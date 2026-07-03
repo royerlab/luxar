@@ -5,9 +5,12 @@
  * a ``THREE.Group``, applies the transform, recurses into children —
  * with two additions:
  *
- *   1. Each child carries a ``min_pixel_size`` attribute (a per-child
- *      pixel threshold) plus its own ``position_bounds`` (the raw nD
- *      AABB). Both are read from the child's zarr attrs.
+ *   1. Each child carries a ``coverage_fraction`` attribute (a per-child
+ *      viewport-relative threshold in [0,1]) plus its own ``position_bounds``
+ *      (the raw nD AABB). Both are read from the child's zarr attrs.
+ *      Legacy (pre-v3.2) datasets that still carry ``min_pixel_size`` /
+ *      selector ``'pixel_size'`` are auto-adapted with a warning
+ *      (see ``resolveCoverageFractions``).
  *   2. Once children are loaded, an entry is registered with the
  *      :class:`LODGroupRegistry` so the per-frame selector can pick
  *      which child renders.
@@ -26,7 +29,7 @@
  * for the points-/lines-substitutive ladders, whose finest child is the full
  * cloud / line set (eager-loading it would defeat progressive loading). The
  * selector math needs
- * only the per-child ``min_pixel_size`` / ``position_bounds`` attrs (read here),
+ * only the per-child ``coverage_fraction`` / ``position_bounds`` attrs (read here),
  * not loaded geometry, so deferral is fully correct.
  *
  * Sibling of `data/scene-loader/nodes/load-scene-nodes.ts` (dispatch),
@@ -92,7 +95,7 @@ const EMPTY_BOUNDS: { min: readonly number[]; max: readonly number[] } = {
 function attachLazyChild(
   placeholder: THREE.Object3D,
   child: SceneNode,
-  minPixelSize: number,
+  coverageFraction: number,
   ctx: NodeBuildCtx,
   runExpensive: () => Promise<void>,
   releaseLoaded?: () => void,
@@ -101,7 +104,7 @@ function attachLazyChild(
   placeholder.visible = false;
   const entryChild: LODGroupChild = {
     object: placeholder,
-    minPixelSize,
+    coverageFraction,
     positionBounds: readPositionBounds(child.attrs),
     ready: false,
     // Progressive (additive-laddered) levels report remaining LODs so the
@@ -153,6 +156,84 @@ function attachLazyChild(
   return entryChild;
 }
 
+/**
+ * Resolve the per-child selector thresholds for a lod_group, auto-adapting
+ * legacy datasets.
+ *
+ * Current stores carry a per-child ``coverage_fraction`` (viewport-relative
+ * ``sqrt(N_i/N_finest)`` in [0,1], strictly ascending coarsest→finest,
+ * finest == 1.0). Datasets written before the v3.2 rename instead carry a
+ * per-child ``min_pixel_size`` (absolute pixel thresholds; group ``selector``
+ * = ``'pixel_size'``). Silently defaulting those to 0 would make the selector
+ * permanently pick the FINEST child — eager-downloading full-res geometry and
+ * defeating progressive LOD — so legacy ladders are **derived** instead:
+ * normalizing the (strictly ascending, positive) legacy pixel thresholds by
+ * the finest value maps them onto the coverage scale. For the legacy
+ * count-anchored ladder (``base·sqrt(N_i/N_0)``) this yields *exactly* the
+ * modern ``sqrt(N_i/N_finest)``; extent-anchored ladders keep their relative
+ * switch points with finest == 1.0. One warning per group names
+ * ``luxar gsplat migrate-format`` so the producer knows to upgrade.
+ *
+ * A child with neither attr is a genuinely malformed producer output: an
+ * actionable error is logged (previously this silently defaulted to 0 and then
+ * blamed the producer with a misleading "not strictly ascending" warning) and
+ * the child falls back to threshold 0.
+ */
+function resolveCoverageFractions(node: SceneNode, children: SceneNode[]): number[] {
+  const coverageRaw = children.map((c) => (c.attrs as Record<string, unknown>).coverage_fraction);
+  const hasCoverage = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v);
+  if (coverageRaw.every(hasCoverage)) {
+    return coverageRaw as number[];
+  }
+
+  // Legacy (pre-v3.2) dataset: every threshold-less child carries the old
+  // ``min_pixel_size`` attr instead (the legacy writer stamped it on EVERY
+  // child, leaf or nested group; the group's ``selector`` was 'pixel_size').
+  const legacyRaw = children.map((c) => (c.attrs as Record<string, unknown>).min_pixel_size);
+  const isLegacy =
+    children.length > 0 &&
+    children.every(
+      (_, i) =>
+        hasCoverage(coverageRaw[i]) ||
+        (typeof legacyRaw[i] === 'number' &&
+          Number.isFinite(legacyRaw[i]) &&
+          (legacyRaw[i] as number) > 0)
+    ) &&
+    legacyRaw.some((v, i) => !hasCoverage(coverageRaw[i]) && typeof v === 'number');
+  if (isLegacy) {
+    // Normalize by the finest (largest) legacy threshold → coverage scale.
+    const merged = children.map((_, i) =>
+      hasCoverage(coverageRaw[i]) ? (coverageRaw[i] as number) : (legacyRaw[i] as number)
+    );
+    const finest = Math.max(...merged.filter((_, i) => !hasCoverage(coverageRaw[i])));
+    const derived = children.map((_, i) =>
+      hasCoverage(coverageRaw[i]) ? (coverageRaw[i] as number) : (legacyRaw[i] as number) / finest
+    );
+    log.warning(
+      Modules.SCENE_LOADER,
+      `lod_group ${node.path}: legacy 'min_pixel_size' selector attrs (pre-v3.2 ` +
+        "'pixel_size' selector) auto-adapted to coverage fractions " +
+        `[${derived.map((v) => v.toFixed(3)).join(', ')}]. Progressive LOD works, but ` +
+        'please re-generate this dataset or upgrade it with ' +
+        '`luxar gsplat migrate-format <in> <out>`.'
+    );
+    return derived;
+  }
+
+  // Malformed: some children carry NO selector threshold at all.
+  const missing = children.filter((_, i) => !hasCoverage(coverageRaw[i])).map((c) => c.path);
+  log.error(
+    Modules.SCENE_LOADER,
+    `lod_group ${node.path}: ${missing.length} of ${children.length} children carry ` +
+      "no 'coverage_fraction' (or legacy 'min_pixel_size') selector threshold " +
+      `(${missing.join(', ')}). Defaulting them to 0 — LOD selection for this group ` +
+      'will be wrong (the finest level may load eagerly). Re-generate the dataset ' +
+      'with the current writer, or upgrade a legacy file with ' +
+      '`luxar gsplat migrate-format <in> <out>`.'
+  );
+  return coverageRaw.map((v) => (hasCoverage(v) ? v : 0));
+}
+
 /** Read raw nD position bounds from a child node's attrs. */
 function readPositionBounds(childAttrs: SceneNode['attrs']): {
   min: readonly number[];
@@ -184,7 +265,7 @@ function readPositionBounds(childAttrs: SceneNode['attrs']): {
  *   2. Recurse each child through ``loadSceneNodes`` so its
  *      geometry-specific loader runs and a placeholder mesh attaches.
  *   3. After each child loads, locate its THREE node by name and
- *      record its ``min_pixel_size`` / ``position_bounds``.
+ *      record its ``coverage_fraction`` / ``position_bounds``.
  *   4. Register a ``LODGroupEntry`` with the registry — the entry
  *      controls per-child visibility on subsequent frames.
  */
@@ -229,6 +310,13 @@ export async function loadLodGroupNode(
   const hasRegistry = !!ctx.lodGroupRegistry;
   const eagerIdx = clampDefaultLevel(attrs.default_level, sceneChildren.length);
 
+  // Per-child selector thresholds, resolved up front so a legacy (pre-v3.2)
+  // dataset carrying ``min_pixel_size`` instead of ``coverage_fraction`` is
+  // auto-adapted (see resolveCoverageFractions) rather than silently
+  // defaulting every level to 0 (which would pin the selector to the finest
+  // child and defeat progressive LOD).
+  const coverageFractions = resolveCoverageFractions(node, sceneChildren);
+
   const registryChildren: LODGroupChild[] = [];
   // Registry index of the eagerly-loaded default child. `eagerIdx` indexes
   // `sceneChildren`, but a child that fails to attach is dropped from
@@ -242,8 +330,7 @@ export async function loadLodGroupNode(
     const child = sceneChildren[i];
     const childLoc = parentLoc.resolve(child.path.slice(1));
 
-    const minPixelSizeRaw = (child.attrs as Record<string, unknown>).min_pixel_size;
-    const minPixelSize = typeof minPixelSizeRaw === 'number' ? minPixelSizeRaw : 0;
+    const coverageFraction = coverageFractions[i];
 
     // Defer only when there's a selector to trigger the load AND the child is a
     // leaf type with a cheap/expensive split (gsplats / points / lines). The
@@ -272,7 +359,7 @@ export async function loadLodGroupNode(
         entryChild = attachLazyChild(
           placeholder,
           lazyChild,
-          minPixelSize,
+          coverageFraction,
           ctx,
           () => loadGSplatsNodeExpensive(lazyChild, ctx, loader),
           () => ctx.releaseLazyGSplats(lazyChild.path),
@@ -288,7 +375,7 @@ export async function loadLodGroupNode(
         entryChild = attachLazyChild(
           placeholder,
           lazyChild,
-          minPixelSize,
+          coverageFraction,
           ctx,
           () => loadPointsNodeExpensive(lazyChild, ctx, loader),
           () => ctx.releaseLazyPoints(lazyChild.path),
@@ -314,7 +401,7 @@ export async function loadLodGroupNode(
         entryChild = attachLazyChild(
           placeholder,
           lazyChild,
-          minPixelSize,
+          coverageFraction,
           ctx,
           () => loadLinesNodeExpensive(lazyChild, ctx, loader),
           () => ctx.releaseLazyLines(lazyChild.path),
@@ -327,7 +414,7 @@ export async function loadLodGroupNode(
 
     // Deferred GROUP path: a non-leaf child (a nested kind=partition or
     // kind=lod) that is not the eager default. The leaf cheap/expensive split
-    // doesn't apply, but the selector only needs the child's min_pixel_size +
+    // doesn't apply, but the selector only needs the child's coverage_fraction +
     // position_bounds (both on attrs, read by attachLazyChild) — not loaded
     // geometry — so we cheap-attach an empty placeholder group and load the
     // whole subtree lazily on first activation. This is what keeps multiscale's
@@ -368,12 +455,8 @@ export async function loadLodGroupNode(
       // pool, so once loaded they stay resident until scene teardown (matching
       // the prior behaviour, just deferred to first view). Nested leaf / lod
       // loaders self-register during loadChildren, which runs only on activation.
-      const entryChild = attachLazyChild(
-        placeholder,
-        lazyChild,
-        minPixelSize,
-        ctx,
-        () => loadChildren(lazyChild, placeholder, childLoc, ctx)
+      const entryChild = attachLazyChild(placeholder, lazyChild, coverageFraction, ctx, () =>
+        loadChildren(lazyChild, placeholder, childLoc, ctx)
       );
       registryChildren.push(entryChild);
       continue;
@@ -405,17 +488,17 @@ export async function loadLodGroupNode(
     if (i === eagerIdx) eagerRegistryIdx = registryChildren.length;
     registryChildren.push({
       object: childObject,
-      minPixelSize,
+      coverageFraction,
       positionBounds: readPositionBounds(child.attrs),
     });
   }
 
   // Defense-in-depth: the per-frame selector (``pickChildWithHysteresis``)
-  // assumes children are in ascending ``min_pixel_size`` order (coarsest→finest)
+  // assumes children are in ascending ``coverage_fraction`` order (coarsest→finest)
   // — it scans upward and stops at the first threshold above the metric, so a
   // later out-of-order (smaller) threshold would never be reached and the wrong
   // level renders. The Python writer guarantees ascending order
-  // (``derive_min_pixel_sizes`` + its monotonicity guard), but a hand-authored
+  // (``coverage_fractions`` + its monotonicity guard), but a hand-authored
   // or otherwise malformed scene could violate it. Rather than refuse the scene
   // (the geometry is fine — only the order is wrong; cf. ``validateTransformFormat``
   // which DOES refuse, because a row-major transform renders catastrophically
@@ -429,23 +512,23 @@ export async function loadLodGroupNode(
   // it with the same warning. The stable sort leaves equal entries in place, so
   // the only effect for the equal case is the diagnostic.
   const isStrictlyAscending = registryChildren.every(
-    (c, k) => k === 0 || registryChildren[k - 1].minPixelSize < c.minPixelSize
+    (c, k) => k === 0 || registryChildren[k - 1].coverageFraction < c.coverageFraction
   );
   if (!isStrictlyAscending) {
-    const before = registryChildren.map((c) => c.minPixelSize);
+    const before = registryChildren.map((c) => c.coverageFraction);
     // Object identity survives the sort, so remap the eager index by reference.
     const eagerChild = eagerRegistryIdx >= 0 ? registryChildren[eagerRegistryIdx] : null;
     // ES2019+ Array.sort is stable, so equal thresholds keep their relative order.
-    registryChildren.sort((a, b) => a.minPixelSize - b.minPixelSize);
+    registryChildren.sort((a, b) => a.coverageFraction - b.coverageFraction);
     if (eagerChild) eagerRegistryIdx = registryChildren.indexOf(eagerChild);
     log.warning(
       Modules.SCENE_LOADER,
-      `lod_group ${node.path}: child min_pixel_size thresholds are not strictly ` +
-        `ascending (${before.join(', ')}). The pixel-size selector needs distinct ` +
+      `lod_group ${node.path}: child coverage_fraction thresholds are not strictly ` +
+        `ascending (${before.join(', ')}). The coverage selector needs distinct ` +
         'coarsest-to-finest thresholds; re-sorted to ascending. Common causes: a ' +
         'non-geometry group (e.g. a metadata sidecar) was adopted as a child and ' +
-        'defaulted to min_pixel_size=0, or the producer emitted a malformed ladder ' +
-        '(derive_min_pixel_sizes guarantees strictly ascending thresholds).'
+        'defaulted to coverage_fraction=0, or the producer emitted a malformed ladder ' +
+        '(coverage_fractions guarantees strictly ascending thresholds).'
     );
   }
 

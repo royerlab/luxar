@@ -25,7 +25,7 @@ is built only on demand.
 | `substitutive.py` | substitutive axis orchestrator (`make_substitutive_lod`, `_reduce_one_level`, `_pack_level`) |
 | `pyramid.py` | `make_lod_pyramid` — chains substitutive (outer) × additive (inner) |
 | `_kernels.py` | shared closed-form Gaussian-mixture math (numpy + torch) |
-| `_substitutive/` | private support subpackage for `substitutive.py`: `warm_start.py` (Morton partition), `kmeans_lloyd.py` (cost-increment Lloyd), `greedy.py` (Runnalls lazy-heap merge) |
+| `_substitutive/` | private support subpackage for `substitutive.py`: `warm_start.py` (Morton partition), `kmeans_lloyd.py` (cost-increment Lloyd), `greedy.py` (Runnalls lazy-heap merge), `refine.py` (L2 mixture-to-mixture refit) |
 
 The public import paths (`luxar.gsplats.lod`, `lod.additive`,
 `lod.substitutive`, `lod._kernels`) are unchanged; the three substitutive
@@ -35,7 +35,7 @@ in CPython).
 
 > **Upstream step**: use `luxar gsplat cal` to pick a principled splat
 > budget K\* before fitting. The canonical end-to-end pipeline is
-> **`cal` → `fit --seeds K*` → `lod --recipe additive` (or `partitioned` / `multiscale` / `mosaic`)**.
+> **`cal` → `fit --seeds K*` → `lod --recipe stream` (or `tiles` / `overview` / `adaptive`)**.
 > See `gsplats/calibration.py` and the "Calibration (Blind-Spot CV)"
 > section in the parent `gsplats/README.md`.
 
@@ -200,6 +200,9 @@ make_substitutive_lod(
     lloyd_iterations: int = 5,
     candidate_bins_k: int = 12,
     coverage_inflation: float = 3.0,    # anti-grid inter-spread widening (1.0 = off)
+    conserve_mass: bool = True,         # per-level (per-barrier-group) DC conservation
+    refine: str = "none",               # "l2" = post-merge L2 refit per level
+    refine_iters: int = 120,            # Adam steps per refined level
     device: str = "auto",               # auto | cpu | cuda | mps
     seed: int | None = None,
     verbose: bool = False,              # per-level Arbol logging
@@ -228,6 +231,58 @@ integral — hence the additive-blend X-ray projection — is unchanged.
 $\beta = 3$ is the exact fixed point of the level recurrence, so the
 calibration holds at every depth. Set `coverage_inflation=1.0` (or CLI
 `--coverage-inflation 1.0`) for the historical pure moment match.
+
+### L2 refinement (`refine="l2"`)
+
+Opt-in post-merge refinement (`_substitutive/refine.py`): each merged level is
+Adam-optimized against its fine input under the **closed-form mixture L²**
+`‖f−g‖² = ‖f‖² − 2⟨f,g⟩ + ‖g‖²` (pairwise Gaussian inner products over sparse
+neighbour pair lists). The per-bin merge objective is structurally blind to
+cross-bin overlap; the global L² objective *contains* the coverage gaps and the
+over-blur, so the refit widens splats exactly where the field is flat and keeps
+isolated structure tight. Measured: rel-L² 0.089 vs 0.151 for the β=3 merge on
+flat fields (equal flatness), 0.141 vs 0.233 on isolated blobs with peak
+preservation 0.99 vs 0.91.
+
+Engineering guarantees:
+
+- **Trusted checkpoints** — pair lists are rebuilt from the current geometry
+  every `rebuild_every` steps and the objective is only compared/snapshotted
+  right after a rebuild (a stale/truncated pair list is exploitable: the
+  optimizer inflates mass to harvest cross terms a capped `‖g‖²` cannot see).
+  The raw merge seed is the first trusted candidate, so the refit is **never
+  worse than the merge** in the trusted metric.
+- **Mass manifold** — amplitudes are renormalized so the coarse mixture's total
+  mass equals the fine mixture's at every iterate: the additive-render DC is
+  pinned (no brightness pop across levels) and the mass-inflation exploit
+  direction is closed outright.
+- **Chain semantics** — the refined level feeds the next reduction, so each
+  level fits its immediate predecessor; with `refine="l2"` the β=3 coverage
+  inflation is demoted from final answer to *optimizer seed*.
+- **Barrier freezing** — under `coarsen_dims` grouping, barrier center
+  coordinates and every Σ row/column touching a barrier dim stay at the seed
+  values (no sliced-dim bleed).
+- Minibatched per-step pair sampling above `step_pair_budget` (unbiased);
+  PD-by-construction Cholesky parameterization plus a defensive NaN-grad step
+  skip; deterministic given `seed` (a local `torch.Generator`).
+
+Only `refine_iters` is exposed on the public builders; the remaining constants
+live in `L2RefineConfig` (stability-critical, not a tuning surface).
+
+### Mass conservation (`conserve_mass=True`)
+
+The per-bin L²-optimal amplitude is **not** mass-preserving (3–17 % total-mass
+drift per level, content-dependent), and total mass over the displayed dims is
+exactly the DC an additive render integrates — uncorrected it shows as a
+visible **brightness pop at every LOD switch** (measured up to −11.5 % per time
+slice at the coarsest level on real 4D data). Each reduced level's amplitudes
+are therefore rescaled by one global factor so its mass over the *coarsened*
+dims equals its fine input's; under `coarsen_dims` grouping this runs per
+barrier group, so every time/channel slice keeps its exact brightness at every
+level. Related numerics fix: the merge's Cholesky ridge is proportional per
+dim (an absolute `1e-6·I` ridge inflated a near-delta barrier width, e.g. a
+lifted time σ of ~1e-9, by ×300,000). `--no-conserve-mass` restores the raw
+per-bin amplitudes.
 
 ### Substitutive methods
 

@@ -519,7 +519,7 @@ def add_points_substitutive_lod_wrapper_impl(
     child and the gsplat children (the lift uses ``opacity=1``).
     """
     from ....gsplats.lift import coarse_substitutive_levels, lift_points_to_gsplats
-    from ..lod.group import lod_thresholds
+    from ..lod.group import coverage_fractions
 
     # Scalar+colormap points have no per-splat scalar channel on gsplats, so bake
     # scalars -> RGB (via the same LUT normalisation the viewer uses) and lift
@@ -548,7 +548,10 @@ def add_points_substitutive_lod_wrapper_impl(
 
     radii_for_lift = DEFAULT_POINT_RADIUS if radii is None else radii
     lifted = lift_points_to_gsplats(
-        pos_arr, radii_for_lift, colors=colors_for_lift, opacity=1.0,
+        pos_arr,
+        radii_for_lift,
+        colors=colors_for_lift,
+        opacity=1.0,
         truncation_radius=float(spec["truncation_radius"]),
     )
 
@@ -585,10 +588,20 @@ def add_points_substitutive_lod_wrapper_impl(
             "levels; writing a flat Points node."
         )
         return add_points_impl(
-            group, name=name, positions=pos_arr, colors=colors, radii=radii,
-            sharpness=sharpness, scalars=scalars, labels=labels,
-            image_labels=image_labels, parent=parent, extend_to_all=extend_to_all,
-            grid_shape=grid_shape, partition=False, **attrs,
+            group,
+            name=name,
+            positions=pos_arr,
+            colors=colors,
+            radii=radii,
+            sharpness=sharpness,
+            scalars=scalars,
+            labels=labels,
+            image_labels=image_labels,
+            parent=parent,
+            extend_to_all=extend_to_all,
+            grid_shape=grid_shape,
+            partition=False,
+            **attrs,
         )
 
     # Children coarsest -> finest: [coarsest gsplat .. finest gsplat, points].
@@ -600,47 +613,25 @@ def add_points_substitutive_lod_wrapper_impl(
     # by the lift and ``lifted.n_splats == n_points`` — but keying off ``lifted``
     # keeps the two geometries' wrappers structurally identical and robust.
     counts = [int(c.n_splats) for c in coarse_first] + [int(lifted.n_splats)]
-    explicit = spec.get("min_pixel_sizes")
+    explicit = spec.get("coverage_fractions")
     if explicit is not None:
         if len(explicit) != len(counts):
             raise ValueError(
-                f"min_pixel_sizes has {len(explicit)} entries but the LOD ladder "
+                f"coverage_fractions has {len(explicit)} entries but the LOD ladder "
                 f"has {len(counts)} levels ({len(coarse_first)} gsplat + 1 points)"
             )
-        min_pixel_sizes = list(explicit)
+        coverage_vals = list(explicit)
     else:
-        # Per-level element radius (world units), coarsest→finest. The finest
-        # level is the points rendered as ``lifted`` gsplats, so use its
-        # principal_radii for consistency with the coarse gsplat levels.
-        pct = float(spec["extent_percentile"])
-        aniso = bool(spec["extent_anisotropy"])
-        extents = [
-            float(np.percentile(c.principal_radii(aniso), pct)) for c in coarse_first
-        ] + [float(np.percentile(lifted.principal_radii(aniso), pct))]
-        # Node extent W = world bbox diagonal. Computed from the FINEST level's
-        # positions here, whereas the gsplat path (lod_dispatch) takes the union
-        # over all substitutive levels' centers. These are EQUAL by construction
-        # — a coarse level's representatives are convex/weighted-mean combinations
-        # of the finest centers, so they always lie inside the finest bbox; the
-        # union therefore equals the finest bbox exactly (verified empirically:
-        # 0.0 difference). Keep this finest-only form — it is cheaper and the
-        # equality means the three geometries stay self-calibrated together. Do
-        # not "fix" the apparent asymmetry; it produces identical thresholds.
-        lo, hi = pos_arr.min(axis=0), pos_arr.max(axis=0)
-        node_extent = float(np.linalg.norm(hi - lo)) if n_points else None
-        min_pixel_sizes = lod_thresholds(
-            str(spec["lod_method"]),  # type: ignore[arg-type]
-            element_counts=counts,
-            element_extents=extents,
-            node_extent=node_extent,
-            base_pixel_size=spec.get("base_pixel_size"),
-        )
+        # Viewport-relative coverage fractions ``sqrt(N_i/N_finest)`` (count ratios;
+        # the viewer anchors the finest at fills-screen). No per-level radius or
+        # world-extent needed.
+        coverage_vals = coverage_fractions(counts)
 
     # Compositing attrs ride on the kind=lod Group; everything else (colormap,
     # truncation_radius, ...) rides onto each child.
     lod_attrs = {k: v for k, v in attrs.items() if k in COMPOSITING_ATTRS}
     child_attrs = {k: v for k, v in attrs.items() if k not in COMPOSITING_ATTRS}
-    child_attrs.pop("min_pixel_size", None)
+    child_attrs.pop("coverage_fraction", None)
     lod_attrs.setdefault("display_type", "points")  # finest child is points
     # The coarse gsplat children carry baked per-splat colours (from the lift),
     # so they must NOT also receive `colormap` (gsplats reject colors+colormap).
@@ -652,9 +643,7 @@ def add_points_substitutive_lod_wrapper_impl(
         f"  📐 Substitutive-LOD '{name}': {len(coarse_first)} gsplat levels + points "
         f"(counts coarsest→finest={counts}, K={spec['compression_factor']})"
     )
-    lod_group_node = parent_node.add_lod_group(
-        name, base_pixel_size=spec.get("base_pixel_size"), **lod_attrs
-    )
+    lod_group_node = parent_node.add_lod_group(name, **lod_attrs)
 
     # Coarse gsplat children (coarsest first). pos_arr is already
     # dim_order-transformed, so children use dim_order=None/fill=None.
@@ -667,7 +656,7 @@ def add_points_substitutive_lod_wrapper_impl(
             fill=None,
             lod_group=None,
             additive_lod=None,
-            min_pixel_size=min_pixel_sizes[idx],
+            coverage_fraction=coverage_vals[idx],
             **gsplat_child_attrs,
         )
 
@@ -689,7 +678,7 @@ def add_points_substitutive_lod_wrapper_impl(
         partition=False,
         additive_lod=None,
         substitutive_lod=None,
-        min_pixel_size=min_pixel_sizes[-1],
+        coverage_fraction=coverage_vals[-1],
         **child_attrs,
     )
 

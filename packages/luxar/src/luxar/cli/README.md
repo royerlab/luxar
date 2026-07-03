@@ -228,7 +228,7 @@ luxar gsplat cal volume.zarr cal.json --progression power --power 2  # Polynomia
 **Options**: `--k-grid` (explicit comma-separated K values), `--n-grid` (default 10), `--k-min` (default 1000), `--k-max` (default 512000), `--progression` (exp/power), `--power`, `--mask-seed`, `--mask-fraction` (default 0.05), `--preset` (default n2s), `--config`, `--device/-d`, plus volume-loader pass-through (`--channel/-c`, `--timepoint`, `--array-key`).
 
 #### `luxar gsplat migrate-format`
-Convert a legacy `.gsplats.zarr` layout to the current node-tree format. Four input shapes are auto-detected: v1.0 (single flat splat set), v1.1 (multi-LOD additive `/splats/lod_<i>/` subgroups), a pre-v2.0 substitutive directory (`manifest.json` + `level_<i>.gsplats.zarr`), and the v2.0 `substitutive_<s>/additive_<a>/` matrix. All migrate to a single current-format `.gsplats.zarr`. By default the output adopts the AUTO encoding policy, so legacy float32 Cholesky factors are re-encoded as the split diagonal/off-diagonal arrays with near-lossless uint16 per-column quantization (~2× smaller); pass `--lossless` to keep them float32 for archival fidelity.
+Convert a legacy `.gsplats.zarr` layout to the current node-tree format. Five input shapes are auto-detected: v1.0 (single flat splat set), v1.1 (multi-LOD additive `/splats/lod_<i>/` subgroups), a pre-v2.0 substitutive directory (`manifest.json` + `level_<i>.gsplats.zarr`), the v2.0 `substitutive_<s>/additive_<a>/` matrix, and a v3.0/v3.1 store whose `kind=lod` groups still carry the pre-v3.2 `pixel_size` selector attrs (rewritten as `selector: "coverage"` + derived per-child `coverage_fraction`). All migrate to a single current-format (v3.2) `.gsplats.zarr`. By default the output adopts the AUTO encoding policy, so legacy float32 Cholesky factors are re-encoded as the split diagonal/off-diagonal arrays with near-lossless uint16 per-column quantization (~2× smaller); pass `--lossless` to keep them float32 for archival fidelity.
 ```bash
 luxar gsplat migrate-format legacy.gsplats.zarr v3.gsplats.zarr             # single file (AUTO encoding)
 luxar gsplat migrate-format old_pyr/ v3.gsplats.zarr                        # substitutive directory
@@ -246,26 +246,26 @@ Output is a standalone `.gsplats.zarr` (graft into a scene from Python via
 `add_gsplats_from_file` / `gsplat convert`).
 
 ```bash
-# flat / additive — single leaf, optionally with an additive (prefix-sum) ladder
+# flat / stream — single leaf, optionally with an additive (prefix-sum) ladder
 luxar gsplat lod in.gsplats.zarr out.gsplats.zarr --recipe flat
-luxar gsplat lod in.gsplats.zarr out.gsplats.zarr --recipe additive --n-lods 6
-luxar gsplat lod in.gsplats.zarr out.gsplats.zarr --recipe additive \
+luxar gsplat lod in.gsplats.zarr out.gsplats.zarr --recipe stream --n-lods 6
+luxar gsplat lod in.gsplats.zarr out.gsplats.zarr --recipe stream \
     --breakpoints energy:0.5,0.9,0.99,1.0                                  # cumulative energy fractions
-luxar gsplat lod in.gsplats.zarr out.gsplats.zarr --recipe additive --method self_energy
+luxar gsplat lod in.gsplats.zarr out.gsplats.zarr --recipe stream --method self_energy
 
-# partitioned / multiscale — BSP parts each with an additive ladder; multiscale
-# adds a coarse substitutive cap (far view) above the partitioned fine branch
-luxar gsplat lod in.gsplats.zarr out.gsplats.zarr --recipe partitioned --max-elements 250000
-luxar gsplat lod in.gsplats.zarr out.gsplats.zarr --recipe partitioned --parts 8 --partition-rule sah
-luxar gsplat lod in.gsplats.zarr out.gsplats.zarr --recipe multiscale --compression-factor 8
+# tiles / overview — BSP parts each with an additive ladder; overview
+# adds a coarse substitutive cap (far view) above the tiled fine branch
+luxar gsplat lod in.gsplats.zarr out.gsplats.zarr --recipe tiles --max-elements 250000
+luxar gsplat lod in.gsplats.zarr out.gsplats.zarr --recipe tiles --parts 8 --partition-rule sah
+luxar gsplat lod in.gsplats.zarr out.gsplats.zarr --recipe overview --compression-factor 8
 
-# substitutive / pyramid primitives (synthesised representative levels)
-luxar gsplat lod in.gsplats.zarr out.gsplats.zarr --recipe substitutive -K 4 -L 3 \
+# levels — synthesised representative levels (substitutive pyramid)
+luxar gsplat lod in.gsplats.zarr out.gsplats.zarr --recipe levels -K 4 -L 3 \
     --substitutive-method kmeans-lloyd --lloyd-iters 5
-luxar gsplat lod in.gsplats.zarr out.gsplats.zarr --recipe pyramid -K 4 -L 3 --n-lods 4
+luxar gsplat lod in.gsplats.zarr out.gsplats.zarr --recipe levels -K 4 -L 3 --n-lods 4
 ```
 
-An option irrelevant to the chosen recipe (e.g. `--max-elements` with `--recipe additive`) is rejected with a clear error.
+An option irrelevant to the chosen recipe (e.g. `--max-elements` with `--recipe stream`) is rejected with a clear error.
 
 #### Tiled Fitting
 For large volumes, use tiled fitting. `--tiling auto` (the default) picks the mode automatically: `none` if the volume fits one tile, `content` if a density is supplied (`--cal`/density knobs), else `uniform`. A tiled fit (`--tiling uniform` or `--tiling content`) emits a `kind=partition` by default (one part per tile/box, for viewer frustum culling); pass `--flat` for a single flat leaf. Whole-volume fits (`--tiling none`/small auto) stay a single leaf.
@@ -327,7 +327,7 @@ Fit a whole timelapse **locally** across multiple GPUs (no Slurm), then merge. O
 luxar gsplat batch-fit run vol.zarr out/ --gpus all --tile-size 256                  # uniform, every GPU
 luxar gsplat batch-fit run vol.zarr out/ --tiling content --cal cal.json --gpus auto # content plan
 luxar gsplat batch-fit run vol.zarr out/ --gpus 0,1 --jobs-per-gpu 2 --timepoints ::10
-luxar gsplat batch-fit run vol.zarr out/ --gpus auto --merge-recipe additive --merge-n-lods 4  # per-part LOD
+luxar gsplat batch-fit run vol.zarr out/ --gpus auto --merge-recipe stream --merge-n-lods 4  # per-part LOD
 luxar gsplat batch-fit run vol.zarr out/ --gpus cpu                                  # CPU fallback
 luxar gsplat batch-fit run vol.zarr out/ --tiling content --cal cal.json --dry-run   # plan only
 ```

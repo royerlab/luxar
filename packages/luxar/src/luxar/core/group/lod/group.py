@@ -5,15 +5,22 @@ on a view-driven metric (currently: the projected bbox diagonal in pixels). It
 is geometry-agnostic — children can be ``points``, ``lines``, ``gsplats``, or
 themselves a specialized group (``kind=lod`` / ``kind=partition``).
 
-Each child carries its own ``min_pixel_size`` attribute (strictly monotonic
-increasing in coarsest→finest order; coarsest = 0.0). The viewer picks the
-finest child whose threshold is satisfied by the current view. The standalone
-builder ``add_lod_group()`` lets users assemble these by hand; the convenience
-paths (e.g. ``Scene.add_gsplats_from_data(..., lod_group=...)``) auto-derive
-thresholds via ``lod_thresholds``. The default ``"extent"`` method anchors each
-threshold in physical element size (``T·W/r`` — self-calibrating); the legacy
-``"count"`` method is the scene-relative √(N_finer / N_coarsest) heuristic
-anchored at ``BASE_PIXEL_SIZE``.
+Each child carries its own ``coverage_fraction`` attribute (strictly monotonic
+increasing in coarsest→finest order; coarsest = 0.0, finest = 1.0). This is a
+**dimensionless, viewport-relative** threshold: the viewer multiplies it by the
+current viewport diagonal (in pixels) and picks the finest child whose resulting
+pixel threshold is satisfied by the group's on-screen size. So the finest level
+(coverage 1.0) activates when the object fills the screen, and coarser levels step
+in geometrically as it shrinks — on any monitor.
+
+The standalone builder ``add_lod_group()`` lets users assemble these by hand; the
+convenience paths (e.g. ``Scene.add_gsplats_from_data(..., lod_group=...)``)
+auto-derive them via ``coverage_fractions``: ``coverage_i = sqrt(N_i / N_finest)``
+where ``N_i`` is level *i*'s splat count. Because it is a **ratio** of counts, it
+is immune to non-displayed-dimension multiplicity (e.g. a stacked time axis inflates
+every level's count equally and cancels), and it makes no absolute-resolution claim
+(a coarse/blocky level is simply mapped onto a smaller apparent size, not a true
+detail estimate).
 
 Everything here is type-agnostic and shared across all leaf geometries
 (Points, Lines, GSplats) and the Partition kind. The geometry-specific
@@ -22,9 +29,8 @@ types (e.g. ``lod.gsplats`` for ``GSplatData``).
 
 This module hosts:
 
-* The ``lod_thresholds`` method selector (``"extent"`` default, ``"count"``
-  fallback), ``extent_min_pixel_sizes`` (``T·W/r``), the ``derive_min_pixel_sizes``
-  √N heuristic, and their shared ``_apply_monotonicity_guard``.
+* ``coverage_fractions`` (``sqrt(N_i / N_finest)``, coarsest 0.0) and its shared
+  ``_apply_monotonicity_guard``.
 * The free-function validator ``validate_lod_group``, callable on any
   ``Group`` whose ``attrs["kind"] == "lod"``.
 * The shared ``resolve_display_type`` helper used by both LOD and Partition
@@ -35,18 +41,10 @@ This module hosts:
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, Dict, List, Literal, Optional
+from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
 if TYPE_CHECKING:
     from ...node import Node
-
-
-#: Base value for auto-derived ``min_pixel_size`` thresholds. Child *i* gets
-#: ``BASE_PIXEL_SIZE * sqrt(n_elements[i] / n_elements[0])`` (coarsest =
-#: child 0). Geometry can resolve roughly √N effective screen pixels of
-#: detail, so the threshold scales linearly with that. 10 px is a reasonable
-#: detail-floor below which a finer level isn't worth the cost.
-BASE_PIXEL_SIZE: float = 10.0
 
 
 # ────────────────────────────────────────────────────────────────────────
@@ -95,7 +93,7 @@ def compute_lod_display_type(children: List["Node"]) -> str:
 
 
 # ────────────────────────────────────────────────────────────────────────
-# min_pixel_size monotonicity invariant
+# coverage_fraction monotonicity invariant
 # ────────────────────────────────────────────────────────────────────────
 
 
@@ -103,7 +101,7 @@ def _assert_strict_ascending(thresholds: List[float], source: str) -> None:
     """Validate ``thresholds`` is strictly monotonic increasing (coarsest→finest).
 
     Shared between the geometry-specific ``lod_group=`` resolvers (explicit
-    ``min_pixel_sizes=`` path) and :func:`derive_min_pixel_sizes` so both
+    ``coverage_fractions=`` path) and :func:`coverage_fractions` so both
     paths apply the same invariant — and so explicit lists fail at the
     resolver instead of deferring to a later :func:`validate_lod_group` call
     that the user may never make.
@@ -112,188 +110,112 @@ def _assert_strict_ascending(thresholds: List[float], source: str) -> None:
     for i, v in enumerate(thresholds):
         if v <= prev:
             raise ValueError(
-                f"{source}: min_pixel_sizes must be strictly increasing in "
+                f"{source}: coverage_fractions must be strictly increasing in "
                 f"coarsest→finest order; entry {i}={v} is not greater than "
                 f"previous {prev}"
             )
         prev = v
 
 
-def derive_min_pixel_sizes(
-    element_counts: list[int],
-    base_pixel_size: Optional[float] = None,
-) -> list[float]:
-    """Auto-derive monotonic ``min_pixel_size`` thresholds from element counts.
+def coverage_fractions(element_counts: list[int]) -> list[float]:
+    """Auto-derive monotonic viewport-relative ``coverage_fraction`` thresholds.
 
-    Coarsest child (index 0) gets ``0.0``; each subsequent child *i* gets
-    ``base_pixel_size * sqrt(n_elements[i] / n_elements[0])``. Geometry can
-    resolve ~√N effective screen pixels of detail, so the threshold scales
-    linearly with that. ``BASE_PIXEL_SIZE`` (~10 px) is the detail floor
-    below which a finer level isn't worth the cost.
+    Coarsest child (index 0) gets ``0.0`` (always-eligible floor); each subsequent
+    child *i* gets ``sqrt(N_i / N_finest)`` where ``N_finest`` is the finest (last)
+    level's splat count — so the finest child is ``1.0`` and activates when the
+    object fills the screen (the viewer multiplies each fraction by the current
+    viewport diagonal in pixels). Coarser levels land at geometric fractions below.
 
-    **Heuristic caveat.** Element *count* is only a proxy for screen
-    *coverage*: a level with 4× the elements does not necessarily resolve
-    2× the linear detail — that depends on how they are distributed
-    in space. The proxy is weakest for *substitutive* levels, where a
-    coarser level has fewer but larger elements; there a count-driven
-    threshold can switch a touch early. When a particular ladder switches
-    at the wrong zoom, override the anchor via ``base_pixel_size``.
+    Because the fraction is a **ratio** of splat counts:
+
+    * any non-displayed-dimension multiplicity (e.g. a stacked time axis that
+      inflates every level's count by the same factor) **cancels**;
+    * no absolute on-screen size or physical element radius is assumed — a
+      coarse/blocky level is simply mapped onto a smaller apparent size, not a
+      claim about true resolvable detail.
+
+    ``sqrt`` is the screen-area law (a level with 4× the splats is ~2× denser
+    linearly), giving ~2×-per-level spacing for the usual K=4 substitutive ladder.
 
     Args:
-        element_counts: One entry per child, in coarsest→finest order. Must
-            be non-empty and the first entry must be > 0.
-        base_pixel_size: Override for the global ``BASE_PIXEL_SIZE``
-            constant. ``None`` (default) → use the module-level constant.
-            Useful when a particular LOD ladder benefits from a higher
-            switching threshold (e.g., very small elements where the
-            default 10-px floor crosses too early).
+        element_counts: One entry per child, in coarsest→finest order. Must be
+            non-empty and the finest (last) entry must be > 0.
 
     Returns:
-        List of thresholds, same length as ``element_counts``. Strictly
-        monotonic increasing for monotonic non-decreasing input.
+        List of coverage fractions in ``[0, 1]``, same length as ``element_counts``,
+        strictly monotonic increasing with the finest anchored at ``1.0``; the
+        monotonicity guard resolves any equal/non-monotone entries by nudging the
+        earlier (coarser) entries *downward*, so the ``[0, 1]`` contract holds
+        for degenerate ladders too (the derived values always round-trip through
+        the explicit-``coverage_fractions=`` validators).
     """
     if not element_counts:
         raise ValueError("element_counts must be non-empty")
-    n0 = element_counts[0]
-    if n0 <= 0:
+    n_finest = element_counts[-1]
+    if n_finest <= 0:
         raise ValueError(
-            "coarsest LOD level is empty (0 elements), so per-level pixel "
-            "thresholds cannot be derived. This usually means a substitutive "
-            "reduction culled every representative — e.g. the input splats all "
-            f"have non-positive amplitude. Got element_counts={list(element_counts)}."
+            "finest LOD level is empty (0 elements), so per-level coverage "
+            "fractions cannot be derived (they normalise by the finest count). "
+            "This usually means a reduction culled every representative — e.g. the "
+            f"input splats all have non-positive amplitude. Got "
+            f"element_counts={list(element_counts)}."
         )
-    bps = BASE_PIXEL_SIZE if base_pixel_size is None else float(base_pixel_size)
-    if bps <= 0:
-        raise ValueError(f"base_pixel_size must be positive, got {bps}")
-    thresholds: list[float] = [0.0]
+    fractions: list[float] = [0.0]
     for n in element_counts[1:]:
-        thresholds.append(bps * (n / n0) ** 0.5)
-    return _apply_monotonicity_guard(thresholds, "derive_min_pixel_sizes")
+        fractions.append((n / n_finest) ** 0.5)
+    return _apply_monotonicity_guard(fractions, "coverage_fractions")
 
 
 def _apply_monotonicity_guard(thresholds: list[float], source: str) -> list[float]:
-    """Enforce strict ascending thresholds, then assert the invariant.
+    """Enforce strict ascending thresholds WITHIN ``[0, 1]``, then assert.
 
     Defensive: guarantee strict monotonicity even when later children have the
-    same (or fewer) elements / a larger extent than a previous level. Uses a
-    *relative* bump (×1.1) rather than a fixed +1px so near-equal levels
-    separate proportionally to their scale — a fixed pixel nudge places the
-    switch threshold at a meaningless absolute value for large ladders.
+    same (or fewer) elements than a previous level — WITHOUT ever breaching the
+    viewport-relative contract (all values in ``[0, 1]``, coarsest ``0.0``,
+    finest ``1.0``). An upward bump would push equal-tail ladders above 1.0
+    (e.g. counts ``[10, 1000, 1000]``), producing values the explicit-input
+    validators (``coverage_fractions=[...]``) reject if a user feeds the
+    derived list back in. So duplicates resolve by nudging the *earlier*
+    (coarser) entries DOWNWARD instead.
 
-    The relative bump is a no-op when the previous threshold is ``0`` (the
-    coarsest entry is always the ``0.0`` floor, and a zero-count intermediate
-    level derives to ``0``), which would leave two equal entries and trip the
-    trailing assertion. So when the previous threshold is non-positive we fall
-    back to a small absolute floor (``_MONOTONIC_FLOOR``); every later entry
-    then bumps relative to a positive value. This makes the guard *total* — it
-    never raises — so a degenerate ladder yields a usable strictly-ascending
-    sequence instead of a crash. The trailing ``_assert_strict_ascending`` is
-    the same invariant the explicit-``min_pixel_sizes`` path is checked against.
+    Strategy (total — never raises on derived input):
+
+    1. Cap the finest (last) entry at the ``1.0`` anchor (only a non-monotone
+       count ladder can derive above it; a monotone one lands exactly on 1.0).
+    2. Backward pass: any earlier entry not strictly below its successor is
+       nudged down to ``successor / 1.1`` — a *relative* nudge, so near-equal
+       levels separate proportionally to their scale, always toward 0 and
+       never above 1.0.
+    3. The downward nudge bottoms out at ``0`` for a zero-valued successor (a
+       zero-count intermediate level derives to ``0``), collapsing degenerate
+       entries into a zero prefix after index 0; a final pass lifts that
+       prefix onto the same geometric ramp strictly between the ``0.0``
+       coarsest floor and the first positive threshold.
+
+    The trailing ``_assert_strict_ascending`` is the same invariant the
+    explicit-``coverage_fractions`` path is checked against.
     """
-    for i in range(1, len(thresholds)):
-        if thresholds[i] <= thresholds[i - 1]:
-            prev = thresholds[i - 1]
-            thresholds[i] = prev * 1.1 if prev > 0 else _MONOTONIC_FLOOR
+    n = len(thresholds)
+    if n >= 2:
+        thresholds[-1] = min(thresholds[-1], 1.0)
+        for i in range(n - 2, 0, -1):
+            if thresholds[i] >= thresholds[i + 1]:
+                thresholds[i] = thresholds[i + 1] / _MONOTONIC_NUDGE
+        # Lift any zero prefix (index 0 stays the 0.0 coarsest floor).
+        first_pos = next((i for i in range(1, n) if thresholds[i] > 0.0), None)
+        if first_pos is not None:
+            for i in range(1, first_pos):
+                thresholds[i] = thresholds[first_pos] / _MONOTONIC_NUDGE ** (
+                    first_pos - i
+                )
     _assert_strict_ascending(thresholds, source)
     return thresholds
 
 
-#: Absolute floor (px) used by :func:`_apply_monotonicity_guard` when the
-#: previous threshold is ``0`` and the relative ×1.1 bump would be a no-op.
-#: Tiny on purpose: a degenerate level it separates effectively switches at the
-#: smallest on-screen size, which is the least-surprising fallback.
-_MONOTONIC_FLOOR: float = 1e-6
-
-
-#: Target on-screen element size (px) for the ``extent`` method. A level is
-#: adopted once its elements project to >= this many pixels — finer levels would
-#: be sub-pixel waste, coarser ones visibly blocky. Unlike :data:`BASE_PIXEL_SIZE`
-#: (a scene-*relative* √N anchor) this is a *physical* anchor: it does not need
-#: per-dataset tuning, because it is expressed directly in screen pixels.
-DEFAULT_TARGET_PIXEL_SIZE: float = 1.5
-
-#: LOD threshold-derivation methods. ``"extent"`` (default) anchors the switch in
-#: physical element size (W / r); ``"count"`` is the legacy scene-relative √N proxy.
-LodThresholdMethod = Literal["extent", "count"]
-
-
-def extent_min_pixel_sizes(
-    element_extents: list[float],
-    node_extent: float,
-    base_pixel_size: Optional[float] = None,
-) -> list[float]:
-    """Derive ``min_pixel_size`` thresholds from per-level element *extents* (W/r).
-
-    Mipmap-style resolvability: a level is adopted once its elements project to
-    >= ``base_pixel_size`` (the target pixel size ``T``) on screen. With node
-    world bbox diagonal ``W`` and level extent ``r_i`` (world units), an element
-    projects to ``r_i * diagonalPx / W`` pixels at node-diagonal ``diagonalPx``,
-    so the switch threshold is::
-
-        threshold_0 = 0.0                # coarsest = always-eligible floor
-        threshold_i = T * W / r_i        # i >= 1
-
-    Because ``T`` is a physical pixel size (~1.5 px), it is **scene-independent**
-    — no per-dataset anchor tuning (unlike :func:`derive_min_pixel_sizes`). And
-    ``r_i`` is the *true* element size, so a substitutive level's fewer-but-larger
-    coarse elements raise its threshold correctly (the count proxy cannot see
-    this). Thresholds ascend because ``r_i`` descends coarsest→finest; the
-    monotonicity guard covers any non-monotone extent input.
-
-    Args:
-        element_extents: per-level element radius (world units), coarsest→finest.
-            Non-empty. The coarsest entry (index 0) is unused (its threshold is
-            the 0.0 floor); entries 1.. should be > 0 (a tiny floor is applied).
-        node_extent: the node's world bbox diagonal ``W`` (> 0).
-        base_pixel_size: target element pixel size ``T``; ``None`` →
-            :data:`DEFAULT_TARGET_PIXEL_SIZE`.
-    """
-    if not element_extents:
-        raise ValueError("element_extents must be non-empty")
-    if node_extent <= 0:
-        raise ValueError(f"node_extent must be positive, got {node_extent}")
-    t_px = (
-        DEFAULT_TARGET_PIXEL_SIZE if base_pixel_size is None else float(base_pixel_size)
-    )
-    if t_px <= 0:
-        raise ValueError(f"base_pixel_size (target px) must be positive, got {t_px}")
-    eps = 1e-9
-    thresholds: list[float] = [0.0]
-    for r in element_extents[1:]:
-        thresholds.append(t_px * node_extent / max(float(r), eps))
-    return _apply_monotonicity_guard(thresholds, "extent_min_pixel_sizes")
-
-
-def lod_thresholds(
-    method: LodThresholdMethod = "extent",
-    *,
-    element_counts: List[int],
-    element_extents: Optional[List[float]] = None,
-    node_extent: Optional[float] = None,
-    base_pixel_size: Optional[float] = None,
-) -> List[float]:
-    """Derive ``min_pixel_size`` thresholds by the selected method.
-
-    ``"extent"`` (default) → :func:`extent_min_pixel_sizes` (physically-anchored
-    W/r) when ``element_extents`` and a positive ``node_extent`` are available;
-    otherwise it transparently falls back to ``"count"`` (e.g. a non-gsplat
-    hand-built tree with no extent data). ``"count"`` → :func:`derive_min_pixel_sizes`
-    (scene-relative √N). ``base_pixel_size`` is the per-method anchor (``None`` →
-    the method's default: ~1.5 px target for ``extent``, ~10 px for ``count``).
-    """
-    if (
-        method == "extent"
-        and element_extents is not None
-        and node_extent is not None
-        and node_extent > 0
-        # Every finer level must have a usable (positive) extent; a non-positive
-        # one (degenerate zero-size or empty level) would otherwise produce a
-        # spurious huge threshold via the eps-clamp. The coarsest extent (index 0)
-        # is unused (its threshold is the 0.0 floor), so it is exempt.
-        and all(r > 0 for r in element_extents[1:])
-    ):
-        return extent_min_pixel_sizes(element_extents, node_extent, base_pixel_size)
-    return derive_min_pixel_sizes(element_counts, base_pixel_size)
+#: Relative separation factor used by :func:`_apply_monotonicity_guard`:
+#: a colliding coarser entry is nudged DOWN to ``successor / 1.1``, keeping the
+#: separation proportional to the threshold's scale while never leaving [0, 1].
+_MONOTONIC_NUDGE: float = 1.1
 
 
 # ────────────────────────────────────────────────────────────────────────
@@ -309,8 +231,8 @@ def validate_lod_group(group: "Node") -> None:
     - the group has zero children;
     - ``default_level`` is out of range (``not 0 <= default_level <
       len(children)``);
-    - any child is missing ``min_pixel_size`` in its attrs;
-    - the per-child ``min_pixel_size`` values are not strictly monotonic
+    - any child is missing ``coverage_fraction`` in its attrs;
+    - the per-child ``coverage_fraction`` values are not strictly monotonic
       increasing in insertion order.
 
     Call this manually before finalizing if you want eager validation;
@@ -328,16 +250,16 @@ def validate_lod_group(group: "Node") -> None:
         )
     prev = float("-inf")
     for i, child in enumerate(group.children):
-        if "min_pixel_size" not in child.attrs:
+        if "coverage_fraction" not in child.attrs:
             raise ValueError(
                 f"LOD-group child {i} ({child.name!r}) is missing "
-                "'min_pixel_size' in its attrs"
+                "'coverage_fraction' in its attrs"
             )
-        value = float(child.attrs["min_pixel_size"])
+        value = float(child.attrs["coverage_fraction"])
         if value <= prev:
             raise ValueError(
                 f"LOD-group child {i} ({child.name!r}) has "
-                f"min_pixel_size={value}, must be strictly greater than "
+                f"coverage_fraction={value}, must be strictly greater than "
                 f"previous child's {prev}"
             )
         prev = value
@@ -481,11 +403,12 @@ def resolve_substitutive_axis(spec: Any, geometry: str) -> Optional[Dict[str, An
     * ``None`` / ``False`` → no-op (caller writes a flat / additive node).
     * ``True`` / ``dict()`` → defaults (K=4, levels=3, method="auto").
     * ``dict(...)`` → keys ``compression_factor`` (alias ``K``), ``levels``
-      (alias ``n_lods``), ``method`` (reduction algorithm), ``lod_method``
-      (``"extent"`` default | ``"count"``), ``extent_percentile`` (default 90),
-      ``extent_anisotropy`` (default True), ``base_pixel_size``,
-      ``truncation_radius``, ``device``, ``seed``, ``min_pixel_sizes`` (explicit,
-      strict-ascending). Unrecognized keys raise.
+      (alias ``n_lods``), ``method`` (reduction algorithm), ``truncation_radius``,
+      ``device``, ``seed``, ``coverage_fractions`` (explicit per-level
+      viewport-relative thresholds, strict-ascending in [0, 1]), ``coarsen_dims``.
+      Unrecognized keys raise. LOD switch thresholds are otherwise auto-derived as
+      ``coverage_fractions`` (``sqrt(N_i/N_finest)``) — no method selector or
+      per-dataset anchor knob.
     """
     if spec is None or spec is False:
         return None
@@ -503,7 +426,9 @@ def resolve_substitutive_axis(spec: Any, geometry: str) -> Optional[Dict[str, An
     if compression_factor < 2:
         raise ValueError(f"compression_factor must be >= 2, got {compression_factor}")
 
-    levels = int(kwargs.pop("levels", kwargs.pop("n_lods", DEFAULT_SUBSTITUTIVE_LEVELS)))
+    levels = int(
+        kwargs.pop("levels", kwargs.pop("n_lods", DEFAULT_SUBSTITUTIVE_LEVELS))
+    )
     if levels < 1:
         raise ValueError(f"levels must be >= 1, got {levels}")
 
@@ -512,27 +437,6 @@ def resolve_substitutive_axis(spec: Any, geometry: str) -> Optional[Dict[str, An
         raise ValueError(
             f"method must be one of {sorted(SUBSTITUTIVE_METHODS)}; got {method!r}"
         )
-
-    base_pixel_size = kwargs.pop("base_pixel_size", None)
-    if base_pixel_size is not None:
-        base_pixel_size = float(base_pixel_size)
-        if base_pixel_size <= 0:
-            raise ValueError(f"base_pixel_size must be positive, got {base_pixel_size}")
-
-    # LOD switching-threshold method + its extent-mode knobs (see lod_thresholds /
-    # extent_min_pixel_sizes). ``lod_method`` is distinct from ``method`` above,
-    # which selects the substitutive *reduction* algorithm.
-    lod_method = str(kwargs.pop("lod_method", "extent"))
-    if lod_method not in ("extent", "count"):
-        raise ValueError(
-            f"lod_method must be 'extent' or 'count', got {lod_method!r}"
-        )
-    extent_percentile = float(kwargs.pop("extent_percentile", 90.0))
-    if not (0.0 < extent_percentile <= 100.0):
-        raise ValueError(
-            f"extent_percentile must lie in (0, 100], got {extent_percentile}"
-        )
-    extent_anisotropy = bool(kwargs.pop("extent_anisotropy", True))
 
     truncation_radius = float(kwargs.pop("truncation_radius", 3.0))
     if truncation_radius <= 0:
@@ -543,12 +447,22 @@ def resolve_substitutive_axis(spec: Any, geometry: str) -> Optional[Dict[str, An
     if seed is not None:
         seed = int(seed)
 
-    min_pixel_sizes = kwargs.pop("min_pixel_sizes", None)
-    if min_pixel_sizes is not None:
-        min_pixel_sizes = [float(m) for m in min_pixel_sizes]
+    explicit_coverage = kwargs.pop("coverage_fractions", None)
+    if explicit_coverage is not None:
+        explicit_coverage = [float(m) for m in explicit_coverage]
+        if not explicit_coverage:
+            raise ValueError(
+                "substitutive_lod=dict(coverage_fractions=...) must be non-empty "
+                "(one strictly-ascending value in [0, 1] per LOD level)"
+            )
         _assert_strict_ascending(
-            min_pixel_sizes, "substitutive_lod=dict(min_pixel_sizes=...)"
+            explicit_coverage, "substitutive_lod=dict(coverage_fractions=...)"
         )
+        if explicit_coverage[0] < 0.0 or explicit_coverage[-1] > 1.0:
+            raise ValueError(
+                "substitutive_lod=dict(coverage_fractions=...): values must lie in "
+                f"[0, 1] (coarsest→finest); got {explicit_coverage}"
+            )
 
     # Dims coarsening may cluster over; complement = hard grouping barriers.
     # Shape/type only here (scene dims aren't known yet); names + the "display"
@@ -559,21 +473,16 @@ def resolve_substitutive_axis(spec: Any, geometry: str) -> Optional[Dict[str, An
         raise ValueError(
             f"substitutive_lod for {geometry}: unrecognized keys {sorted(kwargs)}. "
             "Valid keys: compression_factor (K), levels (n_lods), method, "
-            "lod_method, extent_percentile, extent_anisotropy, base_pixel_size, "
-            "truncation_radius, device, seed, min_pixel_sizes, coarsen_dims."
+            "truncation_radius, device, seed, coverage_fractions, coarsen_dims."
         )
 
     return {
         "compression_factor": compression_factor,
         "levels": levels,
         "method": method,
-        "lod_method": lod_method,
-        "extent_percentile": extent_percentile,
-        "extent_anisotropy": extent_anisotropy,
-        "base_pixel_size": base_pixel_size,
         "truncation_radius": truncation_radius,
         "device": device,
         "seed": seed,
-        "min_pixel_sizes": min_pixel_sizes,
+        "coverage_fractions": explicit_coverage,
         "coarsen_dims": coarsen_dims,
     }

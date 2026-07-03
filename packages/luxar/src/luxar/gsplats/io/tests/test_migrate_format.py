@@ -1,4 +1,4 @@
-"""Tests for the `migrate_format` legacy → v3.0 conversion tool."""
+"""Tests for the `migrate_format` legacy → current-format conversion tool."""
 
 from __future__ import annotations
 
@@ -391,9 +391,9 @@ class TestMigrateFormat:
         out = tmp_path / "out.gsplats.zarr"
         detected = migrate_format(legacy, out)
         assert detected == "v1.0"
-        # Out is a v3.1 node-tree leaf with the split Cholesky layout.
+        # Out is a current node-tree leaf with the split Cholesky layout.
         root = zarr.open_group(str(out), mode="r")
-        assert root.attrs["format_version"] == "3.1"
+        assert root.attrs["format_version"] == "3.2"
         assert "cholesky_factors_diag" in root
         assert "cholesky_factors" not in root
         data = load_gsplats(out)
@@ -451,7 +451,7 @@ class TestMigrateFormat:
         detected = migrate_format(legacy, out)
         assert detected == "v2.0"
         root = zarr.open_group(str(out), mode="r")
-        assert root.attrs["format_version"] == "3.1"
+        assert root.attrs["format_version"] == "3.2"
         data = load_gsplats(out)
         assert data.n_splats == 12
         assert data.n_substitutive == 1
@@ -528,7 +528,7 @@ class TestMigrateFormat:
             centers=np.zeros((3, 3), dtype=np.float32),
             amplitudes=np.ones(3, dtype=np.float32),
             cholesky_factors=_identity_chol(3),
-        ).save(current)  # writes the current v3.1 node-tree
+        ).save(current)  # writes the current (v3.2) node-tree
         out = tmp_path / "out.gsplats.zarr"
         with pytest.raises(ValueError, match="already format v3"):
             migrate_format(current, out)
@@ -695,3 +695,175 @@ class TestMigrateFormat:
         loaded_colors = data.additive_sublods[0].colors
         assert loaded_colors is not None
         np.testing.assert_array_equal(loaded_colors, colors)
+
+
+# ---------------------------------------------------------------------------
+# v3.0 / v3.1 stores with pre-v3.2 lod selector attrs (pixel_size → coverage)
+# ---------------------------------------------------------------------------
+
+
+def _make_v3_lod_pixel_size(
+    path: Path,
+    level_sizes: list[int],
+    *,
+    format_version: str = "3.1",
+    with_fitting: bool = False,
+) -> None:
+    """Build a v3.x node-tree ``kind=lod`` store carrying the pre-v3.2 selector
+    attrs: ``selector='pixel_size'`` on the group and per-child
+    ``min_pixel_size`` (no ``coverage_fraction``).
+
+    Written with the current writer, then attr-rewritten into the legacy form
+    (the array layout is identical across v3.0→v3.2; only the selector attrs
+    were renamed).
+    """
+    from luxar.gsplats.gsplat_data import AdditiveSubLOD
+    from luxar.gsplats.io.save_gsplats import write_gsplats_tree
+    from luxar.gsplats.tree import GSplatLeaf, GSplatLodGroup
+
+    rng = np.random.default_rng(0)
+    leaves = []
+    for n in level_sizes:  # coarsest→finest (the on-disk child_<i> order)
+        leaves.append(
+            GSplatLeaf(
+                additive_sublods=[
+                    AdditiveSubLOD(
+                        centers=(rng.random((n, 3)) * 10).astype(np.float32),
+                        amplitudes=rng.random(n).astype(np.float32),
+                        cholesky_factors=_identity_chol(n),
+                    )
+                ]
+            )
+        )
+    write_gsplats_tree(
+        path,
+        GSplatLodGroup(children=leaves),
+        fitting_info={"fitter_name": "test-fitter", "n_splats": level_sizes[-1]}
+        if with_fitting
+        else None,
+        pipeline_info={"lod_kind": "substitutive"} if with_fitting else None,
+    )
+    root = zarr.open_group(str(path), mode="r+")
+    root.attrs["format_version"] = format_version
+    root.attrs["selector"] = "pixel_size"
+    for i, n in enumerate(level_sizes):
+        child = root[f"child_{i}"]
+        del child.attrs["coverage_fraction"]
+        # The legacy count-anchored ladder: base(100px)·sqrt(N_i/N_0).
+        child.attrs["min_pixel_size"] = 100.0 * float(np.sqrt(n / level_sizes[0]))
+    zarr.consolidate_metadata(root.store)
+
+
+class TestMigrateV3LegacyLodAttrs:
+    """v3.0/v3.1 stores whose kind=lod groups still carry the pre-v3.2
+    'pixel_size' selector attrs are detected and rewritten to v3.2
+    (selector='coverage' + derived coverage_fraction)."""
+
+    def test_detect_v3_1_legacy_lod(self, tmp_path: Path) -> None:
+        legacy = tmp_path / "legacy_lod.gsplats.zarr"
+        _make_v3_lod_pixel_size(legacy, [2, 8])
+        assert detect_legacy_format(legacy) == "v3.1-lod-pixel-size"
+
+    def test_detect_v3_0_legacy_lod(self, tmp_path: Path) -> None:
+        legacy = tmp_path / "legacy_lod.gsplats.zarr"
+        _make_v3_lod_pixel_size(legacy, [2, 8], format_version="3.0")
+        assert detect_legacy_format(legacy) == "v3.0-lod-pixel-size"
+
+    def test_detect_refuses_current_lod_store(self, tmp_path: Path) -> None:
+        """A lod store with current coverage attrs is NOT migratable."""
+        from luxar.gsplats.gsplat_data import AdditiveSubLOD
+        from luxar.gsplats.io.save_gsplats import write_gsplats_tree
+        from luxar.gsplats.tree import GSplatLeaf, GSplatLodGroup
+
+        rng = np.random.default_rng(0)
+        leaves = [
+            GSplatLeaf(
+                additive_sublods=[
+                    AdditiveSubLOD(
+                        centers=(rng.random((n, 3)) * 10).astype(np.float32),
+                        amplitudes=rng.random(n).astype(np.float32),
+                        cholesky_factors=_identity_chol(n),
+                    )
+                ]
+            )
+            for n in (2, 8)
+        ]
+        current = tmp_path / "current_lod.gsplats.zarr"
+        write_gsplats_tree(current, GSplatLodGroup(children=leaves))
+        with pytest.raises(ValueError, match="already format v3"):
+            detect_legacy_format(current)
+
+    def test_migrate_v3_1_lod_pixel_size(self, tmp_path: Path) -> None:
+        legacy = tmp_path / "legacy_lod.gsplats.zarr"
+        _make_v3_lod_pixel_size(legacy, [2, 4, 16], with_fitting=True)
+        out = tmp_path / "out.gsplats.zarr"
+        detected = migrate_format(legacy, out)
+        assert detected == "v3.1-lod-pixel-size"
+
+        root = zarr.open_group(str(out), mode="r")
+        assert root.attrs["format_version"] == "3.2"
+        assert root.attrs["kind"] == "lod"
+        assert root.attrs["selector"] == "coverage"
+        fractions = []
+        for i in range(3):
+            child_attrs = dict(root[f"child_{i}"].attrs)
+            assert "min_pixel_size" not in child_attrs
+            fractions.append(float(child_attrs["coverage_fraction"]))
+        # Derived sqrt(N_i/N_finest): strictly ascending, finest == 1.0.
+        assert fractions == sorted(fractions)
+        assert all(a < b for a, b in zip(fractions, fractions[1:]))
+        assert fractions[-1] == pytest.approx(1.0)
+        # Carry-along groups survive the rewrite.
+        assert root["fitting"].attrs["fitter_name"] == "test-fitter"
+        assert root["pipeline"].attrs["lod_kind"] == "substitutive"
+
+        # Loadable as a substitutive matrix with counts preserved.
+        data = load_gsplats(out)
+        assert data.n_substitutive == 3
+        assert data.n_splats == 16  # default view = finest
+
+    def test_detect_nested_legacy_lod_inside_partition(self, tmp_path: Path) -> None:
+        """The legacy-attr scan recurses: a kind=partition root whose part is a
+        legacy-attr lod group is detected (and migrates) too."""
+        from luxar.gsplats.gsplat_data import AdditiveSubLOD
+        from luxar.gsplats.io.save_gsplats import write_gsplats_tree
+        from luxar.gsplats.tree import GSplatLeaf, GSplatLodGroup, GSplatPartition
+
+        rng = np.random.default_rng(0)
+
+        def leaf(n: int) -> GSplatLeaf:
+            return GSplatLeaf(
+                additive_sublods=[
+                    AdditiveSubLOD(
+                        centers=(rng.random((n, 3)) * 10).astype(np.float32),
+                        amplitudes=rng.random(n).astype(np.float32),
+                        cholesky_factors=_identity_chol(n),
+                    )
+                ]
+            )
+
+        legacy = tmp_path / "nested.gsplats.zarr"
+        write_gsplats_tree(
+            legacy,
+            GSplatPartition(
+                children=[GSplatLodGroup(children=[leaf(2), leaf(8)])],
+                max_elements=0,
+            ),
+        )
+        root = zarr.open_group(str(legacy), mode="r+")
+        root.attrs["format_version"] = "3.1"
+        lod = root["part_0"]
+        lod.attrs["selector"] = "pixel_size"
+        for i, n in enumerate((2, 8)):
+            del lod[f"child_{i}"].attrs["coverage_fraction"]
+            lod[f"child_{i}"].attrs["min_pixel_size"] = 100.0 * float(np.sqrt(n / 2))
+        zarr.consolidate_metadata(root.store)
+
+        assert detect_legacy_format(legacy) == "v3.1-lod-pixel-size"
+        out = tmp_path / "out.gsplats.zarr"
+        assert migrate_format(legacy, out) == "v3.1-lod-pixel-size"
+        out_root = zarr.open_group(str(out), mode="r")
+        assert out_root.attrs["format_version"] == "3.2"
+        assert out_root["part_0"].attrs["selector"] == "coverage"
+        assert "coverage_fraction" in out_root["part_0"]["child_0"].attrs
+        assert "min_pixel_size" not in out_root["part_0"]["child_0"].attrs

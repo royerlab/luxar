@@ -144,7 +144,9 @@ def migrate_format_command(
         ...,
         exists=True,
         help="Legacy .gsplats.zarr (v1.0 / v1.1 / v2.0), .gsplats.zarr.zip/.tar.gz, "
-        "or a substitutive directory (with manifest.json + level_<i>.gsplats.zarr).",
+        "a substitutive directory (with manifest.json + level_<i>.gsplats.zarr), "
+        "or a v3.0/v3.1 store whose kind=lod groups still carry the pre-v3.2 "
+        "'pixel_size' selector attrs.",
     ),
     output_path: Path = typer.Argument(
         ..., help="Output .gsplats.zarr (current node-tree format)."
@@ -165,13 +167,16 @@ def migrate_format_command(
 ) -> None:
     """Convert a legacy .gsplats.zarr layout to the current node-tree format.
 
-    Four input shapes are auto-detected:
+    Five input shapes are auto-detected:
 
     \b
     * v1.0  .gsplats.zarr (single flat splat set)
     * v1.1  .gsplats.zarr (multi-LOD additive, /splats/lod_<i>/ subgroups)
     * v2.0  .gsplats.zarr (2-D substitutive_<s>/additive_<a> matrix)
     * substitutive directory (manifest.json + level_<i>.gsplats.zarr files)
+    * v3.0/v3.1 .gsplats.zarr with pre-v3.2 lod selector attrs
+      (selector='pixel_size' / per-child min_pixel_size — rewritten as
+      selector='coverage' + derived coverage_fraction thresholds)
 
     All migrate to a single current-format ``.gsplats.zarr`` node subtree. By
     default the output adopts the AUTO encoding policy, so legacy float32 Cholesky
@@ -180,9 +185,10 @@ def migrate_format_command(
     """
     try:
         from luxar.encoding import EncodingMode
-        from luxar.gsplats.gsplat_data import GSplatData
+        from luxar.gsplats.io.load_gsplats import load_gsplat_node
         from luxar.gsplats.io.migrate import migrate_format
         from luxar.gsplats.io.save_gsplats import FORMAT_VERSION
+        from luxar.gsplats.tree import total_splats
 
         with asection(f"Migrating {input_path.name} → v{FORMAT_VERSION}"):
             detected = migrate_format(
@@ -196,10 +202,13 @@ def migrate_format_command(
             aprint(f"Detected legacy format: {detected}")
 
             # Post-write read-back: confirm the output is a loadable current-format
-            # file rather than reporting success blind.
+            # file rather than reporting success blind. load_gsplat_node (not
+            # GSplatData.load) so nested trees — a migrated v3.x partition /
+            # multiscale / mosaic, which has no flat matrix equivalent — verify
+            # too, not just leaf/lod-matrix shapes.
             import zarr
 
-            verify = GSplatData.load(output_path, include_stats=False)
+            verify_node, _ = load_gsplat_node(output_path, include_stats=False)
             out_attrs = dict(zarr.open_group(str(output_path), mode="r").attrs)
             fmt = out_attrs.get("format_version")
             if fmt != FORMAT_VERSION:
@@ -210,9 +219,8 @@ def migrate_format_command(
                 raise typer.Exit(1)
             if not quiet:
                 aprint(
-                    f"✓ Verified v{FORMAT_VERSION} output: {verify.n_splats:,} "
-                    f"splats, {verify.n_substitutive} substitutive level(s) → "
-                    f"{output_path}"
+                    f"✓ Verified v{FORMAT_VERSION} output: "
+                    f"{total_splats(verify_node):,} splats → {output_path}"
                 )
     except typer.Exit:
         raise

@@ -520,6 +520,307 @@ class TestApiContract:
                 == pyramid.substitutive_levels[s].n_splats_total
             )
 
+    def test_save_load_preserves_pipeline_stats(self, tmp_path):
+        """Reduction/topology stats survive the disk round-trip via the
+        ``pipeline/`` group — historically ALL of them (lod_kind, method,
+        compression_factor, coverage_inflation, refine, ...) were silently
+        dropped by the fitting-keys whitelist, and the per-level
+        ``refine_stats`` dict was dropped by the scalar-only ``level_stats``
+        filter. Asserts absolute values, not just key presence."""
+        data = _make_isotropic_3d(n=64, seed=0)
+        out = make_substitutive_lod(
+            data,
+            compression_factor=4,
+            levels=1,
+            method="kmeans",
+            device="cpu",
+            refine="l2",
+            refine_iters=4,
+            seed=0,
+        )
+        path = tmp_path / "pipe.gsplats.zarr"
+        out.save(str(path), ordering="none")
+        back = GSplatData.load(str(path), include_stats=True)
+        assert back.stats["lod_kind"] == "substitutive"
+        assert back.stats["method"] == "kmeans"
+        assert back.stats["compression_factor"] == 4
+        assert back.stats["coverage_inflation"] == 3.0
+        assert back.stats["refine"] == "l2"
+        assert back.stats["refine_iters"] == 4
+        assert back.stats["n_substitutive_levels"] == 2
+        # Per-level refine_stats dict (nested) round-trips through level_stats.
+        rs = back.substitutive_levels[1].stats.get("refine_stats")
+        assert isinstance(rs, dict)
+        assert "improvement_frac" in rs and "mass_vs_fine" in rs
+        assert (
+            rs["iters_run"]
+            == out.substitutive_levels[1].stats["refine_stats"]["iters_run"]
+        )
+        # coarsen_dims=None must round-trip AS None (not "None"/dropped).
+        assert back.stats["coarsen_dims"] is None
+
+    def test_plain_fit_writes_no_pipeline_group(self, tmp_path):
+        """A plain fit (no reduction/topology stats, just fit-runtime scratch
+        like ``movie_frames=None``) must NOT emit a ``pipeline/`` group — the
+        blacklist excludes fit-scratch keys, so the round-trip is unchanged
+        from before the pipeline/ feature existed. Regression for the workflow
+        finding that ``movie_frames`` leaked a spurious group into every fit."""
+        import zarr
+
+        from luxar.gsplats.io.save_gsplats import split_fitting_info
+
+        # Fit-like stats: only whitelisted fitting keys + the scratch key.
+        _, _, _, pipe = split_fitting_info(
+            {"fitter_name": "luxar", "n_splats": 5, "movie_frames": None}
+        )
+        assert pipe is None, f"plain fit produced pipeline_info={pipe}"
+
+        data = _make_isotropic_3d(n=32, seed=0)
+        flat = data  # a bare leaf, stats carry a scratch key
+        flat = GSplatData(
+            centers=np.asarray(data.centers),
+            amplitudes=np.asarray(data.amplitudes),
+            cholesky_factors=np.asarray(data.cholesky_factors),
+            stats={"movie_frames": None, "fitter_name": "luxar"},
+        )
+        path = tmp_path / "plain.gsplats.zarr"
+        flat.save(str(path), ordering="none")
+        root = zarr.open_group(str(path), mode="r")
+        assert "pipeline" not in root, "plain fit wrote a spurious pipeline/ group"
+
+    def test_json_safe_value_hardening(self):
+        """The shared sanitizer: numpy floats coerced to Python float (np.float64
+        is a float subclass, so it must be caught before the scalar branch), and
+        non-finite floats rejected (NaN/±Inf are invalid JSON / rejected by the
+        viewer's JSON.parse)."""
+        from luxar.io._compiler.gsplat_tree import json_safe_value as J
+
+        ok, c = J(np.float64(1.5))
+        assert ok and type(c) is float and c == 1.5
+        ok, c = J(np.int32(7))
+        assert ok and type(c) is int and c == 7
+        assert J(True) == (True, True)  # bool stays bool, not 1
+        assert J(np.bool_(True)) == (True, True)
+        for bad in (float("nan"), float("inf"), -float("inf"), np.float64("nan")):
+            assert J(bad) == (False, None)
+        # A nested dict drops only the bad entry, keeps the rest.
+        ok, c = J({"good": 1.0, "bad": float("inf"), "s": "x"})
+        assert ok and c == {"good": 1.0, "s": "x"}
+        # Non-JSON values excluded, not crashing.
+        assert J(np.array([1, 2])) == (False, None)
+
+
+# ─────────────────────────────────────────────────────────────────────
+# Mass conservation + barrier-width numerics (LOD brightness-pop fixes)
+# ─────────────────────────────────────────────────────────────────────
+
+
+def _timelapse_4d(per: int = 2000, n_t: int = 3, sigma_t: float = 3.57e-9):
+    """Real-shaped 4D fixture: 3 spatial dims (voxel scale) + a near-delta
+    time axis — the geometry that exposed both brightness-pop bugs on the
+    h2afva datasets (a* mass drift per group; absolute ridge inflating the
+    tiny barrier width x~300,000)."""
+    rng = np.random.default_rng(0)
+    parts = [
+        np.column_stack([rng.random((per, 3)) * 2000, np.full(per, float(t))])
+        for t in range(n_t)
+    ]
+    pts = np.vstack(parts).astype(np.float32)
+    n = len(pts)
+    L = np.zeros((n, 4, 4), np.float32)
+    for i in range(3):
+        L[:, i, i] = 2.3
+    L[:, 3, 3] = sigma_t
+    return GSplatData(
+        centers=pts,
+        amplitudes=np.ones(n, np.float32),
+        cholesky_factors=pack_tril(L),
+    )
+
+
+def _per_slice_spatial_mass(lev, t: int) -> float:
+    a = np.asarray(lev.amplitudes, np.float64)
+    L = unpack_tril(np.asarray(lev.cholesky_factors), lev.ndim)
+    diag = np.abs(np.diagonal(L, axis1=-2, axis2=-1))
+    m = np.abs(np.asarray(lev.centers)[:, 3] - t) < 0.4
+    return float((a[m] * diag[m, 0] * diag[m, 1] * diag[m, 2]).sum())
+
+
+class TestMassConservation:
+    def test_per_time_slice_mass_constant_across_levels(self):
+        """The brightness-pop fix: every time-slice's spatial mass (the DC an
+        additive render integrates at that slice) is IDENTICAL at every LOD
+        level. Pre-fix the coarsest level drifted up to ~27 % on this fixture."""
+        data = _timelapse_4d()
+        out = make_substitutive_lod(
+            data,
+            compression_factor=4,
+            levels=2,
+            method="kmeans",
+            device="cpu",
+            coarsen_dims=[0, 1, 2],
+        )
+        base = [
+            _per_slice_spatial_mass(out.at_substitutive(0).flattened(), t)
+            for t in range(3)
+        ]
+        for s in range(1, out.n_substitutive):
+            lev = out.at_substitutive(s).flattened()
+            for t in range(3):
+                np.testing.assert_allclose(
+                    _per_slice_spatial_mass(lev, t),
+                    base[t],
+                    rtol=1e-3,
+                    err_msg=f"level {s} slice t={t} mass drifted",
+                )
+
+    def test_conserve_mass_off_restores_raw_amplitudes(self):
+        """conserve_mass=False keeps the raw per-bin a* (which drifts) — the
+        discriminating contrast proving the flag is wired and the default is
+        doing real work."""
+        data = _timelapse_4d()
+        kw = dict(
+            compression_factor=4,
+            levels=2,
+            method="kmeans",
+            device="cpu",
+            coarsen_dims=[0, 1, 2],
+        )
+        on = make_substitutive_lod(data, conserve_mass=True, **kw)
+        off = make_substitutive_lod(data, conserve_mass=False, **kw)
+        m_on = _per_slice_spatial_mass(on.at_substitutive(2).flattened(), 0)
+        m_off = _per_slice_spatial_mass(off.at_substitutive(2).flattened(), 0)
+        base = _per_slice_spatial_mass(on.at_substitutive(0).flattened(), 0)
+        assert abs(m_on / base - 1) < 1e-3
+        assert abs(m_off / base - 1) > 0.02  # raw a* really does drift
+        assert on.stats["conserve_mass"] is True
+        assert off.stats["conserve_mass"] is False
+
+    def test_full_mass_conserved_without_barriers(self):
+        """Ungrouped (all dims coarsened): the FULL nD mass is conserved."""
+        data = _make_isotropic_3d(n=256, seed=1)
+        out = make_substitutive_lod(
+            data, compression_factor=4, levels=2, method="kmeans", device="cpu"
+        )
+
+        def full_mass(lev):
+            a = np.asarray(lev.amplitudes, np.float64)
+            L = unpack_tril(np.asarray(lev.cholesky_factors), lev.ndim)
+            det = np.abs(np.prod(np.diagonal(L, axis1=-2, axis2=-1), axis=-1))
+            return float((a * det).sum())
+
+        base = full_mass(out.at_substitutive(0).flattened())
+        for s in range(1, out.n_substitutive):
+            np.testing.assert_allclose(
+                full_mass(out.at_substitutive(s).flattened()), base, rtol=1e-3
+            )
+
+    def test_refine_mass_manifold_safe_with_tiny_barrier_sigma(self):
+        """refine="l2" pins each level's FULL-det mass to its fine input's.
+        With the old absolute ridge the merged sigma_t inflated x~300,000, so
+        the pinning would have collapsed amplitudes by the inverse factor
+        (black output). With the proportional ridge + frozen barrier dims the
+        pinning is consistent: per-slice brightness stays ~1."""
+        data = _timelapse_4d(per=800, n_t=2)
+        out = make_substitutive_lod(
+            data,
+            compression_factor=4,
+            levels=1,
+            method="kmeans",
+            device="cpu",
+            coarsen_dims=[0, 1, 2],
+            refine="l2",
+            refine_iters=6,
+            seed=0,
+        )
+        base = _per_slice_spatial_mass(out.at_substitutive(0).flattened(), 0)
+        got = _per_slice_spatial_mass(out.at_substitutive(1).flattened(), 0)
+        assert 0.9 < got / base < 1.1, f"slice mass ratio {got / base:.3g}"
+
+    def test_tiny_barrier_sigma_survives_merge_ridge(self):
+        """The Cholesky ridge is proportional per-dim, so a near-delta barrier
+        width (sigma_t ~ 1e-9) passes through the merge unchanged. Pre-fix the
+        absolute 1e-6*I ridge inflated it to sqrt(1e-6)=1e-3 (x~300,000),
+        which poisoned every downstream mass/DC accounting."""
+        data = _timelapse_4d(per=1200, n_t=2)
+        out = make_substitutive_lod(
+            data,
+            compression_factor=4,
+            levels=2,
+            method="kmeans",
+            device="cpu",
+            coarsen_dims=[0, 1, 2],
+        )
+        for s in range(out.n_substitutive):
+            lev = out.at_substitutive(s).flattened()
+            L = unpack_tril(np.asarray(lev.cholesky_factors), 4)
+            st = np.abs(L[:, 3, 3])
+            assert st.max() < 1e-8, (
+                f"level {s}: barrier sigma_t inflated to {st.max():.3g}"
+            )
+
+    def test_conserve_mass_guard_skips_degenerate_rescale(self, monkeypatch):
+        """A tiny-but-positive ``mass_out`` (e.g. most representatives'
+        coarsened-dim submatrices numerically degenerate → ~zero determinant)
+        passed the old ``mass_out > 0.0`` gate and produced an unbounded
+        amplitude blow-up under the conserve_mass=True default. The rescale
+        must be skipped when the factor leaves the [0.1, 10] band — the output
+        then equals the conserve_mass=False result exactly."""
+        import luxar.gsplats.lod.substitutive as sub_mod
+
+        n = 256
+        data = _make_isotropic_3d(n=n, seed=0)
+        kw = dict(compression_factor=4, levels=1, method="kmeans", device="cpu")
+        baseline = make_substitutive_lod(data, conserve_mass=False, **kw)
+
+        real_subset_mass = sub_mod._subset_mass
+
+        def degenerate(L, amps, dims, chunk=2_000_000):
+            m = real_subset_mass(L, amps, dims, chunk)
+            # The coarse (merged, < n rows) call reports a numerically
+            # degenerate tiny-but-positive mass; the fine call is untouched.
+            return m * 1e-9 if L.shape[0] < n else m
+
+        monkeypatch.setattr(sub_mod, "_subset_mass", degenerate)
+        guarded = make_substitutive_lod(data, conserve_mass=True, **kw)
+        # Guard held: no 1e9x white-out; amplitudes identical to the raw path.
+        np.testing.assert_allclose(
+            np.asarray(guarded.at_substitutive(1).amplitudes),
+            np.asarray(baseline.at_substitutive(1).amplitudes),
+            rtol=1e-6,
+        )
+
+
+def test_merge_refine_stats_zero_seed_energy():
+    """An exactly-0.0 summed seed objective must still yield an
+    ``improvement_frac`` when ``trusted_E_best`` improved (the old truthiness
+    gate silently dropped the key), and the division must stay guarded."""
+    from luxar.gsplats.lod.substitutive import _merge_refine_stats
+
+    sink: dict = {}
+    _merge_refine_stats(
+        sink,
+        {
+            "trusted_E_seed": 0.0,
+            "trusted_E_best": -0.5,
+            "iters_run": 3,
+            "rebuilds": 1,
+            "wall_s": 0.1,
+        },
+    )
+    # Zero seed: normalized by |best| -> a finite, meaningful 100 %.
+    assert sink["improvement_frac"] == pytest.approx(1.0)
+
+    # Both exactly zero: defined and 0.0, no ZeroDivisionError.
+    sink2: dict = {}
+    _merge_refine_stats(sink2, {"trusted_E_seed": 0.0, "trusted_E_best": 0.0})
+    assert sink2["improvement_frac"] == 0.0
+
+    # Normal (nonzero-seed) semantics unchanged: (seed - best) / |seed|.
+    sink3: dict = {}
+    _merge_refine_stats(sink3, {"trusted_E_seed": -2.0, "trusted_E_best": -2.5})
+    assert sink3["improvement_frac"] == pytest.approx(0.25)
+
 
 # ─────────────────────────────────────────────────────────────────────
 # Coverage inflation (anti-grid inter-spread widening)
@@ -644,6 +945,139 @@ class TestCoverageInflation:
         data = _make_isotropic_3d(n=16, seed=0)
         out = make_substitutive_lod(data, levels=1, device="cpu")
         assert out.stats["coverage_inflation"] == 3.0  # default ON
+
+
+# ─────────────────────────────────────────────────────────────────────
+# L2 refinement (refine="l2")
+# ─────────────────────────────────────────────────────────────────────
+
+
+class TestRefine:
+    """Integration of the L2 refit (engine unit tests live in test_refine.py)."""
+
+    _KW = dict(compression_factor=8, levels=1, method="kmeans", device="cpu")
+
+    def _blob_data(self, seed: int = 1) -> GSplatData:
+        """Isolated clusters — the regime where the refit shines."""
+        rng = np.random.default_rng(seed)
+        centers = rng.random((6, 3)) * 0.8 + 0.1
+        pts = np.concatenate(
+            [c + rng.normal(0, 0.02, (80, 3)) for c in centers], axis=0
+        ).astype(np.float32)
+        n = len(pts)
+        chol = np.tile(
+            np.array([0.008, 0, 0.008, 0, 0, 0.008], dtype=np.float32), (n, 1)
+        )
+        return GSplatData(
+            centers=pts,
+            amplitudes=np.ones(n, dtype=np.float32),
+            cholesky_factors=chol,
+        )
+
+    def test_refine_none_matches_omitted_kwarg(self):
+        data = _make_isotropic_3d(n=64, seed=3)
+        a = make_substitutive_lod(data, refine="none", **self._KW)
+        b = make_substitutive_lod(data, **self._KW)
+        for s in range(a.n_substitutive):
+            la, lb = a.at_substitutive(s), b.at_substitutive(s)
+            assert np.array_equal(np.asarray(la.centers), np.asarray(lb.centers))
+            assert np.array_equal(
+                np.asarray(la.cholesky_factors), np.asarray(lb.cholesky_factors)
+            )
+            assert np.array_equal(np.asarray(la.amplitudes), np.asarray(lb.amplitudes))
+        assert a.stats["refine"] == "none"
+
+    def test_refine_l2_improves_level_fidelity(self):
+        data = self._blob_data()
+        plain = make_substitutive_lod(data, refine="none", **self._KW)
+        refined = make_substitutive_lod(
+            data, refine="l2", refine_iters=60, seed=7, **self._KW
+        )
+        rel_plain = _rel_l2_render(data, plain.at_substitutive(1))
+        rel_refined = _rel_l2_render(data, refined.at_substitutive(1))
+        assert rel_refined < 0.9 * rel_plain, (
+            f"refine=l2 did not improve: {rel_refined:.4f} vs {rel_plain:.4f}"
+        )
+
+    def test_refine_chains_levels_and_counts_unchanged(self):
+        data = self._blob_data()
+        out = make_substitutive_lod(
+            data,
+            compression_factor=4,
+            levels=2,
+            method="kmeans",
+            refine="l2",
+            refine_iters=15,
+            seed=0,
+            device="cpu",
+        )
+        counts = [lv.n_splats_total for lv in out.substitutive_levels]
+        assert counts[0] == 480
+        assert counts[1] <= 120 and counts[1] >= 90
+        assert counts[2] <= 30 and counts[2] >= 20
+        # Every refined level records its refine stats block.
+        for lv in out.substitutive_levels[1:]:
+            assert lv.stats.get("refine") == "l2"
+            assert lv.stats["refine_stats"]["iters_run"] >= 0
+
+    def test_refine_with_coarsen_dims_keeps_barrier_pure(self):
+        data = _stacked_categorical(n_per=800, n_groups=3)
+        kw = dict(
+            compression_factor=4, levels=2, seed=0, device="cpu", coarsen_dims=[1, 2, 3]
+        )
+        merged = make_substitutive_lod(data, refine="none", **kw)
+        out = make_substitutive_lod(data, refine="l2", refine_iters=12, **kw)
+        for s in range(out.n_substitutive):
+            lev = out.at_substitutive(s).flattened()
+            c0 = np.asarray(lev.centers)[:, 0]
+            assert np.abs(c0 - np.round(c0)).max() < 1e-4
+            # The refit FROZE the barrier dim (0): the barrier marginal
+            # variance Σ[0,0] must be bit-preserved from the pre-refit merge,
+            # not merely "small". Compare the sorted per-splat barrier widths
+            # (refit may permute splat order but must not change the multiset
+            # of Σ[0,0] values — every group's reps keep their merge width).
+            L_ref = unpack_tril(np.asarray(lev.cholesky_factors), lev.ndim)
+            L_mrg = unpack_tril(
+                np.asarray(merged.at_substitutive(s).flattened().cholesky_factors),
+                lev.ndim,
+            )
+            s00_ref = np.sort(L_ref[:, 0, 0] ** 2)
+            s00_mrg = np.sort(L_mrg[:, 0, 0] ** 2)
+            np.testing.assert_allclose(s00_ref, s00_mrg, rtol=1e-4, atol=1e-8)
+
+    def test_refine_deterministic_given_seed(self):
+        """Same seed → same result up to CPU-threading noise (torch reductions
+        are not bitwise run-to-run reproducible; contract is ~1-ulp closeness)."""
+        data = self._blob_data()
+        kw = dict(self._KW, refine="l2", refine_iters=20)
+        a = make_substitutive_lod(data, seed=42, **kw)
+        b = make_substitutive_lod(data, seed=42, **kw)
+        np.testing.assert_allclose(
+            np.asarray(a.at_substitutive(1).centers),
+            np.asarray(b.at_substitutive(1).centers),
+            rtol=1e-5,
+            atol=1e-6,
+        )
+
+    def test_refine_recorded_in_stats(self):
+        data = self._blob_data()
+        out = make_substitutive_lod(
+            data, refine="l2", refine_iters=8, seed=0, **self._KW
+        )
+        assert out.stats["refine"] == "l2"
+        assert out.stats["refine_iters"] == 8
+        lev1 = out.substitutive_levels[1]
+        rs = lev1.stats["refine_stats"]
+        assert rs["rebuilds"] >= 2  # seed eval + at least one checkpoint
+        assert "improvement_frac" in rs
+        assert "_mass_n" not in rs  # aggregation scratch key stripped
+
+    def test_refine_invalid_choice_raises(self):
+        data = _make_isotropic_3d(n=16, seed=0)
+        with pytest.raises(ValueError, match="refine must be"):
+            make_substitutive_lod(data, refine="banana", device="cpu")  # type: ignore[arg-type]
+        with pytest.raises(ValueError, match="refine_iters"):
+            make_substitutive_lod(data, refine="l2", refine_iters=0, device="cpu")
 
 
 # ─────────────────────────────────────────────────────────────────────

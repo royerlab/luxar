@@ -6,7 +6,6 @@ import zarr
 
 from luxar.core.dimensions import Dimensions
 from luxar.core.group import Group
-from luxar.core.group.lod.group import BASE_PIXEL_SIZE, derive_min_pixel_sizes
 from luxar.core.gsplats import GSplats
 from luxar.core.node import Node
 from luxar.io.compiler import LuxarZarrCompiler
@@ -544,25 +543,10 @@ class TestLodGroupAxis:
         # Coarsest first → child_0 has fewer splats than child_1.
         assert grp["child_0"].attrs["n_splats"] == 2
         assert grp["child_1"].attrs["n_splats"] == 8
-        # Default method is `extent` (physically anchored W/r): coarsest = 0,
-        # finer level has a positive ascending threshold.
-        assert grp["child_0"].attrs["min_pixel_size"] == 0.0
-        assert grp["child_1"].attrs["min_pixel_size"] > 0.0
-
-    def test_lod_method_count_reproduces_sqrt(self, tmp_path) -> None:
-        """``lod_group=dict(lod_method="count")`` pins the legacy √N derivation
-        (BASE·sqrt(8/2) = 2·BASE) — the selectable fallback to the extent default."""
-        data = _make_multi_substitutive_gsplat_data()
-        with LuxarZarrCompiler(tmp_path / "c.luxar.zarr") as compiler:
-            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
-            scene.add_gsplats_from_data(
-                "multires", data, lod_group={"lod_method": "count"}
-            )
-        grp = zarr.open(str(tmp_path / "c.luxar.zarr"), mode="r")["multires"]
-        assert grp["child_0"].attrs["min_pixel_size"] == 0.0
-        expected_mps = derive_min_pixel_sizes([2, 8])[1]
-        assert expected_mps == pytest.approx(2.0 * BASE_PIXEL_SIZE)
-        assert grp["child_1"].attrs["min_pixel_size"] == pytest.approx(expected_mps)
+        # Auto-derived coverage fractions (sqrt(N_i/N_finest)): coarsest = 0.0,
+        # finest = 1.0.
+        assert grp["child_0"].attrs["coverage_fraction"] == 0.0
+        assert grp["child_1"].attrs["coverage_fraction"] == pytest.approx(1.0)
 
     def test_false_collapses_to_finest(self, tmp_path) -> None:
         """``False`` keeps only the finest substitutive level (index 0)."""
@@ -612,7 +596,7 @@ class TestLodGroupAxis:
         """``dict()`` with no compute kwargs and stored levels reuses stored.
 
         Companion to ``test_dict_with_stored_and_compute_kwargs_raises``:
-        a bare ``dict()`` (or one carrying only ``min_pixel_sizes``) is
+        a bare ``dict()`` (or one carrying only ``coverage_fractions``) is
         unambiguous — reuse the stored pyramid.
         """
         data = _make_multi_substitutive_gsplat_data()
@@ -645,35 +629,35 @@ class TestLodGroupAxis:
             # K=2, L=2 → 3 substitutive levels total
             assert len(node.children) == 3
 
-    def test_min_pixel_sizes_override(self, tmp_path) -> None:
-        """Explicit ``min_pixel_sizes`` overrides the auto-derived defaults."""
+    def test_coverage_fractions_override(self, tmp_path) -> None:
+        """Explicit ``coverage_fractions`` overrides the auto-derived defaults."""
         data = _make_multi_substitutive_gsplat_data()
         with LuxarZarrCompiler(tmp_path / "t.luxar.zarr") as compiler:
             scene = compiler.create_scene(dimensions=Dimensions.default_3d())
             scene.add_gsplats_from_data(
                 "multires",
                 data,
-                lod_group=dict(min_pixel_sizes=[0.0, 250.0]),
+                lod_group=dict(coverage_fractions=[0.0, 0.5]),
             )
         store = zarr.open(str(tmp_path / "t.luxar.zarr"), mode="r")
         grp = store["multires"]
-        assert grp["child_0"].attrs["min_pixel_size"] == 0.0
-        assert grp["child_1"].attrs["min_pixel_size"] == 250.0
+        assert grp["child_0"].attrs["coverage_fraction"] == 0.0
+        assert grp["child_1"].attrs["coverage_fraction"] == 0.5
 
-    def test_min_pixel_sizes_wrong_length_raises(self, tmp_path) -> None:
-        """Length mismatch between min_pixel_sizes and # of substitutive levels."""
+    def test_coverage_fractions_wrong_length_raises(self, tmp_path) -> None:
+        """Length mismatch between coverage_fractions and # of substitutive levels."""
         data = _make_multi_substitutive_gsplat_data()  # 2 levels
         with LuxarZarrCompiler(tmp_path / "t.luxar.zarr") as compiler:
             scene = compiler.create_scene(dimensions=Dimensions.default_3d())
-            with pytest.raises(ValueError, match="min_pixel_sizes has"):
+            with pytest.raises(ValueError, match="coverage_fractions has"):
                 scene.add_gsplats_from_data(
                     "splats",
                     data,
-                    lod_group=dict(min_pixel_sizes=[0.0, 100.0, 500.0]),  # 3 entries
+                    lod_group=dict(coverage_fractions=[0.0, 0.5, 1.0]),  # 3 entries
                 )
 
-    def test_min_pixel_sizes_not_strictly_ascending_raises(self, tmp_path) -> None:
-        """Explicit ``min_pixel_sizes`` must be strictly increasing coarsest→finest.
+    def test_coverage_fractions_not_strictly_ascending_raises(self, tmp_path) -> None:
+        """Explicit ``coverage_fractions`` must be strictly increasing coarsest→finest.
 
         The resolver checks this directly so callers fail at the
         ``add_gsplats_from_data`` call site, not at a later
@@ -686,26 +670,28 @@ class TestLodGroupAxis:
                 scene.add_gsplats_from_data(
                     "splats",
                     data,
-                    lod_group=dict(min_pixel_sizes=[100.0, 50.0]),  # decreasing
+                    lod_group=dict(coverage_fractions=[0.5, 0.1]),  # decreasing
                 )
 
-    def test_min_pixel_size_attr_rejected_on_multi_substitutive(self, tmp_path) -> None:
-        """Passing ``min_pixel_size=`` to multi-substitutive path raises.
+    def test_coverage_fraction_attr_rejected_on_multi_substitutive(
+        self, tmp_path
+    ) -> None:
+        """Passing ``coverage_fraction=`` to multi-substitutive path raises.
 
-        Multi-substitutive paths derive ``min_pixel_size`` per child. An
+        Multi-substitutive paths derive ``coverage_fraction`` per child. An
         explicit value here is ambiguous — and worse, used to provoke
-        ``TypeError: multiple values for keyword argument 'min_pixel_size'``
+        ``TypeError: multiple values for keyword argument 'coverage_fraction'``
         inside the LODGroup expansion.
         """
         data = _make_multi_substitutive_gsplat_data()
         with LuxarZarrCompiler(tmp_path / "t.luxar.zarr") as compiler:
             scene = compiler.create_scene(dimensions=Dimensions.default_3d())
-            with pytest.raises(ValueError, match="min_pixel_size"):
+            with pytest.raises(ValueError, match="coverage_fraction"):
                 scene.add_gsplats_from_data(
                     "multires",
                     data,
                     lod_group=True,
-                    min_pixel_size=42.0,
+                    coverage_fraction=0.5,
                 )
 
     def test_unknown_spec_type_raises(self, tmp_path) -> None:
@@ -805,7 +791,7 @@ class TestCombinedAxes:
             assert child.attrs.get("n_additive_sublods") == 2
             assert "additive_0" in child
             assert "additive_1" in child
-            assert "min_pixel_size" in child.attrs
+            assert "coverage_fraction" in child.attrs
 
     def test_compositing_attrs_land_on_lod_group(self, tmp_path) -> None:
         """opacity/gamma/etc. ride onto the kind=lod Group, not the children."""

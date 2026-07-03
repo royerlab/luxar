@@ -88,7 +88,7 @@ def graft_gsplat_node(
     additive ladder), ``add_lod_group`` (kind=lod), ``add_partition_group``
     (kind=partition) — so a standalone ``.gsplats.zarr`` of any shape (including
     partition / nested) embeds as the identical subtree it holds on disk. The
-    per-child ``min_pixel_size`` selector thresholds ride from each child's
+    per-child ``coverage_fraction`` selector thresholds ride from each child's
     ``meta`` (so a nested lod combo stays selectable). Compositing attrs land on
     a wrapper Group; the rest fall through to children.
     """
@@ -112,57 +112,47 @@ def graft_gsplat_node(
     parent_node = parent or group
     wrapper_attrs = {k: v for k, v in attrs.items() if k in COMPOSITING_ATTRS}
     child_attrs = {k: v for k, v in attrs.items() if k not in COMPOSITING_ATTRS}
-    # A ``min_pixel_size`` passed down by a parent lod-group is THIS node's own
+    # A ``coverage_fraction`` passed down by a parent lod-group is THIS node's own
     # selector threshold. For a leaf it is applied via ``add_gsplats_from_data``
     # (the leaf branch above); for a kind=lod / kind=partition WRAPPER it must land
     # on the wrapper group itself — NOT be silently dropped and NOT propagate to
     # the parts. Without this, a kind=partition child of a kind=lod group (the
     # ``multiscale`` recipe's fine branch) loses its threshold, so the viewer's
-    # pixel-size selector can never switch to it and the lod is stuck on it. This
+    # coverage selector can never switch to it and the lod is stuck on it. This
     # matches the standalone writer (``gsplat_tree.write_gsplat_node``), which
-    # stamps min_pixel_size on the partition wrapper.
-    self_min_pixel_size = child_attrs.pop("min_pixel_size", None)
-    if self_min_pixel_size is not None:
-        wrapper_attrs["min_pixel_size"] = self_min_pixel_size
+    # stamps coverage_fraction on the partition wrapper.
+    self_coverage_fraction = child_attrs.pop("coverage_fraction", None)
+    if self_coverage_fraction is not None:
+        wrapper_attrs["coverage_fraction"] = self_coverage_fraction
 
     if isinstance(node, GSplatLodGroup):
-        from luxar.gsplats.tree import (
-            node_extent_diagonal,
-            node_percentile_radius,
-            total_splats,
-        )
+        from luxar.gsplats.tree import total_splats
 
-        from ..lod.group import lod_thresholds
+        from ..lod.group import coverage_fractions
 
         wrapper_attrs.setdefault("display_type", "gsplats")
         # In-memory children are coarsest→finest, the same order add_lod_group
         # wants and the on-disk child_<i> layout uses — no reversal.
         on_disk = list(node.children)
-        # Per-child min_pixel_size selector thresholds: prefer each child's authored
-        # ``meta`` value, else derive — defaulting to the physically-anchored
-        # ``extent`` method (T·W/r₉₀), matching the standalone writer (gsplat_tree)
-        # and scene writer (lod_dispatch); ``lod_thresholds`` falls back to the count
-        # √N method when extents/W are unavailable, so a meta-less grafted tree still
-        # gets ascending thresholds the selector accepts (never all-zero).
-        derived_mps = lod_thresholds(
-            "extent",
-            element_counts=[total_splats(c) for c in on_disk],
-            element_extents=[node_percentile_radius(c) for c in on_disk],
-            node_extent=node_extent_diagonal(node),
-        )
+        # Per-child coverage_fraction selector thresholds: prefer each child's
+        # authored ``meta`` value, else derive — ``sqrt(N_i/N_finest)`` (count
+        # ratios), matching the standalone writer (gsplat_tree) and scene writer
+        # (lod_dispatch), so a meta-less grafted tree still gets ascending thresholds
+        # the selector accepts (never all-zero).
+        derived_cov = coverage_fractions([total_splats(c) for c in on_disk])
         # default_level = 0 = the COARSEST child (child_0): the viewer's initial
         # progressive-load level, decoupled from the data-model default (see
         # gsplat_tree.write_gsplat_node / add_gsplats_as_lod_group_impl). Loading
         # the finest by default would render "backwards".
         wrapper = parent_node.add_lod_group(name, **wrapper_attrs)
         for i, child in enumerate(on_disk):
-            mps = float((child.meta or {}).get("min_pixel_size", derived_mps[i]))
+            cov = float((child.meta or {}).get("coverage_fraction", derived_cov[i]))
             graft_gsplat_node(
                 wrapper,
                 name=f"child_{i}",
                 node=child,
                 extend_to_all=extend_to_all,
-                min_pixel_size=mps,
+                coverage_fraction=cov,
                 **child_attrs,
             )
         return wrapper

@@ -243,14 +243,14 @@ luxar gsplat fit vol.zarr plan.json --tiling content --cal cal.json --plan-only
 
 # Per-part LOD AT FIT TIME (`--recipe`, tiled partition only): each tile/box-part
 # gets its own LOD without a separate `lod` pass (which rejects a partition).
-# additive -> `partitioned` topology (prefix-sum ladder); substitutive -> `mosaic`.
+# stream -> `tiles` topology (prefix-sum ladder); levels -> `adaptive`.
 # Requires a tiled fit (--tiling uniform/content) and a partition (not --flat);
 # rejected with --flat / --tiling none / --tile / --plan-only / --plan-box, and
 # rejects cross-recipe knobs (like `gsplat lod`). Knobs mirror `lod`:
 # additive: --n-lods/--additive-method/--breakpoints; substitutive:
-# --compression-factor/--levels/--substitutive-method/--coarsen-dims/--lod-method.
-luxar gsplat fit large.zarr out.gsplats.zarr --tiling uniform -j 4 --recipe additive --n-lods 6
-luxar gsplat fit vol.zarr out.gsplats.zarr --tiling content --cal cal.json --recipe substitutive --compression-factor 4 --levels 3
+# --compression-factor/--levels/--substitutive-method/--coarsen-dims.
+luxar gsplat fit large.zarr out.gsplats.zarr --tiling uniform -j 4 --recipe stream --n-lods 6
+luxar gsplat fit vol.zarr out.gsplats.zarr --tiling content --cal cal.json --recipe levels --compression-factor 4 --levels 3
 
 # Whole-timelapse fitting at scale lives under `batch-fit` (scheduler-agnostic):
 #   `batch-fit run`    = LOCAL multi-GPU (one box, no Slurm) — saturates all GPUs
@@ -266,7 +266,7 @@ luxar gsplat fit vol.zarr out.gsplats.zarr --tiling content --cal cal.json --rec
 # each card's free VRAM). Resumable: re-running skips tiles already on disk.
 luxar gsplat batch-fit run vol.zarr out/ --gpus all --tile-size 256            # uniform, all GPUs
 luxar gsplat batch-fit run vol.zarr out/ --tiling content --cal cal.json --gpus auto   # content plan
-luxar gsplat batch-fit run vol.zarr out/ --gpus auto --merge-recipe additive --merge-n-lods 4  # per-part LOD at merge
+luxar gsplat batch-fit run vol.zarr out/ --gpus auto --merge-recipe stream --merge-n-lods 4  # per-part LOD at merge
 luxar gsplat batch-fit run vol.zarr out/ --gpus 0,1 --jobs-per-gpu 2 --timepoints ::10   # subset, 2 workers/GPU
 luxar gsplat batch-fit run vol.zarr out/ --gpus cpu                            # CPU fallback
 luxar gsplat batch-fit run vol.zarr out/ --tiling content --cal cal.json --dry-run  # plan only
@@ -301,15 +301,15 @@ luxar gsplat batch-fit submit data.zarr.zip output/ -p gpu \
 luxar gsplat batch-fit submit data.zarr.zip output/ -p gpu \
     --iters 8000 --seeds 100000                                         # Override fit params
 luxar gsplat batch-fit submit data.zarr.zip output/ -p gpu \
-    --merge-recipe substitutive --merge-compression-factor 4 --merge-levels 3   # per-part LOD at merge
+    --merge-recipe levels --merge-compression-factor 4 --merge-levels 3   # per-part LOD at merge
 luxar gsplat batch-fit status output/                                       # Check job status
 luxar gsplat batch-fit merge output/                                        # Merge completed tiles → kind=partition
-luxar gsplat batch-fit merge output/ --recipe additive --n-lods 6           # + per-part additive ladder (partitioned)
-luxar gsplat batch-fit merge output/ --recipe substitutive -K 4 -L 3        # + per-part coarse↔fine lod (mosaic)
+luxar gsplat batch-fit merge output/ --recipe stream --n-lods 6           # + per-part additive ladder (tiles)
+luxar gsplat batch-fit merge output/ --recipe levels -K 4 -L 3        # + per-part coarse↔fine lod (adaptive)
 # `--recipe` gives each spatial tile-part its own LOD ladder AS IT STREAMS — the
 # memory-safe way to add LOD to tiled output (the `lod` command rejects a
-# partition, so cal→fit→lod can't otherwise LOD a tiled merge). additive →
-# partitioned topology; substitutive → mosaic. The stacked-timepoint axis stays a
+# partition, so cal→fit→lod can't otherwise LOD a tiled merge). stream →
+# tiles topology; levels → adaptive. The stacked-timepoint axis stays a
 # hard coarsening barrier. `batch-fit submit --merge-recipe ...` bakes it into the
 # merge Slurm job. Without `--recipe`, parts are bare leaves (frustum culling only).
 luxar gsplat batch-fit validate output/                                     # Validate tile integrity
@@ -349,95 +349,110 @@ luxar gsplat cal volume.zarr cal.json --fit-exponent --exponent-scales 128,192,2
 # Output: K* + curve type {peak | plateau | signal_limited} + noise-floor σ̂ + PSNR ceiling.
 # Then re-run fit at the recommended K: luxar gsplat fit volume.zarr out.zarr --seeds <K*>
 
-# Canonical end-to-end pipeline: cal → fit (at K*) → lod (additive | substitutive | pyramid)
+# Canonical end-to-end pipeline: cal → fit (at K*) → lod (--recipe flat|stream|tiles|overview|adaptive|levels)
 # `lod` operates on a pre-fitted .gsplats.zarr (output of `fit`); use `cal` upstream
 # to pick K* in a principled way. .gsplats.zarr is format v3.1 (a node tree —
 # a detached scene gsplat-node subtree the viewer loads directly) — see
 # docs/specs/GSPLATS_ZARR_FORMAT.md.
 
 # Build a representation topology from a fitted gsplat dataset — one command,
-# one `--recipe` flag (REQUIRED). Recipes are scale-ordered:
-#   flat          single leaf (no LOD, no partition)               — small N
-#   additive      one leaf + additive (prefix-sum) ladder           — medium N
-#   partitioned   BSP parts, each with its own additive ladder      — large N
-#   multiscale    coarse substitutive cap + a partitioned fine      — huge N
-#                 branch (unbalanced by design: detail only where
-#                 you look closely; cull off-screen, stream in view)
-#   mosaic        BSP parts, each its own substitutive lod group    — huge N,
-#                 (per-part coarse↔fine swap: every cell culls AND     adaptive
-#                 picks its own level by its own on-screen size)
-#   substitutive  pure substitutive pyramid (synthesised levels)    — primitive
-#   pyramid       balanced substitutive × additive matrix           — primitive
-# Output is a standalone v3.1 .gsplats.zarr (loadable with `luxar gsplat info`);
+# one `--recipe` flag (REQUIRED). Intent-first names, scale-ordered; EVERY
+# recipe carries streaming (additive prefix) ladders by default (--no-additive
+# for bare leaves):
+#   flat      one bare leaf                                        — tiny N / debug
+#   stream    one leaf + progressive ladder (fast first paint)     — small/medium N
+#   levels    coarse→fine replacement levels (zoom across scales)  — medium/large N
+#   tiles     spatial BSP tiles, culled + streamed per tile        — large N
+#   overview  instant coarse overview level + fine tiles on zoom   — huge N
+#   adaptive  tiles where EVERY tile picks its own detail level    — largest N
+# Renamed 2026-07 (old → new): additive→stream, substitutive/pyramid→levels,
+# partitioned→tiles, multiscale→overview, mosaic→adaptive. Old names error with
+# a pointer; stored batch manifests translate silently.
+# Output is a standalone .gsplats.zarr (loadable with `luxar gsplat info`);
 # graft it into a scene from Python via `add_gsplats_from_file` or `gsplat convert`.
-# (Replaces the former `lod additive`/`lod substitutive`/`lod pyramid` subcommands.)
 luxar gsplat lod in.gsplats.zarr out.gsplats.zarr --recipe flat
-luxar gsplat lod in.gsplats.zarr out.gsplats.zarr --recipe additive --n-lods 6
-luxar gsplat lod in.gsplats.zarr out.gsplats.zarr --recipe additive \
+luxar gsplat lod in.gsplats.zarr out.gsplats.zarr --recipe stream --n-lods 6
+luxar gsplat lod in.gsplats.zarr out.gsplats.zarr --recipe stream \
     --breakpoints energy:0.5,0.9,0.99,1.0                                    # cumulative energy fractions
-luxar gsplat lod in.gsplats.zarr out.gsplats.zarr --recipe additive \
+luxar gsplat lod in.gsplats.zarr out.gsplats.zarr --recipe stream \
     -m mass -b counts:500,2000,10000                                         # mass order, explicit counts
 # additive default method `auto`: greedy (provably (1-1/e)-optimal at every
 # prefix) at N <= 5000, else `self_energy` (cheap O(N log N)); override with -m.
-luxar gsplat lod in.gsplats.zarr out.gsplats.zarr --recipe additive --method self_energy
+luxar gsplat lod in.gsplats.zarr out.gsplats.zarr --recipe stream --method self_energy
 # STREAMING breakpoints: `-b stream:C` = geometric ladder (first chunk C splats,
 # then doubling), sized per part/level. Or derive C from a download budget with
 # `--target-ms` (+ `--bandwidth-mbps`, default 25; `--bytes-per-splat` override;
 # bytes/splat measured from the input store, logged). First chunk ≈ target-ms of
 # download → fast first paint; the viewer streams additive sub-LODs progressively.
-luxar gsplat lod in.gsplats.zarr out.gsplats.zarr --recipe additive --target-ms 200
-luxar gsplat lod in.gsplats.zarr out.gsplats.zarr --recipe additive -b stream:14000
+luxar gsplat lod in.gsplats.zarr out.gsplats.zarr --recipe stream --target-ms 200
+luxar gsplat lod in.gsplats.zarr out.gsplats.zarr --recipe stream -b stream:14000
 
 # Give every leaf of an EXISTING tree an additive ladder, structure-preservingly
-# (substitutive kind=lod levels, partition parts, mosaic groups all keep their
+# (substitutive kind=lod levels, partition parts, adaptive groups all keep their
 # shape) — WITHOUT recomputing the expensive substitutive/partition structure.
-# The per-leaf counterpart of `lod --recipe additive` (which needs a flat input)
+# The per-leaf counterpart of `lod --recipe stream` (which needs a flat input)
 # and the inverse companion of `gsplat flatten`. Same streaming knobs; explicit
 # `counts:` are clamped per leaf; an existing ladder is rebuilt from its union.
 luxar gsplat additive sub.gsplats.zarr pyr.gsplats.zarr --target-ms 200        # ~200ms first paint/level
 luxar gsplat additive in.gsplats.zarr out.gsplats.zarr -b stream:14000
 luxar gsplat additive in.gsplats.zarr out.gsplats.zarr --n-lods 4              # classic equal-count
 
-# partitioned / multiscale (the large-data topologies): each part carries its own
-# additive ladder; `--max-elements` (or `--parts`) caps per-part splats (median
-# BSP by default; --partition-rule midpoint|sah). `multiscale` adds a single
-# coarse substitutive cap (`--compression-factor`/-K) above the partitioned branch.
-luxar gsplat lod in.gsplats.zarr out.gsplats.zarr --recipe partitioned --max-elements 250000
-luxar gsplat lod in.gsplats.zarr out.gsplats.zarr --recipe partitioned --parts 8 --partition-rule sah
-luxar gsplat lod in.gsplats.zarr out.gsplats.zarr --recipe multiscale --compression-factor 8 --max-elements 250000
+# tiles / overview (the large-data topologies): each tile carries its own
+# stream ladder; `--max-elements` (or `--parts`) caps per-tile splats (median
+# BSP by default; --partition-rule midpoint|sah). `overview` adds a single
+# coarse merged level (`--compression-factor`/-K) above the tiles branch.
+luxar gsplat lod in.gsplats.zarr out.gsplats.zarr --recipe tiles --max-elements 250000
+luxar gsplat lod in.gsplats.zarr out.gsplats.zarr --recipe tiles --parts 8 --partition-rule sah
+luxar gsplat lod in.gsplats.zarr out.gsplats.zarr --recipe overview --compression-factor 8 --max-elements 250000
 
-# mosaic: BSP partition where EACH part is its own substitutive lod group (per-part
-# coarse↔fine swap — locally adaptive; the per-part-substitutive sibling of
-# partitioned). Partition knobs + the substitutive ones (--compression-factor/-K,
-# --levels/-L, --substitutive-method); no additive ladder per part.
-luxar gsplat lod in.gsplats.zarr out.gsplats.zarr --recipe mosaic --max-elements 250000
-luxar gsplat lod in.gsplats.zarr out.gsplats.zarr --recipe mosaic --parts 8 -K 4 -L 2
+# adaptive: spatial tiles where EACH tile is its own levels group (per-tile
+# coarse↔fine swap — locally adaptive; the per-tile-levels sibling of tiles).
+# Partition knobs + the level-merge ones (--compression-factor/-K, --levels/-L,
+# --substitutive-method); per-tile levels are stream-laddered by default.
+luxar gsplat lod in.gsplats.zarr out.gsplats.zarr --recipe adaptive --max-elements 250000
+luxar gsplat lod in.gsplats.zarr out.gsplats.zarr --recipe adaptive --parts 8 -K 4 -L 2
 
-# substitutive / pyramid primitives: each coarser substitutive level has
-# ceil(N/K^L) representative splats that REPLACE the previous level. Recommended
-# workhorse `kmeans_lloyd` (O(N log N) Morton warm-start + cost-increment Lloyd);
-# `greedy`/`greedy_lloyd` (lazy-heap Runnalls) is quality-leading at small N.
-luxar gsplat lod in.gsplats.zarr out.gsplats.zarr --recipe substitutive            # K=4, L=3, method=auto
-luxar gsplat lod in.gsplats.zarr out.gsplats.zarr --recipe substitutive -K 4 -L 3 \
+# STREAM LADDERS ARE ON BY DEFAULT everywhere: levels, adaptive per-tile
+# levels, and the overview coarse cap all carry a progressive ladder (fast
+# first paint) unless --no-additive is passed. Ladder knobs
+# (--n-lods/-m/-b/--target-ms) therefore apply to those recipes too.
+# levels: each coarser level has ceil(N/K^L) merged representative splats that
+# REPLACE the previous level. Recommended workhorse `kmeans_lloyd` (O(N log N)
+# Morton warm-start + cost-increment Lloyd); `greedy`/`greedy_lloyd` (lazy-heap
+# Runnalls) is quality-leading at small N.
+luxar gsplat lod in.gsplats.zarr out.gsplats.zarr --recipe levels            # K=4, L=3, method=auto
+luxar gsplat lod in.gsplats.zarr out.gsplats.zarr --recipe levels -K 4 -L 3 \
     --substitutive-method kmeans-lloyd --lloyd-iters 5 --device cpu
-luxar gsplat lod in.gsplats.zarr out.gsplats.zarr --recipe pyramid -K 4 -L 3 --n-lods 4
+luxar gsplat lod in.gsplats.zarr out.gsplats.zarr --recipe levels -K 4 -L 3 --n-lods 4
 # Coverage inflation (any substitutive reduction): merged representatives get
 # their inter-center spread widened x`--coverage-inflation` (default 3.0,
 # mass-preserving) so neighbouring coarse splats sum flat — suppresses the
 # axis-aligned grid ripple pure moment matching shows at coarse levels.
 # Pass 1.0 for the historical pure moment match.
-luxar gsplat lod in.gsplats.zarr out.gsplats.zarr --recipe substitutive --coverage-inflation 1.0
-# Barrier-aware coarsening (substitutive/pyramid/multiscale/mosaic): --coarsen-dims
+luxar gsplat lod in.gsplats.zarr out.gsplats.zarr --recipe levels --coverage-inflation 1.0
+# Mass conservation (default ON): each level's total mass over the coarsened dims
+# is pinned to its fine input's, per barrier group — no brightness pop at LOD
+# switches in additive rendering. --no-conserve-mass restores raw a* amplitudes.
+# L2 refinement (any substitutive reduction, opt-in): `--refine l2` Adam-optimizes
+# each merged level against its fine input under the closed-form mixture L2
+# (never worse than the merge; total mass pinned so brightness never pops across
+# levels; barrier dims stay frozen under --coarsen-dims). Slower, higher fidelity,
+# peak-preserving on sparse structures. `--refine-iters` (default 120) is the
+# one time/quality knob.
+luxar gsplat lod in.gsplats.zarr out.gsplats.zarr --recipe levels --refine l2
+luxar gsplat lod in.gsplats.zarr out.gsplats.zarr --recipe overview --refine l2 --refine-iters 200
+# Barrier-aware coarsening (levels/overview/adaptive): --coarsen-dims
 # lists the center-column indices coarsening may merge over; the rest become hard
 # barriers (a categorical/time/channel axis), so coarse splats never blend across
 # them. Default = all dims. (The Python scene API defaults to Auto = coarsen
 # displayed dims, group by non-displayed; standalone gsplats have no display info
 # so the CLI takes explicit indices and warns on >3D input without the flag.)
-luxar gsplat lod in.gsplats.zarr out.gsplats.zarr --recipe substitutive --coarsen-dims 1,2,3
-# LOD switch tuning — applies to ANY recipe with a kind=lod group (multiscale,
-# substitutive, pyramid, mosaic): --lod-method extent|count (default extent=T·W/r),
-# --extent-percentile 90, --extent-anisotropy/--no-extent-anisotropy, --base-pixel-size.
-luxar gsplat lod in.gsplats.zarr out.gsplats.zarr --recipe substitutive --lod-method count
+luxar gsplat lod in.gsplats.zarr out.gsplats.zarr --recipe levels --coarsen-dims 1,2,3
+# LOD switch thresholds (ANY recipe with a kind=lod group — overview,
+# levels, adaptive) are auto-derived as viewport-relative
+# `coverage_fraction` = sqrt(N_i/N_finest): the finest level shows when the object
+# fills the screen and coarser levels step in as it shrinks (the viewer anchors to
+# the live viewport, so it self-calibrates on any monitor — no threshold knob).
 
 # Migrate legacy .gsplats.zarr layouts (v1.0 / v1.1 / pre-v2.0 substitutive dir / v2.0 matrix) → v3.1
 luxar gsplat migrate-format legacy.gsplats.zarr v3.gsplats.zarr               # single file

@@ -163,8 +163,8 @@ class Group(Node):
                 substitutive pipeline (mass-preserving), assembled as a
                 ``kind="lod"`` Group whose finest child is the original Points
                 node. ``dict(...)`` keys: ``compression_factor`` (``K``),
-                ``levels`` (``n_lods``), ``method``, ``base_pixel_size``,
-                ``truncation_radius``, ``device``, ``seed``, ``min_pixel_sizes``.
+                ``levels`` (``n_lods``), ``method``,
+                ``truncation_radius``, ``device``, ``seed``, ``coverage_fractions``.
                 Mutually exclusive with ``additive_lod`` and ``partition``.
                 ``scalars``+``colormap``
                 points are supported by baking scalars→RGB for the coarse gsplat
@@ -429,11 +429,11 @@ class Group(Node):
         per level (in coarsest→finest order, named ``child_<i>``) and
         returns it; otherwise it returns a single :class:`GSplats` node.
 
-        ``min_pixel_size`` may only be passed in ``**attrs`` when the
+        ``coverage_fraction`` may only be passed in ``**attrs`` when the
         result is single-substitutive AND the parent is itself a
         ``kind="lod"`` ``Group`` (the child is a leaf of an enclosing
         LOD group). Passing it on a multi-substitutive path raises
-        ``ValueError`` — use ``lod_group=dict(min_pixel_sizes=[...])`` to
+        ``ValueError`` — use ``lod_group=dict(coverage_fractions=[...])`` to
         override the auto-derived thresholds.
 
         Args:
@@ -449,7 +449,7 @@ class Group(Node):
                 ``True`` (require stored levels), ``False`` (collapse to
                 finest), ``dict(...)`` (compute
                 via :func:`make_substitutive_lod`), or ``dict(..., recompute=
-                True)``. Optional ``min_pixel_sizes=[...]`` inside the dict
+                True)``. Optional ``coverage_fractions=[...]`` inside the dict
                 overrides the auto-derived thresholds.
             additive_lod: Additive-axis control, uniform across substitutive
                 levels. Same value vocabulary as ``lod_group``; ``dict(...)``

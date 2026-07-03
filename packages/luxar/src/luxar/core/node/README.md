@@ -46,7 +46,7 @@ are cached but nothing is written to disk.
 |--------|-------------|
 | `name`, `parent`, `children`, `path` | Scene-graph wiring |
 | `add_group(name, **attrs)` | Create a child `Group` (carries `type="group"`) |
-| `add_lod_group(name, *, selector="pixel_size", default_level=0, base_pixel_size=None, **attrs)` | Create a child `kind="lod"` `Group` |
+| `add_lod_group(name, *, selector="coverage", default_level=0, **attrs)` | Create a child `kind="lod"` `Group` |
 | `add_partition_group(name, *, display_type, max_elements, **attrs)` | Create a child `kind="partition"` `Group` |
 | `walk(depth=0)` | Depth-first generator yielding `(depth, node)` tuples |
 | `num_children`, `is_leaf`, `is_root` | Convenience predicates |
@@ -124,11 +124,13 @@ path) fall back to object identity.
 Free-function bodies for the two specialized-`Group` builders on `Node`,
 extracted to keep `node.py` readable.
 
-- **`add_lod_group_impl`** — validates `selector` (only `"pixel_size"` is
-  currently supported), `default_level >= 0`, and positive `base_pixel_size`,
-  then creates a child group with `kind="lod"`. A `kind=lod` group picks one of
-  N alternative children at runtime from the projected bbox diagonal in pixels
-  and each child's `min_pixel_size` threshold.
+- **`add_lod_group_impl`** — validates `selector` (only `"coverage"` is
+  currently supported) and `default_level >= 0`, then creates a child group
+  with `kind="lod"`. A `kind=lod` group picks one of N alternative children at
+  runtime by projecting the group's bbox diagonal to screen pixels and
+  comparing against each child's `coverage_fraction` threshold (a
+  dimensionless, viewport-relative value in `[0, 1]`, multiplied by the
+  current viewport diagonal to get the pixel comparison).
 - **`add_partition_group_impl`** — validates `display_type` ∈
   {`points`, `lines`, `gsplats`} and `max_elements` (int ≥ 1), then creates a
   child group with `kind="partition"`. A `kind=partition` group is a
@@ -138,9 +140,9 @@ extracted to keep `node.py` readable.
 
 ```python
 lod = scene.add_lod_group("multires")
-lod.add_gsplats_from_data("c", coarse, min_pixel_size=0)
-lod.add_gsplats_from_data("m", medium, min_pixel_size=100)
-lod.add_gsplats_from_data("f", fine,   min_pixel_size=500)
+lod.add_gsplats_from_data("c", coarse, coverage_fraction=0.0)
+lod.add_gsplats_from_data("m", medium, coverage_fraction=0.5)
+lod.add_gsplats_from_data("f", fine,   coverage_fraction=1.0)
 ```
 
 ## See Also

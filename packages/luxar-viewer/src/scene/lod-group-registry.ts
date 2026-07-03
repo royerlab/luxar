@@ -11,10 +11,11 @@
  *   2. Transform the local box into world space via
  *      :func:`transformBoundingBox` and the lod_group's ``matrixWorld``.
  *   3. Project the 8 corners through the camera to NDC and back to
- *      pixel coordinates; the diagonal of the screen-space AABB is
- *      the selector metric.
- *   4. Pick the **finest** child whose ``min_pixel_size`` threshold is
- *      satisfied by that diagonal, with 10% asymmetric hysteresis on
+ *      pixel coordinates; the diagonal of the screen-space AABB, divided
+ *      by ``FILL_FACTOR × viewportDiagonal``, is the dimensionless
+ *      **coverage metric** (fraction of a filled viewport).
+ *   4. Pick the **finest** child whose ``coverage_fraction`` threshold is
+ *      satisfied by that coverage metric, with 10% asymmetric hysteresis on
  *      the downgrade direction to suppress threshold-edge flicker.
  *   5. If the desired child differs from the current active one, swap
  *      visibility atomically.
@@ -58,6 +59,17 @@ const FINE_RELOAD_SETTLE_TICKS = 8;
 const HYSTERESIS_RATIO = 0.1;
 
 /**
+ * Anchor for the viewport-relative ``coverage_fraction`` thresholds: the finest
+ * child (coverage 1.0) activates when the group's projected bbox diagonal reaches
+ * ``FILL_FACTOR × viewportDiagonal`` pixels — i.e. when the object roughly fills
+ * the screen. Coarser children (smaller fractions) take over as it shrinks. 1.0 =
+ * "finest at fills-screen"; lower shows finest a touch sooner, higher a touch
+ * later. The selector normalises the projected diagonal by this to a dimensionless
+ * coverage metric, so the same thresholds behave identically on any viewport size.
+ */
+const FILL_FACTOR = 1.0;
+
+/**
  * Frames a lazy level stays in the ``failed`` state before the registry
  * retries its deferred load. ~2 s at 60 fps — long enough to avoid
  * per-frame retry storms after a hard failure, short enough that a
@@ -74,8 +86,13 @@ export interface LODGroupChild {
    * registration; geometry is committed into it by ``ensureLoaded``.
    */
   object: THREE.Object3D;
-  /** Strictly monotonic increasing in coarsest→finest order. */
-  minPixelSize: number;
+  /**
+   * Viewport-relative LOD-switch threshold in [0, 1], strictly monotonic
+   * increasing in coarsest→finest order (coarsest 0.0, finest 1.0). Multiplied
+   * by ``FILL_FACTOR × viewportDiagonal`` at selection time to compare against the
+   * group's projected bbox diagonal in pixels.
+   */
+  coverageFraction: number;
   /**
    * Raw nD position bounds (from the child's ``position_bounds`` zarr
    * attribute). Stored unprojected because ``displayDims`` can change
@@ -150,7 +167,7 @@ export interface LODGroupEntry {
   groupObject: THREE.Object3D;
   /**
    * Children in coarsest→finest order (== insertion order on disk,
-   * == ascending ``minPixelSize``).
+   * == ascending ``coverageFraction``).
    */
   children: LODGroupChild[];
   /** Current selector mode (``'auto'`` or ``{ lockLevel: i }``). */
@@ -197,6 +214,13 @@ export interface LODGroupEntry {
  * caches — ``register()`` does it for them.
  */
 interface LODGroupEntryCache {
+  /**
+   * Per-child ``coverage_fraction`` thresholds (dimensionless, ascending,
+   * coarsest 0.0 → finest 1.0), rebuilt once at registration. The selector
+   * compares these against the projected bbox diagonal normalised by
+   * ``FILL_FACTOR × viewportDiagonal`` (a dimensionless coverage metric), so the
+   * list is viewport-independent and needs no per-frame rebuild.
+   */
   thresholds: number[];
   localBoxScratch: BoundingBox;
 }
@@ -352,16 +376,18 @@ export function projectBoxDiagonalPx(
 }
 
 /**
- * Pick the desired child index given a screen-space diagonal and the
+ * Pick the desired child index given a scalar view ``metric`` and the
  * current active index. Applies 10% asymmetric hysteresis on the
  * downgrade direction.
  *
- * The "natural" pick is the finest child whose ``minPixelSize`` is
- * less than or equal to ``diagonalPx``. Hysteresis only resists
- * dropping back to a coarser level: when downgrading from index
- * ``currentIdx``, the metric must fall below the current threshold by
- * a margin that is ``hysteresisRatio`` (default 10%) of the GAP to the
- * adjacent coarser threshold — i.e. below
+ * ``metric`` is the dimensionless coverage metric (projected bbox diagonal ÷
+ * ``FILL_FACTOR × viewportDiagonal``) and ``thresholds`` are the per-child
+ * ``coverage_fraction`` values; both are in the same [0,1]-ish space. The
+ * "natural" pick is the finest child whose ``coverageFraction`` is less than or
+ * equal to ``metric``. Hysteresis only resists dropping back to a coarser level:
+ * when downgrading from index ``currentIdx``, the metric must fall below the
+ * current threshold by a margin that is ``hysteresisRatio`` (default 10%) of the
+ * GAP to the adjacent coarser threshold — i.e. below
  * ``thresholds[currentIdx] - hysteresisRatio * (thresholds[currentIdx] -
  * thresholds[currentIdx - 1])``; otherwise we stay on the current level
  * even though the natural pick is coarser. (At the bottom level
@@ -374,17 +400,17 @@ export function projectBoxDiagonalPx(
 export function pickChildWithHysteresis(
   thresholds: readonly number[],
   currentIdx: number,
-  diagonalPx: number,
+  metric: number,
   hysteresisRatio: number = HYSTERESIS_RATIO
 ): number {
   if (thresholds.length === 0) return -1;
 
-  // Natural pick: finest child with threshold ≤ diagonalPx. Thresholds
+  // Natural pick: finest child with threshold ≤ metric. Thresholds
   // are monotonic increasing in coarsest→finest order, so scan upward
   // until the threshold exceeds the metric.
   let natural = 0;
   for (let i = 0; i < thresholds.length; i++) {
-    if (thresholds[i] <= diagonalPx) natural = i;
+    if (thresholds[i] <= metric) natural = i;
     else break;
   }
 
@@ -398,8 +424,8 @@ export function pickChildWithHysteresis(
   // level (coarser threshold 0) the gap equals the threshold, so this
   // reduces to the original ``currentThreshold * (1 - ratio)`` behaviour.
   // For tightly-spaced levels (e.g. separated only by the
-  // ``derive_min_pixel_sizes`` ×1.1 nudge) the band shrinks proportionally,
-  // so the deadband never straddles the neighbour — every level still
+  // ``coverage_fractions`` ×1.1 monotonicity nudge) the band shrinks
+  // proportionally, so the deadband never straddles the neighbour — every level still
   // renders on the way down and the selection can't flip-flop across a band
   // wider than the inter-level spacing.
   //
@@ -412,7 +438,7 @@ export function pickChildWithHysteresis(
   const currentThreshold = thresholds[currentIdx];
   const prevThreshold = thresholds[currentIdx - 1]; // currentIdx >= 1 here
   const margin = hysteresisRatio * (currentThreshold - prevThreshold);
-  if (diagonalPx < currentThreshold - margin) {
+  if (metric < currentThreshold - margin) {
     return natural;
   }
   return currentIdx;
@@ -461,7 +487,7 @@ export class LODGroupRegistry {
   register(entry: LODGroupEntry): void {
     this.entries.set(entry.path, entry);
     this.caches.set(entry.path, {
-      thresholds: entry.children.map((c) => c.minPixelSize),
+      thresholds: entry.children.map((c) => c.coverageFraction),
       localBoxScratch: {
         min: { x: 0, y: 0, z: 0 },
         max: { x: 0, y: 0, z: 0 },
@@ -661,7 +687,15 @@ export class LODGroupRegistry {
         // Reuse the per-frame projection×view product (FRUSTUM_MATRIX_SCRATCH,
         // built in evaluatePerFrame) instead of recomputing it per group.
         const diagonalPx = projectBoxDiagonalPx(worldBox, camera, viewport, FRUSTUM_MATRIX_SCRATCH);
-        desired = pickChildWithHysteresis(cache.thresholds, entry.activeChildIndex, diagonalPx);
+        // Normalise the projected pixel diagonal to a dimensionless **coverage
+        // metric** (fraction of a filled viewport) so the viewport-relative
+        // coverage_fraction thresholds anchor the finest at fills-screen on any
+        // monitor. diagonalPx == +Infinity (camera inside the box) → Infinity →
+        // finest, unchanged. viewportDiag is > 0 here (evaluatePerFrame guards
+        // width/height == 0).
+        const viewportDiag = Math.hypot(viewport.width, viewport.height);
+        const coverageMetric = diagonalPx / (FILL_FACTOR * viewportDiag);
+        desired = pickChildWithHysteresis(cache.thresholds, entry.activeChildIndex, coverageMetric);
         entry.offScreen = false;
       }
     }

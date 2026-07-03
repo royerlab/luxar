@@ -486,8 +486,14 @@ def generate_merge_sbatch(manifest: BatchManifest, env_preamble: str) -> str:
         merge_cmd += f" --channel-colors {shlex.quote(colors_str)}"
     # Per-part LOD recipe (if planned): emit `--recipe <r>` + its knobs so the
     # merge job streams a partition of LOD'd parts rather than bare leaves.
+    # Manifests may carry legacy recipe spellings (pre-rename runs); the merge
+    # CLI rejects those, so emit the canonical name.
     if manifest.merge_recipe:
-        merge_cmd += f" --recipe {shlex.quote(manifest.merge_recipe)}"
+        from luxar.gsplats.lod.recipes import canonical_recipe_name
+
+        merge_cmd += (
+            f" --recipe {shlex.quote(canonical_recipe_name(manifest.merge_recipe))}"
+        )
         for flag, value in manifest.merge_recipe_args.items():
             merge_cmd += f" --{flag} {shlex.quote(str(value))}"
 

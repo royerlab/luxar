@@ -62,10 +62,11 @@ Inputs: `.npy`, `.npz`, `.tiff`/`.tif`, `.zarr`, `.zarr.zip` (TIFF/other need `p
 | `--plan-only` | false | write the box plan JSON and stop (no fit) |
 
 ### Per-part LOD at fit time (tiled partition only)
-`--recipe additive` → `partitioned` topology; `--recipe substitutive` → `mosaic`.
+`--recipe stream` → `tiles` topology; `--recipe levels` → `adaptive`.
 Knobs mirror `lod`: `--n-lods`, `--additive-method`/`-m`, `--breakpoints`/`-b`,
 `--compression-factor`/`-K`, `--levels`/`-L`, `--substitutive-method`,
-`--coarsen-dims`, `--lod-method`.
+`--coarsen-dims`. LOD switch thresholds are auto-derived (`coverage_fraction`,
+no knob — see "LOD switch tuning" below).
 
 ### Progressive fitting
 | Flag | Default | Meaning |
@@ -139,8 +140,8 @@ flags as `fit`: `--channel`/`-c`, `--timepoint`, `--array-key`, `--axes`.
 
 ## `luxar gsplat lod INPUT OUTPUT`
 
-`--recipe` is REQUIRED. Recipes scale-ordered: `flat` < `additive` < `partitioned`
-< `multiscale` / `mosaic`; primitives `substitutive`, `pyramid`.
+`--recipe` is REQUIRED. Recipes scale-ordered: `flat` < `stream` < `tiles`
+< `overview` / `adaptive`; primitive `levels`.
 
 ### Additive ladder (additive / partitioned / multiscale / pyramid)
 | Flag | Default | Meaning |
@@ -156,9 +157,9 @@ flags as `fit`: `--channel`/`-c`, `--timepoint`, `--array-key`, `--axes`.
 
 ### `luxar gsplat additive <in> <out>` — ladder every leaf of an existing tree
 Structure-preserving per-leaf additive laddering: substitutive `kind=lod`
-levels, partition parts, and mosaic groups keep their shape; every leaf gains
+levels, partition parts, and adaptive groups keep their shape; every leaf gains
 an additive ladder WITHOUT recomputing the substitutive/partition structure.
-The per-leaf counterpart of `lod --recipe additive` (which needs a flat input).
+The per-leaf counterpart of `lod --recipe stream` (which needs a flat input).
 Options: `--n-lods` / `--method` / `--breakpoints` (incl. `stream:C`) /
 `--target-ms` / `--bandwidth-mbps` / `--bytes-per-splat` / `--encoding` /
 `--compress` / `--overwrite`.
@@ -166,14 +167,14 @@ Options: `--n-lods` / `--method` / `--breakpoints` (incl. `stream:C`) /
 luxar gsplat additive sub.gsplats.zarr pyr.gsplats.zarr --target-ms 200   # ~200ms first paint per level
 ```
 
-### Spatial partition (partitioned / multiscale / mosaic)
+### Spatial partition (tiles / overview / adaptive)
 | Flag | Default | Meaning |
 | --- | --- | --- |
 | `--max-elements` | 1,000,000 | per-part splat cap (BSP) |
 | `--parts` | none | target part count (sets max_elements = ceil(N/parts)) |
 | `--partition-rule` | median | `median` / `midpoint` / `sah` |
 
-### Substitutive reduction (substitutive / pyramid / multiscale cap / mosaic)
+### Substitutive reduction (levels / overview cap / adaptive)
 | Flag | Default | Meaning |
 | --- | --- | --- |
 | `--compression-factor` / `-K` | 4 | per-level coarsening factor |
@@ -182,15 +183,20 @@ luxar gsplat additive sub.gsplats.zarr pyr.gsplats.zarr --target-ms 200   # ~200
 | `--lloyd-iters` | 5 | Lloyd refinement passes |
 | `--candidate-bins-k` | 12 | Lloyd spatial-hash top-k |
 | `--coverage-inflation` | 3.0 | widen merged reps' inter-center spread (mass-preserving) so coarse splats sum flat — suppresses the grid ripple; 1.0 = pure moment match |
+| `--additive` / `--no-additive` | on | additive ladder in every substitutive level / mosaic part / multiscale cap (streaming first paint); `--no-additive` = bare leaves |
+| `--conserve-mass` / `--no-conserve-mass` | on | pin each level's mass over coarsened dims to its fine input (per barrier group) — kills the LOD brightness pop |
+| `--refine` | none | `l2` = post-merge L2 refit of each level against its fine input (slower, higher fidelity, peak-preserving; mass pinned) |
+| `--refine-iters` | 120 | Adam steps per refined level (requires `--refine l2`) |
 | `--coarsen-dims` | all | center-column indices coarsening may merge over (rest = hard barriers) |
 
 ### LOD switch tuning (any kind=lod group)
-| Flag | Default | Meaning |
-| --- | --- | --- |
-| `--lod-method` | extent | `extent` (T·W/r) / `count` (√N proxy) |
-| `--extent-percentile` | 90 | percentile of per-level radius |
-| `--extent-anisotropy` / `--no-extent-anisotropy` | on | use largest principal axis |
-| `--base-pixel-size` | none | LOD selector pixel anchor |
+Auto-derived, no knob: each child's `coverage_fraction` = `sqrt(N_i / N_finest)`
+(a viewport-relative value in `[0, 1]`; coarsest 0.0, finest 1.0). The viewer
+multiplies it by the live viewport diagonal, so the finest level shows when the
+object fills the screen and coarser levels step in as it shrinks — self-
+calibrating on any monitor. The former `extent`/`count` methods and the
+`--lod-method` / `--extent-percentile` / `--extent-anisotropy` /
+`--base-pixel-size` flags have been removed.
 
 ### Universal
 `--ordering` (hilbert/morton/none, default hilbert), `--device` (auto), `--seed`,

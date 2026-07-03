@@ -184,9 +184,9 @@ def load_gsplat_node(
         if format_version not in SUPPORTED_FORMAT_VERSIONS:
             raise ValueError(
                 f"Unsupported format_version: {format_version!r}. The on-disk "
-                f"format is now v3.1 (a detached node-tree subtree; v3.0 is also "
-                f"read). Convert legacy v1.x / v2.0 files (and old substitutive "
-                f"directories) with "
+                f"format is now v3.2 (a detached node-tree subtree; v3.0 / v3.1 "
+                f"are also read). Convert legacy v1.x / v2.0 files (and old "
+                f"substitutive directories) with "
                 f"`luxar gsplat migrate-format <input> <output.gsplats.zarr>`."
             )
 
@@ -195,12 +195,18 @@ def load_gsplat_node(
 
         node = read_gsplat_node(root, root)
 
-        # Gather root-level stats (fitting / provenance / header).
+        # Gather root-level stats (fitting / pipeline / provenance / header).
         stats: Dict[str, Any] = {}
         if include_stats:
             if "fitting" in root:
                 for key, value in root["fitting"].attrs.items():
                     stats[key] = value
+            if "pipeline" in root:
+                # Reduction/topology stats (lod_kind, method, coverage_inflation,
+                # refine, ...) — split_fitting_info's fourth bucket. setdefault:
+                # fitting/header keys keep precedence on any collision.
+                for key, value in root["pipeline"].attrs.items():
+                    stats.setdefault(key, value)
             if "provenance" in root:
                 stats["provenance"] = dict(root["provenance"].attrs)
             stats["format_version"] = format_version

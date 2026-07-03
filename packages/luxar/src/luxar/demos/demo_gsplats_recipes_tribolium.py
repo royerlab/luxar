@@ -123,19 +123,17 @@ from luxar.utils.paths import get_demos_output_dir
 MAX_ELEMENTS = 50_000
 # Coarse-cap compression for multiscale (one substitutive level ≈ N/FACTOR splats).
 FACTOR = 8
-# NB: the multiscale coarse↔fine switch uses the default `extent` method — the
-# threshold is physically anchored in element size (T·W/r, self-calibrating), so
-# the coarse cap (its splats fewer-but-larger) engages as you zoom *out* (the
-# embryo small on screen) and the fine, colour-coded parts show up close. To tune
-# it, pass RecipeParams(lod_method=..., extent_percentile=..., base_pixel_size=...)
-# here (or `gsplat lod --lod-method/--extent-percentile/--base-pixel-size`); the
-# legacy √N proxy is `lod_method="count"`.
+# NB: the multiscale coarse↔fine switch uses viewport-relative coverage_fraction
+# thresholds (sqrt(N_i/N_finest)) — the finest branch shows when the embryo fills
+# the screen and the coarse cap (fewer-but-larger splats) engages as you zoom *out*.
+# The viewer anchors the finest at fills-screen via the live viewport, so there is
+# no per-dataset threshold knob to tune.
 # Additive ladder depth for additive / partitioned-part / multiscale-part ladders.
 N_LODS = 4
 # Cheap O(N log N) additive ordering — keeps the demo fast on CPU.
 ADDITIVE_METHOD = "self_energy"
 
-RECIPES = ("flat", "additive", "partitioned", "multiscale", "mosaic")
+RECIPES = ("flat", "stream", "tiles", "overview", "adaptive")
 
 # Parse command-line flags.
 FLAGS = parse_demo_flags()
@@ -227,7 +225,7 @@ def _recolor_leaf_by_shades(leaf: GSplatLeaf, hue: float) -> GSplatLeaf:
 # node *type* (the stable ``GSplatNode`` contract), never on which recipe made it
 # or on assumed child positions. This guarantees we serialize byte-for-byte the
 # same topology the CLI would (same constructors, ``meta`` preserved — including
-# the ``min_pixel_size`` switch thresholds), differing only in the colour arrays.
+# the ``coverage_fraction`` switch thresholds), differing only in the colour arrays.
 # The two axes (see above): hue = spatial part, shade = LOD level.
 
 
@@ -321,13 +319,13 @@ def _cli_for(recipe: str) -> str:
             recipe
         )
     )
-    if recipe == "additive":
+    if recipe == "stream":
         return base + f" --n-lods {N_LODS} --method {ADDITIVE_METHOD}"
-    if recipe == "partitioned":
+    if recipe == "tiles":
         return base + f" --max-elements {MAX_ELEMENTS} --n-lods {N_LODS}"
-    if recipe == "multiscale":
+    if recipe == "overview":
         return base + f" --max-elements {MAX_ELEMENTS} --compression-factor {FACTOR}"
-    if recipe == "mosaic":
+    if recipe == "adaptive":
         return base + f" --max-elements {MAX_ELEMENTS} --compression-factor {FACTOR}"
     return base
 
@@ -352,7 +350,7 @@ def build_and_write(base: GSplatData, recipe: str, out_path: Path) -> dict:
                 "splats": result.flattened().n_splats,
                 "structure": (
                     f"{result.n_additive_sublods}-level ladder"
-                    if recipe == "additive"
+                    if recipe == "stream"
                     else "single leaf"
                 ),
             }
@@ -360,10 +358,10 @@ def build_and_write(base: GSplatData, recipe: str, out_path: Path) -> dict:
                 out_path, ordering="hilbert", encoding_mode=EncodingMode.PRECISION
             )
         else:
-            if recipe == "partitioned":
+            if recipe == "tiles":
                 n = result.n_children
                 structure = f"{n} BSP part{'s' if n != 1 else ''}, ladder each"
-            elif recipe == "mosaic":
+            elif recipe == "adaptive":
                 n = result.n_children
                 structure = f"{n} BSP part{'s' if n != 1 else ''}, substitutive each"
             else:  # multiscale
@@ -389,16 +387,16 @@ def build_and_write(base: GSplatData, recipe: str, out_path: Path) -> dict:
 # Per-recipe legend descriptions + a representative legend colour.
 _RECIPE_DESC = {
     "flat": ("single leaf — no LOD, no partition", "rgb(184,189,199)"),
-    "additive": (
+    "stream": (
         "one leaf + prefix-sum ladder (streams coarse→fine)",
         "rgb(80,180,242)",
     ),
-    "partitioned": ("BSP parts, each its own additive ladder", "rgb(102,217,153)"),
-    "multiscale": (
+    "tiles": ("BSP parts, each its own additive ladder", "rgb(102,217,153)"),
+    "overview": (
         "coarse cap (far) + partitioned fine branch (near)",
         "rgb(255,77,82)",
     ),
-    "mosaic": (
+    "adaptive": (
         "BSP parts, each its own substitutive lod (per-part swap)",
         "rgb(255,179,71)",
     ),
@@ -461,7 +459,7 @@ Tracking Challenge / Zenodo 5270323. Cite: Yin et al. 2022; Maska et al. 2023.
                     recipe,
                     str(recipe_paths[recipe]),
                     opacity=1.0,
-                    blending_mode="additive",
+                    blending_mode="stream",
                     layer=True,
                 )
 

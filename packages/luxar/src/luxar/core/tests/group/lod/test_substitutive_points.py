@@ -53,17 +53,19 @@ class TestResolveSubstitutiveAxisPoints:
         r = resolve_substitutive_axis_points(dict(method="kmeans-lloyd"))
         assert r["method"] == "kmeans_lloyd"
 
-    def test_explicit_min_pixel_sizes(self) -> None:
-        r = resolve_substitutive_axis_points(dict(min_pixel_sizes=[0, 10, 20, 30]))
-        assert r["min_pixel_sizes"] == [0.0, 10.0, 20.0, 30.0]
+    def test_explicit_coverage_fractions(self) -> None:
+        r = resolve_substitutive_axis_points(
+            dict(coverage_fractions=[0, 0.25, 0.5, 1.0])
+        )
+        assert r["coverage_fractions"] == [0.0, 0.25, 0.5, 1.0]
 
     def test_unknown_key_raises(self) -> None:
         with pytest.raises(ValueError, match="unrecognized keys"):
             resolve_substitutive_axis_points(dict(bogus=1))
 
-    def test_non_ascending_min_pixel_sizes_raises(self) -> None:
+    def test_non_ascending_coverage_fractions_raises(self) -> None:
         with pytest.raises(ValueError, match="strictly increasing"):
-            resolve_substitutive_axis_points(dict(min_pixel_sizes=[0.0, 50.0, 10.0]))
+            resolve_substitutive_axis_points(dict(coverage_fractions=[0.0, 0.5, 0.1]))
 
     def test_bad_values_raise(self) -> None:
         with pytest.raises(ValueError):
@@ -79,12 +81,15 @@ class TestResolveSubstitutiveAxisPoints:
         with pytest.raises(TypeError):
             resolve_substitutive_axis_points(5)
 
-    def test_base_pixel_size(self) -> None:
-        assert resolve_substitutive_axis_points(dict(base_pixel_size=25.0))[
-            "base_pixel_size"
-        ] == 25.0
-        with pytest.raises(ValueError, match="base_pixel_size"):
-            resolve_substitutive_axis_points(dict(base_pixel_size=0.0))
+    def test_coverage_fractions_out_of_range_raises(self) -> None:
+        with pytest.raises(ValueError, match=r"\[0, 1\]"):
+            resolve_substitutive_axis_points(dict(coverage_fractions=[0.0, 2.0]))
+
+    def test_empty_coverage_fractions_raises_clean_error(self) -> None:
+        # An empty explicit list must raise an actionable ValueError, NOT an
+        # IndexError from the [0]/[-1] range check (regression: deep-double-check).
+        with pytest.raises(ValueError, match="non-empty"):
+            resolve_substitutive_axis_points(dict(coverage_fractions=[]))
 
 
 # ────────────────────────────────────────────────────────────────────────
@@ -105,8 +110,9 @@ def _build(tmp_path, *, n=6000, levels=3, **kw):
             pos,
             colors=colors,
             radii=radii,
-            substitutive_lod=dict(compression_factor=4, levels=levels, device="cpu",
-                                  seed=0, **kw),
+            substitutive_lod=dict(
+                compression_factor=4, levels=levels, device="cpu", seed=0, **kw
+            ),
         )
     return zarr.open(str(out), mode="r")["cloud"], n
 
@@ -116,7 +122,7 @@ class TestAddPointsSubstitutiveLod:
         grp, _ = _build(tmp_path)
         assert grp.attrs["kind"] == "lod"
         assert grp.attrs["display_type"] == "points"
-        assert grp.attrs["selector"] == "pixel_size"
+        assert grp.attrs["selector"] == "coverage"
         assert grp.attrs["default_level"] == 0
 
     def test_child_count_is_levels_gsplats_plus_points(self, tmp_path) -> None:
@@ -143,11 +149,12 @@ class TestAddPointsSubstitutiveLod:
         assert counts == sorted(counts)  # ascending coarsest -> finest
         assert counts[-1] == n
 
-    def test_min_pixel_size_monotone_coarsest_zero(self, tmp_path) -> None:
+    def test_coverage_fraction_monotone_coarsest_zero(self, tmp_path) -> None:
         grp, _ = _build(tmp_path, levels=3)
-        mps = [float(grp[f"child_{i}"].attrs["min_pixel_size"]) for i in range(4)]
-        assert mps[0] == 0.0
-        assert all(mps[i] < mps[i + 1] for i in range(len(mps) - 1))
+        cf = [float(grp[f"child_{i}"].attrs["coverage_fraction"]) for i in range(4)]
+        assert cf[0] == 0.0
+        assert cf[-1] == 1.0
+        assert all(cf[i] < cf[i + 1] for i in range(len(cf) - 1))
 
     def test_position_bounds_backfilled(self, tmp_path) -> None:
         grp, _ = _build(tmp_path)
@@ -170,10 +177,10 @@ class TestAddPointsSubstitutiveLod:
         for lvl in coarse:
             assert render_light(lvl) == pytest.approx(target, rel=1e-4)
 
-    def test_explicit_min_pixel_sizes_override(self, tmp_path) -> None:
-        grp, _ = _build(tmp_path, levels=3, min_pixel_sizes=[0.0, 5.0, 25.0, 100.0])
-        mps = [float(grp[f"child_{i}"].attrs["min_pixel_size"]) for i in range(4)]
-        assert mps == [0.0, 5.0, 25.0, 100.0]
+    def test_explicit_coverage_fractions_override(self, tmp_path) -> None:
+        grp, _ = _build(tmp_path, levels=3, coverage_fractions=[0.0, 0.05, 0.25, 1.0])
+        cf = [float(grp[f"child_{i}"].attrs["coverage_fraction"]) for i in range(4)]
+        assert cf == [0.0, 0.05, 0.25, 1.0]
 
     def test_uint8_colors_render_sdr_on_coarse_levels(self, tmp_path) -> None:
         # CRITICAL regression: uint8 colors must NOT become HDR on the coarse
@@ -190,14 +197,21 @@ class TestAddPointsSubstitutiveLod:
             warnings.simplefilter("always")
             with LuxarZarrCompiler(out) as compiler:
                 scene = compiler.create_scene(dimensions=Dimensions.default_3d())
-                scene.add_points("cloud", pos, colors=colors_u8, radii=1.0,
-                                 substitutive_lod=dict(levels=2, device="cpu", seed=0))
+                scene.add_points(
+                    "cloud",
+                    pos,
+                    colors=colors_u8,
+                    radii=1.0,
+                    substitutive_lod=dict(levels=2, device="cpu", seed=0),
+                )
             hdr = [w for w in caught if "HDR" in str(w.message)]
         grp = zarr.open(str(out), mode="r")["cloud"]
         # child_0 is a coarse gsplat level; its colors must be SDR (uint8), not
         # the blown-out float32-HDR the pre-fix lift produced.
         assert np.asarray(grp["child_0"]["colors"]).dtype == np.uint8
-        assert len(hdr) == 0, f"unexpected HDR colour warning(s): {[str(w.message) for w in hdr]}"
+        assert len(hdr) == 0, (
+            f"unexpected HDR colour warning(s): {[str(w.message) for w in hdr]}"
+        )
 
     def test_opacity_rides_on_group_not_baked_into_amplitudes(self, tmp_path) -> None:
         # opacity is a compositing attr on the kind=lod group; the lift always uses
@@ -209,8 +223,13 @@ class TestAddPointsSubstitutiveLod:
             pos = rng.uniform(0, 40, (6000, 3)).astype(np.float32)
             with LuxarZarrCompiler(out) as compiler:
                 scene = compiler.create_scene(dimensions=Dimensions.default_3d())
-                scene.add_points("cloud", pos, radii=1.0, opacity=op,
-                                 substitutive_lod=dict(levels=2, device="cpu", seed=0))
+                scene.add_points(
+                    "cloud",
+                    pos,
+                    radii=1.0,
+                    opacity=op,
+                    substitutive_lod=dict(levels=2, device="cpu", seed=0),
+                )
             return zarr.open(str(out), mode="r")["cloud"]
 
         g_half, g_full = build(0.5), build(1.0)
@@ -220,8 +239,9 @@ class TestAddPointsSubstitutiveLod:
         a_half = np.asarray(g_half["child_0"]["amplitudes"])
         a_full = np.asarray(g_full["child_0"]["amplitudes"])
         np.testing.assert_array_equal(a_half, a_full)
-        assert (g_half["child_0"].attrs["amplitude_range"]["max"]
-                == pytest.approx(g_full["child_0"].attrs["amplitude_range"]["max"]))
+        assert g_half["child_0"].attrs["amplitude_range"]["max"] == pytest.approx(
+            g_full["child_0"].attrs["amplitude_range"]["max"]
+        )
 
     def test_render_light_survives_writer_quantization(self, tmp_path) -> None:
         # End-to-end: the render-light rescale must survive the writer's lossy
@@ -255,9 +275,7 @@ class TestSubstitutiveLodGuards:
         with LuxarZarrCompiler(out) as compiler:
             scene = compiler.create_scene(dimensions=Dimensions.default_3d())
             with pytest.raises(ValueError, match="mutually exclusive"):
-                scene.add_points(
-                    "pts", pos, additive_lod=True, substitutive_lod=True
-                )
+                scene.add_points("pts", pos, additive_lod=True, substitutive_lod=True)
 
     def test_partition_and_substitutive_raises(self, tmp_path) -> None:
         # Must not silently drop the substitutive ladder when partition= is set.
@@ -276,8 +294,12 @@ class TestSubstitutiveLodGuards:
         pos = rng.uniform(0, 40, (6000, 3)).astype(np.float32)
         with LuxarZarrCompiler(out, auto_partition_max_elements=2000) as compiler:
             scene = compiler.create_scene(dimensions=Dimensions.default_3d())
-            scene.add_points("cloud", pos, radii=1.0,
-                             substitutive_lod=dict(levels=2, device="cpu", seed=0))
+            scene.add_points(
+                "cloud",
+                pos,
+                radii=1.0,
+                substitutive_lod=dict(levels=2, device="cpu", seed=0),
+            )
         grp = zarr.open(str(out), mode="r")["cloud"]
         assert grp.attrs["kind"] == "lod"
         assert grp.attrs["display_type"] == "points"
@@ -301,12 +323,19 @@ class TestSubstitutiveLodGuards:
         pos = rng.uniform(0, 40, (6000, 3)).astype(np.float32)
         with LuxarZarrCompiler(out) as compiler:
             scene = compiler.create_scene(dimensions=Dimensions.default_3d())
-            scene.add_points("cloud", pos, scalars=0.5, colormap="viridis",
-                             substitutive_lod=dict(levels=2, device="cpu", seed=0))
+            scene.add_points(
+                "cloud",
+                pos,
+                scalars=0.5,
+                colormap="viridis",
+                substitutive_lod=dict(levels=2, device="cpu", seed=0),
+            )
         grp = zarr.open(str(out), mode="r")["cloud"]
         assert grp.attrs["kind"] == "lod"
 
-    def test_scalars_plus_colormap_bakes_colors_on_coarse_levels(self, tmp_path) -> None:
+    def test_scalars_plus_colormap_bakes_colors_on_coarse_levels(
+        self, tmp_path
+    ) -> None:
         # scalars+colormap now WORKS: coarse gsplat levels carry baked SDR colours
         # from the colormap; the finest Points child keeps scalars+colormap.
         out = tmp_path / "t.luxar.zarr"
@@ -315,8 +344,13 @@ class TestSubstitutiveLodGuards:
         scalars = rng.uniform(0, 1, 6000).astype(np.float32)
         with LuxarZarrCompiler(out) as compiler:
             scene = compiler.create_scene(dimensions=Dimensions.default_3d())
-            scene.add_points("cloud", pos, scalars=scalars, colormap="viridis",
-                             substitutive_lod=dict(levels=2, device="cpu", seed=0))
+            scene.add_points(
+                "cloud",
+                pos,
+                scalars=scalars,
+                colormap="viridis",
+                substitutive_lod=dict(levels=2, device="cpu", seed=0),
+            )
         grp = zarr.open(str(out), mode="r")["cloud"]
         assert grp.attrs["kind"] == "lod"
         assert grp.attrs["display_type"] == "points"
@@ -339,8 +373,13 @@ class TestSubstitutiveLodGuards:
         pos = rng.uniform(0, 40, (3000, 3)).astype(np.float32)
         with LuxarZarrCompiler(out) as compiler:
             scene = compiler.create_scene(dimensions=Dimensions.default_3d())
-            scene.add_points("cloud", pos, radii=1.0, image_labels=[b"x"] * 3000,
-                             substitutive_lod=dict(levels=2, device="cpu", seed=0))
+            scene.add_points(
+                "cloud",
+                pos,
+                radii=1.0,
+                image_labels=[b"x"] * 3000,
+                substitutive_lod=dict(levels=2, device="cpu", seed=0),
+            )
         grp = zarr.open(str(out), mode="r")["cloud"]
         children = sorted(k for k in grp.keys() if k.startswith("child_"))
         finest = grp[children[-1]]
@@ -356,8 +395,12 @@ class TestSubstitutiveLodGuards:
         with LuxarZarrCompiler(out) as compiler:
             scene = compiler.create_scene(dimensions=Dimensions.default_3d())
             with pytest.raises(ValueError, match="empty points") as exc:
-                scene.add_points("pts", empty, radii=1.0,
-                                 substitutive_lod=dict(levels=2, device="cpu"))
+                scene.add_points(
+                    "pts",
+                    empty,
+                    radii=1.0,
+                    substitutive_lod=dict(levels=2, device="cpu"),
+                )
             assert "coarsest child" not in str(exc.value)
 
     def test_all_zero_radius_falls_through_to_flat_points(self, tmp_path) -> None:
@@ -370,8 +413,12 @@ class TestSubstitutiveLodGuards:
         pos = np.random.RandomState(0).normal(0, 20, (4000, 3)).astype(np.float32)
         with LuxarZarrCompiler(out) as compiler:
             scene = compiler.create_scene(dimensions=Dimensions.default_3d())
-            scene.add_points("pts", pos, radii=0.0,  # every point degenerate
-                             substitutive_lod=dict(levels=2, device="cpu", seed=0))
+            scene.add_points(
+                "pts",
+                pos,
+                radii=0.0,  # every point degenerate
+                substitutive_lod=dict(levels=2, device="cpu", seed=0),
+            )
         grp = zarr.open(str(out), mode="r")["pts"]
         assert grp.attrs.get("kind") != "lod"  # flat fallback, not a 1-child LOD
         assert grp.attrs.get("type") == "points"
@@ -383,8 +430,12 @@ class TestSubstitutiveLodGuards:
         pos = np.random.RandomState(0).rand(5, 3).astype(np.float32)
         with LuxarZarrCompiler(out) as compiler:
             scene = compiler.create_scene(dimensions=Dimensions.default_3d())
-            scene.add_points("pts", pos, radii=1.0,
-                             substitutive_lod=dict(levels=2, device="cpu", seed=0))
+            scene.add_points(
+                "pts",
+                pos,
+                radii=1.0,
+                substitutive_lod=dict(levels=2, device="cpu", seed=0),
+            )
         grp = zarr.open(str(out), mode="r")["pts"]
         assert grp.attrs["kind"] == "lod"
         assert grp.attrs["display_type"] == "points"
@@ -413,8 +464,9 @@ def _build_4d(tmp_path, *, n_per=1500, n_groups=3, coarsen_dims="__unset__"):
     colors = np.vstack([np.tile(palette[g % 3], (n_per, 1)) for g in range(n_groups)])
     dims = Dimensions(
         [
-            Dimension("coloring", categories=[str(g) for g in range(n_groups)],
-                      display=False),
+            Dimension(
+                "coloring", categories=[str(g) for g in range(n_groups)], display=False
+            ),
             Dimension("x", display=True),
             Dimension("y", display=True),
             Dimension("z", display=True),
@@ -425,7 +477,9 @@ def _build_4d(tmp_path, *, n_per=1500, n_groups=3, coarsen_dims="__unset__"):
     with LuxarZarrCompiler(out) as compiler:
         scene = compiler.create_scene(dimensions=dims)
         scene.add_points(
-            "cloud", pos, colors=colors.astype(np.float32),
+            "cloud",
+            pos,
+            colors=colors.astype(np.float32),
             radii=np.full(len(pos), 0.5, np.float32),
             substitutive_lod=dict(compression_factor=4, levels=3, device="cpu", **kw),
         )
@@ -470,7 +524,9 @@ class TestCoarsenDimsPoints:
         with LuxarZarrCompiler(out) as compiler:
             scene = compiler.create_scene(dimensions=Dimensions.default_3d())
             scene.add_points(
-                "cloud", pos, radii=1.0,
+                "cloud",
+                pos,
+                radii=1.0,
                 substitutive_lod=dict(compression_factor=4, levels=2, device="cpu"),
             )
         grp = zarr.open(str(out), mode="r")["cloud"]
@@ -486,10 +542,16 @@ class TestResolveCoarsenDims:
         assert r["coarsen_dims"] == ["x", "y", 2]
 
     def test_display_and_all_sentinels(self) -> None:
-        assert resolve_substitutive_axis_points(
-            dict(coarsen_dims="display"))["coarsen_dims"] == "display"
-        assert resolve_substitutive_axis_points(
-            dict(coarsen_dims="all"))["coarsen_dims"] == "all"
+        assert (
+            resolve_substitutive_axis_points(dict(coarsen_dims="display"))[
+                "coarsen_dims"
+            ]
+            == "display"
+        )
+        assert (
+            resolve_substitutive_axis_points(dict(coarsen_dims="all"))["coarsen_dims"]
+            == "all"
+        )
 
     def test_bad_values_raise(self) -> None:
         with pytest.raises(ValueError):

@@ -257,13 +257,16 @@ def test_nested_lod_of_partition_round_trip():
     assert isinstance(out.children[1], GSplatPartition)
 
     # Review finding #3: EVERY lod child — including a non-leaf (Group) child —
-    # must carry a min_pixel_size selector threshold, else the viewer is stuck
+    # must carry a coverage_fraction selector threshold, else the viewer is stuck
     # always-finest. The back-fill now covers the nested partition child.
-    assert "min_pixel_size" in z["child_0"].attrs  # coarsest leaf
-    assert "min_pixel_size" in z["child_1"].attrs  # the partition (non-leaf!)
+    assert "coverage_fraction" in z["child_0"].attrs  # coarsest leaf
+    assert "coverage_fraction" in z["child_1"].attrs  # the partition (non-leaf!)
     # Monotonic increasing coarsest→finest; coarsest is 0.
-    assert z["child_0"].attrs["min_pixel_size"] == 0.0
-    assert z["child_1"].attrs["min_pixel_size"] > z["child_0"].attrs["min_pixel_size"]
+    assert z["child_0"].attrs["coverage_fraction"] == 0.0
+    assert (
+        z["child_1"].attrs["coverage_fraction"]
+        > z["child_0"].attrs["coverage_fraction"]
+    )
     # Structural attrs are authoritative (not clobbered by meta — finding #8).
     assert z.attrs["kind"] == "lod" and z["child_1"].attrs["kind"] == "partition"
 
@@ -284,23 +287,23 @@ def test_lod_group_meta_does_not_clobber_structural_attrs():
 # ── Selector / provenance metadata on lod children ──────────────────────
 
 
-def test_min_pixel_size_and_provenance_round_trip():
-    fine = _leaf(100, seed=0, min_pixel_size=0.0, compression_factor=1)
+def test_coverage_fraction_and_provenance_round_trip():
+    fine = _leaf(100, seed=0, coverage_fraction=1.0, compression_factor=1)
     coarse = _leaf(
         10,
         seed=1,
-        min_pixel_size=4.0,
+        coverage_fraction=0.4,
         compression_factor=4,
         parent_method="kmeans_lloyd",
     )
     grp = GSplatLodGroup(children=[coarse, fine])  # coarsest→finest
     z, out = _round_trip(grp)
     # coarse leaf is child_0 on disk; its selector threshold + provenance persisted
-    assert z["child_0"].attrs["min_pixel_size"] == 4.0
+    assert z["child_0"].attrs["coverage_fraction"] == 0.4
     assert z["child_0"].attrs["compression_factor"] == 4
     assert z["child_0"].attrs["parent_method"] == "kmeans_lloyd"
     # restored coarsest-first: children[0] is the coarse leaf
-    assert out.children[0].meta["min_pixel_size"] == 4.0
+    assert out.children[0].meta["coverage_fraction"] == 0.4
     assert out.children[0].meta["compression_factor"] == 4
 
 

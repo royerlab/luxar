@@ -42,7 +42,7 @@ luxar gsplat fit volume.tiff splats.gsplats.zarr --preset standard --seeds 8000
 luxar gsplat fit data.zarr.zip splats.gsplats.zarr --timepoint 0 --channel 0
 
 # 3. Build a topology (--recipe is REQUIRED). See "Choosing a LOD recipe".
-luxar gsplat lod splats.gsplats.zarr out.gsplats.zarr --recipe additive --n-lods 6
+luxar gsplat lod splats.gsplats.zarr out.gsplats.zarr --recipe stream --n-lods 6
 ```
 
 Presets: `draft` / `standard` / `hifi` / `ultra`. Override any preset knob, e.g.
@@ -59,21 +59,21 @@ Recipes are scale-ordered — pick by element count `N`:
 | Recipe | What it builds | Use when |
 | --- | --- | --- |
 | `flat` | single leaf, no LOD | small N |
-| `additive` | one leaf + prefix-sum ladder | medium N |
-| `partitioned` | BSP parts, each its own additive ladder | large N |
-| `multiscale` | coarse substitutive cap + partitioned fine branch | huge N |
-| `mosaic` | BSP parts, each its own substitutive group | huge N, adaptive |
-| `substitutive` / `pyramid` | pure synthesised-level pyramids | primitives |
+| `stream` | one leaf + prefix-sum ladder | medium N |
+| `tiles` | BSP parts, each its own additive ladder | large N |
+| `overview` | coarse substitutive cap + tiled fine branch | huge N |
+| `adaptive` | BSP parts, each its own substitutive group | huge N, adaptive |
+| `levels` | pure synthesised-level pyramid | primitive |
 
 ```bash
-luxar gsplat lod in.gsplats.zarr out.gsplats.zarr --recipe additive --n-lods 6
-luxar gsplat lod in.gsplats.zarr out.gsplats.zarr --recipe partitioned --max-elements 250000
-luxar gsplat lod in.gsplats.zarr out.gsplats.zarr --recipe multiscale -K 8 --max-elements 250000
-luxar gsplat lod in.gsplats.zarr out.gsplats.zarr --recipe mosaic --parts 8 -K 4 -L 2
+luxar gsplat lod in.gsplats.zarr out.gsplats.zarr --recipe stream --n-lods 6
+luxar gsplat lod in.gsplats.zarr out.gsplats.zarr --recipe tiles --max-elements 250000
+luxar gsplat lod in.gsplats.zarr out.gsplats.zarr --recipe overview -K 8 --max-elements 250000
+luxar gsplat lod in.gsplats.zarr out.gsplats.zarr --recipe adaptive --parts 8 -K 4 -L 2
 ```
 
-`additive` default method `greedy` (optimal at every prefix); for very large N use
-`--method self_energy`. For `substitutive`/`pyramid`/`multiscale`/`mosaic`,
+`stream` default method `greedy` (optimal at every prefix); for very large N use
+`--method self_energy`. For `levels`/`overview`/`adaptive`,
 `--coarsen-dims` lists center-column indices coarsening may merge over (the rest
 become hard barriers — e.g. a time or channel axis must stay a barrier).
 
@@ -90,9 +90,9 @@ luxar gsplat fit large.zarr out.gsplats.zarr --tiling uniform --tile-size 256 --
 luxar gsplat fit large.zarr out.gsplats.zarr --tiling uniform --tile-size 256 -j 4
 # Content-adaptive boxes (more splats where the volume is busy); needs a density.
 luxar gsplat fit vol.zarr out.gsplats.zarr --tiling content --cal cal.json -j 8
-# Per-part LOD AT FIT TIME (tiled partition only): additive -> partitioned,
-# substitutive -> mosaic. Avoids a separate `lod` pass (which rejects a partition).
-luxar gsplat fit large.zarr out.gsplats.zarr --tiling uniform -j 4 --recipe additive --n-lods 6
+# Per-part LOD AT FIT TIME (tiled partition only): stream -> tiles,
+# levels -> adaptive. Avoids a separate `lod` pass (which rejects a partition).
+luxar gsplat fit large.zarr out.gsplats.zarr --tiling uniform -j 4 --recipe stream --n-lods 6
 ```
 
 ## Whole-timelapse fitting at scale

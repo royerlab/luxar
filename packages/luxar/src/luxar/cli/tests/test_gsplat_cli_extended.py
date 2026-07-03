@@ -1843,15 +1843,15 @@ class TestTransformCommand:
         # extent scaled ~2x on every spatial axis
         np.testing.assert_allclose(hi2 - lo2, src_extent * 2.0, rtol=1e-4, atol=1e-4)
 
-    def test_transform_nested_group_rederives_min_pixel_size(
+    def test_transform_nested_group_rederives_coverage_fraction(
         self, runner: CliRunner, tmp_path: Path
     ) -> None:
         """A spatial scale on a multiscale-style tree (a lod group whose finest
-        child is a partition carrying its OWN min_pixel_size) must NOT leave the
+        child is a partition carrying its OWN coverage_fraction) must NOT leave the
         stale group-node threshold on disk — the writer re-derives it from the
-        transformed extents.
+        transformed subtree splat counts.
 
-        Pre-fix, the tree path scrubbed min_pixel_size only from leaves while
+        Pre-fix, the tree path scrubbed coverage_fraction only from leaves while
         ``map_leaves`` copied the partition GROUP meta verbatim, so the stale
         value survived (and the partition writer branch re-applied it).
         """
@@ -1877,10 +1877,10 @@ class TestTransformCommand:
             )
 
         # multiscale-like: lod( coarse_leaf, partition[ leaf, leaf ] ); stamp a
-        # deliberately-wrong min_pixel_size on the partition GROUP node.
-        STALE = 12345.0
+        # deliberately-wrong coverage_fraction on the partition GROUP node.
+        STALE = 0.5
         fine = GSplatPartition(
-            children=[_leaf(1.0, 0), _leaf(1.0, 1)], meta={"min_pixel_size": STALE}
+            children=[_leaf(1.0, 0), _leaf(1.0, 1)], meta={"coverage_fraction": STALE}
         )
         root = GSplatLodGroup(children=[_leaf(0.3, 2), fine])
 
@@ -1888,7 +1888,7 @@ class TestTransformCommand:
         write_gsplats_tree(src, root)
         # confirm the stale value round-trips on load (the precondition for the bug)
         loaded, _ = load_gsplat_node(src)
-        assert loaded.children[1].meta.get("min_pixel_size") == pytest.approx(STALE)
+        assert loaded.children[1].meta.get("coverage_fraction") == pytest.approx(STALE)
 
         out = tmp_path / "scaled.gsplats.zarr"
         result = runner.invoke(
@@ -1897,12 +1897,56 @@ class TestTransformCommand:
         assert result.exit_code == 0, f"transform failed: {result.stdout}"
         dst, _ = load_gsplat_node(out)
         assert isinstance(dst, GSplatLodGroup)
-        # the partition group's min_pixel_size was re-derived, not the stale value
-        new_mps = dst.children[1].meta.get("min_pixel_size")
-        assert new_mps is not None
-        assert new_mps != pytest.approx(STALE), (
-            f"stale group-node min_pixel_size survived the scale: {new_mps}"
+        # the partition group's coverage_fraction was re-derived, not the stale value
+        new_cov = dst.children[1].meta.get("coverage_fraction")
+        assert new_cov is not None
+        assert new_cov != pytest.approx(STALE), (
+            f"stale group-node coverage_fraction survived the scale: {new_cov}"
         )
+
+    def test_transform_tree_preserves_fitting_and_pipeline_metadata(
+        self, runner: CliRunner, sample_gsplats: Path, tmp_path: Path
+    ) -> None:
+        """The tree-walking path (partition / nested input) must round-trip the
+        fitting/ and pipeline/ provenance groups exactly like the flat path
+        does — pre-fix it called write_gsplats_tree without the
+        split_fitting_info 4-tuple, silently stripping them."""
+        import zarr
+
+        from luxar.gsplats.io.load_gsplats import load_gsplat_node
+        from luxar.gsplats.io.save_gsplats import write_gsplats_tree
+
+        # Build a kind=partition store carrying fitting stats + a pipeline/
+        # group (the reduction provenance this branch preserves on round-trip).
+        part = tmp_path / "part.gsplats.zarr"
+        result = runner.invoke(
+            app,
+            ["gsplat", "partition", str(sample_gsplats), str(part), "--parts", "2"],
+        )
+        assert result.exit_code == 0, f"partition failed: {result.stdout}"
+        node, _ = load_gsplat_node(part)
+        src = tmp_path / "src.gsplats.zarr"
+        write_gsplats_tree(
+            src,
+            node,
+            fitting_info={"fitter_name": "luxar", "psnr_db": 30.5},
+            pipeline_info={"lod_kind": "substitutive", "compression_factor": 4},
+        )
+
+        out = tmp_path / "out.gsplats.zarr"
+        result = runner.invoke(
+            app, ["gsplat", "transform", str(src), str(out), "--scale", "2,2,2"]
+        )
+        assert result.exit_code == 0, f"transform failed: {result.stdout}"
+
+        root = zarr.open_group(str(out), mode="r")
+        assert root.attrs["kind"] == "partition"  # structure preserved
+        assert "fitting" in root, "fitting/ group stripped by the tree path"
+        assert root["fitting"].attrs["fitter_name"] == "luxar"
+        assert root["fitting"].attrs["psnr_db"] == 30.5
+        assert "pipeline" in root, "pipeline/ group stripped by the tree path"
+        assert root["pipeline"].attrs["lod_kind"] == "substitutive"
+        assert root["pipeline"].attrs["compression_factor"] == 4
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -2307,7 +2351,7 @@ class TestLODCommand:
                 str(medium_gsplats),
                 str(out),
                 "--recipe",
-                "additive",
+                "stream",
                 "--max-elements",
                 "100",
             ],
@@ -2328,7 +2372,7 @@ class TestLODCommand:
                 str(medium_gsplats),
                 str(out),
                 "--recipe",
-                "additive",
+                "stream",
                 "--coarsen-dims",
                 "0,1",
             ],
@@ -2349,7 +2393,7 @@ class TestLODCommand:
                 str(medium_gsplats),
                 str(out),
                 "--recipe",
-                "substitutive",
+                "levels",
                 "--coarsen-dims",
                 "0,1,5",
             ],
@@ -2369,7 +2413,7 @@ class TestLODCommand:
                 str(medium_gsplats),
                 str(out),
                 "--recipe",
-                "substitutive",
+                "levels",
                 "--coarsen-dims",
                 "a,b",
             ],
@@ -2392,13 +2436,220 @@ class TestLODCommand:
                 str(medium_gsplats),
                 str(out),
                 "--recipe",
-                "substitutive",
+                "levels",
                 "--coarsen-dims",
                 "0,1",
             ],
         )
         assert result.exit_code == 0, f"failed:\n{result.stdout}"
         assert GSplatData.load(out).n_substitutive >= 2
+
+    def test_legacy_recipe_names_error_with_pointer(
+        self, runner: CliRunner, medium_gsplats: Path, tmp_path: Path
+    ) -> None:
+        """Pre-rename spellings are rejected with a pointer to the new name
+        (no silent aliasing on the CLI; stored manifests translate silently)."""
+        out = tmp_path / "x.gsplats.zarr"
+        for legacy, current in (
+            ("substitutive", "levels"),
+            ("pyramid", "levels"),
+            ("additive", "stream"),
+            ("partitioned", "tiles"),
+            ("multiscale", "overview"),
+            ("mosaic", "adaptive"),
+        ):
+            result = runner.invoke(
+                app,
+                ["gsplat", "lod", str(medium_gsplats), str(out), "--recipe", legacy],
+            )
+            assert result.exit_code != 0, legacy
+            assert current in self._io(result), (legacy, self._io(result))
+            assert not out.exists()
+
+    def test_no_additive_rejected_for_additive_recipe(
+        self, runner: CliRunner, medium_gsplats: Path, tmp_path: Path
+    ) -> None:
+        """--no-additive contradicts recipes whose ladder is definitional."""
+        out = tmp_path / "x.gsplats.zarr"
+        result = runner.invoke(
+            app,
+            [
+                "gsplat",
+                "lod",
+                str(medium_gsplats),
+                str(out),
+                "--recipe",
+                "stream",
+                "--no-additive",
+            ],
+        )
+        assert result.exit_code != 0
+        assert not out.exists()
+
+    def test_recipe_provenance_records_recipe_not_as_lod_kind(
+        self, runner: CliRunner, medium_gsplats: Path, tmp_path: Path
+    ) -> None:
+        """A standalone lod build records the RECIPE that built it (build
+        provenance) WITHOUT overwriting the mechanism ``lod_kind``. A recipe
+        name must never masquerade as lod_kind (viewer/migrator read lod_kind
+        as a mechanism)."""
+        from luxar.gsplats.gsplat_data import GSplatData
+
+        out = tmp_path / "prov.gsplats.zarr"
+        result = runner.invoke(
+            app,
+            [
+                "gsplat",
+                "lod",
+                str(medium_gsplats),
+                str(out),
+                "--recipe",
+                "levels",
+                "-L",
+                "1",
+            ],
+        )
+        assert result.exit_code == 0, f"failed:\n{result.stdout}"
+        stats = GSplatData.load(out, include_stats=True).stats
+        assert stats.get("recipe") == "levels"
+        assert stats.get("lod_kind") == "substitutive"  # mechanism, not "levels"
+
+    def test_substitutive_default_has_additive_ladders(
+        self, runner: CliRunner, medium_gsplats: Path, tmp_path: Path
+    ) -> None:
+        """Additive LODs by default: a plain substitutive build ladders every
+        level; --no-additive restores bare leaves."""
+        from luxar.gsplats.gsplat_data import GSplatData
+
+        out = tmp_path / "lad.gsplats.zarr"
+        result = runner.invoke(
+            app,
+            [
+                "gsplat",
+                "lod",
+                str(medium_gsplats),
+                str(out),
+                "--recipe",
+                "levels",
+                "-L",
+                "1",
+                "--n-lods",
+                "2",
+            ],
+        )
+        assert result.exit_code == 0, f"failed:\n{result.stdout}"
+        loaded = GSplatData.load(out)
+        assert all(lev.n_additive_lods == 2 for lev in loaded.substitutive_levels)
+        out2 = tmp_path / "bare.gsplats.zarr"
+        result = runner.invoke(
+            app,
+            [
+                "gsplat",
+                "lod",
+                str(medium_gsplats),
+                str(out2),
+                "--recipe",
+                "levels",
+                "-L",
+                "1",
+                "--no-additive",
+            ],
+        )
+        assert result.exit_code == 0, f"failed:\n{result.stdout}"
+        loaded2 = GSplatData.load(out2)
+        assert all(lev.n_additive_lods == 1 for lev in loaded2.substitutive_levels)
+
+    def test_refine_rejected_for_additive_recipe(
+        self, runner: CliRunner, medium_gsplats: Path, tmp_path: Path
+    ) -> None:
+        """--refine is a substitutive-only knob; additive must reject it."""
+        out = tmp_path / "x.gsplats.zarr"
+        result = runner.invoke(
+            app,
+            [
+                "gsplat",
+                "lod",
+                str(medium_gsplats),
+                str(out),
+                "--recipe",
+                "stream",
+                "--refine",
+                "l2",
+            ],
+        )
+        assert result.exit_code != 0
+        assert not out.exists()
+
+    def test_refine_iters_requires_refine_l2(
+        self, runner: CliRunner, medium_gsplats: Path, tmp_path: Path
+    ) -> None:
+        out = tmp_path / "x.gsplats.zarr"
+        result = runner.invoke(
+            app,
+            [
+                "gsplat",
+                "lod",
+                str(medium_gsplats),
+                str(out),
+                "--recipe",
+                "levels",
+                "--refine-iters",
+                "50",
+            ],
+        )
+        assert result.exit_code != 0
+        assert not out.exists()
+
+    def test_refine_invalid_value_rejected(
+        self, runner: CliRunner, medium_gsplats: Path, tmp_path: Path
+    ) -> None:
+        out = tmp_path / "x.gsplats.zarr"
+        result = runner.invoke(
+            app,
+            [
+                "gsplat",
+                "lod",
+                str(medium_gsplats),
+                str(out),
+                "--recipe",
+                "levels",
+                "--refine",
+                "banana",
+            ],
+        )
+        assert result.exit_code != 0
+        assert not out.exists()
+
+    def test_recipe_substitutive_with_refine_smoke(
+        self, runner: CliRunner, medium_gsplats: Path, tmp_path: Path
+    ) -> None:
+        """--refine l2 end-to-end: output loads and levels are reduced."""
+        from luxar.gsplats.gsplat_data import GSplatData
+
+        out = tmp_path / "refined.gsplats.zarr"
+        result = runner.invoke(
+            app,
+            [
+                "gsplat",
+                "lod",
+                str(medium_gsplats),
+                str(out),
+                "--recipe",
+                "levels",
+                "-L",
+                "1",
+                "--refine",
+                "l2",
+                "--refine-iters",
+                "4",
+                "--seed",
+                "0",
+            ],
+        )
+        assert result.exit_code == 0, f"refine smoke failed:\n{result.stdout}"
+        loaded = GSplatData.load(out)
+        assert loaded.n_substitutive == 2
+        assert loaded.at_substitutive(1).n_splats < loaded.at_substitutive(0).n_splats
 
     def test_recipe_flat(
         self, runner: CliRunner, medium_gsplats: Path, tmp_path: Path
@@ -2429,7 +2680,7 @@ class TestLODCommand:
                 str(medium_gsplats),
                 str(out),
                 "--recipe",
-                "additive",
+                "stream",
                 "--n-lods",
                 "2",
                 "--method",
@@ -2458,7 +2709,7 @@ class TestLODCommand:
                 str(medium_gsplats),
                 str(out),
                 "--recipe",
-                "substitutive",
+                "levels",
                 "-K",
                 "2",
                 "-L",
@@ -2476,55 +2727,48 @@ class TestLODCommand:
             4,
         ]
 
-    def test_recipe_substitutive_lod_method_threads_to_thresholds(
+    def test_recipe_substitutive_stamps_coverage_fractions(
         self, runner: CliRunner, medium_gsplats: Path, tmp_path: Path
     ) -> None:
-        """#5: `--lod-method` now reaches the substitutive/pyramid thresholds
-        (derived at save). `count` reproduces √N on the on-disk lod children;
-        `extent` (default) is physically anchored and differs."""
+        """#5: `gsplat lod --recipe levels` stamps viewport-relative
+        ``coverage_fraction`` (``sqrt(N_i/N_finest)``) on the on-disk lod children:
+        coarsest = 0.0, finest = 1.0, strictly ascending."""
         import math
 
         import zarr
 
-        def _fine_threshold(*flags: str) -> tuple[list[float], list[int]]:
-            out = tmp_path / (
-                "sub_" + "_".join(flags).replace("-", "") + ".gsplats.zarr"
-            )
-            r = runner.invoke(
-                app,
-                [
-                    "gsplat",
-                    "lod",
-                    str(medium_gsplats),
-                    str(out),
-                    "--recipe",
-                    "substitutive",
-                    "-K",
-                    "2",
-                    "-L",
-                    "2",
-                    "--device",
-                    "cpu",
-                    *flags,
-                ],
-            )
-            assert r.exit_code == 0, f"substitutive {flags} failed:\n{r.stdout}"
-            g = zarr.open_group(str(out), mode="r")
-            ch = sorted(
-                (k for k in g.group_keys() if k.startswith("child_")),
-                key=lambda s: int(s.split("_")[1]),
-            )
-            mps = [float(g[k].attrs["min_pixel_size"]) for k in ch]
-            counts = [int(g[k].attrs["n_splats"]) for k in ch]  # child_0 = coarsest
-            assert mps[0] == 0.0
-            # count method: threshold_i = 10·√(n_i / n_0).
-            return mps, counts
-
-        cnt_mps, counts = _fine_threshold("--lod-method", "count")
-        for i in range(1, len(cnt_mps)):
-            assert cnt_mps[i] == pytest.approx(10.0 * math.sqrt(counts[i] / counts[0]))
-        ext_mps, _ = _fine_threshold()  # default = extent
-        assert ext_mps[-1] != pytest.approx(cnt_mps[-1])  # physically anchored
+        out = tmp_path / "sub.gsplats.zarr"
+        r = runner.invoke(
+            app,
+            [
+                "gsplat",
+                "lod",
+                str(medium_gsplats),
+                str(out),
+                "--recipe",
+                "levels",
+                "-K",
+                "2",
+                "-L",
+                "2",
+                "--device",
+                "cpu",
+            ],
+        )
+        assert r.exit_code == 0, f"substitutive failed:\n{r.stdout}"
+        g = zarr.open_group(str(out), mode="r")
+        ch = sorted(
+            (k for k in g.group_keys() if k.startswith("child_")),
+            key=lambda s: int(s.split("_")[1]),
+        )
+        cov = [float(g[k].attrs["coverage_fraction"]) for k in ch]
+        counts = [int(g[k].attrs["n_splats"]) for k in ch]  # child_0 = coarsest
+        assert cov[0] == 0.0
+        assert cov[-1] == pytest.approx(1.0)
+        # coverage_i = sqrt(n_i / n_finest) for the non-coarsest children.
+        for i in range(1, len(cov)):
+            assert cov[i] == pytest.approx(math.sqrt(counts[i] / counts[-1]))
+        assert all(cov[i] > cov[i - 1] for i in range(1, len(cov)))
 
     def test_recipe_pyramid(
         self, runner: CliRunner, medium_gsplats: Path, tmp_path: Path
@@ -2540,7 +2784,7 @@ class TestLODCommand:
                 str(medium_gsplats),
                 str(out),
                 "--recipe",
-                "pyramid",
+                "levels",
                 "-K",
                 "2",
                 "-L",
@@ -2580,7 +2824,7 @@ class TestLODCommand:
                 str(medium_gsplats),
                 str(out),
                 "--recipe",
-                "partitioned",
+                "tiles",
                 "--max-elements",
                 "12",
                 "--n-lods",
@@ -2616,7 +2860,7 @@ class TestLODCommand:
                 str(medium_gsplats),
                 str(out),
                 "--recipe",
-                "multiscale",
+                "overview",
                 "--max-elements",
                 "12",
                 "--n-lods",
@@ -2654,7 +2898,7 @@ class TestLODCommand:
                 str(medium_gsplats),
                 str(out),
                 "--recipe",
-                "mosaic",
+                "adaptive",
                 "--max-elements",
                 "12",
                 "-K",
@@ -2696,7 +2940,7 @@ class TestLODCommand:
                 str(medium_gsplats),
                 str(out),
                 "--recipe",
-                "mosaic",
+                "adaptive",
                 "--parts",
                 "4",
                 "-K",
@@ -2713,11 +2957,11 @@ class TestLODCommand:
         # 32 splats / 4 parts -> cap 8 -> 4 BSP parts (pre-fix: --parts ignored -> 1).
         assert node.n_children == 4
 
-    def test_recipe_mosaic_rejects_additive_option(
+    def test_recipe_mosaic_accepts_additive_option(
         self, runner: CliRunner, medium_gsplats: Path, tmp_path: Path
     ) -> None:
-        """mosaic parts are substitutive, not additive ladders — an additive-only
-        option (--n-lods) is rejected by the option-relevance check."""
+        """Additive LODs by default: mosaic's per-part substitutive levels are
+        laddered, so additive knobs (--n-lods) are legal for it now."""
         out = tmp_path / "x.gsplats.zarr"
         result = runner.invoke(
             app,
@@ -2727,13 +2971,15 @@ class TestLODCommand:
                 str(medium_gsplats),
                 str(out),
                 "--recipe",
-                "mosaic",
+                "adaptive",
                 "--n-lods",
-                "4",
+                "2",
+                "--max-elements",
+                "16",
             ],
         )
-        assert result.exit_code != 0
-        assert not out.exists()
+        assert result.exit_code == 0, f"failed:\n{result.stdout}"
+        assert out.exists()
 
     def _multiscale_fine_threshold(
         self, runner: CliRunner, src: Path, out: Path, *flags: str
@@ -2746,7 +2992,7 @@ class TestLODCommand:
                 str(src),
                 str(out),
                 "--recipe",
-                "multiscale",
+                "overview",
                 "--max-elements",
                 "12",
                 "--n-lods",
@@ -2762,67 +3008,19 @@ class TestLODCommand:
         import zarr
 
         g = zarr.open_group(str(out), mode="r")
-        assert g["child_0"].attrs.get("min_pixel_size") == 0.0  # coarsest cap
-        return float(g["child_1"].attrs.get("min_pixel_size"))
+        assert g["child_0"].attrs.get("coverage_fraction") == 0.0  # coarsest cap
+        return float(g["child_1"].attrs.get("coverage_fraction"))
 
-    def test_recipe_multiscale_lod_method_thresholds(
+    def test_recipe_multiscale_stamps_coverage_fractions(
         self, runner: CliRunner, medium_gsplats: Path, tmp_path: Path
     ) -> None:
-        """`--lod-method` selects the coarse↔fine threshold on the fine partition
-        wrapper (the on-disk attr the viewer's selector reads). `extent` (default)
-        is physically anchored; `count` reproduces the legacy √N proxy exactly."""
-        import math
-
-        from luxar.gsplats.io.load_gsplats import load_gsplat_node
-        from luxar.gsplats.tree import total_splats
-
-        # count method: fine == base_pixel_size · √(n_fine / n_coarse).
-        out_c = tmp_path / "ms_count.gsplats.zarr"
-        count_mps = self._multiscale_fine_threshold(
-            runner, medium_gsplats, out_c, "--lod-method", "count"
-        )
-        node, _ = load_gsplat_node(out_c)
-        coarse, fine = node.children  # coarsest→finest in memory
-        expected = 10.0 * math.sqrt(total_splats(fine) / total_splats(coarse))
-        assert count_mps == pytest.approx(expected)
-
-        # extent method (default): positive, ascending, and generally != count.
-        out_e = tmp_path / "ms_extent.gsplats.zarr"
-        extent_mps = self._multiscale_fine_threshold(runner, medium_gsplats, out_e)
-        assert extent_mps > 0.0  # ascending → coarse cap reachable at far zoom
-        assert extent_mps != pytest.approx(count_mps)
-
-        # base_pixel_size is the target-px anchor T in extent mode → 2× scales it.
-        out_b = tmp_path / "ms_bps.gsplats.zarr"
-        scaled = self._multiscale_fine_threshold(
-            runner, medium_gsplats, out_b, "--base-pixel-size", "3.0"
-        )
-        assert scaled == pytest.approx(2.0 * extent_mps)  # default T is 1.5
-
-    def test_lod_selector_rejected_for_recipe_without_lod_group(
-        self, runner: CliRunner, medium_gsplats: Path, tmp_path: Path
-    ) -> None:
-        """The lod-selector knobs (`--base-pixel-size`/`--lod-method`/…) tune a
-        kind=lod group's switch, so the option-relevance check accepts them for
-        substitutive/pyramid/multiscale/mosaic but REJECTS them for recipes that
-        build no lod group (flat/additive/partitioned)."""
-        out = tmp_path / "x.gsplats.zarr"
-        for flag, val in (("--base-pixel-size", "200"), ("--lod-method", "count")):
-            result = runner.invoke(
-                app,
-                [
-                    "gsplat",
-                    "lod",
-                    str(medium_gsplats),
-                    str(out),
-                    "--recipe",
-                    "additive",
-                    flag,
-                    val,
-                ],
-            )
-            assert result.exit_code != 0, f"{flag} should be rejected for additive"
-            assert not out.exists()
+        """multiscale stamps viewport-relative ``coverage_fraction`` on the coarse
+        cap (0.0, always-eligible) and the fine partition wrapper (1.0, fills-screen)
+        — the on-disk attrs the viewer's selector reads."""
+        out = tmp_path / "ms.gsplats.zarr"
+        fine_cov = self._multiscale_fine_threshold(runner, medium_gsplats, out)
+        # coverage_fractions([N_coarse, N_fine]) = [0.0, 1.0]: fine fills screen.
+        assert fine_cov == pytest.approx(1.0)
 
     def test_quiet_suppresses_saved_line(
         self, runner: CliRunner, medium_gsplats: Path, tmp_path: Path
@@ -2836,7 +3034,7 @@ class TestLODCommand:
                 str(medium_gsplats),
                 str(out),
                 "--recipe",
-                "additive",
+                "stream",
                 "--n-lods",
                 "2",
                 "--method",
@@ -2907,7 +3105,7 @@ class TestLODCommand:
         ).save(path)
         return path
 
-    @pytest.mark.parametrize("recipe", ["partitioned", "multiscale", "mosaic"])
+    @pytest.mark.parametrize("recipe", ["tiles", "overview", "adaptive"])
     def test_2d_input_partition_recipes_clean_error(
         self, runner: CliRunner, tmp_path: Path, recipe: str
     ) -> None:
@@ -2948,7 +3146,7 @@ class TestLODCommand:
                 str(src),
                 str(out),
                 "--recipe",
-                "additive",
+                "stream",
                 "--n-lods",
                 "2",
             ],
@@ -2981,7 +3179,9 @@ class TestLODCommand:
     def test_substitutive_method_short_flag_hint(
         self, runner: CliRunner, medium_gsplats: Path, tmp_path: Path
     ) -> None:
-        """`--recipe substitutive -m ...` points the user to --substitutive-method."""
+        """`--recipe levels -m kmeans` (a substitutive algorithm name fed
+        to the ADDITIVE --method) still points the user to --substitutive-method
+        via the method-value validation."""
         out = tmp_path / "o.gsplats.zarr"
         result = runner.invoke(
             app,
@@ -2991,7 +3191,7 @@ class TestLODCommand:
                 str(medium_gsplats),
                 str(out),
                 "--recipe",
-                "substitutive",
+                "levels",
                 "-m",
                 "kmeans",
             ],
@@ -3033,7 +3233,7 @@ class TestLODCommand:
                 str(src),
                 str(out),
                 "--recipe",
-                "multiscale",
+                "overview",
                 "--max-elements",
                 "150",
                 "-K",
@@ -3066,7 +3266,7 @@ class TestLODCommand:
                 str(medium_gsplats),
                 str(out),
                 "--recipe",
-                "additive",
+                "stream",
                 "--breakpoints",
                 breakpoints,
             ],
@@ -3095,7 +3295,7 @@ class TestLODCommand:
                 str(medium_gsplats),
                 str(out),
                 "--recipe",
-                "multiscale",
+                "overview",
             ],
         )
         assert result.exit_code == 0, f"multiscale failed: {self._io(result)}"
@@ -3116,7 +3316,7 @@ class TestLODCommand:
                 str(medium_gsplats),
                 str(out),
                 "--recipe",
-                "multiscale",
+                "overview",
                 "-K",
                 "3",
             ],
@@ -3159,7 +3359,7 @@ class TestLODCommand:
                 str(medium_gsplats),
                 str(out),
                 "--recipe",
-                "multiscale",
+                "overview",
                 "--levels",
                 "3",
             ],
@@ -3184,7 +3384,7 @@ class TestLODCommand:
                 str(medium_gsplats),
                 str(out),
                 "--recipe",
-                "additive",
+                "stream",
                 "-b",
                 "stream:10",
             ],
@@ -3208,7 +3408,7 @@ class TestLODCommand:
                 str(medium_gsplats),
                 str(out),
                 "--recipe",
-                "additive",
+                "stream",
                 "-b",
                 bad,
             ],
@@ -3229,7 +3429,7 @@ class TestLODCommand:
                 str(medium_gsplats),
                 str(out),
                 "--recipe",
-                "additive",
+                "stream",
                 "--target-ms",
                 "200",
             ],
@@ -3256,7 +3456,7 @@ class TestLODCommand:
                 str(medium_gsplats),
                 str(out),
                 "--recipe",
-                "additive",
+                "stream",
                 "--target-ms",
                 "200",
                 "--encoding",
@@ -3310,7 +3510,7 @@ class TestLODCommand:
                 str(medium_gsplats),
                 str(out),
                 "--recipe",
-                "additive",
+                "stream",
                 "--target-ms",
                 "200",
                 "-b",
@@ -3335,7 +3535,7 @@ class TestLODCommand:
                 str(medium_gsplats),
                 str(out),
                 "--recipe",
-                "additive",
+                "stream",
                 "--bandwidth-mbps",
                 "50",
             ],
@@ -3346,10 +3546,11 @@ class TestLODCommand:
         flat = re.sub(r"[│─╭╮╰╯\s]+", " ", self._io(result))
         assert "only apply with --target-ms" in flat
 
-    def test_lod_target_ms_rejected_for_substitutive(
+    def test_lod_target_ms_accepted_for_substitutive(
         self, runner: CliRunner, medium_gsplats: Path, tmp_path: Path
     ) -> None:
-        """--target-ms is an additive-token knob — rejected for substitutive."""
+        """Additive ladders are on by default for substitutive, so the
+        streaming-sizing knob applies there now (sizes each level's ladder)."""
         out = tmp_path / "x.gsplats.zarr"
         result = runner.invoke(
             app,
@@ -3359,13 +3560,15 @@ class TestLODCommand:
                 str(medium_gsplats),
                 str(out),
                 "--recipe",
-                "substitutive",
+                "levels",
+                "-L",
+                "1",
                 "--target-ms",
                 "200",
             ],
         )
-        assert result.exit_code != 0
-        assert "not used by" in self._io(result)
+        assert result.exit_code == 0, f"failed:\n{result.stdout}"
+        assert out.exists()
 
 
 class TestAdditiveCommand:
@@ -3392,8 +3595,14 @@ class TestAdditiveCommand:
         data = GSplatData.load(src)
         sub = build_recipe(
             data,
-            "substitutive",
-            RecipeParams(compression_factor=4, levels=2, device="cpu"),
+            "levels",
+            RecipeParams(
+                compression_factor=4,
+                levels=2,
+                device="cpu",
+                additive_ladders=False,  # bare levels: the command under test
+                # retrofits the ladders itself
+            ),
         )
         sub.save(out)
 
@@ -3619,7 +3828,7 @@ class TestFlattenCommand:
     def test_flatten_then_multiscale_lod(
         self, runner: CliRunner, medium_gsplats: Path, tmp_path: Path
     ) -> None:
-        """The end-to-end unblock: partition → flatten → `lod --recipe multiscale`
+        """The end-to-end unblock: partition → flatten → `lod --recipe overview`
         (which rejects a partition directly)."""
         part = tmp_path / "part.gsplats.zarr"
         self._make_partition(runner, medium_gsplats, part)
@@ -3627,7 +3836,7 @@ class TestFlattenCommand:
         # `lod` on the partition directly must fail and point at `flatten`.
         bad = tmp_path / "bad.gsplats.zarr"
         rej = runner.invoke(
-            app, ["gsplat", "lod", str(part), str(bad), "--recipe", "multiscale"]
+            app, ["gsplat", "lod", str(part), str(bad), "--recipe", "overview"]
         )
         assert rej.exit_code != 0
         assert "flatten" in (rej.stdout + (rej.stderr or ""))
@@ -3639,7 +3848,7 @@ class TestFlattenCommand:
         )
         out = tmp_path / "ms.gsplats.zarr"
         ok = runner.invoke(
-            app, ["gsplat", "lod", str(flat), str(out), "--recipe", "multiscale"]
+            app, ["gsplat", "lod", str(flat), str(out), "--recipe", "overview"]
         )
         assert ok.exit_code == 0, f"lod after flatten failed: {ok.stdout}"
         assert out.exists()

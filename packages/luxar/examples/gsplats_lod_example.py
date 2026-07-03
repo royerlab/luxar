@@ -4,7 +4,9 @@
 This example demonstrates the **substitutive LOD** path for Gaussian
 splats: a coarse-to-fine pyramid where each coarser level *replaces*
 its finer level with a smaller set of synthesized representative
-splats. The viewer picks a level based on projected pixel size.
+splats. The viewer picks a level by comparing the group's on-screen
+size against each level's viewport-relative ``coverage_fraction``
+threshold (auto-derived as ``sqrt(N_level / N_finest)``).
 
 This complements the four existing LOD examples
 (``progressive_points_lines_example.py``, ``partition_of_lod_example.py``,
@@ -25,9 +27,9 @@ Pipeline:
 4. Add the house-style explainer card plus a per-level color legend
    (live splat counts, each line tinted to match its level) that
    explain what the colors mean.
-5. The viewer renders the appropriate level given the camera distance;
-   zooming in switches to finer levels automatically — and the color
-   on screen changes as it does.
+5. The viewer renders the appropriate level given the group's on-screen
+   size; zooming in switches to finer levels automatically — and the
+   color on screen changes as it does.
 
 Educational value:
 - See substitutive LOD authored from the lower-level
@@ -35,7 +37,7 @@ Educational value:
   ``add_gsplats_from_data(..., lod_group=True)``.
 - Understand the ``compression_factor`` × ``levels`` parameters.
 - Use per-level coloring + overlays as a debugging aid to *see* the
-  level-switching the ``pixel_size`` selector performs.
+  level-switching the ``coverage_fraction`` selector performs.
 """
 
 import numpy as np
@@ -192,8 +194,8 @@ def main() -> None:
                 "Each coarser level <strong>replaces</strong> the finer one with "
                 "fewer synthesized splats (built by "
                 "<code>make_substitutive_lod</code>). The viewer auto-picks a "
-                "level by projected pixel size; debug colours mark which level "
-                "is on screen."
+                "level by on-screen coverage (<code>coverage_fraction</code>); "
+                "debug colours mark which level is on screen."
             ),
             observe=[
                 "Zoom out and splats turn red (coarsest, fewest splats).",

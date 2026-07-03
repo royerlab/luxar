@@ -234,12 +234,17 @@ than as a "group".
 #### `kind: "lod"` — Level-of-Detail group
 
 Picks **one of N alternative children** at runtime based on the current
-view. Each child carries a `min_pixel_size` threshold; the viewer
-projects the LOD group's bbox to screen, takes the diagonal in pixels,
-and renders the **finest** child whose threshold is satisfied (with 10%
-asymmetric hysteresis on the downgrade direction to suppress flicker).
-When the camera is inside or straddling a group's bounding box, the group
-is treated as filling the screen and its **finest** child is selected.
+view. Each child carries a `coverage_fraction` threshold — a dimensionless,
+viewport-relative value in `[0, 1]`. The viewer projects the LOD group's bbox
+to screen, takes the diagonal in pixels, multiplies each child's
+`coverage_fraction` by the viewport diagonal (times a small fill-factor
+constant) to get a pixel threshold, and renders the **finest** child whose
+threshold is satisfied (with 10% asymmetric hysteresis on the downgrade
+direction to suppress flicker). Because the threshold is viewport-relative,
+the finest child activates when the object roughly fills the screen —
+identically on any monitor/viewport size. When the camera is inside or
+straddling a group's bounding box, the group is treated as filling the screen
+and its **finest** child is selected.
 
 `kind="lod"` is **geometry-agnostic**: children can be points, lines,
 gsplats, or themselves specialized groups (e.g. a Partition group inside an
@@ -262,7 +267,7 @@ on its `position_bounds`. On-disk, children are `child_<i>/` in
   "display_type": "gsplats",  // Resolved at write time from the finest
                               //   child; the layers panel uses this as
                               //   the user-facing layer type.
-  "selector": "pixel_size",   // Reserved; only "pixel_size" supported today.
+  "selector": "coverage",     // Reserved; only "coverage" supported today.
   "default_level": 0,         // 0-based initial active level (coarsest→finest).
                               //   Seeds the "Active level" dropdown in the
                               //   Layers panel; does not lock the runtime
@@ -284,10 +289,10 @@ on its `position_bounds`. On-disk, children are `child_<i>/` in
 - Subgroup naming is **not** enforced; Python's convenience API writes
   `child_0`, `child_1`, … in **coarsest→finest** order, and the loader
   treats insertion order as authoritative.
-- Each child's `.zattrs` MUST carry `"min_pixel_size": <float>`. Values
-  must be strictly monotonic increasing in coarsest→finest order;
-  the coarsest conventionally has `min_pixel_size: 0` (always
-  applicable).
+- Each child's `.zattrs` MUST carry `"coverage_fraction": <float in [0, 1]>`.
+  Values must be strictly monotonic increasing in coarsest→finest order;
+  the coarsest is always `coverage_fraction: 0.0` (always applicable) and the
+  finest is always `coverage_fraction: 1.0` (fills the screen).
 - Children themselves are standard nodes — they retain their own
   `type` (`gsplats` / `points` / `lines` / `group`, possibly with their
   own `kind` attr) and full attr set.
@@ -296,11 +301,12 @@ on its `position_bounds`. On-disk, children are `child_<i>/` in
 ```python
 # Manual:
 lod = scene.add_lod_group("multires")
-lod.add_gsplats_from_data("child_0", coarse_data, min_pixel_size=0)
-lod.add_gsplats_from_data("child_1", medium_data, min_pixel_size=100)
-lod.add_gsplats_from_data("child_2", fine_data, min_pixel_size=500)
+lod.add_gsplats_from_data("child_0", coarse_data, coverage_fraction=0.0)
+lod.add_gsplats_from_data("child_1", medium_data, coverage_fraction=0.5)
+lod.add_gsplats_from_data("child_2", fine_data, coverage_fraction=1.0)
 
-# Convenience (auto-derives min_pixel_sizes via √(N_finer / N_coarsest)):
+# Convenience (auto-derives coverage_fractions via sqrt(N_i / N_finest), the
+# per-level splat-count ratio — coarsest 0.0, finest 1.0):
 scene.add_gsplats_from_data(
     "multires", flat_data,
     lod_group=dict(compression_factor=4, levels=2),

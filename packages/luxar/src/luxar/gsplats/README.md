@@ -731,19 +731,19 @@ matrix = make_lod_pyramid(
 
 ```bash
 # One command, one `--recipe` flag (REQUIRED); output is a standalone v3.1 .gsplats.zarr.
-# flat / additive — single leaf, optionally with an additive (prefix-sum) ladder
-luxar gsplat lod fit.gsplats.zarr additive.gsplats.zarr --recipe additive --n-lods 4
-luxar gsplat lod fit.gsplats.zarr out.gsplats.zarr --recipe additive --method self_energy   # cheap O(N log N)
-luxar gsplat lod fit.gsplats.zarr out.gsplats.zarr --recipe additive -m mass -b counts:500,2000,10000
+# flat / stream — single leaf, optionally with an additive (prefix-sum) ladder
+luxar gsplat lod fit.gsplats.zarr stream.gsplats.zarr --recipe stream --n-lods 4
+luxar gsplat lod fit.gsplats.zarr out.gsplats.zarr --recipe stream --method self_energy   # cheap O(N log N)
+luxar gsplat lod fit.gsplats.zarr out.gsplats.zarr --recipe stream -m mass -b counts:500,2000,10000
 
-# partitioned / multiscale — BSP parts each with an additive ladder (large data);
-# multiscale adds a coarse substitutive cap above the partitioned fine branch
-luxar gsplat lod fit.gsplats.zarr part.gsplats.zarr --recipe partitioned --max-elements 250000
-luxar gsplat lod fit.gsplats.zarr ms.gsplats.zarr --recipe multiscale --compression-factor 8
+# tiles / overview — BSP parts each with an additive ladder (large data);
+# overview adds a coarse substitutive cap above the tiled fine branch
+luxar gsplat lod fit.gsplats.zarr part.gsplats.zarr --recipe tiles --max-elements 250000
+luxar gsplat lod fit.gsplats.zarr ms.gsplats.zarr --recipe overview --compression-factor 8
 
-# substitutive / pyramid primitives; v3.1 kind=lod group
-luxar gsplat lod fit.gsplats.zarr substitutive.gsplats.zarr --recipe substitutive -L 3 -K 4
-luxar gsplat lod fit.gsplats.zarr pyramid.gsplats.zarr --recipe pyramid -K 4 -L 3 --n-lods 4
+# levels — synthesised representative levels; v3.1 kind=lod group
+luxar gsplat lod fit.gsplats.zarr levels.gsplats.zarr --recipe levels -L 3 -K 4
+luxar gsplat lod fit.gsplats.zarr pyramid.gsplats.zarr --recipe levels -K 4 -L 3 --n-lods 4
 
 # Migrate legacy v1.0 / v1.1 / v2.0 / pre-v2.0 substitutive-directory layouts → v3.1
 luxar gsplat migrate-format legacy.gsplats.zarr v3.gsplats.zarr
@@ -761,7 +761,7 @@ luxar gsplat cal volume.tiff cal.json
 luxar gsplat fit volume.tiff fitted.gsplats.zarr --seeds <K*>
 
 # 3. Build a streaming LOD ladder (pick a recipe by dataset scale)
-luxar gsplat lod fitted.gsplats.zarr scene.gsplats.zarr --recipe additive --n-lods 4
+luxar gsplat lod fitted.gsplats.zarr scene.gsplats.zarr --recipe stream --n-lods 4
 ```
 
 See `lod/README.md` for algorithm details (greedy vs self-energy vs mass vs amplitude ordering, breakpoint specs, performance notes, and the mathematical derivations / complexity analyses).
@@ -878,14 +878,16 @@ with LuxarZarrCompiler('scene.luxar.zarr') as compiler:
 
 > **Multi-substitutive input → `kind=lod` group.** When the `GSplatData`
 > carries more than one substitutive level (e.g. the output of
-> `luxar gsplat lod --recipe substitutive` / `pyramid`), `add_gsplats_from_data`
+> `luxar gsplat lod --recipe levels`), `add_gsplats_from_data`
 > (and `add_gsplats_from_file`) route it by default into a `kind=lod`
 > scene group — one gsplats child per substitutive level, with
-> `min_pixel_size` thresholds derived from the per-level splat counts, so
-> the viewer view-switches between levels. In v3.0 a saved `.gsplats.zarr`
+> `coverage_fraction` thresholds derived as `sqrt(N_i / N_finest)` from the
+> per-level splat counts (a dimensionless, viewport-relative value in
+> `[0, 1]`; coarsest = 0.0, finest = 1.0), so the viewer view-switches
+> between levels identically on any monitor. In v3.1 a saved `.gsplats.zarr`
 > is already a `kind=lod` group on disk; scene embedding grafts that subtree
 > directly. No substitutive work is discarded. Pass `lod_group=False` to
-> collapse to the finest level, or `lod_group=dict(min_pixel_sizes=[...])`
+> collapse to the finest level, or `lod_group=dict(coverage_fractions=[...])`
 > to set the switch thresholds explicitly.
 
 ### Color Support

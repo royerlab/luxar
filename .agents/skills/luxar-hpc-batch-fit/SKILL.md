@@ -39,7 +39,7 @@ luxar gsplat batch-fit run vol.zarr out/ --gpus auto --tile-size 256
 
 # Content-balanced boxes (needs a density) + per-part LOD baked into the merge.
 luxar gsplat batch-fit run vol.zarr out/ --tiling content --cal cal.json \
-    --gpus auto --merge-recipe additive --merge-n-lods 4
+    --gpus auto --merge-recipe stream --merge-n-lods 4
 
 # Subset of timepoints, 2 workers per GPU, explicit cards.
 luxar gsplat batch-fit run vol.zarr out/ --gpus 0,1 --jobs-per-gpu 2 --timepoints ::10
@@ -66,7 +66,7 @@ luxar gsplat batch-fit submit data.zarr.zip out/ -p gpu --preemptible
 
 # Per-part LOD baked into the merge job.
 luxar gsplat batch-fit submit data.zarr.zip out/ -p gpu \
-    --merge-recipe substitutive --merge-compression-factor 4 --merge-levels 3
+    --merge-recipe levels --merge-compression-factor 4 --merge-levels 3
 ```
 
 ## Monitor → validate → merge
@@ -75,7 +75,7 @@ luxar gsplat batch-fit submit data.zarr.zip out/ -p gpu \
 luxar gsplat batch-fit status out/ -v          # per-task state (sacct/squeue + disk)
 luxar gsplat batch-fit validate out/ --fix     # delete corrupt/stale tiles for re-fit
 luxar gsplat batch-fit merge out/              # (re)run merge -> kind=partition
-luxar gsplat batch-fit merge out/ --recipe additive --n-lods 6   # + per-part LOD as it streams
+luxar gsplat batch-fit merge out/ --recipe stream --n-lods 6   # + per-part LOD as it streams
 luxar gsplat batch-fit cancel out/             # scancel all jobs for this run
 ```
 
@@ -104,7 +104,7 @@ The local Mac cannot reach Bruno directly — relay through `obsidian`
 luxar gsplat batch-fit submit /hpc/projects/<grp>/data.zarr out/ -p gpu --tiling content --cal cal.json
 luxar gsplat batch-fit status out/ -v       # poll
 luxar gsplat batch-fit validate out/ --fix  # clean failures, then re-submit to refill
-luxar gsplat batch-fit merge out/ --recipe additive --n-lods 6
+luxar gsplat batch-fit merge out/ --recipe stream --n-lods 6
 ```
 
 Build the CUDA extension on a GPU node first if needed: `make build-cuda SLURM=1`.

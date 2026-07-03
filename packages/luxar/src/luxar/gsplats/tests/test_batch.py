@@ -453,7 +453,9 @@ class TestSlurmGen:
 
         script = generate_merge_sbatch(manifest, "# env\n")
         assert "luxar gsplat batch-fit merge" in script
-        assert "--recipe substitutive" in script
+        # Legacy manifest spelling is canonicalized on emission (the merge
+        # CLI rejects old names).
+        assert "--recipe levels" in script
         assert "--compression-factor 4" in script
         assert "--levels 2" in script
 
@@ -1227,6 +1229,12 @@ class TestMergeOrchestrator:
         assert node.n_children == n_k
         assert total_splats(node) == total
 
+        # No recipe → bare-leaf parts → no pipeline/ group (matches a plain fit).
+        import zarr
+
+        root = zarr.open_group(str(final), mode="r")
+        assert "pipeline" not in root
+
         # Each part stacked its 2 timepoints → 4D, and the stacked time
         # coordinate (last appended axis) is the REAL index set {5, 72},
         # not the sequential {0, 1}.
@@ -1276,7 +1284,7 @@ class TestMergeOrchestrator:
     def test_merge_recipe_additive_makes_partition_of_ladders(
         self, tmp_path: Path
     ) -> None:
-        """--recipe additive → kind=partition where each part is a leaf carrying
+        """--recipe stream → kind=partition where each part is a leaf carrying
         an additive ladder (n_additive_sublods > 1); finest total conserved."""
         from luxar.gsplats.batch.manifest import BatchManifest
         from luxar.gsplats.batch.merge_orchestrator import merge_batch_results
@@ -1298,7 +1306,7 @@ class TestMergeOrchestrator:
             seed += 1
 
         manifest = BatchManifest(n_timepoints=1, n_channels=1, n_tiles=n_k)
-        final = merge_batch_results(manifest, out_dir, verbose=False, recipe="additive")
+        final = merge_batch_results(manifest, out_dir, verbose=False, recipe="stream")
 
         node, attrs = self._read_tree(final)
         assert attrs["kind"] == "partition"
@@ -1309,8 +1317,20 @@ class TestMergeOrchestrator:
             assert child.n_additive_sublods > 1  # a real ladder, not a flat leaf
         assert node.n_splats == total  # finest count conserved across parts
 
-    def test_merge_recipe_substitutive_makes_mosaic(self, tmp_path: Path) -> None:
-        """--recipe substitutive → kind=partition where each part is its own
+        # The recipe's reduction provenance is persisted in the pipeline/ group
+        # (pre-fix, write_partition_streaming's pipeline_info was never passed).
+        import zarr
+
+        root = zarr.open_group(str(final), mode="r")
+        assert "pipeline" in root, "merged partition is missing the pipeline/ group"
+        pipe = dict(root["pipeline"].attrs)
+        assert pipe["recipe"] == "stream"  # the recipe (build instruction)
+        assert pipe["lod_kind"] == "additive"  # the reduction MECHANISM, not the recipe
+        assert pipe["per_part"] is True
+        assert pipe["n_lods"] == 4  # RecipeParams default
+
+    def test_merge_recipe_levels_makes_adaptive(self, tmp_path: Path) -> None:
+        """--recipe levels → kind=partition where each part is its own
         substitutive lod group (>= 2 levels); finest total conserved."""
         from luxar.gsplats.batch.manifest import BatchManifest, output_filename
         from luxar.gsplats.batch.merge_orchestrator import merge_batch_results
@@ -1329,9 +1349,7 @@ class TestMergeOrchestrator:
             seed += 1
 
         manifest = BatchManifest(n_timepoints=1, n_channels=1, n_tiles=n_k)
-        final = merge_batch_results(
-            manifest, out_dir, verbose=False, recipe="substitutive"
-        )
+        final = merge_batch_results(manifest, out_dir, verbose=False, recipe="levels")
 
         node, attrs = self._read_tree(final)
         assert attrs["kind"] == "partition"
@@ -1341,6 +1359,23 @@ class TestMergeOrchestrator:
             assert isinstance(child, GSplatLodGroup)
             assert child.n_children >= 2  # coarse↔fine levels
         assert node.n_splats == total  # finest level per part summed
+
+        # Substitutive reduction provenance (mirrors what `gsplat lod` persists)
+        # lands in the pipeline/ group of the merged store.
+        import zarr
+
+        root = zarr.open_group(str(final), mode="r")
+        assert "pipeline" in root, "merged partition is missing the pipeline/ group"
+        pipe = dict(root["pipeline"].attrs)
+        assert pipe["recipe"] == "levels"  # the recipe (build instruction)
+        assert pipe["lod_kind"] == "substitutive"  # the reduction MECHANISM
+        assert pipe["per_part"] is True
+        assert pipe["compression_factor"] == 4  # RecipeParams defaults
+        assert pipe["levels"] == 3
+        assert pipe["conserve_mass"] is True
+        assert pipe["refine"] == "none"
+        # None records the per-part default (spatial dims; time axis = barrier).
+        assert pipe["coarsen_dims"] is None
 
     def test_merge_recipe_single_tile_emits_lod_not_partition(
         self, tmp_path: Path
@@ -1357,17 +1392,26 @@ class TestMergeOrchestrator:
         tile.save(tiles_dir / output_filename(0, 0, 0, 1, 1, 1))
 
         manifest = BatchManifest(n_timepoints=1, n_channels=1, n_tiles=1)
-        final = merge_batch_results(manifest, out_dir, verbose=False, recipe="additive")
+        final = merge_batch_results(manifest, out_dir, verbose=False, recipe="stream")
         node, attrs = self._read_tree(final)
         assert attrs.get("kind") != "partition"
         assert isinstance(node, GSplatLeaf)
         assert node.n_additive_sublods > 1  # the ladder was applied
         assert node.n_splats == tile.n_splats
 
+        # The K=1 (write_gsplats_tree) branch carries the same pipeline/ group
+        # as the streaming K>1 branch.
+        import zarr
+
+        root = zarr.open_group(str(final), mode="r")
+        assert "pipeline" in root
+        assert root["pipeline"].attrs["recipe"] == "stream"
+        assert root["pipeline"].attrs["lod_kind"] == "additive"
+
     def test_merge_recipe_4d_substitutive_barriers_on_timepoint(
         self, tmp_path: Path
     ) -> None:
-        """A 4D part (timepoints stacked) coarsened with --recipe substitutive
+        """A 4D part (timepoints stacked) coarsened with --recipe levels
         must NOT blend across time: the stacked-timepoint axis is a barrier, so
         the coarsest level of each part still spans BOTH timepoints {0, 1}."""
         from luxar.gsplats.batch.manifest import BatchManifest, output_filename
@@ -1388,9 +1432,7 @@ class TestMergeOrchestrator:
                 seed += 1
 
         manifest = BatchManifest(n_timepoints=n_t, n_channels=1, n_tiles=n_k)
-        final = merge_batch_results(
-            manifest, out_dir, verbose=False, recipe="substitutive"
-        )
+        final = merge_batch_results(manifest, out_dir, verbose=False, recipe="levels")
         node, _ = self._read_tree(final)
         assert isinstance(node, GSplatPartition)
         assert node.n_splats == total
@@ -1399,10 +1441,12 @@ class TestMergeOrchestrator:
             assert child.ndim == 4
             # Coarsest level (index 0, coarsest→finest) still spans both
             # timepoints — coarsening did not merge across the time barrier.
+            # The level carries a default additive ladder, so check the UNION
+            # of its sub-LOD prefix chunks (a single chunk holds only the
+            # first splats in additive order, not the whole level).
             coarse = child.children[0]
-            tcoords = np.unique(
-                np.round(coarse.additive_sublods[0].centers[:, -1]).astype(int)
-            )
+            tvals = np.concatenate([s.centers[:, -1] for s in coarse.additive_sublods])
+            tcoords = np.unique(np.round(tvals).astype(int))
             np.testing.assert_array_equal(tcoords, np.array([0, 1]))
 
     def test_merge_recipe_rejects_flat_and_composed(self, tmp_path: Path) -> None:
@@ -1425,7 +1469,7 @@ class TestMergeOrchestrator:
                 manifest, out_dir, verbose=False, flat=True, recipe="additive"
             )
         with pytest.raises(ValueError, match="not supported"):
-            merge_batch_results(manifest, out_dir, verbose=False, recipe="partitioned")
+            merge_batch_results(manifest, out_dir, verbose=False, recipe="tiles")
 
     def test_merge_recipe_params_normalises_hyphenated_method(self) -> None:
         """`--substitutive-method kmeans-lloyd` (the documented spelling) must map
@@ -1514,7 +1558,10 @@ class TestMergeOrchestrator:
         # drop only the `luxar gsplat batch-fit` prefix.
         cli_args = tokens[merge_idx:]
         # Point the (absolute) output_dir arg at the tmp dir (already is).
-        assert "--recipe" in cli_args and "substitutive" in cli_args
+        # The manifest stores the legacy spelling; the sbatch generator must
+        # emit the canonical name (the merge CLI rejects legacy spellings).
+        assert "--recipe" in cli_args and "levels" in cli_args
+        assert "substitutive" not in cli_args
         assert "--substitutive-method" in cli_args and "kmeans-lloyd" in cli_args
         assert "--coarsen-dims" in cli_args and "0,1,2" in cli_args
 
@@ -1597,7 +1644,7 @@ class TestMergeOrchestrator:
                 "merge",
                 str(out_dir),
                 "--recipe",
-                "substitutive",
+                "levels",
                 "--substitutive-method",
                 "kmeans-typo",
             ],
@@ -2071,7 +2118,7 @@ class TestSubmitRecipeValidation:
         src = tmp_path / "vol.zarr"
         z = zarr.open_array(str(src), mode="w", shape=(32, 32, 32), dtype="f4")
         z[:] = 0.0
-        # additive merge recipe + a substitutive-only knob -> rejected before submit
+        # stream merge recipe + a levels-only knob -> rejected before submit
         res = CliRunner().invoke(
             app_gsplat,
             [
@@ -2089,7 +2136,7 @@ class TestSubmitRecipeValidation:
                 "z,y,x",
                 "--dry-run",
                 "--merge-recipe",
-                "additive",
+                "stream",
                 "--merge-compression-factor",
                 "4",
             ],
@@ -2127,29 +2174,16 @@ class TestMergeRecipeAdditiveKnobs:
             levels=None,
             substitutive_method=None,
             coarsen_dims=None,
-            lod_method=None,
         )
         assert params.additive_method == "self_energy"
         assert params.breakpoints == [100, 500]
         assert params.n_lods == 5
 
-    def test_build_merge_recipe_params_lod_method_and_validation(self) -> None:
-        from luxar.cli.gsplat_ops.batch import _build_merge_recipe_params
-
-        params = _build_merge_recipe_params(
-            {},
-            n_lods=None,
-            additive_method=None,
-            breakpoints=None,
-            compression_factor=None,
-            levels=None,
-            substitutive_method=None,
-            coarsen_dims=None,
-            lod_method="count",
-        )
-        assert params.lod_method == "count"
+    def test_build_merge_recipe_params_validation(self) -> None:
         # a bad additive method fails fast
         import typer
+
+        from luxar.cli.gsplat_ops.batch import _build_merge_recipe_params
 
         with pytest.raises(typer.BadParameter):
             _build_merge_recipe_params(
@@ -2161,11 +2195,10 @@ class TestMergeRecipeAdditiveKnobs:
                 levels=None,
                 substitutive_method=None,
                 coarsen_dims=None,
-                lod_method=None,
             )
 
     def test_submit_threads_additive_knobs_into_sbatch(self, tmp_path: Path) -> None:
-        """`batch-fit submit --merge-recipe additive --merge-additive-method ...`
+        """`batch-fit submit --merge-recipe stream --merge-additive-method ...`
         records the knobs in the manifest and the merge sbatch invokes them."""
         import zarr
         from typer.testing import CliRunner
@@ -2203,7 +2236,7 @@ class TestMergeRecipeAdditiveKnobs:
                     "--axes",
                     "z,y,x",
                     "--merge-recipe",
-                    "additive",
+                    "stream",
                     "--merge-additive-method",
                     "self_energy",
                     "--merge-breakpoints",
@@ -2246,7 +2279,7 @@ class TestMergeRecipeAdditiveKnobs:
                 "z,y,x",
                 "--dry-run",
                 "--merge-recipe",
-                "additive",
+                "stream",
                 "--merge-breakpoints",
                 "counts:not_a_number",
             ],

@@ -43,15 +43,15 @@ it), then resolves the two LOD axes via
 [`core/group/lod/gsplats.py`](../lod/gsplats.py):
 
 ```python
-result, explicit_min_pixel_sizes, base_pixel_size = \
+result, explicit_coverage_fractions = \
     resolve_substitutive_axis_gsplats(result, lod_group)
 result = resolve_additive_axis_gsplats(result, additive_lod)
 ```
 
 Branch selection then keys off `result.n_substitutive` and
-`result.n_additive_sublods`. Passing `min_pixel_size` while the resolved
+`result.n_additive_sublods`. Passing `coverage_fraction` while the resolved
 result is multi-substitutive raises `ValueError` — thresholds are derived
-per-child instead (or set via `lod_group=dict(min_pixel_sizes=[...])`).
+per-child instead (or set via `lod_group=dict(coverage_fractions=[...])`).
 
 ### `from_io.py` — load/fit then delegate
 
@@ -74,8 +74,8 @@ gsplats child per substitutive level, written coarsest→finest and named
 `child_<i>`. Substitutive index convention is index 0 = finest,
 `n-1` = coarsest, so the level loop iterates in reverse. Per-level splat
 counts (summed across each level's additive ladder) feed both logging and
-auto-derivation of `min_pixel_sizes` via
-[`lod/group.derive_min_pixel_sizes`](../lod/group.py) when the caller did
+auto-derivation of `coverage_fractions` via
+[`lod/group.coverage_fractions`](../lod/group.py) when the caller did
 not supply explicit thresholds.
 
 Attribute routing splits on
@@ -122,7 +122,7 @@ with LuxarZarrCompiler("scene.luxar.zarr") as compiler:
 - `luxar.gsplats` — `GSplatData`, `fit_gaussian_splats`,
   `fit_progressive_gaussian_splats`, `io.load_gsplats`
 - `core/group/lod/gsplats.py` — substitutive/additive axis resolvers
-- `core/group/lod/group.py` — `derive_min_pixel_sizes`
+- `core/group/lod/group.py` — `coverage_fractions`
 - `core/group/compositing.py` — `COMPOSITING_ATTRS`
 - `core/group/dim_order.py` — per-LOD dim_order application
 - `core/gsplats.py` — the `GSplats` node returned for multi-additive writes

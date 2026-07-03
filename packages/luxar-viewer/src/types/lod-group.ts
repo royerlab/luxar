@@ -3,8 +3,11 @@
  *
  * A `Group` whose `kind === 'lod'` selects one of N alternative
  * children at runtime based on the projected bbox diagonal in pixels and
- * each child's `min_pixel_size` threshold. Children are arbitrary
- * geometry subtrees (points / lines / gsplats / nested specialized groups).
+ * each child's `coverage_fraction` threshold — a viewport-relative fraction
+ * (0..1) the viewer multiplies by the viewport diagonal, so the finest child
+ * (coverage 1.0) activates when the object fills the screen. Children are
+ * arbitrary geometry subtrees (points / lines / gsplats / nested specialized
+ * groups).
  *
  * @module types/lod-group
  */
@@ -27,11 +30,11 @@ export interface LODGroupMetadata {
   display_type?: 'points' | 'lines' | 'gsplats';
 
   /**
-   * Selector mode. Currently only `"pixel_size"` is supported; the field
-   * is carried in the format so future modes (distance, screen-coverage,
-   * ...) can be added without breaking existing scenes.
+   * Selector mode. Currently only `"coverage"` is supported; the field
+   * is carried in the format so future modes (distance, ...) can be added
+   * without breaking existing scenes.
    */
-  selector: 'pixel_size';
+  selector: 'coverage';
 
   /**
    * Initial active level index for the manual-override UI. Stored 0-based
@@ -63,7 +66,7 @@ export interface LODGroupMetadata {
 /**
  * Runtime selector mode held by the registry per lod_group node.
  *
- * `auto` — view-driven pixel-size selection (the default).
+ * `auto` — view-driven coverage-fraction selection (the default).
  * `{ lockLevel: i }` — user has locked to child index `i` (0-based in
  *   coarsest→finest order); the auto selector is bypassed.
  */

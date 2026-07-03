@@ -63,36 +63,30 @@ def add_gsplats_from_data_impl(
             from ..lod.group import _validate_coarsen_dims_spec, resolve_coarsen_dims
 
             raw = _validate_coarsen_dims_spec(lod_group.get("coarsen_dims"))
-            resolved = resolve_coarsen_dims(
-                group._find_scene(), int(result.ndim), raw
-            )
+            resolved = resolve_coarsen_dims(group._find_scene(), int(result.ndim), raw)
             lod_group = {**lod_group, "coarsen_dims": resolved}
 
     # Resolve the two LOD axes. Substitutive first (it can produce a
     # multi-level result), then additive (uniform across levels).
-    result, explicit_min_pixel_sizes, base_pixel_size, extent_opts = (
-        resolve_substitutive_axis_gsplats(result, lod_group)
+    result, explicit_coverage_fractions = resolve_substitutive_axis_gsplats(
+        result, lod_group
     )
     result = resolve_additive_axis_gsplats(result, additive_lod)
 
     # Multi-substitutive → kind=lod Group with one gsplats child per level
     if result.n_substitutive > 1:
-        if "min_pixel_size" in attrs:
+        if "coverage_fraction" in attrs:
             raise ValueError(
-                "min_pixel_size must not be passed when the resolved "
+                "coverage_fraction must not be passed when the resolved "
                 "result is multi-substitutive: thresholds are derived "
-                "per-child (or set via lod_group=dict(min_pixel_sizes="
+                "per-child (or set via lod_group=dict(coverage_fractions="
                 "[...]))."
             )
         return add_gsplats_as_lod_group_impl(
             group,
             name=name,
             result=result,
-            explicit_min_pixel_sizes=explicit_min_pixel_sizes,
-            base_pixel_size=base_pixel_size,
-            lod_method=extent_opts["lod_method"],
-            extent_percentile=extent_opts["extent_percentile"],
-            extent_anisotropy=extent_opts["extent_anisotropy"],
+            explicit_coverage_fractions=explicit_coverage_fractions,
             parent=parent,
             extend_to_all=extend_to_all,
             dim_order=dim_order,
