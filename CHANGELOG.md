@@ -4,6 +4,72 @@ All notable changes to Luxar are documented in this file.
 
 ## [Unreleased]
 
+### July 2026
+
+#### Added — bandwidth-aware streaming additive LODs + `gsplat additive` (per-leaf laddering)
+
+- **`stream:<c>` breakpoints** — a new additive-ladder breakpoint form: geometric
+  cumulative cuts `[c, 2c, 4c, …, N]` (first chunk `c` splats, then doubling),
+  resolved against each call's own N so ONE spec adapts per part / per
+  substitutive level (silently clamped for small parts, capped at 16 levels,
+  sliver tails folded). Works everywhere additive ladders are built: `gsplat
+  lod`, `gsplat additive`, `fit --recipe additive`, `batch-fit merge/submit/run`.
+- **`--target-ms` / `--bandwidth-mbps` / `--bytes-per-splat`** on all those
+  surfaces: derive `stream:<c>` from a download budget — e.g. `--target-ms 200`
+  at the default 25 Mbps sizes the first chunk to ~200 ms of download (fast
+  first paint; the viewer streams additive sub-LODs progressively). Bytes/splat
+  is measured from the input store when one exists, else an analytic estimate;
+  always logged; `--bytes-per-splat` overrides. At `batch-fit submit/run` the
+  trio resolves at plan time into the stored breakpoints string (no manifest
+  schema change).
+- **NEW `gsplat additive <in> <out>`** — give every leaf of an EXISTING tree an
+  additive ladder, structure-preservingly (substitutive `kind=lod` levels,
+  partition parts, mosaic groups keep their shape) WITHOUT recomputing the
+  expensive substitutive/partition structure. The per-leaf counterpart of
+  `lod --recipe additive` and the inverse companion of `gsplat flatten`.
+  E.g. `gsplat additive sub.gsplats.zarr pyr.gsplats.zarr --target-ms 200`
+  turns a 23 M-splat substitutive pyramid into a substitutive × streaming-additive
+  pyramid (~200 ms first paint per level) in one command.
+
+#### Added — coverage inflation for substitutive coarsening (grid-ripple fix)
+
+- **`coverage_inflation` (default 3.0)** on every substitutive reduction
+  (`substitutive` / `pyramid` / `multiscale` / `mosaic` recipes, all methods):
+  merged representatives get their inter-center spread widened
+  ×`coverage_inflation` (mass-preserving) so neighbouring coarse splats sum
+  flat — suppressing the axis-aligned grid ripple pure moment matching shows
+  at coarse levels. CLI: `--coverage-inflation` on `gsplat lod`, `fit
+  --recipe substitutive`, and `batch-fit --merge-recipe`/`merge --recipe`;
+  pass `1.0` for the historical pure moment match.
+
+#### Added — data-loading monitor: streaming-LOD visibility (viewer)
+
+- **Additive-chip glyphs** in the loading-monitor tree: `LOD x/N` detail
+  levels loaded, `●` last refinement fully cache-resident vs `◌` still
+  streaming, `⏳` refinement in progress — with every glyph spelled out in
+  the chip tooltip.
+- **Active substitutive level highlighting**: the tree now marks which
+  `kind=lod` level actually renders (inactive levels dimmed), re-marked per
+  tick from the group's `activeLevel`.
+- **Per-node visible counts**: badge tooltips read "N elements (M visible
+  after slicing)", symmetric across points / lines / gsplats, pushed from
+  the SceneLoader's visible-counts walk.
+
+#### Fixed — additive-breakpoints edge cases
+
+- **`counts:` on small parts no longer aborts the build**: `partitioned` /
+  `pyramid` / per-part merge with explicit `counts:` breakpoints used to raise
+  "largest breakpoint exceeds N" on any part/level smaller than the largest
+  count, aborting the whole build. Per-part ladders now clamp the counts to
+  each part's own size (`clamp_counts_breakpoints`), but the spec is still
+  strictly validated ONCE against the full dataset N
+  (`validate_counts_breakpoints`) so a dataset-scale typo (e.g.
+  `counts:1000000` on a 50 k dataset) aborts loudly as before; direct
+  whole-dataset builds keep the strict validation.
+- The empty-leaf (n==0) fast path now labels its breakpoints kind `"none"`
+  instead of mislabeling the requested spec as `"equal-count"`; boolean values
+  are no longer accepted as integer count breakpoints.
+
 ### June 2026
 
 #### Changed (breaking) — `.gsplats.zarr` format v3.0 → v3.1 (split Cholesky factors, per-channel differential quantization)

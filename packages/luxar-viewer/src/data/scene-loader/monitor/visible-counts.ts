@@ -7,6 +7,10 @@
  * post-progressive-refinement) visible counts rather than the raw loaded
  * counts.
  *
+ * Alongside the totals, a per-path map (mesh `name` is the scene-graph
+ * path) is pushed via `updateVisibleCountsByPath` so the monitor's
+ * scene-graph tree can show per-node visible counts in badge tooltips.
+ *
  * Only meshes that are actually rendered are counted: the walk skips any
  * subtree whose root is `visible === false`. This excludes the inactive
  * levels of a substitutive `kind=lod` group (the registry hides all but
@@ -23,8 +27,8 @@ import type { SceneLoaderMonitorPort } from '../../scene-loader-monitor-port';
 
 /**
  * Traverse `rootGroup`, sum the per-mesh visible-counts userData for all
- * three geometry types symmetrically, and push the totals to `monitor`.
- * No-op when either argument is null.
+ * three geometry types symmetrically, and push the totals (plus a
+ * per-path breakdown) to `monitor`. No-op when either argument is null.
  */
 export function updateVisibleCountsInMonitor(
   rootGroup: THREE.Group | null,
@@ -35,6 +39,7 @@ export function updateVisibleCountsInMonitor(
   let totalVisiblePoints = 0;
   let totalVisibleSegments = 0;
   let totalVisibleSplats = 0;
+  const byPath = new Map<string, number>();
 
   // Manual recursion rather than THREE's `traverse`, which visits every
   // descendant regardless of visibility. Pruning at `visible === false`
@@ -43,12 +48,20 @@ export function updateVisibleCountsInMonitor(
   const visit = (object: THREE.Object3D): void => {
     if (!object.visible) return;
     if (object instanceof THREE.Mesh) {
+      let visible: number | undefined;
       if (isPointsUserData(object.userData)) {
-        totalVisiblePoints += object.userData.visiblePointCount ?? 0;
+        visible = object.userData.visiblePointCount ?? 0;
+        totalVisiblePoints += visible;
       } else if (isLinesUserData(object.userData)) {
-        totalVisibleSegments += object.userData.visibleSegmentCount ?? 0;
+        visible = object.userData.visibleSegmentCount ?? 0;
+        totalVisibleSegments += visible;
       } else if (isGSplatsUserData(object.userData)) {
-        totalVisibleSplats += object.userData.visibleSplatCount ?? 0;
+        visible = object.userData.visibleSplatCount ?? 0;
+        totalVisibleSplats += visible;
+      }
+      if (visible !== undefined && object.name) {
+        // Mesh `name` is the scene-graph path (set by node-factory).
+        byPath.set(object.name, (byPath.get(object.name) ?? 0) + visible);
       }
     }
     for (const child of object.children) visit(child);
@@ -60,4 +73,5 @@ export function updateVisibleCountsInMonitor(
   monitor.updateVisiblePoints(totalVisiblePoints);
   monitor.updateVisibleSegments(totalVisibleSegments);
   monitor.updateVisibleSplats(totalVisibleSplats);
+  monitor.updateVisibleCountsByPath(byPath);
 }

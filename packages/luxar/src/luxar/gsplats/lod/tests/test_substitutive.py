@@ -522,6 +522,131 @@ class TestApiContract:
 
 
 # ─────────────────────────────────────────────────────────────────────
+# Coverage inflation (anti-grid inter-spread widening)
+# ─────────────────────────────────────────────────────────────────────
+
+
+def _mixture_at(points: np.ndarray, data: GSplatData) -> np.ndarray:
+    """Evaluate the Gaussian mixture at query points (dense, test-sized only)."""
+    centres = np.asarray(data.centers, dtype=np.float64)
+    L = unpack_tril(np.asarray(data.cholesky_factors), data.ndim).astype(np.float64)
+    Sigma = L @ L.transpose(0, 2, 1)
+    Sinv = np.linalg.inv(Sigma)
+    amps = np.asarray(data.amplitudes, dtype=np.float64)
+    diff = points[:, None, :] - centres[None, :, :]  # (P, N, D)
+    quad = np.einsum("pnd,nde,pne->pn", diff, Sinv, diff)
+    return np.asarray((amps[None, :] * np.exp(-0.5 * quad)).sum(axis=1))
+
+
+class TestCoverageInflation:
+    """The β·inter widening that suppresses the coarse-level grid ripple."""
+
+    _KW = dict(
+        compression_factor=4,
+        levels=1,
+        method="kmeans",  # warm start only → deterministic identical partitions
+        lloyd_iterations=0,
+        candidate_bins_k=2,
+        device="cpu",
+        seed=0,
+    )
+
+    def test_widens_covariance_and_preserves_mass(self):
+        """Same partition, inflated output: identical centers, wider Σ, and
+        per-splat mass a·|Σ|^{1/2} (the X-ray integral) exactly preserved."""
+        data = _make_isotropic_3d(n=64, seed=3)
+        base = make_substitutive_lod(
+            data, coverage_inflation=1.0, **self._KW
+        ).at_substitutive(1)
+        infl = make_substitutive_lod(
+            data, coverage_inflation=3.0, **self._KW
+        ).at_substitutive(1)
+        np.testing.assert_allclose(
+            np.asarray(infl.centers), np.asarray(base.centers), atol=1e-5
+        )
+        Lb = unpack_tril(np.asarray(base.cholesky_factors), 3)
+        Li = unpack_tril(np.asarray(infl.cholesky_factors), 3)
+        det_b = np.abs(np.prod(np.diagonal(Lb, axis1=-2, axis2=-1), axis=-1))
+        det_i = np.abs(np.prod(np.diagonal(Li, axis1=-2, axis2=-1), axis=-1))
+        assert np.all(det_i >= det_b * (1.0 - 1e-5))  # never narrower
+        # Genuinely widened. (On this fixture the unit-σ intra term dominates
+        # the moment match, so the det ratio is well below the tiny-splat
+        # asymptote of 3^{D/2}; ~1.45 measured.)
+        assert np.median(det_i / det_b) > 1.2
+        mass_b = np.asarray(base.amplitudes) * det_b
+        mass_i = np.asarray(infl.amplitudes) * det_i
+        np.testing.assert_allclose(mass_i, mass_b, rtol=1e-3)
+
+    def test_single_member_bins_untouched(self):
+        """inter = 0 for a one-splat bin → inflation is a no-op there."""
+        import torch as _torch
+
+        from luxar.gsplats.lod._substitutive.kmeans_lloyd import (
+            _build_representatives_vectorized,
+        )
+
+        rng = np.random.RandomState(0)
+        n = 8
+        centres = _torch.tensor(rng.randn(n, 3), dtype=_torch.float64)
+        L = _torch.eye(3, dtype=_torch.float64).expand(n, 3, 3).contiguous()
+        amps = _torch.ones(n, dtype=_torch.float64)
+        assign = _torch.arange(n, dtype=_torch.int64)  # every splat its own bin
+        out1 = _build_representatives_vectorized(
+            centres, L, amps, None, assign, M=n, coverage_inflation=1.0
+        )
+        out3 = _build_representatives_vectorized(
+            centres, L, amps, None, assign, M=n, coverage_inflation=3.0
+        )
+        for a, b in zip(out1[:3], out3[:3]):
+            _torch.testing.assert_close(a, b, rtol=1e-12, atol=1e-12)
+
+    def test_ripple_suppressed_on_uniform_lattice(self):
+        """The regression the feature exists for: coarsening a uniform lattice
+        of tiny splats must not render as a deeply rippled (grid) field. The
+        inflated level's interior intensity variation is a fraction of the
+        un-inflated one's."""
+        g = np.arange(12, dtype=np.float32)
+        zz, yy, xx = np.meshgrid(g, g, g, indexing="ij")
+        centres = np.column_stack([zz.ravel(), yy.ravel(), xx.ravel()])
+        n = len(centres)  # 1728
+        sig = 0.5
+        chol = np.tile(np.array([sig, 0, sig, 0, 0, sig], dtype=np.float32), (n, 1))
+        data = GSplatData(
+            centers=centres,
+            amplitudes=np.ones(n, dtype=np.float32),
+            cholesky_factors=chol,
+        )
+        kw = dict(self._KW, compression_factor=8)
+        base = make_substitutive_lod(
+            data, coverage_inflation=1.0, **kw
+        ).at_substitutive(1)
+        infl = make_substitutive_lod(
+            data, coverage_inflation=3.0, **kw
+        ).at_substitutive(1)
+        # Interior query line (away from the lattice boundary falloff).
+        t = np.linspace(3.0, 9.0, 121)
+        pts = np.column_stack([t, np.full_like(t, 5.7), np.full_like(t, 5.3)])
+        f_base = _mixture_at(pts, base)
+        f_infl = _mixture_at(pts, infl)
+        cv_base = f_base.std() / f_base.mean()
+        cv_infl = f_infl.std() / f_infl.mean()
+        assert cv_infl < 0.6 * cv_base, (
+            f"inflation did not suppress the lattice ripple: "
+            f"cv_infl={cv_infl:.3f} vs cv_base={cv_base:.3f}"
+        )
+
+    def test_invalid_inflation_raises(self):
+        data = _make_isotropic_3d(n=16, seed=0)
+        with pytest.raises(ValueError, match="coverage_inflation"):
+            make_substitutive_lod(data, coverage_inflation=0.5, device="cpu")
+
+    def test_inflation_recorded_in_stats(self):
+        data = _make_isotropic_3d(n=16, seed=0)
+        out = make_substitutive_lod(data, levels=1, device="cpu")
+        assert out.stats["coverage_inflation"] == 3.0  # default ON
+
+
+# ─────────────────────────────────────────────────────────────────────
 # Shape-aware k-means warm start (WS7)
 # ─────────────────────────────────────────────────────────────────────
 
@@ -739,20 +864,28 @@ class TestCoarsenDims:
         out = make_substitutive_lod(
             data, compression_factor=4, levels=3, method="kmeans_lloyd", device="cpu"
         )
-        c0 = np.asarray(out.at_substitutive(out.n_substitutive - 1).flattened().centers)[
-            :, 0
-        ]
+        c0 = np.asarray(
+            out.at_substitutive(out.n_substitutive - 1).flattened().centers
+        )[:, 0]
         assert np.abs(c0 - np.round(c0)).max() > 0.1
 
     def test_all_dims_is_noop_equivalent(self):
         # coarsen_dims == every dim normalises to None (the all-dims path).
         data = _stacked_categorical(n_groups=2)
         a = make_substitutive_lod(
-            data, compression_factor=4, levels=2, method="kmeans_lloyd", device="cpu",
+            data,
+            compression_factor=4,
+            levels=2,
+            method="kmeans_lloyd",
+            device="cpu",
             coarsen_dims=[0, 1, 2, 3],
         )
         b = make_substitutive_lod(
-            data, compression_factor=4, levels=2, method="kmeans_lloyd", device="cpu",
+            data,
+            compression_factor=4,
+            levels=2,
+            method="kmeans_lloyd",
+            device="cpu",
         )
         for s in range(a.n_substitutive):
             assert a.at_substitutive(s).n_splats == b.at_substitutive(s).n_splats
@@ -778,11 +911,19 @@ class TestCoarsenDims:
         # All splats share barrier value 0 → one group → identical to all-dims.
         data = _stacked_categorical(n_per=1200, n_groups=1)
         a = make_substitutive_lod(
-            data, compression_factor=4, levels=2, method="kmeans_lloyd", device="cpu",
+            data,
+            compression_factor=4,
+            levels=2,
+            method="kmeans_lloyd",
+            device="cpu",
             coarsen_dims=[1, 2, 3],
         )
         b = make_substitutive_lod(
-            data, compression_factor=4, levels=2, method="kmeans_lloyd", device="cpu",
+            data,
+            compression_factor=4,
+            levels=2,
+            method="kmeans_lloyd",
+            device="cpu",
         )
         for s in range(a.n_substitutive):
             assert a.at_substitutive(s).n_splats == b.at_substitutive(s).n_splats
@@ -797,11 +938,11 @@ class TestAllocateGroupM:
     @_pytest.mark.parametrize(
         "sizes,M_target,expected",
         [
-            ([1, 1, 1000], 2, [1, 1, 1]),     # M_target < G -> >=1 each, bumped to G
-            ([2, 2], 10, [2, 2]),             # over-target: size-clamp + water-fill
-            ([1, 1, 1], 5, [1, 1, 1]),        # all size-1: clamp, water-fill breaks
-            ([5, 5, 5], 2, [1, 1, 1]),        # M_target < G, balanced
-            ([100, 1, 1], 50, [48, 1, 1]),    # skewed proportional, small clamped
+            ([1, 1, 1000], 2, [1, 1, 1]),  # M_target < G -> >=1 each, bumped to G
+            ([2, 2], 10, [2, 2]),  # over-target: size-clamp + water-fill
+            ([1, 1, 1], 5, [1, 1, 1]),  # all size-1: clamp, water-fill breaks
+            ([5, 5, 5], 2, [1, 1, 1]),  # M_target < G, balanced
+            ([100, 1, 1], 50, [48, 1, 1]),  # skewed proportional, small clamped
         ],
     )
     def test_branches(self, sizes, M_target, expected):
@@ -841,7 +982,11 @@ def test_make_lod_pyramid_respects_coarsen_dims():
     ).astype(np.float32)
     data = lift_points_to_gsplats(pos, np.full(len(pos), 0.5, np.float32))
     out = make_lod_pyramid(
-        data, compression_factor=4, levels=2, n_additive_lods=1, device="cpu",
+        data,
+        compression_factor=4,
+        levels=2,
+        n_additive_lods=1,
+        device="cpu",
         coarsen_dims=[1, 2, 3],
     )
     for s in range(out.n_substitutive):

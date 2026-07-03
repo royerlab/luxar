@@ -164,6 +164,9 @@ def _build_fit_recipe_params(
     n_lods: Optional[int],
     additive_method: Optional[str],
     breakpoints: Optional[str],
+    target_ms: Optional[float] = None,
+    bandwidth_mbps: Optional[float] = None,
+    bytes_per_splat: Optional[float] = None,
     compression_factor: Optional[int],
     levels: Optional[int],
     substitutive_method: Optional[str],
@@ -177,11 +180,16 @@ def _build_fit_recipe_params(
     Mirrors the ``gsplat lod`` vocabulary (reusing its breakpoint parser and the
     valid-method sets) so a fit-time per-part ladder is identical to a separate
     ``gsplat lod`` pass. Only the two :data:`PER_PART_RECIPES` are accepted.
+    ``--target-ms`` derives ``stream:<c>`` breakpoints from the analytic
+    bytes/splat estimate (the input is a volume — no gsplat store to measure).
     """
     from luxar.cli.lod import (
         _VALID_ADDITIVE_METHODS,
         _VALID_SUBSTITUTIVE_METHODS,
         _parse_lod_breakpoints,
+        estimate_bytes_per_splat,
+        resolve_streaming_breakpoints,
+        validate_streaming_knobs,
     )
     from luxar.gsplats.lod.recipes import PER_PART_RECIPES, RecipeParams
 
@@ -198,6 +206,9 @@ def _build_fit_recipe_params(
         "--n-lods": n_lods,
         "--additive-method": additive_method,
         "--breakpoints": breakpoints,
+        "--target-ms": target_ms,
+        "--bandwidth-mbps": bandwidth_mbps,
+        "--bytes-per-splat": bytes_per_splat,
     }
     substitutive_only = {
         "--compression-factor": compression_factor,
@@ -232,7 +243,16 @@ def _build_fit_recipe_params(
             f"--lod-method must be 'extent' or 'count'; got {lod_method!r}"
         )
 
-    bp = _parse_lod_breakpoints(breakpoints) if breakpoints else "equal-count"
+    validate_streaming_knobs(target_ms, bandwidth_mbps, bytes_per_splat, breakpoints)
+    if target_ms is not None:
+        bp: Any = resolve_streaming_breakpoints(
+            target_ms,
+            bandwidth_mbps,
+            bytes_per_splat,
+            analytic_bps=estimate_bytes_per_splat(volume_ndim),
+        )
+    else:
+        bp = _parse_lod_breakpoints(breakpoints) if breakpoints else "equal-count"
 
     parsed_coarsen: Optional[tuple] = None
     if coarsen_dims is not None:
@@ -254,7 +274,7 @@ def _build_fit_recipe_params(
     return RecipeParams(
         n_lods=n_lods if n_lods is not None else 4,
         additive_method=add_norm,  # type: ignore[arg-type]
-        breakpoints=bp,  # type: ignore[arg-type]
+        breakpoints=bp,
         compression_factor=(
             compression_factor if compression_factor is not None else 4
         ),
@@ -464,7 +484,34 @@ def fit_volume(
         "-b",
         "--breakpoints",
         help="[--recipe additive] additive ladder breakpoints: 'equal-count' "
-        "(default), 'counts:500,2000,...' or 'energy:0.5,0.9,...'.",
+        "(default), 'stream:C' (geometric streaming ladder, sized per part), "
+        "'counts:500,2000,...' or 'energy:0.5,0.9,...'.",
+        rich_help_panel="Per-part LOD",
+    ),
+    recipe_target_ms: Optional[float] = typer.Option(
+        None,
+        "--target-ms",
+        min=1.0,
+        help="[--recipe additive] streaming sizing: derive 'stream:<c>' "
+        "breakpoints so each part's first additive chunk downloads in ~this "
+        "many ms at --bandwidth-mbps (analytic bytes/splat estimate; override "
+        "with --bytes-per-splat). Mutually exclusive with --breakpoints.",
+        rich_help_panel="Per-part LOD",
+    ),
+    recipe_bandwidth_mbps: Optional[float] = typer.Option(
+        None,
+        "--bandwidth-mbps",
+        min=0.1,
+        help="[--recipe additive] assumed downlink for --target-ms sizing "
+        "(default 25, a typical broadband connection).",
+        rich_help_panel="Per-part LOD",
+    ),
+    recipe_bytes_per_splat: Optional[float] = typer.Option(
+        None,
+        "--bytes-per-splat",
+        min=0.1,
+        help="[--recipe additive] override the on-wire bytes/splat used by "
+        "--target-ms sizing (default: analytic estimate).",
         rich_help_panel="Per-part LOD",
     ),
     recipe_compression_factor: Optional[int] = typer.Option(
@@ -793,6 +840,9 @@ def fit_volume(
                     n_lods=recipe_n_lods,
                     additive_method=recipe_additive_method,
                     breakpoints=recipe_breakpoints,
+                    target_ms=recipe_target_ms,
+                    bandwidth_mbps=recipe_bandwidth_mbps,
+                    bytes_per_splat=recipe_bytes_per_splat,
                     compression_factor=recipe_compression_factor,
                     levels=recipe_levels,
                     substitutive_method=recipe_substitutive_method,

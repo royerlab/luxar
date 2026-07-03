@@ -27,6 +27,9 @@ import {
   renderSecondaryMetrics,
   summariseLodStates,
   lodChipContent,
+  countAdditiveNodes,
+  nodeStatsContent,
+  activeLevelRole,
 } from '../../../ui/data-loading-monitor/templates';
 import type {
   SceneGraphState,
@@ -241,7 +244,7 @@ describe('lodChipContent', () => {
     };
     expect(lodChipContent(node, state)).toEqual({
       text: 'L2/3',
-      title: 'Active substitutive level 2 of 3',
+      title: 'Active substitutive level 2 of 3 — only this level is rendered',
     });
   });
 
@@ -260,12 +263,37 @@ describe('lodChipContent', () => {
     expect(c.text).toContain('⏳'); // refining
   });
 
-  it('falls back to structural counts before the first provider poll', () => {
+  it('shows "–" (not a guessed level) before the first provider poll', () => {
     const node = { kind: 'lod', lodGroupChildCount: 2 } as SceneGraphNode;
     expect(lodChipContent(node, undefined)).toEqual({
-      text: 'L1/2',
-      title: 'Active substitutive level 1 of 2',
+      text: 'L–/2',
+      title: 'Substitutive LOD group with 2 levels — active level not yet reported',
     });
+  });
+
+  it('shows "–" for an additive node with no live loader state (inactive level)', () => {
+    const node = { additiveSublods: 6 } as SceneGraphNode;
+    const c = lodChipContent(node, undefined)!;
+    expect(c.text).toBe('LOD –/6');
+    expect(c.title).toContain('not streaming');
+  });
+
+  it('always explains the residency dot in the tooltip, including when refinement is done', () => {
+    const node = { additiveSublods: 4 } as SceneGraphNode;
+    const done: LODProgressState = {
+      kind: 'additive',
+      loaded: 4,
+      total: 4,
+      refining: false,
+      lastAllResident: true,
+    };
+    const c = lodChipContent(node, done)!;
+    expect(c.text).toContain('●');
+    expect(c.title).toContain('● = fully cache-resident');
+
+    const streaming = lodChipContent(node, { ...done, lastAllResident: false })!;
+    expect(streaming.text).toContain('◌');
+    expect(streaming.title).toContain('◌ = streaming from network');
   });
 
   it('returns null for a plain node with no LOD dimension', () => {
@@ -310,6 +338,120 @@ describe('summariseLodStates', () => {
   it('returns empty string for no states', () => {
     expect(summariseLodStates(undefined)).toBe('');
     expect(summariseLodStates(new Map())).toBe('');
+  });
+
+  it('reconciles live additive count against the tree total ("x/y additive active")', () => {
+    const states = new Map<string, LODProgressState>([
+      ['/lod', { kind: 'lod', levelCount: 5, activeLevel: 0 }],
+      ['/lod/child_0', { kind: 'additive', loaded: 4, total: 4, refining: false }],
+    ]);
+    expect(summariseLodStates(states, 5)).toBe('1 substitutive · 1/5 additive active');
+    // Matching totals keep the plain wording.
+    expect(summariseLodStates(states, 1)).toBe('1 substitutive · 1 additive');
+  });
+});
+
+describe('countAdditiveNodes', () => {
+  it('counts nodes with additiveSublods > 1 across the tree', () => {
+    const root: SceneGraphNode = {
+      path: '/',
+      name: 'LOD',
+      type: 'group',
+      kind: 'lod',
+      lodGroupChildCount: 2,
+      children: [
+        {
+          path: '/child_0',
+          name: 'child_0',
+          type: 'gsplats',
+          additiveSublods: 4,
+          children: [],
+        },
+        {
+          path: '/child_1',
+          name: 'child_1',
+          type: 'gsplats',
+          additiveSublods: 6,
+          children: [],
+        },
+      ],
+    };
+    expect(countAdditiveNodes(root)).toBe(2);
+    expect(countAdditiveNodes(null)).toBe(0);
+  });
+});
+
+describe('nodeStatsContent', () => {
+  it('appends per-node visible counts symmetrically for all three geometry types', () => {
+    const points = {
+      type: 'points',
+      pointCount: 1000,
+      visiblePointCount: 250,
+      children: [],
+    } as unknown as SceneGraphNode;
+    expect(nodeStatsContent(points)!.title).toContain('250 visible after slicing');
+
+    const lines = {
+      type: 'lines',
+      segmentCount: 500,
+      visibleSegmentCount: 100,
+      children: [],
+    } as unknown as SceneGraphNode;
+    expect(nodeStatsContent(lines)!.title).toContain('100 visible after slicing');
+
+    const gsplats = {
+      type: 'gsplats',
+      splatCount: 2000,
+      visibleSplatCount: 700,
+      children: [],
+    } as unknown as SceneGraphNode;
+    expect(nodeStatsContent(gsplats)!.title).toContain('700 visible after slicing');
+  });
+
+  it('omits the visible suffix when unknown or equal to the total', () => {
+    const node = { type: 'gsplats', splatCount: 2000, children: [] } as unknown as SceneGraphNode;
+    expect(nodeStatsContent(node)!.title).not.toContain('visible');
+    const same = {
+      type: 'gsplats',
+      splatCount: 2000,
+      visibleSplatCount: 2000,
+      children: [],
+    } as unknown as SceneGraphNode;
+    expect(nodeStatsContent(same)!.title).not.toContain('visible');
+  });
+
+  it('suppresses the child-count badge on specialized groups (kind badge covers it)', () => {
+    const child = { type: 'gsplats', splatCount: 1, children: [] } as unknown as SceneGraphNode;
+    const plain = { type: 'group', children: [child] } as unknown as SceneGraphNode;
+    expect(nodeStatsContent(plain)!.text).toBe('1');
+    const lod = {
+      type: 'group',
+      kind: 'lod',
+      lodGroupChildCount: 1,
+      children: [child],
+    } as unknown as SceneGraphNode;
+    expect(nodeStatsContent(lod)).toBeNull();
+  });
+});
+
+describe('activeLevelRole', () => {
+  // Exported so the monitor's per-tick level-row patcher shares this
+  // exact derivation with the initial render (no drifting inline copy).
+  it('marks the active level and dims the others', () => {
+    const state: LODProgressState = { kind: 'lod', levelCount: 3, activeLevel: 1 };
+    expect(activeLevelRole(state, 0)).toBe('inactive');
+    expect(activeLevelRole(state, 1)).toBe('active');
+    expect(activeLevelRole(state, 2)).toBe('inactive');
+  });
+
+  it('returns undefined before the first provider poll (no state / no activeLevel)', () => {
+    expect(activeLevelRole(undefined, 0)).toBeUndefined();
+    expect(activeLevelRole({ kind: 'lod', levelCount: 3 }, 0)).toBeUndefined();
+  });
+
+  it('returns undefined for non-substitutive state kinds', () => {
+    expect(activeLevelRole({ kind: 'additive', loaded: 1, total: 2 }, 0)).toBeUndefined();
+    expect(activeLevelRole({ kind: 'partition', partCount: 4 }, 0)).toBeUndefined();
   });
 });
 

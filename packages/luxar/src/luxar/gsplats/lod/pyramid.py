@@ -20,7 +20,9 @@ from luxar.gsplats.lod.additive import (
 )
 from luxar.gsplats.lod.additive import (
     BreakpointSpec,
+    clamp_counts_breakpoints,
     make_additive_lod,
+    validate_counts_breakpoints,
 )
 from luxar.gsplats.lod.substitutive import (
     AutoOrMethod as SubstitutiveMethodName,
@@ -38,6 +40,7 @@ def make_lod_pyramid(
     substitutive_method: SubstitutiveMethodName = "auto",
     lloyd_iterations: int = 5,
     candidate_bins_k: int = 12,
+    coverage_inflation: float = 3.0,
     device: Union[str, torch.device, None] = "auto",
     coarsen_dims: Optional[Sequence[int]] = None,
     n_additive_lods: int = 4,
@@ -63,8 +66,10 @@ def make_lod_pyramid(
     compression_factor, levels
         Substitutive axis parameters (passed to
         :func:`make_substitutive_lod`).
-    substitutive_method, lloyd_iterations, candidate_bins_k, device
-        Substitutive axis algorithm parameters.
+    substitutive_method, lloyd_iterations, candidate_bins_k, coverage_inflation, device
+        Substitutive axis algorithm parameters (``coverage_inflation``
+        is the anti-grid inter-spread widening; see
+        :func:`make_substitutive_lod`).
     n_additive_lods, additive_method, breakpoints
         Additive axis parameters (passed to :func:`make_additive_lod`).
     truncation_sigmas, max_n_dense
@@ -80,6 +85,16 @@ def make_lod_pyramid(
         A v2.0 dataset with the full ``[levels+1, n_additive_lods]``
         pyramid.
     """
+    # Explicit `counts:` breakpoints must still be sane for the FULL dataset:
+    # the finest pyramid level IS the input's (flattened) default substitutive
+    # level, so a largest count exceeding that N is a whole-dataset-scale typo
+    # and aborts loudly here — BEFORE the expensive substitutive reduction.
+    # Only the coarser (smaller-by-K^s) levels clamp, in the loop below.
+    validate_counts_breakpoints(
+        breakpoints,
+        data.substitutive_levels[data.default_substitutive].n_splats_total,
+    )
+
     pyramid = make_substitutive_lod(
         data,
         compression_factor=compression_factor,
@@ -87,20 +102,27 @@ def make_lod_pyramid(
         method=substitutive_method,
         lloyd_iterations=lloyd_iterations,
         candidate_bins_k=candidate_bins_k,
+        coverage_inflation=coverage_inflation,
         device=device,
         seed=seed,
         coarsen_dims=coarsen_dims,
         verbose=verbose,
     )
 
-    # Build an additive ladder on each substitutive level.
+    # Build an additive ladder on each substitutive level. Explicit `counts:`
+    # breakpoints (strictly validated against the full dataset above) are
+    # clamped to each level's own splat count — coarser levels are smaller by
+    # K^s, so a fixed counts list sized for the finest level would otherwise
+    # abort the build ("largest breakpoint exceeds N"). String/energy specs
+    # pass through (already size-adaptive).
     out = pyramid
     for s in range(out.n_substitutive):
+        level_n = out.at_substitutive(s).n_splats
         out = make_additive_lod(
             out,
             n_lods=n_additive_lods,
             method=additive_method,
-            breakpoints=breakpoints,
+            breakpoints=clamp_counts_breakpoints(breakpoints, level_n),
             truncation_sigmas=truncation_sigmas,
             max_n_dense=max_n_dense,
             seed=None if seed is None else seed + s,

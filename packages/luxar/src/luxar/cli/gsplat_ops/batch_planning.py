@@ -89,6 +89,12 @@ class MergeConfig:
     n_lods: Optional[int] = None
     additive_method: Optional[str] = None
     breakpoints: Optional[str] = None
+    # Streaming sizing (--merge-target-ms trio): resolved at plan time into a
+    # concrete `breakpoints="stream:<c>"` string, so the manifest schema is
+    # unchanged and the merge job just re-parses the stored breakpoints.
+    target_ms: Optional[float] = None
+    bandwidth_mbps: Optional[float] = None
+    bytes_per_splat: Optional[float] = None
     compression_factor: Optional[int] = None
     levels: Optional[int] = None
     substitutive_method: Optional[str] = None
@@ -153,15 +159,25 @@ def _parse_slice(s: str, max_val: int) -> list[int]:
     return list(range(start, stop, step))
 
 
-def resolve_merge_recipe_args(merge: MergeConfig) -> dict:
+def resolve_merge_recipe_args(
+    merge: MergeConfig, *, merged_ndim: int = 4, merged_has_colors: bool = False
+) -> dict:
     """Validate the per-part merge recipe + knobs into the manifest dict.
 
     Fail-fast (before any expensive planning / fitting): rejects an unsupported
     recipe, cross-recipe knobs, and merge knobs given WITHOUT a ``--merge-recipe``
     (previously silently dropped), and validates method/breakpoint/lod-method
-    spellings — mirroring ``fit --recipe`` and ``gsplat lod``. Returns ``{}`` when
-    no recipe and no knobs are requested. Raises :class:`typer.BadParameter` on
-    any problem.
+    spellings — mirroring ``fit --recipe`` and ``gsplat lod``. The streaming trio
+    (``--merge-target-ms``/``--merge-bandwidth-mbps``/``--merge-bytes-per-splat``)
+    is resolved HERE into a concrete ``breakpoints="stream:<c>"`` string (analytic
+    bytes/splat for ``merged_ndim`` — no gsplat store exists yet at plan time), so
+    the manifest schema is unchanged. ``merged_ndim`` defaults to 4 (3 spatial +
+    the stacked-timepoint axis, the whole-timelapse norm); pass the value the
+    merge itself will compute — ``len(spatial_shape) + (n_timepoints > 1)`` — so
+    plan-time and merge-time size the SAME ladder for the same data.
+    ``merged_has_colors`` marks a merge that will write per-splat colors (a
+    multi-channel merge with channel colors). Returns ``{}`` when no recipe and
+    no knobs are requested. Raises :class:`typer.BadParameter` on any problem.
     """
     if merge.recipe is None:
         # A merge knob without a recipe is a silent no-op — reject it loudly so
@@ -172,6 +188,9 @@ def resolve_merge_recipe_args(merge: MergeConfig) -> dict:
                 "--merge-n-lods": merge.n_lods,
                 "--merge-additive-method": merge.additive_method,
                 "--merge-breakpoints": merge.breakpoints,
+                "--merge-target-ms": merge.target_ms,
+                "--merge-bandwidth-mbps": merge.bandwidth_mbps,
+                "--merge-bytes-per-splat": merge.bytes_per_splat,
                 "--merge-compression-factor": merge.compression_factor,
                 "--merge-levels": merge.levels,
                 "--merge-substitutive-method": merge.substitutive_method,
@@ -202,6 +221,9 @@ def resolve_merge_recipe_args(merge: MergeConfig) -> dict:
         "--merge-n-lods": merge.n_lods,
         "--merge-additive-method": merge.additive_method,
         "--merge-breakpoints": merge.breakpoints,
+        "--merge-target-ms": merge.target_ms,
+        "--merge-bandwidth-mbps": merge.bandwidth_mbps,
+        "--merge-bytes-per-splat": merge.bytes_per_splat,
     }
     substitutive_only = {
         "--merge-compression-factor": merge.compression_factor,
@@ -220,6 +242,33 @@ def resolve_merge_recipe_args(merge: MergeConfig) -> dict:
             f"--merge-recipe {other}). Remove them or switch recipe."
         )
 
+    # Streaming trio → a concrete stream:<c> breakpoints string, resolved at
+    # plan time (the stored string round-trips the manifest untouched).
+    from luxar.cli.lod import validate_streaming_knobs
+
+    validate_streaming_knobs(
+        merge.target_ms,
+        merge.bandwidth_mbps,
+        merge.bytes_per_splat,
+        merge.breakpoints,
+        prefix="--merge-",
+    )
+    eff_breakpoints = merge.breakpoints
+    if merge.target_ms is not None:
+        from luxar.cli.lod import (
+            estimate_bytes_per_splat,
+            resolve_streaming_breakpoints,
+        )
+
+        eff_breakpoints = resolve_streaming_breakpoints(
+            merge.target_ms,
+            merge.bandwidth_mbps,
+            merge.bytes_per_splat,
+            analytic_bps=estimate_bytes_per_splat(
+                merged_ndim, has_colors=merged_has_colors
+            ),
+        )
+
     args: dict = {}
     if merge.n_lods is not None:
         args["n-lods"] = str(merge.n_lods)
@@ -233,11 +282,11 @@ def resolve_merge_recipe_args(merge: MergeConfig) -> dict:
                 f"{list(_VALID_ADDITIVE_METHODS)}; got {merge.additive_method!r}"
             )
         args["additive-method"] = am_norm
-    if merge.breakpoints is not None:
+    if eff_breakpoints is not None:
         from luxar.cli.lod import _parse_lod_breakpoints
 
-        _parse_lod_breakpoints(merge.breakpoints)
-        args["breakpoints"] = merge.breakpoints
+        _parse_lod_breakpoints(eff_breakpoints)
+        args["breakpoints"] = eff_breakpoints
     if merge.lod_method is not None:
         if merge.lod_method not in ("extent", "count"):
             raise typer.BadParameter(
@@ -328,7 +377,7 @@ def plan_batch(
     denoise: DenoiseConfig,
     content: ContentKnobs,
     merge: MergeConfig,
-    merge_recipe_args: dict,
+    merge_recipe_args: Optional[dict] = None,
     max_shape: Optional[List[int]] = None,
     throughput_table: Optional[list] = None,
     resolved_gpu: str = "unknown",
@@ -341,6 +390,12 @@ def plan_batch(
 
     Parameters
     ----------
+    merge_recipe_args
+        Pre-resolved manifest dict (tests). Default ``None`` resolves ``merge``
+        via :func:`resolve_merge_recipe_args` HERE, after shape discovery — so
+        ``--merge-target-ms`` is sized with the true merged ndim
+        (``len(spatial) + (n_t > 1)``) and color-carrying multi-channel merges,
+        exactly matching what ``batch-fit merge`` computes at merge time.
     max_shape
         GPU-profile "largest shape that fits" (uniform auto tile-size). ``None``
         in content mode, or locally without a benchmark profile — then an explicit
@@ -417,6 +472,19 @@ def plan_batch(
         n_c = len(c_indices)
         if timepoints_slice or channels_slice:
             aprint(f"Sliced: T={n_t} (of {n_t_full}), C={n_c} (of {n_c_full})")
+
+    # Resolve the merge recipe knobs now that the merged output's shape facts
+    # are known: the merge stacks timepoints onto an extra axis (so merged ndim
+    # is spatial + 1 only when T > 1) and writes per-splat colors only for a
+    # multi-channel merge with channel colors. Sizing --merge-target-ms here
+    # with the same inputs `batch-fit merge` uses guarantees plan-time and
+    # merge-time produce the SAME ladder for the same data.
+    if merge_recipe_args is None:
+        merge_recipe_args = resolve_merge_recipe_args(
+            merge,
+            merged_ndim=len(spatial) + (1 if n_t > 1 else 0),
+            merged_has_colors=bool(merge.channel_colors) and n_c > 1,
+        )
 
     # 3. Decompose the spatial volume into the slots fanned across (t, c).
     mode = "content" if tiling == "content" else "uniform"
