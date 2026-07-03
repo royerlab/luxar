@@ -59,6 +59,10 @@ import {
   renderSceneGraphTree,
   summariseLodStates,
   lodChipContent,
+  nodeStatsContent,
+  countAdditiveNodes,
+  levelRoleTitleSuffix,
+  activeLevelRole,
   formatNumber as templateFormatNumber,
   formatBytes as templateFormatBytes,
   getColorClass,
@@ -152,6 +156,8 @@ export class DataLoadingMonitor {
   // badges, "LOD x/N" chips, refining indicator, and header summary.
   private lodProgressProvider: LODProgressProvider | null = null;
   private lodStates: Map<string, LODProgressState> = new Map();
+  /** Per-path visible counts pushed by the SceneLoader's visible-counts walk. */
+  private visibleCountsByPath: ReadonlyMap<string, number> = new Map();
 
   // Accumulator providers for dynamic stats retrieval
   private accumulatorProviders: {
@@ -449,6 +455,7 @@ export class DataLoadingMonitor {
       visibleSplats: 0,
     };
     this.expandedNodes = new Set<string>(['/']);
+    this.visibleCountsByPath = new Map();
     this.structureDirty = true;
   }
 
@@ -664,6 +671,19 @@ export class DataLoadingMonitor {
    */
   public updateVisibleSplats(count: number): void {
     this.sceneGraphState.visibleSplats = count;
+  }
+
+  /**
+   * Per-node visible counts after nD slicing, keyed by scene-graph path.
+   * Pushed by the SceneLoader's visible-counts walk (only rendered meshes
+   * contribute). Merged into the tree nodes so badge tooltips can show
+   * "(N visible after slicing)" per layer; the merge happens in
+   * `updateSceneGraphBadges` on the next poll tick. Nodes whose path is
+   * absent from the latest map (the walk prunes non-visible subtrees)
+   * have their count cleared so tooltips never show a stale number.
+   */
+  public updateVisibleCountsByPath(counts: ReadonlyMap<string, number>): void {
+    this.visibleCountsByPath = counts;
   }
 
   /**
@@ -1308,6 +1328,10 @@ export class DataLoadingMonitor {
   private updateSceneGraphBadges(): void {
     if (!this.contentContainer || !this.sceneGraphState.root) return;
 
+    // Merge the latest per-path visible counts into the tree nodes so the
+    // badge tooltips (via nodeStatsContent) reflect post-slicing visibility.
+    this.syncVisibleCountsIntoTree();
+
     const badges = this.contentContainer.querySelectorAll(
       '.luxar-scene-graph__badge[data-node-path]'
     );
@@ -1317,18 +1341,11 @@ export class DataLoadingMonitor {
       const node = this.getSceneGraphNodeByPath(path);
       if (!node) return;
 
-      let text = '';
-      if (node.type === 'points' && node.pointCount !== undefined) {
-        text = templateFormatNumber(node.pointCount);
-      } else if (node.type === 'lines' && node.segmentCount !== undefined) {
-        text = templateFormatNumber(node.segmentCount);
-      } else if (node.type === 'gsplats' && node.splatCount !== undefined) {
-        text = templateFormatNumber(node.splatCount);
-      } else if (node.type === 'group' && node.children.length > 0) {
-        text = `${node.children.length}`;
-      }
-      if (text) {
-        badge.textContent = text;
+      // Same helper as the initial render so text + tooltip stay in sync.
+      const stats = nodeStatsContent(node);
+      if (stats) {
+        badge.textContent = stats.text;
+        (badge as HTMLElement).title = stats.title;
       }
     });
 
@@ -1346,6 +1363,32 @@ export class DataLoadingMonitor {
       if (content) {
         chip.textContent = content.text;
         (chip as HTMLElement).title = content.title;
+      } else {
+        // Node no longer has LOD content (e.g. state vanished on reload):
+        // clear rather than leaving a stale value on screen.
+        chip.textContent = '';
+        (chip as HTMLElement).title = '';
+      }
+    });
+
+    // Re-mark active/inactive substitutive-level rows: the LOD selector can
+    // switch levels between structural rebuilds, so classes + tooltips are
+    // patched each tick from the parent group's live state.
+    const levelRows = this.contentContainer.querySelectorAll(
+      '.luxar-scene-graph__node-row[data-level-of]'
+    );
+    levelRows.forEach((row) => {
+      const el = row as HTMLElement;
+      const parentPath = el.dataset.levelOf;
+      const indexRaw = el.dataset.levelIndex;
+      if (!parentPath || indexRaw === undefined) return;
+      // Same helper as the initial render so both derive the role identically.
+      const role = activeLevelRole(this.lodStates.get(parentPath), Number(indexRaw));
+      el.classList.toggle('luxar-scene-graph__node-row--active-level', role === 'active');
+      el.classList.toggle('luxar-scene-graph__node-row--inactive-level', role === 'inactive');
+      const baseTitle = el.dataset.baseTitle;
+      if (baseTitle !== undefined) {
+        el.title = `${baseTitle}${levelRoleTitleSuffix(role)}`;
       }
     });
 
@@ -1354,17 +1397,39 @@ export class DataLoadingMonitor {
       '[data-field="lod-summary"]'
     ) as HTMLElement | null;
     if (summaryEl) {
-      summaryEl.textContent = summariseLodStates(this.lodStates);
+      summaryEl.textContent = summariseLodStates(
+        this.lodStates,
+        countAdditiveNodes(this.sceneGraphState.root)
+      );
     }
   }
 
   /**
-   * Resolve a scene-graph node by path via a memoized path→node index.
-   * The index is rebuilt only when the tree root reference changes (a
-   * wholesale `setSceneGraph`), so repeated per-frame chip lookups are
-   * O(1) per chip rather than a fresh DFS each.
+   * Sync the latest per-path visible counts (from the SceneLoader's
+   * visible-counts walk) onto every geometry node in the tree. The walk
+   * prunes non-visible subtrees, so a path ABSENT from the latest map
+   * (hidden layer, switched-away substitutive level) has its count reset
+   * to `undefined` — the tooltip then omits the "(N visible after
+   * slicing)" suffix (unknown) instead of showing a stale number.
    */
-  private getSceneGraphNodeByPath(path: string): SceneGraphNode | null {
+  private syncVisibleCountsIntoTree(): void {
+    const index = this.ensureSceneGraphNodeIndex();
+    if (!index) return;
+    for (const node of index.values()) {
+      const visible = this.visibleCountsByPath.get(node.path);
+      if (node.type === 'points') node.visiblePointCount = visible;
+      else if (node.type === 'lines') node.visibleSegmentCount = visible;
+      else if (node.type === 'gsplats') node.visibleSplatCount = visible;
+    }
+  }
+
+  /**
+   * Build (or reuse) the memoized path→node index for the current tree.
+   * Rebuilt only when the tree root reference changes (a wholesale
+   * `setSceneGraph`), so repeated per-frame lookups and full-tree sweeps
+   * are O(1)/O(N) rather than a fresh DFS each.
+   */
+  private ensureSceneGraphNodeIndex(): Map<string, SceneGraphNode> | null {
     const root = this.sceneGraphState.root;
     if (!root) return null;
     if (this.sceneGraphNodeIndexRoot !== root) {
@@ -1377,7 +1442,12 @@ export class DataLoadingMonitor {
       }
       this.sceneGraphNodeIndexRoot = root;
     }
-    return this.sceneGraphNodeIndex.get(path) ?? null;
+    return this.sceneGraphNodeIndex;
+  }
+
+  /** Resolve a scene-graph node by path via the memoized path→node index. */
+  private getSceneGraphNodeByPath(path: string): SceneGraphNode | null {
+    return this.ensureSceneGraphNodeIndex()?.get(path) ?? null;
   }
 
   /**

@@ -135,8 +135,20 @@ The `breakpoints` parameter selects how the ordered splats are sliced
 into LOD levels:
 
 - `"equal-count"` (default) — `n_lods` levels of (nearly-)equal size.
+- `"stream:<c>"` — bandwidth-derived **streaming ladder**: geometric
+  cumulative cuts `[c, 2c, 4c, …, N]` (first chunk `c` splats, then
+  doubling), resolved against each call's own `N` — so the same spec
+  adapts per part / per substitutive level, silently clamping for small
+  `N` (capped at `DEFAULT_STREAM_MAX_LEVELS` = 16 levels; a sliver tail
+  `< c/2` folds into the previous cut). Size `c` from a download budget
+  with `streaming_chunk_splats(target_ms, bandwidth_mbps,
+  bytes_per_splat)` — e.g. 200 ms @ 25 Mbps @ 45 B/splat → ~14 k. The
+  CLI's `--target-ms`/`--bandwidth-mbps` do this for you.
 - `list[int]` — explicit cumulative splat counts. The list length sets
-  the number of levels. Example: `[1000, 5000, 25000]`.
+  the number of levels. Example: `[1000, 5000, 25000]`. In per-part /
+  per-level contexts (partitioned parts, pyramid levels) the counts are
+  clamped to each part's own `N` via `clamp_counts_breakpoints` (a fixed
+  list would otherwise abort on small parts).
 - `list[float]` in $(0, 1]$ — cumulative *energy fractions*. Cutpoints
   are placed at the smallest `k` whose cumulative-utility curve crosses
   each target. Example: `[0.5, 0.9, 0.99, 1.0]`.
@@ -187,6 +199,7 @@ make_substitutive_lod(
     method: str = "auto",               # see "Substitutive methods" below
     lloyd_iterations: int = 5,
     candidate_bins_k: int = 12,
+    coverage_inflation: float = 3.0,    # anti-grid inter-spread widening (1.0 = off)
     device: str = "auto",               # auto | cpu | cuda | mps
     seed: int | None = None,
     verbose: bool = False,              # per-level Arbol logging
@@ -198,6 +211,23 @@ additive sub-LOD per substitutive level, and splat counts
 `[N, ⌈N/K⌉, ⌈N/K²⌉, …, ⌈N/K^L⌉]`. The on-disk container is a v3.1
 `kind=lod` group (`child_<i>/` per level, coarsest→finest on disk)
 — no `splats/substitutive_<s>/` wrapper.
+
+### Coverage inflation (anti-grid widening)
+
+Every method finishes with a moment-matched merge, which gives balanced
+spatial bins of pitch $d$ a representative with $\sigma \approx d/\sqrt{12}
+\approx 0.29\,d$ — well below the $\sigma \gtrsim d/2$ a lattice of
+Gaussians needs to sum flat. Because the Morton warm start quantises bin
+boundaries onto a *global dyadic grid*, the resulting coverage dips align
+into coherent axis-aligned planes: a very visible grid pattern at every
+coarse level. `coverage_inflation` (default **3.0**) widens only the
+*inter-center* spread term of each merge ($\Sigma_\text{out} =
+\text{intra} + \beta\,\text{inter}$; $\beta = 3$ turns $d^2/12$ into
+$(d/2)^2$) with a mass-preserving amplitude rescale, so each splat's
+integral — hence the additive-blend X-ray projection — is unchanged.
+$\beta = 3$ is the exact fixed point of the level recurrence, so the
+calibration holds at every depth. Set `coverage_inflation=1.0` (or CLI
+`--coverage-inflation 1.0`) for the historical pure moment match.
 
 ### Substitutive methods
 

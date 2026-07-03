@@ -35,7 +35,14 @@ def _segment_templates(
     *,
     Sigma: Optional[torch.Tensor] = None,
     sqrt_det: Optional[torch.Tensor] = None,
-) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+) -> tuple[
+    torch.Tensor,
+    torch.Tensor,
+    torch.Tensor,
+    torch.Tensor,
+    torch.Tensor,
+    torch.Tensor,
+]:
     """Per-bin moment-matched template + L²-amplitude ingredients (vectorised).
 
     Every quantity is a segment reduction keyed by ``assignments`` (via
@@ -44,10 +51,13 @@ def _segment_templates(
     :func:`bin_inner_product_with_template_torch` exactly, but batched over
     all ``M`` bins at once.
 
-    Returns ``(mu_bar (M,D), Sigma_bar (M,D,D), inner (M,), norm_sq (M,),
-    weights (N,))`` where ``inner`` = ⟨f_Sb, Ḡb⟩ and ``norm_sq`` = ‖Ḡb‖². The
-    per-bin L²-optimal amplitude is ``inner / norm_sq`` and the projection
-    energy is ``inner² / norm_sq``.
+    Returns ``(mu_bar (M,D), Sigma_bar (M,D,D), inter (M,D,D), inner (M,),
+    norm_sq (M,), weights (N,))`` where ``Sigma_bar = intra + inter`` is the
+    moment-matched template covariance and ``inter`` its inter-center spread
+    term alone (Σ_i w_i δδᵀ — needed by the coverage-inflation correction in
+    :func:`_build_representatives_vectorized`), ``inner`` = ⟨f_Sb, Ḡb⟩ and
+    ``norm_sq`` = ‖Ḡb‖². The per-bin L²-optimal amplitude is
+    ``inner / norm_sq`` and the projection energy is ``inner² / norm_sq``.
     """
     N, D = centres.shape
     device = centres.device
@@ -65,12 +75,15 @@ def _segment_templates(
     mu_bar = torch.zeros(M, D, dtype=dt, device=device)
     mu_bar.index_add_(0, assignments, w.unsqueeze(-1) * centres)
 
-    # Intra-bin spread Σ_i w_i Σ_i  +  inter-bin spread Σ_i w_i δδᵀ.
-    Sigma_bar = torch.zeros(M, D, D, dtype=dt, device=device)
-    Sigma_bar.index_add_(0, assignments, w.view(N, 1, 1) * Sigma)
+    # Intra-bin spread Σ_i w_i Σ_i  +  inter-bin spread Σ_i w_i δδᵀ
+    # (accumulated separately so the inter term is available on its own).
+    intra = torch.zeros(M, D, D, dtype=dt, device=device)
+    intra.index_add_(0, assignments, w.view(N, 1, 1) * Sigma)
     delta = centres - mu_bar[assignments]  # (N, D)
     outer = w.view(N, 1, 1) * (delta.unsqueeze(2) * delta.unsqueeze(1))
-    Sigma_bar.index_add_(0, assignments, outer)
+    inter = torch.zeros(M, D, D, dtype=dt, device=device)
+    inter.index_add_(0, assignments, outer)
+    Sigma_bar = intra + inter
 
     # ⟨f_Sb, Ḡb⟩ = Σ_i K(splat_i, template_{bin_i}); ‖Ḡb‖² = π^{D/2}|Σ̄_b|^{1/2}.
     ones = torch.ones(N, dtype=dt, device=device)
@@ -80,7 +93,7 @@ def _segment_templates(
     inner = torch.zeros(M, dtype=dt, device=device)
     inner.index_add_(0, assignments, K_i)
     norm_sq = template_squared_norm_torch(Sigma_bar)  # (M,)
-    return mu_bar, Sigma_bar, inner, norm_sq, w
+    return mu_bar, Sigma_bar, inter, inner, norm_sq, w
 
 
 def _build_representatives_vectorized(
@@ -91,17 +104,44 @@ def _build_representatives_vectorized(
     assignments: torch.Tensor,
     *,
     M: int,
+    coverage_inflation: float = 1.0,
 ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, Optional[torch.Tensor]]:
-    """Vectorised replacement for the per-bin :func:`_build_representatives`."""
+    """Vectorised replacement for the per-bin :func:`_build_representatives`.
+
+    ``coverage_inflation`` (β >= 1) widens each representative's *inter-center*
+    spread term: ``Σ_out = intra + β·inter``, with a mass-preserving amplitude
+    rescale (``a·|Σ|^{1/2}`` kept constant, so the splat's integral — hence the
+    additive-blend X-ray projection — is unchanged). Rationale: the balanced
+    warm-start bins tile space with pitch ``d``, and pure moment matching gives
+    them σ ≈ d/√12 ≈ 0.29 d — far below the σ ≳ d/2 a lattice of Gaussians
+    needs to sum flat, so the un-inflated levels render with a strong periodic
+    (grid) intensity ripple along the shared Morton-cell boundaries. β·inter
+    fixes exactly that term: β=3 turns d²/12 into (d/2)², and the recurrence
+    across levels (σ_ℓ² = σ_{ℓ-1}² + β(d_ℓ² − d_{ℓ-1}²)/12) has σ = √(β/12)·d
+    as its exact fixed point, so the calibration holds at every level with no
+    compounding. Single-member bins have ``inter = 0`` and are untouched.
+    """
     N, D = centres.shape
     device = centres.device
     dt = centres.dtype
     Sigma = L @ L.transpose(-1, -2)
     sqrt_det = sqrt_det_from_cholesky(L)
-    mu_bar, Sigma_bar, inner, norm_sq, w = _segment_templates(
+    mu_bar, Sigma_bar, inter, inner, norm_sq, w = _segment_templates(
         centres, L, amps, assignments, M, Sigma=Sigma, sqrt_det=sqrt_det
     )
     a_star = l2_optimal_amplitude_torch(inner, norm_sq).clamp_min(0.0)  # (M,)
+
+    if coverage_inflation != 1.0:
+        Sigma_infl = Sigma_bar + (coverage_inflation - 1.0) * inter
+        norm_infl = template_squared_norm_torch(Sigma_infl)  # π^{D/2}|Σ_out|^{1/2}
+        # Mass preservation: a_out·|Σ_out|^{1/2} = a*·|Σ̄|^{1/2}, i.e. scale by
+        # norm_sq/norm_infl (the π^{D/2} factors cancel).
+        a_star = torch.where(
+            norm_infl > 0,
+            a_star * norm_sq / norm_infl,
+            torch.zeros_like(a_star),
+        )
+        Sigma_bar = Sigma_infl
 
     # Σ̄ → lower-triangular Cholesky; non-PD / empty bins → identity (then culled
     # by their zero amplitude). A small ridge mirrors the per-bin fallback.
@@ -211,7 +251,7 @@ def _cost_increment_lloyd_vectorized(
     def projection_energy(
         assign: torch.Tensor,
     ) -> tuple[float, torch.Tensor, torch.Tensor]:
-        mu_bar, Sigma_bar, inner, norm_sq, _ = _segment_templates(
+        mu_bar, Sigma_bar, _inter, inner, norm_sq, _ = _segment_templates(
             centres, L, amps, assign, M, Sigma=Sigma, sqrt_det=sqrt_det
         )
         P = (inner * inner / norm_sq.clamp_min(_TINY)).sum()

@@ -146,10 +146,25 @@ flags as `fit`: `--channel`/`-c`, `--timepoint`, `--array-key`, `--axes`.
 | Flag | Default | Meaning |
 | --- | --- | --- |
 | `--n-lods` | 4 | additive LOD levels |
-| `--method` / `-m` | greedy | `greedy` / `self_energy` / `mass` / `amplitude` / `spectral` / `random` |
-| `--breakpoints` / `-b` | equal-count | `equal-count` / `counts:N1,N2,...` / `energy:f1,f2,...` |
+| `--method` / `-m` | auto | `auto` (greedy at N ≤ 5000, else self_energy) / `greedy` / `self_energy` / `mass` / `amplitude` / `spectral` / `random` |
+| `--breakpoints` / `-b` | equal-count | `equal-count` / `stream:C` (geometric streaming ladder, first chunk C splats then doubling; sized per part/level) / `counts:N1,N2,...` (clamped per part) / `energy:f1,f2,...` |
+| `--target-ms` | — | streaming sizing: derive `stream:<c>` so the first additive chunk downloads in ~this many ms (mutually exclusive with `--breakpoints`) |
+| `--bandwidth-mbps` | 25 | assumed downlink for `--target-ms` sizing |
+| `--bytes-per-splat` | measured/estimated | override the on-wire bytes/splat for `--target-ms` sizing |
 | `--truncation-sigmas` | 3.0 | Mahalanobis cutoff for greedy |
 | `--max-n-dense` | 2000 | greedy dense-Gram threshold |
+
+### `luxar gsplat additive <in> <out>` — ladder every leaf of an existing tree
+Structure-preserving per-leaf additive laddering: substitutive `kind=lod`
+levels, partition parts, and mosaic groups keep their shape; every leaf gains
+an additive ladder WITHOUT recomputing the substitutive/partition structure.
+The per-leaf counterpart of `lod --recipe additive` (which needs a flat input).
+Options: `--n-lods` / `--method` / `--breakpoints` (incl. `stream:C`) /
+`--target-ms` / `--bandwidth-mbps` / `--bytes-per-splat` / `--encoding` /
+`--compress` / `--overwrite`.
+```bash
+luxar gsplat additive sub.gsplats.zarr pyr.gsplats.zarr --target-ms 200   # ~200ms first paint per level
+```
 
 ### Spatial partition (partitioned / multiscale / mosaic)
 | Flag | Default | Meaning |
@@ -166,6 +181,7 @@ flags as `fit`: `--channel`/`-c`, `--timepoint`, `--array-key`, `--axes`.
 | `--substitutive-method` | auto | `auto` / `kmeans` / `kmeans_lloyd` / `greedy` / `greedy_lloyd` |
 | `--lloyd-iters` | 5 | Lloyd refinement passes |
 | `--candidate-bins-k` | 12 | Lloyd spatial-hash top-k |
+| `--coverage-inflation` | 3.0 | widen merged reps' inter-center spread (mass-preserving) so coarse splats sum flat — suppresses the grid ripple; 1.0 = pure moment match |
 | `--coarsen-dims` | all | center-column indices coarsening may merge over (rest = hard barriers) |
 
 ### LOD switch tuning (any kind=lod group)

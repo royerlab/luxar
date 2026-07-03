@@ -94,6 +94,14 @@ export interface SceneLoaderMonitorPort {
   updateVisiblePoints(count: number): void;
   updateVisibleSegments(count: number): void;
   updateVisibleSplats(count: number): void;
+  /**
+   * Per-node visible counts after nD slicing, keyed by scene-graph path
+   * (mesh `name`). Drives the "(N visible after slicing)" suffix in the
+   * scene-graph tree's badge tooltips. Only rendered meshes contribute
+   * (hidden subtrees — inactive LOD levels, toggled-off layers — are
+   * pruned by the caller's walk).
+   */
+  updateVisibleCountsByPath(counts: ReadonlyMap<string, number>): void;
 
   // UI visibility — driven by SceneLoader.showMonitor/hideMonitor/toggleMonitor
   show(): void;

@@ -160,6 +160,47 @@ class TestResolveAdditiveAxisGsplats:
         result = resolve_additive_axis_gsplats(flat, {"breakpoints": [30, 64]})
         assert result.n_additive_sublods == 2
 
+    def test_dict_counts_clamp_per_substitutive_level(self, pyramid) -> None:
+        """REGRESSION: explicit ``counts:`` breakpoints larger than a COARSER
+        substitutive level (smaller by K^s) used to abort the whole build with
+        'largest breakpoint exceeds N'. They now clamp per level — mirroring the
+        CLI per-part sites (recipes/pyramid/gsplat additive)."""
+        assert pyramid.n_substitutive > 1
+        coarsest = min(
+            pyramid.at_substitutive(s).n_splats for s in range(pyramid.n_substitutive)
+        )
+        # A count that exceeds every coarser level but fits the finest (== the
+        # full dataset N — larger would be a typo and abort, see the next test).
+        big = pyramid.n_splats
+        assert coarsest < big
+        result = resolve_additive_axis_gsplats(
+            pyramid, {"breakpoints": [1, big]}
+        )  # must NOT raise
+        # Every level keeps all its splats and gains a (clamped) ladder.
+        assert result.n_substitutive == pyramid.n_substitutive
+        for s in range(result.n_substitutive):
+            lvl = result.at_substitutive(s)
+            assert sum(sub.n_splats for sub in lvl.additive_sublods) == lvl.n_splats
+
+    def test_dict_counts_exceeding_whole_group_raise(self, pyramid) -> None:
+        """Counts exceeding the WHOLE group (the finest substitutive level) are
+        a dataset-scale typo and must still abort loudly — the per-level clamp
+        never masks them."""
+        with pytest.raises(ValueError, match="exceeds N="):
+            resolve_additive_axis_gsplats(
+                pyramid, {"breakpoints": [pyramid.n_splats + 1]}
+            )
+
+    def test_dict_stream_breakpoints_per_level(self, pyramid) -> None:
+        """A ``stream:<c>`` spec sizes each substitutive level's ladder against
+        ITS OWN N through the convenience API."""
+        result = resolve_additive_axis_gsplats(pyramid, {"breakpoints": "stream:8"})
+        for s in range(result.n_substitutive):
+            lvl = result.at_substitutive(s)
+            incs = [sub.n_splats for sub in lvl.additive_sublods]
+            assert sum(incs) == lvl.n_splats
+            assert lvl.additive_sublods[0].stats["lod_breakpoints_kind"] == "stream"
+
     def test_invalid_spec_type_raises(self, flat) -> None:
         with pytest.raises(TypeError, match="None, bool, or dict"):
             resolve_additive_axis_gsplats(flat, 1.5)  # type: ignore[arg-type]

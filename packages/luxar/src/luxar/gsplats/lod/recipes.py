@@ -49,7 +49,9 @@ from luxar.gsplats.gsplat_data import GSplatData
 from luxar.gsplats.lod.additive import (
     AutoOrMethod,
     BreakpointSpec,
+    clamp_counts_breakpoints,
     make_additive_lod,
+    validate_counts_breakpoints,
 )
 from luxar.gsplats.lod.pyramid import make_lod_pyramid
 from luxar.gsplats.lod.substitutive import make_substitutive_lod
@@ -113,6 +115,8 @@ class RecipeParams:
     substitutive_method: str = "auto"
     lloyd_iterations: int = 5
     candidate_bins_k: int = 12
+    # Anti-grid inter-spread widening (see make_substitutive_lod); 1.0 disables.
+    coverage_inflation: float = 3.0
     # Center-column indices substitutive coarsening may merge over; the
     # complement become hard grouping barriers. None == coarsen all dims.
     coarsen_dims: Optional[tuple] = None
@@ -173,6 +177,7 @@ def build_substitutive(data: GSplatData, params: RecipeParams) -> GSplatData:
         method=params.substitutive_method,  # type: ignore[arg-type]
         lloyd_iterations=params.lloyd_iterations,
         candidate_bins_k=params.candidate_bins_k,
+        coverage_inflation=params.coverage_inflation,
         device=params.device,
         seed=params.seed,
         coarsen_dims=params.coarsen_dims,
@@ -188,6 +193,7 @@ def build_pyramid(data: GSplatData, params: RecipeParams) -> GSplatData:
         substitutive_method=params.substitutive_method,  # type: ignore[arg-type]
         lloyd_iterations=params.lloyd_iterations,
         candidate_bins_k=params.candidate_bins_k,
+        coverage_inflation=params.coverage_inflation,
         device=params.device,
         coarsen_dims=params.coarsen_dims,
         n_additive_lods=params.n_lods,
@@ -207,6 +213,10 @@ def build_partitioned(data: GSplatData, params: RecipeParams) -> GSplatPartition
     (clamped to the part's splat count so no empty LOD bins are produced).
     """
     base = data.flattened()
+    # Typo guard: explicit `counts:` breakpoints must fit the WHOLE dataset
+    # (strict, aborts loudly); the individual — smaller — parts then clamp in
+    # _ladder_for_part.
+    validate_counts_breakpoints(params.breakpoints, base.n_splats)
     partition = base.to_spatial_partition(
         max_elements=params.effective_max_elements,
         rule=params.partition_rule,
@@ -241,6 +251,7 @@ def _substitutive_for_part(part: GSplatNode, params: RecipeParams) -> GSplatNode
         method=params.substitutive_method,  # type: ignore[arg-type]
         lloyd_iterations=params.lloyd_iterations,
         candidate_bins_k=params.candidate_bins_k,
+        coverage_inflation=params.coverage_inflation,
         device=params.device,
         seed=params.seed,
         coarsen_dims=params.coarsen_dims,
@@ -319,6 +330,7 @@ def build_multiscale(data: GSplatData, params: RecipeParams) -> GSplatLodGroup:
         method=params.substitutive_method,  # type: ignore[arg-type]
         lloyd_iterations=params.lloyd_iterations,
         candidate_bins_k=params.candidate_bins_k,
+        coverage_inflation=params.coverage_inflation,
         device=params.device,
         seed=params.seed,
         coarsen_dims=params.coarsen_dims,
@@ -349,13 +361,18 @@ def build_multiscale(data: GSplatData, params: RecipeParams) -> GSplatLodGroup:
 def _ladder_for_part(part: GSplatNode, params: RecipeParams) -> GSplatNode:
     """Rebuild one partition child as a leaf carrying an additive ladder."""
     part_data = GSplatData.from_tree(part)
-    # Clamp ladder depth so a small part never yields empty equal-count bins.
+    # Clamp ladder depth so a small part never yields empty equal-count bins,
+    # and clamp explicit `counts:` breakpoints to THIS part's size — parts have
+    # differing N, so a fixed counts list whose largest cut exceeds a small
+    # part would otherwise abort the whole build ("largest breakpoint exceeds
+    # N"). String/energy specs pass through (already size-adaptive).
     eff_n_lods = max(1, min(params.n_lods, part_data.n_splats))
+    eff_breakpoints = clamp_counts_breakpoints(params.breakpoints, part_data.n_splats)
     laddered = make_additive_lod(
         part_data,
         n_lods=eff_n_lods,
         method=params.additive_method,
-        breakpoints=params.breakpoints,
+        breakpoints=eff_breakpoints,
         truncation_sigmas=params.truncation_sigmas,
         max_n_dense=params.max_n_dense,
         seed=params.seed,

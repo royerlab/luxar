@@ -53,6 +53,19 @@ Per-bin merge math (moment matching, $L^2$-optimal amplitude, residual
 energy) lives in :mod:`luxar.gsplats.lod._kernels` and is shared with
 the additive axis.
 
+**Coverage inflation** (``coverage_inflation``, default 3.0): every method
+finishes with a merge whose covariance is the bin's moment match
+(intra + inter spread). For balanced spatial bins of pitch ``d`` the
+moment-matched σ is ≈ ``d/√12`` ≈ 0.29 d — well below the σ ≳ d/2 a
+lattice of Gaussians needs to sum flat — and, because the Morton warm
+start quantises bin boundaries onto a *global dyadic grid*, the coverage
+dips align into coherent axis-aligned planes: a very visible grid
+pattern at every coarse level. The fix widens the inter-center term only
+(``Σ_out = intra + β·inter``; β=3 turns d²/12 into (d/2)²) with a
+mass-preserving amplitude rescale, and is the exact fixed point of the
+level recurrence so it stays calibrated at every depth. Set
+``coverage_inflation=1.0`` for the historical pure moment match.
+
 The returned value is a single :class:`GSplatData` with
 ``n_substitutive = levels + 1`` and ``M_i = 1`` per substitutive level
 (one additive sub-LOD each). On disk this is a single v2.0
@@ -169,9 +182,7 @@ def _normalise_coarsen_dims(
         raise ValueError("coarsen_dims must be non-empty")
     for d in cd:
         if d < 0 or d >= d_total:
-            raise ValueError(
-                f"coarsen_dims index {d} out of range for ndim={d_total}"
-            )
+            raise ValueError(f"coarsen_dims index {d} out of range for ndim={d_total}")
     if len(cd) == d_total:
         return None  # no barrier dims -> identical to the all-dims path
     barrier = [d for d in range(d_total) if d not in set(cd)]
@@ -272,6 +283,7 @@ def _reduce_one_level_grouped(
     method: MethodName,
     lloyd_iterations: int,
     candidate_bins_k: int,
+    coverage_inflation: float,
     device: torch.device,
 ) -> GSplatData:
     """One reduction level that never merges across the barrier dims.
@@ -292,6 +304,7 @@ def _reduce_one_level_grouped(
             method=method,
             lloyd_iterations=lloyd_iterations,
             candidate_bins_k=candidate_bins_k,
+            coverage_inflation=coverage_inflation,
             device=device,
         )
     keys = np.asarray(data.centers)[:, barrier]
@@ -305,6 +318,7 @@ def _reduce_one_level_grouped(
             method=method,
             lloyd_iterations=lloyd_iterations,
             candidate_bins_k=candidate_bins_k,
+            coverage_inflation=coverage_inflation,
             device=device,
         )
     sizes = np.bincount(inverse, minlength=g_count)
@@ -336,6 +350,7 @@ def _reduce_one_level_grouped(
                     method=method,
                     lloyd_iterations=lloyd_iterations,
                     candidate_bins_k=candidate_bins_k,
+                    coverage_inflation=coverage_inflation,
                     device=device,
                 )
             )
@@ -355,6 +370,7 @@ def make_substitutive_lod(
     method: AutoOrMethod = "auto",
     lloyd_iterations: int = 5,
     candidate_bins_k: int = 12,
+    coverage_inflation: float = 3.0,
     device: Union[str, torch.device, None] = "auto",
     seed: Optional[int] = None,
     coarsen_dims: Optional[Sequence[int]] = None,
@@ -388,6 +404,19 @@ def make_substitutive_lod(
         Number of Morton-curve neighbours whose current bins are the
         move candidates for each splat during Lloyd refinement. Tighter
         k → faster, slightly worse quality.
+    coverage_inflation
+        Inflation factor β >= 1 applied to each representative's
+        *inter-center* spread (``Σ_out = intra + β·inter``) with a
+        mass-preserving amplitude rescale. Pure moment matching gives
+        the balanced bins σ ≈ pitch/√12 — too narrow for neighbouring
+        representatives to sum flat, which renders as a strong periodic
+        grid ripple along the shared Morton-cell boundaries. The default
+        β=3 widens exactly the inter term to σ ≈ pitch/2 (flat-sum
+        threshold) and is the exact fixed point of the level recurrence,
+        so the calibration holds at every level. ``1.0`` disables
+        (historical pure-moment-matching behaviour). Trade-off: coarse
+        levels look slightly smoother; each splat's integral (X-ray
+        projection) is preserved exactly.
     device
         ``"auto"`` (default), ``"cpu"``, ``"cuda"``, ``"mps"``, or a
         :class:`torch.device`.
@@ -429,6 +458,8 @@ def make_substitutive_lod(
         raise ValueError(
             f"method must be one of {list(_VALID_CHOICES)}, got {method!r}"
         )
+    if coverage_inflation < 1.0:
+        raise ValueError(f"coverage_inflation must be >= 1.0, got {coverage_inflation}")
     K = int(compression_factor)
     L_levels = int(levels)
 
@@ -467,6 +498,7 @@ def make_substitutive_lod(
                 method=meth,
                 lloyd_iterations=lloyd_iterations,
                 candidate_bins_k=candidate_bins_k,
+                coverage_inflation=coverage_inflation,
                 device=target_device,
             )
         return _reduce_one_level_grouped(
@@ -476,6 +508,7 @@ def make_substitutive_lod(
             method=meth,
             lloyd_iterations=lloyd_iterations,
             candidate_bins_k=candidate_bins_k,
+            coverage_inflation=coverage_inflation,
             device=target_device,
         )
 
@@ -537,6 +570,7 @@ def make_substitutive_lod(
             "compression_factor": K,
             "method": method,
             "n_substitutive_levels": len(sub_levels),
+            "coverage_inflation": float(coverage_inflation),
             "coarsen_dims": list(norm_coarsen) if norm_coarsen is not None else None,
         }
     )
@@ -555,6 +589,7 @@ def _reduce_one_level(
     method: MethodName,
     lloyd_iterations: int,
     candidate_bins_k: int,
+    coverage_inflation: float,
     device: torch.device,
 ) -> GSplatData:
     """Run one application of the partition-and-merge operator $\\mathcal{R}_K$."""
@@ -609,7 +644,13 @@ def _reduce_one_level(
 
     # 3) Bin merge: produce M representative splats (vectorised segment ops).
     new_centres, new_L, new_amps, new_colors = _build_representatives_vectorized(
-        centres_t, L_t, amps_t, colors_t, assignments, M=M_target
+        centres_t,
+        L_t,
+        amps_t,
+        colors_t,
+        assignments,
+        M=M_target,
+        coverage_inflation=coverage_inflation,
     )
 
     # Cull empty / degenerate bins (zero optimal amplitude).

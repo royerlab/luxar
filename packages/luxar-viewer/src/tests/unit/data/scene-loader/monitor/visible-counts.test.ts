@@ -14,16 +14,19 @@ function makeMonitor() {
     updateVisiblePoints: vi.fn(),
     updateVisibleSegments: vi.fn(),
     updateVisibleSplats: vi.fn(),
+    updateVisibleCountsByPath: vi.fn(),
   } as unknown as SceneLoaderMonitorPort & {
     updateVisiblePoints: ReturnType<typeof vi.fn>;
     updateVisibleSegments: ReturnType<typeof vi.fn>;
     updateVisibleSplats: ReturnType<typeof vi.fn>;
+    updateVisibleCountsByPath: ReturnType<typeof vi.fn>;
   };
 }
 
-function meshWith(userData: Record<string, unknown>): THREE.Mesh {
+function meshWith(userData: Record<string, unknown>, name?: string): THREE.Mesh {
   const mesh = new THREE.Mesh();
   mesh.userData = userData;
+  if (name) mesh.name = name;
   return mesh;
 }
 
@@ -104,5 +107,28 @@ describe('updateVisibleCountsInMonitor', () => {
     updateVisibleCountsInMonitor(root, monitor);
 
     expect(monitor.updateVisiblePoints).toHaveBeenCalledWith(42);
+  });
+
+  it('pushes a per-path breakdown keyed by mesh name (scene-graph path)', () => {
+    const monitor = makeMonitor();
+    const root = new THREE.Group();
+
+    root.add(meshWith({ nodeType: 'points', visiblePointCount: 120 }, '/pts'));
+    root.add(meshWith({ nodeType: 'gsplats', visibleSplatCount: 1000 }, '/splats'));
+    const hidden = meshWith({ nodeType: 'gsplats', visibleSplatCount: 500 }, '/hidden');
+    hidden.visible = false;
+    root.add(hidden);
+    // Unnamed mesh: contributes to totals but not to the per-path map.
+    root.add(meshWith({ nodeType: 'points', visiblePointCount: 5 }));
+
+    updateVisibleCountsInMonitor(root, monitor);
+
+    expect(monitor.updateVisibleCountsByPath).toHaveBeenCalledTimes(1);
+    const map = monitor.updateVisibleCountsByPath.mock.calls[0][0] as Map<string, number>;
+    expect(map.get('/pts')).toBe(120);
+    expect(map.get('/splats')).toBe(1000);
+    expect(map.has('/hidden')).toBe(false);
+    expect(map.size).toBe(2);
+    expect(monitor.updateVisiblePoints).toHaveBeenCalledWith(125);
   });
 });

@@ -3168,6 +3168,416 @@ class TestLODCommand:
         assert not out.exists()
         assert "single-level" in self._io(result)
 
+    def test_lod_stream_breakpoints_grammar(
+        self, runner: CliRunner, medium_gsplats: Path, tmp_path: Path
+    ) -> None:
+        """'stream:C' is a valid --breakpoints form; each leaf gets a geometric
+        ladder sized against its own N."""
+        from luxar.gsplats.gsplat_data import GSplatData
+
+        out = tmp_path / "stream.gsplats.zarr"
+        result = runner.invoke(
+            app,
+            [
+                "gsplat",
+                "lod",
+                str(medium_gsplats),
+                str(out),
+                "--recipe",
+                "additive",
+                "-b",
+                "stream:10",
+            ],
+        )
+        assert result.exit_code == 0, self._io(result)
+        loaded = GSplatData.load(out, include_stats=True)
+        incs = [s.n_splats for s in loaded.additive_sublods]
+        assert incs[0] == 10 and sum(incs) == 32  # medium_gsplats N=32
+        assert loaded.additive_sublods[0].stats["lod_breakpoints_kind"] == "stream"
+
+    @pytest.mark.parametrize("bad", ["stream:", "stream:0", "stream:abc"])
+    def test_lod_stream_breakpoints_invalid(
+        self, runner: CliRunner, medium_gsplats: Path, tmp_path: Path, bad: str
+    ) -> None:
+        out = tmp_path / "bad.gsplats.zarr"
+        result = runner.invoke(
+            app,
+            [
+                "gsplat",
+                "lod",
+                str(medium_gsplats),
+                str(out),
+                "--recipe",
+                "additive",
+                "-b",
+                bad,
+            ],
+        )
+        assert result.exit_code != 0
+        assert not out.exists()
+
+    def test_lod_target_ms_derives_stream_breakpoints(
+        self, runner: CliRunner, medium_gsplats: Path, tmp_path: Path
+    ) -> None:
+        """--target-ms logs the bytes/splat derivation and builds a ladder."""
+        out = tmp_path / "tms.gsplats.zarr"
+        result = runner.invoke(
+            app,
+            [
+                "gsplat",
+                "lod",
+                str(medium_gsplats),
+                str(out),
+                "--recipe",
+                "additive",
+                "--target-ms",
+                "200",
+            ],
+        )
+        assert result.exit_code == 0, self._io(result)
+        io = self._io(result)
+        assert "--target-ms 200" in io and "stream:" in io
+        assert "measured from input store" in io  # input is a real store
+        assert out.exists()
+
+    def test_lod_target_ms_encoding_change_uses_analytic(
+        self, runner: CliRunner, medium_gsplats: Path, tmp_path: Path
+    ) -> None:
+        """An explicit --encoding that differs from the input's stored encoding
+        re-encodes the output, so --target-ms must size against the analytic
+        estimate for the TARGET encoding — not the measured input bytes (e.g.
+        u16 input + --encoding precision would be ~2x off budget)."""
+        out = tmp_path / "tms_prec.gsplats.zarr"
+        result = runner.invoke(
+            app,
+            [
+                "gsplat",
+                "lod",
+                str(medium_gsplats),
+                str(out),
+                "--recipe",
+                "additive",
+                "--target-ms",
+                "200",
+                "--encoding",
+                "precision",
+            ],
+        )
+        assert result.exit_code == 0, self._io(result)
+        io = self._io(result)
+        assert "re-encodes the output" in io
+        assert "analytic estimate" in io
+        assert "measured from input store" not in io
+        # 3D precision analytic: 1.5·4·(3+1+6) = 60 B → 625000/60 = 10417.
+        assert "stream:10417" in io
+        assert out.exists()
+
+    def test_detect_store_encoding_classifies_modes(self, tmp_path: Path) -> None:
+        """detect_store_encoding reads the on-disk encoding attrs of the split
+        Cholesky arrays: AUTO quantizes to u16, MEMORY to u8, PRECISION stores
+        float32. Needs NON-uniform cholesky (uniform stores broadcast them)."""
+        from luxar.cli.lod import detect_store_encoding
+        from luxar.encoding import EncodingMode
+        from luxar.gsplats.gsplat_data import GSplatData
+
+        rng = np.random.default_rng(1)
+        n = 16
+        data = GSplatData(
+            centers=(rng.random((n, 3)) * 10).astype(np.float32),
+            amplitudes=rng.random(n).astype(np.float32),
+            # Varied, positive-diagonal factors → really encoded, not broadcast.
+            cholesky_factors=(rng.random((n, 6)) * 0.5 + 0.5).astype(np.float32),
+        )
+        for mode, expected in (
+            (EncodingMode.AUTO, "auto"),
+            (EncodingMode.PRECISION, "precision"),
+            (EncodingMode.MEMORY, "memory"),
+        ):
+            out = tmp_path / f"{expected}.gsplats.zarr"
+            data.save(out, encoding_mode=mode)
+            assert detect_store_encoding(out) == expected, mode
+        assert detect_store_encoding(tmp_path / "nope.gsplats.zarr") is None
+
+    def test_lod_target_ms_and_breakpoints_mutually_exclusive(
+        self, runner: CliRunner, medium_gsplats: Path, tmp_path: Path
+    ) -> None:
+        out = tmp_path / "x.gsplats.zarr"
+        result = runner.invoke(
+            app,
+            [
+                "gsplat",
+                "lod",
+                str(medium_gsplats),
+                str(out),
+                "--recipe",
+                "additive",
+                "--target-ms",
+                "200",
+                "-b",
+                "equal-count",
+            ],
+        )
+        assert result.exit_code != 0
+        assert "mutually exclusive" in self._io(result)
+        assert not out.exists()
+
+    def test_lod_bandwidth_knob_requires_target_ms(
+        self, runner: CliRunner, medium_gsplats: Path, tmp_path: Path
+    ) -> None:
+        """--bandwidth-mbps/--bytes-per-splat without --target-ms are loudly
+        rejected (never silently ignored)."""
+        out = tmp_path / "x.gsplats.zarr"
+        result = runner.invoke(
+            app,
+            [
+                "gsplat",
+                "lod",
+                str(medium_gsplats),
+                str(out),
+                "--recipe",
+                "additive",
+                "--bandwidth-mbps",
+                "50",
+            ],
+        )
+        assert result.exit_code != 0
+        # Rich hard-wraps the error box; collapse box glyphs + whitespace so
+        # the multi-word phrase survives wrapping.
+        flat = re.sub(r"[│─╭╮╰╯\s]+", " ", self._io(result))
+        assert "only apply with --target-ms" in flat
+
+    def test_lod_target_ms_rejected_for_substitutive(
+        self, runner: CliRunner, medium_gsplats: Path, tmp_path: Path
+    ) -> None:
+        """--target-ms is an additive-token knob — rejected for substitutive."""
+        out = tmp_path / "x.gsplats.zarr"
+        result = runner.invoke(
+            app,
+            [
+                "gsplat",
+                "lod",
+                str(medium_gsplats),
+                str(out),
+                "--recipe",
+                "substitutive",
+                "--target-ms",
+                "200",
+            ],
+        )
+        assert result.exit_code != 0
+        assert "not used by" in self._io(result)
+
+
+class TestAdditiveCommand:
+    """`gsplat additive` gives every leaf of an existing tree an additive
+    ladder, structure-preservingly (the per-leaf counterpart of `lod --recipe
+    additive`, which needs a flat input)."""
+
+    _ANSI = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
+
+    @classmethod
+    def _io(cls, result) -> str:
+        out = result.stdout or ""
+        try:
+            err = result.stderr or ""
+        except (ValueError, AttributeError):
+            err = ""
+        return cls._ANSI.sub("", out + err)
+
+    def _make_substitutive(self, src: Path, out: Path) -> None:
+        """Build a small 3-level substitutive kind=lod tree from src."""
+        from luxar.gsplats.gsplat_data import GSplatData
+        from luxar.gsplats.lod.recipes import RecipeParams, build_recipe
+
+        data = GSplatData.load(src)
+        sub = build_recipe(
+            data,
+            "substitutive",
+            RecipeParams(compression_factor=4, levels=2, device="cpu"),
+        )
+        sub.save(out)
+
+    def test_additive_on_substitutive_tree_preserves_levels(
+        self, runner: CliRunner, medium_gsplats: Path, tmp_path: Path
+    ) -> None:
+        """A kind=lod input keeps its substitutive levels; EVERY leaf gains a
+        stream ladder sized to its own N."""
+        from luxar.gsplats.io.load_gsplats import load_gsplat_node
+        from luxar.gsplats.tree import GSplatLeaf, GSplatLodGroup
+
+        sub = tmp_path / "sub.gsplats.zarr"
+        self._make_substitutive(medium_gsplats, sub)
+        out = tmp_path / "pyr.gsplats.zarr"
+        result = runner.invoke(
+            app, ["gsplat", "additive", str(sub), str(out), "-b", "stream:5"]
+        )
+        assert result.exit_code == 0, self._io(result)
+        node, _ = load_gsplat_node(out, include_stats=True)
+        assert isinstance(node, GSplatLodGroup)
+        assert len(node.children) == 3  # levels preserved
+        for child in node.children:
+            assert isinstance(child, GSplatLeaf)
+            incs = [s.n_splats for s in child.additive_sublods]
+            assert sum(incs) == child.n_splats
+            assert incs[0] <= 5 or len(incs) == 1
+            assert child.additive_sublods[0].stats["lod_breakpoints_kind"] == "stream"
+
+    def test_additive_on_partition_preserves_parts(
+        self, runner: CliRunner, medium_gsplats: Path, tmp_path: Path
+    ) -> None:
+        """A kind=partition input keeps its parts; each part gains a ladder."""
+        from luxar.gsplats.io.load_gsplats import load_gsplat_node
+        from luxar.gsplats.tree import GSplatPartition, iter_leaves
+
+        part = tmp_path / "part.gsplats.zarr"
+        r = runner.invoke(
+            app,
+            ["gsplat", "partition", str(medium_gsplats), str(part), "--parts", "3"],
+        )
+        assert r.exit_code == 0, self._io(r)
+        out = tmp_path / "part_add.gsplats.zarr"
+        result = runner.invoke(
+            app, ["gsplat", "additive", str(part), str(out), "--n-lods", "2"]
+        )
+        assert result.exit_code == 0, self._io(result)
+        node, _ = load_gsplat_node(out, include_stats=True)
+        assert isinstance(node, GSplatPartition)
+        total = sum(leaf.n_splats for leaf in iter_leaves(node))
+        assert total == 32  # count conserved
+
+    def test_additive_target_ms_logs_derivation(
+        self, runner: CliRunner, medium_gsplats: Path, tmp_path: Path
+    ) -> None:
+        sub = tmp_path / "sub.gsplats.zarr"
+        self._make_substitutive(medium_gsplats, sub)
+        out = tmp_path / "tms.gsplats.zarr"
+        result = runner.invoke(
+            app, ["gsplat", "additive", str(sub), str(out), "--target-ms", "200"]
+        )
+        assert result.exit_code == 0, self._io(result)
+        io = self._io(result)
+        assert "stream:" in io and "B/splat" in io
+
+    def test_additive_target_ms_encoding_change_uses_analytic(
+        self, runner: CliRunner, medium_gsplats: Path, tmp_path: Path
+    ) -> None:
+        """Mirror of `gsplat lod`: an explicit --encoding that re-encodes the
+        output sizes --target-ms from the analytic target-encoding estimate."""
+        out = tmp_path / "tms_prec.gsplats.zarr"
+        result = runner.invoke(
+            app,
+            [
+                "gsplat",
+                "additive",
+                str(medium_gsplats),
+                str(out),
+                "--target-ms",
+                "200",
+                "--encoding",
+                "precision",
+            ],
+        )
+        assert result.exit_code == 0, self._io(result)
+        io = self._io(result)
+        assert "re-encodes the output" in io
+        assert "analytic estimate" in io
+        assert "measured from input store" not in io
+
+    def test_additive_counts_exceeding_union_rejected(
+        self, runner: CliRunner, medium_gsplats: Path, tmp_path: Path
+    ) -> None:
+        """Explicit counts: are clamped PER LEAF, but a largest count exceeding
+        the whole dataset's N is a typo and must abort loudly — not be silently
+        clamped down (e.g. counts:1000000 on a 32-splat dataset)."""
+        out = tmp_path / "typo.gsplats.zarr"
+        result = runner.invoke(
+            app,
+            [
+                "gsplat",
+                "additive",
+                str(medium_gsplats),
+                str(out),
+                "-b",
+                "counts:1000000",
+            ],
+        )
+        assert result.exit_code != 0
+        assert "exceeds N=32" in self._io(result)
+        assert not out.exists()
+
+    def test_additive_overwrite_guard_and_exclusions(
+        self, runner: CliRunner, medium_gsplats: Path, tmp_path: Path
+    ) -> None:
+        out = tmp_path / "o.gsplats.zarr"
+        assert (
+            runner.invoke(
+                app, ["gsplat", "additive", str(medium_gsplats), str(out)]
+            ).exit_code
+            == 0
+        )
+        # exists → refused without --overwrite
+        again = runner.invoke(
+            app, ["gsplat", "additive", str(medium_gsplats), str(out)]
+        )
+        assert again.exit_code != 0
+        # --overwrite succeeds
+        ok = runner.invoke(
+            app,
+            ["gsplat", "additive", str(medium_gsplats), str(out), "--overwrite"],
+        )
+        assert ok.exit_code == 0
+        # exclusions mirror `gsplat lod`
+        bad = runner.invoke(
+            app,
+            [
+                "gsplat",
+                "additive",
+                str(medium_gsplats),
+                str(out),
+                "--overwrite",
+                "--target-ms",
+                "200",
+                "-b",
+                "equal-count",
+            ],
+        )
+        assert bad.exit_code != 0
+        assert "mutually exclusive" in self._io(bad)
+
+    def test_additive_reladders_existing_ladder(
+        self, runner: CliRunner, medium_gsplats: Path, tmp_path: Path
+    ) -> None:
+        """An already-laddered leaf is rebuilt from the flattened union."""
+        from luxar.gsplats.gsplat_data import GSplatData
+
+        first = tmp_path / "l1.gsplats.zarr"
+        assert (
+            runner.invoke(
+                app,
+                [
+                    "gsplat",
+                    "additive",
+                    str(medium_gsplats),
+                    str(first),
+                    "--n-lods",
+                    "4",
+                ],
+            ).exit_code
+            == 0
+        )
+        second = tmp_path / "l2.gsplats.zarr"
+        result = runner.invoke(
+            app, ["gsplat", "additive", str(first), str(second), "--n-lods", "2"]
+        )
+        assert result.exit_code == 0, self._io(result)
+        loaded = GSplatData.load(second, include_stats=True)
+        assert loaded.n_additive_sublods == 2
+        assert loaded.n_splats == 32  # union conserved
+        # Ladder PROVENANCE must reflect the NEW ladder (n_lods=2), not the
+        # source's stale stats (n_lods=4) — a blind meta copy regressed this.
+        lvl_stats = loaded.substitutive_levels[0].stats
+        assert lvl_stats.get("lod_n_lods") == 2, lvl_stats
+
 
 class TestFlattenCommand:
     """`gsplat flatten` collapses any tree (esp. a kind=partition) into a single

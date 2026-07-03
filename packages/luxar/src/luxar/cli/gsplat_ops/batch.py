@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import shutil
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Callable, Optional
+from typing import TYPE_CHECKING, Any, Callable, List, Optional, Tuple
 
 import typer
 from arbol import aprint, asection
@@ -323,7 +323,32 @@ def batch_submit(
         None,
         "--merge-breakpoints",
         help="Additive ladder breakpoints for --merge-recipe additive "
-        "('equal-count' | 'counts:...' | 'energy:...').",
+        "('equal-count' | 'stream:C' | 'counts:...' | 'energy:...').",
+        rich_help_panel="Merge LOD",
+    ),
+    merge_target_ms: Optional[float] = typer.Option(
+        None,
+        "--merge-target-ms",
+        min=1.0,
+        help="[--merge-recipe additive] streaming sizing: derive 'stream:<c>' "
+        "breakpoints so each part's first additive chunk downloads in ~this "
+        "many ms at --merge-bandwidth-mbps. Mutually exclusive with "
+        "--merge-breakpoints.",
+        rich_help_panel="Merge LOD",
+    ),
+    merge_bandwidth_mbps: Optional[float] = typer.Option(
+        None,
+        "--merge-bandwidth-mbps",
+        min=0.1,
+        help="Assumed downlink for --merge-target-ms sizing (default 25).",
+        rich_help_panel="Merge LOD",
+    ),
+    merge_bytes_per_splat: Optional[float] = typer.Option(
+        None,
+        "--merge-bytes-per-splat",
+        min=0.1,
+        help="Override the on-wire bytes/splat for --merge-target-ms sizing "
+        "(default: analytic estimate for the merged parts).",
         rich_help_panel="Merge LOD",
     ),
     merge_compression_factor: Optional[int] = typer.Option(
@@ -469,7 +494,6 @@ def batch_submit(
             FitConfig,
             MergeConfig,
             plan_batch,
-            resolve_merge_recipe_args,
         )
         from luxar.gsplats.batch.env_capture import (
             capture_environment,
@@ -573,14 +597,19 @@ def batch_submit(
             n_lods=merge_n_lods,
             additive_method=merge_additive_method,
             breakpoints=merge_breakpoints,
+            target_ms=merge_target_ms,
+            bandwidth_mbps=merge_bandwidth_mbps,
+            bytes_per_splat=merge_bytes_per_splat,
             compression_factor=merge_compression_factor,
             levels=merge_levels,
             substitutive_method=merge_substitutive_method,
             coarsen_dims=merge_coarsen_dims,
             lod_method=merge_lod_method,
         )
-        merge_recipe_args = resolve_merge_recipe_args(merge_cfg)
 
+        # Merge-recipe knobs (incl. --merge-target-ms sizing) are resolved
+        # INSIDE plan_batch, after shape discovery — so the ladder is sized
+        # with the true merged ndim, matching `batch-fit merge`.
         plan = plan_batch(
             input_path=input_path,
             output_dir=output_dir,
@@ -595,7 +624,6 @@ def batch_submit(
             denoise=denoise_cfg,
             content=content_cfg,
             merge=merge_cfg,
-            merge_recipe_args=merge_recipe_args,
             max_shape=max_shape,
             throughput_table=throughput_table,
             resolved_gpu=resolved_gpu,
@@ -667,9 +695,9 @@ def batch_submit(
         total_gpu_hours = est_seconds * total_tasks / 3600.0
 
         # 6. Build manifest — fit_args, denoise mode, channel colors, and the
-        # per-part merge-recipe args were all resolved inside plan_batch /
-        # resolve_merge_recipe_args above; the manifest is plan.manifest. We only
-        # add the Slurm-specific fields (partition, packing, preemptible) here.
+        # per-part merge-recipe args were all resolved inside plan_batch above;
+        # the manifest is plan.manifest. We only add the Slurm-specific fields
+        # (partition, packing, preemptible) here.
 
         # Preemptible partition detection
         preempt_partition: Optional[str] = None
@@ -1132,6 +1160,15 @@ def batch_run(
     merge_breakpoints: Optional[str] = typer.Option(
         None, "--merge-breakpoints", rich_help_panel="Merge LOD"
     ),
+    merge_target_ms: Optional[float] = typer.Option(
+        None, "--merge-target-ms", min=1.0, rich_help_panel="Merge LOD"
+    ),
+    merge_bandwidth_mbps: Optional[float] = typer.Option(
+        None, "--merge-bandwidth-mbps", min=0.1, rich_help_panel="Merge LOD"
+    ),
+    merge_bytes_per_splat: Optional[float] = typer.Option(
+        None, "--merge-bytes-per-splat", min=0.1, rich_help_panel="Merge LOD"
+    ),
     merge_compression_factor: Optional[int] = typer.Option(
         None, "--merge-compression-factor", rich_help_panel="Merge LOD"
     ),
@@ -1197,7 +1234,6 @@ def batch_run(
             FitConfig,
             MergeConfig,
             plan_batch,
-            resolve_merge_recipe_args,
         )
         from luxar.gsplats.batch.local_runner import run_batch_local
         from luxar.gsplats.gpu_profile import (
@@ -1267,14 +1303,19 @@ def batch_run(
             n_lods=merge_n_lods,
             additive_method=merge_additive_method,
             breakpoints=merge_breakpoints,
+            target_ms=merge_target_ms,
+            bandwidth_mbps=merge_bandwidth_mbps,
+            bytes_per_splat=merge_bytes_per_splat,
             compression_factor=merge_compression_factor,
             levels=merge_levels,
             substitutive_method=merge_substitutive_method,
             coarsen_dims=merge_coarsen_dims,
             lod_method=merge_lod_method,
         )
-        merge_recipe_args = resolve_merge_recipe_args(merge_cfg)
 
+        # Merge-recipe knobs (incl. --merge-target-ms sizing) are resolved
+        # INSIDE plan_batch, after shape discovery — so the ladder is sized
+        # with the true merged ndim, matching `batch-fit merge`.
         plan = plan_batch(
             input_path=input_path,
             output_dir=output_dir,
@@ -1289,7 +1330,6 @@ def batch_run(
             denoise=denoise_cfg,
             content=content_cfg,
             merge=merge_cfg,
-            merge_recipe_args=merge_recipe_args,
             max_shape=max_shape,
             throughput_table=throughput_table,
             resolved_gpu=resolved_gpu,
@@ -1687,6 +1727,9 @@ _MERGE_OPTION_TOKENS = {
     "--n-lods": "additive",
     "--additive-method": "additive",
     "--breakpoints": "additive",
+    "--target-ms": "additive",
+    "--bandwidth-mbps": "additive",
+    "--bytes-per-splat": "additive",
     "--compression-factor": "substitutive",
     "--levels": "substitutive",
     "--substitutive-method": "substitutive",
@@ -1792,6 +1835,47 @@ def _build_merge_recipe_params(
     return RecipeParams(**overrides)
 
 
+def _measure_tiles_bytes_per_splat(
+    tiles_dir: Path, tile_names: List[str]
+) -> Tuple[Optional[float], int]:
+    """Measure the real on-wire bytes/splat from completed tile stores.
+
+    The tiles enumerated by the manifest exist on disk at merge time, so
+    ``--target-ms`` can be sized against their true average storage cost
+    rather than the analytic estimate. Sums :func:`measure_store_bytes` and
+    the stored splat counts (every ``centers`` array's ``.zarray`` row count —
+    covers leaves, additive sublods, and lod levels without decoding data)
+    over every completed tile. Returns ``(bytes_per_splat, n_tiles_measured)``;
+    ``(None, 0)`` when nothing could be measured (missing/empty tiles) —
+    callers then fall back to the analytic estimate.
+    """
+    import json
+
+    from luxar.cli.lod import measure_store_bytes
+
+    total_bytes = 0
+    total_splats = 0
+    n_measured = 0
+    for name in tile_names:
+        tile = tiles_dir / name
+        if not tile.is_dir():
+            continue
+        tile_bytes = measure_store_bytes(tile)
+        tile_splats = 0
+        for zarray in tile.rglob("centers/.zarray"):
+            try:
+                tile_splats += int(json.loads(zarray.read_text())["shape"][0])
+            except (OSError, ValueError, KeyError, IndexError, TypeError):
+                continue
+        if tile_bytes > 0 and tile_splats > 0:
+            total_bytes += tile_bytes
+            total_splats += tile_splats
+            n_measured += 1
+    if total_bytes <= 0 or total_splats <= 0:
+        return None, 0
+    return total_bytes / total_splats, n_measured
+
+
 @app_batch.command("merge")
 def batch_merge_cmd(
     output_dir: Path = typer.Argument(..., exists=True, help="Batch output directory"),
@@ -1840,8 +1924,29 @@ def batch_merge_cmd(
     breakpoints: Optional[str] = typer.Option(
         None,
         "--breakpoints",
-        help="Additive ladder breakpoints: 'equal-count' (default), 'counts:...' "
-        "or 'energy:...' (additive recipe).",
+        help="Additive ladder breakpoints: 'equal-count' (default), 'stream:C', "
+        "'counts:...' or 'energy:...' (additive recipe).",
+    ),
+    target_ms: Optional[float] = typer.Option(
+        None,
+        "--target-ms",
+        min=1.0,
+        help="[additive recipe] streaming sizing: derive 'stream:<c>' "
+        "breakpoints so each part's first additive chunk downloads in ~this "
+        "many ms at --bandwidth-mbps. Mutually exclusive with --breakpoints.",
+    ),
+    bandwidth_mbps: Optional[float] = typer.Option(
+        None,
+        "--bandwidth-mbps",
+        min=0.1,
+        help="Assumed downlink for --target-ms sizing (default 25).",
+    ),
+    bytes_per_splat: Optional[float] = typer.Option(
+        None,
+        "--bytes-per-splat",
+        min=0.1,
+        help="Override the on-wire bytes/splat for --target-ms sizing "
+        "(default: analytic estimate for the merged parts).",
     ),
     compression_factor: Optional[int] = typer.Option(
         None, "-K", "--compression-factor", help="Substitutive reduction factor."
@@ -1914,9 +2019,7 @@ def batch_merge_cmd(
 
         # ── usage validation (up front, before the streaming writer runs) ──
         if recipe is not None and no_recipe:
-            raise typer.BadParameter(
-                "--recipe and --no-recipe are mutually exclusive."
-            )
+            raise typer.BadParameter("--recipe and --no-recipe are mutually exclusive.")
         if flat and recipe is not None:
             raise typer.BadParameter(
                 "--flat and --recipe are mutually exclusive; --flat concatenates "
@@ -1968,6 +2071,9 @@ def batch_merge_cmd(
                 "--n-lods": n_lods,
                 "--additive-method": additive_method,
                 "--breakpoints": breakpoints,
+                "--target-ms": target_ms,
+                "--bandwidth-mbps": bandwidth_mbps,
+                "--bytes-per-splat": bytes_per_splat,
                 "--compression-factor": compression_factor,
                 "--levels": levels,
                 "--substitutive-method": substitutive_method,
@@ -1979,13 +2085,51 @@ def batch_merge_cmd(
             no_recipe_hint=no_recipe_hint,
         )
 
+        # Streaming trio → a concrete stream:<c> breakpoints string. Bytes/splat
+        # is MEASURED from the completed tile stores when possible (they exist
+        # on disk at merge time), falling back to the analytic estimate for the
+        # merged parts (spatial dims + the stacked-timepoint axis when
+        # timepoints were stacked; colors when a multi-channel color merge will
+        # write them). Mutually exclusive with an explicit --breakpoints; the
+        # supporting knobs need --target-ms.
+        from luxar.cli.lod import validate_streaming_knobs
+
+        validate_streaming_knobs(
+            target_ms, bandwidth_mbps, bytes_per_splat, breakpoints
+        )
+        eff_breakpoints = breakpoints
+        if target_ms is not None:
+            from luxar.cli.lod import (
+                estimate_bytes_per_splat,
+                resolve_streaming_breakpoints,
+            )
+
+            merged_ndim = len(manifest.spatial_shape) + (
+                1 if manifest.n_timepoints > 1 else 0
+            )
+            merged_has_colors = bool(colors) and manifest.n_channels > 1
+            measured, n_measured = _measure_tiles_bytes_per_splat(
+                output_dir / "tiles",
+                [job.output_filename for job in manifest.jobs],
+            )
+            eff_breakpoints = resolve_streaming_breakpoints(
+                target_ms,
+                bandwidth_mbps,
+                bytes_per_splat,
+                measured_bps=measured,
+                measured_label=(f"measured from {n_measured} completed tile store(s)"),
+                analytic_bps=estimate_bytes_per_splat(
+                    merged_ndim, has_colors=merged_has_colors
+                ),
+            )
+
         recipe_params = None
         if eff_recipe is not None:
             recipe_params = _build_merge_recipe_params(
                 manifest.merge_recipe_args,
                 n_lods=n_lods,
                 additive_method=additive_method,
-                breakpoints=breakpoints,
+                breakpoints=eff_breakpoints,
                 compression_factor=compression_factor,
                 levels=levels,
                 substitutive_method=substitutive_method,
