@@ -148,6 +148,165 @@ def test_resolve_additive_method_threshold() -> None:
     assert resolve_additive_method("self_energy", 1) == "self_energy"
 
 
+# ── stream:<c> breakpoints (bandwidth-derived streaming ladder) ─────────────
+
+
+def test_streaming_chunk_splats_math() -> None:
+    """200 ms @ 25 Mbps @ 45 B/splat → ~13.9 k splats; validation raises."""
+    from luxar.gsplats.lod.additive import streaming_chunk_splats
+
+    assert streaming_chunk_splats(200, 25, 45.0) == 13889
+    assert streaming_chunk_splats(1000, 8, 45.0) == round(8 * 125_000 / 45.0)
+    assert streaming_chunk_splats(1, 0.1, 1e9) == 1  # floor at 1
+    for bad in [(0, 25, 45), (200, 0, 45), (200, 25, 0)]:
+        with pytest.raises(ValueError):
+            streaming_chunk_splats(*bad)
+
+
+def test_stream_breakpoints_geometric_cuts() -> None:
+    """Geometric cumulative cuts [c, 2c, 4c, …, N]; kind == 'stream'."""
+    from luxar.gsplats.lod.additive import _resolve_breakpoints
+
+    cuts, kind = _resolve_breakpoints(23_368_376, 4, "stream:14000")
+    assert kind == "stream"
+    assert cuts[0] == 14000
+    assert cuts[-1] == 23_368_376
+    # Doubling schedule: each interior cut is 2x the previous.
+    assert all(cuts[i + 1] == 2 * cuts[i] for i in range(len(cuts) - 2))
+
+
+def test_stream_breakpoints_small_n_clamps_silently() -> None:
+    """n <= c → single level [n] — never raises (unlike explicit counts)."""
+    from luxar.gsplats.lod.additive import _resolve_breakpoints
+
+    assert _resolve_breakpoints(500, 4, "stream:14000") == ([500], "stream")
+    assert _resolve_breakpoints(14000, 4, "stream:14000") == ([14000], "stream")
+    assert _resolve_breakpoints(1, 4, "stream:14000") == ([1], "stream")
+
+
+def test_stream_breakpoints_sliver_tail_folds() -> None:
+    """A final increment < c/2 folds into the previous cut (no 1-splat levels)."""
+    from luxar.gsplats.lod.additive import _resolve_breakpoints
+
+    # tail of 1 (< 7000) folds → single level
+    assert _resolve_breakpoints(14001, 4, "stream:14000") == ([14001], "stream")
+    # healthy tail (13000 >= 7000) kept
+    assert _resolve_breakpoints(27000, 4, "stream:14000") == (
+        [14000, 27000],
+        "stream",
+    )
+
+
+def test_stream_breakpoints_level_cap() -> None:
+    """The doubling schedule is capped; the last cut jumps straight to N."""
+    from luxar.gsplats.lod.additive import (
+        DEFAULT_STREAM_MAX_LEVELS,
+        _resolve_breakpoints,
+    )
+
+    cuts, _ = _resolve_breakpoints(10**9, 4, "stream:1")
+    assert len(cuts) <= DEFAULT_STREAM_MAX_LEVELS
+    assert cuts[-1] == 10**9
+
+
+@pytest.mark.parametrize(
+    "bad", ["stream:", "stream:0", "stream:-5", "stream:14000.5", "stream:abc"]
+)
+def test_stream_breakpoints_invalid_payloads_raise(bad: str) -> None:
+    from luxar.gsplats.lod.additive import _resolve_breakpoints
+
+    with pytest.raises(ValueError):
+        _resolve_breakpoints(100, 4, bad)
+
+
+def test_make_additive_lod_stream_no_gram_for_score_methods(monkeypatch) -> None:
+    """stream + a score method must build ZERO Gram matrices (unlike energy
+    fractions, which need the residual-energy curve)."""
+    import luxar.gsplats.lod.additive as additive_mod
+
+    called = {"gram": 0}
+    real = additive_mod._build_sparse_gram
+
+    def _spy(*args, **kwargs):
+        called["gram"] += 1
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(additive_mod, "_build_sparse_gram", _spy)
+    data = _make_random_gsplat(n=64, seed=7)
+    out = additive_mod.make_additive_lod(
+        data, method="self_energy", breakpoints="stream:20"
+    )
+    assert called["gram"] == 0
+    incs = [s.n_splats for s in out.additive_sublods]
+    assert sum(incs) == 64 and incs[0] == 20
+
+
+def test_make_additive_lod_stream_provenance_stat() -> None:
+    """Each stream sub-LOD records kind='stream' + the first-chunk size."""
+    data = _make_random_gsplat(n=64, seed=8)
+    out = make_additive_lod(data, method="self_energy", breakpoints="stream:20")
+    for sub in out.additive_sublods:
+        assert sub.stats["lod_breakpoints_kind"] == "stream"
+        assert sub.stats["lod_stream_chunk_splats"] == 20
+
+
+# ── pre-existing-issue regression tests ─────────────────────────────────────
+
+
+def test_clamp_counts_breakpoints_helper() -> None:
+    """Explicit counts clamp to a small part's N; other specs pass through."""
+    from luxar.gsplats.lod.additive import clamp_counts_breakpoints
+
+    assert clamp_counts_breakpoints([500, 2000, 10000], 800) == [500]
+    assert clamp_counts_breakpoints([500, 2000], 100) == [100]
+    assert clamp_counts_breakpoints([500, 2000], 10_000) == [500, 2000]
+    assert clamp_counts_breakpoints("stream:14000", 100) == "stream:14000"
+    assert clamp_counts_breakpoints("equal-count", 100) == "equal-count"
+    assert clamp_counts_breakpoints([0.5, 0.9], 100) == [0.5, 0.9]
+
+
+def test_validate_counts_breakpoints_helper() -> None:
+    """Typo-scale counts abort loudly against the FULL dataset N (the strict
+    companion of the per-part/per-level clamp); non-count specs pass through."""
+    from luxar.gsplats.lod.additive import validate_counts_breakpoints
+
+    with pytest.raises(ValueError, match="exceeds N=800"):
+        validate_counts_breakpoints([500, 2000, 10000], 800)
+    # <= N is fine (== N allowed; _resolve_breakpoints handles the final cut).
+    validate_counts_breakpoints([500, 2000], 2000)
+    validate_counts_breakpoints([500, 2000], 10_000)
+    # Non-count specs are size-adaptive / validated downstream — never raise.
+    validate_counts_breakpoints("stream:14000", 100)
+    validate_counts_breakpoints("equal-count", 100)
+    validate_counts_breakpoints([0.5, 0.9], 100)
+    validate_counts_breakpoints([500], 0)  # degenerate n: defer to downstream
+
+
+def test_stream_breakpoints_malformed_payload_message() -> None:
+    """The malformed-payload error reads clearly (was the garbled
+    "must be 'stream:<int>=1>'")."""
+    from luxar.gsplats.lod.additive import _resolve_breakpoints
+
+    with pytest.raises(ValueError, match=r"must be 'stream:<c>' with integer c >= 1"):
+        _resolve_breakpoints(100, 4, "stream:abc")
+
+
+def test_bool_breakpoints_rejected() -> None:
+    """bool is an int subclass — [True, False] must not pass as counts."""
+    from luxar.gsplats.lod.additive import _resolve_breakpoints
+
+    with pytest.raises((TypeError, ValueError)):
+        _resolve_breakpoints(100, 4, [True, False])
+
+
+def test_empty_leaf_kind_labeled_none() -> None:
+    """The n==0 fast path labels the kind 'none' (was mislabeled
+    'equal-count' regardless of the requested spec)."""
+    data = _make_empty_gsplat(ndim=3)
+    out = make_additive_lod(data, breakpoints="stream:100")
+    assert out.stats["lod_breakpoints_kind"] == "none"
+
+
 def test_compute_additive_order_auto_resolves_to_greedy_at_small_n() -> None:
     """At small N, ``auto`` produces the SAME ordering as explicit greedy."""
     data = _make_random_gsplat(n=64, seed=3)

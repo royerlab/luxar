@@ -12,6 +12,7 @@ values: ``additive`` / ``substitutive`` / ``pyramid``).
 
 from __future__ import annotations
 
+import os
 import shutil
 from pathlib import Path
 from typing import Any, Mapping, Optional
@@ -59,6 +60,9 @@ _OPTION_TOKENS = {
     "--n-lods": "additive",
     "--method": "additive",
     "--breakpoints": "additive",
+    "--target-ms": "additive",
+    "--bandwidth-mbps": "additive",
+    "--bytes-per-splat": "additive",
     "--truncation-sigmas": "additive",
     "--max-n-dense": "additive",
     "--max-elements": "partition",
@@ -68,6 +72,7 @@ _OPTION_TOKENS = {
     "--substitutive-method": "substitutive",
     "--lloyd-iters": "substitutive",
     "--candidate-bins-k": "substitutive",
+    "--coverage-inflation": "substitutive",
     "--coarsen-dims": "substitutive",
     "--levels": "levels",
     "--base-pixel-size": "lod_selector",
@@ -130,9 +135,7 @@ def reject_irrelevant_recipe_options(
         if no_recipe_hint:
             msg += " " + no_recipe_hint
     else:
-        msg = (
-            f"option(s) {', '.join(irrelevant)} are not used by --recipe {recipe}."
-        )
+        msg = f"option(s) {', '.join(irrelevant)} are not used by --recipe {recipe}."
         if hints:
             for flag, clause in hints.items():
                 if flag in irrelevant:
@@ -143,13 +146,32 @@ def reject_irrelevant_recipe_options(
 def _parse_lod_breakpoints(spec: str) -> "str | list[int] | list[float]":
     """Parse the ``--breakpoints`` string for :func:`make_additive_lod`.
 
-    Accepted forms: ``equal-count`` → literal; ``counts:5,10,15`` → ``[int]``
-    (cumulative splat counts); ``energy:0.5,0.9,1.0`` → ``[float]`` (cumulative
-    energy fractions in (0, 1]).
+    Accepted forms: ``equal-count`` → literal; ``stream:14000`` → passed
+    through as a string (a bandwidth-derived geometric ladder, resolved
+    per-N inside the builder — the first chunk is ``<c>`` splats, then
+    doubling); ``counts:5,10,15`` → ``[int]`` (cumulative splat counts);
+    ``energy:0.5,0.9,1.0`` → ``[float]`` (cumulative energy fractions in
+    (0, 1]).
     """
     s = spec.strip()
     if s == "equal-count":
         return "equal-count"
+    if s.startswith("stream:"):
+        body = s[len("stream:") :]
+        try:
+            first_chunk = int(body)
+        except ValueError as e:
+            raise typer.BadParameter(
+                f"stream breakpoints must be 'stream:<integer>'; got {body!r}"
+            ) from e
+        if first_chunk < 1:
+            raise typer.BadParameter(
+                f"stream first-chunk size must be >= 1; got {first_chunk}"
+            )
+        # Pass the validated string through — it is resolved per-N inside
+        # _resolve_breakpoints (each part/level sizes its own ladder), and the
+        # string form round-trips the batch manifest verbatim.
+        return s
     if s.startswith("counts:"):
         body = s[len("counts:") :]
         try:
@@ -182,9 +204,178 @@ def _parse_lod_breakpoints(spec: str) -> "str | list[int] | list[float]":
             )
         return values_flt
     raise typer.BadParameter(
-        f"breakpoints must be 'equal-count', 'counts:...', or 'energy:...'; "
-        f"got {spec!r}"
+        f"breakpoints must be 'equal-count', 'stream:<c>', 'counts:...', or "
+        f"'energy:...'; got {spec!r}"
     )
+
+
+#: Assumed stored bytes per scalar for each encoding mode (see
+#: :func:`estimate_bytes_per_splat`). AUTO quantizes to ~2 B (u16-family);
+#: PRECISION stores float32 (~4 B); MEMORY quantizes to ~1 B (u8-family).
+_ENCODING_SCALAR_BYTES = {"auto": 2.0, "precision": 4.0, "memory": 1.0}
+
+
+def estimate_bytes_per_splat(
+    ndim: int, has_colors: bool = False, encoding: str = "auto"
+) -> float:
+    """Analytic on-wire bytes/splat estimate for an encoding mode.
+
+    The default AUTO mode quantizes to ~2 bytes per stored scalar (centers
+    u16, amplitude u16/u8, split-Cholesky diag/offdiag u16), i.e.
+    ``2·(d + 1 + d(d+1)/2)`` raw, and the store adds zarr/blosc/chunk-bounds
+    overhead of roughly ×1.5 — calibrated against a real 4D fit that measured
+    ~45 B/splat (raw u16 ≈ 30 B). PRECISION stores float32 (~2× AUTO) and
+    MEMORY quantizes to u8 (~0.5× AUTO). Colors add ~4 B (u8 RGB + overhead;
+    ~18 B as float32 under PRECISION). A crude estimate by design: used only
+    when no matching store exists to measure (``fit --recipe``, or when
+    ``--encoding`` re-encodes the output); the ``--bytes-per-splat`` override
+    is the escape hatch, and the assumed value is always logged.
+    """
+    k = ndim * (ndim + 1) // 2
+    scalar_bytes = _ENCODING_SCALAR_BYTES.get(encoding, 2.0)
+    color_bytes = 18.0 if encoding == "precision" else 4.0
+    return round(
+        1.5 * scalar_bytes * (ndim + 1 + k) + (color_bytes if has_colors else 0.0), 1
+    )
+
+
+def measure_store_bytes(path: Path) -> int:
+    """Total on-disk bytes of a ``.gsplats.zarr`` store (dir walk; ≈ wire cost).
+
+    Zarr chunks are served as-is over HTTP, so store bytes / stored splats is
+    the true average network cost per splat. Returns 0 for a non-directory
+    (e.g. a ``.zip`` archive path) — callers fall back to the analytic estimate.
+    """
+    if not path.is_dir():
+        return 0
+    total = 0
+    for root, _dirs, files in os.walk(path):
+        for f in files:
+            try:
+                total += os.path.getsize(os.path.join(root, f))
+            except OSError:  # pragma: no cover - race with concurrent writers
+                pass
+    return total
+
+
+def detect_store_encoding(path: Path) -> Optional[str]:
+    """Classify a ``.gsplats.zarr`` store's encoding mode from its on-disk attrs.
+
+    Reads the split-Cholesky arrays' ``encoding.name``: the AUTO writer
+    quantizes them to ``*_perchannel_u16``, MEMORY to ``*_u8``, and PRECISION
+    stores plain ``float32``. Uniform-cholesky stores broadcast the factors
+    (no dtype signal), so the amplitudes array is the fallback — it still
+    separates PRECISION (``float32``) from the quantized modes (which are u8
+    in BOTH auto and memory, hence not discriminative). Returns ``None`` when
+    the store cannot be classified (zip archive, legacy layout, broadcast-only
+    quantized store) — callers should then not assume a mode.
+    """
+    import json
+    from typing import Iterator
+
+    if not path.is_dir():
+        return None
+
+    def _encoding_names(array: str) -> Iterator[str]:
+        for zattrs in sorted(path.rglob(f"{array}/.zattrs")):
+            try:
+                enc = json.loads(zattrs.read_text()).get("encoding", {})
+            except (OSError, json.JSONDecodeError, AttributeError):
+                continue
+            name = str(enc.get("name", "")) if isinstance(enc, dict) else ""
+            if name:
+                yield name
+
+    for array in ("cholesky_factors_diag", "cholesky_factors_offdiag"):
+        for name in _encoding_names(array):
+            if name.endswith("_u16"):
+                return "auto"
+            if name.endswith("_u8"):
+                return "memory"
+            if name == "float32":
+                return "precision"
+    for name in _encoding_names("amplitudes"):
+        if name == "float32":
+            return "precision"
+    return None
+
+
+def validate_streaming_knobs(
+    target_ms: Optional[float],
+    bandwidth_mbps: Optional[float],
+    bytes_per_splat: Optional[float],
+    breakpoints: Optional[str],
+    *,
+    prefix: str = "--",
+) -> None:
+    """Reject contradictory / orphaned streaming-sizing knobs.
+
+    Shared by every surface exposing the ``--target-ms`` trio (``gsplat lod``,
+    ``gsplat additive``, ``fit --recipe``, ``batch-fit submit/run/merge``):
+    ``--target-ms`` *derives* the breakpoints, so an explicit ``--breakpoints``
+    alongside it is contradictory; and the supporting knobs are meaningless
+    without ``--target-ms`` (loud, not silently ignored). ``prefix`` renames
+    the options in the messages (e.g. ``"--merge-"`` for the batch plan-time
+    surface). Raises :class:`typer.BadParameter` on violation.
+    """
+    if target_ms is not None and breakpoints is not None:
+        raise typer.BadParameter(
+            f"{prefix}target-ms and {prefix}breakpoints are mutually exclusive "
+            f"({prefix}target-ms derives the breakpoints)."
+        )
+    if target_ms is None and (
+        bandwidth_mbps is not None or bytes_per_splat is not None
+    ):
+        raise typer.BadParameter(
+            f"{prefix}bandwidth-mbps/{prefix}bytes-per-splat only apply with "
+            f"{prefix}target-ms."
+        )
+
+
+def resolve_streaming_breakpoints(
+    target_ms: float,
+    bandwidth_mbps: Optional[float],
+    bytes_per_splat: Optional[float],
+    *,
+    measured_bps: Optional[float] = None,
+    analytic_bps: Optional[float] = None,
+    measured_label: str = "measured from input store",
+) -> str:
+    """Resolve ``--target-ms``/``--bandwidth-mbps`` into a ``stream:<c>`` spec.
+
+    Shared by every CLI surface that builds additive ladders. Bytes/splat
+    priority: explicit ``--bytes-per-splat`` override > measured from the
+    input store(s) > analytic estimate. Logs the derivation (mirrors the
+    N-aware multiscale-K message) so the assumed numbers are always visible;
+    ``measured_label`` names the measurement source in that log line (e.g.
+    "measured from 8 completed tile stores" for ``batch-fit merge``).
+    """
+    from luxar.gsplats.lod.additive import (
+        DEFAULT_BANDWIDTH_MBPS,
+        streaming_chunk_splats,
+    )
+
+    bw = bandwidth_mbps if bandwidth_mbps is not None else DEFAULT_BANDWIDTH_MBPS
+    if bytes_per_splat is not None:
+        bps, source = float(bytes_per_splat), "override"
+    elif measured_bps is not None and measured_bps > 0:
+        bps, source = float(measured_bps), measured_label
+    elif analytic_bps is not None and analytic_bps > 0:
+        bps, source = float(analytic_bps), "analytic estimate"
+    else:
+        raise typer.BadParameter(
+            "--target-ms needs a bytes-per-splat figure; pass --bytes-per-splat"
+        )
+    try:
+        c = streaming_chunk_splats(target_ms, bw, bps)
+    except ValueError as e:
+        raise typer.BadParameter(str(e)) from e
+    aprint(
+        f"--target-ms {target_ms:g} @ {bw:g} Mbps, {bps:.1f} B/splat "
+        f"({source}) -> stream:{c} (first chunk ~{c:,} splats, "
+        f"~{c * bps / 1024:.0f} KB)"
+    )
+    return f"stream:{c}"
 
 
 def _resolve_encoding(mode: str) -> Any:
@@ -238,7 +429,32 @@ def lod_recipe(
         None,
         "--breakpoints",
         "-b",
-        help="'equal-count' (default) | 'counts:N1,N2,...' | 'energy:f1,f2,...'.",
+        help="'equal-count' (default) | 'stream:C' (geometric streaming ladder, "
+        "first chunk C splats then doubling; sized per part/level) | "
+        "'counts:N1,N2,...' | 'energy:f1,f2,...'.",
+    ),
+    target_ms: Optional[float] = typer.Option(
+        None,
+        "--target-ms",
+        min=1.0,
+        help="Streaming sizing: derive 'stream:<c>' breakpoints so the first "
+        "additive chunk downloads in ~this many ms at --bandwidth-mbps "
+        "(bytes/splat measured from the input store; override with "
+        "--bytes-per-splat). Mutually exclusive with --breakpoints.",
+    ),
+    bandwidth_mbps: Optional[float] = typer.Option(
+        None,
+        "--bandwidth-mbps",
+        min=0.1,
+        help="Assumed downlink for --target-ms sizing (default 25, a typical "
+        "broadband connection).",
+    ),
+    bytes_per_splat: Optional[float] = typer.Option(
+        None,
+        "--bytes-per-splat",
+        min=0.1,
+        help="Override the on-wire bytes/splat used by --target-ms sizing "
+        "(default: measured from the input store).",
     ),
     truncation_sigmas: Optional[float] = typer.Option(
         None, "--truncation-sigmas", help="Mahalanobis cutoff for greedy (default 3.0)."
@@ -292,6 +508,15 @@ def lod_recipe(
     ),
     candidate_bins_k: Optional[int] = typer.Option(
         None, "--candidate-bins-k", min=1, help="Lloyd spatial-hash top-k (default 12)."
+    ),
+    coverage_inflation: Optional[float] = typer.Option(
+        None,
+        "--coverage-inflation",
+        min=1.0,
+        help="Widen each merged representative's inter-center spread by this "
+        "factor (mass-preserving). Default 3.0 — calibrated so neighbouring "
+        "representatives sum flat, suppressing the grid-pattern ripple that "
+        "pure moment matching produces at coarse levels. 1.0 disables.",
     ),
     coarsen_dims: Optional[str] = typer.Option(
         None,
@@ -400,6 +625,9 @@ def lod_recipe(
             "--n-lods": n_lods,
             "--method": method,
             "--breakpoints": breakpoints,
+            "--target-ms": target_ms,
+            "--bandwidth-mbps": bandwidth_mbps,
+            "--bytes-per-splat": bytes_per_splat,
             "--truncation-sigmas": truncation_sigmas,
             "--max-n-dense": max_n_dense,
             "--max-elements": max_elements,
@@ -409,6 +637,7 @@ def lod_recipe(
             "--substitutive-method": substitutive_method,
             "--lloyd-iters": lloyd_iterations,
             "--candidate-bins-k": candidate_bins_k,
+            "--coverage-inflation": coverage_inflation,
             "--coarsen-dims": coarsen_dims,
             "--levels": levels,
             "--base-pixel-size": base_pixel_size,
@@ -464,6 +693,9 @@ def lod_recipe(
             raise typer.BadParameter(
                 "--parts and --max-elements are mutually exclusive."
             )
+        validate_streaming_knobs(
+            target_ms, bandwidth_mbps, bytes_per_splat, breakpoints
+        )
         bp = _parse_lod_breakpoints(breakpoints or "equal-count")
         encoding_obj = _resolve_encoding(encoding)
 
@@ -485,6 +717,44 @@ def lod_recipe(
                         f"`luxar gsplat flatten {input_path.name} flat.gsplats.zarr`."
                     ) from e
                 aprint(f"Loaded {data.n_splats:,} splats ({data.ndim}D)")
+
+            # ── streaming breakpoints from --target-ms (measured B/splat) ──
+            if target_ms is not None:
+                stored_total = sum(
+                    data.at_substitutive(s).n_splats for s in range(data.n_substitutive)
+                )
+                store_bytes = measure_store_bytes(input_path)
+                measured = (
+                    store_bytes / stored_total
+                    if store_bytes > 0 and stored_total > 0
+                    else None
+                )
+                # The output is re-encoded per --encoding: when an explicit
+                # non-default mode differs from the input's stored encoding,
+                # the measured input bytes misstate the on-wire OUTPUT cost
+                # (e.g. u16 input + --encoding precision ≈ 2× the measured
+                # figure), so size against the analytic estimate for the
+                # target encoding instead.
+                if measured is not None and encoding != "auto":
+                    input_encoding = detect_store_encoding(input_path)
+                    if input_encoding != encoding:
+                        aprint(
+                            f"--encoding {encoding} re-encodes the output "
+                            f"(input store looks "
+                            f"{input_encoding or 'unknown'}-encoded); sizing "
+                            f"--target-ms from the analytic {encoding} "
+                            f"estimate instead of the measured input bytes"
+                        )
+                        measured = None
+                bp = resolve_streaming_breakpoints(
+                    target_ms,
+                    bandwidth_mbps,
+                    bytes_per_splat,
+                    measured_bps=measured,
+                    analytic_bps=estimate_bytes_per_splat(
+                        data.ndim, data.colors is not None, encoding=encoding
+                    ),
+                )
 
             # ── scale-derived defaults (logged) ──
             eff_max_elements: Optional[int] = max_elements
@@ -572,7 +842,7 @@ def lod_recipe(
             params = RecipeParams(
                 n_lods=n_lods if n_lods is not None else 4,
                 additive_method=method_norm,  # type: ignore[arg-type]
-                breakpoints=bp,  # type: ignore[arg-type]
+                breakpoints=bp,
                 truncation_sigmas=(
                     truncation_sigmas if truncation_sigmas is not None else 3.0
                 ),
@@ -580,9 +850,7 @@ def lod_recipe(
                 max_elements=eff_max_elements,
                 partition_rule=rule,  # type: ignore[arg-type]
                 compression_factor=(
-                    eff_compression_factor
-                    if eff_compression_factor is not None
-                    else 4
+                    eff_compression_factor if eff_compression_factor is not None else 4
                 ),
                 levels=levels if levels is not None else 3,
                 substitutive_method=sub_norm,
@@ -592,6 +860,9 @@ def lod_recipe(
                 candidate_bins_k=candidate_bins_k
                 if candidate_bins_k is not None
                 else 12,
+                coverage_inflation=coverage_inflation
+                if coverage_inflation is not None
+                else 3.0,
                 coarsen_dims=parsed_coarsen,
                 # LOD threshold knobs for any kind=lod recipe (multiscale/
                 # substitutive/pyramid/mosaic); None → RecipeParams defaults

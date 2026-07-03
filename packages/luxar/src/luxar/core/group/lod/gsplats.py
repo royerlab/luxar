@@ -257,7 +257,21 @@ def resolve_additive_axis_gsplats(
         # Default to 4-level ladder for a bare ``dict()`` so the convenience
         # API yields a useful result without parameters.
         kwargs.setdefault("n_lods", 4)
-        from ....gsplats.lod.additive import make_additive_lod
+        from ....gsplats.lod.additive import (
+            clamp_counts_breakpoints,
+            make_additive_lod,
+            validate_counts_breakpoints,
+        )
+
+        # Explicit ``counts:`` breakpoints must still be sane for the WHOLE
+        # group: strictly validate ONCE against the finest substitutive level
+        # (== the full dataset N), so a dataset-scale typo aborts loudly —
+        # only the coarser (smaller) levels clamp, in the loop below.
+        if "breakpoints" in kwargs:
+            validate_counts_breakpoints(
+                kwargs["breakpoints"],
+                data.substitutive_levels[0].n_splats_total,
+            )
 
         result = data
         for s in range(result.n_substitutive):
@@ -265,7 +279,19 @@ def resolve_additive_axis_gsplats(
                 recompute or result.substitutive_levels[s].n_additive_lods <= 1
             )
             if needs_compute:
-                result = make_additive_lod(result, substitutive_level=s, **kwargs)
+                # Clamp explicit ``counts:`` breakpoints to THIS level's size —
+                # coarser substitutive levels are smaller by K^s, so a fixed
+                # counts list sized for the finest level would otherwise abort
+                # the build ("largest breakpoint exceeds N"). String/energy
+                # specs pass through (already size-adaptive). Mirrors the CLI
+                # per-part sites (recipes._ladder_for_part, pyramid loop).
+                level_kwargs = dict(kwargs)
+                if "breakpoints" in level_kwargs:
+                    level_kwargs["breakpoints"] = clamp_counts_breakpoints(
+                        level_kwargs["breakpoints"],
+                        result.at_substitutive(s).n_splats,
+                    )
+                result = make_additive_lod(result, substitutive_level=s, **level_kwargs)
         return result
 
     raise TypeError(

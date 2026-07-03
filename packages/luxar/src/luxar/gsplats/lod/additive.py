@@ -92,7 +92,101 @@ def resolve_additive_method(method: AutoOrMethod, n: int) -> MethodName:
     return "greedy" if n <= _AUTO_ADDITIVE_MAX_N else "self_energy"
 
 
-BreakpointSpec = Union[Literal["equal-count"], Sequence[int], Sequence[float]]
+#: Assumed downlink for streaming-breakpoint sizing when the caller gives none —
+#: a conservative "typical broadband" figure that also covers good 4G.
+DEFAULT_BANDWIDTH_MBPS = 25.0
+
+#: Hard cap on the number of levels a ``stream:<c>`` ladder may produce. The
+#: geometric doubling schedule gives ~log2(N/c) levels, so 16 covers c·2^15
+#: splats (≈ 460 M at c=14 k) — far beyond realistic leaves. On hitting the cap
+#: the last cut jumps straight to N.
+DEFAULT_STREAM_MAX_LEVELS = 16
+
+
+def streaming_chunk_splats(
+    target_ms: float,
+    bandwidth_mbps: float,
+    bytes_per_splat: float,
+) -> int:
+    """Splat count whose download takes ``target_ms`` at ``bandwidth_mbps``.
+
+    Pure sizing math for the ``stream:<c>`` breakpoint spec:
+    ``bandwidth_mbps × 125_000 B/s/Mbps × target_ms/1000 ÷ bytes_per_splat``.
+    E.g. 200 ms @ 25 Mbps @ 45 B/splat → ~13.9 k splats.
+    """
+    if target_ms <= 0:
+        raise ValueError(f"target_ms must be positive; got {target_ms}")
+    if bandwidth_mbps <= 0:
+        raise ValueError(f"bandwidth_mbps must be positive; got {bandwidth_mbps}")
+    if bytes_per_splat <= 0:
+        raise ValueError(f"bytes_per_splat must be positive; got {bytes_per_splat}")
+    return max(
+        1, round(bandwidth_mbps * 125_000.0 * (target_ms / 1000.0) / bytes_per_splat)
+    )
+
+
+#: Breakpoint specification for the additive ladder. String forms:
+#: ``"equal-count"`` (n_lods equal levels) and ``"stream:<c>"`` (geometric
+#: cumulative cuts ``[c, 2c, 4c, …, N]`` — a bandwidth-derived first chunk that
+#: doubles; resolved per-N inside :func:`_resolve_breakpoints`, so the same spec
+#: adapts to every part/level size). List forms: ``list[int]`` explicit
+#: cumulative counts; ``list[float]`` cumulative energy fractions in (0, 1].
+BreakpointSpec = Union[str, Sequence[int], Sequence[float]]
+
+
+def clamp_counts_breakpoints(breakpoints: BreakpointSpec, n: int) -> BreakpointSpec:
+    """Clamp explicit ``counts:`` breakpoints to a part/level of ``n`` splats.
+
+    Per-part and per-level ladders (BSP parts, pyramid levels) have differing
+    N; a fixed ``counts:`` list whose largest cut exceeds a small part would
+    otherwise abort the whole build via ``_resolve_breakpoints``'s strict
+    "largest breakpoint exceeds N" check (which is the RIGHT behavior for a
+    direct whole-dataset build, where the user knows N). This helper keeps the
+    cuts below ``n`` and lets ``_resolve_breakpoints`` append the final ``n``;
+    non-count specs (strings, energy fractions) pass through unchanged — they
+    are already size-adaptive.
+    """
+    if isinstance(breakpoints, str) or n <= 0:
+        return breakpoints
+    if not isinstance(breakpoints, (list, tuple)) or len(breakpoints) == 0:
+        return breakpoints
+    if not all(
+        isinstance(x, (int, np.integer)) and not isinstance(x, bool)
+        for x in breakpoints
+    ):
+        return breakpoints  # energy fractions (or invalid — let validation raise)
+    kept = [int(c) for c in breakpoints if int(c) < n]
+    return kept if kept else [int(n)]
+
+
+def validate_counts_breakpoints(breakpoints: BreakpointSpec, n: int) -> None:
+    """Strictly validate explicit ``counts:`` breakpoints against the FULL ``n``.
+
+    The whole-dataset companion of :func:`clamp_counts_breakpoints`: clamping
+    is right for an individual part/level whose N the user cannot know, but
+    the spec itself must still be sane for the dataset as a whole — a largest
+    count exceeding the full N is a typo (e.g. ``counts:1000000`` on a 50 k
+    dataset) and must abort loudly, exactly like a direct whole-dataset
+    :func:`make_additive_lod` build does via ``_resolve_breakpoints``. Callers
+    that clamp per part/level call this ONCE up front with the union /
+    finest-level size. Non-count specs pass through (validated downstream).
+    """
+    if isinstance(breakpoints, str) or n <= 0:
+        return
+    if not isinstance(breakpoints, (list, tuple)) or len(breakpoints) == 0:
+        return
+    if not all(
+        isinstance(x, (int, np.integer)) and not isinstance(x, bool)
+        for x in breakpoints
+    ):
+        return  # energy fractions (or invalid — let downstream validation raise)
+    largest = max(int(c) for c in breakpoints)
+    if largest > n:
+        raise ValueError(
+            f"largest breakpoint {largest} exceeds N={n} (the full dataset); "
+            "explicit counts: breakpoints must fit the dataset "
+            "(smaller parts/levels clamp automatically)"
+        )
 
 
 # ─────────────────────────────────────────────────────────────────────
@@ -445,13 +539,43 @@ def _resolve_breakpoints(
     """Resolve ``breakpoints`` to a list of cumulative cutpoints ending at $N$.
 
     Returns ``(cumulative_counts, kind)`` where ``kind`` is one of
-    ``equal-count``, ``explicit-counts``, ``energy-fractions``.
+    ``equal-count``, ``stream``, ``explicit-counts``, ``energy-fractions``.
     """
     if isinstance(breakpoints, str):
+        if breakpoints.startswith("stream:"):
+            # Bandwidth-derived streaming ladder: geometric cumulative cuts
+            # [c, 2c, 4c, …] (increments [c, c, 2c, …] — first paint = c splats,
+            # then doubling), resolved against THIS n so the same spec adapts to
+            # every part/level size. Silently clamped, never raises on small n
+            # (unlike explicit counts — deliberate: per-part N is unknowable to
+            # the user). Capped at DEFAULT_STREAM_MAX_LEVELS; a final increment
+            # smaller than c/2 folds into the previous cut (no sliver levels).
+            body = breakpoints[len("stream:") :]
+            try:
+                c = int(body)
+            except ValueError as e:
+                raise ValueError(
+                    "stream breakpoints must be 'stream:<c>' with integer "
+                    f"c >= 1; got {breakpoints!r}"
+                ) from e
+            if c < 1:
+                raise ValueError(f"stream first-chunk size must be >= 1; got {c}")
+            if n <= c:
+                return [n], "stream"
+            cuts: list[int] = []
+            cum = c
+            while cum < n and len(cuts) < DEFAULT_STREAM_MAX_LEVELS - 1:
+                cuts.append(cum)
+                cum *= 2
+            # Fold a sliver tail (< c/2 remaining) into the previous cut.
+            if cuts and (n - cuts[-1]) < c / 2:
+                cuts.pop()
+            cuts.append(n)
+            return cuts, "stream"
         if breakpoints != "equal-count":
             raise ValueError(
                 f"unknown breakpoints string {breakpoints!r}; "
-                "expected 'equal-count' or a list."
+                "expected 'equal-count', 'stream:<c>', or a list."
             )
         if n_lods <= 0:
             raise ValueError("n_lods must be positive")
@@ -466,15 +590,20 @@ def _resolve_breakpoints(
 
     if not isinstance(breakpoints, (list, tuple)):
         raise TypeError(
-            "breakpoints must be 'equal-count', a list of ints "
+            "breakpoints must be 'equal-count', 'stream:<c>', a list of ints "
             "(cumulative counts), or a list of floats in (0, 1] "
             f"(cumulative energy fractions); got {type(breakpoints).__name__}"
         )
     if len(breakpoints) == 0:
         raise ValueError("breakpoints list must not be empty")
 
-    # Distinguish int vs float by inspecting elements.
-    all_int = all(isinstance(x, (int, np.integer)) for x in breakpoints)
+    # Distinguish int vs float by inspecting elements. Excludes bool explicitly
+    # (bool is an int subclass in Python) — [True, False] must not be accepted
+    # as cumulative counts.
+    all_int = all(
+        isinstance(x, (int, np.integer)) and not isinstance(x, bool)
+        for x in breakpoints
+    )
     all_float = all(
         isinstance(x, float) or (isinstance(x, np.floating)) for x in breakpoints
     )
@@ -559,12 +688,19 @@ def make_additive_lod(
         Other substitutive levels are carried over verbatim.
     n_lods : int
         Number of LOD levels when ``breakpoints='equal-count'``.  Ignored
-        when ``breakpoints`` is a list (the list length determines the
-        level count).
+        when ``breakpoints`` is a list or ``'stream:<c>'`` (those determine
+        the level count themselves).
     method : str
         Ordering method (see :func:`compute_additive_order`).
-    breakpoints : ``'equal-count'`` or list of int / list of float
+    breakpoints : ``'equal-count'``, ``'stream:<c>'``, or list of int / float
         - ``'equal-count'``: ``n_lods`` levels of (nearly-)equal size.
+        - ``'stream:<c>'``: geometric streaming ladder — cumulative cuts
+          ``[c, 2c, 4c, …, N]`` sized so the first chunk is ``c`` splats
+          (bandwidth-derived via :func:`streaming_chunk_splats`), then
+          doubling. Resolved against each call's own N (per part / per
+          substitutive level), silently clamped for small N (never raises,
+          unlike explicit counts), capped at
+          :data:`DEFAULT_STREAM_MAX_LEVELS` levels.
         - list[int]: explicit cumulative splat counts per level.
         - list[float] in $(0, 1]$: cumulative energy fractions; the
           smallest $k$ at which the cumulative-utility curve crosses
@@ -625,7 +761,10 @@ def make_additive_lod(
             )
         ]
         cuts = [0]
-        kind = "equal-count"
+        # An empty leaf has no ladder to speak of: label the kind "none" (like
+        # lod_method above) rather than mislabeling whatever spec was requested
+        # as "equal-count".
+        kind = "none"
     else:
         # Build the (expensive) sparse Gram at most once: greedy/spectral need
         # it for the ordering, and energy-fraction breakpoints need it again
@@ -680,6 +819,12 @@ def make_additive_lod(
                 "lod_n_splats": int(end - prev),
                 "lod_cumulative_n": end,
             }
+            if kind == "stream":
+                # Provenance: the bandwidth-derived first-chunk size, otherwise
+                # only recoverable by re-parsing the breakpoints string.
+                lod_stats["lod_stream_chunk_splats"] = int(
+                    str(breakpoints)[len("stream:") :]
+                )
             new_sublods.append(
                 AdditiveSubLOD(
                     centers=centers_full[prev:end].astype(np.float32, copy=False),

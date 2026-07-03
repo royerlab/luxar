@@ -377,9 +377,26 @@ luxar gsplat lod in.gsplats.zarr out.gsplats.zarr --recipe additive \
     --breakpoints energy:0.5,0.9,0.99,1.0                                    # cumulative energy fractions
 luxar gsplat lod in.gsplats.zarr out.gsplats.zarr --recipe additive \
     -m mass -b counts:500,2000,10000                                         # mass order, explicit counts
-# additive default method `greedy` (provably (1-1/e)-optimal at every prefix);
-# for very large N use `self_energy` (cheap O(N log N)).
+# additive default method `auto`: greedy (provably (1-1/e)-optimal at every
+# prefix) at N <= 5000, else `self_energy` (cheap O(N log N)); override with -m.
 luxar gsplat lod in.gsplats.zarr out.gsplats.zarr --recipe additive --method self_energy
+# STREAMING breakpoints: `-b stream:C` = geometric ladder (first chunk C splats,
+# then doubling), sized per part/level. Or derive C from a download budget with
+# `--target-ms` (+ `--bandwidth-mbps`, default 25; `--bytes-per-splat` override;
+# bytes/splat measured from the input store, logged). First chunk ≈ target-ms of
+# download → fast first paint; the viewer streams additive sub-LODs progressively.
+luxar gsplat lod in.gsplats.zarr out.gsplats.zarr --recipe additive --target-ms 200
+luxar gsplat lod in.gsplats.zarr out.gsplats.zarr --recipe additive -b stream:14000
+
+# Give every leaf of an EXISTING tree an additive ladder, structure-preservingly
+# (substitutive kind=lod levels, partition parts, mosaic groups all keep their
+# shape) — WITHOUT recomputing the expensive substitutive/partition structure.
+# The per-leaf counterpart of `lod --recipe additive` (which needs a flat input)
+# and the inverse companion of `gsplat flatten`. Same streaming knobs; explicit
+# `counts:` are clamped per leaf; an existing ladder is rebuilt from its union.
+luxar gsplat additive sub.gsplats.zarr pyr.gsplats.zarr --target-ms 200        # ~200ms first paint/level
+luxar gsplat additive in.gsplats.zarr out.gsplats.zarr -b stream:14000
+luxar gsplat additive in.gsplats.zarr out.gsplats.zarr --n-lods 4              # classic equal-count
 
 # partitioned / multiscale (the large-data topologies): each part carries its own
 # additive ladder; `--max-elements` (or `--parts`) caps per-part splats (median
@@ -404,6 +421,12 @@ luxar gsplat lod in.gsplats.zarr out.gsplats.zarr --recipe substitutive         
 luxar gsplat lod in.gsplats.zarr out.gsplats.zarr --recipe substitutive -K 4 -L 3 \
     --substitutive-method kmeans-lloyd --lloyd-iters 5 --device cpu
 luxar gsplat lod in.gsplats.zarr out.gsplats.zarr --recipe pyramid -K 4 -L 3 --n-lods 4
+# Coverage inflation (any substitutive reduction): merged representatives get
+# their inter-center spread widened x`--coverage-inflation` (default 3.0,
+# mass-preserving) so neighbouring coarse splats sum flat — suppresses the
+# axis-aligned grid ripple pure moment matching shows at coarse levels.
+# Pass 1.0 for the historical pure moment match.
+luxar gsplat lod in.gsplats.zarr out.gsplats.zarr --recipe substitutive --coverage-inflation 1.0
 # Barrier-aware coarsening (substitutive/pyramid/multiscale/mosaic): --coarsen-dims
 # lists the center-column indices coarsening may merge over; the rest become hard
 # barriers (a categorical/time/channel axis), so coarse splats never blend across

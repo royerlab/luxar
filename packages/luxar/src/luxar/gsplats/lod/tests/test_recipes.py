@@ -87,6 +87,62 @@ def test_recipe_params_additive_method_defaults_to_auto():
     assert RecipeParams().additive_method == "auto"
 
 
+def test_partitioned_counts_breakpoints_clamp_to_small_parts():
+    """REGRESSION (pre-existing footgun): explicit `counts:` breakpoints larger
+    than a small BSP part used to abort the WHOLE partitioned build with
+    'largest breakpoint exceeds N'. Per-part ladders now clamp the counts to
+    each part's own size instead."""
+    data = _make_random_gsplat()  # 400 splats
+    # max_elements=120 → parts of ≤120 splats; a 300-cut exceeds every part.
+    params = _params(max_elements=120, breakpoints=[50, 300])
+    tree = build_recipe(data, "partitioned", params)  # must NOT raise
+    assert total_splats(tree) == 400
+
+
+def test_pyramid_counts_breakpoints_clamp_to_coarse_levels():
+    """Same footgun on the pyramid: coarser substitutive levels are smaller by
+    K^s, so counts sized for the finest level used to abort the build."""
+    data = _make_random_gsplat()  # 400 splats; K=4,L=2 → levels 400/100/25
+    params = _params(breakpoints=[50, 300])
+    res = build_recipe(data, "pyramid", params)  # must NOT raise
+    assert isinstance(res, GSplatData)
+    assert res.flattened().n_splats == 400
+
+
+def test_pyramid_counts_breakpoints_typo_scale_raises():
+    """Counts exceeding the FULL dataset (the finest pyramid level) are a typo
+    and must still abort loudly — the per-level clamp applies only to the
+    coarser (smaller-by-K^s) levels, never to the whole-dataset check."""
+    data = _make_random_gsplat()  # 400 splats
+    params = _params(breakpoints=[1_000_000])
+    with pytest.raises(ValueError, match="exceeds N=400"):
+        build_recipe(data, "pyramid", params)
+
+
+def test_partitioned_counts_breakpoints_typo_scale_raises():
+    """The same union-level typo guard on the partitioned recipe: counts must
+    fit the WHOLE dataset even though every individual part clamps."""
+    data = _make_random_gsplat()  # 400 splats
+    params = _params(max_elements=120, breakpoints=[1_000_000])
+    with pytest.raises(ValueError, match="exceeds N=400"):
+        build_recipe(data, "partitioned", params)
+
+
+def test_stream_breakpoints_flow_through_partitioned():
+    """A `stream:<c>` spec sizes each part's ladder against ITS OWN N."""
+    data = _make_random_gsplat()  # 400 splats
+    params = _params(max_elements=120, breakpoints="stream:30")
+    tree = build_recipe(data, "partitioned", params)
+    assert total_splats(tree) == 400
+    from luxar.gsplats.tree import iter_leaves
+
+    for leaf in iter_leaves(tree):
+        incs = [s.n_splats for s in leaf.additive_sublods]
+        assert incs[0] <= 30 or len(incs) == 1  # first chunk ≤ c (or single)
+        assert sum(incs) == leaf.n_splats
+        assert leaf.additive_sublods[0].stats["lod_breakpoints_kind"] == "stream"
+
+
 def test_all_recipe_names_build():
     data = _make_random_gsplat()
     for recipe in RECIPE_NAMES:

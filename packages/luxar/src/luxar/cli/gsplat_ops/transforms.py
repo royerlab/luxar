@@ -726,6 +726,269 @@ def flatten_dataset(
         raise typer.Exit(1)
 
 
+def additive_dataset(
+    input_path: Path = typer.Argument(
+        ..., exists=True, help="Input .gsplats.zarr (any shape: leaf, lod, partition)"
+    ),
+    output_path: Path = typer.Argument(
+        ..., help="Output .gsplats.zarr (same tree shape; every leaf laddered)"
+    ),
+    n_lods: Optional[int] = typer.Option(
+        None,
+        "--n-lods",
+        min=1,
+        help="Additive levels per leaf for 'equal-count' breakpoints (default 4). "
+        "Ignored when --breakpoints/--target-ms determine the level count.",
+    ),
+    method: Optional[str] = typer.Option(
+        None,
+        "--method",
+        "-m",
+        help="Additive ordering per leaf: auto (default; greedy at small N, "
+        "self_energy above) | greedy | self_energy | mass | amplitude | "
+        "spectral | random.",
+    ),
+    breakpoints: Optional[str] = typer.Option(
+        None,
+        "--breakpoints",
+        "-b",
+        help="'equal-count' (default) | 'stream:C' (geometric streaming ladder, "
+        "first chunk C splats then doubling; sized per leaf) | "
+        "'counts:N1,N2,...' (clamped per leaf) | 'energy:f1,f2,...'.",
+    ),
+    target_ms: Optional[float] = typer.Option(
+        None,
+        "--target-ms",
+        min=1.0,
+        help="Streaming sizing: derive 'stream:<c>' breakpoints so each leaf's "
+        "first additive chunk downloads in ~this many ms at --bandwidth-mbps "
+        "(bytes/splat measured from the input store; override with "
+        "--bytes-per-splat). Mutually exclusive with --breakpoints.",
+    ),
+    bandwidth_mbps: Optional[float] = typer.Option(
+        None,
+        "--bandwidth-mbps",
+        min=0.1,
+        help="Assumed downlink for --target-ms sizing (default 25, a typical "
+        "broadband connection).",
+    ),
+    bytes_per_splat: Optional[float] = typer.Option(
+        None,
+        "--bytes-per-splat",
+        min=0.1,
+        help="Override the on-wire bytes/splat used by --target-ms sizing "
+        "(default: measured from the input store).",
+    ),
+    encoding_mode: Literal["auto", "precision", "memory"] = typer.Option(
+        "auto", "--encoding", "-e", help="Encoding mode for output"
+    ),
+    compress: Optional[Literal["zip", "tar.gz"]] = typer.Option(
+        None, "--compress", "-c", help="Compress output as .zip or .tar.gz"
+    ),
+    overwrite: bool = typer.Option(
+        False, "--overwrite", help="Overwrite the output if it already exists."
+    ),
+) -> None:
+    """Give every leaf of a gsplat tree an additive (streaming) LOD ladder.
+
+    Walks the tree structure-preservingly — substitutive ``kind=lod`` levels,
+    ``kind=partition`` parts, mosaic/multiscale groups all keep their shape —
+    and rebuilds each leaf with an additive prefix-sum ladder, WITHOUT
+    recomputing the (expensive, GPU-built) substitutive/partition structure.
+    The per-leaf counterpart of ``gsplat lod --recipe additive`` (which needs
+    a flat input), and the inverse companion of ``gsplat flatten``.
+
+    Breakpoints are sized per leaf: ``--target-ms``/``--bandwidth-mbps`` derive
+    a ``stream:<c>`` geometric ladder (first chunk ~target-ms of download,
+    then doubling — the viewer streams additive sub-LODs progressively, so
+    the first chunk sets first-paint latency); explicit ``counts:`` lists are
+    clamped to each leaf's size. A leaf that already has a ladder is rebuilt
+    from its flattened union (prior ordering discarded).
+
+    Examples:
+        # Substitutive pyramid -> pyramid with ~200ms streaming ladders per level
+        luxar gsplat additive sub.gsplats.zarr pyr.gsplats.zarr --target-ms 200
+
+        # Explicit geometric ladder, 14k first chunk
+        luxar gsplat additive in.gsplats.zarr out.gsplats.zarr -b stream:14000
+
+        # Classic 4-level equal-count ladders on every leaf
+        luxar gsplat additive in.gsplats.zarr out.gsplats.zarr --n-lods 4
+    """
+    try:
+        from dataclasses import replace
+
+        from luxar.cli.lod import (
+            _VALID_ADDITIVE_METHODS,
+            _parse_lod_breakpoints,
+            detect_store_encoding,
+            estimate_bytes_per_splat,
+            measure_store_bytes,
+            resolve_streaming_breakpoints,
+            validate_streaming_knobs,
+        )
+        from luxar.gsplats.gsplat_data import GSplatData
+        from luxar.gsplats.io.load_gsplats import load_gsplat_node
+        from luxar.gsplats.io.save_gsplats import (
+            split_fitting_info,
+            write_gsplats_tree,
+        )
+        from luxar.gsplats.lod.additive import (
+            clamp_counts_breakpoints,
+            make_additive_lod,
+            validate_counts_breakpoints,
+        )
+        from luxar.gsplats.tree import (
+            GSplatLeaf,
+            GSplatNode,
+            iter_leaves,
+            map_leaves,
+            node_ndim,
+        )
+
+        # ── usage validation (mirrors `gsplat lod`) ──
+        method_norm = (method or "auto").strip().replace("-", "_")
+        if method_norm not in _VALID_ADDITIVE_METHODS:
+            raise typer.BadParameter(
+                f"--method must be one of {list(_VALID_ADDITIVE_METHODS)}; "
+                f"got {method!r}"
+            )
+        validate_streaming_knobs(
+            target_ms, bandwidth_mbps, bytes_per_splat, breakpoints
+        )
+        bp = _parse_lod_breakpoints(breakpoints or "equal-count")
+        eff_n_lods = n_lods if n_lods is not None else 4
+        encoding_mode_obj = _resolve_encoding_mode(encoding_mode)
+
+        if output_path.exists() and not overwrite:
+            aprint(f"❌ Error: {output_path} exists; pass --overwrite to replace it.")
+            raise typer.Exit(1)
+
+        with asection(f"Additive laddering: {input_path.name}"):
+            with asection("Loading tree"):
+                node, stats = load_gsplat_node(input_path, include_stats=True)
+            leaves = list(iter_leaves(node))
+            n_leaves = len(leaves)
+            total_stored = sum(leaf.n_splats for leaf in leaves)
+            if n_leaves == 0 or total_stored == 0:
+                aprint("❌ Error: input tree has no splats to ladder")
+                raise typer.Exit(1)
+            has_colors = any(
+                sub.colors is not None for lf in leaves for sub in lf.additive_sublods
+            )
+            aprint(
+                f"Loaded {total_stored:,} stored splats across {n_leaves} "
+                f"leaf/leaves ({node_ndim(node)}D)"
+            )
+
+            # Explicit counts: are clamped PER LEAF below (parts/levels differ
+            # in N), but the spec must still fit the dataset as a whole — a
+            # largest count exceeding the union N is a typo and aborts loudly
+            # (mirrors a direct whole-dataset `lod --recipe additive` build).
+            try:
+                validate_counts_breakpoints(bp, total_stored)
+            except ValueError as e:
+                raise typer.BadParameter(str(e)) from e
+
+            # ── streaming breakpoints from --target-ms (measured B/splat) ──
+            if target_ms is not None:
+                store_bytes = measure_store_bytes(input_path)
+                measured = store_bytes / total_stored if store_bytes > 0 else None
+                # Mirror `gsplat lod`: an explicit non-default --encoding
+                # re-encodes the output, so measured INPUT bytes misstate the
+                # on-wire output cost — size against the analytic estimate
+                # for the target encoding instead.
+                if measured is not None and encoding_mode != "auto":
+                    input_encoding = detect_store_encoding(input_path)
+                    if input_encoding != encoding_mode:
+                        aprint(
+                            f"--encoding {encoding_mode} re-encodes the output "
+                            f"(input store looks "
+                            f"{input_encoding or 'unknown'}-encoded); sizing "
+                            f"--target-ms from the analytic {encoding_mode} "
+                            f"estimate instead of the measured input bytes"
+                        )
+                        measured = None
+                bp = resolve_streaming_breakpoints(
+                    target_ms,
+                    bandwidth_mbps,
+                    bytes_per_splat,
+                    measured_bps=measured,
+                    analytic_bps=estimate_bytes_per_splat(
+                        node_ndim(node), has_colors, encoding=encoding_mode
+                    ),
+                )
+
+            with asection(f"Laddering {n_leaves} leaf/leaves"):
+
+                def _ladder_leaf(leaf: "GSplatLeaf") -> "GSplatNode":
+                    # Rebuild from the leaf's flattened union (an existing
+                    # ladder is discarded and recomputed). Explicit counts are
+                    # clamped to THIS leaf's size (parts/levels differ in N).
+                    gd = GSplatData.from_tree(leaf)
+                    n = gd.n_splats
+                    laddered = make_additive_lod(
+                        gd,
+                        n_lods=max(1, min(eff_n_lods, n)) if n else 1,
+                        method=method_norm,  # type: ignore[arg-type]
+                        breakpoints=clamp_counts_breakpoints(bp, n),
+                    )
+                    new_leaf = laddered.tree
+                    # Merge meta, keeping the FRESHLY-computed ladder stats
+                    # (lod_n_lods/lod_cutpoints/lod_breakpoints_kind) — a blind
+                    # `meta=dict(leaf.meta)` would restore the SOURCE leaf's
+                    # stale ladder stats when re-laddering. Source-only keys
+                    # (e.g. a stamped `min_pixel_size`) are preserved;
+                    # per-key, `stats` merges so source-only stat entries
+                    # survive but ladder keys take the fresh values.
+                    merged = {**leaf.meta, **new_leaf.meta}
+                    src_stats = leaf.meta.get("stats")
+                    new_stats = new_leaf.meta.get("stats")
+                    if isinstance(src_stats, dict) and isinstance(new_stats, dict):
+                        merged["stats"] = {**src_stats, **new_stats}
+                    return replace(new_leaf, meta=merged)
+
+                result = map_leaves(node, _ladder_leaf)
+                ladder_sizes = sorted(
+                    {len(lf.additive_sublods) for lf in iter_leaves(result)}
+                )
+                aprint(f"Ladders built: {ladder_sizes} additive level(s) per leaf")
+
+            with asection(f"Saving to {output_path.name}"):
+                if output_path.exists() and overwrite:
+                    import shutil
+
+                    if output_path.is_dir():
+                        shutil.rmtree(output_path)
+                    else:
+                        output_path.unlink()
+                fitting_info, fitting_config, provenance_info = split_fitting_info(
+                    stats or {}, include_fitting_info=True
+                )
+                write_gsplats_tree(
+                    output_path,
+                    result,
+                    encoding_mode=encoding_mode_obj,
+                    compress=compress,
+                    fitting_info=fitting_info,
+                    fitting_config=fitting_config,
+                    provenance_info=provenance_info,
+                )
+                aprint(
+                    f"  Saved laddered tree: {output_path} "
+                    f"({total_stored:,} splats, {n_leaves} leaf/leaves)"
+                )
+
+    except typer.Exit:
+        raise
+    except Exception as e:
+        aprint(f"❌ Error: {e}")
+        import traceback
+
+        traceback.print_exc()
+        raise typer.Exit(1)
+
+
 def _parse_slices(s: str, ndim: int) -> list[slice]:
     """Parse numpy-style range string into list of slices.
 
@@ -991,9 +1254,7 @@ def transform_dataset(
                 d = node_ndim(node)
                 matrix_shaped = is_matrix_shaped(node)
                 shape_desc = "leaf/matrix" if matrix_shaped else type(node).__name__
-                aprint(
-                    f"Loaded {total_splats(node):,} splats ({d}D, {shape_desc})"
-                )
+                aprint(f"Loaded {total_splats(node):,} splats ({d}D, {shape_desc})")
 
             transforms_applied: list[str] = []
 
@@ -1131,7 +1392,9 @@ def transform_dataset(
                         aprint(f"Intensity scale factor: {scale_intensity_factor}")
                         node = map_leaves(
                             node,
-                            _leaf_op(lambda gd: gd.scale_intensity(scale_intensity_factor)),
+                            _leaf_op(
+                                lambda gd: gd.scale_intensity(scale_intensity_factor)
+                            ),
                         )
                 if normalize_intensity is not None:
                     with asection("Normalizing intensity"):
@@ -1344,3 +1607,4 @@ def register_transforms_commands(app: typer.Typer) -> None:
     app.command("slice")(slice_dataset)
     app.command("partition")(partition_dataset)
     app.command("flatten")(flatten_dataset)
+    app.command("additive")(additive_dataset)
