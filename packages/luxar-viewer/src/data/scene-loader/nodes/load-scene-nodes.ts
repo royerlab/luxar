@@ -47,7 +47,7 @@ export async function loadSceneNodes(
   } else if (node.type === 'group' && node.attrs.kind === 'lod') {
     // A kind=lod Group is a specialized container that recurses into
     // children itself (it needs to capture each child's THREE node +
-    // min_pixel_size to register the LOD entry). No outer recursion
+    // coverage_fraction to register the LOD entry). No outer recursion
     // afterwards. Wrap with ``loadLeafNode`` for the same error-capture
     // semantics as the leaf branches above — a failing LOD group
     // shouldn't sink the rest of the scene.

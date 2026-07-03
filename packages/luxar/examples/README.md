@@ -107,7 +107,7 @@ Each script prints the absolute output path on completion. Defaults to
 | `partition_of_lod_example.py` | Auto-partition + nested LOD UX. |
 | `partition_only_example.py` | Pure spatial partition (auto and manual), no LOD. |
 | `lines_partition_and_sampling_example.py` | Polyline-atomic BSP, Poisson-disk LOD, SAH BSP. |
-| `energy_breakpoints_example.py` | Energy-aware LOD ordering + base_pixel_size (PR δ). |
+| `energy_breakpoints_example.py` | Energy-aware LOD ordering + explicit coverage_fraction. |
 
 ### Gaussian splats
 

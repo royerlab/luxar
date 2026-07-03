@@ -43,8 +43,10 @@ class TestSaveGsplats:
             assert path.exists()
             root = zarr.open_group(str(path), mode="r")
             assert root.attrs["format_type"] == "gsplats_zarr"
-            assert root.attrs["format_version"] == "3.1"
-            # v3.1: leaf at root, no "splats" group; Cholesky factors split.
+            # v3.2 renames the lod selector attrs (coverage_fraction); leaf
+            # layout is unchanged from v3.1.
+            assert root.attrs["format_version"] == "3.2"
+            # v3.1+: leaf at root, no "splats" group; Cholesky factors split.
             assert "splats" not in root
             assert "cholesky_factors_diag" in root
             assert "cholesky_factors" not in root
@@ -280,7 +282,9 @@ class TestCholeskySplitRoundTrip:
             )
             result = load_gsplats(path)
             assert (
-                self._cov_relF_p95(splats["cholesky_factors"], result.cholesky_factors, 2)
+                self._cov_relF_p95(
+                    splats["cholesky_factors"], result.cholesky_factors, 2
+                )
                 <= 1e-3
             )
 
@@ -924,12 +928,11 @@ def test_write_gsplats_tree_stamps_child_index_on_children() -> None:
             assert dict(lroot[f"child_{i}"].attrs)["child_index"] == i
 
 
-def test_writer_derives_extent_thresholds_for_meta_less_lod_group() -> None:
-    """#4: a meta-less (hand-built) kind=lod group gets EXTENT-based min_pixel_size
-    from the writer fallback (physically anchored T·W/r), not the legacy √N count.
-    The builders normally stamp the threshold into child meta — this exercises the
-    fallback for a tree written without it, and pins it to extent."""
-    import math
+def test_writer_derives_coverage_fractions_for_meta_less_lod_group() -> None:
+    """#4: a meta-less (hand-built) kind=lod group gets viewport-relative
+    ``coverage_fraction`` values from the writer fallback (``sqrt(N_i/N_finest)``:
+    coarsest 0.0, finest 1.0). The builders normally stamp these into child meta —
+    this exercises the fallback for a tree written without it."""
     import tempfile
     from pathlib import Path
 
@@ -955,16 +958,13 @@ def test_writer_derives_extent_thresholds_for_meta_less_lod_group() -> None:
 
     # coarsest-first: 50 large (scale 4) then 800 small (scale 1). No authored meta.
     grp = GSplatLodGroup(children=[_leaf(50, 4.0, 0), _leaf(800, 1.0, 1)])
-    assert "min_pixel_size" not in grp.children[0].meta
-    assert "min_pixel_size" not in grp.children[1].meta
+    assert "coverage_fraction" not in grp.children[0].meta
+    assert "coverage_fraction" not in grp.children[1].meta
 
     with tempfile.TemporaryDirectory() as tmpdir:
         path = Path(tmpdir) / "m.gsplats.zarr"
         write_gsplats_tree(path, grp, ordering="none")
         root = zarr.open_group(str(path), mode="r")
-        assert root["child_0"].attrs["min_pixel_size"] == 0.0  # coarsest floor
-        fine_mps = root["child_1"].attrs["min_pixel_size"]
-        assert fine_mps > 0.0
-        # Legacy count would give BASE(10)·√(800/50) = 40; extent (T·W/r) differs.
-        count_pred = 10.0 * math.sqrt(800 / 50)
-        assert abs(fine_mps - count_pred) > 1.0
+        assert root["child_0"].attrs["coverage_fraction"] == 0.0  # coarsest floor
+        # sqrt(N_i/N_finest): coarsest-first counts [50, 800] → finest fills screen.
+        assert root["child_1"].attrs["coverage_fraction"] == pytest.approx(1.0)

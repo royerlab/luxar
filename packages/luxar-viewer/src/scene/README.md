@@ -324,11 +324,15 @@ levels, and bounds resident VRAM with an LRU eviction pass.
    is at/behind the camera near plane (camera inside or straddling the
    box), it returns `+Infinity` so the selector saturates to the finest
    level — instead of the collapsed/garbage diagonal an unguarded
-   perspective divide would produce on close approach.
-5. Pick the finest child whose `minPixelSize` threshold is satisfied,
-   with 10% asymmetric, spacing-aware hysteresis on the downgrade
-   direction to suppress threshold-edge flicker
-   (`pickChildWithHysteresis`).
+   perspective divide would produce on close approach. The pixel
+   diagonal is normalised to a dimensionless coverage metric
+   (`diagonalPx / (FILL_FACTOR * viewportDiagonal)`), so the comparison
+   is viewport-relative rather than an absolute pixel count.
+5. Pick the finest child whose `coverageFraction` threshold (the
+   viewport-normalised per-child value read from the zarr attr
+   `coverage_fraction`) is satisfied by the coverage metric, with 10%
+   asymmetric, spacing-aware hysteresis on the downgrade direction to
+   suppress threshold-edge flicker (`pickChildWithHysteresis`).
 6. Swap visibility atomically when the desired child differs; lazy
    targets that are not yet committed kick `ensureLoaded()` and swap
    on a later frame once `ready` flips true.

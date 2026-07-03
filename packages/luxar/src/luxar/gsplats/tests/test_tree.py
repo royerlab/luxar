@@ -277,14 +277,11 @@ def test_bridge_default_level_is_derived_finest():
     assert default == 0
 
 
-def test_tree_from_substitutive_levels_lod_method_selectable():
-    """#5: the builder threads the lod_method knob into the per-child threshold
-    derivation. ``count`` reproduces the legacy √N thresholds exactly; the default
-    ``extent`` is physically anchored and differs. (Pre-fix the function took no
-    knobs, so a substitutive/pyramid file was never CLI-tunable.)"""
+def test_tree_from_substitutive_levels_stamps_coverage_fractions():
+    """The builder back-fills per-child ``coverage_fraction`` = ``sqrt(N_i/N_finest)``
+    (coarsest 0.0, finest 1.0). ``levels`` is finest-first; the tree stores children
+    coarsest-first, so the stamped fractions are ascending coarsest→finest."""
     import math
-
-    from luxar.core.group.lod.group import BASE_PIXEL_SIZE
 
     # finest-first levels: counts 800, 200, 50 (coarsest = 50, last).
     levels = [
@@ -292,41 +289,13 @@ def test_tree_from_substitutive_levels_lod_method_selectable():
         SubstitutiveLevel(additive_sublods=[_sublod(200, seed=1)], level_index=1),
         SubstitutiveLevel(additive_sublods=[_sublod(50, seed=2)], level_index=2),
     ]
-    cnt = tree_from_substitutive_levels(levels, lod_method="count")
-    cnt_mps = [c.meta["min_pixel_size"] for c in cnt.children]  # coarsest-first
-    assert cnt_mps[0] == 0.0  # coarsest = always-eligible floor
-    assert cnt_mps[1] == pytest.approx(BASE_PIXEL_SIZE * math.sqrt(200 / 50))
-    assert cnt_mps[2] == pytest.approx(BASE_PIXEL_SIZE * math.sqrt(800 / 50))
-
-    ext = tree_from_substitutive_levels(levels)  # default = extent
-    ext_mps = [c.meta["min_pixel_size"] for c in ext.children]
-    assert ext_mps[0] == 0.0
-    assert ext_mps[2] > ext_mps[1] > ext_mps[0]  # ascending coarsest→finest
-    assert ext_mps[2] != pytest.approx(cnt_mps[2])  # physically anchored, differs
-
-    # extent_anisotropy is actually threaded (not silently ignored): _sublod makes
-    # anisotropic splats (random per-axis diagonals), so the isotropic geometric-mean
-    # radius differs from the largest-semi-axis radius → different thresholds.
-    iso = tree_from_substitutive_levels(levels, extent_anisotropy=False)
-    iso_mps = [c.meta["min_pixel_size"] for c in iso.children]
-    assert iso_mps[2] != pytest.approx(ext_mps[2])
-
-
-def test_tree_from_substitutive_levels_rejects_invalid_lod_method():
-    """#5 hardening: an unknown lod_method must RAISE, not silently fall back to
-    ``count`` (``lod_thresholds`` treats any non-"extent" string as count). Guards
-    save()/recipes/.tree — the single user-method chokepoint for substitutive gsplats."""
-    levels = [
-        SubstitutiveLevel(additive_sublods=[_sublod(80, seed=0)], level_index=0),
-        SubstitutiveLevel(additive_sublods=[_sublod(20, seed=1)], level_index=1),
-    ]
-    with pytest.raises(ValueError, match="lod_method must be 'extent' or 'count'"):
-        tree_from_substitutive_levels(levels, lod_method="Extent")  # typo'd case
-    with pytest.raises(ValueError, match="lod_method"):
-        tree_from_substitutive_levels(levels, lod_method="sqrt")
-    # validation fires even for the single-level (otherwise-inert) path
-    with pytest.raises(ValueError, match="lod_method"):
-        tree_from_substitutive_levels(levels[:1], lod_method="bogus")
+    node = tree_from_substitutive_levels(levels)
+    cov = [c.meta["coverage_fraction"] for c in node.children]  # coarsest-first
+    assert cov[0] == 0.0  # coarsest = always-eligible floor
+    # coarsest-first counts are [50, 200, 800]; N_finest = 800.
+    assert cov[1] == pytest.approx(math.sqrt(200 / 800))
+    assert cov[2] == pytest.approx(1.0)  # finest fills the screen
+    assert cov[2] > cov[1] > cov[0]  # ascending coarsest→finest
 
 
 def test_non_matrix_trees_have_no_matrix_projection():
@@ -350,10 +319,11 @@ def test_tree_from_empty_levels_raises():
         tree_from_substitutive_levels([])
 
 
-def test_lod_group_back_fills_min_pixel_size():
-    """A multi-substitutive tree gets per-child min_pixel_size so the viewer
-    selector isn't stuck at the finest level (decision 7 / R3). Finest carries
-    the highest threshold; the coarsest is 0.0 (always eligible)."""
+def test_lod_group_back_fills_coverage_fraction():
+    """A multi-substitutive tree gets per-child coverage_fraction so the viewer
+    selector isn't stuck at the finest level (decision 7 / R3). Finest carries the
+    highest fraction (1.0); the coarsest is 0.0 (always eligible)."""
+
     levels = [
         SubstitutiveLevel(additive_sublods=[_sublod(100, seed=0)], level_index=0),
         SubstitutiveLevel(
@@ -363,43 +333,23 @@ def test_lod_group_back_fills_min_pixel_size():
     node = tree_from_substitutive_levels(levels)
     assert isinstance(node, GSplatLodGroup)
     # children are coarsest-first: [0]=coarsest(25), [1]=finest(100)
-    coarse_mps = node.children[0].meta["min_pixel_size"]
-    finest_mps = node.children[1].meta["min_pixel_size"]
-    # Default `extent` method (T·W/r): coarsest is the 0.0 floor, the finer level
-    # has a positive ascending threshold anchored in element size.
-    assert coarse_mps == 0.0
-    assert finest_mps > coarse_mps
-    assert finest_mps > 0.0
-    # Pin the exact formula with an INDEPENDENTLY computed W and r, so a wrong W
-    # (e.g. finest-level bbox instead of the union of all levels) is caught: W must
-    # be the union bbox diagonal over BOTH levels' centers, r = p90 of the finest
-    # level's principal_radii, threshold = DEFAULT_TARGET_PIXEL_SIZE · W / r.
-    from luxar.core.group.lod.group import DEFAULT_TARGET_PIXEL_SIZE
-
-    all_centers = np.concatenate(
-        [s.centers for lvl in levels for s in lvl.additive_sublods]
-    )
-    w_union = float(np.linalg.norm(all_centers.max(axis=0) - all_centers.min(axis=0)))
-    fine_r = float(
-        np.percentile(
-            np.concatenate(
-                [s.principal_radii(True) for s in levels[0].additive_sublods]
-            ),
-            90.0,
-        )
-    )
-    assert finest_mps == pytest.approx(DEFAULT_TARGET_PIXEL_SIZE * w_union / fine_r)
+    coarse_cov = node.children[0].meta["coverage_fraction"]
+    finest_cov = node.children[1].meta["coverage_fraction"]
+    # Coverage fractions = sqrt(N_i/N_finest): coarsest is the 0.0 floor, finest 1.0.
+    assert coarse_cov == 0.0
+    assert finest_cov == pytest.approx(1.0)
+    assert finest_cov > coarse_cov
 
 
-def test_min_pixel_size_explicit_meta_preserved():
-    """An explicit min_pixel_size in a level's stats-derived meta is not clobbered."""
+def test_coverage_fraction_explicit_meta_preserved():
+    """The derived coverage_fraction is present on every child (setdefault path)."""
     levels = [
         SubstitutiveLevel(additive_sublods=[_sublod(100, seed=0)], level_index=0),
         SubstitutiveLevel(additive_sublods=[_sublod(25, seed=1)], level_index=1),
     ]
     node = tree_from_substitutive_levels(levels)
     # setdefault: derived values are present (no explicit override path here)
-    assert all("min_pixel_size" in c.meta for c in node.children)
+    assert all("coverage_fraction" in c.meta for c in node.children)
 
 
 # ── map_leaves / default-selection global stats (PR-4 tree-aware transform) ──
@@ -503,35 +453,37 @@ def test_without_meta_key_scrubs_group_and_leaf_meta():
     """``without_meta_key`` drops the key from EVERY node — including group
     nodes that ``map_leaves`` copies verbatim — while preserving other meta.
 
-    This is the mechanism that fixes the stale-``min_pixel_size`` bug on the
+    This is the mechanism that fixes the stale-``coverage_fraction`` bug on the
     transform tree path for multiscale / mosaic topologies.
     """
     from luxar.gsplats.tree import map_leaves, without_meta_key
 
     leaf_a = GSplatLeaf(
         additive_sublods=[_sublod(4, seed=0)],
-        meta={"min_pixel_size": 1.0, "compression_factor": 4},
+        meta={"coverage_fraction": 0.1, "compression_factor": 4},
     )
     # multiscale-like: a lod group whose finest child is a partition that itself
-    # carries a min_pixel_size on its GROUP meta.
+    # carries a coverage_fraction on its GROUP meta.
     fine = GSplatPartition(
         children=[leaf_a, GSplatLeaf(additive_sublods=[_sublod(6, seed=1)])],
-        meta={"min_pixel_size": 99.0},
+        meta={"coverage_fraction": 0.99},
     )
     root = GSplatLodGroup(
-        children=[_leaf(3, seed=2), fine], meta={"min_pixel_size": 5.0}
+        children=[_leaf(3, seed=2), fine], meta={"coverage_fraction": 0.5}
     )
 
-    scrubbed = without_meta_key(root, "min_pixel_size")
-    assert "min_pixel_size" not in scrubbed.meta  # root group
-    assert "min_pixel_size" not in scrubbed.children[1].meta  # the partition group
+    scrubbed = without_meta_key(root, "coverage_fraction")
+    assert "coverage_fraction" not in scrubbed.meta  # root group
+    assert "coverage_fraction" not in scrubbed.children[1].meta  # partition group
     scrubbed_leaf = scrubbed.children[1].children[0]
-    assert "min_pixel_size" not in scrubbed_leaf.meta
+    assert "coverage_fraction" not in scrubbed_leaf.meta
     assert scrubbed_leaf.meta["compression_factor"] == 4  # other provenance kept
     # original tree untouched (immutable rebuild)
-    assert root.meta["min_pixel_size"] == 5.0 and fine.meta["min_pixel_size"] == 99.0
+    assert (
+        root.meta["coverage_fraction"] == 0.5 and fine.meta["coverage_fraction"] == 0.99
+    )
 
     # Contrast: map_leaves copies GROUP meta verbatim — it does NOT scrub the
-    # partition's stale min_pixel_size (the bug this helper exists to close).
+    # partition's stale coverage_fraction (the bug this helper exists to close).
     mapped = map_leaves(root, lambda lf: lf)
-    assert mapped.children[1].meta["min_pixel_size"] == 99.0
+    assert mapped.children[1].meta["coverage_fraction"] == 0.99

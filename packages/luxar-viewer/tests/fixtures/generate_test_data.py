@@ -1614,10 +1614,10 @@ def generate_lod_group_test() -> None:
     threshold spread). The lod_group carries ``layer=True`` so the
     Layers panel exposes the Active-level dropdown.
 
-    Each child writes its own ``min_pixel_size`` attr, so the runtime
-    selector has the data it needs even though this fixture's
-    explicit thresholds (auto-derived from splat counts) are not the
-    same as what a real-world authoring path would supply.
+    Each child writes its own ``coverage_fraction`` attr (viewport-relative,
+    coarsest 0.0 → finest 1.0), so the runtime selector has the data it needs
+    even though this fixture's explicit thresholds are not the same as what a
+    real-world authoring path (auto-derived ``sqrt(N_i/N_finest)``) would supply.
     """
     with asection("Generating LODGroup Test"):
         output = FIXTURES_DIR / "test_lod_group.luxar.zarr"
@@ -1649,16 +1649,18 @@ def generate_lod_group_test() -> None:
         ) as compiler:
             scene = compiler.create_scene(dimensions=dims)
             lod = scene.add_lod_group("multires", layer=True)
-            lod.add_gsplats("child_0", **_make_level_splats(8, rng), min_pixel_size=0)
             lod.add_gsplats(
-                "child_1", **_make_level_splats(32, rng), min_pixel_size=50.0
+                "child_0", **_make_level_splats(8, rng), coverage_fraction=0.0
             )
             lod.add_gsplats(
-                "child_2", **_make_level_splats(128, rng), min_pixel_size=200.0
+                "child_1", **_make_level_splats(32, rng), coverage_fraction=0.5
+            )
+            lod.add_gsplats(
+                "child_2", **_make_level_splats(128, rng), coverage_fraction=1.0
             )
 
         aprint(f"  Created {output}")
-        aprint("  3 levels: 8 / 32 / 128 splats, thresholds 0 / 50 / 200 px")
+        aprint("  3 levels: 8 / 32 / 128 splats, coverage_fraction 0.0 / 0.5 / 1.0")
 
 
 def generate_labelled_points_test() -> None:

@@ -99,7 +99,6 @@ class MergeConfig:
     levels: Optional[int] = None
     substitutive_method: Optional[str] = None
     coarsen_dims: Optional[str] = None
-    lod_method: Optional[str] = None
 
 
 @dataclass
@@ -166,8 +165,8 @@ def resolve_merge_recipe_args(
 
     Fail-fast (before any expensive planning / fitting): rejects an unsupported
     recipe, cross-recipe knobs, and merge knobs given WITHOUT a ``--merge-recipe``
-    (previously silently dropped), and validates method/breakpoint/lod-method
-    spellings — mirroring ``fit --recipe`` and ``gsplat lod``. The streaming trio
+    (previously silently dropped), and validates method/breakpoint spellings —
+    mirroring ``fit --recipe`` and ``gsplat lod``. The streaming trio
     (``--merge-target-ms``/``--merge-bandwidth-mbps``/``--merge-bytes-per-splat``)
     is resolved HERE into a concrete ``breakpoints="stream:<c>"`` string (analytic
     bytes/splat for ``merged_ndim`` — no gsplat store exists yet at plan time), so
@@ -195,7 +194,6 @@ def resolve_merge_recipe_args(
                 "--merge-levels": merge.levels,
                 "--merge-substitutive-method": merge.substitutive_method,
                 "--merge-coarsen-dims": merge.coarsen_dims,
-                "--merge-lod-method": merge.lod_method,
             }.items()
             if val is not None
         ]
@@ -203,13 +201,19 @@ def resolve_merge_recipe_args(
             raise typer.BadParameter(
                 f"option(s) {', '.join(sorted(orphaned))} require a "
                 f"--merge-recipe but none was given; pass --merge-recipe "
-                f"additive|substitutive (without one the merge writes bare-leaf "
+                f"stream|levels (without one the merge writes bare-leaf "
                 f"parts, so these knobs would be ignored)."
             )
         return {}
 
-    from luxar.gsplats.lod.recipes import PER_PART_RECIPES
+    from luxar.gsplats.lod.recipes import LEGACY_RECIPE_NAMES, PER_PART_RECIPES
 
+    if merge.recipe in LEGACY_RECIPE_NAMES:
+        raise typer.BadParameter(
+            f"recipe {merge.recipe!r} was renamed to "
+            f"{LEGACY_RECIPE_NAMES[merge.recipe]!r}; use --merge-recipe "
+            f"{LEGACY_RECIPE_NAMES[merge.recipe]}."
+        )
     if merge.recipe not in PER_PART_RECIPES:
         raise typer.BadParameter(
             f"--merge-recipe {merge.recipe!r} is not supported; choose from "
@@ -230,12 +234,11 @@ def resolve_merge_recipe_args(
         "--merge-levels": merge.levels,
         "--merge-substitutive-method": merge.substitutive_method,
         "--merge-coarsen-dims": merge.coarsen_dims,
-        "--merge-lod-method": merge.lod_method,
     }
-    irrelevant = substitutive_only if merge.recipe == "additive" else additive_only
+    irrelevant = substitutive_only if merge.recipe == "stream" else additive_only
     provided = [flag for flag, val in irrelevant.items() if val is not None]
     if provided:
-        other = "substitutive" if merge.recipe == "additive" else "additive"
+        other = "levels" if merge.recipe == "stream" else "stream"
         raise typer.BadParameter(
             f"option(s) {', '.join(provided)} are not used by "
             f"--merge-recipe {merge.recipe} (they configure "
@@ -287,13 +290,6 @@ def resolve_merge_recipe_args(
 
         _parse_lod_breakpoints(eff_breakpoints)
         args["breakpoints"] = eff_breakpoints
-    if merge.lod_method is not None:
-        if merge.lod_method not in ("extent", "count"):
-            raise typer.BadParameter(
-                f"--merge-lod-method must be 'extent' or 'count'; "
-                f"got {merge.lod_method!r}"
-            )
-        args["lod-method"] = merge.lod_method
     if merge.compression_factor is not None:
         args["compression-factor"] = str(merge.compression_factor)
     if merge.levels is not None:

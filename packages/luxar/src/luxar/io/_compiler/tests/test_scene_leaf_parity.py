@@ -86,7 +86,12 @@ def test_standalone_leaf_matches_scene_leaf():
         std_leaf = zarr.open_group(str(std_path), mode="r")
 
         # Arrays: byte-identical (same data, same encoding, no reordering).
-        for arr in ("centers", "amplitudes", "cholesky_factors_diag", "cholesky_factors_offdiag"):
+        for arr in (
+            "centers",
+            "amplitudes",
+            "cholesky_factors_diag",
+            "cholesky_factors_offdiag",
+        ):
             np.testing.assert_array_equal(
                 std_leaf[arr][:], scene_leaf[arr][:], err_msg=f"{arr} differs"
             )
@@ -144,7 +149,12 @@ def test_scene_additive_ladder_matches_standalone():
         assert scene_leaf.attrs["n_additive_sublods"] == 2
         assert std_leaf.attrs["n_additive_sublods"] == 2
         for i in range(2):
-            for arr in ("centers", "amplitudes", "cholesky_factors_diag", "cholesky_factors_offdiag"):
+            for arr in (
+                "centers",
+                "amplitudes",
+                "cholesky_factors_diag",
+                "cholesky_factors_offdiag",
+            ):
                 np.testing.assert_array_equal(
                     std_leaf[f"additive_{i}"][arr][:],
                     scene_leaf[f"additive_{i}"][arr][:],
@@ -155,7 +165,7 @@ def test_scene_additive_ladder_matches_standalone():
 def test_scene_lod_group_matches_standalone():
     """A scene kind=lod group (built by the structural recursion) matches the
     standalone kind=lod group (built by the tree walker): same child_<i> arrays,
-    same per-child ``min_pixel_size``, same group ``kind``/``default_level``.
+    same per-child ``coverage_fraction``, same group ``kind``/``default_level``.
 
     The two are written by *different* code, so this guards real drift."""
     from luxar.gsplats.gsplat_data import GSplatData, SubstitutiveLevel
@@ -199,10 +209,15 @@ def test_scene_lod_group_matches_standalone():
         assert std_lod.attrs["default_level"] == 0
         for i in range(2):
             sc, st = scene_lod[f"child_{i}"], std_lod[f"child_{i}"]
-            assert sc.attrs["min_pixel_size"] == st.attrs["min_pixel_size"], (
-                f"child_{i} min_pixel_size differs"
+            assert sc.attrs["coverage_fraction"] == st.attrs["coverage_fraction"], (
+                f"child_{i} coverage_fraction differs"
             )
-            for arr in ("centers", "amplitudes", "cholesky_factors_diag", "cholesky_factors_offdiag"):
+            for arr in (
+                "centers",
+                "amplitudes",
+                "cholesky_factors_diag",
+                "cholesky_factors_offdiag",
+            ):
                 np.testing.assert_array_equal(
                     st[arr][:], sc[arr][:], err_msg=f"child_{i}/{arr} differs"
                 )
@@ -259,7 +274,12 @@ def test_scene_partition_matches_standalone():
         n_std = sum(1 for k in std_part if str(k).startswith("part_"))
         assert n_scene == n_std and n_scene >= 2
         for i in range(n_scene):
-            for arr in ("centers", "amplitudes", "cholesky_factors_diag", "cholesky_factors_offdiag"):
+            for arr in (
+                "centers",
+                "amplitudes",
+                "cholesky_factors_diag",
+                "cholesky_factors_offdiag",
+            ):
                 np.testing.assert_array_equal(
                     std_part[f"part_{i}"][arr][:],
                     scene_part[f"part_{i}"][arr][:],
@@ -310,7 +330,12 @@ def test_standalone_leaf_matches_scene_leaf_with_colors_and_ordering():
             np.testing.assert_array_equal(
                 std_leaf[arr][:], scene_leaf[arr][:], err_msg=f"{arr} differs"
             )
-        for arr in ("centers", "amplitudes", "cholesky_factors_diag", "cholesky_factors_offdiag"):
+        for arr in (
+            "centers",
+            "amplitudes",
+            "cholesky_factors_diag",
+            "cholesky_factors_offdiag",
+        ):
             assert std_leaf[arr].chunks == scene_leaf[arr].chunks, (
                 f"{arr} chunks differ"
             )

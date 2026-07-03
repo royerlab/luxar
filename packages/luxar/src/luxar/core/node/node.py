@@ -240,42 +240,35 @@ class Node:
         self,
         name: str,
         *,
-        selector: str = "pixel_size",
+        selector: str = "coverage",
         default_level: int = 0,
-        base_pixel_size: Optional[float] = None,
         **attrs: Any,
     ) -> "Group":
         """Create and add a child kind=lod ``Group`` node.
 
         A kind=lod ``Group`` picks one of N alternative children at runtime
         based on the projected bbox diagonal in pixels and each child's
-        ``min_pixel_size`` threshold. Children are added via the inherited
+        ``coverage_fraction`` threshold (a viewport-relative fraction the viewer
+        multiplies by the viewport diagonal). Children are added via the inherited
         ``add_*`` methods on the returned ``Group`` and each must carry a
-        ``min_pixel_size`` attribute. Children must be added in strictly
-        increasing ``min_pixel_size`` order; the resolved ``display_type``
-        of the finest child becomes the group's user-facing geometry type.
+        ``coverage_fraction`` attribute. Children must be added in strictly
+        increasing ``coverage_fraction`` order (coarsest 0.0 → finest 1.0); the
+        resolved ``display_type`` of the finest child becomes the group's
+        user-facing geometry type.
 
         Example::
 
             lod = scene.add_lod_group("multires")
-            lod.add_gsplats_from_data("c", coarse, min_pixel_size=0)
-            lod.add_gsplats_from_data("m", medium, min_pixel_size=100)
-            lod.add_gsplats_from_data("f", fine, min_pixel_size=500)
+            lod.add_gsplats_from_data("c", coarse, coverage_fraction=0.0)
+            lod.add_gsplats_from_data("m", medium, coverage_fraction=0.5)
+            lod.add_gsplats_from_data("f", fine, coverage_fraction=1.0)
 
         Args:
             name: Name of the lod-kind group.
-            selector: Selector mode. Currently only ``"pixel_size"`` is
+            selector: Selector mode. Currently only ``"coverage"`` is
                 supported.
             default_level: Initial active level index for the
                 manual-override UI (0-based).
-            base_pixel_size: Override for the default 10-px LOD-switching
-                threshold (see :data:`luxar.core.group.lod.group.BASE_PIXEL_SIZE`).
-                When set, both the explicit-builder children that auto-
-                derive ``min_pixel_size`` AND the ``lod_group=`` convenience
-                path on ``add_gsplats_from_data`` honor this override.
-                ``None`` (default) → use the module-level constant. Stored
-                as an attr on the lod_group so downstream consumers
-                (compiler, viewer) can read it.
             **attrs: Additional node attributes (transform, layer, etc.).
 
         Returns:
@@ -291,7 +284,6 @@ class Node:
             name,
             selector=selector,
             default_level=default_level,
-            base_pixel_size=base_pixel_size,
             **attrs,
         )
 

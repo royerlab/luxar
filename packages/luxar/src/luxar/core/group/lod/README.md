@@ -9,7 +9,7 @@ children can be `points`, `lines`, `gsplats`, or themselves a specialized group
 This package splits cleanly into two layers:
 
 - **Geometry-agnostic machinery** (`group.py`) — threshold derivation, the
-  `min_pixel_size` monotonicity invariant, the `kind=lod` validator, and the
+  `coverage_fraction` monotonicity invariant, the `kind=lod` validator, and the
   shared display-type resolver. Shared by every leaf geometry and by the
   Partition kind.
 - **Per-geometry axis resolvers** (`points.py`, `lines.py`, `gsplats.py`) —
@@ -55,26 +55,29 @@ See `docs/specs/GSPLATS_ZARR_FORMAT.md` for the v3.1 node-tree grammar
 
 ## Geometry-agnostic machinery (`group.py`)
 
-Each LOD-group child carries a `min_pixel_size` attribute, strictly monotonic
-increasing in coarsest→finest order (coarsest = `0.0`). The viewer picks the
-finest child whose threshold is satisfied by the current view.
+Each LOD-group child carries a `coverage_fraction` attribute — a **dimensionless,
+viewport-relative** threshold in `[0, 1]`, strictly monotonic increasing in
+coarsest→finest order (coarsest = `0.0`, finest = `1.0`). At render time the
+viewer multiplies each child's `coverage_fraction` by the current viewport
+diagonal (in pixels, times a small fill-factor constant) and picks the finest
+child whose resulting pixel threshold is satisfied by the group's on-screen
+size — so the finest level activates when the object fills the screen,
+identically on any monitor/viewport.
 
 | Symbol | Purpose |
 |--------|---------|
-| `lod_thresholds(method, *, element_counts, element_extents=None, node_extent=None, base_pixel_size=None)` | **Method selector** (default `"extent"`). Dispatches to `extent_min_pixel_sizes` when extents + a positive `node_extent` are available; gracefully falls back to the `"count"` √N method otherwise. |
-| `extent_min_pixel_sizes(element_extents, node_extent, base_pixel_size=None)` | **Default (physically anchored).** child *i* → `T · W / r_i` (`W` = node bbox diagonal, `r_i` = the level's element radius, `T` = `base_pixel_size` or `DEFAULT_TARGET_PIXEL_SIZE ≈ 1.5` px), coarsest = `0.0`. Self-calibrating; captures substitutive levels' larger coarse elements. |
-| `derive_min_pixel_sizes(element_counts, base_pixel_size=None)` | **Legacy `count` method.** child *i* → `base * sqrt(n_i / n_0)` (`base = BASE_PIXEL_SIZE = 10`), coarsest = `0.0`. Scene-relative; biased for substitutive levels. |
-| `BASE_PIXEL_SIZE = 10.0` / `DEFAULT_TARGET_PIXEL_SIZE = 1.5` | Default anchors for the `count` / `extent` methods respectively. |
-| `validate_lod_group(group)` | Free-function validator for any `Group` with `attrs["kind"] == "lod"`. Raises on no children, out-of-range `default_level`, missing `min_pixel_size`, or non-monotonic thresholds. |
+| `coverage_fractions(element_counts)` | **Auto-derivation.** child *i* → `sqrt(N_i / N_finest)` where `N_finest` is the finest (last) level's element count; coarsest = `0.0`, finest = `1.0`. A count *ratio*, so non-displayed-dimension multiplicity (e.g. a stacked time axis inflating every level's count equally) cancels out. |
+| `validate_lod_group(group)` | Free-function validator for any `Group` with `attrs["kind"] == "lod"`. Raises on no children, out-of-range `default_level`, missing `coverage_fraction`, or non-monotonic thresholds. |
 | `resolve_display_type(node)` | The geometry type a node appears as to the user. For `kind in (lod, partition)` returns the recorded `display_type`; else the node's own `type`. Shared with the Partition kind's validator. |
 | `compute_lod_display_type(children)` | Derive an LOD group's `display_type` from its finest (last) child, recursing through nested specialized groups. |
-| `_assert_strict_ascending(thresholds, source)` | The shared monotonicity guard, applied by both the explicit-`min_pixel_sizes` resolver paths and `derive_min_pixel_sizes`. |
+| `_assert_strict_ascending(thresholds, source)` | The shared monotonicity guard, applied by both the explicit-`coverage_fractions=` resolver paths and `coverage_fractions()`. |
+| `_apply_monotonicity_guard(thresholds, source)` | Defensive relative (×1.1) bump so near-equal/degenerate levels still separate strictly, before the trailing `_assert_strict_ascending` check. |
 
-**Heuristic caveat.** Element *count* is only a proxy for screen *coverage* —
-a level with 4× the elements does not necessarily resolve 2× the linear detail.
-The proxy is weakest for substitutive levels (fewer, larger elements), where a
-count-driven threshold can switch a touch early. Override the anchor via
-`base_pixel_size` when a particular ladder switches at the wrong zoom.
+**No tunable anchor.** There is no method selector or per-dataset knob (the
+former `extent`/`count` methods and `base_pixel_size`/`extent_percentile`/
+`extent_anisotropy` are gone) — the viewport anchors the finest level at
+fills-screen automatically, so the switch point self-calibrates to whatever
+monitor/window the viewer runs in.
 
 ## Per-geometry resolvers
 
@@ -111,8 +114,9 @@ Breakpoint vocabulary for `counts` / `breakpoints`:
 `resolve_substitutive_axis_points(spec)` normalizes the `substitutive_lod=`
 kwarg (`None`/`False` no-op; `True`/`dict()` defaults `K=4, levels=3,
 method="auto"`; dict keys `compression_factor` (`K`), `levels` (`n_lods`),
-`method`, `base_pixel_size`, `truncation_radius`, `device`, `seed`,
-`min_pixel_sizes`). `add_points_substitutive_lod_wrapper_impl`
+`method`, `truncation_radius`, `device`, `seed`, `coverage_fractions`
+(explicit per-level viewport-relative thresholds, strict-ascending in
+`[0, 1]`), `coarsen_dims`). `add_points_substitutive_lod_wrapper_impl`
 (`adders/points.py`) then:
 
 1. **Lifts** each point to an isotropic Gaussian
@@ -179,12 +183,11 @@ so the two can't drift). `add_lines_substitutive_lod_wrapper_impl`
 2. **Coarsens** via `coarse_substitutive_levels` (drop level 0, render-light
    rescale) — identical to Points.
 3. **Assembles** a `kind=lod` group: coarse gsplat children (coarsest-first) +
-   the original Lines node as the finest child; `display_type="lines"`. Thresholds
-   come from `lod_thresholds` — by default the `extent` method (per-level element
-   radius `r` = the lifted beads'/coarse splats' p90 `principal_radii`); the
-   `count` fallback uses the full lifted **bead** count (not vertex count) so the
-   ladder stays on one scale. `extent_percentile` / `extent_anisotropy` /
-   `base_pixel_size` / `lod_method` tune it via the `substitutive_lod=` spec.
+   the original Lines node as the finest child; `display_type="lines"`.
+   Thresholds are auto-derived `coverage_fractions` (`sqrt(N_i/N_finest)`,
+   using the full lifted **bead** count, not vertex count, so the ladder stays
+   on one scale) — no method selector or per-dataset anchor knob; pass explicit
+   `coverage_fractions=[...]` in the `substitutive_lod=` spec to override.
 
 Mutually exclusive with `additive_lod` and `partition`. `scalars`+`colormap` are
 mapped per bead (scalar interpolated along each segment, *then* the LUT — matching
@@ -204,14 +207,17 @@ GSplats are the only geometry with a stored substitutive pyramid, so it has two
 resolvers:
 
 - `resolve_substitutive_axis_gsplats(data, spec)` — the `lod_group=` axis.
-  Returns `(resolved_data, explicit_min_pixel_sizes_or_None,
-  base_pixel_size_or_None, extent_opts)` where `extent_opts` carries the
-  `lod_method` / `extent_percentile` / `extent_anisotropy` knobs (defaults when
-  not in the spec). `None` auto-keeps a multi-substitutive pyramid
-  (routes to the `kind=lod` builder, no work discarded); `False` collapses to
-  the finest level (index 0); `True` requires a stored pyramid; `dict(...)`
-  reuses a stored pyramid or computes one via
-  `gsplats.lod.substitutive.make_substitutive_lod` (canonical default
+  Returns `(resolved_data, explicit_coverage_fractions_or_None)`.
+  `explicit_coverage_fractions` is non-None only when the user passed
+  `dict(coverage_fractions=[...])` (strict-ascending, in `[0, 1]`) —
+  otherwise downstream code auto-derives per-level thresholds from splat
+  counts via `group.coverage_fractions` (`sqrt(N_i/N_finest)`). There is no
+  method selector or per-dataset anchor knob: the viewer anchors the finest
+  level at fills-screen via the live viewport. `None` auto-keeps a
+  multi-substitutive pyramid (routes to the `kind=lod` builder, no work
+  discarded); `False` collapses to the finest level (index 0); `True`
+  requires a stored pyramid; `dict(...)` reuses a stored pyramid or computes
+  one via `gsplats.lod.substitutive.make_substitutive_lod` (canonical default
   `levels=3`), with `recompute=True` forcing recomputation.
 - `resolve_additive_axis_gsplats(data, spec)` — the `additive_lod=` axis,
   applied independently per substitutive level. `dict(...)` computes a ladder on

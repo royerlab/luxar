@@ -36,15 +36,15 @@ from luxar.gsplats.tree import (
         # BOTH per-part recipes break partition-of-unity at coarse levels on
         # apodized uniform tiles (additive drops tapered halo splats → dims;
         # substitutive merges them per-part → smears).
-        ("uniform", "substitutive", True),
-        ("uniform", "additive", True),
+        ("uniform", "levels", True),
+        ("uniform", "stream", True),
         # Content (disjoint core-keep parts) carries no shared halos → exact.
-        ("content", "substitutive", False),
-        ("content", "additive", False),
-        ("none", "substitutive", False),  # whole-volume, no overlap
-        (None, "substitutive", False),
+        ("content", "levels", False),
+        ("content", "stream", False),
+        ("none", "levels", False),  # whole-volume, no overlap
+        (None, "levels", False),
         ("uniform", None, False),  # no recipe at all
-        ("uniform", "partitioned", False),  # not a per-part recipe
+        ("uniform", "tiles", False),  # not a per-part recipe
     ],
 )
 def test_uniform_per_part_lod_warning(tiling_mode, recipe, expect_warning):
@@ -95,7 +95,7 @@ def test_partitioned_counts_breakpoints_clamp_to_small_parts():
     data = _make_random_gsplat()  # 400 splats
     # max_elements=120 → parts of ≤120 splats; a 300-cut exceeds every part.
     params = _params(max_elements=120, breakpoints=[50, 300])
-    tree = build_recipe(data, "partitioned", params)  # must NOT raise
+    tree = build_recipe(data, "tiles", params)  # must NOT raise
     assert total_splats(tree) == 400
 
 
@@ -104,7 +104,7 @@ def test_pyramid_counts_breakpoints_clamp_to_coarse_levels():
     K^s, so counts sized for the finest level used to abort the build."""
     data = _make_random_gsplat()  # 400 splats; K=4,L=2 → levels 400/100/25
     params = _params(breakpoints=[50, 300])
-    res = build_recipe(data, "pyramid", params)  # must NOT raise
+    res = build_recipe(data, "levels", params)  # must NOT raise
     assert isinstance(res, GSplatData)
     assert res.flattened().n_splats == 400
 
@@ -116,7 +116,7 @@ def test_pyramid_counts_breakpoints_typo_scale_raises():
     data = _make_random_gsplat()  # 400 splats
     params = _params(breakpoints=[1_000_000])
     with pytest.raises(ValueError, match="exceeds N=400"):
-        build_recipe(data, "pyramid", params)
+        build_recipe(data, "levels", params)
 
 
 def test_partitioned_counts_breakpoints_typo_scale_raises():
@@ -125,14 +125,14 @@ def test_partitioned_counts_breakpoints_typo_scale_raises():
     data = _make_random_gsplat()  # 400 splats
     params = _params(max_elements=120, breakpoints=[1_000_000])
     with pytest.raises(ValueError, match="exceeds N=400"):
-        build_recipe(data, "partitioned", params)
+        build_recipe(data, "tiles", params)
 
 
 def test_stream_breakpoints_flow_through_partitioned():
     """A `stream:<c>` spec sizes each part's ladder against ITS OWN N."""
     data = _make_random_gsplat()  # 400 splats
     params = _params(max_elements=120, breakpoints="stream:30")
-    tree = build_recipe(data, "partitioned", params)
+    tree = build_recipe(data, "tiles", params)
     assert total_splats(tree) == 400
     from luxar.gsplats.tree import iter_leaves
 
@@ -158,10 +158,10 @@ def test_all_recipe_names_build():
 
 @pytest.mark.parametrize("ndim", [2, 4])
 def test_matrix_recipes_are_dimension_agnostic(ndim: int):
-    """flat/additive/substitutive/pyramid work at any dimensionality (boundary:
-    ndim != 3) and conserve the splat count."""
+    """flat/stream/levels work at any dimensionality (boundary: ndim != 3)
+    and conserve the splat count."""
     data = _make_random_gsplat(n=120, ndim=ndim)
-    for recipe in ("flat", "additive", "substitutive", "pyramid"):
+    for recipe in ("flat", "stream", "levels"):
         res = build_recipe(data, recipe, _params())
         assert isinstance(res, GSplatData), recipe
         assert res.ndim == ndim, recipe
@@ -171,14 +171,14 @@ def test_matrix_recipes_are_dimension_agnostic(ndim: int):
 def test_partition_recipes_support_4d():
     """partitioned/multiscale require >=3 dims (BSP); 4D must build and conserve."""
     data = _make_random_gsplat(n=400, ndim=4)
-    part = build_recipe(data, "partitioned", _params(max_elements=120))
+    part = build_recipe(data, "tiles", _params(max_elements=120))
     assert isinstance(part, GSplatPartition)
     assert total_splats(part) == 400
     assert all(leaf.ndim == 4 for leaf in iter_leaves(part))
-    ms = build_recipe(data, "multiscale", _params(max_elements=120))
+    ms = build_recipe(data, "overview", _params(max_elements=120))
     assert isinstance(ms, GSplatLodGroup)
     assert all(leaf.ndim == 4 for leaf in iter_leaves(ms))
-    mo = build_recipe(data, "mosaic", _params(max_elements=120))
+    mo = build_recipe(data, "adaptive", _params(max_elements=120))
     assert isinstance(mo, GSplatPartition)
     assert all(leaf.ndim == 4 for leaf in iter_leaves(mo))
 
@@ -194,9 +194,7 @@ def test_flat_is_single_leaf():
 
 def test_additive_is_single_leaf_with_ladder():
     data = _make_random_gsplat(n=200)
-    res = build_recipe(
-        data, "additive", _params(n_lods=4, additive_method="self_energy")
-    )
+    res = build_recipe(data, "stream", _params(n_lods=4, additive_method="self_energy"))
     assert isinstance(res, GSplatData)
     assert res.n_substitutive == 1
     assert res.n_additive_sublods == 4
@@ -208,7 +206,7 @@ def test_additive_is_single_leaf_with_ladder():
 
 def test_substitutive_is_lod_group_matrix():
     data = _make_random_gsplat(n=256)
-    res = build_recipe(data, "substitutive", _params(compression_factor=4, levels=2))
+    res = build_recipe(data, "levels", _params(compression_factor=4, levels=2))
     assert isinstance(res, GSplatData)
     assert res.n_substitutive == 3  # levels + 1
     assert res.tree.__class__ is GSplatLodGroup
@@ -217,7 +215,7 @@ def test_substitutive_is_lod_group_matrix():
 def test_pyramid_is_substitutive_times_additive():
     data = _make_random_gsplat(n=256)
     res = build_recipe(
-        data, "pyramid", _params(compression_factor=4, levels=2, n_lods=2)
+        data, "levels", _params(compression_factor=4, levels=2, n_lods=2)
     )
     assert isinstance(res, GSplatData)
     assert res.n_substitutive == 3
@@ -227,7 +225,7 @@ def test_pyramid_is_substitutive_times_additive():
 
 def test_partitioned_is_partition_of_laddered_leaves():
     data = _make_random_gsplat(n=400)
-    res = build_recipe(data, "partitioned", _params(max_elements=120, n_lods=3))
+    res = build_recipe(data, "tiles", _params(max_elements=120, n_lods=3))
     assert isinstance(res, GSplatPartition)
     assert res.n_children >= 2
     # every part is a leaf, each carrying an additive ladder
@@ -242,80 +240,30 @@ def test_partitioned_is_partition_of_laddered_leaves():
 def test_partitioned_clamps_ladder_on_small_parts():
     # tiny parts must not produce empty equal-count LOD bins
     data = _make_random_gsplat(n=20)
-    res = build_recipe(data, "partitioned", _params(max_elements=4, n_lods=8))
+    res = build_recipe(data, "tiles", _params(max_elements=4, n_lods=8))
     for leaf in iter_leaves(res):
         assert 1 <= leaf.n_additive_sublods <= leaf.n_splats
     assert total_splats(res) == 20
 
 
-def test_extent_thresholds_are_scale_invariant():
-    """The ``extent`` method's defining property: threshold = T·W/r is dimensionless
-    in scale, so uniformly scaling a scene (centers AND covariance × k) leaves the
-    switch thresholds unchanged — no per-dataset tuning (unlike the √N ``count``
-    method, which is also scale-free, but here we lock the self-calibration that
-    motivated the change). A mutation to a non-W/r formula would break this."""
-    data = _make_random_gsplat(n=400)
-    k = 7.0
-    scaled = GSplatData(
-        centers=data.centers * k,
-        amplitudes=data.amplitudes.copy(),
-        cholesky_factors=data.cholesky_factors * k,  # L×k → Σ×k² → semi-axis × k
-    )
-    p = _params(max_elements=120, compression_factor=4, n_lods=3)
-    # children are coarsest→finest; the fine branch (last) carries the >0 threshold.
-    base_mps = build_recipe(data, "multiscale", p).children[-1].meta["min_pixel_size"]
-    scaled_mps = (
-        build_recipe(scaled, "multiscale", p).children[-1].meta["min_pixel_size"]
-    )
-    assert base_mps > 0.0
-    assert scaled_mps == pytest.approx(base_mps, rel=1e-4)
-
-
-def test_multiscale_stamps_extent_thresholds_by_default():
+def test_multiscale_stamps_coverage_fractions_by_default():
     """multiscale always pre-stamps the coarse↔fine selector thresholds on the
-    children's meta (ascending [0.0, fine]). The default ``extent`` method anchors
-    the switch in physical element size (T·W/r), so the anchor ``base_pixel_size``
-    (target px) scales it linearly; ``lod_method="count"`` falls back to √N."""
-    import math
-
+    children's meta as viewport-relative ``coverage_fraction`` values
+    (``sqrt(N_i/N_finest)``): the coarse cap gets 0.0 (always-eligible floor) and
+    the fine partition gets 1.0 (fills-screen)."""
     data = _make_random_gsplat(n=400)
 
-    # Default = extent method: thresholds stamped, coarsest = 0.0, ascending.
-    res = build_recipe(data, "multiscale", _params(max_elements=120))
+    res = build_recipe(data, "overview", _params(max_elements=120))
     coarse, fine = res.children  # coarsest→finest in memory
-    assert coarse.meta["min_pixel_size"] == 0.0  # coarsest = always-eligible floor
-    fine_mps = fine.meta["min_pixel_size"]
-    assert fine_mps > 0.0  # ascending → coarse cap reachable at far zoom
-
-    # base_pixel_size is the target-px anchor T in extent mode: 2× → 2× threshold.
-    bigger = build_recipe(
-        data, "multiscale", _params(max_elements=120, base_pixel_size=2 * 1.5)
-    )
-    # default T is DEFAULT_TARGET_PIXEL_SIZE (1.5); 3.0 is 2×.
-    assert bigger.children[-1].meta["min_pixel_size"] == pytest.approx(2 * fine_mps)
-
-    # lod_method="count" reproduces the legacy √N proxy exactly.
-    cnt = build_recipe(
-        data, "multiscale", _params(max_elements=120, lod_method="count")
-    )
-    ccoarse, cfine = cnt.children
-    assert ccoarse.meta["min_pixel_size"] == 0.0
-    expected_count = 10.0 * math.sqrt(total_splats(cfine) / total_splats(ccoarse))
-    assert cfine.meta["min_pixel_size"] == pytest.approx(expected_count)
-    # extent and count generally land the switch at different thresholds.
-    assert cfine.meta["min_pixel_size"] != pytest.approx(fine_mps)
-
-    # extent knobs change the radius → change the threshold.
-    p50 = build_recipe(
-        data, "multiscale", _params(max_elements=120, extent_percentile=50.0)
-    )
-    assert p50.children[-1].meta["min_pixel_size"] != pytest.approx(fine_mps)
+    assert coarse.meta["coverage_fraction"] == 0.0  # coarsest = always-eligible floor
+    assert fine.meta["coverage_fraction"] == pytest.approx(1.0)  # fills-screen
+    assert fine.meta["coverage_fraction"] > coarse.meta["coverage_fraction"]
 
 
 def test_multiscale_is_unbalanced_lod_over_partition():
     data = _make_random_gsplat(n=400)
     res = build_recipe(
-        data, "multiscale", _params(max_elements=120, n_lods=3, compression_factor=4)
+        data, "overview", _params(max_elements=120, n_lods=3, compression_factor=4)
     )
     assert isinstance(res, GSplatLodGroup)
     assert res.n_children == 2
@@ -335,7 +283,7 @@ def test_mosaic_is_partition_of_substitutive_lod_groups():
     `partitioned` (additive parts) and `multiscale` (one global cap)."""
     data = _make_random_gsplat(n=400)
     res = build_recipe(
-        data, "mosaic", _params(max_elements=120, compression_factor=4, levels=2)
+        data, "adaptive", _params(max_elements=120, compression_factor=4, levels=2)
     )
     assert isinstance(res, GSplatPartition)
     assert res.n_children >= 2
@@ -361,7 +309,7 @@ def test_mosaic_is_partition_of_substitutive_lod_groups():
 def test_additive_recipe_matches_make_additive_lod():
     data = _make_random_gsplat(n=128)
     p = _params(n_lods=4, additive_method="self_energy")
-    via_recipe = build_recipe(data, "additive", p)
+    via_recipe = build_recipe(data, "stream", p)
     direct = make_additive_lod(
         data.flattened(), n_lods=4, method="self_energy", seed=None
     )
@@ -387,7 +335,7 @@ def test_additive_recipe_matches_make_additive_lod():
 def test_substitutive_recipe_matches_make_substitutive_lod():
     data = _make_random_gsplat(n=256)
     p = _params(compression_factor=4, levels=2, substitutive_method="kmeans_lloyd")
-    via_recipe = build_recipe(data, "substitutive", p)
+    via_recipe = build_recipe(data, "levels", p)
     direct = make_substitutive_lod(
         data.flattened(),
         compression_factor=4,
@@ -402,6 +350,53 @@ def test_substitutive_recipe_matches_make_substitutive_lod():
     assert got == exp
 
 
+def test_substitutive_recipe_threads_refine():
+    """RecipeParams.refine/refine_iters reach make_substitutive_lod (stats
+    carry the refine block) and default to "none"/120."""
+    assert RecipeParams().refine == "none"
+    assert RecipeParams().refine_iters == 120
+    data = _make_random_gsplat(n=256)
+    p = _params(
+        compression_factor=8,
+        levels=1,
+        substitutive_method="kmeans",
+        refine="l2",
+        refine_iters=6,
+    )
+    out = build_recipe(data, "levels", p)
+    assert out.stats["refine"] == "l2"
+    assert out.stats["refine_iters"] == 6
+    assert out.substitutive_levels[1].stats.get("refine") == "l2"
+
+
+def test_additive_ladders_default_on_everywhere():
+    """Project convention: additive LODs by default. The substitutive recipe
+    ladders every level; mosaic ladders every per-part level; the multiscale
+    coarse cap is laddered; --no-additive (additive_ladders=False) restores
+    bare leaves."""
+    data = _make_random_gsplat(n=400)
+    # substitutive: default == pyramid behavior (multi-sublod levels)
+    on = build_recipe(data, "levels", _params(levels=1, n_lods=3))
+    assert all(lev.n_additive_lods == 3 for lev in on.substitutive_levels)
+    off = build_recipe(
+        data, "levels", _params(levels=1, n_lods=3, additive_ladders=False)
+    )
+    assert all(lev.n_additive_lods == 1 for lev in off.substitutive_levels)
+    # mosaic: per-part lod-group children are multi-sublod leaves
+    mos = build_recipe(data, "adaptive", _params(levels=1, n_lods=2, max_elements=150))
+    laddered_leaves = [
+        leaf
+        for part in mos.children
+        for leaf in iter_leaves(part)
+        if len(leaf.additive_sublods) > 1
+    ]
+    assert laddered_leaves, "mosaic parts carry no additive ladders"
+    # multiscale: the coarse cap (first child) is a laddered leaf
+    ms = build_recipe(data, "overview", _params(levels=1, n_lods=2, max_elements=150))
+    cap = ms.children[0]
+    assert isinstance(cap, GSplatLeaf) and len(cap.additive_sublods) > 1
+
+
 def test_pyramid_recipe_matches_make_lod_pyramid():
     data = _make_random_gsplat(n=256)
     p = _params(
@@ -411,7 +406,7 @@ def test_pyramid_recipe_matches_make_lod_pyramid():
         additive_method="self_energy",
         substitutive_method="kmeans_lloyd",
     )
-    via_recipe = build_recipe(data, "pyramid", p)
+    via_recipe = build_recipe(data, "levels", p)
     direct = make_lod_pyramid(
         data.flattened(),
         compression_factor=4,
@@ -449,13 +444,13 @@ class TestRecipeParamsCoarsenDims:
         assert RecipeParams().coarsen_dims is None
 
     def test_build_substitutive_respects_barrier(self) -> None:
-        from luxar.gsplats.lod.recipes import build_substitutive
+        from luxar.gsplats.lod.recipes import build_levels
 
         data = _stacked_4d_gsplat()
         params = RecipeParams(
             compression_factor=4, levels=3, device="cpu", coarsen_dims=(1, 2, 3)
         )
-        out = build_substitutive(data, params)
+        out = build_levels(data, params)
         for s in range(out.n_substitutive):
             c0 = np.asarray(out.at_substitutive(s).flattened().centers)[:, 0]
             assert np.abs(c0 - np.round(c0)).max() < 1e-4

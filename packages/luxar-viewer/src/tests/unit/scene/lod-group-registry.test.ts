@@ -4,9 +4,9 @@
  * Covers two independent surfaces:
  *
  *   - The pure pick-with-hysteresis function (no THREE / camera): given
- *     thresholds + a current active index + a screen-space diagonal in
- *     pixels, the right child is selected. Hysteresis suppresses
- *     downgrade flicker but doesn't impede upgrades.
+ *     coverage_fraction thresholds + a current active index + a coverage
+ *     metric (both dimensionless fractions), the right child is selected.
+ *     Hysteresis suppresses downgrade flicker but doesn't impede upgrades.
  *
  *   - The full registry: register/unregister, lock override, visibility
  *     swap on auto-mode evaluation, and the clamp-on-out-of-range lock
@@ -34,73 +34,77 @@ import type { BoundingBox } from '../../../scene/scene-manager/clipping/bounds-m
 // ────────────────────────────────────────────────────────────────────────
 
 describe('pickChildWithHysteresis', () => {
-  const thresholds = [0, 100, 500];
+  // Coverage-fraction thresholds (dimensionless, in [0,1], coarsest→finest).
+  // The `metric` argument is the coverage metric (projected diagonal ÷
+  // FILL_FACTOR·viewportDiagonal), also in fraction space.
+  const thresholds = [0, 0.1, 0.5];
 
   it('picks the coarsest child below the first threshold', () => {
     expect(pickChildWithHysteresis(thresholds, 0, 0)).toBe(0);
-    expect(pickChildWithHysteresis(thresholds, 0, 50)).toBe(0);
+    expect(pickChildWithHysteresis(thresholds, 0, 0.05)).toBe(0);
   });
 
-  it('picks finer child once the diagonal reaches its threshold (upgrade)', () => {
-    // From child 0 → child 1 when diagonalPx ≥ 100 (literal threshold).
-    expect(pickChildWithHysteresis(thresholds, 0, 100)).toBe(1);
-    expect(pickChildWithHysteresis(thresholds, 1, 500)).toBe(2);
+  it('picks finer child once the coverage metric reaches its threshold (upgrade)', () => {
+    // From child 0 → child 1 when the coverage metric ≥ 0.1 (literal threshold).
+    expect(pickChildWithHysteresis(thresholds, 0, 0.1)).toBe(1);
+    expect(pickChildWithHysteresis(thresholds, 1, 0.5)).toBe(2);
   });
 
   it('downgrade requires falling below threshold * (1 - 0.1)', () => {
-    // From child 1 with threshold 100: downgrade only when diagonalPx < 90.
-    // At 95 (still 10% within), we stay on 1 even though natural is 0.
-    expect(pickChildWithHysteresis(thresholds, 1, 95)).toBe(1);
-    expect(pickChildWithHysteresis(thresholds, 1, 89)).toBe(0);
+    // From child 1 with threshold 0.1: downgrade only when the metric < 0.09.
+    // At 0.095 (still 10% within), we stay on 1 even though natural is 0.
+    expect(pickChildWithHysteresis(thresholds, 1, 0.095)).toBe(1);
+    expect(pickChildWithHysteresis(thresholds, 1, 0.089)).toBe(0);
   });
 
   it('returns -1 for an empty thresholds list', () => {
-    expect(pickChildWithHysteresis([], 0, 100)).toBe(-1);
+    expect(pickChildWithHysteresis([], 0, 0.1)).toBe(-1);
   });
 
   it('uses a gap-relative downgrade band for tightly-spaced levels', () => {
-    // Levels 10 and 11 are within 10% of each other (e.g. from the
-    // derive_min_pixel_sizes ×1.1 nudge). The spacing-aware band is
-    // ratio * gap = 0.1 * (11 - 10) = 0.1, so the deadband is [10.9, 11):
-    // level 1 still renders on the way down instead of being skipped.
-    const tight = [0, 10, 11];
-    expect(pickChildWithHysteresis(tight, 2, 10.95)).toBe(2); // deadband → stay
-    expect(pickChildWithHysteresis(tight, 2, 10.5)).toBe(1); // one clean level down
-    expect(pickChildWithHysteresis(tight, 2, 9.9)).toBe(0); // into level 0's range
+    // Levels 0.01 and 0.011 are within 10% of each other (e.g. from the
+    // coverage_fractions ×1.1 monotonicity nudge). The spacing-aware band is
+    // ratio * gap = 0.1 * (0.011 - 0.01) = 0.0001, so the deadband is
+    // [0.0109, 0.011): level 1 still renders on the way down instead of skipped.
+    const tight = [0, 0.01, 0.011];
+    expect(pickChildWithHysteresis(tight, 2, 0.01095)).toBe(2); // deadband → stay
+    expect(pickChildWithHysteresis(tight, 2, 0.0105)).toBe(1); // one clean level down
+    expect(pickChildWithHysteresis(tight, 2, 0.0099)).toBe(0); // into level 0's range
   });
 
   it('reduces to the threshold-fraction band for the bottom level', () => {
     // prev threshold is 0, so gap == currentThreshold and the band equals
     // the original currentThreshold * (1 - ratio) behaviour.
-    expect(pickChildWithHysteresis(thresholds, 1, 91)).toBe(1); // 91 ≥ 90 → stay
-    expect(pickChildWithHysteresis(thresholds, 1, 89)).toBe(0); // 89 < 90 → down
+    expect(pickChildWithHysteresis(thresholds, 1, 0.091)).toBe(1); // 0.091 ≥ 0.09 → stay
+    expect(pickChildWithHysteresis(thresholds, 1, 0.089)).toBe(0); // 0.089 < 0.09 → down
   });
 
   it('handles a current index that no longer satisfies its threshold', () => {
-    // current=2 (threshold 500) but diagonal is only 50 → expected
-    // downgrade to 0 (well below 500 * 0.9).
-    expect(pickChildWithHysteresis(thresholds, 2, 50)).toBe(0);
+    // current=2 (threshold 0.5) but the metric is only 0.05 → expected
+    // downgrade to 0 (well below 0.5 * 0.9).
+    expect(pickChildWithHysteresis(thresholds, 2, 0.05)).toBe(0);
   });
 
-  // C2: pin the downgrade band edge EXACTLY. margin = 0.1*(100-0) = 10, so the
-  // boundary is 90: `diagonalPx < 90` downgrades, `>= 90` stays. A mutant that
+  // C2: pin the downgrade band edge EXACTLY. margin = 0.1*(0.1-0) = 0.01, so the
+  // boundary is 0.09: `metric < 0.09` downgrades, `>= 0.09` stays. A mutant that
   // changed `<` to `<=` (or the ratio) would shift this edge.
-  it('treats the downgrade boundary as exclusive (exactly 90 stays on level 1)', () => {
-    expect(pickChildWithHysteresis(thresholds, 1, 90)).toBe(1); // 90 not < 90 → stay
-    expect(pickChildWithHysteresis(thresholds, 1, 89.999)).toBe(0); // just below → down
+  it('treats the downgrade boundary as exclusive (exactly 0.09 stays on level 1)', () => {
+    expect(pickChildWithHysteresis(thresholds, 1, 0.09)).toBe(1); // 0.09 not < 0.09 → stay
+    expect(pickChildWithHysteresis(thresholds, 1, 0.089999)).toBe(0); // just below → down
   });
 
   // M1: pin the upgrade boundary edge. The natural pick uses `threshold <=
-  // diagonalPx`, so exactly 100 upgrades to level 1 and 99.999 stays at 0.
-  it('treats the upgrade threshold as inclusive (exactly 100 reaches level 1)', () => {
-    expect(pickChildWithHysteresis(thresholds, 0, 100)).toBe(1);
-    expect(pickChildWithHysteresis(thresholds, 0, 99.999)).toBe(0);
+  // metric`, so exactly 0.1 upgrades to level 1 and 0.099999 stays at 0.
+  it('treats the upgrade threshold as inclusive (exactly 0.1 reaches level 1)', () => {
+    expect(pickChildWithHysteresis(thresholds, 0, 0.1)).toBe(1);
+    expect(pickChildWithHysteresis(thresholds, 0, 0.099999)).toBe(0);
   });
 
   // projectBoxDiagonalPx returns +Infinity when the camera is inside/straddling
-  // the bbox. That must select the finest child from any current index, and
-  // must never produce NaN through the downgrade arithmetic.
-  it('saturates to the finest child for an infinite diagonal (camera-inside)', () => {
+  // the bbox (→ infinite coverage metric). That must select the finest child
+  // from any current index, and must never produce NaN through the downgrade
+  // arithmetic.
+  it('saturates to the finest child for an infinite metric (camera-inside)', () => {
     expect(pickChildWithHysteresis(thresholds, 0, Number.POSITIVE_INFINITY)).toBe(2);
     expect(pickChildWithHysteresis(thresholds, 1, Number.POSITIVE_INFINITY)).toBe(2);
     expect(pickChildWithHysteresis(thresholds, 2, Number.POSITIVE_INFINITY)).toBe(2);
@@ -112,11 +116,11 @@ describe('pickChildWithHysteresis', () => {
   // A multi-level downgrade snaps straight to the natural level: the metric fell
   // well past the adjacent band, so the single-gap hysteresis cannot suppress it.
   it('snaps multiple levels down at once when the metric drops far', () => {
-    // current=2 (threshold 500), metric 95 → natural is 0 (95 < 100, so only
-    // threshold 0 qualifies); well under 500 - 0.1*(500-100)=460 → straight to 0.
-    expect(pickChildWithHysteresis(thresholds, 2, 95)).toBe(0);
-    // current=2, metric 150 → natural=1 (100≤150<500); below 500-0.1*(500-100)=460 → down to 1.
-    expect(pickChildWithHysteresis(thresholds, 2, 150)).toBe(1);
+    // current=2 (threshold 0.5), metric 0.095 → natural is 0 (0.095 < 0.1, so
+    // only threshold 0 qualifies); well under 0.5 - 0.1*(0.5-0.1)=0.46 → to 0.
+    expect(pickChildWithHysteresis(thresholds, 2, 0.095)).toBe(0);
+    // current=2, metric 0.15 → natural=1 (0.1≤0.15<0.5); below 0.46 → down to 1.
+    expect(pickChildWithHysteresis(thresholds, 2, 0.15)).toBe(1);
   });
 });
 
@@ -263,10 +267,10 @@ describe('projectBoxDiagonalPx', () => {
 // Registry — registration, lock override, swap behaviour
 // ────────────────────────────────────────────────────────────────────────
 
-function makeChild(minPixelSize: number): LODGroupChild {
+function makeChild(coverageFraction: number): LODGroupChild {
   return {
     object: new THREE.Group(),
-    minPixelSize,
+    coverageFraction,
     positionBounds: { min: [0, 0, 0], max: [10, 10, 10] },
   };
 }
@@ -291,10 +295,10 @@ function makeEntry(
  * deferred loader thunk. Mirrors what ``loadLodGroupNode`` builds for
  * non-default substitutive levels.
  */
-function makeLazyChild(minPixelSize: number, ensureLoaded: () => void): LODGroupChild {
+function makeLazyChild(coverageFraction: number, ensureLoaded: () => void): LODGroupChild {
   return {
     object: new THREE.Group(),
-    minPixelSize,
+    coverageFraction,
     positionBounds: { min: [0, 0, 0], max: [10, 10, 10] },
     ready: false,
     ensureLoaded,
@@ -336,8 +340,8 @@ function makeRegistry(
  * a plain ``makeChild`` (a bare ``THREE.Group`` with no ``nodeType``) is always
  * treated as fresh, so the fallback only engages for gsplats children.
  */
-function makeGsplatChild(minPixelSize: number, loadedViewVersion: number): LODGroupChild {
-  const child = makeChild(minPixelSize);
+function makeGsplatChild(coverageFraction: number, loadedViewVersion: number): LODGroupChild {
+  const child = makeChild(coverageFraction);
   child.object.userData = { nodeType: 'gsplats', loadedViewVersion };
   return child;
 }
@@ -361,7 +365,7 @@ function residentModel(children: readonly LODGroupChild[], perLevel = 100): () =
 describe('LODGroupRegistry — registration', () => {
   it('hides all children except the active one on register', () => {
     const reg = makeRegistry();
-    const children = [makeChild(0), makeChild(100), makeChild(500)];
+    const children = [makeChild(0), makeChild(0.5), makeChild(1.0)];
     reg.register(makeEntry(children, 1));
     expect(children[0].object.visible).toBe(false);
     expect(children[1].object.visible).toBe(true);
@@ -370,7 +374,7 @@ describe('LODGroupRegistry — registration', () => {
 
   it('unregister removes the entry without disturbing visibility', () => {
     const reg = makeRegistry();
-    const children = [makeChild(0), makeChild(100)];
+    const children = [makeChild(0), makeChild(0.5)];
     reg.register(makeEntry(children, 0, '/g'));
     expect(reg.size()).toBe(1);
     reg.unregister('/g');
@@ -379,8 +383,8 @@ describe('LODGroupRegistry — registration', () => {
 
   it('list returns all registered entries', () => {
     const reg = makeRegistry();
-    reg.register(makeEntry([makeChild(0), makeChild(100)], 0, '/g0'));
-    reg.register(makeEntry([makeChild(0), makeChild(100)], 0, '/g1'));
+    reg.register(makeEntry([makeChild(0), makeChild(0.5)], 0, '/g0'));
+    reg.register(makeEntry([makeChild(0), makeChild(0.5)], 0, '/g1'));
     expect(
       reg
         .list()
@@ -393,7 +397,7 @@ describe('LODGroupRegistry — registration', () => {
 describe('LODGroupRegistry — selector mode', () => {
   it('setSelectorMode clamps out-of-range lockLevel and warns', () => {
     const reg = makeRegistry();
-    const children = [makeChild(0), makeChild(100)];
+    const children = [makeChild(0), makeChild(0.5)];
     reg.register(makeEntry(children, 0, '/g'));
     // Out-of-range lockLevel must not throw — UI state can drift from
     // registry state if it does. The registry clamps into [0, n-1]
@@ -406,7 +410,7 @@ describe('LODGroupRegistry — selector mode', () => {
 
   it('setSelectorMode clamps negative lockLevel to 0', () => {
     const reg = makeRegistry();
-    const children = [makeChild(0), makeChild(100)];
+    const children = [makeChild(0), makeChild(0.5)];
     reg.register(makeEntry(children, 1, '/g'));
     reg.setSelectorMode('/g', { lockLevel: -3 });
     reg.evaluatePerFrame();
@@ -416,7 +420,7 @@ describe('LODGroupRegistry — selector mode', () => {
 
   it('lock override swaps to the locked child on the next evaluation', () => {
     const reg = makeRegistry();
-    const children = [makeChild(0), makeChild(100), makeChild(500)];
+    const children = [makeChild(0), makeChild(0.5), makeChild(1.0)];
     reg.register(makeEntry(children, 0, '/g'));
     reg.setSelectorMode('/g', { lockLevel: 2 });
     reg.evaluatePerFrame();
@@ -435,7 +439,7 @@ describe('LODGroupRegistry — selector mode', () => {
     // visible-element tally only when the rendered level actually changes
     // — otherwise the count would stay pinned to the default level.
     const reg = makeRegistry();
-    const children = [makeChild(0), makeChild(100), makeChild(500)];
+    const children = [makeChild(0), makeChild(0.5), makeChild(1.0)];
     reg.register(makeEntry(children, 0, '/g'));
 
     reg.setSelectorMode('/g', { lockLevel: 2 });
@@ -453,7 +457,7 @@ describe('LODGroupRegistry — selector mode', () => {
     // (loadLodGroupNode ensures that on initial load via the
     // sequential-await + visible=false-after-attach pattern).
     const reg = makeRegistry();
-    const children = [makeChild(0), makeChild(100)];
+    const children = [makeChild(0), makeChild(0.5)];
     reg.register(makeEntry(children, 0, '/g'));
     reg.setSelectorMode('/g', { lockLevel: 1 });
     reg.evaluatePerFrame();
@@ -463,21 +467,92 @@ describe('LODGroupRegistry — selector mode', () => {
 });
 
 describe('LODGroupRegistry — auto evaluation', () => {
-  it('picks the finest child whose threshold is satisfied by the projected diagonal', () => {
-    // bbox spans the full NDC cube → identity camera projects to a
-    // 1000 px diagonal on an 800x600 viewport. With thresholds
-    // [0, 100, 500], the finest applicable is child 2.
+  it('picks the finest child whose coverage_fraction is satisfied by the projected diagonal', () => {
+    // bbox spans the full NDC cube → identity camera projects to a 1000 px
+    // diagonal on an 800x600 viewport, whose own diagonal is hypot(800,600)=1000
+    // → coverage metric = 1000/1000 = 1.0 (the group fills the screen). With
+    // coverage_fraction thresholds [0, 0.5, 1.0], the finest applicable (1.0) is
+    // child 2.
     const reg = makeRegistry();
     const children = [
       { ...makeChild(0), positionBounds: { min: [-1, -1, -1], max: [1, 1, 1] } },
-      { ...makeChild(100), positionBounds: { min: [-1, -1, -1], max: [1, 1, 1] } },
-      { ...makeChild(500), positionBounds: { min: [-1, -1, -1], max: [1, 1, 1] } },
+      { ...makeChild(0.5), positionBounds: { min: [-1, -1, -1], max: [1, 1, 1] } },
+      { ...makeChild(1.0), positionBounds: { min: [-1, -1, -1], max: [1, 1, 1] } },
     ];
     reg.register(makeEntry(children, 0, '/g'));
     reg.evaluatePerFrame();
     expect(children[2].object.visible).toBe(true);
     expect(children[0].object.visible).toBe(false);
     expect(children[1].object.visible).toBe(false);
+  });
+
+  it('normalizes coverage by viewport size: a full-viewport box picks the finest (coverage=1.0) child on ANY viewport', () => {
+    // The coverage metric is diagonalPx / (FILL_FACTOR·viewportDiagonal), so a
+    // box that fills the NDC cube projects to a diagonal equal to the viewport
+    // diagonal on ANY viewport size → coverage metric == 1.0 regardless. Both a
+    // small and a large viewport must therefore pick the finest coverage=1.0
+    // child. This pins the viewport-relative normalization (the whole point of
+    // switching from absolute pixels to a coverage fraction).
+    const fullBox = { min: [-1, -1, -1], max: [1, 1, 1] };
+    for (const viewport of [
+      { width: 400, height: 300 }, // small
+      { width: 3840, height: 2160 }, // large (4K)
+    ]) {
+      const camera = new THREE.Camera();
+      camera.matrixWorldInverse.identity();
+      camera.projectionMatrix.identity();
+      const reg = new LODGroupRegistry({
+        getCamera: () => camera,
+        getViewportSize: () => viewport,
+        getDisplayDims: () => [0, 1, 2],
+      });
+      const children = [
+        { ...makeChild(0), positionBounds: fullBox },
+        { ...makeChild(0.5), positionBounds: fullBox },
+        { ...makeChild(1.0), positionBounds: fullBox },
+      ];
+      reg.register(makeEntry(children, 0, '/g'));
+      reg.evaluatePerFrame();
+      expect(children[2].object.visible, `finest at viewport ${viewport.width}x${viewport.height}`).toBe(true);
+      expect(children[0].object.visible).toBe(false);
+      expect(children[1].object.visible).toBe(false);
+    }
+  });
+
+  it('divides by the viewport diagonal: a HALF-viewport box picks the middle child, not the finest, on ANY viewport', () => {
+    // Discriminating test for the normalization (the full-viewport test above
+    // can't: it gives metric 1.0 whether or not you divide). A box spanning
+    // NDC [-0.5, 0.5] projects to a diagonal of 0.5·hypot(w,h) → coverage
+    // metric = 0.5·hypot / hypot = 0.5 on ANY viewport. With thresholds
+    // [0, 0.5, 1.0] the finest applicable to 0.5 is the MIDDLE child (index 1).
+    // A buggy selector that skipped the ÷viewportDiagonal step would compare the
+    // raw pixel diagonal (250 px on 400×300, 2203 px on 4K — both ≫ 1.0) and
+    // wrongly pick the finest (index 2) on both. So this pins the division AND
+    // its viewport-independence.
+    const halfBox = { min: [-0.5, -0.5, -0.5], max: [0.5, 0.5, 0.5] };
+    for (const viewport of [
+      { width: 400, height: 300 },
+      { width: 3840, height: 2160 },
+    ]) {
+      const camera = new THREE.Camera();
+      camera.matrixWorldInverse.identity();
+      camera.projectionMatrix.identity();
+      const reg = new LODGroupRegistry({
+        getCamera: () => camera,
+        getViewportSize: () => viewport,
+        getDisplayDims: () => [0, 1, 2],
+      });
+      const children = [
+        { ...makeChild(0), positionBounds: halfBox },
+        { ...makeChild(0.5), positionBounds: halfBox },
+        { ...makeChild(1.0), positionBounds: halfBox },
+      ];
+      reg.register(makeEntry(children, 0, '/g'));
+      reg.evaluatePerFrame();
+      expect(children[1].object.visible, `middle at ${viewport.width}x${viewport.height}`).toBe(true);
+      expect(children[2].object.visible, `NOT finest at ${viewport.width}x${viewport.height}`).toBe(false);
+      expect(children[0].object.visible).toBe(false);
+    }
   });
 
   it('skips evaluation when the viewport has zero size', () => {
@@ -489,7 +564,7 @@ describe('LODGroupRegistry — auto evaluation', () => {
       getViewportSize: () => ({ width: 0, height: 0 }),
       getDisplayDims: () => [0, 1, 2],
     });
-    const children = [makeChild(0), makeChild(100)];
+    const children = [makeChild(0), makeChild(0.5)];
     reg.register(makeEntry(children, 0, '/g'));
     reg.evaluatePerFrame();
     // Active stayed on 0 because evaluation early-returned.
@@ -500,7 +575,7 @@ describe('LODGroupRegistry — auto evaluation', () => {
 describe('LODGroupRegistry — lazy children', () => {
   it('register leaves a not-ready non-active child hidden', () => {
     const reg = makeRegistry();
-    const children = [makeChild(0), makeLazyChild(100, () => {})];
+    const children = [makeChild(0), makeLazyChild(0.5, () => {})];
     reg.register(makeEntry(children, 0, '/g'));
     expect(children[0].object.visible).toBe(true); // active + ready
     expect(children[1].object.visible).toBe(false); // not ready → hidden
@@ -509,7 +584,7 @@ describe('LODGroupRegistry — lazy children', () => {
   it('does not swap to a not-ready child; fires ensureLoaded exactly once across frames', () => {
     const reg = makeRegistry();
     const ensureLoaded = vi.fn();
-    const children = [makeChild(0), makeLazyChild(100, ensureLoaded)];
+    const children = [makeChild(0), makeLazyChild(0.5, ensureLoaded)];
     reg.register(makeEntry(children, 0, '/g'));
     // Drive desired→1 via lock so the test doesn't depend on projection math.
     reg.setSelectorMode('/g', { lockLevel: 1 });
@@ -529,7 +604,7 @@ describe('LODGroupRegistry — lazy children', () => {
 
   it('swaps to the lazy child on the next frame after it becomes ready', () => {
     const reg = makeRegistry();
-    const children = [makeChild(0), makeLazyChild(100, () => {})];
+    const children = [makeChild(0), makeLazyChild(0.5, () => {})];
     reg.register(makeEntry(children, 0, '/g'));
     reg.setSelectorMode('/g', { lockLevel: 1 });
     reg.evaluatePerFrame(); // fires ensureLoaded, no swap yet
@@ -546,7 +621,7 @@ describe('LODGroupRegistry — lazy children', () => {
   it('does not refire ensureLoaded for a child that previously failed', () => {
     const reg = makeRegistry();
     const ensureLoaded = vi.fn();
-    const children = [makeChild(0), makeLazyChild(100, ensureLoaded)];
+    const children = [makeChild(0), makeLazyChild(0.5, ensureLoaded)];
     children[1].failed = true; // a prior load attempt failed
     reg.register(makeEntry(children, 0, '/g'));
     reg.setSelectorMode('/g', { lockLevel: 1 });
@@ -557,11 +632,11 @@ describe('LODGroupRegistry — lazy children', () => {
 
   /** A loaded lazy level with a release spy + a prior-visible tick. */
   function readyLazy(
-    minPixelSize: number,
+    coverageFraction: number,
     opts: { release?: ReturnType<typeof vi.fn>; tick?: number } = {}
   ): LODGroupChild {
     return {
-      ...makeLazyChild(minPixelSize, () => {}),
+      ...makeLazyChild(coverageFraction, () => {}),
       ready: true,
       release: (opts.release ?? vi.fn()) as () => void,
       lastVisibleTick: opts.tick,
@@ -571,7 +646,7 @@ describe('LODGroupRegistry — lazy children', () => {
   it('does not release on swap (pure retention when no byte budget is wired)', () => {
     const reg = makeRegistry(); // no budget → no eviction
     const rel0 = vi.fn();
-    const children = [readyLazy(0, { release: rel0 }), readyLazy(100), readyLazy(500)];
+    const children = [readyLazy(0, { release: rel0 }), readyLazy(0.5), readyLazy(1.0)];
     // Active on a far level; swap all the way to level 0.
     reg.register(makeEntry(children, 2, '/g'));
     reg.setSelectorMode('/g', { lockLevel: 0 });
@@ -590,8 +665,8 @@ describe('LODGroupRegistry — lazy children', () => {
     const rel1 = vi.fn();
     const children = [
       readyLazy(0, { release: rel0, tick: 1 }), // coldest (lowest tick)
-      readyLazy(100, { release: rel1, tick: 5 }),
-      readyLazy(500), // will be the locked/active level
+      readyLazy(0.5, { release: rel1, tick: 5 }),
+      readyLazy(1.0), // will be the locked/active level
     ];
     const reg = makeRegistry([0, 1, 2], 250, residentModel(children));
     reg.register(makeEntry(children, 2, '/g'));
@@ -610,7 +685,7 @@ describe('LODGroupRegistry — lazy children', () => {
     const relActive = vi.fn();
     const children = [
       readyLazy(0), // not released, but no tick → not a candidate
-      readyLazy(100, { release: relActive, tick: 3 }),
+      readyLazy(0.5, { release: relActive, tick: 3 }),
     ];
     const reg = makeRegistry([0, 1, 2], 50, residentModel(children));
     reg.register(makeEntry(children, 1, '/g')); // active = level 1
@@ -626,7 +701,7 @@ describe('LODGroupRegistry — lazy children', () => {
     // (ready still false) must never be evicted. The ``isReady`` filter
     // excludes it regardless of budget pressure.
     const relLoading = vi.fn();
-    const loading = makeLazyChild(100, () => {});
+    const loading = makeLazyChild(0.5, () => {});
     loading.loading = true; // in flight, ready still false
     loading.release = relLoading;
     const children = [readyLazy(0, { tick: 9 }), loading];
@@ -646,7 +721,7 @@ describe('LODGroupRegistry — lazy children', () => {
     // loader. The eviction filter's `!child.loading` clause is the only thing
     // preventing that — this test fails if that clause is removed.
     const relReloading = vi.fn();
-    const reloading = readyLazy(100, { release: relReloading, tick: 1 });
+    const reloading = readyLazy(0.5, { release: relReloading, tick: 1 });
     reloading.loading = true; // ready=true AND loading=true → stale reload in flight
     const children = [readyLazy(0, { tick: 9 }), reloading];
     // residentModel counts both ready children (200 bytes) > 50 budget → the
@@ -669,7 +744,7 @@ describe('LODGroupRegistry — lazy children', () => {
     const relStranded = vi.fn();
     const children = [
       readyLazy(0, { tick: 9 }), // active
-      readyLazy(100, { release: relStranded }), // loaded, never shown
+      readyLazy(0.5, { release: relStranded }), // loaded, never shown
     ];
     const reg = makeRegistry([0, 1, 2], 50, residentModel(children));
     reg.register(makeEntry(children, 0, '/g'));
@@ -704,7 +779,7 @@ describe('LODGroupRegistry — lazy children', () => {
 
   it('retries a transiently-failed level after the cooldown elapses (Fix 3)', () => {
     const ensureLoaded = vi.fn();
-    const children = [makeChild(0), makeLazyChild(100, ensureLoaded)];
+    const children = [makeChild(0), makeLazyChild(0.5, ensureLoaded)];
     children[1].failed = true; // a prior reload attempt failed
     const reg = makeRegistry();
     reg.register(makeEntry(children, 0, '/g'));
@@ -724,14 +799,14 @@ describe('LODGroupRegistry — lazy children', () => {
 
   it('clear() resets the monotonic tick', () => {
     const reg = makeRegistry();
-    reg.register(makeEntry([makeChild(0), makeChild(100)], 0, '/g'));
+    reg.register(makeEntry([makeChild(0), makeChild(0.5)], 0, '/g'));
     reg.evaluatePerFrame();
     reg.evaluatePerFrame();
     reg.clear();
     // After clear, a freshly-registered entry's first stamp should start
     // from a reset clock. We can't read tick directly, but a re-registered
     // child must not inherit a stale high tick — exercise the path.
-    const children = [makeChild(0), makeChild(100)];
+    const children = [makeChild(0), makeChild(0.5)];
     reg.register(makeEntry(children, 0, '/g2'));
     reg.evaluatePerFrame();
     expect(children[0].lastVisibleTick).toBe(1); // tick reset → first frame == 1
@@ -774,11 +849,11 @@ describe('LODGroupRegistry — frustum-aware selection & eviction', () => {
 
   /** A loaded (ready) level with a release spy + an optional prior-visible tick. */
   function readyLevel(
-    minPixelSize: number,
+    coverageFraction: number,
     opts: { release?: ReturnType<typeof vi.fn>; tick?: number } = {}
   ): LODGroupChild {
     return {
-      ...makeLazyChild(minPixelSize, () => {}),
+      ...makeLazyChild(coverageFraction, () => {}),
       ready: true,
       release: (opts.release ?? vi.fn()) as () => void,
       lastVisibleTick: opts.tick,
@@ -794,7 +869,7 @@ describe('LODGroupRegistry — frustum-aware selection & eviction', () => {
 
   it('auto: holds an off-screen group at the coarsest ready level (drops a fine level)', () => {
     const reg = registryWith(cameraLookingDownNegZ());
-    const children = [makeChild(0), makeChild(100)]; // both ready (non-lazy)
+    const children = [makeChild(0), makeChild(0.5)]; // both ready (non-lazy)
     // Active on the *fine* level, but the group is offset far along +x → outside
     // the frustum. The gate must drop it back to the coarsest ready level.
     const entry = placeAt(makeEntry(children, 1, '/g'), 100, 0, -5);
@@ -810,7 +885,7 @@ describe('LODGroupRegistry — frustum-aware selection & eviction', () => {
   it('auto: does not kick a lazy load for an off-screen group', () => {
     const reg = registryWith(cameraLookingDownNegZ());
     const ensureLoaded = vi.fn();
-    const children = [makeChild(0), makeLazyChild(100, ensureLoaded)];
+    const children = [makeChild(0), makeLazyChild(0.5, ensureLoaded)];
     reg.register(placeAt(makeEntry(children, 0, '/g'), 100, 0, -5));
 
     reg.evaluatePerFrame();
@@ -825,10 +900,11 @@ describe('LODGroupRegistry — frustum-aware selection & eviction', () => {
     const reg = registryWith(cameraLookingDownNegZ());
     const children = [
       { ...makeChild(0), positionBounds: { min: [-1, -1, -1], max: [1, 1, 1] } },
-      { ...makeChild(10), positionBounds: { min: [-1, -1, -1], max: [1, 1, 1] } },
+      { ...makeChild(0.1), positionBounds: { min: [-1, -1, -1], max: [1, 1, 1] } },
     ];
     // Centered in front at depth 3 → inside the frustum, projects to a large
-    // (>> 10 px) diagonal, so the diagonal selector upgrades 0 → 1.
+    // diagonal → coverage metric ≈ 0.73 (well above child 1's 0.1 threshold),
+    // so the coverage selector upgrades 0 → 1.
     const entry = placeAt(makeEntry(children, 0, '/g'), 0, 0, -3);
     reg.register(entry);
 
@@ -843,13 +919,13 @@ describe('LODGroupRegistry — frustum-aware selection & eviction', () => {
     const relOn = vi.fn();
     const onChildren = [
       readyLevel(0, { tick: 50 }), // active — exempt
-      readyLevel(100, { release: relOn, tick: 1 }), // hidden, coldest by tick
+      readyLevel(0.5, { release: relOn, tick: 1 }), // hidden, coldest by tick
     ];
     // Off-screen entry: far +x, hidden level is *warmer* by tick (40).
     const relOff = vi.fn();
     const offChildren = [
       readyLevel(0, { tick: 60 }), // active — exempt
-      readyLevel(100, { release: relOff, tick: 40 }), // hidden, warmer by tick
+      readyLevel(0.5, { release: relOff, tick: 40 }), // hidden, warmer by tick
     ];
     const all = [...onChildren, ...offChildren];
     // 4 ready levels × 100 = 400 resident; budget 350 → exactly one demotion.
@@ -873,11 +949,11 @@ describe('LODGroupRegistry — frustum-aware selection & eviction', () => {
     const relFar = vi.fn();
     const nearChildren = [
       readyLevel(0, { tick: 10 }),
-      readyLevel(100, { release: relNear, tick: 5 }),
+      readyLevel(0.5, { release: relNear, tick: 5 }),
     ];
     const farChildren = [
       readyLevel(0, { tick: 10 }),
-      readyLevel(100, { release: relFar, tick: 5 }),
+      readyLevel(0.5, { release: relFar, tick: 5 }),
     ];
     const all = [...nearChildren, ...farChildren];
     const reg = registryWith(cameraLookingDownNegZ(), 350, residentModel(all));
@@ -905,7 +981,7 @@ describe('LODGroupRegistry — slice-aware freshness fallback', () => {
     // huge on-screen diagonal makes the finest level the aspiration, but it's
     // stale → display falls back to the fresh coarse level.
     const reg = makeRegistry([0, 1, 2], undefined, undefined, () => 2);
-    const children = [makeGsplatChild(0, 2), makeGsplatChild(100, 1)];
+    const children = [makeGsplatChild(0, 2), makeGsplatChild(0.5, 1)];
     reg.register(makeEntry(children, 0, '/g'));
     reg.evaluatePerFrame();
     expect(children[0].object.visible).toBe(true);
@@ -916,7 +992,7 @@ describe('LODGroupRegistry — slice-aware freshness fallback', () => {
 
   it('swaps up to the fine level once it commits for the current version', () => {
     const reg = makeRegistry([0, 1, 2], undefined, undefined, () => 2);
-    const children = [makeGsplatChild(0, 2), makeGsplatChild(100, 1)];
+    const children = [makeGsplatChild(0, 2), makeGsplatChild(0.5, 1)];
     reg.register(makeEntry(children, 0, '/g'));
     reg.evaluatePerFrame(); // fine stale → coarse shown
     expect(children[0].object.visible).toBe(true);
@@ -930,7 +1006,7 @@ describe('LODGroupRegistry — slice-aware freshness fallback', () => {
   it('returns changed=true on the fallback (fine→coarse) and swap-up (coarse→fine) frames', () => {
     let version = 1;
     const reg = makeRegistry([0, 1, 2], undefined, undefined, () => version);
-    const children = [makeGsplatChild(0, 1), makeGsplatChild(100, 1)]; // both fresh@1
+    const children = [makeGsplatChild(0, 1), makeGsplatChild(0.5, 1)]; // both fresh@1
     reg.register(makeEntry(children, 0, '/g'));
     expect(reg.evaluatePerFrame()).toBe(true); // swap up 0→1 (fine fresh)
     expect(children[1].object.visible).toBe(true);
@@ -946,7 +1022,7 @@ describe('LODGroupRegistry — slice-aware freshness fallback', () => {
 
   it('falls back to the coarsest READY level (never blank) when no level is fresh', () => {
     const reg = makeRegistry([0, 1, 2], undefined, undefined, () => 9);
-    const children = [makeGsplatChild(0, 1), makeGsplatChild(100, 1)]; // both stale for V9
+    const children = [makeGsplatChild(0, 1), makeGsplatChild(0.5, 1)]; // both stale for V9
     reg.register(makeEntry(children, 0, '/g'));
     reg.evaluatePerFrame();
     expect(children[0].object.visible).toBe(true); // coarsest ready shown
@@ -966,7 +1042,7 @@ describe('LODGroupRegistry — slice-aware freshness fallback', () => {
       lastVisibleTick: 5,
     };
     const fine = {
-      ...makeGsplatChild(100, 1),
+      ...makeGsplatChild(0.5, 1),
       ready: true,
       release: relFine as () => void,
       lastVisibleTick: 5,
@@ -983,7 +1059,7 @@ describe('LODGroupRegistry — slice-aware freshness fallback', () => {
 
   it('a locked level that is stale still shows the coarse-fresh level until it commits', () => {
     const reg = makeRegistry([0, 1, 2], undefined, undefined, () => 2);
-    const children = [makeGsplatChild(0, 2), makeGsplatChild(100, 1)];
+    const children = [makeGsplatChild(0, 2), makeGsplatChild(0.5, 1)];
     reg.register(makeEntry(children, 0, '/g'));
     reg.setSelectorMode('/g', { lockLevel: 1 });
     reg.evaluatePerFrame();
@@ -995,7 +1071,7 @@ describe('LODGroupRegistry — slice-aware freshness fallback', () => {
 
   it('no-op when the desired level is already fresh (display == aspiration)', () => {
     const reg = makeRegistry([0, 1, 2], undefined, undefined, () => 2);
-    const children = [makeGsplatChild(0, 2), makeGsplatChild(100, 2)]; // both fresh@2
+    const children = [makeGsplatChild(0, 2), makeGsplatChild(0.5, 2)]; // both fresh@2
     reg.register(makeEntry(children, 0, '/g'));
     reg.evaluatePerFrame();
     expect(children[1].object.visible).toBe(true); // finest shown, no fallback
@@ -1005,7 +1081,7 @@ describe('LODGroupRegistry — slice-aware freshness fallback', () => {
     // Plain children (no nodeType:'gsplats') are always fresh even with a
     // version wired — points/lines LOD groups are unaffected.
     const reg = makeRegistry([0, 1, 2], undefined, undefined, () => 999);
-    const children = [makeChild(0), makeChild(100)];
+    const children = [makeChild(0), makeChild(0.5)];
     reg.register(makeEntry(children, 0, '/g'));
     reg.evaluatePerFrame();
     expect(children[1].object.visible).toBe(true);
@@ -1013,7 +1089,7 @@ describe('LODGroupRegistry — slice-aware freshness fallback', () => {
 
   it('treats every ready level as fresh when getViewVersion is not wired (pre-feature parity)', () => {
     const reg = makeRegistry(); // no getViewVersion dep
-    const children = [makeGsplatChild(0, 1), makeGsplatChild(100, 1)];
+    const children = [makeGsplatChild(0, 1), makeGsplatChild(0.5, 1)];
     reg.register(makeEntry(children, 0, '/g'));
     reg.evaluatePerFrame();
     expect(children[1].object.visible).toBe(true); // finest shown (no freshness gating)
@@ -1029,8 +1105,8 @@ describe('LODGroupRegistry — slice-aware freshness fallback', () => {
 
 describe('LODGroupRegistry — settle-gated fine reload', () => {
   /** A ready-but-stale lazy fine gsplats child with an ensureLoaded spy. */
-  function makeStaleLazyFine(minPixelSize: number, staleVersion: number, ensureLoaded: () => void) {
-    const child = makeGsplatChild(minPixelSize, staleVersion);
+  function makeStaleLazyFine(coverageFraction: number, staleVersion: number, ensureLoaded: () => void) {
+    const child = makeGsplatChild(coverageFraction, staleVersion);
     child.ready = true; // committed (just stale for the current version)
     child.ensureLoaded = ensureLoaded;
     return child;
@@ -1039,7 +1115,7 @@ describe('LODGroupRegistry — settle-gated fine reload', () => {
   it('does NOT reload the stale fine level while the version is still changing (scrubbing)', () => {
     let version = 1;
     const ensureLoaded = vi.fn();
-    const children = [makeGsplatChild(0, 1), makeStaleLazyFine(100, 1, ensureLoaded)];
+    const children = [makeGsplatChild(0, 1), makeStaleLazyFine(0.5, 1, ensureLoaded)];
     const reg = makeRegistry([0, 1, 2], undefined, undefined, () => version);
     reg.register(makeEntry(children, 0, '/g'));
     // Scrub every frame: the version keeps changing so it never settles.
@@ -1055,7 +1131,7 @@ describe('LODGroupRegistry — settle-gated fine reload', () => {
 
   it('reloads the stale fine level exactly once after the scrub settles', () => {
     const ensureLoaded = vi.fn();
-    const children = [makeGsplatChild(0, 2), makeStaleLazyFine(100, 1, ensureLoaded)];
+    const children = [makeGsplatChild(0, 2), makeStaleLazyFine(0.5, 1, ensureLoaded)];
     const reg = makeRegistry([0, 1, 2], undefined, undefined, () => 2); // version fixed at 2
     reg.register(makeEntry(children, 0, '/g'));
     // A few frames: not yet settled → no reload.
@@ -1072,7 +1148,7 @@ describe('LODGroupRegistry — settle-gated fine reload', () => {
   it('never reloads an eager (sweep-driven) coarse level — it has no ensureLoaded', () => {
     // Both children stale + ready but NEITHER has ensureLoaded (eager levels):
     // the registry must not attempt a reload (that would throw on undefined).
-    const children = [makeGsplatChild(0, 1), makeGsplatChild(100, 1)];
+    const children = [makeGsplatChild(0, 1), makeGsplatChild(0.5, 1)];
     children.forEach((c) => (c.ready = true));
     const reg = makeRegistry([0, 1, 2], undefined, undefined, () => 2);
     reg.register(makeEntry(children, 0, '/g'));
@@ -1092,7 +1168,7 @@ describe('LODGroupRegistry — settle-gated fine reload', () => {
 describe('LODGroupRegistry — render keep-alive while loading', () => {
   it('requests a render every frame while a child is loading', () => {
     const requestRender = vi.fn();
-    const loading = makeLazyChild(100, () => {});
+    const loading = makeLazyChild(0.5, () => {});
     loading.loading = true; // a deferred (re)load in flight
     const children = [makeGsplatChild(0, 1), loading];
     const reg = makeRegistry([0, 1, 2], undefined, undefined, () => 1, requestRender);
@@ -1104,7 +1180,7 @@ describe('LODGroupRegistry — render keep-alive while loading', () => {
 
   it('does NOT request renders when nothing is loading (power-saving preserved)', () => {
     const requestRender = vi.fn();
-    const children = [makeGsplatChild(0, 1), makeGsplatChild(100, 1)];
+    const children = [makeGsplatChild(0, 1), makeGsplatChild(0.5, 1)];
     const reg = makeRegistry([0, 1, 2], undefined, undefined, () => 1, requestRender);
     reg.register(makeEntry(children, 0, '/g'));
     reg.evaluatePerFrame();
@@ -1122,7 +1198,7 @@ describe('LODGroupRegistry — render keep-alive while loading', () => {
 describe('LODGroupRegistry — progressive refinement of a lazy level', () => {
   it('re-fires ensureLoaded while hasMoreLODs (fresh but incomplete), and stops when complete', () => {
     let more = true;
-    const fine = makeGsplatChild(100, 2); // ready & fresh for version 2
+    const fine = makeGsplatChild(0.5, 2); // ready & fresh for version 2
     fine.ready = true;
     // Spy simulates a completed progressive pass (clears loading so the next
     // settled frame can advance the ladder again).

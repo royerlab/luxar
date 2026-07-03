@@ -5,9 +5,10 @@ the option superset, validates that the options given are relevant to the chosen
 recipe, fills scale-derived defaults, loads the input, builds the recipe, and
 writes the output ``.gsplats.zarr``.
 
-The single ``--recipe`` flag replaces the historical ``lod additive`` /
-``lod substitutive`` / ``lod pyramid`` subcommands (those three are now recipe
-values: ``additive`` / ``substitutive`` / ``pyramid``).
+The single ``--recipe`` flag builds one of the intent-first topologies
+(``flat`` / ``stream`` / ``levels`` / ``tiles`` / ``overview`` / ``adaptive``);
+it replaced the historical ``lod additive`` / ``lod substitutive`` /
+``lod pyramid`` subcommands (now the ``stream`` / ``levels`` recipes).
 """
 
 from __future__ import annotations
@@ -42,24 +43,25 @@ _VALID_SUBSTITUTIVE_METHODS = (
 
 _VALID_PARTITION_RULES = ("median", "midpoint", "sah")
 
-#: Target splat count for the multiscale coarse cap when ``--compression-factor``
+#: Target splat count for the overview coarse cap when ``--compression-factor``
 #: is not given. The cap is a SINGLE substitutive level of ``ceil(N / K)`` splats,
 #: so a fixed default K scales badly: on a 23 M fit, the historical K=4/8 left a
 #: 2.9 M-splat cap (far too heavy to load first). Instead derive
 #: ``K = max(2, round(N / target))`` so the cap lands near this size regardless of
 #: N. ~256 K keeps the coarsest level light enough to stream instantly while still
 #: carrying enough detail to be a useful overview. Mirrors the N-aware
-#: ``max_elements`` default used for the partitioned branch.
+#: ``max_elements`` default used for the tiles branch.
 _MULTISCALE_CAP_TARGET = 256_000
 
 # Per-recipe relevance tokens. Each tuning option belongs to a token group; a
 # recipe only accepts options whose token is in its allowed set. ``--levels`` is
-# its own token because ``multiscale`` accepts the other substitutive options
+# its own token because ``overview`` accepts the other substitutive options
 # (for its coarse cap) but fixes the cap at a single level.
 _OPTION_TOKENS = {
     "--n-lods": "additive",
     "--method": "additive",
     "--breakpoints": "additive",
+    "--additive": "additive",
     "--target-ms": "additive",
     "--bandwidth-mbps": "additive",
     "--bytes-per-splat": "additive",
@@ -73,28 +75,29 @@ _OPTION_TOKENS = {
     "--lloyd-iters": "substitutive",
     "--candidate-bins-k": "substitutive",
     "--coverage-inflation": "substitutive",
+    "--conserve-mass": "substitutive",
+    "--refine": "substitutive",
+    "--refine-iters": "substitutive",
     "--coarsen-dims": "substitutive",
     "--levels": "levels",
-    "--base-pixel-size": "lod_selector",
-    "--lod-method": "lod_selector",
-    "--extent-percentile": "lod_selector",
-    "--extent-anisotropy": "lod_selector",
 }
 
 _ALLOWED_TOKENS = {
     "flat": frozenset(),
-    "additive": frozenset({"additive"}),
-    "partitioned": frozenset({"additive", "partition"}),
-    # ``lod_selector`` (--lod-method/--extent-percentile/--extent-anisotropy/
-    # --base-pixel-size) tunes the coarse↔fine switch of any kind=lod group:
-    # the multiscale cap, and the substitutive/pyramid/mosaic lod ladders.
-    "multiscale": frozenset({"additive", "partition", "substitutive", "lod_selector"}),
-    # mosaic: BSP partition + a substitutive lod group per part — partition knobs
-    # plus the substitutive ones (and --levels for per-part depth) and the lod
-    # selector. No additive ladder (parts replace, not accumulate).
-    "mosaic": frozenset({"partition", "substitutive", "levels", "lod_selector"}),
-    "substitutive": frozenset({"substitutive", "levels", "lod_selector"}),
-    "pyramid": frozenset({"additive", "substitutive", "levels", "lod_selector"}),
+    "stream": frozenset({"additive"}),
+    "tiles": frozenset({"additive", "partition"}),
+    # LOD switch thresholds are auto-derived as viewport-relative coverage
+    # fractions (sqrt(N_i/N_finest)) for every kind=lod group (the overview
+    # cap and the levels/adaptive lod groups) — no threshold knob.
+    "overview": frozenset({"additive", "partition", "substitutive"}),
+    # adaptive: spatial tiles + a levels group per tile — partition +
+    # level-merge knobs (--levels for per-tile depth), plus ladder knobs:
+    # every per-tile level carries a stream ladder by default.
+    "adaptive": frozenset({"additive", "partition", "substitutive", "levels"}),
+    # levels: ladder knobs accepted too — every level is stream-laddered by
+    # default (project convention: additive/stream LODs everywhere;
+    # --no-additive restores bare per-level leaves).
+    "levels": frozenset({"additive", "substitutive", "levels"}),
 }
 
 
@@ -346,7 +349,7 @@ def resolve_streaming_breakpoints(
     Shared by every CLI surface that builds additive ladders. Bytes/splat
     priority: explicit ``--bytes-per-splat`` override > measured from the
     input store(s) > analytic estimate. Logs the derivation (mirrors the
-    N-aware multiscale-K message) so the assumed numbers are always visible;
+    N-aware overview-K message) so the assumed numbers are always visible;
     ``measured_label`` names the measurement source in that log line (e.g.
     "measured from 8 completed tile stores" for ``batch-fit merge``).
     """
@@ -409,11 +412,10 @@ def lod_recipe(
         "-r",
         help=(
             "Representation topology to build (REQUIRED). Scale-ordered: "
-            "flat | additive | partitioned | multiscale | mosaic; plus primitives "
-            "substitutive | pyramid."
+            "flat | stream | levels | tiles | overview | adaptive."
         ),
     ),
-    # ── additive ladder (additive / partitioned / multiscale parts / pyramid) ──
+    # ── stream (additive) ladder — every recipe ladders by default ──
     n_lods: Optional[int] = typer.Option(
         None, "--n-lods", min=1, help="Additive LOD levels (default 4)."
     ),
@@ -462,7 +464,7 @@ def lod_recipe(
     max_n_dense: Optional[int] = typer.Option(
         None, "--max-n-dense", help="Greedy dense-Gram threshold (default 2000)."
     ),
-    # ── spatial partition (partitioned / multiscale / mosaic) ──
+    # ── spatial partition (tiles / overview / adaptive) ──
     max_elements: Optional[int] = typer.Option(
         None,
         "--max-elements",
@@ -479,14 +481,14 @@ def lod_recipe(
     partition_rule: Optional[str] = typer.Option(
         None, "--partition-rule", help="BSP rule: median (default) | midpoint | sah."
     ),
-    # ── substitutive reduction (substitutive / pyramid / multiscale cap) ──
+    # ── level merge (levels / overview cap / adaptive tiles) ──
     compression_factor: Optional[int] = typer.Option(
         None,
         "--compression-factor",
         "-K",
         min=2,
         help="Substitutive per-level compression factor (default 4; for "
-        "--recipe multiscale, auto-scaled from N to a ~256K coarse cap "
+        "--recipe overview, auto-scaled from N to a ~256K coarse cap "
         "when omitted).",
     ),
     levels: Optional[int] = typer.Option(
@@ -494,7 +496,7 @@ def lod_recipe(
         "--levels",
         "-L",
         min=1,
-        help="Substitutive coarser levels (default 3). Not used by multiscale "
+        help="Coarser LOD levels (default 3). Not used by overview "
         "(its cap is a single level).",
     ),
     substitutive_method: Optional[str] = typer.Option(
@@ -518,6 +520,36 @@ def lod_recipe(
         "representatives sum flat, suppressing the grid-pattern ripple that "
         "pure moment matching produces at coarse levels. 1.0 disables.",
     ),
+    additive_ladders: Optional[bool] = typer.Option(
+        None,
+        "--additive/--no-additive",
+        help="Additive ladder inside every substitutive level / part / cap "
+        "(streaming-friendly first paint). ON by default everywhere; "
+        "--no-additive emits bare leaves. Rejected for the stream and "
+        "tiles recipes (their ladders are definitional).",
+    ),
+    conserve_mass: Optional[bool] = typer.Option(
+        None,
+        "--conserve-mass/--no-conserve-mass",
+        help="Rescale each reduced level so its total mass over the coarsened "
+        "dims matches its fine input (per barrier group) — keeps additive-"
+        "render brightness constant across LOD switches. Default on.",
+    ),
+    refine: Optional[str] = typer.Option(
+        None,
+        "--refine",
+        help="Post-merge refinement of each substitutive level: none (default) "
+        "| l2 (Adam-optimize the level against its fine input under the "
+        "closed-form mixture L2 — slower, higher fidelity, peak-preserving; "
+        "total mass pinned so brightness never pops across levels).",
+    ),
+    refine_iters: Optional[int] = typer.Option(
+        None,
+        "--refine-iters",
+        min=1,
+        help="L2-refine optimization steps per level (default 120; requires "
+        "--refine l2).",
+    ),
     coarsen_dims: Optional[str] = typer.Option(
         None,
         "--coarsen-dims",
@@ -525,36 +557,6 @@ def lod_recipe(
         "the remaining dims become hard grouping barriers (e.g. a categorical / "
         "timepoint / channel axis). Default: all dims. (Standalone gsplats carry "
         "no display info, so pass explicit indices here.)",
-    ),
-    lod_method: Optional[str] = typer.Option(
-        None,
-        "--lod-method",
-        help="lod recipes (multiscale/substitutive/pyramid/mosaic): coarse↔fine "
-        "threshold method. 'extent' (default) anchors the switch in physical element "
-        "size (W/r, self-calibrating); 'count' is the legacy scene-relative √N proxy.",
-    ),
-    extent_percentile: Optional[float] = typer.Option(
-        None,
-        "--extent-percentile",
-        min=0.0,
-        max=100.0,
-        help="lod recipes (multiscale/substitutive/pyramid/mosaic): percentile of "
-        "per-level element radius used by --lod-method extent (default 90).",
-    ),
-    extent_anisotropy: Optional[bool] = typer.Option(
-        None,
-        "--extent-anisotropy/--no-extent-anisotropy",
-        help="lod recipes (multiscale/substitutive/pyramid/mosaic): use the largest "
-        "principal semi-axis (anisotropy-aware, default) vs the isotropic-equivalent "
-        "radius for --lod-method extent.",
-    ),
-    base_pixel_size: Optional[float] = typer.Option(
-        None,
-        "--base-pixel-size",
-        help="lod recipes (multiscale/substitutive/pyramid/mosaic): LOD selector "
-        "pixel anchor. In 'extent' mode the target element pixel size T (~1.5 px, "
-        "self-calibrating); in 'count' mode the √N anchor (~10 px). The default "
-        "rarely needs tuning under 'extent'.",
     ),
     # ── universal ──
     ordering: str = typer.Option(
@@ -577,28 +579,34 @@ def lod_recipe(
 ) -> None:
     """Build a representation topology from a fitted gsplat dataset.
 
-    One recipe, scale-ordered. Pick with ``--recipe``:
+    One recipe, scale-ordered; every recipe streams by default (each leaf
+    carries a progressive "stream" ladder unless --no-additive). Pick by what
+    you need:
 
     \b
-      flat          single leaf (no LOD, no partition)
-      additive      one leaf with an additive (prefix-sum) ladder
-      partitioned   BSP parts, each with its own additive ladder
-      multiscale    a coarse substitutive cap + a partitioned fine branch
-                    (unbalanced by design: detail only where you look closely)
-      mosaic        BSP parts, each its own substitutive lod group
-                    (per-part coarse<->fine swap: locally adaptive detail)
-      substitutive  pure substitutive pyramid (synthesised coarse levels)
-      pyramid       balanced substitutive x additive matrix
+      recipe     structure                        use when
+      flat       one bare leaf                    tiny data / debugging
+      stream     one leaf + progressive ladder    small data, fast first paint
+      levels     coarse->fine replacement levels  zooming across scales
+      tiles      spatial tiles (culled), each     large scene, one scale
+                 with its own ladder
+      overview   instant coarse overview level    huge scene, "see everything
+                 + fine tiles on zoom             first" (detail where you look)
+      adaptive   tiles where EVERY tile picks     largest scenes, locally
+                 its own detail level             adaptive detail
+
+    (Renamed 2026-07: additive->stream, substitutive/pyramid->levels,
+    partitioned->tiles, multiscale->overview, mosaic->adaptive.)
 
     Input must be a fitted / flat .gsplats.zarr (output of ``luxar gsplat fit``).
     Canonical pipeline: ``cal`` -> ``fit --seeds K*`` -> ``lod --recipe ...``.
 
     \b
     Examples:
-        luxar gsplat lod fit.gsplats.zarr out.gsplats.zarr --recipe additive --n-lods 6
-        luxar gsplat lod fit.gsplats.zarr out.gsplats.zarr --recipe partitioned \\
+        luxar gsplat lod fit.gsplats.zarr out.gsplats.zarr --recipe stream --n-lods 6
+        luxar gsplat lod fit.gsplats.zarr out.gsplats.zarr --recipe tiles \\
             --max-elements 250000
-        luxar gsplat lod fit.gsplats.zarr out.gsplats.zarr --recipe multiscale \\
+        luxar gsplat lod fit.gsplats.zarr out.gsplats.zarr --recipe overview \\
             --compression-factor 8
     """
     from luxar.gsplats.gsplat_data import GSplatData
@@ -616,6 +624,14 @@ def lod_recipe(
                 "--recipe is required; choose one of: " + ", ".join(RECIPE_NAMES)
             )
         if recipe not in RECIPE_NAMES:
+            from luxar.gsplats.lod.recipes import LEGACY_RECIPE_NAMES
+
+            if recipe in LEGACY_RECIPE_NAMES:
+                raise typer.BadParameter(
+                    f"recipe {recipe!r} was renamed to "
+                    f"{LEGACY_RECIPE_NAMES[recipe]!r} (2026-07 intent-first "
+                    f"vocabulary); use --recipe {LEGACY_RECIPE_NAMES[recipe]}."
+                )
             raise typer.BadParameter(
                 f"unknown recipe {recipe!r}; choose one of: " + ", ".join(RECIPE_NAMES)
             )
@@ -625,6 +641,7 @@ def lod_recipe(
             "--n-lods": n_lods,
             "--method": method,
             "--breakpoints": breakpoints,
+            "--additive": additive_ladders,
             "--target-ms": target_ms,
             "--bandwidth-mbps": bandwidth_mbps,
             "--bytes-per-splat": bytes_per_splat,
@@ -638,25 +655,20 @@ def lod_recipe(
             "--lloyd-iters": lloyd_iterations,
             "--candidate-bins-k": candidate_bins_k,
             "--coverage-inflation": coverage_inflation,
+            "--conserve-mass": conserve_mass,
+            "--refine": refine,
+            "--refine-iters": refine_iters,
             "--coarsen-dims": coarsen_dims,
             "--levels": levels,
-            "--base-pixel-size": base_pixel_size,
-            "--lod-method": lod_method,
-            "--extent-percentile": extent_percentile,
-            "--extent-anisotropy": extent_anisotropy,
         }
         # ``hints`` add a recipe-specific clause when a given flag is rejected:
         #  - --method moved to --substitutive-method for the substitutive recipe;
-        #  - multiscale's coarse cap is single-level, so --levels has no meaning
+        #  - overview's coarse cap is single-level, so --levels has no meaning
         #    there (size the cap with -K, auto-scaled by default).
         hints: dict[str, str] = {}
-        if recipe == "substitutive":
-            hints["--method"] = (
-                "(for the substitutive algorithm use --substitutive-method)"
-            )
-        if recipe == "multiscale":
+        if recipe == "overview":
             hints["--levels"] = (
-                "(multiscale's coarse cap is single-level; size it with "
+                "(overview's coarse cap is single-level; size it with "
                 "--compression-factor/-K, auto-scaled by default)"
             )
         reject_irrelevant_recipe_options(
@@ -666,15 +678,32 @@ def lod_recipe(
         # ── validate values ──
         method_norm = (method or "auto").strip().replace("-", "_")
         if method_norm not in _VALID_ADDITIVE_METHODS:
-            raise typer.BadParameter(
-                f"--method must be one of {list(_VALID_ADDITIVE_METHODS)}; got {method!r}"
+            msg = (
+                f"--method must be one of {list(_VALID_ADDITIVE_METHODS)}; "
+                f"got {method!r}"
             )
+            if method_norm in _VALID_SUBSTITUTIVE_METHODS:
+                # `-m kmeans_lloyd` etc.: the user almost certainly meant the
+                # substitutive partition algorithm (--method is the ADDITIVE
+                # ordering — every substitutive level is laddered by default).
+                msg += " (for the substitutive algorithm use --substitutive-method)"
+            raise typer.BadParameter(msg)
         sub_norm = (substitutive_method or "auto").strip().replace("-", "_")
         if sub_norm not in _VALID_SUBSTITUTIVE_METHODS:
             raise typer.BadParameter(
                 f"--substitutive-method must be one of "
                 f"{list(_VALID_SUBSTITUTIVE_METHODS)}; got {substitutive_method!r}"
             )
+        if additive_ladders is False and recipe in ("stream", "tiles"):
+            raise typer.BadParameter(
+                f"--no-additive contradicts --recipe {recipe}: its additive "
+                "ladder is the recipe's definition."
+            )
+        refine_norm = (refine or "none").strip()
+        if refine_norm not in ("none", "l2"):
+            raise typer.BadParameter(f"--refine must be 'none' or 'l2'; got {refine!r}")
+        if refine_iters is not None and refine_norm != "l2":
+            raise typer.BadParameter("--refine-iters only applies with --refine l2.")
         rule = partition_rule or "median"
         if rule not in _VALID_PARTITION_RULES:
             raise typer.BadParameter(
@@ -758,7 +787,7 @@ def lod_recipe(
 
             # ── scale-derived defaults (logged) ──
             eff_max_elements: Optional[int] = max_elements
-            if recipe in ("partitioned", "multiscale", "mosaic"):
+            if recipe in ("tiles", "overview", "adaptive"):
                 # BSP partitioning needs >= 3 spatial dims; fail cleanly (the
                 # rest of the command's validation style) rather than letting
                 # the deeper ValueError surface as a raw traceback.
@@ -766,7 +795,7 @@ def lod_recipe(
                     raise typer.BadParameter(
                         f"recipe '{recipe}' requires >=3 spatial dimensions for "
                         f"BSP partitioning; got {data.ndim}D. Use --recipe "
-                        f"additive/substitutive/pyramid for {data.ndim}D data."
+                        f"stream or levels for {data.ndim}D data."
                     )
                 if parts is not None:
                     eff_max_elements = -(-data.n_splats // parts)  # ceil
@@ -782,12 +811,12 @@ def lod_recipe(
                 else:
                     aprint(f"max_elements={eff_max_elements:,}")
 
-            # multiscale's coarse cap is a SINGLE substitutive level of ceil(N/K)
+            # overview's coarse cap is a SINGLE merged level of ceil(N/K)
             # splats. A fixed default K scales badly (K=8 on 23 M → a 2.9 M cap),
             # so when --compression-factor is not given, size K to land the cap
             # near _MULTISCALE_CAP_TARGET. Explicit -K always wins.
             eff_compression_factor: Optional[int] = compression_factor
-            if recipe == "multiscale" and compression_factor is None:
+            if recipe == "overview" and compression_factor is None:
                 eff_compression_factor = max(
                     2, round(data.n_splats / _MULTISCALE_CAP_TARGET)
                 )
@@ -796,11 +825,6 @@ def lod_recipe(
                     f"--compression-factor defaulting to {eff_compression_factor} "
                     f"(coarse cap ~{cap_n:,} splats, target "
                     f"~{_MULTISCALE_CAP_TARGET:,}); pass -K to override"
-                )
-
-            if lod_method is not None and lod_method not in ("extent", "count"):
-                raise typer.BadParameter(
-                    f"--lod-method must be 'extent' or 'count'; got {lod_method!r}"
                 )
 
             # Barrier dims for substitutive coarsening. Standalone gsplats carry
@@ -827,10 +851,9 @@ def lod_recipe(
                         )
                 parsed_coarsen = tuple(idxs) if len(idxs) < data.ndim else None
             elif data.ndim > 3 and recipe in (
-                "substitutive",
-                "pyramid",
-                "multiscale",
-                "mosaic",
+                "levels",
+                "overview",
+                "adaptive",
             ):
                 aprint(
                     f"  ⚠ {data.ndim}D input with no --coarsen-dims: substitutive "
@@ -863,18 +886,13 @@ def lod_recipe(
                 coverage_inflation=coverage_inflation
                 if coverage_inflation is not None
                 else 3.0,
-                coarsen_dims=parsed_coarsen,
-                # LOD threshold knobs for any kind=lod recipe (multiscale/
-                # substitutive/pyramid/mosaic); None → RecipeParams defaults
-                # (extent method, p90, anisotropy-aware, ~1.5px target anchor).
-                lod_method=lod_method if lod_method is not None else "extent",
-                extent_percentile=extent_percentile
-                if extent_percentile is not None
-                else 90.0,
-                extent_anisotropy=extent_anisotropy
-                if extent_anisotropy is not None
+                additive_ladders=additive_ladders
+                if additive_ladders is not None
                 else True,
-                base_pixel_size=base_pixel_size,
+                conserve_mass=conserve_mass if conserve_mass is not None else True,
+                refine=refine_norm,
+                refine_iters=refine_iters if refine_iters is not None else 120,
+                coarsen_dims=parsed_coarsen,
                 device=device or "auto",
                 seed=seed,
             )
@@ -896,24 +914,25 @@ def lod_recipe(
                         output_path.unlink()
                 if isinstance(result, GSplatData):
                     # Matrix recipe — identical write path to the absorbed subcommands.
-                    # The LOD-threshold knobs are derived at tree-build time (here),
-                    # so forward them so substitutive/pyramid honor --lod-method etc.
-                    # (inert for flat/additive, which have no kind=lod group).
+                    # A multi-level result gets per-level coverage_fraction
+                    # thresholds derived at tree-build time in save(). Record which
+                    # RECIPE built this (build provenance) alongside the mechanism
+                    # ``lod_kind`` the builder already stamped — the viewer consumes
+                    # the on-disk ``kind`` attrs, not this recipe name.
+                    result.stats["recipe"] = recipe
                     result.save(
                         output_path,
                         ordering=ordering,  # type: ignore[arg-type]
                         encoding_mode=encoding_obj,
                         compress=compress,  # type: ignore[arg-type]
-                        lod_method=params.lod_method,
-                        extent_percentile=params.extent_percentile,
-                        extent_anisotropy=params.extent_anisotropy,
-                        base_pixel_size=params.base_pixel_size,
                     )
                 else:
-                    # Composed recipe — write the node tree, carrying input provenance.
-                    fitting_info, fitting_config, provenance_info = split_fitting_info(
-                        data.stats
+                    # Composed recipe — write the node tree, carrying input
+                    # provenance plus the recipe that built it.
+                    fitting_info, fitting_config, provenance_info, pipeline_info = (
+                        split_fitting_info(data.stats)
                     )
+                    pipeline_info = {**(pipeline_info or {}), "recipe": recipe}
                     write_gsplats_tree(
                         output_path,
                         result,
@@ -922,6 +941,7 @@ def lod_recipe(
                         fitting_info=fitting_info,
                         fitting_config=fitting_config,
                         provenance_info=provenance_info,
+                        pipeline_info=pipeline_info,
                         compress=compress,  # type: ignore[arg-type]
                     )
                 if not quiet:

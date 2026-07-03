@@ -21,7 +21,7 @@ On-disk grammar (the node tree):
 * **lod group** → ``type=group, kind=lod``; children written **coarsest→finest**
   as ``child_<i>/`` (the in-memory tree is also coarsest-first, so the writer
   writes them straight through with no reversal), each carrying its
-  ``min_pixel_size`` selector threshold + LOD provenance.
+  ``coverage_fraction`` selector threshold + LOD provenance.
 * **partition group** → ``type=group, kind=partition``; children as ``part_<i>/``.
 
 Every node carries a ``position_bounds`` attr (groups = union of children) so the
@@ -30,8 +30,10 @@ viewer can frame a bare-node file on load.
 
 from __future__ import annotations
 
+import math
 from typing import TYPE_CHECKING, Any, Dict, List, Literal, Optional, cast
 
+import numpy as np
 import zarr
 
 from ...encoding import ArrayEncoder, EncodingMode
@@ -52,7 +54,7 @@ if TYPE_CHECKING:
 #: Provenance / selector attr keys carried per-node in a leaf's ``meta`` and
 #: surfaced verbatim onto the node's zarr ``.zattrs``.
 _NODE_META_ATTR_KEYS = (
-    "min_pixel_size",
+    "coverage_fraction",
     "compression_factor",
     "parent_method",
     "level_index",
@@ -294,6 +296,54 @@ def _union_bounds(
     }
 
 
+def json_safe_value(value: Any) -> tuple[bool, Any]:
+    """``(ok, converted)`` — recursively coerce ``value`` to a JSON-attr-safe
+    form (numpy scalars → Python scalars; tuples → lists; nested dicts/lists
+    filtered element-wise). ``ok`` is False for values with no *strictly*-JSON
+    form. Shared by the node-meta projection here and the root ``pipeline/``
+    stats bucket in :mod:`luxar.gsplats.io.save_gsplats`.
+
+    Two subtleties this guards:
+
+    * **numpy floats are checked BEFORE the Python-scalar branch.** ``np.float64``
+      is a subclass of ``float``, so a ``(bool, int, float, str)`` check would
+      accept it *un-coerced* and leak a numpy scalar into ``.zattrs``. numpy /
+      bool checks come first so every numpy scalar is coerced to a Python one.
+    * **non-finite floats are rejected** (``ok=False``). ``NaN`` / ``±Inf`` are
+      not valid JSON; zarr writes them as bare ``NaN`` / ``Infinity`` tokens
+      that a strict parser — notably the TypeScript viewer's ``JSON.parse`` —
+      refuses, so a non-finite stat must be dropped, not persisted.
+    """
+    # numpy scalars first (np.float64 is a subclass of float; np.bool_ of int).
+    if isinstance(value, np.integer):
+        return True, int(value)
+    if isinstance(value, np.floating):
+        fv = float(value)
+        return (True, fv) if math.isfinite(fv) else (False, None)
+    if isinstance(value, np.bool_):
+        return True, bool(value)
+    if value is None or isinstance(value, (bool, int, str)):
+        return True, value
+    if isinstance(value, float):
+        return (True, value) if math.isfinite(value) else (False, None)
+    if isinstance(value, (list, tuple)):
+        out_list = []
+        for item in value:
+            ok, conv = json_safe_value(item)
+            if not ok:
+                return False, None
+            out_list.append(conv)
+        return True, out_list
+    if isinstance(value, dict):
+        out_dict = {}
+        for k, v in value.items():
+            ok, conv = json_safe_value(v)
+            if ok:
+                out_dict[str(k)] = conv
+        return True, out_dict
+    return False, None
+
+
 def _meta_to_node_attrs(meta: Optional[Dict[str, Any]]) -> Dict[str, Any]:
     """Project a node's ``meta`` to the exact attr set the reader recovers.
 
@@ -310,15 +360,13 @@ def _meta_to_node_attrs(meta: Optional[Dict[str, Any]]) -> Dict[str, Any]:
     for key in _NODE_META_ATTR_KEYS:
         if key in meta and meta[key] is not None:
             out[key] = meta[key]
-    # Per-level (SubstitutiveLevel) stats ride as a JSON-safe ``level_stats`` attr.
+    # Per-level (SubstitutiveLevel) stats ride as a JSON-safe ``level_stats``
+    # attr. json_safe_value keeps nested dicts (e.g. the L2 refine_stats block)
+    # — the old scalar-only filter silently dropped them (lossy round-trip).
     stats = meta.get("stats")
     if isinstance(stats, dict) and stats:
-        safe = {
-            k: v
-            for k, v in stats.items()
-            if isinstance(v, (int, float, str, bool, list))
-        }
-        if safe:
+        ok, safe = json_safe_value(stats)
+        if ok and safe:
             out["level_stats"] = safe
     return out
 
@@ -366,33 +414,24 @@ def write_gsplat_node(
         )
 
     if isinstance(node, GSplatLodGroup):
-        from luxar.core.group.lod.group import lod_thresholds
-        from luxar.gsplats.tree import (
-            node_extent_diagonal,
-            node_percentile_radius,
-            total_splats,
-        )
+        from luxar.core.group.lod.group import coverage_fractions
+        from luxar.gsplats.tree import total_splats
 
         # In-memory children are coarsest→finest, the SAME order as the on-disk
         # child_<i> layout (child_0 = coarsest) — written straight through.
         on_disk = list(node.children)
         n = len(on_disk)
         # Derive a per-child selector threshold (coarsest→finest) so EVERY child —
-        # leaf OR nested Group — is viewer-selectable. Default to the physically-
-        # anchored ``extent`` method (T·W/r₉₀), matching the builders; ``lod_thresholds``
-        # falls back to the count √N method when extents/W are unavailable. An authored
-        # min_pixel_size on the child still takes precedence: for a leaf child it is
-        # merged over these passed attrs by ``_leaf_child_attrs`` in the leaf writer;
-        # for a nested group child it is reapplied from ``node.meta`` by that group's
-        # branch. So this only sets the threshold for meta-less (e.g. hand-built)
-        # trees. Without it a nested
-        # lod-of-Group child carried no threshold and the selector was stuck always-finest.
-        derived_mps = lod_thresholds(
-            "extent",
-            element_counts=[total_splats(c) for c in on_disk],
-            element_extents=[node_percentile_radius(c) for c in on_disk],
-            node_extent=node_extent_diagonal(node),
-        )
+        # leaf OR nested Group — is viewer-selectable. Viewport-relative
+        # ``coverage_fraction`` = ``sqrt(N_i/N_finest)`` (count ratios; the viewer
+        # multiplies by the live viewport diagonal). An authored coverage_fraction on
+        # the child still takes precedence: for a leaf child it is merged over these
+        # passed attrs by ``_leaf_child_attrs`` in the leaf writer; for a nested group
+        # child it is reapplied from ``node.meta`` by that group's branch. So this
+        # only sets the threshold for meta-less (e.g. hand-built) trees. Without it a
+        # nested lod-of-Group child carried no threshold and the selector was stuck
+        # always-finest.
+        derived_cov = coverage_fractions([total_splats(c) for c in on_disk])
         child_bounds: List[Dict[str, List[float]]] = []
         for i, child in enumerate(on_disk):
             child_group = group.require_group(f"child_{i}")
@@ -409,7 +448,10 @@ def write_gsplat_node(
                 # because bare-root .gsplats.zarr children are written by this
                 # writer, not via ``Node.__init__``; without it a >=10-child
                 # ladder/partition would reorder (child_10 before child_2).
-                attrs={"min_pixel_size": float(derived_mps[i]), "child_index": i},
+                attrs={
+                    "coverage_fraction": float(derived_cov[i]),
+                    "child_index": i,
+                },
             )
             if "position_bounds" in cmeta:
                 child_bounds.append(cmeta["position_bounds"])
@@ -422,8 +464,8 @@ def write_gsplat_node(
             group.attrs[k] = v
         group.attrs["type"] = "group"
         group.attrs["kind"] = "lod"
-        group.attrs["selector"] = "pixel_size"
-        # The viewer's INITIAL level (before the pixel-size selector runs) — the
+        group.attrs["selector"] = "coverage"
+        # The viewer's INITIAL level (before the coverage selector runs) — the
         # COARSEST child (child_0). This is purely a progressive-load hint: it
         # makes the scene appear instantly at low detail, then refine. It is
         # deliberately NOT the data-model default (GSplatData.default_substitutive,

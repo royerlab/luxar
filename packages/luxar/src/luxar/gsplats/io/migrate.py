@@ -1,16 +1,22 @@
 """Migrate legacy .gsplats.zarr layouts to the current node-tree format.
 
-Four input shapes are auto-detected:
+Five input shapes are auto-detected:
 
 * **v1.0** ``.gsplats.zarr`` — single flat splat set under ``/splats``.
 * **v1.1** ``.gsplats.zarr`` — multi-LOD additive with ``/splats/lod_<i>/``.
 * **v2.0** ``.gsplats.zarr`` — the 2-D ``substitutive_<s>/additive_<a>`` matrix.
 * **Substitutive directory** — a directory of ``level_<i>.gsplats.zarr`` files
   + ``manifest.json`` (the pre-v2.0 ``lod substitutive`` output).
+* **v3.0 / v3.1 with legacy lod selector attrs** — a node-tree store whose
+  ``kind=lod`` groups still carry the pre-v3.2 ``selector='pixel_size'`` /
+  per-child ``min_pixel_size`` attrs (renamed in v3.2 to ``selector='coverage'``
+  / ``coverage_fraction``). Re-written through the current node-tree
+  reader/writer, which derives fresh ``coverage_fraction`` thresholds from the
+  per-level splat counts and stamps format v3.2.
 
 Each legacy decoder is *frozen* here (the v1.x and v2.0 decode loops were removed
 from the live ``load_gsplats`` path at the v3.0 cutover) and the result is
-re-written via the unified v3.0 node-tree writer (``write_gsplats_tree``).
+re-written via the unified node-tree writer (``write_gsplats_tree``).
 """
 
 from __future__ import annotations
@@ -81,11 +87,36 @@ def _extract_compressed_zarr(compressed_path: Path) -> Path:
     raise ValueError(f"No .gsplats.zarr directory found in {compressed_path}")
 
 
+def _zarr_tree_has_legacy_lod_attrs(group: zarr.Group) -> bool:
+    """True when any ``kind=lod`` group in ``group``'s subtree still carries the
+    pre-v3.2 selector attrs (``selector='pixel_size'`` on the group, or a
+    ``child_<i>`` with ``min_pixel_size`` but no ``coverage_fraction``)."""
+    if group.attrs.get("kind") == "lod":
+        if group.attrs.get("selector") == "pixel_size":
+            return True
+        for name, child in group.groups():
+            if (
+                str(name).startswith("child_")
+                and "min_pixel_size" in child.attrs
+                and "coverage_fraction" not in child.attrs
+            ):
+                return True
+    for _, child in group.groups():
+        if _zarr_tree_has_legacy_lod_attrs(child):
+            return True
+    return False
+
+
 def detect_legacy_format(input_path: Path) -> str:
-    """Return one of ``"v1.0"``, ``"v1.1"``, ``"substitutive_dir"``, or ``"v2.0"``.
+    """Return one of ``"v1.0"``, ``"v1.1"``, ``"substitutive_dir"``, ``"v2.0"``,
+    ``"v3.0-lod-pixel-size"``, or ``"v3.1-lod-pixel-size"``.
+
+    The two ``v3.x-lod-pixel-size`` results identify current node-tree stores
+    whose ``kind=lod`` groups still carry the pre-v3.2 ``pixel_size`` selector
+    attrs; a v3.x store without them is *already current* and raises.
 
     Raises:
-        ValueError: If the input is unrecognised.
+        ValueError: If the input is unrecognised, or already current.
     """
     input_path = Path(input_path)
     # Substitutive directory: has manifest.json + level_<i>.gsplats.zarr files
@@ -112,9 +143,20 @@ def detect_legacy_format(input_path: Path) -> str:
                 if fv in ("1.0", "1.1", "2.0"):
                     return f"v{fv}"
                 if fv in ("3.0", "3.1"):
+                    # A v3.0/v3.1 node tree is current UNLESS its kind=lod
+                    # groups still carry the pre-v3.2 'pixel_size' selector
+                    # attrs (renamed to 'coverage' / coverage_fraction in
+                    # v3.2) — those need a rewrite for correct viewer LOD.
+                    if _zarr_tree_has_legacy_lod_attrs(root):
+                        return f"v{fv}-lod-pixel-size"
                     raise ValueError(
                         f"Input {input_path} is already format v{fv} "
                         f"(a current node-tree format); no migration needed."
+                    )
+                if fv == "3.2":
+                    raise ValueError(
+                        f"Input {input_path} is already format v{fv} "
+                        f"(the current node-tree format); no migration needed."
                     )
         finally:
             if cleanup_temp is not None and cleanup_temp.exists():
@@ -355,6 +397,40 @@ def _read_substitutive_directory(input_path: Path) -> GSplatData:
     return GSplatData(substitutive_levels=substitutive_levels)
 
 
+def _read_v3_root(
+    root: zarr.Group,
+) -> tuple[Any, Dict[str, Any], Dict[str, Any], Dict[str, Any], Dict[str, Any]]:
+    """Read a v3.0 / v3.1 node-tree root via the **live** reader.
+
+    Used for the ``v3.x-lod-pixel-size`` migration: the arrays and topology are
+    already current, only the ``kind=lod`` selector attrs are stale. The live
+    reader ignores the legacy ``min_pixel_size`` / ``selector='pixel_size'``
+    attrs, and the live writer re-derives fresh ``coverage_fraction``
+    thresholds (``sqrt(N_i/N_finest)``) from the per-level splat counts on the
+    subsequent :func:`write_gsplats_tree` — so read→write *is* the migration.
+
+    Returns ``(node, fitting_info, fitting_config, provenance_info,
+    pipeline_info)``. Note the whole tree is materialized in memory (matching
+    the other migrate readers).
+    """
+    from luxar.io._compiler.gsplat_tree import read_gsplat_node
+
+    node = read_gsplat_node(root, root)
+    fitting_info: Dict[str, Any] = {}
+    fitting_config: Dict[str, Any] = {}
+    provenance_info: Dict[str, Any] = {}
+    pipeline_info: Dict[str, Any] = {}
+    if "fitting" in root:
+        fitting_info = dict(root["fitting"].attrs)
+        if "config" in root["fitting"]:
+            fitting_config = dict(root["fitting"]["config"].attrs)
+    if "provenance" in root:
+        provenance_info = dict(root["provenance"].attrs)
+    if "pipeline" in root:
+        pipeline_info = dict(root["pipeline"].attrs)
+    return node, fitting_info, fitting_config, provenance_info, pipeline_info
+
+
 def migrate_format(
     input_path: str | Path,
     output_path: str | Path,
@@ -363,8 +439,9 @@ def migrate_format(
     zip_deflate: bool = False,
     encoding_mode: EncodingMode = EncodingMode.AUTO,
 ) -> str:
-    """Convert a legacy .gsplats.zarr (v1.0 / v1.1 / v2.0) or substitutive
-    directory to the current node-tree format.
+    """Convert a legacy .gsplats.zarr (v1.0 / v1.1 / v2.0), a substitutive
+    directory, or a v3.0/v3.1 store with pre-v3.2 lod selector attrs to the
+    current node-tree format.
 
     The **container format is preserved from the output extension**: an
     ``output_path`` ending in ``.zip`` / ``.tar.gz`` is written as a compressed
@@ -381,12 +458,14 @@ def migrate_format(
     archival data. Other arrays (centers, etc.) follow the same per-array policy.
 
     Returns the detected legacy format identifier (``"v1.0"``, ``"v1.1"``,
-    ``"v2.0"``, or ``"substitutive_dir"``).
+    ``"v2.0"``, ``"substitutive_dir"``, ``"v3.0-lod-pixel-size"``, or
+    ``"v3.1-lod-pixel-size"``).
 
     Raises:
         ValueError: If ``output_path`` exists and ``overwrite`` is False, the
-            input is already in the current node-tree format (v3.0 / v3.1), or
-            the layout is unrecognised.
+            input is already in the current node-tree format (a v3.x store with
+            no pre-v3.2 lod selector attrs left to upgrade), or the layout is
+            unrecognised.
         FileNotFoundError: If ``input_path`` doesn't exist.
     """
     from luxar.gsplats.io.save_gsplats import write_gsplats_tree
@@ -406,11 +485,12 @@ def migrate_format(
     fitting_info: Dict[str, Any] = {}
     fitting_config: Dict[str, Any] = {}
     provenance_info: Dict[str, Any] = {}
+    pipeline_info: Dict[str, Any] = {}
 
     if detected == "substitutive_dir":
-        data = _read_substitutive_directory(input_path)
+        node: Any = _read_substitutive_directory(input_path).tree
     else:
-        # v1.0 / v1.1 / v2.0 .gsplats.zarr (or compressed)
+        # v1.0 / v1.1 / v2.0 / v3.x-lod-pixel-size .gsplats.zarr (or compressed)
         zarr_path = input_path
         cleanup_temp = None
         try:
@@ -418,10 +498,25 @@ def migrate_format(
                 zarr_path = _extract_compressed_zarr(input_path)
                 cleanup_temp = zarr_path.parent
             root = zarr.open_group(str(zarr_path), mode="r")
-            reader = _read_v2_0_root if detected == "v2.0" else _read_v1_x_root
-            data, fitting_info, fitting_config, provenance_info = reader(
-                root, include_stats=True
-            )
+            if detected.endswith("-lod-pixel-size"):
+                # v3.0/v3.1 node tree whose kind=lod groups still carry the
+                # pre-v3.2 'pixel_size' selector attrs. The live read→write
+                # round-trip IS the migration: the reader ignores the stale
+                # attrs and the writer re-derives coverage_fraction /
+                # selector='coverage' from the per-level splat counts.
+                (
+                    node,
+                    fitting_info,
+                    fitting_config,
+                    provenance_info,
+                    pipeline_info,
+                ) = _read_v3_root(root)
+            else:
+                reader = _read_v2_0_root if detected == "v2.0" else _read_v1_x_root
+                data, fitting_info, fitting_config, provenance_info = reader(
+                    root, include_stats=True
+                )
+                node = data.tree
         finally:
             if cleanup_temp is not None and cleanup_temp.exists():
                 shutil.rmtree(cleanup_temp, ignore_errors=True)
@@ -442,19 +537,21 @@ def migrate_format(
     elif out_name.endswith(".tar.gz"):
         compress = "tar.gz"
 
-    # Write via the single v3.0 node-tree writer. ordering="none" preserves the
-    # source element order (no Morton/Hilbert re-sort); encoding still follows
-    # the v3.0 policy (encoding_mode) — so float32 Cholesky is re-encoded to the
-    # split + per-column quantization unless PRECISION is requested (see the
-    # docstring). Fitting / provenance flow through as first-class write inputs.
+    # Write via the single current node-tree writer. ordering="none" preserves
+    # the source element order (no Morton/Hilbert re-sort); encoding still
+    # follows the current policy (encoding_mode) — so float32 Cholesky is
+    # re-encoded to the split + per-column quantization unless PRECISION is
+    # requested (see the docstring). Fitting / provenance / pipeline flow
+    # through as first-class write inputs.
     write_gsplats_tree(
         output_path,
-        data.tree,
+        node,
         ordering="none",
         encoding_mode=encoding_mode,
         fitting_info=fitting_info or None,
         fitting_config=fitting_config or None,
         provenance_info=provenance_info or None,
+        pipeline_info=pipeline_info or None,
         description=f"Migrated from legacy format {detected}",
         compress=compress,
         zip_deflate=zip_deflate,

@@ -66,6 +66,14 @@ mass-preserving amplitude rescale, and is the exact fixed point of the
 level recurrence so it stays calibrated at every depth. Set
 ``coverage_inflation=1.0`` for the historical pure moment match.
 
+**L2 refinement** (``refine="l2"``, opt-in): after each merge, the level is
+Adam-optimized against its fine input under the closed-form mixture L²
+(:mod:`._substitutive.refine`) — the merge (with its β=3 inflation) becomes
+the optimizer *seed*, and the refit takes over the exact calibration. The
+refit is never worse than the merge in its trusted metric, keeps total mass
+pinned to the fine mixture's (no brightness pop across levels), and freezes
+barrier dims under ``coarsen_dims`` grouping.
+
 The returned value is a single :class:`GSplatData` with
 ``n_substitutive = levels + 1`` and ``M_i = 1`` per substitutive level
 (one additive sub-LOD each). On disk this is a single v2.0
@@ -78,6 +86,7 @@ from __future__ import annotations
 
 import math
 import warnings
+from dataclasses import replace
 from typing import Literal, Optional, Sequence, Union, cast
 
 import numpy as np
@@ -94,6 +103,10 @@ from luxar.gsplats.lod._substitutive.kmeans_lloyd import (
     _build_representatives_vectorized,
     _cost_increment_lloyd_vectorized,
 )
+from luxar.gsplats.lod._substitutive.refine import (
+    L2RefineConfig,
+    l2_refine_mixture,
+)
 from luxar.gsplats.lod._substitutive.warm_start import _morton_partition
 from luxar.gsplats.utils.device import resolve_torch_device
 from luxar.gsplats.utils.trils import pack_tril, unpack_tril
@@ -105,6 +118,44 @@ _VALID_METHODS: tuple[MethodName, ...] = (
     "greedy",
     "greedy_lloyd",
 )
+
+#: Post-merge per-level refinement of the substitutive reduction. ``"l2"``
+#: Adam-optimizes each merged level against its fine input under the
+#: closed-form mixture L² (see :mod:`._substitutive.refine`).
+RefineName = Literal["none", "l2"]
+_VALID_REFINE: tuple[RefineName, ...] = ("none", "l2")
+
+
+def _merge_refine_stats(sink: dict, rstats: dict) -> None:
+    """Aggregate per-group refine stats into a per-level sink.
+
+    Counters and wall time sum; trusted E values sum (the objective is additive
+    over disjoint barrier groups, so the summed improvement fraction is the
+    level's); booleans OR; the mass ratios are averaged over groups.
+    """
+    for key in ("iters_run", "rebuilds", "nan_grad_skips", "wall_s"):
+        sink[key] = sink.get(key, 0) + rstats.get(key, 0)
+    for key in ("trusted_E_seed", "trusted_E_best"):
+        if key in rstats:
+            sink[key] = sink.get(key, 0.0) + rstats[key]
+    for key in ("minibatched", "mass_drift_warning"):
+        sink[key] = bool(sink.get(key, False) or rstats.get(key, False))
+    for key in ("mass_vs_seed", "mass_vs_fine"):
+        if key in rstats:
+            n = sink.get("_mass_n", 0)
+            sink[key] = (sink.get(key, 0.0) * n + rstats[key]) / (n + 1)
+    if "mass_vs_fine" in rstats:
+        sink["_mass_n"] = sink.get("_mass_n", 0) + 1
+    if "trusted_E_seed" in sink:
+        seed_e = float(sink["trusted_E_seed"])
+        best_e = float(sink.get("trusted_E_best", seed_e))
+        # Presence-gated (not truthiness: an exactly-0.0 summed seed objective
+        # is valid and must still report the improvement). Normalize by
+        # |seed E|; in the degenerate zero-seed case fall back to |best E| so
+        # a real improvement yields a finite, meaningful fraction.
+        denom = abs(seed_e) if seed_e != 0.0 else abs(best_e)
+        sink["improvement_frac"] = (seed_e - best_e) / max(denom, 1e-30)
+
 
 # ``method="auto"`` resolves per level: greedy (highest quality, and fastest at
 # small N) when a level's input count is at or below this threshold, otherwise
@@ -285,6 +336,10 @@ def _reduce_one_level_grouped(
     candidate_bins_k: int,
     coverage_inflation: float,
     device: torch.device,
+    conserve_mass: bool = True,
+    refine_config: "Optional[L2RefineConfig]" = None,
+    generator: "Optional[torch.Generator]" = None,
+    refine_stats: Optional[dict] = None,
 ) -> GSplatData:
     """One reduction level that never merges across the barrier dims.
 
@@ -292,7 +347,17 @@ def _reduce_one_level_grouped(
     dims except ``coarsen_dims``); each group is reduced independently with the
     **unchanged** :func:`_reduce_one_level` and a proportional share of
     ``M_target``, then concatenated. Within a group every barrier coordinate is
-    identical, so the merged representatives stay on that value.
+    identical, so the merged representatives stay on that value. When an L2
+    refine is configured, each per-group refit receives the barrier dims as
+    ``frozen_dims`` so refined centers/covariances never move or widen across a
+    barrier; kept-as-is small groups are not refined (nothing was merged).
+
+    Note: with ``refine="l2"`` and many barrier groups (e.g. a long
+    time/channel axis), a full independent refit — standardize + spatial-hash
+    build + Adam loop — runs *per group*, so wall time scales with the group
+    count. This is the correctness-first choice (groups must not blend); the
+    per-group cost is why refine at whole-timelapse scale is validated
+    separately before being exposed on ``batch-fit merge``.
     """
     d_total = data.ndim
     coarsen_set = set(coarsen_dims)
@@ -306,12 +371,19 @@ def _reduce_one_level_grouped(
             candidate_bins_k=candidate_bins_k,
             coverage_inflation=coverage_inflation,
             device=device,
+            conserve_mass=conserve_mass,
+            mass_dims=None,
+            refine_config=refine_config,
+            generator=generator,
+            refine_stats=refine_stats,
         )
     keys = np.asarray(data.centers)[:, barrier]
     _group_ids, inverse = np.unique(keys, axis=0, return_inverse=True)
     inverse = np.asarray(inverse).reshape(-1)
     g_count = int(inverse.max()) + 1 if inverse.size else 0
     if g_count <= 1:
+        # A single group: every barrier coordinate is shared, so the refit
+        # still freezes the barrier dims (centers/Σ must stay on the value).
         return _reduce_one_level(
             data,
             M_target=M_target,
@@ -320,6 +392,12 @@ def _reduce_one_level_grouped(
             candidate_bins_k=candidate_bins_k,
             coverage_inflation=coverage_inflation,
             device=device,
+            conserve_mass=conserve_mass,
+            mass_dims=tuple(coarsen_dims),
+            refine_config=refine_config,
+            refine_frozen_dims=tuple(barrier),
+            generator=generator,
+            refine_stats=refine_stats,
         )
     sizes = np.bincount(inverse, minlength=g_count)
     if M_target < g_count:
@@ -352,6 +430,12 @@ def _reduce_one_level_grouped(
                     candidate_bins_k=candidate_bins_k,
                     coverage_inflation=coverage_inflation,
                     device=device,
+                    conserve_mass=conserve_mass,
+                    mass_dims=tuple(coarsen_dims),
+                    refine_config=refine_config,
+                    refine_frozen_dims=tuple(barrier),
+                    generator=generator,
+                    refine_stats=refine_stats,
                 )
             )
     return _concat_gsplatdata(parts)
@@ -371,6 +455,9 @@ def make_substitutive_lod(
     lloyd_iterations: int = 5,
     candidate_bins_k: int = 12,
     coverage_inflation: float = 3.0,
+    conserve_mass: bool = True,
+    refine: RefineName = "none",
+    refine_iters: int = 120,
     device: Union[str, torch.device, None] = "auto",
     seed: Optional[int] = None,
     coarsen_dims: Optional[Sequence[int]] = None,
@@ -416,14 +503,39 @@ def make_substitutive_lod(
         so the calibration holds at every level. ``1.0`` disables
         (historical pure-moment-matching behaviour). Trade-off: coarse
         levels look slightly smoother; each splat's integral (X-ray
-        projection) is preserved exactly.
+        projection) is preserved exactly. With ``refine="l2"`` the
+        inflation is demoted from final answer to *optimizer seed*: the
+        refit takes over the exact flat-sum calibration.
+    conserve_mass
+        Rescale each reduced level's amplitudes by one global factor so its
+        total mass over the coarsened dims equals its fine input's (per
+        barrier group under ``coarsen_dims``). The per-bin L²-optimal
+        amplitude is not mass-preserving (3–17 % loss per level measured,
+        content-dependent), and that mass is the DC an additive render
+        integrates — uncorrected it shows as a brightness pop at every LOD
+        switch. Default True; ``False`` restores the raw per-bin amplitudes.
+        The rescale is skipped (with a warning) when the implied factor
+        falls outside ``[0.1, 10]`` — a numerically degenerate coarsened-dim
+        mass, where "conserving" it would blow the amplitudes up instead.
+    refine
+        Post-merge per-level refinement. ``"l2"`` Adam-optimizes each
+        merged level's ``(mu, Σ, a)`` against that level's fine input
+        under the closed-form mixture L² (sparse pair lists, trusted
+        checkpoints, total mass pinned to the fine mixture's — see
+        :mod:`._substitutive.refine`). Never worse than the merge in the
+        trusted metric; substantially higher fidelity (prototype: rel-L²
+        0.089 vs 0.151 on flat fields, peak preservation 0.99 vs 0.91 on
+        isolated blobs). ``"none"`` (default) keeps the merge output.
+    refine_iters
+        Adam steps per refined level (only with ``refine="l2"``).
     device
         ``"auto"`` (default), ``"cpu"``, ``"cuda"``, ``"mps"``, or a
         :class:`torch.device`.
     seed
-        Accepted for API stability; the Morton warm start and the
-        synchronous Lloyd pass are deterministic, so it has no effect on
-        the ``kmeans*`` methods.
+        Seeds the L2-refine minibatch pair sampler when ``refine="l2"``
+        (a local :class:`torch.Generator`; global torch RNG untouched).
+        Otherwise accepted for API stability only — the Morton warm start
+        and the synchronous Lloyd pass are deterministic.
     coarsen_dims
         Center-column indices that coarsening is *allowed* to cluster/merge
         over. The complementary dims become hard grouping boundaries: splats
@@ -460,6 +572,10 @@ def make_substitutive_lod(
         )
     if coverage_inflation < 1.0:
         raise ValueError(f"coverage_inflation must be >= 1.0, got {coverage_inflation}")
+    if refine not in _VALID_REFINE:
+        raise ValueError(f"refine must be one of {list(_VALID_REFINE)}, got {refine!r}")
+    if refine_iters < 1:
+        raise ValueError(f"refine_iters must be >= 1, got {refine_iters}")
     K = int(compression_factor)
     L_levels = int(levels)
 
@@ -490,7 +606,20 @@ def make_substitutive_lod(
     # Normalise coarsen_dims -> a sorted barrier set (or None == coarsen all dims).
     norm_coarsen = _normalise_coarsen_dims(coarsen_dims, src)
 
-    def _reduce(cur: GSplatData, m_target: int, meth: MethodName) -> GSplatData:
+    # L2 refine setup: a config (only ``iters`` is user-facing) and a LOCAL
+    # torch.Generator for the minibatch pair sampler (global RNG untouched).
+    refine_cfg: Optional[L2RefineConfig] = (
+        replace(L2RefineConfig(), iters=int(refine_iters)) if refine == "l2" else None
+    )
+    refine_gen: Optional[torch.Generator] = None
+    if refine == "l2" and seed is not None:
+        refine_gen = torch.Generator()
+        refine_gen.manual_seed(int(seed))
+
+    def _reduce(
+        cur: GSplatData, m_target: int, meth: MethodName, level_refine_stats: dict
+    ) -> GSplatData:
+        sink = level_refine_stats if refine_cfg is not None else None
         if norm_coarsen is None:
             return _reduce_one_level(
                 cur,
@@ -500,6 +629,11 @@ def make_substitutive_lod(
                 candidate_bins_k=candidate_bins_k,
                 coverage_inflation=coverage_inflation,
                 device=target_device,
+                conserve_mass=conserve_mass,
+                mass_dims=None,
+                refine_config=refine_cfg,
+                generator=refine_gen,
+                refine_stats=sink,
             )
         return _reduce_one_level_grouped(
             cur,
@@ -510,6 +644,10 @@ def make_substitutive_lod(
             candidate_bins_k=candidate_bins_k,
             coverage_inflation=coverage_inflation,
             device=target_device,
+            conserve_mass=conserve_mass,
+            refine_config=refine_cfg,
+            generator=refine_gen,
+            refine_stats=sink,
         )
 
     # Collect per-level outputs and pack them as SubstitutiveLevels.
@@ -543,22 +681,35 @@ def make_substitutive_lod(
             break
         M_target = max(1, math.ceil(N_in / K))
         level_method = _resolve_method(method, N_in)
+        level_refine_stats: dict = {}
         if verbose:
             label = f"{level_method} (auto)" if method == "auto" else level_method
             with asection(
                 f"Substitutive level {level_idx}: {N_in} -> {M_target} splats"
             ):
                 aprint(f"method={label}")
-                new_data = _reduce(current, M_target, level_method)
+                new_data = _reduce(current, M_target, level_method, level_refine_stats)
+                if level_refine_stats:
+                    aprint(
+                        "refine=l2: trusted-E improvement "
+                        f"{level_refine_stats.get('improvement_frac', 0.0):.1%} "
+                        f"({level_refine_stats.get('iters_run', 0)} steps, "
+                        f"{level_refine_stats.get('wall_s', 0.0):.1f}s)"
+                    )
         else:
-            new_data = _reduce(current, M_target, level_method)
+            new_data = _reduce(current, M_target, level_method, level_refine_stats)
+        level_stats: dict = {"n_splats_total": int(new_data.n_splats)}
+        if level_refine_stats:
+            level_refine_stats.pop("_mass_n", None)
+            level_stats["refine"] = "l2"
+            level_stats["refine_stats"] = level_refine_stats
         sub_levels.append(
             _pack_level(
                 new_data,
                 compression_factor=K**level_idx,
                 parent_method=level_method,
                 level_index=level_idx,
-                stats={"n_splats_total": int(new_data.n_splats)},
+                stats=level_stats,
             )
         )
         current = new_data
@@ -571,6 +722,9 @@ def make_substitutive_lod(
             "method": method,
             "n_substitutive_levels": len(sub_levels),
             "coverage_inflation": float(coverage_inflation),
+            "conserve_mass": bool(conserve_mass),
+            "refine": refine,
+            "refine_iters": int(refine_iters) if refine == "l2" else None,
             "coarsen_dims": list(norm_coarsen) if norm_coarsen is not None else None,
         }
     )
@@ -582,6 +736,46 @@ def make_substitutive_lod(
 # ─────────────────────────────────────────────────────────────────────
 
 
+#: ``conserve_mass`` guard: the global amplitude rescale is skipped (with a
+#: warning) when the implied factor leaves ``[1/x, x]`` for this bound. The
+#: per-bin L²-optimal amplitude loses only 3–17 % mass per level (the measured
+#: drift this feature corrects), so a legitimate correction is a few tens of
+#: percent; a factor beyond 10x / below 0.1x means the coarsened-dim mass is
+#: numerically degenerate (e.g. most representatives' submatrices collapsed to
+#: ~zero determinant, leaving ``mass_out`` tiny-but-positive) and rescaling
+#: would blow amplitudes up (white-out) rather than fix a drift.
+_MASS_SCALE_BOUND = 10.0
+
+
+def _subset_mass(
+    L: torch.Tensor,
+    amps: torch.Tensor,
+    dims: Optional[tuple[int, ...]],
+    chunk: int = 2_000_000,
+) -> float:
+    """Total mass ``Σ a·|Σ[dims,dims]|^{1/2}`` over a dim subset (chunked).
+
+    ``dims=None`` uses the full covariance (``|Σ|^{1/2} = Π diag(L)``). For a
+    subset — the *coarsened* dims of a barrier-grouped reduction — the
+    submatrix determinant is the mass a viewer slicing over the barrier dims
+    actually integrates, immune to any barrier-width numerics. Degenerate
+    (non-PD) submatrices contribute zero.
+    """
+    if dims is None:
+        diag = torch.diagonal(L, dim1=-2, dim2=-1).abs()
+        return float((amps * torch.prod(diag, dim=-1)).sum())
+    idx = torch.as_tensor(dims, dtype=torch.int64, device=L.device)
+    total = 0.0
+    for s in range(0, L.shape[0], chunk):
+        Ls = L[s : s + chunk]
+        sub = (Ls @ Ls.transpose(-1, -2))[:, idx][:, :, idx]
+        Lc, info = torch.linalg.cholesky_ex(sub)
+        det = torch.prod(torch.diagonal(Lc, dim1=-2, dim2=-1).abs(), dim=-1)
+        det = torch.where(info == 0, det, torch.zeros_like(det))
+        total += float((amps[s : s + chunk] * det).sum())
+    return total
+
+
 def _reduce_one_level(
     data: GSplatData,
     *,
@@ -591,8 +785,32 @@ def _reduce_one_level(
     candidate_bins_k: int,
     coverage_inflation: float,
     device: torch.device,
+    conserve_mass: bool = True,
+    mass_dims: Optional[tuple[int, ...]] = None,
+    refine_config: Optional[L2RefineConfig] = None,
+    refine_frozen_dims: tuple[int, ...] = (),
+    generator: Optional[torch.Generator] = None,
+    refine_stats: Optional[dict] = None,
 ) -> GSplatData:
-    """Run one application of the partition-and-merge operator $\\mathcal{R}_K$."""
+    """Run one application of the partition-and-merge operator $\\mathcal{R}_K$.
+
+    When ``refine_config`` is given, the merged level is post-optimized against
+    this level's fine input via :func:`l2_refine_mixture` (the merge acts as
+    the seed / trust region; the refit is never worse than it in the trusted
+    metric). ``refine_frozen_dims`` freezes barrier coordinates of a
+    ``coarsen_dims`` group; per-call stats aggregate into ``refine_stats``.
+
+    ``conserve_mass`` (default True) rescales the merged amplitudes by one
+    global factor so the level's total mass over ``mass_dims`` (the coarsened
+    dims; ``None`` = all) equals the fine input's — the per-bin L²-optimal
+    amplitude is NOT mass-preserving (measured 3–17 % loss per level,
+    content-dependent), and total mass over the displayed dims is the DC an
+    additive render integrates, so uncorrected drift shows as a visible
+    brightness pop at every LOD switch. Because the grouped path calls this
+    once per barrier group, conservation holds PER GROUP (e.g. per timepoint).
+    The rescale is skipped when the factor leaves ``[1/_MASS_SCALE_BOUND,
+    _MASS_SCALE_BOUND]`` — see the constant's rationale.
+    """
     D = data.ndim
     # np.array (copy) not np.asarray: ``data`` may be a flattened() view with
     # read-only arrays, which torch.from_numpy rejects (non-writable). The
@@ -661,6 +879,43 @@ def _reduce_one_level(
         new_amps = new_amps[keep_mask]
         if new_colors is not None:
             new_colors = new_colors[keep_mask]
+
+    # 4) Mass conservation: one global amplitude factor so this level's total
+    #    mass over the coarsened dims equals the fine input's (per barrier
+    #    group, since the grouped path calls this per group). Runs BEFORE the
+    #    optional refit, whose own mass manifold then sees a consistent seed.
+    if conserve_mass and int(new_amps.numel()) > 0:
+        mass_in = _subset_mass(L_t, amps_t, mass_dims)
+        mass_out = _subset_mass(new_L, new_amps, mass_dims)
+        if mass_in > 0.0 and mass_out > 0.0:
+            scale = mass_in / mass_out
+            if 1.0 / _MASS_SCALE_BOUND <= scale <= _MASS_SCALE_BOUND:
+                new_amps = new_amps * scale
+            else:
+                aprint(
+                    f"  substitutive: conserve_mass rescale skipped — factor "
+                    f"{scale:.3g} outside [{1.0 / _MASS_SCALE_BOUND:g}, "
+                    f"{_MASS_SCALE_BOUND:g}] (degenerate coarsened-dim mass; "
+                    "raw per-bin amplitudes kept)."
+                )
+
+    # 5) Optional L2 refit of the merged level against this level's fine input.
+    #    Colors are untouched: the refit changes no splat count or order, so
+    #    the merge's bin-mass-weighted colors stay aligned.
+    if refine_config is not None and int(new_amps.numel()) > 0:
+        new_centres, new_L, new_amps, rstats = l2_refine_mixture(
+            centres_t,
+            L_t,
+            amps_t,
+            new_centres,
+            new_L,
+            new_amps,
+            config=refine_config,
+            frozen_dims=refine_frozen_dims,
+            generator=generator,
+        )
+        if refine_stats is not None:
+            _merge_refine_stats(refine_stats, rstats)
 
     # Pack back to the GSplatData format.
     centres_np = new_centres.detach().cpu().numpy().astype(np.float32)

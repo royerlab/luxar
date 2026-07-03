@@ -7,7 +7,7 @@ to keep node.py readable.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, Dict, Optional
+from typing import TYPE_CHECKING, Any
 
 from arbol import aprint
 
@@ -20,32 +20,25 @@ def add_lod_group_impl(
     node: "Node",
     name: str,
     *,
-    selector: str = "pixel_size",
+    selector: str = "coverage",
     default_level: int = 0,
-    base_pixel_size: Optional[float] = None,
     **attrs: Any,
 ) -> "Group":
     """Body of :meth:`Node.add_lod_group`."""
-    if selector != "pixel_size":
+    if selector != "coverage":
         raise ValueError(
-            f"selector must be 'pixel_size' (other modes reserved for "
+            f"selector must be 'coverage' (other modes reserved for "
             f"future use), got {selector!r}"
         )
     if default_level < 0:
         raise ValueError(f"default_level must be >= 0, got {default_level}")
-    if base_pixel_size is not None and base_pixel_size <= 0:
-        raise ValueError(f"base_pixel_size must be positive, got {base_pixel_size}")
     try:
         aprint(f"Adding child kind=lod group '{name}' to node '{node.name}'.")
-        extra: Dict[str, Any] = {}
-        if base_pixel_size is not None:
-            extra["base_pixel_size"] = float(base_pixel_size)
         child = node.add_group(
             name,
             kind="lod",
             selector=selector,
             default_level=int(default_level),
-            **extra,
             **attrs,
         )
         aprint(f"✓ Child kind=lod group '{name}' added successfully.")

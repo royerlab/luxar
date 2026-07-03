@@ -6,6 +6,93 @@ All notable changes to Luxar are documented in this file.
 
 ### July 2026
 
+#### Changed (breaking) — recipe vocabulary renamed (plain-language names)
+
+- The `--recipe` vocabulary on `gsplat lod`, `gsplat fit --recipe`, and
+  `batch-fit submit/merge/run --merge-recipe/--recipe` is renamed to
+  plain-language names: `additive`→**`stream`**, `substitutive` &
+  `pyramid`→**`levels`**, `partitioned`→**`tiles`**,
+  `multiscale`→**`overview`**, `mosaic`→**`adaptive`** (`flat` unchanged).
+  Old names are rejected with a pointer to the new spelling; stored batch
+  manifests from pre-rename runs are translated silently (including the
+  generated Slurm merge command). Python math-layer names
+  (`make_substitutive_lod` etc.) are unchanged. In the persisted `pipeline/`
+  provenance, `recipe` (the build instruction) is recorded distinctly from
+  `lod_kind` (the viewer-facing reduction mechanism).
+
+#### Added — `--refine l2` post-merge refinement of substitutive levels
+
+- **`refine="l2"`** on `make_substitutive_lod` (CLI: `--refine l2` /
+  `--refine-iters`, token "substitutive"): each merged level is post-optimized
+  with Adam against the closed-form mixture-to-mixture L² residual over sparse
+  neighbour pair lists, starting from the coverage-inflated moment-matched
+  seed. Unlike the per-bin merge (structurally blind to cross-bin overlap),
+  this objective sees coverage gaps and over-blur, so the refit widens splats
+  where the field is flat and keeps isolated structure tight (measured:
+  rel-L² 0.089 vs 0.151 for the β=3 merge on flat fields; peak preservation
+  0.99 vs 0.91 on isolated blobs). Trusted-checkpoint discipline guarantees
+  the returned iterate is never worse than the seed in the trusted metric.
+  Default remains `none`.
+
+#### Added — mass conservation + proportional ridge (LOD brightness-pop fix)
+
+- **`conserve_mass=True`** (CLI `--conserve-mass/--no-conserve-mass`): each
+  reduced substitutive level's amplitudes are rescaled per barrier group so
+  total mass over the coarsened dims matches the fine input's — fixing the
+  up-to-−11.5 % per-time-slice DC drift (visible as a brightness pop at LOD
+  switches) caused by the per-bin merge not being mass-preserving.
+- The merge's absolute `1e-6` Cholesky ridge is now **proportional**
+  (`1e-9·diag`, retry `1e-6·diag`), so near-delta sigmas on barrier axes
+  (e.g. a time axis) are no longer inflated ~300 000×.
+
+#### Fixed — fitting/pipeline stats survive the `.gsplats.zarr` round-trip
+
+- Pipeline-level fitting info (lod kind, method, `compression_factor`,
+  `coverage_inflation`, `refine`, …) is now written to a new optional
+  `pipeline/` root group and merged back on load (previously silently
+  dropped). `refine_stats` and other nested `level_stats` dicts round-trip
+  via JSON-safe encoding (`json_safe_value`). Spec updated
+  (`docs/specs/GSPLATS_ZARR_FORMAT.md`); the group is optional, so existing
+  v3.1 stores remain loadable unchanged.
+
+#### Changed — `.gsplats.zarr` format v3.2 (versioned `coverage` selector attrs + migration)
+
+- The `kind=lod` selector attr rename (`selector: "pixel_size"` → `"coverage"`,
+  per-child `min_pixel_size` → `coverage_fraction`) is now a **versioned**
+  format change: the writer stamps `format_version: "3.2"`; readers accept
+  3.0–3.2. Pre-v3.2 datasets are **auto-adapted by the viewer** (legacy
+  `min_pixel_size` ladders normalized to coverage fractions, with one warning
+  naming `migrate-format`) instead of silently pinning every LOD group to the
+  finest level, and `luxar gsplat migrate-format` now also upgrades v3.0/v3.1
+  stores that still carry the legacy `pixel_size` attrs (detected as
+  `v3.x-lod-pixel-size`) to v3.2 with derived `coverage_fraction` thresholds.
+
+#### Changed — viewport-relative `coverage_fraction` LOD switch threshold (replaces absolute-pixel `min_pixel_size`)
+
+- Substitutive/LOD switch thresholds are now a single **viewport-relative**
+  `coverage_fraction` per child: `sqrt(N_i / N_finest)` (`N_i` = level i's
+  total splat count), strictly ascending coarsest→finest (coarsest `0.0`,
+  finest `1.0`). Being a count *ratio*, it is immune to non-displayed-dimension
+  multiplicity (e.g. a stacked time axis inflates every level equally and
+  cancels). The viewer multiplies each `coverage_fraction` by the live
+  viewport diagonal to get the pixel comparison, so the finest level shows
+  when the object fills the screen and coarser levels step in as it shrinks
+  — self-calibrating identically on any monitor/viewport.
+- **Removed** the `extent` (`T·W/r`) and legacy `count` (`√N`) threshold
+  methods and their tuning knobs — `--lod-method` / `--extent-percentile` /
+  `--extent-anisotropy` / `--base-pixel-size` (and the `--merge-lod-method` /
+  `--recipe-lod-method` forms) — from `gsplat lod`, `gsplat fit --recipe`, and
+  `batch-fit`. There is no replacement knob; the derivation is automatic.
+- **Removed** the matching Python API knobs: `RecipeParams.lod_method` /
+  `extent_percentile` / `extent_anisotropy` / `base_pixel_size`;
+  `GSplatData.save()` dropped the same kwargs; `add_lod_group()` dropped
+  `base_pixel_size` and its `selector` default is now `"coverage"`; the
+  `substitutive_lod=`/`lod_group=` explicit-override key `min_pixel_sizes=[...]`
+  is now `coverage_fractions=[...]` (values in `[0, 1]`).
+- On disk, the child zarr attr `min_pixel_size` is now `coverage_fraction`,
+  and the `kind=lod` group's `selector` attr is now `"coverage"` (was
+  `"pixel_size"`).
+
 #### Added — bandwidth-aware streaming additive LODs + `gsplat additive` (per-leaf laddering)
 
 - **`stream:<c>` breakpoints** — a new additive-ladder breakpoint form: geometric

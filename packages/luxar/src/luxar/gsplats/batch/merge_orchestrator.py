@@ -20,7 +20,7 @@ additive partition parts sums to the true signal exactly as the flat concat does
 from __future__ import annotations
 
 from pathlib import Path
-from typing import TYPE_CHECKING, Iterator, List, Optional, Tuple
+from typing import TYPE_CHECKING, Any, Dict, Iterator, List, Optional, Tuple
 
 from arbol import aprint, asection
 
@@ -54,7 +54,7 @@ def merge_batch_results(
             streaming spatial partition. ``flat=True`` reloads ALL tiles into
             memory (the OOM the partition path avoids); use only for small scenes.
         recipe: Optional per-part LOD recipe applied to each spatial tile-part as
-            it streams (one of :data:`PER_PART_RECIPES`: ``additive`` →
+            it streams (one of :data:`PER_PART_RECIPES`: ``stream`` →
             ``partitioned`` topology, ``substitutive`` → ``mosaic``).
             ``None`` keeps the historical bare-leaf parts. Mutually exclusive with
             ``flat`` (flat has no parts to give a ladder to).
@@ -81,17 +81,20 @@ def merge_batch_results(
             "on the large volumes it targets). Drop --flat to use the default "
             "streaming partition merge, which skips empty slots correctly — then, "
             "if you genuinely need a single flat leaf (e.g. to feed `gsplat lod "
-            "--recipe multiscale`), run `luxar gsplat flatten` on the merged "
+            "--recipe overview`), run `luxar gsplat flatten` on the merged "
             "partition."
         )
     if recipe is not None:
-        from luxar.gsplats.lod.recipes import PER_PART_RECIPES
+        from luxar.gsplats.lod.recipes import PER_PART_RECIPES, canonical_recipe_name
 
+        # Stored manifests may carry pre-rename spellings (additive/substitutive)
+        # — translate silently; only CLI input gets the did-you-mean rejection.
+        recipe = canonical_recipe_name(recipe)
         if recipe not in PER_PART_RECIPES:
             raise ValueError(
                 f"merge_batch_results: per-part recipe {recipe!r} is not supported; "
                 f"choose from {', '.join(PER_PART_RECIPES)}. The composed recipes "
-                "(partitioned/multiscale/mosaic) re-partition their input, but each "
+                "(tiles/overview/adaptive) re-partition their input, but each "
                 "tile is already one spatial part."
             )
         # Per-part LOD on uniform (Hann-apodized) tiles only holds the halo
@@ -276,7 +279,7 @@ def _finalize_part_node(
     from luxar.gsplats.lod.recipes import RecipeParams, build_part_lod
 
     params = recipe_params if recipe_params is not None else RecipeParams()
-    if recipe == "substitutive" and params.coarsen_dims is None:
+    if recipe == "levels" and params.coarsen_dims is None:
         # Stacked-timepoint axis (the last column) is a barrier; coarsen the rest.
         n_spatial = part.ndim - (1 if n_timepoints > 1 else 0)
         if n_spatial < part.ndim:
@@ -284,6 +287,69 @@ def _finalize_part_node(
     # build_part_lod clamps LOD depth to the part's splat count (small tiles never
     # synthesise degenerate levels) — the exact per-part logic of partitioned/mosaic.
     return build_part_lod(part.tree, recipe, params)
+
+
+def _recipe_pipeline_info(
+    recipe: Optional[str],
+    recipe_params: "Optional[RecipeParams]",
+) -> Optional[Dict[str, Any]]:
+    """Reduction/topology provenance for the merged store's ``pipeline/`` group.
+
+    Mirrors the stats ``gsplat lod`` persists for the same reduction (the
+    substitutive builder's out_stats keys / the additive-ladder knobs), plus
+    ``per_part=True`` because the merge applies the recipe to each streamed
+    tile-part rather than to the whole dataset. ``coarsen_dims=None`` records
+    the per-part default (spatial dims only; the stacked-timepoint axis stays a
+    hard barrier — see :func:`_finalize_part_node`). ``recipe=None`` → ``None``
+    (bare-leaf parts write no ``pipeline/`` group, matching a plain fit).
+    """
+    if recipe is None:
+        return None
+    from luxar.gsplats.lod.recipes import RecipeParams, canonical_recipe_name
+
+    recipe = canonical_recipe_name(recipe)
+    params = recipe_params if recipe_params is not None else RecipeParams()
+    # ``recipe`` is the build instruction (a recipe, not a structural kind);
+    # ``lod_kind`` is the underlying reduction MECHANISM, matching what the
+    # standalone builders persist (make_substitutive_lod → "substitutive";
+    # make_additive_lod → "additive"). Keeping them distinct: a recipe name
+    # (stream/levels/…) must never masquerade as a lod_kind — before the recipe
+    # rename the two coincided ("additive"/"substitutive"), which hid the mix-up.
+    info: Dict[str, Any] = {
+        "recipe": recipe,
+        "lod_kind": "additive" if recipe == "stream" else "substitutive",
+        "per_part": True,
+    }
+    if recipe == "stream":
+        bp = params.breakpoints
+        info.update(
+            {
+                "n_lods": int(params.n_lods),
+                "method": str(params.additive_method),
+                "breakpoints": bp if isinstance(bp, str) else list(bp),
+            }
+        )
+    else:  # levels → per-part adaptive (a coarse↔fine lod group per tile)
+        info.update(
+            {
+                "compression_factor": int(params.compression_factor),
+                "levels": int(params.levels),
+                "method": str(params.substitutive_method),
+                "coverage_inflation": float(params.coverage_inflation),
+                "conserve_mass": bool(params.conserve_mass),
+                "refine": str(params.refine),
+                "refine_iters": (
+                    int(params.refine_iters) if params.refine == "l2" else None
+                ),
+                "coarsen_dims": (
+                    list(params.coarsen_dims)
+                    if params.coarsen_dims is not None
+                    else None
+                ),
+                "additive_ladders": bool(params.additive_ladders),
+            }
+        )
+    return info
 
 
 def _merge_partition(
@@ -312,6 +378,8 @@ def _merge_partition(
     t_indices, c_indices = _tile_indices(manifest)
     # Slot label MUST match what the fit array wrote (uniform=tile, content=box).
     label = "box" if manifest.mode == "content" else "tile"
+    # Reduction provenance for the pipeline/ group (None without a recipe).
+    pipeline_info = _recipe_pipeline_info(recipe, recipe_params)
 
     # Single tile (K=1) → emit a bare leaf (or, with a recipe, a single lod
     # group / leaf-with-ladder), NOT a 1-part partition.
@@ -332,7 +400,7 @@ def _merge_partition(
                 node = _finalize_part_node(
                     part, recipe, recipe_params, manifest.n_timepoints
                 )
-                write_gsplats_tree(final_path, node)
+                write_gsplats_tree(final_path, node, pipeline_info=pipeline_info)
                 if verbose:
                     aprint(
                         f"  Wrote single {recipe} lod: "
@@ -379,6 +447,7 @@ def _merge_partition(
             final_path,
             _parts,
             max_elements=0,
+            pipeline_info=pipeline_info,
         )
         if verbose:
             aprint(f"  Wrote kind=partition with {n_written} parts{recipe_label}")

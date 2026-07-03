@@ -144,10 +144,28 @@ def _build_representatives_vectorized(
         Sigma_bar = Sigma_infl
 
     # Σ̄ → lower-triangular Cholesky; non-PD / empty bins → identity (then culled
-    # by their zero amplitude). A small ridge mirrors the per-bin fallback.
-    ridge = 1e-6 * torch.eye(D, dtype=dt, device=device)
-    L_bar, info = torch.linalg.cholesky_ex(Sigma_bar + ridge)
+    # by their zero amplitude). The regularisation ridge is PROPORTIONAL per
+    # dim (1e-9·Σ̄_dd), NOT an absolute 1e-6·I: barrier dims of sliced nD data
+    # carry near-delta widths (e.g. a lifted time axis with σ_t ~ 1e-9), and an
+    # absolute ridge would inflate them to √1e-6 = 1e-3 — a ×10⁵ width blow-up
+    # that corrupts every mass/DC accounting downstream (slice brightness,
+    # refine's mass manifold). Bins the gentle ridge cannot fix retry once with
+    # a stronger relative ridge before falling to the zero-amplitude cull.
+    diag_scale = torch.diagonal(Sigma_bar, dim1=-2, dim2=-1).clamp_min(_TINY)
+    L_bar, info = torch.linalg.cholesky_ex(
+        Sigma_bar + 1e-9 * torch.diag_embed(diag_scale)
+    )
     bad = info != 0
+    if bool(bad.any()):
+        # Retry ONLY the failing rows (ridge values unchanged — same 1e-6
+        # relative ridge); refactorizing the full (M, D, D) batch when a
+        # handful of bins are non-PD was pure waste.
+        bad_idx = bad.nonzero(as_tuple=True)[0]
+        retry, info2 = torch.linalg.cholesky_ex(
+            Sigma_bar[bad_idx] + 1e-6 * torch.diag_embed(diag_scale[bad_idx])
+        )
+        L_bar[bad_idx] = retry
+        bad[bad_idx] = info2 != 0
     if bool(bad.any()):
         eye = torch.eye(D, dtype=dt, device=device).expand(M, D, D)
         L_bar = torch.where(bad.view(M, 1, 1), eye, L_bar)
