@@ -35,11 +35,22 @@ import { getWorkerPool } from '../../../workers/worker-pool';
 import { projectLinesInProcess } from '../../../workers/data-worker/projection/in-process';
 import type { UpdateSession } from '../../../profiling/update-profiler';
 
+import type { StagedNoopCommit } from '../commit/noop-commit';
+
 /** Staged data carried between async processing and the GPU commit. */
-export interface StagedLinesCommit {
+export interface StagedLinesGeometryCommit {
   path: string;
+  noop?: undefined;
+  /** Raw loader-returned data — stamped as `committedData` on commit. */
+  sourceData: LoadedLinesData;
   processed: ProcessedLinesData;
 }
+
+/**
+ * Either a real geometry commit or the stamp-only no-op fast path (data
+ * reference-identical to what the GPU already holds — see noop-commit.ts).
+ */
+export type StagedLinesCommit = StagedLinesGeometryCommit | StagedNoopCommit<LoadedLinesData>;
 
 /**
  * Build the projection params consumed by both the worker RPC and the
@@ -231,7 +242,7 @@ export async function processLinesData(
     );
   }
 
-  return { path, processed };
+  return { path, sourceData: data, processed };
 }
 
 // Re-export the commit helper from its focused module so existing

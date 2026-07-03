@@ -26,6 +26,17 @@ import { concatOptionalField, concatRequiredField } from '../loaders/progressive
 import { CACHE_HIT_THRESHOLD_MS } from '../loaders/progressive/constants';
 import { log, Modules, LogEmoji } from '../../utils/log';
 
+/**
+ * Element-wise viewstate equality (query-affecting fields only).
+ *
+ * INVARIANT: this equality is the linchpin of the no-op commit skip.
+ * When it reports equal AND no new LODs loaded, `updateView` returns the
+ * MEMOIZED concatenation — same object reference — and the commit pipeline
+ * treats reference equality as content equality
+ * (`mesh.userData.committedData === data`). Any new query-affecting field
+ * added to the view state MUST be compared here, or the skip will serve
+ * stale data.
+ */
 function viewStatesEqual(a: LinesViewState, b: LinesViewState): boolean {
   if (a.displayDims.length !== b.displayDims.length) return false;
   for (let i = 0; i < a.displayDims.length; i++) {
@@ -149,6 +160,17 @@ export class LinesProgressiveLoader implements LinesDataLoader {
   private monitor: ProgressiveMonitorAdapter;
   private _initialLoadDone = false;
   private _lastAllResident = true;
+  // Memoized concatenation. Keyed on (resetGeneration, loadedLODs.length):
+  // the generation bumps on every view-state reset so a reset-then-reload
+  // back to the same LOD count yields a NEW reference (contents differ),
+  // while an unchanged view state with no new LODs returns the SAME
+  // reference — which the commit pipeline uses to skip no-op re-commits.
+  private _resetGeneration = 0;
+  private _concatCache: {
+    generation: number;
+    lodCount: number;
+    result: LoadedLinesData;
+  } | null = null;
 
   constructor(lodLoaders: LinesSpatialIndexLoader[], nLods: number, path: string) {
     this.lodLoaders = lodLoaders;
@@ -191,6 +213,7 @@ export class LinesProgressiveLoader implements LinesDataLoader {
   ): Promise<LoadedLinesData> {
     if (!this.lastViewState || !viewStatesEqual(viewState, this.lastViewState)) {
       this.loadedLODs = [];
+      this._resetGeneration++;
       this.lastViewState = {
         displayDims: [...viewState.displayDims],
         slicePosition: [...viewState.slicePosition],
@@ -251,7 +274,36 @@ export class LinesProgressiveLoader implements LinesDataLoader {
 
     this.prefetchNextLOD(viewState);
 
-    return concatenateLinesData(this.loadedLODs);
+    return this.concatenateMemoized(session);
+  }
+
+  /**
+   * Concatenate loaded LODs, memoized on (resetGeneration, LOD count).
+   * An unchanged view state with no new LODs returns the SAME object
+   * reference — safe because the result is never mutated downstream
+   * (worker projection inputs are structured-cloned, not transferred) —
+   * letting the commit pipeline skip no-op re-commits by identity.
+   */
+  private concatenateMemoized(session?: UpdateSession): LoadedLinesData {
+    const concatSession = session?.begin('Concatenate LODs');
+    try {
+      if (
+        this._concatCache &&
+        this._concatCache.generation === this._resetGeneration &&
+        this._concatCache.lodCount === this.loadedLODs.length
+      ) {
+        return this._concatCache.result;
+      }
+      const result = concatenateLinesData(this.loadedLODs);
+      this._concatCache = {
+        generation: this._resetGeneration,
+        lodCount: this.loadedLODs.length,
+        result,
+      };
+      return result;
+    } finally {
+      concatSession?.end();
+    }
   }
 
   private prefetchNextLOD(viewState: LinesViewState): void {
@@ -290,5 +342,6 @@ export class LinesProgressiveLoader implements LinesDataLoader {
     this.lodLoaders = [];
     this.loadedLODs = [];
     this.lastViewState = null;
+    this._concatCache = null;
   }
 }

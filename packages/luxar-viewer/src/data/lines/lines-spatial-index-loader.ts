@@ -552,48 +552,51 @@ export class LinesSpatialIndexLoader implements LinesDataLoader {
       // Profile vertex loading (accumulator path)
       const loadVertSession = session?.begin('Load Vertices');
       try {
-        // Load directly into accumulator buffers (ZERO intermediate allocations!)
-        await this.loadVertexRanges('vertices', mergedVertexRanges, attrs.ndim, vertexBuffer);
-
-        if (this.arrays.widths) {
-          await this.loadVertexRanges('widths', mergedVertexRanges, 1, widthBuffer);
-        } else {
-          // Create default widths directly in buffer
-          widthBuffer.fill(1.0, 0, sortedIndices.length);
-        }
-
-        // Load colors if present
-        // NOTE: For encoded arrays, loadColorRanges uses Float32 intermediate buffer
-        // then converts to original dtype - it may return a different buffer than targetBuffer.
-        // We load without target buffer and copy the result to ensure correctness.
-        if (colorBuffer) {
-          const loadedColors = await this.loadColorRanges(mergedVertexRanges);
-          // Copy loaded colors to accumulator's colorBuffer
-          // Note: TypedArray.set() handles type conversion automatically
-          colorBuffer.set(loadedColors as ArrayLike<number>);
-        }
-
-        if (sharpnessBuffer) {
-          await this.loadVertexRanges('sharpness', mergedVertexRanges, 1, sharpnessBuffer);
-        }
-
-        // Load per-vertex scalars directly into the accumulator buffer.
-        // The accumulator may hold a Uint8Array scalar buffer once the
-        // first fill() observes Uint8 input, but the spatial-index path
-        // hits this branch before any fill() and therefore sees the
-        // constructor's default Float32Array. The `loadVertexRanges` API
-        // is Float32-only by design; routing Uint8 zarr scalars through it
-        // would require a typed-buffer variant.
-        if (scalarBuffer) {
-          await this.loadVertexRanges(
-            'scalars',
-            mergedVertexRanges,
-            1,
-            scalarBuffer as Float32Array
-          );
-          // Flip the hasScalars flag — direct buffer writes bypass fill().
-          this._accumulator.markScalarsLoaded();
-        }
+        // Load ALL vertex-attribute arrays CONCURRENTLY, directly into
+        // accumulator buffers (ZERO intermediate allocations!) — distinct
+        // zarr arrays writing into distinct buffers; the global fetch gate
+        // (utils/fetch-concurrency.ts) bounds total network concurrency.
+        // (The segments → vertices stage boundary above stays sequential:
+        // vertex ranges are derived from segment contents.)
+        await Promise.all([
+          this.loadVertexRanges('vertices', mergedVertexRanges, attrs.ndim, vertexBuffer),
+          this.arrays.widths
+            ? this.loadVertexRanges('widths', mergedVertexRanges, 1, widthBuffer)
+            : // Create default widths directly in buffer
+              Promise.resolve(widthBuffer.fill(1.0, 0, sortedIndices.length)),
+          // Load colors if present
+          // NOTE: For encoded arrays, loadColorRanges uses Float32 intermediate buffer
+          // then converts to original dtype - it may return a different buffer than targetBuffer.
+          // We load without target buffer and copy the result to ensure correctness.
+          colorBuffer
+            ? this.loadColorRanges(mergedVertexRanges).then((loadedColors) => {
+                // Copy loaded colors to accumulator's colorBuffer
+                // Note: TypedArray.set() handles type conversion automatically
+                colorBuffer.set(loadedColors as ArrayLike<number>);
+              })
+            : Promise.resolve(),
+          sharpnessBuffer
+            ? this.loadVertexRanges('sharpness', mergedVertexRanges, 1, sharpnessBuffer)
+            : Promise.resolve(),
+          // Load per-vertex scalars directly into the accumulator buffer.
+          // The accumulator may hold a Uint8Array scalar buffer once the
+          // first fill() observes Uint8 input, but the spatial-index path
+          // hits this branch before any fill() and therefore sees the
+          // constructor's default Float32Array. The `loadVertexRanges` API
+          // is Float32-only by design; routing Uint8 zarr scalars through it
+          // would require a typed-buffer variant.
+          scalarBuffer
+            ? this.loadVertexRanges(
+                'scalars',
+                mergedVertexRanges,
+                1,
+                scalarBuffer as Float32Array
+              ).then(() => {
+                // Flip the hasScalars flag — direct buffer writes bypass fill().
+                this._accumulator!.markScalarsLoaded();
+              })
+            : Promise.resolve(),
+        ]);
       } finally {
         loadVertSession?.end();
       }
@@ -637,37 +640,26 @@ export class LinesSpatialIndexLoader implements LinesDataLoader {
     // undefined matches `LoadedLinesData.scalars?: ScalarArray`.
     let scalars: Float32Array | undefined;
 
-    if (session) {
-      const loadVertSession = session.begin('Load Vertices');
-      try {
-        vertexPositions = await this.loadVertexRanges('vertices', mergedVertexRanges, attrs.ndim);
-        widths = this.arrays.widths
-          ? await this.loadVertexRanges('widths', mergedVertexRanges, 1)
-          : this.createDefaultWidths(sortedIndices.length);
+    // All five vertex-attribute arrays load CONCURRENTLY (distinct zarr
+    // arrays, distinct freshly-allocated output buffers).
+    const loadVertSession = session?.begin('Load Vertices');
+    try {
+      [vertexPositions, widths, colors, sharpness, scalars] = await Promise.all([
+        this.loadVertexRanges('vertices', mergedVertexRanges, attrs.ndim),
+        this.arrays.widths
+          ? this.loadVertexRanges('widths', mergedVertexRanges, 1)
+          : Promise.resolve(this.createDefaultWidths(sortedIndices.length)),
         // Use multi-type loadColorRanges for colors
-        colors = this.arrays.colors ? await this.loadColorRanges(mergedVertexRanges) : null;
-        sharpness = this.arrays.sharpness
-          ? await this.loadVertexRanges('sharpness', mergedVertexRanges, 1)
-          : null;
-        scalars = this.arrays.scalars
-          ? await this.loadVertexRanges('scalars', mergedVertexRanges, 1)
-          : undefined;
-      } finally {
-        loadVertSession.end();
-      }
-    } else {
-      vertexPositions = await this.loadVertexRanges('vertices', mergedVertexRanges, attrs.ndim);
-      widths = this.arrays.widths
-        ? await this.loadVertexRanges('widths', mergedVertexRanges, 1)
-        : this.createDefaultWidths(sortedIndices.length);
-      // Use multi-type loadColorRanges for colors
-      colors = this.arrays.colors ? await this.loadColorRanges(mergedVertexRanges) : null;
-      sharpness = this.arrays.sharpness
-        ? await this.loadVertexRanges('sharpness', mergedVertexRanges, 1)
-        : null;
-      scalars = this.arrays.scalars
-        ? await this.loadVertexRanges('scalars', mergedVertexRanges, 1)
-        : undefined;
+        this.arrays.colors ? this.loadColorRanges(mergedVertexRanges) : Promise.resolve(null),
+        this.arrays.sharpness
+          ? this.loadVertexRanges('sharpness', mergedVertexRanges, 1)
+          : Promise.resolve(null),
+        this.arrays.scalars
+          ? this.loadVertexRanges('scalars', mergedVertexRanges, 1)
+          : Promise.resolve(undefined),
+      ]);
+    } finally {
+      loadVertSession?.end();
     }
 
     const remapSession = session?.begin('Index Remap');

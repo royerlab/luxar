@@ -449,3 +449,73 @@ describe('GSplatsProgressiveLoader', () => {
     });
   });
 });
+
+describe('GSplatsProgressiveLoader — concat memoization (no-op commit skip)', () => {
+  let lodA: SubLoaderStub;
+  let lodB: SubLoaderStub;
+  let loader: GSplatsProgressiveLoader;
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+    lodA = makeSubLoader(makeLodData(100));
+    lodB = makeSubLoader(makeLodData(50));
+    loader = new GSplatsProgressiveLoader(
+      [lodA, lodB] as unknown as GSplatsSpatialIndexLoader[],
+      2,
+      '/test_gsplats'
+    );
+  });
+
+  it('returns the IDENTICAL reference for a repeat call with unchanged view state', async () => {
+    const first = await loader.updateView(baseViewState);
+    expect(first.splatCount).toBe(150);
+    const second = await loader.updateView(baseViewState);
+    // Same reference — the commit pipeline uses this identity to skip
+    // no-op re-commits (mesh.userData.committedData === data).
+    expect(second).toBe(first);
+  });
+
+  it('returns a NEW reference after a view-state change back to the same LOD count (resetGeneration)', async () => {
+    const first = await loader.updateView(baseViewState);
+    expect(first.splatCount).toBe(150);
+
+    // Scrub away…
+    const away = await loader.updateView({
+      ...baseViewState,
+      slicePosition: [1, 1, 1],
+    });
+    expect(away).not.toBe(first);
+
+    // …and back: same slicing state, same LOD count as `first` — but the
+    // loaders re-fetched, so contents may differ. Must NOT be the memo.
+    const back = await loader.updateView(baseViewState);
+    expect(back).not.toBe(first);
+
+    // Repeat at the restored state memoizes again.
+    const backAgain = await loader.updateView(baseViewState);
+    expect(backAgain).toBe(back);
+  });
+
+  it('returns a NEW reference when a refinement pass adds a LOD level', async () => {
+    // 3 LODs with a cache miss at level 1: the first call loads LOD 0 and
+    // the missing LOD 1, then stops - LOD 2 is left for refinement.
+    const lodC = makeSubLoader(makeLodData(25));
+    loader = new GSplatsProgressiveLoader(
+      [lodA, lodB, lodC] as unknown as GSplatsSpatialIndexLoader[],
+      3,
+      '/test_gsplats'
+    );
+    lodB.updateViewWithResidency.mockImplementation(async () => ({
+      data: makeLodData(50),
+      allResident: false,
+    }));
+
+    const first = await loader.updateView(baseViewState);
+    expect(first.splatCount).toBe(150); // LOD 0 + LOD 1 (the miss breaks the loop)
+    expect(loader.hasMoreLODs).toBe(true);
+
+    const second = await loader.updateView(baseViewState);
+    expect(second.splatCount).toBe(175); // LOD 2 added
+    expect(second).not.toBe(first);
+  });
+});

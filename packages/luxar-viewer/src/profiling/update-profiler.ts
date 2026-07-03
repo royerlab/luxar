@@ -3,8 +3,17 @@
  *
  * Provides low-overhead profiling of the scene update pipeline with:
  * - Hierarchical timing breakdown (parent/child relationships)
- * - Exponential moving average (alpha=0.1) for smooth averages
- * - Metadata tracking (chunks, cache hits, point counts)
+ * - TWO persistent timing trees: 'Total Update' (per-frame demand updates)
+ *   and 'LOD Refinement' (background passes that load LODs 1..N after
+ *   first paint, see data/scene-loader/progressive/refinement.ts)
+ * - Per-update sequence accounting: multiple sessions with the same name
+ *   within ONE update SUM into a single row (a progressive loader opens one
+ *   'Load Arrays' per LOD level); rows not touched by the latest update are
+ *   flagged `stale` so the UI can grey them out instead of showing a stale
+ *   lastMs next to fresh parent rows
+ * - Exponential moving average (alpha=0.1), one sample per update
+ * - Metadata tracking (chunks, cache hits, point counts) — numeric fields
+ *   sum across same-update merges
  * - 60fps budget awareness (>16ms highlighted)
  * - Context/ambient pattern with stack-based session management
  * - Convenient time() helper for wrapping async operations
@@ -21,10 +30,23 @@
  * session.setMetadata({ chunks: ranges.length });
  * // ... do work ...
  * session.end();
+ *
+ * // Background refinement pass (its own tree, own pass counter)
+ * const pass = profiler.beginPass();
+ * const node = pass.begin('GSplats (/path)');
+ * // ... load + commit ...
+ * node.end();
+ * pass.end();
  * ```
  */
 
 import { log, Modules } from '../utils/log';
+
+/** Name of the persistent root for per-frame demand updates. */
+export const TOTAL_UPDATE_ROOT = 'Total Update';
+
+/** Name of the persistent root for background LOD-refinement passes. */
+export const REFINEMENT_ROOT = 'LOD Refinement';
 
 /**
  * Metadata that can be attached to timing entries
@@ -50,17 +72,27 @@ export interface TimingMetadata {
   info?: string;
 }
 
+/** Numeric metadata fields that SUM when same-name sessions merge within one update. */
+const SUMMED_METADATA_KEYS = [
+  'chunks',
+  'cacheHits',
+  'cacheMisses',
+  'points',
+  'segments',
+  'splats',
+] as const;
+
 /**
  * A single timing entry in the hierarchy
  */
 export interface TimingEntry {
   /** Name of this timing entry */
   name: string;
-  /** Last measured duration in ms */
+  /** Last measured duration in ms (summed across same-update merges) */
   lastMs: number;
-  /** Exponential moving average in ms */
+  /** Exponential moving average in ms (one sample per update) */
   avgMs: number;
-  /** Number of measurements (for debugging) */
+  /** Number of updates this operation ran in */
   count: number;
   /** Child timing entries */
   children: TimingEntry[];
@@ -68,6 +100,21 @@ export interface TimingEntry {
   metadata?: TimingMetadata;
   /** Whether this entry exceeds 60fps budget (>16ms) */
   overBudget?: boolean;
+  /** Sequence number of the update/pass this entry last recorded in */
+  lastSeq?: number;
+  /**
+   * The avgMs value BEFORE the current update's samples — lets a second
+   * same-name session in the same update recompute the EMA against the
+   * pre-update base instead of double-applying alpha.
+   */
+  emaBase?: number;
+  /**
+   * True when this entry did NOT run in its tree's latest update/pass.
+   * The UI greys stale rows and excludes their lastMs from aggregation
+   * sums (a stale 94ms child under a fresh 29ms parent is the exact
+   * artifact this prevents).
+   */
+  stale?: boolean;
 }
 
 /**
@@ -91,6 +138,31 @@ const EMA_ALPHA = 0.1;
 const FRAME_BUDGET_MS = 16.67;
 
 /**
+ * Merge metadata from a same-update sibling session: numeric fields sum,
+ * `skipped` survives only if BOTH were skipped, string fields last-wins.
+ */
+function mergeMetadata(
+  a: TimingMetadata | undefined,
+  b: TimingMetadata | undefined
+): TimingMetadata | undefined {
+  if (!a) return b;
+  if (!b) return a;
+  const out: TimingMetadata = { ...a, ...b };
+  for (const key of SUMMED_METADATA_KEYS) {
+    if (a[key] !== undefined || b[key] !== undefined) {
+      out[key] = (a[key] ?? 0) + (b[key] ?? 0);
+    }
+  }
+  if (a.skipped === true && b.skipped === true) {
+    out.skipped = true;
+  } else {
+    delete out.skipped;
+    delete out.skipReason;
+  }
+  return out;
+}
+
+/**
  * Internal session implementation
  */
 class SessionImpl implements UpdateSession {
@@ -99,6 +171,15 @@ class SessionImpl implements UpdateSession {
   private ended = false;
   private readonly parent: SessionImpl | null;
   private readonly profiler: UpdateProfiler;
+  /** Which persistent root tree this session's subtree merges into. */
+  private readonly rootName: string;
+  /**
+   * Update/pass sequence this session belongs to. Root sessions capture it
+   * from the profiler at construction; children INHERIT their parent's seq
+   * so a whole session tree always accounts to one update, even if a child
+   * is constructed after a newer update began.
+   */
+  private readonly seq: number;
   // Set by markSkipped() so end() bypasses duration measurement + EMA.
   // Without this flag, skipped entries still record the begin→markSkipped→end
   // overhead because markSkipped() zeroes lastMs/avgMs BEFORE end() runs them.
@@ -110,7 +191,13 @@ class SessionImpl implements UpdateSession {
   // pollute the freshly-rebuilt root tree.
   private readonly generation: number;
 
-  constructor(name: string, parent: SessionImpl | null, profiler: UpdateProfiler) {
+  constructor(
+    name: string,
+    parent: SessionImpl | null,
+    profiler: UpdateProfiler,
+    rootName?: string,
+    seq?: number
+  ) {
     this.entry = {
       name,
       lastMs: 0,
@@ -121,6 +208,8 @@ class SessionImpl implements UpdateSession {
     this.startTime = performance.now();
     this.parent = parent;
     this.profiler = profiler;
+    this.rootName = parent ? parent.rootName : (rootName ?? TOTAL_UPDATE_ROOT);
+    this.seq = parent ? parent.seq : (seq ?? 0);
     this.generation = profiler._currentGeneration();
 
     // Add to parent's children if we have a parent
@@ -168,8 +257,12 @@ class SessionImpl implements UpdateSession {
       this.entry.overBudget = duration > FRAME_BUDGET_MS;
     }
 
+    // Stamp the owning update so the persistent-tree merge can decide
+    // between sum-within-update, rollover, and stale-drop.
+    this.entry.lastSeq = this.seq;
+
     // Merge into profiler's persistent state
-    this.profiler._mergeEntry(this.entry, this.parent?.entry.name);
+    this.profiler._mergeEntry(this.entry, this.parent?.entry.name, this.rootName, this.seq);
   }
 
   setMetadata(meta: Partial<TimingMetadata>): void {
@@ -199,8 +292,8 @@ class SessionImpl implements UpdateSession {
  * Root session that tracks the entire update
  */
 export class RootSession extends SessionImpl {
-  constructor(profiler: UpdateProfiler) {
-    super('Total Update', null, profiler);
+  constructor(profiler: UpdateProfiler, seq: number) {
+    super(TOTAL_UPDATE_ROOT, null, profiler, TOTAL_UPDATE_ROOT, seq);
   }
 }
 
@@ -253,14 +346,11 @@ const NOOP_SESSION = new NoOpSession();
  * parent context at call time, so parallel operations work correctly.
  */
 export class UpdateProfiler {
-  // Persistent timing state (survives across updates)
-  private rootEntry: TimingEntry = {
-    name: 'Total Update',
-    lastMs: 0,
-    avgMs: 0,
-    count: 0,
-    children: [],
-  };
+  // Persistent timing state (survives across updates), one tree per root.
+  private roots = new Map<string, TimingEntry>([
+    [TOTAL_UPDATE_ROOT, UpdateProfiler.makeRoot(TOTAL_UPDATE_ROOT)],
+    [REFINEMENT_ROOT, UpdateProfiler.makeRoot(REFINEMENT_ROOT)],
+  ]);
 
   // Current active session (null when not profiling)
   private activeSession: RootSession | null = null;
@@ -274,12 +364,30 @@ export class UpdateProfiler {
   // Uses AsyncLocalStorage-like pattern: each sync execution path has its own context
   private currentSessionContext: UpdateSession | null = null;
 
+  // Per-update sequence for the 'Total Update' tree (bumped in beginUpdate)
+  // and per-pass sequence for the 'LOD Refinement' tree (bumped in beginPass).
+  // Sessions capture their seq at (root) construction; the merge uses it to
+  // sum same-update siblings, roll over on a new update, and DROP merges
+  // that arrive late from a superseded update.
+  private updateSeq = 0;
+  private passSeq = 0;
+
   // Generation counter, bumped on every reset(). Sessions capture the
   // generation at construction; their end() is a no-op if the profiler's
   // generation has advanced past theirs (the session was "abandoned").
   // Internal: only the SessionImpl reads this — exposed via the package-
   // private `_currentGeneration()` accessor below.
   private generation = 0;
+
+  private static makeRoot(name: string): TimingEntry {
+    return {
+      name,
+      lastMs: 0,
+      avgMs: 0,
+      count: 0,
+      children: [],
+    };
+  }
 
   /**
    * Internal: current generation counter. Read by `SessionImpl` to gate
@@ -303,7 +411,8 @@ export class UpdateProfiler {
       log.warning(Modules.PERFORMANCE, 'Previous session was not ended properly');
     }
 
-    this.activeSession = new RootSession(this);
+    this.updateSeq++;
+    this.activeSession = new RootSession(this, this.updateSeq);
     this.currentSessionContext = this.activeSession;
     return this.activeSession;
   }
@@ -318,6 +427,21 @@ export class UpdateProfiler {
       this.currentSessionContext = null;
       this.activeSessions.clear();
     }
+  }
+
+  /**
+   * Begin a background LOD-refinement pass. Returns a detached root session
+   * that merges into the 'LOD Refinement' persistent tree and does NOT
+   * touch the active update session or the ambient context — a refinement
+   * pass ending mid-update must never disable the update's own profiling.
+   *
+   * Callers pass the returned session explicitly (pass.begin('GSplats (/p)'))
+   * down the load → process → commit chain, mirroring the main update's
+   * per-node top-level sessions.
+   */
+  beginPass(): UpdateSession {
+    this.passSeq++;
+    return new SessionImpl(REFINEMENT_ROOT, null, this, REFINEMENT_ROOT, this.passSeq);
   }
 
   /**
@@ -483,10 +607,18 @@ export class UpdateProfiler {
   }
 
   /**
-   * Get the current timing hierarchy (for UI display)
+   * Get the 'Total Update' timing hierarchy (for UI display)
    */
   getTimings(): TimingEntry {
-    return this.rootEntry;
+    return this.roots.get(TOTAL_UPDATE_ROOT)!;
+  }
+
+  /**
+   * Get the 'LOD Refinement' timing hierarchy (background passes).
+   * `count` on this root is the number of refinement passes recorded.
+   */
+  getRefinementTimings(): TimingEntry {
+    return this.roots.get(REFINEMENT_ROOT)!;
   }
 
   /**
@@ -505,13 +637,12 @@ export class UpdateProfiler {
     this.activeSession = null;
     this.currentSessionContext = null;
     this.activeSessions.clear();
-    this.rootEntry = {
-      name: 'Total Update',
-      lastMs: 0,
-      avgMs: 0,
-      count: 0,
-      children: [],
-    };
+    this.updateSeq = 0;
+    this.passSeq = 0;
+    this.roots = new Map<string, TimingEntry>([
+      [TOTAL_UPDATE_ROOT, UpdateProfiler.makeRoot(TOTAL_UPDATE_ROOT)],
+      [REFINEMENT_ROOT, UpdateProfiler.makeRoot(REFINEMENT_ROOT)],
+    ]);
     this.notifyListeners();
   }
 
@@ -533,55 +664,101 @@ export class UpdateProfiler {
    * Internal: Merge a completed entry into persistent state
    * Called by SessionImpl.end()
    */
-  _mergeEntry(entry: TimingEntry, parentName: string | undefined): void {
-    if (!parentName) {
-      // This is the root entry
-      this.mergeIntoRoot(entry);
-    } else {
-      // Find parent and merge child
-      this.mergeChild(this.rootEntry, entry, parentName);
-    }
+  _mergeEntry(
+    entry: TimingEntry,
+    parentName: string | undefined,
+    rootName: string,
+    seq: number
+  ): void {
+    const root = this.roots.get(rootName);
+    if (!root) return;
 
-    // Notify listeners on root entry completion
     if (!parentName) {
-      this.activeSession = null;
+      // This is a root entry (update root or refinement pass root)
+      this.mergeEntryValues(root, entry, seq);
+      // Sweep: anything this update/pass did NOT touch is now stale. The
+      // root itself just merged with `seq`, so it stays fresh.
+      this.markStaleTree(root, seq);
+
+      // Only the ACTIVE UPDATE root may clear the active session — a
+      // refinement pass root ending while a demand update is in flight
+      // must not disable that update's profiling (beginTopLevel would
+      // start returning NOOP sessions).
+      if (rootName === TOTAL_UPDATE_ROOT) {
+        this.activeSession = null;
+      }
       this.notifyListeners();
+    } else {
+      // Find parent within THIS root's tree and merge child
+      this.mergeChild(root, entry, parentName, seq);
     }
   }
 
   /**
-   * Merge entry into root
+   * Merge a completed session entry's values into a persistent entry.
+   *
+   * - seq OLDER than the persistent entry's → drop (a late merge from a
+   *   superseded update must not overwrite newer data)
+   * - seq EQUAL → same update: SUM lastMs, sum numeric metadata, recompute
+   *   the EMA against the pre-update base (one EMA sample per update)
+   * - seq NEWER → rollover: snapshot avg as emaBase, start a fresh lastMs,
+   *   count++ (count = number of updates the op ran in)
    */
-  private mergeIntoRoot(entry: TimingEntry): void {
-    this.rootEntry.lastMs = entry.lastMs;
-    this.rootEntry.count++;
-
-    // Update EMA
-    if (this.rootEntry.count === 1) {
-      this.rootEntry.avgMs = entry.lastMs;
-    } else {
-      this.rootEntry.avgMs = EMA_ALPHA * entry.lastMs + (1 - EMA_ALPHA) * this.rootEntry.avgMs;
+  private mergeEntryValues(existing: TimingEntry, entry: TimingEntry, seq: number): void {
+    if (existing.lastSeq !== undefined && seq < existing.lastSeq) {
+      return;
     }
 
-    this.rootEntry.overBudget = entry.lastMs > FRAME_BUDGET_MS;
-    this.rootEntry.metadata = entry.metadata;
+    if (existing.lastSeq === seq) {
+      existing.lastMs += entry.lastMs;
+      existing.metadata = mergeMetadata(existing.metadata, entry.metadata);
+    } else {
+      existing.emaBase = existing.count > 0 ? existing.avgMs : undefined;
+      existing.lastMs = entry.lastMs;
+      existing.count++;
+      existing.lastSeq = seq;
+      existing.stale = false;
+      existing.metadata = entry.metadata;
+    }
 
-    // Note: children are NOT re-merged here. Each child session merges itself
-    // via its own SessionImpl.end() → _mergeEntry path. Re-merging here would
-    // double-increment count and double-apply the EMA on every child.
+    if (existing.count === 1) {
+      existing.avgMs = existing.lastMs;
+    } else {
+      existing.avgMs =
+        EMA_ALPHA * existing.lastMs + (1 - EMA_ALPHA) * (existing.emaBase ?? existing.avgMs);
+    }
+
+    existing.overBudget = existing.metadata?.skipped !== true && existing.lastMs > FRAME_BUDGET_MS;
+  }
+
+  /**
+   * Flag every entry the update/pass `seq` did not touch as stale.
+   */
+  private markStaleTree(entry: TimingEntry, seq: number): void {
+    if (entry.lastSeq !== undefined && entry.lastSeq < seq) {
+      entry.stale = true;
+    }
+    for (const child of entry.children) {
+      this.markStaleTree(child, seq);
+    }
   }
 
   /**
    * Find parent entry and merge child into it
    */
-  private mergeChild(current: TimingEntry, child: TimingEntry, parentName: string): boolean {
+  private mergeChild(
+    current: TimingEntry,
+    child: TimingEntry,
+    parentName: string,
+    seq: number
+  ): boolean {
     if (current.name === parentName) {
-      this.mergeChildEntry(current.children, child);
+      this.mergeChildEntry(current.children, child, seq);
       return true;
     }
 
     for (const c of current.children) {
-      if (this.mergeChild(c, child, parentName)) {
+      if (this.mergeChild(c, child, parentName, seq)) {
         return true;
       }
     }
@@ -592,24 +769,12 @@ export class UpdateProfiler {
   /**
    * Merge a child entry into a children array
    */
-  private mergeChildEntry(children: TimingEntry[], entry: TimingEntry): void {
+  private mergeChildEntry(children: TimingEntry[], entry: TimingEntry, seq: number): void {
     // Find existing entry with same name
     const existing = children.find((c) => c.name === entry.name);
 
     if (existing) {
-      // Update existing entry
-      existing.lastMs = entry.lastMs;
-      existing.count++;
-
-      // Update EMA
-      if (existing.count === 1) {
-        existing.avgMs = entry.lastMs;
-      } else {
-        existing.avgMs = EMA_ALPHA * entry.lastMs + (1 - EMA_ALPHA) * existing.avgMs;
-      }
-
-      existing.overBudget = entry.lastMs > FRAME_BUDGET_MS;
-      existing.metadata = entry.metadata;
+      this.mergeEntryValues(existing, entry, seq);
 
       // Note: children are NOT re-merged here. Each child session merges itself
       // via its own SessionImpl.end() → _mergeEntry path (which walks the
@@ -634,6 +799,9 @@ export class UpdateProfiler {
       children: entry.children.map((c) => this.cloneEntry(c)),
       metadata: entry.metadata ? { ...entry.metadata } : undefined,
       overBudget: entry.overBudget,
+      lastSeq: entry.lastSeq,
+      emaBase: entry.emaBase,
+      stale: entry.stale,
     };
   }
 
@@ -661,9 +829,12 @@ export function formatMs(ms: number): string {
 }
 
 /**
- * Check if an entry or any of its children are over budget
+ * Check if an entry or any of its children are over budget.
+ * Stale entries (not touched by the latest update) are ignored — a stale
+ * over-budget child must not paint a fresh parent red.
  */
 export function hasOverBudget(entry: TimingEntry): boolean {
+  if (entry.stale) return false;
   if (entry.overBudget) return true;
   return entry.children.some((c) => hasOverBudget(c));
 }

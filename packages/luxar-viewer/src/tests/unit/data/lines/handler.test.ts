@@ -185,12 +185,13 @@ describe('lines handler', () => {
     expect(loader.updateView).toHaveBeenCalledTimes(1);
     expect(staged).not.toBeNull();
     expect(staged?.path).toBe('/l');
-    // Staged shape is { path, processed } (NOT { path, data } like Points).
-    expect(staged?.processed).toBeDefined();
-    expect(staged?.processed.segmentCount).toBe(1);
-    expect(staged?.processed.startPositions).toBeInstanceOf(Float32Array);
-    expect(staged?.processed.endPositions).toBeInstanceOf(Float32Array);
-    expect(staged?.processed.startPositions.length).toBe(3); // 1 segment × xyz
-    expect(staged?.processed.endPositions.length).toBe(3);
+    // Staged shape is { path, sourceData, processed } (NOT { path, data } like Points).
+    if (!staged || staged.noop) throw new Error('expected a geometry staged commit');
+    expect(staged.processed).toBeDefined();
+    expect(staged.processed.segmentCount).toBe(1);
+    expect(staged.processed.startPositions).toBeInstanceOf(Float32Array);
+    expect(staged.processed.endPositions).toBeInstanceOf(Float32Array);
+    expect(staged.processed.startPositions.length).toBe(3); // 1 segment × xyz
+    expect(staged.processed.endPositions.length).toBe(3);
   });
 });

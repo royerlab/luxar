@@ -1256,6 +1256,18 @@
   opacity: var(--luxar-opacity-disabled);
 }
 
+/* Stale — the operation did not run in the latest update; its values are
+   last-known-from-an-earlier-update and shown de-emphasized. */
+.luxar-timing-panel__row--stale {
+  opacity: var(--luxar-opacity-disabled);
+}
+
+.luxar-timing-panel__row--stale .luxar-timing-panel__last,
+.luxar-timing-panel__row--stale .luxar-timing-panel__avg {
+  font-style: italic;
+  color: var(--luxar-text-muted);
+}
+
 .luxar-timing-panel__name {
   display: flex;
   align-items: center;

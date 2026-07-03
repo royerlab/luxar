@@ -28,6 +28,7 @@ import * as THREE from 'three';
 import type { GSplatsDataLoader, GSplatsMetadata, GSplatsViewState } from '../../types/gsplats';
 import type { LoadedGSplatsData } from '../../types/gsplats';
 import { log, Modules } from '../../utils/log';
+import type { UpdateProfiler, UpdateSession } from '../../profiling/update-profiler';
 import type { ViewState } from '../data-loader-types';
 import type { ViewStateQueue } from '../scene-loader/view-state/view-state-queue';
 import type { StagedGSplatsCommit } from '../scene-loader/process/data-processor-gsplats';
@@ -49,9 +50,17 @@ export interface GSplatsRefinementCtx {
   processGSplats(
     path: string,
     data: LoadedGSplatsData,
-    viewState: GSplatsViewState
+    viewState: GSplatsViewState,
+    session?: UpdateSession
   ): Promise<StagedGSplatsCommit | null>;
-  commitGSplats(staged: StagedGSplatsCommit): void;
+  commitGSplats(staged: StagedGSplatsCommit, session?: UpdateSession): void;
+  /**
+   * Profiler for background-pass accounting. Each per-loader refinement
+   * step opens a 'LOD Refinement' pass root (its own persistent tree,
+   * separate from 'Total Update') with a per-node child session threaded
+   * through load → process → commit.
+   */
+  profiler?: UpdateProfiler | null;
   /** Aggregate visible counts from all line + gsplat meshes into the monitor. */
   updateVisibleCountsInMonitor(): void;
   /**
@@ -92,10 +101,19 @@ export async function runGSplatsRefinement(ctx: GSplatsRefinementCtx): Promise<v
         if (refined.skip) return;
         const gsplatsViewState: GSplatsViewState = refined.viewState;
 
-        const data = await loader.updateView(gsplatsViewState);
-        if (data) {
-          const staged = await ctx.processGSplats(path, data, gsplatsViewState);
-          if (staged) ctx.commitGSplats(staged);
+        // Account this step to the 'LOD Refinement' tree (opened only when
+        // real work happens, so empty sweeps don't record noise passes).
+        const pass = ctx.profiler?.beginPass();
+        const session = pass?.begin(`GSplats (${path})`);
+        try {
+          const data = await loader.updateView(gsplatsViewState, session);
+          if (data) {
+            const staged = await ctx.processGSplats(path, data, gsplatsViewState, session);
+            if (staged) ctx.commitGSplats(staged, session);
+          }
+        } finally {
+          session?.end();
+          pass?.end();
         }
       } catch (error) {
         log.error(

@@ -39,6 +39,7 @@ import {
 } from '../../../rendering/interleaved-attributes';
 import { isPointsUserData } from '../../../types/points';
 import { stampLoadedViewVersion } from './stamp-view-version';
+import { isAlreadyCommitted, type CommittedDataUserData } from './noop-commit';
 import { log, Modules } from '../../../utils/log';
 import type { UpdateSession } from '../../../profiling/update-profiler';
 import type { GPUBufferPool } from '../../../rendering/gpu-buffer-pool';
@@ -78,6 +79,16 @@ export function commitPointsGeometry(
   // same name). Guards against bugs where a placeholder of the wrong
   // type is attached at this path.
   if (!points || !isPointsUserData(points.userData)) return;
+
+  // No-op fast path: the data reference matches what the GPU already holds
+  // (memoized progressive concat — see noop-commit.ts). Points has no
+  // separate process step, so unlike lines/gsplats the check lives here in
+  // the commit helper, covering the atomic-commit, refinement, retry, and
+  // lazy paths uniformly. Refresh only the LOD freshness stamp.
+  if (isAlreadyCommitted(points.userData, data)) {
+    stampLoadedViewVersion(points.userData, loadedViewVersion);
+    return;
+  }
 
   if (data.pointCount === 0) {
     log.info(
@@ -132,6 +143,10 @@ export function commitPointsGeometry(
       points.geometry = geometry;
       syncPointMaterialWithGeometry(points);
       if (attributesRebuilt) invalidateRenderObjectFor(points);
+      // Record the committed data reference — a later update returning the
+      // SAME reference (memoized progressive concat) takes the stamp-only
+      // no-op path above instead of re-uploading.
+      (points.userData as CommittedDataUserData).committedData = data;
       return;
     }
 
@@ -226,6 +241,8 @@ export function commitPointsGeometry(
       // the freshly built geometry's userData.
       syncPointMaterialWithGeometry(points);
     }
+    // Record the committed data reference (see the pool path above).
+    (points.userData as CommittedDataUserData).committedData = data;
   } finally {
     bufferSession?.end();
   }

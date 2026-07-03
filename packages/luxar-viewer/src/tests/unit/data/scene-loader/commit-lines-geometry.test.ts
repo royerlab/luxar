@@ -42,6 +42,19 @@ function makeProcessed(segmentCount = 2): ProcessedLinesData {
   };
 }
 
+function makeSourceData(segmentCount = 2) {
+  return {
+    positions: new Float32Array(segmentCount * 2 * 3),
+    segments: new Uint32Array(segmentCount * 2),
+    widths: new Float32Array(segmentCount * 2),
+    colors: null,
+    sharpness: null,
+    segmentCount,
+    vertexCount: segmentCount * 2,
+    ndim: 3,
+  };
+}
+
 function makeMesh(name: string): THREE.Mesh {
   const mesh = new THREE.Mesh();
   mesh.name = name;
@@ -55,13 +68,21 @@ function makeMesh(name: string): THREE.Mesh {
 
 describe('commitLinesGeometry', () => {
   it('no-ops when rootGroup is null', () => {
-    const staged: StagedLinesCommit = { path: '/lines', processed: makeProcessed() };
+    const staged: StagedLinesCommit = {
+      path: '/lines',
+      sourceData: makeSourceData(),
+      processed: makeProcessed(),
+    };
     expect(() => commitLinesGeometry(staged, null, null, undefined, 0)).not.toThrow();
   });
 
   it('no-ops silently when the mesh has gone missing', () => {
     const root = new THREE.Group();
-    const staged: StagedLinesCommit = { path: '/missing', processed: makeProcessed() };
+    const staged: StagedLinesCommit = {
+      path: '/missing',
+      sourceData: makeSourceData(),
+      processed: makeProcessed(),
+    };
     expect(() => commitLinesGeometry(staged, root, null, undefined, 0)).not.toThrow();
   });
 
@@ -71,7 +92,7 @@ describe('commitLinesGeometry', () => {
     const mesh = makeMesh('/lines');
     root.add(mesh);
     const processed = makeProcessed(7);
-    const staged: StagedLinesCommit = { path: '/lines', processed };
+    const staged: StagedLinesCommit = { path: '/lines', sourceData: makeSourceData(), processed };
     commitLinesGeometry(staged, root, null, undefined, 0);
     expect(mesh.userData.visibleSegmentCount).toBe(7);
     // C6[P2][P11]: pin the actual GPU dispatch — a mutant dropping the
@@ -90,7 +111,11 @@ describe('commitLinesGeometry', () => {
     const root = new THREE.Group();
     const mesh = makeMesh('/lines');
     root.add(mesh);
-    const staged: StagedLinesCommit = { path: '/lines', processed: makeProcessed(4) };
+    const staged: StagedLinesCommit = {
+      path: '/lines',
+      sourceData: makeSourceData(4),
+      processed: makeProcessed(4),
+    };
     commitLinesGeometry(staged, root, null, undefined, 9);
     expect((mesh.userData as { loadedViewVersion?: number }).loadedViewVersion).toBe(9);
   });
@@ -112,7 +137,11 @@ describe('commitLinesGeometry', () => {
       releaseLinesGeometry: () => undefined,
       didLastAcquireRebuildAttributes: () => false,
     };
-    const staged: StagedLinesCommit = { path: '/lines', processed: makeProcessed(11) };
+    const staged: StagedLinesCommit = {
+      path: '/lines',
+      sourceData: makeSourceData(11),
+      processed: makeProcessed(11),
+    };
     mockUpdateInstancedLinesMesh.mockReset();
     expect(() => commitLinesGeometry(staged, root, mockPool, undefined, 0)).not.toThrow();
     expect(mesh.userData.visibleSegmentCount).toBe(11);
@@ -140,12 +169,52 @@ describe('commitLinesGeometry', () => {
       releaseLinesGeometry: vi.fn(),
       didLastAcquireRebuildAttributes: vi.fn(() => false),
     };
-    const staged: StagedLinesCommit = { path: '/lines', processed: makeProcessed(11) };
+    const staged: StagedLinesCommit = {
+      path: '/lines',
+      sourceData: makeSourceData(11),
+      processed: makeProcessed(11),
+    };
     commitLinesGeometry(staged, root, pool as never, undefined, 0);
 
     expect(mesh.geometry).toBe(newGeometry);
     expect(mesh.geometry).not.toBe(beforeGeom);
     expect(pool.acquireLinesGeometry).toHaveBeenCalledTimes(1);
     expect(pool.updateLinesGeometry).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('commitLinesGeometry — no-op commit skip (committedData)', () => {
+  it('stamps committedData with the raw source data on a real commit', () => {
+    mockUpdateInstancedLinesMesh.mockReset();
+    const root = new THREE.Group();
+    const mesh = makeMesh('/lines');
+    root.add(mesh);
+    const staged: StagedLinesCommit = {
+      path: '/lines',
+      sourceData: makeSourceData(3),
+      processed: makeProcessed(3),
+    };
+    commitLinesGeometry(staged, root, null, undefined, 4);
+    if (staged.noop) throw new Error('expected geometry staged commit');
+    expect((mesh.userData as { committedData?: unknown }).committedData).toBe(staged.sourceData);
+  });
+
+  it('noop staged commit stamps loadedViewVersion but touches no geometry', () => {
+    mockUpdateInstancedLinesMesh.mockReset();
+    const root = new THREE.Group();
+    const mesh = makeMesh('/lines');
+    root.add(mesh);
+    const geometryBefore = mesh.geometry;
+
+    const noop: StagedLinesCommit = {
+      path: '/lines',
+      noop: true,
+      sourceData: makeSourceData(3),
+    };
+    commitLinesGeometry(noop, root, null, undefined, 9);
+
+    expect((mesh.userData as { loadedViewVersion?: number }).loadedViewVersion).toBe(9);
+    expect(mesh.geometry).toBe(geometryBefore);
+    expect(mockUpdateInstancedLinesMesh).not.toHaveBeenCalled();
   });
 });

@@ -15,6 +15,7 @@ import type {
   LoadedLinesData,
 } from '../../types/lines';
 import { log, Modules } from '../../utils/log';
+import type { UpdateProfiler, UpdateSession } from '../../profiling/update-profiler';
 import type { ViewState } from '../data-loader-types';
 import type { ViewStateQueue } from '../scene-loader/view-state/view-state-queue';
 import type { StagedLinesCommit } from '../scene-loader/process/data-processor-lines';
@@ -32,9 +33,17 @@ export interface LinesRefinementCtx {
   processLines(
     path: string,
     data: LoadedLinesData,
-    viewState: LinesViewState
+    viewState: LinesViewState,
+    session?: UpdateSession
   ): Promise<StagedLinesCommit | null>;
-  commitLines(staged: StagedLinesCommit): void;
+  commitLines(staged: StagedLinesCommit, session?: UpdateSession): void;
+  /**
+   * Profiler for background-pass accounting. Each per-loader refinement
+   * step opens a 'LOD Refinement' pass root (its own persistent tree,
+   * separate from 'Total Update') with a per-node child session threaded
+   * through load → process → commit.
+   */
+  profiler?: UpdateProfiler | null;
   updateVisibleCountsInMonitor(): void;
   releaseLock(): void;
   retriggerUpdate(pendingState: Partial<ViewState>): void;
@@ -63,10 +72,19 @@ export async function runLinesRefinement(ctx: LinesRefinementCtx): Promise<void>
         if (refined.skip) return;
         const linesVS: LinesViewState = refined.viewState;
 
-        const data = await loader.updateView(linesVS);
-        if (data) {
-          const staged = await ctx.processLines(path, data, linesVS);
-          if (staged) ctx.commitLines(staged);
+        // Account this step to the 'LOD Refinement' tree (opened only when
+        // real work happens, so empty sweeps don't record noise passes).
+        const pass = ctx.profiler?.beginPass();
+        const session = pass?.begin(`Lines (${path})`);
+        try {
+          const data = await loader.updateView(linesVS, session);
+          if (data) {
+            const staged = await ctx.processLines(path, data, linesVS, session);
+            if (staged) ctx.commitLines(staged, session);
+          }
+        } finally {
+          session?.end();
+          pass?.end();
         }
       } catch (error) {
         log.error(

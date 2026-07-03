@@ -16,6 +16,7 @@ import type {
   PointsViewState,
 } from '../../types/points';
 import { log, Modules } from '../../utils/log';
+import type { UpdateProfiler, UpdateSession } from '../../profiling/update-profiler';
 import type { ViewState } from '../data-loader-types';
 import type { ViewStateQueue } from '../scene-loader/view-state/view-state-queue';
 import { runProgressiveRefinement } from '../scene-loader/progressive/refinement';
@@ -34,7 +35,14 @@ export interface PointsRefinementCtx {
    * the helper passes the freshly loaded data straight to
    * `updatePointsGeometry`.
    */
-  updatePointsGeometry(path: string, data: LoadedPointsData): void;
+  updatePointsGeometry(path: string, data: LoadedPointsData, session?: UpdateSession): void;
+  /**
+   * Profiler for background-pass accounting. Each per-loader refinement
+   * step opens a 'LOD Refinement' pass root (its own persistent tree,
+   * separate from 'Total Update') with a per-node child session threaded
+   * through load → commit.
+   */
+  profiler?: UpdateProfiler | null;
   updateVisibleCountsInMonitor(): void;
   releaseLock(): void;
   retriggerUpdate(pendingState: Partial<ViewState>): void;
@@ -63,9 +71,18 @@ export async function runPointsRefinement(ctx: PointsRefinementCtx): Promise<voi
         if (refined.skip) return;
         const pointsVS: PointsViewState = refined.viewState;
 
-        const data = await loader.updateView(pointsVS);
-        if (data) {
-          ctx.updatePointsGeometry(path, data);
+        // Account this step to the 'LOD Refinement' tree (opened only when
+        // real work happens, so empty sweeps don't record noise passes).
+        const pass = ctx.profiler?.beginPass();
+        const session = pass?.begin(`Points (${path})`);
+        try {
+          const data = await loader.updateView(pointsVS, session);
+          if (data) {
+            ctx.updatePointsGeometry(path, data, session);
+          }
+        } finally {
+          session?.end();
+          pass?.end();
         }
       } catch (error) {
         log.error(
