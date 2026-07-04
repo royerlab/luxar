@@ -63,6 +63,41 @@ Reflect.construct = function patchedConstruct<T extends object>(
   );
 } as typeof Reflect.construct;
 
+// Node >= 25 ships an experimental global `localStorage`/`sessionStorage`
+// accessor that evaluates to `undefined` unless Node is started with
+// --localstorage-file. Vitest's jsdom environment copies window properties
+// onto the worker global via `populateGlobal`, but SKIPS any key already
+// present on the global unless it's in Vitest's hardcoded KEYS list —
+// which does not include the storages. On Node >= 25 the key pre-exists
+// (Node's getter), so jsdom's Storage never lands on the global and bare
+// `localStorage.clear()` in tests throws "Cannot read properties of
+// undefined (reading 'clear')". On Node <= 24 the key doesn't pre-exist
+// and everything works — which is why CI (Node 22) is green while newer
+// local Node versions fail.
+//
+// Fix: rebind the globals to the REAL jsdom Storage, reachable via the
+// JSDOM instance that Vitest's jsdom env exposes as `globalThis.jsdom`
+// (its `dom.window` is the original window object, not the augmented
+// global, so its own `localStorage` getter is intact). Node's file-backed
+// storage is NOT a substitute — it would persist across runs and be
+// shared by every worker.
+{
+  const dom = (globalThis as { jsdom?: { window?: Window } }).jsdom;
+  const realWindow = dom?.window;
+  if (realWindow?.localStorage && globalThis.localStorage === undefined) {
+    Object.defineProperty(globalThis, 'localStorage', {
+      value: realWindow.localStorage,
+      configurable: true,
+    });
+  }
+  if (realWindow?.sessionStorage && globalThis.sessionStorage === undefined) {
+    Object.defineProperty(globalThis, 'sessionStorage', {
+      value: realWindow.sessionStorage,
+      configurable: true,
+    });
+  }
+}
+
 // Install all mocks
 installAllMocks();
 

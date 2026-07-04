@@ -87,7 +87,7 @@ from __future__ import annotations
 import math
 import warnings
 from dataclasses import replace
-from typing import Literal, Optional, Sequence, Union, cast
+from typing import TYPE_CHECKING, Literal, Optional, Sequence, Union, cast
 
 import numpy as np
 import torch
@@ -111,6 +111,9 @@ from luxar.gsplats.lod._substitutive.warm_start import _morton_partition
 from luxar.gsplats.utils.device import resolve_torch_device
 from luxar.gsplats.utils.trils import pack_tril, unpack_tril
 
+if TYPE_CHECKING:
+    from luxar.gsplats.lod.volume_refit import VolumeRefitConfig
+
 MethodName = Literal["kmeans", "kmeans_lloyd", "greedy", "greedy_lloyd"]
 _VALID_METHODS: tuple[MethodName, ...] = (
     "kmeans",
@@ -121,9 +124,11 @@ _VALID_METHODS: tuple[MethodName, ...] = (
 
 #: Post-merge per-level refinement of the substitutive reduction. ``"l2"``
 #: Adam-optimizes each merged level against its fine input under the
-#: closed-form mixture L² (see :mod:`._substitutive.refine`).
-RefineName = Literal["none", "l2"]
-_VALID_REFINE: tuple[RefineName, ...] = ("none", "l2")
+#: closed-form mixture L² (see :mod:`._substitutive.refine`). ``"volume"``
+#: warm-start re-fits each merged level against the source volume itself
+#: (see :mod:`.volume_refit`; requires the ``volume`` argument).
+RefineName = Literal["none", "l2", "volume"]
+_VALID_REFINE: tuple[RefineName, ...] = ("none", "l2", "volume")
 
 
 def _merge_refine_stats(sink: dict, rstats: dict) -> None:
@@ -457,7 +462,8 @@ def make_substitutive_lod(
     coverage_inflation: float = 3.0,
     conserve_mass: bool = True,
     refine: RefineName = "none",
-    refine_iters: int = 120,
+    refine_iters: Optional[int] = None,
+    volume: Optional[np.ndarray] = None,
     device: Union[str, torch.device, None] = "auto",
     seed: Optional[int] = None,
     coarsen_dims: Optional[Sequence[int]] = None,
@@ -525,9 +531,25 @@ def make_substitutive_lod(
         :mod:`._substitutive.refine`). Never worse than the merge in the
         trusted metric; substantially higher fidelity (prototype: rel-L²
         0.089 vs 0.151 on flat fields, peak preservation 0.99 vs 0.91 on
-        isolated blobs). ``"none"`` (default) keeps the merge output.
+        isolated blobs). ``"volume"`` warm-start re-fits each merged level
+        against the source ``volume`` itself (a full
+        :func:`~luxar.gsplats.fit_gsplats.fit_gaussian_splats` pass seeded
+        by the merge) — the highest-fidelity option (+5–12 dB over the
+        merge on real microscopy, see :mod:`.volume_refit`); requires
+        ``volume`` and is limited to the no-barrier case (``coarsen_dims``
+        unset/all dims). Each level keeps whichever of {merge seed, re-fit}
+        renders closer to the volume, so it is never worse than the merge.
+        ``"none"`` (default) keeps the merge output.
     refine_iters
-        Adam steps per refined level (only with ``refine="l2"``).
+        Adam steps per refined level (``refine="l2"``) / fit iterations per
+        re-fitted level (``refine="volume"``). ``None`` (default) resolves to
+        the engine's own config default — 120 for ``l2``
+        (:class:`~._substitutive.refine.L2RefineConfig`), 300 for ``volume``
+        (:class:`~.volume_refit.VolumeRefitConfig`).
+    volume
+        The source volume (full resolution, same voxel coordinate frame as
+        the splats) that ``refine="volume"`` fits against. Required for —
+        and only meaningful with — that mode.
     device
         ``"auto"`` (default), ``"cpu"``, ``"cuda"``, ``"mps"``, or a
         :class:`torch.device`.
@@ -574,8 +596,15 @@ def make_substitutive_lod(
         raise ValueError(f"coverage_inflation must be >= 1.0, got {coverage_inflation}")
     if refine not in _VALID_REFINE:
         raise ValueError(f"refine must be one of {list(_VALID_REFINE)}, got {refine!r}")
-    if refine_iters < 1:
+    if refine_iters is not None and refine_iters < 1:
         raise ValueError(f"refine_iters must be >= 1, got {refine_iters}")
+    if refine == "volume" and volume is None:
+        raise ValueError("refine='volume' requires the `volume` argument")
+    if volume is not None and refine != "volume":
+        raise ValueError(
+            "`volume` is only consumed by refine='volume'; "
+            f"got volume with refine={refine!r}"
+        )
     K = int(compression_factor)
     L_levels = int(levels)
 
@@ -605,16 +634,50 @@ def make_substitutive_lod(
 
     # Normalise coarsen_dims -> a sorted barrier set (or None == coarsen all dims).
     norm_coarsen = _normalise_coarsen_dims(coarsen_dims, src)
+    if refine == "volume" and norm_coarsen is not None:
+        raise ValueError(
+            "refine='volume' does not support barrier dims yet "
+            "(coarsen_dims restricts coarsening, but the re-fit targets one "
+            "volume for all barrier groups). Drop coarsen_dims, refit each "
+            "barrier slice against its own volume separately, or use "
+            "refine='l2'."
+        )
 
-    # L2 refine setup: a config (only ``iters`` is user-facing) and a LOCAL
-    # torch.Generator for the minibatch pair sampler (global RNG untouched).
-    refine_cfg: Optional[L2RefineConfig] = (
-        replace(L2RefineConfig(), iters=int(refine_iters)) if refine == "l2" else None
-    )
+    # Refine setup. ``refine_iters=None`` resolves to each engine's own config
+    # default (L2RefineConfig 120 / VolumeRefitConfig 300 — the single source
+    # of truth; the CLI passes None through, so API and CLI defaults agree).
+    refine_cfg: Optional[L2RefineConfig] = None
     refine_gen: Optional[torch.Generator] = None
-    if refine == "l2" and seed is not None:
-        refine_gen = torch.Generator()
-        refine_gen.manual_seed(int(seed))
+    eff_refine_iters: Optional[int] = None
+    if refine == "l2":
+        eff_refine_iters = (
+            int(refine_iters) if refine_iters is not None else L2RefineConfig().iters
+        )
+        refine_cfg = replace(L2RefineConfig(), iters=eff_refine_iters)
+        # A LOCAL torch.Generator for the minibatch pair sampler (global RNG
+        # untouched).
+        if seed is not None:
+            refine_gen = torch.Generator()
+            refine_gen.manual_seed(int(seed))
+
+    # Volume re-fit setup. The fit runs on the *requested* device (not
+    # ``target_device``, which may have been downgraded to CPU for Lloyd's
+    # float64 requirement — the fitting stack is float32 and MPS/CUDA-happy).
+    volume_cfg: Optional["VolumeRefitConfig"] = None
+    refit_device: Optional[str] = None
+    if refine == "volume":
+        from luxar.gsplats.lod.volume_refit import VolumeRefitConfig
+
+        eff_refine_iters = (
+            int(refine_iters) if refine_iters is not None else VolumeRefitConfig().iters
+        )
+        volume_cfg = replace(
+            VolumeRefitConfig(),
+            iters=eff_refine_iters,
+            conserve_mass=bool(conserve_mass),
+        )
+        if device is not None and not (isinstance(device, str) and device == "auto"):
+            refit_device = str(device)
 
     def _reduce(
         cur: GSplatData, m_target: int, meth: MethodName, level_refine_stats: dict
@@ -698,14 +761,46 @@ def make_substitutive_lod(
                     )
         else:
             new_data = _reduce(current, M_target, level_method, level_refine_stats)
-        level_stats: dict = {"n_splats_total": int(new_data.n_splats)}
+        # Volume re-fit: replace the STORED level with the warm-start re-fit
+        # (or keep the merge if it renders closer — the engine's never-worse
+        # guard). The merge chain continues from the unrefined merge output.
+        stored = new_data
+        volume_refit_stats: Optional[dict] = None
+        if volume_cfg is not None and new_data.n_splats > 0:
+            from luxar.gsplats.lod.volume_refit import volume_refine_splats
+
+            assert volume is not None  # validated above
+            stored, volume_refit_stats = volume_refine_splats(
+                new_data, volume, config=volume_cfg, device=refit_device
+            )
+            if verbose:
+                aprint(
+                    "refine=volume: "
+                    + (
+                        "re-fit won "
+                        f"(MSE {volume_refit_stats['mse_seed']:.3e} -> "
+                        f"{volume_refit_stats['mse_refit']:.3e})"
+                        if volume_refit_stats.get("improved")
+                        else (
+                            "merge seed kept (coordinate-frame mismatch — "
+                            "re-fit rejected)"
+                            if volume_refit_stats.get("frame_mismatch")
+                            else "merge seed kept (re-fit did not improve)"
+                        )
+                    )
+                    + f", {volume_refit_stats['wall_s']:.1f}s"
+                )
+        level_stats: dict = {"n_splats_total": int(stored.n_splats)}
         if level_refine_stats:
             level_refine_stats.pop("_mass_n", None)
             level_stats["refine"] = "l2"
             level_stats["refine_stats"] = level_refine_stats
+        if volume_refit_stats is not None:
+            level_stats["refine"] = "volume"
+            level_stats["refine_stats"] = volume_refit_stats
         sub_levels.append(
             _pack_level(
-                new_data,
+                stored,
                 compression_factor=K**level_idx,
                 parent_method=level_method,
                 level_index=level_idx,
@@ -724,7 +819,7 @@ def make_substitutive_lod(
             "coverage_inflation": float(coverage_inflation),
             "conserve_mass": bool(conserve_mass),
             "refine": refine,
-            "refine_iters": int(refine_iters) if refine == "l2" else None,
+            "refine_iters": eff_refine_iters,
             "coarsen_dims": list(norm_coarsen) if norm_coarsen is not None else None,
         }
     )

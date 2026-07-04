@@ -133,6 +133,52 @@ class TestMergePipelineProvenance:
         # recipe name.
         assert lv["lod_kind"] != "levels" and s["lod_kind"] != "stream"
 
+    def test_refine_iters_none_sentinel_resolves(self) -> None:
+        """RecipeParams.refine_iters=None (the engine-default sentinel) must
+        record the value that actually runs — not crash on int(None), and not
+        record None for an active refine. Fails pre-fix with TypeError."""
+        from luxar.gsplats.batch.merge_orchestrator import _recipe_pipeline_info
+        from luxar.gsplats.lod.recipes import RecipeParams
+
+        assert (
+            _recipe_pipeline_info("levels", RecipeParams(refine="l2"))["refine_iters"]
+            == 120
+        )
+        assert (
+            _recipe_pipeline_info("levels", RecipeParams(refine="l2", refine_iters=7))[
+                "refine_iters"
+            ]
+            == 7
+        )
+        assert _recipe_pipeline_info("levels", RecipeParams())["refine_iters"] is None
+
+    def test_merge_rejects_refine_volume_front_door(self, tmp_path) -> None:
+        """refine='volume' must be rejected BEFORE the streaming merge writes
+        anything (the deep per-part rejection would fire mid-stream, leaving a
+        half-written store). Fails pre-fix (error surfaced only mid-merge)."""
+        import numpy as np
+        import pytest
+
+        from luxar.gsplats.batch.manifest import BatchManifest
+        from luxar.gsplats.batch.merge_orchestrator import merge_batch_results
+        from luxar.gsplats.lod.recipes import RecipeParams
+
+        manifest = BatchManifest(n_timepoints=1, n_channels=1, n_tiles=1)
+        out_dir = tmp_path / "batch"
+        (out_dir / "tiles").mkdir(parents=True)
+        with pytest.raises(ValueError, match="volume-free by design"):
+            merge_batch_results(
+                manifest,
+                out_dir,
+                verbose=False,
+                recipe="levels",
+                recipe_params=RecipeParams(
+                    refine="volume", volume=np.zeros((4, 4, 4), np.float32)
+                ),
+            )
+        # Nothing was written before the rejection.
+        assert not (out_dir / "merged").exists()
+
     def test_legacy_manifest_recipe_translates_in_provenance(self) -> None:
         from luxar.gsplats.batch.merge_orchestrator import _recipe_pipeline_info
 

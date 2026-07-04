@@ -441,6 +441,13 @@ luxar gsplat lod in.gsplats.zarr out.gsplats.zarr --recipe levels --coverage-inf
 # one time/quality knob.
 luxar gsplat lod in.gsplats.zarr out.gsplats.zarr --recipe levels --refine l2
 luxar gsplat lod in.gsplats.zarr out.gsplats.zarr --recipe overview --refine l2 --refine-iters 200
+# Volume re-fit (the highest-fidelity rung, opt-in): `--refine volume --target
+# <vol>` warm-start re-fits each merged level against the SOURCE VOLUME itself
+# (full fit seeded by the merge; +5-12 dB over the merge on real microscopy;
+# each level keeps whichever of merge/re-fit renders closer — never worse).
+# Needs the volume in hand: lod --target only (fit-time/batch are follow-ups);
+# levels/overview recipes, no barrier dims. `--refine-iters` default 300 here.
+luxar gsplat lod in.gsplats.zarr out.gsplats.zarr --recipe levels --target vol.tiff --refine volume
 # Barrier-aware coarsening (levels/overview/adaptive): --coarsen-dims
 # lists the center-column indices coarsening may merge over; the rest become hard
 # barriers (a categorical/time/channel axis), so coarse splats never blend across

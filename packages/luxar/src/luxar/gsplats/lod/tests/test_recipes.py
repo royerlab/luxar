@@ -352,10 +352,20 @@ def test_substitutive_recipe_matches_make_substitutive_lod():
 
 def test_substitutive_recipe_threads_refine():
     """RecipeParams.refine/refine_iters reach make_substitutive_lod (stats
-    carry the refine block) and default to "none"/120."""
+    carry the refine block). refine_iters defaults to None (the sentinel that
+    resolves to each engine's own default — 120 for l2)."""
     assert RecipeParams().refine == "none"
-    assert RecipeParams().refine_iters == 120
+    assert RecipeParams().refine_iters is None
     data = _make_random_gsplat(n=256)
+    # Omitted refine_iters resolves to the l2 engine default of 120.
+    default_out = build_recipe(
+        data,
+        "levels",
+        _params(
+            compression_factor=8, levels=1, substitutive_method="kmeans", refine="l2"
+        ),
+    )
+    assert default_out.stats["refine_iters"] == 120
     p = _params(
         compression_factor=8,
         levels=1,
@@ -367,6 +377,50 @@ def test_substitutive_recipe_threads_refine():
     assert out.stats["refine"] == "l2"
     assert out.stats["refine_iters"] == 6
     assert out.substitutive_levels[1].stats.get("refine") == "l2"
+
+
+def test_substitutive_recipe_threads_volume_refine():
+    """RecipeParams.volume reaches make_substitutive_lod for refine="volume"
+    (level stats carry the volume-refit block); the field defaults to None and
+    is excluded from equality (an ndarray payload must not break eq)."""
+    import numpy as np
+
+    assert RecipeParams().volume is None
+    assert RecipeParams() == RecipeParams(volume=np.zeros((2, 2, 2), np.float32))
+
+    rng = np.random.default_rng(0)
+    grid = np.mgrid[0:16, 0:16, 0:16].astype(np.float32)
+    vol = np.zeros((16,) * 3, dtype=np.float32)
+    for _ in range(3):
+        c = rng.uniform(4, 12, 3)
+        r2 = sum((grid[d] - c[d]) ** 2 for d in range(3))
+        vol += np.exp(-r2 / (2 * 2.0**2)).astype(np.float32)
+    from luxar.gsplats.fit_gsplats import fit_gaussian_splats
+
+    fine = fit_gaussian_splats(vol, seeds=60, n_iters=150, device="cpu", verbose=False)
+    p = _params(
+        compression_factor=4,
+        levels=1,
+        refine="volume",
+        refine_iters=20,
+        volume=vol,
+    )
+    out = build_recipe(fine, "levels", p)
+    assert out.stats["refine"] == "volume"
+    lev = out.substitutive_levels[1]
+    assert lev.stats.get("refine") == "volume"
+    assert "mse_seed" in lev.stats["refine_stats"]
+
+
+def test_adaptive_recipe_rejects_volume_refine():
+    """Per-part levels must not re-fit against the FULL volume (splats would
+    leave their tile); the adaptive recipe rejects refine="volume" loudly."""
+    import numpy as np
+
+    data = _make_random_gsplat(n=256)
+    p = _params(refine="volume", volume=np.zeros((8, 8, 8), np.float32))
+    with pytest.raises(ValueError, match="per-part levels"):
+        build_recipe(data, "adaptive", p)
 
 
 def test_additive_ladders_default_on_everywhere():

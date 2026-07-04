@@ -78,6 +78,10 @@ _OPTION_TOKENS = {
     "--conserve-mass": "substitutive",
     "--refine": "substitutive",
     "--refine-iters": "substitutive",
+    "--target": "substitutive",
+    "--channel": "substitutive",
+    "--timepoint": "substitutive",
+    "--array-key": "substitutive",
     "--coarsen-dims": "substitutive",
     "--levels": "levels",
 }
@@ -541,14 +545,40 @@ def lod_recipe(
         help="Post-merge refinement of each substitutive level: none (default) "
         "| l2 (Adam-optimize the level against its fine input under the "
         "closed-form mixture L2 — slower, higher fidelity, peak-preserving; "
-        "total mass pinned so brightness never pops across levels).",
+        "total mass pinned so brightness never pops across levels) "
+        "| volume (warm-start re-fit each level against the source volume "
+        "given via --target — the highest-fidelity option; each level keeps "
+        "whichever of merge/re-fit renders closer to the volume).",
     ),
     refine_iters: Optional[int] = typer.Option(
         None,
         "--refine-iters",
         min=1,
-        help="L2-refine optimization steps per level (default 120; requires "
-        "--refine l2).",
+        help="Refinement steps per level (default 120 for --refine l2, 300 "
+        "for --refine volume; requires --refine l2|volume).",
+    ),
+    target_path: Optional[Path] = typer.Option(
+        None,
+        "--target",
+        exists=True,
+        help="Source volume for --refine volume (.npy/.npz/.tiff/.zarr/"
+        ".zarr.zip; the volume the splats were fitted from). Its voxel "
+        "coordinate frame must match the splats'.",
+    ),
+    target_channel: Optional[int] = typer.Option(
+        None,
+        "--channel",
+        help="Channel to extract from a multi-channel --target volume.",
+    ),
+    target_timepoint: Optional[int] = typer.Option(
+        None,
+        "--timepoint",
+        help="Timepoint to extract from a time-series --target volume.",
+    ),
+    target_array_key: Optional[str] = typer.Option(
+        None,
+        "--array-key",
+        help="Array path inside a nested --target zarr group (e.g. 'a/fused').",
     ),
     coarsen_dims: Optional[str] = typer.Option(
         None,
@@ -658,6 +688,10 @@ def lod_recipe(
             "--conserve-mass": conserve_mass,
             "--refine": refine,
             "--refine-iters": refine_iters,
+            "--target": target_path,
+            "--channel": target_channel,
+            "--timepoint": target_timepoint,
+            "--array-key": target_array_key,
             "--coarsen-dims": coarsen_dims,
             "--levels": levels,
         }
@@ -700,10 +734,44 @@ def lod_recipe(
                 "ladder is the recipe's definition."
             )
         refine_norm = (refine or "none").strip()
-        if refine_norm not in ("none", "l2"):
-            raise typer.BadParameter(f"--refine must be 'none' or 'l2'; got {refine!r}")
-        if refine_iters is not None and refine_norm != "l2":
-            raise typer.BadParameter("--refine-iters only applies with --refine l2.")
+        if refine_norm not in ("none", "l2", "volume"):
+            raise typer.BadParameter(
+                f"--refine must be 'none', 'l2', or 'volume'; got {refine!r}"
+            )
+        if refine_iters is not None and refine_norm == "none":
+            raise typer.BadParameter(
+                "--refine-iters only applies with --refine l2|volume."
+            )
+        if refine_norm == "volume" and target_path is None:
+            raise typer.BadParameter(
+                "--refine volume needs the source volume: pass --target <volume>."
+            )
+        if target_path is not None and refine_norm != "volume":
+            raise typer.BadParameter(
+                "--target is only consumed by --refine volume; pass --refine "
+                "volume to re-fit the coarse levels against it."
+            )
+        orphan_selectors = [
+            flag
+            for flag, value in (
+                ("--channel", target_channel),
+                ("--timepoint", target_timepoint),
+                ("--array-key", target_array_key),
+            )
+            if value is not None
+        ]
+        if orphan_selectors and target_path is None:
+            raise typer.BadParameter(
+                f"option(s) {', '.join(orphan_selectors)} select a sub-volume "
+                "of --target, but no --target was given."
+            )
+        if refine_norm == "volume" and recipe == "adaptive":
+            raise typer.BadParameter(
+                "--refine volume is not supported for --recipe adaptive: each "
+                "tile's levels would re-fit against the full volume, pulling "
+                "splats out of their tile. Use --recipe levels/overview, or "
+                "--refine l2."
+            )
         rule = partition_rule or "median"
         if rule not in _VALID_PARTITION_RULES:
             raise typer.BadParameter(
@@ -746,6 +814,26 @@ def lod_recipe(
                         f"`luxar gsplat flatten {input_path.name} flat.gsplats.zarr`."
                     ) from e
                 aprint(f"Loaded {data.n_splats:,} splats ({data.ndim}D)")
+
+            # ── --refine volume: load the source volume (shared loader) ──
+            target_volume = None
+            if target_path is not None:
+                from luxar.cli.gsplat_config import load_volume
+
+                with asection(f"Loading target volume: {target_path.name}"):
+                    target_volume = load_volume(
+                        target_path,
+                        channel=target_channel,
+                        timepoint=target_timepoint,
+                        array_key=target_array_key,
+                    )
+                    aprint(f"Volume shape: {target_volume.shape}")
+                if len(target_volume.shape) != data.ndim:
+                    raise typer.BadParameter(
+                        f"--target volume is {len(target_volume.shape)}D but the "
+                        f"splats are {data.ndim}D; select a matching sub-volume "
+                        f"with --channel/--timepoint/--array-key."
+                    )
 
             # ── streaming breakpoints from --target-ms (measured B/splat) ──
             if target_ms is not None:
@@ -891,7 +979,10 @@ def lod_recipe(
                 else True,
                 conserve_mass=conserve_mass if conserve_mass is not None else True,
                 refine=refine_norm,
-                refine_iters=refine_iters if refine_iters is not None else 120,
+                # None resolves inside make_substitutive_lod to the engine's
+                # own default (l2: 120, volume: 300) — single source of truth.
+                refine_iters=refine_iters,
+                volume=target_volume,
                 coarsen_dims=parsed_coarsen,
                 device=device or "auto",
                 seed=seed,
