@@ -233,7 +233,7 @@ describe('renderHierarchicalTimingPanel', () => {
       ],
     });
     const html = renderHierarchicalTimingPanel(root);
-    expect(html).toContain('title="Find which data chunks intersect the current view slice"');
+    expect(html).toContain('Ask the spatial index which data chunks intersect');
   });
 });
 
@@ -411,7 +411,7 @@ describe('stale rows', () => {
     });
     const html = renderHierarchicalTimingPanel(root);
     expect(html).toContain('luxar-timing-panel__row--stale');
-    expect(html).toContain('Did not run in the latest update');
+    expect(html).toContain('did not run in the latest update');
   });
 
   it('excludes stale children lastMs from the type aggregation sum', () => {
@@ -472,7 +472,7 @@ describe('LOD Refinement tree', () => {
     );
     expect(html).not.toContain('LOD Refinement');
     expect(html).toContain('8 updates');
-    expect(html).not.toContain('refinement pass');
+    expect(html).not.toMatch(/\d+ refinement pass/);
   });
 
   it('renders refinement data even when Total Update has no updates yet', () => {

@@ -15,24 +15,59 @@ import { escapeHtml } from '../../utils/escape-html';
  * Keys are matched against entry names (exact match).
  */
 const TOOLTIPS: Record<string, string> = {
-  'Total Update': 'End-to-end time for all node updates in this frame',
-  'LOD Refinement': 'Background passes loading remaining LOD levels after first paint',
-  Points: 'Point cloud data: query, load, project, and upload',
-  Lines: 'Line/track data: query segments, load vertices, project, and upload',
-  GSplats: 'Gaussian splat data: query, load, project, and upload',
-  'Spatial Query': 'Find which data chunks intersect the current view slice',
-  'Load Arrays': 'Fetch and decompress zarr chunks from the data source',
-  'Load Segments': 'Fetch segment index arrays (pairs of vertex references)',
-  'Load Vertices': 'Fetch vertex positions and attributes for referenced vertices',
+  'Total Update':
+    'End-to-end wall-clock time of one view update: everything that happens between a view ' +
+    'change (slider move, pan, zoom) and the new data appearing on screen. The rows below ' +
+    'break it down; sibling rows run concurrently, so they do not sum to this total',
+  'LOD Refinement':
+    'Background work that streams in the remaining level-of-detail data AFTER the first quick ' +
+    'paint — the view sharpens progressively without blocking interaction. Timed separately ' +
+    'from Total Update because it runs behind the scenes',
+  Points:
+    'All work to update point-cloud layers this update: spatial query, chunk loading, nD→3D ' +
+    'projection, and GPU upload. With several point layers, this shows the slowest one ' +
+    '(they update concurrently)',
+  Lines:
+    'All work to update line/track layers this update: segment query, vertex loading, index ' +
+    'remapping, nD→3D projection, and GPU upload. With several line layers, this shows the ' +
+    'slowest one (they update concurrently)',
+  GSplats:
+    'All work to update Gaussian-splat layers this update: spatial query, chunk loading, ' +
+    'covariance projection, and GPU upload. With several gsplat layers, this shows the ' +
+    'slowest one (they update concurrently)',
+  'Spatial Query':
+    'Ask the spatial index which data chunks intersect the current view slice — this decides ' +
+    'WHAT to load before anything is fetched. Should be fast (ms); slow queries usually mean ' +
+    'a very large or deep index',
+  'Load Arrays':
+    'Fetch the chunks the query selected and decompress them into usable arrays. Served from ' +
+    'cache when possible (see the cache % tag), from the network otherwise — this is ' +
+    'typically the slowest step on first visit and the biggest cache win on revisits',
+  'Load Segments':
+    'Fetch the segment index arrays for line data — each segment is a pair of vertex ' +
+    'references saying which vertices to connect',
+  'Load Vertices':
+    'Fetch positions and attributes for the vertices referenced by the loaded segments ' +
+    '(only vertices actually needed are loaded)',
   'Index Remap':
-    'Build global → local vertex map and remap segment indices into local buffer space',
-  'Project to 3D': 'Slice nD data to 3D display space (visibility filtering, Cholesky marginals)',
-  'Update Buffers': 'Upload processed data to GPU buffer attributes',
-  'Concatenate LODs': 'Merge loaded LOD levels into one contiguous buffer set',
+    'Rewrite segment indices from dataset-global vertex ids to positions in the small local ' +
+    'buffer that was actually loaded — required so the GPU can index into the compact buffer',
+  'Project to 3D':
+    'Reduce nD data to the 3 displayed dimensions: filter by slice visibility and project ' +
+    'coordinates (for gsplats, also reduce covariances via Cholesky marginals) — pure CPU ' +
+    'math, no I/O',
+  'Update Buffers':
+    'Upload the processed arrays into GPU buffers so the next frame can draw them. Large ' +
+    'uploads can momentarily block the render thread',
+  'Concatenate LODs':
+    'Merge the level-of-detail chunks loaded so far into one contiguous buffer set for ' +
+    'drawing — grows as refinement streams in more detail',
 };
 
 /** Suffix appended to the tooltip of rows that did not run in the latest update. */
-const STALE_TOOLTIP = 'Did not run in the latest update — value is from an earlier one';
+const STALE_TOOLTIP =
+  'Greyed = this operation did not run in the latest update, so the value shown is left over ' +
+  'from an earlier update (not a live measurement)';
 
 /**
  * Get tooltip text for a timing entry name
@@ -86,11 +121,17 @@ function renderMetadata(metadata: TimingMetadata | undefined): string {
   const tags: string[] = [];
 
   if (metadata.skipped) {
-    return `<span class="luxar-timing-panel__tag luxar-timing-panel__tag--skip">${escapeHtml(metadata.skipReason || 'skipped')}</span>`;
+    const skipTitle =
+      'This step was skipped — it did not need to run in this update. The tag text is the ' +
+      'reason (e.g. the view change did not affect this layer, or the result was already ' +
+      'up to date)';
+    return `<span class="luxar-timing-panel__tag luxar-timing-panel__tag--skip" title="${escapeHtml(skipTitle)}">${escapeHtml(metadata.skipReason || 'skipped')}</span>`;
   }
 
   if (metadata.chunks !== undefined) {
-    tags.push(`<span class="luxar-timing-panel__tag">${metadata.chunks} chunks</span>`);
+    tags.push(
+      `<span class="luxar-timing-panel__tag" title="Number of data chunks this step processed in the latest update">${metadata.chunks} chunks</span>`
+    );
   }
 
   if (metadata.cacheHits !== undefined && metadata.cacheMisses !== undefined) {
@@ -103,28 +144,42 @@ function renderMetadata(metadata: TimingMetadata | undefined): string {
           : hitRate > 50
             ? ''
             : 'luxar-timing-panel__tag--warn';
-      tags.push(`<span class="luxar-timing-panel__tag ${tagClass}">${hitRate}% cache</span>`);
+      const cacheTitle =
+        `${metadata.cacheHits} of ${total} chunk reads came from the local cache instead of ` +
+        'the network. Higher = faster; low right after first load is normal (the cache is ' +
+        'still filling)';
+      tags.push(
+        `<span class="luxar-timing-panel__tag ${tagClass}" title="${escapeHtml(cacheTitle)}">${hitRate}% cache</span>`
+      );
     }
   }
 
   if (metadata.points !== undefined) {
-    tags.push(`<span class="luxar-timing-panel__tag">${formatCount(metadata.points)} pts</span>`);
+    tags.push(
+      `<span class="luxar-timing-panel__tag" title="Points processed by this step in the latest update">${formatCount(metadata.points)} pts</span>`
+    );
   }
 
   if (metadata.segments !== undefined) {
     tags.push(
-      `<span class="luxar-timing-panel__tag">${formatCount(metadata.segments)} segs</span>`
+      `<span class="luxar-timing-panel__tag" title="Line segments processed by this step in the latest update">${formatCount(metadata.segments)} segs</span>`
     );
   }
 
   if (metadata.splats !== undefined) {
     tags.push(
-      `<span class="luxar-timing-panel__tag">${formatCount(metadata.splats)} splats</span>`
+      `<span class="luxar-timing-panel__tag" title="Gaussian splats processed by this step in the latest update">${formatCount(metadata.splats)} splats</span>`
     );
   }
 
   if (metadata.info) {
-    tags.push(`<span class="luxar-timing-panel__tag">${escapeHtml(metadata.info)}</span>`);
+    const infoTitle = /^\d+ nodes$/.test(metadata.info)
+      ? 'This row aggregates several layers of the same geometry type; the time shown is the ' +
+        'slowest of them (they update concurrently)'
+      : 'Additional detail reported by this step';
+    tags.push(
+      `<span class="luxar-timing-panel__tag" title="${escapeHtml(infoTitle)}">${escapeHtml(metadata.info)}</span>`
+    );
   }
 
   return tags.join(' ');
@@ -539,10 +594,10 @@ export function renderHierarchicalTimingPanel(
   return `
     <div class="luxar-timing-panel">
       <div class="luxar-timing-panel__header">
-        <div class="luxar-timing-panel__header-label">Operation</div>
+        <div class="luxar-timing-panel__header-label" title="The pipeline steps of a view update, as a tree — expand a row (▼) to see its sub-steps. Hover each row's name for what that step does. Sibling rows run concurrently, so children do not sum to their parent">Operation</div>
         <div class="luxar-timing-panel__header-values">
-          <span class="luxar-timing-panel__header-last">Last</span>
-          <span class="luxar-timing-panel__header-avg">Avg</span>
+          <span class="luxar-timing-panel__header-last" title="Duration measured in the most recent update, in milliseconds">Last</span>
+          <span class="luxar-timing-panel__header-avg" title="Exponential moving average over recent updates — smooths out one-off spikes to show the typical cost">Avg</span>
         </div>
       </div>
       <div class="luxar-timing-panel__body">
@@ -550,11 +605,11 @@ export function renderHierarchicalTimingPanel(
       </div>
       <div class="luxar-timing-panel__footer">
         <span class="luxar-timing-panel__legend">
-          <span class="luxar-timing-panel__legend-item luxar-timing-panel__legend-item--normal">Normal</span>
-          <span class="luxar-timing-panel__legend-item luxar-timing-panel__legend-item--over">&gt;16ms (60fps)</span>
-          <span class="luxar-timing-panel__legend-item luxar-timing-panel__legend-item--skip">Skipped</span>
+          <span class="luxar-timing-panel__legend-item luxar-timing-panel__legend-item--normal" title="Within the frame budget">Normal</span>
+          <span class="luxar-timing-panel__legend-item luxar-timing-panel__legend-item--over" title="Highlighted rows took longer than 16.7ms — the per-frame budget for smooth 60fps interaction. Occasional overruns during navigation are normal; persistent ones point at the bottleneck">&gt;16ms (60fps)</span>
+          <span class="luxar-timing-panel__legend-item luxar-timing-panel__legend-item--skip" title="The step did not need to run this update (e.g. nothing changed for that layer) — its tag shows the skip reason">Skipped</span>
         </span>
-        <span class="luxar-timing-panel__update-count">${root.count} updates${refinementCount}</span>
+        <span class="luxar-timing-panel__update-count" title="How many view updates (and background refinement passes) have been profiled since load">${root.count} updates${refinementCount}</span>
       </div>
     </div>
   `;
