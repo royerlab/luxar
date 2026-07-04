@@ -74,8 +74,9 @@ export interface PointsCheapLoad {
  * to `loadPointsNodeExpensive` (per-level lazy loading), exactly as the
  * gsplats loader does. Registering an unloaded lazy level would pull it
  * into the scene-wide `updateView` sweep and defeat the deferral, so the
- * caller owns registration: the combined `loadPointsNode` registers
- * immediately; the lod_group thunk registers after the load completes.
+ * caller owns registration: the combined `loadPointsNode` (eager path)
+ * registers immediately; lod_group lazy levels are NEVER registered — the
+ * `LODGroupRegistry` drives their (re)loads instead.
  */
 export async function loadPointsNodeCheap(
   node: SceneNode,

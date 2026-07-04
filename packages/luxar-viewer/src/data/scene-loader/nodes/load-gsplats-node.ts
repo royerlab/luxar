@@ -74,13 +74,14 @@ export interface GSplatsCheapLoad {
  * ``n_additive_sublods`` for progressive vs single-LOD loaders, exactly
  * as the combined path did.
  *
- * The caller registers the loader (``ctx.registry.registerGSplatsLoader``)
- * — but only once it is actually loaded. Registering an unloaded lazy
- * level would pull it into the scene-wide ``updateView`` sweep
+ * Registration is the caller's responsibility. Registering an unloaded
+ * lazy level would pull it into the scene-wide ``updateView`` sweep
  * (``runLoaderUpdates`` over every registered gsplat loader), which would
- * load+commit every level and defeat the lazy deferral. So registration
- * is the caller's responsibility: the combined ``loadGSplatsNode`` does
- * it immediately; the lod_group thunk does it after the load completes.
+ * load+commit every level and defeat the lazy deferral. The combined
+ * ``loadGSplatsNode`` (eager path) registers immediately; the lod_group's
+ * lazy levels are NEVER registered — they stay out of the sweep for their
+ * whole lifetime and the ``LODGroupRegistry`` drives their (re)loads
+ * (settle-gated ``ensureLoaded``; see ``load-lod-group-node.ts``).
  */
 export async function loadGSplatsNodeCheap(
   node: SceneNode,

@@ -67,9 +67,10 @@ export interface LinesCheapLoad {
  * registration**. Splitting this from the expensive half lets
  * `load-lod-group-node.ts` defer a Lines lod-group child (the finest level of a
  * lines-substitutive ladder), mirroring the points/gsplats loaders. The caller
- * owns registration: the combined `loadLinesNode` registers immediately; the
- * lod_group thunk registers after the load completes (so an unloaded lazy level
- * doesn't join the scene-wide `updateView` sweep and defeat the deferral).
+ * owns registration: the combined `loadLinesNode` (eager path) registers
+ * immediately; lod_group lazy levels are NEVER registered (so they don't join
+ * the scene-wide `updateView` sweep and defeat the deferral) — the
+ * `LODGroupRegistry` drives their (re)loads instead.
  */
 export async function loadLinesNodeCheap(
   node: SceneNode,

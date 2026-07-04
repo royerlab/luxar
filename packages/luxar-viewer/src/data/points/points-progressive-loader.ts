@@ -158,6 +158,7 @@ export class PointsProgressiveLoader implements PointsDataLoader {
   private monitor: ProgressiveMonitorAdapter;
   private _initialLoadDone = false;
   private _lastAllResident = true;
+  private _disposed = false;
   // Memoized concatenation. Keyed on (resetGeneration, loadedLODs.length):
   // the generation bumps on every view-state reset so a reset-then-reload
   // back to the same LOD count yields a NEW reference (contents differ),
@@ -178,6 +179,10 @@ export class PointsProgressiveLoader implements PointsDataLoader {
 
   /** Whether more LOD levels remain to load for the current view state. */
   get hasMoreLODs(): boolean {
+    // A disposed loader has work-state cleared; report no further work so a
+    // refinement loop holding a stale reference stops instead of indexing
+    // into the now-empty lodLoaders. Mirrors GSplatsProgressiveLoader.
+    if (this._disposed) return false;
     return this.loadedLODs.length < this.nLods;
   }
 
@@ -340,6 +345,7 @@ export class PointsProgressiveLoader implements PointsDataLoader {
   }
 
   dispose(): void {
+    this._disposed = true;
     for (const loader of this.lodLoaders) {
       loader.dispose();
     }
