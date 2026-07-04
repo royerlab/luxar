@@ -19,6 +19,8 @@ import {
   renderCacheStatusBadges,
   formatValidationMode,
   formatLastValidated,
+  validationModeTooltip,
+  lastValidatedTooltip,
   l2ErrorTotal,
 } from '../templates';
 import { patchField, updateColorClass } from './dom-helpers';
@@ -160,16 +162,22 @@ export function updateCacheTab(container: HTMLElement | null, cacheMetrics: Cach
   }
 
   // R3: Cache Health — validation mode + last-validated timestamp.
-  patchField(
-    container,
-    'cache-health-mode',
-    formatValidationMode(cacheMetrics.health?.validationMode)
-  );
+  // Tooltips are mode-specific (e.g. under mode 'none' the timestamp
+  // records a check attempt, not a confirmation), so they are patched
+  // alongside the values: the mode changes at runtime ('—' → actual
+  // mode once the first validation completes) and a stale tooltip
+  // would then describe the wrong mode.
+  const mode = cacheMetrics.health?.validationMode;
+  patchField(container, 'cache-health-mode', formatValidationMode(mode));
   patchField(
     container,
     'cache-health-validated',
     formatLastValidated(cacheMetrics.health?.lastValidatedAt)
   );
+  const modeEl = container.querySelector('[data-field="cache-health-mode"]');
+  if (modeEl) modeEl.setAttribute('title', validationModeTooltip(mode));
+  const validatedEl = container.querySelector('[data-field="cache-health-validated"]');
+  if (validatedEl) validatedEl.setAttribute('title', lastValidatedTooltip(mode));
 
   // R3: L2 error counters card.
   if (cacheMetrics.l2) {

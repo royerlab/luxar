@@ -985,23 +985,23 @@ export class DataLoadingMonitor {
     const entries: string[] = [];
     if (hasPoints) {
       entries.push(
-        `<span data-geom="points" title="Visible points">${templateFormatNumber(stats.visiblePoints)} pts</span>`
+        `<span data-geom="points" title="Points currently on screen (inside the active nD slice). Expand the monitor (⊞) for totals and per-layer detail">${templateFormatNumber(stats.visiblePoints)} pts</span>`
       );
     }
     if (hasLines) {
       entries.push(
-        `<span data-geom="lines" title="Visible line segments">${templateFormatNumber(stats.visibleSegments)} lines</span>`
+        `<span data-geom="lines" title="Line segments currently on screen (inside the active nD slice). Expand the monitor (⊞) for totals and per-layer detail">${templateFormatNumber(stats.visibleSegments)} lines</span>`
       );
     }
     if (hasGSplats) {
       entries.push(
-        `<span data-geom="splats" title="Visible gaussian splats">${templateFormatNumber(stats.visibleSplats)} splats</span>`
+        `<span data-geom="splats" title="Gaussian splats currently on screen (inside the active nD slice). Expand the monitor (⊞) for totals and per-layer detail">${templateFormatNumber(stats.visibleSplats)} splats</span>`
       );
     }
     // Nothing loaded yet → show a points placeholder so the row isn't empty.
     if (entries.length === 0) {
       entries.push(
-        `<span data-geom="points" title="Visible points">${templateFormatNumber(stats.visiblePoints)} pts</span>`
+        `<span data-geom="points" title="Points currently on screen (inside the active nD slice). Expand the monitor (⊞) for totals and per-layer detail">${templateFormatNumber(stats.visiblePoints)} pts</span>`
       );
     }
     return entries.join('');
@@ -1067,7 +1067,7 @@ export class DataLoadingMonitor {
     this.panel.innerHTML = `
       <div class="luxar-glass-refraction" aria-hidden="true"></div>
       <div class="luxar-monitor-compact">
-        <span class="luxar-monitor-compact__type" title="Loading mode">
+        <span class="luxar-monitor-compact__type" title="${hasSpatialIndex ? 'Loading mode: 🔍 spatial-index streaming — only the data inside the current view/slice is queried and loaded on demand (scales to arbitrarily large datasets)' : 'Loading mode: 📦 direct loading — the dataset is loaded whole, without an on-demand spatial index'}">
           ${hasSpatialIndex ? '🔍' : '📦'}
         </span>
 
@@ -1075,18 +1075,18 @@ export class DataLoadingMonitor {
           ${this.buildCompactGeomSummary(stats)}
         </span>
 
-        <span class="luxar-monitor-compact__memory" title="Resident memory (points + lines + gsplats)">
+        <span class="luxar-monitor-compact__memory" title="CPU memory currently held by loaded geometry data, across all layers (points + lines + gsplats)">
           ${templateFormatBytes(stats.totalMemory)}
         </span>
 
-        <span class="luxar-monitor-compact__qps" title="Queries per second">
+        <span class="luxar-monitor-compact__qps" title="Spatial queries per second — how often the viewer is asking the index for data as you navigate. 0/s when idle is normal">
           ${stats.queriesPerSecond.toFixed(1)}/s
         </span>
 
-        ${hasErrors ? '<span class="luxar-monitor-compact__alert" title="Errors detected">🔴</span>' : ''}
-        ${hasWarnings ? '<span class="luxar-monitor-compact__alert" title="Warnings">🟡</span>' : ''}
+        ${hasErrors ? '<span class="luxar-monitor-compact__alert" title="Errors detected — expand the monitor (⊞) and open the Insights tab for details and suggested fixes">🔴</span>' : ''}
+        ${hasWarnings ? '<span class="luxar-monitor-compact__alert" title="Warnings — expand the monitor (⊞) and open the Insights tab for details and suggested fixes">🟡</span>' : ''}
 
-        <button class="luxar-data-monitor__expand-btn" data-action="expand" title="Show details">
+        <button class="luxar-data-monitor__expand-btn" data-action="expand" title="Expand into the full Data Loading Monitor: per-tab views of loading, cache, memory, performance, and insights">
           ⊞
         </button>
       </div>
@@ -1564,31 +1564,42 @@ export class DataLoadingMonitor {
         id: 'overview',
         label: 'Overview',
         icon: '📊',
-        tooltip: 'Visible element counts, memory, query speed, network I/O, and the scene graph',
+        tooltip:
+          'The big picture: how much of the dataset is on screen, memory and query speed, ' +
+          'how much data has been downloaded vs served from cache, and the scene graph tree',
       },
       {
         id: 'cache',
         label: 'Cache',
         icon: '💾',
-        tooltip: 'L0/L1/L2 cache sizes, hit rates, evictions, health, and total usage',
+        tooltip:
+          'The three cache tiers that avoid re-downloading data — L0 (decoded, memory), ' +
+          'L1 (raw, memory), L2 (disk, survives reloads) — with sizes, hit rates, ' +
+          'validation health, and Clear buttons',
       },
       {
         id: 'memory',
         label: 'Memory',
         icon: '🧠',
-        tooltip: 'GPU buffer pool reuse and CPU-side data accumulator usage',
+        tooltip:
+          'Where geometry memory goes: GPU buffer pooling (how often buffers are reused ' +
+          'instead of reallocated) and the CPU-side accumulators that grow as data streams in',
       },
       {
         id: 'performance',
         label: 'Performance',
         icon: '⚡',
-        tooltip: 'Query latency, throughput, and loading performance over time',
+        tooltip:
+          'A timing breakdown of each view update — query, load, project, GPU upload — ' +
+          'per step and per geometry type, with rows exceeding the 60fps frame budget highlighted',
       },
       {
         id: 'insights',
         label: 'Insights',
         icon: '💡',
-        tooltip: 'Recommendations and detected issues for tuning loading and caching',
+        tooltip:
+          'Automatic diagnosis: detected problems and tuning recommendations for loading ' +
+          'and caching, ranked by severity',
       },
     ];
 

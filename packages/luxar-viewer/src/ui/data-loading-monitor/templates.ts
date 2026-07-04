@@ -148,14 +148,14 @@ export function renderLoaderItem(path: string, metrics: LoaderMetrics): string {
   const { label, unit } = loaderDisplay(metrics.type);
 
   return `
-    <div class="luxar-loader-item" title="${escapeHtml(label)} loader — ${escapeHtml(path)}">
+    <div class="luxar-loader-item" title="A loader is the component that streams one layer's data from the zarr store into the viewer — this one serves the ${escapeHtml(label)} layer at ${escapeHtml(path)}">
       <div class="luxar-loader-item__header">
-        <span class="luxar-loader-item__path ${statusColorClass}" title="Loader source path">${escapeHtml(path)}</span>
-        <span class="luxar-loader-item__status" title="Geometry type served by this loader">${escapeHtml(label)}</span>
+        <span class="luxar-loader-item__path ${statusColorClass}" title="Path of this layer inside the dataset (green = has answered queries this session, grey = idle so far)">${escapeHtml(path)}</span>
+        <span class="luxar-loader-item__status" title="Geometry type this loader streams (points, lines, or gsplats)">${escapeHtml(label)}</span>
       </div>
       <div class="luxar-loader-item__metrics">
-        <span title="Visible elements served by this loader">${metrics.visiblePoints.toLocaleString()} ${escapeHtml(unit)}</span>
-        <span title="Memory used by this loader">${formatBytes(metrics.memoryUsed)}</span>
+        <span title="Elements from this layer currently on screen (inside the active nD slice)">${metrics.visiblePoints.toLocaleString()} ${escapeHtml(unit)}</span>
+        <span title="CPU memory this loader currently holds for loaded chunks and index data">${formatBytes(metrics.memoryUsed)}</span>
       </div>
     </div>
   `;
@@ -188,7 +188,7 @@ export function renderSecondaryMetrics(
   return `
     <div class="luxar-secondary-metrics">
       <div class="luxar-secondary-metrics__item">
-        <span class="luxar-secondary-metrics__label" title="Estimated memory used by cached data, relative to the configured limit">MEMORY</span>
+        <span class="luxar-secondary-metrics__label" title="Memory currently used by cached data across all cache tiers, with the bar showing usage against the configured limit. See the Cache tab for the per-tier (L0/L1/L2) breakdown">MEMORY</span>
         <div class="luxar-secondary-metrics__value" data-field="memory-used">
           ${formatBytes(memory.used)}
         </div>
@@ -196,7 +196,7 @@ export function renderSecondaryMetrics(
       </div>
 
       <div class="luxar-secondary-metrics__item">
-        <span class="luxar-secondary-metrics__label" title="Average query latency in milliseconds, with the query rate (queries per second)">QUERY SPEED</span>
+        <span class="luxar-secondary-metrics__label" title="How long a spatial query takes on average, in milliseconds. A query asks the spatial index which data falls inside the current view/slice — it runs every time you pan, zoom, or move a dimension slider. The subtitle is how many such queries run per second">QUERY SPEED</span>
         <div class="luxar-secondary-metrics__value" data-field="query-speed">
           ${querySpeed.avgTime.toFixed(0)}ms
         </div>
@@ -206,7 +206,7 @@ export function renderSecondaryMetrics(
       </div>
 
       <div class="luxar-secondary-metrics__item">
-        <span class="luxar-secondary-metrics__label" title="Total data delivered to the renderer across all cache tiers (memory + disk + network). The subtitle breaks out how much came over the network and the current bandwidth.">DATA LOADED</span>
+        <span class="luxar-secondary-metrics__label" title="Total data delivered to the renderer since load, from all sources combined (memory caches + disk cache + network). The subtitle breaks out the network share — 'net' is what was actually downloaded, followed by current download bandwidth and the total request count. A big gap between loaded and net means the cache is doing its job">DATA LOADED</span>
         <div class="luxar-secondary-metrics__value" data-field="network-bytes">
           ${network ? formatBytes(dataLoaded) : '0B'}
         </div>
@@ -259,7 +259,7 @@ export function renderOverviewContent(stats: GlobalStats, cacheMetrics: CacheMet
           getColorClass('success'),
           'small',
           'visible-points',
-          'Points currently rendered after nD slicing and LOD selection, out of the dataset total'
+          'How many points are on screen right now versus how many the whole dataset holds. The two differ because only data inside the current nD slice is shown, and level-of-detail (LOD) streaming may not have loaded full resolution yet'
         )}
         ${renderMetricCard(
           'VISIBLE LINES',
@@ -268,7 +268,7 @@ export function renderOverviewContent(stats: GlobalStats, cacheMetrics: CacheMet
           getColorClass('warning'),
           'small',
           'visible-lines',
-          'Line segments currently rendered after nD slicing and LOD selection, out of the dataset total'
+          'How many line segments are on screen right now versus how many the whole dataset holds. The two differ because only data inside the current nD slice is shown, and level-of-detail (LOD) streaming may not have loaded full resolution yet'
         )}
         ${renderMetricCard(
           'VISIBLE SPLATS',
@@ -277,7 +277,7 @@ export function renderOverviewContent(stats: GlobalStats, cacheMetrics: CacheMet
           getColorClass('info'),
           'small',
           'visible-splats',
-          'Gaussian splats currently rendered after nD slicing and LOD selection, out of the dataset total'
+          'How many Gaussian splats are on screen right now versus how many the whole dataset holds. The two differ because only data inside the current nD slice is shown, and level-of-detail (LOD) streaming may not have loaded full resolution yet'
         )}
       </div>
     `;
@@ -293,7 +293,7 @@ export function renderOverviewContent(stats: GlobalStats, cacheMetrics: CacheMet
           getColorClass('success'),
           'medium',
           'visible-points',
-          'Points currently rendered after nD slicing and LOD selection, out of the dataset total'
+          'How many points are on screen right now versus how many the whole dataset holds. The two differ because only data inside the current nD slice is shown, and level-of-detail (LOD) streaming may not have loaded full resolution yet'
         )
       );
     }
@@ -306,7 +306,7 @@ export function renderOverviewContent(stats: GlobalStats, cacheMetrics: CacheMet
           getColorClass('warning'),
           'medium',
           'visible-lines',
-          'Line segments currently rendered after nD slicing and LOD selection, out of the dataset total'
+          'How many line segments are on screen right now versus how many the whole dataset holds. The two differ because only data inside the current nD slice is shown, and level-of-detail (LOD) streaming may not have loaded full resolution yet'
         )
       );
     }
@@ -319,7 +319,7 @@ export function renderOverviewContent(stats: GlobalStats, cacheMetrics: CacheMet
           getColorClass('info'),
           'medium',
           'visible-splats',
-          'Gaussian splats currently rendered after nD slicing and LOD selection, out of the dataset total'
+          'How many Gaussian splats are on screen right now versus how many the whole dataset holds. The two differ because only data inside the current nD slice is shown, and level-of-detail (LOD) streaming may not have loaded full resolution yet'
         )
       );
     }
@@ -339,7 +339,7 @@ export function renderOverviewContent(stats: GlobalStats, cacheMetrics: CacheMet
           getColorClass('success'),
           'large',
           'visible-points',
-          'Points currently rendered after nD slicing and LOD selection, out of the dataset total'
+          'How many points are on screen right now versus how many the whole dataset holds. The two differ because only data inside the current nD slice is shown, and level-of-detail (LOD) streaming may not have loaded full resolution yet'
         )}
       </div>
     `;
@@ -354,7 +354,7 @@ export function renderOverviewContent(stats: GlobalStats, cacheMetrics: CacheMet
           getColorClass('warning'),
           'large',
           'visible-lines',
-          'Line segments currently rendered after nD slicing and LOD selection, out of the dataset total'
+          'How many line segments are on screen right now versus how many the whole dataset holds. The two differ because only data inside the current nD slice is shown, and level-of-detail (LOD) streaming may not have loaded full resolution yet'
         )}
       </div>
     `;
@@ -369,7 +369,7 @@ export function renderOverviewContent(stats: GlobalStats, cacheMetrics: CacheMet
           getColorClass('info'),
           'large',
           'visible-splats',
-          'Gaussian splats currently rendered after nD slicing and LOD selection, out of the dataset total'
+          'How many Gaussian splats are on screen right now versus how many the whole dataset holds. The two differ because only data inside the current nD slice is shown, and level-of-detail (LOD) streaming may not have loaded full resolution yet'
         )}
       </div>
     `;
@@ -474,6 +474,48 @@ export const CACHE_BADGE_COLOR: Record<CacheStatusBadge, string> = {
 };
 
 /**
+ * Didactic hover explanation per cache status badge. Each entry says
+ * what the badge means, why it appears, and what (if anything) the
+ * user should do about it. Exported so the cache-tab incremental
+ * updater and unit tests share the exact same wording.
+ */
+export const CACHE_BADGE_TOOLTIP: Record<CacheStatusBadge, string> = {
+  'cache-enabled':
+    'Multi-level caching is active. Downloaded chunks are kept in memory (L0 decoded + L1 raw) ' +
+    'and on disk (L2, browser private storage), so re-slicing and revisits are served locally ' +
+    'instead of re-downloading. Nothing to do — this is the healthy state.',
+  'no-cache':
+    'Caching is turned off for this session by the ?no-cache URL parameter: every chunk is ' +
+    'fetched from the network each time it is needed and nothing persists across reloads. ' +
+    'Remove ?no-cache from the URL to re-enable caching.',
+  'disabled-config':
+    'Caching is turned off in the viewer configuration (cache.enabled / cache.l0Enabled): every ' +
+    'chunk is fetched from the network each time it is needed. Enable it in the app config to ' +
+    'speed up repeat access.',
+  'opfs-unavailable':
+    'The browser did not grant Origin Private File System storage, so the persistent L2 disk ' +
+    'cache is off. In-memory caching (L0/L1) still works, but nothing survives a page reload. ' +
+    'Common in private/incognito windows or when site storage is blocked.',
+  'quota-constrained':
+    'The browser storage quota is full: some chunks could not be written to the L2 disk cache ' +
+    'and will have to be re-downloaded in future sessions. Free up disk space or clear other ' +
+    'site data to restore full caching.',
+  'cache-errors-detected':
+    'The L2 disk cache hit errors: failed writes, corrupted entries, or unreadable metadata ' +
+    '(see the ERRORS card for the breakdown). Corrupt entries are dropped and re-fetched ' +
+    'automatically; if the count keeps growing, press Clear All to rebuild the cache.',
+  'unvalidated-external-dataset':
+    'Warning, not an error: this dataset carries no content_hash (it was not produced by the ' +
+    'Luxar compiler) and no cache TTL is configured, so the viewer cannot detect whether the ' +
+    'file changed on the server. Cached chunks are trusted indefinitely — if the data may have ' +
+    'been updated, press Clear All to force a fresh download.',
+  'provider-missing':
+    'Internal inconsistency: telemetry reports caching as enabled, but no cache provider is ' +
+    'attached, so the statistics on this tab may be incomplete. Usually transient during a ' +
+    'scene switch; if it persists, reload the page.',
+};
+
+/**
  * R3: Render one HTML pill per CacheStatusBadge. Returns an empty
  * string when no badges are present so `data-field="cache-status-row"`
  * still exists in the DOM (the incremental patcher fills it).
@@ -483,7 +525,7 @@ export function renderCacheStatusBadges(badges: CacheStatusBadge[] | undefined):
   return badges
     .map(
       (b) =>
-        `<span class="luxar-badge ${CACHE_BADGE_COLOR[b] ?? getColorClass('muted')}" data-badge="${b}">${b}</span>`
+        `<span class="luxar-badge ${CACHE_BADGE_COLOR[b] ?? getColorClass('muted')}" data-badge="${b}" title="${escapeHtml(CACHE_BADGE_TOOLTIP[b] ?? b)}">${b}</span>`
     )
     .join('');
 }
@@ -499,7 +541,7 @@ function renderCacheStatusRow(badges: CacheStatusBadge[] | undefined, always = f
   const signature = (badges ?? []).join('|');
   if (!always && signature.length === 0) return '';
   return `
-    <div class="luxar-cache-status" data-field="cache-status-row" data-signature="${signature}" title="Cache operational state">
+    <div class="luxar-cache-status" data-field="cache-status-row" data-signature="${signature}" title="Cache status badges — green is healthy, amber is a limitation to be aware of, red needs attention. Hover each badge for a full explanation">
       ${renderCacheStatusBadges(badges)}
     </div>
   `;
@@ -520,6 +562,83 @@ export function formatValidationMode(mode: 'content-hash' | 'ttl' | 'none' | und
       return 'None';
     default:
       return '—';
+  }
+}
+
+/**
+ * Didactic hover explanation for the current validation mode. Mode-
+ * specific so the tooltip always explains what the *shown* value means
+ * (the generic "could be any of three modes" wording read as evasive).
+ * Shared by the initial template and the cache-tab incremental updater
+ * so the tooltip stays correct when the mode changes after the first
+ * validation completes (e.g. '—' → Content Hash).
+ */
+export function validationModeTooltip(mode: 'content-hash' | 'ttl' | 'none' | undefined): string {
+  switch (mode) {
+    case 'content-hash':
+      return (
+        'Content-hash validation (strongest): this dataset was produced by the Luxar compiler ' +
+        'and publishes a content_hash fingerprint in its root metadata. At load time the viewer ' +
+        're-fetches that fingerprint from the server and compares it with the one stored next ' +
+        'to the disk cache. If they differ, every cache tier is cleared and the data is ' +
+        're-downloaded — you can never be shown stale data.'
+      );
+    case 'ttl':
+      return (
+        'Time-to-live validation: the dataset has no content_hash fingerprint, but a maximum ' +
+        'cache age is configured (cache.externalDatasetTtlMs). Cached data older than that age ' +
+        'is discarded and re-downloaded. Within the window, a change on the server is NOT ' +
+        'detected — the TTL bounds how stale the view can get.'
+      );
+    case 'none':
+      return (
+        'No validation: the dataset has no content_hash fingerprint (it was not produced by the ' +
+        'Luxar compiler — e.g. a plain external zarr) and no cache TTL is configured. Cached ' +
+        'chunks are served indefinitely, so if the file changes on the server you will keep ' +
+        'seeing the old data until you press Clear All to force a fresh download.'
+      );
+    default:
+      return (
+        'How the cache decides whether its stored chunks still match the dataset on the server. ' +
+        'Not determined yet — the freshness check runs right after the dataset loads.'
+      );
+  }
+}
+
+/**
+ * Didactic hover explanation for the "Last Validated" timestamp,
+ * mode-aware because the timestamp means different things: under
+ * content-hash it is a real confirmation; under `none` it only records
+ * that the check ran and found nothing to compare.
+ */
+export function lastValidatedTooltip(mode: 'content-hash' | 'ttl' | 'none' | undefined): string {
+  const base =
+    'When the viewer last ran its freshness check (it re-fetches the dataset root metadata ' +
+    'from the server at load time). ';
+  switch (mode) {
+    case 'content-hash':
+      return (
+        base +
+        'At this moment the cached content_hash was compared against the server and the cache ' +
+        'was confirmed current (or cleared if it did not match). "Never" = no check has ' +
+        'completed yet, e.g. offline.'
+      );
+    case 'ttl':
+      return (
+        base +
+        'This timestamp starts the TTL countdown: once the cache is older than the configured ' +
+        'maximum age it is discarded and re-downloaded. "Never" = no check has completed yet, ' +
+        'e.g. offline.'
+      );
+    case 'none':
+      return (
+        base +
+        'Careful: with validation "None" this is only when the check last RAN — it found no ' +
+        'content_hash to compare, so it does NOT confirm the cached data matches the server. ' +
+        '"Never" = no check has completed yet, e.g. offline.'
+      );
+    default:
+      return base + '"Never" = no check has completed yet, e.g. offline.';
   }
 }
 
@@ -610,7 +729,7 @@ export function renderCacheContent(_stats: GlobalStats, cacheMetrics: CacheMetri
             getColorClass('success'),
             'medium',
             undefined,
-            'Total memory used across all cache tiers, relative to the configured limit'
+            'Memory currently used by cached data across all cache tiers, relative to the configured limit. Caching keeps downloaded chunks local so re-slicing and revisits do not re-download them'
           )}
           ${renderMetricCard(
             'CACHED ENTRIES',
@@ -619,7 +738,7 @@ export function renderCacheContent(_stats: GlobalStats, cacheMetrics: CacheMetri
             getColorClass('primary'),
             'medium',
             undefined,
-            'Number of entries currently held across all cache tiers'
+            'Number of chunks/entries currently held across all cache tiers. The full per-tier breakdown (L0/L1/L2) appears once cache statistics finish connecting'
           )}
         </div>
         <div class="luxar-cache-loading">
@@ -663,16 +782,16 @@ export function renderCacheContent(_stats: GlobalStats, cacheMetrics: CacheMetri
         cacheMetrics.l0
           ? renderCacheSection(
               'L0 DECOMPRESSED CACHE',
-              'Caches decoded zarr chunks to avoid ~2ms Blosc decompression overhead',
+              'The fastest cache tier. Data chunks arrive compressed and must be decoded (~2ms each) before use; L0 keeps the already-decoded arrays in memory so repeat reads skip both the download AND the decode. Lookups try L0 first, then fall through L1 (memory) → L2 (disk) → network',
               'clearL0',
-              'Clear L0 decompressed chunk cache',
+              'Empty the L0 decoded-chunk cache. Harmless: chunks are still in L1/L2 and will simply be re-decoded (~2ms each) on next access',
               [
                 {
                   label: 'SIZE',
                   value: formatBytes(cacheMetrics.l0.size),
                   subtitle: `${cacheMetrics.l0.count} chunks`,
                   tooltip:
-                    'L0 decompressed cache: stores already-decoded TypedArrays, eliminating decompression latency',
+                    'Memory currently held by decoded (ready-to-use) chunks, and how many chunks that is. Bounded by an LRU limit — see EVICTIONS',
                   colorClass: getColorClass('primary'),
                   dataField: 'l0-size',
                 },
@@ -681,7 +800,7 @@ export function renderCacheContent(_stats: GlobalStats, cacheMetrics: CacheMetri
                   value: `${l0HitRate.toFixed(1)}%`,
                   subtitle: `${formatNumber(cacheMetrics.l0.hits)} hits · ${formatNumber(cacheMetrics.l0.misses)} miss`,
                   tooltip:
-                    'L0 hit: ~1μs lookup (no decompression). Miss: ~2ms decompression + L1 lookup',
+                    'Share of chunk requests answered by L0. A hit returns a decoded array in ~1μs; a miss pays ~2ms decompression after fetching the raw chunk from L1/L2/network. High is good; a low rate right after loading is normal while the cache warms up',
                   colorClass: l0HitRateColorClass,
                   dataField: 'l0-hitrate',
                 },
@@ -689,7 +808,8 @@ export function renderCacheContent(_stats: GlobalStats, cacheMetrics: CacheMetri
                   label: 'EVICTIONS',
                   value: formatNumber(cacheMetrics.l0.evictions),
                   subtitle: 'LRU removed',
-                  tooltip: 'Chunks removed from L0 cache when memory limit reached',
+                  tooltip:
+                    'Chunks pushed out of L0 (least-recently-used first) because it reached its memory limit. Evicted chunks are not lost — they remain in L1/L2 and are re-decoded on demand. Steady growth just means the working set is larger than the L0 limit',
                   colorClass:
                     cacheMetrics.l0.evictions > 0
                       ? getColorClass('warning')
@@ -704,15 +824,16 @@ export function renderCacheContent(_stats: GlobalStats, cacheMetrics: CacheMetri
       <!-- L1 Memory Cache Section -->
       ${renderCacheSection(
         'L1 MEMORY CACHE',
-        'In-memory LRU cache of recently used chunks — fast RAM lookup, no decompression or network round-trip',
+        'The in-memory tier for raw (still-compressed) chunks and metadata. Serves L0 misses from RAM with no disk or network round-trip. Cleared when the page closes — the persistent copy lives in L2. Lookup order: L0 → L1 → L2 → network',
         'clearL1',
-        'Clear L1 cache',
+        'Empty the L1 in-memory cache. Harmless: chunks still cached on disk (L2) are re-read from there; only uncached data goes back to the network',
         [
           {
             label: 'SIZE',
             value: formatBytes(cacheMetrics.l1!.size),
             subtitle: `${cacheMetrics.l1!.count} entries`,
-            tooltip: 'L1 memory cache: fast in-memory storage for recently accessed chunks',
+            tooltip:
+              'RAM currently held by raw chunks + metadata in L1, and the number of entries. Bounded by an LRU limit — see EVICTIONS',
             colorClass: getColorClass('success'),
             dataField: 'l1-size',
           },
@@ -720,7 +841,7 @@ export function renderCacheContent(_stats: GlobalStats, cacheMetrics: CacheMetri
             label: 'HIT RATE',
             value: `${l1HitRate.toFixed(1)}%`,
             subtitle: `${formatNumber(cacheMetrics.l1!.hits)} hits · ${formatNumber(cacheMetrics.l1!.misses)} miss`,
-            tooltip: `Cache hit rate: ${cacheMetrics.l1!.hits.toLocaleString()} hits out of ${l1Total.toLocaleString()} total accesses`,
+            tooltip: `Share of L1 lookups served from RAM (${cacheMetrics.l1!.hits.toLocaleString()} hits of ${l1Total.toLocaleString()} accesses). A miss falls through to the L2 disk cache, and to the network only if L2 misses too. High is good; low right after loading is normal while the cache warms up`,
             colorClass: l1HitRateColorClass,
             dataField: 'l1-hitrate',
           },
@@ -729,7 +850,7 @@ export function renderCacheContent(_stats: GlobalStats, cacheMetrics: CacheMetri
             value: formatNumber(cacheMetrics.l1!.evictions),
             subtitle: 'LRU removed',
             tooltip:
-              'Entries removed from cache when memory limit reached (LRU = Least Recently Used)',
+              'Entries pushed out of L1 (least-recently-used first) because it reached its memory limit. Evicted entries usually persist in the L2 disk cache, so they are re-read from disk rather than re-downloaded. Steady growth means the working set exceeds the L1 limit',
             colorClass:
               cacheMetrics.l1!.evictions > 0 ? getColorClass('warning') : getColorClass('dimmed'),
             dataField: 'l1-evictions',
@@ -744,16 +865,16 @@ export function renderCacheContent(_stats: GlobalStats, cacheMetrics: CacheMetri
         const l2HitRateColorClass = getCacheHitRateColorClassWithGuard(l2HitRate, l2Total);
         return renderCacheSection(
           'L2 OPFS CACHE',
-          'Origin Private File System: persistent browser storage for cached data',
+          "The persistent disk tier, stored in the browser's Origin Private File System (private storage on your machine — never uploaded anywhere). Survives page reloads and browser restarts, so a revisited dataset loads from disk instead of the network. Lookup order: L0 → L1 → L2 → network",
           'clearL2',
-          'Clear L2 persistent cache (data will need to be re-downloaded)',
+          'Delete the on-disk (L2) cache for this dataset. Anything not held in memory will be re-downloaded from the server — use this to reclaim disk space or force a fresh copy',
           [
             {
               label: 'SIZE',
               value: formatBytes(cacheMetrics.l2!.size),
               subtitle: `${cacheMetrics.l2!.count} entries`,
               tooltip:
-                "L2 persistent cache: stored in browser's Origin Private File System, survives page reloads",
+                "Disk space used by cached chunks in the browser's private storage, and the number of entries. Persists across sessions; counts against the browser storage quota (see the quota-constrained badge if it fills up)",
               colorClass: getColorClass('info'),
               dataField: 'l2-size',
             },
@@ -761,7 +882,7 @@ export function renderCacheContent(_stats: GlobalStats, cacheMetrics: CacheMetri
               label: 'HIT RATE',
               value: l2Total > 0 ? `${l2HitRate.toFixed(1)}%` : '—',
               subtitle: `${formatNumber(cacheMetrics.l2!.reads)} hits · ${formatNumber(cacheMetrics.l2!.misses)} miss`,
-              tooltip: `L2 hit rate: ${cacheMetrics.l2!.reads.toLocaleString()} hits out of ${l2Total.toLocaleString()} L1 misses that fell through to L2`,
+              tooltip: `Of the requests that missed the memory caches and fell through to disk, the share found there (${cacheMetrics.l2!.reads.toLocaleString()} of ${l2Total.toLocaleString()}). An L2 miss is the only case that costs a network download. "—" = nothing has fallen through to L2 yet`,
               colorClass: l2HitRateColorClass,
               dataField: 'l2-hitrate',
             },
@@ -769,7 +890,8 @@ export function renderCacheContent(_stats: GlobalStats, cacheMetrics: CacheMetri
               label: 'I/O',
               value: `${formatNumber(cacheMetrics.l2!.reads)} reads`,
               subtitle: `${formatNumber(cacheMetrics.l2!.writes)} writes`,
-              tooltip: 'Disk I/O operations: reads from cache, writes to cache',
+              tooltip:
+                'Disk traffic: reads = chunks served from the on-disk cache; writes = freshly downloaded chunks saved to disk so future sessions can skip the download',
               dataField: 'l2-io',
             },
             {
@@ -782,7 +904,7 @@ export function renderCacheContent(_stats: GlobalStats, cacheMetrics: CacheMetri
                     )} write · ${formatNumber(l2.corruptedEntries ?? 0)} corrupt`
                   : 'no errors',
               tooltip:
-                'Quota-skipped + write-failures + corrupted-entries + metadata-parse-failures',
+                'Problems in the disk tier, summed: quota = writes skipped because browser storage is full; write = writes that failed outright; corrupt = stored entries that failed integrity checks and were dropped (auto re-fetched); plus unreadable metadata. Occasional errors self-heal; a growing count → press Clear All',
               colorClass: l2Errors > 0 ? getColorClass('error') : getColorClass('dimmed'),
               dataField: 'l2-errors',
             },
@@ -795,18 +917,18 @@ export function renderCacheContent(_stats: GlobalStats, cacheMetrics: CacheMetri
            Always rendered so the incremental patcher can refresh values. -->
       <div class="luxar-cache-health">
         <div class="luxar-cache-health__header">
-          <span class="luxar-cache-health__title" title="Cache validation strategy, last revalidation time, and operational status">CACHE HEALTH</span>
+          <span class="luxar-cache-health__title" title="Is the cached data trustworthy? Shows how (and when) the viewer checks that its cached chunks still match the dataset on the server, plus status badges for anything that needs attention — hover each badge and row for details">CACHE HEALTH</span>
           ${statusRowHtml}
         </div>
         <div class="luxar-cache-health__row">
-          <span class="luxar-cache-health__label">Validation</span>
-          <span class="luxar-cache-health__value" data-field="cache-health-mode" title="How the cache decides whether to trust stored entries: content-hash (Luxar datasets), ttl (configured time window), none (external dataset, manual clear only)">
+          <span class="luxar-cache-health__label" title="The strategy used to detect a dataset that changed on the server: Content Hash (fingerprint comparison, Luxar-compiled datasets), TTL (cached data expires after a configured age), or None (no change detection — external dataset)">Validation</span>
+          <span class="luxar-cache-health__value" data-field="cache-health-mode" title="${escapeHtml(validationModeTooltip(cacheMetrics.health?.validationMode))}">
             ${formatValidationMode(cacheMetrics.health?.validationMode)}
           </span>
         </div>
         <div class="luxar-cache-health__row">
-          <span class="luxar-cache-health__label">Last Validated</span>
-          <span class="luxar-cache-health__value" data-field="cache-health-validated" title="When the cache was last revalidated against the source dataset">
+          <span class="luxar-cache-health__label" title="Timestamp of the most recent freshness check against the server — hover the value for what that means under the current validation mode">Last Validated</span>
+          <span class="luxar-cache-health__value" data-field="cache-health-validated" title="${escapeHtml(lastValidatedTooltip(cacheMetrics.health?.validationMode))}">
             ${formatLastValidated(cacheMetrics.health?.lastValidatedAt)}
           </span>
         </div>
@@ -815,8 +937,8 @@ export function renderCacheContent(_stats: GlobalStats, cacheMetrics: CacheMetri
       <!-- Combined Stats + Clear All -->
       <div class="luxar-cache-total">
         <div class="luxar-cache-total__header">
-          <span class="luxar-cache-total__label" title="Combined L0 + L1 + L2 cache usage">TOTAL</span>
-          <button data-action="clearAll" class="luxar-cache-section__clear-btn" title="Clear all caches (L0 + L1 + L2)">Clear All</button>
+          <span class="luxar-cache-total__label" title="Total space used by cached data across every tier: L0 (decoded, memory) + L1 (raw, memory) + L2 (disk). The bar below shows usage against the configured limit">TOTAL</span>
+          <button data-action="clearAll" class="luxar-cache-section__clear-btn" title="Delete everything in every cache tier (L0 + L1 + L2 disk). The scene stays loaded, but data needed afterwards is re-downloaded from the server. Use this to force a fresh copy of a dataset that may have changed (especially with Validation: None), or to reclaim disk space">Clear All</button>
         </div>
         <div class="luxar-cache-total__value" data-field="cache-total" title="${cacheMetrics.totalCacheMemory.toLocaleString()} bytes total cached">
           ${formatBytes(cacheMetrics.totalCacheMemory)}
@@ -824,7 +946,7 @@ export function renderCacheContent(_stats: GlobalStats, cacheMetrics: CacheMetri
         ${renderProgressBar(cacheMetrics.memoryPercent, getCacheMemoryColorClass(cacheMetrics.memoryPercent), cacheMetrics.memoryLimit > 0 ? `${cacheMetrics.memoryPercent.toFixed(0)}% of ${formatBytes(cacheMetrics.memoryLimit)} limit` : 'no memory limit configured', 6)}
         ${
           cacheMetrics.effectiveDemandHitRate !== undefined
-            ? `<div class="luxar-cache-total__demand" data-field="cache-effective-hitrate" title="Demand hit-rate across all tiers: (l0 + l1 + l2 hits) / total demand requests">
+            ? `<div class="luxar-cache-total__demand" data-field="cache-effective-hitrate" title="The bottom line for caching: of all data requests made by the renderer, the share answered by ANY cache tier (L0, L1, or L2) instead of the network. 100% = fully local, no downloads; low values right after first load are normal — the caches have to be filled once before they can hit">
                  EFFECTIVE HIT RATE: ${(cacheMetrics.effectiveDemandHitRate * 100).toFixed(1)}%
                </div>`
             : ''
@@ -958,7 +1080,7 @@ export function renderMemoryContent(metrics: MemoryMetrics): string {
     <div class="luxar-memory-section">
       <div class="luxar-memory-section__header">
         <span class="luxar-memory-section__icon">⬡</span>
-        <span class="luxar-memory-section__title" title="Reusable GPU buffer allocations — pooling avoids costly reallocation as geometry streams in">GPU BUFFER POOL</span>
+        <span class="luxar-memory-section__title" title="A recycling pool for GPU buffers. Streaming constantly needs new buffers as data arrives; allocating GPU memory is slow, so finished buffers are returned to a pool and handed back out instead of reallocated. REUSE % tells you how well that is working">GPU BUFFER POOL</span>
       </div>
       <div class="luxar-memory-section__empty">Not initialized</div>
     </div>
@@ -976,7 +1098,7 @@ export function renderMemoryContent(metrics: MemoryMetrics): string {
     <div class="luxar-tab-content--memory">
       ${gpuPoolSection}
       ${accumulatorsSection}
-      <div class="luxar-memory-total" title="Combined totals across GPU pool and accumulators: allocations, buffer reuse rate, and accumulator memory">
+      <div class="luxar-memory-total" title="One-line summary of this tab: total GPU buffer allocations since load, the share of buffer requests served by pool reuse (higher = smoother streaming), and CPU memory held by the accumulators">
         <span class="luxar-memory-total__label">Total:</span>
         <span class="luxar-memory-total__value" data-field="memory-total">
           ${totalAllocations} allocs · ${overallReuseRate.toFixed(0)}% reuse · ${totalAccumulatorMemory.toFixed(1)}MB
@@ -1024,16 +1146,16 @@ function renderGPUPoolSection(stats: GPUPoolStats): string {
     <div class="luxar-memory-section">
       <div class="luxar-memory-section__header">
         <span class="luxar-memory-section__icon">⬡</span>
-        <span class="luxar-memory-section__title" title="Reusable GPU buffer allocations — pooling avoids costly reallocation as geometry streams in">GPU BUFFER POOL</span>
+        <span class="luxar-memory-section__title" title="A recycling pool for GPU buffers. Streaming constantly needs new buffers as data arrives; allocating GPU memory is slow, so finished buffers are returned to a pool and handed back out instead of reallocated. REUSE % tells you how well that is working">GPU BUFFER POOL</span>
       </div>
       <table class="luxar-memory-table">
         <thead>
           <tr class="luxar-memory-table__header-row">
-            <th class="luxar-memory-table__header" title="GPU buffer category (e.g. position, color, index)">TYPE</th>
-            <th class="luxar-memory-table__header" title="Share of buffer requests served from the pool instead of a fresh allocation">REUSE %</th>
-            <th class="luxar-memory-table__header" title="Buffers currently checked out and in use">ACTIVE</th>
-            <th class="luxar-memory-table__header" title="Free buffers retained in the pool for reuse">POOLED</th>
-            <th class="luxar-memory-table__header" title="Total buffer allocations made since load">ALLOCS</th>
+            <th class="luxar-memory-table__header" title="Geometry type whose GPU buffers this row tracks (points, lines, or gsplats)">TYPE</th>
+            <th class="luxar-memory-table__header" title="Share of buffer requests served by recycling a pooled buffer instead of allocating a fresh one. Higher is better — GPU allocation is expensive, so high reuse means smoother streaming">REUSE %</th>
+            <th class="luxar-memory-table__header" title="Buffers currently checked out of the pool and holding live geometry data">ACTIVE</th>
+            <th class="luxar-memory-table__header" title="Free buffers kept in the pool, ready to be handed out without a new allocation">POOLED</th>
+            <th class="luxar-memory-table__header" title="Total fresh GPU buffer allocations since load — grows only on pool misses">ALLOCS</th>
           </tr>
         </thead>
         <tbody>
@@ -1089,15 +1211,15 @@ function renderAccumulatorsSection(accumulators: MemoryMetrics['accumulators']):
     <div class="luxar-memory-section">
       <div class="luxar-memory-section__header">
         <span class="luxar-memory-section__icon">⚡</span>
-        <span class="luxar-memory-section__title" title="Per-attribute CPU-side buffers that grow as point/line/splat data streams in">DATA ACCUMULATORS</span>
+        <span class="luxar-memory-section__title" title="CPU-side staging buffers that collect geometry attributes (positions, colors, ...) as chunks stream in, before GPU upload. They over-allocate and grow geometrically so appending stays cheap — see the GROWS column for how often growth was needed">DATA ACCUMULATORS</span>
       </div>
       <table class="luxar-memory-table">
         <thead>
           <tr class="luxar-memory-table__header-row">
-            <th class="luxar-memory-table__header" title="Accumulator category (e.g. positions, colors, widths)">TYPE</th>
-            <th class="luxar-memory-table__header" title="Number of elements the buffer can currently hold">CAPACITY</th>
-            <th class="luxar-memory-table__header" title="Memory currently allocated for this accumulator">MEMORY</th>
-            <th class="luxar-memory-table__header" title="Times the buffer was grown/reallocated to fit more data">GROWS</th>
+            <th class="luxar-memory-table__header" title="Geometry type whose accumulator this row tracks (points, lines, or gsplats)">TYPE</th>
+            <th class="luxar-memory-table__header" title="Elements the accumulator can hold before it must grow. Capacity is over-allocated ahead of demand so most incoming chunks append without a reallocation">CAPACITY</th>
+            <th class="luxar-memory-table__header" title="CPU memory currently allocated by this accumulator's attribute buffers">MEMORY</th>
+            <th class="luxar-memory-table__header" title="How many times the accumulator had to grow (reallocate + copy) to fit more streamed data. Frequent growth is a sign the initial capacity estimate was too small (highlighted above 5)">GROWS</th>
           </tr>
         </thead>
         <tbody>
