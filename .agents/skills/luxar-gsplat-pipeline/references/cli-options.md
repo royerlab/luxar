@@ -185,8 +185,9 @@ luxar gsplat additive sub.gsplats.zarr pyr.gsplats.zarr --target-ms 200   # ~200
 | `--coverage-inflation` | 3.0 | widen merged reps' inter-center spread (mass-preserving) so coarse splats sum flat — suppresses the grid ripple; 1.0 = pure moment match |
 | `--additive` / `--no-additive` | on | additive ladder in every substitutive level / mosaic part / multiscale cap (streaming first paint); `--no-additive` = bare leaves |
 | `--conserve-mass` / `--no-conserve-mass` | on | pin each level's mass over coarsened dims to its fine input (per barrier group) — kills the LOD brightness pop |
-| `--refine` | none | `l2` = post-merge L2 refit of each level against its fine input (slower, higher fidelity, peak-preserving; mass pinned) |
-| `--refine-iters` | 120 | Adam steps per refined level (requires `--refine l2`) |
+| `--refine` | none | `l2` = post-merge L2 refit of each level against its fine input (slower, higher fidelity, peak-preserving; mass pinned); `volume` = warm-start re-fit against the source volume given via `--target` (highest fidelity; never worse than the merge; levels/overview only, no barrier dims) |
+| `--refine-iters` | 120 / 300 | steps per refined level (120 for `l2`, 300 for `volume`; requires `--refine l2\|volume`) |
+| `--target` | — | source volume for `--refine volume` (.npy/.npz/.tiff/.zarr[.zip]; with `--channel`/`--timepoint`/`--array-key` selectors) |
 | `--coarsen-dims` | all | center-column indices coarsening may merge over (rest = hard barriers) |
 
 ### LOD switch tuning (any kind=lod group)

@@ -43,8 +43,10 @@ Two return shapes (see :data:`RecipeResult`):
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Callable, List, Literal, Optional, Union, get_args
+
+import numpy as np
 
 from luxar.core.group.partition import DEFAULT_MAX_ELEMENTS
 from luxar.gsplats.gsplat_data import GSplatData
@@ -140,10 +142,15 @@ class RecipeParams:
     # True (default) laddders every substitutive level of the substitutive /
     # adaptive recipes and the overview coarse cap; False emits bare leaves.
     additive_ladders: bool = True
-    # Post-merge L2 refit of each coarse level against its fine input
-    # ("none" | "l2"; see make_substitutive_lod).
+    # Post-merge refit of each coarse level: "l2" against its fine input,
+    # "volume" against the source volume ("none" | "l2" | "volume"; see
+    # make_substitutive_lod).
     refine: str = "none"
-    refine_iters: int = 120
+    # None resolves to each refine engine's own default (l2: 120, volume: 300).
+    refine_iters: Optional[int] = None
+    # Source volume for refine="volume" (full-res, splat coordinate frame).
+    # Excluded from eq/repr: a large ndarray is payload, not identity.
+    volume: Optional[np.ndarray] = field(default=None, compare=False, repr=False)
     # Center-column indices substitutive coarsening may merge over; the
     # complement become hard grouping barriers. None == coarsen all dims.
     coarsen_dims: Optional[tuple] = None
@@ -207,6 +214,7 @@ def build_levels(data: GSplatData, params: RecipeParams) -> GSplatData:
         conserve_mass=params.conserve_mass,
         refine=params.refine,  # type: ignore[arg-type]
         refine_iters=params.refine_iters,
+        volume=params.volume,
         device=params.device,
         seed=params.seed,
         coarsen_dims=params.coarsen_dims,
@@ -226,6 +234,7 @@ def build_levels_matrix(data: GSplatData, params: RecipeParams) -> GSplatData:
         conserve_mass=params.conserve_mass,
         refine=params.refine,
         refine_iters=params.refine_iters,
+        volume=params.volume,
         device=params.device,
         coarsen_dims=params.coarsen_dims,
         n_additive_lods=params.n_lods,
@@ -268,6 +277,15 @@ def _substitutive_for_part(part: GSplatNode, params: RecipeParams) -> GSplatNode
     swap), the per-part analogue of :func:`_ladder_for_part`."""
     import math
 
+    if params.refine == "volume":
+        # A part's splats cover only its spatial tile; a fit against the FULL
+        # volume would pull them out of the tile to explain the rest of the
+        # signal (silently breaking partition/frustum-culling semantics — the
+        # never-worse MSE guard cannot see that). Needs per-part volume crops.
+        raise ValueError(
+            "refine='volume' is not supported for per-part levels (the "
+            "adaptive recipe); use --recipe levels/overview, or refine='l2'."
+        )
     part_data = GSplatData.from_tree(part)
     # Clamp the substitutive depth so a small part doesn't synthesise degenerate
     # (sub-1-splat) coarse levels: ``levels`` coarser levels need the coarsest to
@@ -372,6 +390,7 @@ def build_overview(data: GSplatData, params: RecipeParams) -> GSplatLodGroup:
         conserve_mass=params.conserve_mass,
         refine=params.refine,  # type: ignore[arg-type]
         refine_iters=params.refine_iters,
+        volume=params.volume,
         device=params.device,
         seed=params.seed,
         coarsen_dims=params.coarsen_dims,

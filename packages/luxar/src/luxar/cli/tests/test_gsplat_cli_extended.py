@@ -2651,6 +2651,178 @@ class TestLODCommand:
         assert loaded.n_substitutive == 2
         assert loaded.at_substitutive(1).n_splats < loaded.at_substitutive(0).n_splats
 
+    def test_refine_volume_requires_target(
+        self, runner: CliRunner, medium_gsplats: Path, tmp_path: Path
+    ) -> None:
+        out = tmp_path / "x.gsplats.zarr"
+        result = runner.invoke(
+            app,
+            [
+                "gsplat",
+                "lod",
+                str(medium_gsplats),
+                str(out),
+                "--recipe",
+                "levels",
+                "--refine",
+                "volume",
+            ],
+        )
+        assert result.exit_code != 0
+        assert "--target" in self._io(result)
+        assert not out.exists()
+
+    def test_channel_without_target_rejected(
+        self, runner: CliRunner, medium_gsplats: Path, tmp_path: Path
+    ) -> None:
+        """A sub-volume selector without --target is a silent no-op unless
+        guarded — the command must reject it, not build a levels LOD that
+        ignored --channel."""
+        out = tmp_path / "x.gsplats.zarr"
+        result = runner.invoke(
+            app,
+            [
+                "gsplat",
+                "lod",
+                str(medium_gsplats),
+                str(out),
+                "--recipe",
+                "levels",
+                "--channel",
+                "1",
+            ],
+        )
+        assert result.exit_code != 0
+        assert "--target" in self._io(result)
+        assert not out.exists()
+
+    def test_target_requires_refine_volume(
+        self,
+        runner: CliRunner,
+        medium_gsplats: Path,
+        small_volume_npy: Path,
+        tmp_path: Path,
+    ) -> None:
+        out = tmp_path / "x.gsplats.zarr"
+        result = runner.invoke(
+            app,
+            [
+                "gsplat",
+                "lod",
+                str(medium_gsplats),
+                str(out),
+                "--recipe",
+                "levels",
+                "--target",
+                str(small_volume_npy),
+            ],
+        )
+        assert result.exit_code != 0
+        assert "--refine volume" in self._io(result)
+        assert not out.exists()
+
+    def test_refine_volume_rejected_for_stream_recipe(
+        self,
+        runner: CliRunner,
+        medium_gsplats: Path,
+        small_volume_npy: Path,
+        tmp_path: Path,
+    ) -> None:
+        """--target/--refine are substitutive knobs; the token machinery must
+        reject them for the stream recipe."""
+        out = tmp_path / "x.gsplats.zarr"
+        result = runner.invoke(
+            app,
+            [
+                "gsplat",
+                "lod",
+                str(medium_gsplats),
+                str(out),
+                "--recipe",
+                "stream",
+                "--refine",
+                "volume",
+                "--target",
+                str(small_volume_npy),
+            ],
+        )
+        assert result.exit_code != 0
+        assert not out.exists()
+
+    def test_refine_volume_rejected_for_adaptive_recipe(
+        self,
+        runner: CliRunner,
+        medium_gsplats: Path,
+        small_volume_npy: Path,
+        tmp_path: Path,
+    ) -> None:
+        """Per-part levels would re-fit against the FULL volume — rejected."""
+        out = tmp_path / "x.gsplats.zarr"
+        result = runner.invoke(
+            app,
+            [
+                "gsplat",
+                "lod",
+                str(medium_gsplats),
+                str(out),
+                "--recipe",
+                "adaptive",
+                "--refine",
+                "volume",
+                "--target",
+                str(small_volume_npy),
+            ],
+        )
+        assert result.exit_code != 0
+        assert "adaptive" in self._io(result)
+        assert not out.exists()
+
+    def test_recipe_levels_with_refine_volume_smoke(
+        self, runner: CliRunner, small_volume_npy: Path, tmp_path: Path
+    ) -> None:
+        """--refine volume --target end-to-end: fit the volume, build levels
+        with a volume re-fit, and confirm the provenance round-trips. The
+        never-worse guard makes the outcome deterministic (seed or better)."""
+        import numpy as np
+
+        from luxar.gsplats.fit_gsplats import fit_gaussian_splats
+        from luxar.gsplats.gsplat_data import GSplatData
+
+        volume = np.load(small_volume_npy)
+        fine = fit_gaussian_splats(
+            volume, seeds=40, n_iters=80, device="cpu", verbose=False
+        )
+        src = tmp_path / "fit.gsplats.zarr"
+        fine.save(src)
+        out = tmp_path / "vr.gsplats.zarr"
+        result = runner.invoke(
+            app,
+            [
+                "gsplat",
+                "lod",
+                str(src),
+                str(out),
+                "--recipe",
+                "levels",
+                "-L",
+                "1",
+                "--refine",
+                "volume",
+                "--refine-iters",
+                "10",
+                "--target",
+                str(small_volume_npy),
+            ],
+        )
+        assert result.exit_code == 0, f"volume-refit smoke failed:\n{result.stdout}"
+        loaded = GSplatData.load(out, include_stats=True)
+        assert loaded.n_substitutive == 2
+        assert loaded.stats["refine"] == "volume"
+        assert loaded.stats["refine_iters"] == 10
+        lev = loaded.substitutive_levels[1]
+        assert lev.stats["refine"] == "volume"
+        assert {"mse_seed", "mse_refit", "improved"} <= set(lev.stats["refine_stats"])
+
     def test_recipe_flat(
         self, runner: CliRunner, medium_gsplats: Path, tmp_path: Path
     ) -> None:

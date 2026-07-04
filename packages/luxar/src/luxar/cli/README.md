@@ -263,6 +263,11 @@ luxar gsplat lod in.gsplats.zarr out.gsplats.zarr --recipe overview --compressio
 luxar gsplat lod in.gsplats.zarr out.gsplats.zarr --recipe levels -K 4 -L 3 \
     --substitutive-method kmeans-lloyd --lloyd-iters 5
 luxar gsplat lod in.gsplats.zarr out.gsplats.zarr --recipe levels -K 4 -L 3 --n-lods 4
+
+# volume re-fit — warm-start re-fit each coarse level against the SOURCE volume
+# (highest fidelity; each level keeps whichever of merge/re-fit renders closer)
+luxar gsplat lod in.gsplats.zarr out.gsplats.zarr --recipe levels \
+    --target volume.tiff --refine volume --refine-iters 300
 ```
 
 An option irrelevant to the chosen recipe (e.g. `--max-elements` with `--recipe stream`) is rejected with a clear error.

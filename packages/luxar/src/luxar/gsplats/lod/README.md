@@ -24,6 +24,7 @@ is built only on demand.
 | `additive.py` | additive axis: ordering + ladder (`make_additive_lod`, `compute_additive_order`) |
 | `substitutive.py` | substitutive axis orchestrator (`make_substitutive_lod`, `_reduce_one_level`, `_pack_level`) |
 | `pyramid.py` | `make_lod_pyramid` — chains substitutive (outer) × additive (inner) |
+| `volume_refit.py` | `refine="volume"`: warm-start re-fit of a coarse level against the source volume (thin orchestration over `fit_gaussian_splats`) |
 | `_kernels.py` | shared closed-form Gaussian-mixture math (numpy + torch) |
 | `_substitutive/` | private support subpackage for `substitutive.py`: `warm_start.py` (Morton partition), `kmeans_lloyd.py` (cost-increment Lloyd), `greedy.py` (Runnalls lazy-heap merge), `refine.py` (L2 mixture-to-mixture refit) |
 
@@ -268,6 +269,56 @@ Engineering guarantees:
 
 Only `refine_iters` is exposed on the public builders; the remaining constants
 live in `L2RefineConfig` (stability-critical, not a tuning surface).
+
+### Volume re-fit (`refine="volume"`)
+
+The third quality rung, above the merge and the L2 mixture refit
+(`volume_refit.py`): each merged level is **warm-start re-fitted against the
+source volume itself** via `fit_gaussian_splats(volume, seeds=<merge level>)`
+— the full rasterizer + Adam stack, identity-preserving (no cull, no dynamic
+ops, colors carried over). Unlike `l2`, whose target is the fine *mixture*
+(which already carries the fine fit's own error), this optimizes the true
+render-fidelity objective at the coarse budget. Benchmarked on real microscopy
+(skimage cells3d nuclei): **+5–6 dB** full-res and
+**+10–12 dB** at viewing scale over the merge, with unchanged splat count, and
+the warm start beats a cold fit while drifting ~2× less across levels (less
+LOD popping). Fitting a blurred/downscaled volume proxy was benchmarked and
+rejected — it discards positional detail the merge inherits from the sharp
+fine fit.
+
+Engineering guarantees and scope:
+
+- **Never worse than the merge** — the seed and the re-fit candidate are both
+  rendered to the volume grid and the lower-MSE one is kept.
+- **Mass pinning** (follows the ladder-wide `conserve_mass`, default on) — the
+  re-fit's amplitudes are rescaled so its rendered DC equals the seed's (already
+  pinned to the fine chain). The free fit otherwise tracks the volume's true DC,
+  which the finest level may under-explain — stored unpinned that is a visible
+  cross-level brightness pop (measured ~14 %). `--no-conserve-mass` opts into the
+  raw volume-accurate DC.
+- **Frame checks (both directions)** — an ENLARGED physical frame (center bbox
+  outside the volume's padded voxel index range) skips the re-fit up front; a
+  SHRUNK, ROTATED, or AXIS-SWAPPED frame fits inside that box, so it is
+  caught after the fit by the per-splat relocation check (rows are 1:1 in the
+  identity-preserving fit; a fit whose median per-splat displacement exceeds
+  the seed's own spread/footprint slack wholesale relocated the splats — a
+  frame mismatch, whatever its shape). Either way the seed is kept with a warning; a voxel-frame re-fit
+  would *win* the MSE guard while being misplaced relative to the ladder.
+- **Chain semantics** — unlike `l2`, the merge chain continues from the
+  *unrefined* merge output; only the stored level is replaced by the re-fit
+  (each level's re-fit is independently seeded from its own merge).
+- **Requires the volume in hand** — exposed via `luxar gsplat lod --target
+  <volume> --refine volume` (CLI loads with the shared `load_volume`); the
+  fit-time (`fit --recipe levels`) and batch-merge paths are follow-ups (the
+  batch streaming merge is volume-free by design).
+- **No-barrier scope (MVP)** — rejected when `coarsen_dims` sets barrier dims
+  (one volume cannot serve all barrier groups) and for the per-part `adaptive`
+  recipe (a tile's splats re-fit against the full volume would leave the
+  tile). `levels` and the global `overview` cap are supported.
+
+Only `refine_iters` (default 300 — omitted resolves to `VolumeRefitConfig`'s
+value in both the API and CLI) and the ladder-wide `conserve_mass` are exposed;
+the remaining constants live in `VolumeRefitConfig`.
 
 ### Mass conservation (`conserve_mass=True`)
 
