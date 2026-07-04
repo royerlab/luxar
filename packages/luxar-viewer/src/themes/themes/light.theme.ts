@@ -52,6 +52,12 @@ export const lightTheme: Theme = {
       strong: 'rgba(0, 0, 0, 0.25)', // Emphasized borders
       focus: 'rgba(46, 125, 50, 0.5)', // Green focus border
     },
+    menu: {
+      background: '#ffffff', // Native <option> popup (solid — no glass)
+      text: '#1e1e1e',
+      activeBackground: '#f0f0f0',
+      activeText: '#000000',
+    },
     visualization: {
       hot: '#d32f2f', // Slightly darker red
       warm: '#f57c00', // Darker orange

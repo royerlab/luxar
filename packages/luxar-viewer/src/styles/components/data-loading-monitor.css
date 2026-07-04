@@ -15,8 +15,11 @@
   color: var(--luxar-text-primary);
   background: var(--luxar-bg-secondary);
   backdrop-filter: var(--luxar-blur-md);
-  border-radius: var(--luxar-radius-md);
-  box-shadow: var(--luxar-shadow-md);
+  /* Shared surface recipe with the control rail: crisp hairline + large soft
+     corners + the same shadow. */
+  border: 1px solid var(--luxar-border-default);
+  border-radius: var(--luxar-radius-lg);
+  box-shadow: var(--luxar-shadow-lg);
   /* NO overflow: hidden - allows pseudo-elements for glass effect */
   overflow: visible;
   user-select: none;
@@ -316,7 +319,7 @@
 }
 
 .luxar-metric-card__value--large {
-  font-size: 32px;
+  font-size: var(--luxar-text-4xl);
 }
 
 .luxar-metric-card__subtitle {
@@ -589,17 +592,17 @@
 }
 
 .luxar-recommendation--error {
-  background: rgba(244, 67, 54, 0.1);
+  background: color-mix(in srgb, var(--luxar-error) 10%, transparent);
   border-left-color: var(--luxar-error);
 }
 
 .luxar-recommendation--warning {
-  background: rgba(255, 193, 7, 0.1);
+  background: color-mix(in srgb, var(--luxar-warning) 10%, transparent);
   border-left-color: var(--luxar-warning);
 }
 
 .luxar-recommendation--info {
-  background: rgba(33, 150, 243, 0.1);
+  background: color-mix(in srgb, var(--luxar-info) 10%, transparent);
   border-left-color: var(--luxar-info);
 }
 
@@ -912,7 +915,7 @@
 }
 
 .luxar-cache-disabled__icon {
-  font-size: 32px;
+  font-size: var(--luxar-text-4xl);
   margin-bottom: var(--luxar-spacing-4);
 }
 
@@ -1091,7 +1094,7 @@
   text-align: left;
   font-weight: var(--luxar-font-semibold);
   color: var(--luxar-text-muted);
-  font-size: 10px;
+  font-size: var(--luxar-text-sm);
   letter-spacing: 0.03em;
 }
 
@@ -1209,7 +1212,7 @@
   background: var(--luxar-bg-tertiary);
   border-bottom: 1px solid var(--luxar-border-subtle);
   font-weight: var(--luxar-font-bold);
-  font-size: 10px;
+  font-size: var(--luxar-text-sm);
   text-transform: uppercase;
   color: var(--luxar-text-muted);
 }
@@ -1280,7 +1283,7 @@
 .luxar-timing-panel__expand {
   cursor: pointer;
   width: 12px;
-  font-size: 10px;
+  font-size: var(--luxar-text-sm);
   color: var(--luxar-text-muted);
   user-select: none;
   transition: var(--luxar-transition-fast);
@@ -1305,7 +1308,7 @@
 }
 
 .luxar-timing-panel__tag {
-  font-size: 9px;
+  font-size: var(--luxar-text-xs);
   padding: 1px var(--luxar-spacing-2);
   border-radius: var(--luxar-radius-sm);
   background: var(--luxar-bg-tertiary);
@@ -1355,7 +1358,7 @@
   padding: var(--luxar-spacing-2) var(--luxar-spacing-4);
   background: var(--luxar-bg-tertiary);
   border-top: 1px solid var(--luxar-border-subtle);
-  font-size: 10px;
+  font-size: var(--luxar-text-sm);
   color: var(--luxar-text-muted);
 }
 

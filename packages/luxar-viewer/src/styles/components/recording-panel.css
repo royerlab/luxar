@@ -19,38 +19,42 @@
    Uses a class applied directly to the .luxar-gui element (not :has(),
    which has limited browser support). */
 .luxar-gui.luxar-recording-panel {
-  max-height: none !important;
+  max-height: none;
 }
 
 .luxar-gui.luxar-recording-panel .luxar-gui__scroll {
-  max-height: none !important;
+  max-height: none;
 }
 
 /* ========== Recording Button ========== */
 
-.luxar-recording-btn .luxar-gui__button {
-  background: var(--luxar-error, #e74c3c) !important;
-  color: #fff !important;
-  border: none !important;
-  border-radius: var(--luxar-radius-md, 8px) !important;
-  font-size: var(--luxar-text-lg, 16px) !important;
-  font-weight: 600 !important;
-  padding: 12px 16px !important;
-  cursor: pointer !important;
+/* The extra `.luxar-recording-panel` prefix raises specificity to (0,3,0) so
+   the record red beats the light-theme `[data-theme=light] .luxar-gui__button`
+   (0,2,0) tie WITHOUT `!important`. `#fff` text is a fixed white-on-red
+   affordance (do not tokenize — --luxar-text-inverse is dark in the dark theme). */
+.luxar-recording-panel .luxar-recording-btn .luxar-gui__button {
+  background: var(--luxar-error);
+  color: #fff;
+  border: none;
+  border-radius: var(--luxar-radius-md);
+  font-size: var(--luxar-text-lg);
+  font-weight: var(--luxar-font-semibold);
+  padding: var(--luxar-spacing-6) var(--luxar-spacing-8);
+  cursor: pointer;
   transition:
     background 0.2s,
-    transform 0.1s !important;
-  width: 100% !important;
+    transform 0.1s;
+  width: 100%;
   text-transform: uppercase;
   letter-spacing: 0.5px;
 }
 
-.luxar-recording-btn .luxar-gui__button:hover {
-  background: #c0392b !important;
+.luxar-recording-panel .luxar-recording-btn .luxar-gui__button:hover {
+  background: color-mix(in srgb, var(--luxar-error) 85%, #000);
   transform: scale(1.02);
 }
 
-.luxar-recording-btn .luxar-gui__button:active {
+.luxar-recording-panel .luxar-recording-btn .luxar-gui__button:active {
   transform: scale(0.98);
 }
 
@@ -95,7 +99,7 @@
   width: 12px;
   height: 12px;
   border-radius: 50%;
-  background: #e74c3c;
+  background: var(--luxar-error);
   animation: luxar-pulse 1s ease-in-out infinite;
   flex-shrink: 0;
 }
@@ -123,7 +127,7 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  background: rgba(0, 0, 0, 0.5);
+  background: var(--luxar-bg-overlay);
   backdrop-filter: blur(2px);
 }
 
@@ -154,11 +158,11 @@
 
 .luxar-recording-confirm__keybinding {
   display: inline-block;
-  background: rgba(255, 255, 255, 0.1);
+  background: var(--luxar-interactive-default);
   padding: 2px 8px;
-  border-radius: 4px;
+  border-radius: var(--luxar-radius-sm);
   font-family: var(--luxar-font-mono, monospace);
-  font-size: var(--luxar-text-sm, 13px);
+  font-size: var(--luxar-text-sm);
 }
 
 .luxar-recording-confirm__buttons {
@@ -181,25 +185,25 @@
 }
 
 .luxar-recording-confirm__btn:hover {
-  background: rgba(255, 255, 255, 0.1);
+  background: var(--luxar-interactive-hover);
 }
 
 .luxar-recording-confirm__btn--primary {
-  background: var(--luxar-error, #e74c3c);
-  border-color: var(--luxar-error, #e74c3c);
-  color: #fff;
+  background: var(--luxar-error);
+  border-color: var(--luxar-error);
+  color: #fff; /* fixed white-on-red affordance */
 }
 
 .luxar-recording-confirm__btn--primary:hover {
-  background: #c0392b;
+  background: color-mix(in srgb, var(--luxar-error) 85%, #000);
 }
 
 /* ========== Theme Overrides ========== */
 
 [data-theme='light'] .luxar-recording-indicator {
   background: rgba(255, 255, 255, 0.9);
-  color: #333;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+  color: var(--luxar-text-primary);
+  box-shadow: var(--luxar-shadow-md);
 }
 
 [data-theme='light'] .luxar-recording-confirm__dialog {
@@ -220,7 +224,7 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  background: rgba(0, 0, 0, 0.3);
+  background: var(--luxar-bg-overlay);
   cursor: wait;
 }
 
@@ -230,19 +234,19 @@
   align-items: center;
   gap: 16px;
   padding: 32px 48px;
-  background: rgba(30, 30, 30, 0.95);
-  border-radius: 12px;
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+  background: var(--luxar-bg-secondary);
+  border-radius: var(--luxar-radius-lg);
+  border: 1px solid var(--luxar-border-default);
+  box-shadow: var(--luxar-shadow-lg);
 }
 
 .luxar-recording-overlay__preview {
   max-width: 480px;
   max-height: 270px;
   width: 100%;
-  border-radius: 6px;
-  border: 1px solid rgba(255, 255, 255, 0.15);
-  background: #000;
+  border-radius: var(--luxar-radius-md);
+  border: 1px solid var(--luxar-border-strong);
+  background: #000; /* letterbox black behind the video preview (intentional) */
 }
 
 .luxar-recording-overlay__progress {
@@ -253,32 +257,32 @@
 }
 
 .luxar-recording-overlay__label {
-  font-size: 14px;
+  font-size: var(--luxar-text-md);
   color: rgba(255, 255, 255, 0.8);
   font-family: inherit;
 }
 
 .luxar-recording-overlay__counter {
-  font-size: 28px;
-  font-weight: 600;
+  font-size: var(--luxar-text-3xl);
+  font-weight: var(--luxar-font-semibold);
   color: #fff;
-  font-family: monospace;
+  font-family: var(--luxar-font-mono, monospace);
   letter-spacing: 2px;
 }
 
 .luxar-recording-overlay__cancel {
   padding: 8px 24px;
-  background: rgba(231, 76, 60, 0.8);
+  background: color-mix(in srgb, var(--luxar-error) 80%, transparent);
   color: #fff;
   border: none;
-  border-radius: 6px;
-  font-size: 13px;
+  border-radius: var(--luxar-radius-md);
+  font-size: var(--luxar-text-base);
   cursor: pointer;
   transition: background 0.2s;
 }
 
 .luxar-recording-overlay__cancel:hover {
-  background: rgba(231, 76, 60, 1);
+  background: var(--luxar-error);
 }
 
 [data-theme='light'] .luxar-recording-overlay {
@@ -310,7 +314,7 @@
     opacity: 1;
   }
 
-  .luxar-recording-btn .luxar-gui__button {
+  .luxar-recording-panel .luxar-recording-btn .luxar-gui__button {
     transition: none !important;
   }
 }

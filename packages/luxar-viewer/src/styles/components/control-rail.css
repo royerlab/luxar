@@ -331,7 +331,7 @@
   border: none;
   background: none;
   color: var(--luxar-text-secondary);
-  font-size: 15px;
+  font-size: var(--luxar-text-lg);
   line-height: 1;
   cursor: pointer;
 }
