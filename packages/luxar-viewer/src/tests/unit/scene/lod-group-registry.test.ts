@@ -999,6 +999,55 @@ function makeCountedChild(
   return child;
 }
 
+describe('LODGroupRegistry — retryLazyChildByLeafPath', () => {
+  it('clears the failure cooldown and re-kicks ensureLoaded for a named lazy leaf', () => {
+    const reg = makeRegistry();
+    const ensureLoaded = vi.fn();
+    const child = makeLazyChild(0.5, ensureLoaded);
+    child.object.name = '/g/child_1'; // leaf lazy placeholders carry the leaf path
+    child.failed = true;
+    child.failedTick = 42;
+    reg.register(makeEntry([makeChild(0), child], 0, '/g'));
+
+    expect(reg.retryLazyChildByLeafPath('/g/child_1')).toBe(true);
+    expect(ensureLoaded).toHaveBeenCalledTimes(1);
+    expect(child.failed).toBe(false);
+    expect(child.failedTick).toBeUndefined();
+    // kickDeferredLoad owns the loading flag (the thunk never sets it).
+    expect(child.loading).toBe(true);
+  });
+
+  it('returns true WITHOUT re-firing when a load is already in flight', () => {
+    const reg = makeRegistry();
+    const ensureLoaded = vi.fn();
+    const child = makeLazyChild(0.5, ensureLoaded);
+    child.object.name = '/g/child_1';
+    child.loading = true;
+    reg.register(makeEntry([makeChild(0), child], 0, '/g'));
+
+    expect(reg.retryLazyChildByLeafPath('/g/child_1')).toBe(true);
+    expect(ensureLoaded).not.toHaveBeenCalled();
+  });
+
+  it('returns false for unknown paths and for anonymous deferred-group placeholders', () => {
+    const reg = makeRegistry();
+    // Deferred-GROUP lazy child: anonymous placeholder (no name, by design).
+    const groupChild = makeLazyChild(0.5, vi.fn());
+    reg.register(makeEntry([makeChild(0), groupChild], 0, '/g'));
+
+    expect(reg.retryLazyChildByLeafPath('/nope')).toBe(false);
+    expect(reg.retryLazyChildByLeafPath('')).toBe(false); // unnamed never matches
+  });
+
+  it('eager children (no ensureLoaded) never match even when named', () => {
+    const reg = makeRegistry();
+    const eager = makeChild(0);
+    eager.object.name = '/g/child_0';
+    reg.register(makeEntry([eager], 0, '/g'));
+    expect(reg.retryLazyChildByLeafPath('/g/child_0')).toBe(false);
+  });
+});
+
 describe('LODGroupRegistry — fresh-but-empty display guard', () => {
   it('redirects display to the coarsest fresh NON-empty level when the chosen level is empty', () => {
     const reg = makeRegistry([0, 1, 2], undefined, undefined, () => 2);

@@ -19,6 +19,7 @@ import type { LinesDataLoader, LinesViewState } from '../../../types/lines';
 import type { GSplatsDataLoader, GSplatsViewState } from '../../../types/gsplats';
 import { log, Modules } from '../../../utils/log';
 import type { LoaderRegistry } from '../loaders/loader-registry';
+import type { LODGroupRegistry } from '../../../scene/lod-group-registry';
 import type { StagedLinesCommit } from '../process/data-processor-lines';
 import type { StagedGSplatsCommit } from '../process/data-processor-gsplats';
 
@@ -35,6 +36,15 @@ type DerivedViewState = { skip: 'extend_to_all' } | { skip: false; viewState: Vi
  */
 export interface RetryCtx {
   registry: LoaderRegistry;
+  /**
+   * Optional LOD-group registry for the lazy-level fallback: lazy
+   * substitutive levels never join the loader maps (they're registry-driven
+   * — see load-lod-group-node.ts), so when a failed path resolves to no
+   * map entry the retry re-kicks the level's ``ensureLoaded`` through
+   * ``retryLazyChildByLeafPath`` instead of discarding the failure.
+   * Optional so headless/test ctxs without a registry keep working.
+   */
+  lodGroupRegistry?: LODGroupRegistry | null;
   rootGroup: THREE.Group | null;
   viewState: ViewState;
   deriveNodeViewState(
@@ -152,6 +162,19 @@ export async function retryFailedLoaderUnlocked(path: string, ctx: RetryCtx): Pr
       }
       return verifyAndClear('gsplats');
     } else {
+      // Not in the sweep maps. Lazy substitutive LOD levels are never
+      // registered there (registry-driven lifecycle) but DO record failures
+      // — previously this branch silently DISCARDED those, making lazy
+      // levels unretryable. Re-kick the level's deferred loader instead.
+      // Fire-and-forget semantics: `true` means "retry started" (the thunk
+      // owns the ready/failed outcome; a repeat failure re-records itself
+      // via recordFailure in the expensive half, so bookkeeping stays
+      // consistent).
+      if (ctx.lodGroupRegistry?.retryLazyChildByLeafPath(path)) {
+        registry.failedLoaders.delete(path);
+        log.info(Modules.SCENE_LOADER, `Retry kicked for lazy LOD level: ${path}`);
+        return true;
+      }
       // Loader not found - it may have been disposed
       log.warning(Modules.SCENE_LOADER, `No loader found for path: ${path}`);
       registry.failedLoaders.delete(path); // Clean up stale entry

@@ -560,6 +560,40 @@ export class LODGroupRegistry {
   }
 
   /**
+   * Retry a LAZY lod_group level by its LEAF path (the path of the level's
+   * placeholder mesh — leaf lazy children are named with their node path by
+   * the node factory; anonymous deferred-GROUP placeholders carry no name and
+   * correctly never match). Used by ``SceneLoader.retryFailedLoader``: lazy
+   * levels never join the update-sweep loader maps, so the map-based retry
+   * cannot reach them — this is their retry entry point.
+   *
+   * Clears the failure cooldown (``failed``/``failedTick``) and routes
+   * through the shared ``kickDeferredLoad`` gate, which owns setting
+   * ``loading`` before firing ``ensureLoaded`` (the thunk itself never sets
+   * ``loading`` — only the registry does; keep that invariant here).
+   *
+   * Returns ``true`` when a retry was kicked OR one is already in flight
+   * (``loading``), ``false`` when no lazy child with that leaf path exists.
+   * Fire-and-forget semantics: ``true`` means "retry started", not "retry
+   * succeeded" — the thunk owns the ready/failed outcome, and a repeat
+   * failure re-enters the normal cooldown cycle.
+   */
+  retryLazyChildByLeafPath(path: string): boolean {
+    if (!path) return false; // anonymous (deferred-group) placeholders have name '' — never match
+    for (const entry of this.entries.values()) {
+      for (const child of entry.children) {
+        if (child.object.name !== path || !child.ensureLoaded) continue;
+        if (child.loading) return true; // retry already in flight
+        child.failed = false;
+        child.failedTick = undefined;
+        this.kickDeferredLoad(child);
+        return true;
+      }
+    }
+    return false;
+  }
+
+  /**
    * Update an lod_group's selector mode. ``'auto'`` re-enables
    * view-driven selection; ``{ lockLevel: i }`` pins the lod_group to
    * child index ``i`` (0-based in coarsest→finest order). An

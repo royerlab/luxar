@@ -1148,7 +1148,11 @@ export class SceneLoader {
    * connectivity is restored.
    *
    * @param path - The path of the failed loader to retry
-   * @returns Promise resolving to true if retry succeeded, false if failed or not found
+   * @returns Promise resolving to true if retry succeeded, false if failed or not found.
+   *          For a LAZY substitutive LOD level (not in the sweep maps), `true`
+   *          means the deferred reload was KICKED (fire-and-forget) — the lazy
+   *          thunk owns the eventual ready/failed outcome, and a repeat failure
+   *          re-records itself for another retry.
    *
    * @example
    * ```typescript
@@ -1194,6 +1198,7 @@ export class SceneLoader {
   private makeRetryCtx(): RetryCtx {
     return {
       registry: this.registry,
+      lodGroupRegistry: this.lodGroupRegistry,
       rootGroup: this.rootGroup,
       viewState: this.viewState,
       deriveNodeViewState: (path, attrs, opts) => this.deriveNodeViewState(path, attrs, opts),

@@ -309,6 +309,45 @@ describe('retryFailedLoaderUnlocked — no loader registered', () => {
   });
 });
 
+describe('retryFailedLoaderUnlocked — lazy LOD level fallback', () => {
+  // Lazy substitutive levels never join the sweep maps but DO record
+  // failures; previously the no-loader branch silently discarded them.
+  it('kicks the lazy child via the LOD registry, clears the record, returns true', async () => {
+    const retryLazyChildByLeafPath = vi.fn().mockReturnValue(true);
+    const ctx = makeRetryCtx({
+      rootGroup: makeRootGroupWith(PATH),
+      lodGroupRegistry: { retryLazyChildByLeafPath } as never,
+    });
+    ctx.registry.recordFailure(PATH, new Error('lazy load failed'));
+
+    const ok = await retryFailedLoaderUnlocked(PATH, ctx);
+
+    expect(ok).toBe(true);
+    expect(retryLazyChildByLeafPath).toHaveBeenCalledWith(PATH);
+    expect(ctx.registry.failedLoaders.has(PATH)).toBe(false); // re-recorded on repeat failure
+  });
+
+  it('falls through to the stale-entry cleanup when the registry has no lazy child', async () => {
+    const retryLazyChildByLeafPath = vi.fn().mockReturnValue(false);
+    const ctx = makeRetryCtx({
+      rootGroup: makeRootGroupWith(PATH),
+      lodGroupRegistry: { retryLazyChildByLeafPath } as never,
+    });
+    ctx.registry.recordFailure(PATH, new Error('orphaned failure'));
+
+    const ok = await retryFailedLoaderUnlocked(PATH, ctx);
+
+    expect(ok).toBe(false);
+    expect(ctx.registry.failedLoaders.has(PATH)).toBe(false); // stale entry cleaned
+  });
+
+  it('no lodGroupRegistry on ctx (headless) keeps the legacy no-loader behavior', async () => {
+    const ctx = makeRetryCtx({ rootGroup: makeRootGroupWith(PATH) });
+    ctx.registry.recordFailure(PATH, new Error('initial failure'));
+    expect(await retryFailedLoaderUnlocked(PATH, ctx)).toBe(false);
+  });
+});
+
 describe('retryFailedLoaderUnlocked — per-attempt retryCount accounting', () => {
   it('increments retryCount when the retry itself throws', async () => {
     const updateView = vi.fn().mockRejectedValue(new Error('network down'));
