@@ -65,7 +65,13 @@ export interface AccumulatorProviderPort {
  */
 export interface FailedLoadsProviderPort {
   getFailedPaths: () => string[];
-  retryAll: () => Promise<{ succeeded: string[]; failed: string[] }>;
+  /**
+   * `deferred: true` ⇒ the batch was refused because a main update held the
+   * serialization lock — nothing was retried (see
+   * `SceneLoader.retryAllFailedLoaders`). The UI must not report it as a
+   * failed re-attempt.
+   */
+  retryAll: () => Promise<{ succeeded: string[]; failed: string[]; deferred?: boolean }>;
 }
 
 /**

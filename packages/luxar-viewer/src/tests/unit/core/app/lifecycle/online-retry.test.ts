@@ -8,6 +8,8 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { EventGroup } from '../../../../../utils/cross-layer/event-group';
 import {
   installOnlineRetry,
+  DEFERRED_RETRY_DELAY_MS,
+  MAX_DEFERRED_RETRY_ATTEMPTS,
   type RetryCapableLoader,
 } from '../../../../../core/app/lifecycle/online-retry';
 
@@ -96,6 +98,91 @@ describe('installOnlineRetry', () => {
     // After the batch settles, a NEW online transition retries again.
     window.dispatchEvent(new Event('online'));
     await vi.waitFor(() => expect(loader.retryAllFailedLoaders).toHaveBeenCalledTimes(2));
+  });
+
+  it('re-attempts a DEFERRED batch until the update lock frees (never reported as failing)', async () => {
+    // Regression: retryAllFailedLoaders returns {succeeded:[], failed:<all>,
+    // deferred:true} WITHOUT retrying when a main update holds the lock —
+    // the very situation a mid-load reconnect produces. Pre-fix this was
+    // toasted as "0 recovered, N still failing" and never re-attempted
+    // (no second 'online' event arrives while the browser stays online).
+    vi.useFakeTimers();
+    try {
+      let call = 0;
+      const loader: RetryCapableLoader = {
+        hasFailures: () => true,
+        retryAllFailedLoaders: vi.fn().mockImplementation(async () => {
+          call += 1;
+          if (call <= 2) return { succeeded: [], failed: ['/a', '/b'], deferred: true };
+          return { succeeded: ['/a', '/b'], failed: [] }; // lock freed on 3rd attempt
+        }),
+      };
+      installOnlineRetry({ events, getLoader: () => loader, toast });
+
+      window.dispatchEvent(new Event('online'));
+      await vi.advanceTimersByTimeAsync(0); // attempt 1 resolves deferred
+      await vi.advanceTimersByTimeAsync(DEFERRED_RETRY_DELAY_MS); // attempt 2 (deferred)
+      await vi.advanceTimersByTimeAsync(DEFERRED_RETRY_DELAY_MS); // attempt 3 (succeeds)
+
+      expect(loader.retryAllFailedLoaders).toHaveBeenCalledTimes(3);
+      // Toasts: the initial "retrying…" plus the genuine outcome — and
+      // NEVER a "still failing" report for the deferred attempts.
+      const messages = toast.mock.calls.map((c) => String(c[0]));
+      expect(messages.some((m) => m.includes('still failing'))).toBe(false);
+      expect(messages.some((m) => m.includes('Recovered 2'))).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('gives up after MAX_DEFERRED_RETRY_ATTEMPTS and leaves failures to the banner', async () => {
+    vi.useFakeTimers();
+    try {
+      const loader: RetryCapableLoader = {
+        hasFailures: () => true,
+        retryAllFailedLoaders: vi
+          .fn()
+          .mockResolvedValue({ succeeded: [], failed: ['/a'], deferred: true }),
+      };
+      installOnlineRetry({ events, getLoader: () => loader, toast });
+
+      window.dispatchEvent(new Event('online'));
+      await vi.advanceTimersByTimeAsync(
+        DEFERRED_RETRY_DELAY_MS * (MAX_DEFERRED_RETRY_ATTEMPTS + 2)
+      );
+
+      expect(loader.retryAllFailedLoaders).toHaveBeenCalledTimes(MAX_DEFERRED_RETRY_ATTEMPTS);
+      // No misleading outcome toast — only the initial "retrying…" one.
+      expect(toast).toHaveBeenCalledTimes(1);
+
+      // The guard released: a NEW online transition starts a fresh chain.
+      window.dispatchEvent(new Event('online'));
+      await vi.advanceTimersByTimeAsync(0);
+      expect(loader.retryAllFailedLoaders).toHaveBeenCalledTimes(MAX_DEFERRED_RETRY_ATTEMPTS + 1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('clears a pending deferred-retry timer when the EventGroup is disposed', async () => {
+    vi.useFakeTimers();
+    try {
+      const loader: RetryCapableLoader = {
+        hasFailures: () => true,
+        retryAllFailedLoaders: vi
+          .fn()
+          .mockResolvedValue({ succeeded: [], failed: ['/a'], deferred: true }),
+      };
+      installOnlineRetry({ events, getLoader: () => loader, toast });
+
+      window.dispatchEvent(new Event('online'));
+      await vi.advanceTimersByTimeAsync(0); // attempt 1 resolves deferred, timer pending
+      events.dispose();
+      await vi.advanceTimersByTimeAsync(DEFERRED_RETRY_DELAY_MS * 3);
+      expect(loader.retryAllFailedLoaders).toHaveBeenCalledTimes(1); // no post-dispose attempts
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('removes the listener when the EventGroup is disposed', async () => {

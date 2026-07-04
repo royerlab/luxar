@@ -628,6 +628,35 @@ describe('SceneLoader', () => {
     });
   });
 
+  describe('retryAllFailedLoaders — deferred vs failed', () => {
+    it('flags a lock-refused batch as deferred:true (nothing was retried)', async () => {
+      // Regression: the deferred branch returned {succeeded:[], failed:<all>}
+      // — byte-identical to a genuine all-failed batch — so the online
+      // auto-retry and the monitor's Retry button reported "N still failing"
+      // for retries that never ran.
+      const internals = sceneLoader as unknown as {
+        _updateInProgress: boolean;
+        registry: { recordFailure(path: string, error: Error): void };
+      };
+      internals.registry.recordFailure('/points/p', new Error('network down'));
+      internals._updateInProgress = true; // a main update holds the lock
+      try {
+        const result = await sceneLoader.retryAllFailedLoaders();
+        expect(result).toEqual({ succeeded: [], failed: ['/points/p'], deferred: true });
+        // Nothing was retried: the failure record must survive untouched.
+        expect(sceneLoader.hasFailures()).toBe(true);
+      } finally {
+        internals._updateInProgress = false;
+      }
+    });
+
+    it('a genuine batch result carries no deferred flag', async () => {
+      // Empty batch (no failures): resolves immediately without the flag.
+      const result = await sceneLoader.retryAllFailedLoaders();
+      expect(result.deferred).toBeUndefined();
+    });
+  });
+
   describe('error handling', () => {
     it('should handle store opening failures', async () => {
       (zarr as any).withMaybeConsolidatedMetadata.mockRejectedValue(

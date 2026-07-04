@@ -1231,7 +1231,12 @@ export class SceneLoader {
    * Retry all failed loaders. Useful for batch recovery after network
    * connectivity is restored.
    *
-   * @returns Promise resolving to an object with succeeded and failed path arrays
+   * @returns Promise resolving to `{ succeeded, failed, deferred? }`.
+   *          `deferred: true` means NOTHING was retried — a main update held
+   *          the serialization lock, so the batch was refused (every path is
+   *          reported in `failed` for compatibility, but none genuinely
+   *          re-failed). Callers must not present a deferred result as a
+   *          failed re-attempt; retry again once the update settles.
    *
    * @example
    * ```typescript
@@ -1240,7 +1245,11 @@ export class SceneLoader {
    * console.log(`Recovered: ${result.succeeded.length}, Still failing: ${result.failed.length}`);
    * ```
    */
-  async retryAllFailedLoaders(): Promise<{ succeeded: string[]; failed: string[] }> {
+  async retryAllFailedLoaders(): Promise<{
+    succeeded: string[];
+    failed: string[];
+    deferred?: boolean;
+  }> {
     const failedPaths = Array.from(this.failedLoaders.keys());
 
     if (failedPaths.length === 0) {
@@ -1257,7 +1266,11 @@ export class SceneLoader {
         Modules.SCENE_LOADER,
         'Retry-all deferred — main update in progress; try again after the update settles'
       );
-      return { succeeded: [], failed: failedPaths };
+      // Deferred, NOT failed: nothing was retried. The flag lets callers
+      // (online auto-retry, the monitor's Retry button) distinguish this
+      // from a genuine all-failed batch — the two were previously
+      // byte-identical result shapes.
+      return { succeeded: [], failed: failedPaths, deferred: true };
     }
 
     log.info(Modules.SCENE_LOADER, `Retrying ${failedPaths.length} failed loader(s)`);

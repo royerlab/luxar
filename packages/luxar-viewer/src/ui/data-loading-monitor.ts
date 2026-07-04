@@ -161,6 +161,8 @@ export class DataLoadingMonitor {
   private failedLoadsProvider: FailedLoadsProviderPort | null = null;
   /** In-flight guard so the banner's Retry button can't stack batches. */
   private retryFailedLoadsInFlight = false;
+  /** Last-rendered failed-loads state; a change marks the overview structure dirty. */
+  private lastFailedLoadsSignature = '';
   private lodStates: Map<string, LODProgressState> = new Map();
   /** Per-path visible counts pushed by the SceneLoader's visible-counts walk. */
   private visibleCountsByPath: ReadonlyMap<string, number> = new Map();
@@ -308,8 +310,8 @@ export class DataLoadingMonitor {
   }
 
   /**
-   * Set the cache stats provider for L1/L2 cache monitoring.
-   * This enables the monitor to display actual cache statistics.
+   * Set the failed-loads provider for the Overview tab's retry banner
+   * (count/paths + retry-all; see `FailedLoadsProviderPort`).
    */
   public setFailedLoadsProvider(provider: FailedLoadsProviderPort | null): void {
     this.failedLoadsProvider = provider;
@@ -318,6 +320,10 @@ export class DataLoadingMonitor {
     }
   }
 
+  /**
+   * Set the cache stats provider for L1/L2 cache monitoring.
+   * This enables the monitor to display actual cache statistics.
+   */
   public setCacheStatsProvider(provider: CacheStatsProvider | null): void {
     this.cacheStatsProvider = provider;
     if (provider) {
@@ -1176,6 +1182,19 @@ export class DataLoadingMonitor {
   private updateDetailedView(): void {
     if (!this.panel) return;
 
+    // Failed-loads banner liveness: the overview HTML is rebuilt only when
+    // structureDirty (values are otherwise patched in place), and the banner
+    // is part of that HTML — so any change in the failed set or the
+    // retry-in-flight flag must mark the structure dirty, or the banner
+    // appears/disappears/disables only on the next unrelated rebuild.
+    const failedLoadsSignature =
+      (this.failedLoadsProvider?.getFailedPaths() ?? []).join('|') +
+      (this.retryFailedLoadsInFlight ? '#retrying' : '');
+    if (failedLoadsSignature !== this.lastFailedLoadsSignature) {
+      this.lastFailedLoadsSignature = failedLoadsSignature;
+      this.structureDirty = true;
+    }
+
     // Update metrics from all loaders
     for (const [path, loader] of this.loaders) {
       const metrics = loader.getMetrics();
@@ -1666,10 +1685,21 @@ export class DataLoadingMonitor {
     if (provider.getFailedPaths().length === 0) return;
 
     this.retryFailedLoadsInFlight = true;
-    this.updateUI(); // disable the button immediately
+    this.structureDirty = true; // rebuild the overview so the button disables now
+    this.updateUI();
     void provider
       .retryAll()
-      .then(({ succeeded, failed }) => {
+      .then(({ succeeded, failed, deferred }) => {
+        if (deferred) {
+          // Nothing was retried — a main update holds the serialization
+          // lock. Saying "still failing" here would falsely report a failed
+          // re-attempt (the pre-fix behavior).
+          notifier.toast(
+            'Retry deferred — a data update is in progress; try again in a moment.',
+            4000
+          );
+          return;
+        }
         if (failed.length === 0) {
           notifier.toast(
             `Recovered ${succeeded.length} failed load${succeeded.length === 1 ? '' : 's'}.`,
@@ -1690,6 +1720,7 @@ export class DataLoadingMonitor {
       })
       .finally(() => {
         this.retryFailedLoadsInFlight = false;
+        this.structureDirty = true; // re-enable the button / drop the banner
         this.updateUI();
       });
   }

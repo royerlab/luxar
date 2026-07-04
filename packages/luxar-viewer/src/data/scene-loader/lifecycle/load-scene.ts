@@ -101,7 +101,7 @@ export interface LoadSceneCtx {
    * Live closures over the orchestrator's registry / retry API.
    */
   getFailedLoaderPaths(): string[];
-  retryAllFailedLoaders(): Promise<{ succeeded: string[]; failed: string[] }>;
+  retryAllFailedLoaders(): Promise<{ succeeded: string[]; failed: string[]; deferred?: boolean }>;
   /** Kick the GSplats LOD refinement loop after initial load. */
   scheduleGSplatsRefinement(): Promise<void>;
 
