@@ -79,10 +79,12 @@ looks like (e.g. hit-rate tooltips note that a low rate right after
 load is normal). Two tooltips are *state-dependent* and therefore
 re-patched by `tabs/cache.ts` on every tick alongside their values:
 `validationModeTooltip(mode)` and `lastValidatedTooltip(mode)` — under
-`validationMode: 'none'` the "Last Validated" timestamp records only a
-check *attempt* (nothing to compare against), not a freshness
-confirmation, and the tooltip must say so for whichever mode is
-currently displayed. The timing panel's per-operation explanations
+`validationMode: 'none'` the freshness timestamp records only a check
+*attempt* (nothing to compare against), not a confirmation, and the
+tooltip must say so for whichever mode is currently displayed. For the
+same reason the row label itself is mode-aware
+(`lastValidatedLabel(mode)`): "Last Validated" only under
+content-hash, "Last Checked" otherwise. The timing panel's per-operation explanations
 live in the `TOOLTIPS` map in `timing-panel.ts`.
 
 ## Contracts and invariants

@@ -81,8 +81,14 @@ function benchmark<T>(
   }
   const tsTime = (performance.now() - tsStart) / BENCHMARK_ITERATIONS;
 
-  // Handle edge case where both times are 0
-  const speedup = wasmTime > 0 ? tsTime / wasmTime : tsTime > 0 ? Infinity : 1.0;
+  // performance.now() can quantize a fully-JIT'd 100-iteration loop to
+  // 0ms (coarse timer resolution, fast machines, worker contention in
+  // whole-suite runs). The old edge-case handling covered both-zero but
+  // not tsTime=0 with wasmTime>0, which produced speedup=0 and failed
+  // the `> 0` sanity assertions. Clamp both sides to ~timer resolution
+  // so every degenerate combination yields a finite, positive ratio.
+  const MIN_MEASURABLE_MS = 0.0005;
+  const speedup = Math.max(tsTime, MIN_MEASURABLE_MS) / Math.max(wasmTime, MIN_MEASURABLE_MS);
 
   results.push({
     name,

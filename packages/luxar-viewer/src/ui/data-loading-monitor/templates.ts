@@ -643,6 +643,17 @@ export function lastValidatedTooltip(mode: 'content-hash' | 'ttl' | 'none' | und
 }
 
 /**
+ * Row label for the freshness timestamp, mode-aware to match the
+ * timestamp's actual meaning: only content-hash mode truly VALIDATES
+ * the cache against the server; under ttl/none the check merely ran
+ * (found no fingerprint to compare), so "Last Validated" would
+ * overstate what happened — "Last Checked" is the honest label.
+ */
+export function lastValidatedLabel(mode: 'content-hash' | 'ttl' | 'none' | undefined): string {
+  return mode === 'content-hash' ? 'Last Validated' : 'Last Checked';
+}
+
+/**
  * R3: Friendly timestamp for `health.lastValidatedAt`. null renders
  * as "Never"; valid timestamps use the browser's locale formatter.
  */
@@ -927,7 +938,7 @@ export function renderCacheContent(_stats: GlobalStats, cacheMetrics: CacheMetri
           </span>
         </div>
         <div class="luxar-cache-health__row">
-          <span class="luxar-cache-health__label" title="Timestamp of the most recent freshness check against the server — hover the value for what that means under the current validation mode">Last Validated</span>
+          <span class="luxar-cache-health__label" data-field="cache-health-validated-label" title="Timestamp of the most recent freshness check against the server — hover the value for what that means under the current validation mode">${lastValidatedLabel(cacheMetrics.health?.validationMode)}</span>
           <span class="luxar-cache-health__value" data-field="cache-health-validated" title="${escapeHtml(lastValidatedTooltip(cacheMetrics.health?.validationMode))}">
             ${formatLastValidated(cacheMetrics.health?.lastValidatedAt)}
           </span>
