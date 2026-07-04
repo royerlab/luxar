@@ -20,6 +20,28 @@ All notable changes to Luxar are documented in this file.
   provenance, `recipe` (the build instruction) is recorded distinctly from
   `lod_kind` (the viewer-facing reduction mechanism).
 
+#### Added — `--refine volume` warm-start volume re-fit of coarse levels
+
+- **`refine="volume"`** on `make_substitutive_lod` / `make_lod_pyramid` /
+  `RecipeParams` (CLI: `luxar gsplat lod --recipe levels --target <volume>
+  --refine volume [--refine-iters N]`): each merged level is warm-start
+  re-fitted against the source volume itself (`fit_gaussian_splats` seeded by
+  the merge; identity-preserving — no cull/dynamic-ops, colors carried over).
+  Benchmarked on real microscopy: +5–6 dB full-res / +10–12 dB at viewing
+  scale over the merge, with the warm start beating a cold fit and drifting
+  ~2× less across levels. Never worse than the merge: each level keeps
+  whichever of {merge seed, re-fit} renders closer to the volume (MSE); the
+  re-fit's DC is pinned to the seed's (following `conserve_mass`, so no
+  cross-level brightness pop), and a seed in a non-voxel coordinate frame — enlarged
+  (bbox check) or shrunk/rotated/axis-swapped (post-fit per-splat relocation
+  check) — keeps the seed with a warning rather than storing a misplaced
+  level; batch merge rejects refine='volume' up front (volume-free by design). `refine_iters` omitted
+  resolves to 300 (the volume default) in both the API and the CLI. New `gsplats/lod/volume_refit.py`
+  engine. Scope: `levels`/`overview` recipes, no barrier dims (`adaptive` and
+  `coarsen_dims` are rejected loudly); needs the volume in hand, so exposed on
+  `gsplat lod` via `--target` (fit-time and batch-merge are follow-ups).
+  Fitting a blurred/downscaled volume proxy was benchmarked and rejected.
+
 #### Added — `--refine l2` post-merge refinement of substitutive levels
 
 - **`refine="l2"`** on `make_substitutive_lod` (CLI: `--refine l2` /

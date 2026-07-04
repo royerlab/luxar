@@ -97,6 +97,20 @@ def merge_batch_results(
                 "(tiles/overview/adaptive) re-partition their input, but each "
                 "tile is already one spatial part."
             )
+        # Front-door: refine="volume" is a whole-dataset re-fit that needs the
+        # source volume in hand; per-part levels reject it deep inside
+        # _substitutive_for_part, which for the STREAMING merge would fire
+        # mid-stream — after parts were already written. Fail here, before any
+        # output exists, with a merge-appropriate message.
+        if recipe_params is not None and recipe_params.refine == "volume":
+            raise ValueError(
+                "merge_batch_results: refine='volume' is not supported at "
+                "batch merge (the streaming merge is volume-free by design, "
+                "and each tile-part would need its own volume crop). Merge "
+                "without it, then run `gsplat lod --recipe levels --target "
+                "<volume> --refine volume` on a flattened copy, or use "
+                "refine='l2'."
+            )
         # Per-part LOD on uniform (Hann-apodized) tiles only holds the halo
         # partition-of-unity at the finest level — warn here, the library boundary,
         # so the CLI, the Slurm merge job, and any direct API caller (e.g. the local
@@ -289,6 +303,27 @@ def _finalize_part_node(
     return build_part_lod(part.tree, recipe, params)
 
 
+def _effective_refine_iters(
+    refine: str, refine_iters: "Optional[int]"
+) -> "Optional[int]":
+    """Resolve the refine_iters sentinel the way make_substitutive_lod does:
+    None -> the engine's own config default (l2: 120, volume: 300); no refine
+    -> None (nothing runs)."""
+    if refine == "l2":
+        if refine_iters is not None:
+            return int(refine_iters)
+        from luxar.gsplats.lod._substitutive.refine import L2RefineConfig
+
+        return L2RefineConfig().iters
+    if refine == "volume":
+        if refine_iters is not None:
+            return int(refine_iters)
+        from luxar.gsplats.lod.volume_refit import VolumeRefitConfig
+
+        return VolumeRefitConfig().iters
+    return None
+
+
 def _recipe_pipeline_info(
     recipe: Optional[str],
     recipe_params: "Optional[RecipeParams]",
@@ -338,8 +373,11 @@ def _recipe_pipeline_info(
                 "coverage_inflation": float(params.coverage_inflation),
                 "conserve_mass": bool(params.conserve_mass),
                 "refine": str(params.refine),
-                "refine_iters": (
-                    int(params.refine_iters) if params.refine == "l2" else None
+                # refine_iters=None is the sentinel for "engine default" —
+                # record the value that actually runs (mirrors the resolution
+                # in make_substitutive_lod), never int(None).
+                "refine_iters": _effective_refine_iters(
+                    str(params.refine), params.refine_iters
                 ),
                 "coarsen_dims": (
                     list(params.coarsen_dims)
