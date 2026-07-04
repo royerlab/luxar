@@ -106,7 +106,15 @@ function concatenatePointsData(parts: LoadedPointsData[]): LoadedPointsData {
   const totalPoints = parts.reduce((sum, p) => sum + p.pointCount, 0);
   const count = (p: LoadedPointsData) => p.pointCount;
 
-  const positions = concatRequiredField(parts, (p) => p.positions, count, ndim);
+  // INVARIANT: `positions` is ALWAYS 3D-projected, stride 3 — Points is the
+  // one geometry whose loader folds nD→3D projection into loadPoints() itself
+  // (the accumulator's getData returns `positionBuffer.subarray(0, count*3)`),
+  // while `ndim` still reports the ORIGINAL dimensionality. Concatenating at
+  // stride `ndim` here would scatter every level after the first to wrong
+  // offsets for >3D data. GSplats/Lines correctly concat their positions at
+  // `ndim` because their loaders return raw nD data (projection runs later in
+  // the process step).
+  const positions = concatRequiredField(parts, (p) => p.positions, count, 3);
 
   // Aggregate bounds across all loaded levels.
   const aggBounds = new THREE.Box3();

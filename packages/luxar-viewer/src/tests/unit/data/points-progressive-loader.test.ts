@@ -50,7 +50,10 @@ function makeLodData(
   ndim = 3,
   options: { color?: 'none' | 'uint8' | 'uint16' | 'float32'; withRadii?: boolean } = {}
 ): LoadedPointsData {
-  const positions = new Float32Array(pointCount * ndim);
+  // Positions are ALWAYS 3D-projected (stride 3) regardless of `ndim` — the
+  // points facade folds nD→3D projection into loadPoints() itself, and `ndim`
+  // reports the ORIGINAL dimensionality. Mirrors the real loaders.
+  const positions = new Float32Array(pointCount * 3);
   positions.fill(0.5);
   let colors: Float32Array | Uint8Array | Uint16Array | undefined;
   if (options.color === 'uint8') {
@@ -326,6 +329,33 @@ describe('PointsProgressiveLoader', () => {
       const result = await loader.loadPoints(baseViewState);
       expect(result.positions.length).toBe(175 * 3);
       expect(result.pointCount).toBe(175);
+    });
+
+    it('concatenates >3D positions at stride 3 (positions are 3D-projected)', async () => {
+      // Regression: the concat used perItem=ndim, but points positions are
+      // ALWAYS 3D-projected (stride 3) while ndim reports the original
+      // dimensionality — for 4D data every level after the first landed at
+      // wrong offsets (zeros/garbage on screen). Distinct per-level fill
+      // values pin the contiguous stride-3 layout.
+      const lod = (n: number, fill: number): LoadedPointsData => {
+        const d = makeLodData(n, 4);
+        (d.positions as Float32Array).fill(fill);
+        return d;
+      };
+      lodA.updateView.mockResolvedValue(lod(100, 1));
+      lodB.updateView.mockResolvedValue(lod(50, 2));
+      lodC.updateView.mockResolvedValue(lod(25, 3));
+      const result = await loader.loadPoints(baseViewState);
+      expect(result.ndim).toBe(4); // original dimensionality preserved
+      expect(result.pointCount).toBe(175);
+      expect(result.positions.length).toBe(175 * 3); // stride 3, no ndim padding
+      // Level boundaries land contiguously at stride 3.
+      expect(result.positions[0]).toBe(1); // first LOD-A element
+      expect(result.positions[100 * 3 - 1]).toBe(1); // last LOD-A element
+      expect(result.positions[100 * 3]).toBe(2); // first LOD-B element
+      expect(result.positions[150 * 3 - 1]).toBe(2); // last LOD-B element
+      expect(result.positions[150 * 3]).toBe(3); // first LOD-C element
+      expect(result.positions[175 * 3 - 1]).toBe(3); // last LOD-C element
     });
 
     it('preserves Uint8Array color type across LODs', async () => {
