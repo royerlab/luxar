@@ -32,6 +32,29 @@
 }
 
 /**
+ * Controller Icon (optional leading line-icon, rail-style)
+ *
+ * Same stroke treatment as the control rail's icons; inherits the label's
+ * currentColor. Used for e.g. the Cinematic Mode toggle.
+ */
+.luxar-gui__controller-icon {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  margin-right: var(--luxar-spacing-2);
+}
+
+.luxar-gui__controller-icon svg {
+  width: 15px;
+  height: 15px;
+  stroke: currentColor;
+  fill: none;
+  stroke-width: 1.7;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+/**
  * Widget Container
  */
 .luxar-gui__controller-widget {
@@ -238,23 +261,8 @@
   border: 1px solid var(--luxar-success);
 }
 
-/**
- * Select Option Elements
- * Explicit styling for dropdown options to ensure contrast on all platforms.
- * Linux/Ubuntu GTK themes often use system colors that conflict with our UI.
- */
-.luxar-gui__select option {
-  background-color: #1e1e1e;
-  color: #e0e0e0;
-  padding: 4px 8px;
-}
-
-.luxar-gui__select option:hover,
-.luxar-gui__select option:focus,
-.luxar-gui__select option:checked {
-  background-color: #2a2a2a;
-  color: #ffffff;
-}
+/* <select> option colors are centralised in styles/components/select-menu.css
+   (token-driven, --luxar-menu-*). */
 
 /**
  * Button
@@ -302,17 +310,8 @@
   background: rgba(0, 0, 0, 0.05);
 }
 
-[data-theme='light'] .luxar-gui__select option {
-  background-color: #ffffff;
-  color: #1e1e1e;
-}
-
-[data-theme='light'] .luxar-gui__select option:hover,
-[data-theme='light'] .luxar-gui__select option:focus,
-[data-theme='light'] .luxar-gui__select option:checked {
-  background-color: #f0f0f0;
-  color: #000000;
-}
+/* light-theme <select> option colors now come from --luxar-menu-* (light theme
+   sets them to white/near-black) via styles/components/select-menu.css. */
 
 [data-theme='light'] .luxar-gui__button {
   background: rgba(0, 0, 0, 0.08);

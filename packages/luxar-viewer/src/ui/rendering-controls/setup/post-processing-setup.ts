@@ -11,6 +11,7 @@
  */
 
 import type { SetupContext, SetupResult } from '../types';
+import { FOLDER_ICONS } from '../folder-icons';
 
 /**
  * Set up post-processing effects controls in the rendering controls GUI.
@@ -29,7 +30,7 @@ export function setupPostProcessingControls(
   const controllers: SetupResult['controllers'] = {};
 
   // Post-Processing Effects folder
-  const effectsFolder = gui.addFolder('🎬 Post-Processing');
+  const effectsFolder = gui.addFolder('Post-Processing', FOLDER_ICONS.postProcessing);
   effectsFolder.close(); // Closed by default
 
   effectsFolder.domElement?.setAttribute(

@@ -20,7 +20,10 @@
   width: 600px;
   height: 400px;
   background: var(--luxar-bg-secondary);
-  border-radius: var(--luxar-radius-md);
+  /* Shared surface recipe with the control rail: crisp hairline + large soft
+     corners. */
+  border: 1px solid var(--luxar-border-default);
+  border-radius: var(--luxar-radius-lg);
   font-family: var(--luxar-font-base);
   font-size: var(--luxar-text-md);
   z-index: 150;
@@ -200,7 +203,7 @@
   justify-content: space-between;
   color: var(--luxar-text-disabled);
   font-size: var(--luxar-text-xs);
-  border-radius: 0 0 var(--luxar-radius-md) var(--luxar-radius-md);
+  border-radius: 0 0 var(--luxar-radius-lg) var(--luxar-radius-lg);
 }
 
 /* Console messages */

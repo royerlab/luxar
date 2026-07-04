@@ -15,15 +15,6 @@
   -webkit-backdrop-filter: var(--luxar-blur-md) saturate(1.5);
 }
 
-/* Select option elements - ensure readable on all platforms */
-[data-theme='frosted-glass'] .luxar-gui__select option {
-  background-color: #1a1a1a;
-  color: #e0e0e0;
-}
-
-[data-theme='frosted-glass'] .luxar-gui__select option:hover,
-[data-theme='frosted-glass'] .luxar-gui__select option:focus,
-[data-theme='frosted-glass'] .luxar-gui__select option:checked {
-  background-color: #2a2a2a;
-  color: #ffffff;
-}
+/* <select> option colors are centralised in styles/components/select-menu.css
+   (token-driven, --luxar-menu-*); the frosted-glass theme sets --luxar-menu-*
+   to solid dark values so native popups stay readable off the glass layer. */

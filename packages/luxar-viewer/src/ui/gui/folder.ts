@@ -22,6 +22,9 @@ export class Folder {
   /** Display name */
   protected name: string;
 
+  /** Optional leading icon (inline SVG string, rail-style). */
+  protected icon?: string;
+
   /** Parent folder (null for root GUI) */
   protected parent: Folder | null;
 
@@ -52,9 +55,16 @@ export class Folder {
    * @param name - Display name
    * @param parent - Parent folder (null for root GUI)
    * @param defaultClosed - Whether folders start closed
+   * @param icon - Optional leading icon (inline SVG string, rail-style)
    */
-  constructor(name: string, parent: Folder | null, defaultClosed: boolean = false) {
+  constructor(
+    name: string,
+    parent: Folder | null,
+    defaultClosed: boolean = false,
+    icon?: string
+  ) {
     this.name = name;
+    this.icon = icon;
     this.parent = parent;
     this.defaultClosed = defaultClosed;
     this.isOpen = !defaultClosed;
@@ -76,10 +86,13 @@ export class Folder {
     const folder = document.createElement('div');
     folder.className = 'luxar-gui__folder';
 
-    // Title bar (clickable, keyboard-accessible)
+    // Title bar (clickable, keyboard-accessible). Layout: caret → [icon] → label.
+    // The label lives in its own span (not the title's textContent) so a leading
+    // icon can sit between the caret and the text without either clobbering the
+    // other. The caret stays the `.luxar-gui__folder-caret` element that
+    // open/close looks up via querySelector.
     const title = document.createElement('div');
     title.className = 'luxar-gui__folder-title';
-    title.textContent = this.name;
     title.setAttribute('role', 'button');
     title.setAttribute('tabindex', '0');
     title.setAttribute('aria-expanded', String(this.isOpen));
@@ -88,7 +101,22 @@ export class Folder {
     const caret = document.createElement('span');
     caret.className = 'luxar-gui__folder-caret';
     caret.textContent = this.isOpen ? '▼' : '▶';
-    title.prepend(caret);
+    title.appendChild(caret);
+
+    // Optional leading icon (inline SVG, styled by CSS via currentColor).
+    if (this.icon) {
+      const iconSpan = document.createElement('span');
+      iconSpan.className = 'luxar-gui__folder-icon';
+      iconSpan.setAttribute('aria-hidden', 'true');
+      iconSpan.innerHTML = this.icon;
+      title.appendChild(iconSpan);
+    }
+
+    // Label text (accessible name for the role="button" title).
+    const label = document.createElement('span');
+    label.className = 'luxar-gui__folder-label';
+    label.textContent = this.name;
+    title.appendChild(label);
 
     const toggleFolder = () => {
       if (this.isOpen) {
@@ -225,10 +253,11 @@ export class Folder {
    * Add a nested folder
    *
    * @param name - Folder name
+   * @param icon - Optional leading icon (inline SVG string, rail-style)
    * @returns Created folder
    */
-  public addFolder(name: string): Folder {
-    const folder = new Folder(name, this, this.defaultClosed);
+  public addFolder(name: string, icon?: string): Folder {
+    const folder = new Folder(name, this, this.defaultClosed, icon);
     this.folders.push(folder);
 
     if (folder.domElement) {

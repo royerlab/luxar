@@ -18,9 +18,11 @@
   height: 500px;
   max-height: 80vh;
 
-  /* Theming */
+  /* Theming — shared surface recipe with the control rail (crisp hairline +
+     large soft corners); a modal keeps the deeper shadow-xl for elevation. */
   background: var(--luxar-bg-secondary);
   backdrop-filter: var(--luxar-blur-md);
+  border: 1px solid var(--luxar-border-default);
   border-radius: var(--luxar-radius-lg);
   box-shadow: var(--luxar-shadow-xl);
 

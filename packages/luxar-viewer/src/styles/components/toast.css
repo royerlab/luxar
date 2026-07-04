@@ -11,12 +11,16 @@
   left: 50%;
   transform: translateX(-50%);
   padding: 10px 20px;
-  border-radius: 8px;
-  font-size: 14px;
+  /* Tokenised surface, aligned with the control rail: crisp hairline
+     (border-default) + tokenised radius/type (small transient badge → radius-md). */
+  border-radius: var(--luxar-radius-md, 8px);
+  font-size: var(--luxar-text-lg, 14px);
   z-index: 10000;
   transition: opacity 0.3s ease;
   pointer-events: none;
   background-color: var(--luxar-bg-secondary, rgba(0, 0, 0, 0.8));
   color: var(--luxar-text-primary, #fff);
-  border: 1px solid var(--luxar-border-subtle, rgba(255, 255, 255, 0.1));
+  backdrop-filter: var(--luxar-blur-md);
+  box-shadow: var(--luxar-shadow-lg);
+  border: 1px solid var(--luxar-border-default, rgba(255, 255, 255, 0.1));
 }

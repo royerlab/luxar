@@ -12,7 +12,9 @@ export function showToast(message: string, durationMs: number = 2000): void {
 
   const toast = document.createElement('div');
   toast.id = 'luxar-toast';
-  toast.className = 'luxar-toast';
+  // luxar-glass-surface: opt into the frosted/liquid-glass material so the
+  // toast matches the other floating panels under those themes.
+  toast.className = 'luxar-toast luxar-glass-surface';
   toast.textContent = message;
   toast.style.opacity = '1';
 

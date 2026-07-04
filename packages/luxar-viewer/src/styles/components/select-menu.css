@@ -1,0 +1,44 @@
+/**
+ * Native <select> option styling — single source of truth.
+ *
+ * Native <option> popups render on an OS layer WITHOUT the panel's
+ * backdrop-filter, so they need solid, opaque colors (translucent glass
+ * backgrounds would be unreadable). These colors come from the theme's
+ * `menu` token category (--luxar-menu-*), so they follow the active theme
+ * without per-component, per-theme copies.
+ *
+ * This rule replaces four duplicated hardcoded blocks that previously lived
+ * in controller.css, layers-panel.css, dimension-sliders.css, and
+ * frosted-glass.css. When adding a new <select>, add its option selector here.
+ */
+
+.luxar-gui__select option,
+.luxar-layers-panel__select option,
+.luxar-dimension-dropdown__select option {
+  background-color: var(--luxar-menu-bg);
+  color: var(--luxar-menu-fg);
+  padding: 4px 8px;
+}
+
+.luxar-gui__select option:hover,
+.luxar-gui__select option:focus,
+.luxar-gui__select option:checked,
+.luxar-layers-panel__select option:hover,
+.luxar-layers-panel__select option:focus,
+.luxar-layers-panel__select option:checked,
+.luxar-dimension-dropdown__select option:hover,
+.luxar-dimension-dropdown__select option:focus,
+.luxar-dimension-dropdown__select option:checked {
+  background-color: var(--luxar-menu-active-bg);
+  color: var(--luxar-menu-active-fg);
+}
+
+/* optgroup labels (layers panel groups blend modes): same menu palette, kept
+   bold so group headers stay distinct from options. */
+.luxar-layers-panel__select optgroup {
+  background-color: var(--luxar-menu-bg);
+  color: var(--luxar-menu-fg);
+  font-style: normal;
+  font-weight: 600;
+  padding: 4px 0;
+}

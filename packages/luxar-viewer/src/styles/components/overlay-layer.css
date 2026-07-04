@@ -52,10 +52,11 @@
 }
 
 .luxar-overlay--html a {
-  color: #66b3ff;
+  color: var(--luxar-info);
   text-decoration: underline;
 }
 
 .luxar-overlay--html a:hover {
-  color: #99ccff;
+  /* Lighter tint of the link color on hover (was #99ccff). */
+  color: color-mix(in srgb, var(--luxar-info) 65%, white);
 }

@@ -12,6 +12,9 @@
 
 /* ========== Scale Bar Container ========== */
 
+/* NOTE: intentionally NOT a .luxar-glass-surface. The scale bar is a
+   deliberately frameless microscopy overlay (a line + label, no panel); the
+   glass themes' backing tint + border would draw an unwanted box around it. */
 .luxar-scale-bar {
   /* Hidden by default */
   display: none;
