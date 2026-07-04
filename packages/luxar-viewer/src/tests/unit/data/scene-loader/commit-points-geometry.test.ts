@@ -59,7 +59,15 @@ describe('commitPointsGeometry', () => {
 
   it('no-ops when no points node with the given path exists', () => {
     expect(() =>
-      commitPointsGeometry('/missing', makeData(5), new THREE.Group(), null, mockNodeFactory, undefined, 0)
+      commitPointsGeometry(
+        '/missing',
+        makeData(5),
+        new THREE.Group(),
+        null,
+        mockNodeFactory,
+        undefined,
+        0
+      )
     ).not.toThrow();
     expect(mockCreatePointsGeometry).not.toHaveBeenCalled();
   });
@@ -96,7 +104,15 @@ describe('commitPointsGeometry', () => {
       didLastAcquireRebuildAttributes: vi.fn(() => false),
     };
 
-    commitPointsGeometry('/p', makeData(3), root, gpuBufferPool as never, mockNodeFactory, undefined, 0);
+    commitPointsGeometry(
+      '/p',
+      makeData(3),
+      root,
+      gpuBufferPool as never,
+      mockNodeFactory,
+      undefined,
+      0
+    );
     expect(gpuBufferPool.acquirePointsGeometry).toHaveBeenCalledTimes(1);
     expect(gpuBufferPool.updatePointsGeometry).toHaveBeenCalledTimes(1);
     expect(points.geometry).toBe(newGeometry);
@@ -177,11 +193,62 @@ describe('commitPointsGeometry', () => {
     points.geometry = geom;
     root.add(points);
 
-    commitPointsGeometry('/p', makeData(3, /*withRadii=*/ true), root, null, mockNodeFactory, undefined, 0);
+    commitPointsGeometry(
+      '/p',
+      makeData(3, /*withRadii=*/ true),
+      root,
+      null,
+      mockNodeFactory,
+      undefined,
+      0
+    );
 
     expect(points.geometry).toBe(geom);
     expect(geom.boundingBox).not.toBeNull();
     expect(geom.boundingBox!.min.x).toBeCloseTo(-11, 5);
     expect(geom.boundingBox!.max.x).toBeCloseTo(11, 5);
+  });
+});
+
+describe('commitPointsGeometry — no-op commit skip (committedData)', () => {
+  it('stamps committedData with the raw data on a real commit', () => {
+    const root = new THREE.Group();
+    const points = makePoints('/p');
+    root.add(points);
+    const data = makeData(3);
+    commitPointsGeometry('/p', data, root, null, mockNodeFactory, undefined, 4);
+    expect((points.userData as { committedData?: unknown }).committedData).toBe(data);
+  });
+
+  it('skips geometry work when the SAME data reference is committed again, but refreshes the freshness stamp', () => {
+    const root = new THREE.Group();
+    const points = makePoints('/p');
+    root.add(points);
+    const data = makeData(3);
+    commitPointsGeometry('/p', data, root, null, mockNodeFactory, undefined, 4);
+    const geometryAfterFirst = points.geometry;
+    mockCreatePointsGeometry.mockClear();
+
+    commitPointsGeometry('/p', data, root, null, mockNodeFactory, undefined, 9);
+
+    // Geometry untouched, no rebuild dispatched, stamp refreshed.
+    expect(points.geometry).toBe(geometryAfterFirst);
+    expect(mockCreatePointsGeometry).not.toHaveBeenCalled();
+    expect((points.userData as { loadedViewVersion?: number }).loadedViewVersion).toBe(9);
+  });
+
+  it('recommits when a DIFFERENT data reference arrives', () => {
+    const root = new THREE.Group();
+    const points = makePoints('/p');
+    root.add(points);
+    const first = makeData(3);
+    commitPointsGeometry('/p', first, root, null, mockNodeFactory, undefined, 4);
+    mockCreatePointsGeometry.mockClear();
+
+    const second = makeData(5); // different reference AND count → rebuild path
+    commitPointsGeometry('/p', second, root, null, mockNodeFactory, undefined, 5);
+
+    expect(mockCreatePointsGeometry).toHaveBeenCalledTimes(1);
+    expect((points.userData as { committedData?: unknown }).committedData).toBe(second);
   });
 });

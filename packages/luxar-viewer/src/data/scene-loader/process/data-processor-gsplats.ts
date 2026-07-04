@@ -37,14 +37,25 @@ import type { UpdateSession } from '../../../profiling/update-profiler';
 /** Default truncation radius if the mesh material doesn't expose one. */
 const DEFAULT_TRUNCATE = SHIFTED_GAUSSIAN_DEFAULT_TRUNCATE;
 
+import type { StagedNoopCommit } from '../commit/noop-commit';
+
 /** Staged data carried between async processing and the GPU commit. */
-export interface StagedGSplatsCommit {
+export interface StagedGSplatsGeometryCommit {
   path: string;
+  noop?: undefined;
+  /** Raw loader-returned data — stamped as `committedData` on commit. */
+  sourceData: LoadedGSplatsData;
   processed: ProcessedGSplatsData;
   cholesky01: Float32Array;
   cholesky23: Float32Array;
   cholesky45: Float32Array;
 }
+
+/**
+ * Either a real geometry commit or the stamp-only no-op fast path (data
+ * reference-identical to what the GPU already holds — see noop-commit.ts).
+ */
+export type StagedGSplatsCommit = StagedGSplatsGeometryCommit | StagedNoopCommit<LoadedGSplatsData>;
 
 /**
  * Build the projection params consumed by both the worker RPC and the
@@ -252,7 +263,7 @@ export async function processGSplatsData(
     );
   }
 
-  return { path, processed, cholesky01, cholesky23, cholesky45 };
+  return { path, sourceData: data, processed, cholesky01, cholesky23, cholesky45 };
 }
 
 // Re-export the commit helper from its focused module so existing

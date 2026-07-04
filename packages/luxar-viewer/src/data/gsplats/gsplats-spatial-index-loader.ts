@@ -413,29 +413,36 @@ export class GSplatsSpatialIndexLoader implements GSplatsDataLoader {
       const choleskyBuffer = this._accumulator.getCholeskyBuffer();
 
       // Load directly into accumulator buffers (ZERO intermediate allocations!)
+      // All four attribute arrays load CONCURRENTLY — distinct zarr arrays
+      // writing into distinct accumulator buffers; the global fetch gate
+      // (utils/fetch-concurrency.ts) bounds total network concurrency.
       const loadSession = session?.begin('Load Arrays');
       try {
-        await this.loadArrayRanges('centers', splatRanges, attrs.ndim, centerBuffer);
-        await this.loadArrayRanges('amplitudes', splatRanges, 1, amplitudeBuffer);
-        await this.loadCholeskyRanges(splatRanges, attrs.ndim, choleskyBuffer);
+        const colorLoad = this.arrays.colors
+          ? (async () => {
+              // Use loadColorRanges for proper multi-type handling
+              // NOTE: For LUT encoding, loadColorRanges may return a different buffer type
+              // (Float32Array) than the accumulator's colorBuffer (Uint8Array based on stored dtype).
+              // We MUST use the returned buffer since it contains the decoded colors.
+              const colorBuffer = this._accumulator!.getColorBuffer();
+              const loadedColors = await this.loadColorRanges(splatRanges, colorBuffer);
 
-        // Load optional arrays directly to accumulator
-        if (this.arrays.colors) {
-          // Use loadColorRanges for proper multi-type handling
-          // NOTE: For LUT encoding, loadColorRanges may return a different buffer type
-          // (Float32Array) than the accumulator's colorBuffer (Uint8Array based on stored dtype).
-          // We MUST use the returned buffer since it contains the decoded colors.
-          const colorBuffer = this._accumulator.getColorBuffer();
-          const loadedColors = await this.loadColorRanges(splatRanges, colorBuffer);
+              // If loadColorRanges returned a different buffer (e.g., LUT decoded to Float32Array),
+              // we need to update the accumulator with the new buffer
+              if (loadedColors !== colorBuffer) {
+                // Replace accumulator's color buffer with the decoded colors
+                // This handles LUT encoding where decoded output is Float32Array
+                this._accumulator!.setColorBuffer(loadedColors);
+              }
+            })()
+          : Promise.resolve();
 
-          // If loadColorRanges returned a different buffer (e.g., LUT decoded to Float32Array),
-          // we need to update the accumulator with the new buffer
-          if (loadedColors !== colorBuffer) {
-            // Replace accumulator's color buffer with the decoded colors
-            // This handles LUT encoding where decoded output is Float32Array
-            this._accumulator.setColorBuffer(loadedColors);
-          }
-        }
+        await Promise.all([
+          this.loadArrayRanges('centers', splatRanges, attrs.ndim, centerBuffer),
+          this.loadArrayRanges('amplitudes', splatRanges, 1, amplitudeBuffer),
+          this.loadCholeskyRanges(splatRanges, attrs.ndim, choleskyBuffer),
+          colorLoad,
+        ]);
       } finally {
         loadSession?.end();
       }
@@ -451,25 +458,18 @@ export class GSplatsSpatialIndexLoader implements GSplatsDataLoader {
     let choleskyFactors: Float32Array;
     let colors: Float32Array | Uint8Array | Uint16Array | null = null;
 
-    if (session) {
-      const loadSession = session.begin('Load Arrays');
-      try {
-        centers = await this.loadArrayRanges('centers', splatRanges, attrs.ndim);
-        amplitudes = await this.loadArrayRanges('amplitudes', splatRanges, 1);
-        choleskyFactors = await this.loadCholeskyRanges(splatRanges, attrs.ndim);
-
-        // Use multi-type loadColorRanges for colors
-        colors = this.arrays.colors ? await this.loadColorRanges(splatRanges) : null;
-      } finally {
-        loadSession.end();
-      }
-    } else {
-      centers = await this.loadArrayRanges('centers', splatRanges, attrs.ndim);
-      amplitudes = await this.loadArrayRanges('amplitudes', splatRanges, 1);
-      choleskyFactors = await this.loadCholeskyRanges(splatRanges, attrs.ndim);
-
-      // Use multi-type loadColorRanges for colors
-      colors = this.arrays.colors ? await this.loadColorRanges(splatRanges) : null;
+    // All four attribute arrays load CONCURRENTLY (distinct zarr arrays,
+    // distinct freshly-allocated output buffers).
+    const loadSession = session?.begin('Load Arrays');
+    try {
+      [centers, amplitudes, choleskyFactors, colors] = await Promise.all([
+        this.loadArrayRanges('centers', splatRanges, attrs.ndim),
+        this.loadArrayRanges('amplitudes', splatRanges, 1),
+        this.loadCholeskyRanges(splatRanges, attrs.ndim),
+        this.arrays.colors ? this.loadColorRanges(splatRanges) : Promise.resolve(null),
+      ]);
+    } finally {
+      loadSession?.end();
     }
 
     return {

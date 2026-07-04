@@ -22,6 +22,7 @@ import {
   processGSplatsData,
   type StagedGSplatsCommit,
 } from '../scene-loader/process/data-processor-gsplats';
+import { isAlreadyCommitted } from '../scene-loader/commit/noop-commit';
 
 export const kind: GeometryKind = 'gsplats';
 export const label = 'GSplats' as const;
@@ -80,6 +81,15 @@ export async function loadAndStage(
   );
   ctx.clearFailure(path);
   if (!data) return null;
+  // No-op fast path: the loader returned the SAME data reference it did
+  // last commit (memoized progressive concat, unchanged view state) — the
+  // GPU already holds exactly this data. Skip the expensive nD→3D
+  // projection and stage a stamp-only commit (see noop-commit.ts).
+  if (isAlreadyCommitted(mesh?.userData, data)) {
+    session.setMetadata({ splats: data.splatCount, info: 'unchanged' });
+    ctx.viewStateQueue.dispatchPrefetch(path, gsplatsViewState, loader);
+    return { path, noop: true, sourceData: data };
+  }
   const staged = await processGSplatsData(
     path,
     data,

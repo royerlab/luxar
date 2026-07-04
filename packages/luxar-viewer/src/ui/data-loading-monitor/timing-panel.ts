@@ -7,7 +7,7 @@
  */
 
 import type { TimingEntry, TimingMetadata } from '../../profiling/update-profiler';
-import { formatMs, hasOverBudget } from '../../profiling/update-profiler';
+import { formatMs, hasOverBudget, REFINEMENT_ROOT } from '../../profiling/update-profiler';
 import { escapeHtml } from '../../utils/escape-html';
 
 /**
@@ -16,6 +16,7 @@ import { escapeHtml } from '../../utils/escape-html';
  */
 const TOOLTIPS: Record<string, string> = {
   'Total Update': 'End-to-end time for all node updates in this frame',
+  'LOD Refinement': 'Background passes loading remaining LOD levels after first paint',
   Points: 'Point cloud data: query, load, project, and upload',
   Lines: 'Line/track data: query segments, load vertices, project, and upload',
   GSplats: 'Gaussian splat data: query, load, project, and upload',
@@ -27,7 +28,11 @@ const TOOLTIPS: Record<string, string> = {
     'Build global → local vertex map and remap segment indices into local buffer space',
   'Project to 3D': 'Slice nD data to 3D display space (visibility filtering, Cholesky marginals)',
   'Update Buffers': 'Upload processed data to GPU buffer attributes',
+  'Concatenate LODs': 'Merge loaded LOD levels into one contiguous buffer set',
 };
+
+/** Suffix appended to the tooltip of rows that did not run in the latest update. */
+const STALE_TOOLTIP = 'Did not run in the latest update — value is from an earlier one';
 
 /**
  * Get tooltip text for a timing entry name
@@ -169,6 +174,8 @@ function aggregateByNodeType(children: TimingEntry[]): TimingEntry[] {
       count: number;
       overBudget: boolean;
       allSkipped: boolean;
+      allStale: boolean;
+      staleLastMs: number;
       points: number;
       segments: number;
       splats: number;
@@ -182,6 +189,8 @@ function aggregateByNodeType(children: TimingEntry[]): TimingEntry[] {
       count: 0,
       overBudget: false,
       allSkipped: true,
+      allStale: true,
+      staleLastMs: 0,
       points: 0,
       segments: 0,
       splats: 0,
@@ -194,6 +203,8 @@ function aggregateByNodeType(children: TimingEntry[]): TimingEntry[] {
       count: 0,
       overBudget: false,
       allSkipped: true,
+      allStale: true,
+      staleLastMs: 0,
       points: 0,
       segments: 0,
       splats: 0,
@@ -206,6 +217,8 @@ function aggregateByNodeType(children: TimingEntry[]): TimingEntry[] {
       count: 0,
       overBudget: false,
       allSkipped: true,
+      allStale: true,
+      staleLastMs: 0,
       points: 0,
       segments: 0,
       splats: 0,
@@ -218,6 +231,8 @@ function aggregateByNodeType(children: TimingEntry[]): TimingEntry[] {
       count: 0,
       overBudget: false,
       allSkipped: true,
+      allStale: true,
+      staleLastMs: 0,
       points: 0,
       segments: 0,
       splats: 0,
@@ -233,14 +248,29 @@ function aggregateByNodeType(children: TimingEntry[]): TimingEntry[] {
 
     acc.entries.push(child);
 
-    // Accumulate timings
+    // Aggregate timings as the MAX across nodes, not the sum: the per-node
+    // sessions of one update run CONCURRENTLY (they all open at update start
+    // and close at the atomic commit), so summing their wall-clock spans
+    // multiplies by node count — 64 nodes × ~186ms would display 11.9s under
+    // a 187ms Total Update. Max = the slowest node = the type's critical
+    // path within the update. (Numeric metadata below stays summed — those
+    // are element counts, not durations.)
+    // Stale entries (not touched by the latest update) are excluded from
+    // the fresh max — a stale 94ms child must not mask a fresh 29ms one.
+    // When EVERY entry is stale the row itself renders stale, showing the
+    // stale max greyed instead of a misleading 0.
     if (!child.metadata?.skipped) {
-      acc.lastMs += child.lastMs;
-      acc.avgMs += child.avgMs;
+      if (!child.stale) {
+        if (child.lastMs > acc.lastMs) acc.lastMs = child.lastMs;
+        acc.allStale = false;
+      } else if (child.lastMs > acc.staleLastMs) {
+        acc.staleLastMs = child.lastMs;
+      }
+      if (child.avgMs > acc.avgMs) acc.avgMs = child.avgMs;
       acc.allSkipped = false;
     }
     if (child.count > acc.count) acc.count = child.count;
-    if (child.overBudget) acc.overBudget = true;
+    if (child.overBudget && !child.stale) acc.overBudget = true;
 
     // Accumulate metadata
     const meta = child.metadata;
@@ -309,14 +339,18 @@ function aggregateByNodeType(children: TimingEntry[]): TimingEntry[] {
       if (nodeCount > 1) metadata.info = `${nodeCount} nodes`;
     }
 
+    const stale = !acc.allSkipped && acc.allStale;
     result.push({
       name: nodeType,
-      lastMs: acc.lastMs,
+      // An all-stale row shows its last-known (stale) max, greyed by the
+      // `stale` flag; a fresh or mixed row shows only the fresh max.
+      lastMs: stale ? acc.staleLastMs : acc.lastMs,
       avgMs: acc.avgMs,
       count: acc.count,
       children: aggregatedChildren,
       metadata,
-      overBudget: acc.overBudget || acc.lastMs > 16.67,
+      overBudget: acc.overBudget || (!stale && acc.lastMs > 16.67),
+      stale,
     });
   }
 
@@ -327,31 +361,45 @@ function aggregateByNodeType(children: TimingEntry[]): TimingEntry[] {
  * Aggregate child entries with same name (optimized, non-recursive for common case)
  */
 function aggregateChildEntriesFast(name: string, entries: TimingEntry[]): TimingEntry {
-  let totalLastMs = 0;
-  let totalAvgMs = 0;
+  let maxLastMs = 0;
+  let staleLastMs = 0;
+  let maxAvgMs = 0;
   let maxCount = 0;
   let anyOverBudget = false;
+  let allStale = true;
 
   // Check if any entry has sub-children
   let hasSubChildren = false;
   for (let i = 0; i < entries.length; i++) {
     const entry = entries[i];
-    totalLastMs += entry.lastMs;
-    totalAvgMs += entry.avgMs;
+    // MAX across nodes, not sum — sibling entries run concurrently within
+    // one update (see aggregateByNodeType). Stale entries don't contribute
+    // to the fresh max; an all-stale row falls back to the stale max so it
+    // shows its last-known value (greyed) instead of 0.
+    if (!entry.stale) {
+      if (entry.lastMs > maxLastMs) maxLastMs = entry.lastMs;
+      allStale = false;
+      if (entry.overBudget) anyOverBudget = true;
+    } else if (entry.lastMs > staleLastMs) {
+      staleLastMs = entry.lastMs;
+    }
+    if (entry.avgMs > maxAvgMs) maxAvgMs = entry.avgMs;
     if (entry.count > maxCount) maxCount = entry.count;
-    if (entry.overBudget) anyOverBudget = true;
     if (entry.children.length > 0) hasSubChildren = true;
   }
+
+  const displayLastMs = allStale ? staleLastMs : maxLastMs;
 
   // Fast path: no sub-children
   if (!hasSubChildren) {
     return {
       name,
-      lastMs: totalLastMs,
-      avgMs: totalAvgMs,
+      lastMs: displayLastMs,
+      avgMs: maxAvgMs,
       count: maxCount,
       children: [],
-      overBudget: anyOverBudget || totalLastMs > 16.67,
+      overBudget: anyOverBudget || (!allStale && maxLastMs > 16.67),
+      stale: allStale,
     };
   }
 
@@ -377,11 +425,12 @@ function aggregateChildEntriesFast(name: string, entries: TimingEntry[]): Timing
 
   return {
     name,
-    lastMs: totalLastMs,
-    avgMs: totalAvgMs,
+    lastMs: displayLastMs,
+    avgMs: maxAvgMs,
     count: maxCount,
     children: aggregatedSubChildren,
-    overBudget: anyOverBudget || totalLastMs > 16.67,
+    overBudget: anyOverBudget || (!allStale && maxLastMs > 16.67),
+    stale: allStale,
   };
 }
 
@@ -398,6 +447,7 @@ function renderEntry(entry: TimingEntry, depth: number, parentPath: string): str
   const rowClasses = ['luxar-timing-panel__row'];
   if (entry.overBudget) rowClasses.push('luxar-timing-panel__row--over');
   if (entry.metadata?.skipped) rowClasses.push('luxar-timing-panel__row--skipped');
+  if (entry.stale) rowClasses.push('luxar-timing-panel__row--stale');
   if (hasOverBudget(entry) && !entry.overBudget)
     rowClasses.push('luxar-timing-panel__row--child-over');
 
@@ -410,9 +460,14 @@ function renderEntry(entry: TimingEntry, depth: number, parentPath: string): str
   const lastValue = entry.metadata?.skipped ? '—' : formatMs(entry.lastMs);
   const avgValue = entry.metadata?.skipped ? '—' : formatMs(entry.avgMs);
 
-  // Tooltip for the operation label
+  // Tooltip for the operation label (stale rows explain their grey state)
   const tooltip = getTooltip(entry.name);
-  const titleAttr = tooltip ? ` title="${escapeHtml(tooltip)}"` : '';
+  const tooltipText = entry.stale
+    ? tooltip
+      ? `${tooltip} — ${STALE_TOOLTIP}`
+      : STALE_TOOLTIP
+    : tooltip;
+  const titleAttr = tooltipText ? ` title="${escapeHtml(tooltipText)}"` : '';
 
   // Build row HTML (data-path on row for incremental updates)
   let html = `
@@ -451,10 +506,18 @@ function createAggregatedRoot(root: TimingEntry): TimingEntry {
 
 /**
  * Render the complete hierarchical timing panel
- * Aggregates performance data by node type (Points, Lines, GSplats) instead of individual nodes
+ * Aggregates performance data by node type (Points, Lines, GSplats) instead of individual nodes.
+ *
+ * @param root - The 'Total Update' timing tree (per-frame demand updates)
+ * @param refinementRoot - Optional 'LOD Refinement' tree (background passes),
+ *   rendered as a second section below the main tree when it has data
  */
-export function renderHierarchicalTimingPanel(root: TimingEntry): string {
-  if (root.count === 0) {
+export function renderHierarchicalTimingPanel(
+  root: TimingEntry,
+  refinementRoot?: TimingEntry
+): string {
+  const hasRefinement = refinementRoot !== undefined && refinementRoot.count > 0;
+  if (root.count === 0 && !hasRefinement) {
     return `
       <div class="luxar-timing-panel luxar-timing-panel--empty">
         <div class="luxar-timing-panel__empty-msg">
@@ -466,6 +529,12 @@ export function renderHierarchicalTimingPanel(root: TimingEntry): string {
 
   // Aggregate children by node type for cleaner display
   const aggregatedRoot = createAggregatedRoot(root);
+  const refinementHtml = hasRefinement
+    ? renderEntry(createAggregatedRoot(refinementRoot), 0, '')
+    : '';
+  const refinementCount = hasRefinement
+    ? ` · ${refinementRoot.count} refinement ${refinementRoot.count === 1 ? 'pass' : 'passes'}`
+    : '';
 
   return `
     <div class="luxar-timing-panel">
@@ -477,7 +546,7 @@ export function renderHierarchicalTimingPanel(root: TimingEntry): string {
         </div>
       </div>
       <div class="luxar-timing-panel__body">
-        ${renderEntry(aggregatedRoot, 0, '')}
+        ${renderEntry(aggregatedRoot, 0, '')}${refinementHtml}
       </div>
       <div class="luxar-timing-panel__footer">
         <span class="luxar-timing-panel__legend">
@@ -485,7 +554,7 @@ export function renderHierarchicalTimingPanel(root: TimingEntry): string {
           <span class="luxar-timing-panel__legend-item luxar-timing-panel__legend-item--over">&gt;16ms (60fps)</span>
           <span class="luxar-timing-panel__legend-item luxar-timing-panel__legend-item--skip">Skipped</span>
         </span>
-        <span class="luxar-timing-panel__update-count">${root.count} updates</span>
+        <span class="luxar-timing-panel__update-count">${root.count} updates${refinementCount}</span>
       </div>
     </div>
   `;
@@ -521,21 +590,49 @@ export function attachTimingPanelHandlers(container: HTMLElement, onUpdate: () =
  * @param root - The updated timing data (will be aggregated to match rendered structure)
  * @returns true if update was successful, false if full re-render is needed
  */
-export function updateTimingPanelValues(container: HTMLElement, root: TimingEntry): boolean {
+export function updateTimingPanelValues(
+  container: HTMLElement,
+  root: TimingEntry,
+  refinementRoot?: TimingEntry
+): boolean {
   const timingBody = container.querySelector('.luxar-timing-panel__body');
   if (!timingBody) return false;
+
+  const hasRefinement = refinementRoot !== undefined && refinementRoot.count > 0;
+
+  // The refinement tree appears once its first pass records — that structural
+  // change needs a full re-render.
+  const refinementRendered =
+    timingBody.querySelector(
+      `:scope > .luxar-timing-panel__row[data-path="${REFINEMENT_ROOT}"]`
+    ) !== null;
+  if (hasRefinement !== refinementRendered) return false;
 
   // Update the update count in footer
   const updateCount = container.querySelector('.luxar-timing-panel__update-count');
   if (updateCount) {
-    updateCount.textContent = `${root.count} updates`;
+    const refinementCount = hasRefinement
+      ? ` · ${refinementRoot.count} refinement ${refinementRoot.count === 1 ? 'pass' : 'passes'}`
+      : '';
+    updateCount.textContent = `${root.count} updates${refinementCount}`;
   }
 
   // Aggregate to match the rendered structure
   const aggregatedRoot = createAggregatedRoot(root);
 
   // Recursively update values for each entry
-  return updateEntryValues(timingBody as HTMLElement, aggregatedRoot, 0, '');
+  if (!updateEntryValues(timingBody as HTMLElement, aggregatedRoot, 0, '')) {
+    return false;
+  }
+  if (hasRefinement) {
+    return updateEntryValues(
+      timingBody as HTMLElement,
+      createAggregatedRoot(refinementRoot),
+      0,
+      ''
+    );
+  }
+  return true;
 }
 
 /**
@@ -567,6 +664,7 @@ function updateEntryValues(
       const rowClasses = ['luxar-timing-panel__row'];
       if (entry.overBudget) rowClasses.push('luxar-timing-panel__row--over');
       if (entry.metadata?.skipped) rowClasses.push('luxar-timing-panel__row--skipped');
+      if (entry.stale) rowClasses.push('luxar-timing-panel__row--stale');
       if (hasOverBudget(entry) && !entry.overBudget)
         rowClasses.push('luxar-timing-panel__row--child-over');
       (row as HTMLElement).className = rowClasses.join(' ');

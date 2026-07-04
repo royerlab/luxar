@@ -532,11 +532,12 @@ export class PointsSpatialIndexLoader implements DataLoader, LoaderMonitor {
       }
 
       // Load all arrays with the SAME ranges (critical for alignment!)
-      // IMPORTANT: Sequential loading is intentional and optimal here because:
-      // 1. Each loadRanges() internally fetches ranges sequentially
-      // 2. Parallel attribute loading causes HTTP connection pool saturation (browser limit: 6)
-      // 3. Sequential ensures each attribute gets full connection pool bandwidth
-      // True parallelism would require a unified request queue with bounded concurrency.
+      // All five attribute arrays load CONCURRENTLY: distinct zarr arrays,
+      // distinct freshly-allocated output buffers. The unified request queue
+      // this used to wait for exists now — every chunk fetch funnels through
+      // the global fetch gate (utils/fetch-concurrency.ts, 64-wide, HTTP/2) —
+      // so parallel attributes overlap network + decode latency instead of
+      // saturating the connection pool.
       type ArrayType = Float32Array | Uint8Array | Uint16Array | Float16Array;
       let positions: ArrayType;
       let colors: ArrayType | null = null;
@@ -550,23 +551,26 @@ export class PointsSpatialIndexLoader implements DataLoader, LoaderMonitor {
         if (!this._initialLoadDone) {
           log.load(
             Modules.SPATIAL_INDEX_LOADER,
-            `Loading attributes sequentially for ${ranges.length} ranges`
+            `Loading attributes concurrently for ${ranges.length} ranges`
           );
         }
 
-        // Load positions (required)
-        const positionsResult = await this.loadRanges('positions', ranges);
+        const nullResult = Promise.resolve(null);
+        let positionsResult: ArrayType | null;
+        [positionsResult, colors, radii, sharpness, scalars] = await Promise.all([
+          // positions (required)
+          this.loadRanges('positions', ranges),
+          // optional attributes; scalars zarr opened in initialize() when has_scalars=true.
+          this.arrays.colors ? this.loadColorRanges(ranges) : nullResult,
+          this.arrays.radii ? this.loadRanges('radii', ranges) : nullResult,
+          this.arrays.sharpness ? this.loadRanges('sharpness', ranges) : nullResult,
+          this.arrays.scalars ? this.loadRanges('scalars', ranges) : nullResult,
+        ]);
+
         if (!positionsResult) {
           throw new Error('[PointsLoader] Failed to load positions array');
         }
         positions = positionsResult;
-
-        // Load optional attributes
-        colors = this.arrays.colors ? await this.loadColorRanges(ranges) : null;
-        radii = this.arrays.radii ? await this.loadRanges('radii', ranges) : null;
-        sharpness = this.arrays.sharpness ? await this.loadRanges('sharpness', ranges) : null;
-        // scalars zarr opened in initialize() when has_scalars=true.
-        scalars = this.arrays.scalars ? await this.loadRanges('scalars', ranges) : null;
       } finally {
         loadSession?.end();
       }
