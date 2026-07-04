@@ -13,7 +13,12 @@ class SemanticType(str, Enum):
     Each semantic type has specific constraints and valid encodings:
 
     - COORDINATE: Spatial positions/centers/vertices. Can be negative.
-      Valid: float32, float16
+      PRECISION → float32; AUTO / MEMORY → uint16 per-axis fixed-point via the
+      generic per-channel **linear** quantization (``linear_perchannel_u16``),
+      decoded back to float32 — visually lossless (sub-unit) and ~2× smaller.
+      Coordinates never use uint8 (too coarse) and never float16 (relative
+      precision degrades with magnitude). A per-axis extent ≥ 2¹⁶ auto-falls
+      back to float32.
     - COLOR: RGB/RGBA color values. Non-negative.
       SDR (0-1): uint8, uint16, float16, float32
       HDR (>1): float16, float32

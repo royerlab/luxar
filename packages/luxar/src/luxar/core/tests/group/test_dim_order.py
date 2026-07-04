@@ -6,6 +6,7 @@ import zarr
 
 from luxar.core.dimensions import Dimension, Dimensions
 from luxar.core.gsplats import GSplats
+from luxar.encoding import ArrayDecoder
 from luxar.gsplats.utils.trils import merge_tril, pack_tril, unpack_tril
 from luxar.io.compiler import LuxarZarrCompiler
 
@@ -66,16 +67,16 @@ class TestDimOrderPoints:
 
         # Verify the stored positions are 4D
         store = zarr.open(str(output), mode="r")
-        stored = store["pts"]["positions"][:]
+        stored = ArrayDecoder().decode(store["pts"]["positions"], store)
         assert stored.shape == (2, 4)
         # X column (scene dim 0) should have original Z values (data col 0 → "Z" → scene col 2)
         # Actually: dim_order=["Z","Y","X"] means data col 0→Z (scene idx 2), col 1→Y (idx 1), col 2→X (idx 0)
         # Scene order is [X, Y, Z, Time]
         # So: stored[:,0]=X=data[:,2], stored[:,1]=Y=data[:,1], stored[:,2]=Z=data[:,0], stored[:,3]=Time=2.0
-        np.testing.assert_allclose(stored[:, 0], [3, 6])  # X
-        np.testing.assert_allclose(stored[:, 1], [2, 5])  # Y
-        np.testing.assert_allclose(stored[:, 2], [1, 4])  # Z
-        np.testing.assert_allclose(stored[:, 3], [2, 2])  # Time (filled)
+        np.testing.assert_allclose(stored[:, 0], [3, 6], atol=1e-3)  # X
+        np.testing.assert_allclose(stored[:, 1], [2, 5], atol=1e-3)  # Y
+        np.testing.assert_allclose(stored[:, 2], [1, 4], atol=1e-3)  # Z
+        np.testing.assert_allclose(stored[:, 3], [2, 2], atol=1e-3)  # Time (filled)
 
     def test_auto_extend_unmapped_dims(self, tmp_path) -> None:
         """Unmapped dims should be auto-added to extend_to_all."""
@@ -123,9 +124,9 @@ class TestDimOrderPoints:
             )
 
         store = zarr.open(str(output), mode="r")
-        stored = store["pts"]["positions"][:]
+        stored = ArrayDecoder().decode(store["pts"]["positions"], store)
         assert stored.shape == (2, 3)
-        np.testing.assert_allclose(stored[:, 2], [5, 5])  # z filled
+        np.testing.assert_allclose(stored[:, 2], [5, 5], atol=1e-3)  # z filled
 
     def test_no_dim_order_unchanged(self, tmp_path) -> None:
         """Without dim_order, behavior is unchanged (positional mapping)."""
@@ -420,9 +421,9 @@ class TestDimOrderValidation:
             assert pts.n_elements == 1
 
         store = zarr.open(str(output), mode="r")
-        stored = store["pts"]["positions"][:]
+        stored = ArrayDecoder().decode(store["pts"]["positions"], store)
         # x=30, y=20, z=10
-        np.testing.assert_allclose(stored[0], [30, 20, 10])
+        np.testing.assert_allclose(stored[0], [30, 20, 10], atol=1e-3)
 
     def test_validation_on_add_lines(self, tmp_path) -> None:
         """dim_order validation also works on add_lines."""

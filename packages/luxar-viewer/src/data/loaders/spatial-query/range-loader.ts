@@ -22,6 +22,7 @@ import { detectEncoding } from './range-loader/detect-encoding';
 import { loadBroadcasted } from './range-loader/broadcasted';
 import { loadQuantized } from './range-loader/quantized';
 import { loadLUT } from './range-loader/lut';
+import { loadPerChannel } from './range-loader/perchannel';
 import { loadDirect } from './range-loader/direct';
 import { loadArrayRef } from './range-loader/array-ref';
 import { resolveArrayRef } from './range-loader/ref-resolution';
@@ -100,6 +101,8 @@ export class RangeLoader {
         return loadQuantized({ ...ctx, decoder: this.decoder }, array, attrs!, ranges, output);
       case 'lut':
         return loadLUT({ ...ctx, decoder: this.decoder }, array, attrs!, ranges, output);
+      case 'perchannel':
+        return loadPerChannel(ctx, array, attrs!, ranges, output, elementsPerItem);
       case 'array_ref':
         return loadArrayRef(ctx, attrs!);
       case 'direct':

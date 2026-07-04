@@ -311,7 +311,7 @@ encoder.encode(
 
 | Semantic Type | AUTO | PRECISION | MEMORY |
 |---------------|------|-----------|--------|
-| COORDINATE | float32 | float32 | float16 |
+| COORDINATE | linear_perchannel_u16 | float32 | linear_perchannel_u16 |
 | COLOR (SDR) | uint8 | float32 | uint8 |
 | COLOR (HDR) | float32 | float32 | float16 |
 | BOUNDED_SCALAR | uint8 | float32 | uint8 |
@@ -321,9 +321,21 @@ encoder.encode(
 | CHOLESKY_OFFDIAG | signed_log_perchannel_u16 | float32 | signed_log_perchannel_u8 |
 | INDEX | Smallest uint | Smallest uint | Smallest uint |
 
-`CHOLESKY_DIAG` / `CHOLESKY_OFFDIAG` select the **generic, reusable** per-channel
-quantizers (`log_perchannel_*` for non-negative data, `signed_log_perchannel_*`
-for signed) — the semantic type is the policy; the encoding is geometry-agnostic.
+`CHOLESKY_DIAG` / `CHOLESKY_OFFDIAG` / `COORDINATE` select the **generic, reusable**
+per-channel quantizers — `log_perchannel_*` (non-negative), `signed_log_perchannel_*`
+(signed), and `linear_perchannel_*` (identity / fixed-point) — the semantic type is
+the policy; the encoding is geometry-agnostic.
+
+**COORDINATE** (positions / centers / vertices) uses **uint16 per-axis fixed-point**
+(`linear_perchannel_u16`) in both AUTO and MEMORY: each axis is quantized over its own
+`[min, max]` to 65536 uniform levels, decoded back to float32 **regardless of the
+input dtype** (`original_dtype` is pinned to float32 — the decode contract, matching
+PRECISION's float32 cast) — visually lossless
+(sub-unit) and ~2× smaller than float32. Coordinates never use uint8 (256 levels is far
+too coarse) and never **float16** (its *relative* precision degrades with magnitude — a
+footgun for absolute positions). An **array-local extent rail** warns when a per-axis
+extent exceeds 2¹² and falls back to float32 at/above 2¹⁶ (where uint16 can't resolve a
+unit step).
 
 **Usage Example:**
 ```python

@@ -438,7 +438,9 @@ def _gsplat_coarse_purity(store, name) -> float:
         child = grp[k]
         if "centers" not in list(child.array_keys()):
             continue
-        c0 = np.asarray(child["centers"])[:, 0]
+        from luxar.encoding import ArrayDecoder
+
+        c0 = ArrayDecoder().decode(child["centers"], grp)[:, 0]
         worst = max(worst, float(np.abs(c0 - np.round(c0)).max()))
     return worst
 

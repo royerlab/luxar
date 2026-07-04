@@ -8,7 +8,13 @@ from luxar.core.dimensions import Dimensions
 from luxar.core.group import Group
 from luxar.core.gsplats import GSplats
 from luxar.core.node import Node
+from luxar.encoding import ArrayDecoder
 from luxar.io.compiler import LuxarZarrCompiler
+
+
+def _atol(a):
+    # AUTO positions/centers/vertices are uint16 per-axis fixed-point.
+    return float(np.ptp(a, axis=0).max()) / 65535 * 2
 
 
 class TestGroupAddData:
@@ -35,9 +41,9 @@ class TestGroupAddData:
         node = store["grp"]["pts"]
         assert node.attrs.get("type") == "points"
         assert node.attrs["n_points"] == 2
-        stored = node["positions"][:]
+        stored = ArrayDecoder().decode(node["positions"], node)
         assert stored.shape == (2, 3)
-        np.testing.assert_allclose(stored, positions)
+        np.testing.assert_allclose(stored, positions, atol=_atol(positions))
 
     def test_group_add_lines(self, tmp_path) -> None:
         """Test group.add_lines() writes data under group path."""
@@ -57,9 +63,9 @@ class TestGroupAddData:
         node = store["grp"]["lines"]
         assert node.attrs.get("type") == "lines"
         assert node.attrs["n_vertices"] == 2
-        verts = node["vertices"][:]
+        verts = ArrayDecoder().decode(node["vertices"], node)
         assert verts.shape == (2, 3)
-        np.testing.assert_allclose(verts, vertices)
+        np.testing.assert_allclose(verts, vertices, atol=_atol(vertices))
 
     def test_group_add_gsplats(self, tmp_path) -> None:
         """Test group.add_gsplats() writes data under group path."""
@@ -82,9 +88,9 @@ class TestGroupAddData:
         # B11/[P2]: verify centers round-tripped and the per-splat arrays are
         # present with the right count (was: only type + n_splats).
         assert node.attrs["n_splats"] == 1
-        ctrs = node["centers"][:]
+        ctrs = ArrayDecoder().decode(node["centers"], node)
         assert ctrs.shape == (1, 3)
-        np.testing.assert_allclose(ctrs, centers)
+        np.testing.assert_allclose(ctrs, centers, atol=_atol(centers) + 1e-6)
         assert node["amplitudes"].shape[0] == 1
         # v3.1: Cholesky stored as a diagonal + off-diagonal split.
         assert "cholesky_factors_diag" in node

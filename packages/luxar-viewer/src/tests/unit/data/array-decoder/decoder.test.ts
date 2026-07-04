@@ -159,17 +159,17 @@ describe('ArrayDecoder - Python Compatibility Tests', () => {
       expect(decoded.length).toBe(0);
     });
 
-    it('should detect non-broadcasted positions as not encoded', async () => {
-      // Now works with float32 (float16_allowed=False for TypeScript compatibility)
-      // Test fixture: {"encoding": {"name": "float32"}}
+    it('encodes non-broadcasted positions per-axis (not broadcasted)', async () => {
+      // Positions are per-axis uint16 fixed-point (linear_perchannel_u16) under the
+      // default AUTO mode — a first-class self-decoded encoding, NOT broadcasted.
       const { attrs } = await loadArrayWithAttrs(
         'test_broadcasting.luxar.zarr',
         'points/positions'
       );
 
-      // Positions should NOT be encoded (each point has unique position)
-      expect(ArrayDecoder.isEncoded(attrs)).toBe(false);
-      expect(attrs.encoding?.n_elements).toBeUndefined();
+      expect(ArrayDecoder.isEncoded(attrs)).toBe(true); // per-channel encoded
+      expect(ArrayDecoder.isPerChannelQuantEncodingName(attrs.encoding?.name)).toBe(true);
+      expect(attrs.encoding?.n_elements).toBeUndefined(); // but NOT broadcasted
     });
   });
 
@@ -482,7 +482,8 @@ describe('ArrayDecoder - Python Compatibility Tests', () => {
 
       // Verify time values are discrete integers
       timeValues.forEach((time) => {
-        expect(Number.isInteger(time)).toBe(true);
+        // time is uint16-decoded → within a sub-unit step of an integer
+        expect(Math.abs(time - Math.round(time))).toBeLessThan(0.01);
       });
     });
 
@@ -517,15 +518,14 @@ describe('ArrayDecoder - Python Compatibility Tests', () => {
   });
 
   describe('Error Handling', () => {
-    it('should handle direct mode (no encoding)', async () => {
-      // Now works with float32 (float16_allowed=False for TypeScript compatibility)
+    it('decodes per-channel encoded positions to float32', async () => {
       const { array, attrs } = await loadArrayWithAttrs(
         'test_broadcasting.luxar.zarr',
         'points/positions'
       );
 
-      // Positions should be direct mode (no encoding)
-      expect(ArrayDecoder.isEncoded(attrs)).toBe(false);
+      // Positions are per-channel encoded (uint16 fixed-point), decoded to float32.
+      expect(ArrayDecoder.isEncoded(attrs)).toBe(true);
 
       // Should decode without issues
       const decoder = new ArrayDecoder(new ArrayRefRegistry());

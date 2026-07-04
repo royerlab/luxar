@@ -20,7 +20,7 @@ import type {
   SplatRange,
 } from '../../types/gsplats';
 import type { SceneNode, PointRange } from '../data-loader-types';
-import { ArrayDecoder, ArrayRefRegistry, type ArrayMetadata } from '../array-decoder/decoder';
+import { ArrayRefRegistry, type ArrayMetadata } from '../array-decoder/decoder';
 import {
   RangeLoader,
   SpatialQueryBuilder,
@@ -717,34 +717,26 @@ export class GSplatsSpatialIndexLoader implements GSplatsDataLoader {
         : Promise.resolve(null),
     ]);
 
-    // Per-column dequantizers from each array's encoding metadata. For the v3.1
-    // differential encodings (diag log-uint8/16, off signed-log-uint8/16) the
-    // arrays loaded as raw integer levels (routed to `direct`); we invert
-    // per-column here, mirroring the Python decoder. For float32/legacy arrays
-    // the dequantizer is the identity, so values pass through unchanged.
-    const diagAttrs = this.arrays.cholesky_factors_diag?.attrs as unknown as
-      | { encoding?: Parameters<typeof ArrayDecoder.makePerChannelDequant>[0] }
-      | undefined;
-    const diagDequant = ArrayDecoder.makePerChannelDequant(diagAttrs?.encoding, d);
-
+    // `diag`/`offdiag` arrive already decoded to float32: the split arrays use
+    // the generic per-channel encodings (diag log-uint8/16, off signed-log-uint8/16),
+    // which the shared RangeLoader fully decodes via its `'perchannel'` path
+    // (float32/legacy arrays pass through unchanged). This is pure geometry
+    // assembly now — scatter each decoded half into its packed columns, mirroring
+    // the Python reader's `recombine_cholesky` → `merge_tril` on decoded arrays.
     const diagIdx = choleskyDiagIndices(ndim);
     for (let s = 0; s < totalSplats; s++) {
       const base = s * k;
       const dbase = s * d;
-      for (let c = 0; c < d; c++) packed[base + diagIdx[c]] = diagDequant(diag[dbase + c], c);
+      for (let c = 0; c < d; c++) packed[base + diagIdx[c]] = diag[dbase + c];
     }
 
     if (offdiag) {
-      const offAttrs = this.arrays.cholesky_factors_offdiag?.attrs as unknown as
-        | { encoding?: Parameters<typeof ArrayDecoder.makePerChannelDequant>[0] }
-        | undefined;
-      const offDequant = ArrayDecoder.makePerChannelDequant(offAttrs?.encoding, offLen);
       const offIdx = choleskyOffdiagIndices(ndim);
       for (let s = 0; s < totalSplats; s++) {
         const base = s * k;
         const obase = s * offLen;
         for (let c = 0; c < offLen; c++) {
-          packed[base + offIdx[c]] = offDequant(offdiag[obase + c], c);
+          packed[base + offIdx[c]] = offdiag[obase + c];
         }
       }
     }

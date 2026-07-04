@@ -31,7 +31,9 @@ class TestFullEncodingRoundtrip:
         return decoded
 
     def test_coordinate_roundtrip(self, tmp_path) -> None:
-        """Float32 positions should survive roundtrip exactly (no quantization)."""
+        """Positions survive roundtrip within uint16 fixed-point tolerance under the
+        default AUTO mode (decoded back to float32). PRECISION is bit-exact — see
+        test_encoder.TestCoordinateEncoding.test_coordinate_precision_mode."""
         np.random.seed(0)
         data = np.random.randn(500, 3).astype(np.float32) * 100
 
@@ -39,7 +41,9 @@ class TestFullEncodingRoundtrip:
 
         assert decoded.shape == data.shape
         assert decoded.dtype == np.float32
-        np.testing.assert_array_equal(decoded, data)
+        np.testing.assert_allclose(
+            decoded, data, atol=float(np.ptp(data, axis=0).max()) / 65535 * 2
+        )
 
     def test_sdr_color_roundtrip(self, tmp_path) -> None:
         """SDR colors [0,1] float32 quantized to uint8 should be within 2/255."""

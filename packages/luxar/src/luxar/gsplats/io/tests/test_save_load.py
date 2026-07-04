@@ -98,9 +98,10 @@ class TestSaveGsplats:
             )
             assert zarr.open_group(str(p_prec), mode="r")["centers"].dtype == np.float32
 
-            # MEMORY mode must keep COORDINATE centers float32 (float16 is
-            # intentionally disabled — WebGL has no native float16 and float16
-            # on coordinates is a precision footgun).
+            # MEMORY mode stores COORDINATE centers as uint16 per-axis fixed-point
+            # (linear_perchannel_u16). float16 is intentionally disabled (WebGL has no
+            # native float16 and float16 on coordinates is a precision footgun);
+            # coordinates never use uint8 (too coarse). Decodes back to float32.
             p_mem = Path(tmpdir) / "memory.gsplats.zarr"
             save_gsplats(
                 path=p_mem, **splats, encoding_mode=EncodingMode.MEMORY, ordering="none"
@@ -108,7 +109,7 @@ class TestSaveGsplats:
             enc = zarr.open_group(str(p_mem), mode="r")["centers"].attrs.get(
                 "encoding", {}
             )
-            assert enc["name"] == "float32"
+            assert enc["name"] == "linear_perchannel_u16"
 
     def test_save_with_fitting_info(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
