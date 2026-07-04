@@ -552,10 +552,14 @@ function renderCacheStatusRow(badges: CacheStatusBadge[] | undefined, always = f
  * this verbatim; null/undefined render as a neutral placeholder so
  * callers don't have to guard the value themselves.
  */
-export function formatValidationMode(mode: 'content-hash' | 'ttl' | 'none' | undefined): string {
+export function formatValidationMode(
+  mode: 'content-hash' | 'zattrs-hash' | 'ttl' | 'none' | undefined
+): string {
   switch (mode) {
     case 'content-hash':
       return 'Content Hash';
+    case 'zattrs-hash':
+      return 'Metadata Hash';
     case 'ttl':
       return 'TTL';
     case 'none':
@@ -573,7 +577,9 @@ export function formatValidationMode(mode: 'content-hash' | 'ttl' | 'none' | und
  * so the tooltip stays correct when the mode changes after the first
  * validation completes (e.g. '—' → Content Hash).
  */
-export function validationModeTooltip(mode: 'content-hash' | 'ttl' | 'none' | undefined): string {
+export function validationModeTooltip(
+  mode: 'content-hash' | 'zattrs-hash' | 'ttl' | 'none' | undefined
+): string {
   switch (mode) {
     case 'content-hash':
       return (
@@ -583,12 +589,20 @@ export function validationModeTooltip(mode: 'content-hash' | 'ttl' | 'none' | un
         'to the disk cache. If they differ, every cache tier is cleared and the data is ' +
         're-downloaded — you can never be shown stale data.'
       );
+    case 'zattrs-hash':
+      return (
+        'Metadata-hash validation: the dataset publishes no content_hash fingerprint, so the ' +
+        'viewer fingerprints the raw root metadata (.zattrs) bytes instead. Luxar writers stamp ' +
+        'a fresh timestamp on every save, so a dataset regenerated at the same URL is detected ' +
+        'and every cache tier cleared. Only a producer that rewrites chunk data without touching ' +
+        'root metadata could still serve stale chunks.'
+      );
     case 'ttl':
       return (
-        'Time-to-live validation: the dataset has no content_hash fingerprint, but a maximum ' +
-        'cache age is configured (cache.externalDatasetTtlMs). Cached data older than that age ' +
-        'is discarded and re-downloaded. Within the window, a change on the server is NOT ' +
-        'detected — the TTL bounds how stale the view can get.'
+        'Time-to-live validation: the dataset root metadata could not be fetched for a ' +
+        'fingerprint, but a maximum cache age is configured (cache.externalDatasetTtlMs). ' +
+        'Cached data older than that age is discarded and re-downloaded. Within the window, a ' +
+        'change on the server is NOT detected — the TTL bounds how stale the view can get.'
       );
     case 'none':
       return (
@@ -611,7 +625,9 @@ export function validationModeTooltip(mode: 'content-hash' | 'ttl' | 'none' | un
  * content-hash it is a real confirmation; under `none` it only records
  * that the check ran and found nothing to compare.
  */
-export function lastValidatedTooltip(mode: 'content-hash' | 'ttl' | 'none' | undefined): string {
+export function lastValidatedTooltip(
+  mode: 'content-hash' | 'zattrs-hash' | 'ttl' | 'none' | undefined
+): string {
   const base =
     'When the viewer last ran its freshness check (it re-fetches the dataset root metadata ' +
     'from the server at load time). ';
@@ -622,6 +638,13 @@ export function lastValidatedTooltip(mode: 'content-hash' | 'ttl' | 'none' | und
         'At this moment the cached content_hash was compared against the server and the cache ' +
         'was confirmed current (or cleared if it did not match). "Never" = no check has ' +
         'completed yet, e.g. offline.'
+      );
+    case 'zattrs-hash':
+      return (
+        base +
+        'At this moment the fingerprint of the dataset root metadata (.zattrs bytes) was ' +
+        'compared against the server and the cache was confirmed current (or cleared if it did ' +
+        'not match). "Never" = no check has completed yet, e.g. offline.'
       );
     case 'ttl':
       return (
@@ -649,8 +672,12 @@ export function lastValidatedTooltip(mode: 'content-hash' | 'ttl' | 'none' | und
  * (found no fingerprint to compare), so "Last Validated" would
  * overstate what happened — "Last Checked" is the honest label.
  */
-export function lastValidatedLabel(mode: 'content-hash' | 'ttl' | 'none' | undefined): string {
-  return mode === 'content-hash' ? 'Last Validated' : 'Last Checked';
+export function lastValidatedLabel(
+  mode: 'content-hash' | 'zattrs-hash' | 'ttl' | 'none' | undefined
+): string {
+  // Both hash modes genuinely VALIDATE the cache against the server;
+  // ttl/none merely record that the check ran.
+  return mode === 'content-hash' || mode === 'zattrs-hash' ? 'Last Validated' : 'Last Checked';
 }
 
 /**

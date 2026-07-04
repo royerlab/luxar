@@ -265,18 +265,41 @@ describe('getRemoteContentHash', () => {
     global.fetch = originalFetch;
   });
 
-  it('returns the content_hash on a 200 response with the attr', async () => {
+  it('returns the content_hash (content-hash mode) on a 200 response with the attr', async () => {
     global.fetch = vi.fn(async () =>
       mockResponse(200, JSON.stringify({ content_hash: 'abc123' }))
     ) as unknown as typeof fetch;
-    expect(await getRemoteContentHash('https://example.com/d.zarr', {})).toBe('abc123');
+    expect(await getRemoteContentHash('https://example.com/d.zarr', {})).toEqual({
+      hash: 'abc123',
+      mode: 'content-hash',
+    });
   });
 
-  it('returns null when the attr is absent', async () => {
+  it('falls back to an implicit zattrs-hash token when the attr is absent', async () => {
+    // Standalone .gsplats.zarr / external datasets carry no content_hash;
+    // the SHA-256 of the raw .zattrs bytes serves as the validation token
+    // so a dataset regenerated in place still invalidates the OPFS cache.
     global.fetch = vi.fn(async () =>
       mockResponse(200, JSON.stringify({ other: 'attr' }))
     ) as unknown as typeof fetch;
-    expect(await getRemoteContentHash('https://example.com/d.zarr', {})).toBeNull();
+    const token = await getRemoteContentHash('https://example.com/d.zarr', {});
+    expect(token).toEqual({
+      hash: expect.stringMatching(/^zattrs:[0-9a-f]{64}$/),
+      mode: 'zattrs-hash',
+    });
+  });
+
+  it('implicit token is stable for identical bytes and differs for changed bytes', async () => {
+    const fetchBody = (body: string) =>
+      vi.fn(async () => mockResponse(200, body)) as unknown as typeof fetch;
+    global.fetch = fetchBody(JSON.stringify({ timestamp: 't1' }));
+    const a = await getRemoteContentHash('https://example.com/d.zarr', {});
+    global.fetch = fetchBody(JSON.stringify({ timestamp: 't1' }));
+    const b = await getRemoteContentHash('https://example.com/d.zarr', {});
+    global.fetch = fetchBody(JSON.stringify({ timestamp: 't2' }));
+    const c = await getRemoteContentHash('https://example.com/d.zarr', {});
+    expect(a!.hash).toBe(b!.hash);
+    expect(a!.hash).not.toBe(c!.hash);
   });
 
   it('returns null when the response is not ok', async () => {
