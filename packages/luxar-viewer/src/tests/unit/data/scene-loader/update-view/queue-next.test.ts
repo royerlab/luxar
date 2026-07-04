@@ -207,6 +207,44 @@ describe('queueNext — no pending + no refinement needed', () => {
   });
 });
 
+describe('queueNext — refinement rejection recovers the lock (no permanent freeze)', () => {
+  it('releases the lock and drains a queued state when scheduleGSplatsRefinement rejects', async () => {
+    // Regression: the fire-and-forget .catch only logged, so an error
+    // escaping the refinement orchestrator glue (outside the loops' own
+    // finally blocks) left _updateInProgress held forever — every future
+    // updateView queued into a pending slot nothing drained.
+    const ctx = makeCtx({
+      gsplatLoaders: new Map<string, GSplatsDataLoader>([['/g', makeGSplatsLoader(true)]]),
+    });
+    ctx.spies.scheduleGSplatsRefinement.mockRejectedValue(new Error('glue died'));
+
+    queueNext(ctx);
+    // Simulate a user scrub arriving while the (doomed) refinement holds the lock.
+    ctx.viewStateQueue.setPending({ slicePosition: [9, 9, 9, 9] });
+    // Let the rejection propagate through the .catch handler + the drain microtask.
+    await Promise.resolve();
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(ctx.spies.setUpdateInProgress).toHaveBeenCalledWith(false); // lock recovered
+    expect(ctx.spies.updateView).toHaveBeenCalledWith({ slicePosition: [9, 9, 9, 9] }); // queued state drained
+  });
+
+  it('rejection with nothing queued just releases the lock (drain is a no-op)', async () => {
+    const ctx = makeCtx({
+      gsplatLoaders: new Map<string, GSplatsDataLoader>([['/g', makeGSplatsLoader(true)]]),
+    });
+    ctx.spies.scheduleGSplatsRefinement.mockRejectedValue(new Error('glue died'));
+
+    queueNext(ctx);
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(ctx.spies.setUpdateInProgress).toHaveBeenCalledWith(false);
+    expect(ctx.spies.updateView).not.toHaveBeenCalled();
+  });
+});
+
 describe('queueNext — points/lines progressive loaders gate refinement too', () => {
   // Regression: needsRefinement previously checked only gsplatLoaders, so a
   // points- or lines-only scene with additive ladders never refined after any

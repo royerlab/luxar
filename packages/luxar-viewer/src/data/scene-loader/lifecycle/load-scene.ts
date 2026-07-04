@@ -386,8 +386,13 @@ export async function loadScene(url: string, ctx: LoadSceneCtx): Promise<THREE.G
     ctx.scheduleGSplatsRefinement().catch((error) => {
       log.error(
         Modules.SCENE_LOADER,
-        `GSplats refinement scheduling failed: ${(error as Error).message}`
+        `Post-load progressive refinement failed: ${(error as Error).message}`
       );
+      // Belt-and-braces lock recovery (mirrors queue-next.ts): each loop
+      // releases the lock in its own finally, so a rejection here means the
+      // orchestrator glue died outside them — without this release the lock
+      // taken above is held forever and every future updateView freezes.
+      ctx.setUpdateInProgress(false);
     });
   }
 

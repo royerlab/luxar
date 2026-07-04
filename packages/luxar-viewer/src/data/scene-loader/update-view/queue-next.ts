@@ -98,8 +98,17 @@ export function queueNext(ctx: QueueNextCtx): void {
     ctx.scheduleGSplatsRefinement().catch((error) => {
       log.error(
         Modules.SCENE_LOADER,
-        `GSplats refinement scheduling failed: ${(error as Error).message}`
+        `Progressive refinement scheduling failed: ${(error as Error).message}`
       );
+      // Belt-and-braces lock recovery: each refinement loop releases the
+      // lock in its own finally, so a rejection reaching here means the
+      // orchestrator glue died OUTSIDE those finallys — without this, the
+      // lock stays held forever and every future updateView queues into a
+      // pending slot that nothing ever drains (total viewer freeze).
+      // Releasing twice is harmless (idempotent boolean), and draining is a
+      // no-op when nothing queued during the failed run.
+      ctx.setUpdateInProgress(false);
+      ctx.viewStateQueue.drain((state) => ctx.updateView(state));
     });
   } else {
     // No pending update, no refinement needed - release the lock now
