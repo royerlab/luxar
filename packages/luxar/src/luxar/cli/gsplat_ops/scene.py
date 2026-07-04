@@ -238,7 +238,113 @@ def migrate_format_command(
         raise typer.Exit(1)
 
 
+def reencode_command(
+    input_path: Path = typer.Argument(
+        ...,
+        exists=True,
+        help="Input .gsplats.zarr (current node-tree format), or .zip/.tar.gz.",
+    ),
+    output_path: Path = typer.Argument(
+        ..., help="Output .gsplats.zarr with the re-quantized Cholesky factors."
+    ),
+    encoding: Literal["auto", "precision", "memory"] = typer.Option(
+        "memory",
+        "--encoding",
+        "-e",
+        help="Target Cholesky encoding: memory=uint8 (smallest, ~93 dB), "
+        "auto=uint16 (near-lossless, ~2× f32), precision=float32 (exact).",
+    ),
+    ordering: Literal["hilbert", "morton", "none"] = typer.Option(
+        "hilbert", "--ordering", help="Spatial chunk ordering for the output."
+    ),
+    quiet: bool = typer.Option(
+        False, "--quiet", "-q", help="Suppress the trailing 'wrote …' summary."
+    ),
+) -> None:
+    """Re-quantize a fitted .gsplats.zarr's Cholesky factors to another encoding.
+
+    A structure-preserving round-trip: the whole node tree (leaf / additive
+    ladder / kind=lod / partition / nested) and its ``fitting`` / ``provenance``
+    / ``pipeline`` groups are carried over verbatim — only the on-disk
+    Cholesky encoding changes. Splat *count* and geometry are unchanged; decode
+    is always to float32, so viewer/GPU/WASM paths are unaffected.
+
+    Unlike ``migrate-format`` (legacy layout → current, which only exposes
+    float32 vs the AUTO uint16 default via ``--lossless``), this exposes the
+    full ladder including ``memory`` (uint8) and works on already-current files.
+
+    Examples:
+        luxar gsplat reencode fit.gsplats.zarr fit_u8.gsplats.zarr -e memory
+        luxar gsplat reencode fit.gsplats.zarr fit_f32.gsplats.zarr -e precision
+    """
+    try:
+        import zarr
+
+        from luxar.gsplats.io.load_gsplats import load_gsplat_node
+        from luxar.gsplats.io.save_gsplats import (
+            FORMAT_VERSION,
+            write_gsplats_tree,
+        )
+        from luxar.gsplats.tree import total_splats
+
+        with asection(f"Re-encoding {input_path.name} → {encoding}"):
+            node, _ = load_gsplat_node(input_path)
+
+            # Preserve the aux provenance groups verbatim (write_gsplats_tree
+            # drops them unless re-supplied). Read from the on-disk root; for
+            # a compressed input the loader already handled extraction, so
+            # re-open via the same path is safe for directory stores. Use the
+            # in-memory node for a compressed source (no directory to reopen).
+            pipeline_info = fitting_info = fitting_config = provenance_info = None
+            if input_path.is_dir():
+                root = zarr.open_group(str(input_path), mode="r")
+                if "pipeline" in root:
+                    pipeline_info = dict(root["pipeline"].attrs)
+                if "fitting" in root:
+                    fitting_info = dict(root["fitting"].attrs)
+                    if "config" in root["fitting"]:
+                        fitting_config = dict(root["fitting"]["config"].attrs)
+                if "provenance" in root:
+                    provenance_info = dict(root["provenance"].attrs)
+
+            write_gsplats_tree(
+                output_path,
+                node,
+                ordering=ordering,
+                encoding_mode=_resolve_encoding_mode(encoding),
+                pipeline_info=pipeline_info,
+                fitting_info=fitting_info,
+                fitting_config=fitting_config,
+                provenance_info=provenance_info,
+            )
+
+            # Read-back verify — a loadable current-format file, not blind success.
+            verify_node, _ = load_gsplat_node(output_path, include_stats=False)
+            out_attrs = dict(zarr.open_group(str(output_path), mode="r").attrs)
+            fmt = out_attrs.get("format_version")
+            if fmt != FORMAT_VERSION:
+                aprint(f"❌ Re-encode produced format_version={fmt!r}")
+                raise typer.Exit(1)
+            if not quiet:
+                aprint(
+                    f"✓ Re-encoded ({encoding}) v{FORMAT_VERSION}: "
+                    f"{total_splats(verify_node):,} splats → {output_path}"
+                )
+    except typer.Exit:
+        raise
+    except (FileNotFoundError, ValueError) as exc:
+        aprint(f"Error: {exc}")
+        raise typer.Exit(1)
+    except Exception as exc:
+        aprint(f"Error: {exc}")
+        import traceback
+
+        traceback.print_exc()
+        raise typer.Exit(1)
+
+
 def register_scene_commands(app: typer.Typer) -> None:
     """Register the scene commands onto ``app_gsplat``."""
     app.command("convert")(convert_to_scene)
     app.command("migrate-format")(migrate_format_command)
+    app.command("reencode")(reencode_command)

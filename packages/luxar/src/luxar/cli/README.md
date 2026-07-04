@@ -33,7 +33,7 @@ luxar info my_data.luxar.zarr --stats
 
 - `__init__.py` - Package initialization, exports the main app
 - `main.py` - Main CLI application with all commands
-- `gsplat_commands.py` - Gaussian splat subcommands (info, view, napari, cull, filter, partition, flatten, additive, slice, transform, denoise, fit, convert, render, compare, cal, migrate-format, merge, benchmark; the `batch-fit` group: run/submit/status/validate/cancel/merge/denoise-calibrate/denoise-preprocess)
+- `gsplat_commands.py` - Gaussian splat subcommands (info, view, napari, cull, filter, partition, flatten, additive, slice, transform, denoise, fit, convert, render, compare, cal, migrate-format, reencode, merge, benchmark; the `batch-fit` group: run/submit/status/validate/cancel/merge/denoise-calibrate/denoise-preprocess)
 - `lod.py` - the unified `lod --recipe {flat,additive,partitioned,multiscale,mosaic,substitutive,pyramid}` command (thin wrapper over `gsplats/lod/recipes.py`; registered onto the `gsplat` app)
 - `gsplat_config.py` - Config system: presets, YAML loading, volume loaders, helpers
 - `utils.py` - Utility functions for CLI operations
@@ -236,6 +236,15 @@ luxar gsplat migrate-format legacy.gsplats.zarr v3.gsplats.zarr --lossless  # pr
 ```
 
 **Options**: `--overwrite`, `--lossless` (preserve float32 Cholesky / PRECISION encoding), `--quiet/-q`.
+
+#### `luxar gsplat reencode`
+Re-quantize a **current-format** `.gsplats.zarr`'s Cholesky encoding in place — a structure-preserving round-trip: the whole node tree (leaf / additive ladder / `kind=lod` / partition / nested) and its `fitting` / `provenance` / `pipeline` groups carry over verbatim; only the on-disk Cholesky encoding changes. Splat count and geometry are unchanged and decode is always to float32, so viewer/GPU/WASM paths are unaffected. Unlike `migrate-format` (legacy → current, exposing only float32 vs the AUTO uint16 default via `--lossless`), this exposes the full ladder — including `memory` (uint8) — and works on already-current files. The clean way to change quantization after fitting.
+```bash
+luxar gsplat reencode fit.gsplats.zarr fit_u8.gsplats.zarr -e memory      # uint8 (smallest, ~93 dB)
+luxar gsplat reencode fit.gsplats.zarr fit_u16.gsplats.zarr -e auto        # uint16 (near-lossless, ~2× f32)
+luxar gsplat reencode fit.gsplats.zarr fit_f32.gsplats.zarr -e precision   # float32 (exact/archival)
+```
+**Options**: `--encoding/-e` (`auto`|`precision`|`memory`, default `memory`), `--ordering` (`hilbert`|`morton`|`none`), `--quiet/-q`.
 
 #### `luxar gsplat lod`
 Build a **representation topology** from a pre-fitted `.gsplats.zarr` via a single
