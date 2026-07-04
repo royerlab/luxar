@@ -28,6 +28,7 @@ import * as THREE from 'three';
 import type { GSplatsDataLoader, GSplatsMetadata, GSplatsViewState } from '../../types/gsplats';
 import type { LoadedGSplatsData } from '../../types/gsplats';
 import { log, Modules } from '../../utils/log';
+import { isAbortError } from '../loaders/abort-error';
 import type { UpdateProfiler, UpdateSession } from '../../profiling/update-profiler';
 import type { ViewState } from '../data-loader-types';
 import type { ViewStateQueue } from '../scene-loader/view-state/view-state-queue';
@@ -82,6 +83,14 @@ export interface GSplatsRefinementCtx {
   retriggerUpdate(pendingState: Partial<ViewState>): void;
   /** Liveness check; false once the owning SceneLoader was disposed. */
   isActive?(): boolean;
+  /**
+   * Per-refinement-run abort signal. The orchestrator assigns the run's
+   * controller to the SceneLoader's `_updateAbortController`, so a
+   * superseding `updateView` (or dispose) aborts in-flight refinement
+   * chunk reads MID-PASS instead of waiting out the whole pass. An
+   * `AbortError` in the per-loader catch is cancellation, not failure.
+   */
+  signal?: AbortSignal;
 }
 
 /**
@@ -115,7 +124,7 @@ export async function runGSplatsRefinement(ctx: GSplatsRefinementCtx): Promise<v
         const pass = ctx.profiler?.beginPass();
         const session = pass?.begin(`GSplats (${path})`);
         try {
-          const data = await loader.updateView(gsplatsViewState, session);
+          const data = await loader.updateView(gsplatsViewState, session, ctx.signal);
           if (data) {
             const staged = await ctx.processGSplats(path, data, gsplatsViewState, session);
             if (staged) ctx.commitGSplats(staged, session);
@@ -126,6 +135,10 @@ export async function runGSplatsRefinement(ctx: GSplatsRefinementCtx): Promise<v
         }
         failures.recordSuccess(path);
       } catch (error) {
+        // Superseded, not failed: a newer view-state (or dispose) aborted the
+        // in-flight read on purpose. Don't count it toward the failure backoff
+        // or log an error — the loop's next-pass pending check hands off.
+        if (isAbortError(error)) return;
         if (failures.recordFailure(path)) {
           log.error(
             Modules.SCENE_LOADER,

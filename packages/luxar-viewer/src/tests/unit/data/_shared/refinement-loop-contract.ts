@@ -41,6 +41,8 @@ export interface RefinementRunWiring {
    * skip-path case can assert it was never invoked.
    */
   processSpy: (...args: unknown[]) => unknown;
+  /** Per-run abort signal, threaded into `loader.updateView` by the wrapper. */
+  signal?: AbortSignal;
 }
 
 /** A loader stub that advances through `hasMoreLODs` stages as updateView runs. */
@@ -131,6 +133,46 @@ export function defineRefinementLoopContract(
           processSpy: vi.fn(),
         })
       ).resolves.not.toThrow();
+    });
+
+    it('treats an AbortError as cancellation — signal threaded, no failure backoff, clean hand-off', async () => {
+      // A superseding updateView aborts the per-run controller mid-pass; the
+      // in-flight read rejects with AbortError. That is cancellation, NOT
+      // failure: it must not count toward the 3-strike backoff, and the
+      // loop's next pass hands off to the pending state.
+      const controller = new AbortController();
+      const queue = new ViewStateQueue();
+      let capturedSignal: AbortSignal | undefined;
+      const loader = {
+        hasMoreLODs: true,
+        updateView: vi
+          .fn()
+          .mockImplementation(async (_vs: unknown, _s: unknown, signal?: AbortSignal) => {
+            capturedSignal = signal;
+            // Simulate the supersede that caused the abort: the new state is
+            // queued and the read rejects with the abort classification.
+            queue.setPending({ slicePosition: [5, 5, 5, 5] });
+            throw new DOMException('aborted', 'AbortError');
+          }),
+      };
+      const releaseLock: () => void = vi.fn();
+      const retriggerUpdate: (pendingState: Partial<ViewState>) => void = vi.fn();
+
+      await run({
+        loaders: new Map([['/n', loader]]),
+        viewStateQueue: queue,
+        deriveNodeViewState: () => ({ skip: false, viewState: baseViewState }),
+        updateVisibleCountsInMonitor: vi.fn(),
+        releaseLock,
+        retriggerUpdate,
+        processSpy: vi.fn(),
+        signal: controller.signal,
+      });
+
+      expect(capturedSignal).toBe(controller.signal); // signal reaches the loader
+      expect(loader.updateView).toHaveBeenCalledTimes(1); // no 3-strike retries
+      expect(retriggerUpdate).toHaveBeenCalledWith({ slicePosition: [5, 5, 5, 5] });
+      expect(releaseLock).not.toHaveBeenCalled(); // lock handed off, not released
     });
 
     it('gives up on a persistently failing loader after 3 consecutive failures (lock released)', async () => {

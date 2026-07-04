@@ -16,6 +16,7 @@ import type {
   PointsViewState,
 } from '../../types/points';
 import { log, Modules } from '../../utils/log';
+import { isAbortError } from '../loaders/abort-error';
 import type { UpdateProfiler, UpdateSession } from '../../profiling/update-profiler';
 import type { ViewState } from '../data-loader-types';
 import type { ViewStateQueue } from '../scene-loader/view-state/view-state-queue';
@@ -52,6 +53,14 @@ export interface PointsRefinementCtx {
   retriggerUpdate(pendingState: Partial<ViewState>): void;
   /** Liveness check; false once the owning SceneLoader was disposed. */
   isActive?(): boolean;
+  /**
+   * Per-refinement-run abort signal. The orchestrator assigns the run's
+   * controller to the SceneLoader's `_updateAbortController`, so a
+   * superseding `updateView` (or dispose) aborts in-flight refinement
+   * chunk reads MID-PASS instead of waiting out the whole pass. An
+   * `AbortError` in the per-loader catch is cancellation, not failure.
+   */
+  signal?: AbortSignal;
 }
 
 export async function runPointsRefinement(ctx: PointsRefinementCtx): Promise<void> {
@@ -85,7 +94,7 @@ export async function runPointsRefinement(ctx: PointsRefinementCtx): Promise<voi
         const pass = ctx.profiler?.beginPass();
         const session = pass?.begin(`Points (${path})`);
         try {
-          const data = await loader.updateView(pointsVS, session);
+          const data = await loader.updateView(pointsVS, session, ctx.signal);
           if (data) {
             ctx.updatePointsGeometry(path, data, session);
           }
@@ -95,6 +104,10 @@ export async function runPointsRefinement(ctx: PointsRefinementCtx): Promise<voi
         }
         failures.recordSuccess(path);
       } catch (error) {
+        // Superseded, not failed: a newer view-state (or dispose) aborted the
+        // in-flight read on purpose. Don't count it toward the failure backoff
+        // or log an error — the loop's next-pass pending check hands off.
+        if (isAbortError(error)) return;
         if (failures.recordFailure(path)) {
           log.error(
             Modules.SCENE_LOADER,

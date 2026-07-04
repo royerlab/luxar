@@ -771,6 +771,15 @@ export class SceneLoader {
         this.updateView(pendingState);
       }
     };
+    // Per-run abort controller, published as THIS loader's live update
+    // controller: the supersede branch in `updateView` (and `dispose`) abort
+    // `_updateAbortController`, so an incoming view-state cancels in-flight
+    // refinement chunk reads MID-PASS instead of waiting for the pass to
+    // finish (previously refinement passed no signal at all). The refinement
+    // catches treat the resulting AbortError as cancellation (no failure
+    // recorded); the loop's next-pass pending check performs the hand-off.
+    const refinementController = new AbortController();
+    this._updateAbortController = refinementController;
     // Intermediate phases shouldn't release the lock — only the last
     // phase running to completion does.
     const noopReleaseLock = () => {
@@ -792,6 +801,7 @@ export class SceneLoader {
       releaseLock: noopReleaseLock,
       retriggerUpdate: onCancel,
       isActive: () => !this._disposed,
+      signal: refinementController.signal,
       profiler: this.profiler,
     });
     if (cancelled || this._disposed) return;
@@ -807,6 +817,7 @@ export class SceneLoader {
       releaseLock: noopReleaseLock,
       retriggerUpdate: onCancel,
       isActive: () => !this._disposed,
+      signal: refinementController.signal,
       profiler: this.profiler,
     });
     if (cancelled || this._disposed) return;
@@ -824,6 +835,7 @@ export class SceneLoader {
       releaseLock: finalReleaseLock,
       retriggerUpdate: onCancel,
       isActive: () => !this._disposed,
+      signal: refinementController.signal,
       profiler: this.profiler,
     });
   }
