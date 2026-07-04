@@ -73,6 +73,28 @@ class TestCoordinateModes:
         nz = np.abs(pos) > _atol(pos)  # sign preserved away from zero
         assert np.array_equal(np.sign(decoded[nz]), np.sign(pos[nz]))
 
+    def test_int_input_decodes_float32_no_truncation(self):
+        # Decode contract: COORDINATE always decodes to float32 regardless of the
+        # input dtype. Regression: original_dtype used to echo the raw input dtype,
+        # so int32 voxel coordinates were dequantized to floats then cast BACK to
+        # int32 — truncating toward zero (99.9998 → 99) and breaking idempotency.
+        rng = np.random.default_rng(20)
+        pos = rng.integers(0, 2000, size=(1500, 3)).astype(np.int32)
+        decoded, enc, _ = _roundtrip(pos, EncodingMode.AUTO)
+        assert enc["name"] == "linear_perchannel_u16"
+        assert enc["original_dtype"] == "float32"  # pinned, not the input dtype
+        assert decoded.dtype == np.float32
+        np.testing.assert_allclose(decoded, pos.astype(np.float32), atol=_atol(pos))
+
+    def test_float64_input_decodes_float32(self):
+        # float64 input (e.g. un-cast np.random.randn) must not silently widen
+        # every downstream consumer: decode returns float32, same as PRECISION.
+        rng = np.random.default_rng(21)
+        pos = rng.standard_normal((800, 3)) * 50  # float64
+        decoded, enc, _ = _roundtrip(pos, EncodingMode.AUTO)
+        assert decoded.dtype == np.float32
+        np.testing.assert_allclose(decoded, pos.astype(np.float32), atol=_atol(pos))
+
     def test_never_uint8_never_float16(self):
         rng = np.random.default_rng(3)
         pos = (rng.standard_normal((100, 3)) * 10).astype(np.float32)
@@ -129,9 +151,9 @@ class TestCoordinateEdgeCases:
         levels = (1 << enc["bits"]) - 1
         # decoder computes in float64 then casts to the original dtype (float32);
         # mirror that cast so the formula lock is bit-exact.
-        hand = (lo + stored.astype(np.float64) / levels * np.maximum(hi - lo, 1e-30)).astype(
-            np.float32
-        )
+        hand = (
+            lo + stored.astype(np.float64) / levels * np.maximum(hi - lo, 1e-30)
+        ).astype(np.float32)
         np.testing.assert_array_equal(decoded, hand)
 
 

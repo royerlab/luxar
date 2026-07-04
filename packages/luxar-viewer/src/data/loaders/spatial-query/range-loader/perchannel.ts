@@ -4,7 +4,9 @@ import { log } from '../../../../utils/log';
 import type { LoadRange } from '../../base-types';
 import { ArrayDecoder, type ArrayMetadata } from '../../../array-decoder/decoder';
 import {
+  clampRangeData,
   firstAxisRangeSlice,
+  rangeDestOffsets,
   type RangeNumericArray,
   type ResolvedRangeLoaderConfig,
 } from './encoding-types';
@@ -29,6 +31,14 @@ export interface PerChannelCtx {
  * `elementsPerItem` is the column count C (the per-channel dimension, e.g. ndim
  * for positions/centers, d for the Cholesky diagonal): the flattened output is
  * `[item*C + col]`, so `col = globalIndex % C`.
+ *
+ * Ranges are fetched CONCURRENTLY (like `loadDirect` / `loadQuantized`):
+ * destination offsets are precomputed, each range writes its own disjoint
+ * output span, and the global flattened index `offsets[i] + j` keeps the
+ * column phase exact regardless of resolution order. Decode itself stays on
+ * the main thread deliberately — it is a single multiply-add per element
+ * (no expm1, no worker `decodePerChannel` kernel exists), so the cost is
+ * marginal next to the network fetch it overlaps with.
  */
 export async function loadPerChannel(
   ctx: PerChannelCtx,
@@ -49,18 +59,26 @@ export async function loadPerChannel(
     );
   }
 
-  let destOffset = 0;
   const shape = array.shape;
-  for (const range of ranges) {
-    const sliceSpec = firstAxisRangeSlice(shape, range);
-    const chunkData = await get(array, sliceSpec, abortOptions(ctx.signal));
-    const data = chunkData.data as RangeNumericArray;
-    for (let i = 0; i < data.length; i++) {
-      const g = destOffset + i;
-      output[g] = dequant(Number(data[i]), g % cols);
-    }
-    destOffset += data.length;
-  }
+  const { offsets, counts, total } = rangeDestOffsets(shape, ranges);
 
-  return destOffset;
+  await Promise.all(
+    ranges.map(async (range, i) => {
+      const sliceSpec = firstAxisRangeSlice(shape, range);
+      const chunkData = await get(array, sliceSpec, abortOptions(ctx.signal));
+      const data = clampRangeData(
+        chunkData.data as RangeNumericArray,
+        counts[i],
+        i,
+        ctx.config.logModule
+      );
+      const base = offsets[i];
+      for (let j = 0; j < data.length; j++) {
+        const g = base + j;
+        output[g] = dequant(Number(data[j]), g % cols);
+      }
+    })
+  );
+
+  return total;
 }

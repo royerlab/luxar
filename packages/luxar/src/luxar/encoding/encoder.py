@@ -818,9 +818,13 @@ class ArrayEncoder:
             return
 
         # AUTO / MEMORY: uint16 per-axis fixed-point, with an array-local extent rail.
+        # Per-axis min/max is computed ONCE here (rail + quantization scales share it).
         arr = np.asarray(data).astype(np.float64)
+        lo = hi = None
         if arr.shape[0] > 0:
-            max_extent = float((arr.max(axis=0) - arr.min(axis=0)).max())
+            lo = arr.min(axis=0)
+            hi = arr.max(axis=0)
+            max_extent = float((hi - lo).max())
             if max_extent >= 65536.0:
                 warnings.warn(
                     f"COORDINATE '{name}': per-axis extent {max_extent:.0f} ≥ 2¹⁶; "
@@ -841,18 +845,21 @@ class ArrayEncoder:
                     stacklevel=2,
                 )
 
-        bits = 16  # coordinates always u16 (never u8) for both AUTO and MEMORY
-        u, lo, hi = self._quantize_per_column(arr, bits)
-        zarr_group.create_dataset(
-            name, data=u, chunks=chunks, compressor=compressor, overwrite=True
+        # Coordinates always u16 (never u8) for both AUTO and MEMORY. The decode
+        # contract for COORDINATE is float32 (GPU/viewer target) regardless of the
+        # input dtype — matching PRECISION's float32 cast — so original_dtype is
+        # pinned to float32 (an integer original_dtype would truncate on decode).
+        self._encode_linear_perchannel(
+            zarr_group,
+            name,
+            arr,
+            16,
+            chunks,
+            compressor,
+            lo=lo,
+            hi=hi,
+            original_dtype="float32",
         )
-        zarr_group[name].attrs["encoding"] = {
-            "name": f"linear_perchannel_u{bits}",
-            "col_lo": lo,
-            "col_hi": hi,
-            "bits": bits,
-            "original_dtype": str(data.dtype),
-        }
 
     def _encode_color(
         self,
@@ -1198,12 +1205,19 @@ class ArrayEncoder:
         }
 
     @staticmethod
-    def _quantize_per_column(y: np.ndarray, bits: int) -> tuple[np.ndarray, list, list]:
+    def _quantize_per_column(
+        y: np.ndarray,
+        bits: int,
+        lo: Optional[np.ndarray] = None,
+        hi: Optional[np.ndarray] = None,
+    ) -> tuple[np.ndarray, list, list]:
         """Quantize a 2-D (N, C) array to uint with PER-COLUMN min/max.
 
         Returns ``(uint_array, lo, hi)`` where ``lo``/``hi`` are length-C lists
         (one min/max per column). A constant column (lo==hi) maps every value to
-        level 0; decode then returns ``lo`` for that column.
+        level 0; decode then returns ``lo`` for that column. Callers that already
+        computed the per-column min/max (e.g. the COORDINATE extent rail) can pass
+        ``lo``/``hi`` to skip the redundant reduction pass.
 
         Idempotency: quantization error does NOT compound across save/load
         cycles. After the first encode→decode→re-encode, the decoded values lie
@@ -1216,11 +1230,50 @@ class ArrayEncoder:
             lo = np.zeros(y.shape[1], dtype=np.float64)
             hi = np.zeros(y.shape[1], dtype=np.float64)
             return y.astype(udtype), lo.tolist(), hi.tolist()
-        lo = y.min(axis=0)
-        hi = y.max(axis=0)
+        if lo is None:
+            lo = y.min(axis=0)
+        if hi is None:
+            hi = y.max(axis=0)
         rng = np.maximum(hi - lo, 1e-30)
         u = np.round((np.clip(y, lo, hi) - lo) / rng * levels).astype(udtype)
         return u, lo.astype(np.float64).tolist(), hi.astype(np.float64).tolist()
+
+    def _encode_linear_perchannel(
+        self,
+        zarr_group: zarr.Group,
+        name: str,
+        data: np.ndarray,
+        bits: int,
+        chunks: Optional[tuple] = None,
+        compressor: Optional[Any] = None,
+        *,
+        lo: Optional[np.ndarray] = None,
+        hi: Optional[np.ndarray] = None,
+        original_dtype: Optional[str] = None,
+    ) -> None:
+        """Generic per-channel LINEAR (fixed-point) quantization of an (N, C) array.
+
+        The identity-transform sibling of ``_encode_log_perchannel`` /
+        ``_encode_signed_log_perchannel``: each column is quantized over its own
+        ``[lo, hi]`` to ``2**bits`` uniform levels — no companding, so it handles
+        negative values (the correct transform for coordinates). Unlike the log
+        siblings this takes ``bits`` directly rather than a mode: its consumers
+        (currently COORDINATE) own the mode policy. ``lo``/``hi`` accept
+        precomputed per-column scales; ``original_dtype`` overrides the stored
+        decode dtype (COORDINATE pins it to float32, the decode contract).
+        """
+        y = np.asarray(data).astype(np.float64)
+        u, lo_list, hi_list = self._quantize_per_column(y, bits, lo=lo, hi=hi)
+        zarr_group.create_dataset(
+            name, data=u, chunks=chunks, compressor=compressor, overwrite=True
+        )
+        zarr_group[name].attrs["encoding"] = {
+            "name": f"linear_perchannel_u{bits}",
+            "col_lo": lo_list,
+            "col_hi": hi_list,
+            "bits": bits,
+            "original_dtype": original_dtype or str(data.dtype),
+        }
 
     def _encode_log_perchannel(
         self,

@@ -212,8 +212,16 @@ export class ArrayDecoder {
     // 'perchannel' path and Python's `_decode_*_perchannel`. `data` holds the raw
     // integer levels as float; apply the per-column inverse (col = index % C).
     if (enc?.name && ArrayDecoder.isPerChannelQuantEncodingName(enc.name)) {
-      const colLo = (enc as { col_lo?: number[] }).col_lo;
-      const cols = Array.isArray(colLo) && colLo.length > 0 ? colLo.length : 1;
+      // Column count comes from the ARRAY's own last dimension (like Python's
+      // `data.shape[-1]` in `_perchannel_scales`), NOT from col_lo.length —
+      // deriving it from the metadata would make makePerChannelDequant's
+      // length guard a tautology, silently misaligning axes on a corrupt file
+      // whose col_lo/col_hi length disagrees with the stored data.
+      const arrShape = zarrArray.shape;
+      const cols =
+        Array.isArray(arrShape) && arrShape.length > 1
+          ? Number(arrShape[arrShape.length - 1])
+          : 1;
       const dequant = ArrayDecoder.makePerChannelDequant(
         enc as { name?: string; bits?: number; col_lo?: number[]; col_hi?: number[] },
         cols

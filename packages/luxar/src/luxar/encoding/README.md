@@ -328,7 +328,9 @@ the policy; the encoding is geometry-agnostic.
 
 **COORDINATE** (positions / centers / vertices) uses **uint16 per-axis fixed-point**
 (`linear_perchannel_u16`) in both AUTO and MEMORY: each axis is quantized over its own
-`[min, max]` to 65536 uniform levels, decoded back to float32 — visually lossless
+`[min, max]` to 65536 uniform levels, decoded back to float32 **regardless of the
+input dtype** (`original_dtype` is pinned to float32 — the decode contract, matching
+PRECISION's float32 cast) — visually lossless
 (sub-unit) and ~2× smaller than float32. Coordinates never use uint8 (256 levels is far
 too coarse) and never **float16** (its *relative* precision degrades with magnitude — a
 footgun for absolute positions). An **array-local extent rail** warns when a per-axis
