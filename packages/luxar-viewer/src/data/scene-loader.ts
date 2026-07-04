@@ -729,6 +729,8 @@ export class SceneLoader {
       // lock release. Implementation in scene-loader/update-view/queue-next.ts.
       queueNext({
         viewStateQueue: this.viewStateQueue,
+        pointsLoaders: this.loaders,
+        linesLoaders: this.linesLoaders,
         gsplatLoaders: this.gsplatLoaders,
         updateView: (state) => this.updateView(state),
         setUpdateInProgress: (v) => {

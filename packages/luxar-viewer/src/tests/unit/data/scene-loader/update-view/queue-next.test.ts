@@ -4,8 +4,9 @@
  * The helper has three outcomes:
  *   1. Pending state → yield via requestAnimationFrame, release the
  *      lock INSIDE the rAF callback, then re-enter updateView.
- *   2. No pending + at least one progressive GSplats loader with
- *      hasMoreLODs:true → kick the refinement loop; lock stays HELD
+ *   2. No pending + at least one progressive loader (points, lines, OR
+ *      gsplats) with hasMoreLODs:true → kick the refinement loop; lock
+ *      stays HELD
  *      (refinement holds the lock so slider events queue and naturally
  *      cancel refinement).
  *   3. No pending + no refinement needed → release the lock.
@@ -24,6 +25,8 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { queueNext } from '../../../../../data/scene-loader/update-view/queue-next';
 import { ViewStateQueue } from '../../../../../data/scene-loader/view-state/view-state-queue';
 import type { GSplatsDataLoader } from '../../../../../types/gsplats';
+import type { LinesDataLoader } from '../../../../../types/lines';
+import type { DataLoader } from '../../../../../data/data-loader-types';
 import type { QueueNextCtx } from '../../../../../data/scene-loader/update-view/queue-next';
 
 // ============================================================================
@@ -32,6 +35,14 @@ import type { QueueNextCtx } from '../../../../../data/scene-loader/update-view/
 
 function makeGSplatsLoader(hasMoreLODs: boolean): GSplatsDataLoader {
   return { hasMoreLODs } as unknown as GSplatsDataLoader;
+}
+
+function makePointsLoader(hasMoreLODs: boolean): DataLoader {
+  return { hasMoreLODs } as unknown as DataLoader;
+}
+
+function makeLinesLoader(hasMoreLODs: boolean): LinesDataLoader {
+  return { hasMoreLODs } as unknown as LinesDataLoader;
 }
 
 function makeCtx(overrides: Partial<QueueNextCtx> = {}): QueueNextCtx & {
@@ -47,6 +58,8 @@ function makeCtx(overrides: Partial<QueueNextCtx> = {}): QueueNextCtx & {
 
   const ctx: QueueNextCtx = {
     viewStateQueue: new ViewStateQueue(),
+    pointsLoaders: new Map(),
+    linesLoaders: new Map(),
     gsplatLoaders: new Map(),
     updateView,
     setUpdateInProgress,
@@ -184,13 +197,66 @@ describe('queueNext — no pending + no refinement needed', () => {
     expect(ctx.spies.updateView).not.toHaveBeenCalled();
   });
 
-  it('releases the lock when the gsplatLoaders map is empty', () => {
+  it('releases the lock when every loader map is empty', () => {
     const ctx = makeCtx({ gsplatLoaders: new Map() });
 
     queueNext(ctx);
 
     expect(ctx.spies.setUpdateInProgress).toHaveBeenCalledWith(false);
     expect(ctx.spies.scheduleGSplatsRefinement).not.toHaveBeenCalled();
+  });
+});
+
+describe('queueNext — points/lines progressive loaders gate refinement too', () => {
+  // Regression: needsRefinement previously checked only gsplatLoaders, so a
+  // points- or lines-only scene with additive ladders never refined after any
+  // view change (stuck at partial LODs). The gate must mirror the post-load
+  // kick in lifecycle/load-scene.ts, which checks all three types.
+  it('kicks refinement when only a POINTS loader has more LODs', () => {
+    const ctx = makeCtx({
+      pointsLoaders: new Map<string, DataLoader>([['/p', makePointsLoader(true)]]),
+    });
+
+    queueNext(ctx);
+
+    expect(ctx.spies.scheduleGSplatsRefinement).toHaveBeenCalledTimes(1);
+    expect(ctx.spies.setUpdateInProgress).not.toHaveBeenCalled(); // lock held
+  });
+
+  it('kicks refinement when only a LINES loader has more LODs', () => {
+    const ctx = makeCtx({
+      linesLoaders: new Map<string, LinesDataLoader>([['/l', makeLinesLoader(true)]]),
+    });
+
+    queueNext(ctx);
+
+    expect(ctx.spies.scheduleGSplatsRefinement).toHaveBeenCalledTimes(1);
+    expect(ctx.spies.setUpdateInProgress).not.toHaveBeenCalled(); // lock held
+  });
+
+  it('releases the lock when points/lines/gsplats loaders all report no more LODs', () => {
+    const ctx = makeCtx({
+      pointsLoaders: new Map<string, DataLoader>([['/p', makePointsLoader(false)]]),
+      linesLoaders: new Map<string, LinesDataLoader>([['/l', makeLinesLoader(false)]]),
+      gsplatLoaders: new Map<string, GSplatsDataLoader>([['/g', makeGSplatsLoader(false)]]),
+    });
+
+    queueNext(ctx);
+
+    expect(ctx.spies.scheduleGSplatsRefinement).not.toHaveBeenCalled();
+    expect(ctx.spies.setUpdateInProgress).toHaveBeenCalledWith(false);
+  });
+
+  it('non-progressive points loaders (no hasMoreLODs) do not schedule refinement', () => {
+    // Plain PointsSpatialIndexLoader has no hasMoreLODs property at all.
+    const ctx = makeCtx({
+      pointsLoaders: new Map<string, DataLoader>([['/p', {} as unknown as DataLoader]]),
+    });
+
+    queueNext(ctx);
+
+    expect(ctx.spies.scheduleGSplatsRefinement).not.toHaveBeenCalled();
+    expect(ctx.spies.setUpdateInProgress).toHaveBeenCalledWith(false);
   });
 });
 

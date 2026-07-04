@@ -20,19 +20,38 @@
  */
 
 import { log, Modules } from '../../../utils/log';
-import type { ViewState } from '../../data-loader-types';
+import type { DataLoader, ViewState } from '../../data-loader-types';
 import type { GSplatsDataLoader } from '../../../types/gsplats';
+import type { LinesDataLoader } from '../../../types/lines';
 import type { ViewStateQueue } from '../view-state/view-state-queue';
 
 export interface QueueNextCtx {
   viewStateQueue: ViewStateQueue;
+  /**
+   * All three per-type loader maps. Refinement must be gated on EVERY
+   * geometry type — progressive Points and Lines loaders carry additive
+   * ladders exactly like GSplats (ladders are on by default for all
+   * recipes), and the post-load kick in `lifecycle/load-scene.ts` already
+   * checks all three. Gating on gsplats alone left points/lines-only
+   * scenes stuck at partial LODs after every view change.
+   */
+  pointsLoaders: Map<string, DataLoader>;
+  linesLoaders: Map<string, LinesDataLoader>;
   gsplatLoaders: Map<string, GSplatsDataLoader>;
   /** Re-enter the orchestrator's `updateView` with the next pending state. */
   updateView(state: Partial<ViewState>): Promise<void>;
   /** Set the orchestrator's `_updateInProgress` flag. */
   setUpdateInProgress(value: boolean): void;
-  /** Kick the GSplats LOD refinement loop. */
+  /**
+   * Kick the progressive LOD refinement orchestrator (all three geometry
+   * types in sequence — gsplats, then points, then lines).
+   */
   scheduleGSplatsRefinement(): Promise<void>;
+}
+
+/** Structural `hasMoreLODs` probe — only progressive loaders expose it. */
+function hasMore(loader: unknown): boolean {
+  return (loader as { hasMoreLODs?: boolean }).hasMoreLODs === true;
 }
 
 /**
@@ -59,15 +78,20 @@ export function queueNext(ctx: QueueNextCtx): void {
     return;
   }
 
-  // No pending update — check if progressive GSplats loaders need refinement
-  const needsRefinement = [...ctx.gsplatLoaders.values()].some((l) => l.hasMoreLODs === true);
+  // No pending update — check if ANY progressive loader (points, lines, or
+  // gsplats) still has additive LODs to stream. Mirrors the post-load kick
+  // in lifecycle/load-scene.ts, which checks all three symmetrically.
+  const needsRefinement =
+    [...ctx.gsplatLoaders.values()].some(hasMore) ||
+    [...ctx.pointsLoaders.values()].some(hasMore) ||
+    [...ctx.linesLoaders.values()].some(hasMore);
 
   if (needsRefinement) {
     // Keep _updateInProgress = true during refinement so slider/animation
     // events queue as _pendingViewState (which naturally cancels refinement)
     log.info(
       Modules.SCENE_LOADER,
-      'Scheduling GSplats LOD refinement (hasMoreLODs=true after update)'
+      'Scheduling progressive LOD refinement (hasMoreLODs=true after update)'
     );
     // Fire-and-forget: catch so an error escaping the refinement loop is
     // logged rather than surfacing as an unhandled promise rejection.
