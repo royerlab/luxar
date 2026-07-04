@@ -1,7 +1,7 @@
 /**
  * Performance / adaptive-DPR setup for the rendering-controls panel.
  *
- * Builds the "⚡ Performance" folder with the Adaptive Resolution toggle,
+ * Builds the "Performance" folder with the Adaptive Resolution toggle,
  * a Manual DPR slider (visible when adaptive is OFF), and read-only
  * Current DPR / Current FPS display rows (visible when adaptive is ON).
  *

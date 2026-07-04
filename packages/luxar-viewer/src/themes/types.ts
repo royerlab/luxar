@@ -143,17 +143,17 @@ export interface ThemeFontFamily {
  * Font size scale
  */
 export interface ThemeFontSizes {
-  /** Extra small: 9px */
+  /** Extra small: 10px */
   xs: string;
-  /** Small: 10px */
+  /** Small: 11px */
   sm: string;
-  /** Base: 11px */
+  /** Base: 13px */
   base: string;
-  /** Medium: 12px */
+  /** Medium: 14px */
   md: string;
-  /** Large: 14px */
+  /** Large: 16px */
   lg: string;
-  /** Extra large: 16px */
+  /** Extra large: 18px */
   xl: string;
   /** 2XL: 20px */
   '2xl': string;

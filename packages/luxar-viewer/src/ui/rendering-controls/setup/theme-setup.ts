@@ -1,7 +1,7 @@
 /**
  * Theme picker setup for the rendering-controls panel.
  *
- * Creates the "🎨 Theme" folder with a single dropdown bound to
+ * Creates the "Theme" folder with a single dropdown bound to
  * `ThemeManager`. The theme manager itself handles persistence;
  * we just need to call `setTheme()` and trigger a re-render so
  * the change is visible immediately.

@@ -133,14 +133,16 @@
 
 .luxar-recording-confirm__dialog {
   background: var(--luxar-bg-secondary, #2a2a2a);
-  border: 1px solid var(--luxar-border-subtle, rgba(255, 255, 255, 0.1));
+  /* Same surface recipe as the other modals (dataset-browser, error-dialog):
+     border-default hairline + shadow-lg. */
+  border: 1px solid var(--luxar-border-default);
   border-radius: var(--luxar-radius-lg, 12px);
   padding: 24px;
   max-width: 420px;
   width: 90%;
   color: var(--luxar-text-primary, #fff);
   font-family: var(--luxar-font-base, system-ui, sans-serif);
-  box-shadow: var(--luxar-shadow-xl, 0 4px 24px rgba(0, 0, 0, 0.4));
+  box-shadow: var(--luxar-shadow-lg);
 }
 
 .luxar-recording-confirm__title {
