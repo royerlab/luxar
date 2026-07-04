@@ -8,8 +8,8 @@ from luxar.core.dimensions import Dimensions
 from luxar.core.group import Group
 from luxar.core.gsplats import GSplats
 from luxar.core.node import Node
-from luxar.io.compiler import LuxarZarrCompiler
 from luxar.encoding import ArrayDecoder
+from luxar.io.compiler import LuxarZarrCompiler
 
 
 def _atol(a):

@@ -4,8 +4,8 @@ import numpy as np
 import zarr
 
 from luxar import Dimensions, LuxarZarrCompiler
-from luxar.typing_utils.constants import MAX_CHUNK_BYTES, MIN_CHUNK_BYTES
 from luxar.encoding import ArrayDecoder
+from luxar.typing_utils.constants import MAX_CHUNK_BYTES, MIN_CHUNK_BYTES
 
 
 def _atol(a):
@@ -79,7 +79,9 @@ class TestZarrNDChunking:
         loaded_positions = ArrayDecoder().decode(root["Points5D"]["positions"], root)
 
         assert loaded_positions.shape == (n_points, 5)
-        np.testing.assert_allclose(loaded_positions, positions_5d, atol=_atol(positions_5d))
+        np.testing.assert_allclose(
+            loaded_positions, positions_5d, atol=_atol(positions_5d)
+        )
 
     def test_chunk_boundary_alignment(self, tmp_path) -> None:
         """Test that chunking aligns well with typical access patterns."""
