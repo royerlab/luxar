@@ -17,6 +17,10 @@ All notable changes to Luxar are documented in this file.
   poisoned before the fix need one `?clear-cache` reload.
 - The LOD registry never displays a fresh-but-empty level over a populated
   coarser fresh one (warns once, pointing at `?clear-cache`).
+- Failed loads are now recoverable without a reload: the Data Loading
+  Monitor's Overview tab shows a warning banner with a Retry action while
+  failures are recorded, and failed loads are retried automatically when
+  the connection comes back online.
 - Viewer LOD loading/scheduling fixes: post-update refinement now covers
   points/lines additive ladders (not just gsplats); >3D progressive points
   concatenate at the correct stride; refinement retries are capped at 3

@@ -674,6 +674,25 @@
 
 /* ========== Overview Tab ========== */
 
+/* Failed-loads warning banner (Overview tab, shown while failures exist). */
+.luxar-failed-loads {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--luxar-spacing-4);
+  padding: var(--luxar-spacing-3) var(--luxar-spacing-4);
+  margin-bottom: var(--luxar-spacing-6);
+  border-radius: var(--luxar-radius-sm, 4px);
+  background: color-mix(in srgb, var(--luxar-warning) 12%, transparent);
+  border-left: 3px solid var(--luxar-warning);
+}
+
+.luxar-failed-loads__label {
+  color: var(--luxar-warning);
+  font-size: var(--luxar-text-sm);
+  font-weight: 600;
+}
+
 .luxar-overview-grid {
   display: grid;
   gap: var(--luxar-spacing-8);

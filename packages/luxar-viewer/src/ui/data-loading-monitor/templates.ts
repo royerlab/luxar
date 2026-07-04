@@ -219,6 +219,35 @@ export function renderSecondaryMetrics(
 }
 
 /**
+ * Warning banner for recorded load failures, with a Retry action. Rendered
+ * at the top of the Overview tab while `SceneLoader.getFailedLoaders()` is
+ * non-empty; empty string when nothing failed (the common case). The
+ * button carries `data-action="retryFailedLoads"` for the monitor's event
+ * delegation and is disabled while a retry batch is in flight.
+ */
+export function renderFailedLoadsBanner(
+  failedPaths: readonly string[],
+  retryInFlight: boolean
+): string {
+  if (failedPaths.length === 0) return '';
+  const n = failedPaths.length;
+  const pathList = failedPaths.join('\n');
+  return `
+    <div class="luxar-failed-loads" title="${escapeHtml(
+      `These nodes failed to load (network error, missing data, …) and may render incomplete:
+${pathList}
+
+Retry re-runs each failed load with the current view state. Failed loads are also retried automatically when the connection comes back online.`
+    )}">
+      <span class="luxar-failed-loads__label">⚠ ${n} failed load${n === 1 ? '' : 's'}</span>
+      <button data-action="retryFailedLoads" class="luxar-cache-section__clear-btn" ${
+        retryInFlight ? 'disabled' : ''
+      } title="Re-run every failed load with the current view state">${retryInFlight ? 'Retrying…' : 'Retry'}</button>
+    </div>
+  `;
+}
+
+/**
  * Template for overview tab content
  */
 export function renderOverviewContent(stats: GlobalStats, cacheMetrics: CacheMetrics): string {

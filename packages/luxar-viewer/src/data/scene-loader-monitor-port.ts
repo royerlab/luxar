@@ -56,6 +56,19 @@ export interface AccumulatorProviderPort {
 }
 
 /**
+ * Provider injected via `setFailedLoadsProvider`. Surfaces the loader's
+ * failed-load records in the monitor UI and powers its Retry action —
+ * the visible half of the failed-load recovery story (the `window
+ * 'online'` listener in `core/app/lifecycle/online-retry.ts` is the
+ * automatic half). `retryAll` maps to `SceneLoader.retryAllFailedLoaders`
+ * (serialized against the update lock by the loader itself).
+ */
+export interface FailedLoadsProviderPort {
+  getFailedPaths: () => string[];
+  retryAll: () => Promise<{ succeeded: string[]; failed: string[] }>;
+}
+
+/**
  * The subset of `DataLoadingMonitor`'s public surface that
  * `SceneLoader` consumes. Implemented structurally by
  * `DataLoadingMonitor`.
@@ -80,6 +93,11 @@ export interface SceneLoaderMonitorPort {
    * badges, "LOD x/N" chips, refining indicator, and header summary.
    */
   setLODProgressProvider(provider: LODProgressProvider | null): void;
+  /**
+   * Inject the failed-loads provider (count/paths + retry-all). The UI
+   * shows a warning banner with a Retry action while failures exist.
+   */
+  setFailedLoadsProvider(provider: FailedLoadsProviderPort | null): void;
   /**
    * Push the cache telemetry state resolved by `cache-setup.ts` so the
    * UI shows the right disabled-reason. Without this, the aggregator

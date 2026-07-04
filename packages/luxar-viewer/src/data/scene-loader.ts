@@ -478,6 +478,8 @@ export class SceneLoader {
       initializeSceneDimensions: (sd) => this.initializeSceneDimensions(sd),
       makeNodeBuildCtx: () => this.makeNodeBuildCtx(),
       updateVisibleCountsInMonitor: () => this.updateVisibleCountsInMonitor(),
+      getFailedLoaderPaths: () => Array.from(this.failedLoaders.keys()),
+      retryAllFailedLoaders: () => this.retryAllFailedLoaders(),
       scheduleGSplatsRefinement: () => this.scheduleGSplatsRefinement(),
       setDatasetAbortController: (c) => {
         this._datasetAbortController = c;

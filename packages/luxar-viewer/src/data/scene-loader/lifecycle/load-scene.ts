@@ -96,6 +96,12 @@ export interface LoadSceneCtx {
   makeNodeBuildCtx(): NodeBuildCtx;
   /** Stats helper used by the post-load monitor wiring. */
   updateVisibleCountsInMonitor(): void;
+  /**
+   * Failed-load records + retry-all for the monitor's failure banner.
+   * Live closures over the orchestrator's registry / retry API.
+   */
+  getFailedLoaderPaths(): string[];
+  retryAllFailedLoaders(): Promise<{ succeeded: string[]; failed: string[] }>;
   /** Kick the GSplats LOD refinement loop after initial load. */
   scheduleGSplatsRefinement(): Promise<void>;
 
@@ -355,6 +361,10 @@ export async function loadScene(url: string, ctx: LoadSceneCtx): Promise<THREE.G
     lodGroupRegistry: ctx.lodGroupRegistry,
     sceneGraph,
     updateVisibleCounts: () => ctx.updateVisibleCountsInMonitor(),
+    failedLoads: {
+      getFailedPaths: () => ctx.getFailedLoaderPaths(),
+      retryAll: () => ctx.retryAllFailedLoaders(),
+    },
   });
 
   log.success(Modules.SCENE_LOADER, 'Scene loaded successfully');

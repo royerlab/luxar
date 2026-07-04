@@ -36,6 +36,7 @@ import { PollingLoop } from './data-loading-monitor/polling-loop';
 import { log, Modules } from '../utils/log';
 import { config } from '../config';
 import { notifier } from '../utils/cross-layer/notifier';
+import type { FailedLoadsProviderPort } from '../data/scene-loader-monitor-port';
 
 // Only extract timings and limits from config (these are data values, not styles)
 const MonitorTimings = config.dataLoading.monitor.timings;
@@ -53,6 +54,7 @@ function isValidTab(tab: string): tab is ValidTab {
 import {
   renderLoaderItem,
   renderOverviewContent,
+  renderFailedLoadsBanner,
   renderCacheContent,
   renderMemoryContent,
   renderInsightsContent,
@@ -155,6 +157,10 @@ export class DataLoadingMonitor {
   // Polled each tick; the snapshot drives the scene-graph tree's kind
   // badges, "LOD x/N" chips, refining indicator, and header summary.
   private lodProgressProvider: LODProgressProvider | null = null;
+  /** Failed-load records + retry-all, from the SceneLoader (overview banner). */
+  private failedLoadsProvider: FailedLoadsProviderPort | null = null;
+  /** In-flight guard so the banner's Retry button can't stack batches. */
+  private retryFailedLoadsInFlight = false;
   private lodStates: Map<string, LODProgressState> = new Map();
   /** Per-path visible counts pushed by the SceneLoader's visible-counts walk. */
   private visibleCountsByPath: ReadonlyMap<string, number> = new Map();
@@ -305,6 +311,13 @@ export class DataLoadingMonitor {
    * Set the cache stats provider for L1/L2 cache monitoring.
    * This enables the monitor to display actual cache statistics.
    */
+  public setFailedLoadsProvider(provider: FailedLoadsProviderPort | null): void {
+    this.failedLoadsProvider = provider;
+    if (provider) {
+      log.info(Modules.DATA_MONITOR, 'Failed-loads provider connected');
+    }
+  }
+
   public setCacheStatsProvider(provider: CacheStatsProvider | null): void {
     this.cacheStatsProvider = provider;
     if (provider) {
@@ -418,6 +431,7 @@ export class DataLoadingMonitor {
     this.accumulatorProviders = { points: null, lines: null, gsplats: null };
     this.profiler = null;
     this.lodProgressProvider = null;
+    this.failedLoadsProvider = null;
     this.lodStates = new Map();
     // Reset to undefined (not 'not-wired') so the next scene's
     // setCacheTelemetryState call lands cleanly. If the next setup
@@ -916,6 +930,9 @@ export class DataLoadingMonitor {
         break;
       case 'clearAll':
         this.clearAllCaches();
+        break;
+      case 'retryFailedLoads':
+        this.retryFailedLoads();
         break;
       case 'toggleNode': {
         const nodePath = target.dataset.nodePath;
@@ -1638,14 +1655,59 @@ export class DataLoadingMonitor {
   }
 
   /**
+   * Retry every failed loader via the injected provider (the monitor-side
+   * trigger for `SceneLoader.retryAllFailedLoaders`; the loader serializes
+   * the batch against its update lock). Guards against double-clicks while
+   * a batch is in flight and refreshes the banner on completion.
+   */
+  private retryFailedLoads(): void {
+    const provider = this.failedLoadsProvider;
+    if (!provider || this.retryFailedLoadsInFlight) return;
+    if (provider.getFailedPaths().length === 0) return;
+
+    this.retryFailedLoadsInFlight = true;
+    this.updateUI(); // disable the button immediately
+    void provider
+      .retryAll()
+      .then(({ succeeded, failed }) => {
+        if (failed.length === 0) {
+          notifier.toast(
+            `Recovered ${succeeded.length} failed load${succeeded.length === 1 ? '' : 's'}.`,
+            4000
+          );
+        } else {
+          notifier.toast(
+            `Retried failed loads: ${succeeded.length} recovered, ${failed.length} still failing.`,
+            5000
+          );
+        }
+      })
+      .catch((error) => {
+        log.warning(
+          Modules.DATA_MONITOR,
+          `Retry-all failed: ${error instanceof Error ? error.message : String(error)}`
+        );
+      })
+      .finally(() => {
+        this.retryFailedLoadsInFlight = false;
+        this.updateUI();
+      });
+  }
+
+  /**
    * Render overview tab with cleaner visual hierarchy
    */
   private renderOverviewTab(): string {
     const stats = this.getGlobalStats();
     const cacheMetrics = this.getCacheMetrics();
 
+    // Failed-load warning banner (with a Retry action) ahead of the metrics —
+    // failures otherwise surface only as transient toasts.
+    const failedPaths = this.failedLoadsProvider?.getFailedPaths() ?? [];
+    const banner = renderFailedLoadsBanner(failedPaths, this.retryFailedLoadsInFlight);
+
     // Use the template function for the main content
-    const content = renderOverviewContent(stats, cacheMetrics);
+    const content = banner + renderOverviewContent(stats, cacheMetrics);
 
     // Replace the loader list placeholder with scene graph tree (or compact loader list if no scene graph)
     if (this.sceneGraphState.root) {
