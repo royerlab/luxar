@@ -12,9 +12,17 @@
  * loader-level error telemetry (`metrics.errors`, the monitor `'error'` event
  * stream) — otherwise rapid scrubbing, where aborts are a frequent intentional
  * control path, would flood both with non-errors.
+ *
+ * Classified by `.name` alone — deliberately NOT `instanceof Error`. A
+ * `DOMException` created in another realm (jsdom test env, iframe, a worker
+ * error surface) fails a same-realm `instanceof Error` check even though its
+ * own prototype chain contains that realm's Error, silently turning an
+ * intentional abort into a recorded failure. Duck-typing the name is
+ * realm-proof, and anything carrying `name === 'AbortError'` is precisely
+ * what this classifier exists to match.
  */
 export function isAbortError(error: unknown): boolean {
-  return (
-    error instanceof Error && (error.name === 'AbortError' || error.name === 'WorkerAbortError')
-  );
+  if (typeof error !== 'object' || error === null) return false;
+  const name = (error as { name?: unknown }).name;
+  return name === 'AbortError' || name === 'WorkerAbortError';
 }

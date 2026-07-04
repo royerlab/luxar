@@ -84,7 +84,7 @@ Key behaviours:
   `metadataParseFailures`, `orphanedFilesRemoved` are surfaced via
   `getStats()` and the cache monitor's "Errors" card.
 - **External-dataset validation state** — the persisted
-  `validationMode` (`content-hash` | `ttl` | `none`) and
+  `validationMode` (`content-hash` | `zattrs-hash` | `ttl` | `none`) and
   `lastValidatedAt` ride along in `_cache_meta.json` so a TTL window
   survives page reloads.
 

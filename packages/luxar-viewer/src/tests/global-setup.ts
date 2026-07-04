@@ -25,12 +25,21 @@ const GENERATOR_PATH = resolve(VIEWER_ROOT, 'tests/fixtures/generate_test_data.p
 const EXPECTATIONS_GENERATOR_PATH = resolve(VIEWER_ROOT, 'tests/fixtures/generate_expectations.py');
 const EXPECTATIONS_PATH = resolve(FIXTURES_DIR, 'roundtrip_expectations.json');
 /**
- * The Python encoder package the fixtures are generated THROUGH. A change
- * here (e.g. #448's uint16 per-axis fixed-point for COORDINATE positions)
- * changes what the generator writes without touching the generator script —
- * so fixture staleness must be measured against these sources too.
+ * The Python packages the fixtures are generated THROUGH. A change in any of
+ * these alters what the generator writes without touching the generator
+ * script itself, so fixture staleness must be measured against them too:
+ *   - `encoding/` — array encodings (e.g. #448's uint16 per-axis fixed-point
+ *     for COORDINATE positions, the miss that motivated this check);
+ *   - `io/` — the LuxarZarrCompiler machinery (`io/_compiler` chunking,
+ *     spatial ordering, gsplat assembly/tree) every fixture byte flows through.
+ * Deliberately NOT the whole `luxar/` package: fitting/CLI/demo code does not
+ * affect compiled-fixture bytes, and over-widening would regenerate the
+ * ~minute-long fixture set on every unrelated Python edit.
  */
-const ENCODING_SOURCES_DIR = resolve(PROJECT_ROOT, 'packages/luxar/src/luxar/encoding');
+const FIXTURE_INPUT_SOURCE_DIRS = [
+  resolve(PROJECT_ROOT, 'packages/luxar/src/luxar/encoding'),
+  resolve(PROJECT_ROOT, 'packages/luxar/src/luxar/io'),
+];
 
 /**
  * Parse fixture names from generate_test_data.py — the single source of truth.
@@ -113,7 +122,8 @@ function newestPySourceMtime(dir: string): number {
 
 /**
  * Whether any EXISTING zarr fixture predates its generation inputs — the
- * generator script itself or the Python encoding sources it writes through.
+ * generator script itself or the Python encoder/compiler sources it writes
+ * through (see FIXTURE_INPUT_SOURCE_DIRS).
  *
  * The generate-if-MISSING gate alone let #448 slip through: the fixtures all
  * existed (git-ignored, generated locally in June) but still carried the old
@@ -124,7 +134,7 @@ function newestPySourceMtime(dir: string): number {
 function areFixturesStale(fixtureNames: string[]): boolean {
   const inputsMtime = Math.max(
     statSync(GENERATOR_PATH).mtimeMs,
-    newestPySourceMtime(ENCODING_SOURCES_DIR)
+    ...FIXTURE_INPUT_SOURCE_DIRS.map(newestPySourceMtime)
   );
   return fixtureNames.some((name) => {
     const path = resolve(FIXTURES_DIR, name);

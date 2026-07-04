@@ -175,6 +175,40 @@ export function defineRefinementLoopContract(
       expect(releaseLock).not.toHaveBeenCalled(); // lock handed off, not released
     });
 
+    it('repeated AbortErrors do NOT count toward the 3-strike backoff', async () => {
+      // The load-bearing counterpart of the case above: 4 consecutive aborted
+      // passes must NOT exhaust the loader (aborts are cancellation, not
+      // failure). Mutation this pins: deleting the `isAbortError` guard in
+      // the wrapper catch makes aborts hit the failure tracker — the loader
+      // would be excluded after 3 strikes and updateView would be called
+      // exactly 3 times instead of running the full 5-step ladder.
+      let calls = 0;
+      const loader = {
+        hasMoreLODs: true,
+        updateView: vi.fn().mockImplementation(async () => {
+          calls += 1;
+          if (calls <= 4) throw new DOMException('aborted', 'AbortError');
+          loader.hasMoreLODs = false; // 5th step completes the ladder
+          return null;
+        }),
+      };
+      const releaseLock: () => void = vi.fn();
+
+      await run({
+        loaders: new Map([['/n', loader]]),
+        viewStateQueue: new ViewStateQueue(), // never pending — loop runs to completion
+        deriveNodeViewState: () => ({ skip: false, viewState: baseViewState }),
+        updateVisibleCountsInMonitor: vi.fn(),
+        releaseLock,
+        retriggerUpdate: vi.fn(),
+        processSpy: vi.fn(),
+      });
+
+      // All 5 passes ran — the 4 aborts were not counted as strikes.
+      expect(loader.updateView).toHaveBeenCalledTimes(5);
+      expect(releaseLock).toHaveBeenCalledTimes(1);
+    });
+
     it('gives up on a persistently failing loader after 3 consecutive failures (lock released)', async () => {
       // Regression: without the per-run failure cap, a loader whose level
       // fetch always throws kept hasMoreLODs=true forever and the loop

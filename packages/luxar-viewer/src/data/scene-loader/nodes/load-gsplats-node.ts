@@ -60,7 +60,7 @@ async function createProgressiveGSplatsLoader(
 export interface GSplatsCheapLoad {
   /** The empty placeholder mesh, already attached to the parent. */
   placeholder: THREE.Mesh;
-  /** The constructed loader, already registered for updates. */
+  /** The constructed loader (NOT yet registered — the caller registers it). */
   loader: GSplatsDataLoader;
 }
 
