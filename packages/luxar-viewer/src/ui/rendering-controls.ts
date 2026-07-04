@@ -27,6 +27,7 @@ import {
 } from './rendering-controls/settings-persistence';
 import { setupPerformanceControls } from './rendering-controls/setup/performance-setup';
 import { setupThemeControls } from './rendering-controls/setup/theme-setup';
+import { FOLDER_ICONS } from './rendering-controls/folder-icons';
 import { ClippingDisplay } from './rendering-controls/clipping-display';
 import { validateRenderingSettings } from './rendering-controls/controls-utils';
 import type { AdaptiveDPRManager } from '../rendering/adaptive-dpr-manager';
@@ -424,12 +425,25 @@ export class RenderingControls {
     // Cinematic Mode checkbox (added before reset button)
     const cinematicModeControl = this.gui
       .add(this.settings, 'cinematicMode')
-      .name('🎬 Cinematic Mode')
+      .name('Cinematic Mode')
       .onChange(() => {
         this.toggleCinematicMode();
         // Update the checkbox to reflect the actual state after toggle
         this.updateCinematicModeCheckbox();
       });
+
+    // Prepend a rail-style line-icon to the label (controllers have no icon
+    // API; the boolean label is already display:flex, so the icon sits inline).
+    const cinematicLabel = cinematicModeControl.domElement.querySelector(
+      '.luxar-gui__controller-name'
+    );
+    if (cinematicLabel) {
+      const cinematicIcon = document.createElement('span');
+      cinematicIcon.className = 'luxar-gui__controller-icon';
+      cinematicIcon.setAttribute('aria-hidden', 'true');
+      cinematicIcon.innerHTML = FOLDER_ICONS.cinematic;
+      cinematicLabel.prepend(cinematicIcon);
+    }
 
     cinematicModeControl.domElement.setAttribute(
       'title',

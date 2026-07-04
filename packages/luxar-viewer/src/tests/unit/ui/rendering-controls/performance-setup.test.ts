@@ -124,7 +124,7 @@ describe('setupPerformanceControls', () => {
 
   it('creates the Performance folder + 2 controls (toggle + manual DPR)', () => {
     setupPerformanceControls(makeContext());
-    expect(gui.addFolder).toHaveBeenCalledWith('⚡ Performance');
+    expect(gui.addFolder).toHaveBeenCalledWith('Performance', expect.any(String));
     expect(folder.controllers).toHaveLength(2);
   });
 

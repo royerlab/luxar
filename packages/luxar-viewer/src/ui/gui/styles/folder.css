@@ -31,6 +31,28 @@
 }
 
 /**
+ * Folder Icon (optional leading line-icon, rail-style)
+ *
+ * Same stroke treatment as the control rail's icons (control-rail.css) so the
+ * folder glyphs match the rail. Inherits the title's `currentColor`.
+ */
+.luxar-gui__folder-icon {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+}
+
+.luxar-gui__folder-icon svg {
+  width: 15px;
+  height: 15px;
+  stroke: currentColor;
+  fill: none;
+  stroke-width: 1.7;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+/**
  * Folder Caret (expand/collapse icon)
  */
 .luxar-gui__folder-caret {

@@ -9,6 +9,7 @@
  */
 
 import type { SetupContext, SetupResult } from '../types';
+import { FOLDER_ICONS } from '../folder-icons';
 
 /**
  * Set up anti-aliasing controls in the rendering controls GUI.
@@ -22,7 +23,7 @@ export function setupAntiAliasingControls(context: SetupContext): SetupResult {
   const controllers: SetupResult['controllers'] = {};
 
   // Anti-aliasing folder
-  const aaFolder = gui.addFolder('✨ Anti-Aliasing');
+  const aaFolder = gui.addFolder('Anti-Aliasing', FOLDER_ICONS.antiAliasing);
   aaFolder.close(); // Collapsed by default
 
   // Set tooltip on the folder title to guide users on AA choices

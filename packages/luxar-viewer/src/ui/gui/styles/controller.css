@@ -32,6 +32,29 @@
 }
 
 /**
+ * Controller Icon (optional leading line-icon, rail-style)
+ *
+ * Same stroke treatment as the control rail's icons; inherits the label's
+ * currentColor. Used for e.g. the Cinematic Mode toggle.
+ */
+.luxar-gui__controller-icon {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  margin-right: var(--luxar-spacing-2);
+}
+
+.luxar-gui__controller-icon svg {
+  width: 15px;
+  height: 15px;
+  stroke: currentColor;
+  fill: none;
+  stroke-width: 1.7;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+/**
  * Widget Container
  */
 .luxar-gui__controller-widget {

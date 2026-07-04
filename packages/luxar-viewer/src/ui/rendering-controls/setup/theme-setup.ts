@@ -10,6 +10,7 @@
 import type GUI from '../../gui';
 import { ThemeManager } from '../../../themes/theme-manager';
 import { log, Modules } from '../../../utils/log';
+import { FOLDER_ICONS } from '../folder-icons';
 
 export interface ThemeSetupContext {
   gui: GUI;
@@ -18,7 +19,7 @@ export interface ThemeSetupContext {
 
 export function setupThemeControls(context: ThemeSetupContext): void {
   const { gui, triggerAnimation } = context;
-  const themeFolder = gui.addFolder('🎨 Theme');
+  const themeFolder = gui.addFolder('Theme', FOLDER_ICONS.theme);
 
   themeFolder.domElement?.setAttribute(
     'title',
