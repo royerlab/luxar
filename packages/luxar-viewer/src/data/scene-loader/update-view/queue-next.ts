@@ -3,10 +3,9 @@
  *
  * Three outcomes:
  *   1. A pending view-state was queued during the in-flight update —
- *      yield to the render loop via `requestAnimationFrame`, then
+ *      yield to the render loop via `scheduleFrame` (rAF while visible,
+ *      timer in hidden tabs, sync in non-browser contexts), then
  *      release the lock and re-enter `updateView(pendingState)`.
- *      Falls back to immediate sync re-entry in non-browser contexts
- *      (Vitest, Worker).
  *   2. No pending state, but at least one progressive GSplats loader
  *      still has higher LODs to fetch — kick the refinement loop and
  *      keep the lock held (refinement releases it on completion or
@@ -20,6 +19,7 @@
  */
 
 import { log, Modules } from '../../../utils/log';
+import { scheduleFrame } from '../../../utils/schedule-frame';
 import type { DataLoader, ViewState } from '../../data-loader-types';
 import type { GSplatsDataLoader } from '../../../types/gsplats';
 import type { LinesDataLoader } from '../../../types/lines';
@@ -61,20 +61,17 @@ function hasMore(loader: unknown): boolean {
 export function queueNext(ctx: QueueNextCtx): void {
   const pendingState = ctx.viewStateQueue.takePending();
   if (pendingState !== null) {
-    // Yield to render loop: ensure at least one frame is painted before next update
-    // This prevents the "updates faster than renders" problem that causes black screen
-    if (typeof requestAnimationFrame !== 'undefined') {
-      requestAnimationFrame(() => {
-        // Release the lock right before starting the next update
-        // Any slider events during the yield were queued (because lock was held)
-        ctx.setUpdateInProgress(false);
-        ctx.updateView(pendingState);
-      });
-    } else {
-      // Fallback for non-browser environments (e.g., tests)
+    // Yield to render loop: ensure at least one frame is painted before next
+    // update (prevents the "updates faster than renders" black-screen
+    // problem). scheduleFrame degrades to a timer in hidden tabs — plain rAF
+    // is suspended there, which used to stall a queued view-state until the
+    // tab was foregrounded — and runs synchronously in non-browser contexts.
+    scheduleFrame(() => {
+      // Release the lock right before starting the next update
+      // Any slider events during the yield were queued (because lock was held)
       ctx.setUpdateInProgress(false);
       ctx.updateView(pendingState);
-    }
+    });
     return;
   }
 

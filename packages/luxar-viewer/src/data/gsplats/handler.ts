@@ -87,7 +87,9 @@ export async function loadAndStage(
   // projection and stage a stamp-only commit (see noop-commit.ts).
   if (isAlreadyCommitted(mesh?.userData, data)) {
     session.setMetadata({ splats: data.splatCount, info: 'unchanged' });
-    ctx.viewStateQueue.dispatchPrefetch(path, gsplatsViewState, loader);
+    if (!ctx.signal?.aborted) {
+      ctx.viewStateQueue.dispatchPrefetch(path, gsplatsViewState, loader);
+    }
     return { path, noop: true, sourceData: data };
   }
   const staged = await processGSplatsData(
@@ -99,7 +101,11 @@ export async function loadAndStage(
     session
   );
   session.setMetadata({ splats: data.splatCount });
-  // S6: per-loader predictive prefetch using the derived view-state.
-  ctx.viewStateQueue.dispatchPrefetch(path, gsplatsViewState, loader);
+  // S6: per-loader predictive prefetch using the derived view-state — but
+  // not for a SUPERSEDED update: extrapolating from an abandoned state warms
+  // the wrong chunks and pollutes the per-path prefetch baseline.
+  if (!ctx.signal?.aborted) {
+    ctx.viewStateQueue.dispatchPrefetch(path, gsplatsViewState, loader);
+  }
   return staged;
 }

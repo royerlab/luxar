@@ -63,6 +63,7 @@ import { LODGroupRegistry } from '../scene/lod-group-registry';
 export type SceneLoaderLODGroupRegistryFactory = () => LODGroupRegistry;
 import { ArrayRefRegistry } from './array-decoder/decoder';
 import { log, Modules } from '../utils/log';
+import { scheduleFrame } from '../utils/schedule-frame';
 import { config as appConfig } from '../config';
 import { MultiLevelCachingStore } from '../cache/multi-level-caching-store';
 import { DecompressedChunkCache } from '../cache/decompressed-chunk-cache';
@@ -761,15 +762,13 @@ export class SceneLoader {
     let cancelled = false;
     const onCancel = (pendingState: Partial<ViewState>) => {
       cancelled = true;
-      if (typeof requestAnimationFrame !== 'undefined') {
-        requestAnimationFrame(() => {
-          this._updateInProgress = false;
-          this.updateView(pendingState);
-        });
-      } else {
+      // scheduleFrame: rAF while visible, timer in hidden tabs (rAF is
+      // suspended there — the hand-off used to stall until foregrounded),
+      // synchronous in non-browser contexts.
+      scheduleFrame(() => {
         this._updateInProgress = false;
         this.updateView(pendingState);
-      }
+      });
     };
     // Per-run abort controller, published as THIS loader's live update
     // controller: the supersede branch in `updateView` (and `dispose`) abort
