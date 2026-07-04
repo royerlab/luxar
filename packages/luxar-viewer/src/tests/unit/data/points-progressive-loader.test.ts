@@ -445,3 +445,38 @@ describe('PointsProgressiveLoader', () => {
     });
   });
 });
+
+describe('PointsProgressiveLoader — concat memoization (no-op commit skip)', () => {
+  let lodA: SubLoaderStub;
+  let lodB: SubLoaderStub;
+  let loader: PointsProgressiveLoader;
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+    lodA = makeSubLoader(makeLodData(100));
+    lodB = makeSubLoader(makeLodData(50));
+    loader = new PointsProgressiveLoader(
+      [lodA, lodB] as unknown as PointsSpatialIndexLoader[],
+      2,
+      '/points'
+    );
+  });
+
+  it('returns the IDENTICAL reference for a repeat call with unchanged view state', async () => {
+    const first = await loader.updateView(baseViewState);
+    const second = await loader.updateView(baseViewState);
+    // Same reference — the commit pipeline uses this identity to skip
+    // no-op re-commits (mesh.userData.committedData === data).
+    expect(second).toBe(first);
+  });
+
+  it('returns a NEW reference after a view-state change back to the same LOD count (resetGeneration)', async () => {
+    const first = await loader.updateView(baseViewState);
+    const away = await loader.updateView({ ...baseViewState, slicePosition: [1, 1, 1] });
+    expect(away).not.toBe(first);
+    const back = await loader.updateView(baseViewState);
+    expect(back).not.toBe(first);
+    const backAgain = await loader.updateView(baseViewState);
+    expect(backAgain).toBe(back);
+  });
+});

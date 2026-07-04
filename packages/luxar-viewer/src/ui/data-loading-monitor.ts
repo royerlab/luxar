@@ -1195,8 +1195,9 @@ export class DataLoadingMonitor {
         case 'performance':
           if (this.profiler) {
             const timingData = this.profiler.getTimings();
-            if (timingData.count > 0) {
-              updated = updateTimingPanelValues(this.contentContainer, timingData);
+            const refinementData = this.profiler.getRefinementTimings();
+            if (timingData.count > 0 || refinementData.count > 0) {
+              updated = updateTimingPanelValues(this.contentContainer, timingData, refinementData);
             }
           }
           break;
@@ -1704,7 +1705,7 @@ export class DataLoadingMonitor {
 
     return `
       <div class="luxar-performance-content">
-        ${renderHierarchicalTimingPanel(timingData)}
+        ${renderHierarchicalTimingPanel(timingData, this.profiler?.getRefinementTimings())}
       </div>
     `;
   }

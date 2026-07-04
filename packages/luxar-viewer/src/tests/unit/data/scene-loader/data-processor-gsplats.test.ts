@@ -226,7 +226,8 @@ describe('processGSplatsData', () => {
     const result = await processGSplatsData('/g', makeData(50), makeViewState(), root, 1);
     expect(result).not.toBeNull();
     expect(mockPackCholesky).toHaveBeenCalledTimes(1);
-    expect(result?.cholesky01).toBeDefined();
+    if (!result || result.noop) throw new Error('expected a geometry staged commit');
+    expect(result.cholesky01).toBeDefined();
   });
 });
 

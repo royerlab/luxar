@@ -783,12 +783,14 @@ export class SceneLoader {
       viewStateQueue: this.viewStateQueue,
       gsplatLoaders: this.gsplatLoaders,
       deriveNodeViewState: (path, attrs, opts) => this.deriveNodeViewState(path, attrs, opts),
-      processGSplats: (path, data, viewState) => this.processGSplatsData(path, data, viewState),
-      commitGSplats: (staged) => this.commitGSplatsGeometry(staged),
+      processGSplats: (path, data, viewState, session) =>
+        this.processGSplatsData(path, data, viewState, session),
+      commitGSplats: (staged, session) => this.commitGSplatsGeometry(staged, session),
       updateVisibleCountsInMonitor: () => this.updateVisibleCountsInMonitor(),
       releaseLock: noopReleaseLock,
       retriggerUpdate: onCancel,
       isActive: () => !this._disposed,
+      profiler: this.profiler,
     });
     if (cancelled || this._disposed) return;
 
@@ -798,11 +800,12 @@ export class SceneLoader {
       pointsLoaders: this.loaders,
       deriveNodeViewState: (path, attrs, opts) =>
         this.deriveNodeViewState(path, attrs as never, opts) as never,
-      updatePointsGeometry: (path, data) => this.updatePointsGeometry(path, data),
+      updatePointsGeometry: (path, data, session) => this.updatePointsGeometry(path, data, session),
       updateVisibleCountsInMonitor: () => this.updateVisibleCountsInMonitor(),
       releaseLock: noopReleaseLock,
       retriggerUpdate: onCancel,
       isActive: () => !this._disposed,
+      profiler: this.profiler,
     });
     if (cancelled || this._disposed) return;
 
@@ -812,13 +815,29 @@ export class SceneLoader {
       linesLoaders: this.linesLoaders,
       deriveNodeViewState: (path, attrs, opts) =>
         this.deriveNodeViewState(path, attrs as never, opts) as never,
-      processLines: (path, data, viewState) => this.processLinesData(path, data, viewState),
-      commitLines: (staged) => this.commitLinesGeometry(staged),
+      processLines: (path, data, viewState, session) =>
+        this.processLinesData(path, data, viewState, session),
+      commitLines: (staged, session) => this.commitLinesGeometry(staged, session),
       updateVisibleCountsInMonitor: () => this.updateVisibleCountsInMonitor(),
       releaseLock: finalReleaseLock,
       retriggerUpdate: onCancel,
       isActive: () => !this._disposed,
+      profiler: this.profiler,
     });
+  }
+
+  /**
+   * Clear the `committedData` identity stamp on a node's mesh. Called when a
+   * lazy LOD level is demoted: its geometry returned to the evictable pool,
+   * so the stamp (a) no longer describes what's on the GPU and (b) would pin
+   * the released node's large CPU arrays in memory. Re-promotion builds a
+   * fresh loader → new data reference → full recommit either way.
+   */
+  private clearCommittedDataStamp(path: string): void {
+    const mesh = this.rootGroup?.getObjectByName(path);
+    if (mesh?.userData) {
+      delete (mesh.userData as { committedData?: unknown }).committedData;
+    }
   }
 
   /**
@@ -877,7 +896,13 @@ export class SceneLoader {
     session?: UpdateSession,
     loadedViewVersion: number = this._updateVersion
   ): void {
-    commitLinesGeometryHelper(staged, this.rootGroup, this._gpuBufferPool, session, loadedViewVersion);
+    commitLinesGeometryHelper(
+      staged,
+      this.rootGroup,
+      this._gpuBufferPool,
+      session,
+      loadedViewVersion
+    );
   }
 
   /**
@@ -914,7 +939,13 @@ export class SceneLoader {
     session?: UpdateSession,
     loadedViewVersion: number = this._updateVersion
   ): void {
-    commitGSplatsGeometryHelper(staged, this.rootGroup, this._gpuBufferPool, session, loadedViewVersion);
+    commitGSplatsGeometryHelper(
+      staged,
+      this.rootGroup,
+      this._gpuBufferPool,
+      session,
+      loadedViewVersion
+    );
   }
 
   /**
@@ -941,6 +972,7 @@ export class SceneLoader {
         // its loader so the scene-wide updateView sweep won't reload it.
         this._gpuBufferPool?.releaseGSplatsGeometry(path);
         this.registry.unregisterGSplatsLoader(path);
+        this.clearCommittedDataStamp(path);
       },
       releaseLazyPoints: (path) => {
         // Points peer of releaseLazyGSplats: return the level's GPU buffer to
@@ -948,11 +980,13 @@ export class SceneLoader {
         // lod_group's ensureLoaded thunk (cheap re-projection from cached chunks).
         this._gpuBufferPool?.releasePointsGeometry(path);
         this.registry.unregisterPointsLoader(path);
+        this.clearCommittedDataStamp(path);
       },
       releaseLazyLines: (path) => {
         // Lines peer of releaseLazyGSplats/releaseLazyPoints.
         this._gpuBufferPool?.releaseLinesGeometry(path);
         this.registry.unregisterLinesLoader(path);
+        this.clearCommittedDataStamp(path);
       },
       applyEffectiveAttrs: (node) => this.applyEffectiveAttrs(node),
       deriveNodeViewState: (path, attrs, opts) => this.deriveNodeViewState(path, attrs, opts),

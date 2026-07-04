@@ -24,6 +24,17 @@ through it (plus the L0 `wrapWithCache` proxy), so there is one place that calls
 
 Both report how many elements were written.
 
+**Ranges load in parallel.** Each per-encoding loader (direct/lut/quantized)
+precomputes every range's destination offset up front (`rangeDestOffsets` —
+element counts are deterministic per range) and issues all `zarr.get()` calls
+concurrently via `Promise.all`; ranges write into disjoint output spans, so
+resolution order doesn't matter. Network concurrency stays bounded by the
+global fetch gate (`utils/fetch-concurrency.ts`, 64-wide) and decode
+concurrency by the worker pool. A decoded chunk whose length mismatches the
+precomputed span is clamped with a warning (`clampRangeData`) — over-long data
+is truncated (never corrupts a neighbour's span), short data leaves the tail
+of its span zeroed, mirroring the historical graceful-fallback behavior.
+
 CPU-heavy decodes (broadcast replication, LUT lookup, dequantization) are
 offloaded to the worker pool when `config.dataLoading.performance.useWebWorkers`
 is set and the element count exceeds `workerThreshold` (default 1000), with a
