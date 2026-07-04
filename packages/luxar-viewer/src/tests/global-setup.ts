@@ -9,9 +9,9 @@
  * If any fixtures are missing, runs the generator script automatically.
  */
 
-import { existsSync, readFileSync, statSync } from 'fs';
+import { existsSync, readdirSync, readFileSync, statSync } from 'fs';
 import { execSync } from 'child_process';
-import { resolve } from 'path';
+import { join, resolve } from 'path';
 import { fileURLToPath } from 'url';
 
 // Use import.meta.url for reliable path resolution in vitest global setup
@@ -24,6 +24,13 @@ const WASM_BIN_PATH = resolve(VIEWER_ROOT, 'public/wasm/luxar_wasm_bg.wasm');
 const GENERATOR_PATH = resolve(VIEWER_ROOT, 'tests/fixtures/generate_test_data.py');
 const EXPECTATIONS_GENERATOR_PATH = resolve(VIEWER_ROOT, 'tests/fixtures/generate_expectations.py');
 const EXPECTATIONS_PATH = resolve(FIXTURES_DIR, 'roundtrip_expectations.json');
+/**
+ * The Python encoder package the fixtures are generated THROUGH. A change
+ * here (e.g. #448's uint16 per-axis fixed-point for COORDINATE positions)
+ * changes what the generator writes without touching the generator script —
+ * so fixture staleness must be measured against these sources too.
+ */
+const ENCODING_SOURCES_DIR = resolve(PROJECT_ROOT, 'packages/luxar/src/luxar/encoding');
 
 /**
  * Parse fixture names from generate_test_data.py — the single source of truth.
@@ -88,6 +95,41 @@ function runPythonGenerator(command: string, label: string): void {
     console.error(`[test-setup] Run manually: ${command}`);
     throw new Error(`${label} generation failed. See above for details.`);
   }
+}
+
+/** Newest mtime of any `.py` source under `dir` (non-recursive dirs skipped safely). */
+function newestPySourceMtime(dir: string): number {
+  if (!existsSync(dir)) return 0;
+  let newest = 0;
+  for (const entry of readdirSync(dir, { recursive: true }) as string[]) {
+    if (!entry.endsWith('.py')) continue;
+    const full = join(dir, entry);
+    if (!existsSync(full)) continue;
+    const mtime = statSync(full).mtimeMs;
+    if (mtime > newest) newest = mtime;
+  }
+  return newest;
+}
+
+/**
+ * Whether any EXISTING zarr fixture predates its generation inputs — the
+ * generator script itself or the Python encoding sources it writes through.
+ *
+ * The generate-if-MISSING gate alone let #448 slip through: the fixtures all
+ * existed (git-ignored, generated locally in June) but still carried the old
+ * `float32` positions encoding, so five array-decoder tests failed while
+ * setup regenerated nothing. Missing fixtures are handled separately by the
+ * caller; this only compares mtimes of the ones present.
+ */
+function areFixturesStale(fixtureNames: string[]): boolean {
+  const inputsMtime = Math.max(
+    statSync(GENERATOR_PATH).mtimeMs,
+    newestPySourceMtime(ENCODING_SOURCES_DIR)
+  );
+  return fixtureNames.some((name) => {
+    const path = resolve(FIXTURES_DIR, name);
+    return existsSync(path) && statSync(path).mtimeMs < inputsMtime;
+  });
 }
 
 function isExpectationsStale(fixtureNames: string[]): boolean {
@@ -166,9 +208,14 @@ export async function setup(): Promise<void> {
   ensureWasmBuilt();
 
   const missing = EXPECTED_FIXTURES.filter((name) => !existsSync(resolve(FIXTURES_DIR, name)));
+  const stale = areFixturesStale(EXPECTED_FIXTURES);
 
-  if (missing.length > 0) {
-    console.log(`\n[test-setup] ${missing.length} zarr fixture(s) missing — generating...`);
+  if (missing.length > 0 || stale) {
+    console.log(
+      missing.length > 0
+        ? `\n[test-setup] ${missing.length} zarr fixture(s) missing — generating...`
+        : '\n[test-setup] zarr fixtures predate the generator/encoder sources — regenerating...'
+    );
     runPythonGenerator(
       'hatch run python packages/luxar-viewer/tests/fixtures/generate_test_data.py',
       'fixtures'
