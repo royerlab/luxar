@@ -55,6 +55,10 @@
 
 .luxar-perf__unit {
   margin-top: 1px;
+  /* Deliberately sub-scale: a tiny uppercase unit caption ("FPS"/"MS") under
+     the numeric readout inside the 38px rail-footer square. No text token is
+     this small (--luxar-text-xs is 10px); a token for one micro-label would be
+     over-engineering, so this stays a literal. */
   font-size: 7px;
   letter-spacing: 0.06em;
   text-transform: uppercase;

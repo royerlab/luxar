@@ -9,6 +9,7 @@
 
 import { config } from '../../../config';
 import type { SetupContext, SetupResult } from '../types';
+import { FOLDER_ICONS } from '../folder-icons';
 
 /**
  * Set up navigation controls in the rendering controls GUI.
@@ -30,7 +31,7 @@ export function setupNavigationControls(context: SetupContext): SetupResult {
   const controllers: SetupResult['controllers'] = {};
 
   // Navigation folder - for camera movement and rotation controls
-  const navigationFolder = gui.addFolder('🕹️ Navigation');
+  const navigationFolder = gui.addFolder('Navigation', FOLDER_ICONS.navigation);
   navigationFolder.open();
 
   navigationFolder.domElement?.setAttribute(

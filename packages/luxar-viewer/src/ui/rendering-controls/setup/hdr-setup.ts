@@ -10,6 +10,7 @@
 
 import * as THREE from 'three';
 import type { SetupContext, SetupResult } from '../types';
+import { FOLDER_ICONS } from '../folder-icons';
 
 /**
  * Set up HDR controls in the rendering controls GUI.
@@ -23,7 +24,7 @@ export function setupHDRControls(context: SetupContext): SetupResult {
   const controllers: SetupResult['controllers'] = {};
 
   // HDR folder
-  const hdrFolder = gui.addFolder('☀️ HDR');
+  const hdrFolder = gui.addFolder('HDR', FOLDER_ICONS.hdr);
   hdrFolder.open();
 
   hdrFolder.domElement?.setAttribute(

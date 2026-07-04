@@ -82,6 +82,25 @@ export interface ThemeBorderColors {
 }
 
 /**
+ * Native menu / dropdown-option colors.
+ *
+ * Native `<option>` popups render on an OS layer without the panel's
+ * backdrop-filter, so they need solid, opaque colors (translucent glass
+ * backgrounds would be unreadable). Centralising them here removes the
+ * hardcoded `<select> option` blocks that were duplicated across components.
+ */
+export interface ThemeMenuColors {
+  /** Option background */
+  background: string;
+  /** Option text */
+  text: string;
+  /** Hovered/selected option background */
+  activeBackground: string;
+  /** Hovered/selected option text */
+  activeText: string;
+}
+
+/**
  * Visualization-specific colors
  */
 export interface ThemeVisualizationColors {
@@ -104,6 +123,7 @@ export interface ThemeColors {
   semantic: ThemeSemanticColors;
   interactive: ThemeInteractiveColors;
   border: ThemeBorderColors;
+  menu: ThemeMenuColors;
   visualization: ThemeVisualizationColors;
 }
 
@@ -123,22 +143,24 @@ export interface ThemeFontFamily {
  * Font size scale
  */
 export interface ThemeFontSizes {
-  /** Extra small: 9px */
+  /** Extra small: 10px */
   xs: string;
-  /** Small: 10px */
+  /** Small: 11px */
   sm: string;
-  /** Base: 11px */
+  /** Base: 13px */
   base: string;
-  /** Medium: 12px */
+  /** Medium: 14px */
   md: string;
-  /** Large: 14px */
+  /** Large: 16px */
   lg: string;
-  /** Extra large: 16px */
+  /** Extra large: 18px */
   xl: string;
-  /** 2XL: 18px */
+  /** 2XL: 20px */
   '2xl': string;
-  /** 3XL: 24px */
+  /** 3XL: 28px */
   '3xl': string;
+  /** 4XL: 32px (large metric readouts) */
+  '4xl': string;
 }
 
 /**

@@ -91,7 +91,7 @@ describe('setupThemeControls', () => {
       triggerAnimation,
     });
 
-    expect(gui.addFolder).toHaveBeenCalledWith('🎨 Theme');
+    expect(gui.addFolder).toHaveBeenCalledWith('Theme', expect.any(String));
     expect(folder.add).toHaveBeenCalledTimes(1);
     expect(folder.controllers).toHaveLength(1);
   });

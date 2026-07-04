@@ -359,6 +359,12 @@ export class ThemeManager {
       '--luxar-border-strong': theme.colors.border.strong,
       '--luxar-border-focus': theme.colors.border.focus,
 
+      // Menu / native dropdown-option colors
+      '--luxar-menu-bg': theme.colors.menu.background,
+      '--luxar-menu-fg': theme.colors.menu.text,
+      '--luxar-menu-active-bg': theme.colors.menu.activeBackground,
+      '--luxar-menu-active-fg': theme.colors.menu.activeText,
+
       // Visualization colors
       '--luxar-viz-hot': theme.colors.visualization.hot,
       '--luxar-viz-warm': theme.colors.visualization.warm,
@@ -379,6 +385,7 @@ export class ThemeManager {
       '--luxar-text-xl': theme.typography.fontSize.xl,
       '--luxar-text-2xl': theme.typography.fontSize['2xl'],
       '--luxar-text-3xl': theme.typography.fontSize['3xl'],
+      '--luxar-text-4xl': theme.typography.fontSize['4xl'],
 
       // Typography — font weights
       '--luxar-font-normal': String(theme.typography.fontWeight.normal),

@@ -10,6 +10,7 @@
 import { config } from '../../../config';
 import { log, Modules } from '../../../utils/log';
 import type { SetupContext, SetupResult } from '../types';
+import { FOLDER_ICONS } from '../folder-icons';
 import { fovToFocalLength } from '../fov-utils';
 
 /**
@@ -36,7 +37,7 @@ export function setupCameraControls(
   const controllers: SetupResult['controllers'] = {};
 
   // Camera folder - for camera-specific settings
-  const cameraFolder = gui.addFolder('🎥 Camera');
+  const cameraFolder = gui.addFolder('Camera', FOLDER_ICONS.camera);
   cameraFolder.open();
 
   cameraFolder.domElement?.setAttribute(

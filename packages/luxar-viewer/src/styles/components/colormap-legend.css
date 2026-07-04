@@ -1,5 +1,8 @@
 /* Colormap Legend — bottom-right overlay showing per-layer colormap gradients */
 
+/* NOTE: the root is intentionally NOT a .luxar-glass-surface. It's a frameless
+   container of independent entry cards (each with its own background); a glass
+   backing tint would show through the gaps between cards as an unwanted panel. */
 .luxar-colormap-legend {
   /* Hidden by default — shown via --visible class */
   display: none;
