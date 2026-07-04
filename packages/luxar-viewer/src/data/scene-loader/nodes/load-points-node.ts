@@ -182,8 +182,9 @@ export async function loadPointsNodeExpensive(
  *
  * Composition of the cheap (placeholder + loader) and expensive (fetch +
  * commit) halves; the non-LOD dispatch path uses this combined form so its
- * behaviour is unchanged. Registers the loader immediately — this node loads
- * eagerly and should join subsequent `updateView` sweeps right away.
+ * behaviour is unchanged. Registers the loader once the
+ * initial load settles, so the update sweep can never overlap the initial
+ * load on the same loader instance.
  */
 export async function loadPointsNode(
   node: SceneNode,
@@ -192,7 +193,22 @@ export async function loadPointsNode(
   ctx: NodeBuildCtx
 ): Promise<THREE.Mesh | null> {
   const { placeholder, loader } = await loadPointsNodeCheap(node, parentThree, loc, ctx);
-  ctx.registry.registerPointsLoader(node.path, loader);
-  await loadPointsNodeExpensive(node, ctx, loader);
+  try {
+    await loadPointsNodeExpensive(node, ctx, loader);
+  } finally {
+    // Register only once the initial load has SETTLED (success or failure).
+    // Registering before the await let a concurrent updateView sweep call
+    // loader.updateView while the initial load was mid-flight on the same
+    // instance — interleaving the shared accumulator buffers and clobbering
+    // the per-update _activeSignal slot (routine during deferred-group
+    // activation, where zoom-triggered loads overlap slice scrubs). Nothing
+    // during the load resolves the loader through the registry maps (commit
+    // helpers use rootGroup.getObjectByName), and load-scene's post-load
+    // consumers run after every loadXNode has been awaited, so the deferral
+    // is invisible to them. Registering on FAILURE too is deliberate:
+    // retryFailedLoader resolves eager loaders through these maps, so a
+    // failed initial load must stay retryable.
+    ctx.registry.registerPointsLoader(node.path, loader);
+  }
   return placeholder;
 }

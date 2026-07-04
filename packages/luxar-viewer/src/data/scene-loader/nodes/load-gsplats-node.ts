@@ -212,9 +212,22 @@ export async function loadGSplatsNode(
   ctx: NodeBuildCtx
 ): Promise<THREE.Mesh | null> {
   const { placeholder, loader } = await loadGSplatsNodeCheap(node, parentThree, loc, ctx);
-  // Register immediately — this node loads eagerly, so it should
-  // participate in subsequent updateView sweeps right away.
-  ctx.registry.registerGSplatsLoader(node.path, loader);
-  await loadGSplatsNodeExpensive(node, ctx, loader);
+  try {
+    await loadGSplatsNodeExpensive(node, ctx, loader);
+  } finally {
+    // Register only once the initial load has SETTLED (success or failure).
+    // Registering before the await let a concurrent updateView sweep call
+    // loader.updateView while the initial load was mid-flight on the same
+    // instance — interleaving the shared accumulator buffers and clobbering
+    // the per-update _activeSignal slot (routine during deferred-group
+    // activation, where zoom-triggered loads overlap slice scrubs). Nothing
+    // during the load resolves the loader through the registry maps (commit
+    // helpers use rootGroup.getObjectByName), and load-scene's post-load
+    // consumers run after every loadXNode has been awaited, so the deferral
+    // is invisible to them. Registering on FAILURE too is deliberate:
+    // retryFailedLoader resolves eager loaders through these maps, so a
+    // failed initial load must stay retryable.
+    ctx.registry.registerGSplatsLoader(node.path, loader);
+  }
   return placeholder;
 }

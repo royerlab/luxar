@@ -176,7 +176,22 @@ export async function loadLinesNode(
   ctx: NodeBuildCtx
 ): Promise<THREE.Mesh | null> {
   const { placeholder, loader } = await loadLinesNodeCheap(node, parentThree, loc, ctx);
-  ctx.registry.registerLinesLoader(node.path, loader);
-  await loadLinesNodeExpensive(node, ctx, loader);
+  try {
+    await loadLinesNodeExpensive(node, ctx, loader);
+  } finally {
+    // Register only once the initial load has SETTLED (success or failure).
+    // Registering before the await let a concurrent updateView sweep call
+    // loader.updateView while the initial load was mid-flight on the same
+    // instance — interleaving the shared accumulator buffers and clobbering
+    // the per-update _activeSignal slot (routine during deferred-group
+    // activation, where zoom-triggered loads overlap slice scrubs). Nothing
+    // during the load resolves the loader through the registry maps (commit
+    // helpers use rootGroup.getObjectByName), and load-scene's post-load
+    // consumers run after every loadXNode has been awaited, so the deferral
+    // is invisible to them. Registering on FAILURE too is deliberate:
+    // retryFailedLoader resolves eager loaders through these maps, so a
+    // failed initial load must stay retryable.
+    ctx.registry.registerLinesLoader(node.path, loader);
+  }
   return placeholder;
 }
