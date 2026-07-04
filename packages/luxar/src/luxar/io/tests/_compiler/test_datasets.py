@@ -6,7 +6,7 @@ import numpy as np
 import pytest
 import zarr
 
-from luxar.encoding import ArrayEncoder, EncodingMode
+from luxar.encoding import ArrayDecoder, ArrayEncoder, EncodingMode
 from luxar.io._compiler.context import DatasetCtx
 from luxar.io._compiler.dataset_writers.colors import write_colors
 from luxar.io._compiler.dataset_writers.positions import write_positions
@@ -37,7 +37,12 @@ def test_write_positions_roundtrip() -> None:
     pos = np.random.rand(50, 3).astype(np.float32)
     write_positions(g, pos, None, _ctx())
     assert "positions" in g
-    np.testing.assert_allclose(g["positions"][:], pos, rtol=1e-3)
+    # AUTO positions are uint16 per-axis fixed-point — decode before comparing.
+    assert g["positions"].attrs["encoding"]["name"] == "linear_perchannel_u16"
+    decoded = ArrayDecoder().decode(g["positions"], g)
+    np.testing.assert_allclose(
+        decoded, pos, atol=float(np.ptp(pos, axis=0).max()) / 65535 * 2
+    )
 
 
 def test_write_colors_records_data_range() -> None:

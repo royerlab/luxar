@@ -372,11 +372,11 @@ describe('Encoded Array Range Extraction', () => {
   });
 
   describe('Direct (Non-Encoded) Arrays - Positions', () => {
-    it('should correctly extract ranges from non-encoded positions with data verification', async () => {
+    it('extracts ranges from decoded per-channel positions with data verification', async () => {
       const { array, attrs } = await loadArrayWithAttrs('test_lut.luxar.zarr', 'points/positions');
 
-      // Positions should NOT be encoded
-      expect(ArrayDecoder.isEncoded(attrs)).toBe(false);
+      // Positions are per-channel encoded (uint16 fixed-point) → decode to float32.
+      expect(ArrayDecoder.isEncoded(attrs)).toBe(true);
 
       const shape = array.shape;
       const elementsPerPoint = shape.length === 2 ? shape[1] : 1;
@@ -385,13 +385,33 @@ describe('Encoded Array Range Extraction', () => {
       const actualElementsPerPoint = getActualElementsPerPoint(array, attrs);
       expect(actualElementsPerPoint).toBe(3);
 
-      // Load the full positions data directly (not encoded, so no decoder needed)
-      const data = await array.getChunk([0]);
-      const typedData = data.data as Float32Array;
-      const fullPositions = new Float32Array(typedData.buffer);
-
-      // Verify we got 1000 points × 3 elements = 3000 floats
+      // Decode the full positions to float32, then extract ranges from the decoded
+      // buffer (self-consistent: extraction must reproduce the decoded values).
+      const fullPositions = await new ArrayDecoder(new ArrayRefRegistry()).decode(array, attrs);
       expect(fullPositions.length).toBe(1000 * 3);
+
+      // Independent ground truth (not decoded-vs-decoded): hand-compute the
+      // per-channel inverse x = lo[c] + level/levels·(hi[c]-lo[c]) from the raw
+      // stored levels + encoding metadata, so a decode bug (wrong column index,
+      // dropped -min offset, raw levels returned) fails here rather than
+      // cancelling out of the extraction comparison below.
+      const enc = attrs.encoding as unknown as {
+        name: string;
+        bits: number;
+        col_lo: number[];
+        col_hi: number[];
+      };
+      expect(enc.name).toBe('linear_perchannel_u16');
+      const rawChunk = await zarr.get(array);
+      const rawLevels = rawChunk.data as Uint16Array;
+      const levels = (1 << enc.bits) - 1;
+      for (const i of [0, 1, 499, 500, 998, 999]) {
+        for (let c = 0; c < 3; c++) {
+          const rng = Math.max(enc.col_hi[c] - enc.col_lo[c], 1e-30);
+          const expected = enc.col_lo[c] + (Number(rawLevels[i * 3 + c]) / levels) * rng;
+          expect(fullPositions[i * 3 + c]).toBeCloseTo(expected, 5);
+        }
+      }
 
       // Test range extraction on raw float32 positions
       const ranges: PointRange[] = [
@@ -432,11 +452,33 @@ describe('Encoded Array Range Extraction', () => {
       }
     });
 
-    it('should handle positions with 4D data correctly', async () => {
+    it('rejects per-channel scales whose length disagrees with the array width', async () => {
+      // Regression: the full-array decode used to derive the column count from
+      // col_lo.length itself, making makePerChannelDequant's length guard a
+      // tautology — a corrupt file with 2 scales on an (N, 3) array silently
+      // decoded with col = i % 2, misaligning every axis. The column count now
+      // comes from the array's own last dimension (like Python's
+      // `_perchannel_scales`), so the mismatch fails loud.
+      const { array, attrs } = await loadArrayWithAttrs('test_lut.luxar.zarr', 'points/positions');
+      const enc = attrs.encoding as unknown as { col_lo: number[]; col_hi: number[] };
+      const corrupt = {
+        ...attrs,
+        encoding: {
+          ...attrs.encoding,
+          col_lo: enc.col_lo.slice(0, 2),
+          col_hi: enc.col_hi.slice(0, 2),
+        },
+      } as unknown as ArrayMetadata;
+      await expect(
+        new ArrayDecoder(new ArrayRefRegistry()).decode(array, corrupt)
+      ).rejects.toThrow(/col_lo\/col_hi must each have 3 entries/);
+    });
+
+    it('extracts ranges from decoded 4D per-channel positions correctly', async () => {
       const { array, attrs } = await loadArrayWithAttrs('test_4d.luxar.zarr', 'points/positions');
 
-      // 4D positions should have 4 elements per point
-      expect(ArrayDecoder.isEncoded(attrs)).toBe(false);
+      // 4D positions are per-channel encoded (uint16 fixed-point) → decode to float32.
+      expect(ArrayDecoder.isEncoded(attrs)).toBe(true);
 
       const shape = array.shape;
       const elementsPerPoint = shape.length === 2 ? shape[1] : 1;
@@ -445,11 +487,8 @@ describe('Encoded Array Range Extraction', () => {
       const actualElementsPerPoint = getActualElementsPerPoint(array, attrs);
       expect(actualElementsPerPoint).toBe(4);
 
-      // Load full data using get() which handles multiple chunks
-      const data = await zarr.get(array);
       const totalPoints = shape[0];
-      const typedData = data.data as Float32Array;
-      const fullPositions = new Float32Array(typedData.buffer);
+      const fullPositions = await new ArrayDecoder(new ArrayRefRegistry()).decode(array, attrs);
 
       // Verify we got totalPoints × 4 elements
       expect(fullPositions.length).toBe(totalPoints * 4);

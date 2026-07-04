@@ -16,10 +16,11 @@ export function detectEncoding(attrs: ArrayMetadata | undefined): EncodingType {
   if (ArrayDecoder.isLUTEncodingName(enc.name)) return 'lut';
   if (ArrayDecoder.isQuantizedEncoding(attrs)) return 'quantized';
   if (ArrayDecoder.isDirectEncodingName(enc.name)) return 'direct';
-  // Per-channel quantized arrays (log/signed-log perchannel) load as raw integer
-  // levels (direct); the consumer applies per-channel dequant (the gsplats loader
-  // does so in loadCholeskyRanges when recombining the split Cholesky).
-  if (ArrayDecoder.isPerChannelQuantEncodingName(enc.name)) return 'direct';
+  // Per-channel quantized arrays (log / signed-log / linear `*_perchannel_*`) are
+  // fully decoded to float32 by the loader's dedicated `'perchannel'` path (per-
+  // column col_lo/col_hi scales) — a first-class self-decoded encoding, so
+  // consumers never apply dequant themselves.
+  if (ArrayDecoder.isPerChannelQuantEncodingName(enc.name)) return 'perchannel';
 
   throw new Error(`Unknown encoding name: ${enc.name}`);
 }

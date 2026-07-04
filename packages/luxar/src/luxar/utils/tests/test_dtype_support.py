@@ -41,10 +41,11 @@ class TestCompilerWithDtypes:
             store = zarr.open_group(zarr_path, mode="r")
             points = store["test"]
 
-            # Check positions encoding (new default: float32 for compatibility)
+            # Check positions encoding: COORDINATE is uint16 per-axis fixed-point
+            # in MEMORY (and AUTO) — never float16, never uint8.
             pos_enc = points["positions"].attrs.get("encoding", {})
-            assert pos_enc["name"] == "float32", (
-                "MEMORY mode uses float32 by default (float16_allowed=False for compatibility)"
+            assert pos_enc["name"] == "linear_perchannel_u16", (
+                "MEMORY mode uses uint16 per-axis fixed-point for positions"
             )
 
             # Check colors encoding (should be uint8, may be LUT/broadcasted/quantized)

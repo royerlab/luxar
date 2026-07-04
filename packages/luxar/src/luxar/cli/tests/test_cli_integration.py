@@ -172,7 +172,9 @@ class TestServeIntegration:
         array_meta = response.json()
         assert "shape" in array_meta
         assert "dtype" in array_meta
-        assert array_meta["dtype"] in ["<f4", ">f4", "float32"]
+        # Positions default to uint16 per-axis fixed-point (linear_perchannel_u16),
+        # decoded to float32 in the viewer; PRECISION / large-extent scenes stay float32.
+        assert array_meta["dtype"] in ["<u2", ">u2", "uint16", "<f4", ">f4", "float32"]
 
     def test_cors_headers(self, test_server):
         """Test that local CORS origins are allowed by default."""

@@ -34,12 +34,15 @@ class ArrayDecoder:
         "log_scalar_uint16",
         "rgb_uint8",
         "rgb_uint16",
-        # Generic per-channel quantization (per-column min/max log / signed-log).
-        # First used for the split Cholesky diagonal / off-diagonal.
+        # Generic per-channel quantization (per-column min/max). log / signed-log
+        # first used for the split Cholesky diagonal / off-diagonal; linear
+        # (identity) used for COORDINATE positions/centers/vertices.
         "log_perchannel_u8",
         "log_perchannel_u16",
         "signed_log_perchannel_u8",
         "signed_log_perchannel_u16",
+        "linear_perchannel_u8",
+        "linear_perchannel_u16",
     }
     SPECIAL_ENCODINGS = {"broadcasted", "array_ref", "lut_uint8", "lut_uint16"}
     KNOWN_ENCODINGS = DIRECT_ENCODINGS | QUANTIZED_ENCODINGS | SPECIAL_ENCODINGS
@@ -96,6 +99,8 @@ class ArrayDecoder:
             return self._decode_log_perchannel(zarr_array, enc)
         elif name in {"signed_log_perchannel_u8", "signed_log_perchannel_u16"}:
             return self._decode_signed_log_perchannel(zarr_array, enc)
+        elif name in {"linear_perchannel_u8", "linear_perchannel_u16"}:
+            return self._decode_linear_perchannel(zarr_array, enc)
 
         # Direct dtype encodings mean the stored values are already decoded.
         elif name in self.DIRECT_ENCODINGS:
@@ -145,6 +150,8 @@ class ArrayDecoder:
             "log_perchannel_u16",
             "signed_log_perchannel_u8",
             "signed_log_perchannel_u16",
+            "linear_perchannel_u8",
+            "linear_perchannel_u16",
         }:
             self._require_fields(
                 enc, name, ("col_lo", "col_hi", "bits", "original_dtype")
@@ -301,6 +308,20 @@ class ArrayDecoder:
         rng = np.maximum(hi - lo, 1e-30)
         y = lo + data / ((1 << bits) - 1) * rng
         return np.asarray(np.sign(y) * np.expm1(np.abs(y)), dtype=original_dtype)
+
+    def _decode_linear_perchannel(self, arr: zarr.Array, enc: dict) -> np.ndarray:
+        """Decode generic per-channel LINEAR (fixed-point) quantization of an
+        (N, C) array — identity transform, per-column min/max.
+
+        Inverse of the ``linear_perchannel_*`` encoding (COORDINATE positions):
+        ``x = col_lo[c] + u/levels·(col_hi[c]-col_lo[c])`` per column. No log —
+        handles negative values, so it is the correct transform for coordinates.
+        """
+        data = np.asarray(arr[:]).astype(np.float64)
+        lo, hi, bits = self._perchannel_scales(data, enc, "linear_perchannel")
+        original_dtype = np.dtype(enc.get("original_dtype", "float32"))
+        rng = np.maximum(hi - lo, 1e-30)
+        return np.asarray(lo + data / ((1 << bits) - 1) * rng, dtype=original_dtype)
 
     def _decode_color(self, arr: zarr.Array, enc: dict) -> np.ndarray:
         """Decode color: uint8/uint16 [0,max] → original dtype [0,1].

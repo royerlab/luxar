@@ -14,6 +14,7 @@ import numpy as np
 import pytest
 import zarr
 
+from luxar.encoding import ArrayDecoder
 from luxar.utils.demos import (
     _safe_extract_zip_member,
     _validate_zip_member_path,
@@ -228,17 +229,22 @@ class TestCreateTimeSeriesDemo:
             )
 
             store = zarr.open(store_path, mode="r")
-            positions = store["time_series"]["positions"][:]
+            # Positions are uint16 per-axis fixed-point under the default AUTO
+            # mode — decode (raw levels are meaningless integers) before reading
+            # the time column.
+            positions = ArrayDecoder().decode(store["time_series"]["positions"], store)
 
             # Time is the 4th dimension (index 3)
             time_values = positions[:, 3]
             unique_times = np.unique(time_values)
 
-            # Should have exactly n_timepoints unique time values
+            # Should have exactly n_timepoints unique time values (each distinct
+            # input value maps to one quantization code, so the count survives)
             assert len(unique_times) == n_timepoints
-            # Time values should be integers 0 to n_timepoints-1
-            np.testing.assert_array_almost_equal(
-                sorted(unique_times), list(range(n_timepoints))
+            # Time values should be integers 0 to n_timepoints-1, within one
+            # quantization step (extent/65535)
+            np.testing.assert_allclose(
+                sorted(unique_times), list(range(n_timepoints)), atol=1e-3
             )
 
     def test_seed_reproducibility(self) -> None:

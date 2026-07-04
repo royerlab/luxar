@@ -3,7 +3,13 @@ import * as zarr from '../../../zarr';
 import { slice } from '../../../zarr';
 import type { LoadRange } from '../../base-types';
 
-export type EncodingType = 'broadcasted' | 'quantized' | 'lut' | 'array_ref' | 'direct';
+export type EncodingType =
+  | 'broadcasted'
+  | 'quantized'
+  | 'lut'
+  | 'array_ref'
+  | 'perchannel'
+  | 'direct';
 
 export interface RangeLoaderConfig {
   /** Minimum elements before using workers (default: 1000) */

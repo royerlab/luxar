@@ -207,6 +207,30 @@ export class ArrayDecoder {
       return this.decodeLogScalar(data, enc.max_log, String(actualDtype));
     }
 
+    // Per-channel quantization (log / signed-log / linear `*_perchannel_*`) —
+    // fully self-decoded here for full-array reads, mirroring the RangeLoader's
+    // 'perchannel' path and Python's `_decode_*_perchannel`. `data` holds the raw
+    // integer levels as float; apply the per-column inverse (col = index % C).
+    if (enc?.name && ArrayDecoder.isPerChannelQuantEncodingName(enc.name)) {
+      // Column count comes from the ARRAY's own last dimension (like Python's
+      // `data.shape[-1]` in `_perchannel_scales`), NOT from col_lo.length —
+      // deriving it from the metadata would make makePerChannelDequant's
+      // length guard a tautology, silently misaligning axes on a corrupt file
+      // whose col_lo/col_hi length disagrees with the stored data.
+      const arrShape = zarrArray.shape;
+      const cols =
+        Array.isArray(arrShape) && arrShape.length > 1
+          ? Number(arrShape[arrShape.length - 1])
+          : 1;
+      const dequant = ArrayDecoder.makePerChannelDequant(
+        enc as { name?: string; bits?: number; col_lo?: number[]; col_hi?: number[] },
+        cols
+      );
+      const out = new Float32Array(data.length);
+      for (let i = 0; i < data.length; i++) out[i] = dequant(data[i], i % cols);
+      return out;
+    }
+
     // Check for quantization (known quantized encodings, bounds present OR implicit)
     // NOTE: Dtype encodings like "uint8"/"uint16" are direct storage, not quantization.
     if (enc?.name && ArrayDecoder.isQuantizedEncoding(attrs)) {
@@ -587,7 +611,8 @@ export class ArrayDecoder {
       enc.name === 'array_ref' || // array reference
       enc.name === 'broadcasted' || // broadcasting
       ArrayDecoder.isLUTEncodingName(enc.name) || // LUT encoding (lut_uint8, lut_uint16)
-      ArrayDecoder.isQuantizedEncoding(attrs) // quantization (rgb_uint8, bounded_scalar_uint16, etc.)
+      ArrayDecoder.isQuantizedEncoding(attrs) || // quantization (rgb_uint8, bounded_scalar_uint16, etc.)
+      ArrayDecoder.isPerChannelQuantEncodingName(enc.name) // per-channel (log/signed-log/linear) — decoded to float32 by the loader
     );
   }
 
@@ -787,20 +812,23 @@ export class ArrayDecoder {
 
   /**
    * Generic per-channel quantization encodings: per-column (per-channel) log
-   * (`log_perchannel_u8/u16`, non-negative) and signed-log
-   * (`signed_log_perchannel_u8/u16`, signed). They carry per-channel scale arrays
-   * (`col_lo/col_hi`) rather than global bounds, so they are NOT in
-   * {@link isQuantizedEncodingName} (the global-scale dequant path). They load as
-   * raw integer levels (`direct`); per-channel dequant is applied by the consumer
-   * (e.g. the gsplats loader recombining the split Cholesky). First consumer:
-   * Cholesky diagonal / off-diagonal — but the scheme is geometry-agnostic.
+   * (`log_perchannel_u8/u16`, non-negative), signed-log
+   * (`signed_log_perchannel_u8/u16`, signed), and linear/fixed-point
+   * (`linear_perchannel_u8/u16`, identity — COORDINATE positions/centers/vertices).
+   * They carry per-channel scale arrays (`col_lo/col_hi`) rather than global
+   * bounds, so they are NOT in {@link isQuantizedEncodingName} (the global-scale
+   * dequant path); they have their own `'perchannel'` load path in the RangeLoader
+   * which fully decodes them to float32 (see `range-loader/perchannel.ts`). The
+   * scheme is geometry-agnostic; consumers receive decoded float32.
    */
   static isPerChannelQuantEncodingName(name: string | undefined): boolean {
     return !!(
       name === 'log_perchannel_u8' ||
       name === 'log_perchannel_u16' ||
       name === 'signed_log_perchannel_u8' ||
-      name === 'signed_log_perchannel_u16'
+      name === 'signed_log_perchannel_u16' ||
+      name === 'linear_perchannel_u8' ||
+      name === 'linear_perchannel_u16'
     );
   }
 
@@ -810,6 +838,7 @@ export class ArrayDecoder {
    * (`_decode_log_perchannel` / `_decode_signed_log_perchannel`):
    *   log:        `x = expm1(lo[c] + level/levels·(hi[c]-lo[c]))`
    *   signed-log: `y = lo[c] + level/levels·(hi[c]-lo[c]); x = sign(y)·expm1(|y|)`
+   *   linear:     `x = lo[c] + level/levels·(hi[c]-lo[c])`  (identity; coordinates)
    * For any other / float32 / direct encoding it returns the identity, so a raw
    * value passes through unchanged.
    *
@@ -823,7 +852,9 @@ export class ArrayDecoder {
     const isLog = name === 'log_perchannel_u8' || name === 'log_perchannel_u16';
     const isSlog =
       name === 'signed_log_perchannel_u8' || name === 'signed_log_perchannel_u16';
-    if (!isLog && !isSlog) {
+    const isLinear =
+      name === 'linear_perchannel_u8' || name === 'linear_perchannel_u16';
+    if (!isLog && !isSlog && !isLinear) {
       return (level: number) => level; // float32 / direct: identity
     }
     // Per-channel scales are mandatory and must match the column count. Failing
@@ -853,6 +884,9 @@ export class ArrayDecoder {
     const bits = encoding!.bits ?? (name!.endsWith('u8') ? 8 : 16);
     const levels = (1 << bits) - 1;
     const rng = lo.map((l, i) => Math.max(hi[i] - l, 1e-30));
+    if (isLinear) {
+      return (level: number, c: number) => lo[c] + (level / levels) * rng[c];
+    }
     if (isLog) {
       return (level: number, c: number) => Math.expm1(lo[c] + (level / levels) * rng[c]);
     }
