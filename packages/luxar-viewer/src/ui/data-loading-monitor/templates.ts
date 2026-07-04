@@ -58,7 +58,7 @@ export function renderMetricCard(
 ): string {
   const fieldAttr = dataField ? ` data-field="${dataField}"` : '';
   const subFieldAttr = dataField ? ` data-field="${dataField}-sub"` : '';
-  const tooltipAttr = tooltip ? ` title="${tooltip}"` : '';
+  const tooltipAttr = tooltip ? ` title="${escapeHtml(tooltip)}"` : '';
   return `
     <div class="luxar-metric-card luxar-metric-card--${size}"${tooltipAttr}>
       ${title ? `<div class="luxar-metric-card__title">${title}</div>` : ''}
@@ -427,8 +427,8 @@ function renderCacheSection(
   return `
     <div class="luxar-cache-section">
       <div class="luxar-cache-section__header">
-        <span class="luxar-cache-section__title"${titleTooltip ? ` title="${titleTooltip}"` : ''}>${title}</span>
-        <button data-action="${clearAction}" class="luxar-cache-section__clear-btn" title="${clearTooltip}">Clear</button>
+        <span class="luxar-cache-section__title"${titleTooltip ? ` title="${escapeHtml(titleTooltip)}"` : ''}>${title}</span>
+        <button data-action="${clearAction}" class="luxar-cache-section__clear-btn" title="${escapeHtml(clearTooltip)}">Clear</button>
       </div>
       <div class="luxar-cache-section__metrics luxar-cache-section__metrics--${cols}">
         ${metrics
@@ -440,7 +440,7 @@ function renderCacheSection(
             const fieldAttr = metric.dataField ? ` data-field="${metric.dataField}"` : '';
             const subFieldAttr = metric.dataField ? ` data-field="${metric.dataField}-sub"` : '';
             return `
-          <div class="luxar-metric-card luxar-metric-card--small"${metric.tooltip ? ` title="${metric.tooltip}"` : ''}>
+          <div class="luxar-metric-card luxar-metric-card--small"${metric.tooltip ? ` title="${escapeHtml(metric.tooltip)}"` : ''}>
             <div class="luxar-metric-card__title">${metric.label}</div>
             <div class="luxar-metric-card__value ${sizeClass} ${metric.colorClass || ''}"${fieldAttr}>
               ${metric.value}
