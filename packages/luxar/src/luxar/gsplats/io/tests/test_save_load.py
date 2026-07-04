@@ -54,6 +54,65 @@ class TestSaveGsplats:
             assert root.attrs["n_splats"] == 100
             assert root.attrs["ndim"] == 3
 
+    def test_save_stamps_content_hash(self) -> None:
+        # The web viewer's persistent cache invalidates on the root
+        # ``content_hash`` — without it, a regenerated file at the same URL
+        # serves stale data indefinitely.
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "test.gsplats.zarr"
+            save_gsplats(path=path, **create_test_splats_3d(50), ordering="none")
+            root = zarr.open_group(str(path), mode="r")
+            content_hash = root.attrs["content_hash"]
+            assert isinstance(content_hash, str) and len(content_hash) > 0
+            # The hash must also land in consolidated metadata (the viewer
+            # reads .zmetadata for structure and .zattrs for validation).
+            import json
+
+            zmeta = json.loads((path / ".zmetadata").read_text())
+            assert zmeta["metadata"][".zattrs"]["content_hash"] == content_hash
+
+    def test_resave_changes_content_hash(self) -> None:
+        # Identical data re-saved must yield a DIFFERENT hash (the timestamp
+        # attr folds in) so the viewer cache invalidates on regeneration.
+        splats = create_test_splats_3d(50)
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path_a = Path(tmpdir) / "a.gsplats.zarr"
+            path_b = Path(tmpdir) / "b.gsplats.zarr"
+            save_gsplats(path=path_a, **splats, ordering="none")
+            save_gsplats(path=path_b, **splats, ordering="none")
+            hash_a = zarr.open_group(str(path_a), mode="r").attrs["content_hash"]
+            hash_b = zarr.open_group(str(path_b), mode="r").attrs["content_hash"]
+            assert hash_a != hash_b
+
+    def test_streaming_partition_stamps_content_hash(self) -> None:
+        # The streaming-partition writer path must stamp too (it is the merge
+        # path for tiled fits — the largest, most re-generated artifacts).
+        from luxar.gsplats.gsplat_data import AdditiveSubLOD
+        from luxar.gsplats.io.save_gsplats import write_partition_streaming
+        from luxar.gsplats.tree import GSplatLeaf
+
+        def make_leaf(seed: int) -> GSplatLeaf:
+            rng = np.random.default_rng(seed)
+            chol = np.zeros((20, 6), dtype=np.float32)
+            chol[:, [0, 2, 5]] = rng.uniform(0.5, 2.0, size=(20, 3))
+            return GSplatLeaf(
+                additive_sublods=[
+                    AdditiveSubLOD(
+                        centers=rng.uniform(0, 50, (20, 3)).astype(np.float32),
+                        amplitudes=rng.uniform(0.1, 1, (20,)).astype(np.float32),
+                        cholesky_factors=chol,
+                    )
+                ]
+            )
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "part.gsplats.zarr"
+            write_partition_streaming(
+                path, lambda: iter([make_leaf(0), make_leaf(1)]), ordering="none"
+            )
+            root = zarr.open_group(str(path), mode="r")
+            assert isinstance(root.attrs["content_hash"], str)
+
     def test_save_with_colors(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             path = Path(tmpdir) / "test.gsplats.zarr"
