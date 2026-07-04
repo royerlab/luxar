@@ -32,7 +32,11 @@ import type { UpdateProfiler, UpdateSession } from '../../profiling/update-profi
 import type { ViewState } from '../data-loader-types';
 import type { ViewStateQueue } from '../scene-loader/view-state/view-state-queue';
 import type { StagedGSplatsCommit } from '../scene-loader/process/data-processor-gsplats';
-import { runProgressiveRefinement } from '../scene-loader/progressive/refinement';
+import {
+  MAX_CONSECUTIVE_REFINEMENT_FAILURES,
+  RefinementFailureTracker,
+  runProgressiveRefinement,
+} from '../scene-loader/progressive/refinement';
 
 /**
  * Bundle of host references the refinement loop needs. Kept narrow so
@@ -86,12 +90,17 @@ export interface GSplatsRefinementCtx {
  * derive / process / commit closures.
  */
 export async function runGSplatsRefinement(ctx: GSplatsRefinementCtx): Promise<void> {
+  // Per-run failure backoff: a loader that fails MAX_CONSECUTIVE times is
+  // excluded for the rest of this run (and from anyHasMoreLODs, so the loop
+  // can terminate) instead of retrying at frame rate forever.
+  const failures = new RefinementFailureTracker();
   await runProgressiveRefinement({
     loaders: ctx.gsplatLoaders,
     viewStateQueue: ctx.viewStateQueue,
     isActive: ctx.isActive,
     processLoader: async (path, loader) => {
       if (loader.hasMoreLODs !== true) return;
+      if (failures.isExhausted(path)) return;
       try {
         const mesh = ctx.rootGroup?.getObjectByName(path) as THREE.Mesh | undefined;
         const nodeAttrs = mesh?.userData?.attrs as GSplatsMetadata | undefined;
@@ -115,14 +124,27 @@ export async function runGSplatsRefinement(ctx: GSplatsRefinementCtx): Promise<v
           session?.end();
           pass?.end();
         }
+        failures.recordSuccess(path);
       } catch (error) {
-        log.error(
-          Modules.SCENE_LOADER,
-          `GSplats refinement failed for ${path}: ${(error as Error).message}`
-        );
+        if (failures.recordFailure(path)) {
+          log.error(
+            Modules.SCENE_LOADER,
+            `GSplats refinement failed for ${path}: ${(error as Error).message} — ` +
+              `giving up after ${MAX_CONSECUTIVE_REFINEMENT_FAILURES} consecutive failures ` +
+              '(will retry on the next view change)'
+          );
+        } else {
+          log.error(
+            Modules.SCENE_LOADER,
+            `GSplats refinement failed for ${path}: ${(error as Error).message}`
+          );
+        }
       }
     },
-    anyHasMoreLODs: () => [...ctx.gsplatLoaders.values()].some((l) => l.hasMoreLODs === true),
+    anyHasMoreLODs: () =>
+      [...ctx.gsplatLoaders.entries()].some(
+        ([path, l]) => !failures.isExhausted(path) && l.hasMoreLODs === true
+      ),
     updateVisibleCountsInMonitor: () => ctx.updateVisibleCountsInMonitor(),
     releaseLock: () => ctx.releaseLock(),
     retriggerUpdate: (pending) => ctx.retriggerUpdate(pending),

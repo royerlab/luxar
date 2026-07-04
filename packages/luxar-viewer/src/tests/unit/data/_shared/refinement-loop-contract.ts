@@ -133,6 +133,69 @@ export function defineRefinementLoopContract(
       ).resolves.not.toThrow();
     });
 
+    it('gives up on a persistently failing loader after 3 consecutive failures (lock released)', async () => {
+      // Regression: without the per-run failure cap, a loader whose level
+      // fetch always throws kept hasMoreLODs=true forever and the loop
+      // retried at frame rate indefinitely, holding the update lock — a
+      // network retry storm. After MAX_CONSECUTIVE_REFINEMENT_FAILURES (3)
+      // the loader is excluded and the loop terminates + releases the lock.
+      const failing = {
+        hasMoreLODs: true, // never progresses
+        updateView: vi.fn().mockRejectedValue(new Error('persistent failure')),
+      };
+      const releaseLock: () => void = vi.fn();
+
+      await run({
+        loaders: new Map([['/bad', failing]]),
+        viewStateQueue: new ViewStateQueue(),
+        deriveNodeViewState: () => ({ skip: false, viewState: baseViewState }),
+        updateVisibleCountsInMonitor: vi.fn(),
+        releaseLock,
+        retriggerUpdate: vi.fn(),
+        processSpy: vi.fn(),
+      });
+
+      // Exactly 3 attempts (the cap), then the loop exits and releases.
+      expect(failing.updateView).toHaveBeenCalledTimes(3);
+      expect(releaseLock).toHaveBeenCalledTimes(1);
+    });
+
+    it('a failing loader does not stop a healthy loader from finishing its ladder', async () => {
+      const failing = {
+        hasMoreLODs: true,
+        updateView: vi.fn().mockRejectedValue(new Error('persistent failure')),
+      };
+      // Healthy loader: 5 levels to stream, one per pass — more passes than
+      // the failing loader's 3-strike budget, so it must keep advancing after
+      // the failing one is excluded.
+      const healthy = makeStagedLoader([
+        { hasMoreLODs: true },
+        { hasMoreLODs: true },
+        { hasMoreLODs: true },
+        { hasMoreLODs: true },
+        { hasMoreLODs: true },
+        { hasMoreLODs: false },
+      ]);
+      const releaseLock: () => void = vi.fn();
+
+      await run({
+        loaders: new Map<string, unknown>([
+          ['/bad', failing],
+          ['/good', healthy],
+        ]),
+        viewStateQueue: new ViewStateQueue(),
+        deriveNodeViewState: () => ({ skip: false, viewState: baseViewState }),
+        updateVisibleCountsInMonitor: vi.fn(),
+        releaseLock,
+        retriggerUpdate: vi.fn(),
+        processSpy: vi.fn(),
+      });
+
+      expect(failing.updateView).toHaveBeenCalledTimes(3); // capped
+      expect(healthy.updateView).toHaveBeenCalledTimes(5); // ladder drained
+      expect(releaseLock).toHaveBeenCalledTimes(1);
+    });
+
     it('skips loaders whose derived view-state is fully-extended', async () => {
       let calls = 0;
       const loader: { updateView: ReturnType<typeof vi.fn>; hasMoreLODs?: boolean } = {
