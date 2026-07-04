@@ -277,10 +277,15 @@ for (const theme of THEMES) {
     await page.goto(`/?theme=${theme}&debug`);
     await waitForTheme(page, theme);
 
-    // Trigger dataset browser with O key
-    await page.keyboard.press('o');
-
+    // The dataset browser auto-opens when no dataset is loaded (welcome UX).
+    // The 'o' key TOGGLES it, so only press it if it hasn't already opened —
+    // pressing 'o' on an already-open browser would toggle it closed. By the
+    // time waitForTheme resolves, the auto-show has fired, so this is
+    // deterministic while still opening the browser if auto-show is disabled.
     const datasetBrowser = page.locator('.luxar-dataset-browser');
+    if (!(await datasetBrowser.isVisible())) {
+      await page.keyboard.press('o');
+    }
     await expect(datasetBrowser).toBeVisible({ timeout: 2000 });
 
     // Extra wait for frosted-glass theme which has animation/blur effects
