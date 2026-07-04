@@ -54,13 +54,29 @@ import type {
 import { LODGroupRegistry } from '../scene/lod-group-registry';
 
 /**
+ * Narrow view of the SceneLoader a registry factory may read. The registry's
+ * freshness (``getViewVersion``) and eviction (``getResidentBytes``) deps must
+ * observe the loader that OWNS the registry — routing them through
+ * ``getSceneLoader('default')`` read the wrong loader's state for any
+ * non-default instance (multi-loader embedding).
+ */
+export interface LODGroupRegistryOwner {
+  /** Monotonic view-update version of the owning loader. */
+  readonly currentViewVersion: number;
+  /** The owning loader's GPU buffer pool (null pre-setup / pooling off). */
+  readonly gpuBufferPool: GPUBufferPool | null;
+}
+
+/**
  * Factory hook that supplies a per-loader ``LODGroupRegistry``. Mirrors
  * ``SceneLoaderMonitorFactory`` — the data/ layer never reaches into
  * scene/ for camera / viewport state, so the host (typically the app
  * pipeline) injects a closure that knows how to construct the
- * registry with proper getters.
+ * registry with proper getters. Receives the OWNING loader (as the
+ * narrow {@link LODGroupRegistryOwner} view) so per-loader deps read
+ * that loader's live state, not the manager's current default.
  */
-export type SceneLoaderLODGroupRegistryFactory = () => LODGroupRegistry;
+export type SceneLoaderLODGroupRegistryFactory = (owner: LODGroupRegistryOwner) => LODGroupRegistry;
 import { ArrayRefRegistry } from './array-decoder/decoder';
 import { log, Modules } from '../utils/log';
 import { scheduleFrame } from '../utils/schedule-frame';
@@ -338,7 +354,7 @@ export class SceneLoader {
       tolerance: [],
     };
     this.arrayRefRegistry = new ArrayRefRegistry();
-    this.lodGroupRegistry = lodGroupRegistryFactory ? lodGroupRegistryFactory() : null;
+    this.lodGroupRegistry = lodGroupRegistryFactory ? lodGroupRegistryFactory(this) : null;
 
     // GPU buffer pool requires Float32Array data; the geometry-update path
     // falls back to the standard route for Uint8/Uint16 attributes.

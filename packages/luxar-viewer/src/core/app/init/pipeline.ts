@@ -168,8 +168,12 @@ export async function runInitPipeline(
   // The per-frame callback reads `getSceneLoader('default')` rather
   // than closing over a specific registry: when the user loads a new
   // dataset, the SceneLoaderManager swaps loaders under the hood and
-  // the callback keeps pointing at whichever is current.
-  SceneLoaderManager.getInstance().setLODGroupRegistryFactory(() => {
+  // the callback keeps pointing at whichever is current. (Known
+  // multi-instance limitation, deferred with the embeddability roadmap:
+  // only the DEFAULT loader's registry is evaluated per frame. The
+  // registry DEPS below are per-owner already, so when per-loader
+  // callbacks arrive no further wiring changes are needed.)
+  SceneLoaderManager.getInstance().setLODGroupRegistryFactory((owner) => {
     return new LODGroupRegistry({
       getCamera: () => sceneManager.camera,
       getViewportSize: () => {
@@ -191,18 +195,19 @@ export async function runInitPipeline(
       getResidentByteBudget: () => getGpuByteBudget(),
       // Measured resident VRAM (active + pooled, real capacities) from the
       // buffer pool — the single accounting truth the registry uses to
-      // decide when to demote cold levels. Routed through the current
-      // default loader (same pattern as the per-frame callback below); a
-      // null pool (pre-construction / pooling disabled) reads as 0 bytes,
-      // so the registry never evicts in that state.
-      getResidentBytes: () => getSceneLoader('default')?.gpuBufferPool?.getResidentBytes() ?? 0,
+      // decide when to demote cold levels. Read from the OWNING loader
+      // (the factory receives it) so a non-default loader's registry never
+      // consults the default loader's pool; a null pool (pre-construction /
+      // pooling disabled) reads as 0 bytes, so the registry never evicts in
+      // that state.
+      getResidentBytes: () => owner.gpuBufferPool?.getResidentBytes() ?? 0,
       // Current view-update version. Lets the registry detect when a level's
       // committed geometry is stale for the current slice/displayDims (a
       // re-slice reloads geometry in place without flipping readiness) and
       // display a coarser FRESH level until the re-slice commits — the
-      // slice-aware coarse-while-reloading fallback. Routed through the current
-      // default loader (same pattern as the byte-budget getters above).
-      getViewVersion: () => getSceneLoader('default')?.currentViewVersion ?? 0,
+      // slice-aware coarse-while-reloading fallback. Read from the OWNING
+      // loader for the same per-instance reason as getResidentBytes.
+      getViewVersion: () => owner.currentViewVersion,
       // Keep the on-demand render loop alive while a lazy fine level reloads
       // (it commits outside the per-slice sweep and can outlast the idle
       // timeout), so the swap-up to the fresh level fires when it lands.
