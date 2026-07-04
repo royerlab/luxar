@@ -1080,6 +1080,215 @@ class TestRefine:
             make_substitutive_lod(data, refine="l2", refine_iters=0, device="cpu")
 
 
+class TestVolumeRefit:
+    """Integration of ``refine="volume"`` (engine unit tests live in
+    test_volume_refit.py)."""
+
+    @staticmethod
+    def _volume_and_fit() -> "tuple[np.ndarray, GSplatData]":
+        from luxar.gsplats.fit_gsplats import fit_gaussian_splats
+
+        rng = np.random.default_rng(0)
+        grid = np.mgrid[0:20, 0:20, 0:20].astype(np.float32)
+        vol = np.zeros((20,) * 3, dtype=np.float32)
+        for _ in range(4):
+            c = rng.uniform(4, 16, 3)
+            s = rng.uniform(1.5, 2.5)
+            r2 = sum((grid[d] - c[d]) ** 2 for d in range(3))
+            vol += rng.uniform(0.4, 1.0) * np.exp(-r2 / (2 * s * s))
+        fine = fit_gaussian_splats(
+            vol, seeds=80, n_iters=200, device="cpu", verbose=False
+        )
+        return vol, fine
+
+    @staticmethod
+    def _mse(data: GSplatData, vol: np.ndarray) -> float:
+        rendered = data.render_to_volume(shape=vol.shape, device="cpu")
+        return float(np.mean((rendered.astype(np.float32) - vol) ** 2))
+
+    def test_refine_volume_improves_level_mse(self):
+        vol, fine = self._volume_and_fit()
+        kw = dict(compression_factor=4, levels=1, device="cpu")
+        plain = make_substitutive_lod(fine, refine="none", **kw)
+        refit = make_substitutive_lod(
+            fine, refine="volume", refine_iters=60, volume=vol, **kw
+        )
+        # Identical structure; only the coarse level's fidelity changes.
+        assert refit.n_substitutive == plain.n_substitutive
+        assert refit.at_substitutive(1).n_splats == plain.at_substitutive(1).n_splats
+        mse_plain = self._mse(plain.at_substitutive(1), vol)
+        mse_refit = self._mse(refit.at_substitutive(1), vol)
+        assert mse_refit < 0.9 * mse_plain, (
+            f"refine=volume did not improve: {mse_refit:.3e} vs {mse_plain:.3e}"
+        )
+        # Stats recorded on the ladder and the level.
+        assert refit.stats["refine"] == "volume"
+        assert refit.stats["refine_iters"] == 60
+        lev = refit.substitutive_levels[1]
+        assert lev.stats["refine"] == "volume"
+        assert lev.stats["refine_stats"]["improved"] is True
+
+    def test_refine_volume_requires_volume(self):
+        data = _make_isotropic_3d(n=16, seed=0)
+        with pytest.raises(ValueError, match="requires the `volume`"):
+            make_substitutive_lod(data, refine="volume", device="cpu")
+
+    def test_volume_without_refine_volume_raises(self):
+        data = _make_isotropic_3d(n=16, seed=0)
+        with pytest.raises(ValueError, match="only consumed by refine='volume'"):
+            make_substitutive_lod(
+                data, volume=np.zeros((4, 4, 4), np.float32), device="cpu"
+            )
+
+    def test_refine_volume_rejects_barrier_dims(self):
+        data = _make_isotropic_3d(n=16, seed=0)
+        with pytest.raises(ValueError, match="barrier dims"):
+            make_substitutive_lod(
+                data,
+                refine="volume",
+                volume=np.zeros((4, 4, 4), np.float32),
+                coarsen_dims=[1, 2],
+                device="cpu",
+            )
+
+    def test_refine_volume_round_trips_stats(self, tmp_path):
+        vol, fine = self._volume_and_fit()
+        refit = make_substitutive_lod(
+            fine,
+            refine="volume",
+            refine_iters=20,
+            volume=vol,
+            compression_factor=4,
+            levels=1,
+            device="cpu",
+        )
+        out = tmp_path / "vr.gsplats.zarr"
+        refit.save(out)
+        back = GSplatData.load(out, include_stats=True)
+        assert back.stats["refine"] == "volume"
+        assert back.stats["refine_iters"] == 20
+        lev = back.substitutive_levels[1]
+        assert lev.stats["refine"] == "volume"
+        assert set(lev.stats["refine_stats"]) >= {"mse_seed", "mse_refit", "improved"}
+
+    def test_default_refine_iters_is_300(self):
+        """The library default for refine="volume" resolves to VolumeRefitConfig's
+        300 (not l2's 120) when refine_iters is omitted."""
+        vol, fine = self._volume_and_fit()
+        lad = make_substitutive_lod(
+            fine,
+            refine="volume",
+            volume=vol,
+            compression_factor=4,
+            levels=1,
+            device="cpu",
+        )
+        assert lad.stats["refine_iters"] == 300
+
+    def test_chain_continues_from_unrefined_merge(self, monkeypatch):
+        """levels>=2 invariant: the coarsening chain continues from the
+        UNREFINED merge, so level L's re-fit seed is the pure merge chain's
+        level L — NOT the (re-fit) previous level. Uses a deterministic
+        monkeypatched re-fit (scale centers ×0.9) so a mutation feeding the
+        re-fit forward (`current = stored`) is caught."""
+        import luxar.gsplats.lod.volume_refit as vr
+
+        vol, fine = self._volume_and_fit()
+
+        def _scale_refit(seed, volume, *, config, device=None):
+            scaled = GSplatData(
+                centers=(np.asarray(seed.centers) * 0.9).astype(np.float32),
+                amplitudes=seed.amplitudes,
+                cholesky_factors=seed.cholesky_factors,
+            )
+            return scaled, {"improved": True, "seed_won": False}
+
+        monkeypatch.setattr(vr, "volume_refine_splats", _scale_refit)
+        kw = dict(compression_factor=4, levels=2, device="cpu")
+        got = make_substitutive_lod(fine, refine="volume", volume=vol, **kw)
+        # Pure merge chain (no refit): level 2 built from the unrefined chain.
+        merge = make_substitutive_lod(fine, refine="none", **kw)
+        # If the chain is correct, level 2 == 0.9 * (pure merge level 2).
+        expected = np.asarray(merge.at_substitutive(2).centers) * 0.9
+        np.testing.assert_allclose(
+            np.asarray(got.at_substitutive(2).centers), expected, rtol=1e-5, atol=1e-5
+        )
+
+    def test_conserve_mass_no_cross_level_brightness_pop(self):
+        """refine="volume" must not reintroduce the brightness pop conserve_mass
+        prevents. The re-fit tracks the volume's true DC, which the finest
+        (fine-fit) level under-explains — stored unpinned that is a large pop.
+        With conserve_mass the volume ladder's per-level DC ratios track the
+        pure-merge ladder's (both pinned to the fine chain), NOT the volume."""
+
+        def dc_ratios(lad):
+            dcs = [
+                float(
+                    np.asarray(
+                        lad.at_substitutive(s).render_to_volume(
+                            shape=vol.shape, device="cpu"
+                        )
+                    ).sum()
+                )
+                for s in range(lad.n_substitutive)
+            ]
+            return np.array([d / dcs[0] for d in dcs])
+
+        vol, fine = self._volume_and_fit()
+        kw = dict(compression_factor=4, levels=2, device="cpu")
+        merge_ratios = dc_ratios(make_substitutive_lod(fine, refine="none", **kw))
+        vol_ratios = dc_ratios(
+            make_substitutive_lod(
+                fine, refine="volume", refine_iters=60, volume=vol, **kw
+            )
+        )
+        # The volume ladder brightness-tracks the merge ladder (pinned), rather
+        # than popping toward the volume's higher DC (the pre-fix +14% bug).
+        np.testing.assert_allclose(vol_ratios, merge_ratios, atol=0.03)
+
+    def test_conserve_mass_false_lets_refit_track_volume_dc(self):
+        """--no-conserve-mass opts into the raw volume-accurate DC: the re-fit's
+        brightness then tracks the VOLUME (may pop vs the finest) — the escape
+        hatch, and proof the pinning in the default path is load-bearing."""
+        vol, fine = self._volume_and_fit()
+        kw = dict(compression_factor=4, levels=1, device="cpu")
+        pinned = make_substitutive_lod(
+            fine,
+            refine="volume",
+            refine_iters=60,
+            volume=vol,
+            conserve_mass=True,
+            **kw,
+        )
+        raw = make_substitutive_lod(
+            fine,
+            refine="volume",
+            refine_iters=60,
+            volume=vol,
+            conserve_mass=False,
+            **kw,
+        )
+
+        def r(lad):
+            return float(
+                np.asarray(
+                    lad.at_substitutive(1).render_to_volume(
+                        shape=vol.shape, device="cpu"
+                    )
+                ).sum()
+            )
+
+        finest = float(
+            np.asarray(
+                pinned.at_substitutive(0).render_to_volume(
+                    shape=vol.shape, device="cpu"
+                )
+            ).sum()
+        )
+        # Pinned coarse DC hugs the finest; raw coarse DC sits meaningfully higher.
+        assert abs(r(pinned) - finest) < abs(r(raw) - finest)
+
+
 # ─────────────────────────────────────────────────────────────────────
 # Shape-aware k-means warm start (WS7)
 # ─────────────────────────────────────────────────────────────────────
