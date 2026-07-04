@@ -124,8 +124,11 @@ A v3.x file is one of (each freely nestable):
 | partition        | `type=group, kind=partition`; `part_<i>/` + `max_elements`         |
 
 Every node carries `position_bounds`; the root additionally carries
-`format_version:"3.2"`, `format_type:"gsplats_zarr"`, `timestamp`, and
-`luxar_gsplats_version`. The historical `[N, M_i]` matrix is just the "full
+`format_version:"3.2"`, `format_type:"gsplats_zarr"`, `timestamp`,
+`luxar_gsplats_version`, and `content_hash` (a metadata-only xxhash64 over
+the tree's attrs + array names/shapes/dtypes, distinct per save because the
+per-save `timestamp` folds in — the web viewer's persistent cache compares it
+to invalidate when a file is regenerated in place). The historical `[N, M_i]` matrix is just the "full
 pyramid" shape expressed as a node tree.
 
 ---
@@ -796,7 +799,8 @@ one into a scene is a graft of that subtree.
 
 **Structure**: A node-tree root (leaf / kind=lod / kind=partition) plus the
 self-identifying header (`format_version:"3.2"`, `format_type:"gsplats_zarr"`,
-`timestamp`, `luxar_gsplats_version`) and optional `fitting/` / `provenance/`.
+`timestamp`, `luxar_gsplats_version`, `content_hash`) and optional
+`fitting/` / `provenance/`.
 
 **Direct viewer load**: `?src=<file>.gsplats.zarr` loads the file as a scene
 root. The viewer frames on `position_bounds` at the root group. No intermediate

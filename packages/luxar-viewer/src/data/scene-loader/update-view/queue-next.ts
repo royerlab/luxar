@@ -64,8 +64,8 @@ export function queueNext(ctx: QueueNextCtx): void {
     // Yield to render loop: ensure at least one frame is painted before next
     // update (prevents the "updates faster than renders" black-screen
     // problem). scheduleFrame degrades to a timer in hidden tabs — plain rAF
-    // is suspended there, which used to stall a queued view-state until the
-    // tab was foregrounded — and runs synchronously in non-browser contexts.
+    // is suspended there and would stall the queued view-state until the tab
+    // is foregrounded — and runs synchronously in non-browser contexts.
     scheduleFrame(() => {
       // Release the lock right before starting the next update
       // Any slider events during the yield were queued (because lock was held)

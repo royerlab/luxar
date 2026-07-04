@@ -163,9 +163,10 @@ export async function retryFailedLoaderUnlocked(path: string, ctx: RetryCtx): Pr
       return verifyAndClear('gsplats');
     } else {
       // Not in the sweep maps. Lazy substitutive LOD levels are never
-      // registered there (registry-driven lifecycle) but DO record failures
-      // — previously this branch silently DISCARDED those, making lazy
-      // levels unretryable. Re-kick the level's deferred loader instead.
+      // registered there (registry-driven lifecycle) but DO record failures;
+      // without this fallback their records would be discarded below and
+      // lazy levels would be unretryable through this API. Re-kick the
+      // level's deferred loader instead.
       // Fire-and-forget semantics: `true` means "retry started" (the thunk
       // owns the ready/failed outcome; a repeat failure re-records itself
       // via recordFailure in the expensive half, so bookkeeping stays

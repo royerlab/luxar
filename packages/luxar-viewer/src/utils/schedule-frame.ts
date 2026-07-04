@@ -6,9 +6,9 @@
  * (`SceneLoader.scheduleGSplatsRefinement`'s `onCancel`) so at least one
  * frame paints before the next update. Plain `requestAnimationFrame` is the
  * right primitive while the tab is visible — but browsers suspend rAF when
- * `document.hidden`, so a pending view-state queued in a background tab
- * previously stalled until the tab was foregrounded (e.g. a programmatic
- * scrub driven while the user watches another window never progressed).
+ * `document.hidden`, so with bare rAF a pending view-state queued in a
+ * background tab stalls until the tab is foregrounded (e.g. a programmatic
+ * scrub driven while the user watches another window never progresses).
  *
  * Policy:
  *   - rAF available and the document visible → schedule via rAF, plus a
