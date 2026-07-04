@@ -54,7 +54,7 @@ Each Gaussian splat is parameterized by:
 
 | Field | Shape | Dtype | Semantic Type | Description |
 |-------|-------|-------|---------------|-------------|
-| `centers` | (N, d) | float32 | COORDINATE | Splat center positions (not broadcastable) |
+| `centers` | (N, d) | uint16 / float32 | COORDINATE | Splat center positions (not broadcastable). AUTO/MEMORY: uint16 per-axis fixed-point (`linear_perchannel_u16`), decoded to float32; PRECISION / large-extent: float32 |
 | `amplitudes` | (N,) or (1,) | float32 | POSITIVE_SCALAR | Non-negative intensity |
 | `cholesky_factors_diag` | (N, d) or (1, d) | uint8/uint16/float32 | CHOLESKY_DIAG | Diagonal of L (positive, scale-like) |
 | `cholesky_factors_offdiag` | (N, d*(d-1)/2) or (1, …) | uint8/uint16/float32 | CHOLESKY_OFFDIAG | Strictly-lower elements of L (signed); absent when d=1 |
@@ -525,13 +525,17 @@ Quantization is handled by `luxar.encoding` based on semantic types:
 
 | Field | Semantic Type | MEMORY Mode Encoding |
 |-------|---------------|---------------------|
-| `centers` | COORDINATE | `float32` (coordinates always stay float32 for WebGL) |
+| `centers` | COORDINATE | `linear_perchannel_u16` (uint16 per-axis fixed-point) |
 | `amplitudes` | POSITIVE_SCALAR | `positive_scalar_uint8` or `log_scalar_uint8` |
 | `cholesky_factors_diag` | CHOLESKY_DIAG | `log_perchannel_u8` (per-column log) |
 | `cholesky_factors_offdiag` | CHOLESKY_OFFDIAG | `signed_log_perchannel_u8` (per-column signed-log; absent if d==1) |
 
-The Cholesky factors are stored split (diagonal + off-diagonal); bit depth follows
-the encoding mode: PRECISION→float32, AUTO→uint16 (near-lossless), MEMORY→uint8.
+**Centers** are uint16 per-axis fixed-point (`linear_perchannel_u16`) in AUTO and
+MEMORY — each axis quantized over its own [min, max] to 65536 levels, decoded back to
+float32 (visually lossless, sub-unit, ~2× smaller). float16 is NOT used (relative
+precision is a footgun for absolute positions); a per-axis extent ≥ 2¹⁶ falls back to
+float32. **Cholesky factors** are stored split (diagonal + off-diagonal); bit depth
+follows the mode: PRECISION→float32, AUTO→uint16 (near-lossless), MEMORY→uint8.
 
 **Log-scale amplitudes**: For high dynamic range (HDR) amplitudes, use log encoding:
 ```python

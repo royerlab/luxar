@@ -34,7 +34,41 @@ function quantSignedLog(values: number[][], bits: number) {
   return { u, lo, hi };
 }
 
+function quantLinear(values: number[][], bits: number) {
+  const cols = values[0].length;
+  const levels = (1 << bits) - 1;
+  const lo = Array.from({ length: cols }, (_, c) => Math.min(...values.map((r) => r[c])));
+  const hi = Array.from({ length: cols }, (_, c) => Math.max(...values.map((r) => r[c])));
+  const u = values.map((row) =>
+    row.map((v, c) => Math.round(((v - lo[c]) / Math.max(hi[c] - lo[c], 1e-30)) * levels))
+  );
+  return { u, lo, hi };
+}
+
 describe('makePerChannelDequant', () => {
+  it('linear: round-trips a signed per-axis coordinate array (uint16), sub-unit', () => {
+    // COORDINATE positions: identity transform, per-axis fixed-point, negatives OK.
+    const vals = [
+      [-1200.5, 3.0, 1990.25],
+      [400.0, -50.0, 0.0],
+      [-3.0, 1800.0, 42.5],
+      [393.9, 119.0, 37.0],
+    ];
+    const { u, lo, hi } = quantLinear(vals, 16);
+    const deq = ArrayDecoder.makePerChannelDequant(
+      { name: 'linear_perchannel_u16', bits: 16, col_lo: lo, col_hi: hi },
+      3
+    );
+    for (let i = 0; i < vals.length; i++) {
+      for (let c = 0; c < 3; c++) {
+        const got = deq(u[i][c], c);
+        const extent = hi[c] - lo[c];
+        expect(Math.abs(got - vals[i][c])).toBeLessThan(extent / 65535 + 1e-6); // sub-unit
+        if (Math.abs(vals[i][c]) > 1) expect(Math.sign(got)).toBe(Math.sign(vals[i][c]));
+      }
+    }
+  });
+
   it('log: round-trips a positive per-channel array (uint8)', () => {
     const vals = [
       [0.5, 12.0],
@@ -139,16 +173,21 @@ describe('makePerChannelDequant', () => {
     }
   });
 
-  it('classifies the four per-channel encodings as known but not global-quantized', () => {
+  it('classifies all six per-channel encodings as known, self-decoded, not global-quantized', () => {
     for (const n of [
       'log_perchannel_u8',
       'log_perchannel_u16',
       'signed_log_perchannel_u8',
       'signed_log_perchannel_u16',
+      'linear_perchannel_u8',
+      'linear_perchannel_u16',
     ]) {
       expect(ArrayDecoder.isPerChannelQuantEncodingName(n)).toBe(true);
       expect(ArrayDecoder.isKnownEncodingName(n)).toBe(true);
       expect(ArrayDecoder.isQuantizedEncodingName(n)).toBe(false); // not the global path
+      // isEncoded=true → the RangeLoader fully decodes them to float32 (consumers
+      // never dequant themselves), and points allocates a Float32 output buffer.
+      expect(ArrayDecoder.isEncoded({ encoding: { name: n } })).toBe(true);
     }
   });
 });

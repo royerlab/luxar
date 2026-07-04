@@ -80,8 +80,8 @@ class TestBasicRoundTrip:
         np.testing.assert_allclose(
             loaded_sorted,
             original_sorted,
-            rtol=1e-6,
-            atol=1e-6,
+            rtol=1e-4,
+            atol=2e-3,  # positions are uint16 fixed-point under AUTO (~extent/65535)
             err_msg="Position values differ after round-trip",
         )
 
@@ -114,20 +114,23 @@ class TestBasicRoundTrip:
         assert data["colors"].shape == colors.shape
         assert data["colors"].dtype == np.float32
 
-        # Verify actual values survive round-trip (sort to handle spatial reordering)
-        sort_idx_orig = np.lexsort(positions.T)
-        sort_idx_load = np.lexsort(data["positions"].T)
-        np.testing.assert_allclose(
-            data["positions"][sort_idx_load],
-            positions[sort_idx_orig],
-            rtol=1e-6,
-            atol=1e-6,
-            err_msg="Position values differ after round-trip",
+        # Verify values survive round-trip. Positions may be spatially reordered
+        # (Morton/Hilbert) AND are uint16 fixed-point under AUTO, so lexsort is
+        # unstable (quantization can flip near-tied points). Match each loaded
+        # point to its nearest original — order- and quantization-robust — then
+        # use that mapping to check colors too.
+        d = np.linalg.norm(
+            data["positions"][:, None, :] - positions[None, :, :], axis=2
         )
+        match = d.argmin(axis=1)
+        assert (
+            d[np.arange(len(match)), match].max() < 2e-3
+        ), "Position values differ after round-trip"
+        assert len(set(match.tolist())) == len(match), "non-unique NN match"
         # SDR colors go through uint8 quantization: allow ~1/255 error per channel
         np.testing.assert_allclose(
-            data["colors"][sort_idx_load],
-            colors[sort_idx_orig],
+            data["colors"],
+            colors[match],
             atol=2.0 / 255,
             err_msg="Color values differ beyond uint8 quantization tolerance",
         )
@@ -167,8 +170,8 @@ class TestBasicRoundTrip:
         np.testing.assert_allclose(
             data["positions"][sort_idx_load],
             positions[sort_idx_orig],
-            rtol=1e-6,
-            atol=1e-6,
+            rtol=1e-4,
+            atol=2e-3,  # positions are uint16 fixed-point under AUTO (~extent/65535)
             err_msg="Position values differ after round-trip",
         )
         np.testing.assert_allclose(
@@ -308,8 +311,8 @@ class TestSceneDimensions:
         np.testing.assert_allclose(
             data["positions"][sort_load],
             positions[sort_orig],
-            rtol=1e-6,
-            atol=1e-6,
+            rtol=1e-4,
+            atol=2e-3,  # positions are uint16 fixed-point under AUTO
             err_msg="5D position values differ after round-trip",
         )
 
@@ -350,8 +353,8 @@ class TestSceneDimensions:
         np.testing.assert_allclose(
             data["positions"][sort_load],
             positions[sort_orig],
-            rtol=1e-6,
-            atol=1e-6,
+            rtol=1e-4,
+            atol=2e-3,  # positions are uint16 fixed-point under AUTO
             err_msg="4D position values differ after round-trip",
         )
 

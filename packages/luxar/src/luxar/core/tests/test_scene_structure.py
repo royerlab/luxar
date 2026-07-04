@@ -24,7 +24,9 @@ def test_random_demo_roundtrip(tmp_path) -> None:
     # ---- datasets / metadata
     pos = grp["positions"]
     assert pos.shape == (n, 3)
-    assert pos.dtype == np.float32
+    # AUTO stores positions as uint16 per-axis fixed-point (linear_perchannel_u16),
+    # decoded to float32 on load; PRECISION / large-extent stays float32.
+    assert pos.dtype in (np.uint16, np.float32)
     # Chunk size is determined by spatial ordering system or defaults to min(n, 32_768)
     # With spatial ordering enabled, chunk size may be smaller for better query performance
     assert pos.chunks[0] > 0

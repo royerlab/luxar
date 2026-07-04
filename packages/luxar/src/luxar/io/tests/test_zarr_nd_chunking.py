@@ -5,6 +5,12 @@ import zarr
 
 from luxar import Dimensions, LuxarZarrCompiler
 from luxar.typing_utils.constants import MAX_CHUNK_BYTES, MIN_CHUNK_BYTES
+from luxar.encoding import ArrayDecoder
+
+
+def _atol(a):
+    # AUTO positions are uint16 per-axis fixed-point (~extent/65535).
+    return float(np.ptp(a, axis=0).max()) / 65535 * 2
 
 
 class TestZarrNDChunking:
@@ -51,8 +57,8 @@ class TestZarrNDChunking:
         assert positions_array.chunks[0] <= 1000000  # Reasonable chunk size for points
 
         # Verify data integrity
-        loaded_positions = positions_array[:]
-        np.testing.assert_array_almost_equal(loaded_positions, positions)
+        loaded_positions = ArrayDecoder().decode(positions_array, root)
+        np.testing.assert_allclose(loaded_positions, positions, atol=_atol(positions))
 
     def test_nd_generic_handling(self, tmp_path) -> None:
         """Test that the system handles arbitrary nD data generically."""
@@ -70,10 +76,10 @@ class TestZarrNDChunking:
 
         # Verify it saved correctly
         root = zarr.open_group(store, "r")
-        loaded_positions = root["Points5D"]["positions"][:]
+        loaded_positions = ArrayDecoder().decode(root["Points5D"]["positions"], root)
 
         assert loaded_positions.shape == (n_points, 5)
-        np.testing.assert_array_almost_equal(loaded_positions, positions_5d)
+        np.testing.assert_allclose(loaded_positions, positions_5d, atol=_atol(positions_5d))
 
     def test_chunk_boundary_alignment(self, tmp_path) -> None:
         """Test that chunking aligns well with typical access patterns."""
@@ -133,7 +139,11 @@ class TestZarrNDChunking:
         single_slice = positions_array[slice_50_start:slice_50_end]
 
         assert single_slice.shape == (points_per_slice, 4)
-        assert np.all(single_slice[:, 3] == 50)  # All points have slice index 50
+        # positions are uint16 fixed-point (AUTO); decode axis-3 to check the slice index
+        enc = dict(positions_array.attrs["encoding"])
+        lo3, hi3 = enc["col_lo"][3], enc["col_hi"][3]
+        decoded_ax3 = lo3 + single_slice[:, 3].astype(np.float64) / 65535 * (hi3 - lo3)
+        np.testing.assert_allclose(decoded_ax3, 50, atol=0.01)
 
     def test_no_hardcoded_dimensions(self, tmp_path) -> None:
         """Ensure the system doesn't assume specific dimension meanings."""
@@ -153,10 +163,10 @@ class TestZarrNDChunking:
 
             # Verify it loads correctly
             root = zarr.open_group(dim_store, "r")
-            loaded = root["Points"]["positions"][:]
+            loaded = ArrayDecoder().decode(root["Points"]["positions"], root)
 
             assert loaded.shape == (n_points, n_dims)
-            np.testing.assert_array_almost_equal(loaded, positions)
+            np.testing.assert_allclose(loaded, positions, atol=_atol(positions))
 
     def test_optimal_chunk_cache_interaction(self, tmp_path) -> None:
         """Test that chunk sizes work well with typical cache sizes."""
@@ -216,7 +226,7 @@ class TestZarrNDChunking:
         assert positions_array.shape[0] == len(active_timesteps) * points_per_active
 
         # Check that we can query specific timesteps efficiently
-        loaded = positions_array[:]
+        loaded = ArrayDecoder().decode(positions_array, root)
         for i, t in enumerate(active_timesteps):
-            slice_data = loaded[loaded[:, 3] == t]
+            slice_data = loaded[np.isclose(loaded[:, 3], t, atol=0.01)]
             assert len(slice_data) == points_per_active

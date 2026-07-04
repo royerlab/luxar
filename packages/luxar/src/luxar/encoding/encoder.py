@@ -7,6 +7,7 @@ The encoder follows a strict priority order:
 4. Dtype Encoding (based on semantic type and mode)
 """
 
+import warnings
 from typing import Any, Literal, Optional, Union
 
 import numpy as np
@@ -779,37 +780,79 @@ class ArrayEncoder:
         chunks: Optional[tuple] = None,
         compressor: Optional[Any] = None,
     ) -> None:
-        """Encode COORDINATE semantic type.
+        """Encode COORDINATE semantic type (positions / centers / vertices).
+
+        ``PRECISION`` → float32 (exact). ``AUTO`` / ``MEMORY`` → **uint16 per-axis
+        fixed-point** (the generic ``linear_perchannel_u16`` encoding): each axis is
+        quantized over its own ``[min, max]`` to 65536 uniform levels and decoded
+        back to float32 on read — visually lossless (sub-unit) and ~2× smaller than
+        float32. Coordinates never use uint8 (256 levels is far too coarse for
+        positions), so MEMORY uses u16 like AUTO.
+
+        float16 is deliberately NOT used: its *relative* precision degrades with
+        magnitude (ULP ≈ 2 at coordinate 2048), a footgun for absolute positions.
+        uint16 fixed-point is uniform absolute precision. The rail is **array-local**
+        (from the data's own per-axis extent): an extent ≥ 2¹⁶ can't resolve a unit
+        step at uint16, so AUTO/MEMORY fall back to float32; an extent > 2¹² warns
+        that sub-unit headroom is shrinking.
 
         Args:
             zarr_group: Zarr group to write to
             name: Array name
-            data: Array data
+            data: Array data (N, d)
             mode: Encoding mode
             chunks: Optional chunk shape
             compressor: Optional compressor
         """
-        target_dtype: np.dtype[Any]
-        if mode == EncodingMode.PRECISION or mode == EncodingMode.AUTO:
-            target_dtype = np.dtype("float32")
-        elif mode == EncodingMode.MEMORY:
-            # Check if float16 is allowed, fallback to float32 if not
-            if self._float16_allowed:
-                target_dtype = np.dtype("float16")
-            else:
-                target_dtype = np.dtype("float32")
-        else:
+        if mode not in (
+            EncodingMode.PRECISION,
+            EncodingMode.AUTO,
+            EncodingMode.MEMORY,
+        ):
             raise ValueError(f"Unexpected mode for COORDINATE: {mode}")
 
-        encoded_data = data.astype(target_dtype)
+        if mode == EncodingMode.PRECISION:
+            self._write_float(
+                zarr_group, name, data, np.dtype("float32"), chunks, compressor
+            )
+            return
+
+        # AUTO / MEMORY: uint16 per-axis fixed-point, with an array-local extent rail.
+        arr = np.asarray(data).astype(np.float64)
+        if arr.shape[0] > 0:
+            max_extent = float((arr.max(axis=0) - arr.min(axis=0)).max())
+            if max_extent >= 65536.0:
+                warnings.warn(
+                    f"COORDINATE '{name}': per-axis extent {max_extent:.0f} ≥ 2¹⁶; "
+                    "uint16 fixed-point cannot resolve a unit step — storing float32.",
+                    UserWarning,
+                    stacklevel=2,
+                )
+                self._write_float(
+                    zarr_group, name, data, np.dtype("float32"), chunks, compressor
+                )
+                return
+            if max_extent > 4096.0:
+                warnings.warn(
+                    f"COORDINATE '{name}': per-axis extent {max_extent:.0f} > 2¹²; "
+                    "uint16 fixed-point sub-unit headroom is shrinking "
+                    f"(step ≈ {max_extent / 65535.0:.4g}).",
+                    UserWarning,
+                    stacklevel=2,
+                )
+
+        bits = 16  # coordinates always u16 (never u8) for both AUTO and MEMORY
+        u, lo, hi = self._quantize_per_column(arr, bits)
         zarr_group.create_dataset(
-            name,
-            data=encoded_data,
-            chunks=chunks,
-            compressor=compressor,
-            overwrite=True,
+            name, data=u, chunks=chunks, compressor=compressor, overwrite=True
         )
-        zarr_group[name].attrs["encoding"] = {"name": target_dtype.name}
+        zarr_group[name].attrs["encoding"] = {
+            "name": f"linear_perchannel_u{bits}",
+            "col_lo": lo,
+            "col_hi": hi,
+            "bits": bits,
+            "original_dtype": str(data.dtype),
+        }
 
     def _encode_color(
         self,

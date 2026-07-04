@@ -10,7 +10,7 @@ import numpy as np
 import pytest
 import zarr
 
-from luxar.encoding import ArrayEncoder, EncodingMode, SemanticType
+from luxar.encoding import ArrayDecoder, ArrayEncoder, EncodingMode, SemanticType
 
 
 class TestBroadcasting:
@@ -254,47 +254,65 @@ class TestArrayReferences:
 
 
 class TestCoordinateEncoding:
-    """Test COORDINATE semantic type encoding."""
+    """Test COORDINATE semantic type encoding.
 
-    def test_coordinate_auto_mode(self):
-        """Test coordinates use float32 in AUTO mode."""
+    PRECISION → float32 (exact); AUTO / MEMORY → uint16 per-axis fixed-point
+    (``linear_perchannel_u16``), decoded back to float32. Coordinates never use
+    uint8 (too coarse) and never float16 (relative precision is a footgun).
+    """
+
+    def test_coordinate_precision_mode(self):
+        """PRECISION keeps coordinates float32, bit-exact."""
         data = np.random.randn(1000, 3).astype(np.float32)
-
         with tempfile.TemporaryDirectory() as tmpdir:
             group = zarr.open_group(str(tmpdir), mode="w")
-            encoder = ArrayEncoder()
-            encoder.encode(data, group, "test", SemanticType.COORDINATE)
-
+            ArrayEncoder().encode(
+                data, group, "test", SemanticType.COORDINATE, mode=EncodingMode.PRECISION
+            )
             arr = group["test"]
             assert arr.dtype == np.float32
+            assert group["test"].attrs["encoding"]["name"] == "float32"
+            np.testing.assert_array_equal(ArrayDecoder().decode(arr, group), data)
+
+    def test_coordinate_auto_mode(self):
+        """AUTO stores coordinates as uint16 per-axis fixed-point, decoded to float32."""
+        data = np.random.randn(1000, 3).astype(np.float32)
+        with tempfile.TemporaryDirectory() as tmpdir:
+            group = zarr.open_group(str(tmpdir), mode="w")
+            ArrayEncoder().encode(data, group, "test", SemanticType.COORDINATE)
+            arr = group["test"]
+            assert arr.dtype == np.uint16
+            assert group["test"].attrs["encoding"]["name"] == "linear_perchannel_u16"
+            decoded = ArrayDecoder().decode(arr, group)
+            assert decoded.dtype == np.float32  # always decodes to float32
+            # sub-unit: error <= per-axis extent / 65535
+            extent = float((data.max(0) - data.min(0)).max())
+            assert np.abs(decoded - data).max() < extent / 65535 * 2
 
     def test_coordinate_memory_mode(self):
-        """Test coordinates use float32 in MEMORY mode by default (TypeScript compatibility)."""
+        """MEMORY also uses uint16 (coordinates never use uint8 — 256 levels too coarse)."""
         data = np.random.randn(1000, 3).astype(np.float32)
-
         with tempfile.TemporaryDirectory() as tmpdir:
             group = zarr.open_group(str(tmpdir), mode="w")
-            encoder = ArrayEncoder()  # float16_allowed=False by default
-            encoder.encode(
+            ArrayEncoder().encode(
                 data, group, "test", SemanticType.COORDINATE, mode=EncodingMode.MEMORY
             )
-
             arr = group["test"]
-            assert arr.dtype == np.float32  # Default is float32 (not float16)
+            assert arr.dtype == np.uint16
+            assert group["test"].attrs["encoding"]["name"] == "linear_perchannel_u16"
 
-    def test_coordinate_memory_mode_float16_enabled(self):
-        """Test coordinates use float16 in MEMORY mode when explicitly enabled."""
+    def test_coordinate_never_float16(self):
+        """float16_allowed does NOT apply to coordinates — they use uint16 fixed-point
+        (float16's relative precision is a footgun for absolute positions)."""
         data = np.random.randn(1000, 3).astype(np.float32)
-
         with tempfile.TemporaryDirectory() as tmpdir:
             group = zarr.open_group(str(tmpdir), mode="w")
-            encoder = ArrayEncoder(float16_allowed=True)  # Explicitly enable float16
-            encoder.encode(
+            ArrayEncoder(float16_allowed=True).encode(
                 data, group, "test", SemanticType.COORDINATE, mode=EncodingMode.MEMORY
             )
-
             arr = group["test"]
-            assert arr.dtype == np.float16
+            assert arr.dtype == np.uint16  # NOT float16
+            assert group["test"].attrs["encoding"]["name"] == "linear_perchannel_u16"
 
 
 class TestPositiveScalarEncoding:

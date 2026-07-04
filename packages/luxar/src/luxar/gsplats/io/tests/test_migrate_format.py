@@ -571,8 +571,15 @@ class TestMigrateFormat:
         out = tmp_path / "out.gsplats.zarr"
         migrate_format(legacy, out)
         data = load_gsplats(out)
-        np.testing.assert_array_equal(data.additive_sublods[0].centers, src_centers_0)
-        np.testing.assert_array_equal(data.additive_sublods[1].centers, src_centers_1)
+        # Centers migrate through AUTO (uint16 per-axis fixed-point) — near-lossless.
+        np.testing.assert_allclose(
+            data.additive_sublods[0].centers, src_centers_0,
+            atol=float(np.ptp(src_centers_0, axis=0).max()) / 65535 * 2,
+        )
+        np.testing.assert_allclose(
+            data.additive_sublods[1].centers, src_centers_1,
+            atol=float(np.ptp(src_centers_1, axis=0).max()) / 65535 * 2,
+        )
 
     # [P5][P1] boundary: v1.0 with the smallest non-degenerate splat count (1)
     def test_migrate_v1_0_single_splat_roundtrip(self, tmp_path: Path) -> None:
@@ -606,7 +613,7 @@ class TestMigrateFormat:
 
     # [P1][P8] full numeric roundtrip for v1.0 (parallels v1.1 test above)
     def test_migrate_v1_0_numerical_equivalence(self, tmp_path: Path) -> None:
-        """v1.0 centers survive migration bit-identically; amplitudes and
+        """v1.0 centers survive migration within uint16 fixed-point tolerance; amplitudes and
         cholesky factors survive within their respective quantization
         tolerances (the v2.0 saver applies log/scalar quantization to
         amplitudes and cholesky factors)."""
@@ -621,8 +628,11 @@ class TestMigrateFormat:
         migrate_format(legacy, out)
         data = load_gsplats(out)
         sub = data.additive_sublods[0]
-        # Centers are stored as float32 directly — bit-identical
-        np.testing.assert_array_equal(sub.centers, src_centers)
+        # Centers migrate through AUTO (uint16 per-axis fixed-point) — near-lossless.
+        np.testing.assert_allclose(
+            sub.centers, src_centers,
+            atol=float(np.ptp(src_centers, axis=0).max()) / 65535 * 2,
+        )
         # Amplitudes go through log-scalar quantization — within ~1% of value
         np.testing.assert_allclose(sub.amplitudes, src_amps, rtol=1e-2)
         # Cholesky factors quantized but should remain close. The default AUTO
