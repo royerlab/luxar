@@ -47,7 +47,7 @@ function makeController(): ControllerStub {
 
 interface FolderStub {
   add: ReturnType<typeof vi.fn>;
-  close: ReturnType<typeof vi.fn>;
+  open: ReturnType<typeof vi.fn>;
   domElement: HTMLElement;
   controllers: ControllerStub[];
 }
@@ -60,7 +60,7 @@ function makeFolder(): FolderStub {
       controllers.push(c);
       return c;
     }),
-    close: vi.fn(),
+    open: vi.fn(),
     domElement: document.createElement('div'),
     controllers,
   };
@@ -135,12 +135,12 @@ describe('setupThemeControls', () => {
     expect(triggerAnimation).toHaveBeenCalled();
   });
 
-  it('closes the folder by default', () => {
+  it('opens the folder by default (shown directly in the Settings popover)', () => {
     setupThemeControls({
       gui: gui as unknown as Parameters<typeof setupThemeControls>[0]['gui'],
       triggerAnimation,
     });
-    expect(folder.close).toHaveBeenCalled();
+    expect(folder.open).toHaveBeenCalled();
   });
 
   it('sets a tooltip on the folder DOM', () => {

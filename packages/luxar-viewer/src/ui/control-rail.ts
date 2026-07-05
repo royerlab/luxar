@@ -48,6 +48,45 @@ export interface ControlRailItem {
    * is open or any toggle inside it is active.
    */
   flyout?: ControlRailToggle[];
+  /**
+   * If set, this button can open a vertical panel popover hosting rich
+   * controls (sliders/dropdowns), built lazily into a host element. Unlike a
+   * {@link flyout} (a row of toggle chips), a popover holds arbitrary content.
+   * The trigger decides how it opens relative to {@link activate}:
+   * - `'click'`: primary click opens the popover ({@link activate} unused).
+   * - `'context'`: right-click opens the popover; primary click still fires
+   *   {@link activate} (e.g. Performance: left-click toggles the readout,
+   *   right-click opens the DPR controls).
+   */
+  popover?: ControlRailPopover;
+  /**
+   * Optional per-refresh hook to sync the button's icon/label/tooltip from live
+   * state (e.g. the Navigation button reflecting the current control mode).
+   * Called on every {@link ControlRail} refresh with the button element.
+   */
+  render?: (btn: HTMLButtonElement) => void;
+  /**
+   * Optional predicate for a disabled (grayed, non-interactive) state — e.g.
+   * the Layers button when the scene has no layers. Re-evaluated on every
+   * refresh; when true the button gets the native `disabled` attribute so it
+   * can't be clicked or focused. Fire a refresh (see {@link ControlRail}
+   * event listeners) when the underlying condition changes.
+   */
+  disabled?: () => boolean;
+}
+
+/** A rich, lazily-built panel popover anchored to a {@link ControlRailItem}. */
+export interface ControlRailPopover {
+  /**
+   * Populate the popover body. Called each time the popover opens (rebuilt
+   * fresh so it always reflects live state). May return a teardown callback
+   * run when the popover closes (e.g. to clear intervals / dispose a GUI).
+   */
+  build: (host: HTMLElement) => void | (() => void);
+  /** How the popover opens: on primary click, or on right-click. */
+  trigger: 'click' | 'context';
+  /** Accessible label for the popover group (defaults to the item title). */
+  title?: string;
 }
 
 /** A compact icon toggle shown inside a {@link ControlRailItem.flyout}. */
@@ -77,8 +116,7 @@ let bodyMarkerRefs = 0;
 const BODY_MARKER_CLASS = 'luxar-has-control-rail';
 
 /** Chevron used by the collapse/expand handle (rotated via CSS when collapsed). */
-const CHEVRON_ICON =
-  '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15 6l-6 6 6 6"/></svg>';
+const CHEVRON_ICON = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15 6l-6 6 6 6"/></svg>';
 
 export class ControlRail {
   private readonly root: HTMLDivElement;
@@ -90,8 +128,18 @@ export class ControlRail {
   private refreshRaf?: number;
   private disposed = false;
   private collapsed = false;
-  /** Open flyout descriptor + its DOM, or null when none is open. */
-  private flyout?: { item: ControlRailItem; el: HTMLDivElement; btn: HTMLButtonElement };
+  /**
+   * The currently-open overlay (chip flyout OR panel popover) + its DOM, or
+   * undefined when none is open. Only one overlay is open at a time. `dispose`
+   * is the popover builder's teardown (undefined for chip flyouts).
+   */
+  private overlay?: {
+    item: ControlRailItem;
+    el: HTMLDivElement;
+    btn: HTMLButtonElement;
+    kind: 'flyout' | 'popover';
+    dispose?: () => void;
+  };
   // Pointer movement anywhere wakes the (expanded) rail so it brightens while
   // the user is active. When collapsed or in fullscreen the rail is meant to
   // stay out of the way, so it reveals on *hover* only — not on any move.
@@ -100,9 +148,14 @@ export class ControlRail {
     this.wake();
   };
   private readonly onFullscreenChange = (): void => this.syncFullscreen();
-  private readonly onDocPointerDown = (e: PointerEvent): void => this.maybeCloseFlyout(e);
+  // External state changes that must re-sync button state without a user
+  // interaction: a scene load / layer change flips the Layers disabled
+  // predicate; a control-mode switch (V key, rail cycle, or popover selector)
+  // changes the Navigation button's icon/tooltip.
+  private readonly onExternalStateChange = (): void => this.scheduleRefresh();
+  private readonly onDocPointerDown = (e: PointerEvent): void => this.maybeCloseOverlay(e);
   private readonly onDocKeyDown = (e: KeyboardEvent): void => {
-    if (e.key === 'Escape') this.closeFlyout();
+    if (e.key === 'Escape') this.closeOverlay();
     // Keyboard shortcuts (H, N, R, …) toggle panels — refresh active-state.
     this.scheduleRefresh();
   };
@@ -164,6 +217,23 @@ export class ControlRail {
       }
     });
 
+    // Suppress the native browser context menu anywhere on the rail (buttons,
+    // separators, background, flyout, popover) — right-click is our own
+    // affordance, and a leaked browser menu over the rail looks broken. For a
+    // button that owns a 'context'-trigger popover, open it instead. Delegated
+    // here (not per-button) so EVERY right-click on the rail is captured.
+    this.root.addEventListener('contextmenu', (e) => {
+      e.preventDefault();
+      const btnEl = (e.target as HTMLElement | null)?.closest<HTMLButtonElement>(
+        '.luxar-control-rail__btn'
+      );
+      const item = btnEl ? this.items.find((it) => it.id === btnEl.dataset.railId) : undefined;
+      if (item?.popover?.trigger === 'context' && !btnEl?.disabled) {
+        this.dismissHint();
+        this.togglePopover(item, btnEl!);
+      }
+    });
+
     this.container.appendChild(this.root);
 
     // Restore persisted collapsed state.
@@ -193,6 +263,11 @@ export class ControlRail {
     document.addEventListener('keydown', this.onDocKeyDown);
     // Refresh active-state on interactions that can toggle a panel (see onDoc*).
     document.addEventListener('click', this.onDocClick);
+    // Refresh on external state changes that don't originate from a click:
+    // layer population (Layers disabled state) and control-mode switches
+    // (Navigation icon/tooltip).
+    window.addEventListener('luxar-layers-changed', this.onExternalStateChange);
+    window.addEventListener('luxar-control-mode-changed', this.onExternalStateChange);
     this.syncFullscreen();
     this.scheduleSleep();
 
@@ -230,7 +305,7 @@ export class ControlRail {
   /** Collapse to just the handle, or expand back to the full rail. */
   setCollapsed(collapsed: boolean, persist = true): void {
     this.collapsed = collapsed;
-    if (collapsed) this.closeFlyout();
+    if (collapsed) this.closeOverlay();
     this.root.classList.toggle('is-collapsed', collapsed);
     const handle = this.root.querySelector<HTMLButtonElement>('.luxar-control-rail__collapse');
     if (handle) {
@@ -256,8 +331,8 @@ export class ControlRail {
     btn.dataset.railId = item.id;
     const label = item.shortcut ? `${item.title} (${item.shortcut})` : item.title;
     btn.setAttribute('aria-label', label);
-    if (item.flyout) {
-      // The button opens a popover group of toggles; advertise + track it.
+    if (item.flyout || item.popover) {
+      // The button opens a popover (chip group or panel); advertise + track it.
       btn.setAttribute('aria-haspopup', 'true');
       btn.setAttribute('aria-expanded', 'false');
     }
@@ -277,6 +352,12 @@ export class ControlRail {
         this.toggleFlyout(item, btn);
         return;
       }
+      // A 'click'-trigger popover opens on primary click; a 'context'-trigger
+      // popover leaves primary click for activate() (opens on right-click).
+      if (item.popover?.trigger === 'click') {
+        this.togglePopover(item, btn);
+        return;
+      }
       try {
         item.activate();
       } catch {
@@ -284,6 +365,13 @@ export class ControlRail {
       }
       // Active-state refresh is handled by the document-click listener.
     });
+
+    // Right-click handling is delegated on the rail root (see constructor) so
+    // the native browser menu is suppressed across the WHOLE rail, not just on
+    // the two buttons that open a context popover.
+
+    // Reflect initial dynamic icon/label state (e.g. Navigation mode).
+    item.render?.(btn);
 
     this.buttons.set(item.id, btn);
     return btn;
@@ -328,18 +416,33 @@ export class ControlRail {
   private refresh(): void {
     if (this.disposed) return;
     for (const item of this.items) {
-      if (item.momentary) continue;
       const btn = this.buttons.get(item.id);
       if (!btn) continue;
+      // Sync any dynamic icon/label (e.g. Navigation mode) before active-state.
+      item.render?.(btn);
+      // Disabled state (e.g. Layers with no layers): native `disabled` so the
+      // button is grayed, unfocusable, and can't be clicked.
+      if (item.disabled) {
+        const isDisabled = item.disabled();
+        btn.disabled = isDisabled;
+        if (isDisabled) {
+          // A disabled control shouldn't also read as active/open.
+          btn.classList.remove('is-active');
+          continue;
+        }
+      }
+      if (item.momentary) continue;
       if (item.flyout) {
         // A flyout button is "active" when its popover is open or any of its
         // toggles are on; also refresh each chip's own state.
         const anyOn = item.flyout.some((t) => this.isToggleActive(t));
-        btn.classList.toggle('is-active', anyOn || this.flyout?.item === item);
+        btn.classList.toggle('is-active', anyOn || this.overlay?.item === item);
         this.refreshFlyoutChips(item);
         continue;
       }
-      btn.classList.toggle('is-active', this.isItemActive(item));
+      // A panel-popover button is active when its own isActive() is true (e.g.
+      // Performance readout visible) or its popover is currently open.
+      btn.classList.toggle('is-active', this.isItemActive(item) || this.overlay?.item === item);
     }
   }
 
@@ -366,9 +469,9 @@ export class ControlRail {
   }
 
   private refreshFlyoutChips(item: ControlRailItem): void {
-    if (this.flyout?.item !== item) return;
+    if (this.overlay?.item !== item || this.overlay.kind !== 'flyout') return;
     for (const t of item.flyout ?? []) {
-      const chip = this.flyout.el.querySelector<HTMLButtonElement>(`[data-toggle-id="${t.id}"]`);
+      const chip = this.overlay.el.querySelector<HTMLButtonElement>(`[data-toggle-id="${t.id}"]`);
       if (!chip) continue;
       const on = this.isToggleActive(t);
       chip.classList.toggle('is-active', on);
@@ -377,15 +480,15 @@ export class ControlRail {
   }
 
   private toggleFlyout(item: ControlRailItem, btn: HTMLButtonElement): void {
-    if (this.flyout?.item === item) {
-      this.closeFlyout();
+    if (this.overlay?.item === item) {
+      this.closeOverlay();
     } else {
       this.openFlyout(item, btn);
     }
   }
 
   private openFlyout(item: ControlRailItem, btn: HTMLButtonElement): void {
-    this.closeFlyout();
+    this.closeOverlay();
     const el = document.createElement('div');
     el.className = 'luxar-control-rail__flyout luxar-glass-surface';
     el.setAttribute('role', 'group');
@@ -431,30 +534,100 @@ export class ControlRail {
       el.classList.add('luxar-control-rail__flyout--up');
     }
     btn.setAttribute('aria-expanded', 'true');
-    this.flyout = { item, el, btn };
+    this.overlay = { item, el, btn, kind: 'flyout' };
     this.refresh();
     this.wake();
   }
 
-  private closeFlyout(): void {
-    if (!this.flyout) return;
-    const { btn, el } = this.flyout;
+  private togglePopover(item: ControlRailItem, btn: HTMLButtonElement): void {
+    if (this.overlay?.item === item) {
+      this.closeOverlay();
+    } else {
+      this.openPopover(item, btn);
+    }
+  }
+
+  /**
+   * Open a vertical panel popover anchored to `btn`, hosting the rich controls
+   * built by {@link ControlRailPopover.build}. Mirrors the flyout's glass
+   * surface + real-child arrow, but flows content vertically and vertically
+   * clamps within the viewport (popovers can be tall).
+   */
+  private openPopover(item: ControlRailItem, btn: HTMLButtonElement): void {
+    this.closeOverlay();
+    const popover = item.popover;
+    if (!popover) return;
+
+    const el = document.createElement('div');
+    el.className = 'luxar-control-rail__popover luxar-glass-surface';
+    el.setAttribute('role', 'group');
+    el.setAttribute('aria-label', `${popover.title ?? item.title}`);
+    // Arrow as a real child (not ::before) — the glass themes claim
+    // .luxar-glass-surface::before/::after (see openFlyout).
+    const arrow = document.createElement('span');
+    arrow.className = 'luxar-control-rail__popover-arrow';
+    arrow.setAttribute('aria-hidden', 'true');
+    el.appendChild(arrow);
+
+    const body = document.createElement('div');
+    body.className = 'luxar-control-rail__popover-body';
+    el.appendChild(body);
+
+    this.root.appendChild(el);
+
+    // Build the content; capture any teardown for closeOverlay().
+    let dispose: (() => void) | undefined;
+    try {
+      const teardown = popover.build(body);
+      if (typeof teardown === 'function') dispose = teardown;
+    } catch {
+      /* a popover builder throwing must not break the rail */
+    }
+
+    // Anchor near the button, then clamp inside the viewport (measured after
+    // content is built so the height is real). Prefer aligning the popover top
+    // with the button; if it would overflow the bottom, shift it up.
+    el.style.top = `${btn.offsetTop}px`;
+    const rect = el.getBoundingClientRect();
+    const margin = 8;
+    if (rect.bottom > window.innerHeight - margin) {
+      const shift = rect.bottom - (window.innerHeight - margin);
+      el.style.top = `${Math.max(margin, btn.offsetTop - shift)}px`;
+    }
+    // Keep the arrow pointing at the button even after a vertical shift.
+    const arrowTop = btn.offsetTop + btn.offsetHeight / 2 - el.offsetTop;
+    arrow.style.top = `${arrowTop}px`;
+
+    btn.setAttribute('aria-expanded', 'true');
+    this.overlay = { item, el, btn, kind: 'popover', dispose };
+    this.refresh();
+    this.wake();
+  }
+
+  private closeOverlay(): void {
+    if (!this.overlay) return;
+    const { btn, el, dispose } = this.overlay;
     btn.setAttribute('aria-expanded', 'false');
-    // If keyboard focus is inside the flyout (e.g. closing via Escape while a
-    // chip is focused), return it to the opener instead of dropping it to
-    // <body> — otherwise the user loses their place in the tab order.
+    // If keyboard focus is inside the overlay (e.g. closing via Escape while a
+    // chip/control is focused), return it to the opener instead of dropping it
+    // to <body> — otherwise the user loses their place in the tab order.
     const focusWasInside = el.contains(document.activeElement);
+    try {
+      dispose?.();
+    } catch {
+      /* teardown errors must not leave the overlay half-open */
+    }
     el.remove();
-    this.flyout = undefined;
+    this.overlay = undefined;
     if (focusWasInside) btn.focus();
     this.refresh();
   }
 
-  private maybeCloseFlyout(e: PointerEvent): void {
-    if (!this.flyout) return;
+  private maybeCloseOverlay(e: PointerEvent): void {
+    if (!this.overlay) return;
     const target = e.target as Node | null;
-    if (this.flyout.el.contains(target) || this.flyout.btn.contains(target)) return;
-    this.closeFlyout();
+    if (this.overlay.el.contains(target) || this.overlay.btn.contains(target)) return;
+    this.closeOverlay();
   }
 
   private maybeShowHint(): void {
@@ -497,13 +670,15 @@ export class ControlRail {
     this.disposed = true;
     if (this.idleTimer) window.clearTimeout(this.idleTimer);
     if (this.refreshRaf !== undefined) cancelAnimationFrame(this.refreshRaf);
-    this.closeFlyout();
+    this.closeOverlay();
     this.container.removeEventListener('pointermove', this.onContainerMove);
     document.removeEventListener('fullscreenchange', this.onFullscreenChange);
     document.removeEventListener('webkitfullscreenchange', this.onFullscreenChange);
     document.removeEventListener('pointerdown', this.onDocPointerDown, true);
     document.removeEventListener('keydown', this.onDocKeyDown);
     document.removeEventListener('click', this.onDocClick);
+    window.removeEventListener('luxar-layers-changed', this.onExternalStateChange);
+    window.removeEventListener('luxar-control-mode-changed', this.onExternalStateChange);
     bodyMarkerRefs = Math.max(0, bodyMarkerRefs - 1);
     if (bodyMarkerRefs === 0) document.body.classList.remove(BODY_MARKER_CLASS);
     this.hint?.remove();
@@ -541,8 +716,7 @@ export const RAIL_ICONS: Record<string, string> = {
     '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3l9 5-9 5-9-5 9-5z"/><path d="M3 13l9 5 9-5"/></svg>',
   perf: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 18a8 8 0 0 1 16 0"/><line x1="12" y1="18" x2="16" y2="11"/></svg>',
   data: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h5l2 2h9v9a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V7z"/></svg>',
-  monitor:
-    '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 12h4l2 6 4-13 2 7h6"/></svg>',
+  monitor: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 12h4l2 6 4-13 2 7h6"/></svg>',
   recording:
     '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="6" width="13" height="12" rx="2"/><path d="M16 10l5-3v10l-5-3z"/></svg>',
   screenshot:
@@ -557,4 +731,17 @@ export const RAIL_ICONS: Record<string, string> = {
     '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="4" width="12" height="12" rx="1"/><rect x="9" y="9" width="11" height="11" rx="1"/></svg>',
   cinematic:
     '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 20l7-7"/><path d="M15 3l1.2 3.3L19.5 7.5l-3.3 1.2L15 12l-1.2-3.3L10.5 7.5l3.3-1.2z"/></svg>',
+  // Navigation modes — the rail button swaps between these to mirror the live
+  // camera control type (orbit / fly / ortho). Same 24×24 / currentColor style.
+  navOrbit:
+    '<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3.2"/><ellipse cx="12" cy="12" rx="10" ry="4.2"/></svg>',
+  navFly:
+    '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 11l18-7-7 18-2.5-8L3 11z"/></svg>',
+  // Ortho: a 2×2 quadrant grid — the classic orthographic multi-view glyph.
+  // Deliberately NOT a cube (which would collide with the dimensions icon).
+  navOrtho:
+    '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="4" width="6.5" height="6.5" rx="1"/><rect x="13.5" y="4" width="6.5" height="6.5" rx="1"/><rect x="4" y="13.5" width="6.5" height="6.5" rx="1"/><rect x="13.5" y="13.5" width="6.5" height="6.5" rx="1"/></svg>',
+  // Settings (gear) — houses theme + other viewer-wide preferences.
+  settings:
+    '<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>',
 };

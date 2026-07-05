@@ -62,8 +62,10 @@ import type {
 import { isTypingInInput, isFocusOnSceneCanvas } from './input-handler/commands/focus-utils';
 import {
   toggleControlMode,
+  setControlMode,
   toggleInertialMode,
   type ControlModeCtx,
+  type ControlType,
 } from './input-handler/commands/control-mode';
 import {
   clearDimensionUI,
@@ -564,6 +566,7 @@ export class InputHandler {
       togglePerformanceStats: () => this.togglePerformanceStats(),
       toggleRenderingControls: () => this.toggleRenderingControls(),
       toggleControlMode: () => this.toggleControlMode(),
+      setControlMode: (type) => this.setControlMode(type),
       toggleInertialMode: () => this.toggleInertialMode(),
       toggleCinematicMode: () => this.toggleCinematicMode(),
       toggleFullscreen: () => this.toggleFullscreen(),
@@ -773,6 +776,17 @@ export class InputHandler {
    */
   private toggleControlMode(): void {
     toggleControlMode(this.makeControlModeCtx());
+  }
+
+  /**
+   * Switch directly to a specific camera control mode (orbit / fly / ortho).
+   * Triggered by the control rail's Navigation popover mode selector; reuses
+   * the same context/sync wiring as the V-key cycle.
+   *
+   * @private
+   */
+  private setControlMode(type: ControlType): void {
+    setControlMode(this.makeControlModeCtx(), type);
   }
 
   /**

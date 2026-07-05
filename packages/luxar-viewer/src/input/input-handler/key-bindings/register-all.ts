@@ -39,6 +39,8 @@ export interface KeyBindingsCommands {
   togglePerformanceStats(): void;
   toggleRenderingControls(): void;
   toggleControlMode(): void;
+  /** Switch directly to a specific camera control mode (rail Navigation popover). */
+  setControlMode(type: 'orbit' | 'fly' | 'ortho'): void;
   toggleInertialMode(): void;
   toggleCinematicMode(): void;
   toggleFullscreen(): void;

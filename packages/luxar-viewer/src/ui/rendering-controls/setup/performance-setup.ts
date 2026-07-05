@@ -166,7 +166,8 @@ export function setupPerformanceControls(context: PerformanceSetupContext): Perf
     }
   }, 500);
 
-  performanceFolder.close();
+  // Open by default: the Performance rail popover shows these controls directly.
+  performanceFolder.open();
 
   return {
     adaptiveDPREnabled: adaptiveToggle,

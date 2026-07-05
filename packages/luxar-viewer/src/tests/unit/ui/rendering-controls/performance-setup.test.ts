@@ -50,7 +50,7 @@ function makeController(): ControllerStub {
 
 interface FolderStub {
   add: ReturnType<typeof vi.fn>;
-  close: ReturnType<typeof vi.fn>;
+  open: ReturnType<typeof vi.fn>;
   domElement: HTMLElement;
   controllers: ControllerStub[];
 }
@@ -70,7 +70,7 @@ function makeFolder(): FolderStub {
       controllers.push(c);
       return c;
     }),
-    close: vi.fn(),
+    open: vi.fn(),
     domElement: root,
     controllers,
   };
