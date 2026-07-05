@@ -136,6 +136,13 @@ export class AdaptiveDPRManager {
   // Coalescing clock for notifyContentChanged().
   private lastContentChangeAt: number | null = null;
 
+  // Idle-restore state: prepareIdleFrame() snaps DPR to native for the
+  // resting frame and remembers where the loop was operating so
+  // notifyResumed() can return there in ONE step instead of reactively
+  // re-walking the reduction ladder on every interaction burst.
+  private restingAtNative: boolean = false;
+  private lastOperatingDPR: number | null = null;
+
   // True after pinManualDPR(): the DPR is locked for the session
   // (`?dpr=` URL param) and setEnabled() becomes a no-op so persisted
   // per-scene settings can't silently re-enable adaptation mid-run.
@@ -230,6 +237,8 @@ export class AdaptiveDPRManager {
     this.hysteresis.clear();
     this.refreshRateEstimator.clear();
     this.fpsTracker.clear();
+    this.restingAtNative = false;
+    this.lastOperatingDPR = null;
 
     const wasTrackingNative = Math.abs(this.currentDPR - previousNative) < 0.01;
     let applied = false;
@@ -566,6 +575,8 @@ export class AdaptiveDPRManager {
       this.probeController.void_();
       this.boundsLedger.reset();
       this.fpsTracker.clear();
+      this.restingAtNative = false;
+      this.lastOperatingDPR = null;
 
       if (this.onDPRChange) {
         this.onDPRChange(nativeDPR, false);
@@ -713,6 +724,91 @@ export class AdaptiveDPRManager {
    * @param timestamp - Caller-supplied clock for tests; defaults to
    *   `performance.now()`, the same clock the frame loop feeds.
    */
+  /**
+   * Notify the manager that the animation loop stopped (idle pause,
+   * tab hide, dispose). Clears SESSION state only — the FPS window,
+   * the scale-up streak, and any in-flight probe (voided unjudged: its
+   * before/after comparison would otherwise span the pause and compare
+   * workloads minutes apart). LEARNED state (floor, backoff streak,
+   * refresh-cap estimate) survives: it is expensive evidence about
+   * this scene on this display, and wiping it here would replay a full
+   * rejected-probe episode on every interaction burst.
+   *
+   * Idempotent and safe after dispose() (stopAnimation is also called
+   * from the controller's dispose path).
+   */
+  notifyPaused(): void {
+    this.fpsTracker.clear();
+    this.hysteresis.clear();
+    this.probeController.void_();
+  }
+
+  /**
+   * Restore native DPR for the resting frame, just before the loop
+   * idle-pauses. The static image the user is about to study should be
+   * sharp — reduced DPR only ever traded quality for interaction
+   * smoothness, and there is no interaction anymore.
+   *
+   * Mutates OPERATING state only (never the floor/backoff — see
+   * notifyPaused). Remembers the operating DPR so notifyResumed() can
+   * snap straight back.
+   *
+   * @returns true when the DPR actually changed — the caller must then
+   *   render one frame, because the resize clears the canvas.
+   */
+  prepareIdleFrame(): boolean {
+    if (!this.isEnabled) return false;
+    const nativeDPR = this.syncNativeDPR();
+    if (this.currentDPR >= nativeDPR - 0.01) return false;
+
+    this.lastOperatingDPR = this.currentDPR;
+    this.currentDPR = nativeDPR;
+    this.restingAtNative = true;
+    this.isReducedResolution = false;
+    this.applyDPR();
+
+    log.info(
+      Modules.ADAPTIVE_DPR,
+      `Idle: restored native DPR ${nativeDPR.toFixed(2)} for the resting frame ` +
+        `(operating DPR ${this.lastOperatingDPR.toFixed(2)} remembered for resume)`
+    );
+
+    if (this.onDPRChange) {
+      this.onDPRChange(this.currentDPR, this.isReducedResolution);
+    }
+    return true;
+  }
+
+  /**
+   * The loop is starting again after an idle rest: snap straight back
+   * to the remembered operating DPR in ONE step (clamped to the live
+   * native). Without this, every interaction burst after an idle
+   * restore would re-discover the reduction reactively — a cascade of
+   * scale-downs, probes, and render-target reallocations.
+   */
+  notifyResumed(): void {
+    if (!this.isEnabled || !this.restingAtNative) return;
+    this.restingAtNative = false;
+
+    const nativeDPR = this.syncNativeDPR();
+    const target = Math.min(this.lastOperatingDPR ?? nativeDPR, nativeDPR);
+    this.lastOperatingDPR = null;
+    if (Math.abs(target - this.currentDPR) < 0.01) return;
+
+    this.currentDPR = target;
+    this.isReducedResolution = target < nativeDPR * 0.95;
+    this.applyDPR();
+
+    log.info(
+      Modules.ADAPTIVE_DPR,
+      `Resume: snapped back to operating DPR ${target.toFixed(2)} in one step`
+    );
+
+    if (this.onDPRChange) {
+      this.onDPRChange(this.currentDPR, this.isReducedResolution);
+    }
+  }
+
   notifyContentChanged(timestamp: number = performance.now()): void {
     if (!this.isEnabled) return;
     if (

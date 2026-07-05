@@ -379,6 +379,9 @@ export async function runInitPipeline(
   );
   recordingPanel.setAdaptiveDPRManager(adaptiveDPRManager);
   inputHandler.setRecordingPanel(recordingPanel);
+  // The idle-pause native-DPR restore must never fire mid-capture —
+  // recording resolution stays locked for the whole session.
+  animationController.setIdleRestorePredicate(() => !recordingPanel.isCurrentlyRecording());
 
   // Initialize layers panel (per-node controls)
   const layersPanel = factories.layersPanel(document.body, animationController);

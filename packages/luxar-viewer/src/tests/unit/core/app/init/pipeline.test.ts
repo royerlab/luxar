@@ -40,6 +40,7 @@ function makeSceneStub(opts: { initThrows?: boolean } = {}) {
 function makeAnimationStub() {
   return {
     setContextLostPredicate: vi.fn(),
+    setIdleRestorePredicate: vi.fn(),
     addPerFrameCallback: vi.fn(),
     setAdaptiveDPRManager: vi.fn(),
     startAnimation: vi.fn(),

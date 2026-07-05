@@ -380,6 +380,170 @@ describe('AdaptiveDPRManager — setManualDPR', () => {
   });
 });
 
+describe('AdaptiveDPRManager — pause / idle-restore / resume', () => {
+  let restore: () => void;
+  let renderer: ReturnType<typeof makeRenderer>;
+
+  beforeEach(() => {
+    restore = setNativeDPR(2.0);
+    renderer = makeRenderer();
+  });
+
+  /** Drive the manager to a reduced DPR with an armed probe (20fps). */
+  function reduceWithProbe(m: AdaptiveDPRManager): number {
+    let t = 0;
+    for (let i = 0; i < 14; i++) {
+      m.recordFrame(t);
+      t += 50;
+    }
+    expect(m.getState().probing).toBe(true);
+    return t;
+  }
+
+  it('notifyPaused clears session state but PRESERVES the learned floor and backoff', () => {
+    const m = new AdaptiveDPRManager({ gapResetMs: 60_000 });
+    try {
+      m.setRenderer(renderer);
+      // Build a REJECTED probe so a floor + backoff streak exist.
+      let t = reduceWithProbe(m);
+      for (let i = 0; i < 44; i++) {
+        m.recordFrame(t);
+        t += 50;
+      }
+      const floorBefore = m.getState().dprFloor;
+      expect(floorBefore).toBeGreaterThan(0.5);
+
+      m.notifyPaused();
+
+      const s = m.getState();
+      // Session state gone...
+      expect(s.currentFPS).toBe(0);
+      expect(s.probing).toBe(false);
+      // ...learned evidence intact. (Copying the setEnabled(false) wipe
+      // here would replay a rejected-probe blur episode on EVERY
+      // interaction burst — strictly worse than the old 30s cycle.)
+      expect(s.dprFloor).toBe(floorBefore);
+    } finally {
+      restore();
+    }
+  });
+
+  it('notifyPaused voids an in-flight probe without judging it', () => {
+    const m = new AdaptiveDPRManager();
+    try {
+      m.setRenderer(renderer);
+      const dpr = (reduceWithProbe(m), m.getCurrentDPR());
+
+      m.notifyPaused();
+      expect(m.getState().probing).toBe(false);
+      expect(m.getCurrentDPR()).toBe(dpr); // kept, not reverted
+      expect(m.getState().dprFloor).toBe(0.5); // nothing learned
+      // Idempotent + safe to repeat (dispose path calls stopAnimation).
+      m.notifyPaused();
+    } finally {
+      restore();
+    }
+  });
+
+  it('prepareIdleFrame restores native for the resting frame and remembers the operating DPR', () => {
+    const m = new AdaptiveDPRManager();
+    try {
+      m.setRenderer(renderer);
+      reduceWithProbe(m);
+      const operatingDPR = m.getCurrentDPR();
+      expect(operatingDPR).toBeLessThan(2.0);
+
+      const changed = m.prepareIdleFrame();
+      expect(changed).toBe(true); // caller must render one frame
+      expect(m.getCurrentDPR()).toBe(2.0);
+      expect(m.getIsReducedResolution()).toBe(false);
+      expect(renderer.setAdaptivePixelRatio).toHaveBeenLastCalledWith(2.0);
+
+      // Resume snaps straight back in ONE step — no reactive re-walk.
+      renderer.setAdaptivePixelRatio.mockClear();
+      m.notifyResumed();
+      expect(m.getCurrentDPR()).toBe(operatingDPR);
+      expect(renderer.setAdaptivePixelRatio).toHaveBeenCalledTimes(1);
+      expect(renderer.setAdaptivePixelRatio).toHaveBeenLastCalledWith(operatingDPR);
+    } finally {
+      restore();
+    }
+  });
+
+  it('prepareIdleFrame preserves the floor/backoff across the idle cycle', () => {
+    const m = new AdaptiveDPRManager({ gapResetMs: 60_000 });
+    try {
+      m.setRenderer(renderer);
+      let t = reduceWithProbe(m);
+      for (let i = 0; i < 44; i++) {
+        m.recordFrame(t);
+        t += 50;
+      }
+      const floorBefore = m.getState().dprFloor;
+      expect(floorBefore).toBeGreaterThan(0.5);
+
+      m.notifyPaused();
+      m.prepareIdleFrame();
+      m.notifyResumed();
+
+      expect(m.getState().dprFloor).toBe(floorBefore);
+    } finally {
+      restore();
+    }
+  });
+
+  it('prepareIdleFrame is a no-op at native DPR or when disabled', () => {
+    const m = new AdaptiveDPRManager();
+    try {
+      m.setRenderer(renderer);
+      // Already at native: nothing to restore, caller must NOT render.
+      expect(m.prepareIdleFrame()).toBe(false);
+      expect(renderer.setAdaptivePixelRatio).not.toHaveBeenCalled();
+
+      reduceWithProbe(m);
+      m.setEnabled(false); // resets to native and disables
+      renderer.setAdaptivePixelRatio.mockClear();
+      expect(m.prepareIdleFrame()).toBe(false);
+      expect(renderer.setAdaptivePixelRatio).not.toHaveBeenCalled();
+    } finally {
+      restore();
+    }
+  });
+
+  it('notifyResumed without a preceding idle restore is a no-op', () => {
+    const m = new AdaptiveDPRManager();
+    try {
+      m.setRenderer(renderer);
+      reduceWithProbe(m);
+      const dpr = m.getCurrentDPR();
+      renderer.setAdaptivePixelRatio.mockClear();
+
+      m.notifyResumed(); // no restingAtNative flag set
+      expect(m.getCurrentDPR()).toBe(dpr);
+      expect(renderer.setAdaptivePixelRatio).not.toHaveBeenCalled();
+    } finally {
+      restore();
+    }
+  });
+
+  it('resume clamps the remembered operating DPR to the live native (monitor change while idle)', () => {
+    const m = new AdaptiveDPRManager();
+    try {
+      m.setRenderer(renderer);
+      reduceWithProbe(m); // operating DPR 1.4 on native 2.0
+      expect(m.getCurrentDPR()).toBeCloseTo(1.4, 5);
+      m.prepareIdleFrame();
+
+      setNativeDPR(1.0); // display changed while resting
+      m.notifyResumed();
+      // min(remembered 1.4, live 1.0) — never supersample on resume.
+      expect(m.getCurrentDPR()).toBeLessThanOrEqual(1.0);
+    } finally {
+      restore();
+    }
+  });
+});
+
 describe('AdaptiveDPRManager — gap detection & load suppression', () => {
   let restore: () => void;
   let renderer: ReturnType<typeof makeRenderer>;
