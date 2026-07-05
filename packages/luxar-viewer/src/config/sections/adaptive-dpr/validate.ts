@@ -101,6 +101,11 @@ export function validateAdaptiveDPR(config: AppConfig, errors: string[], warning
   if (finite('ceilingTtlMs', dpr.ceilingTtlMs) && dpr.ceilingTtlMs <= 0) {
     errors.push(`adaptiveDPR.ceilingTtlMs must be > 0 (got ${dpr.ceilingTtlMs})`);
   }
+  if (finite('backoffMaxTtlMs', dpr.backoffMaxTtlMs) && dpr.backoffMaxTtlMs < dpr.ceilingTtlMs) {
+    errors.push(
+      `adaptiveDPR.backoffMaxTtlMs (${dpr.backoffMaxTtlMs}) must be >= ceilingTtlMs (${dpr.ceilingTtlMs})`
+    );
+  }
   if (
     finite('punishedAscentWindowMs', dpr.punishedAscentWindowMs) &&
     dpr.punishedAscentWindowMs <= 0

@@ -13,17 +13,25 @@
  * - Until the display proves it can beat the fallback, the cap is
  *   `max(mark, fallback)` so a session that STARTS heavy (mark stuck
  *   at the loaded FPS) still scales down against a sane 60Hz baseline.
- * - Genuine rAF throttling (30Hz low-power, background tabs) has a
- *   distinctive signature a heavy scene lacks the *persistence* of:
- *   every sample uniformly low for a sustained period. When the last
- *   `RECENT_SAMPLES` samples stay below `THROTTLE_FRACTION × cap` with
+ * - Genuine rAF throttling (30Hz low-power, background tabs) is only
+ *   inferred when the display has PROVEN a higher achievable rate
+ *   first (mark >= 80% of the fallback): a 120Hz session throttled to
+ *   30 shows every sample uniformly far below its own demonstrated
+ *   mark for a sustained period — when the last `RECENT_SAMPLES`
+ *   samples stay below `THROTTLE_FRACTION × mark` with
  *   < `UNIFORMITY_SPREAD` relative spread for `DOWNSHIFT_AFTER_MS`,
  *   the mark reseeds from them and the fallback lower bound is
- *   released — a 120→30Hz throttle re-converges instead of firing
- *   spurious scale-downs against a stale cap forever. A misclassified
- *   heavy scene merely loses scale-down until FPS varies again (the
- *   probe/backoff machinery already contains that regime), and any
- *   sample above 80% of the fallback immediately restores the bound.
+ *   released, so the throttle re-converges instead of firing spurious
+ *   scale-downs against a stale cap forever. A HEAVY scene never
+ *   proves a higher rate, so it can never be mistaken for a throttle:
+ *   without the proven-rate guard, 10s of steady 20fps would collapse
+ *   the cap to 20 and the relative thresholds would then read 20fps
+ *   as healthy — disabling scale-down and even scaling UP exactly the
+ *   scene that needs help. (A tab throttled from the very first frame
+ *   also never proves a rate; it keeps the fallback cap and its
+ *   futile scale-down probes are contained by the rejection-backoff
+ *   machinery.) Any sample above 80% of the fallback immediately
+ *   restores the bound.
  *
  * Pure and timestamp-driven; no clocks, no window, no config imports.
  */
@@ -79,10 +87,23 @@ export class RefreshRateEstimator {
       this.lowUniformSince = null;
       return;
     }
+    // A downshift below the fallback floor is only justified when the
+    // display has PROVEN a higher achievable rate. Without this guard a
+    // steady heavy scene (uniformly low FPS, low variance — exactly the
+    // signature of a GPU-bound render parked at the DPR floor) would be
+    // misclassified as a throttled display, collapsing the cap onto the
+    // loaded FPS and inverting the thresholds: scale-down disarmed and
+    // scale-up armed on the scene that most needs fewer pixels.
+    if (this.mark < this.fallback * UNTHROTTLE_FRACTION) {
+      this.lowUniformSince = null;
+      return;
+    }
     const max = Math.max(...this.recent);
     const min = Math.min(...this.recent);
+    // Compare against the PROVEN mark (not the fallback-floored cap):
+    // "uniformly far below what this display demonstrated it can do".
     const uniformLow =
-      max < THROTTLE_FRACTION * this.getCap() &&
+      max < THROTTLE_FRACTION * this.mark &&
       (max - min) / Math.max(max, 1e-6) < UNIFORMITY_SPREAD;
 
     if (!uniformLow) {

@@ -32,10 +32,20 @@ describe('RefreshRateEstimator', () => {
   it('never lets a heavy scene drag the cap below the fallback', () => {
     const est = new RefreshRateEstimator(60);
     // A session that STARTS heavy: minutes of stable 20fps. The cap must
-    // hold at the fallback so scale-down stays armed — but note stable
-    // uniform low IS the throttle signature, so this documents the
-    // trade-off: uniform low with real variation stays at fallback.
+    // hold at the fallback so scale-down stays armed.
     feed(est, 20, 8, 0, 3); // 17..23 — spread 26% > 15%, NOT uniform
+    expect(est.getCap()).toBe(60);
+  });
+
+  it('a steady heavy scene is NEVER misclassified as a throttled display (proven-rate guard)', () => {
+    const est = new RefreshRateEstimator(60);
+    // GPU-bound scene parked at the DPR floor: perfectly uniform 20fps
+    // for far longer than the 10s downshift delay. The display never
+    // proved it can beat 80% of the fallback, so the throttle detector
+    // must stay cold — otherwise the cap collapses to 20, the relative
+    // thresholds read 20fps as healthy (down 15 / up 18), scale-down is
+    // disarmed and scale-up fires on the scene that most needs help.
+    feed(est, 20, 60, 0); // 30s of uniform 20fps
     expect(est.getCap()).toBe(60);
   });
 
@@ -68,9 +78,20 @@ describe('RefreshRateEstimator', () => {
     expect(est.getCap()).toBe(118);
   });
 
-  it('a downshifted sub-fallback cap survives until a fast sample appears', () => {
+  it('a session throttled from the very first frame keeps the fallback cap (never proved a rate)', () => {
     const est = new RefreshRateEstimator(60);
-    feed(est, 30, 25, 0); // 30Hz-throttled from the start
+    feed(est, 30, 25, 0); // 30Hz-throttled from the start — mark never beat 48
+    // Without a proven higher rate the uniform-low signature is
+    // indistinguishable from a heavy scene, so no downshift: the cap
+    // holds at the fallback and the (futile) scale-down probes are
+    // contained by the rejection-backoff machinery instead.
+    expect(est.getCap()).toBe(60);
+  });
+
+  it('a downshifted sub-fallback cap survives slow samples until a fast one appears', () => {
+    const est = new RefreshRateEstimator(60);
+    feed(est, 120, 4, 0); // prove the display can do 120
+    feed(est, 30, 25, 2000); // genuine 120→30 throttle → downshift
     expect(est.getCap()).toBe(30);
 
     // Still throttled: a slightly higher-but-slow sample doesn't restore

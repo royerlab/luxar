@@ -129,6 +129,41 @@ describe('BoundsLedger — ceiling (punished-ascent demotion)', () => {
     expect(ledger.ascentPunishments).toBe(1);
   });
 
+  it('a SUSTAINED ascent resets the punishment tally (not a lifetime count)', () => {
+    const ledger = new BoundsLedger(CONFIG);
+
+    // Punished ascent #1...
+    ledger.recordAscent(1.4, 0);
+    ledger.recordSlowSample(500);
+    expect(ledger.ascentPunishments).toBe(1);
+
+    // ...then an ascent that OUTLIVES its punishment window before any
+    // slow sample arrives: positive evidence the scene sustains >1.0,
+    // so the stale tally resets — two isolated hiccups minutes apart
+    // must not demote a HiDPI-capable scene.
+    ledger.recordAscent(1.4, 10_000);
+    ledger.recordSlowSample(14_000); // 4s later — outside the 3s window
+    expect(ledger.ascentPunishments).toBe(0);
+
+    // The next punished ascent starts a fresh streak: still below the
+    // threshold of 2, so no demotion.
+    ledger.recordAscent(1.4, 20_000);
+    expect(ledger.recordSlowSample(20_500)).toBe(false);
+    expect(ledger.dprCeiling).toBeNull();
+  });
+
+  it('a stale unpunished ascent also resets the tally when the next ascent is recorded', () => {
+    const ledger = new BoundsLedger(CONFIG);
+    ledger.recordAscent(1.4, 0);
+    ledger.recordSlowSample(500); // punished #1
+
+    // Ascent that never sees ANY slow sample (scene stayed fast)...
+    ledger.recordAscent(1.4, 10_000);
+    // ...detected as sustained when the NEXT ascent replaces it.
+    ledger.recordAscent(1.5, 60_000);
+    expect(ledger.ascentPunishments).toBe(0);
+  });
+
   it('the demotion expires after its TTL, with backoff escalation on re-demotion', () => {
     const ledger = new BoundsLedger(CONFIG);
     const demoteAt = (t: number) => {

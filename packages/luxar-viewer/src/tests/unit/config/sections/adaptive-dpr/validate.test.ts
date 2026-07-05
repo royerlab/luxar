@@ -63,6 +63,16 @@ describe('validateAdaptiveDPR', () => {
     expect(result.errors).toContainEqual(expect.stringContaining('backoffMaxTtlMs'));
   });
 
+  it('errors when backoffMaxTtlMs is below ceilingTtlMs (would truncate the first demotion rung)', () => {
+    const cfg = cloneConfig();
+    cfg.adaptiveDPR.floorTtlMs = 30_000;
+    cfg.adaptiveDPR.backoffMaxTtlMs = 45_000; // >= floorTtlMs but < ceilingTtlMs (60s)
+
+    const result = invokeValidator(validateAdaptiveDPR, cfg);
+    expect(result.valid).toBe(false);
+    expect(result.errors).toContainEqual(expect.stringContaining('ceilingTtlMs'));
+  });
+
   it('errors on non-integer punishedAscentThreshold', () => {
     const cfg = cloneConfig();
     cfg.adaptiveDPR.punishedAscentThreshold = 1.5;

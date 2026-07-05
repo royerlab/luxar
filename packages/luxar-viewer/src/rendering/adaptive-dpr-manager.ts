@@ -629,6 +629,7 @@ export class AdaptiveDPRManager {
       this.hysteresis.clear();
       this.probeController.void_();
       this.boundsLedger.reset();
+      this.refreshRateEstimator.clear();
       this.fpsTracker.clear();
       this.restingAtNative = false;
       this.lastOperatingDPR = null;
@@ -768,19 +769,6 @@ export class AdaptiveDPRManager {
   }
 
   /**
-   * Notify the manager that scene content genuinely changed (dataset
-   * loaded, layers added/removed, LOD level swapped in). Learned
-   * bounds describe the OLD content, so their expiry is pulled forward
-   * to at most `contentChangeRecheckMs` from now and the rejection
-   * backoff streak resets — a re-probe against the new content is
-   * cheap and justified. Calls are coalesced within
-   * `contentChangeRecheckMs` so event bursts (per-frame LOD swaps
-   * during a zoom) don't spam the ledger.
-   *
-   * @param timestamp - Caller-supplied clock for tests; defaults to
-   *   `performance.now()`, the same clock the frame loop feeds.
-   */
-  /**
    * Notify the manager that the animation loop stopped (idle pause,
    * tab hide, dispose). Clears SESSION state only — the FPS window,
    * the scale-up streak, and any in-flight probe (voided unjudged: its
@@ -869,6 +857,19 @@ export class AdaptiveDPRManager {
     }
   }
 
+  /**
+   * Notify the manager that scene content genuinely changed (dataset
+   * loaded, layers added/removed, LOD level swapped in). Learned
+   * bounds describe the OLD content, so their expiry is pulled forward
+   * to at most `contentChangeRecheckMs` from now and the rejection
+   * backoff streak resets — a re-probe against the new content is
+   * cheap and justified. Calls are coalesced within
+   * `contentChangeRecheckMs` so event bursts (per-frame LOD swaps
+   * during a zoom) don't spam the ledger.
+   *
+   * @param timestamp - Caller-supplied clock for tests; defaults to
+   *   `performance.now()`, the same clock the frame loop feeds.
+   */
   notifyContentChanged(timestamp: number = performance.now()): void {
     if (!this.isEnabled) return;
     if (

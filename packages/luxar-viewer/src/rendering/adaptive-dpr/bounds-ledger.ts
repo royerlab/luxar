@@ -147,9 +147,21 @@ export class BoundsLedger {
   /**
    * Record a scale-up that moved the DPR above 1.0. If FPS collapses
    * shortly after, recordSlowSample() counts it as a punished ascent.
+   *
+   * A previous ascent still on record here has, by construction,
+   * outlived its punishment window without a slow sample — evidence the
+   * scene CAN sustain above-1.0, so the punishment tally is stale and
+   * resets. Without this the count is a lifetime tally and two isolated
+   * hiccups minutes apart would demote a perfectly HiDPI-capable scene.
    */
   recordAscent(dpr: number, timestamp: number): void {
     if (dpr <= 1.01) return;
+    if (
+      this.lastAscent &&
+      timestamp - this.lastAscent.timestamp > this.config.punishedAscentWindowMs
+    ) {
+      this.punishedAscentCount = 0;
+    }
     this.lastAscent = { dpr, timestamp };
   }
 
@@ -167,7 +179,13 @@ export class BoundsLedger {
     if (!this.lastAscent) return false;
     const withinWindow = timestamp - this.lastAscent.timestamp <= this.config.punishedAscentWindowMs;
     this.lastAscent = null;
-    if (!withinWindow) return false;
+    if (!withinWindow) {
+      // The ascent outlived its punishment window before any slow
+      // sample arrived — it was SUSTAINED. That is positive evidence
+      // for above-1.0 viability; the punishment tally resets.
+      this.punishedAscentCount = 0;
+      return false;
+    }
 
     this.punishedAscentCount++;
     if (this.punishedAscentCount < this.config.punishedAscentThreshold) return false;

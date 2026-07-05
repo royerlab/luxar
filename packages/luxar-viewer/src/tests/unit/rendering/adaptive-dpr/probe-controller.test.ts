@@ -57,10 +57,12 @@ describe('ProbeController', () => {
   describe('quality gating', () => {
     it('keeps waiting past the window while the sample is too thin', () => {
       const probe = armed();
-      // 3 janky frames right after a stall — must NOT settle the probe.
+      // Few frames over a SHORT span (ramping back up after a reset) —
+      // must NOT settle the probe. (Few frames over a LONG span is a
+      // different story: that's a genuinely slow scene — see below.)
       const verdict = probe.evaluate(1000 + 1600, 60, {
         sampleCount: 3,
-        spanMs: 900,
+        spanMs: 550,
         suppressed: false,
       });
       expect(verdict).toEqual({ kind: 'pending' });
@@ -68,6 +70,22 @@ describe('ProbeController', () => {
 
       // A clean sample arriving later settles normally.
       expect(probe.evaluate(1000 + 2100, 60, CLEAN)).toMatchObject({ kind: 'accepted' });
+    });
+
+    it('settles from a full-span low-fps window (few frames = genuinely slow, not contaminated)', () => {
+      const probe = armed(); // baseline 40fps
+      // ~5fps scene: the 1s window can never hold minSamples(8) frames.
+      // A full-span window is that scene's best obtainable sample and
+      // MUST settle — voiding it as inconclusive forever would mean no
+      // U-shape floor is ever learned below 8fps and DPR walks
+      // unprotected to minDPR.
+      const verdict = probe.evaluate(1000 + 1600, 5, {
+        sampleCount: 5,
+        spanMs: 950,
+        suppressed: false,
+      });
+      expect(verdict).toMatchObject({ kind: 'rejected' }); // 5/40 « 1.05
+      expect(probe.isPending).toBe(false);
     });
 
     it('keeps waiting while the window span is too short', () => {

@@ -109,11 +109,11 @@ describe('AdaptiveDPRManager — construction', () => {
   it('respects ctor overrides on top of the config defaults', () => {
     // gapResetMs is raised because this test deliberately simulates
     // ~1fps with widely spaced frames — production gap detection would
-    // (correctly) treat those as stalls and never evaluate.
-    const m = new AdaptiveDPRManager({ minDPR: 0.1, gapResetMs: 10_000 });
+    // (correctly) treat those as stalls and never evaluate. The halved
+    // scaleDownFactor makes the override observable EXACTLY: one
+    // scale-down lands at 2.0 × 0.5 = 1.0, not the default 2.0 × 0.9.
+    const m = new AdaptiveDPRManager({ scaleDownFactor: 0.5, gapResetMs: 10_000 });
     try {
-      // Internal config check via behavior: scaleDown with very low FPS
-      // should drop DPR all the way to 0.1, not 0.5.
       const r = makeRenderer();
       m.setRenderer(r);
       // Simulate a very low FPS by pushing 2 frames over a long time.
@@ -121,9 +121,8 @@ describe('AdaptiveDPRManager — construction', () => {
       m.recordFrame(1000); // 2 frames in 1 second → ~1 FPS, well under the 45fps down-threshold
       // evaluateAndAdjust runs at next recordFrame after 500ms — push one more.
       m.recordFrame(1600);
-      // currentDPR should have dropped via repeated scaleDown to clamp at 0.1.
-      // We can't verify the clamp from a single tick, but we can verify scaleDown happened.
-      expect(m.getCurrentDPR()).toBeLessThan(2.0);
+      expect(m.getCurrentDPR()).toBeCloseTo(1.0, 5);
+      expect(r.setAdaptivePixelRatio).toHaveBeenLastCalledWith(1.0);
     } finally {
       restore();
     }
@@ -201,37 +200,54 @@ describe('AdaptiveDPRManager — scaling', () => {
     renderer = makeRenderer();
   });
 
-  it('scales DPR down when sustained low FPS is observed', () => {
+  it('scales DPR down by exactly scaleDownFactor when sustained low FPS is observed', () => {
     const m = new AdaptiveDPRManager();
     try {
       m.setRenderer(renderer);
-      // 10 FPS = 10 frames over 1 second.
+      // 10 FPS = 10 frames over 1 second. The scale-down fires at the
+      // first evaluation tick DURING these pushes (t ≥ 500); the trailing
+      // frame at 1600 is a >gapResetMs gap and only resets the window.
       pushFrames(m, 0, 10, 1000);
-      // Advance 600ms past the last sample so evaluateAndAdjust fires
-      // (interval = 500ms).
       m.recordFrame(1600);
 
-      expect(m.getCurrentDPR()).toBeLessThan(2.0);
-      expect(renderer.setAdaptivePixelRatio).toHaveBeenCalled();
-      // The notification args: (newDPR, isReducedResolution).
-      const lastCall = renderer.setAdaptivePixelRatio.mock.calls.at(-1)!;
-      expect(lastCall[0]).toBeLessThan(2.0);
+      // Exactly one multiplicative step: 2.0 × 0.7 (mock scaleDownFactor).
+      expect(m.getCurrentDPR()).toBeCloseTo(1.4, 5);
+      expect(renderer.setAdaptivePixelRatio).toHaveBeenCalledTimes(1);
+      expect(renderer.setAdaptivePixelRatio).toHaveBeenLastCalledWith(1.4);
     } finally {
       restore();
     }
   });
 
-  it('does not exceed minDPR when scaling down repeatedly', () => {
-    const m = new AdaptiveDPRManager({ minDPR: 0.5 });
+  it('walks accepted probes down to the exact minDPR floor block and never below', () => {
+    const m = new AdaptiveDPRManager({ minDPR: 0.5, gapResetMs: 60_000 });
     try {
       m.setRenderer(renderer);
-      // Hammer with low FPS over many evaluation cycles.
-      for (let cycle = 0; cycle < 20; cycle++) {
-        pushFrames(m, cycle * 1000, 5, 1000); // 5 FPS each second
-        // Trigger evaluation by advancing past the interval.
-        m.recordFrame(cycle * 1000 + 1100);
-      }
-      expect(m.getCurrentDPR()).toBeGreaterThanOrEqual(0.5);
+      // Each phase renders ~20% faster than the last, so every probe's
+      // settle sample clears the +5% improvement bar and is ACCEPTED —
+      // the walk continues: 2.0 → 1.4 → 0.98 → 0.686, then the proposed
+      // 0.48 is blocked by the 0.5 floor (to-or-below rule).
+      let t = 0;
+      const phase = (fps: number, durationMs: number): void => {
+        const step = 1000 / fps;
+        const end = t + durationMs;
+        while (t < end) {
+          m.recordFrame(t);
+          t += step;
+        }
+      };
+      // Cadence: scale-down+arm fires ~500ms into a phase's predecessor;
+      // the settle (arm+1500ms) then reads a window filled entirely with
+      // the NEXT phase's faster frames → ratio ≈ 1.2 → accepted.
+      phase(12, 1000); // scale-down #1 arms probe (baseline ~12)
+      phase(14.4, 2000); // settle #1 accepted; scale-down #2 arms
+      phase(17.3, 2000); // settle #2 accepted; scale-down #3 arms
+      phase(20.7, 2000); // settle #3 accepted; proposal 0.48 blocked
+      phase(24.8, 2000); // stays blocked — no further reduction
+
+      expect(m.getCurrentDPR()).toBeCloseTo(2.0 * 0.7 ** 3, 5);
+      // All probes accepted → no rejection floor was ever learned.
+      expect(m.getState().dprFloor).toBe(0.5);
     } finally {
       restore();
     }
@@ -459,11 +475,16 @@ describe('AdaptiveDPRManager — evidence-based DPR ceiling', () => {
 
       // Idle: the RESTING frame still renders at full native (the
       // ceiling governs interactive rendering, not the still image)...
+      const operatingDPR = m.getCurrentDPR(); // ≤ 1.0 post-demotion
       m.prepareIdleFrame();
       expect(m.getCurrentDPR()).toBe(2.0);
 
-      // ...and resume snaps back respecting the ceiling.
+      // ...and resume snaps back EXACTLY to the remembered operating
+      // DPR (which post-demotion is already at or below the ceiling —
+      // the ceiling term in the resume min() is a defensive invariant,
+      // structurally non-binding today).
       m.notifyResumed();
+      expect(m.getCurrentDPR()).toBe(operatingDPR);
       expect(m.getCurrentDPR()).toBeLessThanOrEqual(1.0);
       void t;
     } finally {
@@ -726,7 +747,11 @@ describe('AdaptiveDPRManager — gap detection & load suppression', () => {
     }
   });
 
-  it('notifyContentChanged pulls a learned floor forward and coalesces bursts', () => {
+  it('notifyContentChanged pulls a learned floor forward (burst calls stay observably inert)', () => {
+    // NOTE on coalescing: softenForContentChange only ever MIN()s the
+    // expiry, so an uncoalesced second call could not extend it either —
+    // the coalescing guard saves ledger/log churn, not correctness, and
+    // is therefore not separately observable through the floor clock.
     const m = new AdaptiveDPRManager({ gapResetMs: 60_000 });
     try {
       m.setRenderer(renderer);
@@ -795,6 +820,29 @@ describe('AdaptiveDPRManager — refresh-rate-relative thresholds', () => {
         t += 1000 / 80;
       }
       expect(m.getCurrentDPR()).toBeLessThan(1.0);
+    } finally {
+      restore();
+    }
+  });
+
+  it('setEnabled(false) wipes the learned refresh-cap estimate along with the other learned state', () => {
+    const m = new AdaptiveDPRManager();
+    try {
+      m.setRenderer(makeRenderer());
+      // Teach the estimator a 120Hz cap.
+      let t = 0;
+      for (let i = 0; i < 180; i++) {
+        m.recordFrame(t);
+        t += 1000 / 120;
+      }
+      expect(m.getState().refreshRateCap).toBeGreaterThan(115);
+
+      // Disable/re-enable on the SAME display must reset the estimate
+      // to the warmup fallback — a learned (possibly throttled) cap
+      // surviving the toggle would mis-arm the relative thresholds.
+      m.setEnabled(false);
+      m.setEnabled(true);
+      expect(m.getState().refreshRateCap).toBe(60);
     } finally {
       restore();
     }

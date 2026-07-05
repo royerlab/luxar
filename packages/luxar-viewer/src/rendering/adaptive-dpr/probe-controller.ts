@@ -61,6 +61,18 @@ export interface ProbeControllerConfig {
   minSpanMs: number;
 }
 
+/**
+ * A window whose span reaches this multiple of `minSpanMs` counts as
+ * representative even below `minSamples`: gap detection guarantees a
+ * long-span window has no internal stall, so few frames over a long
+ * span means the scene is genuinely SLOW, not contaminated. Without
+ * this, scenes below `minSamples` fps (default 8) could never produce
+ * a "clean" sample — every probe would void inconclusive, no U-shape
+ * floor would ever be learned, and DPR would walk unprotected to
+ * minDPR even when the reduction never helped.
+ */
+const REPRESENTATIVE_SPAN_FACTOR = 1.3;
+
 export class ProbeController {
   private pending: PendingProbe | null = null;
 
@@ -109,10 +121,15 @@ export class ProbeController {
       return { kind: 'pending' };
     }
 
+    // "Clean" = enough frames over enough time, OR few frames over a
+    // LONG span (a genuinely slow scene's best obtainable sample — see
+    // REPRESENTATIVE_SPAN_FACTOR), never load-suppressed.
+    const representative =
+      quality.sampleCount >= this.config.minSamples ||
+      (quality.sampleCount >= 2 &&
+        quality.spanMs >= this.config.minSpanMs * REPRESENTATIVE_SPAN_FACTOR);
     const clean =
-      !quality.suppressed &&
-      quality.sampleCount >= this.config.minSamples &&
-      quality.spanMs >= this.config.minSpanMs;
+      !quality.suppressed && representative && quality.spanMs >= this.config.minSpanMs;
     if (!clean) {
       if (age < 2 * this.config.windowMs) {
         return { kind: 'pending' }; // keep waiting for a clean sample
