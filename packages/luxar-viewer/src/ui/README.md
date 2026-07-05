@@ -65,7 +65,7 @@ ui/
 │   │ sync-current-state.ts, settings-persistence.ts,
 │   │ clipping-display.ts, controls-utils.ts, fov-utils.ts, types.ts
 │   └── setup/                          # *-setup.ts files
-│       ├── navigation-setup.ts, camera-setup.ts, hdr-setup.ts,
+│       ├── camera-setup.ts, hdr-setup.ts,
 │       │ anti-aliasing-setup.ts, post-processing-setup.ts,
 │       │ performance-setup.ts, theme-setup.ts
 ├── recording-panel/
@@ -119,12 +119,13 @@ Coordination-heavy UI classes (`recording-panel.ts`, `data-loading-monitor.ts`, 
 
 ### 0. Control Rail
 
-The always-visible discoverability affordance (`ui/control-rail.ts`) — a slim
+The always-visible discoverability affordance (`ui/control-rail/`) — a slim
 vertical activity rail docked to the left edge. Luxar's panels are otherwise
 keyboard-triggered, so the rail is the one visible entry point: one recognizable
-icon per panel (Help, Dimensions, Rendering, Layers, Performance, Data monitor,
-Datasets, Recording, Screenshot, Logs, View options), each with a hover tooltip
-showing its shortcut.
+icon per panel (Help, Navigation, Dimensions, Rendering, Layers, Data monitor,
+Datasets, Recording, Logs, View options, Settings, Performance), each with a
+hover tooltip showing its shortcut. Navigation/Settings/Performance open rail
+popovers (see [`rail-panels/`](./rail-panels/README.md)).
 
 **Design:**
 

@@ -104,7 +104,7 @@ Reference sensor is the 36 mm-wide 35mm-film sensor (`FILM_35MM_SENSOR_WIDTH_MM`
 
 ## Subpackages
 
-- [`setup/`](./setup/README.md) — Per-category GUI builders that populate the rendering-controls panel: `navigation-setup`, `camera-setup`, `hdr-setup`, `anti-aliasing-setup`, `post-processing-setup`, `performance-setup`, `theme-setup`. Each builder consumes a `SetupContext` (from `./types.ts`) and returns a `SetupResult`.
+- [`setup/`](./setup/README.md) — Per-category GUI builders that populate the rendering-controls panel: `camera-setup`, `hdr-setup`, `anti-aliasing-setup`, `post-processing-setup`. Each consumes a `SetupContext` (from `./types.ts`) and returns a `SetupResult`. (`theme-setup` and `performance-setup` also live here but are now hosted in rail popovers — see [`../rail-panels/`](../rail-panels/README.md); navigation moved to `../rail-panels/navigation-popover.ts`.)
 
 ## Dependencies
 
