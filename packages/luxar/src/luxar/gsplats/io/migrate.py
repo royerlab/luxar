@@ -452,8 +452,9 @@ def migrate_format(
     **Encoding is not a pure rewrap.** The output uses the current node-tree
     encoding policy (``encoding_mode``, default :data:`EncodingMode.AUTO`), so legacy
     *float32* Cholesky factors are re-encoded as the split diagonal /
-    off-diagonal arrays with per-column quantization — uint16 (near-lossless,
-    ~0.1% relative error) under AUTO, uint8 under MEMORY. Pass
+    off-diagonal arrays with per-column quantization — uint8 under AUTO and
+    MEMORY (AUTO carries an encode-time covariance certificate and escalates
+    to uint16 only when the measured Σ error demands it). Pass
     ``encoding_mode=EncodingMode.PRECISION`` for a lossless float32 migration of
     archival data. Other arrays (centers, etc.) follow the same per-array policy.
 

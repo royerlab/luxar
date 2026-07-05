@@ -210,19 +210,20 @@ class TestMergeStreamingKnobs:
         )
         bp = args["breakpoints"]
         assert bp.startswith("stream:")
-        # 200 ms @ default 25 Mbps @ analytic 45 B (4D) → 13889.
-        assert bp == "stream:13889"
+        # 200 ms @ default 25 Mbps @ analytic 30 B (4D: centers u16,
+        # amplitude u16, cholesky u8-certified) → 625000/30 = 20833.
+        assert bp == "stream:20833"
 
     def test_stored_stream_string_reparses_at_merge_time(self) -> None:
         """The manifest round-trip: the stored string re-parses via
         _parse_lod_breakpoints into the same deferred spec."""
         from luxar.cli.lod import _parse_lod_breakpoints
 
-        assert _parse_lod_breakpoints("stream:13889") == "stream:13889"
+        assert _parse_lod_breakpoints("stream:20833") == "stream:20833"
 
     def test_target_ms_sized_with_true_merged_ndim(self) -> None:
         """merged_ndim=3 (single timepoint, 3 spatial) must size against the
-        3D analytic figure (30 B), not the hardcoded 4D default (45 B)."""
+        3D analytic figure (21 B), not the hardcoded 4D default (30 B)."""
         from luxar.cli.gsplat_ops.batch_planning import (
             MergeConfig,
             resolve_merge_recipe_args,
@@ -231,8 +232,8 @@ class TestMergeStreamingKnobs:
         args = resolve_merge_recipe_args(
             MergeConfig(recipe="stream", target_ms=200.0), merged_ndim=3
         )
-        # 200 ms @ 25 Mbps @ analytic 30 B (3D) → 625000/30 = 20833.
-        assert args["breakpoints"] == "stream:20833"
+        # 200 ms @ 25 Mbps @ analytic 21 B (3D) → 625000/21 = 29762.
+        assert args["breakpoints"] == "stream:29762"
 
     def test_target_ms_accounts_for_channel_colors(self) -> None:
         """A color-carrying multi-channel merge adds ~4 B/splat to the analytic
@@ -247,8 +248,8 @@ class TestMergeStreamingKnobs:
             merged_ndim=4,
             merged_has_colors=True,
         )
-        # 45 + 4 = 49 B/splat → 625000/49 = 12755 (< the colorless 13889).
-        assert args["breakpoints"] == "stream:12755"
+        # 30 + 4 = 34 B/splat → 625000/34 = 18382 (< the colorless 20833).
+        assert args["breakpoints"] == "stream:18382"
 
     def test_target_ms_and_breakpoints_mutually_exclusive(self) -> None:
         from luxar.cli.gsplat_ops.batch_planning import (
@@ -525,10 +526,10 @@ class TestPlanTimeStreamingSizing:
             ["t", "z", "y", "x"],
             MergeConfig(recipe="stream", target_ms=200.0),
         )
-        # merged ndim = 3 spatial + stacked-timepoint axis = 4 → 45 B → 13889:
+        # merged ndim = 3 spatial + stacked-timepoint axis = 4 → 30 B → 20833:
         # exactly what `batch-fit merge --target-ms 200` derives from the
         # manifest (len(spatial_shape) + (n_timepoints > 1)).
-        assert plan.manifest.merge_recipe_args["breakpoints"] == "stream:13889"
+        assert plan.manifest.merge_recipe_args["breakpoints"] == "stream:20833"
 
     def test_single_timepoint_plans_3d_ladder(self, tmp_path: Path) -> None:
         from luxar.cli.gsplat_ops.batch_planning import MergeConfig
@@ -539,8 +540,8 @@ class TestPlanTimeStreamingSizing:
             ["t", "z", "y", "x"],
             MergeConfig(recipe="stream", target_ms=200.0),
         )
-        # No stacked axis → merged ndim 3 → 30 B → 20833 (pre-fix: 13889).
-        assert plan.manifest.merge_recipe_args["breakpoints"] == "stream:20833"
+        # No stacked axis → merged ndim 3 → 21 B → 29762 (pre-fix: 20833).
+        assert plan.manifest.merge_recipe_args["breakpoints"] == "stream:29762"
 
     def test_multichannel_color_merge_plans_color_bytes(self, tmp_path: Path) -> None:
         from luxar.cli.gsplat_ops.batch_planning import MergeConfig
@@ -555,8 +556,8 @@ class TestPlanTimeStreamingSizing:
                 channel_colors="#ff0080,#00ff00",
             ),
         )
-        # Colors will be written per-splat → 49 B → 12755 (pre-fix: 13889).
-        assert plan.manifest.merge_recipe_args["breakpoints"] == "stream:12755"
+        # Colors will be written per-splat → 34 B → 18382 (pre-fix: 20833).
+        assert plan.manifest.merge_recipe_args["breakpoints"] == "stream:18382"
 
 
 # ── merge-time --target-ms: measured from completed tiles, analytic fallback ─
@@ -618,5 +619,5 @@ class TestMergeTargetMsBytesSource:
         )
         io = _io(res)
         assert "analytic estimate" in io
-        # 3D analytic 30 B → 20833 (the same figure plan-time now derives).
-        assert "stream:20833" in io
+        # 3D analytic 21 B → 29762 (the same figure plan-time now derives).
+        assert "stream:29762" in io

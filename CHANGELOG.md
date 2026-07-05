@@ -6,6 +6,31 @@ All notable changes to Luxar are documented in this file.
 
 ### July 2026
 
+#### Changed — AUTO covariance quantization: uint8 with an encode-time certificate (~3.3× smaller)
+
+- Gsplat Cholesky factors at AUTO now default to the uint8 per-channel log
+  encodings (formerly the MEMORY tier) instead of uint16 — measured on a real
+  light-sheet fit at 94.5 dB vs the float32 render (~46 dB below the fit-error
+  floor, end-to-end invisible) and 2.48 B/splat compressed vs 8.25 (~3.3×).
+- AUTO keeps a *measured* reason to go richer: the new
+  `ArrayEncoder.encode_cholesky_split` joint entry point round-trips both
+  halves through the exact quantization transform, rebuilds Σ = L·Lᵀ, and
+  escalates to uint16 (then float32, practically unreachable) when the p95
+  per-splat relative Frobenius error exceeds 0.05 — e.g. merged heterogeneous
+  stores whose σ columns span many decades. The measurement is recorded as
+  provenance in each array's own `encoding.certificate`; decode never needs it
+  and both halves always share one tier. MEMORY stays uint8 unconditionally;
+  PRECISION stays float32. No format change — readers were already
+  bit-width-agnostic.
+- VQ/codebook covariance compression was evaluated and refuted for this
+  storage stack (2026-07 spike): codebook index streams are entropy-dense and
+  defeat zstd+bitshuffle, losing to plain u8 scalar codes on compressed bytes
+  at equal PSNR.
+- The certificate measures a bounded evenly-spaced row sample above 262 144
+  splats (recorded as `certificate.sample`; quantization scales always come
+  from the full columns), keeping the float64 Σ scratch capped on large flat
+  fits instead of scaling with N.
+
 #### Fixed — stale-cache black screen on regenerated `.gsplats.zarr` + viewer LOD loading/scheduling
 
 - Every `.gsplats.zarr` save now stamps a root `content_hash` (metadata-only
