@@ -1547,6 +1547,38 @@ describe('LODGroupRegistry — never-downgrade display gate', () => {
     expect(fine.object.visible).toBe(false);
   });
 
+  it('preserves the hold across an off-screen excursion (look away and back does not re-pop)', () => {
+    // Zoom-out hold: displaying the full fine level while the coarser
+    // streaming aspiration catches up. A camera look-away (no view-version
+    // change) must NOT clobber the gate's memory: on return the finer level
+    // is still held instead of popping to the partial coarse aspiration.
+    const tiny = { min: [0, 0, 0], max: [0.001, 0.001, 0.001] }; // on-screen, coarse desired
+    const far = { min: [100, 100, 100], max: [110, 110, 110] }; // frustum-culled
+    const coarse = makeStreamingChild(0, 2, 5); // cold, still streaming
+    const fine = makeCountedChild(0.5, 2, 1000); // full, displayed
+    const setBounds = (b: { min: number[]; max: number[] }) => {
+      coarse.positionBounds = b;
+      fine.positionBounds = b;
+    };
+    setBounds(tiny);
+    const reg = makeRegistry([0, 1, 2], undefined, undefined, () => 2);
+    reg.register(makeEntry([coarse, fine], 1, '/g')); // fine active + displayed
+
+    reg.evaluatePerFrame(); // on-screen: gate holds the fine level
+    expect(fine.object.visible).toBe(true);
+    expect(coarse.object.visible).toBe(false);
+
+    setBounds(far);
+    reg.evaluatePerFrame(); // off-screen: coarse shown, displayedChildIndex clobbered
+    expect(reg.list()[0].offScreen).toBe(true);
+    expect(coarse.object.visible).toBe(true);
+
+    setBounds(tiny);
+    reg.evaluatePerFrame(); // back on-screen: the finer level must be re-held
+    expect(fine.object.visible).toBe(true); // pre-fix this popped to the partial coarse
+    expect(coarse.object.visible).toBe(false);
+  });
+
   it('keeps the held aspiration warm in the eviction LRU (lastVisibleTick re-stamped)', () => {
     const reg = makeRegistry([0, 1, 2], undefined, undefined, () => 2);
     const coarse = makeCountedChild(0, 2, 100);

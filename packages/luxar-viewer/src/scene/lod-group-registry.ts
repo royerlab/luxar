@@ -202,9 +202,23 @@ export interface LODGroupEntry {
    * up. A per-frame transient written by ``evaluateEntry`` and read by
    * ``enforceResidentByteBudget`` (same synchronous ``evaluatePerFrame`` pass)
    * so eviction never releases the on-screen level. ``undefined`` before the
-   * first evaluation ⇒ treated as ``activeChildIndex``.
+   * first evaluation ⇒ treated as ``activeChildIndex``. Tracks what is ACTUALLY
+   * on screen every frame — including the coarse level shown while the group is
+   * off-screen — which is what eviction needs, but is therefore NOT the
+   * never-downgrade gate's memory (that is ``heldDisplayChildIndex``).
    */
   displayedChildIndex?: number;
+  /**
+   * The last level displayed while the group was ON SCREEN — the
+   * never-downgrade gate's "previously-displayed level" memory. Distinct from
+   * ``displayedChildIndex`` because the off-screen gate transiently displays
+   * (and would otherwise record) the coarsest ready level; folding that into
+   * the gate memory would let a mere look-away-and-back clobber a held finer
+   * level and re-pop it to chunk-1 on return. Written by ``evaluateEntry``
+   * only on frames where the group is on screen. ``undefined`` before the
+   * first on-screen evaluation ⇒ the gate has no prior level to hold.
+   */
+  heldDisplayChildIndex?: number;
   /**
    * Whether the auto-selector is currently holding this group at its
    * coarsest-ready level because its world bounds are outside the camera
@@ -527,8 +541,10 @@ export class LODGroupRegistry {
     }
     // The initially-shown level is the active default; ``evaluateEntry`` may
     // transiently move the displayed level to a coarser fresh one during a
-    // re-slice, but it starts equal to the aspiration.
+    // re-slice, but it starts equal to the aspiration. The gate memory starts
+    // there too (the group is presumed on-screen until the first evaluation).
     entry.displayedChildIndex = entry.activeChildIndex;
+    entry.heldDisplayChildIndex = entry.activeChildIndex;
   }
 
   /** Drop an lod_group from the registry (called on scene teardown). */
@@ -856,7 +872,10 @@ export class LODGroupRegistry {
       entry.selectorMode === 'auto' &&
       !entry.offScreen
     ) {
-      const prevIdx = entry.displayedChildIndex;
+      // Read the gate's memory (last ON-SCREEN displayed level), NOT
+      // ``displayedChildIndex`` — the latter is clobbered to the coarse level
+      // during an off-screen excursion, which would defeat the hold on return.
+      const prevIdx = entry.heldDisplayChildIndex;
       if (prevIdx != null && prevIdx !== displayIdx) {
         const prev = entry.children[prevIdx];
         if (shouldHoldPreviousDisplay(aspiration!, prev, version ?? null)) {
@@ -909,6 +928,10 @@ export class LODGroupRegistry {
     if (shown && isReady(shown)) {
       shown.lastVisibleTick = this.tick;
       entry.displayedChildIndex = displayIdx;
+      // The gate's memory tracks only what was shown ON SCREEN, so an
+      // off-screen excursion (which displays the coarse fallback) cannot
+      // clobber a held finer level and re-pop it on camera return.
+      if (!entry.offScreen) entry.heldDisplayChildIndex = displayIdx;
     }
 
     // Stamp any already-ready child that has never been shown so it ages into
