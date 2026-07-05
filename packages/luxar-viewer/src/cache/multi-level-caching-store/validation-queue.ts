@@ -75,18 +75,39 @@ export class ValidationQueue {
 }
 
 /**
- * Fetch the dataset's `content_hash` directly from the server, bypassing
+ * Remote validation token for a dataset: either the producer-stamped
+ * `content_hash` attr, or — when the dataset lacks one — an implicit
+ * token derived from the raw root `.zattrs` bytes (`zattrs-hash` mode).
+ */
+export interface RemoteValidationToken {
+  /** Comparison token. Implicit tokens carry a `zattrs:` prefix so they can
+   *  never collide with a producer-stamped content hash. */
+  hash: string;
+  mode: 'content-hash' | 'zattrs-hash';
+}
+
+/**
+ * Fetch the dataset's validation token directly from the server, bypassing
  * every cache tier. Used by validation to detect server-side dataset
  * changes. Uses the dedicated `validationTimeoutMs` budget so a flaky
  * network does not block scene loading for the full data-fetch timeout.
  *
- * Returns `null` if the server response is missing, malformed, or lacks
- * a `content_hash` attr (external-dataset path).
+ * When the root `.zattrs` carries Luxar's `content_hash` attr, that is the
+ * token (`content-hash` mode — strongest guarantee). Otherwise the SHA-256
+ * of the raw `.zattrs` bytes serves as an implicit token (`zattrs-hash`
+ * mode): every Luxar writer re-stamps a per-save `timestamp` attr and most
+ * external producers rewrite root metadata on regeneration, so a dataset
+ * replaced in place at the same URL still invalidates instead of being
+ * served stale from OPFS forever (the pre-fix behaviour with the default
+ * `externalDatasetTtlMs: null`).
+ *
+ * Returns `null` if the `.zattrs` fetch fails or is non-ok (offline /
+ * truly headerless store) — callers then fall back to the TTL path.
  */
 export async function getRemoteContentHash(
   baseUrl: string,
   options: { signal?: AbortSignal; timeoutMsOverride?: number }
-): Promise<string | null> {
+): Promise<RemoteValidationToken | null> {
   try {
     const response = await fetchWithRetry(buildUrl(baseUrl, '.zattrs'), {
       timeoutMsOverride: options.timeoutMsOverride,
@@ -96,7 +117,21 @@ export async function getRemoteContentHash(
 
     const data = await response.arrayBuffer();
     const attrs = JSON.parse(new TextDecoder().decode(data));
-    return attrs?.content_hash ?? null;
+    const stamped = attrs?.content_hash;
+    if (typeof stamped === 'string' && stamped.length > 0) {
+      return { hash: stamped, mode: 'content-hash' };
+    }
+
+    // Implicit token: hash the exact bytes served. Any rewrite of the root
+    // attrs (Luxar writers always bump `timestamp`) changes the token.
+    // Digest a Uint8Array view rather than the raw ArrayBuffer: `instanceof
+    // ArrayBuffer` checks fail across realms (jsdom/worker), and a view
+    // carries explicit byteOffset/byteLength either way.
+    const digestBuffer = await crypto.subtle.digest('SHA-256', new Uint8Array(data));
+    const digest = Array.from(new Uint8Array(digestBuffer))
+      .map((b) => b.toString(16).padStart(2, '0'))
+      .join('');
+    return { hash: `zattrs:${digest}`, mode: 'zattrs-hash' };
   } catch {
     return null;
   }

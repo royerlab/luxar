@@ -24,6 +24,60 @@ import type { ViewState } from '../../data-loader-types';
 import type { ViewStateQueue } from '../view-state/view-state-queue';
 
 /**
+ * Consecutive per-loader failures a refinement run tolerates before giving
+ * up on that loader for the rest of the run. Without a cap, a persistently
+ * failing LOD level (e.g. a hard 404 / decode error) kept `hasMoreLODs`
+ * true forever and the loop retried at frame rate indefinitely — a network
+ * retry storm with the update lock held. Scope is per refinement run: the
+ * next view change starts a fresh run and retries the loader from scratch.
+ */
+export const MAX_CONSECUTIVE_REFINEMENT_FAILURES = 3;
+
+/**
+ * Per-run failure bookkeeping shared by the three per-geometry refinement
+ * wrappers (Points / Lines / GSplats — three-geometry symmetry). Each
+ * wrapper instantiates one tracker per run and:
+ *
+ *   - skips loaders whose path {@link isExhausted},
+ *   - calls {@link recordSuccess} after a loader's step completes,
+ *   - calls {@link recordFailure} in its catch — when it returns `true`
+ *     the loader just crossed the cap and the wrapper logs a final
+ *     "giving up" line,
+ *   - excludes exhausted paths from its `anyHasMoreLODs` aggregation so
+ *     the generic loop can terminate and release the lock.
+ */
+export class RefinementFailureTracker {
+  private failCounts = new Map<string, number>();
+  private exhaustedPaths = new Set<string>();
+
+  constructor(private maxConsecutiveFailures: number = MAX_CONSECUTIVE_REFINEMENT_FAILURES) {}
+
+  /** True once `path` has failed `maxConsecutiveFailures` times in a row. */
+  isExhausted(path: string): boolean {
+    return this.exhaustedPaths.has(path);
+  }
+
+  /** Reset the consecutive-failure count for `path` (a step succeeded). */
+  recordSuccess(path: string): void {
+    this.failCounts.delete(path);
+  }
+
+  /**
+   * Record one failure for `path`. Returns `true` exactly when this failure
+   * crosses the cap (the caller logs the one-time "giving up" line).
+   */
+  recordFailure(path: string): boolean {
+    const count = (this.failCounts.get(path) ?? 0) + 1;
+    this.failCounts.set(path, count);
+    if (count >= this.maxConsecutiveFailures && !this.exhaustedPaths.has(path)) {
+      this.exhaustedPaths.add(path);
+      return true;
+    }
+    return false;
+  }
+}
+
+/**
  * Context object the generic loop needs from the per-type caller.
  *
  * `TLoader` is intentionally loose — the loop only reads loaders out

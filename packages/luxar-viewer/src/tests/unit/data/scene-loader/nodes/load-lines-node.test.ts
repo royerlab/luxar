@@ -126,6 +126,41 @@ beforeEach(() => {
 // Tests
 // ============================================================================
 
+describe('loadLinesNode — registration only after the initial load settles', () => {
+  // Regression (activation race): registering BEFORE the expensive await let
+  // a concurrent updateView sweep call loader.updateView while the initial
+  // load was mid-flight on the same instance (shared accumulator +
+  // _activeSignal). Registration must happen only once the load SETTLES —
+  // and on failure too, so retryFailedLoader can still resolve the loader.
+  it('does NOT register while the initial load is in flight; registers on success', async () => {
+    let resolveLoad!: (d: unknown) => void;
+    const pending = new Promise((res) => (resolveLoad = res));
+    createLinesLoaderMock.mockReturnValue(makeLinesLoader(() => pending as never));
+    const ctx = makeCtx();
+
+    const promise = loadLinesNode(makeSceneNode(), new THREE.Group(), {} as never, ctx);
+    await Promise.resolve(); // let the cheap half + the expensive await start
+    expect(ctx.registry.linesLoaders.has('/scene/l')).toBe(false); // not yet in the sweep
+
+    resolveLoad({ segmentCount: 3 } as LoadedLinesData);
+    await promise;
+    expect(ctx.registry.linesLoaders.has('/scene/l')).toBe(true);
+  });
+
+  it('registers even when the initial load FAILS (loader stays retryable)', async () => {
+    createLinesLoaderMock.mockReturnValue(
+      makeLinesLoader(vi.fn().mockRejectedValue(new Error('network down')) as never)
+    );
+    const ctx = makeCtx();
+
+    await expect(
+      loadLinesNode(makeSceneNode(), new THREE.Group(), {} as never, ctx)
+    ).rejects.toThrow();
+    expect(ctx.registry.linesLoaders.has('/scene/l')).toBe(true); // retry can find it
+    expect(ctx.registry.failedLoaders.has('/scene/l')).toBe(true);
+  });
+});
+
 describe('loadLinesNode — placeholder-before-fetch invariant', () => {
   it('adds the placeholder BEFORE awaiting loader.loadLines', async () => {
     let _resolve: (data: LoadedLinesData) => void = () => {};

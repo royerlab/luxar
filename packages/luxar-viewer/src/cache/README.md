@@ -127,12 +127,16 @@ under "L0 Decompressed Chunk Cache" below.
 
 `MultiLevelCachingStore.getStats()` returns a `health` field with:
 
-- `validationMode: 'content-hash' | 'ttl' | 'none'`
+- `validationMode: 'content-hash' | 'zattrs-hash' | 'ttl' | 'none'`
   - `content-hash`: Luxar dataset with `content_hash` attr — strongest
     invalidation guarantee.
-  - `ttl`: External dataset; cache is invalidated after
+  - `zattrs-hash`: dataset without `content_hash`; the SHA-256 of the raw
+    root `.zattrs` bytes serves as an implicit validation token. Luxar
+    writers re-stamp a per-save `timestamp` attr, so a dataset regenerated
+    in place at the same URL still invalidates.
+  - `ttl`: root `.zattrs` unreachable; cache is invalidated after
     `cache.externalDatasetTtlMs` elapses.
-  - `none`: External dataset, no TTL configured — cache may be stale
+  - `none`: `.zattrs` unreachable, no TTL configured — cache may be stale
     indefinitely until manually cleared. The cache tab surfaces this
     as an `unvalidated-external-dataset` badge.
 - `lastValidatedAt: number | null`: wall-clock millis at last
@@ -425,7 +429,7 @@ data-loading monitor, debug overlay, and cache E2E suite:
     networkRequests: number   // User-demand network requests
   },
   health: {
-    validationMode: 'content-hash' | 'ttl' | 'none',
+    validationMode: 'content-hash' | 'zattrs-hash' | 'ttl' | 'none',
     lastValidatedAt: number | null,
     unvalidatedExternalDataset: boolean,
     opfsAvailable: boolean
@@ -707,10 +711,15 @@ The validation process MUST bypass the cache when checking for dataset changes:
 
 ```typescript
 // CORRECT: Bypass cache to get true server state
-private async getRemoteContentHash(): Promise<string | null> {
+// (free function in validation-queue.ts)
+async function getRemoteContentHash(
+  baseUrl: string,
+  options: { signal?: AbortSignal; timeoutMsOverride?: number }
+): Promise<RemoteValidationToken | null> {
   // Direct HTTP fetch - NO cache lookup
-  const response = await fetch(`${this.baseUrl}/.zattrs`);
-  // ... extract content_hash from response
+  const response = await fetchWithRetry(buildUrl(baseUrl, '.zattrs'), options);
+  // ... return the stamped content_hash ('content-hash' mode), or the
+  // SHA-256 of the raw .zattrs bytes ('zattrs-hash' mode) when absent
 }
 
 // WRONG: Would compare cached hash against itself (always matches!)

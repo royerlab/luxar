@@ -60,7 +60,7 @@ async function createProgressiveGSplatsLoader(
 export interface GSplatsCheapLoad {
   /** The empty placeholder mesh, already attached to the parent. */
   placeholder: THREE.Mesh;
-  /** The constructed loader, already registered for updates. */
+  /** The constructed loader (NOT yet registered — the caller registers it). */
   loader: GSplatsDataLoader;
 }
 
@@ -74,13 +74,14 @@ export interface GSplatsCheapLoad {
  * ``n_additive_sublods`` for progressive vs single-LOD loaders, exactly
  * as the combined path did.
  *
- * The caller registers the loader (``ctx.registry.registerGSplatsLoader``)
- * — but only once it is actually loaded. Registering an unloaded lazy
- * level would pull it into the scene-wide ``updateView`` sweep
+ * Registration is the caller's responsibility. Registering an unloaded
+ * lazy level would pull it into the scene-wide ``updateView`` sweep
  * (``runLoaderUpdates`` over every registered gsplat loader), which would
- * load+commit every level and defeat the lazy deferral. So registration
- * is the caller's responsibility: the combined ``loadGSplatsNode`` does
- * it immediately; the lod_group thunk does it after the load completes.
+ * load+commit every level and defeat the lazy deferral. The combined
+ * ``loadGSplatsNode`` (eager path) registers immediately; the lod_group's
+ * lazy levels are NEVER registered — they stay out of the sweep for their
+ * whole lifetime and the ``LODGroupRegistry`` drives their (re)loads
+ * (settle-gated ``ensureLoaded``; see ``load-lod-group-node.ts``).
  */
 export async function loadGSplatsNodeCheap(
   node: SceneNode,
@@ -211,9 +212,22 @@ export async function loadGSplatsNode(
   ctx: NodeBuildCtx
 ): Promise<THREE.Mesh | null> {
   const { placeholder, loader } = await loadGSplatsNodeCheap(node, parentThree, loc, ctx);
-  // Register immediately — this node loads eagerly, so it should
-  // participate in subsequent updateView sweeps right away.
-  ctx.registry.registerGSplatsLoader(node.path, loader);
-  await loadGSplatsNodeExpensive(node, ctx, loader);
+  try {
+    await loadGSplatsNodeExpensive(node, ctx, loader);
+  } finally {
+    // Register only once the initial load has SETTLED (success or failure).
+    // Registering before the await let a concurrent updateView sweep call
+    // loader.updateView while the initial load was mid-flight on the same
+    // instance — interleaving the shared accumulator buffers and clobbering
+    // the per-update _activeSignal slot (routine during deferred-group
+    // activation, where zoom-triggered loads overlap slice scrubs). Nothing
+    // during the load resolves the loader through the registry maps (commit
+    // helpers use rootGroup.getObjectByName), and load-scene's post-load
+    // consumers run after every loadXNode has been awaited, so the deferral
+    // is invisible to them. Registering on FAILURE too is deliberate:
+    // retryFailedLoader resolves eager loaders through these maps, so a
+    // failed initial load must stay retryable.
+    ctx.registry.registerGSplatsLoader(node.path, loader);
+  }
   return placeholder;
 }

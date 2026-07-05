@@ -27,13 +27,18 @@ export interface CacheStats {
  *
  * - `content-hash`: dataset has Luxar's `content_hash` attr; mismatch
  *   triggers a full clear. Strongest guarantee.
- * - `ttl`: external dataset without `content_hash`; we trust the
- *   cache for `cache.externalDatasetTtlMs` and revalidate after.
- * - `none`: external dataset, no TTL configured — cache may be stale
- *   indefinitely until manually cleared. Surfaced in the UI as a
+ * - `zattrs-hash`: dataset lacks `content_hash`; the SHA-256 of the raw
+ *   root `.zattrs` bytes serves as an implicit token. Luxar writers
+ *   re-stamp a per-save `timestamp` attr, so a dataset regenerated in
+ *   place at the same URL still invalidates. Weaker than `content-hash`
+ *   only for producers that rewrite data without touching root metadata.
+ * - `ttl`: root `.zattrs` unreachable (offline / headerless store); we
+ *   trust the cache for `cache.externalDatasetTtlMs` and revalidate after.
+ * - `none`: `.zattrs` unreachable and no TTL configured — cache may be
+ *   stale indefinitely until manually cleared. Surfaced in the UI as a
  *   warning badge so the user knows what they're getting.
  */
-export type CacheValidationMode = 'content-hash' | 'ttl' | 'none';
+export type CacheValidationMode = 'content-hash' | 'zattrs-hash' | 'ttl' | 'none';
 
 /**
  * Metadata structure persisted to OPFS for L2 cache management.

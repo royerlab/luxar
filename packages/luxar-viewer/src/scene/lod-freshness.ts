@@ -27,7 +27,15 @@ export interface FreshnessChild {
   /** ``false`` ⇒ geometry not committed yet. Absent/``true`` ⇒ committed. */
   ready?: boolean;
   /** The leaf THREE node; its ``userData`` carries the freshness stamp. */
-  object: { userData?: { nodeType?: string; loadedViewVersion?: number } };
+  object: {
+    userData?: {
+      nodeType?: string;
+      loadedViewVersion?: number;
+      visiblePointCount?: number;
+      visibleSegmentCount?: number;
+      visibleSplatCount?: number;
+    };
+  };
 }
 
 /** Leaf geometry types whose meshes are stamped with ``loadedViewVersion``. */
@@ -61,12 +69,55 @@ export function isFresh(child: FreshnessChild | undefined, version: number): boo
  * first match is the coarsest. The caller falls back to the coarsest READY
  * level on `-1` so the group shows stale-but-ready geometry rather than blank.
  */
-export function coarsestFreshIndex(
+export function coarsestFreshIndex(children: readonly FreshnessChild[], version: number): number {
+  for (let i = 0; i < children.length; i++) {
+    if (isFresh(children[i], version)) return i;
+  }
+  return -1;
+}
+
+/**
+ * Committed visible-element count of a child's leaf mesh, or ``null`` when
+ * untracked. Reads the per-type commit stamps (``visiblePointCount`` /
+ * ``visibleSegmentCount`` / ``visibleSplatCount`` — written by the
+ * commit-*-geometry helpers). Non-leaf children (nested groups) and
+ * not-yet-committed leaves carry no stamp and return ``null`` — callers must
+ * only act on a KNOWN-empty level (``0``), never on ``null``.
+ */
+export function visibleElementCount(child: FreshnessChild): number | null {
+  const ud = child.object.userData;
+  if (!ud || !FRESHNESS_TRACKED_TYPES.has(ud.nodeType ?? '')) return null;
+  switch (ud.nodeType) {
+    case 'points':
+      return ud.visiblePointCount ?? null;
+    case 'lines':
+      return ud.visibleSegmentCount ?? null;
+    case 'gsplats':
+      return ud.visibleSplatCount ?? null;
+    default:
+      return null;
+  }
+}
+
+/**
+ * Index of the coarsest child that is ready, fresh for `version`, AND has a
+ * non-zero committed element count — or `-1` when none qualifies. Companion
+ * to :func:`coarsestFreshIndex` for the registry's empty-level display guard:
+ * a fresh level that committed 0 elements while a coarser fresh level holds
+ * visible geometry signals inconsistent data (with consistent LOD data a
+ * finer level can never be empty where a coarser one is not — coarse levels
+ * are derived from fine), and displaying the empty level would blank the
+ * screen. Children with an UNTRACKED count (``null``) are accepted — the
+ * guard only redirects away from known-empty levels.
+ */
+export function coarsestFreshNonEmptyIndex(
   children: readonly FreshnessChild[],
   version: number
 ): number {
   for (let i = 0; i < children.length; i++) {
-    if (isFresh(children[i], version)) return i;
+    if (!isFresh(children[i], version)) continue;
+    if (visibleElementCount(children[i]) === 0) continue;
+    return i;
   }
   return -1;
 }
