@@ -313,8 +313,10 @@
 
 /* The popover hosts a full GUI, but the popover itself is the glass surface —
    so strip the nested .luxar-gui's own chrome (position/frame/blur) and let it
-   flow as flat content. Also override the global rail rule that force-docks
-   left-anchored .luxar-gui panels to left:78px (see below). */
+   flow as flat content. `position: static` is what actually neutralizes the
+   global rail rule that force-docks left-anchored .luxar-gui panels to
+   left:78px (a static box ignores top/left); the top/left resets below are
+   belt-and-suspenders in case a future rule re-positions it. */
 .luxar-control-rail__popover-body .luxar-gui {
   position: static !important;
   top: auto !important;

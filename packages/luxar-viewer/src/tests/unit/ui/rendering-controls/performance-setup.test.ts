@@ -128,6 +128,11 @@ describe('setupPerformanceControls', () => {
     expect(folder.controllers).toHaveLength(2);
   });
 
+  it('opens the folder by default (shown directly in the Performance rail popover)', () => {
+    setupPerformanceControls(makeContext());
+    expect(folder.open).toHaveBeenCalled();
+  });
+
   it('appends DPR + FPS read-only rows into the children container', () => {
     setupPerformanceControls(makeContext());
 

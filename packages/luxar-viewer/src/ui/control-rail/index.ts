@@ -302,10 +302,24 @@ export class ControlRail {
     // the two buttons that open a context popover.
 
     // Reflect initial dynamic icon/label state (e.g. Navigation mode).
-    item.render?.(btn);
+    this.safeRender(item, btn);
 
     this.buttons.set(item.id, btn);
     return btn;
+  }
+
+  /**
+   * Run an item's optional `render` hook fail-soft — a throwing hook must not
+   * abort the refresh loop for the other buttons (matches the guarded
+   * `activate`/`isActive` callbacks elsewhere in this class).
+   */
+  private safeRender(item: ControlRailItem, btn: HTMLButtonElement): void {
+    if (!item.render) return;
+    try {
+      item.render(btn);
+    } catch {
+      /* a render hook throwing must not break the rail */
+    }
   }
 
   private wake(): void {
@@ -350,11 +364,17 @@ export class ControlRail {
       const btn = this.buttons.get(item.id);
       if (!btn) continue;
       // Sync any dynamic icon/label (e.g. Navigation mode) before active-state.
-      item.render?.(btn);
+      this.safeRender(item, btn);
       // Disabled state (e.g. Layers with no layers): native `disabled` so the
-      // button is grayed, unfocusable, and can't be clicked.
+      // button is grayed, unfocusable, and can't be clicked. Fail-soft — a
+      // throwing predicate must not abort the loop for the remaining buttons.
       if (item.disabled) {
-        const isDisabled = item.disabled();
+        let isDisabled = false;
+        try {
+          isDisabled = item.disabled();
+        } catch {
+          /* a disabled predicate throwing leaves the button enabled */
+        }
         btn.disabled = isDisabled;
         if (isDisabled) {
           // A disabled control shouldn't also read as active/open.

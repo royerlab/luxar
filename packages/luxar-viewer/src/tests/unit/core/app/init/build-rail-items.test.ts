@@ -112,14 +112,19 @@ describe('buildRailItems', () => {
       expect(btn.querySelector('.luxar-control-rail__tip')?.textContent).toContain('Fly');
     });
 
-    it('is a no-op when the mode has not changed (dataset guard)', () => {
+    it('is a no-op when the mode has not changed — keeps the SAME svg node (dataset guard)', () => {
       const deps = makeDeps({ controlType: 'orbit' });
       const nav = buildRailItems(deps).find((i: ControlRailItem) => i.id === 'nav')!;
       const btn = makeButtonEl();
       nav.render!(btn);
-      const first = btn.querySelector('svg')?.outerHTML;
-      nav.render!(btn); // second call, same mode
-      expect(btn.querySelector('svg')?.outerHTML).toBe(first);
+      const svgAfterFirst = btn.querySelector('svg');
+      nav.render!(btn); // second call, same mode → guard should early-return
+      // Assert NODE IDENTITY, not outerHTML string: the `if (dataset.navMode ===
+      // type) return` guard skips the `svg.outerHTML = icon` reassignment, so the
+      // exact same element persists. Without the guard the second call replaces
+      // it with a fresh node (identical HTML) — a string compare wouldn't notice,
+      // node identity does. This test fails if the guard is removed.
+      expect(btn.querySelector('svg')).toBe(svgAfterFirst);
     });
   });
 

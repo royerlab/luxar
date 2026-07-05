@@ -198,6 +198,11 @@ export function buildNavigationPopover(
   // (Re)render the popover for the CURRENT mode — called on open and after a
   // mode switch, so the selector highlight + params always match live state.
   const render = (): void => {
+    // A mode switch from the strip removes the focused segment on rebuild; if
+    // focus was inside the popover (keyboard user), move it to the new active
+    // segment afterward so the tab order is preserved (WCAG 2.4.3).
+    const restoreFocus = host.contains(document.activeElement);
+
     if (gui) {
       gui.destroy();
       gui = null;
@@ -210,7 +215,8 @@ export function buildNavigationPopover(
     // fires 'luxar-control-mode-changed', which rebuilds this popover (see the
     // listener below) AND refreshes the rail button — so both stay in sync no
     // matter where the switch originates.
-    host.appendChild(buildModeSelector(mode, (target) => ctx.setMode(target)));
+    const modeStrip = buildModeSelector(mode, (target) => ctx.setMode(target));
+    host.appendChild(modeStrip);
 
     // The GUI holds the current mode's parameters. It's headerless — the mode
     // selector strip above serves as the popover's header.
@@ -223,6 +229,12 @@ export function buildNavigationPopover(
       note.className = 'luxar-control-rail__popover-note';
       note.textContent = 'Orthographic projection — pan & zoom only. No parameters.';
       host.appendChild(note);
+    }
+
+    if (restoreFocus) {
+      modeStrip
+        .querySelector<HTMLButtonElement>('.luxar-control-rail__mode-seg.is-active')
+        ?.focus();
     }
   };
 

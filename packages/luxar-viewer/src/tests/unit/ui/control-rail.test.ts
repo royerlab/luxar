@@ -98,9 +98,9 @@ describe('ControlRail', () => {
     // The constructor's initial refresh() reflects state synchronously.
     const its = items([{}, { isActive: () => true }]);
     rail = new ControlRail(its);
-    expect(
-      document.querySelector('[data-rail-id="render"]')?.classList.contains('is-active')
-    ).toBe(true);
+    expect(document.querySelector('[data-rail-id="render"]')?.classList.contains('is-active')).toBe(
+      true
+    );
   });
 
   it('re-evaluates active-state on document interaction (event-driven refresh)', () => {
@@ -109,12 +109,12 @@ describe('ControlRail', () => {
     // including a panel's own × button. Capture the rAF callback so we can flush
     // it deterministically in the same order the real loop would.
     const rafQueue: FrameRequestCallback[] = [];
-    const raf = vi
-      .spyOn(window, 'requestAnimationFrame')
-      .mockImplementation(((cb: FrameRequestCallback) => {
-        rafQueue.push(cb);
-        return 1;
-      }) as typeof requestAnimationFrame);
+    const raf = vi.spyOn(window, 'requestAnimationFrame').mockImplementation(((
+      cb: FrameRequestCallback
+    ) => {
+      rafQueue.push(cb);
+      return 1;
+    }) as typeof requestAnimationFrame);
     const flushRaf = (): void => rafQueue.shift()?.(0);
 
     let open = false;
@@ -238,7 +238,13 @@ describe('ControlRail', () => {
         icon: RAIL_ICONS.view,
         activate: vi.fn(),
         flyout: [
-          { id: 't', title: 'T', icon: RAIL_ICONS.scalebar, activate: vi.fn(), isActive: () => false },
+          {
+            id: 't',
+            title: 'T',
+            icon: RAIL_ICONS.scalebar,
+            activate: vi.fn(),
+            isActive: () => false,
+          },
         ],
       },
     ]);
@@ -308,7 +314,13 @@ describe('ControlRail', () => {
         icon: RAIL_ICONS.view,
         activate: vi.fn(),
         flyout: [
-          { id: 'scalebar', title: 'Scale bar', icon: RAIL_ICONS.scalebar, activate: vi.fn(), isActive: () => false },
+          {
+            id: 'scalebar',
+            title: 'Scale bar',
+            icon: RAIL_ICONS.scalebar,
+            activate: vi.fn(),
+            isActive: () => false,
+          },
         ],
       },
     ];
@@ -365,5 +377,113 @@ describe('ControlRail', () => {
     expect(document.querySelector('.luxar-control-rail-hint')).toBeNull();
     // no throw / no work after dispose
     expect(() => vi.advanceTimersByTime(1000)).not.toThrow();
+  });
+
+  // ── Panel popovers (RailOverlay popover branch), disabled predicate, and
+  //    context-menu suppression — all added in the rail-reorg; the flyout tests
+  //    above don't exercise these paths.
+
+  it('opens a click-trigger panel popover, builds content, and runs teardown on close', () => {
+    const teardown = vi.fn();
+    const build = vi.fn((host: HTMLElement) => {
+      const content = document.createElement('div');
+      content.className = 'popover-content';
+      host.appendChild(content);
+      return teardown;
+    });
+    rail = new ControlRail([
+      {
+        id: 'settings',
+        title: 'Settings',
+        icon: RAIL_ICONS.settings,
+        activate: vi.fn(),
+        popover: { trigger: 'click', title: 'Settings', build },
+      },
+    ]);
+    const btn = document.querySelector<HTMLButtonElement>('[data-rail-id="settings"]')!;
+    expect(document.querySelector('.luxar-control-rail__popover')).toBeNull();
+
+    btn.click();
+    const pop = document.querySelector('.luxar-control-rail__popover');
+    expect(pop).not.toBeNull();
+    expect(build).toHaveBeenCalledOnce();
+    expect(pop!.querySelector('.popover-content')).not.toBeNull();
+    expect(pop!.getAttribute('role')).toBe('group');
+    expect(pop!.querySelector('.luxar-control-rail__popover-arrow')).not.toBeNull();
+    expect(btn.getAttribute('aria-expanded')).toBe('true');
+
+    // Re-click closes the popover AND runs the builder's teardown.
+    btn.click();
+    expect(document.querySelector('.luxar-control-rail__popover')).toBeNull();
+    expect(teardown).toHaveBeenCalledOnce();
+    expect(btn.getAttribute('aria-expanded')).toBe('false');
+  });
+
+  it('a context-trigger popover opens on right-click; left-click still fires activate()', () => {
+    const activate = vi.fn();
+    const build = vi.fn(() => vi.fn());
+    rail = new ControlRail([
+      {
+        id: 'perf',
+        title: 'Performance',
+        icon: RAIL_ICONS.perf,
+        activate,
+        popover: { trigger: 'context', build },
+      },
+    ]);
+    const btn = document.querySelector<HTMLButtonElement>('[data-rail-id="perf"]')!;
+
+    // Left-click fires activate, does NOT open the popover.
+    btn.click();
+    expect(activate).toHaveBeenCalledOnce();
+    expect(document.querySelector('.luxar-control-rail__popover')).toBeNull();
+
+    // Right-click opens the popover and does NOT fire activate again.
+    btn.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
+    expect(document.querySelector('.luxar-control-rail__popover')).not.toBeNull();
+    expect(build).toHaveBeenCalledOnce();
+    expect(activate).toHaveBeenCalledOnce();
+  });
+
+  it('suppresses the native context menu anywhere on the rail (no leaked browser menu)', () => {
+    rail = new ControlRail(items()); // none of help/render/screenshot has a popover
+    const e = new MouseEvent('contextmenu', { bubbles: true, cancelable: true });
+    document.querySelector('[data-rail-id="help"]')!.dispatchEvent(e);
+    expect(e.defaultPrevented).toBe(true);
+    // No popover opened for a non-popover button.
+    expect(document.querySelector('.luxar-control-rail__popover')).toBeNull();
+  });
+
+  it('applies a disabled() predicate as the native disabled attribute + suppresses active-state', () => {
+    // isActive() is true, but disabled() wins: the button must be grayed/inert
+    // and NOT marked active. Verified on the constructor's synchronous refresh.
+    rail = new ControlRail(items([{}, { disabled: () => true, isActive: () => true }]));
+    const btn = document.querySelector<HTMLButtonElement>('[data-rail-id="render"]')!;
+    expect(btn.disabled).toBe(true);
+    expect(btn.classList.contains('is-active')).toBe(false);
+  });
+
+  it('re-evaluates disabled() when a luxar-layers-changed event fires (no click needed)', () => {
+    const rafQueue: FrameRequestCallback[] = [];
+    const raf = vi.spyOn(window, 'requestAnimationFrame').mockImplementation(((
+      cb: FrameRequestCallback
+    ) => {
+      rafQueue.push(cb);
+      return 1;
+    }) as typeof requestAnimationFrame);
+    const flushRaf = (): void => rafQueue.shift()?.(0);
+
+    let hasLayers = false;
+    rail = new ControlRail(items([{}, { disabled: () => !hasLayers }]));
+    const btn = document.querySelector<HTMLButtonElement>('[data-rail-id="render"]')!;
+    expect(btn.disabled).toBe(true); // no layers at construction
+
+    // Scene loads layers → a layers-changed event schedules a refresh.
+    hasLayers = true;
+    window.dispatchEvent(new CustomEvent('luxar-layers-changed'));
+    flushRaf();
+    expect(btn.disabled).toBe(false);
+
+    raf.mockRestore();
   });
 });
