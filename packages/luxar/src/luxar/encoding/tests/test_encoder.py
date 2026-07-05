@@ -267,7 +267,11 @@ class TestCoordinateEncoding:
         with tempfile.TemporaryDirectory() as tmpdir:
             group = zarr.open_group(str(tmpdir), mode="w")
             ArrayEncoder().encode(
-                data, group, "test", SemanticType.COORDINATE, mode=EncodingMode.PRECISION
+                data,
+                group,
+                "test",
+                SemanticType.COORDINATE,
+                mode=EncodingMode.PRECISION,
             )
             arr = group["test"]
             assert arr.dtype == np.float32
@@ -534,10 +538,10 @@ class TestPositiveScalarEncodingDynamicRange:
             )
 
             arr = group["test"]
-            assert arr.dtype == np.uint8
+            assert arr.dtype == np.uint16  # AUTO log opt-in -> geolog u16
             enc = arr.attrs["encoding"]
-            assert enc["name"] == "log_scalar_uint8"
-            assert "max_log" in enc
+            assert enc["name"] == "geolog_scalar_uint16"
+            assert "min_log" in enc and "max_log" in enc
 
 
 class TestIndexEncoding:

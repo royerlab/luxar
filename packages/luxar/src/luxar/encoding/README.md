@@ -95,7 +95,7 @@ Input Array (numpy float32)
 │ Encoding Execution                          │
 │ • Quantize: float32 → uint16/uint8          │
 │ • Store metadata: {scale, offset, min, max} │
-│ • Compress: blosc/zstd level 3              │
+│ • Compress: blosc/zstd l9, width-aware shuf │
 └─────────────────────────────────────────────┘
     ↓
 Zarr Array (compressed, deduplicated, optimized)
@@ -212,6 +212,9 @@ encoder.encode(
 - `n_elements` - Broadcast target count. Required for scalar/tuple/list input; optional for arrays (opts into broadcast/uniform validation when given).
 - `bounds` - `(min, max)` for BOUNDED_SCALAR (auto-detected if omitted).
 - `positive_scalar_encoding` - `"linear"` (default) or `"log"` for POSITIVE_SCALAR.
+  `"log"` selects the geometric-log encoding (`geolog_scalar_u16` at AUTO,
+  `u8` at MEMORY); AUTO also falls back to it automatically when the linear
+  dynamic range exceeds 65536 (instead of the former float32).
 - `custom_encoder` - Explicit encoder name, required when `mode=CUSTOM`.
 - `color_mode` - `"sdr"` or `"hdr"`, required for float COLOR arrays.
 - `chunks` / `compressor` - Optional zarr dataset chunk shape and compressor.
@@ -315,7 +318,7 @@ encoder.encode(
 | COLOR (SDR) | uint8 | float32 | uint8 |
 | COLOR (HDR) | float32 | float32 | float16 |
 | BOUNDED_SCALAR | uint8 | float32 | uint8 |
-| POSITIVE_SCALAR | Analyze range | float32 | uint8 |
+| POSITIVE_SCALAR | range ≤256 → u8, ≤65536 → u16, wider → geolog_scalar_u16 | float32 | as AUTO but geolog_scalar_u8 for wide ranges |
 | CHOLESKY | float32 | float32 | float16 |
 | CHOLESKY_DIAG | log_perchannel_u8 (certified) | float32 | log_perchannel_u8 |
 | CHOLESKY_OFFDIAG | signed_log_perchannel_u8 (certified) | float32 | signed_log_perchannel_u8 |
@@ -325,6 +328,16 @@ encoder.encode(
 per-channel quantizers — `log_perchannel_*` (non-negative), `signed_log_perchannel_*`
 (signed), and `linear_perchannel_*` (identity / fixed-point) — the semantic type is
 the policy; the encoding is geometry-agnostic.
+
+The log/signed-log pair follows the same rescale-first, zero-safe layout as
+`geolog_scalar` (`zero_level: true` in the attrs): per-column `[col_lo, col_hi]`
+anchored at each column's **nonzero** min/max, code 0 **reserved for exact
+zeros** (decode returns exactly 0), nonzero codes `1..2^bits-1` with denominator
+`2^bits-2`. Exact zeros — e.g. the off-diagonal of an axis-aligned splat —
+round-trip exactly instead of becoming tiny spurious correlations, and zeros
+never consume code range. Legacy arrays without the flag decode with the
+original all-levels, zero-anchored mapping (decode-only support; the writer
+always emits `zero_level`).
 
 **CHOLESKY_DIAG / CHOLESKY_OFFDIAG at AUTO = uint8 with an encode-time
 certificate.** The pair is encoded through `ArrayEncoder.encode_cholesky_split`,

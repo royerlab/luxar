@@ -97,8 +97,10 @@ MANIFEST
 *.metallib
 *.mo
 .mypy_cache/
-# Node.js
-node_modules/
+# Node.js — no trailing slash: `node_modules/` only matches directories, so a
+# dev-convenience SYMLINK named node_modules (worktree setups) evades it and
+# gets committed, breaking CI's `pnpm install` with ENOTDIR on checkout.
+node_modules
 nosetests.xml
 .nox/
 npm-debug.log*

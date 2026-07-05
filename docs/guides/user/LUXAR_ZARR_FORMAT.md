@@ -472,14 +472,14 @@ Points nodes contain the actual point data.
 - **Shape:** `(N, D)` where N = number of points, D = dimensionality
 - **Dtype:** `float32`
 - **Chunks:** `(min(N, 32768), D)` for 2D chunking
-- **Compression:** Blosc with zstd, level 3, bit-shuffle
+- **Compression:** Blosc with zstd, level 9 (width-aware shuffle policy)
 - **Description:** Point positions in D-dimensional space
 
 #### colors/ (Optional)
 - **Shape:** `(N, 3)` for RGB
 - **Dtype:** `float32` (HDR colors)
 - **Chunks:** `(min(N, 32768), 3)`
-- **Compression:** Blosc with zstd, level 3, bit-shuffle
+- **Compression:** Blosc with zstd, level 9 (width-aware shuffle policy)
 - **Description:** HDR RGB colors in normalized range
   - **SDR Range:** 0.0-1.0 (standard dynamic range)
   - **HDR Range:** Values > 1.0 represent HDR brightness
@@ -491,7 +491,7 @@ Points nodes contain the actual point data.
 - **Shape:** `(N,)`
 - **Dtype:** `float32`
 - **Chunks:** `(min(N, 32768),)` for 1D chunking
-- **Compression:** Blosc with zstd, level 3, bit-shuffle
+- **Compression:** Blosc with zstd, level 9 (width-aware shuffle policy)
 - **Description:** Point radii in scene units
 - **Default:** 0.5 if not provided (see `DEFAULT_POINT_RADIUS` in `core/scene.py`)
 - **Validation:** All values must be positive
@@ -500,7 +500,7 @@ Points nodes contain the actual point data.
 - **Shape:** `(N,)`
 - **Dtype:** `float32`
 - **Chunks:** `(min(N, 32768),)` for 1D chunking
-- **Compression:** Blosc with zstd, level 3, bit-shuffle
+- **Compression:** Blosc with zstd, level 9 (width-aware shuffle policy)
 - **Description:** Point edge sharpness — a normalised `[0, 1]` knob. The viewer
   maps it to the super-Gaussian falloff exponent `β = 2^(6s − 2)`: `s = 0.5 → β = 2`
   (a true Gaussian), higher `s` → harder/crisper edge (β up to 16), lower `s` →
@@ -713,7 +713,7 @@ The spatial index stores metadata in the points group `.zattrs` and chunk bounds
 - **Shape:** `(num_chunks, D, 2)` where D = number of dimensions
 - **Dtype:** `float32`
 - **Chunks:** `(num_chunks, D, 2)` - stored as single chunk
-- **Compression:** Blosc with zstd, level 3
+- **Compression:** Blosc with zstd, level 9 (width-aware shuffle policy)
 - **Description:** Bounding box [min, max] for each dimension of each chunk
 - **Example:** For chunk 5 in a 4D dataset: `chunk_bounds[5, :, :]` = `[[x_min, x_max], [y_min, y_max], [z_min, z_max], [t_min, t_max]]`
 - **Note:** Bounds include point radii extent to ensure hyperspheres are found

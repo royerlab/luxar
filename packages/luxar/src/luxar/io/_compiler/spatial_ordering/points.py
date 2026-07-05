@@ -2,15 +2,18 @@
 
 from __future__ import annotations
 
-from typing import Any, Dict, Optional, Union
+from typing import TYPE_CHECKING, Any, Dict, Optional, Union
 
 import numpy as np
 import zarr
 from arbol import aprint
 from numpy.typing import NDArray
 
-from ....typing_utils.protocols import CompressorProtocol
+from ....encoding.compression import resolve_compressor
 from ..context import OrderingCtx
+
+if TYPE_CHECKING:
+    from ....encoding.compression import CompressorLike
 
 
 def build_points_ordering(
@@ -113,7 +116,7 @@ def build_points_ordering(
 def write_points_ordering_to_zarr(
     group: zarr.Group,
     ordering_data: Dict[str, Any],
-    compressor: Optional[CompressorProtocol],
+    compressor: "CompressorLike",
 ) -> None:
     """Write spatial ordering metadata and chunk bounds to Zarr.
 
@@ -145,7 +148,7 @@ def write_points_ordering_to_zarr(
             shape=chunk_bounds.shape,
             dtype=np.float32,
             chunks=(chunk_bounds.shape[0], chunk_bounds.shape[1], 2),
-            compressor=compressor,
+            compressor=resolve_compressor(compressor, np.float32),
         )
 
     aprint(

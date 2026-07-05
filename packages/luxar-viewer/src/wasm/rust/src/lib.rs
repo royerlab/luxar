@@ -74,9 +74,11 @@ mod spatial;
 
 // Re-export all public functions for WASM binding
 pub use decode::{
-    decode_broadcasted, decode_log_scalar_u16, decode_log_scalar_u8, decode_lut_row_u16,
+    decode_broadcasted, decode_geolog_scalar_u16, decode_geolog_scalar_u8,
+    decode_linear_perchannel_u16, decode_linear_perchannel_u8, decode_log_perchannel_u16,
+    decode_log_perchannel_u8, decode_log_scalar_u16, decode_log_scalar_u8, decode_lut_row_u16,
     decode_lut_row_u8, decode_lut_scalar_u16, decode_lut_scalar_u8, decode_quantized_u16,
-    decode_quantized_u8,
+    decode_quantized_u8, decode_signed_log_perchannel_u16, decode_signed_log_perchannel_u8,
 };
 pub use effective_radii::calculate_effective_radii;
 pub use gsplats::compute_nd_visibility_gsplats;

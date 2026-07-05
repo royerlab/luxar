@@ -425,9 +425,8 @@ def generate_encoding_edge_cases_test() -> None:
             compressor=None,
         )
 
-        # Explicit log-space positive scalar encoding. The scene compiler uses
-        # linear positive-scalar encoding by default, so keep a raw fixture for
-        # decoder compatibility with this valid encoder mode.
+        # Explicit log-space positive scalar encoding — the "log" opt-in now
+        # selects the geometric-log (geolog) family: MEMORY -> geolog_scalar_uint8.
         encoder.encode(
             np.logspace(-2, 2, 32, dtype=np.float32),
             root,
@@ -435,6 +434,32 @@ def generate_encoding_edge_cases_test() -> None:
             SemanticType.POSITIVE_SCALAR,
             mode=EncodingMode.MEMORY,
             positive_scalar_encoding="log",
+            compressor=None,
+        )
+
+        # Wide dynamic range (> 65536:1) AUTO positive scalar -> the writer's
+        # geolog_scalar_uint16 (rescale-first, reserved zero level). Includes
+        # exact zeros to pin the reserved level 0 round-trip.
+        wide = np.logspace(-4, 3, 32, dtype=np.float32)
+        wide[::7] = 0.0
+        encoder.encode(
+            wide,
+            root,
+            "geolog_amplitudes",
+            SemanticType.POSITIVE_SCALAR,
+            mode=EncodingMode.AUTO,
+            compressor=None,
+        )
+
+        # LEGACY 0-anchored log encodings: no longer produced by any policy,
+        # but old stores carry them — keep decode coverage via the CUSTOM path.
+        encoder.encode(
+            np.logspace(-1, 2, 32, dtype=np.float32),
+            root,
+            "legacy_log_scalar_u8",
+            SemanticType.POSITIVE_SCALAR,
+            mode=EncodingMode.CUSTOM,
+            custom_encoder="log_scalar_uint8",
             compressor=None,
         )
 

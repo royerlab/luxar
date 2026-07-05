@@ -60,7 +60,20 @@ export async function loadQuantized(
       let dequantized: Float32Array;
       if (shouldUseWorkers) {
         try {
-          if (quantMetadata.isLogSpace) {
+          if (quantMetadata.isGeologSpace) {
+            dequantized = await getWorkerPool().runWithTimeout(
+              'decodeGeologScalar',
+              'decode',
+              (api) =>
+                api.decodeGeologScalar({
+                  data: quantizedData,
+                  minLog: quantMetadata.bounds[0],
+                  maxLog: quantMetadata.bounds[1],
+                  dtype: quantMetadata.dtype,
+                }),
+              ctx.signal ?? undefined
+            );
+          } else if (quantMetadata.isLogSpace) {
             dequantized = await getWorkerPool().runWithTimeout(
               'decodeLogScalar',
               'decode',

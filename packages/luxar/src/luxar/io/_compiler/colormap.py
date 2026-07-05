@@ -9,6 +9,8 @@ import numpy as np
 import zarr
 from arbol import aprint
 
+from ...encoding.compression import WIDTH_AWARE_DEFAULT, resolve_compressor
+
 
 def write_colormap_lut_if_needed(
     group: zarr.Group,
@@ -83,6 +85,7 @@ def write_colormap_lut_if_needed(
             data=lut,
             chunks=(256, 3),
             dtype=np.uint8,
+            compressor=resolve_compressor(WIDTH_AWARE_DEFAULT, np.uint8),
         )
         attrs["colormap"] = "custom"
         aprint(f"  ✓ Resolved '{colormap}' to LUT and wrote as custom (256x3 uint8)")
@@ -95,6 +98,7 @@ def write_colormap_lut_if_needed(
         data=lut,
         chunks=(256, 3),
         dtype=np.uint8,
+        compressor=resolve_compressor(WIDTH_AWARE_DEFAULT, np.uint8),
     )
     attrs["colormap"] = "custom"
     aprint("  ✓ Wrote custom colormap LUT (256x3 uint8)")

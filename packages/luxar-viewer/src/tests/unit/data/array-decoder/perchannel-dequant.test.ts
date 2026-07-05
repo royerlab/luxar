@@ -173,6 +173,75 @@ describe('makePerChannelDequant', () => {
     }
   });
 
+  it('zero_level: level 0 decodes to exactly 0 and nonzero levels use the 2^bits-2 denominator', () => {
+    // Mirrors the CURRENT Python encoder (`zero_level: true`): scales anchored
+    // at each column's NONZERO min/max, code 0 reserved for exact zeros,
+    // codes 1..2^bits-1 spanning [lo, hi].
+    const quantSignedLogZeroLevel = (values: number[][], bits: number) => {
+      const cols = values[0].length;
+      const top = (1 << bits) - 1;
+      const y = values.map((row) => row.map((x) => Math.sign(x) * Math.log1p(Math.abs(x))));
+      const lo = Array.from({ length: cols }, (_, c) => {
+        const nz = y.filter((_, i) => values[i][c] !== 0).map((r) => r[c]);
+        return nz.length ? Math.min(...nz) : 0;
+      });
+      const hi = Array.from({ length: cols }, (_, c) => {
+        const nz = y.filter((_, i) => values[i][c] !== 0).map((r) => r[c]);
+        return nz.length ? Math.max(...nz) : 0;
+      });
+      const u = y.map((row, i) =>
+        row.map((v, c) =>
+          values[i][c] === 0
+            ? 0
+            : 1 + Math.round(((v - lo[c]) / Math.max(hi[c] - lo[c], 1e-30)) * (top - 1))
+        )
+      );
+      return { u, lo, hi };
+    };
+    const vals = [
+      [-0.3, 5.0],
+      [0.0, -2.0], // exact zero (axis-aligned splat correlation)
+      [4.0, 0.0],
+      [-5.0, 0.05],
+    ];
+    const { u, lo, hi } = quantSignedLogZeroLevel(vals, 16);
+    const deq = ArrayDecoder.makePerChannelDequant(
+      {
+        name: 'signed_log_perchannel_u16',
+        bits: 16,
+        col_lo: lo,
+        col_hi: hi,
+        zero_level: true,
+      },
+      2
+    );
+    for (let i = 0; i < vals.length; i++) {
+      for (let c = 0; c < 2; c++) {
+        const got = deq(u[i][c], c);
+        if (vals[i][c] === 0) {
+          expect(got).toBe(0); // EXACT zero, not a tiny spurious correlation
+        } else {
+          expect(Math.abs(got - vals[i][c])).toBeLessThan(1e-2);
+          expect(Math.sign(got)).toBe(Math.sign(vals[i][c]));
+          expect(got).not.toBe(0); // nonzero never collapses to zero
+        }
+      }
+    }
+  });
+
+  it('zero_level: absent flag keeps the legacy all-levels mapping (level 0 ≠ 0)', () => {
+    // A legacy store quantized level 0 as "companded lo", not "exact zero" —
+    // the flag branch must not rewrite old arrays.
+    const enc = { name: 'log_perchannel_u8', bits: 8, col_lo: [0.5], col_hi: [3.0] };
+    const legacy = ArrayDecoder.makePerChannelDequant(enc, 1);
+    expect(legacy(0, 0)).toBeCloseTo(Math.expm1(0.5), 12);
+    expect(legacy(255, 0)).toBeCloseTo(Math.expm1(3.0), 12);
+    const current = ArrayDecoder.makePerChannelDequant({ ...enc, zero_level: true }, 1);
+    expect(current(0, 0)).toBe(0);
+    expect(current(1, 0)).toBeCloseTo(Math.expm1(0.5), 12); // first nonzero code = lo
+    expect(current(255, 0)).toBeCloseTo(Math.expm1(3.0), 12); // top code = hi
+  });
+
   it('classifies all six per-channel encodings as known, self-decoded, not global-quantized', () => {
     for (const n of [
       'log_perchannel_u8',
