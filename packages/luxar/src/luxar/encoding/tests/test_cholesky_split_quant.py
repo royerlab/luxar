@@ -1,7 +1,10 @@
 """Round-trip + edge-case tests for the differential Cholesky encodings.
 
 CHOLESKY_DIAG (positive, per-column log) and CHOLESKY_OFFDIAG (signed, per-column
-signed-log), each at float32 (PRECISION), uint16 (AUTO) and uint8 (MEMORY).
+signed-log), each at float32 (PRECISION) and uint8 (AUTO and MEMORY). AUTO's
+escalation to uint16 is owned by ``encode_cholesky_split`` (the joint pair entry
+point with the encode-time covariance certificate) — tested in
+``TestEncodeCholeskySplit`` below.
 """
 
 import numpy as np
@@ -31,7 +34,7 @@ class TestCholeskyDiag:
         "mode,name,dtype,bits",
         [
             (EncodingMode.PRECISION, "float32", np.float32, None),
-            (EncodingMode.AUTO, "log_perchannel_u16", np.uint16, 16),
+            (EncodingMode.AUTO, "log_perchannel_u8", np.uint8, 8),
             (EncodingMode.MEMORY, "log_perchannel_u8", np.uint8, 8),
         ],
     )
@@ -74,7 +77,7 @@ class TestCholeskyOffdiag:
         "mode,name,dtype",
         [
             (EncodingMode.PRECISION, "float32", np.float32),
-            (EncodingMode.AUTO, "signed_log_perchannel_u16", np.uint16),
+            (EncodingMode.AUTO, "signed_log_perchannel_u8", np.uint8),
             (EncodingMode.MEMORY, "signed_log_perchannel_u8", np.uint8),
         ],
     )
@@ -110,7 +113,7 @@ class TestEdgeCases:
             oned, SemanticType.CHOLESKY_DIAG, EncodingMode.AUTO
         )
         assert len(enc["col_lo"]) == 1
-        np.testing.assert_allclose(decoded, oned, rtol=0, atol=1e-3)
+        np.testing.assert_allclose(decoded, oned, rtol=0, atol=1e-2)
 
     def test_all_zero_offdiag(self):
         z = np.zeros((50, 3), np.float32)
@@ -124,9 +127,7 @@ class TestEdgeCases:
         # broadcast optimization takes over (the path the broadcasted fixtures
         # exercise); the round-trip must still recover exact zeros.
         z = np.zeros((50, 3), np.float32)
-        decoded, enc, _ = _roundtrip(
-            z, SemanticType.CHOLESKY_DIAG, EncodingMode.MEMORY
-        )
+        decoded, enc, _ = _roundtrip(z, SemanticType.CHOLESKY_DIAG, EncodingMode.MEMORY)
         assert enc["name"] == "broadcasted"
         np.testing.assert_array_equal(decoded, z)
 
@@ -149,6 +150,215 @@ class TestEdgeCases:
         once, _, _ = _roundtrip(diag, SemanticType.CHOLESKY_DIAG, EncodingMode.AUTO)
         twice, _, _ = _roundtrip(once, SemanticType.CHOLESKY_DIAG, EncodingMode.AUTO)
         np.testing.assert_array_equal(twice, once)  # zero additional error
+
+
+class TestEncodeCholeskySplit:
+    """The joint pair entry point: one owned policy, encode-time certificate,
+    u8 -> u16 -> float32 escalation ladder (AUTO only)."""
+
+    @staticmethod
+    def _make(n=4000, seed=0):
+        rng = np.random.default_rng(seed)
+        diag = rng.uniform(0.4, 5.0, size=(n, 3)).astype(np.float32)
+        off = (rng.standard_normal((n, 3)) * 0.3).astype(np.float32)
+        return diag, off
+
+    @staticmethod
+    def _encode(diag, off, mode, ndim=3, **kw):
+        g = zarr.group(store=zarr.MemoryStore())
+        ArrayEncoder().encode_cholesky_split(g, diag, off, ndim, mode, **kw)
+        return g
+
+    def test_auto_clean_data_stays_u8_with_certificate(self):
+        diag, off = self._make()
+        g = self._encode(diag, off, EncodingMode.AUTO)
+        for name, enc_name in (
+            ("cholesky_factors_diag", "log_perchannel_u8"),
+            ("cholesky_factors_offdiag", "signed_log_perchannel_u8"),
+        ):
+            enc = dict(g[name].attrs["encoding"])
+            assert enc["name"] == enc_name
+            cert = enc["certificate"]
+            assert cert["metric"] == "cov_relf_p95"
+            assert cert["tier"] == "u8"
+            assert 0.0 <= cert["value"] <= cert["threshold"]
+        # certificate is provenance only: decode needs nothing beyond the
+        # array's own standard encoding fields (self-contained decode).
+        decoded = ArrayDecoder().decode(g["cholesky_factors_diag"], g)
+        assert np.abs(decoded - diag).max() / np.ptp(diag) < 1e-2
+
+    def test_auto_escalates_to_u16_on_stretched_range(self):
+        # A few huge-sigma outliers stretch every column's log range so the
+        # normal splats' u8 reconstruction error blows past the threshold —
+        # the merged-heterogeneous-stores failure mode.
+        diag, off = self._make()
+        diag[:10] = 1e8
+        with pytest.warns(UserWarning, match="escalating to uint16"):
+            g = self._encode(diag, off, EncodingMode.AUTO)
+        for name, enc_name in (
+            ("cholesky_factors_diag", "log_perchannel_u16"),
+            ("cholesky_factors_offdiag", "signed_log_perchannel_u16"),
+        ):
+            enc = dict(g[name].attrs["encoding"])
+            assert enc["name"] == enc_name
+            cert = enc["certificate"]
+            assert cert["tier"] == "u16"
+            assert cert["value"] <= cert["threshold"]  # invariant holds at u16
+        # escalated store still round-trips within the u16 tolerance
+        decoded = ArrayDecoder().decode(g["cholesky_factors_diag"], g)
+        assert np.abs(decoded - diag).max() / np.ptp(diag) < 1e-3
+
+    def test_memory_never_escalates(self):
+        diag, off = self._make()
+        diag[:10] = 1e8  # same nasty data as the escalation test
+        g = self._encode(diag, off, EncodingMode.MEMORY)
+        enc = dict(g["cholesky_factors_diag"].attrs["encoding"])
+        assert enc["name"] == "log_perchannel_u8"
+        assert "certificate" not in enc  # explicit user choice: no certificate
+
+    def test_precision_stays_float32(self):
+        diag, off = self._make(n=200)
+        g = self._encode(diag, off, EncodingMode.PRECISION)
+        for name in ("cholesky_factors_diag", "cholesky_factors_offdiag"):
+            enc = dict(g[name].attrs["encoding"])
+            assert enc["name"] == "float32"
+            assert "certificate" not in enc
+
+    def test_both_halves_share_one_tier(self):
+        # Nasty diag alone must drag the (well-behaved) offdiag up to u16 too:
+        # mixed tiers within one pair are forbidden by design.
+        diag, off = self._make()
+        diag[:10] = 1e8
+        with pytest.warns(UserWarning):
+            g = self._encode(diag, off, EncodingMode.AUTO)
+        assert (
+            g["cholesky_factors_diag"].attrs["encoding"]["bits"]
+            == g["cholesky_factors_offdiag"].attrs["encoding"]["bits"]
+            == 16
+        )
+
+    def test_threshold_override_and_float32_rung(self):
+        # An impossible threshold pushes AUTO through u8 and u16 down to the
+        # float32 rung (exercises the ladder end even though real data never
+        # reaches it).
+        diag, off = self._make(n=500)
+        with pytest.warns(UserWarning, match="storing float32"):
+            g = self._encode(diag, off, EncodingMode.AUTO, certificate_threshold=0.0)
+        enc = dict(g["cholesky_factors_diag"].attrs["encoding"])
+        assert enc["name"] == "float32"
+        assert enc["certificate"]["tier"] == "float32"
+        decoded = ArrayDecoder().decode(g["cholesky_factors_diag"], g)
+        np.testing.assert_array_equal(decoded, diag)
+
+    def test_1d_skips_offdiag(self):
+        diag, _ = self._make(n=100)
+        g = self._encode(
+            diag[:, :1], np.zeros((100, 0), np.float32), EncodingMode.AUTO, ndim=1
+        )
+        assert "cholesky_factors_offdiag" not in g
+        enc = dict(g["cholesky_factors_diag"].attrs["encoding"])
+        assert enc["name"] == "log_perchannel_u8"
+        assert enc["certificate"]["tier"] == "u8"
+
+    def test_rejects_mismatched_shapes(self):
+        diag, off = self._make(n=100)
+        with pytest.raises(ValueError, match="diag must have shape"):
+            self._encode(diag[:, :2], off, EncodingMode.AUTO)
+        with pytest.raises(ValueError, match="offdiag must have shape"):
+            self._encode(diag, off[:, :2], EncodingMode.AUTO)
+
+    @pytest.mark.parametrize(
+        "mode", [EncodingMode.AUTO, EncodingMode.MEMORY, EncodingMode.PRECISION]
+    )
+    def test_empty_pair_writes_passthrough(self, mode):
+        # Zero-splat pairs (empty BSP part / LOD tile / filtered-out result)
+        # must fall through to encode()'s size==0 passthrough — never reach
+        # _is_uniform (which indexes data[0]) or the certificate.
+        g = self._encode(
+            np.zeros((0, 3), np.float32),
+            np.zeros((0, 3), np.float32),
+            mode,
+        )
+        for name in ("cholesky_factors_diag", "cholesky_factors_offdiag"):
+            assert g[name].shape == (0, 3)
+            assert "certificate" not in dict(g[name].attrs.get("encoding", {}))
+
+    def test_sample_cap_bounds_certificate_and_preserves_decision(self, monkeypatch):
+        # Above COV_CERT_SAMPLE_MAX rows, the certificate measures a bounded
+        # evenly-spaced sample (records "sample") — but the quantization scales
+        # come from the FULL columns, so the sampled value tracks the full one.
+        import luxar.encoding.encoder as enc_mod
+
+        diag, off = self._make(n=4000, seed=8)
+        full = ArrayEncoder._cov_relf_p95(
+            np.maximum(diag.astype(np.float64), 0.0),
+            ArrayEncoder._perchannel_log_roundtrip(diag, 8, signed=False),
+            off,
+            ArrayEncoder._perchannel_log_roundtrip(off, 8, signed=True),
+            3,
+        )
+        monkeypatch.setattr(enc_mod, "COV_CERT_SAMPLE_MAX", 512)
+        g = self._encode(diag, off, EncodingMode.AUTO)
+        cert = dict(g["cholesky_factors_diag"].attrs["encoding"])["certificate"]
+        assert cert["sample"] == 512
+        assert cert["tier"] == "u8"
+        # sampled estimate within 25% of the full measurement (same scales)
+        assert abs(cert["value"] - full) / full < 0.25
+
+        # Escalation must still fire through the sample: outliers spread across
+        # the array so evenly-spaced sampling sees the stretched range (the
+        # scales are full-column regardless, which is what stretches the grid).
+        diag2 = diag.copy()
+        diag2[::16] = 1e8
+        with pytest.warns(UserWarning, match="escalating to uint16"):
+            g2 = self._encode(diag2, off, EncodingMode.AUTO)
+        cert2 = dict(g2["cholesky_factors_diag"].attrs["encoding"])["certificate"]
+        assert cert2["tier"] == "u16"
+        assert cert2["sample"] == 512
+
+        # Below the cap: no "sample" key (full measurement).
+        monkeypatch.setattr(enc_mod, "COV_CERT_SAMPLE_MAX", 262_144)
+        g3 = self._encode(diag, off, EncodingMode.AUTO)
+        assert (
+            "sample"
+            not in dict(g3["cholesky_factors_diag"].attrs["encoding"])["certificate"]
+        )
+
+    def test_certificate_metric_matches_trils_convention(self):
+        # The encoder-local Sigma rebuild must agree with the canonical
+        # gsplats.utils.trils packing (row-major np.tril_indices). The test may
+        # import both; production encoding code must not import gsplats.
+        from luxar.gsplats.utils.trils import merge_tril, unpack_tril
+
+        diag, off = self._make(n=300, seed=5)
+        diag_q = diag * 1.01
+        off_q = off * 0.99
+
+        def sigma_via_trils(dg, od):
+            packed = merge_tril(dg, od, 3)
+            tri = unpack_tril(packed.astype(np.float64), 3)
+            return np.einsum("nij,nkj->nik", tri, tri).reshape(len(dg), -1)
+
+        s0 = sigma_via_trils(diag, off)
+        sq = sigma_via_trils(diag_q, off_q)
+        num = np.linalg.norm(sq - s0, axis=1)
+        den = np.maximum(np.linalg.norm(s0, axis=1), 1e-30)
+        expected = float(np.percentile(num / den, 95))
+
+        got = ArrayEncoder._cov_relf_p95(diag, diag_q, off, off_q, 3)
+        np.testing.assert_allclose(got, expected, rtol=1e-12)
+
+    def test_roundtrip_helper_matches_stored_encoding(self):
+        # The certificate's round-trip helper and the real encode->decode path
+        # must be the same transform (the "certificate can never lie" contract).
+        diag, off = self._make(n=800, seed=6)
+        g = self._encode(diag, off, EncodingMode.AUTO)
+        decoded = ArrayDecoder().decode(g["cholesky_factors_diag"], g)
+        helper = ArrayEncoder._perchannel_log_roundtrip(diag, 8, signed=False)
+        np.testing.assert_allclose(decoded, helper, rtol=0, atol=1e-6)
+        decoded_off = ArrayDecoder().decode(g["cholesky_factors_offdiag"], g)
+        helper_off = ArrayEncoder._perchannel_log_roundtrip(off, 8, signed=True)
+        np.testing.assert_allclose(decoded_off, helper_off, rtol=0, atol=1e-6)
 
 
 class TestDecoderValidation:

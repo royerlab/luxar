@@ -154,15 +154,17 @@ This package uses `luxar.encoding` for semantic type-aware array encoding:
 
 | Array | Semantic Type | MEMORY Mode Encoding |
 |-------|---------------|---------------------|
-| `centers` | COORDINATE | `float32` (coordinates stay float32 — never quantized) |
+| `centers` | COORDINATE | `linear_perchannel_u16` per-axis fixed-point (AUTO/MEMORY; extent rail falls back to `float32`) / `float32` (PRECISION) |
 | `amplitudes` | POSITIVE_SCALAR | canonical positive-scalar encoding (may quantize to uint8) |
-| `cholesky_factors_diag` | CHOLESKY_DIAG | per-channel log: `log_perchannel_u16` (AUTO) / `u8` (MEMORY) / `float32` (PRECISION) |
-| `cholesky_factors_offdiag` | CHOLESKY_OFFDIAG | per-channel signed-log: `signed_log_perchannel_u16` / `u8` / `float32`; absent if d==1 |
+| `cholesky_factors_diag` | CHOLESKY_DIAG | per-channel log: `log_perchannel_u8` (AUTO — certified, escalates to `u16`; MEMORY) / `float32` (PRECISION) |
+| `cholesky_factors_offdiag` | CHOLESKY_OFFDIAG | per-channel signed-log: `signed_log_perchannel_u8` (escalates with the diagonal — one shared tier) / `float32`; absent if d==1 |
 | `colors` | COLOR | `rgb_uint8` (SDR) or `float32` (HDR, auto-detected) |
 
-**COORDINATE centers always stay float32** for TypeScript/WebGL compatibility:
-float16 on coordinates is a precision footgun, so the writer disables it
-(there is no `float16_allowed` knob).
+**COORDINATE centers are uint16 per-axis fixed-point** under AUTO/MEMORY
+(`linear_perchannel_u16`, decoded back to float32 on read; a per-axis extent
+≥ 2¹⁶ falls back to float32). float16 is never used on coordinates — its
+*relative* precision is a footgun for absolute positions, so the writer
+disables it (there is no `float16_allowed` knob).
 
 **Encoding modes**:
 - `AUTO`: Analyzes data and selects encoding (may quantize)
@@ -297,7 +299,7 @@ loaded = GSplatData.load("fitted.gsplats.zarr")
 # Save with aggressive compression
 result.save(
     "compressed.gsplats.zarr",
-    encoding_mode=EncodingMode.MEMORY,  # Quantize amplitudes/colors (centers stay float32)
+    encoding_mode=EncodingMode.MEMORY,  # Quantize amplitudes/colors/centers/cholesky
 )
 ```
 
@@ -401,8 +403,9 @@ Migration mappings:
 Migrated arrays are written with `ordering="none"` so element order is
 preserved (no Morton/Hilbert re-sort), but **encoding follows the current policy**:
 under the default `EncodingMode.AUTO`, legacy float32 Cholesky factors are
-re-encoded as the split diagonal/off-diagonal arrays with near-lossless uint16
-per-column quantization. Pass `encoding_mode=EncodingMode.PRECISION`
+re-encoded as the split diagonal/off-diagonal arrays with certified uint8
+per-column quantization (escalating to uint16 when the encode-time covariance
+certificate demands it). Pass `encoding_mode=EncodingMode.PRECISION`
 (`--lossless` on the CLI) for an exact float32 archival migration.
 Fitting/provenance groups are spliced back onto the output. The CLI entry point
 is `luxar gsplat migrate-format`.
