@@ -13,8 +13,10 @@ import { InputContext, type InputContextManager } from '../context-manager';
 import type { SceneManager } from '../../../scene/scene-manager';
 import type { RenderingControls } from '../../../ui/rendering-controls';
 
-/** Camera control modes the V key cycles through. */
-export type ControlType = 'orbit' | 'fly' | 'ortho';
+// Camera control modes the V key cycles through. Re-exported from the canonical
+// domain definition (controls/types.ts) so there is a single source of truth.
+export type { ControlType } from '../../../controls/types';
+import type { ControlType } from '../../../controls/types';
 
 /**
  * Return the next control type in the cycle: orbit → fly → ortho → orbit.
