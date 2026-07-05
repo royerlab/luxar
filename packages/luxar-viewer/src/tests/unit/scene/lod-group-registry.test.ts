@@ -1568,6 +1568,76 @@ describe('LODGroupRegistry — never-downgrade display gate', () => {
     expect(groupFine.object.visible).toBe(true); // current behavior preserved
   });
 
+  it('nested-group aspiration (partition subtree): holds the coarse leaf until the aggregate crosses or completes', () => {
+    // The `overview` shape: an eager coarse cap leaf vs a deferred
+    // kind=partition branch whose parts are streaming their ladders. The
+    // gate reads the SUBTREE aggregate (visible stamped part meshes).
+    const reg = makeRegistry([0, 1, 2], undefined, undefined, () => 2);
+    const coarse = makeCountedChild(0, 2, 100);
+    coarse.object.userData.committedLadderComplete = true;
+
+    const placeholder = new THREE.Group(); // anonymous deferred-GROUP wrapper
+    const partition = new THREE.Group();
+    placeholder.add(partition);
+    const makePart = (count: number, complete: boolean): THREE.Mesh => {
+      const m = new THREE.Mesh();
+      m.userData = {
+        nodeType: 'gsplats',
+        loadedViewVersion: 2,
+        visibleSplatCount: count,
+        committedLadderComplete: complete,
+      };
+      return m;
+    };
+    const part1 = makePart(10, false);
+    const part2 = makePart(20, false);
+    partition.add(part1);
+    partition.add(part2);
+    const fine: LODGroupChild = {
+      object: placeholder,
+      coverageFraction: 0.5,
+      positionBounds: { min: [0, 0, 0], max: [10, 10, 10] },
+      ready: true, // activation (loadChildren) settled
+    };
+    reg.register(makeEntry([coarse, fine], 0, '/g'));
+
+    reg.evaluatePerFrame();
+    expect(coarse.object.visible).toBe(true); // held: aggregate 30 < 100
+    expect(placeholder.visible).toBe(false);
+
+    // Parts stream past the cap → aggregate crossover → swap.
+    (part1.userData as { visibleSplatCount: number }).visibleSplatCount = 80;
+    (part2.userData as { visibleSplatCount: number }).visibleSplatCount = 40;
+    reg.evaluatePerFrame();
+    expect(placeholder.visible).toBe(true);
+    expect(coarse.object.visible).toBe(false);
+  });
+
+  it('nested-group aspiration releases on aggregate completion even below the prev count', () => {
+    const reg = makeRegistry([0, 1, 2], undefined, undefined, () => 2);
+    const coarse = makeCountedChild(0, 2, 1000);
+    coarse.object.userData.committedLadderComplete = true;
+    const placeholder = new THREE.Group();
+    const part = new THREE.Mesh();
+    part.userData = {
+      nodeType: 'gsplats',
+      loadedViewVersion: 2,
+      visibleSplatCount: 50,
+      committedLadderComplete: true, // every part ladder committed complete
+    };
+    placeholder.add(part);
+    const fine: LODGroupChild = {
+      object: placeholder,
+      coverageFraction: 0.5,
+      positionBounds: { min: [0, 0, 0], max: [10, 10, 10] },
+      ready: true,
+    };
+    reg.register(makeEntry([coarse, fine], 0, '/g'));
+    reg.evaluatePerFrame();
+    expect(placeholder.visible).toBe(true); // complete → shown despite 50 < 1000
+    expect(coarse.object.visible).toBe(false);
+  });
+
   it('keeps advancing the held aspiration ladder while the previous level stays visible', () => {
     const reg = makeRegistry([0, 1, 2], undefined, undefined, () => 2);
     const coarse = makeCountedChild(0, 2, 100);

@@ -53,9 +53,9 @@ import {
   isFresh,
   isReady,
   SettleTracker,
-  shouldHoldPreviousDisplay,
   visibleElementCount,
 } from './lod-freshness';
+import { shouldHoldPreviousDisplay } from './lod-display-gate';
 
 /**
  * Frames the view-update version must hold steady before the registry reloads a

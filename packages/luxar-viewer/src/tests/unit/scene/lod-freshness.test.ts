@@ -10,10 +10,8 @@ import {
   isFresh,
   isReady,
   SettleTracker,
-  shouldHoldPreviousDisplay,
   visibleElementCount,
   type FreshnessChild,
-  type HoldCandidate,
 } from '../../../scene/lod-freshness';
 
 function child(
@@ -113,110 +111,6 @@ describe('coarsestFreshNonEmptyIndex', () => {
 
   it('returns -1 when every fresh level is empty (genuinely empty slice)', () => {
     expect(coarsestFreshNonEmptyIndex([level(2, 0), level(2, 0)], 2)).toBe(-1);
-  });
-});
-
-describe('shouldHoldPreviousDisplay (never-downgrade display gate)', () => {
-  /** A gsplats level with committed count + version + ladder-complete stamps. */
-  function shown(visibleSplatCount: number, loadedViewVersion = 2): FreshnessChild {
-    return {
-      ready: true,
-      object: {
-        userData: {
-          nodeType: 'gsplats',
-          loadedViewVersion,
-          visibleSplatCount,
-          committedLadderComplete: true,
-        },
-      },
-    };
-  }
-
-  /** A streaming gsplats aspiration: committed stamp says ladder incomplete. */
-  function streamingAsp(
-    visibleSplatCount: number,
-    overrides: Partial<HoldCandidate> = {}
-  ): HoldCandidate {
-    return {
-      ready: true,
-      object: {
-        userData: {
-          nodeType: 'gsplats',
-          loadedViewVersion: 2,
-          visibleSplatCount,
-          committedLadderComplete: false,
-        },
-      },
-      ...overrides,
-    };
-  }
-
-  it('holds while the committed ladder stamp is incomplete and the count is below prev', () => {
-    expect(shouldHoldPreviousDisplay(streamingAsp(10), shown(100), 2)).toBe(true);
-  });
-
-  it('releases on committed ladder completion (stamp flips at the final COMMIT)', () => {
-    // The stamp — not the loader's live hasMoreLODs — drives the release: it
-    // is written in the same synchronous commit as the final count, so there
-    // is no fetch-resolved-but-not-committed window in which the gate could
-    // re-show a partial level (the premature-release race, by construction).
-    const asp = streamingAsp(50);
-    asp.object.userData!.committedLadderComplete = true;
-    expect(shouldHoldPreviousDisplay(asp, shown(100), 2)).toBe(false);
-  });
-
-  it('releases at the committed-count crossover (aspiration caught up)', () => {
-    expect(shouldHoldPreviousDisplay(streamingAsp(100), shown(100), 2)).toBe(false);
-    expect(shouldHoldPreviousDisplay(streamingAsp(150), shown(100), 2)).toBe(false);
-  });
-
-  it('releases when the aspiration ladder failed (degrade to ungated behavior)', () => {
-    expect(shouldHoldPreviousDisplay(streamingAsp(10, { failed: true }), shown(100), 2)).toBe(
-      false
-    );
-  });
-
-  it('never holds a stale prev (staleness beats quality)', () => {
-    expect(shouldHoldPreviousDisplay(streamingAsp(10), shown(100, 1), 2)).toBe(false);
-  });
-
-  it('never holds an empty or count-untracked prev (fast first paint)', () => {
-    expect(shouldHoldPreviousDisplay(streamingAsp(10), shown(0), 2)).toBe(false);
-    const untrackedPrev: FreshnessChild = {
-      ready: true,
-      object: { userData: { nodeType: 'gsplats', loadedViewVersion: 2 } },
-    };
-    expect(shouldHoldPreviousDisplay(streamingAsp(10), untrackedPrev, 2)).toBe(false);
-    expect(shouldHoldPreviousDisplay(streamingAsp(10), undefined, 2)).toBe(false);
-  });
-
-  it('does not hold against an aspiration with an untracked count', () => {
-    const asp = streamingAsp(0);
-    delete asp.object.userData!.visibleSplatCount;
-    expect(shouldHoldPreviousDisplay(asp, shown(100), 2)).toBe(false);
-  });
-
-  it('does not hold when the ladder stamp is missing (single-LOD / unstamped level)', () => {
-    const asp = streamingAsp(10);
-    delete asp.object.userData!.committedLadderComplete;
-    expect(shouldHoldPreviousDisplay(asp, shown(100), 2)).toBe(false);
-  });
-
-  it('does not compare counts across geometry types (mixed-type ladder)', () => {
-    const linesPrev: FreshnessChild = {
-      ready: true,
-      object: { userData: { nodeType: 'lines', loadedViewVersion: 2, visibleSegmentCount: 100 } },
-    };
-    expect(shouldHoldPreviousDisplay(streamingAsp(10), linesPrev, 2)).toBe(false);
-  });
-
-  it('falls back to readiness for prev when freshness is untracked (version null)', () => {
-    // No version wiring: a READY prev can be held...
-    expect(shouldHoldPreviousDisplay(streamingAsp(10), shown(100), null)).toBe(true);
-    // ...a not-ready prev cannot.
-    const notReady = shown(100);
-    notReady.ready = false;
-    expect(shouldHoldPreviousDisplay(streamingAsp(10), notReady, null)).toBe(false);
   });
 });
 
