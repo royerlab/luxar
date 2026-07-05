@@ -243,12 +243,17 @@ export async function runInitPipeline(
   // Initialize resolution indicator and connect to DPR manager
   const resolutionIndicator = new ResolutionIndicator();
   partial.resolutionIndicator = resolutionIndicator;
-  // Display target FPS rounded up from maxFPS (58 → 60) since targetFPS (55) is a hysteresis threshold
+  // Display target FPS rounded up to a friendly multiple of 5 (58 → 60);
+  // maxFPS itself is the scale-up hysteresis threshold, not a user-facing
+  // target, so the indicator shows the rounded value instead.
   const displayTargetFPS = Math.ceil(config.adaptiveDPR.maxFPS / 5) * 5;
   resolutionIndicator.setTargetFPS(displayTargetFPS);
   adaptiveDPRManager.setOnDPRChangeCallback((dpr, isReducedResolution) => {
     if (isReducedResolution) {
-      resolutionIndicator.show(dpr);
+      // The indicator displays percent-of-native resolution, so normalize
+      // the absolute DPR here — on a 2x retina display a reduced DPR of
+      // 1.8 must read as "90%", not "180%".
+      resolutionIndicator.show(dpr / adaptiveDPRManager.getNativeDPR());
     } else {
       // Reset the indicator so it can show again on next reduced resolution mode activation
       resolutionIndicator.reset();

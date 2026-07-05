@@ -94,6 +94,7 @@ vi.mock('../../../../../rendering/adaptive-dpr-manager', () => ({
   AdaptiveDPRManager: vi.fn().mockImplementation(() => ({
     setRenderer: vi.fn(),
     setOnDPRChangeCallback: vi.fn(),
+    getNativeDPR: vi.fn(() => 2),
   })),
 }));
 vi.mock('../../../../../ui/resolution-indicator', () => ({
@@ -230,6 +231,37 @@ describe('runInitPipeline', () => {
       // sceneSrc is a string (P5 boundary), and EQUALS the supplied src.
       expect(typeof partial.sceneSrc).toBe('string');
       expect(partial.sceneSrc).toBe('http://example.com/scene.zarr');
+    });
+
+    it('normalizes the DPR-change callback to percent-of-native before showing the indicator', async () => {
+      const { factories } = makeFactoryOverrides();
+      const ports = makePorts();
+      ports.options.factories = factories as never;
+      const partial: Partial<InitPipelineResult> = {};
+
+      await runInitPipeline(ports, partial);
+
+      const manager = partial.adaptiveDPRManager as unknown as {
+        setOnDPRChangeCallback: ReturnType<typeof vi.fn>;
+      };
+      const indicator = partial.resolutionIndicator as unknown as {
+        show: ReturnType<typeof vi.fn>;
+        reset: ReturnType<typeof vi.fn>;
+      };
+      const callback = manager.setOnDPRChangeCallback.mock.calls[0][0] as (
+        dpr: number,
+        isReducedResolution: boolean
+      ) => void;
+
+      // Reduced at DPR 1.8 on a native-2 display → indicator shows 0.9
+      // (percent-of-native), NOT the absolute DPR (the retina "180%" bug).
+      callback(1.8, true);
+      expect(indicator.show).toHaveBeenCalledWith(0.9);
+
+      // Back at native → reset branch, no further show.
+      callback(2, false);
+      expect(indicator.reset).toHaveBeenCalledTimes(1);
+      expect(indicator.show).toHaveBeenCalledTimes(1);
     });
 
     it('returns the SAME object reference as `partial` (happy path)', async () => {

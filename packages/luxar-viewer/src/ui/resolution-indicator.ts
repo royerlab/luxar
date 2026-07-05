@@ -69,20 +69,25 @@ export class ResolutionIndicator {
   }
 
   /**
-   * Show the indicator with optional DPR value
+   * Show the indicator with the current resolution scale
    *
    * Only shows once per reduced resolution mode activation. After showing for 4 seconds,
    * the indicator auto-hides. Call reset() when exiting reduced resolution mode to allow
-   * the indicator to show again on next activation.
+   * the indicator to show again on next activation. Further show() calls while the
+   * toast is still visible refresh the displayed percentage in place (no re-show,
+   * no timer extension) so a multi-step DPR walk doesn't freeze the first value.
    *
-   * @param dpr - Current device pixel ratio to display
+   * @param scale - Current resolution as a fraction of native DPR (0..1]
    */
-  show(dpr?: number): void {
-    // Only show once per mode activation. `hasShownForCurrentMode` and
-    // `isVisible` are flipped together below, so a second show() in the
-    // same activation always returns here without touching the DOM —
-    // useful when the AdaptiveDPR caller streams every DPR change.
+  show(scale?: number): void {
+    // Only show once per mode activation. While the toast from this
+    // activation is still on screen, later calls refresh the text in
+    // place (the adaptive caller streams every DPR step); after it has
+    // auto-hidden, they are ignored entirely until reset() re-arms.
     if (this.hasShownForCurrentMode) {
+      if (this.isVisible) {
+        this.updateText(scale);
+      }
       return;
     }
 
@@ -95,7 +100,7 @@ export class ResolutionIndicator {
     const element = this.ensureElement();
 
     // Update text display
-    this.updateText(dpr);
+    this.updateText(scale);
 
     // Show with animation
     element.style.display = 'flex';
@@ -166,15 +171,15 @@ export class ResolutionIndicator {
   /**
    * Update the text display
    *
-   * @param dpr - Current device pixel ratio
+   * @param scale - Current resolution as a fraction of native DPR (0..1]
    */
-  private updateText(dpr?: number): void {
+  private updateText(scale?: number): void {
     if (!this.element) return;
 
     const textElement = this.element.querySelector('.luxar-resolution-indicator__text');
     if (textElement) {
-      if (dpr !== undefined) {
-        const percentage = (dpr * 100).toFixed(0);
+      if (scale !== undefined) {
+        const percentage = (scale * 100).toFixed(0);
         textElement.textContent = `Resolution Scaled to ${percentage}% to maintain ${this.targetFPS} fps`;
       } else {
         textElement.textContent = `Resolution Scaled to maintain ${this.targetFPS} fps`;

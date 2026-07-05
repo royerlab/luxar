@@ -49,7 +49,8 @@ runInitPipeline(ports, partial)
 │                              loader and refreshVisibleCounts() on a swap
 ├── 10. AdaptiveDPRManager    wired to sceneManager + controller
 ├── 11. ResolutionIndicator   targetFPS = ceil(maxFPS/5)*5; show/reset
-│                              on DPR change callback
+│                              on DPR change callback (shown value is
+│                              dpr/nativeDPR — percent of native)
 ├── 12. WebGL/WebGPU loss     webgl-context-restored → NodeFactory
 │      listeners              .rebuildAfterContextRestore on loaded scene;
 │                              webgpu-device-lost → notifier.error

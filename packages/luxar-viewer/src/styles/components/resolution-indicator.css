@@ -34,7 +34,11 @@
 /* ========== Resolution Indicator ========== */
 
 .luxar-resolution-indicator {
-  /* Positioning */
+  /* Positioning — `fixed` is container-scoped, not viewport-scoped: the
+     element mounts into getViewerContainer(), which promotes non-body
+     embed containers to a containing block for fixed descendants via
+     `contain: layout` (see utils/viewer-container.ts). Same pattern as
+     the data-loading monitor, scale bar, and toasts. */
   position: fixed;
   bottom: var(--luxar-spacing-10);
   right: var(--luxar-spacing-10);
