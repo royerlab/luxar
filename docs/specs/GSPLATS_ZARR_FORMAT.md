@@ -539,7 +539,7 @@ Quantization is handled by `luxar.encoding` based on semantic types:
 | Field | Semantic Type | MEMORY Mode Encoding |
 |-------|---------------|---------------------|
 | `centers` | COORDINATE | `linear_perchannel_u16` (uint16 per-axis fixed-point) |
-| `amplitudes` | POSITIVE_SCALAR | `bounded_scalar_uint8/16` (narrow range) or `geolog_scalar_uint16` (wide range) |
+| `amplitudes` | POSITIVE_SCALAR | `bounded_scalar_uint8/16` (narrow range) or `geolog_scalar_uint8` (wide range; AUTO uses `geolog_scalar_uint16`) |
 | `cholesky_factors_diag` | CHOLESKY_DIAG | `log_perchannel_u8` (per-column log) |
 | `cholesky_factors_offdiag` | CHOLESKY_OFFDIAG | `signed_log_perchannel_u8` (per-column signed-log; absent if d==1) |
 
@@ -598,15 +598,19 @@ Not a storage format concern, but worth noting:
 
 ### Blosc Settings
 
-Default zarr compressor configuration:
+The default is a width-aware per-dtype policy (`luxar.encoding.compression`),
+resolved from the stored dtype at write time:
 
 ```python
-compressor = Blosc(
-    cname='zstd',      # Best compression ratio
-    clevel=3,          # Balance speed/ratio (1-9)
-    shuffle=Blosc.BITSHUFFLE,  # Good for float arrays
-)
+# multi-byte integer codes (uint16 quantized/fixed-point)
+Blosc(cname="zstd", clevel=9, shuffle=Blosc.SHUFFLE)
+# uint8 codes and float arrays
+Blosc(cname="zstd", clevel=9, shuffle=Blosc.NOSHUFFLE)
 ```
+
+Decode speed is level-independent (natively and in wasm), so the high level
+is purely a write-time budget. Pass an explicit `Blosc(...)` to override, or
+`None` to store uncompressed.
 
 ### Chunk Sizing
 

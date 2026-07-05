@@ -95,7 +95,7 @@ Input Array (numpy float32)
 │ Encoding Execution                          │
 │ • Quantize: float32 → uint16/uint8          │
 │ • Store metadata: {scale, offset, min, max} │
-│ • Compress: blosc/zstd level 3              │
+│ • Compress: blosc/zstd l9, width-aware shuf │
 └─────────────────────────────────────────────┘
     ↓
 Zarr Array (compressed, deduplicated, optimized)
