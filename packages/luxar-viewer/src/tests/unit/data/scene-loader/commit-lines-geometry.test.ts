@@ -218,3 +218,51 @@ describe('commitLinesGeometry — no-op commit skip (committedData)', () => {
     expect(mockUpdateInstancedLinesMesh).not.toHaveBeenCalled();
   });
 });
+
+describe('commitLinesGeometry — committedLadderComplete stamp', () => {
+  const ladderComplete = (mesh: THREE.Mesh) =>
+    (mesh.userData as { committedLadderComplete?: boolean }).committedLadderComplete;
+
+  it('stamps false while the committing progressive loader has more LODs', () => {
+    const root = new THREE.Group();
+    const mesh = makeMesh('/lines');
+    mesh.userData.loader = { hasMoreLODs: true };
+    root.add(mesh);
+    commitLinesGeometry(
+      { path: '/lines', sourceData: makeSourceData(3), processed: makeProcessed(3) },
+      root,
+      null,
+      undefined,
+      0
+    );
+    expect(ladderComplete(mesh)).toBe(false);
+  });
+
+  it('stamps true on the final ladder pass and for non-progressive / loaderless meshes', () => {
+    for (const loader of [{ hasMoreLODs: false }, {}, undefined]) {
+      const root = new THREE.Group();
+      const mesh = makeMesh('/lines');
+      if (loader) mesh.userData.loader = loader;
+      root.add(mesh);
+      commitLinesGeometry(
+        { path: '/lines', sourceData: makeSourceData(2), processed: makeProcessed(2) },
+        root,
+        null,
+        undefined,
+        0
+      );
+      expect(ladderComplete(mesh)).toBe(true);
+    }
+  });
+
+  it('noop (stamp-only) commit refreshes the ladder stamp too', () => {
+    const root = new THREE.Group();
+    const mesh = makeMesh('/lines');
+    mesh.userData.loader = { hasMoreLODs: true };
+    mesh.userData.committedLadderComplete = true; // stale value from a previous view
+    root.add(mesh);
+    const noop: StagedLinesCommit = { path: '/lines', noop: true, sourceData: makeSourceData(2) };
+    commitLinesGeometry(noop, root, null, undefined, 0);
+    expect(ladderComplete(mesh)).toBe(false); // refreshed from the live loader
+  });
+});

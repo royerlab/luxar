@@ -252,3 +252,41 @@ describe('commitPointsGeometry — no-op commit skip (committedData)', () => {
     expect((points.userData as { committedData?: unknown }).committedData).toBe(second);
   });
 });
+
+describe('commitPointsGeometry — committedLadderComplete stamp', () => {
+  const ladderComplete = (points: THREE.Mesh) =>
+    (points.userData as { committedLadderComplete?: boolean }).committedLadderComplete;
+
+  it('stamps false while the committing progressive loader has more LODs', () => {
+    const root = new THREE.Group();
+    const points = makePoints('/p');
+    points.userData.loader = { hasMoreLODs: true };
+    root.add(points);
+    commitPointsGeometry('/p', makeData(3), root, null, mockNodeFactory, undefined, 0);
+    expect(ladderComplete(points)).toBe(false);
+  });
+
+  it('stamps true on the final ladder pass and for non-progressive / loaderless meshes', () => {
+    for (const loader of [{ hasMoreLODs: false }, {}, undefined]) {
+      const root = new THREE.Group();
+      const points = makePoints('/p');
+      if (loader) points.userData.loader = loader;
+      root.add(points);
+      commitPointsGeometry('/p', makeData(2), root, null, mockNodeFactory, undefined, 0);
+      expect(ladderComplete(points)).toBe(true);
+    }
+  });
+
+  it('no-op (already-committed) commit refreshes the ladder stamp too', () => {
+    const root = new THREE.Group();
+    const points = makePoints('/p');
+    points.userData.loader = { hasMoreLODs: true };
+    root.add(points);
+    const data = makeData(3);
+    commitPointsGeometry('/p', data, root, null, mockNodeFactory, undefined, 1);
+    // Force a stale stamp, then recommit the SAME reference → stamp-only path.
+    points.userData.committedLadderComplete = true;
+    commitPointsGeometry('/p', data, root, null, mockNodeFactory, undefined, 2);
+    expect(ladderComplete(points)).toBe(false); // refreshed from the live loader
+  });
+});
