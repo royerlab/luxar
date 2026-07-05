@@ -526,6 +526,33 @@ describe('WASM vs TypeScript Comparison', () => {
       expect(arraysAlmostEqual(wasmOutput, tsOutput)).toBe(true);
     });
 
+    it.skipIf(!wasmFilesExist)('decode_geolog_scalar_u8 should match', () => {
+      // level 0 = reserved exact zero; min/max-anchored true-log grid
+      const data = new Uint8Array([0, 1, 50, 128, 255]);
+
+      const tsOutput = new Float32Array(5);
+      const wasmOutput = new Float32Array(5);
+
+      tsModule.decode_geolog_scalar_u8(data, -7.5, 9.9, tsOutput);
+      wasmModule!.decode_geolog_scalar_u8(data, -7.5, 9.9, wasmOutput);
+
+      expect(wasmOutput[0]).toBe(0);
+      expect(arraysAlmostEqual(wasmOutput, tsOutput)).toBe(true);
+    });
+
+    it.skipIf(!wasmFilesExist)('decode_geolog_scalar_u16 should match', () => {
+      const data = new Uint16Array([0, 1, 16384, 49152, 65535]);
+
+      const tsOutput = new Float32Array(5);
+      const wasmOutput = new Float32Array(5);
+
+      tsModule.decode_geolog_scalar_u16(data, -7.5, 9.9, tsOutput);
+      wasmModule!.decode_geolog_scalar_u16(data, -7.5, 9.9, wasmOutput);
+
+      expect(wasmOutput[0]).toBe(0);
+      expect(arraysAlmostEqual(wasmOutput, tsOutput)).toBe(true);
+    });
+
     it.skipIf(!wasmFilesExist)('decode_lut_scalar_u16 should match', () => {
       // Use larger indices to test u16 range
       const indices = new Uint16Array([0, 1000, 2000, 3000, 500]);

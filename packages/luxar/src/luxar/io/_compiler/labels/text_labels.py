@@ -8,6 +8,7 @@ import numpy as np
 import zarr
 from arbol import aprint
 
+from ....encoding.compression import resolve_compressor
 from ....typing_utils.protocols import CompressorProtocol
 
 
@@ -70,14 +71,14 @@ def write_labels_csr(
         "label_offsets",
         data=offsets,
         chunks=(min(n_elements + 1, 65536),),
-        compressor=compressor,
+        compressor=resolve_compressor(compressor, offsets.dtype),
         overwrite=True,
     )
     group.create_dataset(
         "label_bytes",
         data=label_bytes,
         chunks=(min(total_bytes, 65536) if total_bytes > 0 else 1,),
-        compressor=compressor,
+        compressor=resolve_compressor(compressor, label_bytes.dtype),
         overwrite=True,
     )
     group.attrs["has_labels"] = True

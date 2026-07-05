@@ -26,6 +26,8 @@ export {
   decode_quantized_u16,
   decode_log_scalar_u8,
   decode_log_scalar_u16,
+  decode_geolog_scalar_u8,
+  decode_geolog_scalar_u16,
   decode_lut_scalar_u8,
   decode_lut_scalar_u16,
   decode_lut_row_u8,
@@ -73,6 +75,8 @@ import {
   decode_quantized_u16,
   decode_log_scalar_u8,
   decode_log_scalar_u16,
+  decode_geolog_scalar_u8,
+  decode_geolog_scalar_u16,
   decode_lut_scalar_u8,
   decode_lut_scalar_u16,
   decode_lut_row_u8,
@@ -120,6 +124,8 @@ export class TypeScriptFallback implements WasmModule {
   decode_quantized_u8 = decode_quantized_u8;
   decode_quantized_u16 = decode_quantized_u16;
   decode_log_scalar_u8 = decode_log_scalar_u8;
+  decode_geolog_scalar_u8 = decode_geolog_scalar_u8;
+  decode_geolog_scalar_u16 = decode_geolog_scalar_u16;
   decode_log_scalar_u16 = decode_log_scalar_u16;
   decode_lut_scalar_u8 = decode_lut_scalar_u8;
   decode_lut_scalar_u16 = decode_lut_scalar_u16;

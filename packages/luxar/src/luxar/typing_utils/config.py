@@ -60,8 +60,11 @@ SUPPORTED_COMPRESSION: Final[tuple[CompressionType, ...]] = (
 )
 
 # Default compression settings
+# Informational only — the REAL default is the width-aware per-dtype policy
+# (zstd level 9 inside Blosc; see luxar.encoding.compression). These constants
+# describe the container/codec family for metadata and docs.
 DEFAULT_COMPRESSION: Final[CompressionType] = "blosc"
-DEFAULT_COMPRESSION_LEVEL: Final[int] = 3
+DEFAULT_COMPRESSION_LEVEL: Final[int] = 9
 
 # Supported physical units
 SUPPORTED_UNITS: Final[tuple[str, ...]] = (
@@ -175,8 +178,6 @@ def validate_chunk_bytes(chunk_bytes: Any) -> int:
         )
 
     return chunk_bytes
-
-
 
 
 def validate_compression_level(level: Any) -> int:

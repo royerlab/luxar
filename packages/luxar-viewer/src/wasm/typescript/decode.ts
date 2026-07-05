@@ -64,6 +64,44 @@ export function decode_log_scalar_u16(
 }
 
 /**
+ * Decode geometric-log quantized uint8 data to float32.
+ * Reserved zero level: 0 -> exactly 0; levels [1,255] ->
+ * exp(minLog + (u-1)/254 * (maxLog - minLog)). Mirrors the Rust kernel 1:1.
+ */
+export function decode_geolog_scalar_u8(
+  data: Uint8Array,
+  minLog: number,
+  maxLog: number,
+  output: Float32Array
+): void {
+  // fround the anchors: the WASM kernel receives them as f32, so the TS
+  // reference must quantize them identically before the f64 math.
+  const lo = Math.fround(minLog);
+  const inv = Math.max(Math.fround(maxLog) - lo, 0) / 254;
+  for (let i = 0; i < data.length; i++) {
+    const u = data[i];
+    output[i] = u === 0 ? 0 : Math.exp(lo + (u - 1) * inv);
+  }
+}
+
+/**
+ * Decode geometric-log quantized uint16 data to float32.
+ */
+export function decode_geolog_scalar_u16(
+  data: Uint16Array,
+  minLog: number,
+  maxLog: number,
+  output: Float32Array
+): void {
+  const lo = Math.fround(minLog);
+  const inv = Math.max(Math.fround(maxLog) - lo, 0) / 65534;
+  for (let i = 0; i < data.length; i++) {
+    const u = data[i];
+    output[i] = u === 0 ? 0 : Math.exp(lo + (u - 1) * inv);
+  }
+}
+
+/**
  * Decode LUT-encoded uint8 indices to float32 (scalar mode).
  * Each index maps to a single float value from the LUT.
  */

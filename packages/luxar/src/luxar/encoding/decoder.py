@@ -32,6 +32,8 @@ class ArrayDecoder:
         "bounded_scalar_uint16",
         "log_scalar_uint8",
         "log_scalar_uint16",
+        "geolog_scalar_uint8",
+        "geolog_scalar_uint16",
         "rgb_uint8",
         "rgb_uint16",
         # Generic per-channel quantization (per-column min/max). log / signed-log
@@ -91,6 +93,8 @@ class ArrayDecoder:
             return self._decode_log_scalar(zarr_array, enc)
         elif name == "log_scalar_uint16":
             return self._decode_log_scalar(zarr_array, enc)
+        elif name in {"geolog_scalar_uint8", "geolog_scalar_uint16"}:
+            return self._decode_geolog_scalar(zarr_array, enc)
         elif name == "rgb_uint8":
             return self._decode_color(zarr_array, enc)
         elif name == "rgb_uint16":
@@ -143,6 +147,10 @@ class ArrayDecoder:
             self._require_fields(enc, name, ("min", "max", "bits", "original_dtype"))
         elif name in {"log_scalar_uint8", "log_scalar_uint16"}:
             self._require_fields(enc, name, ("max_log", "bits", "original_dtype"))
+        elif name in {"geolog_scalar_uint8", "geolog_scalar_uint16"}:
+            self._require_fields(
+                enc, name, ("min_log", "max_log", "bits", "original_dtype")
+            )
         elif name in {"rgb_uint8", "rgb_uint16"}:
             self._require_fields(enc, name, ("original_dtype",))
         elif name in {
@@ -245,6 +253,45 @@ class ArrayDecoder:
         normalized = data.astype(np.float64) / (2**bits - 1)
         result = np.expm1(normalized * max_log)
         return np.asarray(result, dtype=original_dtype)
+
+    def _decode_geolog_scalar(self, arr: zarr.Array, enc: dict) -> np.ndarray:
+        """Decode geometric-log scalar (min/max-anchored, reserved zero level).
+
+        Level 0 decodes to exactly 0; levels ``[1, 2**bits - 1]`` decode to
+        ``exp(min_log + (u - 1)/(2**bits - 2) * (max_log - min_log))`` —
+        uniform relative precision across the array's own nonzero range.
+
+        Raises:
+            ValueError: If metadata is malformed (non-finite ``min_log``/
+                ``max_log``, ``max_log < min_log``, or ``bits <= 0``).
+        """
+        data = np.asarray(arr[:])
+        min_log = float(enc["min_log"])
+        max_log = float(enc["max_log"])
+        bits = int(enc["bits"])
+        if not (np.isfinite(min_log) and np.isfinite(max_log)):
+            raise ValueError(
+                f"geolog_scalar requires finite min_log/max_log, got "
+                f"{min_log}/{max_log}"
+            )
+        if max_log < min_log:
+            raise ValueError(
+                f"geolog_scalar requires max_log >= min_log, got {min_log}/{max_log}"
+            )
+        if bits <= 0:
+            raise ValueError(f"geolog_scalar requires bits > 0, got {bits}")
+        original_dtype = np.dtype(enc.get("original_dtype", "float32"))
+
+        top = (1 << bits) - 1
+        out = np.zeros(data.shape, dtype=np.float64)
+        nz = data > 0
+        if nz.any():
+            denom = max(top - 1, 1)
+            out[nz] = np.exp(
+                min_log
+                + (data[nz].astype(np.float64) - 1.0) / denom * (max_log - min_log)
+            )
+        return np.asarray(out, dtype=original_dtype)
 
     @staticmethod
     def _perchannel_scales(data: np.ndarray, enc: dict, name: str) -> tuple:

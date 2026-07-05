@@ -141,6 +141,22 @@ export interface WasmModule {
   /** Decode log-space quantized uint16. Result = expm1(normalized * maxLog) */
   decode_log_scalar_u16(data: Uint16Array, maxLog: number, output: Float32Array): void;
 
+  /** Decode geometric-log uint8 (reserved zero level; min/max-anchored). */
+  decode_geolog_scalar_u8(
+    data: Uint8Array,
+    minLog: number,
+    maxLog: number,
+    output: Float32Array
+  ): void;
+
+  /** Decode geometric-log uint16 (reserved zero level; min/max-anchored). */
+  decode_geolog_scalar_u16(
+    data: Uint16Array,
+    minLog: number,
+    maxLog: number,
+    output: Float32Array
+  ): void;
+
   /** Decode LUT indices (uint8) to scalar float values */
   decode_lut_scalar_u8(indices: Uint8Array, lut: Float32Array, output: Float32Array): void;
 

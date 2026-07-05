@@ -6,6 +6,28 @@ All notable changes to Luxar are documented in this file.
 
 ### July 2026
 
+#### Changed — geolog amplitude quantization (rescale-first, zero-safe) + per-dtype compressors
+
+- New `geolog_scalar_u8/u16` encoding: wide-dynamic-range positive scalars
+  (gsplat amplitudes; shared path with points radii / lines widths) are
+  quantized AFTER rescaling to the array's own nonzero `[min, max]` on a true
+  log grid — uniform ~0.013% relative error across 7 decades at u16, with
+  **level 0 reserved for exact zeros** so no nonzero splat can quantize to
+  zero by construction. Replaces the float32 fallback the old heuristic used
+  (and the legacy 0-anchored `log_scalar` family, which zeroed 3,026 splats
+  on the real t252 amplitudes; still decodable, no longer produced).
+  Validated on 2.54M real splats: 133.8 dB render vs float32, 121.7 dB on the
+  faint-structure metric; float16 measured and refuted (4x worse, TS-banned).
+  Full decode support: Python, viewer, range-loader, WASM (Rust + TS parity).
+- Width-aware per-dtype compressor policy (from the manuscript
+  `codec_selection` supplementary): u16 codes → zstd-l9/byte-shuffle, u8 and
+  float arrays → zstd-l9/unshuffled, replacing the uniform zstd-l3/bitshuffle
+  default that Blosc silently neutralises at 64 KiB chunks. Applied through a
+  single encoder chokepoint plus the direct-write sites (chunk bounds,
+  labels); fixes two arrays that silently used zarr's lz4 default
+  (colormap LUTs, batch denoise intermediates). Decode is level-independent —
+  read cost unchanged, stores ~20% smaller before the amplitude win.
+
 #### Changed — AUTO covariance quantization: uint8 with an encode-time certificate (~3.3× smaller)
 
 - Gsplat Cholesky factors at AUTO now default to the uint8 per-channel log

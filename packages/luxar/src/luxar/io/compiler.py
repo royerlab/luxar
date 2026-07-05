@@ -24,6 +24,8 @@ from typing import (
 
 import numpy as np
 
+from ..encoding.compression import resolve_compressor
+
 if TYPE_CHECKING:
     from ..core.scene import Scene
     from ..core.viewer_config import ViewerConfig
@@ -1472,7 +1474,7 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
             shape=shape,
             chunks=chunks,
             dtype=dtype,
-            compressor=self.compressor,
+            compressor=resolve_compressor(self.compressor, dtype),
             maxshape=maxshape,
             overwrite=True,
         )

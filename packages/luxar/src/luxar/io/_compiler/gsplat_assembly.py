@@ -19,6 +19,7 @@ from numpy.typing import NDArray
 
 from ...core.dimensions import Dimensions
 from ...encoding import SemanticType
+from ...encoding.compression import resolve_compressor
 from .chunking import calculate_intelligent_chunks
 from .colormap import write_colormap_lut_if_needed
 from .context import DatasetCtx, OrderingCtx
@@ -322,7 +323,7 @@ def write_gsplat_arrays(
                 data=chunk_bounds,
                 chunks=(chunk_bounds.shape[0], n_dims, 2),
                 dtype=np.float32,
-                compressor=ctx.compressor,
+                compressor=resolve_compressor(ctx.compressor, np.float32),
                 overwrite=True,
             )
             aprint(f"  ✓ Chunk bounds written: {len(chunk_bounds)} chunks")

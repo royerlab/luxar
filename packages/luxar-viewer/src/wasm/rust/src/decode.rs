@@ -108,6 +108,61 @@ pub fn decode_log_scalar_u16(data: &[u16], max_log: f32, output: &mut [f32]) {
     }
 }
 
+/// Decode geometric-log quantized uint8 data to float32.
+///
+/// Min/max-anchored true-log quantization with a RESERVED ZERO LEVEL:
+/// level 0 decodes to exactly 0.0; levels [1, 255] decode to
+/// `exp(min_log + (u - 1)/254 * (max_log - min_log))` — uniform relative
+/// precision over the array's own nonzero range. Mirrors the Python
+/// `_decode_geolog_scalar` and the TS reference exactly.
+#[wasm_bindgen]
+pub fn decode_geolog_scalar_u8(data: &[u8], min_log: f32, max_log: f32, output: &mut [f32]) {
+    debug_assert!(
+        output.len() >= data.len(),
+        "output too small: {} < {}",
+        output.len(),
+        data.len()
+    );
+
+    // f64 internals: matches the Python decoder and the TS reference (JS
+    // number math) so all three backends agree to the last f32 ULP even at
+    // the top of a 7-decade range.
+    let min_log = min_log as f64;
+    let inv = ((max_log as f64) - min_log).max(0.0) / 254.0;
+
+    for i in 0..data.len() {
+        let u = data[i];
+        output[i] = if u == 0 {
+            0.0
+        } else {
+            (min_log + ((u - 1) as f64) * inv).exp() as f32
+        };
+    }
+}
+
+/// Decode geometric-log quantized uint16 data to float32.
+#[wasm_bindgen]
+pub fn decode_geolog_scalar_u16(data: &[u16], min_log: f32, max_log: f32, output: &mut [f32]) {
+    debug_assert!(
+        output.len() >= data.len(),
+        "output too small: {} < {}",
+        output.len(),
+        data.len()
+    );
+
+    let min_log = min_log as f64;
+    let inv = ((max_log as f64) - min_log).max(0.0) / 65534.0;
+
+    for i in 0..data.len() {
+        let u = data[i];
+        output[i] = if u == 0 {
+            0.0
+        } else {
+            (min_log + ((u - 1) as f64) * inv).exp() as f32
+        };
+    }
+}
+
 /// Decode LUT-encoded uint8 indices to float32 (scalar mode).
 ///
 /// Each index maps to a single float value from the LUT.
@@ -260,6 +315,29 @@ mod tests {
         assert!((output[0] - (-1.0)).abs() < 0.01);
         assert!((output[1] - 0.0).abs() < 0.01); // ~32768/65535 * 2 - 1 ≈ 0
         assert!((output[2] - 1.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_decode_geolog_scalar_u8() {
+        // level 0 = reserved exact zero; level 1 = exp(min_log); top = exp(max_log)
+        let data = vec![0u8, 1, 255];
+        let (min_log, max_log) = (-2.0f32, 3.0f32);
+        let mut output = vec![0.0f32; 3];
+        decode_geolog_scalar_u8(&data, min_log, max_log, &mut output);
+        assert_eq!(output[0], 0.0);
+        assert!((output[1] - (-2.0f32).exp()).abs() < 1e-6);
+        assert!((output[2] - 3.0f32.exp()).abs() < 1e-4);
+    }
+
+    #[test]
+    fn test_decode_geolog_scalar_u16() {
+        let data = vec![0u16, 1, 65535];
+        let (min_log, max_log) = (-7.5f32, 9.9f32);
+        let mut output = vec![0.0f32; 3];
+        decode_geolog_scalar_u16(&data, min_log, max_log, &mut output);
+        assert_eq!(output[0], 0.0);
+        assert!((output[1] - (-7.5f32).exp()).abs() < 1e-9);
+        assert!((output[2] - 9.9f32.exp()).abs() < 10.0); // ~2e4, f32 rel tol
     }
 
     #[test]

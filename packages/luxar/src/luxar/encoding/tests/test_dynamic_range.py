@@ -151,8 +151,9 @@ class TestPositiveScalarDynamicRange:
             enc = arr.attrs["encoding"]
             assert enc["name"] == "bounded_scalar_uint16"
 
-    def test_float_for_wide_range(self):
-        """POSITIVE_SCALAR with very wide dynamic range uses float."""
+    def test_geolog_for_wide_range(self):
+        """POSITIVE_SCALAR with very wide dynamic range uses geometric-log
+        uint16 (rescale-first, min/max-anchored) instead of float32."""
         # Data with dynamic range ~1000000:1
         data = np.array([0.000001, 0.001, 1.0], dtype=np.float32)
 
@@ -162,7 +163,10 @@ class TestPositiveScalarDynamicRange:
             encoder.encode(data, group, "test", SemanticType.POSITIVE_SCALAR)
 
             arr = group["test"]
-            assert arr.dtype == np.float32, f"Expected float32, got {arr.dtype}"
+            assert arr.dtype == np.uint16, f"Expected uint16, got {arr.dtype}"
+            enc = arr.attrs["encoding"]
+            assert enc["name"] == "geolog_scalar_uint16"
+            assert "min_log" in enc and "max_log" in enc
 
     def test_max_value_irrelevant_to_dtype_selection(self):
         """Max value alone should not determine dtype - only dynamic range matters."""

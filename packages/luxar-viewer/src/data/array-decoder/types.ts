@@ -56,6 +56,8 @@ export interface EncodingMetadata {
 
   /** Log-space encoding max (for log_scalar_uint8/uint16) */
   max_log?: number;
+  /** Geometric-log scalar lower anchor (geolog_scalar_* encodings). */
+  min_log?: number;
 }
 
 /**

@@ -9,6 +9,7 @@ import zarr
 from arbol import aprint
 from numpy.typing import NDArray
 
+from ....encoding.compression import resolve_compressor
 from ....typing_utils.protocols import CompressorProtocol
 from ..context import OrderingCtx
 
@@ -162,7 +163,7 @@ def write_lines_ordering_to_zarr(
             shape=vertex_chunk_bounds.shape,
             dtype=np.float32,
             chunks=(vertex_chunk_bounds.shape[0], n_dims, 2),
-            compressor=compressor,
+            compressor=resolve_compressor(compressor, np.float32),
         )
 
     # Write segment_chunk_bounds
@@ -175,7 +176,7 @@ def write_lines_ordering_to_zarr(
             shape=segment_chunk_bounds.shape,
             dtype=np.float32,
             chunks=(segment_chunk_bounds.shape[0], n_dims, 2),
-            compressor=compressor,
+            compressor=resolve_compressor(compressor, np.float32),
         )
 
     aprint(

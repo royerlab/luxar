@@ -212,6 +212,9 @@ encoder.encode(
 - `n_elements` - Broadcast target count. Required for scalar/tuple/list input; optional for arrays (opts into broadcast/uniform validation when given).
 - `bounds` - `(min, max)` for BOUNDED_SCALAR (auto-detected if omitted).
 - `positive_scalar_encoding` - `"linear"` (default) or `"log"` for POSITIVE_SCALAR.
+  `"log"` selects the geometric-log encoding (`geolog_scalar_u16` at AUTO,
+  `u8` at MEMORY); AUTO also falls back to it automatically when the linear
+  dynamic range exceeds 65536 (instead of the former float32).
 - `custom_encoder` - Explicit encoder name, required when `mode=CUSTOM`.
 - `color_mode` - `"sdr"` or `"hdr"`, required for float COLOR arrays.
 - `chunks` / `compressor` - Optional zarr dataset chunk shape and compressor.
@@ -315,7 +318,7 @@ encoder.encode(
 | COLOR (SDR) | uint8 | float32 | uint8 |
 | COLOR (HDR) | float32 | float32 | float16 |
 | BOUNDED_SCALAR | uint8 | float32 | uint8 |
-| POSITIVE_SCALAR | Analyze range | float32 | uint8 |
+| POSITIVE_SCALAR | range ≤256 → u8, ≤65536 → u16, wider → geolog_scalar_u16 | float32 | as AUTO but geolog_scalar_u8 for wide ranges |
 | CHOLESKY | float32 | float32 | float16 |
 | CHOLESKY_DIAG | log_perchannel_u8 (certified) | float32 | log_perchannel_u8 |
 | CHOLESKY_OFFDIAG | signed_log_perchannel_u8 (certified) | float32 | signed_log_perchannel_u8 |
