@@ -83,6 +83,9 @@ export interface AdaptiveDPRState {
   probing: boolean;
   /** Estimated achievable rAF rate the FPS thresholds derive from. */
   refreshRateCap: number;
+  /** Effective scale-up ceiling: native, or 1.0 while demoted after
+   *  repeated punished ascents (HiDPI luxury the scene can't sustain). */
+  dprCeiling: number;
 }
 
 /**
@@ -178,6 +181,9 @@ export class AdaptiveDPRManager {
       floorTtlMs: this.config.floorTtlMs,
       backoffMultiplier: this.config.backoffMultiplier,
       backoffMaxTtlMs: this.config.backoffMaxTtlMs,
+      ceilingTtlMs: this.config.ceilingTtlMs,
+      punishedAscentWindowMs: this.config.punishedAscentWindowMs,
+      punishedAscentThreshold: this.config.punishedAscentThreshold,
     });
     this.hysteresis = new HysteresisTracker({
       hysteresisMs: this.config.hysteresisSeconds * 1000,
@@ -371,17 +377,33 @@ export class AdaptiveDPRManager {
           `${this.boundsLedger.dprFloor.toFixed(2)})`
       );
     }
+    if (this.boundsLedger.decayCeilingIfExpired(timestamp)) {
+      log.info(
+        Modules.ADAPTIVE_DPR,
+        'DPR ceiling demotion expired — scale-up may try above 1.0 again'
+      );
+    }
 
     if (fps < downThreshold) {
-      // Performance is poor - scale down (and arm a probe so we can
-      // verify the move actually helped — unless the sample is
-      // load-suppressed, in which case the reduction applies unprobed).
-      this.scaleDown(timestamp, fps, suppressed);
+      // A slow sample right after a scale-up above 1.0 is a "punished
+      // ascent" — enough of those and the ledger demotes the operating
+      // ceiling to exactly 1.0 (HiDPI is a luxury this scene has proven
+      // it can't sustain). The demotion clamp IS this tick's reduction.
+      // Load-suppressed samples never count: jank isn't the ascent's
+      // fault.
+      if (!suppressed && this.boundsLedger.recordSlowSample(timestamp)) {
+        this.applyCeilingDemotion(fps);
+      } else {
+        // Performance is poor - scale down (and arm a probe so we can
+        // verify the move actually helped — unless the sample is
+        // load-suppressed, in which case the reduction applies unprobed).
+        this.scaleDown(timestamp, fps, suppressed);
+      }
       this.hysteresis.recordLow();
     } else if (fps > upThreshold) {
       // Performance is good - accumulate the sustained-high streak.
       if (this.hysteresis.recordHigh(timestamp)) {
-        this.scaleUp(fps);
+        this.scaleUp(fps, timestamp);
         this.hysteresis.clear();
       }
     } else {
@@ -510,15 +532,46 @@ export class AdaptiveDPRManager {
   }
 
   /**
+   * Apply a just-decided ceiling demotion: clamp the operating DPR to
+   * 1.0 in one step (this replaces the tick's multiplicative
+   * scale-down — the clamp is usually the larger move).
+   */
+  private applyCeilingDemotion(fps: number): void {
+    log.warning(
+      Modules.ADAPTIVE_DPR,
+      `Repeated punished ascents above DPR 1.0 (FPS ${fps.toFixed(1)}) — ` +
+        'ceiling demoted to 1.0 for this session (TTL-decayed; content changes re-check)'
+    );
+    if (this.currentDPR <= 1.0 + 0.001) return;
+
+    this.currentDPR = 1.0;
+    this.isReducedResolution = this.currentDPR < this.lastSeenNativeDPR * 0.95;
+    this.applyDPR();
+
+    if (this.onDPRChange) {
+      this.onDPRChange(this.currentDPR, this.isReducedResolution);
+    }
+  }
+
+  /**
    * Scale DPR up for better quality
    */
-  private scaleUp(fps: number): void {
-    // Don't exceed native DPR
-    const newDPR = Math.min(this.lastSeenNativeDPR, this.currentDPR * this.config.scaleUpFactor);
+  private scaleUp(fps: number, timestamp: number): void {
+    // Don't exceed the native DPR, nor a demoted ceiling (evidence
+    // says this scene can't sustain the above-1.0 luxury right now).
+    const maxDPR = Math.min(
+      this.lastSeenNativeDPR,
+      this.boundsLedger.dprCeiling ?? this.lastSeenNativeDPR
+    );
+    const newDPR = Math.min(maxDPR, this.currentDPR * this.config.scaleUpFactor);
 
     // Only apply if there's a meaningful change and we're not at max
     if (Math.abs(newDPR - this.currentDPR) < 0.01) return;
-    if (this.currentDPR >= this.lastSeenNativeDPR - 0.01) return;
+    if (this.currentDPR >= maxDPR - 0.01) return;
+
+    // An ascent above 1.0 is on probation: if FPS collapses within the
+    // punishment window, it counts toward ceiling demotion.
+    this.boundsLedger.recordAscent(newDPR, timestamp);
 
     this.currentDPR = newDPR;
     this.applyDPR();
@@ -620,6 +673,7 @@ export class AdaptiveDPRManager {
       dprFloor: this.boundsLedger.dprFloor,
       probing: this.probeController.isPending,
       refreshRateCap: this.refreshRateEstimator.getCap(),
+      dprCeiling: this.boundsLedger.dprCeiling ?? nativeDPR,
     };
   }
 
@@ -791,7 +845,11 @@ export class AdaptiveDPRManager {
     this.restingAtNative = false;
 
     const nativeDPR = this.syncNativeDPR();
-    const target = Math.min(this.lastOperatingDPR ?? nativeDPR, nativeDPR);
+    const target = Math.min(
+      this.lastOperatingDPR ?? nativeDPR,
+      this.boundsLedger.dprCeiling ?? nativeDPR,
+      nativeDPR
+    );
     this.lastOperatingDPR = null;
     if (Math.abs(target - this.currentDPR) < 0.01) return;
 

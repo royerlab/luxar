@@ -380,6 +380,107 @@ describe('AdaptiveDPRManager — setManualDPR', () => {
   });
 });
 
+describe('AdaptiveDPRManager — evidence-based DPR ceiling', () => {
+  let restore: () => void;
+  let renderer: ReturnType<typeof makeRenderer>;
+
+  beforeEach(() => {
+    restore = setNativeDPR(2.0);
+    renderer = makeRenderer();
+  });
+
+  /** Push frames at `fps` from `t` for `durationMs`; returns the new cursor. */
+  function drive(m: AdaptiveDPRManager, t: number, fps: number, durationMs: number): number {
+    const step = 1000 / fps;
+    const end = t + durationMs;
+    while (t < end) {
+      m.recordFrame(t);
+      t += step;
+    }
+    return t;
+  }
+
+  it('demotes the ceiling to 1.0 after a punished ascent and clamps in one step', () => {
+    // threshold 1 keeps the scenario tractable; hysteresis 1s speeds the
+    // scale-up; gap detection off (deliberate fps regime switches).
+    const m = new AdaptiveDPRManager({
+      punishedAscentThreshold: 1,
+      hysteresisSeconds: 1,
+      gapResetMs: 60_000,
+    });
+    try {
+      m.setRenderer(renderer);
+
+      // Phase 1 — heavy: scale down off native (2.0 → 1.4), probe armed.
+      let t = drive(m, 0, 20, 700);
+      expect(m.getCurrentDPR()).toBeCloseTo(1.4, 5);
+
+      // Phase 2 — light: probe ACCEPTED (fps ×4), then the sustained
+      // high streak scales up ABOVE 1.0 (1.4 → 1.68): an ascent on
+      // probation.
+      t = drive(m, t, 80, 3200);
+      expect(m.getState().probing).toBe(false);
+      expect(m.getCurrentDPR()).toBeCloseTo(1.68, 2);
+
+      // Phase 3 — collapse right after the ascent: the slow sample
+      // punishes it; at threshold 1 the ceiling demotes to exactly 1.0
+      // and the operating DPR clamps there in ONE step (1.68 → 1.0, not
+      // a 0.7× walk). The scene is still slow at 1.0, so later ticks
+      // may legitimately probe below it — the clamp itself must appear
+      // verbatim in the renderer call history.
+      renderer.setAdaptivePixelRatio.mockClear();
+      t = drive(m, t, 20, 1300);
+      expect(m.getState().dprCeiling).toBe(1.0);
+      expect(renderer.setAdaptivePixelRatio.mock.calls.map((c) => c[0])).toContain(1.0);
+      expect(m.getCurrentDPR()).toBeLessThanOrEqual(1.0);
+
+      // Scale-up can no longer cross 1.0 while demoted.
+      t = drive(m, t, 80, 3200);
+      expect(m.getCurrentDPR()).toBeLessThanOrEqual(1.0);
+      void t;
+    } finally {
+      restore();
+    }
+  });
+
+  it('resume-from-idle snaps to min(ceiling, remembered operating DPR)', () => {
+    const m = new AdaptiveDPRManager({
+      punishedAscentThreshold: 1,
+      hysteresisSeconds: 1,
+      gapResetMs: 60_000,
+    });
+    try {
+      m.setRenderer(renderer);
+      // Earn the demotion (same choreography as above).
+      let t = drive(m, 0, 20, 700);
+      t = drive(m, t, 80, 3200);
+      t = drive(m, t, 20, 1300);
+      expect(m.getState().dprCeiling).toBe(1.0);
+
+      // Idle: the RESTING frame still renders at full native (the
+      // ceiling governs interactive rendering, not the still image)...
+      m.prepareIdleFrame();
+      expect(m.getCurrentDPR()).toBe(2.0);
+
+      // ...and resume snaps back respecting the ceiling.
+      m.notifyResumed();
+      expect(m.getCurrentDPR()).toBeLessThanOrEqual(1.0);
+      void t;
+    } finally {
+      restore();
+    }
+  });
+
+  it('exposes the effective ceiling as native when not demoted', () => {
+    const m = new AdaptiveDPRManager();
+    try {
+      expect(m.getState().dprCeiling).toBe(2.0);
+    } finally {
+      restore();
+    }
+  });
+});
+
 describe('AdaptiveDPRManager — pause / idle-restore / resume', () => {
   let restore: () => void;
   let renderer: ReturnType<typeof makeRenderer>;

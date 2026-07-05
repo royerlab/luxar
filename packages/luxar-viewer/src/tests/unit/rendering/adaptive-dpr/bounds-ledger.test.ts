@@ -6,6 +6,9 @@ const CONFIG = {
   floorTtlMs: 30_000,
   backoffMultiplier: 2,
   backoffMaxTtlMs: 300_000,
+  ceilingTtlMs: 60_000,
+  punishedAscentWindowMs: 3000,
+  punishedAscentThreshold: 2,
 };
 
 describe('BoundsLedger — floor', () => {
@@ -84,6 +87,99 @@ describe('BoundsLedger — rejection backoff', () => {
     ledger.recordAcceptance();
     expect(ledger.backoffLevel).toBe(0);
     expect(ledger.recordRejection(1.8, 80_000)).toBe(30_000); // ladder restarted
+  });
+});
+
+describe('BoundsLedger — ceiling (punished-ascent demotion)', () => {
+  it('starts undemoted (null → caller uses native)', () => {
+    const ledger = new BoundsLedger(CONFIG);
+    expect(ledger.dprCeiling).toBeNull();
+  });
+
+  it('demotes to exactly 1.0 after the configured number of punished ascents', () => {
+    const ledger = new BoundsLedger(CONFIG);
+
+    ledger.recordAscent(1.4, 0);
+    expect(ledger.recordSlowSample(1000)).toBe(false); // punished #1 (< threshold 2)
+    expect(ledger.ascentPunishments).toBe(1);
+    expect(ledger.dprCeiling).toBeNull();
+
+    ledger.recordAscent(1.3, 5000);
+    expect(ledger.recordSlowSample(6000)).toBe(true); // punished #2 → demoted NOW
+    expect(ledger.dprCeiling).toBe(1.0);
+  });
+
+  it('ignores slow samples outside the punishment window and ascents at or below 1.0', () => {
+    const ledger = new BoundsLedger(CONFIG);
+
+    ledger.recordAscent(1.4, 0);
+    expect(ledger.recordSlowSample(3001)).toBe(false); // outside 3000ms window
+    expect(ledger.ascentPunishments).toBe(0);
+
+    ledger.recordAscent(0.9, 5000); // not above 1.0 — not a luxury ascent
+    expect(ledger.recordSlowSample(5500)).toBe(false);
+    expect(ledger.ascentPunishments).toBe(0);
+  });
+
+  it('a slow sample consumes the ascent — one ascent cannot be punished twice', () => {
+    const ledger = new BoundsLedger(CONFIG);
+    ledger.recordAscent(1.4, 0);
+    ledger.recordSlowSample(500);
+    ledger.recordSlowSample(600);
+    expect(ledger.ascentPunishments).toBe(1);
+  });
+
+  it('the demotion expires after its TTL, with backoff escalation on re-demotion', () => {
+    const ledger = new BoundsLedger(CONFIG);
+    const demoteAt = (t: number) => {
+      ledger.recordAscent(1.4, t);
+      ledger.recordSlowSample(t + 500);
+      ledger.recordAscent(1.4, t + 1000);
+      ledger.recordSlowSample(t + 1500); // second punishment → demote
+    };
+
+    demoteAt(0); // level 1 → TTL 60s, expires at 61_500
+    expect(ledger.dprCeiling).toBe(1.0);
+    expect(ledger.decayCeilingIfExpired(61_000)).toBe(false);
+    expect(ledger.decayCeilingIfExpired(61_501)).toBe(true);
+    expect(ledger.dprCeiling).toBeNull();
+
+    demoteAt(70_000); // level 2 → TTL 120s, expires at 71_500 + 120_000
+    expect(ledger.decayCeilingIfExpired(71_500 + 120_000)).toBe(false);
+    expect(ledger.decayCeilingIfExpired(71_501 + 120_000)).toBe(true);
+  });
+
+  it('content changes soften the ceiling and reset its streaks', () => {
+    const ledger = new BoundsLedger(CONFIG);
+    ledger.recordAscent(1.4, 0);
+    ledger.recordSlowSample(500);
+    ledger.recordAscent(1.4, 1000);
+    ledger.recordSlowSample(1500); // demoted, expires at 61_500
+
+    ledger.softenForContentChange(2000, 5000); // expiry pulled to 7000
+    expect(ledger.decayCeilingIfExpired(6999)).toBe(false);
+    expect(ledger.decayCeilingIfExpired(7001)).toBe(true);
+
+    // Streak reset: the next demotion starts back at the base TTL.
+    ledger.recordAscent(1.4, 10_000);
+    ledger.recordSlowSample(10_500);
+    ledger.recordAscent(1.4, 11_000);
+    ledger.recordSlowSample(11_500);
+    expect(ledger.decayCeilingIfExpired(11_500 + 60_000)).toBe(false);
+    expect(ledger.decayCeilingIfExpired(11_501 + 60_000)).toBe(true);
+  });
+
+  it('reset() clears all ceiling state', () => {
+    const ledger = new BoundsLedger(CONFIG);
+    ledger.recordAscent(1.4, 0);
+    ledger.recordSlowSample(500);
+    ledger.recordAscent(1.4, 1000);
+    ledger.recordSlowSample(1500);
+    expect(ledger.dprCeiling).toBe(1.0);
+
+    ledger.reset();
+    expect(ledger.dprCeiling).toBeNull();
+    expect(ledger.ascentPunishments).toBe(0);
   });
 });
 
