@@ -128,6 +128,11 @@ export class AdaptiveDPRManager {
   // Callback for UI updates
   private onDPRChange: DPRChangeCallback | null = null;
 
+  // True after pinManualDPR(): the DPR is locked for the session
+  // (`?dpr=` URL param) and setEnabled() becomes a no-op so persisted
+  // per-scene settings can't silently re-enable adaptation mid-run.
+  private pinned: boolean = false;
+
   /**
    * Create adaptive DPR manager
    *
@@ -408,6 +413,13 @@ export class AdaptiveDPRManager {
    * @param enabled - Whether to enable adaptive DPR
    */
   setEnabled(enabled: boolean): void {
+    if (this.pinned) {
+      log.info(
+        Modules.ADAPTIVE_DPR,
+        `Ignoring setEnabled(${enabled}) — DPR is pinned for this session (?dpr= URL param)`
+      );
+      return;
+    }
     if (this.isEnabled === enabled) return;
 
     this.isEnabled = enabled;
@@ -508,6 +520,31 @@ export class AdaptiveDPRManager {
     this.applyDPR();
 
     log.info(Modules.ADAPTIVE_DPR, `Manual DPR set to ${clampedDPR.toFixed(2)}`);
+  }
+
+  /**
+   * Pin a fixed manual DPR for the whole session (`?dpr=` URL param).
+   *
+   * Disables adaptive mode, applies `dpr` as a manual DPR (clamped to
+   * [0.25, native]), and locks the enabled state: subsequent
+   * `setEnabled()` calls (persisted per-scene settings, the Performance
+   * toggle, scene metadata) are ignored for the rest of the session.
+   * Intended for deterministic E2E/visual-regression runs and repros.
+   *
+   * @param dpr - Device pixel ratio to pin
+   */
+  pinManualDPR(dpr: number): void {
+    this.setEnabled(false);
+    this.setManualDPR(dpr);
+    this.pinned = true;
+    log.info(Modules.ADAPTIVE_DPR, `DPR pinned at ${this.currentDPR.toFixed(2)} for this session`);
+  }
+
+  /**
+   * Check whether the DPR is pinned for this session (`?dpr=` URL param).
+   */
+  isPinned(): boolean {
+    return this.pinned;
   }
 
   /**

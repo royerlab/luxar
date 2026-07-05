@@ -92,6 +92,7 @@ const EMPTY_PARAMS: UrlParams = {
   webgpuForceWebGL: false,
   perfTimestamp: false,
   gpuBudgetMB: null,
+  dpr: null,
 };
 
 describe('bootstrapStandalone', () => {
@@ -314,6 +315,18 @@ describe('bootstrapStandalone', () => {
         noPrefetch: false,
         prefetchDebug: false,
       });
+    });
+
+    it('threads urlParams.dpr into init() as pinnedDPR, and omits it when absent', async () => {
+      await bootstrapStandalone({
+        canvas: CANVAS,
+        urlParams: { ...EMPTY_PARAMS, dpr: 0.5 },
+      });
+      expect(mocks.init.mock.calls.at(-1)?.[0].pinnedDPR).toBe(0.5);
+
+      await bootstrapStandalone({ canvas: CANVAS, urlParams: EMPTY_PARAMS });
+      // null → undefined so the pipeline's `!== undefined` pin guard stays cold.
+      expect(mocks.init.mock.calls.at(-1)?.[0].pinnedDPR).toBeUndefined();
     });
 
     it('does not set perfTimestamp on the init() call when urlParams.perfTimestamp is false', async () => {

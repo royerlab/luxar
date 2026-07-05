@@ -149,6 +149,16 @@ export interface UrlParams {
    * or negative) ⇒ auto-size from `navigator.deviceMemory`.
    */
   gpuBudgetMB: number | null;
+  /**
+   * Pin a fixed device pixel ratio and disable adaptive DPR for the
+   * session (`?dpr=1`). The value is clamped to [0.25, native DPR] at
+   * apply time and the adaptive-resolution toggle is locked off so
+   * persisted settings can't silently re-enable it. Primarily for
+   * deterministic E2E/visual-regression runs, `agent:debug` sessions,
+   * and bug repros. Null/invalid (missing, non-numeric, <= 0) ⇒ normal
+   * adaptive behavior.
+   */
+  dpr: number | null;
 }
 
 /**
@@ -176,7 +186,18 @@ export function readUrlParams(search?: string): UrlParams {
     webgpuForceWebGL: params.has('webgpu-force-webgl'),
     perfTimestamp: params.has('perf-timestamp'),
     gpuBudgetMB: parseNonNegativeInt(params.get('gpuBudgetMB')),
+    dpr: parsePositiveFloat(params.get('dpr')),
   };
+}
+
+/**
+ * Parse a strictly-positive float query value; null on missing/invalid/<=0.
+ * Used by `?dpr=` where zero or negative pixel ratios are meaningless.
+ */
+function parsePositiveFloat(raw: string | null): number | null {
+  if (raw === null) return null;
+  const n = Number.parseFloat(raw);
+  return Number.isFinite(n) && n > 0 ? n : null;
 }
 
 /**

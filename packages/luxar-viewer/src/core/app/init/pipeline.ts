@@ -232,6 +232,14 @@ export async function runInitPipeline(
   adaptiveDPRManager.setRenderer(sceneManager);
   animationController.setAdaptiveDPRManager(adaptiveDPRManager);
 
+  // `?dpr=` pins a fixed pixel ratio for the whole session (deterministic
+  // E2E/visual runs, repros). Must be applied here — before rendering
+  // controls load persisted settings — and locks setEnabled() so those
+  // settings can't re-enable adaptation later in init.
+  if (ports.options.pinnedDPR !== undefined) {
+    adaptiveDPRManager.pinManualDPR(ports.options.pinnedDPR);
+  }
+
   // Initialize resolution indicator and connect to DPR manager
   const resolutionIndicator = new ResolutionIndicator();
   partial.resolutionIndicator = resolutionIndicator;

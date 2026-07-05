@@ -373,6 +373,64 @@ describe('AdaptiveDPRManager — setManualDPR', () => {
   });
 });
 
+describe('AdaptiveDPRManager — pinManualDPR', () => {
+  let restore: () => void;
+
+  beforeEach(() => {
+    restore = setNativeDPR(2.0);
+  });
+
+  it('disables adaptive mode, applies the clamped DPR, and reports pinned', () => {
+    const m = new AdaptiveDPRManager();
+    try {
+      const renderer = makeRenderer();
+      m.setRenderer(renderer);
+
+      m.pinManualDPR(0.5);
+
+      expect(m.isActive()).toBe(false);
+      expect(m.isPinned()).toBe(true);
+      expect(m.getCurrentDPR()).toBe(0.5);
+      expect(renderer.setAdaptivePixelRatio).toHaveBeenLastCalledWith(0.5);
+    } finally {
+      restore();
+    }
+  });
+
+  it('locks setEnabled so persisted settings cannot re-enable adaptation', () => {
+    const m = new AdaptiveDPRManager();
+    try {
+      const renderer = makeRenderer();
+      m.setRenderer(renderer);
+
+      m.pinManualDPR(1.0);
+      // Simulate rendering-controls loadSettings applying a persisted
+      // `adaptiveDPREnabled: true` after pipeline init.
+      m.setEnabled(true);
+
+      expect(m.isActive()).toBe(false);
+      expect(m.getCurrentDPR()).toBe(1.0);
+
+      // Disable requests are equally ignored — the pin owns the state.
+      m.setEnabled(false);
+      expect(m.isPinned()).toBe(true);
+    } finally {
+      restore();
+    }
+  });
+
+  it('clamps the pinned value to [0.25, native]', () => {
+    const m = new AdaptiveDPRManager();
+    try {
+      m.setRenderer(makeRenderer());
+      m.pinManualDPR(99);
+      expect(m.getCurrentDPR()).toBe(2.0);
+    } finally {
+      restore();
+    }
+  });
+});
+
 describe('AdaptiveDPRManager — dispose', () => {
   let restore: () => void;
 

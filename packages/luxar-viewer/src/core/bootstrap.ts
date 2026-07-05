@@ -210,6 +210,9 @@ export async function bootstrapStandalone(opts: BootstrapOptions): Promise<Luxar
     renderer: urlParams.renderer ?? undefined,
     webgpuForceWebGL: urlParams.webgpuForceWebGL,
     perfTimestamp: urlParams.perfTimestamp,
+    // `?dpr=<value>` pins a fixed pixel ratio for deterministic
+    // E2E/visual runs; undefined → normal adaptive-DPR behavior.
+    pinnedDPR: urlParams.dpr ?? undefined,
   };
 
   const app = new LuxarApp();
