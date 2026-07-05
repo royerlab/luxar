@@ -1397,34 +1397,31 @@ class ArrayEncoder:
                         "bits": 8,
                         "original_dtype": original_dtype,
                     }
-                elif bits == 8:
-                    # Dynamic range <= 256, uint8 is sufficient
-                    normalized = data / max_val
-                    # Use rounding for better accuracy (not truncation)
-                    encoded_data = np.clip(np.round(normalized * 255), 0, 255).astype(
-                        np.uint8
-                    )
-                    encoder_name = "bounded_scalar_uint8"
+                elif bits in (8, 16):
+                    # Rescale-first: anchor the grid at the array's OWN
+                    # [min, max] rather than [0, max] — data far from zero
+                    # (e.g. radii in [10, 11]) no longer wastes code space
+                    # on the empty [0, min) span. min == 0 whenever the data
+                    # contains zeros, so zero handling is unchanged.
+                    min_val = float(np.min(data))
+                    span = max(max_val - min_val, 0.0)
+                    levels = 255 if bits == 8 else 65535
+                    if span == 0.0:
+                        encoded_data = np.zeros_like(
+                            data, dtype=np.uint8 if bits == 8 else np.uint16
+                        )
+                    else:
+                        normalized = (data - min_val) / span
+                        # Use rounding for better accuracy (not truncation)
+                        encoded_data = np.clip(
+                            np.round(normalized * levels), 0, levels
+                        ).astype(np.uint8 if bits == 8 else np.uint16)
+                    encoder_name = f"bounded_scalar_uint{bits}"
                     metadata = {
                         "name": encoder_name,
-                        "min": 0.0,
+                        "min": min_val,
                         "max": max_val,
-                        "bits": 8,
-                        "original_dtype": original_dtype,
-                    }
-                elif bits == 16:
-                    # Dynamic range <= 65536, uint16 is sufficient
-                    normalized = data / max_val
-                    # Use rounding for better accuracy (not truncation)
-                    encoded_data = np.clip(
-                        np.round(normalized * 65535), 0, 65535
-                    ).astype(np.uint16)
-                    encoder_name = "bounded_scalar_uint16"
-                    metadata = {
-                        "name": encoder_name,
-                        "min": 0.0,
-                        "max": max_val,
-                        "bits": 16,
+                        "bits": bits,
                         "original_dtype": original_dtype,
                     }
                 else:
