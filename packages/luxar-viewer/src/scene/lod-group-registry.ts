@@ -18,7 +18,10 @@
  *      satisfied by that coverage metric, with 10% asymmetric hysteresis on
  *      the downgrade direction to suppress threshold-edge flicker.
  *   5. If the desired child differs from the current active one, swap
- *      visibility atomically.
+ *      visibility atomically — gated by the **never-downgrade display
+ *      gate**: a fresh aspiration whose additive ladder is still streaming
+ *      is not shown while the previously-displayed level looks strictly
+ *      better (see ``shouldHoldPreviousDisplay`` in ``lod-freshness.ts``).
  *
  * The atomic-swap invariant on initial load is realized by
  * ``loadLodGroupNode`` (sequential awaits + ``visible=false`` after
@@ -50,6 +53,7 @@ import {
   isFresh,
   isReady,
   SettleTracker,
+  shouldHoldPreviousDisplay,
   visibleElementCount,
 } from './lod-freshness';
 
@@ -192,8 +196,10 @@ export interface LODGroupEntry {
   /**
    * Index into ``children`` of the level ACTUALLY visible this frame. Equals
    * ``activeChildIndex`` in steady state; during a re-slice it transiently
-   * points at the coarsest fresh level while the aspiration reloads. A per-frame
-   * transient written by ``evaluateEntry`` and read by
+   * points at the coarsest fresh level while the aspiration reloads, and
+   * during a never-downgrade hold it can also point at a FINER
+   * previously-displayed level while a coarser streaming aspiration catches
+   * up. A per-frame transient written by ``evaluateEntry`` and read by
    * ``enforceResidentByteBudget`` (same synchronous ``evaluatePerFrame`` pass)
    * so eviction never releases the on-screen level. ``undefined`` before the
    * first evaluation ⇒ treated as ``activeChildIndex``.
@@ -828,6 +834,39 @@ export class LODGroupRegistry {
             );
           }
           displayIdx = fallback;
+        }
+      }
+    }
+
+    // ── Never-downgrade display gate ──
+    // A lazy level flips ``ready`` after its FIRST additive chunk commits, so
+    // an ungated swap to a fresh-but-still-streaming aspiration pops displayed
+    // quality down to chunk-1 (on zoom in, zoom out, or after a scrub settles)
+    // and climbs back. Hold the previously-displayed level while the streaming
+    // aspiration is strictly worse than what is on screen; release on ladder
+    // completion (committed, not just fetched — see shouldHoldPreviousDisplay),
+    // committed-count crossover (the rest of the ladder then streams VISIBLY),
+    // ladder failure, or the previous level losing freshness. A group with
+    // nothing better on screen swaps immediately (fast first paint preserved).
+    // Bypassed for an explicit lock (the user wants that level now) and while
+    // off-screen (frustum-culled: no visual pop, and holding would pin the
+    // previous level's VRAM for nothing).
+    if (
+      displayIdx === entry.activeChildIndex &&
+      entry.selectorMode === 'auto' &&
+      !entry.offScreen
+    ) {
+      const prevIdx = entry.displayedChildIndex;
+      if (prevIdx != null && prevIdx !== displayIdx) {
+        const prev = entry.children[prevIdx];
+        if (shouldHoldPreviousDisplay(aspiration!, prev, version ?? null)) {
+          displayIdx = prevIdx;
+          // The held aspiration is semantically in use — keep it warm in the
+          // eviction LRU. The never-shown stamp below only fires once
+          // (``lastVisibleTick == null``), so during a failure-cooldown window
+          // (ready, not loading, not displayed) it would otherwise be the
+          // globally coldest eviction candidate and churn release→re-stream.
+          aspiration!.lastVisibleTick = this.tick;
         }
       }
     }

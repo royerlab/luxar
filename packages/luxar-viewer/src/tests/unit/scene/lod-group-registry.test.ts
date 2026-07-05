@@ -1372,3 +1372,198 @@ describe('LODGroupRegistry — progressive refinement of a lazy level', () => {
     expect(ensureLoaded.mock.calls.length).toBe(before);
   });
 });
+
+// ────────────────────────────────────────────────────────────────────────
+// Never-downgrade display gate. A lazy level flips ready after its FIRST
+// additive chunk commits; ungated, the swap to a fresh-but-still-streaming
+// aspiration pops displayed quality down to chunk-1 (zoom in, zoom out, or
+// after a scrub settles) and climbs back. The registry must hold the
+// previously-displayed level while the streaming aspiration is strictly
+// worse, and release on completion / count crossover / failure.
+// ────────────────────────────────────────────────────────────────────────
+
+describe('LODGroupRegistry — never-downgrade display gate', () => {
+  /** A fresh counted gsplats child whose additive ladder is still streaming. */
+  function makeStreamingChild(
+    coverageFraction: number,
+    loadedViewVersion: number,
+    visibleSplatCount: number
+  ): LODGroupChild {
+    const child = makeCountedChild(coverageFraction, loadedViewVersion, visibleSplatCount);
+    child.hasMoreLODs = () => true;
+    return child;
+  }
+
+  it('zoom in: holds the full coarse level until the streaming fine level crosses its count', () => {
+    const reg = makeRegistry([0, 1, 2], undefined, undefined, () => 2);
+    const coarse = makeCountedChild(0, 2, 100); // displayed, complete
+    const fine = makeStreamingChild(0.5, 2, 10); // fresh chunk-1, ladder streaming
+    reg.register(makeEntry([coarse, fine], 0, '/g'));
+
+    reg.evaluatePerFrame(); // identity camera → aspiration = fine
+    expect(reg.list()[0].activeChildIndex).toBe(1); // aspiration advanced
+    expect(coarse.object.visible).toBe(true); // ...but display held on coarse
+    expect(fine.object.visible).toBe(false);
+
+    // Ladder streams: count climbs but stays below prev → still held.
+    (fine.object.userData as { visibleSplatCount: number }).visibleSplatCount = 60;
+    reg.evaluatePerFrame();
+    expect(coarse.object.visible).toBe(true);
+
+    // Count crossover → swap; the rest of the ladder streams visibly.
+    (fine.object.userData as { visibleSplatCount: number }).visibleSplatCount = 100;
+    reg.evaluatePerFrame();
+    expect(fine.object.visible).toBe(true);
+    expect(coarse.object.visible).toBe(false);
+  });
+
+  it('zoom out: holds the full fine level until the streaming coarse level completes', () => {
+    // Tiny bounds → tiny coverage metric → the COARSE level is desired.
+    const tinyBounds = { min: [0, 0, 0], max: [0.001, 0.001, 0.001] };
+    let more = true;
+    const coarse = makeCountedChild(0, 2, 5); // cold, chunk-1 committed
+    coarse.hasMoreLODs = () => more;
+    const fine = makeCountedChild(0.5, 2, 1000); // fully-laddered, displayed
+    coarse.positionBounds = tinyBounds;
+    fine.positionBounds = tinyBounds;
+    const reg = makeRegistry([0, 1, 2], undefined, undefined, () => 2);
+    reg.register(makeEntry([coarse, fine], 1, '/g')); // fine active + displayed
+
+    reg.evaluatePerFrame();
+    expect(reg.list()[0].activeChildIndex).toBe(0); // aspiration moved coarse
+    expect(fine.object.visible).toBe(true); // display held on the better fine
+    expect(coarse.object.visible).toBe(false);
+
+    // Crossover is unreachable (coarse total < fine total) — completion releases.
+    more = false;
+    (coarse.object.userData as { visibleSplatCount: number }).visibleSplatCount = 50;
+    reg.evaluatePerFrame();
+    expect(coarse.object.visible).toBe(true);
+    expect(fine.object.visible).toBe(false);
+  });
+
+  it('still holds when hasMoreLODs is false but the final pass is mid-flight (premature release)', () => {
+    // hasMoreLODs flips false at fetch-resolve, BEFORE the final chunk's
+    // processing + commit; `loading` covers that window.
+    const reg = makeRegistry([0, 1, 2], undefined, undefined, () => 2);
+    const coarse = makeCountedChild(0, 2, 100);
+    const fine = makeCountedChild(0.5, 2, 10);
+    fine.hasMoreLODs = () => false;
+    fine.loading = true;
+    reg.register(makeEntry([coarse, fine], 0, '/g'));
+
+    reg.evaluatePerFrame();
+    expect(coarse.object.visible).toBe(true); // held through the commit window
+
+    // Commit landed (count re-stamped) and the pass finished → release.
+    fine.loading = false;
+    (fine.object.userData as { visibleSplatCount: number }).visibleSplatCount = 500;
+    reg.evaluatePerFrame();
+    expect(fine.object.visible).toBe(true);
+  });
+
+  it('scrub-settle: the complete coarse fallback is held over the fine chunk-1 recommit', () => {
+    let version = 1;
+    const reg = makeRegistry([0, 1, 2], undefined, undefined, () => version);
+    const coarse = makeCountedChild(0, 1, 100);
+    const fine = makeCountedChild(0.5, 1, 1000); // complete for v1
+    reg.register(makeEntry([coarse, fine], 0, '/g'));
+    reg.evaluatePerFrame();
+    expect(fine.object.visible).toBe(true); // steady state: fine shown
+
+    // Scrub to v2: both stale → staleness fallback (coarsest ready).
+    version = 2;
+    reg.evaluatePerFrame();
+    expect(coarse.object.visible).toBe(true);
+
+    // The eager coarse recommits fresh + complete for v2 via the sweep.
+    Object.assign(coarse.object.userData!, { loadedViewVersion: 2, visibleSplatCount: 100 });
+    reg.evaluatePerFrame();
+    expect(coarse.object.visible).toBe(true);
+
+    // The fine reload commits chunk-1 fresh — WORSE than the coarse on
+    // screen. Pre-gate this swapped immediately (the post-scrub pop).
+    Object.assign(fine.object.userData!, { loadedViewVersion: 2, visibleSplatCount: 10 });
+    fine.hasMoreLODs = () => true;
+    reg.evaluatePerFrame();
+    expect(coarse.object.visible).toBe(true); // held
+    expect(fine.object.visible).toBe(false);
+
+    // Ladder catches up → crossover → fine shows again.
+    (fine.object.userData as { visibleSplatCount: number }).visibleSplatCount = 400;
+    reg.evaluatePerFrame();
+    expect(fine.object.visible).toBe(true);
+  });
+
+  it('releases the hold when the aspiration ladder failed (degrade to ungated behavior)', () => {
+    const reg = makeRegistry([0, 1, 2], undefined, undefined, () => 2);
+    const coarse = makeCountedChild(0, 2, 100);
+    const fine = makeStreamingChild(0.5, 2, 10);
+    fine.failed = true;
+    reg.register(makeEntry([coarse, fine], 0, '/g'));
+    reg.evaluatePerFrame();
+    expect(fine.object.visible).toBe(true); // no hold behind a failing ladder
+  });
+
+  it('is bypassed by an explicit level lock (the user wants that level now)', () => {
+    const reg = makeRegistry([0, 1, 2], undefined, undefined, () => 2);
+    const coarse = makeCountedChild(0, 2, 100);
+    const fine = makeStreamingChild(0.5, 2, 10);
+    reg.register(makeEntry([coarse, fine], 0, '/g'));
+    reg.setSelectorMode('/g', { lockLevel: 1 });
+    reg.evaluatePerFrame();
+    expect(fine.object.visible).toBe(true); // locked level shows while streaming
+  });
+
+  it('is bypassed while the group is off-screen (frustum-culled: no visual pop)', () => {
+    // Bounds far outside the identity-camera frustum → off-screen gate holds
+    // the group at the coarsest ready level; the display gate must not pin
+    // the fine level's VRAM for an invisible group.
+    const farBounds = { min: [100, 100, 100], max: [110, 110, 110] };
+    const coarse = makeStreamingChild(0, 2, 5);
+    const fine = makeCountedChild(0.5, 2, 1000);
+    coarse.positionBounds = farBounds;
+    fine.positionBounds = farBounds;
+    const reg = makeRegistry([0, 1, 2], undefined, undefined, () => 2);
+    reg.register(makeEntry([coarse, fine], 1, '/g')); // fine displayed
+    reg.evaluatePerFrame();
+    expect(reg.list()[0].offScreen).toBe(true);
+    expect(coarse.object.visible).toBe(true); // no hold off-screen
+    expect(fine.object.visible).toBe(false);
+  });
+
+  it('keeps the held aspiration warm in the eviction LRU (lastVisibleTick re-stamped)', () => {
+    const reg = makeRegistry([0, 1, 2], undefined, undefined, () => 2);
+    const coarse = makeCountedChild(0, 2, 100);
+    const fine = makeStreamingChild(0.5, 2, 10);
+    reg.register(makeEntry([coarse, fine], 0, '/g'));
+    reg.evaluatePerFrame();
+    const afterFirst = fine.lastVisibleTick;
+    reg.evaluatePerFrame();
+    // The never-shown stamp fires only once; the hold must keep re-stamping.
+    expect(fine.lastVisibleTick).toBeGreaterThan(afterFirst!);
+  });
+
+  it('is inert for a deferred-group aspiration (untracked count, no hasMoreLODs)', () => {
+    const reg = makeRegistry([0, 1, 2], undefined, undefined, () => 2);
+    const coarse = makeCountedChild(0, 2, 100);
+    const groupFine = makeChild(0.5); // nested-group level: no nodeType/count
+    reg.register(makeEntry([coarse, groupFine], 0, '/g'));
+    reg.evaluatePerFrame();
+    expect(groupFine.object.visible).toBe(true); // current behavior preserved
+  });
+
+  it('keeps advancing the held aspiration ladder while the previous level stays visible', () => {
+    const reg = makeRegistry([0, 1, 2], undefined, undefined, () => 2);
+    const coarse = makeCountedChild(0, 2, 100);
+    const fine = makeStreamingChild(0.5, 2, 10);
+    fine.ensureLoaded = vi.fn(() => {
+      fine.loading = false; // simulate a completed progressive pass
+    });
+    reg.register(makeEntry([coarse, fine], 0, '/g'));
+    for (let i = 0; i < 16; i++) reg.evaluatePerFrame(); // settle (~8) + passes
+    expect((fine.ensureLoaded as ReturnType<typeof vi.fn>).mock.calls.length).toBeGreaterThan(1);
+    expect(coarse.object.visible).toBe(true); // held throughout
+    expect(fine.object.visible).toBe(false);
+  });
+});
