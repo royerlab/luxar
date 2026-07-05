@@ -1072,3 +1072,155 @@ describe('RangeLoader.getDecoder', () => {
     expect(loader.getDecoder()).toBe(decoder);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Parallel range loading — out-of-order resolution
+// ---------------------------------------------------------------------------
+// Ranges now load concurrently with PRECOMPUTED destination offsets; the
+// output must be byte-identical to the sequential result no matter which
+// range's fetch resolves first.
+
+describe('parallel range loading (out-of-order resolution)', () => {
+  let loader: RangeLoader;
+
+  beforeEach(() => {
+    loader = createLoader();
+    mockZarrGet.mockReset();
+  });
+
+  /**
+   * Queue per-call deferred results for mockZarrGet: call i receives
+   * `datas[i]` but the promises resolve in `resolveOrder`.
+   */
+  function gateGets(datas: Array<Float32Array | Uint8Array>, resolveOrder: number[]) {
+    const resolvers: Array<() => void> = [];
+    const gates = datas.map(
+      (_d, i) =>
+        new Promise<void>((resolve) => {
+          resolvers[i] = resolve;
+        })
+    );
+    let call = 0;
+    mockZarrGet.mockImplementation(() => {
+      const i = call++;
+      return gates[i].then(() => ({ data: datas[i] })) as any;
+    });
+    // Release in the requested order across microtask ticks.
+    void (async () => {
+      for (const i of resolveOrder) {
+        await Promise.resolve();
+        resolvers[i]();
+      }
+    })();
+  }
+
+  it('direct: writes ranges at correct offsets when the LAST range resolves FIRST', async () => {
+    gateGets(
+      [new Float32Array([10, 20]), new Float32Array([30, 40, 50]), new Float32Array([60])],
+      [2, 1, 0] // reverse completion order
+    );
+
+    const output = new Float32Array(6);
+    const ranges: LoadRange[] = [
+      { start: 0, end: 2 },
+      { start: 4, end: 7 },
+      { start: 9, end: 10 },
+    ];
+    const array = mockZarrArray('float32', [10]);
+
+    const written = await loader.loadRanges(array, undefined, ranges, output, 6, 1);
+
+    expect(written).toBe(6);
+    expect(Array.from(output)).toEqual([10, 20, 30, 40, 50, 60]);
+  });
+
+  it('quantized: dequantized ranges land at correct offsets out of order', async () => {
+    gateGets([new Uint8Array([0, 255]), new Uint8Array([127])], [1, 0]);
+
+    const attrs: ArrayMetadata = {
+      encoding: {
+        name: 'rgb_uint8',
+        bounds: [0, 1] as [number, number],
+        original_dtype: 'float32',
+      },
+    };
+    const output = new Float32Array(3);
+    const ranges: LoadRange[] = [
+      { start: 0, end: 2 },
+      { start: 5, end: 6 },
+    ];
+    const array = mockZarrArray('uint8', [10]);
+
+    const written = await loader.loadRanges(array, attrs, ranges, output, 3, 1);
+
+    expect(written).toBe(3);
+    expect(output[0]).toBeCloseTo(0, 5);
+    expect(output[1]).toBeCloseTo(1, 5);
+    expect(output[2]).toBeCloseTo(127 / 255, 5);
+  });
+
+  it('lut row mode: k-wide decoded rows land at correct offsets out of order', async () => {
+    gateGets([new Uint8Array([0]), new Uint8Array([1, 0])], [1, 0]);
+
+    const attrs: ArrayMetadata = {
+      encoding: {
+        name: 'lut_uint8',
+        lut: [
+          [10, 11, 12],
+          [20, 21, 22],
+        ],
+        original_shape: [10, 3],
+        lut_mode: 'row',
+        original_dtype: 'float32',
+      },
+    } as ArrayMetadata;
+    // 3 stored indices × k=3 → 9 output elements.
+    const output = new Float32Array(9);
+    const ranges: LoadRange[] = [
+      { start: 0, end: 1 },
+      { start: 3, end: 5 },
+    ];
+    const array = mockZarrArray('uint8', [10]);
+
+    const written = await loader.loadRanges(array, attrs, ranges, output, 3, 3);
+
+    expect(written).toBe(9);
+    expect(Array.from(output)).toEqual([10, 11, 12, 20, 21, 22, 10, 11, 12]);
+  });
+
+  it('direct: an over-long chunk is truncated to its span (no neighbour corruption)', async () => {
+    // Range 0 returns 3 elements but only owns a 2-element span; range 1's
+    // data must remain intact at its precomputed offset.
+    mockZarrGet
+      .mockResolvedValueOnce({ data: new Float32Array([10, 20, 999]) } as any)
+      .mockResolvedValueOnce({ data: new Float32Array([30, 40]) } as any);
+
+    const output = new Float32Array(4);
+    const ranges: LoadRange[] = [
+      { start: 0, end: 2 },
+      { start: 5, end: 7 },
+    ];
+    const array = mockZarrArray('float32', [10]);
+
+    await loader.loadRanges(array, undefined, ranges, output, 4, 1);
+
+    expect(Array.from(output)).toEqual([10, 20, 30, 40]);
+  });
+
+  it('direct: a short chunk leaves the rest of its span zeroed (graceful fallback)', async () => {
+    mockZarrGet
+      .mockResolvedValueOnce({ data: new Float32Array([10]) } as any) // expected 2
+      .mockResolvedValueOnce({ data: new Float32Array([30, 40]) } as any);
+
+    const output = new Float32Array(4);
+    const ranges: LoadRange[] = [
+      { start: 0, end: 2 },
+      { start: 5, end: 7 },
+    ];
+    const array = mockZarrArray('float32', [10]);
+
+    await loader.loadRanges(array, undefined, ranges, output, 4, 1);
+
+    expect(Array.from(output)).toEqual([10, 0, 30, 40]);
+  });
+});

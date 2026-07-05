@@ -495,7 +495,11 @@ def _coarse_barrier_purity(grp) -> float:
         child = grp[k]
         if child.attrs.get("type") != "gsplats":
             continue
-        c0 = np.asarray(child["centers"])[:, 0]
+        from luxar.encoding import ArrayDecoder
+
+        # AUTO centers are uint16 per-axis fixed-point — decode so the sub-integer
+        # offset metric is meaningful (raw codes are trivially integers).
+        c0 = ArrayDecoder().decode(child["centers"], grp)[:, 0]
         worst = max(worst, float(np.abs(c0 - np.round(c0)).max()))
     return worst
 

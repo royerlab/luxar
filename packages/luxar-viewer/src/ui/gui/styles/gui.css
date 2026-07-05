@@ -25,11 +25,13 @@
   left: 20px;
   z-index: var(--luxar-z-dropdown);
 
-  /* Effects */
-  border-radius: var(--luxar-radius-md);
+  /* Effects — same surface recipe as the control rail (see control-rail.css):
+     a crisp hairline (border-default), large soft corners (radius-lg), and the
+     same blur/shadow so every floating panel reads as one material. */
+  border-radius: var(--luxar-radius-lg);
   box-shadow: var(--luxar-shadow-lg);
   backdrop-filter: var(--luxar-blur-md);
-  border: 1px solid var(--luxar-border-subtle);
+  border: 1px solid var(--luxar-border-default);
 
   /* NO overflow here - allows pseudo-elements to work */
   overflow: visible;
@@ -85,7 +87,7 @@
   align-items: center;
   padding-bottom: var(--luxar-spacing-3);
   margin-bottom: var(--luxar-spacing-5);
-  border-bottom: 1px solid var(--luxar-border-strong);
+  border-bottom: 1px solid var(--luxar-border-default);
 }
 
 /**
@@ -133,21 +135,15 @@
 
 /**
  * Theme-specific overrides (attribute selectors)
+ *
+ * The panel deliberately does NOT override --luxar-shadow-lg per theme — it
+ * uses the same token the control rail does, so both cast an identical shadow.
+ * The border-default hairline replaces the old inset `0 0 0 1px` ring.
  */
 
-/* Dark theme */
-[data-theme='dark'] .luxar-gui {
-  box-shadow:
-    0 8px 24px rgba(0, 0, 0, 0.3),
-    0 0 0 1px rgba(255, 255, 255, 0.05);
-}
-
-/* Light theme */
+/* Light theme: keep the panel opaque enough to read over bright content. */
 [data-theme='light'] .luxar-gui {
   background: rgba(255, 255, 255, 0.95);
-  box-shadow:
-    0 8px 24px rgba(0, 0, 0, 0.1),
-    0 0 0 1px rgba(0, 0, 0, 0.05);
 }
 
 /* Glass themes - see src/styles/themes/{frosted,liquid}-glass.css */

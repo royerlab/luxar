@@ -122,6 +122,38 @@ describe('lines handler', () => {
     expect(updateView).toHaveBeenCalledWith(viewState, expect.anything(), ac.signal);
   });
 
+  it('skips predictive prefetch when the update was superseded (signal aborted)', async () => {
+    // P8 symmetry with the Points handler's gating test: warming chunks for
+    // an abandoned view-state wastes bandwidth and pollutes the per-path
+    // prefetch baseline.
+    const viewState = {
+      displayDims: [0, 1, 2],
+      slicePosition: [0, 0, 0, 0],
+      tolerance: [0, 0, 0, 1],
+    };
+    const loader: LinesDataLoader = {
+      loadLines: vi.fn(),
+      updateView: vi.fn().mockResolvedValue(null), // no data -> stage step exits early
+      dispose: vi.fn(),
+    } as unknown as LinesDataLoader;
+    const queue = new ViewStateQueue();
+    const prefetchSpy = vi.spyOn(queue, 'dispatchPrefetch');
+    const controller = new AbortController();
+    controller.abort();
+
+    await loadAndStage('/l', loader, makeSession(), {
+      rootGroup: new THREE.Group(),
+      viewStateQueue: queue,
+      clearFailure: vi.fn(),
+      currentVersion: 1,
+      updateVersion: 1,
+      signal: controller.signal,
+      deriveNodeViewState: () => ({ skip: false, viewState }),
+    });
+
+    expect(prefetchSpy).not.toHaveBeenCalled();
+  });
+
   // data.md G2 symmetry [P8]: Points has a "returns the staged commit on a
   // successful load" test; Lines lacked one. Add the parallel coverage.
   // Unlike Points (which returns `{ path, data }` verbatim from the loader),
@@ -185,12 +217,13 @@ describe('lines handler', () => {
     expect(loader.updateView).toHaveBeenCalledTimes(1);
     expect(staged).not.toBeNull();
     expect(staged?.path).toBe('/l');
-    // Staged shape is { path, processed } (NOT { path, data } like Points).
-    expect(staged?.processed).toBeDefined();
-    expect(staged?.processed.segmentCount).toBe(1);
-    expect(staged?.processed.startPositions).toBeInstanceOf(Float32Array);
-    expect(staged?.processed.endPositions).toBeInstanceOf(Float32Array);
-    expect(staged?.processed.startPositions.length).toBe(3); // 1 segment × xyz
-    expect(staged?.processed.endPositions.length).toBe(3);
+    // Staged shape is { path, sourceData, processed } (NOT { path, data } like Points).
+    if (!staged || staged.noop) throw new Error('expected a geometry staged commit');
+    expect(staged.processed).toBeDefined();
+    expect(staged.processed.segmentCount).toBe(1);
+    expect(staged.processed.startPositions).toBeInstanceOf(Float32Array);
+    expect(staged.processed.endPositions).toBeInstanceOf(Float32Array);
+    expect(staged.processed.startPositions.length).toBe(3); // 1 segment × xyz
+    expect(staged.processed.endPositions.length).toBe(3);
   });
 });

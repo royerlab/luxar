@@ -36,6 +36,7 @@ import { PollingLoop } from './data-loading-monitor/polling-loop';
 import { log, Modules } from '../utils/log';
 import { config } from '../config';
 import { notifier } from '../utils/cross-layer/notifier';
+import type { FailedLoadsProviderPort } from '../data/scene-loader-monitor-port';
 
 // Only extract timings and limits from config (these are data values, not styles)
 const MonitorTimings = config.dataLoading.monitor.timings;
@@ -53,6 +54,7 @@ function isValidTab(tab: string): tab is ValidTab {
 import {
   renderLoaderItem,
   renderOverviewContent,
+  renderFailedLoadsBanner,
   renderCacheContent,
   renderMemoryContent,
   renderInsightsContent,
@@ -155,6 +157,12 @@ export class DataLoadingMonitor {
   // Polled each tick; the snapshot drives the scene-graph tree's kind
   // badges, "LOD x/N" chips, refining indicator, and header summary.
   private lodProgressProvider: LODProgressProvider | null = null;
+  /** Failed-load records + retry-all, from the SceneLoader (overview banner). */
+  private failedLoadsProvider: FailedLoadsProviderPort | null = null;
+  /** In-flight guard so the banner's Retry button can't stack batches. */
+  private retryFailedLoadsInFlight = false;
+  /** Last-rendered failed-loads state; a change marks the overview structure dirty. */
+  private lastFailedLoadsSignature = '';
   private lodStates: Map<string, LODProgressState> = new Map();
   /** Per-path visible counts pushed by the SceneLoader's visible-counts walk. */
   private visibleCountsByPath: ReadonlyMap<string, number> = new Map();
@@ -302,6 +310,17 @@ export class DataLoadingMonitor {
   }
 
   /**
+   * Set the failed-loads provider for the Overview tab's retry banner
+   * (count/paths + retry-all; see `FailedLoadsProviderPort`).
+   */
+  public setFailedLoadsProvider(provider: FailedLoadsProviderPort | null): void {
+    this.failedLoadsProvider = provider;
+    if (provider) {
+      log.info(Modules.DATA_MONITOR, 'Failed-loads provider connected');
+    }
+  }
+
+  /**
    * Set the cache stats provider for L1/L2 cache monitoring.
    * This enables the monitor to display actual cache statistics.
    */
@@ -418,6 +437,7 @@ export class DataLoadingMonitor {
     this.accumulatorProviders = { points: null, lines: null, gsplats: null };
     this.profiler = null;
     this.lodProgressProvider = null;
+    this.failedLoadsProvider = null;
     this.lodStates = new Map();
     // Reset to undefined (not 'not-wired') so the next scene's
     // setCacheTelemetryState call lands cleanly. If the next setup
@@ -917,6 +937,9 @@ export class DataLoadingMonitor {
       case 'clearAll':
         this.clearAllCaches();
         break;
+      case 'retryFailedLoads':
+        this.retryFailedLoads();
+        break;
       case 'toggleNode': {
         const nodePath = target.dataset.nodePath;
         if (nodePath) {
@@ -985,23 +1008,23 @@ export class DataLoadingMonitor {
     const entries: string[] = [];
     if (hasPoints) {
       entries.push(
-        `<span data-geom="points" title="Visible points">${templateFormatNumber(stats.visiblePoints)} pts</span>`
+        `<span data-geom="points" title="Points currently on screen (inside the active nD slice). Expand the monitor (⊞) for totals and per-layer detail">${templateFormatNumber(stats.visiblePoints)} pts</span>`
       );
     }
     if (hasLines) {
       entries.push(
-        `<span data-geom="lines" title="Visible line segments">${templateFormatNumber(stats.visibleSegments)} lines</span>`
+        `<span data-geom="lines" title="Line segments currently on screen (inside the active nD slice). Expand the monitor (⊞) for totals and per-layer detail">${templateFormatNumber(stats.visibleSegments)} lines</span>`
       );
     }
     if (hasGSplats) {
       entries.push(
-        `<span data-geom="splats" title="Visible gaussian splats">${templateFormatNumber(stats.visibleSplats)} splats</span>`
+        `<span data-geom="splats" title="Gaussian splats currently on screen (inside the active nD slice). Expand the monitor (⊞) for totals and per-layer detail">${templateFormatNumber(stats.visibleSplats)} splats</span>`
       );
     }
     // Nothing loaded yet → show a points placeholder so the row isn't empty.
     if (entries.length === 0) {
       entries.push(
-        `<span data-geom="points" title="Visible points">${templateFormatNumber(stats.visiblePoints)} pts</span>`
+        `<span data-geom="points" title="Points currently on screen (inside the active nD slice). Expand the monitor (⊞) for totals and per-layer detail">${templateFormatNumber(stats.visiblePoints)} pts</span>`
       );
     }
     return entries.join('');
@@ -1067,7 +1090,7 @@ export class DataLoadingMonitor {
     this.panel.innerHTML = `
       <div class="luxar-glass-refraction" aria-hidden="true"></div>
       <div class="luxar-monitor-compact">
-        <span class="luxar-monitor-compact__type" title="Loading mode">
+        <span class="luxar-monitor-compact__type" title="${hasSpatialIndex ? 'Loading mode: 🔍 spatial-index streaming — only the data inside the current view/slice is queried and loaded on demand (scales to arbitrarily large datasets)' : 'Loading mode: 📦 direct loading — the dataset is loaded whole, without an on-demand spatial index'}">
           ${hasSpatialIndex ? '🔍' : '📦'}
         </span>
 
@@ -1075,18 +1098,18 @@ export class DataLoadingMonitor {
           ${this.buildCompactGeomSummary(stats)}
         </span>
 
-        <span class="luxar-monitor-compact__memory" title="Resident memory (points + lines + gsplats)">
+        <span class="luxar-monitor-compact__memory" title="CPU memory currently held by loaded geometry data, across all layers (points + lines + gsplats)">
           ${templateFormatBytes(stats.totalMemory)}
         </span>
 
-        <span class="luxar-monitor-compact__qps" title="Queries per second">
+        <span class="luxar-monitor-compact__qps" title="Spatial queries per second — how often the viewer is asking the index for data as you navigate. 0/s when idle is normal">
           ${stats.queriesPerSecond.toFixed(1)}/s
         </span>
 
-        ${hasErrors ? '<span class="luxar-monitor-compact__alert" title="Errors detected">🔴</span>' : ''}
-        ${hasWarnings ? '<span class="luxar-monitor-compact__alert" title="Warnings">🟡</span>' : ''}
+        ${hasErrors ? '<span class="luxar-monitor-compact__alert" title="Errors detected — expand the monitor (⊞) and open the Insights tab for details and suggested fixes">🔴</span>' : ''}
+        ${hasWarnings ? '<span class="luxar-monitor-compact__alert" title="Warnings — expand the monitor (⊞) and open the Insights tab for details and suggested fixes">🟡</span>' : ''}
 
-        <button class="luxar-data-monitor__expand-btn" data-action="expand" title="Show details">
+        <button class="luxar-data-monitor__expand-btn" data-action="expand" title="Expand into the full Data Loading Monitor: per-tab views of loading, cache, memory, performance, and insights">
           ⊞
         </button>
       </div>
@@ -1159,6 +1182,19 @@ export class DataLoadingMonitor {
   private updateDetailedView(): void {
     if (!this.panel) return;
 
+    // Failed-loads banner liveness: the overview HTML is rebuilt only when
+    // structureDirty (values are otherwise patched in place), and the banner
+    // is part of that HTML — so any change in the failed set or the
+    // retry-in-flight flag must mark the structure dirty, or the banner
+    // appears/disappears/disables only on the next unrelated rebuild.
+    const failedLoadsSignature =
+      (this.failedLoadsProvider?.getFailedPaths() ?? []).join('|') +
+      (this.retryFailedLoadsInFlight ? '#retrying' : '');
+    if (failedLoadsSignature !== this.lastFailedLoadsSignature) {
+      this.lastFailedLoadsSignature = failedLoadsSignature;
+      this.structureDirty = true;
+    }
+
     // Update metrics from all loaders
     for (const [path, loader] of this.loaders) {
       const metrics = loader.getMetrics();
@@ -1195,8 +1231,9 @@ export class DataLoadingMonitor {
         case 'performance':
           if (this.profiler) {
             const timingData = this.profiler.getTimings();
-            if (timingData.count > 0) {
-              updated = updateTimingPanelValues(this.contentContainer, timingData);
+            const refinementData = this.profiler.getRefinementTimings();
+            if (timingData.count > 0 || refinementData.count > 0) {
+              updated = updateTimingPanelValues(this.contentContainer, timingData, refinementData);
             }
           }
           break;
@@ -1563,31 +1600,42 @@ export class DataLoadingMonitor {
         id: 'overview',
         label: 'Overview',
         icon: '📊',
-        tooltip: 'Visible element counts, memory, query speed, network I/O, and the scene graph',
+        tooltip:
+          'The big picture: how much of the dataset is on screen, memory and query speed, ' +
+          'how much data has been downloaded vs served from cache, and the scene graph tree',
       },
       {
         id: 'cache',
         label: 'Cache',
         icon: '💾',
-        tooltip: 'L0/L1/L2 cache sizes, hit rates, evictions, health, and total usage',
+        tooltip:
+          'The three cache tiers that avoid re-downloading data — L0 (decoded, memory), ' +
+          'L1 (raw, memory), L2 (disk, survives reloads) — with sizes, hit rates, ' +
+          'validation health, and Clear buttons',
       },
       {
         id: 'memory',
         label: 'Memory',
         icon: '🧠',
-        tooltip: 'GPU buffer pool reuse and CPU-side data accumulator usage',
+        tooltip:
+          'Where geometry memory goes: GPU buffer pooling (how often buffers are reused ' +
+          'instead of reallocated) and the CPU-side accumulators that grow as data streams in',
       },
       {
         id: 'performance',
         label: 'Performance',
         icon: '⚡',
-        tooltip: 'Query latency, throughput, and loading performance over time',
+        tooltip:
+          'A timing breakdown of each view update — query, load, project, GPU upload — ' +
+          'per step and per geometry type, with rows exceeding the 60fps frame budget highlighted',
       },
       {
         id: 'insights',
         label: 'Insights',
         icon: '💡',
-        tooltip: 'Recommendations and detected issues for tuning loading and caching',
+        tooltip:
+          'Automatic diagnosis: detected problems and tuning recommendations for loading ' +
+          'and caching, ranked by severity',
       },
     ];
 
@@ -1626,14 +1674,71 @@ export class DataLoadingMonitor {
   }
 
   /**
+   * Retry every failed loader via the injected provider (the monitor-side
+   * trigger for `SceneLoader.retryAllFailedLoaders`; the loader serializes
+   * the batch against its update lock). Guards against double-clicks while
+   * a batch is in flight and refreshes the banner on completion.
+   */
+  private retryFailedLoads(): void {
+    const provider = this.failedLoadsProvider;
+    if (!provider || this.retryFailedLoadsInFlight) return;
+    if (provider.getFailedPaths().length === 0) return;
+
+    this.retryFailedLoadsInFlight = true;
+    this.structureDirty = true; // rebuild the overview so the button disables now
+    this.updateUI();
+    void provider
+      .retryAll()
+      .then(({ succeeded, failed, deferred }) => {
+        if (deferred) {
+          // Nothing was retried — a main update holds the serialization
+          // lock. Saying "still failing" here would falsely report a failed
+          // re-attempt (the pre-fix behavior).
+          notifier.toast(
+            'Retry deferred — a data update is in progress; try again in a moment.',
+            4000
+          );
+          return;
+        }
+        if (failed.length === 0) {
+          notifier.toast(
+            `Recovered ${succeeded.length} failed load${succeeded.length === 1 ? '' : 's'}.`,
+            4000
+          );
+        } else {
+          notifier.toast(
+            `Retried failed loads: ${succeeded.length} recovered, ${failed.length} still failing.`,
+            5000
+          );
+        }
+      })
+      .catch((error) => {
+        log.warning(
+          Modules.DATA_MONITOR,
+          `Retry-all failed: ${error instanceof Error ? error.message : String(error)}`
+        );
+      })
+      .finally(() => {
+        this.retryFailedLoadsInFlight = false;
+        this.structureDirty = true; // re-enable the button / drop the banner
+        this.updateUI();
+      });
+  }
+
+  /**
    * Render overview tab with cleaner visual hierarchy
    */
   private renderOverviewTab(): string {
     const stats = this.getGlobalStats();
     const cacheMetrics = this.getCacheMetrics();
 
+    // Failed-load warning banner (with a Retry action) ahead of the metrics —
+    // failures otherwise surface only as transient toasts.
+    const failedPaths = this.failedLoadsProvider?.getFailedPaths() ?? [];
+    const banner = renderFailedLoadsBanner(failedPaths, this.retryFailedLoadsInFlight);
+
     // Use the template function for the main content
-    const content = renderOverviewContent(stats, cacheMetrics);
+    const content = banner + renderOverviewContent(stats, cacheMetrics);
 
     // Replace the loader list placeholder with scene graph tree (or compact loader list if no scene graph)
     if (this.sceneGraphState.root) {
@@ -1704,7 +1809,7 @@ export class DataLoadingMonitor {
 
     return `
       <div class="luxar-performance-content">
-        ${renderHierarchicalTimingPanel(timingData)}
+        ${renderHierarchicalTimingPanel(timingData, this.profiler?.getRefinementTimings())}
       </div>
     `;
   }

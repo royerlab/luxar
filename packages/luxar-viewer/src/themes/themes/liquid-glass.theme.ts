@@ -68,6 +68,13 @@ export const liquidGlassTheme: Theme = {
       strong: 'rgba(255, 255, 255, 0.3)', // More visible
       focus: 'rgba(0, 122, 255, 0.5)', // Blue focus ring
     },
+    menu: {
+      // Native <option> popups render off the glass layer → solid dark for readability
+      background: '#1a1a1a',
+      text: '#e0e0e0',
+      activeBackground: '#2a2a2a',
+      activeText: '#ffffff',
+    },
     visualization: {
       // Vibrant visualization colors
       hot: 'rgba(255, 59, 48, 1)', // Red
@@ -92,6 +99,7 @@ export const liquidGlassTheme: Theme = {
       xl: '18px',
       '2xl': '20px',
       '3xl': '28px',
+      '4xl': '32px',
     },
     fontWeight: {
       normal: 400,

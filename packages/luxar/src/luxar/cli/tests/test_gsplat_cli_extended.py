@@ -2651,6 +2651,178 @@ class TestLODCommand:
         assert loaded.n_substitutive == 2
         assert loaded.at_substitutive(1).n_splats < loaded.at_substitutive(0).n_splats
 
+    def test_refine_volume_requires_target(
+        self, runner: CliRunner, medium_gsplats: Path, tmp_path: Path
+    ) -> None:
+        out = tmp_path / "x.gsplats.zarr"
+        result = runner.invoke(
+            app,
+            [
+                "gsplat",
+                "lod",
+                str(medium_gsplats),
+                str(out),
+                "--recipe",
+                "levels",
+                "--refine",
+                "volume",
+            ],
+        )
+        assert result.exit_code != 0
+        assert "--target" in self._io(result)
+        assert not out.exists()
+
+    def test_channel_without_target_rejected(
+        self, runner: CliRunner, medium_gsplats: Path, tmp_path: Path
+    ) -> None:
+        """A sub-volume selector without --target is a silent no-op unless
+        guarded — the command must reject it, not build a levels LOD that
+        ignored --channel."""
+        out = tmp_path / "x.gsplats.zarr"
+        result = runner.invoke(
+            app,
+            [
+                "gsplat",
+                "lod",
+                str(medium_gsplats),
+                str(out),
+                "--recipe",
+                "levels",
+                "--channel",
+                "1",
+            ],
+        )
+        assert result.exit_code != 0
+        assert "--target" in self._io(result)
+        assert not out.exists()
+
+    def test_target_requires_refine_volume(
+        self,
+        runner: CliRunner,
+        medium_gsplats: Path,
+        small_volume_npy: Path,
+        tmp_path: Path,
+    ) -> None:
+        out = tmp_path / "x.gsplats.zarr"
+        result = runner.invoke(
+            app,
+            [
+                "gsplat",
+                "lod",
+                str(medium_gsplats),
+                str(out),
+                "--recipe",
+                "levels",
+                "--target",
+                str(small_volume_npy),
+            ],
+        )
+        assert result.exit_code != 0
+        assert "--refine volume" in self._io(result)
+        assert not out.exists()
+
+    def test_refine_volume_rejected_for_stream_recipe(
+        self,
+        runner: CliRunner,
+        medium_gsplats: Path,
+        small_volume_npy: Path,
+        tmp_path: Path,
+    ) -> None:
+        """--target/--refine are substitutive knobs; the token machinery must
+        reject them for the stream recipe."""
+        out = tmp_path / "x.gsplats.zarr"
+        result = runner.invoke(
+            app,
+            [
+                "gsplat",
+                "lod",
+                str(medium_gsplats),
+                str(out),
+                "--recipe",
+                "stream",
+                "--refine",
+                "volume",
+                "--target",
+                str(small_volume_npy),
+            ],
+        )
+        assert result.exit_code != 0
+        assert not out.exists()
+
+    def test_refine_volume_rejected_for_adaptive_recipe(
+        self,
+        runner: CliRunner,
+        medium_gsplats: Path,
+        small_volume_npy: Path,
+        tmp_path: Path,
+    ) -> None:
+        """Per-part levels would re-fit against the FULL volume — rejected."""
+        out = tmp_path / "x.gsplats.zarr"
+        result = runner.invoke(
+            app,
+            [
+                "gsplat",
+                "lod",
+                str(medium_gsplats),
+                str(out),
+                "--recipe",
+                "adaptive",
+                "--refine",
+                "volume",
+                "--target",
+                str(small_volume_npy),
+            ],
+        )
+        assert result.exit_code != 0
+        assert "adaptive" in self._io(result)
+        assert not out.exists()
+
+    def test_recipe_levels_with_refine_volume_smoke(
+        self, runner: CliRunner, small_volume_npy: Path, tmp_path: Path
+    ) -> None:
+        """--refine volume --target end-to-end: fit the volume, build levels
+        with a volume re-fit, and confirm the provenance round-trips. The
+        never-worse guard makes the outcome deterministic (seed or better)."""
+        import numpy as np
+
+        from luxar.gsplats.fit_gsplats import fit_gaussian_splats
+        from luxar.gsplats.gsplat_data import GSplatData
+
+        volume = np.load(small_volume_npy)
+        fine = fit_gaussian_splats(
+            volume, seeds=40, n_iters=80, device="cpu", verbose=False
+        )
+        src = tmp_path / "fit.gsplats.zarr"
+        fine.save(src)
+        out = tmp_path / "vr.gsplats.zarr"
+        result = runner.invoke(
+            app,
+            [
+                "gsplat",
+                "lod",
+                str(src),
+                str(out),
+                "--recipe",
+                "levels",
+                "-L",
+                "1",
+                "--refine",
+                "volume",
+                "--refine-iters",
+                "10",
+                "--target",
+                str(small_volume_npy),
+            ],
+        )
+        assert result.exit_code == 0, f"volume-refit smoke failed:\n{result.stdout}"
+        loaded = GSplatData.load(out, include_stats=True)
+        assert loaded.n_substitutive == 2
+        assert loaded.stats["refine"] == "volume"
+        assert loaded.stats["refine_iters"] == 10
+        lev = loaded.substitutive_levels[1]
+        assert lev.stats["refine"] == "volume"
+        assert {"mse_seed", "mse_refit", "improved"} <= set(lev.stats["refine_stats"])
+
     def test_recipe_flat(
         self, runner: CliRunner, medium_gsplats: Path, tmp_path: Path
     ) -> None:
@@ -3474,8 +3646,10 @@ class TestLODCommand:
 
     def test_detect_store_encoding_classifies_modes(self, tmp_path: Path) -> None:
         """detect_store_encoding reads the on-disk encoding attrs of the split
-        Cholesky arrays: AUTO quantizes to u16, MEMORY to u8, PRECISION stores
-        float32. Needs NON-uniform cholesky (uniform stores broadcast them)."""
+        Cholesky arrays: AUTO quantizes to u8 WITH a covariance certificate
+        (u16 when escalated / legacy), MEMORY to u8 without one, PRECISION
+        stores float32. Needs NON-uniform cholesky (uniform stores broadcast
+        them)."""
         from luxar.cli.lod import detect_store_encoding
         from luxar.encoding import EncodingMode
         from luxar.gsplats.gsplat_data import GSplatData
@@ -3497,6 +3671,56 @@ class TestLODCommand:
             data.save(out, encoding_mode=mode)
             assert detect_store_encoding(out) == expected, mode
         assert detect_store_encoding(tmp_path / "nope.gsplats.zarr") is None
+
+    def test_detect_store_encoding_escalated_legacy_and_certified_f32(
+        self, tmp_path: Path
+    ) -> None:
+        """The certificate-based branches: an ESCALATED AUTO store (u16 with a
+        certificate) and a LEGACY pre-certificate AUTO store (bare u16) both
+        classify as "auto"; a certified-float32 store (the f32 rung) is "auto"
+        while bare float32 stays "precision"."""
+        import json
+
+        from luxar.cli.lod import detect_store_encoding
+        from luxar.gsplats.gsplat_data import GSplatData
+
+        rng = np.random.default_rng(2)
+        n = 64
+        chol = (rng.random((n, 6)) * 0.5 + 0.5).astype(np.float32)
+        chol[:4] = 1e8  # outliers stretch the log range → AUTO escalates to u16
+        data = GSplatData(
+            centers=(rng.random((n, 3)) * 10).astype(np.float32),
+            amplitudes=rng.random(n).astype(np.float32),
+            cholesky_factors=chol,
+        )
+        out = tmp_path / "escalated.gsplats.zarr"
+        with pytest.warns(UserWarning, match="escalating to uint16"):
+            data.save(out)
+        zattrs = next(out.rglob("cholesky_factors_diag/.zattrs"))
+        enc = json.loads(zattrs.read_text())["encoding"]
+        assert enc["name"] == "log_perchannel_u16"  # really escalated
+        assert detect_store_encoding(out) == "auto"  # u16 (certified) → auto
+
+        # Legacy pre-certificate AUTO store: bare u16, no certificate key.
+        attrs = json.loads(zattrs.read_text())
+        del attrs["encoding"]["certificate"]
+        zattrs.write_text(json.dumps(attrs))
+        assert detect_store_encoding(out) == "auto"  # bare u16 (legacy) → auto
+
+        # Certified float32 (the practically-unreachable f32 rung): auto, not
+        # precision — the certificate key is the discriminator.
+        attrs["encoding"] = {
+            "name": "float32",
+            "original_dtype": "float32",
+            "certificate": {
+                "metric": "cov_relf_p95",
+                "value": 0.0,
+                "threshold": 0.05,
+                "tier": "float32",
+            },
+        }
+        zattrs.write_text(json.dumps(attrs))
+        assert detect_store_encoding(out) == "auto"
 
     def test_lod_target_ms_and_breakpoints_mutually_exclusive(
         self, runner: CliRunner, medium_gsplats: Path, tmp_path: Path
@@ -4240,3 +4464,130 @@ class TestAxesThreadingAndSqueeze:
         vol = load_volume(p, timepoint=2, axes="t,z,y,x")
         assert vol.shape == (8, 8, 8)
         np.testing.assert_array_equal(vol, data[2])
+
+
+def _chol_base(path: Path) -> Path:
+    """Return the group holding the Cholesky arrays (leaf root or child_0)."""
+    for base in (path, path / "child_0"):
+        if (base / "cholesky_factors_diag" / ".zarray").exists():
+            return base
+    raise AssertionError(f"no split-Cholesky arrays under {path}")
+
+
+def _diag_dtype(path: Path) -> str:
+    import json
+
+    base = _chol_base(path)
+    return json.load(open(base / "cholesky_factors_diag" / ".zarray"))["dtype"]
+
+
+def _varying_gsplats(path: Path, n: int = 300, d: int = 3) -> Path:
+    """Save a small dataset with VARYING Cholesky columns so the per-column
+    quantizer engages (a constant column falls back to float32 in any mode).
+    Saved with PRECISION so the source dtype is deterministically float32 —
+    AUTO is an adaptive ladder and may pick uint8 or uint16 by certificate."""
+    from luxar.encoding import EncodingMode
+    from luxar.gsplats.gsplat_data import GSplatData
+
+    rng = np.random.default_rng(7)
+    tril = d * (d + 1) // 2
+    chol = (rng.standard_normal((n, tril)) * 0.2).astype(np.float32)
+    di = np.cumsum(np.arange(1, d + 1)) - 1
+    chol[:, di] = np.abs(chol[:, di]) + 0.5
+    GSplatData(
+        centers=(rng.standard_normal((n, d)) * 5).astype(np.float32),
+        amplitudes=(np.abs(rng.standard_normal(n)) + 0.5).astype(np.float32),
+        cholesky_factors=chol,
+    ).save(path, encoding_mode=EncodingMode.PRECISION)
+    return path
+
+
+class TestReencode:
+    """`luxar gsplat reencode` — re-quantize Cholesky factors to a new file."""
+
+    def test_memory_encoding_yields_uint8(
+        self, runner: CliRunner, tmp_path: Path
+    ) -> None:
+        # memory encoding must store the Cholesky diag as uint8 (|u1). The
+        # source is saved PRECISION (float32), so the encoding demonstrably
+        # changes regardless of what the adaptive AUTO ladder would pick.
+        src = _varying_gsplats(tmp_path / "src.gsplats.zarr")
+        src_dtype = _diag_dtype(src)
+        assert src_dtype == "<f4"
+        out = tmp_path / "u8.gsplats.zarr"
+        result = runner.invoke(
+            app, ["gsplat", "reencode", str(src), str(out), "-e", "memory"]
+        )
+        assert result.exit_code == 0, result.output
+        assert _diag_dtype(out) == "|u1"
+        assert _diag_dtype(out) != src_dtype  # the encoding actually changed
+
+    def test_precision_encoding_yields_float32(
+        self, runner: CliRunner, sample_gsplats: Path, tmp_path: Path
+    ) -> None:
+        out = tmp_path / "f32.gsplats.zarr"
+        result = runner.invoke(
+            app,
+            ["gsplat", "reencode", str(sample_gsplats), str(out), "-e", "precision"],
+        )
+        assert result.exit_code == 0, result.output
+        assert _diag_dtype(out) == "<f4"
+
+    def test_reencode_preserves_splat_count_and_geometry(
+        self, runner: CliRunner, sample_gsplats: Path, tmp_path: Path
+    ) -> None:
+        from luxar.gsplats.gsplat_data import GSplatData
+
+        src = GSplatData.load(sample_gsplats)
+        out = tmp_path / "u8.gsplats.zarr"
+        result = runner.invoke(
+            app, ["gsplat", "reencode", str(sample_gsplats), str(out), "-e", "memory"]
+        )
+        assert result.exit_code == 0, result.output
+        got = GSplatData.load(out)
+        assert got.n_splats == src.n_splats
+        assert got.ndim == src.ndim
+        # uint8 Cholesky is lossy but centers are stored losslessly (float32).
+        np.testing.assert_allclose(got.centers, src.centers, rtol=0, atol=1e-4)
+
+    def test_reencode_preserves_pipeline_provenance(
+        self, runner: CliRunner, tmp_path: Path
+    ) -> None:
+        """A kind=lod tree's pipeline/ provenance group survives the round-trip
+        (write_gsplats_tree drops it unless re-supplied — regression guard)."""
+        import zarr
+
+        from luxar.gsplats.gsplat_data import GSplatData
+        from luxar.gsplats.lod import make_substitutive_lod
+
+        n, d = 400, 3
+        rng = np.random.default_rng(3)
+        tril = d * (d + 1) // 2
+        chol = (rng.standard_normal((n, tril)) * 0.1).astype(np.float32)
+        di = np.cumsum(np.arange(1, d + 1)) - 1
+        chol[:, di] = np.abs(chol[:, di]) + 0.5
+        base = GSplatData(
+            centers=rng.standard_normal((n, d)).astype(np.float32),
+            amplitudes=(np.abs(rng.standard_normal(n)) + 0.5).astype(np.float32),
+            cholesky_factors=chol,
+        )
+        pyr = make_substitutive_lod(base, compression_factor=4, levels=2, device="cpu")
+        src = tmp_path / "pyr.gsplats.zarr"
+        from luxar.gsplats.io.save_gsplats import write_gsplats_tree
+        from luxar.gsplats.tree import tree_from_substitutive_levels
+
+        node = tree_from_substitutive_levels(list(pyr.substitutive_levels))
+        write_gsplats_tree(
+            src, node, pipeline_info={"lod_kind": "substitutive", "method": "test_tag"}
+        )
+        pre = dict(zarr.open_group(str(src), mode="r")["pipeline"].attrs)
+        assert pre.get("method") == "test_tag"
+
+        out = tmp_path / "pyr_u8.gsplats.zarr"
+        result = runner.invoke(
+            app, ["gsplat", "reencode", str(src), str(out), "-e", "memory"]
+        )
+        assert result.exit_code == 0, result.output
+        post_root = zarr.open_group(str(out), mode="r")
+        assert "pipeline" in post_root
+        assert dict(post_root["pipeline"].attrs).get("method") == "test_tag"

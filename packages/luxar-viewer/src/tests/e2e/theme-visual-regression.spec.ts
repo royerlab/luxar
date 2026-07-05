@@ -277,10 +277,15 @@ for (const theme of THEMES) {
     await page.goto(`/?theme=${theme}&debug`);
     await waitForTheme(page, theme);
 
-    // Trigger dataset browser with O key
-    await page.keyboard.press('o');
-
+    // The dataset browser auto-opens when no dataset is loaded (welcome UX).
+    // The 'o' key TOGGLES it, so only press it if it hasn't already opened —
+    // pressing 'o' on an already-open browser would toggle it closed. By the
+    // time waitForTheme resolves, the auto-show has fired, so this is
+    // deterministic while still opening the browser if auto-show is disabled.
     const datasetBrowser = page.locator('.luxar-dataset-browser');
+    if (!(await datasetBrowser.isVisible())) {
+      await page.keyboard.press('o');
+    }
     await expect(datasetBrowser).toBeVisible({ timeout: 2000 });
 
     // Extra wait for frosted-glass theme which has animation/blur effects
@@ -290,6 +295,119 @@ for (const theme of THEMES) {
 
     // Take screenshot
     await expect(datasetBrowser).toHaveScreenshot(`dataset-browser-${theme}.png`, {
+      maxDiffPixelRatio: 0.1,
+      threshold: 0.3,
+    });
+  });
+}
+
+/**
+ * Test the control rail in all themes.
+ *
+ * The rail is the always-visible left-edge activity bar (PR #452 made
+ * Navigation/Settings/Performance rail-native). It idle-dims after ~2.6s,
+ * so wake it with a pointer move just before the screenshot to pin the
+ * awake (full-opacity) state deterministically.
+ */
+for (const theme of THEMES) {
+  test(`@visual control rail - ${theme} theme`, async ({ page }) => {
+    const testDataUrl =
+      'http://localhost:9000/datasets/examples/dimension_sliders_5d_example.luxar.zarr';
+    await page.goto(`/?src=${testDataUrl}&theme=${theme}&debug`);
+    await waitForTheme(page, theme);
+
+    const rail = page.locator('.luxar-control-rail');
+    await expect(rail).toBeVisible({ timeout: 5000 });
+
+    // Let the scene settle (the rail is a glass surface — canvas content
+    // bleeds through its backdrop blur, so the background must be stable).
+    await page.waitForTimeout(1000);
+
+    // Wake the rail (pointer movement over the canvas brightens it) without
+    // hovering the rail itself, which would show a button tooltip.
+    await page.mouse.move(640, 360);
+    await waitForNextRender(page);
+
+    if (theme === 'frosted-glass') {
+      await page.waitForTimeout(500);
+    }
+
+    await expect(rail).toHaveScreenshot(`control-rail-${theme}.png`, {
+      maxDiffPixelRatio: 0.1,
+      threshold: 0.3,
+    });
+  });
+}
+
+/**
+ * Test the rendering-controls panel in all themes.
+ *
+ * After PR #452 the panel is purely image/appearance: Camera, HDR,
+ * Anti-Aliasing, Post-Processing (Navigation/Theme/Performance moved to
+ * rail popovers) — this baseline pins that slimmed layout per theme.
+ */
+for (const theme of THEMES) {
+  test(`@visual rendering controls panel - ${theme} theme`, async ({ page }) => {
+    const testDataUrl =
+      'http://localhost:9000/datasets/examples/dimension_sliders_5d_example.luxar.zarr';
+    await page.goto(`/?src=${testDataUrl}&theme=${theme}&debug`);
+    await waitForTheme(page, theme);
+
+    // Let the scene settle so the panel's near/far readouts are stable.
+    await page.waitForTimeout(1000);
+
+    await page.keyboard.press('r');
+
+    // Several .luxar-gui elements exist (e.g. the hidden recording panel);
+    // target the one titled "Rendering Controls".
+    const panel = page.locator('.luxar-gui', {
+      has: page.locator('.luxar-gui__title', { hasText: 'Rendering Controls' }),
+    });
+    await expect(panel).toBeVisible({ timeout: 2000 });
+
+    if (theme === 'frosted-glass') {
+      await page.waitForTimeout(500);
+    }
+
+    await expect(panel).toHaveScreenshot(`rendering-controls-panel-${theme}.png`, {
+      maxDiffPixelRatio: 0.1,
+      threshold: 0.3,
+    });
+  });
+}
+
+/**
+ * Test the Navigation rail popover in all themes.
+ *
+ * Right-clicking the Navigation rail button opens a panel popover with the
+ * segmented mode selector (Orbit/Fly/Ortho) + the current mode's parameters
+ * (PR #452). Dispatched programmatically — Playwright's right-click does not
+ * reliably fire `contextmenu` for this delegated handler.
+ */
+for (const theme of THEMES) {
+  test(`@visual navigation popover - ${theme} theme`, async ({ page }) => {
+    const testDataUrl =
+      'http://localhost:9000/datasets/examples/dimension_sliders_5d_example.luxar.zarr';
+    await page.goto(`/?src=${testDataUrl}&theme=${theme}&debug`);
+    await waitForTheme(page, theme);
+
+    // Let the scene settle (glass popover blurs the canvas behind it).
+    await page.waitForTimeout(1000);
+
+    await page.evaluate(() => {
+      document
+        .querySelector('[data-rail-id="nav"]')
+        ?.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
+    });
+
+    const popover = page.locator('.luxar-control-rail__popover');
+    await expect(popover).toBeVisible({ timeout: 2000 });
+
+    if (theme === 'frosted-glass') {
+      await page.waitForTimeout(500);
+    }
+
+    await expect(popover).toHaveScreenshot(`navigation-popover-${theme}.png`, {
       maxDiffPixelRatio: 0.1,
       threshold: 0.3,
     });

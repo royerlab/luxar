@@ -44,7 +44,17 @@ import { concatOptionalField, concatRequiredField } from '../loaders/progressive
 import { CACHE_HIT_THRESHOLD_MS } from '../loaders/progressive/constants';
 import { log, Modules, LogEmoji } from '../../utils/log';
 
-/** Element-wise viewstate equality (query-affecting fields only). */
+/**
+ * Element-wise viewstate equality (query-affecting fields only).
+ *
+ * INVARIANT: this equality is the linchpin of the no-op commit skip.
+ * When it reports equal AND no new LODs loaded, `updateView` returns the
+ * MEMOIZED concatenation — same object reference — and the commit pipeline
+ * treats reference equality as content equality
+ * (`mesh.userData.committedData === data`). Any new query-affecting field
+ * added to the view state MUST be compared here, or the skip will serve
+ * stale data.
+ */
 function viewStatesEqual(a: PointsViewState, b: PointsViewState): boolean {
   if (a.displayDims.length !== b.displayDims.length) return false;
   for (let i = 0; i < a.displayDims.length; i++) {
@@ -96,7 +106,15 @@ function concatenatePointsData(parts: LoadedPointsData[]): LoadedPointsData {
   const totalPoints = parts.reduce((sum, p) => sum + p.pointCount, 0);
   const count = (p: LoadedPointsData) => p.pointCount;
 
-  const positions = concatRequiredField(parts, (p) => p.positions, count, ndim);
+  // INVARIANT: `positions` is ALWAYS 3D-projected, stride 3 — Points is the
+  // one geometry whose loader folds nD→3D projection into loadPoints() itself
+  // (the accumulator's getData returns `positionBuffer.subarray(0, count*3)`),
+  // while `ndim` still reports the ORIGINAL dimensionality. Concatenating at
+  // stride `ndim` here would scatter every level after the first to wrong
+  // offsets for >3D data. GSplats/Lines correctly concat their positions at
+  // `ndim` because their loaders return raw nD data (projection runs later in
+  // the process step).
+  const positions = concatRequiredField(parts, (p) => p.positions, count, 3);
 
   // Aggregate bounds across all loaded levels.
   const aggBounds = new THREE.Box3();
@@ -140,6 +158,18 @@ export class PointsProgressiveLoader implements PointsDataLoader {
   private monitor: ProgressiveMonitorAdapter;
   private _initialLoadDone = false;
   private _lastAllResident = true;
+  private _disposed = false;
+  // Memoized concatenation. Keyed on (resetGeneration, loadedLODs.length):
+  // the generation bumps on every view-state reset so a reset-then-reload
+  // back to the same LOD count yields a NEW reference (contents differ),
+  // while an unchanged view state with no new LODs returns the SAME
+  // reference — which the commit pipeline uses to skip no-op re-commits.
+  private _resetGeneration = 0;
+  private _concatCache: {
+    generation: number;
+    lodCount: number;
+    result: LoadedPointsData;
+  } | null = null;
 
   constructor(lodLoaders: PointsSpatialIndexLoader[], nLods: number, path: string) {
     this.lodLoaders = lodLoaders;
@@ -149,6 +179,10 @@ export class PointsProgressiveLoader implements PointsDataLoader {
 
   /** Whether more LOD levels remain to load for the current view state. */
   get hasMoreLODs(): boolean {
+    // A disposed loader has work-state cleared; report no further work so a
+    // refinement loop holding a stale reference stops instead of indexing
+    // into the now-empty lodLoaders. Mirrors GSplatsProgressiveLoader.
+    if (this._disposed) return false;
     return this.loadedLODs.length < this.nLods;
   }
 
@@ -183,6 +217,7 @@ export class PointsProgressiveLoader implements PointsDataLoader {
   ): Promise<LoadedPointsData> {
     if (!this.lastViewState || !viewStatesEqual(viewState, this.lastViewState)) {
       this.loadedLODs = [];
+      this._resetGeneration++;
       this.lastViewState = {
         displayDims: [...viewState.displayDims],
         slicePosition: [...viewState.slicePosition],
@@ -247,7 +282,36 @@ export class PointsProgressiveLoader implements PointsDataLoader {
 
     this.prefetchNextLOD(viewState);
 
-    return concatenatePointsData(this.loadedLODs);
+    return this.concatenateMemoized(session);
+  }
+
+  /**
+   * Concatenate loaded LODs, memoized on (resetGeneration, LOD count).
+   * An unchanged view state with no new LODs returns the SAME object
+   * reference — safe because the result is never mutated downstream
+   * (worker projection inputs are structured-cloned, not transferred) —
+   * letting the commit pipeline skip no-op re-commits by identity.
+   */
+  private concatenateMemoized(session?: UpdateSession): LoadedPointsData {
+    const concatSession = session?.begin('Concatenate LODs');
+    try {
+      if (
+        this._concatCache &&
+        this._concatCache.generation === this._resetGeneration &&
+        this._concatCache.lodCount === this.loadedLODs.length
+      ) {
+        return this._concatCache.result;
+      }
+      const result = concatenatePointsData(this.loadedLODs);
+      this._concatCache = {
+        generation: this._resetGeneration,
+        lodCount: this.loadedLODs.length,
+        result,
+      };
+      return result;
+    } finally {
+      concatSession?.end();
+    }
   }
 
   private prefetchNextLOD(viewState: PointsViewState): void {
@@ -281,11 +345,13 @@ export class PointsProgressiveLoader implements PointsDataLoader {
   }
 
   dispose(): void {
+    this._disposed = true;
     for (const loader of this.lodLoaders) {
       loader.dispose();
     }
     this.lodLoaders = [];
     this.loadedLODs = [];
     this.lastViewState = null;
+    this._concatCache = null;
   }
 }

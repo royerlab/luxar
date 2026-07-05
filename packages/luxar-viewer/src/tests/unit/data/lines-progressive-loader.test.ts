@@ -432,6 +432,16 @@ describe('LinesProgressiveLoader', () => {
   });
 
   describe('dispose', () => {
+    it('reports hasMoreLODs=false after dispose (stale refinement-loop guard)', () => {
+      // Mirrors GSplatsProgressiveLoader: a disposed loader has loadedLODs
+      // cleared but nLods kept, so without the guard hasMoreLODs flipped
+      // BACK to true and a refinement loop holding a stale reference would
+      // index into the emptied lodLoaders forever (TypeError every pass).
+      expect(loader.hasMoreLODs).toBe(true);
+      loader.dispose();
+      expect(loader.hasMoreLODs).toBe(false);
+    });
+
     it('disposes all sub-loaders', () => {
       loader.dispose();
       expect(lodA.dispose).toHaveBeenCalled();
@@ -489,5 +499,40 @@ describe('LinesProgressiveLoader', () => {
       lodC.getActiveQueries.mockReturnValue([]);
       expect(loader.getActiveQueries()).toHaveLength(3);
     });
+  });
+});
+
+describe('LinesProgressiveLoader — concat memoization (no-op commit skip)', () => {
+  let lodA: SubLoaderStub;
+  let lodB: SubLoaderStub;
+  let loader: LinesProgressiveLoader;
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+    lodA = makeSubLoader(makeLodData(20, 10));
+    lodB = makeSubLoader(makeLodData(10, 5));
+    loader = new LinesProgressiveLoader(
+      [lodA, lodB] as unknown as LinesSpatialIndexLoader[],
+      2,
+      '/lines'
+    );
+  });
+
+  it('returns the IDENTICAL reference for a repeat call with unchanged view state', async () => {
+    const first = await loader.updateView(baseViewState);
+    const second = await loader.updateView(baseViewState);
+    // Same reference — the commit pipeline uses this identity to skip
+    // no-op re-commits (mesh.userData.committedData === data).
+    expect(second).toBe(first);
+  });
+
+  it('returns a NEW reference after a view-state change back to the same LOD count (resetGeneration)', async () => {
+    const first = await loader.updateView(baseViewState);
+    const away = await loader.updateView({ ...baseViewState, slicePosition: [1, 1, 1] });
+    expect(away).not.toBe(first);
+    const back = await loader.updateView(baseViewState);
+    expect(back).not.toBe(first);
+    const backAgain = await loader.updateView(baseViewState);
+    expect(backAgain).toBe(back);
   });
 });

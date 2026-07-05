@@ -1,7 +1,7 @@
 /**
- * Theme picker setup for the rendering-controls panel.
+ * Theme picker setup, hosted in the Settings rail popover.
  *
- * Creates the "🎨 Theme" folder with a single dropdown bound to
+ * Creates the "Theme" folder with a single dropdown bound to
  * `ThemeManager`. The theme manager itself handles persistence;
  * we just need to call `setTheme()` and trigger a re-render so
  * the change is visible immediately.
@@ -10,6 +10,7 @@
 import type GUI from '../../gui';
 import { ThemeManager } from '../../../themes/theme-manager';
 import { log, Modules } from '../../../utils/log';
+import { FOLDER_ICONS } from '../folder-icons';
 
 export interface ThemeSetupContext {
   gui: GUI;
@@ -18,7 +19,7 @@ export interface ThemeSetupContext {
 
 export function setupThemeControls(context: ThemeSetupContext): void {
   const { gui, triggerAnimation } = context;
-  const themeFolder = gui.addFolder('🎨 Theme');
+  const themeFolder = gui.addFolder('Theme', FOLDER_ICONS.theme);
 
   themeFolder.domElement?.setAttribute(
     'title',
@@ -60,5 +61,7 @@ export function setupThemeControls(context: ThemeSetupContext): void {
       '• Liquid Glass: True glass effect with inner glow and tint'
   );
 
-  themeFolder.close();
+  // Open by default: the Settings popover shows this single control directly,
+  // so there's no reason to make the user expand a collapsed folder first.
+  themeFolder.open();
 }

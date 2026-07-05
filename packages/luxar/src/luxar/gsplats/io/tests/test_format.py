@@ -212,8 +212,12 @@ class TestFormatCompliance:
                 encoding_mode=EncodingMode.MEMORY,
             )
             root = zarr.open_group(str(path), mode="r")
-            # COORDINATE → float32 in MEMORY mode (float16_allowed=False default).
-            assert root["centers"].attrs.get("encoding", {})["name"] == "float32"
+            # COORDINATE → uint16 per-axis fixed-point in AUTO/MEMORY
+            # (float16 disabled; coordinates never quantize to uint8).
+            assert (
+                root["centers"].attrs.get("encoding", {})["name"]
+                == "linear_perchannel_u16"
+            )
 
     def test_colors_auto_detected_sdr(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

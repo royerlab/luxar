@@ -199,18 +199,9 @@
   border-color: var(--luxar-success);
 }
 
-/* Select option elements - ensure readable on all platforms */
-[data-theme='liquid-glass'] .luxar-gui__select option {
-  background-color: #1a1a1a;
-  color: #e0e0e0;
-}
-
-[data-theme='liquid-glass'] .luxar-gui__select option:hover,
-[data-theme='liquid-glass'] .luxar-gui__select option:focus,
-[data-theme='liquid-glass'] .luxar-gui__select option:checked {
-  background-color: #2a2a2a;
-  color: #ffffff;
-}
+/* <select> option colors are centralised in styles/components/select-menu.css
+   (token-driven, --luxar-menu-*); the liquid-glass theme sets --luxar-menu-*
+   to solid dark values so native popups stay readable off the glass layer. */
 
 /* GUI slider track - subtle */
 [data-theme='liquid-glass'] .luxar-gui__slider {

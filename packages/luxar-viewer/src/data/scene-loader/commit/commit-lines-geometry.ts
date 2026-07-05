@@ -20,6 +20,7 @@ import type { GPUBufferPool } from '../../../rendering/gpu-buffer-pool';
 import { updateInstancedLinesMesh } from '../../../rendering/line-geometry';
 import { invalidateRenderObjectFor } from './invalidate-render-object';
 import { stampLoadedViewVersion } from './stamp-view-version';
+import type { CommittedDataUserData } from './noop-commit';
 import type { StagedLinesCommit } from '../process/data-processor-lines';
 
 /**
@@ -44,6 +45,14 @@ export function commitLinesGeometry(
   const mesh = rootGroup.getObjectByName(staged.path) as THREE.Mesh;
   if (!mesh || !isLinesUserData(mesh.userData)) return;
 
+  if (staged.noop) {
+    // Stamp-only commit: the data reference matches what the GPU already
+    // holds (see noop-commit.ts). Refresh the LOD freshness stamp so the
+    // registry keeps treating this node as fresh; touch no geometry.
+    stampLoadedViewVersion(mesh.userData, loadedViewVersion);
+    return;
+  }
+
   const { processed } = staged;
 
   const bufferSession = session?.begin('Update Buffers');
@@ -66,6 +75,10 @@ export function commitLinesGeometry(
       mesh.userData.visibleSegmentCount = processed.segmentCount;
       // Slice-aware LOD freshness stamp (see commit-gsplats-geometry.ts).
       stampLoadedViewVersion(mesh.userData, loadedViewVersion);
+      // Record the committed data reference — a later update returning the
+      // SAME reference (memoized progressive concat) can then take the
+      // stamp-only no-op path instead of re-projecting + re-uploading.
+      (mesh.userData as CommittedDataUserData).committedData = staged.sourceData;
     }
 
     if (processed.segmentCount === 0) {

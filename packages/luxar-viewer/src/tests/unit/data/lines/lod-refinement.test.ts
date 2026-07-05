@@ -36,6 +36,7 @@ defineRefinementLoopContract('runLinesRefinement', (w) =>
     updateVisibleCountsInMonitor: w.updateVisibleCountsInMonitor,
     releaseLock: w.releaseLock,
     retriggerUpdate: w.retriggerUpdate,
+    signal: w.signal,
   })
 );
 
@@ -103,9 +104,10 @@ describe('runLinesRefinement — Lines-specific behaviour', () => {
 
     expect(loader.updateView).toHaveBeenCalledTimes(1);
     expect(processLines).toHaveBeenCalledTimes(1);
-    expect(processLines).toHaveBeenCalledWith('/l', refinedData, expect.any(Object));
+    // Trailing arg is the profiler pass session — undefined when no profiler is wired.
+    expect(processLines).toHaveBeenCalledWith('/l', refinedData, expect.any(Object), undefined);
     expect(commitLines).toHaveBeenCalledTimes(1);
-    expect(commitLines).toHaveBeenCalledWith(staged);
+    expect(commitLines).toHaveBeenCalledWith(staged, undefined);
   });
 
   it('skips commitLines when processLines returns null', async () => {

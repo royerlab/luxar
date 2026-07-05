@@ -36,6 +36,7 @@ defineRefinementLoopContract('runPointsRefinement', (w) =>
     updateVisibleCountsInMonitor: w.updateVisibleCountsInMonitor,
     releaseLock: w.releaseLock,
     retriggerUpdate: w.retriggerUpdate,
+    signal: w.signal,
   })
 );
 
@@ -105,6 +106,7 @@ describe('runPointsRefinement — Points-specific behaviour', () => {
 
     expect(loader.updateView).toHaveBeenCalledTimes(1);
     expect(updatePointsGeometry).toHaveBeenCalledTimes(1);
-    expect(updatePointsGeometry).toHaveBeenCalledWith('/p', refinedData);
+    // Third arg is the profiler pass session — undefined when no profiler is wired.
+    expect(updatePointsGeometry).toHaveBeenCalledWith('/p', refinedData, undefined);
   });
 });

@@ -78,6 +78,10 @@ _OPTION_TOKENS = {
     "--conserve-mass": "substitutive",
     "--refine": "substitutive",
     "--refine-iters": "substitutive",
+    "--target": "substitutive",
+    "--channel": "substitutive",
+    "--timepoint": "substitutive",
+    "--array-key": "substitutive",
     "--coarsen-dims": "substitutive",
     "--levels": "levels",
 }
@@ -212,10 +216,17 @@ def _parse_lod_breakpoints(spec: str) -> "str | list[int] | list[float]":
     )
 
 
-#: Assumed stored bytes per scalar for each encoding mode (see
-#: :func:`estimate_bytes_per_splat`). AUTO quantizes to ~2 B (u16-family);
-#: PRECISION stores float32 (~4 B); MEMORY quantizes to ~1 B (u8-family).
-_ENCODING_SCALAR_BYTES = {"auto": 2.0, "precision": 4.0, "memory": 1.0}
+#: Assumed stored bytes per scalar for (centers, amplitudes, cholesky) under
+#: each encoding mode (see :func:`estimate_bytes_per_splat`). AUTO and MEMORY
+#: write the SAME widths: centers u16 (coordinates never drop to u8),
+#: amplitude ~u16 (width picked from dynamic range identically in both modes),
+#: cholesky u8 (AUTO certified — escalation to u16 is the exception, not the
+#: model; MEMORY unconditional). PRECISION: float32 everywhere.
+_ENCODING_ARRAY_BYTES = {
+    "auto": (2.0, 2.0, 1.0),
+    "precision": (4.0, 4.0, 4.0),
+    "memory": (2.0, 2.0, 1.0),
+}
 
 
 def estimate_bytes_per_splat(
@@ -223,22 +234,24 @@ def estimate_bytes_per_splat(
 ) -> float:
     """Analytic on-wire bytes/splat estimate for an encoding mode.
 
-    The default AUTO mode quantizes to ~2 bytes per stored scalar (centers
-    u16, amplitude u16/u8, split-Cholesky diag/offdiag u16), i.e.
-    ``2·(d + 1 + d(d+1)/2)`` raw, and the store adds zarr/blosc/chunk-bounds
-    overhead of roughly ×1.5 — calibrated against a real 4D fit that measured
-    ~45 B/splat (raw u16 ≈ 30 B). PRECISION stores float32 (~2× AUTO) and
-    MEMORY quantizes to u8 (~0.5× AUTO). Colors add ~4 B (u8 RGB + overhead;
+    Per-array model: centers (d scalars), amplitude (1), split-Cholesky
+    diag/offdiag (d(d+1)/2) each get the per-mode byte width from
+    ``_ENCODING_ARRAY_BYTES`` (AUTO cholesky is u8 under the covariance
+    certificate), and the store adds zarr/blosc/chunk-bounds overhead of
+    roughly ×1.5 — calibrated against a real 4D fit that measured
+    ~45 B/splat when everything was u16. Colors add ~4 B (u8 RGB + overhead;
     ~18 B as float32 under PRECISION). A crude estimate by design: used only
     when no matching store exists to measure (``fit --recipe``, or when
     ``--encoding`` re-encodes the output); the ``--bytes-per-splat`` override
     is the escape hatch, and the assumed value is always logged.
     """
     k = ndim * (ndim + 1) // 2
-    scalar_bytes = _ENCODING_SCALAR_BYTES.get(encoding, 2.0)
+    center_b, amp_b, chol_b = _ENCODING_ARRAY_BYTES.get(encoding, (2.0, 2.0, 1.0))
     color_bytes = 18.0 if encoding == "precision" else 4.0
     return round(
-        1.5 * scalar_bytes * (ndim + 1 + k) + (color_bytes if has_colors else 0.0), 1
+        1.5 * (center_b * ndim + amp_b + chol_b * k)
+        + (color_bytes if has_colors else 0.0),
+        1,
     )
 
 
@@ -264,14 +277,17 @@ def measure_store_bytes(path: Path) -> int:
 def detect_store_encoding(path: Path) -> Optional[str]:
     """Classify a ``.gsplats.zarr`` store's encoding mode from its on-disk attrs.
 
-    Reads the split-Cholesky arrays' ``encoding.name``: the AUTO writer
-    quantizes them to ``*_perchannel_u16``, MEMORY to ``*_u8``, and PRECISION
-    stores plain ``float32``. Uniform-cholesky stores broadcast the factors
-    (no dtype signal), so the amplitudes array is the fallback — it still
-    separates PRECISION (``float32``) from the quantized modes (which are u8
-    in BOTH auto and memory, hence not discriminative). Returns ``None`` when
-    the store cannot be classified (zip archive, legacy layout, broadcast-only
-    quantized store) — callers should then not assume a mode.
+    Reads the split-Cholesky arrays' ``encoding`` attrs. The AUTO writer
+    quantizes to u8 (escalating to u16 when its covariance certificate
+    demands) and records the measured ``certificate`` as provenance; MEMORY is
+    u8 WITHOUT a certificate; PRECISION stores plain ``float32``. So the
+    certificate key — not the bit width — separates AUTO from MEMORY, and a
+    bare u16 (legacy pre-certificate store) is AUTO. Uniform-cholesky stores
+    broadcast the factors (no signal), so the amplitudes array is the
+    fallback — it still separates PRECISION (``float32``) from the quantized
+    modes (u8 in both auto and memory, hence not discriminative). Returns
+    ``None`` when the store cannot be classified (zip archive, legacy layout,
+    broadcast-only quantized store) — callers should then not assume a mode.
     """
     import json
     from typing import Iterator
@@ -279,26 +295,27 @@ def detect_store_encoding(path: Path) -> Optional[str]:
     if not path.is_dir():
         return None
 
-    def _encoding_names(array: str) -> Iterator[str]:
+    def _encodings(array: str) -> Iterator[dict]:
         for zattrs in sorted(path.rglob(f"{array}/.zattrs")):
             try:
                 enc = json.loads(zattrs.read_text()).get("encoding", {})
             except (OSError, json.JSONDecodeError, AttributeError):
                 continue
-            name = str(enc.get("name", "")) if isinstance(enc, dict) else ""
-            if name:
-                yield name
+            if isinstance(enc, dict) and enc.get("name"):
+                yield enc
 
     for array in ("cholesky_factors_diag", "cholesky_factors_offdiag"):
-        for name in _encoding_names(array):
+        for enc in _encodings(array):
+            name = str(enc["name"])
+            certified = "certificate" in enc
             if name.endswith("_u16"):
-                return "auto"
+                return "auto"  # escalated-AUTO, or legacy AUTO (pre-certificate)
             if name.endswith("_u8"):
-                return "memory"
+                return "auto" if certified else "memory"
             if name == "float32":
-                return "precision"
-    for name in _encoding_names("amplitudes"):
-        if name == "float32":
+                return "auto" if certified else "precision"
+    for enc in _encodings("amplitudes"):
+        if str(enc["name"]) == "float32":
             return "precision"
     return None
 
@@ -541,14 +558,40 @@ def lod_recipe(
         help="Post-merge refinement of each substitutive level: none (default) "
         "| l2 (Adam-optimize the level against its fine input under the "
         "closed-form mixture L2 — slower, higher fidelity, peak-preserving; "
-        "total mass pinned so brightness never pops across levels).",
+        "total mass pinned so brightness never pops across levels) "
+        "| volume (warm-start re-fit each level against the source volume "
+        "given via --target — the highest-fidelity option; each level keeps "
+        "whichever of merge/re-fit renders closer to the volume).",
     ),
     refine_iters: Optional[int] = typer.Option(
         None,
         "--refine-iters",
         min=1,
-        help="L2-refine optimization steps per level (default 120; requires "
-        "--refine l2).",
+        help="Refinement steps per level (default 120 for --refine l2, 300 "
+        "for --refine volume; requires --refine l2|volume).",
+    ),
+    target_path: Optional[Path] = typer.Option(
+        None,
+        "--target",
+        exists=True,
+        help="Source volume for --refine volume (.npy/.npz/.tiff/.zarr/"
+        ".zarr.zip; the volume the splats were fitted from). Its voxel "
+        "coordinate frame must match the splats'.",
+    ),
+    target_channel: Optional[int] = typer.Option(
+        None,
+        "--channel",
+        help="Channel to extract from a multi-channel --target volume.",
+    ),
+    target_timepoint: Optional[int] = typer.Option(
+        None,
+        "--timepoint",
+        help="Timepoint to extract from a time-series --target volume.",
+    ),
+    target_array_key: Optional[str] = typer.Option(
+        None,
+        "--array-key",
+        help="Array path inside a nested --target zarr group (e.g. 'a/fused').",
     ),
     coarsen_dims: Optional[str] = typer.Option(
         None,
@@ -658,6 +701,10 @@ def lod_recipe(
             "--conserve-mass": conserve_mass,
             "--refine": refine,
             "--refine-iters": refine_iters,
+            "--target": target_path,
+            "--channel": target_channel,
+            "--timepoint": target_timepoint,
+            "--array-key": target_array_key,
             "--coarsen-dims": coarsen_dims,
             "--levels": levels,
         }
@@ -700,10 +747,44 @@ def lod_recipe(
                 "ladder is the recipe's definition."
             )
         refine_norm = (refine or "none").strip()
-        if refine_norm not in ("none", "l2"):
-            raise typer.BadParameter(f"--refine must be 'none' or 'l2'; got {refine!r}")
-        if refine_iters is not None and refine_norm != "l2":
-            raise typer.BadParameter("--refine-iters only applies with --refine l2.")
+        if refine_norm not in ("none", "l2", "volume"):
+            raise typer.BadParameter(
+                f"--refine must be 'none', 'l2', or 'volume'; got {refine!r}"
+            )
+        if refine_iters is not None and refine_norm == "none":
+            raise typer.BadParameter(
+                "--refine-iters only applies with --refine l2|volume."
+            )
+        if refine_norm == "volume" and target_path is None:
+            raise typer.BadParameter(
+                "--refine volume needs the source volume: pass --target <volume>."
+            )
+        if target_path is not None and refine_norm != "volume":
+            raise typer.BadParameter(
+                "--target is only consumed by --refine volume; pass --refine "
+                "volume to re-fit the coarse levels against it."
+            )
+        orphan_selectors = [
+            flag
+            for flag, value in (
+                ("--channel", target_channel),
+                ("--timepoint", target_timepoint),
+                ("--array-key", target_array_key),
+            )
+            if value is not None
+        ]
+        if orphan_selectors and target_path is None:
+            raise typer.BadParameter(
+                f"option(s) {', '.join(orphan_selectors)} select a sub-volume "
+                "of --target, but no --target was given."
+            )
+        if refine_norm == "volume" and recipe == "adaptive":
+            raise typer.BadParameter(
+                "--refine volume is not supported for --recipe adaptive: each "
+                "tile's levels would re-fit against the full volume, pulling "
+                "splats out of their tile. Use --recipe levels/overview, or "
+                "--refine l2."
+            )
         rule = partition_rule or "median"
         if rule not in _VALID_PARTITION_RULES:
             raise typer.BadParameter(
@@ -746,6 +827,26 @@ def lod_recipe(
                         f"`luxar gsplat flatten {input_path.name} flat.gsplats.zarr`."
                     ) from e
                 aprint(f"Loaded {data.n_splats:,} splats ({data.ndim}D)")
+
+            # ── --refine volume: load the source volume (shared loader) ──
+            target_volume = None
+            if target_path is not None:
+                from luxar.cli.gsplat_config import load_volume
+
+                with asection(f"Loading target volume: {target_path.name}"):
+                    target_volume = load_volume(
+                        target_path,
+                        channel=target_channel,
+                        timepoint=target_timepoint,
+                        array_key=target_array_key,
+                    )
+                    aprint(f"Volume shape: {target_volume.shape}")
+                if len(target_volume.shape) != data.ndim:
+                    raise typer.BadParameter(
+                        f"--target volume is {len(target_volume.shape)}D but the "
+                        f"splats are {data.ndim}D; select a matching sub-volume "
+                        f"with --channel/--timepoint/--array-key."
+                    )
 
             # ── streaming breakpoints from --target-ms (measured B/splat) ──
             if target_ms is not None:
@@ -891,7 +992,10 @@ def lod_recipe(
                 else True,
                 conserve_mass=conserve_mass if conserve_mass is not None else True,
                 refine=refine_norm,
-                refine_iters=refine_iters if refine_iters is not None else 120,
+                # None resolves inside make_substitutive_lod to the engine's
+                # own default (l2: 120, volume: 300) — single source of truth.
+                refine_iters=refine_iters,
+                volume=target_volume,
                 coarsen_dims=parsed_coarsen,
                 device=device or "auto",
                 seed=seed,

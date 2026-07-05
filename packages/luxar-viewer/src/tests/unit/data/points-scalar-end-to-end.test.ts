@@ -257,9 +257,14 @@ describe('GPUBufferPool scalar attribute', () => {
     // pool reuse vs re-allocation.
     expect(g1.hasAttribute('aScalar')).toBe(true);
     pool.updatePointsGeometry(g1, data16, 2);
-    const attr = g1.getAttribute('aScalar') as THREE.BufferAttribute;
-    expect((attr.array as Float32Array)[0]).toBeCloseTo(0.25, 2);
-    expect((attr.array as Float32Array)[1]).toBeCloseTo(0.75, 2);
+    const attr = g1.getAttribute('aScalar');
+    // Pooled attributes are `InterleavedBufferAttribute` views over a
+    // shared Float32 buffer — read via the semantic getX(i) API (raw
+    // .array[i] indexes the interleaved buffer, i.e. position x, not the
+    // scalar). This body only executes on engines with Float16Array
+    // (Node >= 25), so it was missed when the sibling tests migrated.
+    expect(attr.getX(0)).toBeCloseTo(0.25, 2);
+    expect(attr.getX(1)).toBeCloseTo(0.75, 2);
 
     // Reusing with a Float32 input must NOT match the Float16 geometry
     // — the dtype tag distinguishes them.

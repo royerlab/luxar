@@ -20,9 +20,11 @@
   min-width: 400px;
   max-height: 240px;
 
-  /* Theming */
+  /* Theming — shared surface recipe with the control rail: crisp hairline
+     (border-default) + large soft corners (radius-lg). */
   background: var(--luxar-bg-secondary);
-  border-radius: var(--luxar-radius-md);
+  border: 1px solid var(--luxar-border-default);
+  border-radius: var(--luxar-radius-lg);
   padding: var(--luxar-spacing-8);
   backdrop-filter: var(--luxar-blur-md);
   box-shadow: var(--luxar-shadow-lg);
@@ -208,23 +210,8 @@
   background: var(--luxar-interactive-hover);
 }
 
-/**
- * Select Option Elements
- * Explicit styling for dropdown options to ensure contrast on all platforms.
- * Linux/Ubuntu GTK themes often use system colors that conflict with our UI.
- */
-.luxar-dimension-dropdown__select option {
-  background-color: #1e1e1e;
-  color: #e0e0e0;
-  padding: 4px 8px;
-}
-
-.luxar-dimension-dropdown__select option:hover,
-.luxar-dimension-dropdown__select option:focus,
-.luxar-dimension-dropdown__select option:checked {
-  background-color: #2a2a2a;
-  color: #ffffff;
-}
+/* <select> option colors are centralised in styles/components/select-menu.css
+   (token-driven, --luxar-menu-*). */
 
 /* ========== Binary Toggles ========== */
 
@@ -300,17 +287,8 @@
   background: rgba(0, 0, 0, 0.08);
 }
 
-[data-theme='light'] .luxar-dimension-dropdown__select option {
-  background-color: #ffffff;
-  color: #1e1e1e;
-}
-
-[data-theme='light'] .luxar-dimension-dropdown__select option:hover,
-[data-theme='light'] .luxar-dimension-dropdown__select option:focus,
-[data-theme='light'] .luxar-dimension-dropdown__select option:checked {
-  background-color: #f0f0f0;
-  color: #000000;
-}
+/* light-theme <select> option colors now come from --luxar-menu-* via
+   styles/components/select-menu.css. */
 
 [data-theme='light'] .luxar-dimension-toggle {
   background: rgba(0, 0, 0, 0.05);

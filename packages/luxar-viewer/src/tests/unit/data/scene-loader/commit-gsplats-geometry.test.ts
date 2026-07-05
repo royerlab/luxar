@@ -32,6 +32,14 @@ function makeProcessed(splatCount = 2) {
 function makeStaged(splatCount = 5): StagedGSplatsCommit {
   return {
     path: '/g',
+    sourceData: {
+      positions: new Float32Array(splatCount * 3),
+      amplitudes: new Float32Array(splatCount),
+      choleskyFactors: new Float32Array(splatCount * 6),
+      colors: null,
+      splatCount,
+      ndim: 3,
+    },
     processed: makeProcessed(splatCount),
     cholesky01: new Float32Array(),
     cholesky23: new Float32Array(),
@@ -142,6 +150,40 @@ describe('commitGSplatsGeometry', () => {
     expect(mesh.geometry).not.toBe(beforeGeom);
     // Pool path skips updateInstancedGSplatsMesh — that's only the
     // no-pool fallback path. Pin BOTH directions of the contract.
+    expect(mockUpdateInstancedMesh).not.toHaveBeenCalled();
+  });
+});
+
+describe('commitGSplatsGeometry — no-op commit skip (committedData)', () => {
+  it('stamps committedData with the raw source data on a real commit', () => {
+    mockUpdateInstancedMesh.mockReset();
+    const root = new THREE.Group();
+    const mesh = makeMesh('/g');
+    root.add(mesh);
+    const staged = makeStaged(5);
+    commitGSplatsGeometry(staged, root, null, undefined, 7);
+    if (staged.noop) throw new Error('expected geometry staged commit');
+    expect((mesh.userData as { committedData?: unknown }).committedData).toBe(staged.sourceData);
+  });
+
+  it('noop staged commit stamps loadedViewVersion but touches no geometry', () => {
+    mockUpdateInstancedMesh.mockReset();
+    const root = new THREE.Group();
+    const mesh = makeMesh('/g');
+    root.add(mesh);
+    const geometryBefore = mesh.geometry;
+
+    const sourceData = makeStaged(5);
+    const noop: StagedGSplatsCommit = {
+      path: '/g',
+      noop: true,
+      sourceData: sourceData.noop ? (undefined as never) : sourceData.sourceData,
+    };
+    commitGSplatsGeometry(noop, root, null, undefined, 9);
+
+    // Freshness stamp written, geometry + GPU dispatch untouched.
+    expect((mesh.userData as { loadedViewVersion?: number }).loadedViewVersion).toBe(9);
+    expect(mesh.geometry).toBe(geometryBefore);
     expect(mockUpdateInstancedMesh).not.toHaveBeenCalled();
   });
 });

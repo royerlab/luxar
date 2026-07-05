@@ -47,6 +47,12 @@ export const darkTheme: Theme = {
       strong: 'rgba(255, 255, 255, 0.2)', // Emphasized borders
       focus: 'rgba(76, 175, 80, 0.5)', // Focus border
     },
+    menu: {
+      background: '#1e1e1e', // Native <option> popup (solid — no glass)
+      text: '#e0e0e0',
+      activeBackground: '#2a2a2a',
+      activeText: '#ffffff',
+    },
     visualization: {
       hot: '#ff6b6b', // Hot/high intensity (red)
       warm: '#FFC107', // Warm/medium-high (amber)
@@ -61,15 +67,18 @@ export const darkTheme: Theme = {
       mono: '"Monaco", "Menlo", "Ubuntu Mono", monospace',
       display: '"Inter", -apple-system, sans-serif',
     },
+    // Unified type scale shared by all four themes (see AskUserQuestion
+    // decision 2026-07): a slightly larger, more readable base.
     fontSize: {
-      xs: '9px',
-      sm: '10px',
-      base: '11px',
-      md: '12px',
-      lg: '14px',
-      xl: '16px',
-      '2xl': '18px',
-      '3xl': '24px',
+      xs: '10px',
+      sm: '11px',
+      base: '13px',
+      md: '14px',
+      lg: '16px',
+      xl: '18px',
+      '2xl': '20px',
+      '3xl': '28px',
+      '4xl': '32px',
     },
     fontWeight: {
       normal: 400,

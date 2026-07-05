@@ -33,7 +33,7 @@ luxar info my_data.luxar.zarr --stats
 
 - `__init__.py` - Package initialization, exports the main app
 - `main.py` - Main CLI application with all commands
-- `gsplat_commands.py` - Gaussian splat subcommands (info, view, napari, cull, filter, partition, flatten, additive, slice, transform, denoise, fit, convert, render, compare, cal, migrate-format, merge, benchmark; the `batch-fit` group: run/submit/status/validate/cancel/merge/denoise-calibrate/denoise-preprocess)
+- `gsplat_commands.py` - Gaussian splat subcommands (info, view, napari, cull, filter, partition, flatten, additive, slice, transform, denoise, fit, convert, render, compare, cal, migrate-format, reencode, merge, benchmark; the `batch-fit` group: run/submit/status/validate/cancel/merge/denoise-calibrate/denoise-preprocess)
 - `lod.py` - the unified `lod --recipe {flat,additive,partitioned,multiscale,mosaic,substitutive,pyramid}` command (thin wrapper over `gsplats/lod/recipes.py`; registered onto the `gsplat` app)
 - `gsplat_config.py` - Config system: presets, YAML loading, volume loaders, helpers
 - `utils.py` - Utility functions for CLI operations
@@ -228,7 +228,7 @@ luxar gsplat cal volume.zarr cal.json --progression power --power 2  # Polynomia
 **Options**: `--k-grid` (explicit comma-separated K values), `--n-grid` (default 10), `--k-min` (default 1000), `--k-max` (default 512000), `--progression` (exp/power), `--power`, `--mask-seed`, `--mask-fraction` (default 0.05), `--preset` (default n2s), `--config`, `--device/-d`, plus volume-loader pass-through (`--channel/-c`, `--timepoint`, `--array-key`).
 
 #### `luxar gsplat migrate-format`
-Convert a legacy `.gsplats.zarr` layout to the current node-tree format. Five input shapes are auto-detected: v1.0 (single flat splat set), v1.1 (multi-LOD additive `/splats/lod_<i>/` subgroups), a pre-v2.0 substitutive directory (`manifest.json` + `level_<i>.gsplats.zarr`), the v2.0 `substitutive_<s>/additive_<a>/` matrix, and a v3.0/v3.1 store whose `kind=lod` groups still carry the pre-v3.2 `pixel_size` selector attrs (rewritten as `selector: "coverage"` + derived per-child `coverage_fraction`). All migrate to a single current-format (v3.2) `.gsplats.zarr`. By default the output adopts the AUTO encoding policy, so legacy float32 Cholesky factors are re-encoded as the split diagonal/off-diagonal arrays with near-lossless uint16 per-column quantization (~2× smaller); pass `--lossless` to keep them float32 for archival fidelity.
+Convert a legacy `.gsplats.zarr` layout to the current node-tree format. Five input shapes are auto-detected: v1.0 (single flat splat set), v1.1 (multi-LOD additive `/splats/lod_<i>/` subgroups), a pre-v2.0 substitutive directory (`manifest.json` + `level_<i>.gsplats.zarr`), the v2.0 `substitutive_<s>/additive_<a>/` matrix, and a v3.0/v3.1 store whose `kind=lod` groups still carry the pre-v3.2 `pixel_size` selector attrs (rewritten as `selector: "coverage"` + derived per-child `coverage_fraction`). All migrate to a single current-format (v3.2) `.gsplats.zarr`. By default the output adopts the AUTO encoding policy, so legacy float32 Cholesky factors are re-encoded as the split diagonal/off-diagonal arrays with certified uint8 per-column quantization (the encode-time covariance certificate escalates to uint16 when the measured Σ error demands it); pass `--lossless` to keep them float32 for archival fidelity.
 ```bash
 luxar gsplat migrate-format legacy.gsplats.zarr v3.gsplats.zarr             # single file (AUTO encoding)
 luxar gsplat migrate-format old_pyr/ v3.gsplats.zarr                        # substitutive directory
@@ -236,6 +236,15 @@ luxar gsplat migrate-format legacy.gsplats.zarr v3.gsplats.zarr --lossless  # pr
 ```
 
 **Options**: `--overwrite`, `--lossless` (preserve float32 Cholesky / PRECISION encoding), `--quiet/-q`.
+
+#### `luxar gsplat reencode`
+Re-quantize a **current-format** `.gsplats.zarr`'s Cholesky encoding (writes a re-quantized copy to a new path) — a structure-preserving round-trip: the whole node tree (leaf / additive ladder / `kind=lod` / partition / nested) and its `fitting` / `provenance` / `pipeline` groups carry over verbatim; only the on-disk Cholesky encoding changes. Splat count and geometry are unchanged and decode is always to float32, so viewer/GPU/WASM paths are unaffected. Unlike `migrate-format` (legacy → current, exposing only float32 vs the AUTO uint16 default via `--lossless`), this exposes the full ladder — including `memory` (uint8) — and works on already-current files. The clean way to change quantization after fitting.
+```bash
+luxar gsplat reencode fit.gsplats.zarr fit_u8.gsplats.zarr -e memory      # uint8 (smallest, ~93 dB)
+luxar gsplat reencode fit.gsplats.zarr fit_auto.gsplats.zarr -e auto       # adaptive u8→u16→f32 ladder (near-lossless by certificate)
+luxar gsplat reencode fit.gsplats.zarr fit_f32.gsplats.zarr -e precision   # float32 (exact/archival)
+```
+**Options**: `--encoding/-e` (`auto`|`precision`|`memory`, default `memory`), `--ordering` (`hilbert`|`morton`|`none`), `--quiet/-q`.
 
 #### `luxar gsplat lod`
 Build a **representation topology** from a pre-fitted `.gsplats.zarr` via a single
@@ -263,6 +272,11 @@ luxar gsplat lod in.gsplats.zarr out.gsplats.zarr --recipe overview --compressio
 luxar gsplat lod in.gsplats.zarr out.gsplats.zarr --recipe levels -K 4 -L 3 \
     --substitutive-method kmeans-lloyd --lloyd-iters 5
 luxar gsplat lod in.gsplats.zarr out.gsplats.zarr --recipe levels -K 4 -L 3 --n-lods 4
+
+# volume re-fit — warm-start re-fit each coarse level against the SOURCE volume
+# (highest fidelity; each level keeps whichever of merge/re-fit renders closer)
+luxar gsplat lod in.gsplats.zarr out.gsplats.zarr --recipe levels \
+    --target volume.tiff --refine volume --refine-iters 300
 ```
 
 An option irrelevant to the chosen recipe (e.g. `--max-elements` with `--recipe stream`) is rejected with a clear error.

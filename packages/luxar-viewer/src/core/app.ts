@@ -58,6 +58,9 @@ import { disposeOverlays as disposeOverlaysImpl } from './app/overlays/dispose-o
 import { initColormapLegend as initColormapLegendImpl } from './app/overlays/init-colormap-legend';
 import { initOverlays as initOverlaysImpl } from './app/overlays/init-overlays';
 import { installFocusHandling } from './app/lifecycle/focus-handling';
+import { installOnlineRetry } from './app/lifecycle/online-retry';
+import { getSceneLoader } from '../data/scene-loader-manager';
+import { notifier } from '../utils/cross-layer/notifier';
 import { initScaleBar as initScaleBarImpl } from './app/overlays/init-scale-bar';
 
 import type { LuxarAppOptions } from './app/options';
@@ -247,6 +250,7 @@ export class LuxarApp {
       this.setupDisposeOnUnload();
       this.setupDatasetBrowserShortcut();
       this.setupFocusHandling();
+      this.setupOnlineRetry();
       this.setupDebugInterface();
       this.setupEmbedderHooks(options.canvas);
 
@@ -501,6 +505,20 @@ export class LuxarApp {
       events: this.events,
       animationController: this.animationController,
       getRecordingPanel: () => this.recordingPanel,
+    });
+  }
+
+  /**
+   * Auto-retry failed loaders when connectivity is restored — the trigger
+   * for `SceneLoader.retryAllFailedLoaders` (whose doc names "after
+   * connectivity is restored" as the intended use). Live accessor through
+   * the manager so dataset switches keep pointing at the current loader.
+   */
+  private setupOnlineRetry(): void {
+    installOnlineRetry({
+      events: this.events,
+      getLoader: () => getSceneLoader(),
+      toast: (message, durationMs) => notifier.toast(message, durationMs),
     });
   }
 

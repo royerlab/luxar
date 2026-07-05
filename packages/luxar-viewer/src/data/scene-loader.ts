@@ -54,15 +54,32 @@ import type {
 import { LODGroupRegistry } from '../scene/lod-group-registry';
 
 /**
+ * Narrow view of the SceneLoader a registry factory may read. The registry's
+ * freshness (``getViewVersion``) and eviction (``getResidentBytes``) deps must
+ * observe the loader that OWNS the registry — routing them through
+ * ``getSceneLoader('default')`` read the wrong loader's state for any
+ * non-default instance (multi-loader embedding).
+ */
+export interface LODGroupRegistryOwner {
+  /** Monotonic view-update version of the owning loader. */
+  readonly currentViewVersion: number;
+  /** The owning loader's GPU buffer pool (null pre-setup / pooling off). */
+  readonly gpuBufferPool: GPUBufferPool | null;
+}
+
+/**
  * Factory hook that supplies a per-loader ``LODGroupRegistry``. Mirrors
  * ``SceneLoaderMonitorFactory`` — the data/ layer never reaches into
  * scene/ for camera / viewport state, so the host (typically the app
  * pipeline) injects a closure that knows how to construct the
- * registry with proper getters.
+ * registry with proper getters. Receives the OWNING loader (as the
+ * narrow {@link LODGroupRegistryOwner} view) so per-loader deps read
+ * that loader's live state, not the manager's current default.
  */
-export type SceneLoaderLODGroupRegistryFactory = () => LODGroupRegistry;
+export type SceneLoaderLODGroupRegistryFactory = (owner: LODGroupRegistryOwner) => LODGroupRegistry;
 import { ArrayRefRegistry } from './array-decoder/decoder';
 import { log, Modules } from '../utils/log';
+import { scheduleFrame } from '../utils/schedule-frame';
 import { config as appConfig } from '../config';
 import { MultiLevelCachingStore } from '../cache/multi-level-caching-store';
 import { DecompressedChunkCache } from '../cache/decompressed-chunk-cache';
@@ -337,7 +354,7 @@ export class SceneLoader {
       tolerance: [],
     };
     this.arrayRefRegistry = new ArrayRefRegistry();
-    this.lodGroupRegistry = lodGroupRegistryFactory ? lodGroupRegistryFactory() : null;
+    this.lodGroupRegistry = lodGroupRegistryFactory ? lodGroupRegistryFactory(this) : null;
 
     // GPU buffer pool requires Float32Array data; the geometry-update path
     // falls back to the standard route for Uint8/Uint16 attributes.
@@ -461,6 +478,8 @@ export class SceneLoader {
       initializeSceneDimensions: (sd) => this.initializeSceneDimensions(sd),
       makeNodeBuildCtx: () => this.makeNodeBuildCtx(),
       updateVisibleCountsInMonitor: () => this.updateVisibleCountsInMonitor(),
+      getFailedLoaderPaths: () => Array.from(this.failedLoaders.keys()),
+      retryAllFailedLoaders: () => this.retryAllFailedLoaders(),
       scheduleGSplatsRefinement: () => this.scheduleGSplatsRefinement(),
       setDatasetAbortController: (c) => {
         this._datasetAbortController = c;
@@ -729,6 +748,8 @@ export class SceneLoader {
       // lock release. Implementation in scene-loader/update-view/queue-next.ts.
       queueNext({
         viewStateQueue: this.viewStateQueue,
+        pointsLoaders: this.loaders,
+        linesLoaders: this.linesLoaders,
         gsplatLoaders: this.gsplatLoaders,
         updateView: (state) => this.updateView(state),
         setUpdateInProgress: (v) => {
@@ -759,16 +780,23 @@ export class SceneLoader {
     let cancelled = false;
     const onCancel = (pendingState: Partial<ViewState>) => {
       cancelled = true;
-      if (typeof requestAnimationFrame !== 'undefined') {
-        requestAnimationFrame(() => {
-          this._updateInProgress = false;
-          this.updateView(pendingState);
-        });
-      } else {
+      // scheduleFrame: rAF while visible, timer in hidden tabs (rAF is
+      // suspended there — the hand-off used to stall until foregrounded),
+      // synchronous in non-browser contexts.
+      scheduleFrame(() => {
         this._updateInProgress = false;
         this.updateView(pendingState);
-      }
+      });
     };
+    // Per-run abort controller, published as THIS loader's live update
+    // controller: the supersede branch in `updateView` (and `dispose`) abort
+    // `_updateAbortController`, so an incoming view-state cancels in-flight
+    // refinement chunk reads MID-PASS instead of waiting for the pass to
+    // finish (previously refinement passed no signal at all). The refinement
+    // catches treat the resulting AbortError as cancellation (no failure
+    // recorded); the loop's next-pass pending check performs the hand-off.
+    const refinementController = new AbortController();
+    this._updateAbortController = refinementController;
     // Intermediate phases shouldn't release the lock — only the last
     // phase running to completion does.
     const noopReleaseLock = () => {
@@ -783,12 +811,15 @@ export class SceneLoader {
       viewStateQueue: this.viewStateQueue,
       gsplatLoaders: this.gsplatLoaders,
       deriveNodeViewState: (path, attrs, opts) => this.deriveNodeViewState(path, attrs, opts),
-      processGSplats: (path, data, viewState) => this.processGSplatsData(path, data, viewState),
-      commitGSplats: (staged) => this.commitGSplatsGeometry(staged),
+      processGSplats: (path, data, viewState, session) =>
+        this.processGSplatsData(path, data, viewState, session),
+      commitGSplats: (staged, session) => this.commitGSplatsGeometry(staged, session),
       updateVisibleCountsInMonitor: () => this.updateVisibleCountsInMonitor(),
       releaseLock: noopReleaseLock,
       retriggerUpdate: onCancel,
       isActive: () => !this._disposed,
+      signal: refinementController.signal,
+      profiler: this.profiler,
     });
     if (cancelled || this._disposed) return;
 
@@ -798,11 +829,13 @@ export class SceneLoader {
       pointsLoaders: this.loaders,
       deriveNodeViewState: (path, attrs, opts) =>
         this.deriveNodeViewState(path, attrs as never, opts) as never,
-      updatePointsGeometry: (path, data) => this.updatePointsGeometry(path, data),
+      updatePointsGeometry: (path, data, session) => this.updatePointsGeometry(path, data, session),
       updateVisibleCountsInMonitor: () => this.updateVisibleCountsInMonitor(),
       releaseLock: noopReleaseLock,
       retriggerUpdate: onCancel,
       isActive: () => !this._disposed,
+      signal: refinementController.signal,
+      profiler: this.profiler,
     });
     if (cancelled || this._disposed) return;
 
@@ -812,13 +845,30 @@ export class SceneLoader {
       linesLoaders: this.linesLoaders,
       deriveNodeViewState: (path, attrs, opts) =>
         this.deriveNodeViewState(path, attrs as never, opts) as never,
-      processLines: (path, data, viewState) => this.processLinesData(path, data, viewState),
-      commitLines: (staged) => this.commitLinesGeometry(staged),
+      processLines: (path, data, viewState, session) =>
+        this.processLinesData(path, data, viewState, session),
+      commitLines: (staged, session) => this.commitLinesGeometry(staged, session),
       updateVisibleCountsInMonitor: () => this.updateVisibleCountsInMonitor(),
       releaseLock: finalReleaseLock,
       retriggerUpdate: onCancel,
       isActive: () => !this._disposed,
+      signal: refinementController.signal,
+      profiler: this.profiler,
     });
+  }
+
+  /**
+   * Clear the `committedData` identity stamp on a node's mesh. Called when a
+   * lazy LOD level is demoted: its geometry returned to the evictable pool,
+   * so the stamp (a) no longer describes what's on the GPU and (b) would pin
+   * the released node's large CPU arrays in memory. Re-promotion builds a
+   * fresh loader → new data reference → full recommit either way.
+   */
+  private clearCommittedDataStamp(path: string): void {
+    const mesh = this.rootGroup?.getObjectByName(path);
+    if (mesh?.userData) {
+      delete (mesh.userData as { committedData?: unknown }).committedData;
+    }
   }
 
   /**
@@ -877,7 +927,13 @@ export class SceneLoader {
     session?: UpdateSession,
     loadedViewVersion: number = this._updateVersion
   ): void {
-    commitLinesGeometryHelper(staged, this.rootGroup, this._gpuBufferPool, session, loadedViewVersion);
+    commitLinesGeometryHelper(
+      staged,
+      this.rootGroup,
+      this._gpuBufferPool,
+      session,
+      loadedViewVersion
+    );
   }
 
   /**
@@ -914,7 +970,13 @@ export class SceneLoader {
     session?: UpdateSession,
     loadedViewVersion: number = this._updateVersion
   ): void {
-    commitGSplatsGeometryHelper(staged, this.rootGroup, this._gpuBufferPool, session, loadedViewVersion);
+    commitGSplatsGeometryHelper(
+      staged,
+      this.rootGroup,
+      this._gpuBufferPool,
+      session,
+      loadedViewVersion
+    );
   }
 
   /**
@@ -941,6 +1003,7 @@ export class SceneLoader {
         // its loader so the scene-wide updateView sweep won't reload it.
         this._gpuBufferPool?.releaseGSplatsGeometry(path);
         this.registry.unregisterGSplatsLoader(path);
+        this.clearCommittedDataStamp(path);
       },
       releaseLazyPoints: (path) => {
         // Points peer of releaseLazyGSplats: return the level's GPU buffer to
@@ -948,11 +1011,13 @@ export class SceneLoader {
         // lod_group's ensureLoaded thunk (cheap re-projection from cached chunks).
         this._gpuBufferPool?.releasePointsGeometry(path);
         this.registry.unregisterPointsLoader(path);
+        this.clearCommittedDataStamp(path);
       },
       releaseLazyLines: (path) => {
         // Lines peer of releaseLazyGSplats/releaseLazyPoints.
         this._gpuBufferPool?.releaseLinesGeometry(path);
         this.registry.unregisterLinesLoader(path);
+        this.clearCommittedDataStamp(path);
       },
       applyEffectiveAttrs: (node) => this.applyEffectiveAttrs(node),
       deriveNodeViewState: (path, attrs, opts) => this.deriveNodeViewState(path, attrs, opts),
@@ -1100,7 +1165,11 @@ export class SceneLoader {
    * connectivity is restored.
    *
    * @param path - The path of the failed loader to retry
-   * @returns Promise resolving to true if retry succeeded, false if failed or not found
+   * @returns Promise resolving to true if retry succeeded, false if failed or not found.
+   *          For a LAZY substitutive LOD level (not in the sweep maps), `true`
+   *          means the deferred reload was KICKED (fire-and-forget) — the lazy
+   *          thunk owns the eventual ready/failed outcome, and a repeat failure
+   *          re-records itself for another retry.
    *
    * @example
    * ```typescript
@@ -1146,6 +1215,7 @@ export class SceneLoader {
   private makeRetryCtx(): RetryCtx {
     return {
       registry: this.registry,
+      lodGroupRegistry: this.lodGroupRegistry,
       rootGroup: this.rootGroup,
       viewState: this.viewState,
       deriveNodeViewState: (path, attrs, opts) => this.deriveNodeViewState(path, attrs, opts),
@@ -1161,7 +1231,12 @@ export class SceneLoader {
    * Retry all failed loaders. Useful for batch recovery after network
    * connectivity is restored.
    *
-   * @returns Promise resolving to an object with succeeded and failed path arrays
+   * @returns Promise resolving to `{ succeeded, failed, deferred? }`.
+   *          `deferred: true` means NOTHING was retried — a main update held
+   *          the serialization lock, so the batch was refused (every path is
+   *          reported in `failed` for compatibility, but none genuinely
+   *          re-failed). Callers must not present a deferred result as a
+   *          failed re-attempt; retry again once the update settles.
    *
    * @example
    * ```typescript
@@ -1170,7 +1245,11 @@ export class SceneLoader {
    * console.log(`Recovered: ${result.succeeded.length}, Still failing: ${result.failed.length}`);
    * ```
    */
-  async retryAllFailedLoaders(): Promise<{ succeeded: string[]; failed: string[] }> {
+  async retryAllFailedLoaders(): Promise<{
+    succeeded: string[];
+    failed: string[];
+    deferred?: boolean;
+  }> {
     const failedPaths = Array.from(this.failedLoaders.keys());
 
     if (failedPaths.length === 0) {
@@ -1187,7 +1266,11 @@ export class SceneLoader {
         Modules.SCENE_LOADER,
         'Retry-all deferred — main update in progress; try again after the update settles'
       );
-      return { succeeded: [], failed: failedPaths };
+      // Deferred, NOT failed: nothing was retried. The flag lets callers
+      // (online auto-retry, the monitor's Retry button) distinguish this
+      // from a genuine all-failed batch — the two were previously
+      // byte-identical result shapes.
+      return { succeeded: [], failed: failedPaths, deferred: true };
     }
 
     log.info(Modules.SCENE_LOADER, `Retrying ${failedPaths.length} failed loader(s)`);

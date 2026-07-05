@@ -20,6 +20,7 @@ import type { UpdateSession } from '../../../profiling/update-profiler';
 import type { GPUBufferPool } from '../../../rendering/gpu-buffer-pool';
 import { invalidateRenderObjectFor } from './invalidate-render-object';
 import { stampLoadedViewVersion } from './stamp-view-version';
+import type { CommittedDataUserData } from './noop-commit';
 import type { StagedGSplatsCommit } from '../process/data-processor-gsplats';
 
 const DEFAULT_TRUNCATE = 3.0;
@@ -56,6 +57,14 @@ export function commitGSplatsGeometry(
 
   const mesh = rootGroup.getObjectByName(staged.path) as THREE.Mesh;
   if (!mesh || mesh.userData?.nodeType !== 'gsplats') return;
+
+  if (staged.noop) {
+    // Stamp-only commit: the data reference matches what the GPU already
+    // holds (see noop-commit.ts). Refresh the LOD freshness stamp so the
+    // registry keeps treating this node as fresh; touch no geometry.
+    stampLoadedViewVersion(mesh.userData as GSplatsUserData, loadedViewVersion);
+    return;
+  }
 
   const { processed, cholesky01, cholesky23, cholesky45 } = staged;
 
@@ -103,6 +112,10 @@ export function commitGSplatsGeometry(
       // re-slice overwrites the buffers in place above without flipping any
       // readiness flag). Shared with the points/lines commits via the helper.
       stampLoadedViewVersion(mesh.userData as GSplatsUserData, loadedViewVersion);
+      // Record the committed data reference — a later update returning the
+      // SAME reference (memoized progressive concat) can then take the
+      // stamp-only no-op path instead of re-projecting + re-uploading.
+      (mesh.userData as CommittedDataUserData).committedData = staged.sourceData;
     }
 
     if (processed.splatCount === 0) {

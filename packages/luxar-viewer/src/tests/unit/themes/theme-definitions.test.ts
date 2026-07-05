@@ -59,6 +59,7 @@ describe('Theme definitions [themes.md/G1-G4][P1]', () => {
         'background',
         'border',
         'interactive',
+        'menu',
         'semantic',
         'text',
         'visualization',
@@ -192,8 +193,8 @@ describe('Theme definitions [themes.md/G1-G4][P1]', () => {
       expect(new Set(names).size).toBe(names.length);
     });
 
-    it('every theme uses the same font-size scale keys (xs..3xl)', () => {
-      const expected = ['2xl', '3xl', 'base', 'lg', 'md', 'sm', 'xl', 'xs'];
+    it('every theme uses the same font-size scale keys (xs..4xl)', () => {
+      const expected = ['2xl', '3xl', '4xl', 'base', 'lg', 'md', 'sm', 'xl', 'xs'];
       for (const { theme } of ALL_THEMES) {
         expect(Object.keys(theme.typography.fontSize).sort()).toEqual(expected);
       }

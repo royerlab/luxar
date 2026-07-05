@@ -383,7 +383,7 @@ export interface CacheMetrics {
    * Optional because some providers may not surface it.
    */
   health?: {
-    validationMode?: 'content-hash' | 'ttl' | 'none';
+    validationMode?: 'content-hash' | 'zattrs-hash' | 'ttl' | 'none';
     lastValidatedAt?: number | null;
     unvalidatedExternalDataset?: boolean;
     /**
@@ -646,7 +646,7 @@ export interface CacheStatsProvider {
     };
     /** Optional cache validation health. */
     health?: {
-      validationMode: 'content-hash' | 'ttl' | 'none';
+      validationMode: 'content-hash' | 'zattrs-hash' | 'ttl' | 'none';
       lastValidatedAt: number | null;
       unvalidatedExternalDataset: boolean;
       /**

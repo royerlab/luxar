@@ -420,7 +420,9 @@ class TestCoarsenDimsLines:
         worst = 0.0
         for k in grp.keys():
             if k.startswith("child_") and grp[k].attrs.get("type") == "gsplats":
-                c0 = np.asarray(grp[k]["centers"])[:, 0]
+                from luxar.encoding import ArrayDecoder
+
+                c0 = ArrayDecoder().decode(grp[k]["centers"], grp)[:, 0]
                 worst = max(worst, float(np.abs(c0 - np.round(c0)).max()))
         return worst
 

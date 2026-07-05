@@ -5,7 +5,12 @@ import { config as appConfig } from '../../../../config';
 import { getWorkerPool } from '../../../../workers/worker-pool';
 import { ArrayDecoder, type ArrayMetadata } from '../../../array-decoder/decoder';
 import type { LoadRange } from '../../base-types';
-import { firstAxisRangeSlice, type ResolvedRangeLoaderConfig } from './encoding-types';
+import {
+  clampRangeData,
+  firstAxisRangeSlice,
+  rangeDestOffsets,
+  type ResolvedRangeLoaderConfig,
+} from './encoding-types';
 
 export interface QuantizedCtx {
   config: ResolvedRangeLoaderConfig;
@@ -37,58 +42,65 @@ export async function loadQuantized(
     );
   }
 
-  let destOffset = 0;
   const shape = array.shape;
 
-  for (const range of ranges) {
-    const sliceSpec = firstAxisRangeSlice(shape, range);
-    const chunkData = await get(array, sliceSpec, abortOptions(ctx.signal));
-    const quantizedData = chunkData.data as Uint8Array | Uint16Array;
+  // Load + decode all ranges CONCURRENTLY: dequantization is element-wise
+  // 1:1, so destination offsets are precomputed and each range writes into
+  // its own disjoint output span regardless of resolution order. Network
+  // concurrency is bounded by the global fetch gate, decode concurrency by
+  // the worker pool.
+  const { offsets, counts, total } = rangeDestOffsets(shape, ranges);
 
-    let dequantized: Float32Array;
-    if (shouldUseWorkers) {
-      try {
-        if (quantMetadata.isLogSpace) {
-          dequantized = await getWorkerPool().runWithTimeout(
-            'decodeLogScalar',
-            'decode',
-            (api) =>
-              api.decodeLogScalar({
-                data: quantizedData,
-                maxLog: quantMetadata.bounds[1],
-                dtype: quantMetadata.dtype,
-              }),
-            ctx.signal ?? undefined
+  await Promise.all(
+    ranges.map(async (range, i) => {
+      const sliceSpec = firstAxisRangeSlice(shape, range);
+      const chunkData = await get(array, sliceSpec, abortOptions(ctx.signal));
+      const quantizedData = chunkData.data as Uint8Array | Uint16Array;
+
+      let dequantized: Float32Array;
+      if (shouldUseWorkers) {
+        try {
+          if (quantMetadata.isLogSpace) {
+            dequantized = await getWorkerPool().runWithTimeout(
+              'decodeLogScalar',
+              'decode',
+              (api) =>
+                api.decodeLogScalar({
+                  data: quantizedData,
+                  maxLog: quantMetadata.bounds[1],
+                  dtype: quantMetadata.dtype,
+                }),
+              ctx.signal ?? undefined
+            );
+          } else {
+            dequantized = await getWorkerPool().runWithTimeout(
+              'decodeQuantized',
+              'decode',
+              (api) =>
+                api.decodeQuantized({
+                  data: quantizedData,
+                  bounds: quantMetadata.bounds,
+                  dtype: quantMetadata.dtype,
+                }),
+              ctx.signal ?? undefined
+            );
+          }
+        } catch (error) {
+          if (error instanceof Error && error.name === 'WorkerAbortError') throw error;
+          log.warning(
+            ctx.config.logModule,
+            'Worker decoding failed, falling back to main thread:',
+            error
           );
-        } else {
-          dequantized = await getWorkerPool().runWithTimeout(
-            'decodeQuantized',
-            'decode',
-            (api) =>
-              api.decodeQuantized({
-                data: quantizedData,
-                bounds: quantMetadata.bounds,
-                dtype: quantMetadata.dtype,
-              }),
-            ctx.signal ?? undefined
-          );
+          dequantized = ctx.decoder.dequantizeRange(quantizedData, quantMetadata);
         }
-      } catch (error) {
-        if (error instanceof Error && error.name === 'WorkerAbortError') throw error;
-        log.warning(
-          ctx.config.logModule,
-          'Worker decoding failed, falling back to main thread:',
-          error
-        );
+      } else {
         dequantized = ctx.decoder.dequantizeRange(quantizedData, quantMetadata);
       }
-    } else {
-      dequantized = ctx.decoder.dequantizeRange(quantizedData, quantMetadata);
-    }
 
-    output.set(dequantized, destOffset);
-    destOffset += dequantized.length;
-  }
+      output.set(clampRangeData(dequantized, counts[i], i, ctx.config.logModule), offsets[i]);
+    })
+  );
 
-  return destOffset;
+  return total;
 }

@@ -24,7 +24,10 @@
   background: rgba(0, 0, 0, 0.8);
   color: var(--luxar-text-primary);
   padding: var(--luxar-spacing-10);
+  border: 1px solid var(--luxar-border-default);
   border-radius: var(--luxar-radius-md);
+  backdrop-filter: var(--luxar-blur-md);
+  box-shadow: var(--luxar-shadow-lg);
   font-family: var(--luxar-font-base);
   font-size: var(--luxar-text-xl);
   z-index: var(--luxar-z-modal);
@@ -58,10 +61,12 @@
   max-width: 520px;
   width: 90%;
 
-  /* Theming */
+  /* Theming — error-tinted hairline derived from the theme's error token
+     (keeps the red affordance while staying theme-aware); rail-consistent
+     large soft corners. */
   background: var(--luxar-bg-secondary);
   color: var(--luxar-text-primary);
-  border: 1px solid rgba(255, 100, 100, 0.3);
+  border: 1px solid color-mix(in srgb, var(--luxar-error) 40%, transparent);
   border-radius: var(--luxar-radius-lg);
   padding: var(--luxar-spacing-12);
 

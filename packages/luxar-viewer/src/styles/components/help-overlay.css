@@ -15,10 +15,12 @@
   width: 380px;
   max-height: 80vh;
 
-  /* Theming */
+  /* Theming — shared surface recipe with the control rail: crisp hairline
+     (border-default) + large soft corners (radius-lg). */
   background: var(--luxar-bg-secondary);
   color: var(--luxar-text-primary);
-  border-radius: var(--luxar-radius-md);
+  border: 1px solid var(--luxar-border-default);
+  border-radius: var(--luxar-radius-lg);
 
   /* Typography */
   font-family: var(--luxar-font-base);

@@ -53,9 +53,12 @@ consumes them.
   fired during the yield/refinement window queue as `_pendingViewState`
   rather than racing into a concurrent `updateView` call. Branch 3
   (idle) is the only one that releases the lock.
-- **Non-browser fallback for `queueNext`.** When `requestAnimationFrame`
-  is undefined (Vitest, Worker contexts), branch 1 re-enters
-  `updateView(pendingState)` synchronously after releasing the lock.
+- **Frame scheduling is hidden-tab-proof.** Branch 1 yields through
+  `utils/schedule-frame.ts` (not bare `requestAnimationFrame`): rAF while
+  the tab is visible (with a shadow-timer fallback covering a tab hidden
+  after scheduling), `setTimeout(0)` when already hidden (rAF is suspended
+  there and a queued view-state would otherwise stall until foregrounded),
+  and synchronous re-entry when rAF is undefined (Vitest, Worker contexts).
 
 ## See also
 

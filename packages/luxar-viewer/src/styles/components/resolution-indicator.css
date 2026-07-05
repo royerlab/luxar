@@ -44,10 +44,11 @@
   align-items: center;
   gap: var(--luxar-spacing-4);
 
-  /* Theming */
+  /* Theming — crisp hairline (border-default) shared with the control rail;
+     a small transient badge keeps the tighter radius-md. */
   background: var(--luxar-bg-secondary);
   color: var(--luxar-text-secondary);
-  border: 1px solid var(--luxar-border-subtle);
+  border: 1px solid var(--luxar-border-default);
   border-radius: var(--luxar-radius-md);
   padding: var(--luxar-spacing-4) var(--luxar-spacing-6);
 

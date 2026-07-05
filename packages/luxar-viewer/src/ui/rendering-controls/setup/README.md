@@ -2,7 +2,9 @@
 
 > Per-category builder functions that populate the rendering-controls GUI panel.
 
-The rendering-controls panel is assembled by composing one setup function per logical category (navigation, camera, HDR, anti-aliasing, post-processing, performance, theme). Each builder owns its folder, creates its controllers, wires `onChange` callbacks to the live subsystems (post-processing manager, scene manager, adaptive-DPR manager, theme manager), and returns the controller references the parent class needs for cross-module sync and persistence.
+The rendering-controls panel is assembled by composing one setup function per logical category (camera, HDR, anti-aliasing, post-processing). Each builder owns its folder, creates its controllers, wires `onChange` callbacks to the live subsystems (post-processing manager, scene manager), and returns the controller references the parent class needs for cross-module sync and persistence.
+
+`performance-setup.ts` and `theme-setup.ts` also live here but are no longer part of the panel — they're hosted in **rail popovers** (see [`../../rail-panels/`](../../rail-panels/README.md)), which import these builders. Navigation moved out entirely to [`../../rail-panels/navigation-popover.ts`](../../rail-panels/navigation-popover.ts).
 
 Splitting setup this way keeps each builder under a few hundred lines and keeps the parent `rendering-controls.ts` class focused on orchestration rather than UI wiring.
 
@@ -10,13 +12,12 @@ Splitting setup this way keeps each builder under a few hundred lines and keeps 
 
 ```
 setup/
-├── navigation-setup.ts        # 🕹️ Navigation (orbit / fly / ortho + sub-folders)
-├── camera-setup.ts            # 🎥 Camera (FOV presets, FOV slider, clipping planes)
-├── hdr-setup.ts               # ☀️ HDR (exposure, offset, gamma, tone mapping)
-├── anti-aliasing-setup.ts     # ✨ Anti-Aliasing (SSAA, FXAA, MSAA)
-├── post-processing-setup.ts   # 🎬 Post-Processing (bloom, detector noise, vignette, chromatic lens)
-├── performance-setup.ts       # ⚡ Performance (adaptive DPR + manual DPR + FPS/DPR readouts)
-└── theme-setup.ts             # 🎨 Theme (theme picker)
+├── camera-setup.ts            # Camera (FOV presets, FOV slider, clipping planes)
+├── hdr-setup.ts               # HDR (exposure, offset, gamma, tone mapping)
+├── anti-aliasing-setup.ts     # Anti-Aliasing (SSAA, FXAA, MSAA)
+├── post-processing-setup.ts   # Post-Processing (bloom, detector noise, vignette, chromatic lens)
+├── performance-setup.ts       # Performance (adaptive DPR + FPS/DPR readouts) — hosted in a rail popover
+└── theme-setup.ts             # Theme (theme picker) — hosted in the Settings rail popover
 ```
 
 ## Builder Contract
@@ -30,7 +31,7 @@ function setupXxxControls(
 ): SetupResult;
 ```
 
-`SetupContext` carries the GUI instance, current `RenderingSettings`, the post-processing and scene managers, the optional animation controller, and the `saveSettings`/`triggerAnimation`/`updateClippingControlsState`/`updateNavigationControls` callbacks. Each builder returns `{ controllers, folders?, shadowObjects? }`; the parent class merges all `controllers` into a single map.
+`SetupContext` carries the GUI instance, current `RenderingSettings`, the post-processing and scene managers, the optional animation controller, and the `saveSettings`/`triggerAnimation`/`updateClippingControlsState`/`updateNavigationControls` callbacks. (`updateNavigationControls` now only governs FOV-slider visibility in ortho mode — the navigation folders it once toggled moved to the rail popover.) Each builder returns `{ controllers, shadowObjects? }`; the parent class merges all `controllers` into a single map.
 
 Two builders use bespoke contexts because they own larger pieces of state:
 
@@ -39,19 +40,15 @@ Two builders use bespoke contexts because they own larger pieces of state:
 
 ## Builders
 
-### `navigation-setup.ts`
-
-Creates the **🕹️ Navigation** folder with:
-
-- Control-type selector (`orbit` | `fly` | `ortho`) wired to `sceneManager.setControlType`.
-- **Orbit Controls** sub-folder: auto-rotate toggle, rotation speed, `naturalDrag` toggle (defaults to ON on macOS for touchpad ergonomics).
-- **Fly Controls** sub-folder: movement speed, rotation speed, inertial-mode toggle, translation damping, rotation damping. Damping sliders only show when inertial mode is on; movement-speed, rotation-speed, and translation-damping ranges are pulled from `config.controls.fly.*` (rotation damping is hardcoded `0.9 … 0.9999`).
-
-Returns `folders.orbitFolder` and `folders.flyFolder` so the parent class can show/hide them from `updateNavigationControls(type)` when the user switches control type. In `ortho` mode both sub-folders are hidden (panning + zooming need no settings), and the parent also hides the FOV slider and preset since orthographic projection has no perspective.
+> **Navigation** is no longer a setup builder — it moved to the rail popover
+> [`../../rail-panels/navigation-popover.ts`](../../rail-panels/navigation-popover.ts)
+> (left-click the rail Navigation button cycles orbit/fly/ortho; right-click opens
+> the current mode's params). The FOV-slider-in-ortho visibility it used to drive
+> now lives in `updateNavigationControls` on the panel class.
 
 ### `camera-setup.ts`
 
-Creates the **🎥 Camera** folder with:
+Creates the **Camera** folder with:
 
 - **FOV Preset** dropdown sourced from `config.camera.fovPresets` (28mm, 35mm, 50mm, 85mm, 135mm, Custom). Selecting a preset:
   1. Sets `settings.fov` and drives `sceneManager.updateFOV(delta)` (delta-based to share code with `Ctrl+Wheel`).
@@ -63,7 +60,7 @@ Takes `controllersRef` because the FOV preset writes back into the lens-distorti
 
 ### `hdr-setup.ts`
 
-Creates the **☀️ HDR** folder with global Exposure–Offset–Gamma (EOG) plus the tone-mapping selector. The four controls map to scene-manager calls and one post-processing call:
+Creates the **HDR** folder with global Exposure–Offset–Gamma (EOG) plus the tone-mapping selector. The four controls map to scene-manager calls and one post-processing call:
 
 | Control      | Range          | Wired to                             |
 | ------------ | -------------- | ------------------------------------ |
@@ -76,7 +73,7 @@ The tone-mapping dropdown maps display names (`None`, `Linear`, `Reinhard`, `Cin
 
 ### `anti-aliasing-setup.ts`
 
-Creates the **✨ Anti-Aliasing** folder (collapsed by default) covering all three AA paths the post-processing pipeline supports:
+Creates the **Anti-Aliasing** folder (collapsed by default) covering all three AA paths the post-processing pipeline supports:
 
 - **SSAA Enabled** + **SSAA Settings** sub-folder (multiplier 1.5×/2×/3×/4×).
 - **FXAA Enabled** (single toggle, no sub-folder).
@@ -86,7 +83,7 @@ The SSAA and MSAA settings sub-folders are shown/hidden in lock-step with their 
 
 ### `post-processing-setup.ts`
 
-Creates the **🎬 Post-Processing** folder (collapsed by default) with one sub-folder per effect:
+Creates the **Post-Processing** folder (collapsed by default) with one sub-folder per effect:
 
 - **Bloom** — `enabled`, `threshold`, `strength`, `radius`, `Mipmap Levels` (1–12, default 8). Toggling enabled re-runs `postProcessing.setBloomEnabled(value, strength, radius, threshold)`; sliders call `postProcessing.updateBloomSettings` and `postProcessing.setBloomLevels`.
 - **Detector Noise** — physics-based, three independent sources: `Shot Noise` (Poisson photon gain), `Readout Noise` (per-frame Gaussian σ), `Fixed Pattern` (static per-pixel σ). The enable toggle starts the animation controller because temporal noise needs continuous frames.
@@ -97,7 +94,7 @@ Takes `_controllersRef` (currently underscored — accepted for symmetry with `c
 
 ### `performance-setup.ts`
 
-Creates the **⚡ Performance** folder (collapsed by default) with:
+Creates the **Performance** folder (collapsed by default) with:
 
 - **Adaptive Resolution** toggle (`AdaptiveDPRManager.setEnabled`). When ON, manual DPR is hidden and two read-only rows show live "Current DPR" and "Current FPS" values polled every 500 ms.
 - **Manual DPR** slider (range `0.25` … `getNativeDPR()`, step 0.05) using `onFinishChange` to avoid GPU resize thrash. Only applies when adaptive is OFF.
@@ -111,16 +108,16 @@ Returns:
 
 ### `theme-setup.ts`
 
-Creates the **🎨 Theme** folder with a single **Active Theme** dropdown bound to `ThemeManager.getInstance()`. Themes are enumerated via `themeManager.getAllThemes()` and rendered as `name → id`. `ThemeManager` owns persistence, so the builder only needs to call `themeManager.setTheme(id)` and trigger a re-render. Returns nothing.
+Creates the **Theme** folder with a single **Active Theme** dropdown bound to `ThemeManager.getInstance()`. Themes are enumerated via `themeManager.getAllThemes()` and rendered as `name → id`. `ThemeManager` owns persistence, so the builder only needs to call `themeManager.setTheme(id)` and trigger a re-render. Returns nothing.
 
 ## Cross-Module Wiring
 
 The parent class (`../rendering-controls.ts`) calls these builders during construction and stitches together the few inter-module dependencies:
 
 - **FOV preset ↔ chromatic lens distortion** — `setupCameraControls(context, controllers)` is called _after_ `setupPostProcessingControls(context, controllers)` so the controller map already contains the chromatic-lens entries that the FOV preset's `onChange` will mutate. Both builders take the same `controllers` object by reference; order of insertion in the parent class is what makes the link work.
-- **Navigation folder visibility** — `setupNavigationControls` returns `orbitFolder` / `flyFolder`; the parent's `updateNavigationControls(type)` toggles them when the control type changes.
+- **FOV-in-ortho visibility** — the parent's `updateNavigationControls(type)` hides the FOV slider + preset in `ortho` mode (orthographic projection has no perspective). Called on sync and after a control-mode switch. (The orbit/fly parameter folders it once toggled now live in the Navigation rail popover.)
 - **Clipping controls enable state** — `setupCameraControls` calls back into the parent's `updateClippingControlsState(enabled)` so the parent can disable the near/far sliders when dynamic clipping is on.
-- **Adaptive-DPR persistence** — after `loadSettings()` reads the stored `adaptiveDPREnabled` flag, the parent re-applies `performanceSetup.updateVisibility(flag)` so the panel matches the loaded state.
+- **Adaptive-DPR persistence** — after `loadSettings()` reads the stored `adaptiveDPREnabled` flag, the parent applies it to the `AdaptiveDPRManager` (`setEnabled`); the Performance rail popover self-syncs from the manager when opened.
 
 ## Conventions
 

@@ -652,3 +652,266 @@ describe('UpdateProfiler — beginUpdate when previous unfinished', () => {
     profiler.endUpdate();
   });
 });
+
+describe('UpdateProfiler — same-update summing (per-update sequence)', () => {
+  let clock: ReturnType<typeof controlledClock>;
+
+  beforeEach(() => {
+    clock = controlledClock();
+  });
+
+  afterEach(() => {
+    clock.restore();
+  });
+
+  it('sums lastMs across same-name sessions within one update, count stays 1', () => {
+    const profiler = new UpdateProfiler();
+    profiler.beginUpdate();
+
+    // Two 'Load Arrays' sessions in the same update (progressive loader
+    // loading two LOD levels).
+    const s1 = profiler.beginTopLevel('Load Arrays');
+    clock.advance(30);
+    s1.end();
+    const s2 = profiler.beginTopLevel('Load Arrays');
+    clock.advance(50);
+    s2.end();
+
+    profiler.endUpdate();
+
+    const child = findChild(profiler.getTimings(), 'Load Arrays')!;
+    expect(child.lastMs).toBe(80); // 30 + 50, NOT overwritten to 50
+    expect(child.count).toBe(1); // count = #updates the op ran in
+    expect(child.avgMs).toBe(80); // first update seeds the EMA with the sum
+  });
+
+  it('sums numeric metadata on same-update merges', () => {
+    const profiler = new UpdateProfiler();
+    profiler.beginUpdate();
+
+    const s1 = profiler.beginTopLevel('Load Arrays');
+    s1.setMetadata({ chunks: 3, cacheHits: 2, cacheMisses: 1 });
+    s1.end();
+    const s2 = profiler.beginTopLevel('Load Arrays');
+    s2.setMetadata({ chunks: 5, cacheHits: 0, cacheMisses: 5 });
+    s2.end();
+
+    profiler.endUpdate();
+
+    const child = findChild(profiler.getTimings(), 'Load Arrays')!;
+    expect(child.metadata?.chunks).toBe(8);
+    expect(child.metadata?.cacheHits).toBe(2);
+    expect(child.metadata?.cacheMisses).toBe(6);
+  });
+
+  it('applies ONE EMA sample per update against the pre-update base', () => {
+    const profiler = new UpdateProfiler();
+
+    // Update 1: two sessions summing to 100 → avg seeds at 100.
+    profiler.beginUpdate();
+    const a1 = profiler.beginTopLevel('Op');
+    clock.advance(60);
+    a1.end();
+    const a2 = profiler.beginTopLevel('Op');
+    clock.advance(40);
+    a2.end();
+    profiler.endUpdate();
+
+    // Update 2: two sessions summing to 50 → avg = 0.1*50 + 0.9*100 = 95,
+    // NOT alpha applied twice (which would give 0.1*30 + 0.9*(0.1*20+0.9*100)).
+    profiler.beginUpdate();
+    const b1 = profiler.beginTopLevel('Op');
+    clock.advance(20);
+    b1.end();
+    const b2 = profiler.beginTopLevel('Op');
+    clock.advance(30);
+    b2.end();
+    profiler.endUpdate();
+
+    const child = findChild(profiler.getTimings(), 'Op')!;
+    expect(child.lastMs).toBe(50);
+    expect(child.count).toBe(2);
+    expect(child.avgMs).toBeCloseTo(0.1 * 50 + 0.9 * 100, 6);
+  });
+
+  it('recomputes overBudget from the summed lastMs', () => {
+    const profiler = new UpdateProfiler();
+    profiler.beginUpdate();
+
+    // Two 10ms sessions: each under budget, sum is over.
+    const s1 = profiler.beginTopLevel('Op');
+    clock.advance(10);
+    s1.end();
+    const s2 = profiler.beginTopLevel('Op');
+    clock.advance(10);
+    s2.end();
+
+    profiler.endUpdate();
+
+    const child = findChild(profiler.getTimings(), 'Op')!;
+    expect(child.lastMs).toBe(20);
+    expect(child.overBudget).toBe(true);
+  });
+});
+
+describe('UpdateProfiler — staleness', () => {
+  let clock: ReturnType<typeof controlledClock>;
+
+  beforeEach(() => {
+    clock = controlledClock();
+  });
+
+  afterEach(() => {
+    clock.restore();
+  });
+
+  it('marks entries that did not run in the latest update as stale', () => {
+    const profiler = new UpdateProfiler();
+
+    // Update 1: 'Load Arrays' runs (94ms).
+    profiler.beginUpdate();
+    const load = profiler.beginTopLevel('Load Arrays');
+    clock.advance(94);
+    load.end();
+    profiler.endUpdate();
+
+    // Update 2: only 'Project to 3D' runs — Load Arrays did NOT run.
+    profiler.beginUpdate();
+    const proj = profiler.beginTopLevel('Project to 3D');
+    clock.advance(3);
+    proj.end();
+    profiler.endUpdate();
+
+    const root = profiler.getTimings();
+    const loadEntry = findChild(root, 'Load Arrays')!;
+    const projEntry = findChild(root, 'Project to 3D')!;
+    expect(loadEntry.stale).toBe(true);
+    expect(loadEntry.lastMs).toBe(94); // last-known value preserved for display
+    expect(projEntry.stale).toBeFalsy();
+    expect(root.stale).toBeFalsy();
+  });
+
+  it('clears the stale flag when the op runs again', () => {
+    const profiler = new UpdateProfiler();
+
+    profiler.beginUpdate();
+    profiler.beginTopLevel('Op').end();
+    profiler.endUpdate();
+
+    profiler.beginUpdate();
+    profiler.beginTopLevel('Other').end();
+    profiler.endUpdate();
+    expect(findChild(profiler.getTimings(), 'Op')!.stale).toBe(true);
+
+    profiler.beginUpdate();
+    profiler.beginTopLevel('Op').end();
+    profiler.endUpdate();
+    expect(findChild(profiler.getTimings(), 'Op')!.stale).toBe(false);
+  });
+
+  it('hasOverBudget ignores stale children', () => {
+    const profiler = new UpdateProfiler();
+
+    profiler.beginUpdate();
+    const slow = profiler.beginTopLevel('Slow');
+    clock.advance(100);
+    slow.end();
+    profiler.endUpdate();
+
+    profiler.beginUpdate();
+    const fast = profiler.beginTopLevel('Fast');
+    clock.advance(1);
+    fast.end();
+    profiler.endUpdate();
+
+    // The stale 100ms 'Slow' child must not paint the fresh tree red;
+    // root itself was 1ms in the latest update.
+    const root = profiler.getTimings();
+    expect(findChild(root, 'Slow')!.overBudget).toBe(true);
+    expect(findChild(root, 'Slow')!.stale).toBe(true);
+    expect(hasOverBudget(findChild(root, 'Slow')!)).toBe(false);
+  });
+});
+
+describe('UpdateProfiler — refinement passes (beginPass)', () => {
+  let clock: ReturnType<typeof controlledClock>;
+
+  beforeEach(() => {
+    clock = controlledClock();
+  });
+
+  afterEach(() => {
+    clock.restore();
+  });
+
+  it('records pass sessions under the LOD Refinement root, not Total Update', () => {
+    const profiler = new UpdateProfiler();
+
+    const pass = profiler.beginPass();
+    const node = pass.begin('GSplats (/g)');
+    clock.advance(40);
+    node.end();
+    pass.end();
+
+    const refinement = profiler.getRefinementTimings();
+    expect(refinement.count).toBe(1);
+    expect(findChild(refinement, 'GSplats (/g)')!.lastMs).toBe(40);
+    // Total Update tree untouched.
+    expect(profiler.getTimings().count).toBe(0);
+    expect(findChild(profiler.getTimings(), 'GSplats (/g)')).toBeUndefined();
+  });
+
+  it('merges pass children into the refinement tree even when a same-named parent exists under Total Update', () => {
+    const profiler = new UpdateProfiler();
+
+    // Total Update tree gets a 'GSplats (/g)' → 'Load Arrays' chain.
+    profiler.beginUpdate();
+    const top = profiler.beginTopLevel('GSplats (/g)');
+    const topLoad = top.begin('Load Arrays');
+    clock.advance(10);
+    topLoad.end();
+    top.end();
+    profiler.endUpdate();
+
+    // Refinement pass with the SAME names.
+    const pass = profiler.beginPass();
+    const node = pass.begin('GSplats (/g)');
+    const load = node.begin('Load Arrays');
+    clock.advance(70);
+    load.end();
+    node.end();
+    pass.end();
+
+    // Each tree holds its own 'Load Arrays' value.
+    expect(findChild(profiler.getTimings(), 'Load Arrays')!.lastMs).toBe(10);
+    expect(findChild(profiler.getRefinementTimings(), 'Load Arrays')!.lastMs).toBe(70);
+  });
+
+  it('a pass ending mid-update does NOT disable the active update session', () => {
+    const profiler = new UpdateProfiler();
+
+    profiler.beginUpdate();
+    const pass = profiler.beginPass();
+    pass.end(); // must NOT null the active update session
+
+    expect(profiler.isActive()).toBe(true);
+    const top = profiler.beginTopLevel('Points (/p)');
+    clock.advance(5);
+    top.end();
+    profiler.endUpdate();
+
+    expect(findChild(profiler.getTimings(), 'Points (/p)')!.lastMs).toBe(5);
+  });
+
+  it('reset clears the refinement tree and pass counter', () => {
+    const profiler = new UpdateProfiler();
+    const pass = profiler.beginPass();
+    pass.begin('GSplats (/g)').end();
+    pass.end();
+    expect(profiler.getRefinementTimings().count).toBe(1);
+
+    profiler.reset();
+    expect(profiler.getRefinementTimings().count).toBe(0);
+    expect(profiler.getRefinementTimings().children).toEqual([]);
+  });
+});

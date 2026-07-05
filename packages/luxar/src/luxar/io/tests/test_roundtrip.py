@@ -23,6 +23,27 @@ import zarr
 from luxar import Dimension, Dimensions, LuxarScene, LuxarZarrCompiler, transforms
 
 
+def _match_nearest(loaded: np.ndarray, orig: np.ndarray, tol: float) -> np.ndarray:
+    """Order- and quantization-robust row matching for round-trip comparison.
+
+    The spatial index may reorder points AND positions are uint16 per-axis
+    fixed-point under AUTO, so lexsort is unstable: two points within one
+    quantization step of each other on the primary key decode to an exact tie
+    and the tiebreak column can order them opposite to the float original.
+    Instead, match each loaded point to its nearest original, assert every
+    match is within ``tol`` and the mapping is a bijection, and return the
+    index map (``loaded[i] ≈ orig[match[i]]``) so per-point attributes can be
+    compared through the same alignment.
+    """
+    d = np.linalg.norm(loaded[:, None, :] - orig[None, :, :], axis=2)
+    match = d.argmin(axis=1)
+    assert d[np.arange(len(match)), match].max() < tol, (
+        "Position values differ after round-trip"
+    )
+    assert len(set(match.tolist())) == len(match), "non-unique NN match"
+    return match
+
+
 class TestBasicRoundTrip:
     """Basic round-trip tests for points data."""
 
@@ -80,8 +101,8 @@ class TestBasicRoundTrip:
         np.testing.assert_allclose(
             loaded_sorted,
             original_sorted,
-            rtol=1e-6,
-            atol=1e-6,
+            rtol=1e-4,
+            atol=2e-3,  # positions are uint16 fixed-point under AUTO (~extent/65535)
             err_msg="Position values differ after round-trip",
         )
 
@@ -114,20 +135,13 @@ class TestBasicRoundTrip:
         assert data["colors"].shape == colors.shape
         assert data["colors"].dtype == np.float32
 
-        # Verify actual values survive round-trip (sort to handle spatial reordering)
-        sort_idx_orig = np.lexsort(positions.T)
-        sort_idx_load = np.lexsort(data["positions"].T)
-        np.testing.assert_allclose(
-            data["positions"][sort_idx_load],
-            positions[sort_idx_orig],
-            rtol=1e-6,
-            atol=1e-6,
-            err_msg="Position values differ after round-trip",
-        )
+        # Verify values survive round-trip (see _match_nearest: order- and
+        # quantization-robust), then use the same mapping to check colors.
+        match = _match_nearest(data["positions"], positions, 2e-3)
         # SDR colors go through uint8 quantization: allow ~1/255 error per channel
         np.testing.assert_allclose(
-            data["colors"][sort_idx_load],
-            colors[sort_idx_orig],
+            data["colors"],
+            colors[match],
             atol=2.0 / 255,
             err_msg="Color values differ beyond uint8 quantization tolerance",
         )
@@ -161,19 +175,14 @@ class TestBasicRoundTrip:
         assert data["radii"].shape == radii.shape
         assert data["sharpness"].shape == sharpness.shape
 
-        # Verify actual values survive round-trip (sort to handle spatial reordering)
-        sort_idx_orig = np.lexsort(positions.T)
-        sort_idx_load = np.lexsort(data["positions"].T)
+        # Verify actual values survive round-trip. One NN-bijection index map
+        # (see _match_nearest) aligns positions AND every per-point attribute —
+        # lexsort of quantized coordinates is unstable and would misalign all
+        # four comparisons at once on a near-tie.
+        match = _match_nearest(data["positions"], positions, 2e-3)
         np.testing.assert_allclose(
-            data["positions"][sort_idx_load],
-            positions[sort_idx_orig],
-            rtol=1e-6,
-            atol=1e-6,
-            err_msg="Position values differ after round-trip",
-        )
-        np.testing.assert_allclose(
-            data["colors"][sort_idx_load],
-            colors[sort_idx_orig],
+            data["colors"],
+            colors[match],
             atol=2.0 / 255,
             err_msg="Color values differ beyond uint8 quantization tolerance",
         )
@@ -181,8 +190,8 @@ class TestBasicRoundTrip:
         # Sharpness uses uint8 over [0, 1] range: step ≈ 1/255 ≈ 0.0039.
         # Use atol based on quantization step size rather than rtol.
         np.testing.assert_allclose(
-            data["radii"][sort_idx_load],
-            radii[sort_idx_orig],
+            data["radii"],
+            radii[match],
             atol=0.01,
             err_msg="Radii values differ after round-trip",
         )
@@ -191,8 +200,8 @@ class TestBasicRoundTrip:
         # in the encoder pushes us above this bound, we want to know.
         sharpness_step = 1.0 / 255.0  # ≈ 0.00392 (see decoder.py docstring)
         np.testing.assert_allclose(
-            data["sharpness"][sort_idx_load],
-            sharpness[sort_idx_orig],
+            data["sharpness"],
+            sharpness[match],
             atol=sharpness_step + 1e-6,
             err_msg="Sharpness values differ after round-trip",
         )
@@ -270,10 +279,11 @@ class TestSceneDimensions:
             ]
         )
 
-        positions = np.random.randn(100, 5).astype(np.float32)
+        rng = np.random.RandomState(1234)  # seeded: quantization near-ties must
+        positions = rng.randn(100, 5).astype(np.float32)  # not vary run-to-run
         # Set discrete dimension values to integers
-        positions[:, 0] = np.random.randint(0, 11, 100).astype(np.float32)  # time
-        positions[:, 1] = np.random.randint(0, 4, 100).astype(np.float32)  # channel
+        positions[:, 0] = rng.randint(0, 11, 100).astype(np.float32)  # time
+        positions[:, 1] = rng.randint(0, 4, 100).astype(np.float32)  # channel
 
         with LuxarZarrCompiler(output_path) as compiler:
             compiler.create_scene(dimensions=dims)
@@ -303,15 +313,9 @@ class TestSceneDimensions:
         data = scene.get_points("points5d")
         assert data["positions"].shape == (100, 5)
         assert data["positions"].dtype == np.float32
-        sort_orig = np.lexsort(positions.T)
-        sort_load = np.lexsort(data["positions"].T)
-        np.testing.assert_allclose(
-            data["positions"][sort_load],
-            positions[sort_orig],
-            rtol=1e-6,
-            atol=1e-6,
-            err_msg="5D position values differ after round-trip",
-        )
+        # NN bijection (see _match_nearest) — lexsort of uint16-quantized
+        # positions is unstable on near-ties.
+        _match_nearest(data["positions"], positions, 2e-3)
 
     def test_4d_scene_dimensions(self, tmp_path) -> None:
         """Round-trip with 4D dimensions (time + xyz) — added to fill the
@@ -328,8 +332,9 @@ class TestSceneDimensions:
             ]
         )
 
-        positions = np.random.randn(80, 4).astype(np.float32)
-        positions[:, 0] = np.random.randint(0, 6, 80).astype(np.float32)
+        rng = np.random.RandomState(1234)  # seeded (see test_5d_scene_dimensions)
+        positions = rng.randn(80, 4).astype(np.float32)
+        positions[:, 0] = rng.randint(0, 6, 80).astype(np.float32)
 
         with LuxarZarrCompiler(output_path) as compiler:
             compiler.create_scene(dimensions=dims)
@@ -345,15 +350,9 @@ class TestSceneDimensions:
         data = scene.get_points("points4d")
         assert data["positions"].shape == (80, 4)
         assert data["positions"].dtype == np.float32
-        sort_orig = np.lexsort(positions.T)
-        sort_load = np.lexsort(data["positions"].T)
-        np.testing.assert_allclose(
-            data["positions"][sort_load],
-            positions[sort_orig],
-            rtol=1e-6,
-            atol=1e-6,
-            err_msg="4D position values differ after round-trip",
-        )
+        # NN bijection (see _match_nearest) — lexsort of uint16-quantized
+        # positions is unstable on near-ties.
+        _match_nearest(data["positions"], positions, 2e-3)
 
     def test_categorical_dimensions(self, tmp_path) -> None:
         """Test round-trip with categorical dimensions."""

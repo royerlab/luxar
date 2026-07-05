@@ -133,6 +133,13 @@
   outline-offset: 2px;
 }
 
+/* Disabled (e.g. Layers when the scene has no layers): grayed + inert. */
+.luxar-control-rail__btn:disabled {
+  opacity: 0.3;
+  cursor: not-allowed;
+  pointer-events: none;
+}
+
 .luxar-control-rail__btn svg {
   width: 19px;
   height: 19px;
@@ -210,6 +217,117 @@
   background: var(--luxar-bg-secondary);
   border-left: 1px solid var(--luxar-border-default);
   border-bottom: 1px solid var(--luxar-border-default);
+}
+
+/* Vertical panel popover (Navigation params, Performance, Settings) — hosts
+   rich controls (a nested .luxar-gui) rather than a row of toggle chips. Same
+   glass surface + real-child arrow as the flyout, but flows content down. */
+.luxar-control-rail__popover {
+  position: absolute;
+  left: calc(100% + 10px);
+  z-index: var(--luxar-z-popover, 3000);
+  background: var(--luxar-bg-secondary);
+  backdrop-filter: var(--luxar-blur-md, blur(10px));
+  -webkit-backdrop-filter: var(--luxar-blur-md, blur(10px));
+  border: 1px solid var(--luxar-border-default);
+  border-radius: var(--luxar-radius-lg, 12px);
+  box-shadow: var(--luxar-shadow-xl);
+}
+
+.luxar-control-rail__popover-arrow {
+  position: absolute;
+  left: -7px;
+  transform: translateY(-50%) rotate(45deg);
+  width: 12px;
+  height: 12px;
+  background: var(--luxar-bg-secondary);
+  border-left: 1px solid var(--luxar-border-default);
+  border-bottom: 1px solid var(--luxar-border-default);
+}
+
+.luxar-control-rail__popover-body {
+  width: 264px;
+  max-height: calc(100vh - 32px);
+  overflow-y: auto;
+  border-radius: var(--luxar-radius-lg, 12px);
+}
+
+/* Segmented mode selector at the top of the Navigation popover — shows the
+   current camera mode (highlighted) and switches on click. */
+.luxar-control-rail__mode-strip {
+  display: flex;
+  gap: 4px;
+  padding: 10px 12px 8px;
+}
+
+.luxar-control-rail__mode-seg {
+  flex: 1;
+  padding: 5px 0;
+  border: 1px solid var(--luxar-border-default);
+  border-radius: var(--luxar-radius-md, 8px);
+  background: none;
+  color: var(--luxar-text-secondary);
+  font-family: var(--luxar-font-base);
+  font-size: var(--luxar-text-sm);
+  cursor: pointer;
+  transition: var(--luxar-transition-fast, all 0.1s ease);
+}
+
+.luxar-control-rail__mode-seg:hover {
+  color: var(--luxar-text-primary);
+  background: var(--luxar-interactive-hover, rgba(255, 255, 255, 0.12));
+}
+
+.luxar-control-rail__mode-seg.is-active {
+  color: var(--luxar-text-primary);
+  background: color-mix(in srgb, var(--luxar-highlight) 22%, transparent);
+  border-color: color-mix(in srgb, var(--luxar-highlight) 50%, transparent);
+}
+
+.luxar-control-rail__mode-seg:focus-visible {
+  outline: 2px solid var(--luxar-border-focus, rgba(76, 175, 80, 0.5));
+  outline-offset: 1px;
+}
+
+/* Navigation popover GUI is headerless — the mode selector is its header. */
+.luxar-control-rail__popover-body .luxar-gui--headerless .luxar-gui__header {
+  display: none;
+}
+
+/* Informational lines inside a popover (e.g. the ortho "no parameters" note and
+   the "click to switch mode" hint under the Navigation params). */
+.luxar-control-rail__popover-note,
+.luxar-control-rail__popover-hint {
+  padding: 8px 12px;
+  color: var(--luxar-text-secondary);
+  font-family: var(--luxar-font-base);
+  font-size: var(--luxar-text-sm);
+  line-height: 1.45;
+}
+
+.luxar-control-rail__popover-hint {
+  color: var(--luxar-text-muted);
+  font-size: var(--luxar-text-xs);
+  border-top: 1px solid var(--luxar-border-default);
+}
+
+/* The popover hosts a full GUI, but the popover itself is the glass surface —
+   so strip the nested .luxar-gui's own chrome (position/frame/blur) and let it
+   flow as flat content. `position: static` is what actually neutralizes the
+   global rail rule that force-docks left-anchored .luxar-gui panels to
+   left:78px (a static box ignores top/left); the top/left resets below are
+   belt-and-suspenders in case a future rule re-positions it. */
+.luxar-control-rail__popover-body .luxar-gui {
+  position: static !important;
+  top: auto !important;
+  left: auto !important;
+  width: 100% !important;
+  max-height: none;
+  background: none;
+  border: none;
+  box-shadow: none;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
 }
 
 .luxar-control-rail__chip {
@@ -331,7 +449,7 @@
   border: none;
   background: none;
   color: var(--luxar-text-secondary);
-  font-size: 15px;
+  font-size: var(--luxar-text-lg);
   line-height: 1;
   cursor: pointer;
 }
@@ -356,7 +474,6 @@
 .luxar-has-control-rail .luxar-debug-console {
   left: 78px;
 }
-
 
 .luxar-control-rail-hint::before {
   content: '';

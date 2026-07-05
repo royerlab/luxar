@@ -42,7 +42,10 @@ export class ResolutionIndicator {
     }
 
     this.element = document.createElement('div');
-    this.element.className = 'luxar-resolution-indicator luxar-resolution-indicator--hidden';
+    // luxar-glass-surface: opt into the frosted/liquid-glass material so the
+    // indicator matches the other floating panels under those themes.
+    this.element.className =
+      'luxar-resolution-indicator luxar-resolution-indicator--hidden luxar-glass-surface';
     this.element.innerHTML = `
       <span class="luxar-resolution-indicator__icon">&#x21C5;</span>
       <span class="luxar-resolution-indicator__text"></span>

@@ -17,6 +17,7 @@ import {
   processLinesData,
   type StagedLinesCommit,
 } from '../scene-loader/process/data-processor-lines';
+import { isAlreadyCommitted } from '../scene-loader/commit/noop-commit';
 
 export const kind: GeometryKind = 'lines';
 export const label = 'Lines' as const;
@@ -71,6 +72,20 @@ export async function loadAndStage(
   const data: LoadedLinesData | null = await loader.updateView(linesViewState, session, ctx.signal);
   ctx.clearFailure(path);
   if (!data) return null;
+  // No-op fast path: the loader returned the SAME data reference it did
+  // last commit (memoized progressive concat, unchanged view state) — the
+  // GPU already holds exactly this data. Skip the expensive projection and
+  // stage a stamp-only commit (see noop-commit.ts).
+  if (isAlreadyCommitted(mesh?.userData, data)) {
+    session.setMetadata({
+      segments: data.segments ? data.segments.length / 2 : 0,
+      info: 'unchanged',
+    });
+    if (!ctx.signal?.aborted) {
+      ctx.viewStateQueue.dispatchPrefetch(path, linesViewState, loader);
+    }
+    return { path, noop: true, sourceData: data };
+  }
   if (ctx.currentVersion <= 1) {
     log.info(
       Modules.SCENE_LOADER,
@@ -86,7 +101,11 @@ export async function loadAndStage(
     session
   );
   session.setMetadata({ segments: data.segments ? data.segments.length / 2 : 0 });
-  // S6: per-loader predictive prefetch using the derived view-state.
-  ctx.viewStateQueue.dispatchPrefetch(path, linesViewState, loader);
+  // S6: per-loader predictive prefetch using the derived view-state — but
+  // not for a SUPERSEDED update: extrapolating from an abandoned state warms
+  // the wrong chunks and pollutes the per-path prefetch baseline.
+  if (!ctx.signal?.aborted) {
+    ctx.viewStateQueue.dispatchPrefetch(path, linesViewState, loader);
+  }
   return staged;
 }

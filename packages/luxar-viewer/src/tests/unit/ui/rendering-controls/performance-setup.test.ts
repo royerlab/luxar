@@ -50,7 +50,7 @@ function makeController(): ControllerStub {
 
 interface FolderStub {
   add: ReturnType<typeof vi.fn>;
-  close: ReturnType<typeof vi.fn>;
+  open: ReturnType<typeof vi.fn>;
   domElement: HTMLElement;
   controllers: ControllerStub[];
 }
@@ -70,7 +70,7 @@ function makeFolder(): FolderStub {
       controllers.push(c);
       return c;
     }),
-    close: vi.fn(),
+    open: vi.fn(),
     domElement: root,
     controllers,
   };
@@ -124,8 +124,13 @@ describe('setupPerformanceControls', () => {
 
   it('creates the Performance folder + 2 controls (toggle + manual DPR)', () => {
     setupPerformanceControls(makeContext());
-    expect(gui.addFolder).toHaveBeenCalledWith('⚡ Performance');
+    expect(gui.addFolder).toHaveBeenCalledWith('Performance', expect.any(String));
     expect(folder.controllers).toHaveLength(2);
+  });
+
+  it('opens the folder by default (shown directly in the Performance rail popover)', () => {
+    setupPerformanceControls(makeContext());
+    expect(folder.open).toHaveBeenCalled();
   });
 
   it('appends DPR + FPS read-only rows into the children container', () => {

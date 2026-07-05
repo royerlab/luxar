@@ -3,9 +3,11 @@ import { get, abortOptions } from '../../../zarr';
 import { log } from '../../../../utils/log';
 import type { LoadRange } from '../../base-types';
 import {
+  clampRangeData,
   copyDirectChunk,
   type DirectOutputBuffer,
   firstAxisRangeSlice,
+  rangeDestOffsets,
   type RangeNumericArray,
   type ResolvedRangeLoaderConfig,
 } from './encoding-types';
@@ -36,14 +38,28 @@ export async function loadDirect(
     log.info(ctx.config.logModule, `Direct: loading ${ranges.length} ranges`);
   }
 
-  let destOffset = 0;
   const shape = array.shape;
 
-  for (const range of ranges) {
-    const sliceSpec = firstAxisRangeSlice(shape, range);
-    const chunkData = await get(array, sliceSpec, abortOptions(ctx.signal));
-    destOffset += copyDirectChunk(output, chunkData.data as RangeNumericArray, destOffset);
-  }
+  // Load all ranges CONCURRENTLY: destination offsets are precomputed
+  // (prefix sum over deterministic range sizes) so each range writes into
+  // its own disjoint output span regardless of resolution order. Network
+  // concurrency is bounded by the global fetch gate (see
+  // utils/fetch-concurrency.ts), not here.
+  const { offsets, counts, total } = rangeDestOffsets(shape, ranges);
 
-  return destOffset;
+  await Promise.all(
+    ranges.map(async (range, i) => {
+      const sliceSpec = firstAxisRangeSlice(shape, range);
+      const chunkData = await get(array, sliceSpec, abortOptions(ctx.signal));
+      const data = clampRangeData(
+        chunkData.data as RangeNumericArray,
+        counts[i],
+        i,
+        ctx.config.logModule
+      );
+      copyDirectChunk(output, data, offsets[i]);
+    })
+  );
+
+  return total;
 }

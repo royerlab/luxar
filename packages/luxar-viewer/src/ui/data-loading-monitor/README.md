@@ -59,14 +59,33 @@ pills surfaced in the Cache tab. `CACHE_BADGE_COLOR` maps each
 `CacheStatusBadge` (`cache-enabled`, `no-cache`, `disabled-config`,
 `opfs-unavailable`, `quota-constrained`, `cache-errors-detected`,
 `unvalidated-external-dataset`, `provider-missing`) to a
-`luxar-color--*` modifier class. `renderCacheStatusBadges` emits one
-`<span class="luxar-badge …" data-badge="…">` per badge; the row
-wrapper carries `data-field="cache-status-row"` and a `join('|')`
+`luxar-color--*` modifier class, and `CACHE_BADGE_TOOLTIP` gives each
+badge a didactic hover explanation (what it means, why it appears,
+what to do about it). `renderCacheStatusBadges` emits one
+`<span class="luxar-badge …" data-badge="…" title="…">` per badge; the
+row wrapper carries `data-field="cache-status-row"` and a `join('|')`
 signature so `tabs/cache.ts` can skip `innerHTML` replacement when the
 badge set hasn't changed across ticks.
 
 All other dynamic colors flow through `getColorClass(SemanticColor)`
 which returns `luxar-color--{success|warning|error|info|muted|dimmed|primary}`.
+
+## Tooltip policy
+
+Every label, value, badge, and table header the monitor paints carries
+a `title` tooltip, and the tooltips are deliberately **didactic**: they
+explain what the metric is, why it matters, and what a good/bad value
+looks like (e.g. hit-rate tooltips note that a low rate right after
+load is normal). Two tooltips are *state-dependent* and therefore
+re-patched by `tabs/cache.ts` on every tick alongside their values:
+`validationModeTooltip(mode)` and `lastValidatedTooltip(mode)` — under
+`validationMode: 'none'` the freshness timestamp records only a check
+*attempt* (nothing to compare against), not a confirmation, and the
+tooltip must say so for whichever mode is currently displayed. For the
+same reason the row label itself is mode-aware
+(`lastValidatedLabel(mode)`): "Last Validated" only under
+content-hash, "Last Checked" otherwise. The timing panel's per-operation explanations
+live in the `TOOLTIPS` map in `timing-panel.ts`.
 
 ## Contracts and invariants
 
@@ -122,6 +141,17 @@ which returns `luxar-color--{success|warning|error|info|muted|dimmed|primary}`.
 - **All user-supplied strings flow through `utils/escape-html`** before
   being interpolated into template literals (loader paths, entry
   names, recommendation messages).
+
+## Failed-load recovery surface
+
+The Overview tab shows a warning banner while the SceneLoader has recorded
+load failures (`renderFailedLoadsBanner` in `templates.ts`), fed by the
+`FailedLoadsProviderPort` injected through `setFailedLoadsProvider` (wired in
+`data/scene-loader/monitor/monitor-wiring.ts`). Its Retry button
+(`data-action="retryFailedLoads"`) runs `SceneLoader.retryAllFailedLoaders`
+(serialized against the update lock by the loader) with an in-flight guard and
+toasts the outcome. Failed loads are also retried automatically when the
+window comes back online (`core/app/lifecycle/online-retry.ts`).
 
 ## Why this layout
 

@@ -1,7 +1,7 @@
 /**
  * Performance / adaptive-DPR setup for the rendering-controls panel.
  *
- * Builds the "⚡ Performance" folder with the Adaptive Resolution toggle,
+ * Builds the "Performance" folder with the Adaptive Resolution toggle,
  * a Manual DPR slider (visible when adaptive is OFF), and read-only
  * Current DPR / Current FPS display rows (visible when adaptive is ON).
  *
@@ -15,6 +15,7 @@
 import type { Controller } from '../../gui';
 import type GUI from '../../gui';
 import type { RenderingSettings } from '../../../config';
+import { FOLDER_ICONS } from '../folder-icons';
 import type { AdaptiveDPRManager } from '../../../rendering/adaptive-dpr-manager';
 import { log, Modules } from '../../../utils/log';
 
@@ -60,7 +61,7 @@ function createDisplayRow(label: string, tooltip: string): HTMLElement {
 export function setupPerformanceControls(context: PerformanceSetupContext): PerformanceSetupResult {
   const { gui, settings, manager, saveSettings, triggerAnimation } = context;
 
-  const performanceFolder = gui.addFolder('⚡ Performance');
+  const performanceFolder = gui.addFolder('Performance', FOLDER_ICONS.performance);
 
   performanceFolder.domElement?.setAttribute(
     'title',
@@ -165,7 +166,8 @@ export function setupPerformanceControls(context: PerformanceSetupContext): Perf
     }
   }, 500);
 
-  performanceFolder.close();
+  // Open by default: the Performance rail popover shows these controls directly.
+  performanceFolder.open();
 
   return {
     adaptiveDPREnabled: adaptiveToggle,

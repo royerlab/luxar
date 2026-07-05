@@ -83,7 +83,11 @@ export async function loadAndStage(
     );
   }
   session.setMetadata({ points: data.metadata.loadedPoints });
-  // S6: per-loader predictive prefetch using the derived view-state.
-  ctx.viewStateQueue.dispatchPrefetch(path, derived.viewState, loader);
+  // S6: per-loader predictive prefetch using the derived view-state — but
+  // not for a SUPERSEDED update: extrapolating from an abandoned state warms
+  // the wrong chunks and pollutes the per-path prefetch baseline.
+  if (!ctx.signal?.aborted) {
+    ctx.viewStateQueue.dispatchPrefetch(path, derived.viewState, loader);
+  }
   return { path, data };
 }

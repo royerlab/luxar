@@ -441,6 +441,13 @@ luxar gsplat lod in.gsplats.zarr out.gsplats.zarr --recipe levels --coverage-inf
 # one time/quality knob.
 luxar gsplat lod in.gsplats.zarr out.gsplats.zarr --recipe levels --refine l2
 luxar gsplat lod in.gsplats.zarr out.gsplats.zarr --recipe overview --refine l2 --refine-iters 200
+# Volume re-fit (the highest-fidelity rung, opt-in): `--refine volume --target
+# <vol>` warm-start re-fits each merged level against the SOURCE VOLUME itself
+# (full fit seeded by the merge; +5-12 dB over the merge on real microscopy;
+# each level keeps whichever of merge/re-fit renders closer — never worse).
+# Needs the volume in hand: lod --target only (fit-time/batch are follow-ups);
+# levels/overview recipes, no barrier dims. `--refine-iters` default 300 here.
+luxar gsplat lod in.gsplats.zarr out.gsplats.zarr --recipe levels --target vol.tiff --refine volume
 # Barrier-aware coarsening (levels/overview/adaptive): --coarsen-dims
 # lists the center-column indices coarsening may merge over; the rest become hard
 # barriers (a categorical/time/channel axis), so coarse splats never blend across
@@ -457,6 +464,14 @@ luxar gsplat lod in.gsplats.zarr out.gsplats.zarr --recipe levels --coarsen-dims
 # Migrate legacy .gsplats.zarr layouts (v1.0 / v1.1 / pre-v2.0 substitutive dir / v2.0 matrix) → v3.1
 luxar gsplat migrate-format legacy.gsplats.zarr v3.gsplats.zarr               # single file
 luxar gsplat migrate-format old_pyr/ v3.gsplats.zarr                          # substitutive directory
+
+# Re-quantize a fitted (current-format) .gsplats.zarr's Cholesky encoding (writes a copy).
+# Structure-preserving round-trip (leaf/lod/partition/nested + fitting/pipeline
+# groups kept); only the on-disk Cholesky encoding changes; decode is always
+# float32 so viewer/GPU/WASM are unaffected. Unlike migrate-format (legacy→current,
+# float32 vs AUTO-uint16 only) this exposes the full ladder incl. memory=uint8.
+luxar gsplat reencode fit.gsplats.zarr fit_u8.gsplats.zarr -e memory      # uint8 (smallest, ~93 dB)
+luxar gsplat reencode fit.gsplats.zarr fit_f32.gsplats.zarr -e precision  # float32 (exact/archival)
 
 # Partition into a single kind=partition file via spatial BSP (--indices removed)
 luxar gsplat partition splats.gsplats.zarr part.gsplats.zarr --parts 4               # target part count

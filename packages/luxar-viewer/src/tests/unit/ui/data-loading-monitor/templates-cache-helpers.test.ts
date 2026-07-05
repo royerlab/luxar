@@ -390,4 +390,28 @@ describe('renderCacheContent layout guards (full L0/L1/L2 view)', () => {
     expect(html).not.toContain('luxar-cache-total__demand');
     expect(html).not.toContain('EFFECTIVE HIT RATE');
   });
+
+  // Regression: the L2 HIT RATE tooltip contains a literal double-quote
+  // (`"—"`). It is interpolated into `title="${tooltip}"` in
+  // renderCacheSection, so an unescaped quote closes the attribute early
+  // and truncates the tooltip (the tail leaks as bogus DOM attributes).
+  // Parse the rendered HTML and read the *effective* title the browser
+  // sees — pre-fix it stops at "...network download." and the closing
+  // phrase is lost.
+  it('keeps the full L2 hit-rate tooltip intact despite its embedded quotes', () => {
+    const html = renderCacheContent(makeGlobalStats(), makeFullCacheMetrics());
+    const host = document.createElement('div');
+    host.innerHTML = html;
+    const valueEl = host.querySelector('[data-field="l2-hitrate"]');
+    expect(valueEl).not.toBeNull();
+    const card = valueEl!.closest('.luxar-metric-card') as HTMLElement;
+    expect(card).not.toBeNull();
+    // The whole tooltip survives, including the quoted em-dash and the
+    // trailing clause that a broken attribute would have dropped.
+    expect(card.title).toContain('An L2 miss is the only case that costs a network download.');
+    expect(card.title).toContain('"—" = nothing has fallen through to L2 yet');
+    // And the raw HTML must carry the escaped quote, never a bare one
+    // inside the attribute value.
+    expect(html).toContain('&quot;—&quot; = nothing has fallen through to L2 yet');
+  });
 });

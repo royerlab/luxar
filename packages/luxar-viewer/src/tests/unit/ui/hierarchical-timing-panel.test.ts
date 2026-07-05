@@ -233,7 +233,7 @@ describe('renderHierarchicalTimingPanel', () => {
       ],
     });
     const html = renderHierarchicalTimingPanel(root);
-    expect(html).toContain('title="Find which data chunks intersect the current view slice"');
+    expect(html).toContain('Ask the spatial index which data chunks intersect');
   });
 });
 
@@ -391,5 +391,116 @@ describe('updateTimingPanelValues', () => {
       ],
     });
     expect(updateTimingPanelValues(container, reshaped)).toBe(false);
+  });
+});
+
+describe('stale rows', () => {
+  it('greys stale rows with the stale class and a tooltip note', () => {
+    const root = makeEntry({
+      count: 3,
+      children: [
+        makeEntry({
+          name: 'GSplats (/g)',
+          lastMs: 29,
+          children: [
+            makeEntry({ name: 'Load Arrays', lastMs: 94, stale: true }),
+            makeEntry({ name: 'Project to 3D', lastMs: 2.7 }),
+          ],
+        }),
+      ],
+    });
+    const html = renderHierarchicalTimingPanel(root);
+    expect(html).toContain('luxar-timing-panel__row--stale');
+    expect(html).toContain('did not run in the latest update');
+  });
+
+  it('excludes stale children lastMs from the type aggregation sum', () => {
+    // Two gsplats nodes: one fresh 29ms, one stale 94ms. The aggregated
+    // GSplats row must show 29ms, not 123ms.
+    const root = makeEntry({
+      count: 3,
+      children: [
+        makeEntry({ name: 'GSplats (/a)', lastMs: 29 }),
+        makeEntry({ name: 'GSplats (/b)', lastMs: 94, stale: true }),
+      ],
+    });
+    const html = renderHierarchicalTimingPanel(root);
+    expect(html).toContain('29ms');
+    expect(html).not.toContain('123ms');
+  });
+
+  it('shows the last-known (stale) sum on an all-stale aggregated row', () => {
+    const root = makeEntry({
+      count: 3,
+      children: [makeEntry({ name: 'GSplats (/a)', lastMs: 94, stale: true })],
+    });
+    const html = renderHierarchicalTimingPanel(root);
+    // Value preserved (greyed via the stale class), not zeroed.
+    expect(html).toContain('94ms');
+    expect(html).toContain('luxar-timing-panel__row--stale');
+  });
+});
+
+describe('LOD Refinement tree', () => {
+  function makeRefinementRoot(): TimingEntry {
+    return makeEntry({
+      name: 'LOD Refinement',
+      lastMs: 82,
+      avgMs: 91,
+      count: 5,
+      children: [
+        makeEntry({
+          name: 'GSplats (/g)',
+          lastMs: 82,
+          avgMs: 91,
+          children: [makeEntry({ name: 'Load Arrays', lastMs: 78, avgMs: 85 })],
+        }),
+      ],
+    });
+  }
+
+  it('renders the refinement tree as a second section with a pass count', () => {
+    const html = renderHierarchicalTimingPanel(makeEntry({ count: 8 }), makeRefinementRoot());
+    expect(html).toContain('LOD Refinement');
+    expect(html).toContain('8 updates · 5 refinement passes');
+  });
+
+  it('omits the refinement section when no pass has recorded', () => {
+    const html = renderHierarchicalTimingPanel(
+      makeEntry({ count: 8 }),
+      makeEntry({ name: 'LOD Refinement', count: 0 })
+    );
+    expect(html).not.toContain('LOD Refinement');
+    expect(html).toContain('8 updates');
+    expect(html).not.toMatch(/\d+ refinement pass/);
+  });
+
+  it('renders refinement data even when Total Update has no updates yet', () => {
+    const html = renderHierarchicalTimingPanel(makeEntry({ count: 0 }), makeRefinementRoot());
+    expect(html).not.toContain('luxar-timing-panel--empty');
+    expect(html).toContain('LOD Refinement');
+  });
+
+  it('updateTimingPanelValues requests a full re-render when the refinement tree first appears', () => {
+    const container = renderInto(renderHierarchicalTimingPanel(makeEntry({ count: 8 })));
+    // No refinement section rendered yet → structural change → false.
+    expect(updateTimingPanelValues(container, makeEntry({ count: 9 }), makeRefinementRoot())).toBe(
+      false
+    );
+  });
+
+  it('updateTimingPanelValues updates both trees in place once rendered', () => {
+    const refinement = makeRefinementRoot();
+    const container = renderInto(
+      renderHierarchicalTimingPanel(makeEntry({ count: 8 }), refinement)
+    );
+    const ok = updateTimingPanelValues(container, makeEntry({ count: 9 }), {
+      ...refinement,
+      count: 6,
+    });
+    expect(ok).toBe(true);
+    expect(container.querySelector('.luxar-timing-panel__update-count')?.textContent).toBe(
+      '9 updates · 6 refinement passes'
+    );
   });
 });

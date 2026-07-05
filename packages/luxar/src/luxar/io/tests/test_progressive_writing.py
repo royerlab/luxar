@@ -8,6 +8,7 @@ import zarr
 
 from luxar.compiler import LuxarZarrCompiler
 from luxar.dimensions import Dimensions
+from luxar.encoding import ArrayDecoder
 
 
 class TestProgressiveWriting:
@@ -66,9 +67,16 @@ class TestProgressiveWriting:
                 assert "test_points/positions" in store
                 assert "test_points/colors" in store
 
-                # Verify data matches
-                stored_positions = store["test_points/positions"][:]
-                np.testing.assert_array_almost_equal(stored_positions, positions)
+                # Verify data matches. Positions are uint16 per-axis fixed-point
+                # under the default AUTO mode, so decode before comparing.
+                decoded_positions = ArrayDecoder().decode(
+                    store["test_points/positions"], store
+                )
+                np.testing.assert_allclose(
+                    decoded_positions,
+                    positions,
+                    atol=float(np.ptp(positions, axis=0).max()) / 65535 * 2,
+                )
 
     def test_scene_with_dimensions(self) -> None:
         """Test scene creation with dimensions."""
