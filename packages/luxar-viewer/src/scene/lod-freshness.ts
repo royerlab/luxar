@@ -19,6 +19,18 @@
  * coarse level; once it has been stable for a few frames we reload the fine
  * level. `SettleTracker` answers "has the version been stable for N ticks?".
  *
+ * **Hold** (the never-downgrade display gate) decides whether the registry
+ * should keep the previously-displayed level on screen instead of swapping to
+ * a fresh aspiration whose additive ladder is still streaming. A lazy level
+ * flips `ready` after its FIRST additive chunk commits, so an ungated swap
+ * pops displayed quality down to chunk-1 (on zoom in, zoom out, or after a
+ * scrub settles) and climbs back over the following passes.
+ * `shouldHoldPreviousDisplay` holds while the aspiration is strictly worse
+ * than what is shown, and releases on ladder completion, committed-count
+ * crossover, ladder failure, or the previous level losing freshness — never
+ * blocking a swap when nothing better is on screen (fast first paint is
+ * preserved).
+ *
  * @module scene/lod-freshness
  */
 
@@ -120,6 +132,74 @@ export function coarsestFreshNonEmptyIndex(
     return i;
   }
   return -1;
+}
+
+/**
+ * The aspiration-side shape for {@link shouldHoldPreviousDisplay}: a
+ * `FreshnessChild` plus the lazy-lifecycle fields the hold decision reads
+ * (all structurally compatible with the registry's `LODGroupChild`).
+ */
+export interface HoldCandidate extends FreshnessChild {
+  /**
+   * For a progressive (additive-laddered) level: whether more additive LODs
+   * remain to stream for the current view. Absent ⇒ single-LOD level, never
+   * held against.
+   */
+  hasMoreLODs?: () => boolean;
+  /** Set by the registry while an ``ensureLoaded`` pass is in flight. */
+  loading?: boolean;
+  /** Set by the load thunk when the last ``ensureLoaded`` pass failed. */
+  failed?: boolean;
+}
+
+/**
+ * The never-downgrade display gate: should the registry keep the
+ * previously-displayed level (`prev`) on screen instead of swapping to the
+ * `aspiration`, because the aspiration's additive ladder is still streaming
+ * and its committed geometry is strictly worse than what is shown?
+ *
+ * Holds only while ALL of these are true:
+ *   - the aspiration is **streaming**: its ladder reports more LODs, or an
+ *     ``ensureLoaded`` pass is in flight. The `loading` half matters at the
+ *     END of a hold — `hasMoreLODs` flips false the moment the final LOD's
+ *     *fetch* resolves, several frames before its worker-processing + commit
+ *     land, and releasing on it alone would re-show the partial level for
+ *     exactly those frames (the miniature version of the pop this gate
+ *     exists to prevent). `loading` stays true until the load thunk's
+ *     ``finally``, which runs strictly after the commit.
+ *   - the aspiration is not **failed** — a failing ladder degrades to the
+ *     ungated behavior (show the partial aspiration; the failure cooldown
+ *     retries) instead of pinning `prev` behind a possibly-permanent failure.
+ *   - `prev` is fresh for `version` (or merely ready when `version` is
+ *     ``null`` — freshness untracked): staleness always beats quality; a
+ *     stale `prev` shows the wrong slice and must not be held.
+ *   - both committed element counts are known, comparable (same leaf
+ *     ``nodeType`` — splat counts vs segment counts are meaningless to
+ *     compare), `prev`'s is non-zero, and the aspiration's is strictly
+ *     below it.
+ *
+ * Releases (returns ``false``) on ladder completion (commit landed), count
+ * crossover (the aspiration caught up — the rest of its ladder then streams
+ * *visibly*), failure, a stale/empty/unknown `prev`, or no `prev` at all —
+ * so a group with nothing better on screen always swaps immediately (fast
+ * first paint).
+ */
+export function shouldHoldPreviousDisplay(
+  aspiration: HoldCandidate,
+  prev: FreshnessChild | undefined,
+  version: number | null
+): boolean {
+  if (!prev) return false;
+  const streaming = (aspiration.hasMoreLODs?.() ?? false) || aspiration.loading === true;
+  if (!streaming) return false;
+  if (aspiration.failed) return false;
+  if (!(version == null ? isReady(prev) : isFresh(prev, version))) return false;
+  if (prev.object.userData?.nodeType !== aspiration.object.userData?.nodeType) return false;
+  const prevCount = visibleElementCount(prev);
+  if (prevCount == null || prevCount <= 0) return false;
+  const aspCount = visibleElementCount(aspiration);
+  if (aspCount == null) return false;
+  return aspCount < prevCount;
 }
 
 /**
