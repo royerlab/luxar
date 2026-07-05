@@ -21,7 +21,7 @@
  *      visibility atomically — gated by the **never-downgrade display
  *      gate**: a fresh aspiration whose additive ladder is still streaming
  *      is not shown while the previously-displayed level looks strictly
- *      better (see ``shouldHoldPreviousDisplay`` in ``lod-freshness.ts``).
+ *      better (see ``shouldHoldPreviousDisplay`` in ``lod-display-gate.ts``).
  *
  * The atomic-swap invariant on initial load is realized by
  * ``loadLodGroupNode`` (sequential awaits + ``visible=false`` after

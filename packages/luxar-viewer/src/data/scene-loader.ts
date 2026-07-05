@@ -133,9 +133,10 @@ import type { NodeBuildCtx } from './scene-loader/nodes/build-ctx';
 /**
  * Delay before `kickRefinementIfIdle` re-checks a lock-held serialization
  * lock. Frame-scale-ish: responsive after the holder finishes, cheap while it
- * runs (one timer at a time — see `_refinementKickPending`).
+ * runs (one timer at a time — see `_refinementKickPending`). Module-local (no
+ * cross-module consumer), matching the sibling `FINE_RELOAD_SETTLE_TICKS`.
  */
-export const REFINEMENT_KICK_RECHECK_MS = 100;
+const REFINEMENT_KICK_RECHECK_MS = 100;
 
 /**
  * Main scene loader that handles the complete loading pipeline.
