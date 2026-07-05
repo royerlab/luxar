@@ -163,6 +163,237 @@ pub fn decode_geolog_scalar_u16(data: &[u16], min_log: f32, max_log: f32, output
     }
 }
 
+/// Shared per-channel dequantization loop (linear / log / signed-log).
+///
+/// Each element's column is its global flattened index modulo the column
+/// count, tracked with a rolling counter; `col_offset` is the column phase of
+/// the FIRST element (callers decoding a range that starts mid-array pass
+/// `flat_start % cols`). With `zero_level` (the current writer for the log
+/// family) code 0 is a RESERVED ZERO (decodes to exactly 0) and codes
+/// `1..=levels` span each column's `[lo, hi]` with denominator `levels - 1`;
+/// without it all codes `0..=levels` span the scale (legacy log arrays, and
+/// the linear encoding always).
+///
+/// f64 internals throughout: the per-column scales arrive as f64 (JSON attrs)
+/// and the math matches the Python decoder (`_perchannel_companded`) and the
+/// main-thread `makePerChannelDequant` bit-for-bit, so worker-decoded and
+/// main-thread-decoded ranges are indistinguishable.
+fn decode_perchannel_impl(
+    n: usize,
+    code_at: impl Fn(usize) -> f64,
+    col_lo: &[f64],
+    col_hi: &[f64],
+    levels: f64,
+    zero_level: bool,
+    col_offset: usize,
+    transform: impl Fn(f64) -> f64,
+    output: &mut [f32],
+) {
+    let cols = col_lo.len();
+    debug_assert!(
+        cols > 0 && col_hi.len() == cols,
+        "per-channel scales malformed: lo={} hi={}",
+        cols,
+        col_hi.len()
+    );
+    debug_assert!(
+        output.len() >= n,
+        "output too small: {} < {}",
+        output.len(),
+        n
+    );
+    if cols == 0 {
+        return;
+    }
+    // Same 1e-30 clamp as the Python decoder / makePerChannelDequant: a
+    // constant column (lo == hi) decodes every code to lo.
+    let rng: Vec<f64> = col_lo
+        .iter()
+        .zip(col_hi)
+        .map(|(lo, hi)| (hi - lo).max(1e-30))
+        .collect();
+    let denom = (levels - 1.0).max(1.0);
+    let mut c = col_offset % cols;
+    for i in 0..n {
+        let u = code_at(i);
+        output[i] = if zero_level && u == 0.0 {
+            0.0
+        } else {
+            let y = if zero_level {
+                col_lo[c] + (u - 1.0) / denom * rng[c]
+            } else {
+                col_lo[c] + u / levels * rng[c]
+            };
+            transform(y) as f32
+        };
+        c += 1;
+        if c == cols {
+            c = 0;
+        }
+    }
+}
+
+/// `sign(y) * expm1(|y|)` — the signed-log inverse compand. Branch instead of
+/// `signum` so `y == 0` maps to exactly 0 (Rust's `signum(0.0)` is 1.0, which
+/// would still give 0 here, but the branch mirrors `Math.sign(y) *
+/// Math.expm1(Math.abs(y))` in the TS reference for every input).
+#[inline]
+fn signed_expm1(y: f64) -> f64 {
+    if y < 0.0 {
+        -((-y).exp_m1())
+    } else {
+        y.exp_m1()
+    }
+}
+
+/// Decode per-channel LINEAR (fixed-point) uint8 codes to float32.
+///
+/// Identity transform with per-column `[lo, hi]` scales — the COORDINATE
+/// encoding (positions / centers / vertices). No reserved zero level (mirrors
+/// the Python `_decode_linear_perchannel`, which has no `zero_level` branch).
+#[wasm_bindgen]
+pub fn decode_linear_perchannel_u8(
+    data: &[u8],
+    col_lo: &[f64],
+    col_hi: &[f64],
+    col_offset: usize,
+    output: &mut [f32],
+) {
+    decode_perchannel_impl(
+        data.len(),
+        |i| data[i] as f64,
+        col_lo,
+        col_hi,
+        255.0,
+        false,
+        col_offset,
+        |y| y,
+        output,
+    );
+}
+
+/// Decode per-channel LINEAR (fixed-point) uint16 codes to float32.
+#[wasm_bindgen]
+pub fn decode_linear_perchannel_u16(
+    data: &[u16],
+    col_lo: &[f64],
+    col_hi: &[f64],
+    col_offset: usize,
+    output: &mut [f32],
+) {
+    decode_perchannel_impl(
+        data.len(),
+        |i| data[i] as f64,
+        col_lo,
+        col_hi,
+        65535.0,
+        false,
+        col_offset,
+        |y| y,
+        output,
+    );
+}
+
+/// Decode per-channel LOG uint8 codes to float32 (`x = expm1(y)`).
+///
+/// The Cholesky-diagonal encoding. `zero_level: true` (current writer) =
+/// reserved zero code + nonzero codes over the nonzero-anchored scale;
+/// `false` = legacy all-levels mapping.
+#[wasm_bindgen]
+pub fn decode_log_perchannel_u8(
+    data: &[u8],
+    col_lo: &[f64],
+    col_hi: &[f64],
+    zero_level: bool,
+    col_offset: usize,
+    output: &mut [f32],
+) {
+    decode_perchannel_impl(
+        data.len(),
+        |i| data[i] as f64,
+        col_lo,
+        col_hi,
+        255.0,
+        zero_level,
+        col_offset,
+        |y| y.exp_m1(),
+        output,
+    );
+}
+
+/// Decode per-channel LOG uint16 codes to float32.
+#[wasm_bindgen]
+pub fn decode_log_perchannel_u16(
+    data: &[u16],
+    col_lo: &[f64],
+    col_hi: &[f64],
+    zero_level: bool,
+    col_offset: usize,
+    output: &mut [f32],
+) {
+    decode_perchannel_impl(
+        data.len(),
+        |i| data[i] as f64,
+        col_lo,
+        col_hi,
+        65535.0,
+        zero_level,
+        col_offset,
+        |y| y.exp_m1(),
+        output,
+    );
+}
+
+/// Decode per-channel SIGNED-LOG uint8 codes to float32
+/// (`y = ...; x = sign(y)·expm1(|y|)`).
+///
+/// The Cholesky off-diagonal encoding (signed, zero-centred). `zero_level`
+/// as in [`decode_log_perchannel_u8`].
+#[wasm_bindgen]
+pub fn decode_signed_log_perchannel_u8(
+    data: &[u8],
+    col_lo: &[f64],
+    col_hi: &[f64],
+    zero_level: bool,
+    col_offset: usize,
+    output: &mut [f32],
+) {
+    decode_perchannel_impl(
+        data.len(),
+        |i| data[i] as f64,
+        col_lo,
+        col_hi,
+        255.0,
+        zero_level,
+        col_offset,
+        signed_expm1,
+        output,
+    );
+}
+
+/// Decode per-channel SIGNED-LOG uint16 codes to float32.
+#[wasm_bindgen]
+pub fn decode_signed_log_perchannel_u16(
+    data: &[u16],
+    col_lo: &[f64],
+    col_hi: &[f64],
+    zero_level: bool,
+    col_offset: usize,
+    output: &mut [f32],
+) {
+    decode_perchannel_impl(
+        data.len(),
+        |i| data[i] as f64,
+        col_lo,
+        col_hi,
+        65535.0,
+        zero_level,
+        col_offset,
+        signed_expm1,
+        output,
+    );
+}
+
 /// Decode LUT-encoded uint8 indices to float32 (scalar mode).
 ///
 /// Each index maps to a single float value from the LUT.
@@ -354,6 +585,78 @@ mod tests {
         assert!(output[1] > 10.0 && output[1] < 13.0);
         // 255 -> expm1(5) ≈ 147.4
         assert!(output[2] > 145.0 && output[2] < 150.0);
+    }
+
+    #[test]
+    fn test_decode_linear_perchannel_u16_columns() {
+        // 2 columns with different scales: code 0 -> lo[c], top -> hi[c],
+        // and the rolling column counter keeps the phase across rows.
+        let data = vec![0u16, 0, 65535, 65535];
+        let (lo, hi) = (vec![-10.0f64, 100.0], vec![10.0f64, 300.0]);
+        let mut output = vec![0.0f32; 4];
+        decode_linear_perchannel_u16(&data, &lo, &hi, 0, &mut output);
+        assert_eq!(output, vec![-10.0, 100.0, 10.0, 300.0]);
+    }
+
+    #[test]
+    fn test_decode_linear_perchannel_col_offset_phase() {
+        // Same codes, but starting at column 1 of 2: columns are (1, 0, 1).
+        let data = vec![0u16, 0, 65535];
+        let (lo, hi) = (vec![0.0f64, 100.0], vec![1.0f64, 200.0]);
+        let mut output = vec![0.0f32; 3];
+        decode_linear_perchannel_u16(&data, &lo, &hi, 1, &mut output);
+        assert_eq!(output, vec![100.0, 0.0, 200.0]);
+    }
+
+    #[test]
+    fn test_decode_log_perchannel_u8_zero_level() {
+        // zero_level: code 0 -> exactly 0; code 1 -> expm1(lo); top -> expm1(hi).
+        let data = vec![0u8, 1, 255];
+        let (lo, hi) = (vec![0.5f64], vec![3.0f64]);
+        let mut output = vec![0.0f32; 3];
+        decode_log_perchannel_u8(&data, &lo, &hi, true, 0, &mut output);
+        assert_eq!(output[0], 0.0);
+        assert!((output[1] - 0.5f64.exp_m1() as f32).abs() < 1e-6);
+        assert!((output[2] - 3.0f64.exp_m1() as f32).abs() < 1e-5);
+    }
+
+    #[test]
+    fn test_decode_log_perchannel_u8_legacy_all_levels() {
+        // Without the flag, code 0 decodes to expm1(lo) (the legacy mapping),
+        // NOT to zero.
+        let data = vec![0u8, 255];
+        let (lo, hi) = (vec![0.5f64], vec![3.0f64]);
+        let mut output = vec![0.0f32; 2];
+        decode_log_perchannel_u8(&data, &lo, &hi, false, 0, &mut output);
+        assert!((output[0] - 0.5f64.exp_m1() as f32).abs() < 1e-6);
+        assert!((output[1] - 3.0f64.exp_m1() as f32).abs() < 1e-5);
+    }
+
+    #[test]
+    fn test_decode_signed_log_perchannel_u16_sign_and_zero() {
+        // Signed inverse compand: negative lo half stays negative, zero level
+        // exact, top decodes to expm1(hi).
+        let data = vec![0u16, 1, 65535];
+        let (lo, hi) = (vec![-2.0f64], vec![2.0f64]);
+        let mut output = vec![0.0f32; 3];
+        decode_signed_log_perchannel_u16(&data, &lo, &hi, true, 0, &mut output);
+        assert_eq!(output[0], 0.0);
+        assert!((output[1] - (-(2.0f64.exp_m1())) as f32).abs() < 1e-5);
+        assert!((output[2] - 2.0f64.exp_m1() as f32).abs() < 1e-5);
+    }
+
+    #[test]
+    fn test_decode_perchannel_constant_column() {
+        // lo == hi (constant column): the 1e-30 range clamp decodes every
+        // nonzero code to lo.
+        let data = vec![1u8, 128, 255];
+        let (lo, hi) = (vec![1.5f64], vec![1.5f64]);
+        let mut output = vec![0.0f32; 3];
+        decode_log_perchannel_u8(&data, &lo, &hi, true, 0, &mut output);
+        let expected = 1.5f64.exp_m1() as f32;
+        for v in output {
+            assert!((v - expected).abs() < 1e-6);
+        }
     }
 
     #[test]

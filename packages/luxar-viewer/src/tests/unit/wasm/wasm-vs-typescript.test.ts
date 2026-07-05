@@ -16,6 +16,7 @@
 
 import { describe, it, expect, beforeAll } from 'vitest';
 import { TypeScriptFallback } from '../../../wasm/typescript';
+import { ArrayDecoder } from '../../../data/array-decoder/decoder';
 import type { WasmModule } from '../../../wasm/types';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
@@ -552,6 +553,151 @@ describe('WASM vs TypeScript Comparison', () => {
       expect(wasmOutput[0]).toBe(0);
       expect(arraysAlmostEqual(wasmOutput, tsOutput)).toBe(true);
     });
+
+    /**
+     * Per-channel family: WASM, the TS reference, AND the main-thread
+     * `makePerChannelDequant` closure must agree BIT-EXACTLY — all three do
+     * the same f64 math on the same f64 scales with an f32 store, so any
+     * difference is a divergence bug, not rounding. This matters because the
+     * range loader decodes sub-threshold ranges on the main thread and larger
+     * ones in the worker; the two paths must be indistinguishable.
+     */
+    const perChannelTriple = (
+      kind: 'linear' | 'log' | 'signed_log',
+      dtype: 'u8' | 'u16',
+      zeroLevel: boolean,
+      colOffset: number
+    ) => {
+      const colLo = new Float64Array([-2.25, 0.5, -7.125]);
+      const colHi = new Float64Array([3.5, 0.5, 9.875]); // column 1 constant (lo == hi)
+      const cols = 3;
+      const top = dtype === 'u8' ? 255 : 65535;
+      const n = 61; // not a multiple of cols: exercises the rolling column counter
+      const codes = Array.from({ length: n }, (_, i) => (i * 9973) % (top + 1));
+      codes[0] = 0; // reserved-zero (or legacy lo) code
+      codes[1] = top; // top code
+      const tsOutput = new Float32Array(n);
+      const wasmOutput = new Float32Array(n);
+
+      if (dtype === 'u8') {
+        const data = new Uint8Array(codes);
+        if (kind === 'linear') {
+          tsModule.decode_linear_perchannel_u8(data, colLo, colHi, colOffset, tsOutput);
+          wasmModule!.decode_linear_perchannel_u8(data, colLo, colHi, colOffset, wasmOutput);
+        } else if (kind === 'log') {
+          tsModule.decode_log_perchannel_u8(data, colLo, colHi, zeroLevel, colOffset, tsOutput);
+          wasmModule!.decode_log_perchannel_u8(
+            data,
+            colLo,
+            colHi,
+            zeroLevel,
+            colOffset,
+            wasmOutput
+          );
+        } else {
+          tsModule.decode_signed_log_perchannel_u8(
+            data,
+            colLo,
+            colHi,
+            zeroLevel,
+            colOffset,
+            tsOutput
+          );
+          wasmModule!.decode_signed_log_perchannel_u8(
+            data,
+            colLo,
+            colHi,
+            zeroLevel,
+            colOffset,
+            wasmOutput
+          );
+        }
+      } else {
+        const data = new Uint16Array(codes);
+        if (kind === 'linear') {
+          tsModule.decode_linear_perchannel_u16(data, colLo, colHi, colOffset, tsOutput);
+          wasmModule!.decode_linear_perchannel_u16(data, colLo, colHi, colOffset, wasmOutput);
+        } else if (kind === 'log') {
+          tsModule.decode_log_perchannel_u16(data, colLo, colHi, zeroLevel, colOffset, tsOutput);
+          wasmModule!.decode_log_perchannel_u16(
+            data,
+            colLo,
+            colHi,
+            zeroLevel,
+            colOffset,
+            wasmOutput
+          );
+        } else {
+          tsModule.decode_signed_log_perchannel_u16(
+            data,
+            colLo,
+            colHi,
+            zeroLevel,
+            colOffset,
+            tsOutput
+          );
+          wasmModule!.decode_signed_log_perchannel_u16(
+            data,
+            colLo,
+            colHi,
+            zeroLevel,
+            colOffset,
+            wasmOutput
+          );
+        }
+      }
+
+      // Third backend: the main-thread dequant closure (the sub-threshold and
+      // worker-failure path in range-loader/perchannel.ts).
+      const dequant = ArrayDecoder.makePerChannelDequant(
+        {
+          name: `${kind}_perchannel_${dtype}`,
+          bits: dtype === 'u8' ? 8 : 16,
+          col_lo: Array.from(colLo),
+          col_hi: Array.from(colHi),
+          zero_level: zeroLevel,
+        },
+        cols
+      );
+      const mainOutput = new Float32Array(n);
+      for (let j = 0; j < n; j++) {
+        mainOutput[j] = dequant(codes[j], (colOffset + j) % cols);
+      }
+
+      expect(arraysEqual(wasmOutput, tsOutput)).toBe(true); // bit-exact
+      expect(arraysEqual(wasmOutput, mainOutput)).toBe(true); // bit-exact
+      if (zeroLevel && kind !== 'linear') expect(wasmOutput[0]).toBe(0);
+    };
+
+    it.skipIf(!wasmFilesExist)('decode_linear_perchannel_u16 matches (3 backends)', () => {
+      perChannelTriple('linear', 'u16', false, 0);
+    });
+
+    it.skipIf(!wasmFilesExist)('decode_linear_perchannel_u8 matches with column phase', () => {
+      perChannelTriple('linear', 'u8', false, 2);
+    });
+
+    it.skipIf(!wasmFilesExist)('decode_log_perchannel_u8 zero_level matches (3 backends)', () => {
+      perChannelTriple('log', 'u8', true, 0);
+    });
+
+    it.skipIf(!wasmFilesExist)('decode_log_perchannel_u16 legacy matches (3 backends)', () => {
+      perChannelTriple('log', 'u16', false, 0);
+    });
+
+    it.skipIf(!wasmFilesExist)(
+      'decode_signed_log_perchannel_u16 zero_level matches with column phase',
+      () => {
+        perChannelTriple('signed_log', 'u16', true, 1);
+      }
+    );
+
+    it.skipIf(!wasmFilesExist)(
+      'decode_signed_log_perchannel_u8 legacy matches (3 backends)',
+      () => {
+        perChannelTriple('signed_log', 'u8', false, 0);
+      }
+    );
 
     it.skipIf(!wasmFilesExist)('decode_lut_scalar_u16 should match', () => {
       // Use larger indices to test u16 range

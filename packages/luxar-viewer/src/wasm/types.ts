@@ -157,6 +157,72 @@ export interface WasmModule {
     output: Float32Array
   ): void;
 
+  /**
+   * Decode per-channel LINEAR (fixed-point) uint8 codes to float32.
+   * Per-column `[lo, hi]` scales (f64, straight from the JSON attrs);
+   * `colOffset` is the column phase of the first element.
+   */
+  decode_linear_perchannel_u8(
+    data: Uint8Array,
+    colLo: Float64Array,
+    colHi: Float64Array,
+    colOffset: number,
+    output: Float32Array
+  ): void;
+
+  /** Decode per-channel LINEAR (fixed-point) uint16 codes to float32. */
+  decode_linear_perchannel_u16(
+    data: Uint16Array,
+    colLo: Float64Array,
+    colHi: Float64Array,
+    colOffset: number,
+    output: Float32Array
+  ): void;
+
+  /**
+   * Decode per-channel LOG uint8 codes to float32 (`x = expm1(y)`).
+   * `zeroLevel: true` = reserved zero code 0 + codes 1..255 over the
+   * nonzero-anchored scale; `false` = legacy all-levels mapping.
+   */
+  decode_log_perchannel_u8(
+    data: Uint8Array,
+    colLo: Float64Array,
+    colHi: Float64Array,
+    zeroLevel: boolean,
+    colOffset: number,
+    output: Float32Array
+  ): void;
+
+  /** Decode per-channel LOG uint16 codes to float32. */
+  decode_log_perchannel_u16(
+    data: Uint16Array,
+    colLo: Float64Array,
+    colHi: Float64Array,
+    zeroLevel: boolean,
+    colOffset: number,
+    output: Float32Array
+  ): void;
+
+  /** Decode per-channel SIGNED-LOG uint8 codes (`x = sign(y)·expm1(|y|)`). */
+  decode_signed_log_perchannel_u8(
+    data: Uint8Array,
+    colLo: Float64Array,
+    colHi: Float64Array,
+    zeroLevel: boolean,
+    colOffset: number,
+    output: Float32Array
+  ): void;
+
+  /** Decode per-channel SIGNED-LOG uint16 codes to float32. */
+  decode_signed_log_perchannel_u16(
+    data: Uint16Array,
+    colLo: Float64Array,
+    colHi: Float64Array,
+    zeroLevel: boolean,
+    colOffset: number,
+    output: Float32Array
+  ): void;
+
   /** Decode LUT indices (uint8) to scalar float values */
   decode_lut_scalar_u8(indices: Uint8Array, lut: Float32Array, output: Float32Array): void;
 

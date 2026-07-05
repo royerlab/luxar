@@ -1,6 +1,9 @@
 import * as zarr from '../../../zarr';
 import { get, abortOptions } from '../../../zarr';
 import { log } from '../../../../utils/log';
+import { config as appConfig } from '../../../../config';
+import { getWorkerPool } from '../../../../workers/worker-pool';
+import type { PerChannelKind } from '../../../../workers/data-worker/decode/perchannel';
 import type { LoadRange } from '../../base-types';
 import { ArrayDecoder, type ArrayMetadata } from '../../../array-decoder/decoder';
 import {
@@ -16,6 +19,15 @@ export interface PerChannelCtx {
   verbose: boolean;
   /** Per-update abort signal forwarded to `get()` (see RangeLoader). */
   signal?: AbortSignal | null;
+}
+
+/** The subset of encoding metadata the per-channel family carries. */
+interface PerChannelEncoding {
+  name?: string;
+  bits?: number;
+  col_lo?: number[];
+  col_hi?: number[];
+  zero_level?: boolean;
 }
 
 /**
@@ -35,10 +47,13 @@ export interface PerChannelCtx {
  * Ranges are fetched CONCURRENTLY (like `loadDirect` / `loadQuantized`):
  * destination offsets are precomputed, each range writes its own disjoint
  * output span, and the global flattened index `offsets[i] + j` keeps the
- * column phase exact regardless of resolution order. Decode itself stays on
- * the main thread deliberately — it is a single multiply-add per element
- * (no expm1, no worker `decodePerChannel` kernel exists), so the cost is
- * marginal next to the network fetch it overlaps with.
+ * column phase exact regardless of resolution order. Above the worker
+ * threshold, decode runs in the worker pool on the WASM per-channel kernels
+ * (`decode_*_perchannel_*`) — the log/signed-log Cholesky pair costs an
+ * `expm1` per element, which is real main-thread work at millions of splats.
+ * Below the threshold (or on worker failure) the main-thread
+ * `makePerChannelDequant` closure decodes bit-identically — both paths do the
+ * same f64 math on the same f64 scales.
  */
 export async function loadPerChannel(
   ctx: PerChannelCtx,
@@ -49,18 +64,36 @@ export async function loadPerChannel(
   elementsPerItem: number
 ): Promise<number> {
   const cols = Math.max(1, elementsPerItem);
-  // Throws (does not silently zero-fill) on missing/malformed per-column scales.
+  // Throws (does not silently zero-fill) on missing/malformed per-column
+  // scales — this validation guards BOTH decode paths, and the returned
+  // closure is the sub-threshold / worker-failure decoder.
   const dequant = ArrayDecoder.makePerChannelDequant(attrs.encoding, cols);
+
+  const enc = (attrs.encoding ?? {}) as PerChannelEncoding;
+  const name = enc.name ?? '';
+  const kind: PerChannelKind = name.startsWith('signed_log_perchannel')
+    ? 'signed_log'
+    : name.startsWith('log_perchannel')
+      ? 'log'
+      : 'linear';
+  const bits: 8 | 16 = (enc.bits ?? (name.endsWith('u8') ? 8 : 16)) === 8 ? 8 : 16;
+  const zeroLevel = enc.zero_level === true;
+  // f64 scales, shared (structured-cloned) across all range decodes.
+  const colLo = Float64Array.from(enc.col_lo ?? []);
+  const colHi = Float64Array.from(enc.col_hi ?? []);
+
+  const shape = array.shape;
+  const { offsets, counts, total } = rangeDestOffsets(shape, ranges);
+
+  const useWorkers = appConfig.dataLoading.performance.useWebWorkers;
+  const shouldUseWorkers = useWorkers && total > ctx.config.workerThreshold;
 
   if (ctx.verbose) {
     log.info(
       ctx.config.logModule,
-      `PerChannel: decoding ${ranges.length} ranges (${attrs.encoding?.name})`
+      `PerChannel: decoding ${ranges.length} ranges (${name}, kind=${kind}, worker=${shouldUseWorkers})`
     );
   }
-
-  const shape = array.shape;
-  const { offsets, counts, total } = rangeDestOffsets(shape, ranges);
 
   await Promise.all(
     ranges.map(async (range, i) => {
@@ -73,6 +106,36 @@ export async function loadPerChannel(
         ctx.config.logModule
       );
       const base = offsets[i];
+
+      if (shouldUseWorkers && (data instanceof Uint8Array || data instanceof Uint16Array)) {
+        try {
+          const decoded = await getWorkerPool().runWithTimeout(
+            'decodePerChannel',
+            'decode',
+            (api) =>
+              api.decodePerChannel({
+                data,
+                kind,
+                colLo,
+                colHi,
+                zeroLevel,
+                colOffset: base % cols,
+                bits,
+              }),
+            ctx.signal ?? undefined
+          );
+          output.set(decoded, base);
+          return;
+        } catch (error) {
+          if (error instanceof Error && error.name === 'WorkerAbortError') throw error;
+          log.warning(
+            ctx.config.logModule,
+            'Worker per-channel decoding failed, falling back to main thread:',
+            error
+          );
+        }
+      }
+
       for (let j = 0; j < data.length; j++) {
         const g = base + j;
         output[g] = dequant(Number(data[j]), g % cols);

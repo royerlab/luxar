@@ -28,6 +28,12 @@ export {
   decode_log_scalar_u16,
   decode_geolog_scalar_u8,
   decode_geolog_scalar_u16,
+  decode_linear_perchannel_u8,
+  decode_linear_perchannel_u16,
+  decode_log_perchannel_u8,
+  decode_log_perchannel_u16,
+  decode_signed_log_perchannel_u8,
+  decode_signed_log_perchannel_u16,
   decode_lut_scalar_u8,
   decode_lut_scalar_u16,
   decode_lut_row_u8,
@@ -77,6 +83,12 @@ import {
   decode_log_scalar_u16,
   decode_geolog_scalar_u8,
   decode_geolog_scalar_u16,
+  decode_linear_perchannel_u8,
+  decode_linear_perchannel_u16,
+  decode_log_perchannel_u8,
+  decode_log_perchannel_u16,
+  decode_signed_log_perchannel_u8,
+  decode_signed_log_perchannel_u16,
   decode_lut_scalar_u8,
   decode_lut_scalar_u16,
   decode_lut_row_u8,
@@ -126,6 +138,12 @@ export class TypeScriptFallback implements WasmModule {
   decode_log_scalar_u8 = decode_log_scalar_u8;
   decode_geolog_scalar_u8 = decode_geolog_scalar_u8;
   decode_geolog_scalar_u16 = decode_geolog_scalar_u16;
+  decode_linear_perchannel_u8 = decode_linear_perchannel_u8;
+  decode_linear_perchannel_u16 = decode_linear_perchannel_u16;
+  decode_log_perchannel_u8 = decode_log_perchannel_u8;
+  decode_log_perchannel_u16 = decode_log_perchannel_u16;
+  decode_signed_log_perchannel_u8 = decode_signed_log_perchannel_u8;
+  decode_signed_log_perchannel_u16 = decode_signed_log_perchannel_u16;
   decode_log_scalar_u16 = decode_log_scalar_u16;
   decode_lut_scalar_u8 = decode_lut_scalar_u8;
   decode_lut_scalar_u16 = decode_lut_scalar_u16;

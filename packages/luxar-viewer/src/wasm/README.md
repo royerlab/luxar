@@ -55,6 +55,10 @@ non-standard location.
 
 - `decode_quantized_u8()` / `decode_quantized_u16()` — Dequantize compressed arrays
 - `decode_log_scalar_u8()` / `decode_log_scalar_u16()` — Log-space decoding
+- `decode_geolog_scalar_u8()` / `decode_geolog_scalar_u16()` — Geometric-log decoding (reserved zero level)
+- `decode_linear_perchannel_u8()` / `_u16()` — Per-column fixed-point (COORDINATE centers/positions)
+- `decode_log_perchannel_u8()` / `_u16()` — Per-column log (Cholesky diagonal; `zero_level`-aware)
+- `decode_signed_log_perchannel_u8()` / `_u16()` — Per-column signed-log (Cholesky off-diagonal)
 - `decode_lut_scalar_u8()` / `decode_lut_scalar_u16()` — Lookup table scalar decoding
 - `decode_lut_row_u8()` / `decode_lut_row_u16()` — Lookup table row (vector) decoding
 - `decode_broadcasted()` — Expand broadcast-encoded arrays

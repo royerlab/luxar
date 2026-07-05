@@ -27,6 +27,15 @@ All notable changes to Luxar are documented in this file.
   labels); fixes two arrays that silently used zarr's lz4 default
   (colormap LUTs, batch denoise intermediates). Decode is level-independent —
   read cost unchanged, stores ~20% smaller before the amplitude win.
+- Viewer: the per-channel decode family (`linear_perchannel_*` centers,
+  `log_perchannel_*` / `signed_log_perchannel_*` Cholesky factors) now decodes
+  in the worker on new Rust/WASM kernels (`decode_{linear,log,signed_log}_
+  perchannel_{u8,u16}`) above the same threshold as the other encodings —
+  previously the only hot decode path still running per-element on the main
+  thread (an `expm1` per element for the Cholesky pair). f64 scales cross the
+  boundary as Float64Array, so worker, TS-fallback, and main-thread decodes
+  are bit-identical (three-way parity tests); sub-threshold ranges and worker
+  failures keep the main-thread `makePerChannelDequant` path.
 - Rescale-first generalised to the sibling encodings: `bounded_scalar_u8/u16`
   now anchor the linear grid at the array's own `[min, max]` instead of
   `[0, max]` (encoder-only — decoders already honoured the stored min), and

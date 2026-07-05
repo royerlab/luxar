@@ -102,6 +102,140 @@ export function decode_geolog_scalar_u16(
 }
 
 /**
+ * Shared per-channel dequantization loop (linear / log / signed-log).
+ * Mirrors the Rust `decode_perchannel_impl` 1:1 — see decode.rs for the
+ * layout contract (rolling column counter, `colOffset` phase, `zeroLevel`
+ * reserved-zero vs legacy all-levels mapping, 1e-30 constant-column clamp).
+ * JS numbers ARE f64, so no fround is needed: the scales arrive as
+ * Float64Array and the math matches the Rust kernel and the Python decoder
+ * bit-for-bit.
+ */
+function decodePerChannelImpl(
+  data: ArrayLike<number>,
+  colLo: Float64Array,
+  colHi: Float64Array,
+  levels: number,
+  zeroLevel: boolean,
+  colOffset: number,
+  transform: (y: number) => number,
+  output: Float32Array
+): void {
+  const cols = colLo.length;
+  if (cols === 0) {
+    return;
+  }
+  const rng = new Float64Array(cols);
+  for (let c = 0; c < cols; c++) {
+    rng[c] = Math.max(colHi[c] - colLo[c], 1e-30);
+  }
+  const denom = Math.max(levels - 1, 1);
+  let c = colOffset % cols;
+  for (let i = 0; i < data.length; i++) {
+    const u = data[i];
+    if (zeroLevel && u === 0) {
+      output[i] = 0;
+    } else {
+      const y = zeroLevel
+        ? colLo[c] + ((u - 1) / denom) * rng[c]
+        : colLo[c] + (u / levels) * rng[c];
+      output[i] = transform(y);
+    }
+    c += 1;
+    if (c === cols) {
+      c = 0;
+    }
+  }
+}
+
+/** `sign(y) * expm1(|y|)` — the signed-log inverse compand. */
+function signedExpm1(y: number): number {
+  return y < 0 ? -Math.expm1(-y) : Math.expm1(y);
+}
+
+const identity = (y: number): number => y;
+
+/**
+ * Decode per-channel LINEAR (fixed-point) uint8 codes to float32.
+ * Identity transform, per-column scales — the COORDINATE encoding. No
+ * reserved zero level (mirrors Python's `_decode_linear_perchannel`).
+ */
+export function decode_linear_perchannel_u8(
+  data: Uint8Array,
+  colLo: Float64Array,
+  colHi: Float64Array,
+  colOffset: number,
+  output: Float32Array
+): void {
+  decodePerChannelImpl(data, colLo, colHi, 255, false, colOffset, identity, output);
+}
+
+/** Decode per-channel LINEAR (fixed-point) uint16 codes to float32. */
+export function decode_linear_perchannel_u16(
+  data: Uint16Array,
+  colLo: Float64Array,
+  colHi: Float64Array,
+  colOffset: number,
+  output: Float32Array
+): void {
+  decodePerChannelImpl(data, colLo, colHi, 65535, false, colOffset, identity, output);
+}
+
+/**
+ * Decode per-channel LOG uint8 codes to float32 (`x = expm1(y)`).
+ * The Cholesky-diagonal encoding; `zeroLevel` per the current-vs-legacy
+ * layout contract in decode.rs.
+ */
+export function decode_log_perchannel_u8(
+  data: Uint8Array,
+  colLo: Float64Array,
+  colHi: Float64Array,
+  zeroLevel: boolean,
+  colOffset: number,
+  output: Float32Array
+): void {
+  decodePerChannelImpl(data, colLo, colHi, 255, zeroLevel, colOffset, Math.expm1, output);
+}
+
+/** Decode per-channel LOG uint16 codes to float32. */
+export function decode_log_perchannel_u16(
+  data: Uint16Array,
+  colLo: Float64Array,
+  colHi: Float64Array,
+  zeroLevel: boolean,
+  colOffset: number,
+  output: Float32Array
+): void {
+  decodePerChannelImpl(data, colLo, colHi, 65535, zeroLevel, colOffset, Math.expm1, output);
+}
+
+/**
+ * Decode per-channel SIGNED-LOG uint8 codes to float32
+ * (`x = sign(y)·expm1(|y|)`). The Cholesky off-diagonal encoding.
+ */
+export function decode_signed_log_perchannel_u8(
+  data: Uint8Array,
+  colLo: Float64Array,
+  colHi: Float64Array,
+  zeroLevel: boolean,
+  colOffset: number,
+  output: Float32Array
+): void {
+  decodePerChannelImpl(data, colLo, colHi, 255, zeroLevel, colOffset, signedExpm1, output);
+}
+
+/** Decode per-channel SIGNED-LOG uint16 codes to float32. */
+export function decode_signed_log_perchannel_u16(
+  data: Uint16Array,
+  colLo: Float64Array,
+  colHi: Float64Array,
+  zeroLevel: boolean,
+  colOffset: number,
+  output: Float32Array
+): void {
+  decodePerChannelImpl(data, colLo, colHi, 65535, zeroLevel, colOffset, signedExpm1, output);
+}
+
+/**
  * Decode LUT-encoded uint8 indices to float32 (scalar mode).
  * Each index maps to a single float value from the LUT.
  */
