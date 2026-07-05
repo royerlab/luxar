@@ -31,6 +31,19 @@ All notable changes to Luxar are documented in this file.
   from the full columns), keeping the float64 Σ scratch capped on large flat
   fits instead of scaling with N.
 
+#### Fixed — LOD level switches no longer dip to chunk-1 quality (never-downgrade display gate)
+
+- A lazy substitutive level becomes displayable after its **first** additive
+  chunk commits, so switching to a cold level (zoom in, zoom out, or after a
+  scrub settles) popped displayed quality down to chunk-1 and climbed back
+  over the following refinement passes. The LOD registry now holds the
+  previously-displayed level while the streaming target's committed element
+  count is strictly below it, releasing on ladder completion (committed, not
+  just fetched), count crossover (the ladder tail then streams visibly),
+  ladder failure, or the held level losing freshness. Fast first paint is
+  unchanged — a group with nothing better on screen still swaps immediately —
+  and explicit level locks / off-screen groups bypass the gate.
+
 #### Fixed — stale-cache black screen on regenerated `.gsplats.zarr` + viewer LOD loading/scheduling
 
 - Every `.gsplats.zarr` save now stamps a root `content_hash` (metadata-only
