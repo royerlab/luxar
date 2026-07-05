@@ -96,6 +96,12 @@ export interface LoadSceneCtx {
   makeNodeBuildCtx(): NodeBuildCtx;
   /** Stats helper used by the post-load monitor wiring. */
   updateVisibleCountsInMonitor(): void;
+  /**
+   * Failed-load records + retry-all for the monitor's failure banner.
+   * Live closures over the orchestrator's registry / retry API.
+   */
+  getFailedLoaderPaths(): string[];
+  retryAllFailedLoaders(): Promise<{ succeeded: string[]; failed: string[]; deferred?: boolean }>;
   /** Kick the GSplats LOD refinement loop after initial load. */
   scheduleGSplatsRefinement(): Promise<void>;
 
@@ -355,6 +361,10 @@ export async function loadScene(url: string, ctx: LoadSceneCtx): Promise<THREE.G
     lodGroupRegistry: ctx.lodGroupRegistry,
     sceneGraph,
     updateVisibleCounts: () => ctx.updateVisibleCountsInMonitor(),
+    failedLoads: {
+      getFailedPaths: () => ctx.getFailedLoaderPaths(),
+      retryAll: () => ctx.retryAllFailedLoaders(),
+    },
   });
 
   log.success(Modules.SCENE_LOADER, 'Scene loaded successfully');
@@ -386,8 +396,13 @@ export async function loadScene(url: string, ctx: LoadSceneCtx): Promise<THREE.G
     ctx.scheduleGSplatsRefinement().catch((error) => {
       log.error(
         Modules.SCENE_LOADER,
-        `GSplats refinement scheduling failed: ${(error as Error).message}`
+        `Post-load progressive refinement failed: ${(error as Error).message}`
       );
+      // Belt-and-braces lock recovery (mirrors queue-next.ts): each loop
+      // releases the lock in its own finally, so a rejection here means the
+      // orchestrator glue died outside them — without this release the lock
+      // taken above is held forever and every future updateView freezes.
+      ctx.setUpdateInProgress(false);
     });
   }
 

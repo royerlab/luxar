@@ -41,6 +41,8 @@ export interface RefinementRunWiring {
    * skip-path case can assert it was never invoked.
    */
   processSpy: (...args: unknown[]) => unknown;
+  /** Per-run abort signal, threaded into `loader.updateView` by the wrapper. */
+  signal?: AbortSignal;
 }
 
 /** A loader stub that advances through `hasMoreLODs` stages as updateView runs. */
@@ -131,6 +133,143 @@ export function defineRefinementLoopContract(
           processSpy: vi.fn(),
         })
       ).resolves.not.toThrow();
+    });
+
+    it('treats an AbortError as cancellation — signal threaded, no failure backoff, clean hand-off', async () => {
+      // A superseding updateView aborts the per-run controller mid-pass; the
+      // in-flight read rejects with AbortError. That is cancellation, NOT
+      // failure: it must not count toward the 3-strike backoff, and the
+      // loop's next pass hands off to the pending state.
+      const controller = new AbortController();
+      const queue = new ViewStateQueue();
+      let capturedSignal: AbortSignal | undefined;
+      const loader = {
+        hasMoreLODs: true,
+        updateView: vi
+          .fn()
+          .mockImplementation(async (_vs: unknown, _s: unknown, signal?: AbortSignal) => {
+            capturedSignal = signal;
+            // Simulate the supersede that caused the abort: the new state is
+            // queued and the read rejects with the abort classification.
+            queue.setPending({ slicePosition: [5, 5, 5, 5] });
+            throw new DOMException('aborted', 'AbortError');
+          }),
+      };
+      const releaseLock: () => void = vi.fn();
+      const retriggerUpdate: (pendingState: Partial<ViewState>) => void = vi.fn();
+
+      await run({
+        loaders: new Map([['/n', loader]]),
+        viewStateQueue: queue,
+        deriveNodeViewState: () => ({ skip: false, viewState: baseViewState }),
+        updateVisibleCountsInMonitor: vi.fn(),
+        releaseLock,
+        retriggerUpdate,
+        processSpy: vi.fn(),
+        signal: controller.signal,
+      });
+
+      expect(capturedSignal).toBe(controller.signal); // signal reaches the loader
+      expect(loader.updateView).toHaveBeenCalledTimes(1); // no 3-strike retries
+      expect(retriggerUpdate).toHaveBeenCalledWith({ slicePosition: [5, 5, 5, 5] });
+      expect(releaseLock).not.toHaveBeenCalled(); // lock handed off, not released
+    });
+
+    it('repeated AbortErrors do NOT count toward the 3-strike backoff', async () => {
+      // The load-bearing counterpart of the case above: 4 consecutive aborted
+      // passes must NOT exhaust the loader (aborts are cancellation, not
+      // failure). Mutation this pins: deleting the `isAbortError` guard in
+      // the wrapper catch makes aborts hit the failure tracker — the loader
+      // would be excluded after 3 strikes and updateView would be called
+      // exactly 3 times instead of running the full 5-step ladder.
+      let calls = 0;
+      const loader = {
+        hasMoreLODs: true,
+        updateView: vi.fn().mockImplementation(async () => {
+          calls += 1;
+          if (calls <= 4) throw new DOMException('aborted', 'AbortError');
+          loader.hasMoreLODs = false; // 5th step completes the ladder
+          return null;
+        }),
+      };
+      const releaseLock: () => void = vi.fn();
+
+      await run({
+        loaders: new Map([['/n', loader]]),
+        viewStateQueue: new ViewStateQueue(), // never pending — loop runs to completion
+        deriveNodeViewState: () => ({ skip: false, viewState: baseViewState }),
+        updateVisibleCountsInMonitor: vi.fn(),
+        releaseLock,
+        retriggerUpdate: vi.fn(),
+        processSpy: vi.fn(),
+      });
+
+      // All 5 passes ran — the 4 aborts were not counted as strikes.
+      expect(loader.updateView).toHaveBeenCalledTimes(5);
+      expect(releaseLock).toHaveBeenCalledTimes(1);
+    });
+
+    it('gives up on a persistently failing loader after 3 consecutive failures (lock released)', async () => {
+      // Regression: without the per-run failure cap, a loader whose level
+      // fetch always throws kept hasMoreLODs=true forever and the loop
+      // retried at frame rate indefinitely, holding the update lock — a
+      // network retry storm. After MAX_CONSECUTIVE_REFINEMENT_FAILURES (3)
+      // the loader is excluded and the loop terminates + releases the lock.
+      const failing = {
+        hasMoreLODs: true, // never progresses
+        updateView: vi.fn().mockRejectedValue(new Error('persistent failure')),
+      };
+      const releaseLock: () => void = vi.fn();
+
+      await run({
+        loaders: new Map([['/bad', failing]]),
+        viewStateQueue: new ViewStateQueue(),
+        deriveNodeViewState: () => ({ skip: false, viewState: baseViewState }),
+        updateVisibleCountsInMonitor: vi.fn(),
+        releaseLock,
+        retriggerUpdate: vi.fn(),
+        processSpy: vi.fn(),
+      });
+
+      // Exactly 3 attempts (the cap), then the loop exits and releases.
+      expect(failing.updateView).toHaveBeenCalledTimes(3);
+      expect(releaseLock).toHaveBeenCalledTimes(1);
+    });
+
+    it('a failing loader does not stop a healthy loader from finishing its ladder', async () => {
+      const failing = {
+        hasMoreLODs: true,
+        updateView: vi.fn().mockRejectedValue(new Error('persistent failure')),
+      };
+      // Healthy loader: 5 levels to stream, one per pass — more passes than
+      // the failing loader's 3-strike budget, so it must keep advancing after
+      // the failing one is excluded.
+      const healthy = makeStagedLoader([
+        { hasMoreLODs: true },
+        { hasMoreLODs: true },
+        { hasMoreLODs: true },
+        { hasMoreLODs: true },
+        { hasMoreLODs: true },
+        { hasMoreLODs: false },
+      ]);
+      const releaseLock: () => void = vi.fn();
+
+      await run({
+        loaders: new Map<string, unknown>([
+          ['/bad', failing],
+          ['/good', healthy],
+        ]),
+        viewStateQueue: new ViewStateQueue(),
+        deriveNodeViewState: () => ({ skip: false, viewState: baseViewState }),
+        updateVisibleCountsInMonitor: vi.fn(),
+        releaseLock,
+        retriggerUpdate: vi.fn(),
+        processSpy: vi.fn(),
+      });
+
+      expect(failing.updateView).toHaveBeenCalledTimes(3); // capped
+      expect(healthy.updateView).toHaveBeenCalledTimes(5); // ladder drained
+      expect(releaseLock).toHaveBeenCalledTimes(1);
     });
 
     it('skips loaders whose derived view-state is fully-extended', async () => {

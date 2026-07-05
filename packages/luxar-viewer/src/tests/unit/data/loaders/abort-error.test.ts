@@ -41,10 +41,32 @@ describe('isAbortError', () => {
     expect(isAbortError(typeErr)).toBe(false);
   });
 
-  it('rejects non-Error values', () => {
+  it('rejects primitives and null-ish values', () => {
     expect(isAbortError('AbortError')).toBe(false);
-    expect(isAbortError({ name: 'AbortError' })).toBe(false);
     expect(isAbortError(null)).toBe(false);
     expect(isAbortError(undefined)).toBe(false);
+    expect(isAbortError(42)).toBe(false);
+  });
+
+  it("accepts any OBJECT named 'AbortError' — the realm-proof contract", () => {
+    // Deliberate contract change: classification is by `.name` alone, NOT
+    // `instanceof Error`. A DOMException created in another realm (jsdom
+    // test env, iframe) fails a same-realm instanceof check even though its
+    // own chain contains that realm's Error — the old check silently turned
+    // intentional aborts into recorded failures + error telemetry.
+    expect(isAbortError({ name: 'AbortError' })).toBe(true);
+    expect(isAbortError({ name: 'WorkerAbortError' })).toBe(true);
+    expect(isAbortError({ name: 'SomethingElse' })).toBe(false);
+  });
+
+  it('recognizes a cross-realm DOMException (jsdom global — NOT instanceof this Error)', () => {
+    // In the vitest jsdom environment, the global DOMException comes from
+    // the jsdom realm: its prototype chain contains jsdom's Error, so
+    // `instanceof Error` (Node realm) is FALSE here. The pre-fix classifier
+    // returned false for exactly this value, which made the refinement
+    // backoff count aborts as failures in every jsdom-based test.
+    const crossRealm = new DOMException('aborted', 'AbortError');
+    expect(crossRealm instanceof Error).toBe(false); // precondition of this env
+    expect(isAbortError(crossRealm)).toBe(true);
   });
 });

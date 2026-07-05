@@ -584,7 +584,7 @@ export class MultiLevelCachingStore implements AsyncReadable {
 
   private async doValidateCache(signal: AbortSignal): Promise<void> {
     try {
-      const remoteHash = await getRemoteContentHash(this.baseUrl, {
+      const remoteToken = await getRemoteContentHash(this.baseUrl, {
         signal,
         timeoutMsOverride: config.dataLoading.network.validationTimeoutMs,
       });
@@ -594,10 +594,10 @@ export class MultiLevelCachingStore implements AsyncReadable {
         return;
       }
 
-      if (!remoteHash) {
-        // External dataset path: no `content_hash` attr available.
-        // Apply optional TTL — if the cache is older than
-        // `cache.externalDatasetTtlMs` we invalidate to avoid serving
+      if (!remoteToken) {
+        // No `.zattrs` reachable at all (offline / headerless store) —
+        // no token to compare. Apply optional TTL — if the cache is older
+        // than `cache.externalDatasetTtlMs` we invalidate to avoid serving
         // stale data indefinitely. Tracked as `validationMode: ttl`
         // (or `none` when no TTL is configured).
         const ttlMs = config.cache.externalDatasetTtlMs;
@@ -615,9 +615,13 @@ export class MultiLevelCachingStore implements AsyncReadable {
         return;
       }
 
+      const remoteHash = remoteToken.hash;
       const cachedHash = this.l2Store?.getContentHash();
 
-      // Compare hashes
+      // Compare tokens. Implicit (`zattrs:`-prefixed) and stamped tokens
+      // can never collide, so a producer ADDING content_hash to a dataset
+      // previously validated implicitly also reads as a change — which is
+      // correct (the dataset was rewritten).
       if (cachedHash && remoteHash !== cachedHash) {
         this.log('Dataset content changed, clearing cache');
         this.log(`Old: ${cachedHash.slice(0, 16)}...`);
@@ -643,7 +647,7 @@ export class MultiLevelCachingStore implements AsyncReadable {
       }
 
       this.l2Store?.setContentHash(remoteHash);
-      this.l2Store?.setValidationMode('content-hash');
+      this.l2Store?.setValidationMode(remoteToken.mode);
     } catch {
       // Offline or error - use cached data
       this.log('Cannot validate (offline?), using cached data');

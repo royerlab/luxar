@@ -6,7 +6,10 @@
  */
 
 import { describe, expect, it, vi, beforeEach } from 'vitest';
-import { runProgressiveRefinement } from '../../../../../data/scene-loader/progressive/refinement';
+import {
+  RefinementFailureTracker,
+  runProgressiveRefinement,
+} from '../../../../../data/scene-loader/progressive/refinement';
 import type { ViewState } from '../../../../../data/data-loader-types';
 
 interface FakeLoader {
@@ -199,5 +202,36 @@ describe('runProgressiveRefinement', () => {
     expect(visited.get('/a')).toBe(2);
     expect(visited.get('/b')).toBe(2);
     expect(visited.get('/c')).toBe(2);
+  });
+});
+
+describe('RefinementFailureTracker', () => {
+  it('exhausts a path only after the configured consecutive failures', () => {
+    const t = new RefinementFailureTracker(3);
+    expect(t.recordFailure('/p')).toBe(false);
+    expect(t.recordFailure('/p')).toBe(false);
+    expect(t.isExhausted('/p')).toBe(false);
+    expect(t.recordFailure('/p')).toBe(true); // crossing the cap reports once
+    expect(t.isExhausted('/p')).toBe(true);
+    expect(t.recordFailure('/p')).toBe(false); // already exhausted → no re-report
+  });
+
+  it('a success resets the consecutive-failure count', () => {
+    const t = new RefinementFailureTracker(3);
+    t.recordFailure('/p');
+    t.recordFailure('/p');
+    t.recordSuccess('/p'); // healthy step — counter resets
+    expect(t.recordFailure('/p')).toBe(false);
+    expect(t.recordFailure('/p')).toBe(false);
+    expect(t.isExhausted('/p')).toBe(false);
+    expect(t.recordFailure('/p')).toBe(true);
+  });
+
+  it('tracks paths independently', () => {
+    const t = new RefinementFailureTracker(2);
+    t.recordFailure('/a');
+    expect(t.recordFailure('/b')).toBe(false);
+    expect(t.recordFailure('/a')).toBe(true);
+    expect(t.isExhausted('/b')).toBe(false);
   });
 });

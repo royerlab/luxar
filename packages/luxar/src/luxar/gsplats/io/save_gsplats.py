@@ -216,6 +216,43 @@ def _compress_zarr(
             shutil.rmtree(temp_dir, ignore_errors=True)
 
 
+def _stamp_content_hash(root: zarr.Group) -> str:
+    """Stamp a root ``content_hash`` for viewer-side cache invalidation.
+
+    The web viewer's persistent (OPFS) cache validates a dataset by re-fetching
+    the root ``.zattrs`` and comparing ``content_hash``; without one the cache
+    is trusted indefinitely and a regenerated file at the same URL serves stale
+    data. The scene compiler stamps a hash at finalize
+    (:func:`luxar.io._compiler.finalize.hashing.compute_content_hashes`), but
+    that helper reads every array's full data — prohibitive for multi-GB splat
+    stores — so this variant hashes the **metadata tree only**: per-group sorted
+    attrs plus each array's ``(name, shape, dtype)``. The root ``timestamp``
+    attr (microsecond ISO, rewritten on every save) rides along in the attrs
+    walk, so every re-save yields a distinct hash even when the structure is
+    unchanged — which is exactly the token cache invalidation needs.
+    """
+    import json
+
+    import xxhash
+
+    def hash_group(group: zarr.Group) -> str:
+        hasher = xxhash.xxh64()
+        for name in sorted(group.array_keys()):
+            arr = group[name]
+            hasher.update(
+                f"{name}:{tuple(arr.shape)}:{arr.dtype}".encode()  # metadata only
+            )
+        attrs = {k: v for k, v in dict(group.attrs).items() if k != "content_hash"}
+        hasher.update(json.dumps(attrs, sort_keys=True, default=str).encode())
+        for name in sorted(group.group_keys()):
+            hasher.update(hash_group(group[name]).encode())
+        return hasher.hexdigest()
+
+    content_hash = hash_group(root)
+    root.attrs["content_hash"] = content_hash
+    return content_hash
+
+
 def write_gsplats_tree(
     path: str | Path,
     node: Any,  # luxar.gsplats.tree.GSplatNode
@@ -287,6 +324,8 @@ def write_gsplats_tree(
         # other buckets do not consume. Optional group: absent for plain fits.
         root.create_group("pipeline").attrs.update(pipeline_info)
 
+    # Stamp BEFORE consolidating so the hash lands in ``.zmetadata`` too.
+    _stamp_content_hash(root)
     zarr.consolidate_metadata(store)
 
     if compress:
@@ -395,6 +434,8 @@ def write_partition_streaming(
     if pipeline_info:
         root.create_group("pipeline").attrs.update(pipeline_info)
 
+    # Stamp BEFORE consolidating so the hash lands in ``.zmetadata`` too.
+    _stamp_content_hash(root)
     zarr.consolidate_metadata(store)
     return n_written
 

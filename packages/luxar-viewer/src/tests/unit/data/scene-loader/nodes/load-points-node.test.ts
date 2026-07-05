@@ -163,17 +163,18 @@ describe('loadPointsNode — placeholder-before-fetch invariant', () => {
     expect(parent.children.length).toBe(1);
     expect((parent.children[0] as THREE.Mesh).name).toBe('/scene/p');
 
-    // The loader is registered before the fetch completes (so retry/update can
-    // find it while the fetch is in flight). Registration lands one microtask
-    // after the cheap split returns — the cheap/expensive split (mirroring the
-    // gsplats loader) registers between the two halves, not synchronously — so
-    // flush microtasks before asserting. The fetch promise (`pending`) is still
-    // unresolved here, proving registration precedes the fetch.
-    await vi.waitFor(() => expect(ctx.registry.loaders.has('/scene/p')).toBe(true));
+    // The loader must NOT be registered while the fetch is in flight — a
+    // concurrent updateView sweep calling loader.updateView mid-initial-load
+    // would interleave the shared accumulator (the activation race).
+    // Registration happens in the combined loader's finally, once the
+    // expensive half settles.
+    await Promise.resolve();
+    expect(ctx.registry.loaders.has('/scene/p')).toBe(false);
 
-    // Let the promise settle so the test cleans up.
+    // Let the promise settle so the test cleans up — registration lands now.
     _resolve({ pointCount: 0 } as LoadedPointsData);
     await promise;
+    expect(ctx.registry.loaders.has('/scene/p')).toBe(true);
   });
 });
 
@@ -232,6 +233,41 @@ describe('loadPointsNode — pointCount === 0 path', () => {
     // Future updateView() / retry calls need the empty commit to seed
     // the geometry — so the helper commits even on pointCount=0.
     expect(ctx.spies.updatePointsGeometry).toHaveBeenCalledWith('/scene/p', data, undefined, 1);
+  });
+});
+
+describe('loadPointsNode — registration only after the initial load settles', () => {
+  // Regression (activation race): registering BEFORE the expensive await let
+  // a concurrent updateView sweep call loader.updateView while the initial
+  // load was mid-flight on the same instance (shared accumulator +
+  // _activeSignal). Registration must happen only once the load SETTLES —
+  // and on failure too, so retryFailedLoader can still resolve the loader.
+  it('does NOT register while the initial load is in flight; registers on success', async () => {
+    let resolveLoad!: (d: unknown) => void;
+    const pending = new Promise((res) => (resolveLoad = res));
+    createPointsLoaderMock.mockReturnValue(makePointsLoader(() => pending as never));
+    const ctx = makeCtx();
+
+    const promise = loadPointsNode(makeSceneNode(), new THREE.Group(), {} as never, ctx);
+    await Promise.resolve(); // let the cheap half + the expensive await start
+    expect(ctx.registry.loaders.has('/scene/p')).toBe(false); // not yet in the sweep
+
+    resolveLoad({ pointCount: 5 } as LoadedPointsData);
+    await promise;
+    expect(ctx.registry.loaders.has('/scene/p')).toBe(true);
+  });
+
+  it('registers even when the initial load FAILS (loader stays retryable)', async () => {
+    createPointsLoaderMock.mockReturnValue(
+      makePointsLoader(vi.fn().mockRejectedValue(new Error('network down')) as never)
+    );
+    const ctx = makeCtx();
+
+    await expect(
+      loadPointsNode(makeSceneNode(), new THREE.Group(), {} as never, ctx)
+    ).rejects.toThrow();
+    expect(ctx.registry.loaders.has('/scene/p')).toBe(true); // retry can find it
+    expect(ctx.registry.failedLoaders.has('/scene/p')).toBe(true);
   });
 });
 

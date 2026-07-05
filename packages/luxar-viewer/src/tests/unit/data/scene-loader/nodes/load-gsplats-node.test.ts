@@ -143,6 +143,41 @@ beforeEach(() => {
 // Tests
 // ============================================================================
 
+describe('loadGSplatsNode — registration only after the initial load settles', () => {
+  // Regression (activation race): registering BEFORE the expensive await let
+  // a concurrent updateView sweep call loader.updateView while the initial
+  // load was mid-flight on the same instance (shared accumulator +
+  // _activeSignal). Registration must happen only once the load SETTLES —
+  // and on failure too, so retryFailedLoader can still resolve the loader.
+  it('does NOT register while the initial load is in flight; registers on success', async () => {
+    let resolveLoad!: (d: unknown) => void;
+    const pending = new Promise((res) => (resolveLoad = res));
+    createGSplatsLoaderMock.mockReturnValue(makeGSplatsLoader(() => pending as never));
+    const ctx = makeCtx();
+
+    const promise = loadGSplatsNode(makeSceneNode(), new THREE.Group(), {} as never, ctx);
+    await Promise.resolve(); // let the cheap half + the expensive await start
+    expect(ctx.registry.gsplatLoaders.has('/scene/g')).toBe(false); // not yet in the sweep
+
+    resolveLoad({ splatCount: 7 } as LoadedGSplatsData);
+    await promise;
+    expect(ctx.registry.gsplatLoaders.has('/scene/g')).toBe(true);
+  });
+
+  it('registers even when the initial load FAILS (loader stays retryable)', async () => {
+    createGSplatsLoaderMock.mockReturnValue(
+      makeGSplatsLoader(vi.fn().mockRejectedValue(new Error('network down')) as never)
+    );
+    const ctx = makeCtx();
+
+    await expect(
+      loadGSplatsNode(makeSceneNode(), new THREE.Group(), {} as never, ctx)
+    ).rejects.toThrow();
+    expect(ctx.registry.gsplatLoaders.has('/scene/g')).toBe(true); // retry can find it
+    expect(ctx.registry.failedLoaders.has('/scene/g')).toBe(true);
+  });
+});
+
 describe('loadGSplatsNode — LOD branch', () => {
   it('uses single-LOD factory when n_additive_sublods is 0 / missing', async () => {
     const loader = makeGSplatsLoader(

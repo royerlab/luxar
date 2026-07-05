@@ -106,7 +106,15 @@ function concatenatePointsData(parts: LoadedPointsData[]): LoadedPointsData {
   const totalPoints = parts.reduce((sum, p) => sum + p.pointCount, 0);
   const count = (p: LoadedPointsData) => p.pointCount;
 
-  const positions = concatRequiredField(parts, (p) => p.positions, count, ndim);
+  // INVARIANT: `positions` is ALWAYS 3D-projected, stride 3 — Points is the
+  // one geometry whose loader folds nD→3D projection into loadPoints() itself
+  // (the accumulator's getData returns `positionBuffer.subarray(0, count*3)`),
+  // while `ndim` still reports the ORIGINAL dimensionality. Concatenating at
+  // stride `ndim` here would scatter every level after the first to wrong
+  // offsets for >3D data. GSplats/Lines correctly concat their positions at
+  // `ndim` because their loaders return raw nD data (projection runs later in
+  // the process step).
+  const positions = concatRequiredField(parts, (p) => p.positions, count, 3);
 
   // Aggregate bounds across all loaded levels.
   const aggBounds = new THREE.Box3();
@@ -150,6 +158,7 @@ export class PointsProgressiveLoader implements PointsDataLoader {
   private monitor: ProgressiveMonitorAdapter;
   private _initialLoadDone = false;
   private _lastAllResident = true;
+  private _disposed = false;
   // Memoized concatenation. Keyed on (resetGeneration, loadedLODs.length):
   // the generation bumps on every view-state reset so a reset-then-reload
   // back to the same LOD count yields a NEW reference (contents differ),
@@ -170,6 +179,10 @@ export class PointsProgressiveLoader implements PointsDataLoader {
 
   /** Whether more LOD levels remain to load for the current view state. */
   get hasMoreLODs(): boolean {
+    // A disposed loader has work-state cleared; report no further work so a
+    // refinement loop holding a stale reference stops instead of indexing
+    // into the now-empty lodLoaders. Mirrors GSplatsProgressiveLoader.
+    if (this._disposed) return false;
     return this.loadedLODs.length < this.nLods;
   }
 
@@ -332,6 +345,7 @@ export class PointsProgressiveLoader implements PointsDataLoader {
   }
 
   dispose(): void {
+    this._disposed = true;
     for (const loader of this.lodLoaders) {
       loader.dispose();
     }
