@@ -13,6 +13,7 @@ import { describe, it, expect, vi } from 'vitest';
 import {
   nextControlType,
   toggleControlMode,
+  setControlMode,
   toggleInertialMode,
   type ControlModeCtx,
 } from '../../../../../input/input-handler/commands/control-mode';
@@ -62,11 +63,13 @@ function makeCtx(opts: {
   setControlType: ReturnType<typeof vi.fn>;
   setContext: ReturnType<typeof vi.fn>;
   syncCurrentState: ReturnType<typeof vi.fn>;
+  saveSettings: ReturnType<typeof vi.fn>;
   controls: FakeControls;
 } {
   const setControlType = vi.fn();
   const setContext = vi.fn();
   const syncCurrentState = vi.fn();
+  const saveSettings = vi.fn();
 
   const controls: FakeControls = {
     type: opts.initialControlType ?? 'orbit',
@@ -87,7 +90,7 @@ function makeCtx(opts: {
   } as unknown as ControlModeCtx['contextManager'];
 
   const renderingControls = opts.withRenderingControls
-    ? ({ syncCurrentState } as unknown as ControlModeCtx['renderingControls'])
+    ? ({ syncCurrentState, saveSettings } as unknown as ControlModeCtx['renderingControls'])
     : undefined;
 
   return {
@@ -95,6 +98,7 @@ function makeCtx(opts: {
     setControlType,
     setContext,
     syncCurrentState,
+    saveSettings,
     controls,
   };
 }
@@ -144,8 +148,22 @@ describe('toggleControlMode', () => {
     expect(syncCurrentState).toHaveBeenCalledTimes(1);
   });
 
+  it('persists the new mode via saveSettings() (else it reverts on reload)', () => {
+    // Regression: after the "Control Type" dropdown was removed, the mode-change
+    // path stopped persisting. Every mode switch must call saveSettings() so the
+    // choice survives a reload (settings.controlType is applied on setSceneId).
+    const { ctx, saveSettings } = makeCtx({
+      initialControlType: 'orbit',
+      withRenderingControls: true,
+    });
+
+    toggleControlMode(ctx);
+
+    expect(saveSettings).toHaveBeenCalledTimes(1);
+  });
+
   it('is a no-op on renderingControls when none is wired', () => {
-    const { ctx, syncCurrentState } = makeCtx({
+    const { ctx, syncCurrentState, saveSettings } = makeCtx({
       initialControlType: 'orbit',
       withRenderingControls: false,
     });
@@ -153,6 +171,32 @@ describe('toggleControlMode', () => {
     toggleControlMode(ctx);
 
     expect(syncCurrentState).not.toHaveBeenCalled();
+    expect(saveSettings).not.toHaveBeenCalled();
+  });
+});
+
+describe('setControlMode', () => {
+  it('switches to an explicit mode + persists it, and no-ops when already there', () => {
+    const { ctx, setControlType, setContext, saveSettings } = makeCtx({
+      initialControlType: 'orbit',
+      withRenderingControls: true,
+    });
+
+    setControlMode(ctx, 'fly');
+    expect(setControlType).toHaveBeenCalledWith('fly');
+    expect(setContext).toHaveBeenCalledWith(InputContext.FLY_CONTROLS);
+    expect(saveSettings).toHaveBeenCalledTimes(1);
+  });
+
+  it('is a no-op when the target mode is already active', () => {
+    const { ctx, setControlType, saveSettings } = makeCtx({
+      initialControlType: 'fly',
+      withRenderingControls: true,
+    });
+
+    setControlMode(ctx, 'fly');
+    expect(setControlType).not.toHaveBeenCalled();
+    expect(saveSettings).not.toHaveBeenCalled();
   });
 });
 

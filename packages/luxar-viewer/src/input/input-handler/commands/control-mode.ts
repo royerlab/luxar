@@ -59,9 +59,15 @@ function applyControlType(ctx: ControlModeCtx, newType: ControlType): void {
     ctx.contextManager.setContext(InputContext.NAVIGATION);
   }
 
-  // Sync rendering controls if they exist
+  // Sync rendering controls if they exist, then PERSIST the new mode.
+  // syncCurrentState pulls the live control type into settings.controlType but
+  // only in memory; without the save, a mode switch (Navigation popover / rail
+  // cycle / V key) is silently lost on reload — a regression from the removed
+  // "Control Type" dropdown, whose onChange used to call saveSettings(). Saving
+  // here restores persistence for every mode-change entry point.
   if (ctx.renderingControls) {
     ctx.renderingControls.syncCurrentState();
+    ctx.renderingControls.saveSettings();
   }
 
   // Notify on-screen affordances that the control mode changed, so they stay in

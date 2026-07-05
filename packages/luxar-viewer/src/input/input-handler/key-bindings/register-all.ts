@@ -15,6 +15,7 @@
 
 import type { InputContextManager } from '../context-manager';
 import type { SceneManager } from '../../../scene/scene-manager';
+import type { ControlType } from '../../../controls/types';
 import type { ScaleBar } from '../../../ui/scale-bar';
 import type { ColormapLegend } from '../../../ui/colormap-legend';
 import type { OverlayManager } from '../../../ui/overlay-manager';
@@ -40,7 +41,7 @@ export interface KeyBindingsCommands {
   toggleRenderingControls(): void;
   toggleControlMode(): void;
   /** Switch directly to a specific camera control mode (rail Navigation popover). */
-  setControlMode(type: 'orbit' | 'fly' | 'ortho'): void;
+  setControlMode(type: ControlType): void;
   toggleInertialMode(): void;
   toggleCinematicMode(): void;
   toggleFullscreen(): void;
