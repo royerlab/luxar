@@ -79,6 +79,16 @@ export interface NodeBuildCtx {
     loader: DataLoader | LinesDataLoader | GSplatsDataLoader
   ): void;
   /**
+   * Kick the progressive refinement orchestrator if no update holds the
+   * serialization lock (re-checks next frame when one does). Called after a
+   * deferred lod_group SUBTREE activation registers new sweep loaders —
+   * refinement is otherwise only scheduled at update-view tails, so without
+   * this the freshly-activated branch would sit at its first additive chunk
+   * per part until the next slice change. See
+   * ``SceneLoader.kickRefinementIfIdle``.
+   */
+  kickRefinementIfIdle(): void;
+  /**
    * True while the dataset that created this ctx is still the live one.
    * Returns false once that dataset has been aborted/disposed or
    * replaced by a later `loadScene`. Deferred loads (e.g. lazily-loaded

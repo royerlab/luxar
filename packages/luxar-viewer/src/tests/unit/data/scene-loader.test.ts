@@ -657,6 +657,90 @@ describe('SceneLoader', () => {
     });
   });
 
+  describe('kickRefinementIfIdle — refinement after deferred-group activation', () => {
+    interface KickInternals {
+      _updateInProgress: boolean;
+      _disposed: boolean;
+      gsplatLoaders: Map<string, unknown>;
+      scheduleGSplatsRefinement: () => Promise<void>;
+    }
+
+    /** Stub the orchestrator (instance property shadows the prototype method). */
+    function stubOrchestrator(releaseLock = true) {
+      const internals = sceneLoader as unknown as KickInternals;
+      const spy = vi.fn(async () => {
+        // The real orchestrator's final phase releases the lock on completion.
+        if (releaseLock) internals._updateInProgress = false;
+      });
+      internals.scheduleGSplatsRefinement = spy;
+      return { internals, spy };
+    }
+
+    it('takes the lock and schedules refinement once when idle and a loader has more LODs', () => {
+      const { internals, spy } = stubOrchestrator(false);
+      internals.gsplatLoaders.set('/g/part_0', { hasMoreLODs: true });
+      try {
+        sceneLoader.kickRefinementIfIdle();
+        expect(spy).toHaveBeenCalledTimes(1);
+        expect(internals._updateInProgress).toBe(true); // lock taken for the run
+        // Re-entrant call while the run holds the lock must not double-fire
+        // (it schedules a timer re-check instead).
+        sceneLoader.kickRefinementIfIdle();
+        expect(spy).toHaveBeenCalledTimes(1);
+      } finally {
+        internals._updateInProgress = false;
+        internals.gsplatLoaders.clear();
+      }
+    });
+
+    it('no-ops when no registered loader has more LODs', () => {
+      const { internals, spy } = stubOrchestrator();
+      internals.gsplatLoaders.set('/g/part_0', { hasMoreLODs: false });
+      sceneLoader.kickRefinementIfIdle();
+      expect(spy).not.toHaveBeenCalled();
+      expect(internals._updateInProgress).toBe(false);
+      internals.gsplatLoaders.clear();
+    });
+
+    it('re-checks on a timer while the lock is held, then kicks once it frees', async () => {
+      vi.useFakeTimers();
+      const { internals, spy } = stubOrchestrator();
+      internals.gsplatLoaders.set('/g/part_0', { hasMoreLODs: true });
+      internals._updateInProgress = true; // an update is mid-flight
+      try {
+        sceneLoader.kickRefinementIfIdle();
+        expect(spy).not.toHaveBeenCalled(); // no double-acquire
+        // Holder finishes; the pending re-check fires and kicks.
+        internals._updateInProgress = false;
+        await vi.runOnlyPendingTimersAsync();
+        expect(spy).toHaveBeenCalledTimes(1);
+      } finally {
+        vi.useRealTimers();
+        internals._updateInProgress = false;
+        internals.gsplatLoaders.clear();
+      }
+    });
+
+    it('a pending re-check no-ops after dispose (no kick against a dead loader)', async () => {
+      vi.useFakeTimers();
+      const { internals, spy } = stubOrchestrator();
+      internals.gsplatLoaders.set('/g/part_0', { hasMoreLODs: true });
+      internals._updateInProgress = true;
+      try {
+        sceneLoader.kickRefinementIfIdle(); // schedules the re-check
+        internals._updateInProgress = false;
+        internals._disposed = true; // dataset switch tore the loader down
+        await vi.runOnlyPendingTimersAsync();
+        expect(spy).not.toHaveBeenCalled();
+      } finally {
+        vi.useRealTimers();
+        internals._disposed = false;
+        internals._updateInProgress = false;
+        internals.gsplatLoaders.clear();
+      }
+    });
+  });
+
   describe('error handling', () => {
     it('should handle store opening failures', async () => {
       (zarr as any).withMaybeConsolidatedMetadata.mockRejectedValue(

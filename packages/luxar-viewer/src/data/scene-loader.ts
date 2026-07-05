@@ -131,6 +131,13 @@ import { connectLoaderToMonitor as connectLoaderToMonitorHelper } from './scene-
 import type { NodeBuildCtx } from './scene-loader/nodes/build-ctx';
 
 /**
+ * Delay before `kickRefinementIfIdle` re-checks a lock-held serialization
+ * lock. Frame-scale-ish: responsive after the holder finishes, cheap while it
+ * runs (one timer at a time — see `_refinementKickPending`).
+ */
+export const REFINEMENT_KICK_RECHECK_MS = 100;
+
+/**
  * Main scene loader that handles the complete loading pipeline.
  *
  * Features:
@@ -199,6 +206,10 @@ export class SceneLoader {
   // When a new update arrives while one is in progress, we store the latest and process it after
   private _updateInProgress = false;
   private _updateVersion = 0; // For logging/debugging
+  // At most ONE lock-busy re-check of kickRefinementIfIdle is in flight at a
+  // time (see that method) — prevents a per-caller pile-up of scheduled
+  // re-checks while an update holds the lock for a while.
+  private _refinementKickPending = false;
   // Set true in dispose(); progressive-refinement loops poll this (via the
   // ctx isActive callback) so they abort promptly when this loader is torn
   // down mid-flight (e.g. a dataset switch) instead of fetching/decoding
@@ -760,6 +771,66 @@ export class SceneLoader {
     }
   }
 
+  /** Any registered loader (points / lines / gsplats) with LODs left to stream. */
+  private anyLoaderHasMoreLODs(): boolean {
+    const hasMore = (loader: unknown) => (loader as { hasMoreLODs?: boolean }).hasMoreLODs === true;
+    return (
+      [...this.gsplatLoaders.values()].some(hasMore) ||
+      [...this.loaders.values()].some(hasMore) ||
+      [...this.linesLoaders.values()].some(hasMore)
+    );
+  }
+
+  /**
+   * Kick the progressive refinement orchestrator from OUTSIDE an update pass.
+   *
+   * Refinement is normally scheduled only at update-view tails
+   * (``queue-next.ts``) and after the initial scene load (``load-scene.ts``) —
+   * loaders that register OUTSIDE those moments otherwise sit at their first
+   * additive chunk until the next slice change. The one such registration
+   * path is a deferred lod_group SUBTREE activation (e.g. the ``overview``
+   * recipe's fine ``kind=partition`` branch): its part leaves join the sweep
+   * maps mid-session, so the deferred-group ``ensureLoaded`` calls this after
+   * ``loadChildren`` settles.
+   *
+   * Lock discipline: when idle, take the serialization lock and run the same
+   * orchestrator the other kick sites use (each phase releases/hands off the
+   * lock — see ``scheduleGSplatsRefinement``), with the same belt-and-braces
+   * release on an orchestrator-glue rejection. When an update or refinement
+   * already holds the lock, its own tail probe usually covers the new
+   * loaders — but a sequenced refinement run may already be PAST the new
+   * loaders' geometry phase, so instead of assuming, re-check on a short
+   * timer (single pending re-check; drops out as soon as nothing has more
+   * LODs or this loader is disposed). A plain timer, deliberately NOT
+   * ``scheduleFrame``: that helper runs synchronously when rAF is missing,
+   * which would turn this lock-held re-check into unbounded recursion.
+   */
+  kickRefinementIfIdle(): void {
+    if (this._disposed) return;
+    if (!this.anyLoaderHasMoreLODs()) return;
+    if (this._updateInProgress) {
+      if (this._refinementKickPending) return;
+      this._refinementKickPending = true;
+      setTimeout(() => {
+        this._refinementKickPending = false;
+        this.kickRefinementIfIdle();
+      }, REFINEMENT_KICK_RECHECK_MS);
+      return;
+    }
+    log.info(Modules.SCENE_LOADER, 'Kicking progressive LOD refinement (deferred activation)');
+    this._updateInProgress = true;
+    this.scheduleGSplatsRefinement().catch((error) => {
+      log.error(
+        Modules.SCENE_LOADER,
+        `Deferred-activation refinement failed: ${(error as Error).message}`
+      );
+      // Belt-and-braces lock recovery (mirrors load-scene.ts / queue-next.ts):
+      // the loops release the lock in their own finally, so a rejection here
+      // means the orchestrator glue died outside them.
+      this._updateInProgress = false;
+    });
+  }
+
   /**
    * Schedule progressive GSplats LOD refinement.
    *
@@ -1022,6 +1093,7 @@ export class SceneLoader {
       applyEffectiveAttrs: (node) => this.applyEffectiveAttrs(node),
       deriveNodeViewState: (path, attrs, opts) => this.deriveNodeViewState(path, attrs, opts),
       connectLoaderToMonitor: (path, loader) => this.connectLoaderToMonitor(path, loader),
+      kickRefinementIfIdle: () => this.kickRefinementIfIdle(),
       // Live accessors (not the snapshot) so a deferred / registry-driven reload
       // loads + stamps for the CURRENT slice, not the one captured at ctx-build.
       getViewVersion: () => this._updateVersion,
