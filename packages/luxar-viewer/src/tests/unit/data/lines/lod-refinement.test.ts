@@ -36,6 +36,7 @@ defineRefinementLoopContract('runLinesRefinement', (w) =>
     updateVisibleCountsInMonitor: w.updateVisibleCountsInMonitor,
     releaseLock: w.releaseLock,
     retriggerUpdate: w.retriggerUpdate,
+    signal: w.signal,
   })
 );
 

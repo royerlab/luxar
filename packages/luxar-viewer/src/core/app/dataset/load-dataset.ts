@@ -77,6 +77,12 @@ export async function loadDataset(src: string, ports: LoadDatasetPorts): Promise
       ports.layersPanel.initFromScene(root as THREE.Group, sceneLoader.sceneGraph);
     }
   }
+  // Notify on-screen affordances (the control rail's Layers button gates its
+  // disabled state on the layer count) that layers may have changed. Best-effort
+  // — guarded so a stubbed/absent window (unit tests) can't fail the load.
+  if (typeof window !== 'undefined' && typeof window.dispatchEvent === 'function') {
+    window.dispatchEvent(new CustomEvent('luxar-layers-changed'));
+  }
 
   // Initialize colormap legend after layers panel (needs layer state)
   if (ports.layersPanel) {

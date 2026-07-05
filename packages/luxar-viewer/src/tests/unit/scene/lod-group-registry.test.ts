@@ -513,7 +513,10 @@ describe('LODGroupRegistry — auto evaluation', () => {
       ];
       reg.register(makeEntry(children, 0, '/g'));
       reg.evaluatePerFrame();
-      expect(children[2].object.visible, `finest at viewport ${viewport.width}x${viewport.height}`).toBe(true);
+      expect(
+        children[2].object.visible,
+        `finest at viewport ${viewport.width}x${viewport.height}`
+      ).toBe(true);
       expect(children[0].object.visible).toBe(false);
       expect(children[1].object.visible).toBe(false);
     }
@@ -549,8 +552,12 @@ describe('LODGroupRegistry — auto evaluation', () => {
       ];
       reg.register(makeEntry(children, 0, '/g'));
       reg.evaluatePerFrame();
-      expect(children[1].object.visible, `middle at ${viewport.width}x${viewport.height}`).toBe(true);
-      expect(children[2].object.visible, `NOT finest at ${viewport.width}x${viewport.height}`).toBe(false);
+      expect(children[1].object.visible, `middle at ${viewport.width}x${viewport.height}`).toBe(
+        true
+      );
+      expect(children[2].object.visible, `NOT finest at ${viewport.width}x${viewport.height}`).toBe(
+        false
+      );
       expect(children[0].object.visible).toBe(false);
     }
   });
@@ -975,6 +982,144 @@ describe('LODGroupRegistry — frustum-aware selection & eviction', () => {
 // a slice / displayDims change, then swap up once it recommits.
 // ────────────────────────────────────────────────────────────────────────
 
+// ────────────────────────────────────────────────────────────────────────
+// Fresh-but-empty display guard — a fresh level that committed 0 elements
+// while another fresh level has visible geometry signals inconsistent data;
+// the registry must show the populated level instead of blanking the group.
+// ────────────────────────────────────────────────────────────────────────
+
+/** A gsplats child stamped fresh with an explicit committed splat count. */
+function makeCountedChild(
+  coverageFraction: number,
+  loadedViewVersion: number,
+  visibleSplatCount: number
+): LODGroupChild {
+  const child = makeChild(coverageFraction);
+  child.object.userData = { nodeType: 'gsplats', loadedViewVersion, visibleSplatCount };
+  return child;
+}
+
+describe('LODGroupRegistry — retryLazyChildByLeafPath', () => {
+  it('clears the failure cooldown and re-kicks ensureLoaded for a named lazy leaf', () => {
+    const reg = makeRegistry();
+    const ensureLoaded = vi.fn();
+    const child = makeLazyChild(0.5, ensureLoaded);
+    child.object.name = '/g/child_1'; // leaf lazy placeholders carry the leaf path
+    child.failed = true;
+    child.failedTick = 42;
+    reg.register(makeEntry([makeChild(0), child], 0, '/g'));
+
+    expect(reg.retryLazyChildByLeafPath('/g/child_1')).toBe(true);
+    expect(ensureLoaded).toHaveBeenCalledTimes(1);
+    expect(child.failed).toBe(false);
+    expect(child.failedTick).toBeUndefined();
+    // kickDeferredLoad owns the loading flag (the thunk never sets it).
+    expect(child.loading).toBe(true);
+  });
+
+  it('returns true WITHOUT re-firing when a load is already in flight', () => {
+    const reg = makeRegistry();
+    const ensureLoaded = vi.fn();
+    const child = makeLazyChild(0.5, ensureLoaded);
+    child.object.name = '/g/child_1';
+    child.loading = true;
+    reg.register(makeEntry([makeChild(0), child], 0, '/g'));
+
+    expect(reg.retryLazyChildByLeafPath('/g/child_1')).toBe(true);
+    expect(ensureLoaded).not.toHaveBeenCalled();
+  });
+
+  it('returns false for unknown paths and for anonymous deferred-group placeholders', () => {
+    const reg = makeRegistry();
+    // Deferred-GROUP lazy child: anonymous placeholder (no name, by design).
+    const groupChild = makeLazyChild(0.5, vi.fn());
+    reg.register(makeEntry([makeChild(0), groupChild], 0, '/g'));
+
+    expect(reg.retryLazyChildByLeafPath('/nope')).toBe(false);
+    expect(reg.retryLazyChildByLeafPath('')).toBe(false); // unnamed never matches
+  });
+
+  it('eager children (no ensureLoaded) never match even when named', () => {
+    const reg = makeRegistry();
+    const eager = makeChild(0);
+    eager.object.name = '/g/child_0';
+    reg.register(makeEntry([eager], 0, '/g'));
+    expect(reg.retryLazyChildByLeafPath('/g/child_0')).toBe(false);
+  });
+});
+
+describe('LODGroupRegistry — fresh-but-empty display guard', () => {
+  it('redirects display to the coarsest fresh NON-empty level when the chosen level is empty', () => {
+    const reg = makeRegistry([0, 1, 2], undefined, undefined, () => 2);
+    // Identity camera → aspiration is the finest level; it is FRESH but
+    // committed 0 splats (the stale-cache / corrupt-data scenario), while the
+    // coarse level holds 100 fresh splats.
+    const children = [makeCountedChild(0, 2, 100), makeCountedChild(0.5, 2, 0)];
+    reg.register(makeEntry(children, 0, '/g'));
+    reg.evaluatePerFrame();
+    expect(children[0].object.visible).toBe(true); // populated coarse shown
+    expect(children[1].object.visible).toBe(false); // empty fine hidden
+  });
+
+  it('leaves a genuinely empty slice unchanged (every fresh level empty)', () => {
+    const reg = makeRegistry([0, 1, 2], undefined, undefined, () => 2);
+    const children = [makeCountedChild(0, 2, 0), makeCountedChild(0.5, 2, 0)];
+    reg.register(makeEntry(children, 0, '/g'));
+    reg.evaluatePerFrame();
+    // No non-empty fallback exists → the aspiration (fine, fresh) displays
+    // as before; exactly one level visible.
+    expect(children.filter((c) => c.object.visible).length).toBe(1);
+    expect(children[1].object.visible).toBe(true);
+  });
+
+  it('is inert for untracked counts (no commit stamp)', () => {
+    const reg = makeRegistry([0, 1, 2], undefined, undefined, () => 2);
+    // Fine level fresh but WITHOUT a visibleSplatCount stamp → count is
+    // unknown (null), not known-empty → no redirect.
+    const children = [makeCountedChild(0, 2, 100), makeGsplatChild(0.5, 2)];
+    reg.register(makeEntry(children, 0, '/g'));
+    reg.evaluatePerFrame();
+    expect(children[1].object.visible).toBe(true);
+    expect(children[0].object.visible).toBe(false);
+  });
+
+  it('recovers once the empty level recommits with visible elements', () => {
+    const reg = makeRegistry([0, 1, 2], undefined, undefined, () => 2);
+    const children = [makeCountedChild(0, 2, 100), makeCountedChild(0.5, 2, 0)];
+    reg.register(makeEntry(children, 0, '/g'));
+    reg.evaluatePerFrame();
+    expect(children[0].object.visible).toBe(true); // guard active
+    (children[1].object.userData as { visibleSplatCount: number }).visibleSplatCount = 5000;
+    reg.evaluatePerFrame();
+    expect(children[1].object.visible).toBe(true); // healed → fine shows
+    expect(children[0].object.visible).toBe(false);
+  });
+
+  it('protects the redirected (displayed) level from eviction', () => {
+    const relCoarse = vi.fn();
+    const relFine = vi.fn();
+    const coarse = {
+      ...makeCountedChild(0, 2, 100),
+      ready: true,
+      release: relCoarse as () => void,
+      lastVisibleTick: 5,
+    };
+    const fine = {
+      ...makeCountedChild(0.5, 2, 0),
+      ready: true,
+      release: relFine as () => void,
+      lastVisibleTick: 5,
+    };
+    const children = [coarse, fine];
+    const reg = makeRegistry([0, 1, 2], 50, residentModel(children), () => 2);
+    reg.register(makeEntry(children, 0, '/g'));
+    reg.evaluatePerFrame();
+    expect(coarse.object.visible).toBe(true); // guard redirected display here
+    expect(relCoarse).not.toHaveBeenCalled(); // displayed level never freed
+    expect(relFine).toHaveBeenCalledTimes(1); // hidden empty level is evictable
+  });
+});
+
 describe('LODGroupRegistry — slice-aware freshness fallback', () => {
   it('displays the coarsest FRESH level while the screen-desired level is stale', () => {
     // coarse fresh@2, fine stale@1; current version 2. Identity camera → the
@@ -1105,7 +1250,11 @@ describe('LODGroupRegistry — slice-aware freshness fallback', () => {
 
 describe('LODGroupRegistry — settle-gated fine reload', () => {
   /** A ready-but-stale lazy fine gsplats child with an ensureLoaded spy. */
-  function makeStaleLazyFine(coverageFraction: number, staleVersion: number, ensureLoaded: () => void) {
+  function makeStaleLazyFine(
+    coverageFraction: number,
+    staleVersion: number,
+    ensureLoaded: () => void
+  ) {
     const child = makeGsplatChild(coverageFraction, staleVersion);
     child.ready = true; // committed (just stale for the current version)
     child.ensureLoaded = ensureLoaded;

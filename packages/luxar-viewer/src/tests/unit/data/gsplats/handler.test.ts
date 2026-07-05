@@ -172,6 +172,40 @@ describe('gsplats handler — no-op commit skip', () => {
     );
   });
 
+  it('noop fast path skips predictive prefetch when the update was superseded', async () => {
+    // P8 symmetry with the Points/Lines gating tests, on the dispatch site
+    // unique to the gsplats/lines handlers: the stamp-only noop path also
+    // fires prefetch, and it too must be gated for a superseded update.
+    const root = new THREE.Group();
+    const mesh = makeGSplatsMesh('/g');
+    (mesh.userData as { committedData?: unknown }).committedData = data;
+    root.add(mesh);
+
+    const loader = {
+      loadGSplats: vi.fn(),
+      updateView: vi.fn().mockResolvedValue(data),
+      dispose: vi.fn(),
+    } as unknown as GSplatsDataLoader;
+    const queue = new ViewStateQueue();
+    const prefetchSpy = vi.spyOn(queue, 'dispatchPrefetch');
+    const controller = new AbortController();
+    controller.abort();
+
+    const staged = await loadAndStage('/g', loader, makeSession(), {
+      rootGroup: root,
+      viewStateQueue: queue,
+      clearFailure: vi.fn(),
+      currentVersion: 2,
+      updateVersion: 2,
+      extendedToleranceCache: new Map(),
+      signal: controller.signal,
+      deriveNodeViewState: () => ({ skip: false, viewState }),
+    });
+
+    expect(staged).toEqual({ path: '/g', noop: true, sourceData: data }); // still stages the noop
+    expect(prefetchSpy).not.toHaveBeenCalled(); // but never prefetches
+  });
+
   it('stages a real commit when the data reference differs from committedData', async () => {
     const root = new THREE.Group();
     const mesh = makeGSplatsMesh('/g');

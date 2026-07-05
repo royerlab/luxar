@@ -6,7 +6,7 @@
  */
 
 import type GUI from '../gui';
-import type { Folder, Controller } from '../gui';
+import type { Controller } from '../gui';
 import type { RenderingSettings } from '../../config';
 import type { PostProcessingManager } from '../../rendering';
 import type { SceneManager } from '../../scene/scene-manager';
@@ -91,13 +91,6 @@ export interface SetupContext {
 export interface SetupResult {
   /** Map of controller references for programmatic updates */
   controllers: Partial<RenderingControllers>;
-
-  /** Folder references for visibility control (optional) */
-  folders?: {
-    orbitFolder?: Folder;
-    flyFolder?: Folder;
-    [key: string]: Folder | undefined;
-  };
 
   /** Shadow objects for special UI patterns (optional) */
   shadowObjects?: {

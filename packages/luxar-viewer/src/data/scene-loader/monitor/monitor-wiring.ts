@@ -17,7 +17,10 @@
 import type { SceneNode } from '../../data-loader-types';
 import type { DataLoader } from '../../data-loader-types';
 import type { SceneGraphNode, CacheTelemetryState } from '../../../types/data-monitor-types';
-import type { SceneLoaderMonitorPort } from '../../scene-loader-monitor-port';
+import type {
+  FailedLoadsProviderPort,
+  SceneLoaderMonitorPort,
+} from '../../scene-loader-monitor-port';
 import type { LinesDataLoader } from '../../../types/lines';
 import type { GSplatsDataLoader } from '../../../types/gsplats';
 import type { MultiLevelCachingStore } from '../../../cache/multi-level-caching-store';
@@ -68,6 +71,12 @@ export interface WireMonitorAfterLoadParams {
    * keeps this helper free of THREE imports.
    */
   updateVisibleCounts: () => void;
+  /**
+   * Failed-load records + retry-all from the SceneLoader — powers the
+   * Overview tab's failure banner and its Retry action. Null when the
+   * host doesn't expose retry (headless tests).
+   */
+  failedLoads: FailedLoadsProviderPort | null;
 }
 
 /**
@@ -89,6 +98,7 @@ export function wireMonitorAfterLoad(params: WireMonitorAfterLoadParams): void {
     lodGroupRegistry,
     sceneGraph,
     updateVisibleCounts,
+    failedLoads,
   } = params;
 
   if (!monitor) return;
@@ -132,6 +142,8 @@ export function wireMonitorAfterLoad(params: WireMonitorAfterLoadParams): void {
   // Reads the progressive loaders (additive) + LOD-group registry
   // (substitutive) each tick. Always wired (even with no LOD content) so
   // the provider lights up as soon as a refinement starts.
+  monitor.setFailedLoadsProvider(failedLoads);
+
   monitor.setLODProgressProvider(
     createLODProgressProvider({
       loaderMaps: [loaders, linesLoaders, gsplatLoaders],

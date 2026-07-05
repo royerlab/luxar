@@ -67,9 +67,13 @@ independently. Each is **differentially quantized** with a generic per-channel
 scheme (one scale per column): the diagonal (positive, wide range) with
 **per-channel log** (`log_perchannel_u8`/`u16`), the off-diagonal (signed,
 zero-centred) with **per-channel signed-log** (`signed_log_perchannel_u8`/`u16`).
-Encoding mode picks the bit depth: PRECISION→float32, AUTO→uint16 (near-lossless),
-MEMORY→uint8 (visually lossless, measured ≥93 dB vs the float32 render at ~4× less
-than float32 / ~2× less than the former float16). Per-array `encoding` metadata
+Encoding mode picks the bit depth: PRECISION→float32; **AUTO→uint8 with an
+encode-time certificate** — the writer measures the actual Σ = L·Lᵀ reconstruction
+error (p95 relative Frobenius) and escalates to uint16 only when it exceeds 0.05
+(e.g. merged stores whose σ columns span many decades), recording the measurement in
+each array's `encoding.certificate`; MEMORY→uint8 unconditionally. uint8 is visually
+lossless on real fits (94.5 dB vs the float32 render, ~46 dB below the fit-error
+floor; 2.48 B/splat compressed vs 8.25 at uint16). Per-array `encoding` metadata
 carries the per-column scales (`col_lo`/`col_hi`). Readers decode to float32 and
 recombine into the packed row-major form `[L00, L10, L11, L20, L21, L22, …]`
 (for d=3) immediately on load; everything above the storage layer sees the single
@@ -124,8 +128,11 @@ A v3.x file is one of (each freely nestable):
 | partition        | `type=group, kind=partition`; `part_<i>/` + `max_elements`         |
 
 Every node carries `position_bounds`; the root additionally carries
-`format_version:"3.2"`, `format_type:"gsplats_zarr"`, `timestamp`, and
-`luxar_gsplats_version`. The historical `[N, M_i]` matrix is just the "full
+`format_version:"3.2"`, `format_type:"gsplats_zarr"`, `timestamp`,
+`luxar_gsplats_version`, and `content_hash` (a metadata-only xxhash64 over
+the tree's attrs + array names/shapes/dtypes, distinct per save because the
+per-save `timestamp` folds in — the web viewer's persistent cache compares it
+to invalidate when a file is regenerated in place). The historical `[N, M_i]` matrix is just the "full
 pyramid" shape expressed as a node tree.
 
 ---
@@ -535,7 +542,8 @@ MEMORY — each axis quantized over its own [min, max] to 65536 levels, decoded 
 float32 (visually lossless, sub-unit, ~2× smaller). float16 is NOT used (relative
 precision is a footgun for absolute positions); a per-axis extent ≥ 2¹⁶ falls back to
 float32. **Cholesky factors** are stored split (diagonal + off-diagonal); bit depth
-follows the mode: PRECISION→float32, AUTO→uint16 (near-lossless), MEMORY→uint8.
+follows the mode: PRECISION→float32; AUTO→uint8, escalating to uint16 only when the
+encode-time covariance certificate measures excessive Σ error; MEMORY→uint8.
 
 **Log-scale amplitudes**: For high dynamic range (HDR) amplitudes, use log encoding:
 ```python
@@ -796,7 +804,8 @@ one into a scene is a graft of that subtree.
 
 **Structure**: A node-tree root (leaf / kind=lod / kind=partition) plus the
 self-identifying header (`format_version:"3.2"`, `format_type:"gsplats_zarr"`,
-`timestamp`, `luxar_gsplats_version`) and optional `fitting/` / `provenance/`.
+`timestamp`, `luxar_gsplats_version`, `content_hash`) and optional
+`fitting/` / `provenance/`.
 
 **Direct viewer load**: `?src=<file>.gsplats.zarr` loads the file as a scene
 root. The viewer frames on `position_bounds` at the root group. No intermediate
@@ -922,6 +931,23 @@ finest level instead). Both paths go through the shared
 
 ## Changelog
 
+- **encoding policy** (2026-07-04, no format change): AUTO Cholesky quantization
+  uint16 → **uint8 with an encode-time covariance certificate**
+  - `ArrayEncoder.encode_cholesky_split` (the joint diag+offdiag entry point) now
+    measures the actual Σ = L·Lᵀ reconstruction error of a u8 round-trip (p95
+    per-splat relative Frobenius) and escalates to u16 — or, as a practically
+    unreachable last rung, float32 — only when it exceeds
+    `COV_CERT_RELF_P95_MAX = 0.05`. Both halves always share one tier.
+  - The measured certificate is stored as provenance in each array's own
+    `encoding` attrs: `{"metric": "cov_relf_p95", "value", "threshold", "tier"}`.
+    Decode does not need it (readers were already u8/u16-agnostic — layout and
+    format version unchanged).
+  - Motivation: the 2026-07 covariance spike measured u8 at 94.5 dB vs the
+    float32 render (~46 dB below the fit-error floor) and 2.48 B/splat
+    compressed vs 8.25 at u16 (~3.3×); VQ/codebook alternatives were refuted
+    (index streams defeat zstd+bitshuffle). Typical escalation trigger: merged
+    heterogeneous stores whose σ columns span many decades.
+
 - **v3.2.0** (2026-07-03): `kind=lod` selector attrs renamed to coverage semantics
   - Group `selector: "pixel_size"` → `"coverage"`; per-child `min_pixel_size`
     (absolute pixel threshold) → `coverage_fraction` (viewport-relative
@@ -938,8 +964,10 @@ finest level instead). Both paths go through the shared
     with a generic per-channel scheme: diagonal → `log_perchannel_u8`/`u16`
     (per-column log), off-diagonal → `signed_log_perchannel_u8`/`u16` (per-column
     signed-log). Encoding mode sets the bit depth: PRECISION→float32,
-    **AUTO (default)→uint16** (near-lossless, ~2× smaller than float32),
-    **MEMORY→uint8** (visually lossless ≥93 dB vs the float32 render, ~4× raw /
+    **AUTO (default)→uint8 with an encode-time covariance certificate** (escalates
+    to uint16 when the measured Σ relF p95 exceeds 0.05; certificate recorded in
+    `encoding.certificate` — see the 2026-07-04 changelog entry),
+    **MEMORY→uint8** (visually lossless 94.5 dB vs the float32 render, ~4× raw /
     ~10× on disk after zstd). Per-array `encoding` carries per-column `col_lo/col_hi`.
   - The encodings are **geometry-agnostic** (semantic types `CHOLESKY_DIAG` /
     `CHOLESKY_OFFDIAG` select them as policy; the `*_perchannel_*` encodings are

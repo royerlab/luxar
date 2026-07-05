@@ -39,6 +39,7 @@ function makeMonitor(): SceneLoaderMonitorPort & {
     setProfiler: vi.fn(() => callOrder.push('setProfiler')),
     setCacheTelemetryState: vi.fn(() => callOrder.push('setCacheTelemetryState')),
     setLODProgressProvider: vi.fn(() => callOrder.push('setLODProgressProvider')),
+    setFailedLoadsProvider: vi.fn(() => callOrder.push('setFailedLoadsProvider')),
     setSceneGraph: vi.fn(() => callOrder.push('setSceneGraph')),
     forceUpdate: vi.fn(() => callOrder.push('forceUpdate')),
     updateVisiblePoints: vi.fn(),
@@ -76,8 +77,24 @@ function makeBaseParams(monitor: SceneLoaderMonitorPort | null): WireMonitorAfte
     lodGroupRegistry: null,
     sceneGraph: makeSceneGraph(),
     updateVisibleCounts: vi.fn(),
+    failedLoads: {
+      getFailedPaths: () => [],
+      retryAll: vi.fn().mockResolvedValue({ succeeded: [], failed: [] }),
+    },
   };
 }
+
+describe('wireMonitorAfterLoad — failed-loads provider', () => {
+  it('injects the failedLoads provider into the monitor', () => {
+    const monitor = makeMonitor();
+    const params = makeBaseParams(monitor);
+    wireMonitorAfterLoad(params);
+    expect(
+      (monitor as unknown as { setFailedLoadsProvider: ReturnType<typeof vi.fn> })
+        .setFailedLoadsProvider
+    ).toHaveBeenCalledWith(params.failedLoads);
+  });
+});
 
 describe('wireMonitorAfterLoad — null-guard', () => {
   it('is a silent no-op when monitor is null', () => {

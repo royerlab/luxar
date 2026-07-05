@@ -142,6 +142,17 @@ live in the `TOOLTIPS` map in `timing-panel.ts`.
   being interpolated into template literals (loader paths, entry
   names, recommendation messages).
 
+## Failed-load recovery surface
+
+The Overview tab shows a warning banner while the SceneLoader has recorded
+load failures (`renderFailedLoadsBanner` in `templates.ts`), fed by the
+`FailedLoadsProviderPort` injected through `setFailedLoadsProvider` (wired in
+`data/scene-loader/monitor/monitor-wiring.ts`). Its Retry button
+(`data-action="retryFailedLoads"`) runs `SceneLoader.retryAllFailedLoaders`
+(serialized against the update lock by the loader) with an in-flight guard and
+toasts the outcome. Failed loads are also retried automatically when the
+window comes back online (`core/app/lifecycle/online-retry.ts`).
+
 ## Why this layout
 
 The monitor's public file is already large because it orchestrates an

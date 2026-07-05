@@ -113,6 +113,43 @@ describe('points handler', () => {
     expect(result).toEqual({ path: '/p', data: fakeData });
   });
 
+  it('skips predictive prefetch when the update was superseded (signal aborted)', async () => {
+    const fakeData = {
+      positions: new Float32Array(),
+      pointCount: 1,
+      ndim: 3,
+      metadata: {
+        totalPoints: 1,
+        loadedPoints: 1,
+        bounds: new THREE.Box3(),
+        usedSpatialIndex: false,
+      },
+    };
+    const loader: DataLoader = {
+      loadPoints: vi.fn(),
+      updateView: vi.fn().mockResolvedValue(fakeData),
+      dispose: vi.fn(),
+    };
+    const queue = new ViewStateQueue();
+    const prefetchSpy = vi.spyOn(queue, 'dispatchPrefetch');
+    const controller = new AbortController();
+    controller.abort(); // superseded before the stage step finished
+
+    await loadAndStage('/p', loader, makeSession(), {
+      rootGroup: new THREE.Group(),
+      viewStateQueue: queue,
+      clearFailure: vi.fn(),
+      currentVersion: 5,
+      extendedToleranceCache: new Map(),
+      signal: controller.signal,
+      deriveNodeViewState: () => ({ skip: false, viewState: baseViewState }),
+    });
+
+    // Warming chunks for an abandoned view-state wastes bandwidth and
+    // pollutes the per-path prefetch baseline.
+    expect(prefetchSpy).not.toHaveBeenCalled();
+  });
+
   it('forwards the per-update abort signal to loader.updateView', async () => {
     const fakeData = {
       positions: new Float32Array(),

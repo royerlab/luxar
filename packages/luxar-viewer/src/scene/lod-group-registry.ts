@@ -44,7 +44,14 @@ import * as THREE from 'three';
 import { type BoundingBox, transformBoundingBox } from './scene-manager/clipping/bounds-math';
 import { log, Modules } from '../utils/log';
 import type { LODGroupSelectorMode } from '../types/lod-group';
-import { coarsestFreshIndex, isFresh, isReady, SettleTracker } from './lod-freshness';
+import {
+  coarsestFreshIndex,
+  coarsestFreshNonEmptyIndex,
+  isFresh,
+  isReady,
+  SettleTracker,
+  visibleElementCount,
+} from './lod-freshness';
 
 /**
  * Frames the view-update version must hold steady before the registry reloads a
@@ -475,6 +482,14 @@ export class LODGroupRegistry {
   private warnedNoReadyChild: Set<string> = new Set();
 
   /**
+   * Entry paths already warned about the fresh-but-empty display guard
+   * firing (see ``evaluateEntry``). The guard is evaluated every frame, so
+   * without a dedupe a persistently inconsistent dataset would warn at
+   * frame rate.
+   */
+  private warnedEmptyLevel: Set<string> = new Set();
+
+  /**
    * Tracks when the global view-update version last changed (in ticks) so the
    * selector can defer a stale fine level's reload until the scrub settles —
    * the debounce behind ``maybeKickReload``. See ``scene/lod-freshness.ts``.
@@ -515,6 +530,7 @@ export class LODGroupRegistry {
     this.entries.delete(path);
     this.caches.delete(path);
     this.warnedNoReadyChild.delete(path);
+    this.warnedEmptyLevel.delete(path);
   }
 
   /** Clear all entries (called on full scene tear-down). */
@@ -525,6 +541,7 @@ export class LODGroupRegistry {
     // refactor) starts cold rather than inheriting stale LRU ordering.
     this.tick = 0;
     this.warnedNoReadyChild.clear();
+    this.warnedEmptyLevel.clear();
   }
 
   /** Number of registered lod_groups (mainly for tests / diagnostics). */
@@ -540,6 +557,40 @@ export class LODGroupRegistry {
   /** All registered entries (mainly for the layers panel UI). */
   list(): LODGroupEntry[] {
     return Array.from(this.entries.values());
+  }
+
+  /**
+   * Retry a LAZY lod_group level by its LEAF path (the path of the level's
+   * placeholder mesh — leaf lazy children are named with their node path by
+   * the node factory; anonymous deferred-GROUP placeholders carry no name and
+   * correctly never match). Used by ``SceneLoader.retryFailedLoader``: lazy
+   * levels never join the update-sweep loader maps, so the map-based retry
+   * cannot reach them — this is their retry entry point.
+   *
+   * Clears the failure cooldown (``failed``/``failedTick``) and routes
+   * through the shared ``kickDeferredLoad`` gate, which owns setting
+   * ``loading`` before firing ``ensureLoaded`` (the thunk itself never sets
+   * ``loading`` — only the registry does; keep that invariant here).
+   *
+   * Returns ``true`` when a retry was kicked OR one is already in flight
+   * (``loading``), ``false`` when no lazy child with that leaf path exists.
+   * Fire-and-forget semantics: ``true`` means "retry started", not "retry
+   * succeeded" — the thunk owns the ready/failed outcome, and a repeat
+   * failure re-enters the normal cooldown cycle.
+   */
+  retryLazyChildByLeafPath(path: string): boolean {
+    if (!path) return false; // anonymous (deferred-group) placeholders have name '' — never match
+    for (const entry of this.entries.values()) {
+      for (const child of entry.children) {
+        if (child.object.name !== path || !child.ensureLoaded) continue;
+        if (child.loading) return true; // retry already in flight
+        child.failed = false;
+        child.failedTick = undefined;
+        this.kickDeferredLoad(child);
+        return true;
+      }
+    }
+    return false;
   }
 
   /**
@@ -613,7 +664,8 @@ export class LODGroupRegistry {
     // (no wiring / tests) ⇒ treat as settled so the trigger is inert.
     const version = this.deps.getViewVersion?.();
     if (version != null) this.settleTracker.observe(version, this.tick);
-    const settled = version == null || this.settleTracker.isSettled(this.tick, FINE_RELOAD_SETTLE_TICKS);
+    const settled =
+      version == null || this.settleTracker.isSettled(this.tick, FINE_RELOAD_SETTLE_TICKS);
 
     let changed = false;
     let anyLoading = false;
@@ -748,6 +800,36 @@ export class LODGroupRegistry {
       // otherwise show nothing until the load commits — the legacy behaviour.
       const prev = entry.displayedChildIndex ?? -1;
       displayIdx = prev >= 0 && isReady(entry.children[prev]) ? prev : -1;
+    }
+
+    // ── Fresh-but-EMPTY display guard ──
+    // With consistent LOD data a finer level can never be empty where a
+    // coarser one is not (coarse levels are derived from fine), so a fresh
+    // level that committed 0 elements while another fresh level holds visible
+    // geometry signals inconsistent/corrupt data (e.g. a stale cache serving
+    // an old layout whose chunk queries zero-fill). Displaying the empty level
+    // would silently blank the group; redirect to the coarsest fresh NON-empty
+    // level and warn once so the inconsistency is visible instead of black.
+    // A genuinely empty slice (every fresh level empty) is unchanged.
+    if (version != null && displayIdx >= 0) {
+      const chosen = entry.children[displayIdx];
+      if (chosen && isFresh(chosen, version) && visibleElementCount(chosen) === 0) {
+        const fallback = coarsestFreshNonEmptyIndex(entry.children, version);
+        if (fallback >= 0 && fallback !== displayIdx) {
+          if (!this.warnedEmptyLevel.has(entry.path)) {
+            this.warnedEmptyLevel.add(entry.path);
+            log.warning(
+              Modules.SCENE_LOADER,
+              `lod_group ${entry.path}: level ${displayIdx} is fresh but committed 0 ` +
+                `elements while level ${fallback} has visible geometry — showing level ` +
+                `${fallback} instead. This usually means inconsistent/stale data ` +
+                '(e.g. a dataset regenerated at the same URL with a poisoned cache); ' +
+                'try reloading with ?clear-cache.'
+            );
+          }
+          displayIdx = fallback;
+        }
+      }
     }
 
     // ── Settle-gated reload / progressive refinement of the lazy aspiration ──

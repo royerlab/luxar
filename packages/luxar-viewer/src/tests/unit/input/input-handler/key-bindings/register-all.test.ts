@@ -62,6 +62,7 @@ function makeCommands(): KeyBindingsCommands {
     togglePerformanceStats: vi.fn(),
     toggleRenderingControls: vi.fn(),
     toggleControlMode: vi.fn(),
+    setControlMode: vi.fn(),
     toggleInertialMode: vi.fn(),
     toggleCinematicMode: vi.fn(),
     toggleFullscreen: vi.fn(),

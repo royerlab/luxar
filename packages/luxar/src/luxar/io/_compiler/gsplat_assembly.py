@@ -252,38 +252,21 @@ def write_gsplat_arrays(
         chunks_diag = (chunk_rows, chol_diag.shape[1])
         chunks_offdiag = (chunk_rows, chol_offdiag.shape[1])
 
-    # deduplicate=False: the per-channel quantized encodings keep their scales
-    # (col_lo/col_hi) in the array's OWN encoding attrs, and the viewer reads
-    # those attrs directly to dequantize (loadCholeskyRanges). If a byte-identical
-    # array were stored as an ``array_ref`` instead, the viewer would find no
-    # scales on the ref and silently skip dequant. So always materialise these
-    # (same reason line vertices/segments opt out of dedup).
-    ctx.encoder.encode(
-        data=chol_diag,
+    # One joint call: the encoder owns the whole pair policy (same tier for
+    # both halves, AUTO's u8→u16 certificate escalation, the 1D no-offdiag
+    # case, and deduplicate=False so the per-channel scales stay in each
+    # array's own attrs for the viewer).
+    ctx.encoder.encode_cholesky_split(
         zarr_group=group,
-        name="cholesky_factors_diag",
-        semantic_type=SemanticType.CHOLESKY_DIAG,
+        diag=chol_diag,
+        offdiag=chol_offdiag,
+        ndim=n_dims,
         mode=ctx.encoding_mode,
         n_elements=n_elems_chol,
-        chunks=chunks_diag,
+        chunks_diag=chunks_diag,
+        chunks_offdiag=chunks_offdiag,
         compressor=ctx.compressor,
-        deduplicate=False,
     )
-
-    # 1D gsplats (n_dims == 1) have no off-diagonal terms; skip the empty array.
-    # The reader reconstructs an empty off-diagonal block when it is absent.
-    if chol_offdiag.shape[1] > 0:
-        ctx.encoder.encode(
-            data=chol_offdiag,
-            zarr_group=group,
-            name="cholesky_factors_offdiag",
-            semantic_type=SemanticType.CHOLESKY_OFFDIAG,
-            mode=ctx.encoding_mode,
-            n_elements=n_elems_chol,
-            chunks=chunks_offdiag,
-            compressor=ctx.compressor,
-            deduplicate=False,
-        )
 
     # Compute metadata
     if n_splats > 0:

@@ -54,6 +54,65 @@ class TestSaveGsplats:
             assert root.attrs["n_splats"] == 100
             assert root.attrs["ndim"] == 3
 
+    def test_save_stamps_content_hash(self) -> None:
+        # The web viewer's persistent cache invalidates on the root
+        # ``content_hash`` — without it, a regenerated file at the same URL
+        # serves stale data indefinitely.
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "test.gsplats.zarr"
+            save_gsplats(path=path, **create_test_splats_3d(50), ordering="none")
+            root = zarr.open_group(str(path), mode="r")
+            content_hash = root.attrs["content_hash"]
+            assert isinstance(content_hash, str) and len(content_hash) > 0
+            # The hash must also land in consolidated metadata (the viewer
+            # reads .zmetadata for structure and .zattrs for validation).
+            import json
+
+            zmeta = json.loads((path / ".zmetadata").read_text())
+            assert zmeta["metadata"][".zattrs"]["content_hash"] == content_hash
+
+    def test_resave_changes_content_hash(self) -> None:
+        # Identical data re-saved must yield a DIFFERENT hash (the timestamp
+        # attr folds in) so the viewer cache invalidates on regeneration.
+        splats = create_test_splats_3d(50)
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path_a = Path(tmpdir) / "a.gsplats.zarr"
+            path_b = Path(tmpdir) / "b.gsplats.zarr"
+            save_gsplats(path=path_a, **splats, ordering="none")
+            save_gsplats(path=path_b, **splats, ordering="none")
+            hash_a = zarr.open_group(str(path_a), mode="r").attrs["content_hash"]
+            hash_b = zarr.open_group(str(path_b), mode="r").attrs["content_hash"]
+            assert hash_a != hash_b
+
+    def test_streaming_partition_stamps_content_hash(self) -> None:
+        # The streaming-partition writer path must stamp too (it is the merge
+        # path for tiled fits — the largest, most re-generated artifacts).
+        from luxar.gsplats.gsplat_data import AdditiveSubLOD
+        from luxar.gsplats.io.save_gsplats import write_partition_streaming
+        from luxar.gsplats.tree import GSplatLeaf
+
+        def make_leaf(seed: int) -> GSplatLeaf:
+            rng = np.random.default_rng(seed)
+            chol = np.zeros((20, 6), dtype=np.float32)
+            chol[:, [0, 2, 5]] = rng.uniform(0.5, 2.0, size=(20, 3))
+            return GSplatLeaf(
+                additive_sublods=[
+                    AdditiveSubLOD(
+                        centers=rng.uniform(0, 50, (20, 3)).astype(np.float32),
+                        amplitudes=rng.uniform(0.1, 1, (20,)).astype(np.float32),
+                        cholesky_factors=chol,
+                    )
+                ]
+            )
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "part.gsplats.zarr"
+            write_partition_streaming(
+                path, lambda: iter([make_leaf(0), make_leaf(1)]), ordering="none"
+            )
+            root = zarr.open_group(str(path), mode="r")
+            assert isinstance(root.attrs["content_hash"], str)
+
     def test_save_with_colors(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             path = Path(tmpdir) / "test.gsplats.zarr"
@@ -191,16 +250,18 @@ class TestCholeskySplitRoundTrip:
 
     # ndim=1 included: it is the degenerate case where the off-diagonal array is
     # intentionally omitted (k - d == 0), so it exercises a distinct write/read path.
-    # Per-mode precision: PRECISION=float32 (exact), AUTO=uint16 differential
-    # (near-lossless), MEMORY=uint8 differential (visually lossless).
+    # Per-mode precision: PRECISION=float32 (exact); AUTO=uint8 with the encode-time
+    # covariance certificate, whose escalation threshold (COV_CERT_RELF_P95_MAX)
+    # makes the AUTO bound a hard invariant, not an observation; MEMORY=uint8
+    # unconditionally (no certificate).
     _COV_P95_BOUND = {
         EncodingMode.PRECISION: 0.0,
-        EncodingMode.AUTO: 1e-3,
+        EncodingMode.AUTO: 0.05,
         EncodingMode.MEMORY: 0.1,
     }
     _DIAG_ENCODING = {
         EncodingMode.PRECISION: "float32",
-        EncodingMode.AUTO: "log_perchannel_u16",
+        EncodingMode.AUTO: "log_perchannel_u8",
         EncodingMode.MEMORY: "log_perchannel_u8",
     }
 
@@ -226,6 +287,16 @@ class TestCholeskySplitRoundTrip:
                 root["cholesky_factors_diag"].attrs["encoding"]["name"]
                 == self._DIAG_ENCODING[mode]
             )
+            # AUTO carries the covariance certificate as provenance; MEMORY and
+            # PRECISION are unconditional tiers and must not.
+            diag_enc = dict(root["cholesky_factors_diag"].attrs["encoding"])
+            if mode == EncodingMode.AUTO:
+                cert = diag_enc["certificate"]
+                assert cert["metric"] == "cov_relf_p95"
+                assert cert["tier"] == "u8"
+                assert cert["value"] <= cert["threshold"]
+            else:
+                assert "certificate" not in diag_enc
             if k - ndim > 0:
                 assert "cholesky_factors_offdiag" in root
                 assert root["cholesky_factors_offdiag"].shape[1] == k - ndim
@@ -273,20 +344,20 @@ class TestCholeskySplitRoundTrip:
         splats = self._splats(40, 2, rng)
         with tempfile.TemporaryDirectory() as tmpdir:
             path = Path(tmpdir) / "t2.gsplats.zarr"
-            # default mode = AUTO → uint16 differential (near-lossless)
+            # default mode = AUTO → uint8 (certified; escalation not triggered here)
             save_gsplats(path=path, **splats, ordering="none")
             root = zarr.open_group(str(path), mode="r")
             assert root["cholesky_factors_offdiag"].shape[1] == 1
-            assert (
-                root["cholesky_factors_offdiag"].attrs["encoding"]["name"]
-                == "signed_log_perchannel_u16"
-            )
+            enc = dict(root["cholesky_factors_offdiag"].attrs["encoding"])
+            assert enc["name"] == "signed_log_perchannel_u8"
+            # the funnel routed through encode_cholesky_split → certificate present
+            assert enc["certificate"]["tier"] == "u8"
             result = load_gsplats(path)
             assert (
                 self._cov_relF_p95(
                     splats["cholesky_factors"], result.cholesky_factors, 2
                 )
-                <= 1e-3
+                <= 0.05
             )
 
     def test_corrupt_missing_offdiag_for_dgt1_raises(self) -> None:

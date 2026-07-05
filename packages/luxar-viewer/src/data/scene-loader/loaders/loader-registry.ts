@@ -66,11 +66,13 @@ export class LoaderRegistry {
 
   /**
    * Drop a single gsplats loader so it no longer participates in
-   * scene-wide ``updateView`` sweeps. Used when a lazily-loaded
-   * substitutive LOD level is released back to the buffer pool — leaving
-   * it registered would reload its geometry on the next view update,
-   * defeating the release. The loader object itself is kept alive by the
-   * lod_group's ``ensureLoaded`` closure and re-registered on reload.
+   * scene-wide ``updateView`` sweeps. Defensive: lazy substitutive LOD
+   * levels are never registered in the first place (they stay out of the
+   * sweep by design — see ``load-lod-group-node.ts``; the registry drives
+   * their reloads), so on the lazy-release path this is a no-op. It exists
+   * so a future path that DOES register such a loader cannot leak it into
+   * the sweep after its geometry was released. The loader object itself
+   * stays alive in the lod_group's ``ensureLoaded`` closure for reload.
    */
   unregisterGSplatsLoader(path: string): void {
     this.gsplatLoaders.delete(path);
@@ -78,11 +80,9 @@ export class LoaderRegistry {
 
   /**
    * Drop a single points loader so it no longer participates in scene-wide
-   * ``updateView`` sweeps. Peer of :meth:`unregisterGSplatsLoader`: used when a
-   * lazily-loaded points substitutive LOD level is released back to the buffer
-   * pool — leaving it registered would reload its geometry on the next view
-   * update. The loader object is kept alive by the lod_group's ``ensureLoaded``
-   * closure and re-registered on reload.
+   * ``updateView`` sweeps. Peer of :meth:`unregisterGSplatsLoader` — same
+   * defensive semantics (lazy levels are never registered; see that method's
+   * doc).
    */
   unregisterPointsLoader(path: string): void {
     this.loaders.delete(path);
@@ -90,9 +90,9 @@ export class LoaderRegistry {
 
   /**
    * Drop a single lines loader so it no longer participates in scene-wide
-   * ``updateView`` sweeps. Peer of :meth:`unregisterPointsLoader` /
-   * :meth:`unregisterGSplatsLoader`: used when a lazily-loaded lines
-   * substitutive LOD level is released back to the buffer pool.
+   * ``updateView`` sweeps. Peer of :meth:`unregisterGSplatsLoader` /
+   * :meth:`unregisterPointsLoader` — same defensive semantics (lazy levels
+   * are never registered; see the gsplats method's doc).
    */
   unregisterLinesLoader(path: string): void {
     this.linesLoaders.delete(path);

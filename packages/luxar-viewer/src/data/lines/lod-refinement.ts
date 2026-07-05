@@ -15,11 +15,16 @@ import type {
   LoadedLinesData,
 } from '../../types/lines';
 import { log, Modules } from '../../utils/log';
+import { isAbortError } from '../loaders/abort-error';
 import type { UpdateProfiler, UpdateSession } from '../../profiling/update-profiler';
 import type { ViewState } from '../data-loader-types';
 import type { ViewStateQueue } from '../scene-loader/view-state/view-state-queue';
 import type { StagedLinesCommit } from '../scene-loader/process/data-processor-lines';
-import { runProgressiveRefinement } from '../scene-loader/progressive/refinement';
+import {
+  MAX_CONSECUTIVE_REFINEMENT_FAILURES,
+  RefinementFailureTracker,
+  runProgressiveRefinement,
+} from '../scene-loader/progressive/refinement';
 
 export interface LinesRefinementCtx {
   rootGroup: THREE.Group | null;
@@ -49,9 +54,21 @@ export interface LinesRefinementCtx {
   retriggerUpdate(pendingState: Partial<ViewState>): void;
   /** Liveness check; false once the owning SceneLoader was disposed. */
   isActive?(): boolean;
+  /**
+   * Per-refinement-run abort signal. The orchestrator assigns the run's
+   * controller to the SceneLoader's `_updateAbortController`, so a
+   * superseding `updateView` (or dispose) aborts in-flight refinement
+   * chunk reads MID-PASS instead of waiting out the whole pass. An
+   * `AbortError` in the per-loader catch is cancellation, not failure.
+   */
+  signal?: AbortSignal;
 }
 
 export async function runLinesRefinement(ctx: LinesRefinementCtx): Promise<void> {
+  // Per-run failure backoff: a loader that fails MAX_CONSECUTIVE times is
+  // excluded for the rest of this run (and from anyHasMoreLODs, so the loop
+  // can terminate) instead of retrying at frame rate forever.
+  const failures = new RefinementFailureTracker();
   await runProgressiveRefinement({
     loaders: ctx.linesLoaders,
     viewStateQueue: ctx.viewStateQueue,
@@ -61,6 +78,7 @@ export async function runLinesRefinement(ctx: LinesRefinementCtx): Promise<void>
         hasMoreLODs?: boolean;
       };
       if (progressiveLoader.hasMoreLODs !== true) return;
+      if (failures.isExhausted(path)) return;
       try {
         const mesh = ctx.rootGroup?.getObjectByName(path) as THREE.Mesh | undefined;
         const nodeAttrs = mesh?.userData?.attrs as LinesMetadata | undefined;
@@ -77,7 +95,7 @@ export async function runLinesRefinement(ctx: LinesRefinementCtx): Promise<void>
         const pass = ctx.profiler?.beginPass();
         const session = pass?.begin(`Lines (${path})`);
         try {
-          const data = await loader.updateView(linesVS, session);
+          const data = await loader.updateView(linesVS, session, ctx.signal);
           if (data) {
             const staged = await ctx.processLines(path, data, linesVS, session);
             if (staged) ctx.commitLines(staged, session);
@@ -86,17 +104,31 @@ export async function runLinesRefinement(ctx: LinesRefinementCtx): Promise<void>
           session?.end();
           pass?.end();
         }
+        failures.recordSuccess(path);
       } catch (error) {
-        log.error(
-          Modules.SCENE_LOADER,
-          `Lines refinement failed for ${path}: ${(error as Error).message}`
-        );
+        // Superseded, not failed: a newer view-state (or dispose) aborted the
+        // in-flight read on purpose. Don't count it toward the failure backoff
+        // or log an error — the loop's next-pass pending check hands off.
+        if (isAbortError(error)) return;
+        if (failures.recordFailure(path)) {
+          log.error(
+            Modules.SCENE_LOADER,
+            `Lines refinement failed for ${path}: ${(error as Error).message} — ` +
+              `giving up after ${MAX_CONSECUTIVE_REFINEMENT_FAILURES} consecutive failures ` +
+              '(will retry on the next view change)'
+          );
+        } else {
+          log.error(
+            Modules.SCENE_LOADER,
+            `Lines refinement failed for ${path}: ${(error as Error).message}`
+          );
+        }
       }
     },
     anyHasMoreLODs: () =>
-      [...ctx.linesLoaders.values()].some((l) => {
+      [...ctx.linesLoaders.entries()].some(([path, l]) => {
         const ll = l as LinesDataLoader & { hasMoreLODs?: boolean };
-        return ll.hasMoreLODs === true;
+        return !failures.isExhausted(path) && ll.hasMoreLODs === true;
       }),
     updateVisibleCountsInMonitor: () => ctx.updateVisibleCountsInMonitor(),
     releaseLock: () => ctx.releaseLock(),

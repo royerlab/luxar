@@ -9,7 +9,8 @@ import { DimensionSliders } from '../../../ui/dimension-sliders';
 import { RenderingControls } from '../../../ui/rendering-controls';
 import { RecordingPanel } from '../../../ui/recording-panel';
 import { LayersPanel } from '../../../ui/layers';
-import { ControlRail, RAIL_ICONS, type ControlRailItem } from '../../../ui/control-rail';
+import { ControlRail } from '../../../ui/control-rail';
+import { buildRailItems } from './build-rail-items';
 import { DataMonitorManager } from '../../../ui/data-monitor-manager';
 import { SceneLoaderManager, getSceneLoader } from '../../../data/scene-loader-manager';
 import { LODGroupRegistry } from '../../../scene/lod-group-registry';
@@ -168,8 +169,12 @@ export async function runInitPipeline(
   // The per-frame callback reads `getSceneLoader('default')` rather
   // than closing over a specific registry: when the user loads a new
   // dataset, the SceneLoaderManager swaps loaders under the hood and
-  // the callback keeps pointing at whichever is current.
-  SceneLoaderManager.getInstance().setLODGroupRegistryFactory(() => {
+  // the callback keeps pointing at whichever is current. (Known
+  // multi-instance limitation, deferred with the embeddability roadmap:
+  // only the DEFAULT loader's registry is evaluated per frame. The
+  // registry DEPS below are per-owner already, so when per-loader
+  // callbacks arrive no further wiring changes are needed.)
+  SceneLoaderManager.getInstance().setLODGroupRegistryFactory((owner) => {
     return new LODGroupRegistry({
       getCamera: () => sceneManager.camera,
       getViewportSize: () => {
@@ -191,18 +196,19 @@ export async function runInitPipeline(
       getResidentByteBudget: () => getGpuByteBudget(),
       // Measured resident VRAM (active + pooled, real capacities) from the
       // buffer pool — the single accounting truth the registry uses to
-      // decide when to demote cold levels. Routed through the current
-      // default loader (same pattern as the per-frame callback below); a
-      // null pool (pre-construction / pooling disabled) reads as 0 bytes,
-      // so the registry never evicts in that state.
-      getResidentBytes: () => getSceneLoader('default')?.gpuBufferPool?.getResidentBytes() ?? 0,
+      // decide when to demote cold levels. Read from the OWNING loader
+      // (the factory receives it) so a non-default loader's registry never
+      // consults the default loader's pool; a null pool (pre-construction /
+      // pooling disabled) reads as 0 bytes, so the registry never evicts in
+      // that state.
+      getResidentBytes: () => owner.gpuBufferPool?.getResidentBytes() ?? 0,
       // Current view-update version. Lets the registry detect when a level's
       // committed geometry is stale for the current slice/displayDims (a
       // re-slice reloads geometry in place without flipping readiness) and
       // display a coarser FRESH level until the re-slice commits — the
-      // slice-aware coarse-while-reloading fallback. Routed through the current
-      // default loader (same pattern as the byte-budget getters above).
-      getViewVersion: () => getSceneLoader('default')?.currentViewVersion ?? 0,
+      // slice-aware coarse-while-reloading fallback. Read from the OWNING
+      // loader for the same per-instance reason as getResidentBytes.
+      getViewVersion: () => owner.currentViewVersion,
       // Keep the on-demand render loop alive while a lazy fine level reloads
       // (it commits outside the per-slice sweep and can outlast the idle
       // timeout), so the swap-up to the fresh level fires when it lands.
@@ -350,133 +356,17 @@ export async function runInitPipeline(
   // otherwise keyboard-only panels. Each button fires the SAME command as its
   // shortcut (via inputHandler.getUiActions()), so behaviour never drifts.
   const ui = inputHandler.getUiActions();
-  const railItems: ControlRailItem[] = [
-    {
-      id: 'help',
-      title: 'Help & shortcuts',
-      shortcut: 'H',
-      icon: RAIL_ICONS.help,
-      activate: () => ui.commands.toggleHelp(),
-      openSelector: '#luxar-help-overlay',
-    },
-    {
-      id: 'dims',
-      title: 'Dimensions',
-      shortcut: 'N',
-      icon: RAIL_ICONS.dims,
-      activate: () => ui.commands.toggleDimensionSliders(),
-      openSelector: '.luxar-dimension-sliders',
-    },
-    {
-      id: 'render',
-      title: 'Rendering',
-      shortcut: 'R',
-      icon: RAIL_ICONS.render,
-      activate: () => ui.commands.toggleRenderingControls(),
-      isActive: () => renderingControls.isVisible(),
-    },
-    {
-      id: 'layers',
-      title: 'Layers',
-      shortcut: 'L',
-      icon: RAIL_ICONS.layers,
-      activate: () => ui.panels.getLayersPanel()?.toggle(),
-      isActive: () => layersPanel.isVisible(),
-    },
-    {
-      id: 'monitor',
-      title: 'Data monitor',
-      shortcut: 'M',
-      icon: RAIL_ICONS.monitor,
-      activate: () => ui.commands.cycleDataMonitor(),
-      openSelector: '.luxar-data-monitor',
-    },
-    {
-      id: 'data',
-      title: 'Datasets',
-      shortcut: 'O',
-      icon: RAIL_ICONS.data,
-      activate: () => window.dispatchEvent(new CustomEvent('open-dataset-browser')),
-      openSelector: '.luxar-dataset-browser',
-    },
-    {
-      id: 'recording',
-      title: 'Recording',
-      shortcut: 'T',
-      icon: RAIL_ICONS.recording,
-      activate: () => ui.panels.getRecordingPanel()?.toggle(),
-      isActive: () => recordingPanel.isVisible(),
-      separatorBefore: true,
-    },
-    {
-      id: 'screenshot',
-      title: 'Screenshot',
-      shortcut: 'G',
-      icon: RAIL_ICONS.screenshot,
-      activate: () => ui.panels.getRecordingPanel()?.captureScreenshot(),
-      momentary: true,
-    },
-    {
-      id: 'logs',
-      title: 'Logs (console)',
-      shortcut: 'Ctrl+L',
-      icon: RAIL_ICONS.logs,
-      activate: () => debugConsole.toggle(),
-      isActive: () => debugConsole.getIsVisible(),
-      separatorBefore: true,
-    },
-    {
-      id: 'view',
-      title: 'View options',
-      icon: RAIL_ICONS.view,
-      activate: () => {}, // unused — opens the flyout below
-      separatorBefore: true,
-      flyout: [
-        {
-          id: 'scalebar',
-          title: 'Scale bar',
-          shortcut: 'B',
-          icon: RAIL_ICONS.scalebar,
-          activate: () => ui.panels.getScaleBar()?.toggle(),
-          openSelector: '.luxar-scale-bar',
-        },
-        {
-          id: 'legend',
-          title: 'Colormap legend',
-          shortcut: 'J',
-          icon: RAIL_ICONS.legend,
-          activate: () => ui.panels.getColormapLegend()?.toggle(),
-          openSelector: '.luxar-colormap-legend',
-        },
-        {
-          id: 'overlays',
-          title: 'Overlays',
-          shortcut: 'U',
-          icon: RAIL_ICONS.overlays,
-          activate: () => ui.panels.getOverlayManager()?.toggle(),
-          openSelector: '.luxar-overlay:not(.luxar-overlay--hidden)',
-        },
-        {
-          id: 'cinematic',
-          title: 'Cinematic mode',
-          shortcut: 'C',
-          icon: RAIL_ICONS.cinematic,
-          activate: () => ui.commands.toggleCinematicMode(),
-          isActive: () => renderingControls.settings.cinematicMode,
-        },
-      ],
-    },
-    {
-      // The gauge toggles the perf readout docked below (rail footer). Placed
-      // just under the eye so the readout appears at the very bottom of the rail.
-      id: 'perf',
-      title: 'Performance',
-      shortcut: 'P',
-      icon: RAIL_ICONS.perf,
-      activate: () => ui.commands.togglePerformanceStats(),
-      isActive: () => performanceMonitor.visible,
-    },
-  ];
+  const railItems = buildRailItems({
+    ui,
+    sceneManager,
+    renderingControls,
+    animationController,
+    adaptiveDPRManager,
+    performanceMonitor,
+    layersPanel,
+    debugConsole,
+    recordingPanel,
+  });
   // Dock the perf readout as the rail's footer; the gauge above toggles it.
   const controlRail = new ControlRail(railItems, performanceMonitor.element);
   partial.controlRail = controlRail;

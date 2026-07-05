@@ -81,7 +81,9 @@ export async function loadAndStage(
       segments: data.segments ? data.segments.length / 2 : 0,
       info: 'unchanged',
     });
-    ctx.viewStateQueue.dispatchPrefetch(path, linesViewState, loader);
+    if (!ctx.signal?.aborted) {
+      ctx.viewStateQueue.dispatchPrefetch(path, linesViewState, loader);
+    }
     return { path, noop: true, sourceData: data };
   }
   if (ctx.currentVersion <= 1) {
@@ -99,7 +101,11 @@ export async function loadAndStage(
     session
   );
   session.setMetadata({ segments: data.segments ? data.segments.length / 2 : 0 });
-  // S6: per-loader predictive prefetch using the derived view-state.
-  ctx.viewStateQueue.dispatchPrefetch(path, linesViewState, loader);
+  // S6: per-loader predictive prefetch using the derived view-state — but
+  // not for a SUPERSEDED update: extrapolating from an abandoned state warms
+  // the wrong chunks and pollutes the per-path prefetch baseline.
+  if (!ctx.signal?.aborted) {
+    ctx.viewStateQueue.dispatchPrefetch(path, linesViewState, loader);
+  }
   return staged;
 }

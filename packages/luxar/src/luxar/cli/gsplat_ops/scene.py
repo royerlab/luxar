@@ -158,8 +158,9 @@ def migrate_format_command(
         False,
         "--lossless",
         help="Preserve float32 Cholesky factors exactly (PRECISION encoding) "
-        "for archival migration. Default re-encodes them with the v3.0 AUTO "
-        "policy (uint16 per-column, near-lossless, ~2× smaller).",
+        "for archival migration. Default re-encodes them with the AUTO policy "
+        "(uint8 per-column with a covariance certificate; escalates to uint16 "
+        "only when the measured error demands it).",
     ),
     quiet: bool = typer.Option(
         False, "--quiet", "-q", help="Suppress the trailing 'wrote …' summary."
@@ -180,7 +181,8 @@ def migrate_format_command(
 
     All migrate to a single current-format ``.gsplats.zarr`` node subtree. By
     default the output adopts the AUTO encoding policy, so legacy float32 Cholesky
-    factors are re-encoded with near-lossless uint16 per-column quantization;
+    factors are re-encoded with certified uint8 per-column quantization (the
+    encode-time covariance certificate escalates to uint16 when needed);
     pass ``--lossless`` to keep them float32 for archival fidelity.
     """
     try:

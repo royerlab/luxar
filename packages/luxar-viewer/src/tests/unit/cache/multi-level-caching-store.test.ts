@@ -417,16 +417,19 @@ describe('MultiLevelCachingStore', () => {
     // and the public `setContentHash`/`setValidationMode` API used to
     // arrange preconditions. The CRIT-5 test below already follows this
     // pattern.
-    it('external dataset without content_hash records validationMode=none by default (commit 6.3)', async () => {
+    it('unreachable .zattrs records validationMode=none by default (commit 6.3)', async () => {
       await store.init();
       const l2Store = (store as any).l2Store as OPFSStore;
       const setValidationModeSpy = vi.spyOn(l2Store, 'setValidationMode');
 
-      // Stub fetch so getRemoteContentHash returns null (no content_hash attr).
+      // Stub fetch so getRemoteContentHash returns null (.zattrs 404 —
+      // a reachable .zattrs without content_hash now yields an implicit
+      // zattrs-hash token instead; see the zattrs-hash tests below).
       global.fetch = vi.fn(async () => ({
-        ok: true,
+        ok: false,
+        status: 404,
         async arrayBuffer() {
-          return new TextEncoder().encode(JSON.stringify({})).buffer;
+          return new ArrayBuffer(0);
         },
       })) as unknown as typeof fetch;
 
@@ -435,6 +438,63 @@ describe('MultiLevelCachingStore', () => {
 
       expect(setValidationModeSpy).toHaveBeenCalledTimes(1);
       expect(setValidationModeSpy).toHaveBeenCalledWith('none');
+    });
+
+    it('dataset without content_hash validates via implicit zattrs-hash token', async () => {
+      await store.init();
+      const l2Store = (store as any).l2Store as OPFSStore;
+      const setValidationModeSpy = vi.spyOn(l2Store, 'setValidationMode');
+      const setContentHashSpy = vi.spyOn(l2Store, 'setContentHash');
+
+      // Reachable .zattrs WITHOUT a content_hash attr (standalone
+      // .gsplats.zarr / external zarr): the raw bytes are fingerprinted.
+      global.fetch = vi.fn(async () => ({
+        ok: true,
+        async arrayBuffer() {
+          return new TextEncoder().encode(JSON.stringify({ timestamp: 't1' })).buffer;
+        },
+      })) as unknown as typeof fetch;
+
+      const ac = new AbortController();
+      await (store as any).doValidateCache(ac.signal);
+
+      expect(setValidationModeSpy).toHaveBeenCalledWith('zattrs-hash');
+      expect(setContentHashSpy).toHaveBeenCalledWith(
+        expect.stringMatching(/^zattrs:[0-9a-f]{64}$/)
+      );
+    });
+
+    it('changed .zattrs bytes (no content_hash) clear every cache tier', async () => {
+      // The regression scenario: a .gsplats.zarr regenerated in place at the
+      // same URL. Previously the cache was trusted forever (validationMode
+      // none); now the implicit token mismatch must clear L1+L2.
+      await store.init();
+      const l2Store = (store as any).l2Store as OPFSStore;
+
+      // First validation stores the implicit token for timestamp t1.
+      global.fetch = vi.fn(async () => ({
+        ok: true,
+        async arrayBuffer() {
+          return new TextEncoder().encode(JSON.stringify({ timestamp: 't1' })).buffer;
+        },
+      })) as unknown as typeof fetch;
+      await (store as any).doValidateCache(new AbortController().signal);
+
+      const clearSpy = vi.spyOn(l2Store, 'clear');
+      const invalidated = vi.fn();
+      store.onInvalidate(invalidated);
+
+      // Dataset regenerated: .zattrs bytes changed (new timestamp).
+      global.fetch = vi.fn(async () => ({
+        ok: true,
+        async arrayBuffer() {
+          return new TextEncoder().encode(JSON.stringify({ timestamp: 't2' })).buffer;
+        },
+      })) as unknown as typeof fetch;
+      await (store as any).doValidateCache(new AbortController().signal);
+
+      expect(clearSpy).toHaveBeenCalled();
+      expect(invalidated).toHaveBeenCalled();
     });
 
     it('external dataset records validationMode=ttl when TTL is configured (commit 6.3)', async () => {
@@ -453,9 +513,10 @@ describe('MultiLevelCachingStore', () => {
         const clearSpy = vi.spyOn(l2Store, 'clear');
 
         global.fetch = vi.fn(async () => ({
-          ok: true,
+          ok: false,
+          status: 404,
           async arrayBuffer() {
-            return new TextEncoder().encode(JSON.stringify({})).buffer;
+            return new ArrayBuffer(0);
           },
         })) as unknown as typeof fetch;
 
@@ -489,10 +550,13 @@ describe('MultiLevelCachingStore', () => {
         const clearSpy = vi.spyOn(l2Store, 'clear');
         const clearL1Spy = vi.spyOn(store, 'clearL1');
 
+        // .zattrs unreachable — with a reachable .zattrs the implicit
+        // zattrs-hash token now takes precedence over the TTL path.
         global.fetch = vi.fn(async () => ({
-          ok: true,
+          ok: false,
+          status: 404,
           async arrayBuffer() {
-            return new TextEncoder().encode(JSON.stringify({})).buffer;
+            return new ArrayBuffer(0);
           },
         })) as unknown as typeof fetch;
 
