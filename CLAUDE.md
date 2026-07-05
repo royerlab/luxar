@@ -991,4 +991,4 @@ Python Data -> Luxar Core -> Zarr Archive -> Luxar Viewer -> WebGL -> Display
 ### Performance Targets
 - 100K-10M elements for smooth interaction
 - Chunk size: 16KB-256KB (target 64KB; see `TARGET_CHUNK_BYTES` in `typing_utils/constants.py`)
-- Compression: Blosc with zstd level 3
+- Compression: Blosc zstd level 9, width-aware shuffle by dtype (see `encoding/compression.py`)

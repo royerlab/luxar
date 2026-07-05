@@ -15,10 +15,9 @@ import typer
 from arbol import aprint, asection
 
 if TYPE_CHECKING:
-    import numpy as np
-
     from luxar.gsplats.lod.recipes import RecipeParams
 
+from luxar.encoding.compression import WIDTH_AWARE_DEFAULT, resolve_compressor
 
 app_batch = typer.Typer(
     help="Fit a whole nD dataset across its axes — locally across GPUs "
@@ -2291,7 +2290,11 @@ def batch_denoise_preprocess_cmd(
                     "data",
                     shape=full_shape,
                     chunks=chunks,
-                    dtype=np.float32,
+                    # string dtype: numpy is only imported under TYPE_CHECKING
+                    # in this module (dtype=np.float32 here was a latent
+                    # NameError before this change).
+                    dtype="float32",
+                    compressor=resolve_compressor(WIDTH_AWARE_DEFAULT, "float32"),
                 )
             store["data"][t_idx, c_idx] = denoised
             aprint(f"Written to denoised.zarr[{t_idx}, {c_idx}]")

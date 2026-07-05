@@ -14,6 +14,7 @@ import numpy as np
 import zarr
 
 from ..validation.base import _validate_numeric_finite_values
+from .compression import resolve_compressor
 from .modes import EncodingMode
 from .registry import ArrayRefRegistry
 from .semantic_types import SemanticType
@@ -490,7 +491,11 @@ class ArrayEncoder:
             compressor: Optional compressor
         """
         zarr_group.create_dataset(
-            name, data=data, chunks=chunks, compressor=compressor, overwrite=True
+            name,
+            data=data,
+            chunks=chunks,
+            compressor=resolve_compressor(compressor, data.dtype),
+            overwrite=True,
         )
         # Set encoding metadata to "none"
         zarr_group[name].attrs["encoding"] = {"name": "none"}
@@ -521,7 +526,10 @@ class ArrayEncoder:
             broadcast_data = data[:1, :]
 
         zarr_group.create_dataset(
-            name, data=broadcast_data, compressor=compressor, overwrite=True
+            name,
+            data=broadcast_data,
+            compressor=resolve_compressor(compressor, broadcast_data.dtype),
+            overwrite=True,
         )
 
         # Set encoding metadata
@@ -594,7 +602,10 @@ class ArrayEncoder:
         """
         # Write the single value
         zarr_group.create_dataset(
-            name, data=data, compressor=compressor, overwrite=True
+            name,
+            data=data,
+            compressor=resolve_compressor(compressor, data.dtype),
+            overwrite=True,
         )
 
         # Set encoding metadata
@@ -634,7 +645,10 @@ class ArrayEncoder:
 
         empty_data = np.array([], dtype=dtype).reshape(empty_shape)
         zarr_group.create_dataset(
-            name, data=empty_data, compressor=compressor, overwrite=True
+            name,
+            data=empty_data,
+            compressor=resolve_compressor(compressor, empty_data.dtype),
+            overwrite=True,
         )
 
         # Set encoding metadata
@@ -697,7 +711,7 @@ class ArrayEncoder:
             name,
             data=indices_array,
             chunks=indices_chunks,
-            compressor=compressor,
+            compressor=resolve_compressor(compressor, indices_array.dtype),
             overwrite=True,
         )
 
@@ -786,9 +800,9 @@ class ArrayEncoder:
             # ~2.7 GB of transient Σ arrays). Evenly-spaced rows = deterministic
             # and, over Hilbert-ordered splats, spatially uniform. The
             # quantization SCALES, however, must come from the FULL columns —
-            # exactly what the real encode uses — or the certificate lies; the
-            # forward compand is monotonic, so companding the raw column
-            # min/max equals the full-array companded min/max.
+            # exactly what the real encode uses — or the certificate lies;
+            # _perchannel_log_scales is the shared nonzero-anchored reduction
+            # both the encoders and this certificate use.
             capped = n_rows > COV_CERT_SAMPLE_MAX
             sel: Any = (
                 np.linspace(0, n_rows - 1, COV_CERT_SAMPLE_MAX).astype(np.intp)
@@ -799,14 +813,11 @@ class ArrayEncoder:
             off_s = offdiag[sel]
             n_s = diag_s.shape[0]
 
-            def col_scales(x: np.ndarray, *, signed: bool) -> tuple:
-                lo = self._perchannel_log_forward(x.min(axis=0)[None, :], signed=signed)
-                hi = self._perchannel_log_forward(x.max(axis=0)[None, :], signed=signed)
-                return lo[0], hi[0]
-
-            lo_d, hi_d = col_scales(diag, signed=False)
+            lo_d, hi_d = self._perchannel_log_scales(diag, signed=False)
             lo_o, hi_o = (
-                col_scales(offdiag, signed=True) if write_offdiag else (None, None)
+                self._perchannel_log_scales(offdiag, signed=True)
+                if write_offdiag
+                else (None, None)
             )
 
             # Reference for the error measurement is the FORWARD-VALID input:
@@ -1192,7 +1203,7 @@ class ArrayEncoder:
             name,
             data=encoded_data,
             chunks=chunks,
-            compressor=compressor,
+            compressor=resolve_compressor(compressor, encoded_data.dtype),
             overwrite=True,
         )
         zarr_group[name].attrs["encoding"] = {
@@ -1306,7 +1317,7 @@ class ArrayEncoder:
             name,
             data=encoded_data,
             chunks=chunks,
-            compressor=compressor,
+            compressor=resolve_compressor(compressor, encoded_data.dtype),
             overwrite=True,
         )
         zarr_group[name].attrs["encoding"] = metadata
@@ -1344,23 +1355,28 @@ class ArrayEncoder:
             # Analyze range
             max_val = float(np.max(data))
 
-            if encoding_type == "log":
-                # Logarithmic encoding
-                bits = 8
-                if max_val == 0:
-                    encoded_data = np.zeros_like(data, dtype=np.uint8)
-                    max_log = 0.0
-                else:
-                    max_log = float(np.log1p(max_val))
-                    log_vals = np.log1p(data)
-                    normalized = log_vals / max_log
-                    encoded_data = np.clip(normalized * 255, 0, 255).astype(np.uint8)
-
-                encoder_name = "log_scalar_uint8"
+            if encoding_type == "log" and max_val > 0:
+                # Geometric-log encoding (min/max-anchored, reserved zero
+                # level): uniform RELATIVE precision across the whole range,
+                # and by construction no nonzero value can decode to zero.
+                self._encode_geolog_scalar(
+                    zarr_group,
+                    name,
+                    data,
+                    16 if mode == EncodingMode.AUTO else 8,
+                    chunks,
+                    compressor,
+                )
+                return
+            elif encoding_type == "log":
+                # All zeros with explicit log request: degenerate constant.
+                encoded_data = np.zeros_like(data, dtype=np.uint8)
+                encoder_name = "bounded_scalar_uint8"
                 metadata = {
                     "name": encoder_name,
-                    "max_log": max_log,
-                    "bits": bits,
+                    "min": 0.0,
+                    "max": 0.0,
+                    "bits": 8,
                     "original_dtype": original_dtype,
                 }
             else:
@@ -1378,45 +1394,48 @@ class ArrayEncoder:
                         "bits": 8,
                         "original_dtype": original_dtype,
                     }
-                elif bits == 8:
-                    # Dynamic range <= 256, uint8 is sufficient
-                    normalized = data / max_val
-                    # Use rounding for better accuracy (not truncation)
-                    encoded_data = np.clip(np.round(normalized * 255), 0, 255).astype(
-                        np.uint8
-                    )
-                    encoder_name = "bounded_scalar_uint8"
+                elif bits in (8, 16):
+                    # Rescale-first: anchor the grid at the array's OWN
+                    # [min, max] rather than [0, max] — data far from zero
+                    # (e.g. radii in [10, 11]) no longer wastes code space
+                    # on the empty [0, min) span. min == 0 whenever the data
+                    # contains zeros, so zero handling is unchanged.
+                    min_val = float(np.min(data))
+                    span = max(max_val - min_val, 0.0)
+                    levels = 255 if bits == 8 else 65535
+                    if span == 0.0:
+                        encoded_data = np.zeros_like(
+                            data, dtype=np.uint8 if bits == 8 else np.uint16
+                        )
+                    else:
+                        normalized = (data - min_val) / span
+                        # Use rounding for better accuracy (not truncation)
+                        encoded_data = np.clip(
+                            np.round(normalized * levels), 0, levels
+                        ).astype(np.uint8 if bits == 8 else np.uint16)
+                    encoder_name = f"bounded_scalar_uint{bits}"
                     metadata = {
                         "name": encoder_name,
-                        "min": 0.0,
+                        "min": min_val,
                         "max": max_val,
-                        "bits": 8,
-                        "original_dtype": original_dtype,
-                    }
-                elif bits == 16:
-                    # Dynamic range <= 65536, uint16 is sufficient
-                    normalized = data / max_val
-                    # Use rounding for better accuracy (not truncation)
-                    encoded_data = np.clip(
-                        np.round(normalized * 65535), 0, 65535
-                    ).astype(np.uint16)
-                    encoder_name = "bounded_scalar_uint16"
-                    metadata = {
-                        "name": encoder_name,
-                        "min": 0.0,
-                        "max": max_val,
-                        "bits": 16,
+                        "bits": bits,
                         "original_dtype": original_dtype,
                     }
                 else:
-                    # Dynamic range > 65536, use float
-                    if self._float16_allowed:
-                        encoded_data = data.astype(np.float16)
-                        encoder_name = "float16"
-                    else:
-                        encoded_data = data.astype(np.float32)
-                        encoder_name = "float32"
-                    metadata = {"name": encoder_name, "original_dtype": original_dtype}
+                    # Dynamic range > 65536: linear quantization cannot hold
+                    # both ends, and float32 wastes 4 B on a relative-precision
+                    # quantity. Rescale-first geometric-log quantization keeps
+                    # uniform relative precision across the whole range
+                    # (AUTO -> u16, ~0.01% for 7 decades; MEMORY -> u8).
+                    self._encode_geolog_scalar(
+                        zarr_group,
+                        name,
+                        data,
+                        16 if mode == EncodingMode.AUTO else 8,
+                        chunks,
+                        compressor,
+                    )
+                    return
         else:
             raise ValueError(f"Unexpected mode for POSITIVE_SCALAR: {mode}")
 
@@ -1424,10 +1443,92 @@ class ArrayEncoder:
             name,
             data=encoded_data,
             chunks=chunks,
-            compressor=compressor,
+            compressor=resolve_compressor(compressor, encoded_data.dtype),
             overwrite=True,
         )
         zarr_group[name].attrs["encoding"] = metadata
+
+    @staticmethod
+    def _geolog_forward(
+        data: np.ndarray, bits: int, min_log: float, max_log: float
+    ) -> np.ndarray:
+        """Compand + quantize a non-negative array to geolog codes.
+
+        Level 0 is RESERVED for exact zeros; nonzero values map to levels
+        ``[1, 2**bits - 1]`` over ``y = ln(x)`` rescaled to
+        ``[min_log, max_log]`` — so no nonzero input can quantize to zero,
+        and relative precision is uniform across the whole range.
+        """
+        top = (1 << bits) - 1
+        codes = np.zeros(data.shape, dtype=np.uint16 if bits > 8 else np.uint8)
+        nz = data > 0
+        if nz.any():
+            y = np.log(data[nz].astype(np.float64))
+            rng = max(max_log - min_log, 0.0)
+            if rng == 0.0 or top == 1:
+                u = np.ones(y.shape, dtype=np.float64)
+            else:
+                u = 1 + np.round(np.clip((y - min_log) / rng, 0.0, 1.0) * (top - 1))
+            codes[nz] = u.astype(codes.dtype)
+        return codes
+
+    @staticmethod
+    def _geolog_inverse(
+        codes: np.ndarray, bits: int, min_log: float, max_log: float
+    ) -> np.ndarray:
+        """Exact inverse of :meth:`_geolog_forward` (mirrors the decoders)."""
+        top = (1 << bits) - 1
+        out = np.zeros(codes.shape, dtype=np.float64)
+        nz = codes > 0
+        if nz.any():
+            rng = max(max_log - min_log, 0.0)
+            denom = max(top - 1, 1)
+            out[nz] = np.exp(min_log + (codes[nz].astype(np.float64) - 1) / denom * rng)
+        return out.astype(np.float32)
+
+    def _encode_geolog_scalar(
+        self,
+        zarr_group: zarr.Group,
+        name: str,
+        data: np.ndarray,
+        bits: int,
+        chunks: Optional[tuple] = None,
+        compressor: Optional[Any] = None,
+    ) -> None:
+        """Write a wide-dynamic-range positive scalar as ``geolog_scalar_u{bits}``.
+
+        Rescale-first log quantization: the grid is anchored to the array's OWN
+        nonzero ``[min, max]`` (stored as ``min_log``/``max_log``), the same
+        array-local principle as the COORDINATE fixed-point grid and the
+        per-column Cholesky scales. Level 0 is reserved for exact zeros.
+        """
+        original_dtype = str(data.dtype)
+        x = np.asarray(data, dtype=np.float64)
+        nz = x > 0
+        min_log = float(np.log(x[nz].min()))
+        max_log = float(np.log(x[nz].max()))
+        codes = self._geolog_forward(x, bits, min_log, max_log)
+        # Invariant, not a data property: the reserved zero level makes
+        # nonzero -> 0 impossible; a violation would be an encoder bug.
+        if bool(((codes == 0) & nz).any()):
+            raise RuntimeError(
+                f"geolog encoding bug: nonzero values of '{name}' mapped to "
+                "the reserved zero level"
+            )
+        zarr_group.create_dataset(
+            name,
+            data=codes,
+            chunks=chunks,
+            compressor=resolve_compressor(compressor, codes.dtype),
+            overwrite=True,
+        )
+        zarr_group[name].attrs["encoding"] = {
+            "name": f"geolog_scalar_uint{bits}",
+            "min_log": min_log,
+            "max_log": max_log,
+            "bits": bits,
+            "original_dtype": original_dtype,
+        }
 
     def _encode_cholesky(
         self,
@@ -1467,7 +1568,7 @@ class ArrayEncoder:
             name,
             data=encoded_data,
             chunks=chunks,
-            compressor=compressor,
+            compressor=resolve_compressor(compressor, encoded_data.dtype),
             overwrite=True,
         )
         zarr_group[name].attrs["encoding"] = {
@@ -1536,7 +1637,11 @@ class ArrayEncoder:
         y = np.asarray(data).astype(np.float64)
         u, lo_list, hi_list = self._quantize_per_column(y, bits, lo=lo, hi=hi)
         zarr_group.create_dataset(
-            name, data=u, chunks=chunks, compressor=compressor, overwrite=True
+            name,
+            data=u,
+            chunks=chunks,
+            compressor=resolve_compressor(compressor, u.dtype),
+            overwrite=True,
         )
         zarr_group[name].attrs["encoding"] = {
             "name": f"linear_perchannel_u{bits}",
@@ -1555,6 +1660,67 @@ class ArrayEncoder:
         return np.asarray(np.log1p(np.maximum(x, 0.0)))
 
     @staticmethod
+    def _perchannel_nonzero_mask(data: np.ndarray, *, signed: bool) -> np.ndarray:
+        """Entries that get a real code (the rest take the reserved zero level).
+
+        Unsigned columns clamp negatives to 0 by policy (see the forward
+        compand), so anything ``<= 0`` decodes to exactly 0 via the reserved
+        level rather than to ``expm1(col_lo)``.
+        """
+        return np.asarray(data != 0 if signed else data > 0)
+
+    @staticmethod
+    def _perchannel_log_scales(
+        data: np.ndarray, *, signed: bool
+    ) -> tuple[np.ndarray, np.ndarray]:
+        """Per-column COMPANDED-domain scales over the NONZERO entries only.
+
+        Zero entries take the reserved zero level, so anchoring the scales at
+        zero would waste code range on values that never use it — the exact
+        anti-pattern ``geolog_scalar`` removed for scalars (rescale first).
+        The forward compand is monotonic, so companding each column's raw
+        nonzero min/max equals the companded nonzero min/max; the column loop
+        keeps peak memory at one column (the covariance certificate feeds
+        full multi-million-row arrays through this). A column with no nonzero
+        entries gets ``lo == hi == 0``.
+        """
+        x = np.asarray(data)
+        n_cols = x.shape[1]
+        raw_lo = np.zeros(n_cols, dtype=np.float64)
+        raw_hi = np.zeros(n_cols, dtype=np.float64)
+        for c in range(n_cols):
+            col = x[:, c]
+            nz = col[ArrayEncoder._perchannel_nonzero_mask(col, signed=signed)]
+            if nz.size:
+                raw_lo[c] = float(nz.min())
+                raw_hi[c] = float(nz.max())
+        lo = ArrayEncoder._perchannel_log_forward(raw_lo[None, :], signed=signed)
+        hi = ArrayEncoder._perchannel_log_forward(raw_hi[None, :], signed=signed)
+        return lo[0], hi[0]
+
+    @staticmethod
+    def _quantize_perchannel_zero_level(
+        y: np.ndarray,
+        nonzero: np.ndarray,
+        bits: int,
+        lo: np.ndarray,
+        hi: np.ndarray,
+    ) -> np.ndarray:
+        """Per-column quantization with a RESERVED ZERO LEVEL.
+
+        Code 0 is reserved for exact zeros (decode returns exactly 0); nonzero
+        entries map to codes ``1..2**bits-1`` spanning each column's companded
+        ``[lo, hi]``. The reserved level makes exact zeros round-trip exactly
+        (an axis-aligned splat keeps zero correlations) and lets the scales
+        come from the nonzero entries only. Same layout as ``geolog_scalar``.
+        """
+        top = (1 << bits) - 1
+        udtype = np.uint8 if bits == 8 else np.uint16
+        rng = np.maximum(hi - lo, 1e-30)
+        codes = 1.0 + np.round((np.clip(y, lo, hi) - lo) / rng * (top - 1))
+        return np.asarray(np.where(nonzero, codes, 0.0).astype(udtype))
+
+    @staticmethod
     def _perchannel_log_roundtrip(
         data: np.ndarray,
         bits: int,
@@ -1565,21 +1731,23 @@ class ArrayEncoder:
     ) -> np.ndarray:
         """Quantized encode→decode round-trip of the per-channel log encodings.
 
-        Uses the SAME forward compand and per-column quantizer as the real
-        encoders and the same inverse as the decoder, so a certificate computed
-        from it can never diverge from what actually lands on disk. ``lo``/``hi``
-        accept precomputed COMPANDED-domain column scales — the certificate
-        passes full-array scales while round-tripping only a row sample.
+        Uses the SAME forward compand, nonzero-anchored scales, and
+        reserved-zero quantizer as the real encoders and the same inverse as
+        the decoder, so a certificate computed from it can never diverge from
+        what actually lands on disk. ``lo``/``hi`` accept precomputed
+        COMPANDED-domain column scales — the certificate passes full-array
+        scales while round-tripping only a row sample.
         """
-        y = ArrayEncoder._perchannel_log_forward(data, signed=signed)
-        u, lo_list, hi_list = ArrayEncoder._quantize_per_column(y, bits, lo=lo, hi=hi)
-        levels = (1 << bits) - 1
-        lo_a = np.asarray(lo_list, dtype=np.float64)
-        hi_a = np.asarray(hi_list, dtype=np.float64)
-        yq = lo_a + u.astype(np.float64) / levels * (hi_a - lo_a)
-        if signed:
-            return np.asarray(np.sign(yq) * np.expm1(np.abs(yq)))
-        return np.asarray(np.expm1(yq))
+        x = np.asarray(data)
+        if lo is None or hi is None:
+            lo, hi = ArrayEncoder._perchannel_log_scales(x, signed=signed)
+        y = ArrayEncoder._perchannel_log_forward(x, signed=signed)
+        nonzero = ArrayEncoder._perchannel_nonzero_mask(x, signed=signed)
+        u = ArrayEncoder._quantize_perchannel_zero_level(y, nonzero, bits, lo, hi)
+        denom = max((1 << bits) - 2, 1)
+        yq = lo + (u.astype(np.float64) - 1.0) / denom * np.maximum(hi - lo, 1e-30)
+        xq = np.sign(yq) * np.expm1(np.abs(yq)) if signed else np.expm1(yq)
+        return np.asarray(np.where(u == 0, 0.0, xq))
 
     def _encode_log_perchannel(
         self,
@@ -1593,13 +1761,16 @@ class ArrayEncoder:
         """Generic per-channel LOG quantization of a non-negative (N, C) array.
 
         Each channel (column) gets its own ``[lo, hi]`` in log space, so a wide
-        per-channel dynamic range keeps relative precision. PRECISION → float32;
-        AUTO/MEMORY → ``log_perchannel_u8``. AUTO escalates to
-        ``log_perchannel_u16`` only through :meth:`encode_cholesky_split`, whose
-        encode-time certificate measures the actual Σ reconstruction error —
-        pair callers should use that entry point. (First consumer: the Cholesky
-        diagonal; reusable for any positive per-channel field.) Negative inputs
-        are clamped to 0 before the log.
+        per-channel dynamic range keeps relative precision. Scales are anchored
+        at each column's NONZERO min/max and code 0 is a RESERVED ZERO LEVEL
+        (``zero_level: true``): entries ``<= 0`` round-trip to exactly 0 and
+        never consume code range (rescale-first, as ``geolog_scalar``).
+        PRECISION → float32; AUTO/MEMORY → ``log_perchannel_u8``. AUTO
+        escalates to ``log_perchannel_u16`` only through
+        :meth:`encode_cholesky_split`, whose encode-time certificate measures
+        the actual Σ reconstruction error — pair callers should use that entry
+        point. (First consumer: the Cholesky diagonal; reusable for any
+        positive per-channel field.)
         """
         original_dtype = str(data.dtype)
         if mode == EncodingMode.PRECISION:
@@ -1608,16 +1779,24 @@ class ArrayEncoder:
             )
             return
         bits = self._perchannel_bits_override or 8
-        y = self._perchannel_log_forward(data, signed=False)
-        u, lo, hi = self._quantize_per_column(y, bits)
+        x = np.asarray(data)
+        lo, hi = self._perchannel_log_scales(x, signed=False)
+        y = self._perchannel_log_forward(x, signed=False)
+        nonzero = self._perchannel_nonzero_mask(x, signed=False)
+        u = self._quantize_perchannel_zero_level(y, nonzero, bits, lo, hi)
         zarr_group.create_dataset(
-            name, data=u, chunks=chunks, compressor=compressor, overwrite=True
+            name,
+            data=u,
+            chunks=chunks,
+            compressor=resolve_compressor(compressor, u.dtype),
+            overwrite=True,
         )
         zarr_group[name].attrs["encoding"] = {
             "name": f"log_perchannel_u{bits}",
-            "col_lo": lo,
-            "col_hi": hi,
+            "col_lo": lo.tolist(),
+            "col_hi": hi.tolist(),
             "bits": bits,
+            "zero_level": True,
             "original_dtype": original_dtype,
         }
 
@@ -1634,10 +1813,13 @@ class ArrayEncoder:
 
         ``y = sign(x)·log1p(|x|)`` companding gives fine resolution near zero
         (where most mass of a zero-centred signal lives) and coarse in the tails,
-        with per-channel ``[lo, hi]``. PRECISION → float32; AUTO/MEMORY →
-        ``signed_log_perchannel_u8``, with AUTO escalation to u16 owned by
-        :meth:`encode_cholesky_split` (see ``_encode_log_perchannel``). (First
-        consumer: the Cholesky off-diagonal.)
+        with per-channel ``[lo, hi]`` anchored at each column's NONZERO min/max
+        and code 0 a RESERVED ZERO LEVEL (``zero_level: true``) — exact zeros
+        (e.g. the off-diagonal of an axis-aligned splat) round-trip to exactly
+        0 instead of a tiny spurious correlation. PRECISION → float32;
+        AUTO/MEMORY → ``signed_log_perchannel_u8``, with AUTO escalation to u16
+        owned by :meth:`encode_cholesky_split` (see ``_encode_log_perchannel``).
+        (First consumer: the Cholesky off-diagonal.)
         """
         original_dtype = str(data.dtype)
         if mode == EncodingMode.PRECISION:
@@ -1646,16 +1828,24 @@ class ArrayEncoder:
             )
             return
         bits = self._perchannel_bits_override or 8
-        y = self._perchannel_log_forward(data, signed=True)
-        u, lo, hi = self._quantize_per_column(y, bits)
+        x = np.asarray(data)
+        lo, hi = self._perchannel_log_scales(x, signed=True)
+        y = self._perchannel_log_forward(x, signed=True)
+        nonzero = self._perchannel_nonzero_mask(x, signed=True)
+        u = self._quantize_perchannel_zero_level(y, nonzero, bits, lo, hi)
         zarr_group.create_dataset(
-            name, data=u, chunks=chunks, compressor=compressor, overwrite=True
+            name,
+            data=u,
+            chunks=chunks,
+            compressor=resolve_compressor(compressor, u.dtype),
+            overwrite=True,
         )
         zarr_group[name].attrs["encoding"] = {
             "name": f"signed_log_perchannel_u{bits}",
-            "col_lo": lo,
-            "col_hi": hi,
+            "col_lo": lo.tolist(),
+            "col_hi": hi.tolist(),
             "bits": bits,
+            "zero_level": True,
             "original_dtype": original_dtype,
         }
 
@@ -1674,7 +1864,7 @@ class ArrayEncoder:
             name,
             data=data.astype(target_dtype),
             chunks=chunks,
-            compressor=compressor,
+            compressor=resolve_compressor(compressor, target_dtype),
             overwrite=True,
         )
         zarr_group[name].attrs["encoding"] = {
@@ -1721,7 +1911,7 @@ class ArrayEncoder:
             name,
             data=encoded_data,
             chunks=chunks,
-            compressor=compressor,
+            compressor=resolve_compressor(compressor, encoded_data.dtype),
             overwrite=True,
         )
         zarr_group[name].attrs["encoding"] = {
@@ -1770,7 +1960,7 @@ class ArrayEncoder:
             name,
             data=encoded_data,
             chunks=chunks,
-            compressor=compressor,
+            compressor=resolve_compressor(compressor, encoded_data.dtype),
             overwrite=True,
         )
         zarr_group[name].attrs["encoding"] = {
@@ -1877,7 +2067,7 @@ class ArrayEncoder:
             name,
             data=encoded_data,
             chunks=chunks,
-            compressor=compressor,
+            compressor=resolve_compressor(compressor, encoded_data.dtype),
             overwrite=True,
         )
         zarr_group[name].attrs["encoding"] = metadata

@@ -18,7 +18,7 @@ path.
 | `gsplats.ts`            | `compute_nd_visibility_gsplats` — ellipsoid-extent pre-filter using Cholesky row norms                           |
 | `gsplats-processing.ts` | Marginal Cholesky factorization, Mahalanobis distance, shifted-Gaussian attenuation, visible-Cholesky extraction |
 | `effective-radii.ts`    | `calculate_effective_radii` — `R_eff = sqrt(R² − D²)` for nD points sliced by a hyperplane                       |
-| `decode.ts`             | LUT / quantized (u8, u16) / log-scalar decoders + `decode_broadcasted` for per-attribute broadcast               |
+| `decode.ts`             | LUT / quantized / log-scalar / geolog-scalar / per-channel (linear, log, signed-log) decoders + `decode_broadcasted` |
 | `projection.ts`         | nD→3D position extraction, AABB bounds, `compact_by_mask`, `count_visible`, `radii_to_visibility_mask`           |
 
 ## Public surface

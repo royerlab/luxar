@@ -12,7 +12,6 @@ from ..typing_utils.constants import (
     TARGET_CHUNK_BYTES,
 )
 from ..typing_utils.enums import PhysicalUnit
-from ..typing_utils.protocols import CompressorProtocol
 
 # Define literal types locally
 CompressionType = Literal["blosc", "zstd", "lz4", "gzip", "bz2", "lzma"]
@@ -60,8 +59,11 @@ SUPPORTED_COMPRESSION: Final[tuple[CompressionType, ...]] = (
 )
 
 # Default compression settings
+# Informational only — the REAL default is the width-aware per-dtype policy
+# (zstd level 9 inside Blosc; see luxar.encoding.compression). These constants
+# describe the container/codec family for metadata and docs.
 DEFAULT_COMPRESSION: Final[CompressionType] = "blosc"
-DEFAULT_COMPRESSION_LEVEL: Final[int] = 3
+DEFAULT_COMPRESSION_LEVEL: Final[int] = 9
 
 # Supported physical units
 SUPPORTED_UNITS: Final[tuple[str, ...]] = (
@@ -120,9 +122,12 @@ SUPPORTED_SCALAR_DTYPES: Final[tuple[str, ...]] = ("float32", "float16", "uint8"
 # Import Default Compressor
 # =============================================================================
 
-# Default compressor (imported from _io.py)
-DEFAULT_COMP: Optional[CompressorProtocol]
+# Default compressor (imported from io.reader): since the width-aware
+# per-dtype policy this is a resolution SENTINEL, not a compressor object —
+# resolve via luxar.encoding.compression.resolve_compressor(dtype).
+DEFAULT_COMP: "CompressorLike"
 try:
+    from ..encoding.compression import CompressorLike
     from ..io.reader import DEFAULT_COMP
 except ImportError:
     DEFAULT_COMP = None
@@ -175,8 +180,6 @@ def validate_chunk_bytes(chunk_bytes: Any) -> int:
         )
 
     return chunk_bytes
-
-
 
 
 def validate_compression_level(level: Any) -> int:

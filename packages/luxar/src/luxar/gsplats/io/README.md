@@ -38,7 +38,7 @@ save_gsplats(
     provenance_info=None,         # Image lineage metadata (optional)
     description="DAPI nuclei fitting",
     compress=None,                # "zip" or "tar.gz" for compressed archive
-    compressor=DEFAULT_COMP,      # Blosc compressor (default: zstd level 3)
+    compressor=DEFAULT_COMP,      # Width-aware default (zstd l9, shuffle by dtype)
     zip_deflate=False,            # Use DEFLATE compression for outer zip
     truncation_radius=3.0,        # Gaussian truncation radius (std devs)
 )

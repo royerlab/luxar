@@ -96,7 +96,7 @@ Each worker loads a WASM module on `initialize()` and exposes these operations:
 | ------------------- | ------------------------------------------------------------------------------------------- |
 | **Spatial queries** | `querySpatialIndex()` — find chunks intersecting nD slice                                   |
 | **nD visibility**   | `computeNDVisibilityPoints()`, `computeNDVisibilityLines()`, `computeNDVisibilityGSplats()` |
-| **Decoding**        | `decodeQuantized()`, `decodeLogScalar()`, `decodeLUT()`, `decodeBroadcasted()`              |
+| **Decoding**        | `decodeQuantized()`, `decodeLogScalar()`, `decodeGeologScalar()`, `decodePerChannel()`, `decodeLUT()`, `decodeBroadcasted()` |
 | **Projection**      | `projectPointsTo3D()`, `projectLinesTo3D()`, `projectGSplatsTo3D()`                         |
 
 ### What workers handle
@@ -172,6 +172,8 @@ workers/
     └── decode/
         ├── quantized.ts                        — uint8/uint16 → float32
         ├── log-scalar.ts                       — log-space dequantization
+        ├── geolog-scalar.ts                    — geometric-log (reserved zero level)
+        ├── perchannel.ts                       — per-column linear/log/signed-log
         ├── lut.ts                              — row + scalar LUT decode
         └── broadcasted.ts                      — single value → N×k array
 ```
