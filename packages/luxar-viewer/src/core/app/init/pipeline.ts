@@ -136,10 +136,19 @@ export async function runInitPipeline(
     sceneManager.postProcessing
   );
   partial.animationController = animationController;
-  // Skip GPU rendering while the WebGL context is lost.
-  // SceneManager flips this flag in its webglcontextlost/restored
-  // handlers; the loop polls each frame.
-  animationController.setContextLostPredicate(() => sceneManager.isWebGLContextLost());
+  // Skip GPU rendering while the rendering context is dead.
+  // isWebGLContextLost covers WebGL2 (contextRecovery flips it in the
+  // webglcontextlost/restored handlers) but is hard-false under
+  // ?renderer=webgpu, where no contextRecovery is constructed — so a
+  // local latch, set by the webgpu-device-lost listener below, folds
+  // WebGPU device loss (unrecoverable in this release) into the same
+  // predicate. Everything keyed on it — render skips, adaptive-DPR
+  // frame recording, the idle-restore render — becomes WebGPU-aware
+  // through this one closure.
+  let gpuDeviceLost = false;
+  animationController.setContextLostPredicate(
+    () => gpuDeviceLost || sceneManager.isWebGLContextLost()
+  );
   // When the perf readout is shown, kick the loop once so it gets a live
   // reading if the scene had idled — but do NOT force continuous rendering
   // (that would defeat the idle-pause / battery saving). The FPS is live while
@@ -310,6 +319,13 @@ export async function runInitPipeline(
     // scene-manager handler; this listener exists to make sure the
     // user is told too.
     const onWebGPUDeviceLost = (event: { reason?: string; message?: string }): void => {
+      // Latch the shared context-lost predicate (see its definition
+      // above): stops draw calls against the dead device AND stops the
+      // adaptive DPR manager from evaluating the artificially cheap
+      // no-op frames (which would drive bogus scale-ups / false probe
+      // verdicts). Unrecoverable in this release, so it never unlatches.
+      gpuDeviceLost = true;
+      adaptiveDPRManager.notifyPaused();
       const reason = event.reason ? ` (${event.reason})` : '';
       const detail = event.message ? `: ${event.message}` : '';
       notifier.error(

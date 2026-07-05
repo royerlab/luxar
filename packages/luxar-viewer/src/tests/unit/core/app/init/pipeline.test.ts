@@ -98,6 +98,7 @@ vi.mock('../../../../../rendering/adaptive-dpr-manager', () => ({
     getNativeDPR: vi.fn(() => 2),
     setLoadActivityPredicate: vi.fn(),
     notifyContentChanged: vi.fn(),
+    notifyPaused: vi.fn(),
   })),
 }));
 vi.mock('../../../../../ui/resolution-indicator', () => ({
@@ -377,6 +378,37 @@ describe('runInitPipeline', () => {
       const events = sceneStub.addEventListener.mock.calls.map((c) => c[0]);
       expect(events).toContain('webgl-context-restored');
       expect(events).toContain('webgpu-device-lost');
+    });
+
+    it('webgpu-device-lost latches the shared context-lost predicate and pauses the DPR manager', async () => {
+      const { factories, sceneStub } = makeFactoryOverrides();
+      const ports = makePorts();
+      ports.options.factories = factories as never;
+      const partial: Partial<InitPipelineResult> = {};
+
+      await runInitPipeline(ports, partial);
+
+      const animation = factories.animationController.mock.results[0].value as {
+        setContextLostPredicate: ReturnType<typeof vi.fn>;
+      };
+      const predicate = animation.setContextLostPredicate.mock.calls[0][0] as () => boolean;
+      sceneStub.isWebGLContextLost = vi.fn(() => false);
+      expect(predicate()).toBe(false);
+
+      // Fire the registered webgpu-device-lost handler.
+      const handler = sceneStub.addEventListener.mock.calls.find(
+        (c: unknown[]) => c[0] === 'webgpu-device-lost'
+      )![1] as (event: object) => void;
+      handler({ reason: 'destroyed' });
+
+      // The predicate is latched even though isWebGLContextLost stays
+      // false (it is hard-false under WebGPU), and the DPR manager is
+      // paused so cheap no-op frames can't drive scale-ups.
+      expect(predicate()).toBe(true);
+      const manager = partial.adaptiveDPRManager as unknown as {
+        notifyPaused: ReturnType<typeof vi.fn>;
+      };
+      expect(manager.notifyPaused).toHaveBeenCalled();
     });
   });
 });
