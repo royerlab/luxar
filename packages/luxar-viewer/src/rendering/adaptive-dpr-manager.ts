@@ -8,9 +8,12 @@
  * Algorithm:
  * - Sample FPS using a 1-second sliding window of frame timestamps
  * - Evaluate every 500ms (configurable)
- * - If FPS < minFPS: Scale DPR down by scaleDownFactor (probe-and-verify;
- *   see U-shape section below)
- * - If FPS > maxFPS for hysteresisSeconds: Scale DPR up by scaleUpFactor
+ * - Thresholds derive from the display's estimated achievable rAF rate
+ *   ("cap"): scale down below scaleDownFpsRatio × cap (probe-and-verify;
+ *   see U-shape section below); scale up by scaleUpFactor after FPS has
+ *   stayed above scaleUpFpsRatio × cap for hysteresisSeconds (with a
+ *   small mid-band grace so isolated dropped-frame samples don't
+ *   restart the wait)
  * - DPR walks multiplicatively below the LIVE window.devicePixelRatio
  *   (re-read on every evaluation/public read — monitor drags and browser
  *   zoom change it at runtime) and stops strictly above
@@ -54,6 +57,8 @@ import { clamp } from '../utils/clamp';
 import { FPSTracker } from './adaptive-dpr/fps-tracker';
 import { ProbeController } from './adaptive-dpr/probe-controller';
 import { BoundsLedger } from './adaptive-dpr/bounds-ledger';
+import { HysteresisTracker } from './adaptive-dpr/hysteresis-tracker';
+import { RefreshRateEstimator } from './adaptive-dpr/refresh-rate-estimator';
 
 /**
  * Interface for the renderer manager that can set pixel ratio
@@ -76,6 +81,8 @@ export interface AdaptiveDPRState {
   dprFloor: number;
   /** True while a scaleDown move is being verified for U-shape improvement. */
   probing: boolean;
+  /** Estimated achievable rAF rate the FPS thresholds derive from. */
+  refreshRateCap: number;
 }
 
 /**
@@ -104,14 +111,18 @@ export class AdaptiveDPRManager {
   private lastSeenNativeDPR: number;
   private isEnabled: boolean;
   private lastEvaluationTime: number = 0;
-  private highFPSStartTime: number | null = null;
   private isReducedResolution: boolean = false;
 
-  // U-shape probe lifecycle (see adaptive-dpr/probe-controller.ts) and
-  // the learned floor it feeds (see adaptive-dpr/bounds-ledger.ts).
-  // Both constructed in the ctor once config is merged.
+  // U-shape probe lifecycle (see adaptive-dpr/probe-controller.ts), the
+  // learned floor it feeds (see adaptive-dpr/bounds-ledger.ts), the
+  // scale-up streak (see adaptive-dpr/hysteresis-tracker.ts), and the
+  // display-cap estimate the thresholds derive from (see
+  // adaptive-dpr/refresh-rate-estimator.ts). All constructed in the
+  // ctor once config is merged.
   private probeController: ProbeController;
   private boundsLedger: BoundsLedger;
+  private hysteresis: HysteresisTracker;
+  private refreshRateEstimator: RefreshRateEstimator;
 
   // Callback for UI updates
   private onDPRChange: DPRChangeCallback | null = null;
@@ -148,6 +159,11 @@ export class AdaptiveDPRManager {
       minDPR: this.config.minDPR,
       floorTtlMs: this.config.floorTtlMs,
     });
+    this.hysteresis = new HysteresisTracker({
+      hysteresisMs: this.config.hysteresisSeconds * 1000,
+      graceSamples: this.config.midbandGraceSamples,
+    });
+    this.refreshRateEstimator = new RefreshRateEstimator(this.config.refreshRateFallback);
     // Initial enabled state from config. At runtime, this is overridden by
     // renderingControls.defaults.adaptiveDPREnabled (persisted per-scene in localStorage).
     this.isEnabled = this.config.enabled;
@@ -193,10 +209,13 @@ export class AdaptiveDPRManager {
     const previousNative = this.lastSeenNativeDPR;
     this.lastSeenNativeDPR = live;
 
-    // Absolute-DPR calibrations from the old display are stale.
+    // Absolute-DPR calibrations from the old display are stale — and so
+    // is its refresh-cap estimate (a new monitor can have a different
+    // refresh rate entirely).
     this.boundsLedger.reset();
     this.probeController.void_();
-    this.highFPSStartTime = null;
+    this.hysteresis.clear();
+    this.refreshRateEstimator.clear();
     this.fpsTracker.clear();
 
     const wasTrackingNative = Math.abs(this.currentDPR - previousNative) < 0.01;
@@ -271,6 +290,21 @@ export class AdaptiveDPRManager {
     // Need at least some frames to make a decision
     if (fps === 0) return;
 
+    // Feed the refresh-cap estimator — but only full-span windows, so a
+    // half-filled window right after a clear doesn't pollute the mark.
+    if (this.fpsTracker.span() >= this.FPS_SAMPLE_WINDOW_MS * 0.5) {
+      this.refreshRateEstimator.addSample(fps, timestamp);
+    }
+
+    // Thresholds are RELATIVE to the display's achievable rAF rate:
+    // 60Hz → down<45 / up>54; 120Hz → 90/108; a 30Hz-throttled tab →
+    // 22.5/27 (so a healthy throttled 30fps neither scale-downs forever
+    // nor is barred from ever scaling up, both failure modes of the old
+    // fixed 50/58 thresholds).
+    const refreshCap = this.refreshRateEstimator.getCap();
+    const downThreshold = this.config.scaleDownFpsRatio * refreshCap;
+    const upThreshold = this.config.scaleUpFpsRatio * refreshCap;
+
     // If a probe is in flight, settle it first. We don't trigger
     // another scaleDown while a probe is pending — we need a clean
     // FPS sample of the just-applied DPR before deciding anything else.
@@ -290,23 +324,21 @@ export class AdaptiveDPRManager {
       );
     }
 
-    if (fps < this.config.minFPS) {
+    if (fps < downThreshold) {
       // Performance is poor - scale down (and arm a probe so we can
       // verify the move actually helped).
       this.scaleDown(timestamp, fps);
-      this.highFPSStartTime = null; // Reset hysteresis
-    } else if (fps > this.config.maxFPS) {
-      // Performance is good - track duration for hysteresis
-      if (this.highFPSStartTime === null) {
-        this.highFPSStartTime = timestamp;
-      } else if (timestamp - this.highFPSStartTime >= this.config.hysteresisSeconds * 1000) {
-        // Sustained high FPS for long enough - try scaling up
+      this.hysteresis.recordLow();
+    } else if (fps > upThreshold) {
+      // Performance is good - accumulate the sustained-high streak.
+      if (this.hysteresis.recordHigh(timestamp)) {
         this.scaleUp(fps);
-        this.highFPSStartTime = null; // Reset after scaling
+        this.hysteresis.clear();
       }
     } else {
-      // FPS is in acceptable range - reset hysteresis
-      this.highFPSStartTime = null;
+      // Mid-band: tolerated a configurable number of times in a row
+      // (a couple of dropped frames must not restart the whole wait).
+      this.hysteresis.recordMidband();
     }
   }
 
@@ -467,7 +499,7 @@ export class AdaptiveDPRManager {
       this.currentDPR = nativeDPR;
       this.applyDPR();
       this.isReducedResolution = false;
-      this.highFPSStartTime = null;
+      this.hysteresis.clear();
       this.probeController.void_();
       this.boundsLedger.reset();
       this.fpsTracker.clear();
@@ -513,6 +545,7 @@ export class AdaptiveDPRManager {
       nativeDPR,
       dprFloor: this.boundsLedger.dprFloor,
       probing: this.probeController.isPending,
+      refreshRateCap: this.refreshRateEstimator.getCap(),
     };
   }
 

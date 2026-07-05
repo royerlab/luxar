@@ -243,10 +243,11 @@ export async function runInitPipeline(
   // Initialize resolution indicator and connect to DPR manager
   const resolutionIndicator = new ResolutionIndicator();
   partial.resolutionIndicator = resolutionIndicator;
-  // Display target FPS rounded up to a friendly multiple of 5 (58 → 60);
-  // maxFPS itself is the scale-up hysteresis threshold, not a user-facing
-  // target, so the indicator shows the rounded value instead.
-  const displayTargetFPS = Math.ceil(config.adaptiveDPR.maxFPS / 5) * 5;
+  // Display target FPS: the warmup refresh cap rounded to a friendly
+  // multiple of 5 (60 → 60). The live thresholds are refresh-relative
+  // ratios, not user-facing targets, so the indicator shows the nominal
+  // cap instead.
+  const displayTargetFPS = Math.ceil(config.adaptiveDPR.refreshRateFallback / 5) * 5;
   resolutionIndicator.setTargetFPS(displayTargetFPS);
   adaptiveDPRManager.setOnDPRChangeCallback((dpr, isReducedResolution) => {
     if (isReducedResolution) {

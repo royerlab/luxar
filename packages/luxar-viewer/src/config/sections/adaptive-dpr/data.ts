@@ -10,8 +10,6 @@ import type { AdaptiveDPRConfig } from './types';
  */
 export const adaptiveDPRConfig: AdaptiveDPRConfig = {
   enabled: true, // Construction-time default; runtime toggle is renderingControls.defaults.adaptiveDPREnabled
-  minFPS: 50, // Scale-down threshold (migration-era; superseded by scaleDownFpsRatio)
-  maxFPS: 58, // Scale-up threshold (migration-era; superseded by scaleUpFpsRatio)
   minDPR: 0.5, // Minimum DPR - lower bound before image becomes too pixelated
   scaleDownFactor: 0.9, // Reduce DPR by 10% when scaling down
   scaleUpFactor: 1.05, // Increase DPR by 5% when scaling up

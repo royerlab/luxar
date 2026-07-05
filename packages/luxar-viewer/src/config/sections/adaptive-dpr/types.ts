@@ -11,14 +11,6 @@ export interface AdaptiveDPRConfig {
   /** Enable adaptive DPR system at construction time (default: true).
    *  Runtime toggle is via renderingControls.defaults.adaptiveDPREnabled. */
   enabled: boolean;
-  /** FPS threshold for scaling down resolution (default: 50).
-   *  Replaced by `scaleDownFpsRatio` × refresh cap once the
-   *  refresh-rate estimator lands; kept during the migration. */
-  minFPS: number;
-  /** FPS threshold for scaling up resolution (default: 58).
-   *  Replaced by `scaleUpFpsRatio` × refresh cap once the
-   *  refresh-rate estimator lands; kept during the migration. */
-  maxFPS: number;
   /** Minimum allowed DPR - lower bound before image becomes too pixelated (default: 0.5) */
   minDPR: number;
   /** Factor to multiply DPR when scaling down (default: 0.9 = 10% reduction) */

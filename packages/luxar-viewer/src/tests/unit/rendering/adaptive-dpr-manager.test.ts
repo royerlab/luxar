@@ -9,13 +9,17 @@
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
-// Config mock — the manager merges this with optional ctor overrides.
+// Config mock — the manager layers this OVER the real data.ts defaults
+// (structural per-key fallback), so only the keys under test need to be
+// listed; missing knobs (probe/backoff/ceiling timings, FPS ratios)
+// resolve to production defaults instead of `undefined`.
+//
+// Effective thresholds with the default ratios and a warmup cap of 60:
+// scale down below 45 fps, count toward scale-up above 54 fps.
 vi.mock('../../../config', () => ({
   config: {
     adaptiveDPR: {
       enabled: true,
-      minFPS: 30,
-      maxFPS: 55,
       scaleDownFactor: 0.7,
       scaleUpFactor: 1.2,
       minDPR: 0.5,
@@ -111,7 +115,7 @@ describe('AdaptiveDPRManager — construction', () => {
       m.setRenderer(r);
       // Simulate a very low FPS by pushing 2 frames over a long time.
       m.recordFrame(0);
-      m.recordFrame(1000); // 2 frames in 1 second → ~1 FPS, well under minFPS=30
+      m.recordFrame(1000); // 2 frames in 1 second → ~1 FPS, well under the 45fps down-threshold
       // evaluateAndAdjust runs at next recordFrame after 500ms — push one more.
       m.recordFrame(1600);
       // currentDPR should have dropped via repeated scaleDown to clamp at 0.1.
@@ -373,6 +377,41 @@ describe('AdaptiveDPRManager — setManualDPR', () => {
   });
 });
 
+describe('AdaptiveDPRManager — refresh-rate-relative thresholds', () => {
+  let restore: () => void;
+
+  beforeEach(() => {
+    restore = setNativeDPR(1.0);
+  });
+
+  it('scales down at 80fps on a 120Hz display (fixed 50fps thresholds never would)', () => {
+    const m = new AdaptiveDPRManager();
+    try {
+      const renderer = makeRenderer();
+      m.setRenderer(renderer);
+
+      // A light 1.5s teaches the estimator the display can do 120Hz.
+      let t = 0;
+      for (let i = 0; i < 180; i++) {
+        m.recordFrame(t);
+        t += 1000 / 120;
+      }
+      expect(m.getState().refreshRateCap).toBeGreaterThan(115);
+      expect(m.getCurrentDPR()).toBe(1.0); // 120 > upThreshold but already at native
+
+      // Sustained 80fps: healthy under the old fixed 50fps rule, but
+      // below 0.75 × 120 = 90 → the relative rule scales down.
+      for (let i = 0; i < 160; i++) {
+        m.recordFrame(t);
+        t += 1000 / 80;
+      }
+      expect(m.getCurrentDPR()).toBeLessThan(1.0);
+    } finally {
+      restore();
+    }
+  });
+});
+
 describe('AdaptiveDPRManager — live native DPR (monitor / zoom changes)', () => {
   let restore: () => void;
 
@@ -484,7 +523,7 @@ describe('AdaptiveDPRManager — live native DPR (monitor / zoom changes)', () =
       m.setRenderer(renderer);
 
       // Drive a scale-down (arms a probe) with sustained low FPS.
-      let t = pushFrames(m, 0, 12, 1100); // ~10 fps < minFPS 30
+      let t = pushFrames(m, 0, 12, 1100); // ~10 fps < 45fps down-threshold
       expect(m.getState().probing).toBe(true);
 
       setNativeDPR(1.0);
@@ -652,7 +691,7 @@ describe('AdaptiveDPRManager — U-shape probe', () => {
     try {
       m.setRenderer(renderer);
 
-      // Eval at t=1000 with FPS=20 → below minFPS=30 → scaleDown, probe armed.
+      // Eval at t=1000 with FPS=20 → below the 45fps down-threshold → scaleDown, probe armed.
       evaluateWithFPS(m, 1000, 20);
       const dprAfterScaleDown = m.getCurrentDPR();
       expect(dprAfterScaleDown).toBeLessThan(2.0);
