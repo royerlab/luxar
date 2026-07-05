@@ -2,21 +2,23 @@
 
 from __future__ import annotations
 
-from typing import Optional, Sequence
+from typing import TYPE_CHECKING, Optional, Sequence
 
 import numpy as np
 import zarr
 from arbol import aprint
 
 from ....encoding.compression import resolve_compressor
-from ....typing_utils.protocols import CompressorProtocol
+
+if TYPE_CHECKING:
+    from ....encoding.compression import CompressorLike
 
 
 def write_labels_csr(
     group: zarr.Group,
     labels: Sequence[str],
     n_elements: int,
-    compressor: Optional[CompressorProtocol],
+    compressor: "CompressorLike",
     sort_order: Optional[np.ndarray] = None,
 ) -> None:
     """Write per-element string labels using CSR-style encoding.

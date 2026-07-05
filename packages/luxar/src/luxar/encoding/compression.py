@@ -21,10 +21,13 @@ explicit compressor object passes through untouched, and ``None`` still
 means "store uncompressed".
 """
 
-from typing import Any, Optional
+from typing import TYPE_CHECKING, Any, Optional, Union
 
 import numpy as np
 from numcodecs import Blosc
+
+if TYPE_CHECKING:
+    from ..typing_utils.protocols import CompressorProtocol
 
 
 class _WidthAwareDefault:
@@ -43,6 +46,10 @@ class _WidthAwareDefault:
 
 #: The default compressor "value" threaded through all writers.
 WIDTH_AWARE_DEFAULT = _WidthAwareDefault()
+
+#: What a writer may pass as ``compressor``: a concrete compressor, the
+#: width-aware sentinel, or ``None`` (store uncompressed).
+CompressorLike = Union["CompressorProtocol", _WidthAwareDefault, None]
 
 # One concrete compressor per width class (module-level: Blosc instances are
 # stateless and reusable across arrays).

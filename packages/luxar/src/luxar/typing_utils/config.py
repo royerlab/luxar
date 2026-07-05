@@ -12,7 +12,6 @@ from ..typing_utils.constants import (
     TARGET_CHUNK_BYTES,
 )
 from ..typing_utils.enums import PhysicalUnit
-from ..typing_utils.protocols import CompressorProtocol
 
 # Define literal types locally
 CompressionType = Literal["blosc", "zstd", "lz4", "gzip", "bz2", "lzma"]
@@ -123,9 +122,12 @@ SUPPORTED_SCALAR_DTYPES: Final[tuple[str, ...]] = ("float32", "float16", "uint8"
 # Import Default Compressor
 # =============================================================================
 
-# Default compressor (imported from _io.py)
-DEFAULT_COMP: Optional[CompressorProtocol]
+# Default compressor (imported from io.reader): since the width-aware
+# per-dtype policy this is a resolution SENTINEL, not a compressor object —
+# resolve via luxar.encoding.compression.resolve_compressor(dtype).
+DEFAULT_COMP: "CompressorLike"
 try:
+    from ..encoding.compression import CompressorLike
     from ..io.reader import DEFAULT_COMP
 except ImportError:
     DEFAULT_COMP = None
