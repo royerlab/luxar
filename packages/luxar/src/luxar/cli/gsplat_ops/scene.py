@@ -252,7 +252,8 @@ def reencode_command(
         "--encoding",
         "-e",
         help="Target Cholesky encoding: memory=uint8 (smallest, ~93 dB), "
-        "auto=uint16 (near-lossless, ~2× f32), precision=float32 (exact).",
+        "auto=adaptive u8→u16→f32 ladder (near-lossless by certificate), "
+        "precision=float32 (exact).",
     ),
     ordering: Literal["hilbert", "morton", "none"] = typer.Option(
         "hilbert", "--ordering", help="Spatial chunk ordering for the output."

@@ -238,10 +238,10 @@ luxar gsplat migrate-format legacy.gsplats.zarr v3.gsplats.zarr --lossless  # pr
 **Options**: `--overwrite`, `--lossless` (preserve float32 Cholesky / PRECISION encoding), `--quiet/-q`.
 
 #### `luxar gsplat reencode`
-Re-quantize a **current-format** `.gsplats.zarr`'s Cholesky encoding in place — a structure-preserving round-trip: the whole node tree (leaf / additive ladder / `kind=lod` / partition / nested) and its `fitting` / `provenance` / `pipeline` groups carry over verbatim; only the on-disk Cholesky encoding changes. Splat count and geometry are unchanged and decode is always to float32, so viewer/GPU/WASM paths are unaffected. Unlike `migrate-format` (legacy → current, exposing only float32 vs the AUTO uint16 default via `--lossless`), this exposes the full ladder — including `memory` (uint8) — and works on already-current files. The clean way to change quantization after fitting.
+Re-quantize a **current-format** `.gsplats.zarr`'s Cholesky encoding (writes a re-quantized copy to a new path) — a structure-preserving round-trip: the whole node tree (leaf / additive ladder / `kind=lod` / partition / nested) and its `fitting` / `provenance` / `pipeline` groups carry over verbatim; only the on-disk Cholesky encoding changes. Splat count and geometry are unchanged and decode is always to float32, so viewer/GPU/WASM paths are unaffected. Unlike `migrate-format` (legacy → current, exposing only float32 vs the AUTO uint16 default via `--lossless`), this exposes the full ladder — including `memory` (uint8) — and works on already-current files. The clean way to change quantization after fitting.
 ```bash
 luxar gsplat reencode fit.gsplats.zarr fit_u8.gsplats.zarr -e memory      # uint8 (smallest, ~93 dB)
-luxar gsplat reencode fit.gsplats.zarr fit_u16.gsplats.zarr -e auto        # uint16 (near-lossless, ~2× f32)
+luxar gsplat reencode fit.gsplats.zarr fit_auto.gsplats.zarr -e auto       # adaptive u8→u16→f32 ladder (near-lossless by certificate)
 luxar gsplat reencode fit.gsplats.zarr fit_f32.gsplats.zarr -e precision   # float32 (exact/archival)
 ```
 **Options**: `--encoding/-e` (`auto`|`precision`|`memory`, default `memory`), `--ordering` (`hilbert`|`morton`|`none`), `--quiet/-q`.

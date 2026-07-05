@@ -465,7 +465,7 @@ luxar gsplat lod in.gsplats.zarr out.gsplats.zarr --recipe levels --coarsen-dims
 luxar gsplat migrate-format legacy.gsplats.zarr v3.gsplats.zarr               # single file
 luxar gsplat migrate-format old_pyr/ v3.gsplats.zarr                          # substitutive directory
 
-# Re-quantize a fitted (current-format) .gsplats.zarr's Cholesky encoding in place.
+# Re-quantize a fitted (current-format) .gsplats.zarr's Cholesky encoding (writes a copy).
 # Structure-preserving round-trip (leaf/lod/partition/nested + fitting/pipeline
 # groups kept); only the on-disk Cholesky encoding changes; decode is always
 # float32 so viewer/GPU/WASM are unaffected. Unlike migrate-format (legacy→current,

@@ -4431,7 +4431,10 @@ def _diag_dtype(path: Path) -> str:
 
 def _varying_gsplats(path: Path, n: int = 300, d: int = 3) -> Path:
     """Save a small dataset with VARYING Cholesky columns so the per-column
-    quantizer engages (a constant column falls back to float32 in any mode)."""
+    quantizer engages (a constant column falls back to float32 in any mode).
+    Saved with PRECISION so the source dtype is deterministically float32 —
+    AUTO is an adaptive ladder and may pick uint8 or uint16 by certificate."""
+    from luxar.encoding import EncodingMode
     from luxar.gsplats.gsplat_data import GSplatData
 
     rng = np.random.default_rng(7)
@@ -4443,20 +4446,22 @@ def _varying_gsplats(path: Path, n: int = 300, d: int = 3) -> Path:
         centers=(rng.standard_normal((n, d)) * 5).astype(np.float32),
         amplitudes=(np.abs(rng.standard_normal(n)) + 0.5).astype(np.float32),
         cholesky_factors=chol,
-    ).save(path)
+    ).save(path, encoding_mode=EncodingMode.PRECISION)
     return path
 
 
 class TestReencode:
-    """`luxar gsplat reencode` — re-quantize Cholesky factors in place."""
+    """`luxar gsplat reencode` — re-quantize Cholesky factors to a new file."""
 
     def test_memory_encoding_yields_uint8(
         self, runner: CliRunner, tmp_path: Path
     ) -> None:
-        # memory encoding must store the Cholesky diag as uint8 (|u1). AUTO on
-        # this varying data is uint16, so the encoding demonstrably changes.
+        # memory encoding must store the Cholesky diag as uint8 (|u1). The
+        # source is saved PRECISION (float32), so the encoding demonstrably
+        # changes regardless of what the adaptive AUTO ladder would pick.
         src = _varying_gsplats(tmp_path / "src.gsplats.zarr")
         src_dtype = _diag_dtype(src)
+        assert src_dtype == "<f4"
         out = tmp_path / "u8.gsplats.zarr"
         result = runner.invoke(
             app, ["gsplat", "reencode", str(src), str(out), "-e", "memory"]
