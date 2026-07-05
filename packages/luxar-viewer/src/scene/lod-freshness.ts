@@ -31,6 +31,16 @@
  * blocking a swap when nothing better is on screen (fast first paint is
  * preserved).
  *
+ * The hold reads **committed** state exclusively: the per-mesh
+ * `committedLadderComplete` stamp (written by the commit helpers next to the
+ * count stamp — see `stamp-view-version.ts`), never the loaders' live
+ * `hasMoreLODs` getters. Live getters flip the moment the final LOD's fetch
+ * resolves, frames before its processing + commit land; the stamp flips in
+ * the same synchronous call that writes the final count, so the gate can
+ * never see "complete" paired with a stale partial count. (The registry's
+ * refinement-kick logic deliberately keeps using the live getter — kicking
+ * MORE loading wants live loader state; displaying wants committed state.)
+ *
  * @module scene/lod-freshness
  */
 
@@ -38,7 +48,7 @@
 export interface FreshnessChild {
   /** ``false`` ⇒ geometry not committed yet. Absent/``true`` ⇒ committed. */
   ready?: boolean;
-  /** The leaf THREE node; its ``userData`` carries the freshness stamp. */
+  /** The leaf THREE node; its ``userData`` carries the commit-time stamps. */
   object: {
     userData?: {
       nodeType?: string;
@@ -46,6 +56,8 @@ export interface FreshnessChild {
       visiblePointCount?: number;
       visibleSegmentCount?: number;
       visibleSplatCount?: number;
+      /** Commit-time ladder stamp — see ``stamp-view-version.ts``. */
+      committedLadderComplete?: boolean;
     };
   };
 }
@@ -136,18 +148,10 @@ export function coarsestFreshNonEmptyIndex(
 
 /**
  * The aspiration-side shape for {@link shouldHoldPreviousDisplay}: a
- * `FreshnessChild` plus the lazy-lifecycle fields the hold decision reads
- * (all structurally compatible with the registry's `LODGroupChild`).
+ * `FreshnessChild` plus the one lazy-lifecycle field the hold decision reads
+ * (structurally compatible with the registry's `LODGroupChild`).
  */
 export interface HoldCandidate extends FreshnessChild {
-  /**
-   * For a progressive (additive-laddered) level: whether more additive LODs
-   * remain to stream for the current view. Absent ⇒ single-LOD level, never
-   * held against.
-   */
-  hasMoreLODs?: () => boolean;
-  /** Set by the registry while an ``ensureLoaded`` pass is in flight. */
-  loading?: boolean;
   /** Set by the load thunk when the last ``ensureLoaded`` pass failed. */
   failed?: boolean;
 }
@@ -159,14 +163,14 @@ export interface HoldCandidate extends FreshnessChild {
  * and its committed geometry is strictly worse than what is shown?
  *
  * Holds only while ALL of these are true:
- *   - the aspiration is **streaming**: its ladder reports more LODs, or an
- *     ``ensureLoaded`` pass is in flight. The `loading` half matters at the
- *     END of a hold — `hasMoreLODs` flips false the moment the final LOD's
- *     *fetch* resolves, several frames before its worker-processing + commit
- *     land, and releasing on it alone would re-show the partial level for
- *     exactly those frames (the miniature version of the pop this gate
- *     exists to prevent). `loading` stays true until the load thunk's
- *     ``finally``, which runs strictly after the commit.
+ *   - the aspiration is **streaming**: its committed geometry carries a
+ *     ``committedLadderComplete: false`` stamp. The stamp — not the loader's
+ *     live ``hasMoreLODs`` getter — is what makes the release race-free: it
+ *     flips to complete in the same synchronous commit that writes the final
+ *     count, so the gate never re-shows a partial level in the
+ *     fetch-resolved-but-not-committed window at the end of a hold. A missing
+ *     stamp reads as complete (single-LOD levels; never-committed levels
+ *     aren't ``ready``, so the gate isn't reached for them).
  *   - the aspiration is not **failed** — a failing ladder degrades to the
  *     ungated behavior (show the partial aspiration; the failure cooldown
  *     retries) instead of pinning `prev` behind a possibly-permanent failure.
@@ -190,8 +194,7 @@ export function shouldHoldPreviousDisplay(
   version: number | null
 ): boolean {
   if (!prev) return false;
-  const streaming = (aspiration.hasMoreLODs?.() ?? false) || aspiration.loading === true;
-  if (!streaming) return false;
+  if (aspiration.object.userData?.committedLadderComplete !== false) return false;
   if (aspiration.failed) return false;
   if (!(version == null ? isReady(prev) : isFresh(prev, version))) return false;
   if (prev.object.userData?.nodeType !== aspiration.object.userData?.nodeType) return false;

@@ -1383,15 +1383,27 @@ describe('LODGroupRegistry — progressive refinement of a lazy level', () => {
 // ────────────────────────────────────────────────────────────────────────
 
 describe('LODGroupRegistry — never-downgrade display gate', () => {
-  /** A fresh counted gsplats child whose additive ladder is still streaming. */
+  /**
+   * A fresh counted gsplats child whose additive ladder is still streaming:
+   * the committed stamp says incomplete (what the display gate reads) and the
+   * live `hasMoreLODs` thunk agrees (what the registry's refinement-kick
+   * logic reads) — the consistent state of a real mid-ladder level.
+   */
   function makeStreamingChild(
     coverageFraction: number,
     loadedViewVersion: number,
     visibleSplatCount: number
   ): LODGroupChild {
     const child = makeCountedChild(coverageFraction, loadedViewVersion, visibleSplatCount);
+    child.object.userData.committedLadderComplete = false;
     child.hasMoreLODs = () => true;
     return child;
+  }
+
+  /** Mark a streaming child's ladder committed-complete (final commit landed). */
+  function completeLadder(child: LODGroupChild): void {
+    child.object.userData.committedLadderComplete = true;
+    child.hasMoreLODs = () => false;
   }
 
   it('zoom in: holds the full coarse level until the streaming fine level crosses its count', () => {
@@ -1420,9 +1432,7 @@ describe('LODGroupRegistry — never-downgrade display gate', () => {
   it('zoom out: holds the full fine level until the streaming coarse level completes', () => {
     // Tiny bounds → tiny coverage metric → the COARSE level is desired.
     const tinyBounds = { min: [0, 0, 0], max: [0.001, 0.001, 0.001] };
-    let more = true;
-    const coarse = makeCountedChild(0, 2, 5); // cold, chunk-1 committed
-    coarse.hasMoreLODs = () => more;
+    const coarse = makeStreamingChild(0, 2, 5); // cold, chunk-1 committed
     const fine = makeCountedChild(0.5, 2, 1000); // fully-laddered, displayed
     coarse.positionBounds = tinyBounds;
     fine.positionBounds = tinyBounds;
@@ -1435,28 +1445,29 @@ describe('LODGroupRegistry — never-downgrade display gate', () => {
     expect(coarse.object.visible).toBe(false);
 
     // Crossover is unreachable (coarse total < fine total) — completion releases.
-    more = false;
+    completeLadder(coarse);
     (coarse.object.userData as { visibleSplatCount: number }).visibleSplatCount = 50;
     reg.evaluatePerFrame();
     expect(coarse.object.visible).toBe(true);
     expect(fine.object.visible).toBe(false);
   });
 
-  it('still holds when hasMoreLODs is false but the final pass is mid-flight (premature release)', () => {
-    // hasMoreLODs flips false at fetch-resolve, BEFORE the final chunk's
-    // processing + commit; `loading` covers that window.
+  it('holds through the fetch-resolved-but-not-committed window (stamp beats live loader state)', () => {
+    // The loader's live hasMoreLODs flips false at fetch-resolve, BEFORE the
+    // final chunk's processing + commit. The gate reads the COMMITTED stamp,
+    // which only flips in the same synchronous commit as the final count —
+    // so the hold persists through that window by construction.
     const reg = makeRegistry([0, 1, 2], undefined, undefined, () => 2);
     const coarse = makeCountedChild(0, 2, 100);
-    const fine = makeCountedChild(0.5, 2, 10);
-    fine.hasMoreLODs = () => false;
-    fine.loading = true;
+    const fine = makeStreamingChild(0.5, 2, 10);
+    fine.hasMoreLODs = () => false; // final fetch resolved; commit not landed
     reg.register(makeEntry([coarse, fine], 0, '/g'));
 
     reg.evaluatePerFrame();
     expect(coarse.object.visible).toBe(true); // held through the commit window
 
-    // Commit landed (count re-stamped) and the pass finished → release.
-    fine.loading = false;
+    // The final commit lands: count + ladder stamp written together → release.
+    completeLadder(fine);
     (fine.object.userData as { visibleSplatCount: number }).visibleSplatCount = 500;
     reg.evaluatePerFrame();
     expect(fine.object.visible).toBe(true);
@@ -1483,7 +1494,11 @@ describe('LODGroupRegistry — never-downgrade display gate', () => {
 
     // The fine reload commits chunk-1 fresh — WORSE than the coarse on
     // screen. Pre-gate this swapped immediately (the post-scrub pop).
-    Object.assign(fine.object.userData!, { loadedViewVersion: 2, visibleSplatCount: 10 });
+    Object.assign(fine.object.userData!, {
+      loadedViewVersion: 2,
+      visibleSplatCount: 10,
+      committedLadderComplete: false,
+    });
     fine.hasMoreLODs = () => true;
     reg.evaluatePerFrame();
     expect(coarse.object.visible).toBe(true); // held

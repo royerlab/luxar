@@ -117,42 +117,52 @@ describe('coarsestFreshNonEmptyIndex', () => {
 });
 
 describe('shouldHoldPreviousDisplay (never-downgrade display gate)', () => {
-  /** A gsplats level with a committed count + version stamp. */
+  /** A gsplats level with committed count + version + ladder-complete stamps. */
   function shown(visibleSplatCount: number, loadedViewVersion = 2): FreshnessChild {
     return {
       ready: true,
-      object: { userData: { nodeType: 'gsplats', loadedViewVersion, visibleSplatCount } },
+      object: {
+        userData: {
+          nodeType: 'gsplats',
+          loadedViewVersion,
+          visibleSplatCount,
+          committedLadderComplete: true,
+        },
+      },
     };
   }
 
-  /** A streaming gsplats aspiration (ladder incomplete unless overridden). */
+  /** A streaming gsplats aspiration: committed stamp says ladder incomplete. */
   function streamingAsp(
     visibleSplatCount: number,
     overrides: Partial<HoldCandidate> = {}
   ): HoldCandidate {
     return {
       ready: true,
-      hasMoreLODs: () => true,
-      object: { userData: { nodeType: 'gsplats', loadedViewVersion: 2, visibleSplatCount } },
+      object: {
+        userData: {
+          nodeType: 'gsplats',
+          loadedViewVersion: 2,
+          visibleSplatCount,
+          committedLadderComplete: false,
+        },
+      },
       ...overrides,
     };
   }
 
-  it('holds while the aspiration ladder is incomplete and its count is below prev', () => {
+  it('holds while the committed ladder stamp is incomplete and the count is below prev', () => {
     expect(shouldHoldPreviousDisplay(streamingAsp(10), shown(100), 2)).toBe(true);
   });
 
-  it('releases on ladder completion (hasMoreLODs false AND no pass in flight)', () => {
-    const asp = streamingAsp(50, { hasMoreLODs: () => false, loading: false });
+  it('releases on committed ladder completion (stamp flips at the final COMMIT)', () => {
+    // The stamp — not the loader's live hasMoreLODs — drives the release: it
+    // is written in the same synchronous commit as the final count, so there
+    // is no fetch-resolved-but-not-committed window in which the gate could
+    // re-show a partial level (the premature-release race, by construction).
+    const asp = streamingAsp(50);
+    asp.object.userData!.committedLadderComplete = true;
     expect(shouldHoldPreviousDisplay(asp, shown(100), 2)).toBe(false);
-  });
-
-  it('still holds when hasMoreLODs is false but the final pass is mid-flight (premature-release regression)', () => {
-    // hasMoreLODs flips false the moment the final LOD's FETCH resolves —
-    // several frames before its processing + commit land. Releasing on it
-    // alone re-shows the partial level for exactly those frames.
-    const asp = streamingAsp(10, { hasMoreLODs: () => false, loading: true });
-    expect(shouldHoldPreviousDisplay(asp, shown(100), 2)).toBe(true);
   });
 
   it('releases at the committed-count crossover (aspiration caught up)', () => {
@@ -186,8 +196,9 @@ describe('shouldHoldPreviousDisplay (never-downgrade display gate)', () => {
     expect(shouldHoldPreviousDisplay(asp, shown(100), 2)).toBe(false);
   });
 
-  it('does not hold for a single-LOD aspiration (no hasMoreLODs, not loading)', () => {
-    const asp = streamingAsp(10, { hasMoreLODs: undefined });
+  it('does not hold when the ladder stamp is missing (single-LOD / unstamped level)', () => {
+    const asp = streamingAsp(10);
+    delete asp.object.userData!.committedLadderComplete;
     expect(shouldHoldPreviousDisplay(asp, shown(100), 2)).toBe(false);
   });
 
