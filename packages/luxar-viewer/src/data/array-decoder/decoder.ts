@@ -928,13 +928,25 @@ export class ArrayDecoder {
    *   log:        `x = expm1(lo[c] + level/levels·(hi[c]-lo[c]))`
    *   signed-log: `y = lo[c] + level/levels·(hi[c]-lo[c]); x = sign(y)·expm1(|y|)`
    *   linear:     `x = lo[c] + level/levels·(hi[c]-lo[c])`  (identity; coordinates)
-   * For any other / float32 / direct encoding it returns the identity, so a raw
-   * value passes through unchanged.
+   * With `zero_level: true` (current writer for the log/signed-log pair),
+   * level 0 is a RESERVED ZERO (decodes to exactly 0) and nonzero levels
+   * `1..2^bits-1` span the nonzero-anchored `[lo, hi]` with denominator
+   * `2^bits-2` — same layout as `geolog_scalar`. Arrays without the flag keep
+   * the legacy all-levels mapping above. For any other / float32 / direct
+   * encoding it returns the identity, so a raw value passes through unchanged.
    *
    * @returns `(level, col) => value` — `level` is the raw stored integer (as float).
    */
   static makePerChannelDequant(
-    encoding: { name?: string; bits?: number; col_lo?: number[]; col_hi?: number[] } | undefined,
+    encoding:
+      | {
+          name?: string;
+          bits?: number;
+          col_lo?: number[];
+          col_hi?: number[];
+          zero_level?: boolean;
+        }
+      | undefined,
     numCols: number
   ): (level: number, col: number) => number {
     const name = encoding?.name;
@@ -979,11 +991,21 @@ export class ArrayDecoder {
     if (isLinear) {
       return (level: number, c: number) => lo[c] + (level / levels) * rng[c];
     }
+    // zero_level (current writer): level 0 = exact zero; levels 1..2^bits-1
+    // span the nonzero-anchored [lo, hi] (denominator 2^bits-2). Legacy
+    // arrays (no flag) map all levels 0..2^bits-1 over a zero-anchored scale.
+    const zeroLevel = encoding!.zero_level === true;
+    const denom = Math.max(levels - 1, 1);
+    const companded = zeroLevel
+      ? (level: number, c: number) => lo[c] + ((level - 1) / denom) * rng[c]
+      : (level: number, c: number) => lo[c] + (level / levels) * rng[c];
     if (isLog) {
-      return (level: number, c: number) => Math.expm1(lo[c] + (level / levels) * rng[c]);
+      return (level: number, c: number) =>
+        zeroLevel && level === 0 ? 0 : Math.expm1(companded(level, c));
     }
     return (level: number, c: number) => {
-      const y = lo[c] + (level / levels) * rng[c];
+      if (zeroLevel && level === 0) return 0;
+      const y = companded(level, c);
       return Math.sign(y) * Math.expm1(Math.abs(y));
     };
   }

@@ -330,31 +330,60 @@ class ArrayDecoder:
             raise ValueError(f"{name} requires col_hi >= col_lo for every column")
         return lo, hi, bits
 
+    @staticmethod
+    def _perchannel_companded(
+        data: np.ndarray,
+        enc: dict,
+        lo: np.ndarray,
+        hi: np.ndarray,
+        bits: int,
+    ) -> tuple[np.ndarray, Optional[np.ndarray]]:
+        """Map stored codes back to companded values, honoring ``zero_level``.
+
+        Current arrays (``zero_level: true``) reserve code 0 for exact zeros
+        and span nonzero codes ``1..2**bits-1`` over the nonzero-anchored
+        ``[lo, hi]``; legacy arrays span all codes ``0..2**bits-1``. Returns
+        ``(y, zero_mask)`` where ``zero_mask`` is ``None`` for legacy arrays.
+        """
+        rng = np.maximum(hi - lo, 1e-30)
+        if enc.get("zero_level"):
+            denom = max((1 << bits) - 2, 1)
+            return lo + (data - 1.0) / denom * rng, data == 0
+        return lo + data / ((1 << bits) - 1) * rng, None
+
     def _decode_log_perchannel(self, arr: zarr.Array, enc: dict) -> np.ndarray:
         """Decode generic per-channel log quantization of an (N, C) array.
 
-        Inverse of ``_encode_log_perchannel``:
-        ``x = expm1(col_lo[c] + u/levels·(col_hi[c]-col_lo[c]))`` per column.
+        Inverse of ``_encode_log_perchannel``. With ``zero_level: true``
+        (current writer): ``x = 0`` for code 0, else
+        ``expm1(col_lo[c] + (u-1)/(levels-1)·(col_hi[c]-col_lo[c]))``. Legacy
+        arrays (no flag): ``x = expm1(col_lo[c] + u/levels·(col_hi[c]-col_lo[c]))``.
         """
         data = np.asarray(arr[:]).astype(np.float64)
         lo, hi, bits = self._perchannel_scales(data, enc, "log_perchannel")
         original_dtype = np.dtype(enc.get("original_dtype", "float32"))
-        rng = np.maximum(hi - lo, 1e-30)
-        y = lo + data / ((1 << bits) - 1) * rng
-        return np.asarray(np.expm1(y), dtype=original_dtype)
+        y, zero_mask = self._perchannel_companded(data, enc, lo, hi, bits)
+        x = np.expm1(y)
+        if zero_mask is not None:
+            x = np.where(zero_mask, 0.0, x)
+        return np.asarray(x, dtype=original_dtype)
 
     def _decode_signed_log_perchannel(self, arr: zarr.Array, enc: dict) -> np.ndarray:
         """Decode generic per-channel signed-log quantization of an (N, C) array.
 
-        Inverse of ``_encode_signed_log_perchannel``:
-        ``y = col_lo[c] + u/levels·(col_hi[c]-col_lo[c]); x = sign(y)·expm1(|y|)``.
+        Inverse of ``_encode_signed_log_perchannel``. With ``zero_level: true``
+        (current writer): ``x = 0`` for code 0, else
+        ``y = col_lo[c] + (u-1)/(levels-1)·rng; x = sign(y)·expm1(|y|)``. Legacy
+        arrays (no flag): ``y = col_lo[c] + u/levels·rng; x = sign(y)·expm1(|y|)``.
         """
         data = np.asarray(arr[:]).astype(np.float64)
         lo, hi, bits = self._perchannel_scales(data, enc, "signed_log_perchannel")
         original_dtype = np.dtype(enc.get("original_dtype", "float32"))
-        rng = np.maximum(hi - lo, 1e-30)
-        y = lo + data / ((1 << bits) - 1) * rng
-        return np.asarray(np.sign(y) * np.expm1(np.abs(y)), dtype=original_dtype)
+        y, zero_mask = self._perchannel_companded(data, enc, lo, hi, bits)
+        x = np.sign(y) * np.expm1(np.abs(y))
+        if zero_mask is not None:
+            x = np.where(zero_mask, 0.0, x)
+        return np.asarray(x, dtype=original_dtype)
 
     def _decode_linear_perchannel(self, arr: zarr.Array, enc: dict) -> np.ndarray:
         """Decode generic per-channel LINEAR (fixed-point) quantization of an

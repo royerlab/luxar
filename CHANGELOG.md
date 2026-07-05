@@ -27,6 +27,16 @@ All notable changes to Luxar are documented in this file.
   labels); fixes two arrays that silently used zarr's lz4 default
   (colormap LUTs, batch denoise intermediates). Decode is level-independent —
   read cost unchanged, stores ~20% smaller before the amplitude win.
+- Rescale-first generalised to the sibling encodings: `bounded_scalar_u8/u16`
+  now anchor the linear grid at the array's own `[min, max]` instead of
+  `[0, max]` (encoder-only — decoders already honoured the stored min), and
+  the per-channel Cholesky pair (`log_perchannel_*` /
+  `signed_log_perchannel_*`) gains **`zero_level: true`**: per-column scales
+  from each column's nonzero min/max with code 0 reserved for exact zeros,
+  so axis-aligned splats keep exactly-zero off-diagonal correlations instead
+  of tiny spurious ones, and zeros stop dragging the scale anchor down.
+  The covariance certificate round-trips through the identical transform.
+  Legacy arrays (no flag) keep their original decode in Python and viewer.
 
 #### Changed — AUTO covariance quantization: uint8 with an encode-time certificate (~3.3× smaller)
 

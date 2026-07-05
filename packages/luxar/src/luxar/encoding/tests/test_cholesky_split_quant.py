@@ -133,15 +133,51 @@ class TestEdgeCases:
 
     def test_zero_diagonal_rows_quantized_path(self):
         # Mix of zero-scale and normal splats forces the per-channel log path
-        # (not broadcast) and must keep the zero rows exactly zero.
+        # (not broadcast). The reserved zero level (code 0) makes the zero
+        # rows round-trip EXACTLY, not merely approximately.
         rng = np.random.default_rng(11)
         diag = rng.uniform(0.4, 5.0, size=(60, 3)).astype(np.float32)
         diag[::3] = 0.0  # singular splats interleaved
-        decoded, enc, _ = _roundtrip(
+        decoded, enc, stored = _roundtrip(
             diag, SemanticType.CHOLESKY_DIAG, EncodingMode.MEMORY
         )
         assert enc["name"] == "log_perchannel_u8"
-        np.testing.assert_allclose(decoded[::3], 0.0, atol=1e-4)
+        assert enc["zero_level"] is True
+        np.testing.assert_array_equal(stored[::3], 0)
+        np.testing.assert_array_equal(decoded[::3], 0.0)
+
+    def test_exact_zero_offdiag_entries_roundtrip_exactly(self):
+        # Axis-aligned splats have exactly-zero off-diagonal correlations;
+        # the reserved zero level must return them as exact zeros instead of
+        # the tiny spurious correlation the legacy all-levels mapping produced.
+        rng = np.random.default_rng(12)
+        off = (rng.standard_normal((300, 3)) * 0.4).astype(np.float32)
+        off[::4] = 0.0  # axis-aligned splats
+        off[10, 1] = 0.0  # and a lone zero entry
+        decoded, enc, stored = _roundtrip(
+            off, SemanticType.CHOLESKY_OFFDIAG, EncodingMode.MEMORY
+        )
+        assert enc["zero_level"] is True
+        zero_mask = off == 0
+        np.testing.assert_array_equal(stored[zero_mask], 0)
+        np.testing.assert_array_equal(decoded[zero_mask], 0.0)
+        # ...and no nonzero input collapses to the zero code
+        assert np.all(stored[~zero_mask] > 0)
+
+    def test_scales_anchored_at_nonzero_minmax(self):
+        # col_lo/col_hi must come from each column's NONZERO min/max
+        # (rescale-first): zeros take the reserved level and must not drag
+        # the scale anchor down to log1p(0) = 0.
+        rng = np.random.default_rng(13)
+        diag = rng.uniform(3.0, 9.0, size=(200, 2)).astype(np.float32)
+        diag[::5] = 0.0
+        _, enc, _ = _roundtrip(diag, SemanticType.CHOLESKY_DIAG, EncodingMode.MEMORY)
+        nz = diag[diag[:, 0] > 0, 0]
+        expected_lo = np.log1p(float(nz.min()))
+        expected_hi = np.log1p(float(nz.max()))
+        assert enc["col_lo"][0] == pytest.approx(expected_lo, rel=1e-12)
+        assert enc["col_hi"][0] == pytest.approx(expected_hi, rel=1e-12)
+        assert enc["col_lo"][0] > 1.0  # far from the zero anchor
 
     def test_idempotent_resave_no_compounding(self):
         # AUTO→decode→AUTO must not compound error: the second cycle is exact.
@@ -412,15 +448,41 @@ class TestDecoderValidation:
             ArrayDecoder().decode(g["a"], g)
 
     def test_decode_matches_hand_computed(self):
-        # Lock the exact inverse formula (per-column signed-log, uint8).
+        # Lock the exact inverse formula (per-column signed-log, uint8,
+        # zero_level layout: code 0 = exact zero, codes 1..255 span the
+        # nonzero-anchored [lo, hi] with denominator 254).
         rng = np.random.default_rng(4)
         off = (rng.standard_normal((200, 2)) * 0.5).astype(np.float32)
+        off[:5, 0] = 0.0  # exercise the reserved zero level too
         decoded, enc, stored = _roundtrip(
             off, SemanticType.CHOLESKY_OFFDIAG, EncodingMode.MEMORY
         )
+        assert enc["zero_level"] is True
         lo = np.asarray(enc["col_lo"])
         hi = np.asarray(enc["col_hi"])
-        levels = (1 << enc["bits"]) - 1
+        denom = (1 << enc["bits"]) - 2
+        y = lo + (stored.astype(np.float64) - 1.0) / denom * np.maximum(hi - lo, 1e-30)
+        hand = np.where(stored == 0, 0.0, np.sign(y) * np.expm1(np.abs(y)))
+        np.testing.assert_allclose(decoded, hand, rtol=0, atol=1e-6)
+
+    def test_legacy_arrays_without_zero_level_use_all_levels(self):
+        # Pre-zero_level stores (no flag) must keep decoding with the
+        # original all-levels, zero-anchored mapping — the flag branch must
+        # not rewrite history.
+        rng = np.random.default_rng(5)
+        off = (rng.standard_normal((100, 2)) * 0.5).astype(np.float32)
+        _, enc, stored = _roundtrip(
+            off, SemanticType.CHOLESKY_OFFDIAG, EncodingMode.MEMORY
+        )
+        legacy = dict(enc)
+        legacy.pop("zero_level")
+        g = zarr.group(store=zarr.MemoryStore())
+        g.create_dataset("a", data=stored, overwrite=True)
+        g["a"].attrs["encoding"] = legacy
+        decoded = ArrayDecoder().decode(g["a"], g)
+        lo = np.asarray(legacy["col_lo"])
+        hi = np.asarray(legacy["col_hi"])
+        levels = (1 << legacy["bits"]) - 1
         y = lo + stored.astype(np.float64) / levels * np.maximum(hi - lo, 1e-30)
         hand = np.sign(y) * np.expm1(np.abs(y))
         np.testing.assert_allclose(decoded, hand, rtol=0, atol=1e-6)

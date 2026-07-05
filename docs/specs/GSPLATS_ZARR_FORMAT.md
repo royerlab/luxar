@@ -74,7 +74,13 @@ error (p95 relative Frobenius) and escalates to uint16 only when it exceeds 0.05
 each array's `encoding.certificate`; MEMORY→uint8 unconditionally. uint8 is visually
 lossless on real fits (94.5 dB vs the float32 render, ~46 dB below the fit-error
 floor; 2.48 B/splat compressed vs 8.25 at uint16). Per-array `encoding` metadata
-carries the per-column scales (`col_lo`/`col_hi`). Readers decode to float32 and
+carries the per-column scales (`col_lo`/`col_hi`). Since 2026-07 the writer emits
+`zero_level: true`: scales are anchored at each column's **nonzero** min/max and
+code 0 is **reserved for exact zeros** (same layout as `geolog_scalar`), so
+exactly-zero entries — e.g. the off-diagonal of an axis-aligned splat — decode to
+exactly 0 (codes `1..2^bits-1` span `[col_lo, col_hi]`, denominator `2^bits-2`);
+arrays without the flag keep the legacy all-levels, zero-anchored decode.
+Readers decode to float32 and
 recombine into the packed row-major form `[L00, L10, L11, L20, L21, L22, …]`
 (for d=3) immediately on load; everything above the storage layer sees the single
 packed (N, k) float32 array, k = d*(d+1)/2. **v3.0** files store a single packed
@@ -949,6 +955,14 @@ finest level instead). Both paths go through the shared
     `zstd l3 + bitshuffle` default (Blosc silently neutralises bit shuffle
     above level 1 at 64 KiB chunks). Zarr arrays self-describe their
     compressor, so readers need no changes.
+  - The rescale-first principle generalised to the sibling encodings:
+    `bounded_scalar_u8/u16` now anchor at the array's own `[min, max]`
+    (new `min` attr, default 0 on decode — old arrays unaffected), and the
+    per-channel `log_perchannel_*` / `signed_log_perchannel_*` pair
+    (Cholesky diag/offdiag) gains **`zero_level: true`**: per-column scales
+    from the nonzero min/max and code 0 reserved for exact zeros, so
+    axis-aligned splats keep exactly-zero correlations (legacy arrays
+    without the flag keep the old all-levels decode).
 
 - **encoding policy** (2026-07-04, no format change): AUTO Cholesky quantization
   uint16 → **uint8 with an encode-time covariance certificate**

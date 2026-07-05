@@ -329,6 +329,16 @@ per-channel quantizers — `log_perchannel_*` (non-negative), `signed_log_percha
 (signed), and `linear_perchannel_*` (identity / fixed-point) — the semantic type is
 the policy; the encoding is geometry-agnostic.
 
+The log/signed-log pair follows the same rescale-first, zero-safe layout as
+`geolog_scalar` (`zero_level: true` in the attrs): per-column `[col_lo, col_hi]`
+anchored at each column's **nonzero** min/max, code 0 **reserved for exact
+zeros** (decode returns exactly 0), nonzero codes `1..2^bits-1` with denominator
+`2^bits-2`. Exact zeros — e.g. the off-diagonal of an axis-aligned splat —
+round-trip exactly instead of becoming tiny spurious correlations, and zeros
+never consume code range. Legacy arrays without the flag decode with the
+original all-levels, zero-anchored mapping (decode-only support; the writer
+always emits `zero_level`).
+
 **CHOLESKY_DIAG / CHOLESKY_OFFDIAG at AUTO = uint8 with an encode-time
 certificate.** The pair is encoded through `ArrayEncoder.encode_cholesky_split`,
 which round-trips both halves through the exact quantization transform, rebuilds
