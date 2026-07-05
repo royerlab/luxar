@@ -4464,3 +4464,130 @@ class TestAxesThreadingAndSqueeze:
         vol = load_volume(p, timepoint=2, axes="t,z,y,x")
         assert vol.shape == (8, 8, 8)
         np.testing.assert_array_equal(vol, data[2])
+
+
+def _chol_base(path: Path) -> Path:
+    """Return the group holding the Cholesky arrays (leaf root or child_0)."""
+    for base in (path, path / "child_0"):
+        if (base / "cholesky_factors_diag" / ".zarray").exists():
+            return base
+    raise AssertionError(f"no split-Cholesky arrays under {path}")
+
+
+def _diag_dtype(path: Path) -> str:
+    import json
+
+    base = _chol_base(path)
+    return json.load(open(base / "cholesky_factors_diag" / ".zarray"))["dtype"]
+
+
+def _varying_gsplats(path: Path, n: int = 300, d: int = 3) -> Path:
+    """Save a small dataset with VARYING Cholesky columns so the per-column
+    quantizer engages (a constant column falls back to float32 in any mode).
+    Saved with PRECISION so the source dtype is deterministically float32 —
+    AUTO is an adaptive ladder and may pick uint8 or uint16 by certificate."""
+    from luxar.encoding import EncodingMode
+    from luxar.gsplats.gsplat_data import GSplatData
+
+    rng = np.random.default_rng(7)
+    tril = d * (d + 1) // 2
+    chol = (rng.standard_normal((n, tril)) * 0.2).astype(np.float32)
+    di = np.cumsum(np.arange(1, d + 1)) - 1
+    chol[:, di] = np.abs(chol[:, di]) + 0.5
+    GSplatData(
+        centers=(rng.standard_normal((n, d)) * 5).astype(np.float32),
+        amplitudes=(np.abs(rng.standard_normal(n)) + 0.5).astype(np.float32),
+        cholesky_factors=chol,
+    ).save(path, encoding_mode=EncodingMode.PRECISION)
+    return path
+
+
+class TestReencode:
+    """`luxar gsplat reencode` — re-quantize Cholesky factors to a new file."""
+
+    def test_memory_encoding_yields_uint8(
+        self, runner: CliRunner, tmp_path: Path
+    ) -> None:
+        # memory encoding must store the Cholesky diag as uint8 (|u1). The
+        # source is saved PRECISION (float32), so the encoding demonstrably
+        # changes regardless of what the adaptive AUTO ladder would pick.
+        src = _varying_gsplats(tmp_path / "src.gsplats.zarr")
+        src_dtype = _diag_dtype(src)
+        assert src_dtype == "<f4"
+        out = tmp_path / "u8.gsplats.zarr"
+        result = runner.invoke(
+            app, ["gsplat", "reencode", str(src), str(out), "-e", "memory"]
+        )
+        assert result.exit_code == 0, result.output
+        assert _diag_dtype(out) == "|u1"
+        assert _diag_dtype(out) != src_dtype  # the encoding actually changed
+
+    def test_precision_encoding_yields_float32(
+        self, runner: CliRunner, sample_gsplats: Path, tmp_path: Path
+    ) -> None:
+        out = tmp_path / "f32.gsplats.zarr"
+        result = runner.invoke(
+            app,
+            ["gsplat", "reencode", str(sample_gsplats), str(out), "-e", "precision"],
+        )
+        assert result.exit_code == 0, result.output
+        assert _diag_dtype(out) == "<f4"
+
+    def test_reencode_preserves_splat_count_and_geometry(
+        self, runner: CliRunner, sample_gsplats: Path, tmp_path: Path
+    ) -> None:
+        from luxar.gsplats.gsplat_data import GSplatData
+
+        src = GSplatData.load(sample_gsplats)
+        out = tmp_path / "u8.gsplats.zarr"
+        result = runner.invoke(
+            app, ["gsplat", "reencode", str(sample_gsplats), str(out), "-e", "memory"]
+        )
+        assert result.exit_code == 0, result.output
+        got = GSplatData.load(out)
+        assert got.n_splats == src.n_splats
+        assert got.ndim == src.ndim
+        # uint8 Cholesky is lossy but centers are stored losslessly (float32).
+        np.testing.assert_allclose(got.centers, src.centers, rtol=0, atol=1e-4)
+
+    def test_reencode_preserves_pipeline_provenance(
+        self, runner: CliRunner, tmp_path: Path
+    ) -> None:
+        """A kind=lod tree's pipeline/ provenance group survives the round-trip
+        (write_gsplats_tree drops it unless re-supplied — regression guard)."""
+        import zarr
+
+        from luxar.gsplats.gsplat_data import GSplatData
+        from luxar.gsplats.lod import make_substitutive_lod
+
+        n, d = 400, 3
+        rng = np.random.default_rng(3)
+        tril = d * (d + 1) // 2
+        chol = (rng.standard_normal((n, tril)) * 0.1).astype(np.float32)
+        di = np.cumsum(np.arange(1, d + 1)) - 1
+        chol[:, di] = np.abs(chol[:, di]) + 0.5
+        base = GSplatData(
+            centers=rng.standard_normal((n, d)).astype(np.float32),
+            amplitudes=(np.abs(rng.standard_normal(n)) + 0.5).astype(np.float32),
+            cholesky_factors=chol,
+        )
+        pyr = make_substitutive_lod(base, compression_factor=4, levels=2, device="cpu")
+        src = tmp_path / "pyr.gsplats.zarr"
+        from luxar.gsplats.io.save_gsplats import write_gsplats_tree
+        from luxar.gsplats.tree import tree_from_substitutive_levels
+
+        node = tree_from_substitutive_levels(list(pyr.substitutive_levels))
+        write_gsplats_tree(
+            src, node, pipeline_info={"lod_kind": "substitutive", "method": "test_tag"}
+        )
+        pre = dict(zarr.open_group(str(src), mode="r")["pipeline"].attrs)
+        assert pre.get("method") == "test_tag"
+
+        out = tmp_path / "pyr_u8.gsplats.zarr"
+        result = runner.invoke(
+            app, ["gsplat", "reencode", str(src), str(out), "-e", "memory"]
+        )
+        assert result.exit_code == 0, result.output
+        post_root = zarr.open_group(str(out), mode="r")
+        assert "pipeline" in post_root
+        assert dict(post_root["pipeline"].attrs).get("method") == "test_tag"
