@@ -250,16 +250,18 @@ class TestCholeskySplitRoundTrip:
 
     # ndim=1 included: it is the degenerate case where the off-diagonal array is
     # intentionally omitted (k - d == 0), so it exercises a distinct write/read path.
-    # Per-mode precision: PRECISION=float32 (exact), AUTO=uint16 differential
-    # (near-lossless), MEMORY=uint8 differential (visually lossless).
+    # Per-mode precision: PRECISION=float32 (exact); AUTO=uint8 with the encode-time
+    # covariance certificate, whose escalation threshold (COV_CERT_RELF_P95_MAX)
+    # makes the AUTO bound a hard invariant, not an observation; MEMORY=uint8
+    # unconditionally (no certificate).
     _COV_P95_BOUND = {
         EncodingMode.PRECISION: 0.0,
-        EncodingMode.AUTO: 1e-3,
+        EncodingMode.AUTO: 0.05,
         EncodingMode.MEMORY: 0.1,
     }
     _DIAG_ENCODING = {
         EncodingMode.PRECISION: "float32",
-        EncodingMode.AUTO: "log_perchannel_u16",
+        EncodingMode.AUTO: "log_perchannel_u8",
         EncodingMode.MEMORY: "log_perchannel_u8",
     }
 
@@ -285,6 +287,16 @@ class TestCholeskySplitRoundTrip:
                 root["cholesky_factors_diag"].attrs["encoding"]["name"]
                 == self._DIAG_ENCODING[mode]
             )
+            # AUTO carries the covariance certificate as provenance; MEMORY and
+            # PRECISION are unconditional tiers and must not.
+            diag_enc = dict(root["cholesky_factors_diag"].attrs["encoding"])
+            if mode == EncodingMode.AUTO:
+                cert = diag_enc["certificate"]
+                assert cert["metric"] == "cov_relf_p95"
+                assert cert["tier"] == "u8"
+                assert cert["value"] <= cert["threshold"]
+            else:
+                assert "certificate" not in diag_enc
             if k - ndim > 0:
                 assert "cholesky_factors_offdiag" in root
                 assert root["cholesky_factors_offdiag"].shape[1] == k - ndim
@@ -332,20 +344,20 @@ class TestCholeskySplitRoundTrip:
         splats = self._splats(40, 2, rng)
         with tempfile.TemporaryDirectory() as tmpdir:
             path = Path(tmpdir) / "t2.gsplats.zarr"
-            # default mode = AUTO → uint16 differential (near-lossless)
+            # default mode = AUTO → uint8 (certified; escalation not triggered here)
             save_gsplats(path=path, **splats, ordering="none")
             root = zarr.open_group(str(path), mode="r")
             assert root["cholesky_factors_offdiag"].shape[1] == 1
-            assert (
-                root["cholesky_factors_offdiag"].attrs["encoding"]["name"]
-                == "signed_log_perchannel_u16"
-            )
+            enc = dict(root["cholesky_factors_offdiag"].attrs["encoding"])
+            assert enc["name"] == "signed_log_perchannel_u8"
+            # the funnel routed through encode_cholesky_split → certificate present
+            assert enc["certificate"]["tier"] == "u8"
             result = load_gsplats(path)
             assert (
                 self._cov_relF_p95(
                     splats["cholesky_factors"], result.cholesky_factors, 2
                 )
-                <= 1e-3
+                <= 0.05
             )
 
     def test_corrupt_missing_offdiag_for_dgt1_raises(self) -> None:

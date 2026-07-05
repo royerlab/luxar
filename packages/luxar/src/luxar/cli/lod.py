@@ -268,14 +268,17 @@ def measure_store_bytes(path: Path) -> int:
 def detect_store_encoding(path: Path) -> Optional[str]:
     """Classify a ``.gsplats.zarr`` store's encoding mode from its on-disk attrs.
 
-    Reads the split-Cholesky arrays' ``encoding.name``: the AUTO writer
-    quantizes them to ``*_perchannel_u16``, MEMORY to ``*_u8``, and PRECISION
-    stores plain ``float32``. Uniform-cholesky stores broadcast the factors
-    (no dtype signal), so the amplitudes array is the fallback — it still
-    separates PRECISION (``float32``) from the quantized modes (which are u8
-    in BOTH auto and memory, hence not discriminative). Returns ``None`` when
-    the store cannot be classified (zip archive, legacy layout, broadcast-only
-    quantized store) — callers should then not assume a mode.
+    Reads the split-Cholesky arrays' ``encoding`` attrs. The AUTO writer
+    quantizes to u8 (escalating to u16 when its covariance certificate
+    demands) and records the measured ``certificate`` as provenance; MEMORY is
+    u8 WITHOUT a certificate; PRECISION stores plain ``float32``. So the
+    certificate key — not the bit width — separates AUTO from MEMORY, and a
+    bare u16 (legacy pre-certificate store) is AUTO. Uniform-cholesky stores
+    broadcast the factors (no signal), so the amplitudes array is the
+    fallback — it still separates PRECISION (``float32``) from the quantized
+    modes (u8 in both auto and memory, hence not discriminative). Returns
+    ``None`` when the store cannot be classified (zip archive, legacy layout,
+    broadcast-only quantized store) — callers should then not assume a mode.
     """
     import json
     from typing import Iterator
@@ -283,26 +286,27 @@ def detect_store_encoding(path: Path) -> Optional[str]:
     if not path.is_dir():
         return None
 
-    def _encoding_names(array: str) -> Iterator[str]:
+    def _encodings(array: str) -> Iterator[dict]:
         for zattrs in sorted(path.rglob(f"{array}/.zattrs")):
             try:
                 enc = json.loads(zattrs.read_text()).get("encoding", {})
             except (OSError, json.JSONDecodeError, AttributeError):
                 continue
-            name = str(enc.get("name", "")) if isinstance(enc, dict) else ""
-            if name:
-                yield name
+            if isinstance(enc, dict) and enc.get("name"):
+                yield enc
 
     for array in ("cholesky_factors_diag", "cholesky_factors_offdiag"):
-        for name in _encoding_names(array):
+        for enc in _encodings(array):
+            name = str(enc["name"])
+            certified = "certificate" in enc
             if name.endswith("_u16"):
-                return "auto"
+                return "auto"  # escalated-AUTO, or legacy AUTO (pre-certificate)
             if name.endswith("_u8"):
-                return "memory"
+                return "auto" if certified else "memory"
             if name == "float32":
-                return "precision"
-    for name in _encoding_names("amplitudes"):
-        if name == "float32":
+                return "auto" if certified else "precision"
+    for enc in _encodings("amplitudes"):
+        if str(enc["name"]) == "float32":
             return "precision"
     return None
 

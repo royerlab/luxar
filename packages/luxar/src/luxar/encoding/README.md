@@ -317,14 +317,28 @@ encoder.encode(
 | BOUNDED_SCALAR | uint8 | float32 | uint8 |
 | POSITIVE_SCALAR | Analyze range | float32 | uint8 |
 | CHOLESKY | float32 | float32 | float16 |
-| CHOLESKY_DIAG | log_perchannel_u16 | float32 | log_perchannel_u8 |
-| CHOLESKY_OFFDIAG | signed_log_perchannel_u16 | float32 | signed_log_perchannel_u8 |
+| CHOLESKY_DIAG | log_perchannel_u8 (certified) | float32 | log_perchannel_u8 |
+| CHOLESKY_OFFDIAG | signed_log_perchannel_u8 (certified) | float32 | signed_log_perchannel_u8 |
 | INDEX | Smallest uint | Smallest uint | Smallest uint |
 
 `CHOLESKY_DIAG` / `CHOLESKY_OFFDIAG` / `COORDINATE` select the **generic, reusable**
 per-channel quantizers — `log_perchannel_*` (non-negative), `signed_log_perchannel_*`
 (signed), and `linear_perchannel_*` (identity / fixed-point) — the semantic type is
 the policy; the encoding is geometry-agnostic.
+
+**CHOLESKY_DIAG / CHOLESKY_OFFDIAG at AUTO = uint8 with an encode-time
+certificate.** The pair is encoded through `ArrayEncoder.encode_cholesky_split`,
+which round-trips both halves through the exact quantization transform, rebuilds
+Σ = L·Lᵀ, and measures the p95 per-splat relative Frobenius error. u8 is kept when
+the error is ≤ `COV_CERT_RELF_P95_MAX` (0.05); otherwise AUTO escalates to u16 (and,
+as a practically-unreachable last rung, float32) — so the AUTO error bound is a hard
+invariant, and "a reason to go richer" is measured, not guessed. The measured
+certificate is written into each array's own `encoding` attrs as provenance
+(`{"metric": "cov_relf_p95", "value", "threshold", "tier"}`) — decode never needs it.
+Both halves always share one tier. MEMORY is u8 unconditionally (no certificate).
+Calibration (2026-07 covariance spike, real light-sheet fit): u8 measured relF p95
+~0.02 while rendering 94.5 dB vs the float32 render (~46 dB below the fit-error
+floor) at 2.48 B/splat compressed vs 8.25 for u16 (~3.3x).
 
 **COORDINATE** (positions / centers / vertices) uses **uint16 per-axis fixed-point**
 (`linear_perchannel_u16`) in both AUTO and MEMORY: each axis is quantized over its own

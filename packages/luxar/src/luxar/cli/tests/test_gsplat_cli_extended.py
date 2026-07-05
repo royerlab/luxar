@@ -3646,8 +3646,10 @@ class TestLODCommand:
 
     def test_detect_store_encoding_classifies_modes(self, tmp_path: Path) -> None:
         """detect_store_encoding reads the on-disk encoding attrs of the split
-        Cholesky arrays: AUTO quantizes to u16, MEMORY to u8, PRECISION stores
-        float32. Needs NON-uniform cholesky (uniform stores broadcast them)."""
+        Cholesky arrays: AUTO quantizes to u8 WITH a covariance certificate
+        (u16 when escalated / legacy), MEMORY to u8 without one, PRECISION
+        stores float32. Needs NON-uniform cholesky (uniform stores broadcast
+        them)."""
         from luxar.cli.lod import detect_store_encoding
         from luxar.encoding import EncodingMode
         from luxar.gsplats.gsplat_data import GSplatData
