@@ -107,7 +107,10 @@ describe('AdaptiveDPRManager — construction', () => {
   });
 
   it('respects ctor overrides on top of the config defaults', () => {
-    const m = new AdaptiveDPRManager({ minDPR: 0.1 });
+    // gapResetMs is raised because this test deliberately simulates
+    // ~1fps with widely spaced frames — production gap detection would
+    // (correctly) treat those as stalls and never evaluate.
+    const m = new AdaptiveDPRManager({ minDPR: 0.1, gapResetMs: 10_000 });
     try {
       // Internal config check via behavior: scaleDown with very low FPS
       // should drop DPR all the way to 0.1, not 0.5.
@@ -371,6 +374,127 @@ describe('AdaptiveDPRManager — setManualDPR', () => {
 
       m.setManualDPR(2.0);
       expect(m.getState().isReducedResolution).toBe(false);
+    } finally {
+      restore();
+    }
+  });
+});
+
+describe('AdaptiveDPRManager — gap detection & load suppression', () => {
+  let restore: () => void;
+  let renderer: ReturnType<typeof makeRenderer>;
+
+  beforeEach(() => {
+    restore = setNativeDPR(1.0);
+    renderer = makeRenderer();
+  });
+
+  it('a frame gap resets the FPS window instead of ratcheting a spurious scale-down', () => {
+    const m = new AdaptiveDPRManager();
+    try {
+      m.setRenderer(renderer);
+      // 500ms of healthy 60fps...
+      let t = 0;
+      for (let i = 0; i < 31; i++) {
+        m.recordFrame(t);
+        t += 1000 / 60;
+      }
+      // ...then a 400ms stall (GC pause / sync decode), then healthy
+      // 60fps again. Without gap detection the window would blend the
+      // dead time into the estimate (~36fps < 45) and scale down a
+      // scene that renders perfectly fine.
+      t += 400;
+      for (let i = 0; i < 60; i++) {
+        m.recordFrame(t);
+        t += 1000 / 60;
+      }
+      expect(m.getCurrentDPR()).toBe(1.0);
+      expect(renderer.setAdaptivePixelRatio).not.toHaveBeenCalled();
+    } finally {
+      restore();
+    }
+  });
+
+  it('a gap voids a pending probe without judging it', () => {
+    const m = new AdaptiveDPRManager();
+    try {
+      m.setRenderer(renderer);
+      // Sustained 20fps arms a scale-down probe.
+      let t = 0;
+      for (let i = 0; i < 14; i++) {
+        m.recordFrame(t);
+        t += 50;
+      }
+      expect(m.getState().probing).toBe(true);
+      const probedDPR = m.getCurrentDPR();
+
+      // Stall across the probe window, then resume: the probe's data is
+      // contaminated — it must be voided (DPR kept, no floor learned),
+      // not settled against post-stall jank.
+      m.recordFrame(t + 5000);
+      expect(m.getState().probing).toBe(false);
+      expect(m.getCurrentDPR()).toBe(probedDPR);
+      expect(m.getState().dprFloor).toBe(0.5);
+    } finally {
+      restore();
+    }
+  });
+
+  it('load-suppressed low FPS scales down WITHOUT arming a probe', () => {
+    const m = new AdaptiveDPRManager();
+    try {
+      m.setRenderer(renderer);
+      m.setLoadActivityPredicate(() => true);
+
+      let t = 0;
+      for (let i = 0; i < 14; i++) {
+        m.recordFrame(t);
+        t += 50; // 20fps < 45 down-threshold
+      }
+      // The reduction applies (fewer pixels help a janky load too)...
+      expect(m.getCurrentDPR()).toBeLessThan(1.0);
+      // ...but jank samples never become probe/floor evidence.
+      expect(m.getState().probing).toBe(false);
+      expect(m.getState().dprFloor).toBe(0.5);
+    } finally {
+      restore();
+    }
+  });
+
+  it('notifyContentChanged pulls a learned floor forward and coalesces bursts', () => {
+    const m = new AdaptiveDPRManager({ gapResetMs: 60_000 });
+    try {
+      m.setRenderer(renderer);
+      // Build a rejected probe: 20fps scale-down, then settle at the
+      // same 20fps past the probe window → revert + floor.
+      let t = 0;
+      for (let i = 0; i < 14; i++) {
+        m.recordFrame(t);
+        t += 50;
+      }
+      expect(m.getState().probing).toBe(true);
+      for (let i = 0; i < 44; i++) {
+        m.recordFrame(t);
+        t += 50; // continues 20fps through settle (~2.9s total)
+      }
+      expect(m.getState().probing).toBe(false);
+      expect(m.getState().dprFloor).toBeGreaterThan(0.5); // floor learned
+
+      // Content changed: floor expiry is pulled to recheckMs (5s) from
+      // now instead of the 30s TTL.
+      m.notifyContentChanged(t);
+      // Coalesced: an immediate second call within recheckMs must be a
+      // no-op (no clock resets/extensions).
+      m.notifyContentChanged(t + 100);
+
+      // Advance past recheckMs (plus one full evaluation interval so a
+      // post-expiry evaluation actually fires) — floor decays.
+      const decayAt = t + 6500;
+      while (t < decayAt) {
+        m.recordFrame(t);
+        t += 50;
+      }
+      expect(m.getState().dprFloor).toBe(0.5);
     } finally {
       restore();
     }
@@ -678,6 +802,16 @@ describe('AdaptiveDPRManager — U-shape probe', () => {
    * evaluations from firing with random FPS readings by keeping all
    * pushes within a single 1000ms window past the previous evaluation.
    */
+  /**
+   * evaluateWithFPS timelines have >350ms dead zones between windows.
+   * Production gap detection would (correctly) void the armed probes
+   * across those zones — gap behavior has its own dedicated suite — so
+   * the U-shape tests disable it to keep single-window semantics.
+   */
+  function makeProbeManager(): AdaptiveDPRManager {
+    return new AdaptiveDPRManager({ gapResetMs: 60_000 });
+  }
+
   function evaluateWithFPS(m: AdaptiveDPRManager, evalAt: number, targetFPS: number): void {
     const start = evalAt - 1000;
     const N = Math.max(2, Math.round(targetFPS));
@@ -687,7 +821,7 @@ describe('AdaptiveDPRManager — U-shape probe', () => {
   }
 
   it('keeps the DPR move when post-probe FPS improves enough', () => {
-    const m = new AdaptiveDPRManager();
+    const m = makeProbeManager();
     try {
       m.setRenderer(renderer);
 
@@ -712,7 +846,7 @@ describe('AdaptiveDPRManager — U-shape probe', () => {
   });
 
   it('reverts DPR and sets a floor when post-probe FPS did not improve', () => {
-    const m = new AdaptiveDPRManager();
+    const m = makeProbeManager();
     try {
       m.setRenderer(renderer);
 
@@ -736,7 +870,7 @@ describe('AdaptiveDPRManager — U-shape probe', () => {
   });
 
   it('refuses to scale TO OR below the dprFloor set by a failed probe', () => {
-    const m = new AdaptiveDPRManager();
+    const m = makeProbeManager();
     try {
       m.setRenderer(renderer);
 
@@ -768,7 +902,7 @@ describe('AdaptiveDPRManager — U-shape probe', () => {
     // the floor instead of strictly above it), causing a 2-second
     // probe-reject-revert cycle to repeat throughout the 30s TTL
     // window. The fix blocks scaleDown when `proposed <= dprFloor`.
-    const m = new AdaptiveDPRManager();
+    const m = makeProbeManager();
     try {
       m.setRenderer(renderer);
 
@@ -793,7 +927,7 @@ describe('AdaptiveDPRManager — U-shape probe', () => {
   });
 
   it('clears probe state and resets floor on setEnabled(false)', () => {
-    const m = new AdaptiveDPRManager();
+    const m = makeProbeManager();
     try {
       m.setRenderer(renderer);
       // Force a rejected probe to set a floor.

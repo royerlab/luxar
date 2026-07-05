@@ -82,7 +82,8 @@ export class RefreshRateEstimator {
     const max = Math.max(...this.recent);
     const min = Math.min(...this.recent);
     const uniformLow =
-      max < THROTTLE_FRACTION * this.getCap() && (max - min) / Math.max(max, 1e-6) < UNIFORMITY_SPREAD;
+      max < THROTTLE_FRACTION * this.getCap() &&
+      (max - min) / Math.max(max, 1e-6) < UNIFORMITY_SPREAD;
 
     if (!uniformLow) {
       this.lowUniformSince = null;

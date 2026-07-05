@@ -95,6 +95,8 @@ vi.mock('../../../../../rendering/adaptive-dpr-manager', () => ({
     setRenderer: vi.fn(),
     setOnDPRChangeCallback: vi.fn(),
     getNativeDPR: vi.fn(() => 2),
+    setLoadActivityPredicate: vi.fn(),
+    notifyContentChanged: vi.fn(),
   })),
 }));
 vi.mock('../../../../../ui/resolution-indicator', () => ({

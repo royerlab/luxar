@@ -127,6 +127,15 @@ export class AdaptiveDPRManager {
   // Callback for UI updates
   private onDPRChange: DPRChangeCallback | null = null;
 
+  // Injected "data is loading" predicate (mirrors the animation
+  // controller's context-lost predicate pattern). While true, FPS
+  // samples are treated as jank-polluted: scale-downs apply unprobed
+  // and nothing feeds the estimator or settles probes.
+  private loadActivityPredicate: (() => boolean) | null = null;
+
+  // Coalescing clock for notifyContentChanged().
+  private lastContentChangeAt: number | null = null;
+
   // True after pinManualDPR(): the DPR is locked for the session
   // (`?dpr=` URL param) and setEnabled() becomes a no-op so persisted
   // per-scene settings can't silently re-enable adaptation mid-run.
@@ -154,10 +163,14 @@ export class AdaptiveDPRManager {
     this.probeController = new ProbeController({
       windowMs: this.config.probeWindowMs,
       improvement: this.config.probeImprovement,
+      minSamples: this.config.probeMinSamples,
+      minSpanMs: this.FPS_SAMPLE_WINDOW_MS * 0.5,
     });
     this.boundsLedger = new BoundsLedger({
       minDPR: this.config.minDPR,
       floorTtlMs: this.config.floorTtlMs,
+      backoffMultiplier: this.config.backoffMultiplier,
+      backoffMaxTtlMs: this.config.backoffMaxTtlMs,
     });
     this.hysteresis = new HysteresisTracker({
       hysteresisMs: this.config.hysteresisSeconds * 1000,
@@ -259,6 +272,21 @@ export class AdaptiveDPRManager {
   recordFrame(timestamp: number): void {
     if (!this.isEnabled) return;
 
+    // Gap detection: a frame arriving long after the previous one means
+    // the loop stalled (GC pause, synchronous decode, idle-resume, tab
+    // switch the pause hook didn't see). The window's pre-gap frames
+    // plus the dead time would read as artificially low FPS and ratchet
+    // a spurious, probe-ratified scale-down — so reset the session
+    // state and start sampling fresh. An in-flight probe is voided (not
+    // judged): the experiment's data is contaminated, learn nothing.
+    const last = this.fpsTracker.lastTimestamp;
+    if (last !== null && timestamp - last > this.config.gapResetMs) {
+      this.fpsTracker.clear();
+      this.probeController.void_();
+      this.hysteresis.clear();
+      this.lastEvaluationTime = timestamp;
+    }
+
     this.fpsTracker.push(timestamp);
 
     // Evaluate DPR at configured interval
@@ -290,9 +318,16 @@ export class AdaptiveDPRManager {
     // Need at least some frames to make a decision
     if (fps === 0) return;
 
-    // Feed the refresh-cap estimator — but only full-span windows, so a
-    // half-filled window right after a clear doesn't pollute the mark.
-    if (this.fpsTracker.span() >= this.FPS_SAMPLE_WINDOW_MS * 0.5) {
+    // While data is loading, FPS samples reflect decode/upload jank,
+    // not steady-state render cost. Scale-downs still apply (a janky
+    // load benefits from fewer pixels too) but NOTHING is learned from
+    // such samples: no probes armed or settled, no estimator feeding.
+    const suppressed = this.loadActivityPredicate?.() ?? false;
+
+    // Feed the refresh-cap estimator — but only clean, full-span
+    // windows, so partial post-reset windows and load jank don't
+    // pollute the mark.
+    if (!suppressed && this.fpsTracker.span() >= this.FPS_SAMPLE_WINDOW_MS * 0.5) {
       this.refreshRateEstimator.addSample(fps, timestamp);
     }
 
@@ -308,7 +343,11 @@ export class AdaptiveDPRManager {
     // If a probe is in flight, settle it first. We don't trigger
     // another scaleDown while a probe is pending — we need a clean
     // FPS sample of the just-applied DPR before deciding anything else.
-    const verdict = this.probeController.evaluate(timestamp, fps);
+    const verdict = this.probeController.evaluate(timestamp, fps, {
+      sampleCount: this.fpsTracker.sampleCount(),
+      spanMs: this.fpsTracker.span(),
+      suppressed,
+    });
     if (verdict) {
       this.applyProbeVerdict(verdict, timestamp, fps);
       return;
@@ -326,8 +365,9 @@ export class AdaptiveDPRManager {
 
     if (fps < downThreshold) {
       // Performance is poor - scale down (and arm a probe so we can
-      // verify the move actually helped).
-      this.scaleDown(timestamp, fps);
+      // verify the move actually helped — unless the sample is
+      // load-suppressed, in which case the reduction applies unprobed).
+      this.scaleDown(timestamp, fps, suppressed);
       this.hysteresis.recordLow();
     } else if (fps > upThreshold) {
       // Performance is good - accumulate the sustained-high streak.
@@ -360,8 +400,22 @@ export class AdaptiveDPRManager {
   ): void {
     if (verdict.kind === 'pending') return;
 
+    if (verdict.kind === 'inconclusive') {
+      // No clean sample within the extended window — keep the DPR,
+      // learn nothing (no revert, no floor, no backoff movement).
+      log.info(
+        Modules.ADAPTIVE_DPR,
+        `Probe at DPR ${verdict.probe.probedDPR.toFixed(2)} voided as inconclusive ` +
+          '(no clean FPS sample) — keeping the DPR, learning nothing'
+      );
+      return;
+    }
+
     const { probe, fpsRatio } = verdict;
     if (verdict.kind === 'accepted') {
+      // The regime responds to DPR reduction — stale rejection streaks
+      // no longer describe it.
+      this.boundsLedger.recordAcceptance();
       log.custom(
         LogEmoji.PERFORMANCE,
         Modules.ADAPTIVE_DPR,
@@ -372,20 +426,25 @@ export class AdaptiveDPRManager {
       return;
     }
 
-    // Rejected: revert and floor.
+    // Rejected: revert and floor (repeated identical rejections
+    // escalate the retry TTL exponentially — see BoundsLedger).
+    this.currentDPR = probe.previousDPR;
+    this.isReducedResolution = this.currentDPR < this.lastSeenNativeDPR * 0.95;
+    this.applyDPR();
+    const ttlMs = this.boundsLedger.recordRejection(probe.probedDPR, timestamp);
+
     log.warning(
       Modules.ADAPTIVE_DPR,
       `Probe rejected at DPR ${probe.probedDPR.toFixed(2)}: ` +
         `FPS ${probe.previousFPS.toFixed(1)} → ${currentFPS.toFixed(1)} ` +
         `(×${fpsRatio.toFixed(2)}, want ≥${this.config.probeImprovement.toFixed(2)}). ` +
         `Reverting to DPR ${probe.previousDPR.toFixed(2)}; ` +
-        `floor set, will retry in ${(this.config.floorTtlMs / 1000).toFixed(0)}s.`
+        `floor set, will retry in ${(ttlMs / 1000).toFixed(0)}s` +
+        (this.boundsLedger.backoffLevel > 1
+          ? ` (backoff ×${this.boundsLedger.backoffLevel})`
+          : '') +
+        '.'
     );
-
-    this.currentDPR = probe.previousDPR;
-    this.isReducedResolution = this.currentDPR < this.lastSeenNativeDPR * 0.95;
-    this.applyDPR();
-    this.boundsLedger.recordRejection(probe.probedDPR, timestamp);
 
     if (this.onDPRChange) {
       this.onDPRChange(this.currentDPR, this.isReducedResolution);
@@ -395,9 +454,11 @@ export class AdaptiveDPRManager {
   /**
    * Scale DPR down for better performance, arming a probe so we
    * verify the move actually helped (see U-shape comment at the top
-   * of this file).
+   * of this file). Load-suppressed scale-downs apply WITHOUT a probe:
+   * the reduction still helps a janky load, but jank-polluted FPS
+   * samples must never become floor evidence.
    */
-  private scaleDown(timestamp: number, fps: number): void {
+  private scaleDown(timestamp: number, fps: number, suppressed: boolean): void {
     const proposed = this.currentDPR * this.config.scaleDownFactor;
     // Block scaleDown from moving TO OR BELOW the U-shape floor. The
     // ledger's to-or-below early-return (rather than clamping to the
@@ -419,17 +480,19 @@ export class AdaptiveDPRManager {
       LogEmoji.PERFORMANCE,
       Modules.ADAPTIVE_DPR,
       `Scaled down: DPR ${previousDPR.toFixed(2)} → ${newDPR.toFixed(2)} ` +
-        `(FPS: ${fps.toFixed(1)}, probing for U-shape)`
+        `(FPS: ${fps.toFixed(1)}, ${suppressed ? 'load-suppressed, unprobed' : 'probing for U-shape'})`
     );
 
     // Arm the probe so the next evaluateAndAdjust pass after
     // config.probeWindowMs judges whether this move helped.
-    this.probeController.arm({
-      previousDPR,
-      previousFPS: fps,
-      probedDPR: newDPR,
-      startTime: timestamp,
-    });
+    if (!suppressed) {
+      this.probeController.arm({
+        previousDPR,
+        previousFPS: fps,
+        probedDPR: newDPR,
+        startTime: timestamp,
+      });
+    }
 
     // Notify callback
     if (this.onDPRChange) {
@@ -623,6 +686,48 @@ export class AdaptiveDPRManager {
    */
   isPinned(): boolean {
     return this.pinned;
+  }
+
+  /**
+   * Inject a predicate polled at each evaluation to detect active data
+   * loading (decode/upload jank). While it returns true, FPS samples
+   * are treated as unrepresentative: scale-downs still apply (fewer
+   * pixels help a janky load too) but no probes are armed or settled
+   * and the refresh-cap estimator is not fed — load jank must never
+   * become learned floor/cap evidence. Pass null to disable.
+   */
+  setLoadActivityPredicate(predicate: (() => boolean) | null): void {
+    this.loadActivityPredicate = predicate;
+  }
+
+  /**
+   * Notify the manager that scene content genuinely changed (dataset
+   * loaded, layers added/removed, LOD level swapped in). Learned
+   * bounds describe the OLD content, so their expiry is pulled forward
+   * to at most `contentChangeRecheckMs` from now and the rejection
+   * backoff streak resets — a re-probe against the new content is
+   * cheap and justified. Calls are coalesced within
+   * `contentChangeRecheckMs` so event bursts (per-frame LOD swaps
+   * during a zoom) don't spam the ledger.
+   *
+   * @param timestamp - Caller-supplied clock for tests; defaults to
+   *   `performance.now()`, the same clock the frame loop feeds.
+   */
+  notifyContentChanged(timestamp: number = performance.now()): void {
+    if (!this.isEnabled) return;
+    if (
+      this.lastContentChangeAt !== null &&
+      timestamp - this.lastContentChangeAt < this.config.contentChangeRecheckMs
+    ) {
+      return;
+    }
+    this.lastContentChangeAt = timestamp;
+    this.boundsLedger.softenForContentChange(timestamp, this.config.contentChangeRecheckMs);
+    log.info(
+      Modules.ADAPTIVE_DPR,
+      'Content changed — floor re-probe allowed within ' +
+        `${(this.config.contentChangeRecheckMs / 1000).toFixed(0)}s, backoff streak reset`
+    );
   }
 
   /**

@@ -223,6 +223,11 @@ export async function runInitPipeline(
     // pinned to the default/coarsest level from the last updateView.
     if (loader?.lodGroupRegistry?.evaluatePerFrame()) {
       loader.refreshVisibleCounts();
+      // A level swap changes what is being rendered — learned DPR
+      // bounds (floor/backoff) describe the old level's render cost.
+      // notifyContentChanged is internally coalesced, so per-frame
+      // swap bursts during a zoom don't spam the ledger.
+      partial.adaptiveDPRManager?.notifyContentChanged();
     }
   });
 
@@ -239,6 +244,20 @@ export async function runInitPipeline(
   if (ports.options.pinnedDPR !== undefined) {
     adaptiveDPRManager.pinManualDPR(ports.options.pinnedDPR);
   }
+
+  // While an updateView sweep is in flight, frame jank reflects
+  // decode/upload work, not steady-state render cost — the manager
+  // suppresses probe/estimator learning for those samples.
+  adaptiveDPRManager.setLoadActivityPredicate(
+    () => getSceneLoader('default')?.isUpdateInProgress() ?? false
+  );
+
+  // Dataset/layer changes invalidate the learned DPR bounds (the floor
+  // was evidence about the OLD content). Tracked via ports.events so
+  // dispose removes it like every other app-level listener.
+  const onLayersChanged = (): void => adaptiveDPRManager.notifyContentChanged();
+  window.addEventListener('luxar-layers-changed', onLayersChanged);
+  ports.events.add(() => window.removeEventListener('luxar-layers-changed', onLayersChanged));
 
   // Initialize resolution indicator and connect to DPR manager
   const resolutionIndicator = new ResolutionIndicator();
