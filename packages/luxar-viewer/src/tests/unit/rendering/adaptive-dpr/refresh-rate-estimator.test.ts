@@ -132,6 +132,40 @@ describe('RefreshRateEstimator', () => {
     expect(est.getCap()).toBe(30); // downshift correctly allowed again
   });
 
+  it('a content change resets an already-latched throttle verdict (not just the proof)', () => {
+    const est = new RefreshRateEstimator(60);
+    // Genuine throttle detected on the OLD content: 120 proven, then
+    // uniform 30 → latched, cap collapsed to the plateau.
+    feed(est, 120, 4, 0);
+    feed(est, 30, 25, 2000);
+    expect(est.getCap()).toBe(30);
+
+    // Content change: the verdict was earned against the old content's
+    // frame stream. Carrying it forward would keep the cap collapsed
+    // for the NEW content — a heavy scene at 35fps would then read as
+    // healthy (upThr 31.5) and get scaled UP, with no reachable exit
+    // sample (35 < 48). The latch must reset with the proof.
+    est.noteContentChanged();
+    expect(est.getCap()).toBe(60);
+
+    // And a heavy new scene keeps the sane fallback-floored cap.
+    feed(est, 35, 30, 20_000);
+    expect(est.getCap()).toBe(60);
+  });
+
+  it('recovers from a 30Hz-class plateau at 25% above it — no dead zone up to 48fps', () => {
+    const est = new RefreshRateEstimator(60);
+    feed(est, 120, 4, 0);
+    feed(est, 30, 25, 2000); // latched at plateau 30 (exit line 37.5)
+    expect(est.getCap()).toBe(30);
+
+    // 38fps is unreachable under a genuine tight 30Hz throttle but well
+    // below 80% of the fallback (48) — the old mark/0.55 exit line was
+    // inert here. The plateau-anchored line must fire.
+    est.addSample(38, 60_000);
+    expect(est.getCap()).toBe(60);
+  });
+
   it('a mis-capped scene recovers as soon as FPS clearly exceeds the throttle plateau', () => {
     const est = new RefreshRateEstimator(60);
     // Proven at 60, then (no content signal) a uniform-20 regime earns a

@@ -30,8 +30,11 @@
  *   scene that needs help. (A tab throttled from the very first frame
  *   also never proves a rate; it keeps the fallback cap and its
  *   futile scale-down probes are contained by the rejection-backoff
- *   machinery.) Any sample above 80% of the fallback immediately
- *   restores the bound.
+ *   machinery.) Any sample above 80% of the fallback — or 25% above
+ *   the reseeded throttle plateau, unreachable under a genuine tight
+ *   throttle — immediately restores the bound, and a content change
+ *   resets the throttle verdict outright (it was earned against the
+ *   old content's frame stream).
  *
  * Pure and timestamp-driven; no clocks, no window, no config imports.
  */
@@ -46,12 +49,26 @@ const UNIFORMITY_SPREAD = 0.15;
 const DOWNSHIFT_AFTER_MS = 10_000;
 /** A sample above this fraction of the fallback clears throttle mode. */
 const UNTHROTTLE_FRACTION = 0.8;
+/**
+ * A sample this far above the reseeded throttle plateau also clears
+ * throttle mode: a genuine rAF throttle is TIGHT (its uniform-low
+ * signature required < UNIFORMITY_SPREAD), so 25% above the plateau is
+ * unreachable under the throttle — while a MISclassified heavy scene
+ * that lightens recovers as soon as it clears the plateau, instead of
+ * staying mis-capped until it somehow hits 80% of the fallback (inert
+ * for 30Hz-class plateaus, whose mark/0.55 exceeds that line).
+ */
+const THROTTLE_EXIT_FACTOR = 1.25;
 
 export class RefreshRateEstimator {
   private mark = 0;
   private recent: number[] = [];
   private lowUniformSince: number | null = null;
   private throttled = false;
+  // The uniform-low level the throttle verdict reseeded from. Kept
+  // separate from `mark` (which keeps growing with observed samples)
+  // so the un-throttle exit line stays anchored to the actual plateau.
+  private throttlePlateau: number | null = null;
   // True once a sample has proven the display can beat 80% of the
   // fallback SINCE THE LAST CONTENT CHANGE. The throttle downshift is
   // gated on this rather than the lifetime `mark`: proof earned while
@@ -70,16 +87,19 @@ export class RefreshRateEstimator {
   addSample(fps: number, timestamp: number): void {
     // Un-throttle when a sample clearly exceeds the throttle plateau:
     // either it approaches the fallback bound, or it rises well above
-    // the reseeded mark (mark/THROTTLE_FRACTION) — a genuinely
-    // throttled display can produce neither, while a misclassified
-    // heavy scene that lightens even a little recovers immediately
-    // instead of staying mis-capped until it somehow hits 80% of
-    // fallback.
+    // the reseeded plateau — a genuinely throttled display can produce
+    // neither, while a misclassified heavy scene that lightens even a
+    // little recovers immediately.
     const unthrottleAt = Math.min(
       this.fallback * UNTHROTTLE_FRACTION,
-      this.throttled ? this.mark / THROTTLE_FRACTION : Number.POSITIVE_INFINITY
+      this.throttled && this.throttlePlateau !== null
+        ? this.throttlePlateau * THROTTLE_EXIT_FACTOR
+        : Number.POSITIVE_INFINITY
     );
-    if (fps >= unthrottleAt) this.throttled = false;
+    if (fps >= unthrottleAt) {
+      this.throttled = false;
+      this.throttlePlateau = null;
+    }
     if (fps >= this.fallback * UNTHROTTLE_FRACTION) this.provenSinceContentChange = true;
     if (fps > this.mark) this.mark = fps;
 
@@ -96,15 +116,25 @@ export class RefreshRateEstimator {
 
   /**
    * Scene content genuinely changed (dataset load, layer change, LOD
-   * swap): the proven-rate evidence now describes the OLD content, so
-   * the throttle downshift is disarmed until the display re-proves its
-   * rate against the new content. The monotonic `mark` itself is kept —
-   * it still upper-bounds the cap correctly and keeping it avoids
-   * threshold flapping on every LOD swap.
+   * swap): ALL content-relative throttle state resets — the proof that
+   * would arm a new downshift AND an already-latched throttle verdict.
+   * The verdict was earned against the OLD content's frame stream;
+   * carrying it forward would keep the cap collapsed on the reseeded
+   * plateau and invert the thresholds for the NEW content (scale-up
+   * armed on a heavy scene) with no reachable exit sample. If the
+   * display is STILL genuinely throttled, the new content cannot
+   * re-prove ≥80% of fallback, so no new downshift fires and the
+   * futile scale-down probes are contained by the rejection backoff —
+   * the same accepted corner as a session throttled from its first
+   * frame. Only the monotonic `mark` survives: it is used purely as an
+   * upper bound via max(mark, fallback), which stays correct and
+   * avoids threshold flapping on every LOD swap.
    */
   noteContentChanged(): void {
     this.provenSinceContentChange = false;
     this.lowUniformSince = null;
+    this.throttled = false;
+    this.throttlePlateau = null;
   }
 
   /** Forget everything (native-DPR / display change). */
@@ -113,6 +143,7 @@ export class RefreshRateEstimator {
     this.recent = [];
     this.lowUniformSince = null;
     this.throttled = false;
+    this.throttlePlateau = null;
     this.provenSinceContentChange = false;
   }
 
@@ -157,6 +188,7 @@ export class RefreshRateEstimator {
     }
     if (timestamp - this.lowUniformSince >= DOWNSHIFT_AFTER_MS) {
       this.mark = max;
+      this.throttlePlateau = max;
       this.throttled = true;
       this.lowUniformSince = null;
     }

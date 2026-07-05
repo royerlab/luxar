@@ -825,6 +825,34 @@ describe('AdaptiveDPRManager — refresh-rate-relative thresholds', () => {
     }
   });
 
+  it('notifyContentChanged resets a LATCHED throttle cap, not only the downshift permission', () => {
+    const m = new AdaptiveDPRManager();
+    try {
+      m.setRenderer(makeRenderer());
+      // Prove 120, then a genuine throttle signature latches the low cap.
+      let t = 0;
+      for (let i = 0; i < 180; i++) {
+        m.recordFrame(t);
+        t += 1000 / 120;
+      }
+      for (let i = 0; i < 480; i++) {
+        m.recordFrame(t);
+        t += 1000 / 30; // uniform 30fps for 16s (mixed-window ramp +
+        // 10s persistence) → downshift latches
+      }
+      expect(m.getState().refreshRateCap).toBeCloseTo(30, 6);
+
+      // The throttle verdict is content-relative: after a content change
+      // the cap must return to the fallback-floored bound so heavy new
+      // content at ~35fps is correctly below the down-threshold instead
+      // of above an inverted up-threshold (31.5).
+      m.notifyContentChanged(t);
+      expect(m.getState().refreshRateCap).toBeGreaterThanOrEqual(60);
+    } finally {
+      restore();
+    }
+  });
+
   it('notifyContentChanged disarms the throttle downshift for the new content', () => {
     const m = new AdaptiveDPRManager();
     try {
