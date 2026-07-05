@@ -89,6 +89,58 @@ describe('RecordingSession', () => {
     document.body.innerHTML = '';
   });
 
+  describe('DPR save/restore around a capture', () => {
+    function makeDPRManager(active: boolean, currentDPR: number) {
+      return {
+        isActive: vi.fn().mockReturnValue(active),
+        getCurrentDPR: vi.fn().mockReturnValue(currentDPR),
+        getNativeDPR: vi.fn().mockReturnValue(2.0),
+        setEnabled: vi.fn(),
+      };
+    }
+
+    it('adaptive-enabled: disables once, no second resize pass, restore re-enables', () => {
+      const manager = makeDPRManager(true, 1.4);
+      panel.setAdaptiveDPRManager(manager as any);
+
+      panel.session.saveRecordingState({ disableDPR: true });
+      // setEnabled(false) already applies native through the resize
+      // path; a second explicit setAdaptivePixelRatio would repeat the
+      // HDR-target dispose/recreate for nothing.
+      expect(manager.setEnabled).toHaveBeenCalledWith(false);
+      expect(mockSceneManager.setAdaptivePixelRatio).not.toHaveBeenCalled();
+
+      panel.session.restoreRecordingState();
+      expect(manager.setEnabled).toHaveBeenLastCalledWith(true);
+      expect(mockSceneManager.setAdaptivePixelRatio).not.toHaveBeenCalled();
+    });
+
+    it('manual-DPR mode: forces native explicitly (load-bearing), restore reapplies the manual value', () => {
+      const manager = makeDPRManager(false, 0.5);
+      panel.setAdaptiveDPRManager(manager as any);
+
+      panel.session.saveRecordingState({ disableDPR: true });
+      // setEnabled(false) early-returns when already disabled — the
+      // explicit call is the only thing forcing native for the capture.
+      expect(mockSceneManager.setAdaptivePixelRatio).toHaveBeenCalledWith(2.0);
+
+      panel.session.restoreRecordingState();
+      expect(mockSceneManager.setAdaptivePixelRatio).toHaveBeenLastCalledWith(0.5);
+      expect(manager.setEnabled).not.toHaveBeenCalledWith(true);
+    });
+
+    it('without disableDPR the session leaves DPR entirely alone', () => {
+      const manager = makeDPRManager(true, 1.4);
+      panel.setAdaptiveDPRManager(manager as any);
+
+      panel.session.saveRecordingState({});
+      panel.session.restoreRecordingState();
+
+      expect(manager.setEnabled).not.toHaveBeenCalledWith(false);
+      expect(mockSceneManager.setAdaptivePixelRatio).not.toHaveBeenCalled();
+    });
+  });
+
   describe('confirmation dialog', () => {
     it('creates dialog with correct structure', () => {
       const promise = (panel as any).session.showConfirmationDialog({
