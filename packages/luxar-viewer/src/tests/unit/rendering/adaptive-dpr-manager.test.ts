@@ -373,6 +373,135 @@ describe('AdaptiveDPRManager — setManualDPR', () => {
   });
 });
 
+describe('AdaptiveDPRManager — live native DPR (monitor / zoom changes)', () => {
+  let restore: () => void;
+
+  beforeEach(() => {
+    restore = setNativeDPR(2.0);
+  });
+
+  it('getNativeDPR() reflects a devicePixelRatio change after construction', () => {
+    const m = new AdaptiveDPRManager();
+    try {
+      expect(m.getNativeDPR()).toBe(2.0);
+      setNativeDPR(1.0);
+      expect(m.getNativeDPR()).toBe(1.0);
+      expect(m.getState().nativeDPR).toBe(1.0);
+    } finally {
+      restore();
+    }
+  });
+
+  it('follows the new native silently when tracking native (no redundant re-apply)', () => {
+    const m = new AdaptiveDPRManager();
+    try {
+      const renderer = makeRenderer();
+      m.setRenderer(renderer);
+
+      setNativeDPR(1.0);
+      // Live-consistent getCurrentDPR: never reports the stale native.
+      expect(m.getCurrentDPR()).toBe(1.0);
+      // Tracking-native path must NOT reallocate render targets — the
+      // renderer follows live DPR by itself via the null override.
+      expect(renderer.setAdaptivePixelRatio).not.toHaveBeenCalled();
+    } finally {
+      restore();
+    }
+  });
+
+  it('clamps an engaged manual DPR above the new native and re-applies (no supersampling)', () => {
+    const m = new AdaptiveDPRManager();
+    try {
+      const renderer = makeRenderer();
+      m.setRenderer(renderer);
+      m.setEnabled(false);
+      m.setManualDPR(1.5); // engaged below native 2.0
+      renderer.setAdaptivePixelRatio.mockClear();
+
+      setNativeDPR(1.0); // move to a 1x monitor
+      expect(m.getCurrentDPR()).toBe(1.0);
+      // The 1.5 override would supersample on the 1x display — must be
+      // clamped down and re-applied exactly once.
+      expect(renderer.setAdaptivePixelRatio).toHaveBeenCalledTimes(1);
+      expect(renderer.setAdaptivePixelRatio).toHaveBeenLastCalledWith(1.0);
+    } finally {
+      restore();
+    }
+  });
+
+  it('keeps an engaged reduced DPR that is still below the new native', () => {
+    const m = new AdaptiveDPRManager();
+    try {
+      const renderer = makeRenderer();
+      m.setRenderer(renderer);
+      m.setEnabled(false);
+      m.setManualDPR(0.5);
+      renderer.setAdaptivePixelRatio.mockClear();
+
+      setNativeDPR(1.0);
+      // 0.5 is still valid below native 1.0 — no clamp, no re-apply.
+      expect(m.getCurrentDPR()).toBe(0.5);
+      expect(renderer.setAdaptivePixelRatio).not.toHaveBeenCalled();
+    } finally {
+      restore();
+    }
+  });
+
+  it('setEnabled(false) resets to the LIVE native, not the construction-time snapshot', () => {
+    const m = new AdaptiveDPRManager();
+    try {
+      const renderer = makeRenderer();
+      m.setRenderer(renderer);
+
+      setNativeDPR(1.0);
+      m.setEnabled(false);
+
+      expect(m.getCurrentDPR()).toBe(1.0);
+      expect(renderer.setAdaptivePixelRatio).toHaveBeenLastCalledWith(1.0);
+    } finally {
+      restore();
+    }
+  });
+
+  it('setManualDPR clamps against the LIVE native', () => {
+    const m = new AdaptiveDPRManager();
+    try {
+      m.setRenderer(makeRenderer());
+      m.setEnabled(false);
+
+      setNativeDPR(1.0);
+      m.setManualDPR(2.0); // old native — must clamp to live 1.0
+      expect(m.getCurrentDPR()).toBe(1.0);
+    } finally {
+      restore();
+    }
+  });
+
+  it('a native change clears the U-shape floor and any pending probe', () => {
+    const m = new AdaptiveDPRManager();
+    try {
+      const renderer = makeRenderer();
+      m.setRenderer(renderer);
+
+      // Drive a scale-down (arms a probe) with sustained low FPS.
+      let t = pushFrames(m, 0, 12, 1100); // ~10 fps < minFPS 30
+      expect(m.getState().probing).toBe(true);
+
+      setNativeDPR(1.0);
+      const state = m.getState();
+      // Probe voided and floor back at config minDPR (0.5) — the old
+      // display's absolute-DPR calibrations are meaningless now.
+      expect(state.probing).toBe(false);
+      expect(state.dprFloor).toBe(0.5);
+      // FPS window cleared: fresh samples required before any decision.
+      expect(state.currentFPS).toBe(0);
+      void t;
+    } finally {
+      restore();
+    }
+  });
+});
+
 describe('AdaptiveDPRManager — pinManualDPR', () => {
   let restore: () => void;
 

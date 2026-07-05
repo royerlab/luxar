@@ -11,7 +11,10 @@
  * - If FPS < minFPS: Scale DPR down by scaleDownFactor (probe-and-verify;
  *   see U-shape section below)
  * - If FPS > maxFPS for hysteresisSeconds: Scale DPR up by scaleUpFactor
- * - DPR is clamped between minDPR and window.devicePixelRatio
+ * - DPR walks multiplicatively below the LIVE window.devicePixelRatio
+ *   (re-read on every evaluation/public read — monitor drags and browser
+ *   zoom change it at runtime) and stops strictly above
+ *   max(minDPR, learned U-shape floor)
  *
  * # U-shape awareness
  *
@@ -85,7 +88,12 @@ export class AdaptiveDPRManager {
 
   // State
   private currentDPR: number;
-  private readonly nativeDPR: number;
+  // Last observed window.devicePixelRatio. The native DPR is NOT a
+  // constant: monitor drags and browser zoom change it at runtime, so
+  // every consumer reads it live via syncNativeDPR() and this snapshot
+  // exists only to detect changes (see syncNativeDPR for the rebase
+  // rules applied when it moves).
+  private lastSeenNativeDPR: number;
   private isEnabled: boolean;
   private lastEvaluationTime: number = 0;
   private highFPSStartTime: number | null = null;
@@ -145,8 +153,8 @@ export class AdaptiveDPRManager {
       ...customConfig,
     };
 
-    this.nativeDPR = window.devicePixelRatio || 1;
-    this.currentDPR = this.nativeDPR;
+    this.lastSeenNativeDPR = this.readLiveNativeDPR();
+    this.currentDPR = this.lastSeenNativeDPR;
     this.dprFloor = this.config.minDPR;
     // Initial enabled state from config. At runtime, this is overridden by
     // renderingControls.defaults.adaptiveDPREnabled (persisted per-scene in localStorage).
@@ -154,8 +162,75 @@ export class AdaptiveDPRManager {
 
     log.info(
       Modules.ADAPTIVE_DPR,
-      `Initialized (enabled: ${this.isEnabled}, native DPR: ${this.nativeDPR.toFixed(2)})`
+      `Initialized (enabled: ${this.isEnabled}, native DPR: ${this.lastSeenNativeDPR.toFixed(2)})`
     );
+  }
+
+  /** Live `window.devicePixelRatio` with the 0/undefined guard. */
+  private readLiveNativeDPR(): number {
+    return window.devicePixelRatio || 1;
+  }
+
+  /**
+   * Detect a native-DPR change (monitor drag, browser zoom) and rebase.
+   *
+   * The U-shape floor, a pending probe, the scale-up hysteresis timer,
+   * and the FPS window are all calibrated against absolute DPR values
+   * and frame timings of the OLD display, so a native change clears
+   * them wholesale. The operating DPR follows one of two rules:
+   *
+   * - Tracking native (no reduction/override engaged): follow the new
+   *   native silently. The renderer already tracks live DPR by itself
+   *   (null override in dpr-policy), so re-applying would only trigger
+   *   a redundant render-target reallocation.
+   * - Explicitly reduced/manual: clamp to the new native and re-apply,
+   *   so a move to a lower-DPI monitor never leaves a supersampling
+   *   override behind (the pre-fix failure mode: a 2.0 override kept
+   *   rendering 4x the pixels on a 1x monitor).
+   *
+   * Detection is lazy — evaluation ticks and public reads — which
+   * covers browser zoom (resize → interaction → evaluation) and
+   * monitor drags on the next activity without a matchMedia listener.
+   *
+   * @returns the live native DPR
+   */
+  private syncNativeDPR(): number {
+    const live = this.readLiveNativeDPR();
+    if (Math.abs(live - this.lastSeenNativeDPR) < 0.01) return live;
+
+    const previousNative = this.lastSeenNativeDPR;
+    this.lastSeenNativeDPR = live;
+
+    // Absolute-DPR calibrations from the old display are stale.
+    this.dprFloor = this.config.minDPR;
+    this.floorSetAt = 0;
+    this.pendingProbe = null;
+    this.highFPSStartTime = null;
+    this.frameTimestamps = [];
+    this.frameStartIndex = 0;
+
+    const wasTrackingNative = Math.abs(this.currentDPR - previousNative) < 0.01;
+    let applied = false;
+    if (wasTrackingNative) {
+      this.currentDPR = live;
+    } else if (this.currentDPR > live) {
+      this.currentDPR = live;
+      this.applyDPR();
+      applied = true;
+    }
+    const wasReduced = this.isReducedResolution;
+    this.isReducedResolution = this.currentDPR < live * 0.95;
+
+    log.info(
+      Modules.ADAPTIVE_DPR,
+      `Native DPR changed ${previousNative.toFixed(2)} → ${live.toFixed(2)}; ` +
+        `rebased (DPR ${this.currentDPR.toFixed(2)}, floor/probe/FPS state cleared)`
+    );
+
+    if (this.onDPRChange && (applied || wasReduced !== this.isReducedResolution)) {
+      this.onDPRChange(this.currentDPR, this.isReducedResolution);
+    }
+    return live;
   }
 
   /**
@@ -223,6 +298,11 @@ export class AdaptiveDPRManager {
    * Evaluate current performance and adjust DPR if needed
    */
   private evaluateAndAdjust(timestamp: number): void {
+    // Rebase first if the display changed: a native-DPR change clears
+    // the FPS window, so getCurrentFPS() below returns 0 and this tick
+    // naturally becomes a no-op while fresh samples accumulate.
+    this.syncNativeDPR();
+
     const fps = this.getCurrentFPS();
 
     // Need at least some frames to make a decision
@@ -309,7 +389,7 @@ export class AdaptiveDPRManager {
     );
 
     this.currentDPR = probe.previousDPR;
-    this.isReducedResolution = this.currentDPR < this.nativeDPR * 0.95;
+    this.isReducedResolution = this.currentDPR < this.lastSeenNativeDPR * 0.95;
     this.applyDPR();
     this.dprFloor = probe.probedDPR;
     this.floorSetAt = timestamp;
@@ -345,7 +425,7 @@ export class AdaptiveDPRManager {
     this.applyDPR();
 
     // Update reduced resolution mode status
-    this.isReducedResolution = newDPR < this.nativeDPR * 0.95;
+    this.isReducedResolution = newDPR < this.lastSeenNativeDPR * 0.95;
 
     log.custom(
       LogEmoji.PERFORMANCE,
@@ -374,17 +454,17 @@ export class AdaptiveDPRManager {
    */
   private scaleUp(fps: number): void {
     // Don't exceed native DPR
-    const newDPR = Math.min(this.nativeDPR, this.currentDPR * this.config.scaleUpFactor);
+    const newDPR = Math.min(this.lastSeenNativeDPR, this.currentDPR * this.config.scaleUpFactor);
 
     // Only apply if there's a meaningful change and we're not at max
     if (Math.abs(newDPR - this.currentDPR) < 0.01) return;
-    if (this.currentDPR >= this.nativeDPR - 0.01) return;
+    if (this.currentDPR >= this.lastSeenNativeDPR - 0.01) return;
 
     this.currentDPR = newDPR;
     this.applyDPR();
 
     // Update reduced resolution mode status
-    this.isReducedResolution = newDPR < this.nativeDPR * 0.95;
+    this.isReducedResolution = newDPR < this.lastSeenNativeDPR * 0.95;
 
     log.custom(
       LogEmoji.PERFORMANCE,
@@ -425,8 +505,10 @@ export class AdaptiveDPRManager {
     this.isEnabled = enabled;
 
     if (!enabled) {
-      // Reset to native DPR when disabled
-      this.currentDPR = this.nativeDPR;
+      // Reset to the LIVE native DPR when disabled — the display may
+      // have changed since construction (monitor drag, browser zoom).
+      const nativeDPR = this.syncNativeDPR();
+      this.currentDPR = nativeDPR;
       this.applyDPR();
       this.isReducedResolution = false;
       this.highFPSStartTime = null;
@@ -437,7 +519,7 @@ export class AdaptiveDPRManager {
       this.frameStartIndex = 0;
 
       if (this.onDPRChange) {
-        this.onDPRChange(this.nativeDPR, false);
+        this.onDPRChange(nativeDPR, false);
       }
     }
 
@@ -468,29 +550,37 @@ export class AdaptiveDPRManager {
    * Get current state for debugging and UI
    */
   getState(): AdaptiveDPRState {
+    const nativeDPR = this.syncNativeDPR();
     return {
       enabled: this.isEnabled,
       currentDPR: this.currentDPR,
       currentFPS: this.getCurrentFPS(),
       isReducedResolution: this.isReducedResolution,
-      nativeDPR: this.nativeDPR,
+      nativeDPR,
       dprFloor: this.dprFloor,
       probing: this.pendingProbe !== null,
     };
   }
 
   /**
-   * Get current DPR value
+   * Get current DPR value.
+   *
+   * Live-consistent: syncs against the current display first, so after
+   * a monitor/zoom change the returned value never reports a stale
+   * native snapshot (callers like the recording session persist this
+   * value and would otherwise install it as a supersampling override).
    */
   getCurrentDPR(): number {
+    this.syncNativeDPR();
     return this.currentDPR;
   }
 
   /**
-   * Get native DPR value
+   * Get the native DPR (live `window.devicePixelRatio`, rebasing
+   * internal state if the display changed since the last read).
    */
   getNativeDPR(): number {
-    return this.nativeDPR;
+    return this.syncNativeDPR();
   }
 
   /**
@@ -507,16 +597,17 @@ export class AdaptiveDPRManager {
       return;
     }
 
-    // Clamp DPR to reasonable range
+    // Clamp DPR to reasonable range against the LIVE native value.
+    const nativeDPR = this.syncNativeDPR();
     const minDPR = 0.25;
-    const clampedDPR = clamp(dpr, minDPR, this.nativeDPR);
+    const clampedDPR = clamp(dpr, minDPR, nativeDPR);
 
     // DPR changes force renderer/post-processing target reallocations, so
     // avoid repeating that expensive path for duplicate slider/input events.
     if (Math.abs(clampedDPR - this.currentDPR) < 0.01) return;
 
     this.currentDPR = clampedDPR;
-    this.isReducedResolution = clampedDPR < this.nativeDPR * 0.95;
+    this.isReducedResolution = clampedDPR < nativeDPR * 0.95;
     this.applyDPR();
 
     log.info(Modules.ADAPTIVE_DPR, `Manual DPR set to ${clampedDPR.toFixed(2)}`);
