@@ -34,17 +34,26 @@
  *   pre-change DPR and FPS.
  * - When the probe window expires, compare the post-change FPS to
  *   the baseline.
- * - If FPS did not improve by a meaningful margin (PROBE_IMPROVEMENT
- *   threshold), revert to the previous DPR and record it as a floor.
- *   Further scaleDown is blocked from crossing the floor.
- * - The floor decays after `floorTTL` so the manager re-probes when
- *   scene content changes.
+ * - If FPS did not improve by a meaningful margin (config
+ *   probeImprovement), revert to the previous DPR and record it as a
+ *   floor. Further scaleDown is blocked from crossing the floor.
+ * - The floor decays after config.floorTtlMs so the manager re-probes
+ *   when scene content changes.
+ *
+ * The control loop is decomposed into pure, timestamp-driven modules
+ * under ./adaptive-dpr/ (FPS tracker, probe controller, bounds ledger);
+ * this class is the orchestrating facade and owns everything
+ * environmental (live devicePixelRatio, renderer, config, callbacks).
  */
 
 import { config } from '../config';
 import type { AdaptiveDPRConfig } from '../config/types';
+import { adaptiveDPRConfig as adaptiveDPRDefaults } from '../config/sections/adaptive-dpr/data';
 import { log, Modules, LogEmoji } from '../utils/log';
 import { clamp } from '../utils/clamp';
+import { FPSTracker } from './adaptive-dpr/fps-tracker';
+import { ProbeController } from './adaptive-dpr/probe-controller';
+import { BoundsLedger } from './adaptive-dpr/bounds-ledger';
 
 /**
  * Interface for the renderer manager that can set pixel ratio
@@ -81,10 +90,9 @@ export class AdaptiveDPRManager {
   private config: AdaptiveDPRConfig;
   private renderer: DPRRenderer | null = null;
 
-  // FPS tracking using circular buffer for O(1) insertion and trimming
-  private frameTimestamps: number[] = [];
-  private frameStartIndex: number = 0;
+  // Sliding-window FPS estimation (see adaptive-dpr/fps-tracker.ts).
   private readonly FPS_SAMPLE_WINDOW_MS = 1000;
+  private fpsTracker = new FPSTracker(this.FPS_SAMPLE_WINDOW_MS);
 
   // State
   private currentDPR: number;
@@ -99,39 +107,11 @@ export class AdaptiveDPRManager {
   private highFPSStartTime: number | null = null;
   private isReducedResolution: boolean = false;
 
-  // U-shape probe state. Set whenever scaleDown moves to a smaller
-  // DPR; cleared once the probe verifies the move helped (or reverts
-  // it if not).
-  private pendingProbe: {
-    previousDPR: number;
-    previousFPS: number;
-    probedDPR: number;
-    startTime: number;
-  } | null = null;
-
-  // Lowest DPR known to actually improve FPS. scaleDown will not
-  // cross this floor. Initialised to config.minDPR and tightened when
-  // a probe reveals lower-DPR was unhelpful. `floorSetAt` lets us
-  // decay the floor so the manager re-probes after a while (scene
-  // content may have changed enough to move the U-shape minimum).
-  private dprFloor: number;
-  private floorSetAt: number = 0;
-
-  // How long to wait after a scaleDown before evaluating its effect.
-  // Needs to be long enough that the renderer/post-processing reallocation
-  // costs are out of the FPS window. The FPS window itself is 1000ms,
-  // so we wait somewhat longer for a representative sample.
-  private readonly PROBE_WINDOW_MS = 1500;
-
-  // Required relative FPS improvement to consider a scaleDown
-  // successful (5%). Anything less and we treat the move as
-  // ineffective: at best a wash, at worst a step backward.
-  private readonly PROBE_IMPROVEMENT = 1.05;
-
-  // How long the U-shape floor stays sticky before we allow another
-  // downward probe. Scene content changes (new layers, camera moves,
-  // dimension switches) can shift the U-shape minimum.
-  private readonly FLOOR_TTL_MS = 30_000;
+  // U-shape probe lifecycle (see adaptive-dpr/probe-controller.ts) and
+  // the learned floor it feeds (see adaptive-dpr/bounds-ledger.ts).
+  // Both constructed in the ctor once config is merged.
+  private probeController: ProbeController;
+  private boundsLedger: BoundsLedger;
 
   // Callback for UI updates
   private onDPRChange: DPRChangeCallback | null = null;
@@ -147,15 +127,27 @@ export class AdaptiveDPRManager {
    * @param customConfig - Optional partial config to override defaults
    */
   constructor(customConfig?: Partial<AdaptiveDPRConfig>) {
-    // Merge custom config with defaults
+    // Layered merge: the data.ts literal (imported directly, NOT via the
+    // config module) supplies structural per-key defaults, so a partial
+    // `config.adaptiveDPR` — e.g. the fixed-shape mock in unit tests —
+    // can never leave a knob `undefined` and silently invert a
+    // comparison against it.
     this.config = {
+      ...adaptiveDPRDefaults,
       ...config.adaptiveDPR,
       ...customConfig,
     };
 
     this.lastSeenNativeDPR = this.readLiveNativeDPR();
     this.currentDPR = this.lastSeenNativeDPR;
-    this.dprFloor = this.config.minDPR;
+    this.probeController = new ProbeController({
+      windowMs: this.config.probeWindowMs,
+      improvement: this.config.probeImprovement,
+    });
+    this.boundsLedger = new BoundsLedger({
+      minDPR: this.config.minDPR,
+      floorTtlMs: this.config.floorTtlMs,
+    });
     // Initial enabled state from config. At runtime, this is overridden by
     // renderingControls.defaults.adaptiveDPREnabled (persisted per-scene in localStorage).
     this.isEnabled = this.config.enabled;
@@ -202,12 +194,10 @@ export class AdaptiveDPRManager {
     this.lastSeenNativeDPR = live;
 
     // Absolute-DPR calibrations from the old display are stale.
-    this.dprFloor = this.config.minDPR;
-    this.floorSetAt = 0;
-    this.pendingProbe = null;
+    this.boundsLedger.reset();
+    this.probeController.void_();
     this.highFPSStartTime = null;
-    this.frameTimestamps = [];
-    this.frameStartIndex = 0;
+    this.fpsTracker.clear();
 
     const wasTrackingNative = Math.abs(this.currentDPR - previousNative) < 0.01;
     let applied = false;
@@ -250,22 +240,7 @@ export class AdaptiveDPRManager {
   recordFrame(timestamp: number): void {
     if (!this.isEnabled) return;
 
-    this.frameTimestamps.push(timestamp);
-
-    // Trim timestamps older than sample window using index advancement (O(1) amortized)
-    const cutoff = timestamp - this.FPS_SAMPLE_WINDOW_MS;
-    while (
-      this.frameStartIndex < this.frameTimestamps.length &&
-      this.frameTimestamps[this.frameStartIndex] < cutoff
-    ) {
-      this.frameStartIndex++;
-    }
-
-    // Compact array periodically to prevent unbounded growth
-    if (this.frameStartIndex > 120) {
-      this.frameTimestamps = this.frameTimestamps.slice(this.frameStartIndex);
-      this.frameStartIndex = 0;
-    }
+    this.fpsTracker.push(timestamp);
 
     // Evaluate DPR at configured interval
     if (timestamp - this.lastEvaluationTime >= this.config.evaluationIntervalMs) {
@@ -279,19 +254,7 @@ export class AdaptiveDPRManager {
    * Returns 0 if not enough data to calculate
    */
   getCurrentFPS(): number {
-    const frameCount = this.frameTimestamps.length - this.frameStartIndex;
-    if (frameCount < 2) return 0;
-
-    // FPS = frame count over the sample window
-    // We use frame count - 1 because we're measuring intervals between frames
-    const timeSpan =
-      this.frameTimestamps[this.frameTimestamps.length - 1] -
-      this.frameTimestamps[this.frameStartIndex];
-
-    if (timeSpan <= 0) return 0;
-
-    // Convert from frames per millisecond to frames per second
-    return ((frameCount - 1) * 1000) / timeSpan;
+    return this.fpsTracker.getFPS();
   }
 
   /**
@@ -311,22 +274,20 @@ export class AdaptiveDPRManager {
     // If a probe is in flight, settle it first. We don't trigger
     // another scaleDown while a probe is pending — we need a clean
     // FPS sample of the just-applied DPR before deciding anything else.
-    if (this.pendingProbe) {
-      if (timestamp - this.pendingProbe.startTime < this.PROBE_WINDOW_MS) {
-        return; // probe still gathering samples
-      }
-      this.settleProbe(timestamp, fps);
+    const verdict = this.probeController.evaluate(timestamp, fps);
+    if (verdict) {
+      this.applyProbeVerdict(verdict, timestamp, fps);
       return;
     }
 
     // Floor decays so we re-probe after the configured TTL. Scene
     // content can change enough to shift the U-shape minimum.
-    if (this.dprFloor > this.config.minDPR && timestamp - this.floorSetAt > this.FLOOR_TTL_MS) {
+    if (this.boundsLedger.decayIfExpired(timestamp)) {
       log.info(
         Modules.ADAPTIVE_DPR,
-        `DPR floor ${this.dprFloor.toFixed(2)} expired — re-enabling scale-down probes`
+        'DPR floor expired — re-enabling scale-down probes (floor back at ' +
+          `${this.boundsLedger.dprFloor.toFixed(2)})`
       );
-      this.dprFloor = this.config.minDPR;
     }
 
     if (fps < this.config.minFPS) {
@@ -350,23 +311,25 @@ export class AdaptiveDPRManager {
   }
 
   /**
-   * Look at the FPS measured after a scaleDown probe. If it improved
-   * by at least PROBE_IMPROVEMENT, the move was useful — keep it. If
-   * not, revert and record the probed DPR as a floor so we don't try
-   * to dip below it again until the TTL expires.
+   * Apply a settled probe verdict from the ProbeController.
    *
-   * `timestamp` is the frame timestamp that triggered the settle —
-   * we use it (not `performance.now()`) for floorSetAt so the TTL
-   * decay is consistent with the rest of the FPS-window timing.
+   * Accepted: the scale-down helped — keep it, normal decisions resume
+   * next tick. Rejected: revert to the pre-probe DPR and tighten the
+   * ledger floor to the probed value so scale-down skips it until the
+   * TTL expires. `timestamp` is the frame timestamp that triggered the
+   * settle — used (not `performance.now()`) for the floor clock so TTL
+   * decay stays consistent with FPS-window timing. A 'pending' verdict
+   * means the probe window is still open: decide nothing this tick.
    */
-  private settleProbe(timestamp: number, currentFPS: number): void {
-    if (!this.pendingProbe) return;
-    const probe = this.pendingProbe;
-    this.pendingProbe = null;
+  private applyProbeVerdict(
+    verdict: NonNullable<ReturnType<ProbeController['evaluate']>>,
+    timestamp: number,
+    currentFPS: number
+  ): void {
+    if (verdict.kind === 'pending') return;
 
-    const fpsRatio = probe.previousFPS > 0 ? currentFPS / probe.previousFPS : 0;
-    if (fpsRatio >= this.PROBE_IMPROVEMENT) {
-      // The move helped — keep it and let normal scaling decisions resume.
+    const { probe, fpsRatio } = verdict;
+    if (verdict.kind === 'accepted') {
       log.custom(
         LogEmoji.PERFORMANCE,
         Modules.ADAPTIVE_DPR,
@@ -377,22 +340,20 @@ export class AdaptiveDPRManager {
       return;
     }
 
-    // The move did not help. Revert to the previous DPR and set a
-    // floor at the probed level so future scaleDown calls skip it.
+    // Rejected: revert and floor.
     log.warning(
       Modules.ADAPTIVE_DPR,
       `Probe rejected at DPR ${probe.probedDPR.toFixed(2)}: ` +
         `FPS ${probe.previousFPS.toFixed(1)} → ${currentFPS.toFixed(1)} ` +
-        `(×${fpsRatio.toFixed(2)}, want ≥${this.PROBE_IMPROVEMENT.toFixed(2)}). ` +
+        `(×${fpsRatio.toFixed(2)}, want ≥${this.config.probeImprovement.toFixed(2)}). ` +
         `Reverting to DPR ${probe.previousDPR.toFixed(2)}; ` +
-        `floor set, will retry in ${(this.FLOOR_TTL_MS / 1000).toFixed(0)}s.`
+        `floor set, will retry in ${(this.config.floorTtlMs / 1000).toFixed(0)}s.`
     );
 
     this.currentDPR = probe.previousDPR;
     this.isReducedResolution = this.currentDPR < this.lastSeenNativeDPR * 0.95;
     this.applyDPR();
-    this.dprFloor = probe.probedDPR;
-    this.floorSetAt = timestamp;
+    this.boundsLedger.recordRejection(probe.probedDPR, timestamp);
 
     if (this.onDPRChange) {
       this.onDPRChange(this.currentDPR, this.isReducedResolution);
@@ -406,15 +367,10 @@ export class AdaptiveDPRManager {
    */
   private scaleDown(timestamp: number, fps: number): void {
     const proposed = this.currentDPR * this.config.scaleDownFactor;
-    // Block scaleDown from moving TO OR BELOW the U-shape floor. Using
-    // an early-return (rather than `Math.max(dprFloor, proposed)`) is
-    // load-bearing: when a probe is rejected, `dprFloor` is tightened
-    // to the probed value, and the next tick's `proposed` lands at
-    // that exact value. `Math.max` would clamp to the floor and re-fire
-    // the same failing probe every ~2s tick — the 30s TTL never gets a
-    // chance to expire. Returning early here keeps us at the current
-    // DPR until the TTL lifts the floor.
-    if (proposed <= this.dprFloor + 0.001) return;
+    // Block scaleDown from moving TO OR BELOW the U-shape floor. The
+    // ledger's to-or-below early-return (rather than clamping to the
+    // floor) is load-bearing — see BoundsLedger.blocksScaleDownTo.
+    if (this.boundsLedger.blocksScaleDownTo(proposed)) return;
     const newDPR = proposed;
 
     // Only apply if there's a meaningful change
@@ -435,13 +391,13 @@ export class AdaptiveDPRManager {
     );
 
     // Arm the probe so the next evaluateAndAdjust pass after
-    // PROBE_WINDOW_MS judges whether this move helped.
-    this.pendingProbe = {
+    // config.probeWindowMs judges whether this move helped.
+    this.probeController.arm({
       previousDPR,
       previousFPS: fps,
       probedDPR: newDPR,
       startTime: timestamp,
-    };
+    });
 
     // Notify callback
     if (this.onDPRChange) {
@@ -512,11 +468,9 @@ export class AdaptiveDPRManager {
       this.applyDPR();
       this.isReducedResolution = false;
       this.highFPSStartTime = null;
-      this.pendingProbe = null;
-      this.dprFloor = this.config.minDPR;
-      this.floorSetAt = 0;
-      this.frameTimestamps = [];
-      this.frameStartIndex = 0;
+      this.probeController.void_();
+      this.boundsLedger.reset();
+      this.fpsTracker.clear();
 
       if (this.onDPRChange) {
         this.onDPRChange(nativeDPR, false);
@@ -557,8 +511,8 @@ export class AdaptiveDPRManager {
       currentFPS: this.getCurrentFPS(),
       isReducedResolution: this.isReducedResolution,
       nativeDPR,
-      dprFloor: this.dprFloor,
-      probing: this.pendingProbe !== null,
+      dprFloor: this.boundsLedger.dprFloor,
+      probing: this.probeController.isPending,
     };
   }
 
@@ -649,8 +603,7 @@ export class AdaptiveDPRManager {
    * Dispose resources
    */
   dispose(): void {
-    this.frameTimestamps = [];
-    this.frameStartIndex = 0;
+    this.fpsTracker.clear();
     this.onDPRChange = null;
     this.renderer = null;
     log.info(Modules.ADAPTIVE_DPR, 'Disposed');
