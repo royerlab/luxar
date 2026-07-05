@@ -1663,6 +1663,60 @@ def generate_lod_group_test() -> None:
         aprint("  3 levels: 8 / 32 / 128 splats, coverage_fraction 0.0 / 0.5 / 1.0")
 
 
+def generate_overview_test() -> None:
+    """Standalone ``overview``-recipe fixture — a lod_group with a GROUP child.
+
+    Built through the REAL recipe pipeline (``build_recipe(data, "overview")``)
+    so the on-disk shape is authoritative: a ``kind=lod`` group whose children
+    are ``[coarse merged leaf, kind=partition of additive-ladder part leaves]``
+    (coarsest→finest, ``default_level=0``). This is the one recipe whose fine
+    child loads through the viewer's deferred-GROUP path
+    (``load-lod-group-node.ts::canDeferGroup``), exercising:
+
+    - the never-downgrade display gate's SUBTREE aggregation
+      (``scene/lod-display-gate.ts::subtreeDisplayProgress``), and
+    - the post-activation refinement kick
+      (``SceneLoader.kickRefinementIfIdle``) — without it the partition's
+      part ladders stall at chunk-1 until the next slice change.
+
+    600 splats, ``max_elements=200`` → 4 spatial parts, 3 additive LODs per
+    part; node-safe encoding (PRECISION float32, no blosc) like every fixture.
+    """
+    with asection("Generating Overview Recipe Test"):
+        from luxar.gsplats import GSplatData
+        from luxar.gsplats.io.save_gsplats import write_gsplats_tree
+        from luxar.gsplats.lod.recipes import RecipeParams, build_recipe
+
+        output = FIXTURES_DIR / "test_overview.gsplats.zarr"
+        rng = np.random.default_rng(7)
+        n = 600
+        centers = rng.uniform(0.0, 10.0, size=(n, 3)).astype(np.float32)
+        amplitudes = np.linspace(0.5, 1.5, n).astype(np.float32)
+        cholesky = np.zeros((n, 6), dtype=np.float32)
+        sigma = 0.25
+        cholesky[:, 0] = sigma  # L11
+        cholesky[:, 2] = sigma  # L22
+        cholesky[:, 5] = sigma  # L33
+
+        data = GSplatData(
+            centers=centers, amplitudes=amplitudes, cholesky_factors=cholesky
+        )
+        tree = build_recipe(
+            data,
+            "overview",
+            RecipeParams(max_elements=200, n_lods=3),
+        )
+        write_gsplats_tree(
+            output,
+            tree,
+            ordering="morton",
+            encoding_mode=EncodingMode.PRECISION,
+            compressor=COMPRESSOR_DISABLED,
+        )
+        aprint(f"  Created {output}")
+        aprint("  overview: coarse cap + kind=partition of 4 laddered parts")
+
+
 def generate_labelled_points_test() -> None:
     """Small labelled-points dataset for the hover-tooltip E2E spec.
 
@@ -1796,6 +1850,9 @@ def main() -> None:
         aprint("")
 
         generate_lod_group_test()
+        aprint("")
+
+        generate_overview_test()
         aprint("")
 
         generate_labelled_points_test()
