@@ -1,7 +1,7 @@
 /**
  * Line-icons for the Rendering Controls top-level folders.
  *
- * Same convention as the control rail's `RAIL_ICONS` (see ui/control-rail.ts):
+ * Same convention as the control rail's `RAIL_ICONS` (see ui/control-rail/):
  * inline SVG strings, `viewBox="0 0 24 24"`, `aria-hidden="true"`, NO inline
  * width/height/stroke/fill — all appearance comes from CSS
  * (`.luxar-gui__folder-icon svg` / `.luxar-gui__controller-icon svg`), which
@@ -13,9 +13,6 @@
 import { RAIL_ICONS } from '../control-rail';
 
 export const FOLDER_ICONS = {
-  // Compass — Navigation.
-  navigation:
-    '<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M15.6 8.4l-2.2 5-5 2.2 2.2-5z"/></svg>',
   // Still camera (reused from the rail's Screenshot glyph) — Camera.
   camera: RAIL_ICONS.screenshot,
   // Sun with rays — HDR / exposure.
@@ -31,6 +28,4 @@ export const FOLDER_ICONS = {
   // Paint palette — Theme.
   theme:
     '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3a9 9 0 0 0 0 18c1.6 0 2-1.2 1.2-2.1-.8-1 .1-2.4 1.3-2.4H17a4 4 0 0 0 4-4C21 6 17 3 12 3z"/><circle cx="7.5" cy="12" r="1.1"/><circle cx="9.5" cy="8" r="1.1"/><circle cx="14.5" cy="8" r="1.1"/></svg>',
-  // Sparkle-trail (reused from the rail's Cinematic glyph) — Cinematic Mode.
-  cinematic: RAIL_ICONS.cinematic,
 } as const;

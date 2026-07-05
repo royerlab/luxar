@@ -13,8 +13,10 @@ import { InputContext, type InputContextManager } from '../context-manager';
 import type { SceneManager } from '../../../scene/scene-manager';
 import type { RenderingControls } from '../../../ui/rendering-controls';
 
-/** Camera control modes the V key cycles through. */
-export type ControlType = 'orbit' | 'fly' | 'ortho';
+// Camera control modes the V key cycles through. Re-exported from the canonical
+// domain definition (controls/types.ts) so there is a single source of truth.
+export type { ControlType } from '../../../controls/types';
+import type { ControlType } from '../../../controls/types';
 
 /**
  * Return the next control type in the cycle: orbit → fly → ortho → orbit.
@@ -41,17 +43,12 @@ export interface ControlModeCtx {
 }
 
 /**
- * Cycle camera control modes: Orbit → Fly → Ortho → Orbit. Updates the
- * input context to FLY_CONTROLS when switching to fly mode (so WASD
- * keys are enabled); back to NAVIGATION otherwise. Syncs rendering
- * controls display if active.
+ * Apply a specific control type: swap the camera/controls, update the input
+ * context (FLY_CONTROLS enables WASD; otherwise NAVIGATION), and sync the
+ * rendering-controls display. Shared by {@link toggleControlMode} (cycle) and
+ * {@link setControlMode} (explicit target).
  */
-export function toggleControlMode(ctx: ControlModeCtx): void {
-  const currentType = ctx.sceneManager.controls.getControlType();
-  log.custom(LogEmoji.CONTROLS, Modules.INPUT, `toggleControlMode called: ${currentType} → ?`);
-
-  const newType = nextControlType(currentType);
-
+function applyControlType(ctx: ControlModeCtx, newType: ControlType): void {
   // Use sceneManager.setControlType for ortho (handles camera swap)
   ctx.sceneManager.setControlType(newType);
 
@@ -62,16 +59,52 @@ export function toggleControlMode(ctx: ControlModeCtx): void {
     ctx.contextManager.setContext(InputContext.NAVIGATION);
   }
 
-  // Sync rendering controls if they exist
+  // Sync rendering controls if they exist, then PERSIST the new mode.
+  // syncCurrentState pulls the live control type into settings.controlType but
+  // only in memory; without the save, a mode switch (Navigation popover / rail
+  // cycle / V key) is silently lost on reload — a regression from the removed
+  // "Control Type" dropdown, whose onChange used to call saveSettings(). Saving
+  // here restores persistence for every mode-change entry point.
   if (ctx.renderingControls) {
     ctx.renderingControls.syncCurrentState();
+    ctx.renderingControls.saveSettings();
+  }
+
+  // Notify on-screen affordances that the control mode changed, so they stay in
+  // sync no matter which path triggered the switch (V key, rail cycle button,
+  // or the Navigation popover's mode selector). The rail refreshes its button
+  // icon/tooltip; an open Navigation popover rebuilds its mode selector.
+  if (typeof window !== 'undefined' && typeof window.dispatchEvent === 'function') {
+    window.dispatchEvent(new CustomEvent('luxar-control-mode-changed', { detail: newType }));
   }
 
   log.custom(
     LogEmoji.CONTROLS,
     Modules.CONTROLS,
-    `Switched to ${newType} controls (press V to toggle)`
+    `Switched to ${newType} controls (press V to cycle)`
   );
+}
+
+/**
+ * Cycle camera control modes: Orbit → Fly → Ortho → Orbit. Updates the
+ * input context to FLY_CONTROLS when switching to fly mode (so WASD
+ * keys are enabled); back to NAVIGATION otherwise. Syncs rendering
+ * controls display if active.
+ */
+export function toggleControlMode(ctx: ControlModeCtx): void {
+  const currentType = ctx.sceneManager.controls.getControlType();
+  log.custom(LogEmoji.CONTROLS, Modules.INPUT, `toggleControlMode called: ${currentType} → ?`);
+  applyControlType(ctx, nextControlType(currentType));
+}
+
+/**
+ * Switch directly to a specific control mode (no-op if already active). Used by
+ * the Navigation rail popover's mode selector, which reuses the exact same
+ * context/sync wiring as the V-key cycle so behaviour never drifts.
+ */
+export function setControlMode(ctx: ControlModeCtx, newType: ControlType): void {
+  if (ctx.sceneManager.controls.getControlType() === newType) return;
+  applyControlType(ctx, newType);
 }
 
 /**

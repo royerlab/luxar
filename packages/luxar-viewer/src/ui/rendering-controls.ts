@@ -1,7 +1,7 @@
 // Advanced rendering controls UI for the Luxar scene player
 // Provides real-time control over post-processing and rendering parameters
 
-import GUI, { Folder } from './gui';
+import GUI from './gui';
 import { PostProcessingManager } from '../rendering';
 import { SceneManager } from '../scene/scene-manager';
 import { AnimationController } from '../scene/animation/animation-controller';
@@ -9,7 +9,6 @@ import { config, type RenderingSettings } from '../config';
 
 import type { RenderingControllers } from './rendering-controls/types';
 import { log, Modules } from '../utils/log';
-import { setupNavigationControls } from './rendering-controls/setup/navigation-setup';
 import { setupCameraControls } from './rendering-controls/setup/camera-setup';
 import { setupHDRControls } from './rendering-controls/setup/hdr-setup';
 import { setupAntiAliasingControls } from './rendering-controls/setup/anti-aliasing-setup';
@@ -25,9 +24,6 @@ import {
   saveSettingsToStorage,
   loadSettingsFromStorage,
 } from './rendering-controls/settings-persistence';
-import { setupPerformanceControls } from './rendering-controls/setup/performance-setup';
-import { setupThemeControls } from './rendering-controls/setup/theme-setup';
-import { FOLDER_ICONS } from './rendering-controls/folder-icons';
 import { ClippingDisplay } from './rendering-controls/clipping-display';
 import { validateRenderingSettings } from './rendering-controls/controls-utils';
 import type { AdaptiveDPRManager } from '../rendering/adaptive-dpr-manager';
@@ -100,15 +96,8 @@ export class RenderingControls {
   /** References to GUI controllers for updates */
   private controllers: RenderingControllers = {};
 
-  /** Folder references for visibility control */
-  private orbitFolder?: Folder;
-  private flyFolder?: Folder;
-
-  /** Reference to adaptive DPR manager for performance controls */
+  /** Reference to adaptive DPR manager (persisted enabled state applied on load). */
   private adaptiveDPRManager?: AdaptiveDPRManager;
-
-  /** Callback to update adaptive DPR control visibility (set by setAdaptiveDPRManager) */
-  private updateAdaptiveDPRVisibility?: (enabled: boolean) => void;
 
   /** RAF-driven mirror of the camera near/far values into the slider displays. */
   private readonly clippingDisplay: ClippingDisplay;
@@ -185,27 +174,9 @@ export class RenderingControls {
     // Setup auto-blur for all controls
     this.setupAutoBlur();
 
-    // Navigation controls
-    const navigationResult = setupNavigationControls({
-      gui: this.gui,
-      settings: this.settings,
-      postProcessing: this.postProcessing,
-      sceneManager: this.sceneManager,
-      animationController: this.animationController,
-      saveSettings: () => this.saveSettings(),
-      triggerAnimation: () => this.triggerAnimation(),
-      updateClippingControlsState: (enabled) => this.updateClippingControlsState(enabled),
-      updateNavigationControls: (controlType) => this.updateNavigationControls(controlType),
-    });
-
-    // Store controller references
-    Object.assign(this.controllers, navigationResult.controllers);
-
-    // Store folder references
-    if (navigationResult.folders) {
-      this.orbitFolder = navigationResult.folders.orbitFolder;
-      this.flyFolder = navigationResult.folders.flyFolder;
-    }
+    // Navigation controls live in the Navigation rail popover (right-click the
+    // Navigation gauge; left-click cycles orbit/fly/ortho) — see
+    // ui/rail-panels/navigation-popover. Navigation is not a rendering concern.
 
     // Camera controls (pass controllers reference for FOV preset lens distortion updates)
     const cameraResult = setupCameraControls(
@@ -277,13 +248,33 @@ export class RenderingControls {
     // Store controller references
     Object.assign(this.controllers, ppResult.controllers);
 
-    // Theme selector
-    setupThemeControls({ gui: this.gui, triggerAnimation: () => this.triggerAnimation() });
-
-    // Note: Reset to Defaults button is added at the end of setAdaptiveDPRManager
-    // to ensure it appears after the Performance folder
+    // Theme lives in the Settings rail popover (see ui/rail-panels/settings-popover)
+    // and the Performance folder in the Performance rail popover — neither is a
+    // rendering concern, so both were moved out of this panel.
 
     this.cinematic = this.createCinematicController();
+
+    // Reset to Defaults button — added last so it sits at the panel bottom.
+    this.addResetButton();
+  }
+
+  /** Add the root-level "Reset to Defaults" button at the bottom of the panel. */
+  private addResetButton(): void {
+    const resetButton = {
+      'Reset to Defaults': () => {
+        this.resetToDefaults();
+      },
+    };
+
+    const resetControl = this.gui.add(resetButton, 'Reset to Defaults');
+    resetControl.domElement.setAttribute(
+      'title',
+      'Reset to Defaults: Restore all rendering settings\n' +
+        '• Resets camera, HDR, bloom, anti-aliasing\n' +
+        '• Resets all post-processing effects\n' +
+        '• Resets navigation controls\n' +
+        '• Clears saved settings for this scene'
+    );
   }
 
   /** Build the cinematic-mode controller. `animationController` is read lazily so
@@ -399,82 +390,17 @@ export class RenderingControls {
   }
 
   /**
-   * Set the adaptive DPR manager reference and create performance controls.
+   * Store the adaptive DPR manager reference.
    *
-   * Creates a "Performance" folder with:
-   * - Adaptive Resolution toggle (enables/disables dynamic DPR scaling)
-   * - Current DPR display (read-only, shows current pixel ratio)
+   * The Performance controls (Adaptive Resolution toggle, Manual DPR slider,
+   * live DPR/FPS readout) live in the Performance rail popover (right-click the
+   * gauge) — see `ui/rail-panels/performance-popover`. The panel only needs the
+   * manager so {@link loadSettings} can apply the persisted enabled state.
    *
    * @param manager - The AdaptiveDPRManager instance
    */
   setAdaptiveDPRManager(manager: AdaptiveDPRManager): void {
     this.adaptiveDPRManager = manager;
-
-    const result = setupPerformanceControls({
-      gui: this.gui,
-      settings: this.settings,
-      manager,
-      saveSettings: () => this.saveSettings(),
-      triggerAnimation: () => this.triggerAnimation(),
-    });
-
-    this.controllers.adaptiveDPREnabled = result.adaptiveDPREnabled;
-    this.updateAdaptiveDPRVisibility = result.updateVisibility;
-    this.cleanupCallbacks.push(result.cleanup);
-
-    // Cinematic Mode checkbox (added before reset button)
-    const cinematicModeControl = this.gui
-      .add(this.settings, 'cinematicMode')
-      .name('Cinematic Mode')
-      .onChange(() => {
-        this.toggleCinematicMode();
-        // Update the checkbox to reflect the actual state after toggle
-        this.updateCinematicModeCheckbox();
-      });
-
-    // Prepend a rail-style line-icon to the label (controllers have no icon
-    // API; the boolean label is already display:flex, so the icon sits inline).
-    const cinematicLabel = cinematicModeControl.domElement.querySelector(
-      '.luxar-gui__controller-name'
-    );
-    if (cinematicLabel) {
-      const cinematicIcon = document.createElement('span');
-      cinematicIcon.className = 'luxar-gui__controller-icon';
-      cinematicIcon.setAttribute('aria-hidden', 'true');
-      cinematicIcon.innerHTML = FOLDER_ICONS.cinematic;
-      cinematicLabel.prepend(cinematicIcon);
-    }
-
-    cinematicModeControl.domElement.setAttribute(
-      'title',
-      'Cinematic Mode: Film-like visual preset (C key)\n' +
-        '• Switches to ACES Filmic tone mapping\n' +
-        '• Enables detector noise (film grain)\n' +
-        '• Enables vignette (darkened corners)\n' +
-        '• Enables chromatic lens distortion\n' +
-        '• Switches to 35mm wide-angle FOV\n' +
-        '• Press C to toggle quickly'
-    );
-
-    // Store controller reference for programmatic updates
-    this.controllers.cinematicMode = cinematicModeControl;
-
-    // Reset to Defaults button at root level (added last to appear at bottom)
-    const resetButton = {
-      'Reset to Defaults': () => {
-        this.resetToDefaults();
-      },
-    };
-
-    const resetControl = this.gui.add(resetButton, 'Reset to Defaults');
-    resetControl.domElement.setAttribute(
-      'title',
-      'Reset to Defaults: Restore all rendering settings\n' +
-        '• Resets camera, HDR, bloom, anti-aliasing\n' +
-        '• Resets all post-processing effects\n' +
-        '• Resets navigation controls\n' +
-        '• Clears saved settings for this scene'
-    );
   }
 
   /**
@@ -672,45 +598,14 @@ export class RenderingControls {
   }
 
   /**
-   * Update navigation controls visibility based on control type
+   * Apply control-type-driven visibility to the panel's camera controls.
+   *
+   * The navigation parameter controls themselves now live in the Navigation
+   * rail popover; the only control-type-dependent UI left in this panel is the
+   * FOV row, which is irrelevant under the ortho (orthographic) projection.
+   * Called on show/sync and after a control-mode switch (`syncCurrentState`).
    */
   private updateNavigationControls(controlType: 'orbit' | 'fly' | 'ortho'): void {
-    const orbitFolder = this.orbitFolder;
-    const flyFolder = this.flyFolder;
-
-    if (controlType === 'orbit') {
-      // Show orbit folder with auto-rotate controls
-      if (orbitFolder) {
-        orbitFolder.show();
-        orbitFolder.open();
-      }
-      if (flyFolder) {
-        flyFolder.close();
-        flyFolder.hide();
-      }
-    } else if (controlType === 'fly') {
-      // Show fly folder for fly controls
-      if (orbitFolder) {
-        orbitFolder.close();
-        orbitFolder.hide();
-      }
-      if (flyFolder) {
-        flyFolder.show();
-        flyFolder.open();
-      }
-    } else if (controlType === 'ortho') {
-      // Ortho: hide all control-specific folders (pan + zoom only, no settings)
-      if (orbitFolder) {
-        orbitFolder.close();
-        orbitFolder.hide();
-      }
-      if (flyFolder) {
-        flyFolder.close();
-        flyFolder.hide();
-      }
-    }
-
-    // FOV controls are irrelevant in ortho mode (no perspective projection)
     const isOrtho = controlType === 'ortho';
     if (this.controllers.fov) {
       isOrtho ? this.controllers.fov.hide() : this.controllers.fov.show();
@@ -720,8 +615,12 @@ export class RenderingControls {
     }
   }
 
-  /** Save current settings to localStorage. */
-  private saveSettings(): void {
+  /**
+   * Save current settings to localStorage. Public so the rail popovers
+   * (navigation / performance) persist through this panel's per-scene key —
+   * the shared `settings` object stays the single source of truth.
+   */
+  public saveSettings(): void {
     saveSettingsToStorage(this.sceneId, this.settings);
   }
 
@@ -756,11 +655,9 @@ export class RenderingControls {
       controller.updateDisplay();
     });
 
-    // Sync adaptive DPR manager state and update visibility
-    if (this.adaptiveDPRManager && this.updateAdaptiveDPRVisibility) {
-      this.adaptiveDPRManager.setEnabled(this.settings.adaptiveDPREnabled);
-      this.updateAdaptiveDPRVisibility(this.settings.adaptiveDPREnabled);
-    }
+    // Apply the persisted adaptive-DPR enabled state to the manager. The
+    // Performance rail popover self-syncs from the manager when opened.
+    this.adaptiveDPRManager?.setEnabled(this.settings.adaptiveDPREnabled);
 
     // Update cinematic mode checkbox based on loaded effects state
     this.updateCinematicModeCheckbox();

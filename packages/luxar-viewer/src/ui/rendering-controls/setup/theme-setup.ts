@@ -1,5 +1,5 @@
 /**
- * Theme picker setup for the rendering-controls panel.
+ * Theme picker setup, hosted in the Settings rail popover.
  *
  * Creates the "Theme" folder with a single dropdown bound to
  * `ThemeManager`. The theme manager itself handles persistence;
@@ -61,5 +61,7 @@ export function setupThemeControls(context: ThemeSetupContext): void {
       '• Liquid Glass: True glass effect with inner glow and tint'
   );
 
-  themeFolder.close();
+  // Open by default: the Settings popover shows this single control directly,
+  // so there's no reason to make the user expand a collapsed folder first.
+  themeFolder.open();
 }
