@@ -880,6 +880,20 @@ export class AdaptiveDPRManager {
     }
     this.lastContentChangeAt = timestamp;
     this.boundsLedger.softenForContentChange(timestamp, this.config.contentChangeRecheckMs);
+    // The estimator's throttle-downshift permission is likewise scoped
+    // to the current content: proof of a high rate earned on the OLD
+    // content must not license mis-capping the NEW one as "throttled".
+    this.refreshRateEstimator.noteContentChanged();
+    // A content change is a regime change for the FPS sample stream:
+    // the window still holds old-content frames (a mixed window would
+    // instantly re-prove the rate and defeat the scoping above), an
+    // in-flight probe's baseline now describes different content (the
+    // classic confounded before/after), and the scale-up streak was
+    // earned on the old workload. Clear SESSION state, exactly like
+    // notifyPaused — learned bounds were already softened above.
+    this.fpsTracker.clear();
+    this.probeController.void_();
+    this.hysteresis.clear();
     log.info(
       Modules.ADAPTIVE_DPR,
       'Content changed — floor re-probe allowed within ' +

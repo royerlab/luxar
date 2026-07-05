@@ -52,6 +52,14 @@ export class RefreshRateEstimator {
   private recent: number[] = [];
   private lowUniformSince: number | null = null;
   private throttled = false;
+  // True once a sample has proven the display can beat 80% of the
+  // fallback SINCE THE LAST CONTENT CHANGE. The throttle downshift is
+  // gated on this rather than the lifetime `mark`: proof earned while
+  // rendering LIGHT content says nothing about whether today's uniform
+  // low FPS is a throttled display or the HEAVY content the user just
+  // navigated into — after a content change the display must re-prove
+  // itself before a downshift is allowed.
+  private provenSinceContentChange = false;
 
   constructor(private readonly fallback: number) {}
 
@@ -60,8 +68,20 @@ export class RefreshRateEstimator {
    * unsuppressed windows so partial data doesn't pollute the mark).
    */
   addSample(fps: number, timestamp: number): void {
+    // Un-throttle when a sample clearly exceeds the throttle plateau:
+    // either it approaches the fallback bound, or it rises well above
+    // the reseeded mark (mark/THROTTLE_FRACTION) — a genuinely
+    // throttled display can produce neither, while a misclassified
+    // heavy scene that lightens even a little recovers immediately
+    // instead of staying mis-capped until it somehow hits 80% of
+    // fallback.
+    const unthrottleAt = Math.min(
+      this.fallback * UNTHROTTLE_FRACTION,
+      this.throttled ? this.mark / THROTTLE_FRACTION : Number.POSITIVE_INFINITY
+    );
+    if (fps >= unthrottleAt) this.throttled = false;
+    if (fps >= this.fallback * UNTHROTTLE_FRACTION) this.provenSinceContentChange = true;
     if (fps > this.mark) this.mark = fps;
-    if (fps >= this.fallback * UNTHROTTLE_FRACTION) this.throttled = false;
 
     this.recent.push(fps);
     if (this.recent.length > RECENT_SAMPLES) this.recent.shift();
@@ -74,12 +94,26 @@ export class RefreshRateEstimator {
     return this.throttled ? this.mark : Math.max(this.mark, this.fallback);
   }
 
+  /**
+   * Scene content genuinely changed (dataset load, layer change, LOD
+   * swap): the proven-rate evidence now describes the OLD content, so
+   * the throttle downshift is disarmed until the display re-proves its
+   * rate against the new content. The monotonic `mark` itself is kept —
+   * it still upper-bounds the cap correctly and keeping it avoids
+   * threshold flapping on every LOD swap.
+   */
+  noteContentChanged(): void {
+    this.provenSinceContentChange = false;
+    this.lowUniformSince = null;
+  }
+
   /** Forget everything (native-DPR / display change). */
   clear(): void {
     this.mark = 0;
     this.recent = [];
     this.lowUniformSince = null;
     this.throttled = false;
+    this.provenSinceContentChange = false;
   }
 
   private detectThrottle(timestamp: number): void {
@@ -88,13 +122,20 @@ export class RefreshRateEstimator {
       return;
     }
     // A downshift below the fallback floor is only justified when the
-    // display has PROVEN a higher achievable rate. Without this guard a
-    // steady heavy scene (uniformly low FPS, low variance — exactly the
-    // signature of a GPU-bound render parked at the DPR floor) would be
+    // display has PROVEN a higher achievable rate — and proven it
+    // AGAINST THE CURRENT CONTENT. Without this guard a steady heavy
+    // scene (uniformly low FPS, low variance — exactly the signature of
+    // a GPU-bound render parked at the DPR floor) would be
     // misclassified as a throttled display, collapsing the cap onto the
     // loaded FPS and inverting the thresholds: scale-down disarmed and
-    // scale-up armed on the scene that most needs fewer pixels.
-    if (this.mark < this.fallback * UNTHROTTLE_FRACTION) {
+    // scale-up armed on the scene that most needs fewer pixels. The
+    // since-content-change scoping closes the light-then-heavy variant
+    // (mark pinned at 60 by a light loading screen, then dense data).
+    // Residual ambiguity: heaviness arriving with NO content signal at
+    // all (e.g. rotating an unchanged scene edge-on) is fundamentally
+    // indistinguishable from a throttle by FPS alone; the widened
+    // un-throttle line in addSample bounds that mistake's lifetime.
+    if (!this.provenSinceContentChange) {
       this.lowUniformSince = null;
       return;
     }

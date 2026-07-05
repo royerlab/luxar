@@ -825,6 +825,34 @@ describe('AdaptiveDPRManager — refresh-rate-relative thresholds', () => {
     }
   });
 
+  it('notifyContentChanged disarms the throttle downshift for the new content', () => {
+    const m = new AdaptiveDPRManager();
+    try {
+      m.setRenderer(makeRenderer());
+      // Light loading phase proves a 120Hz cap...
+      let t = 0;
+      for (let i = 0; i < 180; i++) {
+        m.recordFrame(t);
+        t += 1000 / 120;
+      }
+      expect(m.getState().refreshRateCap).toBeGreaterThan(115);
+
+      // ...then the content changes and the new scene parks at a steady
+      // uniform 20fps. The old proof must not license a throttle
+      // downshift: the cap must NOT collapse onto the loaded FPS (which
+      // would invert the thresholds and arm scale-up on a GPU-bound
+      // scene).
+      m.notifyContentChanged(t);
+      for (let i = 0; i < 300; i++) {
+        m.recordFrame(t);
+        t += 50; // 20fps for 15s
+      }
+      expect(m.getState().refreshRateCap).toBeGreaterThan(115);
+    } finally {
+      restore();
+    }
+  });
+
   it('setEnabled(false) wipes the learned refresh-cap estimate along with the other learned state', () => {
     const m = new AdaptiveDPRManager();
     try {

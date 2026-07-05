@@ -144,6 +144,17 @@ export class ProbeController {
 
     const fpsRatio = probe.previousFPS > 0 ? currentFPS / probe.previousFPS : 0;
     if (fpsRatio >= this.config.improvement) {
+      // Low-sample settles carry asymmetric risk: a wrong REJECT merely
+      // reverts and floors for a TTL (self-correcting), but a wrong
+      // ACCEPT resets the rejection-backoff streak — the very
+      // protection that quiets hopeless scenes. Gap detection bounds
+      // inter-frame gaps, not intra-window rate variance, so a
+      // few-frame window can read a burst-inflated FPS. A noisy
+      // positive therefore settles as inconclusive: the DPR is kept
+      // (operationally identical to accept) but nothing is learned.
+      if (quality.sampleCount < this.config.minSamples) {
+        return { kind: 'inconclusive', probe };
+      }
       return { kind: 'accepted', probe, fpsRatio };
     }
     return { kind: 'rejected', probe, fpsRatio };

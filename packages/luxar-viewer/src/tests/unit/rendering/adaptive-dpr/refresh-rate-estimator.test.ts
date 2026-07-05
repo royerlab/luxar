@@ -106,4 +106,45 @@ describe('RefreshRateEstimator', () => {
     est.clear();
     expect(est.getCap()).toBe(60);
   });
+
+  it('light-then-heavy across a content change is NOT misclassified as a throttle', () => {
+    const est = new RefreshRateEstimator(60);
+    // Scene loads light: the display proves ~60 (mark pinned >= 48)...
+    feed(est, 61, 4, 0);
+    expect(est.getCap()).toBeCloseTo(61, 5);
+
+    // ...then the user navigates into dense data (content change) and
+    // the render parks at a steady uniform 20fps. The proof was earned
+    // on the OLD content — it must not license a throttle downshift on
+    // the new one, or the cap collapses to 20 and the thresholds invert
+    // (scale-up armed on a GPU-bound scene).
+    est.noteContentChanged();
+    feed(est, 20, 60, 10_000); // 30s of uniform 20fps
+    expect(est.getCap()).toBeCloseTo(61, 5); // mark kept; NO downshift
+  });
+
+  it('re-proving the rate after a content change re-arms the throttle downshift', () => {
+    const est = new RefreshRateEstimator(60);
+    feed(est, 120, 4, 0);
+    est.noteContentChanged();
+    feed(est, 120, 4, 5000); // new content also renders light — re-proven
+    feed(est, 30, 25, 10_000); // genuine throttle signature
+    expect(est.getCap()).toBe(30); // downshift correctly allowed again
+  });
+
+  it('a mis-capped scene recovers as soon as FPS clearly exceeds the throttle plateau', () => {
+    const est = new RefreshRateEstimator(60);
+    // Proven at 60, then (no content signal) a uniform-20 regime earns a
+    // downshift — the residual rotation-into-heavy ambiguity.
+    feed(est, 61, 4, 0);
+    feed(est, 20, 60, 2000);
+    expect(est.getCap()).toBe(20);
+
+    // The scene lightens a little: 37fps is impossible under a genuine
+    // 20Hz throttle (> mark/THROTTLE_FRACTION ≈ 36.4), so the estimator
+    // must un-throttle immediately — not wait for 48 (80% of fallback),
+    // which a still-heavy scene may never reach.
+    est.addSample(37, 60_000);
+    expect(est.getCap()).toBe(60);
+  });
 });

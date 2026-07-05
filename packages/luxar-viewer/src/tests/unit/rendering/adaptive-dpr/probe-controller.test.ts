@@ -72,6 +72,22 @@ describe('ProbeController', () => {
       expect(probe.evaluate(1000 + 2100, 60, CLEAN)).toMatchObject({ kind: 'accepted' });
     });
 
+    it('a low-sample settle showing IMPROVEMENT voids inconclusive, never accepts', () => {
+      const probe = armed(); // baseline 40fps
+      // A few-frame window can read burst-inflated FPS (gap detection
+      // bounds inter-frame gaps, not intra-window variance). A wrong
+      // ACCEPT would reset the rejection-backoff streak — the exact
+      // protection that quiets hopeless scenes — while inconclusive
+      // keeps the DPR identically and learns nothing.
+      const verdict = probe.evaluate(1000 + 1600, 60, {
+        sampleCount: 6, // below minSamples(8)
+        spanMs: 950,
+        suppressed: false,
+      });
+      expect(verdict).toMatchObject({ kind: 'inconclusive' });
+      expect(probe.isPending).toBe(false);
+    });
+
     it('settles from a full-span low-fps window (few frames = genuinely slow, not contaminated)', () => {
       const probe = armed(); // baseline 40fps
       // ~5fps scene: the 1s window can never hold minSamples(8) frames.
