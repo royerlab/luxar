@@ -661,7 +661,11 @@ describe('SceneLoader', () => {
     interface KickInternals {
       _updateInProgress: boolean;
       _disposed: boolean;
+      _refinementKickPending: boolean;
       gsplatLoaders: Map<string, unknown>;
+      loaders: Map<string, unknown>; // points
+      linesLoaders: Map<string, unknown>;
+      viewStateQueue: { setPending(s: unknown): void; hasPending(): boolean };
       scheduleGSplatsRefinement: () => Promise<void>;
     }
 
@@ -702,6 +706,49 @@ describe('SceneLoader', () => {
       internals.gsplatLoaders.clear();
     });
 
+    // anyLoaderHasMoreLODs consults all THREE loader maps (gsplats/points/lines),
+    // not just gsplats — a points- or lines-substitutive ladder must kick too.
+    it.each([
+      ['points', 'loaders' as const],
+      ['lines', 'linesLoaders' as const],
+    ])('kicks when only the %s loader map has more LODs', (_label, mapKey) => {
+      const { internals, spy } = stubOrchestrator(false);
+      const map = internals[mapKey];
+      map.set('/g/part_0', { hasMoreLODs: true });
+      try {
+        sceneLoader.kickRefinementIfIdle();
+        expect(spy).toHaveBeenCalledTimes(1);
+      } finally {
+        internals._updateInProgress = false;
+        map.clear();
+      }
+    });
+
+    it('schedules at most ONE re-check timer for repeated locked kicks (single-pending guard)', async () => {
+      vi.useFakeTimers();
+      const setTimeoutSpy = vi.spyOn(globalThis, 'setTimeout');
+      const { internals, spy } = stubOrchestrator();
+      internals.gsplatLoaders.set('/g/part_0', { hasMoreLODs: true });
+      internals._updateInProgress = true; // an update holds the lock
+      try {
+        sceneLoader.kickRefinementIfIdle();
+        sceneLoader.kickRefinementIfIdle(); // second locked kick — must be swallowed
+        sceneLoader.kickRefinementIfIdle(); // third too
+        expect(internals._refinementKickPending).toBe(true);
+        expect(setTimeoutSpy).toHaveBeenCalledTimes(1); // ONE timer, not three
+        // The lock frees; the single re-check fires and kicks exactly once.
+        internals._updateInProgress = false;
+        await vi.runOnlyPendingTimersAsync();
+        expect(spy).toHaveBeenCalledTimes(1);
+      } finally {
+        setTimeoutSpy.mockRestore();
+        vi.useRealTimers();
+        internals._updateInProgress = false;
+        internals._refinementKickPending = false;
+        internals.gsplatLoaders.clear();
+      }
+    });
+
     it('re-checks on a timer while the lock is held, then kicks once it frees', async () => {
       vi.useFakeTimers();
       const { internals, spy } = stubOrchestrator();
@@ -735,6 +782,37 @@ describe('SceneLoader', () => {
       } finally {
         vi.useRealTimers();
         internals._disposed = false;
+        internals._updateInProgress = false;
+        internals.gsplatLoaders.clear();
+      }
+    });
+
+    it('drains a view-state queued during the kick when the orchestrator rejects', async () => {
+      // A concurrent updateView() parks its state via setPending while the kick
+      // holds the lock. If the orchestrator glue rejects OUTSIDE the loops'
+      // finally, the catch must release the lock AND drain — otherwise the
+      // user's latest slice is stranded (queue-next.ts drains; this must too).
+      const internals = sceneLoader as unknown as KickInternals;
+      internals.gsplatLoaders.set('/g/part_0', { hasMoreLODs: true });
+      const rejecting = vi.fn(async () => {
+        throw new Error('orchestrator glue died');
+      });
+      internals.scheduleGSplatsRefinement = rejecting;
+      const updateViewSpy = vi
+        .spyOn(sceneLoader, 'updateView')
+        .mockResolvedValue(undefined as never);
+      try {
+        const pending = { displayDims: [0, 1, 2], slicePosition: [3], tolerance: [0] };
+        internals.viewStateQueue.setPending(pending);
+        sceneLoader.kickRefinementIfIdle();
+        expect(rejecting).toHaveBeenCalledTimes(1);
+        // Let the rejection catch + drain's microtask settle.
+        await new Promise((r) => setTimeout(r, 0));
+        expect(internals._updateInProgress).toBe(false); // lock released
+        expect(internals.viewStateQueue.hasPending()).toBe(false); // drained
+        expect(updateViewSpy).toHaveBeenCalledWith(pending); // re-entered
+      } finally {
+        updateViewSpy.mockRestore();
         internals._updateInProgress = false;
         internals.gsplatLoaders.clear();
       }

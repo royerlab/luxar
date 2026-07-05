@@ -824,10 +824,16 @@ export class SceneLoader {
         Modules.SCENE_LOADER,
         `Deferred-activation refinement failed: ${(error as Error).message}`
       );
-      // Belt-and-braces lock recovery (mirrors load-scene.ts / queue-next.ts):
-      // the loops release the lock in their own finally, so a rejection here
-      // means the orchestrator glue died outside them.
+      // Belt-and-braces lock recovery (mirrors queue-next.ts): the loops
+      // release the lock in their own finally, so a rejection here means the
+      // orchestrator glue died outside them. Release the lock AND drain any
+      // view-state queued while we held it — a mid-session kick can race a
+      // concurrent updateView() (which parks its state via setPending while
+      // the lock is held), so unlike the init-time load-scene.ts twin we must
+      // re-enter it or the viewer strands the user's latest slice. drain() is
+      // a no-op when nothing was queued.
       this._updateInProgress = false;
+      this.viewStateQueue.drain((state) => this.updateView(state));
     });
   }
 

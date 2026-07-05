@@ -39,7 +39,13 @@
  * @module scene/lod-display-gate
  */
 
-import { isFresh, isReady, visibleElementCount, type FreshnessChild } from './lod-freshness';
+import {
+  countFromUserData,
+  isFresh,
+  isReady,
+  visibleElementCount,
+  type FreshnessChild,
+} from './lod-freshness';
 
 /**
  * Structural node shape for {@link subtreeDisplayProgress}: the subset of
@@ -94,7 +100,9 @@ function foldProgress(
   const ud = node.userData;
   // A stamped leaf contributes; unstamped nodes (groups, never-committed
   // placeholders) contribute nothing and never block completeness/freshness.
-  const count = ud ? visibleElementCount({ object: { userData: ud } }) : null;
+  // Reads the count straight off ``ud`` (no throwaway wrapper) — this recurses
+  // over every descendant on the per-frame hot path during a hold.
+  const count = countFromUserData(ud);
   if (count != null && ud) {
     acc.any = true;
     acc.count += count;

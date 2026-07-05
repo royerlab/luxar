@@ -91,7 +91,17 @@ export function coarsestFreshIndex(children: readonly FreshnessChild[], version:
  * only act on a KNOWN-empty level (``0``), never on ``null``.
  */
 export function visibleElementCount(child: FreshnessChild): number | null {
-  const ud = child.object.userData;
+  return countFromUserData(child.object.userData);
+}
+
+/**
+ * Committed visible-element count read straight off a leaf mesh's ``userData``,
+ * or ``null`` when untracked. The allocation-free primitive behind
+ * :func:`visibleElementCount` — the subtree fold in ``lod-display-gate.ts``
+ * calls this per descendant on the per-frame hot path (during a hold), so it
+ * must not wrap ``ud`` in a throwaway ``{ object: { userData } }`` object.
+ */
+export function countFromUserData(ud: FreshnessChild['object']['userData']): number | null {
   if (!ud || !FRESHNESS_TRACKED_TYPES.has(ud.nodeType ?? '')) return null;
   switch (ud.nodeType) {
     case 'points':

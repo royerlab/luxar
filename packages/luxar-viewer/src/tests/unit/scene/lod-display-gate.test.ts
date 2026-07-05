@@ -334,6 +334,20 @@ describe('shouldHoldPreviousDisplay (nested-group levels)', () => {
     expect(shouldHoldPreviousDisplay(groupChild(mixedStreaming), leafPrev(100), 2)).toBe(false);
   });
 
+  it("refuses even when BOTH sides are 'mixed' (the asp.nodeType==='mixed' guard, not just type mismatch)", () => {
+    // Here asp.nodeType === prev.nodeType === 'mixed', so the type-MISMATCH
+    // half of the guard is satisfied; only the explicit `=== 'mixed'` disjunct
+    // blocks the hold. A mutant dropping that disjunct would wrongly hold.
+    const mixedStreaming = group([
+      leaf('gsplats', 10, { complete: false }),
+      leaf('points', 10, { complete: false }),
+    ]);
+    const mixedPrev = group([leaf('gsplats', 500), leaf('points', 500)]);
+    expect(shouldHoldPreviousDisplay(groupChild(mixedStreaming), groupChild(mixedPrev), 2)).toBe(
+      false
+    );
+  });
+
   it('is inert for a group with no stamped leaves (unknown ⇒ swap, today’s behavior)', () => {
     expect(shouldHoldPreviousDisplay(groupChild(group([group([])])), leafPrev(100), 2)).toBe(false);
   });
