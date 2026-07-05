@@ -343,11 +343,23 @@ levels, and bounds resident VRAM with an LRU eviction pass.
    and climb back. The registry holds the previously-displayed level
    while the streaming aspiration's committed element count is
    strictly below it (`shouldHoldPreviousDisplay` in
-   `lod-freshness.ts`), releasing on ladder completion (committed, not
-   just fetched), count crossover (the rest of the ladder then streams
+   `lod-display-gate.ts`), releasing on ladder completion (the
+   commit-time `committedLadderComplete` stamp — committed, not just
+   fetched), count crossover (the rest of the ladder then streams
    visibly), ladder failure, or the previous level losing freshness.
    Bypassed for explicit level locks and off-screen groups; a group
    with nothing better on screen still swaps at first paint.
+   **Nested-group levels** (a child that is a whole subtree, e.g. the
+   `overview` recipe's fine `kind=partition` branch, or arbitrary
+   lod/partition nestings) participate through
+   `subtreeDisplayProgress`, which folds the subtree's _visible_
+   stamped leaves into one aggregate (count sum / all-complete /
+   all-fresh) — inner lod_groups' own level toggling shapes the
+   aggregate to exactly what would render. Deferred-group activation
+   also kicks the sweep refinement orchestrator
+   (`SceneLoader.kickRefinementIfIdle`) so the freshly-registered part
+   ladders stream to completion instead of stalling at chunk-1 until
+   the next slice change.
 
 **Selector modes:**
 
