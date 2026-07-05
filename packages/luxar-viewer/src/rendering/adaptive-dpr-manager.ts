@@ -44,9 +44,11 @@
  *   when scene content changes.
  *
  * The control loop is decomposed into pure, timestamp-driven modules
- * under ./adaptive-dpr/ (FPS tracker, probe controller, bounds ledger);
- * this class is the orchestrating facade and owns everything
- * environmental (live devicePixelRatio, renderer, config, callbacks).
+ * under ./adaptive-dpr/ (FPS tracker, refresh-rate estimator,
+ * hysteresis tracker, probe controller, bounds ledger — see that
+ * folder's README); this class is the orchestrating facade and owns
+ * everything environmental (live devicePixelRatio, renderer, config,
+ * callbacks, pause/idle/resume hooks).
  */
 
 import { config } from '../config';

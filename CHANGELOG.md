@@ -6,6 +6,56 @@ All notable changes to Luxar are documented in this file.
 
 ### July 2026
 
+#### Fixed — adaptive DPR overhaul: correct indicator, sharp resting frames, no blur metronome, monitor-change safety
+
+- The resolution indicator now shows percent-of-native: on a retina display
+  the first reduction reads "Resolution Scaled to 90%" instead of the absolute
+  "180%", the percentage tracks later steps while the toast is visible, and
+  the target FPS reflects the refresh-relative rule.
+- The resting frame is always sharp: when the render loop idle-pauses, DPR
+  snaps back to native and one full-quality frame is rendered (guarded off
+  during recordings and context loss); resuming interaction snaps back to the
+  remembered operating DPR in ONE step instead of reactively re-walking the
+  reduction ladder. Previously a reduced-DPR static image stayed blurry
+  indefinitely (recovery needed ~50 s of uninterrupted high-FPS interaction).
+- No more 30-second blur metronome: rejected U-shape probes back off
+  exponentially (30 s → 60 s → 2 min → capped 5 min) on scenes where DPR
+  reduction never helps; genuine content changes (dataset/layer/LOD swaps)
+  re-arm probing within 5 s. Probes now settle only on clean samples (min
+  frames/span, no data-loading jank) and void as inconclusive otherwise;
+  frame-gap detection stops GC/decode stalls and idle-resume gaps from
+  ratcheting spurious scale-downs.
+- FPS thresholds are refresh-rate-relative (75%/90% of the display's
+  estimated rAF cap) instead of fixed 50/58: recovery no longer stalls on
+  60 Hz displays that drop a couple of frames (plus a mid-band grace sample),
+  120 Hz displays scale down at 80 fps as they should, and a 30 Hz-throttled
+  tab neither probe-loops forever nor is barred from scaling up.
+- The native DPR is read live and rebases learned state on change: dragging
+  the window to a lower-DPI monitor (or browser zoom) can no longer leave a
+  supersampling override behind — including via the screenshot/recording
+  save-restore round-trip, which also no longer runs a redundant second
+  render-target reallocation pass.
+- Stale-data hygiene: the Performance popover FPS row reads `idle` while the
+  loop is paused instead of freezing a stale number; WebGPU device loss now
+  latches the shared context-lost predicate so cheap no-op frames can't drive
+  bogus scale-ups; frames during WebGL context loss are ignored too.
+- The `AdaptiveDPRManager` is decomposed into pure timestamp-driven modules
+  (`rendering/adaptive-dpr/`), all tuning knobs live in a validated
+  `adaptiveDPR` config section, and the previously hardcoded probe constants
+  are configurable.
+
+#### Added — evidence-based DPR ceiling + `?dpr=` URL param
+
+- On HiDPI displays, repeated "punished ascents" (a scale-up above DPR 1.0
+  followed promptly by an FPS collapse) demote the operating ceiling from
+  native to exactly 1.0 for the session — cutting the structural up/down
+  oscillation on heavy scenes instead of merely slowing it. The demotion is
+  TTL-decayed with backoff, softened by content changes, and never affects
+  the idle resting frame (still full native).
+- `?dpr=<value>` pins a fixed pixel ratio and locks adaptive resolution off
+  for the session (clamped to [0.25, native]) — used by the visual-regression
+  suites for deterministic baselines and handy for bug repros.
+
 #### Changed — AUTO covariance quantization: uint8 with an encode-time certificate (~3.3× smaller)
 
 - Gsplat Cholesky factors at AUTO now default to the uint8 per-channel log
