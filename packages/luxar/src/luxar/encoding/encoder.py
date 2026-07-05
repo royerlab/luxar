@@ -762,20 +762,27 @@ class ArrayEncoder:
 
         # AUTO: certify u8, escalate on measured Σ error. Skipped for a uniform
         # pair — the broadcast priority path stores the exact float row, so
-        # there is no quantization to certify.
-        pair_uniform = self._is_uniform(diag) and (
-            not write_offdiag or self._is_uniform(offdiag)
+        # there is no quantization to certify. The n_rows > 0 short-circuit
+        # also protects _is_uniform (which indexes data[0]) from empty arrays:
+        # zero-splat pairs fall straight through to encode()'s size==0
+        # passthrough, matching the pre-joint-call behavior.
+        n_rows = diag.shape[0]
+        pair_uniform = n_rows > 0 and (
+            self._is_uniform(diag) and (not write_offdiag or self._is_uniform(offdiag))
         )
         certificate: Optional[dict] = None
         chosen_bits: Optional[int] = 8
         eff_mode = mode
-        if mode == EncodingMode.AUTO and diag.shape[0] > 0 and not pair_uniform:
+        if mode == EncodingMode.AUTO and n_rows > 0 and not pair_uniform:
             # Reference for the error measurement is the FORWARD-VALID input:
             # the log encoder clamps invalid negative diagonal entries by
             # policy, and that validation loss must not read as quantization
             # error (it is identical at every tier, so escalating cannot
-            # recover it).
+            # recover it). The reference Σ is tier-independent — build it once,
+            # outside the escalation loop.
             diag_ref = np.maximum(diag.astype(np.float64), 0.0)
+            s_ref = self._sigma_from_split(diag_ref, offdiag, ndim).reshape(n_rows, -1)
+            den = np.maximum(np.linalg.norm(s_ref, axis=1), 1e-30)
             tried: list[tuple[int, float]] = []
             chosen_bits = None
             for bits in (8, 16):
@@ -785,7 +792,8 @@ class ArrayEncoder:
                     if write_offdiag
                     else offdiag
                 )
-                relf = self._cov_relf_p95(diag_ref, diag_q, offdiag, off_q, ndim)
+                s_q = self._sigma_from_split(diag_q, off_q, ndim).reshape(n_rows, -1)
+                relf = self._relf_p95(s_ref, den, s_q)
                 tried.append((bits, relf))
                 if relf <= certificate_threshold:
                     chosen_bits = bits
@@ -879,26 +887,40 @@ class ArrayEncoder:
     ) -> float:
         """p95 over splats of the relative Frobenius error of Σ = L·Lᵀ.
 
-        Rebuilds lower-triangular L from the split halves with a local
-        row-major ``np.tril_indices`` layout — the same packing convention as
+        Composed from :meth:`_sigma_from_split` + :meth:`_relf_p95`; the
+        escalation loop in :meth:`encode_cholesky_split` uses the pieces
+        directly so the tier-independent reference Σ is built only once.
+        """
+        n = diag.shape[0]
+        s0 = ArrayEncoder._sigma_from_split(diag, offdiag, ndim).reshape(n, -1)
+        sq = ArrayEncoder._sigma_from_split(diag_q, offdiag_q, ndim).reshape(n, -1)
+        den = np.maximum(np.linalg.norm(s0, axis=1), 1e-30)
+        return ArrayEncoder._relf_p95(s0, den, sq)
+
+    @staticmethod
+    def _sigma_from_split(
+        diag: np.ndarray, offdiag: np.ndarray, ndim: int
+    ) -> np.ndarray:
+        """(N, d, d) Σ = L·Lᵀ from split Cholesky halves.
+
+        Rebuilds lower-triangular L with a local row-major
+        ``np.tril_indices`` layout — the same packing convention as
         ``gsplats.utils.trils`` (locked by a parity test), kept local so the
         encoding package takes no gsplats dependency.
         """
         n = diag.shape[0]
         rows, cols = np.tril_indices(ndim)
         off = rows != cols
+        tri = np.zeros((n, ndim, ndim), dtype=np.float64)
+        tri[:, np.arange(ndim), np.arange(ndim)] = diag.astype(np.float64)
+        if offdiag.shape[1] > 0:
+            tri[:, rows[off], cols[off]] = offdiag.astype(np.float64)
+        return np.asarray(np.einsum("nij,nkj->nik", tri, tri))
 
-        def sigma(dg: np.ndarray, od: np.ndarray) -> np.ndarray:
-            tri = np.zeros((n, ndim, ndim), dtype=np.float64)
-            tri[:, np.arange(ndim), np.arange(ndim)] = dg.astype(np.float64)
-            if od.shape[1] > 0:
-                tri[:, rows[off], cols[off]] = od.astype(np.float64)
-            return np.asarray(np.einsum("nij,nkj->nik", tri, tri))
-
-        s0 = sigma(diag, offdiag).reshape(n, -1)
-        sq = sigma(diag_q, offdiag_q).reshape(n, -1)
-        num = np.linalg.norm(sq - s0, axis=1)
-        den = np.maximum(np.linalg.norm(s0, axis=1), 1e-30)
+    @staticmethod
+    def _relf_p95(s_ref: np.ndarray, den: np.ndarray, s_q: np.ndarray) -> float:
+        """p95 of per-row relative Frobenius error given flattened Σ matrices."""
+        num = np.linalg.norm(s_q - s_ref, axis=1)
         return float(np.percentile(num / den, 95))
 
     def _encode_dtype(

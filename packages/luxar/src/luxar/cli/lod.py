@@ -216,10 +216,16 @@ def _parse_lod_breakpoints(spec: str) -> "str | list[int] | list[float]":
     )
 
 
-#: Assumed stored bytes per scalar for each encoding mode (see
-#: :func:`estimate_bytes_per_splat`). AUTO quantizes to ~2 B (u16-family);
-#: PRECISION stores float32 (~4 B); MEMORY quantizes to ~1 B (u8-family).
-_ENCODING_SCALAR_BYTES = {"auto": 2.0, "precision": 4.0, "memory": 1.0}
+#: Assumed stored bytes per scalar for (centers, amplitudes, cholesky) under
+#: each encoding mode (see :func:`estimate_bytes_per_splat`). AUTO: centers
+#: u16, amplitude ~u16, cholesky u8 (certified — escalation to u16 is the
+#: exception, not the model); PRECISION: float32 everywhere; MEMORY: centers
+#: u16 (coordinates never drop to u8), amplitude/cholesky u8.
+_ENCODING_ARRAY_BYTES = {
+    "auto": (2.0, 2.0, 1.0),
+    "precision": (4.0, 4.0, 4.0),
+    "memory": (2.0, 1.0, 1.0),
+}
 
 
 def estimate_bytes_per_splat(
@@ -227,22 +233,24 @@ def estimate_bytes_per_splat(
 ) -> float:
     """Analytic on-wire bytes/splat estimate for an encoding mode.
 
-    The default AUTO mode quantizes to ~2 bytes per stored scalar (centers
-    u16, amplitude u16/u8, split-Cholesky diag/offdiag u16), i.e.
-    ``2·(d + 1 + d(d+1)/2)`` raw, and the store adds zarr/blosc/chunk-bounds
-    overhead of roughly ×1.5 — calibrated against a real 4D fit that measured
-    ~45 B/splat (raw u16 ≈ 30 B). PRECISION stores float32 (~2× AUTO) and
-    MEMORY quantizes to u8 (~0.5× AUTO). Colors add ~4 B (u8 RGB + overhead;
+    Per-array model: centers (d scalars), amplitude (1), split-Cholesky
+    diag/offdiag (d(d+1)/2) each get the per-mode byte width from
+    ``_ENCODING_ARRAY_BYTES`` (AUTO cholesky is u8 under the covariance
+    certificate), and the store adds zarr/blosc/chunk-bounds overhead of
+    roughly ×1.5 — calibrated against a real 4D fit that measured
+    ~45 B/splat when everything was u16. Colors add ~4 B (u8 RGB + overhead;
     ~18 B as float32 under PRECISION). A crude estimate by design: used only
     when no matching store exists to measure (``fit --recipe``, or when
     ``--encoding`` re-encodes the output); the ``--bytes-per-splat`` override
     is the escape hatch, and the assumed value is always logged.
     """
     k = ndim * (ndim + 1) // 2
-    scalar_bytes = _ENCODING_SCALAR_BYTES.get(encoding, 2.0)
+    center_b, amp_b, chol_b = _ENCODING_ARRAY_BYTES.get(encoding, (2.0, 2.0, 1.0))
     color_bytes = 18.0 if encoding == "precision" else 4.0
     return round(
-        1.5 * scalar_bytes * (ndim + 1 + k) + (color_bytes if has_colors else 0.0), 1
+        1.5 * (center_b * ndim + amp_b + chol_b * k)
+        + (color_bytes if has_colors else 0.0),
+        1,
     )
 
 

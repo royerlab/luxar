@@ -267,6 +267,22 @@ class TestEncodeCholeskySplit:
         with pytest.raises(ValueError, match="offdiag must have shape"):
             self._encode(diag, off[:, :2], EncodingMode.AUTO)
 
+    @pytest.mark.parametrize(
+        "mode", [EncodingMode.AUTO, EncodingMode.MEMORY, EncodingMode.PRECISION]
+    )
+    def test_empty_pair_writes_passthrough(self, mode):
+        # Zero-splat pairs (empty BSP part / LOD tile / filtered-out result)
+        # must fall through to encode()'s size==0 passthrough — never reach
+        # _is_uniform (which indexes data[0]) or the certificate.
+        g = self._encode(
+            np.zeros((0, 3), np.float32),
+            np.zeros((0, 3), np.float32),
+            mode,
+        )
+        for name in ("cholesky_factors_diag", "cholesky_factors_offdiag"):
+            assert g[name].shape == (0, 3)
+            assert "certificate" not in dict(g[name].attrs.get("encoding", {}))
+
     def test_certificate_metric_matches_trils_convention(self):
         # The encoder-local Sigma rebuild must agree with the canonical
         # gsplats.utils.trils packing (row-major np.tril_indices). The test may

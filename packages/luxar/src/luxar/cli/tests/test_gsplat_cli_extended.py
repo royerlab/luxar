@@ -3672,6 +3672,56 @@ class TestLODCommand:
             assert detect_store_encoding(out) == expected, mode
         assert detect_store_encoding(tmp_path / "nope.gsplats.zarr") is None
 
+    def test_detect_store_encoding_escalated_legacy_and_certified_f32(
+        self, tmp_path: Path
+    ) -> None:
+        """The certificate-based branches: an ESCALATED AUTO store (u16 with a
+        certificate) and a LEGACY pre-certificate AUTO store (bare u16) both
+        classify as "auto"; a certified-float32 store (the f32 rung) is "auto"
+        while bare float32 stays "precision"."""
+        import json
+
+        from luxar.cli.lod import detect_store_encoding
+        from luxar.gsplats.gsplat_data import GSplatData
+
+        rng = np.random.default_rng(2)
+        n = 64
+        chol = (rng.random((n, 6)) * 0.5 + 0.5).astype(np.float32)
+        chol[:4] = 1e8  # outliers stretch the log range → AUTO escalates to u16
+        data = GSplatData(
+            centers=(rng.random((n, 3)) * 10).astype(np.float32),
+            amplitudes=rng.random(n).astype(np.float32),
+            cholesky_factors=chol,
+        )
+        out = tmp_path / "escalated.gsplats.zarr"
+        with pytest.warns(UserWarning, match="escalating to uint16"):
+            data.save(out)
+        zattrs = next(out.rglob("cholesky_factors_diag/.zattrs"))
+        enc = json.loads(zattrs.read_text())["encoding"]
+        assert enc["name"] == "log_perchannel_u16"  # really escalated
+        assert detect_store_encoding(out) == "auto"  # u16 (certified) → auto
+
+        # Legacy pre-certificate AUTO store: bare u16, no certificate key.
+        attrs = json.loads(zattrs.read_text())
+        del attrs["encoding"]["certificate"]
+        zattrs.write_text(json.dumps(attrs))
+        assert detect_store_encoding(out) == "auto"  # bare u16 (legacy) → auto
+
+        # Certified float32 (the practically-unreachable f32 rung): auto, not
+        # precision — the certificate key is the discriminator.
+        attrs["encoding"] = {
+            "name": "float32",
+            "original_dtype": "float32",
+            "certificate": {
+                "metric": "cov_relf_p95",
+                "value": 0.0,
+                "threshold": 0.05,
+                "tier": "float32",
+            },
+        }
+        zattrs.write_text(json.dumps(attrs))
+        assert detect_store_encoding(out) == "auto"
+
     def test_lod_target_ms_and_breakpoints_mutually_exclusive(
         self, runner: CliRunner, medium_gsplats: Path, tmp_path: Path
     ) -> None:
