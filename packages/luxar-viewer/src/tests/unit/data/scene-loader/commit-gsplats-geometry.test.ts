@@ -187,3 +187,57 @@ describe('commitGSplatsGeometry — no-op commit skip (committedData)', () => {
     expect(mockUpdateInstancedMesh).not.toHaveBeenCalled();
   });
 });
+
+describe('commitGSplatsGeometry — committedLadderComplete stamp', () => {
+  const ladderComplete = (mesh: THREE.Mesh) =>
+    (mesh.userData as { committedLadderComplete?: boolean }).committedLadderComplete;
+
+  it('stamps false while the committing progressive loader has more LODs', () => {
+    const root = new THREE.Group();
+    const mesh = makeMesh('/g');
+    mesh.userData.loader = { hasMoreLODs: true };
+    root.add(mesh);
+    commitGSplatsGeometry(makeStaged(3), root, null, undefined, V);
+    expect(ladderComplete(mesh)).toBe(false);
+  });
+
+  it('stamps true on the final ladder pass (hasMoreLODs false at commit time)', () => {
+    const root = new THREE.Group();
+    const mesh = makeMesh('/g');
+    mesh.userData.loader = { hasMoreLODs: false };
+    root.add(mesh);
+    commitGSplatsGeometry(makeStaged(3), root, null, undefined, V);
+    expect(ladderComplete(mesh)).toBe(true);
+  });
+
+  it('stamps true for a non-progressive loader (no hasMoreLODs getter) and for no loader at all', () => {
+    const root = new THREE.Group();
+    const plain = makeMesh('/g');
+    plain.userData.loader = {}; // single-LOD spatial-index loader shape
+    root.add(plain);
+    commitGSplatsGeometry(makeStaged(3), root, null, undefined, V);
+    expect(ladderComplete(plain)).toBe(true);
+
+    const root2 = new THREE.Group();
+    const loaderless = makeMesh('/g');
+    root2.add(loaderless);
+    commitGSplatsGeometry(makeStaged(3), root2, null, undefined, V);
+    expect(ladderComplete(loaderless)).toBe(true);
+  });
+
+  it('noop (stamp-only) commit refreshes the ladder stamp too', () => {
+    const root = new THREE.Group();
+    const mesh = makeMesh('/g');
+    mesh.userData.loader = { hasMoreLODs: true };
+    mesh.userData.committedLadderComplete = true; // stale value from a previous view
+    root.add(mesh);
+    const staged = makeStaged(5);
+    const noop: StagedGSplatsCommit = {
+      path: '/g',
+      noop: true,
+      sourceData: staged.noop ? (undefined as never) : staged.sourceData,
+    };
+    commitGSplatsGeometry(noop, root, null, undefined, V);
+    expect(ladderComplete(mesh)).toBe(false); // refreshed from the live loader
+  });
+});

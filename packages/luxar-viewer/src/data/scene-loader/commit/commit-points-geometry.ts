@@ -38,7 +38,7 @@ import {
   writeInterleavedAttribute,
 } from '../../../rendering/interleaved-attributes';
 import { isPointsUserData } from '../../../types/points';
-import { stampLoadedViewVersion } from './stamp-view-version';
+import { stampLadderComplete, stampLoadedViewVersion } from './stamp-view-version';
 import { isAlreadyCommitted, type CommittedDataUserData } from './noop-commit';
 import { log, Modules } from '../../../utils/log';
 import type { UpdateSession } from '../../../profiling/update-profiler';
@@ -87,6 +87,7 @@ export function commitPointsGeometry(
   // lazy paths uniformly. Refresh only the LOD freshness stamp.
   if (isAlreadyCommitted(points.userData, data)) {
     stampLoadedViewVersion(points.userData, loadedViewVersion);
+    stampLadderComplete(points.userData);
     return;
   }
 
@@ -101,6 +102,8 @@ export function commitPointsGeometry(
   points.userData.visiblePointCount = data.pointCount;
   // Slice-aware LOD freshness stamp (see commit-gsplats-geometry.ts).
   stampLoadedViewVersion(points.userData, loadedViewVersion);
+  // Ladder-completeness stamp for the never-downgrade display gate.
+  stampLadderComplete(points.userData);
 
   // World-space radius footprint, shared by every commit path so the
   // boundingBox carries the rendered disc extent (the three-geometry

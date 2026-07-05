@@ -455,8 +455,22 @@ export async function loadLodGroupNode(
       // pool, so once loaded they stay resident until scene teardown (matching
       // the prior behaviour, just deferred to first view). Nested leaf / lod
       // loaders self-register during loadChildren, which runs only on activation.
-      const entryChild = attachLazyChild(placeholder, lazyChild, coverageFraction, ctx, () =>
-        loadChildren(lazyChild, placeholder, childLoc, ctx)
+      const entryChild = attachLazyChild(
+        placeholder,
+        lazyChild,
+        coverageFraction,
+        ctx,
+        async () => {
+          await loadChildren(lazyChild, placeholder, childLoc, ctx);
+          // The subtree's part leaves registered into the sweep maps just
+          // now, mid-session — but refinement is only scheduled at
+          // update-view tails, so without this kick their additive ladders
+          // would sit at chunk-1 until the next slice change (and the
+          // never-downgrade display gate would hold the previous level
+          // indefinitely). Safe on a dead dataset: the kick no-ops once the
+          // owning loader is disposed.
+          ctx.kickRefinementIfIdle();
+        }
       );
       registryChildren.push(entryChild);
       continue;

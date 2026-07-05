@@ -72,6 +72,31 @@ All notable changes to Luxar are documented in this file.
   from the full columns), keeping the float64 Σ scratch capped on large flat
   fits instead of scaling with N.
 
+#### Fixed — LOD level switches no longer dip to chunk-1 quality (never-downgrade display gate)
+
+- A lazy substitutive level becomes displayable after its **first** additive
+  chunk commits, so switching to a cold level (zoom in, zoom out, or after a
+  scrub settles) popped displayed quality down to chunk-1 and climbed back
+  over the following refinement passes. The LOD registry now holds the
+  previously-displayed level while the streaming target's committed element
+  count is strictly below it, releasing on ladder completion (committed, not
+  just fetched — every geometry commit now stamps `committedLadderComplete`
+  next to the count, so the release is race-free by construction), count
+  crossover (the ladder tail then streams visibly), ladder failure, or the
+  held level losing freshness. Fast first paint is unchanged — a group with
+  nothing better on screen still swaps immediately — and explicit level
+  locks / off-screen groups bypass the gate.
+- The gate covers **arbitrary nested hierarchies**: a lod_group child that is
+  a whole subtree (the `overview` recipe's fine `kind=partition` branch,
+  adaptive/hand-authored lod-of-partition nestings) participates through a
+  visibility-respecting subtree aggregate of its leaves' commit stamps —
+  inner lod_groups' own level toggling shapes the aggregate to exactly what
+  would render, and a stale-content subtree is never held over fresh data.
+- Deferred lod_group subtree activation now kicks the progressive-refinement
+  orchestrator: previously nothing scheduled refinement outside update-view
+  tails, so an `overview` fine branch activated by zooming in sat at its
+  first additive chunk per part until the next slice change.
+
 #### Fixed — stale-cache black screen on regenerated `.gsplats.zarr` + viewer LOD loading/scheduling
 
 - Every `.gsplats.zarr` save now stamps a root `content_hash` (metadata-only

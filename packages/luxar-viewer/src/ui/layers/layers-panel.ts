@@ -886,9 +886,7 @@ export class LayersPanel {
         // yet (scene still loading) → default to "auto".
         const entry = registry?.get(primary.path);
         this.lodLevelSelect.value =
-          entry && entry.selectorMode !== 'auto'
-            ? String(entry.selectorMode.lockLevel)
-            : 'auto';
+          entry && entry.selectorMode !== 'auto' ? String(entry.selectorMode.lockLevel) : 'auto';
       } else if (this.isBroadcastPartition(primary)) {
         lodContainer.style.display = '';
         this.renderLodLevelOptions(primary.nestedLodMaxChildCount!);
@@ -898,9 +896,7 @@ export class LayersPanel {
         // ambiguity here.
         const entry = registry?.get(primary.nestedLodGroupPaths![0]);
         this.lodLevelSelect.value =
-          entry && entry.selectorMode !== 'auto'
-            ? String(entry.selectorMode.lockLevel)
-            : 'auto';
+          entry && entry.selectorMode !== 'auto' ? String(entry.selectorMode.lockLevel) : 'auto';
       } else {
         lodContainer.style.display = 'none';
       }
@@ -945,7 +941,9 @@ export class LayersPanel {
       const suffix = entry.offScreen ? ' (off-screen)' : '';
       // Show the level on SCREEN (``displayedChildIndex``), not the selector's
       // aspiration — during a slice scrub the displayed level is a coarser fresh
-      // one while ``activeChildIndex`` is the stale fine level reloading.
+      // one while ``activeChildIndex`` is the stale fine level reloading, and
+      // during a never-downgrade hold it is the better previously-shown level
+      // while the aspiration's additive ladder catches up.
       const shown = entry.displayedChildIndex ?? entry.activeChildIndex;
       return `L${shown + 1}/${entry.children.length}${suffix}`;
     }
