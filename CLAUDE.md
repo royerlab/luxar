@@ -465,6 +465,14 @@ luxar gsplat lod in.gsplats.zarr out.gsplats.zarr --recipe levels --coarsen-dims
 luxar gsplat migrate-format legacy.gsplats.zarr v3.gsplats.zarr               # single file
 luxar gsplat migrate-format old_pyr/ v3.gsplats.zarr                          # substitutive directory
 
+# Re-quantize a fitted (current-format) .gsplats.zarr's Cholesky encoding (writes a copy).
+# Structure-preserving round-trip (leaf/lod/partition/nested + fitting/pipeline
+# groups kept); only the on-disk Cholesky encoding changes; decode is always
+# float32 so viewer/GPU/WASM are unaffected. Unlike migrate-format (legacy→current,
+# float32 vs AUTO-uint16 only) this exposes the full ladder incl. memory=uint8.
+luxar gsplat reencode fit.gsplats.zarr fit_u8.gsplats.zarr -e memory      # uint8 (smallest, ~93 dB)
+luxar gsplat reencode fit.gsplats.zarr fit_f32.gsplats.zarr -e precision  # float32 (exact/archival)
+
 # Partition into a single kind=partition file via spatial BSP (--indices removed)
 luxar gsplat partition splats.gsplats.zarr part.gsplats.zarr --parts 4               # target part count
 luxar gsplat partition splats.gsplats.zarr part.gsplats.zarr --max-elements 100000   # per-part cap
