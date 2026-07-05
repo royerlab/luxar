@@ -160,9 +160,11 @@ This package uses `luxar.encoding` for semantic type-aware array encoding:
 | `cholesky_factors_offdiag` | CHOLESKY_OFFDIAG | per-channel signed-log: `signed_log_perchannel_u8` (escalates with the diagonal — one shared tier) / `float32`; absent if d==1 |
 | `colors` | COLOR | `rgb_uint8` (SDR) or `float32` (HDR, auto-detected) |
 
-**COORDINATE centers always stay float32** for TypeScript/WebGL compatibility:
-float16 on coordinates is a precision footgun, so the writer disables it
-(there is no `float16_allowed` knob).
+**COORDINATE centers are uint16 per-axis fixed-point** under AUTO/MEMORY
+(`linear_perchannel_u16`, decoded back to float32 on read; a per-axis extent
+≥ 2¹⁶ falls back to float32). float16 is never used on coordinates — its
+*relative* precision is a footgun for absolute positions, so the writer
+disables it (there is no `float16_allowed` knob).
 
 **Encoding modes**:
 - `AUTO`: Analyzes data and selects encoding (may quantize)
@@ -297,7 +299,7 @@ loaded = GSplatData.load("fitted.gsplats.zarr")
 # Save with aggressive compression
 result.save(
     "compressed.gsplats.zarr",
-    encoding_mode=EncodingMode.MEMORY,  # Quantize amplitudes/colors (centers stay float32)
+    encoding_mode=EncodingMode.MEMORY,  # Quantize amplitudes/colors/centers/cholesky
 )
 ```
 

@@ -28,6 +28,13 @@ from .semantic_types import SemanticType
 # (e.g. merged stores whose σ columns span many decades).
 COV_CERT_RELF_P95_MAX = 0.05
 
+#: Row cap for the certificate measurement. The p95 statistic needs a bounded
+#: sample, not every splat — without a cap, a 10M-splat flat fit would build
+#: ~2.7 GB of transient float64 Σ scratch just to certify. Evenly-spaced rows
+#: keep the sample deterministic and (over Hilbert-ordered splats) spatially
+#: uniform; the quantization scales always come from the full columns.
+COV_CERT_SAMPLE_MAX = 262_144
+
 
 class ArrayEncoder:
     """Unified encoder with internal registry for deduplication.
@@ -774,25 +781,57 @@ class ArrayEncoder:
         chosen_bits: Optional[int] = 8
         eff_mode = mode
         if mode == EncodingMode.AUTO and n_rows > 0 and not pair_uniform:
+            # The percentile only needs a bounded SAMPLE of rows, so the f64 Σ
+            # scratch stays capped (a 10M-splat flat fit would otherwise build
+            # ~2.7 GB of transient Σ arrays). Evenly-spaced rows = deterministic
+            # and, over Hilbert-ordered splats, spatially uniform. The
+            # quantization SCALES, however, must come from the FULL columns —
+            # exactly what the real encode uses — or the certificate lies; the
+            # forward compand is monotonic, so companding the raw column
+            # min/max equals the full-array companded min/max.
+            capped = n_rows > COV_CERT_SAMPLE_MAX
+            sel: Any = (
+                np.linspace(0, n_rows - 1, COV_CERT_SAMPLE_MAX).astype(np.intp)
+                if capped
+                else slice(None)
+            )
+            diag_s = diag[sel]
+            off_s = offdiag[sel]
+            n_s = diag_s.shape[0]
+
+            def col_scales(x: np.ndarray, *, signed: bool) -> tuple:
+                lo = self._perchannel_log_forward(x.min(axis=0)[None, :], signed=signed)
+                hi = self._perchannel_log_forward(x.max(axis=0)[None, :], signed=signed)
+                return lo[0], hi[0]
+
+            lo_d, hi_d = col_scales(diag, signed=False)
+            lo_o, hi_o = (
+                col_scales(offdiag, signed=True) if write_offdiag else (None, None)
+            )
+
             # Reference for the error measurement is the FORWARD-VALID input:
             # the log encoder clamps invalid negative diagonal entries by
             # policy, and that validation loss must not read as quantization
             # error (it is identical at every tier, so escalating cannot
             # recover it). The reference Σ is tier-independent — build it once,
             # outside the escalation loop.
-            diag_ref = np.maximum(diag.astype(np.float64), 0.0)
-            s_ref = self._sigma_from_split(diag_ref, offdiag, ndim).reshape(n_rows, -1)
+            diag_ref = np.maximum(diag_s.astype(np.float64), 0.0)
+            s_ref = self._sigma_from_split(diag_ref, off_s, ndim).reshape(n_s, -1)
             den = np.maximum(np.linalg.norm(s_ref, axis=1), 1e-30)
             tried: list[tuple[int, float]] = []
             chosen_bits = None
             for bits in (8, 16):
-                diag_q = self._perchannel_log_roundtrip(diag, bits, signed=False)
-                off_q = (
-                    self._perchannel_log_roundtrip(offdiag, bits, signed=True)
-                    if write_offdiag
-                    else offdiag
+                diag_q = self._perchannel_log_roundtrip(
+                    diag_s, bits, signed=False, lo=lo_d, hi=hi_d
                 )
-                s_q = self._sigma_from_split(diag_q, off_q, ndim).reshape(n_rows, -1)
+                off_q = (
+                    self._perchannel_log_roundtrip(
+                        off_s, bits, signed=True, lo=lo_o, hi=hi_o
+                    )
+                    if write_offdiag
+                    else off_s
+                )
+                s_q = self._sigma_from_split(diag_q, off_q, ndim).reshape(n_s, -1)
                 relf = self._relf_p95(s_ref, den, s_q)
                 tried.append((bits, relf))
                 if relf <= certificate_threshold:
@@ -810,6 +849,8 @@ class ArrayEncoder:
                 "threshold": float(certificate_threshold),
                 "tier": tier,
             }
+            if capped:
+                certificate["sample"] = int(n_s)
             if tier == "u16":
                 warnings.warn(
                     f"CHOLESKY '{diag_name}': covariance certificate "
@@ -1515,19 +1556,26 @@ class ArrayEncoder:
 
     @staticmethod
     def _perchannel_log_roundtrip(
-        data: np.ndarray, bits: int, *, signed: bool
+        data: np.ndarray,
+        bits: int,
+        *,
+        signed: bool,
+        lo: Optional[np.ndarray] = None,
+        hi: Optional[np.ndarray] = None,
     ) -> np.ndarray:
         """Quantized encode→decode round-trip of the per-channel log encodings.
 
         Uses the SAME forward compand and per-column quantizer as the real
         encoders and the same inverse as the decoder, so a certificate computed
-        from it can never diverge from what actually lands on disk.
+        from it can never diverge from what actually lands on disk. ``lo``/``hi``
+        accept precomputed COMPANDED-domain column scales — the certificate
+        passes full-array scales while round-tripping only a row sample.
         """
         y = ArrayEncoder._perchannel_log_forward(data, signed=signed)
-        u, lo, hi = ArrayEncoder._quantize_per_column(y, bits)
+        u, lo_list, hi_list = ArrayEncoder._quantize_per_column(y, bits, lo=lo, hi=hi)
         levels = (1 << bits) - 1
-        lo_a = np.asarray(lo, dtype=np.float64)
-        hi_a = np.asarray(hi, dtype=np.float64)
+        lo_a = np.asarray(lo_list, dtype=np.float64)
+        hi_a = np.asarray(hi_list, dtype=np.float64)
         yq = lo_a + u.astype(np.float64) / levels * (hi_a - lo_a)
         if signed:
             return np.asarray(np.sign(yq) * np.expm1(np.abs(yq)))

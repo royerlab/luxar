@@ -217,14 +217,15 @@ def _parse_lod_breakpoints(spec: str) -> "str | list[int] | list[float]":
 
 
 #: Assumed stored bytes per scalar for (centers, amplitudes, cholesky) under
-#: each encoding mode (see :func:`estimate_bytes_per_splat`). AUTO: centers
-#: u16, amplitude ~u16, cholesky u8 (certified — escalation to u16 is the
-#: exception, not the model); PRECISION: float32 everywhere; MEMORY: centers
-#: u16 (coordinates never drop to u8), amplitude/cholesky u8.
+#: each encoding mode (see :func:`estimate_bytes_per_splat`). AUTO and MEMORY
+#: write the SAME widths: centers u16 (coordinates never drop to u8),
+#: amplitude ~u16 (width picked from dynamic range identically in both modes),
+#: cholesky u8 (AUTO certified — escalation to u16 is the exception, not the
+#: model; MEMORY unconditional). PRECISION: float32 everywhere.
 _ENCODING_ARRAY_BYTES = {
     "auto": (2.0, 2.0, 1.0),
     "precision": (4.0, 4.0, 4.0),
-    "memory": (2.0, 1.0, 1.0),
+    "memory": (2.0, 2.0, 1.0),
 }
 
 

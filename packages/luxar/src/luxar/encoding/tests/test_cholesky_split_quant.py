@@ -283,6 +283,47 @@ class TestEncodeCholeskySplit:
             assert g[name].shape == (0, 3)
             assert "certificate" not in dict(g[name].attrs.get("encoding", {}))
 
+    def test_sample_cap_bounds_certificate_and_preserves_decision(self, monkeypatch):
+        # Above COV_CERT_SAMPLE_MAX rows, the certificate measures a bounded
+        # evenly-spaced sample (records "sample") — but the quantization scales
+        # come from the FULL columns, so the sampled value tracks the full one.
+        import luxar.encoding.encoder as enc_mod
+
+        diag, off = self._make(n=4000, seed=8)
+        full = ArrayEncoder._cov_relf_p95(
+            np.maximum(diag.astype(np.float64), 0.0),
+            ArrayEncoder._perchannel_log_roundtrip(diag, 8, signed=False),
+            off,
+            ArrayEncoder._perchannel_log_roundtrip(off, 8, signed=True),
+            3,
+        )
+        monkeypatch.setattr(enc_mod, "COV_CERT_SAMPLE_MAX", 512)
+        g = self._encode(diag, off, EncodingMode.AUTO)
+        cert = dict(g["cholesky_factors_diag"].attrs["encoding"])["certificate"]
+        assert cert["sample"] == 512
+        assert cert["tier"] == "u8"
+        # sampled estimate within 25% of the full measurement (same scales)
+        assert abs(cert["value"] - full) / full < 0.25
+
+        # Escalation must still fire through the sample: outliers spread across
+        # the array so evenly-spaced sampling sees the stretched range (the
+        # scales are full-column regardless, which is what stretches the grid).
+        diag2 = diag.copy()
+        diag2[::16] = 1e8
+        with pytest.warns(UserWarning, match="escalating to uint16"):
+            g2 = self._encode(diag2, off, EncodingMode.AUTO)
+        cert2 = dict(g2["cholesky_factors_diag"].attrs["encoding"])["certificate"]
+        assert cert2["tier"] == "u16"
+        assert cert2["sample"] == 512
+
+        # Below the cap: no "sample" key (full measurement).
+        monkeypatch.setattr(enc_mod, "COV_CERT_SAMPLE_MAX", 262_144)
+        g3 = self._encode(diag, off, EncodingMode.AUTO)
+        assert (
+            "sample"
+            not in dict(g3["cholesky_factors_diag"].attrs["encoding"])["certificate"]
+        )
+
     def test_certificate_metric_matches_trils_convention(self):
         # The encoder-local Sigma rebuild must agree with the canonical
         # gsplats.utils.trils packing (row-major np.tril_indices). The test may

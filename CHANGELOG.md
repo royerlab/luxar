@@ -26,6 +26,10 @@ All notable changes to Luxar are documented in this file.
   storage stack (2026-07 spike): codebook index streams are entropy-dense and
   defeat zstd+bitshuffle, losing to plain u8 scalar codes on compressed bytes
   at equal PSNR.
+- The certificate measures a bounded evenly-spaced row sample above 262 144
+  splats (recorded as `certificate.sample`; quantization scales always come
+  from the full columns), keeping the float64 Σ scratch capped on large flat
+  fits instead of scaling with N.
 
 #### Fixed — stale-cache black screen on regenerated `.gsplats.zarr` + viewer LOD loading/scheduling
 
