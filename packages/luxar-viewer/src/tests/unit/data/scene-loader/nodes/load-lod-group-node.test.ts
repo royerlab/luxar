@@ -212,6 +212,7 @@ function makeCtx(registry?: LODGroupRegistry): NodeBuildCtx {
     releaseLazyGSplats: vi.fn(),
     releaseLazyPoints: vi.fn(),
     releaseLazyLines: vi.fn(),
+    kickRefinementIfIdle: vi.fn(),
     applyEffectiveAttrs: (n) => n.attrs,
     deriveNodeViewState: vi.fn() as never,
     connectLoaderToMonitor: vi.fn(),
@@ -412,6 +413,9 @@ describe('loadLodGroupNode — lazy level loading', () => {
     expect(loadGSplatsNodeExpensiveMock).toHaveBeenCalledTimes(1);
     expect(deferred.loading).toBe(false);
     expect(deferred.failed).toBeUndefined();
+    // A lazy LEAF level is registry-driven (hasMoreLODs thunk) — it must NOT
+    // kick the sweep refinement orchestrator (that's the deferred-GROUP path).
+    expect(ctx.kickRefinementIfIdle).not.toHaveBeenCalled();
   });
 
   // Three-way symmetry: a nested kind=partition / kind=lod wrapper defers
@@ -452,10 +456,15 @@ describe('loadLodGroupNode — lazy level loading', () => {
       expect(initPaths).not.toContain('/lod/child_1');
 
       // Activation loads the whole subtree (loadChildren on the group), marks ready.
+      expect(ctx.kickRefinementIfIdle).not.toHaveBeenCalled(); // not during init
       groupChild.ensureLoaded!();
       await vi.waitFor(() => expect(groupChild.ready).toBe(true));
       const afterPaths = loadSceneNodesMock.mock.calls.map((c) => (c[0] as SceneNode).path);
       expect(afterPaths).toContain('/lod/child_1');
+      // The subtree's leaves registered into the sweep maps mid-session;
+      // refinement is only scheduled at update-view tails, so the activation
+      // must kick the orchestrator or the branch stalls at chunk-1 per part.
+      expect(ctx.kickRefinementIfIdle).toHaveBeenCalledTimes(1);
     }
   );
 

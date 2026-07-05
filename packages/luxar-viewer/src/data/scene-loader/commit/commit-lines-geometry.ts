@@ -19,7 +19,7 @@ import type { UpdateSession } from '../../../profiling/update-profiler';
 import type { GPUBufferPool } from '../../../rendering/gpu-buffer-pool';
 import { updateInstancedLinesMesh } from '../../../rendering/line-geometry';
 import { invalidateRenderObjectFor } from './invalidate-render-object';
-import { stampLoadedViewVersion } from './stamp-view-version';
+import { stampLadderComplete, stampLoadedViewVersion } from './stamp-view-version';
 import type { CommittedDataUserData } from './noop-commit';
 import type { StagedLinesCommit } from '../process/data-processor-lines';
 
@@ -47,9 +47,10 @@ export function commitLinesGeometry(
 
   if (staged.noop) {
     // Stamp-only commit: the data reference matches what the GPU already
-    // holds (see noop-commit.ts). Refresh the LOD freshness stamp so the
-    // registry keeps treating this node as fresh; touch no geometry.
+    // holds (see noop-commit.ts). Refresh the LOD freshness + ladder stamps
+    // so the registry keeps treating this node as fresh; touch no geometry.
     stampLoadedViewVersion(mesh.userData, loadedViewVersion);
+    stampLadderComplete(mesh.userData);
     return;
   }
 
@@ -75,6 +76,8 @@ export function commitLinesGeometry(
       mesh.userData.visibleSegmentCount = processed.segmentCount;
       // Slice-aware LOD freshness stamp (see commit-gsplats-geometry.ts).
       stampLoadedViewVersion(mesh.userData, loadedViewVersion);
+      // Ladder-completeness stamp for the never-downgrade display gate.
+      stampLadderComplete(mesh.userData);
       // Record the committed data reference — a later update returning the
       // SAME reference (memoized progressive concat) can then take the
       // stamp-only no-op path instead of re-projecting + re-uploading.

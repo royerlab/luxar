@@ -112,6 +112,7 @@ function makeCtx(overrides: Partial<NodeBuildCtx> = {}): NodeBuildCtx & {
     releaseLazyGSplats: vi.fn(),
     releaseLazyPoints: vi.fn(),
     releaseLazyLines: vi.fn(),
+    kickRefinementIfIdle: vi.fn(),
     applyEffectiveAttrs,
     deriveNodeViewState,
     connectLoaderToMonitor,
