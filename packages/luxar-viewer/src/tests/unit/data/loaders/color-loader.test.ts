@@ -277,6 +277,36 @@ describe('loadColorRanges (orchestrator)', () => {
     expect(rl.loadDirectTyped).not.toHaveBeenCalled();
   });
 
+  it('allocates a fresh buffer instead of reusing an UNDERSIZED Float32 target', async () => {
+    // Regression (deep-check finding): an accumulator whose buffer was
+    // swapped to an exact-size Float32Array by a smaller earlier load must
+    // not be reused for a larger load — TypedArray out-of-bounds writes are
+    // silently dropped, truncating colors with no error.
+    const array = {
+      dtype: 'uint16',
+      shape: [10, 3],
+      attrs: {
+        encoding: {
+          name: 'geolog_perchannel_u16',
+          bits: 16,
+          col_lo: [0, 0, 0],
+          col_hi: [1, 1, 1],
+          zero_level: true,
+          original_dtype: 'float32',
+        },
+      },
+    } as never;
+    const rl = makeFakeRangeLoader();
+    const undersized = new Float32Array(3); // one item; the load needs four
+    const ranges: ColorRange[] = [{ start: 0, end: 4 }];
+
+    const out = await loadColorRanges(array, ranges, rl, {} as never, 'TEST', undersized);
+
+    expect(out).toBeInstanceOf(Float32Array);
+    expect(out).not.toBe(undersized); // MUST have allocated a fitting buffer
+    expect((out as Float32Array).length).toBe(12);
+  });
+
   it('takes the direct path for unencoded uint8 colors and never invokes RangeLoader', async () => {
     mockZarrGet.mockResolvedValueOnce({ data: new Uint8Array([10, 20, 30, 40, 50, 60]) } as never);
     const array = {

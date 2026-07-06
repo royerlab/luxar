@@ -186,8 +186,15 @@ export async function loadColorRanges(
   //    restore original dtype using the CALLER attrs (not the target's), so
   //    an array_ref'd uint8 colors attribute still ends up uint8 even when
   //    the target storage is float32.
+  //    Reuse the caller's Float32 target only when it actually FITS this
+  //    load — a smaller buffer (e.g. an accumulator swapped to an exact-size
+  //    buffer by an earlier load) would silently truncate the decode: the
+  //    range writes past its end are dropped by TypedArray semantics and no
+  //    error surfaces.
   const decodedFloat32 =
-    targetBuffer instanceof Float32Array ? targetBuffer : new Float32Array(totalElements);
+    targetBuffer instanceof Float32Array && targetBuffer.length >= totalElements
+      ? targetBuffer
+      : new Float32Array(totalElements);
 
   const shape = array.shape;
   const actualElementsPerItem = shape.length === 2 ? shape[1] : 1;
