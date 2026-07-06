@@ -79,6 +79,36 @@ describe('decodePerChannel — worker entry point', () => {
     expect(Array.from(rangeDecoded)).toEqual(Array.from(wholeDecoded.slice(1)));
   });
 
+  it('decodes geolog (TRUE-log HDR colors) identically to the main-thread dequant', async () => {
+    const logLo = new Float64Array([Math.log(1e-3), Math.log(0.5)]);
+    const logHi = new Float64Array([Math.log(10), Math.log(2.0)]);
+    const data = new Uint16Array([0, 1, 65535, 30000, 0, 7]);
+    const decoded = await decodePerChannel(ctx, {
+      data,
+      kind: 'geolog',
+      colLo: logLo,
+      colHi: logHi,
+      zeroLevel: true,
+      colOffset: 0,
+      bits: 16,
+    });
+    const dequant = ArrayDecoder.makePerChannelDequant(
+      {
+        name: 'geolog_perchannel_u16',
+        bits: 16,
+        col_lo: Array.from(logLo),
+        col_hi: Array.from(logHi),
+        zero_level: true,
+      },
+      2
+    );
+    for (let i = 0; i < data.length; i++) {
+      expect(decoded[i]).toBe(Math.fround(dequant(data[i], i % 2)));
+    }
+    expect(decoded[0]).toBe(0);
+    expect(decoded[4]).toBe(0);
+  });
+
   it('rejects a bits/container mismatch', async () => {
     await expect(
       decodePerChannel(ctx, {

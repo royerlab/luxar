@@ -75,7 +75,9 @@ export async function loadPerChannel(
     ? 'signed_log'
     : name.startsWith('log_perchannel')
       ? 'log'
-      : 'linear';
+      : name.startsWith('geolog_perchannel')
+        ? 'geolog'
+        : 'linear';
   const bits: 8 | 16 = (enc.bits ?? (name.endsWith('u8') ? 8 : 16)) === 8 ? 8 : 16;
   const zeroLevel = enc.zero_level === true;
   // f64 scales, shared (structured-cloned) across all range decodes.
