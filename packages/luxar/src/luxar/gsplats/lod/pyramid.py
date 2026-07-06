@@ -23,6 +23,7 @@ from luxar.gsplats.lod.additive import (
     BreakpointSpec,
     clamp_counts_breakpoints,
     make_additive_lod,
+    sibling_aware_stream_breakpoints,
     validate_counts_breakpoints,
 )
 from luxar.gsplats.lod.substitutive import (
@@ -127,13 +128,24 @@ def make_lod_pyramid(
     # abort the build ("largest breakpoint exceeds N"). String/energy specs
     # pass through (already size-adaptive).
     out = pyramid
+    coarsest = out.n_substitutive - 1
     for s in range(out.n_substitutive):
         level_n = out.at_substitutive(s).n_splats
+        level_breakpoints = clamp_counts_breakpoints(breakpoints, level_n)
+        if s < coarsest:
+            # Every level finer than the coarsest has a coarser sibling the
+            # viewer upgrades FROM — raise a stream ladder's first chunk so
+            # the catch-up fires at chunk 1-2 instead of the ladder tail
+            # (see sibling_aware_stream_breakpoints). The coarsest keeps the
+            # user's small base: it is the eager fast-first-paint level.
+            level_breakpoints = sibling_aware_stream_breakpoints(
+                level_breakpoints, level_n, compression_factor
+            )
         out = make_additive_lod(
             out,
             n_lods=n_additive_lods,
             method=additive_method,
-            breakpoints=clamp_counts_breakpoints(breakpoints, level_n),
+            breakpoints=level_breakpoints,
             truncation_sigmas=truncation_sigmas,
             max_n_dense=max_n_dense,
             seed=None if seed is None else seed + s,

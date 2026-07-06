@@ -508,3 +508,62 @@ class TestRecipeParamsCoarsenDims:
         for s in range(out.n_substitutive):
             c0 = np.asarray(out.at_substitutive(s).flattened().centers)[:, 0]
             assert np.abs(c0 - np.round(c0)).max() < 1e-4
+
+
+# ── sibling-aware stream ladders across the recipes ─────────────────────────
+
+
+def test_tiles_stream_parts_keep_user_base():
+    """Plain tiles have no coarser lod-group sibling — parts keep the user's
+    stream base (no sibling-aware raise)."""
+    data = _make_random_gsplat(n=400)
+    tree = build_recipe(
+        data, "tiles", _params(max_elements=120, breakpoints="stream:30")
+    )
+    for leaf in iter_leaves(tree):
+        assert leaf.additive_sublods[0].stats["lod_stream_chunk_splats"] == 30
+
+
+def test_overview_fine_parts_are_sibling_aware():
+    """overview: the fine partition sits UNDER the coarse cap, so each part's
+    stream base is raised to ceil(part_n / 2K); the cap itself is the group's
+    coarsest and keeps the user base."""
+    import math
+
+    data = _make_random_gsplat(n=400)
+    res = build_recipe(
+        data,
+        "overview",
+        _params(max_elements=120, compression_factor=4, breakpoints="stream:4"),
+    )
+    coarse, fine = res.children  # coarsest→finest in memory
+    assert coarse.additive_sublods[0].stats["lod_stream_chunk_splats"] == 4
+    for leaf in iter_leaves(fine):
+        expected = max(4, math.ceil(leaf.n_splats / 8.0))
+        assert leaf.additive_sublods[0].stats["lod_stream_chunk_splats"] == expected
+
+
+def test_adaptive_per_part_levels_are_sibling_aware():
+    """adaptive: within each part's lod group, every level finer than the
+    part's coarsest gets a raised stream base; the coarsest keeps the user
+    base."""
+    import math
+
+    data = _make_random_gsplat(n=400)
+    res = build_recipe(
+        data,
+        "adaptive",
+        _params(
+            max_elements=120,
+            compression_factor=4,
+            levels=2,
+            breakpoints="stream:4",
+        ),
+    )
+    for part in res.children:
+        for i, child in enumerate(part.children):  # coarsest→finest in memory
+            chunk = child.additive_sublods[0].stats["lod_stream_chunk_splats"]
+            if i == 0:  # the part's coarsest level
+                assert chunk == 4
+            else:
+                assert chunk == max(4, math.ceil(child.n_splats / 8.0))

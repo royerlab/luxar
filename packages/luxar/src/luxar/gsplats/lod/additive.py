@@ -202,6 +202,46 @@ def _det_L(data: GSplatData) -> np.ndarray:
     return out
 
 
+def sibling_aware_stream_breakpoints(
+    breakpoints: BreakpointSpec,
+    leaf_n: int,
+    compression_factor: int,
+) -> BreakpointSpec:
+    """Raise a ``stream:C`` ladder's first chunk for a leaf that has a
+    COARSER SIBLING in its lod group.
+
+    Measured pathology (h2afva vrefit, 23.4M splats): with every level's
+    geometric ladder starting at the SAME small base chunk, the point where a
+    finer level's committed content catches up with its coarser sibling —
+    whether by count, energy, or measured L² quality — structurally lands
+    ``log2(sibling_total / base)`` sequential network passes into the ladder,
+    i.e. always 2-3 chunks from the END. Upgrades therefore feel like
+    "waits until fully loaded".
+
+    Fix the geometry instead of the currency: a leaf whose group contains a
+    coarser sibling starts its ladder at ``ceil(leaf_n / (2·K))`` — half the
+    sibling's expected size — so the catch-up fires at chunk 1-2 by
+    construction (energy-ordered first chunks of that size carry ~70%+ of the
+    leaf's energy on real data, comfortably past the viewer's committed-energy
+    switch threshold). The user's ``stream:C`` base still applies wherever it
+    is LARGER, and — crucially — the group's COARSEST leaf must NOT go through
+    this helper: it is the eager default level whose small first chunk is the
+    fast-first-paint path.
+
+    Non-``stream:`` specs (equal-count, explicit counts, energy fractions)
+    pass through untouched — their chunk structure has no shared-base
+    pathology (e.g. equal-count crosses the sibling at chunk 1 already).
+    """
+    if not (isinstance(breakpoints, str) and breakpoints.startswith("stream:")):
+        return breakpoints
+    try:
+        user_base = int(breakpoints[len("stream:") :])
+    except ValueError:
+        return breakpoints
+    sibling_base = math.ceil(leaf_n / (2.0 * max(2, compression_factor)))
+    return f"stream:{max(user_base, sibling_base)}"
+
+
 def _self_energy_score(data: GSplatData) -> np.ndarray:
     """Self-energy ranking score: $a_i^2 \\, |\\Sigma_i|^{1/2}$.
 
@@ -866,20 +906,26 @@ def make_additive_lod(
 
     # Build new substitutive_levels: replace target index with the new
     # ladder; carry the rest through verbatim.
+    merged_level_stats = {
+        **data.substitutive_levels[s_target].stats,
+        "lod_method": method,
+        "lod_n_lods": len(new_sublods),
+        "lod_breakpoints_kind": kind,
+        "lod_cutpoints": [int(c) for c in cuts],
+    }
+    # The ladder's own total is only a FALLBACK weight: a substitutive build
+    # stamps the group-consistent finest-content energy first (see
+    # make_substitutive_lod) and that must win for coarser levels — self-
+    # energy is quadratic in amplitude, so per-level totals differ and would
+    # skew partition-of-lod aggregation.
+    merged_level_stats.setdefault("reference_energy", float(reference_energy))
     new_sub_levels = list(data.substitutive_levels)
     new_sub_levels[s_target] = SubstitutiveLevel(
         additive_sublods=new_sublods,
         compression_factor=data.substitutive_levels[s_target].compression_factor,
         parent_method=data.substitutive_levels[s_target].parent_method,
         level_index=data.substitutive_levels[s_target].level_index,
-        stats={
-            **data.substitutive_levels[s_target].stats,
-            "lod_method": method,
-            "lod_n_lods": len(new_sublods),
-            "lod_breakpoints_kind": kind,
-            "lod_cutpoints": [int(c) for c in cuts],
-            "reference_energy": float(reference_energy),
-        },
+        stats=merged_level_stats,
     )
 
     out_stats = dict(data.stats)

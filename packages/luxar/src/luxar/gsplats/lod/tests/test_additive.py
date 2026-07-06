@@ -609,3 +609,26 @@ def test_make_additive_lod_substitutive_level_out_of_bounds() -> None:
     data = _make_random_gsplat(n=8, ndim=3, seed=13)
     with pytest.raises(ValueError, match="out of bounds"):
         make_additive_lod(data, n_lods=2, substitutive_level=2)
+
+
+# ── sibling-aware stream ladders (upgrade catch-up geometry) ────────────────
+
+
+def test_sibling_aware_stream_breakpoints_helper() -> None:
+    """`stream:C` bases are raised to ceil(n / 2K) for leaves that have a
+    coarser sibling; every other spec passes through untouched."""
+    from luxar.gsplats.lod.additive import sibling_aware_stream_breakpoints as saw
+
+    # Raised to ceil(leaf_n / (2·K)) when that exceeds the user base.
+    assert saw("stream:8", 512, 4) == "stream:64"
+    # The user's base wins when it is already larger.
+    assert saw("stream:100", 512, 4) == "stream:100"
+    # Compression factor floors at 2 (a degenerate K=1 group must not force
+    # the whole leaf into the first chunk).
+    assert saw("stream:1", 512, 1) == "stream:128"
+    # Non-stream specs pass through untouched (no shared-base pathology).
+    assert saw("equal-count", 512, 4) == "equal-count"
+    assert saw([10, 20], 512, 4) == [10, 20]
+    assert saw("energy:0.5,1.0", 512, 4) == "energy:0.5,1.0"
+    # Malformed stream payloads pass through for the validator to reject.
+    assert saw("stream:abc", 512, 4) == "stream:abc"
