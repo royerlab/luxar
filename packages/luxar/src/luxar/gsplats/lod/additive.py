@@ -28,6 +28,7 @@ overhead (supp doc §4.3); we switch automatically.
 from __future__ import annotations
 
 import heapq
+import math
 from typing import Any, Literal, Sequence, Union
 
 import numpy as np
@@ -756,7 +757,12 @@ def make_additive_lod(
                     if target_view.colors is not None
                     else None
                 ),
-                stats={"lod_method": "none", "lod_level": 0},
+                stats={
+                    "lod_method": "none",
+                    "lod_level": 0,
+                    # Trivially complete: nothing to stream.
+                    "energy_fraction_cum": 1.0,
+                },
                 truncation_radius=target_view.truncation_radius,
             )
         ]
@@ -765,6 +771,7 @@ def make_additive_lod(
         # lod_method above) rather than mislabeling whatever spec was requested
         # as "equal-count".
         kind = "none"
+        energy_total = 0.0
     else:
         # Build the (expensive) sparse Gram at most once: greedy/spectral need
         # it for the ordering, and energy-fraction breakpoints need it again
@@ -806,6 +813,14 @@ def make_additive_lod(
             else None
         )
 
+        # Cumulative self-energy over the ladder ordering — the e(k) of the
+        # viewer's committed quality Q·e(k). Fractions, so the shared π^{D/2}
+        # constant of the true self-energy cancels and the (cheap, O(N))
+        # ordering score suffices; π^{D/2} is multiplied back only for the
+        # absolute reference_energy weight w (partition aggregation).
+        energy_cum = np.cumsum(_self_energy_score(target_view)[order])
+        energy_total = float(energy_cum[-1]) if energy_cum.size else 0.0
+
         new_sublods = []
         prev = 0
         for level, end in enumerate(cuts):
@@ -819,6 +834,10 @@ def make_additive_lod(
                 "lod_n_splats": int(end - prev),
                 "lod_cumulative_n": end,
             }
+            if energy_total > 0.0:
+                e_frac = float(energy_cum[end - 1] / energy_total)
+                if np.isfinite(e_frac):
+                    lod_stats["energy_fraction_cum"] = min(1.0, max(0.0, e_frac))
             if kind == "stream":
                 # Provenance: the bandwidth-derived first-chunk size, otherwise
                 # only recoverable by re-parsing the breakpoints string.
@@ -837,6 +856,14 @@ def make_additive_lod(
             )
             prev = end
 
+    # The leaf's absolute reference energy w = Σ aᵢ²·π^{D/2}·|Σᵢ|^{1/2} — the
+    # weight of this leaf in partition-level quality aggregation (disjoint
+    # regions ⇒ L² decomposes additively; see lod/quality.py). The ordering
+    # score already carries a²·|Σ|^{1/2}; multiply the shared constant back.
+    reference_energy = energy_total * math.pi ** (target_view.ndim / 2.0)
+    if not np.isfinite(reference_energy):
+        reference_energy = 0.0
+
     # Build new substitutive_levels: replace target index with the new
     # ladder; carry the rest through verbatim.
     new_sub_levels = list(data.substitutive_levels)
@@ -851,6 +878,7 @@ def make_additive_lod(
             "lod_n_lods": len(new_sublods),
             "lod_breakpoints_kind": kind,
             "lod_cutpoints": [int(c) for c in cuts],
+            "reference_energy": float(reference_energy),
         },
     )
 
