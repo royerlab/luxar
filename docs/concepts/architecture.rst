@@ -461,7 +461,7 @@ Each array is classified by what it represents:
    Dtype Encoding based on semantic type:
    - COORDINATE → uint16 (±32K range, ~0.1% precision)
    - COLOR (SDR) → uint8 (256 levels per channel)
-   - COLOR (HDR) → float32 (full precision)
+   - COLOR (HDR) → geolog_perchannel_u16 (per-channel true-log; decoded to float32)
    - POSITIVE_SCALAR → uint16 (log quantization for range)
    - BOUNDED_SCALAR → uint8 (linear quantization)
 

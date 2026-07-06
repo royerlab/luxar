@@ -242,7 +242,68 @@ describe('makePerChannelDequant', () => {
     expect(current(255, 0)).toBeCloseTo(Math.expm1(3.0), 12); // top code = hi
   });
 
-  it('classifies all six per-channel encodings as known, self-decoded, not global-quantized', () => {
+  it('geolog: round-trips wide-range HDR colors with uniform relative error and exact zeros', () => {
+    // Mirrors the Python encoder (_encode_geolog_perchannel): per-column
+    // TRUE-log anchors over positive min/max, code 0 reserved for zeros.
+    const quantGeolog = (values: number[][], bits: number) => {
+      const cols = values[0].length;
+      const top = (1 << bits) - 1;
+      const lo = Array.from({ length: cols }, (_, c) => {
+        const pos = values.filter((r) => r[c] > 0).map((r) => Math.log(r[c]));
+        return pos.length ? Math.min(...pos) : 0;
+      });
+      const hi = Array.from({ length: cols }, (_, c) => {
+        const pos = values.filter((r) => r[c] > 0).map((r) => Math.log(r[c]));
+        return pos.length ? Math.max(...pos) : 0;
+      });
+      const u = values.map((row) =>
+        row.map((v, c) =>
+          v <= 0
+            ? 0
+            : 1 + Math.round(((Math.log(v) - lo[c]) / Math.max(hi[c] - lo[c], 1e-30)) * (top - 1))
+        )
+      );
+      return { u, lo, hi };
+    };
+    const vals = [
+      [1e-4, 5.0, 0.001],
+      [0.0, 0.0, 0.0], // whole-row zeros (reserved level)
+      [10.0, 1e-2, 1.0],
+      [0.5, 0.0, 9.9], // lone zero entry
+    ];
+    const { u, lo, hi } = quantGeolog(vals, 16);
+    const deq = ArrayDecoder.makePerChannelDequant(
+      { name: 'geolog_perchannel_u16', bits: 16, col_lo: lo, col_hi: hi, zero_level: true },
+      3
+    );
+    for (let i = 0; i < vals.length; i++) {
+      for (let c = 0; c < 3; c++) {
+        const got = deq(u[i][c], c);
+        if (vals[i][c] === 0) {
+          expect(got).toBe(0); // exact zero, not a tiny value
+        } else {
+          // uniform RELATIVE precision across 5 decades
+          expect(Math.abs(got - vals[i][c]) / vals[i][c]).toBeLessThan(3e-4);
+          expect(got).toBeGreaterThan(0);
+        }
+      }
+    }
+  });
+
+  it('geolog: zero level is the name contract (flag not required)', () => {
+    const enc = {
+      name: 'geolog_perchannel_u8',
+      bits: 8,
+      col_lo: [Math.log(0.1)],
+      col_hi: [Math.log(10)],
+    };
+    const deq = ArrayDecoder.makePerChannelDequant(enc, 1); // no zero_level attr
+    expect(deq(0, 0)).toBe(0);
+    expect(deq(1, 0)).toBeCloseTo(0.1, 6);
+    expect(deq(255, 0)).toBeCloseTo(10, 4);
+  });
+
+  it('classifies all eight per-channel encodings as known, self-decoded, not global-quantized', () => {
     for (const n of [
       'log_perchannel_u8',
       'log_perchannel_u16',
@@ -250,6 +311,8 @@ describe('makePerChannelDequant', () => {
       'signed_log_perchannel_u16',
       'linear_perchannel_u8',
       'linear_perchannel_u16',
+      'geolog_perchannel_u8',
+      'geolog_perchannel_u16',
     ]) {
       expect(ArrayDecoder.isPerChannelQuantEncodingName(n)).toBe(true);
       expect(ArrayDecoder.isKnownEncodingName(n)).toBe(true);

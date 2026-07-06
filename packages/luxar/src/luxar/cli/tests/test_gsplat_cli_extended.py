@@ -2444,6 +2444,68 @@ class TestLODCommand:
         assert result.exit_code == 0, f"failed:\n{result.stdout}"
         assert GSplatData.load(out).n_substitutive >= 2
 
+    def test_quality_stamps_rejected_for_stream(
+        self, runner: CliRunner, medium_gsplats: Path, tmp_path: Path
+    ) -> None:
+        """--quality-stamps is a substitutive-only knob; stream rejects it."""
+        out = tmp_path / "x.gsplats.zarr"
+        result = runner.invoke(
+            app,
+            [
+                "gsplat",
+                "lod",
+                str(medium_gsplats),
+                str(out),
+                "--recipe",
+                "stream",
+                "--quality-stamps",
+            ],
+        )
+        assert result.exit_code != 0
+        assert not out.exists()
+
+    def test_quality_stamps_persist_through_levels(
+        self, runner: CliRunner, medium_gsplats: Path, tmp_path: Path
+    ) -> None:
+        """Default-on Q·e stamps round-trip to disk: every substitutive level
+        carries quality + reference_energy and every sub-LOD carries a
+        monotone energy_fraction_cum ending at 1.0; --no-quality-stamps drops
+        the Q keys (the free e(k)/w stamps remain)."""
+        from luxar.gsplats.gsplat_data import GSplatData
+
+        out = tmp_path / "q.gsplats.zarr"
+        result = runner.invoke(
+            app,
+            ["gsplat", "lod", str(medium_gsplats), str(out), "--recipe", "levels"],
+        )
+        assert result.exit_code == 0, f"failed:\n{result.stdout}"
+        loaded = GSplatData.load(out)
+        levels = loaded.substitutive_levels
+        assert levels[0].stats["quality"] == 1.0  # the finest IS the reference
+        for lev in levels:
+            assert 0.0 <= lev.stats["quality"] <= 1.0
+            assert lev.stats["reference_energy"] > 0
+            e = [sub.stats["energy_fraction_cum"] for sub in lev.additive_sublods]
+            assert e == sorted(e)
+            assert e[-1] == pytest.approx(1.0)
+
+        out_off = tmp_path / "noq.gsplats.zarr"
+        result = runner.invoke(
+            app,
+            [
+                "gsplat",
+                "lod",
+                str(medium_gsplats),
+                str(out_off),
+                "--recipe",
+                "levels",
+                "--no-quality-stamps",
+            ],
+        )
+        assert result.exit_code == 0, f"failed:\n{result.stdout}"
+        for lev in GSplatData.load(out_off).substitutive_levels:
+            assert "quality" not in lev.stats
+
     def test_legacy_recipe_names_error_with_pointer(
         self, runner: CliRunner, medium_gsplats: Path, tmp_path: Path
     ) -> None:
@@ -4591,3 +4653,81 @@ class TestReencode:
         post_root = zarr.open_group(str(out), mode="r")
         assert "pipeline" in post_root
         assert dict(post_root["pipeline"].attrs).get("method") == "test_tag"
+
+
+class TestAnnotateQualityCommand:
+    """`luxar gsplat annotate-quality` — in-place Q·e stamp retrofit."""
+
+    def _build_unstamped_levels(
+        self, runner: CliRunner, source: Path, out: Path
+    ) -> None:
+        result = runner.invoke(
+            app,
+            [
+                "gsplat",
+                "lod",
+                str(source),
+                str(out),
+                "--recipe",
+                "levels",
+                "--no-quality-stamps",
+            ],
+        )
+        assert result.exit_code == 0, f"failed:\n{result.stdout}"
+
+    def test_annotate_stamps_in_place(
+        self, runner: CliRunner, medium_gsplats: Path, tmp_path: Path
+    ) -> None:
+        """--with-quality retrofits Q + w onto a store built without them."""
+        from luxar.gsplats.gsplat_data import GSplatData
+
+        out = tmp_path / "lvl.gsplats.zarr"
+        self._build_unstamped_levels(runner, medium_gsplats, out)
+        for lev in GSplatData.load(out).substitutive_levels:
+            assert "quality" not in lev.stats
+
+        result = runner.invoke(
+            app,
+            [
+                "gsplat",
+                "annotate-quality",
+                str(out),
+                "--with-quality",
+                "--device",
+                "cpu",
+            ],
+        )
+        assert result.exit_code == 0, f"failed:\n{result.stdout}"
+        levels = GSplatData.load(out).substitutive_levels
+        assert levels[0].stats["quality"] == 1.0
+        for lev in levels:
+            assert 0.0 <= lev.stats["quality"] <= 1.0
+            assert lev.stats["reference_energy"] > 0
+            for sub in lev.additive_sublods:
+                assert 0.0 < sub.stats["energy_fraction_cum"] <= 1.0
+
+    def test_annotate_dry_run_writes_nothing(
+        self, runner: CliRunner, medium_gsplats: Path, tmp_path: Path
+    ) -> None:
+        import zarr
+
+        from luxar.gsplats.gsplat_data import GSplatData
+
+        out = tmp_path / "lvl.gsplats.zarr"
+        self._build_unstamped_levels(runner, medium_gsplats, out)
+        before_hash = zarr.open_group(str(out), mode="r").attrs["content_hash"]
+        result = runner.invoke(
+            app, ["gsplat", "annotate-quality", str(out), "--dry-run"]
+        )
+        assert result.exit_code == 0, f"failed:\n{result.stdout}"
+        for lev in GSplatData.load(out).substitutive_levels:
+            assert "quality" not in lev.stats
+        assert zarr.open_group(str(out), mode="r").attrs["content_hash"] == before_hash
+
+    def test_annotate_rejects_compressed_store(
+        self, runner: CliRunner, tmp_path: Path
+    ) -> None:
+        fake = tmp_path / "x.gsplats.zarr.zip"
+        fake.write_bytes(b"not a zip")
+        result = runner.invoke(app, ["gsplat", "annotate-quality", str(fake)])
+        assert result.exit_code != 0

@@ -44,6 +44,23 @@ describe('createLODProgressProvider', () => {
     });
   });
 
+  it('surfaces the committed energy fraction e(k) when the loader is stamped', () => {
+    const stamped = { ...progressiveLoader(2, 4, true), committedEnergyFraction: 0.7 };
+    const unstamped = { ...progressiveLoader(2, 4, true), committedEnergyFraction: null };
+    const provider = createLODProgressProvider({
+      loaderMaps: [
+        new Map<string, unknown>([
+          ['/stamped', stamped],
+          ['/legacy', unstamped],
+        ]),
+      ],
+      lodGroupRegistry: null,
+    });
+    const states = provider.getLODStates();
+    expect(states.get('/stamped')?.energy).toBe(0.7);
+    expect(states.get('/legacy')?.energy).toBeUndefined();
+  });
+
   it('marks an additive loader as not refining once all levels are loaded', () => {
     const loaders = new Map<string, unknown>([['/pts', progressiveLoader(3, 3, true)]]);
     const provider = createLODProgressProvider({

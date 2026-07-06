@@ -58,7 +58,7 @@ Each Gaussian splat is parameterized by:
 | `amplitudes` | (N,) or (1,) | uint8/uint16/float32 | POSITIVE_SCALAR | Non-negative intensity |
 | `cholesky_factors_diag` | (N, d) or (1, d) | uint8/uint16/float32 | CHOLESKY_DIAG | Diagonal of L (positive, scale-like) |
 | `cholesky_factors_offdiag` | (N, d*(d-1)/2) or (1, …) | uint8/uint16/float32 | CHOLESKY_OFFDIAG | Strictly-lower elements of L (signed); absent when d=1 |
-| `colors` | (N, 3) or (1, 3) | float32/uint8 | COLOR | RGB colors (optional); uint8 [0-255] for SDR, float32 for HDR; absent if not present |
+| `colors` | (N, 3) or (1, 3) | uint8/uint16/float32 | COLOR | RGB colors (optional); SDR → `rgb_uint8`; HDR → `geolog_perchannel_u16` (AUTO; u8 under MEMORY, float32 under PRECISION); absent if not present |
 
 **Note**: Since **v3.1** the packed lower-triangular factor L (where Σ = LLᵀ) is
 stored as **two arrays** — the diagonal (`cholesky_factors_diag`) and the
@@ -325,6 +325,50 @@ per-array quantization bounds.
 
 **Note**: Broadcasting information is stored per-array via encoding metadata
 (see Broadcasting Convention above), not in the group attributes.
+
+### Quality Stamps (`lod_stats` / `level_stats`, format-additive)
+
+Builds stamp measured approximation quality alongside the LOD structure so the
+viewer can make principled display decisions (raw element counts compare
+apples to oranges across substitutive levels). All keys live inside the
+existing `lod_stats` / `level_stats` attr dicts — additive, no version bump;
+readers treat absence as "unstamped" and fall back to counts.
+
+- **`lod_stats.energy_fraction_cum`** (per additive sub-LOD, `additive_<i>`
+  group or single-set leaf): cumulative self-energy fraction *e(k)* ∈ (0, 1]
+  of the ladder prefix up to and including this sub-LOD
+  (`Σ aᵢ²·|Σᵢ|^½` over the prefix ÷ the leaf total; last entry = 1.0).
+  The additive orderer's own ranking criterion — energy-ordered ladders
+  front-load it, so a small prefix carries most of the energy.
+- **`level_stats.reference_energy`** (per leaf): the leaf's absolute total
+  self-energy *w* = `Σ aᵢ²·π^{D/2}·|Σᵢ|^½`. Disjoint partition parts sum, so
+  *w* is the weight for aggregating per-leaf qualities across a partition.
+  Inside a `kind=lod` group every level carries the **finest** content's
+  total (group-consistent — self-energy is quadratic in amplitude, so
+  per-level totals differ and would skew weighted aggregation).
+- **`level_stats.quality`** (per `kind=lod` child): measured mixture-L²
+  quality *Q* = `1 − ‖level − finest‖²/‖finest‖²` ∈ [0, 1] of the COMPLETE
+  level vs its group's finest content (constant-cost sampled estimator, see
+  `luxar.gsplats.lod.quality`). The finest side is 1.0 by definition
+  (including each part leaf of an `overview` fine partition).
+
+The viewer's recursive quality algebra: a leaf currently shows quality
+`q = Q·e(k)`; a partition shows `Σ wₚ qₚ / Σ wₚ`; a lod group shows its
+visible child's `q`. The LOD display gate releases an upgrade swap once the
+candidate's committed energy reaches a threshold (0.6) instead of waiting for
+the count crossover; `Q` feeds the layers-panel / data-monitor readouts.
+
+Stamps are written by every recipe build (`RecipeParams.quality_stamps`,
+default on; `Q` measurement can be disabled with `--no-quality-stamps`) and
+can be retrofitted onto existing stores in place — no refit, no re-ladder —
+with `luxar gsplat annotate-quality <store> [--with-quality]` (re-stamps the
+root `content_hash`, so viewer caches invalidate automatically).
+
+Related build-side geometry: `stream:<C>` ladders inside a lod group are
+**sibling-aware** — every level with a coarser sibling starts its ladder at
+`max(C, ceil(n/(2·K)))` so an upgrade's committed prefix passes the sibling
+within 1-2 chunks (the group's coarsest keeps the small user base as the
+fast-first-paint level).
 
 ### Fitting Group Attributes (Fitter-Agnostic)
 
@@ -750,7 +794,7 @@ result.save(
     include_provenance=True,     # Store image metadata
     description="DAPI nuclei fitting",
 )
-# Colors: SDR (uint8) vs HDR (float32, values > 1) is auto-detected from the
+# Colors: SDR (uint8) vs HDR (values > 1 -> geolog_perchannel_u16) is auto-detected from the
 # color values and recorded in the color encoding metadata — no color_mode param.
 
 # Memory-optimized save (quantization enabled)
@@ -940,6 +984,18 @@ finest level instead). Both paths go through the shared
 ---
 
 ## Changelog
+
+- **encoding policy** (2026-07-05, no format change): HDR COLOR arrays are now
+  quantized with the new **`geolog_perchannel_u8/u16`** encoding (AUTO → u16,
+  MEMORY → u8; PRECISION keeps float32): per-column min/max-anchored TRUE-log
+  grid (attrs `col_lo`/`col_hi` in ln-domain), uniform relative precision
+  across each channel's dynamic range, code 0 reserved for exact zeros (the
+  reserved level is the name's contract — no legacy variant). Chosen by the
+  2026-07 HDR-color spike (6 datasets, 2–12.6 realized decades): true-log
+  dominated linear fixed-point and log1p per-channel everywhere; ~4× smaller
+  than float32 on realistic data with faint-exposure renders ≥147 dB.
+  Completes the scalar↔per-channel family matrix
+  (`bounded`↔`linear_perchannel`, `geolog`↔`geolog_perchannel`).
 
 - **encoding + compression policy** (2026-07-05, no format change):
   - Wide-dynamic-range POSITIVE_SCALAR arrays (gsplat amplitudes, and any

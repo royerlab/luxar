@@ -74,3 +74,45 @@ def test_make_lod_pyramid_defaults_to_auto_substitutive_method() -> None:
         data, compression_factor=4, levels=1, n_additive_lods=2, device="cpu"
     )
     assert pyr.n_substitutive == 2
+
+
+def test_pyramid_stream_ladders_are_sibling_aware() -> None:
+    """Levels with a coarser sibling get a raised stream base so an upgrade's
+    committed prefix passes the sibling's total within two chunks; the
+    coarsest level keeps the user's small fast-first-paint base."""
+    import math
+
+    from luxar.gsplats.lod import make_lod_pyramid
+
+    data = _make_random_gsplat(n=256, ndim=3, seed=7)
+    pyr = make_lod_pyramid(
+        data,
+        compression_factor=4,
+        levels=2,
+        substitutive_method="kmeans_lloyd",
+        additive_method="self_energy",
+        breakpoints="stream:4",
+        device="cpu",
+        seed=0,
+    )
+    coarsest = pyr.n_substitutive - 1
+    for s, lev in enumerate(pyr.substitutive_levels):
+        chunk = lev.additive_sublods[0].stats["lod_stream_chunk_splats"]
+        if s == coarsest:
+            assert chunk == 4  # eager fast-first-paint level: user base kept
+        else:
+            assert chunk == max(4, math.ceil(lev.n_splats_total / 8.0))
+    # The headline invariant: each finer level's committed prefix reaches its
+    # coarser sibling's TOTAL within two network chunks (measured pathology:
+    # shared small bases pushed this to 2-3 chunks from the ladder END).
+    for s in range(coarsest):
+        sibling_total = pyr.substitutive_levels[s + 1].n_splats_total
+        cum = 0
+        chunks_needed = 0
+        for sub in pyr.substitutive_levels[s].additive_sublods:
+            cum += sub.n_splats
+            chunks_needed += 1
+            if cum >= sibling_total:
+                break
+        assert cum >= sibling_total
+        assert chunks_needed <= 2

@@ -25,6 +25,7 @@ interface ProgressiveLike {
   readonly loadedLODCount?: number;
   readonly hasMoreLODs?: boolean;
   readonly lastAllResident?: boolean;
+  readonly committedEnergyFraction?: number | null;
 }
 
 export interface LODProgressProviderDeps {
@@ -67,6 +68,10 @@ export function createLODProgressProvider(deps: LODProgressProviderDeps): LODPro
               total: p.totalLODCount,
               refining: p.hasMoreLODs === true,
               lastAllResident: p.lastAllResident,
+              energy:
+                typeof p.committedEnergyFraction === 'number'
+                  ? p.committedEnergyFraction
+                  : undefined,
             });
           }
         }

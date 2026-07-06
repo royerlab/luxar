@@ -9,7 +9,7 @@ Key Features:
     - Progressive writing to Zarr for memory-efficient processing
     - Support for nD data (not limited to 3D)
     - Morton/Hilbert spatial ordering for better compression
-    - HDR color support with float32 precision
+    - HDR color support (float32 in/out; stored quantized per-channel true-log)
     - Hierarchical scene graphs with transforms
     - Type-safe API with comprehensive validation
     - Semantic type-based encoding (quantization, broadcasting, LUT)

@@ -83,6 +83,8 @@ _OPTION_TOKENS = {
     "--timepoint": "substitutive",
     "--array-key": "substitutive",
     "--coarsen-dims": "substitutive",
+    "--quality-stamps": "substitutive",
+    "--quality-max-pair-splats": "substitutive",
     "--levels": "levels",
 }
 
@@ -601,6 +603,22 @@ def lod_recipe(
         "timepoint / channel axis). Default: all dims. (Standalone gsplats carry "
         "no display info, so pass explicit indices here.)",
     ),
+    quality_stamps: Optional[bool] = typer.Option(
+        None,
+        "--quality-stamps/--no-quality-stamps",
+        help="Measure each coarse substitutive level's mixture-L2 quality Q vs "
+        "its group's finest content and stamp it (with the reference-energy "
+        "weight w) into the level stats — the viewer folds Q with the per-chunk "
+        "committed-energy fraction e(k) into a recursive quality estimate. "
+        "Constant-cost sampled estimator; ON by default.",
+    ),
+    quality_max_pair_splats: Optional[int] = typer.Option(
+        None,
+        "--quality-max-pair-splats",
+        min=1,
+        help="Subsample cap per mixture for the quality measurement "
+        "(default 2,000,000 splats; lower = faster, noisier Q).",
+    ),
     # ── universal ──
     ordering: str = typer.Option(
         "hilbert", "--ordering", help="Spatial ordering: hilbert | morton | none."
@@ -706,6 +724,8 @@ def lod_recipe(
             "--timepoint": target_timepoint,
             "--array-key": target_array_key,
             "--coarsen-dims": coarsen_dims,
+            "--quality-stamps": quality_stamps,
+            "--quality-max-pair-splats": quality_max_pair_splats,
             "--levels": levels,
         }
         # ``hints`` add a recipe-specific clause when a given flag is rejected:
@@ -997,6 +1017,12 @@ def lod_recipe(
                 refine_iters=refine_iters,
                 volume=target_volume,
                 coarsen_dims=parsed_coarsen,
+                quality_stamps=quality_stamps if quality_stamps is not None else True,
+                quality_max_pair_splats=(
+                    quality_max_pair_splats
+                    if quality_max_pair_splats is not None
+                    else 2_000_000
+                ),
                 device=device or "auto",
                 seed=seed,
             )

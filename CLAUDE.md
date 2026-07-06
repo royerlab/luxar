@@ -412,6 +412,12 @@ luxar gsplat lod in.gsplats.zarr out.gsplats.zarr --recipe overview --compressio
 luxar gsplat lod in.gsplats.zarr out.gsplats.zarr --recipe adaptive --max-elements 250000
 luxar gsplat lod in.gsplats.zarr out.gsplats.zarr --recipe adaptive --parts 8 -K 4 -L 2
 
+# Stream ladders inside a lod group are SIBLING-AWARE: every level with a
+# coarser sibling starts its `stream:C` ladder at max(C, ceil(n/(2·K))) so an
+# upgrade's committed prefix passes the sibling within 1-2 chunks (the
+# coarsest keeps the small user base = fast first paint). The viewer releases
+# upgrade swaps at committed energy e(k) >= 0.6 (quality stamps) instead of
+# waiting for the count crossover.
 # STREAM LADDERS ARE ON BY DEFAULT everywhere: levels, adaptive per-tile
 # levels, and the overview coarse cap all carry a progressive ladder (fast
 # first paint) unless --no-additive is passed. Ladder knobs
@@ -500,6 +506,18 @@ luxar gsplat denoise data.zarr.zip out.zarr --channel 0 --timepoint 5 --denoise-
 
 # Open gsplat dataset in napari for visual inspection
 luxar gsplat napari splats.gsplats.zarr
+
+# Retrofit Q·e quality stamps onto an EXISTING .gsplats.zarr, in place (no
+# refit / re-ladder): energy_fraction_cum e(k) per additive sub-LOD +
+# reference_energy w per leaf (cheap O(N), enables the viewer's early
+# energy-threshold LOD upgrades on legacy datasets); --with-quality also
+# measures per-level mixture-L² Q vs each lod group's finest content.
+# Re-stamps the root content_hash so viewer caches invalidate automatically.
+# Directory stores only (unpack .zip first). New builds stamp by default
+# (`RecipeParams.quality_stamps` / `--no-quality-stamps` on `gsplat lod`).
+luxar gsplat annotate-quality splats.gsplats.zarr                # e(k) + w only (fast)
+luxar gsplat annotate-quality splats.gsplats.zarr --with-quality # + measured Q per level
+luxar gsplat annotate-quality splats.gsplats.zarr --dry-run      # print stamps, write nothing
 
 # Inspect, cull, and filter
 luxar gsplat info splats.gsplats.zarr          # Dataset statistics
