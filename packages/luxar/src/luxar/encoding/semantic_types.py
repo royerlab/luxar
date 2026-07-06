@@ -21,7 +21,8 @@ class SemanticType(str, Enum):
       back to float32.
     - COLOR: RGB/RGBA color values. Non-negative.
       SDR (0-1): uint8, uint16, float16, float32
-      HDR (>1): float16, float32
+      HDR (>1): geolog_perchannel_u8/u16 (per-channel true-log; AUTO u16,
+      MEMORY u8), float32 (PRECISION)
     - BOUNDED_SCALAR: Scalars with known [min, max] bounds.
       Examples: sharpness [0, 1], opacity [0, 1]
       Valid: uint8, uint16, float16, float32

@@ -223,6 +223,27 @@ export interface WasmModule {
     output: Float32Array
   ): void;
 
+  /**
+   * Decode per-channel TRUE-log uint8 codes (`x = exp(y)`; HDR colors).
+   * Reserved zero level always on (name contract — no flag).
+   */
+  decode_geolog_perchannel_u8(
+    data: Uint8Array,
+    colLo: Float64Array,
+    colHi: Float64Array,
+    colOffset: number,
+    output: Float32Array
+  ): void;
+
+  /** Decode per-channel TRUE-log uint16 codes to float32. */
+  decode_geolog_perchannel_u16(
+    data: Uint16Array,
+    colLo: Float64Array,
+    colHi: Float64Array,
+    colOffset: number,
+    output: Float32Array
+  ): void;
+
   /** Decode LUT indices (uint8) to scalar float values */
   decode_lut_scalar_u8(indices: Uint8Array, lut: Float32Array, output: Float32Array): void;
 

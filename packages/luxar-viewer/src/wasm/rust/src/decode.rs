@@ -394,6 +394,56 @@ pub fn decode_signed_log_perchannel_u16(
     );
 }
 
+/// Decode per-channel TRUE-log uint8 codes to float32 (`x = exp(y)`).
+///
+/// The HDR-color encoding: per-column min/max-anchored geometric grid in
+/// log space (`col_lo`/`col_hi` are ln(min+)/ln(max+)), uniform relative
+/// precision across each column's dynamic range. The reserved zero level is
+/// part of this encoding's NAME contract (no legacy variant), so there is
+/// no `zero_level` parameter — it is always on.
+#[wasm_bindgen]
+pub fn decode_geolog_perchannel_u8(
+    data: &[u8],
+    col_lo: &[f64],
+    col_hi: &[f64],
+    col_offset: usize,
+    output: &mut [f32],
+) {
+    decode_perchannel_impl(
+        data.len(),
+        |i| data[i] as f64,
+        col_lo,
+        col_hi,
+        255.0,
+        true,
+        col_offset,
+        f64::exp,
+        output,
+    );
+}
+
+/// Decode per-channel TRUE-log uint16 codes to float32.
+#[wasm_bindgen]
+pub fn decode_geolog_perchannel_u16(
+    data: &[u16],
+    col_lo: &[f64],
+    col_hi: &[f64],
+    col_offset: usize,
+    output: &mut [f32],
+) {
+    decode_perchannel_impl(
+        data.len(),
+        |i| data[i] as f64,
+        col_lo,
+        col_hi,
+        65535.0,
+        true,
+        col_offset,
+        f64::exp,
+        output,
+    );
+}
+
 /// Decode LUT-encoded uint8 indices to float32 (scalar mode).
 ///
 /// Each index maps to a single float value from the LUT.
@@ -643,6 +693,33 @@ mod tests {
         assert_eq!(output[0], 0.0);
         assert!((output[1] - (-(2.0f64.exp_m1())) as f32).abs() < 1e-5);
         assert!((output[2] - 2.0f64.exp_m1() as f32).abs() < 1e-5);
+    }
+
+    #[test]
+    fn test_decode_geolog_perchannel_u16_zero_level_and_anchors() {
+        // TRUE-log grid: code 0 -> exactly 0; code 1 -> exp(lo); top -> exp(hi).
+        let data = vec![0u16, 1, 65535];
+        let (lo, hi) = (vec![(1e-4f64).ln()], vec![10.0f64.ln()]);
+        let mut output = vec![0.0f32; 3];
+        decode_geolog_perchannel_u16(&data, &lo, &hi, 0, &mut output);
+        assert_eq!(output[0], 0.0);
+        assert!((output[1] - 1e-4).abs() < 1e-10);
+        assert!((output[2] - 10.0).abs() < 1e-4);
+    }
+
+    #[test]
+    fn test_decode_geolog_perchannel_u8_per_column_scales() {
+        // Two columns with different log ranges decode against their OWN
+        // anchors; the rolling counter assigns columns (0,1,0,1).
+        let data = vec![1u8, 1, 255, 255];
+        let lo = vec![0.1f64.ln(), 1.0f64.ln()];
+        let hi = vec![1.0f64.ln(), 100.0f64.ln()];
+        let mut output = vec![0.0f32; 4];
+        decode_geolog_perchannel_u8(&data, &lo, &hi, 0, &mut output);
+        assert!((output[0] - 0.1).abs() < 1e-6);
+        assert!((output[1] - 1.0).abs() < 1e-6);
+        assert!((output[2] - 1.0).abs() < 1e-5);
+        assert!((output[3] - 100.0).abs() < 1e-3);
     }
 
     #[test]

@@ -709,9 +709,11 @@ describe('ArrayDecoder - Python Compatibility Tests', () => {
         'hdr_points/colors'
       );
 
-      // Verify metadata indicates float32 (no encoding/quantization)
-      expect(attrs.encoding?.name).toBe('float32');
-      expect(ArrayDecoder.isEncoded(attrs)).toBe(false);
+      // 2026-07 policy: HDR colors are quantized per channel on a TRUE-log
+      // grid (geolog_perchannel_u16) and decoded back to float32 — the
+      // preservation property below is now verified THROUGH the decode.
+      expect(attrs.encoding?.name).toBe('geolog_perchannel_u16');
+      expect(ArrayDecoder.isEncoded(attrs)).toBe(true);
 
       // Decode
       const decoder = new ArrayDecoder(new ArrayRefRegistry());
@@ -756,25 +758,26 @@ describe('ArrayDecoder - Python Compatibility Tests', () => {
       }
     });
 
-    it('should handle HDR colors without quantization', async () => {
-      // Verify that HDR colors are NOT quantized to uint8
+    it('should quantize HDR colors per-channel true-log, never SDR uint8', async () => {
+      // HDR colors must never be crushed to SDR rgb_uint8; since 2026-07 they
+      // are geolog_perchannel_u16 with ln-domain per-column anchors and a
+      // reserved zero level (uniform RELATIVE precision — the anti-clamping
+      // guarantee, verified numerically in the test above).
 
       const { array, attrs } = await loadArrayWithAttrs(
         'test_hdr_colors.luxar.zarr',
         'hdr_points/colors'
       );
 
-      // Should be float32, not uint8
+      // uint16 codes on disk, never SDR uint8
       expect(array.dtype).not.toContain('u1');
-      expect(array.dtype).toContain('f');
+      expect(String(array.dtype)).toMatch(/uint16|u2/);
 
-      // Should have no encoding (direct float32)
-      expect(attrs.encoding?.name).toBe('float32');
-
-      // Should have no bounds (not quantized)
-      expect(attrs.encoding?.bounds).toBeUndefined();
-      expect((attrs.encoding as any)?.min).toBeUndefined();
-      expect((attrs.encoding as any)?.max).toBeUndefined();
+      expect(attrs.encoding?.name).toBe('geolog_perchannel_u16');
+      expect((attrs.encoding as any)?.zero_level).toBe(true);
+      expect((attrs.encoding as any)?.col_lo).toHaveLength(3);
+      expect((attrs.encoding as any)?.col_hi).toHaveLength(3);
+      expect(attrs.encoding?.original_dtype).toBe('float32');
     });
 
     it('should treat Python integer color arrays as direct storage', async () => {

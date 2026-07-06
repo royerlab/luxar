@@ -902,8 +902,9 @@ export class ArrayDecoder {
   /**
    * Generic per-channel quantization encodings: per-column (per-channel) log
    * (`log_perchannel_u8/u16`, non-negative), signed-log
-   * (`signed_log_perchannel_u8/u16`, signed), and linear/fixed-point
-   * (`linear_perchannel_u8/u16`, identity — COORDINATE positions/centers/vertices).
+   * (`signed_log_perchannel_u8/u16`, signed), linear/fixed-point
+   * (`linear_perchannel_u8/u16`, identity — COORDINATE positions/centers/vertices),
+   * and TRUE-log (`geolog_perchannel_u8/u16`, wide-range positive — HDR colors).
    * They carry per-channel scale arrays (`col_lo/col_hi`) rather than global
    * bounds, so they are NOT in {@link isQuantizedEncodingName} (the global-scale
    * dequant path); they have their own `'perchannel'` load path in the RangeLoader
@@ -917,17 +918,21 @@ export class ArrayDecoder {
       name === 'signed_log_perchannel_u8' ||
       name === 'signed_log_perchannel_u16' ||
       name === 'linear_perchannel_u8' ||
-      name === 'linear_perchannel_u16'
+      name === 'linear_perchannel_u16' ||
+      name === 'geolog_perchannel_u8' ||
+      name === 'geolog_perchannel_u16'
     );
   }
 
   /**
    * Build the per-channel dequantizer for a `log_perchannel_*` /
-   * `signed_log_perchannel_*` array. Mirrors the Python decoders
-   * (`_decode_log_perchannel` / `_decode_signed_log_perchannel`):
+   * `signed_log_perchannel_*` / `linear_perchannel_*` / `geolog_perchannel_*`
+   * array. Mirrors the Python decoders (`_decode_*_perchannel`):
    *   log:        `x = expm1(lo[c] + level/levels·(hi[c]-lo[c]))`
    *   signed-log: `y = lo[c] + level/levels·(hi[c]-lo[c]); x = sign(y)·expm1(|y|)`
    *   linear:     `x = lo[c] + level/levels·(hi[c]-lo[c])`  (identity; coordinates)
+   *   geolog:     `x = 0` at level 0, else `exp(lo[c] + (level-1)/(levels-1)·rng)`
+   *               (TRUE-log grid, ln-domain scales; HDR colors — always zero-level)
    * With `zero_level: true` (current writer for the log/signed-log pair),
    * level 0 is a RESERVED ZERO (decodes to exactly 0) and nonzero levels
    * `1..2^bits-1` span the nonzero-anchored `[lo, hi]` with denominator
@@ -953,7 +958,8 @@ export class ArrayDecoder {
     const isLog = name === 'log_perchannel_u8' || name === 'log_perchannel_u16';
     const isSlog = name === 'signed_log_perchannel_u8' || name === 'signed_log_perchannel_u16';
     const isLinear = name === 'linear_perchannel_u8' || name === 'linear_perchannel_u16';
-    if (!isLog && !isSlog && !isLinear) {
+    const isGeolog = name === 'geolog_perchannel_u8' || name === 'geolog_perchannel_u16';
+    if (!isLog && !isSlog && !isLinear && !isGeolog) {
       return (level: number) => level; // float32 / direct: identity
     }
     // Per-channel scales are mandatory and must match the column count. Failing
@@ -994,11 +1000,17 @@ export class ArrayDecoder {
     // zero_level (current writer): level 0 = exact zero; levels 1..2^bits-1
     // span the nonzero-anchored [lo, hi] (denominator 2^bits-2). Legacy
     // arrays (no flag) map all levels 0..2^bits-1 over a zero-anchored scale.
-    const zeroLevel = encoding!.zero_level === true;
+    // geolog_perchannel has NO legacy variant — the reserved zero level is
+    // part of the name's contract, so it ignores the flag.
+    const zeroLevel = isGeolog || encoding!.zero_level === true;
     const denom = Math.max(levels - 1, 1);
     const companded = zeroLevel
       ? (level: number, c: number) => lo[c] + ((level - 1) / denom) * rng[c]
       : (level: number, c: number) => lo[c] + (level / levels) * rng[c];
+    if (isGeolog) {
+      // TRUE-log grid: scales are ln(min+)/ln(max+) per column; exp, not expm1.
+      return (level: number, c: number) => (level === 0 ? 0 : Math.exp(companded(level, c)));
+    }
     if (isLog) {
       return (level: number, c: number) =>
         zeroLevel && level === 0 ? 0 : Math.expm1(companded(level, c));

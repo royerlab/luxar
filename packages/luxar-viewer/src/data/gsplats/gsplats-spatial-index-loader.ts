@@ -389,8 +389,16 @@ export class GSplatsSpatialIndexLoader implements GSplatsDataLoader {
 
       // Initialize accumulator types based on array metadata (must be done BEFORE loading!)
       // This ensures colorBuffer has the correct type (Uint8/Uint16/Float32)
+      // IMPORTANT: For encoded arrays, use encoding.original_dtype NOT the zarr array
+      // dtype (mirrors the lines loader). The zarr dtype is the quantized container
+      // (uint16 for geolog_perchannel HDR colors) while loadColorRanges returns the
+      // ORIGINAL dtype (float32). Typing the accumulator by the container made
+      // loadColorRanges swap in an EXACT-size Float32Array on the first HDR load;
+      // a later larger load then reused that undersized buffer and silently
+      // truncated colors (splats past the first load's count rendered colorless).
       if (this.arrays.colors) {
-        const colorDtype = String(this.arrays.colors.dtype);
+        const colorAttrs = this.arrays.colors.attrs as unknown as ArrayMetadata;
+        const colorDtype = colorAttrs?.encoding?.original_dtype || String(this.arrays.colors.dtype);
         const colorType = getExpectedColorType(colorDtype);
         // Create a small typed array to initialize accumulator types
         const sampleColors =
