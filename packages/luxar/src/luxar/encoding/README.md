@@ -655,7 +655,7 @@ encoder.encode(
 | Color Type | AUTO | PRECISION | MEMORY |
 |------------|------|-----------|--------|
 | SDR float | uint8 | float32 | uint8 |
-| HDR float | float32 | float32 | float16 |
+| HDR float | geolog_perchannel_u16 | float32 | geolog_perchannel_u8 |
 | Integer | Keep as-is | Keep as-is | Keep as-is |
 
 ### Why Explicit color_mode?

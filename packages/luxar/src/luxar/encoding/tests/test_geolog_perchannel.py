@@ -59,6 +59,24 @@ class TestHdrColorPolicy:
         if mode == EncodingMode.PRECISION:
             np.testing.assert_array_equal(decoded, colors)
 
+    def test_non_2d_hdr_input_falls_back_to_float32(self):
+        # The per-channel encoding needs (N, C); a 1-D HDR color-ish array
+        # (defensive path) must fall back to plain float32, not crash.
+        flat = np.linspace(0.0, 10.0, 30, dtype=np.float32)
+        g = zarr.group(store=zarr.MemoryStore())
+        ArrayEncoder().encode(
+            data=flat,
+            zarr_group=g,
+            name="colors",
+            semantic_type=SemanticType.COLOR,
+            mode=EncodingMode.AUTO,
+            color_mode="hdr",
+        )
+        assert g["colors"].attrs["encoding"]["name"] == "float32"
+        np.testing.assert_array_equal(
+            np.asarray(ArrayDecoder().decode(g["colors"], g)), flat
+        )
+
     def test_sdr_colors_unaffected(self):
         rng = np.random.default_rng(1)
         sdr = rng.random((500, 3)).astype(np.float32)

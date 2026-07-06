@@ -750,7 +750,7 @@ result.save(
     include_provenance=True,     # Store image metadata
     description="DAPI nuclei fitting",
 )
-# Colors: SDR (uint8) vs HDR (float32, values > 1) is auto-detected from the
+# Colors: SDR (uint8) vs HDR (values > 1 -> geolog_perchannel_u16) is auto-detected from the
 # color values and recorded in the color encoding metadata — no color_mode param.
 
 # Memory-optimized save (quantization enabled)

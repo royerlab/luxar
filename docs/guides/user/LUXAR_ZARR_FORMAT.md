@@ -6,7 +6,7 @@
 - Chunk-based spatial index for efficient nD point queries
 - Points are reordered using Morton/Hilbert space-filling curves for spatial locality
 - Compound ordering: discrete dimensions (time/channel) + spatial dimensions
-- HDR color support with float32
+- HDR color support (float32 values in/out; stored quantized per-channel true-log)
 - Transform system with matrix transposition for THREE.js compatibility
 
 This document specifies the Zarr-based storage format used by Luxar for high-performance 3D and nD scientific visualization.
@@ -41,7 +41,7 @@ This diagram shows how data flows from Python creation through storage to WebGL 
 │  luxar.encoding                                                             │
 │  ┌──────────────────┐                                                      │
 │  │ Semantic typing  │  COORDINATE → uint16 fixed-point (AUTO/MEM), f32 (PREC)    │
-│  │ Quantization     │  COLOR → uint8/float32 (SDR/HDR)                     │
+│  │ Quantization     │  COLOR → uint8 (SDR), geolog u16 (HDR)               │
 │  │ Broadcasting     │  Uniform values → single scalar                      │
 │  └────────┬─────────┘                                                      │
 │           │                                                                 │
