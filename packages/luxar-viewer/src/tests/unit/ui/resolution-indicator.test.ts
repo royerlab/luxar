@@ -61,14 +61,26 @@ describe('ResolutionIndicator', () => {
       expect(indicator.getIsVisible()).toBe(true);
     });
 
-    it('does not update text on second show() in same mode (gated by hasShownForCurrentMode)', () => {
+    it('refreshes the text in place while visible (no re-show) on later show() calls', () => {
       indicator.show(0.75);
       const el = document.body.querySelector('.luxar-resolution-indicator__text')!;
       expect(el.textContent).toContain('75%');
-      // Subsequent show() calls during the same activation are suppressed
-      // (the AdaptiveDPR caller streams DPR changes; the indicator only
-      // surfaces the first one to keep the UI calm).
+      // The AdaptiveDPR caller streams every DPR step; while the toast
+      // from this activation is still up, the percentage tracks the
+      // latest value instead of freezing on the first step.
       indicator.show(0.5);
+      expect(el.textContent).toContain('50%');
+      expect(indicator.getIsVisible()).toBe(true);
+    });
+
+    it('ignores show() after auto-hide in the same activation (no re-show, no text change)', () => {
+      indicator.show(0.75);
+      const el = document.body.querySelector('.luxar-resolution-indicator__text')!;
+      vi.advanceTimersByTime(4000); // auto-hide fires
+      expect(indicator.getIsVisible()).toBe(false);
+
+      indicator.show(0.5);
+      expect(indicator.getIsVisible()).toBe(false);
       expect(el.textContent).toContain('75%');
     });
 

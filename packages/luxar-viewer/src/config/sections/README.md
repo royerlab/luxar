@@ -2,7 +2,7 @@
 
 Per-slice configuration storage for the unified config package. Each immediate subfolder is one section of the `AppConfig` object — the parent [../README.md](../README.md) composes their literals in `../index.ts`, re-exports their public types through `../types.ts`, and dispatches per-section validation from `../validation.ts`. This folder owns no top-level source files of its own; it exists purely to group the section trios.
 
-Every section conforms to the section-trio pattern: `data.ts` exports the literal (e.g. `cameraConfig: CameraConfig`), `types.ts` defines the interface, and — when the section has cross-field invariants — `validate.ts` exports a section validator (`validateCamera`, `validateBloomConsistency`, …) that the central dispatcher invokes. Sections without invariants (`adaptive-dpr/`, `animation/`, `dimension-animation/`, `ui/`) deliberately omit `validate.ts`.
+Every section conforms to the section-trio pattern: `data.ts` exports the literal (e.g. `cameraConfig: CameraConfig`), `types.ts` defines the interface, and — when the section has cross-field invariants — `validate.ts` exports a section validator (`validateCamera`, `validateBloomConsistency`, `validateAdaptiveDPR`, …) that the central dispatcher invokes. Sections without invariants (`animation/`, `dimension-animation/`, `ui/`) deliberately omit `validate.ts`.
 
 ## Layout
 
@@ -29,7 +29,7 @@ sections/
 
 ## Subpackages
 
-- **[adaptive-dpr/](adaptive-dpr/README.md)** — defaults for the FPS-driven DPR scaler: scale-up/down FPS thresholds, multiplicative factors, the DPR floor, and the hysteresis/evaluation timings used to avoid quality oscillation.
+- **[adaptive-dpr/](adaptive-dpr/README.md)** — defaults + validation for the FPS-driven DPR control loop: refresh-rate-relative scaling ratios, multiplicative factors, the DPR floor, U-shape probe knobs, learned floor/ceiling TTLs with exponential backoff, and session-hygiene timings (gap reset, content-change recheck, hysteresis).
 - **[animation/](animation/README.md)** — the idle-timeout used by the render loop to pause continuous rendering when no input or scene change has occurred. Not the dimension-animation playback engine.
 - **[cache/](cache/README.md)** — three-level cache hierarchy budgets (L0 decompressed, L1 in-memory LRU, L2 OPFS) plus the OPFS operation timeout and external-dataset TTL.
 - **[camera/](camera/README.md)** — initial position, FOV zoom limits and sensitivity, and the photography-style FOV / lens-distortion preset tables. Note: `fov`/`near`/`far` live in `rendering-controls/`, not here.

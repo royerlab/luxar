@@ -1,15 +1,47 @@
 # adaptive-dpr
 
-Adaptive device-pixel-ratio configuration slice. Owns the construction-time defaults for the FPS-driven DPR scaler: scale-up/down FPS thresholds, multiplicative scaling factors, the floor on DPR, and the hysteresis / evaluation timings used to avoid rapid quality oscillation.
+Adaptive device-pixel-ratio configuration slice. Owns the construction-time
+defaults for the FPS-driven DPR control loop: refresh-rate-relative scaling
+thresholds, multiplicative scaling factors, the static DPR floor, the U-shape
+probe knobs, the learned floor/ceiling TTLs with exponential backoff, and the
+session-hygiene timings (gap reset, content-change recheck).
 
-Conforms to the section-trio pattern documented in [../README.md](../README.md): `data.ts` exports the literal and `types.ts` defines the interface. This slice has no `validate.ts` — it carries only numeric defaults consumed by the renderer's DPR controller; the runtime on/off toggle lives in `renderingControls.defaults.adaptiveDPREnabled`, not here.
+Conforms to the section-trio pattern documented in [../README.md](../README.md):
+`data.ts` exports the literal, `types.ts` defines the interface, and
+`validate.ts` checks the cross-field invariants (threshold ordering, factor
+ranges, TTL consistency). The runtime on/off toggle lives in
+`renderingControls.defaults.adaptiveDPREnabled`, not here.
 
 ## Contents
 
-- `data.ts` — `adaptiveDPRConfig: AdaptiveDPRConfig`. Defaults: `enabled: true`, `minFPS: 50`, `maxFPS: 58`, `minDPR: 0.5`, `scaleDownFactor: 0.9`, `scaleUpFactor: 1.05`, `hysteresisSeconds: 3`, `evaluationIntervalMs: 500`. Asymmetric scaling (slower up, faster down) prevents quality flicker.
-- `types.ts` — `AdaptiveDPRConfig` interface. `enabled` is the construction-time default; runtime toggling is delegated to `renderingControls.defaults.adaptiveDPREnabled`.
+- `data.ts` — `adaptiveDPRConfig: AdaptiveDPRConfig`. Key defaults:
+  `enabled: true`, `minDPR: 0.5`, `scaleDownFactor: 0.9`,
+  `scaleUpFactor: 1.05` (asymmetric scaling — slower up, faster down —
+  prevents quality flicker), `hysteresisSeconds: 3`,
+  `evaluationIntervalMs: 500`; refresh-relative ratios
+  `scaleDownFpsRatio: 0.75` / `scaleUpFpsRatio: 0.90` over a
+  `refreshRateFallback: 60` warmup cap; probe knobs
+  `probeWindowMs: 1500` / `probeImprovement: 1.05` / `probeMinSamples: 8`;
+  floor/backoff `floorTtlMs: 30_000` × `backoffMultiplier: 2` capped at
+  `backoffMaxTtlMs: 300_000`; ceiling demotion
+  (`ceilingTtlMs`, `punishedAscentWindowMs`, `punishedAscentThreshold`);
+  hygiene (`gapResetMs: 350`, `contentChangeRecheckMs: 5000`,
+  `midbandGraceSamples: 1`).
+
+  The `AdaptiveDPRManager` constructor merges this literal directly
+  underneath `config.adaptiveDPR`, so partial overrides (including the unit
+  tests' fixed-shape config mock) can never leave a knob `undefined`.
+- `types.ts` — `AdaptiveDPRConfig` interface. `enabled` is the
+  construction-time default; runtime toggling is delegated to
+  `renderingControls.defaults.adaptiveDPREnabled`.
+- `validate.ts` — `validateAdaptiveDPR`: errors on broken invariants
+  (inverted FPS ratios, non-contracting factors, non-positive timings,
+  `floorTtlMs <= probeWindowMs`, `backoffMaxTtlMs < floorTtlMs`); warns on
+  legal-but-self-defeating values (probe window inside the 1s FPS sample
+  window, a gap threshold too large to ever fire).
 
 ## Public API
 
 - `adaptiveDPRConfig` — re-exported through `../../index.ts` into `AppConfig.adaptiveDPR`.
 - `AdaptiveDPRConfig` — re-exported through `../../types.ts`.
+- `validateAdaptiveDPR` — invoked by the central dispatcher in `../../validation.ts`.

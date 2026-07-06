@@ -258,6 +258,24 @@ describe('setupPerformanceControls', () => {
       expect(fpsValue.textContent).toBe('47');
     });
 
+    it("shows 'idle' when the manager reports 0 FPS (loop paused)", () => {
+      settings.adaptiveDPREnabled = true;
+      manager.isActive.mockReturnValue(true);
+      // notifyPaused clears the FPS window, so a paused loop reads 0 —
+      // the row must say so instead of freezing a stale number.
+      manager.getState.mockReturnValue({ currentDPR: 1.0, currentFPS: 0 });
+
+      setupPerformanceControls(makeContext());
+
+      vi.advanceTimersByTime(500);
+
+      const rows = folder.domElement.querySelectorAll(
+        '.luxar-gui__children .luxar-gui__controller'
+      );
+      const fpsValue = rows[1].querySelector('.luxar-gui__controller-widget') as HTMLElement;
+      expect(fpsValue.textContent).toBe('idle');
+    });
+
     it('cleanup() stops the interval', () => {
       settings.adaptiveDPREnabled = true;
       manager.isActive.mockReturnValue(true);

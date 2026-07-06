@@ -136,10 +136,19 @@ export async function runInitPipeline(
     sceneManager.postProcessing
   );
   partial.animationController = animationController;
-  // Skip GPU rendering while the WebGL context is lost.
-  // SceneManager flips this flag in its webglcontextlost/restored
-  // handlers; the loop polls each frame.
-  animationController.setContextLostPredicate(() => sceneManager.isWebGLContextLost());
+  // Skip GPU rendering while the rendering context is dead.
+  // isWebGLContextLost covers WebGL2 (contextRecovery flips it in the
+  // webglcontextlost/restored handlers) but is hard-false under
+  // ?renderer=webgpu, where no contextRecovery is constructed — so a
+  // local latch, set by the webgpu-device-lost listener below, folds
+  // WebGPU device loss (unrecoverable in this release) into the same
+  // predicate. Everything keyed on it — render skips, adaptive-DPR
+  // frame recording, the idle-restore render — becomes WebGPU-aware
+  // through this one closure.
+  let gpuDeviceLost = false;
+  animationController.setContextLostPredicate(
+    () => gpuDeviceLost || sceneManager.isWebGLContextLost()
+  );
   // When the perf readout is shown, kick the loop once so it gets a live
   // reading if the scene had idled — but do NOT force continuous rendering
   // (that would defeat the idle-pause / battery saving). The FPS is live while
@@ -223,6 +232,11 @@ export async function runInitPipeline(
     // pinned to the default/coarsest level from the last updateView.
     if (loader?.lodGroupRegistry?.evaluatePerFrame()) {
       loader.refreshVisibleCounts();
+      // A level swap changes what is being rendered — learned DPR
+      // bounds (floor/backoff) describe the old level's render cost.
+      // notifyContentChanged is internally coalesced, so per-frame
+      // swap bursts during a zoom don't spam the ledger.
+      partial.adaptiveDPRManager?.notifyContentChanged();
     }
   });
 
@@ -232,15 +246,43 @@ export async function runInitPipeline(
   adaptiveDPRManager.setRenderer(sceneManager);
   animationController.setAdaptiveDPRManager(adaptiveDPRManager);
 
+  // `?dpr=` pins a fixed pixel ratio for the whole session (deterministic
+  // E2E/visual runs, repros). Must be applied here — before rendering
+  // controls load persisted settings — and locks setEnabled() so those
+  // settings can't re-enable adaptation later in init.
+  if (ports.options.pinnedDPR !== undefined) {
+    adaptiveDPRManager.pinManualDPR(ports.options.pinnedDPR);
+  }
+
+  // While an updateView sweep is in flight, frame jank reflects
+  // decode/upload work, not steady-state render cost — the manager
+  // suppresses probe/estimator learning for those samples.
+  adaptiveDPRManager.setLoadActivityPredicate(
+    () => getSceneLoader('default')?.isUpdateInProgress() ?? false
+  );
+
+  // Dataset/layer changes invalidate the learned DPR bounds (the floor
+  // was evidence about the OLD content). Tracked via ports.events so
+  // dispose removes it like every other app-level listener.
+  const onLayersChanged = (): void => adaptiveDPRManager.notifyContentChanged();
+  window.addEventListener('luxar-layers-changed', onLayersChanged);
+  ports.events.add(() => window.removeEventListener('luxar-layers-changed', onLayersChanged));
+
   // Initialize resolution indicator and connect to DPR manager
   const resolutionIndicator = new ResolutionIndicator();
   partial.resolutionIndicator = resolutionIndicator;
-  // Display target FPS rounded up from maxFPS (58 → 60) since targetFPS (55) is a hysteresis threshold
-  const displayTargetFPS = Math.ceil(config.adaptiveDPR.maxFPS / 5) * 5;
+  // Display target FPS: the warmup refresh cap rounded to a friendly
+  // multiple of 5 (60 → 60). The live thresholds are refresh-relative
+  // ratios, not user-facing targets, so the indicator shows the nominal
+  // cap instead.
+  const displayTargetFPS = Math.ceil(config.adaptiveDPR.refreshRateFallback / 5) * 5;
   resolutionIndicator.setTargetFPS(displayTargetFPS);
   adaptiveDPRManager.setOnDPRChangeCallback((dpr, isReducedResolution) => {
     if (isReducedResolution) {
-      resolutionIndicator.show(dpr);
+      // The indicator displays percent-of-native resolution, so normalize
+      // the absolute DPR here — on a 2x retina display a reduced DPR of
+      // 1.8 must read as "90%", not "180%".
+      resolutionIndicator.show(dpr / adaptiveDPRManager.getNativeDPR());
     } else {
       // Reset the indicator so it can show again on next reduced resolution mode activation
       resolutionIndicator.reset();
@@ -277,6 +319,13 @@ export async function runInitPipeline(
     // scene-manager handler; this listener exists to make sure the
     // user is told too.
     const onWebGPUDeviceLost = (event: { reason?: string; message?: string }): void => {
+      // Latch the shared context-lost predicate (see its definition
+      // above): stops draw calls against the dead device AND stops the
+      // adaptive DPR manager from evaluating the artificially cheap
+      // no-op frames (which would drive bogus scale-ups / false probe
+      // verdicts). Unrecoverable in this release, so it never unlatches.
+      gpuDeviceLost = true;
+      adaptiveDPRManager.notifyPaused();
       const reason = event.reason ? ` (${event.reason})` : '';
       const detail = event.message ? `: ${event.message}` : '';
       notifier.error(
@@ -346,6 +395,9 @@ export async function runInitPipeline(
   );
   recordingPanel.setAdaptiveDPRManager(adaptiveDPRManager);
   inputHandler.setRecordingPanel(recordingPanel);
+  // The idle-pause native-DPR restore must never fire mid-capture —
+  // recording resolution stays locked for the whole session.
+  animationController.setIdleRestorePredicate(() => !recordingPanel.isCurrentlyRecording());
 
   // Initialize layers panel (per-node controls)
   const layersPanel = factories.layersPanel(document.body, animationController);

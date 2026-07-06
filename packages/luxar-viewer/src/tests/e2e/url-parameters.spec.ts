@@ -62,6 +62,29 @@ test.describe('URL Parameters', () => {
     }
   });
 
+  test('should pin a fixed pixel ratio and lock adaptive DPR with ?dpr=', async ({ page }) => {
+    await page.goto(`/?src=${DATASET}&debug&dpr=0.5`);
+    await waitForLuxarReady(page);
+
+    const state = await page.evaluate(() => {
+      const manager = (window as any).__luxarDebug?.app?.components?.adaptiveDPRManager;
+      if (!manager) return null;
+      // Simulate a persisted setting trying to re-enable adaptation
+      // after init — the pin must hold.
+      manager.setEnabled(true);
+      return {
+        active: manager.isActive(),
+        pinned: manager.isPinned(),
+        currentDPR: manager.getCurrentDPR(),
+      };
+    });
+
+    expect(state).not.toBeNull();
+    expect(state!.active).toBe(false);
+    expect(state!.pinned).toBe(true);
+    expect(state!.currentDPR).toBe(0.5);
+  });
+
   test('should enable debug interface with ?debug parameter', async ({ page }) => {
     // With ?debug: interface should be fully functional
     await page.goto(`/?src=${DATASET}&debug`);

@@ -18,6 +18,7 @@ import {
 } from './sections/rendering-controls/validate';
 import { validateDataLoading } from './sections/data-loading/validate';
 import { validateCache } from './sections/cache/validate';
+import { validateAdaptiveDPR } from './sections/adaptive-dpr/validate';
 
 /**
  * Validation result interface
@@ -61,6 +62,9 @@ export function validateConfig(config: AppConfig): ValidationResult {
 
   // Validate WebGL configuration
   validateWebGL(config, errors, warnings);
+
+  // Validate adaptive DPR control-loop configuration
+  validateAdaptiveDPR(config, errors, warnings);
 
   return {
     valid: errors.length === 0,

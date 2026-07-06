@@ -80,8 +80,9 @@ export function setupPerformanceControls(context: PerformanceSetupContext): Perf
   adaptiveToggle.domElement.setAttribute(
     'title',
     'Adaptive Resolution: Automatically adjusts rendering quality for smooth FPS\n' +
-      '• When FPS drops below 50, reduces pixel ratio\n' +
-      '• Gradually restores quality when FPS stabilizes above 58\n' +
+      '• Reduces pixel ratio when FPS drops below ~75% of your display rate\n' +
+      '• Gradually restores quality once FPS stabilizes above ~90% of it\n' +
+      '• Every reduction is probe-verified (reverted if it did not help)\n' +
       '• Minimum DPR: 0.5 (50% of native resolution)'
   );
 
@@ -115,7 +116,9 @@ export function setupPerformanceControls(context: PerformanceSetupContext): Perf
 
   const fpsRow = createDisplayRow(
     'Current FPS',
-    'Current Frames Per Second\n• Target: 55-60 FPS\n• Scales down if below 50 FPS'
+    'Current Frames Per Second\n' +
+      '• Target: ~90% of your display refresh rate\n' +
+      '• Scales down below ~75% of it'
   );
   const fpsValue = fpsRow.querySelector('.luxar-gui__controller-widget') as HTMLElement;
 
@@ -128,6 +131,12 @@ export function setupPerformanceControls(context: PerformanceSetupContext): Perf
     }
   }
 
+  // The manager clears its FPS window when the animation loop pauses
+  // (notifyPaused), so currentFPS === 0 is an unambiguous "not
+  // rendering" sentinel — display it as such instead of a frozen
+  // last-window number pretending to be live.
+  const formatFPS = (fps: number): string => (fps > 0 ? Math.round(fps).toString() : 'idle');
+
   const updateVisibility = (adaptiveEnabled: boolean): void => {
     if (adaptiveEnabled) {
       manualDPRControl.hide();
@@ -135,7 +144,7 @@ export function setupPerformanceControls(context: PerformanceSetupContext): Perf
       fpsRow.style.display = '';
       const state = manager.getState();
       dprValue.textContent = state.currentDPR.toFixed(2);
-      fpsValue.textContent = Math.round(state.currentFPS).toString();
+      fpsValue.textContent = formatFPS(state.currentFPS);
     } else {
       manualDPRControl.show();
       manualDPRSettings.dpr = manager.getCurrentDPR() ?? nativeDPR;
@@ -162,7 +171,7 @@ export function setupPerformanceControls(context: PerformanceSetupContext): Perf
     if (settings.adaptiveDPREnabled) {
       const state = manager.getState();
       dprValue.textContent = state.currentDPR.toFixed(2);
-      fpsValue.textContent = Math.round(state.currentFPS).toString();
+      fpsValue.textContent = formatFPS(state.currentFPS);
     }
   }, 500);
 

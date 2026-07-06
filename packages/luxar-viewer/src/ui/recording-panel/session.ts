@@ -140,8 +140,17 @@ export class RecordingSession {
     };
 
     if (options.disableDPR && this.adaptiveDPRManager) {
+      // When adaptive was enabled, setEnabled(false) already resets to
+      // native and applies it through the full resize path — calling
+      // setAdaptivePixelRatio again would repeat the HDR-target
+      // dispose/recreate for nothing.
       this.adaptiveDPRManager.setEnabled(false);
-      this.sceneManager.setAdaptivePixelRatio(this.adaptiveDPRManager.getNativeDPR());
+      if (!dprEnabled) {
+        // Manual-DPR mode: setEnabled(false) early-returned (state
+        // unchanged), so this call is the only thing forcing native
+        // resolution for the capture. NOT dead code.
+        this.sceneManager.setAdaptivePixelRatio(this.adaptiveDPRManager.getNativeDPR());
+      }
     }
 
     if (options.lockResize) {

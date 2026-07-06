@@ -115,4 +115,15 @@ export interface LuxarAppOptions {
    * (`?perf-timestamp` URL flag). Ignored under `WebGLRenderer`.
    */
   perfTimestamp?: boolean;
+
+  /**
+   * Pin a fixed device pixel ratio for the whole session. Mirrors
+   * `UrlParams.dpr` (`?dpr=1`) — the standalone bootstrap threads it
+   * here. When set, the adaptive-DPR manager is disabled, the value is
+   * clamped to [0.25, native DPR] and applied as a manual DPR, and the
+   * adaptive-resolution toggle is locked so persisted per-scene
+   * settings can't silently re-enable adaptation. Intended for
+   * deterministic E2E/visual-regression runs and bug repros.
+   */
+  pinnedDPR?: number;
 }

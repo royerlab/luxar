@@ -120,23 +120,52 @@ Dynamic resolution scaling to maintain smooth frame rates:
 ```typescript
 adaptiveDPR: {
   enabled: true,               // Enable adaptive DPR system
-  minFPS: 50,                  // FPS threshold for scaling down resolution
-  maxFPS: 58,                  // FPS threshold for scaling up resolution
   minDPR: 0.5,                 // Minimum allowed DPR (quality floor)
   scaleDownFactor: 0.9,        // Factor when scaling down (10% reduction)
   scaleUpFactor: 1.05,         // Factor when scaling up (5% increase)
-  hysteresisSeconds: 3,        // Seconds FPS must stay above maxFPS before scaling up
-  evaluationIntervalMs: 500    // How often to evaluate FPS (ms)
+  hysteresisSeconds: 3,        // Sustained high-FPS time required before scaling up
+  evaluationIntervalMs: 500,   // How often to evaluate FPS (ms)
+
+  // Refresh-rate-relative thresholds (replace fixed minFPS/maxFPS)
+  scaleDownFpsRatio: 0.75,     // Scale down below 75% of the display's rAF cap
+  scaleUpFpsRatio: 0.90,       // Count toward scale-up above 90% of the cap
+  refreshRateFallback: 60,     // Cap assumed before the estimator warms up
+  midbandGraceSamples: 1,      // Mid-band samples tolerated before the streak resets
+
+  // U-shape probe (every scale-down is verified before it stands)
+  probeWindowMs: 1500,         // Wait before judging a scale-down's effect
+  probeImprovement: 1.05,      // Required FPS gain to keep the move
+  probeMinSamples: 8,          // Min frame samples to settle a probe
+
+  // Learned floor + exponential backoff on repeated rejections
+  floorTtlMs: 30_000,          // First rung: floor stays 30s
+  backoffMultiplier: 2,        // 30s → 60s → 2min → ...
+  backoffMaxTtlMs: 300_000,    // ... capped at 5min
+
+  // Evidence-based ceiling (HiDPI → 1.0 demotion under sustained load)
+  ceilingTtlMs: 60_000,
+  punishedAscentWindowMs: 3000,
+  punishedAscentThreshold: 2,
+
+  // Session hygiene
+  contentChangeRecheckMs: 5000, // Content-change coalescing / early re-probe
+  gapResetMs: 350               // Frame gap that resets the FPS window
 }
 ```
 
 **How It Works**:
 
-- When FPS drops below `minFPS`, DPR is reduced by `scaleDownFactor`
-- When FPS stays above `maxFPS` for `hysteresisSeconds`, DPR increases by `scaleUpFactor`
+- FPS thresholds are relative to the display's achievable rAF rate, so
+  60/120/144Hz monitors and 30Hz low-power throttling all behave sanely
+- When FPS drops below `scaleDownFpsRatio × cap`, DPR is reduced by
+  `scaleDownFactor` and a probe verifies the move actually helped
+  (rejected moves revert and set a floor; repeated rejections back off)
+- When FPS stays above `scaleUpFpsRatio × cap` for `hysteresisSeconds`,
+  DPR increases by `scaleUpFactor`
 - Asymmetric scaling (slower up, faster down) prevents quality oscillation
-- Hysteresis prevents rapid toggling between quality levels
 - `minDPR` prevents image from becoming too pixelated
+- Validation for the cross-field invariants lives in
+  `sections/adaptive-dpr/validate.ts`
 
 ### Rendering Controls
 

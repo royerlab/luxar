@@ -20,7 +20,7 @@ const DATASETS = {
 
 test.describe('@visual Visual Regression - Basic Rendering', () => {
   test('should render dimension_navigation dataset consistently', async ({ page }) => {
-    await page.goto(`/?src=${DATASETS.nav}&debug`);
+    await page.goto(`/?src=${DATASETS.nav}&debug&dpr=1`);
     await waitForLuxarReady(page);
 
     // Wait for render to stabilize using condition-based wait
@@ -34,7 +34,7 @@ test.describe('@visual Visual Regression - Basic Rendering', () => {
   });
 
   test('should render 5D dense grid consistently', async ({ page }) => {
-    await page.goto(`/?src=${DATASETS.grid5D}&debug`);
+    await page.goto(`/?src=${DATASETS.grid5D}&debug&dpr=1`);
     await waitForLuxarReady(page);
 
     // Wait for render to stabilize using condition-based wait
@@ -53,7 +53,7 @@ test.describe('@visual Visual Regression - HDR & Tone Mapping', () => {
   // changes: `playwright test visual-regression --update-snapshots
   // --grep '@visual'`.
   test('should render with exposure = 0.0 (neutral)', async ({ page }) => {
-    await page.goto(`/?src=${DATASETS.build}&debug`);
+    await page.goto(`/?src=${DATASETS.build}&debug&dpr=1`);
     await waitForLuxarReady(page);
 
     // __luxarDebug exposes the post-processing manager directly
@@ -85,7 +85,7 @@ test.describe('@visual Visual Regression - HDR & Tone Mapping', () => {
   });
 
   test('should render with exposure = 3.32 (10x brighter)', async ({ page }) => {
-    await page.goto(`/?src=${DATASETS.build}&debug`);
+    await page.goto(`/?src=${DATASETS.build}&debug&dpr=1`);
     await waitForLuxarReady(page);
 
     // See exposure-0.0 test for the API path rationale.
@@ -114,7 +114,7 @@ test.describe('@visual Visual Regression - HDR & Tone Mapping', () => {
   });
 
   test('should render differently at different nD slices', async ({ page }) => {
-    await page.goto(`/?src=${DATASETS.grid5D}&debug`);
+    await page.goto(`/?src=${DATASETS.grid5D}&debug&dpr=1`);
     await waitForLuxarReady(page);
 
     // Wait for initial render to stabilize
@@ -144,7 +144,7 @@ test.describe('@visual Visual Regression - HDR & Tone Mapping', () => {
 
 test.describe('@visual Visual Regression - Camera Views', () => {
   test('should render with FOV = 47 (default 50mm)', async ({ page }) => {
-    await page.goto(`/?src=${DATASETS.nav}&debug`);
+    await page.goto(`/?src=${DATASETS.nav}&debug&dpr=1`);
     await waitForLuxarReady(page);
 
     await waitForRenderStable(page, 5);
@@ -156,7 +156,7 @@ test.describe('@visual Visual Regression - Camera Views', () => {
   });
 
   test('should render with FOV = 90 (wide angle)', async ({ page }) => {
-    await page.goto(`/?src=${DATASETS.nav}&debug`);
+    await page.goto(`/?src=${DATASETS.nav}&debug&dpr=1`);
     await waitForLuxarReady(page);
 
     // Check if updateFOV API is available
@@ -185,7 +185,7 @@ test.describe('@visual Visual Regression - Camera Views', () => {
   });
 
   test('should render centered on bounding box', async ({ page }) => {
-    await page.goto(`/?src=${DATASETS.build}&debug`);
+    await page.goto(`/?src=${DATASETS.build}&debug&dpr=1`);
     await waitForLuxarReady(page);
 
     // Press 'F' to center on bounding box
@@ -201,7 +201,7 @@ test.describe('@visual Visual Regression - Camera Views', () => {
 
 test.describe('@visual Visual Regression - Control Modes', () => {
   test('should render in orbit control mode', async ({ page }) => {
-    await page.goto(`/?src=${DATASETS.nav}&debug`);
+    await page.goto(`/?src=${DATASETS.nav}&debug&dpr=1`);
     await waitForLuxarReady(page);
 
     // Ensure orbit mode
@@ -218,7 +218,7 @@ test.describe('@visual Visual Regression - Control Modes', () => {
   });
 
   test('should render in fly control mode', async ({ page }) => {
-    await page.goto(`/?src=${DATASETS.nav}&debug`);
+    await page.goto(`/?src=${DATASETS.nav}&debug&dpr=1`);
     await waitForLuxarReady(page);
 
     // Switch to fly mode
