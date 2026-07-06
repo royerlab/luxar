@@ -246,6 +246,8 @@ def _manifest(fixtures: dict[str, Any]) -> dict[str, Any]:
             "log_scalar_uint16",
             "geolog_scalar_uint8",
             "geolog_scalar_uint16",
+            "geolog_perchannel_u8",
+            "geolog_perchannel_u16",
         ],
         "storage_dtypes": ["float32", "uint8", "uint16", "uint32", "uint64"],
         "semantic_types": [
