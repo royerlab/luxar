@@ -15,18 +15,35 @@ stamped into ``level_stats``; the viewer combines it with the additive
 ladder's cumulative energy fraction ``e(k)`` (``lod_stats``) into the
 committed quality ``Q·e(k)`` — see ``docs/specs/GSPLATS_ZARR_FORMAT.md``.
 
-Implementation: ``‖A−B‖² = ‖A‖² − 2⟨A,B⟩ + ‖B‖²`` where every term expands
-into pairwise Gaussian inner products. The exact per-splat SELF terms (the
-diagonals of ``‖A‖²``/``‖B‖²``) are O(N) closed form and always computed on
-the FULL mixtures; only the pairwise (off-diagonal / cross) sums use the
-sparse kNN pair lists shared with the L² refiner
-(:mod:`._substitutive.refine`), evaluated no-grad and chunked. Mixtures above
-``max_pair_splats`` are subsampled for the pair terms with a fixed-seed
-uniform draw (deterministic ⇒ reproducible stamps; uniform ⇒ the
-inverse-inclusion-fraction rescale of every pair sum is unbiased — see
-``_pair_view`` on why evenly-spaced strides are unsafe here). The exact
-diagonals always use the full mixtures. Everything runs in float64 (MPS is
-routed to CPU, mirroring ``make_substitutive_lod``).
+Estimator design — ``‖A−B‖² = ‖A‖² − 2⟨A,B⟩ + ‖B‖²`` where every term
+expands into pairwise Gaussian inner products:
+
+- The per-splat SELF diagonals of ``‖A‖²``/``‖B‖²`` are O(N) closed form and
+  always computed EXACTLY on the full mixtures.
+- Every off-diagonal / cross sum is a **directed row-sum estimate**: a
+  fixed-seed uniform sample of query splats, each queried against the other
+  side's spatial-hash grid (kNN + radius prune), scaled by ``n/|queries|``.
+  Query sampling is the load-bearing scalability lever — the hash grid
+  gathers candidates in a per-query Python loop (~100 µs/query on both its
+  backends), so querying every splat of a multi-million mixture is
+  intractable; a bounded query sample estimates the same sums unbiasedly at
+  constant cost. The cross term averages the A-side and B-side row-sum
+  estimates for symmetric coverage.
+- TRUNCATION CONSISTENCY IS LOAD-BEARING: all directed sums of one
+  comparison share per-side radii (shrunk to a density budget derived from
+  FULL-population counts, so exact and sampled runs truncate identically)
+  and adaptive k sized so the radius is the binding prune. For ``A == B``
+  the four directed queries then see identical grids/k/radii and the three
+  terms cancel: ``mixture_quality(x, x) ≈ 1`` by construction.
+- Row subsampling for the pair views uses a fixed-seed UNIFORM draw
+  (deterministic ⇒ reproducible stamps; uniform ⇒ the inverse-inclusion
+  rescale is unbiased). Evenly-spaced strides are unsafe: both mixtures are
+  Hilbert/ladder-ordered and two regular strides alias, over-including
+  near-duplicate cross partners.
+
+Kernel sums run in float64 (MPS lacks float64 → CPU, mirroring
+``make_substitutive_lod``); the spatial grids run on the fast device when
+one is available (positions are float32 there).
 
 No optimizer, no gradients — this module only *measures*.
 
@@ -46,7 +63,6 @@ from luxar.gsplats.lod._kernels import gaussian_self_energy_numpy
 from luxar.gsplats.lod._substitutive.refine import (
     L2RefineConfig,
     _hash_cell_size,
-    _knn_pairs,
     _pair_K_sum_chunked,
 )
 from luxar.gsplats.utils.device import resolve_torch_device
@@ -55,12 +71,22 @@ from luxar.utils.spatial_hash import BatchedSpatialHashGrid
 
 __all__ = ["QualityResult", "mixture_quality", "total_self_energy"]
 
-#: Pair-term subsampling threshold. Mixtures at or below this size use their
-#: full pair lists; larger ones are subsampled (fixed-seed uniform draw — see
-#: ``_pair_view``) to this many splats for the pairwise sums (the exact
-#: diagonals always use the full arrays). 2M matches the refiner's pair
-#: working-set scale.
+#: Pair-view subsampling threshold (rows entering the kernel tensors).
 DEFAULT_MAX_PAIR_SPLATS = 2_000_000
+
+#: Query budget per directed row-sum. The hash grid's candidate gathering is
+#: a per-query Python loop, so queries — not kernel evals — dominate; this
+#: bounds each of the four directed sums to a constant number of queries.
+_QUERY_BUDGET = 8_192
+
+#: Target expected neighbours inside the pair radius (at FULL-population
+#: density). Denser mixtures get their radius shrunk to meet this budget —
+#: bounding per-query candidate counts at any scale. ~1.5× the refiner's cc_k.
+_PAIR_EXPECTED_BUDGET = 96
+
+#: Hard cap on the adaptive per-query neighbour count (safety on top of the
+#: radius shrink, e.g. pathologically clustered mixtures).
+_PAIR_K_MAX = 1024
 
 
 def _sqrt_det(data: GSplatData) -> np.ndarray:
@@ -89,13 +115,14 @@ class QualityResult:
 
     #: ``clamp(1 − l2_sq/ref_norm_sq, 0, 1)`` — the stampable quality.
     quality: float
-    #: ``‖approx − ref‖²`` (closed-form mixture L², possibly sampled).
+    #: ``‖approx − ref‖²`` (closed-form mixture L², estimated — see module doc).
     l2_sq: float
     approx_norm_sq: float
     ref_norm_sq: float
-    #: Inclusion fractions used for the pair terms (1.0 = exact/full).
+    #: Row-inclusion fractions of the pair views (1.0 = full mixture).
     approx_pair_fraction: float
     ref_pair_fraction: float
+    #: Directed pairs evaluated for the cross / self sums (post-sampling).
     n_cross_pairs: int
     n_approx_pairs: int
     n_ref_pairs: int
@@ -106,15 +133,10 @@ def _pair_view(
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, float]:
     """(centers, L, amps, inclusion_fraction) for the pair terms, float64.
 
-    Above ``max_pair_splats``, rows are subsampled with a FIXED-SEED uniform
-    draw (deterministic, so stamps are reproducible) rather than the encoder's
-    evenly-spaced linspace: both mixtures are Hilbert/ladder-ordered, and two
-    regular strides can ALIAS — near-duplicate cross partners then get
-    included at far above the ``p_a·p_b`` rate and the inverse-fraction
-    rescale systematically overestimates the cross term. Independent uniform
-    inclusion keeps every pair sum unbiased. Amplitudes are NOT rescaled here
-    — pair sums are rescaled by the inverse inclusion fractions at the call
-    sites (the exact diagonals never go through this view).
+    Fixed-seed uniform row subsample above ``max_pair_splats`` (see the
+    module docstring on why evenly-spaced strides are unsafe). Amplitudes are
+    NOT rescaled here — sums are rescaled by the inverse inclusion fractions
+    at the call sites (the exact diagonals never go through this view).
     """
     n = data.n_splats
     if n > max_pair_splats:
@@ -135,99 +157,105 @@ def _median_sigma(L: np.ndarray) -> float:
     return float(np.median(np.abs(L[:, np.arange(d), np.arange(d)])))
 
 
-#: Hard cap on the adaptive per-query neighbour count — bounds pair-list cost
-#: on pathologically dense clusters (documented truncation bias there).
-_PAIR_K_MAX = 1024
+def _live_density_volume(mu: np.ndarray) -> tuple[int, float]:
+    """(live dims, bbox volume over live dims) — degenerate dims excluded,
+    matching ``_hash_cell_size``'s convention."""
+    ext = (mu.max(0) - mu.min(0)).astype(np.float64)
+    live = ext > 1e-3 * float(ext.max())
+    d_live = int(live.sum())
+    vol = float(np.prod(ext[live])) if d_live else 0.0
+    return d_live, vol
+
+
+def _ball_volume(d: int, radius: float) -> float:
+    return float(math.pi ** (d / 2.0) / math.gamma(d / 2.0 + 1.0) * radius**d)
+
+
+def _effective_radius(mu: np.ndarray, n_full: int, nominal: float) -> float:
+    """Shrink the pair radius so the expected FULL-density neighbour count
+    inside it stays ≤ ``_PAIR_EXPECTED_BUDGET``.
+
+    Derived from the FULL population count (``n_full``), never the possibly
+    subsampled view, so the exact and sampled evaluations of one mixture share
+    IDENTICAL truncation — the property the estimator's cancellation rests on
+    (extents come from the view; ≈ the full extents for a uniform sample).
+    The truncation bias is shared by all terms of one comparison; across
+    levels it varies with density, an accepted approximation of the stamp.
+    """
+    d_live, vol = _live_density_volume(mu)
+    if d_live == 0 or vol <= 0.0 or n_full <= 1:
+        return nominal
+    expected = n_full * min(_ball_volume(d_live, nominal) / vol, 1.0)
+    if expected <= _PAIR_EXPECTED_BUDGET:
+        return nominal
+    return float(nominal * (_PAIR_EXPECTED_BUDGET / expected) ** (1.0 / d_live))
 
 
 def _adaptive_k(mu: np.ndarray, radius: float, base_k: int) -> int:
     """Per-query neighbour count sized so the RADIUS is the binding prune.
 
-    A fixed k truncates density-dependently: the same k that covers a sparse
-    mixture's radius-ball caps a dense one's, and — critically for the sampled
-    estimator — a subsample is less dense than its full mixture, so fixed-k
-    pair lists are truncated differently on the two and the ``1/p²`` rescale
-    inflates the sampled sums. Sizing k from the expected number of neighbours
-    inside the radius ball (uniform-density estimate over the live-extent
-    dims, ×1.5 safety) makes the radius govern in both regimes. Clamped to
-    ``[base_k, _PAIR_K_MAX]``; degenerate dims are excluded from the volume
-    exactly as in ``_hash_cell_size``.
+    A fixed k truncates density-dependently — the same k that covers a sparse
+    mixture's radius-ball caps a dense one's — so k is sized from the expected
+    neighbours inside the radius ball (×1.5 safety), clamped to
+    ``[base_k, _PAIR_K_MAX]``. With the radius already shrunk to the density
+    budget this rarely exceeds ``base_k`` by much.
     """
     n = mu.shape[0]
     if n <= base_k:
         return base_k
-    ext = (mu.max(0) - mu.min(0)).astype(np.float64)
-    live = ext > 1e-3 * float(ext.max())
-    d_live = int(live.sum())
+    d_live, vol = _live_density_volume(mu)
     if d_live == 0:
         return int(min(_PAIR_K_MAX, n))  # all points coincide: every pair is near
-    vol = float(np.prod(ext[live]))
     if vol <= 0.0:
         return base_k
-    ball = math.pi ** (d_live / 2.0) / math.gamma(d_live / 2.0 + 1.0) * radius**d_live
-    expected = n * min(ball / vol, 1.0)
+    expected = n * min(_ball_volume(d_live, radius) / vol, 1.0)
     return int(min(max(base_k, math.ceil(1.5 * expected)), _PAIR_K_MAX, n))
 
 
-def _self_pair_list(
-    mu: np.ndarray, *, k: int, radius: float, device: torch.device
-) -> tuple[torch.Tensor, torch.Tensor]:
-    """Unordered within-mixture pairs ``(i < j)`` via OR-symmetrized kNN.
+def _query_sample(n: int, seed: int) -> np.ndarray:
+    """Fixed-seed uniform query sample (all rows when within budget)."""
+    if n <= _QUERY_BUDGET:
+        return np.arange(n, dtype=np.intp)
+    rng = np.random.default_rng(seed)
+    return np.sort(rng.choice(n, size=_QUERY_BUDGET, replace=False))
 
-    Same construction as the refiner's coarse–coarse list: generous-k kNN with
-    a radius prune, then canonicalize each directed edge to ``(min, max)`` and
-    keep every unordered pair once (a pair survives when EITHER endpoint saw
-    the other — per-query kNN truncation is asymmetric in dense regions).
+
+def _directed_row_sum(
+    X: tuple[torch.Tensor, torch.Tensor, torch.Tensor],
+    Y: tuple[torch.Tensor, torch.Tensor, torch.Tensor],
+    x_mu_np: np.ndarray,
+    q_idx: np.ndarray,
+    grid_y: BatchedSpatialHashGrid,
+    *,
+    k: int,
+    radius: float,
+    drop_self: bool,
+    device: torch.device,
+) -> tuple[float, int]:
+    """Estimate ``Σ_{i∈X} Σ_{j∈Y near i} K(xᵢ, yⱼ)`` from sampled queries.
+
+    Queries ``x_mu_np[q_idx]`` against ``grid_y`` (kNN + radius prune),
+    evaluates the pair kernels chunked, and rescales by ``n_x/|q_idx|`` —
+    unbiased for a uniform query sample. ``drop_self`` removes the ``i == j``
+    hits when X IS Y (the exact diagonal is added separately); cross sums
+    keep them (a matched splat in the other mixture is a genuine cross pair).
+    Returns ``(scaled_sum, n_pairs_evaluated)``.
     """
-    n = mu.shape[0]
-    grid = BatchedSpatialHashGrid.from_points(
-        mu, cell_size=_hash_cell_size(mu), device=str(device)
-    )
-    k = _adaptive_k(mu, radius, k)
-    qi, pj = _knn_pairs(mu, grid, k + 1, radius, device)  # +1: self hit dropped below
-    lo = torch.minimum(qi, pj)
-    hi = torch.maximum(qi, pj)
-    keep = lo != hi
-    lo, hi = lo[keep], hi[keep]
-    if lo.numel() == 0:
-        return lo, hi
-    key = torch.unique(lo * n + hi)
-    return key // n, key % n
-
-
-def _cross_pair_list(
-    a_mu: np.ndarray, b_mu: np.ndarray, *, k: int, radius: float, device: torch.device
-) -> tuple[torch.Tensor, torch.Tensor]:
-    """Ordered cross pairs ``(i∈A, j∈B)`` via the OR-closure of kNN both ways.
-
-    TRUNCATION CONSISTENCY IS LOAD-BEARING: the three terms of
-    ``‖A−B‖² = ‖A‖² − 2⟨A,B⟩ + ‖B‖²`` only cancel correctly when their pair
-    sets agree. With the same ``k``/``radius`` as :func:`_self_pair_list`, the
-    OR-closure over A==B is exactly the self pairs (both orders) plus the
-    diagonal — so ``mixture_quality(x, x)`` cancels to ~0 by construction. A
-    one-directional or smaller-k cross list (the refiner's ``cross_k=16``
-    default) systematically over/under-counts the cross term relative to the
-    norms and biases the quality by several percent even at identity.
-    """
-    nb = b_mu.shape[0]
-    grid_b = BatchedSpatialHashGrid.from_points(
-        b_mu, cell_size=_hash_cell_size(b_mu), device=str(device)
-    )
-    ai1, bj1 = _knn_pairs(
-        a_mu, grid_b, _adaptive_k(b_mu, radius, k) + 1, radius, device
-    )
-    grid_a = BatchedSpatialHashGrid.from_points(
-        a_mu, cell_size=_hash_cell_size(a_mu), device=str(device)
-    )
-    bi2, aj2 = _knn_pairs(
-        b_mu, grid_a, _adaptive_k(a_mu, radius, k) + 1, radius, device
-    )
-    ai = torch.cat([ai1, aj2])
-    bj = torch.cat([bj1, bi2])
-    if ai.numel() == 0:
-        return ai, bj
-    key = torch.unique(ai * nb + bj)
-    return key // nb, key % nb
+    n_x = x_mu_np.shape[0]
+    if n_x == 0 or len(grid_y) == 0 or q_idx.size == 0:
+        return 0.0, 0
+    dist, idx = grid_y.query_knn(x_mu_np[q_idx], k=min(k, len(grid_y)))
+    keep = (idx >= 0) & (dist < radius)
+    if drop_self:
+        keep &= idx != q_idx[:, None]
+    rows, cols = np.nonzero(keep)
+    if rows.size == 0:
+        return 0.0, 0
+    ii = torch.from_numpy(q_idx[rows].astype(np.int64)).to(device)
+    jj = torch.from_numpy(idx[rows, cols].astype(np.int64)).to(device)
+    with torch.no_grad():
+        total = float(_pair_K_sum_chunked(*X, *Y, ii, jj))
+    return total * (n_x / float(q_idx.size)), int(rows.size)
 
 
 def mixture_quality(
@@ -245,19 +273,14 @@ def mixture_quality(
     none of the reference); an empty ``reference`` raises (quality against
     nothing is undefined).
 
-    The kNN pair truncation (radii from :class:`L2RefineConfig`) is the same
-    approximation the L² refiner trusts for its objective — far pairs are
-    negligible by construction. Above ``max_pair_splats`` the pair terms are
-    evenly-spaced-sampled estimates; the exact self-energy diagonals always
-    use the full mixtures, so the dominant term of each norm is exact.
-
-    Sampling caveat: when the two mixtures share literally identical splats,
-    the cross term's mass concentrates on the few matched pairs and the
-    sampled estimate becomes high-variance (unbiased, but noisy). The
+    Estimation caveats (see the module docstring for the design): the kNN +
+    radius truncation is the same approximation the L² refiner trusts; query
+    and row sampling make the off-diagonal terms estimates (exact diagonals
+    dominate); when the two mixtures share literally identical splats the
+    cross estimate concentrates on few matched pairs and gets noisy — the
     intended use (a MERGED coarse level vs the finest content) never shares
-    rows; do not use the sampled path to compare a mixture against its own
-    row-prefix (that is what the cheap ``e(k)`` cumulative energy fraction is
-    for).
+    rows; a mixture's own row-prefix is what the cheap ``e(k)`` cumulative
+    energy fraction is for.
     """
     if reference.n_splats == 0:
         raise ValueError("mixture_quality: reference mixture is empty")
@@ -287,11 +310,11 @@ def mixture_quality(
             n_ref_pairs=0,
         )
 
-    # float64 throughout — MPS lacks float64, so route it to CPU (the same
-    # fallback make_substitutive_lod applies for its float64 stages).
-    dev = resolve_torch_device(None if device == "auto" else device)
-    if dev.type == "mps":
-        dev = torch.device("cpu")
+    # Two devices, deliberately split: the KERNEL sums run float64 (MPS lacks
+    # float64 → CPU, the same fallback make_substitutive_lod applies); the
+    # spatial grids take the fast device when available (float32 positions).
+    pair_dev = resolve_torch_device(None if device == "auto" else device)
+    dev = torch.device("cpu") if pair_dev.type == "mps" else pair_dev
 
     a_mu, a_L, a_amps, p_a = _pair_view(approx, max_pair_splats)
     b_mu, b_L, b_amps, p_b = _pair_view(reference, max_pair_splats)
@@ -304,26 +327,45 @@ def mixture_quality(
     A = (to(a_mu), to(a_L), to(a_amps))
     B = (to(b_mu), to(b_L), to(b_amps))
 
-    # One k for all three lists; radii scale with each list's own σ, and the
-    # cross radius takes the larger σ so its coverage dominates both self
-    # lists — see _cross_pair_list on why truncation consistency matters.
-    k = cfg.cc_k
-    r_a = cfg.cc_radius_sigmas * sigma_a
-    r_b = cfg.cc_radius_sigmas * sigma_b
+    # Per-side radii shrunk to the density budget from FULL-population counts
+    # (identical truncation for exact and sampled runs); the cross radius
+    # takes the larger one so its coverage dominates both self sums.
+    r_a = _effective_radius(a_mu, approx.n_splats, cfg.cc_radius_sigmas * sigma_a)
+    r_b = _effective_radius(b_mu, reference.n_splats, cfg.cc_radius_sigmas * sigma_b)
     r_x = max(r_a, r_b)
-    aai, aaj = _self_pair_list(a_mu, k=k, radius=r_a, device=dev)
-    bbi, bbj = _self_pair_list(b_mu, k=k, radius=r_b, device=dev)
-    ci, cb = _cross_pair_list(a_mu, b_mu, k=k, radius=r_x, device=dev)
+    k_a = _adaptive_k(a_mu, r_x, cfg.cc_k)
+    k_b = _adaptive_k(b_mu, r_x, cfg.cc_k)
 
-    with torch.no_grad():
-        cross = float(_pair_K_sum_chunked(*A, *B, ci, cb)) / (p_a * p_b)
-        a_off = 2.0 * float(_pair_K_sum_chunked(*A, *A, aai, aaj)) / (p_a * p_a)
-        b_off = 2.0 * float(_pair_K_sum_chunked(*B, *B, bbi, bbj)) / (p_b * p_b)
+    grid_a = BatchedSpatialHashGrid.from_points(
+        a_mu, cell_size=_hash_cell_size(a_mu), device=str(pair_dev)
+    )
+    grid_b = BatchedSpatialHashGrid.from_points(
+        b_mu, cell_size=_hash_cell_size(b_mu), device=str(pair_dev)
+    )
+    qa = _query_sample(a_mu.shape[0], seed=1)
+    qb = _query_sample(b_mu.shape[0], seed=2)
 
-    approx_norm_sq = approx_diag + a_off
-    ref_norm_sq = ref_diag + b_off
+    # Directed row sums (module docstring): self off-diagonals from each
+    # mixture's own queries (self-hits dropped, exact diagonal added below);
+    # the cross term as the symmetric average of both sides' row sums.
+    a_off, n_aa = _directed_row_sum(
+        A, A, a_mu, qa, grid_a, k=k_a + 1, radius=r_a, drop_self=True, device=dev
+    )
+    b_off, n_bb = _directed_row_sum(
+        B, B, b_mu, qb, grid_b, k=k_b + 1, radius=r_b, drop_self=True, device=dev
+    )
+    x_ab, n_ab = _directed_row_sum(
+        A, B, a_mu, qa, grid_b, k=k_b + 1, radius=r_x, drop_self=False, device=dev
+    )
+    x_ba, n_ba = _directed_row_sum(
+        B, A, b_mu, qb, grid_a, k=k_a + 1, radius=r_x, drop_self=False, device=dev
+    )
+
+    approx_norm_sq = approx_diag + a_off / (p_a * p_a)
+    ref_norm_sq = ref_diag + b_off / (p_b * p_b)
+    cross = 0.5 * (x_ab + x_ba) / (p_a * p_b)
     l2_sq = approx_norm_sq - 2.0 * cross + ref_norm_sq
-    # Sampling noise / kNN truncation can push the ratio marginally outside
+    # Estimation noise / truncation can push the ratio marginally outside
     # [0, 1]; the stamp is defined clamped (and must stay finite for the
     # JSON-attrs contract — the viewer's JSON.parse rejects NaN/Inf).
     quality = 1.0 - l2_sq / ref_norm_sq if ref_norm_sq > 0.0 else 0.0
@@ -338,7 +380,7 @@ def mixture_quality(
         ref_norm_sq=float(ref_norm_sq),
         approx_pair_fraction=p_a,
         ref_pair_fraction=p_b,
-        n_cross_pairs=int(ci.numel()),
-        n_approx_pairs=int(aai.numel()),
-        n_ref_pairs=int(bbi.numel()),
+        n_cross_pairs=int(n_ab + n_ba),
+        n_approx_pairs=int(n_aa),
+        n_ref_pairs=int(n_bb),
     )
