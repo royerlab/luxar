@@ -411,6 +411,7 @@ export async function runInitPipeline(
   const railItems = buildRailItems({
     ui,
     sceneManager,
+    sceneDims: sceneDimsManager,
     renderingControls,
     animationController,
     adaptiveDPRManager,

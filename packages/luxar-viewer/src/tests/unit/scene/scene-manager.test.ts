@@ -816,9 +816,9 @@ describe('SceneManager', () => {
 
   describe('toggleCentering', () => {
     // toggleCentering is a 2-state machine: bbox-center ↔ origin. Each
-    // toggle invokes the matching centering helper (private) and flips
-    // the internal isCenteredOnBoundingBox flag. The flag isn't directly
-    // observable, but a second toggle's behaviour proves the state flip.
+    // toggle invokes the matching centering method. The flag clearing on
+    // the origin side is owned by centerOnOrigin() itself (public — the
+    // rail Home popover calls it directly), covered separately below.
 
     beforeEach(async () => {
       await sceneManager.init({ canvas: mockCanvas as any });
@@ -826,10 +826,9 @@ describe('SceneManager', () => {
 
     it('first toggle from default (origin) calls centerCameraOnScene and flips to bbox', () => {
       const internals = sceneManager as unknown as {
-        centerOnOrigin(): void;
         isCenteredOnBoundingBox: boolean;
       };
-      const onOriginSpy = vi.spyOn(internals, 'centerOnOrigin').mockImplementation(() => {});
+      const onOriginSpy = vi.spyOn(sceneManager, 'centerOnOrigin').mockImplementation(() => {});
       const onSceneSpy = vi.spyOn(sceneManager, 'centerCameraOnScene').mockImplementation(() => {});
       // Default after construction is isCenteredOnBoundingBox=false.
       expect(internals.isCenteredOnBoundingBox).toBe(false);
@@ -841,12 +840,11 @@ describe('SceneManager', () => {
       expect(internals.isCenteredOnBoundingBox).toBe(true);
     });
 
-    it('second toggle from bbox calls centerOnOrigin and flips back to origin', () => {
+    it('second toggle from bbox calls centerOnOrigin (which owns the flag flip)', () => {
       const internals = sceneManager as unknown as {
-        centerOnOrigin(): void;
         isCenteredOnBoundingBox: boolean;
       };
-      const onOriginSpy = vi.spyOn(internals, 'centerOnOrigin').mockImplementation(() => {});
+      const onOriginSpy = vi.spyOn(sceneManager, 'centerOnOrigin').mockImplementation(() => {});
       const onSceneSpy = vi.spyOn(sceneManager, 'centerCameraOnScene').mockImplementation(() => {});
       // Force the bbox-centered state directly.
       internals.isCenteredOnBoundingBox = true;
@@ -855,7 +853,19 @@ describe('SceneManager', () => {
 
       expect(onOriginSpy).toHaveBeenCalledTimes(1);
       expect(onSceneSpy).not.toHaveBeenCalled();
+    });
+
+    it('centerOnOrigin() clears the bbox-centered flag (direct call, no mock)', () => {
+      const internals = sceneManager as unknown as {
+        isCenteredOnBoundingBox: boolean;
+      };
+      internals.isCenteredOnBoundingBox = true;
+
+      sceneManager.centerOnOrigin();
+
       expect(internals.isCenteredOnBoundingBox).toBe(false);
+      // getCurrentCenter() reflects the cleared flag: back to the origin.
+      expect(sceneManager.getCurrentCenter()).toEqual(new THREE.Vector3(0, 0, 0));
     });
   });
 

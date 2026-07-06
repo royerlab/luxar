@@ -207,6 +207,72 @@ describe('SceneDimsManager', () => {
     });
   });
 
+  describe('resetPositions', () => {
+    // The rail Home popover's "Reset dimensions" action. Must apply the SAME
+    // default-position policy as initFromScene: displayed → 0, discrete → min,
+    // continuous non-displayed → center.
+
+    it('restores the initFromScene defaults after navigation moved the dims', () => {
+      manager.initFromScene(mockScene);
+      manager.setDimensionValue(3, 8.7); // time (continuous): away from center 5
+      manager.setDimensionValue(4, 3); // channel (discrete): away from min 0
+
+      manager.resetPositions();
+
+      const step = manager.getDims()!.currentStep;
+      expect(step[0]).toBe(0); // displayed x
+      expect(step[1]).toBe(0); // displayed y
+      expect(step[2]).toBe(0); // displayed z
+      expect(step[3]).toBe(5); // time: center of [0, 10]
+      expect(step[4]).toBe(0); // channel: min of [0, 3]
+    });
+
+    it('notifies listeners exactly once', () => {
+      manager.initFromScene(mockScene);
+      manager.setDimensionValue(3, 8.7);
+      const listener = vi.fn();
+      manager.addListener(listener);
+
+      manager.resetPositions();
+
+      expect(listener).toHaveBeenCalledTimes(1);
+    });
+
+    it('is a safe no-op before initialization (no throw, no notify)', () => {
+      const listener = vi.fn();
+      manager.addListener(listener);
+
+      expect(() => manager.resetPositions()).not.toThrow();
+      expect(listener).not.toHaveBeenCalled();
+      expect(manager.getDims()).toBeNull();
+    });
+
+    it('resets a categorical dimension to its first category', () => {
+      const scene = new THREE.Scene();
+      scene.userData.sceneDimensions = {
+        dimensions: [
+          { name: 'x', unit: 'μm', range: [0, 100], step: 1, display: true },
+          { name: 'y', unit: 'μm', range: [0, 100], step: 1, display: true },
+          { name: 'z', unit: 'μm', range: [0, 50], step: 1, display: true },
+          {
+            name: 'stain',
+            unit: '',
+            range: [0, 2],
+            step: 1,
+            display: false,
+            categories: ['DAPI', 'GFP', 'RFP'],
+          },
+        ],
+      };
+      manager.initFromScene(scene);
+      manager.setDimensionValue(3, 2); // navigate to 'RFP'
+
+      manager.resetPositions();
+
+      expect(manager.getDims()!.currentStep[3]).toBe(0); // back to 'DAPI'
+    });
+  });
+
   describe('observer pattern', () => {
     beforeEach(() => {
       manager.initFromScene(mockScene);
