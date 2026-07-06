@@ -1171,20 +1171,28 @@ class ArrayEncoder:
             encoded_data = data
             encoder_name = str(data.dtype)
         elif color_mode == "hdr":
-            # HDR colors: use float
-            if mode == EncodingMode.PRECISION or mode == EncodingMode.AUTO:
+            # HDR colors: wide-range positive per-channel intensities. AUTO →
+            # geolog_perchannel_u16, MEMORY → u8 (2026-07 HDR-color spike:
+            # per-channel TRUE-log dominates linear and log1p at EVERY
+            # measured dynamic range — 2..12.6 decades, 6 datasets; u16 keeps
+            # faint-exposure renders ≥147 dB where log1p drops to 88 dB —
+            # and float16 was already refuted 4x worse for wide-range
+            # positives). PRECISION stays float32.
+            if mode == EncodingMode.PRECISION or data.ndim != 2:
                 encoded_data = data.astype(np.float32)
                 encoder_name = "float32"
-            elif mode == EncodingMode.MEMORY:
-                # Check if float16 is allowed, fallback to float32 if not
-                if self._float16_allowed:
-                    encoded_data = data.astype(np.float16)
-                    encoder_name = "float16"
-                else:
-                    encoded_data = data.astype(np.float32)
-                    encoder_name = "float32"
+            elif mode in (EncodingMode.AUTO, EncodingMode.MEMORY):
+                self._encode_geolog_perchannel(
+                    zarr_group,
+                    name,
+                    data,
+                    16 if mode == EncodingMode.AUTO else 8,
+                    chunks=chunks,
+                    compressor=compressor,
+                )
+                return
             else:
-                raise ValueError("HDR colors require float dtype")
+                raise ValueError(f"Unexpected mode for HDR COLOR: {mode}")
         elif color_mode == "sdr":
             # SDR colors: can quantize
             if mode == EncodingMode.PRECISION:
@@ -1842,6 +1850,80 @@ class ArrayEncoder:
         )
         zarr_group[name].attrs["encoding"] = {
             "name": f"signed_log_perchannel_u{bits}",
+            "col_lo": lo.tolist(),
+            "col_hi": hi.tolist(),
+            "bits": bits,
+            "zero_level": True,
+            "original_dtype": original_dtype,
+        }
+
+    @staticmethod
+    def _perchannel_geolog_scales(
+        data: np.ndarray,
+    ) -> tuple[np.ndarray, np.ndarray]:
+        """Per-column TRUE-log scales over the POSITIVE entries: (ln min, ln max).
+
+        The per-channel sibling of the scalar geolog anchors (``min_log`` /
+        ``max_log``): each column's grid is anchored to its own positive
+        min/max in log space, giving uniform relative precision across the
+        column's whole dynamic range (log1p companding degenerates to linear
+        below 1 — the 2026-07 HDR-color spike measured it failing at wide
+        range where true log stays uniform). A column with no positive
+        entries gets ``lo == hi == 0`` (harmless: all its codes are the
+        reserved zero level).
+        """
+        x = np.asarray(data)
+        n_cols = x.shape[1]
+        lo = np.zeros(n_cols, dtype=np.float64)
+        hi = np.zeros(n_cols, dtype=np.float64)
+        for c in range(n_cols):
+            col = x[:, c]
+            pos = col[col > 0]
+            if pos.size:
+                lo[c] = float(np.log(float(pos.min())))
+                hi[c] = float(np.log(float(pos.max())))
+        return lo, hi
+
+    def _encode_geolog_perchannel(
+        self,
+        zarr_group: zarr.Group,
+        name: str,
+        data: np.ndarray,
+        bits: int,
+        chunks: Optional[tuple] = None,
+        compressor: Optional[Any] = None,
+    ) -> None:
+        """Per-channel TRUE-log quantization of a positive (N, C) array.
+
+        The per-channel member of the geolog family (scalar sibling:
+        ``geolog_scalar``; identity sibling: ``linear_perchannel``; log1p
+        siblings: ``log_perchannel`` / ``signed_log_perchannel``): each
+        column is quantized on a min/max-anchored geometric grid in log
+        space — ``y = ln(x)`` over the column's own positive ``[min, max]``
+        — so relative precision is uniform across the column's entire
+        dynamic range. Code 0 is the RESERVED ZERO LEVEL (exact zeros — and
+        policy-clamped negatives — round-trip to exactly 0; no positive
+        input can quantize to zero by construction); nonzero codes span
+        ``1..2**bits - 1`` with denominator ``2**bits - 2``. First consumer:
+        HDR colors (AUTO → u16, MEMORY → u8).
+        """
+        original_dtype = str(data.dtype)
+        x = np.asarray(data, dtype=np.float64)
+        lo, hi = self._perchannel_geolog_scales(x)
+        nonzero = self._perchannel_nonzero_mask(x, signed=False)
+        # log of positives only; zero-level entries never read y (masked to
+        # code 0 by the quantizer), the 1.0 placeholder just avoids log(0).
+        y = np.log(np.where(nonzero, x, 1.0))
+        u = self._quantize_perchannel_zero_level(y, nonzero, bits, lo, hi)
+        zarr_group.create_dataset(
+            name,
+            data=u,
+            chunks=chunks,
+            compressor=resolve_compressor(compressor, u.dtype),
+            overwrite=True,
+        )
+        zarr_group[name].attrs["encoding"] = {
+            "name": f"geolog_perchannel_u{bits}",
             "col_lo": lo.tolist(),
             "col_hi": hi.tolist(),
             "bits": bits,

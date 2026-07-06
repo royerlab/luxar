@@ -451,6 +451,41 @@ def generate_encoding_edge_cases_test() -> None:
             compressor=None,
         )
 
+        # HDR colors (values > 1) -> per-channel TRUE-log: AUTO ->
+        # geolog_perchannel_u16, MEMORY -> geolog_perchannel_u8. Exact zeros
+        # (whole rows and lone entries) pin the reserved zero level per column.
+        hdr = np.stack(
+            [
+                np.logspace(-4, 1, 24, dtype=np.float32),
+                np.logspace(-2, 1, 24, dtype=np.float32),
+                np.logspace(-3, 0, 24, dtype=np.float32),
+            ],
+            axis=1,
+        )
+        hdr[::5] = 0.0
+        hdr[1, 2] = 0.0
+        encoder.encode(
+            hdr,
+            root,
+            "hdr_colors_auto",
+            SemanticType.COLOR,
+            mode=EncodingMode.AUTO,
+            color_mode="hdr",
+            compressor=None,
+        )
+        # Distinct values: identical data would dedup into an array_ref and
+        # drop the geolog_perchannel_u8 coverage this array exists to provide.
+        hdr_mem = (hdr * np.float32(1.7)).astype(np.float32)
+        encoder.encode(
+            hdr_mem,
+            root,
+            "hdr_colors_memory",
+            SemanticType.COLOR,
+            mode=EncodingMode.MEMORY,
+            color_mode="hdr",
+            compressor=None,
+        )
+
         # LEGACY 0-anchored log encodings: no longer produced by any policy,
         # but old stores carry them — keep decode coverage via the CUSTOM path.
         encoder.encode(
@@ -1105,10 +1140,13 @@ def generate_hdr_colors_test() -> None:
             ]
         )
 
-        # Use PRECISION mode to force float32 storage (no quantization)
+        # AUTO mode: HDR colors take the PRODUCTION path
+        # (geolog_perchannel_u16 -> decoded back to float32 by the viewer),
+        # so the E2E render exercises the real quantized decode. Raw-float32
+        # HDR storage stays covered by the PRECISION-mode unit tests.
         with LuxarZarrCompiler(
             output,
-            encoding_mode=EncodingMode.PRECISION,
+            encoding_mode=EncodingMode.AUTO,
             compressor=None,
             float16_allowed=False,
         ) as compiler:
@@ -1117,7 +1155,7 @@ def generate_hdr_colors_test() -> None:
             scene.add_points(
                 "hdr_points",
                 positions,
-                colors=colors,  # HDR colors stored as float32
+                colors=colors,  # HDR colors (AUTO -> geolog_perchannel_u16)
                 radii=radii,
             )
 

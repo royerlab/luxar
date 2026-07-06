@@ -45,6 +45,10 @@ class ArrayDecoder:
         "signed_log_perchannel_u16",
         "linear_perchannel_u8",
         "linear_perchannel_u16",
+        # per-channel TRUE-log (min/max-anchored geometric grid, reserved
+        # zero level always); first used for HDR colors.
+        "geolog_perchannel_u8",
+        "geolog_perchannel_u16",
     }
     SPECIAL_ENCODINGS = {"broadcasted", "array_ref", "lut_uint8", "lut_uint16"}
     KNOWN_ENCODINGS = DIRECT_ENCODINGS | QUANTIZED_ENCODINGS | SPECIAL_ENCODINGS
@@ -105,6 +109,8 @@ class ArrayDecoder:
             return self._decode_signed_log_perchannel(zarr_array, enc)
         elif name in {"linear_perchannel_u8", "linear_perchannel_u16"}:
             return self._decode_linear_perchannel(zarr_array, enc)
+        elif name in {"geolog_perchannel_u8", "geolog_perchannel_u16"}:
+            return self._decode_geolog_perchannel(zarr_array, enc)
 
         # Direct dtype encodings mean the stored values are already decoded.
         elif name in self.DIRECT_ENCODINGS:
@@ -160,6 +166,8 @@ class ArrayDecoder:
             "signed_log_perchannel_u16",
             "linear_perchannel_u8",
             "linear_perchannel_u16",
+            "geolog_perchannel_u8",
+            "geolog_perchannel_u16",
         }:
             self._require_fields(
                 enc, name, ("col_lo", "col_hi", "bits", "original_dtype")
@@ -398,6 +406,24 @@ class ArrayDecoder:
         original_dtype = np.dtype(enc.get("original_dtype", "float32"))
         rng = np.maximum(hi - lo, 1e-30)
         return np.asarray(lo + data / ((1 << bits) - 1) * rng, dtype=original_dtype)
+
+    def _decode_geolog_perchannel(self, arr: zarr.Array, enc: dict) -> np.ndarray:
+        """Decode per-channel TRUE-log quantization of a positive (N, C) array.
+
+        Inverse of ``_encode_geolog_perchannel``. The reserved zero level is
+        part of this encoding's NAME contract (there is no legacy all-levels
+        variant): code 0 decodes to exactly 0; codes ``1..2**bits - 1`` decode
+        to ``exp(col_lo[c] + (u-1)/(2**bits - 2)·(col_hi[c]-col_lo[c]))`` —
+        ``col_lo``/``col_hi`` are the column's positive min/max in LOG space,
+        so relative precision is uniform across the column's dynamic range.
+        """
+        data = np.asarray(arr[:]).astype(np.float64)
+        lo, hi, bits = self._perchannel_scales(data, enc, "geolog_perchannel")
+        original_dtype = np.dtype(enc.get("original_dtype", "float32"))
+        rng = np.maximum(hi - lo, 1e-30)
+        denom = max((1 << bits) - 2, 1)
+        y = lo + (data - 1.0) / denom * rng
+        return np.asarray(np.where(data == 0, 0.0, np.exp(y)), dtype=original_dtype)
 
     def _decode_color(self, arr: zarr.Array, enc: dict) -> np.ndarray:
         """Decode color: uint8/uint16 [0,max] → original dtype [0,1].

@@ -563,7 +563,7 @@ describe('WASM vs TypeScript Comparison', () => {
      * ones in the worker; the two paths must be indistinguishable.
      */
     const perChannelTriple = (
-      kind: 'linear' | 'log' | 'signed_log',
+      kind: 'linear' | 'log' | 'signed_log' | 'geolog',
       dtype: 'u8' | 'u16',
       zeroLevel: boolean,
       colOffset: number
@@ -584,6 +584,9 @@ describe('WASM vs TypeScript Comparison', () => {
         if (kind === 'linear') {
           tsModule.decode_linear_perchannel_u8(data, colLo, colHi, colOffset, tsOutput);
           wasmModule!.decode_linear_perchannel_u8(data, colLo, colHi, colOffset, wasmOutput);
+        } else if (kind === 'geolog') {
+          tsModule.decode_geolog_perchannel_u8(data, colLo, colHi, colOffset, tsOutput);
+          wasmModule!.decode_geolog_perchannel_u8(data, colLo, colHi, colOffset, wasmOutput);
         } else if (kind === 'log') {
           tsModule.decode_log_perchannel_u8(data, colLo, colHi, zeroLevel, colOffset, tsOutput);
           wasmModule!.decode_log_perchannel_u8(
@@ -617,6 +620,9 @@ describe('WASM vs TypeScript Comparison', () => {
         if (kind === 'linear') {
           tsModule.decode_linear_perchannel_u16(data, colLo, colHi, colOffset, tsOutput);
           wasmModule!.decode_linear_perchannel_u16(data, colLo, colHi, colOffset, wasmOutput);
+        } else if (kind === 'geolog') {
+          tsModule.decode_geolog_perchannel_u16(data, colLo, colHi, colOffset, tsOutput);
+          wasmModule!.decode_geolog_perchannel_u16(data, colLo, colHi, colOffset, wasmOutput);
         } else if (kind === 'log') {
           tsModule.decode_log_perchannel_u16(data, colLo, colHi, zeroLevel, colOffset, tsOutput);
           wasmModule!.decode_log_perchannel_u16(
@@ -698,6 +704,15 @@ describe('WASM vs TypeScript Comparison', () => {
         perChannelTriple('signed_log', 'u8', false, 0);
       }
     );
+
+    it.skipIf(!wasmFilesExist)('decode_geolog_perchannel_u16 matches (3 backends)', () => {
+      // TRUE-log HDR-color encoding: zero level is always on (name contract).
+      perChannelTriple('geolog', 'u16', true, 0);
+    });
+
+    it.skipIf(!wasmFilesExist)('decode_geolog_perchannel_u8 matches with column phase', () => {
+      perChannelTriple('geolog', 'u8', true, 1);
+    });
 
     it.skipIf(!wasmFilesExist)('decode_lut_scalar_u16 should match', () => {
       // Use larger indices to test u16 range

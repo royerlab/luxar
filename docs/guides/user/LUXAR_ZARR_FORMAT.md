@@ -6,7 +6,7 @@
 - Chunk-based spatial index for efficient nD point queries
 - Points are reordered using Morton/Hilbert space-filling curves for spatial locality
 - Compound ordering: discrete dimensions (time/channel) + spatial dimensions
-- HDR color support with float32
+- HDR color support (float32 values in/out; stored quantized per-channel true-log)
 - Transform system with matrix transposition for THREE.js compatibility
 
 This document specifies the Zarr-based storage format used by Luxar for high-performance 3D and nD scientific visualization.
@@ -41,7 +41,7 @@ This diagram shows how data flows from Python creation through storage to WebGL 
 │  luxar.encoding                                                             │
 │  ┌──────────────────┐                                                      │
 │  │ Semantic typing  │  COORDINATE → uint16 fixed-point (AUTO/MEM), f32 (PREC)    │
-│  │ Quantization     │  COLOR → uint8/float32 (SDR/HDR)                     │
+│  │ Quantization     │  COLOR → uint8 (SDR), geolog u16 (HDR)               │
 │  │ Broadcasting     │  Uniform values → single scalar                      │
 │  └────────┬─────────┘                                                      │
 │           │                                                                 │
@@ -477,7 +477,10 @@ Points nodes contain the actual point data.
 
 #### colors/ (Optional)
 - **Shape:** `(N, 3)` for RGB
-- **Dtype:** `float32` (HDR colors)
+- **Dtype:** `uint16` (`geolog_perchannel_u16`, HDR default) / `uint8` (SDR
+  `rgb_uint8`, or HDR under MEMORY) / `float32` (PRECISION). HDR colors are
+  quantized per channel on a true-log grid (uniform relative precision, code 0
+  reserved for exact zeros) and decoded back to float32.
 - **Chunks:** `(min(N, 32768), 3)`
 - **Compression:** Blosc with zstd, level 9 (width-aware shuffle policy)
 - **Description:** HDR RGB colors in normalized range

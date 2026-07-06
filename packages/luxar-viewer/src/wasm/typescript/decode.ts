@@ -236,6 +236,32 @@ export function decode_signed_log_perchannel_u16(
 }
 
 /**
+ * Decode per-channel TRUE-log uint8 codes to float32 (`x = exp(y)`).
+ * HDR colors: ln-domain per-column anchors, uniform relative precision.
+ * The reserved zero level is part of the name contract (always on).
+ */
+export function decode_geolog_perchannel_u8(
+  data: Uint8Array,
+  colLo: Float64Array,
+  colHi: Float64Array,
+  colOffset: number,
+  output: Float32Array
+): void {
+  decodePerChannelImpl(data, colLo, colHi, 255, true, colOffset, Math.exp, output);
+}
+
+/** Decode per-channel TRUE-log uint16 codes to float32. */
+export function decode_geolog_perchannel_u16(
+  data: Uint16Array,
+  colLo: Float64Array,
+  colHi: Float64Array,
+  colOffset: number,
+  output: Float32Array
+): void {
+  decodePerChannelImpl(data, colLo, colHi, 65535, true, colOffset, Math.exp, output);
+}
+
+/**
  * Decode LUT-encoded uint8 indices to float32 (scalar mode).
  * Each index maps to a single float value from the LUT.
  */

@@ -233,7 +233,7 @@ Luxar automatically optimizes encoding based on data semantics:
 
    # Colors (COLOR semantic type)
    # → uint8 for SDR (0-1 range)
-   # → float32 for HDR (>1.0 values)
+   # → geolog_perchannel_u16 for HDR (>1.0 values; decoded to float32)
 
    # Radii (POSITIVE_SCALAR)
    # → Uniform value broadcasted (99.9% savings)

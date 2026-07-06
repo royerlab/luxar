@@ -815,7 +815,7 @@ result = fit_gaussian_splats(image, n_iters=1000)
 result.save('fitted.gsplats.zarr',
            ordering='hilbert')  # or 'morton', 'none'
 
-# Colors are automatically saved if present; SDR (uint8) vs HDR (float32)
+# Colors are automatically saved if present; SDR (uint8) vs HDR (geolog_perchannel_u16)
 # is auto-detected from the values — there is no explicit color_mode knob.
 ```
 
@@ -904,8 +904,9 @@ result = GSplatData(
     stats={}
 )
 
-# Colors are preserved during save/load; SDR (uint8 [0-255]) vs HDR (float32,
-# values > 1) is auto-detected from the color values — no color_mode knob.
+# Colors are preserved during save/load; SDR (uint8 [0-255]) vs HDR (values
+# > 1 → geolog_perchannel_u16, decoded back to float32) is auto-detected —
+# no color_mode knob.
 result.save('colored.gsplats.zarr')
 
 # Load preserves colors
