@@ -293,6 +293,111 @@ describe('AnimationController', () => {
     });
   });
 
+  describe('pause / idle-restore / resume hooks', () => {
+    function makeDPRManagerStub() {
+      return {
+        recordFrame: vi.fn(),
+        notifyPaused: vi.fn(),
+        notifyResumed: vi.fn(),
+        isActive: vi.fn().mockReturnValue(true),
+        prepareIdleFrame: vi.fn().mockReturnValue(true),
+      };
+    }
+
+    it('stopAnimation notifies the manager of the pause', () => {
+      const manager = makeDPRManagerStub();
+      controller.setAdaptiveDPRManager(manager as never);
+      controller.startAnimation();
+      controller.stopAnimation();
+      expect(manager.notifyPaused).toHaveBeenCalled();
+    });
+
+    it('stopAnimation stays safe with a bare {recordFrame} manager mock (optional chaining)', () => {
+      controller.setAdaptiveDPRManager({ recordFrame: vi.fn() } as never);
+      controller.startAnimation();
+      expect(() => controller.stopAnimation()).not.toThrow();
+    });
+
+    it('idle timeout restores native DPR and renders exactly one resting frame', () => {
+      const manager = makeDPRManagerStub();
+      controller.setAdaptiveDPRManager(manager as never);
+      controller.startAnimation();
+      mockPostProcessing.render.mockClear();
+
+      vi.advanceTimersByTime(2000); // idle-pause fires
+
+      expect(controller.isActive).toBe(false);
+      expect(manager.prepareIdleFrame).toHaveBeenCalledTimes(1);
+      expect(mockPostProcessing.render).toHaveBeenCalledTimes(1);
+    });
+
+    it('does not render a resting frame when prepareIdleFrame reports no change', () => {
+      const manager = makeDPRManagerStub();
+      manager.prepareIdleFrame.mockReturnValue(false); // already at native
+      controller.setAdaptiveDPRManager(manager as never);
+      controller.startAnimation();
+      mockPostProcessing.render.mockClear();
+
+      vi.advanceTimersByTime(2000);
+
+      expect(manager.prepareIdleFrame).toHaveBeenCalledTimes(1);
+      expect(mockPostProcessing.render).not.toHaveBeenCalled();
+    });
+
+    it('skips the idle restore while the idle-restore predicate forbids it (recording)', () => {
+      const manager = makeDPRManagerStub();
+      controller.setAdaptiveDPRManager(manager as never);
+      controller.setIdleRestorePredicate(() => false);
+      controller.startAnimation();
+
+      vi.advanceTimersByTime(2000);
+
+      expect(controller.isActive).toBe(false); // loop still pauses
+      expect(manager.prepareIdleFrame).not.toHaveBeenCalled();
+    });
+
+    it('skips the idle restore while the context is lost', () => {
+      const manager = makeDPRManagerStub();
+      controller.setAdaptiveDPRManager(manager as never);
+      controller.setContextLostPredicate(() => true);
+      controller.startAnimation();
+
+      vi.advanceTimersByTime(2000);
+
+      expect(manager.prepareIdleFrame).not.toHaveBeenCalled();
+    });
+
+    it('idle-pauses cleanly with NO manager set (predicates untouched)', () => {
+      controller.startAnimation();
+      expect(() => vi.advanceTimersByTime(2000)).not.toThrow();
+      expect(controller.isActive).toBe(false);
+    });
+
+    it('notifyResumed fires only on the stopped→running edge, not on every interaction poke', () => {
+      const manager = makeDPRManagerStub();
+      controller.setAdaptiveDPRManager(manager as never);
+
+      controller.startAnimation(); // edge: stopped → running
+      controller.startAnimation(); // already running — just resets the idle timer
+      controller.startAnimation();
+      expect(manager.notifyResumed).toHaveBeenCalledTimes(1);
+
+      controller.stopAnimation();
+      controller.startAnimation(); // new edge
+      expect(manager.notifyResumed).toHaveBeenCalledTimes(2);
+    });
+
+    it('does not record frames while the context is lost', () => {
+      const manager = makeDPRManagerStub();
+      controller.setAdaptiveDPRManager(manager as never);
+      controller.setContextLostPredicate(() => true);
+
+      controller.startAnimation();
+
+      expect(manager.recordFrame).not.toHaveBeenCalled();
+    });
+  });
+
   describe('idle timeout', () => {
     it('should stop animation after idle timeout when no continuous effects', () => {
       mockControls.getAutoRotate.mockReturnValue(false);

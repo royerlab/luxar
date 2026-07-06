@@ -49,7 +49,7 @@ async function waitForTheme(page: Page, themeId: string): Promise<void> {
 for (const theme of THEMES) {
   test(`@visual error dialog - ${theme} theme`, async ({ page }) => {
     // Navigate with debug enabled so __luxarDebug.showError is exposed.
-    await page.goto(`/?theme=${theme}&debug`);
+    await page.goto(`/?theme=${theme}&debug&dpr=1`);
 
     // Wait for the theme to be applied AND the debug interface to be
     // populated. The bootstrap seeds __luxarDebug before init() runs, so
@@ -94,7 +94,7 @@ for (const theme of THEMES) {
   test(`@visual help overlay - ${theme} theme`, async ({ page }) => {
     const testDataUrl =
       'http://localhost:9000/datasets/examples/dimension_sliders_5d_example.luxar.zarr';
-    await page.goto(`/?src=${testDataUrl}&theme=${theme}&debug`);
+    await page.goto(`/?src=${testDataUrl}&theme=${theme}&debug&dpr=1`);
     await waitForTheme(page, theme);
 
     // Trigger help overlay with H key
@@ -120,7 +120,7 @@ for (const theme of THEMES) {
     // Use a 5D dataset to ensure dimension sliders appear (use local for speed)
     const testDataUrl =
       'http://localhost:9000/datasets/examples/dimension_sliders_5d_example.luxar.zarr';
-    await page.goto(`/?src=${testDataUrl}&theme=${theme}&debug`);
+    await page.goto(`/?src=${testDataUrl}&theme=${theme}&debug&dpr=1`);
     await waitForTheme(page, theme);
 
     // Wait for app to be fully initialized
@@ -166,7 +166,7 @@ for (const theme of THEMES) {
   test(`@visual data monitor mini - ${theme} theme`, async ({ page }) => {
     const testDataUrl =
       'http://localhost:9000/datasets/examples/dimension_sliders_5d_example.luxar.zarr';
-    await page.goto(`/?src=${testDataUrl}&theme=${theme}&debug`);
+    await page.goto(`/?src=${testDataUrl}&theme=${theme}&debug&dpr=1`);
     await waitForTheme(page, theme);
 
     // Wait for app to be fully initialized
@@ -203,7 +203,7 @@ for (const theme of THEMES) {
   test(`@visual data monitor expanded - ${theme} theme`, async ({ page }) => {
     const testDataUrl =
       'http://localhost:9000/datasets/examples/dimension_sliders_5d_example.luxar.zarr';
-    await page.goto(`/?src=${testDataUrl}&theme=${theme}&debug`);
+    await page.goto(`/?src=${testDataUrl}&theme=${theme}&debug&dpr=1`);
     await waitForTheme(page, theme);
 
     // Wait for app to be fully initialized
@@ -242,7 +242,7 @@ for (const theme of THEMES) {
   test(`@visual debug console - ${theme} theme`, async ({ page }) => {
     const testDataUrl =
       'http://localhost:9000/datasets/examples/dimension_sliders_5d_example.luxar.zarr';
-    await page.goto(`/?src=${testDataUrl}&theme=${theme}&debug`);
+    await page.goto(`/?src=${testDataUrl}&theme=${theme}&debug&dpr=1`);
     await waitForTheme(page, theme);
 
     // Wait for app to be initialized before keyboard input
@@ -274,7 +274,7 @@ for (const theme of THEMES) {
  */
 for (const theme of THEMES) {
   test(`@visual dataset browser - ${theme} theme`, async ({ page }) => {
-    await page.goto(`/?theme=${theme}&debug`);
+    await page.goto(`/?theme=${theme}&debug&dpr=1`);
     await waitForTheme(page, theme);
 
     // The dataset browser auto-opens when no dataset is loaded (welcome UX).
@@ -313,7 +313,7 @@ for (const theme of THEMES) {
   test(`@visual control rail - ${theme} theme`, async ({ page }) => {
     const testDataUrl =
       'http://localhost:9000/datasets/examples/dimension_sliders_5d_example.luxar.zarr';
-    await page.goto(`/?src=${testDataUrl}&theme=${theme}&debug`);
+    await page.goto(`/?src=${testDataUrl}&theme=${theme}&debug&dpr=1`);
     await waitForTheme(page, theme);
 
     const rail = page.locator('.luxar-control-rail');
@@ -350,7 +350,7 @@ for (const theme of THEMES) {
   test(`@visual rendering controls panel - ${theme} theme`, async ({ page }) => {
     const testDataUrl =
       'http://localhost:9000/datasets/examples/dimension_sliders_5d_example.luxar.zarr';
-    await page.goto(`/?src=${testDataUrl}&theme=${theme}&debug`);
+    await page.goto(`/?src=${testDataUrl}&theme=${theme}&debug&dpr=1`);
     await waitForTheme(page, theme);
 
     // Let the scene settle so the panel's near/far readouts are stable.
@@ -388,7 +388,7 @@ for (const theme of THEMES) {
   test(`@visual navigation popover - ${theme} theme`, async ({ page }) => {
     const testDataUrl =
       'http://localhost:9000/datasets/examples/dimension_sliders_5d_example.luxar.zarr';
-    await page.goto(`/?src=${testDataUrl}&theme=${theme}&debug`);
+    await page.goto(`/?src=${testDataUrl}&theme=${theme}&debug&dpr=1`);
     await waitForTheme(page, theme);
 
     // Let the scene settle (glass popover blurs the canvas behind it).
@@ -420,7 +420,7 @@ for (const theme of THEMES) {
  */
 test('theme switching updates all CSS variables', async ({ page }) => {
   // Test dark theme
-  await page.goto('/?theme=dark&debug');
+  await page.goto('/?theme=dark&debug&dpr=1');
   await waitForTheme(page, 'dark');
 
   const darkBg = await page.evaluate(() =>
@@ -429,7 +429,7 @@ test('theme switching updates all CSS variables', async ({ page }) => {
   expect(darkBg.trim()).toBe('#111111');
 
   // Test light theme
-  await page.goto('/?theme=light&debug');
+  await page.goto('/?theme=light&debug&dpr=1');
   await waitForTheme(page, 'light');
 
   const lightBg = await page.evaluate(() =>
@@ -438,7 +438,7 @@ test('theme switching updates all CSS variables', async ({ page }) => {
   expect(lightBg.trim()).toBe('#ffffff');
 
   // Test frosted-glass theme
-  await page.goto('/?theme=frosted-glass&debug');
+  await page.goto('/?theme=frosted-glass&debug&dpr=1');
   await waitForTheme(page, 'frosted-glass');
 
   const frostedBg = await page.evaluate(() =>
@@ -448,7 +448,7 @@ test('theme switching updates all CSS variables', async ({ page }) => {
   expect(frostedBg.trim()).toBe('rgba(255, 255, 255, 0.15)');
 
   // Test liquid-glass theme
-  await page.goto('/?theme=liquid-glass&debug');
+  await page.goto('/?theme=liquid-glass&debug&dpr=1');
   await waitForTheme(page, 'liquid-glass');
 
   const liquidBg = await page.evaluate(() =>
@@ -464,7 +464,7 @@ test('theme switching updates all CSS variables', async ({ page }) => {
  */
 test('theme persists across page reloads', async ({ page }) => {
   // Navigate with ?theme=light to set the theme (this persists to localStorage)
-  await page.goto('/?theme=light&debug');
+  await page.goto('/?theme=light&debug&dpr=1');
   await waitForTheme(page, 'light');
 
   // Verify light theme is active
@@ -474,7 +474,7 @@ test('theme persists across page reloads', async ({ page }) => {
   expect(themeBeforeReload).toBe('light');
 
   // Reload page WITHOUT theme parameter - should restore from localStorage
-  await page.goto('/?debug');
+  await page.goto('/?debug&dpr=1');
 
   // Wait for theme to be restored after reload
   await waitForTheme(page, 'light');
@@ -490,7 +490,7 @@ test('theme persists across page reloads', async ({ page }) => {
  * Test URL parameter theme override
  */
 test('URL parameter sets initial theme', async ({ page }) => {
-  await page.goto('/?theme=frosted-glass&debug');
+  await page.goto('/?theme=frosted-glass&debug&dpr=1');
 
   // Wait for theme to be applied
   await waitForTheme(page, 'frosted-glass');

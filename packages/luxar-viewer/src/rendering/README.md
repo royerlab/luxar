@@ -316,14 +316,28 @@ The `GPUBufferPool` manages geometry reuse for Points, Lines, and GSplats, elimi
 
 ### 7. Adaptive DPR Manager
 
-The `AdaptiveDPRManager` dynamically adjusts device pixel ratio based on real-time FPS, trading resolution for frame rate when needed.
+The `AdaptiveDPRManager` dynamically adjusts device pixel ratio based on real-time FPS, trading resolution for frame rate when needed. It is a facade over pure, timestamp-driven modules in `adaptive-dpr/` (FPS tracker, refresh-rate estimator, hysteresis tracker, probe controller, bounds ledger — see that folder's README).
 
-**Algorithm:**
+**Control loop:**
 
-- Samples FPS using a 1-second sliding window, evaluated every 500ms
-- Scales DPR down when FPS drops below `minFPS`
-- Scales DPR up when FPS exceeds `maxFPS` for `hysteresisSeconds`
-- DPR clamped between `minDPR` and `window.devicePixelRatio`
+- Samples FPS using a 1-second sliding window, evaluated every 500 ms; a frame gap > `gapResetMs` (stall, idle-resume) resets the window so dead time never reads as low FPS
+- Thresholds are RELATIVE to the display's estimated achievable rAF rate: scale down below `scaleDownFpsRatio × cap`, count toward scale-up above `scaleUpFpsRatio × cap` (works unchanged on 30/60/120/144 Hz; the estimator holds a high-water mark, lower-bounded by `refreshRateFallback` until genuine rAF throttling is detected)
+- Scale-up fires after `hysteresisSeconds` of sustained high FPS, with a small mid-band grace so isolated dropped-frame samples don't restart the wait
+- The DPR walks multiplicatively below the LIVE `window.devicePixelRatio` (re-read on every evaluation and public read; a monitor/zoom change rebases all learned state and clamps an engaged override — no supersampling on a lower-DPI display) and stops strictly above `max(minDPR, learned floor)`
+
+**U-shape probe and learned bounds:**
+
+- Every scale-down is probe-verified: if FPS did not improve ≥ `probeImprovement` on a clean sample (`probeMinSamples`, half-window span, not load-suppressed), it reverts and the probed DPR becomes a floor; unclean probes void as inconclusive (nothing learned)
+- Repeated identical rejections back off exponentially (`floorTtlMs` × `backoffMultiplier`^n, capped) — no eternal probe/blur cycle on scenes DPR reduction can't help
+- On HiDPI displays, repeated "punished ascents" (a scale-up above 1.0 followed by an FPS collapse) demote the operating ceiling from native to exactly 1.0 for the session (TTL-decayed, backed off on re-demotion)
+- `notifyContentChanged()` (dataset/layer/LOD changes) pulls learned-bound expiries forward and resets backoff streaks; `setLoadActivityPredicate()` suppresses all learning while data loads
+
+**Idle/pause integration:**
+
+- `notifyPaused()` (from `stopAnimation`) clears session state only — learned bounds survive
+- At idle-pause the resting frame is restored to full native sharpness (`prepareIdleFrame()` + one direct render); `notifyResumed()` snaps back to the remembered operating DPR in one step
+- Frames are not recorded while the rendering context is lost. Known limitation: under `?renderer=webgpu`, device loss is handled via a pipeline latch (unrecoverable this release), and WebGPU async pipeline-compile jank inside probe windows is not specially detected — the probe backoff bounds the damage
+- `?dpr=<value>` pins a fixed pixel ratio and locks adaptation off for the session (deterministic E2E/visual runs)
 
 ### 8. Colormap Data
 

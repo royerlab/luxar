@@ -98,7 +98,7 @@ Creates the **Performance** folder (collapsed by default) with:
 
 - **Adaptive Resolution** toggle (`AdaptiveDPRManager.setEnabled`). When ON, manual DPR is hidden and two read-only rows show live "Current DPR" and "Current FPS" values polled every 500 ms.
 - **Manual DPR** slider (range `0.25` … `getNativeDPR()`, step 0.05) using `onFinishChange` to avoid GPU resize thrash. Only applies when adaptive is OFF.
-- Two hand-built display rows (`Current DPR`, `Current FPS`) injected into the folder's `.luxar-gui__children` container — these are not GUI controllers because they are read-only.
+- Two hand-built display rows (`Current DPR`, `Current FPS`) injected into the folder's `.luxar-gui__children` container — these are not GUI controllers because they are read-only. The FPS row reads `idle` while the animation loop is paused (the manager clears its FPS window on pause, so `currentFPS === 0` is the not-rendering sentinel) instead of freezing a stale last-window number. Note the rail `PerformanceMonitor` gauge keeps its own independent 500 ms window and intentionally freezes at idle.
 
 Returns:
 

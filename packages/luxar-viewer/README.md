@@ -658,6 +658,7 @@ monitor.element; // the widget element (mounted by the control rail)
 - `?prefetch-debug` — Verbose prefetch logging
 - `?renderer=webgpu` — Use `WebGPURenderer` (TSL `NodeMaterial`) instead of the default `WebGLRenderer`
 - `?renderer=webgpu&webgpu-force-webgl` — TSL/WebGPU API surface but Three.js routes through its internal WebGL2 backend (diagnostic)
+- `?dpr=<value>` — Pin a fixed device pixel ratio for the session (clamped to [0.25, native]) and lock adaptive resolution off; used by E2E/visual-regression runs and bug repros where deterministic buffer sizes matter
 
 ### Programmatic Usage
 

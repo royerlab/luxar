@@ -471,6 +471,13 @@ export class PickingSystem {
     // and additionally capped at MAX_PICK_BUFFER_DIM per axis so 4K/5K screens
     // do not pay full cost. Cursor coordinates rescale automatically below
     // because they are computed from pickW/width and pickH/height.
+    //
+    // Coupling note: getDrawingBufferSize is CSS size × the ACTIVE pixel
+    // ratio, so every adaptive-DPR step changes pickW/pickH → target
+    // reallocation + full pick re-render on the next hover. Cost-only
+    // (never correctness), lazy, and the DPR manager's probe backoff +
+    // ceiling keep step frequency low; if profiling ever flags this,
+    // the lever is quantizing the pick size or sizing from CSS px.
     const drawBuf = this.renderer.getDrawingBufferSize(this._drawBufSize);
     const { w: pickW, h: pickH } = computePickBufferSize(drawBuf.x, drawBuf.y);
 

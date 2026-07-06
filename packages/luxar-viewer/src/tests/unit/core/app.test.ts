@@ -177,6 +177,7 @@ describe('LuxarApp', () => {
       removePerFrameCallback: vi.fn(),
       setAdaptiveDPRManager: vi.fn(),
       setContextLostPredicate: vi.fn(),
+      setIdleRestorePredicate: vi.fn(),
       dispose: vi.fn(),
       isActive: false,
     };

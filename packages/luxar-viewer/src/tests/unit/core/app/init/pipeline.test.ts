@@ -40,6 +40,7 @@ function makeSceneStub(opts: { initThrows?: boolean } = {}) {
 function makeAnimationStub() {
   return {
     setContextLostPredicate: vi.fn(),
+    setIdleRestorePredicate: vi.fn(),
     addPerFrameCallback: vi.fn(),
     setAdaptiveDPRManager: vi.fn(),
     startAnimation: vi.fn(),
@@ -94,6 +95,10 @@ vi.mock('../../../../../rendering/adaptive-dpr-manager', () => ({
   AdaptiveDPRManager: vi.fn().mockImplementation(() => ({
     setRenderer: vi.fn(),
     setOnDPRChangeCallback: vi.fn(),
+    getNativeDPR: vi.fn(() => 2),
+    setLoadActivityPredicate: vi.fn(),
+    notifyContentChanged: vi.fn(),
+    notifyPaused: vi.fn(),
   })),
 }));
 vi.mock('../../../../../ui/resolution-indicator', () => ({
@@ -232,6 +237,37 @@ describe('runInitPipeline', () => {
       expect(partial.sceneSrc).toBe('http://example.com/scene.zarr');
     });
 
+    it('normalizes the DPR-change callback to percent-of-native before showing the indicator', async () => {
+      const { factories } = makeFactoryOverrides();
+      const ports = makePorts();
+      ports.options.factories = factories as never;
+      const partial: Partial<InitPipelineResult> = {};
+
+      await runInitPipeline(ports, partial);
+
+      const manager = partial.adaptiveDPRManager as unknown as {
+        setOnDPRChangeCallback: ReturnType<typeof vi.fn>;
+      };
+      const indicator = partial.resolutionIndicator as unknown as {
+        show: ReturnType<typeof vi.fn>;
+        reset: ReturnType<typeof vi.fn>;
+      };
+      const callback = manager.setOnDPRChangeCallback.mock.calls[0][0] as (
+        dpr: number,
+        isReducedResolution: boolean
+      ) => void;
+
+      // Reduced at DPR 1.8 on a native-2 display → indicator shows 0.9
+      // (percent-of-native), NOT the absolute DPR (the retina "180%" bug).
+      callback(1.8, true);
+      expect(indicator.show).toHaveBeenCalledWith(0.9);
+
+      // Back at native → reset branch, no further show.
+      callback(2, false);
+      expect(indicator.reset).toHaveBeenCalledTimes(1);
+      expect(indicator.show).toHaveBeenCalledTimes(1);
+    });
+
     it('returns the SAME object reference as `partial` (happy path)', async () => {
       const { factories } = makeFactoryOverrides();
       const ports = makePorts();
@@ -342,6 +378,37 @@ describe('runInitPipeline', () => {
       const events = sceneStub.addEventListener.mock.calls.map((c) => c[0]);
       expect(events).toContain('webgl-context-restored');
       expect(events).toContain('webgpu-device-lost');
+    });
+
+    it('webgpu-device-lost latches the shared context-lost predicate and pauses the DPR manager', async () => {
+      const { factories, sceneStub } = makeFactoryOverrides();
+      const ports = makePorts();
+      ports.options.factories = factories as never;
+      const partial: Partial<InitPipelineResult> = {};
+
+      await runInitPipeline(ports, partial);
+
+      const animation = factories.animationController.mock.results[0].value as {
+        setContextLostPredicate: ReturnType<typeof vi.fn>;
+      };
+      const predicate = animation.setContextLostPredicate.mock.calls[0][0] as () => boolean;
+      sceneStub.isWebGLContextLost = vi.fn(() => false);
+      expect(predicate()).toBe(false);
+
+      // Fire the registered webgpu-device-lost handler.
+      const handler = sceneStub.addEventListener.mock.calls.find(
+        (c: unknown[]) => c[0] === 'webgpu-device-lost'
+      )![1] as (event: object) => void;
+      handler({ reason: 'destroyed' });
+
+      // The predicate is latched even though isWebGLContextLost stays
+      // false (it is hard-false under WebGPU), and the DPR manager is
+      // paused so cheap no-op frames can't drive scale-ups.
+      expect(predicate()).toBe(true);
+      const manager = partial.adaptiveDPRManager as unknown as {
+        notifyPaused: ReturnType<typeof vi.fn>;
+      };
+      expect(manager.notifyPaused).toHaveBeenCalled();
     });
   });
 });

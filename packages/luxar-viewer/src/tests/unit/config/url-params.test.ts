@@ -23,7 +23,21 @@ describe('readUrlParams', () => {
       webgpuForceWebGL: false,
       perfTimestamp: false,
       gpuBudgetMB: null,
+      dpr: null,
     });
+  });
+
+  it('parses dpr as a positive float, rejecting zero/negative/non-numeric', () => {
+    expect(readUrlParams('?dpr=1').dpr).toBe(1);
+    expect(readUrlParams('?dpr=0.5').dpr).toBe(0.5);
+    expect(readUrlParams('?dpr=2').dpr).toBe(2);
+    // Zero and negative pixel ratios are meaningless → null (adaptive).
+    expect(readUrlParams('?dpr=0').dpr).toBeNull();
+    expect(readUrlParams('?dpr=-1').dpr).toBeNull();
+    expect(readUrlParams('?dpr=abc').dpr).toBeNull();
+    // Flag-only form parses as NaN → null.
+    expect(readUrlParams('?dpr').dpr).toBeNull();
+    expect(readUrlParams('').dpr).toBeNull();
   });
 
   it('parses gpuBudgetMB, accepting 0 (disable) and rejecting negatives', () => {

@@ -55,6 +55,9 @@ export class AnimationController {
    */
   private isContextLost: (() => boolean) | null = null;
 
+  /** Guard for the idle-pause DPR restore (null = always allowed). */
+  private canRestoreAtIdle: (() => boolean) | null = null;
+
   /**
    * Create animation controller for rendering loop management.
    *
@@ -170,6 +173,17 @@ export class AnimationController {
   }
 
   /**
+   * Inject a predicate consulted before the idle-pause native-DPR
+   * restore. When it returns false the resting frame keeps the current
+   * DPR — used to protect recordings, whose resolution must stay
+   * locked for the whole capture. Mirrors `setContextLostPredicate`.
+   * Pass `null` to always allow the restore.
+   */
+  setIdleRestorePredicate(predicate: (() => boolean) | null): void {
+    this.canRestoreAtIdle = predicate;
+  }
+
+  /**
    * Main animation loop function - the heart of HDR 3D rendering
    *
    * This function is called ~60 times per second (depending on display refresh rate)
@@ -194,8 +208,11 @@ export class AnimationController {
     // without animation-controller importing UI code directly.
     eventBus.emit('frame-start', {});
 
-    // Record frame for adaptive DPR - tracks FPS and adjusts pixel ratio
-    if (this.adaptiveDPRManager) {
+    // Record frame for adaptive DPR - tracks FPS and adjusts pixel
+    // ratio. Skipped while the rendering context is lost: those frames
+    // do no GPU work, so their "speed" would drive bogus scale-ups and
+    // falsely settle U-shape probes.
+    if (this.adaptiveDPRManager && !this.isContextLost?.()) {
       this.adaptiveDPRManager.recordFrame(performance.now());
     }
 
@@ -266,6 +283,25 @@ export class AnimationController {
     } else {
       // No continuous effects, safe to stop animation
       this.stopAnimation();
+
+      // Idle restore: the static frame the user is about to study
+      // should be at full native sharpness — reduced DPR only ever
+      // traded quality for interaction smoothness. This lives ONLY in
+      // the idle path (never in stopAnimation itself, which also runs
+      // on tab-hide and dispose where rendering would be wrong).
+      // prepareIdleFrame() returns true only when the DPR actually
+      // changed; the resize clears the canvas, so exactly then we
+      // render ONE frame directly — NOT via startAnimation(), which
+      // would re-arm the idle timer and feed native-DPR frames back
+      // into the FPS evaluator.
+      if (
+        this.adaptiveDPRManager?.isActive?.() &&
+        this.canRestoreAtIdle?.() !== false &&
+        !this.isContextLost?.() &&
+        this.adaptiveDPRManager.prepareIdleFrame?.()
+      ) {
+        this.postProcessing.render();
+      }
     }
   };
 
@@ -293,6 +329,10 @@ export class AnimationController {
     // Only start if not already running - prevents duplicate loops
     if (!this.isAnimating) {
       this.isAnimating = true;
+      // Resuming from a rest: let the adaptive DPR manager snap back to
+      // its remembered operating DPR in one step (stopped→running edge
+      // only — this must not fire on every interaction poke).
+      this.adaptiveDPRManager?.notifyResumed?.();
       // Kick off the first frame - subsequent frames are scheduled by animate()
       this.animate();
     }
@@ -323,6 +363,13 @@ export class AnimationController {
   stopAnimation = (): void => {
     // Set flag to prevent animate() from continuing the loop
     this.isAnimating = false;
+
+    // The FPS window, hysteresis streak, and any in-flight probe are
+    // about to go stale across the pause — clear them (session state
+    // only; learned floors survive). Method-level optional chaining is
+    // deliberate: tests inject bare {recordFrame} manager mocks, and
+    // this also runs from dispose() after the manager may be gone.
+    this.adaptiveDPRManager?.notifyPaused?.();
 
     // Cancel any pending requestAnimationFrame call
     // This ensures no more frames are scheduled by the browser

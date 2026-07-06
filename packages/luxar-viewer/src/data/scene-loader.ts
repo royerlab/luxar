@@ -207,6 +207,19 @@ export class SceneLoader {
   // When a new update arrives while one is in progress, we store the latest and process it after
   private _updateInProgress = false;
   private _updateVersion = 0; // For logging/debugging
+
+  /**
+   * Whether an updateView sweep (fetch/decode/upload) is currently in
+   * flight. Exposed for consumers that must treat loading-time frame
+   * jank as unrepresentative — e.g. the adaptive DPR manager suppresses
+   * probe learning while this is true. Covers the serialized update
+   * sweep, not late lazy-LOD commits (those surface as content-change
+   * notifications instead).
+   */
+  public isUpdateInProgress(): boolean {
+    return this._updateInProgress;
+  }
+
   // At most ONE lock-busy re-check of kickRefinementIfIdle is in flight at a
   // time (see that method) — prevents a per-caller pile-up of scheduled
   // re-checks while an update holds the lock for a while.

@@ -340,8 +340,38 @@ describe('ScreenshotStrategy', () => {
       await panel.captureScreenshot();
 
       expect(mockDPRManager.setEnabled).toHaveBeenCalledWith(false);
-      expect(mockSceneManager.setAdaptivePixelRatio).toHaveBeenCalledWith(2.0);
+      // setEnabled(false) already resets to native and applies it via
+      // the full resize path — the session must NOT trigger a second
+      // HDR-target dispose/recreate for the same result.
+      expect(mockSceneManager.setAdaptivePixelRatio).not.toHaveBeenCalled();
       expect(mockDPRManager.setEnabled).toHaveBeenCalledWith(true);
+
+      rafSpy.mockRestore();
+    });
+
+    it('forces native resolution explicitly when adaptive was already OFF (manual-DPR mode)', async () => {
+      const rafSpy = vi.spyOn(window, 'requestAnimationFrame').mockImplementation((cb) => {
+        cb(0);
+        return 0;
+      });
+
+      const mockDPRManager = {
+        isActive: vi.fn().mockReturnValue(false), // manual-DPR mode
+        getCurrentDPR: vi.fn().mockReturnValue(0.5),
+        getNativeDPR: vi.fn().mockReturnValue(2.0),
+        setEnabled: vi.fn(),
+      };
+      panel.setAdaptiveDPRManager(mockDPRManager as any);
+      (panel as any).options.maxDPR = true;
+
+      await panel.captureScreenshot();
+
+      // setEnabled(false) early-returns in this state, so the explicit
+      // call is the ONLY thing forcing native for the capture; restore
+      // then reapplies the saved manual DPR.
+      expect(mockSceneManager.setAdaptivePixelRatio).toHaveBeenCalledWith(2.0);
+      expect(mockSceneManager.setAdaptivePixelRatio).toHaveBeenLastCalledWith(0.5);
+      expect(mockDPRManager.setEnabled).not.toHaveBeenCalledWith(true);
 
       rafSpy.mockRestore();
     });
