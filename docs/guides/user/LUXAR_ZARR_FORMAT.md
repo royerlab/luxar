@@ -477,7 +477,10 @@ Points nodes contain the actual point data.
 
 #### colors/ (Optional)
 - **Shape:** `(N, 3)` for RGB
-- **Dtype:** `float32` (HDR colors)
+- **Dtype:** `uint16` (`geolog_perchannel_u16`, HDR default) / `uint8` (SDR
+  `rgb_uint8`, or HDR under MEMORY) / `float32` (PRECISION). HDR colors are
+  quantized per channel on a true-log grid (uniform relative precision, code 0
+  reserved for exact zeros) and decoded back to float32.
 - **Chunks:** `(min(N, 32768), 3)`
 - **Compression:** Blosc with zstd, level 9 (width-aware shuffle policy)
 - **Description:** HDR RGB colors in normalized range
