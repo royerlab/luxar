@@ -32,6 +32,8 @@ import { projectLinesTo3D as projectLinesTo3DImpl } from './data-worker/projecti
 import { projectGSplatsTo3D as projectGSplatsTo3DImpl } from './data-worker/projection/gsplats';
 import { decodeQuantized as decodeQuantizedImpl } from './data-worker/decode/quantized';
 import { decodeLogScalar as decodeLogScalarImpl } from './data-worker/decode/log-scalar';
+import { decodeGeologScalar as decodeGeologScalarImpl } from './data-worker/decode/geolog-scalar';
+import { decodePerChannel as decodePerChannelImpl } from './data-worker/decode/perchannel';
 import { decodeLUT as decodeLUTImpl } from './data-worker/decode/lut';
 import { decodeBroadcasted as decodeBroadcastedImpl } from './data-worker/decode/broadcasted';
 
@@ -63,6 +65,10 @@ export const workerAPI = {
   // Decoding functions (main thread fetches, worker decodes)
   decodeQuantized: (p: Parameters<typeof decodeQuantizedImpl>[1]) => decodeQuantizedImpl(state, p),
   decodeLogScalar: (p: Parameters<typeof decodeLogScalarImpl>[1]) => decodeLogScalarImpl(state, p),
+  decodeGeologScalar: (p: Parameters<typeof decodeGeologScalarImpl>[1]) =>
+    decodeGeologScalarImpl(state, p),
+  decodePerChannel: (p: Parameters<typeof decodePerChannelImpl>[1]) =>
+    decodePerChannelImpl(state, p),
   decodeLUT: (p: Parameters<typeof decodeLUTImpl>[1]) => decodeLUTImpl(state, p),
   decodeBroadcasted: (p: Parameters<typeof decodeBroadcastedImpl>[1]) =>
     decodeBroadcastedImpl(state, p),

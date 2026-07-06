@@ -18,7 +18,10 @@
  *      satisfied by that coverage metric, with 10% asymmetric hysteresis on
  *      the downgrade direction to suppress threshold-edge flicker.
  *   5. If the desired child differs from the current active one, swap
- *      visibility atomically.
+ *      visibility atomically — gated by the **never-downgrade display
+ *      gate**: a fresh aspiration whose additive ladder is still streaming
+ *      is not shown while the previously-displayed level looks strictly
+ *      better (see ``shouldHoldPreviousDisplay`` in ``lod-display-gate.ts``).
  *
  * The atomic-swap invariant on initial load is realized by
  * ``loadLodGroupNode`` (sequential awaits + ``visible=false`` after
@@ -52,6 +55,7 @@ import {
   SettleTracker,
   visibleElementCount,
 } from './lod-freshness';
+import { shouldHoldPreviousDisplay } from './lod-display-gate';
 
 /**
  * Frames the view-update version must hold steady before the registry reloads a
@@ -192,13 +196,29 @@ export interface LODGroupEntry {
   /**
    * Index into ``children`` of the level ACTUALLY visible this frame. Equals
    * ``activeChildIndex`` in steady state; during a re-slice it transiently
-   * points at the coarsest fresh level while the aspiration reloads. A per-frame
-   * transient written by ``evaluateEntry`` and read by
+   * points at the coarsest fresh level while the aspiration reloads, and
+   * during a never-downgrade hold it can also point at a FINER
+   * previously-displayed level while a coarser streaming aspiration catches
+   * up. A per-frame transient written by ``evaluateEntry`` and read by
    * ``enforceResidentByteBudget`` (same synchronous ``evaluatePerFrame`` pass)
    * so eviction never releases the on-screen level. ``undefined`` before the
-   * first evaluation ⇒ treated as ``activeChildIndex``.
+   * first evaluation ⇒ treated as ``activeChildIndex``. Tracks what is ACTUALLY
+   * on screen every frame — including the coarse level shown while the group is
+   * off-screen — which is what eviction needs, but is therefore NOT the
+   * never-downgrade gate's memory (that is ``heldDisplayChildIndex``).
    */
   displayedChildIndex?: number;
+  /**
+   * The last level displayed while the group was ON SCREEN — the
+   * never-downgrade gate's "previously-displayed level" memory. Distinct from
+   * ``displayedChildIndex`` because the off-screen gate transiently displays
+   * (and would otherwise record) the coarsest ready level; folding that into
+   * the gate memory would let a mere look-away-and-back clobber a held finer
+   * level and re-pop it to chunk-1 on return. Written by ``evaluateEntry``
+   * only on frames where the group is on screen. ``undefined`` before the
+   * first on-screen evaluation ⇒ the gate has no prior level to hold.
+   */
+  heldDisplayChildIndex?: number;
   /**
    * Whether the auto-selector is currently holding this group at its
    * coarsest-ready level because its world bounds are outside the camera
@@ -521,8 +541,10 @@ export class LODGroupRegistry {
     }
     // The initially-shown level is the active default; ``evaluateEntry`` may
     // transiently move the displayed level to a coarser fresh one during a
-    // re-slice, but it starts equal to the aspiration.
+    // re-slice, but it starts equal to the aspiration. The gate memory starts
+    // there too (the group is presumed on-screen until the first evaluation).
     entry.displayedChildIndex = entry.activeChildIndex;
+    entry.heldDisplayChildIndex = entry.activeChildIndex;
   }
 
   /** Drop an lod_group from the registry (called on scene teardown). */
@@ -832,6 +854,42 @@ export class LODGroupRegistry {
       }
     }
 
+    // ── Never-downgrade display gate ──
+    // A lazy level flips ``ready`` after its FIRST additive chunk commits, so
+    // an ungated swap to a fresh-but-still-streaming aspiration pops displayed
+    // quality down to chunk-1 (on zoom in, zoom out, or after a scrub settles)
+    // and climbs back. Hold the previously-displayed level while the streaming
+    // aspiration is strictly worse than what is on screen; release on ladder
+    // completion (committed, not just fetched — see shouldHoldPreviousDisplay),
+    // committed-count crossover (the rest of the ladder then streams VISIBLY),
+    // ladder failure, or the previous level losing freshness. A group with
+    // nothing better on screen swaps immediately (fast first paint preserved).
+    // Bypassed for an explicit lock (the user wants that level now) and while
+    // off-screen (frustum-culled: no visual pop, and holding would pin the
+    // previous level's VRAM for nothing).
+    if (
+      displayIdx === entry.activeChildIndex &&
+      entry.selectorMode === 'auto' &&
+      !entry.offScreen
+    ) {
+      // Read the gate's memory (last ON-SCREEN displayed level), NOT
+      // ``displayedChildIndex`` — the latter is clobbered to the coarse level
+      // during an off-screen excursion, which would defeat the hold on return.
+      const prevIdx = entry.heldDisplayChildIndex;
+      if (prevIdx != null && prevIdx !== displayIdx) {
+        const prev = entry.children[prevIdx];
+        if (shouldHoldPreviousDisplay(aspiration!, prev, version ?? null)) {
+          displayIdx = prevIdx;
+          // The held aspiration is semantically in use — keep it warm in the
+          // eviction LRU. The never-shown stamp below only fires once
+          // (``lastVisibleTick == null``), so during a failure-cooldown window
+          // (ready, not loading, not displayed) it would otherwise be the
+          // globally coldest eviction candidate and churn release→re-stream.
+          aspiration!.lastVisibleTick = this.tick;
+        }
+      }
+    }
+
     // ── Settle-gated reload / progressive refinement of the lazy aspiration ──
     // A lazy level no longer joins the per-slice sweep (see load-lod-group-node.ts),
     // so the registry drives its (re)loading HERE, settle-gated: during active
@@ -870,6 +928,10 @@ export class LODGroupRegistry {
     if (shown && isReady(shown)) {
       shown.lastVisibleTick = this.tick;
       entry.displayedChildIndex = displayIdx;
+      // The gate's memory tracks only what was shown ON SCREEN, so an
+      // off-screen excursion (which displays the coarse fallback) cannot
+      // clobber a held finer level and re-pop it on camera return.
+      if (!entry.offScreen) entry.heldDisplayChildIndex = displayIdx;
     }
 
     // Stamp any already-ready child that has never been shown so it ages into

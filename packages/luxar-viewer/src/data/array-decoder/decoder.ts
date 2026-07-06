@@ -207,6 +207,21 @@ export class ArrayDecoder {
       return this.decodeLogScalar(data, enc.max_log, String(actualDtype));
     }
 
+    // Geometric-log scalar (min/max-anchored, reserved zero level) — the
+    // rescale-first encoding for wide-dynamic-range positive scalars
+    // (gsplat amplitudes). MUST also be checked before generic quantization.
+    if (
+      ArrayDecoder.isGeologScalarEncodingName(enc?.name) &&
+      enc?.min_log !== undefined &&
+      enc?.max_log !== undefined
+    ) {
+      const actualDtype = zarrArray.dtype;
+      if (actualDtype === undefined || actualDtype === null || String(actualDtype) === '') {
+        throw new Error(`[ArrayDecoder] Missing zarr dtype for quantized encoding: ${enc.name}`);
+      }
+      return this.decodeGeologScalar(data, enc.min_log, enc.max_log, String(actualDtype));
+    }
+
     // Per-channel quantization (log / signed-log / linear `*_perchannel_*`) —
     // fully self-decoded here for full-array reads, mirroring the RangeLoader's
     // 'perchannel' path and Python's `_decode_*_perchannel`. `data` holds the raw
@@ -219,9 +234,7 @@ export class ArrayDecoder {
       // whose col_lo/col_hi length disagrees with the stored data.
       const arrShape = zarrArray.shape;
       const cols =
-        Array.isArray(arrShape) && arrShape.length > 1
-          ? Number(arrShape[arrShape.length - 1])
-          : 1;
+        Array.isArray(arrShape) && arrShape.length > 1 ? Number(arrShape[arrShape.length - 1]) : 1;
       const dequant = ArrayDecoder.makePerChannelDequant(
         enc as { name?: string; bits?: number; col_lo?: number[]; col_hi?: number[] },
         cols
@@ -531,6 +544,45 @@ export class ArrayDecoder {
   }
 
   /**
+   * Decode geometric-log scalar (min/max-anchored, reserved zero level).
+   *
+   * Level 0 decodes to exactly 0; levels [1, 2^bits - 1] decode to
+   * exp(minLog + (u - 1)/(2^bits - 2) * (maxLog - minLog)) — uniform
+   * relative precision across the array's own nonzero range. Mirrors
+   * Python `_decode_geolog_scalar` and the worker/WASM kernels exactly.
+   */
+  private decodeGeologScalar(
+    data: Float32Array,
+    minLog: number,
+    maxLog: number,
+    dtype: string
+  ): Float32Array {
+    if (!Number.isFinite(minLog) || !Number.isFinite(maxLog) || maxLog < minLog) {
+      throw new Error(
+        `[ArrayDecoder] Invalid geolog_scalar min_log/max_log: ${minLog}/${maxLog}. ` +
+          'Must be finite with max_log >= min_log.'
+      );
+    }
+
+    let top: number;
+    if (dtype === 'uint8' || dtype === '<u1' || dtype === '|u1') {
+      top = 255;
+    } else if (dtype === 'uint16' || dtype === '<u2' || dtype === '>u2' || dtype === '|u2') {
+      top = 65535;
+    } else {
+      throw new Error(`Unsupported geolog_scalar dtype: ${dtype}`);
+    }
+
+    const inv = Math.max(maxLog - minLog, 0) / Math.max(top - 1, 1);
+    const result = new Float32Array(data.length);
+    for (let i = 0; i < data.length; i++) {
+      const u = data[i];
+      result[i] = u === 0 ? 0 : Math.exp(minLog + (u - 1) * inv);
+    }
+    return result;
+  }
+
+  /**
    * Resolve array reference (deduplicated array)
    *
    * Per spec section 7.6, this method:
@@ -631,6 +683,7 @@ export class ArrayDecoder {
     if (enc.name === 'broadcasted') return 'broadcasted';
     if (ArrayDecoder.isLUTEncodingName(enc.name)) return 'lut';
     if (ArrayDecoder.isLogScalarEncodingName(enc.name)) return 'log_scalar';
+    if (ArrayDecoder.isGeologScalarEncodingName(enc.name)) return 'geolog_scalar';
     if (ArrayDecoder.isQuantizedEncoding(attrs)) return 'quantized';
 
     return 'direct';
@@ -707,6 +760,14 @@ export class ArrayDecoder {
   }
 
   /**
+   * Helper: Check if an encoding name is a geometric-log scalar encoding
+   * (min/max-anchored true-log with a reserved zero level).
+   */
+  static isGeologScalarEncodingName(name: string | undefined): boolean {
+    return name === 'geolog_scalar_uint8' || name === 'geolog_scalar_uint16';
+  }
+
+  /**
    * Validate encoding metadata shape before dispatch.
    */
   static validateEncodingMetadata(enc: EncodingMetadata | undefined): void {
@@ -735,8 +796,36 @@ export class ArrayDecoder {
         '[ArrayDecoder] bounds/min/max metadata is only valid for quantized encodings'
       );
     }
-    if (!ArrayDecoder.isLogScalarEncodingName(enc.name) && enc.max_log !== undefined) {
-      throw new Error('[ArrayDecoder] max_log metadata is only valid for log_scalar encodings');
+    if (
+      !ArrayDecoder.isLogScalarEncodingName(enc.name) &&
+      !ArrayDecoder.isGeologScalarEncodingName(enc.name) &&
+      enc.max_log !== undefined
+    ) {
+      throw new Error(
+        '[ArrayDecoder] max_log metadata is only valid for log_scalar/geolog_scalar encodings'
+      );
+    }
+    if (!ArrayDecoder.isGeologScalarEncodingName(enc.name) && enc.min_log !== undefined) {
+      throw new Error('[ArrayDecoder] min_log metadata is only valid for geolog_scalar encodings');
+    }
+    if (
+      ArrayDecoder.isGeologScalarEncodingName(enc.name) &&
+      (enc.min_log === undefined || enc.max_log === undefined)
+    ) {
+      throw new Error(
+        '[ArrayDecoder] geolog_scalar encoding requires encoding.min_log and encoding.max_log'
+      );
+    }
+    if (
+      ArrayDecoder.isGeologScalarEncodingName(enc.name) &&
+      enc.min_log !== undefined &&
+      enc.max_log !== undefined &&
+      (!Number.isFinite(enc.min_log) || !Number.isFinite(enc.max_log) || enc.max_log < enc.min_log)
+    ) {
+      throw new Error(
+        `[ArrayDecoder] Invalid geolog_scalar min_log/max_log: ${enc.min_log}/${enc.max_log}. ` +
+          'Must be finite with max_log >= min_log.'
+      );
     }
     if (
       (enc.name === 'bounded_scalar_uint8' || enc.name === 'bounded_scalar_uint16') &&
@@ -839,21 +928,31 @@ export class ArrayDecoder {
    *   log:        `x = expm1(lo[c] + level/levels·(hi[c]-lo[c]))`
    *   signed-log: `y = lo[c] + level/levels·(hi[c]-lo[c]); x = sign(y)·expm1(|y|)`
    *   linear:     `x = lo[c] + level/levels·(hi[c]-lo[c])`  (identity; coordinates)
-   * For any other / float32 / direct encoding it returns the identity, so a raw
-   * value passes through unchanged.
+   * With `zero_level: true` (current writer for the log/signed-log pair),
+   * level 0 is a RESERVED ZERO (decodes to exactly 0) and nonzero levels
+   * `1..2^bits-1` span the nonzero-anchored `[lo, hi]` with denominator
+   * `2^bits-2` — same layout as `geolog_scalar`. Arrays without the flag keep
+   * the legacy all-levels mapping above. For any other / float32 / direct
+   * encoding it returns the identity, so a raw value passes through unchanged.
    *
    * @returns `(level, col) => value` — `level` is the raw stored integer (as float).
    */
   static makePerChannelDequant(
-    encoding: { name?: string; bits?: number; col_lo?: number[]; col_hi?: number[] } | undefined,
+    encoding:
+      | {
+          name?: string;
+          bits?: number;
+          col_lo?: number[];
+          col_hi?: number[];
+          zero_level?: boolean;
+        }
+      | undefined,
     numCols: number
   ): (level: number, col: number) => number {
     const name = encoding?.name;
     const isLog = name === 'log_perchannel_u8' || name === 'log_perchannel_u16';
-    const isSlog =
-      name === 'signed_log_perchannel_u8' || name === 'signed_log_perchannel_u16';
-    const isLinear =
-      name === 'linear_perchannel_u8' || name === 'linear_perchannel_u16';
+    const isSlog = name === 'signed_log_perchannel_u8' || name === 'signed_log_perchannel_u16';
+    const isLinear = name === 'linear_perchannel_u8' || name === 'linear_perchannel_u16';
     if (!isLog && !isSlog && !isLinear) {
       return (level: number) => level; // float32 / direct: identity
     }
@@ -863,7 +962,12 @@ export class ArrayDecoder {
     // decoder, which requires col_lo/col_hi and errors on a length mismatch.
     const lo = encoding!.col_lo;
     const hi = encoding!.col_hi;
-    if (!Array.isArray(lo) || !Array.isArray(hi) || lo.length !== numCols || hi.length !== numCols) {
+    if (
+      !Array.isArray(lo) ||
+      !Array.isArray(hi) ||
+      lo.length !== numCols ||
+      hi.length !== numCols
+    ) {
       throw new Error(
         `[ArrayDecoder] ${name}: col_lo/col_hi must each have ${numCols} entries ` +
           `(got ${lo?.length} / ${hi?.length}). Corrupt or malformed encoding metadata.`
@@ -887,11 +991,21 @@ export class ArrayDecoder {
     if (isLinear) {
       return (level: number, c: number) => lo[c] + (level / levels) * rng[c];
     }
+    // zero_level (current writer): level 0 = exact zero; levels 1..2^bits-1
+    // span the nonzero-anchored [lo, hi] (denominator 2^bits-2). Legacy
+    // arrays (no flag) map all levels 0..2^bits-1 over a zero-anchored scale.
+    const zeroLevel = encoding!.zero_level === true;
+    const denom = Math.max(levels - 1, 1);
+    const companded = zeroLevel
+      ? (level: number, c: number) => lo[c] + ((level - 1) / denom) * rng[c]
+      : (level: number, c: number) => lo[c] + (level / levels) * rng[c];
     if (isLog) {
-      return (level: number, c: number) => Math.expm1(lo[c] + (level / levels) * rng[c]);
+      return (level: number, c: number) =>
+        zeroLevel && level === 0 ? 0 : Math.expm1(companded(level, c));
     }
     return (level: number, c: number) => {
-      const y = lo[c] + (level / levels) * rng[c];
+      if (zeroLevel && level === 0) return 0;
+      const y = companded(level, c);
       return Math.sign(y) * Math.expm1(Math.abs(y));
     };
   }
@@ -903,6 +1017,8 @@ export class ArrayDecoder {
     return !!(
       name === 'log_scalar_uint8' ||
       name === 'log_scalar_uint16' ||
+      name === 'geolog_scalar_uint8' ||
+      name === 'geolog_scalar_uint16' ||
       name === 'bounded_scalar_uint8' ||
       name === 'bounded_scalar_uint16' ||
       name === 'rgb_uint8' ||
@@ -944,10 +1060,41 @@ export class ArrayDecoder {
   static getQuantizationMetadata(
     attrs: ArrayMetadata,
     zarrDtype: string
-  ): { bounds: [number, number]; dtype: 'uint8' | 'uint16'; isLogSpace: boolean } | null {
+  ): {
+    bounds: [number, number];
+    dtype: 'uint8' | 'uint16';
+    isLogSpace: boolean;
+    isGeologSpace?: boolean;
+  } | null {
     if (!attrs) return null;
     const enc = attrs.encoding;
     if (!enc || !enc.name) return null;
+
+    // Geometric-log (min/max-anchored, reserved zero level). bounds carry
+    // [min_log, max_log]; min_log may be negative and may equal max_log
+    // (constant nonzero array), so the strict quantization-bounds validator
+    // does not apply here.
+    if (
+      ArrayDecoder.isGeologScalarEncodingName(enc.name) &&
+      enc.min_log !== undefined &&
+      enc.max_log !== undefined
+    ) {
+      if (
+        !Number.isFinite(enc.min_log) ||
+        !Number.isFinite(enc.max_log) ||
+        enc.max_log < enc.min_log
+      ) {
+        throw new Error(
+          `[ArrayDecoder] Invalid geolog_scalar min_log/max_log: ${enc.min_log}/${enc.max_log}`
+        );
+      }
+      return {
+        bounds: [enc.min_log, enc.max_log],
+        dtype: ArrayDecoder.normalizeQuantizedDtype(zarrDtype),
+        isLogSpace: false,
+        isGeologSpace: true,
+      };
+    }
 
     // Check for log-space encoding first (special case)
     if (ArrayDecoder.isLogScalarEncodingName(enc.name) && enc.max_log !== undefined) {
@@ -1056,9 +1203,24 @@ export class ArrayDecoder {
    */
   dequantizeRange(
     quantizedData: Float32Array | Uint8Array | Uint16Array,
-    quantMetadata: { bounds: [number, number]; dtype: string; isLogSpace: boolean }
+    quantMetadata: {
+      bounds: [number, number];
+      dtype: string;
+      isLogSpace: boolean;
+      isGeologSpace?: boolean;
+    }
   ): Float32Array {
     const { bounds, dtype, isLogSpace } = quantMetadata;
+
+    if (quantMetadata.isGeologSpace) {
+      // Geometric-log: bounds = [min_log, max_log], reserved zero level.
+      return this.decodeGeologScalar(
+        quantizedData instanceof Float32Array ? quantizedData : new Float32Array(quantizedData),
+        bounds[0],
+        bounds[1],
+        dtype
+      );
+    }
 
     if (isLogSpace) {
       // Log-space quantization: dequantize then exponentiate

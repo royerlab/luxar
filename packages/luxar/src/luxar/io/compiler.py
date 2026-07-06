@@ -24,6 +24,8 @@ from typing import (
 
 import numpy as np
 
+from ..encoding.compression import CompressorLike, resolve_compressor
+
 if TYPE_CHECKING:
     from ..core.scene import Scene
     from ..core.viewer_config import ViewerConfig
@@ -42,7 +44,6 @@ from ..io.writer import ZarrWriterProtocol
 from ..typing_utils.aliases import ChunkSpec, MaxShape, NodePath, PointsMetadata
 from ..typing_utils.config import DEFAULT_VERSION
 from ..typing_utils.constants import SHARPNESS_MAX
-from ..typing_utils.protocols import CompressorProtocol
 from ._compiler.bounds import (
     compute_position_bounds,
     expand_bounds_with_transforms,
@@ -132,7 +133,7 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
     def __init__(
         self,
         store_path: Optional[Union[str, Path]] = None,
-        compressor: Optional[CompressorProtocol] = DEFAULT_COMP,
+        compressor: "CompressorLike" = DEFAULT_COMP,
         version: str = DEFAULT_VERSION,
         enable_spatial_index: bool = True,
         encoding_mode: EncodingMode = EncodingMode.AUTO,
@@ -1472,7 +1473,7 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
             shape=shape,
             chunks=chunks,
             dtype=dtype,
-            compressor=self.compressor,
+            compressor=resolve_compressor(self.compressor, dtype),
             maxshape=maxshape,
             overwrite=True,
         )

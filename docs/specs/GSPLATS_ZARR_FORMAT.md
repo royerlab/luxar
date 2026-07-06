@@ -55,7 +55,7 @@ Each Gaussian splat is parameterized by:
 | Field | Shape | Dtype | Semantic Type | Description |
 |-------|-------|-------|---------------|-------------|
 | `centers` | (N, d) | uint16 / float32 | COORDINATE | Splat center positions (not broadcastable). AUTO/MEMORY: uint16 per-axis fixed-point (`linear_perchannel_u16`), decoded to float32; PRECISION / large-extent: float32 |
-| `amplitudes` | (N,) or (1,) | float32 | POSITIVE_SCALAR | Non-negative intensity |
+| `amplitudes` | (N,) or (1,) | uint8/uint16/float32 | POSITIVE_SCALAR | Non-negative intensity |
 | `cholesky_factors_diag` | (N, d) or (1, d) | uint8/uint16/float32 | CHOLESKY_DIAG | Diagonal of L (positive, scale-like) |
 | `cholesky_factors_offdiag` | (N, d*(d-1)/2) or (1, …) | uint8/uint16/float32 | CHOLESKY_OFFDIAG | Strictly-lower elements of L (signed); absent when d=1 |
 | `colors` | (N, 3) or (1, 3) | float32/uint8 | COLOR | RGB colors (optional); uint8 [0-255] for SDR, float32 for HDR; absent if not present |
@@ -74,7 +74,13 @@ error (p95 relative Frobenius) and escalates to uint16 only when it exceeds 0.05
 each array's `encoding.certificate`; MEMORY→uint8 unconditionally. uint8 is visually
 lossless on real fits (94.5 dB vs the float32 render, ~46 dB below the fit-error
 floor; 2.48 B/splat compressed vs 8.25 at uint16). Per-array `encoding` metadata
-carries the per-column scales (`col_lo`/`col_hi`). Readers decode to float32 and
+carries the per-column scales (`col_lo`/`col_hi`). Since 2026-07 the writer emits
+`zero_level: true`: scales are anchored at each column's **nonzero** min/max and
+code 0 is **reserved for exact zeros** (same layout as `geolog_scalar`), so
+exactly-zero entries — e.g. the off-diagonal of an axis-aligned splat — decode to
+exactly 0 (codes `1..2^bits-1` span `[col_lo, col_hi]`, denominator `2^bits-2`);
+arrays without the flag keep the legacy all-levels, zero-anchored decode.
+Readers decode to float32 and
 recombine into the packed row-major form `[L00, L10, L11, L20, L21, L22, …]`
 (for d=3) immediately on load; everything above the storage layer sees the single
 packed (N, k) float32 array, k = d*(d+1)/2. **v3.0** files store a single packed
@@ -533,7 +539,7 @@ Quantization is handled by `luxar.encoding` based on semantic types:
 | Field | Semantic Type | MEMORY Mode Encoding |
 |-------|---------------|---------------------|
 | `centers` | COORDINATE | `linear_perchannel_u16` (uint16 per-axis fixed-point) |
-| `amplitudes` | POSITIVE_SCALAR | `positive_scalar_uint8` or `log_scalar_uint8` |
+| `amplitudes` | POSITIVE_SCALAR | `bounded_scalar_uint8/16` (narrow range) or `geolog_scalar_uint8` (wide range; AUTO uses `geolog_scalar_uint16`) |
 | `cholesky_factors_diag` | CHOLESKY_DIAG | `log_perchannel_u8` (per-column log) |
 | `cholesky_factors_offdiag` | CHOLESKY_OFFDIAG | `signed_log_perchannel_u8` (per-column signed-log; absent if d==1) |
 
@@ -592,15 +598,19 @@ Not a storage format concern, but worth noting:
 
 ### Blosc Settings
 
-Default zarr compressor configuration:
+The default is a width-aware per-dtype policy (`luxar.encoding.compression`),
+resolved from the stored dtype at write time:
 
 ```python
-compressor = Blosc(
-    cname='zstd',      # Best compression ratio
-    clevel=3,          # Balance speed/ratio (1-9)
-    shuffle=Blosc.BITSHUFFLE,  # Good for float arrays
-)
+# multi-byte integer codes (uint16 quantized/fixed-point)
+Blosc(cname="zstd", clevel=9, shuffle=Blosc.SHUFFLE)
+# uint8 codes and float arrays
+Blosc(cname="zstd", clevel=9, shuffle=Blosc.NOSHUFFLE)
 ```
+
+Decode speed is level-independent (natively and in wasm), so the high level
+is purely a write-time budget. Pass an explicit `Blosc(...)` to override, or
+`None` to store uncompressed.
 
 ### Chunk Sizing
 
@@ -930,6 +940,33 @@ finest level instead). Both paths go through the shared
 ---
 
 ## Changelog
+
+- **encoding + compression policy** (2026-07-05, no format change):
+  - Wide-dynamic-range POSITIVE_SCALAR arrays (gsplat amplitudes, and any
+    radii/widths spanning > 65536:1) are now stored as
+    **`geolog_scalar_uint16`** (AUTO; `uint8` under MEMORY) instead of
+    float32: a min/max-anchored geometric-log grid — quantisation happens
+    AFTER rescaling to the array's own nonzero `[min, max]`
+    (`min_log`/`max_log` attrs), giving uniform relative precision
+    (~0.013% over 7 decades at u16). **Level 0 is reserved for exact
+    zeros**, so no nonzero amplitude can quantise to zero by construction
+    (the legacy 0-anchored `log_scalar_*` encodings zeroed 3k+ splats on
+    real data; they remain decodable but are no longer produced).
+  - Per-dtype **compressor policy** (measured in the manuscript
+    `codec_selection` supplementary): multi-byte integer codes →
+    `blosc-zstd` level 9 with byte shuffle; uint8 codes and floats →
+    `blosc-zstd` level 9 unshuffled. Replaces the uniform
+    `zstd l3 + bitshuffle` default (Blosc silently neutralises bit shuffle
+    above level 1 at 64 KiB chunks). Zarr arrays self-describe their
+    compressor, so readers need no changes.
+  - The rescale-first principle generalised to the sibling encodings:
+    `bounded_scalar_u8/u16` now anchor at the array's own `[min, max]`
+    (new `min` attr, default 0 on decode — old arrays unaffected), and the
+    per-channel `log_perchannel_*` / `signed_log_perchannel_*` pair
+    (Cholesky diag/offdiag) gains **`zero_level: true`**: per-column scales
+    from the nonzero min/max and code 0 reserved for exact zeros, so
+    axis-aligned splats keep exactly-zero correlations (legacy arrays
+    without the flag keep the old all-levels decode).
 
 - **encoding policy** (2026-07-04, no format change): AUTO Cholesky quantization
   uint16 → **uint8 with an encode-time covariance certificate**

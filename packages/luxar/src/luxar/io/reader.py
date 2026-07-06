@@ -11,15 +11,19 @@ from typing import Any, Dict, Iterator, List, Optional, Union
 
 import numpy as np
 import zarr
-from numcodecs import Blosc
 
 from ..core.dimensions import Dimensions
 from ..core.transforms import read_transform_from_zarr
+from ..encoding.compression import WIDTH_AWARE_DEFAULT
 from ..encoding.decoder import ArrayDecoder
 from ..typing_utils.constants import LUXAR_VERSION_CURRENT
 
-# Default compressor: fast, bit‑shuffle‑friendly
-DEFAULT_COMP = Blosc(cname="zstd", clevel=3, shuffle=Blosc.BITSHUFFLE)
+# Default compressor: the width-aware policy sentinel — each array gets a
+# zstd-l9 configuration keyed on its stored dtype (byte shuffle for multi-byte
+# integer codes, no shuffle for uint8/floats), resolved at write time by
+# luxar.encoding.compression.resolve_compressor. See the manuscript
+# supplementary ``codec_selection`` for the measurements behind the policy.
+DEFAULT_COMP = WIDTH_AWARE_DEFAULT
 
 
 _SENTINEL = object()

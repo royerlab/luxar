@@ -271,11 +271,13 @@ class TestDefaultCompressor:
 
     def test_default_comp_importable(self) -> None:
         """Test DEFAULT_COMP can be imported."""
+        # DEFAULT_COMP may be None if io.reader import fails. Since the
+        # width-aware policy it is a resolution SENTINEL, not a compressor
+        # object — resolve_compressor() turns it into a concrete Blosc.
+        from luxar.encoding.compression import WIDTH_AWARE_DEFAULT
         from luxar.typing_utils.config import DEFAULT_COMP
 
-        # DEFAULT_COMP may be None if io.reader import fails
-        # This tests the import path, not the value
-        assert DEFAULT_COMP is None or hasattr(DEFAULT_COMP, "encode")
+        assert DEFAULT_COMP is None or DEFAULT_COMP is WIDTH_AWARE_DEFAULT
 
 
 class TestSupportedDtypes:

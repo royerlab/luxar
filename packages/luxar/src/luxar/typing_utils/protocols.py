@@ -15,6 +15,7 @@ For constants, see constants.py.
 from __future__ import annotations
 
 from typing import (
+    TYPE_CHECKING,
     Any,
     List,
     Optional,
@@ -33,6 +34,9 @@ from .aliases import (
     PositionArray,
     SceneHierarchy,
 )
+
+if TYPE_CHECKING:
+    from ..encoding.compression import CompressorLike
 
 # =============================================================================
 # Protocol Definitions
@@ -83,7 +87,7 @@ class PointsProtocol(Protocol):
         parent: Optional[NodeProtocol] = None,
         *,
         chunk_size: int = 32_768,
-        compressor: Optional[CompressorProtocol] = None,
+        compressor: "CompressorLike" = None,
         **attrs: Any,
     ) -> None:
         """Initialize points object."""

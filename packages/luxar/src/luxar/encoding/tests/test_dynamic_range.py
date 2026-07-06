@@ -151,8 +151,9 @@ class TestPositiveScalarDynamicRange:
             enc = arr.attrs["encoding"]
             assert enc["name"] == "bounded_scalar_uint16"
 
-    def test_float_for_wide_range(self):
-        """POSITIVE_SCALAR with very wide dynamic range uses float."""
+    def test_geolog_for_wide_range(self):
+        """POSITIVE_SCALAR with very wide dynamic range uses geometric-log
+        uint16 (rescale-first, min/max-anchored) instead of float32."""
         # Data with dynamic range ~1000000:1
         data = np.array([0.000001, 0.001, 1.0], dtype=np.float32)
 
@@ -162,7 +163,28 @@ class TestPositiveScalarDynamicRange:
             encoder.encode(data, group, "test", SemanticType.POSITIVE_SCALAR)
 
             arr = group["test"]
-            assert arr.dtype == np.float32, f"Expected float32, got {arr.dtype}"
+            assert arr.dtype == np.uint16, f"Expected uint16, got {arr.dtype}"
+            enc = arr.attrs["encoding"]
+            assert enc["name"] == "geolog_scalar_uint16"
+            assert "min_log" in enc and "max_log" in enc
+
+    def test_min_anchoring_tightens_far_from_zero_data(self):
+        """Rescale-first: data far from zero gets the full code space over
+        its own span — [10, 11] must resolve ~10x better than the old
+        0-anchored grid could (max/255/2 = 0.022 vs span/255/2 = 0.002)."""
+        data = np.linspace(10.0, 11.0, 500).astype(np.float32)
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            group = zarr.open_group(tmpdir, mode="w")
+            ArrayEncoder().encode(data, group, "t", SemanticType.POSITIVE_SCALAR)
+            enc = group["t"].attrs["encoding"]
+            assert enc["name"] == "bounded_scalar_uint8"
+            assert enc["min"] == 10.0  # anchored at the data's own minimum
+            from luxar.encoding.decoder import ArrayDecoder
+
+            decoded = ArrayDecoder().decode(group["t"], group)
+            max_err = float(np.abs(decoded - data).max())
+            assert max_err <= (11.0 - 10.0) / 255.0 / 2 + 1e-6
 
     def test_max_value_irrelevant_to_dtype_selection(self):
         """Max value alone should not determine dtype - only dynamic range matters."""
@@ -236,17 +258,18 @@ class TestQuantizationErrorBounds:
             encoder = ArrayEncoder()
             encoder.encode(data, group, "test", SemanticType.POSITIVE_SCALAR)
 
-            # Decode manually
+            # Decode manually with the stored [min, max] anchors
+            # (rescale-first: the grid spans the array's own range).
             arr = np.array(group["test"])
             enc = group["test"].attrs["encoding"]
-            max_val = enc["max"]
-            decoded = arr / 255.0 * max_val
+            min_val, max_val = enc["min"], enc["max"]
+            decoded = min_val + arr / 255.0 * (max_val - min_val)
 
-            # Max absolute error should be <= range / 255 / 2 (with rounding)
-            # For [0, 10], max error = 10 / 255 / 2 ≈ 0.0196
+            # Max absolute error should be <= span / 255 / 2 (with rounding) —
+            # a TIGHTER bound than the old 0-anchored max/255/2.
             abs_error = np.abs(decoded - data)
             max_abs_error = np.max(abs_error)
-            expected_max_error = max_val / 255.0 / 2
+            expected_max_error = (max_val - min_val) / 255.0 / 2
             assert max_abs_error <= expected_max_error + 1e-6, (
                 f"Max absolute error {max_abs_error:.6f} > expected {expected_max_error:.6f}"
             )
@@ -261,17 +284,17 @@ class TestQuantizationErrorBounds:
             encoder = ArrayEncoder()
             encoder.encode(data, group, "test", SemanticType.POSITIVE_SCALAR)
 
-            # Decode manually
+            # Decode manually with the stored [min, max] anchors
             arr = np.array(group["test"])
             enc = group["test"].attrs["encoding"]
-            max_val = enc["max"]
-            decoded = arr / 65535.0 * max_val
+            min_val, max_val = enc["min"], enc["max"]
+            decoded = min_val + arr / 65535.0 * (max_val - min_val)
 
-            # Max absolute error should be <= range / 65535 / 2 (with rounding)
+            # Max absolute error should be <= span / 65535 / 2 (with rounding)
             # Allow 1e-7 tolerance for float32 precision
             abs_error = np.abs(decoded - data)
             max_abs_error = np.max(abs_error)
-            expected_max_error = max_val / 65535.0 / 2
+            expected_max_error = (max_val - min_val) / 65535.0 / 2
             assert max_abs_error <= expected_max_error + 1e-7, (
                 f"Max absolute error {max_abs_error:.8f} > expected {expected_max_error:.8f}"
             )
@@ -290,14 +313,18 @@ class TestQuantizationErrorBounds:
             encoder = ArrayEncoder()
             encoder.encode(data, group, "test", SemanticType.POSITIVE_SCALAR)
 
-            arr = np.array(group["test"])
+            # Rescale-first anchoring: raw code 0 now decodes to MIN (the
+            # smallest value), not to zero — so assert on DECODED values.
+            from luxar.encoding.decoder import ArrayDecoder
 
-            # With uint16 and proper selection, NO values should be zero
-            # (all original values are non-zero)
-            zero_count = np.sum(arr == 0)
+            decoded = ArrayDecoder().decode(group["test"], group)
+            zero_count = int(np.sum(decoded == 0))
             assert zero_count == 0, (
-                f"Expected 0 zeros, got {zero_count} ({100 * zero_count / len(arr):.1f}%)"
+                f"Expected 0 decoded zeros, got {zero_count} "
+                f"({100 * zero_count / len(decoded):.1f}%)"
             )
+            # and the smallest value survives with the tighter span grid
+            assert decoded.min() > 0
 
 
 class TestGSplatAmplitudeScenario:
@@ -325,11 +352,15 @@ class TestGSplatAmplitudeScenario:
             # Should use uint16 for this dynamic range
             assert group["amplitudes"].dtype == np.uint16
 
-            # Verify NO data loss
-            arr = np.array(group["amplitudes"])
-            zero_count = np.sum(arr == 0)
-            assert zero_count == 0, (
-                f"GSplat amplitudes: {zero_count} zeros ({100 * zero_count / len(arr):.1f}%) - "
+            # Verify NO data loss: no nonzero amplitude may DECODE to zero
+            # (raw code 0 legitimately appears — it decodes to min, and for
+            # geolog it is the reserved exact-zero level).
+            from luxar.encoding.decoder import ArrayDecoder
+
+            decoded = ArrayDecoder().decode(group["amplitudes"], group)
+            zeroed = int(np.sum((decoded == 0) & (amplitudes > 0)))
+            assert zeroed == 0, (
+                f"GSplat amplitudes: {zeroed} splats zeroed - "
                 f"this would cause invisible splats!"
             )
 

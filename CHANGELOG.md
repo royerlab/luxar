@@ -55,6 +55,46 @@ All notable changes to Luxar are documented in this file.
 - `?dpr=<value>` pins a fixed pixel ratio and locks adaptive resolution off
   for the session (clamped to [0.25, native]) — used by the visual-regression
   suites for deterministic baselines and handy for bug repros.
+#### Changed — geolog amplitude quantization (rescale-first, zero-safe) + per-dtype compressors
+
+- New `geolog_scalar_u8/u16` encoding: wide-dynamic-range positive scalars
+  (gsplat amplitudes; shared path with points radii / lines widths) are
+  quantized AFTER rescaling to the array's own nonzero `[min, max]` on a true
+  log grid — uniform ~0.013% relative error across 7 decades at u16, with
+  **level 0 reserved for exact zeros** so no nonzero splat can quantize to
+  zero by construction. Replaces the float32 fallback the old heuristic used
+  (and the legacy 0-anchored `log_scalar` family, which zeroed 3,026 splats
+  on the real t252 amplitudes; still decodable, no longer produced).
+  Validated on 2.54M real splats: 133.8 dB render vs float32, 121.7 dB on the
+  faint-structure metric; float16 measured and refuted (4x worse, TS-banned).
+  Full decode support: Python, viewer, range-loader, WASM (Rust + TS parity).
+- Width-aware per-dtype compressor policy (from the manuscript
+  `codec_selection` supplementary): u16 codes → zstd-l9/byte-shuffle, u8 and
+  float arrays → zstd-l9/unshuffled, replacing the uniform zstd-l3/bitshuffle
+  default that Blosc silently neutralises at 64 KiB chunks. Applied through a
+  single encoder chokepoint plus the direct-write sites (chunk bounds,
+  labels); fixes two arrays that silently used zarr's lz4 default
+  (colormap LUTs, batch denoise intermediates). Decode is level-independent —
+  read cost unchanged, stores ~20% smaller before the amplitude win.
+- Viewer: the per-channel decode family (`linear_perchannel_*` centers,
+  `log_perchannel_*` / `signed_log_perchannel_*` Cholesky factors) now decodes
+  in the worker on new Rust/WASM kernels (`decode_{linear,log,signed_log}_
+  perchannel_{u8,u16}`) above the same threshold as the other encodings —
+  previously the only hot decode path still running per-element on the main
+  thread (an `expm1` per element for the Cholesky pair). f64 scales cross the
+  boundary as Float64Array, so worker, TS-fallback, and main-thread decodes
+  are bit-identical (three-way parity tests); sub-threshold ranges and worker
+  failures keep the main-thread `makePerChannelDequant` path.
+- Rescale-first generalised to the sibling encodings: `bounded_scalar_u8/u16`
+  now anchor the linear grid at the array's own `[min, max]` instead of
+  `[0, max]` (encoder-only — decoders already honoured the stored min), and
+  the per-channel Cholesky pair (`log_perchannel_*` /
+  `signed_log_perchannel_*`) gains **`zero_level: true`**: per-column scales
+  from each column's nonzero min/max with code 0 reserved for exact zeros,
+  so axis-aligned splats keep exactly-zero off-diagonal correlations instead
+  of tiny spurious ones, and zeros stop dragging the scale anchor down.
+  The covariance certificate round-trips through the identical transform.
+  Legacy arrays (no flag) keep their original decode in Python and viewer.
 
 #### Changed — AUTO covariance quantization: uint8 with an encode-time certificate (~3.3× smaller)
 
@@ -80,6 +120,31 @@ All notable changes to Luxar are documented in this file.
   splats (recorded as `certificate.sample`; quantization scales always come
   from the full columns), keeping the float64 Σ scratch capped on large flat
   fits instead of scaling with N.
+
+#### Fixed — LOD level switches no longer dip to chunk-1 quality (never-downgrade display gate)
+
+- A lazy substitutive level becomes displayable after its **first** additive
+  chunk commits, so switching to a cold level (zoom in, zoom out, or after a
+  scrub settles) popped displayed quality down to chunk-1 and climbed back
+  over the following refinement passes. The LOD registry now holds the
+  previously-displayed level while the streaming target's committed element
+  count is strictly below it, releasing on ladder completion (committed, not
+  just fetched — every geometry commit now stamps `committedLadderComplete`
+  next to the count, so the release is race-free by construction), count
+  crossover (the ladder tail then streams visibly), ladder failure, or the
+  held level losing freshness. Fast first paint is unchanged — a group with
+  nothing better on screen still swaps immediately — and explicit level
+  locks / off-screen groups bypass the gate.
+- The gate covers **arbitrary nested hierarchies**: a lod_group child that is
+  a whole subtree (the `overview` recipe's fine `kind=partition` branch,
+  adaptive/hand-authored lod-of-partition nestings) participates through a
+  visibility-respecting subtree aggregate of its leaves' commit stamps —
+  inner lod_groups' own level toggling shapes the aggregate to exactly what
+  would render, and a stale-content subtree is never held over fresh data.
+- Deferred lod_group subtree activation now kicks the progressive-refinement
+  orchestrator: previously nothing scheduled refinement outside update-view
+  tails, so an `overview` fine branch activated by zooming in sat at its
+  first additive chunk per part until the next slice change.
 
 #### Fixed — stale-cache black screen on regenerated `.gsplats.zarr` + viewer LOD loading/scheduling
 

@@ -8,13 +8,16 @@ encoded image bytes ready for CSR-style storage.
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any, List, Optional
+from typing import TYPE_CHECKING, Any, List, Optional
 
 import numpy as np
 import zarr
 from arbol import aprint
 
-from ....typing_utils.protocols import CompressorProtocol
+from ....encoding.compression import resolve_compressor
+
+if TYPE_CHECKING:
+    from ....encoding.compression import CompressorLike
 
 
 def normalize_image_label(item: Any) -> bytes:
@@ -91,7 +94,7 @@ def write_image_labels_csr(
     group: zarr.Group,
     image_labels: Any,
     n_elements: int,
-    compressor: Optional[CompressorProtocol],
+    compressor: "CompressorLike",
     sort_order: Optional[np.ndarray] = None,
 ) -> None:
     """Write per-element image labels using CSR-style encoding.
@@ -159,7 +162,7 @@ def write_image_labels_csr(
         "image_label_offsets",
         data=offsets,
         chunks=(min(n_elements + 1, 65536),),
-        compressor=compressor,
+        compressor=resolve_compressor(compressor, offsets.dtype),
         overwrite=True,
     )
     # Write image bytes — NO compression (already compressed blobs), 1MB chunks

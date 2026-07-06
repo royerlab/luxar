@@ -14,5 +14,14 @@ def test_compressor_and_format(tmp_path) -> None:
     comp = root["LorenzAttractor"]["positions"].compressor
     from numcodecs import Blosc
 
+    from luxar.encoding.compression import resolve_compressor
+
     assert isinstance(comp, Blosc)
-    assert comp.cname == DEFAULT_COMP.cname
+    # DEFAULT_COMP is the width-aware sentinel: the stored compressor must
+    # match the per-dtype policy for the array's actual stored dtype.
+    expected = resolve_compressor(
+        DEFAULT_COMP, root["LorenzAttractor"]["positions"].dtype
+    )
+    assert comp.cname == expected.cname
+    assert comp.clevel == expected.clevel
+    assert comp.shuffle == expected.shuffle
