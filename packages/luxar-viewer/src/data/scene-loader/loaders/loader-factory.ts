@@ -57,6 +57,20 @@ function resolveNodeLoc(
 }
 
 /**
+ * Read a sub-LOD's `lod_stats.energy_fraction_cum` stamp — the cumulative
+ * self-energy fraction e(k) the ladder prefix up to and including this
+ * sub-LOD carries. Stamped at build time (or by `luxar gsplat
+ * annotate-quality`); `null` on unstamped (legacy) datasets. The progressive
+ * loaders fold the per-sub-LOD table into `committedEnergyFraction`, which
+ * the LOD display gate uses for energy-threshold upgrade releases.
+ */
+function energyFractionFromAttrs(lodAttrs: Record<string, unknown>): number | null {
+  const stats = lodAttrs.lod_stats as Record<string, unknown> | undefined;
+  const e = stats?.energy_fraction_cum;
+  return typeof e === 'number' ? e : null;
+}
+
+/**
  * Create the spatial index loader for a points node. The points
  * loader handles 3D datasets without spatial indices itself, so this
  * is the universal points entry point.
@@ -150,12 +164,14 @@ export async function createProgressiveGSplatsLoader(
   );
 
   const lodLoaders: GSplatsSpatialIndexLoader[] = [];
+  const energyTable: Array<number | null> = [];
 
   for (let i = 0; i < nAdditive; i++) {
     const lodLoc = parentLoc.resolve(`additive_${i}`);
 
     const lodGroup = await zarr.open(lodLoc, { kind: 'group' });
     const lodAttrs = lodGroup.attrs as Record<string, unknown>;
+    energyTable.push(energyFractionFromAttrs(lodAttrs));
 
     const lodNode: SceneNode = {
       path: `${node.path === '/' ? '' : node.path}/additive_${i}`,
@@ -186,7 +202,7 @@ export async function createProgressiveGSplatsLoader(
     );
   }
 
-  return new GSplatsProgressiveLoader(lodLoaders, nAdditive, node.path);
+  return new GSplatsProgressiveLoader(lodLoaders, nAdditive, node.path, energyTable);
 }
 
 /**
@@ -211,11 +227,13 @@ export async function createProgressivePointsLoader(
   );
 
   const lodLoaders: PointsSpatialIndexLoader[] = [];
+  const energyTable: Array<number | null> = [];
 
   for (let i = 0; i < nAdditive; i++) {
     const lodLoc = parentLoc.resolve(`additive_${i}`);
     const lodGroup = await zarr.open(lodLoc, { kind: 'group' });
     const lodAttrs = lodGroup.attrs as Record<string, unknown>;
+    energyTable.push(energyFractionFromAttrs(lodAttrs));
 
     const lodNode: SceneNode = {
       path: `${node.path === '/' ? '' : node.path}/additive_${i}`,
@@ -246,7 +264,7 @@ export async function createProgressivePointsLoader(
     );
   }
 
-  return new PointsProgressiveLoader(lodLoaders, nAdditive, node.path);
+  return new PointsProgressiveLoader(lodLoaders, nAdditive, node.path, energyTable);
 }
 
 /**
@@ -267,11 +285,13 @@ export async function createProgressiveLinesLoader(
   );
 
   const lodLoaders: LinesSpatialIndexLoader[] = [];
+  const energyTable: Array<number | null> = [];
 
   for (let i = 0; i < nAdditive; i++) {
     const lodLoc = parentLoc.resolve(`additive_${i}`);
     const lodGroup = await zarr.open(lodLoc, { kind: 'group' });
     const lodAttrs = lodGroup.attrs as Record<string, unknown>;
+    energyTable.push(energyFractionFromAttrs(lodAttrs));
 
     const lodNode: SceneNode = {
       path: `${node.path === '/' ? '' : node.path}/additive_${i}`,
@@ -302,5 +322,5 @@ export async function createProgressiveLinesLoader(
     );
   }
 
-  return new LinesProgressiveLoader(lodLoaders, nAdditive, node.path);
+  return new LinesProgressiveLoader(lodLoaders, nAdditive, node.path, energyTable);
 }

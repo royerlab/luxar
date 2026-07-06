@@ -290,3 +290,34 @@ describe('commitPointsGeometry — committedLadderComplete stamp', () => {
     expect(ladderComplete(points)).toBe(false); // refreshed from the live loader
   });
 });
+
+describe('commitPointsGeometry — committedEnergyFraction stamp', () => {
+  const energy = (points: THREE.Mesh) =>
+    (points.userData as { committedEnergyFraction?: number }).committedEnergyFraction;
+
+  it('stamps the progressive loader committed-energy fraction e(k) mid-ladder', () => {
+    const root = new THREE.Group();
+    const points = makePoints('/p');
+    points.userData.loader = { hasMoreLODs: true, committedEnergyFraction: 0.42 };
+    root.add(points);
+    commitPointsGeometry('/p', makeData(3), root, null, mockNodeFactory, undefined, 0);
+    expect(energy(points)).toBe(0.42);
+  });
+
+  it('REMOVES the stamp on an unstamped (legacy) dataset; stamps 1 for non-progressive', () => {
+    const root = new THREE.Group();
+    const points = makePoints('/p');
+    points.userData.loader = { hasMoreLODs: true, committedEnergyFraction: null };
+    points.userData.committedEnergyFraction = 0.9; // stale
+    root.add(points);
+    commitPointsGeometry('/p', makeData(3), root, null, mockNodeFactory, undefined, 0);
+    expect(energy(points)).toBeUndefined();
+
+    const root2 = new THREE.Group();
+    const plain = makePoints('/p');
+    plain.userData.loader = {};
+    root2.add(plain);
+    commitPointsGeometry('/p', makeData(2), root2, null, mockNodeFactory, undefined, 0);
+    expect(energy(plain)).toBe(1);
+  });
+});

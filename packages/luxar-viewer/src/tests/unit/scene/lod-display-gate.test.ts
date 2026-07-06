@@ -54,6 +54,7 @@ describe('subtreeDisplayProgress', () => {
       complete: true,
       fresh: true,
       nodeType: 'gsplats',
+      energy: null,
     });
   });
 
@@ -82,6 +83,7 @@ describe('subtreeDisplayProgress', () => {
       complete: false,
       fresh: true,
       nodeType: 'gsplats',
+      energy: null,
     });
   });
 
@@ -93,6 +95,7 @@ describe('subtreeDisplayProgress', () => {
       complete: true,
       fresh: true,
       nodeType: 'gsplats',
+      energy: null,
     });
   });
 
@@ -121,6 +124,7 @@ describe('subtreeDisplayProgress', () => {
       complete: true,
       fresh: true,
       nodeType: 'gsplats',
+      energy: null,
     });
   });
 });
@@ -363,5 +367,128 @@ describe('shouldHoldPreviousDisplay (nested-group levels)', () => {
     expect(shouldHoldPreviousDisplay(groupChild(group([innerLodGroup])), leafPrev(100), 2)).toBe(
       true // 40 < 100 and streaming → hold
     );
+  });
+});
+
+// ────────────────────────────────────────────────────────────────────────
+// The committed-energy release (Q·e quality stamps)
+// ────────────────────────────────────────────────────────────────────────
+
+describe('committed-energy release', () => {
+  /** A complete gsplats prev with a committed count. */
+  function shown(visibleSplatCount: number): FreshnessChild {
+    return {
+      ready: true,
+      object: {
+        userData: {
+          nodeType: 'gsplats',
+          loadedViewVersion: 2,
+          visibleSplatCount,
+          committedLadderComplete: true,
+        },
+      },
+    };
+  }
+
+  /** A streaming gsplats aspiration with an optional committed-energy stamp. */
+  function streamingAsp(visibleSplatCount: number, energy?: number): HoldCandidate {
+    return {
+      ready: true,
+      object: {
+        userData: {
+          nodeType: 'gsplats',
+          loadedViewVersion: 2,
+          visibleSplatCount,
+          committedLadderComplete: false,
+          ...(energy !== undefined ? { committedEnergyFraction: energy } : {}),
+        },
+      },
+    };
+  }
+
+  /** A stamped leaf carrying both the dynamic e stamp and the static w. */
+  function energyLeaf(
+    count: number,
+    energy: number | undefined,
+    weight: number | undefined,
+    opts: { complete?: boolean } = {}
+  ): ProgressNode {
+    return {
+      visible: true,
+      userData: {
+        nodeType: 'gsplats',
+        loadedViewVersion: 2,
+        visibleSplatCount: count,
+        committedLadderComplete: opts.complete ?? false,
+        ...(energy !== undefined ? { committedEnergyFraction: energy } : {}),
+        ...(weight !== undefined
+          ? { attrs: { level_stats: { reference_energy: weight } } }
+          : {}),
+      },
+    };
+  }
+
+  it('releases a stamped streaming aspiration at the energy threshold, far below the count crossover (the headline)', () => {
+    // 10 vs 100 committed: the count rule would hold, but the committed
+    // prefix already carries 70% of the level's energy — swap now, the rest
+    // of the ladder streams visibly.
+    expect(shouldHoldPreviousDisplay(streamingAsp(10, 0.7), shown(100), 2)).toBe(false);
+  });
+
+  it('releases exactly AT the threshold (>=, not >)', () => {
+    expect(shouldHoldPreviousDisplay(streamingAsp(10, 0.6), shown(100), 2)).toBe(false);
+  });
+
+  it('keeps holding while the committed energy is below the threshold', () => {
+    expect(shouldHoldPreviousDisplay(streamingAsp(10, 0.3), shown(100), 2)).toBe(true);
+    expect(shouldHoldPreviousDisplay(streamingAsp(10, 0.59), shown(100), 2)).toBe(true);
+  });
+
+  it('falls back to the count rule on an unstamped aspiration (legacy dataset)', () => {
+    expect(shouldHoldPreviousDisplay(streamingAsp(10), shown(100), 2)).toBe(true);
+    expect(shouldHoldPreviousDisplay(streamingAsp(100), shown(100), 2)).toBe(false);
+  });
+
+  it('low-energy stamped aspiration still releases at the count crossover (energy never delays release)', () => {
+    expect(shouldHoldPreviousDisplay(streamingAsp(100, 0.3), shown(100), 2)).toBe(false);
+  });
+
+  it('aggregates a group aspiration as the w-weighted mean of its leaves', () => {
+    // Heavy leaf nearly done, light leaf barely started → mean 0.82 → release.
+    const heavyDone = group([energyLeaf(10, 0.9, 90), energyLeaf(5, 0.1, 10)]);
+    expect(subtreeDisplayProgress(heavyDone, 2)!.energy).toBeCloseTo(0.82, 10);
+    const aspRelease: HoldCandidate = { ready: true, object: heavyDone as never };
+    expect(shouldHoldPreviousDisplay(aspRelease, shown(1000), 2)).toBe(false);
+
+    // Swap the weights: the barely-started leaf dominates → mean 0.18 → hold.
+    const heavyStarting = group([energyLeaf(10, 0.9, 10), energyLeaf(5, 0.1, 90)]);
+    expect(subtreeDisplayProgress(heavyStarting, 2)!.energy).toBeCloseTo(0.18, 10);
+    const aspHold: HoldCandidate = { ready: true, object: heavyStarting as never };
+    expect(shouldHoldPreviousDisplay(aspHold, shown(1000), 2)).toBe(true);
+  });
+
+  it('a partially stamped subtree falls back WHOLE to the count rule (never blend measured and guessed)', () => {
+    // One leaf stamped high, one missing its e stamp → aggregate null.
+    const mixed = group([energyLeaf(10, 0.95, 90), energyLeaf(5, undefined, 10)]);
+    expect(subtreeDisplayProgress(mixed, 2)!.energy).toBeNull();
+    const asp: HoldCandidate = { ready: true, object: mixed as never };
+    expect(shouldHoldPreviousDisplay(asp, shown(1000), 2)).toBe(true);
+    // A missing static w poisons the aggregate the same way.
+    const noW = group([energyLeaf(10, 0.95, 90), energyLeaf(5, 0.5, undefined)]);
+    expect(subtreeDisplayProgress(noW, 2)!.energy).toBeNull();
+  });
+
+  it('excludes known-empty leaves from the weighted mean (mirrors the empty-level display guard)', () => {
+    // The empty part carries no stamps at this slice; the stamped non-empty
+    // part alone decides the aggregate.
+    const withEmpty = group([energyLeaf(0, undefined, undefined), energyLeaf(10, 0.7, 50)]);
+    expect(subtreeDisplayProgress(withEmpty, 2)!.energy).toBeCloseTo(0.7, 10);
+    const asp: HoldCandidate = { ready: true, object: withEmpty as never };
+    expect(shouldHoldPreviousDisplay(asp, shown(1000), 2)).toBe(false);
+  });
+
+  it('an all-empty subtree reports unknown energy (null), not 0 or 1', () => {
+    const allEmpty = group([energyLeaf(0, undefined, undefined)]);
+    expect(subtreeDisplayProgress(allEmpty, 2)!.energy).toBeNull();
   });
 });
