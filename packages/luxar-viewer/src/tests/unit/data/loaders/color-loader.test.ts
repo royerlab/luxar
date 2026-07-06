@@ -247,6 +247,36 @@ describe('loadColorRanges (orchestrator)', () => {
     };
   }
 
+  it('routes per-channel encoded colors (geolog_perchannel_u16 HDR) through the DECODE path', async () => {
+    // Regression: the encoded-ness check used to be a hand-rolled
+    // quantized/LUT/broadcasted triple that missed the per-channel family,
+    // so HDR geolog_perchannel_u16 colors streamed their RAW u16 CODES as
+    // SDR full-scale colors (rendered near-white). Per-channel colors must
+    // decode to Float32 — never take the direct-typed path.
+    const array = {
+      dtype: 'uint16',
+      shape: [10, 3],
+      attrs: {
+        encoding: {
+          name: 'geolog_perchannel_u16',
+          bits: 16,
+          col_lo: [0, 0, 0],
+          col_hi: [1, 1, 1],
+          zero_level: true,
+          original_dtype: 'float32',
+        },
+      },
+    } as never;
+    const rl = makeFakeRangeLoader();
+    const ranges: ColorRange[] = [{ start: 0, end: 2 }];
+
+    const out = await loadColorRanges(array, ranges, rl, {} as never, 'TEST');
+
+    expect(out).toBeInstanceOf(Float32Array); // decoded floats, not raw codes
+    expect(rl.loadRangesResolvingRef).toHaveBeenCalledTimes(1);
+    expect(rl.loadDirectTyped).not.toHaveBeenCalled();
+  });
+
   it('takes the direct path for unencoded uint8 colors and never invokes RangeLoader', async () => {
     mockZarrGet.mockResolvedValueOnce({ data: new Uint8Array([10, 20, 30, 40, 50, 60]) } as never);
     const array = {

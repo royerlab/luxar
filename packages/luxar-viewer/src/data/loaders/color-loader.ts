@@ -148,10 +148,13 @@ export async function loadColorRanges(
   const totalElements = totalItems * 3; // RGB
 
   const attrs = array.attrs as unknown as ArrayMetadata;
-  const isEncoded =
-    ArrayDecoder.isQuantizedEncoding(attrs) ||
-    ArrayDecoder.isLUTEncoded(attrs) ||
-    ArrayDecoder.isBroadcasted(attrs);
+  // Canonical encoded-ness check (covers quantized, LUT, broadcasted,
+  // array_ref AND the per-channel family). The previous hand-rolled
+  // three-way check missed per-channel encodings, so geolog_perchannel_u16
+  // HDR colors fell into the "direct" branch and streamed RAW u16 CODES as
+  // if they were SDR full-scale colors — every HDR scene rendered with
+  // wrong (near-white) colors.
+  const isEncoded = ArrayDecoder.isEncoded(attrs);
   const isArrayRef = ArrayDecoder.isArrayRef(attrs);
 
   // 1. Direct (unencoded) path — preserve native type. The unified
