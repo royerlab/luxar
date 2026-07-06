@@ -56,6 +56,8 @@ def make_lod_pyramid(
     max_n_dense: int = 2_000,
     seed: Optional[int] = None,
     verbose: bool = False,
+    quality_stamps: bool = False,
+    quality_max_pair_splats: int = 2_000_000,
 ) -> GSplatData:
     """Build the full 2-D LOD pyramid (substitutive × additive) in one call.
 
@@ -86,6 +88,9 @@ def make_lod_pyramid(
         Optional shared seed (per-axis offsets are added internally).
     verbose
         Per-step Arbol logging from substitutive reduction.
+    quality_stamps, quality_max_pair_splats
+        Opt-in measured Q·e quality stamps per substitutive level (passed to
+        :func:`make_substitutive_lod`; see :mod:`luxar.gsplats.lod.quality`).
 
     Returns
     -------
@@ -119,6 +124,8 @@ def make_lod_pyramid(
         seed=seed,
         coarsen_dims=coarsen_dims,
         verbose=verbose,
+        quality_stamps=quality_stamps,
+        quality_max_pair_splats=quality_max_pair_splats,
     )
 
     # Build an additive ladder on each substitutive level. Explicit `counts:`

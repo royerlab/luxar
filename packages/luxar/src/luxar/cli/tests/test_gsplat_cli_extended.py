@@ -2444,6 +2444,68 @@ class TestLODCommand:
         assert result.exit_code == 0, f"failed:\n{result.stdout}"
         assert GSplatData.load(out).n_substitutive >= 2
 
+    def test_quality_stamps_rejected_for_stream(
+        self, runner: CliRunner, medium_gsplats: Path, tmp_path: Path
+    ) -> None:
+        """--quality-stamps is a substitutive-only knob; stream rejects it."""
+        out = tmp_path / "x.gsplats.zarr"
+        result = runner.invoke(
+            app,
+            [
+                "gsplat",
+                "lod",
+                str(medium_gsplats),
+                str(out),
+                "--recipe",
+                "stream",
+                "--quality-stamps",
+            ],
+        )
+        assert result.exit_code != 0
+        assert not out.exists()
+
+    def test_quality_stamps_persist_through_levels(
+        self, runner: CliRunner, medium_gsplats: Path, tmp_path: Path
+    ) -> None:
+        """Default-on Q·e stamps round-trip to disk: every substitutive level
+        carries quality + reference_energy and every sub-LOD carries a
+        monotone energy_fraction_cum ending at 1.0; --no-quality-stamps drops
+        the Q keys (the free e(k)/w stamps remain)."""
+        from luxar.gsplats.gsplat_data import GSplatData
+
+        out = tmp_path / "q.gsplats.zarr"
+        result = runner.invoke(
+            app,
+            ["gsplat", "lod", str(medium_gsplats), str(out), "--recipe", "levels"],
+        )
+        assert result.exit_code == 0, f"failed:\n{result.stdout}"
+        loaded = GSplatData.load(out)
+        levels = loaded.substitutive_levels
+        assert levels[0].stats["quality"] == 1.0  # the finest IS the reference
+        for lev in levels:
+            assert 0.0 <= lev.stats["quality"] <= 1.0
+            assert lev.stats["reference_energy"] > 0
+            e = [sub.stats["energy_fraction_cum"] for sub in lev.additive_sublods]
+            assert e == sorted(e)
+            assert e[-1] == pytest.approx(1.0)
+
+        out_off = tmp_path / "noq.gsplats.zarr"
+        result = runner.invoke(
+            app,
+            [
+                "gsplat",
+                "lod",
+                str(medium_gsplats),
+                str(out_off),
+                "--recipe",
+                "levels",
+                "--no-quality-stamps",
+            ],
+        )
+        assert result.exit_code == 0, f"failed:\n{result.stdout}"
+        for lev in GSplatData.load(out_off).substitutive_levels:
+            assert "quality" not in lev.stats
+
     def test_legacy_recipe_names_error_with_pointer(
         self, runner: CliRunner, medium_gsplats: Path, tmp_path: Path
     ) -> None:

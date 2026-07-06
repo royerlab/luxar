@@ -567,3 +567,75 @@ def test_adaptive_per_part_levels_are_sibling_aware():
                 assert chunk == 4
             else:
                 assert chunk == max(4, math.ceil(child.n_splats / 8.0))
+
+
+# ── Q·e quality stamps through the pipeline layer ───────────────────────────
+
+
+def test_quality_stamps_default_on_and_flow_through_levels():
+    """RecipeParams defaults quality stamps ON (the primitive defaults OFF);
+    the levels recipe stamps Q + the group-consistent reference energy w on
+    every level's leaf meta."""
+    assert RecipeParams().quality_stamps is True
+    assert RecipeParams().quality_max_pair_splats == 2_000_000
+
+    data = _make_random_gsplat(n=400)
+    res = build_recipe(data, "levels", _params(levels=1, compression_factor=8))
+    children = res.tree.children  # coarsest→finest in memory
+    stats = [child.meta["stats"] for child in children]
+    assert all("quality" in s for s in stats)
+    assert stats[-1]["quality"] == 1.0  # the finest IS the reference
+    assert 0.0 <= stats[0]["quality"] <= 1.0
+    # w is the FINEST content's total self-energy, constant across the group
+    # (self-energy is quadratic in amplitude — per-level totals differ, so a
+    # per-level w would skew weighted aggregation).
+    ws = [s["reference_energy"] for s in stats]
+    assert ws[0] == pytest.approx(ws[-1])
+    assert ws[0] > 0
+
+    # The off switch removes the measurement entirely.
+    res_off = build_recipe(
+        data, "levels", _params(levels=1, compression_factor=8, quality_stamps=False)
+    )
+    for child in res_off.tree.children:
+        assert "quality" not in child.meta["stats"]
+
+
+def test_quality_stamps_overview_cap_and_fine_parts():
+    """overview: the coarse cap carries its measured Q and the finest
+    content's energy as w (surviving the `.flattened()` leaf rebuild); the
+    fine parts are the finest content — quality 1.0, w = each part's own
+    total (disjoint parts sum to the cap's w)."""
+    data = _make_random_gsplat(n=400)
+    res = build_recipe(
+        data, "overview", _params(max_elements=120, compression_factor=4)
+    )
+    coarse, fine = res.children
+    cap_stats = coarse.meta["stats"]
+    assert 0.0 <= cap_stats["quality"] <= 1.0
+    assert cap_stats["reference_energy"] > 0
+    part_ws = []
+    for leaf in iter_leaves(fine):
+        assert leaf.meta["stats"]["quality"] == 1.0
+        part_ws.append(leaf.meta["stats"]["reference_energy"])
+    assert all(w > 0 for w in part_ws)
+    # Disjoint parts ⇒ self-energy is additive: Σ w_p == the cap's reference w.
+    assert cap_stats["reference_energy"] == pytest.approx(sum(part_ws), rel=1e-3)
+
+
+def test_quality_stamps_adaptive_parts():
+    """adaptive: every part's lod group is quality-stamped per level, with a
+    group-consistent w inside each part."""
+    data = _make_random_gsplat(n=400)
+    res = build_recipe(
+        data,
+        "adaptive",
+        _params(max_elements=120, levels=1, compression_factor=8),
+    )
+    for part in res.children:
+        stats = [child.meta["stats"] for child in part.children]  # coarse→fine
+        assert all("quality" in s and "reference_energy" in s for s in stats)
+        assert stats[-1]["quality"] == 1.0
+        assert stats[0]["reference_energy"] == pytest.approx(
+            stats[-1]["reference_energy"]
+        )

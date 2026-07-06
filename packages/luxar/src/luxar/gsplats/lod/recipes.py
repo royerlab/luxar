@@ -64,6 +64,7 @@ from luxar.gsplats.tree import (
     GSplatLodGroup,
     GSplatNode,
     GSplatPartition,
+    iter_leaves,
 )
 
 #: The recipe vocabulary, ordered by dataset scale.
@@ -161,6 +162,14 @@ class RecipeParams:
     # per-dataset anchor knob: the fraction is a count ratio (immune to
     # non-displayed-dimension multiplicity) and the viewer anchors the finest at
     # fills-screen via the live viewport diagonal.
+    # Q·e quality stamps: measure each coarse substitutive level's mixture-L²
+    # quality Q vs its group's finest content and stamp it (with the
+    # reference_energy weight w) into level_stats — the build-time half of the
+    # viewer's recursive Q·e quality algebra (see gsplats.lod.quality).
+    # Constant-cost sampled estimator; ON by default at this pipeline layer
+    # (the primitive make_substitutive_lod defaults to False).
+    quality_stamps: bool = True
+    quality_max_pair_splats: int = 2_000_000
     # shared
     device: str = "auto"
     seed: Optional[int] = None
@@ -219,6 +228,8 @@ def build_levels(data: GSplatData, params: RecipeParams) -> GSplatData:
         device=params.device,
         seed=params.seed,
         coarsen_dims=params.coarsen_dims,
+        quality_stamps=params.quality_stamps,
+        quality_max_pair_splats=params.quality_max_pair_splats,
     )
 
 
@@ -244,6 +255,8 @@ def build_levels_matrix(data: GSplatData, params: RecipeParams) -> GSplatData:
         truncation_sigmas=params.truncation_sigmas,
         max_n_dense=params.max_n_dense,
         seed=params.seed,
+        quality_stamps=params.quality_stamps,
+        quality_max_pair_splats=params.quality_max_pair_splats,
     )
 
 
@@ -317,6 +330,8 @@ def _substitutive_for_part(part: GSplatNode, params: RecipeParams) -> GSplatNode
         device=params.device,
         seed=params.seed,
         coarsen_dims=params.coarsen_dims,
+        quality_stamps=params.quality_stamps,
+        quality_max_pair_splats=params.quality_max_pair_splats,
     )
     if params.additive_ladders:
         # Additive ladder inside every per-part substitutive level (clamped to
@@ -416,6 +431,8 @@ def build_overview(data: GSplatData, params: RecipeParams) -> GSplatLodGroup:
         device=params.device,
         seed=params.seed,
         coarsen_dims=params.coarsen_dims,
+        quality_stamps=params.quality_stamps,
+        quality_max_pair_splats=params.quality_max_pair_splats,
     )
     coarse_leaf = capped.at_substitutive(capped.n_substitutive - 1).flattened().tree
     if params.additive_ladders:
@@ -423,6 +440,23 @@ def build_overview(data: GSplatData, params: RecipeParams) -> GSplatLodGroup:
         # additive LODs everywhere by default) — the fine branch's parts get
         # theirs from build_tiles.
         coarse_leaf = _ladder_for_part(coarse_leaf, params)
+    if params.quality_stamps:
+        # `.flattened()` above dropped the capped reduction's level_stats —
+        # re-attach the measured Q and the group-consistent reference energy w
+        # (the FINEST content's total; see make_substitutive_lod). The additive
+        # ladder's fallback w (the cap's OWN energy) must not win here: self-
+        # energy is quadratic in amplitude, so it would skew the group's
+        # weighted-quality aggregation.
+        cap_stats = capped.substitutive_levels[-1].stats
+        leaf_stats = coarse_leaf.meta.setdefault("stats", {})
+        for key in ("quality", "reference_energy"):
+            if key in cap_stats:
+                leaf_stats[key] = cap_stats[key]
+        # The fine parts ARE the group's finest content: quality 1.0 by
+        # definition (each part's w is its ladder's own total, already stamped
+        # by make_additive_lod).
+        for leaf in iter_leaves(fine_partition):
+            leaf.meta.setdefault("stats", {})["quality"] = 1.0
 
     # Children are coarsest→finest: [coarse cap, fine partition]. Derive per-child
     # coverage fractions from the whole-subtree splat counts (fine partition's count
