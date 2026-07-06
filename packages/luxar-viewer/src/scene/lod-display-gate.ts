@@ -89,6 +89,15 @@ export interface SubtreeDisplayProgress {
    * registry's known-empty display guard.
    */
   energy: number | null;
+  /**
+   * Displayed-quality estimate q = Q·e aggregated like {@link energy}, where
+   * Q is each leaf's measured `level_stats.quality` (its COMPLETE quality vs
+   * its lod group's finest content; defaults to 1 when not measured — e.g.
+   * datasets annotated without `--with-quality`). Purely informational (the
+   * layers-panel / data-monitor readouts); the gate's release rule uses
+   * {@link energy} alone.
+   */
+  quality: number | null;
 }
 
 /** Mutable fold state for the recursive walk (module-internal). */
@@ -101,6 +110,8 @@ interface ProgressAccumulator {
   any: boolean;
   /** Σ wᵢ·eᵢ over visible non-empty stamped leaves (w = reference_energy). */
   weightedEnergy: number;
+  /** Σ wᵢ·Qᵢ·eᵢ over the same leaves (Q defaults to 1 when unmeasured). */
+  weightedQuality: number;
   /** Σ wᵢ over the same leaves. */
   weight: number;
   /** False once any contributing leaf lacks its e stamp or w weight. */
@@ -141,6 +152,8 @@ function foldProgress(
       const w = ud.attrs?.level_stats?.reference_energy;
       if (typeof e === 'number' && typeof w === 'number' && w > 0) {
         acc.weightedEnergy += w * e;
+        const q = ud.attrs?.level_stats?.quality;
+        acc.weightedQuality += w * e * (typeof q === 'number' ? q : 1);
         acc.weight += w;
       } else {
         acc.energyKnown = false;
@@ -178,6 +191,7 @@ export function subtreeDisplayProgress(
     mixed: false,
     any: false,
     weightedEnergy: 0,
+    weightedQuality: 0,
     weight: 0,
     energyKnown: true,
   };
@@ -189,7 +203,21 @@ export function subtreeDisplayProgress(
     fresh: acc.fresh,
     nodeType: acc.mixed ? 'mixed' : acc.nodeType,
     energy: acc.energyKnown && acc.weight > 0 ? acc.weightedEnergy / acc.weight : null,
+    quality: acc.energyKnown && acc.weight > 0 ? acc.weightedQuality / acc.weight : null,
   };
+}
+
+/**
+ * Displayed-quality estimate q = Q·e of one registry child (leaf or whole
+ * subtree), for the layers-panel / data-monitor readouts — `null` when the
+ * dataset carries no quality stamps (or nothing is committed yet). Q is the
+ * static measured level quality (`level_stats.quality`, default 1), e the
+ * commit-time energy fraction; groups aggregate w-weighted over visible
+ * non-empty leaves. Display-only: the gate's hold rule reads `energy`, not
+ * this.
+ */
+export function displayedQualityFraction(node: ProgressNode): number | null {
+  return subtreeDisplayProgress(node, null)?.quality ?? null;
 }
 
 /**

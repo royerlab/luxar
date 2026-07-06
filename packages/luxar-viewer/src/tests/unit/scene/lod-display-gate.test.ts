@@ -7,6 +7,7 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  displayedQualityFraction,
   shouldHoldPreviousDisplay,
   subtreeDisplayProgress,
   type HoldCandidate,
@@ -55,6 +56,7 @@ describe('subtreeDisplayProgress', () => {
       fresh: true,
       nodeType: 'gsplats',
       energy: null,
+      quality: null,
     });
   });
 
@@ -84,6 +86,7 @@ describe('subtreeDisplayProgress', () => {
       fresh: true,
       nodeType: 'gsplats',
       energy: null,
+      quality: null,
     });
   });
 
@@ -96,6 +99,7 @@ describe('subtreeDisplayProgress', () => {
       fresh: true,
       nodeType: 'gsplats',
       energy: null,
+      quality: null,
     });
   });
 
@@ -125,6 +129,7 @@ describe('subtreeDisplayProgress', () => {
       fresh: true,
       nodeType: 'gsplats',
       energy: null,
+      quality: null,
     });
   });
 });
@@ -421,9 +426,7 @@ describe('committed-energy release', () => {
         visibleSplatCount: count,
         committedLadderComplete: opts.complete ?? false,
         ...(energy !== undefined ? { committedEnergyFraction: energy } : {}),
-        ...(weight !== undefined
-          ? { attrs: { level_stats: { reference_energy: weight } } }
-          : {}),
+        ...(weight !== undefined ? { attrs: { level_stats: { reference_energy: weight } } } : {}),
       },
     };
   }
@@ -490,5 +493,43 @@ describe('committed-energy release', () => {
   it('an all-empty subtree reports unknown energy (null), not 0 or 1', () => {
     const allEmpty = group([energyLeaf(0, undefined, undefined)]);
     expect(subtreeDisplayProgress(allEmpty, 2)!.energy).toBeNull();
+  });
+});
+describe('displayedQualityFraction (Q·e readout)', () => {
+  it('multiplies the measured level quality Q into the committed energy e', () => {
+    const node: ProgressNode = {
+      visible: true,
+      userData: {
+        nodeType: 'gsplats',
+        visibleSplatCount: 10,
+        committedLadderComplete: false,
+        committedEnergyFraction: 0.8,
+        attrs: { level_stats: { quality: 0.75, reference_energy: 100 } },
+      },
+    };
+    expect(displayedQualityFraction(node)).toBeCloseTo(0.6, 10);
+  });
+
+  it('defaults Q to 1 when the level quality was not measured (e-only stamps)', () => {
+    const node: ProgressNode = {
+      visible: true,
+      userData: {
+        nodeType: 'gsplats',
+        visibleSplatCount: 10,
+        committedLadderComplete: false,
+        committedEnergyFraction: 0.8,
+        attrs: { level_stats: { reference_energy: 100 } },
+      },
+    };
+    expect(displayedQualityFraction(node)).toBeCloseTo(0.8, 10);
+  });
+
+  it('returns null on an unstamped dataset or an empty subtree', () => {
+    const unstamped: ProgressNode = {
+      visible: true,
+      userData: { nodeType: 'gsplats', visibleSplatCount: 10, committedLadderComplete: false },
+    };
+    expect(displayedQualityFraction(unstamped)).toBeNull();
+    expect(displayedQualityFraction({ visible: true, children: [] })).toBeNull();
   });
 });

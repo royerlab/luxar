@@ -296,6 +296,27 @@ describe('lodChipContent', () => {
     expect(streaming.title).toContain('◌ = streaming from network');
   });
 
+  it('shows the committed energy fraction e(k) with a didactic tooltip when stamped', () => {
+    const node = { additiveSublods: 6 } as SceneGraphNode;
+    const state: LODProgressState = {
+      kind: 'additive',
+      loaded: 2,
+      total: 6,
+      refining: true,
+      lastAllResident: false,
+      energy: 0.72,
+    };
+    const c = lodChipContent(node, state)!;
+    expect(c.text).toContain('LOD 2/6 ~72%');
+    expect(c.title).toContain('~72% of the level');
+    expect(c.title).toContain('energy-ordered streaming');
+
+    // Unstamped (legacy) datasets: no percentage, no energy tooltip clause.
+    const legacy = lodChipContent(node, { ...state, energy: undefined })!;
+    expect(legacy.text).not.toContain('%');
+    expect(legacy.title).not.toContain('energy');
+  });
+
   it('returns null for a plain node with no LOD dimension', () => {
     expect(lodChipContent({ type: 'points' } as SceneGraphNode, undefined)).toBeNull();
   });

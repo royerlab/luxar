@@ -547,6 +547,13 @@ export interface LODProgressState {
    * `ResidencyAccumulator.allResident`.
    */
   lastAllResident?: boolean;
+  /**
+   * additive: committed energy fraction e(k) ∈ [0, 1] of the loaded ladder
+   * prefix (from the build-time `energy_fraction_cum` quality stamps —
+   * energy-ordered streaming front-loads the visually important elements).
+   * Undefined on unstamped (legacy) datasets.
+   */
+  energy?: number;
   /** partition: number of BSP parts. */
   partCount?: number;
 }

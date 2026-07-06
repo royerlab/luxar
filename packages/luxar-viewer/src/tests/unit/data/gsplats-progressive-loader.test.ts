@@ -520,7 +520,6 @@ describe('GSplatsProgressiveLoader — concat memoization (no-op commit skip)', 
   });
 });
 
-
 describe('GSplatsProgressiveLoader — committedEnergyFraction (quality stamps)', () => {
   function make(table?: Array<number | null>) {
     const lodA = makeSubLoader(makeLodData(100, 3, { color: 'uint8' }));

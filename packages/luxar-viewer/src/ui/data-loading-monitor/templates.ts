@@ -1458,12 +1458,23 @@ export function lodChipContent(
         : state.lastAllResident === false
           ? ' · ◌ = streaming from network'
           : '';
+    // Committed energy fraction e(k) — how much of the ladder's total
+    // self-energy is already on screen (quality stamps; absent on legacy
+    // unstamped datasets). Far more informative than the raw level count:
+    // energy-ordered streaming front-loads the visually important elements,
+    // so e.g. 2/6 levels can already carry ~70% of the energy.
+    const energyStr =
+      typeof state.energy === 'number' ? ` ~${Math.round(state.energy * 100)}%` : '';
+    const energyNote =
+      typeof state.energy === 'number'
+        ? ` · ~${Math.round(state.energy * 100)}% of the level's total energy already on screen (energy-ordered streaming loads the visually important elements first)`
+        : '';
     const base = refining
       ? `Additive LOD refining — ${loaded}/${total} levels loaded`
       : `Additive LOD — ${loaded}/${total} levels loaded`;
     return {
-      text: `LOD ${loaded}/${total}${residency}${spinner}`,
-      title: `${base}${residencyNote}`,
+      text: `LOD ${loaded}/${total}${energyStr}${residency}${spinner}`,
+      title: `${base}${energyNote}${residencyNote}`,
     };
   }
 

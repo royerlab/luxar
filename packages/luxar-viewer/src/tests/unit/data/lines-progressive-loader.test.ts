@@ -537,7 +537,6 @@ describe('LinesProgressiveLoader — concat memoization (no-op commit skip)', ()
   });
 });
 
-
 describe('LinesProgressiveLoader — committedEnergyFraction (quality stamps)', () => {
   function make(table?: Array<number | null>) {
     const lodA = makeSubLoader(makeLodData(100, 50));
