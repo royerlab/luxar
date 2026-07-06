@@ -824,9 +824,91 @@ def _print_gsplat_tree_summary(path: Path) -> None:
             shutil.rmtree(tmp, ignore_errors=True)
 
 
+def annotate_quality(
+    path: Path = typer.Argument(
+        ...,
+        exists=True,
+        help="Path to an UNCOMPRESSED .gsplats.zarr directory (in-place; "
+        ".zip/.tar.gz stores must be unpacked first).",
+    ),
+    with_quality: bool = typer.Option(
+        False,
+        "--with-quality",
+        help="Also measure per-level mixture-L2 quality Q vs each lod group's "
+        "finest content (loads full splat arrays — slower; the free e(k)/w "
+        "stamps alone already enable the viewer's energy-threshold upgrades).",
+    ),
+    max_pair_splats: int = typer.Option(
+        2_000_000,
+        "--max-pair-splats",
+        min=1,
+        help="Subsample cap per mixture for the Q measurement.",
+    ),
+    device: Optional[str] = typer.Option(
+        None, "--device", help="Compute device for Q: auto|cpu|cuda|mps."
+    ),
+    dry_run: bool = typer.Option(
+        False, "--dry-run", help="Compute and print the stamps, write nothing."
+    ),
+) -> None:
+    """Retrofit Q·e quality stamps onto an existing .gsplats.zarr, in place.
+
+    Stamps, without refitting or re-laddering:
+
+    - lod_stats.energy_fraction_cum per additive sub-LOD (cumulative committed
+      self-energy fraction e(k); cheap O(N))
+    - level_stats.reference_energy per leaf (the aggregation weight w)
+    - level_stats.quality per substitutive level (--with-quality; measured
+      mixture-L2 Q vs the group's finest content)
+
+    The root content_hash is re-stamped so the viewer's persistent cache
+    invalidates automatically.
+
+    Examples:
+        luxar gsplat annotate-quality data.gsplats.zarr
+        luxar gsplat annotate-quality data.gsplats.zarr --with-quality
+        luxar gsplat annotate-quality data.gsplats.zarr --dry-run
+    """
+    from luxar.gsplats.lod.annotate import annotate_quality_store
+
+    try:
+        with asection(f"Annotating {path.name}{' (dry run)' if dry_run else ''}"):
+            report = annotate_quality_store(
+                path,
+                with_quality=with_quality,
+                max_pair_splats=max_pair_splats,
+                device=device or "auto",
+                dry_run=dry_run,
+            )
+            aprint(f"Leaves stamped: {len(report.leaves)}")
+            for leaf in report.leaves:
+                e_str = ", ".join(f"{e:.3f}" for e in leaf.energy_fraction_cum)
+                aprint(
+                    f"  {leaf.path or '/'}: {leaf.n_splats:,} splats, "
+                    f"w={leaf.reference_energy:.4g}, e(k)=[{e_str}]"
+                )
+            if with_quality:
+                aprint(f"Levels measured: {len(report.levels)}")
+                for lev in report.levels:
+                    aprint(
+                        f"  {lev.path or '/'}: {lev.n_splats:,} splats, "
+                        f"Q={lev.quality:.4f}, w={lev.reference_energy:.4g}"
+                    )
+            if dry_run:
+                aprint("Dry run: nothing written.")
+            else:
+                aprint("✓ Stamps written; content_hash refreshed.")
+    except typer.Exit:
+        raise
+    except ValueError as e:
+        aprint(f"Error: {e}")
+        raise typer.Exit(1)
+
+
 def register_inspect_commands(app: typer.Typer) -> None:
     """Register the inspect commands onto ``app_gsplat``."""
     app.command("info")(info_dataset)
     app.command("napari")(napari_viewer)
     app.command("view")(quick_view)
     app.command("compare")(compare_quality)
+    app.command("annotate-quality")(annotate_quality)
