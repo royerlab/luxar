@@ -40,6 +40,20 @@ export interface FreshnessChild {
       visibleSplatCount?: number;
       /** Commit-time ladder stamp — see ``stamp-view-version.ts``. */
       committedLadderComplete?: boolean;
+      /**
+       * Commit-time committed-energy stamp e(k) ∈ [0, 1] — see
+       * ``stamp-view-version.ts``. Absent on unstamped (legacy) datasets.
+       */
+      committedEnergyFraction?: number;
+      /**
+       * The leaf's zarr attrs; the display gate reads the static
+       * ``level_stats`` quality stamps (``reference_energy`` = the leaf's
+       * absolute self-energy weight w, used to aggregate committed energy
+       * across a partition's leaves; ``quality`` = measured Q, for UX).
+       */
+      attrs?: {
+        level_stats?: { quality?: number; reference_energy?: number };
+      };
     };
   };
 }

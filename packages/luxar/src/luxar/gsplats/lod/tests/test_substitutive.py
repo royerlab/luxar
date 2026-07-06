@@ -471,6 +471,59 @@ class TestApiContract:
         )
         assert pyramid.n_substitutive == 2
 
+    def test_quality_stamps_opt_in(self):
+        """quality_stamps=True stamps Q + reference_energy on every level.
+
+        The finest level is the reference (Q == 1.0); coarser levels score
+        strictly below it; reference_energy is the FINEST content's total
+        self-energy, identical across the group (self-energy is quadratic in
+        amplitude, so per-level totals differ — the shared value is what
+        keeps partition-of-lod weighting level-independent).
+        """
+        from luxar.gsplats.lod.quality import total_self_energy
+
+        data = _make_anisotropic_3d(n=512, seed=7)
+        pyramid = make_substitutive_lod(
+            data,
+            compression_factor=8,
+            levels=2,
+            method="kmeans_lloyd",
+            lloyd_iterations=2,
+            candidate_bins_k=4,
+            device="cpu",
+            seed=0,
+            quality_stamps=True,
+        )
+        levels = pyramid.substitutive_levels
+        assert levels[0].stats["quality"] == 1.0
+        w = total_self_energy(data.flattened())
+        for lv in levels:
+            assert lv.stats["reference_energy"] == pytest.approx(w, rel=1e-6)
+        qualities = [lv.stats["quality"] for lv in levels]
+        assert all(0.0 <= q <= 1.0 for q in qualities)
+        # Quality is non-increasing toward coarser levels, and the coarsest
+        # (8 splats for 512) is measurably below the reference. A near-perfect
+        # intermediate merge may saturate at 1.0 within estimator noise — the
+        # measured-and-clamped semantics, not a bug.
+        assert qualities[0] >= qualities[1] >= qualities[2]
+        assert qualities[2] < 1.0
+
+    def test_quality_stamps_off_by_default(self):
+        data = _make_isotropic_3d(n=32, seed=1)
+        pyramid = make_substitutive_lod(
+            data,
+            compression_factor=4,
+            levels=1,
+            method="kmeans_lloyd",
+            lloyd_iterations=1,
+            candidate_bins_k=2,
+            device="cpu",
+            seed=0,
+        )
+        for lv in pyramid.substitutive_levels:
+            assert "quality" not in lv.stats
+            assert "reference_energy" not in lv.stats
+
     def test_stats_recorded(self):
         data = _make_isotropic_3d(n=16, seed=0)
         pyramid = make_substitutive_lod(

@@ -10,9 +10,11 @@
  * settles) and climbs back over the following passes.
  * {@link shouldHoldPreviousDisplay} holds the previously-displayed level
  * while the streaming aspiration is strictly worse than what is shown, and
- * releases on ladder completion, committed-count crossover, ladder failure,
- * or the previous level losing freshness — never blocking a swap when
- * nothing better is on screen (fast first paint is preserved).
+ * releases on ladder completion, the committed-energy threshold (stamped
+ * datasets: committed e(k) ≥ {@link ENERGY_RELEASE_THRESHOLD} — the primary,
+ * much earlier release), committed-count crossover (the unstamped fallback),
+ * ladder failure, or the previous level losing freshness — never blocking a
+ * swap when nothing better is on screen (fast first paint is preserved).
  *
  * **Committed state only.** The gate reads the per-mesh commit stamps
  * (`visible*Count`, `loadedViewVersion`, `committedLadderComplete` — written
@@ -75,6 +77,27 @@ export interface SubtreeDisplayProgress {
   fresh: boolean;
   /** Shared leaf type (`points` / `lines` / `gsplats`) or `'mixed'`. */
   nodeType: string;
+  /**
+   * Committed energy fraction of the subtree, aggregated as the
+   * `reference_energy`-weighted mean of the visible non-empty leaves'
+   * `committedEnergyFraction` stamps (disjoint regions ⇒ L² energy is
+   * additive, so w-weighting makes per-leaf fractions comparable). `null`
+   * when ANY contributing leaf lacks the energy stamp or its static
+   * `level_stats.reference_energy` weight — a partially stamped subtree
+   * falls back whole to count comparison (never blend measured and guessed).
+   * Known-empty leaves (count 0) are excluded from the mean, mirroring the
+   * registry's known-empty display guard.
+   */
+  energy: number | null;
+  /**
+   * Displayed-quality estimate q = Q·e aggregated like {@link energy}, where
+   * Q is each leaf's measured `level_stats.quality` (its COMPLETE quality vs
+   * its lod group's finest content; defaults to 1 when not measured — e.g.
+   * datasets annotated without `--with-quality`). Purely informational (the
+   * layers-panel / data-monitor readouts); the gate's release rule uses
+   * {@link energy} alone.
+   */
+  quality: number | null;
 }
 
 /** Mutable fold state for the recursive walk (module-internal). */
@@ -85,6 +108,14 @@ interface ProgressAccumulator {
   nodeType: string;
   mixed: boolean;
   any: boolean;
+  /** Σ wᵢ·eᵢ over visible non-empty stamped leaves (w = reference_energy). */
+  weightedEnergy: number;
+  /** Σ wᵢ·Qᵢ·eᵢ over the same leaves (Q defaults to 1 when unmeasured). */
+  weightedQuality: number;
+  /** Σ wᵢ over the same leaves. */
+  weight: number;
+  /** False once any contributing leaf lacks its e stamp or w weight. */
+  energyKnown: boolean;
 }
 
 function foldProgress(
@@ -111,6 +142,23 @@ function foldProgress(
     const t = ud.nodeType ?? '';
     if (!acc.nodeType) acc.nodeType = t;
     else if (acc.nodeType !== t) acc.mixed = true;
+    // Energy fold: w-weighted mean of the committed-energy stamps over the
+    // NON-EMPTY leaves (a known-empty leaf holds none of the subtree's
+    // content at this slice — including it would drag the mean toward its
+    // meaningless stamp). One missing e or w poisons the whole aggregate to
+    // null (count fallback) — never blend measured and guessed energies.
+    if (count > 0) {
+      const e = ud.committedEnergyFraction;
+      const w = ud.attrs?.level_stats?.reference_energy;
+      if (typeof e === 'number' && typeof w === 'number' && w > 0) {
+        acc.weightedEnergy += w * e;
+        const q = ud.attrs?.level_stats?.quality;
+        acc.weightedQuality += w * e * (typeof q === 'number' ? q : 1);
+        acc.weight += w;
+      } else {
+        acc.energyKnown = false;
+      }
+    }
   }
 
   const children = node.children;
@@ -142,6 +190,10 @@ export function subtreeDisplayProgress(
     nodeType: '',
     mixed: false,
     any: false,
+    weightedEnergy: 0,
+    weightedQuality: 0,
+    weight: 0,
+    energyKnown: true,
   };
   foldProgress(root, true, version, acc);
   if (!acc.any) return null;
@@ -150,7 +202,22 @@ export function subtreeDisplayProgress(
     complete: acc.complete,
     fresh: acc.fresh,
     nodeType: acc.mixed ? 'mixed' : acc.nodeType,
+    energy: acc.energyKnown && acc.weight > 0 ? acc.weightedEnergy / acc.weight : null,
+    quality: acc.energyKnown && acc.weight > 0 ? acc.weightedQuality / acc.weight : null,
   };
+}
+
+/**
+ * Displayed-quality estimate q = Q·e of one registry child (leaf or whole
+ * subtree), for the layers-panel / data-monitor readouts — `null` when the
+ * dataset carries no quality stamps (or nothing is committed yet). Q is the
+ * static measured level quality (`level_stats.quality`, default 1), e the
+ * commit-time energy fraction; groups aggregate w-weighted over visible
+ * non-empty leaves. Display-only: the gate's hold rule reads `energy`, not
+ * this.
+ */
+export function displayedQualityFraction(node: ProgressNode): number | null {
+  return subtreeDisplayProgress(node, null)?.quality ?? null;
 }
 
 /**
@@ -174,6 +241,8 @@ interface SideProgress {
   nodeType: string;
   /** Fresh for `version` (ready-based when untracked) — staleness beats quality. */
   freshForHold: boolean;
+  /** Committed energy fraction (leaf stamp / subtree weighted mean); null = unstamped. */
+  energy: number | null;
 }
 
 function sideProgress(child: FreshnessChild, version: number | null): SideProgress | null {
@@ -185,6 +254,7 @@ function sideProgress(child: FreshnessChild, version: number | null): SideProgre
       complete: ud.committedLadderComplete !== false,
       nodeType: ud.nodeType ?? '',
       freshForHold: version == null ? isReady(child) : isFresh(child, version),
+      energy: typeof ud.committedEnergyFraction === 'number' ? ud.committedEnergyFraction : null,
     };
   }
   // Group / untracked child: aggregate over the subtree, if there is one.
@@ -200,8 +270,23 @@ function sideProgress(child: FreshnessChild, version: number | null): SideProgre
     complete: aggregate.complete,
     nodeType: aggregate.nodeType,
     freshForHold: isReady(child) && aggregate.fresh,
+    energy: aggregate.energy,
   };
 }
+
+/**
+ * Committed-energy release threshold: a streaming aspiration whose committed
+ * prefix already carries at least this fraction of its total self-energy is
+ * visually close enough to its complete self to swap in — regardless of raw
+ * counts. Energy-ordered ladders front-load energy, so this releases far
+ * earlier than count crossover: measured on real microscopy (h2afva vrefit),
+ * committed counts cross only ~2 chunks from the ladder END on legacy
+ * shared-base ladders, while e(k) passes 0.6 mid-ladder (and at chunk 1-2 on
+ * sibling-aware ladders, which size their first chunk for exactly this).
+ * Counts compare apples to oranges across substitutive levels; the energy
+ * fraction is the additive orderer's own criterion.
+ */
+export const ENERGY_RELEASE_THRESHOLD = 0.6;
 
 /**
  * The never-downgrade display gate: should the registry keep the
@@ -220,16 +305,21 @@ function sideProgress(child: FreshnessChild, version: number | null): SideProgre
  *   - `prev` is fresh for `version` (aggregate freshness for a group prev;
  *     merely ready when `version` is ``null``): staleness always beats
  *     quality — a stale `prev` shows the wrong slice and must not be held.
+ *   - the aspiration's committed energy is unknown (unstamped dataset) or
+ *     still below {@link ENERGY_RELEASE_THRESHOLD} — a stamped aspiration
+ *     carrying ≥ that fraction of its own total self-energy swaps in
+ *     immediately (the energy release; strictly earlier than or equal to
+ *     the count release below, never later).
  *   - both committed element counts are known, comparable (same leaf
  *     geometry type on both sides — splat counts vs segment counts are
  *     meaningless to compare, and `'mixed'` subtrees are never comparable),
  *     `prev`'s is non-zero, and the aspiration's is strictly below it.
  *
- * Releases (returns ``false``) on ladder completion (commit landed), count
- * crossover (the aspiration caught up — the rest of its ladder then streams
- * *visibly*), failure, a stale/empty/unknown `prev`, or no `prev` at all —
- * so a group with nothing better on screen always swaps immediately (fast
- * first paint).
+ * Releases (returns ``false``) on ladder completion (commit landed), the
+ * committed-energy threshold (stamped datasets — the rest of the ladder then
+ * streams *visibly*), count crossover (the unstamped fallback / early exit),
+ * failure, a stale/empty/unknown `prev`, or no `prev` at all — so a group
+ * with nothing better on screen always swaps immediately (fast first paint).
  */
 export function shouldHoldPreviousDisplay(
   aspiration: HoldCandidate,
@@ -244,5 +334,6 @@ export function shouldHoldPreviousDisplay(
   if (!prevProgress || !prevProgress.freshForHold) return false;
   if (prevProgress.count <= 0) return false;
   if (asp.nodeType !== prevProgress.nodeType || asp.nodeType === 'mixed') return false;
+  if (asp.energy != null && asp.energy >= ENERGY_RELEASE_THRESHOLD) return false;
   return asp.count < prevProgress.count;
 }

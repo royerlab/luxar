@@ -341,12 +341,17 @@ levels, and bounds resident VRAM with an LRU eviction pass.
    fresh-but-still-streaming aspiration would pop displayed quality
    down to chunk-1 (on zoom in, zoom out, or after a scrub settles)
    and climb back. The registry holds the previously-displayed level
-   while the streaming aspiration's committed element count is
-   strictly below it (`shouldHoldPreviousDisplay` in
+   while the streaming aspiration's committed geometry is strictly
+   worse than what is shown (`shouldHoldPreviousDisplay` in
    `lod-display-gate.ts`), releasing on ladder completion (the
    commit-time `committedLadderComplete` stamp — committed, not just
-   fetched), count crossover (the rest of the ladder then streams
-   visibly), ladder failure, or the previous level losing freshness.
+   fetched), the **committed-energy threshold** (quality-stamped
+   datasets: the aspiration's committed prefix carries ≥ 60% of its
+   total self-energy — `committedEnergyFraction` ≥
+   `ENERGY_RELEASE_THRESHOLD`, the primary and much earlier release;
+   energy-ordered ladders front-load energy, so this fires chunks
+   before raw counts cross), count crossover (the unstamped-dataset
+   fallback), ladder failure, or the previous level losing freshness.
    Bypassed for explicit level locks and off-screen groups; a group
    with nothing better on screen still swaps at first paint.
    **Nested-group levels** (a child that is a whole subtree, e.g. the
@@ -354,7 +359,10 @@ levels, and bounds resident VRAM with an LRU eviction pass.
    lod/partition nestings) participate through
    `subtreeDisplayProgress`, which folds the subtree's _visible_
    stamped leaves into one aggregate (count sum / all-complete /
-   all-fresh) — inner lod_groups' own level toggling shapes the
+   all-fresh / `reference_energy`-weighted committed energy, with
+   known-empty leaves excluded and any missing stamp poisoning the
+   energy aggregate to null → count fallback) — inner lod_groups' own
+   level toggling shapes the
    aggregate to exactly what would render. Deferred-group activation
    also kicks the sweep refinement orchestrator
    (`SceneLoader.kickRefinementIfIdle`) so the freshly-registered part

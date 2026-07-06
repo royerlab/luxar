@@ -520,3 +520,34 @@ describe('PointsProgressiveLoader — concat memoization (no-op commit skip)', (
     expect(backAgain).toBe(back);
   });
 });
+
+describe('PointsProgressiveLoader — committedEnergyFraction (quality stamps)', () => {
+  function make(table?: Array<number | null>) {
+    const lodA = makeSubLoader(makeLodData(100));
+    const lodB = makeSubLoader(makeLodData(50));
+    return new PointsProgressiveLoader(
+      [lodA, lodB] as unknown as PointsSpatialIndexLoader[],
+      2,
+      '/points',
+      table
+    );
+  }
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+
+  it('reports 0 before any LOD loads and the table e(k) as the ladder streams', async () => {
+    const loader = make([0.7, 1.0]);
+    expect(loader.committedEnergyFraction).toBe(0);
+    await loader.updateView(baseViewState);
+    // Sync mocks are cache-hit fast, so both LODs load in the first pass.
+    expect(loader.committedEnergyFraction).toBe([0.7, 1.0][loader.loadedLODCount - 1]);
+  });
+
+  it('reads as unstamped (null) without a table, with a wrong-length table, or with any missing entry', () => {
+    expect(make().committedEnergyFraction).toBeNull();
+    expect(make([0.7]).committedEnergyFraction).toBeNull();
+    expect(make([0.7, null]).committedEnergyFraction).toBeNull();
+  });
+});
