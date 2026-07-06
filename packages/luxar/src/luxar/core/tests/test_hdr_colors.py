@@ -5,6 +5,7 @@ import pytest
 import zarr
 
 from luxar import Dimensions, LuxarZarrCompiler
+from luxar.encoding.decoder import ArrayDecoder
 
 
 class TestHDRColorSupport:
@@ -44,13 +45,16 @@ class TestHDRColorSupport:
 
             scene.add_points("hdr_points", positions, colors=colors)
 
-        # Verify HDR colors are preserved
+        # HDR colors quantize to per-channel true-log uint16 under AUTO
+        # (2026-07 policy); preservation is verified through DECODE.
         store = zarr.open_group(tmp_path / "hdr_moderate.luxar.zarr", mode="r")
-        stored_colors = store["hdr_points/colors"][:]
-        assert stored_colors.dtype == np.float32
-        assert np.max(stored_colors) > 1.0  # HDR values
-        assert np.max(stored_colors) <= 5.0
-        np.testing.assert_array_almost_equal(stored_colors, colors)
+        arr = store["hdr_points/colors"]
+        assert arr.dtype == np.uint16
+        assert arr.attrs["encoding"]["name"] == "geolog_perchannel_u16"
+        decoded = np.asarray(ArrayDecoder().decode(arr, store["hdr_points"]))
+        assert np.max(decoded) > 1.0  # HDR values survive the round-trip
+        assert np.max(decoded) <= 5.0 * (1 + 1e-3)
+        np.testing.assert_allclose(decoded, colors, rtol=1e-3)
 
     def test_hdr_colors_extreme(self, tmp_path) -> None:
         """Test extreme HDR colors with warnings."""
@@ -66,11 +70,13 @@ class TestHDRColorSupport:
             with pytest.warns(UserWarning, match="HDR colors.*maximum value"):
                 compiler.write_points("extreme_hdr", positions, colors=colors)
 
-        # Verify extreme values are preserved
+        # Verify extreme values survive the geolog u16 round-trip (uniform
+        # RELATIVE precision — exactly the regime true-log exists for).
         store = zarr.open_group(tmp_path / "hdr_extreme.luxar.zarr", mode="r")
-        stored_colors = store["extreme_hdr/colors"][:]
-        assert np.max(stored_colors) > 10.0  # Extreme HDR
-        np.testing.assert_array_almost_equal(stored_colors, colors, decimal=2)
+        arr = store["extreme_hdr/colors"]
+        decoded = np.asarray(ArrayDecoder().decode(arr, store["extreme_hdr"]))
+        assert np.max(decoded) > 10.0  # Extreme HDR
+        np.testing.assert_allclose(decoded, colors, rtol=1e-3)
 
     def test_mixed_hdr_sdr_colors(self, tmp_path) -> None:
         """Test mixed HDR and SDR values in same array."""
@@ -86,19 +92,21 @@ class TestHDRColorSupport:
 
             scene.add_points("mixed_points", positions, colors=colors)
 
-        # Verify mixed values are preserved
+        # A mixed array with any value > 1 is HDR -> geolog u16; verify both
+        # populations through decode.
         store = zarr.open_group(tmp_path / "mixed.luxar.zarr", mode="r")
-        stored_colors = store["mixed_points/colors"][:]
+        arr = store["mixed_points/colors"]
+        decoded = np.asarray(ArrayDecoder().decode(arr, store["mixed_points"]))
 
         # Check SDR points
         sdr_mask = np.arange(100) % 2 == 1
-        assert np.all(stored_colors[sdr_mask] <= 1.0)
+        assert np.all(decoded[sdr_mask] <= 1.0 * (1 + 1e-3))
 
         # Check HDR points
         hdr_mask = np.arange(100) % 2 == 0
-        assert np.any(stored_colors[hdr_mask] > 1.0)
+        assert np.any(decoded[hdr_mask] > 1.0)
 
-        np.testing.assert_array_almost_equal(stored_colors, colors)
+        np.testing.assert_allclose(decoded, colors, rtol=1e-3)
 
     def test_zero_colors(self, tmp_path) -> None:
         """Test all-zero colors (black points)."""

@@ -97,7 +97,7 @@ class TestCompilerWithDtypes:
             )
 
     def test_hdr_color_detection(self) -> None:
-        """Test that HDR colors are automatically detected and stored as float32."""
+        """HDR colors are auto-detected and quantized to geolog_perchannel_u16."""
         with tempfile.TemporaryDirectory() as tmpdir:
             zarr_path = Path(tmpdir) / "test.luxar.zarr"
 
@@ -115,13 +115,17 @@ class TestCompilerWithDtypes:
             points = store["test"]
             colors_arr = points["colors"]
 
-            # Verify HDR colors preserved as float32
-            assert colors_arr.dtype == np.float32, "HDR colors should be float32"
+            # HDR detection routes to the per-channel true-log encoding
+            # (2026-07 policy: AUTO -> geolog_perchannel_u16, decode -> f32).
+            assert colors_arr.dtype == np.uint16
+            assert (
+                colors_arr.attrs["encoding"]["name"] == "geolog_perchannel_u16"
+            )
 
             # Check encoding metadata
             enc = colors_arr.attrs.get("encoding", {})
-            assert enc["name"] == "float32", "HDR colors should have float32 encoding"
             assert enc.get("original_dtype") == "float32", "Original dtype preserved"
+            assert enc["zero_level"] is True
 
     def test_backward_compatibility(self) -> None:
         """Test that default behavior (no encoding_mode specified) still works."""
