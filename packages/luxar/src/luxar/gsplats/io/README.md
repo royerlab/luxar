@@ -158,7 +158,7 @@ This package uses `luxar.encoding` for semantic type-aware array encoding:
 | `amplitudes` | POSITIVE_SCALAR | canonical positive-scalar encoding (may quantize to uint8) |
 | `cholesky_factors_diag` | CHOLESKY_DIAG | per-channel log: `log_perchannel_u8` (AUTO — certified, escalates to `u16`; MEMORY) / `float32` (PRECISION) |
 | `cholesky_factors_offdiag` | CHOLESKY_OFFDIAG | per-channel signed-log: `signed_log_perchannel_u8` (escalates with the diagonal — one shared tier) / `float32`; absent if d==1 |
-| `colors` | COLOR | `rgb_uint8` (SDR) or `float32` (HDR, auto-detected) |
+| `colors` | COLOR | `rgb_uint8` (SDR) or `geolog_perchannel_u16` (HDR, auto-detected) |
 
 **COORDINATE centers are uint16 per-axis fixed-point** under AUTO/MEMORY
 (`linear_perchannel_u16`, decoded back to float32 on read; a per-axis extent
@@ -463,7 +463,7 @@ The package includes comprehensive tests covering:
 - Basic save/load
 - Encoding modes (AUTO, PRECISION, MEMORY)
 - Spatial ordering (Morton, Hilbert, none)
-- Colors (SDR uint8 / HDR float32, auto-detected)
+- Colors (SDR uint8 / HDR geolog_perchannel_u16, auto-detected)
 - Fitting metadata
 - Round-trip accuracy
 - Error validation

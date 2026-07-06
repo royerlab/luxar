@@ -135,7 +135,7 @@ Analyzes data and chooses optimal encoding:
    compiler = LuxarZarrCompiler('scene.luxar.zarr', encoding_mode=EncodingMode.AUTO)
 
    # Positions: Analyzes range, uses uint16 if |max-min| < 65536
-   # Colors: uint8 for SDR, float32 for HDR
+   # Colors: uint8 for SDR, geolog_perchannel_u16 for HDR
    # Radii: Broadcasts if uniform, uint16 if varying
 
 **PRECISION Mode** (Lossless):

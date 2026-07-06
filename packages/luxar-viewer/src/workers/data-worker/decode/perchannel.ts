@@ -3,7 +3,8 @@
  *
  * The per-column-scale family (`linear_perchannel_*` for COORDINATE
  * positions/centers, `log_perchannel_*` for the Cholesky diagonal,
- * `signed_log_perchannel_*` for the off-diagonal). Each element's column is
+ * `signed_log_perchannel_*` for the off-diagonal, `geolog_perchannel_*`
+ * for HDR colors). Each element's column is
  * its global flattened index modulo the column count — `colOffset` carries
  * the column phase of the range's first element so a mid-array range decodes
  * with the exact same column assignment as a whole-array decode.
@@ -18,7 +19,7 @@ import { transfer } from 'comlink';
 import { requireWasm, type WasmCtx } from '../state';
 import { validateDecodeArgs } from '../validation';
 
-export type PerChannelKind = 'linear' | 'log' | 'signed_log';
+export type PerChannelKind = 'linear' | 'log' | 'signed_log' | 'geolog';
 
 export async function decodePerChannel(
   ctx: WasmCtx,
@@ -70,6 +71,14 @@ export async function decodePerChannel(
       wasmModule.decode_linear_perchannel_u8(data as Uint8Array, colLo, colHi, colOffset, result);
     } else {
       wasmModule.decode_linear_perchannel_u16(data as Uint16Array, colLo, colHi, colOffset, result);
+    }
+  } else if (kind === 'geolog') {
+    // TRUE-log (HDR colors): reserved zero level is the name contract, so
+    // the kernels take no zeroLevel flag.
+    if (expected8) {
+      wasmModule.decode_geolog_perchannel_u8(data as Uint8Array, colLo, colHi, colOffset, result);
+    } else {
+      wasmModule.decode_geolog_perchannel_u16(data as Uint16Array, colLo, colHi, colOffset, result);
     }
   } else if (kind === 'log') {
     if (expected8) {

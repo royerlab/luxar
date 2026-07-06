@@ -21,7 +21,9 @@ Luxar supports High Dynamic Range (HDR) colors, allowing you to create visualiza
 **High Dynamic Range (HDR)**: Colors can exceed 1.0
 - Values > 1.0 represent colors brighter than white
 - Simulates emissive materials, bright lights, sun
-- Requires float32 data type
+- Requires float32 data type as INPUT (on disk, AUTO stores HDR colors as
+  per-channel true-log uint16 — `geolog_perchannel_u16`, visually lossless,
+  ~4× smaller — decoded back to float32; PRECISION keeps raw float32)
 
 ---
 

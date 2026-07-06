@@ -189,7 +189,7 @@ The I/O layer uses `luxar.encoding` for semantic type-aware array encoding:
 ```python
 # Automatically applied by compiler:
 # - positions → COORDINATE (float16 in MEMORY mode)
-# - colors → COLOR (rgb_uint8 for SDR, float32 for HDR)
+# - colors → COLOR (rgb_uint8 for SDR, geolog_perchannel_u16 for HDR)
 # - radii → POSITIVE_SCALAR (log_scalar_uint8 for wide ranges)
 # - sharpness → BOUNDED_SCALAR (bounded_scalar_uint8, bounds [0, 1])
 ```

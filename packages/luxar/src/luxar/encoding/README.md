@@ -316,7 +316,7 @@ encoder.encode(
 |---------------|------|-----------|--------|
 | COORDINATE | linear_perchannel_u16 | float32 | linear_perchannel_u16 |
 | COLOR (SDR) | uint8 | float32 | uint8 |
-| COLOR (HDR) | float32 | float32 | float16 |
+| COLOR (HDR) | geolog_perchannel_u16 | float32 | geolog_perchannel_u8 |
 | BOUNDED_SCALAR | uint8 | float32 | uint8 |
 | POSITIVE_SCALAR | range ≤256 → u8, ≤65536 → u16, wider → geolog_scalar_u16 | float32 | as AUTO but geolog_scalar_u8 for wide ranges |
 | CHOLESKY | float32 | float32 | float16 |
@@ -324,10 +324,24 @@ encoder.encode(
 | CHOLESKY_OFFDIAG | signed_log_perchannel_u8 (certified) | float32 | signed_log_perchannel_u8 |
 | INDEX | Smallest uint | Smallest uint | Smallest uint |
 
-`CHOLESKY_DIAG` / `CHOLESKY_OFFDIAG` / `COORDINATE` select the **generic, reusable**
-per-channel quantizers — `log_perchannel_*` (non-negative), `signed_log_perchannel_*`
-(signed), and `linear_perchannel_*` (identity / fixed-point) — the semantic type is
-the policy; the encoding is geometry-agnostic.
+`CHOLESKY_DIAG` / `CHOLESKY_OFFDIAG` / `COORDINATE` / `COLOR (HDR)` select the
+**generic, reusable** per-channel quantizers — `log_perchannel_*` (non-negative,
+log1p), `signed_log_perchannel_*` (signed), `linear_perchannel_*` (identity /
+fixed-point), and `geolog_perchannel_*` (TRUE log, wide-range positive) — the
+semantic type is the policy; the encoding is geometry-agnostic. The family now
+mirrors the scalar tier one-for-one: `bounded_scalar`↔`linear_perchannel`,
+`geolog_scalar`↔`geolog_perchannel`.
+
+**COLOR (HDR) at AUTO = `geolog_perchannel_u16`** (MEMORY → u8): each channel
+is quantized on its own min/max-anchored TRUE-log grid — uniform relative
+precision across the channel's whole dynamic range, code 0 reserved for exact
+zeros (no positive value can quantize to zero by construction). Chosen by the
+2026-07 HDR-color spike across 6 datasets and 2–12.6 realized decades: it
+dominated linear fixed-point AND log1p per-channel at EVERY range (realistic
+microscopy-derived colors: rel-err p95 1.8e-4 uniform vs ~100% for both
+alternatives; faint-exposure renders ≥147 dB vs 88–128 dB), and float16 was
+already refuted for wide-range positives. ~4× smaller than the old float32 on
+realistic data.
 
 The log/signed-log pair follows the same rescale-first, zero-safe layout as
 `geolog_scalar` (`zero_level: true` in the attrs): per-column `[col_lo, col_hi]`
@@ -641,7 +655,7 @@ encoder.encode(
 | Color Type | AUTO | PRECISION | MEMORY |
 |------------|------|-----------|--------|
 | SDR float | uint8 | float32 | uint8 |
-| HDR float | float32 | float32 | float16 |
+| HDR float | geolog_perchannel_u16 | float32 | geolog_perchannel_u8 |
 | Integer | Keep as-is | Keep as-is | Keep as-is |
 
 ### Why Explicit color_mode?

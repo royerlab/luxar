@@ -21,6 +21,23 @@ export interface PerChannelCtx {
   signal?: AbortSignal | null;
 }
 
+/**
+ * Map a per-channel encoding NAME to the worker decode kind. Exported so the
+ * mapping is unit-testable — a mis-route here (e.g. geolog -> 'log') decodes
+ * every HDR color with the wrong inverse compand and no error. Order matters:
+ * 'geolog_perchannel*' must not be caught by a 'log_perchannel' prefix test
+ * ('geolog...' does NOT start with 'log', but keep the explicit order anyway).
+ */
+export function perChannelKindFor(name: string): PerChannelKind {
+  return name.startsWith('signed_log_perchannel')
+    ? 'signed_log'
+    : name.startsWith('log_perchannel')
+      ? 'log'
+      : name.startsWith('geolog_perchannel')
+        ? 'geolog'
+        : 'linear';
+}
+
 /** The subset of encoding metadata the per-channel family carries. */
 interface PerChannelEncoding {
   name?: string;
@@ -71,11 +88,7 @@ export async function loadPerChannel(
 
   const enc = (attrs.encoding ?? {}) as PerChannelEncoding;
   const name = enc.name ?? '';
-  const kind: PerChannelKind = name.startsWith('signed_log_perchannel')
-    ? 'signed_log'
-    : name.startsWith('log_perchannel')
-      ? 'log'
-      : 'linear';
+  const kind = perChannelKindFor(name);
   const bits: 8 | 16 = (enc.bits ?? (name.endsWith('u8') ? 8 : 16)) === 8 ? 8 : 16;
   const zeroLevel = enc.zero_level === true;
   // f64 scales, shared (structured-cloned) across all range decodes.

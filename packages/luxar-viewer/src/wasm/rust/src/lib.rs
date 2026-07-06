@@ -75,6 +75,7 @@ mod spatial;
 // Re-export all public functions for WASM binding
 pub use decode::{
     decode_broadcasted, decode_geolog_scalar_u16, decode_geolog_scalar_u8,
+    decode_geolog_perchannel_u16, decode_geolog_perchannel_u8,
     decode_linear_perchannel_u16, decode_linear_perchannel_u8, decode_log_perchannel_u16,
     decode_log_perchannel_u8, decode_log_scalar_u16, decode_log_scalar_u8, decode_lut_row_u16,
     decode_lut_row_u8, decode_lut_scalar_u16, decode_lut_scalar_u8, decode_quantized_u16,

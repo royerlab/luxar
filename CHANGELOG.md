@@ -6,6 +6,29 @@ All notable changes to Luxar are documented in this file.
 
 ### July 2026
 
+#### Changed — HDR colors quantize to per-channel true-log uint16 (~4× smaller, visually lossless)
+
+- New `geolog_perchannel_u8/u16` encoding — the per-channel member of the
+  geolog family (completes the scalar↔per-channel matrix:
+  `bounded`↔`linear_perchannel`, `geolog`↔`geolog_perchannel`): each column
+  quantized on its own min/max-anchored TRUE-log grid (ln-domain
+  `col_lo`/`col_hi`), uniform relative precision across the column's whole
+  dynamic range, code 0 reserved for exact zeros (no positive value can
+  quantize to zero; the reserved level is the name's contract).
+- HDR COLOR policy: AUTO → `geolog_perchannel_u16`, MEMORY → u8, PRECISION →
+  float32 (previously float32 in ALL modes — the last unquantized hot
+  attribute class). Applies to all three geometry types through the shared
+  COLOR semantic type.
+- Grounded in a 6-dataset spike (five h2afva timepoints + a 2.54M-splat fit;
+  realistic volume-sampled colors + 12 synthetic distributions, 2–12.6
+  realized decades): true-log dominated linear fixed-point AND log1p
+  per-channel at EVERY dynamic range (realistic data: rel-err p95 1.8e-4
+  uniform vs ~100% for both alternatives; faint-exposure renders ≥147 dB vs
+  88–128 dB; ~4× smaller than float32 — and no linear→log rail needed).
+- Full decode stack: Python decoder, viewer `makePerChannelDequant`,
+  range-loader worker path, WASM Rust kernels + TS reference (bit-exact
+  three-way parity), fixtures with u8+u16 coverage.
+
 #### Fixed — adaptive DPR overhaul: correct indicator, sharp resting frames, no blur metronome, monitor-change safety
 
 - The resolution indicator now shows percent-of-native: on a retina display

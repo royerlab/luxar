@@ -360,7 +360,9 @@ class TestColorEncoding:
             assert enc["name"] == "rgb_uint8"
 
     def test_color_hdr_auto_mode(self):
-        """Test HDR colors use float32 in AUTO mode."""
+        """HDR colors quantize to geolog_perchannel_u16 in AUTO mode
+        (2026-07 HDR-color spike: per-channel true-log dominates linear and
+        log1p at every dynamic range; PRECISION keeps float32)."""
         data = np.random.rand(1000, 3).astype(np.float32) * 2.0  # HDR range
 
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -369,7 +371,8 @@ class TestColorEncoding:
             encoder.encode(data, group, "test", SemanticType.COLOR, color_mode="hdr")
 
             arr = group["test"]
-            assert arr.dtype == np.float32
+            assert arr.dtype == np.uint16
+            assert arr.attrs["encoding"]["name"] == "geolog_perchannel_u16"
 
     def test_color_missing_color_mode_error(self):
         """Test float colors without color_mode raise error."""

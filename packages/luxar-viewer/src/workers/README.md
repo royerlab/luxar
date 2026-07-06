@@ -173,7 +173,7 @@ workers/
         ├── quantized.ts                        — uint8/uint16 → float32
         ├── log-scalar.ts                       — log-space dequantization
         ├── geolog-scalar.ts                    — geometric-log (reserved zero level)
-        ├── perchannel.ts                       — per-column linear/log/signed-log
+        ├── perchannel.ts                       — per-column linear/log/signed-log/geolog
         ├── lut.ts                              — row + scalar LUT decode
         └── broadcasted.ts                      — single value → N×k array
 ```
