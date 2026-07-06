@@ -23,6 +23,7 @@ from luxar.gsplats.lod.additive import (
     BreakpointSpec,
     clamp_counts_breakpoints,
     make_additive_lod,
+    sibling_aware_stream_breakpoints,
     validate_counts_breakpoints,
 )
 from luxar.gsplats.lod.substitutive import (
@@ -55,6 +56,8 @@ def make_lod_pyramid(
     max_n_dense: int = 2_000,
     seed: Optional[int] = None,
     verbose: bool = False,
+    quality_stamps: bool = False,
+    quality_max_pair_splats: int = 2_000_000,
 ) -> GSplatData:
     """Build the full 2-D LOD pyramid (substitutive × additive) in one call.
 
@@ -85,6 +88,9 @@ def make_lod_pyramid(
         Optional shared seed (per-axis offsets are added internally).
     verbose
         Per-step Arbol logging from substitutive reduction.
+    quality_stamps, quality_max_pair_splats
+        Opt-in measured Q·e quality stamps per substitutive level (passed to
+        :func:`make_substitutive_lod`; see :mod:`luxar.gsplats.lod.quality`).
 
     Returns
     -------
@@ -118,6 +124,8 @@ def make_lod_pyramid(
         seed=seed,
         coarsen_dims=coarsen_dims,
         verbose=verbose,
+        quality_stamps=quality_stamps,
+        quality_max_pair_splats=quality_max_pair_splats,
     )
 
     # Build an additive ladder on each substitutive level. Explicit `counts:`
@@ -127,13 +135,24 @@ def make_lod_pyramid(
     # abort the build ("largest breakpoint exceeds N"). String/energy specs
     # pass through (already size-adaptive).
     out = pyramid
+    coarsest = out.n_substitutive - 1
     for s in range(out.n_substitutive):
         level_n = out.at_substitutive(s).n_splats
+        level_breakpoints = clamp_counts_breakpoints(breakpoints, level_n)
+        if s < coarsest:
+            # Every level finer than the coarsest has a coarser sibling the
+            # viewer upgrades FROM — raise a stream ladder's first chunk so
+            # the catch-up fires at chunk 1-2 instead of the ladder tail
+            # (see sibling_aware_stream_breakpoints). The coarsest keeps the
+            # user's small base: it is the eager fast-first-paint level.
+            level_breakpoints = sibling_aware_stream_breakpoints(
+                level_breakpoints, level_n, compression_factor
+            )
         out = make_additive_lod(
             out,
             n_lods=n_additive_lods,
             method=additive_method,
-            breakpoints=clamp_counts_breakpoints(breakpoints, level_n),
+            breakpoints=level_breakpoints,
             truncation_sigmas=truncation_sigmas,
             max_n_dense=max_n_dense,
             seed=None if seed is None else seed + s,

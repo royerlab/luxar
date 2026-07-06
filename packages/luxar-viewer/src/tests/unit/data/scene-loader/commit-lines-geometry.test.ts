@@ -266,3 +266,52 @@ describe('commitLinesGeometry — committedLadderComplete stamp', () => {
     expect(ladderComplete(mesh)).toBe(false); // refreshed from the live loader
   });
 });
+
+describe('commitLinesGeometry — committedEnergyFraction stamp', () => {
+  const energy = (mesh: THREE.Mesh) =>
+    (mesh.userData as { committedEnergyFraction?: number }).committedEnergyFraction;
+
+  it('stamps the progressive loader committed-energy fraction e(k) mid-ladder', () => {
+    const root = new THREE.Group();
+    const mesh = makeMesh('/lines');
+    mesh.userData.loader = { hasMoreLODs: true, committedEnergyFraction: 0.42 };
+    root.add(mesh);
+    commitLinesGeometry(
+      { path: '/lines', sourceData: makeSourceData(3), processed: makeProcessed(3) },
+      root,
+      null,
+      undefined,
+      0
+    );
+    expect(energy(mesh)).toBe(0.42);
+  });
+
+  it('REMOVES the stamp on an unstamped (legacy) dataset; stamps 1 for non-progressive', () => {
+    const root = new THREE.Group();
+    const mesh = makeMesh('/lines');
+    mesh.userData.loader = { hasMoreLODs: true, committedEnergyFraction: null };
+    mesh.userData.committedEnergyFraction = 0.9; // stale
+    root.add(mesh);
+    commitLinesGeometry(
+      { path: '/lines', sourceData: makeSourceData(3), processed: makeProcessed(3) },
+      root,
+      null,
+      undefined,
+      0
+    );
+    expect(energy(mesh)).toBeUndefined();
+
+    const root2 = new THREE.Group();
+    const plain = makeMesh('/lines');
+    plain.userData.loader = {};
+    root2.add(plain);
+    commitLinesGeometry(
+      { path: '/lines', sourceData: makeSourceData(2), processed: makeProcessed(2) },
+      root2,
+      null,
+      undefined,
+      0
+    );
+    expect(energy(plain)).toBe(1);
+  });
+});

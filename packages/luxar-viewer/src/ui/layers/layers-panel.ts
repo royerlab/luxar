@@ -30,6 +30,7 @@ import { supportsScalarColormap } from '../../rendering/material-colormap-helper
 import { COLORMAP_CATEGORIES } from '../../rendering/colormap-data';
 import { SceneLoaderManager } from '../../data/scene-loader-manager';
 import type { LODGroupRegistry } from '../../scene/lod-group-registry';
+import { displayedQualityFraction } from '../../scene/lod-display-gate';
 import {
   composeAttrs,
   collectAncestorNodes,
@@ -945,7 +946,14 @@ export class LayersPanel {
       // during a never-downgrade hold it is the better previously-shown level
       // while the aspiration's additive ladder catches up.
       const shown = entry.displayedChildIndex ?? entry.activeChildIndex;
-      return `L${shown + 1}/${entry.children.length}${suffix}`;
+      // Displayed-quality estimate q = Q·e from the commit-time quality
+      // stamps (didactic: how close what is ON SCREEN is to the group's
+      // finest content — Q the level's measured complete quality, e the
+      // committed energy fraction of its streaming ladder). Absent on
+      // unstamped (legacy) datasets.
+      const q = displayedQualityFraction(entry.children[shown]?.object ?? {});
+      const qualityStr = q == null ? '' : ` · ~${Math.round(q * 100)}%`;
+      return `L${shown + 1}/${entry.children.length}${qualityStr}${suffix}`;
     }
     if (this.isBroadcastPartition(primary)) {
       // Aggregate across EVERY nested lod_group, not just the first: under

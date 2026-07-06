@@ -12,7 +12,7 @@
  * verifying constructor args + return type is sufficient.
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 // Capture constructor args for each loader class
 const pointsCtorArgs: unknown[][] = [];
@@ -322,5 +322,55 @@ describe('createProgressiveLinesLoader', () => {
     await createProgressiveLinesLoader(node, 1, parentEffectiveAttrs, deps);
     expect(linesCtorArgs[0][2]).toBe(deps.arrayRefRegistry);
     expect(linesCtorArgs[0][3]).toBe(deps.zarrStore);
+  });
+});
+// The energy-table (quality stamps) plumbing: each additive_<i> subgroup's
+// `lod_stats.energy_fraction_cum` is collected into a table and passed as the
+// progressive loaders' 4th constructor arg (→ committedEnergyFraction, the
+// display gate's energy-threshold release). Unstamped subgroups yield null
+// entries — the loader then reads as unstamped.
+describe('progressive loader energy tables (quality stamps)', () => {
+  afterEach(() => {
+    // mockClear() in the global beforeEach does NOT reset implementations —
+    // restore the file-wide default so these stamps never leak elsewhere.
+    zarrOpenMock.mockImplementation(async () => ({ attrs: { foo: 'bar' } }));
+  });
+
+  it('collects e(k) from each sub-LOD attrs and passes the table to the wrapper (all three geometries)', async () => {
+    zarrOpenMock.mockImplementation((async () => ({
+      attrs: { lod_stats: { energy_fraction_cum: 0.75 } },
+    })) as never);
+    await createProgressiveGSplatsLoader(
+      makeNode('/g', 'gsplats'),
+      2,
+      {} as SceneNode['attrs'],
+      makeDeps()
+    );
+    await createProgressivePointsLoader(makeNode('/p'), 2, {} as SceneNode['attrs'], makeDeps());
+    await createProgressiveLinesLoader(
+      makeNode('/l', 'lines'),
+      2,
+      {} as SceneNode['attrs'],
+      makeDeps()
+    );
+    expect(progressiveCtorArgs[0][3]).toEqual([0.75, 0.75]);
+    expect(pointsProgressiveCtorArgs[0][3]).toEqual([0.75, 0.75]);
+    expect(linesProgressiveCtorArgs[0][3]).toEqual([0.75, 0.75]);
+  });
+
+  it('yields null entries for unstamped (legacy) sub-LODs', async () => {
+    zarrOpenMock
+      .mockImplementationOnce((async () => ({
+        attrs: { lod_stats: { energy_fraction_cum: 0.4 } },
+      })) as never)
+      .mockImplementationOnce((async () => ({ attrs: { lod_stats: {} } })) as never)
+      .mockImplementationOnce((async () => ({ attrs: {} })) as never);
+    await createProgressiveGSplatsLoader(
+      makeNode('/g', 'gsplats'),
+      3,
+      {} as SceneNode['attrs'],
+      makeDeps()
+    );
+    expect(progressiveCtorArgs[0][3]).toEqual([0.4, null, null]);
   });
 });

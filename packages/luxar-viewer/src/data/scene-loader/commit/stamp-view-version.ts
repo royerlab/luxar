@@ -38,6 +38,15 @@ export interface ViewVersionStampable {
 export interface LadderStampable {
   loader?: unknown;
   committedLadderComplete?: boolean;
+  /**
+   * Cumulative energy fraction e(k) of the COMMITTED ladder prefix — how much
+   * of the ladder's total self-energy is on screen (from the progressive
+   * loaders' `committedEnergyFraction`, sourced from the build-time
+   * `lod_stats.energy_fraction_cum` stamps). `1` for non-progressive
+   * (complete single-set) leaves; ABSENT on unstamped (legacy) datasets —
+   * the display gate falls back to count crossover then.
+   */
+  committedEnergyFraction?: number;
 }
 
 /**
@@ -53,17 +62,37 @@ export function stampLoadedViewVersion(
 }
 
 /**
- * Stamp whether the committing loader's additive ladder is complete for the
- * current view. Reads `hasMoreLODs` off `userData.loader` (the same loader
- * whose just-returned data is being committed — one source of truth). A
- * non-progressive loader has no `hasMoreLODs` getter and stamps `true`
- * (complete), matching the structural-probe idiom used by the refinement
- * scheduling (`queue-next.ts`). No-op when `userData` is absent. Called by
- * every leaf commit, INCLUDING the stamp-only no-op branches, so the stamp is
- * exactly as current as the freshness stamp beside it.
+ * Stamp the committing loader's ladder state for the current view: whether
+ * the committed ladder is complete (`committedLadderComplete`) and how much
+ * of its total self-energy the committed prefix carries
+ * (`committedEnergyFraction`). Reads both off `userData.loader` (the same
+ * loader whose just-returned data is being committed — one source of truth).
+ *
+ * A non-progressive loader has no `hasMoreLODs` getter and stamps
+ * complete/energy-1 (a single-set leaf IS its full content), matching the
+ * structural-probe idiom used by the refinement scheduling (`queue-next.ts`).
+ * A progressive loader whose dataset carries no `energy_fraction_cum` build
+ * stamps reports `committedEnergyFraction: null` — the mesh stamp is then
+ * REMOVED (absence = unstamped), so the display gate falls back to committed-
+ * count crossover instead of blending measured and guessed energies.
+ *
+ * No-op when `userData` is absent. Called by every leaf commit, INCLUDING the
+ * stamp-only no-op branches, so the stamps are exactly as current as the
+ * freshness stamp beside them.
  */
 export function stampLadderComplete(userData: LadderStampable | undefined | null): void {
   if (!userData) return;
-  userData.committedLadderComplete =
-    (userData.loader as { hasMoreLODs?: boolean } | undefined)?.hasMoreLODs !== true;
+  const loader = userData.loader as
+    | { hasMoreLODs?: boolean; committedEnergyFraction?: number | null }
+    | undefined;
+  userData.committedLadderComplete = loader?.hasMoreLODs !== true;
+  if (!loader || !('committedEnergyFraction' in loader)) {
+    // Non-progressive loader: the committed geometry is the leaf's complete
+    // content — all of its energy is on screen.
+    userData.committedEnergyFraction = 1;
+    return;
+  }
+  const e = loader.committedEnergyFraction;
+  if (e == null) delete userData.committedEnergyFraction;
+  else userData.committedEnergyFraction = e;
 }

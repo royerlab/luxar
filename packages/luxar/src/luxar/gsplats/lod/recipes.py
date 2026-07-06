@@ -55,6 +55,7 @@ from luxar.gsplats.lod.additive import (
     BreakpointSpec,
     clamp_counts_breakpoints,
     make_additive_lod,
+    sibling_aware_stream_breakpoints,
     validate_counts_breakpoints,
 )
 from luxar.gsplats.lod.pyramid import make_lod_pyramid
@@ -63,6 +64,7 @@ from luxar.gsplats.tree import (
     GSplatLodGroup,
     GSplatNode,
     GSplatPartition,
+    iter_leaves,
 )
 
 #: The recipe vocabulary, ordered by dataset scale.
@@ -160,6 +162,14 @@ class RecipeParams:
     # per-dataset anchor knob: the fraction is a count ratio (immune to
     # non-displayed-dimension multiplicity) and the viewer anchors the finest at
     # fills-screen via the live viewport diagonal.
+    # Q·e quality stamps: measure each coarse substitutive level's mixture-L²
+    # quality Q vs its group's finest content and stamp it (with the
+    # reference_energy weight w) into level_stats — the build-time half of the
+    # viewer's recursive Q·e quality algebra (see gsplats.lod.quality).
+    # Constant-cost sampled estimator; ON by default at this pipeline layer
+    # (the primitive make_substitutive_lod defaults to False).
+    quality_stamps: bool = True
+    quality_max_pair_splats: int = 2_000_000
     # shared
     device: str = "auto"
     seed: Optional[int] = None
@@ -218,6 +228,8 @@ def build_levels(data: GSplatData, params: RecipeParams) -> GSplatData:
         device=params.device,
         seed=params.seed,
         coarsen_dims=params.coarsen_dims,
+        quality_stamps=params.quality_stamps,
+        quality_max_pair_splats=params.quality_max_pair_splats,
     )
 
 
@@ -243,15 +255,24 @@ def build_levels_matrix(data: GSplatData, params: RecipeParams) -> GSplatData:
         truncation_sigmas=params.truncation_sigmas,
         max_n_dense=params.max_n_dense,
         seed=params.seed,
+        quality_stamps=params.quality_stamps,
+        quality_max_pair_splats=params.quality_max_pair_splats,
     )
 
 
-def build_tiles(data: GSplatData, params: RecipeParams) -> GSplatPartition:
+def build_tiles(
+    data: GSplatData,
+    params: RecipeParams,
+    *,
+    sibling_compression: Optional[int] = None,
+) -> GSplatPartition:
     """Spatially partition, then build an additive ladder **within each part**.
 
     ``to_spatial_partition`` yields a flat :class:`GSplatPartition` whose children
     are single-level leaves; this replaces each part with its own additive ladder
     (clamped to the part's splat count so no empty LOD bins are produced).
+    ``sibling_compression`` forwards to :func:`_ladder_for_part` when this
+    partition is the fine branch under a coarser lod-group sibling (overview).
     """
     base = data.flattened()
     # Typo guard: explicit `counts:` breakpoints must fit the WHOLE dataset
@@ -263,7 +284,8 @@ def build_tiles(data: GSplatData, params: RecipeParams) -> GSplatPartition:
         rule=params.partition_rule,
     )
     children: List[GSplatNode] = [
-        _ladder_for_part(part, params) for part in partition.children
+        _ladder_for_part(part, params, sibling_compression=sibling_compression)
+        for part in partition.children
     ]
     return GSplatPartition(
         children=children,
@@ -308,17 +330,28 @@ def _substitutive_for_part(part: GSplatNode, params: RecipeParams) -> GSplatNode
         device=params.device,
         seed=params.seed,
         coarsen_dims=params.coarsen_dims,
+        quality_stamps=params.quality_stamps,
+        quality_max_pair_splats=params.quality_max_pair_splats,
     )
     if params.additive_ladders:
         # Additive ladder inside every per-part substitutive level (clamped to
-        # each level's own count; `counts:` specs clamp per level).
+        # each level's own count; `counts:` specs clamp per level). Levels
+        # finer than the part's coarsest get sibling-aware stream bases so an
+        # in-tile upgrade catches its coarser sibling at chunk 1-2 (see
+        # sibling_aware_stream_breakpoints); the coarsest keeps the user base.
+        coarsest = sub.n_substitutive - 1
         for s in range(sub.n_substitutive):
             level_n = sub.at_substitutive(s).n_splats
+            level_breakpoints = clamp_counts_breakpoints(params.breakpoints, level_n)
+            if s < coarsest:
+                level_breakpoints = sibling_aware_stream_breakpoints(
+                    level_breakpoints, level_n, params.compression_factor
+                )
             sub = make_additive_lod(
                 sub,
                 n_lods=max(1, min(params.n_lods, level_n)),
                 method=params.additive_method,
-                breakpoints=clamp_counts_breakpoints(params.breakpoints, level_n),
+                breakpoints=level_breakpoints,
                 truncation_sigmas=params.truncation_sigmas,
                 max_n_dense=params.max_n_dense,
                 seed=None if params.seed is None else params.seed + s,
@@ -374,7 +407,11 @@ def build_overview(data: GSplatData, params: RecipeParams) -> GSplatLodGroup:
     from luxar.gsplats.tree import total_splats
 
     base = data.flattened()
-    fine_partition = build_tiles(base, params)
+    # The fine branch sits under the coarse cap: sibling-aware part ladders so
+    # the cap→partition upgrade catches up at chunk 1-2 per part.
+    fine_partition = build_tiles(
+        base, params, sibling_compression=params.compression_factor
+    )
 
     # A single coarse substitutive level (levels=1 → n_substitutive == 2, with
     # index 1 the coarsest in the finest-first matrix view). Flatten its additive
@@ -394,6 +431,8 @@ def build_overview(data: GSplatData, params: RecipeParams) -> GSplatLodGroup:
         device=params.device,
         seed=params.seed,
         coarsen_dims=params.coarsen_dims,
+        quality_stamps=params.quality_stamps,
+        quality_max_pair_splats=params.quality_max_pair_splats,
     )
     coarse_leaf = capped.at_substitutive(capped.n_substitutive - 1).flattened().tree
     if params.additive_ladders:
@@ -401,6 +440,23 @@ def build_overview(data: GSplatData, params: RecipeParams) -> GSplatLodGroup:
         # additive LODs everywhere by default) — the fine branch's parts get
         # theirs from build_tiles.
         coarse_leaf = _ladder_for_part(coarse_leaf, params)
+    if params.quality_stamps:
+        # `.flattened()` above dropped the capped reduction's level_stats —
+        # re-attach the measured Q and the group-consistent reference energy w
+        # (the FINEST content's total; see make_substitutive_lod). The additive
+        # ladder's fallback w (the cap's OWN energy) must not win here: self-
+        # energy is quadratic in amplitude, so it would skew the group's
+        # weighted-quality aggregation.
+        cap_stats = capped.substitutive_levels[-1].stats
+        leaf_stats = coarse_leaf.meta.setdefault("stats", {})
+        for key in ("quality", "reference_energy"):
+            if key in cap_stats:
+                leaf_stats[key] = cap_stats[key]
+        # The fine parts ARE the group's finest content: quality 1.0 by
+        # definition (each part's w is its ladder's own total, already stamped
+        # by make_additive_lod).
+        for leaf in iter_leaves(fine_partition):
+            leaf.meta.setdefault("stats", {})["quality"] = 1.0
 
     # Children are coarsest→finest: [coarse cap, fine partition]. Derive per-child
     # coverage fractions from the whole-subtree splat counts (fine partition's count
@@ -415,8 +471,21 @@ def build_overview(data: GSplatData, params: RecipeParams) -> GSplatLodGroup:
     return group
 
 
-def _ladder_for_part(part: GSplatNode, params: RecipeParams) -> GSplatNode:
-    """Rebuild one partition child as a leaf carrying an additive ladder."""
+def _ladder_for_part(
+    part: GSplatNode,
+    params: RecipeParams,
+    *,
+    sibling_compression: Optional[int] = None,
+) -> GSplatNode:
+    """Rebuild one partition child as a leaf carrying an additive ladder.
+
+    ``sibling_compression`` is set when the partition sits UNDER a coarser
+    sibling in a lod group (the ``overview`` recipe's fine branch beneath its
+    coarse cap): each part's stream base is then raised sibling-aware so the
+    cap→partition upgrade catches up at chunk 1-2 per part (see
+    ``sibling_aware_stream_breakpoints``). Plain ``tiles`` partitions have no
+    coarser sibling and pass ``None``.
+    """
     part_data = GSplatData.from_tree(part)
     # Clamp ladder depth so a small part never yields empty equal-count bins,
     # and clamp explicit `counts:` breakpoints to THIS part's size — parts have
@@ -425,6 +494,10 @@ def _ladder_for_part(part: GSplatNode, params: RecipeParams) -> GSplatNode:
     # N"). String/energy specs pass through (already size-adaptive).
     eff_n_lods = max(1, min(params.n_lods, part_data.n_splats))
     eff_breakpoints = clamp_counts_breakpoints(params.breakpoints, part_data.n_splats)
+    if sibling_compression is not None:
+        eff_breakpoints = sibling_aware_stream_breakpoints(
+            eff_breakpoints, part_data.n_splats, sibling_compression
+        )
     laddered = make_additive_lod(
         part_data,
         n_lods=eff_n_lods,

@@ -28,6 +28,7 @@ overhead (supp doc §4.3); we switch automatically.
 from __future__ import annotations
 
 import heapq
+import math
 from typing import Any, Literal, Sequence, Union
 
 import numpy as np
@@ -199,6 +200,46 @@ def _det_L(data: GSplatData) -> np.ndarray:
     diag = data._cholesky_diag_elements()  # (N, d)
     out: np.ndarray = np.abs(np.prod(diag.astype(np.float64), axis=1))
     return out
+
+
+def sibling_aware_stream_breakpoints(
+    breakpoints: BreakpointSpec,
+    leaf_n: int,
+    compression_factor: int,
+) -> BreakpointSpec:
+    """Raise a ``stream:C`` ladder's first chunk for a leaf that has a
+    COARSER SIBLING in its lod group.
+
+    Measured pathology (h2afva vrefit, 23.4M splats): with every level's
+    geometric ladder starting at the SAME small base chunk, the point where a
+    finer level's committed content catches up with its coarser sibling —
+    whether by count, energy, or measured L² quality — structurally lands
+    ``log2(sibling_total / base)`` sequential network passes into the ladder,
+    i.e. always 2-3 chunks from the END. Upgrades therefore feel like
+    "waits until fully loaded".
+
+    Fix the geometry instead of the currency: a leaf whose group contains a
+    coarser sibling starts its ladder at ``ceil(leaf_n / (2·K))`` — half the
+    sibling's expected size — so the catch-up fires at chunk 1-2 by
+    construction (energy-ordered first chunks of that size carry ~70%+ of the
+    leaf's energy on real data, comfortably past the viewer's committed-energy
+    switch threshold). The user's ``stream:C`` base still applies wherever it
+    is LARGER, and — crucially — the group's COARSEST leaf must NOT go through
+    this helper: it is the eager default level whose small first chunk is the
+    fast-first-paint path.
+
+    Non-``stream:`` specs (equal-count, explicit counts, energy fractions)
+    pass through untouched — their chunk structure has no shared-base
+    pathology (e.g. equal-count crosses the sibling at chunk 1 already).
+    """
+    if not (isinstance(breakpoints, str) and breakpoints.startswith("stream:")):
+        return breakpoints
+    try:
+        user_base = int(breakpoints[len("stream:") :])
+    except ValueError:
+        return breakpoints
+    sibling_base = math.ceil(leaf_n / (2.0 * max(2, compression_factor)))
+    return f"stream:{max(user_base, sibling_base)}"
 
 
 def _self_energy_score(data: GSplatData) -> np.ndarray:
@@ -756,7 +797,12 @@ def make_additive_lod(
                     if target_view.colors is not None
                     else None
                 ),
-                stats={"lod_method": "none", "lod_level": 0},
+                stats={
+                    "lod_method": "none",
+                    "lod_level": 0,
+                    # Trivially complete: nothing to stream.
+                    "energy_fraction_cum": 1.0,
+                },
                 truncation_radius=target_view.truncation_radius,
             )
         ]
@@ -765,6 +811,7 @@ def make_additive_lod(
         # lod_method above) rather than mislabeling whatever spec was requested
         # as "equal-count".
         kind = "none"
+        energy_total = 0.0
     else:
         # Build the (expensive) sparse Gram at most once: greedy/spectral need
         # it for the ordering, and energy-fraction breakpoints need it again
@@ -806,6 +853,14 @@ def make_additive_lod(
             else None
         )
 
+        # Cumulative self-energy over the ladder ordering — the e(k) of the
+        # viewer's committed quality Q·e(k). Fractions, so the shared π^{D/2}
+        # constant of the true self-energy cancels and the (cheap, O(N))
+        # ordering score suffices; π^{D/2} is multiplied back only for the
+        # absolute reference_energy weight w (partition aggregation).
+        energy_cum = np.cumsum(_self_energy_score(target_view)[order])
+        energy_total = float(energy_cum[-1]) if energy_cum.size else 0.0
+
         new_sublods = []
         prev = 0
         for level, end in enumerate(cuts):
@@ -819,6 +874,10 @@ def make_additive_lod(
                 "lod_n_splats": int(end - prev),
                 "lod_cumulative_n": end,
             }
+            if energy_total > 0.0:
+                e_frac = float(energy_cum[end - 1] / energy_total)
+                if np.isfinite(e_frac):
+                    lod_stats["energy_fraction_cum"] = min(1.0, max(0.0, e_frac))
             if kind == "stream":
                 # Provenance: the bandwidth-derived first-chunk size, otherwise
                 # only recoverable by re-parsing the breakpoints string.
@@ -837,21 +896,36 @@ def make_additive_lod(
             )
             prev = end
 
+    # The leaf's absolute reference energy w = Σ aᵢ²·π^{D/2}·|Σᵢ|^{1/2} — the
+    # weight of this leaf in partition-level quality aggregation (disjoint
+    # regions ⇒ L² decomposes additively; see lod/quality.py). The ordering
+    # score already carries a²·|Σ|^{1/2}; multiply the shared constant back.
+    reference_energy = energy_total * math.pi ** (target_view.ndim / 2.0)
+    if not np.isfinite(reference_energy):
+        reference_energy = 0.0
+
     # Build new substitutive_levels: replace target index with the new
     # ladder; carry the rest through verbatim.
+    merged_level_stats = {
+        **data.substitutive_levels[s_target].stats,
+        "lod_method": method,
+        "lod_n_lods": len(new_sublods),
+        "lod_breakpoints_kind": kind,
+        "lod_cutpoints": [int(c) for c in cuts],
+    }
+    # The ladder's own total is only a FALLBACK weight: a substitutive build
+    # stamps the group-consistent finest-content energy first (see
+    # make_substitutive_lod) and that must win for coarser levels — self-
+    # energy is quadratic in amplitude, so per-level totals differ and would
+    # skew partition-of-lod aggregation.
+    merged_level_stats.setdefault("reference_energy", float(reference_energy))
     new_sub_levels = list(data.substitutive_levels)
     new_sub_levels[s_target] = SubstitutiveLevel(
         additive_sublods=new_sublods,
         compression_factor=data.substitutive_levels[s_target].compression_factor,
         parent_method=data.substitutive_levels[s_target].parent_method,
         level_index=data.substitutive_levels[s_target].level_index,
-        stats={
-            **data.substitutive_levels[s_target].stats,
-            "lod_method": method,
-            "lod_n_lods": len(new_sublods),
-            "lod_breakpoints_kind": kind,
-            "lod_cutpoints": [int(c) for c in cuts],
-        },
+        stats=merged_level_stats,
     )
 
     out_stats = dict(data.stats)

@@ -468,6 +468,8 @@ def make_substitutive_lod(
     seed: Optional[int] = None,
     coarsen_dims: Optional[Sequence[int]] = None,
     verbose: bool = False,
+    quality_stamps: bool = False,
+    quality_max_pair_splats: int = 2_000_000,
 ) -> GSplatData:
     """Build a substitutive-LOD hierarchy.
 
@@ -570,6 +572,21 @@ def make_substitutive_lod(
         least as many splats as there are barrier groups.
     verbose
         Per-level Arbol logging.
+    quality_stamps
+        Measure each level's approximation quality against the finest
+        content (closed-form mixture L², ``lod/quality.py``) and stamp
+        ``quality`` + ``reference_energy`` into every level's stats — the
+        Q of the viewer's committed quality ``Q·e(k)``. ``reference_energy``
+        is the FINEST content's total self-energy (constant across the
+        group), so partition-of-lod aggregation weighs every tile by its
+        region's content regardless of which level the tile displays.
+        Default False at this primitive layer (the measurement costs
+        seconds per level); the RECIPE/CLI pipeline enables it by default —
+        stamped artifacts are its product, speed-sensitive library callers
+        opt in.
+    quality_max_pair_splats
+        Pair-term subsampling threshold for the quality measurement
+        (see :func:`~luxar.gsplats.lod.quality.mixture_quality`).
 
     Returns
     -------
@@ -713,14 +730,48 @@ def make_substitutive_lod(
             refine_stats=sink,
         )
 
+    # Quality stamps (the Q of the viewer's Q·e(k)): every level is measured
+    # against the SAME reference — the group's finest content — so the values
+    # order correctly across levels. reference_energy is likewise the finest
+    # content's total (self-energy is quadratic in amplitude, so unlike mass
+    # it is NOT conserved across levels — per-level energies would skew
+    # partition-of-lod weighting by whichever level a tile happens to show).
+    ref_energy: Optional[float] = None
+    if quality_stamps:
+        from luxar.gsplats.lod.quality import mixture_quality, total_self_energy
+
+        ref_energy = total_self_energy(src)
+
+    def _stamp_quality(level_stats: dict, level_data: GSplatData) -> None:
+        if not quality_stamps:
+            return
+        try:
+            result = mixture_quality(
+                level_data.flattened(),
+                src,
+                max_pair_splats=quality_max_pair_splats,
+                device=device if isinstance(device, str) else str(device),
+            )
+            level_stats["quality"] = result.quality
+        except Exception as exc:  # measurement must never fail the build
+            aprint(f"quality stamp skipped for level: {exc}")
+        if ref_energy is not None and np.isfinite(ref_energy):
+            level_stats["reference_energy"] = float(ref_energy)
+
     # Collect per-level outputs and pack them as SubstitutiveLevels.
+    finest_stats: dict = {"n_splats_total": int(src.n_splats)}
+    if quality_stamps:
+        # The finest level IS the reference: quality 1.0 by construction.
+        finest_stats["quality"] = 1.0
+        if ref_energy is not None and np.isfinite(ref_energy):
+            finest_stats["reference_energy"] = float(ref_energy)
     sub_levels: list[SubstitutiveLevel] = [
         _pack_level(
             src,
             compression_factor=1,
             parent_method=None,
             level_index=0,
-            stats={"n_splats_total": int(src.n_splats)},
+            stats=finest_stats,
         )
     ]
 
@@ -729,16 +780,18 @@ def make_substitutive_lod(
         N_in = current.n_splats
         if N_in <= 1:
             # Cannot reduce further; emit the unchanged dataset and stop.
+            stop_stats: dict = {
+                "n_splats_total": int(N_in),
+                "stop_reason": "input_too_small",
+            }
+            _stamp_quality(stop_stats, current)
             sub_levels.append(
                 _pack_level(
                     current,
                     compression_factor=K**level_idx,
                     parent_method=_resolve_method(method, N_in),
                     level_index=level_idx,
-                    stats={
-                        "n_splats_total": int(N_in),
-                        "stop_reason": "input_too_small",
-                    },
+                    stats=stop_stats,
                 )
             )
             break
@@ -798,6 +851,9 @@ def make_substitutive_lod(
         if volume_refit_stats is not None:
             level_stats["refine"] = "volume"
             level_stats["refine_stats"] = volume_refit_stats
+        _stamp_quality(level_stats, stored)
+        if verbose and "quality" in level_stats:
+            aprint(f"quality vs finest: {level_stats['quality']:.4f}")
         sub_levels.append(
             _pack_level(
                 stored,

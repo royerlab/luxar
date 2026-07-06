@@ -506,6 +506,35 @@ describe('LayersPanel — LOD active-level dropdown', () => {
     expect(findActiveLevelStatus(container)?.textContent).toBe('L1/3');
   });
 
+  it('appends the displayed-quality estimate (~Q·e%) when the shown child carries quality stamps', () => {
+    registryGetMock.mockReturnValue({
+      activeChildIndex: 0,
+      displayedChildIndex: 0,
+      children: [
+        {
+          object: {
+            visible: true,
+            userData: {
+              nodeType: 'gsplats',
+              visibleSplatCount: 10,
+              committedEnergyFraction: 0.8,
+              attrs: { level_stats: { quality: 0.75, reference_energy: 100 } },
+            },
+          },
+        },
+        {},
+      ],
+      selectorMode: 'auto',
+    });
+    const panel = new LayersPanel(container, animationController);
+    panel.initFromScene(new THREE.Group(), makeLodSceneGraph());
+    panel.show();
+    panel.layerState.select('/pyramid', 'single');
+
+    // Q·e = 0.75 · 0.8 = 0.6 → "~60%".
+    expect(findActiveLevelStatus(container)?.textContent).toBe('L1/2 · ~60%');
+  });
+
   it('dropdown options are 1-based labels with 0-based values', () => {
     const panel = new LayersPanel(container, animationController);
     panel.initFromScene(new THREE.Group(), makeLodSceneGraph());
@@ -513,11 +542,7 @@ describe('LayersPanel — LOD active-level dropdown', () => {
     panel.layerState.select('/pyramid', 'single');
 
     const opts = Array.from(findActiveLevelSelect(container)!.options);
-    expect(opts.map((o) => o.textContent)).toEqual([
-      'auto',
-      'lock to level 1',
-      'lock to level 2',
-    ]);
+    expect(opts.map((o) => o.textContent)).toEqual(['auto', 'lock to level 1', 'lock to level 2']);
     // Values stay 0-based — the registry's lockLevel API is 0-based.
     expect(opts.slice(1).map((o) => o.value)).toEqual(['0', '1']);
   });

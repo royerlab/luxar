@@ -21,7 +21,7 @@ are allowed inside commit — by contract.
 | `commit-lines-geometry.ts`    | Synchronous Lines commit. Pool path via `acquireLinesGeometry` / `updateLinesGeometry`, fallback via `updateInstancedLinesMesh`. Captures the acquire's rebuild flag separately from the update's, because `updateLinesGeometry` may itself trigger a spec-set rebuild (lazy scalar promotion). Updates `visibleSegmentCount`.                                                                             |
 | `commit-gsplats-geometry.ts`  | Synchronous GSplats commit. Pool path passes the live `uTruncate` uniform into `updateGSplatsGeometry` so frustum-cull sizing matches the shader; fallback via `updateInstancedGSplatsMesh`. Updates `visibleSplatCount`. Reads `uTruncate` defensively with a `3.0` default.                                                                                                                              |
 | `invalidate-render-object.ts` | Shared helper. Dispatches a tagged `'dispose'` event on a mesh's material so Three's `WebGPURenderer` evicts the cached `RenderObject` and rebuilds its `vertexBuffers` set against the pool's freshly-grown `InstancedInterleavedBuffer`. The `SOFT_DISPOSE_FLAG` symbol tells `MaterialManager` to treat this as a cache-flush, not a real dispose.                                                      |
-| `stamp-view-version.ts`       | Shared commit-time stamps: `stampLoadedViewVersion` (which view version the committed geometry reflects — LOD freshness) and `stampLadderComplete` (whether the committed geometry is the full additive ladder, read off `userData.loader.hasMoreLODs` at commit time — the never-downgrade display gate). Both written by every commit, INCLUDING the stamp-only no-op branches.                          |
+| `stamp-view-version.ts`       | Shared commit-time stamps: `stampLoadedViewVersion` (which view version the committed geometry reflects — LOD freshness) and `stampLadderComplete` (the committed ladder state, read off `userData.loader` at commit time: `committedLadderComplete` from `hasMoreLODs`, plus `committedEnergyFraction` — the committed prefix's e(k) energy fraction from the quality stamps; 1 for non-progressive leaves, REMOVED on unstamped datasets — both feeding the never-downgrade display gate). All written by every commit, INCLUDING the stamp-only no-op branches.                          |
 
 ## Invariants
 
@@ -69,7 +69,8 @@ are allowed inside commit — by contract.
   `syncPointMaterialWithGeometry`. (Sharpness carries no scale on any
   geometry — it is authored natively in `[0, 1]`.)
 - **Commit-time stamps are the display-side truth.** The count,
-  `loadedViewVersion`, and `committedLadderComplete` stamps are written
+  `loadedViewVersion`, `committedLadderComplete`, and
+  `committedEnergyFraction` stamps are written
   in the same synchronous call as the buffer write (and refreshed in
   the stamp-only no-op branches), so readers — the LOD registry's
   freshness fallback and the never-downgrade display gate

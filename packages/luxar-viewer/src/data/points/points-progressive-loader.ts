@@ -170,11 +170,27 @@ export class PointsProgressiveLoader implements PointsDataLoader {
     lodCount: number;
     result: LoadedPointsData;
   } | null = null;
+  // Per-sub-LOD cumulative energy fractions e(k) (the build-time
+  // `lod_stats.energy_fraction_cum` stamps), normalized at construction:
+  // non-null only when EVERY sub-LOD carries a stamp (a partially stamped
+  // ladder reads as unstamped — never blend stamped and guessed entries).
+  private energyTable: readonly number[] | null;
 
-  constructor(lodLoaders: PointsSpatialIndexLoader[], nLods: number, path: string) {
+  constructor(
+    lodLoaders: PointsSpatialIndexLoader[],
+    nLods: number,
+    path: string,
+    energyTable?: ReadonlyArray<number | null | undefined>
+  ) {
     this.lodLoaders = lodLoaders;
     this.nLods = nLods;
     this.monitor = new ProgressiveMonitorAdapter(() => this.lodLoaders, path);
+    this.energyTable =
+      energyTable &&
+      energyTable.length === nLods &&
+      energyTable.every((e) => typeof e === 'number')
+        ? (energyTable as number[])
+        : null;
   }
 
   /** Whether more LOD levels remain to load for the current view state. */
@@ -192,6 +208,22 @@ export class PointsProgressiveLoader implements PointsDataLoader {
 
   get totalLODCount(): number {
     return this.nLods;
+  }
+
+  /**
+   * Cumulative energy fraction e(k) ∈ [0, 1] of the currently loaded LOD
+   * prefix — how much of this ladder's total self-energy the committed
+   * chunks carry (the additive orderer's own ranking criterion, stamped at
+   * build time as `lod_stats.energy_fraction_cum`). `null` when the dataset
+   * carries no energy stamps; `0` before any LOD loads. Read at commit time
+   * by `stampLadderComplete` (→ the `committedEnergyFraction` mesh stamp)
+   * for the display gate's energy-threshold upgrade release.
+   */
+  get committedEnergyFraction(): number | null {
+    if (!this.energyTable) return null;
+    const k = this.loadedLODs.length;
+    if (k === 0) return 0;
+    return this.energyTable[Math.min(k, this.energyTable.length) - 1];
   }
 
   /**
