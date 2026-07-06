@@ -326,6 +326,50 @@ per-array quantization bounds.
 **Note**: Broadcasting information is stored per-array via encoding metadata
 (see Broadcasting Convention above), not in the group attributes.
 
+### Quality Stamps (`lod_stats` / `level_stats`, format-additive)
+
+Builds stamp measured approximation quality alongside the LOD structure so the
+viewer can make principled display decisions (raw element counts compare
+apples to oranges across substitutive levels). All keys live inside the
+existing `lod_stats` / `level_stats` attr dicts — additive, no version bump;
+readers treat absence as "unstamped" and fall back to counts.
+
+- **`lod_stats.energy_fraction_cum`** (per additive sub-LOD, `additive_<i>`
+  group or single-set leaf): cumulative self-energy fraction *e(k)* ∈ (0, 1]
+  of the ladder prefix up to and including this sub-LOD
+  (`Σ aᵢ²·|Σᵢ|^½` over the prefix ÷ the leaf total; last entry = 1.0).
+  The additive orderer's own ranking criterion — energy-ordered ladders
+  front-load it, so a small prefix carries most of the energy.
+- **`level_stats.reference_energy`** (per leaf): the leaf's absolute total
+  self-energy *w* = `Σ aᵢ²·π^{D/2}·|Σᵢ|^½`. Disjoint partition parts sum, so
+  *w* is the weight for aggregating per-leaf qualities across a partition.
+  Inside a `kind=lod` group every level carries the **finest** content's
+  total (group-consistent — self-energy is quadratic in amplitude, so
+  per-level totals differ and would skew weighted aggregation).
+- **`level_stats.quality`** (per `kind=lod` child): measured mixture-L²
+  quality *Q* = `1 − ‖level − finest‖²/‖finest‖²` ∈ [0, 1] of the COMPLETE
+  level vs its group's finest content (constant-cost sampled estimator, see
+  `luxar.gsplats.lod.quality`). The finest side is 1.0 by definition
+  (including each part leaf of an `overview` fine partition).
+
+The viewer's recursive quality algebra: a leaf currently shows quality
+`q = Q·e(k)`; a partition shows `Σ wₚ qₚ / Σ wₚ`; a lod group shows its
+visible child's `q`. The LOD display gate releases an upgrade swap once the
+candidate's committed energy reaches a threshold (0.6) instead of waiting for
+the count crossover; `Q` feeds the layers-panel / data-monitor readouts.
+
+Stamps are written by every recipe build (`RecipeParams.quality_stamps`,
+default on; `Q` measurement can be disabled with `--no-quality-stamps`) and
+can be retrofitted onto existing stores in place — no refit, no re-ladder —
+with `luxar gsplat annotate-quality <store> [--with-quality]` (re-stamps the
+root `content_hash`, so viewer caches invalidate automatically).
+
+Related build-side geometry: `stream:<C>` ladders inside a lod group are
+**sibling-aware** — every level with a coarser sibling starts its ladder at
+`max(C, ceil(n/(2·K)))` so an upgrade's committed prefix passes the sibling
+within 1-2 chunks (the group's coarsest keeps the small user base as the
+fast-first-paint level).
+
 ### Fitting Group Attributes (Fitter-Agnostic)
 
 The `fitting/` group is **optional** and designed to be **fitter-agnostic**. Different fitting implementations can store their own parameters while sharing common fields.

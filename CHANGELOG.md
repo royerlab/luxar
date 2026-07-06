@@ -6,6 +6,40 @@ All notable changes to Luxar are documented in this file.
 
 ### July 2026
 
+#### Added — measured LOD quality (Q·e stamps): early upgrade swaps, sibling-aware ladders, annotate-quality
+
+- **Why**: the never-downgrade display gate released LOD upgrades on
+  committed-COUNT crossover, which on shared-base stream ladders lands
+  structurally ~2 chunks from the ladder END (measured on real microscopy:
+  crossovers at chunk 5/7, 7/9, 9/11, 11/13) — upgrades felt like "waits
+  until fully loaded". Counts also compare apples to oranges across
+  substitutive levels.
+- **Quality stamps at build time** (format-additive, no version bump):
+  `lod_stats.energy_fraction_cum` (cumulative committed self-energy fraction
+  e(k) per additive sub-LOD), `level_stats.reference_energy` (the leaf's
+  self-energy weight w for partition aggregation; group-consistent finest
+  total inside lod groups), and `level_stats.quality` (measured mixture-L²
+  Q of each level vs its group's finest content — new constant-cost sampled
+  estimator in `luxar.gsplats.lod.quality`). On by default in every recipe
+  (`--no-quality-stamps` to skip the Q measurement).
+- **Sibling-aware stream ladders**: inside a lod group, every level with a
+  coarser sibling starts its `stream:C` ladder at `max(C, ceil(n/(2·K)))`,
+  so the upgrade catch-up fires at chunk 1-2 by construction (the coarsest
+  level keeps the small user base — fast first paint unchanged). Applied by
+  the levels/adaptive recipes and overview's fine partition.
+- **`luxar gsplat annotate-quality <store>`**: retrofits the stamps onto an
+  existing `.gsplats.zarr` IN PLACE (no refit, no re-ladder) — e(k)/w are a
+  cheap O(N) pass over amplitudes + the Cholesky diagonal; `--with-quality`
+  adds the measured Q. Re-stamps the root `content_hash` so viewer caches
+  invalidate automatically.
+- **Viewer**: the LOD display gate now releases an upgrade swap once the
+  streaming candidate's committed energy reaches 0.6 of its total
+  (`ENERGY_RELEASE_THRESHOLD`; w-weighted aggregate over partition subtrees,
+  known-empty parts excluded) — chunks earlier than the count crossover,
+  which remains the fallback for unstamped legacy datasets. Layers panel
+  shows the on-screen level's quality estimate (`L2/3 · ~60%`); the data
+  monitor's additive chip shows `LOD k/n ~NN%` with a didactic tooltip.
+
 #### Fixed — adaptive DPR overhaul: correct indicator, sharp resting frames, no blur metronome, monitor-change safety
 
 - The resolution indicator now shows percent-of-native: on a retina display
