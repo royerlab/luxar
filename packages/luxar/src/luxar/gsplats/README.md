@@ -745,6 +745,9 @@ luxar gsplat lod fit.gsplats.zarr ms.gsplats.zarr --recipe overview --compressio
 luxar gsplat lod fit.gsplats.zarr levels.gsplats.zarr --recipe levels -L 3 -K 4
 luxar gsplat lod fit.gsplats.zarr pyramid.gsplats.zarr --recipe levels -K 4 -L 3 --n-lods 4
 
+# Collapse any tree (LOD/partition/nested) into one flat matrix-shaped leaf
+luxar gsplat flatten partitioned.gsplats.zarr flat.gsplats.zarr
+
 # Migrate legacy v1.0 / v1.1 / v2.0 / pre-v2.0 substitutive-directory layouts → v3.1
 luxar gsplat migrate-format legacy.gsplats.zarr v3.gsplats.zarr
 ```
