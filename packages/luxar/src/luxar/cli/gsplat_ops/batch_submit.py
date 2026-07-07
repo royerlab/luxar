@@ -8,6 +8,8 @@ from typing import Optional
 import typer
 from arbol import aprint
 
+from .batch_submit_packing import resolve_tasks_per_job
+from .batch_submit_plan_output import print_batch_submit_plan
 from .batch_submit_slurm import submit_batch_jobs
 
 
@@ -623,35 +625,15 @@ def run_batch_submit(
         uses_backfill = sched_info["uses_backfill"]
         no_job_limit = sched_info["max_jobs_per_user"] is None
 
-        if tasks_per_job is None:
-            max_safe = math.prod(max_shape) if max_shape else tile_voxels
-
-            if parallel:
-                # Each concurrent fit holds the volume tensor + model params
-                # + optimizer state.  ~2× the raw volume is a safe estimate.
-                packing = max(1, int(max_safe / max(tile_voxels * 2, 1)))
-            else:
-                packing = max(1, int(max_safe / max(tile_voxels, 1)))
-
-            # On backfill clusters with no job limit, prefer shorter jobs
-            # (more jobs = more backfill opportunities = faster throughput).
-            # Cap packing lower so individual jobs stay short.
-            if uses_backfill and no_job_limit:
-                if parallel:
-                    # Parallel: already short, keep the memory-based packing
-                    packing = min(packing, 4)
-                else:
-                    # Sequential: each extra task adds wall-time.
-                    # Keep jobs under ~5 min for best backfill scheduling.
-                    if est_seconds > 0:
-                        max_tasks_for_5min = max(1, int(300 / est_seconds))
-                        packing = min(packing, max_tasks_for_5min)
-                    packing = min(packing, 3)
-            else:
-                packing = min(packing, 10)
-
-            tasks_per_job = packing
-        tasks_per_job = max(1, tasks_per_job)
+        tasks_per_job = resolve_tasks_per_job(
+            tasks_per_job,
+            parallel=parallel,
+            uses_backfill=uses_backfill,
+            no_job_limit=no_job_limit,
+            max_shape=max_shape,
+            tile_voxels=tile_voxels,
+            est_seconds=est_seconds,
+        )
 
         n_slurm_jobs = math.ceil(total_tasks / tasks_per_job)
         if parallel:
@@ -751,69 +733,39 @@ def run_batch_submit(
                 denoise_script = generate_denoise_sbatch(manifest, preamble)
 
         # 8. Print plan (always)
-        spatial_str = "x".join(str(s) for s in spatial)
-        peak_gvs = peak.get("gvoxel_per_s", "?")
-        peak_shape_str = "x".join(str(s) for s in peak.get("shape", []))
-
-        aprint("")
-        aprint("=" * 60)
-        aprint("BATCH PLAN")
-        aprint("=" * 60)
-        aprint(f"  Input: {input_path.name} (T={n_t}, C={n_c}, spatial={spatial_str})")
-        aprint(f"  GPU: {resolved_gpu} (peak: {peak_gvs} GV/s at {peak_shape_str})")
-        if mode == "content":
-            aprint(
-                f"  Decomposition: content plan, {n_tiles} boxes/volume "
-                f"(overlap={tile_overlap}); shared across all (t,c)"
-            )
-        elif needs_tiling:
-            aprint(
-                f"  Tile: {tile_size}^{len(spatial)}"
-                f" ({'auto' if auto_tile else 'manual'})"
-                f", overlap={tile_overlap}, {n_tiles} tiles/volume"
-            )
-        else:
-            aprint("  Tile: not needed (volume fits in GPU memory)")
-        slot = "boxes" if mode == "content" else "tiles"
-        aprint(
-            f"  Jobs: {n_t} x {n_c} x {n_tiles} = {total_tasks} fitting tasks ({slot})"
+        print_batch_submit_plan(
+            input_name=input_path.name,
+            n_t=n_t,
+            n_c=n_c,
+            spatial=spatial,
+            resolved_gpu=resolved_gpu,
+            peak_gvs=peak.get("gvoxel_per_s", "?"),
+            peak_shape=peak.get("shape", []),
+            mode=mode,
+            n_tiles=n_tiles,
+            tile_overlap=tile_overlap,
+            needs_tiling=needs_tiling,
+            tile_size=tile_size,
+            auto_tile=auto_tile,
+            total_tasks=total_tasks,
+            tasks_per_job=tasks_per_job,
+            parallel=parallel,
+            n_slurm_jobs=n_slurm_jobs,
+            mps_available=is_slurm_mps_available(),
+            uses_backfill=uses_backfill,
+            no_job_limit=no_job_limit,
+            est_seconds=est_seconds,
+            preset=preset,
+            n_iters=n_iters,
+            est_seconds_per_job=est_seconds_per_job,
+            total_gpu_hours=total_gpu_hours,
+            slurm_time=slurm_time,
+            partition=partition,
+            gpus=gpus,
+            cpus=cpus,
+            mem=mem,
+            output_dir=output_dir,
         )
-        if tasks_per_job > 1:
-            mode = "parallel" if parallel else "sequential"
-            mps_note = ""
-            if parallel:
-                if is_slurm_mps_available():
-                    mps_note = " [MPS available]"
-                else:
-                    mps_note = " [bash background processes]"
-            aprint(
-                f"  Packing: {tasks_per_job} tasks/job ({mode}) → {n_slurm_jobs} Slurm jobs{mps_note}"
-            )
-        else:
-            aprint(f"  Slurm array: {total_tasks} jobs (1 task each)")
-        if uses_backfill:
-            sched_note = "backfill scheduler — short jobs get scheduled fastest"
-            if no_job_limit:
-                sched_note += ", no job count limit"
-            aprint(f"  Scheduler: {sched_note}")
-        aprint(
-            f"  Est. time/task: ~{est_seconds / 60:.0f} min"
-            f" (preset: {preset}, {n_iters} iters)"
-        )
-        if tasks_per_job > 1:
-            if parallel:
-                aprint(
-                    f"  Est. time/job: ~{est_seconds_per_job / 60:.0f} min ({tasks_per_job} tasks in parallel)"
-                )
-            else:
-                aprint(
-                    f"  Est. time/job: ~{est_seconds_per_job / 60:.0f} min ({tasks_per_job} tasks × {est_seconds / 60:.0f} min)"
-                )
-        aprint(f"  Est. total GPU-hours: {total_gpu_hours:.0f} h")
-        aprint(f"  Slurm --time: {slurm_time}")
-        aprint(f"  Partition: {partition}, GPUs: {gpus}, CPUs: {cpus}, Mem: {mem}G")
-        aprint(f"  Output: {output_dir}")
-        aprint("")
 
         if dry_run:
             aprint("Dry run -- omit --dry-run to actually submit.")
