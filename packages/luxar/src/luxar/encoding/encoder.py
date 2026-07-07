@@ -84,7 +84,8 @@ class ArrayEncoder:
                 by consolidated ``.zmetadata``, which the viewer parses at
                 scene-open for ALL nodes — one greedy LUT would tax every
                 load. The estimated doubled JSON size must stay under this
-                cap (default 512 KiB ≈ 7-8K unique float RGB rows). The
+                cap (default 512 KiB ≈ 4-4.5K unique float RGB rows, since the
+                estimate doubles the raw JSON for .zmetadata). The
                 uint8 tier is unaffected (≤256 values is at most ~22 KiB).
 
         Note: Using non-zero tolerance is experimental and should be used
@@ -457,18 +458,34 @@ class ArrayEncoder:
           existing stores re-encode byte-identically — row mode for 2D COLOR
           (≤4 channels) requires N ≥ 2K when the input is uint8, everything
           else requires ``data.size ≥ 4K``.
-        - **uint16** (257 ≤ K ≤ 65,536): byte-modeled benefit rule. The LUT
-          values live as JSON in ``.zattrs`` and are DUPLICATED by
-          consolidated ``.zmetadata`` (parsed at scene-open for every node),
-          so element-count heuristics lie here. Accept only when the doubled
-          JSON costs at most half the raw byte savings over the cheapest
-          realistic alternative encoding, and stays under
-          ``lut_json_max_bytes``. Accepted uint16 LUTs are therefore always
-          strictly smaller than even the most aggressive lossy alternative —
-          while being EXACT (the LUT stores the original values).
+        - **uint16** (257 ≤ K ≤ 65,536): ROW MODE (colors) ONLY, gated by a
+          byte-modeled benefit rule. Scalar mode is structurally excluded:
+          uint16 indices cost exactly what the quantized scalar alternatives
+          cost (≤2 B/element), so the LUT JSON would be pure overhead — a
+          measured ~2× store regression. Row mode genuinely wins because ONE
+          index covers all channels (2 B/row vs ≥3 B/row for the cheapest
+          quantized color). The LUT values live as JSON in ``.zattrs`` and
+          are DUPLICATED by consolidated ``.zmetadata`` (parsed at
+          scene-open for every node), so element-count heuristics lie here.
+          Accept only when the doubled JSON costs at most half the raw byte
+          savings over the cheapest quantized color (1 B/channel — the
+          conservative floor) AND stays under ``lut_json_max_bytes``.
+          Accepted uint16 LUTs are therefore always strictly smaller than
+          even the most aggressive lossy alternative — while being EXACT
+          (the LUT stores the original values).
+
+        INDEX arrays never LUT-encode (either tier): the viewer's line
+        segments loader reads them RAW with no encoding dispatch, so a LUT
+        would silently corrupt connectivity — and the smallest-uint INDEX
+        encoding is already within one byte of what LUT indices would cost.
+        (This also closes a latent pre-existing hazard: small graphs with
+        ≤256 unique vertex ids could historically lut_uint8-encode.)
 
         Returns ``None`` when LUT encoding should not be used.
         """
+        if semantic_type == SemanticType.INDEX:
+            return None
+
         is_color_2d = (
             data.ndim == 2
             and semantic_type == SemanticType.COLOR
@@ -498,11 +515,13 @@ class ArrayEncoder:
             return None
 
         # JSON fidelity guard (applies to BOTH tiers): 64-bit integers with
-        # |v| > 2^53 do not survive the JSON round-trip (values pass through
-        # binary64). Pre-existing latent bug in the uint8 tier; cheap to
-        # check on ≤65,536 uniques.
+        # |v| > 2^53 do not survive the JSON round-trip (viewers parse the
+        # LUT through binary64). Compare in the INTEGER domain — casting to
+        # float64 first would round ±(2^53 + 1) down to exactly 2^53 and let
+        # the one non-round-trippable boundary value slip through.
+        # Pre-existing latent bug in the uint8 tier; cheap on ≤65,536 uniques.
         if data.dtype in (np.int64, np.uint64) and bool(
-            np.any(np.abs(unique.astype(np.float64)) > 2.0**53)
+            np.any(unique > 2**53) or np.any(unique < -(2**53))
         ):
             return None
 
@@ -520,22 +539,21 @@ class ArrayEncoder:
             idx_dtype: Any = np.uint8
             encoding_name = "lut_uint8"
         else:
-            # uint16 tier: byte-modeled benefit rule.
+            # uint16 tier: ROW MODE ONLY. Scalar-mode u16 indices (2 B/elem)
+            # cost exactly what quantized scalar encodings cost, so the LUT
+            # JSON would be pure overhead — measured ~2× store regression.
+            if lut_mode != "row":
+                return None
             # ×2 models .zattrs + consolidated .zmetadata duplication.
             lut_json_bytes = 2 * len(json.dumps(lut_list))
             if lut_json_bytes > self._lut_json_max_bytes:
                 return None
             indices_bytes = 2 * n_indices
-            # Cheapest realistic alternative the dtype ladder would produce:
-            # float colors quantize to at least 1 B/channel (rgb_uint8 /
-            # geolog_perchannel_u8 under MEMORY — a conservative floor; HDR
-            # AUTO's geolog u16 is 2 B/channel). Everything else stores at
-            # most its own itemsize, capped at float32.
-            if lut_mode == "row" and np.issubdtype(data.dtype, np.floating):
-                alt_itemsize = 1
-            else:
-                alt_itemsize = min(data.dtype.itemsize, 4)
-            alt_bytes = data.size * alt_itemsize
+            # Cheapest realistic color alternative the dtype ladder would
+            # produce: 1 B/channel (rgb_uint8 SDR / geolog_perchannel_u8
+            # under MEMORY — the conservative floor; HDR AUTO's geolog u16
+            # is 2 B/channel, so real savings are usually larger).
+            alt_bytes = data.size * 1
             if lut_json_bytes > (alt_bytes - indices_bytes) / 2:
                 return None
             idx_dtype = np.uint16

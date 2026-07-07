@@ -724,10 +724,12 @@ def generate_encoding_contract_matrix_test() -> None:
             color_mode="sdr",
             chunks=(7, 3),
         )
-        # Encoder-EMITTED uint16 LUT tier (257..65,536 uniques with the
-        # byte-modeled benefit rule): sized to clear the break-even so the
-        # required lut_uint16 coverage is organic producer output, not just
-        # the manual threshold cases below.
+        # Encoder-EMITTED uint16 LUT tier (row-mode COLORS only,
+        # 257..65,536 uniques with the byte-modeled benefit rule; scalar
+        # mode never emits u16 — indices would cost what quantized scalars
+        # cost, making the LUT JSON pure overhead): sized to clear the
+        # break-even so the required lut_uint16 coverage is organic
+        # producer output, not just the manual threshold cases below.
         u16_palette = (
             np.stack(
                 [
@@ -746,14 +748,6 @@ def generate_encoding_contract_matrix_test() -> None:
             mode=EncodingMode.AUTO,
             color_mode="hdr",
             chunks=(8192, 3),
-        )
-        encode_case(
-            "scalar_lut_uint16_emitted",
-            np.tile(np.linspace(0.5, 42.0, 300).astype(np.float32), 167)[:50_000],
-            SemanticType.POSITIVE_SCALAR,
-            "scalar uint16 LUT (300 uniques, encoder-emitted)",
-            mode=EncodingMode.AUTO,
-            chunks=(8192,),
         )
         encode_case(
             "color_broadcast_rgba_singleton",

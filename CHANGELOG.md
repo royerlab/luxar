@@ -13,8 +13,10 @@ All notable changes to Luxar are documented in this file.
   hard-capped it at 256 uniques with uint8 indices — the 257..65,536 band
   (color-by-track/lineage: thousands of distinct colors) fell through to
   approximate quantized encodings at 3× the size.
-- The encoder now emits `lut_uint16` for 257..65,536 uniques (row and scalar
-  modes), gated by a byte-modeled benefit rule: the LUT lives as JSON in
+- The encoder now emits `lut_uint16` for 257..65,536 unique ROWS (colors;
+  scalar mode is structurally excluded — u16 indices cost exactly what
+  quantized scalars cost, so the LUT JSON would be pure overhead), gated by
+  a byte-modeled benefit rule: the LUT lives as JSON in
   `.zattrs` and is duplicated by consolidated `.zmetadata` (parsed at
   scene-open for every node), so the doubled JSON must cost at most half the
   raw savings over the cheapest realistic alternative AND stay under a new
@@ -24,7 +26,11 @@ All notable changes to Luxar are documented in this file.
 - The uint8 tier's output is **byte-identical** to before (legacy rules
   preserved verbatim); eligibility and encoding now share ONE `np.unique`
   pass (was two). 64-bit integers beyond ±2^53 no longer LUT-encode (JSON
-  fidelity guard — pre-existing silent-corruption latent bug in the u8 tier).
+  fidelity guard, compared in the INTEGER domain so ±(2^53+1) can't slip
+  through float rounding — pre-existing silent-corruption latent bug in the
+  u8 tier). INDEX arrays never LUT-encode: the viewer reads line segments
+  raw with no decode dispatch, so a LUT would silently corrupt connectivity
+  (also a latent pre-existing hazard at K≤256, now closed).
 - Decode needed no changes anywhere (Python decoder, viewer, worker, WASM
   all shipped `lut_uint16` support long ago); coverage is now organic via
   encoder-emitted fixtures + an E2E spec exercising the Uint16 row kernel
