@@ -16,7 +16,9 @@ and registers command groups from this package.
 - `batch_commands.py` — `batch-fit` app wiring + command wrappers
 - `batch_submit.py` — `batch-fit submit` implementation
 - `batch_run.py` — `batch-fit run` implementation
+- `batch_merge_command.py` — `batch-fit merge` implementation
 - `batch_status_validate_cancel.py` — `batch-fit status` / `validate` / `cancel` implementations
+- `batch_denoise_workers.py` — hidden `batch-fit` denoise worker command implementations
 - `transforms.py` — command registration + compatibility wrappers for edit-style commands
 - `transforms_commands.py` — Typer command signatures for edit-style commands
 - `transforms_transform.py` — `transform` implementation
