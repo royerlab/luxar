@@ -18,6 +18,7 @@ and registers command groups from this package.
 - `batch_submit_slurm.py` — Slurm submission/write orchestration helper for `batch-fit submit`
 - `batch_submit_packing.py` — scheduler-aware tasks/job packing heuristics for `batch-fit submit`
 - `batch_submit_plan_output.py` — stable human-readable plan summary printer for `batch-fit submit`
+- `batch_submit_preemptible.py` — preemptible-partition detection/access checks for `batch-fit submit`
 - `batch_run.py` — `batch-fit run` implementation
 - `batch_run_orchestration.py` — local `batch-fit run` planning/summary/execute orchestration helper
 - `batch_merge_command.py` — `batch-fit merge` implementation

@@ -10,6 +10,7 @@ from arbol import aprint
 
 from .batch_submit_packing import resolve_tasks_per_job
 from .batch_submit_plan_output import print_batch_submit_plan
+from .batch_submit_preemptible import resolve_preemptible_partition
 from .batch_submit_slurm import submit_batch_jobs
 
 
@@ -650,37 +651,10 @@ def run_batch_submit(
         # (partition, packing, preemptible) here.
 
         # Preemptible partition detection
-        preempt_partition: Optional[str] = None
-        if preemptible:
-            if preemptible_partition_opt:
-                preempt_partition = preemptible_partition_opt
-            else:
-                from luxar.gsplats.batch.env_capture import (
-                    detect_preemptible_gpu_partition,
-                )
-
-                preempt_partition = detect_preemptible_gpu_partition()
-
-            if preempt_partition is None:
-                aprint(
-                    "No preemptible GPU partition found on this cluster.\n"
-                    "  Checked all partitions for: preemptible naming + GPU resources.\n"
-                    "  Use --preemptible-partition to specify one explicitly.\n"
-                    "  Continuing with guaranteed partition only."
-                )
-            else:
-                from luxar.gsplats.batch.env_capture import validate_partition_access
-
-                if not validate_partition_access(preempt_partition):
-                    aprint(
-                        f"Cannot submit to preemptible partition '{preempt_partition}'.\n"
-                        f"  Your account may not have access.\n"
-                        f"  To check: sacctmgr show assoc user=$USER partition={preempt_partition}\n"
-                        "  Continuing with guaranteed partition only."
-                    )
-                    preempt_partition = None
-                else:
-                    aprint(f"Preemptible partition: {preempt_partition}")
+        preempt_partition = resolve_preemptible_partition(
+            preemptible=preemptible,
+            preemptible_partition_opt=preemptible_partition_opt,
+        )
 
         # plan_batch built the manifest + jobs (dataset/decomposition/fit/merge/
         # denoise fields). Stamp the Slurm-specific fields onto it here.
