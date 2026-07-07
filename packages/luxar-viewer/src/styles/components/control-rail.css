@@ -311,6 +311,59 @@
   border-top: 1px solid var(--luxar-border-default);
 }
 
+/* Action rows in the Home popover — full-width label+hint buttons (no nested
+   GUI; plain one-shot actions, styled to match the mode-strip segments). */
+.luxar-control-rail__actions {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 10px 12px;
+}
+
+.luxar-control-rail__action {
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: 7px 10px;
+  border: 1px solid var(--luxar-border-default);
+  border-radius: var(--luxar-radius-md, 8px);
+  background: none;
+  cursor: pointer;
+  font-family: var(--luxar-font-base);
+  transition: var(--luxar-transition-fast, all 0.1s ease);
+}
+
+.luxar-control-rail__action:hover {
+  background: var(--luxar-interactive-hover, rgba(255, 255, 255, 0.12));
+}
+
+.luxar-control-rail__action:focus-visible {
+  outline: 2px solid var(--luxar-border-focus, rgba(76, 175, 80, 0.5));
+  outline-offset: 1px;
+}
+
+.luxar-control-rail__action:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.luxar-control-rail__action:disabled:hover {
+  background: none;
+}
+
+.luxar-control-rail__action-label {
+  display: block;
+  color: var(--luxar-text-primary);
+  font-size: var(--luxar-text-sm);
+}
+
+.luxar-control-rail__action-hint {
+  display: block;
+  color: var(--luxar-text-muted);
+  font-size: var(--luxar-text-xs);
+  margin-top: 1px;
+}
+
 /* The popover hosts a full GUI, but the popover itself is the glass surface —
    so strip the nested .luxar-gui's own chrome (position/frame/blur) and let it
    flow as flat content. `position: static` is what actually neutralizes the

@@ -14,9 +14,11 @@ import { RAIL_ICONS, type ControlRailItem } from '../../../ui/control-rail';
 import { buildSettingsPopover } from '../../../ui/rail-panels/settings-popover';
 import { buildNavigationPopover } from '../../../ui/rail-panels/navigation-popover';
 import { buildPerformancePopover } from '../../../ui/rail-panels/performance-popover';
+import { buildHomePopover } from '../../../ui/rail-panels/home-popover';
 import { nextControlType } from '../../../input/input-handler/commands/control-mode';
 import type { InputHandler } from '../../../input/input-handler';
 import type { SceneManager } from '../../../scene/scene-manager';
+import type { SceneDimsManager } from '../../../scene/scene-dims-manager';
 import type { RenderingControls } from '../../../ui/rendering-controls';
 import type { AnimationController } from '../../../scene/animation/animation-controller';
 import type { AdaptiveDPRManager } from '../../../rendering/adaptive-dpr-manager';
@@ -30,6 +32,8 @@ export interface RailItemsDeps {
   /** The command + panel action surface shared with the keyboard bindings. */
   ui: ReturnType<InputHandler['getUiActions']>;
   sceneManager: SceneManager;
+  /** Shared nD dimension state (the pipeline passes the module singleton). */
+  sceneDims: SceneDimsManager;
   renderingControls: RenderingControls;
   animationController: AnimationController;
   adaptiveDPRManager: AdaptiveDPRManager;
@@ -47,6 +51,7 @@ export function buildRailItems(deps: RailItemsDeps): ControlRailItem[] {
   const {
     ui,
     sceneManager,
+    sceneDims,
     renderingControls,
     animationController,
     adaptiveDPRManager,
@@ -64,6 +69,30 @@ export function buildRailItems(deps: RailItemsDeps): ControlRailItem[] {
       icon: RAIL_ICONS.help,
       activate: () => ui.commands.toggleHelp(),
       openSelector: '#luxar-help-overlay',
+    },
+    {
+      // Home: left-click reframes the camera to fit the whole scene (the F
+      // shortcut); right-click opens deeper resets (origin / dimensions /
+      // rendering). Momentary — a one-shot action, never shows active state.
+      id: 'home',
+      title: 'Home · fit scene',
+      shortcut: 'F',
+      icon: RAIL_ICONS.home,
+      momentary: true,
+      activate: () => ui.commands.recenterCamera(),
+      popover: {
+        trigger: 'context',
+        title: 'Home',
+        build: (host) =>
+          buildHomePopover(host, {
+            fitScene: () => ui.commands.recenterCamera(),
+            centerOnOrigin: () => sceneManager.centerOnOrigin(),
+            resetDimensions: () => sceneDims.resetPositions(),
+            hasDimensionSliders: () => sceneDims.hasNonDisplayedDimensions(),
+            resetRendering: () => renderingControls.resetToDefaults(),
+            triggerAnimation: () => animationController.startAnimation(),
+          }),
+      },
     },
     {
       // Navigation: left-click cycles orbit → fly → ortho (reuses the exact V

@@ -2,9 +2,10 @@
  * Unit tests for core/app/init/build-rail-items.ts.
  *
  * `buildRailItems` is pure assembly of object literals — the action closures
- * only run on interaction. These tests stub the 9 deps and verify the item set
- * + order, the Navigation render hook (icon/tooltip mirror the live mode), and
- * the Layers disabled predicate (grayed when the scene has no layers).
+ * only run on interaction. These tests stub the deps and verify the item set
+ * + order, the Home button (momentary fit-scene + reset popover wiring), the
+ * Navigation render hook (icon/tooltip mirror the live mode), and the Layers
+ * disabled predicate (grayed when the scene has no layers).
  */
 
 import { describe, it, expect, vi } from 'vitest';
@@ -12,10 +13,15 @@ import { buildRailItems, type RailItemsDeps } from '../../../../../core/app/init
 import type { ControlRailItem } from '../../../../../ui/control-rail';
 
 function makeDeps(
-  overrides: { controlType?: 'orbit' | 'fly' | 'ortho'; layerCount?: number } = {}
+  overrides: {
+    controlType?: 'orbit' | 'fly' | 'ortho';
+    layerCount?: number;
+    hasDims?: boolean;
+  } = {}
 ) {
   const controlType = overrides.controlType ?? 'orbit';
   const layerCount = overrides.layerCount ?? 0;
+  const hasDims = overrides.hasDims ?? true;
   const deps = {
     ui: {
       commands: {
@@ -27,6 +33,7 @@ function makeDeps(
         cycleDataMonitor: vi.fn(),
         toggleCinematicMode: vi.fn(),
         togglePerformanceStats: vi.fn(),
+        recenterCamera: vi.fn(),
       },
       panels: {
         getLayersPanel: vi.fn(),
@@ -36,10 +43,18 @@ function makeDeps(
         getOverlayManager: vi.fn(),
       },
     },
-    sceneManager: { getControlType: vi.fn().mockReturnValue(controlType) },
+    sceneManager: {
+      getControlType: vi.fn().mockReturnValue(controlType),
+      centerOnOrigin: vi.fn(),
+    },
+    sceneDims: {
+      resetPositions: vi.fn(),
+      hasNonDisplayedDimensions: vi.fn().mockReturnValue(hasDims),
+    },
     renderingControls: {
       isVisible: vi.fn().mockReturnValue(false),
       saveSettings: vi.fn(),
+      resetToDefaults: vi.fn(),
       settings: { cinematicMode: false },
     },
     animationController: { startAnimation: vi.fn() },
@@ -64,6 +79,7 @@ describe('buildRailItems', () => {
     const items = buildRailItems(makeDeps());
     expect(items.map((i: ControlRailItem) => i.id)).toEqual([
       'help',
+      'home',
       'nav',
       'dims',
       'render',
@@ -79,13 +95,73 @@ describe('buildRailItems', () => {
     expect(items.some((i: ControlRailItem) => i.id === 'screenshot')).toBe(false);
   });
 
-  it('wires the popover triggers: nav/perf are context, settings is click', () => {
+  it('wires the popover triggers: home/nav/perf are context, settings is click', () => {
     const items = buildRailItems(makeDeps());
     const find = (id: string): ControlRailItem | undefined =>
       items.find((i: ControlRailItem) => i.id === id);
+    expect(find('home')?.popover?.trigger).toBe('context');
     expect(find('nav')?.popover?.trigger).toBe('context');
     expect(find('perf')?.popover?.trigger).toBe('context');
     expect(find('settings')?.popover?.trigger).toBe('click');
+  });
+
+  describe('Home button', () => {
+    const findHome = (deps = makeDeps()): ControlRailItem =>
+      buildRailItems(deps).find((i: ControlRailItem) => i.id === 'home')!;
+
+    it('is momentary (a one-shot action, never shows an active state)', () => {
+      expect(findHome().momentary).toBe(true);
+    });
+
+    it('left-click fires the F-key recenter command', () => {
+      const deps = makeDeps();
+      const home = buildRailItems(deps).find((i: ControlRailItem) => i.id === 'home')!;
+      home.activate();
+      expect(
+        (deps as unknown as { ui: { commands: { recenterCamera: ReturnType<typeof vi.fn> } } }).ui
+          .commands.recenterCamera
+      ).toHaveBeenCalledTimes(1);
+    });
+
+    it('popover wires the four reset actions to the right deps', () => {
+      const deps = makeDeps();
+      const home = buildRailItems(deps).find((i: ControlRailItem) => i.id === 'home')!;
+      const host = document.createElement('div');
+      home.popover!.build(host);
+
+      const rows = Array.from(
+        host.querySelectorAll<HTMLButtonElement>('.luxar-control-rail__action')
+      );
+      expect(
+        rows.map((r) => r.querySelector('.luxar-control-rail__action-label')?.textContent)
+      ).toEqual(['Fit scene', 'Center on origin', 'Reset dimensions', 'Reset rendering']);
+
+      const d = deps as unknown as {
+        ui: { commands: { recenterCamera: ReturnType<typeof vi.fn> } };
+        sceneManager: { centerOnOrigin: ReturnType<typeof vi.fn> };
+        sceneDims: { resetPositions: ReturnType<typeof vi.fn> };
+        renderingControls: { resetToDefaults: ReturnType<typeof vi.fn> };
+        animationController: { startAnimation: ReturnType<typeof vi.fn> };
+      };
+      rows[0].click();
+      expect(d.ui.commands.recenterCamera).toHaveBeenCalledTimes(1);
+      rows[1].click();
+      expect(d.sceneManager.centerOnOrigin).toHaveBeenCalledTimes(1);
+      rows[2].click();
+      expect(d.sceneDims.resetPositions).toHaveBeenCalledTimes(1);
+      rows[3].click();
+      expect(d.renderingControls.resetToDefaults).toHaveBeenCalledTimes(1);
+      expect(d.animationController.startAnimation).toHaveBeenCalledTimes(4);
+    });
+
+    it('grays the Reset dimensions row when the scene has no slider dimensions', () => {
+      const home = findHome(makeDeps({ hasDims: false }));
+      const host = document.createElement('div');
+      home.popover!.build(host);
+      const rows = host.querySelectorAll<HTMLButtonElement>('.luxar-control-rail__action');
+      expect(rows[2].disabled).toBe(true);
+      expect(rows[0].disabled).toBe(false);
+    });
   });
 
   describe('Navigation render hook', () => {
