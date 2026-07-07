@@ -17,8 +17,12 @@ from arbol import aprint, asection
 if TYPE_CHECKING:
     from luxar.gsplats.lod.recipes import RecipeParams
 
-# Re-exported from batch_planning (single source); kept importable here for
-# back-compat with callers/tests that import it from this module.
+# Re-exported from helpers (single source); kept importable here for
+# back-compat with callers/tests that import these names from this module.
+from luxar.cli.gsplat_ops.batch_measurement import (
+    measure_tiles_bytes_per_splat as _measure_tiles_bytes_per_splat_impl,
+)
+from luxar.cli.gsplat_ops.batch_planning import _select_plan_timepoints  # noqa: F401
 from luxar.cli.gsplat_ops.batch_recipe_args import (
     _MERGE_ALLOWED_TOKENS as _MERGE_ALLOWED_TOKENS_IMPL,
 )
@@ -28,6 +32,13 @@ from luxar.cli.gsplat_ops.batch_recipe_args import (
 from luxar.cli.gsplat_ops.batch_recipe_args import (
     build_merge_recipe_params as _build_merge_recipe_params_impl,
 )
+from luxar.cli.gsplat_ops.batch_validation import (
+    validate_leaf_arrays as _validate_leaf_arrays_impl,
+)
+from luxar.cli.gsplat_ops.batch_validation import (
+    validate_node_dir as _validate_node_dir_impl,
+)
+from luxar.cli.gsplat_ops.batch_validation import validate_tile as _validate_tile_impl
 from luxar.encoding.compression import WIDTH_AWARE_DEFAULT, resolve_compressor
 
 app_batch = typer.Typer(
@@ -1547,117 +1558,18 @@ def batch_validate_cmd(
 
 
 def _validate_leaf_arrays(node_dir: Path, label: str) -> str:
-    """Check a v3.x gsplats leaf's required array sub-dirs (no decode)."""
-    import json
-
-    # Cholesky factors are stored as the v3.1 split (``cholesky_factors_diag``,
-    # optionally + ``cholesky_factors_offdiag``) or a single v3.0
-    # ``cholesky_factors`` array. The diagonal is the marker for the split.
-    diag_dir = node_dir / "cholesky_factors_diag"
-    is_split = diag_dir.is_dir()
-    chol_name = "cholesky_factors_diag" if is_split else "cholesky_factors"
-    for arr_name in ("centers", "amplitudes", chol_name):
-        arr_dir = node_dir / arr_name
-        if not arr_dir.is_dir():
-            return f"missing_{arr_name}@{label}"
-        if not (arr_dir / ".zarray").exists():
-            return f"no_zarray_{arr_name}@{label}"
-
-    # v3.1 split: for d > 1 the off-diagonal array is mandatory — only d == 1
-    # omits it. A leaf with the diagonal but no off-diagonal is a partial /
-    # corrupt write; surface it (recoverable via re-fit) rather than passing.
-    if is_split:
-        try:
-            d = int(json.loads((diag_dir / ".zarray").read_text())["shape"][1])
-        except (
-            OSError,
-            json.JSONDecodeError,
-            KeyError,
-            IndexError,
-            TypeError,  # shape is null / scalar / non-subscriptable
-            ValueError,
-        ):
-            return f"no_zarray_cholesky_factors_diag@{label}"
-        if d > 1 and not (node_dir / "cholesky_factors_offdiag" / ".zarray").exists():
-            return f"missing_cholesky_factors_offdiag@{label}"
-    return "ok"
+    """Back-compat wrapper around leaf-array validation helper."""
+    return _validate_leaf_arrays_impl(node_dir, label)
 
 
 def _validate_node_dir(node_dir: Path, label: str) -> str:
-    """Structurally validate a v3.0 node subtree on disk (no array decode)."""
-    import json
-
-    zattrs_path = node_dir / ".zattrs"
-    if not zattrs_path.exists():
-        # Every node (root, child_<i>, part_<i>) must carry its .zattrs; a
-        # metadata-stripped node is corrupt, not a bare single-set leaf.
-        return f"no_zattrs@{label}"
-    try:
-        attrs = json.loads(zattrs_path.read_text())
-    except (json.JSONDecodeError, OSError):
-        return f"corrupt_zattrs@{label}"
-
-    kind = attrs.get("kind")
-    if kind in ("lod", "partition"):
-        prefix = "child_" if kind == "lod" else "part_"
-        children = sorted(
-            d for d in node_dir.iterdir() if d.is_dir() and d.name.startswith(prefix)
-        )
-        if not children:
-            return f"{kind}_no_children@{label}"
-        for child in children:
-            reason = _validate_node_dir(child, f"{label}/{child.name}")
-            if reason != "ok":
-                return reason
-        return "ok"
-
-    # Leaf: a single splat set, or an additive ladder (additive_<i>/ subgroups).
-    n_additive = int(attrs.get("n_additive_sublods", 1))
-    if n_additive > 1:
-        for i in range(n_additive):
-            reason = _validate_leaf_arrays(
-                node_dir / f"additive_{i}", f"{label}/additive_{i}"
-            )
-            if reason != "ok":
-                return reason
-        return "ok"
-    return _validate_leaf_arrays(node_dir, label)
+    """Back-compat wrapper around node-tree validation helper."""
+    return _validate_node_dir_impl(node_dir, label)
 
 
 def _validate_tile(tile_path: Path) -> str:
-    """Validate a single v3.0 tile's integrity. Returns 'ok' or a reason string.
-
-    Walks the node-tree structure (leaf / kind=lod / kind=partition) checking for
-    the consolidated metadata, the format header, and the presence of every
-    required array — without decoding any data. A non-v3.0 tile is reported (so
-    ``batch-fit validate --fix`` never silently deletes an unmigrated tile).
-    """
-    import json
-
-    # .zmetadata is written last by consolidate_metadata — best completeness signal.
-    if not (tile_path / ".zmetadata").exists():
-        return "no_zmetadata (save incomplete)"
-
-    zattrs_path = tile_path / ".zattrs"
-    if not zattrs_path.exists():
-        return "no_zattrs"
-    try:
-        attrs = json.loads(zattrs_path.read_text())
-    except (json.JSONDecodeError, OSError):
-        return "corrupt_zattrs"
-
-    if attrs.get("format_type") != "gsplats_zarr":
-        return f"bad_format_type: {attrs.get('format_type')}"
-
-    from luxar.gsplats.io.save_gsplats import SUPPORTED_FORMAT_VERSIONS
-
-    version = attrs.get("format_version")
-    if version not in SUPPORTED_FORMAT_VERSIONS:
-        # Not corrupt — just unmigrated. Surface it instead of classifying it as
-        # corrupt (which would let --fix delete a recoverable tile).
-        return f"unsupported_format_version: {version} (run gsplat migrate-format)"
-
-    return _validate_node_dir(tile_path, ".")
+    """Back-compat wrapper around full tile validation helper."""
+    return _validate_tile_impl(tile_path)
 
 
 @app_batch.command("cancel")
@@ -1742,42 +1654,8 @@ def _build_merge_recipe_params(
 def _measure_tiles_bytes_per_splat(
     tiles_dir: Path, tile_names: List[str]
 ) -> Tuple[Optional[float], int]:
-    """Measure the real on-wire bytes/splat from completed tile stores.
-
-    The tiles enumerated by the manifest exist on disk at merge time, so
-    ``--target-ms`` can be sized against their true average storage cost
-    rather than the analytic estimate. Sums :func:`measure_store_bytes` and
-    the stored splat counts (every ``centers`` array's ``.zarray`` row count —
-    covers leaves, additive sublods, and lod levels without decoding data)
-    over every completed tile. Returns ``(bytes_per_splat, n_tiles_measured)``;
-    ``(None, 0)`` when nothing could be measured (missing/empty tiles) —
-    callers then fall back to the analytic estimate.
-    """
-    import json
-
-    from luxar.cli.lod import measure_store_bytes
-
-    total_bytes = 0
-    total_splats = 0
-    n_measured = 0
-    for name in tile_names:
-        tile = tiles_dir / name
-        if not tile.is_dir():
-            continue
-        tile_bytes = measure_store_bytes(tile)
-        tile_splats = 0
-        for zarray in tile.rglob("centers/.zarray"):
-            try:
-                tile_splats += int(json.loads(zarray.read_text())["shape"][0])
-            except (OSError, ValueError, KeyError, IndexError, TypeError):
-                continue
-        if tile_bytes > 0 and tile_splats > 0:
-            total_bytes += tile_bytes
-            total_splats += tile_splats
-            n_measured += 1
-    if total_bytes <= 0 or total_splats <= 0:
-        return None, 0
-    return total_bytes / total_splats, n_measured
+    """Back-compat wrapper around tile-bytes measurement helper."""
+    return _measure_tiles_bytes_per_splat_impl(tiles_dir, tile_names)
 
 
 @app_batch.command("merge")
