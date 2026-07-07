@@ -14,6 +14,15 @@ from arbol import aprint, asection
 
 from ..utils import format_memory_size
 from .encoding import _resolve_encoding_mode
+from .transforms_parsing import (
+    parse_bbox as _parse_bbox_impl,
+)
+from .transforms_parsing import (
+    parse_csv_floats as _parse_csv_floats_impl,
+)
+from .transforms_parsing import (
+    parse_slices as _parse_slices_impl,
+)
 
 if TYPE_CHECKING:
     pass
@@ -291,17 +300,8 @@ def cull_dataset(
 
 
 def _parse_bbox(s: str, ndim: int) -> list[tuple[float, float]]:
-    """Parse a bbox string 'min0,max0,min1,max1,...' into list of (min, max) pairs."""
-    parts = [float(x.strip()) for x in s.split(",")]
-    if len(parts) != 2 * ndim:
-        raise typer.BadParameter(
-            f"bbox needs {2 * ndim} values for {ndim}D data, got {len(parts)}"
-        )
-    pairs = [(parts[2 * i], parts[2 * i + 1]) for i in range(ndim)]
-    for i, (lo, hi) in enumerate(pairs):
-        if lo > hi:
-            raise typer.BadParameter(f"bbox dimension {i} has min ({lo}) > max ({hi})")
-    return pairs
+    """Back-compat wrapper around shared bbox parsing helper."""
+    return _parse_bbox_impl(s, ndim)
 
 
 def filter_dataset(
@@ -991,32 +991,8 @@ def additive_dataset(
 
 
 def _parse_slices(s: str, ndim: int) -> list[slice]:
-    """Parse numpy-style range string into list of slices.
-
-    Format: "lo:hi, :, lo:" where each dimension is separated by comma.
-    Empty start/stop means unbounded (None).
-
-    Examples:
-        "0:50, :, 10:90"  → [slice(0,50), slice(None,None), slice(10,90)]
-        ":50, 20:, :"     → [slice(None,50), slice(20,None), slice(None,None)]
-        "1.5:42.7, :, :"  → [slice(1.5,42.7), slice(None,None), slice(None,None)]
-    """
-    parts = [p.strip() for p in s.split(",")]
-    if len(parts) != ndim:
-        raise typer.BadParameter(
-            f"Expected {ndim} ranges for {ndim}D data, got {len(parts)}"
-        )
-    slices = []
-    for part in parts:
-        if ":" not in part:
-            raise typer.BadParameter(
-                f"Invalid range '{part}': expected 'lo:hi', 'lo:', ':hi', or ':'"
-            )
-        lo_str, hi_str = part.split(":", 1)
-        lo = float(lo_str.strip()) if lo_str.strip() else None
-        hi = float(hi_str.strip()) if hi_str.strip() else None
-        slices.append(slice(lo, hi))
-    return slices
+    """Back-compat wrapper around shared range parsing helper."""
+    return _parse_slices_impl(s, ndim)
 
 
 def slice_dataset(
@@ -1121,17 +1097,8 @@ def slice_dataset(
 
 
 def _parse_csv_floats(value: str, expected: int, name: str) -> list[float]:
-    """Parse comma-separated float values and validate count matches expected dimensions."""
-    parts = [p.strip() for p in value.split(",")]
-    if len(parts) != expected:
-        raise typer.BadParameter(
-            f"--{name} expects {expected} comma-separated values (one per dimension), "
-            f"got {len(parts)}: '{value}'"
-        )
-    try:
-        return [float(p) for p in parts]
-    except ValueError as e:
-        raise typer.BadParameter(f"--{name} values must be numbers: {e}") from e
+    """Back-compat wrapper around shared float-list parser."""
+    return _parse_csv_floats_impl(value, expected, name)
 
 
 def transform_dataset(

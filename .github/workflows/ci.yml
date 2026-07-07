@@ -219,18 +219,9 @@ jobs:
           grep -qiE 'worker' /tmp/pack-files.txt || { echo "Missing worker asset"; exit 1; }
           echo "All release-readiness assertions passed."
 
-  # E2E tests disabled — requires GPU-capable runners for reliable WebGL rendering.
-  # Software rendering on standard ubuntu-latest is too slow and unreliable.
-  # Run locally with: make test-e2e.
-  #
-  # Re-enable path: one of
-  #   - GitHub Actions GPU-enabled runner (currently invite-only beta).
-  #   - Self-hosted runner with NVIDIA driver + EGL software fallback that
-  #     still satisfies WebGL2.
-  #   - A "smoke-only" subset that tolerates software rendering at low
-  #     timeouts for the 10-15 specs that don't render geometry pixels.
+  # E2E smoke coverage on ubuntu-latest (software WebGL + generated example data).
+  # Keep this subset CI-friendly; run the full suite locally with: make test-e2e.
   e2e-tests:
-    if: false
     needs: [python-tests, typescript-tests]
     runs-on: ubuntu-latest
     timeout-minutes: 60
