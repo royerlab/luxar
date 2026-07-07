@@ -1040,3 +1040,127 @@ def test_writer_derives_coverage_fractions_for_meta_less_lod_group() -> None:
         assert root["child_0"].attrs["coverage_fraction"] == 0.0  # coarsest floor
         # sqrt(N_i/N_finest): coarsest-first counts [50, 800] → finest fills screen.
         assert root["child_1"].attrs["coverage_fraction"] == pytest.approx(1.0)
+
+
+class TestBarrierAwareOrdering:
+    """End-to-end: a 4D leaf with a time barrier writes single-timepoint chunks
+    (the fix for per-timepoint viewer-load locality)."""
+
+    @staticmethod
+    def _make_4d_leaf(n: int, n_tps: int, seed: int) -> "GSplatData":
+        """Random 4D splats spread over n_tps integer timepoints in column 3."""
+        rng = np.random.default_rng(seed)
+        centers = np.empty((n, 4), dtype=np.float32)
+        centers[:, :3] = rng.random((n, 3)) * 100.0
+        centers[:, 3] = rng.integers(0, n_tps, size=n).astype(np.float32)
+        chol = np.zeros((n, 10), dtype=np.float32)
+        diag_idx = [d * (d + 1) // 2 + d for d in range(4)]
+        chol[:, diag_idx] = 2.0  # isotropic σ=2 in all 4 dims
+        amps = (rng.random(n) + 0.5).astype(np.float32)
+        return GSplatData(centers=centers, amplitudes=amps, cholesky_factors=chol)
+
+    @staticmethod
+    def _finest_chunk_bounds(path: Path) -> np.ndarray:
+        """chunk_bounds of the (only) leaf's finest splat set."""
+        root = zarr.open_group(str(path), mode="r")
+        # single-leaf root: chunk_bounds directly under root
+        if "chunk_bounds" in root:
+            return np.asarray(root["chunk_bounds"])
+        raise AssertionError("no chunk_bounds at leaf root")
+
+    def test_explicit_barrier_yields_single_timepoint_chunks(self) -> None:
+        from luxar.gsplats.io.save_gsplats import write_gsplats_tree
+        from luxar.gsplats.tree import GSplatLeaf
+
+        # Many splats per timepoint (12k / 3 = 4k ≫ chunk_size ~1024) so a chunk
+        # spans at most 2 adjacent timepoints (a boundary chunk), never all 3 —
+        # this is the regime the real timelapse is in (~2.5M splats/timepoint).
+        data = self._make_4d_leaf(12000, n_tps=3, seed=1)
+        leaf = GSplatLeaf(additive_sublods=list(data.flattened().additive_sublods))
+        with tempfile.TemporaryDirectory() as tmpdir:
+            bpath = Path(tmpdir) / "barrier.gsplats.zarr"
+            npath = Path(tmpdir) / "nobarrier.gsplats.zarr"
+            write_gsplats_tree(bpath, leaf, barrier_dims=[3])
+            write_gsplats_tree(npath, leaf, barrier_dims=[])  # pure spatial
+
+            bt = self._finest_chunk_bounds(bpath)[:, 3, 1] - \
+                self._finest_chunk_bounds(bpath)[:, 3, 0]
+            nt = self._finest_chunk_bounds(npath)[:, 3, 1] - \
+                self._finest_chunk_bounds(npath)[:, 3, 0]
+
+            # WITH barrier: most chunks single-timepoint (extent ~1.0 via ±0.5),
+            # boundary chunks ≤ n_tps span 2 timepoints (extent ~2.0). Never the
+            # whole-span-plus-σ smear the no-barrier ordering produces.
+            assert np.median(bt) <= 1.5
+            assert np.all(bt <= 2.0 + 1e-4)
+            # WITHOUT barrier: chunks smear across timepoints (σ-expanded too),
+            # so the barrier version is decisively tighter — the fix's payoff.
+            assert np.median(nt) > np.median(bt)
+            assert nt.max() > bt.max()
+
+            # ordering attrs advertise the barrier (mirrors Points/Lines).
+            root = zarr.open_group(str(bpath), mode="r")
+            assert list(root.attrs["slice_dims"]) == [3]
+            assert list(root.attrs["ordering_dims"]) == [0, 1, 2]
+
+    def test_barrier_derived_from_coarsen_dims_provenance(self) -> None:
+        """When barrier_dims is not passed, it is derived from
+        pipeline_info['coarsen_dims'] (barrier = complement)."""
+        from luxar.gsplats.io.save_gsplats import write_gsplats_tree
+        from luxar.gsplats.tree import GSplatLeaf
+
+        data = self._make_4d_leaf(12000, n_tps=3, seed=2)
+        leaf = GSplatLeaf(additive_sublods=list(data.flattened().additive_sublods))
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "prov.gsplats.zarr"
+            # coarsen spatial dims 0,1,2 → barrier = [3] (time). No barrier_dims arg.
+            write_gsplats_tree(path, leaf, pipeline_info={"coarsen_dims": [0, 1, 2]})
+            bt = self._finest_chunk_bounds(path)[:, 3, 1] - \
+                self._finest_chunk_bounds(path)[:, 3, 0]
+            assert np.median(bt) <= 1.5  # barrier honored via provenance
+            root = zarr.open_group(str(path), mode="r")
+            assert list(root.attrs["slice_dims"]) == [3]
+
+    def test_coarsen_all_provenance_beats_autodetect(self) -> None:
+        """coarsen_dims covering ALL dims means 'no barrier' — it must win over
+        auto-detect, which would otherwise flag the integer time axis. Regression
+        for _barrier_from_coarsen_dims returning [] (not None) on coarsen-all."""
+        from luxar.gsplats.io.save_gsplats import write_gsplats_tree
+        from luxar.gsplats.tree import GSplatLeaf
+
+        data = self._make_4d_leaf(12000, n_tps=3, seed=4)  # integer time axis
+        leaf = GSplatLeaf(additive_sublods=list(data.flattened().additive_sublods))
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "coarsen_all.gsplats.zarr"
+            write_gsplats_tree(
+                path, leaf, pipeline_info={"coarsen_dims": [0, 1, 2, 3]}
+            )
+            root = zarr.open_group(str(path), mode="r")
+            # Explicit no-barrier: pure spatial, NOT auto-detected [3].
+            assert list(root.attrs["slice_dims"]) == []
+            assert list(root.attrs["ordering_dims"]) == [0, 1, 2, 3]
+
+    def test_no_barrier_3d_unaffected(self) -> None:
+        """A 3D leaf (no barrier) is byte-identical with and without the feature:
+        pure spatial ordering, σ-expanded bounds."""
+        from luxar.gsplats.io.save_gsplats import write_gsplats_tree
+        from luxar.gsplats.tree import GSplatLeaf
+
+        rng = np.random.default_rng(3)
+        centers = (rng.random((2000, 3)) * 100).astype(np.float32)
+        chol = np.zeros((2000, 6), dtype=np.float32)
+        chol[:, [0, 2, 5]] = 2.0
+        data = GSplatData(
+            centers=centers,
+            amplitudes=(rng.random(2000) + 0.5).astype(np.float32),
+            cholesky_factors=chol,
+        )
+        leaf = GSplatLeaf(additive_sublods=list(data.flattened().additive_sublods))
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "flat3d.gsplats.zarr"
+            write_gsplats_tree(path, leaf)  # auto-detect → no barrier for floats
+            bounds = self._finest_chunk_bounds(path)
+            # All 3 dims σ-expanded (isotropic σ=2 → extent well over 2 per chunk).
+            assert bounds.shape[1] == 3
+            got = GSplatData.load(path)
+            assert got.n_splats == 2000

@@ -338,3 +338,193 @@ class TestChunkBounds:
         cholesky = np.zeros((0, 6), dtype=np.float32)
         bounds = compute_chunk_bounds_gsplats(centers, cholesky, chunk_size=0)
         assert bounds.shape == (0, 3, 2)
+
+
+def _packed_cholesky(n: int, ndim: int, sigma: float, rng) -> np.ndarray:
+    """Packed lower-triangular Cholesky factors for n isotropic splats of scale
+    `sigma` in `ndim` dims (diagonal = sigma, off-diagonal = 0)."""
+    k = ndim * (ndim + 1) // 2
+    chol = np.zeros((n, k), dtype=np.float32)
+    diag_idx = [d * (d + 1) // 2 + d for d in range(ndim)]
+    chol[:, diag_idx] = sigma
+    return chol
+
+
+class TestBarrierAwareSorting:
+    """`sort_splats_spatial(slice_dims=...)` — the barrier-aware (compound) path
+    that keeps a chunk from straddling a categorical/time axis."""
+
+    def test_slice_dims_none_matches_legacy_pure_spatial(self) -> None:
+        """slice_dims=None reproduces the historical pure-spatial ordering
+        byte-for-byte (3D data must be unaffected — regression guard)."""
+        rng = np.random.default_rng(0)
+        centers = (rng.random((500, 3)) * 100).astype(np.float32)
+        legacy, _ = sort_splats_spatial(centers, method="hilbert")
+        via_none, meta = sort_splats_spatial(centers, method="hilbert", slice_dims=None)
+        via_empty, _ = sort_splats_spatial(centers, method="hilbert", slice_dims=[])
+        np.testing.assert_array_equal(legacy, via_none)
+        np.testing.assert_array_equal(legacy, via_empty)
+        assert meta["slice_dims"] == []
+        assert meta["ordering_dims"] == [0, 1, 2]
+
+    def test_barrier_groups_are_contiguous(self) -> None:
+        """With a time barrier, all splats of one timepoint are consecutive in
+        the sorted order (the property that makes chunks single-timepoint)."""
+        rng = np.random.default_rng(1)
+        n = 900
+        centers = np.empty((n, 4), dtype=np.float32)
+        centers[:, :3] = rng.random((n, 3)) * 100
+        centers[:, 3] = rng.integers(0, 6, size=n)  # 6 timepoints, index 3
+        order, meta = sort_splats_spatial(centers, method="hilbert", slice_dims=[3])
+        assert meta["slice_dims"] == [3]
+        assert meta["ordering_dims"] == [0, 1, 2]
+        t_sorted = centers[order, 3]
+        # Non-decreasing time => each timepoint is a contiguous run.
+        assert np.all(np.diff(t_sorted) >= 0)
+        # Number of transitions == number of distinct timepoints - 1.
+        assert np.count_nonzero(np.diff(t_sorted) != 0) == len(np.unique(centers[:, 3])) - 1
+
+    def test_chunks_are_single_timepoint(self) -> None:
+        """The bug's killer invariant: with a barrier, every chunk's time-extent
+        is ~0 except the <=1 boundary chunk per transition."""
+        rng = np.random.default_rng(2)
+        n, chunk_size = 2000, 128
+        centers = np.empty((n, 4), dtype=np.float32)
+        centers[:, :3] = rng.random((n, 3)) * 100
+        centers[:, 3] = rng.integers(0, 5, size=n)
+        order, _ = sort_splats_spatial(centers, method="hilbert", slice_dims=[3])
+        sorted_centers = centers[order]
+        chol = _packed_cholesky(n, 4, sigma=2.0, rng=rng)
+        bounds = compute_chunk_bounds_gsplats(
+            sorted_centers, chol, chunk_size, coverage_sigma=3.0, slice_dims=[3]
+        )
+        t_extent = bounds[:, 3, 1] - bounds[:, 3, 0]
+        # Single-timepoint chunks have extent ~1.0 (tight ±0.5), NOT the 3σ*2=6
+        # they'd get without slice_dims. Boundary chunks (<= n_transitions) may
+        # span 2 timepoints (extent ~2.0). The vast majority are single.
+        n_boundary = np.count_nonzero(t_extent > 1.5)
+        assert n_boundary <= len(np.unique(centers[:, 3]))  # <= transitions+1
+        assert np.all(t_extent <= 2.0 + 1e-4)  # never the 6.0 σ-expansion
+
+    def test_two_barrier_axes(self) -> None:
+        """Two categorical axes (time + channel) both lexsort-first."""
+        rng = np.random.default_rng(3)
+        n = 800
+        centers = np.empty((n, 5), dtype=np.float32)
+        centers[:, :3] = rng.random((n, 3)) * 50
+        centers[:, 3] = rng.integers(0, 3, size=n)  # time
+        centers[:, 4] = rng.integers(0, 2, size=n)  # channel
+        order, meta = sort_splats_spatial(centers, method="hilbert", slice_dims=[3, 4])
+        assert meta["slice_dims"] == [3, 4]
+        assert meta["ordering_dims"] == [0, 1, 2]
+        # (time, channel) pairs are non-decreasing lexicographically.
+        pairs = centers[order][:, [3, 4]]
+        keys = pairs[:, 0] * 10 + pairs[:, 1]
+        assert np.all(np.diff(keys) >= 0)
+
+
+class TestBarrierChunkBounds:
+    """`compute_chunk_bounds_gsplats(slice_dims=...)` — barrier axes get tight
+    ±0.5 bounds, spatial axes keep the ellipsoidal σ extent."""
+
+    def test_barrier_axis_no_sigma_expansion(self) -> None:
+        rng = np.random.default_rng(4)
+        n = 256
+        centers = np.zeros((n, 4), dtype=np.float32)
+        centers[:, :3] = rng.random((n, 3)) * 10
+        centers[:, 3] = 2.0  # all at timepoint 2
+        chol = _packed_cholesky(n, 4, sigma=5.0, rng=rng)
+        bounds = compute_chunk_bounds_gsplats(
+            centers, chol, chunk_size=n, coverage_sigma=3.0, slice_dims=[3]
+        )
+        # Barrier dim: tight ±0.5 around 2.0, NOT 2 ± 3*5.
+        assert bounds[0, 3, 0] == pytest.approx(1.5)
+        assert bounds[0, 3, 1] == pytest.approx(2.5)
+        # Spatial dims keep the σ extent (much wider than the value spread).
+        assert bounds[0, 0, 1] - bounds[0, 0, 0] > 10.0
+
+    def test_different_timepoints_dont_overlap_in_barrier(self) -> None:
+        """Two chunks at different timepoints do not overlap in the barrier dim
+        even with huge σ (mirror points test_discrete_chunks_dont_overlap)."""
+        rng = np.random.default_rng(5)
+        centers = np.zeros((256, 4), dtype=np.float32)
+        centers[:128, 3] = 0.0
+        centers[128:, 3] = 1.0
+        centers[:, :3] = rng.random((256, 3)) * 5
+        chol = _packed_cholesky(256, 4, sigma=100.0, rng=rng)
+        bounds = compute_chunk_bounds_gsplats(
+            centers, chol, chunk_size=128, coverage_sigma=3.0, slice_dims=[3]
+        )
+        # No INTERIOR overlap in the barrier dim: chunk 0 (t=0, [-0.5,0.5]) max
+        # <= chunk 1 (t=1, [0.5,1.5]) min. The half-cell edges touch at 0.5 (as
+        # with Points' ±0.5 padding); a categorical query at an integer value
+        # with tolerance < 0.5 still isolates one timepoint. Contrast the σ
+        # expansion (100·3) that would make them overlap massively without
+        # slice_dims.
+        assert bounds[0, 3, 1] <= bounds[1, 3, 0] + 1e-6
+        assert bounds[0, 3, 1] == pytest.approx(0.5)
+        assert bounds[1, 3, 0] == pytest.approx(0.5)
+
+    def test_query_at_timepoint_selects_only_its_chunks(self) -> None:
+        """An AABB query at one timepoint intersects only that timepoint's
+        chunks (mirror points test_query_at_discrete_value_finds_correct_chunks).
+
+        Categorical navigation queries the exact integer value (tolerance < 0.5),
+        so the ±0.5 half-cell padding isolates one timepoint cleanly."""
+        rng = np.random.default_rng(6)
+        n, chunk_size = 1500, 128
+        centers = np.empty((n, 4), dtype=np.float32)
+        centers[:, :3] = rng.random((n, 3)) * 100
+        centers[:, 3] = rng.integers(0, 4, size=n)  # 4 timepoints
+        order, _ = sort_splats_spatial(centers, method="hilbert", slice_dims=[3])
+        sc = centers[order]
+        chol = _packed_cholesky(n, 4, sigma=3.0, rng=rng)
+        bounds = compute_chunk_bounds_gsplats(
+            sc, chol, chunk_size, coverage_sigma=3.0, slice_dims=[3]
+        )
+        total = bounds.shape[0]
+        # Point query at t=2 (categorical nav lands on the exact value).
+        tq = 2.0
+        hit = np.count_nonzero((bounds[:, 3, 0] <= tq) & (bounds[:, 3, 1] >= tq))
+        # ~1/4 of chunks (one of four timepoints), NOT all of them.
+        assert 1 <= hit <= total // 4 + 1
+        # Sanity: without slice_dims the σ-expanded bounds would hit far more.
+        wide = compute_chunk_bounds_gsplats(sc, chol, chunk_size, coverage_sigma=3.0)
+        wide_hit = np.count_nonzero((wide[:, 3, 0] <= tq) & (wide[:, 3, 1] >= tq))
+        assert wide_hit > hit
+
+
+class TestDetectBarrierDims:
+    """`detect_barrier_dims` — conservative auto-detection fallback."""
+
+    def test_integer_time_axis_detected(self) -> None:
+        from luxar.io.ordering import detect_barrier_dims
+
+        rng = np.random.default_rng(7)
+        centers = np.empty((5000, 4), dtype=np.float32)
+        centers[:, :3] = rng.random((5000, 3)) * 1000  # continuous spatial
+        centers[:, 3] = rng.integers(0, 51, size=5000)  # 51 timepoints
+        assert detect_barrier_dims(centers) == [3]
+
+    def test_continuous_spatial_not_detected(self) -> None:
+        from luxar.io.ordering import detect_barrier_dims
+
+        rng = np.random.default_rng(8)
+        centers = (rng.random((5000, 3)) * 1000).astype(np.float32)
+        assert detect_barrier_dims(centers) == []
+
+    def test_wide_integer_axis_not_detected(self) -> None:
+        """An integer-valued but high-cardinality axis (e.g. a fine spatial grid)
+        exceeds the cardinality cap and is not misread as categorical."""
+        from luxar.io.ordering import detect_barrier_dims
+
+        rng = np.random.default_rng(9)
+        centers = np.empty((5000, 2), dtype=np.float32)
+        centers[:, 0] = rng.integers(0, 4000, size=5000)  # 4000 > 1024 cap
+        centers[:, 1] = rng.integers(0, 3, size=5000)  # 3 categories
+        assert detect_barrier_dims(centers, max_cardinality=1024) == [1]
+
+    def test_empty_input(self) -> None:
+        from luxar.io.ordering import detect_barrier_dims
+
+        assert detect_barrier_dims(np.zeros((0, 4), dtype=np.float32)) == []

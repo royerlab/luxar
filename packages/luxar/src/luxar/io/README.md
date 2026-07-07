@@ -73,11 +73,22 @@ with LuxarZarrCompiler(
 - Progressive writing (data written immediately, not cached)
 - **Scalar convenience**: Pass uniform values directly (no `np.full()` needed)
 - Morton/Hilbert spatial ordering for better compression
-- Compound ordering for nD data (discrete dims → spatial curve)
+- Compound ordering for nD data (discrete/barrier dims → spatial curve within)
+  - Shared `_compound_sort` core drives **all three geometries** (Points, Lines,
+    GSplats): categorical/barrier axes (time, channel) are lexsorted first, then
+    a space-filling curve orders spatially *within* each barrier value, so a
+    chunk never straddles a category. GSplats derive the barrier from an explicit
+    `barrier_dims`, the persisted LOD `coarsen_dims` complement, or a conservative
+    per-array auto-detect (`detect_barrier_dims`) — mirroring the discrete-dim
+    handling Points/Lines get from scene `Dimension` metadata.
 - **Dimension-aware spatial indexing**: Optimized for time-series and nD slicing
-  - Step-aware padding for tight discrete bounds
+  - Step-aware padding for tight discrete/barrier bounds (categorical axes get
+    tight ±0.5 bounds, no σ/radius expansion — a splat at time=0 never extends
+    into time=1's chunk bounds)
   - Smart chunk sizing (smaller chunks for animated data)
-  - ~7× performance improvement for time-animated Lines
+  - ~7× performance improvement for time-animated Lines; barrier-aware GSplat
+    ordering makes per-timepoint reads hit the ideal ~1/T of chunks (vs a
+    chaotic 2.5–3.5× over-fetch when time is smeared across chunks)
 - Semantic type-based encoding (via `luxar.encoding`)
 - Automatic chunk size calculation
 - Metadata consolidation for fast loading
