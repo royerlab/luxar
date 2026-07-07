@@ -177,6 +177,137 @@ class TestLUTEncoding:
             assert enc["name"] != "lut_uint8"
 
 
+def _tiled_palette_colors(k: int, n: int, seed: int = 0) -> np.ndarray:
+    """(n, 3) float32 colors with EXACTLY k unique rows.
+
+    Tiling (not random choice) guarantees every palette row appears — a
+    random draw of n from k leaves ~k·e^(-n/k) rows unused, silently
+    shifting the unique count the tests pin.
+    """
+    rng = np.random.default_rng(seed)
+    palette = (rng.random((k, 3)) * 10.0).astype(np.float32)
+    reps = -(-n // k)  # ceil
+    return np.tile(palette, (reps, 1))[:n]
+
+
+class TestLUTUint16Tier:
+    """The uint16 LUT tier (257..65,536 uniques, byte-modeled benefit rule).
+
+    The uint8 tier's behavior is pinned byte-identical by TestLUTEncoding
+    above; these tests cover the new tier and its rejection edges.
+    """
+
+    def _encode(self, data, semantic_type, group, encoder=None, **kw):
+        (encoder or ArrayEncoder()).encode(data, group, "test", semantic_type, **kw)
+        arr = group["test"]
+        return arr, dict(arr.attrs["encoding"])
+
+    def test_row_color_uint16_exact_roundtrip(self):
+        # 300 unique HDR float colors at N=100,000 clears the byte-modeled
+        # break-even (JSON ~36 KB vs savings/2 = 50 KB).
+        colors = _tiled_palette_colors(300, 100_000)
+        group = zarr.group(store=zarr.MemoryStore())
+        arr, enc = self._encode(colors, SemanticType.COLOR, group, color_mode="hdr")
+        assert enc["name"] == "lut_uint16"
+        assert enc["lut_mode"] == "row"
+        assert len(enc["lut"]) == 300
+        assert arr.dtype == np.uint16
+        decoded = np.asarray(ArrayDecoder().decode(arr, group))
+        np.testing.assert_array_equal(decoded, colors)  # LUT is EXACT
+
+    def test_boundary_256_stays_uint8(self):
+        # Same N, K exactly 256: the u8 tier must keep winning (byte-identical
+        # legacy behavior).
+        colors = _tiled_palette_colors(256, 100_000)
+        group = zarr.group(store=zarr.MemoryStore())
+        arr, enc = self._encode(colors, SemanticType.COLOR, group, color_mode="hdr")
+        assert enc["name"] == "lut_uint8"
+        assert arr.dtype == np.uint8
+
+    def test_boundary_65536_uint16_scalar(self):
+        # The format ceiling: exactly 65,536 unique scalars. Needs a raised
+        # JSON cap (the 512 KiB default exists to protect scene metadata) and
+        # E large enough to clear the benefit rule (~2.7M for float32).
+        vals = (np.arange(65_536, dtype=np.float64) * 0.25 + 0.5).astype(np.float32)
+        data = np.tile(vals, 48)  # E = 3,145,728
+        group = zarr.group(store=zarr.MemoryStore())
+        arr, enc = self._encode(
+            data,
+            SemanticType.POSITIVE_SCALAR,
+            group,
+            encoder=ArrayEncoder(lut_json_max_bytes=8 * 1024 * 1024),
+        )
+        assert enc["name"] == "lut_uint16"
+        assert len(enc["lut"]) == 65_536
+        assert arr.dtype == np.uint16
+
+    def test_65537_uniques_falls_through(self):
+        vals = np.arange(65_537, dtype=np.float32)
+        data = np.tile(vals, 3)
+        group = zarr.group(store=zarr.MemoryStore())
+        arr, enc = self._encode(
+            data,
+            SemanticType.POSITIVE_SCALAR,
+            group,
+            encoder=ArrayEncoder(lut_json_max_bytes=64 * 1024 * 1024),
+        )
+        assert enc["name"] not in ("lut_uint8", "lut_uint16")
+
+    def test_benefit_rejection_small_n(self):
+        # K=257 at N=1,000: the doubled LUT JSON dwarfs any index savings —
+        # must fall through to the quantized color path.
+        colors = _tiled_palette_colors(257, 1_000)
+        group = zarr.group(store=zarr.MemoryStore())
+        arr, enc = self._encode(colors, SemanticType.COLOR, group, color_mode="hdr")
+        assert enc["name"] == "geolog_perchannel_u16"
+
+    def test_json_cap_rejection(self):
+        # Same data as the accepting test, but a tiny metadata cap: rejected.
+        colors = _tiled_palette_colors(300, 100_000)
+        group = zarr.group(store=zarr.MemoryStore())
+        arr, enc = self._encode(
+            colors,
+            SemanticType.COLOR,
+            group,
+            encoder=ArrayEncoder(lut_json_max_bytes=1024),
+            color_mode="hdr",
+        )
+        assert enc["name"] == "geolog_perchannel_u16"
+
+    def test_scalar_mode_uint16(self):
+        # 300 unique positive scalars at E=50,000; 1-D arrays omit lut_mode
+        # by contract (decoders default it).
+        vals = np.linspace(0.5, 42.0, 300).astype(np.float32)
+        data = np.tile(vals, 167)[:50_000]
+        group = zarr.group(store=zarr.MemoryStore())
+        arr, enc = self._encode(data, SemanticType.POSITIVE_SCALAR, group)
+        assert enc["name"] == "lut_uint16"
+        assert "lut_mode" not in enc
+        assert arr.dtype == np.uint16
+        decoded = np.asarray(ArrayDecoder().decode(arr, group))
+        np.testing.assert_array_equal(decoded, data)
+
+    def test_idempotent_reencode(self):
+        # decode -> re-encode reproduces identical attrs and indices (LUT is
+        # exact, so nothing can drift across save/load cycles).
+        colors = _tiled_palette_colors(300, 100_000)
+        g1 = zarr.group(store=zarr.MemoryStore())
+        arr1, enc1 = self._encode(colors, SemanticType.COLOR, g1, color_mode="hdr")
+        decoded = np.asarray(ArrayDecoder().decode(arr1, g1)).astype(np.float32)
+        g2 = zarr.group(store=zarr.MemoryStore())
+        arr2, enc2 = self._encode(decoded, SemanticType.COLOR, g2, color_mode="hdr")
+        assert enc1 == enc2
+        np.testing.assert_array_equal(np.asarray(arr1), np.asarray(arr2))
+
+    def test_int64_beyond_2p53_rejected(self):
+        # JSON fidelity guard: 64-bit integers beyond 2^53 don't survive the
+        # JSON round-trip, so the LUT must refuse them (both tiers).
+        data = np.tile(np.array([2**53 + 1, 2**53 + 3, 5, 7], dtype=np.int64), 1000)
+        group = zarr.group(store=zarr.MemoryStore())
+        arr, enc = self._encode(data, SemanticType.INDEX, group)
+        assert enc["name"] not in ("lut_uint8", "lut_uint16")
+
+
 class TestArrayReferences:
     """Test array reference encoding for deduplication."""
 
