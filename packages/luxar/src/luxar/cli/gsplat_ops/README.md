@@ -7,9 +7,12 @@ and registers command groups from this package.
 
 ## Ownership map
 
-- `fitting.py` — fit / cal / render / denoise commands
+- `fitting.py` — Typer command signatures + registration wrappers (`fit`/`cal`/`render`/`denoise`)
+- `fitting_calibrate.py` — `cal` implementation
+- `fitting_denoise_render.py` — `denoise` + `render` implementations
 - `batch.py` — `batch-fit` command group (submit/run/status/merge/validate/cancel)
-- `transforms.py` — edit-style commands (cull/filter/partition/flatten/additive/slice/transform/merge)
+- `transforms.py` — Typer command signatures + wrappers for edit-style commands
+- `transforms_transform.py` — `transform` implementation
 - `scene.py` — convert / migrate-format / reencode
 - `inspect.py` — info / view / compare / annotate-quality / napari
 - `benchmark.py` — GPU benchmark helpers
