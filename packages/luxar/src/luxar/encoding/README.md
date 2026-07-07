@@ -507,10 +507,28 @@ decoded = decoder.decode(target_array, zarr_root)
 
 ### 3. LUT Encoding (Limited Unique Values)
 
-When an array has ≤256 unique values, store indices into a lookup table.
+When an array has few unique values, store integer indices into a lookup
+table holding the EXACT original values — lossless, and smaller than any
+quantized encoding when it fires. Two index tiers:
+
+- **uint8** (K ≤ 256 uniques): the legacy rules — row mode requires
+  N ≥ 2K for uint8 colors; everything else requires `size ≥ 4K`.
+- **uint16** (257 ≤ K ≤ 65,536 uniques): gated by a BYTE-modeled benefit
+  rule, because the LUT itself lives as JSON in `.zattrs` **and is
+  duplicated by consolidated `.zmetadata`** (which the viewer parses at
+  scene-open for every node). The doubled JSON must (a) cost at most half
+  the raw byte savings over the cheapest realistic alternative encoding,
+  and (b) stay under the `ArrayEncoder(lut_json_max_bytes=...)` cap
+  (default 512 KiB ≈ 7-8K unique float RGB rows). Accepted uint16 LUTs are
+  therefore always strictly smaller than even the lossy alternative —
+  while being exact. Typical use: color-by-track/lineage with hundreds to
+  thousands of distinct colors at large N.
+
+64-bit integer values beyond ±2^53 never LUT-encode (they would not
+survive the JSON round-trip).
 
 **Storage Format:**
-- Indices: uint8 array, shape depends on mode
+- Indices: uint8 or uint16 array, shape depends on mode
 - Metadata:
 ```json
 {
@@ -523,10 +541,12 @@ When an array has ≤256 unique values, store indices into a lookup table.
   }
 }
 ```
+(`"name": "lut_uint16"` with uint16 indices for the larger tier — same
+attrs contract.)
 
 **LUT Modes:**
 - **Row mode** (for colors): Each row (color tuple) is a value
-  - Indices: `(N,)` uint8
+  - Indices: `(N,)` uint8/uint16
   - LUT: nested list `[[r,g,b], ...]`
 - **Scalar mode** (for everything else): Each element is a value
   - Indices: same shape as original

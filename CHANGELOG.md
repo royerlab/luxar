@@ -6,6 +6,31 @@ All notable changes to Luxar are documented in this file.
 
 ### July 2026
 
+#### Added — uint16 LUT encoding tier (exact few-color storage up to 65,536 uniques)
+
+- **Why**: the LUT strategy is lossless (exact original values + integer
+  indices) and beats any quantized encoding when it fires, but the producer
+  hard-capped it at 256 uniques with uint8 indices — the 257..65,536 band
+  (color-by-track/lineage: thousands of distinct colors) fell through to
+  approximate quantized encodings at 3× the size.
+- The encoder now emits `lut_uint16` for 257..65,536 uniques (row and scalar
+  modes), gated by a byte-modeled benefit rule: the LUT lives as JSON in
+  `.zattrs` and is duplicated by consolidated `.zmetadata` (parsed at
+  scene-open for every node), so the doubled JSON must cost at most half the
+  raw savings over the cheapest realistic alternative AND stay under a new
+  `ArrayEncoder(lut_json_max_bytes=...)` cap (default 512 KiB). Accepted
+  uint16 LUTs are always strictly smaller than even the lossy alternative —
+  while being exact.
+- The uint8 tier's output is **byte-identical** to before (legacy rules
+  preserved verbatim); eligibility and encoding now share ONE `np.unique`
+  pass (was two). 64-bit integers beyond ±2^53 no longer LUT-encode (JSON
+  fidelity guard — pre-existing silent-corruption latent bug in the u8 tier).
+- Decode needed no changes anywhere (Python decoder, viewer, worker, WASM
+  all shipped `lut_uint16` support long ago); coverage is now organic via
+  encoder-emitted fixtures + an E2E spec exercising the Uint16 row kernel
+  in-browser. Viewer robustness: an unknown `lut_mode` now fails loud on the
+  main thread too (the worker already threw; absent still defaults for 1-D).
+
 #### Added — measured LOD quality (Q·e stamps): early upgrade swaps, sibling-aware ladders, annotate-quality
 
 - **Why**: the never-downgrade display gate released LOD upgrades on
