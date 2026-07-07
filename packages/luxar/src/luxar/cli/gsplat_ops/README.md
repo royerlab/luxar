@@ -17,6 +17,7 @@ and registers command groups from this package.
 - `batch_submit.py` — `batch-fit submit` implementation
 - `batch_submit_slurm.py` — Slurm submission/write orchestration helper for `batch-fit submit`
 - `batch_run.py` — `batch-fit run` implementation
+- `batch_run_orchestration.py` — local `batch-fit run` planning/summary/execute orchestration helper
 - `batch_merge_command.py` — `batch-fit merge` implementation
 - `batch_status_validate_cancel.py` — `batch-fit status` / `validate` / `cancel` implementations
 - `batch_denoise_workers.py` — hidden `batch-fit` denoise worker command implementations
