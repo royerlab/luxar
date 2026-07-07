@@ -29,6 +29,7 @@ const FIXTURES = {
   nd4d: `${FIXTURES_BASE}/test_4d.luxar.zarr`,
   broadcasting: `${FIXTURES_BASE}/test_broadcasting.luxar.zarr`,
   lut: `${FIXTURES_BASE}/test_lut.luxar.zarr`,
+  lutU16: `${FIXTURES_BASE}/test_lut_u16.luxar.zarr`,
 };
 
 test.describe('Test Fixture Rendering', () => {
@@ -379,6 +380,54 @@ test.describe('Test Fixture Rendering', () => {
 
     // Take screenshot
     await page.screenshot({ path: 'test-results/broadcasting-rendering.png' });
+  });
+
+  test('should render lut_uint16 encoded data (>256 unique colors)', async ({ page }) => {
+    // The uint16 LUT tier end-to-end: Uint16Array indices through the
+    // range loader -> worker -> WASM row kernel (only exercised in-browser).
+    await page.goto(`/?src=${FIXTURES.lutU16}&debug`);
+    await waitForLuxarReady(page);
+    await waitForPointsLoaded(page, 1);
+
+    await assertNoConsoleErrors(page);
+
+    const state = await getLuxarState(page);
+    expect(state.totalPoints).toBe(100_000);
+
+    const colorStats = await page.evaluate(() => {
+      const debug = (window as any).__luxarDebug;
+      let points: any = null;
+      debug.scene.traverse((obj: any) => {
+        if (obj.userData?.nodeType === 'points' && !points) {
+          points = obj;
+        }
+      });
+      if (!points || !points.geometry.attributes.aColor) return null;
+      const geometry = points.geometry;
+      const colorAttr = geometry.attributes.aColor;
+      const instanceCount = geometry.isInstancedBufferGeometry
+        ? geometry.instanceCount
+        : colorAttr.count;
+      const actualCount = Math.min(instanceCount, colorAttr.count);
+      const uniqueColors = new Set<string>();
+      let maxChannel = 0;
+      for (let i = 0; i < actualCount; i++) {
+        const r = colorAttr.getX(i);
+        const g = colorAttr.getY(i);
+        const b = colorAttr.getZ(i);
+        maxChannel = Math.max(maxChannel, r, g, b);
+        uniqueColors.add(`${r.toFixed(3)},${g.toFixed(3)},${b.toFixed(3)}`);
+      }
+      return { totalPoints: actualCount, uniqueColors: uniqueColors.size, maxChannel };
+    });
+
+    expect(colorStats).not.toBeNull();
+    expect(colorStats?.totalPoints).toBe(100_000);
+    // 300 exact palette colors must survive the u16 LUT round-trip — well
+    // beyond the u8 tier's 256 ceiling (the load-bearing assertion).
+    expect(colorStats?.uniqueColors).toBe(300);
+    // HDR values decode unclamped (palette peaks at 9.5).
+    expect(colorStats?.maxChannel).toBeGreaterThan(5.0);
   });
 
   test('should render LUT encoded data', async ({ page }) => {

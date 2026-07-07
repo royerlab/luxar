@@ -225,7 +225,7 @@ The constructor accepts `float16_allowed` (see [Compatibility Control](#compatib
 **Encoding Priority Order:**
 1. **Broadcasting** - If scalar input OR all values are identical (stores only 1 value)
 2. **Array Reference** - If exact duplicate exists in registry (stores pointer)
-3. **LUT Encoding** - If ≤256 unique values (stores indices + lookup table)
+3. **LUT Encoding** - If few unique values (≤256 → uint8 indices; row-mode colors up to 65,536 → uint16; stores indices + lookup table)
 4. **Dtype Encoding** - Standard encoding based on semantic type and mode
 
 ### 2. ArrayDecoder (`decoder.py`)
@@ -507,10 +507,31 @@ decoded = decoder.decode(target_array, zarr_root)
 
 ### 3. LUT Encoding (Limited Unique Values)
 
-When an array has ≤256 unique values, store indices into a lookup table.
+When an array has few unique values, store integer indices into a lookup
+table holding the EXACT original values — lossless, and smaller than any
+quantized encoding when it fires. Two index tiers:
+
+- **uint8** (K ≤ 256 uniques): the legacy rules — row mode requires
+  N ≥ 2K for uint8 colors; everything else requires `size ≥ 4K`.
+- **uint16** (257 ≤ K ≤ 65,536 uniques, ROW MODE / colors only —
+  scalar-mode u16 indices would cost exactly what quantized scalars cost,
+  making the LUT JSON pure overhead): gated by a BYTE-modeled benefit
+  rule, because the LUT itself lives as JSON in `.zattrs` **and is
+  duplicated by consolidated `.zmetadata`** (which the viewer parses at
+  scene-open for every node). The doubled JSON must (a) cost at most half
+  the raw byte savings over the cheapest realistic alternative encoding,
+  and (b) stay under the `ArrayEncoder(lut_json_max_bytes=...)` cap
+  (default 512 KiB ≈ 4-4.5K unique float RGB rows — the estimate is
+  measured against the DOUBLED JSON). Accepted uint16 LUTs are
+  therefore always strictly smaller than even the lossy alternative —
+  while being exact. Typical use: color-by-track/lineage with hundreds to
+  thousands of distinct colors at large N.
+
+64-bit integer values beyond ±2^53 never LUT-encode (they would not
+survive the JSON round-trip).
 
 **Storage Format:**
-- Indices: uint8 array, shape depends on mode
+- Indices: uint8 or uint16 array, shape depends on mode
 - Metadata:
 ```json
 {
@@ -523,10 +544,12 @@ When an array has ≤256 unique values, store indices into a lookup table.
   }
 }
 ```
+(`"name": "lut_uint16"` with uint16 indices for the larger tier — same
+attrs contract.)
 
 **LUT Modes:**
 - **Row mode** (for colors): Each row (color tuple) is a value
-  - Indices: `(N,)` uint8
+  - Indices: `(N,)` uint8/uint16
   - LUT: nested list `[[r,g,b], ...]`
 - **Scalar mode** (for everything else): Each element is a value
   - Indices: same shape as original
@@ -544,8 +567,11 @@ radii = np.random.choice([0.1, 0.2, 0.3, 0.4], size=10000)
 ```
 
 **When Used:**
-- ≤256 unique values
-- Array length ≥ 4× unique count
+- uint8 tier: ≤256 unique values and array length ≥ 4× unique count
+  (row-mode uint8 colors: N ≥ 2× unique count)
+- uint16 tier: 257..65,536 unique ROWS (colors only) passing the
+  byte-modeled benefit rule + `lut_json_max_bytes` cap
+- Never for INDEX arrays (viewer reads segments raw — no decode dispatch)
 - Mode != PRECISION
 
 **Decoding:**
@@ -712,7 +738,7 @@ Benchmarks (JavaScript):
 | 100K | 0.08 ms | 0.03 ms | 2.8x |
 | 1M | 0.7 ms | 0.2 ms | 3.5x |
 
-**Acceptable overhead** given the storage benefits. 256-entry LUT fits in L1 cache.
+**Acceptable overhead** given the storage benefits. A 256-entry LUT fits in L1 cache; uint16-tier LUTs (up to thousands of rows under the default JSON cap) still fit in L2.
 
 ### Quantization Error
 
