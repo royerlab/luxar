@@ -14,6 +14,7 @@ and registers command groups from this package.
 - `fitting_fit_utils.py` — shared fit helpers (tiling/recipe args/output save)
 - `batch.py` — `batch-fit` app export + compatibility wrappers
 - `batch_commands.py` — Typer command signatures for `batch-fit` (submit/run/status/merge/validate/cancel)
+- `batch_status_validate_cancel.py` — `batch-fit status` / `validate` / `cancel` implementations
 - `transforms.py` — command registration + compatibility wrappers for edit-style commands
 - `transforms_commands.py` — Typer command signatures for edit-style commands
 - `transforms_transform.py` — `transform` implementation
