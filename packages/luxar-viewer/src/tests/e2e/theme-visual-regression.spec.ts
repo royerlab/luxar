@@ -415,6 +415,44 @@ for (const theme of THEMES) {
 }
 
 /**
+ * Test the Home rail popover in all themes.
+ *
+ * Right-clicking the Home rail button opens the reset-actions popover (fit
+ * scene / center on origin / reset dimensions / reset rendering) — the one
+ * rail popover with plain action rows instead of a nested GUI. Dispatched
+ * programmatically for the same delegated-handler reason as above.
+ */
+for (const theme of THEMES) {
+  test(`@visual home popover - ${theme} theme`, async ({ page }) => {
+    const testDataUrl =
+      'http://localhost:9000/datasets/examples/dimension_sliders_5d_example.luxar.zarr';
+    await page.goto(`/?src=${testDataUrl}&theme=${theme}&debug&dpr=1`);
+    await waitForTheme(page, theme);
+
+    // Let the scene settle (glass popover blurs the canvas behind it).
+    await page.waitForTimeout(1000);
+
+    await page.evaluate(() => {
+      document
+        .querySelector('[data-rail-id="home"]')
+        ?.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
+    });
+
+    const popover = page.locator('.luxar-control-rail__popover');
+    await expect(popover).toBeVisible({ timeout: 2000 });
+
+    if (theme === 'frosted-glass') {
+      await page.waitForTimeout(500);
+    }
+
+    await expect(popover).toHaveScreenshot(`home-popover-${theme}.png`, {
+      maxDiffPixelRatio: 0.1,
+      threshold: 0.3,
+    });
+  });
+}
+
+/**
  * Test theme switching behavior via URL parameter
  * Note: ThemeManager is not exposed to window, so we test via URL params
  */

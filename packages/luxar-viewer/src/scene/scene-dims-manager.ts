@@ -149,28 +149,10 @@ export class SceneDimsManager {
       return [0, 1];
     });
 
-    // Step 6: Initialize dimension positions
-    // Policy:
-    // - Discrete/categorical dimensions (time, channels, frames): start at MINIMUM (first position)
-    // - Continuous spatial dimensions (4th+ spatial dims): start at CENTER (no natural "first")
-    // - Displayed dimensions (X, Y, Z): start at 0 (camera-controlled)
+    // Step 6: Initialize dimension positions (see defaultPosition for the policy)
     const currentStep = new Array(ndim).fill(0);
-
     for (let i = 0; i < ndim; i++) {
-      if (metadata[i].display !== true) {
-        const [min, max] = this.dimensionRanges[i];
-
-        // Discrete/categorical dimensions: start at first position (minimum)
-        // Examples: time=0, channel=0, frame=0, category=first
-        if (metadata[i].discrete || metadata[i].categories) {
-          currentStep[i] = min;
-        } else {
-          // Continuous spatial dimensions: start at center
-          // Examples: 4th spatial dimension (W), higher-dimensional coordinates
-          currentStep[i] = (min + max) / 2;
-        }
-      }
-      // Displayed dimensions start at 0 (camera will determine actual position)
+      currentStep[i] = SceneDimsManager.defaultPosition(metadata[i], this.dimensionRanges[i]);
     }
 
     // Step 7: Identify which dimensions should be displayed in 3D scene
@@ -268,6 +250,37 @@ export class SceneDimsManager {
 
     this.dims.currentStep[dimIndex] = value;
     this.notifyListeners(); // Trigger reactive updates throughout the system
+  }
+
+  /**
+   * The default position policy — shared by {@link initFromScene} and
+   * {@link resetPositions} so the two can never diverge:
+   * - Displayed dimensions (X, Y, Z): 0 (camera-controlled)
+   * - Discrete/categorical dimensions (time, channels, frames): MINIMUM (first position)
+   * - Continuous non-displayed dimensions (4th+ spatial dims): CENTER (no natural "first")
+   */
+  private static defaultPosition(meta: DimensionMetadata, range: [number, number]): number {
+    if (meta.display === true) return 0;
+    const [min, max] = range;
+    if (meta.discrete || meta.categories) return min;
+    return (min + max) / 2;
+  }
+
+  /**
+   * Reset every dimension back to its initial default position (same policy
+   * as {@link initFromScene}) and notify listeners — sliders, slicing, and
+   * status displays all refresh reactively. Used by the rail Home popover's
+   * "Reset dimensions" action. No-op before initialization.
+   */
+  resetPositions(): void {
+    if (!this.dims || !this.dimensionRanges) return;
+    for (let i = 0; i < this.dims.ndim; i++) {
+      const meta = this.dims.metadata?.[i];
+      if (!meta) continue;
+      this.dims.currentStep[i] = SceneDimsManager.defaultPosition(meta, this.dimensionRanges[i]);
+    }
+    this.notifyListeners();
+    log.info(Modules.SCENE_DIMS, 'Dimension positions reset to defaults');
   }
 
   /**

@@ -298,9 +298,12 @@ export class RenderingControls {
   }
 
   /**
-   * Reset all rendering settings to their default values
+   * Reset all rendering settings to their default values.
+   *
+   * Public because the rail Home popover's "Reset rendering" action calls it
+   * too (same behavior as this panel's own "Reset to Defaults" button).
    */
-  private resetToDefaults(): void {
+  public resetToDefaults(): void {
     // Clear cinematic snapshot since we're resetting all settings
     this.cinematic?.clearSnapshot();
 

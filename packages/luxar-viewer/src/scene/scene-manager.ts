@@ -774,7 +774,6 @@ export class SceneManager extends THREE.EventDispatcher<{
     if (this.isCenteredOnBoundingBox) {
       // Switch to origin (native center)
       this.centerOnOrigin();
-      this.isCenteredOnBoundingBox = false;
       log.success(Modules.SCENE_MANAGER, 'Centered on origin (native center)');
     } else {
       // Switch to bounding box center
@@ -784,9 +783,15 @@ export class SceneManager extends THREE.EventDispatcher<{
     }
   }
 
-  /** Center camera and controls on the origin. */
-  private centerOnOrigin(): void {
+  /**
+   * Center camera and controls on the origin (0,0,0) at the current
+   * distance. Also used by the rail Home popover's "Center on origin"
+   * action. Clears the bounding-box-centered flag so a subsequent
+   * {@link toggleCentering} switches back to the bounding box.
+   */
+  public centerOnOrigin(): void {
     centerOnOrigin(this.camera, this.controls);
+    this.isCenteredOnBoundingBox = false;
   }
 
   /**
