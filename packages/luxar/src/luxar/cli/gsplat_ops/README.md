@@ -12,8 +12,10 @@ and registers command groups from this package.
 - `fitting_denoise_render.py` — `denoise` + `render` implementations
 - `fitting_fit.py` — `fit` command implementation
 - `fitting_fit_utils.py` — shared fit helpers (tiling/recipe args/output save)
-- `batch.py` — `batch-fit` command group (submit/run/status/merge/validate/cancel)
-- `transforms.py` — Typer command signatures + wrappers for edit-style commands
+- `batch.py` — `batch-fit` app export + compatibility wrappers
+- `batch_commands.py` — Typer command signatures for `batch-fit` (submit/run/status/merge/validate/cancel)
+- `transforms.py` — command registration + compatibility wrappers for edit-style commands
+- `transforms_commands.py` — Typer command signatures for edit-style commands
 - `transforms_transform.py` — `transform` implementation
 - `scene.py` — convert / migrate-format / reencode
 - `inspect.py` — info / view / compare / annotate-quality / napari
