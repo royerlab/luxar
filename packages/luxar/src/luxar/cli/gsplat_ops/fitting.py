@@ -7,23 +7,25 @@ the shared ``app_gsplat`` Typer (package-refactor-plan P3/P4/P6).
 from __future__ import annotations
 
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Literal, Optional
+from typing import Any, Literal, Optional
 
 import typer
 from arbol import aprint, asection
 
-from ..utils import format_memory_size
 from .fitting_calibrate import run_calibrate_command
 from .fitting_denoise_render import (
     run_denoise_volume_cmd,
     run_render_to_file,
 )
-from .fitting_recipe_args import (
+from .fitting_fit_utils import (
     build_fit_recipe_params as _build_fit_recipe_params_impl,
 )
-
-if TYPE_CHECKING:
-    pass
+from .fitting_fit_utils import (
+    resolve_tiling as _resolve_tiling_impl,
+)
+from .fitting_fit_utils import (
+    save_fit_output as _save_fit_output_impl,
+)
 
 
 def denoise_volume_cmd(
@@ -90,23 +92,8 @@ def denoise_volume_cmd(
 def _resolve_tiling(
     tiling: str, shape: "tuple[int, ...]", tile_size: int, has_density: bool
 ) -> str:
-    """Resolve ``--tiling`` to a concrete strategy: ``none | uniform | content``.
-
-    ``auto`` fits the whole volume when it fits in a single tile, else uniform —
-    or content when a transferable density (``--cal`` / ``--k-star-ref`` / a
-    ``--plan`` / ``--plan-box``) is available to size content-balanced boxes.
-    """
-    t = tiling.lower()
-    if t not in ("auto", "none", "uniform", "content"):
-        raise typer.BadParameter(
-            f"--tiling must be one of auto|none|uniform|content, got {tiling!r}"
-        )
-    if t != "auto":
-        return t
-    large = any(int(s) > int(tile_size) for s in shape)
-    if not large:
-        return "none"
-    return "content" if has_density else "uniform"
+    """Back-compat wrapper around fit tiling-strategy resolution helpers."""
+    return _resolve_tiling_impl(tiling, shape, tile_size, has_density)
 
 
 def _build_fit_recipe_params(
@@ -150,25 +137,13 @@ def _save_fit_output(
     compress: "Optional[Literal['zip', 'tar.gz']]",
     verbose: bool,
 ) -> int:
-    """Save a flat ``GSplatData`` leaf or a ``kind=partition`` tree node.
-
-    Returns the splat count for the summary line.
-    """
-    from luxar.gsplats.gsplat_data import GSplatData
-
-    if isinstance(result, GSplatData):
-        result.save(output_path, compress=compress)
-        n = int(result.n_splats)
-    else:  # a partition / tree node has no flat-matrix equivalent
-        from luxar.gsplats.io.save_gsplats import write_gsplats_tree
-
-        write_gsplats_tree(output_path, result, compress=compress)
-        n = int(getattr(result, "n_splats", 0))
-    if verbose:
-        aprint(f"Saved {n:,} splats")
-        if output_path.exists():
-            aprint(f"File size: {format_memory_size(output_path.stat().st_size)}")
-    return n
+    """Back-compat wrapper around fit output saving helper."""
+    return _save_fit_output_impl(
+        result,
+        output_path,
+        compress=compress,
+        verbose=verbose,
+    )
 
 
 def fit_volume(
