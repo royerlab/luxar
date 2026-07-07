@@ -89,7 +89,7 @@ def write_colors(
         aprint("  ✓ Wrote colors (broadcasted - uniform)")
     elif enc_name == "array_ref":
         aprint(f"  ✓ Wrote colors (reference to {enc['target']})")
-    elif enc_name == "lut_uint8":
+    elif enc_name in ("lut_uint8", "lut_uint16"):
         aprint(f"  ✓ Wrote colors (LUT with {len(enc['lut'])} unique values)")
     elif enc_name in ("rgb_uint8", "uint8"):
         aprint("  ✓ Wrote colors (uint8)")

@@ -750,6 +750,22 @@ mod tests {
     }
 
     #[test]
+    fn test_decode_lut_scalar_u16() {
+        // Index > 255 so the test cannot pass by u8 truncation accident.
+        let mut lut = vec![0.0f32; 300];
+        lut[299] = 42.5;
+        lut[150] = -7.25;
+        let indices = vec![0u16, 299, 150];
+        let mut output = vec![0.0f32; 3];
+
+        decode_lut_scalar_u16(&indices, &lut, &mut output);
+
+        assert_eq!(output[0], 0.0);
+        assert_eq!(output[1], 42.5);
+        assert_eq!(output[2], -7.25);
+    }
+
+    #[test]
     fn test_decode_lut_row_u8() {
         let indices = vec![0u8, 1];
         // LUT with 2 entries, each with 3 values (rgb)
