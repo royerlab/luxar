@@ -21,7 +21,8 @@ and registers command groups from this package.
 - `transforms_commands.py` — Typer command signatures for edit-style commands
 - `transforms_transform.py` — `transform` implementation
 - `scene.py` — convert / migrate-format / reencode
-- `inspect.py` — info / view / compare / annotate-quality / napari
+- `inspect.py` — inspect command registration + compatibility wrappers
+- `inspect_commands.py` — Typer command signatures for inspect commands
 - `benchmark.py` — GPU benchmark helpers
 - `batch_planning.py`, `planner.py`, `encoding.py` — shared helpers
 
