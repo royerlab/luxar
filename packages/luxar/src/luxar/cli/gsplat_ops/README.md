@@ -20,7 +20,8 @@ and registers command groups from this package.
 - `transforms.py` — command registration + compatibility wrappers for edit-style commands
 - `transforms_commands.py` — Typer command signatures for edit-style commands
 - `transforms_transform.py` — `transform` implementation
-- `scene.py` — convert / migrate-format / reencode
+- `scene.py` — scene command registration + compatibility wrappers
+- `scene_commands.py` — Typer command signatures for convert/migrate-format/reencode
 - `inspect.py` — inspect command registration + compatibility wrappers
 - `inspect_commands.py` — Typer command signatures for inspect commands
 - `benchmark.py` — GPU benchmark helpers
