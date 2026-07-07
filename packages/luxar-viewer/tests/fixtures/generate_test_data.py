@@ -73,6 +73,7 @@ FIXTURE_NAMES: list[str] = [
     "test_lod_group.luxar.zarr",
     "test_log_scalar.luxar.zarr",
     "test_lut.luxar.zarr",
+    "test_lut_u16.luxar.zarr",
     "test_mixed.luxar.zarr",
     "test_nd_transforms.luxar.zarr",
     "test_overview.gsplats.zarr",
@@ -188,6 +189,60 @@ def generate_lut_test() -> None:
         aprint(f"  Positions: {positions.shape}")
         aprint(f"  Colors: {colors.shape} ({len(unique_colors)} unique - LUT)")
         aprint(f"  Radii: {radii.shape}")
+
+
+def generate_lut_u16_test() -> None:
+    """Test dataset with the uint16 LUT tier (>256 unique colors).
+
+    100,000 points with exactly 300 unique HDR colors: above the uint8 cap,
+    large enough to clear the byte-modeled benefit rule (at 50k the doubled
+    LUT JSON would exceed half the savings and be rejected), so the encoder
+    emits `lut_uint16` in row mode — the in-browser path for Uint16Array
+    LUT indices (range loader + worker + WASM row kernel).
+    """
+    with asection("Generating LUT uint16 Encoding Test"):
+        output = FIXTURES_DIR / "test_lut_u16.luxar.zarr"
+
+        n_points = 100_000
+        rng = np.random.default_rng(7)
+        positions = (rng.standard_normal((n_points, 3)) * 10).astype(np.float32)
+
+        # Exactly 300 unique HDR colors, tiled so every palette row appears.
+        palette = np.stack(
+            [
+                np.linspace(0.05, 9.5, 300),
+                np.linspace(9.5, 0.05, 300),
+                np.linspace(0.2, 4.0, 300),
+            ],
+            axis=1,
+        ).astype(np.float32)
+        colors = np.tile(palette, (-(-n_points // 300), 1))[:n_points]
+
+        dims = Dimensions(
+            [
+                Dimension("x", unit="units", display=True),
+                Dimension("y", unit="units", display=True),
+                Dimension("z", unit="units", display=True),
+            ]
+        )
+        radii = np.ones(n_points, dtype=np.float32) * 0.5
+
+        with LuxarZarrCompiler(
+            output,
+            encoding_mode=EncodingMode.AUTO,
+            compressor=None,
+            float16_allowed=False,
+        ) as compiler:
+            scene = compiler.create_scene(dimensions=dims)
+            scene.add_points(
+                "points",
+                positions,
+                colors=colors,  # 300 uniques -> lut_uint16 row mode
+                radii=radii,
+            )
+
+        aprint(f"✓ Created {output}")
+        aprint(f"  Colors: {colors.shape} ({len(palette)} unique - lut_uint16)")
 
 
 def generate_quantization_test() -> None:
@@ -669,6 +724,37 @@ def generate_encoding_contract_matrix_test() -> None:
             color_mode="sdr",
             chunks=(7, 3),
         )
+        # Encoder-EMITTED uint16 LUT tier (257..65,536 uniques with the
+        # byte-modeled benefit rule): sized to clear the break-even so the
+        # required lut_uint16 coverage is organic producer output, not just
+        # the manual threshold cases below.
+        u16_palette = (
+            np.stack(
+                [
+                    np.linspace(0.05, 9.5, 300),
+                    np.linspace(9.5, 0.05, 300),
+                    np.linspace(0.2, 4.0, 300),
+                ],
+                axis=1,
+            ).astype(np.float32)
+        )
+        encode_case(
+            "color_lut_row_uint16_emitted",
+            np.tile(u16_palette, (334, 1))[:100_000],
+            SemanticType.COLOR,
+            "row-mode uint16 LUT colors (300 uniques, encoder-emitted)",
+            mode=EncodingMode.AUTO,
+            color_mode="hdr",
+            chunks=(8192, 3),
+        )
+        encode_case(
+            "scalar_lut_uint16_emitted",
+            np.tile(np.linspace(0.5, 42.0, 300).astype(np.float32), 167)[:50_000],
+            SemanticType.POSITIVE_SCALAR,
+            "scalar uint16 LUT (300 uniques, encoder-emitted)",
+            mode=EncodingMode.AUTO,
+            chunks=(8192,),
+        )
         encode_case(
             "color_broadcast_rgba_singleton",
             (0.25, 0.5, 0.75, 1.0),
@@ -815,8 +901,9 @@ def generate_encoding_contract_matrix_test() -> None:
             chunks=(2, 3),
         )
 
-        # Manual LUT threshold cases, including lut_uint16 which normal scenes do
-        # not currently emit automatically (the decoder contract still supports it).
+        # Manual LUT threshold cases. The encoder now emits lut_uint16 itself
+        # (see the *_uint16_emitted cases above); these hand-written variants
+        # stay to pin the DECODE contract independent of producer behavior.
         def manual_lut_case(
             case_id: str,
             unique_count: int,
@@ -1858,6 +1945,7 @@ def main() -> None:
         aprint("")
 
         generate_lut_test()
+        generate_lut_u16_test()
         aprint("")
 
         generate_quantization_test()
