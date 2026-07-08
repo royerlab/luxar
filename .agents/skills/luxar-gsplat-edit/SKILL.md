@@ -4,9 +4,10 @@ description: >-
   Edit, transform, and inspect an existing .gsplats.zarr dataset with the Luxar
   CLI. Use when a user has already-fitted Gaussian splats and wants to crop/slice,
   spatially transform (scale/rotate/translate/center), rescale intensity, cull or
-  filter splats, partition into spatial parts, merge datasets (e.g. multichannel
-  or as a new time dimension), convert to a web scene, migrate a legacy format, or
-  inspect quality (info / render / compare / view / napari). This is the post-fit
+  filter splats, partition into spatial parts, flatten an LOD/partition tree to a
+  single leaf, merge datasets (e.g. multichannel or as a new time dimension),
+  convert to a web scene, migrate a legacy format, or inspect quality
+  (info / render / compare / view / napari). This is the post-fit
   toolbox — for FITTING a volume use the gsplat-pipeline skill instead.
 ---
 
@@ -29,6 +30,7 @@ All commands take a `.gsplats.zarr` (flat, partition, or nested LOD), accept
 | Drop low-value splats (shrink file) | `cull` |
 | Keep splats matching property thresholds | `filter` |
 | Split into spatial parts (frustum culling) | `partition` |
+| Collapse LOD/partition tree to one flat leaf | `flatten` |
 | Combine datasets (channels, timepoints) | `merge` |
 | Make a web-viewer scene | `convert` |
 | Upgrade an old-format file | `migrate-format` |
@@ -53,6 +55,11 @@ luxar gsplat filter in.gsplats.zarr out.gsplats.zarr --bbox "0,50,0,50,0,50" --v
 # Spatial partition for viewer frustum culling
 luxar gsplat partition in.gsplats.zarr part.gsplats.zarr --parts 4 --rule sah
 
+# Collapse any tree (partition/LOD/nested) to a single matrix-shaped leaf.
+# Useful for compatibility with tools that expect a flat .gsplats.zarr, or before
+# rebuilding a fresh global LOD topology from partitioned output.
+luxar gsplat flatten part.gsplats.zarr flat.gsplats.zarr
+
 # Merge: stack two channels with colors, or stack timepoints as a new dimension
 luxar gsplat merge ch0.gsplats.zarr ch1.gsplats.zarr -o multi.gsplats.zarr \
     --channel-colors "#ff0080,#00ff00"
@@ -76,7 +83,7 @@ luxar gsplat napari in.gsplats.zarr                    # napari + centers overla
 ## Notes
 
 - **Full flag tables** for every command (cull methods, filter criteria, transform
-  order, merge modes, partition rules, inspect options) are in
+  order, merge modes, partition/flatten rules, inspect options) are in
   `references/edit-commands.md`.
 - The old `split` command is gone — use `partition`.
 - `transform` applies operations in a fixed order: scale → rotate → translate → center
