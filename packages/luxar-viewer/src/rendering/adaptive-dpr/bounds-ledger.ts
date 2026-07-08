@@ -13,10 +13,12 @@
  * - Ceiling: on HiDPI displays, DPR above 1.0 is a luxury — 1.0 is
  *   exactly what every standard display renders — with a 4x fill cost
  *   at 2x native. When scale-ups above 1.0 keep getting PUNISHED (FPS
- *   collapses shortly after the ascent), the scene has proven it can't
- *   sustain the luxury: the operating ceiling demotes from native to
- *   exactly 1.0, killing the up/down oscillation instead of slowing
- *   it. Session-only; decays after a TTL (backed off on re-demotion).
+ *   collapses shortly after the ascent), or the estimator reports
+ *   sustained sub-throttle DISTRESS (demoteCeiling called directly),
+ *   the scene has proven it can't sustain the luxury: the operating
+ *   ceiling demotes from native to exactly 1.0, killing the up/down
+ *   oscillation instead of slowing it. Session-only; decays after a
+ *   TTL (backed off on re-demotion).
  * - Content changes soften the ledger: expiries are pulled forward so
  *   re-probes/re-ascents happen within `recheckMs`, and the escalation
  *   streaks reset — new content deserves fresh evidence.
@@ -177,7 +179,8 @@ export class BoundsLedger {
    */
   recordSlowSample(timestamp: number): boolean {
     if (!this.lastAscent) return false;
-    const withinWindow = timestamp - this.lastAscent.timestamp <= this.config.punishedAscentWindowMs;
+    const withinWindow =
+      timestamp - this.lastAscent.timestamp <= this.config.punishedAscentWindowMs;
     this.lastAscent = null;
     if (!withinWindow) {
       // The ascent outlived its punishment window before any slow
@@ -190,7 +193,23 @@ export class BoundsLedger {
     this.punishedAscentCount++;
     if (this.punishedAscentCount < this.config.punishedAscentThreshold) return false;
 
+    this.demoteCeiling(timestamp);
+    return true;
+  }
+
+  /**
+   * Demote the ceiling to 1.0 directly on outside evidence (sustained
+   * sub-throttle distress — FPS too low to be any real display
+   * throttle), bypassing the punished-ascent tally: the scene has
+   * already proven it can't afford the above-1.0 luxury without any
+   * ascent experiment. Same TTL/backoff ladder as an earned demotion —
+   * a scene that keeps re-earning it holds it longer each time.
+   *
+   * @returns the TTL applied, ms (for logging)
+   */
+  demoteCeiling(timestamp: number): number {
     this.punishedAscentCount = 0;
+    this.lastAscent = null;
     this.ceilingBackoffLevel++;
     const ttl = Math.min(
       this.config.ceilingTtlMs *
@@ -199,7 +218,7 @@ export class BoundsLedger {
     );
     this.ceilingDemoted = true;
     this.ceilingExpiresAt = timestamp + ttl;
-    return true;
+    return ttl;
   }
 
   /**
