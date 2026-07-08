@@ -177,8 +177,12 @@ export class ArrayDecoder {
       // CRITICAL: Default to 1 for scalar mode, but MUST check original_shape for vector data
       const k = enc.original_shape && enc.original_shape.length > 1 ? enc.original_shape[1] : 1;
 
-      // Get LUT mode from metadata (scalar vs row)
-      const lutMode = enc.lut_mode || 'row'; // Default to row mode
+      // Get LUT mode from metadata (scalar vs row). ABSENT defaults to row
+      // (the Python encoder omits lut_mode for 1-D arrays by contract), but
+      // a present-yet-unknown mode must fail loud — the worker decoder
+      // already throws here, and silently decoding garbage as row mode
+      // would corrupt every value. Keep both paths aligned.
+      const lutMode = ArrayDecoder.validatedLutMode(enc.lut_mode);
 
       // Decode LUT with correct mode
       const decoded = this.decodeLUT(data, enc.lut, k, lutMode);
@@ -1173,9 +1177,26 @@ export class ArrayDecoder {
     if (!enc || !ArrayDecoder.isLUTEncodingName(enc.name) || !enc.lut) return null;
 
     const k = enc.original_shape && enc.original_shape.length > 1 ? enc.original_shape[1] : 1;
-    const lutMode = enc.lut_mode || 'row';
+    const lutMode = ArrayDecoder.validatedLutMode(enc.lut_mode);
 
     return { lut: enc.lut, lutMode, k };
+  }
+
+  /**
+   * Validate a stored `lut_mode`: absent defaults to 'row' (the Python
+   * encoder omits it for 1-D arrays), but a present-yet-unknown value throws
+   * — matching the worker decoder (`workers/data-worker/decode/lut.ts`),
+   * which already rejects it. Previously the main thread silently treated
+   * garbage as row mode.
+   */
+  static validatedLutMode(lutMode: string | undefined): string {
+    if (lutMode !== undefined && lutMode !== 'row' && lutMode !== 'scalar') {
+      throw new Error(
+        `[ArrayDecoder] Invalid lut_mode '${lutMode}' (expected 'row' or 'scalar'). ` +
+          'Corrupt or malformed encoding metadata.'
+      );
+    }
+    return lutMode ?? 'row';
   }
 
   /**

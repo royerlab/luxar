@@ -60,7 +60,7 @@ dataset_writers/
   value exceeds 1.0) and forwards it to the encoder. Records
   `group.attrs["color_data_range"]` (min/max of the original data) for the
   viewer's layer controls, and logs the actual encoding chosen
-  (`broadcasted`, `array_ref`, `lut_uint8`, `rgb_uint8`, `float32`, ...).
+  (`broadcasted`, `array_ref`, `lut_uint8`, `lut_uint16`, `rgb_uint8`, `float32`, ...).
 
 ### `scalars.py`
 

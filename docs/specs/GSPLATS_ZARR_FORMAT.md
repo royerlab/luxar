@@ -152,7 +152,8 @@ The file root IS the node. The same three primitives nest arbitrarily:
 ```
 fitted.gsplats.zarr/
 ├── .zattrs           # type: "gsplats", n_splats, ndim, has_colors, ordering,
-│                     # ordering_min/max/bits, chunk_size, amplitude_range,
+│                     # ordering_min/max/bits, slice_dims, ordering_dims,
+│                     # chunk_size, amplitude_range,
 │                     # center_bounds, position_bounds, truncation_radius,
 │                     # opacity, gamma, intensity, offset, blending_mode,
 │                     # format_version: "3.2", format_type: "gsplats_zarr",
@@ -300,6 +301,8 @@ attrs are `type`, `kind`, `selector`, `default_level`, `display_type`,
   "ordering_min": [0.0, 0.0, 0.0],
   "ordering_max": [256.0, 256.0, 128.0],
   "ordering_bits_per_dim": 21,
+  "slice_dims": [],
+  "ordering_dims": [0, 1, 2],
   "chunk_size": 2048,
   "amplitude_range": {"min": 0.01, "max": 1.5},
   "center_bounds": {
