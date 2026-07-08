@@ -1314,3 +1314,108 @@ describe('AdaptiveDPRManager — U-shape probe', () => {
     }
   });
 });
+
+// ---------------------------------------------------------------------
+// Sub-throttle distress → ceiling demotion (the 10fps-at-native latch)
+// ---------------------------------------------------------------------
+
+describe('AdaptiveDPRManager — sustained distress demotes the ceiling to 1.0', () => {
+  it('a proven-fast display + GPU-bound ~10fps scene ends at DPR 1.0, not parked at native', () => {
+    // Regression for the catastrophic estimator latch: the display
+    // proves ~120Hz, then heavy content pins FPS at a uniform ~10.
+    // The old throttle detector reseeded the cap onto 10fps, the
+    // relative thresholds then read 10fps as "at the display cap =
+    // healthy", and scale-up walked the DPR back to native 2.0 and
+    // parked it there for the content's lifetime. Now the estimator
+    // reports sub-throttle DISTRESS instead and the manager demotes
+    // the ceiling: the session must end operating at exactly 1.0.
+    const restore = setNativeDPR(2.0);
+    const m = new AdaptiveDPRManager();
+    const r = makeRenderer();
+    m.setRenderer(r);
+    try {
+      // Phase A: light content proves the display can do ~120fps.
+      let t = pushFrames(m, 0, 241, 2000); // 8.3ms cadence ≈ 120fps
+      // Phase B: heavy content — a uniform ~10fps for 25s.
+      pushFrames(m, t + 100, 251, 25_000); // 100ms cadence = 10fps
+
+      const s = m.getState();
+      expect(s.dprCeiling).toBe(1.0); // demoted
+      expect(s.currentDPR).toBe(1.0); // clamped in one step
+      expect(s.isReducedResolution).toBe(true);
+      // The cap must NOT have collapsed onto the loaded FPS — that was
+      // the latch. Scale-down thresholds stay armed against it.
+      expect(s.refreshRateCap).toBeGreaterThanOrEqual(60);
+      expect(r.setAdaptivePixelRatio).toHaveBeenCalledWith(1.0);
+    } finally {
+      restore();
+    }
+  });
+
+  it('a scene heavy from the very first frame also gets the 1.0 clamp (no proven rate needed)', () => {
+    const restore = setNativeDPR(2.0);
+    const m = new AdaptiveDPRManager();
+    const r = makeRenderer();
+    m.setRenderer(r);
+    try {
+      pushFrames(m, 0, 251, 25_000); // ~10fps from the start
+      const s = m.getState();
+      expect(s.dprCeiling).toBe(1.0);
+      expect(s.currentDPR).toBe(1.0);
+    } finally {
+      restore();
+    }
+  });
+
+  it('frame-gap dead-time never counts toward the sustained-distress bar (gap-reset leg)', () => {
+    // Same staleness class as the pause leg, reached via the recordFrame
+    // gapResetMs branch instead of notifyPaused(): a long single-frame
+    // stall (tab hide the pause hook didn't see, synchronous decode)
+    // must clear the estimator's plateau clock too. Pinned separately —
+    // deleting the gap-reset's noteSessionInterrupted() call must fail
+    // THIS test even while the pause test stays green.
+    const restore = setNativeDPR(2.0);
+    const m = new AdaptiveDPRManager();
+    const r = makeRenderer();
+    m.setRenderer(r);
+    try {
+      pushFrames(m, 0, 81, 8000); // ~10fps for 8s — under the 10s bar
+      // One frame arrives 2 minutes later: recordFrame's gap detection
+      // fires (no notifyPaused was ever called).
+      pushFrames(m, 128_000, 41, 4000); // 4s at ~10fps after the gap
+      expect(m.getState().dprCeiling).toBe(2.0); // NOT demoted yet
+
+      pushFrames(m, 132_100, 201, 20_000); // sustained → demotes for real
+      expect(m.getState().dprCeiling).toBe(1.0);
+    } finally {
+      restore();
+    }
+  });
+
+  it('pause dead-time never counts toward the sustained-distress bar (stale-state regression)', () => {
+    // Regression: the estimator's plateau clock and recent window used
+    // to survive notifyPaused(), so ~8s of pre-pause lows + 2 minutes
+    // of idle dead time + a couple of janky post-resume windows fired
+    // an immediate wrongful demotion. After the fix, the sustained
+    // requirement must be re-earned from FRESH post-resume samples.
+    const restore = setNativeDPR(2.0);
+    const m = new AdaptiveDPRManager();
+    const r = makeRenderer();
+    m.setRenderer(r);
+    try {
+      pushFrames(m, 0, 81, 8000); // ~10fps for 8s — under the 10s bar
+      m.notifyPaused(); // idle pause; loop stops
+
+      // Resume 2 minutes later, still slow for a few seconds.
+      pushFrames(m, 128_000, 41, 4000); // 4s at ~10fps post-resume
+      expect(m.getState().dprCeiling).toBe(2.0); // NOT demoted yet
+
+      // ...but genuinely sustained post-resume distress still demotes.
+      pushFrames(m, 132_100, 201, 20_000); // 20 more seconds at ~10fps
+      expect(m.getState().dprCeiling).toBe(1.0);
+      expect(m.getState().currentDPR).toBe(1.0);
+    } finally {
+      restore();
+    }
+  });
+});

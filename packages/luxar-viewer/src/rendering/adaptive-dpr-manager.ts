@@ -18,6 +18,10 @@
  *   (re-read on every evaluation/public read — monitor drags and browser
  *   zoom change it at runtime) and stops strictly above
  *   max(minDPR, learned U-shape floor)
+ * - Sustained distress-level FPS (below what any real display throttle
+ *   can produce) demotes the operating ceiling to 1.0 in one step —
+ *   HiDPI is a luxury a scene at ~10fps has proven it can't afford
+ *   (see the estimator's sub-throttle distress verdict)
  *
  * # U-shape awareness
  *
@@ -301,6 +305,10 @@ export class AdaptiveDPRManager {
       this.fpsTracker.clear();
       this.probeController.void_();
       this.hysteresis.clear();
+      // The estimator's uniform-low plateau clock and recent window
+      // span the gap too — dead time must not count toward a
+      // "sustained" throttle/distress verdict (learned state survives).
+      this.refreshRateEstimator.noteSessionInterrupted();
       this.lastEvaluationTime = timestamp;
     }
 
@@ -384,6 +392,33 @@ export class AdaptiveDPRManager {
         Modules.ADAPTIVE_DPR,
         'DPR ceiling demotion expired — scale-up may try above 1.0 again'
       );
+    }
+
+    // Sustained sub-throttle DISTRESS (FPS below what any real display
+    // throttle can produce, for a sustained period) demotes the ceiling
+    // to 1.0 in one step: the scene has proven it can't afford the
+    // above-1.0 HiDPI luxury, and the multiplicative scale-down walk
+    // (≈7 probed steps from 2.0) would leave the user at ~10fps for
+    // tens of seconds. The estimator deliberately reports this instead
+    // of latching its throttle verdict — the pre-fix failure mode
+    // collapsed the cap onto the loaded FPS, read ~10fps as "at the
+    // display cap = healthy", and scale-up parked the DPR at native
+    // for the content's lifetime.
+    if (!suppressed && this.refreshRateEstimator.consumeDistress()) {
+      if (this.currentDPR > 1.0 + 0.001) {
+        const ttlMs = this.boundsLedger.demoteCeiling(timestamp);
+        this.applyCeilingDemotion(
+          fps,
+          `Sustained distress-level FPS (${fps.toFixed(1)}) — too slow to be a display ` +
+            `throttle; demoting the ceiling to 1.0 for ${(ttlMs / 1000).toFixed(0)}s ` +
+            '(TTL-decayed; content changes re-check)'
+        );
+        this.hysteresis.recordLow();
+        return;
+      }
+      // Already at/below 1.0: nothing to demote — the verdict is
+      // consumed (it re-arms) and the normal scale-down walk below
+      // keeps working the reduction.
     }
 
     if (fps < downThreshold) {
@@ -537,12 +572,16 @@ export class AdaptiveDPRManager {
    * Apply a just-decided ceiling demotion: clamp the operating DPR to
    * 1.0 in one step (this replaces the tick's multiplicative
    * scale-down — the clamp is usually the larger move).
+   *
+   * @param reason - Optional log line override; default describes the
+   *   punished-ascent path.
    */
-  private applyCeilingDemotion(fps: number): void {
+  private applyCeilingDemotion(fps: number, reason?: string): void {
     log.warning(
       Modules.ADAPTIVE_DPR,
-      `Repeated punished ascents above DPR 1.0 (FPS ${fps.toFixed(1)}) — ` +
-        'ceiling demoted to 1.0 for this session (TTL-decayed; content changes re-check)'
+      reason ??
+        `Repeated punished ascents above DPR 1.0 (FPS ${fps.toFixed(1)}) — ` +
+          'ceiling demoted to 1.0 for this session (TTL-decayed; content changes re-check)'
     );
     if (this.currentDPR <= 1.0 + 0.001) return;
 
@@ -771,12 +810,15 @@ export class AdaptiveDPRManager {
   /**
    * Notify the manager that the animation loop stopped (idle pause,
    * tab hide, dispose). Clears SESSION state only — the FPS window,
-   * the scale-up streak, and any in-flight probe (voided unjudged: its
+   * the scale-up streak, any in-flight probe (voided unjudged: its
    * before/after comparison would otherwise span the pause and compare
-   * workloads minutes apart). LEARNED state (floor, backoff streak,
-   * refresh-cap estimate) survives: it is expensive evidence about
-   * this scene on this display, and wiping it here would replay a full
-   * rejected-probe episode on every interaction burst.
+   * workloads minutes apart), and the estimator's sample-stream
+   * transients (recent window, uniform-low plateau clock, unconsumed
+   * distress latch — see noteSessionInterrupted). LEARNED state
+   * (floor, backoff streak, refresh-cap mark, throttle verdict)
+   * survives: it is expensive evidence about this scene on this
+   * display, and wiping it here would replay a full rejected-probe
+   * episode on every interaction burst.
    *
    * Idempotent and safe after dispose() (stopAnimation is also called
    * from the controller's dispose path).
@@ -785,6 +827,13 @@ export class AdaptiveDPRManager {
     this.fpsTracker.clear();
     this.hysteresis.clear();
     this.probeController.void_();
+    // The estimator's SESSION transients (recent window, uniform-low
+    // plateau clock, an unconsumed distress latch) describe the frame
+    // stream the pause just broke — clear them so pause dead time
+    // never counts toward a "sustained" verdict and a stale latch
+    // can't demote a session that resumes light. Its LEARNED state
+    // (high-water mark, throttle verdict, proven rate) survives.
+    this.refreshRateEstimator.noteSessionInterrupted();
   }
 
   /**
