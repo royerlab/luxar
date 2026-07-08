@@ -17,7 +17,9 @@ callbacks).
 
 State classification (the manager's contract with its hooks):
 
-- **Session state** (FPS window, hysteresis streak, pending probe) is cheap,
+- **Session state** (FPS window, hysteresis streak, pending probe, the
+  estimator's sample-stream transients — recent window / plateau clock /
+  unconsumed distress latch) is cheap,
   display-and-moment specific, and cleared aggressively — on pause, on a
   native-DPR change, on disable.
 - **Learned state** (the bounds ledger) is expensive evidence and survives

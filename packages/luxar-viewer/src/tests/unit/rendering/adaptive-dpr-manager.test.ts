@@ -1367,6 +1367,31 @@ describe('AdaptiveDPRManager — sustained distress demotes the ceiling to 1.0',
     }
   });
 
+  it('frame-gap dead-time never counts toward the sustained-distress bar (gap-reset leg)', () => {
+    // Same staleness class as the pause leg, reached via the recordFrame
+    // gapResetMs branch instead of notifyPaused(): a long single-frame
+    // stall (tab hide the pause hook didn't see, synchronous decode)
+    // must clear the estimator's plateau clock too. Pinned separately —
+    // deleting the gap-reset's noteSessionInterrupted() call must fail
+    // THIS test even while the pause test stays green.
+    const restore = setNativeDPR(2.0);
+    const m = new AdaptiveDPRManager();
+    const r = makeRenderer();
+    m.setRenderer(r);
+    try {
+      pushFrames(m, 0, 81, 8000); // ~10fps for 8s — under the 10s bar
+      // One frame arrives 2 minutes later: recordFrame's gap detection
+      // fires (no notifyPaused was ever called).
+      pushFrames(m, 128_000, 41, 4000); // 4s at ~10fps after the gap
+      expect(m.getState().dprCeiling).toBe(2.0); // NOT demoted yet
+
+      pushFrames(m, 132_100, 201, 20_000); // sustained → demotes for real
+      expect(m.getState().dprCeiling).toBe(1.0);
+    } finally {
+      restore();
+    }
+  });
+
   it('pause dead-time never counts toward the sustained-distress bar (stale-state regression)', () => {
     // Regression: the estimator's plateau clock and recent window used
     // to survive notifyPaused(), so ~8s of pre-pause lows + 2 minutes

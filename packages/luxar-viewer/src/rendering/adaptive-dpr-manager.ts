@@ -810,12 +810,15 @@ export class AdaptiveDPRManager {
   /**
    * Notify the manager that the animation loop stopped (idle pause,
    * tab hide, dispose). Clears SESSION state only — the FPS window,
-   * the scale-up streak, and any in-flight probe (voided unjudged: its
+   * the scale-up streak, any in-flight probe (voided unjudged: its
    * before/after comparison would otherwise span the pause and compare
-   * workloads minutes apart). LEARNED state (floor, backoff streak,
-   * refresh-cap estimate) survives: it is expensive evidence about
-   * this scene on this display, and wiping it here would replay a full
-   * rejected-probe episode on every interaction burst.
+   * workloads minutes apart), and the estimator's sample-stream
+   * transients (recent window, uniform-low plateau clock, unconsumed
+   * distress latch — see noteSessionInterrupted). LEARNED state
+   * (floor, backoff streak, refresh-cap mark, throttle verdict)
+   * survives: it is expensive evidence about this scene on this
+   * display, and wiping it here would replay a full rejected-probe
+   * episode on every interaction burst.
    *
    * Idempotent and safe after dispose() (stopAnimation is also called
    * from the controller's dispose path).

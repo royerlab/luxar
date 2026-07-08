@@ -36,8 +36,10 @@
  *   resets the throttle verdict outright (it was earned against the
  *   old content's frame stream).
  * - A sustained plateau BELOW `MIN_THROTTLE_PLATEAU` is never latched
- *   as a throttle at all — no real display throttle runs that slow, so
- *   it must be heavy content. The estimator instead raises a one-shot
+ *   as a throttle at all — no real display mode runs that slow, so it
+ *   must be heavy content — and the throttle latch itself requires a
+ *   plateau >= `MIN_REAL_DISPLAY_RATE`, so the band between the two
+ *   lines gets neither verdict. The estimator instead raises a one-shot
  *   DISTRESS verdict (consumeDistress) that the manager answers with a
  *   DPR-ceiling demotion to 1.0, while the cap stays fallback-floored
  *   so scale-down remains armed.
@@ -83,6 +85,19 @@ const THROTTLE_EXIT_FACTOR = 1.25;
  * demotion to 1.0.
  */
 const MIN_THROTTLE_PLATEAU = 22;
+/**
+ * The slowest rAF rate any real display mode produces (~23.976Hz
+ * film/NTSC, minus measurement jitter). The throttle latch requires the
+ * plateau to be AT LEAST this — without a lower bound, uniform ~23fps
+ * heavy content on a proven-fast display satisfies the throttle
+ * signature and re-opens the catastrophic cap-collapse latch in the
+ * [MIN_THROTTLE_PLATEAU, 24) band that the distress verdict was built
+ * to close. Between the two lines — [22, 23.5) — neither verdict fires
+ * by design: the plateau is too fast to be unambiguous distress and too
+ * slow to be any real display, so the normal cap-relative scale-down
+ * machinery (cap stays fallback-floored) handles it.
+ */
+const MIN_REAL_DISPLAY_RATE = 23.5;
 
 export class RefreshRateEstimator {
   private mark = 0;
@@ -228,14 +243,17 @@ export class RefreshRateEstimator {
     const min = Math.min(...this.recent);
 
     // Sub-throttle DISTRESS: a plateau below the slowest real display
-    // throttle can only be heavy content. No proof or uniformity
-    // required — sustained sub-24fps is trouble regardless of jitter
-    // or what the display once demonstrated.
+    // rate can only be heavy content. No proof or uniformity required —
+    // a sustained plateau below the line is trouble regardless of
+    // jitter or what the display once demonstrated.
     const distressLow = max < MIN_THROTTLE_PLATEAU;
 
     // THROTTLE signature: a downshift below the fallback floor is only
-    // justified when the display has PROVEN a higher achievable rate —
-    // and proven it AGAINST THE CURRENT CONTENT. Without this guard a
+    // justified when the plateau is a rate a real display can produce
+    // (>= MIN_REAL_DISPLAY_RATE — without this floor, uniform ~23fps
+    // heavy content latches the cap-collapse in the [22, 24) band) AND
+    // the display has PROVEN a higher achievable rate — proven it
+    // AGAINST THE CURRENT CONTENT. Without the proof guard a
     // steady heavy scene (uniformly low FPS, low variance — exactly the
     // signature of a GPU-bound render parked at the DPR floor) would be
     // misclassified as a throttled display, collapsing the cap onto the
@@ -244,13 +262,14 @@ export class RefreshRateEstimator {
     // since-content-change scoping closes the light-then-heavy variant
     // (mark pinned at 60 by a light loading screen, then dense data).
     // Residual ambiguity: heaviness arriving with NO content signal at
-    // all (e.g. rotating an unchanged scene edge-on) into the 24-48fps
+    // all (e.g. rotating an unchanged scene edge-on) into the ~24-48fps
     // band is fundamentally indistinguishable from a throttle by FPS
     // alone; the widened un-throttle line in addSample and the
     // punished-ascent ceiling machinery bound that mistake's lifetime.
     // Compare against the PROVEN mark (not the fallback-floored cap):
     // "uniformly far below what this display demonstrated it can do".
     const throttleLow =
+      max >= MIN_REAL_DISPLAY_RATE &&
       this.provenSinceContentChange &&
       max < THROTTLE_FRACTION * this.mark &&
       (max - min) / Math.max(max, 1e-6) < UNIFORMITY_SPREAD;
