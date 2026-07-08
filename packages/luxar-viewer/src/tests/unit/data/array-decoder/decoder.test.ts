@@ -174,6 +174,42 @@ describe('ArrayDecoder - Python Compatibility Tests', () => {
   });
 
   describe('LUT Encoding', () => {
+    it('should decode encoder-emitted lut_uint16 colors (300 uniques, row mode)', async () => {
+      // The uint16 LUT tier: >256 unique colors, exact float values in the
+      // LUT, Uint16Array indices on disk.
+      const { array, attrs } = await loadArrayWithAttrs('test_lut_u16.luxar.zarr', 'points/colors');
+
+      expect(attrs.encoding?.name).toBe('lut_uint16');
+      expect(attrs.encoding?.lut_mode).toBe('row');
+      expect((attrs.encoding?.lut as unknown[]).length).toBe(300);
+      expect(ArrayDecoder.isEncoded(attrs)).toBe(true);
+
+      const decoder = new ArrayDecoder(new ArrayRefRegistry());
+      const decoded = await decoder.decode(array, attrs, 100_000);
+      expect(decoded.length).toBe(100_000 * 3);
+
+      // Exactly 300 distinct colors survive the round-trip, and values are
+      // the EXACT palette floats (LUT stores originals, no quantization).
+      const uniqueColors = new Set<string>();
+      for (let i = 0; i < 100_000; i++) {
+        const o = i * 3;
+        uniqueColors.add(`${decoded[o]},${decoded[o + 1]},${decoded[o + 2]}`);
+      }
+      expect(uniqueColors.size).toBe(300);
+      const lut = attrs.encoding?.lut as number[][];
+      const first = `${Math.fround(lut[0][0])},${Math.fround(lut[0][1])},${Math.fround(lut[0][2])}`;
+      expect(uniqueColors.has(first)).toBe(true);
+    });
+
+    it('validatedLutMode: absent defaults to row, invalid throws', () => {
+      expect(ArrayDecoder.validatedLutMode(undefined)).toBe('row');
+      expect(ArrayDecoder.validatedLutMode('row')).toBe('row');
+      expect(ArrayDecoder.validatedLutMode('scalar')).toBe('scalar');
+      // Present-but-unknown must fail loud (worker already throws; the main
+      // thread used to silently decode garbage as row mode).
+      expect(() => ArrayDecoder.validatedLutMode('cubic')).toThrow(/Invalid lut_mode/);
+    });
+
     it('should decode LUT-encoded colors with 10 unique values', async () => {
       // NOTE: Blosc decompression error in numcodecs: "Cannot pass non-string to std::string"
       const { array, attrs } = await loadArrayWithAttrs('test_lut.luxar.zarr', 'points/colors');

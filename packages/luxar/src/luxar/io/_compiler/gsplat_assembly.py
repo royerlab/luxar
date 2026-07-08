@@ -10,7 +10,7 @@ free functions, a scene leaf is byte-identical to a standalone one.
 
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import Any, Dict, List, Optional, Sequence, Tuple, Union
 
 import numpy as np
 import zarr
@@ -102,6 +102,7 @@ def apply_gsplat_spatial_ordering(
     cholesky_is_uniform: bool,
     ctx: OrderingCtx,
     coverage_sigma: float = 3.0,
+    barrier_dims: Optional[Sequence[int]] = None,
 ) -> Tuple[
     NDArray[np.float32],
     Union[NDArray[np.float32], float],
@@ -111,17 +112,35 @@ def apply_gsplat_spatial_ordering(
 ]:
     """Apply spatial ordering to gsplat arrays.
 
+    ``barrier_dims`` names categorical/barrier center columns (e.g. time,
+    channel) that ordering must group by first so a chunk never straddles a
+    category — the gsplat analogue of Points' discrete ``slice_dims``. When
+    ``None``, the barrier is auto-detected from the centers
+    (:func:`~luxar.io.ordering.detect_barrier_dims`); pass ``[]`` to force pure
+    spatial ordering. Callers that know the exact barrier (LOD ``coarsen_dims``
+    complement, or a scene's discrete dims) should pass it explicitly.
+
     Returns:
         (centers, amplitudes, cholesky_factors, colors, ordering_data)
         where ordering_data is None if ordering was not applied.
     """
     ordering_data = None
     if ctx.enable_spatial_index and n_splats > 0:
-        from ..ordering import compute_chunk_bounds_gsplats, sort_splats_spatial
+        from ..ordering import (
+            compute_chunk_bounds_gsplats,
+            detect_barrier_dims,
+            sort_splats_spatial,
+        )
+
+        slice_dims = (
+            list(barrier_dims)
+            if barrier_dims is not None
+            else detect_barrier_dims(centers)
+        )
 
         aprint(f"  🔍 Applying {ctx.ordering_method} ordering to gsplats...")
         sort_indices, ordering_metadata = sort_splats_spatial(
-            centers, method=ctx.ordering_method
+            centers, method=ctx.ordering_method, slice_dims=slice_dims
         )
 
         centers = centers[sort_indices]
@@ -145,6 +164,7 @@ def apply_gsplat_spatial_ordering(
             cholesky_factors,
             chunk_size,
             coverage_sigma=coverage_sigma,
+            slice_dims=slice_dims,
         )
 
         ordering_data = {
@@ -293,6 +313,10 @@ def write_gsplat_arrays(
                 "ordering_max": ordering_data["ordering_max"],
                 "ordering_bits_per_dim": ordering_data["ordering_bits_per_dim"],
                 "chunk_size": ordering_data["chunk_size"],
+                # Barrier/spatial dim split (mirrors Points/Lines ordering attrs)
+                # so the categorical axes an ordering grouped by are inspectable.
+                "slice_dims": ordering_data.get("slice_dims", []),
+                "ordering_dims": ordering_data.get("ordering_dims", []),
             }
         )
     else:
@@ -401,6 +425,8 @@ def apply_gsplat_group_attrs(
             "ordering_max",
             "ordering_bits_per_dim",
             "chunk_size",
+            "slice_dims",
+            "ordering_dims",
         ]:
             if key in metadata:
                 group.attrs[key] = metadata[key]

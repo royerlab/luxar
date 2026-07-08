@@ -177,6 +177,174 @@ class TestLUTEncoding:
             assert enc["name"] != "lut_uint8"
 
 
+def _tiled_palette_colors(k: int, n: int, seed: int = 0) -> np.ndarray:
+    """(n, 3) float32 colors with EXACTLY k unique rows.
+
+    Tiling (not random choice) guarantees every palette row appears — a
+    random draw of n from k leaves ~k·e^(-n/k) rows unused, silently
+    shifting the unique count the tests pin.
+    """
+    rng = np.random.default_rng(seed)
+    palette = (rng.random((k, 3)) * 10.0).astype(np.float32)
+    reps = -(-n // k)  # ceil
+    return np.tile(palette, (reps, 1))[:n]
+
+
+class TestLUTUint16Tier:
+    """The uint16 LUT tier (257..65,536 uniques, byte-modeled benefit rule).
+
+    The uint8 tier's behavior is pinned byte-identical by TestLUTEncoding
+    above; these tests cover the new tier and its rejection edges.
+    """
+
+    def _encode(self, data, semantic_type, group, encoder=None, **kw):
+        (encoder or ArrayEncoder()).encode(data, group, "test", semantic_type, **kw)
+        arr = group["test"]
+        return arr, dict(arr.attrs["encoding"])
+
+    def test_row_color_uint16_exact_roundtrip(self):
+        # 300 unique HDR float colors at N=100,000 clears the byte-modeled
+        # break-even (JSON ~36 KB vs savings/2 = 50 KB).
+        colors = _tiled_palette_colors(300, 100_000)
+        group = zarr.group(store=zarr.MemoryStore())
+        arr, enc = self._encode(colors, SemanticType.COLOR, group, color_mode="hdr")
+        assert enc["name"] == "lut_uint16"
+        assert enc["lut_mode"] == "row"
+        assert len(enc["lut"]) == 300
+        assert arr.dtype == np.uint16
+        decoded = np.asarray(ArrayDecoder().decode(arr, group))
+        np.testing.assert_array_equal(decoded, colors)  # LUT is EXACT
+
+    def test_boundary_256_stays_uint8(self):
+        # Same N, K exactly 256: the u8 tier must keep winning (byte-identical
+        # legacy behavior).
+        colors = _tiled_palette_colors(256, 100_000)
+        group = zarr.group(store=zarr.MemoryStore())
+        arr, enc = self._encode(colors, SemanticType.COLOR, group, color_mode="hdr")
+        assert enc["name"] == "lut_uint8"
+        assert arr.dtype == np.uint8
+
+    def test_ceiling_row_counts(self):
+        # The 65,536 ceiling and the 65,537 rejection, checked at the PLAN
+        # level (an end-to-end array clearing the benefit rule at the
+        # ceiling would need ~16M rows). At K=65,536 rejection comes from
+        # the benefit rule alone; at K=65,537 from the ceiling itself.
+        rng = np.random.default_rng(3)
+        enc = ArrayEncoder(lut_json_max_bytes=64 * 1024 * 1024)
+        at_ceiling = np.tile((rng.random((65_536, 3)) * 10).astype(np.float32), (2, 1))
+        assert enc._lut_plan(at_ceiling, SemanticType.COLOR) is None
+        over = np.tile((rng.random((65_537, 3)) * 10).astype(np.float32), (2, 1))
+        assert enc._lut_plan(over, SemanticType.COLOR) is None
+
+    def test_benefit_rejection_small_n(self):
+        # K=257 at N=1,000: the doubled LUT JSON dwarfs any index savings —
+        # must fall through to the quantized color path.
+        colors = _tiled_palette_colors(257, 1_000)
+        group = zarr.group(store=zarr.MemoryStore())
+        arr, enc = self._encode(colors, SemanticType.COLOR, group, color_mode="hdr")
+        assert enc["name"] == "geolog_perchannel_u16"
+
+    def test_json_cap_rejection(self):
+        # Same data as the accepting test, but a tiny metadata cap: rejected.
+        colors = _tiled_palette_colors(300, 100_000)
+        group = zarr.group(store=zarr.MemoryStore())
+        arr, enc = self._encode(
+            colors,
+            SemanticType.COLOR,
+            group,
+            encoder=ArrayEncoder(lut_json_max_bytes=1024),
+            color_mode="hdr",
+        )
+        assert enc["name"] == "geolog_perchannel_u16"
+
+    def test_scalar_mode_never_uint16(self):
+        # Scalar u16 LUT is structurally excluded: 2 B/elem indices equal
+        # the quantized scalar alternatives, so the JSON is pure overhead
+        # (the deep-check measured a ~2x store regression before this rule).
+        vals = np.linspace(0.5, 42.0, 300).astype(np.float32)
+        data = np.tile(vals, 1000)  # E = 300,000: passed the OLD (flawed) rule
+        group = zarr.group(store=zarr.MemoryStore())
+        arr, enc = self._encode(
+            data,
+            SemanticType.POSITIVE_SCALAR,
+            group,
+            encoder=ArrayEncoder(lut_json_max_bytes=64 * 1024 * 1024),
+        )
+        assert enc["name"] == "bounded_scalar_uint8"  # quantized, no JSON
+
+    def test_index_arrays_never_lut(self):
+        # INDEX (line segments) is read RAW by the viewer with no encoding
+        # dispatch — a LUT would silently corrupt connectivity. Both tiers
+        # excluded (K<=256 was a latent PRE-EXISTING hazard this closes).
+        segs = np.column_stack(
+            [
+                np.arange(2000, dtype=np.uint32) % 200,
+                (np.arange(2000, dtype=np.uint32) + 1) % 200,
+            ]
+        )
+        group = zarr.group(store=zarr.MemoryStore())
+        arr, enc = self._encode(segs, SemanticType.INDEX, group)
+        assert enc["name"] not in ("lut_uint8", "lut_uint16")
+        decoded = np.asarray(ArrayDecoder().decode(arr, group))
+        np.testing.assert_array_equal(decoded, segs)  # raw ids preserved
+
+    def test_benefit_break_even_pins_constants(self):
+        # Mutation guard for the benefit constants. For K=300 rows with
+        # doubled JSON J, the rule fires iff J <= (3N - 2N)/2 = N/2, i.e.
+        # N >= 2J. Just-above fires, just-below does not; dropping the /2,
+        # dropping the JSON x2 doubling, or raising the 1 B/channel floor
+        # each flips one of these.
+        import json as _json
+
+        probe = _tiled_palette_colors(300, 301)
+        lut_json = 2 * len(_json.dumps(np.unique(probe, axis=0).tolist()))
+        n_break = 2 * lut_json
+        g1 = zarr.group(store=zarr.MemoryStore())
+        _, enc_above = self._encode(
+            _tiled_palette_colors(300, n_break + 600),
+            SemanticType.COLOR,
+            g1,
+            color_mode="hdr",
+        )
+        g2 = zarr.group(store=zarr.MemoryStore())
+        _, enc_below = self._encode(
+            _tiled_palette_colors(300, max(n_break - 600, 301)),
+            SemanticType.COLOR,
+            g2,
+            color_mode="hdr",
+        )
+        assert enc_above["name"] == "lut_uint16"
+        assert enc_below["name"] != "lut_uint16"
+
+    def test_idempotent_reencode(self):
+        # decode -> re-encode reproduces identical attrs and indices (LUT is
+        # exact, so nothing can drift across save/load cycles).
+        colors = _tiled_palette_colors(300, 100_000)
+        g1 = zarr.group(store=zarr.MemoryStore())
+        arr1, enc1 = self._encode(colors, SemanticType.COLOR, g1, color_mode="hdr")
+        decoded = np.asarray(ArrayDecoder().decode(arr1, g1)).astype(np.float32)
+        g2 = zarr.group(store=zarr.MemoryStore())
+        arr2, enc2 = self._encode(decoded, SemanticType.COLOR, g2, color_mode="hdr")
+        assert enc1 == enc2
+        np.testing.assert_array_equal(np.asarray(arr1), np.asarray(arr2))
+
+    def test_int64_beyond_2p53_rejected(self):
+        # JSON fidelity guard in the INTEGER domain: 2^53 + 1 ALONE is the
+        # trap value — cast to float64 it rounds down to exactly 2^53, so a
+        # float-domain guard passes the one non-round-trippable boundary
+        # value (deep-check finding). INDEX can't be used here (never LUTs),
+        # so probe via a bounded-scalar-typed int array through _lut_plan.
+        for probe in (2**53 + 1, -(2**53) - 1, 2**53 + 3):
+            data = np.tile(np.array([probe, 5, 7, 9], dtype=np.int64), 1000)
+            plan = ArrayEncoder()._lut_plan(data, SemanticType.BOUNDED_SCALAR)
+            assert plan is None, f"guard missed {probe}"
+        # ...and exactly 2^53 IS representable, so it may LUT-encode.
+        ok = np.tile(np.array([2**53, 5, 7, 9], dtype=np.int64), 1000)
+        plan = ArrayEncoder()._lut_plan(ok, SemanticType.BOUNDED_SCALAR)
+        assert plan is not None
+        assert plan.encoding_name == "lut_uint8"
+
+
 class TestArrayReferences:
     """Test array reference encoding for deduplication."""
 

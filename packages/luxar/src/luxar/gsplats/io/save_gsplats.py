@@ -20,7 +20,17 @@ import datetime
 import shutil
 import tempfile
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Callable, Dict, Iterator, List, Literal, Optional
+from typing import (
+    TYPE_CHECKING,
+    Any,
+    Callable,
+    Dict,
+    Iterator,
+    List,
+    Literal,
+    Optional,
+    Sequence,
+)
 
 import numpy as np
 import zarr
@@ -253,6 +263,37 @@ def _stamp_content_hash(root: zarr.Group) -> str:
     return content_hash
 
 
+def _barrier_from_coarsen_dims(
+    pipeline_info: Optional[Dict[str, Any]],
+    node: Any,
+) -> Optional[Sequence[int]]:
+    """Derive ordering barrier axes from persisted ``coarsen_dims``.
+
+    The LOD reducer coarsens (merges) over ``coarsen_dims`` and treats the rest
+    as hard grouping barriers (time/channel). The ordering barrier is exactly
+    that complement over the node's ``ndim``.
+
+    Returns ``None`` only when no ``coarsen_dims`` provenance is available (→
+    per-leaf auto-detection). When provenance IS present the complement is
+    authoritative and returned verbatim — INCLUDING an empty list, which means
+    "coarsen everything, no barrier" (pure spatial ordering). Returning ``None``
+    there would wrongly fall through to auto-detect and could re-introduce a
+    barrier the producer explicitly ruled out.
+    """
+    if not pipeline_info:
+        return None
+    coarsen = pipeline_info.get("coarsen_dims")
+    if coarsen is None:
+        return None
+    try:
+        ndim = int(node.ndim)
+    except (AttributeError, TypeError):
+        return None
+    coarsen_set = {int(d) for d in coarsen}
+    # Empty complement (coarsen-all) is an explicit no-barrier → return [] not None.
+    return [d for d in range(ndim) if d not in coarsen_set]
+
+
 def write_gsplats_tree(
     path: str | Path,
     node: Any,  # luxar.gsplats.tree.GSplatNode
@@ -267,6 +308,7 @@ def write_gsplats_tree(
     compress: Optional[Literal["zip", "tar.gz"]] = None,
     compressor: Optional[Any] = DEFAULT_COMP,
     zip_deflate: bool = False,
+    barrier_dims: Optional[Sequence[int]] = None,
 ) -> None:
     """Write a :class:`~luxar.gsplats.tree.GSplatNode` subtree as ``.gsplats.zarr``.
 
@@ -276,6 +318,11 @@ def write_gsplats_tree(
     plus optional ``fitting/`` / ``provenance/`` / ``pipeline/`` groups
     (``pipeline/`` carries the reduction/topology stats — see
     :func:`split_fitting_info`).
+
+    ``barrier_dims`` names categorical/barrier center columns (time, channel) so
+    chunk ordering groups by them first and per-slice reads stay local. When
+    ``None`` it is derived from ``pipeline_info["coarsen_dims"]`` (barrier =
+    complement) if present; failing that each leaf auto-detects from its centers.
     """
     path = Path(path)
     temp_dir, zarr_path = _resolve_zarr_path(path, compress)
@@ -283,10 +330,21 @@ def write_gsplats_tree(
     store = DirectoryStore(str(zarr_path))
     root = zarr.group(store=store, overwrite=True)
 
+    # Barrier axes for ordering: explicit arg wins; else the LOD reduction
+    # barrier (complement of the persisted coarsen_dims); else per-leaf
+    # auto-detect (barrier_dims stays None → detect_barrier_dims per leaf).
+    if barrier_dims is None:
+        barrier_dims = _barrier_from_coarsen_dims(pipeline_info, node)
+
     dataset_ctx = make_dataset_ctx(encoding_mode, compressor=compressor)
     ordering_ctx = make_ordering_ctx(ordering)
     write_gsplat_node(
-        root, node, dataset_ctx=dataset_ctx, ordering_ctx=ordering_ctx, store=root
+        root,
+        node,
+        dataset_ctx=dataset_ctx,
+        ordering_ctx=ordering_ctx,
+        store=root,
+        barrier_dims=barrier_dims,
     )
 
     # Self-identifying v3.0 header (the node's own type/kind/position_bounds attrs
@@ -345,6 +403,7 @@ def write_partition_streaming(
     pipeline_info: Optional[Dict[str, Any]] = None,
     description: Optional[str] = None,
     compressor: Optional[Any] = DEFAULT_COMP,
+    barrier_dims: Optional[Sequence[int]] = None,
 ) -> int:
     """Write a ``kind=partition`` file part-by-part, holding ≤1 part in memory.
 
@@ -388,6 +447,14 @@ def write_partition_streaming(
     n_written = 0
     for node in part_nodes():
         part_group = root.require_group(f"part_{n_written}")
+        # Barrier for ordering: explicit arg wins; else derive from this part's
+        # coarsen_dims provenance; else per-leaf auto-detect. Computed per part
+        # since parts are streamed one at a time (each has its own ndim).
+        part_barrier = (
+            barrier_dims
+            if barrier_dims is not None
+            else _barrier_from_coarsen_dims(pipeline_info, node)
+        )
         cmeta = write_gsplat_node(
             part_group,
             node,
@@ -397,6 +464,7 @@ def write_partition_streaming(
             # Insertion order for the viewer's sibling sort — matches the
             # standalone partition writer (prevents part_10 < part_2 reorder).
             attrs={"child_index": n_written},
+            barrier_dims=part_barrier,
         )
         if "position_bounds" in cmeta:
             child_bounds.append(cmeta["position_bounds"])

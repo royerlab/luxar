@@ -168,17 +168,177 @@ describe('RefreshRateEstimator', () => {
 
   it('a mis-capped scene recovers as soon as FPS clearly exceeds the throttle plateau', () => {
     const est = new RefreshRateEstimator(60);
-    // Proven at 60, then (no content signal) a uniform-20 regime earns a
-    // downshift — the residual rotation-into-heavy ambiguity.
+    // Proven at 60, then (no content signal) a uniform regime in the
+    // 24-48fps ambiguity band earns a downshift — the residual
+    // rotation-into-heavy ambiguity.
     feed(est, 61, 4, 0);
-    feed(est, 20, 60, 2000);
-    expect(est.getCap()).toBe(20);
+    feed(est, 30, 60, 2000);
+    expect(est.getCap()).toBe(30);
 
-    // The scene lightens a little: 37fps is impossible under a genuine
-    // 20Hz throttle (> mark/THROTTLE_FRACTION ≈ 36.4), so the estimator
-    // must un-throttle immediately — not wait for 48 (80% of fallback),
+    // The scene lightens a little: 45fps is impossible under a genuine
+    // 30Hz throttle (> plateau × 1.25 = 37.5), so the estimator must
+    // un-throttle immediately — not wait for 48 (80% of fallback),
     // which a still-heavy scene may never reach.
-    est.addSample(37, 60_000);
+    est.addSample(45, 60_000);
     expect(est.getCap()).toBe(60);
+  });
+
+  // ── Sub-throttle distress (plateau < MIN_THROTTLE_PLATEAU = 22) ──
+
+  it('a sub-throttle plateau NEVER collapses the cap, even with a proven rate — it raises distress', () => {
+    const est = new RefreshRateEstimator(60);
+    // The pre-fix catastrophic latch: 120 proven, then a GPU-bound
+    // scene parks at uniform 10fps. The old detector latched the cap
+    // onto 10, the relative thresholds then read 10fps as healthy, and
+    // the manager scaled UP to native and parked there forever.
+    feed(est, 120, 4, 0);
+    feed(est, 10, 30, 2000); // 15s of uniform 10fps
+    expect(est.getCap()).toBe(120); // cap intact — scale-down stays armed
+    expect(est.consumeDistress()).toBe(true); // distress raised instead
+    expect(est.consumeDistress()).toBe(false); // one-shot until re-earned
+  });
+
+  it('distress fires without a proven rate (heavy from the very first frame)', () => {
+    const est = new RefreshRateEstimator(60);
+    feed(est, 10, 30, 0); // 15s of 10fps, nothing ever proven
+    expect(est.getCap()).toBe(60);
+    expect(est.consumeDistress()).toBe(true);
+  });
+
+  it('distress tolerates jitter — no uniformity requirement below the plateau line', () => {
+    const est = new RefreshRateEstimator(60);
+    feed(est, 12, 30, 0, 4); // 8..16fps — spread ~50%, all < 22
+    expect(est.consumeDistress()).toBe(true);
+  });
+
+  it('spiky FPS straddling the plateau line does NOT fire distress (max governs, not min)', () => {
+    // Alternating 20/40: dips below 22 but the scene demonstrably still
+    // reaches 40fps — not sustained distress. The normal relative
+    // scale-down machinery (cap stays 60) handles this regime instead.
+    const spikyOnly = new RefreshRateEstimator(60);
+    feed(spikyOnly, 30, 30, 0, 10); // 20..40 for ~15s
+    expect(spikyOnly.consumeDistress()).toBe(false);
+    expect(spikyOnly.getCap()).toBe(60);
+
+    // A spiky phase must not BANK latch credit either: if the scene
+    // then turns genuinely low, the verdict still requires the full
+    // sustained period from that point. No consume in between — a
+    // min-governs mutant would have latched during the straddle and
+    // the banked verdict would pass re-validation on the fresh low
+    // window without ever meeting the sustained requirement.
+    const est = new RefreshRateEstimator(60);
+    const t = feed(est, 30, 30, 0, 10); // spiky straddle, unconsumed
+    feed(est, 20, 4, t + 500); // 4 low windows ≈ 2s — far under 10s
+    expect(est.consumeDistress()).toBe(false);
+  });
+
+  it('distress needs the sustained period — a brief dip does not fire', () => {
+    const est = new RefreshRateEstimator(60);
+    feed(est, 10, 12, 0); // only ~5.5s below the line
+    expect(est.consumeDistress()).toBe(false);
+  });
+
+  it('distress re-arms and re-fires while the scene stays distressed', () => {
+    const est = new RefreshRateEstimator(60);
+    const t = feed(est, 10, 30, 0);
+    expect(est.consumeDistress()).toBe(true);
+    feed(est, 10, 30, t + 500);
+    expect(est.consumeDistress()).toBe(true);
+  });
+
+  it('a content change clears an unconsumed distress verdict', () => {
+    const est = new RefreshRateEstimator(60);
+    feed(est, 10, 30, 0);
+    est.noteContentChanged();
+    expect(est.consumeDistress()).toBe(false);
+  });
+
+  it('a low-band grind (21fps) IS distress — the lower edge of the line is pinned', () => {
+    const est = new RefreshRateEstimator(60);
+    feed(est, 21, 30, 0); // 15s of uniform 21fps — just under the 22 line
+    expect(est.consumeDistress()).toBe(true);
+  });
+
+  it('uniform ~23fps heavy content NEVER latches the throttle (no real display runs that slow)', () => {
+    const est = new RefreshRateEstimator(60);
+    // The regression the MIN_REAL_DISPLAY_RATE floor closes: a proven
+    // -fast display grinding at uniform 23fps sits between the distress
+    // line (22) and the slowest real display mode (23.976). Without the
+    // floor, the throttle signature latches (23 < 0.55×120, uniform),
+    // collapsing the cap onto 23 and re-opening the parked-at-native
+    // inversion one band up from the one the distress verdict closed.
+    feed(est, 120, 4, 0);
+    feed(est, 23, 60, 2000); // 30s of uniform 23fps
+    expect(est.getCap()).toBe(120); // cap intact — no latch
+    expect(est.consumeDistress()).toBe(false); // and not distress either
+  });
+
+  it('a genuine 120Hz → 23.976Hz display-mode throttle still latches', () => {
+    const est = new RefreshRateEstimator(60);
+    feed(est, 120, 4, 0);
+    feed(est, 23.9, 60, 2000); // dragged onto a 24Hz TV: uniform ~23.976
+    expect(est.getCap()).toBeCloseTo(23.9, 5); // real display rate — latched
+  });
+
+  it('a healthy 24Hz film/TV display mode (23.976fps) is NOT distress', () => {
+    const est = new RefreshRateEstimator(60);
+    // Macs driving 4K TVs over HDMI 1.4 run the whole desktop at
+    // ~23.976Hz — a vsync-bound session there is healthy, not heavy.
+    feed(est, 23.9, 40, 0); // 20s of uniform ~24fps
+    expect(est.consumeDistress()).toBe(false);
+    expect(est.getCap()).toBe(60); // and no throttle latch (unproven)
+  });
+
+  it('a stale latched verdict is dropped at consumption if the window has recovered', () => {
+    const est = new RefreshRateEstimator(60);
+    // Verdict latches during a grind but is not consumed (probe in
+    // flight / load suppression on the manager side)...
+    const t = feed(est, 10, 30, 0);
+    // ...then the workload lightens BEFORE the next clean tick.
+    feed(est, 120, 4, t + 500);
+    // Consumption re-validates against the live window: no demotion
+    // of a session that has since recovered.
+    expect(est.consumeDistress()).toBe(false);
+    // And the latch is spent — it does not linger for a later tick.
+    expect(est.consumeDistress()).toBe(false);
+  });
+
+  it('noteSessionInterrupted() stops pause dead-time from counting as "sustained"', () => {
+    const est = new RefreshRateEstimator(60);
+    feed(est, 10, 12, 0); // ~5.5s below the line — under the 10s bar
+    est.noteSessionInterrupted(); // idle pause / gap reset
+    // Two minutes later a single janky post-resume window arrives.
+    // Without the reset, the stale plateau clock (wall-clock 120s) and
+    // stale recent[] samples would fire distress immediately.
+    est.addSample(15, 120_000);
+    expect(est.consumeDistress()).toBe(false);
+  });
+
+  it('noteSessionInterrupted() clears an unconsumed distress latch but keeps learned state', () => {
+    const est = new RefreshRateEstimator(60);
+    feed(est, 120, 4, 0); // prove the display (learned mark)
+    feed(est, 10, 30, 2000); // latch distress
+    est.noteSessionInterrupted();
+    expect(est.consumeDistress()).toBe(false);
+    expect(est.getCap()).toBe(120); // high-water mark survives
+  });
+
+  it('noteSessionInterrupted() keeps a latched THROTTLE verdict (learned, not session, state)', () => {
+    const est = new RefreshRateEstimator(60);
+    feed(est, 120, 4, 0);
+    feed(est, 30, 25, 2000); // genuine 120→30 throttle → cap collapsed
+    expect(est.getCap()).toBe(30);
+    est.noteSessionInterrupted(); // idle pause
+    // The throttle verdict describes the display, not the interrupted
+    // sample stream — the collapsed cap must survive the pause.
+    expect(est.getCap()).toBe(30);
+  });
+
+  it('a 30Hz-class plateau is still a throttle, not distress (above the plateau line)', () => {
+    const est = new RefreshRateEstimator(60);
+    feed(est, 120, 4, 0);
+    feed(est, 30, 25, 2000);
+    expect(est.getCap()).toBe(30); // genuine throttle downshift kept
+    expect(est.consumeDistress()).toBe(false);
   });
 });

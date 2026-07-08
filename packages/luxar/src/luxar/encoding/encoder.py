@@ -3,11 +3,14 @@
 The encoder follows a strict priority order:
 1. Broadcasting (if all values identical)
 2. Array Reference (if duplicate exists)
-3. LUT Encoding (if ≤256 unique values and mode != PRECISION)
+3. LUT Encoding (if ≤65536 unique values, tiered uint8/uint16 indices,
+   and mode != PRECISION)
 4. Dtype Encoding (based on semantic type and mode)
 """
 
+import json
 import warnings
+from dataclasses import dataclass
 from typing import Any, Literal, Optional, Union
 
 import numpy as np
@@ -37,6 +40,22 @@ COV_CERT_RELF_P95_MAX = 0.05
 COV_CERT_SAMPLE_MAX = 262_144
 
 
+@dataclass(frozen=True)
+class _LutPlan:
+    """A fully-resolved LUT encoding decision (eligibility + payload).
+
+    Produced by :meth:`ArrayEncoder._lut_plan` from a SINGLE ``np.unique``
+    pass, so the eligibility check and the written encoding can never
+    disagree (the previous split ``_should_use_lut`` / ``_encode_lut``
+    design ran ``np.unique`` twice — once to decide, once to build).
+    """
+
+    encoding_name: str  # "lut_uint8" | "lut_uint16"
+    lut_list: list  # JSON-ready values (nested rows for row mode)
+    indices: np.ndarray  # uint8/uint16; 1-D for row mode, data.shape for scalar
+    lut_mode: str  # "row" | "scalar"
+
+
 class ArrayEncoder:
     """Unified encoder with internal registry for deduplication.
 
@@ -50,6 +69,7 @@ class ArrayEncoder:
         broadcast_rtol: float = 0.0,
         broadcast_atol: float = 0.0,
         float16_allowed: bool = False,
+        lut_json_max_bytes: int = 512 * 1024,
     ) -> None:
         """Initialize encoder with optional broadcasting tolerance and float16 control.
 
@@ -59,6 +79,14 @@ class ArrayEncoder:
             broadcast_atol: Absolute tolerance for broadcasting check
                 (default: 0.0 = exact equality)
             float16_allowed: Allow float16 encoding in MEMORY mode (default: False for TypeScript compatibility)
+            lut_json_max_bytes: Metadata-health cap for the uint16 LUT tier:
+                the LUT values live as JSON in ``.zattrs`` AND are duplicated
+                by consolidated ``.zmetadata``, which the viewer parses at
+                scene-open for ALL nodes — one greedy LUT would tax every
+                load. The estimated doubled JSON size must stay under this
+                cap (default 512 KiB ≈ 4-4.5K unique float RGB rows, since the
+                estimate doubles the raw JSON for .zmetadata). The
+                uint8 tier is unaffected (≤256 values is at most ~22 KiB).
 
         Note: Using non-zero tolerance is experimental and should be used
         with caution. Exact equality (default) is safe for all semantic types
@@ -68,6 +96,7 @@ class ArrayEncoder:
         self._broadcast_rtol = broadcast_rtol
         self._broadcast_atol = broadcast_atol
         self._float16_allowed = float16_allowed
+        self._lut_json_max_bytes = lut_json_max_bytes
         # Internal tier override consumed by the per-channel log encoders.
         # Set (via try/finally) only by encode_cholesky_split, which owns the
         # certified u8→u16 escalation for the diag/offdiag PAIR. Deliberately
@@ -95,7 +124,7 @@ class ArrayEncoder:
         Follows priority order:
         1. Broadcasting (if scalar input OR all values identical within tolerance)
         2. Array reference (if duplicate exists)
-        3. LUT encoding (if ≤256 unique values and mode != PRECISION)
+        3. LUT encoding (≤65536 unique values, tiered uint8/uint16 indices, mode != PRECISION)
         4. Dtype encoding (based on semantic type and mode)
 
         Args:
@@ -242,10 +271,9 @@ class ArrayEncoder:
 
         # Priority 3: LUT Encoding (skip in PRECISION mode)
         if mode != EncodingMode.PRECISION:
-            if self._should_use_lut(data, semantic_type):
-                self._encode_lut(
-                    zarr_group, name, data, semantic_type, chunks, compressor
-                )
+            plan = self._lut_plan(data, semantic_type)
+            if plan is not None:
+                self._encode_lut(zarr_group, name, data, plan, chunks, compressor)
                 return
 
         # Priority 4: Dtype Encoding
@@ -420,58 +448,128 @@ class ArrayEncoder:
             if np.any(data < 0):
                 raise ValueError("INDEX semantic type requires non-negative values")
 
-    def _should_use_lut(self, data: np.ndarray, semantic_type: SemanticType) -> bool:
-        """Determine if LUT encoding should be used.
+    def _lut_plan(
+        self, data: np.ndarray, semantic_type: SemanticType
+    ) -> Optional[_LutPlan]:
+        """Decide LUT eligibility and build the payload in ONE unique pass.
 
-        Args:
-            data: Input array
-            semantic_type: Semantic type
+        Tiers:
+        - **uint8** (K ≤ 256): the legacy rules, preserved verbatim so
+          existing stores re-encode byte-identically — row mode for 2D COLOR
+          (≤4 channels) requires N ≥ 2K when the input is uint8, everything
+          else requires ``data.size ≥ 4K``.
+        - **uint16** (257 ≤ K ≤ 65,536): ROW MODE (colors) ONLY, gated by a
+          byte-modeled benefit rule. Scalar mode is structurally excluded:
+          uint16 indices cost exactly what the quantized scalar alternatives
+          cost (≤2 B/element), so the LUT JSON would be pure overhead — a
+          measured ~2× store regression. Row mode genuinely wins because ONE
+          index covers all channels (2 B/row vs ≥3 B/row for the cheapest
+          quantized color). The LUT values live as JSON in ``.zattrs`` and
+          are DUPLICATED by consolidated ``.zmetadata`` (parsed at
+          scene-open for every node), so element-count heuristics lie here.
+          Accept only when the doubled JSON costs at most half the raw byte
+          savings over the cheapest quantized color (1 B/channel — the
+          conservative floor) AND stays under ``lut_json_max_bytes``.
+          Accepted uint16 LUTs are therefore always strictly smaller than
+          even the most aggressive lossy alternative — while being EXACT
+          (the LUT stores the original values).
 
-        Returns:
-            True if LUT encoding is beneficial
+        INDEX arrays never LUT-encode (either tier): the viewer's line
+        segments loader reads them RAW with no encoding dispatch, so a LUT
+        would silently corrupt connectivity — and the smallest-uint INDEX
+        encoding is already within one byte of what LUT indices would cost.
+        (This also closes a latent pre-existing hazard: small graphs with
+        ≤256 unique vertex ids could historically lut_uint8-encode.)
+
+        Returns ``None`` when LUT encoding should not be used.
         """
-        # LUT encoding criteria:
-        # 1. ≤256 unique values (fits in uint8 indices)
-        # 2. Array length >> unique count (meaningful savings)
-        # 3. For 1D uint8: skip (already optimal)
-        # 4. For 2D uint8 colors: check unique rows (LUT can still help)
+        if semantic_type == SemanticType.INDEX:
+            return None
 
-        # For 2D arrays with COLOR semantic type, check unique rows
-        if data.ndim == 2 and semantic_type == SemanticType.COLOR:
-            if data.shape[1] <= 4:  # RGB or RGBA
-                # Row mode: check unique rows
-                # Use a view trick to compare entire rows
-                unique_rows = np.unique(data, axis=0)
-                unique_count = len(unique_rows)
+        is_color_2d = (
+            data.ndim == 2
+            and semantic_type == SemanticType.COLOR
+            and data.shape[1] <= 4
+        )
 
-                # For uint8 colors, LUT is beneficial if few unique rows
-                # Original: N × d × 1 byte
-                # LUT: N × 1 byte + K × d × 1 byte
-                # Beneficial if N > 2*K (at least 2x savings)
-                if data.dtype == np.uint8:
-                    if unique_count > 256:
-                        return False
-                    if data.shape[0] < 2 * unique_count:
-                        return False
-                    return True
-            else:
-                # Fallback to scalar mode
-                unique_count = len(np.unique(data))
+        # Cheap short-circuit BEFORE the unique pass: 1-D uint8 is already
+        # optimal (1 B/element; a LUT could not beat it).
+        if not is_color_2d and data.dtype == np.uint8 and data.ndim == 1:
+            return None
+
+        if is_color_2d:
+            unique, inverse = np.unique(data, axis=0, return_inverse=True)
+            # numpy 2.0 briefly returned a non-1-D inverse for axis!=None;
+            # normalize (harmless on all versions).
+            indices_flat = inverse.reshape(-1)
+            lut_mode = "row"
+            n_indices = data.shape[0]
         else:
-            # Scalar mode: check unique values
-            if data.dtype == np.uint8 and data.ndim == 1:
-                return False  # 1D uint8 already optimal
+            unique, inverse = np.unique(data.ravel(), return_inverse=True)
+            indices_flat = inverse.reshape(-1)
+            lut_mode = "scalar"
+            n_indices = data.size
 
-            unique_count = len(np.unique(data))
+        k = len(unique)
+        if k > 65_536:
+            return None
 
-        if unique_count > 256:
-            return False
+        # JSON fidelity guard (applies to BOTH tiers): 64-bit integers with
+        # |v| > 2^53 do not survive the JSON round-trip (viewers parse the
+        # LUT through binary64). Compare in the INTEGER domain — casting to
+        # float64 first would round ±(2^53 + 1) down to exactly 2^53 and let
+        # the one non-round-trippable boundary value slip through.
+        # Pre-existing latent bug in the uint8 tier; cheap on ≤65,536 uniques.
+        if data.dtype in (np.int64, np.uint64) and bool(
+            np.any(unique > 2**53) or np.any(unique < -(2**53))
+        ):
+            return None
 
-        # Require at least 4x savings for non-color arrays
-        if data.size < 4 * unique_count:
-            return False
+        lut_list = unique.tolist()
+        if k <= 256:
+            # uint8 tier: legacy eligibility, verbatim.
+            if lut_mode == "row" and data.dtype == np.uint8:
+                if data.shape[0] < 2 * k:
+                    return None
+            elif data.size < 4 * k:
+                # "At least 4x savings" heuristic (row-mode non-uint8 colors
+                # historically fell through to this same check with
+                # data.size = N*d, preserved here).
+                return None
+            idx_dtype: Any = np.uint8
+            encoding_name = "lut_uint8"
+        else:
+            # uint16 tier: ROW MODE ONLY. Scalar-mode u16 indices (2 B/elem)
+            # cost exactly what quantized scalar encodings cost, so the LUT
+            # JSON would be pure overhead — measured ~2× store regression.
+            if lut_mode != "row":
+                return None
+            # ×2 models .zattrs + consolidated .zmetadata duplication.
+            lut_json_bytes = 2 * len(json.dumps(lut_list))
+            if lut_json_bytes > self._lut_json_max_bytes:
+                return None
+            indices_bytes = 2 * n_indices
+            # Cheapest realistic color alternative the dtype ladder would
+            # produce: 1 B/channel (rgb_uint8 SDR / geolog_perchannel_u8
+            # under MEMORY — the conservative floor; HDR AUTO's geolog u16
+            # is 2 B/channel, so real savings are usually larger).
+            alt_bytes = data.size * 1
+            if lut_json_bytes > (alt_bytes - indices_bytes) / 2:
+                return None
+            idx_dtype = np.uint16
+            encoding_name = "lut_uint16"
 
-        return True
+        indices = (
+            indices_flat.astype(idx_dtype)
+            if lut_mode == "row"
+            else indices_flat.astype(idx_dtype).reshape(data.shape)
+        )
+        return _LutPlan(
+            encoding_name=encoding_name,
+            lut_list=lut_list,
+            indices=indices,
+            lut_mode=lut_mode,
+        )
 
     def _write_passthrough(
         self,
@@ -665,66 +763,48 @@ class ArrayEncoder:
         zarr_group: zarr.Group,
         name: str,
         data: np.ndarray,
-        semantic_type: SemanticType,
+        plan: _LutPlan,
         chunks: Optional[tuple],
         compressor: Optional[Any],
     ) -> None:
-        """Encode array using lookup table.
+        """Write a LUT encoding decided by :meth:`_lut_plan`.
 
         Args:
             zarr_group: Zarr group to write to
             name: Array name
-            data: Array data
-            semantic_type: Semantic type for row vs scalar mode
-            chunks: Optional chunk shape
+            data: Original array (for original_dtype/original_shape metadata)
+            plan: The resolved LUT decision (indices + values + mode)
+            chunks: Optional chunk shape (of the ORIGINAL array)
             compressor: Optional compressor
         """
-        # Determine LUT mode
-        is_color_2d = (
-            data.ndim == 2
-            and semantic_type == SemanticType.COLOR
-            and data.shape[1] <= 4
-        )
-        indices_chunks: Optional[tuple] = None
-        if is_color_2d:
-            # Row mode: treat each row as a value
-            unique_rows, indices = np.unique(data, axis=0, return_inverse=True)
-            lut = unique_rows.tolist()
-            lut_mode = "row"
-            indices_array = indices.astype(np.uint8)
-            # Adjust chunks for 1D indices array
+        indices_chunks: Optional[tuple]
+        if plan.lut_mode == "row":
+            # Indices are 1-D; keep only the first chunk dimension.
             if chunks is not None and len(chunks) > 1:
-                indices_chunks = (chunks[0],)  # Use only first dimension
+                indices_chunks = (chunks[0],)
             else:
                 indices_chunks = chunks
         else:
-            # Scalar mode: treat each element individually
-            unique_vals, indices = np.unique(data.ravel(), return_inverse=True)
-            lut = unique_vals.tolist()
-            lut_mode = "scalar"
-            indices_array = indices.reshape(data.shape).astype(np.uint8)
-            # Chunks match data shape
+            # Scalar mode: indices keep the original shape.
             indices_chunks = chunks
 
-        # Write indices
         zarr_group.create_dataset(
             name,
-            data=indices_array,
+            data=plan.indices,
             chunks=indices_chunks,
-            compressor=resolve_compressor(compressor, indices_array.dtype),
+            compressor=resolve_compressor(compressor, plan.indices.dtype),
             overwrite=True,
         )
 
-        # Set encoding metadata
         metadata = {
-            "name": "lut_uint8",
-            "lut": lut,
+            "name": plan.encoding_name,
+            "lut": plan.lut_list,
             "original_dtype": str(data.dtype),
         }
-
-        # Add lut_mode and original_shape for 2D arrays
+        # Add lut_mode and original_shape for 2D arrays (1-D arrays omit
+        # lut_mode by contract; decoders default it).
         if data.ndim > 1:
-            metadata["lut_mode"] = lut_mode
+            metadata["lut_mode"] = plan.lut_mode
             metadata["original_shape"] = list(data.shape)
 
         zarr_group[name].attrs["encoding"] = metadata

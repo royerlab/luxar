@@ -85,7 +85,11 @@ function setNativeDPR(value: number): void {
  * "tracking native" (a monitor-DPI change follows the null override for
  * free), so a naive last-value mock would report a false divergence.
  */
-function makeRenderer(): DPRRenderer & { override: number | null; touched: boolean; effective(): number } {
+function makeRenderer(): DPRRenderer & {
+  override: number | null;
+  touched: boolean;
+  effective(): number;
+} {
   const r = {
     override: null as number | null,
     touched: false,
@@ -116,7 +120,11 @@ describe('AdaptiveDPRManager — property/invariant fuzzing', () => {
   });
 
   /** Assert the manager's cross-cutting invariants at the current state. */
-  function assertInvariants(m: AdaptiveDPRManager, r: ReturnType<typeof makeRenderer>, ctx: string) {
+  function assertInvariants(
+    m: AdaptiveDPRManager,
+    r: ReturnType<typeof makeRenderer>,
+    ctx: string
+  ) {
     const s = m.getState();
     const native = window.devicePixelRatio || 1;
 
@@ -133,6 +141,14 @@ describe('AdaptiveDPRManager — property/invariant fuzzing', () => {
     expect(Number.isFinite(s.dprCeiling), `${ctx} I3-finite`).toBe(true);
     expect(s.dprCeiling, `${ctx} I3-pos`).toBeGreaterThan(0);
     expect(s.dprCeiling, `${ctx} I3-hi`).toBeLessThanOrEqual(native + EPS);
+    // I3b the only demoted value is exactly 1.0 (a Schelling point, not
+    // a hunted estimate) — the ceiling is either the live native or 1.0,
+    // whether the demotion came from punished ascents or sustained
+    // sub-throttle distress.
+    expect(
+      Math.abs(s.dprCeiling - 1.0) < EPS || Math.abs(s.dprCeiling - native) < EPS,
+      `${ctx} I3b-schelling (ceiling ${s.dprCeiling}, native ${native})`
+    ).toBe(true);
 
     // I4 floor sane (config.minDPR = 0.5)
     expect(s.dprFloor, `${ctx} I4-lo`).toBeGreaterThanOrEqual(0.5 - EPS);
@@ -142,7 +158,10 @@ describe('AdaptiveDPRManager — property/invariant fuzzing', () => {
     // (after the null-override snap) must track manager.currentDPR once
     // the manager has driven the renderer at least once.
     if (r.touched) {
-      expect(Math.abs(r.effective() - s.currentDPR), `${ctx} I5-diverge (eff ${r.effective()})`).toBeLessThan(0.02);
+      expect(
+        Math.abs(r.effective() - s.currentDPR),
+        `${ctx} I5-diverge (eff ${r.effective()})`
+      ).toBeLessThan(0.02);
     }
   }
 

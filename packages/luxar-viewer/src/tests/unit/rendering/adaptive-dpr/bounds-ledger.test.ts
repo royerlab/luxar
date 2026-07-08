@@ -244,3 +244,34 @@ describe('BoundsLedger — content-change softening', () => {
     expect(ledger.recordRejection(1.8, 60_000)).toBe(30_000);
   });
 });
+
+describe('BoundsLedger — direct ceiling demotion (sustained distress)', () => {
+  it('demotes to 1.0 immediately, without any ascent experiment', () => {
+    const ledger = new BoundsLedger(CONFIG);
+    expect(ledger.dprCeiling).toBeNull();
+    const ttl = ledger.demoteCeiling(1000);
+    expect(ttl).toBe(60_000); // first rung
+    expect(ledger.dprCeiling).toBe(1.0);
+  });
+
+  it('shares the TTL/backoff ladder with earned demotions and decays after the TTL', () => {
+    const ledger = new BoundsLedger(CONFIG);
+    expect(ledger.demoteCeiling(0)).toBe(60_000);
+    expect(ledger.decayCeilingIfExpired(60_001)).toBe(true);
+    expect(ledger.dprCeiling).toBeNull();
+
+    // Re-earned demotion holds longer each time (backoff survives decay).
+    expect(ledger.demoteCeiling(70_000)).toBe(120_000);
+    expect(ledger.decayCeilingIfExpired(70_000 + 120_000)).toBe(false); // exactly TTL — not yet
+    expect(ledger.decayCeilingIfExpired(70_000 + 120_001)).toBe(true);
+  });
+
+  it('clears any pending punished-ascent tally (the demotion supersedes the experiment)', () => {
+    const ledger = new BoundsLedger(CONFIG);
+    ledger.recordAscent(1.5, 0);
+    ledger.recordSlowSample(1000); // 1 of 2 punishments
+    expect(ledger.ascentPunishments).toBe(1);
+    ledger.demoteCeiling(2000);
+    expect(ledger.ascentPunishments).toBe(0);
+  });
+});

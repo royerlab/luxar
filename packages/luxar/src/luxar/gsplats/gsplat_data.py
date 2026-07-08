@@ -5,7 +5,7 @@ from __future__ import annotations
 import warnings
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Callable, Dict, List, Literal, Optional
+from typing import TYPE_CHECKING, Any, Callable, Dict, List, Literal, Optional, Sequence
 
 import numpy as np
 
@@ -1891,6 +1891,7 @@ class GSplatData(_SplatArrayMixin):
         compress: Optional[Literal["zip", "tar.gz"]] = None,
         compressor: Any = _USE_DEFAULT_COMPRESSOR,
         zip_deflate: bool = False,
+        barrier_dims: Optional[Sequence[int]] = None,
     ) -> None:
         """Save splats to .gsplats.zarr format.
 
@@ -1904,6 +1905,10 @@ class GSplatData(_SplatArrayMixin):
             compress: Optional compression format ("zip" or "tar.gz"). Creates compressed archive.
             zip_deflate: Use DEFLATE compression for the outer zip (default: STORED).
                 Useful when metadata overhead matters, e.g. for Git LFS storage.
+            barrier_dims: Explicit categorical/barrier center columns for chunk
+                ordering (e.g. a stacked-time axis). ``None`` (default) derives
+                the barrier from the ``coarsen_dims`` complement in stats, else
+                per-leaf auto-detect — see ``write_gsplats_tree``.
 
         For a multi-substitutive dataset the per-level ``coverage_fraction`` LOD
         switch thresholds (``sqrt(N_i/N_finest)``) are derived automatically — the
@@ -1963,6 +1968,7 @@ class GSplatData(_SplatArrayMixin):
             compress=compress,
             compressor=compressor,
             zip_deflate=zip_deflate,
+            barrier_dims=barrier_dims,
         )
 
     def translate(self, offset: np.ndarray) -> "GSplatData":

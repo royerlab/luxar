@@ -261,6 +261,35 @@ describe('data-worker validation — decode entry points', () => {
   // index ≥ entry-count would reach Rust/WASM (`lut[indices[i]]`)
   // and panic. JS-side rejection at the worker boundary is the
   // intended contract.
+  it('decodeLUT skips the bounds scan when the LUT covers the full u16 index domain', async () => {
+    // K-aware fast path: with entryCount >= 65536 every Uint16 index is
+    // provably in range, so the O(n) scan is skipped and the call passes
+    // validation (this harness stubs WASM, so only the boundary behavior is
+    // assertable here — value correctness lives in the WASM parity tests).
+    const mod = await loadWorker();
+    const lut = Array.from({ length: 65536 }, (_, i) => i * 0.5);
+    const out = (await mod.workerAPI.decodeLUT({
+      indices: new Uint16Array([0, 65535, 12345]),
+      lut,
+      k: 1,
+      lutMode: 'scalar',
+    })) as Float32Array;
+    expect(out).toBeInstanceOf(Float32Array);
+    expect(out.length).toBe(3);
+  });
+
+  it('decodeLUT still scans (and throws) below the full u16 domain', async () => {
+    const mod = await loadWorker();
+    await expect(
+      mod.workerAPI.decodeLUT({
+        indices: new Uint16Array([0, 65535]), // 65535 >= entryCount=65535? -> 65535 out of range for 65535 entries
+        lut: Array.from({ length: 65535 }, (_, i) => i),
+        k: 1,
+        lutMode: 'scalar',
+      })
+    ).rejects.toThrow(/out of range for 65535 LUT entries/);
+  });
+
   it('decodeLUT rejects scalar-mode index >= lut.length (Uint8 indices)', async () => {
     const mod = await loadWorker();
     await expect(
