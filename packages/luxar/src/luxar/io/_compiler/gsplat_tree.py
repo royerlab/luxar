@@ -31,7 +31,7 @@ viewer can frame a bare-node file on load.
 from __future__ import annotations
 
 import math
-from typing import TYPE_CHECKING, Any, Dict, List, Literal, Optional, cast
+from typing import TYPE_CHECKING, Any, Dict, List, Literal, Optional, Sequence, cast
 
 import numpy as np
 import zarr
@@ -116,6 +116,7 @@ def _write_single_splat_set(
     store: zarr.Group,
     attrs: Optional[Dict[str, Any]] = None,
     scene_tone_mapping: Optional[str] = None,
+    barrier_dims: Optional[Sequence[int]] = None,
 ) -> Dict[str, Any]:
     """Order + write one splat set's arrays into ``group``; return metadata.
 
@@ -147,6 +148,7 @@ def _write_single_splat_set(
             chol_uniform,
             ordering_ctx,
             coverage_sigma=truncation_radius,
+            barrier_dims=barrier_dims,
         )
     )
     metadata = write_gsplat_arrays(
@@ -179,6 +181,8 @@ def _write_single_splat_set(
                 "ordering_max",
                 "ordering_bits_per_dim",
                 "chunk_size",
+                "slice_dims",
+                "ordering_dims",
             ):
                 if key in metadata:
                     group.attrs[key] = metadata[key]
@@ -215,6 +219,7 @@ def write_gsplat_leaf(
     store: zarr.Group,
     attrs: Optional[Dict[str, Any]] = None,
     scene_tone_mapping: Optional[str] = None,
+    barrier_dims: Optional[Sequence[int]] = None,
 ) -> Dict[str, Any]:
     """Write a :class:`GSplatLeaf` (single set or additive ladder) into ``group``."""
     sublods = leaf.additive_sublods
@@ -228,6 +233,7 @@ def write_gsplat_leaf(
             store=store,
             attrs=attrs,
             scene_tone_mapping=scene_tone_mapping,
+            barrier_dims=barrier_dims,
         )
 
     # Additive ladder → additive_<i>/ subgroups + aggregate parent attrs.
@@ -248,6 +254,7 @@ def write_gsplat_leaf(
             lightweight=True,
             store=store,
             attrs=attrs,
+            barrier_dims=barrier_dims,
         )
         n_dims = meta["ndim"] if n_dims is None else n_dims
         total += meta["n_splats"]
@@ -389,6 +396,7 @@ def write_gsplat_node(
     store: zarr.Group,
     attrs: Optional[Dict[str, Any]] = None,
     scene_tone_mapping: Optional[str] = None,
+    barrier_dims: Optional[Sequence[int]] = None,
 ) -> Dict[str, Any]:
     """Recursively write any :class:`GSplatNode` into ``group``.
 
@@ -397,6 +405,9 @@ def write_gsplat_node(
     defaults, selector thresholds, provenance) merged onto the node.
     ``scene_tone_mapping`` (the scene's ``viewer_config.tone_mapping``, or
     ``None`` for a standalone file) is threaded to leaf attr stamping.
+    ``barrier_dims`` names categorical/barrier center columns (e.g. time) so
+    chunk ordering groups by them first; it is the SAME for every leaf in the
+    tree and passed straight through. ``None`` → per-leaf auto-detection.
     """
     from luxar.gsplats.tree import GSplatLeaf, GSplatLodGroup, GSplatPartition
 
@@ -411,6 +422,7 @@ def write_gsplat_node(
             store=store,
             attrs=merged,
             scene_tone_mapping=scene_tone_mapping,
+            barrier_dims=barrier_dims,
         )
 
     if isinstance(node, GSplatLodGroup):
@@ -452,6 +464,7 @@ def write_gsplat_node(
                     "coverage_fraction": float(derived_cov[i]),
                     "child_index": i,
                 },
+                barrier_dims=barrier_dims,
             )
             if "position_bounds" in cmeta:
                 child_bounds.append(cmeta["position_bounds"])
@@ -497,6 +510,7 @@ def write_gsplat_node(
                 # render), but keeping it consistent prevents a >=10-part graft
                 # from enumerating part_10 before part_2.
                 attrs={"child_index": i},
+                barrier_dims=barrier_dims,
             )
             if "position_bounds" in cmeta:
                 child_bounds.append(cmeta["position_bounds"])
