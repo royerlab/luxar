@@ -725,7 +725,7 @@ def run_batch_submit(
             tasks_per_job=tasks_per_job,
             parallel=parallel,
             n_slurm_jobs=n_slurm_jobs,
-            mps_available=is_slurm_mps_available(),
+            mps_available_fn=is_slurm_mps_available,
             uses_backfill=uses_backfill,
             no_job_limit=no_job_limit,
             est_seconds=est_seconds,

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Sequence
+from typing import Callable, Sequence
 
 from arbol import aprint
 
@@ -27,7 +27,7 @@ def print_batch_submit_plan(
     tasks_per_job: int,
     parallel: bool,
     n_slurm_jobs: int,
-    mps_available: bool,
+    mps_available_fn: Callable[[], bool],
     uses_backfill: bool,
     no_job_limit: bool,
     est_seconds: float,
@@ -73,7 +73,9 @@ def print_batch_submit_plan(
         run_mode = "parallel" if parallel else "sequential"
         mps_note = ""
         if parallel:
-            if mps_available:
+            # Probed lazily: `scontrol show config` (subprocess, 5 s timeout)
+            # only runs when the note is actually printed.
+            if mps_available_fn():
                 mps_note = " [MPS available]"
             else:
                 mps_note = " [bash background processes]"

@@ -44,11 +44,7 @@ def batch_status_cmd(*args: Any, **kwargs: Any) -> None:
 
 
 def batch_validate_cmd(*args: Any, **kwargs: Any) -> None:
-    """Back-compat wrapper around the batch validate command function.
-
-    Contract marker kept for tests guarding the --fix bucket behavior:
-    startswith("unsupported_format_version")
-    """
+    """Back-compat wrapper around the batch validate command function."""
     return _batch_validate_cmd(*args, **kwargs)
 
 
