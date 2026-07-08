@@ -326,6 +326,19 @@ class TestFindKStar:
         out = find_k_star(ks, psnr)
         assert out.type == "signal_limited"
 
+    def test_steep_then_flat_top_is_plateau_not_signal_limited(self):
+        # M3 regression: a curve that climbs steeply then goes flat at the very top.
+        # The averaged trailing tail_rise is carried over 0.1 dB by the earlier big
+        # step, but the final step is ~0 dB -> it has plateaued. Must be 'plateau'
+        # (k_star = the earlier knee), NOT 'signal_limited' (which would inflate the
+        # K*-derived splat-density budget). Pre-M3 code mislabeled this signal_limited.
+        ks = [16000, 64000, 128000, 256000, 512000]
+        psnr = [40.0, 41.5, 43.0, 43.52, 43.54]  # steps +1.5,+1.5,+0.52,+0.02
+        out = find_k_star(ks, psnr)
+        assert out.type == "plateau"
+        assert out.k_star == out.k_knee  # plateau: budget anchor == knee
+        assert out.k_star < 512000  # not pinned to the last K
+
     def test_nan_gap_before_last_k_not_signal_limited(self):
         # M1 regression: a NaN before the last K must NOT be read as a one-step
         # climb (the "last finite step" spans 2 K's). Total rise > 0.3 dB but the

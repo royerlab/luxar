@@ -883,8 +883,13 @@ def find_k_star(
     # "Still climbing at the top" = mean per-step rise over the trailing run of
     # *adjacent* finite K's (up to 3 steps). Adjacency guards against a NaN/inf gap
     # reading as a climb (M1); averaging guards against a single sub-0.1 dB final
-    # step demoting a steadily-climbing curve to plateau (M2).
+    # step demoting a steadily-climbing curve to plateau (M2). ``last_step`` is the
+    # single final inter-sample step: it prevents an earlier large step from
+    # carrying the averaged ``tail_rise`` over threshold when the curve has in fact
+    # gone flat at the very top (M3) — which would otherwise mislabel a narrow
+    # flat-topped plateau as ``signal_limited`` and inflate the K*-derived budget.
     tail_rise = 0.0
+    last_step = 0.0
     if fin_idx.size >= 2 and int(fin_idx[-1] - fin_idx[-2]) == 1:
         run = [int(fin_idx[-1])]
         for j in range(fin_idx.size - 2, -1, -1):
@@ -893,7 +898,9 @@ def find_k_star(
             else:
                 break
         seg = psnr_arr[np.array(sorted(run))]
-        tail_rise = float(np.mean(np.diff(seg))) if seg.size >= 2 else 0.0
+        if seg.size >= 2:
+            tail_rise = float(np.mean(np.diff(seg)))
+            last_step = float(seg[-1] - seg[-2])
 
     # --- Clear interior peak? (both flanks ≥ 0.1 dB below the peak) ---
     pre = psnr_arr[:argmax]
@@ -906,8 +913,14 @@ def find_k_star(
         and (peak - float(np.mean(pre_finite))) >= 0.1
         and (peak - float(np.mean(post_finite))) >= 0.1
     )
+    # last-step floor (0.05 dB) is half the 0.1 dB per-step "worth it" bar: the
+    # final doubling must itself still deliver a non-trivial gain, so a flat top
+    # after an earlier steep climb reads as a plateau, not signal-limited.
     still_climbing = (
-        argmax == n - 1 and total_rise >= knee_margin_db and tail_rise >= 0.1
+        argmax == n - 1
+        and total_rise >= knee_margin_db
+        and tail_rise >= 0.1
+        and last_step >= 0.05
     )
 
     # ``k_knee`` = the point of diminishing returns (replicates the manuscript's
