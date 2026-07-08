@@ -1446,6 +1446,11 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
             store=self.store,
             attrs=attrs,
             scene_tone_mapping=scene_tone_mapping,
+            # Scene-embedded GSplatData (flat leaf / additive ladder) uses the
+            # same authoritative scene-dimension barrier as the array path, so a
+            # non-integer categorical axis is grouped correctly (not left to the
+            # value-based auto-detect fallback).
+            barrier_dims=self._scene_barrier_dims(leaf.ndim),
         )
 
         self._update_scene_bounds(metadata["position_bounds"])

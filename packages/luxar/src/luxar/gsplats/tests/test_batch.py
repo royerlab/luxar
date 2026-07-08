@@ -873,6 +873,86 @@ class TestMergeOrchestrator:
         node = read_gsplat_node(root, root)
         return node, dict(root.attrs)
 
+    def test_merge_partition_barriers_time_from_spatial_shape(
+        self, tmp_path: Path
+    ) -> None:
+        """REGRESSION (deep-double-check +deeper): _merge_partition derives the
+        ordering barrier authoritatively from manifest.spatial_shape (the stacked
+        -time axis = index len(spatial_shape)) and passes it to the streaming
+        writer — so per-timepoint chunk locality holds even on SPARSE tiles where
+        the value-based auto-detect (n_unique*4<=n guard) would miss the barrier.
+
+        Fails on the pre-hardening code: without the explicit barrier the merge
+        relied on auto-detect, which returns [] for this sparse part, leaving the
+        time axis smeared across chunks (slice_dims=[])."""
+        import zarr
+
+        from luxar.gsplats.batch.manifest import BatchManifest, output_filename
+        from luxar.gsplats.batch.merge_orchestrator import merge_batch_results
+        from luxar.io.ordering import detect_barrier_dims
+
+        out_dir = tmp_path / "batch"
+        tiles_dir = out_dir / "tiles"
+        tiles_dir.mkdir(parents=True, exist_ok=True)
+        # 14 timepoints × 2 tiles, only 3 splats per (t,k) → each stacked part has
+        # 42 splats over 14 timepoints (42 < 14*4=56 → auto-detect MISSES it).
+        n_t, n_k = 14, 2
+        for t in range(n_t):
+            for k in range(n_k):
+                self._tile(3, seed=t * n_k + k).save(
+                    tiles_dir / output_filename(t, 0, k, n_t, 1, n_k)
+                )
+        # spatial_shape has 3 dims → the stacked-time axis lands at index 3.
+        manifest = BatchManifest(
+            n_timepoints=n_t, n_channels=1, n_tiles=n_k, spatial_shape=(8, 8, 8)
+        )
+        final = merge_batch_results(manifest, out_dir, verbose=False, recipe=None)
+
+        root = zarr.open_group(str(final), mode="r")
+        assert root.attrs["kind"] == "partition"
+        checked = 0
+        for part_name in [k for k in root.group_keys() if k.startswith("part_")]:
+            part = root[part_name]
+            # Sanity: this part IS the sparse regime auto-detect would miss.
+            centers = np.asarray(part["centers"])
+            assert centers.shape[1] == 4  # 3 spatial + stacked time
+            assert detect_barrier_dims(centers) == []  # auto-detect misses it
+            # But the merge threaded the authoritative barrier → time is barriered.
+            assert list(part.attrs["slice_dims"]) == [3]
+            checked += 1
+        assert checked >= 1
+
+    def test_merge_single_tile_no_recipe_barriers_time(self, tmp_path: Path) -> None:
+        """REGRESSION (deep-double-check +deeper): the K==1 / no-recipe merge
+        branch (part.save bare leaf) must ALSO pass the authoritative stacked-time
+        barrier — not silently fall back to value-based auto-detect. A single
+        spatial tile stacked over sparse timepoints would otherwise smear time
+        across chunks."""
+        import zarr
+
+        from luxar.gsplats.batch.manifest import BatchManifest, output_filename
+        from luxar.gsplats.batch.merge_orchestrator import merge_batch_results
+        from luxar.io.ordering import detect_barrier_dims
+
+        out_dir = tmp_path / "batch"
+        tiles_dir = out_dir / "tiles"
+        tiles_dir.mkdir(parents=True, exist_ok=True)
+        n_t = 14  # single tile (n_k=1), 3 splats/tp → 42 splats over 14 tps (sparse)
+        for t in range(n_t):
+            self._tile(3, seed=t).save(tiles_dir / output_filename(t, 0, 0, n_t, 1, 1))
+        manifest = BatchManifest(
+            n_timepoints=n_t, n_channels=1, n_tiles=1, spatial_shape=(8, 8, 8)
+        )
+        final = merge_batch_results(manifest, out_dir, verbose=False, recipe=None)
+
+        root = zarr.open_group(str(final), mode="r")
+        # K==1 no-recipe → a bare leaf at the root (not a partition).
+        assert root.attrs.get("kind") != "partition"
+        centers = np.asarray(root["centers"])
+        assert centers.shape[1] == 4
+        assert detect_barrier_dims(centers) == []  # auto-detect misses the sparse axis
+        assert list(root.attrs["slice_dims"]) == [3]  # authoritative barrier applied
+
     def test_merge_channels_with_colors_round_trips(self, tmp_path: Path) -> None:
         """T=1, C=2, K=2 (--flat): Level-1 concat then Level-3 color merge."""
         from luxar.gsplats.batch.manifest import BatchManifest

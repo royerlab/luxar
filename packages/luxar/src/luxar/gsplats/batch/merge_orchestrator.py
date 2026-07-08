@@ -439,7 +439,10 @@ def _merge_partition(
             if part is None:
                 raise ValueError("Single tile-region is empty — nothing to merge")
             if recipe is None:
-                part.save(final_path)
+                # Pass the authoritative stacked-time barrier here too (K==1,
+                # no recipe) so a single-tile timelapse gets per-timepoint chunk
+                # locality instead of relying on value-based auto-detect.
+                part.save(final_path, barrier_dims=barrier_dims)
                 if verbose:
                     aprint(f"  Wrote bare leaf: {part.n_splats:,} splats, {part.ndim}D")
             else:
