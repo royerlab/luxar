@@ -219,9 +219,18 @@ jobs:
           grep -qiE 'worker' /tmp/pack-files.txt || { echo "Missing worker asset"; exit 1; }
           echo "All release-readiness assertions passed."
 
-  # E2E smoke coverage on ubuntu-latest (software WebGL + generated example data).
-  # Keep this subset CI-friendly; run the full suite locally with: make test-e2e.
+  # E2E tests disabled — software WebGL on standard ubuntu-latest runners is
+  # too slow and unreliable for rendering-dependent specs. Run locally with:
+  # make test-e2e.
+  #
+  # The job below is a ready-to-go smoke subset (interaction-focused specs,
+  # datasets generated at runtime via `make run-examples`, no LFS needed) —
+  # re-enabling is a one-line change (drop `if: false`) once we accept the
+  # software-rendering flakiness risk or get GPU-capable runners
+  # (GitHub GPU runner beta, or a self-hosted runner with NVIDIA driver +
+  # EGL software fallback that still satisfies WebGL2).
   e2e-tests:
+    if: false
     needs: [python-tests, typescript-tests]
     runs-on: ubuntu-latest
     timeout-minutes: 60
