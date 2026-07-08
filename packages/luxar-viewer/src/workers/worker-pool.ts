@@ -637,6 +637,7 @@ export class WorkerPool {
     // instead of attempting a fresh `initialize()`.
     this.initPromise = null;
     this.nextWorkerIndex = 0;
+    this.poolAbortSignal = undefined;
   }
 }
 
