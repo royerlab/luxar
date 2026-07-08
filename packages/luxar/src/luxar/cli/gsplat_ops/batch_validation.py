@@ -7,28 +7,19 @@ from pathlib import Path
 
 
 def validate_leaf_arrays(node_dir: Path, label: str) -> str:
-    """Validate required arrays for one leaf directory.
-
-    Accepts both v3.0 consolidated Cholesky (``cholesky_factors``) and v3.1 split
-    storage (``cholesky_factors_diag`` + ``cholesky_factors_offdiag`` when
-    ``ndim > 1``).
-    """
-    required = ("centers", "amplitudes")
-    for arr_name in required:
+    """Check a v3.x gsplats leaf's required array sub-dirs (no decode)."""
+    # Cholesky factors are stored as the v3.1 split (``cholesky_factors_diag``,
+    # optionally + ``cholesky_factors_offdiag``) or a single v3.0
+    # ``cholesky_factors`` array. The diagonal is the marker for the split.
+    diag_dir = node_dir / "cholesky_factors_diag"
+    is_split = diag_dir.is_dir()
+    chol_name = "cholesky_factors_diag" if is_split else "cholesky_factors"
+    for arr_name in ("centers", "amplitudes", chol_name):
         arr_dir = node_dir / arr_name
         if not arr_dir.is_dir():
             return f"missing_{arr_name}@{label}"
         if not (arr_dir / ".zarray").exists():
             return f"no_zarray_{arr_name}@{label}"
-
-    # Cholesky: either consolidated (v3.0) or split (v3.1+).
-    consolidated_dir = node_dir / "cholesky_factors"
-    diag_dir = node_dir / "cholesky_factors_diag"
-    is_consolidated = (consolidated_dir / ".zarray").exists()
-    is_split = (diag_dir / ".zarray").exists()
-
-    if not (is_consolidated or is_split):
-        return f"missing_cholesky_factors@{label}"
 
     # v3.1 split: for d > 1 the off-diagonal array is mandatory — only d == 1
     # omits it. A leaf with the diagonal but no off-diagonal is a partial /
