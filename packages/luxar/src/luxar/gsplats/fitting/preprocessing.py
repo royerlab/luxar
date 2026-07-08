@@ -927,7 +927,6 @@ def _normalize_data(
     resolved_floor = _resolve_floor(V, floor)
     applied_floor: "float | None" = None
     if resolved_floor is not None:
-        v_min = float(np.min(V))
         if resolved_floor >= image_max:
             # A floor at/above the brightest voxel would erase all signal
             # (empty [0,1] range). Refuse it and keep the default image_min.
@@ -937,8 +936,12 @@ def _normalize_data(
                     f"{image_max:.6g}; ignoring (would erase all signal)"
                 )
         else:
-            # Clamp into [min(V), image_max) so range stays strictly positive.
-            image_min = float(max(resolved_floor, v_min))
+            # Only ever RAISE image_min (never below the percentile-based value
+            # chosen above): the floor is orthogonal to norm_percentile's low-end
+            # clipping. Clamp into [image_min, image_max) so the range stays
+            # strictly positive. (When norm_percentile==0, image_min == min(V),
+            # so this reduces to max(resolved_floor, min(V)) as before.)
+            image_min = float(max(resolved_floor, image_min))
             applied_floor = image_min
             if verbose:
                 aprint(

@@ -212,6 +212,7 @@ def fit_progressive_gaussian_splats(
     """
     from luxar.gsplats.fit_gsplats import fit_gaussian_splats
     from luxar.gsplats.fitting.preprocessing import _resolve_floor
+    from luxar.gsplats.fitting.validation import _validate_floor
     from luxar.gsplats.rendering.volume_rendering import render_to_volume_tensor
 
     if max_passes is not None and max_passes < 1:
@@ -230,6 +231,10 @@ def fit_progressive_gaussian_splats(
     # only inside pass 0 would be WRONG — the residual would be built against the
     # raw volume and reinstate the pedestal for the floor='none' residual passes.
     floor_spec = kwargs.pop("floor", "auto")
+    # The progressive path never routes through prepare_fit_config (per-pass fits
+    # run with floor='none'), so validate the user's spec here — the same guard
+    # every other entry point gets — before resolving it below.
+    _validate_floor(floor_spec)
     # Force voxel-space output for internal passes: render_to_volume_tensor
     # expects voxel-space centers for correct residual computation.
     # We capture voxel_size/output_space to apply to the final result.
@@ -249,7 +254,9 @@ def fit_progressive_gaussian_splats(
     if applied_floor is not None:
         V_original = np.clip(V_original - applied_floor, 0.0, None).astype(np.float32)
         if verbose:
-            aprint(f"Floor suppression: subtracted background level {applied_floor:.6g}")
+            aprint(
+                f"Floor suppression: subtracted background level {applied_floor:.6g}"
+            )
 
     accumulated_lods: list[AdditiveSubLOD] = []
     prev_psnr = 0.0

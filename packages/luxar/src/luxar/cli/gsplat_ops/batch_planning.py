@@ -544,6 +544,18 @@ def plan_batch(
                     f"calibrated density.feature_method '{density.feature_method}' — "
                     "per-box budgets will be mis-scaled. Use matching metrics."
                 )
+            # Scan the floor-suppressed volume the boxes will fit: cal records
+            # `density.feature_threshold` on floor-subtracted data, and each box
+            # fits with `fit.floor`. Subtract the same floor from the (max-proj)
+            # scan volume so the content field is on the calibration's scale —
+            # otherwise the raw pedestal counts as signal and flattens the plan.
+            from luxar.gsplats.fitting.preprocessing import _resolve_floor
+
+            scan_floor = _resolve_floor(
+                rep_vol, "auto" if fit.floor is None else fit.floor
+            )
+            if scan_floor is not None:
+                rep_vol = _np.clip(rep_vol.astype(_np.float32) - scan_floor, 0.0, None)
             content_plan = plan_volume(
                 rep_vol,
                 density,

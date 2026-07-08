@@ -849,11 +849,12 @@ class HeldOutPeak:
     """Peak minus the first finite held-out value (total climb across the sweep)."""
 
     still_climbing: bool = False
-    """True when the curve is signal-limited (argmax at the last K, the tail is
-    still rising ≥ 0.1 dB/step on average, and the final step is ≥ 0.05 dB).
-    ``k_star`` is then the last K (budget anchor); ``k_knee`` may still be an
-    earlier K when one is already within ``knee_margin_db`` of the maximum,
-    and equals the last K only when no earlier K is that close."""
+    """True when the curve is signal-limited: argmax at the last K, total rise
+    across the sweep ≥ ``knee_margin_db`` (0.3 dB), the trailing tail still
+    rising ≥ 0.1 dB/step on average, and the final step ≥ 0.05 dB. ``k_star`` is
+    then the last K (budget anchor); ``k_knee`` may still be an earlier K when
+    one is already within ``knee_margin_db`` of the maximum, and equals the last
+    K only when no earlier K is that close."""
 
     knee_margin_db: float = 0.3
     """The dB tolerance used to locate the knee / plateau onset."""
@@ -1657,9 +1658,10 @@ def calibrate(
     if str(render_device).startswith("cuda"):
         torch.cuda.empty_cache()
 
-    # 4. Noise floor (on the original volume; needs [0, 1] for the PSNR ceiling
-    # to be meaningful — the manuscript and fit_gaussian_splats both work in
-    # that range, so we pre-normalise)
+    # 4. Noise floor (on the calibrated volume — floor-subtracted above if a
+    # floor was applied, i.e. the same scale the fits and K* use; needs [0, 1]
+    # for the PSNR ceiling to be meaningful — the manuscript and
+    # fit_gaussian_splats both work in that range, so we pre-normalise)
     Vn = V.astype(np.float32, copy=False)
     vmin = float(Vn.min())
     vmax = float(Vn.max())
