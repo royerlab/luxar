@@ -334,13 +334,24 @@ def detect_barrier_dims(
     A standalone ``.gsplats.zarr`` carries no per-dimension descriptors, so when
     neither an explicit ``barrier_dims`` nor persisted ``coarsen_dims`` provenance
     is available this conservatively infers which axes behave like a categorical
-    stack (time, channel): an axis qualifies iff its values are (near-)integers
-    AND take few distinct values (``<= max_cardinality`` and ``<< N``). Continuous
-    spatial float coordinates never qualify, so the fallback cannot misclassify a
-    normal spatial axis with a wide range.
+    stack (time, channel): an axis qualifies iff its values are integers AND take
+    few distinct values (``<= max_cardinality`` and ``<< N``). Continuous spatial
+    float coordinates never qualify.
+
+    **Conservative in the safe direction.** A false NEGATIVE (missing a barrier)
+    only causes over-fetch — no worse than pure spatial ordering. A false
+    POSITIVE (flagging a spatial axis) gives it tight ±0.5 chunk bounds with no
+    σ expansion, so a spatially-extended splat can fall outside its chunk bounds
+    and be *dropped* from a query — a correctness bug. So both guards err toward
+    NOT flagging: the integer test is strict (``rtol=0``, absolute tolerance
+    only — a large-magnitude continuous coordinate is never "close enough" to an
+    integer), and the ``n_unique * 4 <= n`` guard rejects a fine integer spatial
+    grid (many distinct values relative to N) that is not a true category.
 
     Subordinate by design: callers apply explicit ``barrier_dims`` and
-    ``coarsen_dims`` complements first, using this only as the last resort.
+    ``coarsen_dims`` complements first (the scene compiler passes scene
+    ``Dimension.discrete`` dims; the batch merge passes the stacked-time axis),
+    using this only as the last resort for provenance-less standalone files.
 
     Args:
         centers: Splat centers, shape (N, d).
@@ -356,11 +367,15 @@ def detect_barrier_dims(
     for d in range(ndim):
         col = centers[:, d]
         # Must lie on an integer grid (categorical stacks are integer-labelled).
-        if not np.allclose(col, np.round(col), atol=1e-3):
+        # rtol=0: a large-magnitude continuous float must NOT count as integer
+        # (np.allclose's default rtol=1e-5 makes |coord|>~5e4 always "integer",
+        # which would misclassify a spatial axis → dropped splats).
+        if not np.allclose(col, np.round(col), rtol=0.0, atol=1e-3):
             continue
         n_unique = int(np.unique(np.round(col).astype(np.int64)).size)
         # Few distinct values, and materially fewer than N (so a genuinely
-        # per-splat-varying axis is never mistaken for a category).
+        # per-splat-varying axis — or a fine integer spatial grid — is never
+        # mistaken for a category).
         if n_unique <= max_cardinality and n_unique * 4 <= n:
             barrier.append(d)
     return barrier

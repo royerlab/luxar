@@ -419,6 +419,16 @@ def _merge_partition(
     # Reduction provenance for the pipeline/ group (None without a recipe).
     pipeline_info = _recipe_pipeline_info(recipe, recipe_params)
 
+    # Authoritative ordering barrier: when timepoints are stacked (n_timepoints
+    # > 1) the merge appends them as the LAST axis (see _finalize_part_node /
+    # _build_part_for_tile), and that stacked-time axis is a hard barrier. Pass
+    # it explicitly so per-part chunk ordering groups by timepoint — the merge
+    # KNOWS the barrier, so we must not leave it to the value-based auto-detect
+    # (which false-negatives on sparse tiles or >max_cardinality timepoints).
+    barrier_dims: Optional[List[int]] = None
+    if manifest.n_timepoints > 1 and manifest.spatial_shape:
+        barrier_dims = [len(manifest.spatial_shape)]  # last axis == stacked time
+
     # Single tile (K=1) → emit a bare leaf (or, with a recipe, a single lod
     # group / leaf-with-ladder), NOT a 1-part partition.
     if n_k == 1:
@@ -438,7 +448,12 @@ def _merge_partition(
                 node = _finalize_part_node(
                     part, recipe, recipe_params, manifest.n_timepoints
                 )
-                write_gsplats_tree(final_path, node, pipeline_info=pipeline_info)
+                write_gsplats_tree(
+                    final_path,
+                    node,
+                    pipeline_info=pipeline_info,
+                    barrier_dims=barrier_dims,
+                )
                 if verbose:
                     aprint(
                         f"  Wrote single {recipe} lod: "
@@ -486,6 +501,7 @@ def _merge_partition(
             _parts,
             max_elements=0,
             pipeline_info=pipeline_info,
+            barrier_dims=barrier_dims,
         )
         if verbose:
             aprint(f"  Wrote kind=partition with {n_written} parts{recipe_label}")

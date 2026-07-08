@@ -524,6 +524,23 @@ class TestDetectBarrierDims:
         centers[:, 1] = rng.integers(0, 3, size=5000)  # 3 categories
         assert detect_barrier_dims(centers, max_cardinality=1024) == [1]
 
+    def test_large_magnitude_continuous_not_detected(self) -> None:
+        """REGRESSION (deep-double-check): a large-magnitude CONTINUOUS spatial
+        axis must NOT be flagged. np.allclose's default rtol=1e-5 makes every
+        float within tolerance of an integer once |coord| > ~5e4, so a strict
+        rtol=0 test is required. A false positive here would give a spatial axis
+        tight ±0.5 bounds and DROP splats whose extent crosses a query slice."""
+        from luxar.io.ordering import detect_barrier_dims
+
+        rng = np.random.default_rng(11)
+        centers = np.empty((400, 3), dtype=np.float32)
+        # Continuous values at a large world offset (e.g. a stitched-lightsheet
+        # tile or post-transform coords): clearly non-integer, low cardinality.
+        centers[:, 0] = 100000.0 + rng.random(400) * 10.0
+        centers[:, 1] = 100000.0 + rng.random(400) * 10.0
+        centers[:, 2] = 100000.0 + rng.random(400) * 10.0
+        assert detect_barrier_dims(centers) == []
+
     def test_empty_input(self) -> None:
         from luxar.io.ordering import detect_barrier_dims
 

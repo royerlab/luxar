@@ -77,10 +77,12 @@ with LuxarZarrCompiler(
   - Shared `_compound_sort` core drives **all three geometries** (Points, Lines,
     GSplats): categorical/barrier axes (time, channel) are lexsorted first, then
     a space-filling curve orders spatially *within* each barrier value, so a
-    chunk never straddles a category. GSplats derive the barrier from an explicit
-    `barrier_dims`, the persisted LOD `coarsen_dims` complement, or a conservative
-    per-array auto-detect (`detect_barrier_dims`) — mirroring the discrete-dim
-    handling Points/Lines get from scene `Dimension` metadata.
+    chunk never straddles a category. GSplats derive the barrier authoritatively
+    where known — the scene compiler uses the scene's `Dimension.discrete`
+    non-displayed axes (exactly like Points/Lines), and the batch merge uses the
+    stacked-time axis — falling back to the persisted LOD `coarsen_dims`
+    complement, then a conservative value-based auto-detect (`detect_barrier_dims`,
+    strict integer + low-cardinality) only for provenance-less standalone files.
 - **Dimension-aware spatial indexing**: Optimized for time-series and nD slicing
   - Step-aware padding for tight discrete/barrier bounds (categorical axes get
     tight ±0.5 bounds, no σ/radius expansion — a splat at time=0 never extends

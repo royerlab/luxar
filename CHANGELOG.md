@@ -22,7 +22,8 @@ All notable changes to Luxar are documented in this file.
   `coarsen_dims` complement, else a conservative auto-detect
   (`detect_barrier_dims`). Threaded through every gsplat write path
   (`write_gsplats_tree` / `write_partition_streaming` / scene compiler / batch
-  merge / `reencode`); 3D data is byte-unchanged.
+  merge / `reencode`); 3D data keeps identical splat ordering and `chunk_bounds`
+  (leaf `.zattrs` gain informational `slice_dims=[]` / `ordering_dims` keys).
 - **Measured** (51-timepoint h2afva, 127 M splats): per-timepoint chunk hit-rate
   went from a chaotic 0.01–7 % to a uniform ~1.96 % (= ideal 1/51) at every
   timepoint. Viewer needs no change (dimension-agnostic AABB chunk selection);

@@ -1121,10 +1121,15 @@ class TestBarrierAwareOrdering:
             root = zarr.open_group(str(path), mode="r")
             assert list(root.attrs["slice_dims"]) == [3]
 
-    def test_coarsen_all_provenance_beats_autodetect(self) -> None:
-        """coarsen_dims covering ALL dims means 'no barrier' — it must win over
-        auto-detect, which would otherwise flag the integer time axis. Regression
-        for _barrier_from_coarsen_dims returning [] (not None) on coarsen-all."""
+    def test_explicit_full_coarsen_list_yields_no_barrier(self) -> None:
+        """A DIRECT caller passing an explicit full coarsen_dims list (barrier =
+        empty complement) → pure spatial, NOT auto-detected [3].
+
+        NOTE: this is the direct-caller contract for _barrier_from_coarsen_dims's
+        empty-complement branch. The LOD reducer itself never persists a full
+        list — _normalise_coarsen_dims collapses coarsen-all to `coarsen_dims=
+        None`, which is indistinguishable from 'no provenance' and correctly
+        falls through to auto-detect (a degenerate, rarely-used config)."""
         from luxar.gsplats.io.save_gsplats import write_gsplats_tree
         from luxar.gsplats.tree import GSplatLeaf
 
@@ -1132,24 +1137,125 @@ class TestBarrierAwareOrdering:
         leaf = GSplatLeaf(additive_sublods=list(data.flattened().additive_sublods))
         with tempfile.TemporaryDirectory() as tmpdir:
             path = Path(tmpdir) / "coarsen_all.gsplats.zarr"
-            write_gsplats_tree(
-                path, leaf, pipeline_info={"coarsen_dims": [0, 1, 2, 3]}
-            )
+            write_gsplats_tree(path, leaf, pipeline_info={"coarsen_dims": [0, 1, 2, 3]})
             root = zarr.open_group(str(path), mode="r")
-            # Explicit no-barrier: pure spatial, NOT auto-detected [3].
             assert list(root.attrs["slice_dims"]) == []
             assert list(root.attrs["ordering_dims"]) == [0, 1, 2, 3]
 
+    def test_streaming_partition_explicit_barrier_on_sparse_time(self) -> None:
+        """REGRESSION (deep-double-check, findings 1/6): the batch-merge streaming
+        partition path passes an EXPLICIT barrier (the stacked-time axis) rather
+        than relying on auto-detect, which false-negatives on sparse tiles (few
+        splats per timepoint trips the n_unique*4<=n guard). Verify each part's
+        finest chunk bounds are time-tight when barrier_dims is passed, and that
+        auto-detect alone would NOT barrier this sparse part."""
+        from luxar.gsplats.gsplat_data import AdditiveSubLOD
+        from luxar.gsplats.io.save_gsplats import write_partition_streaming
+        from luxar.gsplats.tree import GSplatLeaf
+        from luxar.io.ordering import detect_barrier_dims
+
+        def make_sparse_4d_leaf(seed: int) -> GSplatLeaf:
+            rng = np.random.default_rng(seed)
+            n = 40  # sparse: 40 splats over 14 timepoints (40 < 14*4=56)
+            centers = np.empty((n, 4), dtype=np.float32)
+            centers[:, :3] = rng.uniform(0, 50, (n, 3))
+            centers[:, 3] = rng.integers(0, 14, size=n).astype(np.float32)
+            chol = np.zeros((n, 10), dtype=np.float32)
+            chol[:, [0, 2, 5, 9]] = 2.0
+            return GSplatLeaf(
+                additive_sublods=[
+                    AdditiveSubLOD(
+                        centers=centers,
+                        amplitudes=rng.uniform(0.1, 1, (n,)).astype(np.float32),
+                        cholesky_factors=chol,
+                    )
+                ]
+            )
+
+        # Auto-detect MISSES the sparse time axis (the finding's failure mode),
+        # so relying on it (barrier_dims=None default) leaves the axis σ-smeared.
+        assert detect_barrier_dims(make_sparse_4d_leaf(0).additive_sublods[0].centers) == []
+
+        def max_time_extent(path: Path, part: str) -> float:
+            cb = np.asarray(zarr.open_group(str(path), mode="r")[part]["chunk_bounds"])
+            return float((cb[:, 3, 1] - cb[:, 3, 0]).max())
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            bpath = Path(tmpdir) / "barrier.gsplats.zarr"
+            npath = Path(tmpdir) / "auto.gsplats.zarr"
+            # Explicit barrier=[3] — what _merge_partition now passes.
+            write_partition_streaming(
+                bpath, lambda: iter([make_sparse_4d_leaf(0), make_sparse_4d_leaf(1)]),
+                barrier_dims=[3],
+            )
+            # Auto-detect fallback (the pre-fix batch behavior): no barrier found.
+            write_partition_streaming(
+                npath, lambda: iter([make_sparse_4d_leaf(0), make_sparse_4d_leaf(1)]),
+            )
+            for part in ("part_0", "part_1"):
+                broot = zarr.open_group(str(bpath), mode="r")
+                assert list(broot[part].attrs["slice_dims"]) == [3]
+                assert list(zarr.open_group(str(npath), mode="r")[part].attrs["slice_dims"]) == []
+                # Barrier removes the σ (coverage 3·2=6) expansion on the time
+                # axis → strictly tighter time bounds than the auto-detect miss.
+                assert max_time_extent(bpath, part) < max_time_extent(npath, part)
+
+    def test_scene_barrier_from_dimension_discrete_beats_autodetect(self) -> None:
+        """REGRESSION (deep-double-check, finding 5): a scene-embedded gsplat with
+        a NON-INTEGER discrete axis (e.g. physical-time seconds {0.0,0.5,1.0})
+        must get its barrier from the scene's authoritative Dimension.discrete
+        metadata — value-based auto-detect would reject 0.5 as non-integer and
+        leave the axis smeared across chunks. Mirrors the Points/Lines scene path."""
+        import zarr
+
+        from luxar import LuxarZarrCompiler
+        from luxar.core.dimensions import Dimension, Dimensions
+
+        dims = Dimensions(
+            [
+                Dimension("X", display=True),
+                Dimension("Y", display=True),
+                Dimension("Z", display=True),
+                Dimension("Time", display=False, discrete=True, range=(0.0, 1.0)),
+            ]
+        )
+        rng = np.random.default_rng(12)
+        n = 3000
+        centers = np.empty((n, 4), dtype=np.float32)
+        centers[:, :3] = rng.random((n, 3)) * 100
+        centers[:, 3] = rng.choice([0.0, 0.5, 1.0], size=n)  # NON-integer time
+        chol = np.zeros((n, 10), dtype=np.float32)
+        chol[:, [0, 2, 5, 9]] = 2.0
+        with tempfile.TemporaryDirectory() as tmpdir:
+            store_path = Path(tmpdir) / "scene.luxar.zarr"
+            with LuxarZarrCompiler(store_path) as compiler:
+                scene = compiler.create_scene(dimensions=dims)
+                scene.add_gsplats(
+                    "gsplats", centers, amplitudes=1.0, cholesky_factors=chol
+                )
+            store = zarr.open_group(str(store_path), mode="r")
+            attrs = dict(store["gsplats"].attrs)
+            # Barrier came from Dimension.discrete (index 3), NOT auto-detect
+            # (which would return [] because 0.5 is not near-integer).
+            assert list(attrs["slice_dims"]) == [3]
+            from luxar.io.ordering import detect_barrier_dims
+
+            assert detect_barrier_dims(centers) == []  # proves auto-detect misses it
+
     def test_no_barrier_3d_unaffected(self) -> None:
-        """A 3D leaf (no barrier) is byte-identical with and without the feature:
-        pure spatial ordering, σ-expanded bounds."""
+        """A 3D leaf gets NO barrier (auto-detect returns [] for continuous
+        floats), pure spatial ordering, σ-expanded bounds on every axis.
+
+        Asserts the barrier machinery specifically (not just shape/count): would
+        fail if detect_barrier_dims wrongly flagged a float axis (→ slice_dims
+        non-empty and tight ±0.5 bounds instead of σ-expanded)."""
         from luxar.gsplats.io.save_gsplats import write_gsplats_tree
         from luxar.gsplats.tree import GSplatLeaf
 
         rng = np.random.default_rng(3)
         centers = (rng.random((2000, 3)) * 100).astype(np.float32)
         chol = np.zeros((2000, 6), dtype=np.float32)
-        chol[:, [0, 2, 5]] = 2.0
+        chol[:, [0, 2, 5]] = 2.0  # isotropic σ=2 in all 3 dims
         data = GSplatData(
             centers=centers,
             amplitudes=(rng.random(2000) + 0.5).astype(np.float32),
@@ -1159,8 +1265,16 @@ class TestBarrierAwareOrdering:
         with tempfile.TemporaryDirectory() as tmpdir:
             path = Path(tmpdir) / "flat3d.gsplats.zarr"
             write_gsplats_tree(path, leaf)  # auto-detect → no barrier for floats
+            root = zarr.open_group(str(path), mode="r")
+            # No axis flagged as a barrier (the load-bearing assertion).
+            assert list(root.attrs["slice_dims"]) == []
+            assert list(root.attrs["ordering_dims"]) == [0, 1, 2]
             bounds = self._finest_chunk_bounds(path)
-            # All 3 dims σ-expanded (isotropic σ=2 → extent well over 2 per chunk).
             assert bounds.shape[1] == 3
+            # Every axis is σ-expanded — extents exceed the ±0.5 a barrier axis
+            # would get (proves NO axis received tight barrier bounds). σ=2,
+            # coverage 3σ → ~6 extent, well over 1.0.
+            extents = bounds[:, :, 1] - bounds[:, :, 0]
+            assert np.all(extents.max(axis=0) > 1.5)
             got = GSplatData.load(path)
             assert got.n_splats == 2000

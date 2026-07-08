@@ -1006,7 +1006,30 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
             cholesky_is_uniform,
             self._make_ordering_ctx(),
             coverage_sigma,
+            # Scene gsplats carry authoritative dimension semantics — use the
+            # discrete non-displayed axes as the ordering barrier, exactly like
+            # the Points/Lines scene path (sort_points_compound slice_dims).
+            # This is authoritative regardless of coordinate value spacing, so a
+            # non-integer categorical axis (e.g. physical-time seconds) is
+            # handled where the value-based auto-detect fallback would miss it.
+            barrier_dims=self._scene_barrier_dims(n_dims),
         )
+
+    def _scene_barrier_dims(self, n_dims: int) -> Optional[List[int]]:
+        """Barrier (categorical) axes from the scene's ``Dimension`` metadata.
+
+        Mirrors the Points/Lines slice-dim split (``d.discrete and not
+        d.display``). Returns ``None`` when the scene carries no dimensions (→
+        per-leaf auto-detect); an explicit list (possibly empty) otherwise.
+        """
+        if "scene_dimensions" not in self.store.attrs:
+            return None
+        from ..core.dimensions import Dimensions
+
+        dims = Dimensions.from_dict(self.store.attrs["scene_dimensions"]).dimensions
+        return [
+            i for i, d in enumerate(dims) if i < n_dims and d.discrete and not d.display
+        ]
 
     def _write_gsplat_arrays(
         self,
