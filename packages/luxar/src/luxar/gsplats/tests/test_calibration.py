@@ -336,6 +336,58 @@ class TestFindKStar:
         assert out.type != "signal_limited"
 
 
+class TestKKnee:
+    """The operating point (``k_knee``) = the point of diminishing returns,
+    decoupled from the regime label and from the budget anchor ``k_star``."""
+
+    def test_peak_knee_is_the_peak(self):
+        ks = [1, 2, 4, 8, 16, 32, 64]
+        psnr = [22.0, 26.0, 30.0, 34.0, 33.5, 32.0, 30.0]
+        out = find_k_star(ks, psnr)
+        assert out.type == "peak"
+        assert out.k_knee == out.k_star == 8  # peak: knee == budget anchor
+
+    def test_plateau_knee_is_the_onset(self):
+        ks = [1, 2, 4, 8, 16, 32]
+        psnr = [30.0, 35.0, 39.5, 39.78, 39.80, 39.79]
+        out = find_k_star(ks, psnr)
+        assert out.type == "plateau"
+        assert out.k_knee == out.k_star == 4
+
+    def test_signal_limited_decouples_knee_from_kstar(self):
+        # Slow creep: rises to the last K (still-climbing tail) so type stays
+        # signal_limited and k_star = last K (budget anchor), but an earlier K is
+        # already within 0.3 dB of the max -> k_knee is that earlier knee.
+        ks = [16000, 64000, 128000, 256000, 512000]
+        psnr = [29.2, 35.2, 37.0, 37.59, 37.84]  # h2afva-like; last step +0.25
+        out = find_k_star(ks, psnr)
+        assert out.type == "signal_limited"
+        assert out.k_star == 512000  # unchanged budget anchor
+        assert out.k_knee == 256000  # earlier diminishing-returns point
+        assert out.k_knee < out.k_star
+        assert out.still_climbing is True
+
+    def test_steep_signal_limited_knee_equals_kstar(self):
+        # A genuinely starved curve: no earlier K within 0.3 dB of the max, so the
+        # knee IS the last K -> k_knee == k_star.
+        ks = [16000, 64000, 128000, 256000, 512000]
+        psnr = [45.4, 45.9, 46.2, 47.8, 49.3]
+        out = find_k_star(ks, psnr)
+        assert out.type == "signal_limited"
+        assert out.k_knee == out.k_star == 512000
+
+    def test_metadata_fields_populated(self):
+        ks = [1, 2, 4, 8, 16, 32, 64]
+        psnr = [22.0, 26.0, 30.0, 34.0, 33.5, 32.0, 30.0]  # peak at 8, declines after
+        out = find_k_star(ks, psnr)
+        assert out.knee_idx == 3
+        assert out.knee_margin_db == pytest.approx(0.3)
+        assert out.total_rise_db == pytest.approx(12.0)  # 34 - 22
+        assert out.drop_after_peak_db == pytest.approx(-4.0)  # 30 - 34 (post-peak drop)
+        assert out.plateau_spread_db >= 0.0
+        assert out.still_climbing is False
+
+
 # -----------------------------------------------------------------------------
 # estimate_noise_floor
 # -----------------------------------------------------------------------------

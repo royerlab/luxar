@@ -1958,6 +1958,14 @@ def calibrate_command(
                 f"(metric: {result.k_star_metric}, type: {selected_peak.type}, "
                 f"confidence: {selected_peak.confidence_db:.2f} dB)"
             )
+            # Operating point (point of diminishing returns) — equals K* for peak/
+            # plateau; for a signal-limited curve it is the earlier knee (K* stays
+            # the max-K budget anchor).
+            if selected_peak.k_knee and selected_peak.k_knee != selected_peak.k_star:
+                aprint(
+                    f"    operating point (diminishing returns) = "
+                    f"{selected_peak.k_knee:,} splats"
+                )
             if result.held_out_peak_selected is not None:
                 aprint(
                     f"    (psnr_minmax K* = {result.held_out_peak.k_star:,}, "
