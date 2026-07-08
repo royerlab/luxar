@@ -20,6 +20,7 @@ from luxar.gsplats.calibration import (
     count_features,
     cv_mask,
     donut_median_fill,
+    estimate_floor,
     estimate_noise_floor,
     find_k_star,
     fit_rd_model,
@@ -1102,3 +1103,66 @@ class TestExponentFitSerialization:
         assert loaded.exponent_fit["alpha"] == pytest.approx(0.53)
         assert loaded.exponent_fit["scales"] == [128, 192, 256]
         assert loaded.exponent_fit["r_squared"] == pytest.approx(0.97)
+
+
+class TestEstimateFloor:
+    """Unit tests for the background/DC floor estimator."""
+
+    def _pedestal_volume(self, pedestal: float = 110.0, seed: int = 0) -> np.ndarray:
+        rng = np.random.default_rng(seed)
+        V = np.full((40, 64, 64), pedestal, np.float32)
+        V += rng.normal(0, 2.0, V.shape).astype(np.float32)
+        V[10:14, 30:34, 30:34] += 400.0  # a bright signal blob
+        return V
+
+    def test_mode_recovers_pedestal(self) -> None:
+        V = self._pedestal_volume(pedestal=110.0)
+        floor = estimate_floor(V, method="mode")
+        assert floor == pytest.approx(110.0, abs=3.0)
+
+    def test_percentile_method(self) -> None:
+        V = self._pedestal_volume(pedestal=110.0)
+        floor = estimate_floor(V, method="percentile")
+        # 10th percentile of a ~110 pedestal sits just below the mode.
+        assert 104.0 <= floor <= 111.0
+
+    def test_median_cap_prevents_over_subtraction(self) -> None:
+        # Mostly-signal image: a broad bright distribution with no pedestal.
+        rng = np.random.default_rng(3)
+        V = rng.normal(500.0, 50.0, (32, 32, 32)).astype(np.float32)
+        floor = estimate_floor(V, method="mode")
+        # The cap keeps the floor at or below the median so real signal is safe.
+        assert floor <= float(np.median(V)) + 1e-3
+
+    def test_noop_on_clean_data(self) -> None:
+        # Clean data spanning [0, 1] with no pedestal: floor near min(V).
+        rng = np.random.default_rng(5)
+        V = rng.random((32, 32, 32)).astype(np.float32)
+        floor = estimate_floor(V, method="mode")
+        assert floor == pytest.approx(float(np.min(V)), abs=0.05)
+
+    def test_excludes_exact_zero_padding(self) -> None:
+        # Half the volume is exact-zero padding; the real content sits on ~110.
+        V = self._pedestal_volume(pedestal=110.0)
+        V[:20] = 0.0  # out-of-FOV padding
+        floor = estimate_floor(V, method="mode")
+        # Padding is excluded, so the estimate still lands on the pedestal.
+        assert floor == pytest.approx(110.0, abs=4.0)
+
+    def test_unknown_method_raises(self) -> None:
+        V = self._pedestal_volume()
+        with pytest.raises(ValueError):
+            estimate_floor(V, method="bogus")
+
+    def test_calibrate_rejects_bad_floor_before_fitting(self) -> None:
+        # The cal path bypasses prepare_fit_config's validation, so calibrate()
+        # must validate the floor itself and fail fast (before any fit) on a
+        # malformed spec — not raise an opaque ValueError mid-sweep.
+        # match="floor" pins the clean validation error (pre-fix, an invalid
+        # spec instead surfaced as an opaque float-conversion / NaN-input error
+        # from deeper in the sweep, whose message does NOT mention "floor").
+        V = self._pedestal_volume(seed=1)
+        with pytest.raises(ValueError, match="floor"):
+            calibrate(V, k_grid=[20], fit_kwargs={"floor": "pX", "device": "cpu"})
+        with pytest.raises(ValueError, match="floor"):
+            calibrate(V, k_grid=[20], fit_kwargs={"floor": float("nan"), "device": "cpu"})

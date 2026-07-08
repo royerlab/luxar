@@ -211,6 +211,7 @@ def fit_progressive_gaussian_splats(
     on the same GPU and fill the utilization gap.
     """
     from luxar.gsplats.fit_gsplats import fit_gaussian_splats
+    from luxar.gsplats.fitting.preprocessing import _resolve_floor
     from luxar.gsplats.rendering.volume_rendering import render_to_volume_tensor
 
     if max_passes is not None and max_passes < 1:
@@ -221,6 +222,14 @@ def fit_progressive_gaussian_splats(
     kwargs.pop("seeds", None)  # progressive computes seeds_this_pass per pass
     kwargs.pop("seed_method", None)  # progressive sets auto/peaks per pass
     kwargs.pop("cull_retention", None)  # per-pass culling disabled; final cull at end
+    # Background floor / DC-offset suppression: subtract ONCE from the volume up
+    # front (like calibrate()), then run EVERY pass with floor='none'. The
+    # residual chain (target = clip(V - render, 0)) is built against this
+    # subtracted volume, so the pedestal is never reintroduced; output amplitudes
+    # stay background-relative, matching the single-pass fitter. Applying floor
+    # only inside pass 0 would be WRONG — the residual would be built against the
+    # raw volume and reinstate the pedestal for the floor='none' residual passes.
+    floor_spec = kwargs.pop("floor", "auto")
     # Force voxel-space output for internal passes: render_to_volume_tensor
     # expects voxel-space centers for correct residual computation.
     # We capture voxel_size/output_space to apply to the final result.
@@ -236,6 +245,11 @@ def fit_progressive_gaussian_splats(
 
     start_time = time.time()
     V_original = V.astype(np.float32)
+    applied_floor = _resolve_floor(V_original, floor_spec)
+    if applied_floor is not None:
+        V_original = np.clip(V_original - applied_floor, 0.0, None).astype(np.float32)
+        if verbose:
+            aprint(f"Floor suppression: subtracted background level {applied_floor:.6g}")
 
     accumulated_lods: list[AdditiveSubLOD] = []
     prev_psnr = 0.0
@@ -348,6 +362,12 @@ def fit_progressive_gaussian_splats(
 
         # No eccentricity limit: let splats adapt shape to irregular features.
         pass_kwargs["max_eccentricity"] = None
+
+        # Floor is already subtracted from V_original up front (see above), so
+        # every per-pass fit must run with floor='none' — re-estimating a floor
+        # on the (already background-relative) full volume or its residuals would
+        # wrongly eat signal.
+        pass_kwargs["floor"] = "none"
 
         if pass_i > 0:
             # Residual-pass overrides (see module docstring for rationale):

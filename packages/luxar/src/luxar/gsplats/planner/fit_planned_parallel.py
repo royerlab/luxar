@@ -43,6 +43,7 @@ def _default_worker_cmd_builder(
     *,
     preset: str = "standard",
     device: Optional[str] = None,
+    floor: Optional[str] = None,
     channel: Optional[int] = None,
     timepoint: Optional[int] = None,
     array_key: Optional[str] = None,
@@ -76,6 +77,8 @@ def _default_worker_cmd_builder(
         ]
         if device:
             cmd += ["--device", device]
+        if floor is not None:
+            cmd += ["--floor", str(floor)]
         if channel is not None:
             cmd += ["--channel", str(channel)]
         if timepoint is not None:

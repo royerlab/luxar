@@ -241,8 +241,8 @@ def preprocess_data(config: FitConfig) -> PreprocessedData:
 
     # Normalize input data
     with asection("Normalizing input data"):
-        V_normalized, image_min, image_max, intensity_range = _normalize_data(
-            V, config.norm_percentile, config.verbose
+        V_normalized, image_min, image_max, intensity_range, applied_floor = (
+            _normalize_data(V, config.norm_percentile, config.verbose, config.floor)
         )
 
     # Rescale pre-initialized amplitudes to match normalized image scale
@@ -296,6 +296,7 @@ def preprocess_data(config: FitConfig) -> PreprocessedData:
         image_min=image_min,
         image_max=image_max,
         intensity_range=intensity_range,
+        floor=applied_floor,
         d=d,
         N=N,
         max_abs_error=max_abs_error,
@@ -859,10 +860,52 @@ def _add_grid_fallback_seeds(
         return existing_seeds, 0.0
 
 
+def _resolve_floor(V: np.ndarray, floor: "str | float | None") -> "float | None":
+    """Resolve a ``floor`` spec to a concrete background level, or ``None``.
+
+    ``None`` means "no explicit floor" — the caller keeps its default
+    ``image_min`` (hard ``min``/``norm_percentile``). Accepted forms:
+
+    - ``"auto"`` → histogram-mode estimate (see :func:`estimate_floor`).
+    - ``"pN"`` (e.g. ``"p10"``) → the Nth intensity percentile.
+    - ``"none"`` / ``"0"`` / ``0`` / ``None`` → disabled (returns ``None``).
+    - ``float`` / numeric string → that fixed intensity value.
+    """
+    if floor is None:
+        return None
+    if isinstance(floor, str):
+        f = floor.strip().lower()
+        if f in ("none", ""):
+            return None
+        if f == "auto":
+            from luxar.gsplats.calibration import estimate_floor
+
+            return float(estimate_floor(V, method="mode"))
+        if f.startswith("p"):
+            pct = float(f[1:])
+            return float(np.percentile(V, pct))
+        value = float(f)  # numeric string
+    else:
+        value = float(floor)
+    if value == 0.0:
+        return None
+    return value
+
+
 def _normalize_data(
-    V: np.ndarray, norm_percentile: float, verbose: bool
-) -> tuple[np.ndarray, float, float, float]:
-    """Normalize input data to [0, 1] range."""
+    V: np.ndarray,
+    norm_percentile: float,
+    verbose: bool,
+    floor: "str | float | None" = None,
+) -> tuple[np.ndarray, float, float, float, "float | None"]:
+    """Normalize input data to [0, 1] range.
+
+    ``floor`` (see :func:`_resolve_floor`) overrides how ``image_min`` is
+    chosen: an explicit background level raises ``image_min`` so the pedestal
+    is clipped to 0 by the existing ``np.clip((V - image_min) / range, 0, 1)``.
+    ``norm_percentile`` still governs ``image_max`` (bright-outlier clipping),
+    so the two are orthogonal.
+    """
     # Configurable normalization - store parameters for intensity rescaling
     if norm_percentile == 0.0:
         # Full range normalization
@@ -880,6 +923,28 @@ def _normalize_data(
                 f"{100.0 - norm_percentile:.1f}% percentile range"
             )
 
+    # Background floor suppression: raise image_min to the resolved floor.
+    resolved_floor = _resolve_floor(V, floor)
+    applied_floor: "float | None" = None
+    if resolved_floor is not None:
+        v_min = float(np.min(V))
+        if resolved_floor >= image_max:
+            # A floor at/above the brightest voxel would erase all signal
+            # (empty [0,1] range). Refuse it and keep the default image_min.
+            if verbose:
+                aprint(
+                    f"Warning: floor {resolved_floor:.6g} >= image max "
+                    f"{image_max:.6g}; ignoring (would erase all signal)"
+                )
+        else:
+            # Clamp into [min(V), image_max) so range stays strictly positive.
+            image_min = float(max(resolved_floor, v_min))
+            applied_floor = image_min
+            if verbose:
+                aprint(
+                    f"Floor suppression: subtracting background level {image_min:.6g}"
+                )
+
     intensity_range = image_max - image_min
 
     if np.abs(intensity_range) < 1e-12:
@@ -890,7 +955,7 @@ def _normalize_data(
     else:
         V = np.clip((V - image_min) / intensity_range, 0.0, 1.0)
 
-    return V, image_min, image_max, intensity_range
+    return V, image_min, image_max, intensity_range, applied_floor
 
 
 def _set_convergence_threshold(max_abs_error: float | None, verbose: bool) -> float:

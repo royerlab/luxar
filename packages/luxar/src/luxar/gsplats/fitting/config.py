@@ -158,6 +158,11 @@ class FitConfig:
     device: torch.device
     verbose: bool
 
+    # Background floor / DC-offset suppression (with default - see preprocessing)
+    # Raises the effective image_min used in normalization so a constant
+    # pedestal is clipped to 0 before fitting. "auto" | "none" | "pN" | float.
+    floor: str | float | None = "auto"
+
     # Metal acceleration (with defaults - must come after required fields)
     use_metal: bool = True  # Enable Metal acceleration when available (macOS + MPS)
     metal_intensity_floor: float = 1e-5  # Early culling threshold for Metal kernels
@@ -258,6 +263,11 @@ class PreprocessedData:
     # Convergence thresholds
     max_abs_error: float
     rel_l2_target: Optional[float] = None
+
+    # Resolved background floor that was subtracted (None if disabled).
+    # Equal to image_min when floor suppression is active. Recorded for
+    # inspection/reproducibility; NOT added back to output amplitudes.
+    floor: Optional[float] = None
 
     # Computed L1 regularization values (set during preprocessing)
     # These are stored here instead of mutating FitConfig

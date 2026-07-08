@@ -336,6 +336,22 @@ class TestFitCommand:
         parsed = yaml.safe_load(result.stdout)
         assert parsed["n_iters"] == 10000
 
+    def test_fit_help_exposes_floor_flag(self, runner: CliRunner) -> None:
+        result = runner.invoke(app, ["gsplat", "fit", "--help"])
+        assert result.exit_code == 0
+        assert "--floor" in result.stdout
+
+    def test_dump_config_includes_floor_default(self, runner: CliRunner) -> None:
+        result = runner.invoke(app, ["gsplat", "fit", "--dump-config"])
+        assert result.exit_code == 0
+        parsed = yaml.safe_load(result.stdout)
+        assert parsed["floor"] == "auto"
+
+    def test_cal_help_exposes_floor_flag(self, runner: CliRunner) -> None:
+        result = runner.invoke(app, ["gsplat", "cal", "--help"])
+        assert result.exit_code == 0
+        assert "--floor" in result.stdout
+
     def test_fit_small_volume(
         self, runner: CliRunner, small_volume_npy: Path, tmp_path: Path
     ) -> None:

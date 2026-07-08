@@ -227,6 +227,7 @@ def dump_default_config(preset: str = "standard") -> str:
         "",
         "# --- Preprocessing ---",
         f"norm_percentile: {_fmt(vals.get('norm_percentile'))}  # Percentile clipping (0=full range, >0=robust)",
+        f'floor: "{vals.get("floor", "auto")}"                # Background/DC suppression: auto | pN (e.g. p10) | <float> | none',
         f"downscale: {_fmt(vals.get('downscale'))}            # Downsample by integer factor (null=disabled, e.g. 4 or [1,4,4])",
         "",
         "# --- Regularization ---",

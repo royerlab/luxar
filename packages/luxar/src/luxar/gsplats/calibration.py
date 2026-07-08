@@ -681,6 +681,45 @@ def estimate_noise_floor(V: np.ndarray) -> NoiseFloor:
     )
 
 
+def estimate_floor(V: np.ndarray, method: str = "mode") -> float:
+    """Estimate the background pedestal / DC offset to subtract before fitting.
+
+    A constant background is the worst case for a localized Gaussian-splat
+    basis, so subtracting it before normalisation is the single
+    highest-leverage preprocessing step on real microscopy (see
+    ``docs/handoffs/floor-suppression-handoff.md``).
+
+    Parameters
+    ----------
+    V : np.ndarray
+        Input volume (any shape / dtype convertible to float).
+    method : {"mode", "percentile"}
+        ``"mode"`` (default): histogram mode of the low-intensity bulk (the
+        pedestal peak), capped at the median so an image that is *mostly*
+        signal can never have real signal subtracted. On clean data with no
+        pedestal ``mode ≈ min(V)`` → effectively a no-op → backward-compatible.
+        ``"percentile"``: the 10th intensity percentile (cheaper; matches the
+        :func:`_background_mad` threshold).
+
+    Notes
+    -----
+    Exact-zero voxels (masked / out-of-FOV padding) are excluded so padding
+    does not dominate the histogram.
+    """
+    Vf = V[V != 0.0] if np.any(V != 0.0) else V
+    if Vf.size == 0:
+        return float(np.min(V))
+    if method == "percentile":
+        return float(np.percentile(Vf, 10.0))
+    if method != "mode":
+        raise ValueError(f"estimate_floor: unknown method {method!r}")
+    hi = float(np.percentile(Vf, 95.0))
+    hist, edges = np.histogram(Vf[Vf <= hi], bins=512)
+    i = int(hist.argmax())
+    mode = 0.5 * (float(edges[i]) + float(edges[i + 1]))
+    return float(min(mode, float(np.median(Vf))))
+
+
 # =============================================================================
 # K-grid construction
 # =============================================================================
@@ -810,9 +849,11 @@ class HeldOutPeak:
     """Peak minus the first finite held-out value (total climb across the sweep)."""
 
     still_climbing: bool = False
-    """True when the curve is signal-limited (argmax at the last K and the tail
-    is still rising ≥ 0.1 dB/step) — i.e. no diminishing-returns point was
-    reached within the sampled range and ``k_knee`` falls back to the last K."""
+    """True when the curve is signal-limited (argmax at the last K, the tail is
+    still rising ≥ 0.1 dB/step on average, and the final step is ≥ 0.05 dB).
+    ``k_star`` is then the last K (budget anchor); ``k_knee`` may still be an
+    earlier K when one is already within ``knee_margin_db`` of the maximum,
+    and equals the last K only when no earlier K is that close."""
 
     knee_margin_db: float = 0.3
     """The dB tolerance used to locate the knee / plateau onset."""
@@ -831,8 +872,9 @@ def find_k_star(
        the argmax.
     2. **Signal-limited**: the argmax is the last K, the curve rose by
        ≥ 0.3 dB across the sweep, AND it is *still climbing at the top*
-       (the last finite step is ≥ 0.1 dB). Return the last K. The tail
-       check stops a flat-topped plateau (whose noisy max lands on the
+       (mean rise over the trailing run of adjacent finite steps ≥ 0.1 dB
+       AND the single final step ≥ 0.05 dB). Return the last K. The tail
+       checks stop a flat-topped plateau (whose noisy max lands on the
        last K) from being misread as signal-limited.
     3. **Plateau**: otherwise. Return the smallest K within 0.3 dB of the
        maximum — the onset of diminishing returns.
@@ -1453,6 +1495,23 @@ def calibrate(
     # cv runs many fits — keep their internal logging quiet by default
     fit_kwargs.setdefault("verbose", False)
 
+    # Background floor / DC-offset suppression: subtract ONCE from V so the fit
+    # target, the render reference, AND the held-out truth are all on the same
+    # floor-suppressed scale. (A per-fit floor would subtract only inside each
+    # fit, mismatching the raw held-out reference and tanking the PSNR.) Default
+    # is on ("auto"); K* is thus measured the same way you will fit. See
+    # docs/handoffs/floor-suppression-handoff.md.
+    from luxar.gsplats.fitting.preprocessing import _resolve_floor
+    from luxar.gsplats.fitting.validation import _validate_floor
+
+    floor_spec = fit_kwargs.pop("floor", "auto")
+    _validate_floor(floor_spec)  # cal bypasses prepare_fit_config's validation
+    applied_floor = _resolve_floor(V, floor_spec)
+    if applied_floor is not None:
+        V = np.clip(V.astype(np.float32, copy=False) - applied_floor, 0.0, None)
+    # V is already floor-subtracted; the per-K fits must not subtract again.
+    fit_kwargs["floor"] = "none"
+
     if keep_fits is not None:
         keep_fits = Path(keep_fits)
         keep_fits.mkdir(parents=True, exist_ok=True)
@@ -1686,7 +1745,10 @@ def calibrate(
         mask_seed=mask_seed,
         mask_fraction=mask_fraction,
         donut_radius=donut_radius,
-        fit_config={k: v for k, v in fit_kwargs.items() if _json_safe(v)},
+        fit_config={
+            **{k: v for k, v in fit_kwargs.items() if _json_safe(v)},
+            "floor_subtracted": applied_floor,
+        },
         volume_shape=list(V.shape),
         volume_dtype=str(V.dtype),
         timestamp=datetime.now(timezone.utc).isoformat(),

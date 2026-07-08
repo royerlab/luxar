@@ -246,6 +246,16 @@ class TestBuildWorkerCmd:
         assert val("--timepoint") == "7"
         assert val("--array-key") == "h2afva/fused"
 
+    def test_forwards_floor(self) -> None:
+        # An explicit --floor must reach each parallel tile worker (else -j>1
+        # silently drops the override and every tile falls back to 'auto').
+        cmd = self._cmd(floor="none")
+        assert "--floor" in cmd and cmd[cmd.index("--floor") + 1] == "none"
+        cmd_p = self._cmd(floor="p10")
+        assert cmd_p[cmd_p.index("--floor") + 1] == "p10"
+        # Not emitted when unset (worker then defaults to 'auto').
+        assert "--floor" not in self._cmd()
+
     def test_forwards_config_and_progressive_and_denoise_values(self) -> None:
         # Close the rest of the mutation-survivor class (config / progressive /
         # denoise VALUES, not just flag presence).

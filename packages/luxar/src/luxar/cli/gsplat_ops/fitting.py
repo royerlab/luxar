@@ -136,14 +136,24 @@ def denoise_volume_cmd(
         raise typer.Exit(1) from e
 
 
+# Whole-volume voxel budget for ``--tiling auto``: below this a volume fits
+# whole (no tiling), avoiding spurious tile seams on small/medium stacks. ~4x a
+# 256^3 tile — a 28M-voxel neuromast stack fits whole; gigavoxel volumes tile.
+_AUTO_WHOLE_VOLUME_VOXELS = 64_000_000
+
+
 def _resolve_tiling(
     tiling: str, shape: "tuple[int, ...]", tile_size: int, has_density: bool
 ) -> str:
     """Resolve ``--tiling`` to a concrete strategy: ``none | uniform | content``.
 
-    ``auto`` fits the whole volume when it fits in a single tile, else uniform —
-    or content when a transferable density (``--cal`` / ``--k-star-ref`` / a
-    ``--plan`` / ``--plan-box``) is available to size content-balanced boxes.
+    ``auto`` fits the whole volume unless it is genuinely large — i.e. some
+    dimension exceeds ``tile_size`` AND the total voxel count exceeds
+    :data:`_AUTO_WHOLE_VOLUME_VOXELS`. A single dim over ``tile_size`` is not
+    enough on its own (that needlessly tiled small stacks and produced visible
+    background seams). When tiling IS selected, ``content`` is used when a
+    transferable density (``--cal`` / ``--k-star-ref`` / ``--plan``) is
+    available, else ``uniform``.
     """
     t = tiling.lower()
     if t not in ("auto", "none", "uniform", "content"):
@@ -152,7 +162,11 @@ def _resolve_tiling(
         )
     if t != "auto":
         return t
-    large = any(int(s) > int(tile_size) for s in shape)
+    n_voxels = 1
+    for s in shape:
+        n_voxels *= int(s)
+    exceeds_dim = any(int(s) > int(tile_size) for s in shape)
+    large = exceeds_dim and n_voxels > _AUTO_WHOLE_VOLUME_VOXELS
     if not large:
         return "none"
     return "content" if has_density else "uniform"
@@ -381,6 +395,14 @@ def fit_volume(
     ),
     # Frequently used fit params
     lr: Optional[float] = typer.Option(None, "--lr", help="Learning rate"),
+    floor: str = typer.Option(
+        "auto",
+        "--floor",
+        help="Background floor / DC-offset suppression before normalization "
+        "(on by default). auto = histogram-mode estimate (capped at median; "
+        "no-op on clean data) | pN = Nth percentile (e.g. p10) | <float> = "
+        "fixed value | none = disable (hard-min normalization).",
+    ),
     seed_method: Optional[str] = typer.Option(
         None, "--seed-method", help="Seed generation method"
     ),
@@ -900,6 +922,7 @@ def fit_volume(
                     iters=iters,
                     loss=loss,
                     lr=lr,
+                    floor=floor,
                     cull_retention=cull_retention,
                     device=device,
                     jobs=jobs,
@@ -991,6 +1014,7 @@ def fit_volume(
                 "device": device,
                 "loss_type": loss,
                 "lr": lr,
+                "floor": floor,
                 "seed_method": seed_method,
                 "verbose": verbose,
                 "cull_retention": cull_retention,
@@ -1117,6 +1141,7 @@ def fit_volume(
                             config=config,
                             loss=loss,
                             lr=lr,
+                            floor=floor,
                             seed_method=seed_method,
                             downscale=ds_arg,
                             channel=channel,
@@ -1534,6 +1559,13 @@ def calibrate_command(
     config: Optional[Path] = typer.Option(
         None, "--config", help="YAML overrides for fit parameters"
     ),
+    floor: str = typer.Option(
+        "auto",
+        "--floor",
+        help="Background floor / DC-offset suppression (on by default), so K* "
+        "is measured on floor-suppressed data (matches how you will fit). "
+        "auto | pN | <float> | none. See `gsplat fit --help`.",
+    ),
     device: Optional[str] = typer.Option(
         None, "--device", "-d", help="Device: auto/cpu/cuda/mps"
     ),
@@ -1728,7 +1760,7 @@ def calibrate_command(
             fit_kwargs = load_fit_config(
                 preset=preset,
                 config_path=config,
-                cli_overrides={"device": device},
+                cli_overrides={"device": device, "floor": floor},
             )
             # Calibration runs many fits — keep them quiet
             fit_kwargs["verbose"] = False

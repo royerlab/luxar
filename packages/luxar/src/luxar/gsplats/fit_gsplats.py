@@ -99,6 +99,7 @@ class GaussianSplatFitter:
         V: np.ndarray,
         seeds: Optional[np.ndarray | int | float | GSplatData] = None,
         norm_percentile: float = 0.0,
+        floor: "str | float | None" = "auto",
         downscale: Optional[int | Sequence[int]] = None,
         init_sigma_vox: Optional[float] = None,
         n_iters: int = 1000,
@@ -174,6 +175,7 @@ class GaussianSplatFitter:
             V,
             seeds,
             norm_percentile,
+            floor=floor,
             downscale=downscale,
             init_sigma_vox=init_sigma_vox,
             n_iters=n_iters,
@@ -249,6 +251,7 @@ def fit_gaussian_splats(
     V: np.ndarray,
     seeds: Optional[np.ndarray | int | float | GSplatData] = None,
     norm_percentile: float = 0.0,
+    floor: "str | float | None" = "auto",
     downscale: Optional[int | Sequence[int]] = None,
     init_sigma_vox: Optional[float] = None,
     n_iters: int = 1000,
@@ -343,6 +346,17 @@ def fit_gaussian_splats(
         - 0.0: Full min-max range (maximum dynamic range, sensitive to outliers)
         - >0: Percentile clipping (e.g., 1.0 uses 1%-99% range, robust to outliers)
         Higher values provide more outlier robustness but may clip important data.
+    floor : str, float, or None, default="auto"
+        Background floor / DC-offset suppression, applied before normalization
+        (subtracts a constant pedestal that a localized-Gaussian basis cannot
+        represent efficiently). Raises the effective image_min so sub-floor
+        intensity clips to 0.
+        - "auto": histogram-mode estimate (capped at the median; a no-op on
+          clean data with no pedestal).
+        - "pN" (e.g. "p10"): the Nth intensity percentile.
+        - float: a fixed intensity value.
+        - "none" / 0 / None: disabled (today's hard-min normalization).
+        Orthogonal to ``norm_percentile`` (which still governs image_max).
     downscale : int, sequence of int, or None, default=None
         Downsample the volume by integer factor(s) before fitting.
         Useful for band-limited data where high-frequency voxels contain only noise.
@@ -558,6 +572,7 @@ def fit_gaussian_splats(
             V=V,
             seeds=seeds,
             norm_percentile=norm_percentile,
+            floor=floor,
             downscale=downscale,
             init_sigma_vox=init_sigma_vox,
             n_iters=n_iters,

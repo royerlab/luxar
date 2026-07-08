@@ -40,6 +40,7 @@ class FitConfig:
     seeds: Optional[str] = None
     iters: Optional[int] = None
     config: Optional[Path] = None
+    floor: Optional[str] = "auto"
     progressive: bool = False
     splats_per_pass: Optional[int] = None
     psnr_patience: Optional[float] = None
@@ -326,6 +327,8 @@ def _assemble_fit_args(
         fit_args["iters"] = str(fit.iters)
     if fit.config:
         fit_args["config"] = str(fit.config)
+    if fit.floor is not None:
+        fit_args["floor"] = str(fit.floor)
     if fit.progressive:
         fit_args["progressive"] = ""  # boolean flag, no value
     if fit.splats_per_pass is not None:

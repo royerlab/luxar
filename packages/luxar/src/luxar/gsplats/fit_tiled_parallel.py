@@ -80,6 +80,7 @@ def build_worker_cmd(
     config: Optional[str | Path] = None,
     loss: Optional[str] = None,
     lr: Optional[float] = None,
+    floor: Optional[str] = None,
     seed_method: Optional[str] = None,
     downscale: Optional[str] = None,
     channel: Optional[int] = None,
@@ -138,6 +139,8 @@ def build_worker_cmd(
         cmd += ["--loss", loss]
     if lr is not None:
         cmd += ["--lr", str(lr)]
+    if floor is not None:
+        cmd += ["--floor", str(floor)]
     if seed_method:
         cmd += ["--seed-method", seed_method]
     if downscale is not None:

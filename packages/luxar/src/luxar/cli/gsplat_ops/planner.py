@@ -62,6 +62,7 @@ def run_content_fit(
     iters: Optional[int] = None,
     loss: Optional[str] = None,
     lr: Optional[float] = None,
+    floor: Optional[str] = None,
     cull_retention: Optional[float] = None,
     device: Optional[str] = None,
     jobs: str = "1",
@@ -121,6 +122,7 @@ def run_content_fit(
                 "n_iters": iters,
                 "loss_type": loss,
                 "lr": lr,
+                "floor": floor,
             },
         )
         fk.pop("seeds", None)
@@ -265,6 +267,7 @@ def run_content_fit(
             plan_json_path,
             preset=preset or "standard",
             device=device,
+            floor=floor,
             channel=channel,
             timepoint=timepoint,
             array_key=array_key,

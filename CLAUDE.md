@@ -214,9 +214,20 @@ luxar gsplat fit data.zarr.zip splats.gsplats.zarr --array-key h2afva/fused  # N
 luxar gsplat fit volume.tiff splats.gsplats.zarr --preset hifi --iters 8000  # Override iterations
 luxar gsplat fit --dump-config --preset hifi > config.yaml  # Generate config template
 
+# Background floor / DC-offset suppression: `--floor` is ON by default (`auto`).
+# A constant pedestal (camera offset, autofluorescence) is the worst case for a
+# localized-Gaussian basis, so the floor is subtracted (clip at 0) before
+# normalization; output amplitudes are background-relative. auto = histogram-mode
+# estimate (capped at the median; a no-op on clean data with no pedestal).
+luxar gsplat fit volume.tiff splats.gsplats.zarr                 # --floor auto (default)
+luxar gsplat fit volume.tiff splats.gsplats.zarr --floor p10     # subtract 10th percentile
+luxar gsplat fit volume.tiff splats.gsplats.zarr --floor 110     # subtract a fixed value
+luxar gsplat fit volume.tiff splats.gsplats.zarr --floor none    # disable (hard-min, legacy)
+
 # Tiling: `--tiling auto` (default) picks none/uniform/content automatically
-# (none if the volume fits one tile; content if a density is supplied; else
-# uniform). A tiled fit (`--tiling uniform` or `--tiling content`) emits a
+# (none if the volume fits one tile — a total voxel budget, so small/medium
+# stacks stay whole and avoid tile seams; content if a density is supplied;
+# else uniform). A tiled fit (`--tiling uniform` or `--tiling content`) emits a
 # `kind=partition` by default (one part per tile/box, for viewer frustum
 # culling); pass `--flat` for a single flat leaf. Whole-volume fits
 # (`--tiling none`/small auto) stay a single leaf.
@@ -346,6 +357,10 @@ luxar gsplat cal volume.zarr cal.json --progression power --power 2  # Polynomia
 # splat_density (consumed by `fit --tiling content`). WARNING: one K-sweep per
 # scale, so runtime is multiplied by the number of scales.
 luxar gsplat cal volume.zarr cal.json --fit-exponent --exponent-scales 128,192,256
+# `cal` applies the SAME `--floor` (default auto) as `fit`, subtracting the floor
+# ONCE up front so K* is measured on floor-suppressed data (matching how you fit).
+# Pass `--floor none` to reproduce the legacy hard-min manuscript numbers.
+luxar gsplat cal volume.tiff cal.json --floor none               # legacy (no floor)
 # Output: K* + curve type {peak | plateau | signal_limited} + noise-floor σ̂ + PSNR ceiling.
 # Then re-run fit at the recommended K: luxar gsplat fit volume.zarr out.zarr --seeds <K*>
 

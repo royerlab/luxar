@@ -141,6 +141,12 @@ def batch_submit(
     # Fit params
     preset: str = typer.Option("standard", "--preset", help="Fitting preset"),
     config: Optional[Path] = typer.Option(None, "--config", help="YAML fit config"),
+    floor: str = typer.Option(
+        "auto",
+        "--floor",
+        help="Background floor / DC-offset suppression per tile (on by "
+        "default): auto | pN | <float> | none. See `gsplat fit --help`.",
+    ),
     seeds: Optional[str] = typer.Option(None, "--seeds", help="Seed count or ratio"),
     iters: Optional[int] = typer.Option(
         None, "--iters", "-n", help="Max optimization iterations (overrides preset)"
@@ -553,6 +559,7 @@ def batch_submit(
             seeds=seeds,
             iters=iters,
             config=config,
+            floor=floor,
             progressive=batch_progressive,
             splats_per_pass=batch_splats_per_pass,
             psnr_patience=batch_psnr_patience,
@@ -1063,6 +1070,12 @@ def batch_run(
     # Fit params
     preset: str = typer.Option("standard", "--preset", help="Fitting preset"),
     config: Optional[Path] = typer.Option(None, "--config", help="YAML fit config"),
+    floor: str = typer.Option(
+        "auto",
+        "--floor",
+        help="Background floor / DC-offset suppression per tile (on by "
+        "default): auto | pN | <float> | none. See `gsplat fit --help`.",
+    ),
     seeds: Optional[str] = typer.Option(None, "--seeds", help="Seed count or ratio"),
     iters: Optional[int] = typer.Option(
         None, "--iters", "-n", help="Max optimization iterations (overrides preset)"
@@ -1256,6 +1269,7 @@ def batch_run(
             seeds=seeds,
             iters=iters,
             config=config,
+            floor=floor,
             progressive=batch_progressive,
             splats_per_pass=batch_splats_per_pass,
             psnr_patience=batch_psnr_patience,
