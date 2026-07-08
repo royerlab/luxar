@@ -370,6 +370,15 @@ module = [
 ]
 follow_imports = "skip"
 
+# The `# type: ignore[misc]` on the numba.njit decorators is needed when
+# numba is installed (typed decorator -> untyped-decorator error) but is
+# "unused" in envs without numba, where the ignore_missing_imports override
+# turns the decorator into Any. Silence the env-dependent unused-ignore
+# warning for this one module.
+[[tool.mypy.overrides]]
+module = ["luxar.io.ordering"]
+warn_unused_ignores = false
+
 # Relax strict rules for test files. ignore_errors is kept on:
 # narrowing it surfaces ~540 mypy hits, mostly noise from intentional
 # negative tests passing wrong types into validation functions to verify
