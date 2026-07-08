@@ -1366,4 +1366,31 @@ describe('AdaptiveDPRManager — sustained distress demotes the ceiling to 1.0',
       restore();
     }
   });
+
+  it('pause dead-time never counts toward the sustained-distress bar (stale-state regression)', () => {
+    // Regression: the estimator's plateau clock and recent window used
+    // to survive notifyPaused(), so ~8s of pre-pause lows + 2 minutes
+    // of idle dead time + a couple of janky post-resume windows fired
+    // an immediate wrongful demotion. After the fix, the sustained
+    // requirement must be re-earned from FRESH post-resume samples.
+    const restore = setNativeDPR(2.0);
+    const m = new AdaptiveDPRManager();
+    const r = makeRenderer();
+    m.setRenderer(r);
+    try {
+      pushFrames(m, 0, 81, 8000); // ~10fps for 8s — under the 10s bar
+      m.notifyPaused(); // idle pause; loop stops
+
+      // Resume 2 minutes later, still slow for a few seconds.
+      pushFrames(m, 128_000, 41, 4000); // 4s at ~10fps post-resume
+      expect(m.getState().dprCeiling).toBe(2.0); // NOT demoted yet
+
+      // ...but genuinely sustained post-resume distress still demotes.
+      pushFrames(m, 132_100, 201, 20_000); // 20 more seconds at ~10fps
+      expect(m.getState().dprCeiling).toBe(1.0);
+      expect(m.getState().currentDPR).toBe(1.0);
+    } finally {
+      restore();
+    }
+  });
 });

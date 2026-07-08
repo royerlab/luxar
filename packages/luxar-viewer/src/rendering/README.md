@@ -329,7 +329,7 @@ The `AdaptiveDPRManager` dynamically adjusts device pixel ratio based on real-ti
 
 - Every scale-down is probe-verified: if FPS did not improve ≥ `probeImprovement` on a clean sample (`probeMinSamples`, half-window span, not load-suppressed), it reverts and the probed DPR becomes a floor; unclean probes void as inconclusive (nothing learned)
 - Repeated identical rejections back off exponentially (`floorTtlMs` × `backoffMultiplier`^n, capped) — no eternal probe/blur cycle on scenes DPR reduction can't help
-- On HiDPI displays, repeated "punished ascents" (a scale-up above 1.0 followed by an FPS collapse) demote the operating ceiling from native to exactly 1.0 for the session (TTL-decayed, backed off on re-demotion)
+- On HiDPI displays, the operating ceiling demotes from native to exactly 1.0 for the session (TTL-decayed, backed off on re-demotion) on either kind of evidence: repeated "punished ascents" (a scale-up above 1.0 followed by an FPS collapse), or sustained sub-throttle DISTRESS — FPS below what any real display mode can produce (< ~22 fps) for a sustained period, which the estimator reports instead of ever latching its throttle verdict down there (pre-fix that latch collapsed the cap onto the loaded FPS and parked the DPR at native on exactly the scenes that needed help)
 - `notifyContentChanged()` (dataset/layer/LOD changes) pulls learned-bound expiries forward and resets backoff streaks; `setLoadActivityPredicate()` suppresses all learning while data loads
 
 **Idle/pause integration:**

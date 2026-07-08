@@ -66,19 +66,23 @@ const UNTHROTTLE_FRACTION = 0.8;
  */
 const THROTTLE_EXIT_FACTOR = 1.25;
 /**
- * No real display/rAF throttle runs below this rate (30Hz low-power is
- * the slowest genuine regime; occluded-tab throttles don't interact),
- * so a sustained plateau BELOW it cannot be a throttle — it is heavy
- * content in distress. Latching the throttle verdict on such a plateau
- * is the catastrophic misfire: the cap collapses onto the loaded FPS,
- * the relative thresholds then read ~10fps as "at the display cap =
- * healthy", scale-up walks the DPR back to native and parks it there,
- * and the plateau-anchored exit line (×1.25) is unreachable for a
- * GPU-bound scene — the mistake latches for the content's lifetime.
- * Instead the estimator reports DISTRESS (see consumeDistress), which
- * the manager answers with a DPR-ceiling demotion to 1.0.
+ * No real display/rAF regime runs below this rate while the user
+ * interacts (the slowest genuine modes are 30Hz low-power and the
+ * ~23.976Hz film/NTSC desktop modes of 4K TVs over HDMI 1.4; occluded
+ * -tab throttles don't interact), so a sustained plateau BELOW it
+ * cannot be a display — it is heavy content in distress. The line sits
+ * at 22, safely under 23.976, so a healthy vsync-bound 24Hz-TV session
+ * is never read as distress. Latching the throttle verdict on such a
+ * plateau is the catastrophic misfire: the cap collapses onto the
+ * loaded FPS, the relative thresholds then read ~10fps as "at the
+ * display cap = healthy", scale-up walks the DPR back to native and
+ * parks it there, and the plateau-anchored exit line (×1.25) is
+ * unreachable for a GPU-bound scene — the mistake latches for the
+ * content's lifetime. Instead the estimator reports DISTRESS (see
+ * consumeDistress), which the manager answers with a DPR-ceiling
+ * demotion to 1.0.
  */
-const MIN_THROTTLE_PLATEAU = 24;
+const MIN_THROTTLE_PLATEAU = 22;
 
 export class RefreshRateEstimator {
   private mark = 0;
@@ -146,11 +150,36 @@ export class RefreshRateEstimator {
    * The intended response is a DPR-ceiling demotion, not a cap change
    * (the cap deliberately stays fallback-floored so scale-down stays
    * armed).
+   *
+   * RE-VALIDATED AT CONSUMPTION: a verdict can be latched on a tick the
+   * manager doesn't consume (probe in flight, load suppression) and go
+   * stale if the workload lightens before the next clean tick. The
+   * verdict is therefore only honored while the CURRENT sample window
+   * still shows distress; otherwise it is dropped (a genuinely
+   * distressed scene re-earns it within DOWNSHIFT_AFTER_MS).
    */
   consumeDistress(): boolean {
     const d = this.distressSignal;
     this.distressSignal = false;
-    return d;
+    if (!d) return false;
+    return this.recent.length >= RECENT_SAMPLES && Math.max(...this.recent) < MIN_THROTTLE_PLATEAU;
+  }
+
+  /**
+   * The frame loop was interrupted (idle pause, tab hide, a long
+   * stall's gap-reset): the sample stream broke, so the SESSION-grade
+   * transients are stale — the recent window (pre-gap frames), the
+   * uniform-low plateau clock (which would otherwise count unobserved
+   * wall-clock dead time toward the "sustained" requirement and let a
+   * single janky post-resume window fire an immediate verdict), and an
+   * unconsumed distress latch. LEARNED state survives: the high-water
+   * mark, a latched throttle verdict, and the proven-rate flag all
+   * describe the display/content, not the interrupted sample stream.
+   */
+  noteSessionInterrupted(): void {
+    this.recent = [];
+    this.lowUniformSince = null;
+    this.distressSignal = false;
   }
 
   /**

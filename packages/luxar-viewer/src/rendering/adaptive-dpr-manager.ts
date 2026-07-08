@@ -305,6 +305,10 @@ export class AdaptiveDPRManager {
       this.fpsTracker.clear();
       this.probeController.void_();
       this.hysteresis.clear();
+      // The estimator's uniform-low plateau clock and recent window
+      // span the gap too — dead time must not count toward a
+      // "sustained" throttle/distress verdict (learned state survives).
+      this.refreshRateEstimator.noteSessionInterrupted();
       this.lastEvaluationTime = timestamp;
     }
 
@@ -820,6 +824,13 @@ export class AdaptiveDPRManager {
     this.fpsTracker.clear();
     this.hysteresis.clear();
     this.probeController.void_();
+    // The estimator's SESSION transients (recent window, uniform-low
+    // plateau clock, an unconsumed distress latch) describe the frame
+    // stream the pause just broke — clear them so pause dead time
+    // never counts toward a "sustained" verdict and a stale latch
+    // can't demote a session that resumes light. Its LEARNED state
+    // (high-water mark, throttle verdict, proven rate) survives.
+    this.refreshRateEstimator.noteSessionInterrupted();
   }
 
   /**

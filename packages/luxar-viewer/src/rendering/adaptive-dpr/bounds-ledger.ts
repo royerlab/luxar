@@ -13,10 +13,12 @@
  * - Ceiling: on HiDPI displays, DPR above 1.0 is a luxury — 1.0 is
  *   exactly what every standard display renders — with a 4x fill cost
  *   at 2x native. When scale-ups above 1.0 keep getting PUNISHED (FPS
- *   collapses shortly after the ascent), the scene has proven it can't
- *   sustain the luxury: the operating ceiling demotes from native to
- *   exactly 1.0, killing the up/down oscillation instead of slowing
- *   it. Session-only; decays after a TTL (backed off on re-demotion).
+ *   collapses shortly after the ascent), or the estimator reports
+ *   sustained sub-throttle DISTRESS (demoteCeiling called directly),
+ *   the scene has proven it can't sustain the luxury: the operating
+ *   ceiling demotes from native to exactly 1.0, killing the up/down
+ *   oscillation instead of slowing it. Session-only; decays after a
+ *   TTL (backed off on re-demotion).
  * - Content changes soften the ledger: expiries are pulled forward so
  *   re-probes/re-ascents happen within `recheckMs`, and the escalation
  *   streaks reset — new content deserves fresh evidence.

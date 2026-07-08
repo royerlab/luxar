@@ -211,6 +211,16 @@ describe('RefreshRateEstimator', () => {
     expect(est.consumeDistress()).toBe(true);
   });
 
+  it('spiky FPS straddling the plateau line does NOT fire distress (max governs, not min)', () => {
+    const est = new RefreshRateEstimator(60);
+    // Alternating 20/40: dips below 24 but the scene demonstrably still
+    // reaches 40fps — not sustained distress. The normal relative
+    // scale-down machinery (cap stays 60) handles this regime instead.
+    feed(est, 30, 30, 0, 10); // 20..40 for ~15s
+    expect(est.consumeDistress()).toBe(false);
+    expect(est.getCap()).toBe(60);
+  });
+
   it('distress needs the sustained period — a brief dip does not fire', () => {
     const est = new RefreshRateEstimator(60);
     feed(est, 10, 12, 0); // only ~5.5s below the line
@@ -230,6 +240,49 @@ describe('RefreshRateEstimator', () => {
     feed(est, 10, 30, 0);
     est.noteContentChanged();
     expect(est.consumeDistress()).toBe(false);
+  });
+
+  it('a healthy 24Hz film/TV display mode (23.976fps) is NOT distress', () => {
+    const est = new RefreshRateEstimator(60);
+    // Macs driving 4K TVs over HDMI 1.4 run the whole desktop at
+    // ~23.976Hz — a vsync-bound session there is healthy, not heavy.
+    feed(est, 23.9, 40, 0); // 20s of uniform ~24fps
+    expect(est.consumeDistress()).toBe(false);
+    expect(est.getCap()).toBe(60); // and no throttle latch (unproven)
+  });
+
+  it('a stale latched verdict is dropped at consumption if the window has recovered', () => {
+    const est = new RefreshRateEstimator(60);
+    // Verdict latches during a grind but is not consumed (probe in
+    // flight / load suppression on the manager side)...
+    const t = feed(est, 10, 30, 0);
+    // ...then the workload lightens BEFORE the next clean tick.
+    feed(est, 120, 4, t + 500);
+    // Consumption re-validates against the live window: no demotion
+    // of a session that has since recovered.
+    expect(est.consumeDistress()).toBe(false);
+    // And the latch is spent — it does not linger for a later tick.
+    expect(est.consumeDistress()).toBe(false);
+  });
+
+  it('noteSessionInterrupted() stops pause dead-time from counting as "sustained"', () => {
+    const est = new RefreshRateEstimator(60);
+    feed(est, 10, 12, 0); // ~5.5s below the line — under the 10s bar
+    est.noteSessionInterrupted(); // idle pause / gap reset
+    // Two minutes later a single janky post-resume window arrives.
+    // Without the reset, the stale plateau clock (wall-clock 120s) and
+    // stale recent[] samples would fire distress immediately.
+    est.addSample(15, 120_000);
+    expect(est.consumeDistress()).toBe(false);
+  });
+
+  it('noteSessionInterrupted() clears an unconsumed distress latch but keeps learned state', () => {
+    const est = new RefreshRateEstimator(60);
+    feed(est, 120, 4, 0); // prove the display (learned mark)
+    feed(est, 10, 30, 2000); // latch distress
+    est.noteSessionInterrupted();
+    expect(est.consumeDistress()).toBe(false);
+    expect(est.getCap()).toBe(120); // high-water mark survives
   });
 
   it('a 30Hz-class plateau is still a throttle, not distress (above the plateau line)', () => {

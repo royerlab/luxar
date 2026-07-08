@@ -6,6 +6,30 @@ All notable changes to Luxar are documented in this file.
 
 ### July 2026
 
+#### Fixed — adaptive DPR: sub-throttle distress verdict (heavy scenes no longer latch at native)
+
+- **Why**: on a heavy scene pinned at a uniform ~10 fps, the viewer's adaptive
+  resolution refused to lower the DPR — it showed `DPR 2.00 @ 10 FPS`
+  permanently. The refresh-rate estimator's throttle detector misread the
+  GPU-bound plateau as a browser rAF throttle (the display had proven ~120 Hz
+  earlier), reseeded its cap onto the loaded FPS, and the cap-relative
+  thresholds then read 10 fps as "at the display cap = healthy": scale-up
+  walked the DPR back to native and parked it there, with an exit line
+  (plateau ×1.25) unreachable while GPU-bound.
+- **Fix**: no real display/rAF mode runs below ~23.976 Hz (film/TV) while the
+  user interacts, so a sustained
+  plateau below `MIN_THROTTLE_PLATEAU` (22 fps — safely under the slowest real
+  display mode, 23.976 Hz film/TV) is now classified as content
+  **distress**, never a throttle: the cap stays fallback-floored (scale-down
+  stays armed) and the estimator raises a one-shot verdict that the manager
+  answers with a DPR-ceiling demotion to exactly 1.0 in one step
+  (`BoundsLedger.demoteCeiling`, same TTL/backoff ladder as the
+  punished-ascent demotion). Genuine throttles (≥ 22 fps plateaus, e.g.
+  120→30 low-power) keep the existing downshift behavior.
+- **Verified live**: the same repro (90 ms rAF stall) now demotes to DPR 1.0
+  within ~10 s of sustained distress, the cap stays ~144, and the normal
+  probe walk continues below 1.0 once the rejected-probe floor expires.
+
 #### Fixed — barrier-aware GSplat chunk ordering (per-timepoint load locality)
 
 - **Why**: navigating to a fresh timepoint in a dense timelapse loaded high-res
