@@ -6,8 +6,6 @@ import time as time  # noqa: F401 - kept for test monkeypatch path stability
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-import typer
-
 from .inspect_commands import _ascii_histogram as _ascii_histogram_impl
 from .inspect_commands import (
     _compute_splat_volumes as _compute_splat_volumes_impl,
@@ -23,6 +21,9 @@ from .inspect_commands import compare_quality as _compare_quality_cmd
 from .inspect_commands import info_dataset as _info_dataset_cmd
 from .inspect_commands import napari_viewer as _napari_viewer_cmd
 from .inspect_commands import quick_view as _quick_view_cmd
+from .inspect_commands import (
+    register_inspect_commands as register_inspect_commands,
+)
 
 if TYPE_CHECKING:
     import numpy as np
@@ -73,12 +74,3 @@ def _print_gsplat_tree_summary(path: Path) -> None:
 def annotate_quality(*args: Any, **kwargs: Any) -> None:
     """Back-compat wrapper around annotate-quality command function."""
     return _annotate_quality_cmd(*args, **kwargs)
-
-
-def register_inspect_commands(app: typer.Typer) -> None:
-    """Register the inspect commands onto ``app_gsplat``."""
-    app.command("info")(_info_dataset_cmd)
-    app.command("view")(_quick_view_cmd)
-    app.command("napari")(_napari_viewer_cmd)
-    app.command("compare")(_compare_quality_cmd)
-    app.command("annotate-quality")(_annotate_quality_cmd)
