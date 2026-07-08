@@ -12,6 +12,7 @@ and registers command groups from this package.
 - `fitting_denoise_render.py` — `denoise` + `render` implementations
 - `fitting_fit.py` — `fit` command implementation
 - `fitting_fit_utils.py` — shared fit helpers (tiling/recipe args/output save)
+- `fitting_recipe_args.py` — fit-time `--recipe` option parsing/validation
 - `batch.py` — `batch-fit` app export + compatibility wrappers
 - `batch_commands.py` — `batch-fit` app wiring + command wrappers
 - `batch_submit.py` — `batch-fit submit` implementation
@@ -24,9 +25,18 @@ and registers command groups from this package.
 - `batch_merge_command.py` — `batch-fit merge` implementation
 - `batch_status_validate_cancel.py` — `batch-fit status` / `validate` / `cancel` implementations
 - `batch_denoise_workers.py` — hidden `batch-fit` denoise worker command implementations
+- `batch_measurement.py` — tile store size / bytes-per-splat measurement helpers
+- `batch_recipe_args.py` — merge-time `--recipe` option parsing/validation
+- `batch_validation.py` — structural tile-store validation helpers (leaf arrays, node dirs)
 - `transforms.py` — command registration + compatibility wrappers for edit-style commands
 - `transforms_commands.py` — Typer command signatures for edit-style commands
 - `transforms_transform.py` — `transform` implementation
+- `transforms_merge.py` — `merge` implementation
+- `transforms_cull.py` — `cull` implementation
+- `transforms_filter_slice.py` — `filter` + `slice` implementations
+- `transforms_partition_flatten.py` — `partition` + `flatten` implementations
+- `transforms_additive.py` — `additive` implementation
+- `transforms_parsing.py` — shared parsing helpers (bbox, slices, CSV floats)
 - `scene.py` — scene command registration + compatibility wrappers
 - `scene_commands.py` — Typer command signatures for convert/migrate-format/reencode
 - `inspect.py` — inspect command registration + compatibility wrappers
