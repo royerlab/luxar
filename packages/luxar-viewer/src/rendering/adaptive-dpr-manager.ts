@@ -18,6 +18,10 @@
  *   (re-read on every evaluation/public read — monitor drags and browser
  *   zoom change it at runtime) and stops strictly above
  *   max(minDPR, learned U-shape floor)
+ * - Sustained distress-level FPS (below what any real display throttle
+ *   can produce) demotes the operating ceiling to 1.0 in one step —
+ *   HiDPI is a luxury a scene at ~10fps has proven it can't afford
+ *   (see the estimator's sub-throttle distress verdict)
  *
  * # U-shape awareness
  *
@@ -386,6 +390,33 @@ export class AdaptiveDPRManager {
       );
     }
 
+    // Sustained sub-throttle DISTRESS (FPS below what any real display
+    // throttle can produce, for a sustained period) demotes the ceiling
+    // to 1.0 in one step: the scene has proven it can't afford the
+    // above-1.0 HiDPI luxury, and the multiplicative scale-down walk
+    // (≈7 probed steps from 2.0) would leave the user at ~10fps for
+    // tens of seconds. The estimator deliberately reports this instead
+    // of latching its throttle verdict — the pre-fix failure mode
+    // collapsed the cap onto the loaded FPS, read ~10fps as "at the
+    // display cap = healthy", and scale-up parked the DPR at native
+    // for the content's lifetime.
+    if (!suppressed && this.refreshRateEstimator.consumeDistress()) {
+      if (this.currentDPR > 1.0 + 0.001) {
+        const ttlMs = this.boundsLedger.demoteCeiling(timestamp);
+        this.applyCeilingDemotion(
+          fps,
+          `Sustained distress-level FPS (${fps.toFixed(1)}) — too slow to be a display ` +
+            `throttle; demoting the ceiling to 1.0 for ${(ttlMs / 1000).toFixed(0)}s ` +
+            '(TTL-decayed; content changes re-check)'
+        );
+        this.hysteresis.recordLow();
+        return;
+      }
+      // Already at/below 1.0: nothing to demote — the verdict is
+      // consumed (it re-arms) and the normal scale-down walk below
+      // keeps working the reduction.
+    }
+
     if (fps < downThreshold) {
       // A slow sample right after a scale-up above 1.0 is a "punished
       // ascent" — enough of those and the ledger demotes the operating
@@ -537,12 +568,16 @@ export class AdaptiveDPRManager {
    * Apply a just-decided ceiling demotion: clamp the operating DPR to
    * 1.0 in one step (this replaces the tick's multiplicative
    * scale-down — the clamp is usually the larger move).
+   *
+   * @param reason - Optional log line override; default describes the
+   *   punished-ascent path.
    */
-  private applyCeilingDemotion(fps: number): void {
+  private applyCeilingDemotion(fps: number, reason?: string): void {
     log.warning(
       Modules.ADAPTIVE_DPR,
-      `Repeated punished ascents above DPR 1.0 (FPS ${fps.toFixed(1)}) — ` +
-        'ceiling demoted to 1.0 for this session (TTL-decayed; content changes re-check)'
+      reason ??
+        `Repeated punished ascents above DPR 1.0 (FPS ${fps.toFixed(1)}) — ` +
+          'ceiling demoted to 1.0 for this session (TTL-decayed; content changes re-check)'
     );
     if (this.currentDPR <= 1.0 + 0.001) return;
 

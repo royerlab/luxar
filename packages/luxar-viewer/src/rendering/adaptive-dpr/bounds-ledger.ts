@@ -177,7 +177,8 @@ export class BoundsLedger {
    */
   recordSlowSample(timestamp: number): boolean {
     if (!this.lastAscent) return false;
-    const withinWindow = timestamp - this.lastAscent.timestamp <= this.config.punishedAscentWindowMs;
+    const withinWindow =
+      timestamp - this.lastAscent.timestamp <= this.config.punishedAscentWindowMs;
     this.lastAscent = null;
     if (!withinWindow) {
       // The ascent outlived its punishment window before any slow
@@ -190,7 +191,23 @@ export class BoundsLedger {
     this.punishedAscentCount++;
     if (this.punishedAscentCount < this.config.punishedAscentThreshold) return false;
 
+    this.demoteCeiling(timestamp);
+    return true;
+  }
+
+  /**
+   * Demote the ceiling to 1.0 directly on outside evidence (sustained
+   * sub-throttle distress — FPS too low to be any real display
+   * throttle), bypassing the punished-ascent tally: the scene has
+   * already proven it can't afford the above-1.0 luxury without any
+   * ascent experiment. Same TTL/backoff ladder as an earned demotion —
+   * a scene that keeps re-earning it holds it longer each time.
+   *
+   * @returns the TTL applied, ms (for logging)
+   */
+  demoteCeiling(timestamp: number): number {
     this.punishedAscentCount = 0;
+    this.lastAscent = null;
     this.ceilingBackoffLevel++;
     const ttl = Math.min(
       this.config.ceilingTtlMs *
@@ -199,7 +216,7 @@ export class BoundsLedger {
     );
     this.ceilingDemoted = true;
     this.ceilingExpiresAt = timestamp + ttl;
-    return true;
+    return ttl;
   }
 
   /**

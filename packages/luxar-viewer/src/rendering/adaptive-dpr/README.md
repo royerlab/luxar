@@ -10,7 +10,7 @@ callbacks).
 | Module | Owns |
 |---|---|
 | `fps-tracker.ts` | Sliding-window FPS estimation: O(1) trim/compaction, interval-normalized FPS, sample count / span for probe quality gates |
-| `refresh-rate-estimator.ts` | The display's achievable rAF cap (high-water mark, fallback lower bound, sustained-uniform-low throttle downshift) that the relative FPS thresholds derive from |
+| `refresh-rate-estimator.ts` | The display's achievable rAF cap (high-water mark, fallback lower bound, sustained-uniform-low throttle downshift) that the relative FPS thresholds derive from — plus the one-shot sub-throttle DISTRESS verdict (a sustained plateau below ~24fps can't be a real display throttle, so instead of latching the cap onto it, which would invert the thresholds and park the DPR at native, the manager answers with a ceiling demotion to 1.0) |
 | `hysteresis-tracker.ts` | The sustained-high scale-up streak, with a mid-band grace so isolated dropped-frame samples don't restart the wait |
 | `probe-controller.ts` | U-shape probe lifecycle: arm on scale-down, settle after the probe window on a CLEAN sample (accept / reject vs. the pre-change baseline / inconclusive-void), void on pause or display change |
 | `bounds-ledger.ts` | Learned operating bounds: the rejected-probe floor with exponential rejection backoff, the punished-ascent ceiling (native → 1.0 demotion), TTL decay, and content-change softening |

@@ -35,6 +35,12 @@
  *   throttle — immediately restores the bound, and a content change
  *   resets the throttle verdict outright (it was earned against the
  *   old content's frame stream).
+ * - A sustained plateau BELOW `MIN_THROTTLE_PLATEAU` is never latched
+ *   as a throttle at all — no real display throttle runs that slow, so
+ *   it must be heavy content. The estimator instead raises a one-shot
+ *   DISTRESS verdict (consumeDistress) that the manager answers with a
+ *   DPR-ceiling demotion to 1.0, while the cap stays fallback-floored
+ *   so scale-down remains armed.
  *
  * Pure and timestamp-driven; no clocks, no window, no config imports.
  */
@@ -59,6 +65,20 @@ const UNTHROTTLE_FRACTION = 0.8;
  * for 30Hz-class plateaus, whose mark/0.55 exceeds that line).
  */
 const THROTTLE_EXIT_FACTOR = 1.25;
+/**
+ * No real display/rAF throttle runs below this rate (30Hz low-power is
+ * the slowest genuine regime; occluded-tab throttles don't interact),
+ * so a sustained plateau BELOW it cannot be a throttle — it is heavy
+ * content in distress. Latching the throttle verdict on such a plateau
+ * is the catastrophic misfire: the cap collapses onto the loaded FPS,
+ * the relative thresholds then read ~10fps as "at the display cap =
+ * healthy", scale-up walks the DPR back to native and parks it there,
+ * and the plateau-anchored exit line (×1.25) is unreachable for a
+ * GPU-bound scene — the mistake latches for the content's lifetime.
+ * Instead the estimator reports DISTRESS (see consumeDistress), which
+ * the manager answers with a DPR-ceiling demotion to 1.0.
+ */
+const MIN_THROTTLE_PLATEAU = 24;
 
 export class RefreshRateEstimator {
   private mark = 0;
@@ -77,6 +97,9 @@ export class RefreshRateEstimator {
   // navigated into — after a content change the display must re-prove
   // itself before a downshift is allowed.
   private provenSinceContentChange = false;
+  // One-shot sub-throttle distress verdict (sustained plateau below
+  // MIN_THROTTLE_PLATEAU); latched here until the manager consumes it.
+  private distressSignal = false;
 
   constructor(private readonly fallback: number) {}
 
@@ -115,6 +138,22 @@ export class RefreshRateEstimator {
   }
 
   /**
+   * One-shot sub-throttle distress verdict: true when FPS has stayed
+   * below MIN_THROTTLE_PLATEAU for DOWNSHIFT_AFTER_MS — a regime no
+   * real display throttle can produce, so it is heavy content by
+   * construction. Consuming clears the latch; the detector re-arms and
+   * re-fires after another sustained period if the distress persists.
+   * The intended response is a DPR-ceiling demotion, not a cap change
+   * (the cap deliberately stays fallback-floored so scale-down stays
+   * armed).
+   */
+  consumeDistress(): boolean {
+    const d = this.distressSignal;
+    this.distressSignal = false;
+    return d;
+  }
+
+  /**
    * Scene content genuinely changed (dataset load, layer change, LOD
    * swap): ALL content-relative throttle state resets — the proof that
    * would arm a new downshift AND an already-latched throttle verdict.
@@ -135,6 +174,9 @@ export class RefreshRateEstimator {
     this.lowUniformSince = null;
     this.throttled = false;
     this.throttlePlateau = null;
+    // An unconsumed distress verdict was earned against the old
+    // content's frame stream — the new content deserves fresh evidence.
+    this.distressSignal = false;
   }
 
   /** Forget everything (native-DPR / display change). */
@@ -145,6 +187,7 @@ export class RefreshRateEstimator {
     this.throttled = false;
     this.throttlePlateau = null;
     this.provenSinceContentChange = false;
+    this.distressSignal = false;
   }
 
   private detectThrottle(timestamp: number): void {
@@ -152,33 +195,38 @@ export class RefreshRateEstimator {
       this.lowUniformSince = null;
       return;
     }
-    // A downshift below the fallback floor is only justified when the
-    // display has PROVEN a higher achievable rate — and proven it
-    // AGAINST THE CURRENT CONTENT. Without this guard a steady heavy
-    // scene (uniformly low FPS, low variance — exactly the signature of
-    // a GPU-bound render parked at the DPR floor) would be
+    const max = Math.max(...this.recent);
+    const min = Math.min(...this.recent);
+
+    // Sub-throttle DISTRESS: a plateau below the slowest real display
+    // throttle can only be heavy content. No proof or uniformity
+    // required — sustained sub-24fps is trouble regardless of jitter
+    // or what the display once demonstrated.
+    const distressLow = max < MIN_THROTTLE_PLATEAU;
+
+    // THROTTLE signature: a downshift below the fallback floor is only
+    // justified when the display has PROVEN a higher achievable rate —
+    // and proven it AGAINST THE CURRENT CONTENT. Without this guard a
+    // steady heavy scene (uniformly low FPS, low variance — exactly the
+    // signature of a GPU-bound render parked at the DPR floor) would be
     // misclassified as a throttled display, collapsing the cap onto the
     // loaded FPS and inverting the thresholds: scale-down disarmed and
     // scale-up armed on the scene that most needs fewer pixels. The
     // since-content-change scoping closes the light-then-heavy variant
     // (mark pinned at 60 by a light loading screen, then dense data).
     // Residual ambiguity: heaviness arriving with NO content signal at
-    // all (e.g. rotating an unchanged scene edge-on) is fundamentally
-    // indistinguishable from a throttle by FPS alone; the widened
-    // un-throttle line in addSample bounds that mistake's lifetime.
-    if (!this.provenSinceContentChange) {
-      this.lowUniformSince = null;
-      return;
-    }
-    const max = Math.max(...this.recent);
-    const min = Math.min(...this.recent);
+    // all (e.g. rotating an unchanged scene edge-on) into the 24-48fps
+    // band is fundamentally indistinguishable from a throttle by FPS
+    // alone; the widened un-throttle line in addSample and the
+    // punished-ascent ceiling machinery bound that mistake's lifetime.
     // Compare against the PROVEN mark (not the fallback-floored cap):
     // "uniformly far below what this display demonstrated it can do".
-    const uniformLow =
+    const throttleLow =
+      this.provenSinceContentChange &&
       max < THROTTLE_FRACTION * this.mark &&
       (max - min) / Math.max(max, 1e-6) < UNIFORMITY_SPREAD;
 
-    if (!uniformLow) {
+    if (!distressLow && !throttleLow) {
       this.lowUniformSince = null;
       return;
     }
@@ -187,9 +235,16 @@ export class RefreshRateEstimator {
       return;
     }
     if (timestamp - this.lowUniformSince >= DOWNSHIFT_AFTER_MS) {
-      this.mark = max;
-      this.throttlePlateau = max;
-      this.throttled = true;
+      if (distressLow) {
+        // Never latch the throttle verdict down here (see
+        // MIN_THROTTLE_PLATEAU) — signal distress and re-arm, so a
+        // scene that STAYS distressed re-fires after another period.
+        this.distressSignal = true;
+      } else {
+        this.mark = max;
+        this.throttlePlateau = max;
+        this.throttled = true;
+      }
       this.lowUniformSince = null;
     }
   }

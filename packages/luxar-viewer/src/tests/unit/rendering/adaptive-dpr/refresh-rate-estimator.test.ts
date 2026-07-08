@@ -168,17 +168,75 @@ describe('RefreshRateEstimator', () => {
 
   it('a mis-capped scene recovers as soon as FPS clearly exceeds the throttle plateau', () => {
     const est = new RefreshRateEstimator(60);
-    // Proven at 60, then (no content signal) a uniform-20 regime earns a
-    // downshift — the residual rotation-into-heavy ambiguity.
+    // Proven at 60, then (no content signal) a uniform regime in the
+    // 24-48fps ambiguity band earns a downshift — the residual
+    // rotation-into-heavy ambiguity.
     feed(est, 61, 4, 0);
-    feed(est, 20, 60, 2000);
-    expect(est.getCap()).toBe(20);
+    feed(est, 30, 60, 2000);
+    expect(est.getCap()).toBe(30);
 
-    // The scene lightens a little: 37fps is impossible under a genuine
-    // 20Hz throttle (> mark/THROTTLE_FRACTION ≈ 36.4), so the estimator
-    // must un-throttle immediately — not wait for 48 (80% of fallback),
+    // The scene lightens a little: 45fps is impossible under a genuine
+    // 30Hz throttle (> plateau × 1.25 = 37.5), so the estimator must
+    // un-throttle immediately — not wait for 48 (80% of fallback),
     // which a still-heavy scene may never reach.
-    est.addSample(37, 60_000);
+    est.addSample(45, 60_000);
     expect(est.getCap()).toBe(60);
+  });
+
+  // ── Sub-throttle distress (plateau < MIN_THROTTLE_PLATEAU = 24) ──
+
+  it('a sub-throttle plateau NEVER collapses the cap, even with a proven rate — it raises distress', () => {
+    const est = new RefreshRateEstimator(60);
+    // The pre-fix catastrophic latch: 120 proven, then a GPU-bound
+    // scene parks at uniform 10fps. The old detector latched the cap
+    // onto 10, the relative thresholds then read 10fps as healthy, and
+    // the manager scaled UP to native and parked there forever.
+    feed(est, 120, 4, 0);
+    feed(est, 10, 30, 2000); // 15s of uniform 10fps
+    expect(est.getCap()).toBe(120); // cap intact — scale-down stays armed
+    expect(est.consumeDistress()).toBe(true); // distress raised instead
+    expect(est.consumeDistress()).toBe(false); // one-shot until re-earned
+  });
+
+  it('distress fires without a proven rate (heavy from the very first frame)', () => {
+    const est = new RefreshRateEstimator(60);
+    feed(est, 10, 30, 0); // 15s of 10fps, nothing ever proven
+    expect(est.getCap()).toBe(60);
+    expect(est.consumeDistress()).toBe(true);
+  });
+
+  it('distress tolerates jitter — no uniformity requirement below the plateau line', () => {
+    const est = new RefreshRateEstimator(60);
+    feed(est, 12, 30, 0, 4); // 8..16fps — spread ~50%, all < 24
+    expect(est.consumeDistress()).toBe(true);
+  });
+
+  it('distress needs the sustained period — a brief dip does not fire', () => {
+    const est = new RefreshRateEstimator(60);
+    feed(est, 10, 12, 0); // only ~5.5s below the line
+    expect(est.consumeDistress()).toBe(false);
+  });
+
+  it('distress re-arms and re-fires while the scene stays distressed', () => {
+    const est = new RefreshRateEstimator(60);
+    const t = feed(est, 10, 30, 0);
+    expect(est.consumeDistress()).toBe(true);
+    feed(est, 10, 30, t + 500);
+    expect(est.consumeDistress()).toBe(true);
+  });
+
+  it('a content change clears an unconsumed distress verdict', () => {
+    const est = new RefreshRateEstimator(60);
+    feed(est, 10, 30, 0);
+    est.noteContentChanged();
+    expect(est.consumeDistress()).toBe(false);
+  });
+
+  it('a 30Hz-class plateau is still a throttle, not distress (above the plateau line)', () => {
+    const est = new RefreshRateEstimator(60);
+    feed(est, 120, 4, 0);
+    feed(est, 30, 25, 2000);
+    expect(est.getCap()).toBe(30); // genuine throttle downshift kept
+    expect(est.consumeDistress()).toBe(false);
   });
 });

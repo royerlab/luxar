@@ -1314,3 +1314,56 @@ describe('AdaptiveDPRManager — U-shape probe', () => {
     }
   });
 });
+
+// ---------------------------------------------------------------------
+// Sub-throttle distress → ceiling demotion (the 10fps-at-native latch)
+// ---------------------------------------------------------------------
+
+describe('AdaptiveDPRManager — sustained distress demotes the ceiling to 1.0', () => {
+  it('a proven-fast display + GPU-bound ~10fps scene ends at DPR 1.0, not parked at native', () => {
+    // Regression for the catastrophic estimator latch: the display
+    // proves ~120Hz, then heavy content pins FPS at a uniform ~10.
+    // The old throttle detector reseeded the cap onto 10fps, the
+    // relative thresholds then read 10fps as "at the display cap =
+    // healthy", and scale-up walked the DPR back to native 2.0 and
+    // parked it there for the content's lifetime. Now the estimator
+    // reports sub-throttle DISTRESS instead and the manager demotes
+    // the ceiling: the session must end operating at exactly 1.0.
+    const restore = setNativeDPR(2.0);
+    const m = new AdaptiveDPRManager();
+    const r = makeRenderer();
+    m.setRenderer(r);
+    try {
+      // Phase A: light content proves the display can do ~120fps.
+      let t = pushFrames(m, 0, 241, 2000); // 8.3ms cadence ≈ 120fps
+      // Phase B: heavy content — a uniform ~10fps for 25s.
+      pushFrames(m, t + 100, 251, 25_000); // 100ms cadence = 10fps
+
+      const s = m.getState();
+      expect(s.dprCeiling).toBe(1.0); // demoted
+      expect(s.currentDPR).toBe(1.0); // clamped in one step
+      expect(s.isReducedResolution).toBe(true);
+      // The cap must NOT have collapsed onto the loaded FPS — that was
+      // the latch. Scale-down thresholds stay armed against it.
+      expect(s.refreshRateCap).toBeGreaterThanOrEqual(60);
+      expect(r.setAdaptivePixelRatio).toHaveBeenCalledWith(1.0);
+    } finally {
+      restore();
+    }
+  });
+
+  it('a scene heavy from the very first frame also gets the 1.0 clamp (no proven rate needed)', () => {
+    const restore = setNativeDPR(2.0);
+    const m = new AdaptiveDPRManager();
+    const r = makeRenderer();
+    m.setRenderer(r);
+    try {
+      pushFrames(m, 0, 251, 25_000); // ~10fps from the start
+      const s = m.getState();
+      expect(s.dprCeiling).toBe(1.0);
+      expect(s.currentDPR).toBe(1.0);
+    } finally {
+      restore();
+    }
+  });
+});
