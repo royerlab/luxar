@@ -6,6 +6,30 @@ All notable changes to Luxar are documented in this file.
 
 ### July 2026
 
+#### Fixed — barrier-aware GSplat chunk ordering (per-timepoint load locality)
+
+- **Why**: navigating to a fresh timepoint in a dense timelapse loaded high-res
+  data far slower than expected. GSplats ordered chunks by a Hilbert curve over
+  **all** center axes including time, so chunks straddled timepoints and a
+  single-timepoint query over-fetched (~2.5–3.5× the ideal, chaotically). Points
+  and Lines already avoid this via compound ordering (discrete/barrier dims
+  first); GSplats had diverged.
+- **Fix**: GSplat ordering (`sort_splats_spatial`) and chunk bounds
+  (`compute_chunk_bounds_gsplats`) are now barrier-aware, sharing a single
+  `_compound_sort` core with Points/Lines. Categorical/barrier axes (time,
+  channel) are grouped first and get tight ±0.5 chunk bounds (no σ expansion).
+  The barrier is taken from an explicit `barrier_dims`, else the persisted LOD
+  `coarsen_dims` complement, else a conservative auto-detect
+  (`detect_barrier_dims`). Threaded through every gsplat write path
+  (`write_gsplats_tree` / `write_partition_streaming` / scene compiler / batch
+  merge / `reencode`); 3D data keeps identical splat ordering and `chunk_bounds`
+  (leaf `.zattrs` gain informational `slice_dims=[]` / `ordering_dims` keys).
+- **Measured** (51-timepoint h2afva, 127 M splats): per-timepoint chunk hit-rate
+  went from a chaotic 0.01–7 % to a uniform ~1.96 % (= ideal 1/51) at every
+  timepoint. Viewer needs no change (dimension-agnostic AABB chunk selection);
+  re-order an existing dataset with `luxar gsplat reencode`.
+
+
 #### Added — uint16 LUT encoding tier (exact few-color storage up to 65,536 uniques)
 
 - **Why**: the LUT strategy is lossless (exact original values + integer

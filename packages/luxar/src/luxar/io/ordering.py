@@ -8,7 +8,7 @@ This module provides Morton and Hilbert ordering for:
 
 from __future__ import annotations
 
-from typing import Any, Literal, Optional
+from typing import Any, Literal, Optional, Sequence
 
 import numpy as np
 
@@ -244,6 +244,143 @@ def compute_auto_resolution(coords: np.ndarray, max_resolution: int = 2**16) -> 
     return resolution
 
 
+def _compound_sort(
+    coords: np.ndarray,
+    slice_dims: Sequence[int],
+    ordering_dims: Sequence[int],
+    method: Literal["morton", "hilbert"] = "hilbert",
+) -> tuple[np.ndarray, dict]:
+    """Compound spatial ordering: lexsort by ``slice_dims`` (categorical/barrier
+    axes) first, then a Morton/Hilbert space-filling curve over ``ordering_dims``
+    (spatial axes) within each barrier value.
+
+    This is the single source of truth shared by :func:`sort_points_compound`
+    (barrier = discrete non-display dims) and :func:`sort_splats_spatial`
+    (barrier = the LOD/categorical dims). Keeping the two geometries on one
+    primitive guarantees a chunk never straddles a categorical value regardless
+    of geometry type. With ``slice_dims == []`` this reduces to pure spatial
+    ordering over all of ``ordering_dims`` (the historical GSplat behavior).
+
+    Args:
+        coords: Coordinates, shape (N, d).
+        slice_dims: Barrier/categorical column indices (lexsorted first).
+        ordering_dims: Spatial column indices (space-filling curve within).
+        method: "morton" or "hilbert".
+
+    Returns:
+        (sort_indices, metadata) — the same metadata schema Points/Lines emit.
+    """
+    n = coords.shape[0]
+    slice_dims = list(slice_dims)
+    ordering_dims = list(ordering_dims)
+
+    # Bits budget is split across ONLY the spatial (ordering) dims, so excluding
+    # a barrier axis gives the spatial axes more resolution too.
+    if ordering_dims:
+        bits_per_dim = min(21, 64 // len(ordering_dims))
+    else:
+        bits_per_dim = 21  # Fallback (all-discrete)
+
+    if ordering_dims:
+        ordering_coords = coords[:, ordering_dims]
+        ordering_min = ordering_coords.min(axis=0)
+        ordering_max = ordering_coords.max(axis=0)
+
+        grid_coords = normalize_coords_to_grid(
+            ordering_coords, ordering_min, ordering_max, 2**bits_per_dim
+        )
+
+        if method == "morton":
+            spatial_codes = morton_encode_nd(grid_coords, bits_per_dim)
+        elif method == "hilbert":
+            spatial_codes = hilbert_encode_nd(grid_coords, bits_per_dim)
+        else:
+            raise ValueError(f"Unknown method: {method}")
+    else:
+        # No ordering dimensions - all discrete
+        spatial_codes = np.zeros(n, dtype=np.uint64)
+        ordering_min = np.array([])
+        ordering_max = np.array([])
+
+    if slice_dims:
+        # Lexicographic sort on barrier dims, then spatial code within each.
+        slice_values = coords[:, slice_dims]
+        sort_indices = np.lexsort(
+            [spatial_codes]
+            + [slice_values[:, i] for i in range(len(slice_dims) - 1, -1, -1)]
+        )
+    else:
+        # Pure spatial ordering (no barrier dimensions)
+        sort_indices = np.argsort(spatial_codes)
+
+    metadata = {
+        "ordering": method,
+        "slice_dims": slice_dims,
+        "ordering_dims": ordering_dims,
+        "ordering_min": ordering_min.tolist() if len(ordering_min) > 0 else [],
+        "ordering_max": ordering_max.tolist() if len(ordering_max) > 0 else [],
+        "ordering_bits_per_dim": bits_per_dim,
+    }
+
+    return sort_indices, metadata
+
+
+def detect_barrier_dims(
+    centers: np.ndarray,
+    max_cardinality: int = 1024,
+) -> list[int]:
+    """Heuristically identify categorical/barrier axes in a GSplat center array.
+
+    A standalone ``.gsplats.zarr`` carries no per-dimension descriptors, so when
+    neither an explicit ``barrier_dims`` nor persisted ``coarsen_dims`` provenance
+    is available this conservatively infers which axes behave like a categorical
+    stack (time, channel): an axis qualifies iff its values are integers AND take
+    few distinct values (``<= max_cardinality`` and ``<< N``). Continuous spatial
+    float coordinates never qualify.
+
+    **Conservative in the safe direction.** A false NEGATIVE (missing a barrier)
+    only causes over-fetch — no worse than pure spatial ordering. A false
+    POSITIVE (flagging a spatial axis) gives it tight ±0.5 chunk bounds with no
+    σ expansion, so a spatially-extended splat can fall outside its chunk bounds
+    and be *dropped* from a query — a correctness bug. So both guards err toward
+    NOT flagging: the integer test is strict (``rtol=0``, absolute tolerance
+    only — a large-magnitude continuous coordinate is never "close enough" to an
+    integer), and the ``n_unique * 4 <= n`` guard rejects a fine integer spatial
+    grid (many distinct values relative to N) that is not a true category.
+
+    Subordinate by design: callers apply explicit ``barrier_dims`` and
+    ``coarsen_dims`` complements first (the scene compiler passes scene
+    ``Dimension.discrete`` dims; the batch merge passes the stacked-time axis),
+    using this only as the last resort for provenance-less standalone files.
+
+    Args:
+        centers: Splat centers, shape (N, d).
+        max_cardinality: Max distinct values for an axis to count as categorical.
+
+    Returns:
+        Sorted list of barrier column indices (possibly empty).
+    """
+    if centers.ndim != 2 or centers.shape[0] == 0:
+        return []
+    n, ndim = centers.shape
+    barrier: list[int] = []
+    for d in range(ndim):
+        col = centers[:, d]
+        # Must lie on an integer grid (categorical stacks are integer-labelled).
+        # rtol=0: a large-magnitude continuous float must NOT count as integer
+        # (np.allclose's default rtol=1e-5 makes |coord|>~5e4 always "integer",
+        # which would misclassify a spatial axis → dropped splats).
+        if not np.allclose(col, np.round(col), rtol=0.0, atol=1e-3):
+            continue
+        n_unique = int(np.unique(np.round(col).astype(np.int64)).size)
+        # Few distinct values, and materially fewer than N (so a genuinely
+        # per-splat-varying axis — or a fine integer spatial grid — is never
+        # mistaken for a category).
+        if n_unique <= max_cardinality and n_unique * 4 <= n:
+            barrier.append(d)
+    return barrier
+
+
 def sort_points_compound(
     positions: np.ndarray,
     dimensions: list[Dimension],
@@ -264,126 +401,44 @@ def sort_points_compound(
         sort_indices: Indices to reorder points
         metadata: Dict with ordering metadata
     """
-    n_points, n_dims = positions.shape
-
-    # Identify dimension categories (per spec Section "Compound Ordering")
+    # Identify dimension categories (per spec Section "Compound Ordering").
     slice_dims = [i for i, d in enumerate(dimensions) if d.discrete and not d.display]
     ordering_dims = [i for i, d in enumerate(dimensions) if not d.discrete or d.display]
-
-    # Compute bits per ordering dimension
-    if ordering_dims:
-        bits_per_dim = min(21, 64 // len(ordering_dims))
-    else:
-        bits_per_dim = 21  # Fallback
-
-    # Extract ordering dimension coordinates
-    if ordering_dims:
-        ordering_coords = positions[:, ordering_dims]
-        ordering_min = ordering_coords.min(axis=0)
-        ordering_max = ordering_coords.max(axis=0)
-
-        # Normalize to grid (using 2^bits_per_dim resolution)
-        grid_coords = normalize_coords_to_grid(
-            ordering_coords, ordering_min, ordering_max, 2**bits_per_dim
-        )
-
-        # Compute spatial curve codes
-        if method == "morton":
-            spatial_codes = morton_encode_nd(grid_coords, bits_per_dim)
-        elif method == "hilbert":
-            spatial_codes = hilbert_encode_nd(grid_coords, bits_per_dim)
-        else:
-            raise ValueError(f"Unknown method: {method}")
-    else:
-        # No ordering dimensions - all discrete
-        spatial_codes = np.zeros(n_points, dtype=np.uint64)
-        ordering_min = np.array([])
-        ordering_max = np.array([])
-
-    # Create compound sort key
-    if slice_dims:
-        # Extract discrete dimension values
-        slice_values = positions[:, slice_dims]
-
-        # Create sort keys: (discrete_tuple, spatial_code)
-        # Use lexicographic sort on discrete dims, then spatial code
-        sort_indices = np.lexsort(
-            [spatial_codes]
-            + [slice_values[:, i] for i in range(len(slice_dims) - 1, -1, -1)]
-        )
-    else:
-        # Pure spatial ordering (no discrete dimensions)
-        sort_indices = np.argsort(spatial_codes)
-
-    # Build metadata
-    metadata = {
-        "ordering": method,
-        "slice_dims": slice_dims,
-        "ordering_dims": ordering_dims,
-        "ordering_min": ordering_min.tolist() if len(ordering_min) > 0 else [],
-        "ordering_max": ordering_max.tolist() if len(ordering_max) > 0 else [],
-        "ordering_bits_per_dim": bits_per_dim,
-    }
-
-    return sort_indices, metadata
+    return _compound_sort(positions, slice_dims, ordering_dims, method)
 
 
 def sort_splats_spatial(
     centers: np.ndarray,
     method: Literal["morton", "hilbert"] = "hilbert",
     resolution: Optional[int] = None,
+    slice_dims: Optional[Sequence[int]] = None,
 ) -> tuple[np.ndarray, dict]:
-    """Sort GSplats using simple spatial ordering (no compound ordering).
+    """Sort GSplats using barrier-aware compound spatial ordering.
 
-    GSplats don't have discrete dimensions, so this is pure spatial ordering.
+    When ``slice_dims`` names one or more categorical/barrier axes (e.g. time or
+    channel), splats are grouped by those axes first (lexicographic) and a
+    Morton/Hilbert curve orders spatially within each barrier value — so a chunk
+    never straddles two timepoints. This mirrors :func:`sort_points_compound`
+    and is what keeps per-timepoint reads local (see the ``io`` ordering README).
+
+    With ``slice_dims`` empty/None this is pure spatial ordering over all center
+    columns — the historical behavior, unchanged for 3D data.
 
     Args:
         centers: Splat centers, shape (N, d), float32
         method: Spatial curve method ("morton" or "hilbert")
-        resolution: Grid resolution (auto-computed if None)
+        resolution: Ignored (kept for signature stability; the grid resolution
+            is derived per-axis from the bit budget, as it always has been).
+        slice_dims: Barrier/categorical column indices to order by first.
 
     Returns:
         sort_indices: Indices to reorder splats
-        metadata: Dict with ordering metadata
+        metadata: Dict with ordering metadata (incl. slice_dims / ordering_dims)
     """
-    n_splats, ndim = centers.shape
-
-    # Auto-compute resolution if not provided
-    if resolution is None:
-        resolution = compute_auto_resolution(centers)
-
-    # Compute bits per dimension
-    bits_per_dim = min(21, 64 // ndim)
-
-    # Get bounds
-    min_coords = centers.min(axis=0)
-    max_coords = centers.max(axis=0)
-
-    # Normalize to integer grid
-    grid_coords = normalize_coords_to_grid(
-        centers, min_coords, max_coords, 2**bits_per_dim
-    )
-
-    # Compute spatial curve codes
-    if method == "morton":
-        spatial_codes = morton_encode_nd(grid_coords, bits_per_dim)
-    elif method == "hilbert":
-        spatial_codes = hilbert_encode_nd(grid_coords, bits_per_dim)
-    else:
-        raise ValueError(f"Unknown method: {method}")
-
-    # Sort by spatial code
-    sort_indices = np.argsort(spatial_codes)
-
-    # Metadata
-    metadata = {
-        "ordering": method,
-        "ordering_min": min_coords.tolist(),
-        "ordering_max": max_coords.tolist(),
-        "ordering_bits_per_dim": bits_per_dim,
-    }
-
-    return sort_indices, metadata
+    ndim = centers.shape[1]
+    slice_set = set(int(d) for d in slice_dims) if slice_dims else set()
+    ordering_dims = [d for d in range(ndim) if d not in slice_set]
+    return _compound_sort(centers, sorted(slice_set), ordering_dims, method)
 
 
 def compute_chunk_bounds_points(
@@ -484,14 +539,24 @@ def compute_chunk_bounds_gsplats(
     cholesky_factors: np.ndarray,
     chunk_size: int,
     coverage_sigma: float = 3.0,
+    slice_dims: Optional[Sequence[int]] = None,
 ) -> np.ndarray:
     """Compute chunk bounding boxes for GSplats (includes ellipsoidal extent).
+
+    CRITICAL: the ellipsoidal (coverage_sigma·σ) extent is applied only to
+    SPATIAL axes. ``slice_dims`` name categorical/barrier axes (time, channel):
+    a splat at time=0 must not extend into time=1's bounds, so those axes get
+    only tight ±0.5 bounds. This mirrors :func:`compute_chunk_bounds_points`
+    and keeps a chunk's barrier-axis footprint from straddling categories,
+    which is what makes single-timepoint queries fetch only their own chunks.
 
     Args:
         centers: Splat centers (already sorted), shape (N, d)
         cholesky_factors: Packed Cholesky factors (already sorted), shape (N, k)
         chunk_size: Number of splats per chunk
         coverage_sigma: Coverage radius in standard deviations (default 3.0)
+        slice_dims: Barrier/categorical dimension indices (no σ expansion).
+            Default None → expand all axes (historical behavior).
 
     Returns:
         chunk_bounds: Bounding boxes, shape (num_chunks, d, 2)
@@ -500,6 +565,7 @@ def compute_chunk_bounds_gsplats(
     if n_splats == 0:
         return np.zeros((0, ndim, 2), dtype=np.float32)
     num_chunks = (n_splats + chunk_size - 1) // chunk_size
+    discrete_dims = set(int(d) for d in slice_dims) if slice_dims else set()
 
     chunk_bounds = np.zeros((num_chunks, ndim, 2), dtype=np.float32)
 
@@ -514,6 +580,9 @@ def compute_chunk_bounds_gsplats(
         extents = np.zeros((end_idx - start_idx, ndim), dtype=np.float32)
 
         for d in range(ndim):
+            if d in discrete_dims:
+                # BARRIER dimension: no σ expansion (a category has no extent).
+                continue
             # Covariance diagonal from Cholesky factors
             # For dimension d: start_idx = d*(d+1)//2
             start_chol_idx = d * (d + 1) // 2
@@ -524,9 +593,15 @@ def compute_chunk_bounds_gsplats(
             # Extent = sqrt(covariance) * coverage_sigma
             extents[:, d] = np.sqrt(extents[:, d]) * coverage_sigma
 
-        # Compute bounds including extent
+        # Compute bounds including extent (barrier dims have zero extent).
         mins = (chunk_centers - extents).min(axis=0)
         maxs = (chunk_centers + extents).max(axis=0)
+
+        # Barrier dims: tight ±0.5 bounds (exact category values, small float
+        # tolerance at boundaries) — mirrors compute_chunk_bounds_points.
+        for d in discrete_dims:
+            mins[d] = chunk_centers[:, d].min() - 0.5
+            maxs[d] = chunk_centers[:, d].max() + 0.5
 
         chunk_bounds[chunk_idx, :, 0] = mins
         chunk_bounds[chunk_idx, :, 1] = maxs
