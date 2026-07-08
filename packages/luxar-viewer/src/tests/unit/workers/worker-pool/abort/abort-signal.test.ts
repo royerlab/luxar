@@ -94,4 +94,25 @@ describe('WorkerPool — AbortSignal', () => {
     );
     expect(result).toBe('A');
   });
+
+  it('dispose clears a stale pool-wide abort signal before reuse', async () => {
+    const pool = makePool([makeFakeWorker('before-dispose')]);
+    const controller = new AbortController();
+    pool.setAbortSignal(controller.signal);
+    controller.abort();
+
+    pool.dispose();
+
+    const w0 = makeFakeWorker('after-dispose');
+    (pool as any).workers = [w0];
+    (pool as any).initPromise = Promise.resolve();
+    (pool as any).nextWorkerIndex = 0;
+
+    const result = await (pool as any).runWithTimeout(
+      'after-dispose-op',
+      'visibility',
+      (api: any) => api.handle()
+    );
+    expect(result).toBe('after-dispose');
+  });
 });

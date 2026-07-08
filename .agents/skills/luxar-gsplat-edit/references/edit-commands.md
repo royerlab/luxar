@@ -49,6 +49,12 @@ Combine datasets. Modes (mutually exclusive):
 Spatial BSP into one `kind=partition`. `--max-elements`/`-m` OR `--parts`/`-n`
 (mutually exclusive); `--rule` (`median` default / `midpoint` / `sah`).
 
+## flatten IN OUT
+Collapse any gsplat tree (leaf, LOD/matrix-shaped tree, partition, or nested
+partition/LOD) into one flat matrix-shaped leaf. Use it when a downstream tool
+expects a flat `.gsplats.zarr`, or to rebuild a fresh global LOD after tiled or
+partitioned fitting. Options: `--overwrite`, `--encoding`/`-e`, `--compress`.
+
 ## convert IN.gsplats.zarr OUT.luxar.zarr
 Wrap a fitted dataset as a web scene. `--center`/`--no-center` (default on),
 `--scale-intensity`, `--opacity` (1.0), `--blending-mode` (`additive` default /

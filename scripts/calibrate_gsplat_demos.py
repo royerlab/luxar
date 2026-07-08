@@ -35,14 +35,13 @@ import importlib
 import importlib.util
 import json
 import os
-import shutil
-import subprocess
+import subprocess  # nosec B404: this script intentionally shells out to the trusted Luxar CLI
 import sys
 import tempfile
 import time
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Dict, List
 
 import numpy as np
 from arbol import Arbol, aprint, asection
@@ -54,7 +53,8 @@ DEMOS_DIR = REPO_ROOT / "packages" / "luxar" / "src" / "luxar" / "demos"
 
 # Volume scratch dir: large .npy files we feed to `luxar gsplat cal`.
 # Kept under /tmp by default so the repo stays clean; override via $LUXAR_CAL_SCRATCH.
-SCRATCH_DIR = Path(os.environ.get("LUXAR_CAL_SCRATCH", "/tmp/luxar-cal-scratch"))
+_default_scratch = Path(tempfile.gettempdir()) / "luxar-cal-scratch"
+SCRATCH_DIR = Path(os.environ.get("LUXAR_CAL_SCRATCH", str(_default_scratch)))
 SCRATCH_DIR.mkdir(parents=True, exist_ok=True)
 
 # K-sweep configuration. n-grid=10 (default), exp progression.
@@ -357,7 +357,11 @@ def _run_cli_cal(
         "--quiet",
     ]
     aprint(f"  $ {' '.join(cmd)}")
-    subprocess.run(cmd, check=True, cwd=str(REPO_ROOT))
+    subprocess.run(
+        cmd,
+        check=True,
+        cwd=str(REPO_ROOT),
+    )  # nosec B603: args are constructed by this script; no shell interpolation
 
 
 def _read_k_star(json_path: Path) -> Dict[str, Any]:
@@ -396,9 +400,7 @@ def _calibrate_one_sample(
     # Persist preprocessed volume for the CLI. Use the scratch dir so the
     # repo stays clean.
     npy_path = SCRATCH_DIR / f"{label}.npy"
-    aprint(
-        f"  Saving {label}: shape={V.shape} dtype={V.dtype} → {npy_path.name}"
-    )
+    aprint(f"  Saving {label}: shape={V.shape} dtype={V.dtype} → {npy_path.name}")
     np.save(npy_path, V.astype(np.float32, copy=False))
 
     t0 = time.perf_counter()
@@ -555,7 +557,9 @@ def main() -> int:
 
     if args.list:
         for d in DEMOS:
-            aprint(f"  {d['name']:<32} [{d['k_min']}..{d['k_max']}] {d.get('comment', '')}")
+            aprint(
+                f"  {d['name']:<32} [{d['k_min']}..{d['k_max']}] {d.get('comment', '')}"
+            )
         return 0
 
     Arbol.max_depth = 5
@@ -568,7 +572,9 @@ def main() -> int:
             aprint(f"No demo matches --only {args.only}")
             return 1
 
-    aprint(f"Running calibration on {len(targets)} demo(s) via `luxar gsplat cal --preset {PRESET}`")
+    aprint(
+        f"Running calibration on {len(targets)} demo(s) via `luxar gsplat cal --preset {PRESET}`"
+    )
     aprint(f"Scratch volumes: {SCRATCH_DIR}")
     summaries = []
     for d in targets:
