@@ -508,8 +508,12 @@ export class DimensionAnimationManager extends THREE.EventDispatcher<DimensionAn
       }
     }
     if (maxFPS === null) return null;
-    const { budgetFraction, minBudgetMs } = config.dimensionAnimation.playback;
-    return Math.max((1000 / maxFPS) * budgetFraction, minBudgetMs);
+    const { budgetFraction, minBudgetMs, overheadReserveMs } = config.dimensionAnimation.playback;
+    const frameWindow = 1000 / maxFPS;
+    // Fractional share of the window, but at slow FPS give the loaders the
+    // whole window minus a fixed projection/commit/render reserve — a 1 fps
+    // tick should stream ~950ms of levels, not idle 40% of every second.
+    return Math.max(frameWindow * budgetFraction, frameWindow - overheadReserveMs, minBudgetMs);
   }
 
   /**

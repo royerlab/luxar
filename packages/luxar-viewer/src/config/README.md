@@ -281,6 +281,11 @@ dimensionAnimation: {
   ui: {
     showFPSFeedback: true,            // Show FPS feedback in UI
     feedbackThreshold: 0.8            // Warning when actual FPS < target * threshold
+  },
+  playback: {
+    budgetFraction: 0.6,              // Fraction of the frame window handed to progressive loaders per tick
+    minBudgetMs: 8,                   // Budget floor at high target FPS
+    overheadReserveMs: 50             // Slow FPS: budget = frame window − reserve (projection/commit/render)
   }
 }
 ```

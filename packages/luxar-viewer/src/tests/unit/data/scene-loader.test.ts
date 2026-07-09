@@ -447,7 +447,10 @@ describe('SceneLoader', () => {
     });
 
     /** Register a points loader whose FIRST call parks on a gate; later calls resolve null. */
-    function installGatedLoader(): { releaseFirst: () => void; updateView: ReturnType<typeof vi.fn> } {
+    function installGatedLoader(): {
+      releaseFirst: () => void;
+      updateView: ReturnType<typeof vi.fn>;
+    } {
       let releaseFirst!: () => void;
       const firstGate = new Promise<void>((resolve) => {
         releaseFirst = resolve;
@@ -522,6 +525,61 @@ describe('SceneLoader', () => {
       // Latest-wins: only ONE winning pass ran for the three queued states
       // (first gated call + one re-entry), never one pass per queued call.
       expect(updateView.mock.calls.length).toBe(2);
+    });
+
+    it('a view-state queued during the FINAL refinement pass is drained and its waiter resolves', async () => {
+      // Regression (deep-check round 3, HIGH — found by 8 independent
+      // angles): finalReleaseLock was a bare `_updateInProgress = false`, so
+      // a state queued DURING the last refinement pass (after the loop's
+      // final loop-top pending check) was stranded, its parked pacing-gate
+      // waiter never resolved, and playback froze permanently. The fix
+      // makes finalReleaseLock mirror queueNext's contract (drain pending
+      // into a fresh pass, else settle waiters).
+      let queuedResolved = false;
+      let raceFired = false;
+      const linesLoader = {
+        hasMoreLODs: true,
+        loadLines: vi.fn(),
+        updateView: vi.fn(async () => {
+          // Simulate the race deterministically (ONCE): a tick arrives
+          // DURING the final pass — the queued branch parks a waiter + sets
+          // pending — and this pass completes the ladder.
+          linesLoader.hasMoreLODs = false;
+          if (!raceFired) {
+            raceFired = true;
+            void sceneLoader
+              .updateView({
+                displayDims: [0, 1, 2],
+                slicePosition: [0, 0, 0, 9],
+                tolerance: [0, 0, 0, 0],
+              })
+              .then(() => {
+                queuedResolved = true;
+              });
+          }
+          return null; // no data → no process/commit
+        }),
+        dispose: vi.fn(),
+      };
+      (sceneLoader as unknown as Record<string, Map<string, unknown>>)['linesLoaders'].set(
+        '/lines',
+        linesLoader
+      );
+
+      // Hold the lock exactly as queueNext's refinement branch does, then
+      // run the real refinement orchestrator to completion.
+      (sceneLoader as unknown as { _updateInProgress: boolean })._updateInProgress = true;
+      await (
+        sceneLoader as unknown as { scheduleGSplatsRefinement(): Promise<void> }
+      ).scheduleGSplatsRefinement();
+
+      // Post-fix: finalReleaseLock drains the stranded state; the re-entered
+      // pass completes and settles the waiter. Pre-fix: this never resolves.
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      expect(queuedResolved).toBe(true);
+      expect((sceneLoader as unknown as { _updateInProgress: boolean })._updateInProgress).toBe(
+        false
+      );
     });
 
     it('dispose flushes queued-update waiters (no hang across dataset switches)', async () => {

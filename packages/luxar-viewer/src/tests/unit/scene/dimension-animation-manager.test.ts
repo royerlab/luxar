@@ -234,6 +234,18 @@ describe('DimensionAnimationManager', () => {
       expect(manager.getFrameBudgetMs()).toBeCloseTo(60, 5);
     });
 
+    it('slow FPS: budget expands to the frame window minus the overhead reserve', () => {
+      // At 1 fps the fractional budget (600ms) would idle 40% of every
+      // second with refinement disabled — the window-minus-reserve term
+      // wins instead: 1000 − 50 = 950ms.
+      manager.play(3, { targetFPS: 1 });
+      expect(manager.getFrameBudgetMs()).toBeCloseTo(950, 5);
+
+      // At 5 fps: max(200×0.6, 200−50) = 150ms.
+      manager.setTargetFPS(3, 5);
+      expect(manager.getFrameBudgetMs()).toBeCloseTo(150, 5);
+    });
+
     it('uses the FASTEST playing dimension and floors at minBudgetMs', () => {
       manager.play(3, { targetFPS: 10 });
       manager.play(4, { targetFPS: 60 });

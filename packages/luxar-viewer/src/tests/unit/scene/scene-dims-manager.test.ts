@@ -287,6 +287,44 @@ describe('SceneDimsManager', () => {
       expect(listener).toHaveBeenCalled();
     });
 
+    it("an OLDER update settling does not clobber a NEWER update's waitForUpdate tracking", async () => {
+      // Regression: notifyListeners used to null pendingUpdatePromise
+      // unconditionally when ANY update settled — so an older (slower)
+      // update's completion made waitForUpdate() resolve immediately while
+      // a newer update was still loading (a real hazard now that queued
+      // scene-loader updates keep listener promises pending until their
+      // pass commits). The guard only nulls the field when it still points
+      // at the settling promise.
+      const deferreds: Array<() => void> = [];
+      manager.addListener(
+        () =>
+          new Promise<void>((resolve) => {
+            deferreds.push(resolve);
+          })
+      );
+
+      manager.setDimensionValue(3, 1); // update #1 → deferred[0]
+      manager.setDimensionValue(3, 2); // update #2 → deferred[1] (tracked)
+
+      // Settle the OLDER update first. Pre-guard, its completion nulled
+      // pendingUpdatePromise unconditionally — so the waitForUpdate() call
+      // BELOW got an instantly-resolved promise while update #2 was still
+      // loading.
+      deferreds[0]();
+      await new Promise((resolve) => setTimeout(resolve, 0)); // full microtask drain
+
+      let settled = false;
+      void manager.waitForUpdate().then(() => {
+        settled = true;
+      });
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      expect(settled).toBe(false); // newer update still pending
+
+      deferreds[1]();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      expect(settled).toBe(true);
+    });
+
     it('should support multiple listeners', () => {
       const listener1 = vi.fn();
       const listener2 = vi.fn();

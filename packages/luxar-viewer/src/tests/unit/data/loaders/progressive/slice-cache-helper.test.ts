@@ -108,6 +108,21 @@ describe('slice-cache-helper — prefix ladders', () => {
     expect(after.hitRate).toBe(before.hitRate);
   });
 
+  it('storeLadder itself never perturbs hit/miss stats (its length check must use peek, not get)', () => {
+    // The upgrade-if-longer check reads the existing entry on EVERY store —
+    // if it used the counting get() instead of peek(), each playback tick
+    // would inflate the hit count and corrupt the monitor's hit-rate.
+    storeLadder(sc, PATH, view, [makeLod(10)]);
+    const before = sc.getStats();
+
+    storeLadder(sc, PATH, view, [makeLod(10)]); // equal-length no-op (reads entry)
+    storeLadder(sc, PATH, view, [makeLod(10), makeLod(5)]); // upgrade (reads entry)
+
+    const after = sc.getStats();
+    expect(after.hits).toBe(before.hits);
+    expect(after.misses).toBe(before.misses);
+  });
+
   it('restore returns the cache payload; storing deep-clones (cache never aliases loader arrays)', () => {
     const original = [makeLod(10)];
     storeLadder(sc, PATH, view, original);

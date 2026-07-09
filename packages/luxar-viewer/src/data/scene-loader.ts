@@ -945,6 +945,21 @@ export class SceneLoader {
     };
     const finalReleaseLock = () => {
       this._updateInProgress = false;
+      // dispose() flushes waiters itself; never re-enter a dead loader.
+      if (this._disposed) return;
+      // A view-state queued DURING the last refinement pass (after the
+      // loop's final loop-top pending check) would otherwise be stranded
+      // here — and with it any parked queued-updateView waiters, freezing
+      // the dimension-animation pacing gate permanently (waitForUpdate
+      // never settles). Mirror queueNext's contract: drain the pending
+      // state into a fresh pass (whose own queueNext carries/settles the
+      // waiters), else settle the waiters now. Intermediate phases don't
+      // need this — the NEXT phase's loop-top pending check rescues them.
+      if (this.viewStateQueue.hasPending()) {
+        this.viewStateQueue.drain((state) => this.updateView(state));
+      } else {
+        this.resolvePassWaiters();
+      }
     };
 
     await runGSplatsRefinement({

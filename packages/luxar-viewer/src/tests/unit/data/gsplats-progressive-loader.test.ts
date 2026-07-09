@@ -406,6 +406,11 @@ describe('GSplatsProgressiveLoader', () => {
     });
 
     it('always loads at least one level under a tiny budget (first-paint floor)', async () => {
+      // Advance the clock on EVERY performance.now() call so the deadline is
+      // already past by level 0's loop-top check — without the
+      // `level > startLevel` guard, level 0 would be skipped entirely
+      // (pins the first-paint floor against guard removal).
+      nowSpy.mockImplementation(() => (now += 5));
       await loader.updateView({ ...baseViewState, frameBudgetMs: 0.001 });
       expect(lodA.updateViewWithResidency).toHaveBeenCalledTimes(1);
       expect(loader.loadedLODCount).toBe(1);

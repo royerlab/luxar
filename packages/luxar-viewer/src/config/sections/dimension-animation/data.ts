@@ -25,5 +25,6 @@ export const dimensionAnimationConfig: DimensionAnimationConfig = {
   playback: {
     budgetFraction: 0.6, // 60% of the frame window for LOD streaming
     minBudgetMs: 8, // even at 60fps targets, give loaders ≥8ms
+    overheadReserveMs: 50, // slow FPS: budget = window − reserve (see types.ts)
   },
 };

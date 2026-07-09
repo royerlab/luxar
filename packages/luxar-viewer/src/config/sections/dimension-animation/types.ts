@@ -32,5 +32,13 @@ export interface DimensionAnimationConfig {
     budgetFraction: number;
     /** Floor for the per-tick budget so high target FPS still loads data. */
     minBudgetMs: number;
+    /**
+     * Fixed per-tick reserve (ms) for projection + commit + render. At slow
+     * target FPS the budget is `frameWindow − overheadReserveMs` when that
+     * exceeds `frameWindow × budgetFraction` — otherwise a 1 fps playback
+     * would idle 40 % of every second with refinement disabled, capping
+     * quality below what the window could deliver.
+     */
+    overheadReserveMs: number;
   };
 }
