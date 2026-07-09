@@ -50,11 +50,13 @@ function makeCtx(overrides: Partial<QueueNextCtx> = {}): QueueNextCtx & {
     updateView: ReturnType<typeof vi.fn>;
     setUpdateInProgress: ReturnType<typeof vi.fn>;
     scheduleGSplatsRefinement: ReturnType<typeof vi.fn>;
+    resolvePassWaiters: ReturnType<typeof vi.fn>;
   };
 } {
   const updateView = vi.fn().mockResolvedValue(undefined);
   const setUpdateInProgress = vi.fn();
   const scheduleGSplatsRefinement = vi.fn().mockResolvedValue(undefined);
+  const resolvePassWaiters = vi.fn();
 
   const ctx: QueueNextCtx = {
     viewStateQueue: new ViewStateQueue(),
@@ -64,10 +66,11 @@ function makeCtx(overrides: Partial<QueueNextCtx> = {}): QueueNextCtx & {
     updateView,
     setUpdateInProgress,
     scheduleGSplatsRefinement,
+    resolvePassWaiters,
     ...overrides,
   };
   return Object.assign(ctx, {
-    spies: { updateView, setUpdateInProgress, scheduleGSplatsRefinement },
+    spies: { updateView, setUpdateInProgress, scheduleGSplatsRefinement, resolvePassWaiters },
   });
 }
 
@@ -123,6 +126,9 @@ describe('queueNext — pending state + rAF available', () => {
 
     // No refinement scheduling on this branch.
     expect(ctx.spies.scheduleGSplatsRefinement).not.toHaveBeenCalled();
+    // Waiters are NOT resolved on the pending branch — they carry over to
+    // the re-entered (winning) pass, whose own queueNext resolves them.
+    expect(ctx.spies.resolvePassWaiters).not.toHaveBeenCalled();
   });
 });
 
@@ -162,6 +168,9 @@ describe('queueNext — no pending + at least one loader with hasMoreLODs:true',
     // is responsible for releasing it on completion).
     expect(ctx.spies.setUpdateInProgress).not.toHaveBeenCalled();
     expect(ctx.spies.updateView).not.toHaveBeenCalled();
+    // Waiters resolve at refinement ENTRY: the main pass (first commit) is
+    // done — the pacing gate needs first-commit latency, not full-ladder.
+    expect(ctx.spies.resolvePassWaiters).toHaveBeenCalledTimes(1);
   });
 });
 
@@ -179,6 +188,8 @@ describe('queueNext — no pending + no refinement needed', () => {
     expect(ctx.spies.setUpdateInProgress).toHaveBeenCalledWith(false);
     expect(ctx.spies.scheduleGSplatsRefinement).not.toHaveBeenCalled();
     expect(ctx.spies.updateView).not.toHaveBeenCalled();
+    // Idle branch: the winning pass committed and nothing follows — waiters settle.
+    expect(ctx.spies.resolvePassWaiters).toHaveBeenCalledTimes(1);
   });
 
   it('treats hasMoreLODs === undefined as NOT needing refinement (strict === true)', () => {
@@ -242,6 +253,10 @@ describe('queueNext — refinement rejection recovers the lock (no permanent fre
 
     expect(ctx.spies.setUpdateInProgress).toHaveBeenCalledWith(false);
     expect(ctx.spies.updateView).not.toHaveBeenCalled();
+    // Belt-and-braces settle in the rejection catch: with nothing queued no
+    // re-entry will resolve parked waiters, so the catch must (the entry-time
+    // resolve already ran once before refinement was scheduled).
+    expect(ctx.spies.resolvePassWaiters).toHaveBeenCalledTimes(2);
   });
 });
 

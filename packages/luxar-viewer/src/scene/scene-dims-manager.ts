@@ -336,11 +336,18 @@ export class SceneDimsManager {
       }
     });
 
-    // Track combined promise for async synchronization
+    // Track combined promise for async synchronization. Only null the field
+    // if it still points at THIS update's promise — an older update settling
+    // late must not clobber a newer update's tracking (listener promises are
+    // long-lived now that queued scene-loader updates resolve on real pass
+    // completion, which widened this pre-existing race).
     if (promises.length > 0) {
-      this.pendingUpdatePromise = Promise.all(promises).then(() => {
-        this.pendingUpdatePromise = null;
+      const tracked: Promise<void> = Promise.all(promises).then(() => {
+        if (this.pendingUpdatePromise === tracked) {
+          this.pendingUpdatePromise = null;
+        }
       });
+      this.pendingUpdatePromise = tracked;
     }
   }
 

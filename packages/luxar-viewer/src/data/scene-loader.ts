@@ -272,6 +272,28 @@ export class SceneLoader {
    */
   private _updateAbortController: AbortController | null = null;
 
+  /**
+   * Waiters for "the requested-or-newer view-state completed a main pass".
+   * Created ONLY in `updateView`'s queued/supersede branch: instead of
+   * resolving immediately (which made `sceneDimsManager.waitForUpdate()` —
+   * and with it the dimension-animation pacing gate — meaningless during
+   * playback), the queued caller's promise parks here and resolves when
+   * `queueNext` finds no pending state left, i.e. when the latest-wins
+   * winning pass has landed its commit. Latest-wins supersession keeps
+   * waiters pending until the winner completes; `dispose()` flushes them
+   * (resolve-only, never reject) so callers can't hang across a dataset
+   * switch.
+   */
+  private _passWaiters: Array<() => void> = [];
+
+  /** Resolve-and-drain all queued-update waiters (see {@link _passWaiters}). */
+  private resolvePassWaiters(): void {
+    if (this._passWaiters.length === 0) return;
+    const waiters = this._passWaiters;
+    this._passWaiters = [];
+    for (const resolve of waiters) resolve();
+  }
+
   /** Public accessor for the scene graph built during loadScene(). */
   get sceneGraph(): SceneNode | null {
     return this._sceneGraph;
@@ -637,7 +659,15 @@ export class SceneLoader {
           `Update queued (v${newVersion}) - in-flight v${this._updateVersion}`
         );
       }
-      return;
+      // Resolve when the pending-OR-NEWER state completes a main pass (its
+      // first commit) — NOT immediately. This is what makes the
+      // dimension-animation pacing gate real: during playback the next tick
+      // is held until the frame it requested actually rendered, instead of
+      // free-running while every pass is aborted pre-commit. Waiters are
+      // resolved by queueNext (no pending left) and flushed by dispose().
+      return new Promise<void>((resolve) => {
+        this._passWaiters.push(resolve);
+      });
     }
 
     // Mark update as in progress
@@ -787,6 +817,7 @@ export class SceneLoader {
           this._updateInProgress = v;
         },
         scheduleGSplatsRefinement: () => this.scheduleGSplatsRefinement(),
+        resolvePassWaiters: () => this.resolvePassWaiters(),
       });
     }
   }
@@ -854,6 +885,11 @@ export class SceneLoader {
       // a no-op when nothing was queued.
       this._updateInProgress = false;
       this.viewStateQueue.drain((state) => this.updateView(state));
+      // Belt-and-braces: if no state was queued, nothing will re-enter
+      // updateView, so settle any queued-update waiters here rather than
+      // leaving them parked (resolve-only; a queued state's re-entry would
+      // have resolved them anyway).
+      this.resolvePassWaiters();
     });
   }
 
@@ -1417,6 +1453,12 @@ export class SceneLoader {
     // Signal any in-flight progressive-refinement loop to abort before we
     // start nulling the fields it reads.
     this._disposed = true;
+
+    // Flush queued-update waiters FIRST: a disposed loader never runs its
+    // pending pass, so without this any `waitForUpdate()` /
+    // `awaitDimensionUpdate()` caller parked on a queued update would hang
+    // forever across a dataset switch. Resolve-only (never reject).
+    this.resolvePassWaiters();
     await disposeSceneLoader({
       datasetAbortController: this._datasetAbortController,
       updateAbortController: this._updateAbortController,
