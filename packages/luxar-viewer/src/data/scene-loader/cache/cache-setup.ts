@@ -15,6 +15,7 @@ import * as zarr from '../../zarr';
 import { MultiLevelCachingStore } from '../../../cache/multi-level-caching-store';
 import { ChunkPrefetcher } from '../../../cache/chunk-prefetcher';
 import { DecompressedChunkCache } from '../../../cache/decompressed-chunk-cache';
+import { SliceCache } from '../../../cache/slice-cache';
 import { config as appConfig } from '../../../config';
 import { log, Modules } from '../../../utils/log';
 import type { CacheTelemetryState } from '../../../types/data-monitor-types';
@@ -23,6 +24,8 @@ import type { CacheTelemetryState } from '../../../types/data-monitor-types';
  *  the original inline code consulted. */
 export interface CacheSetupFlags {
   noCache?: boolean;
+  /** Disable ONLY the SliceCache (`?no-slice-cache`); L0/L1/L2 stay on. */
+  noSliceCache?: boolean;
   cacheDebug?: boolean;
   clearCache?: boolean;
   noPrefetch?: boolean;
@@ -32,6 +35,8 @@ export interface CacheSetupFlags {
 /** Result of cache setup: the three layers and a ready-to-open store. */
 export interface CacheSetupResult {
   l0Cache: DecompressedChunkCache | null;
+  /** Shared SliceCache ("S-cache") for per-slice decoded-geometry reuse. */
+  sliceCache: SliceCache | null;
   cachingStore: MultiLevelCachingStore | null;
   rawStore: zarr.AsyncReadable;
   /**
@@ -60,12 +65,35 @@ export interface CacheSetupResult {
  */
 export async function setupCaches(url: string, flags: CacheSetupFlags): Promise<CacheSetupResult> {
   const noCache = flags.noCache ?? false;
+  const noSliceCache = flags.noSliceCache ?? false;
   const cacheDebug = flags.cacheDebug ?? false;
   const clearCache = flags.clearCache ?? false;
   const noPrefetch = flags.noPrefetch ?? false;
   const prefetchDebug = flags.prefetchDebug ?? false;
 
   let l0Cache: DecompressedChunkCache | null = null;
+
+  // SliceCache ("S-cache"): shared per-slice decoded-geometry cache. Gated by
+  // its own config flag + `?no-slice-cache`, and also off when `?no-cache`
+  // disables all tiers. It is cleared on content-hash invalidation alongside L0
+  // (see the onInvalidate registration below).
+  let sliceCache: SliceCache | null = null;
+  if (appConfig.cache.sliceCacheEnabled && !noCache && !noSliceCache) {
+    sliceCache = new SliceCache({
+      maxSize: appConfig.cache.sliceCacheMaxSizeMB * 1024 * 1024,
+      debug: cacheDebug || appConfig.cache.debug,
+    });
+    if (clearCache) {
+      sliceCache.clear();
+      log.info(Modules.SCENE_LOADER, 'SliceCache cleared via ?clear-cache URL parameter');
+    }
+    log.info(
+      Modules.SCENE_LOADER,
+      `SliceCache (S-cache) enabled (max size: ${appConfig.cache.sliceCacheMaxSizeMB}MB)`
+    );
+  } else if (noSliceCache) {
+    log.info(Modules.SCENE_LOADER, 'SliceCache disabled via ?no-slice-cache URL parameter');
+  }
 
   if (appConfig.cache.l0Enabled && !noCache) {
     l0Cache = new DecompressedChunkCache({
@@ -114,6 +142,17 @@ export async function setupCaches(url: string, flags: CacheSetupFlags): Promise<
       });
     }
 
+    // SliceCache holds decoded geometry derived from the dataset's content, so a
+    // content-hash bump must evict it too — otherwise a revisit would serve
+    // geometry from the stale dataset (cf. the past stale-cache black screen).
+    if (sliceCache) {
+      const sc = sliceCache;
+      cachingStore.onInvalidate(() => {
+        sc.clear();
+        log.info(Modules.SCENE_LOADER, 'SliceCache cleared due to L1/L2 invalidation');
+      });
+    }
+
     rawStore = cachingStore;
   } else {
     rawStore = zarr.createFetchStore(url);
@@ -132,5 +171,5 @@ export async function setupCaches(url: string, flags: CacheSetupFlags): Promise<
     telemetryState = { kind: 'enabled' };
   }
 
-  return { l0Cache, cachingStore, rawStore, telemetryState };
+  return { l0Cache, sliceCache, cachingStore, rawStore, telemetryState };
 }

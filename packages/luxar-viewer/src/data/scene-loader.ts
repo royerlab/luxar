@@ -83,6 +83,7 @@ import { scheduleFrame } from '../utils/schedule-frame';
 import { config as appConfig } from '../config';
 import { MultiLevelCachingStore } from '../cache/multi-level-caching-store';
 import { DecompressedChunkCache } from '../cache/decompressed-chunk-cache';
+import { SliceCache } from '../cache/slice-cache';
 import type { LinesDataLoader, LinesViewState, LoadedLinesData } from '../types/lines';
 import type { GSplatsDataLoader, GSplatsViewState, LoadedGSplatsData } from '../types/gsplats';
 import { GPUBufferPool } from '../rendering/gpu-buffer-pool';
@@ -166,6 +167,8 @@ export class SceneLoader {
   private cachingStore: MultiLevelCachingStore | null = null;
   // L0 decompressed chunk cache - caches decoded zarr chunks to avoid Blosc decompression
   private l0Cache: DecompressedChunkCache | null = null;
+  // SliceCache ("S-cache") - per-(node,view) decoded-slice cache for instant slice revisits
+  private sliceCache: SliceCache | null = null;
   private registry = new LoaderRegistry();
 
   // Delegate registry-backed maps used by the loader orchestration methods.
@@ -514,6 +517,9 @@ export class SceneLoader {
       },
       setL0Cache: (c) => {
         this.l0Cache = c;
+      },
+      setSliceCache: (c) => {
+        this.sliceCache = c;
       },
       setZarrStore: (s) => {
         this._zarrStore = s;
@@ -1140,6 +1146,7 @@ export class SceneLoader {
       arrayRefRegistry: this.arrayRefRegistry,
       profiler: this.profiler,
       l0Cache: this.l0Cache,
+      sliceCache: this.sliceCache,
       cachingStore: this.cachingStore,
     };
   }
@@ -1417,6 +1424,7 @@ export class SceneLoader {
       gpuBufferPool: this._gpuBufferPool,
       cachingStore: this.cachingStore,
       l0Cache: this.l0Cache,
+      sliceCache: this.sliceCache,
       viewStateQueue: this.viewStateQueue,
       monitor: this.monitor,
     });

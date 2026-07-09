@@ -12,6 +12,7 @@ import { GSplatsProgressiveLoader } from '../../../data/gsplats/gsplats-progress
 import type { GSplatsSpatialIndexLoader } from '../../../data/gsplats/gsplats-spatial-index-loader';
 import type { GSplatsViewState, LoadedGSplatsData } from '../../../types/gsplats';
 import { CACHE_HIT_THRESHOLD_MS } from '../../../data/loaders/progressive/constants';
+import { SliceCache } from '../../../cache/slice-cache';
 
 interface SubLoaderStub {
   updateView: ReturnType<typeof vi.fn>;
@@ -154,6 +155,92 @@ describe('GSplatsProgressiveLoader', () => {
       expect(loader.hasMoreLODs).toBe(true);
       loader.dispose();
       expect(loader.hasMoreLODs).toBe(false);
+    });
+  });
+
+  describe('SliceCache integration', () => {
+    const viewA: GSplatsViewState = {
+      displayDims: [0, 1, 2],
+      slicePosition: [0, 0, 0],
+      tolerance: [0, 0, 0],
+    };
+    const viewB: GSplatsViewState = {
+      displayDims: [0, 1, 2],
+      slicePosition: [0, 0, 1],
+      tolerance: [0, 0, 0],
+    };
+
+    it('restores a revisited view from the SliceCache without re-streaming sub-LODs', async () => {
+      const sc = new SliceCache({ maxSize: 10 * 1024 * 1024 });
+      const a = makeSubLoader(makeLodData(100, 3, { color: 'uint8' }));
+      const b = makeSubLoader(makeLodData(50, 3, { color: 'uint8' }));
+      const l = new GSplatsProgressiveLoader(
+        [a, b] as unknown as GSplatsSpatialIndexLoader[],
+        2,
+        '/g',
+        undefined,
+        sc
+      );
+
+      await l.loadGSplats(viewA); // full ladder for A → stored
+      expect(l.loadedLODCount).toBe(2);
+      await l.loadGSplats(viewB); // different view → loads B, stores B
+
+      // Clear call history, then revisit A: it must be served entirely from the
+      // SliceCache — no sub-loader load at all.
+      a.updateViewWithResidency.mockClear();
+      b.updateViewWithResidency.mockClear();
+      const restored = await l.loadGSplats(viewA);
+
+      expect(a.updateViewWithResidency).not.toHaveBeenCalled();
+      expect(b.updateViewWithResidency).not.toHaveBeenCalled();
+      expect(l.hasMoreLODs).toBe(false); // full ladder → refinement won't re-stream
+      expect(l.loadedLODCount).toBe(2);
+      expect(restored.splatCount).toBe(150);
+      expect(sc.getStats().hits).toBeGreaterThanOrEqual(1);
+    });
+
+    it('clones on store so a later accumulator overwrite cannot corrupt a cached slice', async () => {
+      const sc = new SliceCache({ maxSize: 10 * 1024 * 1024 });
+      const dataA = makeLodData(100, 3, { color: 'uint8' }); // positions filled 0.5
+      const a = makeSubLoader(dataA);
+      const b = makeSubLoader(makeLodData(50, 3, { color: 'uint8' }));
+      const l = new GSplatsProgressiveLoader(
+        [a, b] as unknown as GSplatsSpatialIndexLoader[],
+        2,
+        '/g',
+        undefined,
+        sc
+      );
+
+      await l.loadGSplats(viewA); // stores a CLONE of [dataA, dataB]
+      // Simulate the spatial-index loader reusing its accumulator buffer for the
+      // next load: overwrite dataA's decoded arrays in place.
+      dataA.positions.fill(999);
+      dataA.amplitudes.fill(999);
+
+      await l.loadGSplats(viewB); // change view away (evicts loadedLODs)
+      const restored = await l.loadGSplats(viewA); // restore A from the cache
+
+      // The cached clone must retain the original values, not the 999 overwrite.
+      expect(restored.positions[0]).toBeCloseTo(0.5);
+      expect(restored.amplitudes[0]).toBeCloseTo(1.0);
+    });
+
+    it('is a no-op (no restore, always re-streams) when no SliceCache is supplied', async () => {
+      const a = makeSubLoader(makeLodData(100, 3, { color: 'uint8' }));
+      const b = makeSubLoader(makeLodData(50, 3, { color: 'uint8' }));
+      const l = new GSplatsProgressiveLoader(
+        [a, b] as unknown as GSplatsSpatialIndexLoader[],
+        2,
+        '/g'
+        // no energyTable, no sliceCache
+      );
+      await l.loadGSplats(viewA);
+      await l.loadGSplats(viewB);
+      a.updateViewWithResidency.mockClear();
+      await l.loadGSplats(viewA); // revisit → must re-stream (no cache)
+      expect(a.updateViewWithResidency).toHaveBeenCalled();
     });
   });
 

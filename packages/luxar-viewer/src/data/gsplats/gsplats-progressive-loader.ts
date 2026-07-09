@@ -29,6 +29,8 @@ import type {
 import { ProgressiveMonitorAdapter } from '../loaders/progressive-monitor-adapter';
 import { concatRequiredField } from '../loaders/progressive/concat-helpers';
 import { CACHE_HIT_THRESHOLD_MS } from '../loaders/progressive/constants';
+import { buildSliceViewSig, cloneLodSnapshot } from '../loaders/progressive/slice-cache-helper';
+import { SliceCache } from '../../cache/slice-cache';
 import { log, Modules, LogEmoji } from '../../utils/log';
 
 /**
@@ -168,20 +170,24 @@ export class GSplatsProgressiveLoader implements GSplatsDataLoader {
   // non-null only when EVERY sub-LOD carries a stamp (a partially stamped
   // ladder reads as unstamped — never blend stamped and guessed entries).
   private energyTable: readonly number[] | null;
+  // Node path (SliceCache namespace) + the shared SliceCache, if enabled.
+  private readonly path: string;
+  private readonly sliceCache: SliceCache | null;
 
   constructor(
     lodLoaders: GSplatsSpatialIndexLoader[],
     nLods: number,
     path: string,
-    energyTable?: ReadonlyArray<number | null | undefined>
+    energyTable?: ReadonlyArray<number | null | undefined>,
+    sliceCache?: SliceCache | null
   ) {
     this.lodLoaders = lodLoaders;
     this.nLods = nLods;
+    this.path = path;
+    this.sliceCache = sliceCache ?? null;
     this.monitor = new ProgressiveMonitorAdapter(() => this.lodLoaders, path);
     this.energyTable =
-      energyTable &&
-      energyTable.length === nLods &&
-      energyTable.every((e) => typeof e === 'number')
+      energyTable && energyTable.length === nLods && energyTable.every((e) => typeof e === 'number')
         ? (energyTable as number[])
         : null;
   }
@@ -258,9 +264,13 @@ export class GSplatsProgressiveLoader implements GSplatsDataLoader {
     session?: UpdateSession,
     signal?: AbortSignal
   ): Promise<LoadedGSplatsData> {
-    // Reset if view state changed
+    // Reset if view state changed. Before discarding the ladder, try the
+    // SliceCache: a full-ladder snapshot for this exact view lets us restore
+    // `loadedLODs` outright (so `hasMoreLODs` reads false and the refinement
+    // loop never re-streams), skipping the whole load+decode.
     if (!this.lastViewState || !viewStatesEqual(viewState, this.lastViewState)) {
-      this.loadedLODs = [];
+      const restored = this.restoreFromSliceCache(viewState);
+      this.loadedLODs = restored ?? [];
       this._resetGeneration++;
       this.lastViewState = {
         displayDims: [...viewState.displayDims],
@@ -268,6 +278,11 @@ export class GSplatsProgressiveLoader implements GSplatsDataLoader {
         tolerance: [...viewState.tolerance],
         dimensions: viewState.dimensions,
       };
+      if (restored) {
+        this._initialLoadDone = true;
+        this._lastAllResident = true;
+        return this.concatenateMemoized(session);
+      }
     }
 
     // Load LODs sequentially, stopping at first slow (cache-miss) load
@@ -331,7 +346,43 @@ export class GSplatsProgressiveLoader implements GSplatsDataLoader {
     // Fire-and-forget: prefetch next unloaded LOD to warm cache
     this.prefetchNextLOD(viewState);
 
+    // Once the full ladder is loaded, snapshot it into the SliceCache so a later
+    // revisit to this view is an instant restore (see restoreFromSliceCache).
+    this.maybeStoreSliceCache(viewState);
+
     return this.concatenateMemoized(session);
+  }
+
+  /** SliceCache key for a view (namespaced per node by the cache itself). */
+  private sliceKey(viewState: GSplatsViewState): string {
+    return SliceCache.makeKey(this.path, buildSliceViewSig(viewState));
+  }
+
+  /**
+   * Return a cached FULL-ladder `loadedLODs` snapshot for this view, or null on
+   * miss / disabled / incomplete. The returned arrays are shared read-only:
+   * concat allocates fresh output (nLods > 1) and worker projection
+   * structured-clones its inputs, so the cached snapshot is never mutated.
+   */
+  private restoreFromSliceCache(viewState: GSplatsViewState): LoadedGSplatsData[] | null {
+    if (!this.sliceCache || this.nLods <= 0) return null;
+    const entry = this.sliceCache.get(this.sliceKey(viewState));
+    if (!entry) return null;
+    const lods = entry.payload as LoadedGSplatsData[];
+    return lods.length === this.nLods ? lods : null; // only complete ladders
+  }
+
+  /**
+   * Store a cloned snapshot of the completed ladder. Clones because the loaded
+   * arrays alias reused accumulator buffers (see cloneLodSnapshot). `has()`
+   * guards against re-cloning an entry already cached for this view.
+   */
+  private maybeStoreSliceCache(viewState: GSplatsViewState): void {
+    if (!this.sliceCache || this.loadedLODs.length !== this.nLods) return;
+    const key = this.sliceKey(viewState);
+    if (this.sliceCache.has(key)) return;
+    const { clone, bytes } = cloneLodSnapshot(this.loadedLODs);
+    this.sliceCache.set(key, { payload: clone, bytes });
   }
 
   /**

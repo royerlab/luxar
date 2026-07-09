@@ -24,6 +24,8 @@ import type {
 import { ProgressiveMonitorAdapter } from '../loaders/progressive-monitor-adapter';
 import { concatOptionalField, concatRequiredField } from '../loaders/progressive/concat-helpers';
 import { CACHE_HIT_THRESHOLD_MS } from '../loaders/progressive/constants';
+import { buildSliceViewSig, cloneLodSnapshot } from '../loaders/progressive/slice-cache-helper';
+import { SliceCache } from '../../cache/slice-cache';
 import { log, Modules, LogEmoji } from '../../utils/log';
 
 /**
@@ -177,20 +179,24 @@ export class LinesProgressiveLoader implements LinesDataLoader {
   // non-null only when EVERY sub-LOD carries a stamp (a partially stamped
   // ladder reads as unstamped — never blend stamped and guessed entries).
   private energyTable: readonly number[] | null;
+  // Node path (SliceCache namespace) + the shared SliceCache, if enabled.
+  private readonly path: string;
+  private readonly sliceCache: SliceCache | null;
 
   constructor(
     lodLoaders: LinesSpatialIndexLoader[],
     nLods: number,
     path: string,
-    energyTable?: ReadonlyArray<number | null | undefined>
+    energyTable?: ReadonlyArray<number | null | undefined>,
+    sliceCache?: SliceCache | null
   ) {
     this.lodLoaders = lodLoaders;
     this.nLods = nLods;
+    this.path = path;
+    this.sliceCache = sliceCache ?? null;
     this.monitor = new ProgressiveMonitorAdapter(() => this.lodLoaders, path);
     this.energyTable =
-      energyTable &&
-      energyTable.length === nLods &&
-      energyTable.every((e) => typeof e === 'number')
+      energyTable && energyTable.length === nLods && energyTable.every((e) => typeof e === 'number')
         ? (energyTable as number[])
         : null;
   }
@@ -249,7 +255,9 @@ export class LinesProgressiveLoader implements LinesDataLoader {
     signal?: AbortSignal
   ): Promise<LoadedLinesData> {
     if (!this.lastViewState || !viewStatesEqual(viewState, this.lastViewState)) {
-      this.loadedLODs = [];
+      // Try the SliceCache before discarding the ladder (see GSplats loader).
+      const restored = this.restoreFromSliceCache(viewState);
+      this.loadedLODs = restored ?? [];
       this._resetGeneration++;
       this.lastViewState = {
         displayDims: [...viewState.displayDims],
@@ -257,6 +265,11 @@ export class LinesProgressiveLoader implements LinesDataLoader {
         tolerance: [...viewState.tolerance],
         dimensions: viewState.dimensions,
       };
+      if (restored) {
+        this._initialLoadDone = true;
+        this._lastAllResident = true;
+        return this.concatenateMemoized(session);
+      }
     }
 
     const startLevel = this.loadedLODs.length;
@@ -311,7 +324,37 @@ export class LinesProgressiveLoader implements LinesDataLoader {
 
     this.prefetchNextLOD(viewState);
 
+    // Snapshot the completed ladder into the SliceCache for instant revisits.
+    this.maybeStoreSliceCache(viewState);
+
     return this.concatenateMemoized(session);
+  }
+
+  /** SliceCache key for a view (namespaced per node by the cache itself). */
+  private sliceKey(viewState: LinesViewState): string {
+    return SliceCache.makeKey(this.path, buildSliceViewSig(viewState));
+  }
+
+  /**
+   * Return a cached FULL-ladder `loadedLODs` snapshot for this view, or null on
+   * miss / disabled / incomplete. Shared read-only (see GSplats loader).
+   */
+  private restoreFromSliceCache(viewState: LinesViewState): LoadedLinesData[] | null {
+    if (!this.sliceCache || this.nLods <= 0) return null;
+    const entry = this.sliceCache.get(this.sliceKey(viewState));
+    if (!entry) return null;
+    const lods = entry.payload as LoadedLinesData[];
+    return lods.length === this.nLods ? lods : null; // only complete ladders
+  }
+
+  /** Store a cloned snapshot of the completed ladder (clones because loaded
+   *  arrays alias reused accumulator buffers; `has()` avoids re-cloning). */
+  private maybeStoreSliceCache(viewState: LinesViewState): void {
+    if (!this.sliceCache || this.loadedLODs.length !== this.nLods) return;
+    const key = this.sliceKey(viewState);
+    if (this.sliceCache.has(key)) return;
+    const { clone, bytes } = cloneLodSnapshot(this.loadedLODs);
+    this.sliceCache.set(key, { payload: clone, bytes });
   }
 
   /**

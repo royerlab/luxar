@@ -36,6 +36,7 @@ import { ArrayRefRegistry } from '../../array-decoder/decoder';
 import { log, Modules } from '../../../utils/log';
 import { UpdateProfiler } from '../../../profiling/update-profiler';
 import type { DecompressedChunkCache } from '../../../cache/decompressed-chunk-cache';
+import type { SliceCache } from '../../../cache/slice-cache';
 import type { MultiLevelCachingStore } from '../../../cache/multi-level-caching-store';
 
 /** Common dependencies needed by every loader factory call. */
@@ -44,6 +45,8 @@ export interface LoaderFactoryDeps {
   arrayRefRegistry: ArrayRefRegistry;
   profiler: UpdateProfiler | null;
   l0Cache: DecompressedChunkCache | null;
+  /** Shared SliceCache; passed to progressive loaders for per-slice reuse. */
+  sliceCache: SliceCache | null;
   cachingStore: MultiLevelCachingStore | null;
 }
 
@@ -202,7 +205,13 @@ export async function createProgressiveGSplatsLoader(
     );
   }
 
-  return new GSplatsProgressiveLoader(lodLoaders, nAdditive, node.path, energyTable);
+  return new GSplatsProgressiveLoader(
+    lodLoaders,
+    nAdditive,
+    node.path,
+    energyTable,
+    deps.sliceCache ?? undefined
+  );
 }
 
 /**
@@ -264,7 +273,13 @@ export async function createProgressivePointsLoader(
     );
   }
 
-  return new PointsProgressiveLoader(lodLoaders, nAdditive, node.path, energyTable);
+  return new PointsProgressiveLoader(
+    lodLoaders,
+    nAdditive,
+    node.path,
+    energyTable,
+    deps.sliceCache ?? undefined
+  );
 }
 
 /**
@@ -322,5 +337,11 @@ export async function createProgressiveLinesLoader(
     );
   }
 
-  return new LinesProgressiveLoader(lodLoaders, nAdditive, node.path, energyTable);
+  return new LinesProgressiveLoader(
+    lodLoaders,
+    nAdditive,
+    node.path,
+    energyTable,
+    deps.sliceCache ?? undefined
+  );
 }

@@ -115,6 +115,9 @@ export interface LoaderConfig {
   /** Disable both L1/L2 cache tiers and L0 decompressed cache. */
   noCache?: boolean;
 
+  /** Disable only the SliceCache / S-cache (L0/L1/L2 stay on). */
+  noSliceCache?: boolean;
+
   /** Verbose cache logging. */
   cacheDebug?: boolean;
 
@@ -236,4 +239,3 @@ export interface LoaderStats {
  * switch/case dispatch on `geometry_type` strings in scene-loader.
  */
 export type GeometryKind = 'points' | 'lines' | 'gsplats';
-
