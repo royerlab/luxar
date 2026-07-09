@@ -22,7 +22,7 @@ def run_batch_local_orchestration(
     channels_slice: Optional[str],
     preset: str,
     config: Optional[Path],
-    floor: str,
+    floor: Optional[str],
     seeds: Optional[str],
     iters: Optional[int],
     batch_progressive: bool,

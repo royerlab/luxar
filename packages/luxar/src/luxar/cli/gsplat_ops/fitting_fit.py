@@ -84,13 +84,14 @@ def run_fit_volume(
     ),
     # Frequently used fit params
     lr: Optional[float] = typer.Option(None, "--lr", help="Learning rate"),
-    floor: str = typer.Option(
-        "auto",
+    floor: Optional[str] = typer.Option(
+        None,
         "--floor",
         help="Background floor / DC-offset suppression before normalization "
-        "(on by default). auto = histogram-mode estimate (capped at median; "
+        "(default: auto). auto = histogram-mode estimate (capped at median; "
         "no-op on clean data) | pN = Nth percentile (e.g. p10) | <float> = "
-        "fixed value | none = disable (hard-min normalization).",
+        "fixed value | none = disable (hard-min normalization). Unset lets a "
+        "`floor:` in --config/preset apply, else defaults to auto.",
     ),
     seed_method: Optional[str] = typer.Option(
         None, "--seed-method", help="Seed generation method"

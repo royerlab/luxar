@@ -122,11 +122,12 @@ def run_batch_submit(
     # Fit params
     preset: str = typer.Option("standard", "--preset", help="Fitting preset"),
     config: Optional[Path] = typer.Option(None, "--config", help="YAML fit config"),
-    floor: str = typer.Option(
-        "auto",
+    floor: Optional[str] = typer.Option(
+        None,
         "--floor",
-        help="Background floor / DC-offset suppression per tile (on by "
-        "default): auto | pN | <float> | none. See `gsplat fit --help`.",
+        help="Background floor / DC-offset suppression per tile (default: "
+        "auto): auto | pN | <float> | none. Unset lets a `floor:` in "
+        "--config apply, else defaults to auto. See `gsplat fit --help`.",
     ),
     seeds: Optional[str] = typer.Option(None, "--seeds", help="Seed count or ratio"),
     iters: Optional[int] = typer.Option(

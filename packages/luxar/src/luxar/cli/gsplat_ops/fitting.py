@@ -243,12 +243,13 @@ def calibrate_command(
     config: Optional[Path] = typer.Option(
         None, "--config", help="YAML overrides for fit parameters"
     ),
-    floor: str = typer.Option(
-        "auto",
+    floor: Optional[str] = typer.Option(
+        None,
         "--floor",
-        help="Background floor / DC-offset suppression (on by default), so K* "
+        help="Background floor / DC-offset suppression (default: auto), so K* "
         "is measured on floor-suppressed data (matches how you will fit). "
-        "auto | pN | <float> | none. See `gsplat fit --help`.",
+        "auto | pN | <float> | none. Unset lets a `floor:` in --config/preset "
+        "apply, else defaults to auto. See `gsplat fit --help`.",
     ),
     device: Optional[str] = typer.Option(
         None, "--device", "-d", help="Device: auto/cpu/cuda/mps"

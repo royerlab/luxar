@@ -24,7 +24,7 @@ def run_calibrate_command(
     mask_fraction: float,
     preset: str,
     config: Optional[Path],
-    floor: str,
+    floor: Optional[str],
     device: Optional[str],
     channel: Optional[int],
     timepoint: Optional[int],
