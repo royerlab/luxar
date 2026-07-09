@@ -25,6 +25,18 @@ from luxar.cli.gsplat_config import (
     parse_shape,
 )
 
+_ANSI_RE = re.compile(r"\x1b\[[0-9;]*m")
+
+
+def _plain(text: str) -> str:
+    """Strip ANSI SGR codes so option-name substring checks are color-robust.
+
+    Rich renders an option like ``--floor`` as ``-`` + SGR + ``-floor`` when
+    color is on (CI forces a TTY), which breaks a naive ``"--floor" in stdout``.
+    Stripping the SGR codes rejoins the name.
+    """
+    return _ANSI_RE.sub("", text)
+
 
 @pytest.fixture
 def runner() -> CliRunner:
@@ -339,7 +351,7 @@ class TestFitCommand:
     def test_fit_help_exposes_floor_flag(self, runner: CliRunner) -> None:
         result = runner.invoke(app, ["gsplat", "fit", "--help"])
         assert result.exit_code == 0
-        assert "--floor" in result.stdout
+        assert "--floor" in _plain(result.stdout)
 
     def test_dump_config_includes_floor_default(self, runner: CliRunner) -> None:
         result = runner.invoke(app, ["gsplat", "fit", "--dump-config"])
@@ -350,7 +362,7 @@ class TestFitCommand:
     def test_cal_help_exposes_floor_flag(self, runner: CliRunner) -> None:
         result = runner.invoke(app, ["gsplat", "cal", "--help"])
         assert result.exit_code == 0
-        assert "--floor" in result.stdout
+        assert "--floor" in _plain(result.stdout)
 
     def test_fit_small_volume(
         self, runner: CliRunner, small_volume_npy: Path, tmp_path: Path
