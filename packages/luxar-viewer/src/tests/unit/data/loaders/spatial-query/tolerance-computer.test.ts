@@ -37,25 +37,26 @@ describe('computeTolerance — points', () => {
     expect(tol[3]).toBe(1.0);
   });
 
-  it('uses 0.5 for hidden dimensions flagged non-spatial via spatialExtendDims', () => {
-    // Dimension 3 is non-spatial (discrete-like) per the per-dimension flag array
+  it('uses the shared quarter-cell tolerance for hidden dims flagged non-spatial via spatialExtendDims', () => {
+    // Dimension 3 is non-spatial (discrete-like) per the per-dimension flag array.
+    // No dimension metadata is supplied, so the step falls back to 1 → 0.25.
     const tol = computeTolerance('points', [0, 1, 2], 4, undefined, {
       maxRadius: 5.0,
       spatialExtendDims: [true, true, true, false],
     });
-    expect(tol[3]).toBe(0.5);
+    expect(tol[3]).toBe(0.25);
   });
 
   it('uses maxRadius for hidden dimensions flagged spatial via spatialExtendDims', () => {
     // Same shape, but dimension 3 is flagged spatial (true): it must use
-    // maxRadius, not the 0.5 discrete value. This pins the true branch of the
-    // spatialExtendDims flag so a flipped flag-check is caught.
+    // maxRadius, not the discrete quarter-cell value. This pins the true branch of
+    // the spatialExtendDims flag so a flipped flag-check is caught.
     const tol = computeTolerance('points', [0, 1, 2], 4, undefined, {
       maxRadius: 5.0,
       spatialExtendDims: [true, true, true, true],
     });
     expect(tol[3]).toBe(5.0);
-    expect(tol[3]).not.toBe(0.5);
+    expect(tol[3]).not.toBe(0.25);
   });
 
   it('treats dimensions beyond spatialExtendDims length as spatial', () => {
@@ -78,7 +79,7 @@ describe('computeTolerance — lines', () => {
 
   it('returns 0 for hidden spatial dimensions (segment bounds already include line width)', () => {
     const tol = computeTolerance('lines', [0, 1, 2], 4, dims);
-    expect(tol[3]).toBe(0.5); // discrete, step/2
+    expect(tol[3]).toBe(0.25); // discrete, 0.25 × step (step 1)
     const spatialOnly: DimensionInfo[] = [
       { discrete: false },
       { discrete: false },
@@ -89,12 +90,23 @@ describe('computeTolerance — lines', () => {
     expect(tol2[3]).toBe(0);
   });
 
-  it('uses step/2 for discrete hidden dimensions', () => {
+  it('uses 0.25 × step for discrete hidden dimensions', () => {
     const tol = computeTolerance('lines', [0, 1, 2], 4, dims);
-    expect(tol[3]).toBe(0.5);
+    expect(tol[3]).toBe(0.25);
   });
 
-  it('falls back to 0.5 for discrete hidden dimensions without a step', () => {
+  it('scales the discrete tolerance with a larger step (step 2 → 0.5)', () => {
+    const dimsStep2: DimensionInfo[] = [
+      { discrete: false },
+      { discrete: false },
+      { discrete: false },
+      { discrete: true, step: 2.0 },
+    ];
+    const tol = computeTolerance('lines', [0, 1, 2], 4, dimsStep2);
+    expect(tol[3]).toBe(0.5); // 0.25 × 2
+  });
+
+  it('falls back to a quarter-cell (0.25) for discrete hidden dimensions without a step', () => {
     const dimsNoStep: DimensionInfo[] = [
       { discrete: false },
       { discrete: false },
@@ -102,7 +114,7 @@ describe('computeTolerance — lines', () => {
       { discrete: true },
     ];
     const tol = computeTolerance('lines', [0, 1, 2], 4, dimsNoStep);
-    expect(tol[3]).toBe(0.5);
+    expect(tol[3]).toBe(0.25);
   });
 });
 
@@ -129,7 +141,7 @@ describe('computeTolerance — gsplats', () => {
     expect(tol[3]).toBe(0.25 * 5.0);
   });
 
-  it('uses 0.5 for hidden discrete dimensions', () => {
+  it('uses 0.25 × step for hidden discrete dimensions', () => {
     const dims: DimensionInfo[] = [
       { discrete: false },
       { discrete: false },
@@ -137,7 +149,18 @@ describe('computeTolerance — gsplats', () => {
       { discrete: true, step: 1.0 },
     ];
     const tol = computeTolerance('gsplats', [0, 1, 2], 4, dims);
-    expect(tol[3]).toBe(0.5);
+    expect(tol[3]).toBe(0.25);
+  });
+
+  it('scales the discrete tolerance with a larger step (step 2 → 0.5)', () => {
+    const dims: DimensionInfo[] = [
+      { discrete: false },
+      { discrete: false },
+      { discrete: false },
+      { discrete: true, step: 2.0 },
+    ];
+    const tol = computeTolerance('gsplats', [0, 1, 2], 4, dims);
+    expect(tol[3]).toBe(0.5); // 0.25 × 2
   });
 
   it('falls back to defaultTolerance when no step is available', () => {

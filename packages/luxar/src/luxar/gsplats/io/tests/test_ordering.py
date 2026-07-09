@@ -4,6 +4,7 @@ import numpy as np
 import pytest
 
 from luxar.io.ordering import (
+    _BARRIER_BOUND_EPS,
     compute_auto_resolution,
     compute_chunk_bounds_gsplats,
     morton_encode_nd,
@@ -382,7 +383,10 @@ class TestBarrierAwareSorting:
         # Non-decreasing time => each timepoint is a contiguous run.
         assert np.all(np.diff(t_sorted) >= 0)
         # Number of transitions == number of distinct timepoints - 1.
-        assert np.count_nonzero(np.diff(t_sorted) != 0) == len(np.unique(centers[:, 3])) - 1
+        assert (
+            np.count_nonzero(np.diff(t_sorted) != 0)
+            == len(np.unique(centers[:, 3])) - 1
+        )
 
     def test_chunks_are_single_timepoint(self) -> None:
         """The bug's killer invariant: with a barrier, every chunk's time-extent
@@ -399,10 +403,11 @@ class TestBarrierAwareSorting:
             sorted_centers, chol, chunk_size, coverage_sigma=3.0, slice_dims=[3]
         )
         t_extent = bounds[:, 3, 1] - bounds[:, 3, 0]
-        # Single-timepoint chunks have extent ~1.0 (tight ±0.5), NOT the 3σ*2=6
-        # they'd get without slice_dims. Boundary chunks (<= n_transitions) may
-        # span 2 timepoints (extent ~2.0). The vast majority are single.
-        n_boundary = np.count_nonzero(t_extent > 1.5)
+        # Single-timepoint chunks have ~zero time-extent (only the float-boundary
+        # epsilon), NOT the 3σ*2=6 they'd get without slice_dims. Boundary chunks
+        # (<= n_transitions) may span 2 timepoints (extent ~1.0). The vast majority
+        # are single.
+        n_boundary = np.count_nonzero(t_extent > 0.5)
         assert n_boundary <= len(np.unique(centers[:, 3]))  # <= transitions+1
         assert np.all(t_extent <= 2.0 + 1e-4)  # never the 6.0 σ-expansion
 
@@ -425,7 +430,7 @@ class TestBarrierAwareSorting:
 
 class TestBarrierChunkBounds:
     """`compute_chunk_bounds_gsplats(slice_dims=...)` — barrier axes get tight
-    ±0.5 bounds, spatial axes keep the ellipsoidal σ extent."""
+    (epsilon-padded) bounds, spatial axes keep the ellipsoidal σ extent."""
 
     def test_barrier_axis_no_sigma_expansion(self) -> None:
         rng = np.random.default_rng(4)
@@ -437,9 +442,9 @@ class TestBarrierChunkBounds:
         bounds = compute_chunk_bounds_gsplats(
             centers, chol, chunk_size=n, coverage_sigma=3.0, slice_dims=[3]
         )
-        # Barrier dim: tight ±0.5 around 2.0, NOT 2 ± 3*5.
-        assert bounds[0, 3, 0] == pytest.approx(1.5)
-        assert bounds[0, 3, 1] == pytest.approx(2.5)
+        # Barrier dim: tight (epsilon-padded) around 2.0, NOT 2 ± 3*5.
+        assert bounds[0, 3, 0] == pytest.approx(2.0 - _BARRIER_BOUND_EPS)
+        assert bounds[0, 3, 1] == pytest.approx(2.0 + _BARRIER_BOUND_EPS)
         # Spatial dims keep the σ extent (much wider than the value spread).
         assert bounds[0, 0, 1] - bounds[0, 0, 0] > 10.0
 
@@ -455,22 +460,22 @@ class TestBarrierChunkBounds:
         bounds = compute_chunk_bounds_gsplats(
             centers, chol, chunk_size=128, coverage_sigma=3.0, slice_dims=[3]
         )
-        # No INTERIOR overlap in the barrier dim: chunk 0 (t=0, [-0.5,0.5]) max
-        # <= chunk 1 (t=1, [0.5,1.5]) min. The half-cell edges touch at 0.5 (as
-        # with Points' ±0.5 padding); a categorical query at an integer value
-        # with tolerance < 0.5 still isolates one timepoint. Contrast the σ
-        # expansion (100·3) that would make them overlap massively without
-        # slice_dims.
-        assert bounds[0, 3, 1] <= bounds[1, 3, 0] + 1e-6
-        assert bounds[0, 3, 1] == pytest.approx(0.5)
-        assert bounds[1, 3, 0] == pytest.approx(0.5)
+        # No overlap in the barrier dim: chunk 0 (t=0, [-eps, eps]) max is strictly
+        # below chunk 1 (t=1, [1-eps, 1+eps]) min, with a clean ~1-step gap. The
+        # epsilon padding no longer reaches half a step, so adjacent timepoints do
+        # not touch. Contrast the σ expansion (100·3) that would make them overlap
+        # massively without slice_dims.
+        assert bounds[0, 3, 1] < bounds[1, 3, 0]
+        assert bounds[0, 3, 1] == pytest.approx(_BARRIER_BOUND_EPS)
+        assert bounds[1, 3, 0] == pytest.approx(1.0 - _BARRIER_BOUND_EPS)
 
     def test_query_at_timepoint_selects_only_its_chunks(self) -> None:
         """An AABB query at one timepoint intersects only that timepoint's
         chunks (mirror points test_query_at_discrete_value_finds_correct_chunks).
 
-        Categorical navigation queries the exact integer value (tolerance < 0.5),
-        so the ±0.5 half-cell padding isolates one timepoint cleanly."""
+        Categorical navigation queries the exact integer value; the epsilon-padded
+        barrier bounds isolate one timepoint cleanly (a point query at t only lands
+        in chunks that actually contain t)."""
         rng = np.random.default_rng(6)
         n, chunk_size = 1500, 128
         centers = np.empty((n, 4), dtype=np.float32)
@@ -529,7 +534,7 @@ class TestDetectBarrierDims:
         axis must NOT be flagged. np.allclose's default rtol=1e-5 makes every
         float within tolerance of an integer once |coord| > ~5e4, so a strict
         rtol=0 test is required. A false positive here would give a spatial axis
-        tight ±0.5 bounds and DROP splats whose extent crosses a query slice."""
+        tight epsilon-padded bounds and DROP splats whose extent crosses a query slice."""
         from luxar.io.ordering import detect_barrier_dims
 
         rng = np.random.default_rng(11)

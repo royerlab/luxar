@@ -90,8 +90,8 @@ class TestChunkBoundsPoints:
         """CRITICAL TEST: Discrete dimensions should NOT expand by radius.
 
         This test verifies the fix for the discrete dimension filtering bug:
-        - A point at discrete=0 with radius=5 should have chunk bounds
-          of [-0.5, 0.5] for the discrete dimension, NOT [-5, 5].
+        - A point at discrete=0 with radius=5 should have tight (epsilon-padded)
+          chunk bounds of ~0 for the discrete dimension, NOT [-5, 5].
         - Without this fix, chunks with discrete=0 would match queries
           for discrete=3, returning wrong data.
         """
@@ -121,8 +121,8 @@ class TestChunkBoundsPoints:
         # Should have 3 chunks (6 points / 2 per chunk)
         assert bounds.shape == (3, 4, 2)
 
-        # Check chunk 0 (points at time=0): discrete bounds should be ~0±0.5
-        # NOT expanded by radius (which would be -5 to 5)
+        # Check chunk 0 (points at time=0): discrete bounds should be ~0
+        # (epsilon-padded), NOT expanded by radius (which would be -5 to 5)
         assert bounds[0, 0, 0] >= -0.6, f"Time min too low: {bounds[0, 0, 0]}"
         assert bounds[0, 0, 1] <= 0.6, f"Time max too high: {bounds[0, 0, 1]}"
 
@@ -309,8 +309,8 @@ class TestChunkBoundsDiscreteFiltering:
         for i in range(4):
             chunk_max = bounds[i, 0, 1]
             next_chunk_min = bounds[i + 1, 0, 0]
-            # With tolerance ±0.5, chunks at t=0 and t=1 have bounds
-            # [-0.5, 0.5] and [0.5, 1.5] which just touch but don't cross
+            # With epsilon padding, chunks at t=0 and t=1 have bounds
+            # [-eps, eps] and [1-eps, 1+eps] with a clean ~1-step gap (no overlap).
             # The gap should be: (next_min) - (this_max) >= -0.5 (small overlap is ok)
             gap = next_chunk_min - chunk_max
             assert gap >= -0.5, (

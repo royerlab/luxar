@@ -2,14 +2,22 @@
  * Canonical tolerance computer used by all geometry-specific spatial-index loaders.
  *
  * Each geometry type has slightly different requirements for hidden (non-displayed)
- * dimensions:
- * - **Points**: `maxRadius` for spatial dims, 0.5 for discrete dims (selected via
- *   the `spatialExtendDims` option, which is the per-dimension flag array carried
- *   by `EffectiveRadiusConfig`).
+ * dimensions. Discrete dims share ONE rule across all three geometries
+ * ({@link discreteDimTolerance}); only the spatial/continuous branch differs:
+ * - **Points**: `maxRadius` for spatial dims (selected via the `spatialExtendDims`
+ *   option, the per-dimension flag array carried by `EffectiveRadiusConfig`).
  * - **Lines**: 0 for spatial dims (segment bounding boxes already include line
- *   width extent), `step / 2` for discrete dims (or 0.5 fallback).
- * - **GSplats**: `step × gsplatsDefaultTolerance` (default 3σ) for continuous dims,
- *   0.5 for discrete dims, falling back to `gsplatsDefaultTolerance` when no step.
+ *   width extent).
+ * - **GSplats**: `step × gsplatsDefaultTolerance` (default 3σ) for continuous dims.
+ *
+ * Discrete dims (all geometries): a "quarter-cell" `0.25 × step`. This is
+ * deliberately `< 0.5 × step`: a query on category `k` must not reach the `k±1`
+ * cell even though chunk bounds are padded on the write side (see
+ * `io/ordering.py` barrier padding). The two half-steps (pad + tolerance) would
+ * otherwise sum to a full step and bleed the entire neighbouring category (e.g.
+ * loading timepoint `t−1` in full when scrubbing to `t`). A quarter-cell still
+ * comfortably catches the target cell and genuine straddle chunks, and sits
+ * inside the projection stage's `0.5 × step` membership rule.
  *
  * Displayed dimensions always get infinite tolerance (1e10) regardless of type.
  *
@@ -56,6 +64,26 @@ export interface ToleranceOptions {
 
 /** Infinite tolerance sentinel for displayed dimensions. */
 const DISPLAYED_TOLERANCE = 1e10;
+
+/**
+ * Fraction of a step used as the hidden-dimension tolerance for DISCRETE dims,
+ * shared by all three geometry types. A "quarter-cell": `< 0.5` so a query on
+ * category `k` never reaches the `k±1` cell (chunk bounds are padded on the
+ * write side; pad + tolerance must stay below one step or the whole neighbour
+ * category bleeds in), yet `> 0` so the target cell + genuine straddle chunks
+ * always match. See the module docstring.
+ */
+const DISCRETE_TOLERANCE_FRACTION = 0.25;
+
+/**
+ * Canonical discrete-dimension query tolerance, shared by points/lines/gsplats.
+ * `0.25 × step` (fallback quarter-cell of a unit step when no step metadata).
+ */
+function discreteDimTolerance(dimInfo: DimensionInfo | undefined): number {
+  const step =
+    dimInfo?.step !== undefined && dimInfo.step !== null && dimInfo.step > 0 ? dimInfo.step : 1;
+  return DISCRETE_TOLERANCE_FRACTION * step;
+}
 
 /**
  * Compute per-dimension query tolerances for a spatial-index query.
@@ -110,11 +138,11 @@ function computeHiddenDimTolerance(
  * Points hidden dimension tolerance.
  *
  * Spatial dimensions use `maxRadius` so points whose radius intersects the slice
- * are loaded. Discrete dimensions use 0.5 for floating-point safety.
+ * are loaded. Discrete dimensions use the shared quarter-cell rule.
  */
 function computePointsHiddenTolerance(
   dimIndex: number,
-  _dimInfo: DimensionInfo | undefined,
+  dimInfo: DimensionInfo | undefined,
   options: ToleranceOptions
 ): number {
   const { maxRadius = 1.0, spatialExtendDims } = options;
@@ -131,21 +159,18 @@ function computePointsHiddenTolerance(
     return maxRadius;
   }
   // Discrete (non-spatial) dimension
-  return 0.5;
+  return discreteDimTolerance(dimInfo);
 }
 
 /**
  * Lines hidden dimension tolerance.
  *
  * Spatial dimensions get 0 because segment bounding boxes already include
- * the line width extent. Discrete dimensions use `step / 2` (or 0.5 fallback).
+ * the line width extent. Discrete dimensions use the shared quarter-cell rule.
  */
 function computeLinesHiddenTolerance(dimInfo: DimensionInfo | undefined): number {
   if (dimInfo?.discrete) {
-    if (dimInfo.step !== undefined && dimInfo.step !== null) {
-      return dimInfo.step / 2;
-    }
-    return 0.5;
+    return discreteDimTolerance(dimInfo);
   }
   // Spatial dimension: bounds already include width
   return 0;
@@ -154,8 +179,9 @@ function computeLinesHiddenTolerance(dimInfo: DimensionInfo | undefined): number
 /**
  * GSplats hidden dimension tolerance.
  *
- * Discrete dimensions use 0.5. Continuous dimensions use `step × defaultTolerance`
- * (default 3.0 = 3 σ of the Gaussian), falling back to `defaultTolerance` alone.
+ * Discrete dimensions use the shared quarter-cell rule. Continuous dimensions use
+ * `step × defaultTolerance` (default 3.0 = 3 σ of the Gaussian), falling back to
+ * `defaultTolerance` alone.
  */
 function computeGSplatsHiddenTolerance(
   dimInfo: DimensionInfo | undefined,
@@ -164,7 +190,7 @@ function computeGSplatsHiddenTolerance(
   const defaultTol = options.gsplatsDefaultTolerance ?? 3.0;
 
   if (dimInfo?.discrete) {
-    return 0.5;
+    return discreteDimTolerance(dimInfo);
   }
   if (dimInfo?.step) {
     return dimInfo.step * defaultTol;
