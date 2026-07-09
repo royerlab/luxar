@@ -173,6 +173,14 @@ export class GSplatsProgressiveLoader implements GSplatsDataLoader {
   // Node path (SliceCache namespace) + the shared SliceCache, if enabled.
   private readonly path: string;
   private readonly sliceCache: SliceCache | null;
+  // Per-tick LOD time budget (ms) from the CURRENT updateView call during
+  // dimension-animation playback; null outside playback. A per-pass
+  // directive (never part of lastViewState / viewStatesEqual / cache keys):
+  // caps how many sub-LODs the streaming loop loads this pass and, while
+  // set, makes `hasMoreLODs` read false so no background refinement runs
+  // between animation ticks and the budgeted prefix commits as
+  // "complete for playback" (display gate accepts it without holding).
+  private _frameBudgetMs: number | null = null;
 
   constructor(
     lodLoaders: GSplatsSpatialIndexLoader[],
@@ -200,6 +208,13 @@ export class GSplatsProgressiveLoader implements GSplatsDataLoader {
     // refinement loop holding a stale reference stops instead of indexing
     // into the now-empty lodLoaders.
     if (this._disposed) return false;
+    // While a playback frame budget is active, the budgeted prefix IS the
+    // target: report no further work so the refinement scheduler stays idle
+    // between animation ticks and the commit stamps the prefix as complete
+    // (the display gate then accepts it instead of holding the previous
+    // frame). The next budget-free updateView (pause re-trigger, scrub)
+    // clears the budget and refinement resumes from the prefix.
+    if (this._frameBudgetMs !== null) return false;
     return this.loadedLODs.length < this.nLods;
   }
 
@@ -264,6 +279,14 @@ export class GSplatsProgressiveLoader implements GSplatsDataLoader {
     session?: UpdateSession,
     signal?: AbortSignal
   ): Promise<LoadedGSplatsData> {
+    // Record the per-pass playback budget FIRST (before the restore branch:
+    // a pause re-trigger arrives with the SAME view state — it must still
+    // clear the budget so refinement can resume). Deadline is measured from
+    // pass start so slow levels consume the budget too.
+    this._frameBudgetMs = viewState.frameBudgetMs ?? null;
+    const budgetDeadline =
+      this._frameBudgetMs !== null ? performance.now() + this._frameBudgetMs : null;
+
     // Reset if view state changed. Before discarding the ladder, try the
     // SliceCache: a full-ladder snapshot for this exact view lets us restore
     // `loadedLODs` outright (so `hasMoreLODs` reads false and the refinement
@@ -294,6 +317,14 @@ export class GSplatsProgressiveLoader implements GSplatsDataLoader {
     const startLevel = this.loadedLODs.length;
 
     for (let level = startLevel; level < this.nLods; level++) {
+      // Playback frame budget: stop as soon as the tick's time is spent —
+      // whether many fast levels consumed it or one slow level did. Checked
+      // at loop top (skips work known to be over budget); the
+      // `level > startLevel` guard keeps the ≥1-level first-paint floor
+      // even under tiny budgets.
+      if (budgetDeadline !== null && level > startLevel && performance.now() > budgetDeadline) {
+        break;
+      }
       const t0 = performance.now();
       const { data: lodData, allResident } = await this.lodLoaders[level].updateViewWithResidency(
         viewState,

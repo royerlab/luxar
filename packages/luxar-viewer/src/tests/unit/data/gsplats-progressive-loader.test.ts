@@ -7,7 +7,7 @@
  * sub-loaders and inspect the merged result.
  */
 
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { GSplatsProgressiveLoader } from '../../../data/gsplats/gsplats-progressive-loader';
 import type { GSplatsSpatialIndexLoader } from '../../../data/gsplats/gsplats-spatial-index-loader';
 import type { GSplatsViewState, LoadedGSplatsData } from '../../../types/gsplats';
@@ -356,6 +356,81 @@ describe('GSplatsProgressiveLoader', () => {
       expect(lodA.updateViewWithResidency).toHaveBeenCalled();
       expect(lodB.updateViewWithResidency).toHaveBeenCalled();
       expect(lodC.updateViewWithResidency).toHaveBeenCalled();
+    });
+  });
+
+  describe('playback frame budget (frameBudgetMs)', () => {
+    // Mirrored in points-progressive-loader.test.ts and
+    // lines-progressive-loader.test.ts (three-geometry symmetry).
+    let now: number;
+    let nowSpy: ReturnType<typeof vi.spyOn>;
+
+    beforeEach(() => {
+      now = 0;
+      nowSpy = vi.spyOn(performance, 'now').mockImplementation(() => now);
+      // Every level "costs" 30ms of simulated work.
+      for (const lod of [lodA, lodB, lodC]) {
+        lod.updateViewWithResidency.mockImplementation(async () => {
+          now += 30;
+          return { data: makeLodData(10, 3, { color: 'uint8' }), allResident: true };
+        });
+      }
+    });
+
+    afterEach(() => {
+      nowSpy.mockRestore();
+    });
+
+    it('stops streaming when the budget runs out and reports hasMoreLODs=false', async () => {
+      // Budget 10ms < one 30ms level: level 0 loads (first-paint floor),
+      // level 1's loop-top check sees the budget spent → stop.
+      await loader.updateView({ ...baseViewState, frameBudgetMs: 10 });
+
+      expect(lodA.updateViewWithResidency).toHaveBeenCalledTimes(1);
+      expect(lodB.updateViewWithResidency).not.toHaveBeenCalled();
+      expect(lodC.updateViewWithResidency).not.toHaveBeenCalled();
+      expect(loader.loadedLODCount).toBe(1);
+      // Budget active → the prefix IS the target: no refinement scheduling.
+      expect(loader.hasMoreLODs).toBe(false);
+    });
+
+    it('loads as many levels as fit the budget', async () => {
+      // Budget 70ms fits two 30ms levels; the third's loop-top check fails.
+      await loader.updateView({ ...baseViewState, frameBudgetMs: 70 });
+
+      expect(lodA.updateViewWithResidency).toHaveBeenCalledTimes(1);
+      expect(lodB.updateViewWithResidency).toHaveBeenCalledTimes(1);
+      expect(lodC.updateViewWithResidency).not.toHaveBeenCalled();
+      expect(loader.loadedLODCount).toBe(2);
+    });
+
+    it('always loads at least one level under a tiny budget (first-paint floor)', async () => {
+      await loader.updateView({ ...baseViewState, frameBudgetMs: 0.001 });
+      expect(lodA.updateViewWithResidency).toHaveBeenCalledTimes(1);
+      expect(loader.loadedLODCount).toBe(1);
+    });
+
+    it('a budget-free call with the SAME view resumes from the prefix and completes', async () => {
+      await loader.updateView({ ...baseViewState, frameBudgetMs: 10 });
+      expect(loader.loadedLODCount).toBe(1);
+      expect(loader.hasMoreLODs).toBe(false); // capped
+
+      // Pause re-trigger: same view, no budget → resume from level 1.
+      await loader.updateView(baseViewState);
+      expect(loader.loadedLODCount).toBe(3);
+      expect(loader.hasMoreLODs).toBe(false); // genuinely complete now
+      // Level 0 was NOT reloaded — the ladder survived (no reset).
+      expect(lodA.updateViewWithResidency).toHaveBeenCalledTimes(1);
+    });
+
+    it('a differing budget with an identical view does NOT reset the ladder', async () => {
+      await loader.updateView({ ...baseViewState, frameBudgetMs: 10 });
+      expect(loader.loadedLODCount).toBe(1);
+
+      await loader.updateView({ ...baseViewState, frameBudgetMs: 70 });
+      // No reset: level 0 loaded once; the second pass continued at level 1.
+      expect(lodA.updateViewWithResidency).toHaveBeenCalledTimes(1);
+      expect(loader.loadedLODCount).toBeGreaterThanOrEqual(2);
     });
   });
 

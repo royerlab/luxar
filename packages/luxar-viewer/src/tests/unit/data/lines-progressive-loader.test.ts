@@ -13,7 +13,7 @@
  * contract.
  */
 
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { LinesProgressiveLoader } from '../../../data/lines/lines-progressive-loader';
 import type { LinesSpatialIndexLoader } from '../../../data/lines/lines-spatial-index-loader';
 import type { LinesViewState, LoadedLinesData } from '../../../types/lines';
@@ -324,6 +324,73 @@ describe('LinesProgressiveLoader', () => {
       expect(lodA.updateViewWithResidency).toHaveBeenCalled();
       expect(lodB.updateViewWithResidency).toHaveBeenCalled();
       expect(lodC.updateViewWithResidency).toHaveBeenCalled();
+    });
+  });
+
+  describe('playback frame budget (frameBudgetMs)', () => {
+    // Mirrors gsplats-progressive-loader.test.ts (three-geometry symmetry).
+    let now: number;
+    let nowSpy: ReturnType<typeof vi.spyOn>;
+
+    beforeEach(() => {
+      now = 0;
+      nowSpy = vi.spyOn(performance, 'now').mockImplementation(() => now);
+      // Every level "costs" 30ms of simulated work.
+      for (const lod of [lodA, lodB, lodC]) {
+        lod.updateViewWithResidency.mockImplementation(async () => {
+          now += 30;
+          return { data: makeLodData(10, 5, 3, { color: 'uint8' }), allResident: true };
+        });
+      }
+    });
+
+    afterEach(() => {
+      nowSpy.mockRestore();
+    });
+
+    it('stops streaming when the budget runs out and reports hasMoreLODs=false', async () => {
+      await loader.updateView({ ...baseViewState, frameBudgetMs: 10 });
+
+      expect(lodA.updateViewWithResidency).toHaveBeenCalledTimes(1);
+      expect(lodB.updateViewWithResidency).not.toHaveBeenCalled();
+      expect(lodC.updateViewWithResidency).not.toHaveBeenCalled();
+      expect(loader.loadedLODCount).toBe(1);
+      expect(loader.hasMoreLODs).toBe(false);
+    });
+
+    it('loads as many levels as fit the budget', async () => {
+      await loader.updateView({ ...baseViewState, frameBudgetMs: 70 });
+
+      expect(lodA.updateViewWithResidency).toHaveBeenCalledTimes(1);
+      expect(lodB.updateViewWithResidency).toHaveBeenCalledTimes(1);
+      expect(lodC.updateViewWithResidency).not.toHaveBeenCalled();
+      expect(loader.loadedLODCount).toBe(2);
+    });
+
+    it('always loads at least one level under a tiny budget (first-paint floor)', async () => {
+      await loader.updateView({ ...baseViewState, frameBudgetMs: 0.001 });
+      expect(lodA.updateViewWithResidency).toHaveBeenCalledTimes(1);
+      expect(loader.loadedLODCount).toBe(1);
+    });
+
+    it('a budget-free call with the SAME view resumes from the prefix and completes', async () => {
+      await loader.updateView({ ...baseViewState, frameBudgetMs: 10 });
+      expect(loader.loadedLODCount).toBe(1);
+      expect(loader.hasMoreLODs).toBe(false); // capped
+
+      await loader.updateView(baseViewState);
+      expect(loader.loadedLODCount).toBe(3);
+      expect(loader.hasMoreLODs).toBe(false); // genuinely complete now
+      expect(lodA.updateViewWithResidency).toHaveBeenCalledTimes(1); // no reset
+    });
+
+    it('a differing budget with an identical view does NOT reset the ladder', async () => {
+      await loader.updateView({ ...baseViewState, frameBudgetMs: 10 });
+      expect(loader.loadedLODCount).toBe(1);
+
+      await loader.updateView({ ...baseViewState, frameBudgetMs: 70 });
+      expect(lodA.updateViewWithResidency).toHaveBeenCalledTimes(1);
+      expect(loader.loadedLODCount).toBeGreaterThanOrEqual(2);
     });
   });
 

@@ -683,11 +683,18 @@ export class SceneLoader {
     this._updateAbortController = updateController;
 
     try {
+      // Playback frame budget is a PER-PASS directive, never persisted:
+      // destructure it OUT before the merge below so a stale budget can't
+      // linger in `this.viewState` (which refinement/retry re-derive from)
+      // and leave the loaders capped after playback ends. It flows to the
+      // loaders only via the per-type handler ctxs (buildUpdateCtxs).
+      const { frameBudgetMs, ...incomingViewState } = viewState;
+
       // CRITICAL: Deep copy arrays to prevent mutation during async operations
       // The spread operator only does shallow copy - arrays must be explicitly copied
       this.viewState = {
         ...this.viewState,
-        ...viewState,
+        ...incomingViewState,
         // Always copy arrays to prevent external mutation affecting in-flight updates
         displayDims: viewState.displayDims
           ? [...viewState.displayDims]
@@ -730,6 +737,7 @@ export class SceneLoader {
         updateVersion: this._updateVersion,
         extendedToleranceCache,
         signal: updateController.signal,
+        frameBudgetMs,
         deriveNodeViewState: (path, attrs, opts) => this.deriveNodeViewState(path, attrs, opts),
       });
 

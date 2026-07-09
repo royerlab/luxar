@@ -182,6 +182,11 @@ export class LinesProgressiveLoader implements LinesDataLoader {
   // Node path (SliceCache namespace) + the shared SliceCache, if enabled.
   private readonly path: string;
   private readonly sliceCache: SliceCache | null;
+  // Per-tick LOD time budget (ms) from the CURRENT updateView call during
+  // dimension-animation playback; null outside playback. A per-pass
+  // directive (never part of lastViewState / viewStatesEqual / cache keys).
+  // Mirrors GSplatsProgressiveLoader.
+  private _frameBudgetMs: number | null = null;
 
   constructor(
     lodLoaders: LinesSpatialIndexLoader[],
@@ -206,6 +211,10 @@ export class LinesProgressiveLoader implements LinesDataLoader {
     // refinement loop holding a stale reference stops instead of indexing
     // into the now-empty lodLoaders. Mirrors GSplatsProgressiveLoader.
     if (this._disposed) return false;
+    // While a playback frame budget is active, the budgeted prefix IS the
+    // target: no background refinement between animation ticks; the commit
+    // stamps the prefix complete. Mirrors GSplatsProgressiveLoader.
+    if (this._frameBudgetMs !== null) return false;
     return this.loadedLODs.length < this.nLods;
   }
 
@@ -254,6 +263,13 @@ export class LinesProgressiveLoader implements LinesDataLoader {
     session?: UpdateSession,
     signal?: AbortSignal
   ): Promise<LoadedLinesData> {
+    // Record the per-pass playback budget FIRST (before the restore branch:
+    // a pause re-trigger arrives with the SAME view state — it must still
+    // clear the budget). Mirrors GSplatsProgressiveLoader.
+    this._frameBudgetMs = viewState.frameBudgetMs ?? null;
+    const budgetDeadline =
+      this._frameBudgetMs !== null ? performance.now() + this._frameBudgetMs : null;
+
     if (!this.lastViewState || !viewStatesEqual(viewState, this.lastViewState)) {
       // Try the SliceCache before discarding the ladder (see GSplats loader).
       const restored = restoreLadder<LoadedLinesData>(
@@ -280,6 +296,12 @@ export class LinesProgressiveLoader implements LinesDataLoader {
     const startLevel = this.loadedLODs.length;
 
     for (let level = startLevel; level < this.nLods; level++) {
+      // Playback frame budget: stop as soon as the tick's time is spent
+      // (≥1 level always loads — `level > startLevel` guard). Mirrors
+      // GSplatsProgressiveLoader.
+      if (budgetDeadline !== null && level > startLevel && performance.now() > budgetDeadline) {
+        break;
+      }
       const t0 = performance.now();
       const { data: lodData, allResident } = await this.lodLoaders[level].updateViewWithResidency(
         viewState,

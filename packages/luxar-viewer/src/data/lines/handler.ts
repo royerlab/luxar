@@ -36,6 +36,13 @@ export interface LinesHandlerCtx {
   ): { skip: 'extend_to_all' } | { skip: false; viewState: ViewState };
   /** Per-update abort signal forwarded to `loader.updateView` (see DataLoader). */
   signal?: AbortSignal;
+  /**
+   * Per-tick LOD time budget during dimension-animation playback (see
+   * `ViewState.frameBudgetMs`). Injected into the DERIVED per-node view
+   * state below — a per-pass directive, so refinement/retry passes (which
+   * derive independently) stay budget-free.
+   */
+  frameBudgetMs?: number;
 }
 
 /**
@@ -68,7 +75,12 @@ export async function loadAndStage(
     ctx.viewStateQueue.forgetPath(path);
     return null;
   }
-  const linesViewState: LinesViewState = derived.viewState;
+  // Playback frame budget rides the derived per-node view state (per-pass
+  // directive; absent outside animation playback — see ctx.frameBudgetMs).
+  const linesViewState: LinesViewState =
+    ctx.frameBudgetMs !== undefined
+      ? { ...derived.viewState, frameBudgetMs: ctx.frameBudgetMs }
+      : derived.viewState;
   const data: LoadedLinesData | null = await loader.updateView(linesViewState, session, ctx.signal);
   ctx.clearFailure(path);
   if (!data) return null;
