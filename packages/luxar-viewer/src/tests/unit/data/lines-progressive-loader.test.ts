@@ -18,6 +18,7 @@ import { LinesProgressiveLoader } from '../../../data/lines/lines-progressive-lo
 import type { LinesSpatialIndexLoader } from '../../../data/lines/lines-spatial-index-loader';
 import type { LinesViewState, LoadedLinesData } from '../../../types/lines';
 import { CACHE_HIT_THRESHOLD_MS } from '../../../data/loaders/progressive/constants';
+import { SliceCache } from '../../../cache/slice-cache';
 
 interface SubLoaderStub {
   updateView: ReturnType<typeof vi.fn>;
@@ -132,6 +133,61 @@ describe('LinesProgressiveLoader', () => {
       3,
       '/lines'
     );
+  });
+
+  describe('SliceCache integration', () => {
+    const viewA: LinesViewState = {
+      displayDims: [0, 1, 2],
+      slicePosition: [0, 0, 0],
+      tolerance: [0, 0, 0],
+    };
+    const viewB: LinesViewState = {
+      displayDims: [0, 1, 2],
+      slicePosition: [0, 0, 1],
+      tolerance: [0, 0, 0],
+    };
+
+    it('restores a revisited view from the SliceCache without re-streaming sub-LODs', async () => {
+      const sc = new SliceCache({ maxSize: 10 * 1024 * 1024 });
+      const a = makeSubLoader(makeLodData(20, 10, 3, { color: 'uint8' }));
+      const b = makeSubLoader(makeLodData(10, 5, 3, { color: 'uint8' }));
+      const l = new LinesProgressiveLoader(
+        [a, b] as unknown as LinesSpatialIndexLoader[],
+        2,
+        '/l',
+        undefined,
+        sc
+      );
+      await l.loadLines(viewA);
+      await l.loadLines(viewB);
+      a.updateViewWithResidency.mockClear();
+      b.updateViewWithResidency.mockClear();
+      const restored = await l.loadLines(viewA);
+      expect(a.updateViewWithResidency).not.toHaveBeenCalled();
+      expect(b.updateViewWithResidency).not.toHaveBeenCalled();
+      expect(l.hasMoreLODs).toBe(false);
+      expect(restored.vertexCount).toBe(30);
+      expect(sc.getStats().hits).toBeGreaterThanOrEqual(1);
+    });
+
+    it('clones on store so a later accumulator overwrite cannot corrupt a cached slice', async () => {
+      const sc = new SliceCache({ maxSize: 10 * 1024 * 1024 });
+      const dataA = makeLodData(20, 10, 3, { color: 'uint8' });
+      const a = makeSubLoader(dataA);
+      const b = makeSubLoader(makeLodData(10, 5, 3, { color: 'uint8' }));
+      const l = new LinesProgressiveLoader(
+        [a, b] as unknown as LinesSpatialIndexLoader[],
+        2,
+        '/l',
+        undefined,
+        sc
+      );
+      await l.loadLines(viewA);
+      dataA.positions.fill(999);
+      await l.loadLines(viewB);
+      const restored = await l.loadLines(viewA);
+      expect(restored.positions[0]).toBeCloseTo(0.5);
+    });
   });
 
   describe('initial load', () => {

@@ -560,9 +560,10 @@ def compute_chunk_bounds_gsplats(
     CRITICAL: the ellipsoidal (coverage_sigma·σ) extent is applied only to
     SPATIAL axes. ``slice_dims`` name categorical/barrier axes (time, channel):
     a splat at time=0 must not extend into time=1's bounds, so those axes get
-    only tight ±0.5 bounds. This mirrors :func:`compute_chunk_bounds_points`
-    and keeps a chunk's barrier-axis footprint from straddling categories,
-    which is what makes single-timepoint queries fetch only their own chunks.
+    only a tight float-boundary epsilon (``_BARRIER_BOUND_EPS``). This mirrors
+    :func:`compute_chunk_bounds_points` and keeps a chunk's barrier-axis footprint
+    from straddling categories, which is what makes single-timepoint queries fetch
+    only their own chunks.
 
     Args:
         centers: Splat centers (already sorted), shape (N, d)
@@ -910,17 +911,15 @@ def compute_vertex_chunk_bounds(
     vertices: np.ndarray,
     chunk_size: int,
     slice_dims: Optional[list[int]] = None,
-    dimensions: Optional[list] = None,
 ) -> np.ndarray:
     """Compute chunk bounding boxes for vertices (no radius/width expansion).
 
     Args:
         vertices: Vertex positions (already sorted), shape (V, D)
         chunk_size: Number of vertices per chunk
-        slice_dims: Indices of discrete (non-spatial) dimensions
-        dimensions: Retained for API stability; no longer drives padding width
-            (discrete dims are padded by a float-boundary epsilon only — the
-            reader's per-dimension tolerance owns the query reach).
+        slice_dims: Indices of discrete (non-spatial) dimensions (padded by a
+            float-boundary epsilon only — the reader's per-dimension tolerance
+            owns the query reach)
 
     Returns:
         chunk_bounds: Bounding boxes, shape (num_chunks, D, 2)
@@ -960,7 +959,6 @@ def compute_segment_chunk_bounds(
     widths: np.ndarray,
     chunk_size: int,
     slice_dims: Optional[list[int]] = None,
-    dimensions: Optional[list] = None,
 ) -> np.ndarray:
     """Compute chunk bounding boxes for segments (includes line width).
 
@@ -975,10 +973,9 @@ def compute_segment_chunk_bounds(
         segments: Segment index pairs (already sorted), shape (S, 2)
         widths: Vertex widths (already sorted), shape (V,)
         chunk_size: Number of segments per chunk
-        slice_dims: Indices of discrete (non-spatial) dimensions
-        dimensions: Retained for API stability; no longer drives padding width
-            (discrete dims are padded by a float-boundary epsilon only — the
-            reader's per-dimension tolerance owns the query reach).
+        slice_dims: Indices of discrete (non-spatial) dimensions (padded by a
+            float-boundary epsilon only — the reader's per-dimension tolerance
+            owns the query reach)
 
     Returns:
         chunk_bounds: Bounding boxes, shape (num_chunks, D, 2)

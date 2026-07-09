@@ -72,6 +72,17 @@ const DISPLAYED_TOLERANCE = 1e10;
  * write side; pad + tolerance must stay below one step or the whole neighbour
  * category bleeds in), yet `> 0` so the target cell + genuine straddle chunks
  * always match. See the module docstring.
+ *
+ * Why 0.25 and not 0.5 (which would exactly match the gsplats projection
+ * membership gate at `step/2`): LEGACY datasets written before this change pad
+ * barrier chunk bounds by ±0.5 step, so a `0.5×step` query would sum to a full
+ * step and re-introduce the neighbour-category over-fetch this exists to fix.
+ * `0.25` keeps the fix working for both legacy (±0.5-padded) and new
+ * (ε-padded) data. The resulting `(0.25, 0.5]×step` band — where a splat would
+ * pass the projection gate but its chunk isn't fetched — is unreachable in
+ * practice: discrete-dim navigation snaps the slice position to exact category
+ * values (see `SceneDimsManager.setDimensionValue`), so queries are always
+ * on-grid (offset 0) and the target cell always matches.
  */
 const DISCRETE_TOLERANCE_FRACTION = 0.25;
 

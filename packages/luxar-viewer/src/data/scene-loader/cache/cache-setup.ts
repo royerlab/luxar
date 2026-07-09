@@ -145,6 +145,11 @@ export async function setupCaches(url: string, flags: CacheSetupFlags): Promise<
     // SliceCache holds decoded geometry derived from the dataset's content, so a
     // content-hash bump must evict it too — otherwise a revisit would serve
     // geometry from the stale dataset (cf. the past stale-cache black screen).
+    // NOTE: this registration lives inside the `cache.enabled` block (same as
+    // L0's), so with L1/L2 disabled there is no content-hash listener. That's an
+    // acceptably narrow gap: in-session dataset switches clear the SliceCache via
+    // dispose(), and with no persistent chunk cache there's nothing else to be
+    // stale against.
     if (sliceCache) {
       const sc = sliceCache;
       cachingStore.onInvalidate(() => {

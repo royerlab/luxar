@@ -42,8 +42,8 @@ import type {
 import { ProgressiveMonitorAdapter } from '../loaders/progressive-monitor-adapter';
 import { concatOptionalField, concatRequiredField } from '../loaders/progressive/concat-helpers';
 import { CACHE_HIT_THRESHOLD_MS } from '../loaders/progressive/constants';
-import { buildSliceViewSig, cloneLodSnapshot } from '../loaders/progressive/slice-cache-helper';
-import { SliceCache } from '../../cache/slice-cache';
+import { restoreLadder, storeLadder } from '../loaders/progressive/slice-cache-helper';
+import type { SliceCache } from '../../cache/slice-cache';
 import { log, Modules, LogEmoji } from '../../utils/log';
 
 /**
@@ -255,7 +255,12 @@ export class PointsProgressiveLoader implements PointsDataLoader {
   ): Promise<LoadedPointsData> {
     if (!this.lastViewState || !viewStatesEqual(viewState, this.lastViewState)) {
       // Try the SliceCache before discarding the ladder (see GSplats loader).
-      const restored = this.restoreFromSliceCache(viewState);
+      const restored = restoreLadder<LoadedPointsData>(
+        this.sliceCache,
+        this.path,
+        viewState,
+        this.nLods
+      );
       this.loadedLODs = restored ?? [];
       this._resetGeneration++;
       this.lastViewState = {
@@ -328,36 +333,9 @@ export class PointsProgressiveLoader implements PointsDataLoader {
     this.prefetchNextLOD(viewState);
 
     // Snapshot the completed ladder into the SliceCache for instant revisits.
-    this.maybeStoreSliceCache(viewState);
+    storeLadder(this.sliceCache, this.path, viewState, this.loadedLODs, this.nLods);
 
     return this.concatenateMemoized(session);
-  }
-
-  /** SliceCache key for a view (namespaced per node by the cache itself). */
-  private sliceKey(viewState: PointsViewState): string {
-    return SliceCache.makeKey(this.path, buildSliceViewSig(viewState));
-  }
-
-  /**
-   * Return a cached FULL-ladder `loadedLODs` snapshot for this view, or null on
-   * miss / disabled / incomplete. Shared read-only (see GSplats loader).
-   */
-  private restoreFromSliceCache(viewState: PointsViewState): LoadedPointsData[] | null {
-    if (!this.sliceCache || this.nLods <= 0) return null;
-    const entry = this.sliceCache.get(this.sliceKey(viewState));
-    if (!entry) return null;
-    const lods = entry.payload as LoadedPointsData[];
-    return lods.length === this.nLods ? lods : null; // only complete ladders
-  }
-
-  /** Store a cloned snapshot of the completed ladder (clones because loaded
-   *  arrays alias reused accumulator buffers; `has()` avoids re-cloning). */
-  private maybeStoreSliceCache(viewState: PointsViewState): void {
-    if (!this.sliceCache || this.loadedLODs.length !== this.nLods) return;
-    const key = this.sliceKey(viewState);
-    if (this.sliceCache.has(key)) return;
-    const { clone, bytes } = cloneLodSnapshot(this.loadedLODs);
-    this.sliceCache.set(key, { payload: clone, bytes });
   }
 
   /**
