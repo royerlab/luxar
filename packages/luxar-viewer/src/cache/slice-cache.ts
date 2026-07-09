@@ -74,7 +74,10 @@ export interface SliceCacheOptions {
  *
  * Key format: `${nodePath}\u0000${viewSig}` (see {@link SliceCache.makeKey}),
  * where `viewSig` is a stable serialization of the query's displayDims /
- * slicePosition / tolerance (the loader's `viewStatesEqual` fields).
+ * slicePosition / tolerance / dimensions — the loader's `viewStatesEqual`
+ * fields, ALL of them (a key narrower than that equality can restore a
+ * snapshot the loader itself would have reloaded; see
+ * `data/loaders/progressive/slice-cache-helper.ts::buildSliceViewSig`).
  */
 export class SliceCache {
   /** Default cache size derived from config.cache.sliceCacheMaxSizeMB. */

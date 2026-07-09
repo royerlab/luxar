@@ -292,6 +292,12 @@ export class GSplatsProgressiveLoader implements GSplatsDataLoader {
     // `loadedLODs` outright (so `hasMoreLODs` reads false and the refinement
     // loop never re-streams), skipping the whole load+decode.
     if (!this.lastViewState || !viewStatesEqual(viewState, this.lastViewState)) {
+      // DEPARTURE store: snapshot the outgoing view's partial ladder under
+      // the OUTGOING key before discarding — scrub-back stays warm even when
+      // ladders never complete between navigations. Mirrors Points/Lines.
+      if (this.lastViewState && this.loadedLODs.length > 0) {
+        storeLadder(this.sliceCache, this.path, this.lastViewState, this.loadedLODs);
+      }
       const restored = restoreLadder<LoadedGSplatsData>(
         this.sliceCache,
         this.path,

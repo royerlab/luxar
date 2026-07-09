@@ -157,6 +157,19 @@ describe('computeTolerance — lines', () => {
       expect(tol2[1]).toBe(0);
     });
 
+    it('falls back to a half-cell of a unit step (0.5) when the discrete dim has no step', () => {
+      const dimsNoStep: DimensionInfo[] = [
+        { discrete: false },
+        { discrete: false },
+        { discrete: false },
+        { discrete: true },
+      ];
+      const tol = computeTolerance('lines', [0, 1, 2], 4, dimsNoStep, {
+        discreteRole: 'membership',
+      });
+      expect(tol[3]).toBe(0.5);
+    });
+
     it('three-geometry parity: lines membership slab equals the half-step gate points/gsplats use', () => {
       // Points membership: absolute 0.5 on the unit grid
       // (effective-radius-calculator.ts); gsplats projection: step × 0.5

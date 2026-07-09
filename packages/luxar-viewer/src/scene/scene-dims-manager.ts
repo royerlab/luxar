@@ -269,11 +269,23 @@ export class SceneDimsManager {
     const [min, max] = range;
     if (meta.discrete || meta.categories) {
       const step = meta.step || 1.0;
+      // Step-relative epsilon: for FP-hostile fractional steps an EXACTLY
+      // on-grid min can round an ulp low (e.g. Math.round(2.1/0.7)*0.7 =
+      // 2.0999999999999996 < 2.1) — a strict `< min` bump would then skip
+      // the whole first category. Tolerate sub-epsilon undershoot.
+      const eps = step * 1e-9;
       let snapped = Math.round(min / step) * step;
-      if (snapped < min) snapped += step; // stay inside the declared range
+      if (snapped < min - eps) {
+        // Bump to the next grid point, then RE-SNAP: `k*step + step` can
+        // differ from `(k+1)*step` by an ulp, and the initial position must
+        // be byte-identical to what setDimensionValue's own snap produces
+        // for the same target (viewStatesEqual / S-cache keys compare
+        // exact floats).
+        snapped = Math.round((snapped + step) / step) * step;
+      }
       // Pathological range narrower than one step with no on-grid point:
       // fall back to the raw min rather than leaving the range entirely.
-      return snapped <= max ? snapped : min;
+      return snapped <= max + eps ? snapped : min;
     }
     return (min + max) / 2;
   }

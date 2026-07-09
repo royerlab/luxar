@@ -99,6 +99,25 @@ describe('SceneDimsManager', () => {
       expect(manager.getDims()!.currentStep[3]).toBe(2);
     });
 
+    // Regression (deep-double-check round 5): an EXACTLY on-grid min with an
+    // FP-hostile fractional step rounds an ulp low (Math.round(2.1/0.7)*0.7 =
+    // 2.0999999999999996 < 2.1); a strict `< min` bump then skipped the whole
+    // first category — the viewer opened at timepoint 2 of a valid dataset.
+    it('does not skip the first category when a fractional-step min rounds an ulp low', () => {
+      const scene = new THREE.Scene();
+      scene.userData.sceneDimensions = {
+        dimensions: [
+          { name: 'x', unit: '', range: [0, 100], step: 1, display: true },
+          { name: 'y', unit: '', range: [0, 100], step: 1, display: true },
+          { name: 'z', unit: '', range: [0, 50], step: 1, display: true },
+          // 2.1 = 3 × 0.7 exactly on-grid by intent; FP rounds it below 2.1.
+          { name: 'time', unit: '', range: [2.1, 4.2], step: 0.7, display: false, discrete: true },
+        ],
+      };
+      manager.initFromScene(scene);
+      expect(manager.getDims()!.currentStep[3]).toBeCloseTo(2.1, 9);
+    });
+
     it('falls back to the raw min when no on-grid point exists inside the range', () => {
       const scene = new THREE.Scene();
       scene.userData.sceneDimensions = {

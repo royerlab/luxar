@@ -169,9 +169,11 @@ export async function setupCaches(url: string, flags: CacheSetupFlags): Promise<
   let telemetryState: CacheTelemetryState;
   if (noCache) {
     telemetryState = { kind: 'disabled-no-cache' };
-  } else if (!appConfig.cache.enabled && !appConfig.cache.l0Enabled) {
+  } else if (sliceCache === null && !appConfig.cache.enabled && !appConfig.cache.l0Enabled) {
     telemetryState = { kind: 'disabled-config' };
   } else {
+    // At least one tier is active (S-cache counts: an S-cache-only
+    // configuration still serves slice revisits and reports live stats).
     telemetryState = { kind: 'enabled' };
   }
 

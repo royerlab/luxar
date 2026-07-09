@@ -146,6 +146,44 @@ describe('PointsProgressiveLoader', () => {
       tolerance: [0, 0, 0, 0],
     };
 
+    // Regression (deep-double-check round 5, Playwright-measured): scrubbing
+    // faster than the ladder completes NEVER stored anything — the reset
+    // branch discarded the partial ladder, so scrub-back was always cold
+    // (measured 1/7 hits pre-fix vs 7/7 post-fix under 4G emulation). The
+    // DEPARTURE store snapshots the outgoing view's prefix under the
+    // OUTGOING key when the view changes.
+    it('stores the outgoing PARTIAL ladder on view change (departure store)', async () => {
+      const sc = new SliceCache({ maxSize: 10 * 1024 * 1024 });
+      const a = makeSubLoader(makeLodData(100, 3, { color: 'uint8' }));
+      const b = makeSubLoader(makeLodData(50, 3, { color: 'uint8' }));
+      const c = makeSubLoader(makeLodData(25, 3, { color: 'uint8' }));
+      // Level 1 is a network miss: the loop pushes it then BREAKS, leaving a
+      // 2-of-3 PREFIX that never completes (level 2 is never streamed).
+      b.updateViewWithResidency.mockImplementation(async () => ({
+        data: makeLodData(50, 3, { color: 'uint8' }),
+        allResident: false,
+      }));
+      const l = new PointsProgressiveLoader(
+        [a, b, c] as unknown as PointsSpatialIndexLoader[],
+        3,
+        '/p',
+        undefined,
+        sc
+      );
+      await l.loadPoints(viewA); // levels 0-1 only (miss break)
+      expect(c.updateViewWithResidency).not.toHaveBeenCalled();
+      expect(sc.getStats().count).toBe(0); // incomplete: no completion store
+      await l.loadPoints(viewB); // leaving A -> departure store of A's prefix
+      expect(sc.getStats().count).toBeGreaterThanOrEqual(1);
+
+      // Scrub back to A: the prefix must be served from the cache (no
+      // level-0 re-stream) and streaming resumes at level 1.
+      a.updateViewWithResidency.mockClear();
+      await l.loadPoints(viewA);
+      expect(sc.getStats().hits).toBe(1);
+      expect(a.updateViewWithResidency).not.toHaveBeenCalled();
+    });
+
     it('restores a revisited view from the SliceCache without re-streaming sub-LODs', async () => {
       const sc = new SliceCache({ maxSize: 10 * 1024 * 1024 });
       const a = makeSubLoader(makeLodData(100, 3, { color: 'uint8' }));

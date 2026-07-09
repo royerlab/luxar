@@ -271,6 +271,12 @@ export class LinesProgressiveLoader implements LinesDataLoader {
       this._frameBudgetMs !== null ? performance.now() + this._frameBudgetMs : null;
 
     if (!this.lastViewState || !viewStatesEqual(viewState, this.lastViewState)) {
+      // DEPARTURE store: snapshot the outgoing view's partial ladder under
+      // the OUTGOING key before discarding — scrub-back stays warm even when
+      // ladders never complete between navigations. Mirrors Points/GSplats.
+      if (this.lastViewState && this.loadedLODs.length > 0) {
+        storeLadder(this.sliceCache, this.path, this.lastViewState, this.loadedLODs);
+      }
       // Try the SliceCache before discarding the ladder (see GSplats loader).
       const restored = restoreLadder<LoadedLinesData>(
         this.sliceCache,

@@ -1252,7 +1252,8 @@ class TestBarrierAwareOrdering:
 
         Asserts the barrier machinery specifically (not just shape/count): would
         fail if detect_barrier_dims wrongly flagged a float axis (→ slice_dims
-        non-empty and tight ±0.5 bounds instead of σ-expanded)."""
+        non-empty and tight ±_BARRIER_BOUND_EPS ≈ ±1e-3 bounds — extent ~0.002
+        — instead of σ-expanded)."""
         from luxar.gsplats.io.save_gsplats import write_gsplats_tree
         from luxar.gsplats.tree import GSplatLeaf
 
@@ -1275,9 +1276,10 @@ class TestBarrierAwareOrdering:
             assert list(root.attrs["ordering_dims"]) == [0, 1, 2]
             bounds = self._finest_chunk_bounds(path)
             assert bounds.shape[1] == 3
-            # Every axis is σ-expanded — extents exceed the ±0.5 a barrier axis
-            # would get (proves NO axis received tight barrier bounds). σ=2,
-            # coverage 3σ → ~6 extent, well over 1.0.
+            # Every axis is σ-expanded — extents dwarf the ~2·eps (≈0.002,
+            # _BARRIER_BOUND_EPS) a wrongly-flagged barrier axis would get
+            # (proves NO axis received tight barrier bounds). σ=2,
+            # coverage 3σ → ~6 extent, well over 1.5.
             extents = bounds[:, :, 1] - bounds[:, :, 0]
             assert np.all(extents.max(axis=0) > 1.5)
             got = GSplatData.load(path)

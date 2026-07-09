@@ -270,6 +270,15 @@ export class PointsProgressiveLoader implements PointsDataLoader {
       this._frameBudgetMs !== null ? performance.now() + this._frameBudgetMs : null;
 
     if (!this.lastViewState || !viewStatesEqual(viewState, this.lastViewState)) {
+      // DEPARTURE store: snapshot the OUTGOING view's partial ladder before
+      // discarding it, keyed under the OUTGOING view (lastViewState — never
+      // the incoming one). Scrubbing faster than the ladder completes would
+      // otherwise store nothing at all (completion never happens), making
+      // scrub-back — the S-cache's headline case — always cold. One clone
+      // per slice-leave; upgrade-if-longer makes re-departures cheap no-ops.
+      if (this.lastViewState && this.loadedLODs.length > 0) {
+        storeLadder(this.sliceCache, this.path, this.lastViewState, this.loadedLODs);
+      }
       // Try the SliceCache before discarding the ladder (see GSplats loader).
       const restored = restoreLadder<LoadedPointsData>(
         this.sliceCache,

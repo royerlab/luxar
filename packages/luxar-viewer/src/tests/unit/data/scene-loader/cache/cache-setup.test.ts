@@ -71,15 +71,35 @@ describe('setupCaches — cache telemetry state resolution', () => {
     expect(result.l0Cache).toBeNull();
   });
 
-  it('app config disables both cache + l0 → disabled-config', async () => {
+  it('app config disables cache + l0 + slice → disabled-config', async () => {
     appConfig.cache.enabled = false;
     appConfig.cache.l0Enabled = false;
+    const prevSlice = appConfig.cache.sliceCacheEnabled;
+    appConfig.cache.sliceCacheEnabled = false;
+    try {
+      const result = await setupCaches('http://example.com/scene.zarr/', {});
+      expect(result.telemetryState).toEqual({ kind: 'disabled-config' });
+      expect(result.cachingStore).toBeNull();
+      expect(result.l0Cache).toBeNull();
+    } finally {
+      appConfig.cache.sliceCacheEnabled = prevSlice;
+    }
+  });
 
-    const result = await setupCaches('http://example.com/scene.zarr/', {});
-
-    expect(result.telemetryState).toEqual({ kind: 'disabled-config' });
-    expect(result.cachingStore).toBeNull();
-    expect(result.l0Cache).toBeNull();
+  it('S-cache-only configuration (cache + l0 off, slice on) → enabled', async () => {
+    appConfig.cache.enabled = false;
+    appConfig.cache.l0Enabled = false;
+    const prevSlice = appConfig.cache.sliceCacheEnabled;
+    appConfig.cache.sliceCacheEnabled = true;
+    try {
+      const result = await setupCaches('http://example.com/scene.zarr/', {});
+      // An active S-cache still serves slice revisits and reports live
+      // stats — the monitor must not claim caching is disabled.
+      expect(result.telemetryState).toEqual({ kind: 'enabled' });
+      expect(result.sliceCache).not.toBeNull();
+    } finally {
+      appConfig.cache.sliceCacheEnabled = prevSlice;
+    }
   });
 
   it('L1/L2 enabled in config → enabled', async () => {

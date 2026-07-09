@@ -7,6 +7,7 @@
  */
 
 import { SliceCache } from '../../../cache/slice-cache';
+import type { DimensionMetadata } from '../../../types/dims';
 
 /** The query fields that determine which elements a slice loads. */
 export interface SliceViewLike {
@@ -21,7 +22,7 @@ export interface SliceViewLike {
    * (see `dims-to-view-state.ts`) — so a dims-metadata change can alter the
    * decoded set without touching the other three fields.
    */
-  dimensions?: unknown;
+  dimensions?: ReadonlyArray<Partial<DimensionMetadata>>;
 }
 
 /**
