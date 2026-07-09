@@ -256,13 +256,37 @@ export class SceneDimsManager {
    * The default position policy — shared by {@link initFromScene} and
    * {@link resetPositions} so the two can never diverge:
    * - Displayed dimensions (X, Y, Z): 0 (camera-controlled)
-   * - Discrete/categorical dimensions (time, channels, frames): MINIMUM (first position)
+   * - Discrete/categorical dimensions (time, channels, frames): FIRST ON-GRID
+   *   position at or above the range minimum. Snapping matters: every later
+   *   navigation snaps to the k·step grid ({@link setDimensionValue}), and the
+   *   discrete chunk query only reaches a quarter-step around the position —
+   *   a raw off-grid `min` (e.g. 1.3 with step 1) would make the INITIAL view
+   *   silently empty until the first user navigation snapped it.
    * - Continuous non-displayed dimensions (4th+ spatial dims): CENTER (no natural "first")
    */
   private static defaultPosition(meta: DimensionMetadata, range: [number, number]): number {
     if (meta.display === true) return 0;
     const [min, max] = range;
-    if (meta.discrete || meta.categories) return min;
+    if (meta.discrete || meta.categories) {
+      const step = meta.step || 1.0;
+      // Step-relative epsilon: for FP-hostile fractional steps an EXACTLY
+      // on-grid min can round an ulp low (e.g. Math.round(2.1/0.7)*0.7 =
+      // 2.0999999999999996 < 2.1) — a strict `< min` bump would then skip
+      // the whole first category. Tolerate sub-epsilon undershoot.
+      const eps = step * 1e-9;
+      let snapped = Math.round(min / step) * step;
+      if (snapped < min - eps) {
+        // Bump to the next grid point, then RE-SNAP: `k*step + step` can
+        // differ from `(k+1)*step` by an ulp, and the initial position must
+        // be byte-identical to what setDimensionValue's own snap produces
+        // for the same target (viewStatesEqual / S-cache keys compare
+        // exact floats).
+        snapped = Math.round((snapped + step) / step) * step;
+      }
+      // Pathological range narrower than one step with no on-grid point:
+      // fall back to the raw min rather than leaving the range entirely.
+      return snapped <= max + eps ? snapped : min;
+    }
     return (min + max) / 2;
   }
 
@@ -336,11 +360,18 @@ export class SceneDimsManager {
       }
     });
 
-    // Track combined promise for async synchronization
+    // Track combined promise for async synchronization. Only null the field
+    // if it still points at THIS update's promise — an older update settling
+    // late must not clobber a newer update's tracking (listener promises are
+    // long-lived now that queued scene-loader updates resolve on real pass
+    // completion, which widened this pre-existing race).
     if (promises.length > 0) {
-      this.pendingUpdatePromise = Promise.all(promises).then(() => {
-        this.pendingUpdatePromise = null;
+      const tracked: Promise<void> = Promise.all(promises).then(() => {
+        if (this.pendingUpdatePromise === tracked) {
+          this.pendingUpdatePromise = null;
+        }
       });
+      this.pendingUpdatePromise = tracked;
     }
   }
 

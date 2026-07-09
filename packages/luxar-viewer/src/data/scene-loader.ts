@@ -83,6 +83,7 @@ import { scheduleFrame } from '../utils/schedule-frame';
 import { config as appConfig } from '../config';
 import { MultiLevelCachingStore } from '../cache/multi-level-caching-store';
 import { DecompressedChunkCache } from '../cache/decompressed-chunk-cache';
+import { SliceCache } from '../cache/slice-cache';
 import type { LinesDataLoader, LinesViewState, LoadedLinesData } from '../types/lines';
 import type { GSplatsDataLoader, GSplatsViewState, LoadedGSplatsData } from '../types/gsplats';
 import { GPUBufferPool } from '../rendering/gpu-buffer-pool';
@@ -166,6 +167,8 @@ export class SceneLoader {
   private cachingStore: MultiLevelCachingStore | null = null;
   // L0 decompressed chunk cache - caches decoded zarr chunks to avoid Blosc decompression
   private l0Cache: DecompressedChunkCache | null = null;
+  // SliceCache ("S-cache") - per-(node,view) decoded-slice cache for instant slice revisits
+  private sliceCache: SliceCache | null = null;
   private registry = new LoaderRegistry();
 
   // Delegate registry-backed maps used by the loader orchestration methods.
@@ -268,6 +271,28 @@ export class SceneLoader {
    * with the dataset signal through the worker pool's `combineSignals`.
    */
   private _updateAbortController: AbortController | null = null;
+
+  /**
+   * Waiters for "the requested-or-newer view-state completed a main pass".
+   * Created ONLY in `updateView`'s queued/supersede branch: instead of
+   * resolving immediately (which made `sceneDimsManager.waitForUpdate()` —
+   * and with it the dimension-animation pacing gate — meaningless during
+   * playback), the queued caller's promise parks here and resolves when
+   * `queueNext` finds no pending state left, i.e. when the latest-wins
+   * winning pass has landed its commit. Latest-wins supersession keeps
+   * waiters pending until the winner completes; `dispose()` flushes them
+   * (resolve-only, never reject) so callers can't hang across a dataset
+   * switch.
+   */
+  private _passWaiters: Array<() => void> = [];
+
+  /** Resolve-and-drain all queued-update waiters (see {@link _passWaiters}). */
+  private resolvePassWaiters(): void {
+    if (this._passWaiters.length === 0) return;
+    const waiters = this._passWaiters;
+    this._passWaiters = [];
+    for (const resolve of waiters) resolve();
+  }
 
   /** Public accessor for the scene graph built during loadScene(). */
   get sceneGraph(): SceneNode | null {
@@ -515,6 +540,9 @@ export class SceneLoader {
       setL0Cache: (c) => {
         this.l0Cache = c;
       },
+      setSliceCache: (c) => {
+        this.sliceCache = c;
+      },
       setZarrStore: (s) => {
         this._zarrStore = s;
       },
@@ -631,7 +659,15 @@ export class SceneLoader {
           `Update queued (v${newVersion}) - in-flight v${this._updateVersion}`
         );
       }
-      return;
+      // Resolve when the pending-OR-NEWER state completes a main pass (its
+      // first commit) — NOT immediately. This is what makes the
+      // dimension-animation pacing gate real: during playback the next tick
+      // is held until the frame it requested actually rendered, instead of
+      // free-running while every pass is aborted pre-commit. Waiters are
+      // resolved by queueNext (no pending left) and flushed by dispose().
+      return new Promise<void>((resolve) => {
+        this._passWaiters.push(resolve);
+      });
     }
 
     // Mark update as in progress
@@ -647,11 +683,18 @@ export class SceneLoader {
     this._updateAbortController = updateController;
 
     try {
+      // Playback frame budget is a PER-PASS directive, never persisted:
+      // destructure it OUT before the merge below so a stale budget can't
+      // linger in `this.viewState` (which refinement/retry re-derive from)
+      // and leave the loaders capped after playback ends. It flows to the
+      // loaders only via the per-type handler ctxs (buildUpdateCtxs).
+      const { frameBudgetMs, ...incomingViewState } = viewState;
+
       // CRITICAL: Deep copy arrays to prevent mutation during async operations
       // The spread operator only does shallow copy - arrays must be explicitly copied
       this.viewState = {
         ...this.viewState,
-        ...viewState,
+        ...incomingViewState,
         // Always copy arrays to prevent external mutation affecting in-flight updates
         displayDims: viewState.displayDims
           ? [...viewState.displayDims]
@@ -694,6 +737,7 @@ export class SceneLoader {
         updateVersion: this._updateVersion,
         extendedToleranceCache,
         signal: updateController.signal,
+        frameBudgetMs,
         deriveNodeViewState: (path, attrs, opts) => this.deriveNodeViewState(path, attrs, opts),
       });
 
@@ -781,6 +825,7 @@ export class SceneLoader {
           this._updateInProgress = v;
         },
         scheduleGSplatsRefinement: () => this.scheduleGSplatsRefinement(),
+        resolvePassWaiters: () => this.resolvePassWaiters(),
       });
     }
   }
@@ -848,6 +893,11 @@ export class SceneLoader {
       // a no-op when nothing was queued.
       this._updateInProgress = false;
       this.viewStateQueue.drain((state) => this.updateView(state));
+      // Belt-and-braces: if no state was queued, nothing will re-enter
+      // updateView, so settle any queued-update waiters here rather than
+      // leaving them parked (resolve-only; a queued state's re-entry would
+      // have resolved them anyway).
+      this.resolvePassWaiters();
     });
   }
 
@@ -895,6 +945,21 @@ export class SceneLoader {
     };
     const finalReleaseLock = () => {
       this._updateInProgress = false;
+      // dispose() flushes waiters itself; never re-enter a dead loader.
+      if (this._disposed) return;
+      // A view-state queued DURING the last refinement pass (after the
+      // loop's final loop-top pending check) would otherwise be stranded
+      // here — and with it any parked queued-updateView waiters, freezing
+      // the dimension-animation pacing gate permanently (waitForUpdate
+      // never settles). Mirror queueNext's contract: drain the pending
+      // state into a fresh pass (whose own queueNext carries/settles the
+      // waiters), else settle the waiters now. Intermediate phases don't
+      // need this — the NEXT phase's loop-top pending check rescues them.
+      if (this.viewStateQueue.hasPending()) {
+        this.viewStateQueue.drain((state) => this.updateView(state));
+      } else {
+        this.resolvePassWaiters();
+      }
     };
 
     await runGSplatsRefinement({
@@ -1140,6 +1205,7 @@ export class SceneLoader {
       arrayRefRegistry: this.arrayRefRegistry,
       profiler: this.profiler,
       l0Cache: this.l0Cache,
+      sliceCache: this.sliceCache,
       cachingStore: this.cachingStore,
     };
   }
@@ -1410,6 +1476,12 @@ export class SceneLoader {
     // Signal any in-flight progressive-refinement loop to abort before we
     // start nulling the fields it reads.
     this._disposed = true;
+
+    // Flush queued-update waiters FIRST: a disposed loader never runs its
+    // pending pass, so without this any `waitForUpdate()` /
+    // `awaitDimensionUpdate()` caller parked on a queued update would hang
+    // forever across a dataset switch. Resolve-only (never reject).
+    this.resolvePassWaiters();
     await disposeSceneLoader({
       datasetAbortController: this._datasetAbortController,
       updateAbortController: this._updateAbortController,
@@ -1417,6 +1489,7 @@ export class SceneLoader {
       gpuBufferPool: this._gpuBufferPool,
       cachingStore: this.cachingStore,
       l0Cache: this.l0Cache,
+      sliceCache: this.sliceCache,
       viewStateQueue: this.viewStateQueue,
       monitor: this.monitor,
     });

@@ -45,8 +45,17 @@ export interface L0Provider {
   clear?: () => void;
 }
 
+/** Provider port for SliceCache ("S-cache") stats. */
+export interface SliceProvider {
+  getStats: () => CacheMetrics['slice'];
+  clear?: () => void;
+}
+
 export interface AggregateCacheMetricsParams {
   l0Provider: L0Provider | null;
+  /** Optional so existing callers/tests need no change; the real monitor always
+   *  passes it. Absent → no SliceCache row in the aggregated metrics. */
+  sliceProvider?: SliceProvider | null;
   cacheStatsProvider: CacheStatsProvider | null;
   /** Active loaders to roll up memoryLimit + evictions from. */
   loaders: Map<string, LoaderMonitor>;
@@ -76,7 +85,7 @@ export interface AggregateCacheMetricsParams {
  * monitor's per-loader snapshots).
  */
 export function aggregateCacheMetrics(params: AggregateCacheMetricsParams): CacheMetrics {
-  const { l0Provider, cacheStatsProvider, loaders, metricsCache, rates } = params;
+  const { l0Provider, sliceProvider, cacheStatsProvider, loaders, metricsCache, rates } = params;
 
   let totalCacheMemory = 0;
   let memoryLimit = 0;
@@ -84,6 +93,7 @@ export function aggregateCacheMetrics(params: AggregateCacheMetricsParams): Cach
   let evictions = 0;
 
   let l0Stats: CacheMetrics['l0'] | undefined;
+  let sliceStats: CacheMetrics['slice'] | undefined;
   let l1Stats: CacheMetrics['l1'] | undefined;
   let l2Stats: CacheMetrics['l2'] | undefined;
   let networkStats: CacheMetrics['network'] | undefined;
@@ -116,6 +126,11 @@ export function aggregateCacheMetrics(params: AggregateCacheMetricsParams): Cach
   // L0 from in-memory decompressed-chunk cache provider.
   if (l0Provider) {
     l0Stats = l0Provider.getStats();
+  }
+
+  // SliceCache ("S-cache") from its provider.
+  if (sliceProvider) {
+    sliceStats = sliceProvider.getStats();
   }
 
   // L1/L2/network from the multi-level caching store.
@@ -179,12 +194,12 @@ export function aggregateCacheMetrics(params: AggregateCacheMetricsParams): Cach
       };
     }
 
-    totalCacheMemory = (l0Stats?.size ?? 0) + l1Stats.size + l2Stats.size;
-    totalEntries = (l0Stats?.count ?? 0) + l1Stats.count + l2Stats.count;
-  } else if (l0Stats) {
-    // No L1/L2 provider — fall back to L0-only totals.
-    totalCacheMemory = l0Stats.size;
-    totalEntries = l0Stats.count;
+    totalCacheMemory = (l0Stats?.size ?? 0) + (sliceStats?.size ?? 0) + l1Stats.size + l2Stats.size;
+    totalEntries = (l0Stats?.count ?? 0) + (sliceStats?.count ?? 0) + l1Stats.count + l2Stats.count;
+  } else if (l0Stats || sliceStats) {
+    // No L1/L2 provider — fall back to in-memory (L0 + SliceCache) totals.
+    totalCacheMemory = (l0Stats?.size ?? 0) + (sliceStats?.size ?? 0);
+    totalEntries = (l0Stats?.count ?? 0) + (sliceStats?.count ?? 0);
   }
 
   // Walk loaders for memoryLimit / evictions; refresh metricsCache.
@@ -223,15 +238,27 @@ export function aggregateCacheMetrics(params: AggregateCacheMetricsParams): Cach
   // "not wired up" from "0% hit rate."
   let effectiveDemandHitRate: number | undefined;
   const l0Hits = l0Stats?.hits ?? 0;
+  // A SliceCache hit short-circuits the whole load (all lower tiers), so it
+  // counts toward the effective hit rate — otherwise instant slice revisits
+  // would understate it.
+  const sliceHits = sliceStats?.hits ?? 0;
   if (demand) {
-    const total = l0Hits + demand.l1Hits + demand.l2Hits + demand.networkRequests;
+    const total = sliceHits + l0Hits + demand.l1Hits + demand.l2Hits + demand.networkRequests;
     if (total > 0) {
-      effectiveDemandHitRate = (l0Hits + demand.l1Hits + demand.l2Hits) / total;
+      effectiveDemandHitRate = (sliceHits + l0Hits + demand.l1Hits + demand.l2Hits) / total;
     } else {
       effectiveDemandHitRate = 0;
     }
+  } else if (sliceStats && l0Stats) {
+    // Both in-memory caches wired (no demand counters): combine their counters.
+    const hits = sliceHits + l0Hits;
+    const accesses = hits + (sliceStats.misses ?? 0) + (l0Stats.misses ?? 0);
+    effectiveDemandHitRate = accesses > 0 ? hits / accesses : 0;
+  } else if (sliceStats) {
+    // Only SliceCache wired: use its reported hitRate.
+    effectiveDemandHitRate = sliceStats.hitRate;
   } else if (l0Stats) {
-    // Fallback: only L0 wired. Use the L0 provider's own hitRate.
+    // Only L0 wired. Use the L0 provider's own hitRate.
     effectiveDemandHitRate = l0Stats.hitRate;
   }
 
@@ -257,7 +284,7 @@ export function aggregateCacheMetrics(params: AggregateCacheMetricsParams): Cach
   }
   // Provider-health: telemetry classifier said enabled but providers
   // are absent → contradiction; flag as provider-missing.
-  if (telemetryState.kind === 'enabled' && !cacheStatsProvider && !l0Provider) {
+  if (telemetryState.kind === 'enabled' && !cacheStatsProvider && !l0Provider && !sliceProvider) {
     status.push('provider-missing');
   }
   if (l2QuotaSkipped > 0) status.push('quota-constrained');
@@ -295,6 +322,7 @@ export function aggregateCacheMetrics(params: AggregateCacheMetricsParams): Cach
     loadsPerSec: rates.loadsPerSec,
     bandwidth: rates.bandwidth,
     l0: l0Stats,
+    slice: sliceStats,
     l1: l1Stats,
     l2: l2Stats,
     network: networkStats,

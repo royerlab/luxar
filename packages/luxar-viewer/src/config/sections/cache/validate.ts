@@ -15,6 +15,10 @@ export function validateCache(config: AppConfig, errors: string[], _warnings: st
   if (!Number.isFinite(l0) || l0 <= 0) {
     errors.push(`Invalid cache.l0MaxSizeMB: ${l0} (must be a finite positive number)`);
   }
+  const slice = cache.sliceCacheMaxSizeMB;
+  if (!Number.isFinite(slice) || slice <= 0) {
+    errors.push(`Invalid cache.sliceCacheMaxSizeMB: ${slice} (must be a finite positive number)`);
+  }
   const l1 = cache.l1MaxSizeMB;
   if (!Number.isFinite(l1) || l1 <= 0) {
     errors.push(`Invalid cache.l1MaxSizeMB: ${l1} (must be a finite positive number)`);

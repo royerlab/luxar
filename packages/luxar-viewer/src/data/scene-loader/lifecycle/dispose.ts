@@ -26,6 +26,7 @@ import type { ViewStateQueue } from '../view-state/view-state-queue';
 import type { GPUBufferPool } from '../../../rendering/gpu-buffer-pool';
 import type { MultiLevelCachingStore } from '../../../cache/multi-level-caching-store';
 import type { DecompressedChunkCache } from '../../../cache/decompressed-chunk-cache';
+import type { SliceCache } from '../../../cache/slice-cache';
 import type { SceneLoaderMonitorPort } from '../../scene-loader-monitor-port';
 
 /**
@@ -41,6 +42,7 @@ export interface DisposeCtx {
   gpuBufferPool: GPUBufferPool | null;
   cachingStore: MultiLevelCachingStore | null;
   l0Cache: DecompressedChunkCache | null;
+  sliceCache: SliceCache | null;
   viewStateQueue: ViewStateQueue;
   monitor: SceneLoaderMonitorPort | null;
 }
@@ -107,6 +109,18 @@ export async function disposeSceneLoader(ctx: DisposeCtx): Promise<{
         `hit rate: ${(stats.hitRate * 100).toFixed(1)}%`
     );
     ctx.l0Cache.clear();
+  }
+
+  // Clear the SliceCache (S-cache) so a reused SceneLoader / dataset switch
+  // never serves decoded geometry from the previous dataset.
+  if (ctx.sliceCache) {
+    const s = ctx.sliceCache.getStats();
+    log.info(
+      Modules.SCENE_LOADER,
+      `SliceCache stats at dispose: ${s.count} slices, ${(s.size / 1024 / 1024).toFixed(1)}MB, ` +
+        `hit rate: ${(s.hitRate * 100).toFixed(1)}%`
+    );
+    ctx.sliceCache.clear();
   }
 
   // S6: clear per-loader prefetch predictor state on dispose so a

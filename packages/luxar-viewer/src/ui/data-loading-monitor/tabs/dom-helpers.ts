@@ -11,15 +11,20 @@
  */
 
 /**
- * Update a single element's textContent by `data-field` attribute,
- * scoped to `container`. Returns false if no matching element was
- * found (the caller can use the boolean to decide whether the DOM
- * structure needs a full rebuild).
+ * Update every element carrying the given `data-field` attribute,
+ * scoped to `container`. A field key may appear more than once (the
+ * Cache tab renders each value both in the full metric card AND in the
+ * collapsed-header compact summary) — all copies get the same text.
+ * Returns false if no matching element was found (the caller can use
+ * the boolean to decide whether the DOM structure needs a full
+ * rebuild).
  */
 export function patchField(container: HTMLElement | null, field: string, text: string): boolean {
-  const el = container?.querySelector(`[data-field="${field}"]`);
-  if (!el) return false;
-  el.textContent = text;
+  const els = container?.querySelectorAll(`[data-field="${field}"]`);
+  if (!els || els.length === 0) return false;
+  els.forEach((el) => {
+    el.textContent = text;
+  });
   return true;
 }
 
@@ -34,4 +39,20 @@ export function updateColorClass(el: HTMLElement, newColorClass: string): void {
     classes.push(newColorClass);
   }
   el.className = classes.join(' ');
+}
+
+/**
+ * Apply `updateColorClass` to EVERY element carrying the given
+ * `data-field` attribute within `container`. Companion to `patchField`
+ * for fields that render in more than one place (full metric card +
+ * compact collapsed-header summary on the Cache tab).
+ */
+export function updateColorClassByField(
+  container: HTMLElement | null,
+  field: string,
+  newColorClass: string
+): void {
+  container?.querySelectorAll(`[data-field="${field}"]`).forEach((el) => {
+    updateColorClass(el as HTMLElement, newColorClass);
+  });
 }

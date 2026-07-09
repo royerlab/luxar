@@ -32,6 +32,13 @@ export interface UpdateCtxsInput {
   extendedToleranceCache: Map<string, number[]>;
   /** Per-update abort signal; forwarded into each per-type handler ctx. */
   signal?: AbortSignal;
+  /**
+   * Per-tick LOD time budget during dimension-animation playback (see
+   * `ViewState.frameBudgetMs`). A per-pass directive: forwarded into each
+   * handler ctx and injected into the DERIVED per-node view state there —
+   * never persisted on the scene loader.
+   */
+  frameBudgetMs?: number;
   deriveNodeViewState(
     path: string,
     attrs: { extend_to_all?: string[] } | undefined,
@@ -55,6 +62,7 @@ export function buildUpdateCtxs(input: UpdateCtxsInput): {
     currentVersion: input.currentVersion,
     extendedToleranceCache: input.extendedToleranceCache,
     signal: input.signal,
+    frameBudgetMs: input.frameBudgetMs,
     deriveNodeViewState: input.deriveNodeViewState,
   };
   const linesCtx: LinesHandlerCtx = {
@@ -64,6 +72,7 @@ export function buildUpdateCtxs(input: UpdateCtxsInput): {
     currentVersion: input.currentVersion,
     updateVersion: input.updateVersion,
     signal: input.signal,
+    frameBudgetMs: input.frameBudgetMs,
     deriveNodeViewState: input.deriveNodeViewState,
   };
   const gsplatsCtx: GSplatsHandlerCtx = {
@@ -74,6 +83,7 @@ export function buildUpdateCtxs(input: UpdateCtxsInput): {
     updateVersion: input.updateVersion,
     extendedToleranceCache: input.extendedToleranceCache,
     signal: input.signal,
+    frameBudgetMs: input.frameBudgetMs,
     deriveNodeViewState: input.deriveNodeViewState,
   };
   return { pointsCtx, linesCtx, gsplatsCtx };

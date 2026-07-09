@@ -98,13 +98,24 @@ export async function updateView(viewState: Partial<ViewState>, loaderId?: strin
 export async function updateSceneForDimensions(
   dims: SimpleDims,
   scene: THREE.Group,
-  loaderId?: string
+  loaderId?: string,
+  opts?: {
+    /**
+     * Per-tick LOD time budget during dimension-animation playback (see
+     * `ViewState.frameBudgetMs`). A per-pass directive — attached to this
+     * one update call, never persisted.
+     */
+    frameBudgetMs?: number;
+  }
 ): Promise<void> {
   const maxRadius = scene.userData.maxRadius || config.dataLoading.spatial.defaultMaxRadius;
   const viewState = simpleDimsToViewState(dims, {
     maxRadius,
     defaultTolerance: config.dataLoading.spatial.defaultTolerance,
   });
+  if (opts?.frameBudgetMs !== undefined) {
+    viewState.frameBudgetMs = opts.frameBudgetMs;
+  }
 
   await updateView(viewState, loaderId);
 }

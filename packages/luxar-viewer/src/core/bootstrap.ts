@@ -198,6 +198,7 @@ export async function bootstrapStandalone(opts: BootstrapOptions): Promise<Luxar
     openCacheStats: urlParams.cacheStats,
     loaderConfig: {
       noCache: urlParams.noCache,
+      noSliceCache: urlParams.noSliceCache,
       cacheDebug: urlParams.cacheDebug,
       clearCache: urlParams.clearCache,
       noPrefetch: urlParams.noPrefetch,

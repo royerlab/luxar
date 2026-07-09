@@ -1088,11 +1088,15 @@ class TestBarrierAwareOrdering:
             nt = self._finest_chunk_bounds(npath)[:, 3, 1] - \
                 self._finest_chunk_bounds(npath)[:, 3, 0]
 
-            # WITH barrier: most chunks single-timepoint (extent ~1.0 via ±0.5),
-            # boundary chunks ≤ n_tps span 2 timepoints (extent ~2.0). Never the
-            # whole-span-plus-σ smear the no-barrier ordering produces.
-            assert np.median(bt) <= 1.5
-            assert np.all(bt <= 2.0 + 1e-4)
+            # WITH barrier: most chunks single-timepoint. Since the write-side
+            # padding shrank from ±0.5 step to the tiny float-boundary epsilon
+            # (_BARRIER_BOUND_EPS = 1e-3), a single-timepoint chunk's extent is
+            # ~2*eps (~0.002, no longer ~1.0), and a boundary chunk spanning 2
+            # timepoints is ~1.0 + 2*eps. Never the whole-span-plus-sigma smear
+            # the no-barrier ordering produces. The tight thresholds FAIL under
+            # the legacy +/-0.5 padding — they pin the over-fetch fix's write side.
+            assert np.median(bt) <= 0.1
+            assert np.all(bt <= 1.0 + 0.1)
             # WITHOUT barrier: chunks smear across timepoints (σ-expanded too),
             # so the barrier version is decisively tighter — the fix's payoff.
             assert np.median(nt) > np.median(bt)
@@ -1248,7 +1252,8 @@ class TestBarrierAwareOrdering:
 
         Asserts the barrier machinery specifically (not just shape/count): would
         fail if detect_barrier_dims wrongly flagged a float axis (→ slice_dims
-        non-empty and tight ±0.5 bounds instead of σ-expanded)."""
+        non-empty and tight ±_BARRIER_BOUND_EPS ≈ ±1e-3 bounds — extent ~0.002
+        — instead of σ-expanded)."""
         from luxar.gsplats.io.save_gsplats import write_gsplats_tree
         from luxar.gsplats.tree import GSplatLeaf
 
@@ -1271,9 +1276,10 @@ class TestBarrierAwareOrdering:
             assert list(root.attrs["ordering_dims"]) == [0, 1, 2]
             bounds = self._finest_chunk_bounds(path)
             assert bounds.shape[1] == 3
-            # Every axis is σ-expanded — extents exceed the ±0.5 a barrier axis
-            # would get (proves NO axis received tight barrier bounds). σ=2,
-            # coverage 3σ → ~6 extent, well over 1.0.
+            # Every axis is σ-expanded — extents dwarf the ~2·eps (≈0.002,
+            # _BARRIER_BOUND_EPS) a wrongly-flagged barrier axis would get
+            # (proves NO axis received tight barrier bounds). σ=2,
+            # coverage 3σ → ~6 extent, well over 1.5.
             extents = bounds[:, :, 1] - bounds[:, :, 0]
             assert np.all(extents.max(axis=0) > 1.5)
             got = GSplatData.load(path)

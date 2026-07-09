@@ -221,7 +221,7 @@
 }
 
 .luxar-monitor-compact__alert {
-  color: var(--luxar-warning);
+  /* Color comes from the semantic luxar-color--* class on the element. */
   font-size: var(--luxar-text-lg);
   animation: luxar-monitor-pulse 2s ease-in-out infinite;
 }
@@ -449,17 +449,93 @@
      no own margin (avoids stacking extra space on top of the gap). */
 }
 
+/* Header doubles as the expand/collapse toggle. The Clear button keeps
+   its own click action (nearest data-action wins in the delegated
+   handler); margin-left:auto pins it right in both states. */
 .luxar-cache-section__header {
   display: flex;
-  justify-content: space-between;
   align-items: center;
+  gap: var(--luxar-spacing-3);
   margin-bottom: var(--luxar-spacing-3);
+  cursor: pointer;
+  user-select: none;
+}
+
+.luxar-cache-section__header > .luxar-cache-section__clear-btn {
+  margin-left: auto;
+  flex: 0 0 auto;
+}
+
+.luxar-cache-section__chevron {
+  flex: 0 0 auto;
+  font-size: var(--luxar-text-xs);
+  color: var(--luxar-text-muted);
+  transition: transform 0.15s ease;
+}
+
+.luxar-cache-section--collapsed .luxar-cache-section__chevron {
+  transform: rotate(-90deg);
 }
 
 .luxar-cache-section__title {
   font-size: var(--luxar-text-xs);
   color: var(--luxar-text-muted);
   font-weight: var(--luxar-font-semibold);
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+
+/* Compact inline summary: mirrors every metric card (same data-field
+   keys, patched together with the cards). Hidden while expanded; when
+   the section is collapsed it is the only visible value row. */
+.luxar-cache-section__summary {
+  display: none;
+  flex: 1 1 auto;
+  min-width: 0;
+  justify-content: flex-end;
+  align-items: baseline;
+  gap: var(--luxar-spacing-4);
+  overflow: hidden;
+}
+
+.luxar-cache-section--collapsed .luxar-cache-section__summary {
+  display: flex;
+}
+
+.luxar-cache-section__summary-item {
+  display: inline-flex;
+  align-items: baseline;
+  gap: var(--luxar-spacing-1);
+  white-space: nowrap;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.luxar-cache-section__summary-label {
+  font-size: 9px;
+  color: var(--luxar-text-muted);
+  letter-spacing: 0.03em;
+}
+
+.luxar-cache-section__summary-value {
+  font-size: var(--luxar-text-xs);
+  font-weight: var(--luxar-font-bold);
+}
+
+.luxar-cache-section__summary-sub {
+  font-size: var(--luxar-text-xs);
+  color: var(--luxar-text-disabled);
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Collapsed: hide the metric-card grid; the header row is the section. */
+.luxar-cache-section--collapsed .luxar-cache-section__metrics {
+  display: none;
+}
+
+.luxar-cache-section--collapsed .luxar-cache-section__header {
+  margin-bottom: 0;
 }
 
 .luxar-cache-section__clear-btn {
@@ -1413,4 +1489,308 @@
 
 .luxar-timing-panel__update-count {
   font-style: italic;
+}
+
+/* ==========================================================================
+   Refinement layer — "quiet instrument" pass
+   ==========================================================================
+   Cross-cutting design rules applied over the per-section styles above
+   (same specificity, later in the file, so they win where they overlap):
+
+   1. NUMERALS  — every metric value is an instrument register: the mono
+      stack with tabular numerals, so digits align in tables and values
+      tick without jitter as live updates land.
+   2. LABELS    — one micro-label voice (10px caps, wide tracking, muted)
+      for every metric/table label; section TITLES rank one step above
+      (brighter, with a small status-tick anchor) so structure reads
+      before data.
+   3. COLOR     — semantic only. Health states (hit rates, errors,
+      evictions) keep their colors; identity tints are gone and idle
+      zeros are dimmed, so an idle panel looks calm, not alarming.
+   4. MOTION    — one entrance reveal per tab paint (staggered on the
+      cache stack), reveals on expand/collapse, hover affordances on the
+      clickable section headers. All disabled under reduced motion.
+   ========================================================================== */
+
+/* ---- 1. Numerals ---- */
+
+.luxar-metric-card__value,
+.luxar-secondary-metrics__value,
+.luxar-cache-total__value,
+.luxar-cache-total__demand-value,
+.luxar-cache-section__summary-value,
+.luxar-cache-health__value,
+.luxar-memory-table__cell--value,
+.luxar-memory-total__value,
+.luxar-stat-grid__value,
+.luxar-monitor-compact__geoms,
+.luxar-monitor-compact__memory,
+.luxar-monitor-compact__qps {
+  font-family: var(--luxar-font-mono);
+  font-variant-numeric: tabular-nums;
+}
+
+.luxar-metric-card__value--medium,
+.luxar-metric-card__value--large,
+.luxar-cache-total__value {
+  letter-spacing: -0.02em;
+}
+
+/* ---- 2. Labels & section titles ---- */
+
+.luxar-metric-card__title,
+.luxar-secondary-metrics__label,
+.luxar-memory-table__header,
+.luxar-cache-total__demand-label {
+  font-size: 10px;
+  font-weight: var(--luxar-font-semibold);
+  letter-spacing: 0.08em;
+  color: var(--luxar-text-muted);
+}
+
+/* Section titles rank above metric labels: brighter, and anchored by a
+   small status tick — the panel's one recurring motif (echoes the active
+   tab's accent). */
+.luxar-cache-section__title,
+.luxar-memory-section__title,
+.luxar-cache-health__title,
+.luxar-cache-total__label {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--luxar-spacing-3);
+  color: var(--luxar-text-secondary);
+  letter-spacing: 0.06em;
+}
+
+.luxar-cache-section__title::before,
+.luxar-memory-section__title::before,
+.luxar-cache-health__title::before,
+.luxar-cache-total__label::before {
+  content: '';
+  flex: 0 0 auto;
+  width: 3px;
+  height: 10px;
+  border-radius: 1px;
+  background: var(--luxar-success);
+  opacity: 0.55;
+}
+
+/* Compact-summary labels sit BELOW both: smallest, most dimmed. */
+.luxar-cache-section__summary-label {
+  font-weight: var(--luxar-font-medium);
+  color: var(--luxar-text-disabled);
+}
+
+/* ---- 3. Iconography ---- */
+
+.luxar-micon {
+  width: 13px;
+  height: 13px;
+  flex: 0 0 auto;
+}
+
+.luxar-data-monitor__tab {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--luxar-spacing-2);
+}
+
+.luxar-data-monitor__tab .luxar-micon {
+  width: 12px;
+  height: 12px;
+  opacity: 0.75;
+}
+
+.luxar-data-monitor__tab--active .luxar-micon {
+  opacity: 1;
+}
+
+.luxar-monitor-compact__type {
+  display: inline-flex;
+  align-items: center;
+  color: var(--luxar-text-muted);
+}
+
+.luxar-monitor-compact__alert {
+  display: inline-flex;
+  align-items: center;
+}
+
+.luxar-monitor-compact__alert .luxar-micon {
+  width: 9px;
+  height: 9px;
+}
+
+.luxar-data-monitor__expand-btn .luxar-micon {
+  width: 14px;
+  height: 14px;
+}
+
+.luxar-recommendation__icon .luxar-micon,
+.luxar-suggestion .luxar-micon {
+  width: 12px;
+  height: 12px;
+  vertical-align: -2px;
+}
+
+/* ---- 4. Clickable cache-section headers: affordance ---- */
+
+.luxar-cache-section__header {
+  /* Widen the hover surface to the section's padding box without
+     shifting the content grid. */
+  margin: calc(-1 * var(--luxar-spacing-1)) calc(-1 * var(--luxar-spacing-2));
+  margin-bottom: calc(var(--luxar-spacing-3) - var(--luxar-spacing-1));
+  padding: var(--luxar-spacing-1) var(--luxar-spacing-2);
+  border-radius: var(--luxar-radius-sm);
+  transition: background var(--luxar-transition-fast);
+}
+
+.luxar-cache-section--collapsed .luxar-cache-section__header {
+  margin-bottom: calc(-1 * var(--luxar-spacing-1));
+}
+
+.luxar-cache-section__header:hover {
+  background: var(--luxar-interactive-hover);
+}
+
+.luxar-cache-section__chevron {
+  transition:
+    transform 0.15s ease,
+    color var(--luxar-transition-fast);
+}
+
+.luxar-cache-section__header:hover .luxar-cache-section__chevron,
+.luxar-cache-section__header:hover .luxar-cache-section__title {
+  color: var(--luxar-text-primary);
+}
+
+/* Clear buttons recede until the row is engaged (still visible and
+   fully clickable — just quieter than the data they sit beside). */
+.luxar-cache-section__header > .luxar-cache-section__clear-btn {
+  opacity: 0.55;
+  transition:
+    opacity var(--luxar-transition-fast),
+    background var(--luxar-transition-fast),
+    color var(--luxar-transition-fast),
+    border-color var(--luxar-transition-fast);
+}
+
+.luxar-cache-section__header:hover > .luxar-cache-section__clear-btn,
+.luxar-cache-section__header > .luxar-cache-section__clear-btn:focus-visible {
+  opacity: 1;
+}
+
+/* ---- 5. Motion ---- */
+
+@keyframes luxar-monitor-reveal {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+/* One entrance per TAB SWITCH (or panel expand): the monitor stamps a
+   one-shot `--animate` marker on the content div for those rebuilds only.
+   Live structureDirty rebuilds (scene-tree toggles, failed-loads banner)
+   render without the marker, so the reveal never replays mid-session. */
+.luxar-data-monitor__content--animate > [class*='luxar-tab-content'] {
+  animation: luxar-monitor-reveal 0.18s ease both;
+}
+
+/* The cache stack staggers in top-to-bottom. */
+.luxar-data-monitor__content--animate > .luxar-tab-content--cache > * {
+  animation: luxar-monitor-reveal 0.22s ease backwards;
+}
+
+.luxar-data-monitor__content--animate > .luxar-tab-content--cache > *:nth-child(2) {
+  animation-delay: 0.03s;
+}
+.luxar-data-monitor__content--animate > .luxar-tab-content--cache > *:nth-child(3) {
+  animation-delay: 0.06s;
+}
+.luxar-data-monitor__content--animate > .luxar-tab-content--cache > *:nth-child(4) {
+  animation-delay: 0.09s;
+}
+.luxar-data-monitor__content--animate > .luxar-tab-content--cache > *:nth-child(5) {
+  animation-delay: 0.12s;
+}
+.luxar-data-monitor__content--animate > .luxar-tab-content--cache > *:nth-child(6) {
+  animation-delay: 0.15s;
+}
+.luxar-data-monitor__content--animate > .luxar-tab-content--cache > *:nth-child(7) {
+  animation-delay: 0.18s;
+}
+
+/* Expanding a section reveals its cards; collapsing reveals the
+   summary — the switch reads as a morph rather than a pop. Keyed on the
+   transient `--morph` marker (added for ~250ms by toggleCacheSection), so
+   the reveal plays only on an INTERACTIVE toggle — never when a structural
+   rebuild re-creates the sections in their current state. */
+.luxar-cache-section--morph:not(.luxar-cache-section--collapsed) .luxar-cache-section__metrics {
+  animation: luxar-monitor-reveal 0.16s ease;
+}
+
+.luxar-cache-section--morph.luxar-cache-section--collapsed .luxar-cache-section__summary {
+  animation: luxar-monitor-reveal 0.16s ease;
+}
+
+/* Keyboard affordance for the div-based header button. */
+.luxar-cache-section__header:focus-visible {
+  outline: 1px solid var(--luxar-border-strong);
+  outline-offset: 1px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .luxar-data-monitor__content--animate > [class*='luxar-tab-content'],
+  .luxar-data-monitor__content--animate > .luxar-tab-content--cache > *,
+  .luxar-cache-section--morph .luxar-cache-section__metrics,
+  .luxar-cache-section--morph .luxar-cache-section__summary {
+    animation: none !important;
+  }
+}
+
+/* ---- 6. Empty / idle states ---- */
+
+.luxar-monitor-allclear {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--luxar-spacing-3);
+  padding: var(--luxar-spacing-10) 0;
+}
+
+.luxar-monitor-allclear__icon .luxar-micon {
+  width: 26px;
+  height: 26px;
+  color: var(--luxar-success);
+  opacity: 0.75;
+}
+
+.luxar-monitor-allclear__title {
+  font-size: var(--luxar-text-sm);
+  font-weight: var(--luxar-font-semibold);
+  color: var(--luxar-text-secondary);
+}
+
+.luxar-monitor-allclear__sub {
+  font-size: var(--luxar-text-xs);
+  color: var(--luxar-text-disabled);
+}
+
+/* ---- 7. TOTAL footer: effective hit rate as a first-class value ---- */
+
+.luxar-cache-total__demand {
+  display: flex;
+  align-items: baseline;
+  justify-content: flex-end;
+  gap: var(--luxar-spacing-3);
+}
+
+.luxar-cache-total__demand-value {
+  font-size: var(--luxar-text-sm);
+  color: var(--luxar-text-secondary);
 }

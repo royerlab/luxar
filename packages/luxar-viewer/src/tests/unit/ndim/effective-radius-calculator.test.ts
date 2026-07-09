@@ -255,7 +255,7 @@ describe('effective-radius-calculator', () => {
   describe('calculateSpatialQueryTolerance', () => {
     // ndim.md O4 / Phase E45: P9 rename — pins the per-dim tolerance
     // selection: displayed → 1e10 (show all), non-displayed spatial →
-    // maxRadius, non-spatial (discrete) → 0.5 chunk-query slop.
+    // maxRadius, non-spatial (discrete) → shared quarter-cell (0.25 × step).
     it('non-displayed spatial dim uses maxRadius (0.5) for chunk-query tolerance', () => {
       const viewState: ViewState = {
         displayDims: [0, 1, 2],
@@ -274,13 +274,15 @@ describe('effective-radius-calculator', () => {
       expect(result[1]).toBe(1e10); // Displayed → infinite tolerance
       expect(result[2]).toBe(1e10); // Displayed → infinite tolerance
       expect(result[3]).toBe(0.5); // Non-displayed spatial → maxRadius
-      expect(result[4]).toBe(0.5); // Non-spatial → 0.5 tolerance for chunk query (precise filtering done in calculateEffectiveRadii)
+      expect(result[4]).toBe(0.25); // Non-spatial → quarter-cell chunk query (precise filtering done in calculateEffectiveRadii)
     });
 
-    // ndim.md O4 / Phase E45: P9 rename — pins the 0.5 chunk-query slop
-    // applied to non-spatial (discrete) dimensions. Precise filtering
-    // happens later in calculateEffectiveRadii.
-    it('non-spatial (discrete) dim uses 0.5 chunk-query tolerance (precise filter applied later)', () => {
+    // ndim.md O4 / Phase E45: P9 rename — pins the quarter-cell chunk-query
+    // tolerance applied to non-spatial (discrete) dimensions (shared
+    // discreteDimTolerance rule; < 0.5 so legacy ±0.5-padded chunk bounds
+    // can't sum to a full step and bleed the neighbouring category). Precise
+    // filtering happens later in calculateEffectiveRadii.
+    it('non-spatial (discrete) dim uses the quarter-cell chunk-query tolerance (precise filter applied later)', () => {
       const viewState: ViewState = {
         displayDims: [0, 1],
         slicePosition: [0, 0, 0, 0],
@@ -296,12 +298,12 @@ describe('effective-radius-calculator', () => {
       // Displayed dimensions use infinite tolerance (1e10) to show all points
       expect(result[0]).toBe(1e10); // Displayed → infinite tolerance
       expect(result[1]).toBe(1e10); // Displayed → infinite tolerance
-      // Non-spatial (discrete) dimensions use 0.5 tolerance for chunk queries
-      // This matches the discreteTolerance in calculateEffectiveRadii and handles
-      // float precision issues in chunk bounds. The precise filtering is done
-      // in calculateEffectiveRadii with discreteTolerance = 0.5
-      expect(result[2]).toBe(0.5); // Non-spatial → 0.5 tolerance for chunk query
-      expect(result[3]).toBe(0.5); // Non-spatial → 0.5 tolerance for chunk query
+      // Non-spatial (discrete) dimensions use the shared quarter-cell rule
+      // (0.25 × step, fallback 0.25 with no dimension metadata) for chunk
+      // queries. The precise per-point filtering is done later in
+      // calculateEffectiveRadii with the half-step MEMBERSHIP gate (0.5).
+      expect(result[2]).toBe(0.25); // Non-spatial → quarter-cell chunk query
+      expect(result[3]).toBe(0.25); // Non-spatial → quarter-cell chunk query
     });
 
     // ndim.md O4 / Phase E45: P9 rename — pins the precedence: spatial

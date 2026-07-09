@@ -103,6 +103,7 @@ function makeDeps(): LoaderFactoryDeps {
     arrayRefRegistry: {} as never,
     profiler: null,
     l0Cache: null,
+    sliceCache: null,
     cachingStore: null,
   };
 }

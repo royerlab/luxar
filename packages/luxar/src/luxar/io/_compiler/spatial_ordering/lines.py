@@ -100,7 +100,6 @@ def build_lines_ordering(
         sorted_vertices,
         vertex_chunk_size,
         slice_dims=ordering_metadata["vertex_ordering"]["slice_dims"],
-        dimensions=dimensions.dimensions,
     )
 
     # Compute segment chunk bounds
@@ -121,7 +120,6 @@ def build_lines_ordering(
         slice_dims=ordering_metadata["vertex_ordering"][
             "slice_dims"
         ],  # Use D-space dims
-        dimensions=dimensions.dimensions,
     )
 
     aprint(

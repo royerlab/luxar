@@ -42,6 +42,9 @@ vi.mock('../../../../../data', () => ({
 vi.mock('../../../../../scene/animation/dimension-animation-manager', () => ({
   DimensionAnimationManager: vi.fn().mockImplementation(() => ({
     dispose: vi.fn(),
+    // updateAllNDNodes reads the playback frame budget per update; the real
+    // manager returns null when nothing is playing.
+    getFrameBudgetMs: vi.fn(() => null),
   })),
 }));
 
@@ -202,7 +205,11 @@ describe('updateAllNDNodes', () => {
       animationController: { startAnimation } as never,
     });
     await updateAllNDNodes(ctx);
-    expect(updateSceneForDimensions).toHaveBeenCalledWith(dims, expect.anything());
+    // 3rd arg: loaderId (undefined); 4th: playback frame-budget opts (no
+    // budget outside animation playback → { frameBudgetMs: undefined }).
+    expect(updateSceneForDimensions).toHaveBeenCalledWith(dims, expect.anything(), undefined, {
+      frameBudgetMs: undefined,
+    });
     expect(startAnimation).toHaveBeenCalledTimes(1);
   });
 });

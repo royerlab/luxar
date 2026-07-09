@@ -83,6 +83,7 @@ const EMPTY_PARAMS: UrlParams = {
   theme: null,
   debug: false,
   noCache: false,
+  noSliceCache: false,
   cacheDebug: false,
   clearCache: false,
   noPrefetch: false,

@@ -155,6 +155,12 @@ export async function projectGSplatsTo3DUsingWorker(
       );
     }
 
+    // NOTE: `params` (positions / choleskyFactors / amplitudes / colors) is
+    // passed WITHOUT a Comlink transfer list, so its buffers are structured-
+    // cloned into the worker, not detached. The SliceCache relies on this: a
+    // restored slice hands the loader's cached arrays straight into projection,
+    // and transferring them would neuter (detach) the cached snapshot. Do not
+    // add a transfer list for the inputs here.
     const workerResult = await getWorkerPool().runWithTimeout(
       'projectGSplatsTo3D',
       'projection',

@@ -158,13 +158,23 @@ const ranges = mergeRanges(chunkIndicesToRanges(chunkIndices, chunkSize, totalEl
 ## Tolerance calculation
 
 Unified tolerance logic lives in `spatial-query/tolerance-computer.ts::computeTolerance`
-and is selected by `geometryType`:
+and is selected by `geometryType`. Hidden DISCRETE dims distinguish two roles:
+the **query** role (chunk-fetch reach — the default) uses the shared
+quarter-cell `0.25 × step`, while the **membership** role
+(`options.discreteRole: 'membership'`, the per-element visibility slab used by
+the lines projection-clipping path) uses the half-cell `0.5 × step`, matching
+the points/gsplats projection gates:
 
-| Geometry  | Hidden spatial dim                                              | Hidden discrete dim          |
-| --------- | --------------------------------------------------------------- | ---------------------------- |
-| `points`  | `maxRadius` (or 0.5 if `spatialExtendDims[d]` is false)         | 0.5                          |
-| `lines`   | 0 (segment bounds already include line width)                   | `step / 2` (or 0.5 fallback) |
-| `gsplats` | `step × gsplatsDefaultTolerance` (default 3 σ; or 3.0 fallback) | 0.5                          |
+| Geometry  | Hidden spatial dim                                              | Hidden discrete dim (query)   | Discrete membership gate        |
+| --------- | --------------------------------------------------------------- | ----------------------------- | ------------------------------- |
+| `points`  | `maxRadius` (discrete rule if `spatialExtendDims[d]` false)     | `0.25 × step` (0.25 fallback) | 0.5 absolute (projection stage) |
+| `lines`   | 0 (segment bounds already include line width)                   | `0.25 × step` (0.25 fallback) | `0.5 × step` via `discreteRole` |
+| `gsplats` | `step × gsplatsDefaultTolerance` (default 3 σ; or 3.0 fallback) | `0.25 × step` (0.25 fallback) | `step × 0.5` (projection stage) |
+
+The quarter-cell query reach sits deliberately below the half-cell membership
+gates: chunk bounds are epsilon-padded on the write side (`io/ordering.py`),
+and pad + reach must stay under one step or a single-category query bleeds in
+the whole neighbouring category.
 
 Displayed dimensions always get `1e10` (effectively infinite).
 

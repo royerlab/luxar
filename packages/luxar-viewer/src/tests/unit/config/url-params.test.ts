@@ -14,6 +14,7 @@ describe('readUrlParams', () => {
       theme: null,
       debug: false,
       noCache: false,
+      noSliceCache: false,
       cacheDebug: false,
       clearCache: false,
       noPrefetch: false,
@@ -118,10 +119,11 @@ describe('readUrlParams', () => {
 
   it('treats valueless flags as boolean true', () => {
     const params = readUrlParams(
-      '?debug&no-cache&cache-debug&clear-cache&no-prefetch&prefetch-debug&cache-stats&webgpu-force-webgl'
+      '?debug&no-cache&no-slice-cache&cache-debug&clear-cache&no-prefetch&prefetch-debug&cache-stats&webgpu-force-webgl'
     );
     expect(params.debug).toBe(true);
     expect(params.noCache).toBe(true);
+    expect(params.noSliceCache).toBe(true);
     expect(params.cacheDebug).toBe(true);
     expect(params.clearCache).toBe(true);
     expect(params.noPrefetch).toBe(true);

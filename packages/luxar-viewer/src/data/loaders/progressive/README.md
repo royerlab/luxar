@@ -21,8 +21,9 @@ imported by the geometry loaders one directory up.
 
 ```
 progressive/
-├── concat-helpers.ts   # Generic typed-array field concatenation across LOD parts
-└── constants.ts        # CACHE_HIT_THRESHOLD_MS — the shared streaming threshold
+├── concat-helpers.ts      # Generic typed-array field concatenation across LOD parts
+├── constants.ts           # CACHE_HIT_THRESHOLD_MS — the shared streaming threshold
+└── slice-cache-helper.ts  # Shared SliceCache key/clone/restore/store logic (3-loader symmetry)
 ```
 
 ## Components

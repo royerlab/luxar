@@ -267,11 +267,16 @@ export async function loadScene(
 
 export async function updateView(viewState: Partial<ViewState>, loaderId?: string): Promise<void>;
 
-// Update scene when navigating dimensions
+// Update scene when navigating dimensions. `opts.frameBudgetMs` is the
+// per-pass LOD time budget during dimension-animation playback (loaders
+// stream sub-LODs until the budget runs out, then commit); absent outside
+// playback. Queued calls resolve when the requested-or-newer state's pass
+// commits (the animation pacing gate awaits this).
 export async function updateSceneForDimensions(
   dims: SimpleDims,
   scene: THREE.Group,
-  loaderId?: string
+  loaderId?: string,
+  opts?: { frameBudgetMs?: number }
 ): Promise<void>;
 ```
 
@@ -1028,7 +1033,7 @@ location /data/ {
 | -------------------------------------------------- | ---------------------------------------------------- |
 | `loadScene(url, config?, loaderId?)`               | Load complete Zarr dataset with chunk-based indexing |
 | `updateView(viewState, loaderId?)`                 | Update all points for new view state                 |
-| `updateSceneForDimensions(dims, scene, loaderId?)` | Update scene when navigating dimensions              |
+| `updateSceneForDimensions(dims, scene, loaderId?, opts?)` | Update scene when navigating dimensions (opts.frameBudgetMs = playback LOD budget) |
 | `dispose(loaderId?)`                               | Clean up resources (specific or all)                 |
 
 Cache inspection and clearing are not on the `zarr-loader.ts` surface;

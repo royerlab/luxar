@@ -44,6 +44,22 @@ export interface ViewState {
    * different shape on this field.
    */
   dimensions?: DimensionMetadata[];
+
+  /**
+   * Per-tick LOD time budget (ms) for progressive loaders during dimension
+   * ANIMATION playback, or absent for normal full-refinement behavior.
+   *
+   * **PER-PASS DIRECTIVE, not state.** This field rides only the
+   * `updateView(partial)` call: the scene loader destructures it OUT before
+   * merging into its persistent view state (a stale budget would leave
+   * loaders capped after playback ends), threads it through the per-type
+   * handler ctxs, and injects it into the DERIVED per-node view state right
+   * before `loader.updateView` — so refinement and retry passes (which
+   * derive independently) are budget-free by construction. It must never
+   * enter `viewStatesEqual` (would reset ladders on play/pause) nor the
+   * SliceCache key (`buildSliceViewSig`).
+   */
+  frameBudgetMs?: number;
 }
 
 // Re-export the points-specific types (LoadedPointsData, PointRange,
@@ -112,8 +128,11 @@ export interface LoaderConfig {
   /** Enable data loading monitor UI */
   enableMonitor?: boolean;
 
-  /** Disable both L1/L2 cache tiers and L0 decompressed cache. */
+  /** Disable ALL cache tiers: SliceCache, L0 decompressed, and L1/L2. */
   noCache?: boolean;
+
+  /** Disable only the SliceCache / S-cache (L0/L1/L2 stay on). */
+  noSliceCache?: boolean;
 
   /** Verbose cache logging. */
   cacheDebug?: boolean;
@@ -236,4 +255,3 @@ export interface LoaderStats {
  * switch/case dispatch on `geometry_type` strings in scene-loader.
  */
 export type GeometryKind = 'points' | 'lines' | 'gsplats';
-
