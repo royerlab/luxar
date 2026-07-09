@@ -116,6 +116,57 @@ describe('computeTolerance — lines', () => {
     const tol = computeTolerance('lines', [0, 1, 2], 4, dimsNoStep);
     expect(tol[3]).toBe(0.25);
   });
+
+  // Regression (deep-double-check): the lines PROJECTION/CLIPPING path is a
+  // MEMBERSHIP gate, not a fetch reach. When the quarter-cell query rule
+  // landed (ee0971f3) it silently halved the lines visibility slab from
+  // step/2 to step/4 — cross-category whiskers shrank and off-grid vertices
+  // in the (0.25, 0.5]×step band vanished while identical points/gsplats
+  // stayed visible. `discreteRole: 'membership'` restores the half-cell gate.
+  describe('membership role (projection clipping slab)', () => {
+    it('uses the half-cell (0.5 × step) for discrete hidden dims under discreteRole=membership', () => {
+      const tol = computeTolerance('lines', [0, 1, 2], 4, dims, {
+        discreteRole: 'membership',
+      });
+      expect(tol[3]).toBe(0.5); // 0.5 × step (step 1) — NOT the 0.25 query reach
+    });
+
+    it('scales the membership slab with the step (step 2 → 1.0)', () => {
+      const dimsStep2: DimensionInfo[] = [
+        { discrete: false },
+        { discrete: false },
+        { discrete: false },
+        { discrete: true, step: 2.0 },
+      ];
+      const tol = computeTolerance('lines', [0, 1, 2], 4, dimsStep2, {
+        discreteRole: 'membership',
+      });
+      expect(tol[3]).toBe(1.0);
+    });
+
+    it('keeps spatial dims at 0 and displayed dims infinite under the membership role', () => {
+      const tol = computeTolerance('lines', [0, 1, 2], 4, dims, {
+        discreteRole: 'membership',
+      });
+      expect(tol[0]).toBe(1e10);
+      expect(tol[3]).toBe(0.5);
+      const spatialOnly: DimensionInfo[] = [{ discrete: false }, { discrete: false }];
+      const tol2 = computeTolerance('lines', [0], 2, spatialOnly, {
+        discreteRole: 'membership',
+      });
+      expect(tol2[1]).toBe(0);
+    });
+
+    it('three-geometry parity: lines membership slab equals the half-step gate points/gsplats use', () => {
+      // Points membership: absolute 0.5 on the unit grid
+      // (effective-radius-calculator.ts); gsplats projection: step × 0.5
+      // (workers/data-worker/projection). Lines must match at step 1.
+      const tol = computeTolerance('lines', [0, 1, 2], 4, dims, {
+        discreteRole: 'membership',
+      });
+      expect(tol[3]).toBe(0.5);
+    });
+  });
 });
 
 describe('computeTolerance — gsplats', () => {
