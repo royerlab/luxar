@@ -34,6 +34,7 @@ import type { SceneDimsManager } from '../scene-dims-manager';
 import { config } from '../../config';
 import { log, Modules } from '../../utils/log';
 import { clamp } from '../../utils/clamp';
+import { advanceDimensionValue } from './advance-value';
 import type {
   DimensionAnimationState,
   DimensionAnimationEvents,
@@ -227,12 +228,19 @@ export class DimensionAnimationManager extends THREE.EventDispatcher<DimensionAn
       const metadata = dims.metadata?.[dimIndex];
       const step = metadata?.discrete ? (metadata.step ?? 1.0) : null;
 
-      // Calculate next value
-      let nextValue = this.calculateNextValue(currentValue, min, max, step, state);
-
-      // Handle boundary conditions
-      const result = this.handleBoundary(nextValue, min, max, state);
-      nextValue = result.value;
+      // Next value + boundary handling (pure — see advance-value.ts). The
+      // manager APPLIES the returned direction; peekNextValue() does not.
+      const result = advanceDimensionValue({
+        current: currentValue,
+        min,
+        max,
+        step,
+        direction: state.direction,
+        loopMode: state.loopMode,
+        targetFPS: state.targetFPS,
+        continuousTraverseMs: config.dimensionAnimation.timing.continuousTraverseSeconds * 1000,
+      });
+      const nextValue = result.value;
 
       if (result.shouldStop) {
         // Animation complete (loop mode: once)
@@ -244,6 +252,7 @@ export class DimensionAnimationManager extends THREE.EventDispatcher<DimensionAn
 
       if (result.directionChanged) {
         // Direction changed (bounce mode)
+        state.direction = result.direction;
         this.dispatchEvent({
           type: 'directionChange',
           dimIndex,
@@ -278,95 +287,54 @@ export class DimensionAnimationManager extends THREE.EventDispatcher<DimensionAn
   }
 
   /**
-   * Calculate next dimension value based on step and direction
+   * PEEK the value the next playback tick would move to — loop/bounce/
+   * backward aware, WITHOUT mutating any animation state. Used by the t+1
+   * slice prefetcher to warm the S-cache for the upcoming tick.
    *
-   * @param current - Current dimension value
-   * @param min - Minimum dimension value
-   * @param max - Maximum dimension value
-   * @param step - Step size (null for continuous dimensions)
-   * @param state - Animation state
-   * @returns Next dimension value
+   * @returns The predicted next value, or null when the dimension is not
+   *   playing, dims/ranges are unavailable, or the next step would STOP
+   *   playback (loop mode 'once' at its boundary — nothing to prefetch).
    */
-  private calculateNextValue(
-    current: number,
-    min: number,
-    max: number,
-    step: number | null,
-    state: DimensionAnimationState
-  ): number {
-    if (step !== null) {
-      // Discrete dimension: step by integer increments
-      const direction = state.direction === 'forward' ? 1 : -1;
-      return current + direction * step;
-    } else {
-      // Continuous dimension: calculate based on target FPS
-      const range = max - min;
-      const traverseTime = config.dimensionAnimation.timing.continuousTraverseSeconds * 1000; // ms
-      const increment = (range / traverseTime) * (1000 / state.targetFPS);
-      const direction = state.direction === 'forward' ? 1 : -1;
-      return current + direction * increment;
-    }
+  peekNextValue(dimIndex: number): number | null {
+    const state = this.animationStates.get(dimIndex);
+    if (!state?.isPlaying) return null;
+
+    const dims = this.sceneDimsManager.getDims();
+    if (!dims || dimIndex >= dims.ndim) return null;
+    if (!this.dimensionRanges || dimIndex >= this.dimensionRanges.length) return null;
+
+    const [min, max] = this.dimensionRanges[dimIndex];
+    const metadata = dims.metadata?.[dimIndex];
+    const step = metadata?.discrete ? (metadata.step ?? 1.0) : null;
+
+    const result = advanceDimensionValue({
+      current: dims.currentStep[dimIndex],
+      min,
+      max,
+      step,
+      direction: state.direction,
+      loopMode: state.loopMode,
+      targetFPS: state.targetFPS,
+      continuousTraverseMs: config.dimensionAnimation.timing.continuousTraverseSeconds * 1000,
+    });
+    return result.shouldStop ? null : result.value;
   }
 
-  /**
-   * Handle boundary conditions (min/max) based on loop mode
-   *
-   * @param value - Proposed next value
-   * @param min - Minimum dimension value
-   * @param max - Maximum dimension value
-   * @param state - Animation state (may be modified for bounce mode)
-   * @returns Adjusted value and control flags
-   */
-  private handleBoundary(
-    value: number,
-    min: number,
-    max: number,
-    state: DimensionAnimationState
-  ): { value: number; shouldStop: boolean; directionChanged: boolean } {
-    let shouldStop = false;
-    let directionChanged = false;
-
-    if (state.direction === 'forward' && value >= max) {
-      // Hit max boundary
-      switch (state.loopMode) {
-        case 'once':
-          // Stop at max
-          value = max;
-          shouldStop = true;
-          break;
-        case 'loop':
-          // Wrap to min
-          value = min;
-          break;
-        case 'bounce':
-          // Reverse direction
-          value = max;
-          state.direction = 'backward';
-          directionChanged = true;
-          break;
-      }
-    } else if (state.direction === 'backward' && value <= min) {
-      // Hit min boundary
-      switch (state.loopMode) {
-        case 'once':
-          // Stop at min
-          value = min;
-          shouldStop = true;
-          break;
-        case 'loop':
-          // Wrap to max
-          value = max;
-          break;
-        case 'bounce':
-          // Reverse direction
-          value = min;
-          state.direction = 'forward';
-          directionChanged = true;
-          break;
-      }
+  /** Indices of every dimension currently playing. */
+  getPlayingDimIndices(): number[] {
+    const playing: number[] = [];
+    for (const [dimIndex, state] of this.animationStates) {
+      if (state.isPlaying) playing.push(dimIndex);
     }
+    return playing;
+  }
 
-    return { value, shouldStop, directionChanged };
+  /** Whether ANY dimension is currently playing (== getFrameBudgetMs() !== null). */
+  isAnyPlaying(): boolean {
+    for (const state of this.animationStates.values()) {
+      if (state.isPlaying) return true;
+    }
+    return false;
   }
 
   /**
