@@ -14,6 +14,7 @@ import pytest
 
 from luxar.core import Dimension, Dimensions
 from luxar.io.ordering import (
+    _BARRIER_BOUND_EPS,
     compute_segment_chunk_bounds,
     compute_vertex_chunk_bounds,
     convert_to_indexed,
@@ -302,9 +303,9 @@ class TestComputeVertexChunkBounds:
 
         bounds = compute_vertex_chunk_bounds(vertices, chunk_size=2, slice_dims=[0])
 
-        # First chunk (time=0): discrete bounds should be tight
-        assert bounds[0, 0, 0] == pytest.approx(-0.5)
-        assert bounds[0, 0, 1] == pytest.approx(0.5)
+        # First chunk (time=0): discrete bounds should be tight (epsilon-padded)
+        assert bounds[0, 0, 0] == pytest.approx(-_BARRIER_BOUND_EPS)
+        assert bounds[0, 0, 1] == pytest.approx(_BARRIER_BOUND_EPS)
 
 
 class TestComputeSegmentChunkBounds:
@@ -379,7 +380,7 @@ class TestComputeSegmentChunkBounds:
         )
 
         # Time dimension (discrete) should NOT expand by width
-        # First segment time=0: bounds should be ~ [-0.5, 0.5]
+        # First segment time=0: bounds should be ~0 (epsilon-padded), not ±width
         assert bounds[0, 0, 0] >= -0.6
         assert bounds[0, 0, 1] <= 0.6
 

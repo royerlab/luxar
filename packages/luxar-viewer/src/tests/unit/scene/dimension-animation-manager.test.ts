@@ -220,6 +220,80 @@ describe('DimensionAnimationManager', () => {
     });
   });
 
+  describe('playback frame budget (getFrameBudgetMs)', () => {
+    it('is null when nothing is playing', () => {
+      expect(manager.getFrameBudgetMs()).toBeNull();
+      manager.play(3);
+      manager.pause(3);
+      expect(manager.getFrameBudgetMs()).toBeNull();
+    });
+
+    it('derives the budget from the target FPS (budgetFraction of the frame window)', () => {
+      manager.play(3, { targetFPS: 10 });
+      // 1000/10 * 0.6 = 60ms (config defaults: budgetFraction 0.6, minBudgetMs 8)
+      expect(manager.getFrameBudgetMs()).toBeCloseTo(60, 5);
+    });
+
+    it('slow FPS: budget expands to the frame window minus the overhead reserve', () => {
+      // At 1 fps the fractional budget (600ms) would idle 40% of every
+      // second with refinement disabled — the window-minus-reserve term
+      // wins instead: 1000 − 50 = 950ms.
+      manager.play(3, { targetFPS: 1 });
+      expect(manager.getFrameBudgetMs()).toBeCloseTo(950, 5);
+
+      // At 5 fps: max(200×0.6, 200−50) = 150ms.
+      manager.setTargetFPS(3, 5);
+      expect(manager.getFrameBudgetMs()).toBeCloseTo(150, 5);
+    });
+
+    it('uses the FASTEST playing dimension and floors at minBudgetMs', () => {
+      manager.play(3, { targetFPS: 10 });
+      manager.play(4, { targetFPS: 60 });
+      // max FPS 60 → 1000/60 * 0.6 = 10ms (above the 8ms floor)
+      expect(manager.getFrameBudgetMs()).toBeCloseTo(10, 3);
+
+      manager.setTargetFPS(4, 120);
+      // 1000/120 * 0.6 = 5ms → floored at minBudgetMs = 8
+      expect(manager.getFrameBudgetMs()).toBe(8);
+    });
+
+    it('pause of the LAST playing dim re-triggers one update at the current position (refine-on-pause)', () => {
+      const spy = vi.spyOn(sceneDimsManager, 'setDimensionValue');
+      manager.play(3, { targetFPS: 10 });
+      spy.mockClear();
+
+      manager.pause(3);
+
+      // Budget just transitioned to null → one budget-free re-update at the
+      // CURRENT value so the loaders refine the paused frame to full quality.
+      const current = sceneDimsManager.getDims()!.currentStep[3];
+      expect(spy).toHaveBeenCalledTimes(1);
+      expect(spy).toHaveBeenCalledWith(3, current);
+    });
+
+    it('pause with ANOTHER dim still playing does NOT re-trigger (budget still active)', () => {
+      const spy = vi.spyOn(sceneDimsManager, 'setDimensionValue');
+      manager.play(3, { targetFPS: 10 });
+      manager.play(4, { targetFPS: 10 });
+      spy.mockClear();
+
+      manager.pause(3);
+
+      expect(manager.getFrameBudgetMs()).not.toBeNull(); // dim 4 still playing
+      expect(spy).not.toHaveBeenCalled();
+    });
+
+    it('dispose does NOT fire the refine re-trigger (torn-down scene)', () => {
+      const spy = vi.spyOn(sceneDimsManager, 'setDimensionValue');
+      manager.play(3, { targetFPS: 10 });
+      spy.mockClear();
+
+      manager.dispose();
+
+      expect(spy).not.toHaveBeenCalled();
+    });
+  });
+
   describe('frame updates', () => {
     let mockTime = 0;
 
@@ -246,6 +320,56 @@ describe('DimensionAnimationManager', () => {
 
       const newValue = sceneDimsManager.getDims()!.currentStep[3];
       expect(newValue).toBeGreaterThan(initialValue);
+    });
+
+    it('pacing gate: does not advance while waitForUpdate is unresolved (data-bound playback)', () => {
+      // The frame-sync contract Fix 1 makes REAL end-to-end: after a tick
+      // dispatches, the manager parks in pendingUpdates until
+      // sceneDimsManager.waitForUpdate() resolves. With a never-resolving
+      // update (data slower than the FPS window), further frames must NOT
+      // advance the dimension — playback paces to the data, never ahead.
+      vi.spyOn(sceneDimsManager, 'waitForUpdate').mockImplementation(
+        () => new Promise<void>(() => {}) // never resolves
+      );
+      manager.play(3, { targetFPS: 10, direction: 'forward' });
+      const initialValue = sceneDimsManager.getDims()!.currentStep[3];
+
+      mockTime += 200; // past the 100ms FPS window → first tick dispatches
+      perFrameCallback?.();
+      const afterFirst = sceneDimsManager.getDims()!.currentStep[3];
+      expect(afterFirst).toBe(initialValue + 1);
+
+      // Plenty of frames, all past the FPS window — every one must be gated.
+      for (let i = 0; i < 5; i++) {
+        mockTime += 200;
+        perFrameCallback?.();
+      }
+      expect(sceneDimsManager.getDims()!.currentStep[3]).toBe(afterFirst);
+    });
+
+    it('pacing gate: advances again once waitForUpdate resolves', async () => {
+      let release!: () => void;
+      const gate = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      const wfu = vi.spyOn(sceneDimsManager, 'waitForUpdate').mockImplementation(() => gate);
+      manager.play(3, { targetFPS: 10, direction: 'forward' });
+
+      mockTime += 200;
+      perFrameCallback?.();
+      const afterFirst = sceneDimsManager.getDims()!.currentStep[3];
+
+      mockTime += 200;
+      perFrameCallback?.();
+      expect(sceneDimsManager.getDims()!.currentStep[3]).toBe(afterFirst); // gated
+
+      wfu.mockImplementation(() => Promise.resolve()); // subsequent ticks unblocked
+      release();
+      await Promise.resolve(); // let the .then clear pendingUpdates
+
+      mockTime += 200;
+      perFrameCallback?.();
+      expect(sceneDimsManager.getDims()!.currentStep[3]).toBe(afterFirst + 1);
     });
 
     it('should respect FPS throttling - skip frames if too soon', () => {

@@ -70,6 +70,12 @@ export class DimensionAnimationManager extends THREE.EventDispatcher<DimensionAn
   private removeDimsListener: (() => void) | null = null;
 
   /**
+   * True while dispose() runs — suppresses the pause() refine re-trigger
+   * (a torn-down scene must not receive a fresh dimension update).
+   */
+  private _disposing = false;
+
+  /**
    * Create dimension animation manager
    *
    * @param sceneDimsManager - Singleton manager for dimension state
@@ -464,7 +470,50 @@ export class DimensionAnimationManager extends THREE.EventDispatcher<DimensionAn
     this.dispatchEvent({ type: 'pause', dimIndex });
     log.info(Modules.ANIMATION, `Paused dimension ${dimIndex}`);
 
+    // Refine-on-pause: while playing, progressive loaders stream only within
+    // the per-tick frame budget (a partial LOD ladder). Once the LAST playing
+    // dimension pauses (getFrameBudgetMs() just became null — with another
+    // dim still playing this would inject a spurious mid-play update),
+    // re-trigger ONE update at the current position; the budget-free pass
+    // lets the loaders resume from their prefix and refinement completes the
+    // ladder. Suppressed during dispose (torn-down scene). setDimensionValue
+    // notifies listeners unconditionally, so a same-value write still fires
+    // the update.
+    if (!this._disposing && this.getFrameBudgetMs() === null) {
+      const dims = this.sceneDimsManager.getDims();
+      if (dims && dimIndex < dims.ndim) {
+        this.sceneDimsManager.setDimensionValue(dimIndex, dims.currentStep[dimIndex]);
+      }
+    }
+
     return true;
+  }
+
+  /**
+   * Per-tick LOD time budget for the progressive loaders, or `null` when no
+   * dimension animation is playing (normal full-refinement behavior).
+   *
+   * While playing, each update pass should finish within the animation frame
+   * window so every tick commits a frame (see the pacing gate in
+   * `updateDimension`). The budget is a fraction of the frame window of the
+   * FASTEST currently-playing dimension (`config.dimensionAnimation.playback`),
+   * floored at `minBudgetMs`. Read per-update by the dims listener and
+   * threaded to the loaders as a per-pass directive — never persisted.
+   */
+  getFrameBudgetMs(): number | null {
+    let maxFPS: number | null = null;
+    for (const state of this.animationStates.values()) {
+      if (state.isPlaying) {
+        maxFPS = maxFPS === null ? state.targetFPS : Math.max(maxFPS, state.targetFPS);
+      }
+    }
+    if (maxFPS === null) return null;
+    const { budgetFraction, minBudgetMs, overheadReserveMs } = config.dimensionAnimation.playback;
+    const frameWindow = 1000 / maxFPS;
+    // Fractional share of the window, but at slow FPS give the loaders the
+    // whole window minus a fixed projection/commit/render reserve — a 1 fps
+    // tick should stream ~950ms of levels, not idle 40% of every second.
+    return Math.max(frameWindow * budgetFraction, frameWindow - overheadReserveMs, minBudgetMs);
   }
 
   /**
@@ -631,6 +680,9 @@ export class DimensionAnimationManager extends THREE.EventDispatcher<DimensionAn
    * Clean up all animations and unregister from animation controller
    */
   dispose(): void {
+    // Suppress the pause() refine re-trigger while tearing down.
+    this._disposing = true;
+
     // Pause all animations
     for (const dimIndex of this.animationStates.keys()) {
       this.pause(dimIndex);

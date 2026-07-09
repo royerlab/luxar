@@ -206,6 +206,44 @@ describe('processLinesData', () => {
     expect(mockBuildInstanceBuffers).not.toHaveBeenCalled();
   });
 
+  // Regression (deep-double-check round 5): pins that processLinesData
+  // requests the MEMBERSHIP role at the call site — dropping the
+  // { discreteRole: 'membership' } options object (the exact regression
+  // class ee0971f3 introduced) would silently revert the lines clipping
+  // slab from 0.5 x step to the 0.25 x step query reach with every other
+  // test still green.
+  it('passes the half-cell MEMBERSHIP tolerance for hidden discrete dims to projection', async () => {
+    const root = new THREE.Group();
+    root.add(makeMesh('/lines', {}));
+    const data = makeData(100);
+    data.ndim = 4;
+
+    await processLinesData(
+      '/lines',
+      data,
+      {
+        displayDims: [0, 1, 2],
+        slicePosition: [0, 0, 0, 0],
+        tolerance: [0, 0, 0, 0],
+        dimensions: [
+          { name: 'x', unit: 'px', scale: 1 },
+          { name: 'y', unit: 'px', scale: 1 },
+          { name: 'z', unit: 'px', scale: 1 },
+          { name: 't', unit: 's', scale: 1, discrete: true, step: 1 },
+        ],
+      },
+      root,
+      1
+    );
+
+    expect(mockBuildInstanceBuffers).toHaveBeenCalledTimes(1);
+    const params = mockBuildInstanceBuffers.mock.calls[0][0] as {
+      viewState: { tolerance: number[] };
+    };
+    // 0.5 x step (membership slab), NOT 0.25 x step (query reach).
+    expect(params.viewState.tolerance[3]).toBe(0.5);
+  });
+
   it('extends tolerance to 1e10 for extend_to_all dimensions', async () => {
     const root = new THREE.Group();
     root.add(makeMesh('/lines', { extend_to_all: ['t'] }));

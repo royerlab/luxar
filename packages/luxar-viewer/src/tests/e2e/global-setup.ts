@@ -24,6 +24,9 @@ const REQUIRED_DATASETS = [
   'dimension_sliders_5d_example.luxar.zarr',
   'dense_grid_5d_example.luxar.zarr',
   'layers_test_example.luxar.zarr',
+  // slice-cache.spec.ts: 4D progressive points (additive LODs + hidden
+  // discrete frame dim) — the S-cache's target configuration.
+  'progressive_timelapse_example.luxar.zarr',
 ];
 
 export default async function globalSetup() {

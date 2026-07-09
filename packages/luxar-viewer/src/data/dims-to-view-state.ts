@@ -45,6 +45,10 @@ export function simpleDimsToViewState(
     }
     const meta = dims.metadata?.[i];
     if (meta?.discrete && !meta?.spatial) {
+      // Query-irrelevant: the spatial-index builders recompute the discrete
+      // tolerance via `computeTolerance` (0.25×step) and ignore this value. It
+      // only rides along in `viewState.tolerance` (e.g. the SliceCache key),
+      // where a stable constant is all that's required.
       return 0.5;
     }
     return maxRadius;

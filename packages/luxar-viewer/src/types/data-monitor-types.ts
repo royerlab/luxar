@@ -342,6 +342,15 @@ export interface CacheMetrics {
     evictions: number;
     hitRate: number;
   };
+  /** SliceCache ("S-cache") breakdown (optional, only when the SliceCache is connected) */
+  slice?: {
+    size: number;
+    count: number;
+    hits: number;
+    misses: number;
+    evictions: number;
+    hitRate: number;
+  };
   /**
    * Whether caching is enabled. Derived from
    * `telemetryState.kind === 'enabled'`. New code should read

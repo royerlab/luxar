@@ -90,6 +90,8 @@ export interface UrlParams {
   debug: boolean;
   /** Disable all cache layers (`?no-cache`). */
   noCache: boolean;
+  /** Disable only the SliceCache / S-cache (`?no-slice-cache`). */
+  noSliceCache: boolean;
   /** Verbose cache logging (`?cache-debug`). */
   cacheDebug: boolean;
   /** Clear caches on init (`?clear-cache`). */
@@ -177,6 +179,7 @@ export function readUrlParams(search?: string): UrlParams {
     theme: params.get('theme'),
     debug: params.has('debug'),
     noCache: params.has('no-cache'),
+    noSliceCache: params.has('no-slice-cache'),
     cacheDebug: params.has('cache-debug'),
     clearCache: params.has('clear-cache'),
     noPrefetch: params.has('no-prefetch'),

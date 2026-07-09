@@ -126,6 +126,16 @@ export class LRUCache<V> {
     this.currentSize += size;
   }
 
+  /**
+   * Read a value WITHOUT LRU promotion and WITHOUT touching the hit/miss
+   * counters. For bookkeeping reads (e.g. "is the stored entry longer than
+   * what I'm about to store?") that must not perturb eviction order or the
+   * hit-rate statistic the monitor reports.
+   */
+  peek(key: string): V | undefined {
+    return this.cache.get(key);
+  }
+
   has(key: string): boolean {
     return this.cache.has(key);
   }

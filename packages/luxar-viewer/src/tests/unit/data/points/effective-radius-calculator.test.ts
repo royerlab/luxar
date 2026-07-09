@@ -7,7 +7,10 @@
  *     discrete exact-match filtering, the `isSpatialDim` out-of-bounds default
  *     (spatial=true), and extend_to_all (tolerance ≥ 1e9) bypass.
  *   - `calculateSpatialQueryTolerance`: per-dim tolerance selection
- *     (displayed/extend_to_all → 1e10, spatial → maxRadius, discrete → 0.5).
+ *     (displayed/extend_to_all → 1e10, spatial → maxRadius, discrete → the
+ *     shared quarter-cell rule `0.25 × step`, fallback 0.25 — see
+ *     `discreteDimTolerance` in tolerance-computer.ts; the half-step
+ *     MEMBERSHIP gate in calculateEffectiveRadii is a separate concern).
  *   - `shouldApplyEffectiveRadius`: gate on config/radii/non-displayed dims.
  */
 
@@ -322,7 +325,12 @@ describe('calculateSpatialQueryTolerance', () => {
     expect(tol).toEqual([1e10, 1e10, 1e10, 7]);
   });
 
-  it('uses 0.5 for non-displayed discrete dims', () => {
+  it('uses the shared quarter-cell (0.25 × step) for non-displayed discrete dims', () => {
+    // The chunk-query reach must stay BELOW half a step: legacy datasets pad
+    // chunk bounds ±0.5 on the write side, and 0.5 pad + 0.5 tolerance = a
+    // full step — fetching the whole neighbouring category (the barrier
+    // over-fetch bug). 0.25 keeps pad + tolerance < 1 step for both legacy
+    // and ε-padded data.
     const ndim = 4;
     const viewState = makeViewState({
       displayDims: [0, 1, 2],
@@ -332,7 +340,26 @@ describe('calculateSpatialQueryTolerance', () => {
     const config = makeConfig({ spatialExtendDims: [true, true, true, false], maxRadius: 7 });
 
     const tol = calculateSpatialQueryTolerance(viewState, config, ndim);
-    expect(tol).toEqual([1e10, 1e10, 1e10, 0.5]);
+    expect(tol).toEqual([1e10, 1e10, 1e10, 0.25]);
+  });
+
+  it('scales the discrete quarter-cell by the dimension step (step 2 → 0.5)', () => {
+    const ndim = 4;
+    const viewState = makeViewState({
+      displayDims: [0, 1, 2],
+      slicePosition: [0, 0, 0, 0],
+      tolerance: [0, 0, 0, 0],
+      dimensions: [
+        { name: 'x', unit: '', scale: 1 },
+        { name: 'y', unit: '', scale: 1 },
+        { name: 'z', unit: '', scale: 1 },
+        { name: 'time', unit: '', scale: 1, discrete: true, step: 2 },
+      ],
+    });
+    const config = makeConfig({ spatialExtendDims: [true, true, true, false], maxRadius: 7 });
+
+    const tol = calculateSpatialQueryTolerance(viewState, config, ndim);
+    expect(tol[3]).toBe(0.5); // 0.25 × step 2
   });
 
   it('uses 1e10 for an extend_to_all dim (tolerance ≥ 1e9) regardless of spatial flag', () => {

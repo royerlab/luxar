@@ -13,11 +13,13 @@
  * contract.
  */
 
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { LinesProgressiveLoader } from '../../../data/lines/lines-progressive-loader';
 import type { LinesSpatialIndexLoader } from '../../../data/lines/lines-spatial-index-loader';
 import type { LinesViewState, LoadedLinesData } from '../../../types/lines';
 import { CACHE_HIT_THRESHOLD_MS } from '../../../data/loaders/progressive/constants';
+import { SliceCache } from '../../../cache/slice-cache';
+import { buildSliceViewSig } from '../../../data/loaders/progressive/slice-cache-helper';
 
 interface SubLoaderStub {
   updateView: ReturnType<typeof vi.fn>;
@@ -111,8 +113,8 @@ function makeSubLoader(
 
 const baseViewState: LinesViewState = {
   displayDims: [0, 1, 2],
-  slicePosition: [0, 0, 0],
-  tolerance: [0, 0, 0],
+  slicePosition: [0, 0, 0, 0],
+  tolerance: [0, 0, 0, 0],
 };
 
 describe('LinesProgressiveLoader', () => {
@@ -132,6 +134,61 @@ describe('LinesProgressiveLoader', () => {
       3,
       '/lines'
     );
+  });
+
+  describe('SliceCache integration', () => {
+    const viewA: LinesViewState = {
+      displayDims: [0, 1, 2],
+      slicePosition: [0, 0, 0, 0],
+      tolerance: [0, 0, 0, 0],
+    };
+    const viewB: LinesViewState = {
+      displayDims: [0, 1, 2],
+      slicePosition: [0, 0, 0, 1],
+      tolerance: [0, 0, 0, 0],
+    };
+
+    it('restores a revisited view from the SliceCache without re-streaming sub-LODs', async () => {
+      const sc = new SliceCache({ maxSize: 10 * 1024 * 1024 });
+      const a = makeSubLoader(makeLodData(20, 10, 3, { color: 'uint8' }));
+      const b = makeSubLoader(makeLodData(10, 5, 3, { color: 'uint8' }));
+      const l = new LinesProgressiveLoader(
+        [a, b] as unknown as LinesSpatialIndexLoader[],
+        2,
+        '/l',
+        undefined,
+        sc
+      );
+      await l.loadLines(viewA);
+      await l.loadLines(viewB);
+      a.updateViewWithResidency.mockClear();
+      b.updateViewWithResidency.mockClear();
+      const restored = await l.loadLines(viewA);
+      expect(a.updateViewWithResidency).not.toHaveBeenCalled();
+      expect(b.updateViewWithResidency).not.toHaveBeenCalled();
+      expect(l.hasMoreLODs).toBe(false);
+      expect(restored.vertexCount).toBe(30);
+      expect(sc.getStats().hits).toBeGreaterThanOrEqual(1);
+    });
+
+    it('clones on store so a later accumulator overwrite cannot corrupt a cached slice', async () => {
+      const sc = new SliceCache({ maxSize: 10 * 1024 * 1024 });
+      const dataA = makeLodData(20, 10, 3, { color: 'uint8' });
+      const a = makeSubLoader(dataA);
+      const b = makeSubLoader(makeLodData(10, 5, 3, { color: 'uint8' }));
+      const l = new LinesProgressiveLoader(
+        [a, b] as unknown as LinesSpatialIndexLoader[],
+        2,
+        '/l',
+        undefined,
+        sc
+      );
+      await l.loadLines(viewA);
+      dataA.positions.fill(999);
+      await l.loadLines(viewB);
+      const restored = await l.loadLines(viewA);
+      expect(restored.positions[0]).toBeCloseTo(0.5);
+    });
   });
 
   describe('initial load', () => {
@@ -268,6 +325,151 @@ describe('LinesProgressiveLoader', () => {
       expect(lodA.updateViewWithResidency).toHaveBeenCalled();
       expect(lodB.updateViewWithResidency).toHaveBeenCalled();
       expect(lodC.updateViewWithResidency).toHaveBeenCalled();
+    });
+  });
+
+  describe('playback frame budget (frameBudgetMs)', () => {
+    // Mirrors gsplats-progressive-loader.test.ts (three-geometry symmetry).
+    let now: number;
+    let nowSpy: ReturnType<typeof vi.spyOn>;
+
+    beforeEach(() => {
+      now = 0;
+      nowSpy = vi.spyOn(performance, 'now').mockImplementation(() => now);
+      // Every level "costs" 30ms of simulated work.
+      for (const lod of [lodA, lodB, lodC]) {
+        lod.updateViewWithResidency.mockImplementation(async () => {
+          now += 30;
+          return { data: makeLodData(10, 5, 3, { color: 'uint8' }), allResident: true };
+        });
+      }
+    });
+
+    afterEach(() => {
+      nowSpy.mockRestore();
+    });
+
+    it('stops streaming when the budget runs out and reports hasMoreLODs=false', async () => {
+      await loader.updateView({ ...baseViewState, frameBudgetMs: 10 });
+
+      expect(lodA.updateViewWithResidency).toHaveBeenCalledTimes(1);
+      expect(lodB.updateViewWithResidency).not.toHaveBeenCalled();
+      expect(lodC.updateViewWithResidency).not.toHaveBeenCalled();
+      expect(loader.loadedLODCount).toBe(1);
+      expect(loader.hasMoreLODs).toBe(false);
+    });
+
+    it('loads as many levels as fit the budget', async () => {
+      await loader.updateView({ ...baseViewState, frameBudgetMs: 70 });
+
+      expect(lodA.updateViewWithResidency).toHaveBeenCalledTimes(1);
+      expect(lodB.updateViewWithResidency).toHaveBeenCalledTimes(1);
+      expect(lodC.updateViewWithResidency).not.toHaveBeenCalled();
+      expect(loader.loadedLODCount).toBe(2);
+    });
+
+    it('always loads at least one level under a tiny budget (first-paint floor)', async () => {
+      // Advance the clock on EVERY performance.now() call so the deadline is
+      // already past by level 0's loop-top check — without the
+      // `level > startLevel` guard, level 0 would be skipped entirely
+      // (pins the first-paint floor against guard removal).
+      nowSpy.mockImplementation(() => (now += 5));
+      await loader.updateView({ ...baseViewState, frameBudgetMs: 0.001 });
+      expect(lodA.updateViewWithResidency).toHaveBeenCalledTimes(1);
+      expect(loader.loadedLODCount).toBe(1);
+    });
+
+    it('a budget-free call with the SAME view resumes from the prefix and completes', async () => {
+      await loader.updateView({ ...baseViewState, frameBudgetMs: 10 });
+      expect(loader.loadedLODCount).toBe(1);
+      expect(loader.hasMoreLODs).toBe(false); // capped
+
+      await loader.updateView(baseViewState);
+      expect(loader.loadedLODCount).toBe(3);
+      expect(loader.hasMoreLODs).toBe(false); // genuinely complete now
+      expect(lodA.updateViewWithResidency).toHaveBeenCalledTimes(1); // no reset
+    });
+
+    it('a differing budget with an identical view does NOT reset the ladder', async () => {
+      await loader.updateView({ ...baseViewState, frameBudgetMs: 10 });
+      expect(loader.loadedLODCount).toBe(1);
+
+      await loader.updateView({ ...baseViewState, frameBudgetMs: 70 });
+      expect(lodA.updateViewWithResidency).toHaveBeenCalledTimes(1);
+      expect(loader.loadedLODCount).toBeGreaterThanOrEqual(2);
+    });
+
+    it('playback prefix caching: capped ladders are stored, restored, and deepened loop-over-loop', async () => {
+      // Mirrors gsplats-progressive-loader.test.ts (three-geometry symmetry).
+      const sc = new SliceCache({ maxSize: 10 * 1024 * 1024 });
+      const l = new LinesProgressiveLoader(
+        [lodA, lodB, lodC] as unknown as LinesSpatialIndexLoader[],
+        3,
+        '/l',
+        undefined,
+        sc
+      );
+      const viewA = baseViewState;
+      const viewB = { ...baseViewState, slicePosition: [0, 0, 0, 1] };
+
+      await l.updateView({ ...viewA, frameBudgetMs: 10 });
+      expect(l.loadedLODCount).toBe(1);
+      expect(sc.getStats().count).toBe(1);
+
+      await l.updateView({ ...viewB, frameBudgetMs: 10 });
+
+      lodA.updateViewWithResidency.mockClear();
+      lodB.updateViewWithResidency.mockClear();
+      lodC.updateViewWithResidency.mockClear();
+      await l.updateView({ ...viewA, frameBudgetMs: 20 });
+      expect(lodA.updateViewWithResidency).not.toHaveBeenCalled(); // from cache
+      expect(lodB.updateViewWithResidency).toHaveBeenCalledTimes(1); // deepened
+      expect(l.loadedLODCount).toBe(2);
+
+      await l.updateView({ ...viewB, frameBudgetMs: 10 });
+      lodA.updateViewWithResidency.mockClear();
+      lodB.updateViewWithResidency.mockClear();
+      lodC.updateViewWithResidency.mockClear();
+      await l.updateView(viewA);
+      expect(lodA.updateViewWithResidency).not.toHaveBeenCalled();
+      expect(lodB.updateViewWithResidency).not.toHaveBeenCalled();
+      expect(lodC.updateViewWithResidency).toHaveBeenCalledTimes(1); // only the tail
+      expect(l.loadedLODCount).toBe(3);
+      expect(l.hasMoreLODs).toBe(false);
+
+      await l.updateView({ ...viewB, frameBudgetMs: 10 });
+      lodA.updateViewWithResidency.mockClear();
+      lodB.updateViewWithResidency.mockClear();
+      lodC.updateViewWithResidency.mockClear();
+      await l.updateView({ ...viewA, frameBudgetMs: 10 });
+      expect(lodA.updateViewWithResidency).not.toHaveBeenCalled();
+      expect(lodB.updateViewWithResidency).not.toHaveBeenCalled();
+      expect(lodC.updateViewWithResidency).not.toHaveBeenCalled();
+      expect(l.loadedLODCount).toBe(3);
+    });
+
+    it('partial restore copies the container: resume never mutates the cached payload', async () => {
+      // Mirrors gsplats-progressive-loader.test.ts (three-geometry symmetry).
+      const sc = new SliceCache({ maxSize: 10 * 1024 * 1024 });
+      const l = new LinesProgressiveLoader(
+        [lodA, lodB, lodC] as unknown as LinesSpatialIndexLoader[],
+        3,
+        '/l',
+        undefined,
+        sc
+      );
+      const viewA = baseViewState;
+      const viewB = { ...baseViewState, slicePosition: [0, 0, 0, 1] };
+
+      await l.updateView({ ...viewA, frameBudgetMs: 10 });
+      await l.updateView({ ...viewB, frameBudgetMs: 10 });
+
+      const key = SliceCache.makeKey('/l', buildSliceViewSig(viewA));
+      const cachedPayload = sc.peek(key)!.payload as unknown[];
+      expect(cachedPayload.length).toBe(1);
+
+      await l.updateView({ ...viewA, frameBudgetMs: 20 });
+      expect(cachedPayload.length).toBe(1);
     });
   });
 

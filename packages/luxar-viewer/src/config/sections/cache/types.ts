@@ -8,6 +8,14 @@ export interface CacheConfig {
   l0Enabled: boolean;
   /** L0 decompressed chunk cache size in MB (default: 200) */
   l0MaxSizeMB: number;
+  /**
+   * Enable the SliceCache ("S-cache") — a per-(node, view) LRU of the decoded
+   * per-slice geometry that lets revisiting a slice (e.g. scrubbing back to a
+   * timepoint) skip the load+decode entirely (default: true).
+   */
+  sliceCacheEnabled: boolean;
+  /** SliceCache size in MB (default: 128). Byte-budget LRU shared across nodes. */
+  sliceCacheMaxSizeMB: number;
   /** L1 memory cache size in MB (default: 100) */
   l1MaxSizeMB: number;
   /** L2 OPFS cache size in MB (default: 2048) */

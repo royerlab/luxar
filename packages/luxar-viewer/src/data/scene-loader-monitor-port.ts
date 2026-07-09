@@ -35,6 +35,12 @@ export interface L0CacheProviderPort {
   clear: () => void;
 }
 
+/** Provider injected via `setSliceCacheProvider`. */
+export interface SliceCacheProviderPort {
+  getStats: () => CacheMetrics['slice'];
+  clear: () => void;
+}
+
 /**
  * Provider injected via `setGPUBufferPoolProvider`. `GPUPoolStats`
  * lives in `types/data-monitor-types` so the data/ layer can reference
@@ -87,6 +93,7 @@ export interface SceneLoaderMonitorPort {
   // Provider injection
   setCacheStatsProvider(provider: CacheStatsProvider | null): void;
   setL0CacheProvider(provider: L0CacheProviderPort | null): void;
+  setSliceCacheProvider(provider: SliceCacheProviderPort | null): void;
   setGPUBufferPoolProvider(provider: GPUBufferPoolProviderPort | null): void;
   setAccumulatorProvider(
     type: 'points' | 'lines' | 'gsplats',

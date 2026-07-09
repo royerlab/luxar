@@ -14,6 +14,22 @@ import numpy as np
 
 from luxar.core import Dimension
 
+# Padding added to barrier/discrete-dimension chunk bounds. This is ONLY a
+# float-boundary safety margin — the query "reach" (how far a slice query
+# selects around a category) lives entirely in the reader's per-dimension
+# tolerance (see luxar-viewer tolerance-computer.ts, discrete = 0.25 × step).
+# It used to be 0.5 (half a step); combined with the reader's own half-step
+# tolerance that summed to a full step and made a single-category query (e.g.
+# one timepoint) pull in the entire neighbouring category. Keep this tiny.
+#
+# KNOWN LIMIT: the pad is absolute while the reader's reach is step-scaled
+# (0.25 x step), so for pathological discrete steps below ~1.3e-3 the pad
+# reaches past the neighbour category's quarter-step boundary and the
+# over-fetch returns. Step metadata is not plumbed into these bound
+# builders; discrete/categorical dims with milli-scale steps are not a
+# supported layout (rescale the axis instead).
+_BARRIER_BOUND_EPS = 1e-3
+
 
 def _get_morton_numba_kernel():  # type: ignore[no-untyped-def]
     """Lazy-compile the Numba Morton encoding kernel on first use."""
@@ -340,8 +356,8 @@ def detect_barrier_dims(
 
     **Conservative in the safe direction.** A false NEGATIVE (missing a barrier)
     only causes over-fetch — no worse than pure spatial ordering. A false
-    POSITIVE (flagging a spatial axis) gives it tight ±0.5 chunk bounds with no
-    σ expansion, so a spatially-extended splat can fall outside its chunk bounds
+    POSITIVE (flagging a spatial axis) gives it tight (epsilon-padded) chunk
+    bounds with no σ expansion, so a spatially-extended splat can fall outside its chunk bounds
     and be *dropped* from a query — a correctness bug. So both guards err toward
     NOT flagging: the integer test is strict (``rtol=0``, absolute tolerance
     only — a large-magnitude continuous coordinate is never "close enough" to an
@@ -493,10 +509,11 @@ def compute_chunk_bounds_points(
             for d in range(ndim):
                 if d in discrete_dims:
                     # DISCRETE dimension: No radius expansion!
-                    # Just use exact min/max of coordinate values
-                    # Add small tolerance (0.5) to handle float precision at boundaries
-                    mins_d = chunk_positions[:, d].min() - 0.5
-                    maxs_d = chunk_positions[:, d].max() + 0.5
+                    # Just use exact min/max of coordinate values, padded only by a
+                    # tiny float-boundary epsilon (the reader's tolerance owns the
+                    # query reach — see _BARRIER_BOUND_EPS).
+                    mins_d = chunk_positions[:, d].min() - _BARRIER_BOUND_EPS
+                    maxs_d = chunk_positions[:, d].max() + _BARRIER_BOUND_EPS
                 else:
                     # SPATIAL dimension: Include radius extent
                     if radii_scalar is not None:
@@ -519,9 +536,13 @@ def compute_chunk_bounds_points(
             # For discrete dims, use tighter bounds
             for d in range(ndim):
                 if d in discrete_dims:
-                    # Discrete: tight bounds with small tolerance
-                    chunk_bounds[chunk_idx, d, 0] = chunk_positions[:, d].min() - 0.5
-                    chunk_bounds[chunk_idx, d, 1] = chunk_positions[:, d].max() + 0.5
+                    # Discrete: tight bounds with a float-boundary epsilon only.
+                    chunk_bounds[chunk_idx, d, 0] = (
+                        chunk_positions[:, d].min() - _BARRIER_BOUND_EPS
+                    )
+                    chunk_bounds[chunk_idx, d, 1] = (
+                        chunk_positions[:, d].max() + _BARRIER_BOUND_EPS
+                    )
                 else:
                     # Spatial: include safety margin
                     chunk_bounds[chunk_idx, d, 0] = (
@@ -546,9 +567,10 @@ def compute_chunk_bounds_gsplats(
     CRITICAL: the ellipsoidal (coverage_sigma·σ) extent is applied only to
     SPATIAL axes. ``slice_dims`` name categorical/barrier axes (time, channel):
     a splat at time=0 must not extend into time=1's bounds, so those axes get
-    only tight ±0.5 bounds. This mirrors :func:`compute_chunk_bounds_points`
-    and keeps a chunk's barrier-axis footprint from straddling categories,
-    which is what makes single-timepoint queries fetch only their own chunks.
+    only a tight float-boundary epsilon (``_BARRIER_BOUND_EPS``). This mirrors
+    :func:`compute_chunk_bounds_points` and keeps a chunk's barrier-axis footprint
+    from straddling categories, which is what makes single-timepoint queries fetch
+    only their own chunks.
 
     Args:
         centers: Splat centers (already sorted), shape (N, d)
@@ -597,11 +619,12 @@ def compute_chunk_bounds_gsplats(
         mins = (chunk_centers - extents).min(axis=0)
         maxs = (chunk_centers + extents).max(axis=0)
 
-        # Barrier dims: tight ±0.5 bounds (exact category values, small float
-        # tolerance at boundaries) — mirrors compute_chunk_bounds_points.
+        # Barrier dims: tight bounds (exact category values) padded only by a
+        # float-boundary epsilon — the reader's tolerance owns the query reach.
+        # Mirrors compute_chunk_bounds_points.
         for d in discrete_dims:
-            mins[d] = chunk_centers[:, d].min() - 0.5
-            maxs[d] = chunk_centers[:, d].max() + 0.5
+            mins[d] = chunk_centers[:, d].min() - _BARRIER_BOUND_EPS
+            maxs[d] = chunk_centers[:, d].max() + _BARRIER_BOUND_EPS
 
         chunk_bounds[chunk_idx, :, 0] = mins
         chunk_bounds[chunk_idx, :, 1] = maxs
@@ -895,15 +918,15 @@ def compute_vertex_chunk_bounds(
     vertices: np.ndarray,
     chunk_size: int,
     slice_dims: Optional[list[int]] = None,
-    dimensions: Optional[list] = None,
 ) -> np.ndarray:
     """Compute chunk bounding boxes for vertices (no radius/width expansion).
 
     Args:
         vertices: Vertex positions (already sorted), shape (V, D)
         chunk_size: Number of vertices per chunk
-        slice_dims: Indices of discrete (non-spatial) dimensions
-        dimensions: Optional list of Dimension objects for step-aware padding
+        slice_dims: Indices of discrete (non-spatial) dimensions (padded by a
+            float-boundary epsilon only — the reader's per-dimension tolerance
+            owns the query reach)
 
     Returns:
         chunk_bounds: Bounding boxes, shape (num_chunks, D, 2)
@@ -921,14 +944,14 @@ def compute_vertex_chunk_bounds(
 
         for d in range(n_dims):
             if d in discrete_dims:
-                # Discrete: tight bounds with step-aware padding
-                # Use half of step size if available, fallback to 0.5
-                if dimensions and d < len(dimensions) and dimensions[d].step:
-                    padding = dimensions[d].step / 2.0
-                else:
-                    padding = 0.5
-                chunk_bounds[chunk_idx, d, 0] = chunk_verts[:, d].min() - padding
-                chunk_bounds[chunk_idx, d, 1] = chunk_verts[:, d].max() + padding
+                # Discrete: tight bounds padded by a float-boundary epsilon only
+                # (the reader's per-dimension tolerance owns the query reach).
+                chunk_bounds[chunk_idx, d, 0] = (
+                    chunk_verts[:, d].min() - _BARRIER_BOUND_EPS
+                )
+                chunk_bounds[chunk_idx, d, 1] = (
+                    chunk_verts[:, d].max() + _BARRIER_BOUND_EPS
+                )
             else:
                 # Spatial: exact bounds (no size expansion for vertices)
                 chunk_bounds[chunk_idx, d, 0] = chunk_verts[:, d].min()
@@ -943,7 +966,6 @@ def compute_segment_chunk_bounds(
     widths: np.ndarray,
     chunk_size: int,
     slice_dims: Optional[list[int]] = None,
-    dimensions: Optional[list] = None,
 ) -> np.ndarray:
     """Compute chunk bounding boxes for segments (includes line width).
 
@@ -958,8 +980,9 @@ def compute_segment_chunk_bounds(
         segments: Segment index pairs (already sorted), shape (S, 2)
         widths: Vertex widths (already sorted), shape (V,)
         chunk_size: Number of segments per chunk
-        slice_dims: Indices of discrete (non-spatial) dimensions
-        dimensions: Optional list of Dimension objects for step-aware padding
+        slice_dims: Indices of discrete (non-spatial) dimensions (padded by a
+            float-boundary epsilon only — the reader's per-dimension tolerance
+            owns the query reach)
 
     Returns:
         chunk_bounds: Bounding boxes, shape (num_chunks, D, 2)
@@ -985,17 +1008,14 @@ def compute_segment_chunk_bounds(
 
         for d in range(D):
             if d in discrete_dims:
-                # Discrete: no width expansion, step-aware padding
-                # Use half of step size if available, fallback to 0.5
-                if dimensions and d < len(dimensions) and dimensions[d].step:
-                    padding = dimensions[d].step / 2.0
-                else:
-                    padding = 0.5
+                # Discrete: no width expansion, only a float-boundary epsilon.
+                # The reader's per-dimension tolerance owns the query reach
+                # (see _BARRIER_BOUND_EPS).
                 chunk_bounds[chunk_idx, d, 0] = (
-                    min(p1[:, d].min(), p2[:, d].min()) - padding
+                    min(p1[:, d].min(), p2[:, d].min()) - _BARRIER_BOUND_EPS
                 )
                 chunk_bounds[chunk_idx, d, 1] = (
-                    max(p1[:, d].max(), p2[:, d].max()) + padding
+                    max(p1[:, d].max(), p2[:, d].max()) + _BARRIER_BOUND_EPS
                 )
             else:
                 # Spatial: include width extent

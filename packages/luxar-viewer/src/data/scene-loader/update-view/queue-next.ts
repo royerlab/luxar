@@ -47,6 +47,15 @@ export interface QueueNextCtx {
    * types in sequence — gsplats, then points, then lines).
    */
   scheduleGSplatsRefinement(): Promise<void>;
+  /**
+   * Settle the orchestrator's queued-update waiters (callers parked in
+   * `updateView`'s supersede branch). Called whenever a pass completes with
+   * NO pending state left — i.e. the requested-or-newer view-state has
+   * landed its main-pass commit — which is exactly what the
+   * dimension-animation pacing gate awaits. When a pending state exists,
+   * waiters are carried to the re-entered pass instead.
+   */
+  resolvePassWaiters(): void;
 }
 
 /** Structural `hasMoreLODs` probe — only progressive loaders expose it. */
@@ -74,6 +83,14 @@ export function queueNext(ctx: QueueNextCtx): void {
     });
     return;
   }
+
+  // No pending state left: the pass that just finished IS the latest-wins
+  // winner, so any callers parked in the queued branch have had their
+  // requested-or-newer state committed — settle them now (synchronous from
+  // takePending(), so no competing updateView can interleave). Resolving at
+  // refinement ENTRY (not completion) is deliberate: the pacing gate needs
+  // first-commit latency, not full-ladder latency.
+  ctx.resolvePassWaiters();
 
   // No pending update — check if ANY progressive loader (points, lines, or
   // gsplats) still has additive LODs to stream. Mirrors the post-load kick
@@ -106,6 +123,10 @@ export function queueNext(ctx: QueueNextCtx): void {
       // no-op when nothing queued during the failed run.
       ctx.setUpdateInProgress(false);
       ctx.viewStateQueue.drain((state) => ctx.updateView(state));
+      // Belt-and-braces: when nothing was queued during the failed run,
+      // no re-entry will resolve parked waiters — settle them here
+      // (resolve-only; harmless if drain re-enters and resolves again).
+      ctx.resolvePassWaiters();
     });
   } else {
     // No pending update, no refinement needed - release the lock now

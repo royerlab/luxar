@@ -64,13 +64,21 @@ a mix of leaf types and never set the parent's `display_type`.
 ### `validation.validate_discrete_dimension_ranges(store, scene_bounds) -> None`
 
 Emits `UserWarning`s when a discrete, non-displayed dimension's declared
-`range` falls outside the actual data extent (read from `scene_bounds`). Catches
-two common authoring mistakes: a range that starts before any data exists
-(e.g. range starts at frame 0 but data starts at frame 1) and a range that
-extends beyond the data, either of which lets the viewer initialise or navigate
-to a slice with nothing in it. Comparisons use a half-step tolerance
-(`dim.step / 2`, default `0.5`). No-ops when `scene_bounds` is `None` or the
-store has no `scene_dimensions` attr.
+`range` falls outside the actual data extent (read from `scene_bounds`), or
+when the data itself sits off the viewer's navigation grid. Catches three
+authoring mistakes: a range that starts before any data exists (e.g. range
+starts at frame 0 but data starts at frame 1), a range that extends beyond the
+data — either of which lets the viewer initialise or navigate to a slice with
+nothing in it — and discrete data more than a quarter-step off the `k·step`
+grid (the viewer snaps navigation to that grid and its chunk query reaches
+only a quarter-step around it, so off-grid data can silently never display).
+Comparisons use a quarter-step tolerance (`dim.step / 4`, default `0.25`),
+mirroring the viewer's `DISCRETE_TOLERANCE_FRACTION`. A dimension without a
+declared step is checked against the integer grid (the viewer defaults a
+missing step to `1.0`). The on-grid check inspects the data min/max only —
+interior off-grid values on an otherwise on-grid extent are not scanned.
+No-ops when `scene_bounds` is `None` or the store has no `scene_dimensions`
+attr.
 
 ## How the compiler wires these
 

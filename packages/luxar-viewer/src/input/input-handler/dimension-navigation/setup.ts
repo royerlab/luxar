@@ -102,8 +102,21 @@ export async function updateAllNDNodes(ctx: DimNavSetupCtx): Promise<void> {
     return;
   }
 
+  // During dimension-animation playback, hand the progressive loaders a
+  // per-tick LOD time budget so each update pass fits the animation frame
+  // window (they stream sub-LODs until the budget runs out, then commit).
+  // Null/undefined outside playback → normal full-refinement behavior.
+  const frameBudgetMs = ctx.getAnimationManager()?.getFrameBudgetMs() ?? undefined;
+
   // Use the new loader architecture's update mechanism
-  await updateSceneForDimensions(dims, ctx.sceneManager.scene as unknown as THREE.Group);
+  await updateSceneForDimensions(
+    dims,
+    ctx.sceneManager.scene as unknown as THREE.Group,
+    undefined,
+    {
+      frameBudgetMs,
+    }
+  );
 
   // Trigger re-render after update
   ctx.animationController.startAnimation();

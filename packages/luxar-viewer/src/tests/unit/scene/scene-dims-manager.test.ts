@@ -65,6 +65,74 @@ describe('SceneDimsManager', () => {
       expect(dims!.currentStep[4]).toBe(0); // channel: minimum of [0, 3] (discrete)
     });
 
+    // Regression (deep-double-check): the INITIAL discrete position must be
+    // snapped onto the k·step grid like every subsequent navigation
+    // (setDimensionValue snaps; the discrete chunk query reaches only a
+    // quarter-step). A raw off-grid range.min (e.g. 1.3, step 1) left the
+    // initial view silently empty until the first manual navigation.
+    it('snaps the initial discrete position onto the step grid (first on-grid ≥ min)', () => {
+      const scene = new THREE.Scene();
+      scene.userData.sceneDimensions = {
+        dimensions: [
+          { name: 'x', unit: '', range: [0, 100], step: 1, display: true },
+          { name: 'y', unit: '', range: [0, 100], step: 1, display: true },
+          { name: 'z', unit: '', range: [0, 50], step: 1, display: true },
+          // Off-grid declared min: first on-grid position at/above 1.3 is 2.
+          { name: 'time', unit: '', range: [1.3, 5.3], step: 1, display: false, discrete: true },
+        ],
+      };
+      manager.initFromScene(scene);
+      expect(manager.getDims()!.currentStep[3]).toBe(2);
+    });
+
+    it('keeps an already on-grid discrete minimum unchanged', () => {
+      const scene = new THREE.Scene();
+      scene.userData.sceneDimensions = {
+        dimensions: [
+          { name: 'x', unit: '', range: [0, 100], step: 1, display: true },
+          { name: 'y', unit: '', range: [0, 100], step: 1, display: true },
+          { name: 'z', unit: '', range: [0, 50], step: 1, display: true },
+          { name: 'time', unit: '', range: [2, 8], step: 2, display: false, discrete: true },
+        ],
+      };
+      manager.initFromScene(scene);
+      expect(manager.getDims()!.currentStep[3]).toBe(2);
+    });
+
+    // Regression (deep-double-check round 5): an EXACTLY on-grid min with an
+    // FP-hostile fractional step rounds an ulp low (Math.round(2.1/0.7)*0.7 =
+    // 2.0999999999999996 < 2.1); a strict `< min` bump then skipped the whole
+    // first category — the viewer opened at timepoint 2 of a valid dataset.
+    it('does not skip the first category when a fractional-step min rounds an ulp low', () => {
+      const scene = new THREE.Scene();
+      scene.userData.sceneDimensions = {
+        dimensions: [
+          { name: 'x', unit: '', range: [0, 100], step: 1, display: true },
+          { name: 'y', unit: '', range: [0, 100], step: 1, display: true },
+          { name: 'z', unit: '', range: [0, 50], step: 1, display: true },
+          // 2.1 = 3 × 0.7 exactly on-grid by intent; FP rounds it below 2.1.
+          { name: 'time', unit: '', range: [2.1, 4.2], step: 0.7, display: false, discrete: true },
+        ],
+      };
+      manager.initFromScene(scene);
+      expect(manager.getDims()!.currentStep[3]).toBeCloseTo(2.1, 9);
+    });
+
+    it('falls back to the raw min when no on-grid point exists inside the range', () => {
+      const scene = new THREE.Scene();
+      scene.userData.sceneDimensions = {
+        dimensions: [
+          { name: 'x', unit: '', range: [0, 100], step: 1, display: true },
+          { name: 'y', unit: '', range: [0, 100], step: 1, display: true },
+          { name: 'z', unit: '', range: [0, 50], step: 1, display: true },
+          // Range narrower than a step with no multiple of 10 inside.
+          { name: 'time', unit: '', range: [1.2, 1.8], step: 10, display: false, discrete: true },
+        ],
+      };
+      manager.initFromScene(scene);
+      expect(manager.getDims()!.currentStep[3]).toBe(1.2);
+    });
+
     it('should extract dimension ranges', () => {
       manager.initFromScene(mockScene);
       const ranges = manager.getDimensionRanges();
@@ -285,6 +353,44 @@ describe('SceneDimsManager', () => {
       manager.setDimensionValue(3, 5);
 
       expect(listener).toHaveBeenCalled();
+    });
+
+    it("an OLDER update settling does not clobber a NEWER update's waitForUpdate tracking", async () => {
+      // Regression: notifyListeners used to null pendingUpdatePromise
+      // unconditionally when ANY update settled — so an older (slower)
+      // update's completion made waitForUpdate() resolve immediately while
+      // a newer update was still loading (a real hazard now that queued
+      // scene-loader updates keep listener promises pending until their
+      // pass commits). The guard only nulls the field when it still points
+      // at the settling promise.
+      const deferreds: Array<() => void> = [];
+      manager.addListener(
+        () =>
+          new Promise<void>((resolve) => {
+            deferreds.push(resolve);
+          })
+      );
+
+      manager.setDimensionValue(3, 1); // update #1 → deferred[0]
+      manager.setDimensionValue(3, 2); // update #2 → deferred[1] (tracked)
+
+      // Settle the OLDER update first. Pre-guard, its completion nulled
+      // pendingUpdatePromise unconditionally — so the waitForUpdate() call
+      // BELOW got an instantly-resolved promise while update #2 was still
+      // loading.
+      deferreds[0]();
+      await new Promise((resolve) => setTimeout(resolve, 0)); // full microtask drain
+
+      let settled = false;
+      void manager.waitForUpdate().then(() => {
+        settled = true;
+      });
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      expect(settled).toBe(false); // newer update still pending
+
+      deferreds[1]();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      expect(settled).toBe(true);
     });
 
     it('should support multiple listeners', () => {

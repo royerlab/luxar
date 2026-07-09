@@ -447,7 +447,23 @@ loader.addEventListener((event: MonitorEvent) => {
    - Key performance indicators
    - Recent events stream
 
+**Design language ("quiet instrument")**: every metric value renders in
+the mono stack with tabular numerals (stable live ticking); labels share
+one 10px caps micro-style; section titles rank above labels and carry a
+small status-tick motif; color is semantic only (health states), with
+idle zeros dimmed and hit rates dimmed during cache warm-up
+(`CACHE_WARMUP_ACCESSES`) instead of alarm-red; iconography is the
+inline `MONITOR_ICONS` stroke-SVG set (no emoji); tab/section paints get
+a one-shot staggered reveal (disabled under `prefers-reduced-motion`).
+See the "Refinement layer" section at the end of
+`styles/components/data-loading-monitor.css`.
+
 2. **Cache Tab**
+   - Per-tier sections (S-cache / L0 / L1 / L2), each collapsible: sections
+     start collapsed as a compact one-line summary carrying the same values
+     (size, hit rate + hits·miss, evictions, I/O, errors) and expand to
+     full metric cards on header click — keeps the tab scrollbar-free
+     with 4 tiers
    - Cache memory usage with visual gauge
    - Hit rate statistics (global and recent)
    - Cached ranges count and average size
