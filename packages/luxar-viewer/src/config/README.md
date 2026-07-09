@@ -242,6 +242,8 @@ cache: {
   enabled: true,              // Enable OPFS caching
   l0Enabled: true,            // L0: decompressed chunk cache (fastest)
   l0MaxSizeMB: 200,           // L0 memory budget
+  sliceCacheEnabled: true,    // S-cache: per-(node,view) decoded-slice cache (instant slice revisits)
+  sliceCacheMaxSizeMB: 128,   // S-cache byte budget (shared across nodes)
   l1MaxSizeMB: 100,           // L1: in-memory LRU cache
   l2MaxSizeMB: 2048,          // L2: persistent OPFS cache (largest)
   opfsOperationTimeoutMs: 10000, // Per-OPFS-operation deadline (ms)
