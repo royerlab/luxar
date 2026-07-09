@@ -222,7 +222,10 @@ def finalize_results(
     Ls_np = Ls_dev.cpu().numpy()
     amps_np = amps_dev.cpu().numpy()
 
-    # Rescale amplitudes to original intensity range
+    # Rescale amplitudes to original intensity range.
+    # NOTE: image_min (incl. any subtracted background floor) is intentionally
+    # NOT added back — output amplitudes are background-relative by design
+    # (background -> 0), which is what the viewer wants. See PreprocessedData.floor.
     amps_np = amps_np * preprocessed_data.intensity_range
     if config.verbose:
         aprint(
@@ -301,6 +304,13 @@ def finalize_results(
         "converged": optimization_results.converged_early,
         "early_stopped": optimization_results.early_stopped,
         "n_splats": len(amps_np),
+        # Normalization metadata (recorded for inspection/reproducibility).
+        # `floor` is the background level subtracted before fitting (None if
+        # floor suppression was disabled); it is NOT added back to amplitudes.
+        "image_min": preprocessed_data.image_min,
+        "image_max": preprocessed_data.image_max,
+        "intensity_range": preprocessed_data.intensity_range,
+        "floor": preprocessed_data.floor,
     }
 
     # Store movie frames in stats for later display (don't show here to avoid timing issues)

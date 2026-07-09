@@ -20,6 +20,7 @@ from luxar.gsplats.calibration import (
     count_features,
     cv_mask,
     donut_median_fill,
+    estimate_floor,
     estimate_noise_floor,
     find_k_star,
     fit_rd_model,
@@ -326,6 +327,19 @@ class TestFindKStar:
         out = find_k_star(ks, psnr)
         assert out.type == "signal_limited"
 
+    def test_steep_then_flat_top_is_plateau_not_signal_limited(self):
+        # M3 regression: a curve that climbs steeply then goes flat at the very top.
+        # The averaged trailing tail_rise is carried over 0.1 dB by the earlier big
+        # step, but the final step is ~0 dB -> it has plateaued. Must be 'plateau'
+        # (k_star = the earlier knee), NOT 'signal_limited' (which would inflate the
+        # K*-derived splat-density budget). Pre-M3 code mislabeled this signal_limited.
+        ks = [16000, 64000, 128000, 256000, 512000]
+        psnr = [40.0, 41.5, 43.0, 43.52, 43.54]  # steps +1.5,+1.5,+0.52,+0.02
+        out = find_k_star(ks, psnr)
+        assert out.type == "plateau"
+        assert out.k_star == out.k_knee  # plateau: budget anchor == knee
+        assert out.k_star < 512000  # not pinned to the last K
+
     def test_nan_gap_before_last_k_not_signal_limited(self):
         # M1 regression: a NaN before the last K must NOT be read as a one-step
         # climb (the "last finite step" spans 2 K's). Total rise > 0.3 dB but the
@@ -334,6 +348,58 @@ class TestFindKStar:
         psnr = [40.0, 43.0, float("nan"), 43.5]
         out = find_k_star(ks, psnr)
         assert out.type != "signal_limited"
+
+
+class TestKKnee:
+    """The operating point (``k_knee``) = the point of diminishing returns,
+    decoupled from the regime label and from the budget anchor ``k_star``."""
+
+    def test_peak_knee_is_the_peak(self):
+        ks = [1, 2, 4, 8, 16, 32, 64]
+        psnr = [22.0, 26.0, 30.0, 34.0, 33.5, 32.0, 30.0]
+        out = find_k_star(ks, psnr)
+        assert out.type == "peak"
+        assert out.k_knee == out.k_star == 8  # peak: knee == budget anchor
+
+    def test_plateau_knee_is_the_onset(self):
+        ks = [1, 2, 4, 8, 16, 32]
+        psnr = [30.0, 35.0, 39.5, 39.78, 39.80, 39.79]
+        out = find_k_star(ks, psnr)
+        assert out.type == "plateau"
+        assert out.k_knee == out.k_star == 4
+
+    def test_signal_limited_decouples_knee_from_kstar(self):
+        # Slow creep: rises to the last K (still-climbing tail) so type stays
+        # signal_limited and k_star = last K (budget anchor), but an earlier K is
+        # already within 0.3 dB of the max -> k_knee is that earlier knee.
+        ks = [16000, 64000, 128000, 256000, 512000]
+        psnr = [29.2, 35.2, 37.0, 37.59, 37.84]  # h2afva-like; last step +0.25
+        out = find_k_star(ks, psnr)
+        assert out.type == "signal_limited"
+        assert out.k_star == 512000  # unchanged budget anchor
+        assert out.k_knee == 256000  # earlier diminishing-returns point
+        assert out.k_knee < out.k_star
+        assert out.still_climbing is True
+
+    def test_steep_signal_limited_knee_equals_kstar(self):
+        # A genuinely starved curve: no earlier K within 0.3 dB of the max, so the
+        # knee IS the last K -> k_knee == k_star.
+        ks = [16000, 64000, 128000, 256000, 512000]
+        psnr = [45.4, 45.9, 46.2, 47.8, 49.3]
+        out = find_k_star(ks, psnr)
+        assert out.type == "signal_limited"
+        assert out.k_knee == out.k_star == 512000
+
+    def test_metadata_fields_populated(self):
+        ks = [1, 2, 4, 8, 16, 32, 64]
+        psnr = [22.0, 26.0, 30.0, 34.0, 33.5, 32.0, 30.0]  # peak at 8, declines after
+        out = find_k_star(ks, psnr)
+        assert out.knee_idx == 3
+        assert out.knee_margin_db == pytest.approx(0.3)
+        assert out.total_rise_db == pytest.approx(12.0)  # 34 - 22
+        assert out.drop_after_peak_db == pytest.approx(-4.0)  # 30 - 34 (post-peak drop)
+        assert out.plateau_spread_db >= 0.0
+        assert out.still_climbing is False
 
 
 # -----------------------------------------------------------------------------
@@ -560,6 +626,44 @@ class TestCalibrateSmoke:
         result.to_json(out_json)
         round_trip = CalibrationResult.from_json(out_json)
         assert round_trip.held_out_peak.k_star == result.held_out_peak.k_star
+
+    def test_floor_above_volume_max_is_ignored_not_fatal(self):
+        # Guard: an explicit --floor at/above the brightest voxel would clip the
+        # whole volume to 0 → non-finite held-out PSNR → find_k_star raises. cal
+        # must warn and IGNORE it (mirrors the single-pass _normalize_data guard),
+        # producing a normal finite result instead of crashing.
+        rng = np.random.default_rng(0)
+        Y, X, Z = np.meshgrid(
+            np.linspace(0, 1, 16),
+            np.linspace(0, 1, 16),
+            np.linspace(0, 1, 16),
+            indexing="ij",
+        )
+        signal = np.exp(-((X - 0.5) ** 2 + (Y - 0.5) ** 2 + (Z - 0.5) ** 2) * 8)
+        V = np.clip(signal + 0.02 * rng.standard_normal(signal.shape), 0, 1).astype(
+            np.float32
+        )
+
+        with pytest.warns(UserWarning, match="would erase all signal"):
+            result = calibrate(
+                V,
+                k_grid=[20, 80, 200],
+                fit_kwargs={
+                    "n_iters": 50,
+                    "device": "cpu",
+                    "verbose": False,
+                    "early_stop_patience": 50,
+                    "use_cuda": False,
+                    "use_metal": False,
+                    "floor": 999999.0,  # >> V.max() (== 1.0)
+                },
+            )
+        assert isinstance(result, CalibrationResult)
+        # Floor was ignored → volume not zeroed → finite curve + a real K*.
+        assert any(math.isfinite(p) for p in result.held_out_psnr_db)
+        assert result.held_out_peak.k_star in (20, 80, 200)
+        # And it was recorded as "not subtracted" in the fit config.
+        assert result.fit_config.get("floor_subtracted") is None
 
     def test_default_behaviour_unchanged(self):
         # Reproducibility guardrail: with default flags, K* is EXACTLY the legacy
@@ -1037,3 +1141,68 @@ class TestExponentFitSerialization:
         assert loaded.exponent_fit["alpha"] == pytest.approx(0.53)
         assert loaded.exponent_fit["scales"] == [128, 192, 256]
         assert loaded.exponent_fit["r_squared"] == pytest.approx(0.97)
+
+
+class TestEstimateFloor:
+    """Unit tests for the background/DC floor estimator."""
+
+    def _pedestal_volume(self, pedestal: float = 110.0, seed: int = 0) -> np.ndarray:
+        rng = np.random.default_rng(seed)
+        V = np.full((40, 64, 64), pedestal, np.float32)
+        V += rng.normal(0, 2.0, V.shape).astype(np.float32)
+        V[10:14, 30:34, 30:34] += 400.0  # a bright signal blob
+        return V
+
+    def test_mode_recovers_pedestal(self) -> None:
+        V = self._pedestal_volume(pedestal=110.0)
+        floor = estimate_floor(V, method="mode")
+        assert floor == pytest.approx(110.0, abs=3.0)
+
+    def test_percentile_method(self) -> None:
+        V = self._pedestal_volume(pedestal=110.0)
+        floor = estimate_floor(V, method="percentile")
+        # 10th percentile of a ~110 pedestal sits just below the mode.
+        assert 104.0 <= floor <= 111.0
+
+    def test_median_cap_prevents_over_subtraction(self) -> None:
+        # Mostly-signal image: a broad bright distribution with no pedestal.
+        rng = np.random.default_rng(3)
+        V = rng.normal(500.0, 50.0, (32, 32, 32)).astype(np.float32)
+        floor = estimate_floor(V, method="mode")
+        # The cap keeps the floor at or below the median so real signal is safe.
+        assert floor <= float(np.median(V)) + 1e-3
+
+    def test_noop_on_clean_data(self) -> None:
+        # Clean data spanning [0, 1] with no pedestal: floor near min(V).
+        rng = np.random.default_rng(5)
+        V = rng.random((32, 32, 32)).astype(np.float32)
+        floor = estimate_floor(V, method="mode")
+        assert floor == pytest.approx(float(np.min(V)), abs=0.05)
+
+    def test_excludes_exact_zero_padding(self) -> None:
+        # Half the volume is exact-zero padding; the real content sits on ~110.
+        V = self._pedestal_volume(pedestal=110.0)
+        V[:20] = 0.0  # out-of-FOV padding
+        floor = estimate_floor(V, method="mode")
+        # Padding is excluded, so the estimate still lands on the pedestal.
+        assert floor == pytest.approx(110.0, abs=4.0)
+
+    def test_unknown_method_raises(self) -> None:
+        V = self._pedestal_volume()
+        with pytest.raises(ValueError):
+            estimate_floor(V, method="bogus")
+
+    def test_calibrate_rejects_bad_floor_before_fitting(self) -> None:
+        # The cal path bypasses prepare_fit_config's validation, so calibrate()
+        # must validate the floor itself and fail fast (before any fit) on a
+        # malformed spec — not raise an opaque ValueError mid-sweep.
+        # match="floor" pins the clean validation error (pre-fix, an invalid
+        # spec instead surfaced as an opaque float-conversion / NaN-input error
+        # from deeper in the sweep, whose message does NOT mention "floor").
+        V = self._pedestal_volume(seed=1)
+        with pytest.raises(ValueError, match="floor"):
+            calibrate(V, k_grid=[20], fit_kwargs={"floor": "pX", "device": "cpu"})
+        with pytest.raises(ValueError, match="floor"):
+            calibrate(
+                V, k_grid=[20], fit_kwargs={"floor": float("nan"), "device": "cpu"}
+            )

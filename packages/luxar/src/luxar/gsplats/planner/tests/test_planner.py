@@ -345,6 +345,22 @@ def _empty_marker_for(*box_idxs: int, n_per_box: int = 5):
     return builder
 
 
+class TestDefaultWorkerCmdBuilder:
+    def test_forwards_floor(self, tmp_path):
+        # An explicit --floor must reach each content box worker (else -j>1
+        # content fits silently drop the override and default to 'auto').
+        from luxar.gsplats.planner.fit_planned_parallel import (
+            _default_worker_cmd_builder,
+        )
+
+        b = _default_worker_cmd_builder("in.zarr", "plan.json", floor="p10")
+        cmd = [str(c) for c in b(0, tmp_path / "box0.gsplats.zarr")]
+        assert "--floor" in cmd and cmd[cmd.index("--floor") + 1] == "p10"
+        # Not emitted when unset (worker defaults to 'auto').
+        b2 = _default_worker_cmd_builder("in.zarr", "plan.json")
+        assert "--floor" not in [str(c) for c in b2(0, tmp_path / "box0.gsplats.zarr")]
+
+
 class TestFitPlannedParallel:
     def test_merges_all_budgeted_boxes(self, tmp_path):
         plan = _toy_plan(n_boxes=3)

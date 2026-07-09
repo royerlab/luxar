@@ -40,6 +40,7 @@ class FitConfig:
     seeds: Optional[str] = None
     iters: Optional[int] = None
     config: Optional[Path] = None
+    floor: Optional[str] = "auto"
     progressive: bool = False
     splats_per_pass: Optional[int] = None
     psnr_patience: Optional[float] = None
@@ -326,6 +327,8 @@ def _assemble_fit_args(
         fit_args["iters"] = str(fit.iters)
     if fit.config:
         fit_args["config"] = str(fit.config)
+    if fit.floor is not None:
+        fit_args["floor"] = str(fit.floor)
     if fit.progressive:
         fit_args["progressive"] = ""  # boolean flag, no value
     if fit.splats_per_pass is not None:
@@ -541,6 +544,18 @@ def plan_batch(
                     f"calibrated density.feature_method '{density.feature_method}' — "
                     "per-box budgets will be mis-scaled. Use matching metrics."
                 )
+            # Scan the floor-suppressed volume the boxes will fit: cal records
+            # `density.feature_threshold` on floor-subtracted data, and each box
+            # fits with `fit.floor`. Subtract the same floor from the (max-proj)
+            # scan volume so the content field is on the calibration's scale —
+            # otherwise the raw pedestal counts as signal and flattens the plan.
+            from luxar.gsplats.fitting.preprocessing import _resolve_floor
+
+            scan_floor = _resolve_floor(
+                rep_vol, "auto" if fit.floor is None else fit.floor
+            )
+            if scan_floor is not None:
+                rep_vol = _np.clip(rep_vol.astype(_np.float32) - scan_floor, 0.0, None)
             content_plan = plan_volume(
                 rep_vol,
                 density,

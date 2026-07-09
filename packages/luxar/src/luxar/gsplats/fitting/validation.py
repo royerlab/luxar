@@ -4,6 +4,7 @@ Input validation and configuration preparation for Gaussian splat fitting.
 
 from __future__ import annotations
 
+import math
 from typing import TYPE_CHECKING, Any, Optional, Sequence
 
 import numpy as np
@@ -18,11 +19,46 @@ if TYPE_CHECKING:
 DEFAULT_SIGMA_MIN_DIAG = float(np.sqrt(1.0 / 12.0))
 
 
+def _validate_floor(floor: "str | float | None") -> None:
+    """Validate a ``floor`` spec: ``auto`` / ``none`` / ``pN`` / float >= 0."""
+    if floor is None:
+        return
+    if isinstance(floor, str):
+        f = floor.strip().lower()
+        if f in ("auto", "none", ""):
+            return
+        if f.startswith("p"):
+            try:
+                pct = float(f[1:])
+            except ValueError as exc:
+                raise ValueError(
+                    f"floor percentile must be 'pN' (e.g. 'p10'), got {floor!r}"
+                ) from exc
+            if not 0.0 <= pct <= 100.0:
+                raise ValueError(
+                    f"floor percentile must be in [0, 100], got {floor!r}"
+                )
+            return
+        try:
+            value = float(f)
+        except ValueError as exc:
+            raise ValueError(
+                f"floor must be 'auto'/'none'/'pN'/a number >= 0, got {floor!r}"
+            ) from exc
+    else:
+        value = float(floor)
+    if not math.isfinite(value):
+        raise ValueError(f"floor must be a finite number, got {floor!r}")
+    if value < 0.0:
+        raise ValueError(f"floor must be >= 0, got {value}")
+
+
 def prepare_fit_config(
     fitter: "GaussianSplatFitter",  # GaussianSplatFitter instance
     V: np.ndarray,
     seeds: Optional[np.ndarray | int | float | GSplatData] = None,
     norm_percentile: float = 0.0,
+    floor: "str | float | None" = "auto",
     downscale: Optional[int | Sequence[int]] = None,
     init_sigma_vox: Optional[float] = None,
     n_iters: int = 1000,
@@ -178,6 +214,7 @@ def prepare_fit_config(
         raise ValueError(
             f"norm_percentile must be in range [0.0, 50.0), got {norm_percentile}"
         )
+    _validate_floor(floor)
 
     # Movie frame limit
     if movie_max_frames is None:
@@ -274,6 +311,7 @@ def prepare_fit_config(
         seed_method=seed_method,
         seed_kwargs=seed_kwargs,
         norm_percentile=norm_percentile,
+        floor=floor,
         init_sigma_vox=init_sigma_vox,
         sigma_min_diag=sigma_min_diag,
         sigma_max_diag=sigma_max_diag,

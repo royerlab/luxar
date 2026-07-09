@@ -38,6 +38,11 @@ def test_iter_fit_arg_flags_maps_underscore_to_dash() -> None:
     assert pairs == [("--cull-retention", "0.9"), ("--denoise", None)]
 
 
+def test_fit_args_to_tokens_expands_floor() -> None:
+    assert fit_args_to_tokens({"floor": "auto"}) == ["--floor", "auto"]
+    assert fit_args_to_tokens({"floor": "0.03"}) == ["--floor", "0.03"]
+
+
 def test_uniform_argv() -> None:
     m = BatchManifest(
         input_path="in.zarr",

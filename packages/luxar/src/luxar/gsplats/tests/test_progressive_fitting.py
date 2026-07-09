@@ -318,3 +318,49 @@ class TestProgressiveFitting:
                 "residual_pass_min_iters floor was not honored "
                 "(expected ≥200; production floor is 500)."
             )
+
+
+def test_progressive_floor_suppresses_background():
+    """Regression: progressive floor='auto' must suppress a background pedestal
+    across ALL passes, not just pass 0.
+
+    The floor is subtracted from the volume ONCE up front and every pass runs
+    with floor='none'. The previous (buggy) approach subtracted the floor only
+    inside pass 0's fit while building the residual against the RAW volume,
+    reintroducing the pedestal for the residual passes to waste splats on — so
+    the reconstructed background stayed at the pedestal level. This test fails on
+    that pre-fix code.
+    """
+    import torch  # noqa: F401
+
+    from luxar.gsplats.rendering.volume_rendering import render_to_volume_tensor
+
+    rng = np.random.default_rng(0)
+    # ~100-count pedestal, a couple of dark voxels (so min≈0), a bright blob.
+    V = np.full((20, 20, 20), 100.0, np.float32)
+    V += rng.normal(0, 1.0, V.shape).astype(np.float32)
+    V[0, 0, 0] = 0.0
+    V[8:12, 8:12, 8:12] += 300.0
+
+    common = dict(
+        max_splats=400,
+        max_splats_per_pass=200,
+        iters_per_pass=60,
+        residual_pass_min_iters=60,
+        device="cpu",
+        verbose=False,
+    )
+    res_auto = fit_progressive_gaussian_splats(V.copy(), floor="auto", **common)
+    res_none = fit_progressive_gaussian_splats(V.copy(), floor="none", **common)
+
+    r_auto = render_to_volume_tensor(res_auto, shape=V.shape, device="cpu").numpy()
+    r_none = render_to_volume_tensor(res_none, shape=V.shape, device="cpu").numpy()
+
+    bg = V < 150.0  # background region (excludes the bright blob)
+    bg_auto = float(np.median(r_auto[bg]))
+    bg_none = float(np.median(r_none[bg]))
+
+    # floor='auto': background reconstructed near 0 (pedestal removed).
+    assert bg_auto < 20.0, f"auto background not suppressed: {bg_auto}"
+    # floor='none': background reconstructed near the ~100 pedestal.
+    assert bg_none > 50.0, f"none background unexpectedly suppressed: {bg_none}"

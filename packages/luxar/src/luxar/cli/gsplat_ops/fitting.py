@@ -243,6 +243,14 @@ def calibrate_command(
     config: Optional[Path] = typer.Option(
         None, "--config", help="YAML overrides for fit parameters"
     ),
+    floor: Optional[str] = typer.Option(
+        None,
+        "--floor",
+        help="Background floor / DC-offset suppression (default: auto), so K* "
+        "is measured on floor-suppressed data (matches how you will fit). "
+        "auto | pN | <float> | none. Unset lets a `floor:` in --config/preset "
+        "apply, else defaults to auto. See `gsplat fit --help`.",
+    ),
     device: Optional[str] = typer.Option(
         None, "--device", "-d", help="Device: auto/cpu/cuda/mps"
     ),
@@ -383,6 +391,7 @@ def calibrate_command(
         mask_fraction=mask_fraction,
         preset=preset,
         config=config,
+        floor=floor,
         device=device,
         channel=channel,
         timepoint=timepoint,
