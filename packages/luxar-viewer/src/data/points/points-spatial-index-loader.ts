@@ -549,7 +549,9 @@ export class PointsSpatialIndexLoader implements DataLoader, LoaderMonitor {
         // slice is a valid, ~0-byte result that revisits should skip).
         this.activeQueries.delete(queryId);
         const empty = this.createEmptyPointsData(viewState);
-        storeLadder(this.sliceCache, this.node.path, viewState, [empty]);
+        storeLadder(this.sliceCache, this.node.path, viewState, [empty], {
+          scan: viewState.frameBudgetMs != null,
+        });
         return empty;
       }
 
@@ -740,7 +742,9 @@ export class PointsSpatialIndexLoader implements DataLoader, LoaderMonitor {
 
       // Cache the decoded slice (helper clones on store — the arrays alias
       // the reused accumulator). Aborted loads throw and never reach here.
-      storeLadder(this.sliceCache, this.node.path, viewState, [result]);
+      storeLadder(this.sliceCache, this.node.path, viewState, [result], {
+        scan: viewState.frameBudgetMs != null,
+      });
       return result;
     } catch (error) {
       // A superseded scrub aborts the in-flight read on purpose; runLoaderUpdates

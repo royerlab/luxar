@@ -507,6 +507,46 @@ describe('PointsProgressiveLoader', () => {
       await l.updateView({ ...viewA, frameBudgetMs: 20 });
       expect(cachedPayload.length).toBe(1);
     });
+
+    it('stores with the scan hint while a frame budget is active, and without it when budget-free', async () => {
+      // Mirrored across the three progressive loader tests (symmetry). The
+      // hint selects scan-resistant (MRU-victim) eviction in the S-cache so
+      // cyclic playback loops keep their loop-head prefix resident.
+      const sc = new SliceCache({ maxSize: 10 * 1024 * 1024 });
+      const setSpy = vi.spyOn(sc, 'set');
+      const l = new PointsProgressiveLoader(
+        [lodA, lodB, lodC] as unknown as PointsSpatialIndexLoader[],
+        3,
+        '/p',
+        undefined,
+        sc
+      );
+      const viewA = baseViewState;
+      const viewB = { ...baseViewState, slicePosition: [0, 0, 0, 1] };
+
+      // Playback tick (budget active): the store carries scan: true.
+      await l.updateView({ ...viewA, frameBudgetMs: 10 });
+      expect(setSpy).toHaveBeenCalled();
+      expect(setSpy.mock.calls.at(-1)![2]).toEqual({ scan: true });
+
+      // Pause re-trigger (same view, budget-free): the ladder completes and
+      // the full-ladder upgrade store is scan-free.
+      setSpy.mockClear();
+      await l.updateView(viewA);
+      expect(setSpy).toHaveBeenCalled();
+      for (const call of setSpy.mock.calls) {
+        expect(call[2]).toEqual({ scan: false });
+      }
+
+      // Next playback tick at a NEW view: the departure store for A (skipped
+      // here only if not longer) and B's prefix store are scan-hinted again.
+      setSpy.mockClear();
+      await l.updateView({ ...viewB, frameBudgetMs: 10 });
+      expect(setSpy).toHaveBeenCalled();
+      for (const call of setSpy.mock.calls) {
+        expect(call[2]).toEqual({ scan: true });
+      }
+    });
   });
 
   describe('prefetch scheduling', () => {

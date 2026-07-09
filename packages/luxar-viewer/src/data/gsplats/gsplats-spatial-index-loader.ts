@@ -307,7 +307,9 @@ export class GSplatsSpatialIndexLoader implements GSplatsDataLoader {
       this.finishQueryTracking(queryId, startTime, 'complete');
       // Cache the decoded slice (helper clones on store — the arrays alias
       // the reused accumulator). Aborted loads throw and never reach here.
-      storeLadder(this.sliceCache, this.node.path, viewState, [result]);
+      storeLadder(this.sliceCache, this.node.path, viewState, [result], {
+        scan: viewState.frameBudgetMs != null,
+      });
       return result;
     } catch (err) {
       // A superseded scrub aborts the in-flight read on purpose; runLoaderUpdates

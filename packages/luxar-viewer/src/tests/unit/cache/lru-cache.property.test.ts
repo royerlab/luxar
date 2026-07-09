@@ -19,7 +19,7 @@ import * as fc from 'fast-check';
 import { LRUCache } from '../../../cache/lru-cache';
 
 type Op =
-  | { kind: 'set'; key: string; size: number }
+  | { kind: 'set'; key: string; size: number; scan: boolean }
   | { kind: 'get'; key: string }
   | { kind: 'delete'; key: string }
   | { kind: 'clear' };
@@ -31,6 +31,9 @@ const opArb: fc.Arbitrary<Op> = fc.oneof(
       kind: fc.constant<'set'>('set'),
       key: fc.constantFrom('a', 'b', 'c', 'd', 'e', 'f'),
       size: fc.integer({ min: 1, max: 100 }),
+      // Scan-mode (evictMostRecent) stores interleave with normal ones so the
+      // invariants below cover BOTH eviction policies over arbitrary traces.
+      scan: fc.boolean(),
     }),
   },
   {
@@ -62,7 +65,7 @@ describe('LRUCache — algebraic invariants over arbitrary operation traces', ()
             switch (op.kind) {
               case 'set':
                 // Size must be > 0 to be accepted; clamp to ≤ maxSize so set won't reject outright.
-                cache.set(op.key, { size: Math.min(op.size, maxSize) });
+                cache.set(op.key, { size: Math.min(op.size, maxSize) }, { evictMostRecent: op.scan });
                 break;
               case 'get':
                 cache.get(op.key);
@@ -164,4 +167,29 @@ describe('LRUCache — algebraic invariants over arbitrary operation traces', ()
       { numRuns: 50 }
     );
   });
+  test('an admissible set always leaves the inserted key present (never its own victim)', () => {
+    fc.assert(
+      fc.property(
+        fc.integer({ min: 10, max: 500 }),
+        fc.array(opArb, { minLength: 1, maxLength: 200 }),
+        (maxSize, ops) => {
+          const cache = new LRUCache<{ size: number }>(maxSize, (v) => v.size);
+          for (const op of ops) {
+            if (op.kind === 'set') {
+              cache.set(op.key, { size: Math.min(op.size, maxSize) }, { evictMostRecent: op.scan });
+              expect(cache.has(op.key)).toBe(true);
+            } else if (op.kind === 'get') {
+              cache.get(op.key);
+            } else if (op.kind === 'delete') {
+              cache.delete(op.key);
+            } else {
+              cache.clear();
+            }
+          }
+        }
+      ),
+      { numRuns: 100 }
+    );
+  });
+
 });

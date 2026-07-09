@@ -141,12 +141,18 @@ export function restoreLadder<T>(
  * MEASURES bytes before cloning and skips oversized snapshots entirely
  * (the LRU would silently reject them after an expensive copy). Shared by
  * all three progressive loaders.
+ *
+ * `opts.scan` — the caller is storing inside a sequential scan (dimension
+ * playback; the loaders pass their per-pass `frameBudgetMs !== null`).
+ * Forwarded to `SliceCache.set` to select scan-resistant (MRU-victim)
+ * eviction, which keeps the loop-head prefix resident across cyclic loops.
  */
 export function storeLadder<T extends object>(
   sliceCache: SliceCache | null,
   path: string,
   view: SliceViewLike,
-  lods: readonly T[]
+  lods: readonly T[],
+  opts?: { scan?: boolean }
 ): void {
   if (!sliceCache || lods.length === 0 || !hasHiddenDims(view)) return;
   const key = SliceCache.makeKey(path, buildSliceViewSig(view));
@@ -154,5 +160,5 @@ export function storeLadder<T extends object>(
   if (existing && (existing.payload as unknown[]).length >= lods.length) return;
   const bytes = measureLodBytes(lods);
   if (!sliceCache.willFit(bytes)) return; // too large — don't clone just to drop it
-  sliceCache.set(key, { payload: cloneLodSnapshot(lods), bytes });
+  sliceCache.set(key, { payload: cloneLodSnapshot(lods), bytes }, opts);
 }

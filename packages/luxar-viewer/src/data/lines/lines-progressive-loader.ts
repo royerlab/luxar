@@ -275,7 +275,9 @@ export class LinesProgressiveLoader implements LinesDataLoader {
       // the OUTGOING key before discarding — scrub-back stays warm even when
       // ladders never complete between navigations. Mirrors Points/GSplats.
       if (this.lastViewState && this.loadedLODs.length > 0) {
-        storeLadder(this.sliceCache, this.path, this.lastViewState, this.loadedLODs);
+        storeLadder(this.sliceCache, this.path, this.lastViewState, this.loadedLODs, {
+          scan: this._frameBudgetMs !== null,
+        });
       }
       // Try the SliceCache before discarding the ladder (see GSplats loader).
       const restored = restoreLadder<LoadedLinesData>(
@@ -368,7 +370,9 @@ export class LinesProgressiveLoader implements LinesDataLoader {
     // PREFIXES only while a playback budget is active. Mirrors
     // GSplatsProgressiveLoader.
     if (this.loadedLODs.length === this.nLods || this._frameBudgetMs !== null) {
-      storeLadder(this.sliceCache, this.path, viewState, this.loadedLODs);
+      storeLadder(this.sliceCache, this.path, viewState, this.loadedLODs, {
+        scan: this._frameBudgetMs !== null,
+      });
     }
 
     return this.concatenateMemoized(session);

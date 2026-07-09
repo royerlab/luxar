@@ -89,3 +89,69 @@ describe('SliceCache', () => {
     expect((c.get(k2)!.payload as { tag: string }).tag).toBe('b');
   });
 });
+
+describe('SliceCache — scan-resistant eviction + thrash stats', () => {
+  // Regression (loop-aware eviction): cyclic playback over a working set
+  // larger than the budget. Plain LRU evicts exactly the entry needed
+  // soonest after the wrap → 0 loop-2 hits. Scan-hinted stores evict from
+  // the MRU end instead, keeping the loop-head prefix resident.
+  function playLoop(c: SliceCache, nKeys: number, scan: boolean): number {
+    let hits = 0;
+    for (let i = 0; i < nKeys; i++) {
+      const k = SliceCache.makeKey('/node', `t${i}`);
+      if (c.get(k) !== undefined) hits++;
+      else c.set(k, entry(100, `t${i}`), { scan });
+    }
+    return hits;
+  }
+
+  it('cyclic loop over an overflowing budget: 0 loop-2 hits under LRU, loop-head hits under scan (fail-pre-fix)', () => {
+    // Budget holds 3 of the 10 per-loop entries.
+    const lru = new SliceCache({ maxSize: 300 });
+    playLoop(lru, 10, false); // loop 1 (cold)
+    expect(playLoop(lru, 10, false)).toBe(0); // the LRU scan pathology
+
+    const scan = new SliceCache({ maxSize: 300 });
+    playLoop(scan, 10, true); // loop 1 (cold)
+    const loop2 = playLoop(scan, 10, true);
+    expect(loop2).toBeGreaterThanOrEqual(2); // loop-head prefix survives
+    // And the hits are the loop HEAD (instant frames right after the wrap).
+    expect(scan.get(SliceCache.makeKey('/node', 't0'))).toBeDefined();
+  });
+
+  it('counts eviction-induced misses as thrashMisses (vs. cold misses)', () => {
+    const c = new SliceCache({ maxSize: 300 });
+    playLoop(c, 10, false); // stores t0..t9, evicting most along the way
+
+    expect(c.getStats().thrashMisses).toBe(0); // stores don't count misses
+
+    c.get(SliceCache.makeKey('/node', 't0')); // was stored → evicted → thrash
+    expect(c.getStats().thrashMisses).toBe(1);
+
+    c.get(SliceCache.makeKey('/node', 'never-stored')); // cold miss
+    expect(c.getStats().thrashMisses).toBe(1); // unchanged
+    expect(c.getStats().misses).toBeGreaterThan(c.getStats().thrashMisses!);
+  });
+
+  it('re-storing an evicted key clears its tombstone (a later hit is not thrash)', () => {
+    const c = new SliceCache({ maxSize: 300 });
+    playLoop(c, 10, false);
+    const t0 = SliceCache.makeKey('/node', 't0');
+    c.get(t0); // thrash miss #1
+    c.set(t0, entry(100, 't0')); // re-stored
+    expect(c.get(t0)).toBeDefined(); // hit — not a miss of any kind
+    expect(c.getStats().thrashMisses).toBe(1);
+  });
+
+  it('clear() resets thrashMisses and tombstones', () => {
+    const c = new SliceCache({ maxSize: 300 });
+    playLoop(c, 10, false);
+    c.get(SliceCache.makeKey('/node', 't0'));
+    expect(c.getStats().thrashMisses).toBe(1);
+    c.clear();
+    expect(c.getStats().thrashMisses).toBe(0);
+    // Post-clear, an old key is a COLD miss (tombstones were reset).
+    c.get(SliceCache.makeKey('/node', 't0'));
+    expect(c.getStats().thrashMisses).toBe(0);
+  });
+});
