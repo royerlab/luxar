@@ -68,6 +68,8 @@ import { DecompressedChunkCache } from '../../cache/decompressed-chunk-cache';
 import { wrapWithCache } from '../../cache/decompressed-chunk-cache/cached-zarr-array';
 import { ResidencyAccumulator } from '../../cache/residency-probe';
 import { ChunkPrefetcher } from '../../cache/chunk-prefetcher';
+import type { SliceCache } from '../../cache/slice-cache';
+import { restoreLadder, storeLadder } from '../loaders/progressive/slice-cache-helper';
 
 /**
  * `PointsNodeAttrs` and `PointsChunkIndex` are now defined alongside the
@@ -140,6 +142,11 @@ export class PointsSpatialIndexLoader implements DataLoader, LoaderMonitor {
   // Chunk prefetcher (optional, for registering array bounds to suppress 404s)
   private prefetcher: ChunkPrefetcher | null = null;
 
+  // Per-slice decoded-result cache (S-cache). Wired ONLY for plain-leaf nodes
+  // by the plain factory helper — progressive sub-LOD instances stay
+  // cache-less (their wrapper owns the whole ladder; see loader-factory.ts).
+  private sliceCache: SliceCache | null = null;
+
   // Suppress detail logs after first successful view update
   private _initialLoadDone = false;
 
@@ -158,7 +165,8 @@ export class PointsSpatialIndexLoader implements DataLoader, LoaderMonitor {
     zarrStore?: zarr.Readable,
     profiler?: UpdateProfiler,
     l0Cache?: DecompressedChunkCache,
-    prefetcher?: ChunkPrefetcher
+    prefetcher?: ChunkPrefetcher,
+    sliceCache?: SliceCache
   ) {
     this.zarrLocation = zarrLocation;
     this.node = node;
@@ -169,6 +177,7 @@ export class PointsSpatialIndexLoader implements DataLoader, LoaderMonitor {
     this.zarrStore = zarrStore || null;
     this.l0Cache = l0Cache || null;
     this.prefetcher = prefetcher || null;
+    this.sliceCache = sliceCache || null;
     // profiler parameter kept for API compatibility; session is passed directly to methods
     void profiler;
 
@@ -458,6 +467,16 @@ export class PointsSpatialIndexLoader implements DataLoader, LoaderMonitor {
    * @param session - Optional profiler session for nested timing
    */
   async loadPoints(viewState: ViewState, session?: UpdateSession): Promise<LoadedPointsData> {
+    // Plain-leaf S-cache: a decoded slice is cached as a 1-element ladder
+    // under the same key contract as the progressive loaders. Points cache
+    // POST-projection data (projection is folded into loadPoints and consumes
+    // only key fields + node-static context), so a hit skips the WASM
+    // projection too. A hit returns the SAME payload object on every
+    // same-view call, so the downstream reference-identity commit check
+    // turns same-slice revisits into no-ops.
+    const cached = restoreLadder<LoadedPointsData>(this.sliceCache, this.node.path, viewState, 1);
+    if (cached) return cached[0];
+
     const startTime = Date.now();
     const queryId = `${this.node.path}-${startTime}`;
 
@@ -526,9 +545,12 @@ export class PointsSpatialIndexLoader implements DataLoader, LoaderMonitor {
       });
 
       if (ranges.length === 0) {
-        // No visible points - return empty dataset
+        // No visible points - return empty dataset (cached too: an empty
+        // slice is a valid, ~0-byte result that revisits should skip).
         this.activeQueries.delete(queryId);
-        return this.createEmptyPointsData(viewState);
+        const empty = this.createEmptyPointsData(viewState);
+        storeLadder(this.sliceCache, this.node.path, viewState, [empty]);
+        return empty;
       }
 
       // Load all arrays with the SAME ranges (critical for alignment!)
@@ -716,6 +738,9 @@ export class PointsSpatialIndexLoader implements DataLoader, LoaderMonitor {
       // Clean up completed query
       this.activeQueries.delete(queryId);
 
+      // Cache the decoded slice (helper clones on store — the arrays alias
+      // the reused accumulator). Aborted loads throw and never reach here.
+      storeLadder(this.sliceCache, this.node.path, viewState, [result]);
       return result;
     } catch (error) {
       // A superseded scrub aborts the in-flight read on purpose; runLoaderUpdates

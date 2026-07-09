@@ -160,6 +160,37 @@ describe('createGSplatsLoader', () => {
   });
 });
 
+describe('sliceCache wiring (plain-leaf S-cache)', () => {
+  const sentinelCache = { kind: 'slice-cache' } as never;
+
+  it('plain factories forward deps.sliceCache as the 8th ctor arg (×3 symmetric)', () => {
+    const deps = { ...makeDeps(), sliceCache: sentinelCache };
+    createPointsLoader(makeNode('/p'), {} as never, deps);
+    createLinesLoader(makeNode('/l', 'lines'), {} as never, deps);
+    createGSplatsLoader(makeNode('/g', 'gsplats'), {} as never, deps);
+    // (loc, node, registry, store, profiler, l0, prefetcher, sliceCache)
+    expect(pointsCtorArgs[0][7]).toBe(sentinelCache);
+    expect(linesCtorArgs[0][7]).toBe(sentinelCache);
+    expect(gsplatsCtorArgs[0][7]).toBe(sentinelCache);
+  });
+
+  it('progressive factories do NOT hand the sliceCache to sub-LOD loaders (their wrapper owns the whole-ladder entry)', async () => {
+    const deps = { ...makeDeps(), sliceCache: sentinelCache };
+    await createProgressiveGSplatsLoader(
+      makeNode('/g', 'gsplats'),
+      2,
+      {} as SceneNode['attrs'],
+      deps
+    );
+    expect(gsplatsCtorArgs).toHaveLength(2);
+    for (const args of gsplatsCtorArgs) {
+      expect(args[7]).toBeUndefined();
+    }
+    // The WRAPPER still receives it (existing behavior, 5th ctor arg).
+    expect(progressiveCtorArgs[0][4]).toBe(sentinelCache);
+  });
+});
+
 describe('createProgressiveGSplatsLoader', () => {
   it('opens N additive sub-LOD subgroups and constructs N GSplatsSpatialIndexLoaders', async () => {
     const node = makeNode('/g', 'gsplats');

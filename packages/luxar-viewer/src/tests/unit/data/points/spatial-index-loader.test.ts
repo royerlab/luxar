@@ -8,6 +8,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { PointsSpatialIndexLoader, type ViewState, type SceneNode } from '../../../../data';
 import * as zarr from 'zarrita';
+import { SliceCache } from '../../../../cache/slice-cache';
 
 // Mock THREE.js using partial mock with importOriginal
 vi.mock('three', async (importOriginal) => {
@@ -755,6 +756,91 @@ describe('PointsSpatialIndexLoader', () => {
       expect((loader as any).chunkIndex).toBeNull();
       expect((loader as any).arrays).toEqual({});
       expect((loader as any).events.size).toBe(0);
+    });
+  });
+
+
+  // ────────────────────────────────────────────────────────────────
+  // Plain-leaf S-cache: a plain leaf caches its decoded slice as a
+  // 1-element ladder under the progressive loaders' key contract
+  // (restoreLadder/storeLadder). Symmetric block across the three
+  // spatial-index loader test files.
+  describe('plain-leaf S-cache', () => {
+    const hiddenDimView: ViewState = {
+      displayDims: [0, 1, 2],
+      slicePosition: [0, 0, 0, 5],
+      tolerance: [0, 0, 0, 0.25],
+    };
+    let sliceCache: SliceCache;
+    let cachedLoader: PointsSpatialIndexLoader;
+
+    beforeEach(() => {
+      sliceCache = new SliceCache({ maxSize: 8 * 1024 * 1024 });
+      cachedLoader = new PointsSpatialIndexLoader(
+        mockZarrLocation as unknown as ConstructorParameters<typeof PointsSpatialIndexLoader>[0],
+        mockNode,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        sliceCache
+      );
+    });
+
+    afterEach(() => {
+      cachedLoader?.dispose();
+    });
+
+    const gets = () => (zarr.get as unknown as ReturnType<typeof vi.fn>).mock.calls.length;
+
+    it('same-view revisits restore from the S-cache: same reference, zero new reads', async () => {
+      const first = await cachedLoader.loadPoints(hiddenDimView);
+      const readsAfterFirst = gets();
+
+      const second = await cachedLoader.loadPoints(hiddenDimView);
+      const third = await cachedLoader.loadPoints(hiddenDimView);
+
+      // Hits return the SAME cached payload object (feeds the downstream
+      // reference-identity no-op commit) and touch zarr not at all.
+      expect(third).toBe(second);
+      expect(second.pointCount).toBe(first.pointCount);
+      expect(gets()).toBe(readsAfterFirst);
+    });
+
+    it('a different slicePosition is a miss: loads fresh and stores a second entry', async () => {
+      await cachedLoader.loadPoints(hiddenDimView);
+      const readsAfterFirst = gets();
+
+      await cachedLoader.loadPoints({ ...hiddenDimView, slicePosition: [0, 0, 0, 6] });
+
+      expect(gets()).toBeGreaterThan(readsAfterFirst);
+      expect(sliceCache.getStats().count).toBe(2);
+    });
+
+    it('stores nothing when every dimension is displayed (single-slice view)', async () => {
+      await cachedLoader.loadPoints({
+        displayDims: [0, 1, 2],
+        slicePosition: [0, 0, 0],
+        tolerance: [0, 0, 0],
+      });
+      expect(sliceCache.getStats().count).toBe(0);
+    });
+
+    it('a failed (e.g. aborted) load stores nothing', async () => {
+      mockExecute.mockRejectedValueOnce(new DOMException('aborted', 'AbortError'));
+      await expect(cachedLoader.loadPoints(hiddenDimView)).rejects.toThrow();
+      expect(sliceCache.getStats().count).toBe(0);
+    });
+
+    it('the cached snapshot is a deep clone: post-store accumulator reuse cannot corrupt it', async () => {
+      const first = await cachedLoader.loadPoints(hiddenDimView);
+      // Simulate the loader's next pass overwriting the reused accumulator
+      // buffers that `first`'s arrays alias.
+      (first.positions as Float32Array).fill(999);
+
+      const second = await cachedLoader.loadPoints(hiddenDimView);
+      expect(second.positions[0]).toBe(0);
     });
   });
 

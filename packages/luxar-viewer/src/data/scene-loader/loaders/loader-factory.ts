@@ -96,7 +96,11 @@ export function createPointsLoader(
     deps.zarrStore,
     deps.profiler ?? undefined,
     deps.l0Cache ?? undefined,
-    deps.cachingStore?.getPrefetcher() ?? undefined
+    deps.cachingStore?.getPrefetcher() ?? undefined,
+    // Plain-leaf nodes cache their decoded slice in the S-cache as a
+    // 1-element ladder. Progressive sub-LOD loaders (created below) must
+    // NOT receive it — their wrapper owns the whole-ladder cache entry.
+    deps.sliceCache ?? undefined
   );
 }
 
@@ -115,7 +119,11 @@ export function createLinesLoader(
     deps.zarrStore,
     deps.profiler ?? undefined,
     deps.l0Cache ?? undefined,
-    deps.cachingStore?.getPrefetcher() ?? undefined
+    deps.cachingStore?.getPrefetcher() ?? undefined,
+    // Plain-leaf nodes cache their decoded slice in the S-cache as a
+    // 1-element ladder. Progressive sub-LOD loaders (created below) must
+    // NOT receive it — their wrapper owns the whole-ladder cache entry.
+    deps.sliceCache ?? undefined
   );
 }
 
@@ -134,7 +142,11 @@ export function createGSplatsLoader(
     deps.zarrStore,
     deps.profiler ?? undefined,
     deps.l0Cache ?? undefined,
-    deps.cachingStore?.getPrefetcher() ?? undefined
+    deps.cachingStore?.getPrefetcher() ?? undefined,
+    // Plain-leaf nodes cache their decoded slice in the S-cache as a
+    // 1-element ladder. Progressive sub-LOD loaders (created below) must
+    // NOT receive it — their wrapper owns the whole-ladder cache entry.
+    deps.sliceCache ?? undefined
   );
 }
 

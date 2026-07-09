@@ -3,6 +3,11 @@
  * Lines). Keeps the per-slice key, snapshot cloning, and lookup/store logic
  * identical across geometries so the loaders stay symmetric and can't drift.
  *
+ * Also used by the three PLAIN spatial-index loaders (plain-leaf nodes, no
+ * additive ladder): a plain leaf caches its decoded slice as a 1-element
+ * ladder under the same key contract, so plain and progressive nodes share
+ * one cache, one signature, and one clone/budget policy.
+ *
  * @module data/loaders/progressive/slice-cache-helper
  */
 
