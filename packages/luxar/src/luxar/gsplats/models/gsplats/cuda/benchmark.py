@@ -86,7 +86,7 @@ def benchmark_forward(
         # Warmup
         for _ in range(n_warmup):
             if use_amp:
-                with torch.amp.autocast("cuda"):  # type: ignore[attr-defined]
+                with torch.amp.autocast("cuda"):  # type: ignore[attr-defined, unused-ignore]
                     _ = model()
             else:
                 _ = model()
@@ -97,7 +97,7 @@ def benchmark_forward(
         start = time.perf_counter()
         for _ in range(n_iters):
             if use_amp:
-                with torch.amp.autocast("cuda"):  # type: ignore[attr-defined]
+                with torch.amp.autocast("cuda"):  # type: ignore[attr-defined, unused-ignore]
                     _ = model()
             else:
                 _ = model()
@@ -130,7 +130,7 @@ def benchmark_training(
     # Warmup with full forward+backward
     for _ in range(n_warmup):
         if use_amp:
-            with torch.amp.autocast("cuda"):  # type: ignore[attr-defined]
+            with torch.amp.autocast("cuda"):  # type: ignore[attr-defined, unused-ignore]
                 output = model()
                 loss = output.sum()
             loss.backward()
@@ -146,7 +146,7 @@ def benchmark_training(
     start = time.perf_counter()
     for _ in range(n_iters):
         if use_amp:
-            with torch.amp.autocast("cuda"):  # type: ignore[attr-defined]
+            with torch.amp.autocast("cuda"):  # type: ignore[attr-defined, unused-ignore]
                 output = model()
         else:
             output = model()
@@ -158,7 +158,7 @@ def benchmark_training(
     start = time.perf_counter()
     for _ in range(n_iters):
         if use_amp:
-            with torch.amp.autocast("cuda"):  # type: ignore[attr-defined]
+            with torch.amp.autocast("cuda"):  # type: ignore[attr-defined, unused-ignore]
                 output = model()
                 loss = output.sum()
             loss.backward()
