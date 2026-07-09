@@ -6,6 +6,43 @@ All notable changes to Luxar are documented in this file.
 
 ### July 2026
 
+#### Added — first-class background/floor suppression (`--floor`, on by default) + companion whole-volume auto-tiling
+
+- **Why**: a constant background pedestal / DC offset (camera offset,
+  autofluorescence, scattered light — ubiquitous in real microscopy) is the
+  worst case for a localized-Gaussian basis: the optimizer wastes splat capacity
+  tiling the background with low-amplitude "haze" or under-fits the real signal.
+  On the neuromast iSIM dataset a ~110-count pedestal held a naive fit at
+  18.5 dB PSNR; subtracting the floor lifted it to ~47 dB (+28.5 dB).
+- **`--floor auto|none|pN|<float>`** on `gsplat fit`, `cal`, and `batch-fit`,
+  **default `auto`** — histogram-mode estimate of the low-intensity bulk, capped
+  at the median so it can never eat real signal (a no-op on clean data with no
+  pedestal). The floor raises the effective `image_min` used in normalization,
+  so the pedestal clips to 0; output amplitudes are background-relative (the
+  subtracted level is recorded in fit stats / `gsplat info`, not added back).
+- **`cal`** subtracts the floor ONCE up front (not per-fit) so the fit target,
+  render, and held-out reference stay on one scale; K* is thus measured the same
+  way you will fit. `--floor none` reproduces the legacy hard-min numbers.
+- **Progressive fits** subtract the floor once up front and run every pass with
+  floor `none` (the residual chain is built against the subtracted volume, so
+  the pedestal is never reintroduced). Threaded through the parallel-tiled and
+  content-tiled worker commands too, so an explicit `--floor` is honored at scale.
+- **Companion auto-tiling fix**: `--tiling auto` now decides whole-volume vs
+  tiled from a total voxel budget (not any single dim > tile size), so small and
+  medium stacks fit whole-volume — eliminating the background tile seams that
+  independent per-tile pedestal fits produced.
+
+#### Added — k_knee "operating point" (point of diminishing returns) on the cal held-out curve
+
+- **Why**: `k_star` is the splat-budget anchor (the max K for a signal-limited
+  curve), but users also want the earlier knee where returns level off.
+- `HeldOutPeak` now reports `k_knee` (argmax for a clear peak, else the smallest
+  K within 0.3 dB of the max) plus supporting per-regime metadata; additive and
+  defaulted so older `cal.json` files hydrate cleanly (`k_knee` falls back to
+  `k_star`). `find_k_star`'s per-regime `k_star` selection is unchanged; a
+  last-step floor guards a flat-topped plateau from inflating a signal-limited
+  budget. The cal CLI prints the operating point when it differs from `k_star`.
+
 #### Fixed — adaptive DPR: sub-throttle distress verdict (heavy scenes no longer latch at native)
 
 - **Why**: on a heavy scene pinned at a uniform ~10 fps, the viewer's adaptive

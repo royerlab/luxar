@@ -681,6 +681,45 @@ def estimate_noise_floor(V: np.ndarray) -> NoiseFloor:
     )
 
 
+def estimate_floor(V: np.ndarray, method: str = "mode") -> float:
+    """Estimate the background pedestal / DC offset to subtract before fitting.
+
+    A constant background is the worst case for a localized Gaussian-splat
+    basis, so subtracting it before normalisation is the single
+    highest-leverage preprocessing step on real microscopy (see
+    ``docs/handoffs/floor-suppression-handoff.md``).
+
+    Parameters
+    ----------
+    V : np.ndarray
+        Input volume (any shape / dtype convertible to float).
+    method : {"mode", "percentile"}
+        ``"mode"`` (default): histogram mode of the low-intensity bulk (the
+        pedestal peak), capped at the median so an image that is *mostly*
+        signal can never have real signal subtracted. On clean data with no
+        pedestal ``mode ≈ min(V)`` → effectively a no-op → backward-compatible.
+        ``"percentile"``: the 10th intensity percentile (cheaper; matches the
+        :func:`_background_mad` threshold).
+
+    Notes
+    -----
+    Exact-zero voxels (masked / out-of-FOV padding) are excluded so padding
+    does not dominate the histogram.
+    """
+    Vf = V[V != 0.0] if np.any(V != 0.0) else V
+    if Vf.size == 0:
+        return float(np.min(V))
+    if method == "percentile":
+        return float(np.percentile(Vf, 10.0))
+    if method != "mode":
+        raise ValueError(f"estimate_floor: unknown method {method!r}")
+    hi = float(np.percentile(Vf, 95.0))
+    hist, edges = np.histogram(Vf[Vf <= hi], bins=512)
+    i = int(hist.argmax())
+    mode = 0.5 * (float(edges[i]) + float(edges[i + 1]))
+    return float(min(mode, float(np.median(Vf))))
+
+
 # =============================================================================
 # K-grid construction
 # =============================================================================
@@ -780,6 +819,46 @@ class HeldOutPeak:
     For ``plateau``: spread across the in-tolerance plateau.
     For ``signal_limited``: total dB rise across the sweep."""
 
+    # --- Operating point (point of diminishing returns) + supporting metadata ---
+    # These are additive and defaulted so older cal.json files hydrate cleanly.
+    k_knee: int = 0
+    """The point of diminishing returns, independent of the budget anchor
+    ``k_star`` and of the regime label: the interior argmax for a clear peak,
+    otherwise the smallest K within ``knee_margin_db`` of the maximum. For
+    ``peak`` and ``plateau`` this equals ``k_star``; for ``signal_limited`` it
+    is the (earlier) knee while ``k_star`` remains the last/max K used for the
+    splat budget. Defaults to 0; callers that predate this field should fall
+    back to ``k_star`` (``from_json`` does this)."""
+
+    knee_idx: int = -1
+    """Positional index of ``k_knee`` in the input ``k_values`` (−1 if unset)."""
+
+    drop_after_peak_db: float = 0.0
+    """Held-out PSNR at the last K minus the peak (≤ 0; its magnitude is the
+    post-peak overfitting drop for a ``peak`` curve)."""
+
+    tail_rise_db: float = 0.0
+    """Mean per-step held-out rise over the trailing run of adjacent finite K
+    (the still-climbing discriminator; ≥ 0.1 dB drives ``signal_limited``)."""
+
+    plateau_spread_db: float = 0.0
+    """Peak minus the smallest held-out value among K within
+    ``knee_margin_db`` of the maximum (how flat the in-tolerance top is)."""
+
+    total_rise_db: float = 0.0
+    """Peak minus the first finite held-out value (total climb across the sweep)."""
+
+    still_climbing: bool = False
+    """True when the curve is signal-limited: argmax at the last K, total rise
+    across the sweep ≥ ``knee_margin_db`` (0.3 dB), the trailing tail still
+    rising ≥ 0.1 dB/step on average, and the final step ≥ 0.05 dB. ``k_star`` is
+    then the last K (budget anchor); ``k_knee`` may still be an earlier K when
+    one is already within ``knee_margin_db`` of the maximum, and equals the last
+    K only when no earlier K is that close."""
+
+    knee_margin_db: float = 0.3
+    """The dB tolerance used to locate the knee / plateau onset."""
+
 
 def find_k_star(
     k_values: Sequence[int],
@@ -794,12 +873,22 @@ def find_k_star(
        the argmax.
     2. **Signal-limited**: the argmax is the last K, the curve rose by
        ≥ 0.3 dB across the sweep, AND it is *still climbing at the top*
-       (the last finite step is ≥ 0.1 dB). Return the last K. The tail
-       check stops a flat-topped plateau (whose noisy max lands on the
+       (mean rise over the trailing run of adjacent finite steps ≥ 0.1 dB
+       AND the single final step ≥ 0.05 dB). Return the last K. The tail
+       checks stop a flat-topped plateau (whose noisy max lands on the
        last K) from being misread as signal-limited.
     3. **Plateau**: otherwise. Return the smallest K within 0.3 dB of the
        maximum — the onset of diminishing returns.
+
+    The returned :class:`HeldOutPeak` reports both ``k_star`` (the budget
+    anchor above — max K for ``signal_limited``) and ``k_knee`` (the point of
+    diminishing returns: the argmax for a clear peak, else the knee), plus
+    supporting per-regime metadata. ``k_knee`` equals ``k_star`` for ``peak``
+    and ``plateau`` and is the earlier knee for ``signal_limited``; it is the
+    field to use when a single "reasonable operating point" is wanted
+    regardless of regime.
     """
+    knee_margin_db = 0.3
     k_arr = np.asarray(list(k_values), dtype=int)
     psnr_arr = np.asarray(list(held_out_psnr_values), dtype=float)
     if k_arr.size != psnr_arr.size:
@@ -817,39 +906,33 @@ def find_k_star(
     argmax = int(np.argmax(np.where(finite, psnr_arr, -np.inf)))
     peak = float(psnr_arr[argmax])
 
-    # 1. Peak
-    pre = psnr_arr[:argmax]
-    post = psnr_arr[argmax + 1 :]
-    pre_finite = pre[np.isfinite(pre)]
-    post_finite = post[np.isfinite(post)]
-    if pre_finite.size > 0 and post_finite.size > 0:
-        pre_gap = peak - float(np.mean(pre_finite))
-        post_gap = peak - float(np.mean(post_finite))
-        if pre_gap >= 0.1 and post_gap >= 0.1:
-            sorted_psnr = np.sort(psnr_arr[finite])
-            margin = (
-                float(sorted_psnr[-1] - sorted_psnr[-2])
-                if sorted_psnr.size >= 2
-                else float(peak)
-            )
-            return HeldOutPeak(
-                k_star=int(k_arr[argmax]),
-                type="peak",
-                confidence_db=margin,
-            )
-
-    # 2. Signal-limited: argmax is the last K, the curve rose meaningfully overall,
-    #    AND it is still climbing at the top (the last finite step is not flat).
-    #    The tail check prevents a flat-topped *plateau* whose noisy maximum merely
-    #    lands on the last K from being mislabelled signal-limited — which would also
-    #    inflate any K*-derived splat density (observed on deconvolved tile cal).
+    # --- Common curve metadata (computed once, attached to every regime) ---
     fin_idx = np.flatnonzero(finite)
     first_finite_psnr = float(psnr_arr[fin_idx[0]])
+    last_finite_psnr = float(psnr_arr[fin_idx[-1]])
+    total_rise = peak - first_finite_psnr
+    drop_after_peak = last_finite_psnr - peak  # ≤ 0
+
+    # Knee = smallest K within ``knee_margin_db`` of the max (always well-defined;
+    # the argmax itself qualifies). This is the plateau/diminishing-returns onset.
+    above_idx = np.where(np.where(finite, psnr_arr, -np.inf) >= peak - knee_margin_db)[
+        0
+    ]
+    knee_idx = int(above_idx[0])
+    plateau_spread = float(
+        peak - psnr_arr[above_idx][np.isfinite(psnr_arr[above_idx])].min()
+    )
+
     # "Still climbing at the top" = mean per-step rise over the trailing run of
     # *adjacent* finite K's (up to 3 steps). Adjacency guards against a NaN/inf gap
     # reading as a climb (M1); averaging guards against a single sub-0.1 dB final
-    # step demoting a steadily-climbing curve to plateau (M2).
+    # step demoting a steadily-climbing curve to plateau (M2). ``last_step`` is the
+    # single final inter-sample step: it prevents an earlier large step from
+    # carrying the averaged ``tail_rise`` over threshold when the curve has in fact
+    # gone flat at the very top (M3) — which would otherwise mislabel a narrow
+    # flat-topped plateau as ``signal_limited`` and inflate the K*-derived budget.
     tail_rise = 0.0
+    last_step = 0.0
     if fin_idx.size >= 2 and int(fin_idx[-1] - fin_idx[-2]) == 1:
         run = [int(fin_idx[-1])]
         for j in range(fin_idx.size - 2, -1, -1):
@@ -858,26 +941,69 @@ def find_k_star(
             else:
                 break
         seg = psnr_arr[np.array(sorted(run))]
-        tail_rise = float(np.mean(np.diff(seg))) if seg.size >= 2 else 0.0
-    if argmax == n - 1 and (peak - first_finite_psnr) >= 0.3 and tail_rise >= 0.1:
+        if seg.size >= 2:
+            tail_rise = float(np.mean(np.diff(seg)))
+            last_step = float(seg[-1] - seg[-2])
+
+    # --- Clear interior peak? (both flanks ≥ 0.1 dB below the peak) ---
+    pre = psnr_arr[:argmax]
+    post = psnr_arr[argmax + 1 :]
+    pre_finite = pre[np.isfinite(pre)]
+    post_finite = post[np.isfinite(post)]
+    is_clear_peak = (
+        pre_finite.size > 0
+        and post_finite.size > 0
+        and (peak - float(np.mean(pre_finite))) >= 0.1
+        and (peak - float(np.mean(post_finite))) >= 0.1
+    )
+    # last-step floor (0.05 dB) is half the 0.1 dB per-step "worth it" bar: the
+    # final doubling must itself still deliver a non-trivial gain, so a flat top
+    # after an earlier steep climb reads as a plateau, not signal-limited.
+    still_climbing = (
+        argmax == n - 1
+        and total_rise >= knee_margin_db
+        and tail_rise >= 0.1
+        and last_step >= 0.05
+    )
+
+    # ``k_knee`` = the point of diminishing returns (replicates the manuscript's
+    # ``find_cv_optimal_idx``): the argmax for a clear peak, else the knee. It is
+    # decoupled from both the regime label and the budget anchor ``k_star``.
+    knee_operating_idx = argmax if is_clear_peak else knee_idx
+
+    def _build(k_star_idx: int, kind: str, confidence: float) -> HeldOutPeak:
         return HeldOutPeak(
-            k_star=int(k_arr[-1]),
-            type="signal_limited",
-            confidence_db=float(peak - first_finite_psnr),
+            k_star=int(k_arr[k_star_idx]),
+            type=kind,  # type: ignore[arg-type]
+            confidence_db=float(confidence),
+            k_knee=int(k_arr[knee_operating_idx]),
+            knee_idx=int(knee_operating_idx),
+            drop_after_peak_db=float(drop_after_peak),
+            tail_rise_db=float(tail_rise),
+            plateau_spread_db=float(plateau_spread),
+            total_rise_db=float(total_rise),
+            still_climbing=bool(still_climbing),
+            knee_margin_db=float(knee_margin_db),
         )
 
-    # 3. Plateau
-    threshold = peak - 0.3
-    above_idx = np.where(np.where(finite, psnr_arr, -np.inf) >= threshold)[0]
-    smallest_above = int(above_idx[0])
-    plateau_spread = float(
-        peak - psnr_arr[above_idx][np.isfinite(psnr_arr[above_idx])].min()
-    )
-    return HeldOutPeak(
-        k_star=int(k_arr[smallest_above]),
-        type="plateau",
-        confidence_db=plateau_spread,
-    )
+    # 1. Peak — clear interior maximum; k_star = k_knee = argmax.
+    if is_clear_peak:
+        sorted_psnr = np.sort(psnr_arr[finite])
+        margin = (
+            float(sorted_psnr[-1] - sorted_psnr[-2])
+            if sorted_psnr.size >= 2
+            else float(peak)
+        )
+        return _build(argmax, "peak", margin)
+
+    # 2. Signal-limited — argmax at last K, rose meaningfully, still climbing.
+    #    k_star = last/max K (the budget anchor a still-detail-limited tile needs),
+    #    while k_knee is the (earlier) diminishing-returns knee.
+    if still_climbing:
+        return _build(n - 1, "signal_limited", total_rise)
+
+    # 3. Plateau — flat top; k_star = k_knee = knee.
+    return _build(knee_idx, "plateau", plateau_spread)
 
 
 # =============================================================================
@@ -1211,12 +1337,25 @@ class CalibrationResult:
         def _hydrate_float_list(xs: List[Any]) -> List[float]:
             return [float("nan") if x is None else float(x) for x in xs]
 
-        peak_raw = raw["held_out_peak"]
-        peak = HeldOutPeak(
-            k_star=int(peak_raw["k_star"]),
-            type=peak_raw["type"],
-            confidence_db=float(peak_raw["confidence_db"]),
-        )
+        def _peak_from(d: dict) -> HeldOutPeak:
+            # Additive fields hydrate with defaults; k_knee falls back to k_star
+            # for cal.json written before the operating-point fields existed.
+            k_star = int(d["k_star"])
+            return HeldOutPeak(
+                k_star=k_star,
+                type=d["type"],
+                confidence_db=float(d["confidence_db"]),
+                k_knee=int(d.get("k_knee", k_star) or k_star),
+                knee_idx=int(d.get("knee_idx", -1)),
+                drop_after_peak_db=float(d.get("drop_after_peak_db", 0.0)),
+                tail_rise_db=float(d.get("tail_rise_db", 0.0)),
+                plateau_spread_db=float(d.get("plateau_spread_db", 0.0)),
+                total_rise_db=float(d.get("total_rise_db", 0.0)),
+                still_climbing=bool(d.get("still_climbing", False)),
+                knee_margin_db=float(d.get("knee_margin_db", 0.3)),
+            )
+
+        peak = _peak_from(raw["held_out_peak"])
         nf_raw = raw["noise_floor"]
         nf = NoiseFloor(
             sigma_hat=float(nf_raw["sigma_hat"])
@@ -1236,15 +1375,7 @@ class CalibrationResult:
             else float("inf"),
         )
         sel_raw = raw.get("held_out_peak_selected")
-        peak_selected = (
-            HeldOutPeak(
-                k_star=int(sel_raw["k_star"]),
-                type=sel_raw["type"],
-                confidence_db=float(sel_raw["confidence_db"]),
-            )
-            if sel_raw
-            else None
-        )
+        peak_selected = _peak_from(sel_raw) if sel_raw else None
         baseline = raw.get("predict_zero_baseline_mse")
         return cls(
             k_values_requested=[int(x) for x in raw["k_values_requested"]],
@@ -1364,6 +1495,36 @@ def calibrate(
     fit_kwargs.pop("seeds", None)
     # cv runs many fits — keep their internal logging quiet by default
     fit_kwargs.setdefault("verbose", False)
+
+    # Background floor / DC-offset suppression: subtract ONCE from V so the fit
+    # target, the render reference, AND the held-out truth are all on the same
+    # floor-suppressed scale. (A per-fit floor would subtract only inside each
+    # fit, mismatching the raw held-out reference and tanking the PSNR.) Default
+    # is on ("auto"); K* is thus measured the same way you will fit. See
+    # docs/handoffs/floor-suppression-handoff.md.
+    from luxar.gsplats.fitting.preprocessing import _resolve_floor
+    from luxar.gsplats.fitting.validation import _validate_floor
+
+    floor_spec = fit_kwargs.pop("floor", "auto")
+    _validate_floor(floor_spec)  # cal bypasses prepare_fit_config's validation
+    applied_floor = _resolve_floor(V, floor_spec)
+    # A floor at/above the brightest voxel would clip the whole volume to 0
+    # (empty signal → non-finite held-out PSNR). Refuse it, mirroring the
+    # single-pass guard in _normalize_data. `auto` can't trigger this (mode is
+    # capped at the median); only an explicit too-high float/percentile can.
+    if applied_floor is not None and applied_floor >= float(V.max()):
+        import warnings
+
+        warnings.warn(
+            f"floor {applied_floor:.6g} >= volume max {float(V.max()):.6g}; "
+            "ignoring (would erase all signal).",
+            stacklevel=2,
+        )
+        applied_floor = None
+    if applied_floor is not None:
+        V = np.clip(V.astype(np.float32, copy=False) - applied_floor, 0.0, None)
+    # V is already floor-subtracted; the per-K fits must not subtract again.
+    fit_kwargs["floor"] = "none"
 
     if keep_fits is not None:
         keep_fits = Path(keep_fits)
@@ -1510,9 +1671,10 @@ def calibrate(
     if str(render_device).startswith("cuda"):
         torch.cuda.empty_cache()
 
-    # 4. Noise floor (on the original volume; needs [0, 1] for the PSNR ceiling
-    # to be meaningful — the manuscript and fit_gaussian_splats both work in
-    # that range, so we pre-normalise)
+    # 4. Noise floor (on the calibrated volume — floor-subtracted above if a
+    # floor was applied, i.e. the same scale the fits and K* use; needs [0, 1]
+    # for the PSNR ceiling to be meaningful — the manuscript and
+    # fit_gaussian_splats both work in that range, so we pre-normalise)
     Vn = V.astype(np.float32, copy=False)
     vmin = float(Vn.min())
     vmax = float(Vn.max())
@@ -1598,7 +1760,10 @@ def calibrate(
         mask_seed=mask_seed,
         mask_fraction=mask_fraction,
         donut_radius=donut_radius,
-        fit_config={k: v for k, v in fit_kwargs.items() if _json_safe(v)},
+        fit_config={
+            **{k: v for k, v in fit_kwargs.items() if _json_safe(v)},
+            "floor_subtracted": applied_floor,
+        },
         volume_shape=list(V.shape),
         volume_dtype=str(V.dtype),
         timestamp=datetime.now(timezone.utc).isoformat(),

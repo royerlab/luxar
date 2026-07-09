@@ -258,6 +258,32 @@ class TestPrepareConfig:
             prepare_fit_config(fitter, V, seeds=-0.1)
 
 
+class TestFloorValidation:
+    """Tests for the ``floor`` (background suppression) parameter."""
+
+    def test_default_floor_is_auto(self) -> None:
+        fitter = MockGaussianSplatFitter()
+        V = np.random.rand(16, 16).astype(np.float32)
+        config = prepare_fit_config(fitter, V)
+        assert config.floor == "auto"
+
+    @pytest.mark.parametrize("value", ["auto", "none", "p10", "0.5", 0.5, 0, None])
+    def test_valid_floor_values_accepted(self, value) -> None:
+        fitter = MockGaussianSplatFitter()
+        V = np.random.rand(16, 16).astype(np.float32)
+        config = prepare_fit_config(fitter, V, floor=value)
+        assert config.floor == value
+
+    @pytest.mark.parametrize(
+        "value", ["-1", "pX", "abc", -2.0, float("nan"), float("inf"), "nan", "inf"]
+    )
+    def test_invalid_floor_values_rejected(self, value) -> None:
+        fitter = MockGaussianSplatFitter()
+        V = np.random.rand(16, 16).astype(np.float32)
+        with pytest.raises(ValueError):
+            prepare_fit_config(fitter, V, floor=value)
+
+
 class TestBoundaryPenaltyValidation:
     """Tests for boundary_penalty parameter validation."""
 

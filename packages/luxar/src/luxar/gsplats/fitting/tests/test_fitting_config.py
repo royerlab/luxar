@@ -101,6 +101,7 @@ class TestFitConfig:
         # Fields with default values
         assert config.use_metal is True
         assert config.use_cuda is True
+        assert config.floor == "auto"
         assert config.seed_method == "auto"
         assert config.seed_kwargs is None
         assert config.init_L is None
@@ -308,6 +309,7 @@ class TestPreprocessedData:
         assert data.rel_l2_target is None
         assert data.l1_amp is None
         assert data.l1_diag is None
+        assert data.floor is None
         assert data.init_L is None
         assert data.init_amps is None
         assert data.downscale_factors is None

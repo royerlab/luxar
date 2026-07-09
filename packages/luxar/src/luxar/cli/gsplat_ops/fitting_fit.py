@@ -84,6 +84,15 @@ def run_fit_volume(
     ),
     # Frequently used fit params
     lr: Optional[float] = typer.Option(None, "--lr", help="Learning rate"),
+    floor: Optional[str] = typer.Option(
+        None,
+        "--floor",
+        help="Background floor / DC-offset suppression before normalization "
+        "(default: auto). auto = histogram-mode estimate (capped at median; "
+        "no-op on clean data) | pN = Nth percentile (e.g. p10) | <float> = "
+        "fixed value | none = disable (hard-min normalization). Unset lets a "
+        "`floor:` in --config/preset apply, else defaults to auto.",
+    ),
     seed_method: Optional[str] = typer.Option(
         None, "--seed-method", help="Seed generation method"
     ),
@@ -603,6 +612,7 @@ def run_fit_volume(
                     iters=iters,
                     loss=loss,
                     lr=lr,
+                    floor=floor,
                     cull_retention=cull_retention,
                     device=device,
                     jobs=jobs,
@@ -694,6 +704,7 @@ def run_fit_volume(
                 "device": device,
                 "loss_type": loss,
                 "lr": lr,
+                "floor": floor,
                 "seed_method": seed_method,
                 "verbose": verbose,
                 "cull_retention": cull_retention,
@@ -820,6 +831,7 @@ def run_fit_volume(
                             config=config,
                             loss=loss,
                             lr=lr,
+                            floor=floor,
                             seed_method=seed_method,
                             downscale=ds_arg,
                             channel=channel,

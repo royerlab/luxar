@@ -149,10 +149,17 @@ The fitting pipeline orchestrates the entire process of fitting n-dimensional Ga
 **Key Function:** `preprocess_data(config: FitConfig) -> PreprocessedData`
 
 **Operations:**
-1. **Normalization**: Converts input to [0, 1] range (percentile-based or full range)
-2. **Seed Generation**: Creates initial splat positions (auto or user-provided)
-3. **L1 Regularization Defaults**: Sets proportional defaults based on base learning rate and parameter type multipliers
-4. **Convergence Threshold**: Sets sensible default if not specified
+1. **Background floor suppression** (`config.floor`, default `"auto"`): subtracts a
+   constant background pedestal / DC offset before normalization by raising the
+   effective `image_min` (`_resolve_floor` → `estimate_floor`). `auto` = capped
+   histogram mode (a no-op on clean data), `pN` = Nth percentile, `<float>` =
+   fixed, `none` = disabled. The subtracted level is recorded on
+   `PreprocessedData.floor`; it is NOT added back (output amplitudes are
+   background-relative).
+2. **Normalization**: Converts input to [0, 1] range (floor/percentile-based or full range)
+3. **Seed Generation**: Creates initial splat positions (auto or user-provided)
+4. **L1 Regularization Defaults**: Sets proportional defaults based on base learning rate and parameter type multipliers
+5. **Convergence Threshold**: Sets sensible default if not specified
 
 **Key Insight:** L1 regularization is proportional to learning rate for consistent sparsity pressure across different learning rate choices.
 

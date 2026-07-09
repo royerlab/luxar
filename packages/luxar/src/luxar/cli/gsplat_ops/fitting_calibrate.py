@@ -24,6 +24,7 @@ def run_calibrate_command(
     mask_fraction: float,
     preset: str,
     config: Optional[Path],
+    floor: Optional[str],
     device: Optional[str],
     channel: Optional[int],
     timepoint: Optional[int],
@@ -110,7 +111,7 @@ def run_calibrate_command(
             fit_kwargs = load_fit_config(
                 preset=preset,
                 config_path=config,
-                cli_overrides={"device": device},
+                cli_overrides={"device": device, "floor": floor},
             )
             # Calibration runs many fits — keep them quiet
             fit_kwargs["verbose"] = False
@@ -340,6 +341,14 @@ def run_calibrate_command(
                 f"(metric: {result.k_star_metric}, type: {selected_peak.type}, "
                 f"confidence: {selected_peak.confidence_db:.2f} dB)"
             )
+            # Operating point (point of diminishing returns) — equals K* for peak/
+            # plateau; for a signal-limited curve it is the earlier knee (K* stays
+            # the max-K budget anchor).
+            if selected_peak.k_knee and selected_peak.k_knee != selected_peak.k_star:
+                aprint(
+                    f"    operating point (diminishing returns) = "
+                    f"{selected_peak.k_knee:,} splats"
+                )
             if result.held_out_peak_selected is not None:
                 aprint(
                     f"    (psnr_minmax K* = {result.held_out_peak.k_star:,}, "

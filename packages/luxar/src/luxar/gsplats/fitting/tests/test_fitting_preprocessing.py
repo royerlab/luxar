@@ -34,6 +34,7 @@ def mock_config_2d():
         V=V,
         seeds=centers,
         norm_percentile=0.0,
+        floor="none",  # tests opt in to floor explicitly; default here = old behavior
         init_sigma_vox=1.5,
         sigma_min_diag=[0.1, 0.1],
         sigma_max_diag=None,
@@ -128,6 +129,62 @@ class TestPreprocessData:
         # Should not use the extreme values
         assert result.image_min != 0.0
         assert result.image_max != 10.0
+
+    def test_floor_auto_subtracts_pedestal(self, mock_config_2d) -> None:
+        """`floor='auto'` maps a background pedestal to 0 and keeps the peak."""
+        rng = np.random.default_rng(0)
+        V = np.full((40, 40), 110.0, np.float32)
+        V += rng.normal(0, 1.0, V.shape).astype(np.float32)
+        V[18:22, 18:22] += 400.0  # bright signal blob
+        mock_config_2d.V = V
+        mock_config_2d.floor = "auto"
+
+        result = preprocess_data(mock_config_2d)
+
+        # image_min lands on the pedestal (~110), not the hard min.
+        assert result.image_min == pytest.approx(110.0, abs=3.0)
+        assert result.floor == pytest.approx(result.image_min, abs=1e-6)
+        # Most of the background maps to 0; the peak is preserved at ~1.
+        assert float((result.V_normalized < 1e-6).mean()) > 0.3
+        assert result.V_normalized.max() == pytest.approx(1.0, abs=1e-6)
+
+    def test_floor_none_reproduces_hard_min(self, mock_config_2d) -> None:
+        """`floor='none'` reproduces the historical hard-min normalization."""
+        V = np.array([[0.1, 0.5], [0.3, 0.9]], dtype=np.float32)
+        mock_config_2d.V = V
+        mock_config_2d.norm_percentile = 0.0
+        mock_config_2d.floor = "none"
+
+        result = preprocess_data(mock_config_2d)
+
+        assert result.image_min == pytest.approx(0.1, abs=1e-6)
+        assert result.floor is None
+
+    def test_floor_fixed_value(self, mock_config_2d) -> None:
+        """A fixed float floor sets image_min directly."""
+        V = np.linspace(0.0, 1.0, 400, dtype=np.float32).reshape(20, 20)
+        mock_config_2d.V = V
+        mock_config_2d.floor = 0.25
+
+        result = preprocess_data(mock_config_2d)
+
+        assert result.image_min == pytest.approx(0.25, abs=1e-6)
+        assert result.floor == pytest.approx(0.25, abs=1e-6)
+
+    def test_floor_above_max_is_ignored(self, mock_config_2d) -> None:
+        """A floor >= image max would erase all signal — it is refused, not
+        applied (no degenerate uniform-0.5 volume)."""
+        V = np.linspace(0.0, 100.0, 400, dtype=np.float32).reshape(20, 20)
+        mock_config_2d.V = V
+        mock_config_2d.floor = 500.0  # above the data max
+
+        result = preprocess_data(mock_config_2d)
+
+        assert result.floor is None  # floor not applied
+        assert result.image_min == pytest.approx(0.0, abs=1e-6)  # default hard-min
+        # Real dynamic range preserved (not collapsed to a constant 0.5).
+        assert result.V_normalized.max() == pytest.approx(1.0, abs=1e-6)
+        assert result.V_normalized.min() == pytest.approx(0.0, abs=1e-6)
 
     def test_uniform_image_handling(self, mock_config_2d) -> None:
         """Test handling of nearly uniform images."""

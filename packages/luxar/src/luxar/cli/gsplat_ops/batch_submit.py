@@ -122,6 +122,13 @@ def run_batch_submit(
     # Fit params
     preset: str = typer.Option("standard", "--preset", help="Fitting preset"),
     config: Optional[Path] = typer.Option(None, "--config", help="YAML fit config"),
+    floor: Optional[str] = typer.Option(
+        None,
+        "--floor",
+        help="Background floor / DC-offset suppression per tile (default: "
+        "auto): auto | pN | <float> | none. Unset lets a `floor:` in "
+        "--config apply, else defaults to auto. See `gsplat fit --help`.",
+    ),
     seeds: Optional[str] = typer.Option(None, "--seeds", help="Seed count or ratio"),
     iters: Optional[int] = typer.Option(
         None, "--iters", "-n", help="Max optimization iterations (overrides preset)"
@@ -532,6 +539,7 @@ def run_batch_submit(
             seeds=seeds,
             iters=iters,
             config=config,
+            floor=floor,
             progressive=batch_progressive,
             splats_per_pass=batch_splats_per_pass,
             psnr_patience=batch_psnr_patience,

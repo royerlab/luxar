@@ -13,6 +13,7 @@ import time
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, Optional
 
+import numpy as np
 import typer
 from arbol import aprint, asection
 
@@ -62,6 +63,7 @@ def run_content_fit(
     iters: Optional[int] = None,
     loss: Optional[str] = None,
     lr: Optional[float] = None,
+    floor: Optional[str] = None,
     cull_retention: Optional[float] = None,
     device: Optional[str] = None,
     jobs: str = "1",
@@ -121,6 +123,7 @@ def run_content_fit(
                 "n_iters": iters,
                 "loss_type": loss,
                 "lr": lr,
+                "floor": floor,
             },
         )
         fk.pop("seeds", None)
@@ -195,9 +198,25 @@ def run_content_fit(
                 "will be mis-scaled. Use matching metrics."
             )
         with asection("Scanning content + planning"):
+            from luxar.gsplats.fitting.preprocessing import _resolve_floor
+
             t0 = time.perf_counter()
+            # Scan the SAME floor-suppressed volume the boxes will fit: cal
+            # records `density.feature_threshold` on the floor-subtracted volume,
+            # so scanning the raw (pedestal-carrying) volume would count the whole
+            # background as signal and flatten the content field. Subtract the
+            # fit's own floor here so the scan scale matches the calibration.
+            scan_vol = vol
+            # `floor=None` means "not overridden" — the per-box worker then
+            # defaults to "auto", so the scan must resolve "auto" too (matching
+            # what the boxes will actually fit).
+            scan_floor = _resolve_floor(vol, "auto" if floor is None else floor)
+            if scan_floor is not None:
+                scan_vol = np.clip(
+                    np.asarray(vol, dtype=np.float32) - scan_floor, 0.0, None
+                )
             fitplan = plan_volume(
-                vol,
+                scan_vol,
                 density,
                 feature_method=scan_metric,
                 cell=cell,
@@ -265,6 +284,7 @@ def run_content_fit(
             plan_json_path,
             preset=preset or "standard",
             device=device,
+            floor=floor,
             channel=channel,
             timepoint=timepoint,
             array_key=array_key,

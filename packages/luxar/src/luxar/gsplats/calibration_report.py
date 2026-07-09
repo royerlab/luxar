@@ -37,6 +37,22 @@ def _safe_log_x(ax: "Axes") -> None:
     ax.grid(True, which="both", linestyle="--", alpha=0.3)
 
 
+def _knee_display_idx(result: CalibrationResult) -> Optional[int]:
+    """Index of the operating point (``k_knee``) in the sweep, or None.
+
+    Returns None when the knee coincides with ``k_star`` (peak/plateau, or
+    legacy cal.json hydrated with the fallback) — the report then shows only
+    the K* marker, mirroring the CLI which prints the operating point only
+    when it differs.
+    """
+    peak = result.held_out_peak
+    if not peak.k_knee or peak.k_knee == peak.k_star:
+        return None
+    if peak.k_knee not in result.k_values_requested:
+        return None
+    return result.k_values_requested.index(peak.k_knee)
+
+
 def _plot_rate_distortion(
     fig: "Figure",
     ax_psnr: "Axes",
@@ -79,6 +95,17 @@ def _plot_rate_distortion(
         zorder=10,
         label=f"K*={k_star:,}",
     )
+    knee_idx = _knee_display_idx(result)
+    if knee_idx is not None:
+        ax_psnr.plot(
+            ks[knee_idx],
+            held[knee_idx],
+            marker="D",
+            color="C6",
+            markersize=10,
+            zorder=9,
+            label=f"knee={result.held_out_peak.k_knee:,}",
+        )
     _safe_log_x(ax_psnr)
     ax_psnr.set_xlabel("Effective splat count K")
     ax_psnr.set_ylabel("PSNR (dB)")
@@ -152,6 +179,17 @@ def _plot_blind_spot(fig: "Figure", ax: "Axes", result: CalibrationResult) -> No
         zorder=10,
         label=f"K* = {k_star:,} ({result.held_out_peak.type})",
     )
+    knee_idx = _knee_display_idx(result)
+    if knee_idx is not None:
+        ax.plot(
+            ks[knee_idx],
+            held[knee_idx],
+            marker="D",
+            color="C6",
+            markersize=12,
+            zorder=9,
+            label=f"operating point (knee) = {result.held_out_peak.k_knee:,}",
+        )
     _safe_log_x(ax)
     ax.set_xlabel("Effective splat count K")
     ax.set_ylabel("PSNR (dB)")
@@ -314,6 +352,8 @@ def render_calibration_report(
             f"K* = {result.held_out_peak.k_star:,} "
             f"(type: {result.held_out_peak.type})"
         )
+        if _knee_display_idx(result) is not None:
+            suptitle += f" — operating point = {result.held_out_peak.k_knee:,}"
         fig.suptitle(suptitle, fontsize=12)
         _plot_rate_distortion(
             fig,
@@ -336,6 +376,13 @@ def render_calibration_report(
             f"K* = {result.held_out_peak.k_star:,}  "
             f"(type: {result.held_out_peak.type}, "
             f"confidence: {result.held_out_peak.confidence_db:.2f} dB)\n"
+        )
+        if _knee_display_idx(result) is not None:
+            annotation += (
+                f"operating point (diminishing returns) = "
+                f"{result.held_out_peak.k_knee:,} splats\n"
+            )
+        annotation += (
             f"σ̂ = {nf.sigma_hat:.4f}, "
             f"ceiling = {'>60' if math.isinf(nf.psnr_max_db) else f'{nf.psnr_max_db:.1f}'} dB"
         )

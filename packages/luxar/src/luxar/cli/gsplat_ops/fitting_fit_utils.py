@@ -17,14 +17,24 @@ if TYPE_CHECKING:
     pass
 
 
+# Whole-volume voxel budget for ``--tiling auto``: below this a volume fits
+# whole (no tiling), avoiding spurious tile seams on small/medium stacks. ~4x a
+# 256^3 tile — a 28M-voxel neuromast stack fits whole; gigavoxel volumes tile.
+_AUTO_WHOLE_VOLUME_VOXELS = 64_000_000
+
+
 def resolve_tiling(
     tiling: str, shape: "tuple[int, ...]", tile_size: int, has_density: bool
 ) -> str:
     """Resolve ``--tiling`` to a concrete strategy: ``none | uniform | content``.
 
-    ``auto`` fits the whole volume when it fits in a single tile, else uniform —
-    or content when a transferable density (``--cal`` / ``--k-star-ref`` / a
-    ``--plan`` / ``--plan-box``) is available to size content-balanced boxes.
+    ``auto`` fits the whole volume unless it is genuinely large — i.e. some
+    dimension exceeds ``tile_size`` AND the total voxel count exceeds
+    :data:`_AUTO_WHOLE_VOLUME_VOXELS`. A single dim over ``tile_size`` is not
+    enough on its own (that needlessly tiled small stacks and produced visible
+    background seams). When tiling IS selected, ``content`` is used when a
+    transferable density (``--cal`` / ``--k-star-ref`` / ``--plan``) is
+    available, else ``uniform``.
     """
     t = tiling.lower()
     if t not in ("auto", "none", "uniform", "content"):
@@ -33,7 +43,11 @@ def resolve_tiling(
         )
     if t != "auto":
         return t
-    large = any(int(s) > int(tile_size) for s in shape)
+    n_voxels = 1
+    for s in shape:
+        n_voxels *= int(s)
+    exceeds_dim = any(int(s) > int(tile_size) for s in shape)
+    large = exceeds_dim and n_voxels > _AUTO_WHOLE_VOLUME_VOXELS
     if not large:
         return "none"
     return "content" if has_density else "uniform"
