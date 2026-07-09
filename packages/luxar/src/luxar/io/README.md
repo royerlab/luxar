@@ -84,9 +84,10 @@ with LuxarZarrCompiler(
     complement, then a conservative value-based auto-detect (`detect_barrier_dims`,
     strict integer + low-cardinality) only for provenance-less standalone files.
 - **Dimension-aware spatial indexing**: Optimized for time-series and nD slicing
-  - Step-aware padding for tight discrete/barrier bounds (categorical axes get
-    tight ±0.5 bounds, no σ/radius expansion — a splat at time=0 never extends
-    into time=1's chunk bounds)
+  - Tight discrete/barrier bounds (categorical axes get exact-value bounds
+    padded only by a float-boundary epsilon `_BARRIER_BOUND_EPS`, no σ/radius
+    expansion — a splat at time=0 never extends into time=1's chunk bounds;
+    the reader's per-dimension query tolerance owns the reach)
   - Smart chunk sizing (smaller chunks for animated data)
   - ~7× performance improvement for time-animated Lines; barrier-aware GSplat
     ordering makes per-timepoint reads hit the ideal ~1/T of chunks (vs a

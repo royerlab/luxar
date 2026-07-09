@@ -1003,8 +1003,7 @@ def compute_segment_chunk_bounds(
             if d in discrete_dims:
                 # Discrete: no width expansion, only a float-boundary epsilon.
                 # The reader's per-dimension tolerance owns the query reach
-                # (see _BARRIER_BOUND_EPS); the `dimensions` param is retained
-                # for API stability but no longer drives the padding width.
+                # (see _BARRIER_BOUND_EPS).
                 chunk_bounds[chunk_idx, d, 0] = (
                     min(p1[:, d].min(), p2[:, d].min()) - _BARRIER_BOUND_EPS
                 )
