@@ -47,7 +47,10 @@ spatial-query/
 source is selected at construction via a discriminated union — supply **either**
 a `geometryType` (tolerance delegated to `computeTolerance`) **or** a
 pre-computed `tolerance: number[]` (used by the points loader, which already
-knows about `EffectiveRadiusConfig`).
+knows about `EffectiveRadiusConfig`). The points pre-computed path
+(`calculateSpatialQueryTolerance` in `effective-radius-calculator.ts`) applies
+the SAME shared `discreteDimTolerance` quarter-cell rule for discrete dims, so
+both paths agree at runtime.
 
 ```typescript
 import { SpatialQueryBuilder, type ChunkSpatialIndex } from './spatial-query-builder';
@@ -107,13 +110,18 @@ don't need the full builder (e.g. `scene-loader`'s lines clipping path):
 
 `computeTolerance(geometryType, displayDims, ndim, dimensions?, options?)`
 returns a length-`ndim` tolerance array. Displayed dimensions always get an
-infinite sentinel (`1e10`); hidden dimensions follow geometry-specific rules:
+infinite sentinel (`1e10`). Hidden **discrete** dims share ONE rule across all
+three geometries (`discreteDimTolerance`): a quarter-cell `0.25 × step`
+(fallback `0.25`) — deliberately `< 0.5 × step` so write-side chunk-bound
+padding plus tolerance can never sum to a full step and bleed the neighbouring
+category (the barrier over-fetch fix). Hidden **spatial/continuous** dims stay
+geometry-specific:
 
-| Geometry  | Hidden spatial dim                                                            | Hidden discrete dim    |
-| --------- | ----------------------------------------------------------------------------- | ---------------------- |
-| `points`  | `maxRadius` (so points whose radius intersects the slice load)                | `0.5`                  |
-| `lines`   | `0` (segment bounds already include line-width extent)                        | `step / 2`, else `0.5` |
-| `gsplats` | `step × gsplatsDefaultTolerance` (default 3σ), else `gsplatsDefaultTolerance` | `0.5`                  |
+| Geometry  | Hidden spatial dim                                                            | Hidden discrete dim             |
+| --------- | ----------------------------------------------------------------------------- | ------------------------------- |
+| `points`  | `maxRadius` (so points whose radius intersects the slice load)                | `0.25 × step` (fallback `0.25`) |
+| `lines`   | `0` (segment bounds already include line-width extent)                        | `0.25 × step` (fallback `0.25`) |
+| `gsplats` | `step × gsplatsDefaultTolerance` (default 3σ), else `gsplatsDefaultTolerance` | `0.25 × step` (fallback `0.25`) |
 
 Points decide "spatial vs discrete" from `options.spatialExtendDims` (the
 per-dimension flag array carried by `EffectiveRadiusConfig`) rather than the

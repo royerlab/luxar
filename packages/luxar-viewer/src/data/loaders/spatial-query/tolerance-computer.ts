@@ -89,8 +89,15 @@ const DISCRETE_TOLERANCE_FRACTION = 0.25;
 /**
  * Canonical discrete-dimension query tolerance, shared by points/lines/gsplats.
  * `0.25 × step` (fallback quarter-cell of a unit step when no step metadata).
+ *
+ * Exported because the points loader's live query path builds its tolerance in
+ * `effective-radius-calculator.ts` (`calculateSpatialQueryTolerance`, which is
+ * `EffectiveRadiusConfig`-aware) and passes it to `SpatialQueryBuilder`
+ * explicitly, bypassing `computeTolerance`. That path MUST apply the same
+ * quarter-cell rule for discrete dims, or points regress to the
+ * neighbour-category over-fetch this module fixes.
  */
-function discreteDimTolerance(dimInfo: DimensionInfo | undefined): number {
+export function discreteDimTolerance(dimInfo: DimensionInfo | undefined): number {
   const step =
     dimInfo?.step !== undefined && dimInfo.step !== null && dimInfo.step > 0 ? dimInfo.step : 1;
   return DISCRETE_TOLERANCE_FRACTION * step;
