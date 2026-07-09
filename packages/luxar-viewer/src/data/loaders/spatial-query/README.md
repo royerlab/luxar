@@ -111,10 +111,14 @@ don't need the full builder (e.g. `scene-loader`'s lines clipping path):
 `computeTolerance(geometryType, displayDims, ndim, dimensions?, options?)`
 returns a length-`ndim` tolerance array. Displayed dimensions always get an
 infinite sentinel (`1e10`). Hidden **discrete** dims share ONE rule across all
-three geometries (`discreteDimTolerance`): a quarter-cell `0.25 × step`
-(fallback `0.25`) — deliberately `< 0.5 × step` so write-side chunk-bound
-padding plus tolerance can never sum to a full step and bleed the neighbouring
-category (the barrier over-fetch fix). Hidden **spatial/continuous** dims stay
+three geometries, split by ROLE: the default **query** role
+(`discreteDimTolerance`) is a quarter-cell `0.25 × step` (fallback `0.25`) —
+deliberately `< 0.5 × step` so write-side chunk-bound padding plus tolerance
+can never sum to a full step and bleed the neighbouring category (the barrier
+over-fetch fix) — while the **membership** role
+(`options.discreteRole: 'membership'`, used by the lines projection-clipping
+path via `discreteDimMembershipTolerance`) is the half-cell `0.5 × step`
+matching the points/gsplats projection visibility gates. Hidden **spatial/continuous** dims stay
 geometry-specific:
 
 | Geometry  | Hidden spatial dim                                                            | Hidden discrete dim             |

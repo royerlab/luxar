@@ -101,8 +101,8 @@ function makeSubLoader(
 
 const baseViewState: GSplatsViewState = {
   displayDims: [0, 1, 2],
-  slicePosition: [0, 0, 0],
-  tolerance: [0, 0, 0],
+  slicePosition: [0, 0, 0, 0],
+  tolerance: [0, 0, 0, 0],
 };
 
 describe('GSplatsProgressiveLoader', () => {
@@ -162,13 +162,13 @@ describe('GSplatsProgressiveLoader', () => {
   describe('SliceCache integration', () => {
     const viewA: GSplatsViewState = {
       displayDims: [0, 1, 2],
-      slicePosition: [0, 0, 0],
-      tolerance: [0, 0, 0],
+      slicePosition: [0, 0, 0, 0],
+      tolerance: [0, 0, 0, 0],
     };
     const viewB: GSplatsViewState = {
       displayDims: [0, 1, 2],
-      slicePosition: [0, 0, 1],
-      tolerance: [0, 0, 0],
+      slicePosition: [0, 0, 0, 1],
+      tolerance: [0, 0, 0, 0],
     };
 
     it('restores a revisited view from the SliceCache without re-streaming sub-LODs', async () => {
@@ -450,7 +450,7 @@ describe('GSplatsProgressiveLoader', () => {
         sc
       );
       const viewA = baseViewState;
-      const viewB = { ...baseViewState, slicePosition: [0, 0, 1] };
+      const viewB = { ...baseViewState, slicePosition: [0, 0, 0, 1] };
 
       // Loop-1 tick at view A: budget 10 < one 30ms level → prefix(1) STORED.
       await l.updateView({ ...viewA, frameBudgetMs: 10 });
@@ -505,7 +505,7 @@ describe('GSplatsProgressiveLoader', () => {
         sc
       );
       const viewA = baseViewState;
-      const viewB = { ...baseViewState, slicePosition: [0, 0, 1] };
+      const viewB = { ...baseViewState, slicePosition: [0, 0, 0, 1] };
 
       await l.updateView({ ...viewA, frameBudgetMs: 10 }); // prefix(1) stored
       await l.updateView({ ...viewB, frameBudgetMs: 10 });

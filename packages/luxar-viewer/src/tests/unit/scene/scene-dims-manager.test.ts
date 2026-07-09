@@ -65,6 +65,55 @@ describe('SceneDimsManager', () => {
       expect(dims!.currentStep[4]).toBe(0); // channel: minimum of [0, 3] (discrete)
     });
 
+    // Regression (deep-double-check): the INITIAL discrete position must be
+    // snapped onto the k·step grid like every subsequent navigation
+    // (setDimensionValue snaps; the discrete chunk query reaches only a
+    // quarter-step). A raw off-grid range.min (e.g. 1.3, step 1) left the
+    // initial view silently empty until the first manual navigation.
+    it('snaps the initial discrete position onto the step grid (first on-grid ≥ min)', () => {
+      const scene = new THREE.Scene();
+      scene.userData.sceneDimensions = {
+        dimensions: [
+          { name: 'x', unit: '', range: [0, 100], step: 1, display: true },
+          { name: 'y', unit: '', range: [0, 100], step: 1, display: true },
+          { name: 'z', unit: '', range: [0, 50], step: 1, display: true },
+          // Off-grid declared min: first on-grid position at/above 1.3 is 2.
+          { name: 'time', unit: '', range: [1.3, 5.3], step: 1, display: false, discrete: true },
+        ],
+      };
+      manager.initFromScene(scene);
+      expect(manager.getDims()!.currentStep[3]).toBe(2);
+    });
+
+    it('keeps an already on-grid discrete minimum unchanged', () => {
+      const scene = new THREE.Scene();
+      scene.userData.sceneDimensions = {
+        dimensions: [
+          { name: 'x', unit: '', range: [0, 100], step: 1, display: true },
+          { name: 'y', unit: '', range: [0, 100], step: 1, display: true },
+          { name: 'z', unit: '', range: [0, 50], step: 1, display: true },
+          { name: 'time', unit: '', range: [2, 8], step: 2, display: false, discrete: true },
+        ],
+      };
+      manager.initFromScene(scene);
+      expect(manager.getDims()!.currentStep[3]).toBe(2);
+    });
+
+    it('falls back to the raw min when no on-grid point exists inside the range', () => {
+      const scene = new THREE.Scene();
+      scene.userData.sceneDimensions = {
+        dimensions: [
+          { name: 'x', unit: '', range: [0, 100], step: 1, display: true },
+          { name: 'y', unit: '', range: [0, 100], step: 1, display: true },
+          { name: 'z', unit: '', range: [0, 50], step: 1, display: true },
+          // Range narrower than a step with no multiple of 10 inside.
+          { name: 'time', unit: '', range: [1.2, 1.8], step: 10, display: false, discrete: true },
+        ],
+      };
+      manager.initFromScene(scene);
+      expect(manager.getDims()!.currentStep[3]).toBe(1.2);
+    });
+
     it('should extract dimension ranges', () => {
       manager.initFromScene(mockScene);
       const ranges = manager.getDimensionRanges();

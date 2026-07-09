@@ -131,4 +131,74 @@ describe('slice-cache-helper — prefix ladders', () => {
     const restored = restoreLadder<FakeLod>(sc, PATH, view, N_LODS)!;
     expect(restored[0].positions[0]).toBeCloseTo(0.5);
   });
+
+  // Regression (deep-double-check): with EVERY dimension displayed there is
+  // exactly one possible slice — it is never re-queried, so caching it can
+  // never hit and would only pin a deep clone (up to the whole S-cache
+  // budget, e.g. a plain 3D scene's full ladder) for nothing.
+  it('skips store AND restore for views with no hidden dimensions', () => {
+    const allDisplayed = {
+      displayDims: [0, 1, 2],
+      slicePosition: [0, 0, 0],
+      tolerance: [0, 0, 0],
+    };
+    storeLadder(sc, PATH, allDisplayed, [makeLod(10)]);
+    expect(sc.getStats().count).toBe(0); // nothing stored
+    expect(restoreLadder<FakeLod>(sc, PATH, allDisplayed, N_LODS)).toBeNull();
+  });
+
+  // Regression (deep-double-check): a stored ladder LONGER than the current
+  // nLods (stale after a ladder reconfiguration) must be rejected, not
+  // restored — the loader would index past its own level table.
+  it('restoreLadder rejects an entry longer than nLods (stale-longer-ladder guard)', () => {
+    storeLadder(sc, PATH, view, [makeLod(8), makeLod(6), makeLod(4), makeLod(2)]); // 4 levels
+    expect(restoreLadder<FakeLod>(sc, PATH, view, 3)).toBeNull();
+    // Same entry serves fine when nLods covers it.
+    expect(restoreLadder<FakeLod>(sc, PATH, view, 4)).not.toBeNull();
+  });
+});
+
+// Regression (deep-double-check, mutation-killers): the SliceCache key must
+// discriminate on EVERY field of the loaders' viewStatesEqual contract —
+// displayDims, slicePosition, tolerance, AND dimensions. Dropping any one of
+// them from buildSliceViewSig previously survived the whole suite (all
+// cache-wired tests varied only slicePosition), which would let the cache
+// serve geometry loaded under a different view as a hit.
+describe('buildSliceViewSig — key discrimination (one test per field)', () => {
+  const base = {
+    displayDims: [0, 1, 2],
+    slicePosition: [0, 0, 0, 7],
+    tolerance: [0, 0, 0, 0.25],
+    dimensions: [{ name: 't', discrete: true, step: 1 }],
+  };
+
+  it('differs when slicePosition differs', () => {
+    expect(buildSliceViewSig(base)).not.toBe(
+      buildSliceViewSig({ ...base, slicePosition: [0, 0, 0, 8] })
+    );
+  });
+
+  it('differs when displayDims differ', () => {
+    expect(buildSliceViewSig(base)).not.toBe(
+      buildSliceViewSig({ ...base, displayDims: [1, 2, 3] })
+    );
+  });
+
+  it('differs when tolerance differs (e.g. extend_to_all widened a dim)', () => {
+    expect(buildSliceViewSig(base)).not.toBe(
+      buildSliceViewSig({ ...base, tolerance: [0, 0, 0, 1e10] })
+    );
+  });
+
+  it('differs when dimensions metadata differs (executed fetch reach derives from step)', () => {
+    expect(buildSliceViewSig(base)).not.toBe(
+      buildSliceViewSig({ ...base, dimensions: [{ name: 't', discrete: true, step: 2 }] })
+    );
+  });
+
+  it('is stable for equal views, with undefined dimensions serialized deterministically', () => {
+    const noDims = { ...base, dimensions: undefined };
+    expect(buildSliceViewSig(noDims)).toBe(buildSliceViewSig({ ...noDims }));
+    expect(buildSliceViewSig(base)).toBe(buildSliceViewSig({ ...base }));
+  });
 });

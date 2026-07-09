@@ -1,11 +1,17 @@
 # Luxar Viewer Cache Package
 
-Three-level caching system with intelligent prefetching for zarr chunks enabling offline viewing, instant reloads, and reduced bandwidth.
+Multi-tier caching system with intelligent prefetching for zarr chunks enabling offline viewing, instant reloads, and reduced bandwidth.
 
 ## Overview
 
 This package implements a transparent caching and prefetching layer for zarr datasets:
 
+- **S-cache (SliceCache, `slice-cache.ts`)**: 128MB LRU cache of fully DECODED
+  per-slice geometry ladders, keyed per node + view signature (displayDims,
+  slicePosition, tolerance, dimensions). A slice revisit — e.g. scrubbing back
+  to a timepoint — skips the whole query + fetch + decode pipeline; only the
+  cheap nD→3D projection re-runs. Sits ABOVE L0; in-memory, per-session,
+  cleared on content-hash invalidation. Disable with `?no-slice-cache`.
 - **L0 (Decompressed)**: 200MB LRU cache for decoded TypedArrays (eliminates Blosc decompression)
 - **L1 (Memory)**: 100MB segmented LRU cache with metadata protection
 - **L2 (OPFS)**: 2GB persistent storage surviving browser restarts
@@ -16,18 +22,20 @@ This package implements a transparent caching and prefetching layer for zarr dat
 ## Cache Hierarchy
 
 ```
-Request → L0 (Decompressed) → L1 (Memory) → L2 (OPFS) → Remote HTTP
-              ↓                   ↓             ↓            ↓
-           ~1μs               ~1μs+2ms       ~1ms+2ms     ~100ms+2ms
-       (no decompress)    (decompress)   (decompress)   (decompress)
+Slice revisit → S-cache (decoded slice ladder) ────────────────┐ hit: skip all of ↓
+Chunk request → L0 (Decompressed) → L1 (Memory) → L2 (OPFS) → Remote HTTP
+                    ↓                   ↓             ↓            ↓
+                 ~1μs               ~1μs+2ms       ~1ms+2ms     ~100ms+2ms
+             (no decompress)    (decompress)   (decompress)   (decompress)
 ```
 
-| Level | Storage | Speed         | Size  | Persistence  | Content           |
-| ----- | ------- | ------------- | ----- | ------------ | ----------------- |
-| L0    | Memory  | ~1μs          | 200MB | Session only | Decompressed data |
-| L1    | Memory  | ~1μs + ~2ms\* | 100MB | Session only | Compressed chunks |
-| L2    | OPFS    | ~1ms + ~2ms\* | 2GB   | Permanent    | Compressed chunks |
-| L3    | Remote  | ~100ms        | ∞     | N/A          | Compressed chunks |
+| Level   | Storage | Speed         | Size  | Persistence  | Content               |
+| ------- | ------- | ------------- | ----- | ------------ | --------------------- |
+| S-cache | Memory  | ~1μs          | 128MB | Session only | Decoded slice ladders |
+| L0      | Memory  | ~1μs          | 200MB | Session only | Decompressed data     |
+| L1      | Memory  | ~1μs + ~2ms\* | 100MB | Session only | Compressed chunks     |
+| L2      | OPFS    | ~1ms + ~2ms\* | 2GB   | Permanent    | Compressed chunks     |
+| L3      | Remote  | ~100ms        | ∞     | N/A          | Compressed chunks     |
 
 \*~2ms is Blosc decompression time per chunk (skipped on L0 hit)
 
@@ -64,9 +72,10 @@ await store.dispose();
 
 Override cache behavior via URL parameters:
 
-- `?no-cache` - Disable all caching (L0 + L1 + L2) for this session
+- `?no-cache` - Disable all caching (S-cache + L0 + L1 + L2) for this session
+- `?no-slice-cache` - Disable only the SliceCache (S-cache); L0/L1/L2 stay on
 - `?cache-debug` - Enable verbose cache logging for all layers
-- `?clear-cache` - Clear all caches (L0 + L1 + L2) before loading dataset
+- `?clear-cache` - Clear all persistent/persisted caches (L0 + L1 + L2) before loading dataset (the in-memory S-cache is created fresh per load)
 - `?no-prefetch` - Disable prefetching (caches still active)
 - `?prefetch-debug` - Enable verbose prefetch logging
 - `?cache-stats` - Auto-open the data-loading monitor expanded on the Cache tab

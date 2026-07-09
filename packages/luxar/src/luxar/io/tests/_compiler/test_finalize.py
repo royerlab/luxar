@@ -207,6 +207,40 @@ def test_validate_discrete_ranges_warns_on_off_grid_data() -> None:
     )
 
 
+def test_validate_discrete_ranges_warns_on_off_grid_data_without_step() -> None:
+    """Regression (deep-double-check): a discrete dimension WITHOUT a declared
+    step is not exempt from the on-grid check — the viewer defaults a missing
+    step to 1.0 (scene-dims-manager.ts `step: dim.step || 1.0`) and snaps
+    navigation/queries to the integer grid, so step-less data at non-integer
+    values silently never displays. Pre-fix the check was gated on
+    `if dim.step:` and this compiled warning-free."""
+    import warnings as _warnings
+
+    from luxar.core.dimensions import Dimension, Dimensions
+
+    dims = Dimensions(
+        [
+            # No step declared — viewer treats the grid as integers.
+            Dimension(name="time", range=(0.5, 4.5), display=False, discrete=True),
+            Dimension(name="z", range=(0, 10)),
+            Dimension(name="y", range=(0, 10)),
+            Dimension(name="x", range=(0, 10)),
+        ]
+    )
+    root = zarr.group()
+    root.attrs["scene_dimensions"] = dims.to_dict()
+
+    bounds = {"min": [0.5, 0.0, 0.0, 0.0], "max": [4.5, 10.0, 10.0, 10.0]}
+    with _warnings.catch_warnings(record=True) as caught:
+        _warnings.simplefilter("always")
+        validate_discrete_dimension_ranges(root, bounds)
+    messages = [str(w.message) for w in caught]
+    assert any("off the step grid" in m for m in messages), (
+        f"Expected off-grid warning for step-less discrete data at x.5, got: {messages}"
+    )
+    assert any("no step is declared" in m for m in messages), messages
+
+
 def test_validate_discrete_ranges_on_grid_data_is_silent() -> None:
     """Exactly on-grid data (and data within a quarter-step of the grid)
     triggers no off-grid warning."""

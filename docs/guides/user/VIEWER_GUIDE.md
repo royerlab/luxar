@@ -46,7 +46,8 @@ Append parameters to the viewer URL to control startup behavior.
 | `src` | string | Zarr dataset URL or local path. |
 | `theme` | string | Initial theme. One of: `light`, `dark`, `liquid-glass`, `frosted-glass`. |
 | `debug` | flag | Enable the debug interface (developer use). |
-| `no-cache` | flag | Disable L0/L1/L2 caching layers. |
+| `no-cache` | flag | Disable ALL caching tiers (S-cache + L0/L1/L2). |
+| `no-slice-cache` | flag | Disable only the SliceCache (per-slice decoded-geometry reuse); L0/L1/L2 stay on. |
 | `cache-debug` | flag | Enable cache debug logging to the browser console. |
 | `clear-cache` | flag | Clear all caches on startup. |
 | `no-prefetch` | flag | Disable adjacent-chunk prefetching. |

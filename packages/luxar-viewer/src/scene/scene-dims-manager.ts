@@ -256,13 +256,25 @@ export class SceneDimsManager {
    * The default position policy — shared by {@link initFromScene} and
    * {@link resetPositions} so the two can never diverge:
    * - Displayed dimensions (X, Y, Z): 0 (camera-controlled)
-   * - Discrete/categorical dimensions (time, channels, frames): MINIMUM (first position)
+   * - Discrete/categorical dimensions (time, channels, frames): FIRST ON-GRID
+   *   position at or above the range minimum. Snapping matters: every later
+   *   navigation snaps to the k·step grid ({@link setDimensionValue}), and the
+   *   discrete chunk query only reaches a quarter-step around the position —
+   *   a raw off-grid `min` (e.g. 1.3 with step 1) would make the INITIAL view
+   *   silently empty until the first user navigation snapped it.
    * - Continuous non-displayed dimensions (4th+ spatial dims): CENTER (no natural "first")
    */
   private static defaultPosition(meta: DimensionMetadata, range: [number, number]): number {
     if (meta.display === true) return 0;
     const [min, max] = range;
-    if (meta.discrete || meta.categories) return min;
+    if (meta.discrete || meta.categories) {
+      const step = meta.step || 1.0;
+      let snapped = Math.round(min / step) * step;
+      if (snapped < min) snapped += step; // stay inside the declared range
+      // Pathological range narrower than one step with no on-grid point:
+      // fall back to the raw min rather than leaving the range entirely.
+      return snapped <= max ? snapped : min;
+    }
     return (min + max) / 2;
   }
 

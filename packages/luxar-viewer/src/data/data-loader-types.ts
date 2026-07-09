@@ -128,7 +128,7 @@ export interface LoaderConfig {
   /** Enable data loading monitor UI */
   enableMonitor?: boolean;
 
-  /** Disable both L1/L2 cache tiers and L0 decompressed cache. */
+  /** Disable ALL cache tiers: SliceCache, L0 decompressed, and L1/L2. */
   noCache?: boolean;
 
   /** Disable only the SliceCache / S-cache (L0/L1/L2 stay on). */

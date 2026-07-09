@@ -13,17 +13,35 @@ export interface SliceViewLike {
   displayDims: readonly number[];
   slicePosition: readonly number[];
   tolerance: readonly number[];
+  /**
+   * Per-dimension metadata (step, discrete, nd_transform, …). Part of the key
+   * because the EXECUTED query derives from it: the points fetch reach is
+   * `discreteDimTolerance(dimensions[d])` (0.25 × step) while the keyed
+   * `tolerance` holds a step-independent ride-along constant for discrete dims
+   * (see `dims-to-view-state.ts`) — so a dims-metadata change can alter the
+   * decoded set without touching the other three fields.
+   */
+  dimensions?: unknown;
 }
 
 /**
  * Build the view signature used as the SliceCache key (namespaced per node by
  * the cache itself). Covers exactly the query determinants — displayDims,
- * slicePosition, tolerance — matching the progressive loaders' `viewStatesEqual`.
- * Nothing projection- or render-dependent enters the key: projection re-runs on
- * every hit, and a dataset content-hash change clears the whole cache.
+ * slicePosition, tolerance, dimensions — matching the progressive loaders'
+ * `viewStatesEqual` field-for-field (that equality is the loaders' stale-skip
+ * contract; a key narrower than it can restore a snapshot the loader itself
+ * would have reloaded). Nothing projection- or render-dependent enters the
+ * key: projection re-runs on every hit, and a dataset content-hash change
+ * clears the whole cache. `dimensions` may be undefined (serializes as null —
+ * deterministic).
  */
 export function buildSliceViewSig(view: SliceViewLike): string {
-  return JSON.stringify([view.displayDims, view.slicePosition, view.tolerance]);
+  return JSON.stringify([
+    view.displayDims,
+    view.slicePosition,
+    view.tolerance,
+    view.dimensions ?? null,
+  ]);
 }
 
 /** Non-DataView ArrayBufferView (i.e. a TypedArray) with a `.slice()`. */
@@ -82,13 +100,24 @@ export function cloneLodSnapshot<T extends object>(lods: readonly T[]): T[] {
  * loaders must still shallow-copy the CONTAINER before pushing further levels
  * into it. Shared by all three progressive loaders.
  */
+/**
+ * True when the view has at least one non-displayed dimension. With every
+ * dimension displayed there is exactly ONE possible slice — it never gets
+ * re-queried, so caching it can never hit and would only pin a full deep
+ * clone of the ladder (up to the whole SliceCache budget) for nothing.
+ * Shared gate for {@link restoreLadder} / {@link storeLadder}.
+ */
+function hasHiddenDims(view: SliceViewLike): boolean {
+  return view.displayDims.length < view.slicePosition.length;
+}
+
 export function restoreLadder<T>(
   sliceCache: SliceCache | null,
   path: string,
   view: SliceViewLike,
   nLods: number
 ): T[] | null {
-  if (!sliceCache || nLods <= 0) return null;
+  if (!sliceCache || nLods <= 0 || !hasHiddenDims(view)) return null;
   const entry = sliceCache.get(SliceCache.makeKey(path, buildSliceViewSig(view)));
   if (!entry) return null;
   const lods = entry.payload as T[];
@@ -113,7 +142,7 @@ export function storeLadder<T extends object>(
   view: SliceViewLike,
   lods: readonly T[]
 ): void {
-  if (!sliceCache || lods.length === 0) return;
+  if (!sliceCache || lods.length === 0 || !hasHiddenDims(view)) return;
   const key = SliceCache.makeKey(path, buildSliceViewSig(view));
   const existing = sliceCache.peek(key);
   if (existing && (existing.payload as unknown[]).length >= lods.length) return;

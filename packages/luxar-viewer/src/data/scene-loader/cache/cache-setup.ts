@@ -79,14 +79,13 @@ export async function setupCaches(url: string, flags: CacheSetupFlags): Promise<
   // (see the onInvalidate registration below).
   let sliceCache: SliceCache | null = null;
   if (appConfig.cache.sliceCacheEnabled && !noCache && !noSliceCache) {
+    // No `?clear-cache` handling here (unlike L0/L1/L2 below): the SliceCache
+    // is in-memory only and constructed fresh for every loadScene, so there is
+    // never a prior session's state to clear.
     sliceCache = new SliceCache({
       maxSize: appConfig.cache.sliceCacheMaxSizeMB * 1024 * 1024,
       debug: cacheDebug || appConfig.cache.debug,
     });
-    if (clearCache) {
-      sliceCache.clear();
-      log.info(Modules.SCENE_LOADER, 'SliceCache cleared via ?clear-cache URL parameter');
-    }
     log.info(
       Modules.SCENE_LOADER,
       `SliceCache (S-cache) enabled (max size: ${appConfig.cache.sliceCacheMaxSizeMB}MB)`

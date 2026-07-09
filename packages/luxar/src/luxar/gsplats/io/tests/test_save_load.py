@@ -1088,11 +1088,15 @@ class TestBarrierAwareOrdering:
             nt = self._finest_chunk_bounds(npath)[:, 3, 1] - \
                 self._finest_chunk_bounds(npath)[:, 3, 0]
 
-            # WITH barrier: most chunks single-timepoint (extent ~1.0 via ±0.5),
-            # boundary chunks ≤ n_tps span 2 timepoints (extent ~2.0). Never the
-            # whole-span-plus-σ smear the no-barrier ordering produces.
-            assert np.median(bt) <= 1.5
-            assert np.all(bt <= 2.0 + 1e-4)
+            # WITH barrier: most chunks single-timepoint. Since the write-side
+            # padding shrank from ±0.5 step to the tiny float-boundary epsilon
+            # (_BARRIER_BOUND_EPS = 1e-3), a single-timepoint chunk's extent is
+            # ~2*eps (~0.002, no longer ~1.0), and a boundary chunk spanning 2
+            # timepoints is ~1.0 + 2*eps. Never the whole-span-plus-sigma smear
+            # the no-barrier ordering produces. The tight thresholds FAIL under
+            # the legacy +/-0.5 padding — they pin the over-fetch fix's write side.
+            assert np.median(bt) <= 0.1
+            assert np.all(bt <= 1.0 + 0.1)
             # WITHOUT barrier: chunks smear across timepoints (σ-expanded too),
             # so the barrier version is decisively tighter — the fix's payoff.
             assert np.median(nt) > np.median(bt)
