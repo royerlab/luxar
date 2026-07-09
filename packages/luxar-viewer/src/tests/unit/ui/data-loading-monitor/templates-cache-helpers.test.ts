@@ -23,7 +23,9 @@ import {
   renderCacheStatusBadges,
   getCacheHitRateColorClass,
   getCacheHitRateColorClassWithGuard,
+  CACHE_WARMUP_ACCESSES,
   renderCacheContent,
+  CACHE_SECTION_KEYS,
 } from '../../../../ui/data-loading-monitor/templates';
 import type {
   CacheMetrics,
@@ -202,16 +204,18 @@ describe('l2ErrorTotal', () => {
 });
 
 // S3: no-data guard so initial render uses dimmed instead of error
-// when there are no accesses yet — matches the incremental updater.
+// while the cache is still warming up — matches the incremental updater.
 describe('getCacheHitRateColorClassWithGuard (S3)', () => {
-  it('returns dimmed color when totalAccesses === 0', () => {
+  it('returns dimmed color while warming up (below CACHE_WARMUP_ACCESSES)', () => {
     expect(getCacheHitRateColorClassWithGuard(0, 0)).toMatch(/dimmed/);
-    // Same response regardless of rate value when nothing has been accessed.
+    // Same response regardless of rate — a handful of first-touch
+    // lookups carries no signal (the cache HAS to miss before it hits).
     expect(getCacheHitRateColorClassWithGuard(99, 0)).toMatch(/dimmed/);
+    expect(getCacheHitRateColorClassWithGuard(0, CACHE_WARMUP_ACCESSES - 1)).toMatch(/dimmed/);
   });
 
-  it('returns error color when totalAccesses > 0 and rate is ≤ 50', () => {
-    expect(getCacheHitRateColorClassWithGuard(0, 1)).toMatch(/error/);
+  it('returns error color when warmed up and rate is ≤ 50', () => {
+    expect(getCacheHitRateColorClassWithGuard(0, CACHE_WARMUP_ACCESSES)).toMatch(/error/);
     expect(getCacheHitRateColorClassWithGuard(50, 100)).toMatch(/error/);
   });
 
@@ -225,11 +229,13 @@ describe('getCacheHitRateColorClassWithGuard (S3)', () => {
     expect(getCacheHitRateColorClassWithGuard(100, 100)).toMatch(/success/);
   });
 
-  it('matches getCacheHitRateColorClass for any non-zero totalAccesses', () => {
-    // The guard is purely a no-data wrapper; once totalAccesses > 0
-    // the two functions must agree.
+  it('matches getCacheHitRateColorClass once warmed up', () => {
+    // The guard is purely a warm-up wrapper; at or past the warm-up
+    // threshold the two functions must agree.
     for (const rate of [0, 25, 51, 65, 80.01, 95]) {
-      expect(getCacheHitRateColorClassWithGuard(rate, 1)).toBe(getCacheHitRateColorClass(rate));
+      expect(getCacheHitRateColorClassWithGuard(rate, CACHE_WARMUP_ACCESSES)).toBe(
+        getCacheHitRateColorClass(rate)
+      );
     }
   });
 });
@@ -375,10 +381,15 @@ describe('renderCacheContent layout guards (full L0/L1/L2 view)', () => {
     );
 
     // Footer is wrapped in its own styled container so it reads as
-    // part of the TOTAL card rather than unstyled stray text.
+    // part of the TOTAL card rather than unstyled stray text. The
+    // label is a static span; only the value span carries the
+    // data-field patched by the per-tick updater.
     expect(html).toMatch(/<div[^>]*class="luxar-cache-total__demand"/);
-    expect(html).toContain('data-field="cache-effective-hitrate"');
-    expect(html).toContain('EFFECTIVE HIT RATE: 100.0%');
+    expect(html).toContain('EFFECTIVE HIT RATE');
+    const host = document.createElement('div');
+    host.innerHTML = html;
+    const value = host.querySelector('[data-field="cache-effective-hitrate"]');
+    expect(value?.textContent?.trim()).toBe('100.0%');
   });
 
   it('omits the EFFECTIVE HIT RATE footer when effectiveDemandHitRate is undefined', () => {
@@ -402,7 +413,9 @@ describe('renderCacheContent layout guards (full L0/L1/L2 view)', () => {
     const html = renderCacheContent(makeGlobalStats(), makeFullCacheMetrics());
     const host = document.createElement('div');
     host.innerHTML = html;
-    const valueEl = host.querySelector('[data-field="l2-hitrate"]');
+    // The field renders twice (compact header summary + full metric
+    // card); target the card copy for the tooltip check.
+    const valueEl = host.querySelector('.luxar-metric-card__value[data-field="l2-hitrate"]');
     expect(valueEl).not.toBeNull();
     const card = valueEl!.closest('.luxar-metric-card') as HTMLElement;
     expect(card).not.toBeNull();
@@ -413,5 +426,98 @@ describe('renderCacheContent layout guards (full L0/L1/L2 view)', () => {
     // And the raw HTML must carry the escaped quote, never a bare one
     // inside the attribute value.
     expect(html).toContain('&quot;—&quot; = nothing has fallen through to L2 yet');
+  });
+
+  // Collapsible sections: each cache section can collapse to a compact
+  // one-line header summary that mirrors every metric via the SAME
+  // data-field keys as the full cards, so the per-tick patcher keeps
+  // both views current with a single pass.
+  describe('collapsible sections', () => {
+    function renderFull(collapsed?: ReadonlySet<string>): HTMLElement {
+      const html = renderCacheContent(
+        makeGlobalStats(),
+        makeFullCacheMetrics({
+          slice: { size: 1024, count: 3, hits: 5, misses: 2, evictions: 1, hitRate: 0.71 },
+        }),
+        collapsed
+      );
+      const host = document.createElement('div');
+      host.innerHTML = html;
+      return host;
+    }
+
+    it('collapses every section by default (compact resting state)', () => {
+      const host = renderFull();
+      const sections = host.querySelectorAll('.luxar-cache-section');
+      expect(sections.length).toBe(4); // slice + l0 + l1 + l2
+      sections.forEach((s) => {
+        expect(s.classList.contains('luxar-cache-section--collapsed')).toBe(true);
+      });
+    });
+
+    it('respects an explicit collapsed-set (expanded sections lack the modifier)', () => {
+      const host = renderFull(new Set(['l1']));
+      const l1 = host.querySelector('.luxar-cache-section[data-section="l1"]');
+      const l0 = host.querySelector('.luxar-cache-section[data-section="l0"]');
+      expect(l1?.classList.contains('luxar-cache-section--collapsed')).toBe(true);
+      expect(l0?.classList.contains('luxar-cache-section--collapsed')).toBe(false);
+    });
+
+    it('every section header carries the toggle action + its section key', () => {
+      const host = renderFull();
+      for (const key of CACHE_SECTION_KEYS) {
+        const header = host.querySelector(
+          `.luxar-cache-section[data-section="${key}"] .luxar-cache-section__header`
+        ) as HTMLElement | null;
+        expect(header).not.toBeNull();
+        expect(header!.dataset.action).toBe('toggleCacheSection');
+        expect(header!.dataset.sectionKey).toBe(key);
+      }
+    });
+
+    it('duplicates every metric data-field into the compact summary (value + hit-rate sub)', () => {
+      const host = renderFull();
+      const fields = [
+        's-size',
+        's-hitrate',
+        's-evictions',
+        'l0-size',
+        'l0-hitrate',
+        'l0-evictions',
+        'l1-size',
+        'l1-hitrate',
+        'l1-evictions',
+        'l2-size',
+        'l2-hitrate',
+        'l2-io',
+        'l2-errors',
+      ];
+      for (const field of fields) {
+        // Every VALUE renders twice: compact summary span + full metric
+        // card. Subtitles ride along in the summary only for hit-rate
+        // metrics (the hits·miss split is live data); the others would
+        // just truncate at one-line width and stay on the cards/tooltips.
+        expect(host.querySelectorAll(`[data-field="${field}"]`).length).toBe(2);
+        const expectedSubCopies = field.includes('hitrate') ? 2 : 1;
+        expect(host.querySelectorAll(`[data-field="${field}-sub"]`).length).toBe(expectedSubCopies);
+        expect(
+          host.querySelector(`.luxar-cache-section__summary [data-field="${field}"]`)
+        ).not.toBeNull();
+      }
+    });
+
+    it('summary values render the same text and color class as the cards', () => {
+      const host = renderFull();
+      const summaryVal = host.querySelector(
+        '.luxar-cache-section__summary [data-field="l0-hitrate"]'
+      ) as HTMLElement;
+      const cardVal = host.querySelector(
+        '.luxar-metric-card__value[data-field="l0-hitrate"]'
+      ) as HTMLElement;
+      expect(summaryVal.textContent?.trim()).toBe(cardVal.textContent?.trim());
+      const colorOf = (el: HTMLElement) =>
+        Array.from(el.classList).find((c) => c.startsWith('luxar-color--'));
+      expect(colorOf(summaryVal)).toBe(colorOf(cardVal));
+    });
   });
 });

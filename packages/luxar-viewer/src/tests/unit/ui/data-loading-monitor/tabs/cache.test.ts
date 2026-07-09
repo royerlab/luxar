@@ -234,6 +234,32 @@ describe('updateCacheTab', () => {
     });
   });
 
+  // Collapsible sections render each value twice (compact header
+  // summary + full metric card) under the SAME data-field key — the
+  // patcher must update every copy, text and color class alike.
+  it('patches all duplicate copies of a data-field (compact summary + card)', () => {
+    const c = makeContainer();
+    // Simulate the dual-render: a second l0-hitrate span, as in the
+    // collapsed-header summary.
+    const dup = document.createElement('span');
+    dup.setAttribute('data-field', 'l0-hitrate');
+    c.appendChild(dup);
+
+    updateCacheTab(
+      c,
+      makeMetrics({
+        l0: { size: 1, count: 1, hits: 90, misses: 10, evictions: 0, hitRate: 0.9 },
+      })
+    );
+
+    const copies = c.querySelectorAll('[data-field="l0-hitrate"]');
+    expect(copies.length).toBe(2);
+    copies.forEach((el) => {
+      expect(el.textContent).toContain('90.0%');
+      expect((el as HTMLElement).className).toMatch(/success/i);
+    });
+  });
+
   it('updates the total memory bar fill width', () => {
     const c = makeContainer();
     updateCacheTab(c, makeMetrics({ memoryPercent: 73, memoryLimit: 4096 }));

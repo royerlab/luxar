@@ -42,6 +42,51 @@ export function getColorClass(color: SemanticColor): string {
 }
 
 /**
+ * Inline SVG line-icon set for the monitor (tab bar, section headers,
+ * status glyphs). Replaces the previous emoji glyphs, which rendered
+ * differently on every platform and clashed with the viewer rail's
+ * stroke-icon language. All icons are 14×14 stroke = currentColor, so
+ * they inherit the color of their context (including the semantic
+ * `luxar-color--*` classes).
+ */
+const MICON =
+  '<svg class="luxar-micon" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">';
+export const MONITOR_ICONS = {
+  /** Ascending bars — the Overview tab. */
+  overview: `${MICON}<path d="M2.5 12V8.5M7 12V4M11.5 12V6.5"/></svg>`,
+  /** Database cylinder — the Cache tab. */
+  cache: `${MICON}<ellipse cx="7" cy="3.4" rx="4.6" ry="1.9"/><path d="M2.4 3.4v7.2c0 1.05 2.06 1.9 4.6 1.9s4.6-.85 4.6-1.9V3.4"/><path d="M2.4 7c0 1.05 2.06 1.9 4.6 1.9S11.6 8.05 11.6 7"/></svg>`,
+  /** Memory chip — the Memory tab. */
+  memory: `${MICON}<rect x="3.6" y="3.6" width="6.8" height="6.8" rx="1.2"/><path d="M5.6 3.6V1.9M8.4 3.6V1.9M5.6 12.1v-1.7M8.4 12.1v-1.7M3.6 5.6H1.9M3.6 8.4H1.9M12.1 5.6h-1.7M12.1 8.4h-1.7"/></svg>`,
+  /** Lightning bolt — the Performance tab. */
+  performance: `${MICON}<path d="M7.9 1.4 3.4 7.9h2.9L5.5 12.6 10.6 6H7.4l.5-4.6Z"/></svg>`,
+  /** Lightbulb — the Insights tab. */
+  insights: `${MICON}<path d="M4.7 9.3a3.8 3.8 0 1 1 4.6 0c-.5.4-.8 1-.8 1.6H5.5c0-.6-.3-1.2-.8-1.6Z"/><path d="M5.7 12.9h2.6"/></svg>`,
+  /** Crosshair scan — spatial-index streaming mode (compact view). */
+  stream: `${MICON}<circle cx="7" cy="7" r="3.1"/><path d="M7 1.6v1.9M7 10.5v1.9M1.6 7h1.9M10.5 7h1.9"/></svg>`,
+  /** Closed box — direct (whole-dataset) loading mode (compact view). */
+  box: `${MICON}<path d="M2.5 4.5 7 2l4.5 2.5v5L7 12 2.5 9.5v-5Z"/><path d="M2.5 4.5 7 7l4.5-2.5M7 7v5"/></svg>`,
+  /** Check in a circle — all-clear states. */
+  check: `${MICON}<circle cx="7" cy="7" r="5.4"/><path d="m4.6 7.2 1.7 1.7 3.1-3.5"/></svg>`,
+  /** Filled dot — status/severity marker (colored by context). */
+  dot: '<svg class="luxar-micon luxar-micon--dot" viewBox="0 0 14 14" aria-hidden="true"><circle cx="7" cy="7" r="4" fill="currentColor"/></svg>',
+  /** Info circle — informational recommendations. */
+  info: `${MICON}<circle cx="7" cy="7" r="5.4"/><path d="M7 6.6v3M7 4.3v.1"/></svg>`,
+  /** Expand corners — grow the compact pill into the full panel. */
+  expand: `${MICON}<path d="M5.4 1.8H1.8v3.6M8.6 1.8h3.6v3.6M5.4 12.2H1.8V8.6M8.6 12.2h3.6V8.6"/></svg>`,
+} as const;
+
+/**
+ * Color for a visible-count metric: neutral while data is on screen,
+ * dimmed at zero. Counts are state, not identity — the previous
+ * per-geometry palette (points green / lines orange / splats blue)
+ * made a healthy lines card read as a permanent warning.
+ */
+export function countColorClass(count: number): string {
+  return count > 0 ? '' : getColorClass('dimmed');
+}
+
+/**
  * Template for metric card component
  * @param colorClass - CSS class for color (e.g., 'luxar-color--success')
  * @param dataField - Optional data-field attribute for targeted DOM patching
@@ -285,7 +330,7 @@ export function renderOverviewContent(stats: GlobalStats, cacheMetrics: CacheMet
           'VISIBLE POINTS',
           formatNumber(stats.visiblePoints),
           `${visiblePointsPercent}% of ${formatNumber(stats.datasetSize)}`,
-          getColorClass('success'),
+          countColorClass(stats.visiblePoints),
           'small',
           'visible-points',
           'How many points are on screen right now versus how many the whole dataset holds. The two differ because only data inside the current nD slice is shown, and level-of-detail (LOD) streaming may not have loaded full resolution yet'
@@ -294,7 +339,7 @@ export function renderOverviewContent(stats: GlobalStats, cacheMetrics: CacheMet
           'VISIBLE LINES',
           formatNumber(stats.visibleSegments),
           `${visibleSegmentsPercent}% of ${formatNumber(stats.datasetSegments)}`,
-          getColorClass('warning'),
+          countColorClass(stats.visibleSegments),
           'small',
           'visible-lines',
           'How many line segments are on screen right now versus how many the whole dataset holds. The two differ because only data inside the current nD slice is shown, and level-of-detail (LOD) streaming may not have loaded full resolution yet'
@@ -303,7 +348,7 @@ export function renderOverviewContent(stats: GlobalStats, cacheMetrics: CacheMet
           'VISIBLE SPLATS',
           formatNumber(stats.visibleSplats),
           `${visibleSplatsPercent}% of ${formatNumber(stats.datasetSplats)}`,
-          getColorClass('info'),
+          countColorClass(stats.visibleSplats),
           'small',
           'visible-splats',
           'How many Gaussian splats are on screen right now versus how many the whole dataset holds. The two differ because only data inside the current nD slice is shown, and level-of-detail (LOD) streaming may not have loaded full resolution yet'
@@ -319,7 +364,7 @@ export function renderOverviewContent(stats: GlobalStats, cacheMetrics: CacheMet
           'VISIBLE POINTS',
           formatNumber(stats.visiblePoints),
           `${visiblePointsPercent}% of ${formatNumber(stats.datasetSize)}`,
-          getColorClass('success'),
+          countColorClass(stats.visiblePoints),
           'medium',
           'visible-points',
           'How many points are on screen right now versus how many the whole dataset holds. The two differ because only data inside the current nD slice is shown, and level-of-detail (LOD) streaming may not have loaded full resolution yet'
@@ -332,7 +377,7 @@ export function renderOverviewContent(stats: GlobalStats, cacheMetrics: CacheMet
           'VISIBLE LINES',
           formatNumber(stats.visibleSegments),
           `${visibleSegmentsPercent}% of ${formatNumber(stats.datasetSegments)}`,
-          getColorClass('warning'),
+          countColorClass(stats.visibleSegments),
           'medium',
           'visible-lines',
           'How many line segments are on screen right now versus how many the whole dataset holds. The two differ because only data inside the current nD slice is shown, and level-of-detail (LOD) streaming may not have loaded full resolution yet'
@@ -345,7 +390,7 @@ export function renderOverviewContent(stats: GlobalStats, cacheMetrics: CacheMet
           'VISIBLE SPLATS',
           formatNumber(stats.visibleSplats),
           `${visibleSplatsPercent}% of ${formatNumber(stats.datasetSplats)}`,
-          getColorClass('info'),
+          countColorClass(stats.visibleSplats),
           'medium',
           'visible-splats',
           'How many Gaussian splats are on screen right now versus how many the whole dataset holds. The two differ because only data inside the current nD slice is shown, and level-of-detail (LOD) streaming may not have loaded full resolution yet'
@@ -365,7 +410,7 @@ export function renderOverviewContent(stats: GlobalStats, cacheMetrics: CacheMet
           'VISIBLE POINTS',
           formatNumber(stats.visiblePoints),
           `${visiblePointsPercent}% of ${formatNumber(stats.datasetSize)} total`,
-          getColorClass('success'),
+          countColorClass(stats.visiblePoints),
           'large',
           'visible-points',
           'How many points are on screen right now versus how many the whole dataset holds. The two differ because only data inside the current nD slice is shown, and level-of-detail (LOD) streaming may not have loaded full resolution yet'
@@ -380,7 +425,7 @@ export function renderOverviewContent(stats: GlobalStats, cacheMetrics: CacheMet
           'VISIBLE LINES',
           formatNumber(stats.visibleSegments),
           `${visibleSegmentsPercent}% of ${formatNumber(stats.datasetSegments)} total`,
-          getColorClass('warning'),
+          countColorClass(stats.visibleSegments),
           'large',
           'visible-lines',
           'How many line segments are on screen right now versus how many the whole dataset holds. The two differ because only data inside the current nD slice is shown, and level-of-detail (LOD) streaming may not have loaded full resolution yet'
@@ -395,7 +440,7 @@ export function renderOverviewContent(stats: GlobalStats, cacheMetrics: CacheMet
           'VISIBLE SPLATS',
           formatNumber(stats.visibleSplats),
           `${visibleSplatsPercent}% of ${formatNumber(stats.datasetSplats)} total`,
-          getColorClass('info'),
+          countColorClass(stats.visibleSplats),
           'large',
           'visible-splats',
           'How many Gaussian splats are on screen right now versus how many the whole dataset holds. The two differ because only data inside the current nD slice is shown, and level-of-detail (LOD) streaming may not have loaded full resolution yet'
@@ -432,7 +477,20 @@ export function renderOverviewContent(stats: GlobalStats, cacheMetrics: CacheMet
 }
 
 /**
- * Reusable cache section component (reduces duplication between L1/L2)
+ * Cache-section keys accepted by the collapse toggle. Sections start
+ * collapsed (compact one-line summary) — the Cache tab holds 4 stacked
+ * sections and would otherwise overflow the panel with a scrollbar.
+ */
+export const CACHE_SECTION_KEYS = ['slice', 'l0', 'l1', 'l2'] as const;
+export type CacheSectionKey = (typeof CACHE_SECTION_KEYS)[number];
+
+/**
+ * Reusable cache section component (reduces duplication between L1/L2).
+ * Collapsible: the header always carries a compact inline summary
+ * (hidden by CSS while expanded) that mirrors every metric — same
+ * value/subtitle text and the SAME `data-field` keys as the full cards,
+ * so the per-tick patcher in `tabs/cache.ts` updates both views with
+ * one pass and no state is lost by collapsing.
  * @param metrics - Each metric can have a colorClass for CSS class-based coloring
  */
 function renderCacheSection(
@@ -440,6 +498,8 @@ function renderCacheSection(
   titleTooltip: string | undefined,
   clearAction: string,
   clearTooltip: string,
+  sectionKey: CacheSectionKey,
+  collapsed: boolean,
   metrics: Array<{
     label: string;
     value: string;
@@ -453,10 +513,35 @@ function renderCacheSection(
   // SIZE / HIT RATE / I/O). 2 → cols-2, 3 → cols-3, anything else → cols-4.
   const cols = metrics.length === 2 ? 'cols-2' : metrics.length === 3 ? 'cols-3' : 'cols-4';
 
+  const summaryHtml = metrics
+    .map((metric) => {
+      const fieldAttr = metric.dataField ? ` data-field="${metric.dataField}"` : '';
+      const subFieldAttr = metric.dataField ? ` data-field="${metric.dataField}-sub"` : '';
+      // The one-line summary only has room for label + value per metric;
+      // the sole subtitle carried along is the hit-rate hits·miss split
+      // (live data not visible anywhere else while collapsed). The other
+      // subtitles (entry counts, "LRU removed", error breakdowns) stay on
+      // the expanded cards and in each item's hover tooltip.
+      const withSub = metric.dataField?.includes('hitrate');
+      const subHtml = withSub
+        ? `<span class="luxar-cache-section__summary-sub"${subFieldAttr}>${metric.subtitle}</span>`
+        : '';
+      return `
+        <span class="luxar-cache-section__summary-item"${metric.tooltip ? ` title="${escapeHtml(metric.tooltip)}"` : ''}>
+          <span class="luxar-cache-section__summary-label">${metric.label}</span>
+          <span class="luxar-cache-section__summary-value ${metric.colorClass || ''}"${fieldAttr}>${metric.value}</span>
+          ${subHtml}
+        </span>
+      `;
+    })
+    .join('');
+
   return `
-    <div class="luxar-cache-section">
-      <div class="luxar-cache-section__header">
+    <div class="luxar-cache-section${collapsed ? ' luxar-cache-section--collapsed' : ''}" data-section="${sectionKey}">
+      <div class="luxar-cache-section__header" data-action="toggleCacheSection" data-section-key="${sectionKey}" role="button" tabindex="0" aria-expanded="${!collapsed}" title="Click to ${collapsed ? 'expand' : 'collapse'} this section">
+        <span class="luxar-cache-section__chevron" aria-hidden="true">▾</span>
         <span class="luxar-cache-section__title"${titleTooltip ? ` title="${escapeHtml(titleTooltip)}"` : ''}>${title}</span>
+        <span class="luxar-cache-section__summary">${summaryHtml}</span>
         <button data-action="${clearAction}" class="luxar-cache-section__clear-btn" title="${escapeHtml(clearTooltip)}">Clear</button>
       </div>
       <div class="luxar-cache-section__metrics luxar-cache-section__metrics--${cols}">
@@ -510,9 +595,9 @@ export const CACHE_BADGE_COLOR: Record<CacheStatusBadge, string> = {
  */
 export const CACHE_BADGE_TOOLTIP: Record<CacheStatusBadge, string> = {
   'cache-enabled':
-    'Multi-level caching is active. Downloaded chunks are kept in memory (L0 decoded + L1 raw) ' +
-    'and on disk (L2, browser private storage), so re-slicing and revisits are served locally ' +
-    'instead of re-downloading. Nothing to do — this is the healthy state.',
+    'Multi-level caching is active. Decoded slices (S-cache) and downloaded chunks (L0 decoded + ' +
+    'L1 raw in memory, L2 on disk in browser private storage) are retained, so re-slicing and ' +
+    'revisits are served locally instead of re-downloading. Nothing to do — this is the healthy state.',
   'no-cache':
     'Caching is turned off for this session by the ?no-cache URL parameter: every chunk is ' +
     'fetched from the network each time it is needed and nothing persists across reloads. ' +
@@ -738,9 +823,16 @@ export function l2ErrorTotal(l2: CacheMetrics['l2']): number {
 }
 
 /**
- * Template for cache tab content with L0/L1/L2 breakdown
+ * Template for cache tab content with L0/L1/L2 breakdown.
+ * `collapsedSections` holds the section keys currently collapsed to
+ * their compact one-line summary (default: all — the compact state is
+ * the resting state so the tab fits without a scrollbar).
  */
-export function renderCacheContent(_stats: GlobalStats, cacheMetrics: CacheMetrics): string {
+export function renderCacheContent(
+  _stats: GlobalStats,
+  cacheMetrics: CacheMetrics,
+  collapsedSections: ReadonlySet<string> = new Set(CACHE_SECTION_KEYS)
+): string {
   // Switch on the explicit telemetry state so each not-enabled
   // variant gets a faithful message. Fall back to the `enabled`
   // boolean only when telemetryState is absent.
@@ -857,6 +949,8 @@ export function renderCacheContent(_stats: GlobalStats, cacheMetrics: CacheMetri
               'Caches the fully decoded geometry of a whole slice (a node at one view: slice position + displayed dims), keyed per node. Revisiting a slice — e.g. scrubbing back to a timepoint — restores it instantly, skipping the query + fetch + decode entirely (only the cheap nD→3D projection re-runs). Cleared on dataset change',
               'clearSlice',
               'Empty the SliceCache. Harmless: the next visit to each slice re-loads and re-decodes it from L0/L1/L2/network',
+              'slice',
+              collapsedSections.has('slice'),
               [
                 {
                   label: 'SIZE',
@@ -901,6 +995,8 @@ export function renderCacheContent(_stats: GlobalStats, cacheMetrics: CacheMetri
               'The fastest cache tier. Data chunks arrive compressed and must be decoded (~2ms each) before use; L0 keeps the already-decoded arrays in memory so repeat reads skip both the download AND the decode. Lookups try L0 first, then fall through L1 (memory) → L2 (disk) → network',
               'clearL0',
               'Empty the L0 decoded-chunk cache. Harmless: chunks are still in L1/L2 and will simply be re-decoded (~2ms each) on next access',
+              'l0',
+              collapsedSections.has('l0'),
               [
                 {
                   label: 'SIZE',
@@ -943,6 +1039,8 @@ export function renderCacheContent(_stats: GlobalStats, cacheMetrics: CacheMetri
         'The in-memory tier for raw (still-compressed) chunks and metadata. Serves L0 misses from RAM with no disk or network round-trip. Cleared when the page closes — the persistent copy lives in L2. Lookup order: L0 → L1 → L2 → network',
         'clearL1',
         'Empty the L1 in-memory cache. Harmless: chunks still cached on disk (L2) are re-read from there; only uncached data goes back to the network',
+        'l1',
+        collapsedSections.has('l1'),
         [
           {
             label: 'SIZE',
@@ -950,7 +1048,7 @@ export function renderCacheContent(_stats: GlobalStats, cacheMetrics: CacheMetri
             subtitle: `${cacheMetrics.l1!.count} entries`,
             tooltip:
               'RAM currently held by raw chunks + metadata in L1, and the number of entries. Bounded by an LRU limit — see EVICTIONS',
-            colorClass: getColorClass('success'),
+            colorClass: getColorClass('primary'),
             dataField: 'l1-size',
           },
           {
@@ -984,6 +1082,8 @@ export function renderCacheContent(_stats: GlobalStats, cacheMetrics: CacheMetri
           "The persistent disk tier, stored in the browser's Origin Private File System (private storage on your machine — never uploaded anywhere). Survives page reloads and browser restarts, so a revisited dataset loads from disk instead of the network. Lookup order: L0 → L1 → L2 → network",
           'clearL2',
           'Delete the on-disk (L2) cache for this dataset. Anything not held in memory will be re-downloaded from the server — use this to reclaim disk space or force a fresh copy',
+          'l2',
+          collapsedSections.has('l2'),
           [
             {
               label: 'SIZE',
@@ -991,7 +1091,7 @@ export function renderCacheContent(_stats: GlobalStats, cacheMetrics: CacheMetri
               subtitle: `${cacheMetrics.l2!.count} entries`,
               tooltip:
                 "Disk space used by cached chunks in the browser's private storage, and the number of entries. Persists across sessions; counts against the browser storage quota (see the quota-constrained badge if it fills up)",
-              colorClass: getColorClass('info'),
+              colorClass: getColorClass('primary'),
               dataField: 'l2-size',
             },
             {
@@ -1008,6 +1108,7 @@ export function renderCacheContent(_stats: GlobalStats, cacheMetrics: CacheMetri
               subtitle: `${formatNumber(cacheMetrics.l2!.writes)} writes`,
               tooltip:
                 'Disk traffic: reads = chunks served from the on-disk cache; writes = freshly downloaded chunks saved to disk so future sessions can skip the download',
+              colorClass: countColorClass(cacheMetrics.l2!.reads + cacheMetrics.l2!.writes),
               dataField: 'l2-io',
             },
             {
@@ -1053,8 +1154,8 @@ export function renderCacheContent(_stats: GlobalStats, cacheMetrics: CacheMetri
       <!-- Combined Stats + Clear All -->
       <div class="luxar-cache-total">
         <div class="luxar-cache-total__header">
-          <span class="luxar-cache-total__label" title="Total space used by cached data across every tier: L0 (decoded, memory) + L1 (raw, memory) + L2 (disk). The bar below shows usage against the configured limit">TOTAL</span>
-          <button data-action="clearAll" class="luxar-cache-section__clear-btn" title="Delete everything in every cache tier (L0 + L1 + L2 disk). The scene stays loaded, but data needed afterwards is re-downloaded from the server. Use this to force a fresh copy of a dataset that may have changed (especially with Validation: None), or to reclaim disk space">Clear All</button>
+          <span class="luxar-cache-total__label" title="Total space used by cached data across every tier: S-cache (decoded slices) + L0 (decoded chunks, memory) + L1 (raw, memory) + L2 (disk). The bar below shows usage against the configured limit">TOTAL</span>
+          <button data-action="clearAll" class="luxar-cache-section__clear-btn" title="Delete everything in every cache tier (S-cache + L0 + L1 + L2 disk). The scene stays loaded, but data needed afterwards is re-downloaded from the server. Use this to force a fresh copy of a dataset that may have changed (especially with Validation: None), or to reclaim disk space">Clear All</button>
         </div>
         <div class="luxar-cache-total__value" data-field="cache-total" title="${cacheMetrics.totalCacheMemory.toLocaleString()} bytes total cached">
           ${formatBytes(cacheMetrics.totalCacheMemory)}
@@ -1062,8 +1163,9 @@ export function renderCacheContent(_stats: GlobalStats, cacheMetrics: CacheMetri
         ${renderProgressBar(cacheMetrics.memoryPercent, getCacheMemoryColorClass(cacheMetrics.memoryPercent), cacheMetrics.memoryLimit > 0 ? `${cacheMetrics.memoryPercent.toFixed(0)}% of ${formatBytes(cacheMetrics.memoryLimit)} limit` : 'no memory limit configured', 6)}
         ${
           cacheMetrics.effectiveDemandHitRate !== undefined
-            ? `<div class="luxar-cache-total__demand" data-field="cache-effective-hitrate" title="The bottom line for caching: of all data requests made by the renderer, the share answered by ANY cache tier (L0, L1, or L2) instead of the network. 100% = fully local, no downloads; low values right after first load are normal — the caches have to be filled once before they can hit">
-                 EFFECTIVE HIT RATE: ${(cacheMetrics.effectiveDemandHitRate * 100).toFixed(1)}%
+            ? `<div class="luxar-cache-total__demand" title="The bottom line for caching: of all data requests made by the renderer, the share answered by ANY cache tier (S-cache, L0, L1, or L2) instead of the network. 100% = fully local, no downloads; low values right after first load are normal — the caches have to be filled once before they can hit">
+                 <span class="luxar-cache-total__demand-label">EFFECTIVE HIT RATE</span>
+                 <span class="luxar-cache-total__demand-value" data-field="cache-effective-hitrate">${(cacheMetrics.effectiveDemandHitRate * 100).toFixed(1)}%</span>
                </div>`
             : ''
         }
@@ -1077,9 +1179,9 @@ export function renderCacheContent(_stats: GlobalStats, cacheMetrics: CacheMetri
  */
 export function renderRecommendation(rec: Recommendation): string {
   const severityIcons = {
-    error: '🔴',
-    warning: '🟡',
-    info: 'ℹ️',
+    error: `<span class="${getColorClass('error')}">${MONITOR_ICONS.dot}</span>`,
+    warning: `<span class="${getColorClass('warning')}">${MONITOR_ICONS.dot}</span>`,
+    info: `<span class="${getColorClass('info')}">${MONITOR_ICONS.info}</span>`,
   };
 
   return `
@@ -1095,7 +1197,7 @@ export function renderRecommendation(rec: Recommendation): string {
         rec.suggestion
           ? `
         <div class="luxar-recommendation__message luxar-suggestion">
-          💡 ${escapeHtml(rec.suggestion)}
+          ${MONITOR_ICONS.insights} ${escapeHtml(rec.suggestion)}
         </div>
       `
           : ''
@@ -1110,8 +1212,10 @@ export function renderRecommendation(rec: Recommendation): string {
 export function renderInsightsContent(recommendations: Recommendation[]): string {
   if (recommendations.length === 0) {
     return `
-      <div class="luxar-data-monitor__empty luxar-data-monitor__empty--faded">
-        ✅ No issues detected
+      <div class="luxar-data-monitor__empty luxar-data-monitor__empty--faded luxar-monitor-allclear">
+        <span class="luxar-monitor-allclear__icon">${MONITOR_ICONS.check}</span>
+        <div class="luxar-monitor-allclear__title">All clear</div>
+        <div class="luxar-monitor-allclear__sub">No loading, caching, or performance issues detected.</div>
       </div>
     `;
   }
@@ -1165,15 +1269,24 @@ export function getCacheHitRateColorClass(rate: number): string {
 }
 
 /**
+ * Accesses below this count are the warm-up phase: a low hit rate on a
+ * handful of first-touch lookups is expected (the cache HAS to miss
+ * before it can hit) and should read as "no signal yet", not as a
+ * red-alert failure.
+ */
+export const CACHE_WARMUP_ACCESSES = 25;
+
+/**
  * Like {@link getCacheHitRateColorClass} but returns the dimmed color
- * when no accesses have happened yet. Keeps the initial render of
- * the cache tab consistent with the incremental cache-tab updater,
- * which already special-cases the no-data state. Without this, a
- * freshly loaded session shows hit-rate cards in red (error color)
- * on first paint, then flips to dimmed on the next 1s poll tick.
+ * while the cache is still warming up (fewer than
+ * {@link CACHE_WARMUP_ACCESSES} accesses, including zero). Keeps the
+ * initial render of the cache tab consistent with the incremental
+ * cache-tab updater. Without this, a freshly loaded session shows
+ * hit-rate cards in alarm red when nothing is wrong — the first
+ * lookups are unavoidable misses.
  */
 export function getCacheHitRateColorClassWithGuard(rate: number, totalAccesses: number): string {
-  if (totalAccesses === 0) return getColorClass('dimmed');
+  if (totalAccesses < CACHE_WARMUP_ACCESSES) return getColorClass('dimmed');
   return getCacheHitRateColorClass(rate);
 }
 
@@ -1195,7 +1308,6 @@ export function renderMemoryContent(metrics: MemoryMetrics): string {
     : `
     <div class="luxar-memory-section">
       <div class="luxar-memory-section__header">
-        <span class="luxar-memory-section__icon">⬡</span>
         <span class="luxar-memory-section__title" title="A recycling pool for GPU buffers. Streaming constantly needs new buffers as data arrives; allocating GPU memory is slow, so finished buffers are returned to a pool and handed back out instead of reallocated. REUSE % tells you how well that is working">GPU BUFFER POOL</span>
       </div>
       <div class="luxar-memory-section__empty">Not initialized</div>
@@ -1261,7 +1373,6 @@ function renderGPUPoolSection(stats: GPUPoolStats): string {
   return `
     <div class="luxar-memory-section">
       <div class="luxar-memory-section__header">
-        <span class="luxar-memory-section__icon">⬡</span>
         <span class="luxar-memory-section__title" title="A recycling pool for GPU buffers. Streaming constantly needs new buffers as data arrives; allocating GPU memory is slow, so finished buffers are returned to a pool and handed back out instead of reallocated. REUSE % tells you how well that is working">GPU BUFFER POOL</span>
       </div>
       <table class="luxar-memory-table">
@@ -1326,7 +1437,6 @@ function renderAccumulatorsSection(accumulators: MemoryMetrics['accumulators']):
   return `
     <div class="luxar-memory-section">
       <div class="luxar-memory-section__header">
-        <span class="luxar-memory-section__icon">⚡</span>
         <span class="luxar-memory-section__title" title="CPU-side staging buffers that collect geometry attributes (positions, colors, ...) as chunks stream in, before GPU upload. They over-allocate and grow geometrically so appending stays cheap — see the GROWS column for how often growth was needed">DATA ACCUMULATORS</span>
       </div>
       <table class="luxar-memory-table">
