@@ -20,6 +20,7 @@ import type { WireMonitorAfterLoadParams } from '../../../../../data/scene-loade
 import type { SceneNode } from '../../../../../data/data-loader-types';
 import type { MultiLevelCachingStore } from '../../../../../cache/multi-level-caching-store';
 import type { DecompressedChunkCache } from '../../../../../cache/decompressed-chunk-cache';
+import type { SliceCache } from '../../../../../cache/slice-cache';
 import type { GPUBufferPool } from '../../../../../rendering/gpu-buffer-pool';
 import type { UpdateProfiler } from '../../../../../profiling/update-profiler';
 
@@ -32,6 +33,7 @@ function makeMonitor(): SceneLoaderMonitorPort & {
     disconnectAllLoaders: vi.fn(),
     setCacheStatsProvider: vi.fn(() => callOrder.push('setCacheStatsProvider')),
     setL0CacheProvider: vi.fn(() => callOrder.push('setL0CacheProvider')),
+    setSliceCacheProvider: vi.fn(() => callOrder.push('setSliceCacheProvider')),
     setGPUBufferPoolProvider: vi.fn(() => callOrder.push('setGPUBufferPoolProvider')),
     setAccumulatorProvider: vi.fn((type: string) =>
       callOrder.push(`setAccumulatorProvider:${type}`)
@@ -68,6 +70,7 @@ function makeBaseParams(monitor: SceneLoaderMonitorPort | null): WireMonitorAfte
     monitor,
     cachingStore: null,
     l0Cache: null,
+    sliceCache: null,
     cacheTelemetryState: { kind: 'enabled' },
     gpuBufferPool: null,
     profiler: null,
@@ -185,6 +188,34 @@ describe('wireMonitorAfterLoad — cache providers', () => {
     const monitor = makeMonitor();
     wireMonitorAfterLoad(makeBaseParams(monitor));
     expect(monitor.setL0CacheProvider).not.toHaveBeenCalled();
+  });
+
+  it('setSliceCacheProvider wraps sliceCache.getStats and sliceCache.clear', () => {
+    const monitor = makeMonitor();
+    const getStats = vi.fn(() => ({ size: 9 }));
+    const clear = vi.fn();
+    const sliceCache = { getStats, clear } as unknown as SliceCache;
+
+    wireMonitorAfterLoad({
+      ...makeBaseParams(monitor),
+      sliceCache,
+    });
+
+    const provider = (monitor.setSliceCacheProvider as ReturnType<typeof vi.fn>).mock
+      .calls[0][0] as {
+      getStats: () => unknown;
+      clear: () => void;
+    };
+    provider.getStats();
+    provider.clear();
+    expect(getStats).toHaveBeenCalledTimes(1);
+    expect(clear).toHaveBeenCalledTimes(1);
+  });
+
+  it('setSliceCacheProvider skipped when sliceCache is null', () => {
+    const monitor = makeMonitor();
+    wireMonitorAfterLoad(makeBaseParams(monitor));
+    expect(monitor.setSliceCacheProvider).not.toHaveBeenCalled();
   });
 
   it('always pushes the resolved cacheTelemetryState', () => {

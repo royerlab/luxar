@@ -140,6 +140,8 @@ export class DataLoadingMonitor {
 
   // L0 decompressed chunk cache provider
   private l0CacheProvider: { getStats: () => CacheMetrics['l0']; clear: () => void } | null = null;
+  private sliceCacheProvider: { getStats: () => CacheMetrics['slice']; clear: () => void } | null =
+    null;
 
   // Explicit cache telemetry state (set by SceneLoader.cache-setup).
   // Pre-wiring this defaults to undefined so the aggregator falls back
@@ -360,6 +362,19 @@ export class DataLoadingMonitor {
   }
 
   /**
+   * Register the SliceCache ("S-cache") stats/clear provider so the Cache tab
+   * shows its usage and hit rate. Mirrors {@link setL0CacheProvider}.
+   */
+  public setSliceCacheProvider(
+    provider: { getStats: () => CacheMetrics['slice']; clear: () => void } | null
+  ): void {
+    this.sliceCacheProvider = provider;
+    if (provider) {
+      log.info(Modules.DATA_MONITOR, 'SliceCache provider connected');
+    }
+  }
+
+  /**
    * Set the GPU buffer pool provider for Memory tab stats.
    * The provider should have a getStats() method that returns PoolStats.
    */
@@ -433,6 +448,7 @@ export class DataLoadingMonitor {
   public resetSceneProviders(): void {
     this.cacheStatsProvider = null;
     this.l0CacheProvider = null;
+    this.sliceCacheProvider = null;
     this.gpuBufferPoolProvider = null;
     this.accumulatorProviders = { points: null, lines: null, gsplats: null };
     this.profiler = null;
@@ -491,6 +507,17 @@ export class DataLoadingMonitor {
   }
 
   /**
+   * Clear the SliceCache ("S-cache").
+   */
+  public clearSliceCache(): void {
+    if (this.sliceCacheProvider) {
+      this.sliceCacheProvider.clear();
+      log.info(Modules.DATA_MONITOR, 'SliceCache cleared');
+      this.updateUI();
+    }
+  }
+
+  /**
    * Clear L1 memory cache.
    */
   public clearL1Cache(): void {
@@ -536,15 +563,18 @@ export class DataLoadingMonitor {
     ) {
       return;
     }
-    // Clear L0 first (synchronous)
+    // Clear L0 + SliceCache first (synchronous)
     if (this.l0CacheProvider) {
       this.l0CacheProvider.clear();
+    }
+    if (this.sliceCacheProvider) {
+      this.sliceCacheProvider.clear();
     }
     // Clear L1 + L2 (L2 is async)
     if (this.cacheStatsProvider) {
       await this.cacheStatsProvider.clearAll();
     }
-    log.info(Modules.DATA_MONITOR, 'All caches cleared (L0 + L1 + L2)');
+    log.info(Modules.DATA_MONITOR, 'All caches cleared (S-cache + L0 + L1 + L2)');
     notifier.toast('All caches cleared');
     this.updateUI();
   }
@@ -927,6 +957,9 @@ export class DataLoadingMonitor {
       }
       case 'clearL0':
         this.clearL0Cache();
+        break;
+      case 'clearSlice':
+        this.clearSliceCache();
         break;
       case 'clearL1':
         this.clearL1Cache();
@@ -1948,6 +1981,7 @@ export class DataLoadingMonitor {
     this.calculateRates();
     return aggregateCacheMetrics({
       l0Provider: this.l0CacheProvider,
+      sliceProvider: this.sliceCacheProvider,
       cacheStatsProvider: this.cacheStatsProvider,
       loaders: this.loaders,
       metricsCache: this.metrics,

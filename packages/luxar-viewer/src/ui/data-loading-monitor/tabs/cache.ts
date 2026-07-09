@@ -76,6 +76,43 @@ export function updateCacheTab(container: HTMLElement | null, cacheMetrics: Cach
     }
   }
 
+  // SliceCache ("S-cache") stats
+  if (cacheMetrics.slice) {
+    const sliceTotal = cacheMetrics.slice.hits + cacheMetrics.slice.misses;
+    const sliceHitRate = sliceTotal > 0 ? (cacheMetrics.slice.hits / sliceTotal) * 100 : 0;
+
+    patchField(container, 's-size', templateFormatBytes(cacheMetrics.slice.size));
+    patchField(container, 's-size-sub', `${cacheMetrics.slice.count} slices`);
+    patchField(container, 's-hitrate', `${sliceHitRate.toFixed(1)}%`);
+    patchField(
+      container,
+      's-hitrate-sub',
+      `${templateFormatNumber(cacheMetrics.slice.hits)} hits · ${templateFormatNumber(cacheMetrics.slice.misses)} miss`
+    );
+    patchField(container, 's-evictions', templateFormatNumber(cacheMetrics.slice.evictions));
+
+    const sHitEl = container.querySelector('[data-field="s-hitrate"]') as HTMLElement | null;
+    if (sHitEl) {
+      const colorClass =
+        sliceTotal === 0
+          ? getColorClass('dimmed')
+          : sliceHitRate > 80
+            ? getColorClass('success')
+            : sliceHitRate > 50
+              ? getColorClass('warning')
+              : getColorClass('error');
+      updateColorClass(sHitEl, colorClass);
+    }
+
+    const sEvictEl = container.querySelector('[data-field="s-evictions"]') as HTMLElement | null;
+    if (sEvictEl) {
+      updateColorClass(
+        sEvictEl,
+        cacheMetrics.slice.evictions > 0 ? getColorClass('warning') : getColorClass('dimmed')
+      );
+    }
+  }
+
   // L1 stats
   if (cacheMetrics.l1) {
     const l1Total = cacheMetrics.l1.hits + cacheMetrics.l1.misses;

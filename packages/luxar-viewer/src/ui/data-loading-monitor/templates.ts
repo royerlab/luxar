@@ -822,6 +822,11 @@ export function renderCacheContent(_stats: GlobalStats, cacheMetrics: CacheMetri
   // freshly loaded session doesn't flash red on first paint.
   const l0HitRateColorClass = getCacheHitRateColorClassWithGuard(l0HitRate, l0Total);
 
+  // SliceCache ("S-cache") hit rate calculation (if available)
+  const sliceTotal = cacheMetrics.slice ? cacheMetrics.slice.hits + cacheMetrics.slice.misses : 0;
+  const sliceHitRate = sliceTotal > 0 ? (cacheMetrics.slice!.hits / sliceTotal) * 100 : 0;
+  const sliceHitRateColorClass = getCacheHitRateColorClassWithGuard(sliceHitRate, sliceTotal);
+
   // L1 hit rate calculation
   const l1Total = cacheMetrics.l1!.hits + cacheMetrics.l1!.misses;
   const l1HitRate = l1Total > 0 ? (cacheMetrics.l1!.hits / l1Total) * 100 : 0;
@@ -844,6 +849,50 @@ export function renderCacheContent(_stats: GlobalStats, cacheMetrics: CacheMetri
 
   return `
     <div class="luxar-tab-content--cache">
+      <!-- SliceCache ("S-cache") — per-(node,view) decoded-slice cache, above L0 -->
+      ${
+        cacheMetrics.slice
+          ? renderCacheSection(
+              'SLICE CACHE (S-CACHE)',
+              'Caches the fully decoded geometry of a whole slice (a node at one view: slice position + displayed dims), keyed per node. Revisiting a slice — e.g. scrubbing back to a timepoint — restores it instantly, skipping the query + fetch + decode entirely (only the cheap nD→3D projection re-runs). Cleared on dataset change',
+              'clearSlice',
+              'Empty the SliceCache. Harmless: the next visit to each slice re-loads and re-decodes it from L0/L1/L2/network',
+              [
+                {
+                  label: 'SIZE',
+                  value: formatBytes(cacheMetrics.slice.size),
+                  subtitle: `${cacheMetrics.slice.count} slices`,
+                  tooltip:
+                    'Memory held by cached decoded slices, and how many slices that is. Bounded by an LRU byte budget — see EVICTIONS',
+                  colorClass: getColorClass('primary'),
+                  dataField: 's-size',
+                },
+                {
+                  label: 'HIT RATE',
+                  value: `${sliceHitRate.toFixed(1)}%`,
+                  subtitle: `${formatNumber(cacheMetrics.slice.hits)} hits · ${formatNumber(cacheMetrics.slice.misses)} miss`,
+                  tooltip:
+                    'Share of slice revisits served instantly from the cache. A hit skips the whole load+decode; a miss loads the slice normally. Rises as you revisit / oscillate over slices (e.g. scrubbing back and forth in time)',
+                  colorClass: sliceHitRateColorClass,
+                  dataField: 's-hitrate',
+                },
+                {
+                  label: 'EVICTIONS',
+                  value: formatNumber(cacheMetrics.slice.evictions),
+                  subtitle: 'LRU removed',
+                  tooltip:
+                    'Slices pushed out of the cache (least-recently-used first) once it hit its byte budget. Evicted slices are simply re-loaded on next visit. Steady growth means more distinct slices were visited than the budget holds',
+                  colorClass:
+                    cacheMetrics.slice.evictions > 0
+                      ? getColorClass('warning')
+                      : getColorClass('dimmed'),
+                  dataField: 's-evictions',
+                },
+              ]
+            )
+          : ''
+      }
+
       <!-- L0 Decompressed Chunk Cache Section (fastest layer - avoids Blosc decompression) -->
       ${
         cacheMetrics.l0

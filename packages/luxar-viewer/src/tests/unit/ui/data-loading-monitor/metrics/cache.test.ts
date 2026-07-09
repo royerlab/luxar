@@ -11,6 +11,7 @@ import {
   aggregateCacheMetrics,
   type CacheRatesSnapshot,
   type L0Provider,
+  type SliceProvider,
 } from '../../../../../ui/data-loading-monitor/metrics/cache';
 import type {
   LoaderMonitor,
@@ -137,6 +138,50 @@ describe('aggregateCacheMetrics', () => {
     expect(result.totalEntries).toBe(7);
     expect(result.l1).toBeUndefined();
     expect(result.l2).toBeUndefined();
+  });
+
+  it('surfaces SliceCache stats and folds them into the in-memory totals', () => {
+    const sliceProvider: SliceProvider = {
+      getStats: () => ({
+        size: 4096,
+        count: 3,
+        hits: 6,
+        misses: 4,
+        evictions: 1,
+        hitRate: 0.6,
+      }),
+    };
+    const l0Provider: L0Provider = {
+      getStats: () => ({ size: 500, count: 7, hits: 0, misses: 0, evictions: 0, hitRate: 0 }),
+    };
+    const result = aggregateCacheMetrics({
+      l0Provider,
+      sliceProvider,
+      cacheStatsProvider: null,
+      loaders: new Map(),
+      metricsCache: new Map(),
+      rates: ZERO_RATES,
+    });
+
+    expect(result.slice?.size).toBe(4096);
+    expect(result.slice?.count).toBe(3);
+    expect(result.slice?.hits).toBe(6);
+    // In-memory totals combine L0 (500/7) + SliceCache (4096/3).
+    expect(result.totalCacheMemory).toBe(4596);
+    expect(result.totalEntries).toBe(10);
+    // SliceCache hits count toward the effective hit rate (6 hits / 10 accesses).
+    expect(result.effectiveDemandHitRate).toBeCloseTo(0.6, 5);
+  });
+
+  it('omits the SliceCache breakdown when no sliceProvider is supplied', () => {
+    const result = aggregateCacheMetrics({
+      l0Provider: null,
+      cacheStatsProvider: null,
+      loaders: new Map(),
+      metricsCache: new Map(),
+      rates: ZERO_RATES,
+    });
+    expect(result.slice).toBeUndefined();
   });
 
   it('with full cache provider: totals are L0 + L1 + L2 sizes/counts', () => {

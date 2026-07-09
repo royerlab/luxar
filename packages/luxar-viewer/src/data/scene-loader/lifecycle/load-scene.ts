@@ -356,6 +356,7 @@ export async function loadScene(url: string, ctx: LoadSceneCtx): Promise<THREE.G
     monitor: ctx.monitor(),
     cachingStore: cacheResult.cachingStore,
     l0Cache: cacheResult.l0Cache,
+    sliceCache: cacheResult.sliceCache,
     cacheTelemetryState: cacheResult.telemetryState,
     gpuBufferPool: ctx.gpuBufferPool(),
     profiler: ctx.profiler,
