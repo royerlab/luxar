@@ -19,6 +19,7 @@ import type { LinesSpatialIndexLoader } from '../../../data/lines/lines-spatial-
 import type { LinesViewState, LoadedLinesData } from '../../../types/lines';
 import { CACHE_HIT_THRESHOLD_MS } from '../../../data/loaders/progressive/constants';
 import { SliceCache } from '../../../cache/slice-cache';
+import { buildSliceViewSig } from '../../../data/loaders/progressive/slice-cache-helper';
 
 interface SubLoaderStub {
   updateView: ReturnType<typeof vi.fn>;
@@ -391,6 +392,79 @@ describe('LinesProgressiveLoader', () => {
       await loader.updateView({ ...baseViewState, frameBudgetMs: 70 });
       expect(lodA.updateViewWithResidency).toHaveBeenCalledTimes(1);
       expect(loader.loadedLODCount).toBeGreaterThanOrEqual(2);
+    });
+
+    it('playback prefix caching: capped ladders are stored, restored, and deepened loop-over-loop', async () => {
+      // Mirrors gsplats-progressive-loader.test.ts (three-geometry symmetry).
+      const sc = new SliceCache({ maxSize: 10 * 1024 * 1024 });
+      const l = new LinesProgressiveLoader(
+        [lodA, lodB, lodC] as unknown as LinesSpatialIndexLoader[],
+        3,
+        '/l',
+        undefined,
+        sc
+      );
+      const viewA = baseViewState;
+      const viewB = { ...baseViewState, slicePosition: [0, 0, 1] };
+
+      await l.updateView({ ...viewA, frameBudgetMs: 10 });
+      expect(l.loadedLODCount).toBe(1);
+      expect(sc.getStats().count).toBe(1);
+
+      await l.updateView({ ...viewB, frameBudgetMs: 10 });
+
+      lodA.updateViewWithResidency.mockClear();
+      lodB.updateViewWithResidency.mockClear();
+      lodC.updateViewWithResidency.mockClear();
+      await l.updateView({ ...viewA, frameBudgetMs: 20 });
+      expect(lodA.updateViewWithResidency).not.toHaveBeenCalled(); // from cache
+      expect(lodB.updateViewWithResidency).toHaveBeenCalledTimes(1); // deepened
+      expect(l.loadedLODCount).toBe(2);
+
+      await l.updateView({ ...viewB, frameBudgetMs: 10 });
+      lodA.updateViewWithResidency.mockClear();
+      lodB.updateViewWithResidency.mockClear();
+      lodC.updateViewWithResidency.mockClear();
+      await l.updateView(viewA);
+      expect(lodA.updateViewWithResidency).not.toHaveBeenCalled();
+      expect(lodB.updateViewWithResidency).not.toHaveBeenCalled();
+      expect(lodC.updateViewWithResidency).toHaveBeenCalledTimes(1); // only the tail
+      expect(l.loadedLODCount).toBe(3);
+      expect(l.hasMoreLODs).toBe(false);
+
+      await l.updateView({ ...viewB, frameBudgetMs: 10 });
+      lodA.updateViewWithResidency.mockClear();
+      lodB.updateViewWithResidency.mockClear();
+      lodC.updateViewWithResidency.mockClear();
+      await l.updateView({ ...viewA, frameBudgetMs: 10 });
+      expect(lodA.updateViewWithResidency).not.toHaveBeenCalled();
+      expect(lodB.updateViewWithResidency).not.toHaveBeenCalled();
+      expect(lodC.updateViewWithResidency).not.toHaveBeenCalled();
+      expect(l.loadedLODCount).toBe(3);
+    });
+
+    it('partial restore copies the container: resume never mutates the cached payload', async () => {
+      // Mirrors gsplats-progressive-loader.test.ts (three-geometry symmetry).
+      const sc = new SliceCache({ maxSize: 10 * 1024 * 1024 });
+      const l = new LinesProgressiveLoader(
+        [lodA, lodB, lodC] as unknown as LinesSpatialIndexLoader[],
+        3,
+        '/l',
+        undefined,
+        sc
+      );
+      const viewA = baseViewState;
+      const viewB = { ...baseViewState, slicePosition: [0, 0, 1] };
+
+      await l.updateView({ ...viewA, frameBudgetMs: 10 });
+      await l.updateView({ ...viewB, frameBudgetMs: 10 });
+
+      const key = SliceCache.makeKey('/l', buildSliceViewSig(viewA));
+      const cachedPayload = sc.peek(key)!.payload as unknown[];
+      expect(cachedPayload.length).toBe(1);
+
+      await l.updateView({ ...viewA, frameBudgetMs: 20 });
+      expect(cachedPayload.length).toBe(1);
     });
   });
 

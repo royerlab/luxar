@@ -143,6 +143,15 @@ export class SliceCache {
   }
 
   /**
+   * Read an entry WITHOUT LRU promotion and WITHOUT counting a hit/miss.
+   * Used by `storeLadder`'s upgrade-if-longer check so bookkeeping reads
+   * don't perturb the hit-rate statistic the monitor reports.
+   */
+  peek(key: string): SliceCacheEntry | undefined {
+    return this.cache.peek(key);
+  }
+
+  /**
    * Whether an entry of `bytes` could ever be stored (i.e. it does not exceed
    * the whole budget). The LRU silently rejects oversized entries, so callers
    * check this BEFORE doing the (potentially large) clone to avoid a wasted

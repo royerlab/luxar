@@ -13,6 +13,7 @@ import type { GSplatsSpatialIndexLoader } from '../../../data/gsplats/gsplats-sp
 import type { GSplatsViewState, LoadedGSplatsData } from '../../../types/gsplats';
 import { CACHE_HIT_THRESHOLD_MS } from '../../../data/loaders/progressive/constants';
 import { SliceCache } from '../../../cache/slice-cache';
+import { buildSliceViewSig } from '../../../data/loaders/progressive/slice-cache-helper';
 
 interface SubLoaderStub {
   updateView: ReturnType<typeof vi.fn>;
@@ -431,6 +432,88 @@ describe('GSplatsProgressiveLoader', () => {
       // No reset: level 0 loaded once; the second pass continued at level 1.
       expect(lodA.updateViewWithResidency).toHaveBeenCalledTimes(1);
       expect(loader.loadedLODCount).toBeGreaterThanOrEqual(2);
+    });
+
+    it('playback prefix caching: capped ladders are stored, restored, and deepened loop-over-loop', async () => {
+      // Mirrored in points/lines loader tests (three-geometry symmetry).
+      const sc = new SliceCache({ maxSize: 10 * 1024 * 1024 });
+      const l = new GSplatsProgressiveLoader(
+        [lodA, lodB, lodC] as unknown as GSplatsSpatialIndexLoader[],
+        3,
+        '/g',
+        undefined,
+        sc
+      );
+      const viewA = baseViewState;
+      const viewB = { ...baseViewState, slicePosition: [0, 0, 1] };
+
+      // Loop-1 tick at view A: budget 10 < one 30ms level → prefix(1) STORED.
+      await l.updateView({ ...viewA, frameBudgetMs: 10 });
+      expect(l.loadedLODCount).toBe(1);
+      expect(sc.getStats().count).toBe(1);
+
+      await l.updateView({ ...viewB, frameBudgetMs: 10 }); // move on (stores B's prefix)
+
+      // Loop-2 tick at view A (budget 20): the prefix restores WITHOUT
+      // re-streaming level 0, and the budget deepens the ladder by one level.
+      lodA.updateViewWithResidency.mockClear();
+      lodB.updateViewWithResidency.mockClear();
+      lodC.updateViewWithResidency.mockClear();
+      await l.updateView({ ...viewA, frameBudgetMs: 20 });
+      expect(lodA.updateViewWithResidency).not.toHaveBeenCalled(); // from cache
+      expect(lodB.updateViewWithResidency).toHaveBeenCalledTimes(1); // deepened
+      expect(l.loadedLODCount).toBe(2);
+
+      // Idle revisit (pause → no budget): prefix(2) restores, ladder completes,
+      // the FULL ladder upgrades the cache entry.
+      await l.updateView({ ...viewB, frameBudgetMs: 10 });
+      lodA.updateViewWithResidency.mockClear();
+      lodB.updateViewWithResidency.mockClear();
+      lodC.updateViewWithResidency.mockClear();
+      await l.updateView(viewA);
+      expect(lodA.updateViewWithResidency).not.toHaveBeenCalled();
+      expect(lodB.updateViewWithResidency).not.toHaveBeenCalled();
+      expect(lodC.updateViewWithResidency).toHaveBeenCalledTimes(1); // only the tail
+      expect(l.loadedLODCount).toBe(3);
+      expect(l.hasMoreLODs).toBe(false);
+
+      // Loop-3 tick at view A: FULL restore — zero streaming even under budget.
+      await l.updateView({ ...viewB, frameBudgetMs: 10 });
+      lodA.updateViewWithResidency.mockClear();
+      lodB.updateViewWithResidency.mockClear();
+      lodC.updateViewWithResidency.mockClear();
+      await l.updateView({ ...viewA, frameBudgetMs: 10 });
+      expect(lodA.updateViewWithResidency).not.toHaveBeenCalled();
+      expect(lodB.updateViewWithResidency).not.toHaveBeenCalled();
+      expect(lodC.updateViewWithResidency).not.toHaveBeenCalled();
+      expect(l.loadedLODCount).toBe(3);
+    });
+
+    it('partial restore copies the container: resume never mutates the cached payload', async () => {
+      // Mirrored in points/lines loader tests (three-geometry symmetry).
+      const sc = new SliceCache({ maxSize: 10 * 1024 * 1024 });
+      const l = new GSplatsProgressiveLoader(
+        [lodA, lodB, lodC] as unknown as GSplatsSpatialIndexLoader[],
+        3,
+        '/g',
+        undefined,
+        sc
+      );
+      const viewA = baseViewState;
+      const viewB = { ...baseViewState, slicePosition: [0, 0, 1] };
+
+      await l.updateView({ ...viewA, frameBudgetMs: 10 }); // prefix(1) stored
+      await l.updateView({ ...viewB, frameBudgetMs: 10 });
+
+      const key = SliceCache.makeKey('/g', buildSliceViewSig(viewA));
+      const cachedPayload = sc.peek(key)!.payload as unknown[];
+      expect(cachedPayload.length).toBe(1);
+
+      // Restore + deepen: the loader must push into a COPIED container, so
+      // the previously cached prefix array stays untouched (the upgrade
+      // replaces the ENTRY, never mutates the old payload in place).
+      await l.updateView({ ...viewA, frameBudgetMs: 20 });
+      expect(cachedPayload.length).toBe(1);
     });
   });
 

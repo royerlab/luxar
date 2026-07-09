@@ -278,7 +278,10 @@ export class LinesProgressiveLoader implements LinesDataLoader {
         viewState,
         this.nLods
       );
-      this.loadedLODs = restored ?? [];
+      // Shallow-copy the CONTAINER: the streaming loop below pushes further
+      // levels and must never mutate the cache's payload array (elements
+      // stay shared read-only). Mirrors GSplatsProgressiveLoader.
+      this.loadedLODs = restored ? [...restored] : [];
       this._resetGeneration++;
       this.lastViewState = {
         displayDims: [...viewState.displayDims],
@@ -289,7 +292,11 @@ export class LinesProgressiveLoader implements LinesDataLoader {
       if (restored) {
         this._initialLoadDone = true;
         this._lastAllResident = true;
-        return this.concatenateMemoized(session);
+        // FULL ladder short-circuits; a PREFIX falls through to the loop
+        // (startLevel = prefix length). Mirrors GSplatsProgressiveLoader.
+        if (restored.length === this.nLods) {
+          return this.concatenateMemoized(session);
+        }
       }
     }
 
@@ -351,8 +358,12 @@ export class LinesProgressiveLoader implements LinesDataLoader {
 
     this.prefetchNextLOD(viewState);
 
-    // Snapshot the completed ladder into the SliceCache for instant revisits.
-    storeLadder(this.sliceCache, this.path, viewState, this.loadedLODs, this.nLods);
+    // Snapshot into the SliceCache (upgrade-if-longer): full ladders always;
+    // PREFIXES only while a playback budget is active. Mirrors
+    // GSplatsProgressiveLoader.
+    if (this.loadedLODs.length === this.nLods || this._frameBudgetMs !== null) {
+      storeLadder(this.sliceCache, this.path, viewState, this.loadedLODs);
+    }
 
     return this.concatenateMemoized(session);
   }

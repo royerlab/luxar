@@ -298,7 +298,10 @@ export class GSplatsProgressiveLoader implements GSplatsDataLoader {
         viewState,
         this.nLods
       );
-      this.loadedLODs = restored ?? [];
+      // Shallow-copy the CONTAINER: the streaming loop below pushes further
+      // levels into loadedLODs and must never mutate the cache's payload
+      // array (the elements stay shared read-only — store deep-clones).
+      this.loadedLODs = restored ? [...restored] : [];
       this._resetGeneration++;
       this.lastViewState = {
         displayDims: [...viewState.displayDims],
@@ -309,7 +312,14 @@ export class GSplatsProgressiveLoader implements GSplatsDataLoader {
       if (restored) {
         this._initialLoadDone = true;
         this._lastAllResident = true;
-        return this.concatenateMemoized(session);
+        // FULL ladder: nothing left to load — short-circuit the whole pass.
+        // A PREFIX (stored while a playback budget capped a previous pass)
+        // falls through to the loop instead: loading resumes from
+        // startLevel = prefix length — within this pass's budget during
+        // play, or to completion when idle.
+        if (restored.length === this.nLods) {
+          return this.concatenateMemoized(session);
+        }
       }
     }
 
@@ -382,9 +392,15 @@ export class GSplatsProgressiveLoader implements GSplatsDataLoader {
     // Fire-and-forget: prefetch next unloaded LOD to warm cache
     this.prefetchNextLOD(viewState);
 
-    // Once the full ladder is loaded, snapshot it into the SliceCache so a later
-    // revisit to this view is an instant restore (see restoreLadder).
-    storeLadder(this.sliceCache, this.path, viewState, this.loadedLODs, this.nLods);
+    // Snapshot into the SliceCache (upgrade-if-longer): full ladders always
+    // (instant revisit restore); PREFIXES only while a playback budget is
+    // active — each playback loop then restores the prefix instantly and
+    // deepens it with the leftover budget, converging to full ladders.
+    // Gating prefixes on the budget keeps the non-play cost profile (a
+    // store per refinement pass would clone O(N²) bytes per slice).
+    if (this.loadedLODs.length === this.nLods || this._frameBudgetMs !== null) {
+      storeLadder(this.sliceCache, this.path, viewState, this.loadedLODs);
+    }
 
     return this.concatenateMemoized(session);
   }
