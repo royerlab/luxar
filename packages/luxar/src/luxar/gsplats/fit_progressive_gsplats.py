@@ -251,6 +251,16 @@ def fit_progressive_gaussian_splats(
     start_time = time.time()
     V_original = V.astype(np.float32)
     applied_floor = _resolve_floor(V_original, floor_spec)
+    # A floor at/above the brightest voxel would clip everything to 0; refuse it
+    # (mirrors the single-pass guard in _normalize_data). `auto` is capped at the
+    # median, so only an explicit too-high float/percentile can reach here.
+    if applied_floor is not None and applied_floor >= float(V_original.max()):
+        if verbose:
+            aprint(
+                f"Warning: floor {applied_floor:.6g} >= volume max "
+                f"{float(V_original.max()):.6g}; ignoring (would erase all signal)."
+            )
+        applied_floor = None
     if applied_floor is not None:
         V_original = np.clip(V_original - applied_floor, 0.0, None).astype(np.float32)
         if verbose:

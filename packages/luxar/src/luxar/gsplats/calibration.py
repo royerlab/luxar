@@ -1508,6 +1508,19 @@ def calibrate(
     floor_spec = fit_kwargs.pop("floor", "auto")
     _validate_floor(floor_spec)  # cal bypasses prepare_fit_config's validation
     applied_floor = _resolve_floor(V, floor_spec)
+    # A floor at/above the brightest voxel would clip the whole volume to 0
+    # (empty signal → non-finite held-out PSNR). Refuse it, mirroring the
+    # single-pass guard in _normalize_data. `auto` can't trigger this (mode is
+    # capped at the median); only an explicit too-high float/percentile can.
+    if applied_floor is not None and applied_floor >= float(V.max()):
+        import warnings
+
+        warnings.warn(
+            f"floor {applied_floor:.6g} >= volume max {float(V.max()):.6g}; "
+            "ignoring (would erase all signal).",
+            stacklevel=2,
+        )
+        applied_floor = None
     if applied_floor is not None:
         V = np.clip(V.astype(np.float32, copy=False) - applied_floor, 0.0, None)
     # V is already floor-subtracted; the per-K fits must not subtract again.

@@ -627,6 +627,44 @@ class TestCalibrateSmoke:
         round_trip = CalibrationResult.from_json(out_json)
         assert round_trip.held_out_peak.k_star == result.held_out_peak.k_star
 
+    def test_floor_above_volume_max_is_ignored_not_fatal(self):
+        # Guard: an explicit --floor at/above the brightest voxel would clip the
+        # whole volume to 0 → non-finite held-out PSNR → find_k_star raises. cal
+        # must warn and IGNORE it (mirrors the single-pass _normalize_data guard),
+        # producing a normal finite result instead of crashing.
+        rng = np.random.default_rng(0)
+        Y, X, Z = np.meshgrid(
+            np.linspace(0, 1, 16),
+            np.linspace(0, 1, 16),
+            np.linspace(0, 1, 16),
+            indexing="ij",
+        )
+        signal = np.exp(-((X - 0.5) ** 2 + (Y - 0.5) ** 2 + (Z - 0.5) ** 2) * 8)
+        V = np.clip(signal + 0.02 * rng.standard_normal(signal.shape), 0, 1).astype(
+            np.float32
+        )
+
+        with pytest.warns(UserWarning, match="would erase all signal"):
+            result = calibrate(
+                V,
+                k_grid=[20, 80, 200],
+                fit_kwargs={
+                    "n_iters": 50,
+                    "device": "cpu",
+                    "verbose": False,
+                    "early_stop_patience": 50,
+                    "use_cuda": False,
+                    "use_metal": False,
+                    "floor": 999999.0,  # >> V.max() (== 1.0)
+                },
+            )
+        assert isinstance(result, CalibrationResult)
+        # Floor was ignored → volume not zeroed → finite curve + a real K*.
+        assert any(math.isfinite(p) for p in result.held_out_psnr_db)
+        assert result.held_out_peak.k_star in (20, 80, 200)
+        # And it was recorded as "not subtracted" in the fit config.
+        assert result.fit_config.get("floor_subtracted") is None
+
     def test_default_behaviour_unchanged(self):
         # Reproducibility guardrail: with default flags, K* is EXACTLY the legacy
         # min--max blind-spot peak and no metric switch engages. The regime-robust
@@ -1165,4 +1203,6 @@ class TestEstimateFloor:
         with pytest.raises(ValueError, match="floor"):
             calibrate(V, k_grid=[20], fit_kwargs={"floor": "pX", "device": "cpu"})
         with pytest.raises(ValueError, match="floor"):
-            calibrate(V, k_grid=[20], fit_kwargs={"floor": float("nan"), "device": "cpu"})
+            calibrate(
+                V, k_grid=[20], fit_kwargs={"floor": float("nan"), "device": "cpu"}
+            )
