@@ -66,6 +66,13 @@ export interface SliceCacheStats {
    * thrash. Optional so stat mirrors that predate it keep compiling.
    */
   thrashMisses?: number;
+  /**
+   * Resolved byte budget (heap-aware; see `heap-budget.ts`). Surfaced so the
+   * monitor / debug API can show the live budget — critical when it varies by
+   * device heap rather than being the fixed config value. Mirrors
+   * {@link DecompressedChunkCacheStats.maxSize}.
+   */
+  maxSize?: number;
 }
 
 /** Configuration options for the SliceCache. */
@@ -104,6 +111,13 @@ export class SliceCache {
   private readonly tombstones = new Set<string>();
   private thrashMisses = 0;
 
+  // Keys already warned about as oversized (a full ladder exceeding the whole
+  // budget → only a coarse prefix is cached; see `storeLadder`). Instance-
+  // scoped and cleared on clear() so a dataset switch can warn afresh, and
+  // bounded FIFO so a long session can't grow it unboundedly. Same discipline
+  // as `tombstones`.
+  private readonly oversizedWarned = new Set<string>();
+
   constructor(options?: SliceCacheOptions) {
     const maxSize = options?.maxSize ?? SliceCache.DEFAULT_MAX_SIZE;
     this.maxSize = maxSize;
@@ -134,7 +148,12 @@ export class SliceCache {
    */
   get(key: string): SliceCacheEntry | undefined {
     const entry = this.cache.get(key);
-    if (entry === undefined && this.tombstones.has(key)) {
+    if (entry !== undefined) {
+      // A hit means the consumer (e.g. the foreground tick restoring a
+      // prefetched slice) has taken the entry — release any prefetch pin so it
+      // rejoins normal eviction. Harmless when the key was never pinned.
+      this.cache.unpin(key);
+    } else if (this.tombstones.has(key)) {
       // Was cached earlier, got evicted, asked for again: thrash, not cold.
       this.thrashMisses++;
     }
@@ -161,9 +180,16 @@ export class SliceCache {
    *   turnaround this is locally worse than LRU (the loaders only see the
    *   budget directive, not the loop mode) — accepted; a loop-mode-aware
    *   per-pass hint is a possible follow-up.
+   * @param opts.pin - Protect this entry from eviction until it is next read
+   *   (unpinned on the first {@link get} hit). The SlicePrefetcher sets it so a
+   *   projected next-frame slice — which lands as the MRU entry and would be
+   *   the FIRST victim of a subsequent scan store under budget pressure —
+   *   survives until the foreground tick restores it. Best-effort: if the whole
+   *   working set is pinned and over budget, pinned entries are still evicted.
    */
-  set(key: string, entry: SliceCacheEntry, opts?: { scan?: boolean }): void {
+  set(key: string, entry: SliceCacheEntry, opts?: { scan?: boolean; pin?: boolean }): void {
     this.cache.set(key, entry, { evictMostRecent: opts?.scan });
+    if (opts?.pin) this.cache.pin(key);
     // Freshly cached: a later miss on this key is only thrash if it gets
     // evicted AGAIN (recordTombstone re-adds it then).
     this.tombstones.delete(key);
@@ -201,10 +227,28 @@ export class SliceCache {
     return bytes <= this.maxSize;
   }
 
+  /**
+   * Warn-once gate for oversized ladders: returns true the FIRST time `key` is
+   * reported oversized (a full ladder exceeding the whole budget, so only a
+   * coarse prefix is cached — see `storeLadder`), false thereafter. Bounded
+   * FIFO + cleared on {@link clear}, so warnings can't leak across a long
+   * session or a dataset switch (mirrors the tombstone discipline).
+   */
+  markOversizedWarned(key: string): boolean {
+    if (this.oversizedWarned.has(key)) return false;
+    this.oversizedWarned.add(key);
+    if (this.oversizedWarned.size > SliceCache.MAX_TOMBSTONES) {
+      const oldest = this.oversizedWarned.values().next().value;
+      if (oldest !== undefined) this.oversizedWarned.delete(oldest);
+    }
+    return true;
+  }
+
   /** Clear all cached slices (invoked on content-hash / dataset invalidation). */
   clear(): void {
     this.cache.clear(); // fires onEvict per entry — reset tombstones AFTER
     this.tombstones.clear();
+    this.oversizedWarned.clear();
     this.thrashMisses = 0;
     if (this.debug) {
       log.custom(LogEmoji.CACHE, Modules.CACHE, 'SliceCache cleared');
@@ -229,6 +273,7 @@ export class SliceCache {
       evictions: this.cache.evictionCount,
       hitRate: total > 0 ? hits / total : 0,
       thrashMisses: this.thrashMisses,
+      maxSize: this.maxSize,
     };
   }
 

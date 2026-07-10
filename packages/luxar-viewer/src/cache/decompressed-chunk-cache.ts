@@ -58,6 +58,8 @@ export interface DecompressedChunkCacheStats {
   evictions: number;
   /** Hit rate (0-1) */
   hitRate: number;
+  /** Resolved byte budget (heap-aware; see `heap-budget.ts`). */
+  maxSize?: number;
 }
 
 /**
@@ -90,9 +92,12 @@ export class DecompressedChunkCache {
 
   private cache: LRUCache<DecompressedChunk>;
   private debug: boolean;
+  /** Resolved byte budget — surfaced in getStats() for runtime introspection. */
+  private readonly maxSize: number;
 
   constructor(options?: DecompressedChunkCacheOptions) {
     const maxSize = options?.maxSize ?? DecompressedChunkCache.DEFAULT_MAX_SIZE;
+    this.maxSize = maxSize;
     this.debug = options?.debug ?? false;
 
     // Create LRU cache with byte-size tracking
@@ -197,6 +202,7 @@ export class DecompressedChunkCache {
       misses,
       evictions: this.cache.evictionCount,
       hitRate: total > 0 ? hits / total : 0,
+      maxSize: this.maxSize,
     };
   }
 

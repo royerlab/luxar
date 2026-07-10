@@ -93,6 +93,7 @@ const EMPTY_PARAMS: UrlParams = {
   webgpuForceWebGL: false,
   perfTimestamp: false,
   gpuBudgetMB: null,
+  cacheBudgetMB: null,
   dpr: null,
 };
 

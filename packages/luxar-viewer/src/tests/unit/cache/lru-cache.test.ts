@@ -492,7 +492,6 @@ describe('LRUCache', () => {
     });
   });
 
-
   describe('Scan-Mode Eviction (evictMostRecent)', () => {
     // Scan-resistant policy for sequential scans (dimension playback): the
     // MOST-recently-used entry is needed farthest in the future during a
@@ -760,6 +759,66 @@ describe('LRUCache', () => {
       expect(cache.has('too-big')).toBe(false);
       expect(cache.has('keeper')).toBe(true);
       expect(cache.size).toBe(50);
+    });
+  });
+
+  describe('Pinned keys (eviction protection)', () => {
+    it('skips a pinned key when choosing an LRU victim', () => {
+      const c = new LRUCache<Uint8Array>(100, getSize);
+      c.set('a', new Uint8Array(40)); // oldest
+      c.set('b', new Uint8Array(40));
+      c.pin('a'); // protect the oldest (would normally be the LRU victim)
+      c.set('d', new Uint8Array(40)); // 120 > 100 → must evict; 'a' is pinned → 'b' goes
+      expect(c.has('a')).toBe(true);
+      expect(c.has('b')).toBe(false);
+      expect(c.has('d')).toBe(true);
+    });
+
+    it('skips a pinned key under scan (MRU-victim) eviction too', () => {
+      const c = new LRUCache<Uint8Array>(100, getSize);
+      c.set('a', new Uint8Array(40));
+      c.set('b', new Uint8Array(40)); // newest → the scan victim
+      c.pin('b'); // but it's pinned (e.g. a just-prefetched t+1)
+      c.set('d', new Uint8Array(40), { evictMostRecent: true }); // evicts 'a', not pinned 'b'
+      expect(c.has('b')).toBe(true);
+      expect(c.has('a')).toBe(false);
+      expect(c.has('d')).toBe(true);
+    });
+
+    it('evicts a pinned key as a LAST RESORT rather than violate the byte budget', () => {
+      const c = new LRUCache<Uint8Array>(100, getSize);
+      c.set('a', new Uint8Array(60));
+      c.pin('a');
+      // A 60-byte insert can't fit alongside the pinned 60; nothing else to
+      // evict → the pin is sacrificed so the invariant (size ≤ max) holds.
+      c.set('b', new Uint8Array(60));
+      expect(c.has('b')).toBe(true);
+      expect(c.has('a')).toBe(false);
+      expect(c.size).toBeLessThanOrEqual(100);
+    });
+
+    it('unpin() re-exposes a key to eviction', () => {
+      const c = new LRUCache<Uint8Array>(100, getSize);
+      c.set('a', new Uint8Array(40));
+      c.set('b', new Uint8Array(40));
+      c.pin('a');
+      c.unpin('a');
+      c.set('d', new Uint8Array(40)); // 'a' now unprotected and oldest → evicted
+      expect(c.has('a')).toBe(false);
+      expect(c.has('b')).toBe(true);
+      expect(c.has('d')).toBe(true);
+    });
+
+    it('clear() drops all pins', () => {
+      const c = new LRUCache<Uint8Array>(100, getSize);
+      c.set('a', new Uint8Array(40));
+      c.pin('a');
+      c.clear();
+      // Re-populate; 'a' must be a normal, evictable entry again.
+      c.set('a', new Uint8Array(40));
+      c.set('b', new Uint8Array(40));
+      c.set('d', new Uint8Array(40)); // evicts LRU 'a' (pin did not survive clear)
+      expect(c.has('a')).toBe(false);
     });
   });
 });

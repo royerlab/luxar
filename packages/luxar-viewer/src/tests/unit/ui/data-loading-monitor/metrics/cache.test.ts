@@ -351,8 +351,64 @@ describe('aggregateCacheMetrics', () => {
     // totalCacheMemory comes from L1+L2 (300 + 1000 = 1300), NOT
     // from the loader's memoryUsed when cacheStatsProvider is set.
     expect(result.totalCacheMemory).toBe(1300);
-    // memoryLimit is still aggregated from loaders.
+    // memoryLimit falls back to the loader sum only because this stub exposes
+    // no per-tier maxSize (see the budget-driven test below).
     expect(result.memoryLimit).toBe(5000);
+  });
+
+  it('memoryLimit is the sum of per-tier budgets (maxSize) when the providers expose them', () => {
+    // Regression for the "no memory limit configured" gauge: the limit is the
+    // sum of the resolved per-tier byte budgets, not the (hardcoded-0) per-loader
+    // memoryLimit. Fixes the pressure bar reading "no memory limit configured".
+    const l0Provider: L0Provider = {
+      getStats: () => ({
+        size: 0,
+        count: 0,
+        hits: 0,
+        misses: 0,
+        evictions: 0,
+        hitRate: 0,
+        maxSize: 200,
+      }),
+    };
+    const sliceProvider: SliceProvider = {
+      getStats: () => ({
+        size: 0,
+        count: 0,
+        hits: 0,
+        misses: 0,
+        evictions: 0,
+        hitRate: 0,
+        maxSize: 1024,
+      }),
+    };
+    const cacheStatsProvider: CacheStatsProvider = {
+      ...makeFullCacheProvider(),
+      getStats: () => ({
+        l1: {
+          metadataSize: 0,
+          chunksSize: 0,
+          metadataCount: 0,
+          chunksCount: 0,
+          hits: 0,
+          misses: 0,
+          evictions: 0,
+          maxSize: 100,
+        },
+        l2: { size: 0, count: 0, reads: 0, writes: 0, misses: 0, maxSize: 2048 },
+        network: { bytesTransferred: 0, requestCount: 0, bandwidth: 0 },
+      }),
+    };
+    const result = aggregateCacheMetrics({
+      l0Provider,
+      sliceProvider,
+      cacheStatsProvider,
+      loaders: new Map([['/p', makeLoader(makeLoaderMetrics({ memoryLimit: 999 }))]]),
+      metricsCache: new Map(),
+      rates: ZERO_RATES,
+    });
+    // 200 (L0) + 1024 (S-cache) + 100 (L1) + 2048 (L2) — NOT the loader's 999.
+    expect(result.memoryLimit).toBe(200 + 1024 + 100 + 2048);
   });
 
   it('rates are passed through unchanged', () => {

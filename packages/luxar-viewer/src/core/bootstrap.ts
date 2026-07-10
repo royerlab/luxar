@@ -203,6 +203,7 @@ export async function bootstrapStandalone(opts: BootstrapOptions): Promise<Luxar
       clearCache: urlParams.clearCache,
       noPrefetch: urlParams.noPrefetch,
       prefetchDebug: urlParams.prefetchDebug,
+      cacheBudgetMB: urlParams.cacheBudgetMB,
     },
     // `?renderer=webgl|webgpu` forces a backend regardless of the
     // build-time env. Undefined → SceneManager falls back to the env

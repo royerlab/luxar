@@ -540,7 +540,7 @@ describe('GSplatsProgressiveLoader', () => {
       // Playback tick (budget active): the store carries scan: true.
       await l.updateView({ ...viewA, frameBudgetMs: 10 });
       expect(setSpy).toHaveBeenCalled();
-      expect(setSpy.mock.calls.at(-1)![2]).toEqual({ scan: true });
+      expect(setSpy.mock.calls.at(-1)![2]).toEqual({ scan: true, pin: false });
 
       // Pause re-trigger (same view, budget-free): the ladder completes and
       // the full-ladder upgrade store is scan-free.
@@ -548,7 +548,7 @@ describe('GSplatsProgressiveLoader', () => {
       await l.updateView(viewA);
       expect(setSpy).toHaveBeenCalled();
       for (const call of setSpy.mock.calls) {
-        expect(call[2]).toEqual({ scan: false });
+        expect(call[2]).toEqual({ scan: false, pin: false });
       }
 
       // Next playback tick at a NEW view: the departure store for A (skipped
@@ -557,8 +557,27 @@ describe('GSplatsProgressiveLoader', () => {
       await l.updateView({ ...viewB, frameBudgetMs: 10 });
       expect(setSpy).toHaveBeenCalled();
       for (const call of setSpy.mock.calls) {
-        expect(call[2]).toEqual({ scan: true });
+        expect(call[2]).toEqual({ scan: true, pin: false });
       }
+    });
+
+    it('pins the stored ladder on a prefetch pass (prefetch → pin: true)', async () => {
+      // Mirrored across the three progressive loader tests (symmetry). The
+      // SlicePrefetcher marks its shadow pass `prefetch: true`; the loader
+      // forwards pin so the projected t+1 slice survives eviction until the
+      // foreground tick restores it.
+      const sc = new SliceCache({ maxSize: 10 * 1024 * 1024 });
+      const setSpy = vi.spyOn(sc, 'set');
+      const l = new GSplatsProgressiveLoader(
+        [lodA, lodB, lodC] as unknown as GSplatsSpatialIndexLoader[],
+        3,
+        '/g',
+        undefined,
+        sc
+      );
+      await l.updateView({ ...baseViewState, frameBudgetMs: 10, prefetch: true });
+      expect(setSpy).toHaveBeenCalled();
+      expect(setSpy.mock.calls.at(-1)![2]).toEqual({ scan: true, pin: true });
     });
 
     it('shadow-prefetch handoff: a prefix stored by ANOTHER instance restores here and deepens', async () => {

@@ -152,6 +152,15 @@ export interface UrlParams {
    */
   gpuBudgetMB: number | null;
   /**
+   * Override the total in-memory cache pool (L0 + L1 + S-cache), in megabytes
+   * (`?cacheBudgetMB=1536`). Used where `performance.memory` is unavailable —
+   * WKWebView (the native app) and Safari — so heap-aware sizing has a real
+   * budget to split instead of the tiny fixed fallback. The native launcher
+   * injects it automatically. Null/invalid ⇒ fall back to the measured heap,
+   * then to the fixed config sizes. See `cache/heap-budget.ts`.
+   */
+  cacheBudgetMB: number | null;
+  /**
    * Pin a fixed device pixel ratio and disable adaptive DPR for the
    * session (`?dpr=1`). The value is clamped to [0.25, native DPR] at
    * apply time and the adaptive-resolution toggle is locked off so
@@ -189,6 +198,7 @@ export function readUrlParams(search?: string): UrlParams {
     webgpuForceWebGL: params.has('webgpu-force-webgl'),
     perfTimestamp: params.has('perf-timestamp'),
     gpuBudgetMB: parseNonNegativeInt(params.get('gpuBudgetMB')),
+    cacheBudgetMB: parseNonNegativeInt(params.get('cacheBudgetMB')),
     dpr: parsePositiveFloat(params.get('dpr')),
   };
 }

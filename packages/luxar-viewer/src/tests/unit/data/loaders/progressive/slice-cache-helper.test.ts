@@ -13,6 +13,7 @@
 
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { SliceCache } from '../../../../../cache/slice-cache';
+import { log } from '../../../../../utils/log';
 import {
   restoreLadder,
   storeLadder,
@@ -107,7 +108,6 @@ describe('slice-cache-helper — prefix ladders', () => {
     expect(after.misses).toBe(before.misses);
     expect(after.hitRate).toBe(before.hitRate);
   });
-
 
   it('forwards the scan hint to SliceCache.set (scan-resistant eviction opt-in)', () => {
     const setSpy = vi.spyOn(sc, 'set');
@@ -212,5 +212,61 @@ describe('buildSliceViewSig — key discrimination (one test per field)', () => 
     const noDims = { ...base, dimensions: undefined };
     expect(buildSliceViewSig(noDims)).toBe(buildSliceViewSig({ ...noDims }));
     expect(buildSliceViewSig(base)).toBe(buildSliceViewSig({ ...base }));
+  });
+});
+
+describe('slice-cache-helper — oversized ladder (partial-prefix caching)', () => {
+  // makeLod(n) retains 4n bytes (a Float32Array(n)). A full ladder that
+  // exceeds the budget must NOT be dropped wholesale (that slice would
+  // re-decode forever); the largest coarse-first prefix that fits is cached.
+  it('caches the coarse prefix that fits instead of dropping the whole ladder', () => {
+    const sc = new SliceCache({ maxSize: 500 }); // holds 1×400B level, not 2
+    const ovPath = '/oversized-node';
+    const full = [makeLod(100), makeLod(100), makeLod(100)]; // 3 × 400B = 1200B
+    storeLadder(sc, ovPath, view, full);
+    const restored = restoreLadder<FakeLod>(sc, ovPath, view, N_LODS);
+    expect(restored).not.toBeNull();
+    expect(restored!.length).toBe(1); // only the coarsest level fit
+    expect(restored![0].count).toBe(100);
+  });
+
+  it('drops nothing to the cache when even the coarsest level exceeds the budget', () => {
+    const sc = new SliceCache({ maxSize: 100 }); // < a single 400B level
+    const ovPath = '/tiny-budget-node';
+    storeLadder(sc, ovPath, view, [makeLod(100)]);
+    expect(restoreLadder<FakeLod>(sc, ovPath, view, N_LODS)).toBeNull();
+  });
+
+  it('warns once when it has to trim an oversized ladder', () => {
+    const warnSpy = vi.spyOn(log, 'warning').mockImplementation(() => undefined);
+    try {
+      const sc = new SliceCache({ maxSize: 500 });
+      const ovPath = '/warn-node';
+      storeLadder(sc, ovPath, view, [makeLod(100), makeLod(100), makeLod(100)]);
+      expect(warnSpy).toHaveBeenCalledTimes(1);
+    } finally {
+      warnSpy.mockRestore();
+    }
+  });
+
+  it('dedups the warning per key but re-warns after clear() (instance-scoped, not a module-global leak)', () => {
+    const warnSpy = vi.spyOn(log, 'warning').mockImplementation(() => undefined);
+    try {
+      const sc = new SliceCache({ maxSize: 500 });
+      const p = '/reclear-node';
+      const oversized = () => storeLadder(sc, p, view, [makeLod(100), makeLod(100), makeLod(100)]);
+      oversized();
+      expect(warnSpy).toHaveBeenCalledTimes(1); // first trim warns
+      oversized();
+      expect(warnSpy).toHaveBeenCalledTimes(1); // same key → deduped, no spam
+      // A dataset switch clears the cache; the warn-dedup must reset with it so
+      // the next dataset can warn afresh (pre-fix: a module-global Set that
+      // clear() never touched kept the count pinned at 1 forever).
+      sc.clear();
+      oversized();
+      expect(warnSpy).toHaveBeenCalledTimes(2);
+    } finally {
+      warnSpy.mockRestore();
+    }
   });
 });
