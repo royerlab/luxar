@@ -485,25 +485,56 @@
   white-space: nowrap;
 }
 
+/* The title carries two variants: the full name while expanded, a short
+   uniform-width one ("S-cache" / "L0 cache" / …) while collapsed, so all
+   four collapsed summaries start at the same x and their value columns
+   can grid-align. The didactic tooltip lives on the title in both states. */
+.luxar-cache-section__title-short {
+  display: none;
+}
+
+.luxar-cache-section--collapsed .luxar-cache-section__title-full {
+  display: none;
+}
+
+.luxar-cache-section--collapsed .luxar-cache-section__title-short {
+  display: inline;
+}
+
+.luxar-cache-section--collapsed .luxar-cache-section__title {
+  width: 64px; /* fits the widest short title; uniform across rows */
+}
+
 /* Compact inline summary: mirrors every metric card (same data-field
    keys, patched together with the cards). Hidden while expanded; when
-   the section is collapsed it is the only visible value row. */
+   the section is collapsed it is the only visible value row.
+
+   Laid out as a fixed-column grid (not free-flow flex) so the values line
+   up in columns across the four stacked cache rows: SIZE | HIT RATE |
+   third counter | last counter. The last item of every row is pinned to
+   the final column, so EVICTIONS (3-metric rows) and ERRORS (the 4-metric
+   L2 row) share one right-anchored column next to the Clear button; L2's
+   extra I/O metric fills the otherwise-empty third column. */
 .luxar-cache-section__summary {
   display: none;
   flex: 1 1 auto;
   min-width: 0;
-  justify-content: flex-end;
+  grid-template-columns: 92px minmax(0, 1fr) 96px 96px;
+  column-gap: var(--luxar-spacing-4);
   align-items: baseline;
-  gap: var(--luxar-spacing-4);
   overflow: hidden;
 }
 
 .luxar-cache-section--collapsed .luxar-cache-section__summary {
-  display: flex;
+  display: grid;
+}
+
+.luxar-cache-section__summary-item:last-child {
+  grid-column: 4;
 }
 
 .luxar-cache-section__summary-item {
-  display: inline-flex;
+  display: flex;
   align-items: baseline;
   gap: var(--luxar-spacing-1);
   white-space: nowrap;
@@ -511,8 +542,22 @@
   overflow: hidden;
 }
 
+/* Within a column: label anchored left, number flushed right — the mono
+   tabular numerals then align digit-for-digit down the stack. */
+.luxar-cache-section__summary-value {
+  margin-left: auto;
+}
+
+/* The hit-rate hits·miss split trails its value; fixing its box keeps the
+   percentage values on a shared right edge across rows even when the split
+   text lengths differ (it ellipsizes when tight). */
+.luxar-cache-section--collapsed .luxar-cache-section__summary-sub {
+  flex: 0 0 auto;
+  width: 104px;
+}
+
 .luxar-cache-section__summary-label {
-  font-size: 9px;
+  font-size: var(--luxar-text-xs);
   color: var(--luxar-text-muted);
   letter-spacing: 0.03em;
 }
@@ -610,8 +655,8 @@
   border-radius: var(--luxar-radius-full);
   border: 1px solid var(--luxar-border-default);
   background: var(--luxar-bg-tertiary);
-  font-size: 0.7em;
-  font-weight: 500;
+  font-size: var(--luxar-text-xs);
+  font-weight: var(--luxar-font-medium);
   text-transform: lowercase;
   letter-spacing: 0.02em;
 }
@@ -1542,7 +1587,7 @@
 .luxar-secondary-metrics__label,
 .luxar-memory-table__header,
 .luxar-cache-total__demand-label {
-  font-size: 10px;
+  font-size: var(--luxar-text-xs);
   font-weight: var(--luxar-font-semibold);
   letter-spacing: 0.08em;
   color: var(--luxar-text-muted);

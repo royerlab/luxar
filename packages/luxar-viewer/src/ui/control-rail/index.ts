@@ -14,7 +14,8 @@
  * - Idle-dims after a few seconds of no pointer movement so it recedes into the
  *   immersive canvas, and wakes on pointer movement / hover.
  * - Reflects live open/closed state per panel (active highlight).
- * - Shows a one-time first-run hint (localStorage-gated) pointing at itself.
+ * - Shows a one-time first-run hint (localStorage-gated) pointing at itself;
+ *   it auto-fades after a few seconds and any click/keypress dismisses it.
  *
  * The flyout + panel-popover lifecycle lives in {@link RailOverlay}
  * (rail-overlay.ts); this class owns the buttons, idle/collapse/fullscreen
@@ -33,6 +34,10 @@ export type { ControlRailItem, ControlRailPopover, ControlRailToggle } from './t
 export { RAIL_ICONS } from './icons';
 
 const HINT_STORAGE_KEY = 'luxar-control-rail-hint-dismissed';
+/** First-run hint fades away on its own if the user never interacts. */
+const HINT_AUTO_HIDE_MS = 10_000;
+/** Matches the .is-leaving opacity transition in control-rail.css. */
+const HINT_FADE_MS = 400;
 const COLLAPSED_STORAGE_KEY = 'luxar-control-rail-collapsed';
 const IDLE_MS = 2600;
 /** Collapsed handle lingers a little longer, then fades to barely-visible. */
@@ -58,6 +63,8 @@ export class ControlRail {
   /** Flyout + panel-popover lifecycle (only one open at a time). */
   private readonly overlay: RailOverlay;
   private hint?: HTMLDivElement;
+  private hintAutoHideTimer?: number;
+  private hintFadeTimer?: number;
   private idleTimer?: number;
   private refreshRaf?: number;
   private disposed = false;
@@ -75,9 +82,15 @@ export class ControlRail {
   // predicate; a control-mode switch (V key, rail cycle, or popover selector)
   // changes the Navigation button's icon/tooltip.
   private readonly onExternalStateChange = (): void => this.scheduleRefresh();
-  private readonly onDocPointerDown = (e: PointerEvent): void =>
+  private readonly onDocPointerDown = (e: PointerEvent): void => {
+    // Any press anywhere (canvas, a panel, the rail itself) means the user is
+    // already interacting — the first-run hint has served its purpose.
+    this.dismissHint();
     this.overlay.maybeCloseOnPointer(e);
+  };
   private readonly onDocKeyDown = (e: KeyboardEvent): void => {
+    // Same for any keypress (e.g. the H the hint itself suggests).
+    this.dismissHint();
     if (e.key === 'Escape') this.overlay.close();
     // Keyboard shortcuts (H, N, R, …) toggle panels — refresh active-state.
     this.scheduleRefresh();
@@ -433,9 +446,24 @@ export class ControlRail {
       ?.addEventListener('click', () => this.dismissHint());
     this.container.appendChild(hint);
     this.hint = hint;
+    // The hint is a nudge, not a modal: if the user never interacts it fades
+    // away on its own (and any pointer/keyboard interaction dismisses it
+    // immediately — see onDocPointerDown / onDocKeyDown).
+    this.hintAutoHideTimer = window.setTimeout(() => this.fadeOutHint(), HINT_AUTO_HIDE_MS);
+  }
+
+  /** Auto-hide path: fade the hint out, then dismiss (and persist) for real. */
+  private fadeOutHint(): void {
+    if (!this.hint) return;
+    this.hint.classList.add('is-leaving');
+    this.hintFadeTimer = window.setTimeout(() => this.dismissHint(), HINT_FADE_MS);
   }
 
   private dismissHint(): void {
+    if (this.hintAutoHideTimer) window.clearTimeout(this.hintAutoHideTimer);
+    if (this.hintFadeTimer) window.clearTimeout(this.hintFadeTimer);
+    this.hintAutoHideTimer = undefined;
+    this.hintFadeTimer = undefined;
     if (!this.hint) return;
     try {
       localStorage.setItem(HINT_STORAGE_KEY, '1');
@@ -450,6 +478,8 @@ export class ControlRail {
     if (this.disposed) return;
     this.disposed = true;
     if (this.idleTimer) window.clearTimeout(this.idleTimer);
+    if (this.hintAutoHideTimer) window.clearTimeout(this.hintAutoHideTimer);
+    if (this.hintFadeTimer) window.clearTimeout(this.hintFadeTimer);
     if (this.refreshRaf !== undefined) cancelAnimationFrame(this.refreshRaf);
     this.overlay.dispose();
     this.container.removeEventListener('pointermove', this.onContainerMove);

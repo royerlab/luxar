@@ -1,8 +1,10 @@
 /**
  * Help Overlay Component Styles
  *
- * Keyboard shortcuts and controls reference panel.
- * Used by showHelpOverlay() in ui/help-overlay.ts
+ * Keyboard shortcuts and controls reference panel, styled after the viewer's
+ * "quiet instrument" design language: tick-motif section micro-headers,
+ * stroke section icons, and two-column shortcut rows (mono <kbd> chips +
+ * muted descriptions). Used by showHelpOverlay() in ui/help-overlay.ts.
  */
 
 .luxar-help-overlay {
@@ -12,8 +14,8 @@
   right: var(--luxar-spacing-10);
 
   /* Sizing */
-  width: 380px;
-  max-height: 80vh;
+  width: 400px;
+  max-height: 82vh;
 
   /* Theming — shared surface recipe with the control rail: crisp hairline
      (border-default) + large soft corners (radius-lg). */
@@ -34,10 +36,6 @@
   /* NO overflow here - allows pseudo-elements for glass effect */
   overflow: visible;
   outline: none !important;
-
-  /* Animation removed - opacity + animation interferes with SVG filter in liquid glass theme */
-  /* opacity: 0; */
-  /* animation: luxar-fade-in 0.15s ease forwards; */
 }
 
 /**
@@ -45,16 +43,13 @@
  * Contains header, content, and footer - handles all scrolling
  */
 .luxar-help-overlay__scroll {
-  /* Spacing */
   padding: var(--luxar-spacing-8);
-
-  /* Scrolling behavior (moved from .luxar-help-overlay) */
   overflow-y: auto;
-  max-height: 80vh;
+  max-height: 82vh;
 
-  /* Scrollbar styling */
+  /* Quiet scrollbar — neutral, not accent-colored. */
   scrollbar-width: thin;
-  scrollbar-color: var(--luxar-success) transparent;
+  scrollbar-color: var(--luxar-border-strong) transparent;
 }
 
 .luxar-help-overlay__scroll::-webkit-scrollbar {
@@ -66,7 +61,7 @@
 }
 
 .luxar-help-overlay__scroll::-webkit-scrollbar-thumb {
-  background: var(--luxar-success);
+  background: var(--luxar-border-strong);
   border-radius: var(--luxar-radius-full);
 }
 
@@ -105,66 +100,115 @@
   color: var(--luxar-text-primary);
 }
 
-/* Categories */
-.luxar-help-overlay__category-header {
-  font-weight: var(--luxar-font-bold);
-  margin-top: var(--luxar-spacing-6);
-  margin-bottom: var(--luxar-spacing-4);
-  color: var(--luxar-success);
-  cursor: pointer;
-  user-select: none;
+/* Sections */
+.luxar-help-overlay__section {
+  margin-bottom: var(--luxar-spacing-6);
+}
+
+/* Section micro-header: status tick (the viewer's recurring motif) +
+   stroke icon + letterspaced small caps — same register as the data
+   monitor's section titles. */
+.luxar-help-overlay__section-title {
   display: flex;
   align-items: center;
-}
-
-.luxar-help-overlay__category-header:first-of-type {
-  margin-top: var(--luxar-spacing-4);
-}
-
-.luxar-help-overlay__category-arrow {
+  gap: var(--luxar-spacing-3);
+  margin-bottom: var(--luxar-spacing-3);
   font-size: var(--luxar-text-xs);
-  margin-right: var(--luxar-spacing-2);
-  transition: transform 0.2s;
-  display: inline-block;
+  font-weight: var(--luxar-font-semibold);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--luxar-text-secondary);
+}
+
+.luxar-help-overlay__section-title::before {
+  content: '';
+  flex: 0 0 auto;
+  width: 3px;
+  height: 10px;
+  border-radius: 1px;
+  background: var(--luxar-success);
+  opacity: 0.55;
+}
+
+.luxar-help-overlay__section-title svg {
+  width: 13px;
+  height: 13px;
+  stroke: currentColor;
+  fill: none;
+  stroke-width: 1.7;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  opacity: 0.9;
+}
+
+.luxar-help-overlay__section-note {
+  margin: calc(-1 * var(--luxar-spacing-1)) 0 var(--luxar-spacing-3);
+  padding-left: calc(3px + var(--luxar-spacing-3));
+  font-size: var(--luxar-text-xs);
   color: var(--luxar-text-muted);
 }
 
-.luxar-help-overlay__category-arrow--expanded {
-  transform: rotate(90deg);
+/* Shortcut rows: fixed keys column + description, so the chip column and
+   the description column each align down the whole panel. */
+.luxar-help-overlay__row {
+  display: flex;
+  align-items: baseline;
+  gap: var(--luxar-spacing-4);
+  padding: 3px 0;
 }
 
-.luxar-help-overlay__category-content {
-  margin-bottom: var(--luxar-spacing-2);
-  border-left: 2px solid color-mix(in srgb, var(--luxar-success) 20%, transparent);
-  margin-left: var(--luxar-spacing-4);
-  padding-left: var(--luxar-spacing-6);
+.luxar-help-overlay__keys {
+  flex: 0 0 118px;
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 3px;
+  justify-content: flex-end;
 }
 
-.luxar-help-overlay__category-content--collapsed {
-  display: none;
-}
-
-/* Items */
-.luxar-help-overlay__item {
-  margin-bottom: var(--luxar-spacing-3);
-  line-height: var(--luxar-line-normal);
+.luxar-help-overlay__keys kbd {
+  font-family: var(--luxar-font-mono);
+  font-size: var(--luxar-text-xs);
+  line-height: 1;
   color: var(--luxar-text-primary);
+  background: var(--luxar-bg-tertiary);
+  border: 1px solid var(--luxar-border-default);
+  border-radius: 4px;
+  padding: 3px 5px;
+  white-space: nowrap;
 }
 
-.luxar-help-overlay__item--tip {
+.luxar-help-overlay__desc {
+  flex: 1;
+  min-width: 0;
+  font-size: var(--luxar-text-sm);
+  line-height: var(--luxar-line-normal);
   color: var(--luxar-text-secondary);
-  font-size: var(--luxar-text-xs);
 }
 
-.luxar-help-overlay__item--note {
-  color: var(--luxar-warning);
+/* Tips — short prose lines, quietest register in the panel. */
+.luxar-help-overlay__tip {
+  position: relative;
+  padding-left: var(--luxar-spacing-5);
+  margin-bottom: var(--luxar-spacing-2);
   font-size: var(--luxar-text-xs);
-  font-style: italic;
+  line-height: var(--luxar-line-relaxed);
+  color: var(--luxar-text-muted);
+}
+
+.luxar-help-overlay__tip::before {
+  content: '';
+  position: absolute;
+  left: 2px;
+  top: 0.55em;
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--luxar-success) 55%, transparent);
 }
 
 /* Footer */
 .luxar-help-overlay__footer {
-  margin-top: var(--luxar-spacing-6);
+  margin-top: var(--luxar-spacing-2);
   padding-top: var(--luxar-spacing-4);
   border-top: 1px solid var(--luxar-border-subtle);
   font-size: var(--luxar-text-xs);
