@@ -12,6 +12,7 @@
  */
 
 import { SliceCache } from '../../../cache/slice-cache';
+import { log, Modules } from '../../../utils/log';
 import type { DimensionMetadata } from '../../../types/dims';
 
 /** The query fields that determine which elements a slice loads. */
@@ -146,19 +147,51 @@ export function restoreLadder<T>(
  * playback; the loaders pass their per-pass `frameBudgetMs !== null`).
  * Forwarded to `SliceCache.set` to select scan-resistant (MRU-victim)
  * eviction, which keeps the loop-head prefix resident across cyclic loops.
+ *
+ * `opts.pin` — the caller is the SlicePrefetcher storing a projected t+1
+ * ladder; forwarded so the entry survives eviction until the foreground tick
+ * restores it (see `SliceCache.set`).
+ *
+ * OVERSIZED LADDERS: when the full snapshot exceeds the whole cache budget the
+ * cache would reject it wholesale, leaving that slice permanently uncacheable
+ * (it re-decodes on every visit). Instead we store the largest COARSE-FIRST
+ * prefix that fits — the additive ladder is amplitude-ordered, so the coarse
+ * levels are the cheapest to keep and give a usable partial revisit; only the
+ * fine tail re-decodes. A one-time warning per key surfaces the shortfall.
  */
+const _oversizedWarned = new Set<string>();
+
 export function storeLadder<T extends object>(
   sliceCache: SliceCache | null,
   path: string,
   view: SliceViewLike,
   lods: readonly T[],
-  opts?: { scan?: boolean }
+  opts?: { scan?: boolean; pin?: boolean }
 ): void {
   if (!sliceCache || lods.length === 0 || !hasHiddenDims(view)) return;
   const key = SliceCache.makeKey(path, buildSliceViewSig(view));
   const existing = sliceCache.peek(key);
   if (existing && (existing.payload as unknown[]).length >= lods.length) return;
-  const bytes = measureLodBytes(lods);
-  if (!sliceCache.willFit(bytes)) return; // too large — don't clone just to drop it
-  sliceCache.set(key, { payload: cloneLodSnapshot(lods), bytes }, opts);
+
+  // Trim to the largest coarse-first prefix that fits the budget instead of
+  // dropping the whole ladder (which would make heavy single slices forever
+  // uncacheable). measureLodBytes is O(levels) so the linear scan is cheap.
+  let fit = lods.length;
+  let bytes = measureLodBytes(lods);
+  while (fit > 0 && !sliceCache.willFit(bytes)) {
+    fit--;
+    bytes = fit > 0 ? measureLodBytes(lods.slice(0, fit)) : 0;
+  }
+  if (fit === 0) return; // even the coarsest single level exceeds the budget
+  if (fit < lods.length && !_oversizedWarned.has(key)) {
+    _oversizedWarned.add(key);
+    log.warning(
+      Modules.CACHE,
+      `SliceCache: ladder for ${path} exceeds the budget; caching ${fit}/${lods.length} coarse levels (fine tail re-decodes). Consider a larger cache budget.`
+    );
+  }
+  // Re-check upgrade-if-longer against the (possibly trimmed) prefix length.
+  if (existing && (existing.payload as unknown[]).length >= fit) return;
+  const snapshot = fit < lods.length ? lods.slice(0, fit) : lods;
+  sliceCache.set(key, { payload: cloneLodSnapshot(snapshot), bytes }, opts);
 }

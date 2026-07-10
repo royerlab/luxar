@@ -155,3 +155,32 @@ describe('SliceCache — scan-resistant eviction + thrash stats', () => {
     expect(c.getStats().thrashMisses).toBe(0);
   });
 });
+
+describe('SliceCache — prefetch pin', () => {
+  // The SlicePrefetcher stores a projected t+1 slice with `{ pin: true }`; it
+  // lands as the MRU entry and, without protection, would be the first victim
+  // of the next scan store. The pin keeps it resident until the foreground
+  // tick restores (and thereby unpins) it.
+  it('a pinned entry survives a subsequent overflowing scan store', () => {
+    const c = new SliceCache({ maxSize: 250 });
+    const a = SliceCache.makeKey('/n', 'a');
+    const b = SliceCache.makeKey('/n', 'b');
+    const d = SliceCache.makeKey('/n', 'd');
+    c.set(a, entry(100, 'a'), { pin: true }); // prefetched t+1
+    c.set(b, entry(100, 'b'));
+    c.set(d, entry(100, 'd'), { scan: true }); // 300 > 250 → evict MRU-unpinned ('b')
+    expect(c.has(a)).toBe(true);
+    expect(c.has(b)).toBe(false);
+    expect(c.has(d)).toBe(true);
+  });
+
+  it('a get hit releases the pin so the entry rejoins normal eviction', () => {
+    const c = new SliceCache({ maxSize: 250 });
+    const a = SliceCache.makeKey('/n', 'a');
+    c.set(a, entry(100, 'a'), { pin: true });
+    expect(c.get(a)).toBeDefined(); // foreground consumes → unpin
+    c.set(SliceCache.makeKey('/n', 'b'), entry(100, 'b'));
+    c.set(SliceCache.makeKey('/n', 'd'), entry(100, 'd')); // now 'a' (oldest, unpinned) evictable
+    expect(c.has(a)).toBe(false);
+  });
+});

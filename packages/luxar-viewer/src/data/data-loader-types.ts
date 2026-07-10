@@ -60,6 +60,17 @@ export interface ViewState {
    * SliceCache key (`buildSliceViewSig`).
    */
   frameBudgetMs?: number;
+
+  /**
+   * Set only on the SlicePrefetcher's shadow pass: marks stores as PREFETCH so
+   * the loader pins the cached ladder until the foreground tick restores it
+   * (see `SliceCache.set({ pin })`). Without the pin, the just-stored t+1 is the
+   * MRU entry and the FIRST victim of a subsequent scan-eviction under budget
+   * pressure — defeating the prefetch exactly in the thrash regime. Like
+   * `frameBudgetMs` this is a per-pass directive: it must never enter
+   * `viewStatesEqual` nor the SliceCache key (`buildSliceViewSig`).
+   */
+  prefetch?: boolean;
 }
 
 // Re-export the points-specific types (LoadedPointsData, PointRange,

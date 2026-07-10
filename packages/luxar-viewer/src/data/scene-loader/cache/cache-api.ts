@@ -25,6 +25,7 @@
 
 import type { MultiLevelCachingStore } from '../../../cache/multi-level-caching-store';
 import type { DecompressedChunkCache } from '../../../cache/decompressed-chunk-cache';
+import type { SliceCache } from '../../../cache/slice-cache';
 
 /**
  * Snapshot of all three cache levels exposed by
@@ -36,6 +37,8 @@ import type { DecompressedChunkCache } from '../../../cache/decompressed-chunk-c
  */
 export interface CacheStatsSnapshot {
   l0: ReturnType<DecompressedChunkCache['getStats']> | null;
+  /** S-cache (decoded per-slice geometry) — null when the SliceCache is off. */
+  slice: ReturnType<SliceCache['getStats']> | null;
   l1: ReturnType<MultiLevelCachingStore['getStats']>['l1'] | null;
   l2: ReturnType<MultiLevelCachingStore['getStats']>['l2'] | null;
   network?: ReturnType<MultiLevelCachingStore['getStats']>['network'] | null;
@@ -58,7 +61,8 @@ export interface CacheStatsSnapshot {
  */
 export function getCacheStats(
   l0Cache: DecompressedChunkCache | null,
-  cachingStore: MultiLevelCachingStore | null
+  cachingStore: MultiLevelCachingStore | null,
+  sliceCache: SliceCache | null = null
 ): CacheStatsSnapshot {
   const stats = cachingStore?.getStats();
   // Defensive: cache-api is sometimes called with a stub cachingStore
@@ -70,6 +74,7 @@ export function getCacheStats(
       : null;
   return {
     l0: l0Cache?.getStats() ?? null,
+    slice: sliceCache?.getStats() ?? null,
     l1: stats?.l1 ?? null,
     l2: stats?.l2 ?? null,
     network: stats?.network ?? null,

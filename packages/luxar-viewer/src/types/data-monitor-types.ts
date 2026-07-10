@@ -350,6 +350,10 @@ export interface CacheMetrics {
     misses: number;
     evictions: number;
     hitRate: number;
+    /** Eviction-induced misses (working-set-over-budget / cyclic-playback thrash). */
+    thrashMisses?: number;
+    /** Resolved (heap-aware) byte budget — varies by device heap. */
+    maxSize?: number;
   };
   /**
    * Whether caching is enabled. Derived from

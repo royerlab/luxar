@@ -66,6 +66,13 @@ export interface SliceCacheStats {
    * thrash. Optional so stat mirrors that predate it keep compiling.
    */
   thrashMisses?: number;
+  /**
+   * Resolved byte budget (heap-aware; see `heap-budget.ts`). Surfaced so the
+   * monitor / debug API can show the live budget — critical when it varies by
+   * device heap rather than being the fixed config value. Mirrors
+   * {@link DecompressedChunkCacheStats.maxSize}.
+   */
+  maxSize?: number;
 }
 
 /** Configuration options for the SliceCache. */
@@ -134,7 +141,12 @@ export class SliceCache {
    */
   get(key: string): SliceCacheEntry | undefined {
     const entry = this.cache.get(key);
-    if (entry === undefined && this.tombstones.has(key)) {
+    if (entry !== undefined) {
+      // A hit means the consumer (e.g. the foreground tick restoring a
+      // prefetched slice) has taken the entry — release any prefetch pin so it
+      // rejoins normal eviction. Harmless when the key was never pinned.
+      this.cache.unpin(key);
+    } else if (this.tombstones.has(key)) {
       // Was cached earlier, got evicted, asked for again: thrash, not cold.
       this.thrashMisses++;
     }
@@ -161,9 +173,16 @@ export class SliceCache {
    *   turnaround this is locally worse than LRU (the loaders only see the
    *   budget directive, not the loop mode) — accepted; a loop-mode-aware
    *   per-pass hint is a possible follow-up.
+   * @param opts.pin - Protect this entry from eviction until it is next read
+   *   (unpinned on the first {@link get} hit). The SlicePrefetcher sets it so a
+   *   projected next-frame slice — which lands as the MRU entry and would be
+   *   the FIRST victim of a subsequent scan store under budget pressure —
+   *   survives until the foreground tick restores it. Best-effort: if the whole
+   *   working set is pinned and over budget, pinned entries are still evicted.
    */
-  set(key: string, entry: SliceCacheEntry, opts?: { scan?: boolean }): void {
+  set(key: string, entry: SliceCacheEntry, opts?: { scan?: boolean; pin?: boolean }): void {
     this.cache.set(key, entry, { evictMostRecent: opts?.scan });
+    if (opts?.pin) this.cache.pin(key);
     // Freshly cached: a later miss on this key is only thrash if it gets
     // evicted AGAIN (recordTombstone re-adds it then).
     this.tombstones.delete(key);
@@ -229,6 +248,7 @@ export class SliceCache {
       evictions: this.cache.evictionCount,
       hitRate: total > 0 ? hits / total : 0,
       thrashMisses: this.thrashMisses,
+      maxSize: this.maxSize,
     };
   }
 

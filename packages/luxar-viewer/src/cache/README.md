@@ -6,9 +6,14 @@ Multi-tier caching system with intelligent prefetching for zarr chunks enabling 
 
 This package implements a transparent caching and prefetching layer for zarr datasets:
 
-- **S-cache (SliceCache, `slice-cache.ts`)**: 128MB LRU cache of fully DECODED
+- **S-cache (SliceCache, `slice-cache.ts`)**: LRU cache of fully DECODED
   per-slice geometry ladders, keyed per node + view signature (displayDims,
-  slicePosition, tolerance, dimensions). A slice revisit — e.g. scrubbing back
+  slicePosition, tolerance, dimensions). Its byte budget is **heap-aware and
+  two-sided** (`heap-budget.ts::computeCacheBudgets`): it scales UP on a large
+  device heap so a fits-in-RAM timelapse stays fully resident (decode-free
+  revisit) and DOWN on a small heap to avoid OOM; `config.cache.sliceCacheMaxSizeMB`
+  (128MB) is the fixed fallback used where `performance.memory` is unavailable
+  (Firefox/Safari). A slice revisit — e.g. scrubbing back
   to a timepoint — skips the whole query + fetch + decode pipeline; only the
   cheap nD→3D projection re-runs. Sits ABOVE L0; in-memory, per-session,
   cleared on content-hash invalidation. Disable with `?no-slice-cache`.
@@ -29,12 +34,19 @@ Chunk request → L0 (Decompressed) → L1 (Memory) → L2 (OPFS) → Remote HTT
              (no decompress)    (decompress)   (decompress)   (decompress)
 ```
 
-| Level   | Storage | Speed         | Size  | Persistence  | Content               |
-| ------- | ------- | ------------- | ----- | ------------ | --------------------- |
-| S-cache | Memory  | ~1μs          | 128MB | Session only | Decoded slice ladders |
-| L0      | Memory  | ~1μs          | 200MB | Session only | Decompressed data     |
-| L1      | Memory  | ~1μs + ~2ms\* | 100MB | Session only | Compressed chunks     |
-| L2      | OPFS    | ~1ms + ~2ms\* | 2GB   | Permanent    | Compressed chunks     |
+| Level   | Storage | Speed         | Size          | Persistence  | Content               |
+| ------- | ------- | ------------- | ------------- | ------------ | --------------------- |
+| S-cache | Memory  | ~1μs          | heap-aware†   | Session only | Decoded slice ladders |
+| L0      | Memory  | ~1μs          | heap-aware†   | Session only | Decompressed data     |
+| L1      | Memory  | ~1μs + ~2ms\* | heap-aware†   | Session only | Compressed chunks     |
+| L2      | OPFS    | ~1ms + ~2ms\* | 2GB           | Permanent    | Compressed chunks     |
+
+† The three in-memory tiers are sized two-sidedly from the device heap by
+`heap-budget.ts` — the config `l0MaxSizeMB` (200) / `l1MaxSizeMB` (100) /
+`sliceCacheMaxSizeMB` (128) are ceilings/fallbacks, not fixed allocations. On a
+large heap the S-cache scales up (residual headroom, capped at 1 GiB); on a
+small heap all three scale down to stay within `dataLoading.memory.targetHeapUsage`.
+L2 (OPFS/disk) is a fixed 2GB and unaffected.
 | L3      | Remote  | ~100ms        | ∞     | N/A          | Compressed chunks     |
 
 \*~2ms is Blosc decompression time per chunk (skipped on L0 hit)

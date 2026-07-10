@@ -73,6 +73,25 @@ describe('getCacheStats', () => {
     });
   });
 
+  it('surfaces the S-cache slice stats (incl. the heap-aware budget) when present, null otherwise', () => {
+    const sliceStats = {
+      size: 42,
+      count: 3,
+      hits: 10,
+      misses: 4,
+      evictions: 1,
+      hitRate: 10 / 14,
+      thrashMisses: 2,
+      maxSize: 512 * 1024 * 1024,
+    };
+    const sliceStub = { getStats: () => sliceStats } as unknown as Parameters<
+      typeof getCacheStats
+    >[2];
+    expect(getCacheStats(null, null, sliceStub)!.slice).toEqual(sliceStats);
+    // Absent SliceCache → null (and the default 2-arg call keeps slice null).
+    expect(getCacheStats(null, null).slice).toBeNull();
+  });
+
   it('extends the snapshot with network/demand/prefetch/health fields (commit 7.1)', () => {
     // Stub a caching store that exposes everything the snapshot
     // surfaces — including the prefetcher and the new health field.
