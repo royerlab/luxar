@@ -68,6 +68,9 @@ import { type LuxarCamera, isPerspectiveCamera, isOrthographicCamera } from '../
 import { isDocumentFullscreen } from '../utils/fullscreen';
 import type { ControlType } from '../controls/controls-manager';
 
+/** Default scene up (world +Y) — overridden per scene by `viewer_config.up`. */
+const DEFAULT_SCENE_UP = new THREE.Vector3(0, 1, 0);
+
 /**
  * SceneManager orchestrates all Three.js components for 3D rendering
  *
@@ -156,6 +159,14 @@ export class SceneManager extends THREE.EventDispatcher<{
 
   /** Store the last calculated bounding box center */
   private lastBoundingBoxCenter: THREE.Vector3 = new THREE.Vector3();
+
+  /**
+   * The scene's up vector — world +Y unless the zarr `viewer_config`
+   * authored one (set in loadSceneData). Every camera fit/reset
+   * (Home/F, center-on-origin, load-time auto-frame) squares to this,
+   * so author-oriented scenes reset to THEIR horizon, not world Y.
+   */
+  private sceneUp: THREE.Vector3 = DEFAULT_SCENE_UP.clone();
 
   /** Resize debouncing with requestAnimationFrame for smooth resizing */
   private resizer = new ResizeOrchestrator();
@@ -645,7 +656,10 @@ export class SceneManager extends THREE.EventDispatcher<{
       // The helper returns whether an explicit camera position was applied;
       // also extract once more to detect author-set target/targetNode.
       const viewerConfig = root.userData?.viewerConfig as ZarrViewerConfig | undefined;
-      const { positionApplied } = this.applyZarrViewerConfig(root);
+      const { positionApplied, appliedUp } = this.applyZarrViewerConfig(root);
+      // The scene up governs every camera fit/reset (Home/F, center-on-
+      // origin, this auto-frame): world +Y unless the author set one.
+      this.sceneUp.copy(appliedUp ?? DEFAULT_SCENE_UP);
       const camOverrides = viewerConfig ? extractCameraOverrides(viewerConfig) : {};
       const hasAuthorTarget = !!(camOverrides.target || camOverrides.targetNode);
 
@@ -688,7 +702,10 @@ export class SceneManager extends THREE.EventDispatcher<{
    * `positionApplied` flag so `loadSceneData` can suppress auto-framing.
    * (Author target alone does NOT suppress auto-framing.)
    */
-  private applyZarrViewerConfig(root: THREE.Group): { positionApplied: boolean } {
+  private applyZarrViewerConfig(root: THREE.Group): {
+    positionApplied: boolean;
+    appliedUp: THREE.Vector3 | null;
+  } {
     return applyZarrViewerConfigHelper(root, this.camera, this.controls, this.scene);
   }
 
@@ -722,7 +739,7 @@ export class SceneManager extends THREE.EventDispatcher<{
    * ```
    */
   public centerCameraOnScene(): void {
-    const center = centerCameraOnScene(this.scene, this.camera, this.controls);
+    const center = centerCameraOnScene(this.scene, this.camera, this.controls, this.sceneUp);
     if (center) this.lastBoundingBoxCenter.copy(center);
   }
 
@@ -790,7 +807,7 @@ export class SceneManager extends THREE.EventDispatcher<{
    * {@link toggleCentering} switches back to the bounding box.
    */
   public centerOnOrigin(): void {
-    centerOnOrigin(this.camera, this.controls);
+    centerOnOrigin(this.camera, this.controls, this.sceneUp);
     this.isCenteredOnBoundingBox = false;
   }
 
@@ -951,7 +968,8 @@ export class SceneManager extends THREE.EventDispatcher<{
       this.camera,
       this.controls,
       this.getSceneBoundsFromMetadata(),
-      preserveTarget
+      preserveTarget,
+      this.sceneUp
     );
     if (result.framed && result.center) {
       this.isCenteredOnBoundingBox = !preserveTarget;
