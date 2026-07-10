@@ -341,6 +341,8 @@ export interface CacheMetrics {
     misses: number;
     evictions: number;
     hitRate: number;
+    /** Resolved (heap-aware) byte budget. */
+    maxSize?: number;
   };
   /** SliceCache ("S-cache") breakdown (optional, only when the SliceCache is connected) */
   slice?: {
@@ -624,6 +626,8 @@ export interface CacheStatsProvider {
       hits: number;
       misses: number;
       evictions: number;
+      /** Resolved (heap-aware) L1 byte budget. */
+      maxSize?: number;
     };
     l2: {
       size: number;
@@ -631,6 +635,8 @@ export interface CacheStatsProvider {
       reads: number;
       writes: number;
       misses: number;
+      /** Fixed OPFS/disk byte budget. */
+      maxSize?: number;
       /**
        * Optional OPFS health counters; provider stubs may omit them.
        */

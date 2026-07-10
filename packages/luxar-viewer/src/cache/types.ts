@@ -20,6 +20,8 @@ export interface CacheStats {
   misses: number;
   /** Total evictions across all segments */
   evictions: number;
+  /** Configured byte budget (heap-aware; the L1 total size). */
+  maxSize?: number;
 }
 
 /**
@@ -92,6 +94,8 @@ export interface MultiLevelCacheStats {
     reads: number;
     writes: number;
     misses: number;
+    /** Configured byte budget (fixed OPFS/disk cap). */
+    maxSize?: number;
     oversizedWriteSkipped?: number;
     quotaWriteSkipped?: number;
     evictions?: number;
