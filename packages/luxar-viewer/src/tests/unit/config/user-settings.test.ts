@@ -157,6 +157,22 @@ describe('applyLiveConfigOverrides', () => {
     expect(config.dataLoading.performance.workerCount).toBe(2);
     expect(config.dataLoading.network.maxConcurrent).toBe(8);
   });
+
+  it('defaults stay the BUILT-IN values even after live overrides mutated config (Reset All)', () => {
+    // Regression: defaultUserSettings() used to read config at call time, so
+    // after applying a user value the "default" became the user value and
+    // Reset All could never restore the built-ins.
+    const builtinFov = defaultUserSettings().input.fovSensitivity;
+    const s = defaultUserSettings();
+    s.input.fovSensitivity = 0.19;
+    s.performance.idleTimeoutMs = 9000;
+    applyLiveConfigOverrides(s);
+
+    const d = defaultUserSettings();
+    expect(d.input.fovSensitivity).toBe(builtinFov);
+    expect(d.input.fovSensitivity).not.toBe(0.19);
+    expect(d.performance.idleTimeoutMs).not.toBe(9000);
+  });
 });
 
 describe('initUserSettings + reloadRequired', () => {

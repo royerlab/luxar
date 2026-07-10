@@ -13,6 +13,7 @@ export function validateControls(config: AppConfig, errors: string[], _warnings:
     { name: 'fly.movement.damping', range: controls.fly.movement.damping },
     { name: 'fly.rotation.speed', range: controls.fly.rotation.speed },
     { name: 'fly.rotation.damping', range: controls.fly.rotation.damping },
+    { name: 'fly.look.mouseSpeed', range: controls.fly.look.mouseSpeed },
     { name: 'orbit.autoRotate.speed', range: controls.orbit.autoRotate.speed },
     { name: 'orbit.zoom.speed', range: controls.orbit.zoom.speed },
     { name: 'orbit.damping.factor', range: controls.orbit.damping.factor },

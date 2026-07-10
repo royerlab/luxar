@@ -74,18 +74,34 @@ export const USER_SETTINGS_RANGES = {
   budgetMB: { min: 128, max: 4096 },
 } as const;
 
+/**
+ * Built-in values of the live-read config fields, captured ONCE at module
+ * load — i.e. before {@link applyLiveConfigOverrides} can mutate them.
+ * `defaultUserSettings()` must read from this snapshot, not from `config`:
+ * reading `config` at call time would return the user's own applied values
+ * as "defaults", so Reset All could never restore the built-ins and
+ * sanitize fallbacks would drift toward whatever was last applied.
+ */
+const BUILTIN_LIVE_DEFAULTS = {
+  fovSensitivity: config.camera.fovSensitivity,
+  idleTimeoutMs: config.animation.idleTimeoutMs,
+  useWebWorkers: config.dataLoading.performance.useWebWorkers,
+  workerCount: config.dataLoading.performance.workerCount,
+  networkMaxConcurrent: config.dataLoading.network.maxConcurrent,
+} as const;
+
 /** Defaults derived from the built-in config (so the two never drift). */
 export function defaultUserSettings(): UserSettings {
   return {
     version: SETTINGS_VERSION,
     input: {
-      fovSensitivity: config.camera.fovSensitivity,
+      fovSensitivity: BUILTIN_LIVE_DEFAULTS.fovSensitivity,
     },
     performance: {
-      idleTimeoutMs: config.animation.idleTimeoutMs,
-      useWebWorkers: config.dataLoading.performance.useWebWorkers,
-      workerCount: config.dataLoading.performance.workerCount,
-      networkMaxConcurrent: config.dataLoading.network.maxConcurrent,
+      idleTimeoutMs: BUILTIN_LIVE_DEFAULTS.idleTimeoutMs,
+      useWebWorkers: BUILTIN_LIVE_DEFAULTS.useWebWorkers,
+      workerCount: BUILTIN_LIVE_DEFAULTS.workerCount,
+      networkMaxConcurrent: BUILTIN_LIVE_DEFAULTS.networkMaxConcurrent,
     },
     caching: {
       enabled: true,
