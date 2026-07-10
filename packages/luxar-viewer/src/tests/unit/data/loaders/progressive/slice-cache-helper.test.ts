@@ -249,6 +249,22 @@ describe('slice-cache-helper — oversized ladder (partial-prefix caching)', () 
     }
   });
 
+  it('dedups the oversized warning per NODE PATH, not per view (a playback sweep warns once)', () => {
+    const warnSpy = vi.spyOn(log, 'warning').mockImplementation(() => undefined);
+    try {
+      const sc = new SliceCache({ maxSize: 500 });
+      const p = '/sweep-node';
+      const oversized = [makeLod(100), makeLod(100), makeLod(100)];
+      // Two DISTINCT views (slice positions) of the same node, both oversized.
+      storeLadder(sc, p, { ...view, slicePosition: [0, 0, 0, 7] }, oversized);
+      storeLadder(sc, p, { ...view, slicePosition: [0, 0, 0, 8] }, oversized);
+      storeLadder(sc, p, { ...view, slicePosition: [0, 0, 0, 9] }, oversized);
+      expect(warnSpy).toHaveBeenCalledTimes(1); // per-path → one warning for the node
+    } finally {
+      warnSpy.mockRestore();
+    }
+  });
+
   it('dedups the warning per key but re-warns after clear() (instance-scoped, not a module-global leak)', () => {
     const warnSpy = vi.spyOn(log, 'warning').mockImplementation(() => undefined);
     try {

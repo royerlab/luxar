@@ -175,14 +175,29 @@ export function readHeapLimitBytes(): number | undefined {
  *
  * Resolution order: explicit override → measured heap → device-class fallback →
  * fixed config sizes (`source: 'fixed'`, e.g. non-browser / no device signals).
+ *
+ * @param enabled - Which tiers are actually active this session. A disabled tier
+ *   gets a 0 budget and does NOT reserve any pool: e.g. `?no-slice-cache` frees
+ *   the S-cache floor back to the chunk caches, and disabling L0 gives its share
+ *   to the S-cache. Defaults to all enabled (identical to the pre-flag behavior).
  */
+export interface CacheTiersEnabled {
+  l0?: boolean;
+  l1?: boolean;
+  slice?: boolean;
+}
+
 export function computeCacheBudgets(
   heapLimitBytes?: number,
   poolOverrideBytes?: number,
-  fallbackPoolBytes?: number
+  fallbackPoolBytes?: number,
+  enabled: CacheTiersEnabled = {}
 ): CacheBudgets {
-  const l0Ceil = config.cache.l0MaxSizeMB * MB;
-  const l1Ceil = config.cache.l1MaxSizeMB * MB;
+  const l0On = enabled.l0 !== false;
+  const l1On = enabled.l1 !== false;
+  const sliceOn = enabled.slice !== false;
+  const l0Ceil = l0On ? config.cache.l0MaxSizeMB * MB : 0;
+  const l1Ceil = l1On ? config.cache.l1MaxSizeMB * MB : 0;
   const sliceConfig = config.cache.sliceCacheMaxSizeMB * MB;
 
   const positive = (v: number | undefined): v is number => v != null && Number.isFinite(v) && v > 0;
@@ -206,19 +221,23 @@ export function computeCacheBudgets(
       return {
         l0Bytes: l0Ceil,
         l1Bytes: l1Ceil,
-        sliceBytes: sliceConfig,
+        sliceBytes: sliceOn ? sliceConfig : 0,
         heapAware: false,
         source: 'fixed',
       };
     }
   }
 
-  // Heap-relative S-cache floor, never above the historical 128 MB default.
-  const sliceMin = Math.min(sliceConfig, Math.max(SLICE_ABS_MIN_BYTES, pool * SLICE_MIN_FRACTION));
+  // Heap-relative S-cache floor, never above the historical 128 MB default —
+  // zero when the S-cache is disabled so it reserves nothing from the pool.
+  const sliceMin = sliceOn
+    ? Math.min(sliceConfig, Math.max(SLICE_ABS_MIN_BYTES, pool * SLICE_MIN_FRACTION))
+    : 0;
 
   // Seat L0/L1 at their ceilings, but never crowd out the S-cache floor:
   // when the pool is too tight for both, shrink the chunk caches (they rebuild
-  // cheaply from L2/network) before the render-proximal S-cache.
+  // cheaply from L2/network) before the render-proximal S-cache. Disabled tiers
+  // have a 0 ceiling, so their share flows to whatever is enabled.
   const l0l1Budget = Math.max(0, pool - sliceMin);
   const l0l1Want = l0Ceil + l1Ceil;
   let l0Bytes = l0Ceil;
@@ -231,7 +250,9 @@ export function computeCacheBudgets(
 
   // The S-cache takes the residual headroom (scales up), floored at sliceMin
   // and capped so it can't pin an unreasonable amount on a very large heap.
-  const sliceBytes = Math.min(SLICE_CAP_BYTES, Math.max(sliceMin, pool - l0Bytes - l1Bytes));
+  const sliceBytes = sliceOn
+    ? Math.min(SLICE_CAP_BYTES, Math.max(sliceMin, pool - l0Bytes - l1Bytes))
+    : 0;
 
   return {
     l0Bytes: Math.floor(l0Bytes),

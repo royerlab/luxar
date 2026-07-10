@@ -393,6 +393,15 @@ describe('SceneLoader', () => {
     it('releasePrefetchResources is a safe no-op before any prefetch', () => {
       expect(() => sceneLoader.releasePrefetchResources()).not.toThrow();
     });
+
+    it('does NOT persist the transient `prefetch` directive into the view state', async () => {
+      // Regression: `prefetch` (like `frameBudgetMs`) is a per-pass directive.
+      // If it leaked into the persistent view state, every subsequent foreground
+      // store would be pinned, silently defeating scan eviction.
+      await sceneLoader.updateView({ slicePosition: [0, 0, 0, 4], prefetch: true });
+      const vs = (sceneLoader as unknown as { viewState: { prefetch?: boolean } }).viewState;
+      expect(vs.prefetch).toBeUndefined();
+    });
   });
 
   describe('updateView — superseded loads abort (per-update AbortSignal)', () => {
