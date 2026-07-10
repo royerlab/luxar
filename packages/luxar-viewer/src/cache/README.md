@@ -47,6 +47,14 @@ Chunk request → L0 (Decompressed) → L1 (Memory) → L2 (OPFS) → Remote HTT
 large heap the S-cache scales up (residual headroom, capped at 1 GiB); on a
 small heap all three scale down to stay within `dataLoading.memory.targetHeapUsage`.
 L2 (OPFS/disk) is a fixed 2GB and unaffected.
+
+Heap detection uses `performance.memory`, which is **Chrome/Blink-only**. In
+**WebKit — WKWebView (the native `luxar export --native` app) and Safari** — it
+is absent, so the heap can't be measured. There, pass an explicit pool with
+**`?cacheBudgetMB=<N>`** (the native launcher injects it automatically, default
+1536, env `LUXAR_CACHE_BUDGET_MB`); it takes precedence over heap detection and
+is split across the tiers the same way. Without it, WebKit falls back to the
+fixed config sizes.
 | L3      | Remote  | ~100ms        | ∞     | N/A          | Compressed chunks     |
 
 \*~2ms is Blosc decompression time per chunk (skipped on L0 hit)

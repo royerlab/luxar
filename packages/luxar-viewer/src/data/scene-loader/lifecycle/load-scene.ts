@@ -225,6 +225,7 @@ export async function loadScene(url: string, ctx: LoadSceneCtx): Promise<THREE.G
     clearCache: ctx.config.clearCache,
     noPrefetch: ctx.config.noPrefetch,
     prefetchDebug: ctx.config.prefetchDebug,
+    cacheBudgetMB: ctx.config.cacheBudgetMB,
   });
   ctx.setL0Cache(cacheResult.l0Cache);
   ctx.setSliceCache(cacheResult.sliceCache);

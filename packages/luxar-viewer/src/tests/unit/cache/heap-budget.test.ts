@@ -20,15 +20,33 @@ describe('computeCacheBudgets', () => {
   it('falls back to fixed config sizes when the heap is unknown', () => {
     const b = computeCacheBudgets(); // no override, no performance.memory → fallback
     expect(b.heapAware).toBe(false);
+    expect(b.source).toBe('fixed');
     expect(b.l0Bytes).toBe(l0Ceil);
     expect(b.l1Bytes).toBe(l1Ceil);
     expect(b.sliceBytes).toBe(sliceConfig);
+  });
+
+  it('explicit pool override (WKWebView/Safari path) splits the pool and reports source=explicit', () => {
+    // The native launcher / ?cacheBudgetMB= supplies a pool where the heap is
+    // unmeasurable. Precedence over any heap arg. Pool 1536MB → L0/L1 ceilings,
+    // S-cache the residual (capped at 1 GiB).
+    const b = computeCacheBudgets(undefined, 1536 * MB);
+    expect(b.source).toBe('explicit');
+    expect(b.heapAware).toBe(true);
+    expect(b.l0Bytes).toBe(l0Ceil);
+    expect(b.l1Bytes).toBe(l1Ceil);
+    expect(b.sliceBytes).toBe(SLICE_CAP); // 1536-300=1236 → capped to 1 GiB
+    // Override wins even if a (smaller) heap is also passed.
+    const b2 = computeCacheBudgets(256 * MB, 1536 * MB);
+    expect(b2.source).toBe('explicit');
+    expect(b2.sliceBytes).toBe(SLICE_CAP);
   });
 
   it('large heap: L0/L1 stay at their ceilings, S-cache scales up to the cap', () => {
     const heap = 4192 * MB;
     const b = computeCacheBudgets(heap);
     expect(b.heapAware).toBe(true);
+    expect(b.source).toBe('heap');
     expect(b.l0Bytes).toBe(l0Ceil); // pool is ample → ceilings honored
     expect(b.l1Bytes).toBe(l1Ceil);
     expect(b.sliceBytes).toBe(SLICE_CAP); // residual exceeds cap → clamped

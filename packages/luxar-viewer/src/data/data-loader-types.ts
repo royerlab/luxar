@@ -145,6 +145,13 @@ export interface LoaderConfig {
   /** Disable only the SliceCache / S-cache (L0/L1/L2 stay on). */
   noSliceCache?: boolean;
 
+  /**
+   * Explicit total in-memory cache pool (L0+L1+S-cache) in MB, from
+   * `?cacheBudgetMB=` / the native launcher. Used where `performance.memory` is
+   * absent (WKWebView/Safari) so heap-aware sizing still gets a real budget.
+   */
+  cacheBudgetMB?: number | null;
+
   /** Verbose cache logging. */
   cacheDebug?: boolean;
 

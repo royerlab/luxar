@@ -66,6 +66,11 @@ make clean-launchers  # Clean built launcher binaries
 #   Opens the system default browser instead of the embedded WebView —
 #   useful for headless smoke tests and minimal Linux installs without
 #   libwebkit2gtk.
+# Runtime override: LUXAR_CACHE_BUDGET_MB=<N> ./luxar-launcher
+#   Total in-memory cache pool (L0+L1+S-cache) the launcher passes to the
+#   viewer via ?cacheBudgetMB=. WKWebView has no performance.memory, so the
+#   viewer can't auto-size caches from the heap; the launcher supplies a
+#   generous default (1536). Lower it on a memory-constrained machine.
 
 # CUDA (Gaussian Splatting)
 make setup-cuda       # Install CUDA deps + build extension (may need sudo)

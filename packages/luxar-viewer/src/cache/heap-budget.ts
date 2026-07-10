@@ -53,8 +53,17 @@ export interface CacheBudgets {
   l1Bytes: number;
   /** S-cache decoded-slice budget (bytes). */
   sliceBytes: number;
-  /** True when derived from a known device heap; false = fixed-config fallback. */
+  /** True when derived (heap OR explicit override); false = fixed-config fallback. */
   heapAware: boolean;
+  /**
+   * Where the pool came from:
+   *   `heap`     — measured `performance.memory.jsHeapSizeLimit` (Chrome).
+   *   `explicit` — a caller-supplied pool override (`?cacheBudgetMB=` / the
+   *                native launcher), used where `performance.memory` is absent
+   *                (WKWebView/Safari) so the app still gets a real budget.
+   *   `fixed`    — neither available: the historical fixed config sizes.
+   */
+  source: 'heap' | 'explicit' | 'fixed';
 }
 
 /**
@@ -81,21 +90,45 @@ export function readHeapLimitBytes(): number | undefined {
  *   slice   = clamp(pool − L0 − L1, sliceMin, SLICE_CAP)  // residual → scales UP
  *
  * @param heapLimitBytes - Override for the device heap limit (tests). When
- *   omitted, {@link readHeapLimitBytes} is consulted; if that is also unknown,
- *   the fixed config sizes are returned (`heapAware: false`).
+ *   omitted, {@link readHeapLimitBytes} is consulted.
+ * @param poolOverrideBytes - Explicit total cache pool (L0+L1+S-cache) in bytes,
+ *   from `?cacheBudgetMB=` or the native launcher. Takes precedence over the
+ *   heap: this is how the WKWebView app / Safari (no `performance.memory`) still
+ *   get a real budget instead of the tiny fixed fallback. Split across tiers by
+ *   the same rule as the heap path.
+ *
+ * If neither a pool override nor a heap is available (Firefox/Safari with no
+ * override, node), the fixed config sizes are returned (`source: 'fixed'`).
  */
-export function computeCacheBudgets(heapLimitBytes?: number): CacheBudgets {
+export function computeCacheBudgets(
+  heapLimitBytes?: number,
+  poolOverrideBytes?: number
+): CacheBudgets {
   const l0Ceil = config.cache.l0MaxSizeMB * MB;
   const l1Ceil = config.cache.l1MaxSizeMB * MB;
   const sliceConfig = config.cache.sliceCacheMaxSizeMB * MB;
 
-  const heap = heapLimitBytes ?? readHeapLimitBytes();
-  if (heap === undefined) {
-    // Unknown heap (Firefox/Safari/node): preserve the historical fixed sizes.
-    return { l0Bytes: l0Ceil, l1Bytes: l1Ceil, sliceBytes: sliceConfig, heapAware: false };
+  // Determine the total cache pool: an explicit override wins; else derive it
+  // from the measured heap; else fall back to the fixed config sizes.
+  let pool: number;
+  let source: 'heap' | 'explicit';
+  if (poolOverrideBytes != null && Number.isFinite(poolOverrideBytes) && poolOverrideBytes > 0) {
+    pool = poolOverrideBytes;
+    source = 'explicit';
+  } else {
+    const heap = heapLimitBytes ?? readHeapLimitBytes();
+    if (heap === undefined) {
+      return {
+        l0Bytes: l0Ceil,
+        l1Bytes: l1Ceil,
+        sliceBytes: sliceConfig,
+        heapAware: false,
+        source: 'fixed',
+      };
+    }
+    pool = heap * config.dataLoading.memory.targetHeapUsage * CACHE_SHARE_OF_TARGET;
+    source = 'heap';
   }
-
-  const pool = heap * config.dataLoading.memory.targetHeapUsage * CACHE_SHARE_OF_TARGET;
 
   // Heap-relative S-cache floor, never above the historical 128 MB default.
   const sliceMin = Math.min(sliceConfig, Math.max(SLICE_ABS_MIN_BYTES, pool * SLICE_MIN_FRACTION));
@@ -122,5 +155,6 @@ export function computeCacheBudgets(heapLimitBytes?: number): CacheBudgets {
     l1Bytes: Math.floor(l1Bytes),
     sliceBytes: Math.floor(sliceBytes),
     heapAware: true,
+    source,
   };
 }

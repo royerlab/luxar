@@ -31,6 +31,12 @@ export interface CacheSetupFlags {
   clearCache?: boolean;
   noPrefetch?: boolean;
   prefetchDebug?: boolean;
+  /**
+   * Explicit total cache pool (L0+L1+S-cache) in MB (`?cacheBudgetMB=` / native
+   * launcher). Overrides heap detection — the path that gives the WKWebView app
+   * / Safari (no `performance.memory`) a real budget.
+   */
+  cacheBudgetMB?: number | null;
 }
 
 /** Result of cache setup: the three layers and a ready-to-open store. */
@@ -75,9 +81,14 @@ export async function setupCaches(url: string, flags: CacheSetupFlags): Promise<
   // Two-sided heap-aware budgets for the in-memory tiers (L0/L1/S-cache):
   // scale up on a large heap so a fits-in-RAM timelapse stays resident, and
   // down on a small heap to avoid an OOM from the previously-fixed 428 MB.
-  // On Firefox/Safari/node (no `performance.memory`) this returns the fixed
-  // config sizes, preserving prior behaviour. L2 (OPFS/disk) is unaffected.
-  const budgets = computeCacheBudgets();
+  // An explicit `cacheBudgetMB` (URL / native launcher) takes precedence — the
+  // path that gives WKWebView/Safari (no `performance.memory`) a real budget
+  // instead of the fixed fallback. L2 (OPFS/disk) is unaffected.
+  const poolOverrideBytes =
+    flags.cacheBudgetMB != null && flags.cacheBudgetMB > 0
+      ? flags.cacheBudgetMB * 1024 * 1024
+      : undefined;
+  const budgets = computeCacheBudgets(undefined, poolOverrideBytes);
   const toMB = (bytes: number) => (bytes / 1024 / 1024).toFixed(0);
 
   let l0Cache: DecompressedChunkCache | null = null;
@@ -97,8 +108,7 @@ export async function setupCaches(url: string, flags: CacheSetupFlags): Promise<
     });
     log.info(
       Modules.SCENE_LOADER,
-      `SliceCache (S-cache) enabled (max size: ${toMB(budgets.sliceBytes)}MB` +
-        `${budgets.heapAware ? ', heap-aware' : ', fixed'})`
+      `SliceCache (S-cache) enabled (max size: ${toMB(budgets.sliceBytes)}MB, ${budgets.source})`
     );
   } else if (noSliceCache) {
     log.info(Modules.SCENE_LOADER, 'SliceCache disabled via ?no-slice-cache URL parameter');

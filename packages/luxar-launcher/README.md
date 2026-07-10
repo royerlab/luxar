@@ -7,6 +7,14 @@ WebView window. Setting `LUXAR_LAUNCHER_NO_WEBVIEW=1` falls back to the
 user's default browser (no native window) — useful for headless smoke
 tests and minimal Linux installs without `libwebkit2gtk`.
 
+The launcher also passes a cache budget to the viewer via
+`?cacheBudgetMB=<N>` (default **1536**). WebKit (WKWebView / WebKitGTK)
+does not implement `performance.memory`, so the viewer cannot auto-size
+its in-memory caches from the JS heap the way it does in Chrome — without
+this it would fall back to a tiny fixed budget and re-decode timelapse
+frames on every loop. Override with `LUXAR_CACHE_BUDGET_MB=<N>` on a
+memory-constrained machine (e.g. `=512`).
+
 ## Build
 
 From the project root:

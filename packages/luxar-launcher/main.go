@@ -28,6 +28,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"syscall"
 	"time"
 
@@ -125,7 +126,12 @@ func startServer(root string) (string, *http.Server, error) {
 	}
 	port := ln.Addr().(*net.TCPAddr).Port
 	dataURL := fmt.Sprintf("http://127.0.0.1:%d/data", port)
-	viewerURL := fmt.Sprintf("http://127.0.0.1:%d/viewer/?src=%s", port, dataURL)
+	// Inject a cache budget: the viewer auto-sizes its in-memory caches from
+	// `performance.memory`, which WKWebView (WebKit) does not implement — so
+	// without this the app would fall back to a tiny fixed budget and re-decode
+	// timelapse frames every loop. We know this is a desktop app, so we supply a
+	// generous default the viewer splits across its cache tiers.
+	viewerURL := fmt.Sprintf("http://127.0.0.1:%d/viewer/?src=%s&cacheBudgetMB=%d", port, dataURL, cacheBudgetMB())
 
 	srv := &http.Server{
 		Handler:           withCORS(http.FileServer(http.Dir(root))),
@@ -137,6 +143,21 @@ func startServer(root string) (string, *http.Server, error) {
 		}
 	}()
 	return viewerURL, srv, nil
+}
+
+// cacheBudgetMB is the total in-memory cache pool (MB) the launcher tells the
+// viewer to use, via `?cacheBudgetMB=`. WKWebView has no `performance.memory`,
+// so the viewer cannot auto-size from the heap; as a desktop app we supply a
+// generous default (the viewer caps individual tiers internally). Override with
+// LUXAR_CACHE_BUDGET_MB on a memory-constrained machine (e.g. `=512`).
+func cacheBudgetMB() int {
+	const def = 1536
+	if v := os.Getenv("LUXAR_CACHE_BUDGET_MB"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			return n
+		}
+	}
+	return def
 }
 
 func shutdownServer(srv *http.Server) {
