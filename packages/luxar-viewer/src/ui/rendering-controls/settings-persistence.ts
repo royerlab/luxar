@@ -24,21 +24,27 @@ import {
 import { extractRenderingOverrides } from '../../config/zarr-bridge/viewer-config-utils';
 import type { ZarrViewerConfig } from '../../types/zarr';
 
-/** RenderingSettings with the fly fields narrowed to non-optional concretes. */
+/** RenderingSettings with the orbit/fly feel fields narrowed to non-optional concretes. */
 export type FullySpecifiedRenderingSettings = RenderingSettings & {
+  orbitZoomSpeed: number;
+  orbitDampingFactor: number;
   flyMovementSpeed: number;
   flyRotationSpeed: number;
+  flyLookSpeed: number;
   flyInertialMode: boolean;
   flyDamping: number;
   flyRotationDamping: number;
 };
 
-/** Build the hardcoded base defaults (config.renderingControls.defaults + fly defaults). */
+/** Build the hardcoded base defaults (config.renderingControls.defaults + orbit/fly defaults). */
 export function buildBaseDefaults(): FullySpecifiedRenderingSettings {
   return {
     ...config.renderingControls.defaults,
+    orbitZoomSpeed: config.controls.orbit.zoom.speed.default,
+    orbitDampingFactor: config.controls.orbit.damping.factor.default,
     flyMovementSpeed: config.controls.fly.movement.speed.default,
     flyRotationSpeed: config.controls.fly.rotation.speed.default,
+    flyLookSpeed: config.controls.fly.look.mouseSpeed.default,
     flyInertialMode: config.controls.fly.inertialMode.default,
     flyDamping: config.controls.fly.movement.damping.default,
     flyRotationDamping: config.controls.fly.rotation.damping.default,

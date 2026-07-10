@@ -37,6 +37,9 @@ config/
 ├── types.ts                       # Barrel re-exports of section types + AppConfig interface
 ├── validation.ts                  # Dispatcher; imports per-section validators
 ├── url-params.ts                  # URL ?param=value parsing (self-contained)
+├── user-settings.ts               # Persisted global prefs (localStorage luxar.settings) —
+│                                  #   Settings-popover model; live values mutate config, startup
+│                                  #   values thread through bootstrap (URL params always win)
 ├── constants.ts                   # WASM ABI constants
 ├── sections/
 │   ├── camera/             {data,types,validate}.ts
