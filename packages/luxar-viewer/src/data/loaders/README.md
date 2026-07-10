@@ -345,10 +345,22 @@ loadTime)` (rolling-mean update of `loads` / `elementsLoaded` /
   (query close-out: stamps `status`/`endTime` on the tracked `QueryInfo`,
   drops it from the map, folds the elapsed time into the rolling
   `avgQueryTime` — called by the facades' `loadX` wrappers on BOTH the
-  success and error paths so the active-query map never leaks). Pure
-  helpers, unit-tested without a zarr store, used by all three geometry
-  facades. `elementsLoaded` is the geometry-neutral throughput counter
-  (points / vertices / splats).
+  success and error paths so the active-query map never leaks), plus
+  `makeInitialLoaderMetrics(type, path)` (the zeroed initial `LoaderMetrics`
+  record every facade starts from). Pure helpers, unit-tested without a zarr
+  store, used by all three geometry facades. `elementsLoaded` is the
+  geometry-neutral throughput counter (points / vertices / splats).
+- **`spatial-facade.ts`** — shared facade-level orchestration for the three
+  spatial-index loaders, driven by one per-loader `SpatialFacadeCtx` (stable
+  references + `this`-bound accessors, built once in each constructor):
+  `loadSliceWithCache(ctx, viewState, loadInternal)` (the `loadX` template —
+  S-cache restore → internal load → query close-out → S-cache store, with the
+  abort-aware error branch), `recordLoadMetrics(ctx, arrayName, elements,
+  output)` (per-array load metrics + 'load' event), and
+  `runWithActiveSignal` / `runWithResidencyProbe` (the `updateView` /
+  `updateViewWithResidency` bodies: per-update abort-signal publication and
+  cache-residency probing). Each used to exist as three byte-identical
+  private methods.
 - **`monitor-events.ts`** — `LoaderEventEmitter`: owns the listener `Set` for
   a `LoaderMonitor` implementation. Per-listener try/catch isolates one bad
   listener from the rest; `clear()` is called on dispose.

@@ -111,9 +111,20 @@ export {
   recordLoadEvent,
   computeLoadLatency,
   finishQueryTracking,
+  makeInitialLoaderMetrics,
   type LoaderMetricsCounters,
   type QueryMetricsCounters,
 } from './loader-metrics';
+
+export {
+  loadSliceWithCache,
+  recordLoadMetrics,
+  runWithActiveSignal,
+  runWithResidencyProbe,
+  type SpatialFacadeCtx,
+  type FacadeViewState,
+  type FacadeMetrics,
+} from './spatial-facade';
 
 export { LoaderEventEmitter } from './monitor-events';
 

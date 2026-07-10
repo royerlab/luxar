@@ -94,8 +94,15 @@ export interface SliceCacheOptions {
  * `data/loaders/progressive/slice-cache-helper.ts::buildSliceViewSig`).
  */
 export class SliceCache {
-  /** Default cache size derived from config.cache.sliceCacheMaxSizeMB. */
-  private static readonly DEFAULT_MAX_SIZE = config.cache.sliceCacheMaxSizeMB * 1024 * 1024;
+  /**
+   * Default cache size derived from config.cache.sliceCacheMaxSizeMB.
+   * A method, not a static initializer: reading config at module-load time
+   * couples every transitive importer (e.g. the shared facade helpers) to a
+   * fully-populated config mock in tests.
+   */
+  private static defaultMaxSize(): number {
+    return config.cache.sliceCacheMaxSizeMB * 1024 * 1024;
+  }
 
   /** Tombstone cap — bounded so long sessions can't grow it unboundedly. */
   private static readonly MAX_TOMBSTONES = 4096;
@@ -119,7 +126,7 @@ export class SliceCache {
   private readonly oversizedWarned = new Set<string>();
 
   constructor(options?: SliceCacheOptions) {
-    const maxSize = options?.maxSize ?? SliceCache.DEFAULT_MAX_SIZE;
+    const maxSize = options?.maxSize ?? SliceCache.defaultMaxSize();
     this.maxSize = maxSize;
     this.debug = options?.debug ?? false;
 

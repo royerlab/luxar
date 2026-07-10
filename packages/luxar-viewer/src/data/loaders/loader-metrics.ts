@@ -13,7 +13,31 @@
  * @module data/loaders/loader-metrics
  */
 
-import type { QueryInfo } from '../../types/data-monitor-types';
+import type { LoaderMetrics, LoaderType, QueryInfo } from '../../types/data-monitor-types';
+
+/**
+ * The zeroed initial {@link LoaderMetrics} record every spatial-index loader
+ * starts from — one factory instead of three near-identical constructor
+ * blocks. `elementsLoaded` / `visibleElements` are the geometry-neutral
+ * counters (points / vertices-or-segments / splats).
+ */
+export function makeInitialLoaderMetrics(type: LoaderType, path: string): LoaderMetrics {
+  return {
+    type,
+    path,
+    queries: 0,
+    loads: 0,
+    evictions: 0,
+    errors: 0,
+    elementsLoaded: 0,
+    bytesLoaded: 0,
+    visibleElements: 0,
+    avgQueryTime: 0,
+    avgLoadTime: 0,
+    memoryUsed: 0,
+    memoryLimit: 0,
+  };
+}
 
 /** Mutable subset of the loader's metrics record we need to update. */
 export interface LoaderMetricsCounters {

@@ -51,11 +51,13 @@ import {
   type LoadRange,
   loadColorRanges,
   prefetchRangesIntoCache,
-  isAbortError,
   OnceInit,
-  computeLoadLatency,
-  recordLoadEvent,
-  finishQueryTracking,
+  makeInitialLoaderMetrics,
+  loadSliceWithCache,
+  recordLoadMetrics,
+  runWithActiveSignal,
+  runWithResidencyProbe,
+  type SpatialFacadeCtx,
   LoaderEventEmitter,
   warnExtendToAllNoDimensions,
   announceExtendToAllOnce,
@@ -70,7 +72,6 @@ import { wrapWithCache } from '../../cache/decompressed-chunk-cache/cached-zarr-
 import { ResidencyAccumulator } from '../../cache/residency-probe';
 import { ChunkPrefetcher } from '../../cache/chunk-prefetcher';
 import type { SliceCache } from '../../cache/slice-cache';
-import { restoreLadder, storeLadder } from '../loaders/progressive/slice-cache-helper';
 
 /**
  * `PointsNodeAttrs` and `PointsChunkIndex` are now defined alongside the
@@ -125,6 +126,9 @@ export class PointsSpatialIndexLoader implements DataLoader, LoaderMonitor {
   private readonly metrics: LoaderMetrics;
   private readonly activeQueries = new Map<string, QueryInfo>();
   private nextQueryId = 0;
+  // Shared facade-helper context (data/loaders/spatial-facade.ts): stable
+  // references + this-bound accessors, built once in the constructor.
+  private readonly facadeCtx: SpatialFacadeCtx;
   private lastQueryCells = 0;
   private zarrStore: zarr.Readable | null = null;
 
@@ -183,21 +187,16 @@ export class PointsSpatialIndexLoader implements DataLoader, LoaderMonitor {
     // profiler parameter kept for API compatibility; session is passed directly to methods
     void profiler;
 
-    // Initialize metrics
-    this.metrics = {
-      type: 'point-spatial-index',
+    this.metrics = makeInitialLoaderMetrics('point-spatial-index', node.path);
+    this.facadeCtx = {
+      metrics: this.metrics,
+      activeQueries: this.activeQueries,
+      loader: 'point-spatial-index',
       path: node.path,
-      queries: 0,
-      loads: 0,
-      evictions: 0,
-      errors: 0,
-      elementsLoaded: 0,
-      bytesLoaded: 0,
-      visibleElements: 0, // Updated on each query
-      avgQueryTime: 0,
-      avgLoadTime: 0,
-      memoryUsed: 0,
-      memoryLimit: 0,
+      sliceCache: this.sliceCache,
+      nextQueryId: () => this.nextQueryId++,
+      accumulatorMemoryMB: () => this.getAccumulatorStats()?.memoryMB ?? 0,
+      emit: (event) => this.emitEvent(event),
     };
   }
 
@@ -469,49 +468,14 @@ export class PointsSpatialIndexLoader implements DataLoader, LoaderMonitor {
    * @param session - Optional profiler session for nested timing
    */
   async loadPoints(viewState: ViewState, session?: UpdateSession): Promise<LoadedPointsData> {
-    // Plain-leaf S-cache: a decoded slice is cached as a 1-element ladder
-    // under the same key contract as the progressive loaders. Points cache
-    // POST-projection data (projection is folded into loadPointsInternal and
-    // consumes only key fields + node-static context), so a hit skips the
-    // WASM projection too. A hit returns the SAME payload object on every
-    // same-view call, so the downstream reference-identity commit check
-    // turns same-slice revisits into no-ops.
-    const cached = restoreLadder<LoadedPointsData>(this.sliceCache, this.node.path, viewState, 1);
-    if (cached) return cached[0];
-
-    const startTime = Date.now();
-    const queryId = `${this.node.path}-${startTime}-${this.nextQueryId++}`;
-
-    try {
-      const result = await this.loadPointsInternal(viewState, session, queryId, startTime);
-      finishQueryTracking(this.activeQueries, this.metrics, queryId, startTime, 'complete');
-      // Cache the decoded slice (helper clones on store — the arrays alias
-      // the reused accumulator). Aborted loads throw and never reach here.
-      storeLadder(this.sliceCache, this.node.path, viewState, [result], {
-        scan: viewState.frameBudgetMs != null,
-        pin: viewState.prefetch === true,
-      });
-      return result;
-    } catch (error) {
-      // A superseded scrub aborts the in-flight read on purpose; runLoaderUpdates
-      // classifies it as 'superseded' (not a failure), so don't inflate the
-      // error counter or flood the monitor's error stream with non-errors.
-      // Still finish query tracking (removes the active query, records timing).
-      finishQueryTracking(this.activeQueries, this.metrics, queryId, startTime, 'error');
-      if (!isAbortError(error)) {
-        this.metrics.errors++;
-        this.emitEvent({
-          type: 'error',
-          loader: 'point-spatial-index',
-          timestamp: Date.now(),
-          data: {
-            path: this.node.path,
-            error: String(error),
-          },
-        });
-      }
-      throw error;
-    }
+    // Plain-leaf S-cache + query close-out via the shared facade template
+    // (see `loadSliceWithCache`). Points-specific wrinkle: the cached payload
+    // is POST-projection data (projection is folded into loadPointsInternal
+    // and consumes only key fields + node-static context), so a hit skips
+    // the WASM projection too.
+    return loadSliceWithCache(this.facadeCtx, viewState, (queryId, startTime) =>
+      this.loadPointsInternal(viewState, session, queryId, startTime)
+    );
   }
 
   private async loadPointsInternal(
@@ -771,41 +735,33 @@ export class PointsSpatialIndexLoader implements DataLoader, LoaderMonitor {
     session?: UpdateSession,
     signal?: AbortSignal
   ): Promise<LoadedPointsData> {
-    // Publish the per-update signal for the L0 proxy chokepoint, then clear it
-    // in `finally` so a later cache hit/prefetch isn't seen as abortable.
-    this._activeSignal = signal ?? null;
-    try {
-      const result = await this.loadPoints(viewState, session);
-      if (!this._initialLoadDone) {
-        this._initialLoadDone = true;
-        this.rangeLoader.setVerbose(false);
+    return runWithActiveSignal(
+      (s) => (this._activeSignal = s),
+      signal,
+      async () => {
+        const result = await this.loadPoints(viewState, session);
+        if (!this._initialLoadDone) {
+          this._initialLoadDone = true;
+          this.rangeLoader.setVerbose(false);
+        }
+        return result;
       }
-      return result;
-    } finally {
-      this._activeSignal = null;
-    }
+    );
   }
 
   /**
    * Like {@link updateView} but also reports whether the load was served
-   * entirely from cache. Drives the progressive loader's per-frame decision
-   * to keep loading the next LOD level (resident) or stop and let the
-   * refinement loop continue after a miss. A load that touches no chunks
-   * counts as resident (`allResident: true`).
+   * entirely from cache (see `runWithResidencyProbe`).
    */
   async updateViewWithResidency(
     viewState: ViewState,
     session?: UpdateSession,
     signal?: AbortSignal
   ): Promise<{ data: LoadedPointsData; allResident: boolean }> {
-    const probe = new ResidencyAccumulator();
-    this._activeProbe = probe;
-    try {
-      const data = await this.updateView(viewState, session, signal);
-      return { data, allResident: probe.allResident };
-    } finally {
-      this._activeProbe = null;
-    }
+    return runWithResidencyProbe(
+      (p) => (this._activeProbe = p),
+      () => this.updateView(viewState, session, signal)
+    );
   }
 
   /**
@@ -1021,35 +977,6 @@ export class PointsSpatialIndexLoader implements DataLoader, LoaderMonitor {
   }
 
   /**
-   * Update metrics and emit load event after successful load.
-   */
-  private recordLoadMetrics(arrayName: string, totalPoints: number, output: ArrayBufferView): void {
-    const queryStart = this.activeQueries.values().next().value?.startTime;
-    const loadTime = computeLoadLatency(queryStart);
-    const bytes = output.byteLength;
-
-    recordLoadEvent(this.metrics, totalPoints, bytes, loadTime);
-
-    // Resident memory = current accumulator allocation (MB → bytes). Assignment
-    // (not +=): memoryUsed is a live footprint that grows/shrinks with the pool,
-    // unlike the cumulative bytesLoaded counter updated above.
-    this.metrics.memoryUsed = Math.round((this.getAccumulatorStats()?.memoryMB ?? 0) * 1024 * 1024);
-
-    this.emitEvent({
-      type: 'load',
-      loader: 'point-spatial-index',
-      timestamp: Date.now(),
-      data: {
-        path: this.node.path,
-        arrayName,
-        elements: totalPoints,
-        memory: bytes,
-        latency: loadTime,
-      },
-    });
-  }
-
-  /**
    * Load color ranges with multi-type support (preserves original_dtype).
    *
    * Delegates to the shared color-attribute helper used by the lines and
@@ -1077,7 +1004,7 @@ export class PointsSpatialIndexLoader implements DataLoader, LoaderMonitor {
     }
 
     const output = await loadColorRanges(array, ranges, this.rangeLoader, storeToUse, 'Points');
-    this.recordLoadMetrics('colors', totalPoints, output);
+    recordLoadMetrics(this.facadeCtx, 'colors', totalPoints, output);
     return output;
   }
 
@@ -1180,7 +1107,7 @@ export class PointsSpatialIndexLoader implements DataLoader, LoaderMonitor {
         );
       }
 
-      this.recordLoadMetrics(arrayName, totalPoints, output);
+      recordLoadMetrics(this.facadeCtx, arrayName, totalPoints, output);
       return output;
     }
 
@@ -1195,7 +1122,7 @@ export class PointsSpatialIndexLoader implements DataLoader, LoaderMonitor {
     if (encoding === 'direct') {
       const output = this.allocateOutputBuffer(totalElements, false, array.dtype);
       await this.rangeLoader.loadDirectTyped(array, ranges as LoadRange[], output);
-      this.recordLoadMetrics(arrayName, totalPoints, output);
+      recordLoadMetrics(this.facadeCtx, arrayName, totalPoints, output);
       return output;
     }
 
@@ -1255,7 +1182,7 @@ export class PointsSpatialIndexLoader implements DataLoader, LoaderMonitor {
     // For float32/float64 or unspecified, keep as Float32Array
 
     // Update metrics and emit load event
-    this.recordLoadMetrics(arrayName, totalPoints, output);
+    recordLoadMetrics(this.facadeCtx, arrayName, totalPoints, output);
     return output;
   }
 
