@@ -21,7 +21,7 @@ export const controlsConfig: ControlsConfig = {
       damping: { min: 0.9, max: 0.9999, default: 0.99, step: 0.0001 },
     },
     look: {
-      mouseSpeed: { default: 0.002 },
+      mouseSpeed: { min: 0.0005, max: 0.01, default: 0.002, step: 0.0005 },
     },
     physics: {
       velocityThreshold: 1e-4,
@@ -36,11 +36,13 @@ export const controlsConfig: ControlsConfig = {
     zoom: {
       minDistance: 0.1,
       maxDistance: 1000,
-      speed: { min: 0.5, max: 2.0, default: 1.0, step: 0.1 },
+      speed: { min: 0.2, max: 3.0, default: 1.0, step: 0.1 },
     },
     damping: {
       enabled: true,
-      factor: { min: 0.01, max: 0.3, default: 0.05, step: 0.01 },
+      // Default aligned to the value LuxarOrbitControls has always actually
+      // used (its constructor fallback): the old 0.05 here was never applied.
+      factor: { min: 0.01, max: 0.5, default: 0.25, step: 0.01 },
     },
   },
 };

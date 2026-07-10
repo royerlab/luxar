@@ -42,7 +42,4 @@ export const inputConfig: InputConfig = {
     ],
     dimensionKeys: ['[', ']', '1', '2', '3', '4', '5', '6', '7', '8', '9'],
   },
-  mouse: {
-    doubleClickDelay: 300,
-  },
 };

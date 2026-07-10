@@ -118,14 +118,18 @@ export async function clearL2Cache(cachingStore: MultiLevelCachingStore | null):
 }
 
 /**
- * Clear all three cache levels in one call. L1+L2 are cleared together
- * via the caching store's `clearAll`; L0 is cleared independently.
+ * Clear every cache tier in one call. L1+L2 are cleared together via the
+ * caching store's `clearAll`; L0 and the decoded-slice S-cache are cleared
+ * independently (the S-cache sits above L0 and holds decoded geometry, so a
+ * "clear all" that skipped it would keep serving slice revisits from memory).
  */
 export async function clearAllCaches(
   l0Cache: DecompressedChunkCache | null,
-  cachingStore: MultiLevelCachingStore | null
+  cachingStore: MultiLevelCachingStore | null,
+  sliceCache: SliceCache | null = null
 ): Promise<void> {
   l0Cache?.clear();
+  sliceCache?.clear();
   if (cachingStore) {
     await cachingStore.clearAll();
   }

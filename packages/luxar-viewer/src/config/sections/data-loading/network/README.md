@@ -6,7 +6,7 @@ Conforms to the section-trio pattern documented in [../../../README.md](../../..
 
 ## Contents
 
-- `data.ts` — `dataLoadingNetworkConfig: DataLoadingNetworkConfig`. Defines `timeoutMs` (30000 ms total request budget across retries), `validationTimeoutMs` (5000 ms fail-fast budget for the L2 cache-validation HEAD probe in `getRemoteContentHash`), `maxConcurrent` (6), and `retryAttempts` (3).
+- `data.ts` — `dataLoadingNetworkConfig: DataLoadingNetworkConfig`. Defines `timeoutMs` (30000 ms total request budget across retries), `validationTimeoutMs` (5000 ms fail-fast budget for the L2 cache-validation HEAD probe in `getRemoteContentHash`), `maxConcurrent` (4 — the ChunkPrefetcher's concurrent-fetch cap), and `retryAttempts` (3).
 - `types.ts` — `DataLoadingNetworkConfig` interface. The `validationTimeoutMs` JSDoc documents the trade-off: lower values fail faster (render from cache while the network is slow); 3G / Edge / high-latency targets should raise to `>=8000` ms because real-world round-trip plus server processing can exceed the 5 s default.
 - `validate.ts` — `validateDataLoadingNetwork(config, errors, warnings)`. Rejects non-finite or non-positive `timeoutMs` / `validationTimeoutMs`, non-positive-integer `maxConcurrent`, and negative-integer or non-integer `retryAttempts`. Warns when `validationTimeoutMs < 3000` ms (the "almost certainly broken" floor below which DNS + TLS + server processing rarely complete in one round-trip).
 

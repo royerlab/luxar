@@ -37,6 +37,9 @@ config/
 ├── types.ts                       # Barrel re-exports of section types + AppConfig interface
 ├── validation.ts                  # Dispatcher; imports per-section validators
 ├── url-params.ts                  # URL ?param=value parsing (self-contained)
+├── user-settings.ts               # Persisted global prefs (localStorage luxar.settings) —
+│                                  #   Settings-popover model; live values mutate config, startup
+│                                  #   values thread through bootstrap (URL params always win)
 ├── constants.ts                   # WASM ABI constants
 ├── sections/
 │   ├── camera/             {data,types,validate}.ts
@@ -45,7 +48,7 @@ config/
 │   ├── scene/              {data,types,validate}.ts   # includes ShaderConfig
 │   ├── ui/                 {data,types}.ts            # includes DebugConsoleConfig, UIComponentsConfig
 │   ├── rendering-controls/ {data,types,validate}.ts   # includes RenderingSettings, validateBloomConsistency
-│   ├── controls/           {data,types,validate}.ts   # includes Fly/Orbit/ScaleMultipliers/ConfigRange/ConfigValue
+│   ├── controls/           {data,types,validate}.ts   # includes Fly/Orbit/ScaleMultipliers/ConfigRange
 │   ├── input/              {data,types,validate}.ts
 │   ├── data-loading/       {data,types,validate}.ts   # composes the 5 sub-sections below
 │   │   ├── spatial/        {data,types}.ts
@@ -313,9 +316,6 @@ dataLoading: {
     useWebWorkers: true,
     workerCount: 0,                  // 0 = auto-detect based on navigator.hardwareConcurrency
 
-    // WASM acceleration
-    useWASM: true,
-    wasmModulePath: 'wasm/luxar_wasm_bg.wasm', // Resolved relative to bundle via import.meta.url
 
     // GPU buffer pool (reuse WebGL buffers)
     useGPUBufferPool: true,

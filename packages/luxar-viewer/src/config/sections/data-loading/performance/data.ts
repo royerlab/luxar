@@ -33,11 +33,6 @@ export const dataLoadingPerformanceConfig: DataLoadingPerformanceConfig = {
   // quickly so eviction keeps memory bounded.
   materialCacheMaxSize: 200,
 
-  // WASM acceleration — module loads automatically via initWasm()
-  // when workers are enabled.
-  useWASM: true,
-  wasmModulePath: 'wasm/luxar_wasm_bg.wasm', // Resolved relative to bundle via import.meta.url
-
   // GPU buffer pool — multi-type support (Float32Array, Uint8Array,
   // Uint16Array with auto normalization). Reuses geometries when
   // capacity AND types match (0ms allocation on reuse). Integrated

@@ -52,9 +52,14 @@ export interface RenderingSettings {
    * Defaults to true on macOS. Orbit (3D) only; ortho and fly modes ignore.
    */
   naturalDrag: boolean;
+  // Orbit feel — added at runtime from config.controls.orbit (also applied
+  // to ortho: same control class, shared feel).
+  orbitZoomSpeed?: number;
+  orbitDampingFactor?: number;
   // Fly controls - these are added at runtime from config.controls.fly
   flyMovementSpeed?: number;
   flyRotationSpeed?: number;
+  flyLookSpeed?: number;
   flyInertialMode?: boolean;
   flyDamping?: number;
   flyRotationDamping?: number;
