@@ -118,6 +118,7 @@ import {
   type RetryCtx,
 } from './scene-loader/lifecycle/retry';
 import { deriveNodeViewState as deriveNodeViewStateHelper } from './scene-loader/view-state/derive-node-view-state';
+import { SlicePrefetcher } from './scene-loader/prefetch/slice-prefetcher';
 import { runLoaderUpdates as runLoaderUpdatesHelper } from './scene-loader/loaders/run-loader-updates';
 import { updateVisibleCountsInMonitor as updateVisibleCountsInMonitorHelper } from './scene-loader/monitor/visible-counts';
 import { disposeSceneLoader } from './scene-loader/lifecycle/dispose';
@@ -292,6 +293,48 @@ export class SceneLoader {
     const waiters = this._passWaiters;
     this._passWaiters = [];
     for (const resolve of waiters) resolve();
+  }
+
+  /**
+   * Background t+1 slice prefetcher (dimension playback). Lazily created on
+   * the first `prefetchSlice` call; aborted at the top of every `updateView`
+   * (foreground always preempts); disposed with the loader. Its SHADOW
+   * loader instances share nothing mutable with the foreground loaders —
+   * the S-cache is the only handoff (see slice-prefetcher.ts).
+   */
+  private _slicePrefetcher: SlicePrefetcher | null = null;
+
+  /**
+   * Fire one background prefetch pass for the PREDICTED next view (t+1
+   * during playback). Fire-and-forget: returns immediately; the shadow pass
+   * is aborted by the next foreground `updateView`. The partial is merged
+   * onto a COPY of the current view state — never persisted (a prefetch
+   * must not move the real view; see the stuck-display hazard in
+   * slice-prefetcher.ts).
+   */
+  prefetchSlice(viewState: Partial<ViewState>, budgetMs: number): void {
+    if (this._disposed || !this._sceneGraph) return;
+    if (!this._slicePrefetcher) {
+      this._slicePrefetcher = new SlicePrefetcher({
+        getSceneGraph: () => this._sceneGraph,
+        factoryDeps: () => this.factoryDeps(),
+        registry: this.registry,
+        applyEffectiveAttrs: (node) => this.applyEffectiveAttrs(node),
+      });
+    }
+    // Strip any rider budget off the incoming partial — the shadow pass gets
+    // exactly `budgetMs` (the prefetcher injects it post-derive).
+    const incoming = { ...viewState };
+    delete incoming.frameBudgetMs;
+    this._slicePrefetcher.prefetch({ ...this.viewState, ...incoming }, budgetMs);
+  }
+
+  /**
+   * Release the prefetcher's shadow loaders (frees their accumulators).
+   * Called when playback ends; shadows rebuild lazily on the next play.
+   */
+  releasePrefetchResources(): void {
+    this._slicePrefetcher?.releaseShadows();
   }
 
   /** Public accessor for the scene graph built during loadScene(). */
@@ -633,6 +676,11 @@ export class SceneLoader {
    * are discarded), ensuring eventual convergence without starvation.
    */
   async updateView(viewState: Partial<ViewState>): Promise<void> {
+    // A foreground pass always preempts the background t+1 shadow prefetch
+    // (both branches below): the shadow pass is strictly lower priority and
+    // must never compete with a real tick for fetch slots or CPU.
+    this._slicePrefetcher?.abortInFlight();
+
     // SERIALIZATION: If an update is already in progress, queue this one and return
     if (this._updateInProgress) {
       // Abort the in-flight update: it has now been superseded by this newer
@@ -1482,6 +1530,9 @@ export class SceneLoader {
     // `awaitDimensionUpdate()` caller parked on a queued update would hang
     // forever across a dataset switch. Resolve-only (never reject).
     this.resolvePassWaiters();
+    // Kill the background t+1 prefetch and its shadow loaders.
+    this._slicePrefetcher?.dispose();
+    this._slicePrefetcher = null;
     await disposeSceneLoader({
       datasetAbortController: this._datasetAbortController,
       updateAbortController: this._updateAbortController,

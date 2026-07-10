@@ -296,7 +296,9 @@ export class GSplatsProgressiveLoader implements GSplatsDataLoader {
       // the OUTGOING key before discarding — scrub-back stays warm even when
       // ladders never complete between navigations. Mirrors Points/Lines.
       if (this.lastViewState && this.loadedLODs.length > 0) {
-        storeLadder(this.sliceCache, this.path, this.lastViewState, this.loadedLODs);
+        storeLadder(this.sliceCache, this.path, this.lastViewState, this.loadedLODs, {
+          scan: this._frameBudgetMs !== null,
+        });
       }
       const restored = restoreLadder<LoadedGSplatsData>(
         this.sliceCache,
@@ -405,7 +407,9 @@ export class GSplatsProgressiveLoader implements GSplatsDataLoader {
     // Gating prefixes on the budget keeps the non-play cost profile (a
     // store per refinement pass would clone O(N²) bytes per slice).
     if (this.loadedLODs.length === this.nLods || this._frameBudgetMs !== null) {
-      storeLadder(this.sliceCache, this.path, viewState, this.loadedLODs);
+      storeLadder(this.sliceCache, this.path, viewState, this.loadedLODs, {
+        scan: this._frameBudgetMs !== null,
+      });
     }
 
     return this.concatenateMemoized(session);
