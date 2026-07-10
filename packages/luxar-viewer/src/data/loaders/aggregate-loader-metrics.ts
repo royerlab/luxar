@@ -89,7 +89,7 @@ export function aggregateLoaderMetrics(inner: LoaderMetrics[], path: string): Lo
       siCells += si.occupiedCells;
       siTotalCells += si.totalCells;
       siCellsPerQueryWeighted += si.avgCellsPerQuery * m.queries;
-      siPointsPerCellWeighted += si.avgPointsPerCell * m.queries;
+      siPointsPerCellWeighted += si.avgElementsPerCell * m.queries;
       siEfficiencyWeighted += si.queryEfficiency * m.queries;
       siRangesInCache += si.rangesInCache;
     }
@@ -111,7 +111,7 @@ export function aggregateLoaderMetrics(inner: LoaderMetrics[], path: string): Lo
       occupiedCells: siCells,
       totalCells: siTotalCells,
       avgCellsPerQuery: out.queries > 0 ? siCellsPerQueryWeighted / out.queries : 0,
-      avgPointsPerCell: out.queries > 0 ? siPointsPerCellWeighted / out.queries : 0,
+      avgElementsPerCell: out.queries > 0 ? siPointsPerCellWeighted / out.queries : 0,
       queryEfficiency: out.queries > 0 ? siEfficiencyWeighted / out.queries : 0,
       rangesInCache: siRangesInCache,
     };

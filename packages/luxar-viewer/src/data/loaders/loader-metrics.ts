@@ -13,7 +13,12 @@
  * @module data/loaders/loader-metrics
  */
 
-import type { LoaderMetrics, LoaderType, QueryInfo } from '../../types/data-monitor-types';
+import type {
+  LoaderMetrics,
+  LoaderType,
+  QueryInfo,
+  SpatialIndexMetrics,
+} from '../../types/data-monitor-types';
 
 /**
  * The zeroed initial {@link LoaderMetrics} record every spatial-index loader
@@ -36,6 +41,40 @@ export function makeInitialLoaderMetrics(type: LoaderType, path: string): Loader
     avgLoadTime: 0,
     memoryUsed: 0,
     memoryLimit: 0,
+  };
+}
+
+/**
+ * Build the chunk-index telemetry snapshot every facade's `getMetrics`
+ * attaches as `metrics.spatialIndex` (consumed by the monitor advisor's
+ * query-efficiency recommendations). Shared by all three geometry facades:
+ * points/gsplats pass their single chunk index; lines passes its SEGMENT
+ * index (the queried side of its dual index).
+ *
+ * The grid-flavored field names are the metric shape's legacy vocabulary for
+ * a chunk-based index: one "cell" = one chunk. `avgCellsPerQuery` preserves
+ * the historical formula (`lastQueryCells / queries` — the LAST query's cell
+ * count over the cumulative query count), kept verbatim so the advisor's
+ * thresholds keep their calibration.
+ */
+export function buildSpatialIndexMetrics(
+  chunkCount: number,
+  chunkSize: number,
+  queries: number,
+  lastQueryCells: number,
+  elementsLoaded: number
+): SpatialIndexMetrics {
+  const avgChunksPerQuery = queries > 0 ? lastQueryCells / queries : 0;
+  return {
+    gridShape: [chunkCount],
+    gridOrigin: [0],
+    cellSize: [chunkSize],
+    occupiedCells: chunkCount,
+    totalCells: chunkCount,
+    avgCellsPerQuery: avgChunksPerQuery,
+    avgElementsPerCell: chunkCount > 0 ? elementsLoaded / chunkCount : 0,
+    queryEfficiency: avgChunksPerQuery / Math.max(chunkCount, 1),
+    rangesInCache: 0, // Range-based per-loader cache is not used.
   };
 }
 

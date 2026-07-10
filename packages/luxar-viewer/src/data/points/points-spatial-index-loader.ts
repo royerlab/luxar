@@ -53,6 +53,7 @@ import {
   prefetchRangesIntoCache,
   OnceInit,
   makeInitialLoaderMetrics,
+  buildSpatialIndexMetrics,
   loadSliceWithCache,
   recordLoadMetrics,
   runWithActiveSignal,
@@ -1255,25 +1256,16 @@ export class PointsSpatialIndexLoader implements DataLoader, LoaderMonitor {
    * Get current metrics
    */
   getMetrics(): LoaderMetrics {
-    // Update spatial index metrics if available
+    // Chunk-index telemetry for the monitor advisor (shared across the
+    // three facades; see buildSpatialIndexMetrics).
     if (this.chunkIndex) {
-      // Chunk-based index metrics
-      const totalChunks = this.chunkIndex.metadata.total_chunks;
-      const avgChunksPerQuery =
-        this.metrics.queries > 0 ? this.lastQueryCells / this.metrics.queries : 0;
-
-      this.metrics.spatialIndex = {
-        // Chunk-based index metrics
-        gridShape: [totalChunks], // Use total chunks as "grid" size
-        gridOrigin: [0],
-        cellSize: [this.chunkIndex.metadata.chunk_size],
-        occupiedCells: totalChunks, // All chunks are "occupied"
-        totalCells: totalChunks,
-        avgCellsPerQuery: avgChunksPerQuery,
-        avgPointsPerCell: totalChunks > 0 ? this.metrics.elementsLoaded / totalChunks : 0,
-        queryEfficiency: avgChunksPerQuery / Math.max(totalChunks, 1),
-        rangesInCache: 0, // Range-based per-loader cache is not used.
-      };
+      this.metrics.spatialIndex = buildSpatialIndexMetrics(
+        this.chunkIndex.metadata.total_chunks,
+        this.chunkIndex.metadata.chunk_size,
+        this.metrics.queries,
+        this.lastQueryCells,
+        this.metrics.elementsLoaded
+      );
     }
 
     return { ...this.metrics };

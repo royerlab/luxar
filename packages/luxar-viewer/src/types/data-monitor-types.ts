@@ -98,7 +98,7 @@ export interface LoaderMetrics {
   memoryUsed: number;
   memoryLimit: number;
   // Spatial index specific metrics
-  spatialIndex?: PointSpatialIndexMetrics;
+  spatialIndex?: SpatialIndexMetrics;
   // Performance optimization metrics
   optimization?: OptimizationMetrics;
 }
@@ -143,14 +143,14 @@ export interface OptimizationMetrics {
 /**
  * Spatial index specific metrics
  */
-export interface PointSpatialIndexMetrics {
+export interface SpatialIndexMetrics {
   gridShape: number[];
   gridOrigin: number[];
   cellSize: number[];
   occupiedCells: number;
   totalCells: number;
   avgCellsPerQuery: number;
-  avgPointsPerCell: number;
+  avgElementsPerCell: number;
   queryEfficiency: number; // Points loaded / points in query region
   lastQueryBounds?: { min: number[]; max: number[] };
   rangesInCache: number; // Number of cached range queries

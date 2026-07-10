@@ -31,6 +31,7 @@ import {
   loadColorRanges,
   prefetchRangesIntoCache,
   makeInitialLoaderMetrics,
+  buildSpatialIndexMetrics,
   loadSliceWithCache,
   recordLoadMetrics,
   runWithActiveSignal,
@@ -110,6 +111,7 @@ export class LinesSpatialIndexLoader implements LinesDataLoader {
   private readonly metrics: LoaderMetrics;
   private readonly activeQueries = new Map<string, QueryInfo>();
   private nextQueryId = 0;
+  private lastQueryCells = 0;
   // Shared facade-helper context (data/loaders/spatial-facade.ts): stable
   // references + this-bound accessors, built once in the constructor.
   private readonly facadeCtx: SpatialFacadeCtx;
@@ -388,6 +390,7 @@ export class LinesSpatialIndexLoader implements LinesDataLoader {
 
     // Begin query tracking now that we know the segment ranges.
     const totalSegmentsRequested = segmentRanges.reduce((sum, r) => sum + (r.end - r.start), 0);
+    this.lastQueryCells = segmentRanges.length;
     this.metrics.queries += 1;
     // Query-time visibility count (segments — the queried unit for lines),
     // mirroring points (totalPoints) and gsplats (totalSplats). Was never
@@ -946,6 +949,19 @@ export class LinesSpatialIndexLoader implements LinesDataLoader {
   }
 
   getMetrics(): LoaderMetrics {
+    // Chunk-index telemetry for the monitor advisor — the SEGMENT side of
+    // the dual index (the queried unit for lines); shared across the three
+    // facades (see buildSpatialIndexMetrics).
+    if (this.chunkIndex) {
+      this.metrics.spatialIndex = buildSpatialIndexMetrics(
+        this.chunkIndex.segmentIndex.chunkCount,
+        this.chunkIndex.segmentIndex.metadata.chunk_size ?? 0,
+        this.metrics.queries,
+        this.lastQueryCells,
+        this.metrics.elementsLoaded
+      );
+    }
+
     return { ...this.metrics };
   }
 

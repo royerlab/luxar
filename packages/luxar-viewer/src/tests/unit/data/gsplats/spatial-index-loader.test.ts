@@ -835,6 +835,9 @@ describe('GSplatsSpatialIndexLoader', () => {
         const accMB = bodyLoader.getAccumulatorStats()?.memoryMB ?? 0;
         expect(accMB).toBeGreaterThan(0);
         expect(metrics.memoryUsed).toBe(Math.round(accMB * 1024 * 1024));
+        // Chunk-index telemetry is attached for the advisor (×3 symmetric).
+        expect(metrics.spatialIndex).toBeDefined();
+        expect(metrics.spatialIndex!.totalCells).toBeGreaterThan(0);
       });
 
       it('should fold completed loads into avgQueryTime (wrapper close-out)', async () => {

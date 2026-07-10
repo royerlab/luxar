@@ -7,6 +7,8 @@ import {
   computeLoadLatency,
   recordLoadEvent,
   finishQueryTracking,
+  makeInitialLoaderMetrics,
+  buildSpatialIndexMetrics,
   type LoaderMetricsCounters,
   type QueryMetricsCounters,
 } from '../../../../data/loaders';
@@ -157,5 +159,50 @@ describe('finishQueryTracking', () => {
     expect(active.size).toBe(1);
     expect(other.status).toBe('loading');
     expect(metrics.avgQueryTime).toBe(10);
+  });
+});
+
+describe('makeInitialLoaderMetrics', () => {
+  it('returns a fully zeroed record stamped with type and path', () => {
+    const m = makeInitialLoaderMetrics('lines-spatial-index', '/some/node');
+    expect(m.type).toBe('lines-spatial-index');
+    expect(m.path).toBe('/some/node');
+    expect(m.queries).toBe(0);
+    expect(m.loads).toBe(0);
+    expect(m.errors).toBe(0);
+    expect(m.elementsLoaded).toBe(0);
+    expect(m.visibleElements).toBe(0);
+    expect(m.avgQueryTime).toBe(0);
+    expect(m.memoryUsed).toBe(0);
+  });
+
+  it('returns a fresh object per call (no shared state between loaders)', () => {
+    const a = makeInitialLoaderMetrics('point-spatial-index', '/a');
+    const b = makeInitialLoaderMetrics('point-spatial-index', '/b');
+    expect(a).not.toBe(b);
+    a.queries = 5;
+    expect(b.queries).toBe(0);
+  });
+});
+
+describe('buildSpatialIndexMetrics', () => {
+  it('maps chunk-index figures onto the grid-flavored metric shape', () => {
+    const si = buildSpatialIndexMetrics(20, 256, 4, 2, 4000);
+    expect(si.gridShape).toEqual([20]);
+    expect(si.cellSize).toEqual([256]);
+    expect(si.occupiedCells).toBe(20);
+    expect(si.totalCells).toBe(20);
+    // Historical formula: lastQueryCells / queries.
+    expect(si.avgCellsPerQuery).toBe(0.5);
+    expect(si.avgElementsPerCell).toBe(200);
+    expect(si.queryEfficiency).toBe(0.5 / 20);
+    expect(si.rangesInCache).toBe(0);
+  });
+
+  it('guards the divisions at zero queries / zero chunks', () => {
+    const si = buildSpatialIndexMetrics(0, 256, 0, 0, 0);
+    expect(si.avgCellsPerQuery).toBe(0);
+    expect(si.avgElementsPerCell).toBe(0);
+    expect(si.queryEfficiency).toBe(0);
   });
 });

@@ -302,7 +302,7 @@ describe('aggregateCacheMetrics', () => {
         occupiedCells: 0,
         totalCells: 0,
         avgCellsPerQuery: 0,
-        avgPointsPerCell: 0,
+        avgElementsPerCell: 0,
         queryEfficiency: 0,
         rangesInCache: 5,
       },

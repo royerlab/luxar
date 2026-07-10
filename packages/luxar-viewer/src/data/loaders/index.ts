@@ -112,6 +112,7 @@ export {
   computeLoadLatency,
   finishQueryTracking,
   makeInitialLoaderMetrics,
+  buildSpatialIndexMetrics,
   type LoaderMetricsCounters,
   type QueryMetricsCounters,
 } from './loader-metrics';

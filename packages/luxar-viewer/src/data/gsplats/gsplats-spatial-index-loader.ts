@@ -30,6 +30,7 @@ import {
   loadColorRanges,
   prefetchRangesIntoCache,
   makeInitialLoaderMetrics,
+  buildSpatialIndexMetrics,
   loadSliceWithCache,
   recordLoadMetrics,
   runWithActiveSignal,
@@ -108,6 +109,7 @@ export class GSplatsSpatialIndexLoader implements GSplatsDataLoader {
   private readonly metrics: LoaderMetrics;
   private readonly activeQueries = new Map<string, QueryInfo>();
   private nextQueryId = 0;
+  private lastQueryCells = 0;
   // Shared facade-helper context (data/loaders/spatial-facade.ts): stable
   // references + this-bound accessors, built once in the constructor.
   private readonly facadeCtx: SpatialFacadeCtx;
@@ -329,6 +331,7 @@ export class GSplatsSpatialIndexLoader implements GSplatsDataLoader {
 
     // Count total splats to load and begin query tracking.
     const totalSplats = splatRanges.reduce((sum, r) => sum + (r.end - r.start), 0);
+    this.lastQueryCells = splatRanges.length;
     this.metrics.queries += 1;
     this.metrics.visibleElements = totalSplats;
     this.activeQueries.set(queryId, {
@@ -864,6 +867,18 @@ export class GSplatsSpatialIndexLoader implements GSplatsDataLoader {
   }
 
   getMetrics(): LoaderMetrics {
+    // Chunk-index telemetry for the monitor advisor; shared across the
+    // three facades (see buildSpatialIndexMetrics).
+    if (this.chunkIndex) {
+      this.metrics.spatialIndex = buildSpatialIndexMetrics(
+        this.chunkIndex.chunkCount,
+        this.chunkIndex.metadata.chunk_size ?? 0,
+        this.metrics.queries,
+        this.lastQueryCells,
+        this.metrics.elementsLoaded
+      );
+    }
+
     return { ...this.metrics };
   }
 
