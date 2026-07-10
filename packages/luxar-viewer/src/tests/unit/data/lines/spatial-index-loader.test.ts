@@ -958,6 +958,51 @@ describe('LinesSpatialIndexLoader', () => {
         expect(result.colors).toBeInstanceOf(Uint8Array);
       });
 
+      it('should handle uint16 color data via the shared color helper', async () => {
+        // Mirror of the Points suite's uint16 case: direct (unencoded)
+        // Uint16 colors must be preserved natively end-to-end through the
+        // loader, not just by the shared helper's own unit tests.
+        mockArrays.colors.dtype = 'uint16';
+
+        (zarr.get as unknown as ReturnType<typeof vi.fn>).mockImplementation(
+          (array: unknown, slices?: unknown) => {
+            if (array === vertexBoundsArray || array === segmentBoundsArray) {
+              return Promise.resolve({ data: new Float32Array(10 * 3 * 2) });
+            }
+            if (array === mockArrays.segments) {
+              const sliceSpec = slices as Array<{ start: number; end: number }>;
+              const range = sliceSpec[0];
+              const count = range.end - range.start;
+              const data = new Uint32Array(count * 2);
+              for (let i = 0; i < count; i++) {
+                data[i * 2] = range.start + i;
+                data[i * 2 + 1] = range.start + i + 1;
+              }
+              return Promise.resolve({ data });
+            }
+            const sliceSpec = slices as Array<{ start: number; end: number }>;
+            const count = sliceSpec[0].end - sliceSpec[0].start;
+            if (array === mockArrays.colors) {
+              const buf = new Uint16Array(count * 3);
+              for (let i = 0; i < count; i++) buf[i * 3] = 65535;
+              return Promise.resolve({ data: buf });
+            }
+            const elementsPerItem = array === mockArrays.vertices ? 3 : 1;
+            return Promise.resolve({ data: new Float32Array(count * elementsPerItem) });
+          }
+        );
+
+        const viewState: ViewState = {
+          displayDims: [0, 1, 2],
+          slicePosition: [0, 0, 0],
+          tolerance: [0, 0, 0],
+        };
+
+        const result = await bodyLoader.loadLines(viewState);
+        expect(result.colors).toBeInstanceOf(Uint16Array);
+        expect((result.colors as Uint16Array)[0]).toBe(65535);
+      });
+
       it('should keep direct Float32 (HDR) colors as Float32Array', async () => {
         const viewState: ViewState = {
           displayDims: [0, 1, 2],

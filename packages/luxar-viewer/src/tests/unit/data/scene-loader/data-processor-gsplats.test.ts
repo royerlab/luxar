@@ -62,7 +62,6 @@ function makeDispatcherResult(visibleCount = 2) {
     choleskyFactors3D: new Float32Array(visibleCount * 6),
     amplitudes: new Float32Array(visibleCount),
     colors: new Float32Array(visibleCount * 3),
-    sharpness: new Float32Array(0),
     visibleCount,
   };
 }
