@@ -183,7 +183,11 @@ export class SlicePrefetcher {
     if (derived.skip) return;
     if (!hasHiddenDims(derived.viewState)) return; // S-cache would skip it anyway
 
-    const shadowViewState: ViewState = { ...derived.viewState, frameBudgetMs: budgetMs };
+    const shadowViewState: ViewState = {
+      ...derived.viewState,
+      frameBudgetMs: budgetMs,
+      prefetch: true, // pin the stored t+1 ladder until the foreground restores it
+    };
 
     void this.getShadow(path, kind, node)
       .then((shadow) => {

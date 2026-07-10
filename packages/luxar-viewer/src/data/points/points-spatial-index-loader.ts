@@ -551,6 +551,7 @@ export class PointsSpatialIndexLoader implements DataLoader, LoaderMonitor {
         const empty = this.createEmptyPointsData(viewState);
         storeLadder(this.sliceCache, this.node.path, viewState, [empty], {
           scan: viewState.frameBudgetMs != null,
+          pin: viewState.prefetch === true,
         });
         return empty;
       }
@@ -744,6 +745,7 @@ export class PointsSpatialIndexLoader implements DataLoader, LoaderMonitor {
       // the reused accumulator). Aborted loads throw and never reach here.
       storeLadder(this.sliceCache, this.node.path, viewState, [result], {
         scan: viewState.frameBudgetMs != null,
+        pin: viewState.prefetch === true,
       });
       return result;
     } catch (error) {

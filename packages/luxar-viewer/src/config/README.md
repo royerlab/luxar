@@ -241,11 +241,11 @@ OPFS-based zarr caching with a three-level hierarchy:
 cache: {
   enabled: true,              // Enable OPFS caching
   l0Enabled: true,            // L0: decompressed chunk cache (fastest)
-  l0MaxSizeMB: 200,           // L0 memory budget
+  l0MaxSizeMB: 200,           // L0 memory budget — CEILING; heap-aware sizing may scale it down (heap-budget.ts)
   sliceCacheEnabled: true,    // S-cache: per-(node,view) decoded-slice cache (instant slice revisits)
-  sliceCacheMaxSizeMB: 128,   // S-cache byte budget (shared across nodes)
-  l1MaxSizeMB: 100,           // L1: in-memory LRU cache
-  l2MaxSizeMB: 2048,          // L2: persistent OPFS cache (largest)
+  sliceCacheMaxSizeMB: 128,   // S-cache budget — fixed FALLBACK (no performance.memory) + shrink floor; heap-aware sizing scales it up/down
+  l1MaxSizeMB: 100,           // L1 in-memory LRU — CEILING; heap-aware sizing may scale it down
+  l2MaxSizeMB: 2048,          // L2: persistent OPFS cache (disk, fixed — not heap-sized)
   opfsOperationTimeoutMs: 10000, // Per-OPFS-operation deadline (ms)
   externalDatasetTtlMs: null, // Optional TTL (ms) for non-local datasets; null = no expiry
   debug: false                // Enable cache debug logging

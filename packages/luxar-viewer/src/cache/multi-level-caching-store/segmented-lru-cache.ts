@@ -22,7 +22,11 @@ export class SegmentedLRUCache {
   // Chunks segment: data chunks (80% of cache)
   private chunks: LRUCache<Uint8Array>;
 
+  /** Configured total byte budget (metadata + chunks segments). */
+  private readonly totalSize: number;
+
   constructor(totalSize: number) {
+    this.totalSize = totalSize;
     const getSize = (v: Uint8Array) => v.byteLength;
     const metadataSize = Math.max(totalSize * 0.2, SegmentedLRUCache.MIN_METADATA_SIZE);
     // Guard: if totalSize < MIN_METADATA_SIZE, chunksSize would go negative
@@ -81,6 +85,7 @@ export class SegmentedLRUCache {
       hits: this.metadata.hitCount + this.chunks.hitCount,
       misses: this.metadata.missCount + this.chunks.missCount,
       evictions: this.metadata.evictionCount + this.chunks.evictionCount,
+      maxSize: this.totalSize,
     };
   }
 }

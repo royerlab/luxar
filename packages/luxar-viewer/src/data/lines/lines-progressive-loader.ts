@@ -277,6 +277,7 @@ export class LinesProgressiveLoader implements LinesDataLoader {
       if (this.lastViewState && this.loadedLODs.length > 0) {
         storeLadder(this.sliceCache, this.path, this.lastViewState, this.loadedLODs, {
           scan: this._frameBudgetMs !== null,
+          pin: viewState.prefetch === true,
         });
       }
       // Try the SliceCache before discarding the ladder (see GSplats loader).
@@ -372,6 +373,7 @@ export class LinesProgressiveLoader implements LinesDataLoader {
     if (this.loadedLODs.length === this.nLods || this._frameBudgetMs !== null) {
       storeLadder(this.sliceCache, this.path, viewState, this.loadedLODs, {
         scan: this._frameBudgetMs !== null,
+        pin: viewState.prefetch === true,
       });
     }
 

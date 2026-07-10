@@ -24,6 +24,7 @@ describe('readUrlParams', () => {
       webgpuForceWebGL: false,
       perfTimestamp: false,
       gpuBudgetMB: null,
+      cacheBudgetMB: null,
       dpr: null,
     });
   });
@@ -49,6 +50,14 @@ describe('readUrlParams', () => {
     expect(readUrlParams('?gpuBudgetMB=-5').gpuBudgetMB).toBeNull();
     expect(readUrlParams('?gpuBudgetMB=abc').gpuBudgetMB).toBeNull();
     expect(readUrlParams('').gpuBudgetMB).toBeNull();
+  });
+
+  it('parses cacheBudgetMB (cache pool override), rejecting negatives/non-numeric', () => {
+    expect(readUrlParams('?cacheBudgetMB=1536').cacheBudgetMB).toBe(1536);
+    expect(readUrlParams('?cacheBudgetMB=512').cacheBudgetMB).toBe(512);
+    expect(readUrlParams('?cacheBudgetMB=-5').cacheBudgetMB).toBeNull();
+    expect(readUrlParams('?cacheBudgetMB=abc').cacheBudgetMB).toBeNull();
+    expect(readUrlParams('').cacheBudgetMB).toBeNull();
   });
 
   it('parses and trims valid src and theme strings', () => {

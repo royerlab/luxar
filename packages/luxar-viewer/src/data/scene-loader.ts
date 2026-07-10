@@ -352,9 +352,9 @@ export class SceneLoader {
   // unavailable (e.g. when `noCache` is set in LoaderConfig).
   // ============================================================
 
-  /** Snapshot of all cache levels (L0, L1, L2) for debug and embed tooling. */
+  /** Snapshot of all cache levels (L0, S-cache, L1, L2) for debug and embed tooling. */
   getCacheStats(): CacheStatsSnapshot {
-    return getCacheStatsHelper(this.l0Cache, this.cachingStore);
+    return getCacheStatsHelper(this.l0Cache, this.cachingStore, this.sliceCache);
   }
 
   /** List datasets currently held by the L1/L2 caching store. */

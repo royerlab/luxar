@@ -16,6 +16,7 @@ import { MultiLevelCachingStore } from '../../../cache/multi-level-caching-store
 import { ChunkPrefetcher } from '../../../cache/chunk-prefetcher';
 import { DecompressedChunkCache } from '../../../cache/decompressed-chunk-cache';
 import { SliceCache } from '../../../cache/slice-cache';
+import { computeCacheBudgets, deviceClassPoolBytes } from '../../../cache/heap-budget';
 import { config as appConfig } from '../../../config';
 import { log, Modules } from '../../../utils/log';
 import type { CacheTelemetryState } from '../../../types/data-monitor-types';
@@ -30,6 +31,12 @@ export interface CacheSetupFlags {
   clearCache?: boolean;
   noPrefetch?: boolean;
   prefetchDebug?: boolean;
+  /**
+   * Explicit total cache pool (L0+L1+S-cache) in MB (`?cacheBudgetMB=` / native
+   * launcher). Overrides heap detection — the path that gives the WKWebView app
+   * / Safari (no `performance.memory`) a real budget.
+   */
+  cacheBudgetMB?: number | null;
 }
 
 /** Result of cache setup: the three layers and a ready-to-open store. */
@@ -71,6 +78,21 @@ export async function setupCaches(url: string, flags: CacheSetupFlags): Promise<
   const noPrefetch = flags.noPrefetch ?? false;
   const prefetchDebug = flags.prefetchDebug ?? false;
 
+  // Two-sided heap-aware budgets for the in-memory tiers (L0/L1/S-cache):
+  // scale up on a large heap so a fits-in-RAM timelapse stays resident, and
+  // down on a small heap to avoid an OOM from the previously-fixed 428 MB.
+  // An explicit `cacheBudgetMB` (URL / native launcher) takes precedence — the
+  // path that gives WKWebView/Safari (no `performance.memory`) a real budget
+  // instead of the fixed fallback. L2 (OPFS/disk) is unaffected.
+  const poolOverrideBytes =
+    flags.cacheBudgetMB != null && flags.cacheBudgetMB > 0
+      ? flags.cacheBudgetMB * 1024 * 1024
+      : undefined;
+  // Device-class fallback pool (mobile/laptop/desktop) for WebKit without an
+  // override — where the heap can't be measured. undefined in non-browser envs.
+  const budgets = computeCacheBudgets(undefined, poolOverrideBytes, deviceClassPoolBytes());
+  const toMB = (bytes: number) => (bytes / 1024 / 1024).toFixed(0);
+
   let l0Cache: DecompressedChunkCache | null = null;
 
   // SliceCache ("S-cache"): shared per-slice decoded-geometry cache. Gated by
@@ -83,12 +105,12 @@ export async function setupCaches(url: string, flags: CacheSetupFlags): Promise<
     // is in-memory only and constructed fresh for every loadScene, so there is
     // never a prior session's state to clear.
     sliceCache = new SliceCache({
-      maxSize: appConfig.cache.sliceCacheMaxSizeMB * 1024 * 1024,
+      maxSize: budgets.sliceBytes,
       debug: cacheDebug || appConfig.cache.debug,
     });
     log.info(
       Modules.SCENE_LOADER,
-      `SliceCache (S-cache) enabled (max size: ${appConfig.cache.sliceCacheMaxSizeMB}MB)`
+      `SliceCache (S-cache) enabled (max size: ${toMB(budgets.sliceBytes)}MB, ${budgets.source})`
     );
   } else if (noSliceCache) {
     log.info(Modules.SCENE_LOADER, 'SliceCache disabled via ?no-slice-cache URL parameter');
@@ -96,7 +118,7 @@ export async function setupCaches(url: string, flags: CacheSetupFlags): Promise<
 
   if (appConfig.cache.l0Enabled && !noCache) {
     l0Cache = new DecompressedChunkCache({
-      maxSize: appConfig.cache.l0MaxSizeMB * 1024 * 1024,
+      maxSize: budgets.l0Bytes,
       debug: cacheDebug || appConfig.cache.debug,
     });
 
@@ -107,7 +129,7 @@ export async function setupCaches(url: string, flags: CacheSetupFlags): Promise<
 
     log.info(
       Modules.SCENE_LOADER,
-      `L0 decompressed chunk cache enabled (max size: ${appConfig.cache.l0MaxSizeMB}MB)`
+      `L0 decompressed chunk cache enabled (max size: ${toMB(budgets.l0Bytes)}MB)`
     );
   } else if (noCache) {
     log.info(Modules.SCENE_LOADER, 'L0 cache disabled via ?no-cache URL parameter');
@@ -118,7 +140,7 @@ export async function setupCaches(url: string, flags: CacheSetupFlags): Promise<
 
   if (appConfig.cache.enabled && !noCache) {
     cachingStore = new MultiLevelCachingStore(url, {
-      l1MaxSize: appConfig.cache.l1MaxSizeMB * 1024 * 1024,
+      l1MaxSize: budgets.l1Bytes,
       l2MaxSize: appConfig.cache.l2MaxSizeMB * 1024 * 1024,
       debug: cacheDebug || appConfig.cache.debug,
       noCache,

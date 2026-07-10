@@ -368,6 +368,7 @@ export class LinesSpatialIndexLoader implements LinesDataLoader {
       // the reused accumulator). Aborted loads throw and never reach here.
       storeLadder(this.sliceCache, this.node.path, viewState, [result], {
         scan: viewState.frameBudgetMs != null,
+        pin: viewState.prefetch === true,
       });
       return result;
     } catch (err) {

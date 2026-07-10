@@ -91,6 +91,10 @@ export function aggregateCacheMetrics(params: AggregateCacheMetricsParams): Cach
   let memoryLimit = 0;
   let totalEntries = 0;
   let evictions = 0;
+  // Sum of the per-tier byte BUDGETS (not usage). Populated from the tiers'
+  // resolved maxSize; drives the memory-pressure gauge's denominator so it
+  // shows a real "X% of <limit>" instead of "no memory limit configured".
+  let tierBudget = 0;
 
   let l0Stats: CacheMetrics['l0'] | undefined;
   let sliceStats: CacheMetrics['slice'] | undefined;
@@ -126,16 +130,19 @@ export function aggregateCacheMetrics(params: AggregateCacheMetricsParams): Cach
   // L0 from in-memory decompressed-chunk cache provider.
   if (l0Provider) {
     l0Stats = l0Provider.getStats();
+    tierBudget += l0Stats?.maxSize ?? 0;
   }
 
   // SliceCache ("S-cache") from its provider.
   if (sliceProvider) {
     sliceStats = sliceProvider.getStats();
+    tierBudget += sliceStats?.maxSize ?? 0;
   }
 
   // L1/L2/network from the multi-level caching store.
   if (cacheStatsProvider) {
     const stats = cacheStatsProvider.getStats();
+    tierBudget += (stats.l1.maxSize ?? 0) + (stats.l2.maxSize ?? 0);
 
     l1Stats = {
       size: stats.l1.metadataSize + stats.l1.chunksSize,
@@ -218,6 +225,15 @@ export function aggregateCacheMetrics(params: AggregateCacheMetricsParams): Cach
         totalEntries += metrics.spatialIndex.rangesInCache;
       }
     }
+  }
+
+  // The real limit is the sum of the per-tier byte budgets (L0 + S-cache + L1 +
+  // L2). The per-loader `memoryLimit` above is a legacy field hardcoded to 0 in
+  // every loader (an unimplemented per-loader cap), so without this the gauge
+  // reads "no memory limit configured". Fall back to the loader sum only when no
+  // cache provider exposed a budget (e.g. caching disabled → genuinely no limit).
+  if (tierBudget > 0) {
+    memoryLimit = tierBudget;
   }
 
   const memoryPercent = memoryLimit > 0 ? (totalCacheMemory / memoryLimit) * 100 : 0;
