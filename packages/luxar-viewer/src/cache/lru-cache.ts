@@ -150,11 +150,23 @@ export class LRUCache<V> {
    * plain oldest/newest so the byte budget can still be honored (pinned entries
    * are eviction-exempt only best-effort, never a hard reservation).
    *
-   * O(n) forward iteration — a Map has no reverse iterator and an auxiliary
-   * deque isn't worth its stale-entry bookkeeping here: entries are multi-MB
-   * decoded slices (n at most a few hundred) and this only runs on overflow.
+   * **Fast path when nothing is pinned** (the norm — only the SliceCache pins,
+   * and only during active prefetch): the LRU victim is the Map head in O(1);
+   * this keeps L0/L1 chunk eviction — which never pins and can hold tens of
+   * thousands of entries — cheap. Only when pins exist do we pay the O(n) scan
+   * to skip them (SliceCache, n at most a few hundred multi-MB slices). The MRU
+   * branch is O(n) regardless — a Map has no reverse iterator — matching the
+   * pre-pin behavior.
    */
   private selectVictim(evictMostRecent: boolean): string | undefined {
+    if (this.pinned.size === 0) {
+      if (!evictMostRecent) return this.cache.keys().next().value; // O(1) Map head
+      let last: string | undefined;
+      for (const k of this.cache.keys()) last = k; // Map tail (no reverse iterator)
+      return last;
+    }
+    // Pins present: skip them (best-effort), falling back to the plain
+    // oldest/newest only if EVERY entry is pinned.
     let first: string | undefined;
     let last: string | undefined;
     let firstUnpinned: string | undefined;

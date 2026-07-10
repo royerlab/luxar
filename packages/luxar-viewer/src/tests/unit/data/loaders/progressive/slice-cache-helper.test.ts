@@ -248,4 +248,25 @@ describe('slice-cache-helper — oversized ladder (partial-prefix caching)', () 
       warnSpy.mockRestore();
     }
   });
+
+  it('dedups the warning per key but re-warns after clear() (instance-scoped, not a module-global leak)', () => {
+    const warnSpy = vi.spyOn(log, 'warning').mockImplementation(() => undefined);
+    try {
+      const sc = new SliceCache({ maxSize: 500 });
+      const p = '/reclear-node';
+      const oversized = () => storeLadder(sc, p, view, [makeLod(100), makeLod(100), makeLod(100)]);
+      oversized();
+      expect(warnSpy).toHaveBeenCalledTimes(1); // first trim warns
+      oversized();
+      expect(warnSpy).toHaveBeenCalledTimes(1); // same key → deduped, no spam
+      // A dataset switch clears the cache; the warn-dedup must reset with it so
+      // the next dataset can warn afresh (pre-fix: a module-global Set that
+      // clear() never touched kept the count pinned at 1 forever).
+      sc.clear();
+      oversized();
+      expect(warnSpy).toHaveBeenCalledTimes(2);
+    } finally {
+      warnSpy.mockRestore();
+    }
+  });
 });

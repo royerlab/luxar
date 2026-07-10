@@ -17,9 +17,9 @@ This package implements a transparent caching and prefetching layer for zarr dat
   to a timepoint — skips the whole query + fetch + decode pipeline; only the
   cheap nD→3D projection re-runs. Sits ABOVE L0; in-memory, per-session,
   cleared on content-hash invalidation. Disable with `?no-slice-cache`.
-- **L0 (Decompressed)**: 200MB LRU cache for decoded TypedArrays (eliminates Blosc decompression)
-- **L1 (Memory)**: 100MB segmented LRU cache with metadata protection
-- **L2 (OPFS)**: 2GB persistent storage surviving browser restarts
+- **L0 (Decompressed)**: LRU cache for decoded TypedArrays (eliminates Blosc decompression); heap-aware budget, config `l0MaxSizeMB` (200) is the ceiling — see `heap-budget.ts`
+- **L1 (Memory)**: segmented LRU cache with metadata protection; heap-aware budget, config `l1MaxSizeMB` (100) is the ceiling
+- **L2 (OPFS)**: 2GB persistent storage surviving browser restarts (disk — fixed, not heap-sized)
 - **Intelligent Prefetching**: Proactive loading of adjacent chunks to hide network latency
 - **Content-hash validation**: Automatic cache invalidation when data changes
 - **Zero overhead**: Stores raw compressed chunks (no re-compression)
@@ -768,14 +768,18 @@ async function getRemoteContentHash(
 
 ### Memory Budget
 
-**200MB L0** + **100MB L1** compressed ≈ **500MB-1.5GB** effective coverage
+The three in-memory tiers (L0 + L1 + S-cache) are sized **two-sidedly from the
+device heap** by `heap-budget.ts::computeCacheBudgets` — up on a large heap so a
+fits-in-RAM timelapse stays fully resident, down on a small heap to stay within
+`dataLoading.memory.targetHeapUsage`. The config `l0MaxSizeMB` (200) / `l1MaxSizeMB`
+(100) / `sliceCacheMaxSizeMB` (128) are **ceilings / fallbacks**, not fixed
+allocations (the fallback applies where `performance.memory` is unavailable —
+Firefox/Safari). L2 (OPFS/disk, 2GB) is fixed and not heap-sized.
 
-**Typical session** (100K points, 4D):
-
-- L0 Cache: ~200MB (decompressed chunks)
-- L1 Cache: ~100MB (compressed chunks)
-- Three.js: ~50MB (geometries)
-- **Total**: ~350MB (well within browser limits)
+**Typical desktop session** (4 GB heap): L0 up to ~200MB + L1 up to ~100MB +
+S-cache the residual (capped at 1 GiB), all demand-filled — so actual footprint
+tracks the working set, not the ceilings. On a small mobile heap the same tiers
+shrink proportionally to avoid OOM.
 
 ## Browser Support
 

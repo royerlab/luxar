@@ -157,10 +157,10 @@ export function restoreLadder<T>(
  * (it re-decodes on every visit). Instead we store the largest COARSE-FIRST
  * prefix that fits — the additive ladder is amplitude-ordered, so the coarse
  * levels are the cheapest to keep and give a usable partial revisit; only the
- * fine tail re-decodes. A one-time warning per key surfaces the shortfall.
+ * fine tail re-decodes. A one-time warning per key surfaces the shortfall
+ * (deduped by the cache's `markOversizedWarned`, so it can't leak across
+ * sessions or a dataset switch).
  */
-const _oversizedWarned = new Set<string>();
-
 export function storeLadder<T extends object>(
   sliceCache: SliceCache | null,
   path: string,
@@ -183,8 +183,7 @@ export function storeLadder<T extends object>(
     bytes = fit > 0 ? measureLodBytes(lods.slice(0, fit)) : 0;
   }
   if (fit === 0) return; // even the coarsest single level exceeds the budget
-  if (fit < lods.length && !_oversizedWarned.has(key)) {
-    _oversizedWarned.add(key);
+  if (fit < lods.length && sliceCache.markOversizedWarned(key)) {
     log.warning(
       Modules.CACHE,
       `SliceCache: ladder for ${path} exceeds the budget; caching ${fit}/${lods.length} coarse levels (fine tail re-decodes). Consider a larger cache budget.`

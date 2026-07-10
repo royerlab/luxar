@@ -184,3 +184,21 @@ describe('SliceCache — prefetch pin', () => {
     expect(c.has(a)).toBe(false);
   });
 });
+
+describe('SliceCache — markOversizedWarned (warn-once, cleared on clear)', () => {
+  it('returns true once per key, then false — deduping the oversized warning', () => {
+    const c = new SliceCache({ maxSize: 1024 });
+    const k = SliceCache.makeKey('/n', 'big');
+    expect(c.markOversizedWarned(k)).toBe(true);
+    expect(c.markOversizedWarned(k)).toBe(false);
+    expect(c.markOversizedWarned(k)).toBe(false);
+  });
+
+  it('clear() resets the dedup so a later dataset can warn afresh (no module-global leak)', () => {
+    const c = new SliceCache({ maxSize: 1024 });
+    const k = SliceCache.makeKey('/n', 'big');
+    expect(c.markOversizedWarned(k)).toBe(true);
+    c.clear();
+    expect(c.markOversizedWarned(k)).toBe(true); // reset by clear()
+  });
+});

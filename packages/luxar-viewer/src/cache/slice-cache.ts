@@ -111,6 +111,13 @@ export class SliceCache {
   private readonly tombstones = new Set<string>();
   private thrashMisses = 0;
 
+  // Keys already warned about as oversized (a full ladder exceeding the whole
+  // budget → only a coarse prefix is cached; see `storeLadder`). Instance-
+  // scoped and cleared on clear() so a dataset switch can warn afresh, and
+  // bounded FIFO so a long session can't grow it unboundedly. Same discipline
+  // as `tombstones`.
+  private readonly oversizedWarned = new Set<string>();
+
   constructor(options?: SliceCacheOptions) {
     const maxSize = options?.maxSize ?? SliceCache.DEFAULT_MAX_SIZE;
     this.maxSize = maxSize;
@@ -220,10 +227,28 @@ export class SliceCache {
     return bytes <= this.maxSize;
   }
 
+  /**
+   * Warn-once gate for oversized ladders: returns true the FIRST time `key` is
+   * reported oversized (a full ladder exceeding the whole budget, so only a
+   * coarse prefix is cached — see `storeLadder`), false thereafter. Bounded
+   * FIFO + cleared on {@link clear}, so warnings can't leak across a long
+   * session or a dataset switch (mirrors the tombstone discipline).
+   */
+  markOversizedWarned(key: string): boolean {
+    if (this.oversizedWarned.has(key)) return false;
+    this.oversizedWarned.add(key);
+    if (this.oversizedWarned.size > SliceCache.MAX_TOMBSTONES) {
+      const oldest = this.oversizedWarned.values().next().value;
+      if (oldest !== undefined) this.oversizedWarned.delete(oldest);
+    }
+    return true;
+  }
+
   /** Clear all cached slices (invoked on content-hash / dataset invalidation). */
   clear(): void {
     this.cache.clear(); // fires onEvict per entry — reset tombstones AFTER
     this.tombstones.clear();
+    this.oversizedWarned.clear();
     this.thrashMisses = 0;
     if (this.debug) {
       log.custom(LogEmoji.CACHE, Modules.CACHE, 'SliceCache cleared');
