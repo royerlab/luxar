@@ -310,6 +310,21 @@ describe('fitCameraToBounds', () => {
     expect(screenUp.z).toBeCloseTo(0, 6);
   });
 
+  // A zarr viewer_config can author a custom scene up. The fit must square
+  // to THAT up (SceneManager passes it via options.up), not clobber it with
+  // world +Y — otherwise an author-oriented scene loses its horizon on the
+  // load-time auto-frame and on every Home/F reset.
+  it('squares the fit to a custom scene up when options.up is provided', () => {
+    const { controls } = makeControls();
+    const sceneUp = new THREE.Vector3(0, 0, 1); // z-up authored scene
+    perspectiveCamera.up.set(0.5, 0.5, 0.7071).normalize(); // stale orbit tilt
+    fitCameraToBounds(perspectiveCamera, controls, makeBounds([0, 0, 0], [10, 10, 10]), {
+      lookAtTarget: new THREE.Vector3(5, 5, 5),
+      up: sceneUp,
+    });
+    expect(perspectiveCamera.up.distanceTo(sceneUp)).toBeCloseTo(0, 6);
+  });
+
   it('orthographic: returns 0 and short-circuits on a zero-extent box (scene.md G11)', () => {
     // [scene.md/G11][P5] Perspective zero-extent is covered above; the
     // ortho path was not. Both paths must early-return without touching
@@ -465,5 +480,17 @@ describe('centerOnOrigin', () => {
     expect(camera.up.distanceTo(THREE.Object3D.DEFAULT_UP)).toBeCloseTo(0, 6);
     const screenUp = new THREE.Vector3(0, 1, 0).applyQuaternion(camera.quaternion);
     expect(screenUp.y).toBeCloseTo(1, 6);
+  });
+
+  it('squares to a custom scene up when one is passed (authored viewer_config.up)', () => {
+    const camera = new THREE.PerspectiveCamera(60, 1, 0.1, 1000);
+    camera.position.set(30, 40, 0);
+    camera.up.set(1, 0, 0);
+    const { controls } = makeControls(new THREE.Vector3(0, 0, 0));
+
+    const sceneUp = new THREE.Vector3(0, 0, 1);
+    centerOnOrigin(camera, controls, sceneUp);
+
+    expect(camera.up.distanceTo(sceneUp)).toBeCloseTo(0, 6);
   });
 });

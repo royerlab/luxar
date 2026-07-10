@@ -129,6 +129,13 @@ export interface FitCameraOptions {
    * messages without forcing the caller to log separately.
    */
   logLabel?: string;
+  /**
+   * The up vector the fitted view is squared to (see the up-reset in the
+   * implementation). Defaults to world +Y; SceneManager passes the scene's
+   * authored up (zarr `viewer_config.up`) so an author-oriented scene
+   * frames upright in ITS OWN frame rather than snapping to world Y.
+   */
+  up?: THREE.Vector3;
 }
 
 /**
@@ -157,7 +164,12 @@ export function fitCameraToBounds(
   bounds: BoundingBox,
   options: FitCameraOptions
 ): number {
-  const { lookAtTarget, preserveControlsTarget = false, logLabel = 'Fit camera' } = options;
+  const {
+    lookAtTarget,
+    preserveControlsTarget = false,
+    logLabel = 'Fit camera',
+    up = THREE.Object3D.DEFAULT_UP,
+  } = options;
 
   const sizeX = bounds.max.x - bounds.min.x;
   const sizeY = bounds.max.y - bounds.min.y;
@@ -196,8 +208,10 @@ export function fitCameraToBounds(
   // frame (see luxar-orbit-controls/camera-application.ts), so without this a
   // fit after any orbit inherits the accumulated tilt — lookAt derives its
   // roll from `camera.up` — and "Home" lands on an oblique, rolled framing
-  // instead of the same face-on view a fresh camera gets on load.
-  camera.up.copy(THREE.Object3D.DEFAULT_UP);
+  // instead of the same face-on view a fresh camera gets on load. The reset
+  // targets `options.up` (the scene's authored up, world +Y by default) so a
+  // zarr `viewer_config.up` scene squares to ITS OWN horizon, not world Y.
+  camera.up.copy(up);
   camera.lookAt(lookAtTarget);
   camera.updateMatrixWorld(true);
 
@@ -244,7 +258,8 @@ export type CenterResult = THREE.Vector3 | null;
 export function centerCameraOnScene(
   scene: THREE.Scene,
   camera: LuxarCamera,
-  controls: ControlsManager
+  controls: ControlsManager,
+  up?: THREE.Vector3
 ): CenterResult {
   // Ensure world matrices are up to date before computing bounds.
   scene.updateMatrixWorld(true);
@@ -264,7 +279,7 @@ export function centerCameraOnScene(
       min: { x: box.min.x, y: box.min.y, z: box.min.z },
       max: { x: box.max.x, y: box.max.y, z: box.max.z },
     },
-    { lookAtTarget: center, logLabel: 'Camera centered on scene' }
+    { lookAtTarget: center, logLabel: 'Camera centered on scene', up }
   );
   log.success(Modules.CONTROLS, 'Controls target updated and state saved');
 
@@ -277,7 +292,11 @@ export function centerCameraOnScene(
  * new origin-centered state as the controls' default so a reset
  * later returns here.
  */
-export function centerOnOrigin(camera: LuxarCamera, controls: ControlsManager): void {
+export function centerOnOrigin(
+  camera: LuxarCamera,
+  controls: ControlsManager,
+  up: THREE.Vector3 = THREE.Object3D.DEFAULT_UP
+): void {
   // Get current camera distance from target. getFocusTarget() returns a
   // clone, so it is safe to use as a one-shot read.
   const currentDistance = camera.position.distanceTo(controls.getFocusTarget());
@@ -285,9 +304,10 @@ export function centerOnOrigin(camera: LuxarCamera, controls: ControlsManager): 
   const origin = new THREE.Vector3(0, 0, 0);
 
   camera.position.set(0, 0, currentDistance);
-  // Same up-reset as fitCameraToBounds: without it, lookAt keeps the roll
-  // accumulated by orbiting and the "centered" view comes out tilted.
-  camera.up.copy(THREE.Object3D.DEFAULT_UP);
+  // Same up-reset as fitCameraToBounds (scene-authored up, world +Y by
+  // default): without it, lookAt keeps the roll accumulated by orbiting and
+  // the "centered" view comes out tilted.
+  camera.up.copy(up);
   camera.lookAt(origin);
   camera.updateMatrixWorld(true);
 
@@ -327,7 +347,8 @@ export function autoFrameCamera(
   camera: LuxarCamera,
   controls: ControlsManager,
   bounds: BoundingBox | null,
-  preserveTarget: boolean = false
+  preserveTarget: boolean = false,
+  up?: THREE.Vector3
 ): AutoFrameResult {
   if (!bounds) {
     log.warning(Modules.SCENE_MANAGER, 'No metadata bounds available for auto-framing');
@@ -343,6 +364,7 @@ export function autoFrameCamera(
     lookAtTarget,
     preserveControlsTarget: preserveTarget,
     logLabel: 'Auto-framed camera on scene',
+    up,
   });
   if (diagonal === 0) {
     log.warning(Modules.SCENE_MANAGER, 'Scene bounds have zero extent, skipping auto-frame');

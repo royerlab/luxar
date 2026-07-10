@@ -48,7 +48,7 @@ config/
 │   ├── scene/              {data,types,validate}.ts   # includes ShaderConfig
 │   ├── ui/                 {data,types}.ts            # includes DebugConsoleConfig, UIComponentsConfig
 │   ├── rendering-controls/ {data,types,validate}.ts   # includes RenderingSettings, validateBloomConsistency
-│   ├── controls/           {data,types,validate}.ts   # includes Fly/Orbit/ScaleMultipliers/ConfigRange/ConfigValue
+│   ├── controls/           {data,types,validate}.ts   # includes Fly/Orbit/ScaleMultipliers/ConfigRange
 │   ├── input/              {data,types,validate}.ts
 │   ├── data-loading/       {data,types,validate}.ts   # composes the 5 sub-sections below
 │   │   ├── spatial/        {data,types}.ts
