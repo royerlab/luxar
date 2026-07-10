@@ -90,6 +90,8 @@ export function buildRailItems(deps: RailItemsDeps): ControlRailItem[] {
             resetDimensions: () => sceneDims.resetPositions(),
             hasDimensionSliders: () => sceneDims.hasNonDisplayedDimensions(),
             resetRendering: () => renderingControls.resetToDefaults(),
+            resetLayers: () => layersPanel.resetAllLayers(),
+            hasLayers: () => layersPanel.layerState.count > 0,
             triggerAnimation: () => animationController.startAnimation(),
           }),
       },

@@ -60,7 +60,11 @@ function makeDeps(
     animationController: { startAnimation: vi.fn() },
     adaptiveDPRManager: {},
     performanceMonitor: { visible: false },
-    layersPanel: { isVisible: vi.fn().mockReturnValue(false), layerState: { count: layerCount } },
+    layersPanel: {
+      isVisible: vi.fn().mockReturnValue(false),
+      layerState: { count: layerCount },
+      resetAllLayers: vi.fn(),
+    },
     debugConsole: { toggle: vi.fn(), getIsVisible: vi.fn().mockReturnValue(false) },
     recordingPanel: { isVisible: vi.fn().mockReturnValue(false) },
   };
@@ -123,44 +127,59 @@ describe('buildRailItems', () => {
       ).toHaveBeenCalledTimes(1);
     });
 
-    it('popover wires the four reset actions to the right deps', () => {
-      const deps = makeDeps();
+    it('popover wires the five reset actions to the right deps', () => {
+      const deps = makeDeps({ layerCount: 2 }); // layers present → Reset layers enabled
       const home = buildRailItems(deps).find((i: ControlRailItem) => i.id === 'home')!;
       const host = document.createElement('div');
       home.popover!.build(host);
 
-      const rows = Array.from(
-        host.querySelectorAll<HTMLButtonElement>('.luxar-control-rail__action')
+      const chips = Array.from(
+        host.querySelectorAll<HTMLButtonElement>('.luxar-control-rail__home-chip')
       );
-      expect(
-        rows.map((r) => r.querySelector('.luxar-control-rail__action-label')?.textContent)
-      ).toEqual(['Fit scene', 'Center on origin', 'Reset dimensions', 'Reset rendering']);
+      expect(chips.map((c) => c.getAttribute('aria-label')?.split(' — ')[0])).toEqual([
+        'Fit scene',
+        'Center on origin',
+        'Reset dimensions',
+        'Reset rendering',
+        'Reset layers',
+      ]);
 
       const d = deps as unknown as {
         ui: { commands: { recenterCamera: ReturnType<typeof vi.fn> } };
         sceneManager: { centerOnOrigin: ReturnType<typeof vi.fn> };
         sceneDims: { resetPositions: ReturnType<typeof vi.fn> };
         renderingControls: { resetToDefaults: ReturnType<typeof vi.fn> };
+        layersPanel: { resetAllLayers: ReturnType<typeof vi.fn> };
         animationController: { startAnimation: ReturnType<typeof vi.fn> };
       };
-      rows[0].click();
+      chips[0].click();
       expect(d.ui.commands.recenterCamera).toHaveBeenCalledTimes(1);
-      rows[1].click();
+      chips[1].click();
       expect(d.sceneManager.centerOnOrigin).toHaveBeenCalledTimes(1);
-      rows[2].click();
+      chips[2].click();
       expect(d.sceneDims.resetPositions).toHaveBeenCalledTimes(1);
-      rows[3].click();
+      chips[3].click();
       expect(d.renderingControls.resetToDefaults).toHaveBeenCalledTimes(1);
-      expect(d.animationController.startAnimation).toHaveBeenCalledTimes(4);
+      chips[4].click();
+      expect(d.layersPanel.resetAllLayers).toHaveBeenCalledTimes(1);
+      expect(d.animationController.startAnimation).toHaveBeenCalledTimes(5);
     });
 
-    it('grays the Reset dimensions row when the scene has no slider dimensions', () => {
+    it('grays the Reset dimensions chip when the scene has no slider dimensions', () => {
       const home = findHome(makeDeps({ hasDims: false }));
       const host = document.createElement('div');
       home.popover!.build(host);
-      const rows = host.querySelectorAll<HTMLButtonElement>('.luxar-control-rail__action');
-      expect(rows[2].disabled).toBe(true);
-      expect(rows[0].disabled).toBe(false);
+      const chips = host.querySelectorAll<HTMLButtonElement>('.luxar-control-rail__home-chip');
+      expect(chips[2].disabled).toBe(true);
+      expect(chips[0].disabled).toBe(false);
+    });
+
+    it('grays the Reset layers chip when the scene has no layers', () => {
+      const home = findHome(makeDeps({ layerCount: 0 }));
+      const host = document.createElement('div');
+      home.popover!.build(host);
+      const chips = host.querySelectorAll<HTMLButtonElement>('.luxar-control-rail__home-chip');
+      expect(chips[4].disabled).toBe(true);
     });
   });
 

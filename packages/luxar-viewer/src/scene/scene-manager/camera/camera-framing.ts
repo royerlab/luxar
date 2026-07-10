@@ -192,6 +192,12 @@ export function fitCameraToBounds(
     camera.position.set(lookAtTarget.x, lookAtTarget.y, lookAtTarget.z + diagonal);
   }
 
+  // Reset the up vector before lookAt: orbiting overwrites `camera.up` every
+  // frame (see luxar-orbit-controls/camera-application.ts), so without this a
+  // fit after any orbit inherits the accumulated tilt — lookAt derives its
+  // roll from `camera.up` — and "Home" lands on an oblique, rolled framing
+  // instead of the same face-on view a fresh camera gets on load.
+  camera.up.copy(THREE.Object3D.DEFAULT_UP);
   camera.lookAt(lookAtTarget);
   camera.updateMatrixWorld(true);
 
@@ -279,6 +285,9 @@ export function centerOnOrigin(camera: LuxarCamera, controls: ControlsManager): 
   const origin = new THREE.Vector3(0, 0, 0);
 
   camera.position.set(0, 0, currentDistance);
+  // Same up-reset as fitCameraToBounds: without it, lookAt keeps the roll
+  // accumulated by orbiting and the "centered" view comes out tilted.
+  camera.up.copy(THREE.Object3D.DEFAULT_UP);
   camera.lookAt(origin);
   camera.updateMatrixWorld(true);
 
