@@ -1181,23 +1181,23 @@ describe('DataLoadingMonitor', () => {
 
       monitor.setSceneGraph(sceneGraph);
 
-      // Initially visibleElements equals totalPoints
+      // Initially visiblePoints equals totalPoints
       let state = monitor.getSceneGraph();
       expect(state.totalPoints).toBe(200000);
-      expect(state.visibleElements).toBe(200000);
+      expect(state.visiblePoints).toBe(200000);
 
       // Update visible points (simulating nD slicing / progressive LOD)
       monitor.updateVisiblePoints(50000);
 
       state = monitor.getSceneGraph();
       expect(state.totalPoints).toBe(200000); // Total unchanged
-      expect(state.visibleElements).toBe(50000); // Only visible count updated
+      expect(state.visiblePoints).toBe(50000); // Only visible count updated
 
       // getGlobalStats should source points from the scene graph, so a
       // progressive points loader (no LoaderMonitor surface) still reports.
       const stats = monitor.getGlobalStats();
       expect(stats.datasetSize).toBe(200000);
-      expect(stats.visibleElements).toBe(50000);
+      expect(stats.visiblePoints).toBe(50000);
     });
 
     it('clears per-node visible counts for paths absent from the latest walk', () => {
@@ -1360,7 +1360,7 @@ describe('DataLoadingMonitor', () => {
 
       const stats = monitor.getGlobalStats();
       expect(stats.datasetSize).toBe(1000); // 500 + 500
-      expect(stats.visibleElements).toBe(200); // Only what's visible
+      expect(stats.visiblePoints).toBe(200); // Only what's visible
     });
 
     it('should track visible segments separately from total segments', () => {

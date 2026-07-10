@@ -91,7 +91,7 @@ export interface LoaderMetrics {
   elementsLoaded: number; // Cumulative (for throughput calculation)
   bytesLoaded: number;
   // Dataset info
-  visibleElements: number; // Currently visible/rendered points (non-cumulative)
+  visibleElements: number; // Currently visible elements: points / segments / splats (non-cumulative)
   avgQueryTime: number;
   avgLoadTime: number;
   // Memory usage
@@ -226,7 +226,7 @@ export interface GlobalStats {
   totalMemory: number;
   // Dataset metrics - Points
   datasetSize: number; // Total points in all datasets
-  visibleElements: number; // Currently visible/rendered points
+  visiblePoints: number; // Currently visible/rendered points (per-geometry trio with visibleSegments / visibleSplats)
   // Dataset metrics - Lines
   datasetSegments: number; // Total segments in all line datasets
   visibleSegments: number; // Currently visible/rendered segments (for lines, typically equals total)
@@ -602,7 +602,7 @@ export interface SceneGraphState {
   /** Total points across all nodes */
   totalPoints: number;
   /** Currently visible points (after nD clipping / progressive LOD) */
-  visibleElements: number;
+  visiblePoints: number;
   /** Total segments across all lines */
   totalSegments: number;
   /** Currently visible segments (after nD clipping) */

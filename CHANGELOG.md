@@ -6,6 +6,38 @@ All notable changes to Luxar are documented in this file.
 
 ### July 2026
 
+#### Changed — three-geometry loader symmetry + geometry-neutral monitor naming (viewer + Python)
+
+- **Why**: the Points spatial-index loader had drifted from the Lines/GSplats
+  facade shape (a monolithic `loadPoints` with inlined S-cache/query-tracking),
+  ~300 lines of byte-identical private helpers were duplicated across the three
+  loaders, and several monitor names said "points" while counting vertices,
+  segments, or splats — the kind of compat debt this project explicitly rejects.
+- **Refactor**: `loadPoints` is now a thin wrapper around `loadPointsInternal`
+  (mirroring Lines/GSplats); the shared facade orchestration lives in
+  `data/loaders/spatial-facade.ts` (`loadSliceWithCache`, `recordLoadMetrics`,
+  `runWithActiveSignal`, `runWithResidencyProbe`, one per-loader
+  `SpatialFacadeCtx`) and `loader-metrics.ts` (`finishQueryTracking`,
+  `makeInitialLoaderMetrics`, `buildSpatialIndexMetrics`).
+- **Renames (no compat shims)**: `LoaderMetrics.pointsLoaded → elementsLoaded`,
+  `visiblePoints → visibleElements`, `MonitorEvent.data.points` /
+  `QueryInfo.points → elements`, `PointSpatialIndexMetrics →
+  SpatialIndexMetrics` (+ `avgElementsPerCell`), and a shared `ElementRange`
+  replaces the `as unknown as PointRange[]` casts. Python scene-node alias
+  properties `n_points` / `n_vertices` / `n_splats` removed (`n_elements` is
+  the one count property; on-disk metadata keys unchanged).
+- **Fixed**: the Lines loader never wrote `visibleElements` (the monitor
+  permanently showed 0 for lines layers — now the visible segment count,
+  labeled `segs`); Points `dispose()` leaked its active-query map; dead
+  monitor fields (`totalCacheHits`, `totalPointsLoaded`, `totalMemoryUsed`,
+  `globalCacheHitRate`, `activeFallbackLoaders`) and the unused `profiler`
+  loader-constructor param deleted.
+- **Added**: chunk-index `spatialIndex` telemetry is now reported by all three
+  loaders (the monitor advisor's query-efficiency recommendations previously
+  worked only for points); test suites brought to full three-way parity, with
+  regression pins for both fixed bugs and direct unit coverage for the new
+  shared facade helpers.
+
 #### Added — first-class background/floor suppression (`--floor`, on by default) + companion whole-volume auto-tiling
 
 - **Why**: a constant background pedestal / DC offset (camera offset,
