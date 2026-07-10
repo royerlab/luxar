@@ -156,6 +156,12 @@ const configSnapshot = {
   maxConcurrent: config.dataLoading.network.maxConcurrent,
 };
 
+// Captured at MODULE LOAD, before any test mutates config. Reset-behavior
+// assertions must compare against this snapshot — a fresh
+// defaultUserSettings() call would drift in lockstep if defaults were
+// (re-)derived from the mutated config, masking the very bug under test.
+const BUILTIN_DEFAULTS = defaultUserSettings();
+
 beforeEach(() => {
   localStorage.clear();
   resetUserSettingsForTests();
@@ -253,14 +259,18 @@ describe('buildSettingsPopover', () => {
     expect(fallback).toContain('Budgets resolve on scene load');
   });
 
-  it('Reset All restores defaults, persists them, and rebuilds the popover', () => {
+  it('Reset All restores the BUILT-IN defaults (pre-mutation snapshot), persists, rebuilds', () => {
     build();
     byProp('fovSensitivity').set(0.19);
     expect(loadUserSettings().input.fovSensitivity).toBe(0.19);
 
     (byProp('resetAll').boundObj.resetAll as () => void)();
-    expect(loadUserSettings()).toEqual(defaultUserSettings());
-    expect(config.camera.fovSensitivity).toBe(defaultUserSettings().input.fovSensitivity);
+    // Compare against the module-load snapshot, NOT a fresh
+    // defaultUserSettings() call — the fresh call would drift together with
+    // the bug (defaults re-derived from mutated config) and mask it.
+    expect(loadUserSettings()).toEqual(BUILTIN_DEFAULTS);
+    expect(config.camera.fovSensitivity).toBe(BUILTIN_DEFAULTS.input.fovSensitivity);
+    expect(config.camera.fovSensitivity).not.toBe(0.19);
   });
 
   it('teardown destroys the GUI', () => {
