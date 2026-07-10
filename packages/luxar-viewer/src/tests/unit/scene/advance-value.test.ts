@@ -74,6 +74,33 @@ describe('advanceDimensionValue — boundaries', () => {
     expect(r.value).toBe(99);
   });
 
+  // Boundary is INCLUSIVE (`value >= max`), so a step landing EXACTLY on max
+  // wraps — the last index is skipped on the forward loop. This pins the
+  // pre-existing (baseline `handleBoundary`) contract that the extracted pure
+  // function must preserve: without the exact-max case, a `>=`→`>` drift is
+  // undetectable (every other boundary test overshoots max). Symmetric at min.
+  it('loop wraps when a step lands EXACTLY on max (>= boundary, not >)', () => {
+    // range [0, 50] step 1: t=49 → 50 === max → wraps to min (t=50 skipped).
+    const r = advanceDimensionValue(args({ current: 49, min: 0, max: 50, step: 1 }));
+    expect(r.value).toBe(0);
+    expect(r.shouldStop).toBe(false);
+  });
+
+  it('loop wraps when a backward step lands EXACTLY on min (<= boundary, not <)', () => {
+    const r = advanceDimensionValue(
+      args({ current: 1, min: 0, max: 50, step: 1, direction: 'backward' })
+    );
+    expect(r.value).toBe(50);
+  });
+
+  it('once mode STOPS when a step lands exactly on max', () => {
+    const r = advanceDimensionValue(
+      args({ current: 49, min: 0, max: 50, step: 1, loopMode: 'once' })
+    );
+    expect(r.value).toBe(50);
+    expect(r.shouldStop).toBe(true);
+  });
+
   it('once mode clamps at max and stops', () => {
     const r = advanceDimensionValue(args({ current: 99, loopMode: 'once' }));
     expect(r.value).toBe(99);
