@@ -65,14 +65,18 @@ export interface UserSettings {
   };
 }
 
-/** UI/sanitization ranges — shared by the Settings popover sliders. */
-export const USER_SETTINGS_RANGES = {
-  fovSensitivity: { min: 0.01, max: 0.2 },
-  idleTimeoutMs: { min: 500, max: 10_000 },
-  workerCount: { min: 0, max: 16 },
-  networkMaxConcurrent: { min: 1, max: 12 },
-  budgetMB: { min: 128, max: 4096 },
-} as const;
+/**
+ * UI/sanitization ranges — shared by the Settings popover sliders. Frozen at
+ * runtime (like `StorageKeys`): `as const` only gives compile-time readonly
+ * tags, and a mutated range would silently change what sanitization admits.
+ */
+export const USER_SETTINGS_RANGES = Object.freeze({
+  fovSensitivity: Object.freeze({ min: 0.01, max: 0.2 }),
+  idleTimeoutMs: Object.freeze({ min: 500, max: 10_000 }),
+  workerCount: Object.freeze({ min: 0, max: 16 }),
+  networkMaxConcurrent: Object.freeze({ min: 1, max: 12 }),
+  budgetMB: Object.freeze({ min: 128, max: 4096 }),
+} as const);
 
 /**
  * Built-in values of the live-read config fields, captured ONCE at module
@@ -81,14 +85,16 @@ export const USER_SETTINGS_RANGES = {
  * reading `config` at call time would return the user's own applied values
  * as "defaults", so Reset All could never restore the built-ins and
  * sanitize fallbacks would drift toward whatever was last applied.
+ * `Object.freeze` locks the snapshot at runtime too — a write into it would
+ * reintroduce exactly the drift this baseline exists to prevent.
  */
-const BUILTIN_LIVE_DEFAULTS = {
+const BUILTIN_LIVE_DEFAULTS = Object.freeze({
   fovSensitivity: config.camera.fovSensitivity,
   idleTimeoutMs: config.animation.idleTimeoutMs,
   useWebWorkers: config.dataLoading.performance.useWebWorkers,
   workerCount: config.dataLoading.performance.workerCount,
   networkMaxConcurrent: config.dataLoading.network.maxConcurrent,
-} as const;
+} as const);
 
 /** Defaults derived from the built-in config (so the two never drift). */
 export function defaultUserSettings(): UserSettings {
