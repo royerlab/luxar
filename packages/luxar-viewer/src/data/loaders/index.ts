@@ -107,7 +107,13 @@ export {
 } from './color-loader';
 
 // Cross-cutting utilities
-export { recordLoadEvent, computeLoadLatency, type LoaderMetricsCounters } from './loader-metrics';
+export {
+  recordLoadEvent,
+  computeLoadLatency,
+  finishQueryTracking,
+  type LoaderMetricsCounters,
+  type QueryMetricsCounters,
+} from './loader-metrics';
 
 export { LoaderEventEmitter } from './monitor-events';
 

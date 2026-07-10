@@ -111,7 +111,7 @@ describe('LinesSpatialIndexLoader', () => {
       expect(metrics.path).toBe('/test_lines');
       expect(metrics.queries).toBe(0);
       expect(metrics.loads).toBe(0);
-      expect(metrics.pointsLoaded).toBe(0);
+      expect(metrics.elementsLoaded).toBe(0);
       expect(metrics.bytesLoaded).toBe(0);
     });
 

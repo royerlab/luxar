@@ -37,7 +37,7 @@ function makeInnerLoader(path: string, metricsOver: Partial<LoaderMetrics> = {})
         loads: 0,
         evictions: 0,
         errors: 0,
-        pointsLoaded: 0,
+        elementsLoaded: 0,
         bytesLoaded: 0,
         visiblePoints: 0,
         avgQueryTime: 0,
@@ -125,13 +125,13 @@ describe('ProgressiveMonitorAdapter', () => {
   });
 
   it('getMetrics aggregates inner metrics under the parent path', () => {
-    const a = makeInnerLoader('/p/additive_0', { queries: 2, pointsLoaded: 100 });
-    const b = makeInnerLoader('/p/additive_1', { queries: 3, pointsLoaded: 50 });
+    const a = makeInnerLoader('/p/additive_0', { queries: 2, elementsLoaded: 100 });
+    const b = makeInnerLoader('/p/additive_1', { queries: 3, elementsLoaded: 50 });
     const adapter = new ProgressiveMonitorAdapter(() => [a, b] as unknown as LoaderMonitor[], '/p');
     const m = adapter.getMetrics();
     expect(m.path).toBe('/p');
     expect(m.queries).toBe(5);
-    expect(m.pointsLoaded).toBe(150);
+    expect(m.elementsLoaded).toBe(150);
   });
 
   it('getActiveQueries merges inner lists and re-paths them to the parent', () => {

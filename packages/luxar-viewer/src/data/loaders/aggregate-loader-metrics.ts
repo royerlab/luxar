@@ -22,7 +22,7 @@ function zeroedMetrics(type: LoaderType, path: string): LoaderMetrics {
     loads: 0,
     evictions: 0,
     errors: 0,
-    pointsLoaded: 0,
+    elementsLoaded: 0,
     bytesLoaded: 0,
     visiblePoints: 0,
     avgQueryTime: 0,
@@ -36,7 +36,7 @@ function zeroedMetrics(type: LoaderType, path: string): LoaderMetrics {
  * Aggregate the per-LOD metrics of a progressive loader's inner loaders into a
  * single {@link LoaderMetrics} representing the whole node.
  *
- * Counters (`queries` / `loads` / `evictions` / `errors` / `pointsLoaded` /
+ * Counters (`queries` / `loads` / `evictions` / `errors` / `elementsLoaded` /
  * `bytesLoaded` / `visiblePoints` / `memoryUsed`) are summed. `memoryLimit` is
  * the max across loaders (it's a shared cap, not additive). `avgQueryTime` /
  * `avgLoadTime` are weighted means by `queries` / `loads` respectively (so a
@@ -74,7 +74,7 @@ export function aggregateLoaderMetrics(inner: LoaderMetrics[], path: string): Lo
     out.loads += m.loads;
     out.evictions += m.evictions;
     out.errors += m.errors;
-    out.pointsLoaded += m.pointsLoaded;
+    out.elementsLoaded += m.elementsLoaded;
     out.bytesLoaded += m.bytesLoaded;
     out.visiblePoints += m.visiblePoints;
     out.memoryUsed += m.memoryUsed;

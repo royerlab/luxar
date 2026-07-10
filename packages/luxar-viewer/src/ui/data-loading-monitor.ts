@@ -838,7 +838,7 @@ export class DataLoadingMonitor {
 
       case 'load':
         metrics.loads++;
-        metrics.pointsLoaded += event.data.points || 0;
+        metrics.elementsLoaded += event.data.points || 0;
         metrics.bytesLoaded += event.data.memory || 0;
         if (event.data.latency) {
           const totalTime = metrics.avgLoadTime * (metrics.loads - 1) + event.data.latency;
@@ -899,7 +899,7 @@ export class DataLoadingMonitor {
       loads: 0,
       evictions: 0,
       errors: 0,
-      pointsLoaded: 0,
+      elementsLoaded: 0,
       bytesLoaded: 0,
       visiblePoints: 0,
       avgQueryTime: 0,
@@ -1940,7 +1940,7 @@ export class DataLoadingMonitor {
       t === 'point-spatial-index' || t === 'lines-spatial-index' || t === 'gsplats-spatial-index';
 
     for (const metrics of this.metrics.values()) {
-      totalPoints += metrics.pointsLoaded;
+      totalPoints += metrics.elementsLoaded;
       totalMemory += metrics.memoryUsed;
       totalQueries += metrics.queries;
       totalLoads += metrics.loads;

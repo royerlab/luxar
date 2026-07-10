@@ -32,6 +32,7 @@ import {
   isAbortError,
   computeLoadLatency,
   recordLoadEvent,
+  finishQueryTracking,
   LoaderEventEmitter,
   OnceInit,
   warnExtendToAllNoDimensions,
@@ -148,7 +149,7 @@ export class GSplatsSpatialIndexLoader implements GSplatsDataLoader {
       loads: 0,
       evictions: 0,
       errors: 0,
-      pointsLoaded: 0, // Shared loader metric; counts splats for gsplats.
+      elementsLoaded: 0, // Shared loader metric; counts splats for gsplats.
       bytesLoaded: 0,
       visiblePoints: 0, // counts visible splats for gsplats
       avgQueryTime: 0,
@@ -304,7 +305,7 @@ export class GSplatsSpatialIndexLoader implements GSplatsDataLoader {
 
     try {
       const result = await this.loadGSplatsInternal(viewState, session, queryId, startTime);
-      this.finishQueryTracking(queryId, startTime, 'complete');
+      finishQueryTracking(this.activeQueries, this.metrics, queryId, startTime, 'complete');
       // Cache the decoded slice (helper clones on store — the arrays alias
       // the reused accumulator). Aborted loads throw and never reach here.
       storeLadder(this.sliceCache, this.node.path, viewState, [result], {
@@ -317,7 +318,7 @@ export class GSplatsSpatialIndexLoader implements GSplatsDataLoader {
       // classifies it as 'superseded' (not a failure), so don't inflate the
       // error counter or flood the monitor's error stream with non-errors.
       // Still finish query tracking (removes the active query, records timing).
-      this.finishQueryTracking(queryId, startTime, 'error');
+      finishQueryTracking(this.activeQueries, this.metrics, queryId, startTime, 'error');
       if (!isAbortError(err)) {
         this.metrics.errors += 1;
         // Emit a monitor 'error' event for parity with Points (see
@@ -943,24 +944,6 @@ export class GSplatsSpatialIndexLoader implements GSplatsDataLoader {
 
   private emitEvent(event: MonitorEvent): void {
     this.events.emit(event);
-  }
-
-  private finishQueryTracking(
-    queryId: string,
-    startTime: number,
-    status: 'complete' | 'error'
-  ): void {
-    const query = this.activeQueries.get(queryId);
-    if (query) {
-      query.status = status;
-      query.endTime = Date.now();
-      this.activeQueries.delete(queryId);
-    }
-    const queryTime = Date.now() - startTime;
-    if (this.metrics.queries > 0) {
-      this.metrics.avgQueryTime =
-        (this.metrics.avgQueryTime * (this.metrics.queries - 1) + queryTime) / this.metrics.queries;
-    }
   }
 
   /**

@@ -19,7 +19,7 @@ const baseMetrics: LoaderMetrics = {
   loads: 0,
   evictions: 0,
   errors: 0,
-  pointsLoaded: 0,
+  elementsLoaded: 0,
   bytesLoaded: 0,
   visiblePoints: 0,
   avgQueryTime: 0,

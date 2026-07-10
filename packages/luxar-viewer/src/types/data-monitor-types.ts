@@ -81,7 +81,7 @@ export interface LoaderMetrics {
   evictions: number;
   errors: number;
   // Performance metrics
-  pointsLoaded: number; // Cumulative (for throughput calculation)
+  elementsLoaded: number; // Cumulative (for throughput calculation)
   bytesLoaded: number;
   // Dataset info
   visiblePoints: number; // Currently visible/rendered points (non-cumulative)
@@ -438,7 +438,7 @@ export interface TimelinePoint {
   loadTime?: number;
   cacheHitRate?: number;
   memoryUsed?: number;
-  pointsLoaded?: number;
+  elementsLoaded?: number;
   loaderType?: LoaderType;
   event?: MonitorEventType;
 }

@@ -561,6 +561,25 @@ describe('PointsSpatialIndexLoader', () => {
       expect(metrics.memoryUsed).toBe(Math.round(accMB * 1024 * 1024));
     });
 
+    it('should fold completed loads into avgQueryTime (wrapper close-out)', async () => {
+      // The wrapper's shared finishQueryTracking stamps the rolling mean
+      // AFTER the load (incl. projection) completes — mirror of the Lines/
+      // GSplats facades. With real timers the elapsed may round to 0ms, so
+      // pin the type/range rather than a concrete duration.
+      const viewState: ViewState = {
+        displayDims: [0, 1, 2],
+        slicePosition: [0, 0, 0, 5],
+        tolerance: [0, 0, 0, 0.1],
+      };
+
+      await loader.loadPoints(viewState);
+
+      const metrics = loader.getMetrics();
+      expect(metrics.queries).toBe(1);
+      expect(Number.isFinite(metrics.avgQueryTime)).toBe(true);
+      expect(metrics.avgQueryTime).toBeGreaterThanOrEqual(0);
+    });
+
     it('should handle listener errors gracefully', async () => {
       const errorListener = vi.fn().mockImplementation(() => {
         throw new Error('Listener error');
@@ -627,6 +646,21 @@ describe('PointsSpatialIndexLoader', () => {
           }),
         })
       );
+    });
+
+    it('should record errors in metrics on failure', async () => {
+      (zarr.get as any).mockRejectedValue(new Error('Load failed'));
+
+      const viewState: ViewState = {
+        displayDims: [0, 1, 2],
+        slicePosition: [0, 0, 0, 5],
+        tolerance: [0, 0, 0, 0.1],
+      };
+
+      await expect(loader.loadPoints(viewState)).rejects.toThrow();
+
+      const metrics = loader.getMetrics();
+      expect(metrics.errors).toBeGreaterThanOrEqual(1);
     });
 
     it('should handle data validation errors', async () => {
@@ -759,7 +793,6 @@ describe('PointsSpatialIndexLoader', () => {
     });
   });
 
-
   // ────────────────────────────────────────────────────────────────
   // Plain-leaf S-cache: a plain leaf caches its decoded slice as a
   // 1-element ladder under the progressive loaders' key contract
@@ -831,6 +864,25 @@ describe('PointsSpatialIndexLoader', () => {
       mockExecute.mockRejectedValueOnce(new DOMException('aborted', 'AbortError'));
       await expect(cachedLoader.loadPoints(hiddenDimView)).rejects.toThrow();
       expect(sliceCache.getStats().count).toBe(0);
+    });
+
+    it('an empty slice is cached via the wrapper: revisits skip the query entirely', async () => {
+      // Zero visible ranges → the internal returns empty data and the
+      // WRAPPER stores it (same contract as Lines/GSplats: an empty slice
+      // is a valid, ~0-byte result that revisits should skip).
+      mockExecute.mockResolvedValue([]);
+
+      const first = await cachedLoader.loadPoints(hiddenDimView);
+      expect(first.pointCount).toBe(0);
+      expect(sliceCache.getStats().count).toBe(1);
+      const readsAfterFirst = gets();
+
+      const second = await cachedLoader.loadPoints(hiddenDimView);
+      const third = await cachedLoader.loadPoints(hiddenDimView);
+
+      expect(second.pointCount).toBe(0);
+      expect(third).toBe(second);
+      expect(gets()).toBe(readsAfterFirst);
     });
 
     it('the cached snapshot is a deep clone: post-store accumulator reuse cannot corrupt it', async () => {

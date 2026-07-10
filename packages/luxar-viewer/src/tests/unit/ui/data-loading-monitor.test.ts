@@ -89,7 +89,7 @@ describe('DataLoadingMonitor', () => {
           cacheMisses: 0,
           evictions: 0,
           errors: 0,
-          pointsLoaded: 0,
+          elementsLoaded: 0,
           bytesLoaded: 0,
           visiblePoints: 0,
           avgQueryTime: 0,
@@ -138,7 +138,7 @@ describe('DataLoadingMonitor', () => {
           cacheMisses: 0,
           evictions: 0,
           errors: 0,
-          pointsLoaded: 1000,
+          elementsLoaded: 1000,
           bytesLoaded: 0,
           visiblePoints: 0,
           avgQueryTime: 50,
@@ -181,7 +181,7 @@ describe('DataLoadingMonitor', () => {
           cacheMisses: 0,
           evictions: 0,
           errors: 0,
-          pointsLoaded: 0,
+          elementsLoaded: 0,
           bytesLoaded: 0,
           visiblePoints: 0,
           avgQueryTime: 0,
@@ -315,7 +315,7 @@ describe('DataLoadingMonitor', () => {
           cacheMisses: 0, // L0 cache removed
           evictions: 2,
           errors: 1,
-          pointsLoaded: 10000,
+          elementsLoaded: 10000,
           bytesLoaded: 40000,
           visiblePoints: 0,
           avgQueryTime: 25,
@@ -355,7 +355,7 @@ describe('DataLoadingMonitor', () => {
           loads: 0,
           evictions: 0,
           errors: 0,
-          pointsLoaded: 0,
+          elementsLoaded: 0,
           bytesLoaded: 0,
           visiblePoints: 0,
           avgQueryTime: 0,
@@ -409,7 +409,7 @@ describe('DataLoadingMonitor', () => {
             loads: 0,
             evictions: 0,
             errors: 0,
-            pointsLoaded: 0,
+            elementsLoaded: 0,
             bytesLoaded: 0,
             visiblePoints: 0,
             avgQueryTime: 0,
@@ -469,7 +469,7 @@ describe('DataLoadingMonitor', () => {
           cacheMisses: 0,
           evictions: 0,
           errors: 0,
-          pointsLoaded: 500,
+          elementsLoaded: 500,
           bytesLoaded: 2000,
           visiblePoints: 0,
           avgQueryTime: 75,
@@ -502,7 +502,7 @@ describe('DataLoadingMonitor', () => {
           cacheMisses: 0, // L0 cache removed
           evictions: 50,
           errors: 0,
-          pointsLoaded: 90000,
+          elementsLoaded: 90000,
           bytesLoaded: 360000,
           visiblePoints: 0,
           avgQueryTime: 200,
@@ -610,7 +610,7 @@ describe('DataLoadingMonitor', () => {
           cacheMisses: 0,
           evictions: 0,
           errors: 0,
-          pointsLoaded: 0,
+          elementsLoaded: 0,
           bytesLoaded: 0,
           visiblePoints: 0,
           avgQueryTime: 0,
@@ -634,7 +634,7 @@ describe('DataLoadingMonitor', () => {
           cacheMisses: 0,
           evictions: 0,
           errors: 0,
-          pointsLoaded: 0,
+          elementsLoaded: 0,
           bytesLoaded: 0,
           visiblePoints: 0,
           avgQueryTime: 0,
@@ -690,7 +690,7 @@ describe('DataLoadingMonitor', () => {
           cacheMisses: 0,
           evictions: 0,
           errors: 0,
-          pointsLoaded: 100,
+          elementsLoaded: 100,
           bytesLoaded: 400,
           visiblePoints: 0,
           avgQueryTime: 10,
@@ -713,7 +713,7 @@ describe('DataLoadingMonitor', () => {
       expect(metricsBefore!.type).toBe('point-spatial-index');
       expect(metricsBefore!.path).toBe('/test');
       expect(metricsBefore!.queries).toBe(1);
-      expect(metricsBefore!.pointsLoaded).toBe(100);
+      expect(metricsBefore!.elementsLoaded).toBe(100);
 
       // Process queued events (with polling architecture, events are queued until tick)
       monitor.show(); // Make visible so forceUpdate works

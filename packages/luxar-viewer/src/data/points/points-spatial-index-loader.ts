@@ -55,6 +55,7 @@ import {
   OnceInit,
   computeLoadLatency,
   recordLoadEvent,
+  finishQueryTracking,
   LoaderEventEmitter,
   warnExtendToAllNoDimensions,
   announceExtendToAllOnce,
@@ -121,8 +122,9 @@ export class PointsSpatialIndexLoader implements DataLoader, LoaderMonitor {
 
   // Monitoring
   private readonly events = new LoaderEventEmitter();
-  private metrics: LoaderMetrics;
-  private activeQueries = new Map<string, QueryInfo>();
+  private readonly metrics: LoaderMetrics;
+  private readonly activeQueries = new Map<string, QueryInfo>();
+  private nextQueryId = 0;
   private lastQueryCells = 0;
   private zarrStore: zarr.Readable | null = null;
 
@@ -189,7 +191,7 @@ export class PointsSpatialIndexLoader implements DataLoader, LoaderMonitor {
       loads: 0,
       evictions: 0,
       errors: 0,
-      pointsLoaded: 0,
+      elementsLoaded: 0,
       bytesLoaded: 0,
       visiblePoints: 0, // Updated on each query
       avgQueryTime: 0,
@@ -469,278 +471,20 @@ export class PointsSpatialIndexLoader implements DataLoader, LoaderMonitor {
   async loadPoints(viewState: ViewState, session?: UpdateSession): Promise<LoadedPointsData> {
     // Plain-leaf S-cache: a decoded slice is cached as a 1-element ladder
     // under the same key contract as the progressive loaders. Points cache
-    // POST-projection data (projection is folded into loadPoints and consumes
-    // only key fields + node-static context), so a hit skips the WASM
-    // projection too. A hit returns the SAME payload object on every
+    // POST-projection data (projection is folded into loadPointsInternal and
+    // consumes only key fields + node-static context), so a hit skips the
+    // WASM projection too. A hit returns the SAME payload object on every
     // same-view call, so the downstream reference-identity commit check
     // turns same-slice revisits into no-ops.
     const cached = restoreLadder<LoadedPointsData>(this.sliceCache, this.node.path, viewState, 1);
     if (cached) return cached[0];
 
     const startTime = Date.now();
-    const queryId = `${this.node.path}-${startTime}`;
+    const queryId = `${this.node.path}-${startTime}-${this.nextQueryId++}`;
 
     try {
-      await this._onceInit.ensure(() => this.initialize());
-
-      // Check if loader is properly initialized (chunk index OR fallback with total points count)
-      if (!this.chunkIndex && this.totalPointsNoIndex === 0) {
-        // Zero points is still valid - it just means we have no points to load
-        log.warning(
-          Modules.SPATIAL_INDEX_LOADER,
-          `Loader initialized with no chunk index and 0 points for ${this.node.path}`
-        );
-      }
-
-      if (!this.arrays.positions) {
-        throw new Error(
-          '[PointsLoader] Loader not properly initialized: positions array not loaded'
-        );
-      }
-
-      // Query spatial index for visible ranges (async to allow worker
-      // offload).
-      let ranges: PointRange[];
-      if (session) {
-        const querySession = session.begin('Spatial Query');
-        try {
-          ranges = await this.queryVisiblePointRanges(viewState);
-        } finally {
-          querySession.end();
-        }
-      } else {
-        ranges = await this.queryVisiblePointRanges(viewState);
-      }
-
-      // Emit query event
-      const totalPoints = ranges.reduce((sum, r) => sum + (r.end - r.start), 0);
-      this.lastQueryCells = ranges.length;
-      this.metrics.queries++;
-      this.metrics.visiblePoints = totalPoints; // Track current visible points (non-cumulative)
-
-      this.emitEvent({
-        type: 'query',
-        loader: 'point-spatial-index',
-        timestamp: Date.now(),
-        data: {
-          path: this.node.path,
-          ranges,
-          cells: ranges.length,
-          points: totalPoints,
-          queryPosition: viewState.slicePosition,
-          queryTolerance: viewState.tolerance,
-        },
-      });
-
-      // Track active query
-      this.activeQueries.set(queryId, {
-        id: queryId,
-        loader: 'point-spatial-index',
-        path: this.node.path,
-        startTime,
-        status: 'loading',
-        cells: ranges.length,
-        points: totalPoints,
-        ranges,
-      });
-
-      if (ranges.length === 0) {
-        // No visible points - return empty dataset (cached too: an empty
-        // slice is a valid, ~0-byte result that revisits should skip).
-        this.activeQueries.delete(queryId);
-        const empty = this.createEmptyPointsData(viewState);
-        storeLadder(this.sliceCache, this.node.path, viewState, [empty], {
-          scan: viewState.frameBudgetMs != null,
-          pin: viewState.prefetch === true,
-        });
-        return empty;
-      }
-
-      // Load all arrays with the SAME ranges (critical for alignment!)
-      // All five attribute arrays load CONCURRENTLY: distinct zarr arrays,
-      // distinct freshly-allocated output buffers. The unified request queue
-      // this used to wait for exists now — every chunk fetch funnels through
-      // the global fetch gate (utils/fetch-concurrency.ts, 64-wide, HTTP/2) —
-      // so parallel attributes overlap network + decode latency instead of
-      // saturating the connection pool.
-      type ArrayType = Float32Array | Uint8Array | Uint16Array | Float16Array;
-      let positions: ArrayType;
-      let colors: ArrayType | null = null;
-      let radii: ArrayType | null = null;
-      let sharpness: ArrayType | null = null;
-      // optional per-point scalars for colormap lookup.
-      let scalars: ArrayType | null = null;
-
-      const loadSession = session?.begin('Load Arrays');
-      try {
-        if (!this._initialLoadDone) {
-          log.load(
-            Modules.SPATIAL_INDEX_LOADER,
-            `Loading attributes concurrently for ${ranges.length} ranges`
-          );
-        }
-
-        const nullResult = Promise.resolve(null);
-        let positionsResult: ArrayType | null;
-        [positionsResult, colors, radii, sharpness, scalars] = await Promise.all([
-          // positions (required)
-          this.loadRanges('positions', ranges),
-          // optional attributes; scalars zarr opened in initialize() when has_scalars=true.
-          this.arrays.colors ? this.loadColorRanges(ranges) : nullResult,
-          this.arrays.radii ? this.loadRanges('radii', ranges) : nullResult,
-          this.arrays.sharpness ? this.loadRanges('sharpness', ranges) : nullResult,
-          this.arrays.scalars ? this.loadRanges('scalars', ranges) : nullResult,
-        ]);
-
-        if (!positionsResult) {
-          throw new Error('[PointsLoader] Failed to load positions array');
-        }
-        positions = positionsResult;
-      } finally {
-        loadSession?.end();
-      }
-
-      // Update query status
-      const query = this.activeQueries.get(queryId);
-      if (query) {
-        query.status = 'complete';
-        query.endTime = Date.now();
-      }
-
-      // Update metrics
-      const queryTime = Date.now() - startTime;
-      this.metrics.avgQueryTime =
-        (this.metrics.avgQueryTime * (this.metrics.queries - 1) + queryTime) / this.metrics.queries;
-
-      // Prepare accumulator buffers if enabled.
-      let targetBuffers: ProjectionTargetBuffers | null = null;
-
-      if (this._accumulator && appConfig.dataLoading.performance.useAccumulators) {
-        const totalPoints = ranges.reduce((sum, r) => sum + (r.end - r.start), 0);
-
-        // Ensure capacity and initialize types
-        this._accumulator.ensureCapacity(totalPoints);
-
-        // Initialize types if not already done
-        if (!this._accumulator.hasTypes()) {
-          this._accumulator.fill(0, {
-            positions: new Float32Array(3),
-            colors: colors
-              ? (colors.subarray(0, Math.min(3, colors.length)) as ColorArray)
-              : undefined,
-            radii: radii
-              ? (radii.subarray(0, Math.min(1, radii.length)) as ScalarArray)
-              : undefined,
-            sharpness: sharpness
-              ? (sharpness.subarray(0, Math.min(1, sharpness.length)) as ScalarArray)
-              : undefined,
-            // type-detect scalar buffer on first fill (Float32 vs Uint8).
-            scalars: scalars
-              ? (scalars.subarray(0, Math.min(1, scalars.length)) as ScalarArray)
-              : undefined,
-          });
-        }
-
-        // Get references to accumulator buffers (ZERO allocations!)
-        targetBuffers = {
-          positions3D: this._accumulator.getPositionBuffer(),
-          colors: this._accumulator.getColorBuffer() as ColorArray,
-          radii: this._accumulator.getRadiiBuffer() as ScalarArray,
-          sharpness: this._accumulator.getSharpnessBuffer() as ScalarArray,
-          // scalar target — only populated when the source has scalars
-          // (the projection helper checks both `scalars` and
-          // `targetBuffers.scalars` before compacting).
-          scalars: scalars ? (this._accumulator.getScalarBuffer() as ScalarArray) : undefined,
-        };
-
-        // Copy source colors/sharpness to accumulator buffers (needed for filtering later)
-        if (colors) {
-          if (colors instanceof Uint8Array && targetBuffers.colors instanceof Uint8Array) {
-            (targetBuffers.colors as Uint8Array).set(colors);
-          } else if (colors instanceof Uint16Array && targetBuffers.colors instanceof Uint16Array) {
-            (targetBuffers.colors as Uint16Array).set(colors);
-          } else if (
-            colors instanceof Float32Array &&
-            targetBuffers.colors instanceof Float32Array
-          ) {
-            (targetBuffers.colors as Float32Array).set(colors as Float32Array);
-          }
-        }
-
-        if (sharpness) {
-          if (sharpness instanceof Uint8Array && targetBuffers.sharpness instanceof Uint8Array) {
-            (targetBuffers.sharpness as Uint8Array).set(sharpness);
-          } else if (
-            sharpness instanceof Float32Array &&
-            targetBuffers.sharpness instanceof Float32Array
-          ) {
-            (targetBuffers.sharpness as Float32Array).set(sharpness as Float32Array);
-          }
-        }
-
-        // copy source scalars into accumulator buffer so projection's
-        // filter pass has them available for in-place compaction.
-        if (scalars && targetBuffers.scalars) {
-          if (scalars instanceof Uint8Array && targetBuffers.scalars instanceof Uint8Array) {
-            (targetBuffers.scalars as Uint8Array).set(scalars);
-          } else if (
-            scalars instanceof Float32Array &&
-            targetBuffers.scalars instanceof Float32Array
-          ) {
-            (targetBuffers.scalars as Float32Array).set(scalars as Float32Array);
-          }
-        }
-      }
-
-      // Project to 3D display space on the main thread, WASM-accelerated.
-      // Points projection is memory-bandwidth-bound and pairs with the
-      // zero-allocation accumulator (targetBuffers), so it stays on the
-      // main thread rather than a worker — offloading would pay transfer
-      // cost both ways for negligible compute savings. The WASM kernels
-      // (extract_3d_positions / calculate_effective_radii) run via the
-      // backend resolved here; `getPointsBackend` routes ndim > 16 to the
-      // uncapped TS reference.
-      const ndimForBackend =
-        totalPoints > 0
-          ? Math.round(positions.length / totalPoints)
-          : this.chunkIndex?.metadata.ndim || 3;
-      const wasm = await getPointsBackend(ndimForBackend);
-
-      let result: LoadedPointsData;
-      if (session) {
-        const projectSession = session.begin('Project to 3D');
-        try {
-          result = this.projectTo3D(
-            wasm,
-            positions,
-            colors,
-            radii,
-            sharpness,
-            viewState,
-            ranges,
-            targetBuffers,
-            scalars
-          );
-        } finally {
-          projectSession.end();
-        }
-      } else {
-        result = this.projectTo3D(
-          wasm,
-          positions,
-          colors,
-          radii,
-          sharpness,
-          viewState,
-          ranges,
-          targetBuffers,
-          scalars
-        );
-      }
-
-      // Clean up completed query
-      this.activeQueries.delete(queryId);
-
+      const result = await this.loadPointsInternal(viewState, session, queryId, startTime);
+      finishQueryTracking(this.activeQueries, this.metrics, queryId, startTime, 'complete');
       // Cache the decoded slice (helper clones on store — the arrays alias
       // the reused accumulator). Aborted loads throw and never reach here.
       storeLadder(this.sliceCache, this.node.path, viewState, [result], {
@@ -752,13 +496,10 @@ export class PointsSpatialIndexLoader implements DataLoader, LoaderMonitor {
       // A superseded scrub aborts the in-flight read on purpose; runLoaderUpdates
       // classifies it as 'superseded' (not a failure), so don't inflate the
       // error counter or flood the monitor's error stream with non-errors.
+      // Still finish query tracking (removes the active query, records timing).
+      finishQueryTracking(this.activeQueries, this.metrics, queryId, startTime, 'error');
       if (!isAbortError(error)) {
         this.metrics.errors++;
-        const query = this.activeQueries.get(queryId);
-        if (query) {
-          query.status = 'error';
-          query.error = String(error);
-        }
         this.emitEvent({
           type: 'error',
           loader: 'point-spatial-index',
@@ -769,10 +510,250 @@ export class PointsSpatialIndexLoader implements DataLoader, LoaderMonitor {
           },
         });
       }
-
-      this.activeQueries.delete(queryId);
       throw error;
     }
+  }
+
+  private async loadPointsInternal(
+    viewState: ViewState,
+    session: UpdateSession | undefined,
+    queryId: string,
+    startTime: number
+  ): Promise<LoadedPointsData> {
+    await this._onceInit.ensure(() => this.initialize());
+
+    // Check if loader is properly initialized (chunk index OR fallback with total points count)
+    if (!this.chunkIndex && this.totalPointsNoIndex === 0) {
+      // Zero points is still valid - it just means we have no points to load
+      log.warning(
+        Modules.SPATIAL_INDEX_LOADER,
+        `Loader initialized with no chunk index and 0 points for ${this.node.path}`
+      );
+    }
+
+    if (!this.arrays.positions) {
+      throw new Error('[PointsLoader] Loader not properly initialized: positions array not loaded');
+    }
+
+    // Query spatial index for visible ranges (async to allow worker
+    // offload).
+    let ranges: PointRange[];
+    if (session) {
+      const querySession = session.begin('Spatial Query');
+      try {
+        ranges = await this.queryVisiblePointRanges(viewState);
+      } finally {
+        querySession.end();
+      }
+    } else {
+      ranges = await this.queryVisiblePointRanges(viewState);
+    }
+
+    // Emit query event
+    const totalPoints = ranges.reduce((sum, r) => sum + (r.end - r.start), 0);
+    this.lastQueryCells = ranges.length;
+    this.metrics.queries++;
+    this.metrics.visiblePoints = totalPoints; // Track current visible points (non-cumulative)
+
+    this.emitEvent({
+      type: 'query',
+      loader: 'point-spatial-index',
+      timestamp: Date.now(),
+      data: {
+        path: this.node.path,
+        ranges,
+        cells: ranges.length,
+        points: totalPoints,
+        queryPosition: viewState.slicePosition,
+        queryTolerance: viewState.tolerance,
+      },
+    });
+
+    // Track active query
+    this.activeQueries.set(queryId, {
+      id: queryId,
+      loader: 'point-spatial-index',
+      path: this.node.path,
+      startTime,
+      status: 'loading',
+      cells: ranges.length,
+      points: totalPoints,
+      ranges,
+    });
+
+    if (ranges.length === 0) {
+      // No visible points — return empty dataset; the wrapper caches it
+      // (an empty slice is a valid, ~0-byte result that revisits should
+      // skip).
+      return this.createEmptyPointsData(viewState);
+    }
+
+    // Load all arrays with the SAME ranges (critical for alignment!)
+    // All five attribute arrays load CONCURRENTLY: distinct zarr arrays,
+    // distinct freshly-allocated output buffers. The unified request queue
+    // this used to wait for exists now — every chunk fetch funnels through
+    // the global fetch gate (utils/fetch-concurrency.ts, 64-wide, HTTP/2) —
+    // so parallel attributes overlap network + decode latency instead of
+    // saturating the connection pool.
+    type ArrayType = Float32Array | Uint8Array | Uint16Array | Float16Array;
+    let positions: ArrayType;
+    let colors: ArrayType | null = null;
+    let radii: ArrayType | null = null;
+    let sharpness: ArrayType | null = null;
+    // optional per-point scalars for colormap lookup.
+    let scalars: ArrayType | null = null;
+
+    const loadSession = session?.begin('Load Arrays');
+    try {
+      if (!this._initialLoadDone) {
+        log.load(
+          Modules.SPATIAL_INDEX_LOADER,
+          `Loading attributes concurrently for ${ranges.length} ranges`
+        );
+      }
+
+      const nullResult = Promise.resolve(null);
+      let positionsResult: ArrayType | null;
+      [positionsResult, colors, radii, sharpness, scalars] = await Promise.all([
+        // positions (required)
+        this.loadRanges('positions', ranges),
+        // optional attributes; scalars zarr opened in initialize() when has_scalars=true.
+        this.arrays.colors ? this.loadColorRanges(ranges) : nullResult,
+        this.arrays.radii ? this.loadRanges('radii', ranges) : nullResult,
+        this.arrays.sharpness ? this.loadRanges('sharpness', ranges) : nullResult,
+        this.arrays.scalars ? this.loadRanges('scalars', ranges) : nullResult,
+      ]);
+
+      if (!positionsResult) {
+        throw new Error('[PointsLoader] Failed to load positions array');
+      }
+      positions = positionsResult;
+    } finally {
+      loadSession?.end();
+    }
+
+    // Prepare accumulator buffers if enabled.
+    let targetBuffers: ProjectionTargetBuffers | null = null;
+
+    if (this._accumulator && appConfig.dataLoading.performance.useAccumulators) {
+      const totalPoints = ranges.reduce((sum, r) => sum + (r.end - r.start), 0);
+
+      // Ensure capacity and initialize types
+      this._accumulator.ensureCapacity(totalPoints);
+
+      // Initialize types if not already done
+      if (!this._accumulator.hasTypes()) {
+        this._accumulator.fill(0, {
+          positions: new Float32Array(3),
+          colors: colors
+            ? (colors.subarray(0, Math.min(3, colors.length)) as ColorArray)
+            : undefined,
+          radii: radii ? (radii.subarray(0, Math.min(1, radii.length)) as ScalarArray) : undefined,
+          sharpness: sharpness
+            ? (sharpness.subarray(0, Math.min(1, sharpness.length)) as ScalarArray)
+            : undefined,
+          // type-detect scalar buffer on first fill (Float32 vs Uint8).
+          scalars: scalars
+            ? (scalars.subarray(0, Math.min(1, scalars.length)) as ScalarArray)
+            : undefined,
+        });
+      }
+
+      // Get references to accumulator buffers (ZERO allocations!)
+      targetBuffers = {
+        positions3D: this._accumulator.getPositionBuffer(),
+        colors: this._accumulator.getColorBuffer() as ColorArray,
+        radii: this._accumulator.getRadiiBuffer() as ScalarArray,
+        sharpness: this._accumulator.getSharpnessBuffer() as ScalarArray,
+        // scalar target — only populated when the source has scalars
+        // (the projection helper checks both `scalars` and
+        // `targetBuffers.scalars` before compacting).
+        scalars: scalars ? (this._accumulator.getScalarBuffer() as ScalarArray) : undefined,
+      };
+
+      // Copy source colors/sharpness to accumulator buffers (needed for filtering later)
+      if (colors) {
+        if (colors instanceof Uint8Array && targetBuffers.colors instanceof Uint8Array) {
+          (targetBuffers.colors as Uint8Array).set(colors);
+        } else if (colors instanceof Uint16Array && targetBuffers.colors instanceof Uint16Array) {
+          (targetBuffers.colors as Uint16Array).set(colors);
+        } else if (colors instanceof Float32Array && targetBuffers.colors instanceof Float32Array) {
+          (targetBuffers.colors as Float32Array).set(colors as Float32Array);
+        }
+      }
+
+      if (sharpness) {
+        if (sharpness instanceof Uint8Array && targetBuffers.sharpness instanceof Uint8Array) {
+          (targetBuffers.sharpness as Uint8Array).set(sharpness);
+        } else if (
+          sharpness instanceof Float32Array &&
+          targetBuffers.sharpness instanceof Float32Array
+        ) {
+          (targetBuffers.sharpness as Float32Array).set(sharpness as Float32Array);
+        }
+      }
+
+      // copy source scalars into accumulator buffer so projection's
+      // filter pass has them available for in-place compaction.
+      if (scalars && targetBuffers.scalars) {
+        if (scalars instanceof Uint8Array && targetBuffers.scalars instanceof Uint8Array) {
+          (targetBuffers.scalars as Uint8Array).set(scalars);
+        } else if (
+          scalars instanceof Float32Array &&
+          targetBuffers.scalars instanceof Float32Array
+        ) {
+          (targetBuffers.scalars as Float32Array).set(scalars as Float32Array);
+        }
+      }
+    }
+
+    // Project to 3D display space on the main thread, WASM-accelerated.
+    // Points projection is memory-bandwidth-bound and pairs with the
+    // zero-allocation accumulator (targetBuffers), so it stays on the
+    // main thread rather than a worker — offloading would pay transfer
+    // cost both ways for negligible compute savings. The WASM kernels
+    // (extract_3d_positions / calculate_effective_radii) run via the
+    // backend resolved here; `getPointsBackend` routes ndim > 16 to the
+    // uncapped TS reference.
+    const ndimForBackend =
+      totalPoints > 0
+        ? Math.round(positions.length / totalPoints)
+        : this.chunkIndex?.metadata.ndim || 3;
+    const wasm = await getPointsBackend(ndimForBackend);
+
+    let result: LoadedPointsData;
+    if (session) {
+      const projectSession = session.begin('Project to 3D');
+      try {
+        result = this.projectTo3D(
+          wasm,
+          positions,
+          colors,
+          radii,
+          sharpness,
+          viewState,
+          ranges,
+          targetBuffers,
+          scalars
+        );
+      } finally {
+        projectSession.end();
+      }
+    } else {
+      result = this.projectTo3D(
+        wasm,
+        positions,
+        colors,
+        radii,
+        sharpness,
+        viewState,
+        ranges,
+        targetBuffers,
+        scalars
+      );
+    }
+
+    return result;
   }
 
   /**
@@ -1366,7 +1347,7 @@ export class PointsSpatialIndexLoader implements DataLoader, LoaderMonitor {
         occupiedCells: totalChunks, // All chunks are "occupied"
         totalCells: totalChunks,
         avgCellsPerQuery: avgChunksPerQuery,
-        avgPointsPerCell: totalChunks > 0 ? this.metrics.pointsLoaded / totalChunks : 0,
+        avgPointsPerCell: totalChunks > 0 ? this.metrics.elementsLoaded / totalChunks : 0,
         queryEfficiency: avgChunksPerQuery / Math.max(totalChunks, 1),
         rangesInCache: 0, // Range-based per-loader cache is not used.
       };

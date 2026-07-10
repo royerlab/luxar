@@ -4,21 +4,21 @@
  *
  * Originally lived in `data/points/`; hoisted to `data/loaders/` once
  * lines and gsplats grew the same monitor surface. The moving-average
- * load-time update + the load-counter increments are unit-tested in
- * isolation, without a zarr store or an active query map.
+ * load/query-time updates + the load-counter increments are unit-tested
+ * in isolation, without a zarr store.
  *
- * The `pointsLoaded` field name is kept for compatibility with the
- * existing `LoaderMetrics.pointsLoaded` shape consumed by the data-
- * loading-monitor UI; for lines / gsplats the same counter records
- * vertex / splat throughput.
+ * `elementsLoaded` is the geometry-neutral throughput counter: it records
+ * points for the points facade, vertices for lines, and splats for gsplats.
  *
  * @module data/loaders/loader-metrics
  */
 
+import type { QueryInfo } from '../../types/data-monitor-types';
+
 /** Mutable subset of the loader's metrics record we need to update. */
 export interface LoaderMetricsCounters {
   loads: number;
-  pointsLoaded: number;
+  elementsLoaded: number;
   bytesLoaded: number;
   avgLoadTime: number;
 }
@@ -28,7 +28,7 @@ export interface LoaderMetricsCounters {
  *
  * Updates:
  *   - `loads`: incremented by 1
- *   - `pointsLoaded`: incremented by `points`
+ *   - `elementsLoaded`: incremented by `elements` (points / vertices / splats)
  *   - `bytesLoaded`: incremented by `bytes`
  *   - `avgLoadTime`: rolling mean
  *     `(prev_avg × (n-1) + new_load_time) / n` after the increment
@@ -37,12 +37,12 @@ export interface LoaderMetricsCounters {
  */
 export function recordLoadEvent(
   counters: LoaderMetricsCounters,
-  points: number,
+  elements: number,
   bytes: number,
   loadTime: number
 ): LoaderMetricsCounters {
   counters.loads += 1;
-  counters.pointsLoaded += points;
+  counters.elementsLoaded += elements;
   counters.bytesLoaded += bytes;
   counters.avgLoadTime = (counters.avgLoadTime * (counters.loads - 1) + loadTime) / counters.loads;
   return counters;
@@ -61,4 +61,40 @@ export function computeLoadLatency(
 ): number {
   if (!queryStartMs) return 0;
   return nowMs - queryStartMs;
+}
+
+/** Mutable subset of the loader's metrics needed to close out a query. */
+export interface QueryMetricsCounters {
+  queries: number;
+  avgQueryTime: number;
+}
+
+/**
+ * Close out a tracked query: mark the `QueryInfo` complete/errored, drop it
+ * from `activeQueries`, and fold the elapsed time into the rolling
+ * `avgQueryTime` mean (`(prev_avg × (n-1) + elapsed) / n` over `queries`).
+ *
+ * Runs on BOTH the success and error paths so the active-query map never
+ * leaks an entry. The `queries > 0` guard skips the average when the
+ * failure happened before query registration (e.g. an init error).
+ * Shared verbatim by the points / lines / gsplats facades.
+ */
+export function finishQueryTracking(
+  activeQueries: Map<string, QueryInfo>,
+  metrics: QueryMetricsCounters,
+  queryId: string,
+  startTime: number,
+  status: 'complete' | 'error'
+): void {
+  const query = activeQueries.get(queryId);
+  if (query) {
+    query.status = status;
+    query.endTime = Date.now();
+    activeQueries.delete(queryId);
+  }
+  const queryTime = Date.now() - startTime;
+  if (metrics.queries > 0) {
+    metrics.avgQueryTime =
+      (metrics.avgQueryTime * (metrics.queries - 1) + queryTime) / metrics.queries;
+  }
 }
