@@ -254,7 +254,7 @@ describe('updateAllNDNodes', () => {
       await updateAllNDNodes(ctx);
 
       expect(prefetchSceneForDimensions).toHaveBeenCalledTimes(1);
-      const [predictedDims, _scene, loaderId, opts] = (
+      const [predictedDims, , loaderId, opts] = (
         prefetchSceneForDimensions as ReturnType<typeof vi.fn>
       ).mock.calls[0];
       expect(predictedDims.currentStep).toEqual([0, 0, 0, 6]); // peeked t+1
