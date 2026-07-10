@@ -95,6 +95,24 @@ describe('computeCacheBudgets', () => {
     expect(b.sliceBytes).toBe(SLICE_CAP);
   });
 
+  it('disabled S-cache: reserves no sliceMin, so chunk caches keep more of a tight pool', () => {
+    const heap = 512 * MB; // tight: with S-cache on, L0/L1 shrink to protect sliceMin
+    const withSlice = computeCacheBudgets(heap);
+    const noSlice = computeCacheBudgets(heap, undefined, undefined, { slice: false });
+    expect(noSlice.sliceBytes).toBe(0); // disabled → 0, not just unconstructed
+    // The freed sliceMin lets L0/L1 be at least as large as when S-cache is on.
+    expect(noSlice.l0Bytes).toBeGreaterThan(withSlice.l0Bytes);
+    expect(noSlice.l1Bytes).toBeGreaterThan(withSlice.l1Bytes);
+  });
+
+  it('disabled L0: its ceiling flows to the S-cache residual', () => {
+    const heap = 4192 * MB;
+    const withL0 = computeCacheBudgets(heap);
+    const noL0 = computeCacheBudgets(heap, undefined, undefined, { l0: false });
+    expect(noL0.l0Bytes).toBe(0);
+    expect(noL0.sliceBytes).toBeGreaterThan(withL0.sliceBytes); // gained L0's ~200MB
+  });
+
   it('device-class fallback: used when no override and no heap; source=device-class', () => {
     // cache-setup passes deviceClassPoolBytes() here for WebKit without an
     // override. A 1 GiB laptop pool → ceilings + residual S-cache.

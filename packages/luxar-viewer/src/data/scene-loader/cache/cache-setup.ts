@@ -88,9 +88,19 @@ export async function setupCaches(url: string, flags: CacheSetupFlags): Promise<
     flags.cacheBudgetMB != null && flags.cacheBudgetMB > 0
       ? flags.cacheBudgetMB * 1024 * 1024
       : undefined;
+  // Which tiers are actually active this session (single source of truth, reused
+  // both to size the budgets and to gate construction below) — so a disabled
+  // tier doesn't reserve pool it can't use.
+  const sliceEnabled = appConfig.cache.sliceCacheEnabled && !noCache && !noSliceCache;
+  const l0Enabled = appConfig.cache.l0Enabled && !noCache;
+  const l1Enabled = appConfig.cache.enabled && !noCache;
   // Device-class fallback pool (mobile/laptop/desktop) for WebKit without an
   // override — where the heap can't be measured. undefined in non-browser envs.
-  const budgets = computeCacheBudgets(undefined, poolOverrideBytes, deviceClassPoolBytes());
+  const budgets = computeCacheBudgets(undefined, poolOverrideBytes, deviceClassPoolBytes(), {
+    l0: l0Enabled,
+    l1: l1Enabled,
+    slice: sliceEnabled,
+  });
   const toMB = (bytes: number) => (bytes / 1024 / 1024).toFixed(0);
 
   let l0Cache: DecompressedChunkCache | null = null;
@@ -100,7 +110,7 @@ export async function setupCaches(url: string, flags: CacheSetupFlags): Promise<
   // disables all tiers. It is cleared on content-hash invalidation alongside L0
   // (see the onInvalidate registration below).
   let sliceCache: SliceCache | null = null;
-  if (appConfig.cache.sliceCacheEnabled && !noCache && !noSliceCache) {
+  if (sliceEnabled) {
     // No `?clear-cache` handling here (unlike L0/L1/L2 below): the SliceCache
     // is in-memory only and constructed fresh for every loadScene, so there is
     // never a prior session's state to clear.
@@ -116,7 +126,7 @@ export async function setupCaches(url: string, flags: CacheSetupFlags): Promise<
     log.info(Modules.SCENE_LOADER, 'SliceCache disabled via ?no-slice-cache URL parameter');
   }
 
-  if (appConfig.cache.l0Enabled && !noCache) {
+  if (l0Enabled) {
     l0Cache = new DecompressedChunkCache({
       maxSize: budgets.l0Bytes,
       debug: cacheDebug || appConfig.cache.debug,
@@ -138,7 +148,7 @@ export async function setupCaches(url: string, flags: CacheSetupFlags): Promise<
   let rawStore: zarr.AsyncReadable;
   let cachingStore: MultiLevelCachingStore | null = null;
 
-  if (appConfig.cache.enabled && !noCache) {
+  if (l1Enabled) {
     cachingStore = new MultiLevelCachingStore(url, {
       l1MaxSize: budgets.l1Bytes,
       l2MaxSize: appConfig.cache.l2MaxSizeMB * 1024 * 1024,

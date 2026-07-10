@@ -183,7 +183,10 @@ export function storeLadder<T extends object>(
     bytes = fit > 0 ? measureLodBytes(lods.slice(0, fit)) : 0;
   }
   if (fit === 0) return; // even the coarsest single level exceeds the budget
-  if (fit < lods.length && sliceCache.markOversizedWarned(key)) {
+  // Dedupe the warning per NODE (path), not per view: a "ladder exceeds budget"
+  // report is about the node vs the budget, not any one slice — so a long
+  // playback sweep over many views of the same node warns once, not once/view.
+  if (fit < lods.length && sliceCache.markOversizedWarned(path)) {
     log.warning(
       Modules.CACHE,
       `SliceCache: ladder for ${path} exceeds the budget; caching ${fit}/${lods.length} coarse levels (fine tail re-decodes). Consider a larger cache budget.`

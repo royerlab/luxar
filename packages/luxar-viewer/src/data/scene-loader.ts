@@ -737,6 +737,10 @@ export class SceneLoader {
       // and leave the loaders capped after playback ends. It flows to the
       // loaders only via the per-type handler ctxs (buildUpdateCtxs).
       const { frameBudgetMs, ...incomingViewState } = viewState;
+      // `prefetch` is likewise a transient directive (set only on the
+      // SlicePrefetcher's shadow passes); strip it too so it can never persist
+      // into `this.viewState` and pin every subsequent foreground store.
+      delete incomingViewState.prefetch;
 
       // CRITICAL: Deep copy arrays to prevent mutation during async operations
       // The spread operator only does shallow copy - arrays must be explicitly copied
