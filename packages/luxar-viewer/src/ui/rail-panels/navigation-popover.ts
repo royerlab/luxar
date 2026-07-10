@@ -124,6 +124,26 @@ function buildModeParams(
         saveSettings();
         triggerAnimation();
       });
+
+    const zs = config.controls.orbit.zoom.speed;
+    gui
+      .add(settings, 'orbitZoomSpeed', zs.min, zs.max, zs.step || 0.1)
+      .name('Zoom Speed')
+      .onChange((value: number) => {
+        sceneManager.setOrbitZoomSpeed(value);
+        saveSettings();
+        triggerAnimation();
+      });
+
+    const df = config.controls.orbit.damping.factor;
+    gui
+      .add(settings, 'orbitDampingFactor', df.min, df.max, df.step || 0.01)
+      .name('Damping')
+      .onChange((value: number) => {
+        sceneManager.setOrbitDampingFactor(value);
+        saveSettings();
+        triggerAnimation();
+      });
   } else if (mode === 'fly') {
     const range = flySpeedRange(sceneManager);
     gui
@@ -140,6 +160,15 @@ function buildModeParams(
       .name('Rotation Speed')
       .onChange((value: number) => {
         sceneManager.setFlyRotationSpeed(value);
+        saveSettings();
+      });
+
+    const look = config.controls.fly.look.mouseSpeed;
+    gui
+      .add(settings, 'flyLookSpeed', look.min, look.max, look.step || 0.0005)
+      .name('Look Sensitivity')
+      .onChange((value: number) => {
+        sceneManager.setFlyLookSpeed(value);
         saveSettings();
       });
 

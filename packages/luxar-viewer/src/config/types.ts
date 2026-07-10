@@ -32,7 +32,6 @@ export type { InputConfig };
 
 import type {
   ConfigRange,
-  ConfigValue,
   ControlsConfig,
   FlyControlsConfig,
   OrbitControlsConfig,
@@ -40,7 +39,6 @@ import type {
 } from './sections/controls/types';
 export type {
   ConfigRange,
-  ConfigValue,
   ControlsConfig,
   FlyControlsConfig,
   OrbitControlsConfig,

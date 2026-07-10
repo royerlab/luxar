@@ -9,13 +9,6 @@ export interface ConfigRange {
 }
 
 /**
- * Configuration value with default
- */
-export interface ConfigValue {
-  default: number;
-}
-
-/**
  * Fly controls configuration
  */
 export interface FlyControlsConfig {
@@ -32,7 +25,7 @@ export interface FlyControlsConfig {
     damping: ConfigRange;
   };
   look: {
-    mouseSpeed: ConfigValue;
+    mouseSpeed: ConfigRange;
   };
   physics: {
     velocityThreshold: number;

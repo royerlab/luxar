@@ -28,4 +28,13 @@ export const FOLDER_ICONS = {
   // Paint palette — Theme.
   theme:
     '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3a9 9 0 0 0 0 18c1.6 0 2-1.2 1.2-2.1-.8-1 .1-2.4 1.3-2.4H17a4 4 0 0 0 4-4C21 6 17 3 12 3z"/><circle cx="7.5" cy="12" r="1.1"/><circle cx="9.5" cy="8" r="1.1"/><circle cx="14.5" cy="8" r="1.1"/></svg>',
+  // Mouse pointer — Input (Settings popover).
+  input:
+    '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 3l14 7-6.5 1.5L14 18l-3 1.3-1.5-6.5L5 3z"/></svg>',
+  // Database stack — Caching (Settings popover).
+  caching:
+    '<svg viewBox="0 0 24 24" aria-hidden="true"><ellipse cx="12" cy="5.5" rx="8" ry="2.8"/><path d="M4 5.5v6c0 1.6 3.6 2.8 8 2.8s8-1.2 8-2.8v-6"/><path d="M4 11.5v6c0 1.6 3.6 2.8 8 2.8s8-1.2 8-2.8v-6"/></svg>',
+  // Wrench — Advanced (Settings popover).
+  advanced:
+    '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M14.5 6.5a4.5 4.5 0 0 0-6 6L3 18l3 3 5.5-5.5a4.5 4.5 0 0 0 6-6L14 13l-3-3 3.5-3.5z"/></svg>',
 } as const;

@@ -53,6 +53,13 @@ export interface ControlsManagerConfig {
    * drag rotates) stays in place. Ignored in ortho and fly modes.
    */
   naturalDrag?: boolean;
+  /**
+   * Orbit feel parameters. Also applied to ortho mode — it is the same
+   * LuxarOrbitControls class, and the live setters mutate whichever
+   * instance is current, so both modes share one zoom/damping feel.
+   */
+  orbitZoomSpeed?: number;
+  orbitDampingFactor?: number;
   flyMovementSpeed?: number;
   flyRotationSpeed?: number;
   flyLookSpeed?: number;
@@ -89,6 +96,8 @@ export class ControlsManager extends THREE.EventDispatcher<ControlsManagerEventM
     // Default to true on macOS; rendering-controls persistence overrides
     // this with any stored user choice as soon as settings load.
     naturalDrag: isMacPlatform(),
+    orbitZoomSpeed: config.controls.orbit.zoom.speed.default,
+    orbitDampingFactor: config.controls.orbit.damping.factor.default,
     flyMovementSpeed: config.controls.fly.movement.speed.default,
     flyRotationSpeed: config.controls.fly.rotation.speed.default,
     flyLookSpeed: config.controls.fly.look.mouseSpeed.default,
@@ -333,6 +342,36 @@ export class ControlsManager extends THREE.EventDispatcher<ControlsManagerEventM
       return this.currentControls.autoRotate;
     }
     return false;
+  }
+
+  /**
+   * Orbit wheel-zoom speed. `zoomSpeed` is read live per wheel event, so
+   * mutating the field applies immediately. Also affects ortho mode (same
+   * LuxarOrbitControls class) — one shared zoom feel across both.
+   */
+  public setOrbitZoomSpeed(speed: number): void {
+    this.config.orbitZoomSpeed = speed;
+    if (this.currentControls instanceof LuxarOrbitControls) {
+      this.currentControls.zoomSpeed = speed;
+    }
+  }
+
+  /**
+   * Orbit damping factor (camera "weight"). `dampingFactor` is read live
+   * per frame; applies immediately. Shared with ortho like the zoom speed.
+   */
+  public setOrbitDampingFactor(factor: number): void {
+    this.config.orbitDampingFactor = factor;
+    if (this.currentControls instanceof LuxarOrbitControls) {
+      this.currentControls.dampingFactor = factor;
+    }
+  }
+
+  public setFlyLookSpeed(speed: number): void {
+    this.config.flyLookSpeed = speed;
+    if (this.currentControls instanceof LuxarFlyControls) {
+      this.currentControls.lookSpeed = speed;
+    }
   }
 
   public setFlyMovementSpeed(speed: number): void {
