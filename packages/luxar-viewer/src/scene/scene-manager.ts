@@ -1128,6 +1128,21 @@ export class SceneManager extends THREE.EventDispatcher<{
     this.controls.setAutoRotateSpeed(speed);
   }
 
+  /** Orbit wheel-zoom speed (live; shared with ortho — same control class). */
+  setOrbitZoomSpeed(speed: number): void {
+    this.controls.setOrbitZoomSpeed(speed);
+  }
+
+  /** Orbit damping factor (live; shared with ortho — same control class). */
+  setOrbitDampingFactor(factor: number): void {
+    this.controls.setOrbitDampingFactor(factor);
+  }
+
+  /** Fly-mode mouse-look sensitivity (live on the current fly controls). */
+  setFlyLookSpeed(speed: number): void {
+    this.controls.setFlyLookSpeed(speed);
+  }
+
   /**
    * Toggle "natural drag" — swap LEFT ↔ RIGHT mouse buttons in orbit mode so
    * a one-finger touchpad drag rotates and right-drag pans. Applies to

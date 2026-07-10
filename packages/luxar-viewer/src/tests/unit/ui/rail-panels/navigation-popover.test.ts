@@ -99,8 +99,11 @@ function makeStubs(
     setAutoRotate: vi.fn(),
     setAutoRotateSpeed: vi.fn(),
     setNaturalDrag: vi.fn(),
+    setOrbitZoomSpeed: vi.fn(),
+    setOrbitDampingFactor: vi.fn(),
     setFlyMovementSpeed: vi.fn(),
     setFlyRotationSpeed: vi.fn(),
+    setFlyLookSpeed: vi.fn(),
     setFlyInertialMode: vi.fn(),
     setFlyDamping: vi.fn(),
     setFlyRotationDamping: vi.fn(),
@@ -109,8 +112,11 @@ function makeStubs(
     autoRotate: false,
     autoRotateSpeed: 0.25,
     naturalDrag: false,
+    orbitZoomSpeed: 1.0,
+    orbitDampingFactor: 0.25,
     flyMovementSpeed: 1.0,
     flyRotationSpeed: 1.0,
+    flyLookSpeed: 0.002,
     flyInertialMode: true,
     flyDamping: 0.999,
     flyRotationDamping: 0.999,
@@ -170,6 +176,19 @@ describe('buildNavigationPopover', () => {
       expect(stubs.sceneManager.setNaturalDrag).toHaveBeenCalledWith(true);
     });
 
+    it('wires orbitZoomSpeed → setOrbitZoomSpeed', () => {
+      byProp('orbitZoomSpeed')._onChangeFn?.(2.0);
+      expect(stubs.sceneManager.setOrbitZoomSpeed).toHaveBeenCalledWith(2.0);
+      expect(stubs.saveSettings).toHaveBeenCalled();
+      expect(stubs.triggerAnimation).toHaveBeenCalled();
+    });
+
+    it('wires orbitDampingFactor → setOrbitDampingFactor', () => {
+      byProp('orbitDampingFactor')._onChangeFn?.(0.1);
+      expect(stubs.sceneManager.setOrbitDampingFactor).toHaveBeenCalledWith(0.1);
+      expect(stubs.saveSettings).toHaveBeenCalled();
+    });
+
     it('does NOT build fly controls in orbit mode', () => {
       expect(currentGui.controllers.some((c) => c.prop === 'flyMovementSpeed')).toBe(false);
     });
@@ -191,6 +210,12 @@ describe('buildNavigationPopover', () => {
     it('wires flyRotationSpeed → setFlyRotationSpeed', () => {
       byProp('flyRotationSpeed')._onChangeFn?.(1.5);
       expect(stubs.sceneManager.setFlyRotationSpeed).toHaveBeenCalledWith(1.5);
+    });
+
+    it('wires flyLookSpeed → setFlyLookSpeed', () => {
+      byProp('flyLookSpeed')._onChangeFn?.(0.005);
+      expect(stubs.sceneManager.setFlyLookSpeed).toHaveBeenCalledWith(0.005);
+      expect(stubs.saveSettings).toHaveBeenCalled();
     });
 
     it('wires flyDamping → setFlyDamping', () => {

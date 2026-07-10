@@ -32,7 +32,7 @@ export interface FlyControlsConfig {
     damping: ConfigRange;
   };
   look: {
-    mouseSpeed: ConfigValue;
+    mouseSpeed: ConfigRange;
   };
   physics: {
     velocityThreshold: number;

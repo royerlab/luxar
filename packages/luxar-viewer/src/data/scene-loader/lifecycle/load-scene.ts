@@ -44,6 +44,7 @@ import type { UpdateProfiler } from '../../../profiling/update-profiler';
 import type { MultiLevelCachingStore } from '../../../cache/multi-level-caching-store';
 import type { DecompressedChunkCache } from '../../../cache/decompressed-chunk-cache';
 import type { SliceCache } from '../../../cache/slice-cache';
+import type { CacheBudgets } from '../../../cache/heap-budget';
 import type { SceneLoaderMonitorPort } from '../../scene-loader-monitor-port';
 import type { LODGroupRegistry } from '../../../scene/lod-group-registry';
 import { setupCaches } from '../cache/cache-setup';
@@ -111,6 +112,8 @@ export interface LoadSceneCtx {
   setCachingStore(store: MultiLevelCachingStore | null): void;
   setL0Cache(cache: DecompressedChunkCache | null): void;
   setSliceCache(cache: SliceCache | null): void;
+  /** Resolved per-tier cache budgets (for the Settings popover readout). */
+  setCacheBudgets(budgets: CacheBudgets | null): void;
   setZarrStore(store: zarr.Readable): void;
   setRootGroup(group: THREE.Group): void;
   setSceneGraph(graph: SceneNode): void;
@@ -230,6 +233,7 @@ export async function loadScene(url: string, ctx: LoadSceneCtx): Promise<THREE.G
   ctx.setL0Cache(cacheResult.l0Cache);
   ctx.setSliceCache(cacheResult.sliceCache);
   ctx.setCachingStore(cacheResult.cachingStore);
+  ctx.setCacheBudgets(cacheResult.budgets);
   const zarrStore = (await zarr.openStore(cacheResult.rawStore)) as zarr.Readable;
   ctx.setZarrStore(zarrStore);
 

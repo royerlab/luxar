@@ -64,6 +64,8 @@ export function createOrbitControls(ctx: ControlsCreationCtx): LuxarOrbitControl
     screenSpacePanning: true,
     autoRotate: ctx.config.autoRotate || false,
     autoRotateSpeed: ctx.config.autoRotateSpeed || 0.25,
+    zoomSpeed: ctx.config.orbitZoomSpeed,
+    dampingFactor: ctx.config.orbitDampingFactor,
     minDistance: minDist,
     maxDistance: maxDist,
   });
@@ -105,6 +107,11 @@ export function createOrthoControls(ctx: ControlsCreationCtx): LuxarOrbitControl
     enableDamping: true,
     screenSpacePanning: true,
     enableRotate: false,
+    // Same feel knobs as orbit — ortho is the same class, and the live
+    // setOrbitZoomSpeed/-DampingFactor setters mutate whichever is current,
+    // so construction must match to avoid feel-flips on mode switch.
+    zoomSpeed: ctx.config.orbitZoomSpeed,
+    dampingFactor: ctx.config.orbitDampingFactor,
     minZoom,
     maxZoom,
     minDistance: 0,
