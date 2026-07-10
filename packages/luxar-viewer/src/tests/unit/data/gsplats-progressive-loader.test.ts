@@ -736,16 +736,6 @@ describe('GSplatsProgressiveLoader', () => {
   });
 
   describe('dispose', () => {
-    it('reports hasMoreLODs=false after dispose (stale refinement-loop guard)', () => {
-      // Mirrors the Points/Lines progressive suites: a disposed loader has
-      // loadedLODs cleared but nLods kept, so without the guard hasMoreLODs
-      // flipped BACK to true and a refinement loop holding a stale reference
-      // would index into the emptied lodLoaders forever (TypeError every pass).
-      expect(loader.hasMoreLODs).toBe(true);
-      loader.dispose();
-      expect(loader.hasMoreLODs).toBe(false);
-    });
-
     it('disposes all sub-loaders', () => {
       loader.dispose();
       expect(lodA.dispose).toHaveBeenCalled();

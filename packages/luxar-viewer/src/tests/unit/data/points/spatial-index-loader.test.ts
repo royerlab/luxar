@@ -606,6 +606,10 @@ describe('PointsSpatialIndexLoader', () => {
       expect(metrics.queries).toBe(1);
       expect(metrics.type).toBe('point-spatial-index');
       expect(metrics.path).toBe('/test_points');
+      // Regression (×3 symmetric): visibleElements is written at query time.
+      // The lines loader shipped for months never setting it (monitor showed
+      // a permanent 0) — pin it in every suite.
+      expect(metrics.visibleElements).toBeGreaterThan(0);
       // Resident memory is populated from the accumulator after a load
       // (was a perpetual 0 before — never written). Matches the MB→bytes
       // conversion done in recordLoadMetrics.
@@ -628,12 +632,20 @@ describe('PointsSpatialIndexLoader', () => {
         tolerance: [0, 0, 0, 0.1],
       };
 
-      await loader.loadPoints(viewState);
+      // Make elapsed time observable: every Date.now() call advances 5ms, so
+      // if the wrapper's close-out were deleted, avgQueryTime would stay 0
+      // and the strict > 0 assertion below would fail.
+      let t = 1_000_000;
+      const nowSpy = vi.spyOn(Date, 'now').mockImplementation(() => (t += 5));
+      try {
+        await loader.loadPoints(viewState);
+      } finally {
+        nowSpy.mockRestore();
+      }
 
       const metrics = loader.getMetrics();
       expect(metrics.queries).toBe(1);
-      expect(Number.isFinite(metrics.avgQueryTime)).toBe(true);
-      expect(metrics.avgQueryTime).toBeGreaterThanOrEqual(0);
+      expect(metrics.avgQueryTime).toBeGreaterThan(0);
     });
 
     it('should handle listener errors gracefully', async () => {
@@ -817,6 +829,42 @@ describe('PointsSpatialIndexLoader', () => {
   });
 
   describe('resource cleanup', () => {
+    it('dispose clears the active-query map (mid-flight leak guard)', async () => {
+      // Regression (×3 symmetric): points dispose() historically omitted
+      // activeQueries.clear(), so a dispose mid-flight leaked the tracked
+      // query entry (lines/gsplats always cleared it).
+      const baseViewState: ViewState = {
+        displayDims: [0, 1, 2],
+        slicePosition: [0, 0, 0, 5],
+        tolerance: [0, 0, 0, 0.1],
+      };
+
+      // Pre-initialize (chunk-bounds open + get) with the fast mock.
+      await loader.loadPoints(baseViewState);
+      expect(loader.getActiveQueries().length).toBe(0);
+
+      // Gate data-array reads so a query is observably mid-flight.
+      let release!: () => void;
+      const gate = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      (zarr.get as any).mockImplementation(() =>
+        gate.then(() => ({ data: new Float32Array(100) }))
+      );
+
+      const loadPromise = loader
+        .loadPoints({ ...baseViewState, slicePosition: [0.5, 0.5, 0.5, 5] })
+        .catch(() => null); // dispose mid-flight may fail the load — expected
+
+      for (let i = 0; i < 10; i++) await Promise.resolve();
+      expect(loader.getActiveQueries().length).toBeGreaterThanOrEqual(1);
+
+      loader.dispose();
+      expect(loader.getActiveQueries().length).toBe(0);
+
+      release();
+      await loadPromise;
+    });
     it('should dispose resources properly', async () => {
       const viewState: ViewState = {
         displayDims: [0, 1, 2],

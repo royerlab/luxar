@@ -347,7 +347,10 @@ loadTime)` (rolling-mean update of `loads` / `elementsLoaded` /
   `avgQueryTime` — called by the facades' `loadX` wrappers on BOTH the
   success and error paths so the active-query map never leaks), plus
   `makeInitialLoaderMetrics(type, path)` (the zeroed initial `LoaderMetrics`
-  record every facade starts from). Pure helpers, unit-tested without a zarr
+  record every facade starts from), and `buildSpatialIndexMetrics(chunkCount,
+  chunkSize, queries, lastQueryCells, elementsLoaded)` (the chunk-index
+  telemetry snapshot all three facades attach as `metrics.spatialIndex` for
+  the monitor advisor). Pure helpers, unit-tested without a zarr
   store, used by all three geometry facades. `elementsLoaded` is the
   geometry-neutral throughput counter (points / vertices / splats).
 - **`spatial-facade.ts`** — shared facade-level orchestration for the three
@@ -356,7 +359,7 @@ loadTime)` (rolling-mean update of `loads` / `elementsLoaded` /
   `loadSliceWithCache(ctx, viewState, loadInternal)` (the `loadX` template —
   S-cache restore → internal load → query close-out → S-cache store, with the
   abort-aware error branch), `recordLoadMetrics(ctx, arrayName, elements,
-  output)` (per-array load metrics + 'load' event), and
+output)` (per-array load metrics + 'load' event), and
   `runWithActiveSignal` / `runWithResidencyProbe` (the `updateView` /
   `updateViewWithResidency` bodies: per-update abort-signal publication and
   cache-residency probing). Each used to exist as three byte-identical
@@ -396,6 +399,7 @@ src/data/loaders/
 ├── color-loader.ts               # Shared color-range loader with native-dtype preservation
 ├── transferable-accumulator.ts   # Zero-allocation + worker offload buffer pattern
 ├── loader-metrics.ts             # Pure helpers for load/query metric bookkeeping
+├── spatial-facade.ts             # Shared loadX/updateView/metrics facade orchestration
 ├── monitor-events.ts             # LoaderEventEmitter — listener fan-out with error isolation
 ├── once-init.ts                  # One-shot async initializer with retry-on-failure
 ├── extend-to-all-preflight.ts    # Shared extend_to_all warning + one-time announce

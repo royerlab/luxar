@@ -171,12 +171,13 @@ export function renderStatGrid(
 /**
  * Map LoaderType identifier to its short display label / item-unit pair.
  * Keeps the loader-list rendering geometry-aware: a lines loader shows
- * "verts", a gsplats loader shows "splats", points shows "pts".
+ * "segs" (visibleElements counts visible segments — the queried unit for
+ * lines), a gsplats loader shows "splats", points shows "pts".
  */
 function loaderDisplay(type: LoaderMetrics['type']): { label: string; unit: string } {
   switch (type) {
     case 'lines-spatial-index':
-      return { label: 'lines', unit: 'verts' };
+      return { label: 'lines', unit: 'segs' };
     case 'gsplats-spatial-index':
       return { label: 'gsplats', unit: 'splats' };
     case 'point-spatial-index':

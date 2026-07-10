@@ -134,8 +134,7 @@ class TestLinesNode:
             lines = scene.add_lines("polyline", vertices, widths, line_type="polyline")
 
             # Test properties
-            assert lines.n_elements == 4
-            assert lines.n_elements == 4  # n_elements == n_vertices
+            assert lines.n_elements == 4  # vertex count (geometry-neutral)
             assert lines.n_segments == 3  # polyline: N-1 segments
             assert lines.line_type == "polyline"
             assert lines.ndim == 3
@@ -276,8 +275,7 @@ class TestGSplatsNode:
             scene = compiler.create_scene(dimensions=Dimensions.default_2d())
             gsplats = scene.add_gsplats("splats2d", centers, amplitudes, cholesky)
 
-            assert gsplats.n_elements == 3
-            assert gsplats.n_elements == 3  # n_elements == n_splats
+            assert gsplats.n_elements == 3  # splat count (geometry-neutral)
             assert gsplats.ndim == 2
             assert gsplats.has_colors is False
             assert gsplats.amplitude_range["min"] == 1.0
