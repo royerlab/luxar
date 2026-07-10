@@ -49,7 +49,7 @@ import type {
 } from '../../types/data-monitor-types';
 import { LinesDataAccumulator, type AccumulatorStats } from '../accumulators/lines';
 import { config as appConfig } from '../../config';
-import type { UpdateProfiler, UpdateSession } from '../../profiling/update-profiler';
+import type { UpdateSession } from '../../profiling/update-profiler';
 import { DecompressedChunkCache } from '../../cache/decompressed-chunk-cache';
 import { wrapWithCache } from '../../cache/decompressed-chunk-cache/cached-zarr-array';
 import { ResidencyAccumulator } from '../../cache/residency-probe';
@@ -129,7 +129,6 @@ export class LinesSpatialIndexLoader implements LinesDataLoader {
     node: SceneNode,
     refRegistry?: ArrayRefRegistry,
     zarrStore?: zarr.Readable,
-    profiler?: UpdateProfiler,
     l0Cache?: DecompressedChunkCache,
     prefetcher?: ChunkPrefetcher,
     sliceCache?: SliceCache
@@ -144,9 +143,6 @@ export class LinesSpatialIndexLoader implements LinesDataLoader {
     this.l0Cache = l0Cache || null;
     this.prefetcher = prefetcher || null;
     this.sliceCache = sliceCache || null;
-    // profiler parameter kept for API compatibility; session is passed directly to methods
-    void profiler;
-
     // Geometry-neutral counters: elementsLoaded counts vertices for lines;
     // visibleElements counts visible segments (the queried unit).
     this.metrics = makeInitialLoaderMetrics('lines-spatial-index', node.path);

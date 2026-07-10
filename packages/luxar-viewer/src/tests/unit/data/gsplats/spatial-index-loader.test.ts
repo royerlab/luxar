@@ -247,7 +247,6 @@ describe('GSplatsSpatialIndexLoader', () => {
           undefined,
           undefined,
           undefined,
-          undefined,
           sliceCache
         );
       });

@@ -333,12 +333,9 @@ describe('DataLoadingMonitor', () => {
       const globalStats = monitor.getGlobalStats();
       expect(globalStats.totalQueries).toBe(20);
       expect(globalStats.totalLoads).toBe(10);
-      // L0 cache removed - cache hits should now be 0
-      expect(globalStats.totalCacheHits).toBe(0);
-      expect(globalStats.totalPointsLoaded).toBe(20000);
+      expect(globalStats.totalPoints).toBe(20000);
       // Resident memory aggregates each loader's memoryUsed (2 × 1MB). This is
       // the figure the compact badge renders.
-      expect(globalStats.totalMemoryUsed).toBe(2 * 1024 * 1024);
       expect(globalStats.totalMemory).toBe(2 * 1024 * 1024);
     });
   });

@@ -1270,7 +1270,6 @@ export class SceneLoader {
     return {
       zarrStore: this._zarrStore!,
       arrayRefRegistry: this.arrayRefRegistry,
-      profiler: this.profiler,
       l0Cache: this.l0Cache,
       sliceCache: this.sliceCache,
       cachingStore: this.cachingStore,

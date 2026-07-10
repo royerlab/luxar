@@ -37,7 +37,6 @@ function makeGlobalStats(): GlobalStats {
   return {
     totalLoaders: 0,
     activeSpatialLoaders: 0,
-    activeFallbackLoaders: 0,
     totalPoints: 0,
     totalMemory: 0,
     datasetSize: 0,
@@ -48,10 +47,6 @@ function makeGlobalStats(): GlobalStats {
     visibleSplats: 0,
     totalQueries: 0,
     totalLoads: 0,
-    totalCacheHits: 0,
-    totalPointsLoaded: 0,
-    totalMemoryUsed: 0,
-    globalCacheHitRate: 0,
     avgQueryTime: 0,
     queriesPerSecond: 0,
     recommendations: [],

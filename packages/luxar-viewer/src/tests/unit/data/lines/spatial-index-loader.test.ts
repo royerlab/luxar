@@ -278,7 +278,6 @@ describe('LinesSpatialIndexLoader', () => {
           undefined,
           undefined,
           undefined,
-          undefined,
           sliceCache
         );
       });

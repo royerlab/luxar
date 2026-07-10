@@ -601,9 +601,6 @@ describe('Data Monitor Integration', () => {
       const stats = monitor.getGlobalStats();
       // UI refresh calls loader.getMetrics() which returns queries: 2
       expect(stats.totalQueries).toBe(2);
-      // L0 cache removed - cache hits should now be 0
-      expect(stats.totalCacheHits).toBe(0);
-      expect(stats.globalCacheHitRate).toBe(0);
     });
   });
 

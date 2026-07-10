@@ -55,7 +55,7 @@ import {
 } from '../../types/gsplats';
 import { GSplatsDataAccumulator, type AccumulatorStats } from '../accumulators/gsplats';
 import { config as appConfig } from '../../config';
-import type { UpdateProfiler, UpdateSession } from '../../profiling/update-profiler';
+import type { UpdateSession } from '../../profiling/update-profiler';
 import { DecompressedChunkCache } from '../../cache/decompressed-chunk-cache';
 import { wrapWithCache } from '../../cache/decompressed-chunk-cache/cached-zarr-array';
 import { ResidencyAccumulator } from '../../cache/residency-probe';
@@ -128,7 +128,6 @@ export class GSplatsSpatialIndexLoader implements GSplatsDataLoader {
     node: SceneNode,
     refRegistry?: ArrayRefRegistry,
     zarrStore?: zarr.Readable,
-    profiler?: UpdateProfiler,
     l0Cache?: DecompressedChunkCache,
     prefetcher?: ChunkPrefetcher,
     sliceCache?: SliceCache
@@ -143,9 +142,6 @@ export class GSplatsSpatialIndexLoader implements GSplatsDataLoader {
     this.l0Cache = l0Cache || null;
     this.prefetcher = prefetcher || null;
     this.sliceCache = sliceCache || null;
-    // profiler parameter kept for API compatibility; session is passed directly to methods
-    void profiler;
-
     // Geometry-neutral counters: elementsLoaded / visibleElements count
     // splats for gsplats.
     this.metrics = makeInitialLoaderMetrics('gsplats-spatial-index', node.path);

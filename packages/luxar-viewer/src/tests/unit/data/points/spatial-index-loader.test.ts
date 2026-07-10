@@ -869,7 +869,6 @@ describe('PointsSpatialIndexLoader', () => {
         undefined,
         undefined,
         undefined,
-        undefined,
         sliceCache
       );
     });

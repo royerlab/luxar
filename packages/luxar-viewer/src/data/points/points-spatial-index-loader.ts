@@ -66,7 +66,7 @@ import type { ZarrSceneAttrs } from '../../types/zarr';
 import type { PointsMetadata } from '../../types/points';
 import { LoadedPointsDataAccumulator, type AccumulatorStats } from '../accumulators/points';
 import { config as appConfig } from '../../config';
-import type { UpdateProfiler, UpdateSession } from '../../profiling/update-profiler';
+import type { UpdateSession } from '../../profiling/update-profiler';
 import { DecompressedChunkCache } from '../../cache/decompressed-chunk-cache';
 import { wrapWithCache } from '../../cache/decompressed-chunk-cache/cached-zarr-array';
 import { ResidencyAccumulator } from '../../cache/residency-probe';
@@ -169,7 +169,6 @@ export class PointsSpatialIndexLoader implements DataLoader, LoaderMonitor {
     node: SceneNode,
     refRegistry?: ArrayRefRegistry,
     zarrStore?: zarr.Readable,
-    profiler?: UpdateProfiler,
     l0Cache?: DecompressedChunkCache,
     prefetcher?: ChunkPrefetcher,
     sliceCache?: SliceCache
@@ -184,9 +183,6 @@ export class PointsSpatialIndexLoader implements DataLoader, LoaderMonitor {
     this.l0Cache = l0Cache || null;
     this.prefetcher = prefetcher || null;
     this.sliceCache = sliceCache || null;
-    // profiler parameter kept for API compatibility; session is passed directly to methods
-    void profiler;
-
     this.metrics = makeInitialLoaderMetrics('point-spatial-index', node.path);
     this.facadeCtx = {
       metrics: this.metrics,

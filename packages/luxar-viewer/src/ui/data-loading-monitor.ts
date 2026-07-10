@@ -2007,7 +2007,6 @@ export class DataLoadingMonitor {
     return {
       totalLoaders,
       activeSpatialLoaders: activeSpatial,
-      activeFallbackLoaders: 0, // No more fallback loaders
       totalPoints,
       totalMemory,
       datasetSize, // Total points in all datasets (from zarr metadata)
@@ -2018,16 +2017,6 @@ export class DataLoadingMonitor {
       visibleSplats, // Currently visible splats
       totalQueries,
       totalLoads,
-      // `totalCacheHits` and `globalCacheHitRate` aren't a single derivable
-      // number anymore — each cache tier (L0/L1/L2) has its own hit rate, and
-      // a true "effective demand hit rate" would need per-request final-tier
-      // tracking which doesn't exist yet. Reported as 0 for back-compat with
-      // tests that assert the field's presence; consumers wanting honest data
-      // should read `getCacheMetrics()` per-tier.
-      totalCacheHits: 0,
-      totalPointsLoaded: totalPoints, // Alias for compatibility
-      totalMemoryUsed: totalMemory, // Alias for compatibility
-      globalCacheHitRate: 0,
       avgQueryTime: totalQueries > 0 ? totalQueryTime / totalQueries : 0,
       queriesPerSecond: qps,
       recommendations: this.advisor.getRecommendations(),

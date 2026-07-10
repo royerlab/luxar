@@ -219,7 +219,6 @@ export interface MonitorConfig {
 export interface GlobalStats {
   totalLoaders: number;
   activeSpatialLoaders: number;
-  activeFallbackLoaders: number; // Kept for compatibility but always 0
   totalPoints: number; // Cumulative points loaded (for throughput)
   // Resident memory across all loaders — sum of each loader's `memoryUsed`
   // (current accumulator allocation, set in the spatial-index loaders'
@@ -234,13 +233,8 @@ export interface GlobalStats {
   // Dataset metrics - GSplats
   datasetSplats: number; // Total splats in all gsplats datasets
   visibleSplats: number; // Currently visible/rendered splats
-  // Additional properties expected by tests
   totalQueries: number;
   totalLoads: number;
-  totalCacheHits: number;
-  totalPointsLoaded: number;
-  totalMemoryUsed: number;
-  globalCacheHitRate: number;
   avgQueryTime: number;
   queriesPerSecond: number;
   recommendations: Recommendation[];
