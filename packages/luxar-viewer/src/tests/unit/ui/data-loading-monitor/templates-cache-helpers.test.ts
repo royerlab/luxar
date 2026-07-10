@@ -37,7 +37,7 @@ function makeGlobalStats(): GlobalStats {
   return {
     totalLoaders: 0,
     activeSpatialLoaders: 0,
-    totalPoints: 0,
+    totalElementsLoaded: 0,
     totalMemory: 0,
     datasetSize: 0,
     visiblePoints: 0,

@@ -52,19 +52,21 @@ export function makeInitialLoaderMetrics(type: LoaderType, path: string): Loader
  * index (the queried side of its dual index).
  *
  * The grid-flavored field names are the metric shape's legacy vocabulary for
- * a chunk-based index: one "cell" = one chunk. `avgCellsPerQuery` preserves
- * the historical formula (`lastQueryCells / queries` — the LAST query's cell
- * count over the cumulative query count), kept verbatim so the advisor's
- * thresholds keep their calibration.
+ * a chunk-based index: one "cell" = one chunk. `avgCellsPerQuery` is a TRUE
+ * rolling mean — CUMULATIVE queried cells over cumulative query count. (The
+ * historical points formula divided the LAST query's cell count by the
+ * cumulative query count, which decayed ~1/n with session length and made
+ * `queryEfficiency` drift toward 0, eventually firing the advisor's
+ * "Suboptimal Query Efficiency" recommendation on any long session.)
  */
 export function buildSpatialIndexMetrics(
   chunkCount: number,
   chunkSize: number,
   queries: number,
-  lastQueryCells: number,
+  totalQueryCells: number,
   elementsLoaded: number
 ): SpatialIndexMetrics {
-  const avgChunksPerQuery = queries > 0 ? lastQueryCells / queries : 0;
+  const avgChunksPerQuery = queries > 0 ? totalQueryCells / queries : 0;
   return {
     gridShape: [chunkCount],
     gridOrigin: [0],

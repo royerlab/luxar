@@ -130,7 +130,8 @@ export class PointsSpatialIndexLoader implements DataLoader, LoaderMonitor {
   // Shared facade-helper context (data/loaders/spatial-facade.ts): stable
   // references + this-bound accessors, built once in the constructor.
   private readonly facadeCtx: SpatialFacadeCtx;
-  private lastQueryCells = 0;
+  // Cumulative queried cells across the session (drives avgCellsPerQuery).
+  private totalQueryCells = 0;
   private zarrStore: zarr.Readable | null = null;
 
   // L0 decompressed chunk cache (optional, avoids Blosc decompression on repeat access)
@@ -512,7 +513,7 @@ export class PointsSpatialIndexLoader implements DataLoader, LoaderMonitor {
 
     // Emit query event
     const totalPoints = ranges.reduce((sum, r) => sum + (r.end - r.start), 0);
-    this.lastQueryCells = ranges.length;
+    this.totalQueryCells += ranges.length;
     this.metrics.queries++;
     this.metrics.visibleElements = totalPoints; // Track current visible points (non-cumulative)
 
@@ -1263,7 +1264,7 @@ export class PointsSpatialIndexLoader implements DataLoader, LoaderMonitor {
         this.chunkIndex.metadata.total_chunks,
         this.chunkIndex.metadata.chunk_size,
         this.metrics.queries,
-        this.lastQueryCells,
+        this.totalQueryCells,
         this.metrics.elementsLoaded
       );
     }

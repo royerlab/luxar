@@ -333,7 +333,7 @@ describe('DataLoadingMonitor', () => {
       const globalStats = monitor.getGlobalStats();
       expect(globalStats.totalQueries).toBe(20);
       expect(globalStats.totalLoads).toBe(10);
-      expect(globalStats.totalPoints).toBe(20000);
+      expect(globalStats.totalElementsLoaded).toBe(20000);
       // Resident memory aggregates each loader's memoryUsed (2 × 1MB). This is
       // the figure the compact badge renders.
       expect(globalStats.totalMemory).toBe(2 * 1024 * 1024);

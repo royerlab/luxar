@@ -219,7 +219,7 @@ export interface MonitorConfig {
 export interface GlobalStats {
   totalLoaders: number;
   activeSpatialLoaders: number;
-  totalPoints: number; // Cumulative points loaded (for throughput)
+  totalElementsLoaded: number; // Cumulative elements loaded across all loaders (points/vertices/splats — throughput)
   // Resident memory across all loaders — sum of each loader's `memoryUsed`
   // (current accumulator allocation, set in the spatial-index loaders'
   // recordLoadMetrics). Drives the compact badge's memory figure.

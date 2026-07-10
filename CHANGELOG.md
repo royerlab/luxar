@@ -19,17 +19,25 @@ All notable changes to Luxar are documented in this file.
   `runWithActiveSignal`, `runWithResidencyProbe`, one per-loader
   `SpatialFacadeCtx`) and `loader-metrics.ts` (`finishQueryTracking`,
   `makeInitialLoaderMetrics`, `buildSpatialIndexMetrics`).
-- **Renames (no compat shims)**: `LoaderMetrics.pointsLoaded → elementsLoaded`,
-  `visiblePoints → visibleElements`, `MonitorEvent.data.points` /
-  `QueryInfo.points → elements`, `PointSpatialIndexMetrics →
-  SpatialIndexMetrics` (+ `avgElementsPerCell`), and a shared `ElementRange`
-  replaces the `as unknown as PointRange[]` casts. Python scene-node alias
-  properties `n_points` / `n_vertices` / `n_splats` removed (`n_elements` is
-  the one count property; on-disk metadata keys unchanged).
+- **Renames (no compat shims)**: `LoaderMetrics.pointsLoaded → elementsLoaded`
+  and `LoaderMetrics.visiblePoints → visibleElements` (loader-level,
+  geometry-neutral; the per-geometry `GlobalStats` / scene-graph trio
+  deliberately keeps `visiblePoints` / `visibleSegments` / `visibleSplats`),
+  `GlobalStats.totalPoints → totalElementsLoaded` (it always summed all
+  three geometries), `MonitorEvent.data.points` / `QueryInfo.points →
+  elements`, `PointSpatialIndexMetrics → SpatialIndexMetrics`
+  (+ `avgElementsPerCell`), and a shared `ElementRange` replaces the
+  `as unknown as PointRange[]` casts. Python scene-node alias properties
+  `n_points` / `n_vertices` / `n_splats` removed (`n_elements` is the one
+  count property; on-disk metadata keys unchanged).
 - **Fixed**: the Lines loader never wrote `visibleElements` (the monitor
   permanently showed 0 for lines layers — now the visible segment count,
-  labeled `segs`); Points `dispose()` leaked its active-query map; dead
-  monitor fields (`totalCacheHits`, `totalPointsLoaded`, `totalMemoryUsed`,
+  labeled `segs`); Points `dispose()` leaked its active-query map;
+  the monitor's `avgCellsPerQuery` /
+  `queryEfficiency` decayed ~1/n with session length (last-query cells over
+  cumulative queries — now a true cumulative mean, so long sessions no
+  longer drift into spurious low-efficiency recommendations); dead monitor
+  fields (`totalCacheHits`, `totalPointsLoaded`, `totalMemoryUsed`,
   `globalCacheHitRate`, `activeFallbackLoaders`) and the unused `profiler`
   loader-constructor param deleted.
 - **Added**: chunk-index `spatialIndex` telemetry is now reported by all three

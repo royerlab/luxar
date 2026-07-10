@@ -187,16 +187,28 @@ describe('makeInitialLoaderMetrics', () => {
 
 describe('buildSpatialIndexMetrics', () => {
   it('maps chunk-index figures onto the grid-flavored metric shape', () => {
-    const si = buildSpatialIndexMetrics(20, 256, 4, 2, 4000);
+    // 4 queries touched 8 cells cumulatively -> a true mean of 2 cells/query.
+    const si = buildSpatialIndexMetrics(20, 256, 4, 8, 4000);
     expect(si.gridShape).toEqual([20]);
     expect(si.cellSize).toEqual([256]);
     expect(si.occupiedCells).toBe(20);
     expect(si.totalCells).toBe(20);
-    // Historical formula: lastQueryCells / queries.
-    expect(si.avgCellsPerQuery).toBe(0.5);
+    expect(si.avgCellsPerQuery).toBe(2);
     expect(si.avgElementsPerCell).toBe(200);
-    expect(si.queryEfficiency).toBe(0.5 / 20);
+    expect(si.queryEfficiency).toBe(2 / 20);
     expect(si.rangesInCache).toBe(0);
+  });
+
+  it('efficiency is stable over session length (regression: the historical last/cumulative formula decayed ~1/n)', () => {
+    // Same per-query behavior (2 cells each) at 10 vs 10,000 queries must
+    // yield the SAME efficiency — the old formula divided the LAST query's
+    // cells by the cumulative count, drifting toward 0 and eventually firing
+    // the advisor's low-efficiency recommendation on any long session.
+    const early = buildSpatialIndexMetrics(20, 256, 10, 20, 4000);
+    const late = buildSpatialIndexMetrics(20, 256, 10_000, 20_000, 4_000_000);
+    expect(early.avgCellsPerQuery).toBe(2);
+    expect(late.avgCellsPerQuery).toBe(2);
+    expect(late.queryEfficiency).toBe(early.queryEfficiency);
   });
 
   it('guards the divisions at zero queries / zero chunks', () => {

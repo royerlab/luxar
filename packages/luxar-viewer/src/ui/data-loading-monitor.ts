@@ -1923,7 +1923,7 @@ export class DataLoadingMonitor {
    * Get global statistics
    */
   public getGlobalStats(): GlobalStats {
-    let totalPoints = 0;
+    let totalElementsLoaded = 0;
     let totalMemory = 0;
     let totalQueries = 0;
     let totalLoads = 0;
@@ -1940,7 +1940,7 @@ export class DataLoadingMonitor {
       t === 'point-spatial-index' || t === 'lines-spatial-index' || t === 'gsplats-spatial-index';
 
     for (const metrics of this.metrics.values()) {
-      totalPoints += metrics.elementsLoaded;
+      totalElementsLoaded += metrics.elementsLoaded;
       totalMemory += metrics.memoryUsed;
       totalQueries += metrics.queries;
       totalLoads += metrics.loads;
@@ -2007,7 +2007,7 @@ export class DataLoadingMonitor {
     return {
       totalLoaders,
       activeSpatialLoaders: activeSpatial,
-      totalPoints,
+      totalElementsLoaded,
       totalMemory,
       datasetSize, // Total points in all datasets (from zarr metadata)
       visiblePoints, // Currently visible/rendered points
