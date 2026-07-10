@@ -471,6 +471,86 @@ describe('LinesProgressiveLoader', () => {
       await l.updateView({ ...viewA, frameBudgetMs: 20 });
       expect(cachedPayload.length).toBe(1);
     });
+
+    it('stores with the scan hint while a frame budget is active, and without it when budget-free', async () => {
+      // Mirrored across the three progressive loader tests (symmetry). The
+      // hint selects scan-resistant (MRU-victim) eviction in the S-cache so
+      // cyclic playback loops keep their loop-head prefix resident.
+      const sc = new SliceCache({ maxSize: 10 * 1024 * 1024 });
+      const setSpy = vi.spyOn(sc, 'set');
+      const l = new LinesProgressiveLoader(
+        [lodA, lodB, lodC] as unknown as LinesSpatialIndexLoader[],
+        3,
+        '/l',
+        undefined,
+        sc
+      );
+      const viewA = baseViewState;
+      const viewB = { ...baseViewState, slicePosition: [0, 0, 0, 1] };
+
+      // Playback tick (budget active): the store carries scan: true.
+      await l.updateView({ ...viewA, frameBudgetMs: 10 });
+      expect(setSpy).toHaveBeenCalled();
+      expect(setSpy.mock.calls.at(-1)![2]).toEqual({ scan: true });
+
+      // Pause re-trigger (same view, budget-free): the ladder completes and
+      // the full-ladder upgrade store is scan-free.
+      setSpy.mockClear();
+      await l.updateView(viewA);
+      expect(setSpy).toHaveBeenCalled();
+      for (const call of setSpy.mock.calls) {
+        expect(call[2]).toEqual({ scan: false });
+      }
+
+      // Next playback tick at a NEW view: the departure store for A (skipped
+      // here only if not longer) and B's prefix store are scan-hinted again.
+      setSpy.mockClear();
+      await l.updateView({ ...viewB, frameBudgetMs: 10 });
+      expect(setSpy).toHaveBeenCalled();
+      for (const call of setSpy.mock.calls) {
+        expect(call[2]).toEqual({ scan: true });
+      }
+    });
+
+    it('shadow-prefetch handoff: a prefix stored by ANOTHER instance restores here and deepens', async () => {
+      // Mirrored across the three progressive loader tests (symmetry). The
+      // t+1 SlicePrefetcher runs SHADOW loader instances whose only handoff
+      // to the foreground is the shared S-cache: the shadow stores view B's
+      // prefix while the foreground displays A; the real tick at B then
+      // restores that prefix (no level-0 re-stream) and deepens with its
+      // own budget.
+      const sc = new SliceCache({ maxSize: 10 * 1024 * 1024 });
+      const shadow = new LinesProgressiveLoader(
+        [lodA, lodB, lodC] as unknown as LinesSpatialIndexLoader[],
+        3,
+        '/l',
+        undefined,
+        sc
+      );
+      const foreground = new LinesProgressiveLoader(
+        [lodA, lodB, lodC] as unknown as LinesSpatialIndexLoader[],
+        3,
+        '/l',
+        undefined,
+        sc
+      );
+      const viewA = baseViewState;
+      const viewB = { ...baseViewState, slicePosition: [0, 0, 0, 1] };
+
+      await foreground.updateView({ ...viewA, frameBudgetMs: 10 }); // real tick at A
+      await shadow.updateView({ ...viewB, frameBudgetMs: 10 }); // shadow prefetches B: prefix(1)
+
+      lodA.updateViewWithResidency.mockClear();
+      lodB.updateViewWithResidency.mockClear();
+      lodC.updateViewWithResidency.mockClear();
+
+      // Real tick at B (budget 20 = one more 30ms level): level 0 comes from
+      // the SHADOW's cache entry; the budget deepens from startLevel = 1.
+      await foreground.updateView({ ...viewB, frameBudgetMs: 20 });
+      expect(lodA.updateViewWithResidency).not.toHaveBeenCalled();
+      expect(lodB.updateViewWithResidency).toHaveBeenCalledTimes(1);
+      expect(foreground.loadedLODCount).toBe(2);
+    });
   });
 
   describe('prefetch scheduling', () => {

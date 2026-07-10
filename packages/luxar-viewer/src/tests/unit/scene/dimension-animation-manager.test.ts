@@ -294,6 +294,56 @@ describe('DimensionAnimationManager', () => {
     });
   });
 
+  describe('peekNextValue / playing surface (t+1 prefetch)', () => {
+    // Dim 3 = 'time', range [0, 10], step 1, discrete (see mockScene above).
+
+    it('returns null when the dimension is not playing', () => {
+      expect(manager.peekNextValue(3)).toBeNull();
+    });
+
+    it('peeks the next discrete value without mutating any state', () => {
+      manager.play(3, { loopMode: 'loop' });
+      const current = sceneDimsManager.getDims()!.currentStep[3];
+      expect(manager.peekNextValue(3)).toBe(current + 1);
+      expect(manager.peekNextValue(3)).toBe(current + 1); // pure — repeatable
+      expect(sceneDimsManager.getDims()!.currentStep[3]).toBe(current); // playhead untouched
+    });
+
+    it('is loop-wrap aware: at max the peek is min (the t99→t0 wrap)', () => {
+      sceneDimsManager.setDimensionValue(3, 10);
+      manager.play(3, { loopMode: 'loop' });
+      expect(manager.peekNextValue(3)).toBe(0);
+    });
+
+    it('bounce boundary: peeks the turnaround value WITHOUT flipping the live direction', () => {
+      sceneDimsManager.setDimensionValue(3, 10);
+      manager.play(3, { loopMode: 'bounce' });
+      expect(manager.peekNextValue(3)).toBe(10); // clamped at max
+      expect(manager.getState(3)?.direction).toBe('forward'); // state unmutated
+      expect(manager.peekNextValue(3)).toBe(10); // repeatable
+    });
+
+    it("returns null for 'once' at the boundary (nothing to prefetch)", () => {
+      sceneDimsManager.setDimensionValue(3, 10);
+      manager.play(3, { loopMode: 'once' });
+      expect(manager.peekNextValue(3)).toBeNull();
+    });
+
+    it('isAnyPlaying / getPlayingDimIndices track play and pause', () => {
+      expect(manager.isAnyPlaying()).toBe(false);
+      expect(manager.getPlayingDimIndices()).toEqual([]);
+      manager.play(3);
+      manager.play(4);
+      expect(manager.isAnyPlaying()).toBe(true);
+      expect(manager.getPlayingDimIndices()).toEqual([3, 4]);
+      manager.pause(3);
+      expect(manager.getPlayingDimIndices()).toEqual([4]);
+      expect(manager.isAnyPlaying()).toBe(true);
+      manager.pause(4);
+      expect(manager.isAnyPlaying()).toBe(false);
+    });
+  });
+
   describe('frame updates', () => {
     let mockTime = 0;
 

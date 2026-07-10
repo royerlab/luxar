@@ -51,6 +51,8 @@ import { DecompressedChunkCache } from '../../cache/decompressed-chunk-cache';
 import { wrapWithCache } from '../../cache/decompressed-chunk-cache/cached-zarr-array';
 import { ResidencyAccumulator } from '../../cache/residency-probe';
 import { ChunkPrefetcher } from '../../cache/chunk-prefetcher';
+import type { SliceCache } from '../../cache/slice-cache';
+import { restoreLadder, storeLadder } from '../loaders/progressive/slice-cache-helper';
 import {
   type LinesDualChunkIndex,
   loadLinesDualChunkIndex,
@@ -93,6 +95,11 @@ export class LinesSpatialIndexLoader implements LinesDataLoader {
   // Chunk prefetcher (optional, for registering array bounds to suppress 404s)
   private prefetcher: ChunkPrefetcher | null = null;
 
+  // Per-slice decoded-result cache (S-cache). Wired ONLY for plain-leaf nodes
+  // by the plain factory helper — progressive sub-LOD instances stay
+  // cache-less (their wrapper owns the whole ladder; see loader-factory.ts).
+  private sliceCache: SliceCache | null = null;
+
   // Suppress detail logs after first successful view update
   private _initialLoadDone = false;
 
@@ -119,7 +126,8 @@ export class LinesSpatialIndexLoader implements LinesDataLoader {
     zarrStore?: zarr.Readable,
     profiler?: UpdateProfiler,
     l0Cache?: DecompressedChunkCache,
-    prefetcher?: ChunkPrefetcher
+    prefetcher?: ChunkPrefetcher,
+    sliceCache?: SliceCache
   ) {
     this.zarrLocation = zarrLocation;
     this.node = node;
@@ -130,6 +138,7 @@ export class LinesSpatialIndexLoader implements LinesDataLoader {
     this.zarrStore = zarrStore || null;
     this.l0Cache = l0Cache || null;
     this.prefetcher = prefetcher || null;
+    this.sliceCache = sliceCache || null;
     // profiler parameter kept for API compatibility; session is passed directly to methods
     void profiler;
 
@@ -342,12 +351,24 @@ export class LinesSpatialIndexLoader implements LinesDataLoader {
    * @param session - Optional profiler session for nested timing
    */
   async loadLines(viewState: LinesViewState, session?: UpdateSession): Promise<LoadedLinesData> {
+    // Plain-leaf S-cache: a decoded slice is cached as a 1-element ladder
+    // under the same key contract as the progressive loaders. A hit returns
+    // the SAME payload object on every same-view call, so the downstream
+    // reference-identity commit check turns same-slice revisits into no-ops.
+    const cached = restoreLadder<LoadedLinesData>(this.sliceCache, this.node.path, viewState, 1);
+    if (cached) return cached[0];
+
     const startTime = Date.now();
     const queryId = `${this.node.path}-${startTime}-${this.nextQueryId++}`;
 
     try {
       const result = await this.loadLinesInternal(viewState, session, queryId, startTime);
       this.finishQueryTracking(queryId, startTime, 'complete');
+      // Cache the decoded slice (helper clones on store — the arrays alias
+      // the reused accumulator). Aborted loads throw and never reach here.
+      storeLadder(this.sliceCache, this.node.path, viewState, [result], {
+        scan: viewState.frameBudgetMs != null,
+      });
       return result;
     } catch (err) {
       // A superseded scrub aborts the in-flight read on purpose; runLoaderUpdates

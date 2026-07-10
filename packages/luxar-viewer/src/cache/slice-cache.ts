@@ -59,6 +59,13 @@ export interface SliceCacheStats {
   evictions: number;
   /** Hit rate (0–1). */
   hitRate: number;
+  /**
+   * Misses on keys that were previously stored and then evicted (eviction-
+   * induced misses, vs. cold misses). A high thrashMisses/misses ratio is the
+   * signature of a working set larger than the budget — e.g. cyclic playback
+   * thrash. Optional so stat mirrors that predate it keep compiling.
+   */
+  thrashMisses?: number;
 }
 
 /** Configuration options for the SliceCache. */
@@ -83,9 +90,19 @@ export class SliceCache {
   /** Default cache size derived from config.cache.sliceCacheMaxSizeMB. */
   private static readonly DEFAULT_MAX_SIZE = config.cache.sliceCacheMaxSizeMB * 1024 * 1024;
 
+  /** Tombstone cap — bounded so long sessions can't grow it unboundedly. */
+  private static readonly MAX_TOMBSTONES = 4096;
+
   private cache: LRUCache<SliceCacheEntry>;
   private debug: boolean;
   private readonly maxSize: number;
+
+  // Evicted-key tombstones (bounded FIFO): lets getStats() distinguish an
+  // eviction-induced miss ("was cached, got evicted, asked for again" —
+  // thrash) from a cold miss. A JS Set iterates in insertion order, so FIFO
+  // trimming is just "delete the first key".
+  private readonly tombstones = new Set<string>();
+  private thrashMisses = 0;
 
   constructor(options?: SliceCacheOptions) {
     const maxSize = options?.maxSize ?? SliceCache.DEFAULT_MAX_SIZE;
@@ -93,7 +110,12 @@ export class SliceCache {
     this.debug = options?.debug ?? false;
 
     // Byte-budget LRU keyed on the caller-measured retained size.
-    this.cache = new LRUCache<SliceCacheEntry>(maxSize, (entry) => entry.bytes);
+    // The onEvict hook records tombstones for thrash detection.
+    this.cache = new LRUCache<SliceCacheEntry>(
+      maxSize,
+      (entry) => entry.bytes,
+      (key) => this.recordTombstone(key)
+    );
 
     if (this.debug) {
       log.custom(
@@ -112,6 +134,10 @@ export class SliceCache {
    */
   get(key: string): SliceCacheEntry | undefined {
     const entry = this.cache.get(key);
+    if (entry === undefined && this.tombstones.has(key)) {
+      // Was cached earlier, got evicted, asked for again: thrash, not cold.
+      this.thrashMisses++;
+    }
     if (this.debug) {
       log.custom(
         LogEmoji.CACHE,
@@ -123,13 +149,24 @@ export class SliceCache {
   }
 
   /**
-   * Cache a per-slice entry (may evict LRU entries to stay within budget).
+   * Cache a per-slice entry (may evict entries to stay within budget).
    *
    * @param key - Cache key (use {@link SliceCache.makeKey}).
    * @param entry - Cloned payload + its retained byte size.
+   * @param opts.scan - The caller KNOWS it is storing inside a sequential
+   *   scan (dimension playback: the loaders pass `frameBudgetMs !== null`).
+   *   Evicts from the MRU end instead of LRU — scan-resistant eviction that
+   *   keeps the loop-head prefix resident across cyclic loops (see
+   *   `LRUCache.set`). Known trade-off: under `bounce` loop mode near a
+   *   turnaround this is locally worse than LRU (the loaders only see the
+   *   budget directive, not the loop mode) — accepted; a loop-mode-aware
+   *   per-pass hint is a possible follow-up.
    */
-  set(key: string, entry: SliceCacheEntry): void {
-    this.cache.set(key, entry);
+  set(key: string, entry: SliceCacheEntry, opts?: { scan?: boolean }): void {
+    this.cache.set(key, entry, { evictMostRecent: opts?.scan });
+    // Freshly cached: a later miss on this key is only thrash if it gets
+    // evicted AGAIN (recordTombstone re-adds it then).
+    this.tombstones.delete(key);
     if (this.debug) {
       log.custom(
         LogEmoji.CACHE,
@@ -166,7 +203,9 @@ export class SliceCache {
 
   /** Clear all cached slices (invoked on content-hash / dataset invalidation). */
   clear(): void {
-    this.cache.clear();
+    this.cache.clear(); // fires onEvict per entry — reset tombstones AFTER
+    this.tombstones.clear();
+    this.thrashMisses = 0;
     if (this.debug) {
       log.custom(LogEmoji.CACHE, Modules.CACHE, 'SliceCache cleared');
     }
@@ -189,7 +228,18 @@ export class SliceCache {
       misses,
       evictions: this.cache.evictionCount,
       hitRate: total > 0 ? hits / total : 0,
+      thrashMisses: this.thrashMisses,
     };
+  }
+
+  /** Record an evicted key as a tombstone (bounded FIFO). */
+  private recordTombstone(key: string): void {
+    this.tombstones.delete(key); // re-insert at FIFO tail if already present
+    this.tombstones.add(key);
+    if (this.tombstones.size > SliceCache.MAX_TOMBSTONES) {
+      const oldest = this.tombstones.values().next().value;
+      if (oldest !== undefined) this.tombstones.delete(oldest);
+    }
   }
 
   /**

@@ -11,7 +11,7 @@
  * directly.
  */
 
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { SliceCache } from '../../../../../cache/slice-cache';
 import {
   restoreLadder,
@@ -106,6 +106,18 @@ describe('slice-cache-helper — prefix ladders', () => {
     expect(after.hits).toBe(before.hits);
     expect(after.misses).toBe(before.misses);
     expect(after.hitRate).toBe(before.hitRate);
+  });
+
+
+  it('forwards the scan hint to SliceCache.set (scan-resistant eviction opt-in)', () => {
+    const setSpy = vi.spyOn(sc, 'set');
+    storeLadder(sc, PATH, view, [makeLod(10)], { scan: true });
+    expect(setSpy.mock.calls[0][2]).toEqual({ scan: true });
+
+    // Longer ladder (passes upgrade-if-longer) without the opt: undefined.
+    storeLadder(sc, PATH, view, [makeLod(10), makeLod(5)]);
+    expect(setSpy.mock.calls[1][2]).toBeUndefined();
+    setSpy.mockRestore();
   });
 
   it('storeLadder itself never perturbs hit/miss stats (its length check must use peek, not get)', () => {

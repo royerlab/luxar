@@ -277,7 +277,9 @@ export class PointsProgressiveLoader implements PointsDataLoader {
       // scrub-back — the S-cache's headline case — always cold. One clone
       // per slice-leave; upgrade-if-longer makes re-departures cheap no-ops.
       if (this.lastViewState && this.loadedLODs.length > 0) {
-        storeLadder(this.sliceCache, this.path, this.lastViewState, this.loadedLODs);
+        storeLadder(this.sliceCache, this.path, this.lastViewState, this.loadedLODs, {
+          scan: this._frameBudgetMs !== null,
+        });
       }
       // Try the SliceCache before discarding the ladder (see GSplats loader).
       const restored = restoreLadder<LoadedPointsData>(
@@ -374,7 +376,9 @@ export class PointsProgressiveLoader implements PointsDataLoader {
     // PREFIXES only while a playback budget is active. Mirrors
     // GSplatsProgressiveLoader.
     if (this.loadedLODs.length === this.nLods || this._frameBudgetMs !== null) {
-      storeLadder(this.sliceCache, this.path, viewState, this.loadedLODs);
+      storeLadder(this.sliceCache, this.path, viewState, this.loadedLODs, {
+        scan: this._frameBudgetMs !== null,
+      });
     }
 
     return this.concatenateMemoized(session);

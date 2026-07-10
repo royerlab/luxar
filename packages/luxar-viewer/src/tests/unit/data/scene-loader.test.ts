@@ -347,6 +347,54 @@ describe('SceneLoader', () => {
     });
   });
 
+  describe('updateView — foreground preempts the t+1 shadow prefetch', () => {
+    beforeEach(async () => {
+      await sceneLoader.loadScene('http://localhost:8000/test.zarr');
+    });
+
+    function armPrefetcher(): { abortInFlight: ReturnType<typeof vi.fn> } {
+      // Lazily create the prefetcher via the public API, then spy on it.
+      sceneLoader.prefetchSlice({ slicePosition: [0, 0, 0, 6] }, 10);
+      const prefetcher = (sceneLoader as unknown as { _slicePrefetcher: unknown })
+        ._slicePrefetcher as { abortInFlight: () => void };
+      expect(prefetcher).toBeTruthy();
+      const abortSpy = vi.spyOn(prefetcher, 'abortInFlight');
+      return { abortInFlight: abortSpy as unknown as ReturnType<typeof vi.fn> };
+    }
+
+    it('aborts an in-flight prefetch at updateView entry (main branch)', async () => {
+      const spy = armPrefetcher();
+      await sceneLoader.updateView({ slicePosition: [0, 0, 0, 7] });
+      expect(spy.abortInFlight).toHaveBeenCalled();
+    });
+
+    it('aborts the prefetch in the QUEUED branch too (before parking as a waiter)', async () => {
+      const spy = armPrefetcher();
+      const internals = sceneLoader as unknown as {
+        _updateInProgress: boolean;
+        resolvePassWaiters(): void;
+      };
+      internals._updateInProgress = true; // simulate an in-flight pass
+      const parked = sceneLoader.updateView({ slicePosition: [0, 0, 0, 8] });
+      expect(spy.abortInFlight).toHaveBeenCalledTimes(1); // fired synchronously at entry
+      internals.resolvePassWaiters(); // unpark (the simulated pass "completes")
+      await parked;
+      internals._updateInProgress = false;
+    });
+
+    it('prefetchSlice never mutates the persistent view state (per-pass shadow copy)', () => {
+      const before = JSON.stringify((sceneLoader as unknown as { viewState: unknown }).viewState);
+      sceneLoader.prefetchSlice({ slicePosition: [9, 9, 9, 9], frameBudgetMs: 99 }, 10);
+      expect(JSON.stringify((sceneLoader as unknown as { viewState: unknown }).viewState)).toBe(
+        before
+      );
+    });
+
+    it('releasePrefetchResources is a safe no-op before any prefetch', () => {
+      expect(() => sceneLoader.releasePrefetchResources()).not.toThrow();
+    });
+  });
+
   describe('updateView — superseded loads abort (per-update AbortSignal)', () => {
     beforeEach(async () => {
       await sceneLoader.loadScene('http://localhost:8000/test.zarr');
