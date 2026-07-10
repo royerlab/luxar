@@ -394,6 +394,8 @@ export class GSplatsSpatialIndexLoader implements GSplatsDataLoader {
     });
 
     if (splatRanges.length === 0) {
+      // No visible splats — return empty dataset; the wrapper caches it
+      // (an empty slice is a valid, ~0-byte result that revisits should skip).
       log.info(Modules.GSPLATS_SPATIAL_INDEX_LOADER, 'No visible gsplats - returning empty data');
       return createEmptyGSplatsData(attrs);
     }

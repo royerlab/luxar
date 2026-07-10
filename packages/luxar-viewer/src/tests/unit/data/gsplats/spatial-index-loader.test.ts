@@ -306,6 +306,25 @@ describe('GSplatsSpatialIndexLoader', () => {
         const second = await cachedLoader.loadGSplats(hiddenDimView);
         expect(second.positions[0]).toBe(0);
       });
+
+      it('an empty slice is cached via the wrapper: revisits skip the query entirely', async () => {
+        // Zero visible ranges → the internal returns empty data and the
+        // WRAPPER stores it (same contract as Points/Lines: an empty slice
+        // is a valid, ~0-byte result that revisits should skip).
+        mockExecute.mockResolvedValue([]);
+
+        const first = await cachedLoader.loadGSplats(hiddenDimView);
+        expect(first.splatCount).toBe(0);
+        expect(sliceCache.getStats().count).toBe(1);
+        const readsAfterFirst = gets();
+
+        const second = await cachedLoader.loadGSplats(hiddenDimView);
+        const third = await cachedLoader.loadGSplats(hiddenDimView);
+
+        expect(second.splatCount).toBe(0);
+        expect(third).toBe(second);
+        expect(gets()).toBe(readsAfterFirst);
+      });
     });
 
     describe('initialization', () => {
@@ -817,6 +836,25 @@ describe('GSplatsSpatialIndexLoader', () => {
         const accMB = bodyLoader.getAccumulatorStats()?.memoryMB ?? 0;
         expect(accMB).toBeGreaterThan(0);
         expect(metrics.memoryUsed).toBe(Math.round(accMB * 1024 * 1024));
+      });
+
+      it('should fold completed loads into avgQueryTime (wrapper close-out)', async () => {
+        // The wrapper's shared finishQueryTracking stamps the rolling mean
+        // after the load completes — mirror of the Points/Lines suites.
+        // With real timers the elapsed may round to 0ms, so pin the
+        // type/range rather than a concrete duration.
+        const viewState: ViewState = {
+          displayDims: [0, 1, 2],
+          slicePosition: [0, 0, 0],
+          tolerance: [0, 0, 0],
+        };
+
+        await bodyLoader.loadGSplats(viewState);
+
+        const metrics = bodyLoader.getMetrics();
+        expect(metrics.queries).toBe(1);
+        expect(Number.isFinite(metrics.avgQueryTime)).toBe(true);
+        expect(metrics.avgQueryTime).toBeGreaterThanOrEqual(0);
       });
     });
 

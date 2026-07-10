@@ -9,6 +9,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { PointsSpatialIndexLoader, type ViewState, type SceneNode } from '../../../../data';
 import * as zarr from 'zarrita';
 import { SliceCache } from '../../../../cache/slice-cache';
+import type { MonitorEvent, MonitorEventListener } from '../../../../types/data-monitor-types';
 
 // Mock THREE.js using partial mock with importOriginal
 vi.mock('three', async (importOriginal) => {
@@ -467,6 +468,58 @@ describe('PointsSpatialIndexLoader', () => {
   });
 
   describe('monitoring', () => {
+    // Baseline LoaderMonitor-surface tests — mirror of the Lines and GSplats
+    // suites so the three spatial-index test files stay parallel.
+    it('exposes the four LoaderMonitor methods', () => {
+      expect(typeof loader.addEventListener).toBe('function');
+      expect(typeof loader.removeEventListener).toBe('function');
+      expect(typeof loader.getMetrics).toBe('function');
+      expect(typeof loader.getActiveQueries).toBe('function');
+    });
+
+    it('initial metrics report the point-spatial-index type and node path', () => {
+      const metrics = loader.getMetrics();
+      expect(metrics.type).toBe('point-spatial-index');
+      expect(metrics.path).toBe('/test_points');
+      expect(metrics.queries).toBe(0);
+      expect(metrics.loads).toBe(0);
+      expect(metrics.elementsLoaded).toBe(0);
+      expect(metrics.bytesLoaded).toBe(0);
+    });
+
+    it('returns an empty active-queries list initially', () => {
+      expect(loader.getActiveQueries()).toEqual([]);
+    });
+
+    it('add + remove of a listener leaves no leak after dispose', () => {
+      // Observable Set-size transitions through the private
+      // `events: LoaderEventEmitter` whose `size` getter is part of the
+      // emitter's documented test-only surface (data/loaders/monitor-events.ts).
+      const calls: MonitorEvent[] = [];
+      const listener: MonitorEventListener = (event) => calls.push(event);
+
+      const events = (loader as unknown as { events: { size: number } }).events;
+
+      expect(events.size).toBe(0);
+      loader.addEventListener(listener);
+      expect(events.size).toBe(1);
+      loader.removeEventListener(listener);
+      expect(events.size).toBe(0);
+
+      loader.addEventListener(listener);
+      expect(events.size).toBe(1);
+      loader.dispose();
+      expect(events.size).toBe(0);
+
+      expect(calls).toEqual([]);
+    });
+
+    it('returns an immutable snapshot from getMetrics', () => {
+      const snapshot = loader.getMetrics();
+      snapshot.queries = 99;
+      expect(loader.getMetrics().queries).toBe(0);
+    });
+
     it('should emit query events', async () => {
       const listener = vi.fn();
       loader.addEventListener(listener);

@@ -456,6 +456,8 @@ export class LinesSpatialIndexLoader implements LinesDataLoader {
     });
 
     if (segmentRanges.length === 0) {
+      // No visible segments — return empty dataset; the wrapper caches it
+      // (an empty slice is a valid, ~0-byte result that revisits should skip).
       log.info(Modules.LINES_LOADER, 'No visible segments - returning empty lines data');
       return createEmptyLinesData(attrs);
     }

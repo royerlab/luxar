@@ -337,6 +337,25 @@ describe('LinesSpatialIndexLoader', () => {
         const second = await cachedLoader.loadLines(hiddenDimView);
         expect(second.positions[0]).toBe(0);
       });
+
+      it('an empty slice is cached via the wrapper: revisits skip the query entirely', async () => {
+        // Zero visible ranges → the internal returns empty data and the
+        // WRAPPER stores it (same contract as Points/GSplats: an empty slice
+        // is a valid, ~0-byte result that revisits should skip).
+        mockExecute.mockResolvedValue([]);
+
+        const first = await cachedLoader.loadLines(hiddenDimView);
+        expect(first.vertexCount).toBe(0);
+        expect(sliceCache.getStats().count).toBe(1);
+        const readsAfterFirst = gets();
+
+        const second = await cachedLoader.loadLines(hiddenDimView);
+        const third = await cachedLoader.loadLines(hiddenDimView);
+
+        expect(second.vertexCount).toBe(0);
+        expect(third).toBe(second);
+        expect(gets()).toBe(readsAfterFirst);
+      });
     });
 
     describe('initialization', () => {
@@ -666,6 +685,25 @@ describe('LinesSpatialIndexLoader', () => {
         expect(accMB).toBeGreaterThan(0);
         expect(metrics.memoryUsed).toBe(Math.round(accMB * 1024 * 1024));
       });
+
+      it('should fold completed loads into avgQueryTime (wrapper close-out)', async () => {
+        // The wrapper's shared finishQueryTracking stamps the rolling mean
+        // after the load completes — mirror of the Points/GSplats suites.
+        // With real timers the elapsed may round to 0ms, so pin the
+        // type/range rather than a concrete duration.
+        const viewState: ViewState = {
+          displayDims: [0, 1, 2],
+          slicePosition: [0, 0, 0],
+          tolerance: [0, 0, 0],
+        };
+
+        await bodyLoader.loadLines(viewState);
+
+        const metrics = bodyLoader.getMetrics();
+        expect(metrics.queries).toBe(1);
+        expect(Number.isFinite(metrics.avgQueryTime)).toBe(true);
+        expect(metrics.avgQueryTime).toBeGreaterThanOrEqual(0);
+      });
     });
 
     describe('error handling', () => {
@@ -774,6 +812,28 @@ describe('LinesSpatialIndexLoader', () => {
         await bodyLoader.prefetchChunks(viewState);
         const callsAfter = (zarr.get as any).mock.calls.length;
         expect(callsAfter).toBeGreaterThan(callsBefore);
+      });
+
+      it('skips fetches when the spatial query returns no ranges', async () => {
+        // Mirror of the Points/GSplats prefetch zero-range tests: an
+        // out-of-slice prefetch position must not issue any zarr reads.
+        await bodyLoader.loadLines({
+          displayDims: [0, 1, 2],
+          slicePosition: [0, 0, 0],
+          tolerance: [0, 0, 0],
+        });
+
+        const callsBefore = (zarr.get as any).mock.calls.length;
+
+        mockExecute.mockResolvedValueOnce([]);
+        await bodyLoader.prefetchChunks({
+          displayDims: [0, 1, 2],
+          slicePosition: [100, 100, 100],
+          tolerance: [0, 0, 0],
+        });
+
+        const callsAfter = (zarr.get as any).mock.calls.length;
+        expect(callsAfter).toBe(callsBefore);
       });
     });
 
