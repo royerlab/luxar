@@ -152,7 +152,7 @@ export class LinesSpatialIndexLoader implements LinesDataLoader {
       errors: 0,
       elementsLoaded: 0, // Shared loader metric; counts vertices for lines.
       bytesLoaded: 0,
-      visiblePoints: 0, // counts visible vertices for lines
+      visiblePoints: 0, // counts visible segments for lines (the queried unit)
       avgQueryTime: 0,
       avgLoadTime: 0,
       memoryUsed: 0,
@@ -427,6 +427,10 @@ export class LinesSpatialIndexLoader implements LinesDataLoader {
     // Begin query tracking now that we know the segment ranges.
     const totalSegmentsRequested = segmentRanges.reduce((sum, r) => sum + (r.end - r.start), 0);
     this.metrics.queries += 1;
+    // Query-time visibility count (segments — the queried unit for lines),
+    // mirroring points (totalPoints) and gsplats (totalSplats). Was never
+    // written before, so the monitor permanently showed 0 for lines.
+    this.metrics.visiblePoints = totalSegmentsRequested;
     this.activeQueries.set(queryId, {
       id: queryId,
       loader: 'lines-spatial-index',

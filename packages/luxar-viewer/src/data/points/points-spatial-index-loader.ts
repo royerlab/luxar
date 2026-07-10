@@ -1453,6 +1453,7 @@ export class PointsSpatialIndexLoader implements DataLoader, LoaderMonitor {
     this.arrays = {};
     this._onceInit.reset();
     this.events.clear();
+    this.activeQueries.clear();
 
     // Dispose accumulator
     if (this._accumulator) {
