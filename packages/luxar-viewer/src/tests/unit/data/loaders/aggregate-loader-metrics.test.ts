@@ -17,7 +17,7 @@ function metrics(type: LoaderType, over: Partial<LoaderMetrics> = {}): LoaderMet
     errors: 0,
     elementsLoaded: 0,
     bytesLoaded: 0,
-    visiblePoints: 0,
+    visibleElements: 0,
     avgQueryTime: 0,
     avgLoadTime: 0,
     memoryUsed: 0,
@@ -45,7 +45,7 @@ describe('aggregateLoaderMetrics', () => {
           errors: 1,
           elementsLoaded: 100,
           bytesLoaded: 500,
-          visiblePoints: 40,
+          visibleElements: 40,
           memoryUsed: 10,
         }),
         metrics('point-spatial-index', {
@@ -53,7 +53,7 @@ describe('aggregateLoaderMetrics', () => {
           loads: 2,
           elementsLoaded: 50,
           bytesLoaded: 250,
-          visiblePoints: 20,
+          visibleElements: 20,
           memoryUsed: 25,
         }),
       ],
@@ -67,7 +67,7 @@ describe('aggregateLoaderMetrics', () => {
     expect(out.errors).toBe(1);
     expect(out.elementsLoaded).toBe(150);
     expect(out.bytesLoaded).toBe(750);
-    expect(out.visiblePoints).toBe(60);
+    expect(out.visibleElements).toBe(60);
     expect(out.memoryUsed).toBe(35);
   });
 

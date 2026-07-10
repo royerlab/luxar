@@ -38,7 +38,7 @@ function stubMetrics(over: Partial<Record<string, number>> = {}) {
     errors: 0,
     elementsLoaded: 0,
     bytesLoaded: 0,
-    visiblePoints: 0,
+    visibleElements: 0,
     avgQueryTime: 0,
     avgLoadTime: 0,
     memoryUsed: 0,

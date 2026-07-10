@@ -585,10 +585,7 @@ describe('GSplatsSpatialIndexLoader', () => {
             if (path.includes('chunk_bounds')) return Promise.resolve(chunkBoundsArray);
             if (path.includes('centers')) return Promise.resolve(mockArrays.centers);
             if (path.includes('amplitudes')) return Promise.resolve(mockArrays.amplitudes);
-            if (
-              path.includes('cholesky_factors_diag') ||
-              path.includes('cholesky_factors_offdiag')
-            )
+            if (path.includes('cholesky_factors_diag') || path.includes('cholesky_factors_offdiag'))
               // zarrita-style missing-node error (recognized by isNotFoundError).
               return Promise.reject(new Error('Node not found'));
             if (path.includes('cholesky_factors')) return Promise.resolve(legacyChol);
@@ -659,9 +656,7 @@ describe('GSplatsSpatialIndexLoader', () => {
           slicePosition: [0, 0, 0],
           tolerance: [0, 0, 0],
         };
-        await expect(bodyLoader.loadGSplats(viewState)).rejects.toThrow(
-          /cholesky_factors_offdiag/
-        );
+        await expect(bodyLoader.loadGSplats(viewState)).rejects.toThrow(/cholesky_factors_offdiag/);
       });
 
       it('surfaces a transient (non-not-found) error opening the diagonal array', async () => {

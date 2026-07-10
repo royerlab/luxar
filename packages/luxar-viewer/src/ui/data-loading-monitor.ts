@@ -194,7 +194,7 @@ export class DataLoadingMonitor {
     linesNodes: 0,
     gsplatsNodes: 0,
     totalPoints: 0,
-    visiblePoints: 0,
+    visibleElements: 0,
     totalSegments: 0,
     visibleSegments: 0,
     totalSplats: 0,
@@ -499,7 +499,7 @@ export class DataLoadingMonitor {
       linesNodes: 0,
       gsplatsNodes: 0,
       totalPoints: 0,
-      visiblePoints: 0,
+      visibleElements: 0,
       totalSegments: 0,
       visibleSegments: 0,
       totalSplats: 0,
@@ -705,7 +705,7 @@ export class DataLoadingMonitor {
       linesNodes,
       gsplatsNodes,
       totalPoints,
-      visiblePoints: totalPoints,
+      visibleElements: totalPoints,
       totalSegments,
       visibleSegments: totalSegments,
       totalSplats,
@@ -719,7 +719,7 @@ export class DataLoadingMonitor {
    * progressive LOD refinement.
    */
   public updateVisiblePoints(count: number): void {
-    this.sceneGraphState.visiblePoints = count;
+    this.sceneGraphState.visibleElements = count;
   }
 
   /**
@@ -838,7 +838,7 @@ export class DataLoadingMonitor {
 
       case 'load':
         metrics.loads++;
-        metrics.elementsLoaded += event.data.points || 0;
+        metrics.elementsLoaded += event.data.elements || 0;
         metrics.bytesLoaded += event.data.memory || 0;
         if (event.data.latency) {
           const totalTime = metrics.avgLoadTime * (metrics.loads - 1) + event.data.latency;
@@ -871,7 +871,7 @@ export class DataLoadingMonitor {
       startTime: event.timestamp,
       status: 'loading',
       cells: event.data.cells,
-      points: event.data.points,
+      elements: event.data.elements,
       ranges: event.data.ranges,
     });
 
@@ -901,7 +901,7 @@ export class DataLoadingMonitor {
       errors: 0,
       elementsLoaded: 0,
       bytesLoaded: 0,
-      visiblePoints: 0,
+      visibleElements: 0,
       avgQueryTime: 0,
       avgLoadTime: 0,
       memoryUsed: 0,
@@ -1104,14 +1104,14 @@ export class DataLoadingMonitor {
    * "points". Falls back to a points entry when nothing has loaded yet.
    */
   private buildCompactGeomSummary(stats: GlobalStats): string {
-    const hasPoints = stats.datasetSize > 0 || stats.visiblePoints > 0;
+    const hasPoints = stats.datasetSize > 0 || stats.visibleElements > 0;
     const hasLines = stats.datasetSegments > 0 || stats.visibleSegments > 0;
     const hasGSplats = stats.datasetSplats > 0 || stats.visibleSplats > 0;
 
     const entries: string[] = [];
     if (hasPoints) {
       entries.push(
-        `<span data-geom="points" title="Points currently on screen (inside the active nD slice). Expand the monitor for totals and per-layer detail">${templateFormatNumber(stats.visiblePoints)} pts</span>`
+        `<span data-geom="points" title="Points currently on screen (inside the active nD slice). Expand the monitor for totals and per-layer detail">${templateFormatNumber(stats.visibleElements)} pts</span>`
       );
     }
     if (hasLines) {
@@ -1127,7 +1127,7 @@ export class DataLoadingMonitor {
     // Nothing loaded yet → show a points placeholder so the row isn't empty.
     if (entries.length === 0) {
       entries.push(
-        `<span data-geom="points" title="Points currently on screen (inside the active nD slice). Expand the monitor for totals and per-layer detail">${templateFormatNumber(stats.visiblePoints)} pts</span>`
+        `<span data-geom="points" title="Points currently on screen (inside the active nD slice). Expand the monitor for totals and per-layer detail">${templateFormatNumber(stats.visibleElements)} pts</span>`
       );
     }
     return entries.join('');
@@ -1390,7 +1390,7 @@ export class DataLoadingMonitor {
     const cacheMetrics = this.getCacheMetrics();
 
     // Update primary metric card values
-    const hasPoints = stats.datasetSize > 0 || stats.visiblePoints > 0;
+    const hasPoints = stats.datasetSize > 0 || stats.visibleElements > 0;
     const hasLines = stats.datasetSegments > 0 || stats.visibleSegments > 0;
     const hasGSplats = stats.datasetSplats > 0 || stats.visibleSplats > 0;
 
@@ -1415,7 +1415,7 @@ export class DataLoadingMonitor {
       const el = this.contentContainer?.querySelector(`[data-field="${field}"]`);
       if (el) this.updateColorClass(el as HTMLElement, countColorClass(visible));
     };
-    if (hasPoints) patchCount('visible-points', stats.visiblePoints, stats.datasetSize);
+    if (hasPoints) patchCount('visible-points', stats.visibleElements, stats.datasetSize);
     if (hasLines) patchCount('visible-lines', stats.visibleSegments, stats.datasetSegments);
     if (hasGSplats) patchCount('visible-splats', stats.visibleSplats, stats.datasetSplats);
 
@@ -1996,7 +1996,7 @@ export class DataLoadingMonitor {
     // for points / lines / gsplats. Visible counts are refreshed each update
     // cycle by `updateVisibleCountsInMonitor` after nD clipping / LOD refine.
     const datasetSize = this.sceneGraphState.totalPoints;
-    const visiblePoints = this.sceneGraphState.visiblePoints;
+    const visibleElements = this.sceneGraphState.visibleElements;
 
     const datasetSegments = this.sceneGraphState.totalSegments;
     const visibleSegments = this.sceneGraphState.visibleSegments;
@@ -2011,7 +2011,7 @@ export class DataLoadingMonitor {
       totalPoints,
       totalMemory,
       datasetSize, // Total points in all datasets (from zarr metadata)
-      visiblePoints, // Currently visible/rendered points
+      visibleElements, // Currently visible/rendered points
       datasetSegments, // Total segments in all line datasets
       visibleSegments, // Currently visible segments (for lines, typically equals total)
       datasetSplats, // Total splats in all gsplats datasets

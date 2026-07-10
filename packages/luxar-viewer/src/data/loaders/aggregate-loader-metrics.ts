@@ -24,7 +24,7 @@ function zeroedMetrics(type: LoaderType, path: string): LoaderMetrics {
     errors: 0,
     elementsLoaded: 0,
     bytesLoaded: 0,
-    visiblePoints: 0,
+    visibleElements: 0,
     avgQueryTime: 0,
     avgLoadTime: 0,
     memoryUsed: 0,
@@ -37,7 +37,7 @@ function zeroedMetrics(type: LoaderType, path: string): LoaderMetrics {
  * single {@link LoaderMetrics} representing the whole node.
  *
  * Counters (`queries` / `loads` / `evictions` / `errors` / `elementsLoaded` /
- * `bytesLoaded` / `visiblePoints` / `memoryUsed`) are summed. `memoryLimit` is
+ * `bytesLoaded` / `visibleElements` / `memoryUsed`) are summed. `memoryLimit` is
  * the max across loaders (it's a shared cap, not additive). `avgQueryTime` /
  * `avgLoadTime` are weighted means by `queries` / `loads` respectively (so a
  * LOD that never queried doesn't skew the average). The optional
@@ -76,7 +76,7 @@ export function aggregateLoaderMetrics(inner: LoaderMetrics[], path: string): Lo
     out.errors += m.errors;
     out.elementsLoaded += m.elementsLoaded;
     out.bytesLoaded += m.bytesLoaded;
-    out.visiblePoints += m.visiblePoints;
+    out.visibleElements += m.visibleElements;
     out.memoryUsed += m.memoryUsed;
     out.memoryLimit = Math.max(out.memoryLimit, m.memoryLimit);
 

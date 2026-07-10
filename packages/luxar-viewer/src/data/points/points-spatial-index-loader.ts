@@ -193,7 +193,7 @@ export class PointsSpatialIndexLoader implements DataLoader, LoaderMonitor {
       errors: 0,
       elementsLoaded: 0,
       bytesLoaded: 0,
-      visiblePoints: 0, // Updated on each query
+      visibleElements: 0, // Updated on each query
       avgQueryTime: 0,
       avgLoadTime: 0,
       memoryUsed: 0,
@@ -553,7 +553,7 @@ export class PointsSpatialIndexLoader implements DataLoader, LoaderMonitor {
     const totalPoints = ranges.reduce((sum, r) => sum + (r.end - r.start), 0);
     this.lastQueryCells = ranges.length;
     this.metrics.queries++;
-    this.metrics.visiblePoints = totalPoints; // Track current visible points (non-cumulative)
+    this.metrics.visibleElements = totalPoints; // Track current visible points (non-cumulative)
 
     this.emitEvent({
       type: 'query',
@@ -563,7 +563,7 @@ export class PointsSpatialIndexLoader implements DataLoader, LoaderMonitor {
         path: this.node.path,
         ranges,
         cells: ranges.length,
-        points: totalPoints,
+        elements: totalPoints,
         queryPosition: viewState.slicePosition,
         queryTolerance: viewState.tolerance,
       },
@@ -577,7 +577,7 @@ export class PointsSpatialIndexLoader implements DataLoader, LoaderMonitor {
       startTime,
       status: 'loading',
       cells: ranges.length,
-      points: totalPoints,
+      elements: totalPoints,
       ranges,
     });
 
@@ -1042,7 +1042,7 @@ export class PointsSpatialIndexLoader implements DataLoader, LoaderMonitor {
       data: {
         path: this.node.path,
         arrayName,
-        points: totalPoints,
+        elements: totalPoints,
         memory: bytes,
         latency: loadTime,
       },

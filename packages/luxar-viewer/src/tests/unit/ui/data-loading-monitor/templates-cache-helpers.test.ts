@@ -41,7 +41,7 @@ function makeGlobalStats(): GlobalStats {
     totalPoints: 0,
     totalMemory: 0,
     datasetSize: 0,
-    visiblePoints: 0,
+    visibleElements: 0,
     datasetSegments: 0,
     visibleSegments: 0,
     datasetSplats: 0,

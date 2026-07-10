@@ -338,7 +338,7 @@ ranges)`: shared cache-warming read for the three loaders' `prefetchChunks`.
   `OverlayConfig` (text / image / html, with per-type fields). Results are
   z-index-sorted; missing `overlays/` group returns `[]` silently.
 - **`loader-metrics.ts`** — `recordLoadEvent(counters, elements, bytes,
-  loadTime)` (rolling-mean update of `loads` / `elementsLoaded` /
+loadTime)` (rolling-mean update of `loads` / `elementsLoaded` /
   `bytesLoaded` / `avgLoadTime`), `computeLoadLatency(startMs, nowMs?)`
   (latency, 0 when start is undefined / 0), and
   `finishQueryTracking(activeQueries, metrics, queryId, startTime, status)`

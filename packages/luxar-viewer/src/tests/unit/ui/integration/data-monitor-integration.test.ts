@@ -252,7 +252,7 @@ describe('Data Monitor Integration', () => {
           errors: 0,
           elementsLoaded: 0,
           bytesLoaded: 0,
-          visiblePoints: 0,
+          visibleElements: 0,
           avgQueryTime: 0,
           avgLoadTime: 0,
           cacheHitRate: 0,
@@ -292,7 +292,7 @@ describe('Data Monitor Integration', () => {
           errors: 0,
           elementsLoaded: 0,
           bytesLoaded: 0,
-          visiblePoints: 0,
+          visibleElements: 0,
           avgQueryTime: 0,
           avgLoadTime: 0,
           memoryUsed: 0,
@@ -454,7 +454,7 @@ describe('Data Monitor Integration', () => {
           errors: 0,
           elementsLoaded: 0,
           bytesLoaded: 0,
-          visiblePoints: 0,
+          visibleElements: 0,
           avgQueryTime: 0,
           avgLoadTime: 0,
           cacheHitRate: 0,
@@ -476,7 +476,7 @@ describe('Data Monitor Integration', () => {
           type: 'query',
           loader: 'point-spatial-index',
           timestamp: Date.now(),
-          data: { path: '/test', points: 1000 },
+          data: { path: '/test', elements: 1000 },
         });
 
         (eventListener as (event: MonitorEvent) => void)({
@@ -519,7 +519,7 @@ describe('Data Monitor Integration', () => {
           errors: 0,
           elementsLoaded: 2000,
           bytesLoaded: 8000,
-          visiblePoints: 0,
+          visibleElements: 0,
           avgQueryTime: 15,
           avgLoadTime: 50,
           cacheHitRate: 60,
@@ -540,21 +540,21 @@ describe('Data Monitor Integration', () => {
           type: 'query',
           loader: 'point-spatial-index',
           timestamp: Date.now(),
-          data: { path: '/test', points: 1000, latency: 10 },
+          data: { path: '/test', elements: 1000, latency: 10 },
         });
 
         (eventListener as (event: MonitorEvent) => void)({
           type: 'query',
           loader: 'point-spatial-index',
           timestamp: Date.now(),
-          data: { path: '/test', points: 1000, latency: 20 },
+          data: { path: '/test', elements: 1000, latency: 20 },
         });
 
         (eventListener as (event: MonitorEvent) => void)({
           type: 'load',
           loader: 'point-spatial-index',
           timestamp: Date.now(),
-          data: { path: '/test', points: 2000, memory: 8000, latency: 50 },
+          data: { path: '/test', elements: 2000, memory: 8000, latency: 50 },
         });
 
         (eventListener as (event: MonitorEvent) => void)({

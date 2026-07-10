@@ -6,12 +6,18 @@
  * and loading statistics in real-time.
  */
 
-// Import PointRange directly from its `types/` source rather than from
-// the `data` barrel. types/ is the foundational layer; reaching upward
-// into `data/` (which re-exports runtime APIs and managers) inverts the
-// dependency direction even though dependency-cruiser allows it for
-// type-only imports.
-import type { PointRange } from './points';
+/**
+ * Geometry-neutral index range for monitor events and query tracking.
+ * `PointRange` / `SegmentRange` / `SplatRange` (the per-geometry query
+ * types) are structurally identical, so every loader's ranges assign here
+ * directly — no casts.
+ */
+export interface ElementRange {
+  /** Starting index (inclusive) */
+  start: number;
+  /** Ending index (exclusive) */
+  end: number;
+}
 
 /**
  * Event types emitted by data loaders
@@ -40,8 +46,9 @@ export interface MonitorEvent {
   data: {
     path?: string;
     arrayName?: string;
-    ranges?: PointRange[];
-    points?: number;
+    ranges?: ElementRange[];
+    /** Element count for the event (points / vertices-or-segments / splats). */
+    elements?: number;
     cells?: number;
     latency?: number;
     memory?: number;
@@ -84,7 +91,7 @@ export interface LoaderMetrics {
   elementsLoaded: number; // Cumulative (for throughput calculation)
   bytesLoaded: number;
   // Dataset info
-  visiblePoints: number; // Currently visible/rendered points (non-cumulative)
+  visibleElements: number; // Currently visible/rendered points (non-cumulative)
   avgQueryTime: number;
   avgLoadTime: number;
   // Memory usage
@@ -160,8 +167,9 @@ export interface QueryInfo {
   endTime?: number;
   status: 'pending' | 'loading' | 'complete' | 'error';
   cells?: number;
-  points?: number;
-  ranges?: PointRange[];
+  /** Element count the query matched (points / segments / splats). */
+  elements?: number;
+  ranges?: ElementRange[];
   fromCache?: boolean;
   error?: string;
 }
@@ -219,7 +227,7 @@ export interface GlobalStats {
   totalMemory: number;
   // Dataset metrics - Points
   datasetSize: number; // Total points in all datasets
-  visiblePoints: number; // Currently visible/rendered points
+  visibleElements: number; // Currently visible/rendered points
   // Dataset metrics - Lines
   datasetSegments: number; // Total segments in all line datasets
   visibleSegments: number; // Currently visible/rendered segments (for lines, typically equals total)
@@ -600,7 +608,7 @@ export interface SceneGraphState {
   /** Total points across all nodes */
   totalPoints: number;
   /** Currently visible points (after nD clipping / progressive LOD) */
-  visiblePoints: number;
+  visibleElements: number;
   /** Total segments across all lines */
   totalSegments: number;
   /** Currently visible segments (after nD clipping) */

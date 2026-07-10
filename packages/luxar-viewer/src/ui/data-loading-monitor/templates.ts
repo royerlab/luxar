@@ -199,7 +199,7 @@ export function renderLoaderItem(path: string, metrics: LoaderMetrics): string {
         <span class="luxar-loader-item__status" title="Geometry type this loader streams (points, lines, or gsplats)">${escapeHtml(label)}</span>
       </div>
       <div class="luxar-loader-item__metrics">
-        <span title="Elements from this layer currently on screen (inside the active nD slice)">${metrics.visiblePoints.toLocaleString()} ${escapeHtml(unit)}</span>
+        <span title="Elements from this layer currently on screen (inside the active nD slice)">${metrics.visibleElements.toLocaleString()} ${escapeHtml(unit)}</span>
         <span title="CPU memory this loader currently holds for loaded chunks and index data">${formatBytes(metrics.memoryUsed)}</span>
       </div>
     </div>
@@ -297,8 +297,8 @@ Retry re-runs each failed load with the current view state. Failed loads are als
  */
 export function renderOverviewContent(stats: GlobalStats, cacheMetrics: CacheMetrics): string {
   // Calculate visible percentage of points dataset
-  const visiblePointsPercent =
-    stats.datasetSize > 0 ? ((stats.visiblePoints / stats.datasetSize) * 100).toFixed(1) : '0';
+  const visibleElementsPercent =
+    stats.datasetSize > 0 ? ((stats.visibleElements / stats.datasetSize) * 100).toFixed(1) : '0';
 
   // Calculate visible percentage of segments dataset
   const visibleSegmentsPercent =
@@ -307,7 +307,7 @@ export function renderOverviewContent(stats: GlobalStats, cacheMetrics: CacheMet
       : '0';
 
   // Determine what to show based on available data
-  const hasPoints = stats.datasetSize > 0 || stats.visiblePoints > 0;
+  const hasPoints = stats.datasetSize > 0 || stats.visibleElements > 0;
   const hasLines = stats.datasetSegments > 0 || stats.visibleSegments > 0;
   const hasGSplats = stats.datasetSplats > 0 || stats.visibleSplats > 0;
 
@@ -328,9 +328,9 @@ export function renderOverviewContent(stats: GlobalStats, cacheMetrics: CacheMet
       <div class="luxar-overview-grid luxar-overview-grid--cols-3">
         ${renderMetricCard(
           'VISIBLE POINTS',
-          formatNumber(stats.visiblePoints),
-          `${visiblePointsPercent}% of ${formatNumber(stats.datasetSize)}`,
-          countColorClass(stats.visiblePoints),
+          formatNumber(stats.visibleElements),
+          `${visibleElementsPercent}% of ${formatNumber(stats.datasetSize)}`,
+          countColorClass(stats.visibleElements),
           'small',
           'visible-points',
           'How many points are on screen right now versus how many the whole dataset holds. The two differ because only data inside the current nD slice is shown, and level-of-detail (LOD) streaming may not have loaded full resolution yet'
@@ -362,9 +362,9 @@ export function renderOverviewContent(stats: GlobalStats, cacheMetrics: CacheMet
       cards.push(
         renderMetricCard(
           'VISIBLE POINTS',
-          formatNumber(stats.visiblePoints),
-          `${visiblePointsPercent}% of ${formatNumber(stats.datasetSize)}`,
-          countColorClass(stats.visiblePoints),
+          formatNumber(stats.visibleElements),
+          `${visibleElementsPercent}% of ${formatNumber(stats.datasetSize)}`,
+          countColorClass(stats.visibleElements),
           'medium',
           'visible-points',
           'How many points are on screen right now versus how many the whole dataset holds. The two differ because only data inside the current nD slice is shown, and level-of-detail (LOD) streaming may not have loaded full resolution yet'
@@ -408,9 +408,9 @@ export function renderOverviewContent(stats: GlobalStats, cacheMetrics: CacheMet
       <div class="luxar-overview-grid luxar-overview-grid--cols-1">
         ${renderMetricCard(
           'VISIBLE POINTS',
-          formatNumber(stats.visiblePoints),
-          `${visiblePointsPercent}% of ${formatNumber(stats.datasetSize)} total`,
-          countColorClass(stats.visiblePoints),
+          formatNumber(stats.visibleElements),
+          `${visibleElementsPercent}% of ${formatNumber(stats.datasetSize)} total`,
+          countColorClass(stats.visibleElements),
           'large',
           'visible-points',
           'How many points are on screen right now versus how many the whole dataset holds. The two differ because only data inside the current nD slice is shown, and level-of-detail (LOD) streaming may not have loaded full resolution yet'

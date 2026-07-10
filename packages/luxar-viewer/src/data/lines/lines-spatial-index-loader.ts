@@ -20,7 +20,7 @@ import type {
   LinesViewState,
   SegmentRange,
 } from '../../types/lines';
-import type { SceneNode, PointRange } from '../data-loader-types';
+import type { SceneNode } from '../data-loader-types';
 import { ArrayRefRegistry, type ArrayMetadata } from '../array-decoder/decoder';
 import {
   RangeLoader,
@@ -152,7 +152,7 @@ export class LinesSpatialIndexLoader implements LinesDataLoader {
       errors: 0,
       elementsLoaded: 0, // Shared loader metric; counts vertices for lines.
       bytesLoaded: 0,
-      visiblePoints: 0, // counts visible segments for lines (the queried unit)
+      visibleElements: 0, // counts visible segments for lines (the queried unit)
       avgQueryTime: 0,
       avgLoadTime: 0,
       memoryUsed: 0,
@@ -430,7 +430,7 @@ export class LinesSpatialIndexLoader implements LinesDataLoader {
     // Query-time visibility count (segments — the queried unit for lines),
     // mirroring points (totalPoints) and gsplats (totalSplats). Was never
     // written before, so the monitor permanently showed 0 for lines.
-    this.metrics.visiblePoints = totalSegmentsRequested;
+    this.metrics.visibleElements = totalSegmentsRequested;
     this.activeQueries.set(queryId, {
       id: queryId,
       loader: 'lines-spatial-index',
@@ -438,8 +438,8 @@ export class LinesSpatialIndexLoader implements LinesDataLoader {
       startTime,
       status: 'loading',
       cells: segmentRanges.length,
-      points: totalSegmentsRequested,
-      ranges: segmentRanges as unknown as PointRange[],
+      elements: totalSegmentsRequested,
+      ranges: segmentRanges,
     });
     this.emitEvent({
       type: 'query',
@@ -447,9 +447,9 @@ export class LinesSpatialIndexLoader implements LinesDataLoader {
       timestamp: Date.now(),
       data: {
         path: this.node.path,
-        ranges: segmentRanges as unknown as PointRange[],
+        ranges: segmentRanges,
         cells: segmentRanges.length,
-        points: totalSegmentsRequested,
+        elements: totalSegmentsRequested,
         queryPosition: viewState.slicePosition,
         queryTolerance: viewState.tolerance,
       },
@@ -1018,7 +1018,7 @@ export class LinesSpatialIndexLoader implements LinesDataLoader {
       data: {
         path: this.node.path,
         arrayName,
-        points: items,
+        elements: items,
         memory: bytes,
         latency: loadTime,
       },

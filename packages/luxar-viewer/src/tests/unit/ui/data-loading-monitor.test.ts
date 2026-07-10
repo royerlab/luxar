@@ -91,7 +91,7 @@ describe('DataLoadingMonitor', () => {
           errors: 0,
           elementsLoaded: 0,
           bytesLoaded: 0,
-          visiblePoints: 0,
+          visibleElements: 0,
           avgQueryTime: 0,
           avgLoadTime: 0,
           cacheHitRate: 0,
@@ -122,7 +122,7 @@ describe('DataLoadingMonitor', () => {
             data: {
               path: '/test',
               cells: 10,
-              points: 1000,
+              elements: 1000,
               latency: 50,
             },
           };
@@ -140,7 +140,7 @@ describe('DataLoadingMonitor', () => {
           errors: 0,
           elementsLoaded: 1000,
           bytesLoaded: 0,
-          visiblePoints: 0,
+          visibleElements: 0,
           avgQueryTime: 50,
           avgLoadTime: 0,
           cacheHitRate: 0,
@@ -183,7 +183,7 @@ describe('DataLoadingMonitor', () => {
           errors: 0,
           elementsLoaded: 0,
           bytesLoaded: 0,
-          visiblePoints: 0,
+          visibleElements: 0,
           avgQueryTime: 0,
           avgLoadTime: 0,
           cacheHitRate: 100,
@@ -317,7 +317,7 @@ describe('DataLoadingMonitor', () => {
           errors: 1,
           elementsLoaded: 10000,
           bytesLoaded: 40000,
-          visiblePoints: 0,
+          visibleElements: 0,
           avgQueryTime: 25,
           avgLoadTime: 100,
           cacheHitRate: 0, // L0 cache removed
@@ -357,7 +357,7 @@ describe('DataLoadingMonitor', () => {
           errors: 0,
           elementsLoaded: 0,
           bytesLoaded: 0,
-          visiblePoints: 0,
+          visibleElements: 0,
           avgQueryTime: 0,
           avgLoadTime: 0,
           memoryUsed: 0,
@@ -411,7 +411,7 @@ describe('DataLoadingMonitor', () => {
             errors: 0,
             elementsLoaded: 0,
             bytesLoaded: 0,
-            visiblePoints: 0,
+            visibleElements: 0,
             avgQueryTime: 0,
             avgLoadTime: 0,
             memoryUsed: 0,
@@ -453,7 +453,7 @@ describe('DataLoadingMonitor', () => {
             data: {
               path: '/test',
               cells: 5,
-              points: 500,
+              elements: 500,
               latency: 75,
             },
           };
@@ -471,7 +471,7 @@ describe('DataLoadingMonitor', () => {
           errors: 0,
           elementsLoaded: 500,
           bytesLoaded: 2000,
-          visiblePoints: 0,
+          visibleElements: 0,
           avgQueryTime: 75,
           avgLoadTime: 0,
           cacheHitRate: 0,
@@ -504,7 +504,7 @@ describe('DataLoadingMonitor', () => {
           errors: 0,
           elementsLoaded: 90000,
           bytesLoaded: 360000,
-          visiblePoints: 0,
+          visibleElements: 0,
           avgQueryTime: 200,
           avgLoadTime: 150,
           cacheHitRate: 0, // L0 cache removed
@@ -612,7 +612,7 @@ describe('DataLoadingMonitor', () => {
           errors: 0,
           elementsLoaded: 0,
           bytesLoaded: 0,
-          visiblePoints: 0,
+          visibleElements: 0,
           avgQueryTime: 0,
           avgLoadTime: 0,
           cacheHitRate: 0,
@@ -636,7 +636,7 @@ describe('DataLoadingMonitor', () => {
           errors: 0,
           elementsLoaded: 0,
           bytesLoaded: 0,
-          visiblePoints: 0,
+          visibleElements: 0,
           avgQueryTime: 0,
           avgLoadTime: 0,
           cacheHitRate: 0,
@@ -676,7 +676,7 @@ describe('DataLoadingMonitor', () => {
             type: 'query',
             loader: 'point-spatial-index',
             timestamp: Date.now(),
-            data: { path: '/test', points: 100 },
+            data: { path: '/test', elements: 100 },
           };
           listener(event);
         }),
@@ -692,7 +692,7 @@ describe('DataLoadingMonitor', () => {
           errors: 0,
           elementsLoaded: 100,
           bytesLoaded: 400,
-          visiblePoints: 0,
+          visibleElements: 0,
           avgQueryTime: 10,
           avgLoadTime: 0,
           cacheHitRate: 0,
@@ -1184,23 +1184,23 @@ describe('DataLoadingMonitor', () => {
 
       monitor.setSceneGraph(sceneGraph);
 
-      // Initially visiblePoints equals totalPoints
+      // Initially visibleElements equals totalPoints
       let state = monitor.getSceneGraph();
       expect(state.totalPoints).toBe(200000);
-      expect(state.visiblePoints).toBe(200000);
+      expect(state.visibleElements).toBe(200000);
 
       // Update visible points (simulating nD slicing / progressive LOD)
       monitor.updateVisiblePoints(50000);
 
       state = monitor.getSceneGraph();
       expect(state.totalPoints).toBe(200000); // Total unchanged
-      expect(state.visiblePoints).toBe(50000); // Only visible count updated
+      expect(state.visibleElements).toBe(50000); // Only visible count updated
 
       // getGlobalStats should source points from the scene graph, so a
       // progressive points loader (no LoaderMonitor surface) still reports.
       const stats = monitor.getGlobalStats();
       expect(stats.datasetSize).toBe(200000);
-      expect(stats.visiblePoints).toBe(50000);
+      expect(stats.visibleElements).toBe(50000);
     });
 
     it('clears per-node visible counts for paths absent from the latest walk', () => {
@@ -1363,7 +1363,7 @@ describe('DataLoadingMonitor', () => {
 
       const stats = monitor.getGlobalStats();
       expect(stats.datasetSize).toBe(1000); // 500 + 500
-      expect(stats.visiblePoints).toBe(200); // Only what's visible
+      expect(stats.visibleElements).toBe(200); // Only what's visible
     });
 
     it('should track visible segments separately from total segments', () => {

@@ -19,7 +19,7 @@ import type {
   GSplatsViewState,
   SplatRange,
 } from '../../types/gsplats';
-import type { SceneNode, PointRange } from '../data-loader-types';
+import type { SceneNode } from '../data-loader-types';
 import { ArrayRefRegistry, type ArrayMetadata } from '../array-decoder/decoder';
 import {
   RangeLoader,
@@ -151,7 +151,7 @@ export class GSplatsSpatialIndexLoader implements GSplatsDataLoader {
       errors: 0,
       elementsLoaded: 0, // Shared loader metric; counts splats for gsplats.
       bytesLoaded: 0,
-      visiblePoints: 0, // counts visible splats for gsplats
+      visibleElements: 0, // counts visible splats for gsplats
       avgQueryTime: 0,
       avgLoadTime: 0,
       memoryUsed: 0,
@@ -368,7 +368,7 @@ export class GSplatsSpatialIndexLoader implements GSplatsDataLoader {
     // Count total splats to load and begin query tracking.
     const totalSplats = splatRanges.reduce((sum, r) => sum + (r.end - r.start), 0);
     this.metrics.queries += 1;
-    this.metrics.visiblePoints = totalSplats;
+    this.metrics.visibleElements = totalSplats;
     this.activeQueries.set(queryId, {
       id: queryId,
       loader: 'gsplats-spatial-index',
@@ -376,8 +376,8 @@ export class GSplatsSpatialIndexLoader implements GSplatsDataLoader {
       startTime,
       status: 'loading',
       cells: splatRanges.length,
-      points: totalSplats,
-      ranges: splatRanges as unknown as PointRange[],
+      elements: totalSplats,
+      ranges: splatRanges,
     });
     this.emitEvent({
       type: 'query',
@@ -385,9 +385,9 @@ export class GSplatsSpatialIndexLoader implements GSplatsDataLoader {
       timestamp: Date.now(),
       data: {
         path: this.node.path,
-        ranges: splatRanges as unknown as PointRange[],
+        ranges: splatRanges,
         cells: splatRanges.length,
-        points: totalSplats,
+        elements: totalSplats,
         queryPosition: viewState.slicePosition,
         queryTolerance: viewState.tolerance,
       },
@@ -935,7 +935,7 @@ export class GSplatsSpatialIndexLoader implements GSplatsDataLoader {
       data: {
         path: this.node.path,
         arrayName,
-        points: items,
+        elements: items,
         memory: bytes,
         latency: loadTime,
       },

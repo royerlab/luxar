@@ -43,7 +43,7 @@ function stubMetrics(over: Partial<Record<string, number>> = {}) {
     errors: 0,
     elementsLoaded: 0,
     bytesLoaded: 0,
-    visiblePoints: 0,
+    visibleElements: 0,
     avgQueryTime: 0,
     avgLoadTime: 0,
     memoryUsed: 0,
@@ -766,7 +766,11 @@ describe('LinesProgressiveLoader', () => {
     });
 
     it('getMetrics aggregates inner-loader metrics under the node path', () => {
-      lodA = makeSubLoader(makeLodData(20, 10), { queries: 2, elementsLoaded: 100, memoryUsed: 10 });
+      lodA = makeSubLoader(makeLodData(20, 10), {
+        queries: 2,
+        elementsLoaded: 100,
+        memoryUsed: 10,
+      });
       lodB = makeSubLoader(makeLodData(10, 5), { queries: 3, elementsLoaded: 50, memoryUsed: 20 });
       loader = new LinesProgressiveLoader(
         [lodA, lodB] as unknown as LinesSpatialIndexLoader[],
