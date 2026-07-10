@@ -134,7 +134,7 @@ class TestLinesNode:
             lines = scene.add_lines("polyline", vertices, widths, line_type="polyline")
 
             # Test properties
-            assert lines.n_vertices == 4
+            assert lines.n_elements == 4
             assert lines.n_elements == 4  # n_elements == n_vertices
             assert lines.n_segments == 3  # polyline: N-1 segments
             assert lines.line_type == "polyline"
@@ -154,7 +154,7 @@ class TestLinesNode:
             scene = compiler.create_scene(dimensions=Dimensions.default_3d())
             lines = scene.add_lines("segments", vertices, widths, line_type="segments")
 
-            assert lines.n_vertices == 4
+            assert lines.n_elements == 4
             assert lines.n_segments == 2  # segments: N//2
             assert lines.line_type == "segments"
             assert lines.max_width == pytest.approx(0.2)
@@ -168,7 +168,7 @@ class TestLinesNode:
             scene = compiler.create_scene(dimensions=Dimensions.default_2d())
             lines = scene.add_lines("loop", vertices, widths, line_type="loop")
 
-            assert lines.n_vertices == 4
+            assert lines.n_elements == 4
             assert lines.n_segments == 4  # loop: N segments (including wrap)
             assert lines.line_type == "loop"
             assert lines.ndim == 2
@@ -186,7 +186,7 @@ class TestLinesNode:
                 "triangle", vertices, widths, indices=indices, line_type="indexed"
             )
 
-            assert lines.n_vertices == 3
+            assert lines.n_elements == 3
             assert lines.n_segments == 3  # indexed: len(indices)//2
             assert lines.line_type == "indexed"
 
@@ -203,7 +203,7 @@ class TestLinesNode:
             )
 
             assert lines.has_colors is True
-            assert lines.n_vertices == 2
+            assert lines.n_elements == 2
 
     def test_add_lines_with_sharpness(self, tmp_path) -> None:
         """Test lines with per-vertex sharpness."""
@@ -228,7 +228,7 @@ class TestLinesNode:
             scene = compiler.create_scene(dimensions=Dimensions.default_2d())
             lines = scene.add_lines("uniform", vertices, width, line_type="polyline")
 
-            assert lines.n_vertices == 3
+            assert lines.n_elements == 3
             assert lines.max_width == pytest.approx(0.5)
 
     def test_lines_validation_segments_odd_vertices(self, tmp_path) -> None:
@@ -276,7 +276,7 @@ class TestGSplatsNode:
             scene = compiler.create_scene(dimensions=Dimensions.default_2d())
             gsplats = scene.add_gsplats("splats2d", centers, amplitudes, cholesky)
 
-            assert gsplats.n_splats == 3
+            assert gsplats.n_elements == 3
             assert gsplats.n_elements == 3  # n_elements == n_splats
             assert gsplats.ndim == 2
             assert gsplats.has_colors is False
@@ -294,7 +294,7 @@ class TestGSplatsNode:
             scene = compiler.create_scene(dimensions=Dimensions.default_3d())
             gsplats = scene.add_gsplats("splats3d", centers, amplitudes, cholesky)
 
-            assert gsplats.n_splats == 2
+            assert gsplats.n_elements == 2
             assert gsplats.ndim == 3
 
     def test_add_gsplats_with_colors(self, tmp_path) -> None:
@@ -324,7 +324,7 @@ class TestGSplatsNode:
             scene = compiler.create_scene(dimensions=Dimensions.default_2d())
             gsplats = scene.add_gsplats("uniform", centers, amplitude, cholesky)
 
-            assert gsplats.n_splats == 3
+            assert gsplats.n_elements == 3
             assert gsplats.amplitude_range["min"] == 2.0
             assert gsplats.amplitude_range["max"] == 2.0
 
@@ -363,7 +363,7 @@ class TestGSplatsNode:
             scene = compiler.create_scene(dimensions=Dimensions.default_2d())
             gsplats = scene.add_gsplats("isotropic", centers, amplitudes, cholesky)
 
-            assert gsplats.n_splats == 3
+            assert gsplats.n_elements == 3
 
     def test_add_gsplats_from_data(self, tmp_path) -> None:
         """Test adding gsplats from GSplatData."""
@@ -389,7 +389,7 @@ class TestGSplatsNode:
 
             # Single-substitutive path returns GSplats, not LODGroup.
             assert isinstance(gsplats, GSplats)
-            assert gsplats.n_splats == 2
+            assert gsplats.n_elements == 2
             assert gsplats.ndim == 2
             assert gsplats.has_colors is True
 
@@ -418,7 +418,7 @@ class TestGSplatsNode:
             scene = compiler.create_scene(dimensions=Dimensions.default_3d())
             gsplats = scene.add_gsplats_from_file("from_file", gsplats_path)
 
-            assert gsplats.n_splats == 2
+            assert gsplats.n_elements == 2
             assert gsplats.ndim == 3
             assert gsplats.has_colors is False
 

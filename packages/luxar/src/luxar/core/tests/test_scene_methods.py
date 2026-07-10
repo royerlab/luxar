@@ -312,7 +312,7 @@ class TestSceneMethods:
             assert "max_radius" in points.metadata, "max_radius missing"
 
             # Verify values
-            assert points.n_points == n_points
+            assert points.n_elements == n_points
             assert points.metadata["ndim"] == 3
             assert 0.14 < points.metadata["max_radius"] < 0.16, "max_radius incorrect"
 
@@ -328,7 +328,7 @@ class TestSceneMethods:
             points = scene.add_points("minimal", positions)
 
             # Should have basic metadata
-            assert points.n_points == 50
+            assert points.n_elements == 50
             assert points.metadata["ndim"] == 3
 
             # Colors and sharpness are not provided
