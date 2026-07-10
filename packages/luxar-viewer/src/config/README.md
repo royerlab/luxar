@@ -316,9 +316,6 @@ dataLoading: {
     useWebWorkers: true,
     workerCount: 0,                  // 0 = auto-detect based on navigator.hardwareConcurrency
 
-    // WASM acceleration
-    useWASM: true,
-    wasmModulePath: 'wasm/luxar_wasm_bg.wasm', // Resolved relative to bundle via import.meta.url
 
     // GPU buffer pool (reuse WebGL buffers)
     useGPUBufferPool: true,
