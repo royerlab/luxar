@@ -8,7 +8,7 @@ user's default browser (no native window) — useful for headless smoke
 tests and minimal Linux installs without `libwebkit2gtk`.
 
 The launcher also passes a cache budget to the viewer via
-`?cacheBudgetMB=<N>` (default **1536**). WebKit (WKWebView / WebKitGTK)
+`?cacheBudgetMB=<N>` (default **2048** — desktop-class). WebKit (WKWebView / WebKitGTK)
 does not implement `performance.memory`, so the viewer cannot auto-size
 its in-memory caches from the JS heap the way it does in Chrome — without
 this it would fall back to a tiny fixed budget and re-decode timelapse

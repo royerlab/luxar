@@ -52,9 +52,15 @@ Heap detection uses `performance.memory`, which is **Chrome/Blink-only**. In
 **WebKit — WKWebView (the native `luxar export --native` app) and Safari** — it
 is absent, so the heap can't be measured. There, pass an explicit pool with
 **`?cacheBudgetMB=<N>`** (the native launcher injects it automatically, default
-1536, env `LUXAR_CACHE_BUDGET_MB`); it takes precedence over heap detection and
-is split across the tiers the same way. Without it, WebKit falls back to the
-fixed config sizes.
+2048, env `LUXAR_CACHE_BUDGET_MB`); it takes precedence over heap detection and
+is split across the tiers the same way. Without an override, WebKit falls back to
+an inferred **device-class** pool (`inferDeviceClass`): mobile ≈ 384 MB, laptop
+≈ 1 GB, desktop ≈ 2 GB. `mobile` is detected reliably (mobile UA, or touch +
+coarse pointer — which also catches iPadOS); laptop vs desktop is a deliberately
+weak `hardwareConcurrency ≥ 12` proxy (there is no in-browser RAM signal on
+WebKit — `navigator.deviceMemory` is Chromium-only — and laptop/desktop aren't
+reliably distinguishable, so this is an educated guess, safe on 8 GB+ machines).
+The fixed config sizes are the last resort (non-browser / no device signals).
 | L3      | Remote  | ~100ms        | ∞     | N/A          | Compressed chunks     |
 
 \*~2ms is Blosc decompression time per chunk (skipped on L0 hit)

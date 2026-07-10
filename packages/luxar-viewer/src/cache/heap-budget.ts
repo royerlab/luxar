@@ -38,12 +38,81 @@ const MB = 1024 * 1024;
 const CACHE_SHARE_OF_TARGET = 0.6;
 
 /** Hard ceiling on the S-cache so a huge heap can't pin an absurd budget. */
-const SLICE_CAP_BYTES = 1024 * MB;
+const SLICE_CAP_BYTES = 2048 * MB;
 
 /** The S-cache floor is heap-relative: this fraction of the cache pool… */
 const SLICE_MIN_FRACTION = 0.05;
 /** …clamped to at least this absolute minimum so it is never fully starved. */
 const SLICE_ABS_MIN_BYTES = 16 * MB;
+
+/**
+ * Total cache pool (bytes) per inferred DEVICE CLASS — the fallback used where
+ * the heap is unmeasurable (WebKit: WKWebView / Safari have no
+ * `performance.memory`) AND no explicit `?cacheBudgetMB=` override was given.
+ * Values are demand-filled ceilings, split across tiers by the same rule as the
+ * heap path. Desktop reaches ≥2 GB (with `SLICE_CAP_BYTES` raised to match).
+ */
+const DEVICE_CLASS_POOL_BYTES = {
+  mobile: 384 * MB,
+  laptop: 1024 * MB,
+  desktop: 2048 * MB,
+} as const;
+
+/**
+ * Logical-core count at/above which a NON-mobile device is treated as a desktop
+ * rather than a laptop. This is a deliberately WEAK proxy: laptop vs desktop is
+ * not reliably distinguishable in-browser — there is no RAM API in WebKit
+ * (`navigator.deviceMemory` is Chromium-only), no battery API in Safari, and
+ * UA / core counts overlap (an 8-core MacBook vs an 8-core Mac mini). The
+ * industry consensus is that only an "educated guess" is possible. Both the
+ * laptop and desktop budgets are safe on the 8 GB+ machines that run the
+ * desktop app, so a misclassification is low-consequence.
+ */
+const DESKTOP_CORE_THRESHOLD = 12;
+
+/** Device signals used by {@link inferDeviceClass} (injectable for tests). */
+export interface DeviceSignals {
+  userAgent: string;
+  maxTouchPoints: number;
+  coarsePointer: boolean;
+  cores: number;
+}
+
+/** Read device signals from the browser (best-effort; safe in non-browser envs). */
+function readDeviceSignals(): DeviceSignals {
+  const nav = typeof navigator !== 'undefined' ? navigator : undefined;
+  const coarsePointer =
+    typeof matchMedia === 'function' ? matchMedia('(pointer: coarse)').matches : false;
+  return {
+    userAgent: nav?.userAgent ?? '',
+    maxTouchPoints: nav?.maxTouchPoints ?? 0,
+    coarsePointer,
+    cores: nav?.hardwareConcurrency ?? 0,
+  };
+}
+
+/**
+ * Infer a coarse device class from browser signals. `mobile` is reliable
+ * (mobile UA, or a touch + coarse-pointer device — which also catches iPadOS,
+ * whose UA masquerades as macOS). `desktop` vs `laptop` is the weak core-count
+ * proxy (see {@link DESKTOP_CORE_THRESHOLD}).
+ */
+export function inferDeviceClass(
+  signals: DeviceSignals = readDeviceSignals()
+): 'mobile' | 'laptop' | 'desktop' {
+  const mobileUA = /Mobi|Android|iPhone|iPod|iPad/i.test(signals.userAgent);
+  if (mobileUA || (signals.maxTouchPoints > 0 && signals.coarsePointer)) return 'mobile';
+  return signals.cores >= DESKTOP_CORE_THRESHOLD ? 'desktop' : 'laptop';
+}
+
+/**
+ * Device-class cache pool (bytes), or `undefined` outside a browser (node/tests)
+ * so callers fall through to the fixed config sizes there rather than a guess.
+ */
+export function deviceClassPoolBytes(): number | undefined {
+  if (typeof navigator === 'undefined') return undefined;
+  return DEVICE_CLASS_POOL_BYTES[inferDeviceClass()];
+}
 
 /** Resolved per-tier heap budgets, in bytes. L2 (OPFS/disk) is not included. */
 export interface CacheBudgets {
@@ -61,9 +130,12 @@ export interface CacheBudgets {
    *   `explicit` — a caller-supplied pool override (`?cacheBudgetMB=` / the
    *                native launcher), used where `performance.memory` is absent
    *                (WKWebView/Safari) so the app still gets a real budget.
-   *   `fixed`    — neither available: the historical fixed config sizes.
+   *   `device-class` — no heap and no override: an inferred mobile/laptop/desktop
+   *                pool (see {@link deviceClassPoolBytes}).
+   *   `fixed`    — none of the above (non-browser / no device signals): the
+   *                historical fixed config sizes.
    */
-  source: 'heap' | 'explicit' | 'fixed';
+  source: 'heap' | 'explicit' | 'device-class' | 'fixed';
 }
 
 /**
@@ -96,28 +168,41 @@ export function readHeapLimitBytes(): number | undefined {
  *   heap: this is how the WKWebView app / Safari (no `performance.memory`) still
  *   get a real budget instead of the tiny fixed fallback. Split across tiers by
  *   the same rule as the heap path.
+ * @param fallbackPoolBytes - Total pool to use when there is NO explicit override
+ *   AND no measurable heap — typically {@link deviceClassPoolBytes}. Lets WebKit
+ *   without an override still get a device-class-appropriate budget rather than
+ *   the tiny fixed sizes.
  *
- * If neither a pool override nor a heap is available (Firefox/Safari with no
- * override, node), the fixed config sizes are returned (`source: 'fixed'`).
+ * Resolution order: explicit override → measured heap → device-class fallback →
+ * fixed config sizes (`source: 'fixed'`, e.g. non-browser / no device signals).
  */
 export function computeCacheBudgets(
   heapLimitBytes?: number,
-  poolOverrideBytes?: number
+  poolOverrideBytes?: number,
+  fallbackPoolBytes?: number
 ): CacheBudgets {
   const l0Ceil = config.cache.l0MaxSizeMB * MB;
   const l1Ceil = config.cache.l1MaxSizeMB * MB;
   const sliceConfig = config.cache.sliceCacheMaxSizeMB * MB;
 
+  const positive = (v: number | undefined): v is number => v != null && Number.isFinite(v) && v > 0;
+
   // Determine the total cache pool: an explicit override wins; else derive it
-  // from the measured heap; else fall back to the fixed config sizes.
+  // from the measured heap; else a device-class fallback; else fixed config.
   let pool: number;
-  let source: 'heap' | 'explicit';
-  if (poolOverrideBytes != null && Number.isFinite(poolOverrideBytes) && poolOverrideBytes > 0) {
+  let source: 'heap' | 'explicit' | 'device-class';
+  if (positive(poolOverrideBytes)) {
     pool = poolOverrideBytes;
     source = 'explicit';
   } else {
     const heap = heapLimitBytes ?? readHeapLimitBytes();
-    if (heap === undefined) {
+    if (heap !== undefined) {
+      pool = heap * config.dataLoading.memory.targetHeapUsage * CACHE_SHARE_OF_TARGET;
+      source = 'heap';
+    } else if (positive(fallbackPoolBytes)) {
+      pool = fallbackPoolBytes;
+      source = 'device-class';
+    } else {
       return {
         l0Bytes: l0Ceil,
         l1Bytes: l1Ceil,
@@ -126,8 +211,6 @@ export function computeCacheBudgets(
         source: 'fixed',
       };
     }
-    pool = heap * config.dataLoading.memory.targetHeapUsage * CACHE_SHARE_OF_TARGET;
-    source = 'heap';
   }
 
   // Heap-relative S-cache floor, never above the historical 128 MB default.

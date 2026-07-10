@@ -151,7 +151,7 @@ func startServer(root string) (string, *http.Server, error) {
 // generous default (the viewer caps individual tiers internally). Override with
 // LUXAR_CACHE_BUDGET_MB on a memory-constrained machine (e.g. `=512`).
 func cacheBudgetMB() int {
-	const def = 1536
+	const def = 2048 // desktop-class default (~2 GB total cache pool)
 	if v := os.Getenv("LUXAR_CACHE_BUDGET_MB"); v != "" {
 		if n, err := strconv.Atoi(v); err == nil && n > 0 {
 			return n

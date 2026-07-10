@@ -16,7 +16,7 @@ import { MultiLevelCachingStore } from '../../../cache/multi-level-caching-store
 import { ChunkPrefetcher } from '../../../cache/chunk-prefetcher';
 import { DecompressedChunkCache } from '../../../cache/decompressed-chunk-cache';
 import { SliceCache } from '../../../cache/slice-cache';
-import { computeCacheBudgets } from '../../../cache/heap-budget';
+import { computeCacheBudgets, deviceClassPoolBytes } from '../../../cache/heap-budget';
 import { config as appConfig } from '../../../config';
 import { log, Modules } from '../../../utils/log';
 import type { CacheTelemetryState } from '../../../types/data-monitor-types';
@@ -88,7 +88,9 @@ export async function setupCaches(url: string, flags: CacheSetupFlags): Promise<
     flags.cacheBudgetMB != null && flags.cacheBudgetMB > 0
       ? flags.cacheBudgetMB * 1024 * 1024
       : undefined;
-  const budgets = computeCacheBudgets(undefined, poolOverrideBytes);
+  // Device-class fallback pool (mobile/laptop/desktop) for WebKit without an
+  // override — where the heap can't be measured. undefined in non-browser envs.
+  const budgets = computeCacheBudgets(undefined, poolOverrideBytes, deviceClassPoolBytes());
   const toMB = (bytes: number) => (bytes / 1024 / 1024).toFixed(0);
 
   let l0Cache: DecompressedChunkCache | null = null;
