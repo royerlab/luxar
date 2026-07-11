@@ -113,12 +113,12 @@
   "dependencies": {
     "comlink": "^4.4.2",
     "fflate": "^0.8.3",
-    "mediabunny": "^1.49.0",
+    "mediabunny": "^1.50.8",
     "zarrita": "^0.7.3"
   },
   "devDependencies": {
     "@eslint/js": "^9.39.4",
-    "@playwright/test": "^1.60.0",
+    "@playwright/test": "^1.61.1",
     "@types/node": "^25.9.3",
     "@types/three": "~0.185.0",
     "@typescript-eslint/eslint-plugin": "^8.61.0",
@@ -128,10 +128,10 @@
     "@zarrita/storage": "^0.2.0",
     "dependency-cruiser": "^18.0.0",
     "eslint": "^9.39.4",
-    "fast-check": "^4.8.0",
+    "fast-check": "^4.9.0",
     "globals": "^17.6.0",
     "jsdom": "^29.1.1",
-    "knip": "^6.24.0",
+    "knip": "^6.26.0",
     "prettier": "^3.8.3",
     "tsx": "^4.22.4",
     "typedoc": "^0.28.19",

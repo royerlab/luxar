@@ -128,10 +128,14 @@ to ship after). Sequencing is at the bottom.
 - **R4 [BLOCKER] — Citation + DOI.** README cites a placeholder
   `@software{luxar2024}` with year 2024 and no preprint. Wire in the bioRxiv DOI
   and a proper `CITATION.cff` once the preprint is posted.
-- **R5 [BLOCKER] — Branch cleanup to a clean `main`.** Currently on
-  `feat/gsplat-cholesky-split-storage` with ~7 unmerged feature branches +
-  dependabot PRs. Merge/close everything intended for 1.0, drain dependabot,
-  confirm CI green on `main`.
+- **R5 [BLOCKER] — Branch cleanup to a clean `main`.** ✅ **DONE** (2026-07-01),
+  with the caveat that dependabot re-accumulates continuously — **re-drained
+  2026-07-11**: 4 green dep bumps merged (knip, fast-check, mediabunny,
+  playwright); the TypeScript 5.9→6.0 major bump was **deferred post-launch**
+  (`@dependabot ignore this major version`) because TS 6 deprecates `baseUrl`
+  (TS5101) and needs a real tsconfig migration. Treat "drain dependabot +
+  confirm CI green on `main`" as a recurring final release-prep step, not a
+  one-time task.
 - **R6 [LAUNCH] — Repo hygiene.** Remove/relocate the 141-entry `delme/`, the
   untracked `lightsheet_overview/`, `test-results/`, and stray caches before the
   repo is public-facing. Confirm `.gitignore` covers generated `.zarr`, build
@@ -175,11 +179,19 @@ to ship after). Sequencing is at the bottom.
 
 ### C. Manuscript / reproducibility — bioRxiv defensibility
 
-- **R13 [BLOCKER for preprint] — Methods specificity.** Add per-preset
-  hyperparameter tables (draft/standard/hifi/ultra), exact seed counts, the
-  H.265 encoder version + exact command line, and blind-spot mask seeding.
-  Classic reviewer bait; currently ~100 lines for a paper claiming 12 datasets +
-  CV + tiled fitting + web architecture + an H.265 baseline.
+- **R13 [BLOCKER for preprint] — Methods specificity.** ✅ **DONE** (2026-07-08).
+  A three-way audit (manuscript claims ↔ `methods.tex` ↔ code) found the Methods
+  were stronger than assumed — blind-spot mask seeding (seed 42, 5%, 3×3×3 donut),
+  Adam/LR/dilution, loss+regularizers, dynamic ops, tiled window, encoding, and
+  viewer were already specified. The overnight `manuscript-update/code-sync-jul2026`
+  session incorporated the remaining gaps: the literal H.265 `ffmpeg`/`libx265`
+  command + a version-capture note, seed-generation numerics (edge threshold 0.1,
+  min-separation 2 vox), the reference fit config, and τ=2.75. The one confirmed
+  factual error — Methods+SD2 claimed a nonexistent "fourth, pywt Haar-wavelet"
+  MAD estimator — was corrected to the three estimators actually in
+  `calibration.py` and both PDFs rebuilt (luxar-paper `fc0780c`, pushed). NOTE:
+  the named draft/standard/hifi/ultra presets only vary 4 knobs and the paper fits
+  by explicit config, so a large per-preset matrix was correctly not added.
 - **R14 [LAUNCH] — Consumer-GPU timing benchmark.** Wall-time is softened to
   "minutes per dataset" pending a consumer-GPU sweep (only RTX PRO 6000 numbers
   documented). Run the benchmark on a commodity card (e.g. RTX 3070) to firm up
@@ -199,8 +211,8 @@ to ship after). Sequencing is at the bottom.
    no open feature branches, dependabot drained, release pipeline landed (#417).
 2. **Decide versioning & package** — R1 → R3 (PyPI dry-run / TestPyPI) in parallel
    with the day-one polish (R8/R9/R10/R11).
-3. **Post the preprint** — R13/R14/R16 land → bioRxiv → obtain DOI → R4 (wire
-   citation back into the repo).
+3. **Post the preprint** — R13 ✅ / R14 / R16 land → bioRxiv → obtain DOI → R4
+   (wire citation back into the repo).
 4. **Cut the release** — R2 (tag + GitHub release) → flip PyPI to live (R3) →
    announce.
 5. **Post-launch backlog** — R12, R15, and the existing Rendering/LOD and
@@ -211,6 +223,19 @@ to ship after). Sequencing is at the bottom.
 > post-release**. The critical path is now the **preprint** (R13/R14/R16 →
 > bioRxiv → DOI → R4) and the **release cut** (R1 version bump → R2 tag →
 > R3/R3-npm go-live).
+
+> Update 2026-07-11: R13 (Methods specificity) is **done** (#466) and
+> dependabot is re-drained (R5 note above). All release *tooling* is built and
+> validated — what remains on the critical path is **execution**, in order:
+> **(1) preprint track** — R14 (consumer-GPU timing sweep) + R16 (manuscript
+> repo hygiene); also decide whether the 13-dataset analyses get re-run with
+> floor suppression (`--floor`, #463) before or after bioRxiv — then post →
+> DOI → R4 (CITATION.cff). **(2) day-one leftovers** — R11 remainder
+> (fresh-machine `make setup-dev` verify, optional gallery media regen) + R7
+> (license/acknowledgments audit). **(3) the mechanical cut** — final
+> dependabot/branch drain → `make set-version` → PR → `make release-check` →
+> `make release` (fires PyPI OIDC publish) → one-time npm bootstrap (R3-npm)
+> → GitHub release notes from CHANGELOG `[Unreleased]` → announce.
 
 ---
 
