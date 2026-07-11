@@ -21,7 +21,7 @@ from pathlib import Path
 import numpy as np
 import zarr
 
-from luxar.cli.gsplat_commands import _validate_tile
+from luxar.cli.gsplat_ops.batch_validation import validate_tile as _validate_tile
 from luxar.gsplats.gsplat_data import AdditiveSubLOD
 from luxar.gsplats.io.save_gsplats import save_gsplats, write_gsplats_tree
 from luxar.gsplats.tree import GSplatLeaf, GSplatLodGroup, GSplatPartition

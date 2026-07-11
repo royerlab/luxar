@@ -18,15 +18,6 @@ from .transforms_filter_slice import (
 )
 from .transforms_filter_slice import run_slice_dataset as _run_slice_dataset_impl
 from .transforms_merge import run_merge_datasets as _run_merge_datasets_impl
-from .transforms_parsing import (
-    parse_bbox as _parse_bbox_impl,
-)
-from .transforms_parsing import (
-    parse_csv_floats as _parse_csv_floats_impl,
-)
-from .transforms_parsing import (
-    parse_slices as _parse_slices_impl,
-)
 from .transforms_partition_flatten import (
     run_flatten_dataset as _run_flatten_dataset_impl,
 )
@@ -216,10 +207,6 @@ def cull_dataset(
         compress=compress,
     )
 
-
-def _parse_bbox(s: str, ndim: int) -> list[tuple[float, float]]:
-    """Back-compat wrapper around shared bbox parsing helper."""
-    return _parse_bbox_impl(s, ndim)
 
 
 def filter_dataset(
@@ -568,10 +555,6 @@ def additive_dataset(
     )
 
 
-def _parse_slices(s: str, ndim: int) -> list[slice]:
-    """Back-compat wrapper around shared range parsing helper."""
-    return _parse_slices_impl(s, ndim)
-
 
 def slice_dataset(
     input_path: Path = typer.Argument(
@@ -621,10 +604,6 @@ def slice_dataset(
         compress=compress,
     )
 
-
-def _parse_csv_floats(value: str, expected: int, name: str) -> list[float]:
-    """Back-compat wrapper around shared float-list parser."""
-    return _parse_csv_floats_impl(value, expected, name)
 
 
 def transform_dataset(
