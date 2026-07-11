@@ -6,12 +6,18 @@
  * and loading statistics in real-time.
  */
 
-// Import PointRange directly from its `types/` source rather than from
-// the `data` barrel. types/ is the foundational layer; reaching upward
-// into `data/` (which re-exports runtime APIs and managers) inverts the
-// dependency direction even though dependency-cruiser allows it for
-// type-only imports.
-import type { PointRange } from './points';
+/**
+ * Geometry-neutral index range for monitor events and query tracking.
+ * `PointRange` / `SegmentRange` / `SplatRange` (the per-geometry query
+ * types) are structurally identical, so every loader's ranges assign here
+ * directly — no casts.
+ */
+export interface ElementRange {
+  /** Starting index (inclusive) */
+  start: number;
+  /** Ending index (exclusive) */
+  end: number;
+}
 
 /**
  * Event types emitted by data loaders
@@ -40,8 +46,9 @@ export interface MonitorEvent {
   data: {
     path?: string;
     arrayName?: string;
-    ranges?: PointRange[];
-    points?: number;
+    ranges?: ElementRange[];
+    /** Element count for the event (points / vertices-or-segments / splats). */
+    elements?: number;
     cells?: number;
     latency?: number;
     memory?: number;
@@ -81,17 +88,17 @@ export interface LoaderMetrics {
   evictions: number;
   errors: number;
   // Performance metrics
-  pointsLoaded: number; // Cumulative (for throughput calculation)
+  elementsLoaded: number; // Cumulative (for throughput calculation)
   bytesLoaded: number;
   // Dataset info
-  visiblePoints: number; // Currently visible/rendered points (non-cumulative)
+  visibleElements: number; // Currently visible elements: points / segments / splats (non-cumulative)
   avgQueryTime: number;
   avgLoadTime: number;
   // Memory usage
   memoryUsed: number;
   memoryLimit: number;
   // Spatial index specific metrics
-  spatialIndex?: PointSpatialIndexMetrics;
+  spatialIndex?: SpatialIndexMetrics;
   // Performance optimization metrics
   optimization?: OptimizationMetrics;
 }
@@ -136,14 +143,14 @@ export interface OptimizationMetrics {
 /**
  * Spatial index specific metrics
  */
-export interface PointSpatialIndexMetrics {
+export interface SpatialIndexMetrics {
   gridShape: number[];
   gridOrigin: number[];
   cellSize: number[];
   occupiedCells: number;
   totalCells: number;
   avgCellsPerQuery: number;
-  avgPointsPerCell: number;
+  avgElementsPerCell: number;
   queryEfficiency: number; // Points loaded / points in query region
   lastQueryBounds?: { min: number[]; max: number[] };
   rangesInCache: number; // Number of cached range queries
@@ -160,8 +167,9 @@ export interface QueryInfo {
   endTime?: number;
   status: 'pending' | 'loading' | 'complete' | 'error';
   cells?: number;
-  points?: number;
-  ranges?: PointRange[];
+  /** Element count the query matched (points / segments / splats). */
+  elements?: number;
+  ranges?: ElementRange[];
   fromCache?: boolean;
   error?: string;
 }
@@ -211,28 +219,22 @@ export interface MonitorConfig {
 export interface GlobalStats {
   totalLoaders: number;
   activeSpatialLoaders: number;
-  activeFallbackLoaders: number; // Kept for compatibility but always 0
-  totalPoints: number; // Cumulative points loaded (for throughput)
+  totalElementsLoaded: number; // Cumulative elements loaded across all loaders (points/vertices/splats — throughput)
   // Resident memory across all loaders — sum of each loader's `memoryUsed`
   // (current accumulator allocation, set in the spatial-index loaders'
   // recordLoadMetrics). Drives the compact badge's memory figure.
   totalMemory: number;
   // Dataset metrics - Points
   datasetSize: number; // Total points in all datasets
-  visiblePoints: number; // Currently visible/rendered points
+  visiblePoints: number; // Currently visible/rendered points (per-geometry trio with visibleSegments / visibleSplats)
   // Dataset metrics - Lines
   datasetSegments: number; // Total segments in all line datasets
   visibleSegments: number; // Currently visible/rendered segments (for lines, typically equals total)
   // Dataset metrics - GSplats
   datasetSplats: number; // Total splats in all gsplats datasets
   visibleSplats: number; // Currently visible/rendered splats
-  // Additional properties expected by tests
   totalQueries: number;
   totalLoads: number;
-  totalCacheHits: number;
-  totalPointsLoaded: number;
-  totalMemoryUsed: number;
-  globalCacheHitRate: number;
   avgQueryTime: number;
   queriesPerSecond: number;
   recommendations: Recommendation[];
@@ -438,7 +440,7 @@ export interface TimelinePoint {
   loadTime?: number;
   cacheHitRate?: number;
   memoryUsed?: number;
-  pointsLoaded?: number;
+  elementsLoaded?: number;
   loaderType?: LoaderType;
   event?: MonitorEventType;
 }

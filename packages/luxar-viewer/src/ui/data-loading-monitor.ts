@@ -838,7 +838,7 @@ export class DataLoadingMonitor {
 
       case 'load':
         metrics.loads++;
-        metrics.pointsLoaded += event.data.points || 0;
+        metrics.elementsLoaded += event.data.elements || 0;
         metrics.bytesLoaded += event.data.memory || 0;
         if (event.data.latency) {
           const totalTime = metrics.avgLoadTime * (metrics.loads - 1) + event.data.latency;
@@ -871,7 +871,7 @@ export class DataLoadingMonitor {
       startTime: event.timestamp,
       status: 'loading',
       cells: event.data.cells,
-      points: event.data.points,
+      elements: event.data.elements,
       ranges: event.data.ranges,
     });
 
@@ -899,9 +899,9 @@ export class DataLoadingMonitor {
       loads: 0,
       evictions: 0,
       errors: 0,
-      pointsLoaded: 0,
+      elementsLoaded: 0,
       bytesLoaded: 0,
-      visiblePoints: 0,
+      visibleElements: 0,
       avgQueryTime: 0,
       avgLoadTime: 0,
       memoryUsed: 0,
@@ -1923,7 +1923,7 @@ export class DataLoadingMonitor {
    * Get global statistics
    */
   public getGlobalStats(): GlobalStats {
-    let totalPoints = 0;
+    let totalElementsLoaded = 0;
     let totalMemory = 0;
     let totalQueries = 0;
     let totalLoads = 0;
@@ -1940,7 +1940,7 @@ export class DataLoadingMonitor {
       t === 'point-spatial-index' || t === 'lines-spatial-index' || t === 'gsplats-spatial-index';
 
     for (const metrics of this.metrics.values()) {
-      totalPoints += metrics.pointsLoaded;
+      totalElementsLoaded += metrics.elementsLoaded;
       totalMemory += metrics.memoryUsed;
       totalQueries += metrics.queries;
       totalLoads += metrics.loads;
@@ -2007,8 +2007,7 @@ export class DataLoadingMonitor {
     return {
       totalLoaders,
       activeSpatialLoaders: activeSpatial,
-      activeFallbackLoaders: 0, // No more fallback loaders
-      totalPoints,
+      totalElementsLoaded,
       totalMemory,
       datasetSize, // Total points in all datasets (from zarr metadata)
       visiblePoints, // Currently visible/rendered points
@@ -2018,16 +2017,6 @@ export class DataLoadingMonitor {
       visibleSplats, // Currently visible splats
       totalQueries,
       totalLoads,
-      // `totalCacheHits` and `globalCacheHitRate` aren't a single derivable
-      // number anymore — each cache tier (L0/L1/L2) has its own hit rate, and
-      // a true "effective demand hit rate" would need per-request final-tier
-      // tracking which doesn't exist yet. Reported as 0 for back-compat with
-      // tests that assert the field's presence; consumers wanting honest data
-      // should read `getCacheMetrics()` per-tier.
-      totalCacheHits: 0,
-      totalPointsLoaded: totalPoints, // Alias for compatibility
-      totalMemoryUsed: totalMemory, // Alias for compatibility
-      globalCacheHitRate: 0,
       avgQueryTime: totalQueries > 0 ? totalQueryTime / totalQueries : 0,
       queriesPerSecond: qps,
       recommendations: this.advisor.getRecommendations(),

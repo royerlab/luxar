@@ -89,9 +89,9 @@ describe('DataLoadingMonitor', () => {
           cacheMisses: 0,
           evictions: 0,
           errors: 0,
-          pointsLoaded: 0,
+          elementsLoaded: 0,
           bytesLoaded: 0,
-          visiblePoints: 0,
+          visibleElements: 0,
           avgQueryTime: 0,
           avgLoadTime: 0,
           cacheHitRate: 0,
@@ -122,7 +122,7 @@ describe('DataLoadingMonitor', () => {
             data: {
               path: '/test',
               cells: 10,
-              points: 1000,
+              elements: 1000,
               latency: 50,
             },
           };
@@ -138,9 +138,9 @@ describe('DataLoadingMonitor', () => {
           cacheMisses: 0,
           evictions: 0,
           errors: 0,
-          pointsLoaded: 1000,
+          elementsLoaded: 1000,
           bytesLoaded: 0,
-          visiblePoints: 0,
+          visibleElements: 0,
           avgQueryTime: 50,
           avgLoadTime: 0,
           cacheHitRate: 0,
@@ -181,9 +181,9 @@ describe('DataLoadingMonitor', () => {
           cacheMisses: 0,
           evictions: 0,
           errors: 0,
-          pointsLoaded: 0,
+          elementsLoaded: 0,
           bytesLoaded: 0,
-          visiblePoints: 0,
+          visibleElements: 0,
           avgQueryTime: 0,
           avgLoadTime: 0,
           cacheHitRate: 100,
@@ -315,9 +315,9 @@ describe('DataLoadingMonitor', () => {
           cacheMisses: 0, // L0 cache removed
           evictions: 2,
           errors: 1,
-          pointsLoaded: 10000,
+          elementsLoaded: 10000,
           bytesLoaded: 40000,
-          visiblePoints: 0,
+          visibleElements: 0,
           avgQueryTime: 25,
           avgLoadTime: 100,
           cacheHitRate: 0, // L0 cache removed
@@ -333,12 +333,9 @@ describe('DataLoadingMonitor', () => {
       const globalStats = monitor.getGlobalStats();
       expect(globalStats.totalQueries).toBe(20);
       expect(globalStats.totalLoads).toBe(10);
-      // L0 cache removed - cache hits should now be 0
-      expect(globalStats.totalCacheHits).toBe(0);
-      expect(globalStats.totalPointsLoaded).toBe(20000);
+      expect(globalStats.totalElementsLoaded).toBe(20000);
       // Resident memory aggregates each loader's memoryUsed (2 × 1MB). This is
       // the figure the compact badge renders.
-      expect(globalStats.totalMemoryUsed).toBe(2 * 1024 * 1024);
       expect(globalStats.totalMemory).toBe(2 * 1024 * 1024);
     });
   });
@@ -355,9 +352,9 @@ describe('DataLoadingMonitor', () => {
           loads: 0,
           evictions: 0,
           errors: 0,
-          pointsLoaded: 0,
+          elementsLoaded: 0,
           bytesLoaded: 0,
-          visiblePoints: 0,
+          visibleElements: 0,
           avgQueryTime: 0,
           avgLoadTime: 0,
           memoryUsed: 0,
@@ -409,9 +406,9 @@ describe('DataLoadingMonitor', () => {
             loads: 0,
             evictions: 0,
             errors: 0,
-            pointsLoaded: 0,
+            elementsLoaded: 0,
             bytesLoaded: 0,
-            visiblePoints: 0,
+            visibleElements: 0,
             avgQueryTime: 0,
             avgLoadTime: 0,
             memoryUsed: 0,
@@ -453,7 +450,7 @@ describe('DataLoadingMonitor', () => {
             data: {
               path: '/test',
               cells: 5,
-              points: 500,
+              elements: 500,
               latency: 75,
             },
           };
@@ -469,9 +466,9 @@ describe('DataLoadingMonitor', () => {
           cacheMisses: 0,
           evictions: 0,
           errors: 0,
-          pointsLoaded: 500,
+          elementsLoaded: 500,
           bytesLoaded: 2000,
-          visiblePoints: 0,
+          visibleElements: 0,
           avgQueryTime: 75,
           avgLoadTime: 0,
           cacheHitRate: 0,
@@ -502,9 +499,9 @@ describe('DataLoadingMonitor', () => {
           cacheMisses: 0, // L0 cache removed
           evictions: 50,
           errors: 0,
-          pointsLoaded: 90000,
+          elementsLoaded: 90000,
           bytesLoaded: 360000,
-          visiblePoints: 0,
+          visibleElements: 0,
           avgQueryTime: 200,
           avgLoadTime: 150,
           cacheHitRate: 0, // L0 cache removed
@@ -610,9 +607,9 @@ describe('DataLoadingMonitor', () => {
           cacheMisses: 0,
           evictions: 0,
           errors: 0,
-          pointsLoaded: 0,
+          elementsLoaded: 0,
           bytesLoaded: 0,
-          visiblePoints: 0,
+          visibleElements: 0,
           avgQueryTime: 0,
           avgLoadTime: 0,
           cacheHitRate: 0,
@@ -634,9 +631,9 @@ describe('DataLoadingMonitor', () => {
           cacheMisses: 0,
           evictions: 0,
           errors: 0,
-          pointsLoaded: 0,
+          elementsLoaded: 0,
           bytesLoaded: 0,
-          visiblePoints: 0,
+          visibleElements: 0,
           avgQueryTime: 0,
           avgLoadTime: 0,
           cacheHitRate: 0,
@@ -676,7 +673,7 @@ describe('DataLoadingMonitor', () => {
             type: 'query',
             loader: 'point-spatial-index',
             timestamp: Date.now(),
-            data: { path: '/test', points: 100 },
+            data: { path: '/test', elements: 100 },
           };
           listener(event);
         }),
@@ -690,9 +687,9 @@ describe('DataLoadingMonitor', () => {
           cacheMisses: 0,
           evictions: 0,
           errors: 0,
-          pointsLoaded: 100,
+          elementsLoaded: 100,
           bytesLoaded: 400,
-          visiblePoints: 0,
+          visibleElements: 0,
           avgQueryTime: 10,
           avgLoadTime: 0,
           cacheHitRate: 0,
@@ -713,7 +710,7 @@ describe('DataLoadingMonitor', () => {
       expect(metricsBefore!.type).toBe('point-spatial-index');
       expect(metricsBefore!.path).toBe('/test');
       expect(metricsBefore!.queries).toBe(1);
-      expect(metricsBefore!.pointsLoaded).toBe(100);
+      expect(metricsBefore!.elementsLoaded).toBe(100);
 
       // Process queued events (with polling architecture, events are queued until tick)
       monitor.show(); // Make visible so forceUpdate works

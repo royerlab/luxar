@@ -76,11 +76,6 @@ class Points(DataNode):
         return int(self._metadata.get("n_points", 0))
 
     @property
-    def n_points(self) -> int:
-        """Get number of points (alias for n_elements)."""
-        return self.n_elements
-
-    @property
     def has_colors(self) -> bool:
         """Check if points have colors."""
         return bool(self._metadata.get("has_colors", False))

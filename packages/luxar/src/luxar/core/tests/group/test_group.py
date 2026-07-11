@@ -79,7 +79,7 @@ class TestGroupAddData:
             group = scene.add_group("grp")
             gsplats = group.add_gsplats("splats", centers, amplitudes, cholesky)
 
-            assert gsplats.n_splats == 1
+            assert gsplats.n_elements == 1
 
         store = zarr.open(str(output_path), mode="r")
         assert "splats" in store["grp"]
@@ -225,7 +225,7 @@ class TestMultiLODGSplats:
 
             # Single-substitutive path returns GSplats, not LODGroup.
             assert isinstance(node, GSplats)
-            assert node.n_splats == 8  # 5 + 3
+            assert node.n_elements == 8  # 5 + 3
 
         store = zarr.open(str(output_path), mode="r")
         grp = store["splats"]

@@ -257,7 +257,7 @@ Specialized node for point cloud data. Lightweight metadata container in progres
 
 **Key Features:**
 - Metadata-only in progressive writing (data written immediately to Zarr)
-- Tracks data characteristics (n_points, has_colors, has_radii, etc.)
+- Tracks data characteristics (n_elements, has_colors, has_radii, etc.)
 - Inherits all Node and DataNode capabilities
 
 **Usage Example:**
@@ -270,14 +270,13 @@ points = scene.add_points('cloud',
                          sharpness=sharpness)
 
 # Query metadata
-print(f"Points: {points.n_points:,}")
+print(f"Points: {points.n_elements:,}")
 print(f"Has colors: {points.has_colors}")
-print(f"Elements: {points.n_elements}")  # Alias for n_points
 ```
 
 **Key Properties:**
-- `n_points` - Number of points
-- `n_elements` - Alias for n_points (DataNode protocol)
+- `n_elements` - Number of points (the geometry-neutral DataNode count; the
+  on-disk metadata key stays `n_points`)
 - `has_colors` - Whether colors are present
 - `has_radii` - Whether radii are present
 - `has_sharpness` - Whether sharpness is present
@@ -319,15 +318,15 @@ lines = scene.add_lines('trajectory',
                        line_type='polyline')
 
 # Query metadata
-print(f"Vertices: {lines.n_vertices:,}")
+print(f"Vertices: {lines.n_elements:,}")
 print(f"Segments: {lines.n_segments:,}")
 print(f"Line type: {lines.line_type}")
 print(f"Max width: {lines.max_width}")
 ```
 
 **Key Properties:**
-- `n_vertices` - Number of vertices
-- `n_elements` - Alias for n_vertices (DataNode protocol)
+- `n_elements` - Number of vertices (the geometry-neutral DataNode count; the
+  on-disk metadata key stays `n_vertices`)
 - `n_segments` - Number of line segments
 - `line_type` - Type of line connectivity
 - `has_colors` - Whether per-vertex colors are present
@@ -394,14 +393,14 @@ splats = scene.add_gsplats('gaussians',
                           sharpness=sharpness)
 
 # Query metadata
-print(f"Splats: {splats.n_splats:,}")
+print(f"Splats: {splats.n_elements:,}")
 print(f"Amplitude range: {splats.amplitude_range}")
 print(f"Center bounds: {splats.center_bounds}")
 ```
 
 **Key Properties:**
-- `n_splats` - Number of splats
-- `n_elements` - Alias for n_splats (DataNode protocol)
+- `n_elements` - Number of splats (the geometry-neutral DataNode count; the
+  on-disk metadata key stays `n_splats`)
 - `has_colors` - Whether splat colors are present
 - `has_labels` - Whether per-element string labels (hover tooltips) are present
 - `has_image_labels` - Whether per-element image labels (hover thumbnails) are present
@@ -432,7 +431,7 @@ result = fit_gaussian_splats(image, n_iters=1000)
 with LuxarZarrCompiler('scene.luxar.zarr') as compiler:
     scene = compiler.create_scene(dimensions=Dimensions.default_3d())
     gsplats = scene.add_gsplats_from_data('fitted', result)
-    print(f"Added {gsplats.n_splats} splats with colors={gsplats.has_colors}")
+    print(f"Added {gsplats.n_elements} splats with colors={gsplats.has_colors}")
 ```
 
 **From .gsplats.zarr File:**
@@ -441,7 +440,7 @@ with LuxarZarrCompiler('scene.luxar.zarr') as compiler:
 with LuxarZarrCompiler('scene.luxar.zarr') as compiler:
     scene = compiler.create_scene(dimensions=Dimensions.default_3d())
     gsplats = scene.add_gsplats_from_file('loaded', 'path/to/fitted.gsplats.zarr')
-    print(f"Loaded {gsplats.n_splats} splats")
+    print(f"Loaded {gsplats.n_elements} splats")
 ```
 
 These methods automatically handle:

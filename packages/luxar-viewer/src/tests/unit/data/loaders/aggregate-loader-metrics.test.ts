@@ -15,9 +15,9 @@ function metrics(type: LoaderType, over: Partial<LoaderMetrics> = {}): LoaderMet
     loads: 0,
     evictions: 0,
     errors: 0,
-    pointsLoaded: 0,
+    elementsLoaded: 0,
     bytesLoaded: 0,
-    visiblePoints: 0,
+    visibleElements: 0,
     avgQueryTime: 0,
     avgLoadTime: 0,
     memoryUsed: 0,
@@ -32,7 +32,7 @@ describe('aggregateLoaderMetrics', () => {
     expect(out.path).toBe('/node');
     expect(out.type).toBe('point-spatial-index');
     expect(out.queries).toBe(0);
-    expect(out.pointsLoaded).toBe(0);
+    expect(out.elementsLoaded).toBe(0);
   });
 
   it('sums counters and reports the supplied path + inner type', () => {
@@ -43,17 +43,17 @@ describe('aggregateLoaderMetrics', () => {
           loads: 1,
           evictions: 3,
           errors: 1,
-          pointsLoaded: 100,
+          elementsLoaded: 100,
           bytesLoaded: 500,
-          visiblePoints: 40,
+          visibleElements: 40,
           memoryUsed: 10,
         }),
         metrics('point-spatial-index', {
           queries: 3,
           loads: 2,
-          pointsLoaded: 50,
+          elementsLoaded: 50,
           bytesLoaded: 250,
-          visiblePoints: 20,
+          visibleElements: 20,
           memoryUsed: 25,
         }),
       ],
@@ -65,9 +65,9 @@ describe('aggregateLoaderMetrics', () => {
     expect(out.loads).toBe(3);
     expect(out.evictions).toBe(3);
     expect(out.errors).toBe(1);
-    expect(out.pointsLoaded).toBe(150);
+    expect(out.elementsLoaded).toBe(150);
     expect(out.bytesLoaded).toBe(750);
-    expect(out.visiblePoints).toBe(60);
+    expect(out.visibleElements).toBe(60);
     expect(out.memoryUsed).toBe(35);
   });
 

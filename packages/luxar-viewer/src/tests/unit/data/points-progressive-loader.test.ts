@@ -36,9 +36,9 @@ function stubMetrics(over: Partial<Record<string, number>> = {}) {
     loads: 0,
     evictions: 0,
     errors: 0,
-    pointsLoaded: 0,
+    elementsLoaded: 0,
     bytesLoaded: 0,
-    visiblePoints: 0,
+    visibleElements: 0,
     avgQueryTime: 0,
     avgLoadTime: 0,
     memoryUsed: 0,
@@ -788,8 +788,8 @@ describe('PointsProgressiveLoader', () => {
     });
 
     it('getMetrics aggregates inner-loader metrics under the node path', () => {
-      lodA = makeSubLoader(makeLodData(100), { queries: 2, pointsLoaded: 100, memoryUsed: 10 });
-      lodB = makeSubLoader(makeLodData(50), { queries: 3, pointsLoaded: 50, memoryUsed: 20 });
+      lodA = makeSubLoader(makeLodData(100), { queries: 2, elementsLoaded: 100, memoryUsed: 10 });
+      lodB = makeSubLoader(makeLodData(50), { queries: 3, elementsLoaded: 50, memoryUsed: 20 });
       loader = new PointsProgressiveLoader(
         [lodA, lodB] as unknown as PointsSpatialIndexLoader[],
         2,
@@ -800,7 +800,7 @@ describe('PointsProgressiveLoader', () => {
       expect(metrics.path).toBe('/points');
       expect(metrics.type).toBe('point-spatial-index');
       expect(metrics.queries).toBe(5); // 2 + 3
-      expect(metrics.pointsLoaded).toBe(150); // 100 + 50
+      expect(metrics.elementsLoaded).toBe(150); // 100 + 50
       expect(metrics.memoryUsed).toBe(30); // 10 + 20
     });
 
