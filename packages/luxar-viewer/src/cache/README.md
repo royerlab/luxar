@@ -202,7 +202,7 @@ on `CacheMetrics.status: CacheStatusBadge[]` so programmatic consumers
 | `cache-enabled`                | Caching is wired and operational.                             | `telemetryState.kind === 'enabled'`                               |
 | `no-cache`                     | The `?no-cache` URL flag is set; all tiers disabled.          | `telemetryState.kind === 'disabled-no-cache'`                     |
 | `disabled-config`              | App config disabled caching (e.g. `cache.enabled: false`).    | `telemetryState.kind === 'disabled-config'`                       |
-| `opfs-unavailable`             | The browser does not expose OPFS; L2 is disabled.             | OPFS provider absent                                              |
+| `opfs-unavailable`             | OPFS is absent OR mounts read-only; L2 is disabled.           | OPFS provider absent, or the init write probe failed (WebKit/WKWebView has no main-thread `createWritable`) |
 | `quota-constrained`            | L2 has skipped at least one write because of browser quota.   | `l2.quotaWriteSkipped > 0`                                        |
 | `cache-errors-detected`        | L2 has accumulated I/O / corruption failures.                 | `l2.writeFailures + corruptedEntries + metadataParseFailures > 0` |
 | `unvalidated-external-dataset` | External dataset, no TTL configured — entries may stay stale. | `health.unvalidatedExternalDataset === true`                      |
