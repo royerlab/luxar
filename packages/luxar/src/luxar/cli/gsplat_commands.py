@@ -6,23 +6,21 @@ group (inspect / transforms / fitting / scene / benchmark / batch), plus the
 Typer and registers each group onto it, keeping itself a thin registration
 surface rather than a multi-thousand-line god-file.
 
-A few symbols are re-exported for external consumers that import them from here:
-``main.py`` mounts ``app_gsplat``; tests import ``info_dataset`` /
-``batch_validate_cmd`` / ``_validate_tile``; ``_resolve_encoding_mode``
-historically lived in this module.
+``main.py`` mounts ``app_gsplat``; ``_resolve_encoding_mode`` is re-exported
+for consumers that historically imported it from this module.
 """
 
 from __future__ import annotations
 
 import typer
 
-from .gsplat_ops.batch import _validate_tile, app_batch, batch_validate_cmd
+from .gsplat_ops.batch_commands import app_batch
 from .gsplat_ops.benchmark import register_benchmark_commands
 from .gsplat_ops.encoding import _resolve_encoding_mode
 from .gsplat_ops.fitting import register_fitting_commands
-from .gsplat_ops.inspect import info_dataset, register_inspect_commands
-from .gsplat_ops.scene import register_scene_commands
-from .gsplat_ops.transforms import register_transforms_commands
+from .gsplat_ops.inspect_commands import register_inspect_commands
+from .gsplat_ops.scene_commands import register_scene_commands
+from .gsplat_ops.transforms_commands import register_transforms_commands
 from .lod import register_lod_command
 
 app_gsplat = typer.Typer(
@@ -54,8 +52,5 @@ app_gsplat.add_typer(app_batch, name="batch-fit")  # run (local) + submit (Slurm
 
 __all__ = [
     "app_gsplat",
-    "info_dataset",
-    "batch_validate_cmd",
-    "_validate_tile",
     "_resolve_encoding_mode",
 ]
