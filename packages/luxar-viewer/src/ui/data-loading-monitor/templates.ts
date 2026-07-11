@@ -171,12 +171,13 @@ export function renderStatGrid(
 /**
  * Map LoaderType identifier to its short display label / item-unit pair.
  * Keeps the loader-list rendering geometry-aware: a lines loader shows
- * "verts", a gsplats loader shows "splats", points shows "pts".
+ * "segs" (visibleElements counts visible segments — the queried unit for
+ * lines), a gsplats loader shows "splats", points shows "pts".
  */
 function loaderDisplay(type: LoaderMetrics['type']): { label: string; unit: string } {
   switch (type) {
     case 'lines-spatial-index':
-      return { label: 'lines', unit: 'verts' };
+      return { label: 'lines', unit: 'segs' };
     case 'gsplats-spatial-index':
       return { label: 'gsplats', unit: 'splats' };
     case 'point-spatial-index':
@@ -199,7 +200,7 @@ export function renderLoaderItem(path: string, metrics: LoaderMetrics): string {
         <span class="luxar-loader-item__status" title="Geometry type this loader streams (points, lines, or gsplats)">${escapeHtml(label)}</span>
       </div>
       <div class="luxar-loader-item__metrics">
-        <span title="Elements from this layer currently on screen (inside the active nD slice)">${metrics.visiblePoints.toLocaleString()} ${escapeHtml(unit)}</span>
+        <span title="Elements from this layer currently on screen (inside the active nD slice)">${metrics.visibleElements.toLocaleString()} ${escapeHtml(unit)}</span>
         <span title="CPU memory this loader currently holds for loaded chunks and index data">${formatBytes(metrics.memoryUsed)}</span>
       </div>
     </div>

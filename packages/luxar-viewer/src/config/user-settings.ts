@@ -96,7 +96,8 @@ const BUILTIN_LIVE_DEFAULTS = Object.freeze({
   networkMaxConcurrent: config.dataLoading.network.maxConcurrent,
 } as const);
 
-/** Defaults derived from the built-in config (so the two never drift). */
+/** Defaults derived from the built-in config, via the module-load snapshot
+ *  above (so later live-config mutation cannot make the defaults drift). */
 export function defaultUserSettings(): UserSettings {
   return {
     version: SETTINGS_VERSION,

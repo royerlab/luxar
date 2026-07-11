@@ -101,7 +101,6 @@ function makeDeps(): LoaderFactoryDeps {
   return {
     zarrStore: {} as never,
     arrayRefRegistry: {} as never,
-    profiler: null,
     l0Cache: null,
     sliceCache: null,
     cachingStore: null,
@@ -136,7 +135,7 @@ describe('createPointsLoader', () => {
     const deps = makeDeps();
     createPointsLoader(makeNode('/p'), {} as never, deps);
     // Constructor signature:
-    //   (loc, node, registry, store, profiler?, l0?, prefetcher?)
+    //   (loc, node, registry, store, l0?, prefetcher?)
     expect(pointsCtorArgs[0][2]).toBe(deps.arrayRefRegistry);
     expect(pointsCtorArgs[0][3]).toBe(deps.zarrStore);
   });
@@ -163,15 +162,15 @@ describe('createGSplatsLoader', () => {
 describe('sliceCache wiring (plain-leaf S-cache)', () => {
   const sentinelCache = { kind: 'slice-cache' } as never;
 
-  it('plain factories forward deps.sliceCache as the 8th ctor arg (×3 symmetric)', () => {
+  it('plain factories forward deps.sliceCache as the 7th ctor arg (×3 symmetric)', () => {
     const deps = { ...makeDeps(), sliceCache: sentinelCache };
     createPointsLoader(makeNode('/p'), {} as never, deps);
     createLinesLoader(makeNode('/l', 'lines'), {} as never, deps);
     createGSplatsLoader(makeNode('/g', 'gsplats'), {} as never, deps);
-    // (loc, node, registry, store, profiler, l0, prefetcher, sliceCache)
-    expect(pointsCtorArgs[0][7]).toBe(sentinelCache);
-    expect(linesCtorArgs[0][7]).toBe(sentinelCache);
-    expect(gsplatsCtorArgs[0][7]).toBe(sentinelCache);
+    // (loc, node, registry, store, l0, prefetcher, sliceCache)
+    expect(pointsCtorArgs[0][6]).toBe(sentinelCache);
+    expect(linesCtorArgs[0][6]).toBe(sentinelCache);
+    expect(gsplatsCtorArgs[0][6]).toBe(sentinelCache);
   });
 
   it('progressive factories do NOT hand the sliceCache to sub-LOD loaders (their wrapper owns the whole-ladder entry)', async () => {
@@ -184,7 +183,7 @@ describe('sliceCache wiring (plain-leaf S-cache)', () => {
     );
     expect(gsplatsCtorArgs).toHaveLength(2);
     for (const args of gsplatsCtorArgs) {
-      expect(args[7]).toBeUndefined();
+      expect(args[6]).toBeUndefined();
     }
     // The WRAPPER still receives it (existing behavior, 5th ctor arg).
     expect(progressiveCtorArgs[0][4]).toBe(sentinelCache);
@@ -224,7 +223,7 @@ describe('createProgressiveGSplatsLoader', () => {
 
     await createProgressiveGSplatsLoader(node, 1, parentEffectiveAttrs, makeDeps());
 
-    // Constructor signature: (loc, node, registry, store, profiler?, l0?, prefetcher?)
+    // Constructor signature: (loc, node, registry, store, l0?, prefetcher?)
     const lodNode = gsplatsCtorArgs[0][1] as SceneNode;
     expect(lodNode.path).toBe('/g/additive_0');
     expect(lodNode.type).toBe('gsplats');
@@ -285,7 +284,7 @@ describe('createProgressivePointsLoader', () => {
 
     await createProgressivePointsLoader(node, 1, parentEffectiveAttrs, makeDeps());
 
-    // Constructor signature: (loc, node, registry, store, profiler?, l0?, prefetcher?)
+    // Constructor signature: (loc, node, registry, store, l0?, prefetcher?)
     const lodNode = pointsCtorArgs[0][1] as SceneNode;
     expect(lodNode.path).toBe('/p/additive_0');
     expect(lodNode.type).toBe('points');
