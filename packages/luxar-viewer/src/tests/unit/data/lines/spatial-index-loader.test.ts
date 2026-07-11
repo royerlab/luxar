@@ -23,6 +23,7 @@ import { LinesSpatialIndexLoader } from '../../../../data/lines/lines-spatial-in
 import type { SceneNode, ViewState } from '../../../../data';
 import type { MonitorEvent, MonitorEventListener } from '../../../../types/data-monitor-types';
 import { makeMockZarrLocation } from '../../../builders/spatial-loader-fixtures';
+import { SliceCache } from '../../../../cache/slice-cache';
 
 vi.mock('zarrita', () => ({
   registry: {},
@@ -110,7 +111,7 @@ describe('LinesSpatialIndexLoader', () => {
       expect(metrics.path).toBe('/test_lines');
       expect(metrics.queries).toBe(0);
       expect(metrics.loads).toBe(0);
-      expect(metrics.pointsLoaded).toBe(0);
+      expect(metrics.elementsLoaded).toBe(0);
       expect(metrics.bytesLoaded).toBe(0);
     });
 
@@ -252,6 +253,108 @@ describe('LinesSpatialIndexLoader', () => {
 
     afterEach(() => {
       bodyLoader?.dispose();
+    });
+
+    // ────────────────────────────────────────────────────────────────
+    // Plain-leaf S-cache: a plain leaf caches its decoded slice as a
+    // 1-element ladder under the progressive loaders' key contract
+    // (restoreLadder/storeLadder). Symmetric block across the three
+    // spatial-index loader test files.
+    describe('plain-leaf S-cache', () => {
+      const hiddenDimView: ViewState = {
+        displayDims: [0, 1, 2],
+        slicePosition: [0, 0, 0, 5],
+        tolerance: [0, 0, 0, 0.25],
+      };
+      let sliceCache: SliceCache;
+      let cachedLoader: LinesSpatialIndexLoader;
+
+      beforeEach(() => {
+        sliceCache = new SliceCache({ maxSize: 8 * 1024 * 1024 });
+        cachedLoader = new LinesSpatialIndexLoader(
+          mockZarrLocation as unknown as ConstructorParameters<typeof LinesSpatialIndexLoader>[0],
+          mockNode,
+          undefined,
+          undefined,
+          undefined,
+          undefined,
+          sliceCache
+        );
+      });
+
+      afterEach(() => {
+        cachedLoader?.dispose();
+      });
+
+      const gets = () => (zarr.get as unknown as ReturnType<typeof vi.fn>).mock.calls.length;
+
+      it('same-view revisits restore from the S-cache: same reference, zero new reads', async () => {
+        const first = await cachedLoader.loadLines(hiddenDimView);
+        const readsAfterFirst = gets();
+
+        const second = await cachedLoader.loadLines(hiddenDimView);
+        const third = await cachedLoader.loadLines(hiddenDimView);
+
+        // Hits return the SAME cached payload object (feeds the downstream
+        // reference-identity no-op commit) and touch zarr not at all.
+        expect(third).toBe(second);
+        expect(second.vertexCount).toBe(first.vertexCount);
+        expect(gets()).toBe(readsAfterFirst);
+      });
+
+      it('a different slicePosition is a miss: loads fresh and stores a second entry', async () => {
+        await cachedLoader.loadLines(hiddenDimView);
+        const readsAfterFirst = gets();
+
+        await cachedLoader.loadLines({ ...hiddenDimView, slicePosition: [0, 0, 0, 6] });
+
+        expect(gets()).toBeGreaterThan(readsAfterFirst);
+        expect(sliceCache.getStats().count).toBe(2);
+      });
+
+      it('stores nothing when every dimension is displayed (single-slice view)', async () => {
+        await cachedLoader.loadLines({
+          displayDims: [0, 1, 2],
+          slicePosition: [0, 0, 0],
+          tolerance: [0, 0, 0],
+        });
+        expect(sliceCache.getStats().count).toBe(0);
+      });
+
+      it('a failed (e.g. aborted) load stores nothing', async () => {
+        mockExecute.mockRejectedValueOnce(new DOMException('aborted', 'AbortError'));
+        await expect(cachedLoader.loadLines(hiddenDimView)).rejects.toThrow();
+        expect(sliceCache.getStats().count).toBe(0);
+      });
+
+      it('the cached snapshot is a deep clone: post-store accumulator reuse cannot corrupt it', async () => {
+        const first = await cachedLoader.loadLines(hiddenDimView);
+        // Simulate the loader's next pass overwriting the reused accumulator
+        // buffers that `first`'s arrays alias.
+        (first.positions as Float32Array).fill(999);
+
+        const second = await cachedLoader.loadLines(hiddenDimView);
+        expect(second.positions[0]).toBe(0);
+      });
+
+      it('an empty slice is cached via the wrapper: revisits skip the query entirely', async () => {
+        // Zero visible ranges → the internal returns empty data and the
+        // WRAPPER stores it (same contract as Points/GSplats: an empty slice
+        // is a valid, ~0-byte result that revisits should skip).
+        mockExecute.mockResolvedValue([]);
+
+        const first = await cachedLoader.loadLines(hiddenDimView);
+        expect(first.vertexCount).toBe(0);
+        expect(sliceCache.getStats().count).toBe(1);
+        const readsAfterFirst = gets();
+
+        const second = await cachedLoader.loadLines(hiddenDimView);
+        const third = await cachedLoader.loadLines(hiddenDimView);
+
+        expect(second.vertexCount).toBe(0);
+        expect(third).toBe(second);
+        expect(gets()).toBe(readsAfterFirst);
+      });
     });
 
     describe('initialization', () => {
@@ -574,12 +677,47 @@ describe('LinesSpatialIndexLoader', () => {
         expect(metrics.queries).toBe(1);
         expect(metrics.type).toBe('lines-spatial-index');
         expect(metrics.path).toBe('/test_lines');
+        // Regression (×3 symmetric): visibleElements (segments — the queried
+        // unit) is written at query time. This loader shipped for months
+        // never setting it (monitor showed a permanent 0).
+        expect(metrics.visibleElements).toBeGreaterThan(0);
         // Resident memory is populated from the accumulator after a load
         // (was a perpetual 0 before — never written). Matches the MB→bytes
         // conversion done in recordLoadMetrics.
         const accMB = bodyLoader.getAccumulatorStats()?.memoryMB ?? 0;
         expect(accMB).toBeGreaterThan(0);
         expect(metrics.memoryUsed).toBe(Math.round(accMB * 1024 * 1024));
+        // Chunk-index telemetry (segment side of the dual index) is attached
+        // for the advisor (×3 symmetric).
+        expect(metrics.spatialIndex).toBeDefined();
+        expect(metrics.spatialIndex!.totalCells).toBeGreaterThan(0);
+      });
+
+      it('should fold completed loads into avgQueryTime (wrapper close-out)', async () => {
+        // The wrapper's shared finishQueryTracking stamps the rolling mean
+        // after the load completes — mirror of the Points/GSplats suites.
+        // With real timers the elapsed may round to 0ms, so pin the
+        // type/range rather than a concrete duration.
+        const viewState: ViewState = {
+          displayDims: [0, 1, 2],
+          slicePosition: [0, 0, 0],
+          tolerance: [0, 0, 0],
+        };
+
+        // Make elapsed time observable: every Date.now() call advances 5ms, so
+        // if the wrapper's close-out were deleted, avgQueryTime would stay 0
+        // and the strict > 0 assertion below would fail.
+        let t = 1_000_000;
+        const nowSpy = vi.spyOn(Date, 'now').mockImplementation(() => (t += 5));
+        try {
+          await bodyLoader.loadLines(viewState);
+        } finally {
+          nowSpy.mockRestore();
+        }
+
+        const metrics = bodyLoader.getMetrics();
+        expect(metrics.queries).toBe(1);
+        expect(metrics.avgQueryTime).toBeGreaterThan(0);
       });
     });
 
@@ -690,9 +828,67 @@ describe('LinesSpatialIndexLoader', () => {
         const callsAfter = (zarr.get as any).mock.calls.length;
         expect(callsAfter).toBeGreaterThan(callsBefore);
       });
+
+      it('skips fetches when the spatial query returns no ranges', async () => {
+        // Mirror of the Points/GSplats prefetch zero-range tests: an
+        // out-of-slice prefetch position must not issue any zarr reads.
+        await bodyLoader.loadLines({
+          displayDims: [0, 1, 2],
+          slicePosition: [0, 0, 0],
+          tolerance: [0, 0, 0],
+        });
+
+        const callsBefore = (zarr.get as any).mock.calls.length;
+
+        mockExecute.mockResolvedValueOnce([]);
+        await bodyLoader.prefetchChunks({
+          displayDims: [0, 1, 2],
+          slicePosition: [100, 100, 100],
+          tolerance: [0, 0, 0],
+        });
+
+        const callsAfter = (zarr.get as any).mock.calls.length;
+        expect(callsAfter).toBe(callsBefore);
+      });
     });
 
     describe('resource cleanup', () => {
+      it('dispose clears the active-query map (mid-flight leak guard)', async () => {
+        // Regression (×3 symmetric): points dispose() historically omitted
+        // activeQueries.clear(), so a dispose mid-flight leaked the tracked
+        // query entry (lines/gsplats always cleared it).
+        const baseViewState: ViewState = {
+          displayDims: [0, 1, 2],
+          slicePosition: [0, 0, 0],
+          tolerance: [0, 0, 0],
+        };
+
+        // Pre-initialize (chunk-bounds open + get) with the fast mock.
+        await bodyLoader.loadLines(baseViewState);
+        expect(bodyLoader.getActiveQueries().length).toBe(0);
+
+        // Gate data-array reads so a query is observably mid-flight.
+        let release!: () => void;
+        const gate = new Promise<void>((resolve) => {
+          release = resolve;
+        });
+        (zarr.get as any).mockImplementation(() =>
+          gate.then(() => ({ data: new Float32Array(100) }))
+        );
+
+        const loadPromise = bodyLoader
+          .loadLines({ ...baseViewState, slicePosition: [0.5, 0.5, 0.5] })
+          .catch(() => null); // dispose mid-flight may fail the load — expected
+
+        for (let i = 0; i < 10; i++) await Promise.resolve();
+        expect(bodyLoader.getActiveQueries().length).toBeGreaterThanOrEqual(1);
+
+        bodyLoader.dispose();
+        expect(bodyLoader.getActiveQueries().length).toBe(0);
+
+        release();
+        await loadPromise;
+      });
       it('should dispose resources properly', async () => {
         const viewState: ViewState = {
           displayDims: [0, 1, 2],
@@ -760,6 +956,51 @@ describe('LinesSpatialIndexLoader', () => {
 
         const result = await bodyLoader.loadLines(viewState);
         expect(result.colors).toBeInstanceOf(Uint8Array);
+      });
+
+      it('should handle uint16 color data via the shared color helper', async () => {
+        // Mirror of the Points suite's uint16 case: direct (unencoded)
+        // Uint16 colors must be preserved natively end-to-end through the
+        // loader, not just by the shared helper's own unit tests.
+        mockArrays.colors.dtype = 'uint16';
+
+        (zarr.get as unknown as ReturnType<typeof vi.fn>).mockImplementation(
+          (array: unknown, slices?: unknown) => {
+            if (array === vertexBoundsArray || array === segmentBoundsArray) {
+              return Promise.resolve({ data: new Float32Array(10 * 3 * 2) });
+            }
+            if (array === mockArrays.segments) {
+              const sliceSpec = slices as Array<{ start: number; end: number }>;
+              const range = sliceSpec[0];
+              const count = range.end - range.start;
+              const data = new Uint32Array(count * 2);
+              for (let i = 0; i < count; i++) {
+                data[i * 2] = range.start + i;
+                data[i * 2 + 1] = range.start + i + 1;
+              }
+              return Promise.resolve({ data });
+            }
+            const sliceSpec = slices as Array<{ start: number; end: number }>;
+            const count = sliceSpec[0].end - sliceSpec[0].start;
+            if (array === mockArrays.colors) {
+              const buf = new Uint16Array(count * 3);
+              for (let i = 0; i < count; i++) buf[i * 3] = 65535;
+              return Promise.resolve({ data: buf });
+            }
+            const elementsPerItem = array === mockArrays.vertices ? 3 : 1;
+            return Promise.resolve({ data: new Float32Array(count * elementsPerItem) });
+          }
+        );
+
+        const viewState: ViewState = {
+          displayDims: [0, 1, 2],
+          slicePosition: [0, 0, 0],
+          tolerance: [0, 0, 0],
+        };
+
+        const result = await bodyLoader.loadLines(viewState);
+        expect(result.colors).toBeInstanceOf(Uint16Array);
+        expect((result.colors as Uint16Array)[0]).toBe(65535);
       });
 
       it('should keep direct Float32 (HDR) colors as Float32Array', async () => {

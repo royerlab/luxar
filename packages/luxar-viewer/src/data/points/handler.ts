@@ -40,6 +40,13 @@ export interface PointsHandlerCtx {
   extendedToleranceCache: Map<string, number[]>;
   /** Per-update abort signal forwarded to `loader.updateView` (see DataLoader). */
   signal?: AbortSignal;
+  /**
+   * Per-tick LOD time budget during dimension-animation playback (see
+   * `ViewState.frameBudgetMs`). Injected into the DERIVED per-node view
+   * state below — a per-pass directive, so refinement/retry passes (which
+   * derive independently) stay budget-free.
+   */
+  frameBudgetMs?: number;
 }
 
 /**
@@ -73,7 +80,13 @@ export async function loadAndStage(
     ctx.viewStateQueue.forgetPath(path);
     return null;
   }
-  const data = await loader.updateView(derived.viewState, session, ctx.signal);
+  // Playback frame budget rides the derived per-node view state (per-pass
+  // directive; absent outside animation playback — see ctx.frameBudgetMs).
+  const pointsViewState: ViewState =
+    ctx.frameBudgetMs !== undefined
+      ? { ...derived.viewState, frameBudgetMs: ctx.frameBudgetMs }
+      : derived.viewState;
+  const data = await loader.updateView(pointsViewState, session, ctx.signal);
   ctx.clearFailure(path);
   if (!data) return null;
   if (ctx.currentVersion <= 1) {
@@ -87,7 +100,14 @@ export async function loadAndStage(
   // not for a SUPERSEDED update: extrapolating from an abandoned state warms
   // the wrong chunks and pollutes the per-path prefetch baseline.
   if (!ctx.signal?.aborted) {
-    ctx.viewStateQueue.dispatchPrefetch(path, derived.viewState, loader);
+    ctx.viewStateQueue.dispatchPrefetch(path, pointsViewState, loader);
   }
+  // DELIBERATE asymmetry vs the Lines/GSplats handlers: no handler-level
+  // `isAlreadyCommitted` fast path here. Those handlers must short-circuit
+  // BEFORE their `process*` step to skip the worker projection on a
+  // same-reference revisit; Points has no process step (projection is folded
+  // into the loader and already skipped by the S-cache hit), so its
+  // reference-identity no-op lives at the earliest place it can save work —
+  // the commit (`commit-points-geometry.ts::isAlreadyCommitted`).
   return { path, data };
 }

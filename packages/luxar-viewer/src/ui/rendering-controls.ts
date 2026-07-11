@@ -172,7 +172,6 @@ export class RenderingControls {
    */
   private setupControls(): void {
     // Setup auto-blur for all controls
-    this.setupAutoBlur();
 
     // Navigation controls live in the Navigation rail popover (right-click the
     // Navigation gauge; left-click cycles orbit/fly/ortho) — see
@@ -332,8 +331,11 @@ export class RenderingControls {
     this.sceneManager.setAutoRotate(this.settings.autoRotate);
     this.sceneManager.setAutoRotateSpeed(this.settings.autoRotateSpeed);
     this.sceneManager.setNaturalDrag(this.settings.naturalDrag);
+    this.sceneManager.setOrbitZoomSpeed(defaults.orbitZoomSpeed);
+    this.sceneManager.setOrbitDampingFactor(defaults.orbitDampingFactor);
     this.sceneManager.setFlyMovementSpeed(defaults.flyMovementSpeed);
     this.sceneManager.setFlyRotationSpeed(defaults.flyRotationSpeed);
+    this.sceneManager.setFlyLookSpeed(defaults.flyLookSpeed);
     this.sceneManager.setFlyInertialMode(defaults.flyInertialMode);
     this.sceneManager.setFlyDamping(defaults.flyDamping);
     this.sceneManager.setFlyRotationDamping(defaults.flyRotationDamping);
@@ -437,12 +439,23 @@ export class RenderingControls {
     this.sceneManager.setAutoRotateSpeed(this.settings.autoRotateSpeed);
     this.sceneManager.setNaturalDrag(this.settings.naturalDrag);
 
+    // Apply orbit feel settings (if they exist in loaded settings)
+    if (this.settings.orbitZoomSpeed !== undefined) {
+      this.sceneManager.setOrbitZoomSpeed(this.settings.orbitZoomSpeed);
+    }
+    if (this.settings.orbitDampingFactor !== undefined) {
+      this.sceneManager.setOrbitDampingFactor(this.settings.orbitDampingFactor);
+    }
+
     // Apply fly control settings (if they exist in loaded settings)
     if (this.settings.flyMovementSpeed !== undefined) {
       this.sceneManager.setFlyMovementSpeed(this.settings.flyMovementSpeed);
     }
     if (this.settings.flyRotationSpeed !== undefined) {
       this.sceneManager.setFlyRotationSpeed(this.settings.flyRotationSpeed);
+    }
+    if (this.settings.flyLookSpeed !== undefined) {
+      this.sceneManager.setFlyLookSpeed(this.settings.flyLookSpeed);
     }
     if (this.settings.flyInertialMode !== undefined) {
       this.sceneManager.setFlyInertialMode(this.settings.flyInertialMode);
@@ -757,18 +770,6 @@ export class RenderingControls {
    */
   isVisible(): boolean {
     return this.visible;
-  }
-
-  /**
-   * Setup auto-blur for all GUI controls
-   *
-   * NOTE: The custom GUI library now handles auto-blur internally via
-   * src/ui/gui/format/auto-blur.ts. This method is kept for backwards
-   * compatibility but does nothing - all auto-blur logic is in the GUI library.
-   */
-  private setupAutoBlur(): void {
-    // Auto-blur is now handled by the custom GUI library's applyAutoBlur() utility
-    // No additional setup needed here
   }
 
   /**

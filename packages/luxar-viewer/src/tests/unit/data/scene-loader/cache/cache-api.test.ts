@@ -73,6 +73,25 @@ describe('getCacheStats', () => {
     });
   });
 
+  it('surfaces the S-cache slice stats (incl. the heap-aware budget) when present, null otherwise', () => {
+    const sliceStats = {
+      size: 42,
+      count: 3,
+      hits: 10,
+      misses: 4,
+      evictions: 1,
+      hitRate: 10 / 14,
+      thrashMisses: 2,
+      maxSize: 512 * 1024 * 1024,
+    };
+    const sliceStub = { getStats: () => sliceStats } as unknown as Parameters<
+      typeof getCacheStats
+    >[2];
+    expect(getCacheStats(null, null, sliceStub)!.slice).toEqual(sliceStats);
+    // Absent SliceCache → null (and the default 2-arg call keeps slice null).
+    expect(getCacheStats(null, null).slice).toBeNull();
+  });
+
   it('extends the snapshot with network/demand/prefetch/health fields (commit 7.1)', () => {
     // Stub a caching store that exposes everything the snapshot
     // surfaces — including the prefetcher and the new health field.
@@ -169,5 +188,20 @@ describe('clear* helpers', () => {
     await clearAllCaches(l0.stub, store.stub);
     expect(l0.clear).toHaveBeenCalledTimes(1);
     expect(store.clearAll).toHaveBeenCalledTimes(1);
+  });
+
+  it('clearAllCaches also clears the S-cache when provided (all four tiers)', async () => {
+    const l0 = makeL0Stub();
+    const store = makeStoreStub();
+    const sliceClear = vi.fn();
+    const sliceStub = { clear: sliceClear } as unknown as Parameters<typeof clearAllCaches>[2];
+
+    await clearAllCaches(l0.stub, store.stub, sliceStub);
+    expect(l0.clear).toHaveBeenCalledTimes(1);
+    expect(store.clearAll).toHaveBeenCalledTimes(1);
+    expect(sliceClear).toHaveBeenCalledTimes(1);
+
+    // Null S-cache stays a no-op (pre-slice-cache callers).
+    await expect(clearAllCaches(null, null, null)).resolves.toBeUndefined();
   });
 });

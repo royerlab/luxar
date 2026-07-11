@@ -10,6 +10,8 @@ export const dataLoadingNetworkConfig: DataLoadingNetworkConfig = {
   // path must NOT block scene loading for the full timeoutMs — failing
   // fast is better since we can render from cached data.
   validationTimeoutMs: 5000,
-  maxConcurrent: 6,
+  // Concurrent prefetch fetches (ChunkPrefetcher). Default matches the value
+  // the prefetcher always used in practice (this knob was unwired until 2026-07).
+  maxConcurrent: 4,
   retryAttempts: 3,
 };

@@ -98,15 +98,67 @@ export async function updateView(viewState: Partial<ViewState>, loaderId?: strin
 export async function updateSceneForDimensions(
   dims: SimpleDims,
   scene: THREE.Group,
-  loaderId?: string
+  loaderId?: string,
+  opts?: {
+    /**
+     * Per-tick LOD time budget during dimension-animation playback (see
+     * `ViewState.frameBudgetMs`). A per-pass directive — attached to this
+     * one update call, never persisted.
+     */
+    frameBudgetMs?: number;
+  }
 ): Promise<void> {
   const maxRadius = scene.userData.maxRadius || config.dataLoading.spatial.defaultMaxRadius;
   const viewState = simpleDimsToViewState(dims, {
     maxRadius,
     defaultTolerance: config.dataLoading.spatial.defaultTolerance,
   });
+  if (opts?.frameBudgetMs !== undefined) {
+    viewState.frameBudgetMs = opts.frameBudgetMs;
+  }
 
   await updateView(viewState, loaderId);
+}
+
+/**
+ * Fire a background t+1 slice prefetch for a PREDICTED dimension state
+ * (dimension playback). Mirror of {@link updateSceneForDimensions}, but
+ * fire-and-forget and routed to `SceneLoader.prefetchSlice` — it never
+ * moves the real view and is aborted by the next foreground update.
+ *
+ * @param dims - PREDICTED dimension state (currentStep advanced to the next
+ *   playback tick via `DimensionAnimationManager.peekNextValue`).
+ * @param scene - THREE.Group containing the scene (for maxRadius).
+ * @param loaderId - Optional loader ID, defaults to default loader.
+ * @param opts.budgetMs - Per-pass LOD time budget for the shadow pass
+ *   (always set — it is also what makes prefix ladders cacheable).
+ */
+export function prefetchSceneForDimensions(
+  dims: SimpleDims,
+  scene: THREE.Group,
+  loaderId: string | undefined,
+  opts: { budgetMs: number }
+): void {
+  const manager = SceneLoaderManager.getInstance();
+  const sceneLoader = loaderId ? manager.getLoader(loaderId) : manager.getDefaultLoader();
+  if (!sceneLoader) return;
+
+  const maxRadius = scene.userData.maxRadius || config.dataLoading.spatial.defaultMaxRadius;
+  const viewState = simpleDimsToViewState(dims, {
+    maxRadius,
+    defaultTolerance: config.dataLoading.spatial.defaultTolerance,
+  });
+  sceneLoader.prefetchSlice(viewState, opts.budgetMs);
+}
+
+/**
+ * Release the default (or given) loader's t+1 prefetch resources (shadow
+ * loaders + their accumulators). Called when playback ends.
+ */
+export function releasePrefetchResources(loaderId?: string): void {
+  const manager = SceneLoaderManager.getInstance();
+  const sceneLoader = loaderId ? manager.getLoader(loaderId) : manager.getDefaultLoader();
+  sceneLoader?.releasePrefetchResources();
 }
 
 /**

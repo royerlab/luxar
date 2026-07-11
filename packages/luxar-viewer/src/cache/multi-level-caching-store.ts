@@ -685,12 +685,17 @@ export class MultiLevelCachingStore implements AsyncReadable {
 
     return {
       l1: this.l1Cache.getStats(),
-      l2: l2Stats ?? {
-        size: 0,
-        count: 0,
-        reads: 0,
-        writes: 0,
-        misses: 0,
+      l2: {
+        ...(l2Stats ?? {
+          size: 0,
+          count: 0,
+          reads: 0,
+          writes: 0,
+          misses: 0,
+        }),
+        // Fixed OPFS/disk budget — surfaced so the monitor's memory gauge has a
+        // real per-tier limit to sum (L2 is disk, not heap, but it is a tier).
+        maxSize: this.l2MaxSize,
       },
       network: {
         bytesTransferred: this.networkBytesTransferred,

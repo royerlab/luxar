@@ -1,8 +1,9 @@
 /**
- * Incremental Cache-tab updater. The Cache tab paints L0/L1/L2 stats
- * + total cache memory bar + eviction counts using the data-field
- * selector pattern. The renderer (in `../templates.ts`) paints the
- * static structure once; this module handles per-tick value patching.
+ * Incremental Cache-tab updater. The Cache tab paints the SliceCache
+ * ("S-cache") + L0/L1/L2 stats + total cache memory bar + eviction
+ * counts using the data-field selector pattern. The renderer (in
+ * `../templates.ts`) paints the static structure once; this module
+ * handles per-tick value patching.
  *
  * Inputs are the container element and the pre-aggregated
  * CacheMetrics (built by `../metrics/cache.ts`). Returns `true` when
@@ -15,7 +16,9 @@ import {
   formatNumber as templateFormatNumber,
   formatBytes as templateFormatBytes,
   getColorClass,
+  getCacheHitRateColorClassWithGuard,
   getCacheMemoryColorClass,
+  countColorClass,
   renderCacheStatusBadges,
   formatValidationMode,
   formatLastValidated,
@@ -24,7 +27,7 @@ import {
   lastValidatedLabel,
   l2ErrorTotal,
 } from '../templates';
-import { patchField, updateColorClass } from './dom-helpers';
+import { patchField, updateColorClass, updateColorClassByField } from './dom-helpers';
 
 /**
  * Patch every value cell on the Cache tab in place. Idempotent
@@ -52,28 +55,45 @@ export function updateCacheTab(container: HTMLElement | null, cacheMetrics: Cach
     );
     patchField(container, 'l0-evictions', templateFormatNumber(cacheMetrics.l0.evictions));
 
-    const l0HitrateEl = container.querySelector('[data-field="l0-hitrate"]') as HTMLElement | null;
-    if (l0HitrateEl) {
-      // S3: dimmed when no accesses yet, matching the initial render
-      // (../templates.ts uses getCacheHitRateColorClassWithGuard).
-      const colorClass =
-        l0Total === 0
-          ? getColorClass('dimmed')
-          : l0HitRate > 80
-            ? getColorClass('success')
-            : l0HitRate > 50
-              ? getColorClass('warning')
-              : getColorClass('error');
-      updateColorClass(l0HitrateEl, colorClass);
-    }
+    // Same warm-up-aware coloring as the initial render (dimmed until
+    // the cache has seen enough accesses to have a meaningful rate).
+    updateColorClassByField(
+      container,
+      'l0-hitrate',
+      getCacheHitRateColorClassWithGuard(l0HitRate, l0Total)
+    );
+    updateColorClassByField(
+      container,
+      'l0-evictions',
+      cacheMetrics.l0.evictions > 0 ? getColorClass('warning') : getColorClass('dimmed')
+    );
+  }
 
-    const l0EvictEl = container.querySelector('[data-field="l0-evictions"]') as HTMLElement | null;
-    if (l0EvictEl) {
-      updateColorClass(
-        l0EvictEl,
-        cacheMetrics.l0.evictions > 0 ? getColorClass('warning') : getColorClass('dimmed')
-      );
-    }
+  // SliceCache ("S-cache") stats
+  if (cacheMetrics.slice) {
+    const sliceTotal = cacheMetrics.slice.hits + cacheMetrics.slice.misses;
+    const sliceHitRate = sliceTotal > 0 ? (cacheMetrics.slice.hits / sliceTotal) * 100 : 0;
+
+    patchField(container, 's-size', templateFormatBytes(cacheMetrics.slice.size));
+    patchField(container, 's-size-sub', `${cacheMetrics.slice.count} slices`);
+    patchField(container, 's-hitrate', `${sliceHitRate.toFixed(1)}%`);
+    patchField(
+      container,
+      's-hitrate-sub',
+      `${templateFormatNumber(cacheMetrics.slice.hits)} hits · ${templateFormatNumber(cacheMetrics.slice.misses)} miss`
+    );
+    patchField(container, 's-evictions', templateFormatNumber(cacheMetrics.slice.evictions));
+
+    updateColorClassByField(
+      container,
+      's-hitrate',
+      getCacheHitRateColorClassWithGuard(sliceHitRate, sliceTotal)
+    );
+    updateColorClassByField(
+      container,
+      's-evictions',
+      cacheMetrics.slice.evictions > 0 ? getColorClass('warning') : getColorClass('dimmed')
+    );
   }
 
   // L1 stats
@@ -91,27 +111,16 @@ export function updateCacheTab(container: HTMLElement | null, cacheMetrics: Cach
     );
     patchField(container, 'l1-evictions', templateFormatNumber(cacheMetrics.l1.evictions));
 
-    const l1HitrateEl = container.querySelector('[data-field="l1-hitrate"]') as HTMLElement | null;
-    if (l1HitrateEl) {
-      // S3: dimmed when no accesses yet (matches L0 + L2).
-      const colorClass =
-        l1Total === 0
-          ? getColorClass('dimmed')
-          : l1HitRate > 80
-            ? getColorClass('success')
-            : l1HitRate > 50
-              ? getColorClass('warning')
-              : getColorClass('error');
-      updateColorClass(l1HitrateEl, colorClass);
-    }
-
-    const l1EvictEl = container.querySelector('[data-field="l1-evictions"]') as HTMLElement | null;
-    if (l1EvictEl) {
-      updateColorClass(
-        l1EvictEl,
-        cacheMetrics.l1.evictions > 0 ? getColorClass('warning') : getColorClass('dimmed')
-      );
-    }
+    updateColorClassByField(
+      container,
+      'l1-hitrate',
+      getCacheHitRateColorClassWithGuard(l1HitRate, l1Total)
+    );
+    updateColorClassByField(
+      container,
+      'l1-evictions',
+      cacheMetrics.l1.evictions > 0 ? getColorClass('warning') : getColorClass('dimmed')
+    );
   }
 
   // L2 stats. Note: L2 "reads" already means successful gets (= hits);
@@ -133,19 +142,19 @@ export function updateCacheTab(container: HTMLElement | null, cacheMetrics: Cach
     );
     patchField(container, 'l2-io', `${templateFormatNumber(cacheMetrics.l2.reads)} reads`);
     patchField(container, 'l2-io-sub', `${templateFormatNumber(cacheMetrics.l2.writes)} writes`);
+    // Idle-dimming parity with the initial render: bright once disk
+    // traffic exists, dimmed while the tier is untouched.
+    updateColorClassByField(
+      container,
+      'l2-io',
+      countColorClass(cacheMetrics.l2.reads + cacheMetrics.l2.writes)
+    );
 
-    const l2HitrateEl = container.querySelector('[data-field="l2-hitrate"]') as HTMLElement | null;
-    if (l2HitrateEl) {
-      const colorClass =
-        l2Total === 0
-          ? getColorClass('dimmed')
-          : l2HitRate > 80
-            ? getColorClass('success')
-            : l2HitRate > 50
-              ? getColorClass('warning')
-              : getColorClass('error');
-      updateColorClass(l2HitrateEl, colorClass);
-    }
+    updateColorClassByField(
+      container,
+      'l2-hitrate',
+      getCacheHitRateColorClassWithGuard(l2HitRate, l2Total)
+    );
   }
 
   // R3: status pill row. Avoid full innerHTML replace when the badge
@@ -194,23 +203,25 @@ export function updateCacheTab(container: HTMLElement | null, cacheMetrics: Cach
         ? `${templateFormatNumber(cacheMetrics.l2.quotaWriteSkipped ?? 0)} quota · ${templateFormatNumber(cacheMetrics.l2.writeFailures ?? 0)} write · ${templateFormatNumber(cacheMetrics.l2.corruptedEntries ?? 0)} corrupt`
         : 'no errors'
     );
-    const l2ErrEl = container.querySelector('[data-field="l2-errors"]') as HTMLElement | null;
-    if (l2ErrEl) {
-      updateColorClass(l2ErrEl, errTotal > 0 ? getColorClass('error') : getColorClass('dimmed'));
-    }
+    updateColorClassByField(
+      container,
+      'l2-errors',
+      errTotal > 0 ? getColorClass('error') : getColorClass('dimmed')
+    );
   }
 
   // Total
   patchField(container, 'cache-total', templateFormatBytes(cacheMetrics.totalCacheMemory));
 
-  // Effective demand hit-rate. The field is absent in the rendered
-  // template when `effectiveDemandHitRate` is undefined; `patchField`
-  // no-ops when the selector misses.
+  // Effective demand hit-rate. The label is static in the template;
+  // only the value span is patched. The field is absent in the
+  // rendered template when `effectiveDemandHitRate` is undefined;
+  // `patchField` no-ops when the selector misses.
   if (cacheMetrics.effectiveDemandHitRate !== undefined) {
     patchField(
       container,
       'cache-effective-hitrate',
-      `EFFECTIVE HIT RATE: ${(cacheMetrics.effectiveDemandHitRate * 100).toFixed(1)}%`
+      `${(cacheMetrics.effectiveDemandHitRate * 100).toFixed(1)}%`
     );
   }
 

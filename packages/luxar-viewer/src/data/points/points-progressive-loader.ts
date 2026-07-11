@@ -42,6 +42,8 @@ import type {
 import { ProgressiveMonitorAdapter } from '../loaders/progressive-monitor-adapter';
 import { concatOptionalField, concatRequiredField } from '../loaders/progressive/concat-helpers';
 import { CACHE_HIT_THRESHOLD_MS } from '../loaders/progressive/constants';
+import { restoreLadder, storeLadder } from '../loaders/progressive/slice-cache-helper';
+import type { SliceCache } from '../../cache/slice-cache';
 import { log, Modules, LogEmoji } from '../../utils/log';
 
 /**
@@ -175,20 +177,29 @@ export class PointsProgressiveLoader implements PointsDataLoader {
   // non-null only when EVERY sub-LOD carries a stamp (a partially stamped
   // ladder reads as unstamped — never blend stamped and guessed entries).
   private energyTable: readonly number[] | null;
+  // Node path (SliceCache namespace) + the shared SliceCache, if enabled.
+  private readonly path: string;
+  private readonly sliceCache: SliceCache | null;
+  // Per-tick LOD time budget (ms) from the CURRENT updateView call during
+  // dimension-animation playback; null outside playback. A per-pass
+  // directive (never part of lastViewState / viewStatesEqual / cache keys).
+  // Mirrors GSplatsProgressiveLoader.
+  private _frameBudgetMs: number | null = null;
 
   constructor(
     lodLoaders: PointsSpatialIndexLoader[],
     nLods: number,
     path: string,
-    energyTable?: ReadonlyArray<number | null | undefined>
+    energyTable?: ReadonlyArray<number | null | undefined>,
+    sliceCache?: SliceCache | null
   ) {
     this.lodLoaders = lodLoaders;
     this.nLods = nLods;
+    this.path = path;
+    this.sliceCache = sliceCache ?? null;
     this.monitor = new ProgressiveMonitorAdapter(() => this.lodLoaders, path);
     this.energyTable =
-      energyTable &&
-      energyTable.length === nLods &&
-      energyTable.every((e) => typeof e === 'number')
+      energyTable && energyTable.length === nLods && energyTable.every((e) => typeof e === 'number')
         ? (energyTable as number[])
         : null;
   }
@@ -199,6 +210,10 @@ export class PointsProgressiveLoader implements PointsDataLoader {
     // refinement loop holding a stale reference stops instead of indexing
     // into the now-empty lodLoaders. Mirrors GSplatsProgressiveLoader.
     if (this._disposed) return false;
+    // While a playback frame budget is active, the budgeted prefix IS the
+    // target: no background refinement between animation ticks; the commit
+    // stamps the prefix complete. Mirrors GSplatsProgressiveLoader.
+    if (this._frameBudgetMs !== null) return false;
     return this.loadedLODs.length < this.nLods;
   }
 
@@ -247,8 +262,37 @@ export class PointsProgressiveLoader implements PointsDataLoader {
     session?: UpdateSession,
     signal?: AbortSignal
   ): Promise<LoadedPointsData> {
+    // Record the per-pass playback budget FIRST (before the restore branch:
+    // a pause re-trigger arrives with the SAME view state — it must still
+    // clear the budget). Mirrors GSplatsProgressiveLoader.
+    this._frameBudgetMs = viewState.frameBudgetMs ?? null;
+    const budgetDeadline =
+      this._frameBudgetMs !== null ? performance.now() + this._frameBudgetMs : null;
+
     if (!this.lastViewState || !viewStatesEqual(viewState, this.lastViewState)) {
-      this.loadedLODs = [];
+      // DEPARTURE store: snapshot the OUTGOING view's partial ladder before
+      // discarding it, keyed under the OUTGOING view (lastViewState — never
+      // the incoming one). Scrubbing faster than the ladder completes would
+      // otherwise store nothing at all (completion never happens), making
+      // scrub-back — the S-cache's headline case — always cold. One clone
+      // per slice-leave; upgrade-if-longer makes re-departures cheap no-ops.
+      if (this.lastViewState && this.loadedLODs.length > 0) {
+        storeLadder(this.sliceCache, this.path, this.lastViewState, this.loadedLODs, {
+          scan: this._frameBudgetMs !== null,
+          pin: viewState.prefetch === true,
+        });
+      }
+      // Try the SliceCache before discarding the ladder (see GSplats loader).
+      const restored = restoreLadder<LoadedPointsData>(
+        this.sliceCache,
+        this.path,
+        viewState,
+        this.nLods
+      );
+      // Shallow-copy the CONTAINER: the streaming loop below pushes further
+      // levels and must never mutate the cache's payload array (elements
+      // stay shared read-only). Mirrors GSplatsProgressiveLoader.
+      this.loadedLODs = restored ? [...restored] : [];
       this._resetGeneration++;
       this.lastViewState = {
         displayDims: [...viewState.displayDims],
@@ -256,11 +300,26 @@ export class PointsProgressiveLoader implements PointsDataLoader {
         tolerance: [...viewState.tolerance],
         dimensions: viewState.dimensions,
       };
+      if (restored) {
+        this._initialLoadDone = true;
+        this._lastAllResident = true;
+        // FULL ladder short-circuits; a PREFIX falls through to the loop
+        // (startLevel = prefix length). Mirrors GSplatsProgressiveLoader.
+        if (restored.length === this.nLods) {
+          return this.concatenateMemoized(session);
+        }
+      }
     }
 
     const startLevel = this.loadedLODs.length;
 
     for (let level = startLevel; level < this.nLods; level++) {
+      // Playback frame budget: stop as soon as the tick's time is spent
+      // (≥1 level always loads — `level > startLevel` guard). Mirrors
+      // GSplatsProgressiveLoader.
+      if (budgetDeadline !== null && level > startLevel && performance.now() > budgetDeadline) {
+        break;
+      }
       const t0 = performance.now();
       const { data: lodData, allResident } = await this.lodLoaders[level].updateViewWithResidency(
         viewState,
@@ -313,6 +372,16 @@ export class PointsProgressiveLoader implements PointsDataLoader {
     }
 
     this.prefetchNextLOD(viewState);
+
+    // Snapshot into the SliceCache (upgrade-if-longer): full ladders always;
+    // PREFIXES only while a playback budget is active. Mirrors
+    // GSplatsProgressiveLoader.
+    if (this.loadedLODs.length === this.nLods || this._frameBudgetMs !== null) {
+      storeLadder(this.sliceCache, this.path, viewState, this.loadedLODs, {
+        scan: this._frameBudgetMs !== null,
+        pin: viewState.prefetch === true,
+      });
+    }
 
     return this.concatenateMemoized(session);
   }

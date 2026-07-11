@@ -6,9 +6,9 @@ Conforms to the section-trio pattern documented in [../../README.md](../../READM
 
 ## Contents
 
-- `data.ts` — `cacheConfig: CacheConfig`. Defaults: caching `enabled`, L0 on with a 200MB decompressed-chunk budget, L1 100MB in-memory LRU, L2 2048MB persistent OPFS, `opfsOperationTimeoutMs: 10_000`, `externalDatasetTtlMs: null` (no TTL — external datasets without `content_hash` may be stale indefinitely), `debug: false`.
-- `types.ts` — `CacheConfig` interface. Documents each field including the rationale for the OPFS timeout (bounds hung-handle stalls into cache misses) and the external-TTL semantics (applies only to datasets without `content_hash`; `null` means no validation, recording `validationMode: 'none'`).
-- `validate.ts` — `validateCache(config, errors, warnings)`. Rejects non-finite or non-positive L0/L1/L2 sizes; enforces `l1MaxSizeMB ≥ 10` because `SegmentedLRUCache` reserves a 10MB metadata floor below which chunk writes are silently dropped; requires `opfsOperationTimeoutMs` to be finite and positive; allows `externalDatasetTtlMs` to be `null` or a finite positive number (explicitly rejecting `NaN`).
+- `data.ts` — `cacheConfig: CacheConfig`. Defaults: caching `enabled`, L0 on with a 200MB decompressed-chunk budget, L1 100MB in-memory LRU, L2 2048MB persistent OPFS, SliceCache ("S-cache") on with a 128MB budget (`sliceCacheEnabled: true`, `sliceCacheMaxSizeMB: 128`), `opfsOperationTimeoutMs: 10_000`, `externalDatasetTtlMs: null` (no TTL — external datasets without `content_hash` may be stale indefinitely), `debug: false`.
+- `types.ts` — `CacheConfig` interface. Documents each field including the SliceCache pair (per-slice decoded-geometry LRU above L0; disabled via `sliceCacheEnabled: false` or the `?no-slice-cache` URL flag), the rationale for the OPFS timeout (bounds hung-handle stalls into cache misses), and the external-TTL semantics (applies only to datasets without `content_hash`; `null` means no validation, recording `validationMode: 'none'`).
+- `validate.ts` — `validateCache(config, errors, warnings)`. Rejects non-finite or non-positive L0/L1/L2/SliceCache sizes; enforces `l1MaxSizeMB ≥ 10` because `SegmentedLRUCache` reserves a 10MB metadata floor below which chunk writes are silently dropped; requires `opfsOperationTimeoutMs` to be finite and positive; allows `externalDatasetTtlMs` to be `null` or a finite positive number (explicitly rejecting `NaN`).
 
 ## Public API
 

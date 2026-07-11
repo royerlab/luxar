@@ -43,6 +43,8 @@ import type { GPUBufferPool } from '../../../rendering/gpu-buffer-pool';
 import type { UpdateProfiler } from '../../../profiling/update-profiler';
 import type { MultiLevelCachingStore } from '../../../cache/multi-level-caching-store';
 import type { DecompressedChunkCache } from '../../../cache/decompressed-chunk-cache';
+import type { SliceCache } from '../../../cache/slice-cache';
+import type { CacheBudgets } from '../../../cache/heap-budget';
 import type { SceneLoaderMonitorPort } from '../../scene-loader-monitor-port';
 import type { LODGroupRegistry } from '../../../scene/lod-group-registry';
 import { setupCaches } from '../cache/cache-setup';
@@ -109,6 +111,9 @@ export interface LoadSceneCtx {
   setDatasetAbortController(controller: AbortController | null): void;
   setCachingStore(store: MultiLevelCachingStore | null): void;
   setL0Cache(cache: DecompressedChunkCache | null): void;
+  setSliceCache(cache: SliceCache | null): void;
+  /** Resolved per-tier cache budgets (for the Settings popover readout). */
+  setCacheBudgets(budgets: CacheBudgets | null): void;
   setZarrStore(store: zarr.Readable): void;
   setRootGroup(group: THREE.Group): void;
   setSceneGraph(graph: SceneNode): void;
@@ -218,13 +223,17 @@ export async function loadScene(url: string, ctx: LoadSceneCtx): Promise<THREE.G
 
   const cacheResult = await setupCaches(ctx.normalizeURL(url), {
     noCache: ctx.config.noCache,
+    noSliceCache: ctx.config.noSliceCache,
     cacheDebug: ctx.config.cacheDebug,
     clearCache: ctx.config.clearCache,
     noPrefetch: ctx.config.noPrefetch,
     prefetchDebug: ctx.config.prefetchDebug,
+    cacheBudgetMB: ctx.config.cacheBudgetMB,
   });
   ctx.setL0Cache(cacheResult.l0Cache);
+  ctx.setSliceCache(cacheResult.sliceCache);
   ctx.setCachingStore(cacheResult.cachingStore);
+  ctx.setCacheBudgets(cacheResult.budgets);
   const zarrStore = (await zarr.openStore(cacheResult.rawStore)) as zarr.Readable;
   ctx.setZarrStore(zarrStore);
 
@@ -352,6 +361,7 @@ export async function loadScene(url: string, ctx: LoadSceneCtx): Promise<THREE.G
     monitor: ctx.monitor(),
     cachingStore: cacheResult.cachingStore,
     l0Cache: cacheResult.l0Cache,
+    sliceCache: cacheResult.sliceCache,
     cacheTelemetryState: cacheResult.telemetryState,
     gpuBufferPool: ctx.gpuBufferPool(),
     profiler: ctx.profiler,

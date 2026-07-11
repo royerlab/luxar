@@ -24,6 +24,7 @@ import { GSplatsSpatialIndexLoader } from '../../../../data/gsplats/gsplats-spat
 import type { SceneNode, ViewState } from '../../../../data';
 import type { MonitorEvent, MonitorEventListener } from '../../../../types/data-monitor-types';
 import { makeMockZarrLocation } from '../../../builders/spatial-loader-fixtures';
+import { SliceCache } from '../../../../cache/slice-cache';
 
 vi.mock('zarrita', () => ({
   registry: {},
@@ -96,7 +97,7 @@ describe('GSplatsSpatialIndexLoader', () => {
       expect(metrics.path).toBe('/test_gsplats');
       expect(metrics.queries).toBe(0);
       expect(metrics.loads).toBe(0);
-      expect(metrics.pointsLoaded).toBe(0);
+      expect(metrics.elementsLoaded).toBe(0);
       expect(metrics.bytesLoaded).toBe(0);
     });
 
@@ -221,6 +222,108 @@ describe('GSplatsSpatialIndexLoader', () => {
 
     afterEach(() => {
       bodyLoader?.dispose();
+    });
+
+    // ────────────────────────────────────────────────────────────────
+    // Plain-leaf S-cache: a plain leaf caches its decoded slice as a
+    // 1-element ladder under the progressive loaders' key contract
+    // (restoreLadder/storeLadder). Symmetric block across the three
+    // spatial-index loader test files.
+    describe('plain-leaf S-cache', () => {
+      const hiddenDimView: ViewState = {
+        displayDims: [0, 1, 2],
+        slicePosition: [0, 0, 0, 5],
+        tolerance: [0, 0, 0, 0.25],
+      };
+      let sliceCache: SliceCache;
+      let cachedLoader: GSplatsSpatialIndexLoader;
+
+      beforeEach(() => {
+        sliceCache = new SliceCache({ maxSize: 8 * 1024 * 1024 });
+        cachedLoader = new GSplatsSpatialIndexLoader(
+          mockZarrLocation as unknown as ConstructorParameters<typeof GSplatsSpatialIndexLoader>[0],
+          mockNode,
+          undefined,
+          undefined,
+          undefined,
+          undefined,
+          sliceCache
+        );
+      });
+
+      afterEach(() => {
+        cachedLoader?.dispose();
+      });
+
+      const gets = () => (zarr.get as unknown as ReturnType<typeof vi.fn>).mock.calls.length;
+
+      it('same-view revisits restore from the S-cache: same reference, zero new reads', async () => {
+        const first = await cachedLoader.loadGSplats(hiddenDimView);
+        const readsAfterFirst = gets();
+
+        const second = await cachedLoader.loadGSplats(hiddenDimView);
+        const third = await cachedLoader.loadGSplats(hiddenDimView);
+
+        // Hits return the SAME cached payload object (feeds the downstream
+        // reference-identity no-op commit) and touch zarr not at all.
+        expect(third).toBe(second);
+        expect(second.splatCount).toBe(first.splatCount);
+        expect(gets()).toBe(readsAfterFirst);
+      });
+
+      it('a different slicePosition is a miss: loads fresh and stores a second entry', async () => {
+        await cachedLoader.loadGSplats(hiddenDimView);
+        const readsAfterFirst = gets();
+
+        await cachedLoader.loadGSplats({ ...hiddenDimView, slicePosition: [0, 0, 0, 6] });
+
+        expect(gets()).toBeGreaterThan(readsAfterFirst);
+        expect(sliceCache.getStats().count).toBe(2);
+      });
+
+      it('stores nothing when every dimension is displayed (single-slice view)', async () => {
+        await cachedLoader.loadGSplats({
+          displayDims: [0, 1, 2],
+          slicePosition: [0, 0, 0],
+          tolerance: [0, 0, 0],
+        });
+        expect(sliceCache.getStats().count).toBe(0);
+      });
+
+      it('a failed (e.g. aborted) load stores nothing', async () => {
+        mockExecute.mockRejectedValueOnce(new DOMException('aborted', 'AbortError'));
+        await expect(cachedLoader.loadGSplats(hiddenDimView)).rejects.toThrow();
+        expect(sliceCache.getStats().count).toBe(0);
+      });
+
+      it('the cached snapshot is a deep clone: post-store accumulator reuse cannot corrupt it', async () => {
+        const first = await cachedLoader.loadGSplats(hiddenDimView);
+        // Simulate the loader's next pass overwriting the reused accumulator
+        // buffers that `first`'s arrays alias.
+        (first.positions as Float32Array).fill(999);
+
+        const second = await cachedLoader.loadGSplats(hiddenDimView);
+        expect(second.positions[0]).toBe(0);
+      });
+
+      it('an empty slice is cached via the wrapper: revisits skip the query entirely', async () => {
+        // Zero visible ranges → the internal returns empty data and the
+        // WRAPPER stores it (same contract as Points/Lines: an empty slice
+        // is a valid, ~0-byte result that revisits should skip).
+        mockExecute.mockResolvedValue([]);
+
+        const first = await cachedLoader.loadGSplats(hiddenDimView);
+        expect(first.splatCount).toBe(0);
+        expect(sliceCache.getStats().count).toBe(1);
+        const readsAfterFirst = gets();
+
+        const second = await cachedLoader.loadGSplats(hiddenDimView);
+        const third = await cachedLoader.loadGSplats(hiddenDimView);
+
+        expect(second.splatCount).toBe(0);
+        expect(third).toBe(second);
+        expect(gets()).toBe(readsAfterFirst);
+      });
     });
 
     describe('initialization', () => {
@@ -500,10 +603,7 @@ describe('GSplatsSpatialIndexLoader', () => {
             if (path.includes('chunk_bounds')) return Promise.resolve(chunkBoundsArray);
             if (path.includes('centers')) return Promise.resolve(mockArrays.centers);
             if (path.includes('amplitudes')) return Promise.resolve(mockArrays.amplitudes);
-            if (
-              path.includes('cholesky_factors_diag') ||
-              path.includes('cholesky_factors_offdiag')
-            )
+            if (path.includes('cholesky_factors_diag') || path.includes('cholesky_factors_offdiag'))
               // zarrita-style missing-node error (recognized by isNotFoundError).
               return Promise.reject(new Error('Node not found'));
             if (path.includes('cholesky_factors')) return Promise.resolve(legacyChol);
@@ -574,9 +674,7 @@ describe('GSplatsSpatialIndexLoader', () => {
           slicePosition: [0, 0, 0],
           tolerance: [0, 0, 0],
         };
-        await expect(bodyLoader.loadGSplats(viewState)).rejects.toThrow(
-          /cholesky_factors_offdiag/
-        );
+        await expect(bodyLoader.loadGSplats(viewState)).rejects.toThrow(/cholesky_factors_offdiag/);
       });
 
       it('surfaces a transient (non-not-found) error opening the diagonal array', async () => {
@@ -731,12 +829,46 @@ describe('GSplatsSpatialIndexLoader', () => {
         expect(metrics.queries).toBe(1);
         expect(metrics.type).toBe('gsplats-spatial-index');
         expect(metrics.path).toBe('/test_gsplats');
+        // Regression (×3 symmetric): visibleElements is written at query time.
+        // The lines loader shipped for months never setting it (monitor showed
+        // a permanent 0) — pin it in every suite.
+        expect(metrics.visibleElements).toBeGreaterThan(0);
         // Resident memory is populated from the accumulator after a load
         // (was a perpetual 0 before — never written). Matches the MB→bytes
         // conversion done in recordLoadMetrics.
         const accMB = bodyLoader.getAccumulatorStats()?.memoryMB ?? 0;
         expect(accMB).toBeGreaterThan(0);
         expect(metrics.memoryUsed).toBe(Math.round(accMB * 1024 * 1024));
+        // Chunk-index telemetry is attached for the advisor (×3 symmetric).
+        expect(metrics.spatialIndex).toBeDefined();
+        expect(metrics.spatialIndex!.totalCells).toBeGreaterThan(0);
+      });
+
+      it('should fold completed loads into avgQueryTime (wrapper close-out)', async () => {
+        // The wrapper's shared finishQueryTracking stamps the rolling mean
+        // after the load completes — mirror of the Points/Lines suites.
+        // With real timers the elapsed may round to 0ms, so pin the
+        // type/range rather than a concrete duration.
+        const viewState: ViewState = {
+          displayDims: [0, 1, 2],
+          slicePosition: [0, 0, 0],
+          tolerance: [0, 0, 0],
+        };
+
+        // Make elapsed time observable: every Date.now() call advances 5ms, so
+        // if the wrapper's close-out were deleted, avgQueryTime would stay 0
+        // and the strict > 0 assertion below would fail.
+        let t = 1_000_000;
+        const nowSpy = vi.spyOn(Date, 'now').mockImplementation(() => (t += 5));
+        try {
+          await bodyLoader.loadGSplats(viewState);
+        } finally {
+          nowSpy.mockRestore();
+        }
+
+        const metrics = bodyLoader.getMetrics();
+        expect(metrics.queries).toBe(1);
+        expect(metrics.avgQueryTime).toBeGreaterThan(0);
       });
     });
 
@@ -841,6 +973,42 @@ describe('GSplatsSpatialIndexLoader', () => {
     });
 
     describe('resource cleanup', () => {
+      it('dispose clears the active-query map (mid-flight leak guard)', async () => {
+        // Regression (×3 symmetric): points dispose() historically omitted
+        // activeQueries.clear(), so a dispose mid-flight leaked the tracked
+        // query entry (lines/gsplats always cleared it).
+        const baseViewState: ViewState = {
+          displayDims: [0, 1, 2],
+          slicePosition: [0, 0, 0],
+          tolerance: [0, 0, 0],
+        };
+
+        // Pre-initialize (chunk-bounds open + get) with the fast mock.
+        await bodyLoader.loadGSplats(baseViewState);
+        expect(bodyLoader.getActiveQueries().length).toBe(0);
+
+        // Gate data-array reads so a query is observably mid-flight.
+        let release!: () => void;
+        const gate = new Promise<void>((resolve) => {
+          release = resolve;
+        });
+        (zarr.get as any).mockImplementation(() =>
+          gate.then(() => ({ data: new Float32Array(100) }))
+        );
+
+        const loadPromise = bodyLoader
+          .loadGSplats({ ...baseViewState, slicePosition: [0.5, 0.5, 0.5] })
+          .catch(() => null); // dispose mid-flight may fail the load — expected
+
+        for (let i = 0; i < 10; i++) await Promise.resolve();
+        expect(bodyLoader.getActiveQueries().length).toBeGreaterThanOrEqual(1);
+
+        bodyLoader.dispose();
+        expect(bodyLoader.getActiveQueries().length).toBe(0);
+
+        release();
+        await loadPromise;
+      });
       it('should dispose resources properly', async () => {
         const viewState: ViewState = {
           displayDims: [0, 1, 2],
@@ -899,6 +1067,43 @@ describe('GSplatsSpatialIndexLoader', () => {
 
         const result = await bodyLoader.loadGSplats(viewState);
         expect(result.colors).toBeInstanceOf(Uint8Array);
+      });
+
+      it('should handle uint16 color data via the shared color helper', async () => {
+        // Mirror of the Points suite's uint16 case: direct (unencoded)
+        // Uint16 colors must be preserved natively end-to-end through the
+        // loader, not just by the shared helper's own unit tests.
+        mockArrays.colors.dtype = 'uint16';
+
+        (zarr.get as unknown as ReturnType<typeof vi.fn>).mockImplementation(
+          (array: unknown, slices?: unknown) => {
+            if (array === chunkBoundsArray) {
+              return Promise.resolve({ data: new Float32Array(20 * 3 * 2) });
+            }
+            const sliceSpec = slices as Array<{ start: number; end: number }>;
+            const count = sliceSpec[0].end - sliceSpec[0].start;
+            if (array === mockArrays.colors) {
+              const buf = new Uint16Array(count * 3);
+              for (let i = 0; i < count; i++) buf[i * 3] = 65535;
+              return Promise.resolve({ data: buf });
+            }
+            let elementsPerItem = 1;
+            if (array === mockArrays.centers) elementsPerItem = 3;
+            else if (array === mockArrays.cholesky_factors_diag) elementsPerItem = 3;
+            else if (array === mockArrays.cholesky_factors_offdiag) elementsPerItem = 3;
+            return Promise.resolve({ data: new Float32Array(count * elementsPerItem) });
+          }
+        );
+
+        const viewState: ViewState = {
+          displayDims: [0, 1, 2],
+          slicePosition: [0, 0, 0],
+          tolerance: [0, 0, 0],
+        };
+
+        const result = await bodyLoader.loadGSplats(viewState);
+        expect(result.colors).toBeInstanceOf(Uint16Array);
+        expect((result.colors as Uint16Array)[0]).toBe(65535);
       });
 
       it('should keep direct Float32 (HDR) colors as Float32Array', async () => {

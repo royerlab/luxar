@@ -15,6 +15,12 @@ import * as zarr from '../../zarr';
 import { MultiLevelCachingStore } from '../../../cache/multi-level-caching-store';
 import { ChunkPrefetcher } from '../../../cache/chunk-prefetcher';
 import { DecompressedChunkCache } from '../../../cache/decompressed-chunk-cache';
+import { SliceCache } from '../../../cache/slice-cache';
+import {
+  computeCacheBudgets,
+  deviceClassPoolBytes,
+  type CacheBudgets,
+} from '../../../cache/heap-budget';
 import { config as appConfig } from '../../../config';
 import { log, Modules } from '../../../utils/log';
 import type { CacheTelemetryState } from '../../../types/data-monitor-types';
@@ -23,15 +29,25 @@ import type { CacheTelemetryState } from '../../../types/data-monitor-types';
  *  the original inline code consulted. */
 export interface CacheSetupFlags {
   noCache?: boolean;
+  /** Disable ONLY the SliceCache (`?no-slice-cache`); L0/L1/L2 stay on. */
+  noSliceCache?: boolean;
   cacheDebug?: boolean;
   clearCache?: boolean;
   noPrefetch?: boolean;
   prefetchDebug?: boolean;
+  /**
+   * Explicit total cache pool (L0+L1+S-cache) in MB (`?cacheBudgetMB=` / native
+   * launcher). Overrides heap detection — the path that gives the WKWebView app
+   * / Safari (no `performance.memory`) a real budget.
+   */
+  cacheBudgetMB?: number | null;
 }
 
 /** Result of cache setup: the three layers and a ready-to-open store. */
 export interface CacheSetupResult {
   l0Cache: DecompressedChunkCache | null;
+  /** Shared SliceCache ("S-cache") for per-slice decoded-geometry reuse. */
+  sliceCache: SliceCache | null;
   cachingStore: MultiLevelCachingStore | null;
   rawStore: zarr.AsyncReadable;
   /**
@@ -44,6 +60,12 @@ export interface CacheSetupResult {
    * `wireMonitorAfterLoad`.
    */
   telemetryState: CacheTelemetryState;
+  /**
+   * The resolved per-tier budgets (and their source: heap / explicit /
+   * device-class / fixed) — surfaced so the Settings popover can show the
+   * user what their budget actually resolved to.
+   */
+  budgets: CacheBudgets;
 }
 
 /**
@@ -60,16 +82,63 @@ export interface CacheSetupResult {
  */
 export async function setupCaches(url: string, flags: CacheSetupFlags): Promise<CacheSetupResult> {
   const noCache = flags.noCache ?? false;
+  const noSliceCache = flags.noSliceCache ?? false;
   const cacheDebug = flags.cacheDebug ?? false;
   const clearCache = flags.clearCache ?? false;
   const noPrefetch = flags.noPrefetch ?? false;
   const prefetchDebug = flags.prefetchDebug ?? false;
 
+  // Two-sided heap-aware budgets for the in-memory tiers (L0/L1/S-cache):
+  // scale up on a large heap so a fits-in-RAM timelapse stays resident, and
+  // down on a small heap to avoid an OOM from the previously-fixed 428 MB.
+  // An explicit `cacheBudgetMB` (URL / native launcher) takes precedence — the
+  // path that gives WKWebView/Safari (no `performance.memory`) a real budget
+  // instead of the fixed fallback. L2 (OPFS/disk) is unaffected.
+  const poolOverrideBytes =
+    flags.cacheBudgetMB != null && flags.cacheBudgetMB > 0
+      ? flags.cacheBudgetMB * 1024 * 1024
+      : undefined;
+  // Which tiers are actually active this session (single source of truth, reused
+  // both to size the budgets and to gate construction below) — so a disabled
+  // tier doesn't reserve pool it can't use.
+  const sliceEnabled = appConfig.cache.sliceCacheEnabled && !noCache && !noSliceCache;
+  const l0Enabled = appConfig.cache.l0Enabled && !noCache;
+  const l1Enabled = appConfig.cache.enabled && !noCache;
+  // Device-class fallback pool (mobile/laptop/desktop) for WebKit without an
+  // override — where the heap can't be measured. undefined in non-browser envs.
+  const budgets = computeCacheBudgets(undefined, poolOverrideBytes, deviceClassPoolBytes(), {
+    l0: l0Enabled,
+    l1: l1Enabled,
+    slice: sliceEnabled,
+  });
+  const toMB = (bytes: number) => (bytes / 1024 / 1024).toFixed(0);
+
   let l0Cache: DecompressedChunkCache | null = null;
 
-  if (appConfig.cache.l0Enabled && !noCache) {
+  // SliceCache ("S-cache"): shared per-slice decoded-geometry cache. Gated by
+  // its own config flag + `?no-slice-cache`, and also off when `?no-cache`
+  // disables all tiers. It is cleared on content-hash invalidation alongside L0
+  // (see the onInvalidate registration below).
+  let sliceCache: SliceCache | null = null;
+  if (sliceEnabled) {
+    // No `?clear-cache` handling here (unlike L0/L1/L2 below): the SliceCache
+    // is in-memory only and constructed fresh for every loadScene, so there is
+    // never a prior session's state to clear.
+    sliceCache = new SliceCache({
+      maxSize: budgets.sliceBytes,
+      debug: cacheDebug || appConfig.cache.debug,
+    });
+    log.info(
+      Modules.SCENE_LOADER,
+      `SliceCache (S-cache) enabled (max size: ${toMB(budgets.sliceBytes)}MB, ${budgets.source})`
+    );
+  } else if (noSliceCache) {
+    log.info(Modules.SCENE_LOADER, 'SliceCache disabled via ?no-slice-cache URL parameter');
+  }
+
+  if (l0Enabled) {
     l0Cache = new DecompressedChunkCache({
-      maxSize: appConfig.cache.l0MaxSizeMB * 1024 * 1024,
+      maxSize: budgets.l0Bytes,
       debug: cacheDebug || appConfig.cache.debug,
     });
 
@@ -80,7 +149,7 @@ export async function setupCaches(url: string, flags: CacheSetupFlags): Promise<
 
     log.info(
       Modules.SCENE_LOADER,
-      `L0 decompressed chunk cache enabled (max size: ${appConfig.cache.l0MaxSizeMB}MB)`
+      `L0 decompressed chunk cache enabled (max size: ${toMB(budgets.l0Bytes)}MB)`
     );
   } else if (noCache) {
     log.info(Modules.SCENE_LOADER, 'L0 cache disabled via ?no-cache URL parameter');
@@ -89,9 +158,9 @@ export async function setupCaches(url: string, flags: CacheSetupFlags): Promise<
   let rawStore: zarr.AsyncReadable;
   let cachingStore: MultiLevelCachingStore | null = null;
 
-  if (appConfig.cache.enabled && !noCache) {
+  if (l1Enabled) {
     cachingStore = new MultiLevelCachingStore(url, {
-      l1MaxSize: appConfig.cache.l1MaxSizeMB * 1024 * 1024,
+      l1MaxSize: budgets.l1Bytes,
       l2MaxSize: appConfig.cache.l2MaxSizeMB * 1024 * 1024,
       debug: cacheDebug || appConfig.cache.debug,
       noCache,
@@ -100,7 +169,7 @@ export async function setupCaches(url: string, flags: CacheSetupFlags): Promise<
     await cachingStore.init();
 
     const prefetcher = new ChunkPrefetcher(cachingStore, {
-      maxConcurrent: 4,
+      maxConcurrent: appConfig.dataLoading.network.maxConcurrent,
       enabled: !noPrefetch,
       debug: prefetchDebug,
     });
@@ -111,6 +180,22 @@ export async function setupCaches(url: string, flags: CacheSetupFlags): Promise<
       cachingStore.onInvalidate(() => {
         l0.clear();
         log.info(Modules.SCENE_LOADER, 'L0 cache cleared due to L1/L2 invalidation');
+      });
+    }
+
+    // SliceCache holds decoded geometry derived from the dataset's content, so a
+    // content-hash bump must evict it too — otherwise a revisit would serve
+    // geometry from the stale dataset (cf. the past stale-cache black screen).
+    // NOTE: this registration lives inside the `cache.enabled` block (same as
+    // L0's), so with L1/L2 disabled there is no content-hash listener. That's an
+    // acceptably narrow gap: in-session dataset switches clear the SliceCache via
+    // dispose(), and with no persistent chunk cache there's nothing else to be
+    // stale against.
+    if (sliceCache) {
+      const sc = sliceCache;
+      cachingStore.onInvalidate(() => {
+        sc.clear();
+        log.info(Modules.SCENE_LOADER, 'SliceCache cleared due to L1/L2 invalidation');
       });
     }
 
@@ -126,11 +211,13 @@ export async function setupCaches(url: string, flags: CacheSetupFlags): Promise<
   let telemetryState: CacheTelemetryState;
   if (noCache) {
     telemetryState = { kind: 'disabled-no-cache' };
-  } else if (!appConfig.cache.enabled && !appConfig.cache.l0Enabled) {
+  } else if (sliceCache === null && !appConfig.cache.enabled && !appConfig.cache.l0Enabled) {
     telemetryState = { kind: 'disabled-config' };
   } else {
+    // At least one tier is active (S-cache counts: an S-cache-only
+    // configuration still serves slice revisits and reports live stats).
     telemetryState = { kind: 'enabled' };
   }
 
-  return { l0Cache, cachingStore, rawStore, telemetryState };
+  return { l0Cache, sliceCache, cachingStore, rawStore, telemetryState, budgets };
 }

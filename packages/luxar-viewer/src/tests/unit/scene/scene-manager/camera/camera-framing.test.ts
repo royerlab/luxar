@@ -292,6 +292,39 @@ describe('fitCameraToBounds', () => {
     expect(reinitialize).toHaveBeenCalledTimes(1);
   });
 
+  // Regression: orbiting overwrites camera.up every frame, so a Home/F fit
+  // after any orbit used to inherit the accumulated tilt (lookAt derives roll
+  // from camera.up) and land on an oblique, rolled framing instead of the
+  // face-on view a fresh camera gets on load.
+  it('resets a tilted camera.up so the fitted view is upright (no inherited roll)', () => {
+    const { controls } = makeControls();
+    perspectiveCamera.up.set(0.5, 0.5, 0.7071).normalize(); // tilt from prior orbiting
+    fitCameraToBounds(perspectiveCamera, controls, makeBounds([0, 0, 0], [10, 10, 10]), {
+      lookAtTarget: new THREE.Vector3(5, 5, 5),
+    });
+    expect(perspectiveCamera.up.distanceTo(THREE.Object3D.DEFAULT_UP)).toBeCloseTo(0, 6);
+    // The camera's actual screen-up (local +Y in world) must be world +Y.
+    const screenUp = new THREE.Vector3(0, 1, 0).applyQuaternion(perspectiveCamera.quaternion);
+    expect(screenUp.x).toBeCloseTo(0, 6);
+    expect(screenUp.y).toBeCloseTo(1, 6);
+    expect(screenUp.z).toBeCloseTo(0, 6);
+  });
+
+  // A zarr viewer_config can author a custom scene up. The fit must square
+  // to THAT up (SceneManager passes it via options.up), not clobber it with
+  // world +Y — otherwise an author-oriented scene loses its horizon on the
+  // load-time auto-frame and on every Home/F reset.
+  it('squares the fit to a custom scene up when options.up is provided', () => {
+    const { controls } = makeControls();
+    const sceneUp = new THREE.Vector3(0, 0, 1); // z-up authored scene
+    perspectiveCamera.up.set(0.5, 0.5, 0.7071).normalize(); // stale orbit tilt
+    fitCameraToBounds(perspectiveCamera, controls, makeBounds([0, 0, 0], [10, 10, 10]), {
+      lookAtTarget: new THREE.Vector3(5, 5, 5),
+      up: sceneUp,
+    });
+    expect(perspectiveCamera.up.distanceTo(sceneUp)).toBeCloseTo(0, 6);
+  });
+
   it('orthographic: returns 0 and short-circuits on a zero-extent box (scene.md G11)', () => {
     // [scene.md/G11][P5] Perspective zero-extent is covered above; the
     // ortho path was not. Both paths must early-return without touching
@@ -434,5 +467,30 @@ describe('centerOnOrigin', () => {
     expect(targetArg.z).toBe(0);
     expect(update).toHaveBeenCalledTimes(1);
     expect(saveState).toHaveBeenCalledTimes(1);
+  });
+
+  it('resets a tilted camera.up so the origin-centered view is upright', () => {
+    const camera = new THREE.PerspectiveCamera(60, 1, 0.1, 1000);
+    camera.position.set(30, 40, 0);
+    camera.up.set(1, 0, 0); // fully rolled from prior orbiting
+    const { controls } = makeControls(new THREE.Vector3(0, 0, 0));
+
+    centerOnOrigin(camera, controls);
+
+    expect(camera.up.distanceTo(THREE.Object3D.DEFAULT_UP)).toBeCloseTo(0, 6);
+    const screenUp = new THREE.Vector3(0, 1, 0).applyQuaternion(camera.quaternion);
+    expect(screenUp.y).toBeCloseTo(1, 6);
+  });
+
+  it('squares to a custom scene up when one is passed (authored viewer_config.up)', () => {
+    const camera = new THREE.PerspectiveCamera(60, 1, 0.1, 1000);
+    camera.position.set(30, 40, 0);
+    camera.up.set(1, 0, 0);
+    const { controls } = makeControls(new THREE.Vector3(0, 0, 0));
+
+    const sceneUp = new THREE.Vector3(0, 0, 1);
+    centerOnOrigin(camera, controls, sceneUp);
+
+    expect(camera.up.distanceTo(sceneUp)).toBeCloseTo(0, 6);
   });
 });

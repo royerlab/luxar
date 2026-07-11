@@ -25,6 +25,7 @@ import type { LinesDataLoader } from '../../../types/lines';
 import type { GSplatsDataLoader } from '../../../types/gsplats';
 import type { MultiLevelCachingStore } from '../../../cache/multi-level-caching-store';
 import type { DecompressedChunkCache } from '../../../cache/decompressed-chunk-cache';
+import type { SliceCache } from '../../../cache/slice-cache';
 import type { GPUBufferPool } from '../../../rendering/gpu-buffer-pool';
 import type { UpdateProfiler } from '../../../profiling/update-profiler';
 import type { LODGroupRegistry } from '../../../scene/lod-group-registry';
@@ -43,6 +44,8 @@ export interface WireMonitorAfterLoadParams {
   cachingStore: MultiLevelCachingStore | null;
   /** L0 decompressed-chunk cache, when L0 is enabled. */
   l0Cache: DecompressedChunkCache | null;
+  /** SliceCache ("S-cache"), when enabled. */
+  sliceCache: SliceCache | null;
   /**
    * Resolved cache telemetry state from `setupCaches()`. Pushed to
    * the monitor before provider wiring so the UI sees the right
@@ -89,6 +92,7 @@ export function wireMonitorAfterLoad(params: WireMonitorAfterLoadParams): void {
     monitor,
     cachingStore,
     l0Cache,
+    sliceCache,
     cacheTelemetryState,
     gpuBufferPool,
     profiler,
@@ -116,6 +120,12 @@ export function wireMonitorAfterLoad(params: WireMonitorAfterLoadParams): void {
     monitor.setL0CacheProvider({
       getStats: () => l0Cache.getStats(),
       clear: () => l0Cache.clear(),
+    });
+  }
+  if (sliceCache) {
+    monitor.setSliceCacheProvider({
+      getStats: () => sliceCache.getStats(),
+      clear: () => sliceCache.clear(),
     });
   }
 

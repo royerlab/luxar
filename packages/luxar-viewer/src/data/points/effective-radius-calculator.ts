@@ -8,6 +8,7 @@
 
 import { ViewState } from '../data-loader-types';
 import type { EffectiveRadiusConfig } from '../../types/points';
+import { discreteDimTolerance } from '../loaders/spatial-query/tolerance-computer';
 
 // Re-export so existing importers (`import { EffectiveRadiusConfig } from
 // '.../data/points/effective-radius-calculator'`) keep resolving.
@@ -45,7 +46,20 @@ export function calculateEffectiveRadii(
 
   const effectiveRadii = new Float32Array(numPoints);
 
-  // Small tolerance for floating point comparison in discrete dimensions
+  // MEMBERSHIP gate for discrete dimensions: a point belongs to the queried
+  // category iff |value − target| ≤ 0.5. This is deliberately DIFFERENT from
+  // the chunk-QUERY tolerance (quarter-cell, see calculateSpatialQueryTolerance
+  // below): the query decides which chunks to fetch; this decides which of the
+  // fetched points are visible. Keep at 0.5 — the viewer snaps discrete
+  // navigation TARGETS to the absolute k·step grid
+  // (SceneDimsManager.setDimensionValue), and the compiler warns when discrete
+  // DATA sits more than a quarter-step off that grid
+  // (validate_discrete_dimension_ranges' on-grid check), so for conforming
+  // data a half-unit reach selects exactly the target category. Off-grid data
+  // in the (quarter-step, half-step] band would pass this gate without its
+  // chunks being fetched — that's the contract the compile-time warning
+  // guards. Mirrors the fixed 0.5 in the WASM parity kernel
+  // (wasm/typescript/effective-radii.ts) — keep the two in 1:1 sync.
   const discreteTolerance = 0.5;
 
   // Helper function to safely check if a dimension is spatial
@@ -202,12 +216,18 @@ export function calculateSpatialQueryTolerance(
       // ALWAYS use maxRadius for spatial dimensions, ignore tolerance array
       queryTolerance[d] = maxRadius;
     } else {
-      // Non-spatial dimensions are discrete (by design)
-      // CRITICAL: Use 0.5 tolerance for chunk queries to handle float precision issues
-      // and ensure we don't miss chunks at boundaries. The effective radius calculation
-      // (calculateEffectiveRadii) does the precise filtering with discreteTolerance = 0.5.
-      // Using 0 here would cause chunks to be missed due to float precision errors.
-      queryTolerance[d] = 0.5;
+      // Non-spatial dimensions are discrete (by design): the shared
+      // quarter-cell rule (0.25 × step, fallback 0.25) used by all three
+      // geometries. Deliberately < 0.5 × step: chunk bounds are padded on the
+      // write side (±0.5 in legacy datasets), and a half-step query tolerance
+      // would sum with that padding to a full step — fetching the ENTIRE
+      // neighbouring category (e.g. all of timepoint t−1 when scrubbing to t).
+      // A quarter-cell still always catches the target cell and genuine
+      // straddle chunks (discrete navigation is on-grid). The precise
+      // per-point filtering happens later in calculateEffectiveRadii with the
+      // half-step MEMBERSHIP gate. Using 0 here would miss chunks at float
+      // boundaries.
+      queryTolerance[d] = discreteDimTolerance(viewState.dimensions?.[d]);
     }
   }
 

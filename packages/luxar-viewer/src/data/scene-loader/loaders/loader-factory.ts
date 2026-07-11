@@ -15,7 +15,7 @@
  *
  * Behavior matches the inline original — same constructor argument
  * order, same logging, same null-coalescing of optional cache /
- * profiler / prefetcher dependencies.
+ * prefetcher dependencies.
  *
  * @module data/scene-loader/loaders/loader-factory
  */
@@ -34,16 +34,17 @@ import type { LinesDataLoader } from '../../../types/lines';
 import type { GSplatsDataLoader } from '../../../types/gsplats';
 import { ArrayRefRegistry } from '../../array-decoder/decoder';
 import { log, Modules } from '../../../utils/log';
-import { UpdateProfiler } from '../../../profiling/update-profiler';
 import type { DecompressedChunkCache } from '../../../cache/decompressed-chunk-cache';
+import type { SliceCache } from '../../../cache/slice-cache';
 import type { MultiLevelCachingStore } from '../../../cache/multi-level-caching-store';
 
 /** Common dependencies needed by every loader factory call. */
 export interface LoaderFactoryDeps {
   zarrStore: zarr.Readable;
   arrayRefRegistry: ArrayRefRegistry;
-  profiler: UpdateProfiler | null;
   l0Cache: DecompressedChunkCache | null;
+  /** Shared SliceCache; passed to progressive loaders for per-slice reuse. */
+  sliceCache: SliceCache | null;
   cachingStore: MultiLevelCachingStore | null;
 }
 
@@ -91,9 +92,12 @@ export function createPointsLoader(
     node,
     deps.arrayRefRegistry,
     deps.zarrStore,
-    deps.profiler ?? undefined,
     deps.l0Cache ?? undefined,
-    deps.cachingStore?.getPrefetcher() ?? undefined
+    deps.cachingStore?.getPrefetcher() ?? undefined,
+    // Plain-leaf nodes cache their decoded slice in the S-cache as a
+    // 1-element ladder. Progressive sub-LOD loaders (created below) must
+    // NOT receive it — their wrapper owns the whole-ladder cache entry.
+    deps.sliceCache ?? undefined
   );
 }
 
@@ -110,9 +114,12 @@ export function createLinesLoader(
     node,
     deps.arrayRefRegistry,
     deps.zarrStore,
-    deps.profiler ?? undefined,
     deps.l0Cache ?? undefined,
-    deps.cachingStore?.getPrefetcher() ?? undefined
+    deps.cachingStore?.getPrefetcher() ?? undefined,
+    // Plain-leaf nodes cache their decoded slice in the S-cache as a
+    // 1-element ladder. Progressive sub-LOD loaders (created below) must
+    // NOT receive it — their wrapper owns the whole-ladder cache entry.
+    deps.sliceCache ?? undefined
   );
 }
 
@@ -129,9 +136,12 @@ export function createGSplatsLoader(
     node,
     deps.arrayRefRegistry,
     deps.zarrStore,
-    deps.profiler ?? undefined,
     deps.l0Cache ?? undefined,
-    deps.cachingStore?.getPrefetcher() ?? undefined
+    deps.cachingStore?.getPrefetcher() ?? undefined,
+    // Plain-leaf nodes cache their decoded slice in the S-cache as a
+    // 1-element ladder. Progressive sub-LOD loaders (created below) must
+    // NOT receive it — their wrapper owns the whole-ladder cache entry.
+    deps.sliceCache ?? undefined
   );
 }
 
@@ -195,14 +205,19 @@ export async function createProgressiveGSplatsLoader(
         lodNode,
         deps.arrayRefRegistry,
         deps.zarrStore,
-        deps.profiler ?? undefined,
         deps.l0Cache ?? undefined,
         deps.cachingStore?.getPrefetcher() ?? undefined
       )
     );
   }
 
-  return new GSplatsProgressiveLoader(lodLoaders, nAdditive, node.path, energyTable);
+  return new GSplatsProgressiveLoader(
+    lodLoaders,
+    nAdditive,
+    node.path,
+    energyTable,
+    deps.sliceCache ?? undefined
+  );
 }
 
 /**
@@ -257,14 +272,19 @@ export async function createProgressivePointsLoader(
         lodNode,
         deps.arrayRefRegistry,
         deps.zarrStore,
-        deps.profiler ?? undefined,
         deps.l0Cache ?? undefined,
         deps.cachingStore?.getPrefetcher() ?? undefined
       )
     );
   }
 
-  return new PointsProgressiveLoader(lodLoaders, nAdditive, node.path, energyTable);
+  return new PointsProgressiveLoader(
+    lodLoaders,
+    nAdditive,
+    node.path,
+    energyTable,
+    deps.sliceCache ?? undefined
+  );
 }
 
 /**
@@ -315,12 +335,17 @@ export async function createProgressiveLinesLoader(
         lodNode,
         deps.arrayRefRegistry,
         deps.zarrStore,
-        deps.profiler ?? undefined,
         deps.l0Cache ?? undefined,
         deps.cachingStore?.getPrefetcher() ?? undefined
       )
     );
   }
 
-  return new LinesProgressiveLoader(lodLoaders, nAdditive, node.path, energyTable);
+  return new LinesProgressiveLoader(
+    lodLoaders,
+    nAdditive,
+    node.path,
+    energyTable,
+    deps.sliceCache ?? undefined
+  );
 }

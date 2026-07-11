@@ -68,7 +68,6 @@ export async function projectGSplatsTo3D(
   choleskyFactors3D: Float32Array;
   amplitudes: Float32Array;
   colors: Float32Array;
-  sharpness: Float32Array;
   visibleCount: number;
 }> {
   const wasmModule = pickBackend(ctx, params.ndim); // >16D -> uncapped TS reference
@@ -107,11 +106,12 @@ export async function projectGSplatsTo3D(
   }
   // [workers OOS] Three-geometry symmetry: Points and Lines both validate
   // their per-element `sharpness` length. GSplats accepts `sharpness` for
-  // API parity but never reads it (the output is always an empty
-  // Float32Array). Even so, callers occasionally pass it; validate the
-  // length so a caller bug — building a wrong-sized sharpness array —
-  // surfaces with the same clear error the other geometries produce
-  // rather than silently flowing through into the discard.
+  // call-signature parity but never reads it (gsplats have no sharpness
+  // attribute; the result carries none). Even so, callers occasionally pass
+  // it; validate the length so a caller bug — building a wrong-sized
+  // sharpness array — surfaces with the same clear error the other
+  // geometries produce rather than silently flowing through into the
+  // discard.
   if (sharpness && sharpness.length < splatCount) {
     throw new Error(
       `projectGSplatsTo3D: sharpness too short (got ${sharpness.length}, expected ≥ ${splatCount})`
@@ -140,7 +140,6 @@ export async function projectGSplatsTo3D(
           choleskyFactors3D: new Float32Array(0),
           amplitudes: new Float32Array(0),
           colors: new Float32Array(0),
-          sharpness: new Float32Array(0),
           visibleCount: 0,
         },
         [emptyF32.buffer]
@@ -156,7 +155,6 @@ export async function projectGSplatsTo3D(
         choleskyFactors3D,
         amplitudes: outAmplitudes,
         colors: outColors,
-        sharpness: new Float32Array(0),
         visibleCount: splatCount,
       },
       [
@@ -259,7 +257,6 @@ export async function projectGSplatsTo3D(
         choleskyFactors3D: new Float32Array(0),
         amplitudes: new Float32Array(0),
         colors: new Float32Array(0),
-        sharpness: new Float32Array(0),
         visibleCount: 0,
       },
       [emptyF32.buffer]
@@ -280,7 +277,6 @@ export async function projectGSplatsTo3D(
       choleskyFactors3D,
       amplitudes: outAmplitudes,
       colors: outColors,
-      sharpness: new Float32Array(0), // Kept for API compatibility but unused
       visibleCount,
     },
     [

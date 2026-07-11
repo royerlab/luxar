@@ -45,6 +45,16 @@ import {
 } from './attrs-utils';
 import { clamp } from '../gui/format/value-formatting';
 
+/**
+ * Visibility-toggle glyphs — stroke SVG in the rail-icon style (currentColor,
+ * round caps), replacing the old eye emoji so the toggle themes with the
+ * panel and reads crisply at small sizes.
+ */
+const EYE_ICON =
+  '<svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7z"/><circle cx="12" cy="12" r="3"/></svg>';
+const EYE_OFF_ICON =
+  '<svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3l18 18"/><path d="M10.6 5.2A11.3 11.3 0 0 1 12 5c6.5 0 10 7 10 7a17.6 17.6 0 0 1-3 3.9M6.5 6.5C3.6 8.4 2 12 2 12s3.5 7 10 7c1.4 0 2.7-.3 3.9-.7"/><path d="M9.9 9.9a3 3 0 0 0 4.2 4.2"/></svg>';
+
 // Type guard: does this material have our update* methods?
 export interface LuxarMaterial extends THREE.Material, CameraAwareMaterial {
   updateIntensity(v: number): void;
@@ -251,6 +261,40 @@ export class LayersPanel {
     }
   }
 
+  /**
+   * Reset every layer's parameters — visibility, display range, gamma,
+   * opacity, blending mode, and colormap — back to their authored defaults.
+   *
+   * Re-derives the default state from the scene graph (the same walk
+   * `initFromScene` uses) and pushes every parameter through the regular
+   * apply paths, so the materials, the row list, and the controls all agree.
+   * No-op before a scene loads or when the scene exposes no layers.
+   */
+  resetAllLayers(): void {
+    if (!this.sceneGraph || this.state.count === 0) return;
+
+    this.state.initFromSceneGraph(this.sceneGraph);
+    const layers = this.state.getLayers();
+    for (const layer of layers) {
+      // Visibility applies unconditionally: a currently-hidden layer whose
+      // authored default is visible must come back.
+      this.applyVisibility(layer.path, layer.visible);
+      // applyColormap restores the authored colormap (or none) and then
+      // recomposes opacity/gamma/intensity/offset/blending via applyComposed.
+      this.applyColormap(layer);
+    }
+
+    // Rebuild the row list + controls so the panel reflects the fresh state
+    // (initFromSceneGraph replaced every LayerInfo the rows were bound to).
+    if (this.panelEl) {
+      this.renderList();
+      this.renderControls();
+    }
+    if (layers.length > 0) this.state.select(layers[0].path, 'single');
+
+    log.info(Modules.UI, `Layers reset to defaults (${layers.length} layer(s))`);
+  }
+
   show(): void {
     if (!this.panelEl || this.state.count === 0) return;
     this.panelEl.style.display = 'flex';
@@ -448,10 +492,10 @@ export class LayersPanel {
         row.tabIndex = -1;
       }
 
-      // Update eye button text + ARIA state
+      // Update eye button icon + ARIA state
       const eyeBtn = row.querySelector('.luxar-layer-row__eye') as HTMLButtonElement | null;
       if (eyeBtn) {
-        eyeBtn.textContent = layer.visible ? '\u{1F441}' : '\u{1F441}\u200D\u{1F5E8}';
+        eyeBtn.innerHTML = layer.visible ? EYE_ICON : EYE_OFF_ICON;
         const tooltip = layer.visible ? 'Hide layer' : 'Show layer';
         eyeBtn.title = tooltip;
         eyeBtn.setAttribute('aria-label', `${tooltip}: ${layer.name}`);
@@ -496,7 +540,7 @@ export class LayersPanel {
     const eyeBtn = document.createElement('button');
     eyeBtn.type = 'button';
     eyeBtn.className = 'luxar-layer-row__eye';
-    eyeBtn.textContent = layer.visible ? '\u{1F441}' : '\u{1F441}\u200D\u{1F5E8}';
+    eyeBtn.innerHTML = layer.visible ? EYE_ICON : EYE_OFF_ICON;
     const tooltip = layer.visible ? 'Hide layer' : 'Show layer';
     eyeBtn.title = tooltip;
     eyeBtn.setAttribute('aria-label', `${tooltip}: ${layer.name}`);

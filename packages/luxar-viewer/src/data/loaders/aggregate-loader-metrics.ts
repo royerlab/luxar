@@ -22,9 +22,9 @@ function zeroedMetrics(type: LoaderType, path: string): LoaderMetrics {
     loads: 0,
     evictions: 0,
     errors: 0,
-    pointsLoaded: 0,
+    elementsLoaded: 0,
     bytesLoaded: 0,
-    visiblePoints: 0,
+    visibleElements: 0,
     avgQueryTime: 0,
     avgLoadTime: 0,
     memoryUsed: 0,
@@ -36,8 +36,8 @@ function zeroedMetrics(type: LoaderType, path: string): LoaderMetrics {
  * Aggregate the per-LOD metrics of a progressive loader's inner loaders into a
  * single {@link LoaderMetrics} representing the whole node.
  *
- * Counters (`queries` / `loads` / `evictions` / `errors` / `pointsLoaded` /
- * `bytesLoaded` / `visiblePoints` / `memoryUsed`) are summed. `memoryLimit` is
+ * Counters (`queries` / `loads` / `evictions` / `errors` / `elementsLoaded` /
+ * `bytesLoaded` / `visibleElements` / `memoryUsed`) are summed. `memoryLimit` is
  * the max across loaders (it's a shared cap, not additive). `avgQueryTime` /
  * `avgLoadTime` are weighted means by `queries` / `loads` respectively (so a
  * LOD that never queried doesn't skew the average). The optional
@@ -74,9 +74,9 @@ export function aggregateLoaderMetrics(inner: LoaderMetrics[], path: string): Lo
     out.loads += m.loads;
     out.evictions += m.evictions;
     out.errors += m.errors;
-    out.pointsLoaded += m.pointsLoaded;
+    out.elementsLoaded += m.elementsLoaded;
     out.bytesLoaded += m.bytesLoaded;
-    out.visiblePoints += m.visiblePoints;
+    out.visibleElements += m.visibleElements;
     out.memoryUsed += m.memoryUsed;
     out.memoryLimit = Math.max(out.memoryLimit, m.memoryLimit);
 
@@ -89,7 +89,7 @@ export function aggregateLoaderMetrics(inner: LoaderMetrics[], path: string): Lo
       siCells += si.occupiedCells;
       siTotalCells += si.totalCells;
       siCellsPerQueryWeighted += si.avgCellsPerQuery * m.queries;
-      siPointsPerCellWeighted += si.avgPointsPerCell * m.queries;
+      siPointsPerCellWeighted += si.avgElementsPerCell * m.queries;
       siEfficiencyWeighted += si.queryEfficiency * m.queries;
       siRangesInCache += si.rangesInCache;
     }
@@ -111,7 +111,7 @@ export function aggregateLoaderMetrics(inner: LoaderMetrics[], path: string): Lo
       occupiedCells: siCells,
       totalCells: siTotalCells,
       avgCellsPerQuery: out.queries > 0 ? siCellsPerQueryWeighted / out.queries : 0,
-      avgPointsPerCell: out.queries > 0 ? siPointsPerCellWeighted / out.queries : 0,
+      avgElementsPerCell: out.queries > 0 ? siPointsPerCellWeighted / out.queries : 0,
       queryEfficiency: out.queries > 0 ? siEfficiencyWeighted / out.queries : 0,
       rangesInCache: siRangesInCache,
     };

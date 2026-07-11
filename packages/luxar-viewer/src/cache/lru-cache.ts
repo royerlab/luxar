@@ -9,6 +9,14 @@ export class LRUCache<V> {
   private getSize: (v: V) => number;
   private onEvict?: (key: string, value: V) => void;
 
+  // Pinned keys are protected from ROUTINE eviction: victim selection skips
+  // them so a caller can keep a just-inserted entry alive for a bounded window
+  // (e.g. a prefetched next-frame slice that must survive until the foreground
+  // consumes it). If EVERY remaining entry is pinned and the cache is still
+  // over budget, a pinned entry is evicted as a last resort so the byte
+  // invariant is never violated.
+  private pinned = new Set<string>();
+
   // Hit/miss tracking for monitoring
   private hits = 0;
   private misses = 0;
@@ -95,7 +103,7 @@ export class LRUCache<V> {
    *
    * @remarks Performance: O(k) where k = number of evictions needed (typically 0-2)
    */
-  set(key: string, value: V): void {
+  set(key: string, value: V, opts?: { evictMostRecent?: boolean }): void {
     const size = this.getSize(value);
 
     // Reject items that exceed total cache capacity to avoid permanent
@@ -111,19 +119,87 @@ export class LRUCache<V> {
       this.cache.delete(key);
     }
 
-    // Evict LRU until space available
+    // Evict until space available. Default policy: least-recently-used
+    // (Map head). Scan policy (`evictMostRecent`, opted into per-store by
+    // callers that KNOW they are in a sequential scan, e.g. dimension
+    // playback): evict the MOST-recently-used entry instead — during a
+    // cyclic scan the entry just behind the playhead is the one needed
+    // farthest in the future, so evicting it (and keeping the oldest
+    // prefix resident) converts the classic 0%-hit LRU scan pathology
+    // into hits ≈ budget/working-set clustered right after the wrap.
+    // The key being inserted is never a victim (it's not in the Map here).
     while (this.currentSize + size > this.maxSize && this.cache.size > 0) {
-      const oldestKey = this.cache.keys().next().value;
-      if (!oldestKey) break; // Safety check (should never happen)
-      const oldestValue = this.cache.get(oldestKey)!;
-      this.onEvict?.(oldestKey, oldestValue);
-      this.currentSize -= this.getSize(oldestValue);
-      this.cache.delete(oldestKey);
+      const victimKey = this.selectVictim(opts?.evictMostRecent ?? false);
+      if (!victimKey) break; // Safety check (should never happen)
+      const victimValue = this.cache.get(victimKey)!;
+      this.onEvict?.(victimKey, victimValue);
+      this.currentSize -= this.getSize(victimValue);
+      this.cache.delete(victimKey);
+      this.pinned.delete(victimKey); // a last-resort eviction clears its pin
       this.evictions++;
     }
 
     this.cache.set(key, value);
     this.currentSize += size;
+  }
+
+  /**
+   * Choose the next eviction victim. Prefers an UNPINNED key — the oldest
+   * (Map head) under the default LRU policy, or the newest (Map tail) under the
+   * scan policy (`evictMostRecent`). If every entry is pinned, falls back to the
+   * plain oldest/newest so the byte budget can still be honored (pinned entries
+   * are eviction-exempt only best-effort, never a hard reservation).
+   *
+   * **Fast path when nothing is pinned** (the norm — only the SliceCache pins,
+   * and only during active prefetch): the LRU victim is the Map head in O(1);
+   * this keeps L0/L1 chunk eviction — which never pins and can hold tens of
+   * thousands of entries — cheap. Only when pins exist do we pay the O(n) scan
+   * to skip them (SliceCache, n at most a few hundred multi-MB slices). The MRU
+   * branch is O(n) regardless — a Map has no reverse iterator — matching the
+   * pre-pin behavior.
+   */
+  private selectVictim(evictMostRecent: boolean): string | undefined {
+    if (this.pinned.size === 0) {
+      if (!evictMostRecent) return this.cache.keys().next().value; // O(1) Map head
+      let last: string | undefined;
+      for (const k of this.cache.keys()) last = k; // Map tail (no reverse iterator)
+      return last;
+    }
+    // Pins present: skip them (best-effort), falling back to the plain
+    // oldest/newest only if EVERY entry is pinned.
+    let first: string | undefined;
+    let last: string | undefined;
+    let firstUnpinned: string | undefined;
+    let lastUnpinned: string | undefined;
+    for (const k of this.cache.keys()) {
+      if (first === undefined) first = k;
+      last = k;
+      if (!this.pinned.has(k)) {
+        if (firstUnpinned === undefined) firstUnpinned = k;
+        lastUnpinned = k;
+      }
+    }
+    return evictMostRecent ? (lastUnpinned ?? last) : (firstUnpinned ?? first);
+  }
+
+  /** Protect `key` from routine eviction until {@link unpin} (best-effort). */
+  pin(key: string): void {
+    if (this.cache.has(key)) this.pinned.add(key);
+  }
+
+  /** Release a pin so `key` is eligible for eviction again. */
+  unpin(key: string): void {
+    this.pinned.delete(key);
+  }
+
+  /**
+   * Read a value WITHOUT LRU promotion and WITHOUT touching the hit/miss
+   * counters. For bookkeeping reads (e.g. "is the stored entry longer than
+   * what I'm about to store?") that must not perturb eviction order or the
+   * hit-rate statistic the monitor reports.
+   */
+  peek(key: string): V | undefined {
+    return this.cache.get(key);
   }
 
   has(key: string): boolean {
@@ -137,6 +213,7 @@ export class LRUCache<V> {
     const value = this.cache.get(key)!;
     this.onEvict?.(key, value);
     this.currentSize -= this.getSize(value);
+    this.pinned.delete(key);
     return this.cache.delete(key);
   }
 
@@ -147,6 +224,7 @@ export class LRUCache<V> {
       }
     }
     this.cache.clear();
+    this.pinned.clear();
     this.currentSize = 0;
     this.hits = 0;
     this.misses = 0;

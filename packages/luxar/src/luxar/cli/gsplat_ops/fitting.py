@@ -7,7 +7,7 @@ the shared ``app_gsplat`` Typer (package-refactor-plan P3/P4/P6).
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any, Literal, Optional
+from typing import Optional
 
 import typer
 
@@ -17,15 +17,6 @@ from .fitting_denoise_render import (
     run_render_to_file,
 )
 from .fitting_fit import run_fit_volume
-from .fitting_fit_utils import (
-    build_fit_recipe_params as _build_fit_recipe_params_impl,
-)
-from .fitting_fit_utils import (
-    resolve_tiling as _resolve_tiling_impl,
-)
-from .fitting_fit_utils import (
-    save_fit_output as _save_fit_output_impl,
-)
 
 
 def denoise_volume_cmd(
@@ -89,66 +80,8 @@ def denoise_volume_cmd(
     )
 
 
-def _resolve_tiling(
-    tiling: str, shape: "tuple[int, ...]", tile_size: int, has_density: bool
-) -> str:
-    """Back-compat wrapper around fit tiling-strategy resolution helpers."""
-    return _resolve_tiling_impl(tiling, shape, tile_size, has_density)
 
 
-def _build_fit_recipe_params(
-    recipe: str,
-    *,
-    n_lods: Optional[int],
-    additive_method: Optional[str],
-    breakpoints: Optional[str],
-    target_ms: Optional[float] = None,
-    bandwidth_mbps: Optional[float] = None,
-    bytes_per_splat: Optional[float] = None,
-    compression_factor: Optional[int],
-    levels: Optional[int],
-    substitutive_method: Optional[str],
-    coarsen_dims: Optional[str],
-    device: Optional[str],
-    volume_ndim: int,
-) -> "Any":
-    """Back-compat wrapper around fit recipe-argument parsing helpers."""
-    return _build_fit_recipe_params_impl(
-        recipe,
-        n_lods=n_lods,
-        additive_method=additive_method,
-        breakpoints=breakpoints,
-        target_ms=target_ms,
-        bandwidth_mbps=bandwidth_mbps,
-        bytes_per_splat=bytes_per_splat,
-        compression_factor=compression_factor,
-        levels=levels,
-        substitutive_method=substitutive_method,
-        coarsen_dims=coarsen_dims,
-        device=device,
-        volume_ndim=volume_ndim,
-    )
-
-
-def _save_fit_output(
-    result: Any,
-    output_path: Path,
-    *,
-    compress: "Optional[Literal['zip', 'tar.gz']]",
-    verbose: bool,
-) -> int:
-    """Back-compat wrapper around fit output saving helper."""
-    return _save_fit_output_impl(
-        result,
-        output_path,
-        compress=compress,
-        verbose=verbose,
-    )
-
-
-def fit_volume(*args: Any, **kwargs: Any) -> None:
-    """Back-compat wrapper around ``run_fit_volume``."""
-    return run_fit_volume(*args, **kwargs)
 
 
 def render_to_file(

@@ -22,6 +22,7 @@
 
 import type { ViewState } from '../../data-loader-types';
 import type { ViewStateQueue } from '../view-state/view-state-queue';
+import { scheduleFrame } from '../../../utils/schedule-frame';
 
 /**
  * Consecutive per-loader failures a refinement run tolerates before giving
@@ -147,14 +148,13 @@ export async function runProgressiveRefinement<TLoader>(
     while (true) {
       // Yield: let the browser paint the current LOD level so the
       // refinement is *visible* rather than batched into one frame.
-      await new Promise<void>((resolve) => {
-        if (typeof requestAnimationFrame !== 'undefined') {
-          requestAnimationFrame(() => resolve());
-        } else {
-          // Test environment without rAF: proceed synchronously.
-          resolve();
-        }
-      });
+      // scheduleFrame (not bare rAF) matters here: rAF is suspended in
+      // hidden tabs, and this loop HOLDS the update lock — with the
+      // queued-updateView pacing waiters, a suspended yield would hang
+      // waitForUpdate()/awaitDimensionUpdate() callers until the tab is
+      // foregrounded. scheduleFrame degrades to a timer when hidden and
+      // runs synchronously in rAF-less test environments.
+      await new Promise<void>((resolve) => scheduleFrame(resolve));
 
       // Abort if the owning SceneLoader was disposed (e.g. a dataset
       // switch) while this loop was mid-flight — stop touching the dead

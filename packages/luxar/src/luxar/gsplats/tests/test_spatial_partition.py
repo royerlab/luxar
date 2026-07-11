@@ -93,7 +93,7 @@ def test_spatial_partition_validates_max_elements():
 def test_gsplat_info_handles_partition_file():
     """`gsplat info` must report a partition file's tree shape, not crash
     (GSplatData.load raises on a non-matrix tree — decision 5 gap)."""
-    from luxar.cli.gsplat_commands import info_dataset
+    from luxar.cli.gsplat_ops.inspect_commands import info_dataset
 
     data = _clustered(40)
     with tempfile.TemporaryDirectory() as tmp:
@@ -275,7 +275,7 @@ def test_gsplat_info_legacy_file_shows_migrate_hint_not_traceback():
     substring dispatch mis-routed legacy files)."""
     import typer
 
-    from luxar.cli.gsplat_commands import info_dataset
+    from luxar.cli.gsplat_ops.inspect_commands import info_dataset
 
     with tempfile.TemporaryDirectory() as tmp:
         legacy = Path(tmp) / "legacy.gsplats.zarr"

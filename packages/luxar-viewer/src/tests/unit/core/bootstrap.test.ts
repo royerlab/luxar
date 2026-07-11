@@ -75,6 +75,11 @@ vi.mock('zarrita', () => ({
 import { bootstrapStandalone } from '../../../core/bootstrap';
 import { log } from '../../../utils/log';
 import type { UrlParams } from '../../../config/url-params';
+import {
+  defaultUserSettings,
+  saveUserSettings,
+  resetUserSettingsForTests,
+} from '../../../config/user-settings';
 
 const CANVAS = {} as HTMLCanvasElement;
 
@@ -83,6 +88,7 @@ const EMPTY_PARAMS: UrlParams = {
   theme: null,
   debug: false,
   noCache: false,
+  noSliceCache: false,
   cacheDebug: false,
   clearCache: false,
   noPrefetch: false,
@@ -92,6 +98,7 @@ const EMPTY_PARAMS: UrlParams = {
   webgpuForceWebGL: false,
   perfTimestamp: false,
   gpuBudgetMB: null,
+  cacheBudgetMB: null,
   dpr: null,
 };
 
@@ -101,6 +108,7 @@ describe('bootstrapStandalone', () => {
     mocks.init.mockResolvedValue(undefined);
     delete (window as { __luxarDebug?: unknown }).__luxarDebug;
     localStorage.clear();
+    resetUserSettingsForTests();
   });
 
   afterEach(() => {
@@ -350,6 +358,73 @@ describe('bootstrapStandalone', () => {
 
       expect(mocks.showError).toHaveBeenCalledTimes(1);
       expect(mocks.showError.mock.calls[0][0]).toMatch(/Failed to start the application/i);
+    });
+  });
+
+  describe('user-settings precedence (URL param > stored setting > default)', () => {
+    const initOptions = () => mocks.init.mock.calls[0][0];
+
+    it('threads stored cache preferences into loaderConfig when no URL params are set', async () => {
+      const s = defaultUserSettings();
+      s.caching.enabled = false;
+      s.caching.prefetch = false;
+      s.caching.budgetMode = 'custom';
+      s.caching.budgetMB = 512;
+      saveUserSettings(s);
+
+      await bootstrapStandalone({ canvas: CANVAS, urlParams: EMPTY_PARAMS });
+
+      const lc = initOptions().loaderConfig;
+      expect(lc.noCache).toBe(true);
+      expect(lc.noPrefetch).toBe(true);
+      expect(lc.noSliceCache).toBe(false); // untouched preference stays default
+      expect(lc.cacheBudgetMB).toBe(512);
+    });
+
+    it('URL cacheBudgetMB wins over a stored custom budget', async () => {
+      const s = defaultUserSettings();
+      s.caching.budgetMode = 'custom';
+      s.caching.budgetMB = 512;
+      saveUserSettings(s);
+
+      await bootstrapStandalone({
+        canvas: CANVAS,
+        urlParams: { ...EMPTY_PARAMS, cacheBudgetMB: 256 },
+      });
+
+      expect(initOptions().loaderConfig.cacheBudgetMB).toBe(256);
+    });
+
+    it('auto budget mode passes null (heap-aware path) when no URL override', async () => {
+      await bootstrapStandalone({ canvas: CANVAS, urlParams: EMPTY_PARAMS });
+      expect(initOptions().loaderConfig.cacheBudgetMB).toBeNull();
+    });
+
+    it('stored renderer preference applies, but the URL param beats it', async () => {
+      const s = defaultUserSettings();
+      s.advanced.renderer = 'webgpu';
+      saveUserSettings(s);
+
+      await bootstrapStandalone({ canvas: CANVAS, urlParams: EMPTY_PARAMS });
+      expect(initOptions().renderer).toBe('webgpu');
+
+      vi.clearAllMocks();
+      mocks.init.mockResolvedValue(undefined);
+      await bootstrapStandalone({
+        canvas: CANVAS,
+        urlParams: { ...EMPTY_PARAMS, renderer: 'webgl' },
+      });
+      expect(initOptions().renderer).toBe('webgl');
+    });
+
+    it('URL disable flags compose with stored preferences via OR', async () => {
+      // Stored prefs enable everything; ?no-slice-cache still disables S-cache.
+      saveUserSettings(defaultUserSettings());
+      await bootstrapStandalone({
+        canvas: CANVAS,
+        urlParams: { ...EMPTY_PARAMS, noSliceCache: true },
+      });
+      expect(initOptions().loaderConfig.noSliceCache).toBe(true);
     });
   });
 });

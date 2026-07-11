@@ -71,6 +71,9 @@ import {
   getCacheMemoryColorClass,
   calculateReuseRate,
   getReuseRateColorClass,
+  CACHE_SECTION_KEYS,
+  MONITOR_ICONS,
+  countColorClass,
   type MemoryMetrics,
 } from './data-loading-monitor/templates';
 
@@ -140,6 +143,8 @@ export class DataLoadingMonitor {
 
   // L0 decompressed chunk cache provider
   private l0CacheProvider: { getStats: () => CacheMetrics['l0']; clear: () => void } | null = null;
+  private sliceCacheProvider: { getStats: () => CacheMetrics['slice']; clear: () => void } | null =
+    null;
 
   // Explicit cache telemetry state (set by SceneLoader.cache-setup).
   // Pre-wiring this defaults to undefined so the aggregator falls back
@@ -198,6 +203,18 @@ export class DataLoadingMonitor {
 
   // Track expanded nodes in scene graph tree (by path)
   private expandedNodes = new Set<string>(['/']);
+
+  // Cache-tab sections currently collapsed to their compact one-line
+  // summary. All sections start collapsed — 4 stacked full sections
+  // (S/L0/L1/L2) overflow the panel; the compact rows carry the same
+  // values, so nothing is lost until the user expands for the card view.
+  private collapsedCacheSections = new Set<string>(CACHE_SECTION_KEYS);
+
+  // One-shot flag: the next detailed-structure rebuild plays the entrance
+  // animation. Set on tab switch + expand; NOT on live structureDirty
+  // rebuilds (scene-tree toggles, failed-loads banner), which would replay
+  // the staggered reveal as visible flicker.
+  private animateNextBuild = false;
 
   // Memoized path→node index over the current scene-graph tree, rebuilt
   // only when the root reference changes (a wholesale `setSceneGraph`).
@@ -360,6 +377,19 @@ export class DataLoadingMonitor {
   }
 
   /**
+   * Register the SliceCache ("S-cache") stats/clear provider so the Cache tab
+   * shows its usage and hit rate. Mirrors {@link setL0CacheProvider}.
+   */
+  public setSliceCacheProvider(
+    provider: { getStats: () => CacheMetrics['slice']; clear: () => void } | null
+  ): void {
+    this.sliceCacheProvider = provider;
+    if (provider) {
+      log.info(Modules.DATA_MONITOR, 'SliceCache provider connected');
+    }
+  }
+
+  /**
    * Set the GPU buffer pool provider for Memory tab stats.
    * The provider should have a getStats() method that returns PoolStats.
    */
@@ -433,6 +463,7 @@ export class DataLoadingMonitor {
   public resetSceneProviders(): void {
     this.cacheStatsProvider = null;
     this.l0CacheProvider = null;
+    this.sliceCacheProvider = null;
     this.gpuBufferPoolProvider = null;
     this.accumulatorProviders = { points: null, lines: null, gsplats: null };
     this.profiler = null;
@@ -491,6 +522,17 @@ export class DataLoadingMonitor {
   }
 
   /**
+   * Clear the SliceCache ("S-cache").
+   */
+  public clearSliceCache(): void {
+    if (this.sliceCacheProvider) {
+      this.sliceCacheProvider.clear();
+      log.info(Modules.DATA_MONITOR, 'SliceCache cleared');
+      this.updateUI();
+    }
+  }
+
+  /**
    * Clear L1 memory cache.
    */
   public clearL1Cache(): void {
@@ -536,15 +578,18 @@ export class DataLoadingMonitor {
     ) {
       return;
     }
-    // Clear L0 first (synchronous)
+    // Clear L0 + SliceCache first (synchronous)
     if (this.l0CacheProvider) {
       this.l0CacheProvider.clear();
+    }
+    if (this.sliceCacheProvider) {
+      this.sliceCacheProvider.clear();
     }
     // Clear L1 + L2 (L2 is async)
     if (this.cacheStatsProvider) {
       await this.cacheStatsProvider.clearAll();
     }
-    log.info(Modules.DATA_MONITOR, 'All caches cleared (L0 + L1 + L2)');
+    log.info(Modules.DATA_MONITOR, 'All caches cleared (S-cache + L0 + L1 + L2)');
     notifier.toast('All caches cleared');
     this.updateUI();
   }
@@ -793,7 +838,7 @@ export class DataLoadingMonitor {
 
       case 'load':
         metrics.loads++;
-        metrics.pointsLoaded += event.data.points || 0;
+        metrics.elementsLoaded += event.data.elements || 0;
         metrics.bytesLoaded += event.data.memory || 0;
         if (event.data.latency) {
           const totalTime = metrics.avgLoadTime * (metrics.loads - 1) + event.data.latency;
@@ -826,7 +871,7 @@ export class DataLoadingMonitor {
       startTime: event.timestamp,
       status: 'loading',
       cells: event.data.cells,
-      points: event.data.points,
+      elements: event.data.elements,
       ranges: event.data.ranges,
     });
 
@@ -854,9 +899,9 @@ export class DataLoadingMonitor {
       loads: 0,
       evictions: 0,
       errors: 0,
-      pointsLoaded: 0,
+      elementsLoaded: 0,
       bytesLoaded: 0,
-      visiblePoints: 0,
+      visibleElements: 0,
       avgQueryTime: 0,
       avgLoadTime: 0,
       memoryUsed: 0,
@@ -895,10 +940,16 @@ export class DataLoadingMonitor {
    * Handle UI events through event delegation
    */
   private handleUIEvent(event: Event): void {
-    const target = event.target as HTMLElement;
+    // Resolve to the closest actionable ancestor so clicks landing on
+    // child elements (e.g. the text spans inside a collapsible cache
+    // section header) still trigger the header's action. The nearest
+    // `data-action` wins, so buttons nested inside an actionable header
+    // (like Clear) keep their own action.
+    const target = (event.target as HTMLElement | null)?.closest?.(
+      '[data-action]'
+    ) as HTMLElement | null;
     if (!target) return;
 
-    // Check for data-action attribute
     const action = target.dataset.action;
     if (!action) return;
 
@@ -928,6 +979,9 @@ export class DataLoadingMonitor {
       case 'clearL0':
         this.clearL0Cache();
         break;
+      case 'clearSlice':
+        this.clearSliceCache();
+        break;
       case 'clearL1':
         this.clearL1Cache();
         break;
@@ -947,7 +1001,44 @@ export class DataLoadingMonitor {
         }
         break;
       }
+      case 'toggleCacheSection': {
+        const sectionKey = target.dataset.sectionKey;
+        if (sectionKey) {
+          this.toggleCacheSection(sectionKey);
+        }
+        break;
+      }
     }
+  }
+
+  /**
+   * Toggle a Cache-tab section between its full metric-card view and
+   * the compact one-line header summary. Both views are always in the
+   * DOM (visibility is CSS-driven), so the toggle is a pure class flip
+   * — no re-render, and the per-tick patcher keeps updating both.
+   */
+  private toggleCacheSection(sectionKey: string): void {
+    if (this.collapsedCacheSections.has(sectionKey)) {
+      this.collapsedCacheSections.delete(sectionKey);
+    } else {
+      this.collapsedCacheSections.add(sectionKey);
+    }
+    const collapsed = this.collapsedCacheSections.has(sectionKey);
+    const section = this.contentContainer?.querySelector(
+      `.luxar-cache-section[data-section="${sectionKey}"]`
+    );
+    section?.classList.toggle('luxar-cache-section--collapsed', collapsed);
+    // Transient morph marker: the expand/collapse reveal animation is keyed
+    // on THIS class (not on the collapsed state), so it plays only on an
+    // interactive toggle — never when a structural rebuild re-creates the
+    // sections in their current state.
+    if (section) {
+      section.classList.add('luxar-cache-section--morph');
+      setTimeout(() => section.classList.remove('luxar-cache-section--morph'), 250);
+    }
+    const header = section?.querySelector('.luxar-cache-section__header');
+    header?.setAttribute('title', `Click to ${collapsed ? 'expand' : 'collapse'} this section`);
+    header?.setAttribute('aria-expanded', String(!collapsed));
   }
 
   /**
@@ -960,9 +1051,21 @@ export class DataLoadingMonitor {
     this.panel = document.createElement('div');
     this.updatePanelClasses();
 
-    // Add event delegation listeners
+    // Add event delegation listeners. Keydown makes the div-based
+    // actionable elements (e.g. the collapsible cache-section headers,
+    // which carry role="button" + tabindex) keyboard-operable.
     this.panel.addEventListener('click', this.uiEventHandler);
     this.panel.addEventListener('change', this.uiEventHandler);
+    this.panel.addEventListener('keydown', (e: KeyboardEvent) => {
+      if (e.key !== 'Enter' && e.key !== ' ') return;
+      const target = (e.target as HTMLElement | null)?.closest?.('[data-action]');
+      // Native buttons/selects already handle Enter/Space themselves.
+      if (!target || target instanceof HTMLButtonElement || target instanceof HTMLSelectElement) {
+        return;
+      }
+      e.preventDefault(); // stop Space from scrolling the panel
+      this.uiEventHandler(e);
+    });
 
     // Add to container
     this.container.appendChild(this.panel);
@@ -1008,23 +1111,23 @@ export class DataLoadingMonitor {
     const entries: string[] = [];
     if (hasPoints) {
       entries.push(
-        `<span data-geom="points" title="Points currently on screen (inside the active nD slice). Expand the monitor (⊞) for totals and per-layer detail">${templateFormatNumber(stats.visiblePoints)} pts</span>`
+        `<span data-geom="points" title="Points currently on screen (inside the active nD slice). Expand the monitor for totals and per-layer detail">${templateFormatNumber(stats.visiblePoints)} pts</span>`
       );
     }
     if (hasLines) {
       entries.push(
-        `<span data-geom="lines" title="Line segments currently on screen (inside the active nD slice). Expand the monitor (⊞) for totals and per-layer detail">${templateFormatNumber(stats.visibleSegments)} lines</span>`
+        `<span data-geom="lines" title="Line segments currently on screen (inside the active nD slice). Expand the monitor for totals and per-layer detail">${templateFormatNumber(stats.visibleSegments)} lines</span>`
       );
     }
     if (hasGSplats) {
       entries.push(
-        `<span data-geom="splats" title="Gaussian splats currently on screen (inside the active nD slice). Expand the monitor (⊞) for totals and per-layer detail">${templateFormatNumber(stats.visibleSplats)} splats</span>`
+        `<span data-geom="splats" title="Gaussian splats currently on screen (inside the active nD slice). Expand the monitor for totals and per-layer detail">${templateFormatNumber(stats.visibleSplats)} splats</span>`
       );
     }
     // Nothing loaded yet → show a points placeholder so the row isn't empty.
     if (entries.length === 0) {
       entries.push(
-        `<span data-geom="points" title="Points currently on screen (inside the active nD slice). Expand the monitor (⊞) for totals and per-layer detail">${templateFormatNumber(stats.visiblePoints)} pts</span>`
+        `<span data-geom="points" title="Points currently on screen (inside the active nD slice). Expand the monitor for totals and per-layer detail">${templateFormatNumber(stats.visiblePoints)} pts</span>`
       );
     }
     return entries.join('');
@@ -1090,8 +1193,8 @@ export class DataLoadingMonitor {
     this.panel.innerHTML = `
       <div class="luxar-glass-refraction" aria-hidden="true"></div>
       <div class="luxar-monitor-compact">
-        <span class="luxar-monitor-compact__type" title="${hasSpatialIndex ? 'Loading mode: 🔍 spatial-index streaming — only the data inside the current view/slice is queried and loaded on demand (scales to arbitrarily large datasets)' : 'Loading mode: 📦 direct loading — the dataset is loaded whole, without an on-demand spatial index'}">
-          ${hasSpatialIndex ? '🔍' : '📦'}
+        <span class="luxar-monitor-compact__type" title="${hasSpatialIndex ? 'Loading mode: spatial-index streaming — only the data inside the current view/slice is queried and loaded on demand (scales to arbitrarily large datasets)' : 'Loading mode: direct loading — the dataset is loaded whole, without an on-demand spatial index'}">
+          ${hasSpatialIndex ? MONITOR_ICONS.stream : MONITOR_ICONS.box}
         </span>
 
         <span class="luxar-monitor-compact__geoms">
@@ -1106,11 +1209,11 @@ export class DataLoadingMonitor {
           ${stats.queriesPerSecond.toFixed(1)}/s
         </span>
 
-        ${hasErrors ? '<span class="luxar-monitor-compact__alert" title="Errors detected — expand the monitor (⊞) and open the Insights tab for details and suggested fixes">🔴</span>' : ''}
-        ${hasWarnings ? '<span class="luxar-monitor-compact__alert" title="Warnings — expand the monitor (⊞) and open the Insights tab for details and suggested fixes">🟡</span>' : ''}
+        ${hasErrors ? `<span class="luxar-monitor-compact__alert luxar-color--error" title="Errors detected — expand the monitor and open the Insights tab for details and suggested fixes">${MONITOR_ICONS.dot}</span>` : ''}
+        ${hasWarnings && !hasErrors ? `<span class="luxar-monitor-compact__alert luxar-color--warning" title="Warnings — expand the monitor and open the Insights tab for details and suggested fixes">${MONITOR_ICONS.dot}</span>` : ''}
 
         <button class="luxar-data-monitor__expand-btn" data-action="expand" title="Expand into the full Data Loading Monitor: per-tab views of loading, cache, memory, performance, and insights">
-          ⊞
+          ${MONITOR_ICONS.expand}
         </button>
       </div>
     `;
@@ -1121,6 +1224,12 @@ export class DataLoadingMonitor {
    */
   private buildDetailedViewStructure(): void {
     if (!this.panel) return;
+
+    // One-shot entrance-animation marker: set by setActiveTab (and the
+    // initial expand), consumed here. Live structureDirty rebuilds render
+    // WITHOUT the class so the reveal never replays mid-session.
+    const animClass = this.animateNextBuild ? ' luxar-data-monitor__content--animate' : '';
+    this.animateNextBuild = false;
 
     this.panel.innerHTML = `
       <div class="luxar-glass-refraction" aria-hidden="true"></div>
@@ -1140,7 +1249,7 @@ export class DataLoadingMonitor {
         </div>
 
         <!-- Content (updated frequently via targeted patching) -->
-        <div class="luxar-data-monitor__content">
+        <div class="luxar-data-monitor__content${animClass}">
           ${this.renderTabContent()}
         </div>
       </div>
@@ -1247,7 +1356,13 @@ export class DataLoadingMonitor {
     this.structureDirty = false;
 
     if (!updated) {
-      // Full content rebuild (structure changed or first render for this tab)
+      // Full content rebuild (structure changed or first render for this tab).
+      // The entrance-reveal marker is strictly one-shot (tab switch/expand):
+      // this PARTIAL rebuild path replaces the container's children while the
+      // container itself — and any lingering marker class — survives, so the
+      // reveal would replay on every such rebuild (10x/second on tabs that
+      // always rebuild, e.g. Insights). Strip it before re-rendering.
+      this.contentContainer.classList.remove('luxar-data-monitor__content--animate');
       this.contentContainer.innerHTML = this.renderTabContent();
       this.attachTabHandlers();
     }
@@ -1290,37 +1405,19 @@ export class DataLoadingMonitor {
     const dataTypeCount = [hasPoints, hasLines, hasGSplats].filter(Boolean).length;
     const suffix = dataTypeCount === 1 ? ' total' : '';
 
-    if (hasPoints) {
-      const pct =
-        stats.datasetSize > 0 ? ((stats.visiblePoints / stats.datasetSize) * 100).toFixed(1) : '0';
-      this.patchField('visible-points', templateFormatNumber(stats.visiblePoints));
-      this.patchField(
-        'visible-points-sub',
-        `${pct}% of ${templateFormatNumber(stats.datasetSize)}${suffix}`
-      );
-    }
-    if (hasLines) {
-      const pct =
-        stats.datasetSegments > 0
-          ? ((stats.visibleSegments / stats.datasetSegments) * 100).toFixed(1)
-          : '0';
-      this.patchField('visible-lines', templateFormatNumber(stats.visibleSegments));
-      this.patchField(
-        'visible-lines-sub',
-        `${pct}% of ${templateFormatNumber(stats.datasetSegments)}${suffix}`
-      );
-    }
-    if (hasGSplats) {
-      const pct =
-        stats.datasetSplats > 0
-          ? ((stats.visibleSplats / stats.datasetSplats) * 100).toFixed(1)
-          : '0';
-      this.patchField('visible-splats', templateFormatNumber(stats.visibleSplats));
-      this.patchField(
-        'visible-splats-sub',
-        `${pct}% of ${templateFormatNumber(stats.datasetSplats)}${suffix}`
-      );
-    }
+    // Count cards: value text plus the state color (neutral with data,
+    // dimmed at zero — matches `countColorClass` in the initial render,
+    // so a card doesn't stay dimmed after points scroll into view).
+    const patchCount = (field: string, visible: number, dataset: number) => {
+      const pct = dataset > 0 ? ((visible / dataset) * 100).toFixed(1) : '0';
+      this.patchField(field, templateFormatNumber(visible));
+      this.patchField(`${field}-sub`, `${pct}% of ${templateFormatNumber(dataset)}${suffix}`);
+      const el = this.contentContainer?.querySelector(`[data-field="${field}"]`);
+      if (el) this.updateColorClass(el as HTMLElement, countColorClass(visible));
+    };
+    if (hasPoints) patchCount('visible-points', stats.visiblePoints, stats.datasetSize);
+    if (hasLines) patchCount('visible-lines', stats.visibleSegments, stats.datasetSegments);
+    if (hasGSplats) patchCount('visible-splats', stats.visibleSplats, stats.datasetSplats);
 
     // Update secondary metrics
     this.patchField('memory-used', templateFormatBytes(cacheMetrics.totalCacheMemory));
@@ -1599,7 +1696,7 @@ export class DataLoadingMonitor {
       {
         id: 'overview',
         label: 'Overview',
-        icon: '📊',
+        icon: MONITOR_ICONS.overview,
         tooltip:
           'The big picture: how much of the dataset is on screen, memory and query speed, ' +
           'how much data has been downloaded vs served from cache, and the scene graph tree',
@@ -1607,7 +1704,7 @@ export class DataLoadingMonitor {
       {
         id: 'cache',
         label: 'Cache',
-        icon: '💾',
+        icon: MONITOR_ICONS.cache,
         tooltip:
           'The three cache tiers that avoid re-downloading data — L0 (decoded, memory), ' +
           'L1 (raw, memory), L2 (disk, survives reloads) — with sizes, hit rates, ' +
@@ -1616,7 +1713,7 @@ export class DataLoadingMonitor {
       {
         id: 'memory',
         label: 'Memory',
-        icon: '🧠',
+        icon: MONITOR_ICONS.memory,
         tooltip:
           'Where geometry memory goes: GPU buffer pooling (how often buffers are reused ' +
           'instead of reallocated) and the CPU-side accumulators that grow as data streams in',
@@ -1624,7 +1721,7 @@ export class DataLoadingMonitor {
       {
         id: 'performance',
         label: 'Performance',
-        icon: '⚡',
+        icon: MONITOR_ICONS.performance,
         tooltip:
           'A timing breakdown of each view update — query, load, project, GPU upload — ' +
           'per step and per geometry type, with rows exceeding the 60fps frame budget highlighted',
@@ -1632,7 +1729,7 @@ export class DataLoadingMonitor {
       {
         id: 'insights',
         label: 'Insights',
-        icon: '💡',
+        icon: MONITOR_ICONS.insights,
         tooltip:
           'Automatic diagnosis: detected problems and tuning recommendations for loading ' +
           'and caching, ranked by severity',
@@ -1646,7 +1743,7 @@ export class DataLoadingMonitor {
         class="luxar-data-monitor__tab ${this.uiState.activeTab === tab.id ? 'luxar-data-monitor__tab--active' : ''}"
         data-action="setTab" data-tab-id="${tab.id}" title="${tab.tooltip}"
       >
-        ${tab.icon}&nbsp;${tab.label}
+        ${tab.icon}<span>${tab.label}</span>
       </button>
     `
       )
@@ -1762,7 +1859,7 @@ export class DataLoadingMonitor {
     const cacheMetrics = this.getCacheMetrics();
 
     // Use the template function
-    return renderCacheContent(stats, cacheMetrics);
+    return renderCacheContent(stats, cacheMetrics, this.collapsedCacheSections);
   }
 
   /**
@@ -1826,7 +1923,7 @@ export class DataLoadingMonitor {
    * Get global statistics
    */
   public getGlobalStats(): GlobalStats {
-    let totalPoints = 0;
+    let totalElementsLoaded = 0;
     let totalMemory = 0;
     let totalQueries = 0;
     let totalLoads = 0;
@@ -1843,7 +1940,7 @@ export class DataLoadingMonitor {
       t === 'point-spatial-index' || t === 'lines-spatial-index' || t === 'gsplats-spatial-index';
 
     for (const metrics of this.metrics.values()) {
-      totalPoints += metrics.pointsLoaded;
+      totalElementsLoaded += metrics.elementsLoaded;
       totalMemory += metrics.memoryUsed;
       totalQueries += metrics.queries;
       totalLoads += metrics.loads;
@@ -1910,8 +2007,7 @@ export class DataLoadingMonitor {
     return {
       totalLoaders,
       activeSpatialLoaders: activeSpatial,
-      activeFallbackLoaders: 0, // No more fallback loaders
-      totalPoints,
+      totalElementsLoaded,
       totalMemory,
       datasetSize, // Total points in all datasets (from zarr metadata)
       visiblePoints, // Currently visible/rendered points
@@ -1921,16 +2017,6 @@ export class DataLoadingMonitor {
       visibleSplats, // Currently visible splats
       totalQueries,
       totalLoads,
-      // `totalCacheHits` and `globalCacheHitRate` aren't a single derivable
-      // number anymore — each cache tier (L0/L1/L2) has its own hit rate, and
-      // a true "effective demand hit rate" would need per-request final-tier
-      // tracking which doesn't exist yet. Reported as 0 for back-compat with
-      // tests that assert the field's presence; consumers wanting honest data
-      // should read `getCacheMetrics()` per-tier.
-      totalCacheHits: 0,
-      totalPointsLoaded: totalPoints, // Alias for compatibility
-      totalMemoryUsed: totalMemory, // Alias for compatibility
-      globalCacheHitRate: 0,
       avgQueryTime: totalQueries > 0 ? totalQueryTime / totalQueries : 0,
       queriesPerSecond: qps,
       recommendations: this.advisor.getRecommendations(),
@@ -1948,6 +2034,7 @@ export class DataLoadingMonitor {
     this.calculateRates();
     return aggregateCacheMetrics({
       l0Provider: this.l0CacheProvider,
+      sliceProvider: this.sliceCacheProvider,
       cacheStatsProvider: this.cacheStatsProvider,
       loaders: this.loaders,
       metricsCache: this.metrics,
@@ -2060,6 +2147,8 @@ export class DataLoadingMonitor {
     if (this.panel) {
       this.updatePanelClasses();
     }
+    // Entrance reveal on opening the full panel (like a tab switch).
+    this.animateNextBuild = true;
     // Force rebuild of structure when expanding
     this.contentContainer = null;
     this.updateUI();
@@ -2102,6 +2191,10 @@ export class DataLoadingMonitor {
     // Use type guard for proper validation
     if (isValidTab(tab)) {
       this.uiState.activeTab = tab;
+      // Entrance animation is reserved for tab switches — structureDirty
+      // rebuilds during live updates (tree toggles, banner changes) must
+      // not replay the staggered reveal (it reads as flicker).
+      this.animateNextBuild = true;
       // Rebuild structure when tab changes (tabs need to show active state)
       this.contentContainer = null; // Force rebuild
       this.updateUI();

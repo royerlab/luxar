@@ -29,6 +29,8 @@ import type {
 import { ProgressiveMonitorAdapter } from '../loaders/progressive-monitor-adapter';
 import { concatRequiredField } from '../loaders/progressive/concat-helpers';
 import { CACHE_HIT_THRESHOLD_MS } from '../loaders/progressive/constants';
+import { restoreLadder, storeLadder } from '../loaders/progressive/slice-cache-helper';
+import type { SliceCache } from '../../cache/slice-cache';
 import { log, Modules, LogEmoji } from '../../utils/log';
 
 /**
@@ -168,20 +170,32 @@ export class GSplatsProgressiveLoader implements GSplatsDataLoader {
   // non-null only when EVERY sub-LOD carries a stamp (a partially stamped
   // ladder reads as unstamped — never blend stamped and guessed entries).
   private energyTable: readonly number[] | null;
+  // Node path (SliceCache namespace) + the shared SliceCache, if enabled.
+  private readonly path: string;
+  private readonly sliceCache: SliceCache | null;
+  // Per-tick LOD time budget (ms) from the CURRENT updateView call during
+  // dimension-animation playback; null outside playback. A per-pass
+  // directive (never part of lastViewState / viewStatesEqual / cache keys):
+  // caps how many sub-LODs the streaming loop loads this pass and, while
+  // set, makes `hasMoreLODs` read false so no background refinement runs
+  // between animation ticks and the budgeted prefix commits as
+  // "complete for playback" (display gate accepts it without holding).
+  private _frameBudgetMs: number | null = null;
 
   constructor(
     lodLoaders: GSplatsSpatialIndexLoader[],
     nLods: number,
     path: string,
-    energyTable?: ReadonlyArray<number | null | undefined>
+    energyTable?: ReadonlyArray<number | null | undefined>,
+    sliceCache?: SliceCache | null
   ) {
     this.lodLoaders = lodLoaders;
     this.nLods = nLods;
+    this.path = path;
+    this.sliceCache = sliceCache ?? null;
     this.monitor = new ProgressiveMonitorAdapter(() => this.lodLoaders, path);
     this.energyTable =
-      energyTable &&
-      energyTable.length === nLods &&
-      energyTable.every((e) => typeof e === 'number')
+      energyTable && energyTable.length === nLods && energyTable.every((e) => typeof e === 'number')
         ? (energyTable as number[])
         : null;
   }
@@ -194,6 +208,13 @@ export class GSplatsProgressiveLoader implements GSplatsDataLoader {
     // refinement loop holding a stale reference stops instead of indexing
     // into the now-empty lodLoaders.
     if (this._disposed) return false;
+    // While a playback frame budget is active, the budgeted prefix IS the
+    // target: report no further work so the refinement scheduler stays idle
+    // between animation ticks and the commit stamps the prefix as complete
+    // (the display gate then accepts it instead of holding the previous
+    // frame). The next budget-free updateView (pause re-trigger, scrub)
+    // clears the budget and refinement resumes from the prefix.
+    if (this._frameBudgetMs !== null) return false;
     return this.loadedLODs.length < this.nLods;
   }
 
@@ -258,9 +279,38 @@ export class GSplatsProgressiveLoader implements GSplatsDataLoader {
     session?: UpdateSession,
     signal?: AbortSignal
   ): Promise<LoadedGSplatsData> {
-    // Reset if view state changed
+    // Record the per-pass playback budget FIRST (before the restore branch:
+    // a pause re-trigger arrives with the SAME view state — it must still
+    // clear the budget so refinement can resume). Deadline is measured from
+    // pass start so slow levels consume the budget too.
+    this._frameBudgetMs = viewState.frameBudgetMs ?? null;
+    const budgetDeadline =
+      this._frameBudgetMs !== null ? performance.now() + this._frameBudgetMs : null;
+
+    // Reset if view state changed. Before discarding the ladder, try the
+    // SliceCache: a full-ladder snapshot for this exact view lets us restore
+    // `loadedLODs` outright (so `hasMoreLODs` reads false and the refinement
+    // loop never re-streams), skipping the whole load+decode.
     if (!this.lastViewState || !viewStatesEqual(viewState, this.lastViewState)) {
-      this.loadedLODs = [];
+      // DEPARTURE store: snapshot the outgoing view's partial ladder under
+      // the OUTGOING key before discarding — scrub-back stays warm even when
+      // ladders never complete between navigations. Mirrors Points/Lines.
+      if (this.lastViewState && this.loadedLODs.length > 0) {
+        storeLadder(this.sliceCache, this.path, this.lastViewState, this.loadedLODs, {
+          scan: this._frameBudgetMs !== null,
+          pin: viewState.prefetch === true,
+        });
+      }
+      const restored = restoreLadder<LoadedGSplatsData>(
+        this.sliceCache,
+        this.path,
+        viewState,
+        this.nLods
+      );
+      // Shallow-copy the CONTAINER: the streaming loop below pushes further
+      // levels into loadedLODs and must never mutate the cache's payload
+      // array (the elements stay shared read-only — store deep-clones).
+      this.loadedLODs = restored ? [...restored] : [];
       this._resetGeneration++;
       this.lastViewState = {
         displayDims: [...viewState.displayDims],
@@ -268,12 +318,32 @@ export class GSplatsProgressiveLoader implements GSplatsDataLoader {
         tolerance: [...viewState.tolerance],
         dimensions: viewState.dimensions,
       };
+      if (restored) {
+        this._initialLoadDone = true;
+        this._lastAllResident = true;
+        // FULL ladder: nothing left to load — short-circuit the whole pass.
+        // A PREFIX (stored while a playback budget capped a previous pass)
+        // falls through to the loop instead: loading resumes from
+        // startLevel = prefix length — within this pass's budget during
+        // play, or to completion when idle.
+        if (restored.length === this.nLods) {
+          return this.concatenateMemoized(session);
+        }
+      }
     }
 
     // Load LODs sequentially, stopping at first slow (cache-miss) load
     const startLevel = this.loadedLODs.length;
 
     for (let level = startLevel; level < this.nLods; level++) {
+      // Playback frame budget: stop as soon as the tick's time is spent —
+      // whether many fast levels consumed it or one slow level did. Checked
+      // at loop top (skips work known to be over budget); the
+      // `level > startLevel` guard keeps the ≥1-level first-paint floor
+      // even under tiny budgets.
+      if (budgetDeadline !== null && level > startLevel && performance.now() > budgetDeadline) {
+        break;
+      }
       const t0 = performance.now();
       const { data: lodData, allResident } = await this.lodLoaders[level].updateViewWithResidency(
         viewState,
@@ -330,6 +400,19 @@ export class GSplatsProgressiveLoader implements GSplatsDataLoader {
 
     // Fire-and-forget: prefetch next unloaded LOD to warm cache
     this.prefetchNextLOD(viewState);
+
+    // Snapshot into the SliceCache (upgrade-if-longer): full ladders always
+    // (instant revisit restore); PREFIXES only while a playback budget is
+    // active — each playback loop then restores the prefix instantly and
+    // deepens it with the leftover budget, converging to full ladders.
+    // Gating prefixes on the budget keeps the non-play cost profile (a
+    // store per refinement pass would clone O(N²) bytes per slice).
+    if (this.loadedLODs.length === this.nLods || this._frameBudgetMs !== null) {
+      storeLadder(this.sliceCache, this.path, viewState, this.loadedLODs, {
+        scan: this._frameBudgetMs !== null,
+        pin: viewState.prefetch === true,
+      });
+    }
 
     return this.concatenateMemoized(session);
   }

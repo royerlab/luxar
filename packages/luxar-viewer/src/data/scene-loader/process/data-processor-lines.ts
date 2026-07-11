@@ -141,6 +141,12 @@ export async function projectLinesTo3DUsingWorker(
       );
     }
 
+    // NOTE: `params` (positions / segments / widths / colors / scalars) is
+    // passed WITHOUT a Comlink transfer list, so its buffers are structured-
+    // cloned into the worker, not detached. The SliceCache relies on this: a
+    // restored slice hands the loader's cached arrays straight into projection,
+    // and transferring them would neuter (detach) the cached snapshot. Do not
+    // add a transfer list for the inputs here. (Mirrors the gsplats processor.)
     const workerResult = await getWorkerPool().runWithTimeout(
       'projectLinesTo3D',
       'projection',
@@ -191,8 +197,14 @@ export async function processLinesData(
 
   // Compute base tolerance, then mutate per-dim for extend_to_all
   // dimensions. Copy first to avoid mutating shared arrays.
+  // MEMBERSHIP role: this tolerance is the per-dimension visibility slab
+  // used by clip_segments_batch, not the chunk-fetch reach — discrete dims
+  // get the half-cell gate matching points/gsplats, while the loader's
+  // fetch path keeps the quarter-cell query role.
   const ndim = data.ndim;
-  let tolerance = computeTolerance('lines', viewState.displayDims, ndim, viewState.dimensions);
+  let tolerance = computeTolerance('lines', viewState.displayDims, ndim, viewState.dimensions, {
+    discreteRole: 'membership',
+  });
 
   const attrs = mesh.userData.attrs as { extend_to_all?: string[] };
   const extendDims: string[] = attrs.extend_to_all || [];

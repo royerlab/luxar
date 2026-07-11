@@ -9,11 +9,11 @@ Note: the active control mode (`controlType: 'orbit' | 'fly' | 'ortho'`) and `au
 ## Contents
 
 - `data.ts` — `controlsConfig: ControlsConfig`. Defines `scaleMultipliers` (`minDistanceFactor`, `maxDistanceFactor`, `flySpeedFactor`), the `fly` block (`inertialMode`, `movement` speed/acceleration/damping, `rotation` speed/damping, `look.mouseSpeed`, `physics` thresholds and `dampingPower`), and the `orbit` block (`autoRotate.speed`, `zoom` min/max distance + speed, `damping` enabled flag + factor).
-- `types.ts` — `ControlsConfig`, `FlyControlsConfig`, `OrbitControlsConfig`, `ScaleMultipliers`, plus the shared `ConfigRange` (`min`/`max`/`default`/optional `step`) and `ConfigValue` (`default`) helper interfaces used across UI-bound numeric settings.
-- `validate.ts` — `validateControls(config, errors, warnings)`. Iterates the eight `ConfigRange` fields under `fly.*` and `orbit.*`; rejects non-finite `min`/`max`/`default`, enforces `min < max`, and enforces `min <= default <= max`.
+- `types.ts` — `ControlsConfig`, `FlyControlsConfig`, `OrbitControlsConfig`, `ScaleMultipliers`, plus the shared `ConfigRange` (`min`/`max`/`default`/optional `step`) helper interface used across UI-bound numeric settings.
+- `validate.ts` — `validateControls(config, errors, warnings)`. Iterates the nine `ConfigRange` fields under `fly.*` and `orbit.*` (incl. `fly.look.mouseSpeed`); rejects non-finite `min`/`max`/`default`, enforces `min < max`, and enforces `min <= default <= max`.
 
 ## Public API
 
 - `controlsConfig` — re-exported through `../../index.ts` into `AppConfig.controls`.
-- `ControlsConfig`, `FlyControlsConfig`, `OrbitControlsConfig`, `ScaleMultipliers`, `ConfigRange`, `ConfigValue` — re-exported through `../../types.ts`.
+- `ControlsConfig`, `FlyControlsConfig`, `OrbitControlsConfig`, `ScaleMultipliers`, `ConfigRange` — re-exported through `../../types.ts`.
 - `validateControls` — called from `../../validation.ts`.

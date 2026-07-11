@@ -158,13 +158,23 @@ const ranges = mergeRanges(chunkIndicesToRanges(chunkIndices, chunkSize, totalEl
 ## Tolerance calculation
 
 Unified tolerance logic lives in `spatial-query/tolerance-computer.ts::computeTolerance`
-and is selected by `geometryType`:
+and is selected by `geometryType`. Hidden DISCRETE dims distinguish two roles:
+the **query** role (chunk-fetch reach — the default) uses the shared
+quarter-cell `0.25 × step`, while the **membership** role
+(`options.discreteRole: 'membership'`, the per-element visibility slab used by
+the lines projection-clipping path) uses the half-cell `0.5 × step`, matching
+the points/gsplats projection gates:
 
-| Geometry  | Hidden spatial dim                                              | Hidden discrete dim          |
-| --------- | --------------------------------------------------------------- | ---------------------------- |
-| `points`  | `maxRadius` (or 0.5 if `spatialExtendDims[d]` is false)         | 0.5                          |
-| `lines`   | 0 (segment bounds already include line width)                   | `step / 2` (or 0.5 fallback) |
-| `gsplats` | `step × gsplatsDefaultTolerance` (default 3 σ; or 3.0 fallback) | 0.5                          |
+| Geometry  | Hidden spatial dim                                              | Hidden discrete dim (query)   | Discrete membership gate        |
+| --------- | --------------------------------------------------------------- | ----------------------------- | ------------------------------- |
+| `points`  | `maxRadius` (discrete rule if `spatialExtendDims[d]` false)     | `0.25 × step` (0.25 fallback) | 0.5 absolute (projection stage) |
+| `lines`   | 0 (segment bounds already include line width)                   | `0.25 × step` (0.25 fallback) | `0.5 × step` via `discreteRole` |
+| `gsplats` | `step × gsplatsDefaultTolerance` (default 3 σ; or 3.0 fallback) | `0.25 × step` (0.25 fallback) | `step × 0.5` (projection stage) |
+
+The quarter-cell query reach sits deliberately below the half-cell membership
+gates: chunk bounds are epsilon-padded on the write side (`io/ordering.py`),
+and pad + reach must stay under one step or a single-category query bleeds in
+the whole neighbouring category.
 
 Displayed dimensions always get `1e10` (effectively infinite).
 
@@ -327,13 +337,33 @@ ranges)`: shared cache-warming read for the three loaders' `prefetchChunks`.
   enumerates the `overlays/` group and parses each child's `.zattrs` into an
   `OverlayConfig` (text / image / html, with per-type fields). Results are
   z-index-sorted; missing `overlays/` group returns `[]` silently.
-- **`loader-metrics.ts`** — `recordLoadEvent(counters, points, bytes,
-loadTime)` (rolling-mean update of `loads` / `pointsLoaded` / `bytesLoaded`
-  / `avgLoadTime`) + `computeLoadLatency(startMs, nowMs?)` (latency, 0 when
-  start is undefined / 0). Pure helpers, unit-tested without a zarr store.
-  Used by all three geometry facades; the `pointsLoaded` field name is kept
-  for compatibility with the monitor UI, but records vertex / splat
-  throughput for lines / gsplats.
+- **`loader-metrics.ts`** — `recordLoadEvent(counters, elements, bytes,
+loadTime)` (rolling-mean update of `loads` / `elementsLoaded` /
+  `bytesLoaded` / `avgLoadTime`), `computeLoadLatency(startMs, nowMs?)`
+  (latency, 0 when start is undefined / 0), and
+  `finishQueryTracking(activeQueries, metrics, queryId, startTime, status)`
+  (query close-out: stamps `status`/`endTime` on the tracked `QueryInfo`,
+  drops it from the map, folds the elapsed time into the rolling
+  `avgQueryTime` — called by the facades' `loadX` wrappers on BOTH the
+  success and error paths so the active-query map never leaks), plus
+  `makeInitialLoaderMetrics(type, path)` (the zeroed initial `LoaderMetrics`
+  record every facade starts from), and `buildSpatialIndexMetrics(chunkCount,
+  chunkSize, queries, lastQueryCells, elementsLoaded)` (the chunk-index
+  telemetry snapshot all three facades attach as `metrics.spatialIndex` for
+  the monitor advisor). Pure helpers, unit-tested without a zarr
+  store, used by all three geometry facades. `elementsLoaded` is the
+  geometry-neutral throughput counter (points / vertices / splats).
+- **`spatial-facade.ts`** — shared facade-level orchestration for the three
+  spatial-index loaders, driven by one per-loader `SpatialFacadeCtx` (stable
+  references + `this`-bound accessors, built once in each constructor):
+  `loadSliceWithCache(ctx, viewState, loadInternal)` (the `loadX` template —
+  S-cache restore → internal load → query close-out → S-cache store, with the
+  abort-aware error branch), `recordLoadMetrics(ctx, arrayName, elements,
+output)` (per-array load metrics + 'load' event), and
+  `runWithActiveSignal` / `runWithResidencyProbe` (the `updateView` /
+  `updateViewWithResidency` bodies: per-update abort-signal publication and
+  cache-residency probing). Each used to exist as three byte-identical
+  private methods.
 - **`monitor-events.ts`** — `LoaderEventEmitter`: owns the listener `Set` for
   a `LoaderMonitor` implementation. Per-listener try/catch isolates one bad
   listener from the rest; `clear()` is called on dispose.
@@ -368,7 +398,8 @@ src/data/loaders/
 ├── chunk-bounds-loader.ts        # Shared chunk_bounds zarr probe (Points/Lines/GSplats)
 ├── color-loader.ts               # Shared color-range loader with native-dtype preservation
 ├── transferable-accumulator.ts   # Zero-allocation + worker offload buffer pattern
-├── loader-metrics.ts             # Pure helpers for moving-average load metrics
+├── loader-metrics.ts             # Pure helpers for load/query metric bookkeeping
+├── spatial-facade.ts             # Shared loadX/updateView/metrics facade orchestration
 ├── monitor-events.ts             # LoaderEventEmitter — listener fan-out with error isolation
 ├── once-init.ts                  # One-shot async initializer with retry-on-failure
 ├── extend-to-all-preflight.ts    # Shared extend_to_all warning + one-time announce
@@ -445,7 +476,9 @@ pnpm test src/tests/unit/data/loaders/transferable-accumulator.test.ts
 - **extend-to-all-preflight.test.ts** — warning and one-time announce
   predicates, silence when `extendDims` is empty.
 - **loader-metrics.test.ts** — `recordLoadEvent` rolling-mean math,
-  `computeLoadLatency` undefined/zero start fallback.
+  `computeLoadLatency` undefined/zero start fallback, `finishQueryTracking`
+  close-out (complete/error stamping, map removal, rolling `avgQueryTime`,
+  `queries === 0` guard).
 - **monitor-events.test.ts** — add/remove idempotency, per-listener
   try/catch isolation, `clear()` on dispose.
 - **once-init.test.ts** — concurrent callers share in-flight promise;

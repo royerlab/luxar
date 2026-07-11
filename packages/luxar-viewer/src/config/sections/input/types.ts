@@ -24,7 +24,4 @@ export interface InputConfig {
     flyModeKeys: string[];
     dimensionKeys: string[];
   };
-  mouse: {
-    doubleClickDelay: number;
-  };
 }

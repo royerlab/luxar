@@ -184,7 +184,7 @@ class TestDimOrderGSplats:
                 fill={"Time": 0.0},
                 fill_sigma={"Time": 0.5},
             )
-            assert gsplats.n_splats == 1
+            assert gsplats.n_elements == 1
 
         # Verify stored data
         store = zarr.open(str(output), mode="r")
@@ -230,7 +230,7 @@ class TestDimOrderGSplats:
                 fill={"Time": 0.0},
                 fill_sigma={"Time": 0.5},
             )
-            assert gsplats.n_splats == 2
+            assert gsplats.n_elements == 2
 
         store = zarr.open(str(output), mode="r")
         stored_chol = _read_packed_cholesky(store["splats"])
@@ -312,7 +312,7 @@ class TestDimOrderGSplats:
             )
             # Single-substitutive path returns GSplats, not LODGroup.
             assert isinstance(gsplats, GSplats)
-            assert gsplats.n_splats == 1
+            assert gsplats.n_elements == 1
 
         store = zarr.open(str(output), mode="r")
         assert store["splats"]["centers"][:].shape == (1, 4)

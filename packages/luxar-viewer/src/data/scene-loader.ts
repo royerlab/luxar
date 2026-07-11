@@ -83,6 +83,8 @@ import { scheduleFrame } from '../utils/schedule-frame';
 import { config as appConfig } from '../config';
 import { MultiLevelCachingStore } from '../cache/multi-level-caching-store';
 import { DecompressedChunkCache } from '../cache/decompressed-chunk-cache';
+import { SliceCache } from '../cache/slice-cache';
+import type { CacheBudgets } from '../cache/heap-budget';
 import type { LinesDataLoader, LinesViewState, LoadedLinesData } from '../types/lines';
 import type { GSplatsDataLoader, GSplatsViewState, LoadedGSplatsData } from '../types/gsplats';
 import { GPUBufferPool } from '../rendering/gpu-buffer-pool';
@@ -117,6 +119,7 @@ import {
   type RetryCtx,
 } from './scene-loader/lifecycle/retry';
 import { deriveNodeViewState as deriveNodeViewStateHelper } from './scene-loader/view-state/derive-node-view-state';
+import { SlicePrefetcher } from './scene-loader/prefetch/slice-prefetcher';
 import { runLoaderUpdates as runLoaderUpdatesHelper } from './scene-loader/loaders/run-loader-updates';
 import { updateVisibleCountsInMonitor as updateVisibleCountsInMonitorHelper } from './scene-loader/monitor/visible-counts';
 import { disposeSceneLoader } from './scene-loader/lifecycle/dispose';
@@ -166,6 +169,10 @@ export class SceneLoader {
   private cachingStore: MultiLevelCachingStore | null = null;
   // L0 decompressed chunk cache - caches decoded zarr chunks to avoid Blosc decompression
   private l0Cache: DecompressedChunkCache | null = null;
+  // SliceCache ("S-cache") - per-(node,view) decoded-slice cache for instant slice revisits
+  private sliceCache: SliceCache | null = null;
+  // Resolved per-tier cache budgets from setupCaches (Settings popover readout)
+  private cacheBudgets: CacheBudgets | null = null;
   private registry = new LoaderRegistry();
 
   // Delegate registry-backed maps used by the loader orchestration methods.
@@ -269,6 +276,70 @@ export class SceneLoader {
    */
   private _updateAbortController: AbortController | null = null;
 
+  /**
+   * Waiters for "the requested-or-newer view-state completed a main pass".
+   * Created ONLY in `updateView`'s queued/supersede branch: instead of
+   * resolving immediately (which made `sceneDimsManager.waitForUpdate()` —
+   * and with it the dimension-animation pacing gate — meaningless during
+   * playback), the queued caller's promise parks here and resolves when
+   * `queueNext` finds no pending state left, i.e. when the latest-wins
+   * winning pass has landed its commit. Latest-wins supersession keeps
+   * waiters pending until the winner completes; `dispose()` flushes them
+   * (resolve-only, never reject) so callers can't hang across a dataset
+   * switch.
+   */
+  private _passWaiters: Array<() => void> = [];
+
+  /** Resolve-and-drain all queued-update waiters (see {@link _passWaiters}). */
+  private resolvePassWaiters(): void {
+    if (this._passWaiters.length === 0) return;
+    const waiters = this._passWaiters;
+    this._passWaiters = [];
+    for (const resolve of waiters) resolve();
+  }
+
+  /**
+   * Background t+1 slice prefetcher (dimension playback). Lazily created on
+   * the first `prefetchSlice` call; aborted at the top of every `updateView`
+   * (foreground always preempts); disposed with the loader. Its SHADOW
+   * loader instances share nothing mutable with the foreground loaders —
+   * the S-cache is the only handoff (see slice-prefetcher.ts).
+   */
+  private _slicePrefetcher: SlicePrefetcher | null = null;
+
+  /**
+   * Fire one background prefetch pass for the PREDICTED next view (t+1
+   * during playback). Fire-and-forget: returns immediately; the shadow pass
+   * is aborted by the next foreground `updateView`. The partial is merged
+   * onto a COPY of the current view state — never persisted (a prefetch
+   * must not move the real view; see the stuck-display hazard in
+   * slice-prefetcher.ts).
+   */
+  prefetchSlice(viewState: Partial<ViewState>, budgetMs: number): void {
+    if (this._disposed || !this._sceneGraph) return;
+    if (!this._slicePrefetcher) {
+      this._slicePrefetcher = new SlicePrefetcher({
+        getSceneGraph: () => this._sceneGraph,
+        factoryDeps: () => this.factoryDeps(),
+        registry: this.registry,
+        applyEffectiveAttrs: (node) => this.applyEffectiveAttrs(node),
+      });
+    }
+    // Strip any rider budget off the incoming partial — the shadow pass gets
+    // exactly `budgetMs` (the prefetcher injects it post-derive).
+    const incoming = { ...viewState };
+    delete incoming.frameBudgetMs;
+    this._slicePrefetcher.prefetch({ ...this.viewState, ...incoming }, budgetMs);
+  }
+
+  /**
+   * Release the prefetcher's shadow loaders (frees their accumulators).
+   * Called when playback ends; shadows rebuild lazily on the next play.
+   */
+  releasePrefetchResources(): void {
+    this._slicePrefetcher?.releaseShadows();
+  }
+
   /** Public accessor for the scene graph built during loadScene(). */
   get sceneGraph(): SceneNode | null {
     return this._sceneGraph;
@@ -284,9 +355,9 @@ export class SceneLoader {
   // unavailable (e.g. when `noCache` is set in LoaderConfig).
   // ============================================================
 
-  /** Snapshot of all cache levels (L0, L1, L2) for debug and embed tooling. */
+  /** Snapshot of all cache levels (L0, S-cache, L1, L2) for debug and embed tooling. */
   getCacheStats(): CacheStatsSnapshot {
-    return getCacheStatsHelper(this.l0Cache, this.cachingStore);
+    return getCacheStatsHelper(this.l0Cache, this.cachingStore, this.sliceCache);
   }
 
   /** List datasets currently held by the L1/L2 caching store. */
@@ -314,9 +385,18 @@ export class SceneLoader {
     await clearL2CacheHelper(this.cachingStore);
   }
 
-  /** Clear all cache levels (L0 + L1 + L2). */
+  /** Clear ALL cache tiers (L0 + L1 + L2 + the decoded-slice S-cache). */
   async clearAllCaches(): Promise<void> {
-    await clearAllCachesHelper(this.l0Cache, this.cachingStore);
+    await clearAllCachesHelper(this.l0Cache, this.cachingStore, this.sliceCache);
+  }
+
+  /**
+   * Resolved per-tier cache budgets from the last `setupCaches` run (source:
+   * heap / explicit / device-class / fixed), or null before the first scene
+   * load / after dispose. Surfaced for the Settings popover's budget readout.
+   */
+  getCacheBudgets(): CacheBudgets | null {
+    return this.cacheBudgets;
   }
 
   /**
@@ -515,6 +595,12 @@ export class SceneLoader {
       setL0Cache: (c) => {
         this.l0Cache = c;
       },
+      setSliceCache: (c) => {
+        this.sliceCache = c;
+      },
+      setCacheBudgets: (b) => {
+        this.cacheBudgets = b;
+      },
       setZarrStore: (s) => {
         this._zarrStore = s;
       },
@@ -605,6 +691,11 @@ export class SceneLoader {
    * are discarded), ensuring eventual convergence without starvation.
    */
   async updateView(viewState: Partial<ViewState>): Promise<void> {
+    // A foreground pass always preempts the background t+1 shadow prefetch
+    // (both branches below): the shadow pass is strictly lower priority and
+    // must never compete with a real tick for fetch slots or CPU.
+    this._slicePrefetcher?.abortInFlight();
+
     // SERIALIZATION: If an update is already in progress, queue this one and return
     if (this._updateInProgress) {
       // Abort the in-flight update: it has now been superseded by this newer
@@ -631,7 +722,15 @@ export class SceneLoader {
           `Update queued (v${newVersion}) - in-flight v${this._updateVersion}`
         );
       }
-      return;
+      // Resolve when the pending-OR-NEWER state completes a main pass (its
+      // first commit) — NOT immediately. This is what makes the
+      // dimension-animation pacing gate real: during playback the next tick
+      // is held until the frame it requested actually rendered, instead of
+      // free-running while every pass is aborted pre-commit. Waiters are
+      // resolved by queueNext (no pending left) and flushed by dispose().
+      return new Promise<void>((resolve) => {
+        this._passWaiters.push(resolve);
+      });
     }
 
     // Mark update as in progress
@@ -647,11 +746,22 @@ export class SceneLoader {
     this._updateAbortController = updateController;
 
     try {
+      // Playback frame budget is a PER-PASS directive, never persisted:
+      // destructure it OUT before the merge below so a stale budget can't
+      // linger in `this.viewState` (which refinement/retry re-derive from)
+      // and leave the loaders capped after playback ends. It flows to the
+      // loaders only via the per-type handler ctxs (buildUpdateCtxs).
+      const { frameBudgetMs, ...incomingViewState } = viewState;
+      // `prefetch` is likewise a transient directive (set only on the
+      // SlicePrefetcher's shadow passes); strip it too so it can never persist
+      // into `this.viewState` and pin every subsequent foreground store.
+      delete incomingViewState.prefetch;
+
       // CRITICAL: Deep copy arrays to prevent mutation during async operations
       // The spread operator only does shallow copy - arrays must be explicitly copied
       this.viewState = {
         ...this.viewState,
-        ...viewState,
+        ...incomingViewState,
         // Always copy arrays to prevent external mutation affecting in-flight updates
         displayDims: viewState.displayDims
           ? [...viewState.displayDims]
@@ -694,6 +804,7 @@ export class SceneLoader {
         updateVersion: this._updateVersion,
         extendedToleranceCache,
         signal: updateController.signal,
+        frameBudgetMs,
         deriveNodeViewState: (path, attrs, opts) => this.deriveNodeViewState(path, attrs, opts),
       });
 
@@ -781,6 +892,7 @@ export class SceneLoader {
           this._updateInProgress = v;
         },
         scheduleGSplatsRefinement: () => this.scheduleGSplatsRefinement(),
+        resolvePassWaiters: () => this.resolvePassWaiters(),
       });
     }
   }
@@ -848,6 +960,11 @@ export class SceneLoader {
       // a no-op when nothing was queued.
       this._updateInProgress = false;
       this.viewStateQueue.drain((state) => this.updateView(state));
+      // Belt-and-braces: if no state was queued, nothing will re-enter
+      // updateView, so settle any queued-update waiters here rather than
+      // leaving them parked (resolve-only; a queued state's re-entry would
+      // have resolved them anyway).
+      this.resolvePassWaiters();
     });
   }
 
@@ -895,6 +1012,21 @@ export class SceneLoader {
     };
     const finalReleaseLock = () => {
       this._updateInProgress = false;
+      // dispose() flushes waiters itself; never re-enter a dead loader.
+      if (this._disposed) return;
+      // A view-state queued DURING the last refinement pass (after the
+      // loop's final loop-top pending check) would otherwise be stranded
+      // here — and with it any parked queued-updateView waiters, freezing
+      // the dimension-animation pacing gate permanently (waitForUpdate
+      // never settles). Mirror queueNext's contract: drain the pending
+      // state into a fresh pass (whose own queueNext carries/settles the
+      // waiters), else settle the waiters now. Intermediate phases don't
+      // need this — the NEXT phase's loop-top pending check rescues them.
+      if (this.viewStateQueue.hasPending()) {
+        this.viewStateQueue.drain((state) => this.updateView(state));
+      } else {
+        this.resolvePassWaiters();
+      }
     };
 
     await runGSplatsRefinement({
@@ -1138,8 +1270,8 @@ export class SceneLoader {
     return {
       zarrStore: this._zarrStore!,
       arrayRefRegistry: this.arrayRefRegistry,
-      profiler: this.profiler,
       l0Cache: this.l0Cache,
+      sliceCache: this.sliceCache,
       cachingStore: this.cachingStore,
     };
   }
@@ -1410,6 +1542,15 @@ export class SceneLoader {
     // Signal any in-flight progressive-refinement loop to abort before we
     // start nulling the fields it reads.
     this._disposed = true;
+
+    // Flush queued-update waiters FIRST: a disposed loader never runs its
+    // pending pass, so without this any `waitForUpdate()` /
+    // `awaitDimensionUpdate()` caller parked on a queued update would hang
+    // forever across a dataset switch. Resolve-only (never reject).
+    this.resolvePassWaiters();
+    // Kill the background t+1 prefetch and its shadow loaders.
+    this._slicePrefetcher?.dispose();
+    this._slicePrefetcher = null;
     await disposeSceneLoader({
       datasetAbortController: this._datasetAbortController,
       updateAbortController: this._updateAbortController,
@@ -1417,6 +1558,7 @@ export class SceneLoader {
       gpuBufferPool: this._gpuBufferPool,
       cachingStore: this.cachingStore,
       l0Cache: this.l0Cache,
+      sliceCache: this.sliceCache,
       viewStateQueue: this.viewStateQueue,
       monitor: this.monitor,
     });
@@ -1436,6 +1578,7 @@ export class SceneLoader {
     this._gpuBufferPool = null;
     this.cachingStore = null;
     this.l0Cache = null;
+    this.cacheBudgets = null;
     this._zarrStore = null;
     this.rootGroup = null;
     this._sceneGraph = null;

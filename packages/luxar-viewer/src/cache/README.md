@@ -1,14 +1,25 @@
 # Luxar Viewer Cache Package
 
-Three-level caching system with intelligent prefetching for zarr chunks enabling offline viewing, instant reloads, and reduced bandwidth.
+Multi-tier caching system with intelligent prefetching for zarr chunks enabling offline viewing, instant reloads, and reduced bandwidth.
 
 ## Overview
 
 This package implements a transparent caching and prefetching layer for zarr datasets:
 
-- **L0 (Decompressed)**: 200MB LRU cache for decoded TypedArrays (eliminates Blosc decompression)
-- **L1 (Memory)**: 100MB segmented LRU cache with metadata protection
-- **L2 (OPFS)**: 2GB persistent storage surviving browser restarts
+- **S-cache (SliceCache, `slice-cache.ts`)**: LRU cache of fully DECODED
+  per-slice geometry ladders, keyed per node + view signature (displayDims,
+  slicePosition, tolerance, dimensions). Its byte budget is **heap-aware and
+  two-sided** (`heap-budget.ts::computeCacheBudgets`): it scales UP on a large
+  device heap so a fits-in-RAM timelapse stays fully resident (decode-free
+  revisit) and DOWN on a small heap to avoid OOM; `config.cache.sliceCacheMaxSizeMB`
+  (128MB) is the fixed fallback used where `performance.memory` is unavailable
+  (Firefox/Safari). A slice revisit — e.g. scrubbing back
+  to a timepoint — skips the whole query + fetch + decode pipeline; only the
+  cheap nD→3D projection re-runs. Sits ABOVE L0; in-memory, per-session,
+  cleared on content-hash invalidation. Disable with `?no-slice-cache`.
+- **L0 (Decompressed)**: LRU cache for decoded TypedArrays (eliminates Blosc decompression); heap-aware budget, config `l0MaxSizeMB` (200) is the ceiling — see `heap-budget.ts`
+- **L1 (Memory)**: segmented LRU cache with metadata protection; heap-aware budget, config `l1MaxSizeMB` (100) is the ceiling
+- **L2 (OPFS)**: 2GB persistent storage surviving browser restarts (disk — fixed, not heap-sized)
 - **Intelligent Prefetching**: Proactive loading of adjacent chunks to hide network latency
 - **Content-hash validation**: Automatic cache invalidation when data changes
 - **Zero overhead**: Stores raw compressed chunks (no re-compression)
@@ -16,18 +27,41 @@ This package implements a transparent caching and prefetching layer for zarr dat
 ## Cache Hierarchy
 
 ```
-Request → L0 (Decompressed) → L1 (Memory) → L2 (OPFS) → Remote HTTP
-              ↓                   ↓             ↓            ↓
-           ~1μs               ~1μs+2ms       ~1ms+2ms     ~100ms+2ms
-       (no decompress)    (decompress)   (decompress)   (decompress)
+Slice revisit → S-cache (decoded slice ladder) ────────────────┐ hit: skip all of ↓
+Chunk request → L0 (Decompressed) → L1 (Memory) → L2 (OPFS) → Remote HTTP
+                    ↓                   ↓             ↓            ↓
+                 ~1μs               ~1μs+2ms       ~1ms+2ms     ~100ms+2ms
+             (no decompress)    (decompress)   (decompress)   (decompress)
 ```
 
-| Level | Storage | Speed         | Size  | Persistence  | Content           |
-| ----- | ------- | ------------- | ----- | ------------ | ----------------- |
-| L0    | Memory  | ~1μs          | 200MB | Session only | Decompressed data |
-| L1    | Memory  | ~1μs + ~2ms\* | 100MB | Session only | Compressed chunks |
-| L2    | OPFS    | ~1ms + ~2ms\* | 2GB   | Permanent    | Compressed chunks |
-| L3    | Remote  | ~100ms        | ∞     | N/A          | Compressed chunks |
+| Level   | Storage | Speed         | Size          | Persistence  | Content               |
+| ------- | ------- | ------------- | ------------- | ------------ | --------------------- |
+| S-cache | Memory  | ~1μs          | heap-aware†   | Session only | Decoded slice ladders |
+| L0      | Memory  | ~1μs          | heap-aware†   | Session only | Decompressed data     |
+| L1      | Memory  | ~1μs + ~2ms\* | heap-aware†   | Session only | Compressed chunks     |
+| L2      | OPFS    | ~1ms + ~2ms\* | 2GB           | Permanent    | Compressed chunks     |
+
+† The three in-memory tiers are sized two-sidedly from the device heap by
+`heap-budget.ts` — the config `l0MaxSizeMB` (200) / `l1MaxSizeMB` (100) /
+`sliceCacheMaxSizeMB` (128) are ceilings/fallbacks, not fixed allocations. On a
+large heap the S-cache scales up (residual headroom, capped at 1 GiB); on a
+small heap all three scale down to stay within `dataLoading.memory.targetHeapUsage`.
+L2 (OPFS/disk) is a fixed 2GB and unaffected.
+
+Heap detection uses `performance.memory`, which is **Chrome/Blink-only**. In
+**WebKit — WKWebView (the native `luxar export --native` app) and Safari** — it
+is absent, so the heap can't be measured. There, pass an explicit pool with
+**`?cacheBudgetMB=<N>`** (the native launcher injects it automatically, default
+2048, env `LUXAR_CACHE_BUDGET_MB`); it takes precedence over heap detection and
+is split across the tiers the same way. Without an override, WebKit falls back to
+an inferred **device-class** pool (`inferDeviceClass`): mobile ≈ 384 MB, laptop
+≈ 1 GB, desktop ≈ 2 GB. `mobile` is detected reliably (mobile UA, or touch +
+coarse pointer — which also catches iPadOS); laptop vs desktop is a deliberately
+weak `hardwareConcurrency ≥ 12` proxy (there is no in-browser RAM signal on
+WebKit — `navigator.deviceMemory` is Chromium-only — and laptop/desktop aren't
+reliably distinguishable, so this is an educated guess, safe on 8 GB+ machines).
+The fixed config sizes are the last resort (non-browser / no device signals).
+| L3      | Remote  | ~100ms        | ∞     | N/A          | Compressed chunks     |
 
 \*~2ms is Blosc decompression time per chunk (skipped on L0 hit)
 
@@ -64,9 +98,10 @@ await store.dispose();
 
 Override cache behavior via URL parameters:
 
-- `?no-cache` - Disable all caching (L0 + L1 + L2) for this session
+- `?no-cache` - Disable all caching (S-cache + L0 + L1 + L2) for this session
+- `?no-slice-cache` - Disable only the SliceCache (S-cache); L0/L1/L2 stay on
 - `?cache-debug` - Enable verbose cache logging for all layers
-- `?clear-cache` - Clear all caches (L0 + L1 + L2) before loading dataset
+- `?clear-cache` - Clear all persistent/persisted caches (L0 + L1 + L2) before loading dataset (the in-memory S-cache is created fresh per load)
 - `?no-prefetch` - Disable prefetching (caches still active)
 - `?prefetch-debug` - Enable verbose prefetch logging
 - `?cache-stats` - Auto-open the data-loading monitor expanded on the Cache tab
@@ -167,7 +202,7 @@ on `CacheMetrics.status: CacheStatusBadge[]` so programmatic consumers
 | `cache-enabled`                | Caching is wired and operational.                             | `telemetryState.kind === 'enabled'`                               |
 | `no-cache`                     | The `?no-cache` URL flag is set; all tiers disabled.          | `telemetryState.kind === 'disabled-no-cache'`                     |
 | `disabled-config`              | App config disabled caching (e.g. `cache.enabled: false`).    | `telemetryState.kind === 'disabled-config'`                       |
-| `opfs-unavailable`             | The browser does not expose OPFS; L2 is disabled.             | OPFS provider absent                                              |
+| `opfs-unavailable`             | OPFS is absent OR mounts read-only; L2 is disabled.           | OPFS provider absent, or the init write probe failed (WebKit/WKWebView has no main-thread `createWritable`) |
 | `quota-constrained`            | L2 has skipped at least one write because of browser quota.   | `l2.quotaWriteSkipped > 0`                                        |
 | `cache-errors-detected`        | L2 has accumulated I/O / corruption failures.                 | `l2.writeFailures + corruptedEntries + metadataParseFailures > 0` |
 | `unvalidated-external-dataset` | External dataset, no TTL configured — entries may stay stale. | `health.unvalidatedExternalDataset === true`                      |
@@ -747,14 +782,18 @@ async function getRemoteContentHash(
 
 ### Memory Budget
 
-**200MB L0** + **100MB L1** compressed ≈ **500MB-1.5GB** effective coverage
+The three in-memory tiers (L0 + L1 + S-cache) are sized **two-sidedly from the
+device heap** by `heap-budget.ts::computeCacheBudgets` — up on a large heap so a
+fits-in-RAM timelapse stays fully resident, down on a small heap to stay within
+`dataLoading.memory.targetHeapUsage`. The config `l0MaxSizeMB` (200) / `l1MaxSizeMB`
+(100) / `sliceCacheMaxSizeMB` (128) are **ceilings / fallbacks**, not fixed
+allocations (the fallback applies where `performance.memory` is unavailable —
+Firefox/Safari). L2 (OPFS/disk, 2GB) is fixed and not heap-sized.
 
-**Typical session** (100K points, 4D):
-
-- L0 Cache: ~200MB (decompressed chunks)
-- L1 Cache: ~100MB (compressed chunks)
-- Three.js: ~50MB (geometries)
-- **Total**: ~350MB (well within browser limits)
+**Typical desktop session** (4 GB heap): L0 up to ~200MB + L1 up to ~100MB +
+S-cache the residual (capped at 1 GiB), all demand-filled — so actual footprint
+tracks the working set, not the ceilings. On a small mobile heap the same tiers
+shrink proportionally to avoid OOM.
 
 ## Browser Support
 

@@ -37,6 +37,9 @@ config/
 ├── types.ts                       # Barrel re-exports of section types + AppConfig interface
 ├── validation.ts                  # Dispatcher; imports per-section validators
 ├── url-params.ts                  # URL ?param=value parsing (self-contained)
+├── user-settings.ts               # Persisted global prefs (localStorage luxar.settings) —
+│                                  #   Settings-popover model; live values mutate config, startup
+│                                  #   values thread through bootstrap (URL params always win)
 ├── constants.ts                   # WASM ABI constants
 ├── sections/
 │   ├── camera/             {data,types,validate}.ts
@@ -45,7 +48,7 @@ config/
 │   ├── scene/              {data,types,validate}.ts   # includes ShaderConfig
 │   ├── ui/                 {data,types}.ts            # includes DebugConsoleConfig, UIComponentsConfig
 │   ├── rendering-controls/ {data,types,validate}.ts   # includes RenderingSettings, validateBloomConsistency
-│   ├── controls/           {data,types,validate}.ts   # includes Fly/Orbit/ScaleMultipliers/ConfigRange/ConfigValue
+│   ├── controls/           {data,types,validate}.ts   # includes Fly/Orbit/ScaleMultipliers/ConfigRange
 │   ├── input/              {data,types,validate}.ts
 │   ├── data-loading/       {data,types,validate}.ts   # composes the 5 sub-sections below
 │   │   ├── spatial/        {data,types}.ts
@@ -241,9 +244,11 @@ OPFS-based zarr caching with a three-level hierarchy:
 cache: {
   enabled: true,              // Enable OPFS caching
   l0Enabled: true,            // L0: decompressed chunk cache (fastest)
-  l0MaxSizeMB: 200,           // L0 memory budget
-  l1MaxSizeMB: 100,           // L1: in-memory LRU cache
-  l2MaxSizeMB: 2048,          // L2: persistent OPFS cache (largest)
+  l0MaxSizeMB: 200,           // L0 memory budget — CEILING; heap-aware sizing may scale it down (heap-budget.ts)
+  sliceCacheEnabled: true,    // S-cache: per-(node,view) decoded-slice cache (instant slice revisits)
+  sliceCacheMaxSizeMB: 128,   // S-cache budget — fixed FALLBACK (no performance.memory) + shrink floor; heap-aware sizing scales it up/down
+  l1MaxSizeMB: 100,           // L1 in-memory LRU — CEILING; heap-aware sizing may scale it down
+  l2MaxSizeMB: 2048,          // L2: persistent OPFS cache (disk, fixed — not heap-sized)
   opfsOperationTimeoutMs: 10000, // Per-OPFS-operation deadline (ms)
   externalDatasetTtlMs: null, // Optional TTL (ms) for non-local datasets; null = no expiry
   debug: false                // Enable cache debug logging
@@ -279,6 +284,11 @@ dimensionAnimation: {
   ui: {
     showFPSFeedback: true,            // Show FPS feedback in UI
     feedbackThreshold: 0.8            // Warning when actual FPS < target * threshold
+  },
+  playback: {
+    budgetFraction: 0.6,              // Fraction of the frame window handed to progressive loaders per tick
+    minBudgetMs: 8,                   // Budget floor at high target FPS
+    overheadReserveMs: 50             // Slow FPS: budget = frame window − reserve (projection/commit/render)
   }
 }
 ```
@@ -306,9 +316,6 @@ dataLoading: {
     useWebWorkers: true,
     workerCount: 0,                  // 0 = auto-detect based on navigator.hardwareConcurrency
 
-    // WASM acceleration
-    useWASM: true,
-    wasmModulePath: 'wasm/luxar_wasm_bg.wasm', // Resolved relative to bundle via import.meta.url
 
     // GPU buffer pool (reuse WebGL buffers)
     useGPUBufferPool: true,

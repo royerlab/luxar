@@ -6,7 +6,14 @@
  */
 
 // Main exports
-export { loadScene, updateView, updateSceneForDimensions, dispose } from './zarr-loader';
+export {
+  loadScene,
+  updateView,
+  updateSceneForDimensions,
+  prefetchSceneForDimensions,
+  releasePrefetchResources,
+  dispose,
+} from './zarr-loader';
 
 // Core components
 export { SceneLoader } from './scene-loader';

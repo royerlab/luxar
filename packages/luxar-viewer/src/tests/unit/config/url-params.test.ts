@@ -14,6 +14,7 @@ describe('readUrlParams', () => {
       theme: null,
       debug: false,
       noCache: false,
+      noSliceCache: false,
       cacheDebug: false,
       clearCache: false,
       noPrefetch: false,
@@ -23,6 +24,7 @@ describe('readUrlParams', () => {
       webgpuForceWebGL: false,
       perfTimestamp: false,
       gpuBudgetMB: null,
+      cacheBudgetMB: null,
       dpr: null,
     });
   });
@@ -48,6 +50,14 @@ describe('readUrlParams', () => {
     expect(readUrlParams('?gpuBudgetMB=-5').gpuBudgetMB).toBeNull();
     expect(readUrlParams('?gpuBudgetMB=abc').gpuBudgetMB).toBeNull();
     expect(readUrlParams('').gpuBudgetMB).toBeNull();
+  });
+
+  it('parses cacheBudgetMB (cache pool override), rejecting negatives/non-numeric', () => {
+    expect(readUrlParams('?cacheBudgetMB=1536').cacheBudgetMB).toBe(1536);
+    expect(readUrlParams('?cacheBudgetMB=512').cacheBudgetMB).toBe(512);
+    expect(readUrlParams('?cacheBudgetMB=-5').cacheBudgetMB).toBeNull();
+    expect(readUrlParams('?cacheBudgetMB=abc').cacheBudgetMB).toBeNull();
+    expect(readUrlParams('').cacheBudgetMB).toBeNull();
   });
 
   it('parses and trims valid src and theme strings', () => {
@@ -118,10 +128,11 @@ describe('readUrlParams', () => {
 
   it('treats valueless flags as boolean true', () => {
     const params = readUrlParams(
-      '?debug&no-cache&cache-debug&clear-cache&no-prefetch&prefetch-debug&cache-stats&webgpu-force-webgl'
+      '?debug&no-cache&no-slice-cache&cache-debug&clear-cache&no-prefetch&prefetch-debug&cache-stats&webgpu-force-webgl'
     );
     expect(params.debug).toBe(true);
     expect(params.noCache).toBe(true);
+    expect(params.noSliceCache).toBe(true);
     expect(params.cacheDebug).toBe(true);
     expect(params.clearCache).toBe(true);
     expect(params.noPrefetch).toBe(true);

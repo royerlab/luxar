@@ -20,6 +20,7 @@ import { LuxarApp, type LuxarAppOptions } from './app';
 import { config } from '../config';
 import { validateAndLog } from '../config/validation';
 import { readUrlParams, type UrlParams } from '../config/url-params';
+import { initUserSettings } from '../config/user-settings';
 import { initGpuByteBudget } from '../rendering/gpu-byte-budget';
 import { StorageKeys } from '../utils/storage-keys';
 import { showError, clearError } from '../ui/error-overlay';
@@ -98,6 +99,13 @@ export async function bootstrapStandalone(opts: BootstrapOptions): Promise<Luxar
   const patchConsole = opts.patchConsole ?? true;
   const warmCodecs = opts.warmCodecs ?? true;
   const validateConfig = opts.validateConfig ?? true;
+
+  // Load + apply the persisted global viewer preferences (Settings popover)
+  // BEFORE the first config read below: live-read values are applied by
+  // mutating `config`; startup-only values are threaded into appOptions
+  // further down with the precedence URL param > stored setting > default.
+  // Standalone-only — library embedders configure via LuxarAppOptions.
+  const userSettings = initUserSettings();
 
   // Size the single GPU-geometry byte budget before any pool / LOD
   // registry is constructed. Precedence: `?gpuBudgetMB=` URL param >
@@ -197,17 +205,26 @@ export async function bootstrapStandalone(opts: BootstrapOptions): Promise<Luxar
     updateBrowserUrl: true,
     openCacheStats: urlParams.cacheStats,
     loaderConfig: {
-      noCache: urlParams.noCache,
+      // URL boolean flags are one-way DISABLE switches, so they compose with
+      // the stored preferences via `||` (either source can disable, neither
+      // can force-enable past the other). Value-typed params use `??`.
+      noCache: urlParams.noCache || !userSettings.caching.enabled,
+      noSliceCache: urlParams.noSliceCache || !userSettings.caching.sliceCache,
       cacheDebug: urlParams.cacheDebug,
       clearCache: urlParams.clearCache,
-      noPrefetch: urlParams.noPrefetch,
+      noPrefetch: urlParams.noPrefetch || !userSettings.caching.prefetch,
       prefetchDebug: urlParams.prefetchDebug,
+      cacheBudgetMB:
+        urlParams.cacheBudgetMB ??
+        (userSettings.caching.budgetMode === 'custom' ? userSettings.caching.budgetMB : null),
     },
     // `?renderer=webgl|webgpu` forces a backend regardless of the
-    // build-time env. Undefined → SceneManager falls back to the env
-    // var, then the WebGL default. See `setupRenderer` for the
-    // precedence chain.
-    renderer: urlParams.renderer ?? undefined,
+    // build-time env, then the stored Settings preference, then undefined →
+    // SceneManager falls back to the env var, then the WebGL default. See
+    // `setupRenderer` for the precedence chain.
+    renderer:
+      urlParams.renderer ??
+      (userSettings.advanced.renderer !== 'auto' ? userSettings.advanced.renderer : undefined),
     webgpuForceWebGL: urlParams.webgpuForceWebGL,
     perfTimestamp: urlParams.perfTimestamp,
     // `?dpr=<value>` pins a fixed pixel ratio for deterministic
