@@ -1330,6 +1330,20 @@ class TestFilterCommand:
         )
         assert result.exit_code != 0
 
+    def test_filter_mixed_mode_errors(
+        self, runner: CliRunner, sample_gsplats_for_filter: Path, tmp_path: Path
+    ) -> None:
+        # Mixing percentile + absolute on one attribute's min/max is rejected
+        # (would otherwise silently read the absolute value as a percentile).
+        out = tmp_path / "x.gsplats.zarr"
+        result = runner.invoke(
+            app,
+            ["gsplat", "filter", str(sample_gsplats_for_filter), str(out),
+             "--amplitude-min", "p10", "--amplitude-max", "0.9"],
+        )
+        assert result.exit_code != 0
+        assert not out.exists()
+
 
 # ═══════════════════════════════════════════════════════════════════════
 # Partition command tests

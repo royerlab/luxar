@@ -87,6 +87,24 @@ def run_filter_dataset(
             if spatial_dims is not None:
                 axes = [int(x.strip()) for x in spatial_dims.split(",") if x.strip()]
 
+            # A single percentile flag per attribute is shared by its min & max
+            # (mirrors the existing *_normalized convention). Mixing modes on one
+            # attribute (e.g. --volume-min p90 --volume-max 0.5) would silently
+            # read the absolute value as a percentile, so reject it up front.
+            for name, lo, lo_p, hi, hi_p in (
+                ("volume", vmin, vmin_p, vmax, vmax_p),
+                ("scale", scmin, scmin_p, scmax, scmax_p),
+                ("amplitude", amin, amin_p, amax, amax_p),
+                ("eccentricity", emin, emin_p, emax, emax_p),
+                ("mass", mmin, mmin_p, mmax, mmax_p),
+                ("sigma", smin, smin_p, smax, smax_p),
+            ):
+                if lo is not None and hi is not None and lo_p != hi_p:
+                    raise typer.BadParameter(
+                        f"--{name}-min and --{name}-max must use the same mode: "
+                        f"both percentile ('pNN') or both absolute."
+                    )
+
             # A single percentile flag per attribute (min/max share it).
             filter_kwargs: dict[str, Any] = dict(
                 bbox=bbox_parsed,
