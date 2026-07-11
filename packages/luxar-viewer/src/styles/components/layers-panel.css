@@ -143,16 +143,22 @@
 .luxar-layer-row__eye {
   background: none;
   border: none;
-  font-size: var(--luxar-text-md);
   cursor: pointer;
   padding: 0;
-  line-height: 1;
+  line-height: 0;
   flex-shrink: 0;
-  transition: opacity var(--luxar-transition-fast);
+  color: var(--luxar-text-secondary);
+  transition: color var(--luxar-transition-fast);
+}
+
+.luxar-layer-row__eye svg {
+  width: 15px;
+  height: 15px;
+  display: block;
 }
 
 .luxar-layer-row__eye:hover {
-  opacity: var(--luxar-opacity-hover);
+  color: var(--luxar-text-primary);
 }
 
 /* ========== Layer Name ========== */
@@ -250,7 +256,7 @@
 .luxar-layers-panel__select {
   width: 100%;
   padding: var(--luxar-spacing-2) var(--luxar-spacing-3);
-  background: var(--luxar-interactive-default);
+  background-color: var(--luxar-interactive-default);
   border: 1px solid var(--luxar-border-strong);
   border-radius: var(--luxar-radius-sm);
   color: var(--luxar-text-primary);
@@ -262,13 +268,13 @@
 }
 
 .luxar-layers-panel__select:hover {
-  background: var(--luxar-interactive-hover);
+  background-color: var(--luxar-interactive-hover);
   border-color: color-mix(in srgb, var(--luxar-success) 50%, transparent);
 }
 
 .luxar-layers-panel__select:focus {
   border-color: var(--luxar-success);
-  background: var(--luxar-interactive-hover);
+  background-color: var(--luxar-interactive-hover);
 }
 
 /* <select> option + optgroup colors are centralised in

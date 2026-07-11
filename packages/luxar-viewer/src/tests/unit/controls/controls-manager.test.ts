@@ -125,6 +125,36 @@ describe('ControlsManager', () => {
       expect(controls.autoRotateSpeed).toBe(2.5);
     });
 
+    it('setOrbitZoomSpeed updates the live orbit instance AND survives a mode round-trip', () => {
+      controlsManager.setOrbitZoomSpeed(2.0);
+      let controls = controlsManager.getControls() as LuxarOrbitControls;
+      expect(controls.zoomSpeed).toBe(2.0);
+
+      // Stored config must seed the freshly-constructed controls after a
+      // mode switch (factories pass orbitZoomSpeed through).
+      controlsManager.setControlType('fly');
+      controlsManager.setControlType('orbit');
+      controls = controlsManager.getControls() as LuxarOrbitControls;
+      expect(controls.zoomSpeed).toBe(2.0);
+    });
+
+    it('setOrbitDampingFactor updates the live orbit instance AND survives a mode round-trip', () => {
+      controlsManager.setOrbitDampingFactor(0.1);
+      let controls = controlsManager.getControls() as LuxarOrbitControls;
+      expect(controls.dampingFactor).toBe(0.1);
+
+      controlsManager.setControlType('ortho');
+      // Ortho is the same class — the feel knobs apply there too.
+      controls = controlsManager.getControls() as LuxarOrbitControls;
+      expect(controls.dampingFactor).toBe(0.1);
+    });
+
+    it('defaults orbit feel knobs from config (zoom 1.0, damping 0.25)', () => {
+      const controls = controlsManager.getControls() as LuxarOrbitControls;
+      expect(controls.zoomSpeed).toBe(1.0);
+      expect(controls.dampingFactor).toBe(0.25);
+    });
+
     it('should enable/disable zoom', () => {
       controlsManager.setEnableZoom(false);
       const controls = controlsManager.getControls() as LuxarOrbitControls;
@@ -251,6 +281,17 @@ describe('ControlsManager', () => {
       controlsManager.setFlyRotationDamping(0.88);
       const controls = controlsManager.getControls() as LuxarFlyControls;
       expect(controls.rotationDamping).toBeCloseTo(0.88, 5);
+    });
+
+    it('setFlyLookSpeed applies live AND survives a mode round-trip', () => {
+      controlsManager.setFlyLookSpeed(0.006);
+      let controls = controlsManager.getControls() as LuxarFlyControls;
+      expect(controls.lookSpeed).toBeCloseTo(0.006, 6);
+
+      controlsManager.setControlType('orbit');
+      controlsManager.setControlType('fly');
+      controls = controlsManager.getControls() as LuxarFlyControls;
+      expect(controls.lookSpeed).toBeCloseTo(0.006, 6);
     });
 
     it('returns the SAME LuxarFlyControls instance as getControls() when active', () => {

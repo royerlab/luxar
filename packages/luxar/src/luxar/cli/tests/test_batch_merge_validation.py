@@ -569,7 +569,9 @@ class TestMergeTargetMsBytesSource:
         from every centers/.zarray — missing tiles are skipped."""
         import json
 
-        from luxar.cli.gsplat_ops.batch import _measure_tiles_bytes_per_splat
+        from luxar.cli.gsplat_ops.batch_measurement import (
+            measure_tiles_bytes_per_splat as _measure_tiles_bytes_per_splat,
+        )
 
         tiles = tmp_path / "tiles"
         tile = tiles / "t00_c00_tile000.gsplats.zarr"
@@ -584,7 +586,9 @@ class TestMergeTargetMsBytesSource:
         assert bps == pytest.approx((4000 + len(zarray)) / 100)
 
     def test_measure_tiles_none_when_nothing_on_disk(self, tmp_path: Path) -> None:
-        from luxar.cli.gsplat_ops.batch import _measure_tiles_bytes_per_splat
+        from luxar.cli.gsplat_ops.batch_measurement import (
+            measure_tiles_bytes_per_splat as _measure_tiles_bytes_per_splat,
+        )
 
         bps, n = _measure_tiles_bytes_per_splat(tmp_path / "tiles", ["a.gsplats.zarr"])
         assert bps is None and n == 0

@@ -34,10 +34,6 @@ export interface DataLoadingPerformanceConfig {
    */
   workerInitTimeoutMs: number;
 
-  // WASM acceleration
-  useWASM: boolean;
-  wasmModulePath: string;
-
   // GPU buffer pool
   useGPUBufferPool: boolean;
   gpuPoolMaxSize: number;

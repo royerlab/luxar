@@ -189,4 +189,19 @@ describe('clear* helpers', () => {
     expect(l0.clear).toHaveBeenCalledTimes(1);
     expect(store.clearAll).toHaveBeenCalledTimes(1);
   });
+
+  it('clearAllCaches also clears the S-cache when provided (all four tiers)', async () => {
+    const l0 = makeL0Stub();
+    const store = makeStoreStub();
+    const sliceClear = vi.fn();
+    const sliceStub = { clear: sliceClear } as unknown as Parameters<typeof clearAllCaches>[2];
+
+    await clearAllCaches(l0.stub, store.stub, sliceStub);
+    expect(l0.clear).toHaveBeenCalledTimes(1);
+    expect(store.clearAll).toHaveBeenCalledTimes(1);
+    expect(sliceClear).toHaveBeenCalledTimes(1);
+
+    // Null S-cache stays a no-op (pre-slice-cache callers).
+    await expect(clearAllCaches(null, null, null)).resolves.toBeUndefined();
+  });
 });

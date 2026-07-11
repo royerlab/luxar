@@ -188,6 +188,21 @@ export function validateRenderingSettings(settings: Partial<RenderingSettings>):
   );
   merged.naturalDrag = booleanOrDefault(merged.naturalDrag, defaults.naturalDrag);
 
+  // Orbit feel (optional in the type — only validate when present).
+  if (merged.orbitZoomSpeed !== undefined) {
+    const zs = config.controls.orbit.zoom.speed;
+    merged.orbitZoomSpeed = clampOrDefault(merged.orbitZoomSpeed, zs.default, zs.min, zs.max);
+  }
+  if (merged.orbitDampingFactor !== undefined) {
+    const df = config.controls.orbit.damping.factor;
+    merged.orbitDampingFactor = clampOrDefault(
+      merged.orbitDampingFactor,
+      df.default,
+      df.min,
+      df.max
+    );
+  }
+
   // Fly controls (all optional in the type — only validate when present).
   if (merged.flyMovementSpeed !== undefined) {
     merged.flyMovementSpeed = positiveOrDefault(
@@ -200,6 +215,10 @@ export function validateRenderingSettings(settings: Partial<RenderingSettings>):
       merged.flyRotationSpeed,
       defaults.flyRotationSpeed ?? 1
     );
+  }
+  if (merged.flyLookSpeed !== undefined) {
+    const look = config.controls.fly.look.mouseSpeed;
+    merged.flyLookSpeed = clampOrDefault(merged.flyLookSpeed, look.default, look.min, look.max);
   }
   if (merged.flyInertialMode !== undefined) {
     merged.flyInertialMode = booleanOrDefault(

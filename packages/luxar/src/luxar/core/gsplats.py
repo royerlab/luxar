@@ -75,11 +75,6 @@ class GSplats(DataNode):
         return int(self._metadata.get("n_splats", 0))
 
     @property
-    def n_splats(self) -> int:
-        """Get number of splats (alias for n_elements)."""
-        return self.n_elements
-
-    @property
     def has_colors(self) -> bool:
         """Check if splats have colors."""
         return bool(self._metadata.get("has_colors", False))

@@ -1,7 +1,12 @@
 /**
  * Keyboard-shortcuts help overlay (H key).
  *
- * Displays a comprehensive, collapsible-by-category help panel.
+ * A data-driven shortcut reference styled after the viewer's "quiet
+ * instrument" design language: tick-motif section micro-headers, stroke SVG
+ * section icons (no emoji), and two-column rows of <kbd> chips + muted
+ * descriptions. All sections are visible (no collapsing) — hierarchy comes
+ * from typography, and the panel scrolls.
+ *
  * Dismissible by clicking outside, pressing Escape, or via the close
  * button. Traps focus inside the panel while it is open.
  *
@@ -13,11 +18,118 @@
 import { config } from '../config';
 import { trapFocus } from './help-overlay/focus-trap';
 import { getViewerContainer } from '../utils/viewer-container';
+import { RAIL_ICONS } from './control-rail/icons';
 
 const UI_CONFIG = config.ui;
 
 let activeHelpClickHandler: ((event: MouseEvent) => void) | null = null;
 let activeHelpFocusTrapRelease: (() => void) | null = null;
+
+/** One shortcut row: chip text(s) + what they do. */
+interface HelpEntry {
+  /** Key/gesture chips, rendered as <kbd> (e.g. ['V'] or ['⇧', 'Wheel']). */
+  keys: string[];
+  label: string;
+}
+
+interface HelpSection {
+  title: string;
+  /** Stroke SVG icon (rail icon set) shown beside the section title. */
+  icon: string;
+  /** Optional muted context line under the title (e.g. how to enter a mode). */
+  note?: string;
+  entries: HelpEntry[];
+}
+
+/**
+ * The shortcut reference. Maintained by hand alongside the key bindings in
+ * input/input-handler/key-bindings/ — keep the two in sync when bindings
+ * change.
+ */
+const HELP_SECTIONS: HelpSection[] = [
+  {
+    title: 'Basics',
+    icon: RAIL_ICONS.navOrbit,
+    entries: [
+      { keys: ['Drag'], label: 'Pan camera' },
+      { keys: ['Right drag'], label: 'Rotate view' },
+      { keys: ['⇧', 'Drag'], label: 'Rotate view (alternative)' },
+      { keys: ['Wheel'], label: 'Zoom in / out' },
+      { keys: ['⇧', 'Wheel'], label: 'Roll around the view axis' },
+      { keys: ['Space'], label: 'Toggle fullscreen' },
+      { keys: ['F'], label: 'Fit scene (recenter camera)' },
+      { keys: ['V'], label: 'View mode: orbit / fly / ortho' },
+      { keys: ['O'], label: 'Open dataset browser' },
+      { keys: ['H'], label: 'Toggle this help' },
+      { keys: ['Esc'], label: 'Exit fullscreen / close panels' },
+    ],
+  },
+  {
+    title: 'Fly mode',
+    icon: RAIL_ICONS.navFly,
+    note: 'Press V until the fly icon shows',
+    entries: [
+      { keys: ['W', 'A', 'S', 'D'], label: 'Move forward / left / back / right' },
+      { keys: ['⌥', 'W / S'], label: 'Move up / down' },
+      { keys: ['⇧'], label: 'Hold for 2× speed boost' },
+      { keys: ['↑ ↓ ← →'], label: 'Look around' },
+      { keys: ['Q / E'], label: 'Roll left / right' },
+      { keys: ['Drag'], label: 'Strafe (pan camera)' },
+      { keys: ['Right drag'], label: 'Free look' },
+      { keys: ['Wheel'], label: 'Move forward / backward' },
+      { keys: ['I'], label: 'Toggle inertial mode (smooth coasting)' },
+    ],
+  },
+  {
+    title: 'Ortho mode',
+    icon: RAIL_ICONS.navOrtho,
+    note: 'Press V until the grid icon shows — 2D viewing, no rotation',
+    entries: [
+      { keys: ['Drag'], label: 'Pan camera' },
+      { keys: ['Wheel'], label: 'Zoom in / out' },
+      { keys: ['⇧', 'Wheel'], label: 'Roll around the view axis' },
+    ],
+  },
+  {
+    title: 'nD navigation',
+    icon: RAIL_ICONS.dims,
+    entries: [
+      { keys: ['1 – 9'], label: 'Select dimension to control' },
+      { keys: ['[', ']'], label: 'Step along the selected dimension' },
+      { keys: ['N'], label: 'Dimension sliders panel' },
+      { keys: ['K'], label: 'Play / pause dimension animation' },
+      { keys: ['Home', 'End'], label: 'Jump to dimension start / end' },
+      { keys: ['⇧', '↑ / ↓'], label: 'Animation speed up / down' },
+    ],
+  },
+  {
+    title: 'Panels & tools',
+    icon: RAIL_ICONS.settings,
+    entries: [
+      { keys: ['R'], label: 'Rendering controls' },
+      { keys: ['L'], label: 'Layers panel' },
+      { keys: ['N'], label: 'Dimension sliders' },
+      { keys: ['M'], label: 'Data monitor (mini / expanded / off)' },
+      { keys: ['P'], label: 'Performance monitor' },
+      { keys: ['T'], label: 'Recording panel (screenshot / video)' },
+      { keys: ['G'], label: 'Quick screenshot' },
+      { keys: ['B'], label: 'Scale bar' },
+      { keys: ['J'], label: 'Colormap legend' },
+      { keys: ['U'], label: 'Overlays' },
+      { keys: ['C'], label: 'Cinematic mode (noise / vignette / lens)' },
+      { keys: ['Ctrl/⌘', 'Wheel'], label: 'Adjust field of view (perspective)' },
+      { keys: ['Ctrl', 'L'], label: 'Debug console' },
+      { keys: ['Ctrl', '⇧', 'S'], label: 'Export viewer state to clipboard' },
+    ],
+  },
+];
+
+/** Closing prose tips (no key chips). */
+const HELP_TIPS: string[] = [
+  'Try fly mode (V) for exploration, with inertial mode (I) for smooth coasting.',
+  'The left rail mirrors every panel shortcut — hover its buttons for a reminder.',
+  'Right-click the Home button for deeper resets (origin, dimensions, rendering, layers).',
+];
 
 export function showHelpOverlay() {
   // Prevent opening multiple overlays - if one exists, do nothing
@@ -52,154 +164,69 @@ export function showHelpOverlay() {
   header.appendChild(title);
   header.appendChild(closeBtn);
 
-  // Define help categories with expandable sections
-  const helpCategories = [
-    {
-      title: '🎮 Basic Controls',
-      expanded: true,
-      items: [
-        '🖱️ Drag: Pan camera',
-        '🖱️ Right drag: Rotate view',
-        '🖱️ ⇧+Drag: Rotate view (alternative)',
-        '🖱️ Wheel: Zoom in/out',
-        '🖱️ ⇧+Wheel: Roll (rotate around view axis)',
-        '⎵ Space: Toggle fullscreen',
-        'H: Toggle this help',
-        'V: Switch view mode (Orbit/Fly/Ortho)',
-        'F: Recenter camera on scene',
-        'O: Open dataset browser',
-        'Esc: Exit fullscreen / Close panels',
-      ],
-    },
-    {
-      title: '🚁 Fly Mode Controls',
-      expanded: false,
-      items: [
-        'WASD: Move forward/back/left/right',
-        '⌥W/⌥S (Alt+W/S): Move up/down',
-        '⇧ Shift: 2x speed boost',
-        '↑↓←→: Look up/down/left/right',
-        'Q/E: Roll left/right (barrel roll)',
-        '🖱️ Drag: Strafe (pan camera)',
-        '🖱️ Right drag: Free look (rotate view)',
-        '🖱️ Wheel: Move forward/backward',
-        '🖱️ ⇧+Wheel: Roll (rotate around view axis)',
-        'I: Toggle inertial mode',
-        'Note: Press V to enter fly mode',
-      ],
-    },
-    {
-      title: '📐 Ortho Mode Controls',
-      expanded: false,
-      items: [
-        '🖱️ Drag: Pan camera',
-        '🖱️ Wheel: Zoom in/out',
-        '🖱️ ⇧+Wheel: Roll (rotate around view axis)',
-        'No rotation — 2D viewing mode',
-        'Note: Press V to cycle to ortho mode',
-      ],
-    },
-    {
-      title: '🧭 nD Navigation',
-      expanded: false,
-      items: [
-        '1-9: Select dimension to control',
-        '[ / ]: Navigate selected dimension',
-        'N: Dimension sliders panel',
-        'K: Play/pause dimension animation',
-        'Home / End: Jump to dimension start/end',
-        '⇧ + ↑/↓: Animation speed up/down',
-      ],
-    },
-    {
-      title: '⚙️ Advanced Settings',
-      expanded: false,
-      items: [
-        'R: Rendering controls panel',
-        'T: Recording panel (screenshot/video)',
-        'G: Quick screenshot',
-        'B: Toggle scale bar',
-        'J: Toggle colormap legend',
-        'U: Toggle overlays',
-        'P: Performance monitor',
-        'M: Cycle data monitor (mini/expanded/off)',
-        'C: Toggle cinematic mode (noise/vignette/CA/lens)',
-        'Ctrl/⌘ + Wheel: Adjust field of view (perspective only)',
-        'L: Layers panel',
-        'Ctrl+L: Debug console',
-        'Ctrl+⇧+S: Export viewer state to clipboard',
-      ],
-    },
-    {
-      title: '💡 Tips',
-      expanded: false,
-      items: [
-        '• Try fly mode (V) for exploration',
-        '• Use inertial mode (I) for smooth coasting',
-        '• Enable auto-rotation in settings',
-        '• Use WASD + arrows for precise fly control',
-      ],
-    },
-  ];
-
   const controlsList = document.createElement('div');
+  controlsList.className = 'luxar-help-overlay__sections';
 
-  // Create collapsible categories
-  helpCategories.forEach((category) => {
-    // Category header (clickable)
-    const categoryHeader = document.createElement('div');
-    categoryHeader.className = 'luxar-help-overlay__category-header';
+  for (const section of HELP_SECTIONS) {
+    const sectionEl = document.createElement('section');
+    sectionEl.className = 'luxar-help-overlay__section';
 
-    const categoryArrow = document.createElement('span');
-    categoryArrow.className = `luxar-help-overlay__category-arrow ${category.expanded ? 'luxar-help-overlay__category-arrow--expanded' : ''}`;
-    categoryArrow.textContent = '▶';
+    const heading = document.createElement('div');
+    heading.className = 'luxar-help-overlay__section-title';
+    heading.innerHTML = section.icon;
+    const headingText = document.createElement('span');
+    headingText.textContent = section.title;
+    heading.appendChild(headingText);
+    sectionEl.appendChild(heading);
 
-    const categoryTitle = document.createElement('span');
-    categoryTitle.textContent = category.title;
+    if (section.note) {
+      const note = document.createElement('div');
+      note.className = 'luxar-help-overlay__section-note';
+      note.textContent = section.note;
+      sectionEl.appendChild(note);
+    }
 
-    categoryHeader.appendChild(categoryArrow);
-    categoryHeader.appendChild(categoryTitle);
+    for (const entry of section.entries) {
+      const row = document.createElement('div');
+      row.className = 'luxar-help-overlay__row';
 
-    // Category content container
-    const categoryContent = document.createElement('div');
-    categoryContent.className = `luxar-help-overlay__category-content ${category.expanded ? '' : 'luxar-help-overlay__category-content--collapsed'}`;
-
-    // Add items to category
-    category.items.forEach((item) => {
-      const itemDiv = document.createElement('div');
-      itemDiv.textContent = item;
-
-      // Special styling for certain items
-      if (item.startsWith('•')) {
-        itemDiv.className = 'luxar-help-overlay__item luxar-help-overlay__item--tip';
-      } else if (item.startsWith('Note:')) {
-        itemDiv.className = 'luxar-help-overlay__item luxar-help-overlay__item--note';
-      } else {
-        itemDiv.className = 'luxar-help-overlay__item';
+      const keys = document.createElement('span');
+      keys.className = 'luxar-help-overlay__keys';
+      for (const key of entry.keys) {
+        const kbd = document.createElement('kbd');
+        kbd.textContent = key;
+        keys.appendChild(kbd);
       }
 
-      categoryContent.appendChild(itemDiv);
-    });
+      const desc = document.createElement('span');
+      desc.className = 'luxar-help-overlay__desc';
+      desc.textContent = entry.label;
 
-    // Toggle functionality
-    categoryHeader.addEventListener('click', (e) => {
-      e.stopPropagation();
-      const isExpanded = !categoryContent.classList.contains(
-        'luxar-help-overlay__category-content--collapsed'
-      );
+      row.appendChild(keys);
+      row.appendChild(desc);
+      sectionEl.appendChild(row);
+    }
 
-      if (isExpanded) {
-        categoryContent.classList.add('luxar-help-overlay__category-content--collapsed');
-        categoryArrow.classList.remove('luxar-help-overlay__category-arrow--expanded');
-      } else {
-        categoryContent.classList.remove('luxar-help-overlay__category-content--collapsed');
-        categoryArrow.classList.add('luxar-help-overlay__category-arrow--expanded');
-      }
-    });
+    controlsList.appendChild(sectionEl);
+  }
 
-    controlsList.appendChild(categoryHeader);
-    controlsList.appendChild(categoryContent);
-  });
+  // Tips — prose, no key chips.
+  const tipsEl = document.createElement('section');
+  tipsEl.className = 'luxar-help-overlay__section';
+  const tipsHeading = document.createElement('div');
+  tipsHeading.className = 'luxar-help-overlay__section-title';
+  tipsHeading.innerHTML = RAIL_ICONS.cinematic;
+  const tipsText = document.createElement('span');
+  tipsText.textContent = 'Tips';
+  tipsHeading.appendChild(tipsText);
+  tipsEl.appendChild(tipsHeading);
+  for (const tip of HELP_TIPS) {
+    const tipEl = document.createElement('div');
+    tipEl.className = 'luxar-help-overlay__tip';
+    tipEl.textContent = tip;
+    tipsEl.appendChild(tipEl);
+  }
+  controlsList.appendChild(tipsEl);
 
   // Add footer note
   const footerNote = document.createElement('div');

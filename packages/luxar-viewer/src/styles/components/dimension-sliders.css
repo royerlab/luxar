@@ -189,7 +189,7 @@
 .luxar-dimension-dropdown__select {
   width: 100%;
   padding: 6px 8px;
-  background: var(--luxar-interactive-default);
+  background-color: var(--luxar-interactive-default);
   color: var(--luxar-text-primary);
   border: 1px solid var(--luxar-border-strong);
   border-radius: var(--luxar-radius-sm);
@@ -201,13 +201,13 @@
 }
 
 .luxar-dimension-dropdown__select:hover {
-  background: var(--luxar-interactive-hover);
+  background-color: var(--luxar-interactive-hover);
   border-color: color-mix(in srgb, var(--luxar-success) 50%, transparent);
 }
 
 .luxar-dimension-dropdown__select:focus {
   border-color: var(--luxar-success);
-  background: var(--luxar-interactive-hover);
+  background-color: var(--luxar-interactive-hover);
 }
 
 /* <select> option colors are centralised in styles/components/select-menu.css
@@ -273,18 +273,18 @@
 }
 
 [data-theme='light'] .luxar-dimension-dropdown__select {
-  background: rgba(0, 0, 0, 0.05);
+  background-color: rgba(0, 0, 0, 0.05);
   color: var(--luxar-text-primary);
   border-color: rgba(0, 0, 0, 0.2);
 }
 
 [data-theme='light'] .luxar-dimension-dropdown__select:hover {
-  background: rgba(0, 0, 0, 0.08);
+  background-color: rgba(0, 0, 0, 0.08);
   border-color: var(--luxar-success);
 }
 
 [data-theme='light'] .luxar-dimension-dropdown__select:focus {
-  background: rgba(0, 0, 0, 0.08);
+  background-color: rgba(0, 0, 0, 0.08);
 }
 
 /* light-theme <select> option colors now come from --luxar-menu-* via
@@ -330,7 +330,7 @@
   border-radius: var(--luxar-radius-sm);
 
   /* Typography */
-  font-size: 12px;
+  font-size: var(--luxar-text-sm);
   line-height: 1;
 
   /* Behavior */

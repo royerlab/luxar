@@ -24,6 +24,8 @@ export const StorageKeys = Object.freeze({
   theme: 'luxar.theme',
   /** Persisted debug-mode toggle (mirrors `?debug` URL parameter). */
   debug: 'luxar.debug',
+  /** Global viewer preferences (Settings popover) — see config/user-settings.ts. */
+  settings: 'luxar.settings',
   /** Per-scene rendering settings (bloom, HDR, lens, etc). */
   rendering(sceneId: string): string {
     return `luxar.rendering.${sanitizeKeySegment(sceneId)}`;

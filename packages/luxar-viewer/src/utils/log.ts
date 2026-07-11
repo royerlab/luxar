@@ -186,6 +186,7 @@ export const Modules = {
   ANIMATION: 'DimAnimation',
 
   // Utils
+  CONFIG: 'Config',
   MEMORY: 'Memory',
   PERFORMANCE: 'Performance',
   CONSOLE_INTERCEPTOR: 'ConsoleInterceptor',

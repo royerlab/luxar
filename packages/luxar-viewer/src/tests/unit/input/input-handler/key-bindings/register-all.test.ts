@@ -208,9 +208,10 @@ describe('registerAllKeyBindings — structure', () => {
     // input.md W5 fix: a structure-only check (handler is a function,
     // count is 2) kills no mutants. Strengthen by exercising the
     // actual side effect — each registered handler should toggle the
-    // sceneManager's setEnableZoom(false) gate on keydown. A mutation
-    // that flipped the keys, dropped one binding, or swapped handlers
-    // is now observable.
+    // sceneManager's setEnableZoom(false) gate on keydown. Re-enabling is
+    // NOT a per-binding keyupHandler anymore: the gate reconciles against
+    // live modifier flags on window-capture keyup (a context-routed keyup
+    // can be swallowed while typing, which used to stick the gate shut).
     const { bindings, setEnableZoom } = setup();
     const fov = bindings.filter(
       (b) => b.context === InputContext.NAVIGATION && (b.key === 'Control' || b.key === 'Meta')
@@ -220,12 +221,11 @@ describe('registerAllKeyBindings — structure', () => {
     expect(fovKeys).toEqual(new Set(['Control', 'Meta']));
     fov.forEach((b) => {
       expect(b.handler).toBeTypeOf('function');
-      expect(b.keyupHandler).toBeTypeOf('function');
-      // The handler must disable zoom; the keyupHandler must re-enable.
       setEnableZoom.mockClear();
       b.handler(new KeyboardEvent('keydown'));
       expect(setEnableZoom).toHaveBeenLastCalledWith(false);
-      b.keyupHandler!(new KeyboardEvent('keyup'));
+      // A window keyup reporting both modifiers up re-enables zoom.
+      window.dispatchEvent(new KeyboardEvent('keyup', { ctrlKey: false, metaKey: false }));
       expect(setEnableZoom).toHaveBeenLastCalledWith(true);
     });
   });
@@ -265,12 +265,12 @@ describe('registerAllKeyBindings — structure', () => {
 });
 
 describe('registerAllKeyBindings — FOV gate dispatch', () => {
-  it('Control keydown disables zoom; matching keyup re-enables it', () => {
+  it('Control keydown disables zoom; a modifiers-up window keyup re-enables it', () => {
     const { bindings, setEnableZoom } = setup();
     const ctrl = findBinding(bindings, InputContext.NAVIGATION, 'Control');
     ctrl.handler(new KeyboardEvent('keydown'));
     expect(setEnableZoom).toHaveBeenLastCalledWith(false);
-    ctrl.keyupHandler!(new KeyboardEvent('keyup'));
+    window.dispatchEvent(new KeyboardEvent('keyup', { ctrlKey: false, metaKey: false }));
     expect(setEnableZoom).toHaveBeenLastCalledWith(true);
   });
 
@@ -283,12 +283,28 @@ describe('registerAllKeyBindings — FOV gate dispatch', () => {
     meta.handler(new KeyboardEvent('keydown'));
     setEnableZoom.mockClear();
 
-    // Release Ctrl: counter goes 2 → 1, zoom should NOT re-enable.
-    ctrl.keyupHandler!(new KeyboardEvent('keyup'));
+    // Release Ctrl while Meta is still held: the keyup event reports
+    // metaKey=true, so zoom must NOT re-enable.
+    window.dispatchEvent(new KeyboardEvent('keyup', { key: 'Control', metaKey: true }));
     expect(setEnableZoom).not.toHaveBeenCalled();
 
-    // Release Meta: counter 1 → 0, zoom should re-enable.
-    meta.keyupHandler!(new KeyboardEvent('keyup'));
+    // Release Meta too (both flags now up): zoom re-enables.
+    window.dispatchEvent(new KeyboardEvent('keyup', { key: 'Meta' }));
+    expect(setEnableZoom).toHaveBeenLastCalledWith(true);
+  });
+
+  it('recovers even when the modifier keyup itself was swallowed (regression: stuck zoom)', () => {
+    // The old keydown/keyup counter stuck the gate shut when a keyup was
+    // eaten (typing-context filter, macOS ⌘ suppression) — wheel zoom died
+    // until blur. Now ANY later window event whose modifier flags are up
+    // (here: a pointer move) reconciles the gate open.
+    const { bindings, setEnableZoom } = setup();
+    const ctrl = findBinding(bindings, InputContext.NAVIGATION, 'Control');
+    ctrl.handler(new KeyboardEvent('keydown'));
+    ctrl.handler(new KeyboardEvent('keydown', { repeat: true })); // key-repeat, no keyup seen
+    setEnableZoom.mockClear();
+
+    window.dispatchEvent(new PointerEvent('pointermove', { ctrlKey: false, metaKey: false }));
     expect(setEnableZoom).toHaveBeenLastCalledWith(true);
   });
 

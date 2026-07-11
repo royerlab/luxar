@@ -175,9 +175,14 @@
 }
 
 /* When the button's panel is already open, its name is redundant — suppress
-   the tooltip so it doesn't linger over the on-screen panel. */
+   the tooltip so it doesn't linger over the on-screen panel.
+   [aria-expanded='true'] covers the button whose flyout/popover is currently
+   open (set by RailOverlay): a momentary item like Home never gets .is-active
+   (refresh() skips it), yet its right-click popover must still win over the
+   hover tooltip. */
 .luxar-control-rail__btn.is-active:hover .luxar-control-rail__tip,
-.luxar-control-rail__btn.is-active:focus-visible .luxar-control-rail__tip {
+.luxar-control-rail__btn.is-active:focus-visible .luxar-control-rail__tip,
+.luxar-control-rail__btn[aria-expanded='true'] .luxar-control-rail__tip {
   opacity: 0;
 }
 
@@ -311,55 +316,44 @@
   border-top: 1px solid var(--luxar-border-default);
 }
 
-/* Action rows in the Home popover — full-width label+hint buttons (no nested
-   GUI; plain one-shot actions, styled to match the mode-strip segments). */
-.luxar-control-rail__actions {
+/* Home popover — a horizontal row of square icon chips (the same
+   `.luxar-control-rail__chip` recipe as the View flyout) with a live caption
+   strip below that names + explains the hovered/focused action. The caption
+   replaces the flyout's floating per-chip tooltips so the explanation can
+   never overlap the chips or the rail. */
+.luxar-control-rail__home-chips {
   display: flex;
-  flex-direction: column;
   gap: 4px;
-  padding: 10px 12px;
+  padding: 8px 8px 2px;
 }
 
-.luxar-control-rail__action {
-  display: block;
-  width: 100%;
-  text-align: left;
-  padding: 7px 10px;
-  border: 1px solid var(--luxar-border-default);
-  border-radius: var(--luxar-radius-md, 8px);
-  background: none;
-  cursor: pointer;
-  font-family: var(--luxar-font-base);
-  transition: var(--luxar-transition-fast, all 0.1s ease);
-}
-
-.luxar-control-rail__action:hover {
-  background: var(--luxar-interactive-hover, rgba(255, 255, 255, 0.12));
-}
-
-.luxar-control-rail__action:focus-visible {
-  outline: 2px solid var(--luxar-border-focus, rgba(76, 175, 80, 0.5));
-  outline-offset: 1px;
-}
-
-.luxar-control-rail__action:disabled {
-  opacity: 0.45;
+.luxar-control-rail__chip:disabled {
+  opacity: 0.4;
   cursor: default;
 }
 
-.luxar-control-rail__action:disabled:hover {
+.luxar-control-rail__chip:disabled:hover {
+  color: var(--luxar-text-muted);
   background: none;
 }
 
-.luxar-control-rail__action-label {
+.luxar-control-rail__home-caption {
+  padding: 6px 14px 10px;
+  /* Reserve two lines so hovering chips never resizes the popover. */
+  min-height: 32px;
+}
+
+.luxar-control-rail__home-caption-label {
   display: block;
   color: var(--luxar-text-primary);
+  font-family: var(--luxar-font-base);
   font-size: var(--luxar-text-sm);
 }
 
-.luxar-control-rail__action-hint {
+.luxar-control-rail__home-caption-hint {
   display: block;
   color: var(--luxar-text-muted);
+  font-family: var(--luxar-font-base);
   font-size: var(--luxar-text-xs);
   margin-top: 1px;
 }
@@ -481,6 +475,14 @@
   font-family: var(--luxar-font-base);
   font-size: var(--luxar-text-md, 12px);
   line-height: 1.5;
+  transition: opacity 0.4s ease;
+}
+
+/* Auto-hide: the hint melts away if the user never interacts (the element is
+   removed after the transition — see HINT_FADE_MS in control-rail/index.ts). */
+.luxar-control-rail-hint.is-leaving {
+  opacity: 0;
+  pointer-events: none;
 }
 
 .luxar-control-rail-hint b {
@@ -550,7 +552,8 @@
   .luxar-control-rail__collapse svg,
   .luxar-control-rail__tip,
   .luxar-control-rail__chip,
-  .luxar-control-rail__chip-tip {
+  .luxar-control-rail__chip-tip,
+  .luxar-control-rail-hint {
     transition: none;
   }
 }

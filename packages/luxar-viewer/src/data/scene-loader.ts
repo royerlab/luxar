@@ -84,6 +84,7 @@ import { config as appConfig } from '../config';
 import { MultiLevelCachingStore } from '../cache/multi-level-caching-store';
 import { DecompressedChunkCache } from '../cache/decompressed-chunk-cache';
 import { SliceCache } from '../cache/slice-cache';
+import type { CacheBudgets } from '../cache/heap-budget';
 import type { LinesDataLoader, LinesViewState, LoadedLinesData } from '../types/lines';
 import type { GSplatsDataLoader, GSplatsViewState, LoadedGSplatsData } from '../types/gsplats';
 import { GPUBufferPool } from '../rendering/gpu-buffer-pool';
@@ -170,6 +171,8 @@ export class SceneLoader {
   private l0Cache: DecompressedChunkCache | null = null;
   // SliceCache ("S-cache") - per-(node,view) decoded-slice cache for instant slice revisits
   private sliceCache: SliceCache | null = null;
+  // Resolved per-tier cache budgets from setupCaches (Settings popover readout)
+  private cacheBudgets: CacheBudgets | null = null;
   private registry = new LoaderRegistry();
 
   // Delegate registry-backed maps used by the loader orchestration methods.
@@ -382,9 +385,18 @@ export class SceneLoader {
     await clearL2CacheHelper(this.cachingStore);
   }
 
-  /** Clear all cache levels (L0 + L1 + L2). */
+  /** Clear ALL cache tiers (L0 + L1 + L2 + the decoded-slice S-cache). */
   async clearAllCaches(): Promise<void> {
-    await clearAllCachesHelper(this.l0Cache, this.cachingStore);
+    await clearAllCachesHelper(this.l0Cache, this.cachingStore, this.sliceCache);
+  }
+
+  /**
+   * Resolved per-tier cache budgets from the last `setupCaches` run (source:
+   * heap / explicit / device-class / fixed), or null before the first scene
+   * load / after dispose. Surfaced for the Settings popover's budget readout.
+   */
+  getCacheBudgets(): CacheBudgets | null {
+    return this.cacheBudgets;
   }
 
   /**
@@ -585,6 +597,9 @@ export class SceneLoader {
       },
       setSliceCache: (c) => {
         this.sliceCache = c;
+      },
+      setCacheBudgets: (b) => {
+        this.cacheBudgets = b;
       },
       setZarrStore: (s) => {
         this._zarrStore = s;
@@ -1255,7 +1270,6 @@ export class SceneLoader {
     return {
       zarrStore: this._zarrStore!,
       arrayRefRegistry: this.arrayRefRegistry,
-      profiler: this.profiler,
       l0Cache: this.l0Cache,
       sliceCache: this.sliceCache,
       cachingStore: this.cachingStore,
@@ -1564,6 +1578,7 @@ export class SceneLoader {
     this._gpuBufferPool = null;
     this.cachingStore = null;
     this.l0Cache = null;
+    this.cacheBudgets = null;
     this._zarrStore = null;
     this.rootGroup = null;
     this._sceneGraph = null;

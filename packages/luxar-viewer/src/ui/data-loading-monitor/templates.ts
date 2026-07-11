@@ -171,12 +171,13 @@ export function renderStatGrid(
 /**
  * Map LoaderType identifier to its short display label / item-unit pair.
  * Keeps the loader-list rendering geometry-aware: a lines loader shows
- * "verts", a gsplats loader shows "splats", points shows "pts".
+ * "segs" (visibleElements counts visible segments — the queried unit for
+ * lines), a gsplats loader shows "splats", points shows "pts".
  */
 function loaderDisplay(type: LoaderMetrics['type']): { label: string; unit: string } {
   switch (type) {
     case 'lines-spatial-index':
-      return { label: 'lines', unit: 'verts' };
+      return { label: 'lines', unit: 'segs' };
     case 'gsplats-spatial-index':
       return { label: 'gsplats', unit: 'splats' };
     case 'point-spatial-index':
@@ -199,7 +200,7 @@ export function renderLoaderItem(path: string, metrics: LoaderMetrics): string {
         <span class="luxar-loader-item__status" title="Geometry type this loader streams (points, lines, or gsplats)">${escapeHtml(label)}</span>
       </div>
       <div class="luxar-loader-item__metrics">
-        <span title="Elements from this layer currently on screen (inside the active nD slice)">${metrics.visiblePoints.toLocaleString()} ${escapeHtml(unit)}</span>
+        <span title="Elements from this layer currently on screen (inside the active nD slice)">${metrics.visibleElements.toLocaleString()} ${escapeHtml(unit)}</span>
         <span title="CPU memory this loader currently holds for loaded chunks and index data">${formatBytes(metrics.memoryUsed)}</span>
       </div>
     </div>
@@ -491,10 +492,18 @@ export type CacheSectionKey = (typeof CACHE_SECTION_KEYS)[number];
  * value/subtitle text and the SAME `data-field` keys as the full cards,
  * so the per-tick patcher in `tabs/cache.ts` updates both views with
  * one pass and no state is lost by collapsing.
+ *
+ * The title renders in two variants: `title` (full, e.g. "L0 DECOMPRESSED
+ * CACHE") shown while expanded, and `shortTitle` (e.g. "L0 cache") shown in
+ * the collapsed one-line summary. The short titles are near-uniform width,
+ * which lets the collapsed summaries grid-align their value columns across
+ * all four cache rows; the didactic titleTooltip carries the full story in
+ * both states.
  * @param metrics - Each metric can have a colorClass for CSS class-based coloring
  */
 function renderCacheSection(
   title: string,
+  shortTitle: string,
   titleTooltip: string | undefined,
   clearAction: string,
   clearTooltip: string,
@@ -540,7 +549,7 @@ function renderCacheSection(
     <div class="luxar-cache-section${collapsed ? ' luxar-cache-section--collapsed' : ''}" data-section="${sectionKey}">
       <div class="luxar-cache-section__header" data-action="toggleCacheSection" data-section-key="${sectionKey}" role="button" tabindex="0" aria-expanded="${!collapsed}" title="Click to ${collapsed ? 'expand' : 'collapse'} this section">
         <span class="luxar-cache-section__chevron" aria-hidden="true">▾</span>
-        <span class="luxar-cache-section__title"${titleTooltip ? ` title="${escapeHtml(titleTooltip)}"` : ''}>${title}</span>
+        <span class="luxar-cache-section__title"${titleTooltip ? ` title="${escapeHtml(titleTooltip)}"` : ''}><span class="luxar-cache-section__title-full">${title}</span><span class="luxar-cache-section__title-short">${shortTitle}</span></span>
         <span class="luxar-cache-section__summary">${summaryHtml}</span>
         <button data-action="${clearAction}" class="luxar-cache-section__clear-btn" title="${escapeHtml(clearTooltip)}">Clear</button>
       </div>
@@ -946,6 +955,7 @@ export function renderCacheContent(
         cacheMetrics.slice
           ? renderCacheSection(
               'SLICE CACHE (S-CACHE)',
+              'S-cache',
               'Caches the fully decoded geometry of a whole slice (a node at one view: slice position + displayed dims), keyed per node. Revisiting a slice — e.g. scrubbing back to a timepoint — restores it instantly, skipping the query + fetch + decode entirely (only the cheap nD→3D projection re-runs). Cleared on dataset change',
               'clearSlice',
               'Empty the SliceCache. Harmless: the next visit to each slice re-loads and re-decodes it from L0/L1/L2/network',
@@ -992,6 +1002,7 @@ export function renderCacheContent(
         cacheMetrics.l0
           ? renderCacheSection(
               'L0 DECOMPRESSED CACHE',
+              'L0 cache',
               'The fastest cache tier. Data chunks arrive compressed and must be decoded (~2ms each) before use; L0 keeps the already-decoded arrays in memory so repeat reads skip both the download AND the decode. Lookups try L0 first, then fall through L1 (memory) → L2 (disk) → network',
               'clearL0',
               'Empty the L0 decoded-chunk cache. Harmless: chunks are still in L1/L2 and will simply be re-decoded (~2ms each) on next access',
@@ -1036,6 +1047,7 @@ export function renderCacheContent(
       <!-- L1 Memory Cache Section -->
       ${renderCacheSection(
         'L1 MEMORY CACHE',
+        'L1 cache',
         'The in-memory tier for raw (still-compressed) chunks and metadata. Serves L0 misses from RAM with no disk or network round-trip. Cleared when the page closes — the persistent copy lives in L2. Lookup order: L0 → L1 → L2 → network',
         'clearL1',
         'Empty the L1 in-memory cache. Harmless: chunks still cached on disk (L2) are re-read from there; only uncached data goes back to the network',
@@ -1079,6 +1091,7 @@ export function renderCacheContent(
         const l2HitRateColorClass = getCacheHitRateColorClassWithGuard(l2HitRate, l2Total);
         return renderCacheSection(
           'L2 OPFS CACHE',
+          'L2 cache',
           "The persistent disk tier, stored in the browser's Origin Private File System (private storage on your machine — never uploaded anywhere). Survives page reloads and browser restarts, so a revisited dataset loads from disk instead of the network. Lookup order: L0 → L1 → L2 → network",
           'clearL2',
           'Delete the on-disk (L2) cache for this dataset. Anything not held in memory will be re-downloaded from the server — use this to reclaim disk space or force a fresh copy',

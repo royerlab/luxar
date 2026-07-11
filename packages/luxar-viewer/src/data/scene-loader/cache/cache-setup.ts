@@ -16,7 +16,11 @@ import { MultiLevelCachingStore } from '../../../cache/multi-level-caching-store
 import { ChunkPrefetcher } from '../../../cache/chunk-prefetcher';
 import { DecompressedChunkCache } from '../../../cache/decompressed-chunk-cache';
 import { SliceCache } from '../../../cache/slice-cache';
-import { computeCacheBudgets, deviceClassPoolBytes } from '../../../cache/heap-budget';
+import {
+  computeCacheBudgets,
+  deviceClassPoolBytes,
+  type CacheBudgets,
+} from '../../../cache/heap-budget';
 import { config as appConfig } from '../../../config';
 import { log, Modules } from '../../../utils/log';
 import type { CacheTelemetryState } from '../../../types/data-monitor-types';
@@ -56,6 +60,12 @@ export interface CacheSetupResult {
    * `wireMonitorAfterLoad`.
    */
   telemetryState: CacheTelemetryState;
+  /**
+   * The resolved per-tier budgets (and their source: heap / explicit /
+   * device-class / fixed) — surfaced so the Settings popover can show the
+   * user what their budget actually resolved to.
+   */
+  budgets: CacheBudgets;
 }
 
 /**
@@ -159,7 +169,7 @@ export async function setupCaches(url: string, flags: CacheSetupFlags): Promise<
     await cachingStore.init();
 
     const prefetcher = new ChunkPrefetcher(cachingStore, {
-      maxConcurrent: 4,
+      maxConcurrent: appConfig.dataLoading.network.maxConcurrent,
       enabled: !noPrefetch,
       debug: prefetchDebug,
     });
@@ -209,5 +219,5 @@ export async function setupCaches(url: string, flags: CacheSetupFlags): Promise<
     telemetryState = { kind: 'enabled' };
   }
 
-  return { l0Cache, sliceCache, cachingStore, rawStore, telemetryState };
+  return { l0Cache, sliceCache, cachingStore, rawStore, telemetryState, budgets };
 }

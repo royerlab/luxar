@@ -27,8 +27,10 @@
   backdrop-filter: none;
   -webkit-backdrop-filter: none;
 
-  /* Brighter border for glass edge definition */
-  border: 1px solid rgba(255, 255, 255, 0.5);
+  /* Subtle bright edge for glass definition. Was 0.5 — that read as a harsh
+     white frame around every panel; the ::after inset highlights already
+     carry most of the "glass rim" so the border only needs a whisper. */
+  border: 1px solid rgba(255, 255, 255, 0.22);
 }
 
 /* The flyout's pointer arrow is painted with --luxar-bg-secondary, but in this
@@ -186,16 +188,16 @@
 
 /* GUI select - more transparent */
 [data-theme='liquid-glass'] .luxar-gui__select {
-  background: rgba(255, 255, 255, 0.06);
+  background-color: rgba(255, 255, 255, 0.06);
   border: 1px solid rgba(255, 255, 255, 0.15);
 }
 
 [data-theme='liquid-glass'] .luxar-gui__select:hover {
-  background: rgba(255, 255, 255, 0.1);
+  background-color: rgba(255, 255, 255, 0.1);
 }
 
 [data-theme='liquid-glass'] .luxar-gui__select:focus {
-  background: rgba(255, 255, 255, 0.12);
+  background-color: rgba(255, 255, 255, 0.12);
   border-color: var(--luxar-success);
 }
 
@@ -422,16 +424,16 @@
 
 /* Select controls - glass style (matches GUI selects) */
 [data-theme='liquid-glass'] .luxar-layers-panel__select {
-  background: rgba(255, 255, 255, 0.06);
+  background-color: rgba(255, 255, 255, 0.06);
   border: 1px solid rgba(255, 255, 255, 0.15);
 }
 
 [data-theme='liquid-glass'] .luxar-layers-panel__select:hover {
-  background: rgba(255, 255, 255, 0.1);
+  background-color: rgba(255, 255, 255, 0.1);
 }
 
 [data-theme='liquid-glass'] .luxar-layers-panel__select:focus {
-  background: rgba(255, 255, 255, 0.12);
+  background-color: rgba(255, 255, 255, 0.12);
   border-color: var(--luxar-success);
 }
 

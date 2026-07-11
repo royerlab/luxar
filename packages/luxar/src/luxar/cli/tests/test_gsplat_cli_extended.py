@@ -1337,7 +1337,7 @@ class TestViewCommand:
             patch("luxar.cli.utils.find_available_port", side_effect=lambda p: p),
             patch("luxar.cli.main._serve_data", side_effect=_fake_serve_data),
             patch("luxar.cli.main._serve_viewer"),
-            patch("luxar.cli.gsplat_ops.inspect.time.sleep"),
+            patch("luxar.cli.gsplat_ops.inspect_commands.time.sleep"),
         ):
             result = runner.invoke(app, ["gsplat", "view", str(path), "--no-open"])
         return result, captured
