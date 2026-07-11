@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Literal, Optional
+from typing import Any, Literal, Optional
 
 import typer
 from arbol import aprint, asection
@@ -18,27 +18,42 @@ def run_filter_dataset(
     input_path: Path,
     output_path: Path,
     bbox: Optional[str],
-    volume_min: Optional[float],
-    volume_max: Optional[float],
+    volume_min: Optional[str],
+    volume_max: Optional[str],
     volume_normalized: bool,
-    amplitude_min: Optional[float],
-    amplitude_max: Optional[float],
+    scale_min: Optional[str],
+    scale_max: Optional[str],
+    scale_normalized: bool,
+    amplitude_min: Optional[str],
+    amplitude_max: Optional[str],
     amplitude_normalized: bool,
-    eccentricity_min: Optional[float],
-    eccentricity_max: Optional[float],
-    mass_min: Optional[float],
-    mass_max: Optional[float],
+    eccentricity_min: Optional[str],
+    eccentricity_max: Optional[str],
+    mass_min: Optional[str],
+    mass_max: Optional[str],
     mass_normalized: bool,
     sigma_axis: Optional[int],
-    sigma_min: Optional[float],
-    sigma_max: Optional[float],
+    sigma_min: Optional[str],
+    sigma_max: Optional[str],
+    isolation_max: Optional[str],
+    min_neighbors: Optional[int],
+    neighbor_radius: Optional[float],
+    spatial_dims: Optional[str],
+    soft_highpass: Optional[str],
+    soft_lowpass: Optional[str],
+    soft_width: float,
+    dry_run: bool,
     truncate: Optional[float],
     encoding_mode: Literal["auto", "precision", "memory"],
     compress: Optional[Literal["zip", "tar.gz"]],
 ) -> None:
     """Run filter command implementation."""
     try:
+        import numpy as np
+
         from luxar.gsplats.gsplat_data import GSplatData
+
+        from .transforms_parsing import parse_threshold
 
         encoding_mode_obj = _resolve_encoding_mode(encoding_mode)
 
@@ -50,66 +65,116 @@ def run_filter_dataset(
                 ndim = data.ndim
                 aprint(f"Loaded {n_original:,} splats ({ndim}D)")
 
-            # Resolve truncation radius from dataset if not explicitly set
             if truncate is None:
                 truncate = data.truncation_radius
 
-            # Parse bbox
-            bbox_parsed = None
-            if bbox is not None:
-                bbox_parsed = parse_bbox(bbox, ndim)
+            bbox_parsed = parse_bbox(bbox, ndim) if bbox is not None else None
 
-            # Show active criteria
-            with asection("Active criteria"):
-                if bbox_parsed is not None:
-                    aprint(f"  bbox: {bbox_parsed}")
-                if amplitude_min is not None or amplitude_max is not None:
-                    norm = " (normalized)" if amplitude_normalized else ""
-                    aprint(f"  amplitude: [{amplitude_min}, {amplitude_max}]{norm}")
-                if volume_min is not None or volume_max is not None:
-                    norm = " (normalized)" if volume_normalized else ""
-                    aprint(
-                        f"  volume: [{volume_min}, {volume_max}]{norm} (truncate={truncate})"
-                    )
-                if eccentricity_min is not None or eccentricity_max is not None:
-                    aprint(f"  eccentricity: [{eccentricity_min}, {eccentricity_max}]")
-                if mass_min is not None or mass_max is not None:
-                    norm = " (normalized)" if mass_normalized else ""
-                    aprint(f"  mass: [{mass_min}, {mass_max}]{norm}")
-                if sigma_axis is not None:
-                    aprint(f"  sigma axis {sigma_axis}: [{sigma_min}, {sigma_max}]")
+            # Parse thresholds ("pNN"/"NN%" → percentile flag) once.
+            vmin, vmin_p = parse_threshold(volume_min, "volume-min")
+            vmax, vmax_p = parse_threshold(volume_max, "volume-max")
+            scmin, scmin_p = parse_threshold(scale_min, "scale-min")
+            scmax, scmax_p = parse_threshold(scale_max, "scale-max")
+            amin, amin_p = parse_threshold(amplitude_min, "amplitude-min")
+            amax, amax_p = parse_threshold(amplitude_max, "amplitude-max")
+            emin, emin_p = parse_threshold(eccentricity_min, "eccentricity-min")
+            emax, emax_p = parse_threshold(eccentricity_max, "eccentricity-max")
+            mmin, mmin_p = parse_threshold(mass_min, "mass-min")
+            mmax, mmax_p = parse_threshold(mass_max, "mass-max")
+            smin, smin_p = parse_threshold(sigma_min, "sigma-min")
+            smax, smax_p = parse_threshold(sigma_max, "sigma-max")
+            imax, imax_p = parse_threshold(isolation_max, "isolation-max")
 
-            # Filter
+            axes = None
+            if spatial_dims is not None:
+                axes = [int(x.strip()) for x in spatial_dims.split(",") if x.strip()]
+
+            # A single percentile flag per attribute (min/max share it).
+            filter_kwargs: dict[str, Any] = dict(
+                bbox=bbox_parsed,
+                volume_min=vmin,
+                volume_max=vmax,
+                volume_normalized=volume_normalized,
+                volume_percentile=vmin_p or vmax_p,
+                scale_min=scmin,
+                scale_max=scmax,
+                scale_normalized=scale_normalized,
+                scale_percentile=scmin_p or scmax_p,
+                amplitude_min=amin,
+                amplitude_max=amax,
+                amplitude_normalized=amplitude_normalized,
+                amplitude_percentile=amin_p or amax_p,
+                eccentricity_min=emin,
+                eccentricity_max=emax,
+                eccentricity_percentile=emin_p or emax_p,
+                mass_min=mmin,
+                mass_max=mmax,
+                mass_normalized=mass_normalized,
+                mass_percentile=mmin_p or mmax_p,
+                sigma_axis=sigma_axis,
+                sigma_min=smin,
+                sigma_max=smax,
+                sigma_percentile=smin_p or smax_p,
+                isolation_max=imax,
+                isolation_percentile=imax_p,
+                min_neighbors=min_neighbors,
+                neighbor_radius=neighbor_radius,
+                spatial_dims=axes,
+                truncate=truncate,
+            )
+
             with asection("Filtering"):
-                filtered_data = data.filter_by(
-                    bbox=bbox_parsed,
-                    volume_min=volume_min,
-                    volume_max=volume_max,
-                    volume_normalized=volume_normalized,
-                    amplitude_min=amplitude_min,
-                    amplitude_max=amplitude_max,
-                    amplitude_normalized=amplitude_normalized,
-                    eccentricity_min=eccentricity_min,
-                    eccentricity_max=eccentricity_max,
-                    mass_min=mass_min,
-                    mass_max=mass_max,
-                    mass_normalized=mass_normalized,
-                    sigma_axis=sigma_axis,
-                    sigma_min=sigma_min,
-                    sigma_max=sigma_max,
-                    truncate=truncate,
-                )
+                filtered_data = data.filter_by(**filter_kwargs)
                 n_filtered = filtered_data.n_splats
                 n_removed = n_original - n_filtered
+
+                # Impact vs the ORIGINAL (mass = integrated brightness; the key
+                # GSIP signal is mass-removed ≫ amplitude-removed = diffuse haze).
+                orig_mass = float(data.masses().sum())
+                orig_amp = float(np.asarray(data.amplitudes).sum())
+                kept_mass = float(filtered_data.masses().sum()) if n_filtered else 0.0
+                kept_amp = (
+                    float(np.asarray(filtered_data.amplitudes).sum())
+                    if n_filtered
+                    else 0.0
+                )
+                def pct(a: float, b: float) -> float:
+                    return 100.0 * (1.0 - a / b) if b > 0 else 0.0
 
                 aprint("\nResults:")
                 aprint(f"  Original splats: {n_original:,}")
                 aprint(f"  Filtered splats: {n_filtered:,}")
                 aprint(
-                    f"  Removed:         {n_removed:,} ({100 * n_removed / max(n_original, 1):.1f}%)"
+                    f"  Removed:         {n_removed:,} "
+                    f"({100 * n_removed / max(n_original, 1):.2f}%)"
                 )
+                aprint(f"  Mass removed:      {pct(kept_mass, orig_mass):.2f}%")
+                aprint(f"  Amplitude removed: {pct(kept_amp, orig_amp):.2f}%")
 
-            # Save
+            # Soft reweighting (attenuate, not remove) — resolve percentile
+            # cutoffs against the post-hard-filter scale distribution.
+            soft_active = soft_highpass is not None or soft_lowpass is not None
+            if soft_active and n_filtered > 0:
+                scl = filtered_data.scale(axes=axes)
+                hp_v, hp_p = parse_threshold(soft_highpass, "soft-highpass")
+                lp_v, lp_p = parse_threshold(soft_lowpass, "soft-lowpass")
+                hp = float(np.percentile(scl, hp_v)) if hp_p and hp_v is not None else hp_v
+                lp = float(np.percentile(scl, lp_v)) if lp_p and lp_v is not None else lp_v
+                with asection("Soft reweighting"):
+                    pre_mass = float(filtered_data.masses().sum())
+                    filtered_data = filtered_data.soft_scale_filter(
+                        highpass=hp, lowpass=lp, width=soft_width, spatial_dims=axes
+                    )
+                    post_mass = float(filtered_data.masses().sum())
+                    aprint(
+                        f"  soft highpass={hp} lowpass={lp} width={soft_width} → "
+                        f"mass attenuated {pct(post_mass, pre_mass):.2f}%"
+                    )
+
+            if dry_run:
+                aprint("\n(dry-run: nothing written)")
+                return
+
             with asection(f"Saving to {output_path.name}"):
                 if n_filtered == 0:
                     aprint("⚠ No splats remain after filtering — skipping save")
@@ -121,13 +186,12 @@ def run_filter_dataset(
                         compress=compress,
                     )
                     aprint(f"Saved filtered dataset: {output_path}")
-
                     if output_path.exists():
                         aprint(
                             f"  Size: {format_memory_size(output_path.stat().st_size)}"
                         )
 
-    except typer.Exit:
+    except (typer.Exit, typer.BadParameter):
         raise
     except Exception as e:
         aprint(f"❌ Error: {e}")

@@ -197,17 +197,61 @@ class _SplatArrayMixin:
         result: np.ndarray = np.sqrt(np.sum(L**2, axis=2))
         return result
 
-    def eccentricities(self) -> np.ndarray:
+    def _nondegenerate_axes(self, eps: float = 1e-6) -> np.ndarray:
+        """Axes that carry real extent (max marginal sigma across splats > eps).
+
+        A per-timepoint categorical / time axis (built with ``sigma=0``) has
+        ~zero variance for *every* splat and is dropped, so scale / eccentricity
+        become spatial-by-default on nD timelapses. Falls back to all axes if
+        that would leave nothing (e.g. all-degenerate or empty data).
+        """
+        if self.n_splats == 0:
+            return np.arange(self.ndim)
+        max_sigma = self.marginal_sigmas().max(axis=0)
+        keep = np.flatnonzero(max_sigma > eps)
+        return keep if keep.size > 0 else np.arange(self.ndim)
+
+    def _resolve_axes(self, axes: Optional[Sequence[int]]) -> np.ndarray:
+        """Normalise an ``axes`` argument: ``None`` → auto non-degenerate axes."""
+        if axes is None:
+            return self._nondegenerate_axes()
+        return np.asarray(list(axes), dtype=int)
+
+    def scale(self, axes: Optional[Sequence[int]] = None) -> np.ndarray:
+        """Per-splat characteristic size (world units): geometric mean of the
+        marginal sigmas over ``axes``.
+
+        Unlike ``volumes()`` (``det(Σ)^(1/d)`` over ALL dims, which collapses on
+        a zero-variance time axis), ``scale`` defaults to the auto-detected
+        non-degenerate (spatial) axes, so it is the meaningful "size" metric for
+        nD timelapses. Large scale = diffuse / low-frequency (background).
+
+        Returns:
+            shape (N,) float array.
+        """
+        if self.n_splats == 0:
+            return np.empty(0, dtype=np.float64)
+        ax = self._resolve_axes(axes)
+        sig = np.clip(self.marginal_sigmas()[:, ax], 1e-12, None)
+        result: np.ndarray = np.exp(np.mean(np.log(sig), axis=1))
+        return result
+
+    def eccentricities(self, axes: Optional[Sequence[int]] = None) -> np.ndarray:
         """Per-splat eccentricity: max marginal sigma / min marginal sigma.
 
-        1.0 = isotropic. Higher values = more elongated.
+        1.0 = isotropic. Higher values = more elongated. By default the ratio is
+        taken over the auto-detected non-degenerate (spatial) axes — for pure 3D
+        data this is all axes (unchanged), but on a timelapse it ignores the
+        ~zero-variance time axis (which would otherwise force the degenerate
+        1.0 fallback for every splat).
 
         Returns:
             shape (N,) float array. Returns 1.0 for degenerate splats.
         """
         if self.n_splats == 0:
             return np.empty(0, dtype=np.float64)
-        sigmas = self.marginal_sigmas()
+        ax = self._resolve_axes(axes)
+        sigmas = self.marginal_sigmas()[:, ax]
         min_s = sigmas.min(axis=1)
         max_s = sigmas.max(axis=1)
         result = np.ones(self.n_splats, dtype=np.float64)
@@ -247,6 +291,105 @@ class _SplatArrayMixin:
             semi = np.sqrt(self.volumes())
         result: np.ndarray = trunc * semi
         return result
+
+    def _grouped_spatial(
+        self,
+        spatial_axes: Optional[Sequence[int]],
+        group_axes: Optional[Sequence[int]],
+    ) -> "tuple[np.ndarray, np.ndarray]":
+        """Split centers into spatial coords + integer group ids.
+
+        Neighbour queries run *within* a group so splats at different
+        timepoints/channels are never neighbours. By default ``spatial_axes`` =
+        auto non-degenerate axes and ``group_axes`` = the complement (the
+        near-constant categorical/time axes). Returns
+        ``(spatial (N, ds) float64, group_ids (N,) int64)``.
+        """
+        ax = self._resolve_axes(spatial_axes)
+        if group_axes is None:
+            grp = np.array([d for d in range(self.ndim) if d not in set(ax.tolist())], dtype=int)
+        else:
+            grp = np.asarray(list(group_axes), dtype=int)
+        spatial = self.centers[:, ax].astype(np.float64)
+        if grp.size == 0:
+            group_ids = np.zeros(self.n_splats, dtype=np.int64)
+        else:
+            # Round categorical coords to collapse float noise, then map unique
+            # rows → contiguous ids.
+            keys = np.round(self.centers[:, grp].astype(np.float64), 6)
+            _, group_ids = np.unique(keys, axis=0, return_inverse=True)
+        return spatial, group_ids.astype(np.int64)
+
+    def _cell_size_hint(self, spatial: np.ndarray) -> float:
+        """A ~1-point-per-cell grid cell size heuristic for the spatial coords."""
+        n, ds = spatial.shape
+        if n <= 1:
+            return 1.0
+        extent = float(np.max(spatial.max(axis=0) - spatial.min(axis=0)))
+        if extent <= 0:
+            return 1.0
+        return float(max(extent / max(1.0, n ** (1.0 / max(ds, 1))), 1e-6))
+
+    def nearest_neighbor_distances(
+        self,
+        spatial_axes: Optional[Sequence[int]] = None,
+        group_axes: Optional[Sequence[int]] = None,
+        k: int = 1,
+    ) -> np.ndarray:
+        """Distance from each splat to its ``k``-th nearest neighbour.
+
+        Computed over the spatial axes and grouped by the non-spatial axes (so a
+        timelapse's timepoints never count as neighbours). Large distance =
+        spatially isolated (a noise-splat signature). Returns shape ``(N,)``;
+        ``+inf`` where a group has ``<= k`` splats (no neighbour exists).
+        """
+        if self.n_splats == 0:
+            return np.empty(0, dtype=np.float64)
+        from luxar.utils.spatial_hash import BatchedSpatialHashGrid
+
+        spatial, group_ids = self._grouped_spatial(spatial_axes, group_axes)
+        out = np.full(self.n_splats, np.inf, dtype=np.float64)
+        for gid in np.unique(group_ids):
+            idx = np.flatnonzero(group_ids == gid)
+            if idx.size <= k:
+                continue  # no k-th neighbour in this group → stays +inf
+            pts = spatial[idx]
+            grid = BatchedSpatialHashGrid.from_points(
+                pts, cell_size=self._cell_size_hint(pts), device="auto"
+            )
+            dists, _ = grid.query_knn(pts, k=k + 1)  # column 0 is self
+            out[idx] = dists[:, k]
+        return out
+
+    def neighbor_counts(
+        self,
+        radius: float,
+        spatial_axes: Optional[Sequence[int]] = None,
+        group_axes: Optional[Sequence[int]] = None,
+    ) -> np.ndarray:
+        """Number of OTHER splats within ``radius`` (Euclidean, spatial axes),
+        grouped by the non-spatial axes. Returns shape ``(N,)`` int64. Low count
+        = spatially isolated.
+        """
+        if self.n_splats == 0:
+            return np.empty(0, dtype=np.int64)
+        from luxar.utils.spatial_hash import BatchedSpatialHashGrid
+
+        spatial, group_ids = self._grouped_spatial(spatial_axes, group_axes)
+        out = np.zeros(self.n_splats, dtype=np.int64)
+        for gid in np.unique(group_ids):
+            idx = np.flatnonzero(group_ids == gid)
+            if idx.size == 0:
+                continue
+            pts = spatial[idx]
+            # query_radius requires radius <= cell_size.
+            grid = BatchedSpatialHashGrid.from_points(
+                pts, cell_size=float(radius), device="auto"
+            )
+            neigh = grid.query_radius(pts, radius=float(radius))
+            # each list entry includes self → subtract 1.
+            out[idx] = np.array([max(len(n) - 1, 0) for n in neigh], dtype=np.int64)
+        return out
 
 
 @dataclass(frozen=True, eq=False)
@@ -864,10 +1007,20 @@ class GSplatData(_SplatArrayMixin):
         val: float | None,
         normalized: bool,
         dataset_values: np.ndarray,
+        percentile: bool = False,
     ) -> float | None:
-        """Map a threshold from [0,1] normalized range to absolute if needed."""
+        """Resolve a threshold to an absolute value.
+
+        - ``percentile``: ``val`` in [0,100] → the ``val``-th percentile of
+          ``dataset_values`` (robust on heavy-tailed attributes; preferred over
+          ``normalized``).
+        - ``normalized``: ``val`` in [0,1] → linear map onto [min, max].
+        - otherwise: ``val`` is already absolute.
+        """
         if val is None:
             return None
+        if percentile:
+            return float(np.percentile(dataset_values, val))
         if normalized:
             dmin, dmax = float(dataset_values.min()), float(dataset_values.max())
             return dmin + val * (dmax - dmin)
@@ -880,17 +1033,31 @@ class GSplatData(_SplatArrayMixin):
         volume_min: float | None = None,
         volume_max: float | None = None,
         volume_normalized: bool = False,
+        volume_percentile: bool = False,
+        scale_min: float | None = None,
+        scale_max: float | None = None,
+        scale_normalized: bool = False,
+        scale_percentile: bool = False,
         amplitude_min: float | None = None,
         amplitude_max: float | None = None,
         amplitude_normalized: bool = False,
+        amplitude_percentile: bool = False,
         eccentricity_min: float | None = None,
         eccentricity_max: float | None = None,
+        eccentricity_percentile: bool = False,
         mass_min: float | None = None,
         mass_max: float | None = None,
         mass_normalized: bool = False,
+        mass_percentile: bool = False,
         sigma_axis: int | None = None,
         sigma_min: float | None = None,
         sigma_max: float | None = None,
+        sigma_percentile: bool = False,
+        isolation_max: float | None = None,
+        isolation_percentile: bool = False,
+        min_neighbors: int | None = None,
+        neighbor_radius: float | None = None,
+        spatial_dims: Sequence[int] | None = None,
         truncate: float | None = None,
     ) -> "GSplatData":
         """Filter splats by multiple criteria (AND logic).
@@ -919,6 +1086,20 @@ class GSplatData(_SplatArrayMixin):
             sigma_axis: Axis index for per-axis sigma filtering.
             sigma_min: Minimum marginal sigma on sigma_axis.
             sigma_max: Maximum marginal sigma on sigma_axis.
+            scale_min/scale_max: Characteristic size (geometric-mean marginal
+                sigma over the spatial/``spatial_dims`` axes; see ``scale()``).
+                The recommended "remove large diffuse background" knob — cleaner
+                than ``volume`` on nD timelapses.
+            isolation_max: Remove splats whose nearest-neighbour distance (over
+                the spatial axes, grouped by the non-spatial axes) EXCEEDS this
+                — i.e. spatially isolated noise splats.
+            min_neighbors / neighbor_radius: Remove splats with fewer than
+                ``min_neighbors`` other splats within ``neighbor_radius``.
+            spatial_dims: Override the axes used for scale / eccentricity /
+                isolation (default: auto-detected non-degenerate axes).
+            *_percentile: For volume/scale/amplitude/mass/sigma/eccentricity/
+                isolation — interpret the corresponding min/max as a percentile
+                in [0,100] of that attribute (robust on heavy-tailed data).
             truncate: Sigma truncation factor for volume computation.
                 Defaults to ``self.truncation_radius``.
 
@@ -977,17 +1158,31 @@ class GSplatData(_SplatArrayMixin):
                     volume_min=volume_min,
                     volume_max=volume_max,
                     volume_normalized=volume_normalized,
+                    volume_percentile=volume_percentile,
+                    scale_min=scale_min,
+                    scale_max=scale_max,
+                    scale_normalized=scale_normalized,
+                    scale_percentile=scale_percentile,
                     amplitude_min=amplitude_min,
                     amplitude_max=amplitude_max,
                     amplitude_normalized=amplitude_normalized,
+                    amplitude_percentile=amplitude_percentile,
                     eccentricity_min=eccentricity_min,
                     eccentricity_max=eccentricity_max,
+                    eccentricity_percentile=eccentricity_percentile,
                     mass_min=mass_min,
                     mass_max=mass_max,
                     mass_normalized=mass_normalized,
+                    mass_percentile=mass_percentile,
                     sigma_axis=sigma_axis,
                     sigma_min=sigma_min,
                     sigma_max=sigma_max,
+                    sigma_percentile=sigma_percentile,
+                    isolation_max=isolation_max,
+                    isolation_percentile=isolation_percentile,
+                    min_neighbors=min_neighbors,
+                    neighbor_radius=neighbor_radius,
+                    spatial_dims=spatial_dims,
                     truncate=truncate,
                 )
                 new_levels.append(
@@ -1031,8 +1226,12 @@ class GSplatData(_SplatArrayMixin):
         # -- Volume (characteristic length * truncate)
         if volume_min is not None or volume_max is not None:
             vols = self.volumes() * truncate
-            vmin = self._resolve_threshold(volume_min, volume_normalized, vols)
-            vmax = self._resolve_threshold(volume_max, volume_normalized, vols)
+            vmin = self._resolve_threshold(
+                volume_min, volume_normalized, vols, volume_percentile
+            )
+            vmax = self._resolve_threshold(
+                volume_max, volume_normalized, vols, volume_percentile
+            )
             if vmin is not None:
                 mask &= vols >= vmin
                 criteria["volume_min"] = vmin
@@ -1042,11 +1241,31 @@ class GSplatData(_SplatArrayMixin):
             if volume_normalized:
                 criteria["volume_normalized"] = True
 
+        # -- Scale (geometric-mean marginal sigma over the spatial axes)
+        if scale_min is not None or scale_max is not None:
+            scl = self.scale(axes=spatial_dims)
+            smin = self._resolve_threshold(
+                scale_min, scale_normalized, scl, scale_percentile
+            )
+            smax = self._resolve_threshold(
+                scale_max, scale_normalized, scl, scale_percentile
+            )
+            if smin is not None:
+                mask &= scl >= smin
+                criteria["scale_min"] = smin
+            if smax is not None:
+                mask &= scl <= smax
+                criteria["scale_max"] = smax
+
         # -- Amplitude
         if amplitude_min is not None or amplitude_max is not None:
             amps = self.amplitudes
-            amin = self._resolve_threshold(amplitude_min, amplitude_normalized, amps)
-            amax = self._resolve_threshold(amplitude_max, amplitude_normalized, amps)
+            amin = self._resolve_threshold(
+                amplitude_min, amplitude_normalized, amps, amplitude_percentile
+            )
+            amax = self._resolve_threshold(
+                amplitude_max, amplitude_normalized, amps, amplitude_percentile
+            )
             if amin is not None:
                 mask &= amps >= amin
                 criteria["amplitude_min"] = amin
@@ -1056,21 +1275,27 @@ class GSplatData(_SplatArrayMixin):
             if amplitude_normalized:
                 criteria["amplitude_normalized"] = True
 
-        # -- Eccentricity
+        # -- Eccentricity (spatial isotropy; auto-ignores degenerate axes)
         if eccentricity_min is not None or eccentricity_max is not None:
-            ecc = self.eccentricities()
-            if eccentricity_min is not None:
-                mask &= ecc >= eccentricity_min
-                criteria["eccentricity_min"] = eccentricity_min
-            if eccentricity_max is not None:
-                mask &= ecc <= eccentricity_max
-                criteria["eccentricity_max"] = eccentricity_max
+            ecc = self.eccentricities(axes=spatial_dims)
+            emin = self._resolve_threshold(
+                eccentricity_min, False, ecc, eccentricity_percentile
+            )
+            emax = self._resolve_threshold(
+                eccentricity_max, False, ecc, eccentricity_percentile
+            )
+            if emin is not None:
+                mask &= ecc >= emin
+                criteria["eccentricity_min"] = emin
+            if emax is not None:
+                mask &= ecc <= emax
+                criteria["eccentricity_max"] = emax
 
         # -- Mass (amplitude * volume)
         if mass_min is not None or mass_max is not None:
             m = self.masses()
-            mmin = self._resolve_threshold(mass_min, mass_normalized, m)
-            mmax = self._resolve_threshold(mass_max, mass_normalized, m)
+            mmin = self._resolve_threshold(mass_min, mass_normalized, m, mass_percentile)
+            mmax = self._resolve_threshold(mass_max, mass_normalized, m, mass_percentile)
             if mmin is not None:
                 mask &= m >= mmin
                 criteria["mass_min"] = mmin
@@ -1084,12 +1309,32 @@ class GSplatData(_SplatArrayMixin):
         if sigma_axis is not None and (sigma_min is not None or sigma_max is not None):
             sigmas = self.marginal_sigmas()[:, sigma_axis]
             criteria["sigma_axis"] = sigma_axis
-            if sigma_min is not None:
-                mask &= sigmas >= sigma_min
-                criteria["sigma_min"] = sigma_min
-            if sigma_max is not None:
-                mask &= sigmas <= sigma_max
-                criteria["sigma_max"] = sigma_max
+            smn = self._resolve_threshold(sigma_min, False, sigmas, sigma_percentile)
+            smx = self._resolve_threshold(sigma_max, False, sigmas, sigma_percentile)
+            if smn is not None:
+                mask &= sigmas >= smn
+                criteria["sigma_min"] = smn
+            if smx is not None:
+                mask &= sigmas <= smx
+                criteria["sigma_max"] = smx
+
+        # -- Isolation (remove spatially-isolated noise splats)
+        if isolation_max is not None:
+            nn = self.nearest_neighbor_distances(spatial_axes=spatial_dims)
+            imax = self._resolve_threshold(
+                isolation_max, False, nn[np.isfinite(nn)], isolation_percentile
+            )
+            if imax is not None:
+                # +inf (no neighbour) always exceeds the threshold → removed.
+                mask &= nn <= imax
+                criteria["isolation_max"] = imax
+
+        # -- Local density (keep only well-supported splats)
+        if min_neighbors is not None and neighbor_radius is not None:
+            counts = self.neighbor_counts(neighbor_radius, spatial_axes=spatial_dims)
+            mask &= counts >= int(min_neighbors)
+            criteria["min_neighbors"] = int(min_neighbors)
+            criteria["neighbor_radius"] = float(neighbor_radius)
 
         # Apply mask
         result = self.filter(mask)
@@ -2064,6 +2309,77 @@ class GSplatData(_SplatArrayMixin):
         if self.n_substitutive > 1:
             return self._map_substitutive(lambda lvl: lvl.scale_intensity(factor))
         return self._with_new_amplitudes(self.amplitudes * factor)
+
+    def reweight_amplitude(self, multiplier: np.ndarray) -> "GSplatData":
+        """Return a copy with per-splat amplitudes multiplied by ``multiplier``.
+
+        The per-splat counterpart of ``scale_intensity`` (which is scalar-only).
+        ``multiplier`` must be shape ``(n_splats,)`` and operates on this
+        (matrix / default-level) view; it preserves the additive ladder. A
+        global multiplier is not meaningful across substitutive levels — callers
+        with a pyramid should reweight per-level (see ``soft_scale_filter``).
+        """
+        multiplier = np.asarray(multiplier, dtype=np.float64)
+        if multiplier.shape != (self.n_splats,):
+            raise ValueError(
+                f"multiplier shape {multiplier.shape} != ({self.n_splats},)"
+            )
+        return self._with_new_amplitudes(self.amplitudes * multiplier)
+
+    def soft_scale_filter(
+        self,
+        *,
+        highpass: float | None = None,
+        lowpass: float | None = None,
+        width: float = 1.0,
+        spatial_dims: Sequence[int] | None = None,
+    ) -> "GSplatData":
+        """Soft "frequency" filter: attenuate amplitude by a smooth function of
+        each splat's characteristic ``scale()`` — a gentler alternative to a hard
+        scale cut (no popping, splat count unchanged).
+
+        - ``highpass``: suppress splats with scale ABOVE the cutoff (removes
+          large diffuse / low-frequency background). Multiplier → 0 for very
+          large scales, → 1 for small.
+        - ``lowpass``: suppress splats with scale BELOW the cutoff (removes fine
+          detail / high-frequency). Multiplier → 0 for very small scales, → 1
+          for large.
+        Both may be combined (a band-pass). ``width`` is the transition softness
+        in octaves (log2 scale); larger = gentler roll-off.
+
+        The cutoff is in the same world units as ``scale()``.
+        """
+        if self.n_splats == 0 or (highpass is None and lowpass is None):
+            return self
+        if self.n_substitutive > 1:
+            # Reweight each substitutive level against its OWN scale distribution.
+            return self._map_substitutive(
+                lambda lvl: lvl.soft_scale_filter(
+                    highpass=highpass,
+                    lowpass=lowpass,
+                    width=width,
+                    spatial_dims=spatial_dims,
+                )
+            )
+        scl = np.clip(self.scale(axes=spatial_dims), 1e-12, None)
+        w = max(float(width), 1e-6)
+        mult = np.ones(self.n_splats, dtype=np.float64)
+        # Smoothstep in log2(scale) space, spanning ±width octaves about cutoff.
+
+        def _smoothstep(t: np.ndarray) -> np.ndarray:
+            t = np.clip(t, 0.0, 1.0)
+            out: np.ndarray = t * t * (3.0 - 2.0 * t)
+            return out
+
+        if highpass is not None:
+            # 1 (keep) for scale <= cutoff, ramping to 0 above.
+            t = (np.log2(scl) - np.log2(float(highpass))) / w + 0.5
+            mult *= 1.0 - _smoothstep(t)
+        if lowpass is not None:
+            # 1 (keep) for scale >= cutoff, ramping to 0 below.
+            t = (np.log2(scl) - np.log2(float(lowpass))) / w + 0.5
+            mult *= _smoothstep(t)
+        return self.reweight_amplitude(mult)
 
     def cull(
         self,
