@@ -175,11 +175,19 @@ to ship after). Sequencing is at the bottom.
 
 ### C. Manuscript / reproducibility — bioRxiv defensibility
 
-- **R13 [BLOCKER for preprint] — Methods specificity.** Add per-preset
-  hyperparameter tables (draft/standard/hifi/ultra), exact seed counts, the
-  H.265 encoder version + exact command line, and blind-spot mask seeding.
-  Classic reviewer bait; currently ~100 lines for a paper claiming 12 datasets +
-  CV + tiled fitting + web architecture + an H.265 baseline.
+- **R13 [BLOCKER for preprint] — Methods specificity.** ✅ **DONE** (2026-07-08).
+  A three-way audit (manuscript claims ↔ `methods.tex` ↔ code) found the Methods
+  were stronger than assumed — blind-spot mask seeding (seed 42, 5%, 3×3×3 donut),
+  Adam/LR/dilution, loss+regularizers, dynamic ops, tiled window, encoding, and
+  viewer were already specified. The overnight `manuscript-update/code-sync-jul2026`
+  session incorporated the remaining gaps: the literal H.265 `ffmpeg`/`libx265`
+  command + a version-capture note, seed-generation numerics (edge threshold 0.1,
+  min-separation 2 vox), the reference fit config, and τ=2.75. The one confirmed
+  factual error — Methods+SD2 claimed a nonexistent "fourth, pywt Haar-wavelet"
+  MAD estimator — was corrected to the three estimators actually in
+  `calibration.py` and both PDFs rebuilt (luxar-paper `fc0780c`, pushed). NOTE:
+  the named draft/standard/hifi/ultra presets only vary 4 knobs and the paper fits
+  by explicit config, so a large per-preset matrix was correctly not added.
 - **R14 [LAUNCH] — Consumer-GPU timing benchmark.** Wall-time is softened to
   "minutes per dataset" pending a consumer-GPU sweep (only RTX PRO 6000 numbers
   documented). Run the benchmark on a commodity card (e.g. RTX 3070) to firm up
