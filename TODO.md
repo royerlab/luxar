@@ -162,9 +162,10 @@ to ship after). Sequencing is at the bottom.
   `blending_mode="max"` (#430) — the washout was additive *summation* of the
   self-overlapping spiral (order-independent, so NOT a #24 depth-sorting
   issue), and `max` (brightest-wins) shows each colormap's true hues.
-- **R10 [LAUNCH] — Depth sorting for alpha blending** (see detailed item
+- **R10 [POST] — Depth sorting for alpha blending** (see detailed item
   **#24**). Translucent geometry composites in submission order → view-dependent
-  artifacts, visible in any splat/point demo.
+  artifacts, visible in any splat/point demo. **DEFERRED post-publication/release**
+  (re-confirmed 2026-07-11; retagged [LAUNCH] → [POST] — not launch-gating).
 - **R11 [LAUNCH] — README/landing pass.** ✅ **Mostly done** (2026-07-01):
   audited the quick-start end-to-end — `luxar demo` generates + renders
   flawlessly (10k-pt Lorenz), every documented Python snippet runs, and all
@@ -215,8 +216,9 @@ to ship after). Sequencing is at the bottom.
    (wire citation back into the repo).
 4. **Cut the release** — R2 (tag + GitHub release) → flip PyPI to live (R3) →
    announce.
-5. **Post-launch backlog** — R12, R15, and the existing Rendering/LOD and
-   Future/Exploratory items below.
+5. **Post-launch backlog** — R10 (#24 depth sorting), R12, R15, and the
+   remaining Future/Exploratory items below (incl. #25 advanced LOD
+   refinements).
 
 > Update 2026-07-01: R5/R6 (clean `main`) and the day-one polish R8/R9/R11 have
 > landed (R8 control rail merged #432); R10 (#24 depth sorting) is **deferred
@@ -269,30 +271,28 @@ to ship after). Sequencing is at the bottom.
 
 ## Rendering & Performance (MEDIUM Priority)
 
-24 - **Depth sorting for proper alpha blending**: Sort transparent geometry (Points, Lines, GSplats) back-to-front per frame so semi-transparent elements composite correctly. Without depth sorting, overlapping translucent primitives blend in submission order rather than depth order, producing incorrect colors and visible artifacts depending on view angle.
+24 - **Depth sorting for proper alpha blending** (**deferred post-publication/release**, re-confirmed 2026-07-11 — see R10): Sort transparent geometry (Points, Lines, GSplats) back-to-front per frame so semi-transparent elements composite correctly. Without depth sorting, overlapping translucent primitives blend in submission order rather than depth order, producing incorrect colors and visible artifacts depending on view angle.
 
-22 - **Level-of-Detail (LOD) with PartitionNode** — core landed, advanced refinements remain.
-
-    **Implemented (see Completed archive, item 22-core):** LODNode (`kind:'lod'`, pixel-size selector + hysteresis), PartitionNode (`kind:'partition'`, median [default] + midpoint + SAH BSP, auto-partition heuristic), recursive scene-graph composition, `luxar gsplat lod --recipe` (flat / additive / partitioned / multiscale / mosaic / substitutive / pyramid), Poisson-disk + spatial-uniform LOD ordering, LOD for lines (connectivity-preserving), progressive multi-additive-LOD loading for Points & Lines, zarr v2.0 (substitutive × additive matrix) format.
-
-    **Still TODO:**
-    - **Per-splat opacity crossfade** during LOD transitions — each splat's opacity modulated by the transition factor to avoid brightness doubling from overlapping semi-transparent layers. (Currently transitions are hard switches with hysteresis; no crossfade.)
-    - **Pixel-error metric, not just projected size**: LOD selection should be based on "how many pixels of screen-space error would this simplification introduce" — not just projected bounding box size. A flat region with 1M splats may have near-zero simplification error (coarse is fine), while a detailed region at the same screen size may need fine LOD. Store per-level error, project it to pixels at runtime. (Currently selector is `coverage` — viewport-relative projected size, not simplification error.)
-    - **Monotonic error guarantee**: Each LODNode should store its simplification error (max amplitude difference, spatial displacement vs. fine level) with `parent_error >= child_error` guaranteed at every level so top-down traversal always converges. (Greedy additive ordering has a `(1-1/e)` submodular guarantee but no stored monotonic error bound.)
-    - **Density-adaptive partitioning**: PartitionNode should partition based on splat density / detail, not a balanced/uniform grid. Dense regions get more parts, empty regions fewer (cluster by density). The default median BSP gives balanced *counts* and SAH BSP is cost-driven, but neither is density-driven.
-    - **Nanite-style stop-traversal**: top-down traversal that renders a coarse summary and **stops** (never loading finer splits below) when screen-space error is below threshold, for view-adaptive memory + draw-call counts and progressive streaming. (Currently progressive loaders stream additive LODs but there is no error-driven subtree pruning.)
-    - **nD LOD metric for non-displayed dimensions**, split seam handling at LOD boundaries, optimal split granularity tuning.
-    - **Virtual residency via zarr chunks**: coarse LOD chunks stay resident, fine LOD chunks fetched on demand and evicted when the camera moves away (Nanite-style virtual memory model).
+22 - ~~**Level-of-Detail (LOD) with PartitionNode**~~: **DONE for release** (code-verified 2026-07-11). Beyond the core (archive item 22-core), the 2026-07 wave shipped: intent-first `--recipe` topologies (flat/stream/levels/tiles/overview/adaptive) with stream ladders on by default, viewport-relative coverage-fraction switching (`sqrt(N_i/N_finest)`, self-calibrating — no threshold knob), Q·e quality stamps + energy-gated upgrade release (`e(k) ≥ 0.6`), the never-downgrade display gate with subtree aggregation and refinement kick, sibling-aware ladders, per-part LOD at fit/merge time (`--recipe` on tiled fits and batch-fit merges), coverage inflation + mass conservation + `--refine l2|volume`, `annotate-quality` retrofitting, and byte-budget VRAM residency (coarse eager levels stay resident; fine lazy levels load on demand and evict off-screen-first under pressure). The advanced refinements formerly listed here were re-verified against the code (2026-07-11: 3 missing, 4 partial) and **demoted to Future/Exploratory item 25** — none is release-gating.
 
 ## Future / Exploratory (LOW Priority)
 
-1 - **Ray casting with object labels**: Associate descriptive strings with scene objects. When the user picks an object via ray casting, display the associated label at a fixed screen position. Useful for providing context during exploration.
+1 - ~~**Ray casting with object labels**~~: **DONE** (code-verified 2026-07-11). Implemented end-to-end: per-element `labels=`/`image_labels=` on all three geometry adders (`core/group/adders/{points,lines,gsplats}.py`) → CSR zarr arrays (`label_offsets`/`label_bytes`, `io/_compiler/labels/`) → GPU pick-buffer ray casting (`rendering/picking/`, per-geometry pick shaders) → hover pick resolves `elementId` → lazy CSR label decode (`data/loaders/picking/label-loader.ts`) → label shown in a fixed-screen-position overlay (default top-right `(0.98, 0.02)`, auto-injected by `core/scene/overlays/hover_inject.py`; `{hover_label}`/`{hover_node}`/`{hover_index}` templating in `ui/overlay-manager.ts`). Unit + E2E coverage (`hover-tooltip.spec.ts`, `label-loader.test.ts`). Note: the trigger is hover (mousemove settle) rather than click; an embedder `selection` event fires on the same pick.
 
 2 - **Scene domains**: Introduce the concept of rendering "domains" beyond the main nD-to-3D slice:
     - **Overlay domain**: For a given set of non-visible dimensions, render an associated scene as a transparent overlay in normalized canvas coordinates ([0,1] x [0,1]), unaffected by camera controls.
     - **Sound domain**: Associate audio with a scene, played back on load to provide auditory context.
 
 3 - **VR/AR mode**: Add the ability to activate VR/AR rendering for immersive exploration of 3D scenes.
+
+25 - **Advanced LOD refinements** (demoted from item 22; code-verified still open 2026-07-11 — none release-gating):
+    - **Per-splat opacity crossfade** during LOD transitions — MISSING. Transitions are hard visibility toggles with hysteresis (`scene/lod-group-registry.ts`); the only shader fade is the near-plane/coverage single-splat guard, not a transition crossfade.
+    - **Pixel-error selection metric** — PARTIAL. Per-level fidelity is now *stored* (mixture-L² `Q`, `energy_fraction_cum`, `reference_energy` quality stamps) but selection is still projected-size `coverage_fraction`; the stored error feeds only the display/hold gate and is never projected to pixels.
+    - **Monotonic error guarantee** — PARTIAL. Per-level `Q`/energy is stored, but no `parent_error >= child_error` bound is enforced across substitutive levels (additive ladders are monotone in cumulative energy by construction).
+    - **Density-adaptive partitioning** — PARTIAL. `PartitionNode` rules remain median/midpoint/SAH (count/cost-balanced); density-driven partitioning exists only at fit time via `fit --tiling content` box plans, not as a PartitionNode splitter.
+    - **Nanite-style stop-traversal** — MISSING. Partition children all load and stay visible (frustum culling only); no error-driven subtree pruning.
+    - **Virtual residency via zarr chunks** — PARTIAL (close). Coarse eager levels stay resident, fine lazy levels fetch on demand and evict off-screen-first/furthest-first — but driven by byte-budget pressure over LOD geometry + decoded-chunk caches, not per-chunk camera-keyed paging.
+    - **nD LOD metric for non-displayed dimensions, split-seam handling, split-granularity tuning** — MISSING (`extend_to_all` governs visibility only, not LOD; granularity is `max_elements`-count-driven).
 
 ---
 
