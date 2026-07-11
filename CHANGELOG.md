@@ -6,6 +6,42 @@ All notable changes to Luxar are documented in this file.
 
 ### July 2026
 
+#### Added — GSIP: `gsplat filter` toolbox + `gsplat convert` appearance options
+
+- **Why**: exporting background-suppression experiments from the neuromast
+  gsplat timelapse exposed two gaps. `gsplat convert` hardcoded `colormap=gray`
+  and wrote no `viewer_config`, so scenes silently rendered gray + ACES
+  tone-mapping and couldn't be compared to a plasma/Neutral reference. And
+  `gsplat filter` only cut on volume/amplitude/eccentricity/mass/sigma with
+  absolute or linear-normalized thresholds — useless on a timelapse, where the
+  near-zero time axis makes `eccentricities()` a constant 1.0 and linear
+  normalization is meaningless on heavy-tailed splat attributes.
+- **`gsplat convert` appearance**: `--colormap` (validated builtin /
+  matplotlib / colorcet), `--tone-mapping` (validated, written to scene
+  `viewer_config`), `--gamma`, `--intensity`, `--layer/--no-layer`. Pair a
+  scientific colormap with `--tone-mapping Neutral` for faithful colors (the
+  viewer default, ACES, shifts hues). NOTE: `--layer` now defaults on (the
+  gsplats node is listed in the viewer Layers panel).
+- **`gsplat filter` (GSIP)**:
+  - Percentile value-syntax on any threshold: `pNN` / `NN%` (e.g.
+    `--scale-max p90`), robust on heavy-tailed attributes.
+  - `--scale-min/max`: characteristic size = geometric-mean **spatial** sigma;
+    auto-ignores zero-variance axes (timelapse-safe). `--eccentricity` is now
+    spatial-by-default too. `--spatial-dims` overrides the axis auto-detection.
+  - `--isolation-max` (nearest-neighbour distance) and
+    `--min-neighbors`+`--neighbor-radius` remove spatially-isolated noise
+    splats, grouped by the non-spatial axis (timepoints never count as
+    neighbours; reuses `BatchedSpatialHashGrid`).
+  - `--soft-highpass`/`--soft-lowpass`+`--soft-width`: soft reweighting that
+    attenuates amplitude by a smooth function of scale instead of deleting (no
+    popping; splat count unchanged).
+  - `--dry-run`: report impact (splats / mass / amplitude removed) without
+    writing.
+  - New `GSplatData` API: `scale()`, axes-aware `eccentricities()`,
+    `nearest_neighbor_distances()`, `neighbor_counts()`, `reweight_amplitude()`,
+    `soft_scale_filter()`, percentile mode on `_resolve_threshold`, and the new
+    `filter_by` criteria (all forwarded per-level for substitutive pyramids).
+
 #### Fixed — L2 OPFS cache: write-probe at init (WKWebView/Safari error storm)
 
 - **Why**: in the native macOS app (WKWebView) the cache monitor showed the L2

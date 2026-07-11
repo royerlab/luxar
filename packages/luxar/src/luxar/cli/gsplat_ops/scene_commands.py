@@ -33,6 +33,30 @@ def convert_to_scene(
     blending_mode: str = typer.Option(
         "additive", "--blending-mode", help="Blending: additive/normal/max/opaque"
     ),
+    colormap: Optional[str] = typer.Option(
+        None,
+        "--colormap",
+        help="Colormap for scalar amplitudes (e.g. plasma, viridis, gray). "
+        "Builtin or any matplotlib/colorcet name. Default: gray.",
+    ),
+    tone_mapping: Optional[str] = typer.Option(
+        None,
+        "--tone-mapping",
+        help="Scene HDR tone-mapping (None/Linear/Reinhard/Cineon/ACES/AgX/"
+        "Neutral). Default: viewer default (ACES). Use 'Neutral' for faithful "
+        "colormap colors (ACES shifts hues).",
+    ),
+    gamma: Optional[float] = typer.Option(
+        None, "--gamma", help="Display gamma (default 1.0)"
+    ),
+    intensity: Optional[float] = typer.Option(
+        None, "--intensity", help="Display intensity multiplier (default 1.0)"
+    ),
+    layer: bool = typer.Option(
+        True,
+        "--layer/--no-layer",
+        help="List the gsplats node in the viewer Layers panel",
+    ),
     encoding: Literal["auto", "precision", "memory"] = typer.Option(
         "auto", "--encoding", "-e", help="Encoding mode"
     ),
@@ -42,19 +66,55 @@ def convert_to_scene(
     Creates a persistent Luxar scene zarr that can be served with
     ``luxar serve``. By default, centers the data at the centroid.
 
+    Appearance (colormap / tone-mapping / gamma / intensity) is baked into the
+    scene here. For faithful scientific colors pair a colormap with Neutral
+    tone-mapping — the viewer default (ACES) intentionally shifts hues.
+
     Examples:
         luxar gsplat convert fitted.gsplats.zarr scene.luxar.zarr
         luxar gsplat convert fitted.gsplats.zarr scene.luxar.zarr --no-center
         luxar gsplat convert fitted.gsplats.zarr scene.luxar.zarr --scale-intensity 0.1
+        luxar gsplat convert fitted.gsplats.zarr scene.luxar.zarr \\
+            --colormap plasma --tone-mapping Neutral
     """
     try:
         import numpy as np
 
         from luxar import LuxarZarrCompiler
         from luxar.cli.gsplat_config import build_dimensions_from_data
+        from luxar.core.viewer_config import VALID_TONE_MAPPINGS, ViewerConfig
         from luxar.gsplats.gsplat_data import GSplatData
         from luxar.gsplats.io.load_gsplats import load_gsplat_node
         from luxar.gsplats.tree import center_bounds, is_matrix_shaped
+
+        # Validate + assemble appearance attrs (only forward what was set).
+        appearance: dict = {"layer": layer}
+        if colormap is not None:
+            from luxar.colormaps import BUILTIN_COLORMAP_NAMES
+            from luxar.colormaps.registry import resolve_colormap
+
+            if colormap not in BUILTIN_COLORMAP_NAMES:
+                try:
+                    resolve_colormap(colormap)
+                except Exception as e:
+                    raise typer.BadParameter(
+                        f"--colormap '{colormap}' is not a known builtin / "
+                        f"matplotlib / colorcet colormap"
+                    ) from e
+            appearance["colormap"] = colormap
+        if gamma is not None:
+            appearance["gamma"] = gamma
+        if intensity is not None:
+            appearance["intensity"] = intensity
+
+        viewer_config = None
+        if tone_mapping is not None:
+            if tone_mapping not in VALID_TONE_MAPPINGS:
+                raise typer.BadParameter(
+                    f"--tone-mapping must be one of {VALID_TONE_MAPPINGS}, "
+                    f"got '{tone_mapping}'"
+                )
+            viewer_config = ViewerConfig(tone_mapping=tone_mapping)
 
         with asection(f"Converting: {input_path.name} -> {output_path.name}"):
             with asection("Loading gsplat dataset"):
@@ -81,12 +141,15 @@ def convert_to_scene(
                     with LuxarZarrCompiler(
                         output_path, encoding_mode=_resolve_encoding_mode(encoding)
                     ) as compiler:
-                        scene = compiler.create_scene(dimensions=dims)
+                        scene = compiler.create_scene(
+                            dimensions=dims, viewer_config=viewer_config
+                        )
                         scene.add_gsplats_from_data(
                             name="gsplats",
                             result=data,
                             opacity=opacity,
                             blending_mode=blending_mode,
+                            **appearance,
                         )
             else:
                 kind = (
@@ -118,18 +181,21 @@ def convert_to_scene(
                     with LuxarZarrCompiler(
                         output_path, encoding_mode=_resolve_encoding_mode(encoding)
                     ) as compiler:
-                        scene = compiler.create_scene(dimensions=dims)
+                        scene = compiler.create_scene(
+                            dimensions=dims, viewer_config=viewer_config
+                        )
                         scene.add_gsplats_from_file(
                             name="gsplats",
                             path=input_path,
                             opacity=opacity,
                             blending_mode=blending_mode,
+                            **appearance,
                         )
 
             aprint(f"\nScene saved: {output_path}")
             aprint(f"Serve with: luxar serve {output_path} --viewer")
 
-    except typer.Exit:
+    except (typer.Exit, typer.BadParameter):
         raise
     except Exception as e:
         aprint(f"Error: {e}")

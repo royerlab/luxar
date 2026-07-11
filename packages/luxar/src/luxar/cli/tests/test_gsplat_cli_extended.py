@@ -559,6 +559,60 @@ class TestConvertCommand:
         assert "cholesky_factors_diag" in gsplats_group
         assert "cholesky_factors_offdiag" in gsplats_group
 
+    def test_convert_colormap_and_tone_mapping(
+        self, runner: CliRunner, sample_gsplats: Path, tmp_path: Path
+    ) -> None:
+        """--colormap writes the node attr; --tone-mapping writes the scene
+        viewer_config."""
+        import zarr
+
+        out = tmp_path / "scene.luxar.zarr"
+        result = runner.invoke(
+            app,
+            ["gsplat", "convert", str(sample_gsplats), str(out),
+             "--colormap", "plasma", "--tone-mapping", "Neutral",
+             "--gamma", "1.0", "--intensity", "1.0"],
+        )
+        assert result.exit_code == 0, result.stdout
+        store = zarr.open_group(str(out), mode="r")
+        assert store["gsplats"].attrs.get("colormap") == "plasma"
+        assert store["gsplats"].attrs.get("layer") is True
+        assert store.attrs.get("viewer_config", {}).get("tone_mapping") == "Neutral"
+
+    def test_convert_invalid_colormap_errors(
+        self, runner: CliRunner, sample_gsplats: Path, tmp_path: Path
+    ) -> None:
+        result = runner.invoke(
+            app,
+            ["gsplat", "convert", str(sample_gsplats),
+             str(tmp_path / "s.luxar.zarr"), "--colormap", "notacolormap"],
+        )
+        assert result.exit_code != 0
+
+    def test_convert_invalid_tone_mapping_errors(
+        self, runner: CliRunner, sample_gsplats: Path, tmp_path: Path
+    ) -> None:
+        result = runner.invoke(
+            app,
+            ["gsplat", "convert", str(sample_gsplats),
+             str(tmp_path / "s.luxar.zarr"), "--tone-mapping", "Fancy"],
+        )
+        assert result.exit_code != 0
+
+    def test_convert_no_layer(
+        self, runner: CliRunner, sample_gsplats: Path, tmp_path: Path
+    ) -> None:
+        import zarr
+
+        out = tmp_path / "scene.luxar.zarr"
+        result = runner.invoke(
+            app,
+            ["gsplat", "convert", str(sample_gsplats), str(out), "--no-layer"],
+        )
+        assert result.exit_code == 0, result.stdout
+        store = zarr.open_group(str(out), mode="r")
+        assert store["gsplats"].attrs.get("layer") is False
+
 
 class TestRenderCommand:
     def test_render_to_npy(
@@ -1195,6 +1249,100 @@ class TestFilterCommand:
         filtered = GSplatData.load(out)
         assert filtered.n_splats < 10
         assert filtered.n_splats > 0
+
+    def test_filter_percentile_syntax(
+        self, runner: CliRunner, sample_gsplats_for_filter: Path, tmp_path: Path
+    ) -> None:
+        # 'pNN' percentile value syntax: --amplitude-max p90 drops the brightest
+        # (the fixture amplitudes are linspace(0.1, 1.0, 10)).
+        out = tmp_path / "filtered.gsplats.zarr"
+        result = runner.invoke(
+            app,
+            ["gsplat", "filter", str(sample_gsplats_for_filter), str(out),
+             "--amplitude-max", "p90"],
+        )
+        assert result.exit_code == 0, f"filter failed: {result.stdout}"
+        from luxar.gsplats.gsplat_data import GSplatData
+
+        assert GSplatData.load(out).n_splats == 9
+
+    def test_filter_volume_and_mass(
+        self, runner: CliRunner, sample_gsplats_for_filter: Path, tmp_path: Path
+    ) -> None:
+        # Previously-uncovered --volume/--mass criteria at the CLI level.
+        out = tmp_path / "filtered.gsplats.zarr"
+        result = runner.invoke(
+            app,
+            ["gsplat", "filter", str(sample_gsplats_for_filter), str(out),
+             "--volume-max", "1000", "--mass-min", "0.0"],
+        )
+        assert result.exit_code == 0, f"filter failed: {result.stdout}"
+        assert out.exists()
+
+    def test_filter_isolation(
+        self, runner: CliRunner, sample_gsplats_for_filter: Path, tmp_path: Path
+    ) -> None:
+        out = tmp_path / "filtered.gsplats.zarr"
+        result = runner.invoke(
+            app,
+            ["gsplat", "filter", str(sample_gsplats_for_filter), str(out),
+             "--isolation-max", "p50"],
+        )
+        assert result.exit_code == 0, f"filter failed: {result.stdout}"
+        assert out.exists()
+
+    def test_filter_dry_run_writes_nothing(
+        self, runner: CliRunner, sample_gsplats_for_filter: Path, tmp_path: Path
+    ) -> None:
+        out = tmp_path / "should_not_exist.gsplats.zarr"
+        result = runner.invoke(
+            app,
+            ["gsplat", "filter", str(sample_gsplats_for_filter), str(out),
+             "--scale-max", "p90", "--dry-run"],
+        )
+        assert result.exit_code == 0, f"filter failed: {result.stdout}"
+        assert not out.exists()
+        assert "dry-run" in result.stdout.lower()
+
+    def test_filter_soft_highpass(
+        self, runner: CliRunner, sample_gsplats_for_filter: Path, tmp_path: Path
+    ) -> None:
+        out = tmp_path / "soft.gsplats.zarr"
+        result = runner.invoke(
+            app,
+            ["gsplat", "filter", str(sample_gsplats_for_filter), str(out),
+             "--soft-highpass", "p50"],
+        )
+        assert result.exit_code == 0, f"filter failed: {result.stdout}"
+        from luxar.gsplats.gsplat_data import GSplatData
+
+        # Soft filter attenuates, never removes: count is preserved.
+        assert GSplatData.load(out).n_splats == 10
+
+    def test_filter_bad_percentile_errors(
+        self, runner: CliRunner, sample_gsplats_for_filter: Path, tmp_path: Path
+    ) -> None:
+        out = tmp_path / "x.gsplats.zarr"
+        result = runner.invoke(
+            app,
+            ["gsplat", "filter", str(sample_gsplats_for_filter), str(out),
+             "--scale-max", "p150"],  # percentile out of [0,100]
+        )
+        assert result.exit_code != 0
+
+    def test_filter_mixed_mode_errors(
+        self, runner: CliRunner, sample_gsplats_for_filter: Path, tmp_path: Path
+    ) -> None:
+        # Mixing percentile + absolute on one attribute's min/max is rejected
+        # (would otherwise silently read the absolute value as a percentile).
+        out = tmp_path / "x.gsplats.zarr"
+        result = runner.invoke(
+            app,
+            ["gsplat", "filter", str(sample_gsplats_for_filter), str(out),
+             "--amplitude-min", "p10", "--amplitude-max", "0.9"],
+        )
+        assert result.exit_code != 0
+        assert not out.exists()
 
 
 # ═══════════════════════════════════════════════════════════════════════

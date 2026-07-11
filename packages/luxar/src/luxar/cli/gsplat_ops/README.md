@@ -34,8 +34,42 @@ and registers command groups from this package.
 - `transforms_filter_slice.py` — `filter` + `slice` implementations
 - `transforms_partition_flatten.py` — `partition` + `flatten` implementations
 - `transforms_additive.py` — `additive` implementation
-- `transforms_parsing.py` — shared parsing helpers (bbox, slices, CSV floats)
+- `transforms_parsing.py` — shared parsing helpers (bbox, slices, CSV floats, `parse_threshold` for `pNN`/`NN%` percentile syntax)
 - `scene_commands.py` — Typer command signatures + registration for convert/migrate-format/reencode
+
+### `filter` options (GSIP toolbox)
+
+Every min/max threshold accepts a plain number OR a percentile written `pNN` /
+`NN%` (resolved against that attribute's distribution — robust on heavy-tailed
+data). Criteria AND together.
+
+| Option | Meaning |
+|--------|---------|
+| `--bbox` | Spatial crop by center position |
+| `--amplitude-min/max` | Intensity |
+| `--scale-min/max` | Characteristic size = geometric-mean **spatial** sigma; auto-ignores a zero-variance time axis (timelapse-safe). The recommended "remove large diffuse background" knob. |
+| `--volume-min/max` | `det(Σ)^(1/d)·truncate` over all dims (legacy size metric) |
+| `--eccentricity-min/max` | Spatial isotropy (1.0 = sphere) |
+| `--mass-min/max` | amplitude·volume (integrated brightness) |
+| `--sigma-axis`+`--sigma-min/max` | Per-axis marginal sigma |
+| `--isolation-max` | Remove splats whose nearest-neighbour distance exceeds it (isolated = noise); grouped by the non-spatial axis |
+| `--min-neighbors`+`--neighbor-radius` | Remove poorly-supported splats |
+| `--soft-highpass`/`--soft-lowpass`+`--soft-width` | SOFT reweighting: attenuate amplitude by a smooth function of scale instead of deleting (count unchanged) |
+| `--spatial-dims` | Override the axes used for scale/eccentricity/isolation |
+| `--dry-run` | Report impact (splats/mass/amplitude removed) and write nothing |
+
+Reuses `BatchedSpatialHashGrid` (`utils/spatial_hash.py`) for the neighbour
+queries; percentile/soft resolution lives in `filter_by` /
+`soft_scale_filter` (`gsplats/gsplat_data.py`).
+
+### `convert` appearance
+
+`convert` bakes scene appearance: `--colormap` (builtin/matplotlib/colorcet,
+validated), `--tone-mapping` (scene `viewer_config`, validated against
+`VALID_TONE_MAPPINGS`), `--gamma`, `--intensity`, `--layer/--no-layer`.
+Colormap/gamma/intensity/layer flow through `**attrs`; tone-mapping goes through
+`ViewerConfig` on `create_scene`. Pair a scientific colormap with
+`--tone-mapping Neutral` — the viewer default (ACES) shifts hues.
 - `inspect_commands.py` — Typer command signatures + registration for inspect commands
 - `benchmark.py` — GPU benchmark helpers
 - `batch_planning.py`, `planner.py`, `encoding.py` — shared helpers
