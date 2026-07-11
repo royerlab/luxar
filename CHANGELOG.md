@@ -6,6 +6,22 @@ All notable changes to Luxar are documented in this file.
 
 ### July 2026
 
+#### Fixed — L2 OPFS cache: write-probe at init (WKWebView/Safari error storm)
+
+- **Why**: in the native macOS app (WKWebView) the cache monitor showed the L2
+  OPFS cache "healthy" but permanently empty — 0 entries, 0 B, 0 % hit rate —
+  with tens of thousands of write errors. WebKit implements
+  `navigator.storage.getDirectory()` and file handles but NOT the main-thread
+  `FileSystemFileHandle.createWritable()` (OPFS writes there require
+  worker-side `createSyncAccessHandle`), so the store mounted successfully and
+  then failed every single put.
+- **Fix**: `OPFSStore.init()` now runs a tiny timeout-wrapped write probe
+  (create → write → close → remove). If the environment cannot actually write,
+  the store degrades to the ordinary OPFS-unavailable path — L1-only operation,
+  the `opfs-unavailable` badge, and one clear warning — instead of an error
+  storm. Transient mid-session I/O failures still increment `writeFailures`
+  as before.
+
 #### Changed — three-geometry loader symmetry + geometry-neutral monitor naming (viewer + Python)
 
 - **Why**: the Points spatial-index loader had drifted from the Lines/GSplats
