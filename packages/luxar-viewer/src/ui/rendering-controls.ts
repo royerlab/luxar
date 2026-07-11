@@ -172,7 +172,6 @@ export class RenderingControls {
    */
   private setupControls(): void {
     // Setup auto-blur for all controls
-    this.setupAutoBlur();
 
     // Navigation controls live in the Navigation rail popover (right-click the
     // Navigation gauge; left-click cycles orbit/fly/ortho) — see
@@ -771,18 +770,6 @@ export class RenderingControls {
    */
   isVisible(): boolean {
     return this.visible;
-  }
-
-  /**
-   * Setup auto-blur for all GUI controls
-   *
-   * NOTE: The custom GUI library now handles auto-blur internally via
-   * src/ui/gui/format/auto-blur.ts. This method is kept for backwards
-   * compatibility but does nothing - all auto-blur logic is in the GUI library.
-   */
-  private setupAutoBlur(): void {
-    // Auto-blur is now handled by the custom GUI library's applyAutoBlur() utility
-    // No additional setup needed here
   }
 
   /**

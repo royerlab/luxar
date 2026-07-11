@@ -102,5 +102,12 @@ export async function loadAndStage(
   if (!ctx.signal?.aborted) {
     ctx.viewStateQueue.dispatchPrefetch(path, pointsViewState, loader);
   }
+  // DELIBERATE asymmetry vs the Lines/GSplats handlers: no handler-level
+  // `isAlreadyCommitted` fast path here. Those handlers must short-circuit
+  // BEFORE their `process*` step to skip the worker projection on a
+  // same-reference revisit; Points has no process step (projection is folded
+  // into the loader and already skipped by the S-cache hit), so its
+  // reference-identity no-op lives at the earliest place it can save work —
+  // the commit (`commit-points-geometry.ts::isAlreadyCommitted`).
   return { path, data };
 }

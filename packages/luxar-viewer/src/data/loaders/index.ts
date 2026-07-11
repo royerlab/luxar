@@ -107,7 +107,25 @@ export {
 } from './color-loader';
 
 // Cross-cutting utilities
-export { recordLoadEvent, computeLoadLatency, type LoaderMetricsCounters } from './loader-metrics';
+export {
+  recordLoadEvent,
+  computeLoadLatency,
+  finishQueryTracking,
+  makeInitialLoaderMetrics,
+  buildSpatialIndexMetrics,
+  type LoaderMetricsCounters,
+  type QueryMetricsCounters,
+} from './loader-metrics';
+
+export {
+  loadSliceWithCache,
+  recordLoadMetrics,
+  runWithActiveSignal,
+  runWithResidencyProbe,
+  type SpatialFacadeCtx,
+  type FacadeViewState,
+  type FacadeMetrics,
+} from './spatial-facade';
 
 export { LoaderEventEmitter } from './monitor-events';
 

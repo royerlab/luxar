@@ -19,7 +19,7 @@ import type {
   GSplatsViewState,
   SplatRange,
 } from '../../types/gsplats';
-import type { SceneNode, PointRange } from '../data-loader-types';
+import type { SceneNode } from '../data-loader-types';
 import { ArrayRefRegistry, type ArrayMetadata } from '../array-decoder/decoder';
 import {
   RangeLoader,
@@ -29,9 +29,13 @@ import {
   getExpectedColorType,
   loadColorRanges,
   prefetchRangesIntoCache,
-  isAbortError,
-  computeLoadLatency,
-  recordLoadEvent,
+  makeInitialLoaderMetrics,
+  buildSpatialIndexMetrics,
+  loadSliceWithCache,
+  recordLoadMetrics,
+  runWithActiveSignal,
+  runWithResidencyProbe,
+  type SpatialFacadeCtx,
   LoaderEventEmitter,
   OnceInit,
   warnExtendToAllNoDimensions,
@@ -52,13 +56,12 @@ import {
 } from '../../types/gsplats';
 import { GSplatsDataAccumulator, type AccumulatorStats } from '../accumulators/gsplats';
 import { config as appConfig } from '../../config';
-import type { UpdateProfiler, UpdateSession } from '../../profiling/update-profiler';
+import type { UpdateSession } from '../../profiling/update-profiler';
 import { DecompressedChunkCache } from '../../cache/decompressed-chunk-cache';
 import { wrapWithCache } from '../../cache/decompressed-chunk-cache/cached-zarr-array';
 import { ResidencyAccumulator } from '../../cache/residency-probe';
 import { ChunkPrefetcher } from '../../cache/chunk-prefetcher';
 import type { SliceCache } from '../../cache/slice-cache';
-import { restoreLadder, storeLadder } from '../loaders/progressive/slice-cache-helper';
 
 /**
  * GSplats data loader using spatial indices for efficient nD queries.
@@ -106,6 +109,11 @@ export class GSplatsSpatialIndexLoader implements GSplatsDataLoader {
   private readonly metrics: LoaderMetrics;
   private readonly activeQueries = new Map<string, QueryInfo>();
   private nextQueryId = 0;
+  // Cumulative queried cells across the session (drives avgCellsPerQuery).
+  private totalQueryCells = 0;
+  // Shared facade-helper context (data/loaders/spatial-facade.ts): stable
+  // references + this-bound accessors, built once in the constructor.
+  private readonly facadeCtx: SpatialFacadeCtx;
 
   private arrays: {
     centers?: zarr.Array<zarr.DataType, zarr.Readable>;
@@ -123,7 +131,6 @@ export class GSplatsSpatialIndexLoader implements GSplatsDataLoader {
     node: SceneNode,
     refRegistry?: ArrayRefRegistry,
     zarrStore?: zarr.Readable,
-    profiler?: UpdateProfiler,
     l0Cache?: DecompressedChunkCache,
     prefetcher?: ChunkPrefetcher,
     sliceCache?: SliceCache
@@ -138,23 +145,18 @@ export class GSplatsSpatialIndexLoader implements GSplatsDataLoader {
     this.l0Cache = l0Cache || null;
     this.prefetcher = prefetcher || null;
     this.sliceCache = sliceCache || null;
-    // profiler parameter kept for API compatibility; session is passed directly to methods
-    void profiler;
-
-    this.metrics = {
-      type: 'gsplats-spatial-index',
+    // Geometry-neutral counters: elementsLoaded / visibleElements count
+    // splats for gsplats.
+    this.metrics = makeInitialLoaderMetrics('gsplats-spatial-index', node.path);
+    this.facadeCtx = {
+      metrics: this.metrics,
+      activeQueries: this.activeQueries,
+      loader: 'gsplats-spatial-index',
       path: node.path,
-      queries: 0,
-      loads: 0,
-      evictions: 0,
-      errors: 0,
-      pointsLoaded: 0, // Shared loader metric; counts splats for gsplats.
-      bytesLoaded: 0,
-      visiblePoints: 0, // counts visible splats for gsplats
-      avgQueryTime: 0,
-      avgLoadTime: 0,
-      memoryUsed: 0,
-      memoryLimit: 0,
+      sliceCache: this.sliceCache,
+      nextQueryId: () => this.nextQueryId++,
+      accumulatorMemoryMB: () => this.getAccumulatorStats()?.memoryMB ?? 0,
+      emit: (event) => this.emitEvent(event),
     };
   }
 
@@ -292,48 +294,12 @@ export class GSplatsSpatialIndexLoader implements GSplatsDataLoader {
     viewState: GSplatsViewState,
     session?: UpdateSession
   ): Promise<LoadedGSplatsData> {
-    // Plain-leaf S-cache: a decoded slice is cached as a 1-element ladder
-    // under the same key contract as the progressive loaders. A hit returns
-    // the SAME payload object on every same-view call, so the downstream
-    // reference-identity commit check turns same-slice revisits into no-ops.
-    const cached = restoreLadder<LoadedGSplatsData>(this.sliceCache, this.node.path, viewState, 1);
-    if (cached) return cached[0];
-
-    const startTime = Date.now();
-    const queryId = `${this.node.path}-${startTime}-${this.nextQueryId++}`;
-
-    try {
-      const result = await this.loadGSplatsInternal(viewState, session, queryId, startTime);
-      this.finishQueryTracking(queryId, startTime, 'complete');
-      // Cache the decoded slice (helper clones on store — the arrays alias
-      // the reused accumulator). Aborted loads throw and never reach here.
-      storeLadder(this.sliceCache, this.node.path, viewState, [result], {
-        scan: viewState.frameBudgetMs != null,
-        pin: viewState.prefetch === true,
-      });
-      return result;
-    } catch (err) {
-      // A superseded scrub aborts the in-flight read on purpose; runLoaderUpdates
-      // classifies it as 'superseded' (not a failure), so don't inflate the
-      // error counter or flood the monitor's error stream with non-errors.
-      // Still finish query tracking (removes the active query, records timing).
-      this.finishQueryTracking(queryId, startTime, 'error');
-      if (!isAbortError(err)) {
-        this.metrics.errors += 1;
-        // Emit a monitor 'error' event for parity with Points (see
-        // lines-spatial-index-loader.ts comment).
-        this.emitEvent({
-          type: 'error',
-          loader: 'gsplats-spatial-index',
-          timestamp: Date.now(),
-          data: {
-            path: this.node.path,
-            error: String(err),
-          },
-        });
-      }
-      throw err;
-    }
+    // Plain-leaf S-cache + query close-out via the shared facade template
+    // (see `loadSliceWithCache`). GSplats cache PRE-projection decoded data —
+    // projection re-runs on every hit downstream.
+    return loadSliceWithCache(this.facadeCtx, viewState, (queryId, startTime) =>
+      this.loadGSplatsInternal(viewState, session, queryId, startTime)
+    );
   }
 
   private async loadGSplatsInternal(
@@ -366,8 +332,9 @@ export class GSplatsSpatialIndexLoader implements GSplatsDataLoader {
 
     // Count total splats to load and begin query tracking.
     const totalSplats = splatRanges.reduce((sum, r) => sum + (r.end - r.start), 0);
+    this.totalQueryCells += splatRanges.length;
     this.metrics.queries += 1;
-    this.metrics.visiblePoints = totalSplats;
+    this.metrics.visibleElements = totalSplats;
     this.activeQueries.set(queryId, {
       id: queryId,
       loader: 'gsplats-spatial-index',
@@ -375,8 +342,8 @@ export class GSplatsSpatialIndexLoader implements GSplatsDataLoader {
       startTime,
       status: 'loading',
       cells: splatRanges.length,
-      points: totalSplats,
-      ranges: splatRanges as unknown as PointRange[],
+      elements: totalSplats,
+      ranges: splatRanges,
     });
     this.emitEvent({
       type: 'query',
@@ -384,15 +351,17 @@ export class GSplatsSpatialIndexLoader implements GSplatsDataLoader {
       timestamp: Date.now(),
       data: {
         path: this.node.path,
-        ranges: splatRanges as unknown as PointRange[],
+        ranges: splatRanges,
         cells: splatRanges.length,
-        points: totalSplats,
+        elements: totalSplats,
         queryPosition: viewState.slicePosition,
         queryTolerance: viewState.tolerance,
       },
     });
 
     if (splatRanges.length === 0) {
+      // No visible splats — return empty dataset; the wrapper caches it
+      // (an empty slice is a valid, ~0-byte result that revisits should skip).
       log.info(Modules.GSPLATS_SPATIAL_INDEX_LOADER, 'No visible gsplats - returning empty data');
       return createEmptyGSplatsData(attrs);
     }
@@ -522,38 +491,33 @@ export class GSplatsSpatialIndexLoader implements GSplatsDataLoader {
     session?: UpdateSession,
     signal?: AbortSignal
   ): Promise<LoadedGSplatsData> {
-    // Publish the per-update signal for the L0 proxy chokepoint, then clear it
-    // in `finally` so a later cache hit/prefetch isn't seen as abortable.
-    this._activeSignal = signal ?? null;
-    try {
-      const result = await this.loadGSplats(viewState, session);
-      if (!this._initialLoadDone) {
-        this._initialLoadDone = true;
-        this.rangeLoader.setVerbose(false);
+    return runWithActiveSignal(
+      (s) => (this._activeSignal = s),
+      signal,
+      async () => {
+        const result = await this.loadGSplats(viewState, session);
+        if (!this._initialLoadDone) {
+          this._initialLoadDone = true;
+          this.rangeLoader.setVerbose(false);
+        }
+        return result;
       }
-      return result;
-    } finally {
-      this._activeSignal = null;
-    }
+    );
   }
 
   /**
    * Like {@link updateView} but also reports whether the load was served
-   * entirely from cache (see PointsSpatialIndexLoader.updateViewWithResidency).
+   * entirely from cache (see `runWithResidencyProbe`).
    */
   async updateViewWithResidency(
     viewState: GSplatsViewState,
     session?: UpdateSession,
     signal?: AbortSignal
   ): Promise<{ data: LoadedGSplatsData; allResident: boolean }> {
-    const probe = new ResidencyAccumulator();
-    this._activeProbe = probe;
-    try {
-      const data = await this.updateView(viewState, session, signal);
-      return { data, allResident: probe.allResident };
-    } finally {
-      this._activeProbe = null;
-    }
+    return runWithResidencyProbe(
+      (p) => (this._activeProbe = p),
+      () => this.updateView(viewState, session, signal)
+    );
   }
 
   /**
@@ -808,7 +772,7 @@ export class GSplatsSpatialIndexLoader implements GSplatsDataLoader {
       'GSplats'
     );
 
-    this.recordLoadMetrics(arrayName, totalSplats, output);
+    recordLoadMetrics(this.facadeCtx, arrayName, totalSplats, output);
     return output;
   }
 
@@ -836,7 +800,7 @@ export class GSplatsSpatialIndexLoader implements GSplatsDataLoader {
       'GSplats',
       targetBuffer
     );
-    this.recordLoadMetrics('colors', totalSplats, output);
+    recordLoadMetrics(this.facadeCtx, 'colors', totalSplats, output);
     return output;
   }
 
@@ -904,6 +868,18 @@ export class GSplatsSpatialIndexLoader implements GSplatsDataLoader {
   }
 
   getMetrics(): LoaderMetrics {
+    // Chunk-index telemetry for the monitor advisor; shared across the
+    // three facades (see buildSpatialIndexMetrics).
+    if (this.chunkIndex) {
+      this.metrics.spatialIndex = buildSpatialIndexMetrics(
+        this.chunkIndex.chunkCount,
+        this.chunkIndex.metadata.chunk_size ?? 0,
+        this.metrics.queries,
+        this.totalQueryCells,
+        this.metrics.elementsLoaded
+      );
+    }
+
     return { ...this.metrics };
   }
 
@@ -911,56 +887,8 @@ export class GSplatsSpatialIndexLoader implements GSplatsDataLoader {
     return Array.from(this.activeQueries.values());
   }
 
-  /**
-   * Update metrics + emit a 'load' event. Mirrors the points / lines facade's
-   * recordLoadMetrics shape.
-   */
-  private recordLoadMetrics(arrayName: string, items: number, output: ArrayBufferView): void {
-    const queryStart = this.activeQueries.values().next().value?.startTime;
-    const loadTime = computeLoadLatency(queryStart);
-    const bytes = output.byteLength;
-
-    recordLoadEvent(this.metrics, items, bytes, loadTime);
-
-    // Resident memory = current accumulator allocation (MB → bytes). Assignment
-    // (not +=): memoryUsed is a live footprint that grows/shrinks with the pool,
-    // unlike the cumulative bytesLoaded counter updated above.
-    this.metrics.memoryUsed = Math.round((this.getAccumulatorStats()?.memoryMB ?? 0) * 1024 * 1024);
-
-    this.emitEvent({
-      type: 'load',
-      loader: 'gsplats-spatial-index',
-      timestamp: Date.now(),
-      data: {
-        path: this.node.path,
-        arrayName,
-        points: items,
-        memory: bytes,
-        latency: loadTime,
-      },
-    });
-  }
-
   private emitEvent(event: MonitorEvent): void {
     this.events.emit(event);
-  }
-
-  private finishQueryTracking(
-    queryId: string,
-    startTime: number,
-    status: 'complete' | 'error'
-  ): void {
-    const query = this.activeQueries.get(queryId);
-    if (query) {
-      query.status = status;
-      query.endTime = Date.now();
-      this.activeQueries.delete(queryId);
-    }
-    const queryTime = Date.now() - startTime;
-    if (this.metrics.queries > 0) {
-      this.metrics.avgQueryTime =
-        (this.metrics.avgQueryTime * (this.metrics.queries - 1) + queryTime) / this.metrics.queries;
-    }
   }
 
   /**

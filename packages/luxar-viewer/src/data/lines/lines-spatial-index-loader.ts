@@ -20,7 +20,7 @@ import type {
   LinesViewState,
   SegmentRange,
 } from '../../types/lines';
-import type { SceneNode, PointRange } from '../data-loader-types';
+import type { SceneNode } from '../data-loader-types';
 import { ArrayRefRegistry, type ArrayMetadata } from '../array-decoder/decoder';
 import {
   RangeLoader,
@@ -30,9 +30,13 @@ import {
   getExpectedColorType,
   loadColorRanges,
   prefetchRangesIntoCache,
-  isAbortError,
-  computeLoadLatency,
-  recordLoadEvent,
+  makeInitialLoaderMetrics,
+  buildSpatialIndexMetrics,
+  loadSliceWithCache,
+  recordLoadMetrics,
+  runWithActiveSignal,
+  runWithResidencyProbe,
+  type SpatialFacadeCtx,
   LoaderEventEmitter,
   OnceInit,
   warnExtendToAllNoDimensions,
@@ -46,13 +50,12 @@ import type {
 } from '../../types/data-monitor-types';
 import { LinesDataAccumulator, type AccumulatorStats } from '../accumulators/lines';
 import { config as appConfig } from '../../config';
-import type { UpdateProfiler, UpdateSession } from '../../profiling/update-profiler';
+import type { UpdateSession } from '../../profiling/update-profiler';
 import { DecompressedChunkCache } from '../../cache/decompressed-chunk-cache';
 import { wrapWithCache } from '../../cache/decompressed-chunk-cache/cached-zarr-array';
 import { ResidencyAccumulator } from '../../cache/residency-probe';
 import { ChunkPrefetcher } from '../../cache/chunk-prefetcher';
 import type { SliceCache } from '../../cache/slice-cache';
-import { restoreLadder, storeLadder } from '../loaders/progressive/slice-cache-helper';
 import {
   type LinesDualChunkIndex,
   loadLinesDualChunkIndex,
@@ -108,6 +111,11 @@ export class LinesSpatialIndexLoader implements LinesDataLoader {
   private readonly metrics: LoaderMetrics;
   private readonly activeQueries = new Map<string, QueryInfo>();
   private nextQueryId = 0;
+  // Cumulative queried cells across the session (drives avgCellsPerQuery).
+  private totalQueryCells = 0;
+  // Shared facade-helper context (data/loaders/spatial-facade.ts): stable
+  // references + this-bound accessors, built once in the constructor.
+  private readonly facadeCtx: SpatialFacadeCtx;
 
   private arrays: {
     vertices?: zarr.Array<zarr.DataType, zarr.Readable>;
@@ -124,7 +132,6 @@ export class LinesSpatialIndexLoader implements LinesDataLoader {
     node: SceneNode,
     refRegistry?: ArrayRefRegistry,
     zarrStore?: zarr.Readable,
-    profiler?: UpdateProfiler,
     l0Cache?: DecompressedChunkCache,
     prefetcher?: ChunkPrefetcher,
     sliceCache?: SliceCache
@@ -139,23 +146,18 @@ export class LinesSpatialIndexLoader implements LinesDataLoader {
     this.l0Cache = l0Cache || null;
     this.prefetcher = prefetcher || null;
     this.sliceCache = sliceCache || null;
-    // profiler parameter kept for API compatibility; session is passed directly to methods
-    void profiler;
-
-    this.metrics = {
-      type: 'lines-spatial-index',
+    // Geometry-neutral counters: elementsLoaded counts vertices for lines;
+    // visibleElements counts visible segments (the queried unit).
+    this.metrics = makeInitialLoaderMetrics('lines-spatial-index', node.path);
+    this.facadeCtx = {
+      metrics: this.metrics,
+      activeQueries: this.activeQueries,
+      loader: 'lines-spatial-index',
       path: node.path,
-      queries: 0,
-      loads: 0,
-      evictions: 0,
-      errors: 0,
-      pointsLoaded: 0, // Shared loader metric; counts vertices for lines.
-      bytesLoaded: 0,
-      visiblePoints: 0, // counts visible vertices for lines
-      avgQueryTime: 0,
-      avgLoadTime: 0,
-      memoryUsed: 0,
-      memoryLimit: 0,
+      sliceCache: this.sliceCache,
+      nextQueryId: () => this.nextQueryId++,
+      accumulatorMemoryMB: () => this.getAccumulatorStats()?.memoryMB ?? 0,
+      emit: (event) => this.emitEvent(event),
     };
   }
 
@@ -351,48 +353,12 @@ export class LinesSpatialIndexLoader implements LinesDataLoader {
    * @param session - Optional profiler session for nested timing
    */
   async loadLines(viewState: LinesViewState, session?: UpdateSession): Promise<LoadedLinesData> {
-    // Plain-leaf S-cache: a decoded slice is cached as a 1-element ladder
-    // under the same key contract as the progressive loaders. A hit returns
-    // the SAME payload object on every same-view call, so the downstream
-    // reference-identity commit check turns same-slice revisits into no-ops.
-    const cached = restoreLadder<LoadedLinesData>(this.sliceCache, this.node.path, viewState, 1);
-    if (cached) return cached[0];
-
-    const startTime = Date.now();
-    const queryId = `${this.node.path}-${startTime}-${this.nextQueryId++}`;
-
-    try {
-      const result = await this.loadLinesInternal(viewState, session, queryId, startTime);
-      this.finishQueryTracking(queryId, startTime, 'complete');
-      // Cache the decoded slice (helper clones on store — the arrays alias
-      // the reused accumulator). Aborted loads throw and never reach here.
-      storeLadder(this.sliceCache, this.node.path, viewState, [result], {
-        scan: viewState.frameBudgetMs != null,
-        pin: viewState.prefetch === true,
-      });
-      return result;
-    } catch (err) {
-      // A superseded scrub aborts the in-flight read on purpose; runLoaderUpdates
-      // classifies it as 'superseded' (not a failure), so don't inflate the
-      // error counter or flood the monitor's error stream with non-errors.
-      // Still finish query tracking (removes the active query, records timing).
-      this.finishQueryTracking(queryId, startTime, 'error');
-      if (!isAbortError(err)) {
-        this.metrics.errors += 1;
-        // Emit a monitor 'error' event so event-driven dashboards /
-        // timelines see the failure. Mirrors the Points loader semantics.
-        this.emitEvent({
-          type: 'error',
-          loader: 'lines-spatial-index',
-          timestamp: Date.now(),
-          data: {
-            path: this.node.path,
-            error: String(err),
-          },
-        });
-      }
-      throw err;
-    }
+    // Plain-leaf S-cache + query close-out via the shared facade template
+    // (see `loadSliceWithCache`). Lines cache PRE-projection decoded data —
+    // projection re-runs on every hit downstream.
+    return loadSliceWithCache(this.facadeCtx, viewState, (queryId, startTime) =>
+      this.loadLinesInternal(viewState, session, queryId, startTime)
+    );
   }
 
   private async loadLinesInternal(
@@ -425,7 +391,12 @@ export class LinesSpatialIndexLoader implements LinesDataLoader {
 
     // Begin query tracking now that we know the segment ranges.
     const totalSegmentsRequested = segmentRanges.reduce((sum, r) => sum + (r.end - r.start), 0);
+    this.totalQueryCells += segmentRanges.length;
     this.metrics.queries += 1;
+    // Query-time visibility count (segments — the queried unit for lines),
+    // mirroring points (totalPoints) and gsplats (totalSplats). Was never
+    // written before, so the monitor permanently showed 0 for lines.
+    this.metrics.visibleElements = totalSegmentsRequested;
     this.activeQueries.set(queryId, {
       id: queryId,
       loader: 'lines-spatial-index',
@@ -433,8 +404,8 @@ export class LinesSpatialIndexLoader implements LinesDataLoader {
       startTime,
       status: 'loading',
       cells: segmentRanges.length,
-      points: totalSegmentsRequested,
-      ranges: segmentRanges as unknown as PointRange[],
+      elements: totalSegmentsRequested,
+      ranges: segmentRanges,
     });
     this.emitEvent({
       type: 'query',
@@ -442,15 +413,17 @@ export class LinesSpatialIndexLoader implements LinesDataLoader {
       timestamp: Date.now(),
       data: {
         path: this.node.path,
-        ranges: segmentRanges as unknown as PointRange[],
+        ranges: segmentRanges,
         cells: segmentRanges.length,
-        points: totalSegmentsRequested,
+        elements: totalSegmentsRequested,
         queryPosition: viewState.slicePosition,
         queryTolerance: viewState.tolerance,
       },
     });
 
     if (segmentRanges.length === 0) {
+      // No visible segments — return empty dataset; the wrapper caches it
+      // (an empty slice is a valid, ~0-byte result that revisits should skip).
       log.info(Modules.LINES_LOADER, 'No visible segments - returning empty lines data');
       return createEmptyLinesData(attrs);
     }
@@ -738,38 +711,33 @@ export class LinesSpatialIndexLoader implements LinesDataLoader {
     session?: UpdateSession,
     signal?: AbortSignal
   ): Promise<LoadedLinesData> {
-    // Publish the per-update signal for the L0 proxy chokepoint, then clear it
-    // in `finally` so a later cache hit/prefetch isn't seen as abortable.
-    this._activeSignal = signal ?? null;
-    try {
-      const result = await this.loadLines(viewState, session);
-      if (!this._initialLoadDone) {
-        this._initialLoadDone = true;
-        this.rangeLoader.setVerbose(false);
+    return runWithActiveSignal(
+      (s) => (this._activeSignal = s),
+      signal,
+      async () => {
+        const result = await this.loadLines(viewState, session);
+        if (!this._initialLoadDone) {
+          this._initialLoadDone = true;
+          this.rangeLoader.setVerbose(false);
+        }
+        return result;
       }
-      return result;
-    } finally {
-      this._activeSignal = null;
-    }
+    );
   }
 
   /**
    * Like {@link updateView} but also reports whether the load was served
-   * entirely from cache (see PointsSpatialIndexLoader.updateViewWithResidency).
+   * entirely from cache (see `runWithResidencyProbe`).
    */
   async updateViewWithResidency(
     viewState: LinesViewState,
     session?: UpdateSession,
     signal?: AbortSignal
   ): Promise<{ data: LoadedLinesData; allResident: boolean }> {
-    const probe = new ResidencyAccumulator();
-    this._activeProbe = probe;
-    try {
-      const data = await this.updateView(viewState, session, signal);
-      return { data, allResident: probe.allResident };
-    } finally {
-      this._activeProbe = null;
-    }
+    return runWithResidencyProbe(
+      (p) => (this._activeProbe = p),
+      () => this.updateView(viewState, session, signal)
+    );
   }
 
   /**
@@ -878,7 +846,7 @@ export class LinesSpatialIndexLoader implements LinesDataLoader {
     // carries the per-update abort signal (sourced internally).
     await this.rangeLoader.loadDirectTyped(this.arrays.segments, ranges as LoadRange[], output);
 
-    this.recordLoadMetrics('segments', totalSegments, output);
+    recordLoadMetrics(this.facadeCtx, 'segments', totalSegments, output);
     return output;
   }
 
@@ -921,7 +889,7 @@ export class LinesSpatialIndexLoader implements LinesDataLoader {
       `Lines:${arrayName}`
     );
 
-    this.recordLoadMetrics(arrayName, totalVertices, output);
+    recordLoadMetrics(this.facadeCtx, arrayName, totalVertices, output);
     return output;
   }
 
@@ -949,7 +917,7 @@ export class LinesSpatialIndexLoader implements LinesDataLoader {
       'Lines',
       targetBuffer
     );
-    this.recordLoadMetrics('colors', totalVertices, output);
+    recordLoadMetrics(this.facadeCtx, 'colors', totalVertices, output);
     return output;
   }
 
@@ -982,6 +950,19 @@ export class LinesSpatialIndexLoader implements LinesDataLoader {
   }
 
   getMetrics(): LoaderMetrics {
+    // Chunk-index telemetry for the monitor advisor — the SEGMENT side of
+    // the dual index (the queried unit for lines); shared across the three
+    // facades (see buildSpatialIndexMetrics).
+    if (this.chunkIndex) {
+      this.metrics.spatialIndex = buildSpatialIndexMetrics(
+        this.chunkIndex.segmentIndex.chunkCount,
+        this.chunkIndex.segmentIndex.metadata.chunk_size ?? 0,
+        this.metrics.queries,
+        this.totalQueryCells,
+        this.metrics.elementsLoaded
+      );
+    }
+
     return { ...this.metrics };
   }
 
@@ -989,61 +970,8 @@ export class LinesSpatialIndexLoader implements LinesDataLoader {
     return Array.from(this.activeQueries.values());
   }
 
-  /**
-   * Update metrics + emit a 'load' event. Mirrors the points facade's
-   * recordLoadMetrics shape: items is the per-attribute item count (vertices
-   * or segments depending on the array), output supplies the bytes.
-   */
-  private recordLoadMetrics(arrayName: string, items: number, output: ArrayBufferView): void {
-    const queryStart = this.activeQueries.values().next().value?.startTime;
-    const loadTime = computeLoadLatency(queryStart);
-    const bytes = output.byteLength;
-
-    recordLoadEvent(this.metrics, items, bytes, loadTime);
-
-    // Resident memory = current accumulator allocation (MB → bytes). Assignment
-    // (not +=): memoryUsed is a live footprint that grows/shrinks with the pool,
-    // unlike the cumulative bytesLoaded counter updated above.
-    this.metrics.memoryUsed = Math.round((this.getAccumulatorStats()?.memoryMB ?? 0) * 1024 * 1024);
-
-    this.emitEvent({
-      type: 'load',
-      loader: 'lines-spatial-index',
-      timestamp: Date.now(),
-      data: {
-        path: this.node.path,
-        arrayName,
-        points: items,
-        memory: bytes,
-        latency: loadTime,
-      },
-    });
-  }
-
   private emitEvent(event: MonitorEvent): void {
     this.events.emit(event);
-  }
-
-  /**
-   * Close out a tracked query: update the rolling avgQueryTime, mark the
-   * QueryInfo as complete or errored, and drop it from `activeQueries`.
-   */
-  private finishQueryTracking(
-    queryId: string,
-    startTime: number,
-    status: 'complete' | 'error'
-  ): void {
-    const query = this.activeQueries.get(queryId);
-    if (query) {
-      query.status = status;
-      query.endTime = Date.now();
-      this.activeQueries.delete(queryId);
-    }
-    const queryTime = Date.now() - startTime;
-    if (this.metrics.queries > 0) {
-      this.metrics.avgQueryTime =
-        (this.metrics.avgQueryTime * (this.metrics.queries - 1) + queryTime) / this.metrics.queries;
-    }
   }
 
   /**
