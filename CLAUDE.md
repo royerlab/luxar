@@ -338,6 +338,11 @@ luxar gsplat benchmark --list                         # Show profiled GPUs
 
 # Convert .gsplats.zarr to Luxar scene for web viewer
 luxar gsplat convert splats.gsplats.zarr scene.luxar.zarr --center
+# Appearance is baked at convert time: --colormap (builtin/matplotlib/colorcet,
+# default gray), --tone-mapping (None/Linear/Reinhard/Cineon/ACES/AgX/Neutral;
+# default = viewer default ACES), --gamma, --intensity, --layer/--no-layer.
+# For faithful scientific colors pair a colormap with Neutral (ACES shifts hues):
+luxar gsplat convert splats.gsplats.zarr scene.luxar.zarr --colormap plasma --tone-mapping Neutral
 
 # Render gsplats back to volume for quality comparison
 luxar gsplat render splats.gsplats.zarr rendered.npy --shape 128,128,128
@@ -554,6 +559,23 @@ luxar gsplat cull input.gsplats.zarr culled.gsplats.zarr --target vol.npy       
 luxar gsplat cull input.gsplats.zarr culled.gsplats.zarr --target vol.npy -p 95     # More aggressive error-budget
 luxar gsplat filter splats.gsplats.zarr out.gsplats.zarr --amplitude-min 0.1 --eccentricity-max 5
 luxar gsplat filter splats.gsplats.zarr out.gsplats.zarr --bbox "0,50,0,50,0,50" --volume-max 100
+# Any min/max threshold accepts a number OR a percentile 'pNN' / 'NN%'
+# (robust on heavy-tailed attributes; how GSIP background-cut sweeps are driven).
+# --scale-min/max: characteristic size = geometric-mean SPATIAL sigma. Timelapse-
+# safe (auto-ignores a zero-variance time axis) — the recommended "remove large
+# diffuse background" knob. --eccentricity is likewise spatial by default.
+luxar gsplat filter splats.gsplats.zarr out.gsplats.zarr --scale-max p90         # drop largest 10% (diffuse background)
+luxar gsplat filter splats.gsplats.zarr out.gsplats.zarr --scale-max p90 --dry-run  # preview impact (splats/mass/amplitude removed), write nothing
+# --isolation-max / --min-neighbors+--neighbor-radius: remove spatially-isolated
+# noise splats (nearest-neighbour distance / local density; grouped by the
+# non-spatial axis so timepoints never count as neighbours).
+luxar gsplat filter splats.gsplats.zarr out.gsplats.zarr --isolation-max p99      # strip the 1% most-isolated (noise)
+luxar gsplat filter splats.gsplats.zarr out.gsplats.zarr --min-neighbors 3 --neighbor-radius 5
+# --soft-highpass/--soft-lowpass (+ --soft-width octaves): SOFT reweighting —
+# attenuate amplitude by a smooth function of scale instead of hard-removing (no
+# popping; splat count unchanged). High-pass suppresses large/diffuse background.
+luxar gsplat filter splats.gsplats.zarr out.gsplats.zarr --soft-highpass p90 --soft-width 1.0
+# --spatial-dims 0,1,2 overrides the auto axis detection for scale/eccentricity/isolation.
 luxar gsplat view splats.gsplats.zarr          # Quick web viewer
 ```
 

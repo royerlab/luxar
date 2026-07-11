@@ -39,6 +39,32 @@ def parse_slices(s: str, ndim: int) -> list[slice]:
     return slices
 
 
+def parse_threshold(s: str | None, name: str) -> tuple[float | None, bool]:
+    """Parse a filter threshold that may be absolute or a percentile.
+
+    ``"p90"`` / ``"90%"`` → ``(90.0, True)`` (percentile in [0,100]); a bare
+    number ``"0.021"`` → ``(0.021, False)`` (absolute). ``None`` → ``(None,
+    False)``.
+    """
+    if s is None:
+        return None, False
+    t = s.strip().lower()
+    is_pct = False
+    if t.startswith("p"):
+        t, is_pct = t[1:], True
+    elif t.endswith("%"):
+        t, is_pct = t[:-1], True
+    try:
+        val = float(t)
+    except ValueError as e:
+        raise typer.BadParameter(
+            f"--{name}: expected a number or a percentile ('p90'/'90%'), got '{s}'"
+        ) from e
+    if is_pct and not (0.0 <= val <= 100.0):
+        raise typer.BadParameter(f"--{name}: percentile must be in [0,100], got {val}")
+    return val, is_pct
+
+
 def parse_csv_floats(value: str, expected: int, name: str) -> list[float]:
     """Parse comma-separated float values and validate expected arity."""
     parts = [p.strip() for p in value.split(",")]

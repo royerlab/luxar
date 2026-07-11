@@ -218,42 +218,57 @@ def filter_dataset(
     bbox: Optional[str] = typer.Option(
         None, "--bbox", help="Bounding box: 'min0,max0,min1,max1,...' (pairs per dim)"
     ),
-    # Volume
-    volume_min: Optional[float] = typer.Option(
-        None, "--volume-min", help="Minimum volume threshold"
+    # Volume  (thresholds accept a number OR a percentile 'p90'/'90%')
+    volume_min: Optional[str] = typer.Option(
+        None, "--volume-min", help="Minimum volume (number or 'pNN' percentile)"
     ),
-    volume_max: Optional[float] = typer.Option(
-        None, "--volume-max", help="Maximum volume threshold"
+    volume_max: Optional[str] = typer.Option(
+        None, "--volume-max", help="Maximum volume (number or 'pNN' percentile)"
     ),
     volume_normalized: bool = typer.Option(
         False,
         "--volume-normalized",
-        help="Interpret volume thresholds as 0-1 normalized",
+        help="Interpret volume thresholds as 0-1 linear-normalized",
+    ),
+    # Scale (geometric-mean spatial sigma — the timelapse-safe size metric)
+    scale_min: Optional[str] = typer.Option(
+        None, "--scale-min", help="Minimum characteristic scale (number or 'pNN')"
+    ),
+    scale_max: Optional[str] = typer.Option(
+        None,
+        "--scale-max",
+        help="Maximum characteristic scale (number or 'pNN'). Recommended "
+        "'remove large diffuse background' knob.",
+    ),
+    scale_normalized: bool = typer.Option(
+        False, "--scale-normalized", help="Interpret scale thresholds as 0-1 normalized"
     ),
     # Amplitude
-    amplitude_min: Optional[float] = typer.Option(
-        None, "--amplitude-min", help="Minimum amplitude threshold"
+    amplitude_min: Optional[str] = typer.Option(
+        None, "--amplitude-min", help="Minimum amplitude (number or 'pNN')"
     ),
-    amplitude_max: Optional[float] = typer.Option(
-        None, "--amplitude-max", help="Maximum amplitude threshold"
+    amplitude_max: Optional[str] = typer.Option(
+        None, "--amplitude-max", help="Maximum amplitude (number or 'pNN')"
     ),
     amplitude_normalized: bool = typer.Option(
         False,
         "--amplitude-normalized",
         help="Interpret amplitude thresholds as 0-1 normalized",
     ),
-    # Eccentricity
-    eccentricity_min: Optional[float] = typer.Option(
-        None, "--eccentricity-min", help="Minimum eccentricity (1.0 = sphere)"
+    # Eccentricity (spatial isotropy; auto-ignores a zero-variance time axis)
+    eccentricity_min: Optional[str] = typer.Option(
+        None, "--eccentricity-min", help="Minimum eccentricity (1.0 = sphere; or 'pNN')"
     ),
-    eccentricity_max: Optional[float] = typer.Option(
-        None, "--eccentricity-max", help="Maximum eccentricity"
+    eccentricity_max: Optional[str] = typer.Option(
+        None, "--eccentricity-max", help="Maximum eccentricity (number or 'pNN')"
     ),
     # Mass
-    mass_min: Optional[float] = typer.Option(
-        None, "--mass-min", help="Minimum mass (amplitude * volume)"
+    mass_min: Optional[str] = typer.Option(
+        None, "--mass-min", help="Minimum mass = amplitude*volume (number or 'pNN')"
     ),
-    mass_max: Optional[float] = typer.Option(None, "--mass-max", help="Maximum mass"),
+    mass_max: Optional[str] = typer.Option(
+        None, "--mass-max", help="Maximum mass (number or 'pNN')"
+    ),
     mass_normalized: bool = typer.Option(
         False, "--mass-normalized", help="Interpret mass thresholds as 0-1 normalized"
     ),
@@ -261,11 +276,55 @@ def filter_dataset(
     sigma_axis: Optional[int] = typer.Option(
         None, "--sigma-axis", help="Axis index for per-axis sigma filtering"
     ),
-    sigma_min: Optional[float] = typer.Option(
-        None, "--sigma-min", help="Minimum marginal sigma on --sigma-axis"
+    sigma_min: Optional[str] = typer.Option(
+        None, "--sigma-min", help="Minimum marginal sigma on --sigma-axis (or 'pNN')"
     ),
-    sigma_max: Optional[float] = typer.Option(
-        None, "--sigma-max", help="Maximum marginal sigma on --sigma-axis"
+    sigma_max: Optional[str] = typer.Option(
+        None, "--sigma-max", help="Maximum marginal sigma on --sigma-axis (or 'pNN')"
+    ),
+    # Isolation / local density (noise removal)
+    isolation_max: Optional[str] = typer.Option(
+        None,
+        "--isolation-max",
+        help="Remove splats whose nearest-neighbour distance EXCEEDS this "
+        "(spatially isolated = noise). Number or 'pNN'.",
+    ),
+    min_neighbors: Optional[int] = typer.Option(
+        None,
+        "--min-neighbors",
+        help="Remove splats with fewer than N neighbours within --neighbor-radius",
+    ),
+    neighbor_radius: Optional[float] = typer.Option(
+        None, "--neighbor-radius", help="Radius for --min-neighbors (world units)"
+    ),
+    # Axis control
+    spatial_dims: Optional[str] = typer.Option(
+        None,
+        "--spatial-dims",
+        help="Comma-separated axes for scale/eccentricity/isolation "
+        "(default: auto-detected non-degenerate axes)",
+    ),
+    # Soft filtering (attenuate amplitude instead of hard removal)
+    soft_highpass: Optional[str] = typer.Option(
+        None,
+        "--soft-highpass",
+        help="Soft high-pass cutoff scale: attenuate splats LARGER than this "
+        "(suppress diffuse background). Number or 'pNN'.",
+    ),
+    soft_lowpass: Optional[str] = typer.Option(
+        None,
+        "--soft-lowpass",
+        help="Soft low-pass cutoff scale: attenuate splats SMALLER than this. "
+        "Number or 'pNN'.",
+    ),
+    soft_width: float = typer.Option(
+        1.0, "--soft-width", help="Soft transition width in octaves (log2 scale)"
+    ),
+    # Preview
+    dry_run: bool = typer.Option(
+        False,
+        "--dry-run",
+        help="Report the impact (splats/mass/amplitude removed) and exit WITHOUT saving",
     ),
     # Truncation
     truncate: Optional[float] = typer.Option(
@@ -283,41 +342,44 @@ def filter_dataset(
 ) -> None:
     """Filter splats by multiple criteria (AND logic).
 
-    All filter options are optional. Only specified criteria are applied.
-    Multiple criteria combine with AND — a splat must satisfy all
-    active criteria to be kept.
+    All filter options are optional; only specified criteria apply, combined
+    with AND. Any min/max threshold accepts a plain number OR a percentile of
+    that attribute written as ``pNN`` / ``NN%`` (e.g. ``--scale-max p90``) —
+    robust on heavy-tailed attributes and how the GSIP experiments were driven.
 
     Criteria:
         --bbox: Spatial bounding box (filter by center position)
         --amplitude-min/max: Intensity thresholds
-        --volume-min/max: Size thresholds (characteristic length * truncate)
-        --eccentricity-min/max: Shape (1.0 = sphere, higher = elongated)
-        --mass-min/max: Amplitude * volume (physical importance)
+        --scale-min/max: Characteristic size (geometric-mean SPATIAL sigma).
+            Timelapse-safe (ignores a zero-variance time axis) — the recommended
+            'remove large diffuse background' knob.
+        --volume-min/max: det(Σ)^(1/d) * truncate (all dims; legacy size metric)
+        --eccentricity-min/max: Spatial isotropy (1.0 = sphere, higher = elongated)
+        --mass-min/max: Amplitude * volume (integrated brightness)
         --sigma-axis + --sigma-min/max: Per-axis standard deviation
-
-    Use --*-normalized flags to interpret thresholds as 0-1 fractions
-    of the dataset's [min, max] range.
+        --isolation-max: Remove spatially-isolated noise splats (NN distance)
+        --min-neighbors + --neighbor-radius: Remove poorly-supported splats
+        --soft-highpass/--soft-lowpass (+ --soft-width): Soft reweighting — a
+            gentle high/low-pass that ATTENUATES amplitude instead of deleting
+            (no popping; splat count unchanged).
+        --spatial-dims: Override the axes used for scale/eccentricity/isolation.
 
     Examples:
-        # Keep only bright splats
-        luxar gsplat filter input.gsplats.zarr output.gsplats.zarr \\
-            --amplitude-min 0.1
+        # Remove the largest 10% (diffuse background), timelapse-safe
+        luxar gsplat filter in.gsplats.zarr out.gsplats.zarr --scale-max p90
 
-        # Crop to a 3D bounding box
-        luxar gsplat filter input.gsplats.zarr output.gsplats.zarr \\
-            --bbox "0,50,0,50,0,50"
+        # Preview impact without writing
+        luxar gsplat filter in.gsplats.zarr out.gsplats.zarr --scale-max p90 --dry-run
 
-        # Remove elongated outliers and large splats
-        luxar gsplat filter input.gsplats.zarr output.gsplats.zarr \\
-            --eccentricity-max 5.0 --volume-max 100
+        # Strip isolated noise splats (top 1% most-isolated)
+        luxar gsplat filter in.gsplats.zarr out.gsplats.zarr --isolation-max p99
 
-        # Keep top 50% by amplitude (normalized)
-        luxar gsplat filter input.gsplats.zarr output.gsplats.zarr \\
-            --amplitude-min 0.5 --amplitude-normalized
+        # Soft background suppression (attenuate, don't delete)
+        luxar gsplat filter in.gsplats.zarr out.gsplats.zarr --soft-highpass p90
 
-        # With compression
-        luxar gsplat filter input.gsplats.zarr output.gsplats.zarr.zip \\
-            --amplitude-min 0.1 --compress zip
+        # Crop + remove elongated outliers
+        luxar gsplat filter in.gsplats.zarr out.gsplats.zarr \\
+            --bbox "0,50,0,50,0,50" --eccentricity-max 5.0
     """
     return _run_filter_dataset_impl(
         input_path=input_path,
@@ -326,6 +388,9 @@ def filter_dataset(
         volume_min=volume_min,
         volume_max=volume_max,
         volume_normalized=volume_normalized,
+        scale_min=scale_min,
+        scale_max=scale_max,
+        scale_normalized=scale_normalized,
         amplitude_min=amplitude_min,
         amplitude_max=amplitude_max,
         amplitude_normalized=amplitude_normalized,
@@ -337,6 +402,14 @@ def filter_dataset(
         sigma_axis=sigma_axis,
         sigma_min=sigma_min,
         sigma_max=sigma_max,
+        isolation_max=isolation_max,
+        min_neighbors=min_neighbors,
+        neighbor_radius=neighbor_radius,
+        spatial_dims=spatial_dims,
+        soft_highpass=soft_highpass,
+        soft_lowpass=soft_lowpass,
+        soft_width=soft_width,
+        dry_run=dry_run,
         truncate=truncate,
         encoding_mode=encoding_mode,
         compress=compress,
