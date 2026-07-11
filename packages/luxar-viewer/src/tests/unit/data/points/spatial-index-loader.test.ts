@@ -9,6 +9,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { PointsSpatialIndexLoader, type ViewState, type SceneNode } from '../../../../data';
 import * as zarr from 'zarrita';
 import { SliceCache } from '../../../../cache/slice-cache';
+import type { MonitorEvent, MonitorEventListener } from '../../../../types/data-monitor-types';
 
 // Mock THREE.js using partial mock with importOriginal
 vi.mock('three', async (importOriginal) => {
@@ -467,6 +468,58 @@ describe('PointsSpatialIndexLoader', () => {
   });
 
   describe('monitoring', () => {
+    // Baseline LoaderMonitor-surface tests — mirror of the Lines and GSplats
+    // suites so the three spatial-index test files stay parallel.
+    it('exposes the four LoaderMonitor methods', () => {
+      expect(typeof loader.addEventListener).toBe('function');
+      expect(typeof loader.removeEventListener).toBe('function');
+      expect(typeof loader.getMetrics).toBe('function');
+      expect(typeof loader.getActiveQueries).toBe('function');
+    });
+
+    it('initial metrics report the point-spatial-index type and node path', () => {
+      const metrics = loader.getMetrics();
+      expect(metrics.type).toBe('point-spatial-index');
+      expect(metrics.path).toBe('/test_points');
+      expect(metrics.queries).toBe(0);
+      expect(metrics.loads).toBe(0);
+      expect(metrics.elementsLoaded).toBe(0);
+      expect(metrics.bytesLoaded).toBe(0);
+    });
+
+    it('returns an empty active-queries list initially', () => {
+      expect(loader.getActiveQueries()).toEqual([]);
+    });
+
+    it('add + remove of a listener leaves no leak after dispose', () => {
+      // Observable Set-size transitions through the private
+      // `events: LoaderEventEmitter` whose `size` getter is part of the
+      // emitter's documented test-only surface (data/loaders/monitor-events.ts).
+      const calls: MonitorEvent[] = [];
+      const listener: MonitorEventListener = (event) => calls.push(event);
+
+      const events = (loader as unknown as { events: { size: number } }).events;
+
+      expect(events.size).toBe(0);
+      loader.addEventListener(listener);
+      expect(events.size).toBe(1);
+      loader.removeEventListener(listener);
+      expect(events.size).toBe(0);
+
+      loader.addEventListener(listener);
+      expect(events.size).toBe(1);
+      loader.dispose();
+      expect(events.size).toBe(0);
+
+      expect(calls).toEqual([]);
+    });
+
+    it('returns an immutable snapshot from getMetrics', () => {
+      const snapshot = loader.getMetrics();
+      snapshot.queries = 99;
+      expect(loader.getMetrics().queries).toBe(0);
+    });
+
     it('should emit query events', async () => {
       const listener = vi.fn();
       loader.addEventListener(listener);
@@ -553,12 +606,46 @@ describe('PointsSpatialIndexLoader', () => {
       expect(metrics.queries).toBe(1);
       expect(metrics.type).toBe('point-spatial-index');
       expect(metrics.path).toBe('/test_points');
+      // Regression (×3 symmetric): visibleElements is written at query time.
+      // The lines loader shipped for months never setting it (monitor showed
+      // a permanent 0) — pin it in every suite.
+      expect(metrics.visibleElements).toBeGreaterThan(0);
       // Resident memory is populated from the accumulator after a load
       // (was a perpetual 0 before — never written). Matches the MB→bytes
       // conversion done in recordLoadMetrics.
       const accMB = loader.getAccumulatorStats()?.memoryMB ?? 0;
       expect(accMB).toBeGreaterThan(0);
       expect(metrics.memoryUsed).toBe(Math.round(accMB * 1024 * 1024));
+      // Chunk-index telemetry is attached for the advisor (×3 symmetric).
+      expect(metrics.spatialIndex).toBeDefined();
+      expect(metrics.spatialIndex!.totalCells).toBeGreaterThan(0);
+    });
+
+    it('should fold completed loads into avgQueryTime (wrapper close-out)', async () => {
+      // The wrapper's shared finishQueryTracking stamps the rolling mean
+      // AFTER the load (incl. projection) completes — mirror of the Lines/
+      // GSplats facades. With real timers the elapsed may round to 0ms, so
+      // pin the type/range rather than a concrete duration.
+      const viewState: ViewState = {
+        displayDims: [0, 1, 2],
+        slicePosition: [0, 0, 0, 5],
+        tolerance: [0, 0, 0, 0.1],
+      };
+
+      // Make elapsed time observable: every Date.now() call advances 5ms, so
+      // if the wrapper's close-out were deleted, avgQueryTime would stay 0
+      // and the strict > 0 assertion below would fail.
+      let t = 1_000_000;
+      const nowSpy = vi.spyOn(Date, 'now').mockImplementation(() => (t += 5));
+      try {
+        await loader.loadPoints(viewState);
+      } finally {
+        nowSpy.mockRestore();
+      }
+
+      const metrics = loader.getMetrics();
+      expect(metrics.queries).toBe(1);
+      expect(metrics.avgQueryTime).toBeGreaterThan(0);
     });
 
     it('should handle listener errors gracefully', async () => {
@@ -627,6 +714,21 @@ describe('PointsSpatialIndexLoader', () => {
           }),
         })
       );
+    });
+
+    it('should record errors in metrics on failure', async () => {
+      (zarr.get as any).mockRejectedValue(new Error('Load failed'));
+
+      const viewState: ViewState = {
+        displayDims: [0, 1, 2],
+        slicePosition: [0, 0, 0, 5],
+        tolerance: [0, 0, 0, 0.1],
+      };
+
+      await expect(loader.loadPoints(viewState)).rejects.toThrow();
+
+      const metrics = loader.getMetrics();
+      expect(metrics.errors).toBeGreaterThanOrEqual(1);
     });
 
     it('should handle data validation errors', async () => {
@@ -727,6 +829,42 @@ describe('PointsSpatialIndexLoader', () => {
   });
 
   describe('resource cleanup', () => {
+    it('dispose clears the active-query map (mid-flight leak guard)', async () => {
+      // Regression (×3 symmetric): points dispose() historically omitted
+      // activeQueries.clear(), so a dispose mid-flight leaked the tracked
+      // query entry (lines/gsplats always cleared it).
+      const baseViewState: ViewState = {
+        displayDims: [0, 1, 2],
+        slicePosition: [0, 0, 0, 5],
+        tolerance: [0, 0, 0, 0.1],
+      };
+
+      // Pre-initialize (chunk-bounds open + get) with the fast mock.
+      await loader.loadPoints(baseViewState);
+      expect(loader.getActiveQueries().length).toBe(0);
+
+      // Gate data-array reads so a query is observably mid-flight.
+      let release!: () => void;
+      const gate = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      (zarr.get as any).mockImplementation(() =>
+        gate.then(() => ({ data: new Float32Array(100) }))
+      );
+
+      const loadPromise = loader
+        .loadPoints({ ...baseViewState, slicePosition: [0.5, 0.5, 0.5, 5] })
+        .catch(() => null); // dispose mid-flight may fail the load — expected
+
+      for (let i = 0; i < 10; i++) await Promise.resolve();
+      expect(loader.getActiveQueries().length).toBeGreaterThanOrEqual(1);
+
+      loader.dispose();
+      expect(loader.getActiveQueries().length).toBe(0);
+
+      release();
+      await loadPromise;
+    });
     it('should dispose resources properly', async () => {
       const viewState: ViewState = {
         displayDims: [0, 1, 2],
@@ -759,7 +897,6 @@ describe('PointsSpatialIndexLoader', () => {
     });
   });
 
-
   // ────────────────────────────────────────────────────────────────
   // Plain-leaf S-cache: a plain leaf caches its decoded slice as a
   // 1-element ladder under the progressive loaders' key contract
@@ -779,7 +916,6 @@ describe('PointsSpatialIndexLoader', () => {
       cachedLoader = new PointsSpatialIndexLoader(
         mockZarrLocation as unknown as ConstructorParameters<typeof PointsSpatialIndexLoader>[0],
         mockNode,
-        undefined,
         undefined,
         undefined,
         undefined,
@@ -831,6 +967,25 @@ describe('PointsSpatialIndexLoader', () => {
       mockExecute.mockRejectedValueOnce(new DOMException('aborted', 'AbortError'));
       await expect(cachedLoader.loadPoints(hiddenDimView)).rejects.toThrow();
       expect(sliceCache.getStats().count).toBe(0);
+    });
+
+    it('an empty slice is cached via the wrapper: revisits skip the query entirely', async () => {
+      // Zero visible ranges → the internal returns empty data and the
+      // WRAPPER stores it (same contract as Lines/GSplats: an empty slice
+      // is a valid, ~0-byte result that revisits should skip).
+      mockExecute.mockResolvedValue([]);
+
+      const first = await cachedLoader.loadPoints(hiddenDimView);
+      expect(first.pointCount).toBe(0);
+      expect(sliceCache.getStats().count).toBe(1);
+      const readsAfterFirst = gets();
+
+      const second = await cachedLoader.loadPoints(hiddenDimView);
+      const third = await cachedLoader.loadPoints(hiddenDimView);
+
+      expect(second.pointCount).toBe(0);
+      expect(third).toBe(second);
+      expect(gets()).toBe(readsAfterFirst);
     });
 
     it('the cached snapshot is a deep clone: post-store accumulator reuse cannot corrupt it', async () => {

@@ -159,17 +159,52 @@ export class OPFSStore {
   }
 
   /**
-   * Initialize OPFS directory and load metadata.
+   * Initialize OPFS directory, prove writability, and load metadata.
    */
   async init(): Promise<void> {
     try {
       const root = await navigator.storage.getDirectory();
       this.opfsRoot = await root.getDirectoryHandle(this.datasetId, { create: true });
+      await this.probeWritability();
       await this.applyMetadataOnLoad();
     } catch (error) {
-      log.warning(Modules.CACHE, 'OPFSStore failed to initialize', error);
+      log.warning(
+        Modules.CACHE,
+        'OPFSStore unavailable (init / write-probe failed) — running without the L2 disk cache',
+        error
+      );
       this.opfsRoot = null;
     }
+  }
+
+  /**
+   * Prove OPFS is actually WRITABLE, not merely mounted. WebKit (Safari and
+   * the WKWebView native launcher) implements `navigator.storage
+   * .getDirectory()` and directory/file handles but NOT the main-thread
+   * `FileSystemFileHandle.createWritable()` — WebKit supports OPFS writes
+   * only through worker-side `createSyncAccessHandle`. Without this probe
+   * the store mounts "healthy" there and then fails EVERY put: tens of
+   * thousands of write errors, a permanently empty L2, and an all-miss read
+   * path (observed in the native macOS app's cache monitor). One tiny probe
+   * write at init converts that failure mode into the ordinary
+   * OPFS-unavailable degradation (L1-only, `opfs-unavailable` badge) with a
+   * single clear warning. Timeout-wrapped like every other OPFS operation so
+   * a hung handle cannot stall startup. Throws on failure — init()'s catch
+   * nulls `opfsRoot`.
+   */
+  private async probeWritability(): Promise<void> {
+    const PROBE_NAME = '.opfs-write-probe';
+    await withTimeout(
+      (async () => {
+        const fileHandle = await this.opfsRoot!.getFileHandle(PROBE_NAME, { create: true });
+        const writable = await fileHandle.createWritable();
+        await writable.write(new Uint8Array([1]).buffer as ArrayBuffer);
+        await writable.close();
+        await this.opfsRoot!.removeEntry(PROBE_NAME);
+      })(),
+      config.cache.opfsOperationTimeoutMs,
+      'write-probe'
+    );
   }
 
   private async applyMetadataOnLoad(): Promise<void> {

@@ -81,11 +81,6 @@ class Lines(DataNode):
         return int(self._metadata.get("n_vertices", 0))
 
     @property
-    def n_vertices(self) -> int:
-        """Get number of vertices (alias for n_elements)."""
-        return self.n_elements
-
-    @property
     def n_segments(self) -> int:
         """Get number of line segments."""
         return int(self._metadata.get("n_segments", 0))

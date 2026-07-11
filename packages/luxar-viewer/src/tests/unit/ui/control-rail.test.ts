@@ -165,6 +165,33 @@ describe('ControlRail', () => {
     expect(document.querySelector('.luxar-control-rail-hint')).toBeNull();
   });
 
+  it('auto-fades the first-run hint after a few seconds and persists dismissal', () => {
+    rail = new ControlRail(items());
+    const hint = document.querySelector('.luxar-control-rail-hint')!;
+    // Auto-hide kicks in at 10s: fade class first, removal after the transition.
+    vi.advanceTimersByTime(10_000);
+    expect(hint.classList.contains('is-leaving')).toBe(true);
+    vi.advanceTimersByTime(400);
+    expect(document.querySelector('.luxar-control-rail-hint')).toBeNull();
+    expect(localStorage.getItem('luxar-control-rail-hint-dismissed')).toBe('1');
+  });
+
+  it('any pointerdown anywhere dismisses the first-run hint', () => {
+    rail = new ControlRail(items());
+    expect(document.querySelector('.luxar-control-rail-hint')).not.toBeNull();
+    document.body.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }));
+    expect(document.querySelector('.luxar-control-rail-hint')).toBeNull();
+    expect(localStorage.getItem('luxar-control-rail-hint-dismissed')).toBe('1');
+  });
+
+  it('any keypress dismisses the first-run hint', () => {
+    rail = new ControlRail(items());
+    expect(document.querySelector('.luxar-control-rail-hint')).not.toBeNull();
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'h', bubbles: true }));
+    expect(document.querySelector('.luxar-control-rail-hint')).toBeNull();
+    expect(localStorage.getItem('luxar-control-rail-hint-dismissed')).toBe('1');
+  });
+
   it('returns focus to the body after a pointer click (keeps Space/global shortcuts working)', () => {
     // Regression: a rail button that keeps focus after a mouse click swallows
     // the next Space (canvas/body-gated fullscreen). The rail blurs the button

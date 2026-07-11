@@ -112,6 +112,70 @@ describe('OPFSStore', () => {
       expect(stats.count).toBe(0);
     });
 
+    it('cleans up the init-time write-probe file', () => {
+      // The healthy beforeEach init ran the probe: it must leave no trace.
+      expect(mockFS.files.has('.opfs-write-probe')).toBe(false);
+      expect(mockFS.metaFiles.has('.opfs-write-probe')).toBe(false);
+    });
+
+    it('disables the store when OPFS mounts but createWritable is unsupported (WebKit)', async () => {
+      // WebKit (Safari / the WKWebView native launcher) implements
+      // getDirectory() + handles but not main-thread createWritable():
+      // without the init write probe the store mounted "healthy" and then
+      // failed EVERY put (tens of thousands of write errors, empty L2,
+      // all-miss reads). The probe must catch it at init instead.
+      const webkitDir: any = {
+        ...mockFS.mockDirHandle,
+        async getFileHandle() {
+          return {
+            async getFile() {
+              return {
+                async arrayBuffer() {
+                  return new ArrayBuffer(0);
+                },
+              };
+            },
+            async createWritable() {
+              throw new TypeError('createWritable is not a function');
+            },
+          };
+        },
+        async getDirectoryHandle() {
+          return webkitDir;
+        },
+        async removeEntry() {},
+      };
+      vi.stubGlobal('navigator', {
+        storage: {
+          async getDirectory() {
+            return {
+              async getDirectoryHandle() {
+                return webkitDir;
+              },
+              async removeEntry() {},
+            };
+          },
+          async estimate() {
+            return { quota: 10e9, usage: 1e9 };
+          },
+        },
+      });
+
+      const webkitStore = new OPFSStore('webkit-id', 'https://example.com', 1000);
+      await webkitStore.init();
+
+      const stats = webkitStore.getStats();
+      expect(stats.available).toBe(false);
+
+      // Puts are silent no-ops on the disabled store — no error storm.
+      await webkitStore.set('key', new Uint8Array(10));
+      const after = webkitStore.getStats();
+      expect(after.writeFailures).toBe(0);
+      expect(after.writes).toBe(0);
+      expect(after.count).toBe(0);
+      expect(await webkitStore.get('key')).toBeUndefined();
+    });
+
     it('should load existing metadata on init', async () => {
       // Pre-populate metadata. encodingVersion must match the current
       // OPFS_ENCODING_VERSION; otherwise the directory is intentionally
@@ -338,6 +402,8 @@ describe('OPFSStore', () => {
       const writeBlocker = new Promise<void>((resolve) => {
         releaseWrite = resolve;
       });
+      // Armed only AFTER init so the init-time write probe passes through.
+      let blockWrites = false;
       const baseDir = mockFS.mockDirHandle;
       const slowDir: any = {
         ...baseDir,
@@ -350,7 +416,7 @@ describe('OPFSStore', () => {
               return {
                 ...w,
                 async write(data: ArrayBuffer | string) {
-                  await writeBlocker;
+                  if (blockWrites) await writeBlocker;
                   return w.write(data);
                 },
               };
@@ -379,6 +445,7 @@ describe('OPFSStore', () => {
 
       const slowStore = new OPFSStore('slow-id', 'https://example.com', 100 * 1024 * 1024);
       await slowStore.init();
+      blockWrites = true;
 
       // Kick off a slow set; do not await yet — its write() is blocked.
       const setPromise = slowStore.set('hung-key', new Uint8Array(500));
@@ -512,7 +579,11 @@ describe('OPFSStore', () => {
     it('write I/O failures increment writeFailures stat', async () => {
       // Make navigateToFile succeed for retry path (not "could not be
       // found") but createWritable() throw so the catch branch runs and
-      // increments writeFailures.
+      // increments writeFailures. The failure is armed only AFTER init —
+      // an always-broken createWritable is now caught by the init-time
+      // write probe (which disables the store outright, the WebKit case);
+      // this test covers TRANSIENT mid-session I/O failures.
+      let failWrites = false;
       const failingDir: any = {
         ...mockFS.mockDirHandle,
         async getFileHandle() {
@@ -525,7 +596,11 @@ describe('OPFSStore', () => {
               };
             },
             async createWritable() {
-              throw new Error('ENOSPC: simulated I/O failure');
+              if (failWrites) throw new Error('ENOSPC: simulated I/O failure');
+              return {
+                async write(_data: ArrayBuffer | string) {},
+                async close() {},
+              };
             },
           };
         },
@@ -552,6 +627,7 @@ describe('OPFSStore', () => {
 
       const failStore = new OPFSStore('fail-id', 'https://example.com', 1000);
       await failStore.init();
+      failWrites = true;
       await failStore.set('boom', new Uint8Array(50));
       const stats = failStore.getStats();
       // HIGH-2 regression: a single broken write that exhausts the retry

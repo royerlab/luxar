@@ -127,20 +127,22 @@ export function resolveTargetNodeCenter(root: THREE.Group, nodeName: string): TH
  *     `controls.reinitialize()` then `controls.update()`.
  *   - background color: assigned directly to `scene.background`.
  *
- * @returns `true` when an explicit camera position was applied — the
- *   caller uses this to suppress auto-framing. (Author target alone
- *   does NOT suppress auto-framing — a target without a position means
- *   the author wants the orbit pivot set but still wants a sensible
- *   distance.)
+ * @returns `positionApplied` — true when an explicit camera position was
+ *   applied; the caller uses this to suppress auto-framing. (Author target
+ *   alone does NOT suppress auto-framing — a target without a position
+ *   means the author wants the orbit pivot set but still wants a sensible
+ *   distance.) `appliedUp` — the author's up vector when one was applied
+ *   (null otherwise); the caller stores it as the scene up so camera
+ *   fits/resets square to the AUTHOR's horizon instead of world +Y.
  */
 export function applyZarrViewerConfig(
   root: THREE.Group,
   camera: LuxarCamera,
   controls: ControlsManager,
   scene: THREE.Scene
-): { positionApplied: boolean } {
+): { positionApplied: boolean; appliedUp: THREE.Vector3 | null } {
   const viewerConfig = root.userData?.viewerConfig as ZarrViewerConfig | undefined;
-  if (!viewerConfig) return { positionApplied: false };
+  if (!viewerConfig) return { positionApplied: false, appliedUp: null };
 
   const camOverrides = extractCameraOverrides(viewerConfig);
   if (camOverrides.position) {
@@ -195,5 +197,10 @@ export function applyZarrViewerConfig(
     log.info(Modules.SCENE_MANAGER, `Applied background color from zarr: ${bgColor}`);
   }
 
-  return { positionApplied: !!camOverrides.position };
+  return {
+    positionApplied: !!camOverrides.position,
+    appliedUp: camOverrides.up
+      ? new THREE.Vector3(camOverrides.up.x, camOverrides.up.y, camOverrides.up.z)
+      : null,
+  };
 }

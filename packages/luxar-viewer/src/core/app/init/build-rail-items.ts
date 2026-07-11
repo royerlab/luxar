@@ -16,6 +16,7 @@ import { buildNavigationPopover } from '../../../ui/rail-panels/navigation-popov
 import { buildPerformancePopover } from '../../../ui/rail-panels/performance-popover';
 import { buildHomePopover } from '../../../ui/rail-panels/home-popover';
 import { nextControlType } from '../../../input/input-handler/commands/control-mode';
+import { getSceneLoader } from '../../../data/scene-loader-manager';
 import type { InputHandler } from '../../../input/input-handler';
 import type { SceneManager } from '../../../scene/scene-manager';
 import type { SceneDimsManager } from '../../../scene/scene-dims-manager';
@@ -90,6 +91,8 @@ export function buildRailItems(deps: RailItemsDeps): ControlRailItem[] {
             resetDimensions: () => sceneDims.resetPositions(),
             hasDimensionSliders: () => sceneDims.hasNonDisplayedDimensions(),
             resetRendering: () => renderingControls.resetToDefaults(),
+            resetLayers: () => layersPanel.resetAllLayers(),
+            hasLayers: () => layersPanel.layerState.count > 0,
             triggerAnimation: () => animationController.startAnimation(),
           }),
       },
@@ -244,8 +247,8 @@ export function buildRailItems(deps: RailItemsDeps): ControlRailItem[] {
       ],
     },
     {
-      // Viewer-wide preferences (theme, and future settings) — kept off the top
-      // level so the rail stays focused. Click opens the Settings popover.
+      // Viewer-wide preferences (theme + persisted user settings) — kept off
+      // the top level so the rail stays focused. Click opens the popover.
       id: 'settings',
       title: 'Settings',
       icon: RAIL_ICONS.settings,
@@ -256,6 +259,8 @@ export function buildRailItems(deps: RailItemsDeps): ControlRailItem[] {
         build: (host) =>
           buildSettingsPopover(host, {
             triggerAnimation: () => animationController.startAnimation(),
+            // Lazy — the loader exists only after the first scene load.
+            getSceneLoader: () => getSceneLoader(),
           }),
       },
     },
