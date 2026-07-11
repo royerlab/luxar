@@ -1144,6 +1144,11 @@ class GSplatData(_SplatArrayMixin):
             raise ValueError(
                 f"sigma_axis={sigma_axis} out of range for {self.ndim}D data"
             )
+        # Local-density filter needs both knobs (mirrors the sigma_axis rule).
+        if (min_neighbors is None) != (neighbor_radius is None):
+            raise ValueError(
+                "min_neighbors and neighbor_radius must be specified together"
+            )
 
         # Multi-substitutive: apply the SAME criteria to every substitutive
         # level and rebuild the pyramid (decision 6) rather than silently
@@ -1321,13 +1326,20 @@ class GSplatData(_SplatArrayMixin):
         # -- Isolation (remove spatially-isolated noise splats)
         if isolation_max is not None:
             nn = self.nearest_neighbor_distances(spatial_axes=spatial_dims)
-            imax = self._resolve_threshold(
-                isolation_max, False, nn[np.isfinite(nn)], isolation_percentile
-            )
-            if imax is not None:
-                # +inf (no neighbour) always exceeds the threshold → removed.
-                mask &= nn <= imax
-                criteria["isolation_max"] = imax
+            finite = nn[np.isfinite(nn)]
+            if isolation_percentile and finite.size == 0:
+                # Every splat is an isolated singleton (no finite NN distance);
+                # a percentile is undefined → drop them all.
+                mask &= False
+                criteria["isolation_max"] = "all-isolated"
+            else:
+                imax = self._resolve_threshold(
+                    isolation_max, False, finite, isolation_percentile
+                )
+                if imax is not None:
+                    # +inf (no neighbour) always exceeds the threshold → removed.
+                    mask &= nn <= imax
+                    criteria["isolation_max"] = imax
 
         # -- Local density (keep only well-supported splats)
         if min_neighbors is not None and neighbor_radius is not None:

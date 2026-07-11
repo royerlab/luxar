@@ -10,7 +10,7 @@ from arbol import aprint, asection
 
 from ..utils import format_memory_size
 from .encoding import _resolve_encoding_mode
-from .transforms_parsing import parse_bbox, parse_slices
+from .transforms_parsing import parse_bbox, parse_slices, parse_threshold
 
 
 def run_filter_dataset(
@@ -52,8 +52,6 @@ def run_filter_dataset(
         import numpy as np
 
         from luxar.gsplats.gsplat_data import GSplatData
-
-        from .transforms_parsing import parse_threshold
 
         encoding_mode_obj = _resolve_encoding_mode(encoding_mode)
 
