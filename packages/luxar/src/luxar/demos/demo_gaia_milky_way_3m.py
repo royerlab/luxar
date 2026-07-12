@@ -261,8 +261,8 @@ def load_and_convert_gaia_data(data_zarr_path: Path, output_path: Path) -> int:
             target=(float(center[0]), float(center[1]), float(center[2])),
             up=(0.0, 1.0, 0.0),
             fov=fov_deg,
-            near=max(0.5, cam_dist * 0.005),
-            far=cam_dist * 20.0 + extent * 10.0,
+            near=float(max(0.5, cam_dist * 0.005)),
+            far=float(cam_dist * 20.0 + extent * 10.0),
         )
 
         with LuxarZarrCompiler(output_path) as compiler:
