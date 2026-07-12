@@ -143,6 +143,35 @@ to ship after). Sequencing is at the bottom.
 - **R7 [LAUNCH] — License/authorship sanity.** BSD-3 is in place; confirm
   third-party acknowledgments (Three.js, Zarr/Zarrita, datasets) are complete
   and the announce copy doesn't overclaim.
+- **R17 [LAUNCH] — Retire git-LFS for heavy processed datasets → Zenodo
+  (versioned, fetch-on-demand).** The compute-expensive precomputed demo data
+  (`.gsplats.zarr.zip`, catalogs) lives in **git-LFS** under
+  `packages/luxar/src/luxar/demos/data/**` — ~237 MB tracked today, dominated by
+  `gsplats_cmu1_pathology` (~330 MB / 3 ch), `gsplats_celegans` (206 MB), and
+  `milky_way_gaia_8m` (143 MB). This does not scale: newer/larger datasets can't
+  be committed at all, a public repo pays LFS storage+bandwidth limits, the wheel
+  already has to `exclude` `demos/data/**` (see R3), and CI risks shipping broken
+  LFS *pointer* files. Migrate heavy datasets out of the repo and fetch them on
+  demand.
+  - **Access confirmed:** `ZENODO_TOKEN` is on the dev machine (`~/.zshrc`); the
+    Zenodo API is reachable (HTTP 200) and the account already owns 14
+    depositions (zebrahub / ultrack / daxi / …), so there is both access and
+    royerlab precedent. Zenodo records carry a **concept DOI with versioning** —
+    exactly the "multiple steps / versions" the migration wants.
+  - **Reusable mechanism already in-tree:** `demos/demo_cosmicflows_laniakea.py`
+    has the pattern (`~/.cache/luxar/<name>` + atomic `download_file` +
+    `ensure_input_data`). Generalize it into a shared
+    `luxar.demos.data_fetch` helper that pulls a named dataset from a Zenodo
+    record (verifying a checksum) into the cache on first run.
+  - **Plan (incremental, largest-first, keeps LFS as fallback until proven):**
+    (1) shared fetch helper + a committed `demos/data/manifest.json` pinning each
+    dataset's Zenodo record/URL + checksum + expected version; (2) create the
+    "Luxar demo datasets" Zenodo deposition, upload current files; (3) repoint
+    demos at the helper one at a time; (4) `git rm` the migrated files and drop
+    their `.gitattributes` LFS globs. Future large datasets land as **new Zenodo
+    versions**, with the manifest pinning what each Luxar release expects.
+  - **Scope note:** only *heavy processed datasets* move. Small README/doc images
+    (`docs/images/**`) must stay in-repo so GitHub renders them (see R19).
 
 ### B. First-impression polish — what a visitor sees on day one
 
@@ -175,6 +204,36 @@ to ship after). Sequencing is at the bottom.
   block (→ single `luxar serve … --viewer --open`). **Remaining:** verify a
   truly-fresh-machine `make setup-dev`, and optionally regenerate the gallery
   media (`make generate-readme-images/videos`).
+- **R18 [LAUNCH] — Documentation: content pass + confirm it's publicly
+  viewable.** The **hosting is already wired**: `.github/workflows/docs.yml`
+  builds Sphinx (Python API) + typedoc (viewer) and deploys to **GitHub Pages**
+  (`https://royerlab.github.io/luxar/`) on every push to `main` touching
+  `docs/**` or the sources. Two gaps remain for day one:
+  - **Publicly viewable:** the repo is still private, so the Pages site isn't
+    reachable by outsiders yet. Confirm it goes live when the repo is made public
+    (or enable/verify Pages visibility), and that the built site actually renders
+    — nav, API autosummary, viewer typedoc, and images all resolve.
+  - **Content cleanup:** `docs/` carries internal/stale trees that should not
+    ship in public docs — `archive/`, `handoffs/`, `reports/`, `bugs/`,
+    `templates/`, `benchmarks/`. Prune or exclude them from the Sphinx build,
+    then update/improve the user-facing guides + API reference to match the
+    current surface (gsplat cal→fit→lod pipeline, LOD recipes, export/native,
+    batch-fit, filtering). Cross-check against the CLI so examples don't drift.
+- **R19 [LAUNCH] — README refresh + showcase the newer/better demos (images +
+  video).** Extends R11 (whose one open remainder was "regenerate the gallery
+  media"). The pipeline exists: `make generate-readme-demos →
+  generate-readme-images / generate-readme-videos` (Playwright captures of the
+  live viewer → `docs/images/readme/*.{png,gif,webp}`).
+  - **Curate a stronger gallery** from the newer/better datasets (H&E pathology
+    gsplats, 4D *C. elegans* tracking, organoid multichannel, Gaia) — decide
+    which few best convey the range (volumetric splats, nD navigation, scale).
+  - **Regenerate** stills + short loops via the Playwright pipeline; refresh the
+    README gallery section + captions; ensure everything renders on GitHub.
+  - **LFS interaction (coordinate with R17):** README/doc images stay in-repo
+    (GitHub must render them inline) — only the heavy *datasets* move to Zenodo.
+    But the media the gallery captures come from demos whose *inputs* may have
+    moved to Zenodo, so `generate-readme-demos` must run after R17's fetch path
+    exists (or before the migration). Keep gallery media small/optimized.
 - **R12 [POST] — Theme layout consistency (#7)**, **Python-side panel visibility
   config (#8)** — nice-to-have, not launch-gating.
 
@@ -220,9 +279,15 @@ to ship after). Sequencing is at the bottom.
    with the day-one polish (R8/R9/R10/R11).
 3. **Post the preprint** — R13 ✅ / R14 ✅ / R16 land → bioRxiv → obtain DOI → R4
    (wire citation back into the repo).
-4. **Cut the release** — R2 (tag + GitHub release) → flip PyPI to live (R3) →
+4. **Public-repo readiness** (parallel with the preprint track, before the repo
+   goes public) — **R17** (retire git-LFS heavy datasets → Zenodo, so the public
+   clone is lean and future large datasets are addable), **R18** (docs content
+   pass + confirm the GitHub Pages site is publicly viewable), **R19** (README
+   refresh + regenerated gallery from the newer demos). R19 depends on R17's
+   fetch path (gallery capture re-runs the demos); R18 is independent.
+5. **Cut the release** — R2 (tag + GitHub release) → flip PyPI to live (R3) →
    announce.
-5. **Post-launch backlog** — R10 (#24 depth sorting), R12, R15, and the
+6. **Post-launch backlog** — R10 (#24 depth sorting), R12, R15, and the
    remaining Future/Exploratory items below (incl. #25 advanced LOD
    refinements).
 
@@ -245,6 +310,19 @@ to ship after). Sequencing is at the bottom.
 > dependabot/branch drain → `make set-version` → PR → `make release-check` →
 > `make release` (fires PyPI OIDC publish) → one-time npm bootstrap (R3-npm)
 > → GitHub release notes from CHANGELOG `[Unreleased]` → announce.
+
+> Update 2026-07-12: R14 done (see above). Added three **public-repo-readiness**
+> items (new sequencing step 4, all [LAUNCH], parallelizable with the preprint):
+> **R17** — retire git-LFS heavy processed datasets (~237 MB today; pathology
+> /celegans/Gaia dominate) to **Zenodo** with fetch-on-demand + a pinned
+> manifest (access verified: `ZENODO_TOKEN` present, API live, 14 royerlab
+> depositions; reuse the `demo_cosmicflows_laniakea.py` cache pattern; migrate
+> largest-first, versioned). **R18** — docs content pass + confirm the already-
+> wired GitHub Pages site (`royerlab.github.io/luxar`, built by
+> `docs.yml`) is publicly viewable and free of internal `docs/` trees. **R19** —
+> README refresh + regenerated gallery from the newer demos (Playwright pipeline
+> exists; depends on R17's fetch path). These gate a *clean public repo*, not the
+> preprint; they should land before the repo is flipped public in the cut.
 
 ---
 
