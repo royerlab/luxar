@@ -24,6 +24,7 @@ from ..utils.demos import (
     parse_demo_flags,
     parse_int_arg,
     require_local_data,
+    stack_colorings,
     warn_if_no_cuda_gpu,
 )
 
@@ -41,5 +42,6 @@ __all__ = [
     "parse_demo_flags",
     "parse_int_arg",
     "require_local_data",
+    "stack_colorings",
     "warn_if_no_cuda_gpu",
 ]

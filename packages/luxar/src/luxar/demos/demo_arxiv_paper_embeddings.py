@@ -87,7 +87,7 @@ import requests
 from arbol import aprint, asection
 
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
-from luxar.demos import cache_computed, launch_viewer
+from luxar.demos import cache_computed, hsv_to_rgb, launch_viewer, stack_colorings
 from luxar.utils.paths import get_demos_output_dir
 
 # =============================================================================
@@ -447,37 +447,79 @@ def generate_paper_landscape(
         n_papers = len(embeddings_3d)
         positions = embeddings_3d
 
-        # Colors by field
-        colors = np.zeros((n_papers, 3), dtype=np.float32)
-        for i in range(n_papers):
-            field = primary_fields[i]
-            colors[i] = FIELD_COLORS.get(field, FIELD_COLORS["Other"])
+        citation_array = np.array(citation_counts, dtype=np.float32)
+        log_citations = np.log1p(citation_array)  # log(1 + x) to handle 0 citations
+        years = np.array(
+            [
+                int(papers_clean[i].get("year", 2015)) if i < len(papers_clean) else 2015
+                for i in range(n_papers)
+            ],
+            dtype=np.float32,
+        )
 
-        aprint("✓ Colored by field:")
-        field_counts = {}
+        def _norm(a: np.ndarray) -> np.ndarray:
+            rng = float(a.max() - a.min())
+            return (a - a.min()) / rng if rng > 0 else np.zeros_like(a)
+
+        # Three switchable coloring views: research field (categorical), plus
+        # cool→warm sequential ramps over publication year and citation count.
+        field_colors = np.array(
+            [FIELD_COLORS.get(primary_fields[i], FIELD_COLORS["Other"]) for i in range(n_papers)],
+            dtype=np.float32,
+        )
+        year_colors = hsv_to_rgb(0.66 * (1.0 - _norm(years)))  # old=blue → new=red
+        citation_colors = hsv_to_rgb(0.66 * (1.0 - _norm(log_citations)))
+
+        field_counts: dict[str, int] = {}
         for field in primary_fields:
             field_counts[field] = field_counts.get(field, 0) + 1
+        aprint("✓ Colored by field / year / citations:")
         for field, count in sorted(field_counts.items(), key=lambda x: -x[1])[:10]:
-            (FIELD_COLORS.get(field, FIELD_COLORS["Other"]) * 255).astype(int)
             aprint(f"  {field}: {count} papers")
 
-        # Radii based on citation count (log scale)
-        citation_array = np.array(citation_counts, dtype=np.float32)
-        # Log scale for citations (heavily cited papers are much larger)
-        log_citations = np.log1p(citation_array)  # log(1 + x) to handle 0 citations
-        # Normalize to reasonable radius range
-        radii = 0.02 + 0.08 * (log_citations / log_citations.max())
-        radii = radii.astype(np.float32)
+        # Per-point radii by citation count (log scale); tiled across views below.
+        radii_pp = (0.02 + 0.08 * (log_citations / max(log_citations.max(), 1e-9))).astype(
+            np.float32
+        )
 
-        aprint("✓ Radii scaled by citations:")
-        aprint(f"  Min citations: {citation_array.min():.0f}")
-        aprint(f"  Max citations: {citation_array.max():.0f}")
-        aprint(f"  Median citations: {np.median(citation_array):.0f}")
+        def _title(i: int) -> str:
+            t = (
+                papers_clean[i].get("title", "Unknown")
+                if i < len(papers_clean)
+                else "Unknown"
+            )
+            return t[:60] + ("…" if len(t) > 60 else "")
+
+        field_labels = [
+            f"{_title(i)} ({int(citation_array[i])} cites, {primary_fields[i]})"
+            for i in range(n_papers)
+        ]
+        year_labels = [f"{_title(i)} ({int(years[i])})" for i in range(n_papers)]
+        citation_labels = [
+            f"{_title(i)} ({int(citation_array[i])} cites)" for i in range(n_papers)
+        ]
+
+        stacked = stack_colorings(
+            positions,
+            [
+                {"label": "Field", "colors": field_colors, "labels": field_labels},
+                {"label": "Year", "colors": year_colors, "labels": year_labels},
+                {"label": "Citations", "colors": citation_colors, "labels": citation_labels},
+            ],
+        )
+        radii = np.tile(radii_pp, len(stacked.categories)).astype(np.float32)
 
     # Write to Zarr
     with asection("Writing to Zarr"):
         dims = Dimensions(
             [
+                Dimension(
+                    "coloring",
+                    unit="",
+                    categories=stacked.categories,
+                    display=False,
+                    description="Color scheme: research field / year / citations",
+                ),
                 Dimension("x", unit="UMAP", display=True),
                 Dimension("y", unit="UMAP", display=True),
                 Dimension("z", unit="UMAP", display=True),
@@ -487,33 +529,18 @@ def generate_paper_landscape(
         with LuxarZarrCompiler(output_path) as compiler:
             scene = compiler.create_scene(dimensions=dims)
 
-            # Sharp points for clarity
-            sharpness = np.full(n_papers, 0.6, dtype=np.float32)
-
-            # Hover labels: title (citations, field)
-            paper_labels = []
-            for i in range(n_papers):
-                title = (
-                    papers_clean[i].get("title", "Unknown")
-                    if i < len(papers_clean)
-                    else "Unknown"
-                )
-                title_short = title[:60] + ("…" if len(title) > 60 else "")
-                cites = int(citation_counts[i]) if i < len(citation_counts) else 0
-                field = primary_fields[i] if i < len(primary_fields) else "Unknown"
-                paper_labels.append(f"{title_short} ({cites} cites, {field})")
-
             # Substitutive Points LOD for the (potentially large) paper cloud —
-            # coarse merged levels when zoomed out (census-style wiring).
+            # coarse merged levels when zoomed out (census-style wiring; coarse
+            # splats stay pure per coloring via the `coloring` barrier).
             scene.add_points(
                 "papers",
-                positions=positions,
-                colors=colors,
+                positions=stacked.positions,
+                colors=stacked.colors,
                 radii=radii,
-                sharpness=sharpness,
+                sharpness=np.full(len(stacked.positions), 0.6, dtype=np.float32),
                 opacity=0.9,
                 intensity=0.1,
-                labels=paper_labels,
+                labels=stacked.labels,
                 substitutive_lod=dict(compression_factor=8, levels=3, device="auto"),
             )
 
@@ -540,6 +567,31 @@ def generate_paper_landscape(
                 "</div>",
                 position=(0.02, 0.97),
                 anchor="bottom-left",
+                visible_range={"coloring": 0},
+                transition="fade",
+                transition_duration=0.3,
+            )
+            scene.add_html(
+                '<div style="font-size:1.3vh;background:rgba(0,0,0,0.5);padding:0.6vh;'
+                'border-radius:3px;color:#ccc">Year: '
+                '<span style="color:#4d80ff">\u2588</span> older \u2192 '
+                '<span style="color:#ff4d4d">\u2588</span> newer</div>',
+                position=(0.02, 0.97),
+                anchor="bottom-left",
+                visible_range={"coloring": 1},
+                transition="fade",
+                transition_duration=0.3,
+            )
+            scene.add_html(
+                '<div style="font-size:1.3vh;background:rgba(0,0,0,0.5);padding:0.6vh;'
+                'border-radius:3px;color:#ccc">Citations: '
+                '<span style="color:#4d80ff">\u2588</span> few \u2192 '
+                '<span style="color:#ff4d4d">\u2588</span> many</div>',
+                position=(0.02, 0.97),
+                anchor="bottom-left",
+                visible_range={"coloring": 2},
+                transition="fade",
+                transition_duration=0.3,
             )
 
             # Info + source

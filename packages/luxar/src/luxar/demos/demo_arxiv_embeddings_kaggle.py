@@ -87,7 +87,13 @@ import numpy as np
 from arbol import aprint, asection
 
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
-from luxar.demos import cache_computed, cached_download, launch_viewer
+from luxar.demos import (
+    cache_computed,
+    cached_download,
+    hsv_to_rgb,
+    launch_viewer,
+    stack_colorings,
+)
 from luxar.utils.paths import get_demos_output_dir
 
 # =============================================================================
@@ -564,35 +570,63 @@ def generate_paper_landscape(
     # Generate visualization
     with asection("Generating visualization"):
         n_papers = len(positions)
+        year_array = np.array(years, dtype=np.float32)
+        yr_rng = float(year_array.max() - year_array.min())
+        yr_t = (
+            (year_array - year_array.min()) / yr_rng
+            if yr_rng > 0
+            else np.zeros_like(year_array)
+        )
 
-        # Colors by category
-        colors = np.zeros((n_papers, 3), dtype=np.float32)
-        for i, cat in enumerate(categories):
-            colors[i] = CATEGORY_COLORS.get(cat, CATEGORY_COLORS["other"])
+        # Two switchable coloring views: arXiv category (categorical) and a
+        # cool→warm sequential ramp over publication year.
+        category_colors = np.array(
+            [CATEGORY_COLORS.get(c, CATEGORY_COLORS["other"]) for c in categories],
+            dtype=np.float32,
+        )
+        year_colors = hsv_to_rgb(0.66 * (1.0 - yr_t))  # older=blue → newer=red
 
-        # Count categories
-        cat_counts = {}
+        cat_counts: dict[str, int] = {}
         for cat in categories:
             cat_counts[cat] = cat_counts.get(cat, 0) + 1
-
-        aprint("✓ Papers by category:")
+        aprint("✓ Papers by category (colored by category / year):")
         for cat, count in sorted(cat_counts.items(), key=lambda x: -x[1])[:10]:
             aprint(f"  {cat}: {count:,}")
-
-        # Size by recency (newer papers = larger)
-        year_array = np.array(years, dtype=np.float32)
-        year_norm = (year_array - year_array.min()) / (
-            year_array.max() - year_array.min() + 1
-        )
-        radii = (0.03 + 0.07 * year_norm).astype(np.float32)
-
-        aprint("✓ Sizes by year:")
         aprint(f"  Year range: {int(year_array.min())} to {int(year_array.max())}")
+
+        # Per-point radii by recency (newer=larger); tiled across views below.
+        radii_pp = (0.03 + 0.07 * yr_t).astype(np.float32)
+
+        def _title(i: int) -> str:
+            if titles is not None:
+                return titles[i][:60] + ("…" if len(titles[i]) > 60 else "")
+            return str(categories[i])
+
+        category_labels = [
+            f"{_title(i)} ({years[i]}, {categories[i]})" for i in range(n_papers)
+        ]
+        year_labels = [f"{_title(i)} ({years[i]})" for i in range(n_papers)]
+
+        stacked = stack_colorings(
+            positions,
+            [
+                {"label": "Category", "colors": category_colors, "labels": category_labels},
+                {"label": "Year", "colors": year_colors, "labels": year_labels},
+            ],
+        )
+        radii = np.tile(radii_pp, len(stacked.categories)).astype(np.float32)
 
     # Write to Zarr
     with asection("Writing to Zarr"):
         dims = Dimensions(
             [
+                Dimension(
+                    "coloring",
+                    unit="",
+                    categories=stacked.categories,
+                    display=False,
+                    description="Color scheme: arXiv category / publication year",
+                ),
                 Dimension("x", unit="UMAP", display=True),
                 Dimension("y", unit="UMAP", display=True),
                 Dimension("z", unit="UMAP", display=True),
@@ -602,35 +636,22 @@ def generate_paper_landscape(
         with LuxarZarrCompiler(output_path) as compiler:
             scene = compiler.create_scene(dimensions=dims)
 
-            sharpness = np.full(n_papers, 0.6, dtype=np.float32)
-
-            # Hover labels: title + year + category
-            if titles is not None:
-                paper_labels = [
-                    f"{titles[i][:60]}{'…' if len(titles[i]) > 60 else ''} ({years[i]}, {categories[i]})"
-                    for i in range(n_papers)
-                ]
-            else:
-                paper_labels = [
-                    f"{categories[i]} ({years[i]})" for i in range(n_papers)
-                ]
-
             # Substitutive Points LOD for the large (up to 2M) paper cloud —
-            # coarse merged levels when zoomed out (census-style wiring).
+            # coarse merged levels when zoomed out (census-style wiring; coarse
+            # splats stay pure per coloring via the `coloring` barrier).
             scene.add_points(
                 "arxiv_papers",
-                positions=positions,
-                colors=colors,
+                positions=stacked.positions,
+                colors=stacked.colors,
                 radii=radii,
-                sharpness=sharpness,
+                sharpness=np.full(len(stacked.positions), 0.6, dtype=np.float32),
                 opacity=0.9,
                 intensity=0.1,
-                labels=paper_labels,
+                labels=stacked.labels,
                 substitutive_lod=dict(compression_factor=8, levels=3, device="auto"),
             )
 
             # --- Overlays ---
-            # Title
             scene.add_text(
                 "ArXiv Paper Embeddings",
                 position=(0.02, 0.02),
@@ -638,6 +659,41 @@ def generate_paper_landscape(
                 anchor="top-left",
                 color="rgba(255,255,255,0.6)",
                 blend_mode="difference",
+            )
+
+            # Category legend (view 0) + year gradient caption (view 1).
+            _cat_legend = (
+                '<div style="font-size:1.2vh;line-height:1.5;background:rgba(0,0,0,0.5);'
+                'padding:0.5vh;border-radius:3px">'
+                '<div style="font-weight:bold;color:#ccc;margin-bottom:0.3vh">Category</div>'
+            )
+            for cat, _ in sorted(cat_counts.items(), key=lambda x: -x[1])[:10]:
+                r, g, b = (
+                    int(round(v * 255))
+                    for v in CATEGORY_COLORS.get(cat, CATEGORY_COLORS["other"])
+                )
+                _cat_legend += (
+                    f'<div><span style="color:#{r:02x}{g:02x}{b:02x}">█</span> {cat}</div>'
+                )
+            _cat_legend += "</div>"
+            scene.add_html(
+                _cat_legend,
+                position=(0.02, 0.97),
+                anchor="bottom-left",
+                visible_range={"coloring": 0},
+                transition="fade",
+                transition_duration=0.3,
+            )
+            scene.add_html(
+                '<div style="font-size:1.3vh;background:rgba(0,0,0,0.5);padding:0.6vh;'
+                'border-radius:3px;color:#ccc">Year: '
+                '<span style="color:#4d80ff">█</span> older → '
+                '<span style="color:#ff4d4d">█</span> newer</div>',
+                position=(0.02, 0.97),
+                anchor="bottom-left",
+                visible_range={"coloring": 1},
+                transition="fade",
+                transition_duration=0.3,
             )
 
             # Info + source
