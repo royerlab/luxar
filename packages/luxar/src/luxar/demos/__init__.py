@@ -11,25 +11,35 @@ See demos/README.md for more information on creating new demos.
 """
 
 from ..utils.demos import (
+    cache_computed,
+    cached_download,
     create_lorenz_attractor,
     create_random_spheres,
     create_time_series_demo,
     detect_device,
+    hsv_to_rgb,
     launch_viewer,
     load_precomputed_bundle,
     load_precomputed_gsplats,
     parse_demo_flags,
+    parse_int_arg,
+    require_local_data,
     warn_if_no_cuda_gpu,
 )
 
 __all__ = [
+    "cache_computed",
+    "cached_download",
     "create_lorenz_attractor",
     "create_random_spheres",
     "create_time_series_demo",
     "detect_device",
+    "hsv_to_rgb",
     "launch_viewer",
     "load_precomputed_bundle",
     "load_precomputed_gsplats",
     "parse_demo_flags",
+    "parse_int_arg",
+    "require_local_data",
     "warn_if_no_cuda_gpu",
 ]
