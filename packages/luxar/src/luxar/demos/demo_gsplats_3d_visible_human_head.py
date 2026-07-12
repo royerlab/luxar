@@ -100,6 +100,10 @@ MAX_SPLATS_PER_PASS = 100_000
 ITERS_PER_PASS = 4_000
 PSNR_PATIENCE = 0.1
 
+# Display brightness (additive): a dense head over-accumulates, so scale the
+# fitted amplitudes far down to keep the core from blowing out to white.
+SCENE_INTENSITY = 0.025
+
 FLAGS = parse_demo_flags()
 NO_SERVE = FLAGS["no_serve"]
 SERVE_ONLY = FLAGS["serve_only"]
@@ -349,12 +353,11 @@ def load_or_build() -> tuple[GSplatData, np.ndarray]:
 def create_luxar_scene(fit: GSplatData, colors: np.ndarray, output_path: Path) -> Path:
     """Build the true-color Visible Human head scene."""
     with asection("Creating Luxar Scene"):
-        # The head is a solid, opaque volume, so alpha ("normal") blending — not
-        # additive — is what makes it read as photographic anatomy rather than a
-        # blown-out glowing mass (additive suits sparse fluorescence/dust).
-        # Boost amplitudes so the tissue splats are near-opaque (the luminance
-        # fit leaves them dim, which reads as see-through/dark under alpha).
-        centered = fit.center_at_centroid().scale_intensity(4.0)
+        # Additive blending (the gsplat norm). A solid, dense head accumulates
+        # far more along each view ray than the sparse fluorescence/dust demos,
+        # so the amplitudes must be scaled WAY down to avoid a blown-out white
+        # core — reduce brightness rather than switch blend mode.
+        centered = fit.center_at_centroid().scale_intensity(SCENE_INTENSITY)
         dims = Dimensions(
             [
                 Dimension("x", unit="mm", display=True),
@@ -362,15 +365,12 @@ def create_luxar_scene(fit: GSplatData, colors: np.ndarray, output_path: Path) -
                 Dimension("z", unit="mm", display=True),
             ]
         )
-        # Cryosection tissue colors are dark (deep-red muscle, brown); a mild
-        # gamma lift keeps the hues but makes the anatomy legible under alpha.
-        disp_colors = np.clip(colors.astype(np.float32) ** 0.7, 0.0, 1.0)
         with LuxarZarrCompiler(
             output_path, encoding_mode=EncodingMode.PRECISION
         ) as compiler:
             scene = compiler.create_scene(
                 dimensions=dims,
-                viewer_config=ViewerConfig(tone_mapping="Neutral", exposure=1.5),
+                viewer_config=ViewerConfig(tone_mapping="Neutral"),
             )
             scene.attrs["title"] = "GSplats: Visible Human Head (NLM cryosections)"
             scene.add_gsplats(
@@ -378,9 +378,9 @@ def create_luxar_scene(fit: GSplatData, colors: np.ndarray, output_path: Path) -
                 centers=centered.centers,
                 amplitudes=centered.amplitudes,
                 cholesky_factors=centered.cholesky_factors,
-                colors=disp_colors,
+                colors=colors.astype(np.float32),
                 opacity=1.0,
-                blending_mode="normal",
+                blending_mode="additive",
                 layer=True,
             )
             scene.add_text(
