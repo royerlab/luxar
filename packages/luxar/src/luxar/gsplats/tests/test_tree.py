@@ -449,6 +449,40 @@ def test_amplitude_weighted_centroid_zero_amplitude_falls_back_to_mean():
     assert np.allclose(amplitude_weighted_centroid(leaf), [2.0, 0.0, 0.0])
 
 
+def _leaf_4d_zero_time(centers, amps) -> GSplatLeaf:
+    """4D leaf with isotropic spatial sigma=1 and a zero-variance time axis."""
+    centers = np.asarray(centers, dtype=np.float32)
+    n = centers.shape[0]
+    chol = np.zeros((n, 10), dtype=np.float32)  # 4D packed lower-triangular
+    chol[:, [0, 2, 5]] = 1.0  # spatial diagonals; dim3 diagonal (idx 9) stays 0
+    return GSplatLeaf(
+        additive_sublods=[
+            AdditiveSubLOD(
+                centers=centers,
+                amplitudes=np.asarray(amps, dtype=np.float32),
+                cholesky_factors=chol,
+            )
+        ]
+    )
+
+
+def test_nondegenerate_axes_all_spatial_3d():
+    from luxar.gsplats.tree import nondegenerate_axes
+
+    leaf = _leaf_xyz([[0, 0, 0], [1, 2, 3]], [1.0, 1.0])
+    assert list(nondegenerate_axes(leaf)) == [0, 1, 2]
+
+
+def test_nondegenerate_axes_excludes_zero_variance_time():
+    from luxar.gsplats.tree import nondegenerate_axes
+
+    leaf = _leaf_4d_zero_time([[1, 2, 3, 0], [4, 5, 6, 1]], [1.0, 1.0])
+    assert list(nondegenerate_axes(leaf)) == [0, 1, 2]
+    # Also over a partition of such leaves (the transform --center graft path).
+    part = GSplatPartition(children=[leaf, leaf])
+    assert list(nondegenerate_axes(part)) == [0, 1, 2]
+
+
 def test_without_meta_key_scrubs_group_and_leaf_meta():
     """``without_meta_key`` drops the key from EVERY node — including group
     nodes that ``map_leaves`` copies verbatim — while preserving other meta.
