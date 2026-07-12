@@ -89,8 +89,7 @@ def compute_ray_integral_factor(truncation_radius: float) -> float:
     t = 1.0 / (1.0 + 0.3275911 * abs(x))
     erf = 1.0 - t * (
         0.254829592
-        + t
-        * (-0.284496736 + t * (1.421413741 + t * (-1.453152027 + t * 1.061405429)))
+        + t * (-0.284496736 + t * (1.421413741 + t * (-1.453152027 + t * 1.061405429)))
     ) * np.exp(-x * x)
     if x < 0:
         erf = -erf
@@ -299,8 +298,11 @@ def lift_lines_to_gsplats(
 
     def _empty() -> GSplatData:
         return lift_points_to_gsplats(
-            np.empty((0, d), np.float32), np.empty((0,), np.float32),
-            colors=None, opacity=opacity, radius_scale=radius_scale,
+            np.empty((0, d), np.float32),
+            np.empty((0,), np.float32),
+            colors=None,
+            opacity=opacity,
+            radius_scale=radius_scale,
             truncation_radius=T,
         )
 
@@ -308,9 +310,9 @@ def lift_lines_to_gsplats(
     if pairs.shape[0] == 0:
         return _empty()  # no edges (e.g. a single-vertex polyline)
 
-    w_arr = np.broadcast_to(
-        np.asarray(widths, dtype=np.float64), (n_vertices,)
-    ).astype(np.float64)
+    w_arr = np.broadcast_to(np.asarray(widths, dtype=np.float64), (n_vertices,)).astype(
+        np.float64
+    )
     p0 = verts[pairs[:, 0]].astype(np.float64)  # (E, d)
     p1 = verts[pairs[:, 1]].astype(np.float64)
     w0 = w_arr[pairs[:, 0]]
@@ -325,7 +327,13 @@ def lift_lines_to_gsplats(
     if not np.any(keep):
         return _empty()
     pairs, p0, p1, w0, w1, seg_len, sigma = (
-        pairs[keep], p0[keep], p1[keep], w0[keep], w1[keep], seg_len[keep], sigma[keep]
+        pairs[keep],
+        p0[keep],
+        p1[keep],
+        w0[keep],
+        w1[keep],
+        seg_len[keep],
+        sigma[keep],
     )
 
     # Bead count per segment, CAPPED so a tiny-but-positive width can't OOM.
@@ -394,7 +402,8 @@ def lift_lines_to_gsplats(
         c1 = c[pairs[:, 1]].astype(np.float64)[seg_idx]
         interp = c0 + t[:, None] * (c1 - c0)
         bead_colors = (
-            interp.round().astype(c.dtype) if np.issubdtype(c.dtype, np.integer)
+            interp.round().astype(c.dtype)
+            if np.issubdtype(c.dtype, np.integer)
             else interp.astype(c.dtype)
         )
 
@@ -411,14 +420,19 @@ def lift_lines_to_gsplats(
     # kept segments have σ>0 → positive bead widths), then scale each bead's
     # amplitude by opacity / overlap_i so every segment's tube peaks at opacity.
     lifted = lift_points_to_gsplats(
-        bead_centers, bead_widths, colors=bead_colors, opacity=1.0,
-        radius_scale=radius_scale, truncation_radius=T,
+        bead_centers,
+        bead_widths,
+        colors=bead_colors,
+        opacity=1.0,
+        radius_scale=radius_scale,
+        truncation_radius=T,
     )
     flat = lifted.flattened()
     if int(flat.n_splats) != bead_centers.shape[0]:  # defensive: alignment broke
         return lifted
     amps = (
-        np.asarray(flat.amplitudes, dtype=np.float64) * (float(opacity) / overlap_per_bead)
+        np.asarray(flat.amplitudes, dtype=np.float64)
+        * (float(opacity) / overlap_per_bead)
     ).astype(np.float32)
     return GSplatData(
         centers=np.asarray(flat.centers, dtype=np.float32),

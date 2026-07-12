@@ -211,7 +211,7 @@ def calibrate_h_for_channel(
     h_values = []
     for tp in sample_timepoints:
         try:
-            from luxar.cli.gsplat_config import load_volume
+            from luxar.io.volume import load_volume
 
             vol = load_volume(
                 input_path,

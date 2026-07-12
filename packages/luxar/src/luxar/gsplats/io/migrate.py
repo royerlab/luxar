@@ -23,7 +23,6 @@ from __future__ import annotations
 
 import json
 import shutil
-import tempfile
 from pathlib import Path
 from typing import Any, Dict, List, Literal, Optional
 
@@ -35,56 +34,9 @@ from luxar.gsplats.gsplat_data import (
     GSplatData,
     SubstitutiveLevel,
 )
+from luxar.gsplats.io._archive import extract_compressed_zarr
 
 __all__ = ["migrate_format", "detect_legacy_format"]
-
-
-def _extract_compressed_zarr(compressed_path: Path) -> Path:
-    """Extract compressed zarr archive to temporary directory.
-
-    Mirrors the helper in ``load_gsplats``; duplicated here so this
-    module has no inbound dependency on the live loader.
-    """
-    import tarfile
-    import zipfile
-
-    temp_dir = Path(tempfile.mkdtemp(prefix="luxar_gsplat_migrate_"))
-    suffix = compressed_path.suffix
-    if suffix == ".zip" or str(compressed_path).endswith(".gsplats.zarr.zip"):
-        with zipfile.ZipFile(compressed_path, "r") as zip_ref:
-            temp_dir_resolved = Path(temp_dir).resolve()
-            for zip_member in zip_ref.namelist():
-                if "\\" in zip_member or zip_member.startswith("/"):
-                    raise ValueError(
-                        f"Zip member '{zip_member}' has unsafe path separator"
-                    )
-                zip_member_path = (Path(temp_dir) / zip_member).resolve()
-                try:
-                    zip_member_path.relative_to(temp_dir_resolved)
-                except ValueError as exc:
-                    raise ValueError(
-                        f"Zip member '{zip_member}' would escape extraction directory"
-                    ) from exc
-            zip_ref.extractall(temp_dir)
-    elif str(compressed_path).endswith(".tar.gz"):
-        with tarfile.open(compressed_path, "r:gz") as tar_ref:
-            for member in tar_ref.getmembers():
-                member_path = Path(temp_dir) / member.name
-                if not member_path.resolve().is_relative_to(Path(temp_dir).resolve()):
-                    raise ValueError(
-                        f"Tar member '{member.name}' would escape extraction directory"
-                    )
-            tar_ref.extractall(temp_dir)
-    else:
-        raise ValueError(f"Unsupported compression format: {compressed_path}")
-
-    for d in temp_dir.iterdir():
-        if d.is_dir() and d.name.endswith(".gsplats.zarr"):
-            return d
-    children = list(temp_dir.iterdir())
-    if children and children[0].is_dir():
-        return children[0]
-    raise ValueError(f"No .gsplats.zarr directory found in {compressed_path}")
 
 
 def _zarr_tree_has_legacy_lod_attrs(group: zarr.Group) -> bool:
@@ -131,7 +83,7 @@ def detect_legacy_format(input_path: Path) -> str:
         cleanup_temp = None
         try:
             if input_path.is_file():
-                zarr_path = _extract_compressed_zarr(input_path)
+                zarr_path = extract_compressed_zarr(input_path)
                 cleanup_temp = zarr_path.parent
             try:
                 root = zarr.open_group(str(zarr_path), mode="r")
@@ -496,7 +448,7 @@ def migrate_format(
         cleanup_temp = None
         try:
             if input_path.is_file():
-                zarr_path = _extract_compressed_zarr(input_path)
+                zarr_path = extract_compressed_zarr(input_path)
                 cleanup_temp = zarr_path.parent
             root = zarr.open_group(str(zarr_path), mode="r")
             if detected.endswith("-lod-pixel-size"):

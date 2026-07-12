@@ -6,6 +6,39 @@ All notable changes to Luxar are documented in this file.
 
 ### July 2026
 
+#### Security & architecture — external review remediation
+
+- **Archive extraction hardened + de-duplicated**: consolidated the two
+  drifted `_extract_compressed_zarr` helpers into one safe
+  `luxar.gsplats.io._archive.extract_compressed_zarr`. It rejects symlinks,
+  hardlinks, devices and FIFOs (the migrate path previously did not — a
+  malicious `.tar.gz` could escape the temp dir), validates every member before
+  extracting, caps member count / total uncompressed size (archive-bomb guard),
+  and removes the temp dir on any failure. The symlink-escape test now also
+  covers the `migrate-format` path.
+- **Security & layer checks now gate CI**: `bandit` (medium+), `import-linter`
+  (domain layers `gsplats`/`io`/`core`/`encoding` must not import `luxar.cli`),
+  and a Python/viewer version-consistency check run in `hatch run check`,
+  `make check-all`, and CI. Rust `cargo test` and a new Go `go vet`/`build`/
+  `test` job also gate PRs (browser E2E stays opt-in).
+- **Volume / OME-Zarr loading moved out of the CLI**: `load_volume`, the
+  zarr/OME-Zarr discovery helpers, and dimension inference now live in
+  `luxar.io.volume`, `luxar.io.ome_zarr`, and `luxar.core.dimension_inference`;
+  the domain denoise pipeline no longer imports upward into `luxar.cli`.
+  `load_volume` raises a domain `ImportError` (the CLI converts it to a clean
+  exit) instead of leaking `typer.Exit` to programmatic callers.
+- **`import luxar` is lightweight again**: GSplat re-exports resolve lazily
+  (PEP 562), so importing the base package no longer eagerly loads torch/scipy.
+  The gsplats optional-import guard now re-raises internal import errors instead
+  of masking them as "optional dependency missing".
+- **CORS removed from same-origin bundles**: the exported `serve.py` and the
+  native Go launcher no longer emit a wildcard `Access-Control-Allow-Origin` —
+  the viewer and its data are same-origin, so it only widened exposure. The
+  `luxar serve` LAN-exposure warning now correctly fires when binding
+  `0.0.0.0` (all interfaces) with wildcard CORS.
+- **Docs**: reconciled remaining `v3.1` references to the current `v3.2`
+  `.gsplats.zarr` format (writer output, migration targets).
+
 #### Added — GSIP: `gsplat filter` toolbox + `gsplat convert` appearance options
 
 - **Why**: exporting background-suppression experiments from the neuromast

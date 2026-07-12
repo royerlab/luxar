@@ -89,7 +89,8 @@ dev = [
     "mypy>=1.5.0",
     "types-PyYAML>=6.0.12",
     "pre-commit>=3.3.0",
-    "bandit[toml]>=1.7.5"
+    "bandit[toml]>=1.7.5",
+    "import-linter>=2.0"
 ]
 io = [
     "tifffile>=2023.1.0",
@@ -229,9 +230,17 @@ lint = [
     "ruff check packages/luxar/src",
     "mypy packages/luxar/src/luxar"
 ]
+security = "bandit -r packages/luxar/src/luxar -c pyproject.toml --severity-level medium --confidence-level medium -q"
+# Enforce layer direction: domain (gsplats/io/core/encoding) must not import cli.
+check-imports = "lint-imports"
+# Assert Python __version__ and viewer package.json describe the same release.
+check-versions = "python scripts/check_version_consistency.py"
 check = [
     "format",
     "lint",
+    "check-imports",
+    "check-versions",
+    "security",
     "test-cov"
 ]
 
@@ -471,8 +480,34 @@ fail_under = 80
 [tool.coverage.html]
 directory = "coverage/python/htmlcov"
 
+[tool.importlinter]
+root_package = "luxar"
+# Test modules colocated under domain packages may import the CLI to exercise
+# CLI behaviour; the contract targets production code only.
+exclude_type_checking_imports = true
+
+[[tool.importlinter.contracts]]
+name = "Domain layers must not import the CLI"
+type = "forbidden"
+source_modules = [
+    "luxar.gsplats",
+    "luxar.io",
+    "luxar.core",
+    "luxar.encoding",
+]
+forbidden_modules = ["luxar.cli"]
+# CLI-behaviour tests colocated under domain packages legitimately import the
+# CLI (they drive/monkeypatch CLI commands); ignore test-module edges only, so
+# the contract still catches any production domain -> CLI import.
+ignore_imports = [
+    "luxar.**.tests.** -> luxar.cli.**",
+]
+
 [tool.bandit]
-exclude_dirs = ["tests", "test_*.py"]
+# Exclude tests and the demo scripts: demos are example programs that download
+# public datasets (urlopen B310) and load their own pickled artifacts (B301) —
+# not shipped library code paths, so they are out of scope for the gate.
+exclude_dirs = ["tests", "test_*.py", "demos"]
 skips = ["B101"]  # Skip assert_used test
 
 [tool.ruff]

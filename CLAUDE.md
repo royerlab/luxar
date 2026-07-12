@@ -376,7 +376,7 @@ luxar gsplat cal volume.tiff cal.json --floor none               # legacy (no fl
 
 # Canonical end-to-end pipeline: cal → fit (at K*) → lod (--recipe flat|stream|tiles|overview|adaptive|levels)
 # `lod` operates on a pre-fitted .gsplats.zarr (output of `fit`); use `cal` upstream
-# to pick K* in a principled way. .gsplats.zarr is format v3.1 (a node tree —
+# to pick K* in a principled way. .gsplats.zarr is format v3.2 (a node tree —
 # a detached scene gsplat-node subtree the viewer loads directly) — see
 # docs/specs/GSPLATS_ZARR_FORMAT.md.
 
@@ -498,7 +498,7 @@ luxar gsplat lod in.gsplats.zarr out.gsplats.zarr --recipe levels --coarsen-dims
 # fills the screen and coarser levels step in as it shrinks (the viewer anchors to
 # the live viewport, so it self-calibrates on any monitor — no threshold knob).
 
-# Migrate legacy .gsplats.zarr layouts (v1.0 / v1.1 / pre-v2.0 substitutive dir / v2.0 matrix) → v3.1
+# Migrate legacy .gsplats.zarr layouts (v1.0 / v1.1 / pre-v2.0 substitutive dir / v2.0 matrix) → v3.2
 luxar gsplat migrate-format legacy.gsplats.zarr v3.gsplats.zarr               # single file
 luxar gsplat migrate-format old_pyr/ v3.gsplats.zarr                          # substitutive directory
 

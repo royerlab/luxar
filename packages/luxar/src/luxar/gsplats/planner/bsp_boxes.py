@@ -110,7 +110,11 @@ def plan_partition(
         # drifts the split by up to (origin mod cell) voxels off the centroid (M8).
         base = (origin // c) * c
         cut = int(
-            np.clip(base + (cell_idx + 1) * c, origin + min_leaf, origin + dims[ax] - min_leaf)
+            np.clip(
+                base + (cell_idx + 1) * c,
+                origin + min_leaf,
+                origin + dims[ax] - min_leaf,
+            )
         )
         lo, hi = list(box), list(box)
         lo[2 * ax + 1] = cut

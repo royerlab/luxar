@@ -63,6 +63,7 @@ vi.mock('../../../data/scene-loader-manager', () => {
     SceneLoaderManager: {
       getInstance: vi.fn().mockReturnValue({
         createLoader: vi.fn().mockReturnValue(mockLoader),
+        createLoaderAsync: vi.fn().mockResolvedValue(mockLoader),
         getLoader: vi.fn().mockReturnValue(mockLoader),
         getDefaultLoader: vi.fn(() => (isDisposed ? null : mockLoader)),
         destroyAll: vi.fn(() => {

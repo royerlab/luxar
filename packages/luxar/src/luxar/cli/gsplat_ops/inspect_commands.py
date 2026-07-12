@@ -498,7 +498,7 @@ def quick_view(
             check_viewer_built,
             find_available_port,
         )
-        from luxar.gsplats.io.load_gsplats import _extract_compressed_zarr
+        from luxar.gsplats.io._archive import extract_compressed_zarr
 
         # Check viewer is built
         if not check_viewer_built():
@@ -514,7 +514,7 @@ def quick_view(
             # the only path that supports partition/nested roots.
             if str(path).endswith((".zip", ".tar.gz")):
                 aprint("Extracting compressed dataset...")
-                serve_target = _extract_compressed_zarr(path)
+                serve_target = extract_compressed_zarr(path)
                 temp_dir = serve_target.parent
             elif path.is_dir():
                 serve_target = path
@@ -779,7 +779,7 @@ def _print_gsplat_tree_summary(path: Path) -> None:
 
     import zarr
 
-    from luxar.gsplats.io.load_gsplats import _extract_compressed_zarr
+    from luxar.gsplats.io._archive import extract_compressed_zarr
     from luxar.gsplats.tree import (
         GSplatLodGroup,
         GSplatPartition,
@@ -793,7 +793,7 @@ def _print_gsplat_tree_summary(path: Path) -> None:
     tmp = None
     try:
         if path.is_file():  # compressed archive
-            zarr_path = _extract_compressed_zarr(path)
+            zarr_path = extract_compressed_zarr(path)
             tmp = zarr_path.parent
         root = zarr.open_group(str(zarr_path), mode="r")
         node = read_gsplat_node(root, root)

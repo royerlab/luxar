@@ -307,7 +307,9 @@ class _SplatArrayMixin:
         """
         ax = self._resolve_axes(spatial_axes)
         if group_axes is None:
-            grp = np.array([d for d in range(self.ndim) if d not in set(ax.tolist())], dtype=int)
+            grp = np.array(
+                [d for d in range(self.ndim) if d not in set(ax.tolist())], dtype=int
+            )
         else:
             grp = np.asarray(list(group_axes), dtype=int)
         spatial = self.centers[:, ax].astype(np.float64)
@@ -1299,8 +1301,12 @@ class GSplatData(_SplatArrayMixin):
         # -- Mass (amplitude * volume)
         if mass_min is not None or mass_max is not None:
             m = self.masses()
-            mmin = self._resolve_threshold(mass_min, mass_normalized, m, mass_percentile)
-            mmax = self._resolve_threshold(mass_max, mass_normalized, m, mass_percentile)
+            mmin = self._resolve_threshold(
+                mass_min, mass_normalized, m, mass_percentile
+            )
+            mmax = self._resolve_threshold(
+                mass_max, mass_normalized, m, mass_percentile
+            )
             if mmin is not None:
                 mask &= m >= mmin
                 criteria["mass_min"] = mmin
@@ -2205,8 +2211,9 @@ class GSplatData(_SplatArrayMixin):
             )
         )
 
-        # One authoring path: serialize this dataset's node tree to v3.0 via the
-        # shared walker (the same machinery the scene compiler uses for leaves).
+        # One authoring path: serialize this dataset's node tree to the current
+        # format (v3.2) via the shared walker (the same machinery the scene
+        # compiler uses for leaves).
         # Multi-substitutive → a kind=lod group whose per-level coverage_fraction is
         # derived here (sqrt(N_i/N_finest)); a single level is a bare leaf.
         from luxar.gsplats.tree import tree_from_substitutive_levels

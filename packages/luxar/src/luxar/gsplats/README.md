@@ -730,7 +730,7 @@ matrix = make_lod_pyramid(
 ### CLI
 
 ```bash
-# One command, one `--recipe` flag (REQUIRED); output is a standalone v3.1 .gsplats.zarr.
+# One command, one `--recipe` flag (REQUIRED); output is a standalone v3.2 .gsplats.zarr.
 # flat / stream — single leaf, optionally with an additive (prefix-sum) ladder
 luxar gsplat lod fit.gsplats.zarr stream.gsplats.zarr --recipe stream --n-lods 4
 luxar gsplat lod fit.gsplats.zarr out.gsplats.zarr --recipe stream --method self_energy   # cheap O(N log N)
@@ -741,14 +741,14 @@ luxar gsplat lod fit.gsplats.zarr out.gsplats.zarr --recipe stream -m mass -b co
 luxar gsplat lod fit.gsplats.zarr part.gsplats.zarr --recipe tiles --max-elements 250000
 luxar gsplat lod fit.gsplats.zarr ms.gsplats.zarr --recipe overview --compression-factor 8
 
-# levels — synthesised representative levels; v3.1 kind=lod group
+# levels — synthesised representative levels; v3.2 kind=lod group
 luxar gsplat lod fit.gsplats.zarr levels.gsplats.zarr --recipe levels -L 3 -K 4
 luxar gsplat lod fit.gsplats.zarr pyramid.gsplats.zarr --recipe levels -K 4 -L 3 --n-lods 4
 
 # Collapse any tree (LOD/partition/nested) into one flat matrix-shaped leaf
 luxar gsplat flatten partitioned.gsplats.zarr flat.gsplats.zarr
 
-# Migrate legacy v1.0 / v1.1 / v2.0 / pre-v2.0 substitutive-directory layouts → v3.1
+# Migrate legacy v1.0 / v1.1 / v2.0 / pre-v2.0 substitutive-directory layouts → v3.2
 luxar gsplat migrate-format legacy.gsplats.zarr v3.gsplats.zarr
 ```
 
@@ -887,7 +887,7 @@ with LuxarZarrCompiler('scene.luxar.zarr') as compiler:
 > `coverage_fraction` thresholds derived as `sqrt(N_i / N_finest)` from the
 > per-level splat counts (a dimensionless, viewport-relative value in
 > `[0, 1]`; coarsest = 0.0, finest = 1.0), so the viewer view-switches
-> between levels identically on any monitor. In v3.1 a saved `.gsplats.zarr`
+> between levels identically on any monitor. In v3.2 a saved `.gsplats.zarr`
 > is already a `kind=lod` group on disk; scene embedding grafts that subtree
 > directly. No substitutive work is discarded. Pass `lod_group=False` to
 > collapse to the finest level, or `lod_group=dict(coverage_fractions=[...])`
@@ -1151,7 +1151,7 @@ gsplats/
 │   ├── save_gsplats.py            # Save GSplatData to .gsplats.zarr
 │   ├── load_gsplats.py            # Load GSplatData from .gsplats.zarr
 │   ├── inspect_gsplats.py         # Inspect and summarize .gsplats.zarr files
-│   └── migrate.py                 # Migrate legacy v1.0 / v1.1 / v2.0 / substitutive-dir layouts → v3.1
+│   └── migrate.py                 # Migrate legacy v1.0 / v1.1 / v2.0 / substitutive-dir layouts → v3.2
 │
 ├── batch/                         # HPC batch fitting (Slurm integration)
 │   ├── manifest.py                # Batch job manifest management

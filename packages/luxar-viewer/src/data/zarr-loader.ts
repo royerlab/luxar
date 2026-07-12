@@ -40,8 +40,10 @@ export async function loadScene(
   const manager = SceneLoaderManager.getInstance();
 
   // Always create a fresh scene loader for each load to ensure clean state.
-  // This disposes any existing loader and its connections first.
-  const sceneLoader = manager.createLoader(loaderId, config);
+  // Await disposal of any existing loader first (caching-store teardown + OPFS
+  // metadata flush fully drain before the replacement is built), so a dataset
+  // switch never races the previous loader's late async teardown.
+  const sceneLoader = await manager.createLoaderAsync(loaderId, config);
 
   try {
     // Load the scene

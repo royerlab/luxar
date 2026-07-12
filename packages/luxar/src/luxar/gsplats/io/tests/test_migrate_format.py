@@ -573,11 +573,13 @@ class TestMigrateFormat:
         data = load_gsplats(out)
         # Centers migrate through AUTO (uint16 per-axis fixed-point) — near-lossless.
         np.testing.assert_allclose(
-            data.additive_sublods[0].centers, src_centers_0,
+            data.additive_sublods[0].centers,
+            src_centers_0,
             atol=float(np.ptp(src_centers_0, axis=0).max()) / 65535 * 2,
         )
         np.testing.assert_allclose(
-            data.additive_sublods[1].centers, src_centers_1,
+            data.additive_sublods[1].centers,
+            src_centers_1,
             atol=float(np.ptp(src_centers_1, axis=0).max()) / 65535 * 2,
         )
 
@@ -630,7 +632,8 @@ class TestMigrateFormat:
         sub = data.additive_sublods[0]
         # Centers migrate through AUTO (uint16 per-axis fixed-point) — near-lossless.
         np.testing.assert_allclose(
-            sub.centers, src_centers,
+            sub.centers,
+            src_centers,
             atol=float(np.ptp(src_centers, axis=0).max()) / 65535 * 2,
         )
         # Amplitudes go through log-scalar quantization — within ~1% of value

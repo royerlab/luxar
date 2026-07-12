@@ -218,18 +218,14 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 DATA_DIR_NAME = "{data_dir_name}"
 
 
-class CORSHandler(http.server.SimpleHTTPRequestHandler):
-    """HTTP handler with CORS headers for cross-origin zarr access."""
+class QuietHandler(http.server.SimpleHTTPRequestHandler):
+    """Serves the viewer and its zarr data from one origin.
 
-    def end_headers(self):
-        self.send_header("Access-Control-Allow-Origin", "*")
-        self.send_header("Access-Control-Allow-Methods", "GET, HEAD, OPTIONS")
-        self.send_header("Access-Control-Allow-Headers", "*")
-        super().end_headers()
-
-    def do_OPTIONS(self):
-        self.send_response(200)
-        self.end_headers()
+    No cross-origin headers: the viewer (/viewer) and its data are served from
+    the same host:port, differing only by path, so same-origin fetches need
+    none. A wildcard cross-origin policy here would only widen exposure —
+    letting any web page read the locally-served scene if it discovered the port.
+    """
 
     def log_message(self, format, *args):
         """Suppress request logging for cleaner output."""
@@ -262,7 +258,7 @@ def main():
         print("Error: No available port found near {{}}".format(args.port))
         sys.exit(1)
 
-    handler = partial(CORSHandler, directory=str(SCRIPT_DIR))
+    handler = partial(QuietHandler, directory=str(SCRIPT_DIR))
     server = http.server.HTTPServer(("127.0.0.1", port), handler)
 
     data_url = "http://127.0.0.1:{{}}/{{}}".format(port, DATA_DIR_NAME)

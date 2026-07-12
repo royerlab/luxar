@@ -95,9 +95,7 @@ class TestSpatialMetrics:
 
 class TestIsolation:
     def _cluster_plus_isolated(self) -> GSplatData:
-        pts = np.array(
-            [[0, 0, 0], [1, 0, 0], [0, 1, 0], [50, 50, 50]], dtype=float
-        )
+        pts = np.array([[0, 0, 0], [1, 0, 0], [0, 1, 0], [50, 50, 50]], dtype=float)
         return _make(pts, np.full((4, 3), 1.0), np.ones(4))
 
     def test_nn_distance_flags_isolated(self):
@@ -139,8 +137,9 @@ class TestPercentile:
 
     def test_filter_by_amplitude_percentile(self):
         amps = np.linspace(0.1, 1.0, 100)
-        d = _make(np.random.default_rng(1).random((100, 3)) * 10,
-                  np.full((100, 3), 1.0), amps)
+        d = _make(
+            np.random.default_rng(1).random((100, 3)) * 10, np.full((100, 3), 1.0), amps
+        )
         out = d.filter_by(amplitude_min=90, amplitude_percentile=True)
         assert out.n_splats == 10
 

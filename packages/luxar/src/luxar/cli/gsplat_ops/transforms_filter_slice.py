@@ -154,6 +154,7 @@ def run_filter_dataset(
                     if n_filtered
                     else 0.0
                 )
+
                 def pct(a: float, b: float) -> float:
                     return 100.0 * (1.0 - a / b) if b > 0 else 0.0
 
@@ -174,8 +175,16 @@ def run_filter_dataset(
                 scl = filtered_data.scale(axes=axes)
                 hp_v, hp_p = parse_threshold(soft_highpass, "soft-highpass")
                 lp_v, lp_p = parse_threshold(soft_lowpass, "soft-lowpass")
-                hp = float(np.percentile(scl, hp_v)) if hp_p and hp_v is not None else hp_v
-                lp = float(np.percentile(scl, lp_v)) if lp_p and lp_v is not None else lp_v
+                hp = (
+                    float(np.percentile(scl, hp_v))
+                    if hp_p and hp_v is not None
+                    else hp_v
+                )
+                lp = (
+                    float(np.percentile(scl, lp_v))
+                    if lp_p and lp_v is not None
+                    else lp_v
+                )
                 with asection("Soft reweighting"):
                     pre_mass = float(filtered_data.masses().sum())
                     filtered_data = filtered_data.soft_scale_filter(

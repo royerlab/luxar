@@ -147,7 +147,9 @@ def build() -> None:
     # Build using torch's JIT compilation
     # This compiles and loads the module, placing .so in a cache dir
     # We'll then copy it to the cuda/ directory
-    load(
+    # cpp_extension.load JIT-compiles our own CUDA source here; it is not
+    # torch.load deserialization of untrusted data (bandit B614 false positive).
+    load(  # nosec B614
         name="cuda_splatting_backend",
         sources=[str(s) for s in sources],
         extra_cflags=extra_cflags,

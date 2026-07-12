@@ -118,9 +118,7 @@ class TestCompilerWithDtypes:
             # HDR detection routes to the per-channel true-log encoding
             # (2026-07 policy: AUTO -> geolog_perchannel_u16, decode -> f32).
             assert colors_arr.dtype == np.uint16
-            assert (
-                colors_arr.attrs["encoding"]["name"] == "geolog_perchannel_u16"
-            )
+            assert colors_arr.attrs["encoding"]["name"] == "geolog_perchannel_u16"
 
             # Check encoding metadata
             enc = colors_arr.attrs.get("encoding", {})

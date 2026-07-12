@@ -96,6 +96,15 @@ else:
 
         fit_tiled_gaussian_splats = fit_tiled
     except ImportError as exc:
+        # Only treat a genuinely MISSING OPTIONAL dependency (torch/scipy) as
+        # "gsplats extra not installed" and fall back to stubs. An internal
+        # import error (a typo'd/moved symbol inside luxar.gsplats.*) must
+        # propagate loudly instead of masquerading as a missing extra — else a
+        # real packaging bug is silently hidden behind the install hint.
+        _OPTIONAL_ROOTS = ("torch", "scipy")
+        _missing = (exc.name or "").split(".", 1)[0]
+        if _missing not in _OPTIONAL_ROOTS:
+            raise
         _GSPLATS_IMPORT_ERROR = exc
 
         def _raise_gsplats_import_error(_exc: ImportError = exc) -> None:
