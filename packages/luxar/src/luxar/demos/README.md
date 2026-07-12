@@ -616,6 +616,17 @@ Gaussian-splats a real 3D reconstruction of the Milky Way's interstellar dust ar
 
 ---
 
+#### demo_gsplats_3d_visible_human_head.py - Visible Human Head (Real-Color Anatomy)
+The human head Gaussian-splatted in **true photographic color** from the NLM Visible Human Project cryosections — actual photographs of a frozen cadaver sliced at 1 mm, so brain, skull, muscle and vasculature appear in natural anatomical color (not a false-color transfer function). The splat pipeline applied to real photographic volumetric anatomy.
+
+**Run**: `hatch run python packages/luxar/src/luxar/demos/demo_gsplats_3d_visible_human_head.py [--recompute]`
+
+**Requires**: Nothing extra by default — ships a precomputed fit + per-splat colors via Git LFS. With `--recompute` (or if the LFS assets aren't pulled) it auto-downloads the 377 color head slices (~1.1 GB) to `~/.cache/luxar/gsplats_visible_human_head/`, builds the masked RGB volume, fits luminance (GPU), and samples per-splat colors.
+
+**Demonstrates**: True-color volumetric anatomy → Gaussian splats via a **single luminance fit + per-splat color sampling** (one fit, real photographic color — vs. the scalar-intensity-plus-colormap microscopy demos), warm-vs-blue tissue masking to drop the frozen-gel background, Neutral tone-mapping, self-contained download → mask → fit → cache-processed bootstrap. Data: [NLM Visible Human Project](https://www.nlm.nih.gov/research/visible/visible_human.html) (Male color cryosections, head subset; public domain).
+
+---
+
 #### demo_gsplats_lod_tribolium.py - Adaptive Level of Detail on the Tribolium Embryo
 Takes the precomputed Tribolium embryo fit and builds an **adaptive Level of Detail (LOD)** pyramid on it — the embryo is stored at several resolutions, and the viewer shows the simplest one that still looks right at the current zoom. This demo uses *substitutive* LOD (each coarser level *replaces* the finer one with fewer, larger splats), and ships it with per-level debug colors (green→amber→red, finest→coarsest) so the viewer's pixel-size level-switching is visible as you zoom. The scaled-up companion to `examples/gsplats_lod_example.py`.
 
@@ -926,6 +937,7 @@ hatch run python packages/luxar/src/luxar/demos/demo_gsplats_2d_cmu1_pathology.p
 
 # --- GSplats: 3D ---
 hatch run python packages/luxar/src/luxar/demos/demo_gsplats_3d_milky_way_dust.py
+hatch run python packages/luxar/src/luxar/demos/demo_gsplats_3d_visible_human_head.py
 hatch run python packages/luxar/src/luxar/demos/demo_gsplats_3d_organoid_dapi_nuclei.py
 hatch run python packages/luxar/src/luxar/demos/demo_gsplats_3d_organoid_multichannel.py
 hatch run python packages/luxar/src/luxar/demos/demo_gsplats_3d_kidney_multichannel_toggles.py
