@@ -35,7 +35,7 @@ import pandas as pd
 from arbol import aprint, asection
 
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
-from luxar.demos import launch_viewer
+from luxar.demos import launch_viewer, require_local_data
 from luxar.utils._umap_utils import (
     attribute_to_color,
     build_legend_html,
@@ -59,7 +59,7 @@ def load_human_umap_data() -> tuple[np.ndarray, dict, dict]:
         - category_maps: dict of attribute name -> list of category labels
     """
     with asection("Loading Human 3D UMAP Data"):
-        data_path = get_data_dir() / "3d_umap_coords_human.parquet"
+        data_path = require_local_data(get_data_dir() / "3d_umap_coords_human.parquet")
         aprint(f"Loading from {data_path}...")
 
         df = pd.read_parquet(data_path)

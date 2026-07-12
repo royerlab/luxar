@@ -28,7 +28,7 @@ import numpy as np
 from arbol import aprint, asection
 
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
-from luxar.demos import launch_viewer
+from luxar.demos import cache_computed, cached_download, launch_viewer
 from luxar.utils.paths import get_demos_output_dir
 
 # =============================================================================
@@ -112,7 +112,7 @@ def _classify_genre(genre: str) -> str:
 
 
 def load_spotify_data(
-    cache_dir: Path, sample_size: int = DEFAULT_SAMPLE_SIZE
+    sample_size: int = DEFAULT_SAMPLE_SIZE,
 ) -> tuple[np.ndarray, list[str], list[str], list[str], np.ndarray]:
     """Load Spotify tracks dataset.
 
@@ -121,13 +121,8 @@ def load_spotify_data(
     """
     import pandas as pd
 
-    csv_path = cache_dir / "dataset.csv"
-
-    if not csv_path.exists():
-        from luxar.utils.download import robust_download
-
-        with asection("Downloading Spotify dataset (~20 MB)"):
-            robust_download(DATASET_URL, csv_path)
+    with asection("Downloading Spotify dataset (~20 MB)"):
+        csv_path = cached_download(DATASET_URL, "spotify", "dataset.csv")
 
     with asection("Loading dataset"):
         df = pd.read_csv(csv_path)
@@ -174,20 +169,11 @@ def load_spotify_data(
 # =============================================================================
 
 
-def reduce_to_3d(
-    features: np.ndarray,
-    cache_path: Path | None = None,
-) -> np.ndarray:
-    """Reduce audio features to 3D with UMAP.
+def reduce_to_3d(features: np.ndarray) -> np.ndarray:
+    """Reduce audio features to 3D with UMAP (pure compute; caching is external).
 
     Returns centered 3D positions.
     """
-    if cache_path and cache_path.exists():
-        with asection("Loading cached UMAP"):
-            positions = np.load(cache_path)["positions"]
-            aprint(f"✓ Loaded {len(positions):,} positions from cache")
-            return positions
-
     from umap import UMAP
 
     with asection(
@@ -208,11 +194,6 @@ def reduce_to_3d(
 
         aprint(f"✓ UMAP complete: {positions.shape}")
 
-    if cache_path:
-        cache_path.parent.mkdir(parents=True, exist_ok=True)
-        np.savez(cache_path, positions=positions)
-        aprint(f"✓ Cached to {cache_path}")
-
     return positions
 
 
@@ -224,26 +205,20 @@ def reduce_to_3d(
 def generate_spotify_landscape(
     output_path: Path,
     sample_size: int = DEFAULT_SAMPLE_SIZE,
-    cache_dir: Path | None = None,
 ) -> int:
     """Generate 3D landscape of Spotify tracks."""
-    if cache_dir is None:
-        cache_dir = Path.home() / ".cache" / "luxar" / "spotify"
-    cache_dir.mkdir(parents=True, exist_ok=True)
-
     # Load data
-    features, track_names, artists, genres, popularity = load_spotify_data(
-        cache_dir, sample_size
-    )
+    features, track_names, artists, genres, popularity = load_spotify_data(sample_size)
     n_tracks = len(track_names)
 
     if n_tracks == 0:
         aprint("❌ No tracks loaded")
         return 0
 
-    # UMAP
-    umap_cache = cache_dir / f"umap_{n_tracks}.npz"
-    positions = reduce_to_3d(features, cache_path=umap_cache)
+    # UMAP — cached under ~/.cache/luxar/spotify, keyed on the track count AND the
+    # feature set (bump the key/version if AUDIO_FEATURES or normalization change).
+    umap_key = f"umap3d_n{n_tracks}_f{len(AUDIO_FEATURES)}"
+    positions = cache_computed("spotify", umap_key, lambda: reduce_to_3d(features))
 
     # Generate visualization
     with asection("Generating visualization"):
@@ -359,13 +334,11 @@ def main() -> None:
         aprint("Install with: pip install luxar[demos]")
         sys.exit(1)
 
-    cache_dir = Path.home() / ".cache" / "luxar" / "spotify"
-
     if "--no-serve" in sys.argv:
         output_path = get_demos_output_dir() / "spotify_tracks.luxar.zarr"
         try:
             n_tracks = generate_spotify_landscape(
-                output_path, sample_size=sample_size, cache_dir=cache_dir
+                output_path, sample_size=sample_size
             )
             if n_tracks == 0:
                 return
@@ -384,7 +357,7 @@ def main() -> None:
 
         try:
             n_tracks = generate_spotify_landscape(
-                output_path, sample_size=sample_size, cache_dir=cache_dir
+                output_path, sample_size=sample_size
             )
             if n_tracks == 0:
                 return

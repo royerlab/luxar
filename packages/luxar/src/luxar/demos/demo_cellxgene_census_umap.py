@@ -46,7 +46,7 @@ import numpy as np
 from arbol import aprint, asection
 
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
-from luxar.demos import launch_viewer, parse_demo_flags
+from luxar.demos import launch_viewer, parse_demo_flags, require_local_data
 from luxar.utils._umap_utils import attribute_to_color
 from luxar.utils.paths import get_demos_output_dir
 
@@ -91,7 +91,9 @@ def normalize_coords(coords: np.ndarray, span: float = 140.0) -> np.ndarray:
 
 
 def load_cache(path: Path):
-    z = np.load(path, allow_pickle=False)
+    # Gate the shipped LFS npz so an unpulled pointer gives the "git lfs pull"
+    # message instead of a cryptic np.load zip error.
+    z = np.load(require_local_data(path), allow_pickle=False)
     labels = json.loads(str(z["labels_json"]))
     codes = {f"{c}": z[f"{c}_code"] for c, _ in COLORINGS}
     return z["coords"], codes, labels
