@@ -2279,17 +2279,20 @@ class GSplatData(_SplatArrayMixin):
     def center_at_centroid(self) -> "GSplatData":
         """Center the splats at their center of mass (amplitude-weighted centroid).
 
-        The centroid is computed as the amplitude-weighted average of splat centers,
-        which corresponds to the center of mass of the represented density.
+        The centroid is the amplitude-weighted average of splat centers (the
+        center of mass of the represented density). Only the **spatial**
+        (non-degenerate) axes are re-origined: a zero-variance categorical axis
+        (a per-timepoint time axis, a channel axis) keeps its original
+        coordinates, because centering it would push integer timepoints to
+        fractional offsets and misalign the viewer's slice navigator. For pure
+        spatial data (no degenerate axis) every axis is centered, as before.
 
         Returns:
-            New GSplatData centered at origin (amplitude-weighted centroid at [0, 0, ...])
+            New GSplatData with its spatial centroid at the origin.
 
         Example:
             >>> # Center splats at origin for easier viewing
             >>> centered = data.center_at_centroid()
-            >>> # Amplitude-weighted centroid is now at origin
-            >>> centroid = (centered.centers.T @ centered.amplitudes) / centered.amplitudes.sum()
         """
         # Empty data: nothing to center. Return a structure-preserving copy
         # (translate by zero) rather than computing mean() of an empty array,
@@ -2304,8 +2307,13 @@ class GSplatData(_SplatArrayMixin):
         else:
             centroid = self.centers.mean(axis=0)
 
-        # Translate to center at origin
-        return self.translate(-centroid)
+        # Shift only the spatial (non-degenerate) axes; leave categorical axes
+        # (zero covariance extent — e.g. a stacked-time axis) at their
+        # coordinates. Mirrors scale()/eccentricities()/isolation grouping.
+        shift = np.zeros(self.ndim, dtype=np.float64)
+        spatial = self._nondegenerate_axes()
+        shift[spatial] = np.asarray(centroid, dtype=np.float64)[spatial]
+        return self.translate(-shift)
 
     def scale_intensity(self, factor: float) -> "GSplatData":
         """Scale all splat amplitudes by a multiplicative factor.

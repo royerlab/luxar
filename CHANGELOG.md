@@ -6,6 +6,22 @@ All notable changes to Luxar are documented in this file.
 
 ### July 2026
 
+#### Fixed — `center_at_centroid` / `gsplat convert --center` no longer centers categorical axes
+
+- **Why**: `center_at_centroid()` subtracted the amplitude-weighted centroid from
+  **every** dimension, including a non-spatial categorical axis (a per-timepoint
+  time axis, a channel axis). On an nD timelapse that pushed the integer
+  timepoints (0..T-1) to fractional offsets, so the viewer's slice navigator —
+  which steps in integer voxels — landed *between* timepoints and showed a
+  partial/sparse splat set (looked like corruption). `gsplat convert` centers by
+  default, so every converted timelapse scene was affected.
+- **Fix**: `center_at_centroid()` now shifts only the **non-degenerate (spatial)**
+  axes (via `_nondegenerate_axes()` — the same zero-covariance test used by
+  `scale()`/`eccentricities()`/isolation grouping), leaving categorical axes at
+  their coordinates. Pure spatial data (no degenerate axis) is centered on every
+  axis exactly as before. Affects `gsplat convert --center`,
+  `gsplat transform --center`, and the Python API.
+
 #### Security & architecture — external review remediation
 
 - **Archive extraction hardened + de-duplicated**: consolidated the two
