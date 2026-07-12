@@ -202,6 +202,55 @@ class TestCenterAtCentroid:
         centered = gs.center_at_centroid()
         assert np.allclose(centered.centers.mean(axis=0), 0.0, atol=1e-5)
 
+    @staticmethod
+    def _iso3d(center, sigma=2.0):
+        from luxar.gsplats.utils.trils import pack_tril
+
+        L = np.zeros((1, 3, 3))
+        for i in range(3):
+            L[0, i, i] = sigma
+        return GSplatData(
+            centers=np.array([center], dtype=np.float32),
+            amplitudes=np.array([1.0], dtype=np.float32),
+            cholesky_factors=pack_tril(L).astype(np.float32),
+        )
+
+    def test_pure_3d_all_axes_centered(self):
+        """With real (non-degenerate) covariance on every axis, all axes center
+        — the historical behavior is preserved for spatial data."""
+        from luxar.gsplats.utils.trils import pack_tril
+
+        L = np.zeros((2, 3, 3))
+        for i in range(3):
+            L[:, i, i] = 2.0
+        gs = GSplatData(
+            centers=np.array([[0, 0, 0], [10, 10, 10]], dtype=np.float32),
+            amplitudes=np.array([1.0, 1.0], dtype=np.float32),
+            cholesky_factors=pack_tril(L).astype(np.float32),
+        )
+        centered = gs.center_at_centroid()
+        assert np.allclose(centered.centers.mean(axis=0), 0.0, atol=1e-5)
+
+    def test_leaves_categorical_time_axis_uncentered(self):
+        """A zero-variance time axis (combine_as_new_dimension, sigma=0) keeps
+        its integer coordinates; only the spatial centroid is re-origined.
+
+        Regression guard for the timelapse-centering bug that pushed integer
+        timepoints to fractional offsets and misaligned the slice navigator.
+        """
+        t0 = self._iso3d([10.0, 20.0, 30.0])
+        t1 = self._iso3d([10.0, 20.0, 30.0])
+        gs = GSplatData.combine_as_new_dimension(
+            [t0, t1], values=[0.0, 1.0], sigma=0.0
+        )
+        centered = gs.center_at_centroid()
+        # Time axis (dim3) must be untouched — still exactly {0, 1}.
+        assert set(np.round(centered.centers[:, 3], 5).tolist()) == {0.0, 1.0}
+        # Spatial centroid (dims 0..2) at the origin.
+        amp = centered.amplitudes
+        sp_centroid = (centered.centers[:, :3].T @ amp) / amp.sum()
+        assert np.allclose(sp_centroid, 0.0, atol=1e-4)
+
 
 # ── Scale intensity ─────────────────────────────────────────
 
