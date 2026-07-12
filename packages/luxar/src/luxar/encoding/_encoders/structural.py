@@ -490,6 +490,25 @@ class StructuralEncoderMixin(BaseEncoderMixin):
             "original_dtype": original_dtype,
         }
 
+    #: CUSTOM-mode dispatch: encoding name -> the handler method that produces
+    #: ``(encoded_data, metadata)``. Replaces a string-keyed if/elif ladder;
+    #: every key must be a valid format-contract encoding name (see
+    #: ``test_custom_dispatch_contract``).
+    _CUSTOM_DISPATCH: dict[str, str] = {
+        "float32": "_custom_passthrough",
+        "float16": "_custom_passthrough",
+        "uint8": "_custom_passthrough",
+        "uint16": "_custom_passthrough",
+        "uint32": "_custom_passthrough",
+        "uint64": "_custom_passthrough",
+        "bounded_scalar_uint8": "_custom_bounded_scalar",
+        "bounded_scalar_uint16": "_custom_bounded_scalar",
+        "log_scalar_uint8": "_custom_log_scalar",
+        "log_scalar_uint16": "_custom_log_scalar",
+        "rgb_uint8": "_custom_rgb",
+        "rgb_uint16": "_custom_rgb",
+    }
+
     def _encode_custom(
         self,
         zarr_group: zarr.Group,
@@ -500,7 +519,11 @@ class StructuralEncoderMixin(BaseEncoderMixin):
         chunks: Optional[tuple] = None,
         compressor: Optional[Any] = None,
     ) -> None:
-        """Encode using explicitly specified encoder.
+        """Encode using an explicitly specified encoder (CUSTOM mode).
+
+        Dispatches ``encoder_name`` through :data:`_CUSTOM_DISPATCH` to a
+        handler that returns ``(encoded_data, metadata)``; the shared tail
+        writes the array and its ``encoding`` attrs.
 
         Args:
             zarr_group: Zarr group to write to
@@ -511,86 +534,12 @@ class StructuralEncoderMixin(BaseEncoderMixin):
             chunks: Optional chunk shape
             compressor: Optional compressor
         """
-        original_dtype = str(data.dtype)
-        metadata: dict[str, Any]
-
-        if encoder_name in ("float32", "float16"):
-            # Passthrough with dtype conversion
-            target_dtype = np.dtype(encoder_name)
-            encoded_data = data.astype(target_dtype)
-            metadata = {"name": encoder_name, "original_dtype": original_dtype}
-
-        elif encoder_name in ("uint8", "uint16", "uint32", "uint64"):
-            # Direct uint conversion (for INDEX)
-            target_dtype = np.dtype(encoder_name)
-            encoded_data = data.astype(target_dtype)
-            metadata = {"name": encoder_name, "original_dtype": original_dtype}
-
-        elif encoder_name in ("bounded_scalar_uint8", "bounded_scalar_uint16"):
-            # Bounded scalar encoding
-            if bounds is None:
-                raise ValueError(f"{encoder_name} requires bounds parameter")
-
-            min_val, max_val = bounds
-            bits = 8 if "uint8" in encoder_name else 16
-            max_int = (2**bits) - 1
-
-            span = max_val - min_val
-            if span == 0:
-                encoded_data = np.zeros_like(
-                    data, dtype=np.uint8 if bits == 8 else np.uint16
-                )
-            else:
-                # round_values=False preserves the custom encoder's historical
-                # truncating quantization (the semantic-type encoders round).
-                encoded_data = self._quantize_normalized_clip(
-                    data,
-                    min_val,
-                    span,
-                    max_int,
-                    np.dtype(np.uint8 if bits == 8 else np.uint16),
-                    round_values=False,
-                )
-
-            metadata = {
-                "name": encoder_name,
-                "min": min_val,
-                "max": max_val,
-                "bits": bits,
-                "original_dtype": original_dtype,
-            }
-
-        elif encoder_name in ("log_scalar_uint8", "log_scalar_uint16"):
-            # Log scalar encoding
-            bits = 8 if "uint8" in encoder_name else 16
-            max_int = (2**bits) - 1
-
-            max_val = float(np.max(data))
-            max_log = float(np.log1p(max_val))
-            log_vals = np.log1p(data)
-            normalized = log_vals / max_log
-            encoded_data = np.clip(normalized * max_int, 0, max_int).astype(
-                np.uint8 if bits == 8 else np.uint16
-            )
-
-            metadata = {
-                "name": encoder_name,
-                "max_log": max_log,
-                "bits": bits,
-                "original_dtype": original_dtype,
-            }
-
-        elif encoder_name in ("rgb_uint8", "rgb_uint16"):
-            # Color encoding (SDR)
-            max_int = 255 if "uint8" in encoder_name else 65535
-            encoded_data = np.clip(data * max_int, 0, max_int).astype(
-                np.uint8 if "uint8" in encoder_name else np.uint16
-            )
-            metadata = {"name": encoder_name, "original_dtype": original_dtype}
-
-        else:
+        handler_name = self._CUSTOM_DISPATCH.get(encoder_name)
+        if handler_name is None:
             raise ValueError(f"Unknown custom encoder: {encoder_name}")
-
+        encoded_data, metadata = getattr(self, handler_name)(
+            data, encoder_name, bounds, str(data.dtype)
+        )
         zarr_group.create_dataset(
             name,
             data=encoded_data,
@@ -599,4 +548,90 @@ class StructuralEncoderMixin(BaseEncoderMixin):
             overwrite=True,
         )
         zarr_group[name].attrs["encoding"] = metadata
+
+    def _custom_passthrough(
+        self,
+        data: np.ndarray,
+        encoder_name: str,
+        bounds: Optional[tuple[float, float]],
+        original_dtype: str,
+    ) -> tuple[np.ndarray, dict[str, Any]]:
+        """float32/float16 + direct uint8/16/32/64: dtype cast, no quantization."""
+        encoded_data = data.astype(np.dtype(encoder_name))
+        return encoded_data, {"name": encoder_name, "original_dtype": original_dtype}
+
+    def _custom_bounded_scalar(
+        self,
+        data: np.ndarray,
+        encoder_name: str,
+        bounds: Optional[tuple[float, float]],
+        original_dtype: str,
+    ) -> tuple[np.ndarray, dict[str, Any]]:
+        """bounded_scalar_uint{8,16}: linear quantize over explicit bounds."""
+        if bounds is None:
+            raise ValueError(f"{encoder_name} requires bounds parameter")
+        min_val, max_val = bounds
+        bits = 8 if "uint8" in encoder_name else 16
+        max_int = (2**bits) - 1
+        span = max_val - min_val
+        if span == 0:
+            encoded_data = np.zeros_like(
+                data, dtype=np.uint8 if bits == 8 else np.uint16
+            )
+        else:
+            # round_values=False preserves the custom encoder's historical
+            # truncating quantization (the semantic-type encoders round).
+            encoded_data = self._quantize_normalized_clip(
+                data,
+                min_val,
+                span,
+                max_int,
+                np.dtype(np.uint8 if bits == 8 else np.uint16),
+                round_values=False,
+            )
+        return encoded_data, {
+            "name": encoder_name,
+            "min": min_val,
+            "max": max_val,
+            "bits": bits,
+            "original_dtype": original_dtype,
+        }
+
+    def _custom_log_scalar(
+        self,
+        data: np.ndarray,
+        encoder_name: str,
+        bounds: Optional[tuple[float, float]],
+        original_dtype: str,
+    ) -> tuple[np.ndarray, dict[str, Any]]:
+        """log_scalar_uint{8,16}: log1p compand then linear quantize."""
+        bits = 8 if "uint8" in encoder_name else 16
+        max_int = (2**bits) - 1
+        max_val = float(np.max(data))
+        max_log = float(np.log1p(max_val))
+        log_vals = np.log1p(data)
+        normalized = log_vals / max_log
+        encoded_data = np.clip(normalized * max_int, 0, max_int).astype(
+            np.uint8 if bits == 8 else np.uint16
+        )
+        return encoded_data, {
+            "name": encoder_name,
+            "max_log": max_log,
+            "bits": bits,
+            "original_dtype": original_dtype,
+        }
+
+    def _custom_rgb(
+        self,
+        data: np.ndarray,
+        encoder_name: str,
+        bounds: Optional[tuple[float, float]],
+        original_dtype: str,
+    ) -> tuple[np.ndarray, dict[str, Any]]:
+        """rgb_uint{8,16}: SDR color quantize (truncating)."""
+        max_int = 255 if "uint8" in encoder_name else 65535
+        encoded_data = np.clip(data * max_int, 0, max_int).astype(
+            np.uint8 if "uint8" in encoder_name else np.uint16
+        )
+        return encoded_data, {"name": encoder_name, "original_dtype": original_dtype}
 

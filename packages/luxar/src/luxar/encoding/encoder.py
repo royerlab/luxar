@@ -8,7 +8,7 @@ The encoder follows a strict priority order:
 4. Dtype Encoding (based on semantic type and mode)
 """
 
-from typing import Any, Literal, Optional, Union
+from typing import Any, Callable, Literal, Optional, Union
 
 import numpy as np
 import zarr
@@ -313,25 +313,29 @@ class ArrayEncoder(
             perchannel_bits: Internal tier override (8/16) forwarded to the
                 Cholesky per-channel log encoders; ``None`` defaults to 8.
         """
+        # CUSTOM mode overrides semantic-type selection with an explicit encoder.
         if mode == EncodingMode.CUSTOM:
             if custom_encoder is None:
                 raise ValueError("CUSTOM mode requires custom_encoder parameter")
-            # Use explicitly specified encoder
             self._encode_custom(
                 zarr_group, name, data, custom_encoder, bounds, chunks, compressor
             )
-        elif semantic_type == SemanticType.COORDINATE:
-            self._encode_coordinate(zarr_group, name, data, mode, chunks, compressor)
-        elif semantic_type == SemanticType.COLOR:
-            self._encode_color(
+            return
+
+        # Registry: semantic type -> the writer that owns it. Each entry closes
+        # over this call's arguments (the writers keep their heterogeneous
+        # signatures) — this table replaces a 10-branch if/elif dispatch.
+        dispatch: dict[SemanticType, Callable[[], None]] = {
+            SemanticType.COORDINATE: lambda: self._encode_coordinate(
+                zarr_group, name, data, mode, chunks, compressor
+            ),
+            SemanticType.COLOR: lambda: self._encode_color(
                 zarr_group, name, data, mode, color_mode, chunks, compressor
-            )
-        elif semantic_type == SemanticType.BOUNDED_SCALAR:
-            self._encode_bounded_scalar(
+            ),
+            SemanticType.BOUNDED_SCALAR: lambda: self._encode_bounded_scalar(
                 zarr_group, name, data, mode, bounds, chunks, compressor
-            )
-        elif semantic_type == SemanticType.POSITIVE_SCALAR:
-            self._encode_positive_scalar(
+            ),
+            SemanticType.POSITIVE_SCALAR: lambda: self._encode_positive_scalar(
                 zarr_group,
                 name,
                 data,
@@ -339,22 +343,26 @@ class ArrayEncoder(
                 positive_scalar_encoding,
                 chunks,
                 compressor,
-            )
-        elif semantic_type == SemanticType.CHOLESKY:
-            self._encode_cholesky(zarr_group, name, data, mode, chunks, compressor)
-        elif semantic_type == SemanticType.CHOLESKY_DIAG:
+            ),
+            SemanticType.CHOLESKY: lambda: self._encode_cholesky(
+                zarr_group, name, data, mode, chunks, compressor
+            ),
             # Cholesky diagonal is positive → generic per-channel log encoding.
-            self._encode_log_perchannel(
+            SemanticType.CHOLESKY_DIAG: lambda: self._encode_log_perchannel(
                 zarr_group, name, data, mode, chunks, compressor, perchannel_bits
-            )
-        elif semantic_type == SemanticType.CHOLESKY_OFFDIAG:
+            ),
             # Cholesky off-diagonal is signed → generic per-channel signed-log.
-            self._encode_signed_log_perchannel(
+            SemanticType.CHOLESKY_OFFDIAG: lambda: self._encode_signed_log_perchannel(
                 zarr_group, name, data, mode, chunks, compressor, perchannel_bits
-            )
-        elif semantic_type == SemanticType.INDEX:
-            self._encode_index(zarr_group, name, data, mode, chunks, compressor)
-        elif semantic_type == SemanticType.UNIT_VECTOR:
-            self._encode_unit_vector(zarr_group, name, data, mode, chunks, compressor)
-        else:
+            ),
+            SemanticType.INDEX: lambda: self._encode_index(
+                zarr_group, name, data, mode, chunks, compressor
+            ),
+            SemanticType.UNIT_VECTOR: lambda: self._encode_unit_vector(
+                zarr_group, name, data, mode, chunks, compressor
+            ),
+        }
+        handler = dispatch.get(semantic_type)
+        if handler is None:
             raise ValueError(f"Unknown semantic type: {semantic_type}")
+        handler()
