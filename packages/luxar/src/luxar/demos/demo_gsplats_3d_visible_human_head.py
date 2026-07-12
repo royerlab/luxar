@@ -104,6 +104,14 @@ PSNR_PATIENCE = 0.1
 # fitted amplitudes far down to keep the core from blowing out to white.
 SCENE_INTENSITY = 0.025
 
+# Physical voxel spacing of the NLM VHM color cryosections: 1.0 mm axial (slice
+# spacing) vs ~0.33 mm in-plane. The renderer treats voxels as cubes, so the
+# slice axis (center column 0, from the (Z, Y, X) fit volume) must be stretched
+# by this ratio to restore the correct anatomical aspect — otherwise the head
+# renders flattened along the vertical (superior–inferior) axis.
+VOXEL_Z_MM = 1.0
+VOXEL_XY_MM = 0.33
+
 FLAGS = parse_demo_flags()
 NO_SERVE = FLAGS["no_serve"]
 SERVE_ONLY = FLAGS["serve_only"]
@@ -353,11 +361,17 @@ def load_or_build() -> tuple[GSplatData, np.ndarray]:
 def create_luxar_scene(fit: GSplatData, colors: np.ndarray, output_path: Path) -> Path:
     """Build the true-color Visible Human head scene."""
     with asection("Creating Luxar Scene"):
-        # Additive blending (the gsplat norm). A solid, dense head accumulates
-        # far more along each view ray than the sparse fluorescence/dust demos,
-        # so the amplitudes must be scaled WAY down to avoid a blown-out white
-        # core — reduce brightness rather than switch blend mode.
-        centered = fit.center_at_centroid().scale_intensity(SCENE_INTENSITY)
+        # Correct the anisotropic voxel aspect (1.0 mm slices vs 0.33 mm
+        # in-plane) by stretching the slice axis — column 0 of the (Z, Y, X)
+        # fit centers — then dim brightness. Additive blending (the gsplat
+        # norm): a dense head over-accumulates, so amplitudes are scaled WAY
+        # down to avoid a blown-out white core — reduce brightness, not blend mode.
+        z_stretch = VOXEL_Z_MM / VOXEL_XY_MM
+        centered = (
+            fit.center_at_centroid()
+            .transform(np.diag([z_stretch, 1.0, 1.0]))
+            .scale_intensity(SCENE_INTENSITY)
+        )
         dims = Dimensions(
             [
                 Dimension("x", unit="mm", display=True),
