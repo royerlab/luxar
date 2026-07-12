@@ -34,13 +34,6 @@ Visualization Parameters:
   * Betelgeuse: Red, radius 0.35, at 168 pc
   * Rigel: Blue, radius 0.35, at 265 pc
 
-Comparison to demo_gaia_milky_way_8m.py:
-- 3M vs 8M stars
-- 10 kpc vs unknown radius cutoff
-- Real Gaia BP-RP colors vs magnitude-generated colors
-- Has famous star markers vs no markers
-- Scientific provenance vs unknown source
-
 Data Source & Attribution:
     ESA/Gaia/DPAC - Gaia Data Release 3 (2022)
 
@@ -425,10 +418,8 @@ def main() -> None:
     if "--no-serve" in sys.argv:
         output_path = get_demos_output_dir() / "galaxy.luxar.zarr"
         try:
-            with tempfile.TemporaryDirectory(prefix="luxar_demo_gaia_") as tmpdir:
-                tmp_path = Path(tmpdir)
-                # Extract and convert to Luxar format
-                load_and_convert_gaia_data(DATA_FILE, output_path)
+            # Reads the .zarr.zip in place (via a ``zip://`` store) — no temp dir.
+            load_and_convert_gaia_data(DATA_FILE, output_path)
         except FileNotFoundError as e:
             aprint(f"\n❌ Error: {e}")
             sys.exit(1)

@@ -8,7 +8,8 @@ liveness, valence, tempo). Colored by genre, sized by popularity.
 
 Hover over any point to see the track name, artist, and genre.
 
-Data source: maharshipandya/spotify-tracks-dataset (Hugging Face, open access)
+Data source: the `maharshipandya/spotify-tracks-dataset` on Hugging Face,
+derived from the Spotify Web API (per-track audio features).
 
 Usage:
     python -m luxar.demos.demo_spotify_tracks
@@ -73,9 +74,6 @@ GENRE_COLORS: dict[str, tuple[float, float, float]] = {
     "ambient": (0.4, 0.5, 0.7),
     "other": (0.5, 0.5, 0.5),
 }
-
-# Map detailed genres to supercategories
-GENRE_MAP: dict[str, str] = {}
 
 
 def _classify_genre(genre: str) -> str:

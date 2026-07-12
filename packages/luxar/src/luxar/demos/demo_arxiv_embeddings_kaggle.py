@@ -61,8 +61,7 @@ Usage:
     python demo_arxiv_embeddings_kaggle.py [--sample=N]
 
     Options:
-    --sample=N       Number of papers to sample (default: 50000)
-    --categories=X   Filter by arXiv category (e.g., cs.AI, physics.atom-ph)
+    --sample=N       Number of papers to sample (default: 500000)
     --use-cache      Use cached UMAP coordinates (RECOMMENDED!)
 
 Requirements:
@@ -441,7 +440,6 @@ def reduce_embeddings_umap(
 def generate_paper_landscape(
     output_path: Path,
     sample_size: int = 50000,
-    category_filter: str | None = None,
     cache_dir: Path | None = None,
 ) -> int:
     """Generate 3D landscape of arXiv papers.
@@ -449,7 +447,6 @@ def generate_paper_landscape(
     Args:
         output_path: Where to write zarr
         sample_size: Number of papers to sample
-        category_filter: Optional category filter
         cache_dir: Optional cache for UMAP results
 
     Returns:
@@ -459,7 +456,7 @@ def generate_paper_landscape(
     cache_file = None
     if cache_dir:
         cache_dir.mkdir(parents=True, exist_ok=True)
-        cache_file = cache_dir / f"umap_{sample_size}_{category_filter or 'all'}.npz"
+        cache_file = cache_dir / f"umap_{sample_size}.npz"
 
     if cache_file and cache_file.exists():
         with asection("Loading cached UMAP coordinates"):
@@ -555,9 +552,6 @@ def generate_paper_landscape(
         positions = reduce_embeddings_umap(embeddings, n_components=3)
 
         # Cache UMAP results for instant future runs
-        aprint(
-            f"[DEBUG] About to cache. cache_file={cache_file}, cache_dir={cache_dir}"
-        )
         with asection("Saving UMAP cache"):
             if cache_file:
                 aprint(f"Cache path: {cache_file}")
@@ -671,14 +665,10 @@ def generate_paper_landscape(
 def main() -> None:
     """Main demo entry point."""
     sample_size = DEFAULT_SAMPLE_SIZE
-    category_filter = None
-    _use_cache = True  # Caching is ALWAYS on by default (reserved for future use)
 
     for arg in sys.argv[1:]:
         if arg.startswith("--sample="):
             sample_size = int(arg.split("=")[1])
-        elif arg.startswith("--category="):
-            category_filter = arg.split("=")[1]
 
     aprint("=" * 70)
     aprint("ARXIV PAPER EMBEDDINGS - PRE-COMPUTED FROM KAGGLE")
@@ -696,8 +686,6 @@ def main() -> None:
     aprint("")
     aprint("Parameters:")
     aprint(f"  Sample size: {sample_size:,} papers")
-    if category_filter:
-        aprint(f"  Category filter: {category_filter}")
     aprint("")
 
     # Check dependencies
@@ -721,7 +709,6 @@ def main() -> None:
             n_papers = generate_paper_landscape(
                 output_path,
                 sample_size=sample_size,
-                category_filter=category_filter,
                 cache_dir=cache_dir,
             )
             if n_papers == 0:
@@ -744,7 +731,6 @@ def main() -> None:
             n_papers = generate_paper_landscape(
                 output_path,
                 sample_size=sample_size,
-                category_filter=category_filter,
                 cache_dir=cache_dir,
             )
 

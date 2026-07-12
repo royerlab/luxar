@@ -268,7 +268,7 @@ def create_mouse_scene(
                         )
 
             scene.add_text(
-                f"{n_points:,} peaks • Mouse E7.5–E8.75 • 3D UMAP • Wagner et al. 2024",
+                f"{n_points:,} peaks • Mouse E7.5–E8.75 • 3D UMAP • Lange et al., Cell 2024",
                 position=(0.98, 0.97),
                 font_size=0.012,
                 anchor="bottom-right",

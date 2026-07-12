@@ -3,15 +3,17 @@
 
 This demo demonstrates:
 - Testing viewer performance under realistic network conditions
-- Generating a large, complex 4D dataset with time dimension (10M+ points)
-- Using network simulation profiles (slow broadband by default)
+- Generating a large, complex 4D dataset (1M+ points by default: W, X, Y, Z)
+- Using network simulation profiles (slow broadband by default), forwarded to
+  ``luxar serve --profile`` so the throttling actually happens server-side
 - Comparing performance with different network profiles
 - Progressive loading behavior under bandwidth constraints
-- Interactive bandwidth testing via time dimension navigation
+- Interactive bandwidth testing via nD (W-dimension) navigation
 
 The demo creates a visually interesting 4D dataset that stresses the viewer's
-loading and caching systems. Navigate through time ([4] then [ / ]) to trigger
-additional data loading and test network performance interactively.
+loading and caching systems. Slice the non-displayed W dimension ([1] then
+[ / ]) to trigger additional data loading and test network performance
+interactively.
 
 Usage:
     python demo_network_performance.py [--points N] [--profile NAME]
@@ -253,7 +255,7 @@ def generate_performance_test_dataset(
 
             # Info
             scene.add_text(
-                "10M+ points \u2022 Stress test",
+                f"{len(positions):,} points \u2022 4D stress test",
                 position=(0.98, 0.97),
                 font_size=0.015,
                 anchor="bottom-right",
@@ -298,11 +300,9 @@ def main() -> None:
     aprint("This demo generates a large 4D dataset and serves it with network")
     aprint("simulation to test viewer performance under realistic conditions.")
     aprint("")
-    aprint(
-        f"Dataset: {n_points:,} points × 10 timesteps = {n_points * 10:,} total points"
-    )
-    aprint(f"Size: ~{n_points * 10 * 48 / 1_000_000:.1f} MB (4D positions with time)")
-    aprint("Use [4] then [ / ] keys to navigate time and trigger progressive loading")
+    aprint(f"Dataset: {n_points:,} points in 4D (W, X, Y, Z)")
+    aprint(f"Size: ~{n_points * 48 / 1_000_000:.1f} MB (4D positions + colors + radii)")
+    aprint("Use [1] then [ / ] keys to slice the W dimension and trigger progressive loading")
 
     if not no_simulation:
         aprint(f"Network Profile: {network_profile}")
@@ -356,7 +356,10 @@ def main() -> None:
         aprint("Press Ctrl+C when done to stop and cleanup.")
         aprint("")
 
-        launch_viewer(output_path)
+        # Forward the network profile to ``luxar serve`` so the throttling the
+        # demo advertises actually happens server-side.
+        serve_args = [] if no_simulation else ["--profile", network_profile]
+        launch_viewer(output_path, serve_args=serve_args)
 
 
 if __name__ == "__main__":

@@ -119,7 +119,8 @@ from luxar.utils.paths import get_demos_output_dir
 # =============================================================================
 
 ZARR_URL = "https://uk1s3.embassy.ebi.ac.uk/idr/zarr/v0.2/6001240.zarr"
-TARGET_SIZE = 256  # Downscale to manageable size
+TARGET_SIZE = 256  # Only used by the synthetic fallback (edge cube size when
+# the IDR load fails); the real path loads at native resolution (no resample).
 TIME_POINT = 0  # First time point
 
 # Channel configuration with colors

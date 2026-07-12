@@ -136,6 +136,7 @@ def generate_mandelbulb_volumetric(
     resolution: int = 100,
     power: int = 8,
     max_distance: float = 0.01,
+    seed: int = 0,
 ) -> int:
     """Generate volumetric Mandelbulb fractal.
 
@@ -146,6 +147,7 @@ def generate_mandelbulb_volumetric(
         resolution: Grid resolution per axis (100 = 100^3 = 1M samples)
         power: Mandelbulb power (6, 8, or 9 recommended)
         max_distance: Maximum distance to include (controls surface thickness)
+        seed: Seed for the anti-aliasing jitter RNG (reproducible output)
 
     Returns:
         Number of points in final dataset
@@ -167,7 +169,8 @@ def generate_mandelbulb_volumetric(
         # Add small jitter to avoid aliasing artifacts from regular grid
         grid_spacing = coords[1] - coords[0]
         jitter_amount = grid_spacing * 0.3  # 30% of grid spacing
-        jitter = np.random.uniform(
+        rng = np.random.default_rng(seed)
+        jitter = rng.uniform(
             -jitter_amount, jitter_amount, sample_points.shape
         ).astype(np.float32)
         sample_points += jitter
@@ -214,7 +217,8 @@ def generate_mandelbulb_volumetric(
         colors[:, 1] = np.abs(np.sin(2 * np.pi * hue + 2 * np.pi / 3))  # Green
         colors[:, 2] = np.abs(np.sin(2 * np.pi * hue + 4 * np.pi / 3))  # Blue
 
-        # Boost intensity
+        # Dim/attenuate colors so the dense surface doesn't blow out under
+        # additive blending
         colors *= 0.1
 
         aprint("✓ Generated rainbow gradient based on fractal depth")

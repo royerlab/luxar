@@ -75,7 +75,7 @@ Options:
     --target-size=N:    Downsample target for longest axis (default: 0 = full res)
     --tile-size=N:      Tile size in pixels for tiled fitting (default: 4096)
     --overlap=N:        Tile overlap in pixels (default: 512)
-    --seeds-per-tile=N: Seeds per tile (default: 8000)
+    --seeds-per-tile=N: Gaussian seeds per tile (default: 255000, per tile)
 
 By default, the demo works at full resolution (25,816 x 18,440 pixels)
 using tiled fitting. Each channel is fitted and cached independently,

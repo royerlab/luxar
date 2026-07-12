@@ -22,8 +22,9 @@ WHAT THIS DEMONSTRATES — ADAPTIVE DETAIL MAKES HUGE SCENES TRACTABLE
 embryo. This demo shows why that matters at scale:
 
 - **Per-object detail selection**: the viewer evaluates every embryo
-  independently each frame by its projected on-screen size
-  (``lod-group-registry.ts``). A near embryo gets the finest level (green, full
+  independently each frame by its viewport-relative ``coverage_fraction``
+  (``sqrt(N_i/N_finest)``; ``lod-group-registry.ts``) — effectively how much of
+  the screen it covers. A near embryo gets the finest level (green, full
   detail); a far one gets the coarsest (red, a few big splats). You never pay to
   draw detail you cannot see.
 - **"Never more than the screen can show"**: with the camera in the middle, the

@@ -18,6 +18,9 @@ Many jellyfish species produce light through proteins like:
 - Aequorin - a calcium-activated photoprotein
 - Luciferin/luciferase systems
 
+The discovery and development of GFP was recognized by the 2008 Nobel Prize in
+Chemistry (Osamu Shimomura, Martin Chalfie, and Roger Y. Tsien).
+
 The light serves various purposes:
 - Defense (startling predators)
 - Attracting prey
@@ -278,7 +281,6 @@ def generate_tentacles(
     jelly: JellyfishParams,
     frame: int,
     n_frames: int,
-    rng: np.random.Generator,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     """Generate flowing tentacles as line segments.
 
@@ -381,7 +383,6 @@ def generate_oral_arms(
     jelly: JellyfishParams,
     frame: int,
     n_frames: int,
-    rng: np.random.Generator,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     """Generate oral arms (frilly appendages around mouth).
 
@@ -391,9 +392,6 @@ def generate_oral_arms(
         vertices, widths, colors, sharpness
     """
     t = frame / n_frames
-    _ = 0.5 + 0.5 * np.sin(
-        2 * np.pi * (frame * PULSE_FREQUENCY * jelly.pulse_speed + jelly.pulse_phase)
-    )
 
     all_vertices = []
     all_widths = []
@@ -716,7 +714,7 @@ def generate_ocean_scene(
 
                     # Tentacle lines
                     verts, widths, colors, shrp = generate_tentacles(
-                        jelly, frame, n_frames, rng
+                        jelly, frame, n_frames
                     )
                     # Add time dimension to vertices
                     verts_4d = np.column_stack([verts, np.full(len(verts), frame)])
@@ -727,7 +725,7 @@ def generate_ocean_scene(
 
                     # Oral arms
                     verts, widths, colors, shrp = generate_oral_arms(
-                        jelly, frame, n_frames, rng
+                        jelly, frame, n_frames
                     )
                     verts_4d = np.column_stack([verts, np.full(len(verts), frame)])
                     frame_tent_verts.append(verts_4d)
@@ -818,7 +816,7 @@ def generate_ocean_scene(
 
         # Info
         scene.add_text(
-            "8 jellyfish \u2022 250 frames",
+            f"{n_jellyfish} jellyfish \u2022 {n_frames} frames",
             position=(0.98, 0.97),
             font_size=0.015,
             anchor="bottom-right",

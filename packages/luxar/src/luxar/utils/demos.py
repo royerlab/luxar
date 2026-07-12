@@ -381,7 +381,11 @@ def load_precomputed_bundle(
         return results
 
 
-def launch_viewer(output_path: Union[str, Path], open_browser: bool = True) -> None:
+def launch_viewer(
+    output_path: Union[str, Path],
+    open_browser: bool = True,
+    serve_args: Optional[list[str]] = None,
+) -> None:
     """Launch the Luxar viewer to display a dataset.
 
     This function uses sys.executable to ensure it works regardless of how
@@ -390,11 +394,17 @@ def launch_viewer(output_path: Union[str, Path], open_browser: bool = True) -> N
     Args:
         output_path: Path to the .zarr dataset to view
         open_browser: Whether to automatically open a browser window
+        serve_args: Extra arguments forwarded verbatim to ``luxar serve`` — e.g.
+            ``["--profile", "3g"]`` for the network-simulation demo. These let a
+            demo drive server-side behaviour (bandwidth throttling, latency,
+            packet loss) that ``serve`` already supports.
 
     Raises:
         SystemExit: If the viewer fails to launch
     """
     cmd = [sys.executable, "-m", "luxar", "serve", str(output_path), "--viewer"]
+    if serve_args:
+        cmd.extend(serve_args)
     if open_browser:
         cmd.append("--open")
 

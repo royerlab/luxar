@@ -637,6 +637,13 @@ def generate_esm3_landscape(
         )
 
         model_label = "ESM-3" if "esm3" in model_name else f"ESM C ({model_name})"
+        # Cite the model that actually produced the embeddings: ESM3 → Hayes
+        # et al. 2025; ESM C (esmc-*) → the EvolutionaryScale ESM C release.
+        model_citation = (
+            "Hayes et al. 2025"
+            if "esm3" in model_name
+            else "EvolutionaryScale ESM C, 2024"
+        )
         with LuxarZarrCompiler(output_path) as compiler:
             scene = compiler.create_scene(dimensions=dims)
 
@@ -661,7 +668,7 @@ def generate_esm3_landscape(
             )
 
             scene.add_text(
-                f"{n:,} proteins • {model_label} embeddings • 3D UMAP • Hayes et al. 2025",
+                f"{n:,} proteins • {model_label} embeddings • 3D UMAP • {model_citation}",
                 position=(0.98, 0.97),
                 font_size=0.012,
                 anchor="bottom-right",
@@ -775,7 +782,8 @@ def main() -> None:
         aprint("")
         aprint("Explore the protein universe:")
         aprint(
-            "  - Blue = Eukaryota, Green = Bacteria, Orange = Archaea, Red = Viruses"
+            "  - Colored by taxonomic group (12 categories: vertebrates in blues, "
+            "bacteria in greens, Archaea orange, Viruses red, ...)"
         )
         aprint(
             "  - Clusters = proteins with similar ESM-3 embeddings (shared function/fold)"

@@ -175,7 +175,7 @@ def main() -> None:
 
                 # Info + citation
                 scene.add_text(
-                    "95K cells • 32 cell types • Wagner et al. 2024",
+                    "95K cells • 32 cell types • Lange et al., Cell 2024",
                     position=(0.98, 0.97),
                     font_size=0.012,
                     anchor="bottom-right",
@@ -268,7 +268,7 @@ def main() -> None:
 
                 # Info + citation
                 scene.add_text(
-                    "95K cells • 32 cell types • Wagner et al. 2024",
+                    "95K cells • 32 cell types • Lange et al., Cell 2024",
                     position=(0.98, 0.97),
                     font_size=0.012,
                     anchor="bottom-right",

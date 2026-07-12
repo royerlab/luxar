@@ -52,9 +52,9 @@ def simple_noise_3d(
     Returns:
         Noise values in approximate range [-1, 1]
     """
-    # Use numpy's hash-like function for pseudo-random gradients
-    # This creates smooth interpolated noise from grid coordinates
-    np.random.seed(seed)
+    # This creates smooth interpolated noise from grid coordinates.
+    # Note: this is a deterministic positional hash (see hash_coords below) - it
+    # does not touch the global RNG, so no np.random.seed() call is needed here.
 
     # Get integer grid coordinates
     xi = np.floor(x).astype(int)
@@ -190,22 +190,9 @@ def generate_volumetric_cloud(
         aprint(f"✓ Generated {n_candidate_points:,} candidate positions")
 
         # === STEP 2: Calculate fractal density with turbulence ===
-        aprint("Calculating fractal noise density (6 octaves + turbulence)...")
+        aprint("Calculating fractal noise density (7 octaves + turbulence)...")
 
         x, y, z = positions_raw[:, 0], positions_raw[:, 1], positions_raw[:, 2]
-
-        # Apply multi-octave noise for fractal structure
-        # More octaves = more detail at different scales
-        # Octave 1-2: Large-scale puff structure
-        # Octave 3-4: Medium wisps and tendrils
-        # Octave 5-6: Fine detail and texture
-        noise_density = fractal_noise_3d(
-            x / cloud_size,  # Normalize coordinates
-            y / cloud_size,
-            z / cloud_size,
-            octaves=7,  # More octaves for fractal detail
-            persistence=0.6,  # Higher persistence = more detail visible
-        )
 
         # Add turbulence (distortion) for wispy structure
         # This creates the characteristic cloud wisps and tendrils
@@ -239,7 +226,7 @@ def generate_volumetric_cloud(
         # Apply power function to increase contrast (more dramatic density variation)
         noise_density = np.power(noise_density, 1.5)  # Emphasize dense areas
 
-        aprint("✓ Generated 6-octave fractal noise with turbulence")
+        aprint("✓ Generated 7-octave fractal noise with turbulence")
 
         # === STEP 3: Apply 3D Gaussian falloff (spherical cloud shape) ===
         aprint("Applying Gaussian falloff for puff shape...")
@@ -408,7 +395,7 @@ def main() -> None:
     aprint("Generating a realistic cloud with fractal structure")
     aprint(f"Candidate points: {n_candidate_points:,} (will be filtered by density)")
     aprint("Features:")
-    aprint("  - 6-octave fractal noise for detail at multiple scales")
+    aprint("  - 7-octave fractal noise for detail at multiple scales")
     aprint("  - Turbulence/curl for wispy tendrils and structure")
     aprint("  - Dramatic size variation (0.03 to 0.5 units)")
     aprint("  - Very soft appearance (sharpness 0.2-0.35)")
