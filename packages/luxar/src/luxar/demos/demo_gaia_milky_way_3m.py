@@ -119,7 +119,13 @@ import numpy as np
 import zarr
 from arbol import aprint, asection
 
-from luxar import Dimension, Dimensions, LuxarZarrCompiler
+from luxar import (
+    CameraConfig,
+    Dimension,
+    Dimensions,
+    LuxarZarrCompiler,
+    ViewerConfig,
+)
 from luxar.demos import launch_viewer
 from luxar.utils.paths import get_demos_output_dir
 
@@ -234,8 +240,35 @@ def load_and_convert_gaia_data(data_zarr_path: Path, output_path: Path) -> int:
             ]
         )
 
+        # Start the camera pulled IN, framing the bright stellar bulk (the 3M
+        # brightest stars cluster near the Sun, not the galactic centre). Robust
+        # 2–98th percentile bounds ignore sparse-halo outliers that would
+        # otherwise make the auto-fit zoom way out and leave the galaxy a tiny
+        # dot. Closer start = galaxy fills the view AND the coverage-fraction LOD
+        # immediately shows a finer level.
+        lo, hi = np.percentile(positions, [2, 98], axis=0)
+        center = (lo + hi) / 2.0
+        extent = float(np.max(hi - lo))
+        fov_deg = 47.0
+        fit_dist = (extent * 0.5) / np.tan(np.radians(fov_deg) / 2.0)
+        cam_dist = fit_dist * 0.65  # pull in ~35% tighter than a plain fit
+        camera = CameraConfig(
+            position=(
+                float(center[0]),
+                float(center[1] + extent * 0.15),
+                float(center[2] + cam_dist),
+            ),
+            target=(float(center[0]), float(center[1]), float(center[2])),
+            up=(0.0, 1.0, 0.0),
+            fov=fov_deg,
+            near=max(0.5, cam_dist * 0.005),
+            far=cam_dist * 20.0 + extent * 10.0,
+        )
+
         with LuxarZarrCompiler(output_path) as compiler:
-            scene = compiler.create_scene(dimensions=dims)
+            scene = compiler.create_scene(
+                dimensions=dims, viewer_config=ViewerConfig(camera=camera)
+            )
 
             # Add the stars with substitutive Points LOD: coarse levels replace
             # the 3M-star cloud with fewer, larger mass-preserving Gaussian splats
