@@ -983,23 +983,19 @@ class GSplatData(_SplatArrayMixin):
 
         # Multi-LOD path: split mask across LODs
         if self.n_additive_sublods > 1:
-            new_lods = []
-            offset = 0
-            for lod in self.additive_sublods:
-                n = lod.n_splats
+
+            def _filter_lod(lod: AdditiveSubLOD, offset: int, n: int) -> AdditiveSubLOD:
                 lod_mask = mask[offset : offset + n]
-                new_lods.append(
-                    AdditiveSubLOD(
-                        centers=lod.centers[lod_mask],
-                        amplitudes=lod.amplitudes[lod_mask],
-                        cholesky_factors=lod.cholesky_factors[lod_mask],
-                        colors=lod.colors[lod_mask] if lod.colors is not None else None,
-                        stats=dict(lod.stats),
-                        truncation_radius=lod.truncation_radius,
-                    )
+                return AdditiveSubLOD(
+                    centers=lod.centers[lod_mask],
+                    amplitudes=lod.amplitudes[lod_mask],
+                    cholesky_factors=lod.cholesky_factors[lod_mask],
+                    colors=lod.colors[lod_mask] if lod.colors is not None else None,
+                    stats=dict(lod.stats),
+                    truncation_radius=lod.truncation_radius,
                 )
-                offset += n
-            return GSplatData.from_additive_sublods(new_lods, stats=dict(self.stats))
+
+            return self._map_additive(_filter_lod)
 
         return GSplatData(
             centers=self.centers[mask],
@@ -1764,12 +1760,12 @@ class GSplatData(_SplatArrayMixin):
                     raise ValueError(
                         f"values shape {values_arr.shape} doesn't match splat count ({n},)"
                     )
-            new_lods = []
-            offset = 0
             dim_mapping = list(range(d))
             fill_sigma = {d: sigma}
-            for lod in self.additive_sublods:
-                nl = lod.n_splats
+
+            def _embed_lod(
+                lod: AdditiveSubLOD, offset: int, nl: int
+            ) -> AdditiveSubLOD:
                 if is_scalar:
                     lod_col = np.full((nl, 1), values, dtype=lod.centers.dtype)
                 else:
@@ -1779,18 +1775,16 @@ class GSplatData(_SplatArrayMixin):
                 lod_cholesky = embed_cholesky_packed(
                     lod.cholesky_factors, d, d + 1, dim_mapping, fill_sigma
                 )
-                new_lods.append(
-                    AdditiveSubLOD(
-                        centers=lod_centers,
-                        amplitudes=lod.amplitudes,
-                        cholesky_factors=lod_cholesky,
-                        colors=lod.colors,
-                        stats=dict(lod.stats),
-                        truncation_radius=lod.truncation_radius,
-                    )
+                return AdditiveSubLOD(
+                    centers=lod_centers,
+                    amplitudes=lod.amplitudes,
+                    cholesky_factors=lod_cholesky,
+                    colors=lod.colors,
+                    stats=dict(lod.stats),
+                    truncation_radius=lod.truncation_radius,
                 )
-                offset += nl
-            return GSplatData.from_additive_sublods(new_lods, stats=dict(self.stats))
+
+            return self._map_additive(_embed_lod)
 
         # Single-LOD fast path (unchanged)
         if np.isscalar(values):
@@ -1848,6 +1842,26 @@ class GSplatData(_SplatArrayMixin):
                 )
             )
         return GSplatData.from_substitutive_levels(new_levels, stats=dict(self.stats))
+
+    def _map_additive(
+        self, fn: "Callable[[AdditiveSubLOD, int, int], AdditiveSubLOD]"
+    ) -> "GSplatData":
+        """Apply a per-sub-LOD transform to EVERY additive sub-LOD, rebuild.
+
+        ``fn`` receives ``(lod, offset, n)`` — the sub-LOD, its start offset
+        into the flattened finest-leaf arrays, and its splat count — and returns
+        a replacement :class:`AdditiveSubLOD` (which may change N, ndim, or
+        array widths). The additive-dimension sibling of :meth:`_map_substitutive`;
+        callers guard the multi-sub-LOD branch with
+        ``if self.n_additive_sublods > 1``.
+        """
+        new_lods: List[AdditiveSubLOD] = []
+        offset = 0
+        for lod in self.additive_sublods:
+            n = lod.n_splats
+            new_lods.append(fn(lod, offset, n))
+            offset += n
+        return GSplatData.from_additive_sublods(new_lods, stats=dict(self.stats))
 
     def transform(self, matrix: np.ndarray) -> "GSplatData":
         """Apply affine transformation to all splats.
@@ -1943,23 +1957,23 @@ class GSplatData(_SplatArrayMixin):
 
         # Multi-LOD path: transform each LOD independently
         if self.n_additive_sublods > 1:
-            new_lods = []
-            for lod in self.additive_sublods:
+
+            def _transform_lod(
+                lod: AdditiveSubLOD, offset: int, n: int
+            ) -> AdditiveSubLOD:
                 lod_centers = (lod.centers.astype(np.float64) @ A.T + t).astype(
                     lod.centers.dtype
                 )
-                lod_cholesky = _transform_cholesky(lod.cholesky_factors)
-                new_lods.append(
-                    AdditiveSubLOD(
-                        centers=lod_centers,
-                        amplitudes=lod.amplitudes,
-                        cholesky_factors=lod_cholesky,
-                        colors=lod.colors,
-                        stats=dict(lod.stats),
-                        truncation_radius=lod.truncation_radius,
-                    )
+                return AdditiveSubLOD(
+                    centers=lod_centers,
+                    amplitudes=lod.amplitudes,
+                    cholesky_factors=_transform_cholesky(lod.cholesky_factors),
+                    colors=lod.colors,
+                    stats=dict(lod.stats),
+                    truncation_radius=lod.truncation_radius,
                 )
-            return GSplatData.from_additive_sublods(new_lods, stats=dict(self.stats))
+
+            return self._map_additive(_transform_lod)
 
         # Single-LOD fast path
         new_centers = (self.centers.astype(np.float64) @ A.T + t).astype(
@@ -1981,22 +1995,16 @@ class GSplatData(_SplatArrayMixin):
     def _with_new_amplitudes(self, new_amplitudes: np.ndarray) -> "GSplatData":
         """Return a new GSplatData with replaced amplitudes, preserving LODs."""
         if self.n_additive_sublods > 1:
-            new_lods = []
-            offset = 0
-            for lod in self.additive_sublods:
-                n = lod.n_splats
-                new_lods.append(
-                    AdditiveSubLOD(
-                        centers=lod.centers,
-                        amplitudes=new_amplitudes[offset : offset + n],
-                        cholesky_factors=lod.cholesky_factors,
-                        colors=lod.colors,
-                        stats=dict(lod.stats),
-                        truncation_radius=lod.truncation_radius,
-                    )
+            return self._map_additive(
+                lambda lod, offset, n: AdditiveSubLOD(
+                    centers=lod.centers,
+                    amplitudes=new_amplitudes[offset : offset + n],
+                    cholesky_factors=lod.cholesky_factors,
+                    colors=lod.colors,
+                    stats=dict(lod.stats),
+                    truncation_radius=lod.truncation_radius,
                 )
-                offset += n
-            return GSplatData.from_additive_sublods(new_lods, stats=dict(self.stats))
+            )
         return GSplatData(
             centers=self.centers,
             amplitudes=new_amplitudes,
@@ -2050,22 +2058,16 @@ class GSplatData(_SplatArrayMixin):
                 f"colors shape {colors.shape} doesn't match ({self.n_splats}, 3)"
             )
         if self.n_additive_sublods > 1:
-            new_lods = []
-            offset = 0
-            for lod in self.additive_sublods:
-                n = lod.n_splats
-                new_lods.append(
-                    AdditiveSubLOD(
-                        centers=lod.centers,
-                        amplitudes=lod.amplitudes,
-                        cholesky_factors=lod.cholesky_factors,
-                        colors=colors[offset : offset + n],
-                        stats=dict(lod.stats),
-                        truncation_radius=lod.truncation_radius,
-                    )
+            return self._map_additive(
+                lambda lod, offset, n: AdditiveSubLOD(
+                    centers=lod.centers,
+                    amplitudes=lod.amplitudes,
+                    cholesky_factors=lod.cholesky_factors,
+                    colors=colors[offset : offset + n],
+                    stats=dict(lod.stats),
+                    truncation_radius=lod.truncation_radius,
                 )
-                offset += n
-            return GSplatData.from_additive_sublods(new_lods, stats=dict(self.stats))
+            )
         return GSplatData(
             centers=self.centers,
             amplitudes=self.amplitudes,
@@ -2245,8 +2247,8 @@ class GSplatData(_SplatArrayMixin):
 
         # Multi-LOD path: translate each LOD independently
         if self.n_additive_sublods > 1:
-            new_lods = [
-                AdditiveSubLOD(
+            return self._map_additive(
+                lambda lod, offset_, n: AdditiveSubLOD(
                     centers=lod.centers + offset,
                     amplitudes=lod.amplitudes,
                     cholesky_factors=lod.cholesky_factors,
@@ -2254,9 +2256,7 @@ class GSplatData(_SplatArrayMixin):
                     stats=dict(lod.stats),
                     truncation_radius=lod.truncation_radius,
                 )
-                for lod in self.additive_sublods
-            ]
-            return GSplatData.from_additive_sublods(new_lods, stats=dict(self.stats))
+            )
 
         return GSplatData(
             centers=self.centers + offset,
