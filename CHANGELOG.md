@@ -6,6 +6,31 @@ All notable changes to Luxar are documented in this file.
 
 ### July 2026
 
+#### Fixed — Lines are re-culled when scrubbing a non-displayed dimension
+
+- **Symptom**: scrubbing a non-displayed dimension (categorical toggle, time
+  slider) only ever *added* Lines geometry — every visited slot stayed
+  rendered (A ∪ B) while Points/GSplats correctly swapped (A xor B). A
+  categorical or time dimension was therefore unusable for slicing Lines.
+- **Root cause**: the Lines projection dispatcher
+  (`workers/data-worker/projection/lines.ts`) hardcoded `numItems = 1` in its
+  input validation, rejecting the canonical *empty* payload the loader
+  returns when a node has no data at the current slice
+  (`positions array too short (got 0, expected ≥ ndim)`). The throw was
+  swallowed as a failed loader update (`staged: null`), so the empty commit
+  that clears the previous slot's mesh never ran. The same throw fired on
+  the initial load of any Lines node that starts out-of-slice (error log +
+  spurious failure/retry bookkeeping).
+- **Fix**: validate with `numItems = 0` — the real positions invariant
+  ("covers the max vertex referenced by segments") is fully enforced by
+  `validateLineSegmentReferences`, and the empty payload now flows through
+  the existing zero-visible early-exit to a mesh-clearing commit.
+  Regression coverage: dispatcher golden test (TS + WASM backends), worker
+  happy-path tests, data-processor staging test, and a new E2E spec
+  (`lines-nd-dimension-visibility.spec.ts`) driving a hidden categorical
+  scrub over the new `test_lines_categorical.luxar.zarr` fixture with a
+  Points pair as the in-frame control.
+
 #### Fixed — `center_at_centroid` / `gsplat convert --center` no longer centers categorical axes
 
 - **Why**: `center_at_centroid()` subtracted the amplitude-weighted centroid from
