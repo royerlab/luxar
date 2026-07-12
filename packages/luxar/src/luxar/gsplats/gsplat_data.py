@@ -1164,9 +1164,8 @@ class GSplatData(_SplatArrayMixin):
         # single-substitutive path below (a per-level view); thresholds with
         # *_normalized resolve per-level (each level to its own range).
         if self.n_substitutive > 1:
-            new_levels: List[SubstitutiveLevel] = []
-            for s, src in enumerate(self.substitutive_levels):
-                filtered = self._view_of_level(src).filter_by(
+            out = self._map_substitutive(
+                lambda lvl: lvl.filter_by(
                     bbox=bbox,
                     volume_min=volume_min,
                     volume_max=volume_max,
@@ -1198,20 +1197,6 @@ class GSplatData(_SplatArrayMixin):
                     spatial_dims=spatial_dims,
                     truncate=truncate,
                 )
-                new_levels.append(
-                    SubstitutiveLevel(
-                        additive_sublods=filtered.substitutive_levels[
-                            0
-                        ].additive_sublods,
-                        compression_factor=src.compression_factor,
-                        parent_method=src.parent_method,
-                        level_index=src.level_index,
-                        stats=dict(src.stats),
-                    )
-                )
-            out = GSplatData.from_substitutive_levels(
-                new_levels,
-                stats=dict(self.stats),
             )
             out.stats.update(
                 {
@@ -2535,9 +2520,8 @@ class GSplatData(_SplatArrayMixin):
         # Each level is culled through the single-substitutive path (the same
         # target volume reconstructs every level). Mirrors filter_by().
         if self.n_substitutive > 1:
-            culled_levels: List[SubstitutiveLevel] = []
-            for s, src in enumerate(self.substitutive_levels):
-                culled_level = self._view_of_level(src).cull(
+            out = self._map_substitutive(
+                lambda lvl: lvl.cull(
                     target,
                     method=method,
                     shape=shape,
@@ -2553,20 +2537,6 @@ class GSplatData(_SplatArrayMixin):
                     volume_percentile=volume_percentile,
                     verbose=verbose,
                 )
-                culled_levels.append(
-                    SubstitutiveLevel(
-                        additive_sublods=culled_level.substitutive_levels[
-                            0
-                        ].additive_sublods,
-                        compression_factor=src.compression_factor,
-                        parent_method=src.parent_method,
-                        level_index=src.level_index,
-                        stats=dict(src.stats),
-                    )
-                )
-            out = GSplatData.from_substitutive_levels(
-                culled_levels,
-                stats=dict(self.stats),
             )
             out.stats.update(
                 {
