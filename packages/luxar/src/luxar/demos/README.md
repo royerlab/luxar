@@ -450,13 +450,13 @@ Every catalogued minor planet placed in real 3D space by propagating its measure
 ---
 
 #### demo_dipc_3d_genome.py - Single-Cell 3D Genome (Dip-C)
-The folded 3D structure of one human cell's genome from Dip-C (Tan et al. 2018, Science): each chromosome arm is a continuous Lines polyline coiling through the nucleus, colored by chromosome, with a Maternal/Paternal toggle swapping between the two independently folded haplotypes.
+The folded 3D structure of one human cell's genome from Dip-C (Tan et al. 2018, Science): the chromosomes coil through the nucleus as Lines, colored by chromosome, with the maternal and paternal genomes exposed as two toggleable Layers (press **L**) to isolate one copy or overlay both.
 
 **Run**: `hatch run python packages/luxar/src/luxar/demos/demo_dipc_3d_genome.py [--recompute]`
 
 **Requires**: Nothing extra by default — ships a small precomputed structure via Git LFS. With `--recompute` (or if the LFS asset isn't pulled) it auto-downloads the GEO archive (`GSE117876_RAW.tar`, ~4.7 GB) to `~/.cache/luxar/dipc_genome/`, extracts one cell's `.3dg`, and caches the processed `.npz`.
 
-**Demonstrates**: 3D-genomics visualization (nothing else renders single-cell genome folding interactively), one `polyline` Lines node per chromosome arm with per-vertex color and hover labels, a categorical `haplotype` toggle dimension (Maternal ⇄ Paternal via `fill`), self-contained download → extract → cache-processed bootstrap. Data: [Tan et al. 2018](https://doi.org/10.1126/science.aat5641), GEO GSE117876; [dip-c format](https://github.com/tanlongzhi/dip-c).
+**Demonstrates**: 3D-genomics visualization (nothing else renders single-cell genome folding interactively), Lines with per-vertex color and hover labels, one Lines node per haplotype exposed as a **Layers-panel** toggle (a hard visibility on/off — the reliable way to isolate Lines, since a non-displayed dimension can't cull already-loaded polylines), self-contained download → extract → cache-processed bootstrap. Data: [Tan et al. 2018](https://doi.org/10.1126/science.aat5641), GEO GSE117876; [dip-c format](https://github.com/tanlongzhi/dip-c).
 
 ---
 

@@ -5,8 +5,9 @@ Visualize the folded three-dimensional structure of a single human cell's
 genome. Dip-C (diploid chromatin conformation capture; Tan et al. 2018, Science)
 reconstructs the 3D coordinates of every ~20 kb bead along all 46 chromosomes of
 one cell, with the maternal and paternal copies resolved separately. Each
-chromosome copy becomes a continuous Lines polyline coiling through the nucleus;
-a Maternal/Paternal toggle swaps between the two haplotypes.
+chromosome copy coils through the nucleus as Lines; the maternal and paternal
+genomes are two toggleable Layers (press **L**) so you can isolate or overlay
+the two independently folded haplotypes.
 
 ================================================================================
 THE 3D GENOME
@@ -20,10 +21,11 @@ this fold in a *single* cell and outputs a ``.3dg`` file: for each chromosome
 
 WHAT THIS DEMO SHOWS
 --------------------
-- One polyline per chromosome copy (chr1..22, X), colored by chromosome — 23
-  strands for the maternal set, 23 for the paternal set.
-- A non-displayed ``haplotype`` toggle (Maternal ⇄ Paternal) so you can compare
-  the two independently folded copies of the genome.
+- The 23 chromosomes of each haplotype (chr1..22, X), colored by chromosome and
+  packed into one Lines node per genome copy.
+- Two Layers-panel toggles — "Maternal genome" and "Paternal genome" (press
+  **L**) — to isolate one copy or overlay both for the diploid view. Opens
+  showing the maternal copy.
 - Hover a strand to read its chromosome and genomic coordinate.
 
 DATA SOURCE & CITATION
@@ -50,7 +52,7 @@ USAGE
 
 Controls:
     - Mouse drag: rotate,  Scroll: zoom
-    - Press '1' then '[' / ']' to toggle Maternal ⇄ Paternal
+    - Press 'L' to open the Layers panel, then toggle the Maternal / Paternal genomes
 """
 
 from __future__ import annotations
@@ -378,21 +380,59 @@ def _position_gradient(base: np.ndarray, n: int) -> np.ndarray:
     return (base[None, :] * t).astype(np.float32)
 
 
+def _haplotype_segments(
+    polys: list[dict],
+) -> tuple[np.ndarray, np.ndarray, list[str]]:
+    """Pack one haplotype's chromosome polylines into a single ``segments`` mesh.
+
+    Each chromosome's consecutive beads become independent 2-vertex segments
+    (interleaved start/end), so all chromosomes of a haplotype live in ONE Lines
+    node — which the viewer's Layers panel can hard-toggle on/off. Returns
+    ``(vertices(M,3), colors(M,3), labels[M])``.
+    """
+    vparts: list[np.ndarray] = []
+    cparts: list[np.ndarray] = []
+    labels: list[str] = []
+    for p in polys:
+        v = p["vertices"]
+        n = len(v)
+        if n < 2:
+            continue
+        seg = np.empty((2 * (n - 1), 3), dtype=np.float32)
+        seg[0::2] = v[:-1]
+        seg[1::2] = v[1:]
+        col = _position_gradient(p["color"], n)
+        cseg = np.empty((2 * (n - 1), 3), dtype=np.float32)
+        cseg[0::2] = col[:-1]
+        cseg[1::2] = col[1:]
+        pos_mb = p["positions"] / 1_000_000.0
+        lab = [
+            f"chr{p['chrom']}:{mb:.1f} Mb ({HAPLOTYPE_NAMES[p['haplotype']]})"
+            for mb in pos_mb
+        ]
+        seglab: list[str] = [""] * (2 * (n - 1))
+        seglab[0::2] = lab[:-1]
+        seglab[1::2] = lab[1:]
+        vparts.append(seg)
+        cparts.append(cseg)
+        labels.extend(seglab)
+    return np.concatenate(vparts), np.concatenate(cparts), labels
+
+
 def build_scene(output_path: Path, polylines: list[dict]) -> int:
-    """Write the Dip-C genome scene. Returns total vertex count."""
+    """Write the Dip-C genome scene. Returns total segment-vertex count.
+
+    Maternal and paternal genomes are exposed as two toggleable Layers-panel
+    nodes (press **L**). Layer visibility is a hard on/off — the reliable way to
+    isolate one genome copy for Lines (a non-displayed *dimension* can't cull
+    already-loaded polylines, so a haplotype slider would leave both showing).
+    """
     with asection("Building 3D genome scene"):
         dims = Dimensions(
             [
                 Dimension("x", unit="", display=True),
                 Dimension("y", unit="", display=True),
                 Dimension("z", unit="", display=True),
-                Dimension(
-                    "haplotype",
-                    unit="",
-                    display=False,
-                    categories=HAPLOTYPE_NAMES,
-                    description="Maternal vs paternal genome copy",
-                ),
             ]
         )
         total = 0
@@ -400,31 +440,29 @@ def build_scene(output_path: Path, polylines: list[dict]) -> int:
             scene = compiler.create_scene(dimensions=dims)
             scene.attrs["title"] = "Dip-C: Single-Cell 3D Genome"
 
-            for p in polylines:
-                v = p["vertices"]  # (n, 3) x/y/z; the haplotype slot comes from fill
-                n = len(v)
-                colors = _position_gradient(p["color"], n)
-                pos_mb = p["positions"] / 1_000_000.0
-                labels = [
-                    f"chr{p['chrom']}:{mb:.1f} Mb ({HAPLOTYPE_NAMES[p['haplotype']]})"
-                    for mb in pos_mb
-                ]
+            for hap, hap_name in enumerate(HAPLOTYPE_NAMES):
+                polys = [p for p in polylines if p["haplotype"] == hap]
+                if not polys:
+                    continue
+                verts, colors, labels = _haplotype_segments(polys)
+                # Open showing the maternal copy; the paternal layer starts hidden
+                # so the Layers panel toggle produces a clean Maternal ⇄ Paternal
+                # comparison (both can be shown at once for the diploid view).
                 scene.add_lines(
-                    f"chr{p['chrom']} ({HAPLOTYPE_NAMES[p['haplotype']]})",
-                    vertices=v,
+                    f"{hap_name} genome",
+                    vertices=verts,
                     widths=0.006,
                     colors=colors,
                     labels=labels,
-                    line_type="polyline",
-                    dim_order=["x", "y", "z"],
-                    fill={"haplotype": float(p["haplotype"])},
+                    line_type="segments",
                     sharpness=0.5,
                     opacity=0.95,
                     intensity=0.6,
                     blending_mode="luminous",
                     layer=True,
+                    visible=(hap == 0),
                 )
-                total += n
+                total += len(verts)
 
             scene.add_text(
                 "Single-Cell 3D Genome (Dip-C)",
@@ -442,7 +480,7 @@ def build_scene(output_path: Path, polylines: list[dict]) -> int:
                 color="rgba(200,200,200,0.5)",
             )
             scene.add_text(
-                "press '1' then '[' / ']' — Maternal ⇄ Paternal",
+                "press 'L' — toggle Maternal / Paternal layers",
                 position=(0.02, 0.97),
                 font_size=0.014,
                 anchor="bottom-left",
