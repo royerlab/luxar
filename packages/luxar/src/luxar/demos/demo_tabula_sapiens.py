@@ -702,6 +702,24 @@ def generate_tabula_sapiens(
                 color="rgba(200,200,200,0.45)",
             )
 
+            # Organ/tissue color legend — top tissues actually present, so the
+            # baked organ colors are decodable in-viewer (previously absent).
+            legend_tissues = [
+                t for t, _ in sorted(tissue_counts.items(), key=lambda x: -x[1])
+            ][:14]
+            legend_html = (
+                '<div style="font-size:1.2vh;line-height:1.5;background:rgba(0,0,0,0.5);'
+                'padding:0.5vh;border-radius:3px">'
+                '<div style="font-weight:bold;color:#ccc;margin-bottom:0.3vh">Tissue</div>'
+            )
+            for t in legend_tissues:
+                r, g, b = (int(round(v * 255)) for v in _tissue_color(t))
+                legend_html += (
+                    f'<div><span style="color:#{r:02x}{g:02x}{b:02x}">█</span> {t}</div>'
+                )
+            legend_html += "</div>"
+            scene.add_html(legend_html, position=(0.02, 0.97), anchor="bottom-left")
+
     aprint(f"✓ Wrote {n_cells:,} cells to {output_path}")
     return n_cells
 

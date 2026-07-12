@@ -293,6 +293,27 @@ def generate_spotify_landscape(
                 color="rgba(200,200,200,0.45)",
             )
 
+            # Genre color legend — built from the supercategories ACTUALLY present
+            # (most common first) so the baked genre colors are decodable in-viewer.
+            legend_cats = [
+                c for c, _ in sorted(cat_counts.items(), key=lambda x: -x[1])
+            ][:12]
+            legend_html = (
+                '<div style="font-size:1.3vh;line-height:1.6;background:rgba(0,0,0,0.5);'
+                'padding:0.5vh;border-radius:3px">'
+                '<div style="font-weight:bold;color:#ccc;margin-bottom:0.3vh">Genre</div>'
+            )
+            for cat in legend_cats:
+                r, g, b = (
+                    int(round(v * 255))
+                    for v in GENRE_COLORS.get(cat, GENRE_COLORS["other"])
+                )
+                legend_html += (
+                    f'<div><span style="color:#{r:02x}{g:02x}{b:02x}">█</span> {cat}</div>'
+                )
+            legend_html += "</div>"
+            scene.add_html(legend_html, position=(0.02, 0.97), anchor="bottom-left")
+
     aprint(f"✓ Wrote {n_tracks:,} tracks to {output_path}")
     return n_tracks
 
