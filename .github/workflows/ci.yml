@@ -238,7 +238,10 @@ jobs:
           echo "All release-readiness assertions passed."
 
   go-launcher:
-    runs-on: ubuntu-latest
+    # Pinned to 22.04: the launcher's webview_go (latest available) links
+    # webkit2gtk-4.0 via pkg-config, and ubuntu-24.04 (ubuntu-latest) ships only
+    # the 4.1 dev package. 22.04 provides libwebkit2gtk-4.0-dev.
+    runs-on: ubuntu-22.04
     timeout-minutes: 15
     defaults:
       run:
@@ -253,8 +256,9 @@ jobs:
 
       - name: Install WebView build deps (cgo)
         # The launcher binds github.com/webview/webview_go, which is cgo over
-        # WebKitGTK; go vet/build/test must compile the C bindings.
-        run: sudo apt-get update && sudo apt-get install -y libwebkit2gtk-4.1-dev pkg-config
+        # WebKitGTK; go vet/build/test must compile the C bindings. webview_go
+        # links webkit2gtk-4.0, so install the 4.0 dev package (present on 22.04).
+        run: sudo apt-get update && sudo apt-get install -y libwebkit2gtk-4.0-dev pkg-config
 
       - name: go vet
         run: go vet ./...
