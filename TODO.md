@@ -234,6 +234,23 @@ to ship after). Sequencing is at the bottom.
     But the media the gallery captures come from demos whose *inputs* may have
     moved to Zenodo, so `generate-readme-demos` must run after R17's fetch path
     exists (or before the migration). Keep gallery media small/optimized.
+- **R20 [LAUNCH] — Demos quality overhaul** (in progress, parallel agent —
+  **PR #488**, branch `worktree-demos-quality-overhaul`, ~+1785/−1286 across the
+  demo suite). Crash fixes, stale-doc fixes, shared caching, alias removal, and
+  colorbar/channel legends across the demos. First-impression-critical: the
+  demos are what `luxar demo` / the gallery / new users hit first. **Land this
+  before R19** (the gallery is captured from these demos) and coordinate with
+  R17 (shared caching should route through the same fetch/cache layer).
+- **R21 [LAUNCH] — New "turnkey three" science demos** (in progress, parallel
+  agent — branch `demos-turnkey-three`, **no PR yet**). Adds three geometry-
+  showcasing demos with tests: **asteroids / solar system** (points),
+  **Milky Way dust** (full-resolution gsplat fit), and **Dip-C 3D genome**
+  (with a Layers-panel haplotype toggle). Strong candidates for the R19 gallery.
+  **⚠ Feeds R17 directly:** this branch commits *new* heavy LFS data
+  (`milkyway_dust.gsplats.zarr.zip`, `dipc_gm12878.npz`) — exactly the kind of
+  compute-expensive processed dataset R17 moves to Zenodo. Open a PR, then either
+  migrate its data as part of R17 or land it to Zenodo from the start rather than
+  adding more git-LFS weight.
 - **R12 [POST] — Theme layout consistency (#7)**, **Python-side panel visibility
   config (#8)** — nice-to-have, not launch-gating.
 
@@ -309,11 +326,15 @@ to ship after). Sequencing is at the bottom.
 3. **Post the preprint** — R13 ✅ / R14 ✅ / R16 land → bioRxiv → obtain DOI → R4
    (wire citation back into the repo).
 4. **Public-repo readiness** (parallel with the preprint track, before the repo
-   goes public) — **R17** (retire git-LFS heavy datasets → Zenodo, so the public
-   clone is lean and future large datasets are addable), **R18** (docs content
-   pass + confirm the GitHub Pages site is publicly viewable), **R19** (README
-   refresh + regenerated gallery from the newer demos). R19 depends on R17's
-   fetch path (gallery capture re-runs the demos); R18 is independent.
+   goes public) — first land the in-flight demo work: **R20** (demos quality
+   overhaul, PR #488) and **R21** (new "turnkey three" demos, branch
+   `demos-turnkey-three`); then **R17** (retire git-LFS heavy datasets → Zenodo —
+   fold in R21's new `milkyway_dust`/`dipc` data so the public clone is lean and
+   future large datasets are addable), **R18** (docs content pass + confirm the
+   GitHub Pages site is publicly viewable), **R19** (README refresh + regenerated
+   gallery). Order within the step: **R20/R21 → R17 → R19** (the gallery is
+   captured from the finalized demos, whose inputs live in Zenodo by then); R18
+   is independent and can run any time.
 5. **Cut the release** — R2 (tag + GitHub release) → flip PyPI to live (R3) →
    announce.
 6. **Post-launch backlog** — R10 (#24 depth sorting), R12, R15, and the
@@ -352,6 +373,14 @@ to ship after). Sequencing is at the bottom.
 > README refresh + regenerated gallery from the newer demos (Playwright pipeline
 > exists; depends on R17's fetch path). These gate a *clean public repo*, not the
 > preprint; they should land before the repo is flipped public in the cut.
+>
+> Also tracking two in-flight demo efforts by parallel agents: **R20** (demos
+> quality overhaul — PR #488) and **R21** (new "turnkey three" demos:
+> asteroids / Milky-Way-dust gsplats / Dip-C genome — branch
+> `demos-turnkey-three`, no PR yet). Sequenced ahead of R17/R19 in step 4:
+> finalize the demos, then migrate their (incl. R21's new) heavy data to Zenodo,
+> then capture the gallery. R21 adds new git-LFS data, so it should be folded
+> into R17 rather than growing LFS further.
 
 ---
 
