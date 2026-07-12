@@ -762,6 +762,38 @@ with asection("Writing to Zarr"):
     aprint(f"✓ Written to {path}")
 ```
 
+### 6. Use the shared helpers (don't hand-roll caching)
+
+`luxar.demos` re-exports a small set of helpers — prefer them over hand-rolling
+`Path.home() / ".cache" / ...` logic, `sys.argv` scanning, or HSV→RGB:
+
+```python
+from luxar.demos import (
+    launch_viewer,       # serve + open viewer (serve_args=[...] to pass e.g. --profile)
+    cached_download,     # download once into ~/.cache/luxar/<name>/, skip-if-present
+    cache_computed,      # cache an expensive result (UMAP, field) — versioned, param-keyed
+    require_local_data,  # gate LFS-tracked local data (clear "git lfs pull" message)
+    parse_demo_flags,    # --recompute / --no-serve / --serve-only
+    parse_int_arg,       # --points=N / --sample N integer flags
+    hsv_to_rgb,          # vectorized rainbow / hue-ramp colouring
+    detect_device, warn_if_no_cuda_gpu,          # GPU/MPS/CPU
+    load_precomputed_gsplats, load_precomputed_bundle,  # LFS-shipped gsplat data
+)
+
+# Download once, reused on every later run:
+csv = cached_download("https://…/data.csv", "mydemo", "data.csv")
+
+# Cache an expensive UMAP — the KEY must include every param that changes the
+# output (sample size, feature set, …) so a stale cache is never reused:
+positions = cache_computed(
+    "mydemo", f"umap3d_n{n}_f{len(FEATURES)}", lambda: run_umap(features), version=1
+)
+```
+
+`cache_computed` writes atomically and quarantines a corrupt cache to `.corrupt`
+instead of crashing. Sibling demos are importable normally
+(`from luxar.demos.demo_x import helper`) — no `importlib` file-path tricks.
+
 ## Creating New Demos
 
 1. **Copy a template** (demo_lorenz.py or demo_cubic_array.py)
