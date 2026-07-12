@@ -9,6 +9,12 @@ from typing import TYPE_CHECKING, Any, Callable, Dict, List, Literal, Optional, 
 
 import numpy as np
 
+from luxar.gsplats.utils.spatial_axes import (
+    SPATIAL_SIGMA_EPS,
+    spatial_axes_from_max_sigma,
+    spatial_only_shift,
+)
+
 if TYPE_CHECKING:
     from luxar.encoding import EncodingMode
     from luxar.gsplats.tree import GSplatLeaf, GSplatNode, GSplatPartition
@@ -197,7 +203,9 @@ class _SplatArrayMixin:
         result: np.ndarray = np.sqrt(np.sum(L**2, axis=2))
         return result
 
-    def _nondegenerate_axes(self, eps: float = 1e-6) -> np.ndarray:
+    def _nondegenerate_axes(
+        self, eps: float = SPATIAL_SIGMA_EPS
+    ) -> np.ndarray:
         """Axes that carry real extent (max marginal sigma across splats > eps).
 
         A per-timepoint categorical / time axis (built with ``sigma=0``) has
@@ -207,9 +215,7 @@ class _SplatArrayMixin:
         """
         if self.n_splats == 0:
             return np.arange(self.ndim)
-        max_sigma = self.marginal_sigmas().max(axis=0)
-        keep = np.flatnonzero(max_sigma > eps)
-        return keep if keep.size > 0 else np.arange(self.ndim)
+        return spatial_axes_from_max_sigma(self.marginal_sigmas().max(axis=0), eps)
 
     def _resolve_axes(self, axes: Optional[Sequence[int]]) -> np.ndarray:
         """Normalise an ``axes`` argument: ``None`` → auto non-degenerate axes."""
@@ -2310,9 +2316,7 @@ class GSplatData(_SplatArrayMixin):
         # Shift only the spatial (non-degenerate) axes; leave categorical axes
         # (zero covariance extent — e.g. a stacked-time axis) at their
         # coordinates. Mirrors scale()/eccentricities()/isolation grouping.
-        shift = np.zeros(self.ndim, dtype=np.float64)
-        spatial = self._nondegenerate_axes()
-        shift[spatial] = np.asarray(centroid, dtype=np.float64)[spatial]
+        shift = spatial_only_shift(centroid, self._nondegenerate_axes())
         return self.translate(-shift)
 
     def scale_intensity(self, factor: float) -> "GSplatData":

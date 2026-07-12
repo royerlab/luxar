@@ -51,6 +51,11 @@ from typing import (
 
 import numpy as np
 
+from luxar.gsplats.utils.spatial_axes import (
+    SPATIAL_SIGMA_EPS,
+    spatial_axes_from_max_sigma,
+)
+
 if TYPE_CHECKING:
     from luxar.gsplats.gsplat_data import AdditiveSubLOD, SubstitutiveLevel
 
@@ -393,6 +398,33 @@ def global_amplitude_max(node: GSplatNode) -> float:
             if sub.n_splats:
                 mx = max(mx, float(sub.amplitudes.max()))
     return mx
+
+
+def nondegenerate_axes(
+    node: GSplatNode, eps: float = SPATIAL_SIGMA_EPS
+) -> np.ndarray:
+    """Axes with real covariance extent over the default-rendered splat set.
+
+    The node-tree twin of ``GSplatData._nondegenerate_axes``: an axis is spatial
+    if its maximum marginal sigma across the splats exceeds ``eps``; a
+    zero-variance categorical axis (a stacked-time / channel axis) is excluded.
+    Used by ``transform --center`` to re-origin only the spatial axes. Reduces
+    to a per-axis max-sigma vector (via each leaf's ``marginal_sigmas``) and
+    applies the shared spatial-axis rule. Falls back to all axes when none
+    qualify (or the tree is empty).
+    """
+    max_sigma: Optional[np.ndarray] = None
+    ndim = 0
+    for leaf in iter_default_leaves(node):
+        for sub in leaf.additive_sublods:
+            if sub.n_splats == 0:
+                continue
+            ndim = int(sub.centers.shape[1])
+            sig = sub.marginal_sigmas().max(axis=0)  # reuse the shared metric
+            max_sigma = sig if max_sigma is None else np.maximum(max_sigma, sig)
+    if max_sigma is None:
+        return np.arange(ndim)
+    return spatial_axes_from_max_sigma(max_sigma, eps)
 
 
 # ────────────────────────────────────────────────────────────────────────

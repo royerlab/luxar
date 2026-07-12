@@ -44,8 +44,10 @@ def run_transform_dataset(
             is_matrix_shaped,
             map_leaves,
             node_ndim,
+            nondegenerate_axes,
             total_splats,
         )
+        from luxar.gsplats.utils.spatial_axes import spatial_only_shift
 
         encoding_mode_obj = _resolve_encoding_mode(encoding_mode)
 
@@ -205,10 +207,19 @@ def run_transform_dataset(
                     with asection("Centering at centroid"):
                         centroid = amplitude_weighted_centroid(node)
                         if centroid is not None:
-                            node = map_leaves(
-                                node, _leaf_op(lambda gd: gd.translate(-centroid))
+                            # Re-origin only the spatial axes; leave a categorical
+                            # (zero-variance) time/channel axis in place — matching
+                            # GSplatData.center_at_centroid.
+                            shift = spatial_only_shift(
+                                centroid, nondegenerate_axes(node)
                             )
-                            aprint("Centered at global amplitude-weighted centroid")
+                            node = map_leaves(
+                                node, _leaf_op(lambda gd: gd.translate(-shift))
+                            )
+                            aprint(
+                                "Centered spatial axes at the global "
+                                "amplitude-weighted centroid"
+                            )
                 if scale_intensity_factor is not None:
                     with asection("Scaling intensity"):
                         aprint(f"Intensity scale factor: {scale_intensity_factor}")
