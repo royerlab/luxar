@@ -588,14 +588,12 @@ def main() -> None:
         base = precomputed[0]
     else:
         warn_if_no_cuda_gpu()
-        import importlib.util
+        from luxar.demos.demo_gsplats_3d_tribolium_embryo import (
+            fit_tribolium,
+            load_tribolium_volume,
+        )
 
-        sibling = Path(__file__).with_name("demo_gsplats_3d_tribolium_embryo.py")
-        spec = importlib.util.spec_from_file_location("_tribolium_base", sibling)
-        assert spec is not None and spec.loader is not None
-        tri = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(tri)
-        base = tri.fit_tribolium(tri.load_tribolium_volume())
+        base = fit_tribolium(load_tribolium_volume())
 
     # Center at the intensity-weighted centroid + dim amplitudes (matches the
     # other gsplat demos) so each column sits at the origin before placement.

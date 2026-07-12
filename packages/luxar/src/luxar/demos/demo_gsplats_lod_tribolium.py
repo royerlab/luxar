@@ -414,19 +414,14 @@ def main() -> None:
         base = precomputed[0]
     else:
         # --recompute path: re-fit the base splats from the raw volume by
-        # delegating to the base Tribolium demo's fitting pipeline. Demos run
-        # as scripts (their dir is on sys.path) and `luxar.demos` is aliased to
-        # `luxar.utils.demos`, so import the sibling module by file path.
+        # delegating to the base Tribolium demo's fitting pipeline.
         warn_if_no_cuda_gpu()
-        import importlib.util
+        from luxar.demos.demo_gsplats_3d_tribolium_embryo import (
+            fit_tribolium,
+            load_tribolium_volume,
+        )
 
-        sibling = Path(__file__).with_name("demo_gsplats_3d_tribolium_embryo.py")
-        spec = importlib.util.spec_from_file_location("_tribolium_base", sibling)
-        assert spec is not None and spec.loader is not None
-        tri = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(tri)
-
-        base = tri.fit_tribolium(tri.load_tribolium_volume())
+        base = fit_tribolium(load_tribolium_volume())
 
     # Build the substitutive ladder and colorize it.
     colored = build_lod_ladder(base)
