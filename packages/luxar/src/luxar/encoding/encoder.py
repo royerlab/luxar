@@ -1306,6 +1306,31 @@ class ArrayEncoder:
             "original_dtype": original_dtype,
         }
 
+    @staticmethod
+    def _quantize_normalized_clip(
+        data: np.ndarray,
+        min_val: float,
+        span: float,
+        levels: int,
+        dtype: np.dtype,
+        *,
+        round_values: bool = True,
+    ) -> np.ndarray:
+        """Affine-normalize to ``[0, levels]`` then clip-and-cast to ``dtype``.
+
+        The shared quantization core of the bounded / positive / custom scalar
+        encoders: map ``[min_val, min_val + span] → [0, levels]``, optionally
+        round (vs truncate toward zero), clip to ``[0, levels]``, and cast.
+        Callers own the degenerate ``span == 0`` (all-equal) branch — this
+        assumes ``span != 0``. ``round_values=False`` reproduces the custom
+        encoder's historical truncating behaviour exactly.
+        """
+        normalized = (data - min_val) / span
+        scaled = normalized * levels
+        if round_values:
+            scaled = np.round(scaled)
+        return np.clip(scaled, 0, levels).astype(dtype)
+
     def _encode_bounded_scalar(
         self,
         zarr_group: zarr.Group,
@@ -1368,10 +1393,8 @@ class ArrayEncoder:
 
                 if bits == 8:
                     # Dynamic range <= 256, uint8 is sufficient
-                    normalized = (data - min_val) / span
-                    # Use rounding for better accuracy (not truncation)
-                    encoded_data = np.clip(np.round(normalized * 255), 0, 255).astype(
-                        np.uint8
+                    encoded_data = self._quantize_normalized_clip(
+                        data, min_val, span, 255, np.dtype(np.uint8)
                     )
                     encoder_name = "bounded_scalar_uint8"
                     metadata = {
@@ -1383,11 +1406,9 @@ class ArrayEncoder:
                     }
                 elif bits == 16:
                     # Dynamic range <= 65536, uint16 is sufficient
-                    normalized = (data - min_val) / span
-                    # Use rounding for better accuracy (not truncation)
-                    encoded_data = np.clip(
-                        np.round(normalized * 65535), 0, 65535
-                    ).astype(np.uint16)
+                    encoded_data = self._quantize_normalized_clip(
+                        data, min_val, span, 65535, np.dtype(np.uint16)
+                    )
                     encoder_name = "bounded_scalar_uint16"
                     metadata = {
                         "name": encoder_name,
@@ -1503,11 +1524,13 @@ class ArrayEncoder:
                             data, dtype=np.uint8 if bits == 8 else np.uint16
                         )
                     else:
-                        normalized = (data - min_val) / span
-                        # Use rounding for better accuracy (not truncation)
-                        encoded_data = np.clip(
-                            np.round(normalized * levels), 0, levels
-                        ).astype(np.uint8 if bits == 8 else np.uint16)
+                        encoded_data = self._quantize_normalized_clip(
+                            data,
+                            min_val,
+                            span,
+                            levels,
+                            np.dtype(np.uint8 if bits == 8 else np.uint16),
+                        )
                     encoder_name = f"bounded_scalar_uint{bits}"
                     metadata = {
                         "name": encoder_name,
@@ -2190,9 +2213,15 @@ class ArrayEncoder:
                     data, dtype=np.uint8 if bits == 8 else np.uint16
                 )
             else:
-                normalized = (data - min_val) / span
-                encoded_data = np.clip(normalized * max_int, 0, max_int).astype(
-                    np.uint8 if bits == 8 else np.uint16
+                # round_values=False preserves the custom encoder's historical
+                # truncating quantization (the semantic-type encoders round).
+                encoded_data = self._quantize_normalized_clip(
+                    data,
+                    min_val,
+                    span,
+                    max_int,
+                    np.dtype(np.uint8 if bits == 8 else np.uint16),
+                    round_values=False,
                 )
 
             metadata = {
