@@ -55,6 +55,13 @@ class TestNormalizeDustVolume:
         out = normalize_dust_volume(raw, target_size=8)
         assert out.shape == (8, 8, 8)
 
+    def test_native_resolution_when_target_nonpositive(self) -> None:
+        # target_size <= 0 ⇒ keep the native (non-cubic) shape, no downscale.
+        raw = np.abs(np.random.default_rng(3).normal(size=(9, 7, 5))).astype(np.float32)
+        out = normalize_dust_volume(raw, target_size=0)
+        assert out.shape == (9, 7, 5)
+        assert out.min() >= 0.0 and out.max() <= 1.0
+
     def test_deterministic(self) -> None:
         raw = np.abs(np.random.default_rng(2).normal(size=(10, 10, 10))).astype(
             np.float32

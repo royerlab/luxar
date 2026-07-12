@@ -31,17 +31,22 @@ Data (Zenodo record 3993082): ``mean_std.h5`` — mean + std of the dust
 SELF-CONTAINED / CACHING
 ------------------------
 On a fresh machine this demo bootstraps itself with no manual steps:
-  1. Fast path: a small precomputed fit shipped via Git LFS
-     (``demos/data/gsplats_milkyway_dust/``).
+  1. Fast path: a precomputed FULL-RESOLUTION fit shipped via Git LFS
+     (``demos/data/gsplats_milkyway_dust/``, ~8 MB) — the native 740×740×540
+     cube fit to ~675k Gaussian splats (PSNR ~35 dB).
   2. If that asset isn't pulled, it AUTOMATICALLY downloads the 2.4 GB cube to
      ``~/.cache/luxar/gsplats_milkyway_dust/`` (resumable), fits Gaussian splats
      on the GPU, and caches the fit there — so subsequent runs are instant.
 ``--recompute`` forces the download + fit path.
 
+The ``--recompute`` default reproduces the shipped asset (native resolution,
+~1M splats), which needs a large-VRAM GPU (~40 GB+). On a smaller card, pass a
+downscale + lighter budget, e.g. ``--target-size 256 --max-splats 200000``.
+
 USAGE
 -----
     python demo_gsplats_3d_milky_way_dust.py [--recompute] [--no-serve] [--serve-only]
-    python demo_gsplats_3d_milky_way_dust.py --target-size 192 --max-splats 120000
+    python demo_gsplats_3d_milky_way_dust.py --recompute --target-size 256 --max-splats 200000
 
 Controls:
     - Mouse drag: rotate,  Scroll: zoom,  Right-drag: pan,  'C': fly controls
@@ -82,11 +87,14 @@ CACHE_FILE = CACHE_DIR / GSPLATS_FILE
 
 VOXEL_SIZE_PC = 1.0  # native resolution of the reconstruction
 
-# Fitting parameters (GPU). Dust is diffuse, so a moderate splat budget suffices.
-TARGET_SIZE = 256  # downsample the 740³-ish cube to this cube edge before fitting
-MAX_SPLATS = 200_000
-MAX_SPLATS_PER_PASS = 50_000
-ITERS_PER_PASS = 3_000
+# Fitting parameters (GPU). Defaults reproduce the shipped full-resolution asset:
+# the native 740×740×540 cube (TARGET_SIZE=0 ⇒ no downscale) fit to ~1M splats.
+# This needs a large-VRAM GPU (~40 GB+); on a smaller card pass e.g.
+# `--target-size 256 --max-splats 200000` for a lighter, downscaled refit.
+TARGET_SIZE = 0  # 0 (or negative) ⇒ fit at native resolution (no downscale)
+MAX_SPLATS = 1_000_000
+MAX_SPLATS_PER_PASS = 200_000
+ITERS_PER_PASS = 5_000
 PSNR_PATIENCE = 0.1
 
 FLAGS = parse_demo_flags()
@@ -113,9 +121,9 @@ def normalize_dust_volume(mean: np.ndarray, target_size: int) -> np.ndarray:
     """Turn the raw reconstruction array into a fit-ready [0, 1] cube.
 
     Handles both linear-density and log-density storage (negatives ⇒ log ⇒
-    ``exp``), downsamples to ``target_size`` per axis, and robustly normalizes
-    with a high-percentile clip so a few dense cloud cores don't crush the
-    diffuse structure.
+    ``exp``), optionally downsamples to ``target_size`` per axis (``target_size``
+    <= 0 keeps native resolution), and robustly normalizes with a high-percentile
+    clip so a few dense cloud cores don't crush the diffuse structure.
     """
     from scipy.ndimage import zoom
 
@@ -125,9 +133,10 @@ def normalize_dust_volume(mean: np.ndarray, target_size: int) -> np.ndarray:
         V = np.exp(V)
     V = np.nan_to_num(V, nan=0.0, posinf=0.0, neginf=0.0)
 
-    factors = [target_size / s for s in V.shape]
-    if not all(abs(f - 1.0) < 1e-6 for f in factors):
-        V = zoom(V, factors, order=1)
+    if target_size and target_size > 0:
+        factors = [target_size / s for s in V.shape]
+        if not all(abs(f - 1.0) < 1e-6 for f in factors):
+            V = zoom(V, factors, order=1)
 
     lo = float(np.percentile(V, 1.0))
     hi = float(np.percentile(V, 99.5))

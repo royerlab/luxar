@@ -610,9 +610,9 @@ Gaussian-splats a real 3D reconstruction of the Milky Way's interstellar dust ar
 
 **Run**: `hatch run python packages/luxar/src/luxar/demos/demo_gsplats_3d_milky_way_dust.py [--recompute]`
 
-**Requires**: Nothing extra by default — ships a small precomputed fit via Git LFS. With `--recompute` (or if the LFS asset isn't pulled) it auto-downloads the 2.4 GB reconstruction (`mean_std.h5`) to `~/.cache/luxar/gsplats_milkyway_dust/` (resumable) and fits Gaussian splats (GPU recommended), caching the fit for reuse.
+**Requires**: Nothing extra by default — ships a precomputed **full-resolution** fit via Git LFS (~8 MB: the native 740×740×540 cube fit to ~675k splats, PSNR ~35 dB). With `--recompute` (or if the LFS asset isn't pulled) it auto-downloads the 2.4 GB reconstruction (`mean_std.h5`) to `~/.cache/luxar/gsplats_milkyway_dust/` (resumable) and refits. The `--recompute` default reproduces the shipped full-res fit and needs a large-VRAM GPU (~40 GB+); on a smaller card pass `--target-size 256 --max-splats 200000` for a lighter downscaled refit.
 
-**Demonstrates**: Real *volumetric astronomy* → Gaussian splats (the same `cal → fit → convert` pipeline used for microscopy, on a dust-density cube), 20–50× compression, `inferno` colormap + additive HDR rendering, self-contained download → fit → cache-processed bootstrap. Data: [Leike, Glatzle & Enßlin 2020](https://doi.org/10.1051/0004-6361/202038169), A&A 639, A138 (Zenodo record 3993082, CC BY 4.0).
+**Demonstrates**: Real *volumetric astronomy* → Gaussian splats (the same `cal → fit → convert` pipeline used for microscopy, on a dust-density cube), 20–50× compression, `inferno` colormap + Neutral tone-mapping + additive HDR rendering, self-contained download → fit → cache-processed bootstrap. Data: [Leike, Glatzle & Enßlin 2020](https://doi.org/10.1051/0004-6361/202038169), A&A 639, A138 (Zenodo record 3993082, CC BY 4.0).
 
 ---
 
