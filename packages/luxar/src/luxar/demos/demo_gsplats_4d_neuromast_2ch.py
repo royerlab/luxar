@@ -60,8 +60,7 @@ from pathlib import Path
 import numpy as np
 from arbol import aprint, asection
 
-from luxar import LuxarZarrCompiler
-from luxar.cli.gsplat_config import build_dimensions_from_data
+from luxar import Dimension, Dimensions, LuxarZarrCompiler
 from luxar.core.viewer_config import ViewerConfig
 from luxar.gsplats.io.load_gsplats import load_gsplat_node
 from luxar.gsplats.tree import center_bounds
@@ -142,11 +141,36 @@ def create_luxar_scene(channel_paths: list[Path], output_path: Path) -> Path:
     bounds → they co-register and animate together over the Time dimension.
     """
     with asection("Creating 4D two-channel neuromast scene"):
-        # Dims from the (shared) gsplat bounds — 3 spatial dims displayed + Time.
+        # Explicit, named 4D dims (not the generic dim0..dim3 from
+        # build_dimensions_from_data). The fitted gsplat center columns are
+        # ordered (Z, Y, X, Time) — Z first, from the fit's axes=time,z,y,x —
+        # so the Dimensions list must follow that exact order. The three
+        # spatial axes are displayed; Time is a DISCRETE (step=1) hidden axis
+        # that drives the playback slider.
         node, _ = load_gsplat_node(str(channel_paths[0]))
         bmin, bmax = center_bounds(node)
-        dims = build_dimensions_from_data(np.array([bmin, bmax], dtype=np.float32))
         aprint(f"Scene bounds: min={np.round(bmin, 2)} max={np.round(bmax, 2)}")
+        dims = Dimensions(
+            [
+                Dimension(
+                    "Z", unit="µm", display=True, range=(float(bmin[0]), float(bmax[0]))
+                ),
+                Dimension(
+                    "Y", unit="µm", display=True, range=(float(bmin[1]), float(bmax[1]))
+                ),
+                Dimension(
+                    "X", unit="µm", display=True, range=(float(bmin[2]), float(bmax[2]))
+                ),
+                Dimension(
+                    "Time",
+                    unit="frame",
+                    discrete=True,
+                    step=1.0,
+                    display=False,
+                    range=(float(bmin[3]), float(bmax[3])),
+                ),
+            ]
+        )
 
         with LuxarZarrCompiler(output_path) as compiler:
             scene = compiler.create_scene(
