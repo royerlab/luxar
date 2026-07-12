@@ -3,6 +3,16 @@
 **Version**: 3.2.0
 **Last Updated**: 2026-07-03
 
+> **Cross-language contract:** the format *vocabulary* shared by the Python
+> writer and the TypeScript viewer — format versions, encoding-scheme names,
+> node types/kinds, and canonical attr/array keys — is single-sourced in
+> [`format-contract/contract.yaml`](../../format-contract/contract.yaml). Edit
+> that file and run `make gen-contract` to regenerate the Python
+> (`typing_utils/_format_contract.py`) and TypeScript
+> (`types/format-contract.ts`) projections; `hatch run check-contract` gates
+> against drift. This document remains the prose reference; the YAML is the
+> machine-checked source of truth for the values.
+
 ## Purpose
 
 The `gsplats.io` package provides I/O operations for persisting and loading Gaussian splat data in a dedicated zarr format (`.gsplats.zarr`). This enables efficient storage, compression, and retrieval of fitted Gaussian splat results.

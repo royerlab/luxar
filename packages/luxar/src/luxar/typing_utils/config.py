@@ -5,6 +5,10 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, Final, Literal, Optional
 
+from ..typing_utils._format_contract import (
+    SUPPORTED_SCENE_VERSIONS,
+    SceneFormatVersion,
+)
 from ..typing_utils.constants import (
     LUXAR_VERSION_CURRENT,
     MAX_CHUNK_BYTES,
@@ -15,7 +19,8 @@ from ..typing_utils.enums import PhysicalUnit
 
 # Define literal types locally
 CompressionType = Literal["blosc", "zstd", "lz4", "gzip", "bz2", "lzma"]
-LuxarVersion = Literal["0.1", "0.2", "0.3"]
+# Single-sourced from format-contract/contract.yaml.
+LuxarVersion = SceneFormatVersion
 
 # =============================================================================
 # Core Configuration Constants
@@ -29,7 +34,7 @@ DEFAULT_CHUNK_BYTES: Final[int] = TARGET_CHUNK_BYTES
 DEFAULT_VERSION: Final[str] = LUXAR_VERSION_CURRENT
 
 # Supported Luxar versions for backwards compatibility
-SUPPORTED_VERSIONS: Final[tuple[LuxarVersion, ...]] = ("0.1", "0.2", "0.3")
+SUPPORTED_VERSIONS: Final[tuple[LuxarVersion, ...]] = SUPPORTED_SCENE_VERSIONS
 
 # Default output directory for temporary scenes
 DEFAULT_TMP_DIR: Final[Optional[Path]] = None
