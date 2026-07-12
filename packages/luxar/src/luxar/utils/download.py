@@ -263,7 +263,9 @@ def verify_file_checksum(
     with asection(f"Verifying {file_path.name}"):
         if expected_md5:
             aprint("Computing MD5...")
-            md5_hash = hashlib.md5()
+            # Integrity check of a downloaded artifact, not a security control:
+            # usedforsecurity=False documents intent and clears bandit B324.
+            md5_hash = hashlib.md5(usedforsecurity=False)
             with open(file_path, "rb") as f:
                 for chunk in iter(lambda: f.read(8192 * 128), b""):
                     md5_hash.update(chunk)

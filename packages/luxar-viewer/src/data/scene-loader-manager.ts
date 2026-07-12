@@ -129,6 +129,48 @@ export class SceneLoaderManager {
   }
 
   /**
+   * Create a new SceneLoader, awaiting disposal of any existing loader with the
+   * same ID first.
+   *
+   * Unlike {@link createLoader} (which fires the previous loader's async dispose
+   * without awaiting), this awaits {@link destroyLoaderAsync} so caching-store
+   * teardown and OPFS metadata flush fully drain before the replacement loader
+   * is constructed. Dataset switches must use this path so the new loader never
+   * races the old one's late teardown for cache ownership / OPFS metadata.
+   *
+   * @param id - Unique identifier for this loader
+   * @param config - Optional loader configuration
+   * @param setAsDefault - Whether to set this as the default loader
+   * @returns The created SceneLoader instance
+   */
+  async createLoaderAsync(
+    id: string = 'default',
+    config?: LoaderConfig,
+    setAsDefault: boolean = true
+  ): Promise<SceneLoader> {
+    // Await disposal of any existing loader with the same ID before building
+    // the replacement (deterministic teardown; see destroyLoaderAsync).
+    if (this.loaders.has(id)) {
+      await this.destroyLoaderAsync(id);
+    }
+
+    const loader = new SceneLoader(
+      config,
+      id,
+      this.profiler,
+      this.monitorFactory,
+      this.lodGroupRegistryFactory
+    );
+    this.loaders.set(id, loader);
+
+    if (setAsDefault || !this.defaultLoaderId) {
+      this.defaultLoaderId = id;
+    }
+
+    return loader;
+  }
+
+  /**
    * Get a SceneLoader by ID
    *
    * @param id - The loader ID

@@ -350,7 +350,6 @@ class TestServeIntegration:
         _warn_if_lan_exposed("127.0.0.1", "*")
         _warn_if_lan_exposed("localhost", "*")
         _warn_if_lan_exposed("::1", "*")
-        _warn_if_lan_exposed("0.0.0.0", "*")
         # Non-loopback host with restricted CORS — no warning.
         _warn_if_lan_exposed("192.168.1.10", "local")
         _warn_if_lan_exposed("my-server.lan", "https://example.com")
@@ -366,6 +365,15 @@ class TestServeIntegration:
         captured = capsys.readouterr()
         assert "Serving on host=192.168.1.10" in captured.out
         assert "--cors-origin '*'" in captured.out
+
+    def test_lan_warning_fires_for_all_interfaces_bind(self, capsys):
+        """Binding all interfaces (0.0.0.0) with wildcard CORS must warn — it
+        exposes the data on every network interface, not just loopback."""
+        from luxar.cli.main import _warn_if_lan_exposed
+
+        _warn_if_lan_exposed("0.0.0.0", "*")
+        captured = capsys.readouterr()
+        assert "Serving on host=0.0.0.0" in captured.out
 
     def test_404_for_nonexistent_path(self, test_server):
         """Test that nonexistent paths return 404."""

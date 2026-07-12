@@ -453,7 +453,17 @@ format-cuda:  ## Format CUDA/C++ code with clang-format (skips if not installed)
 		echo "✅ CUDA/C++ code formatted"; \
 	fi
 
-format-all:  ## Format all code (Python, TypeScript, Rust, CUDA)
+format-go:  ## Format the Go launcher with gofmt
+	@GO_BIN=$$(command -v go || echo "$(HOME)/.local/go/bin/go"); \
+	if [ -x "$$GO_BIN" ] || command -v go >/dev/null 2>&1; then \
+		echo "🐹 Formatting Go launcher..."; \
+		(cd $(LAUNCHER_SRC_DIR) && "$$GO_BIN" fmt ./...); \
+		echo "✅ Go code formatted"; \
+	else \
+		echo "⚠️  go not found - skipping Go formatting (run 'make install-go')"; \
+	fi
+
+format-all:  ## Format all code (Python, TypeScript, Rust, Go, CUDA)
 	@echo "🐍 Formatting Python code..."
 	$(MAKE) format-python
 	@echo ""
@@ -461,6 +471,8 @@ format-all:  ## Format all code (Python, TypeScript, Rust, CUDA)
 	$(MAKE) format-typescript
 	@echo ""
 	$(MAKE) format-rust
+	@echo ""
+	$(MAKE) format-go
 	@echo ""
 	$(MAKE) format-cuda
 
@@ -546,6 +558,16 @@ test-all:  ## Run all tests (Python, Rust/WASM, and TypeScript with fresh fixtur
 		echo "⚠️  CUDA extension not built - CUDA tests skipped"; \
 		echo "   Run 'make setup-cuda' to enable CUDA testing"; \
 	fi
+	@echo ""
+	@echo "🐹 Checking Go launcher tests..."
+	@GO_BIN=$$(command -v go || echo "$(HOME)/.local/go/bin/go"); \
+	if [ -x "$$GO_BIN" ] || command -v go >/dev/null 2>&1; then \
+		echo "Running Go launcher unit tests..."; \
+		(cd $(LAUNCHER_SRC_DIR) && "$$GO_BIN" test ./...) || exit $$?; \
+	else \
+		echo "⚠️  go not found - Go launcher tests skipped"; \
+		echo "   Run 'make install-go' to enable launcher testing"; \
+	fi
 
 # GPU contention warning: do not run `test-python` and `test-cuda` in
 # parallel processes — both invoke PyTorch/CUDA on the same device, which
@@ -582,8 +604,8 @@ run-pre-commit:  ## Run pre-commit on all files
 	$(HATCH) run pre-commit run --all-files
 
 # Quality checks (run all using Hatch)
-check-all:  ## Run all quality checks (Python and TypeScript)
-	@echo "🐍 Running Python checks..."
+check-all:  ## Run all quality checks (Python, TypeScript, Go)
+	@echo "🐍 Running Python checks (ruff, mypy, import-linter, version, bandit, tests)..."
 	$(HATCH) run check
 	@echo "📘 Running TypeScript checks (CI: typecheck + lint + layers + coverage)..."
 	@if [ ! -d "packages/luxar-viewer/node_modules" ]; then \
@@ -591,6 +613,14 @@ check-all:  ## Run all quality checks (Python and TypeScript)
 		cd packages/luxar-viewer && pnpm install; \
 	fi
 	cd packages/luxar-viewer && pnpm run check:ci
+	@echo "🐹 Running Go launcher checks (go vet)..."
+	@GO_BIN=$$(command -v go || echo "$(HOME)/.local/go/bin/go"); \
+	if [ -x "$$GO_BIN" ] || command -v go >/dev/null 2>&1; then \
+		(cd $(LAUNCHER_SRC_DIR) && "$$GO_BIN" vet ./...) || exit $$?; \
+		echo "✅ Go launcher vet passed"; \
+	else \
+		echo "⚠️  go not found - skipping Go vet (run 'make install-go')"; \
+	fi
 
 # Documentation checks
 check-docs:  ## Check documentation quality and coverage

@@ -908,41 +908,96 @@ def test_save_explicit_none_compressor_disables_compression():
 
 
 class TestCompressedLoadSecurity:
-    """Path-safety of the compressed-archive loader (``_extract_compressed_zarr``)."""
+    """Path-safety of the shared compressed-archive extractor
+    (``luxar.gsplats.io._archive.extract_compressed_zarr``), exercised through
+    every entry point that consumes it (loader + format migrator)."""
 
-    def test_targz_symlink_escape_rejected(self, tmp_path: Path) -> None:
-        """A tar.gz with a symlink escaping the extraction dir must be rejected
-        BEFORE any file is written (CVE-2007-4559-style symlink escape).
-
-        Pre-fix: the loader validated only ``member.name`` (which resolves inside
-        the temp dir) and then ``extractall`` recreated the symlink, so a file
-        member written "through" it landed outside the extraction dir.
-        """
+    def _make_symlink_bomb(self, dest_dir: Path, outside: Path) -> Path:
+        """Build a malicious .tar.gz: a symlink 'd' -> ``outside`` then a file
+        'd/PWNED.txt' written through it (CVE-2007-4559-style symlink escape)."""
         import io
         import tarfile
 
-        from luxar.gsplats.io.load_gsplats import _extract_compressed_zarr
-
-        outside = tmp_path / "outside"
-        outside.mkdir()
-        target = outside / "PWNED.txt"
-        assert not target.exists()
-
-        evil = tmp_path / "evil.gsplats.zarr.tar.gz"
+        evil = dest_dir / "evil.gsplats.zarr.tar.gz"
         with tarfile.open(evil, "w:gz") as tar:
-            link = tarfile.TarInfo("d")  # symlink 'd' -> the outside dir
+            link = tarfile.TarInfo("d")
             link.type = tarfile.SYMTYPE
             link.linkname = str(outside)
             tar.addfile(link)
             payload = b"arbitrary write outside extraction dir"
-            f = tarfile.TarInfo("d/PWNED.txt")  # writes through the symlink
+            f = tarfile.TarInfo("d/PWNED.txt")
             f.size = len(payload)
             tar.addfile(f, io.BytesIO(payload))
+        return evil
 
-        with pytest.raises(ValueError, match="link|escape"):
-            _extract_compressed_zarr(evil)
-        # The decisive assertion: nothing was written outside the extraction dir.
+    def test_targz_symlink_escape_rejected(self, tmp_path: Path) -> None:
+        """The shared extractor must reject a symlink-escape tar.gz BEFORE any
+        file is written, and leave no temp dir behind."""
+        from luxar.gsplats.io._archive import extract_compressed_zarr
+
+        outside = tmp_path / "outside"
+        outside.mkdir()
+        target = outside / "PWNED.txt"
+
+        evil = self._make_symlink_bomb(tmp_path, outside)
+        with pytest.raises(ValueError, match="link|escape|device"):
+            extract_compressed_zarr(evil)
         assert not target.exists(), "symlink escape wrote a file outside the temp dir"
+
+    def test_targz_hardlink_rejected(self, tmp_path: Path) -> None:
+        """Hardlink members are rejected too (not just symlinks)."""
+        import io
+        import tarfile
+
+        from luxar.gsplats.io._archive import extract_compressed_zarr
+
+        evil = tmp_path / "hard.gsplats.zarr.tar.gz"
+        with tarfile.open(evil, "w:gz") as tar:
+            payload = b"real"
+            real = tarfile.TarInfo("real.txt")
+            real.size = len(payload)
+            tar.addfile(real, io.BytesIO(payload))
+            link = tarfile.TarInfo("link.txt")
+            link.type = tarfile.LNKTYPE
+            link.linkname = "real.txt"
+            tar.addfile(link)
+
+        with pytest.raises(ValueError, match="link|device"):
+            extract_compressed_zarr(evil)
+
+    def test_targz_member_count_cap(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """An archive with too many members is rejected (archive-bomb guard)."""
+        import io
+        import tarfile
+
+        from luxar.gsplats.io import _archive
+
+        monkeypatch.setattr(_archive, "_MAX_MEMBERS", 3)
+        bomb = tmp_path / "bomb.gsplats.zarr.tar.gz"
+        with tarfile.open(bomb, "w:gz") as tar:
+            for i in range(5):
+                info = tarfile.TarInfo(f"f{i}.txt")
+                info.size = 1
+                tar.addfile(info, io.BytesIO(b"x"))
+
+        with pytest.raises(ValueError, match="members"):
+            _archive.extract_compressed_zarr(bomb)
+
+    def test_migrate_path_rejects_symlink_escape(self, tmp_path: Path) -> None:
+        """The migration entry point uses the same safe extractor: a malicious
+        archive passed to ``detect_legacy_format`` must not escape the temp dir."""
+        from luxar.gsplats.io.migrate import detect_legacy_format
+
+        outside = tmp_path / "outside"
+        outside.mkdir()
+        target = outside / "PWNED.txt"
+
+        evil = self._make_symlink_bomb(tmp_path, outside)
+        with pytest.raises(ValueError, match="link|escape|device"):
+            detect_legacy_format(evil)
+        assert not target.exists(), "migrate path allowed a symlink escape"
 
 
 def test_write_gsplats_tree_stamps_child_index_on_children() -> None:
@@ -1083,10 +1138,14 @@ class TestBarrierAwareOrdering:
             write_gsplats_tree(bpath, leaf, barrier_dims=[3])
             write_gsplats_tree(npath, leaf, barrier_dims=[])  # pure spatial
 
-            bt = self._finest_chunk_bounds(bpath)[:, 3, 1] - \
-                self._finest_chunk_bounds(bpath)[:, 3, 0]
-            nt = self._finest_chunk_bounds(npath)[:, 3, 1] - \
-                self._finest_chunk_bounds(npath)[:, 3, 0]
+            bt = (
+                self._finest_chunk_bounds(bpath)[:, 3, 1]
+                - self._finest_chunk_bounds(bpath)[:, 3, 0]
+            )
+            nt = (
+                self._finest_chunk_bounds(npath)[:, 3, 1]
+                - self._finest_chunk_bounds(npath)[:, 3, 0]
+            )
 
             # WITH barrier: most chunks single-timepoint. Since the write-side
             # padding shrank from ±0.5 step to the tiny float-boundary epsilon
@@ -1119,8 +1178,10 @@ class TestBarrierAwareOrdering:
             path = Path(tmpdir) / "prov.gsplats.zarr"
             # coarsen spatial dims 0,1,2 → barrier = [3] (time). No barrier_dims arg.
             write_gsplats_tree(path, leaf, pipeline_info={"coarsen_dims": [0, 1, 2]})
-            bt = self._finest_chunk_bounds(path)[:, 3, 1] - \
-                self._finest_chunk_bounds(path)[:, 3, 0]
+            bt = (
+                self._finest_chunk_bounds(path)[:, 3, 1]
+                - self._finest_chunk_bounds(path)[:, 3, 0]
+            )
             assert np.median(bt) <= 1.5  # barrier honored via provenance
             root = zarr.open_group(str(path), mode="r")
             assert list(root.attrs["slice_dims"]) == [3]
@@ -1178,7 +1239,10 @@ class TestBarrierAwareOrdering:
 
         # Auto-detect MISSES the sparse time axis (the finding's failure mode),
         # so relying on it (barrier_dims=None default) leaves the axis σ-smeared.
-        assert detect_barrier_dims(make_sparse_4d_leaf(0).additive_sublods[0].centers) == []
+        assert (
+            detect_barrier_dims(make_sparse_4d_leaf(0).additive_sublods[0].centers)
+            == []
+        )
 
         def max_time_extent(path: Path, part: str) -> float:
             cb = np.asarray(zarr.open_group(str(path), mode="r")[part]["chunk_bounds"])
@@ -1189,17 +1253,24 @@ class TestBarrierAwareOrdering:
             npath = Path(tmpdir) / "auto.gsplats.zarr"
             # Explicit barrier=[3] — what _merge_partition now passes.
             write_partition_streaming(
-                bpath, lambda: iter([make_sparse_4d_leaf(0), make_sparse_4d_leaf(1)]),
+                bpath,
+                lambda: iter([make_sparse_4d_leaf(0), make_sparse_4d_leaf(1)]),
                 barrier_dims=[3],
             )
             # Auto-detect fallback (the pre-fix batch behavior): no barrier found.
             write_partition_streaming(
-                npath, lambda: iter([make_sparse_4d_leaf(0), make_sparse_4d_leaf(1)]),
+                npath,
+                lambda: iter([make_sparse_4d_leaf(0), make_sparse_4d_leaf(1)]),
             )
             for part in ("part_0", "part_1"):
                 broot = zarr.open_group(str(bpath), mode="r")
                 assert list(broot[part].attrs["slice_dims"]) == [3]
-                assert list(zarr.open_group(str(npath), mode="r")[part].attrs["slice_dims"]) == []
+                assert (
+                    list(
+                        zarr.open_group(str(npath), mode="r")[part].attrs["slice_dims"]
+                    )
+                    == []
+                )
                 # Barrier removes the σ (coverage 3·2=6) expansion on the time
                 # axis → strictly tighter time bounds than the auto-detect miss.
                 assert max_time_extent(bpath, part) < max_time_extent(npath, part)

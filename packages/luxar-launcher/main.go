@@ -82,23 +82,6 @@ func hasViewerAndData(root string) bool {
 	return true
 }
 
-// withCORS wraps a handler so the WebView (and any browser fallback) can
-// fetch zarr chunks across the viewer/data path split without preflight
-// failures. Mirrors the policy used by `luxar serve` and the old
-// serve.py-based export.
-func withCORS(h http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Access-Control-Allow-Origin", "*")
-		w.Header().Set("Access-Control-Allow-Methods", "GET, HEAD, OPTIONS")
-		w.Header().Set("Access-Control-Allow-Headers", "*")
-		if r.Method == http.MethodOptions {
-			w.WriteHeader(http.StatusOK)
-			return
-		}
-		h.ServeHTTP(w, r)
-	})
-}
-
 func openSystemBrowser(url string) error {
 	var cmd string
 	var args []string
@@ -133,8 +116,11 @@ func startServer(root string) (string, *http.Server, error) {
 	// generous default the viewer splits across its cache tiers.
 	viewerURL := fmt.Sprintf("http://127.0.0.1:%d/viewer/?src=%s&cacheBudgetMB=%d", port, dataURL, cacheBudgetMB())
 
+	// No CORS headers: the viewer (/viewer) and its data (/data) are served
+	// from this one origin, so same-origin fetches need none. A wildcard here
+	// would only let an unrelated web page read the locally-served scene.
 	srv := &http.Server{
-		Handler:           withCORS(http.FileServer(http.Dir(root))),
+		Handler:           http.FileServer(http.Dir(root)),
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 	go func() {

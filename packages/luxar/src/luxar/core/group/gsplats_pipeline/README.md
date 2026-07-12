@@ -112,7 +112,7 @@ with LuxarZarrCompiler("scene.luxar.zarr") as compiler:
     # Fit a volume and add in one step
     scene.add_gsplats_from_volume("fitted", volume, seeds=8000, n_iters=1000)
 
-    # Load a pre-fitted .gsplats.zarr (v3.1 node tree grafted into the scene)
+    # Load a pre-fitted .gsplats.zarr (v3.2 node tree grafted into the scene)
     scene.add_gsplats_from_file("loaded", "path/to/fitted.gsplats.zarr")
 ```
 
@@ -136,4 +136,4 @@ with LuxarZarrCompiler("scene.luxar.zarr") as compiler:
 - [core/README.md](../../README.md) — scene graph and `add_gsplats*` overview
 - [core/group/group.py](../group.py) — public method signatures that delegate here
 - [gsplats/README.md](../../../gsplats/README.md) — fitting and `GSplatData`
-- `docs/specs/GSPLATS_ZARR_FORMAT.md` — the v3.1 node-tree format (leaf / kind=lod / kind=partition)
+- `docs/specs/GSPLATS_ZARR_FORMAT.md` — the v3.2 node-tree format (leaf / kind=lod / kind=partition)

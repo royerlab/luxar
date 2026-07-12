@@ -94,16 +94,18 @@ def _add_cors(api: FastAPI, cors_origin: str = _DEFAULT_CORS_ORIGIN) -> None:
     )
 
 
-_LOOPBACK_HOSTS = frozenset({"127.0.0.1", "localhost", "::1", "0.0.0.0"})
+# Genuine loopback addresses only. The all-interfaces sentinel (0.0.0.0 / ::)
+# is deliberately NOT here: binding it exposes the server on every network
+# interface, which is exactly the case the LAN-exposure warning must fire on.
+_LOOPBACK_HOSTS = frozenset({"127.0.0.1", "localhost", "::1"})
 
 
 def _warn_if_lan_exposed(host: str, cors_origin: str) -> None:
-    """Warn when the user is binding non-loopback AND opening CORS to all.
+    """Warn when the user is binding a non-loopback address AND opening CORS to all.
 
-    ``host`` is the bind address. ``0.0.0.0`` is treated as loopback for this
-    warning's purpose because it is the conventional "all interfaces" sentinel
-    on the server side; the *real* exposure risk is when a developer passes
-    a routable LAN address (an internal IP, a hostname, ``::``).
+    ``host`` is the bind address. Anything that is not a genuine loopback
+    address — an all-interfaces sentinel, a routable LAN address, or a
+    hostname — reaches the network and triggers the warning.
     """
     if cors_origin.strip() != "*":
         return

@@ -46,7 +46,7 @@ save_gsplats(
 
 **`load_gsplats()`** - Load splats from .gsplats.zarr
 
-Transparently handles compressed formats (`.gsplats.zarr.zip`, `.gsplats.zarr.tar.gz`) by extracting to a temporary directory automatically. Arrays are decoded from their stored encoding (quantization, broadcasting, etc.) to float32.
+Transparently handles compressed formats (`.gsplats.zarr.zip`, `.gsplats.zarr.tar.gz`) by extracting to a temporary directory automatically (via the shared, hardened `_archive.extract_compressed_zarr` — it rejects links/devices, validates every member before extracting, and caps member count / total size to guard against path-traversal and archive-bomb attacks). Arrays are decoded from their stored encoding (quantization, broadcasting, etc.) to float32.
 
 ```python
 from luxar.gsplats.io import load_gsplats
@@ -479,7 +479,7 @@ The package includes comprehensive tests covering:
 
 **Migration tests** (`test_migrate_format.py`):
 - Legacy-format detection (v1.0, v1.1, v2.0, substitutive directory)
-- Round-trip migration to v3.1 node-tree layout
+- Round-trip migration to v3.2 node-tree layout
 
 Run tests:
 ```bash
@@ -505,7 +505,7 @@ Compression gains from:
 
 ## Related Documentation
 
-- **Format spec (v3.1)**: `../../../../../../docs/specs/GSPLATS_ZARR_FORMAT.md` (node-tree: leaf / kind=lod / kind=partition)
+- **Format spec (v3.2)**: `../../../../../../docs/specs/GSPLATS_ZARR_FORMAT.md` (node-tree: leaf / kind=lod / kind=partition)
 - **Encoding system**: `../../encoding/README.md` (semantic types, quantization)
 - **Scene embedding**: `../../core/README.md` (GSplats in scene graph)
 - **Parent package**: `../README.md` (Gaussian splatting algorithms)
