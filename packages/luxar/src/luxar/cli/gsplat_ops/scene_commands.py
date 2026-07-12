@@ -24,7 +24,10 @@ def convert_to_scene(
     ),
     output_path: Path = typer.Argument(..., help="Output .luxar.zarr scene path"),
     center: bool = typer.Option(
-        True, "--center/--no-center", help="Center at amplitude-weighted centroid"
+        True,
+        "--center/--no-center",
+        help="Center spatial axes at the amplitude-weighted centroid "
+        "(a categorical time/channel axis is left in place)",
     ),
     scale_intensity: Optional[float] = typer.Option(
         None, "--scale-intensity", help="Scale amplitudes by factor (e.g., 0.1)"

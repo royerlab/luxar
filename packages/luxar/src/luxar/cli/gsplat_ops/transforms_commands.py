@@ -704,7 +704,10 @@ def transform_dataset(
         None, "--rotate-z", help="Rotate around Z axis (degrees, 3D spatial dims only)"
     ),
     center: bool = typer.Option(
-        False, "--center", help="Center at amplitude-weighted centroid"
+        False,
+        "--center",
+        help="Center spatial axes at the amplitude-weighted centroid "
+        "(a categorical time/channel axis is left in place)",
     ),
     # Intensity transforms
     scale_intensity_factor: Optional[float] = typer.Option(
