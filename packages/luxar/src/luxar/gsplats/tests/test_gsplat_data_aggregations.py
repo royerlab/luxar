@@ -79,8 +79,8 @@ class TestPrincipalRadii:
     def test_anisotropic_ge_isotropic(self):
         gs = _make_3d_gsplat(n=8)
         assert np.all(
-            gs.principal_radii(anisotropy=True) >= gs.principal_radii(anisotropy=False)
-            - 1e-6
+            gs.principal_radii(anisotropy=True)
+            >= gs.principal_radii(anisotropy=False) - 1e-6
         )
 
     def test_scales_with_truncation(self):
@@ -113,7 +113,8 @@ class TestPrincipalRadii:
         )
         assert np.allclose(gs.principal_radii(anisotropy=True)[0], 3.0 * 5.0, atol=1e-2)
         assert np.allclose(
-            gs.principal_radii(anisotropy=False)[0], 3.0 * (5 * 2 * 1) ** (1 / 3),
+            gs.principal_radii(anisotropy=False)[0],
+            3.0 * (5 * 2 * 1) ** (1 / 3),
             atol=1e-2,
         )
 

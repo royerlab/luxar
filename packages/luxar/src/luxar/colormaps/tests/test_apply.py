@@ -28,7 +28,7 @@ def test_vmin_vmax_clamping():
     s = np.array([-5.0, 0.0, 5.0, 10.0, 99.0], dtype=np.float32)
     c = scalars_to_colors(s, "viridis", vmin=0.0, vmax=10.0)
     lut = resolve_colormap("viridis").astype(np.float64) / 255.0
-    np.testing.assert_allclose(c[0], lut[0], atol=1e-6)   # -5 clamps to min
+    np.testing.assert_allclose(c[0], lut[0], atol=1e-6)  # -5 clamps to min
     np.testing.assert_allclose(c[-1], lut[255], atol=1e-6)  # 99 clamps to max
 
 
@@ -60,7 +60,7 @@ def test_default_vmin_vmax_from_data():
     s = np.array([2.0, 4.0, 6.0], dtype=np.float32)  # range [2,6]
     c = scalars_to_colors(s, "viridis")
     lut = resolve_colormap("viridis").astype(np.float64) / 255.0
-    np.testing.assert_allclose(c[0], lut[0], atol=1e-6)   # 2 -> min
+    np.testing.assert_allclose(c[0], lut[0], atol=1e-6)  # 2 -> min
     np.testing.assert_allclose(c[-1], lut[255], atol=1e-6)  # 6 -> max
 
 
