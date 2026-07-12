@@ -20,6 +20,14 @@ Each subdirectory contains pre-fitted `.gsplats.zarr.zip` files for one demo:
 | `gsplats_opencell_map4/` | 3D OpenCell MAP4 (cytoskeleton) | 2 channel files (~4.0 MB total) |
 | `gsplats_cmu1_pathology/` | 2D CMU-1 pathology (H&E) | 3 channel files (pending) |
 | `gsplats_celegans/` | 4D C. elegans tracking | 1 bundle zip with 400 timepoints (~64 MB) |
+| _(not bundled)_ `gsplats_neuromast_2ch` | 4D two-channel neuromast timelapse | 2 channel `.gsplats.zarr` (~220 MB) — **local-only, not in Git LFS yet** |
+
+> **Note — `demo_gsplats_4d_neuromast_2ch.py` data is not hosted yet.** Its two
+> pre-fit channels (~220 MB total) are too large for the current tiny-fit LFS
+> bundles and are kept in a local store on the author's machine
+> (`~/luxar_demo_data/gsplats_neuromast_2ch/`, override with
+> `$LUXAR_NEUROMAST_DATA_DIR`). Outstanding follow-up: upload them to the demo
+> data host and switch the demo to `load_precomputed_gsplats` like the others.
 
 ### Other Data Files (top level)
 
