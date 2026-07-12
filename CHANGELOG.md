@@ -6,6 +6,22 @@ All notable changes to Luxar are documented in this file.
 
 ### July 2026
 
+#### Removed — dead `computeNDVisibility{Points,Lines,GSplats}` worker kernels
+
+- Deleted the three standalone nD-visibility worker tasks, their TS wrappers
+  (`workers/data-worker/visibility/`), TypeScript reference kernels
+  (`wasm/typescript/{points,lines,gsplats}.ts`), Rust WASM kernels
+  (`wasm/rust/src/{points,lines,gsplats}.rs`), the pooled
+  `visibilityMaskBuffer` worker state, and their tests/benchmarks.
+- **Why**: they were speculative Phase-2 (2025-12) infrastructure that never
+  gained a production caller — two days after they were built, projection
+  moved to the worker (`projectXTo3D`) and per-element nD visibility/culling
+  was fused INTO projection (Lines `clip_segments_batch` mask, Points
+  effective radius, GSplats attenuation), making a standalone visibility
+  round-trip redundant. Parity tests and benchmarks kept the dead kernels
+  looking alive for six months.
+- The `'visibility'` `TimeoutKind` stays — it belongs to `querySpatialIndex`.
+
 #### Fixed — Lines are re-culled when scrubbing a non-displayed dimension
 
 - **Symptom**: scrubbing a non-displayed dimension (categorical toggle, time

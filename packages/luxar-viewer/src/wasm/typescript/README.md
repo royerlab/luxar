@@ -12,10 +12,7 @@ path.
 | ----------------------- | ---------------------------------------------------------------------------------------------------------------- |
 | `index.ts`              | Barrel re-exporting every kernel and the `TypeScriptFallback` class implementing the `WasmModule` interface      |
 | `spatial.ts`            | `query_chunks_for_view` — AABB intersection between chunk bounds and the nD slice                                |
-| `points.ts`             | `compute_nd_visibility_points` — per-point nD hypersphere/slice visibility test                                  |
-| `lines.ts`              | `compute_nd_visibility_lines` — endpoint-based segment visibility (OR of the two vertex tests)                   |
 | `lines-clipping.ts`     | Liang-Barsky segment clipping, batched position/scalar/color interpolation, segment lengths, clipped-end flags   |
-| `gsplats.ts`            | `compute_nd_visibility_gsplats` — ellipsoid-extent pre-filter using Cholesky row norms                           |
 | `gsplats-processing.ts` | Marginal Cholesky factorization, Mahalanobis distance, shifted-Gaussian attenuation, visible-Cholesky extraction |
 | `effective-radii.ts`    | `calculate_effective_radii` — `R_eff = sqrt(R² − D²)` for nD points sliced by a hyperplane                       |
 | `decode.ts`             | LUT / quantized / log-scalar / geolog-scalar / per-channel (linear, log, signed-log, geolog) decoders + `decode_broadcasted` |

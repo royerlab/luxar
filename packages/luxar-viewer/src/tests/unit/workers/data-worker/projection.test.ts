@@ -21,9 +21,6 @@ interface WasmStubs {
   calculate_effective_radii: ReturnType<typeof vi.fn>;
   calculate_bounds_3d: ReturnType<typeof vi.fn>;
   radii_to_visibility_mask: ReturnType<typeof vi.fn>;
-  compute_nd_visibility_points: ReturnType<typeof vi.fn>;
-  compute_nd_visibility_lines: ReturnType<typeof vi.fn>;
-  compute_nd_visibility_gsplats: ReturnType<typeof vi.fn>;
   clip_segments_batch: ReturnType<typeof vi.fn>;
   interpolate_clipped_positions: ReturnType<typeof vi.fn>;
   interpolate_colors_batch: ReturnType<typeof vi.fn>;
@@ -55,9 +52,6 @@ async function loadWorker(): Promise<{ mod: WorkerModule; wasm: WasmStubs }> {
     calculate_effective_radii: vi.fn(real.calculate_effective_radii.bind(real)),
     calculate_bounds_3d: vi.fn(real.calculate_bounds_3d.bind(real)),
     radii_to_visibility_mask: vi.fn(real.radii_to_visibility_mask.bind(real)),
-    compute_nd_visibility_points: vi.fn(real.compute_nd_visibility_points.bind(real)),
-    compute_nd_visibility_lines: vi.fn(real.compute_nd_visibility_lines.bind(real)),
-    compute_nd_visibility_gsplats: vi.fn(real.compute_nd_visibility_gsplats.bind(real)),
     clip_segments_batch: vi.fn(real.clip_segments_batch.bind(real)),
     interpolate_clipped_positions: vi.fn(real.interpolate_clipped_positions.bind(real)),
     interpolate_colors_batch: vi.fn(real.interpolate_colors_batch.bind(real)),

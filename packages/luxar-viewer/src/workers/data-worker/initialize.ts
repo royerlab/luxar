@@ -45,9 +45,6 @@ export async function initialize(ctx: WasmCtx, wasmPath?: string): Promise<Worke
     );
   }
 
-  // Pre-allocate visibility buffer (will grow as needed)
-  ctx.visibilityMaskBuffer = new Uint8Array(100000); // 100K elements max
-
   log.info(Modules.WORKER_POOL, 'DataWorker ready');
   return { wasmFallback: isWasmFallback(ctx.wasm) };
 }

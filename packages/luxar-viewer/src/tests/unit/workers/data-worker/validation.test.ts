@@ -18,9 +18,6 @@ async function loadWorker(): Promise<WorkerModule> {
   const wasmStub = {
     extract_3d_positions: vi.fn(),
     calculate_effective_radii: vi.fn(),
-    compute_nd_visibility_points: vi.fn(() => 0),
-    compute_nd_visibility_lines: vi.fn(() => 0),
-    compute_nd_visibility_gsplats: vi.fn(() => 0),
     clip_segments_batch: vi.fn(() => 0),
     interpolate_clipped_positions: vi.fn(),
     interpolate_colors_batch: vi.fn(),
@@ -571,39 +568,6 @@ describe('data-worker validation — segment/color/query gaps', () => {
         ndim: 3,
       })
     ).rejects.toThrow(/tolerance too short/);
-  });
-
-  it('computeNDVisibilityLines rejects segment indices past end of vertices', async () => {
-    const mod = await loadWorker();
-    // ndim=3, 2 segments, segments[3]=8 references vertex 8; vertices
-    // has only 5 vertices (15 floats). The line-segment validator must
-    // catch this before WASM clip_segments_batch.
-    await expect(
-      mod.workerAPI.computeNDVisibilityLines({
-        vertices: new Float32Array(15),
-        segments: new Uint32Array([0, 1, 2, 8]),
-        widths: new Float32Array(9),
-        slicePosition: new Float32Array(3),
-        tolerance: new Float32Array(3),
-        ndim: 3,
-        numSegments: 2,
-      })
-    ).rejects.toThrow(/vertices too short|positions too short for max segment vertex 8/);
-  });
-
-  it('computeNDVisibilityLines rejects widths shorter than max-vertex+1', async () => {
-    const mod = await loadWorker();
-    await expect(
-      mod.workerAPI.computeNDVisibilityLines({
-        vertices: new Float32Array(30),
-        segments: new Uint32Array([0, 1, 2, 3]),
-        widths: new Float32Array(2), // need at least max-vertex+1 = 4
-        slicePosition: new Float32Array(3),
-        tolerance: new Float32Array(3),
-        ndim: 3,
-        numSegments: 2,
-      })
-    ).rejects.toThrow(/widths too short/);
   });
 
   it('projectLinesTo3D rejects sharpness shorter than max-vertex+1', async () => {

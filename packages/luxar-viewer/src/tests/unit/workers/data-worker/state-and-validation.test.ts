@@ -33,13 +33,13 @@ import {
 
 describe('requireWasm (G17, P5)', () => {
   it('throws NOT_INITIALIZED_MSG when ctx.wasm is null', () => {
-    const ctx: WasmCtx = { wasm: null, visibilityMaskBuffer: null };
+    const ctx: WasmCtx = { wasm: null };
     expect(() => requireWasm(ctx)).toThrow(NOT_INITIALIZED_MSG);
   });
 
   it('returns ctx.wasm when present (identity, no copy)', () => {
     const fakeWasm = { tag: 'fake' } as unknown as WasmCtx['wasm'];
-    const ctx: WasmCtx = { wasm: fakeWasm, visibilityMaskBuffer: null };
+    const ctx: WasmCtx = { wasm: fakeWasm };
     expect(requireWasm(ctx)).toBe(fakeWasm);
   });
 
@@ -50,17 +50,16 @@ describe('requireWasm (G17, P5)', () => {
     expect(NOT_INITIALIZED_MSG).toMatch(/Not initialized/);
   });
 
-  it('module-level `state` defaults: wasm=null, visibilityMaskBuffer=null', () => {
-    // Production worker starts with both slots null; initialize() fills
-    // `wasm`, visibility tasks fill the mask buffer. The audit asked
-    // for the throw path; this also pins the module-level defaults.
+  it('module-level `state` defaults: wasm=null', () => {
+    // Production worker starts with the slot null; initialize() fills
+    // `wasm`. The audit asked for the throw path; this also pins the
+    // module-level default.
     //
     // NOTE: vitest test files share the module graph, so this assertion
     // checks the cached state, which other tests in this file may
     // mutate. We only assert the *shape* of the initial-default
-    // contract: both slots are nullable, never undefined.
+    // contract: the slot is nullable, never undefined.
     expect(workerState).toHaveProperty('wasm');
-    expect(workerState).toHaveProperty('visibilityMaskBuffer');
   });
 });
 

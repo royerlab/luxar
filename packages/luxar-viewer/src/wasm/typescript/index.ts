@@ -8,18 +8,12 @@
  *
  * Structure mirrors src/wasm/rust/src/:
  * - spatial.ts     -> spatial.rs
- * - points.ts      -> points.rs
- * - lines.ts       -> lines.rs
- * - gsplats.ts     -> gsplats.rs
  * - effective-radii.ts -> effective_radii.rs
  * - decode.ts      -> decode.rs
  * - lines-clipping.ts -> lines_clipping.rs
  */
 
 export { query_chunks_for_view } from './spatial';
-export { compute_nd_visibility_points } from './points';
-export { compute_nd_visibility_lines } from './lines';
-export { compute_nd_visibility_gsplats } from './gsplats';
 export { calculate_effective_radii } from './effective-radii';
 export {
   decode_quantized_u8,
@@ -74,9 +68,6 @@ export {
 // Re-export as a module class for compatibility with WasmModule interface
 import type { WasmModule } from '../types';
 import { query_chunks_for_view } from './spatial';
-import { compute_nd_visibility_points } from './points';
-import { compute_nd_visibility_lines } from './lines';
-import { compute_nd_visibility_gsplats } from './gsplats';
 import { calculate_effective_radii } from './effective-radii';
 import {
   decode_quantized_u8,
@@ -133,9 +124,6 @@ import {
  */
 export class TypeScriptFallback implements WasmModule {
   query_chunks_for_view = query_chunks_for_view;
-  compute_nd_visibility_points = compute_nd_visibility_points;
-  compute_nd_visibility_lines = compute_nd_visibility_lines;
-  compute_nd_visibility_gsplats = compute_nd_visibility_gsplats;
   calculate_effective_radii = calculate_effective_radii;
   decode_quantized_u8 = decode_quantized_u8;
   decode_quantized_u16 = decode_quantized_u16;

@@ -30,7 +30,7 @@ const wasm = await initWasm();
 
 // Use the unified API
 const chunks = wasm.query_chunks_for_view(/* ... */);
-const visibility = wasm.compute_nd_visibility_points(/* ... */);
+const count = wasm.clip_segments_batch(/* ... */);
 ```
 
 The default URL resolution (`new URL('../wasm/luxar_wasm.js', import.meta.url)`)
@@ -46,10 +46,10 @@ non-standard location.
 
 ### nD Visibility
 
-- `compute_nd_visibility_points()` — Hypersphere intersection for point clouds
-- `compute_nd_visibility_lines()` — Endpoint-based visibility for line segments
-- `compute_nd_visibility_gsplats()` — Ellipsoid extent for Gaussian splats
 - `calculate_effective_radii()` — Radius when sliced through higher dimensions
+  (per-element nD visibility/culling otherwise lives INSIDE the projection
+  kernels: `clip_segments_batch` for Lines, the attenuation/fused kernel for
+  GSplats)
 
 ### Decoding
 

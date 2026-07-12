@@ -210,7 +210,7 @@ describe('WorkerPool.runWithTimeout', () => {
     );
     const pool = new WorkerPool();
     const raced = pool
-      .runWithTimeout('computeNDVisibilityPoints', 'visibility', (api) =>
+      .runWithTimeout('querySpatialIndex', 'visibility', (api) =>
         (api as unknown as { neverResolves: () => Promise<never> }).neverResolves()
       )
       .catch((e: unknown) => e);

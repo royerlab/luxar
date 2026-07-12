@@ -95,14 +95,14 @@ Each worker loads a WASM module on `initialize()` and exposes these operations:
 | Category            | Methods                                                                                     |
 | ------------------- | ------------------------------------------------------------------------------------------- |
 | **Spatial queries** | `querySpatialIndex()` — find chunks intersecting nD slice                                   |
-| **nD visibility**   | `computeNDVisibilityPoints()`, `computeNDVisibilityLines()`, `computeNDVisibilityGSplats()` |
 | **Decoding**        | `decodeQuantized()`, `decodeLogScalar()`, `decodeGeologScalar()`, `decodePerChannel()`, `decodeLUT()`, `decodeBroadcasted()` |
-| **Projection**      | `projectPointsTo3D()`, `projectLinesTo3D()`, `projectGSplatsTo3D()`                         |
+| **Projection**      | `projectLinesTo3D()`, `projectGSplatsTo3D()` (Points project on the main thread)            |
 
 ### What workers handle
 
 - Spatial index queries (chunk bounding box tests)
-- nD visibility computation (hypersphere intersection)
+- nD→3D projection with built-in per-element visibility/culling
+  (Lines clip mask, GSplats attenuation)
 - Array decoding (LUT, quantization, log-space)
 
 ### What stays on main thread
@@ -149,8 +149,7 @@ workers/
 │                                                 from data-worker/ and exposes
 │                                                 the Comlink workerAPI.
 └── data-worker/
-    ├── state.ts                                — WasmCtx { wasm,
-    │                                            visibilityMaskBuffer }
+    ├── state.ts                                — WasmCtx { wasm }
     │                                            + requireWasm helper
     ├── initialize.ts                           — WASM bootstrap
     ├── types.ts                                — ProjectionViewState,
@@ -161,12 +160,7 @@ workers/
     │                                            (worker-internal)
     ├── spatial-index/
     │   └── query.ts                            — querySpatialIndex
-    ├── visibility/
-    │   ├── points.ts                           — computeNDVisibilityPoints
-    │   ├── lines.ts                            — computeNDVisibilityLines
-    │   └── gsplats.ts                          — computeNDVisibilityGSplats
     ├── projection/
-    │   ├── points.ts                           — projectPointsTo3D
     │   ├── lines.ts                            — projectLinesTo3D
     │   └── gsplats.ts                          — projectGSplatsTo3D
     └── decode/

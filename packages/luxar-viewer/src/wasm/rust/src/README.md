@@ -21,10 +21,7 @@ src/
 ├── lib.rs                  — crate root: module declarations + WASM re-exports
 ├── common.rs               — shared constants, ndim validation, packed-Cholesky index
 ├── spatial.rs              — chunk AABB intersection (nD broadphase)
-├── points.rs               — hypersphere visibility for Points
-├── lines.rs                — endpoint visibility for Line segments
 ├── lines_clipping.rs       — Liang-Barsky nD slab clipping + attribute interpolation
-├── gsplats.rs              — coarse ellipsoid-extent visibility for GSplats
 ├── gsplats_processing.rs   — Mahalanobis distance, marginal Cholesky, attenuation
 ├── effective_radii.rs      — Pythagorean radius shrinkage when slicing through hidden dims
 ├── projection.rs           — extract 3D positions, bounds, compact-by-mask
@@ -73,7 +70,7 @@ The kernels share a small bag of tricks documented inline:
 - **Reciprocal multiply over division** (`let inv = 1.0 / x; a * inv`) — WASM
   `f32.div` is roughly 10× slower than `f32.mul` on most engines.
 - **Loop fusion** — visibility and norm computation collapsed into a single
-  pass over the per-point inner loop (see `points.rs`,
+  pass over the per-element inner loop (see
   `gsplats_processing.rs::mahalanobis_distance_internal`).
 - **Branchless mask writes** — `output_mask[i] = visible as u8; count +=
 visible as u32;` instead of an `if/else`.
@@ -110,30 +107,6 @@ dimension's `[chunk_min, chunk_max]` interval lies fully outside
 caller-supplied `&mut [u32]` and the population count returned. No `ndim`
 validation is required here (no fixed-size buffers).
 
-### `points.rs` — point visibility
-
-| Function                       | Purpose                                     |
-| ------------------------------ | ------------------------------------------- |
-| `compute_nd_visibility_points` | Hypersphere/hypercube visibility per point. |
-
-For each point, normalises the per-dim delta by `tolerance[d] + radius` and
-sums the squares; visible iff the sum is `<= 1.0`. Zero effective tolerance
-with a non-zero delta short-circuits to `dist_sq = INFINITY` and breaks the
-inner loop early. The per-point radius is added uniformly to every
-dimension's tolerance (isotropic).
-
-### `lines.rs` — segment visibility
-
-| Function                      | Purpose                                                  |
-| ----------------------------- | -------------------------------------------------------- |
-| `compute_nd_visibility_lines` | A segment is visible iff **either** endpoint is visible. |
-
-Reuses the same normalised-distance formula as `points.rs` via a private
-`#[inline] fn check_point_visibility(...)` helper. Widths are per-vertex
-(`widths[v0_idx]`, `widths[v1_idx]`) rather than per-segment so the call site
-must supply a vertex-keyed array. Short-circuits the second endpoint check
-when the first is already visible.
-
 ### `lines_clipping.rs` — Liang-Barsky clipping in nD
 
 The most involved kernel. Handles the five segment cases relative to the
@@ -162,19 +135,6 @@ The batch path replaces the `HashSet<u32>` of display dims with a fixed-size
 `[bool; 16]` lookup. `dv.abs() < 1e-7` short-circuits the
 parallel-to-slice case before any division. `t1 >= t2` aborts the per-segment
 loop the moment the valid interval collapses.
-
-### `gsplats.rs` — coarse splat visibility
-
-| Function                        | Purpose                                                         |
-| ------------------------------- | --------------------------------------------------------------- |
-| `compute_nd_visibility_gsplats` | Pre-filter using the max Cholesky row-norm as ellipsoid extent. |
-
-For each splat, computes the marginal standard deviation along each axis as
-the **row norm** `sqrt(sum_j L[i,j]²)` of the packed Cholesky factor, then
-uses the maximum row norm as a conservative isotropic extent and runs the
-same hypersphere test as `points.rs`. This is intentionally
-over-permissive — the precise Mahalanobis-based attenuation runs later in
-`gsplats_processing::compute_gsplats_attenuation`.
 
 ### `gsplats_processing.rs` — Mahalanobis, marginal Cholesky, attenuation
 

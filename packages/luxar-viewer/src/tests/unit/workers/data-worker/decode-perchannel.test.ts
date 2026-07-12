@@ -18,7 +18,6 @@ import { ArrayDecoder } from '../../../../data/array-decoder/decoder';
 const ctx: WasmCtx = {
   wasm: new TypeScriptFallback(),
   tsFallback: null,
-  visibilityMaskBuffer: null,
 };
 
 const colLo = new Float64Array([-1.5, 0.25]);

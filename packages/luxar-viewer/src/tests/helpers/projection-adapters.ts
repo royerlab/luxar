@@ -98,7 +98,7 @@ export function distance3D(a: number[], b: number[]): number {
 
 /** Wrap a backend module as a main-thread `WasmCtx` for the dispatchers. */
 function ctxFor(backend: WasmModule): WasmCtx {
-  return { wasm: backend, tsFallback: backend, visibilityMaskBuffer: null };
+  return { wasm: backend, tsFallback: backend };
 }
 
 /**
