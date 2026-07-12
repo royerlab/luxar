@@ -132,7 +132,8 @@ FACTOR = 8
 # the screen and the coarse cap (fewer-but-larger splats) engages as you zoom *out*.
 # The viewer anchors the finest at fills-screen via the live viewport, so there is
 # no per-dataset threshold knob to tune.
-# Additive ladder depth for additive / partitioned-part / multiscale-part ladders.
+# Additive-ladder depth for the stream recipe and the tiles / overview per-part
+# (and per-level) streaming ladders.
 N_LODS = 4
 # Cheap O(N log N) additive ordering — keeps the demo fast on CPU.
 ADDITIVE_METHOD = "self_energy"
