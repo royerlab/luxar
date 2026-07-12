@@ -94,21 +94,20 @@ LFS_COLORS = DATA_DIR / COLORS_FILE
 
 # Preprocessing / fit parameters.
 RULER_CROP_FRAC = 0.14  # drop the bottom rows (color-scale ruler + slice label)
-TARGET_MAX_DIM = 384  # downsample so the largest spatial axis is <= this
-MAX_SPLATS = 500_000
-MAX_SPLATS_PER_PASS = 100_000
+TARGET_MAX_DIM = 896  # resample so the largest (physical) spatial axis is this
+MAX_SPLATS = 4_000_000
+MAX_SPLATS_PER_PASS = 600_000
 ITERS_PER_PASS = 4_000
 PSNR_PATIENCE = 0.1
 
 # Display brightness (additive): a dense head over-accumulates, so scale the
 # fitted amplitudes far down to keep the core from blowing out to white.
-SCENE_INTENSITY = 0.025
+SCENE_INTENSITY = 0.008
 
 # Physical voxel spacing of the NLM VHM color cryosections: 1.0 mm axial (slice
-# spacing) vs ~0.33 mm in-plane. The renderer treats voxels as cubes, so the
-# slice axis (center column 0, from the (Z, Y, X) fit volume) must be stretched
-# by this ratio to restore the correct anatomical aspect — otherwise the head
-# renders flattened along the vertical (superior–inferior) axis.
+# spacing) vs ~0.33 mm in-plane. The assembly resamples to physically-cubic
+# voxels using this ratio, so the fit volume has the correct anatomical aspect
+# (no render-time stretch) and the fitter yields well-shaped, non-elongated splats.
 VOXEL_Z_MM = 1.0
 VOXEL_XY_MM = 0.33
 
@@ -265,11 +264,19 @@ def assemble_volume(png_dir: Path, target_max_dim: int = TARGET_MAX_DIM) -> np.n
         vol, box = crop_to_content(vol)
         aprint(f"  Masked + cleaned + cropped to {vol.shape[:3]} (box {box})")
 
-        max_dim = max(vol.shape[:3])
-        if max_dim > target_max_dim:
-            f = target_max_dim / max_dim
-            vol = zoom(vol, (f, f, f, 1.0), order=1).clip(0.0, 1.0).astype(np.float32)
-            aprint(f"  Downsampled → {vol.shape[:3]}")
+        # Resample to physically-cubic voxels: the slices are 1.0 mm apart but
+        # in-plane pixels are ~0.33 mm, so downsample each axis in proportion to
+        # its physical extent (largest → target_max_dim). This bakes the correct
+        # anatomical aspect into the fit volume (no render-time stretch needed)
+        # and lets the fitter produce well-shaped, non-elongated splats.
+        nz, ny, nx = vol.shape[:3]
+        phys = np.array(
+            [nz * VOXEL_Z_MM, ny * VOXEL_XY_MM, nx * VOXEL_XY_MM], dtype=np.float64
+        )
+        out = np.maximum(1, np.round(phys / phys.max() * target_max_dim)).astype(int)
+        factors = (out[0] / nz, out[1] / ny, out[2] / nx, 1.0)
+        vol = zoom(vol, factors, order=1).clip(0.0, 1.0).astype(np.float32)
+        aprint(f"  Resampled to physically-isotropic {vol.shape[:3]}")
         return vol
 
 
@@ -361,17 +368,11 @@ def load_or_build() -> tuple[GSplatData, np.ndarray]:
 def create_luxar_scene(fit: GSplatData, colors: np.ndarray, output_path: Path) -> Path:
     """Build the true-color Visible Human head scene."""
     with asection("Creating Luxar Scene"):
-        # Correct the anisotropic voxel aspect (1.0 mm slices vs 0.33 mm
-        # in-plane) by stretching the slice axis — column 0 of the (Z, Y, X)
-        # fit centers — then dim brightness. Additive blending (the gsplat
-        # norm): a dense head over-accumulates, so amplitudes are scaled WAY
-        # down to avoid a blown-out white core — reduce brightness, not blend mode.
-        z_stretch = VOXEL_Z_MM / VOXEL_XY_MM
-        centered = (
-            fit.center_at_centroid()
-            .transform(np.diag([z_stretch, 1.0, 1.0]))
-            .scale_intensity(SCENE_INTENSITY)
-        )
+        # Aspect is already correct (the volume was resampled to cubic voxels),
+        # so just center and dim. Additive blending (the gsplat norm): a dense
+        # head over-accumulates, so amplitudes are scaled WAY down to avoid a
+        # blown-out white core — reduce brightness, not blend mode.
+        centered = fit.center_at_centroid().scale_intensity(SCENE_INTENSITY)
         dims = Dimensions(
             [
                 Dimension("x", unit="mm", display=True),
