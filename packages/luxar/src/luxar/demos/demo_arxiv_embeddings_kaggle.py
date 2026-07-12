@@ -87,7 +87,7 @@ import numpy as np
 from arbol import aprint, asection
 
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
-from luxar.demos import launch_viewer
+from luxar.demos import cache_computed, cached_download, launch_viewer
 from luxar.utils.paths import get_demos_output_dir
 
 # =============================================================================
@@ -440,34 +440,20 @@ def reduce_embeddings_umap(
 def generate_paper_landscape(
     output_path: Path,
     sample_size: int = 50000,
-    cache_dir: Path | None = None,
 ) -> int:
     """Generate 3D landscape of arXiv papers.
 
     Args:
         output_path: Where to write zarr
         sample_size: Number of papers to sample
-        cache_dir: Optional cache for UMAP results
 
     Returns:
         Number of papers visualized
     """
-    # Check cache for UMAP results
-    cache_file = None
-    if cache_dir:
-        cache_dir.mkdir(parents=True, exist_ok=True)
-        cache_file = cache_dir / f"umap_{sample_size}.npz"
 
-    if cache_file and cache_file.exists():
-        with asection("Loading cached UMAP coordinates"):
-            cached = np.load(cache_file, allow_pickle=True)
-            positions = cached["positions"]
-            categories = list(cached["categories"])
-            years = list(cached["years"])
-            titles = list(cached["titles"]) if "titles" in cached else None
-            aprint(f"✓ Loaded {len(positions):,} papers from cache")
-    else:
-        # Check for cached embeddings dataset
+    def _compute_bundle() -> dict:
+        # Check for cached embeddings dataset (the ~30 GB embeddings ZIP is
+        # kept in ~/.cache/luxar with its own completeness / in-progress guards).
         dataset_cache = Path.home() / ".cache" / "luxar" / "arxiv_embeddings.zip"
         metadata_cache = Path.home() / ".cache" / "luxar" / "arxiv_metadata.json"
         expected_emb_size_gb = 30  # Expected embeddings size
@@ -508,14 +494,13 @@ def generate_paper_landscape(
         # Download and load metadata
         if not metadata_cache.exists():
             aprint("Metadata not in cache, downloading...")
-            # First download to Downloads, then extract
-            meta_zip = Path.home() / "Downloads" / "arxiv-metadata.zip"
-            if not meta_zip.exists():
-                aprint("Downloading arXiv metadata (1.5GB compressed)...")
-                download_kaggle_dataset(
-                    meta_zip,
-                    url="https://www.kaggle.com/api/v1/datasets/download/Cornell-University/arxiv",
-                )
+            # Cache the metadata ZIP under ~/.cache/luxar/arxiv_kaggle instead of
+            # polluting the user's ~/Downloads (skip-if-present built in).
+            meta_zip = cached_download(
+                "https://www.kaggle.com/api/v1/datasets/download/Cornell-University/arxiv",
+                "arxiv_kaggle",
+                "arxiv-metadata.zip",
+            )
 
             # Extract metadata
             import zipfile
@@ -545,27 +530,36 @@ def generate_paper_landscape(
         embeddings = np.array(embeddings_list, dtype=np.float32)
 
         if len(embeddings) == 0:
-            aprint("❌ No papers loaded")
-            return 0
+            return {
+                "positions": np.zeros((0, 3), dtype=np.float32),
+                "categories": [],
+                "years": [],
+                "titles": None,
+            }
 
         # Reduce to 3D
         positions = reduce_embeddings_umap(embeddings, n_components=3)
 
-        # Cache UMAP results for instant future runs
-        with asection("Saving UMAP cache"):
-            if cache_file:
-                aprint(f"Cache path: {cache_file}")
-                np.savez(
-                    cache_file,
-                    positions=positions,
-                    categories=np.array(categories),
-                    years=np.array(years),
-                    titles=np.array(titles, dtype=object),
-                )
-                aprint("✓ UMAP cached successfully!")
-                aprint("  Next run with same sample size will be INSTANT!")
-            else:
-                aprint("⚠️  Cache not enabled (--use-cache flag needed)")
+        return {
+            "positions": positions,
+            "categories": list(categories),
+            "years": list(years),
+            "titles": list(titles) if titles is not None else None,
+        }
+
+    # UMAP + matched metadata cached under ~/.cache/luxar/arxiv_kaggle, keyed on
+    # the sample size (version=1) so a second run with the same size is instant.
+    bundle = cache_computed(
+        "arxiv_kaggle", f"umap3d_n{sample_size}", _compute_bundle, version=1
+    )
+    positions = bundle["positions"]
+    categories = list(bundle["categories"])
+    years = list(bundle["years"])
+    titles = bundle["titles"]
+
+    if len(positions) == 0:
+        aprint("❌ No papers loaded")
+        return 0
 
     # Generate visualization
     with asection("Generating visualization"):
@@ -699,9 +693,6 @@ def main() -> None:
         aprint("")
         sys.exit(1)
 
-    # ALWAYS use cache
-    cache_dir = Path.home() / ".cache" / "luxar" / "arxiv_umap"
-
     # If --no-serve, use persistent directory; otherwise temp for auto-cleanup
     if "--no-serve" in sys.argv:
         output_path = get_demos_output_dir() / "arxiv_papers_kaggle.luxar.zarr"
@@ -709,7 +700,6 @@ def main() -> None:
             n_papers = generate_paper_landscape(
                 output_path,
                 sample_size=sample_size,
-                cache_dir=cache_dir,
             )
             if n_papers == 0:
                 return
@@ -731,7 +721,6 @@ def main() -> None:
             n_papers = generate_paper_landscape(
                 output_path,
                 sample_size=sample_size,
-                cache_dir=cache_dir,
             )
 
             if n_papers == 0:

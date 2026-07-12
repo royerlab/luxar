@@ -19,7 +19,7 @@ import zarr
 from arbol import aprint, asection
 
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
-from luxar.demos import launch_viewer
+from luxar.demos import cache_computed, launch_viewer
 from luxar.utils.paths import get_demos_output_dir
 
 
@@ -27,10 +27,12 @@ def load_cells_data():  # type: ignore[no-untyped-def]
     """Load integrated cells UMAP from Zebrahub.
 
     Returns coords, attrs (integer codes), and category maps (code → name).
+    The remote fetch+parse is cached under ~/.cache/luxar/zebrahub_multiome so
+    a second run is fully offline.
     """
     base = "https://public.czbiohub.org/royerlab/zebrahub/sequencing/3d-umaps/integrated_umap_3d_annotated"
 
-    with asection("Loading Zebrahub Multiome Integrated Cells"):
+    def _fetch():  # type: ignore[no-untyped-def]
         try:
             # Coordinates
             coords_flat = zarr.open(fsspec.get_mapper(f"{base}/coords.zarr"), mode="r")[
@@ -63,7 +65,12 @@ def load_cells_data():  # type: ignore[no-untyped-def]
             aprint("Please check your internet connection and try again.")
             raise
 
-    return coords, attrs, category_maps
+        return coords, attrs, category_maps
+
+    with asection("Loading Zebrahub Multiome Integrated Cells"):
+        return cache_computed(
+            "zebrahub_multiome", "coords_attrs", _fetch, version=1
+        )
 
 
 def attr_to_colors(values):  # type: ignore[no-untyped-def]

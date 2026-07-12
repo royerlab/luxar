@@ -82,6 +82,7 @@ from luxar import Dimension, Dimensions, LuxarZarrCompiler
 from luxar.encoding import EncodingMode
 from luxar.gsplats.gsplat_data import GSplatData
 from luxar.utils.demos import (
+    cached_download,
     launch_viewer,
     load_precomputed_gsplats,
     parse_demo_flags,
@@ -546,23 +547,14 @@ def main():
         elif tiff_path is None and cached_tiff.exists():
             tiff_path = cached_tiff
         elif tiff_path is None:
-            # Auto-download from OpenCell S3 bucket
-            import tempfile
-            import urllib.request
-
+            # Auto-download from OpenCell S3 bucket via the shared cache helper
+            # (retry / resume / skip-if-present) under
+            # ~/.cache/luxar/gsplats_opencell_map4/.
             with asection("Downloading OpenCell MAP4 TIFF (~70 MB)"):
                 aprint(f"URL: {TIFF_URL}")
-                tmp_fd, tmp_path = tempfile.mkstemp(dir=CACHE_DIR, suffix=".tif.tmp")
-                os.close(tmp_fd)
-                try:
-                    urllib.request.urlretrieve(TIFF_URL, tmp_path)
-                    os.replace(tmp_path, cached_tiff)
-                except BaseException:
-                    if os.path.exists(tmp_path):
-                        os.unlink(tmp_path)
-                    raise
-                aprint(f"Saved to {cached_tiff}")
-            tiff_path = cached_tiff
+                tiff_path = cached_download(
+                    TIFF_URL, "gsplats_opencell_map4", "opencell_map4_stack.tif"
+                )
 
         warn_if_no_cuda_gpu()
         volumes = load_opencell_data(tiff_path)

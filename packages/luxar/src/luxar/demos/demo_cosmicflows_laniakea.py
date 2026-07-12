@@ -30,7 +30,6 @@ from __future__ import annotations
 import argparse
 import sys
 import tempfile
-import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Final
@@ -40,7 +39,7 @@ from arbol import aprint, asection
 
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
 from luxar.core.viewer_config import CameraConfig, UIConfig, ViewerConfig
-from luxar.demos import launch_viewer
+from luxar.demos import cached_download, launch_viewer
 from luxar.utils.paths import get_demos_output_dir
 
 LANIAKEA_RAW_BASE: Final = "https://raw.githubusercontent.com/manlius/laniakea/main"
@@ -163,31 +162,22 @@ def get_cache_dir() -> Path:
     return Path.home() / ".cache" / "luxar" / "laniakea"
 
 
-def download_file(url: str, destination: Path) -> None:
-    """Download a URL atomically if it is not already cached."""
-    if destination.exists() and destination.stat().st_size > 0:
-        aprint(f"✓ Cached: {destination.name}")
-        return
-
-    destination.parent.mkdir(parents=True, exist_ok=True)
-    tmp_path = destination.with_suffix(destination.suffix + ".tmp")
-    aprint(f"Downloading {destination.name}...")
-    with urllib.request.urlopen(url, timeout=120) as response:
-        tmp_path.write_bytes(response.read())
-    tmp_path.replace(destination)
-    aprint(f"✓ Downloaded: {destination}")
-
-
 def ensure_input_data(cache_dir: Path) -> tuple[Path, Path, Path]:
-    """Ensure all public inputs are present in the local cache."""
-    with asection("Preparing Cosmicflows-4 input data"):
-        galaxy_path = cache_dir / "EDDtable22Nov2025140156.txt"
-        velocity_path = cache_dir / "CF4_new_64-z008_velocity.npy"
-        basins_path = cache_dir / "CF4_new_128-z008_BoA.npy"
+    """Ensure all public inputs are present in the local cache.
 
-        download_file(DATA_FILES["galaxies"], galaxy_path)
-        download_file(DATA_FILES["velocity"], velocity_path)
-        download_file(DATA_FILES["basins"], basins_path)
+    Downloads route through the shared :func:`cached_download` helper
+    (retry / resume / skip-if-present) into ``~/.cache/luxar/laniakea/``.
+    """
+    with asection("Preparing Cosmicflows-4 input data"):
+        galaxy_path = cached_download(
+            DATA_FILES["galaxies"], "laniakea", "EDDtable22Nov2025140156.txt"
+        )
+        velocity_path = cached_download(
+            DATA_FILES["velocity"], "laniakea", "CF4_new_64-z008_velocity.npy"
+        )
+        basins_path = cached_download(
+            DATA_FILES["basins"], "laniakea", "CF4_new_128-z008_BoA.npy"
+        )
 
     return galaxy_path, velocity_path, basins_path
 

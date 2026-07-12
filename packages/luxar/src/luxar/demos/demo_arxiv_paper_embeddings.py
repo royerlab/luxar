@@ -50,7 +50,9 @@ Usage:
     Options:
     --papers=N          Number of papers per field (default: 1000)
     --fields=cs,physics Fields to include (default: cs,physics,biology,medicine,math)
-    --use-cache         Use cached embeddings if available
+
+    Embeddings + 3D UMAP are cached automatically under ~/.cache/luxar/arxiv_paper
+    (keyed on fields + papers-per-field), so repeat runs are instant.
 
 Controls:
     - Rotate to explore the knowledge landscape
@@ -64,7 +66,7 @@ NOTES:
   * Small scale (5k papers): ~2-5 minutes
   * Large scale (100k papers): ~30-60 minutes
   * Very large scale (1M papers): Use bulk dataset API recommended!
-- Subsequent runs can use cached embeddings (--use-cache flag)
+- Subsequent runs load cached embeddings automatically
 - Requires internet connection for Semantic Scholar API
 - Required packages: sentence-transformers, umap-learn
 - API rate limits: ~100 requests/second (use delays for large queries)
@@ -75,7 +77,6 @@ https://api.semanticscholar.org/datasets/v1/release/
 Download pre-computed embeddings and metadata directly!
 """
 
-import json
 import sys
 import tempfile
 import time
@@ -86,7 +87,7 @@ import requests
 from arbol import aprint, asection
 
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
-from luxar.demos import launch_viewer
+from luxar.demos import cache_computed, launch_viewer
 from luxar.utils.paths import get_demos_output_dir
 
 # =============================================================================
@@ -369,7 +370,6 @@ def generate_paper_landscape(
     output_path: Path,
     fields: list[str] = None,
     papers_per_field: int = 500,
-    cache_dir: Path | None = None,
 ) -> int:
     """Generate 3D landscape of scientific papers.
 
@@ -377,7 +377,6 @@ def generate_paper_landscape(
         output_path: Where to write zarr
         fields: List of fields to include
         papers_per_field: Papers to download per field
-        cache_dir: Optional directory for caching embeddings
 
     Returns:
         Total number of papers visualized
@@ -385,31 +384,17 @@ def generate_paper_landscape(
     if fields is None:
         fields = DEFAULT_FIELDS
 
-    # Check cache
-    cache_file = None
-    if cache_dir:
-        cache_dir.mkdir(parents=True, exist_ok=True)
-        cache_file = cache_dir / f"papers_{'_'.join(fields)}_{papers_per_field}.json"
-
-    # Download or load papers
-    if cache_file and cache_file.exists():
-        with asection("Loading cached paper data"):
-            with open(cache_file) as f:
-                cached = json.load(f)
-                papers_data = cached["papers"]
-                embeddings_3d = np.array(cached["embeddings_3d"], dtype=np.float32)
-                primary_fields = cached["fields"]
-                citation_counts = cached["citations"]
-            papers_clean = papers_data
-            aprint(f"✓ Loaded {len(papers_clean)} papers from cache")
-            aprint(f"  Embeddings: {embeddings_3d.shape}")
-    else:
-        # Download papers
+    def _compute_bundle() -> dict:
+        # Download papers from Semantic Scholar
         papers = download_papers_across_fields(fields, papers_per_field)
 
         if len(papers) == 0:
-            aprint("❌ No papers found")
-            return 0
+            return {
+                "papers_clean": [],
+                "embeddings_3d": np.zeros((0, 3), dtype=np.float32),
+                "fields": [],
+                "citations": [],
+            }
 
         # Prepare data
         with asection("Preparing paper data"):
@@ -437,19 +422,25 @@ def generate_paper_landscape(
                     }
                 )
 
-        # Cache for future runs
-        if cache_file:
-            with open(cache_file, "w") as f:
-                json.dump(
-                    {
-                        "papers": papers_clean,
-                        "embeddings_3d": embeddings_3d.tolist(),
-                        "fields": primary_fields,
-                        "citations": citation_counts,
-                    },
-                    f,
-                )
-            aprint(f"✓ Cached to {cache_file}")
+        return {
+            "papers_clean": papers_clean,
+            "embeddings_3d": embeddings_3d,
+            "fields": primary_fields,
+            "citations": citation_counts,
+        }
+
+    # Embeddings + UMAP are cached ON BY DEFAULT under ~/.cache/luxar/arxiv_paper,
+    # keyed on the query (fields + papers-per-field), version=1.
+    cache_key = f"embed3d_{'_'.join(fields)}_n{papers_per_field}"
+    bundle = cache_computed("arxiv_paper", cache_key, _compute_bundle, version=1)
+    papers_clean = bundle["papers_clean"]
+    embeddings_3d = np.asarray(bundle["embeddings_3d"], dtype=np.float32)
+    primary_fields = bundle["fields"]
+    citation_counts = bundle["citations"]
+
+    if len(embeddings_3d) == 0:
+        aprint("❌ No papers found")
+        return 0
 
     # Generate colors and sizes
     with asection("Generating visualization attributes"):
@@ -572,7 +563,6 @@ def main() -> None:
     # Parse arguments
     papers_per_field = DEFAULT_PAPERS_PER_FIELD
     field_list = DEFAULT_FIELDS
-    use_cache = "--use-cache" in sys.argv
 
     for arg in sys.argv[1:]:
         if arg.startswith("--papers="):
@@ -618,7 +608,7 @@ def main() -> None:
     aprint("")
     aprint("⏱️  Expected time:")
     aprint("  • First run: 2-5 minutes (download + compute embeddings)")
-    aprint("  • Cached run: <30 seconds (if --use-cache)")
+    aprint("  • Cached run: <30 seconds (results cached automatically)")
     aprint("")
 
     # Check dependencies
@@ -633,11 +623,6 @@ def main() -> None:
         aprint("")
         sys.exit(1)
 
-    # Setup cache
-    cache_dir = None
-    if use_cache:
-        cache_dir = Path.home() / ".cache" / "luxar" / "arxiv_embeddings"
-
     # If --no-serve, use persistent directory; otherwise temp for auto-cleanup
     if "--no-serve" in sys.argv:
         output_path = get_demos_output_dir() / "arxiv_papers.luxar.zarr"
@@ -646,7 +631,6 @@ def main() -> None:
                 output_path,
                 fields=field_list,
                 papers_per_field=papers_per_field,
-                cache_dir=cache_dir,
             )
             if n_papers == 0:
                 aprint("\nNo papers generated")
@@ -671,7 +655,6 @@ def main() -> None:
                 output_path,
                 fields=field_list,
                 papers_per_field=papers_per_field,
-                cache_dir=cache_dir,
             )
 
             if n_papers == 0:
@@ -722,7 +705,7 @@ def main() -> None:
     aprint("Cleanup complete")
     aprint("")
     aprint("Performance tips:")
-    aprint("  - Use --use-cache to skip re-downloading and re-computing")
+    aprint("  - Embeddings + UMAP are cached automatically (instant re-runs)")
     aprint("  - Reduce --papers=N for faster generation")
     aprint("  - Limit --fields=cs,physics for focused exploration")
     aprint("")

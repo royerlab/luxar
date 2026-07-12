@@ -46,7 +46,7 @@ import zarr
 from arbol import aprint, asection
 
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
-from luxar.demos import launch_viewer
+from luxar.demos import cache_computed, launch_viewer
 from luxar.utils._umap_utils import (
     attribute_to_color,
     build_legend_html,
@@ -69,7 +69,19 @@ def load_zebrahub_umap_data(
         - attributes: dict of attribute arrays (numeric indices)
         - category_maps: dict of attribute name -> list of category labels
     """
-    with asection("Downloading Zebrahub 3D UMAP Data"):
+    # Attributes fetched from the remote zarr (fold into the cache key so a
+    # changed attribute set never reuses a stale cache).
+    attr_names = [
+        "celltype",
+        "chromosome",
+        "leiden_coarse",
+        "leiden_fine",
+        "lineage",
+        "peak_type",
+        "timepoint",
+    ]
+
+    def _fetch() -> tuple[np.ndarray, dict, dict]:
         # Load coordinates
         aprint("Loading 3D UMAP coordinates...")
         try:
@@ -107,15 +119,7 @@ def load_zebrahub_umap_data(
         attributes = {}
         category_maps = {}
 
-        for attr_name in [
-            "celltype",
-            "chromosome",
-            "leiden_coarse",
-            "leiden_fine",
-            "lineage",
-            "peak_type",
-            "timepoint",
-        ]:
+        for attr_name in attr_names:
             try:
                 attr_store = fsspec.get_mapper(f"{base_url}/attribute_{attr_name}.zarr")
                 z = zarr.open(attr_store, mode="r")
@@ -131,7 +135,15 @@ def load_zebrahub_umap_data(
             except Exception as e:
                 aprint(f"  {attr_name}: Failed to load - {e}")
 
-    return coordinates, attributes, category_maps
+        return coordinates, attributes, category_maps
+
+    # Cache the 640k×N remote fetch under ~/.cache/luxar/zebrahub_multiome_peak
+    # (keyed on the selected attribute set) so repeat runs are offline.
+    cache_key = "coords_attrs_" + "_".join(attr_names)
+    with asection("Downloading Zebrahub 3D UMAP Data"):
+        return cache_computed(
+            "zebrahub_multiome_peak", cache_key, _fetch, version=1
+        )
 
 
 def create_zebrahub_scene(
