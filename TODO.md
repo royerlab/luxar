@@ -193,10 +193,16 @@ to ship after). Sequencing is at the bottom.
   `calibration.py` and both PDFs rebuilt (luxar-paper `fc0780c`, pushed). NOTE:
   the named draft/standard/hifi/ultra presets only vary 4 knobs and the paper fits
   by explicit config, so a large per-preset matrix was correctly not added.
-- **R14 [LAUNCH] — Consumer-GPU timing benchmark.** Wall-time is softened to
-  "minutes per dataset" pending a consumer-GPU sweep (only RTX PRO 6000 numbers
-  documented). Run the benchmark on a commodity card (e.g. RTX 3070) to firm up
-  the claim.
+- **R14 [LAUNCH] — Consumer-GPU timing benchmark.** ✅ **DONE** (2026-07-12).
+  Ran the fit-timing sweep on a commodity NVIDIA RTX 3070 (8 GB) across the 9
+  core datasets × 5 splat counts (4K–256K), same config as the main
+  rate-distortion analysis (early stopping). Operating point (32K): all 9 fit in
+  38–355 s (**median ~4.2 min**) — substantiates "minutes per dataset" on
+  commodity hardware. 0/45 cells OOM (peak ≤4.8 GB even for the ~100-Mvox
+  light-sheet volumes, since the render kernel bounds VRAM independently of
+  volume size). Shipped as luxar-paper **SD13** (new supplement + harness), with
+  the claim wired into the main-text wall-time sentence and the Methods hardware
+  paragraph (luxar-paper #5 merged; lint/type sweep #6 merged alongside).
 - **R15 [POST] — Tiled-fitting figure.** Described in Methods + Results but has
   no figure; a reviewer may ask for a seamless-stitching demonstration. The
   `tiled_fitting/` SD is method-only (empirical eval deferred).
@@ -212,7 +218,7 @@ to ship after). Sequencing is at the bottom.
    no open feature branches, dependabot drained, release pipeline landed (#417).
 2. **Decide versioning & package** — R1 → R3 (PyPI dry-run / TestPyPI) in parallel
    with the day-one polish (R8/R9/R10/R11).
-3. **Post the preprint** — R13 ✅ / R14 / R16 land → bioRxiv → obtain DOI → R4
+3. **Post the preprint** — R13 ✅ / R14 ✅ / R16 land → bioRxiv → obtain DOI → R4
    (wire citation back into the repo).
 4. **Cut the release** — R2 (tag + GitHub release) → flip PyPI to live (R3) →
    announce.
@@ -229,10 +235,11 @@ to ship after). Sequencing is at the bottom.
 > Update 2026-07-11: R13 (Methods specificity) is **done** (#466) and
 > dependabot is re-drained (R5 note above). All release *tooling* is built and
 > validated — what remains on the critical path is **execution**, in order:
-> **(1) preprint track** — R14 (consumer-GPU timing sweep) + R16 (manuscript
-> repo hygiene); also decide whether the 13-dataset analyses get re-run with
-> floor suppression (`--floor`, #463) before or after bioRxiv — then post →
-> DOI → R4 (CITATION.cff). **(2) day-one leftovers** — R11 remainder
+> **(1) preprint track** — R14 (consumer-GPU timing sweep) ✅ **done**
+> 2026-07-12 (luxar-paper SD13); remaining: R16 (manuscript repo hygiene), and
+> decide whether the 13-dataset analyses get re-run with floor suppression
+> (`--floor`, #463) before or after bioRxiv — then post → DOI → R4
+> (CITATION.cff). **(2) day-one leftovers** — R11 remainder
 > (fresh-machine `make setup-dev` verify, optional gallery media regen) + R7
 > (license/acknowledgments audit). **(3) the mechanical cut** — final
 > dependabot/branch drain → `make set-version` → PR → `make release-check` →
