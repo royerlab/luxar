@@ -237,7 +237,12 @@ def load_and_convert_gaia_data(data_zarr_path: Path, output_path: Path) -> int:
         with LuxarZarrCompiler(output_path) as compiler:
             scene = compiler.create_scene(dimensions=dims)
 
-            # Add the stars
+            # Add the stars with substitutive Points LOD: coarse levels replace
+            # the 3M-star cloud with fewer, larger mass-preserving Gaussian splats
+            # when the galaxy is small on screen, so the viewer only pays for the
+            # detail it can resolve (the census demo uses the same wiring). The
+            # `layer=True` flag rides onto the wrapper kind=lod group → one "Stars"
+            # layer in the Layers panel.
             scene.add_points(
                 "Stars",
                 positions,
@@ -247,6 +252,7 @@ def load_and_convert_gaia_data(data_zarr_path: Path, output_path: Path) -> int:
                 blending_mode="additive",
                 intensity=0.031,
                 layer=True,
+                substitutive_lod=dict(compression_factor=8, levels=3, device="auto"),
             )
 
             # Add reference markers for famous stars
@@ -418,8 +424,17 @@ def main() -> None:
     if "--no-serve" in sys.argv:
         output_path = get_demos_output_dir() / "galaxy.luxar.zarr"
         try:
-            # Reads the .zarr.zip in place (via a ``zip://`` store) — no temp dir.
-            load_and_convert_gaia_data(DATA_FILE, output_path)
+            # Extract the raw .zarr from the zip to a temp dir, then convert to the
+            # persistent output_path (same extraction the serve path uses — reading
+            # the zip in place via a zip:// store is unreliable across zarr versions).
+            import zipfile
+
+            with tempfile.TemporaryDirectory(prefix="luxar_demo_gaia_") as tmpdir:
+                with zipfile.ZipFile(DATA_FILE, "r") as zf:
+                    zf.extractall(tmpdir)
+                load_and_convert_gaia_data(
+                    Path(tmpdir) / "milky_way_gaia_3m.zarr", output_path
+                )
         except FileNotFoundError as e:
             aprint(f"\n❌ Error: {e}")
             sys.exit(1)

@@ -151,6 +151,16 @@ def build_scene(
     colors = np.vstack([color_arrays[f] for f, _ in COLORINGS]).astype(np.float32)
     radii = np.full(len(positions), 0.35, dtype=np.float32)
 
+    # Per-cell hover labels, aligned with the stacked `coloring` blocks: within
+    # each block a point shows that coloring's category (cell type / tissue /
+    # disease) for its cell — the metadata is already in `codes`/`labels`.
+    hover_labels: list[str] = []
+    for field, _ in COLORINGS:
+        cat_names = labels[field]
+        hover_labels.extend(
+            cat_names[c] if 0 <= c < len(cat_names) else "?" for c in codes[field]
+        )
+
     output_path.parent.mkdir(parents=True, exist_ok=True)
     with asection(f"Building substitutive-LOD scene (device={device})"):
         with LuxarZarrCompiler(str(output_path)) as compiler:
@@ -161,6 +171,7 @@ def build_scene(
                 colors=colors,
                 radii=radii,
                 sharpness=np.full(len(positions), 0.6, np.float32),
+                labels=hover_labels,
                 opacity=0.85,
                 intensity=0.2,
                 # Expose the single cells node in the viewer's Layers panel.

@@ -461,9 +461,12 @@ def create_luxar_scene(
                     Dimension("y", unit="um", display=True),
                 ]
             )
-            # 2D data: start in orthographic mode with scale bar visible
+            # 2D data: start in orthographic mode with scale bar visible.
+            # Neutral tone-mapping keeps the per-marker colormap hues faithful —
+            # the viewer's default ACES shifts scientific LUT colors.
             viewer_config = ViewerConfig(
                 control_type="ortho",
+                tone_mapping="Neutral",
                 ui=UIConfig(show_scale_bar=True),
             )
             scene = compiler.create_scene(dimensions=dims, viewer_config=viewer_config)

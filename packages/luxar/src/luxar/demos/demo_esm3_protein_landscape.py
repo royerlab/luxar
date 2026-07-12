@@ -647,6 +647,9 @@ def generate_esm3_landscape(
         with LuxarZarrCompiler(output_path) as compiler:
             scene = compiler.create_scene(dimensions=dims)
 
+            # Substitutive Points LOD: ~572k proteins is a large cloud, so coarse
+            # levels replace it with fewer, larger merged splats when zoomed out
+            # (census-style wiring).
             scene.add_points(
                 "proteins",
                 positions=positions,
@@ -656,6 +659,7 @@ def generate_esm3_landscape(
                 opacity=0.9,
                 intensity=0.12,
                 labels=labels,
+                substitutive_lod=dict(compression_factor=8, levels=3, device="auto"),
             )
 
             scene.add_text(

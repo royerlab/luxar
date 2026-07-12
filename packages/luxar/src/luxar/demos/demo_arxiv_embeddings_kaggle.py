@@ -615,6 +615,8 @@ def generate_paper_landscape(
                     f"{categories[i]} ({years[i]})" for i in range(n_papers)
                 ]
 
+            # Substitutive Points LOD for the large (up to 2M) paper cloud —
+            # coarse merged levels when zoomed out (census-style wiring).
             scene.add_points(
                 "arxiv_papers",
                 positions=positions,
@@ -624,6 +626,7 @@ def generate_paper_landscape(
                 opacity=0.9,
                 intensity=0.1,
                 labels=paper_labels,
+                substitutive_lod=dict(compression_factor=8, levels=3, device="auto"),
             )
 
             # --- Overlays ---

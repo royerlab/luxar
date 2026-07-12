@@ -503,6 +503,8 @@ def generate_paper_landscape(
                 field = primary_fields[i] if i < len(primary_fields) else "Unknown"
                 paper_labels.append(f"{title_short} ({cites} cites, {field})")
 
+            # Substitutive Points LOD for the (potentially large) paper cloud —
+            # coarse merged levels when zoomed out (census-style wiring).
             scene.add_points(
                 "papers",
                 positions=positions,
@@ -512,6 +514,7 @@ def generate_paper_landscape(
                 opacity=0.9,
                 intensity=0.1,
                 labels=paper_labels,
+                substitutive_lod=dict(compression_factor=8, levels=3, device="auto"),
             )
 
             # --- Overlays ---

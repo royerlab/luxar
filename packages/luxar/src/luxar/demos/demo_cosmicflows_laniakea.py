@@ -655,6 +655,8 @@ def write_laniakea_scene(
                 intensity=0.45,
                 blending_mode="additive",
                 layer=True,
+                # Hover: which basin of attraction each galaxy flows into.
+                labels=[f"Basin {int(b)}" for b in galaxies.basin_ids],
             )
 
             for basin in basin_lines:

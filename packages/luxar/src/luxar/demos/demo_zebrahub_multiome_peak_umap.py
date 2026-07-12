@@ -261,6 +261,9 @@ def create_zebrahub_scene(
                 opacity=0.8,
                 intensity=0.067,
                 labels=labels,
+                # Substitutive Points LOD (coarsen x/y/z, group by the attribute
+                # barrier) — same wiring as the census demo.
+                substitutive_lod=dict(compression_factor=8, levels=3, device="auto"),
             )
 
             # --- Overlays ---

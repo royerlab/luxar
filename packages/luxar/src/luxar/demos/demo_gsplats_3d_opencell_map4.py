@@ -98,8 +98,8 @@ N_CHANNELS = 2
 
 # Channel configuration with colours
 CHANNELS = [
-    {"index": 0, "name": "MAP4-GFP (Microtubules)", "color": (0.0, 1.0, 0.8)},  # Cyan
-    {"index": 1, "name": "Hoechst (Nuclei)", "color": (0.3, 0.3, 1.0)},  # Blue
+    {"index": 0, "name": "MAP4-GFP (Microtubules)", "colormap": "cyan"},
+    {"index": 1, "name": "Hoechst (Nuclei)", "colormap": "blue"},
 ]
 
 # Progressive fitting parameters
@@ -368,21 +368,20 @@ Controls:
                 zip(gsplats_list, CHANNELS[: len(gsplats_list)])
             ):
                 ch_name = ch_config["name"]
-                color = ch_config["color"]
+                ch_colormap = ch_config["colormap"]
 
                 with asection(f"Adding {ch_name} (layer)"):
                     gsplats = gsplats.translate(-shared_centroid)
                     gsplats = gsplats.scale_intensity(0.1)
 
                     n_splats = len(gsplats.amplitudes)
-                    colors = np.tile(np.array(color, dtype=np.float32), (n_splats, 1))
-
-                    scene.add_gsplats(
+                    # Named colormap (viewer-adjustable) instead of baked RGB —
+                    # matches the acto3d demo and lets the Layers panel tune
+                    # display range / gamma / colormap per channel at view time.
+                    scene.add_gsplats_from_data(
                         name=f"gsplats_ch{i}",
-                        centers=gsplats.centers,
-                        amplitudes=gsplats.amplitudes,
-                        cholesky_factors=gsplats.cholesky_factors,
-                        colors=colors,
+                        result=gsplats,
+                        colormap=ch_colormap,
                         dim_order=["z", "y", "x"],
                         opacity=1.0,
                         blending_mode="additive",

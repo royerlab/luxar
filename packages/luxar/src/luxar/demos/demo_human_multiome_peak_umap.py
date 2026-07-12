@@ -216,6 +216,11 @@ def create_human_scene(
                     per_cell_labels.append("\n".join(parts))
             labels = per_cell_labels * len(available_attrs) if per_cell_labels else None
 
+            # Substitutive Points LOD: ~1M peaks × several attribute views is a
+            # large cloud, so coarse levels replace it with fewer, larger merged
+            # splats when the embedding is small on screen. Auto coarsen_dims
+            # coarsens x/y/z and groups by the categorical `attribute` barrier so
+            # coarse splats stay pure per view (same wiring as the census demo).
             scene.add_points(
                 "Cells",
                 positions_combined,
@@ -225,6 +230,7 @@ def create_human_scene(
                 opacity=0.8,
                 intensity=0.11,
                 labels=labels,
+                substitutive_lod=dict(compression_factor=8, levels=3, device="auto"),
             )
 
             # --- Overlays ---

@@ -102,6 +102,7 @@ import zarr
 from arbol import Arbol, aprint, asection
 
 from luxar import Dimensions, LuxarZarrCompiler
+from luxar.core.viewer_config import ViewerConfig
 from luxar.encoding import EncodingMode
 from luxar.gsplats.fit_progressive_gsplats import fit_progressive_gaussian_splats
 from luxar.gsplats.gsplat_data import GSplatData
@@ -419,8 +420,11 @@ def create_luxar_scene(gsplats_list, output_path: Path | None = None):
         with LuxarZarrCompiler(
             output_path, encoding_mode=EncodingMode.PRECISION
         ) as compiler:
+            # Neutral tone-mapping keeps the per-channel colormap hues faithful
+            # (the viewer's default ACES shifts scientific LUT colors).
             scene = compiler.create_scene(
                 dimensions=Dimensions.default_3d(),
+                viewer_config=ViewerConfig(tone_mapping="Neutral"),
             )
 
             # Add scene metadata
