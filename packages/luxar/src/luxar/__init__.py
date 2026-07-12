@@ -103,7 +103,6 @@ import sys
 from . import colormaps, core, io, typing_utils, utils
 from . import validation as validation_module
 from .core import dimensions, node, points, scene
-from .gsplats import GSplatData, fit_gaussian_splats
 from .io import compiler, writer
 from .utils import array as array_utils
 from .utils import demos
@@ -181,3 +180,22 @@ __all__: list[str] = [
     # Version
     "__version__",
 ]
+
+# GSplat symbols are re-exported lazily (PEP 562): importing `luxar` for scene
+# construction / dimensions / basic zarr compilation must NOT pull in the heavy
+# gsplats subsystem (torch + scipy, ~1600 modules). They resolve on first
+# access, e.g. `luxar.GSplatData` / `from luxar import fit_gaussian_splats`.
+_LAZY_GSPLAT_EXPORTS = frozenset({"GSplatData", "fit_gaussian_splats"})
+
+
+def __getattr__(name: str) -> object:
+    """Lazily resolve the optional GSplat re-exports (PEP 562)."""
+    if name in _LAZY_GSPLAT_EXPORTS:
+        from . import gsplats
+
+        return getattr(gsplats, name)
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
+
+def __dir__() -> list[str]:
+    return sorted(set(globals()) | _LAZY_GSPLAT_EXPORTS)

@@ -175,3 +175,8 @@ scripts/benchmarks/data/progressive_pareto_baseline.json
 # uv lock file: project uses Hatch; uv.lock is generated incidentally
 # by tools that invoke uv and is not authoritative here.
 uv.lock
+
+# Go launcher build artifact from `go build ./...` (the binary is named after
+# the module's last path element). The shipped launchers live under
+# cli/_launchers/ via `make build-launchers`; this stray dev-build binary is not.
+/packages/luxar-launcher/launcher

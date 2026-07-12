@@ -196,6 +196,25 @@ This ensures:
 
 `ZarrWriterProtocol` defines the interface for Zarr writers, enabling different implementations while maintaining API consistency.
 
+### Input Volume Loading
+
+`luxar.io.volume` and `luxar.io.ome_zarr` load arbitrary input volumes (the
+sources fed to gsplat fitting/calibration), independent of the compiled
+`.luxar.zarr` scene format above:
+
+- `volume.load_volume(path, channel=, timepoint=, array_key=, axes=)` — reads
+  `.npy` / `.npz` / `.zarr` / `.zarr.zip` / `.tiff` / imageio-supported files to
+  a float32 volume, with OME-Zarr-aware positional slicing and an explicit
+  `--axes` override. Missing optional readers raise `ImportError` (the CLI turns
+  it into a clean exit).
+- `ome_zarr.discover_ome_zarr_shape(path, ...)` → `OMEZarrInfo` — discovers the
+  T/C/Z/Y/X layout, voxel size, unit, and resolution levels from NGFF
+  `multiscales` (with custom-`axes` and shape-heuristic fallbacks).
+
+These are domain-layer helpers (no CLI dependency); the gsplat CLI re-exports
+them. Dimension inference from a splat bounding box lives in
+`luxar.core.dimension_inference.build_dimensions_from_data`.
+
 ## Encoding Integration
 
 The I/O layer uses `luxar.encoding` for semantic type-aware array encoding:

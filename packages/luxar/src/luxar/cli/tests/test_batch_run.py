@@ -134,9 +134,7 @@ def test_assemble_fit_args_floor_override() -> None:
         _assemble_fit_args,
     )
 
-    fit_args, _mode, _path = _assemble_fit_args(
-        FitConfig(floor="p10"), DenoiseConfig()
-    )
+    fit_args, _mode, _path = _assemble_fit_args(FitConfig(floor="p10"), DenoiseConfig())
     assert fit_args["floor"] == "p10"
 
 

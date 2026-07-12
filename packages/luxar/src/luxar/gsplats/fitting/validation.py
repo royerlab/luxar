@@ -35,9 +35,7 @@ def _validate_floor(floor: "str | float | None") -> None:
                     f"floor percentile must be 'pN' (e.g. 'p10'), got {floor!r}"
                 ) from exc
             if not 0.0 <= pct <= 100.0:
-                raise ValueError(
-                    f"floor percentile must be in [0, 100], got {floor!r}"
-                )
+                raise ValueError(f"floor percentile must be in [0, 100], got {floor!r}")
             return
         try:
             value = float(f)

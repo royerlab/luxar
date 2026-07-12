@@ -9,7 +9,7 @@ import sys
 import time
 from pathlib import Path
 from unittest.mock import patch
-from urllib.request import Request, urlopen
+from urllib.request import urlopen
 
 import numpy as np
 import pytest
@@ -306,10 +306,11 @@ class TestServeScript:
         content = _get_serve_script_content("data")
         assert content.startswith("#!/usr/bin/env python3")
 
-    def test_has_cors_handler(self) -> None:
-        """Verify the script includes CORS support."""
+    def test_no_cors_headers(self) -> None:
+        """The serve script must NOT emit CORS headers: the viewer and its data
+        are same-origin, so wildcard CORS would only widen local exposure."""
         content = _get_serve_script_content("data")
-        assert "Access-Control-Allow-Origin" in content
+        assert "Access-Control-Allow-Origin" not in content
 
     def test_script_importable(self, tmp_path: Path) -> None:
         """Verify the serve script can be parsed by Python."""
@@ -326,7 +327,8 @@ class TestServeScript:
         assert "find_port" in func_names
 
     def test_serve_script_serves_files(self, tmp_path: Path) -> None:
-        """Integration test: start serve.py, verify it serves files with CORS."""
+        """Integration test: start serve.py and verify it serves viewer + data
+        files (same-origin, no CORS headers)."""
         # Create a minimal export structure
         export_dir = tmp_path / "export"
         export_dir.mkdir()
@@ -377,14 +379,10 @@ class TestServeScript:
             assert resp.status == 200
             assert b"scene" in resp.read()
 
-            # Verify CORS headers
-            req = Request(
-                f"http://127.0.0.1:{port}/viewer/index.html",
-                method="OPTIONS",
-            )
-            resp = urlopen(req, timeout=5)
+            # Verify NO CORS header is emitted (viewer + data are same-origin).
+            resp = urlopen(f"http://127.0.0.1:{port}/data/.zattrs", timeout=5)
             cors = resp.headers.get("Access-Control-Allow-Origin")
-            assert cors == "*", f"Expected CORS header '*', got {cors!r}"
+            assert cors is None, f"Expected no CORS header, got {cors!r}"
         finally:
             proc.terminate()
             proc.wait(timeout=5)

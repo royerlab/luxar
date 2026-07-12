@@ -134,7 +134,9 @@ def build() -> None:
     build_dir = SCRIPT_DIR / "build"
     build_dir.mkdir(exist_ok=True)
 
-    load(
+    # cpp_extension.load JIT-compiles our own CUDA source here; it is not
+    # torch.load deserialization of untrusted data (bandit B614 false positive).
+    load(  # nosec B614
         name="nlm_cuda_backend",
         sources=[str(s) for s in sources],
         extra_cflags=extra_cflags,

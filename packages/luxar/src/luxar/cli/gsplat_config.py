@@ -13,10 +13,9 @@ from __future__ import annotations
 
 import inspect
 import re
-from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import Any, Dict, Optional, Tuple, Union
 
 import numpy as np
 import yaml
@@ -280,100 +279,41 @@ def dump_default_config(preset: str = "standard") -> str:
 
 
 # ---------------------------------------------------------------------------
-# Volume loading
+# Volume loading, OME-Zarr discovery, and dimension inference now live in the
+# domain layer (luxar.io / luxar.core); the gsplat CLI re-exports them so its
+# command modules keep a single import site. `load_volume` is wrapped to convert
+# the domain ImportError (missing optional reader) into a clean Typer exit.
 # ---------------------------------------------------------------------------
 
+from luxar.core.dimension_inference import (  # noqa: E402
+    build_dimensions_from_data,
+)
+from luxar.io.ome_zarr import (  # noqa: E402
+    OMEZarrInfo,
+    discover_ome_zarr_shape,
+)
+from luxar.io.volume import (  # noqa: E402
+    decode_flat_channel_index,
+)
+from luxar.io.volume import (  # noqa: E402
+    load_volume as _load_volume_impl,
+)
 
-def decode_flat_channel_index(
-    channel: int, channel_shape: Tuple[int, ...]
-) -> Tuple[int, ...]:
-    """Decode a flat channel task index into folded channel-axis coordinates.
-
-    For data with multiple non-spatial, channel-like axes (for example
-    ``camera`` and ``channel``), batch planning treats each axis combination as
-    one flat channel task. This helper uses row-major order to map the flat
-    index back to per-axis coordinates.
-    """
-    if channel < 0:
-        raise ValueError(f"channel index must be non-negative, got {channel}")
-    if not channel_shape:
-        if channel == 0:
-            return ()
-        raise ValueError("channel index > 0 is invalid when there are no channel axes")
-
-    total = 1
-    for size in channel_shape:
-        if size <= 0:
-            raise ValueError(
-                f"channel axis sizes must be positive, got {channel_shape}"
-            )
-        total *= size
-    if channel >= total:
-        raise ValueError(
-            f"flat channel index {channel} is out of range for channel_shape={channel_shape} "
-            f"(total={total})"
-        )
-
-    coords: List[int] = []
-    remaining = channel
-    for dim_size in reversed(channel_shape):
-        coords.insert(0, remaining % dim_size)
-        remaining //= dim_size
-    return tuple(coords)
-
-
-def _apply_axes_spec(
-    arr: np.ndarray,
-    axes: str,
-    channel: Optional[int],
-    timepoint: Optional[int],
-) -> np.ndarray:
-    """Collapse a non-canonically-ordered nD array to its spatial volume.
-
-    ``axes`` is a comma-separated label per array dimension (e.g.
-    ``"z,c,y,x"`` or ``"t,z,y,x"``). Recognised: time (``t``/``time``),
-    channel (``c``/``channel``/``ch``/``camera``/``cam``), spatial
-    (``z``/``y``/``x``/``depth``/``height``/``width``). Each time/channel axis is
-    indexed (by ``timepoint``/``channel``, default 0) and dropped; the remaining
-    spatial axes are kept in their given order. This is the single-volume
-    counterpart of ``batch-fit submit --axes`` — it lets ``fit``/``cal`` consume
-    data whose axis order isn't the assumed TCZYX/CZYX/ZYX.
-    """
-    labels = [a.strip().lower() for a in axes.split(",") if a.strip() != ""]
-    if len(labels) != arr.ndim:
-        raise ValueError(
-            f"--axes has {len(labels)} labels but the array is {arr.ndim}D "
-            f"(shape {arr.shape}); give one label per dimension."
-        )
-
-    def _kind(label: str) -> str:
-        if label in ("t", "time"):
-            return "t"
-        if label in ("c", "channel", "ch", "camera", "cam"):
-            return "c"
-        if label in ("z", "y", "x", "depth", "height", "width"):
-            return "s"
-        raise ValueError(
-            f"--axes label {label!r} not recognised; use time/t, "
-            "channel/c/ch/camera/cam, or z/y/x (depth/height/width)."
-        )
-
-    kinds = [_kind(label) for label in labels]
-    index: list = [slice(None)] * arr.ndim
-    for i, k in enumerate(kinds):
-        if k in ("t", "c"):
-            which, idx = (
-                ("--timepoint", timepoint) if k == "t" else ("--channel", channel)
-            )
-            idx = 0 if idx is None else int(idx)
-            size = arr.shape[i]
-            if not (0 <= idx < size):
-                raise ValueError(
-                    f"{which} index {idx} is out of range for the '{labels[i]}' "
-                    f"axis of size {size} (valid 0..{size - 1})."
-                )
-            index[i] = idx
-    return np.asarray(arr[tuple(index)])
+__all__ = [
+    "OMEZarrInfo",
+    "build_dimensions_from_data",
+    "decode_flat_channel_index",
+    "discover_ome_zarr_shape",
+    "dump_default_config",
+    "get_fit_defaults",
+    "load_fit_config",
+    "load_volume",
+    "parse_hex_color",
+    "parse_seeds",
+    "parse_shape",
+    "FitPreset",
+    "PRESETS",
+]
 
 
 def load_volume(
@@ -383,620 +323,26 @@ def load_volume(
     array_key: Optional[str] = None,
     axes: Optional[str] = None,
 ) -> np.ndarray:
-    """Load a volume from various file formats.
+    """CLI wrapper around :func:`luxar.io.volume.load_volume`.
 
-    Supported formats:
-        .npy         — NumPy binary (numpy, base dep)
-        .npz         — NumPy compressed (numpy, base dep)
-        .zarr        — Zarr array/group, including OME-ZARR 5D (zarr, base dep)
-        .tiff / .tif — TIFF image (tifffile, optional: pip install luxar[io])
-        other        — Fallback via imageio (optional: pip install luxar[io])
-
-    Args:
-        path: Path to the volume file
-        channel: Channel index for 4D/5D+ OME-ZARR data. If None, defaults
-            to 0 when slicing is needed; for 4D arrays, ``None`` returns
-            the array as-is.
-        timepoint: Timepoint index for 5D+ OME-ZARR data. If None, defaults
-            to 0 when slicing is needed; for 4D arrays, ``None`` returns
-            the array as-is.
-        array_key: Array key within .npz or .zarr files
-        axes: Explicit per-dimension axis labels (e.g. ``"z,c,y,x"``) overriding
-            the positional TCZYX/CZYX/ZYX heuristic — for data whose axis order
-            differs. Time/channel axes are sliced (by ``timepoint``/``channel``)
-            and dropped; spatial axes are kept in the given order.
-
-    Returns:
-        Volume as float32 numpy array (>=2D)
+    Converts the domain-layer :class:`ImportError` (raised when an optional
+    reader such as tifffile/imageio is missing) into a clean ``typer.Exit(1)``
+    with an install hint, so the CLI shows a friendly message instead of a
+    traceback. All loading behaviour is identical to the domain function.
     """
     import typer
 
-    suffix = path.suffix.lower()
-
-    if suffix == ".npy":
-        aprint(f"Loading NumPy array: {path.name}")
-        volume = np.load(str(path))
-
-    elif suffix == ".npz":
-        aprint(f"Loading NumPy archive: {path.name}")
-        with np.load(str(path)) as npz:
-            keys = list(npz.keys())
-            if array_key:
-                if array_key not in keys:
-                    raise ValueError(
-                        f"Key '{array_key}' not found in {path.name}. "
-                        f"Available keys: {keys}"
-                    )
-                volume = np.array(npz[array_key])
-            else:
-                volume = np.array(npz[keys[0]])
-                if len(keys) > 1:
-                    aprint(f"  Using first array '{keys[0]}' (available: {keys})")
-
-    elif suffix == ".zarr" or (suffix == ".zip" and path.stem.endswith(".zarr")):
-        # Handles both plain .zarr directories and .zarr.zip archives.
-        # zarr natively supports ZipStore so no extraction needed. With an
-        # explicit --axes the raw array is loaded and sliced by _apply_axes_spec
-        # below (bypassing the positional TCZYX/CZYX heuristic).
-        volume = _load_zarr_volume(
-            path, channel, timepoint, array_key, raw=axes is not None
-        )
-
-    elif suffix in (".tiff", ".tif"):
-        try:
-            import tifffile
-        except ImportError:
-            aprint("tifffile not installed.")
-            aprint("Install with: pip install luxar[io]")
-            raise typer.Exit(1)
-        aprint(f"Loading TIFF: {path.name}")
-        volume = tifffile.imread(str(path))
-
-    else:
-        try:
-            import imageio.v3 as iio
-        except ImportError:
-            aprint(f"Cannot load '{suffix}' files — imageio not installed.")
-            aprint("Install with: pip install luxar[io]")
-            raise typer.Exit(1)
-        aprint(f"Loading via imageio: {path.name}")
-        volume = iio.imread(str(path))
-
-    # Explicit axis spec (overrides the positional heuristic): slice/drop the
-    # time & channel axes and keep the spatial axes in the given order.
-    if axes is not None:
-        # Pass `volume` as-is (a lazy zarr array for .zarr inputs) so
-        # _apply_axes_spec slices the time/channel axes BEFORE materializing —
-        # do NOT np.asarray() here or a huge nD movie loads fully into RAM.
-        volume = _apply_axes_spec(volume, axes, channel, timepoint)
-        # The spec already fixed the shape (time/channel dropped, spatial kept) —
-        # do NOT squeeze, or a deliberately-kept size-1 spatial axis (e.g. a
-        # single z-plane via --axes z,y,x) would be silently dropped.
-        volume = np.asarray(volume, dtype=np.float32)
-    else:
-        # Post-process: drop incidental size-1 dims from the positional heuristic.
-        volume = np.asarray(volume, dtype=np.float32)
-        volume = np.squeeze(volume)
-
-    if volume.ndim < 2:
-        raise ValueError(
-            f"Volume must be at least 2D after squeezing, got {volume.ndim}D "
-            f"with shape {volume.shape}"
-        )
-
-    aprint(f"  Shape: {volume.shape}, dtype: float32")
-    return volume
-
-
-def _find_all_arrays(group: Any, prefix: str = "") -> list:
-    """Recursively find all arrays in a zarr group, returning (key_path, array) pairs."""
-    import zarr
-
-    results = []
-    for k in group.keys():
-        item = group[k]
-        key_path = f"{prefix}/{k}" if prefix else k
-        if isinstance(item, zarr.Array):
-            results.append((key_path, item))
-        elif isinstance(item, zarr.Group):
-            results.extend(_find_all_arrays(item, key_path))
-    return results
-
-
-def _load_zarr_volume(
-    path: Path,
-    channel: Optional[int],
-    timepoint: Optional[int],
-    array_key: Optional[str],
-    raw: bool = False,
-) -> np.ndarray:
-    """Load a volume from a zarr store, handling OME-ZARR conventions.
-
-    With ``raw=True`` the full array is returned WITHOUT the positional
-    TCZYX/CZYX slicing — the caller (``load_volume`` with an explicit ``--axes``)
-    applies its own axis spec instead.
-    """
-    import zarr
-
-    aprint(f"Loading Zarr: {path.name}")
-    store = zarr.open(str(path), mode="r")
-
-    # Navigate to the target array
-    if isinstance(store, zarr.Array):
-        arr = store
-    elif isinstance(store, zarr.Group):
-        if array_key is not None:
-            try:
-                arr = store[array_key]
-            except KeyError:
-                available = list(store.keys())
-                raise ValueError(
-                    f"Array key '{array_key}' not found in {path}. "
-                    f"Available keys: {available}"
-                )
-            aprint(f"  Using array '{array_key}'")
-        elif "0" in store:
-            # OME-ZARR convention: "0" is highest resolution
-            aprint("  Detected OME-ZARR layout (using resolution level '0')")
-            arr = store["0"]
-        else:
-            # Find the largest array in the group, searching recursively
-            # into sub-groups (e.g. h2afva/fused, mezzo/fused).
-            arrays = _find_all_arrays(store)
-            if not arrays:
-                raise ValueError(f"No arrays found in zarr group: {path}")
-            best_key = max(arrays, key=lambda kv: int(np.prod(kv[1].shape)))[0]
-            arr = store[best_key]
-            aprint(f"  Using array '{best_key}'")
-    else:
-        raise ValueError(f"Unexpected zarr object type: {type(store)}")
-
-    shape = arr.shape
-    ndim = len(shape)
-    aprint(f"  Raw array shape: {shape} ({ndim}D)")
-
-    if raw:
-        # Explicit --axes path: hand back the LAZY zarr array (NOT np.array(arr)) so
-        # the caller's _apply_axes_spec slices the requested timepoint/channel BEFORE
-        # materializing — otherwise a whole nD movie (e.g. a 329-timepoint stack,
-        # >1 TiB) would be loaded into RAM just to extract one 3D volume.
-        return arr  # type: ignore[no-any-return]
-
-    # Slice the array down to a 2D/3D spatial volume.
-    # For nD data where ndim > 5, consume leading dimensions using
-    # timepoint and channel indices (defaulting to 0 for each).
-    if ndim >= 6:
-        # Generic >5D: treat first dim as T, fold all leading non-spatial
-        # dimensions before the final 3 spatial axes into one flat channel index.
-        t = timepoint if timepoint is not None else 0
-        remaining_non_spatial = ndim - 4  # -1 for time, -3 for spatial
-        channel_shape = tuple(shape[1 : 1 + remaining_non_spatial])
-        if channel is None:
-            channel_coords = tuple(0 for _ in channel_shape)
-        else:
-            channel_coords = decode_flat_channel_index(channel, channel_shape)
-        idx = [t, *channel_coords]
-        aprint(f"  Slicing {ndim}D: indices {idx} → 3D spatial")
-        volume = np.array(arr[tuple(idx)])
-    elif ndim == 5:
-        t = timepoint if timepoint is not None else 0
-        c = channel if channel is not None else 0
-        aprint(f"  Slicing 5D (TCZYX): T={t}, C={c}")
-        volume = np.array(arr[t, c, :, :, :])
-    elif ndim == 4:
-        if channel is not None:
-            aprint(f"  Slicing 4D (CZYX): C={channel}")
-            volume = np.array(arr[channel, :, :, :])
-        elif timepoint is not None:
-            aprint(f"  Slicing 4D (TZYX): T={timepoint}")
-            volume = np.array(arr[timepoint, :, :, :])
-        else:
-            aprint("  4D array — using as-is (use --channel or --timepoint to slice)")
-            volume = np.array(arr)
-    else:
-        volume = np.array(arr)
-
-    return volume
-
-
-# ---------------------------------------------------------------------------
-# OME-Zarr shape discovery
-# ---------------------------------------------------------------------------
-
-
-@dataclass
-class OMEZarrInfo:
-    """Metadata about an OME-Zarr dataset's structure."""
-
-    axes: List[str]
-    """Axis labels, e.g. ``["t", "c", "z", "y", "x"]``."""
-
-    shape: Tuple[int, ...]
-    """Full array shape at highest resolution."""
-
-    n_timepoints: int
-    """Size of the T dimension (1 if absent)."""
-
-    n_channels: int
-    """Number of flat channel tasks (product of channel-like axes, or 1)."""
-
-    channel_axes: List[str]
-    """Axis labels folded into the flat channel task index."""
-
-    channel_shape: Tuple[int, ...]
-    """Shape of axes folded into the flat channel task index."""
-
-    spatial_shape: Tuple[int, ...]
-    """ZYX (or YX) portion of the shape."""
-
-    spatial_axes: List[str]
-    """Spatial axis labels, e.g. ``["z", "y", "x"]``."""
-
-    voxel_size: Optional[Tuple[float, ...]] = None
-    """Physical spacing from coordinateTransformations (spatial axes only)."""
-
-    unit: Optional[str] = None
-    """Physical unit string (e.g. ``"micrometer"``)."""
-
-    resolution_levels: int = 1
-    """Number of multiscale levels."""
-
-    path: Optional[Path] = None
-    """Path to the zarr store."""
-
-
-def discover_ome_zarr_shape(
-    path: Path,
-    axes_override: Optional[List[str]] = None,
-    array_key: Optional[str] = None,
-) -> OMEZarrInfo:
-    """Discover the shape and axis structure of an OME-Zarr dataset.
-
-    Parses ``.zattrs`` ``multiscales`` metadata (NGFF v0.4+). Falls back
-    to a custom ``axes`` attribute, then to a shape-based heuristic
-    (5D→TCZYX, 4D→CZYX, 3D→ZYX) for non-NGFF zarr stores.
-
-    Accepts both plain ``.zarr`` directories and ``.zarr.zip`` archives —
-    zarr's ZipStore handles the latter transparently.
-
-    Args:
-        path: Path to the ``.zarr`` store or ``.zarr.zip`` archive.
-        axes_override: Explicit axis labels (e.g. ``["time","channel","z","y","x"]``).
-            Overrides all auto-detection when provided.
-        array_key: Key path to a specific array within the zarr store
-            (e.g. ``"h2afva/fused"``).  When provided, skips auto-selection
-            and navigates directly to this array.
-
-    Returns:
-        :class:`OMEZarrInfo` with discovered metadata.
-
-    Raises:
-        ValueError: If the zarr store has no arrays, ``array_key`` is not
-            found, or the store is unreadable.
-    """
-    import zarr
-
-    store = zarr.open(str(path), mode="r")
-
-    # Navigate to the group/array
-    if isinstance(store, zarr.Array):
-        arr = store
-        attrs: Dict[str, Any] = dict(getattr(store, "attrs", {}))
-    elif isinstance(store, zarr.Group):
-        attrs = dict(store.attrs)
-        if array_key is not None:
-            # User-specified array key (may be nested, e.g. "h2afva/fused")
-            try:
-                arr = store[array_key]
-            except KeyError:
-                available = list(store.keys())
-                raise ValueError(
-                    f"Array key '{array_key}' not found in {path}. "
-                    f"Available keys: {available}"
-                )
-        elif "0" in store:
-            # OME-NGFF standard: resolution level "0" is highest resolution
-            arr = store["0"]
-        else:
-            # Find the largest array, searching recursively into sub-groups
-            arrays = _find_all_arrays(store)
-            if not arrays:
-                raise ValueError(f"No arrays found in zarr group: {path}")
-            # Pick the array with the most elements
-            arr = max(arrays, key=lambda kv: int(np.prod(kv[1].shape)))[1]
-    else:
-        raise ValueError(f"Unexpected zarr object type: {type(store)}")
-
-    shape = tuple(arr.shape)
-    ndim = len(shape)
-
-    # User-supplied axes override: skip all auto-detection
-    if axes_override is not None:
-        if len(axes_override) != ndim:
-            raise ValueError(
-                f"--axes has {len(axes_override)} labels but array is {ndim}D "
-                f"(shape {shape}). Provide exactly {ndim} comma-separated axis names."
-            )
-        return _parse_custom_axes_attr(axes_override, shape, path)
-
-    # Try NGFF multiscales metadata
-    multiscales = attrs.get("multiscales")
-    if multiscales and isinstance(multiscales, list) and len(multiscales) > 0:
-        ms = multiscales[0]
-        return _parse_ngff_metadata(ms, shape, path, store)
-
-    # Try custom axes attribute (e.g. Keller-lab zarr.zip files store
-    # axes = ['time', 'camera', 'channel', 'z', 'y', 'x'])
-    custom_axes = attrs.get("axes")
-    if custom_axes and isinstance(custom_axes, list) and len(custom_axes) == ndim:
-        return _parse_custom_axes_attr(custom_axes, shape, path)
-
-    # Fallback: heuristic based on ndim
-    return _heuristic_ome_info(shape, ndim, path)
-
-
-def _parse_ngff_metadata(
-    ms: Dict[str, Any],
-    shape: Tuple[int, ...],
-    path: Path,
-    store: Any,
-) -> OMEZarrInfo:
-    """Parse NGFF v0.4+ multiscales metadata."""
-    axes_raw = ms.get("axes", [])
-    axes = [a["name"] if isinstance(a, dict) else str(a) for a in axes_raw]
-
-    # Identify T, C, spatial axes
-    t_idx: Optional[int] = None
-    c_idx: Optional[int] = None
-    spatial_indices: List[int] = []
-    spatial_axes: List[str] = []
-
-    for i, a in enumerate(axes_raw):
-        if isinstance(a, dict):
-            atype = a.get("type", "").lower()
-            aname = a.get("name", "").lower()
-        else:
-            atype = ""
-            aname = str(a).lower()
-
-        if atype == "time" or aname == "t":
-            t_idx = i
-        elif atype == "channel" or aname == "c":
-            c_idx = i
-        elif atype == "space" or aname in ("z", "y", "x"):
-            spatial_indices.append(i)
-            spatial_axes.append(aname)
-        else:
-            # Unknown axis — treat as spatial
-            spatial_indices.append(i)
-            spatial_axes.append(aname)
-
-    n_t = shape[t_idx] if t_idx is not None else 1
-    channel_axes = [axes[c_idx]] if c_idx is not None else []
-    channel_shape = (shape[c_idx],) if c_idx is not None else ()
-    n_c = shape[c_idx] if c_idx is not None else 1
-    spatial_shape = tuple(shape[i] for i in spatial_indices)
-
-    # Extract voxel_size from coordinateTransformations
-    voxel_size = None
-    unit = None
-    datasets = ms.get("datasets", [])
-    if datasets:
-        transforms = datasets[0].get("coordinateTransformations", [])
-        for t in transforms:
-            if t.get("type") == "scale":
-                scale = t.get("scale", [])
-                # Extract spatial dimensions only
-                if spatial_indices and len(scale) == len(shape):
-                    voxel_size = tuple(float(scale[i]) for i in spatial_indices)
-                elif len(scale) == len(spatial_indices):
-                    voxel_size = tuple(float(s) for s in scale)
-
-    # Extract unit from axes metadata
-    for a in axes_raw:
-        if isinstance(a, dict) and a.get("type") == "space":
-            u = a.get("unit")
-            if u:
-                unit = u
-                break
-
-    # Count resolution levels
-    n_levels = len(datasets) if datasets else 1
-
-    return OMEZarrInfo(
-        axes=axes,
-        shape=shape,
-        n_timepoints=n_t,
-        n_channels=n_c,
-        channel_axes=channel_axes,
-        channel_shape=channel_shape,
-        spatial_shape=spatial_shape,
-        spatial_axes=spatial_axes,
-        voxel_size=voxel_size,
-        unit=unit,
-        resolution_levels=n_levels,
-        path=path,
-    )
-
-
-def _parse_custom_axes_attr(
-    axes: List[str], shape: Tuple[int, ...], path: Path
-) -> OMEZarrInfo:
-    """Build OMEZarrInfo from a custom ``axes`` list attribute.
-
-    Recognises common axis name conventions:
-      - T: ``time``, ``t``
-      - C: ``channel``, ``c``, ``ch``
-      - Camera / extra non-spatial dims (``camera``, ``cam``, ``view``,
-        ``angle``): folded into the channel count so each combination
-        becomes its own fitting task.
-      - Spatial: ``z``, ``y``, ``x``, ``depth``, ``height``, ``width``
-        (and any unrecognised leftover axes)
-    """
-    _SPATIAL = {"z", "y", "x", "depth", "height", "width"}
-    _TIME = {"time", "t"}
-    _CHANNEL = {"channel", "c", "ch"}
-    _CAMERA = {"camera", "cam", "view", "angle"}
-
-    t_idx: Optional[int] = None
-    channel_indices: List[int] = []  # channel + camera axes
-    spatial_indices: List[int] = []
-
-    for i, ax in enumerate(axes):
-        ax_l = ax.lower()
-        if ax_l in _TIME:
-            t_idx = i
-        elif ax_l in _CHANNEL or ax_l in _CAMERA:
-            channel_indices.append(i)
-        elif ax_l in _SPATIAL:
-            spatial_indices.append(i)
-        else:
-            # Unknown axis — treat as spatial
-            spatial_indices.append(i)
-
-    n_t = shape[t_idx] if t_idx is not None else 1
-    channel_shape = tuple(shape[i] for i in channel_indices)
-    channel_axes = [axes[i] for i in channel_indices]
-    n_c = 1
-    for size in channel_shape:
-        n_c *= size
-
-    spatial_shape = tuple(shape[i] for i in spatial_indices)
-    spatial_axes = [axes[i] for i in spatial_indices]
-
-    return OMEZarrInfo(
-        axes=axes,
-        shape=shape,
-        n_timepoints=n_t,
-        n_channels=n_c,
-        channel_axes=channel_axes,
-        channel_shape=channel_shape,
-        spatial_shape=spatial_shape,
-        spatial_axes=spatial_axes,
-        path=path,
-    )
-
-
-def _heuristic_ome_info(shape: Tuple[int, ...], ndim: int, path: Path) -> OMEZarrInfo:
-    """Fallback OME info based on shape heuristics."""
-    if ndim == 5:
-        # Assume TCZYX
-        return OMEZarrInfo(
-            axes=["t", "c", "z", "y", "x"],
-            shape=shape,
-            n_timepoints=shape[0],
-            n_channels=shape[1],
-            channel_axes=["c"],
-            channel_shape=(shape[1],),
-            spatial_shape=shape[2:],
-            spatial_axes=["z", "y", "x"],
-            path=path,
-        )
-    elif ndim == 4:
-        # Assume CZYX (could be TZYX — user can override)
-        return OMEZarrInfo(
-            axes=["c", "z", "y", "x"],
-            shape=shape,
-            n_timepoints=1,
-            n_channels=shape[0],
-            channel_axes=["c"],
-            channel_shape=(shape[0],),
-            spatial_shape=shape[1:],
-            spatial_axes=["z", "y", "x"],
-            path=path,
-        )
-    elif ndim == 3:
-        return OMEZarrInfo(
-            axes=["z", "y", "x"],
-            shape=shape,
-            n_timepoints=1,
-            n_channels=1,
-            channel_axes=[],
-            channel_shape=(),
-            spatial_shape=shape,
-            spatial_axes=["z", "y", "x"],
-            path=path,
-        )
-    elif ndim == 2:
-        return OMEZarrInfo(
-            axes=["y", "x"],
-            shape=shape,
-            n_timepoints=1,
-            n_channels=1,
-            channel_axes=[],
-            channel_shape=(),
-            spatial_shape=shape,
-            spatial_axes=["y", "x"],
-            path=path,
-        )
-    else:
-        # Generic nD — all spatial
-        axes = [f"dim{i}" for i in range(ndim)]
-        return OMEZarrInfo(
+    try:
+        return _load_volume_impl(
+            path,
+            channel=channel,
+            timepoint=timepoint,
+            array_key=array_key,
             axes=axes,
-            shape=shape,
-            n_timepoints=1,
-            n_channels=1,
-            channel_axes=[],
-            channel_shape=(),
-            spatial_shape=shape,
-            spatial_axes=axes,
-            path=path,
         )
-
-
-# ---------------------------------------------------------------------------
-# Dimension building (reused by convert and view)
-# ---------------------------------------------------------------------------
-
-
-def build_dimensions_from_data(
-    centers: np.ndarray,
-) -> Any:
-    """Build Dimensions object from gsplat center bounding box.
-
-    Args:
-        centers: Splat center positions (N, D)
-
-    Returns:
-        Dimensions with ranges matching the data extent
-    """
-    from luxar import Dimension, Dimensions
-
-    ndim = centers.shape[1]
-    mins = centers.min(axis=0)
-    maxs = centers.max(axis=0)
-
-    # Ensure range is valid (min < max) — add epsilon for degenerate dims
-    for i in range(ndim):
-        if maxs[i] <= mins[i]:
-            maxs[i] = mins[i] + 1.0
-
-    if ndim == 2:
-        dims = Dimensions.default_2d()
-        for i, dim in enumerate(dims.dimensions):
-            dim.range = (float(mins[i]), float(maxs[i]))
-        return dims
-
-    if ndim == 3:
-        dims = Dimensions.default_3d()
-        for i, dim in enumerate(dims.dimensions):
-            dim.range = (float(mins[i]), float(maxs[i]))
-        return dims
-
-    # nD: first 3 displayed, rest non-displayed
-    dim_list = []
-    for i in range(ndim):
-        dim_list.append(
-            Dimension(
-                name=f"dim{i}",
-                unit="voxel",
-                range=(float(mins[i]), float(maxs[i])),
-                step=1.0,
-                display=(i < 3),
-            )
-        )
-    return Dimensions(dimensions=dim_list)
+    except ImportError as exc:
+        aprint(str(exc))
+        raise typer.Exit(1)
 
 
 # ---------------------------------------------------------------------------

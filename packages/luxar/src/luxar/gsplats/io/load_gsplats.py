@@ -3,98 +3,13 @@
 from __future__ import annotations
 
 import shutil
-import tempfile
 from pathlib import Path
 from typing import Any, Dict
 
 import zarr
 
 from luxar.gsplats import GSplatData
-
-
-def _extract_compressed_zarr(compressed_path: Path) -> Path:
-    """Extract compressed zarr archive to temporary directory.
-
-    Args:
-        compressed_path: Path to .gsplats.zarr.zip or .gsplats.zarr.tar.gz
-
-    Returns:
-        Path to extracted .gsplats.zarr directory (in temp)
-    """
-    import tarfile
-    import zipfile
-
-    # Create temp directory
-    temp_dir = Path(tempfile.mkdtemp(prefix="luxar_gsplat_"))
-
-    # Determine compression type and extract
-    if compressed_path.suffix == ".zip" or str(compressed_path).endswith(
-        ".gsplats.zarr.zip"
-    ):
-        # ZIP extraction (with path traversal protection)
-        with zipfile.ZipFile(compressed_path, "r") as zip_ref:
-            temp_dir_resolved = Path(temp_dir).resolve()
-            for zip_member in zip_ref.namelist():
-                # Reject absolute paths, parent traversal, and backslash sep.
-                if "\\" in zip_member or zip_member.startswith("/"):
-                    raise ValueError(
-                        f"Zip member '{zip_member}' has unsafe path separator"
-                    )
-                zip_member_path = (Path(temp_dir) / zip_member).resolve()
-                try:
-                    zip_member_path.relative_to(temp_dir_resolved)
-                except ValueError as exc:
-                    raise ValueError(
-                        f"Zip member '{zip_member}' would escape extraction directory"
-                    ) from exc
-            zip_ref.extractall(temp_dir)
-    elif compressed_path.suffix == ".gz" or str(compressed_path).endswith(
-        (".tar.gz", ".gsplats.zarr.tar.gz")
-    ):
-        # TAR.GZ extraction (with path traversal protection)
-        with tarfile.open(compressed_path, "r:gz") as tar_ref:
-            temp_dir_resolved = Path(temp_dir).resolve()
-            # Validate every member BEFORE extracting anything, so a malicious
-            # archive cannot write a single byte (CVE-2007-4559 + symlink escape).
-            for member in tar_ref.getmembers():
-                # A legitimate .gsplats.zarr archive is only regular files and
-                # directories — never links. Reject sym/hard links outright:
-                # otherwise a symlink member pointing outside temp_dir followed
-                # by a file member written "through" it escapes the extraction
-                # dir (name-only validation does not catch this — the file's own
-                # name resolves inside temp_dir).
-                if member.issym() or member.islnk():
-                    raise ValueError(
-                        f"Tar member '{member.name}' is a link; refusing "
-                        "(gsplats archives must contain only regular files)"
-                    )
-                member_path = Path(temp_dir) / member.name
-                if not member_path.resolve().is_relative_to(temp_dir_resolved):
-                    raise ValueError(
-                        f"Tar member '{member.name}' would escape extraction directory"
-                    )
-            tar_ref.extractall(temp_dir)
-    else:
-        raise ValueError(f"Unsupported compression format: {compressed_path}")
-
-    # Find the extracted .gsplats.zarr directory
-    # It should be the only directory in temp_dir or have .gsplats.zarr suffix
-    extracted_dirs = list(temp_dir.iterdir())
-    zarr_dir = None
-
-    for d in extracted_dirs:
-        if d.is_dir() and d.name.endswith(".gsplats.zarr"):
-            zarr_dir = d
-            break
-
-    if zarr_dir is None:
-        # Fallback: use first directory
-        if extracted_dirs and extracted_dirs[0].is_dir():
-            zarr_dir = extracted_dirs[0]
-        else:
-            raise ValueError(f"No .gsplats.zarr directory found in {compressed_path}")
-
-    return zarr_dir
+from luxar.gsplats.io._archive import extract_compressed_zarr
 
 
 def load_gsplats(
@@ -159,7 +74,7 @@ def load_gsplat_node(
     is_compressed = any(str(path).endswith(s) for s in compressed_suffixes)
     if is_compressed:
         # Compressed archive - extract to temp
-        zarr_path = _extract_compressed_zarr(path)
+        zarr_path = extract_compressed_zarr(path)
         temp_dir = zarr_path.parent
     elif path.is_file():
         raise ValueError(

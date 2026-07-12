@@ -80,10 +80,6 @@ def denoise_volume_cmd(
     )
 
 
-
-
-
-
 def render_to_file(
     input_path: Path = typer.Argument(
         ..., exists=True, help="Input .gsplats.zarr dataset (or .zip/.tar.gz)"

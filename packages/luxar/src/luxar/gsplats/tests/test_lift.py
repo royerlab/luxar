@@ -170,7 +170,9 @@ def test_render_light_isotropic_formula():
     # render_light = sum a * sigma^3 for isotropic d=3.
     T = 3.0
     R = np.array([1.0, 2.0])
-    data = lift_points_to_gsplats(np.zeros((2, 3), np.float32), R, None, truncation_radius=T)
+    data = lift_points_to_gsplats(
+        np.zeros((2, 3), np.float32), R, None, truncation_radius=T
+    )
     a = np.asarray(data.flattened().amplitudes, dtype=np.float64)
     sigma = 2.0 * R / T
     assert render_light(data) == pytest.approx(float(np.sum(a * sigma**3)), rel=1e-5)
@@ -198,13 +200,17 @@ def _bead_sigma(data, d=3):
 def test_lines_segment_bead_count():
     # L=20, width=1, T=3 -> sigma_perp=2/3, spacing=sigma -> ~30 beads.
     verts = np.array([[0, 0, 0], [20, 0, 0]], np.float32)
-    data = lift_lines_to_gsplats(verts, 1.0, line_type="segments", truncation_radius=3.0)
+    data = lift_lines_to_gsplats(
+        verts, 1.0, line_type="segments", truncation_radius=3.0
+    )
     assert data.n_splats == 30
 
 
 def test_lines_beads_are_isotropic_with_sigma_2w_over_T():
     verts = np.array([[0, 0, 0], [10, 0, 0]], np.float32)
-    data = lift_lines_to_gsplats(verts, 1.5, line_type="segments", truncation_radius=3.0)
+    data = lift_lines_to_gsplats(
+        verts, 1.5, line_type="segments", truncation_radius=3.0
+    )
     sig = _bead_sigma(data)
     # uniform width -> all beads share sigma = 2*1.5/3 = 1.0
     np.testing.assert_allclose(sig, 1.0, rtol=1e-4)
@@ -213,8 +219,9 @@ def test_lines_beads_are_isotropic_with_sigma_2w_over_T():
 def test_lines_tube_centerline_matches_opacity():
     # Overlapping beads sum to ~opacity at the centreline (the √(2π) calibration).
     verts = np.array([[0, 0, 0], [20, 0, 0]], np.float32)
-    data = lift_lines_to_gsplats(verts, 1.0, line_type="segments", opacity=1.0,
-                                 truncation_radius=3.0)
+    data = lift_lines_to_gsplats(
+        verts, 1.0, line_type="segments", opacity=1.0, truncation_radius=3.0
+    )
     flat = data.flattened()
     c = np.asarray(flat.centers, np.float64)
     a = np.asarray(flat.amplitudes, np.float64)
@@ -261,8 +268,9 @@ def test_lines_render_light_positive():
 
 
 def test_lines_single_vertex_polyline_is_empty():
-    data = lift_lines_to_gsplats(np.array([[1.0, 2.0, 3.0]], np.float32), 1.0,
-                                 line_type="polyline")
+    data = lift_lines_to_gsplats(
+        np.array([[1.0, 2.0, 3.0]], np.float32), 1.0, line_type="polyline"
+    )
     assert data.n_splats == 0
 
 
@@ -293,8 +301,9 @@ def test_lines_tube_centerline_equals_opacity_for_any_length(seg_len):
     # Per-segment comb amplitude: long tubes AND short (single-bead) segments must
     # both peak at opacity (the asymptotic sqrt(2pi) alone under-renders short ones).
     verts = np.array([[0, 0, 0], [seg_len, 0, 0]], np.float32)
-    data = lift_lines_to_gsplats(verts, 1.0, line_type="segments", opacity=1.0,
-                                 truncation_radius=3.0)
+    data = lift_lines_to_gsplats(
+        verts, 1.0, line_type="segments", opacity=1.0, truncation_radius=3.0
+    )
     flat = data.flattened()
     c = np.asarray(flat.centers, np.float64)
     a = np.asarray(flat.amplitudes, np.float64)
@@ -328,9 +337,13 @@ def test_lines_indexed_lifts_all_edges():
 def test_lines_scalars_interpolate_then_lut():
     # scalars+colormap: scalar interpolated per bead THEN LUT (not RGB-interpolated).
     verts = np.array([[0, 0, 0], [10, 0, 0]], np.float32)
-    data = lift_lines_to_gsplats(verts, 1.0, line_type="segments",
-                                 scalars=np.array([0.0, 1.0], np.float32),
-                                 colormap="viridis")
+    data = lift_lines_to_gsplats(
+        verts,
+        1.0,
+        line_type="segments",
+        scalars=np.array([0.0, 1.0], np.float32),
+        colormap="viridis",
+    )
     from luxar.colormaps import resolve_colormap
 
     lut = resolve_colormap("viridis").astype(np.float64) / 255.0
@@ -381,8 +394,9 @@ def test_lines_radius_scale_applied():
     # radius_scale mirrors the point lift: a uint8-style width with radius_scale
     # = 1/255 gives the same bead sigma as the equivalent float width at scale 1.
     v = np.array([[0, 0, 0], [10, 0, 0]], np.float32)
-    d_scaled = lift_lines_to_gsplats(v, 255.0, line_type="segments",
-                                     radius_scale=1.0 / 255.0)
+    d_scaled = lift_lines_to_gsplats(
+        v, 255.0, line_type="segments", radius_scale=1.0 / 255.0
+    )
     d_plain = lift_lines_to_gsplats(v, 1.0, line_type="segments")
     assert _bead_sigma(d_scaled) == pytest.approx(_bead_sigma(d_plain), rel=1e-4)
 
@@ -401,10 +415,12 @@ def test_bead_spacing_factor_scales_bead_count():
     # Wider spacing -> fewer beads (spacing = factor * sigma); halving it doubles.
     v = np.array([[0, 0, 0], [20, 0, 0]], np.float32)
     base = lift_lines_to_gsplats(v, 1.0, line_type="segments").n_splats
-    sparse = lift_lines_to_gsplats(v, 1.0, line_type="segments",
-                                   bead_spacing_factor=2.0).n_splats
-    dense = lift_lines_to_gsplats(v, 1.0, line_type="segments",
-                                  bead_spacing_factor=0.5).n_splats
+    sparse = lift_lines_to_gsplats(
+        v, 1.0, line_type="segments", bead_spacing_factor=2.0
+    ).n_splats
+    dense = lift_lines_to_gsplats(
+        v, 1.0, line_type="segments", bead_spacing_factor=0.5
+    ).n_splats
     assert sparse == pytest.approx(base / 2, abs=1)
     assert dense == pytest.approx(base * 2, abs=1)
 

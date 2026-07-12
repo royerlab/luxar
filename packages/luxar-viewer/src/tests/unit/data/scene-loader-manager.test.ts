@@ -52,6 +52,45 @@ describe('SceneLoaderManager', () => {
     expect(manager.getDefaultLoader()).toBe(loader2); // Should switch to loader2
   });
 
+  it('createLoaderAsync awaits prior loader disposal before building the replacement', async () => {
+    const manager = SceneLoaderManager.getInstance();
+    const first = manager.createLoader('switch');
+    expect(manager.getLoader('switch')).toBe(first);
+
+    // Make the prior loader's dispose hang on a deferred promise so we can
+    // observe the ordering deterministically.
+    let resolveDispose!: () => void;
+    const disposeGate = new Promise<void>((resolve) => {
+      resolveDispose = resolve;
+    });
+    let disposeStarted = false;
+    (first as unknown as { dispose: () => Promise<void> }).dispose = () => {
+      disposeStarted = true;
+      return disposeGate;
+    };
+
+    // Kick off the async replacement. It must NOT resolve while the prior
+    // loader's dispose is still in flight.
+    let created: unknown = null;
+    const pending = manager.createLoaderAsync('switch').then((loader) => {
+      created = loader;
+    });
+
+    // Flush microtasks: destroyLoaderAsync should have detached the old loader
+    // and begun awaiting its dispose, but the replacement is not built yet.
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(disposeStarted).toBe(true);
+    expect(created).toBeNull();
+
+    // Complete the prior dispose; only now may the replacement be constructed.
+    resolveDispose();
+    await pending;
+    expect(created).not.toBeNull();
+    expect(created).not.toBe(first);
+    expect(manager.getLoader('switch')).toBe(created);
+  });
+
   it('should use singleton pattern correctly', () => {
     const manager1 = SceneLoaderManager.getInstance();
     const manager2 = SceneLoaderManager.getInstance();

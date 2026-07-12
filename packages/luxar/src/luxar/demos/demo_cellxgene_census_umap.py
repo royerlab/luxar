@@ -116,11 +116,12 @@ def build_scene(
         codes = {k: v[idx] for k, v in codes.items()}
         n = max_cells
     coords = normalize_coords(coords)
-    aprint(f"{n:,} cells × {len(COLORINGS)} colorings = {n * len(COLORINGS):,} elements")
+    aprint(
+        f"{n:,} cells × {len(COLORINGS)} colorings = {n * len(COLORINGS):,} elements"
+    )
 
     color_arrays = {
-        field: _colors_for(field, codes[field], labels[field])
-        for field, _ in COLORINGS
+        field: _colors_for(field, codes[field], labels[field]) for field, _ in COLORINGS
     }
 
     dims = Dimensions(

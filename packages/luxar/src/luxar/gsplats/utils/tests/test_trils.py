@@ -466,9 +466,7 @@ class TestDiagOffdiagIndices:
         for d in [2, 3, 4, 5]:
             L = np.arange(d * d, dtype=np.float64).reshape(d, d)
             packed = pack_tril(L[None])[0]
-            np.testing.assert_array_equal(
-                packed[diag_indices(d)], np.diag(L)
-            )
+            np.testing.assert_array_equal(packed[diag_indices(d)], np.diag(L))
 
 
 class TestSplitMergeTril:
@@ -502,9 +500,7 @@ class TestSplitMergeTril:
             packed_flat = np.random.rand(tril_size(d)).astype(np.float32)
             diag_f, offdiag_f = split_tril(packed_flat, d)
             assert diag_f.shape == (d,)
-            np.testing.assert_array_equal(
-                merge_tril(diag_f, offdiag_f, d), packed_flat
-            )
+            np.testing.assert_array_equal(merge_tril(diag_f, offdiag_f, d), packed_flat)
 
     def test_diag_is_actual_diagonal(self) -> None:
         """split_tril's diagonal output equals the matrix diagonal."""

@@ -208,7 +208,6 @@ def cull_dataset(
     )
 
 
-
 def filter_dataset(
     input_path: Path = typer.Argument(
         ..., exists=True, help="Input .gsplats.zarr dataset (or .zip/.tar.gz)"
@@ -628,7 +627,6 @@ def additive_dataset(
     )
 
 
-
 def slice_dataset(
     input_path: Path = typer.Argument(
         ..., exists=True, help="Input .gsplats.zarr dataset (or .zip/.tar.gz)"
@@ -676,7 +674,6 @@ def slice_dataset(
         encoding_mode=encoding_mode,
         compress=compress,
     )
-
 
 
 def transform_dataset(

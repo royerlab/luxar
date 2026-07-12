@@ -182,8 +182,8 @@ class TestManifest:
         assert output_filename(5, 2, 15) == "t05_c02_tile015.gsplats.zarr"
 
     def test_sliced_batch_jobs_use_real_indices_in_filenames(self) -> None:
-        from luxar.cli.gsplat_config import decode_flat_channel_index
         from luxar.gsplats.batch.manifest import BatchJob, output_filename
+        from luxar.io.volume import decode_flat_channel_index
 
         t_indices = [0, 72]
         c_indices = [1, 5]
@@ -553,7 +553,7 @@ class TestOMEZarrDiscovery:
     def test_discover_3d_zarr(self, tmp_path: Path) -> None:
         import zarr
 
-        from luxar.cli.gsplat_config import discover_ome_zarr_shape
+        from luxar.io.ome_zarr import discover_ome_zarr_shape
 
         store_path = tmp_path / "test.zarr"
         root = zarr.open(str(store_path), mode="w")
@@ -567,7 +567,7 @@ class TestOMEZarrDiscovery:
     def test_discover_5d_zarr_heuristic(self, tmp_path: Path) -> None:
         import zarr
 
-        from luxar.cli.gsplat_config import discover_ome_zarr_shape
+        from luxar.io.ome_zarr import discover_ome_zarr_shape
 
         store_path = tmp_path / "test.zarr"
         root = zarr.open(str(store_path), mode="w")
@@ -581,7 +581,7 @@ class TestOMEZarrDiscovery:
     def test_discover_ome_ngff_metadata(self, tmp_path: Path) -> None:
         import zarr
 
-        from luxar.cli.gsplat_config import discover_ome_zarr_shape
+        from luxar.io.ome_zarr import discover_ome_zarr_shape
 
         store_path = tmp_path / "ome.zarr"
         root = zarr.open(str(store_path), mode="w")
@@ -637,7 +637,7 @@ class TestBatchPlanRegression:
 
     def test_custom_axes_parsing(self) -> None:
         """_parse_custom_axes_attr correctly identifies T, C, and spatial dims."""
-        from luxar.cli.gsplat_config import _parse_custom_axes_attr
+        from luxar.io.ome_zarr import _parse_custom_axes_attr
 
         # 6D Keller-style
         info = _parse_custom_axes_attr(
@@ -677,7 +677,7 @@ class TestBatchPlanRegression:
         """axes_override must match array ndim."""
         import zarr
 
-        from luxar.cli.gsplat_config import discover_ome_zarr_shape
+        from luxar.io.ome_zarr import discover_ome_zarr_shape
 
         path = tmp_path / "test.zarr"
         z = zarr.open(str(path), mode="w")
@@ -694,7 +694,8 @@ class TestBatchPlanRegression:
         """Both discover_ome_zarr_shape and _load_zarr_volume pick the largest array."""
         import zarr
 
-        from luxar.cli.gsplat_config import _load_zarr_volume, discover_ome_zarr_shape
+        from luxar.io.ome_zarr import discover_ome_zarr_shape
+        from luxar.io.volume import _load_zarr_volume
 
         path = tmp_path / "test.zarr"
         z = zarr.open(str(path), mode="w")
@@ -728,7 +729,7 @@ class TestBatchPlanRegression:
 
     def test_6d_channel_decoding(self) -> None:
         """Flat channel index should decode to channel-like axis coordinates."""
-        from luxar.cli.gsplat_config import decode_flat_channel_index
+        from luxar.io.volume import decode_flat_channel_index
 
         assert decode_flat_channel_index(5, (2, 4)) == (1, 1)
         assert decode_flat_channel_index(0, (2, 4)) == (0, 0)
@@ -739,7 +740,7 @@ class TestBatchPlanRegression:
     def test_6d_zarr_volume_load_uses_flat_channel_index(self, tmp_path: Path) -> None:
         import zarr
 
-        from luxar.cli.gsplat_config import _load_zarr_volume
+        from luxar.io.volume import _load_zarr_volume
 
         path = tmp_path / "sixd.zarr"
         data = np.arange(3 * 2 * 4 * 2 * 3 * 5, dtype=np.float32).reshape(

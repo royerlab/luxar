@@ -569,9 +569,20 @@ class TestConvertCommand:
         out = tmp_path / "scene.luxar.zarr"
         result = runner.invoke(
             app,
-            ["gsplat", "convert", str(sample_gsplats), str(out),
-             "--colormap", "plasma", "--tone-mapping", "Neutral",
-             "--gamma", "1.0", "--intensity", "1.0"],
+            [
+                "gsplat",
+                "convert",
+                str(sample_gsplats),
+                str(out),
+                "--colormap",
+                "plasma",
+                "--tone-mapping",
+                "Neutral",
+                "--gamma",
+                "1.0",
+                "--intensity",
+                "1.0",
+            ],
         )
         assert result.exit_code == 0, result.stdout
         store = zarr.open_group(str(out), mode="r")
@@ -584,8 +595,14 @@ class TestConvertCommand:
     ) -> None:
         result = runner.invoke(
             app,
-            ["gsplat", "convert", str(sample_gsplats),
-             str(tmp_path / "s.luxar.zarr"), "--colormap", "notacolormap"],
+            [
+                "gsplat",
+                "convert",
+                str(sample_gsplats),
+                str(tmp_path / "s.luxar.zarr"),
+                "--colormap",
+                "notacolormap",
+            ],
         )
         assert result.exit_code != 0
 
@@ -594,8 +611,14 @@ class TestConvertCommand:
     ) -> None:
         result = runner.invoke(
             app,
-            ["gsplat", "convert", str(sample_gsplats),
-             str(tmp_path / "s.luxar.zarr"), "--tone-mapping", "Fancy"],
+            [
+                "gsplat",
+                "convert",
+                str(sample_gsplats),
+                str(tmp_path / "s.luxar.zarr"),
+                "--tone-mapping",
+                "Fancy",
+            ],
         )
         assert result.exit_code != 0
 
@@ -1258,8 +1281,14 @@ class TestFilterCommand:
         out = tmp_path / "filtered.gsplats.zarr"
         result = runner.invoke(
             app,
-            ["gsplat", "filter", str(sample_gsplats_for_filter), str(out),
-             "--amplitude-max", "p90"],
+            [
+                "gsplat",
+                "filter",
+                str(sample_gsplats_for_filter),
+                str(out),
+                "--amplitude-max",
+                "p90",
+            ],
         )
         assert result.exit_code == 0, f"filter failed: {result.stdout}"
         from luxar.gsplats.gsplat_data import GSplatData
@@ -1273,8 +1302,16 @@ class TestFilterCommand:
         out = tmp_path / "filtered.gsplats.zarr"
         result = runner.invoke(
             app,
-            ["gsplat", "filter", str(sample_gsplats_for_filter), str(out),
-             "--volume-max", "1000", "--mass-min", "0.0"],
+            [
+                "gsplat",
+                "filter",
+                str(sample_gsplats_for_filter),
+                str(out),
+                "--volume-max",
+                "1000",
+                "--mass-min",
+                "0.0",
+            ],
         )
         assert result.exit_code == 0, f"filter failed: {result.stdout}"
         assert out.exists()
@@ -1285,8 +1322,14 @@ class TestFilterCommand:
         out = tmp_path / "filtered.gsplats.zarr"
         result = runner.invoke(
             app,
-            ["gsplat", "filter", str(sample_gsplats_for_filter), str(out),
-             "--isolation-max", "p50"],
+            [
+                "gsplat",
+                "filter",
+                str(sample_gsplats_for_filter),
+                str(out),
+                "--isolation-max",
+                "p50",
+            ],
         )
         assert result.exit_code == 0, f"filter failed: {result.stdout}"
         assert out.exists()
@@ -1297,8 +1340,15 @@ class TestFilterCommand:
         out = tmp_path / "should_not_exist.gsplats.zarr"
         result = runner.invoke(
             app,
-            ["gsplat", "filter", str(sample_gsplats_for_filter), str(out),
-             "--scale-max", "p90", "--dry-run"],
+            [
+                "gsplat",
+                "filter",
+                str(sample_gsplats_for_filter),
+                str(out),
+                "--scale-max",
+                "p90",
+                "--dry-run",
+            ],
         )
         assert result.exit_code == 0, f"filter failed: {result.stdout}"
         assert not out.exists()
@@ -1310,8 +1360,14 @@ class TestFilterCommand:
         out = tmp_path / "soft.gsplats.zarr"
         result = runner.invoke(
             app,
-            ["gsplat", "filter", str(sample_gsplats_for_filter), str(out),
-             "--soft-highpass", "p50"],
+            [
+                "gsplat",
+                "filter",
+                str(sample_gsplats_for_filter),
+                str(out),
+                "--soft-highpass",
+                "p50",
+            ],
         )
         assert result.exit_code == 0, f"filter failed: {result.stdout}"
         from luxar.gsplats.gsplat_data import GSplatData
@@ -1325,8 +1381,14 @@ class TestFilterCommand:
         out = tmp_path / "x.gsplats.zarr"
         result = runner.invoke(
             app,
-            ["gsplat", "filter", str(sample_gsplats_for_filter), str(out),
-             "--scale-max", "p150"],  # percentile out of [0,100]
+            [
+                "gsplat",
+                "filter",
+                str(sample_gsplats_for_filter),
+                str(out),
+                "--scale-max",
+                "p150",
+            ],  # percentile out of [0,100]
         )
         assert result.exit_code != 0
 
@@ -1338,8 +1400,16 @@ class TestFilterCommand:
         out = tmp_path / "x.gsplats.zarr"
         result = runner.invoke(
             app,
-            ["gsplat", "filter", str(sample_gsplats_for_filter), str(out),
-             "--amplitude-min", "p10", "--amplitude-max", "0.9"],
+            [
+                "gsplat",
+                "filter",
+                str(sample_gsplats_for_filter),
+                str(out),
+                "--amplitude-min",
+                "p10",
+                "--amplitude-max",
+                "0.9",
+            ],
         )
         assert result.exit_code != 0
         assert not out.exists()
@@ -4575,7 +4645,7 @@ class TestAxesSpec:
     (the single-volume counterpart of batch-fit submit --axes)."""
 
     def test_apply_axes_spec_slices_channel_axis(self) -> None:
-        from luxar.cli.gsplat_config import _apply_axes_spec
+        from luxar.io.volume import _apply_axes_spec
 
         # ZCYX volume (channel is axis 1, not the canonical CZYX axis 0)
         arr = np.arange(2 * 3 * 4 * 5, dtype=np.float32).reshape(2, 3, 4, 5)
@@ -4584,7 +4654,7 @@ class TestAxesSpec:
         np.testing.assert_array_equal(out, arr[:, 1, :, :])
 
     def test_apply_axes_spec_time_and_channel(self) -> None:
-        from luxar.cli.gsplat_config import _apply_axes_spec
+        from luxar.io.volume import _apply_axes_spec
 
         # TZCYX → pick t=2, c=1
         arr = np.random.rand(3, 4, 2, 5, 6).astype(np.float32)
@@ -4593,14 +4663,14 @@ class TestAxesSpec:
         np.testing.assert_array_equal(out, arr[2, :, 1, :, :])
 
     def test_apply_axes_spec_defaults_to_zero(self) -> None:
-        from luxar.cli.gsplat_config import _apply_axes_spec
+        from luxar.io.volume import _apply_axes_spec
 
         arr = np.random.rand(2, 3, 4, 5).astype(np.float32)
         out = _apply_axes_spec(arr, "c,z,y,x", channel=None, timepoint=None)
         np.testing.assert_array_equal(out, arr[0])  # channel defaults to 0
 
     def test_apply_axes_spec_validates(self) -> None:
-        from luxar.cli.gsplat_config import _apply_axes_spec
+        from luxar.io.volume import _apply_axes_spec
 
         arr = np.zeros((2, 3, 4), dtype=np.float32)
         with pytest.raises(ValueError, match="labels but the array"):
@@ -4661,7 +4731,7 @@ class TestAxesThreadingAndSqueeze:
         assert load_volume(p).shape == (8, 9)
 
     def test_apply_axes_spec_rejects_out_of_range_index(self) -> None:
-        from luxar.cli.gsplat_config import _apply_axes_spec
+        from luxar.io.volume import _apply_axes_spec
 
         arr = np.zeros((2, 3, 4, 5), dtype=np.float32)  # c=2 on axis 0
         with pytest.raises(ValueError, match="out of range"):
@@ -4676,7 +4746,7 @@ class TestAxesThreadingAndSqueeze:
         → OOM on a real 329-timepoint stack."""
         import zarr
 
-        from luxar.cli.gsplat_config import _load_zarr_volume
+        from luxar.io.volume import _load_zarr_volume
 
         p = tmp_path / "movie.zarr"
         z = zarr.open_array(
