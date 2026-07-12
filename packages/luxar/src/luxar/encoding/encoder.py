@@ -97,11 +97,6 @@ class ArrayEncoder:
         self._broadcast_atol = broadcast_atol
         self._float16_allowed = float16_allowed
         self._lut_json_max_bytes = lut_json_max_bytes
-        # Internal tier override consumed by the per-channel log encoders.
-        # Set (via try/finally) only by encode_cholesky_split, which owns the
-        # certified u8→u16 escalation for the diag/offdiag PAIR. Deliberately
-        # not a public encode() parameter: callers never choose bit widths.
-        self._perchannel_bits_override: Optional[int] = None
 
     def encode(
         self,
@@ -118,6 +113,7 @@ class ArrayEncoder:
         chunks: Optional[tuple] = None,
         compressor: Optional[Any] = None,
         deduplicate: bool = True,
+        _perchannel_bits: Optional[int] = None,
     ) -> None:
         """Encode array or scalar and write to zarr group.
 
@@ -156,6 +152,12 @@ class ArrayEncoder:
                          cannot resolve refs (e.g. line vertices/segments,
                          read as raw chunked zarr) so they are always
                          materialised.
+            _perchannel_bits: Internal-only. Forces the quantization tier (8 or
+                         16) of the per-channel log encoders for the
+                         CHOLESKY_DIAG / CHOLESKY_OFFDIAG semantic types. Set
+                         only by :meth:`encode_cholesky_split`, which owns the
+                         certified u8→u16 escalation for the diag/offdiag pair;
+                         ``None`` (all other callers) defaults to 8.
 
         Raises:
             ValueError: If scalar input lacks n_elements
@@ -289,6 +291,7 @@ class ArrayEncoder:
             color_mode,
             chunks,
             compressor,
+            _perchannel_bits,
         )
 
     def reset(self) -> None:
@@ -962,33 +965,34 @@ class ArrayEncoder:
 
         # Delegate each half to the full encode() priority ladder (broadcast /
         # LUT / dtype) with the certified tier forced for the quantized path.
-        self._perchannel_bits_override = chosen_bits
-        try:
+        # The tier is threaded explicitly via `_perchannel_bits` (consumed only
+        # by the CHOLESKY_DIAG/OFFDIAG per-channel log encoders) — no shared
+        # instance state, so this is re-entrant and needs no try/finally.
+        self.encode(
+            data=diag,
+            zarr_group=zarr_group,
+            name=diag_name,
+            semantic_type=SemanticType.CHOLESKY_DIAG,
+            mode=eff_mode,
+            n_elements=n_elements,
+            chunks=chunks_diag,
+            compressor=compressor,
+            deduplicate=False,
+            _perchannel_bits=chosen_bits,
+        )
+        if write_offdiag:
             self.encode(
-                data=diag,
+                data=offdiag,
                 zarr_group=zarr_group,
-                name=diag_name,
-                semantic_type=SemanticType.CHOLESKY_DIAG,
+                name=offdiag_name,
+                semantic_type=SemanticType.CHOLESKY_OFFDIAG,
                 mode=eff_mode,
                 n_elements=n_elements,
-                chunks=chunks_diag,
+                chunks=chunks_offdiag,
                 compressor=compressor,
                 deduplicate=False,
+                _perchannel_bits=chosen_bits,
             )
-            if write_offdiag:
-                self.encode(
-                    data=offdiag,
-                    zarr_group=zarr_group,
-                    name=offdiag_name,
-                    semantic_type=SemanticType.CHOLESKY_OFFDIAG,
-                    mode=eff_mode,
-                    n_elements=n_elements,
-                    chunks=chunks_offdiag,
-                    compressor=compressor,
-                    deduplicate=False,
-                )
-        finally:
-            self._perchannel_bits_override = None
 
         # Record the certificate as provenance inside each array's own encoding
         # attrs — only where the tier decision actually applied (the broadcast /
@@ -1068,6 +1072,7 @@ class ArrayEncoder:
         color_mode: Optional[str],
         chunks: Optional[tuple],
         compressor: Optional[Any],
+        perchannel_bits: Optional[int] = None,
     ) -> None:
         """Encode array using dtype-based encoding.
 
@@ -1086,6 +1091,8 @@ class ArrayEncoder:
             color_mode: "sdr" or "hdr" for COLOR
             chunks: Optional chunk shape
             compressor: Optional compressor
+            perchannel_bits: Internal tier override (8/16) forwarded to the
+                Cholesky per-channel log encoders; ``None`` defaults to 8.
         """
         if mode == EncodingMode.CUSTOM:
             if custom_encoder is None:
@@ -1119,12 +1126,12 @@ class ArrayEncoder:
         elif semantic_type == SemanticType.CHOLESKY_DIAG:
             # Cholesky diagonal is positive → generic per-channel log encoding.
             self._encode_log_perchannel(
-                zarr_group, name, data, mode, chunks, compressor
+                zarr_group, name, data, mode, chunks, compressor, perchannel_bits
             )
         elif semantic_type == SemanticType.CHOLESKY_OFFDIAG:
             # Cholesky off-diagonal is signed → generic per-channel signed-log.
             self._encode_signed_log_perchannel(
-                zarr_group, name, data, mode, chunks, compressor
+                zarr_group, name, data, mode, chunks, compressor, perchannel_bits
             )
         elif semantic_type == SemanticType.INDEX:
             self._encode_index(zarr_group, name, data, mode, chunks, compressor)
@@ -1845,6 +1852,7 @@ class ArrayEncoder:
         mode: EncodingMode,
         chunks: Optional[tuple] = None,
         compressor: Optional[Any] = None,
+        bits: Optional[int] = None,
     ) -> None:
         """Generic per-channel LOG quantization of a non-negative (N, C) array.
 
@@ -1866,7 +1874,7 @@ class ArrayEncoder:
                 zarr_group, name, data, np.dtype("float32"), chunks, compressor
             )
             return
-        bits = self._perchannel_bits_override or 8
+        bits = bits or 8
         x = np.asarray(data)
         lo, hi = self._perchannel_log_scales(x, signed=False)
         y = self._perchannel_log_forward(x, signed=False)
@@ -1896,6 +1904,7 @@ class ArrayEncoder:
         mode: EncodingMode,
         chunks: Optional[tuple] = None,
         compressor: Optional[Any] = None,
+        bits: Optional[int] = None,
     ) -> None:
         """Generic per-channel SIGNED-LOG quantization of a signed (N, C) array.
 
@@ -1915,7 +1924,7 @@ class ArrayEncoder:
                 zarr_group, name, data, np.dtype("float32"), chunks, compressor
             )
             return
-        bits = self._perchannel_bits_override or 8
+        bits = bits or 8
         x = np.asarray(data)
         lo, hi = self._perchannel_log_scales(x, signed=True)
         y = self._perchannel_log_forward(x, signed=True)
