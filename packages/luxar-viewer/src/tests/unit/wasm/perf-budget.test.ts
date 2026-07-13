@@ -1,11 +1,12 @@
 /**
  * Performance-budget assertions for the WASM hot paths.
  *
- * The viewer relies on the WASM module to keep nD visibility, projection,
- * and decode workloads fast enough for ~60 fps interaction at 100 K – 10 M
- * elements. The TypeScript fallbacks in `src/wasm/typescript/` are correct
- * but slow; we ship them so a missing WASM build does not break the app,
- * not because we are happy running on them.
+ * The viewer relies on the WASM module to keep projection (with its
+ * built-in nD visibility/culling) and decode workloads fast enough for
+ * ~60 fps interaction at 100 K – 10 M elements. The TypeScript fallbacks
+ * in `src/wasm/typescript/` are correct but slow; we ship them so a
+ * missing WASM build does not break the app, not because we are happy
+ * running on them.
  *
  * If a regression in the Rust source landed that pulled WASM down close to
  * the TS implementation (e.g. accidentally allocating in the hot loop or
@@ -129,29 +130,6 @@ function generateRadii(count: number): Float32Array {
   return radii;
 }
 
-function generateSegments(count: number): Uint32Array {
-  const segments = new Uint32Array(count * 2);
-  for (let i = 0; i < count; i++) {
-    segments[i * 2] = i;
-    segments[i * 2 + 1] = i + 1;
-  }
-  return segments;
-}
-
-function generateCholeskyFactors(count: number, ndim: number): Float32Array {
-  // Deterministic (sine-based, matching generatePositions/generateRadii) rather
-  // than Math.random: the perf gate must be reproducible run-to-run, and
-  // unseeded factors could yield ill-conditioned/non-positive-definite packed
-  // Cholesky that makes the mahalanobis/attenuation branch timing input-
-  // dependent — the very flakiness the threshold was lowered to absorb.
-  const size = (ndim * (ndim + 1)) / 2;
-  const factors = new Float32Array(count * size);
-  for (let i = 0; i < count * size; i++) {
-    factors[i] = Math.abs(Math.sin(i * 0.053 + 0.5)) * 0.5 + 0.5; // ∈ [0.5, 1.0]
-  }
-  return factors;
-}
-
 const describeIfWasm = wasmAvailable ? describe : describe.skip;
 
 function reportSpeedup(
@@ -169,120 +147,6 @@ describeIfWasm(
     // budget. The ratio measurement is meaningless under coverage anyway
     // (TS is instrumented, WASM binary is not), but bumping the timeout
     // keeps the suite from going red.
-    it('compute_nd_visibility_points', { timeout: 60_000 }, () => {
-      const ndim = 5;
-      const positions = generatePositions(SIZE, ndim);
-      const radii = generateRadii(SIZE);
-      const slicePos = new Float32Array(ndim).fill(0);
-      const tolerance = new Float32Array(ndim).fill(1.0);
-      const tsOut = new Uint8Array(SIZE);
-      const wasmOut = new Uint8Array(SIZE);
-
-      const r = medianSpeedup(
-        () =>
-          tsModule.compute_nd_visibility_points(
-            positions,
-            radii,
-            slicePos,
-            tolerance,
-            ndim,
-            SIZE,
-            tsOut
-          ),
-        () =>
-          wasmModule!.compute_nd_visibility_points(
-            positions,
-            radii,
-            slicePos,
-            tolerance,
-            ndim,
-            SIZE,
-            wasmOut
-          )
-      );
-
-      expect(r.speedup, reportSpeedup('compute_nd_visibility_points', r)).toBeGreaterThanOrEqual(
-        MIN_SPEEDUP
-      );
-    });
-
-    it('compute_nd_visibility_lines', { timeout: 60_000 }, () => {
-      const ndim = 5;
-      const vertices = generatePositions(SIZE + 1, ndim);
-      const segments = generateSegments(SIZE);
-      const widths = generateRadii(SIZE + 1);
-      const slicePos = new Float32Array(ndim).fill(0);
-      const tolerance = new Float32Array(ndim).fill(1.0);
-      const tsOut = new Uint8Array(SIZE);
-      const wasmOut = new Uint8Array(SIZE);
-
-      const r = medianSpeedup(
-        () =>
-          tsModule.compute_nd_visibility_lines(
-            vertices,
-            segments,
-            widths,
-            slicePos,
-            tolerance,
-            ndim,
-            SIZE,
-            tsOut
-          ),
-        () =>
-          wasmModule!.compute_nd_visibility_lines(
-            vertices,
-            segments,
-            widths,
-            slicePos,
-            tolerance,
-            ndim,
-            SIZE,
-            wasmOut
-          )
-      );
-
-      expect(r.speedup, reportSpeedup('compute_nd_visibility_lines', r)).toBeGreaterThanOrEqual(
-        MIN_SPEEDUP
-      );
-    });
-
-    it('compute_nd_visibility_gsplats', { timeout: 60_000 }, () => {
-      const ndim = 4;
-      const centers = generatePositions(SIZE, ndim);
-      const choleskyFactors = generateCholeskyFactors(SIZE, ndim);
-      const slicePos = new Float32Array(ndim).fill(0);
-      const tolerance = new Float32Array(ndim).fill(1.0);
-      const tsOut = new Uint8Array(SIZE);
-      const wasmOut = new Uint8Array(SIZE);
-
-      const r = medianSpeedup(
-        () =>
-          tsModule.compute_nd_visibility_gsplats(
-            centers,
-            choleskyFactors,
-            slicePos,
-            tolerance,
-            ndim,
-            SIZE,
-            tsOut
-          ),
-        () =>
-          wasmModule!.compute_nd_visibility_gsplats(
-            centers,
-            choleskyFactors,
-            slicePos,
-            tolerance,
-            ndim,
-            SIZE,
-            wasmOut
-          )
-      );
-
-      expect(r.speedup, reportSpeedup('compute_nd_visibility_gsplats', r)).toBeGreaterThanOrEqual(
-        MIN_SPEEDUP
-      );
-    });
-
     it('calculate_effective_radii', { timeout: 60_000 }, () => {
       const ndim = 6;
       const positions = generatePositions(SIZE, ndim);

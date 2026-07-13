@@ -21,9 +21,6 @@ interface WasmStubs {
   calculate_effective_radii: ReturnType<typeof vi.fn>;
   calculate_bounds_3d: ReturnType<typeof vi.fn>;
   radii_to_visibility_mask: ReturnType<typeof vi.fn>;
-  compute_nd_visibility_points: ReturnType<typeof vi.fn>;
-  compute_nd_visibility_lines: ReturnType<typeof vi.fn>;
-  compute_nd_visibility_gsplats: ReturnType<typeof vi.fn>;
   clip_segments_batch: ReturnType<typeof vi.fn>;
   interpolate_clipped_positions: ReturnType<typeof vi.fn>;
   interpolate_colors_batch: ReturnType<typeof vi.fn>;
@@ -55,9 +52,6 @@ async function loadWorker(): Promise<{ mod: WorkerModule; wasm: WasmStubs }> {
     calculate_effective_radii: vi.fn(real.calculate_effective_radii.bind(real)),
     calculate_bounds_3d: vi.fn(real.calculate_bounds_3d.bind(real)),
     radii_to_visibility_mask: vi.fn(real.radii_to_visibility_mask.bind(real)),
-    compute_nd_visibility_points: vi.fn(real.compute_nd_visibility_points.bind(real)),
-    compute_nd_visibility_lines: vi.fn(real.compute_nd_visibility_lines.bind(real)),
-    compute_nd_visibility_gsplats: vi.fn(real.compute_nd_visibility_gsplats.bind(real)),
     clip_segments_batch: vi.fn(real.clip_segments_batch.bind(real)),
     interpolate_clipped_positions: vi.fn(real.interpolate_clipped_positions.bind(real)),
     interpolate_colors_batch: vi.fn(real.interpolate_colors_batch.bind(real)),
@@ -99,10 +93,14 @@ describe('projectLinesTo3D — happy paths', () => {
 
   it('zero segments returns a zero-shape output without throwing', async () => {
     const { mod } = await loadWorker();
-    // Validator requires ≥ ndim positions even for zero segments
-    // (it uses numItems=1); supply ndim-length zeros.
+    // The canonical empty payload (createEmptyLinesData: ALL arrays
+    // zero-length, matching the zero-splat gsplats test below). A
+    // regression here silently freezes stale Lines geometry: the loader
+    // returns this payload when a node's data falls outside the current
+    // slice, and only a successful empty projection lets the commit step
+    // clear the mesh.
     const result = (await mod.workerAPI.projectLinesTo3D({
-      positions: new Float32Array(3),
+      positions: new Float32Array(0),
       segments: new Uint32Array(0),
       widths: new Float32Array(0),
       colors: null,
@@ -116,6 +114,33 @@ describe('projectLinesTo3D — happy paths', () => {
       segmentCount: 0,
     })) as { visibleSegmentCount: number };
     expect(result.visibleSegmentCount).toBe(0);
+  });
+
+  it('canonical empty payload with a non-displayed dim projects to empty (nD scrub re-cull regression)', async () => {
+    // Regression: scrubbing a non-displayed dim to a slot where a Lines
+    // node has no data made the loader return the canonical empty payload,
+    // which projectLinesTo3D REJECTED (hardcoded numItems=1 required ≥ 1
+    // vertex). The throw was swallowed as a failed loader update, so the
+    // node's previous-slot geometry stayed rendered forever — Lines
+    // accumulated (A ∪ B) where Points/GSplats swapped (A xor B).
+    const { mod } = await loadWorker();
+    const result = (await mod.workerAPI.projectLinesTo3D({
+      positions: new Float32Array(0),
+      segments: new Uint32Array(0),
+      widths: new Float32Array(0),
+      colors: null,
+      sharpness: null,
+      scalars: null,
+      viewState: {
+        displayDims: [0, 1, 2],
+        slicePosition: [0, 0, 0, 1], // hidden dim 3 scrubbed to slot 1
+        tolerance: [1, 1, 1, 0.5], // half-cell membership slab
+      },
+      ndim: 4,
+      segmentCount: 0,
+    })) as { visibleSegmentCount: number; startPositions: Float32Array };
+    expect(result.visibleSegmentCount).toBe(0);
+    expect(result.startPositions.length).toBe(0);
   });
 
   // workers.md/W5/P3: previously call-count only; now pins the WASM-bound

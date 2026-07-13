@@ -1,98 +1,10 @@
 /**
- * WASM module interface for spatial queries and nD visibility computation.
+ * WASM module interface: projection, effective-radius, and decode kernels.
  *
  * This interface defines the contract between TypeScript and the WASM module.
  * Both the compiled WASM and the TypeScript fallback implement this interface.
  */
 export interface WasmModule {
-  /**
-   * Query chunks whose bounding boxes intersect the nD slice.
-   *
-   * @param chunkBounds - Flattened chunk bounds [numChunks * ndim * 2] (min/max pairs)
-   * @param slicePosition - Current slice position in nD space [ndim]
-   * @param tolerance - Tolerance per dimension [ndim]
-   * @param ndim - Number of dimensions
-   * @param numChunks - Total number of chunks
-   * @param output - Output buffer for matching chunk indices [numChunks]
-   * @returns Number of matching chunks
-   */
-  query_chunks_for_view(
-    chunkBounds: Float32Array,
-    slicePosition: Float32Array,
-    tolerance: Float32Array,
-    ndim: number,
-    numChunks: number,
-    output: Uint32Array
-  ): number;
-
-  /**
-   * Compute nD visibility for points using hypersphere intersection.
-   *
-   * @param positions - Point positions [numPoints * ndim]
-   * @param radii - Point radii [numPoints]
-   * @param slicePosition - Current slice position [ndim]
-   * @param tolerance - Tolerance per dimension [ndim]
-   * @param ndim - Number of dimensions
-   * @param numPoints - Total number of points
-   * @param output - Output visibility mask [numPoints] (1=visible, 0=hidden)
-   * @returns Number of visible points
-   */
-  compute_nd_visibility_points(
-    positions: Float32Array,
-    radii: Float32Array,
-    slicePosition: Float32Array,
-    tolerance: Float32Array,
-    ndim: number,
-    numPoints: number,
-    output: Uint8Array
-  ): number;
-
-  /**
-   * Compute nD visibility for line segments (endpoint-based).
-   *
-   * @param vertices - Vertex positions [numVertices * ndim]
-   * @param segments - Segment indices [numSegments * 2] (pairs of vertex indices)
-   * @param widths - Per-vertex widths [numVertices]
-   * @param slicePosition - Current slice position [ndim]
-   * @param tolerance - Tolerance per dimension [ndim]
-   * @param ndim - Number of dimensions
-   * @param numSegments - Total number of segments
-   * @param output - Output visibility mask [numSegments]
-   * @returns Number of visible segments
-   */
-  compute_nd_visibility_lines(
-    vertices: Float32Array,
-    segments: Uint32Array,
-    widths: Float32Array,
-    slicePosition: Float32Array,
-    tolerance: Float32Array,
-    ndim: number,
-    numSegments: number,
-    output: Uint8Array
-  ): number;
-
-  /**
-   * Compute nD visibility for GSplats using ellipsoid extent.
-   *
-   * @param centers - Splat centers [numSplats * ndim]
-   * @param choleskyFactors - Packed Cholesky factors [numSplats * k] where k = ndim*(ndim+1)/2
-   * @param slicePosition - Current slice position [ndim]
-   * @param tolerance - Tolerance per dimension [ndim]
-   * @param ndim - Number of dimensions
-   * @param numSplats - Total number of splats
-   * @param output - Output visibility mask [numSplats]
-   * @returns Number of visible splats
-   */
-  compute_nd_visibility_gsplats(
-    centers: Float32Array,
-    choleskyFactors: Float32Array,
-    slicePosition: Float32Array,
-    tolerance: Float32Array,
-    ndim: number,
-    numSplats: number,
-    output: Uint8Array
-  ): number;
-
   /**
    * Calculate effective radii for nD points when sliced.
    *

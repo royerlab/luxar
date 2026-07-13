@@ -93,7 +93,7 @@ describe('validateDataLoading', () => {
     const cfg = cloneConfig();
     cfg.dataLoading.network.timeoutMs = -1; // network
     cfg.dataLoading.memory.targetHeapUsage = 0; // memory
-    cfg.dataLoading.performance.workerVisibilityTimeoutMs = -1; // performance
+    cfg.dataLoading.performance.workerProjectionTimeoutMs = -1; // performance
     cfg.dataLoading.spatial.defaultTolerance = 0; // spatial (inlined)
 
     const result = invokeValidator(validateDataLoading, cfg);
@@ -102,7 +102,7 @@ describe('validateDataLoading', () => {
     expect(result.errors).toContainEqual(expect.stringContaining('Invalid network timeout'));
     expect(result.errors).toContainEqual(expect.stringContaining('Invalid target heap usage'));
     expect(result.errors).toContainEqual(
-      expect.stringContaining('Invalid workerVisibilityTimeoutMs')
+      expect.stringContaining('Invalid workerProjectionTimeoutMs')
     );
     expect(result.errors).toContainEqual(
       expect.stringContaining('Invalid spatial default tolerance')

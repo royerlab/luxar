@@ -424,11 +424,10 @@ export class WorkerPool {
   }
 
   /**
-   * Pick the kind-appropriate timeout from config. Visibility uses
-   * `workerVisibilityTimeoutMs`; projection AND decode share
-   * `workerProjectionTimeoutMs` (both are long-running CPU-bound calls
-   * — a dedicated decode knob can be added later if telemetry shows a
-   * need).
+   * Pick the kind-appropriate timeout from config. Projection AND
+   * decode share `workerProjectionTimeoutMs` (both are long-running
+   * CPU-bound calls — a dedicated decode knob can be added later if
+   * telemetry shows a need).
    */
   private pickTimeoutMs(kind: TimeoutKind): number {
     return pickTimeoutMs(kind, config.dataLoading.performance);

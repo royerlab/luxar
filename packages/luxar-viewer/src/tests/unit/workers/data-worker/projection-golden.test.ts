@@ -348,6 +348,22 @@ describe('lines dispatcher: hidden-dim clipping + culling', () => {
     );
     expect(out.segmentCount).toBe(0);
   });
+
+  it('accepts the canonical empty payload and projects to an empty result (nD scrub re-cull regression)', async () => {
+    // Regression: the dispatcher hardcoded numItems=1 in its input
+    // validation, rejecting createEmptyLinesData (zero-length positions)
+    // with "positions array too short". The loader returns exactly this
+    // payload when a Lines node has no data at the current slice of a
+    // non-displayed dimension; the throw was swallowed as a failed loader
+    // update, so the previous slice's geometry was never cleared and
+    // Lines accumulated across scrubs instead of swapping like
+    // Points/GSplats.
+    const empty = createEmptyLinesData({ ndim: 4 } as unknown as LinesMetadata);
+    const out = await runLinesBothBackends(empty, [0, 0, 0, 1], [1e10, 1e10, 1e10, 0.5], [0, 1, 2]);
+    expect(out.segmentCount).toBe(0);
+    expect(out.startPositions.length).toBe(0);
+    expect(out.endPositions.length).toBe(0);
+  });
 });
 
 // ---------------------------------------------------------------------------

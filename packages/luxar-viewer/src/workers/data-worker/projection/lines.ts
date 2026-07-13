@@ -74,16 +74,21 @@ export async function projectLinesTo3D(
   const { displayDims, slicePosition, tolerance } = viewState;
 
   // The shared projection validator handles displayDims and the basic
-  // ndim/positions sanity check; we then check segment-vertex bounds
-  // explicitly because positions length depends on max referenced vertex
-  // (not numItems = 1), and finally the per-vertex attribute lengths.
+  // ndim/slicePosition sanity checks. numItems is 0 because the real
+  // positions invariant for lines — "covers the max vertex referenced by
+  // segments" — is enforced by validateLineSegmentReferences below, and
+  // the canonical empty payload (segmentCount 0, zero-length positions)
+  // is a legitimate input that must project to an empty result so the
+  // commit step can CLEAR stale geometry (a hardcoded numItems=1 here
+  // rejected it, leaving out-of-slice Lines rendered forever on
+  // non-displayed-dimension scrubs).
   validateProjectionInputs(
     'projectLinesTo3D',
     positions,
     displayDims,
     slicePosition,
     ndim,
-    1,
+    0,
     ndim
   );
   if (tolerance.length < ndim) {

@@ -50,7 +50,6 @@ async function loadWorkerPool(
       dataLoading: {
         performance: {
           workerCount,
-          workerVisibilityTimeoutMs: 30000,
           workerProjectionTimeoutMs: 60000,
           workerInitTimeoutMs: 0, // disabled — tests control settlement directly
         },

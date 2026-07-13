@@ -39,7 +39,7 @@ import { setWasmJsUrl } from '../../../../wasm';
 import type { WasmCtx } from '../../../../workers/data-worker/state';
 
 function makeCtx(): WasmCtx {
-  return { wasm: null, tsFallback: null, visibilityMaskBuffer: null };
+  return { wasm: null, tsFallback: null };
 }
 
 describe('worker initialize() — wasmPath forwarding', () => {
