@@ -39,8 +39,10 @@ import subprocess  # nosec B404: this script intentionally shells out to the tru
 import sys
 import tempfile
 import time
-from contextlib import contextmanager
+from collections.abc import Iterator
+from contextlib import AbstractContextManager, contextmanager
 from pathlib import Path
+from types import ModuleType
 from typing import Any, Dict, List
 
 import numpy as np
@@ -70,12 +72,12 @@ PRESET = "n2s"
 # ---------------------------------------------------------------------------
 
 
-def _clean_argv():
+def _clean_argv() -> AbstractContextManager[None]:
     """Return a context that resets sys.argv so demo module imports don't
     pick up driver flags."""
 
     @contextmanager
-    def _ctx():
+    def _ctx() -> Iterator[None]:
         saved = sys.argv
         sys.argv = [saved[0] if saved else "driver"]
         try:
@@ -86,7 +88,7 @@ def _clean_argv():
     return _ctx()
 
 
-def _import_demo(file_stem: str):
+def _import_demo(file_stem: str) -> ModuleType:
     """Import a demo module by loading its file directly.
 
     ``luxar/__init__.py`` overrides ``sys.modules['luxar.demos']`` to point at
@@ -112,36 +114,42 @@ def _import_demo(file_stem: str):
     return module
 
 
-def _load_dapi():
+def _load_dapi() -> list[tuple[str, np.ndarray]]:
     mod = _import_demo("demo_gsplats_3d_organoid_dapi_nuclei")
     V = mod.load_dapi_data()
     return [("dapi", V)]
 
 
-def _load_kidney_layers():
+def _load_kidney_layers() -> list[tuple[str, np.ndarray]]:
     mod = _import_demo("demo_gsplats_3d_kidney_multichannel_layers")
     vols = mod.load_kidney()
     return [(f"ch{i}", v) for i, v in enumerate(vols)]
 
 
-def _load_kidney_toggles():
+def _load_kidney_toggles() -> list[tuple[str, np.ndarray]]:
     # Same data source as layers; both demos call skimage.data.kidney().
     return _load_kidney_layers()
 
 
-def _load_acto3d():
+def _load_acto3d() -> list[tuple[str, np.ndarray]]:
     mod = _import_demo("demo_gsplats_3d_acto3d_heart")
     vols, _voxel = mod.load_acto3d_heart_data()
     return [(f"ch{i}", v) for i, v in enumerate(vols)]
 
 
-def _load_organoid_multi():
+def _load_organoid_multi() -> list[tuple[str, np.ndarray]]:
     mod = _import_demo("demo_gsplats_3d_organoid_multichannel")
     vols = mod.load_multichannel_data()
     return [(f"ch{i}", v) for i, v in enumerate(vols)]
 
 
-def _load_opencell():
+def _load_cells3d() -> list[tuple[str, np.ndarray]]:
+    mod = _import_demo("demo_gsplats_3d_cells3d_multichannel")
+    vols = mod.load_cells3d()
+    return [(f"ch{i}", v) for i, v in enumerate(vols)]
+
+
+def _load_opencell() -> list[tuple[str, np.ndarray]]:
     mod = _import_demo("demo_gsplats_3d_opencell_map4")
     cache = mod.CACHE_DIR / "opencell_map4_stack.tif"
     if not cache.exists():
@@ -150,13 +158,13 @@ def _load_opencell():
     return [(f"ch{i}", v) for i, v in enumerate(vols)]
 
 
-def _load_tribolium():
+def _load_tribolium() -> list[tuple[str, np.ndarray]]:
     mod = _import_demo("demo_gsplats_3d_tribolium_embryo")
     V = mod.load_tribolium_volume()
     return [("tribolium", V)]
 
 
-def _load_celegans():
+def _load_celegans() -> list[tuple[str, np.ndarray]]:
     """3 distributed timepoints from the 400-tp confocal dataset."""
     mod = _import_demo("demo_gsplats_4d_celegans_tracking")
     tps = [50, 200, 350]
@@ -179,7 +187,7 @@ def _load_celegans():
     return samples
 
 
-def _load_zebrafish():
+def _load_zebrafish() -> list[tuple[str, np.ndarray]]:
     """3 distributed timepoints from the LSM timelapse."""
     mod = _import_demo("demo_gsplats_4d_zebrafish_timelapse")
     result = mod.load_zebrafish_volumes()
@@ -197,7 +205,7 @@ def _load_zebrafish():
     return [(f"t{i:04d}", volumes[i]) for i in picks]
 
 
-def _load_cmu1_pathology_tile():
+def _load_cmu1_pathology_tile() -> list[tuple[str, np.ndarray]]:
     """Calibrate on a single representative tile-sized crop of the RGB image."""
     mod = _import_demo("demo_gsplats_2d_cmu1_pathology")
     channels = mod.load_cmu1_image()
@@ -213,7 +221,7 @@ def _load_cmu1_pathology_tile():
     return samples
 
 
-def _load_codex_pancreas_tile():
+def _load_codex_pancreas_tile() -> list[tuple[str, np.ndarray]]:
     """Same strategy as CMU-1: representative tile-sized crop per channel."""
     mod = _import_demo("demo_gsplats_2d_codex_pancreas")
     tiff_dir = mod.ensure_extracted()
@@ -269,6 +277,13 @@ DEMOS: List[Dict[str, Any]] = [
         "k_min": 1_000,
         "k_max": 256_000,
         "comment": "256^3 2-channel organoid",
+    },
+    {
+        "name": "cells3d_multichannel",
+        "loader": _load_cells3d,
+        "k_min": 1_000,
+        "k_max": 64_000,
+        "comment": "skimage cells3d 2-channel 60x256x256",
     },
     {
         "name": "opencell_map4",
@@ -439,7 +454,8 @@ def _calibrate_demo(demo: Dict[str, Any], skip_existing: bool) -> Dict[str, Any]
 
     if skip_existing and summary_path.exists():
         aprint(f"⊘ {name}: summary exists, skipping")
-        return json.loads(summary_path.read_text())
+        cached: Dict[str, Any] = json.loads(summary_path.read_text())
+        return cached
 
     if "alias_of" in demo:
         alias_summary = RESULTS_DIR / f"{demo['alias_of']}.summary.json"
