@@ -427,6 +427,28 @@ Recreates the Cosmicflows-4 / Laniakea visualization by Simone Conradi and Manli
 
 ---
 
+#### demo_asteroids_solar_system.py - The Solar System (~1.5M Real Asteroids, JPL SBDB)
+Every catalogued minor planet placed in real 3D space by propagating its measured Keplerian orbit to a common epoch: ~1.5M asteroids as Points colored by semi-major axis, plus the eight planets, the Sun, and the planets' orbit ellipses (Lines). The main belt, Kirkwood gaps, Hilda triangle, and Jupiter Trojan clouds all emerge from the real orbital-element distribution.
+
+**Run**: `hatch run python packages/luxar/src/luxar/demos/demo_asteroids_solar_system.py [--animate] [--max-asteroids N]`
+
+**Requires**: Internet access on first run (downloads the JPL SBDB catalog, ~140 MB, to `~/.cache/luxar/asteroids/`; the parsed catalog is then cached as `.npz`, so subsequent runs are offline).
+
+**Demonstrates**: Real planetary-science data (NASA/JPL Small-Body Database), on-the-fly orbital mechanics (vectorized Kepler solve, element→Cartesian, mean-anomaly propagation — no astropy), ~1.5M-point cloud with `scalars`+colormap coloring and per-point hover labels, Points + Lines (planet orbits) in one scene, optional time-dimension animation (`--animate`) advancing every body along its orbit. Data: [JPL SBDB Query API](https://ssd-api.jpl.nasa.gov/doc/sbdb_query.html) (public domain).
+
+---
+
+#### demo_dipc_3d_genome.py - Single-Cell 3D Genome (Dip-C)
+The folded 3D structure of one human cell's genome from Dip-C (Tan et al. 2018, Science): the chromosomes coil through the nucleus as Lines, colored by chromosome, with the maternal and paternal genomes exposed as two toggleable Layers (press **L**) to isolate one copy or overlay both.
+
+**Run**: `hatch run python packages/luxar/src/luxar/demos/demo_dipc_3d_genome.py [--recompute]`
+
+**Requires**: Nothing extra by default — ships a small precomputed structure via Git LFS. With `--recompute` (or if the LFS asset isn't pulled) it auto-downloads the GEO archive (`GSE117876_RAW.tar`, ~4.7 GB) to `~/.cache/luxar/dipc_genome/`, extracts one cell's `.3dg`, and caches the processed `.npz`.
+
+**Demonstrates**: 3D-genomics visualization (nothing else renders single-cell genome folding interactively), Lines with per-vertex color and hover labels, one Lines node per haplotype exposed as a **Layers-panel** toggle (a hard visibility on/off — the reliable way to isolate Lines, since a non-displayed dimension can't cull already-loaded polylines), self-contained download → extract → cache-processed bootstrap. Data: [Tan et al. 2018](https://doi.org/10.1126/science.aat5641), GEO GSE117876; [dip-c format](https://github.com/tanlongzhi/dip-c).
+
+---
+
 #### demo_storm_3d_microtubules.py - 3D STORM Super-Resolution Microscopy
 Microtubule cytoskeleton at nanometer resolution using real STORM super-resolution microscopy localizations as Gaussian splats.
 
@@ -572,6 +594,39 @@ Large isotropic 3D light-sheet volume of a developing beetle (*Tribolium castane
 
 ---
 
+#### demo_gsplats_3d_milky_way_dust.py - 3D Interstellar Dust of the Solar Neighborhood (Leike & Enßlin 2020)
+Gaussian-splats a real 3D reconstruction of the Milky Way's interstellar dust around the Sun — the splat pipeline applied to astrophysics rather than microscopy. The "volume" is a cube of *space*: a 740 × 740 × 540 pc reconstruction of dust extinction density at 1 pc resolution, fit into glowing 3D fog revealing the Local Bubble and the Orion / Taurus / Perseus molecular clouds.
+
+**Run**: `hatch run python packages/luxar/src/luxar/demos/demo_gsplats_3d_milky_way_dust.py [--recompute]`
+
+**Requires**: Nothing extra by default — ships a precomputed **full-resolution** fit via Git LFS (~8 MB: the native 740×740×540 cube fit to ~675k splats, PSNR ~35 dB). With `--recompute` (or if the LFS asset isn't pulled) it auto-downloads the 2.4 GB reconstruction (`mean_std.h5`) to `~/.cache/luxar/gsplats_milkyway_dust/` (resumable) and refits. The `--recompute` default reproduces the shipped full-res fit and needs a large-VRAM GPU (~40 GB+); on a smaller card pass `--target-size 256 --max-splats 200000` for a lighter downscaled refit.
+
+**Demonstrates**: Real *volumetric astronomy* → Gaussian splats (the same `cal → fit → convert` pipeline used for microscopy, on a dust-density cube), 20–50× compression, `inferno` colormap + Neutral tone-mapping + additive HDR rendering, self-contained download → fit → cache-processed bootstrap. Data: [Leike, Glatzle & Enßlin 2020](https://doi.org/10.1051/0004-6361/202038169), A&A 639, A138 (Zenodo record 3993082, CC BY 4.0).
+
+---
+
+#### demo_gsplats_3d_visible_human_head.py - Visible Human Head (Real-Color Anatomy)
+The human head Gaussian-splatted in **true photographic color** from the NLM Visible Human Project cryosections — actual photographs of a frozen cadaver sliced at 1 mm, so brain, skull, muscle and vasculature appear in natural anatomical color (not a false-color transfer function). The splat pipeline applied to real photographic volumetric anatomy.
+
+**Run**: `hatch run python packages/luxar/src/luxar/demos/demo_gsplats_3d_visible_human_head.py [--recompute]`
+
+**Requires**: Nothing extra by default — ships a precomputed fit + per-splat colors via Git LFS. With `--recompute` (or if the LFS assets aren't pulled) it auto-downloads the 377 color head slices (~1.1 GB) to `~/.cache/luxar/gsplats_visible_human_head/`, builds the masked RGB volume, fits luminance (GPU), and samples per-splat colors.
+
+**Demonstrates**: True-color volumetric anatomy → Gaussian splats via a **single luminance fit + per-splat color sampling** (one fit, real photographic color — vs. the scalar-intensity-plus-colormap microscopy demos), warm-vs-blue tissue masking to drop the frozen-gel background, Neutral tone-mapping, self-contained download → mask → fit → cache-processed bootstrap. Data: [NLM Visible Human Project](https://www.nlm.nih.gov/research/visible/visible_human.html) (Male color cryosections, head subset; public domain).
+
+---
+
+#### demo_gsplats_3d_cryoem_virus.py - Cryo-EM Giant Virus Capsid (Structural Biology)
+Gaussian-splats a real cryo-electron-microscopy density map from the EMDB: the icosahedral capsid of *Paramecium bursaria* chlorella virus 1 (PBCV-1), a giant virus. The reconstructed electron-density volume — a hollow ~1650 Å shell tiled with capsomers — is exactly what the Luxar splat fitter eats, so this is the microscopy splat pipeline applied to structural biology (no isosurface threshold needed).
+
+**Run**: `hatch run python packages/luxar/src/luxar/demos/demo_gsplats_3d_cryoem_virus.py [--recompute]`
+
+**Requires**: Nothing extra by default — ships a precomputed fit via Git LFS (~12 MB: the 700³ EMDB map downsampled to 512³, fit to ~1.0M splats, PSNR ~28 dB). With `--recompute` (or if the LFS asset isn't pulled) it auto-downloads the 1.3 GB EMDB map (`emd_5384.map.gz`) to `~/.cache/luxar/gsplats_cryoem_virus/` (resumable), reads it with `mrcfile`, downsamples to 512³, and fits Gaussian splats on the GPU. Adds `mrcfile` to the `demos` extra.
+
+**Demonstrates**: Real *structural-biology* electron density → Gaussian splats (the same `cal → fit → convert` pipeline used for microscopy, on an EMDB MRC/CCP4 map), solvent clipping + percentile normalization, `viridis` colormap + Neutral tone-mapping + additive HDR rendering, self-contained download → read → fit → cache-processed bootstrap. Data: [EMDB EMD-5384](https://www.ebi.ac.uk/emdb/EMD-5384) (Zhang et al. 2011, PNAS 108(36):14837; public domain / CC0).
+
+---
+
 #### demo_gsplats_lod_tribolium.py - Adaptive Level of Detail on the Tribolium Embryo
 Takes the precomputed Tribolium embryo fit and builds an **adaptive Level of Detail (LOD)** pyramid on it — the embryo is stored at several resolutions, and the viewer shows the simplest one that still looks right at the current zoom. This demo uses *substitutive* LOD (each coarser level *replaces* the finer one with fewer, larger splats), and ships it with per-level debug colors (green→amber→red, finest→coarsest) so the viewer's `coverage_fraction` level-switching is visible as you zoom. The scaled-up companion to `examples/gsplats_lod_example.py`.
 
@@ -613,6 +668,17 @@ Runs the unified `luxar gsplat lod --recipe` pipeline on the **one** precomputed
 **Requires**: Internet access (downloads ~2.1 GB LSM from Zenodo), GPU recommended.
 
 **Demonstrates**: 4D Gaussian splatting (3D + time), per-timepoint independent fitting, `dim_order` + `fill` for time coordinate assignment, zebrafish gastrulation imaging, Zeiss LSM format.
+
+---
+
+#### demo_gsplats_4d_neuromast_2ch.py - 4D Two-Channel Zebrafish Neuromast Time-Lapse
+100-timepoint iSIM recording of a developing zebrafish lateral-line **neuromast** (`she:GFP; cldnb:lyn-mScarlet`), shown as **two independently-toggleable Gaussian-splat layers**: membranes (mScarlet, `bop_blue` LUT) + nuclei (GFP, `bop_orange` LUT). Both channels are co-registered and share one 4D coordinate space, so they animate together — play the **Time** slider to scrub development, press **L** for the Layers panel to control each channel. The bundled gsplats are pre-fit (per-channel calibration K*=64k → `batch-fit` → Z×2.5 anisotropy correction → redundancy cull), so no fitting/GPU is needed to view.
+
+**Run**: `hatch run python packages/luxar/src/luxar/demos/demo_gsplats_4d_neuromast_2ch.py`
+
+**Requires**: The two pre-fit `.gsplats.zarr` (~220 MB) in a local store (`~/luxar_demo_data/gsplats_neuromast_2ch/`, or `$LUXAR_NEUROMAST_DATA_DIR`). ⚠️ **Not bundled/hosted yet** — this is the outstanding follow-up (upload to the demo data host and switch to `load_precomputed_gsplats`, like the other gsplat demos). No network/GPU needed once the store is populated.
+
+**Demonstrates**: 4D + multi-channel gsplats, per-channel `layer=True` + named colormaps (`bop_blue`/`bop_orange`) for the Layers panel, `add_gsplats_from_file` grafting of pre-fit multi-LOD (`stream`, 8 LODs) nodes, Z-anisotropy correction baked via `transform --scale`, redundancy-based culling. Options: `--no-serve`, `--serve-only`.
 
 ---
 
@@ -904,12 +970,17 @@ hatch run python packages/luxar/src/luxar/demos/demo_storm_3d_microtubules.py
 hatch run python packages/luxar/src/luxar/demos/demo_huri_interactome.py
 hatch run python packages/luxar/src/luxar/demos/demo_ppi_flow_field.py
 hatch run python packages/luxar/src/luxar/demos/demo_caida_as_topology.py
+hatch run python packages/luxar/src/luxar/demos/demo_asteroids_solar_system.py
+hatch run python packages/luxar/src/luxar/demos/demo_dipc_3d_genome.py
 
 # --- GSplats: 2D ---
 hatch run python packages/luxar/src/luxar/demos/demo_gsplats_2d_codex_pancreas.py
 hatch run python packages/luxar/src/luxar/demos/demo_gsplats_2d_cmu1_pathology.py
 
 # --- GSplats: 3D ---
+hatch run python packages/luxar/src/luxar/demos/demo_gsplats_3d_milky_way_dust.py
+hatch run python packages/luxar/src/luxar/demos/demo_gsplats_3d_visible_human_head.py
+hatch run python packages/luxar/src/luxar/demos/demo_gsplats_3d_cryoem_virus.py
 hatch run python packages/luxar/src/luxar/demos/demo_gsplats_3d_organoid_dapi_nuclei.py
 hatch run python packages/luxar/src/luxar/demos/demo_gsplats_3d_organoid_multichannel.py
 hatch run python packages/luxar/src/luxar/demos/demo_gsplats_3d_kidney_multichannel_toggles.py

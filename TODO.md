@@ -172,6 +172,11 @@ to ship after). Sequencing is at the bottom.
     versions**, with the manifest pinning what each Luxar release expects.
   - **Scope note:** only *heavy processed datasets* move. Small README/doc images
     (`docs/images/**`) must stay in-repo so GitHub renders them (see R19).
+  - **Also here (from R16):** the **64 MB** `luxar-paper`
+    `supp_doc/splat_count_vs_quality/splat_count_vs_quality.pdf` (LFS, ~10× any
+    other PDF) embeds many 2–8 MB slice montages uncompressed — rasterize/
+    downsample them at build time to shrink it. A manuscript-repo LFS-weight
+    item folded in alongside the software-repo dataset migration.
 
 ### B. First-impression polish — what a visitor sees on day one
 
@@ -282,42 +287,36 @@ to ship after). Sequencing is at the bottom.
 - **R15 [POST] — Tiled-fitting figure.** Described in Methods + Results but has
   no figure; a reviewer may ask for a seamless-stitching demonstration. The
   `tiled_fitting/` SD is method-only (empirical eval deferred).
-- **R16 [LAUNCH] — Manuscript repo hygiene.** Scoped against the repo
-  2026-07-12. The `--floor` decision is **resolved → keep legacy no-floor + document**
-  (see the decision note at the end of section D — a measurement reversed the
-  initial "re-run" call), so there is **no GPU re-run**; R16 stays the light slice:
-  - **No full `run_all.sh` regen for floor.** A quick floor=auto-vs-none check
-    showed floor=auto *lowers* PSNR-vs-original (−5.86 dB kidney_dapi, +0.01
-    organoid — never improves it), because floor drops the background pedestal
-    the PSNR metric still expects. The committed legacy numbers are already the
-    `--floor none` numbers (committed kidney 31.81 dB ≈ floor=none 31.77), so
-    they **stand as-is**. The regenerate-all pipeline (`build_all.sh` →
-    `run_all.sh` → `build_figures` → `build_supp_docs` → `build_preprint`)
-    remains available but is only needed if the analysis inputs change.
-  - ✅ **Prune the confirmed orphan:** `preprint/figs/quantitative_analysis/
-    cross_validation.pdf` is referenced by *no* `.tex` (CV now lives in
-    `quantitative_analysis.pdf` + suppfig `cv_all.pdf`). Delete it.
-  - ❌ **DO NOT prune the `compression_*.pdf` — the old note is stale.** All four
-    (`compression.pdf`, `compression_cv_optimal.pdf`,
-    `compression_rate_distortion.pdf`, `compression_denoised.pdf`) are live
-    `\includegraphics` in `luxar_preprint.tex` (lines ~354/379/390/399) since
-    SD7 (compression) was promoted to a cited document.
-  - ⚠️ **Compression single-source check:** those figs exist in both
-    `preprint/figs/suppfig/` (what the preprint includes) and
-    `supp_doc/compression_comparison/results/`. Confirm one is generated from the
-    other (single source of truth) so they can't diverge.
-  - ✅ **SD6 placeholders — looks already resolved; just verify.** `sweep_v6.json`
-    (216 KB) is committed and is the wired default input
-    (`sweep_latest.json → sweep_v6.json`); the committed SD6 fig PDFs carry no
-    placeholder marker and were committed in the *same commit* as the data
-    (2026-05-04). Residual: a rebuild-and-diff to confirm the committed figs
-    match a fresh build from `sweep_v6.json` (the OUTLINE "regen in progress"
-    note is stale). The `_emit_placeholders` path only fires when the JSON is
-    absent — it isn't.
-  - 🚩 **New (bloat):** `supp_doc/splat_count_vs_quality/splat_count_vs_quality.pdf`
-    is **64 MB** (LFS) — ~10× any other PDF, because it embeds the many 2–8 MB
-    `fig_slice_montage.pdf` uncompressed. Rasterize/downsample the embedded
-    montages at build time. (Overlaps R17's LFS-weight concern.)
+- **R16 [LAUNCH] — Manuscript repo hygiene.** ✅ **DONE** (2026-07-12). Scoped,
+  executed, and verified:
+  - **Regenerate-all / `--floor`:** resolved to **keep legacy no-floor + document**
+    (no GPU re-run — a floor=auto-vs-none measurement showed floor=auto only
+    *lowers* PSNR-vs-original, a reference-mismatch, so a full regen would weaken
+    the numbers; the committed legacy numbers already are the `--floor none`
+    numbers and stand). See the decision note at the end of section D. The
+    manuscript fit harnesses were pinned to `--floor none` (luxar-paper #8) and a
+    Methods paragraph documents the choice (luxar-paper #7).
+  - ✅ **Orphan pruned:** deleted `preprint/figs/quantitative_analysis/cross_validation.pdf`
+    (referenced by no `.tex`; CV lives in `quantitative_analysis.pdf` + suppfig
+    `cv_all.pdf`) — luxar-paper #9.
+  - ✅ **Compression figs — not stale, single-source verified:** all four
+    `compression_*.pdf` are live `\includegraphics` (SD7 is cited), and
+    `preprint/figs/suppfig/compression.pdf` is **byte-identical** to
+    `supp_doc/compression_comparison/results/compression.pdf` (in sync via
+    `build_figures.sh`, no divergence). The old "prune the compression variants"
+    note was stale and is retired.
+  - ✅ **SD6 uses `sweep_v6`, not placeholders:** `sweep_v6.json` (216 KB) is
+    committed and wired as the default input (`sweep_latest.json → sweep_v6.json`);
+    the committed SD6 figs carry no placeholder marker and were committed in the
+    same commit as the data. (The `_emit_placeholders` path fires only when the
+    JSON is absent.)
+  - ➡️ **64 MB `splat_count_vs_quality.pdf` bloat moved to R17** (it's an LFS
+    storage concern — the PDF embeds many 2–8 MB slice montages uncompressed;
+    rasterize/downsample at build time, alongside the Zenodo/LFS work).
+  - Bonus (beyond R16 proper): a full Methods fact-check corrected ~12 code-vs-text
+    mismatches with inline `% source:` comments, and removed the stray 4th pywt
+    noise-floor estimator so the analysis matches the "three estimators" claim
+    (luxar-paper #7, merged).
 
 ### D. Sequencing (suggested order, parallelizable across tracks)
 
@@ -326,7 +325,7 @@ to ship after). Sequencing is at the bottom.
    no open feature branches, dependabot drained, release pipeline landed (#417).
 2. **Decide versioning & package** — R1 → R3 (PyPI dry-run / TestPyPI) in parallel
    with the day-one polish (R8/R9/R10/R11).
-3. **Post the preprint** — R13 ✅ / R14 ✅ / R16 land → bioRxiv → obtain DOI → R4
+3. **Post the preprint** — R13 ✅ / R14 ✅ / R16 ✅ → bioRxiv → obtain DOI → R4
    (wire citation back into the repo).
 4. **Public-repo readiness** (parallel with the preprint track, before the repo
    goes public) — first land the in-flight demo work: **R20** (demos quality
@@ -353,10 +352,11 @@ to ship after). Sequencing is at the bottom.
 > Update 2026-07-11: R13 (Methods specificity) is **done** (#466) and
 > dependabot is re-drained (R5 note above). All release *tooling* is built and
 > validated — what remains on the critical path is **execution**, in order:
-> **(1) preprint track** — R14 (consumer-GPU timing sweep) ✅ **done**
-> 2026-07-12 (luxar-paper SD13); remaining: R16 (manuscript repo hygiene) — now
-> **coupled to the resolved `--floor` decision** (below) — then post → DOI → R4
-> (CITATION.cff). **(2) day-one leftovers** — R11 remainder
+> **(1) preprint track** — R14 (consumer-GPU timing sweep) ✅ **done** and R16
+> (manuscript repo hygiene) ✅ **done** (2026-07-12; `--floor` resolved,
+> orphan pruned, compression single-source + SD6 verified, Methods fact-checked;
+> 64 MB PDF moved to R17). Preprint track is now clear to **post → DOI → R4
+> (CITATION.cff)**, once the author does a final read. **(2) day-one leftovers** — R11 remainder
 > (fresh-machine `make setup-dev` verify, optional gallery media regen) + R7
 > (license/acknowledgments audit). **(3) the mechanical cut** — final
 > dependabot/branch drain → `make set-version` → PR → `make release-check` →
