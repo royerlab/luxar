@@ -6,6 +6,68 @@ All notable changes to Luxar are documented in this file.
 
 ### July 2026
 
+#### Fixed — seven viewer rendering-engine bugs from a WebGL-path deep read (PRs #503, #507)
+
+A full read of the viewer's Three.js WebGL rendering path surfaced seven
+confirmed bugs; each fix shipped with a failing-first regression test.
+
+- **Non-pool geometry commit was broken (all three geometry types)**. With
+  `useGPUBufferPool: false`, the points same-count commit cast a plain
+  `InstancedBufferAttribute` to an interleaved view and threw
+  `Cannot read properties of undefined (reading 'stride')` on the *second*
+  same-count commit (routine while scrubbing a constant-count dimension); the
+  same branch also normalized `Uint16` colors with ÷255 instead of ÷65535
+  (~257× too bright). Points now dispose+recreate via `createPointsGeometry`
+  (the single owner of the dtype/bounds logic). `updateInstanced{Lines,GSplats}Mesh`
+  now return whether they rebuilt the buffer so all three non-pool commit paths
+  evict Three's cached `RenderObject` on rebuild (WebGPU stale-`vertexBuffers`
+  parity with the pool path).
+- **`nearCull` dropped for newly created materials**. The three `getXMaterial`
+  factories omitted the stored `currentNearCull`, so a gsplat/line material
+  created after camera setup kept its constructor default (0.1 / 0.05 world
+  units) until the next resize/FOV event — geometry near the camera was
+  wrongly faded/culled on first paint ("splats missing until the camera
+  moves") on scenes whose world scale differs from those defaults.
+- **LRU material eviction disposed materials still attached to live meshes**.
+  Cache churn could dispose a shared material still on a mesh; Three
+  auto-recompiled it (so it kept rendering) but its dispose listener had
+  unregistered it, so it permanently stopped receiving `updateCameraParams`
+  and rendered with stale resolution/FOV/nearCull after the next resize.
+  Eviction is now defer-dispose: the entry leaves the cache but stays
+  registered for camera updates and is disposed at teardown. (`dispose()` also
+  now covers the `registeredMaterials ∪ ownedMaterials` union so a
+  colormap-clone original that was detached then evicted is still freed.)
+- **GSplat picking was displaced on wide / HiDPI displays**. `computePickBufferSize`
+  clamped each axis independently to 1024 px, so any drawing buffer wider than
+  2048 px (Retina fullscreen, 4K, ultrawide) produced a pick buffer whose
+  aspect no longer matched the camera. The gsplat pick shader assumes square
+  pixels (`uFx == uFy`), so hover/selection landed up to ~1.5–1.8× off
+  horizontally away from screen center (points/lines pick through the
+  aspect-aware projection matrix and were unaffected). The cap is now a single
+  uniform scale on both axes, preserving aspect.
+- **Progressive-refinement / retry commits never woke the render loop**.
+  Refinement passes, failed-load retries, and the online auto-retry commit
+  geometry *after* the sweep that started them; with the rAF loop idle-paused
+  (2 s), LOD chunks were fetched, decoded, and uploaded invisibly until the
+  next input. A `requestRender` callback now funnels through the three
+  SceneLoader commit methods (`SceneLoaderManager.setRequestRender` →
+  `AnimationController.startAnimation`, idempotent).
+- **The SceneManager `change` event had no subscriber → blank canvas after an
+  idle-time context restore**. The WebGL context-restore path ends with
+  `triggerChange()` ("trigger a render"), but nothing listened. A context
+  restored while the loop was idle-paused (GPU driver reset with the page
+  visible but untouched) rebuilt resources and resized the renderer (clearing
+  the canvas), then never painted — blank viewer until the next input. The
+  init pipeline now wires `change → startAnimation`.
+- **Every window resize reallocated the HDR render target twice, unconditionally**.
+  `reallocateForSize()` disposed + recreated the full-screen half-float HDR
+  target on every call, and every resize reaches it through *two* paths (the
+  window `resize` listener via `ResizeOrchestrator` **and** the canvas-parent
+  `ResizeObserver`). The allocation is now memoized on display size, effective
+  logical size (SSAA), physical size (DPR), and MSAA sample count — an
+  identical request is a complete no-op, while DPR/MSAA/SSAA changes still
+  reallocate and `rebuildAfterContextRestore` resets the memo.
+
 #### Removed — dead `computeNDVisibility{Points,Lines,GSplats}` worker kernels
 
 - Deleted the three standalone nD-visibility worker tasks, their TS wrappers
