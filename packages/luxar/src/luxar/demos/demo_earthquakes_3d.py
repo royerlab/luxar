@@ -102,7 +102,7 @@ from arbol import aprint, asection
 from PIL import Image
 
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
-from luxar.demos import launch_viewer
+from luxar.demos import cached_download, launch_viewer
 from luxar.utils.paths import get_demos_output_dir
 
 # =============================================================================
@@ -221,9 +221,7 @@ def latlon_to_xyz(lat: float, lon: float, radius: float = 1.0) -> np.ndarray:
 # =============================================================================
 
 
-def download_and_prepare_earth_texture(
-    cache_path: Path | None = None,
-) -> np.ndarray:
+def download_and_prepare_earth_texture() -> np.ndarray:
     """Download NASA Blue Marble image and prepare for texture mapping.
 
     Downloads the NASA Blue Marble true-color Earth image in equirectangular
@@ -236,44 +234,28 @@ def download_and_prepare_earth_texture(
     - Longitude: -180° to +180° maps to left-to-right (0 to width)
     - Latitude: +90° to -90° maps to top-to-bottom (0 to height)
 
-    Args:
-        cache_path: Optional path to cache the downloaded image
+    The image is cached (skip-if-present) under
+    ``~/.cache/luxar/earthquakes/`` via the shared download helper.
 
     Returns:
         RGB array of shape (height, width, 3) with values 0-255
     """
     with asection("Downloading NASA Blue Marble Earth texture"):
-        # Check cache first
-        if cache_path and cache_path.exists():
-            aprint(f"Loading cached texture from {cache_path}")
-            img = Image.open(cache_path)
-        else:
-            aprint("Downloading from NASA NEO...")
-            aprint(f"  URL: {BLUE_MARBLE_URL}")
-            aprint("  Original size: 5400x2700 pixels (~30 MB)")
+        # Route the download through the shared cache helper so the texture
+        # lands under ~/.cache/luxar/earthquakes/ and repeat runs skip the
+        # network entirely when the cached file is present.
+        try:
+            cache_path = cached_download(
+                BLUE_MARBLE_URL, "earthquakes", "blue_marble_2048x1024.jpg"
+            )
+        except Exception as e:
+            aprint(f"❌ Error downloading Blue Marble image: {e}")
+            aprint("")
+            aprint("💡 Falling back to heuristic coloring...")
+            aprint("   (continents will be approximate)")
+            raise
 
-            try:
-                response = requests.get(BLUE_MARBLE_URL, timeout=120, stream=True)
-                response.raise_for_status()
-
-                # Load image from response
-                from io import BytesIO
-
-                img = Image.open(BytesIO(response.content))
-                aprint(f"✓ Downloaded: {img.size[0]}x{img.size[1]} pixels")
-
-                # Save to cache if specified
-                if cache_path:
-                    cache_path.parent.mkdir(parents=True, exist_ok=True)
-                    img.save(cache_path, "JPEG", quality=85)
-                    aprint(f"✓ Cached to {cache_path}")
-
-            except requests.exceptions.RequestException as e:
-                aprint(f"❌ Error downloading Blue Marble image: {e}")
-                aprint("")
-                aprint("💡 Falling back to heuristic coloring...")
-                aprint("   (continents will be approximate)")
-                raise
+        img = Image.open(cache_path)
 
         # Downscale to target resolution
         if img.size[0] != TEXTURE_WIDTH or img.size[1] != TEXTURE_HEIGHT:
@@ -1257,12 +1239,9 @@ def generate_earthquake_scene(
         aprint("⚠️  No earthquakes found matching criteria")
         return 0, 0, 0
 
-    # Download and prepare Earth texture
-    cache_dir = Path.home() / ".cache" / "luxar"
-    cache_file = cache_dir / "blue_marble_2048x1024.jpg"
-
+    # Download and prepare Earth texture (cached under ~/.cache/luxar/earthquakes/)
     try:
-        earth_texture = download_and_prepare_earth_texture(cache_file)
+        earth_texture = download_and_prepare_earth_texture()
         use_texture = True
     except Exception:
         aprint("⚠️  Falling back to heuristic coloring")

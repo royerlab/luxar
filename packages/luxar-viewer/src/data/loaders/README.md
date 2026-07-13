@@ -188,7 +188,7 @@ guard and the hung-worker eviction logic. See
 ```typescript
 // Config check happens automatically inside the loader.
 if (appConfig.dataLoading.performance.useWebWorkers) {
-  // The pool maps the TimeoutKind ('projection' / 'decode' / 'visibility')
+  // The pool maps the TimeoutKind ('projection' / 'decode')
   // to the corresponding config knob and evicts the worker on timeout.
   result = await getWorkerPool().runWithTimeout(
     'someMethod',

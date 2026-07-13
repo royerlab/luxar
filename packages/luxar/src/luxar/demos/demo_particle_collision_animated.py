@@ -120,7 +120,6 @@ Controls:
 
 from __future__ import annotations
 
-import importlib.util
 import sys
 import tempfile
 from pathlib import Path
@@ -129,34 +128,26 @@ import numpy as np
 from arbol import aprint, asection
 
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
-from luxar.utils.demos import launch_viewer
-from luxar.utils.paths import get_demos_output_dir
+from luxar.demos import launch_viewer
 
-# Import shared physics code from the static particle collision demo.
-# We use importlib because luxar.__init__ aliases sys.modules["luxar.demos"]
-# to luxar.utils.demos, which prevents normal submodule imports from the
-# luxar/demos/ package directory.
-_static_demo_path = Path(__file__).parent / "demo_particle_collision.py"
-_spec = importlib.util.spec_from_file_location(
-    "luxar.demos.demo_particle_collision", _static_demo_path
+# Reuse the shared physics constants + event generator from the static particle
+# collision demo (now a normal sibling import; see the retired sys.modules alias).
+from luxar.demos.demo_particle_collision import (
+    B_FIELD,
+    BEAM_PIPE_RADIUS,
+    DETECTOR_LENGTH,
+    ECAL_INNER,
+    ECAL_OUTER,
+    HCAL_INNER,
+    HCAL_OUTER,
+    MUON_INNER,
+    MUON_OUTER,
+    TRACKER_INNER,
+    TRACKER_OUTER,
+    Particle,
+    generate_collision_event,
 )
-_mod = importlib.util.module_from_spec(_spec)
-sys.modules[_spec.name] = _mod
-_spec.loader.exec_module(_mod)
-
-B_FIELD = _mod.B_FIELD
-BEAM_PIPE_RADIUS = _mod.BEAM_PIPE_RADIUS
-DETECTOR_LENGTH = _mod.DETECTOR_LENGTH
-ECAL_INNER = _mod.ECAL_INNER
-ECAL_OUTER = _mod.ECAL_OUTER
-HCAL_INNER = _mod.HCAL_INNER
-HCAL_OUTER = _mod.HCAL_OUTER
-MUON_INNER = _mod.MUON_INNER
-MUON_OUTER = _mod.MUON_OUTER
-TRACKER_INNER = _mod.TRACKER_INNER
-TRACKER_OUTER = _mod.TRACKER_OUTER
-Particle = _mod.Particle
-generate_collision_event = _mod.generate_collision_event
+from luxar.utils.paths import get_demos_output_dir
 
 
 def generate_helix_track_with_times(

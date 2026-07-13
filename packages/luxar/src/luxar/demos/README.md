@@ -405,17 +405,6 @@ Real Milky Way stars from Gaia DR3: top 3M brightest stars with real photometric
 
 ---
 
-#### demo_gaia_milky_way_8m.py - Milky Way Stars (8M Stars)
-Pre-computed 8.1 million star dataset from a CSV source, visualized with magnitude-based coloring and sizing.
-
-**Run**: `hatch run python packages/luxar/src/luxar/demos/demo_gaia_milky_way_8m.py`
-
-**Requires**: Pre-computed `milky_way_gaia_8m.zarr.zip` data file (143 MB).
-
-**Demonstrates**: Very large point cloud visualization (8M+ stars), magnitude-to-color conversion (blue bright to red faint), percentile-based normalization for outlier handling, pre-computed dataset loading.
-
----
-
 #### demo_earthquakes_3d.py - Global Earthquake Visualization
 Real-time earthquake data from USGS plotted on a 3D Earth sphere with vertical spikes showing magnitude and color-coded by time.
 
@@ -628,35 +617,35 @@ The human head Gaussian-splatted in **true photographic color** from the NLM Vis
 ---
 
 #### demo_gsplats_lod_tribolium.py - Adaptive Level of Detail on the Tribolium Embryo
-Takes the precomputed Tribolium embryo fit and builds an **adaptive Level of Detail (LOD)** pyramid on it — the embryo is stored at several resolutions, and the viewer shows the simplest one that still looks right at the current zoom. This demo uses *substitutive* LOD (each coarser level *replaces* the finer one with fewer, larger splats), and ships it with per-level debug colors (green→amber→red, finest→coarsest) so the viewer's pixel-size level-switching is visible as you zoom. The scaled-up companion to `examples/gsplats_lod_example.py`.
+Takes the precomputed Tribolium embryo fit and builds an **adaptive Level of Detail (LOD)** pyramid on it — the embryo is stored at several resolutions, and the viewer shows the simplest one that still looks right at the current zoom. This demo uses *substitutive* LOD (each coarser level *replaces* the finer one with fewer, larger splats), and ships it with per-level debug colors (green→amber→red, finest→coarsest) so the viewer's `coverage_fraction` level-switching is visible as you zoom. The scaled-up companion to `examples/gsplats_lod_example.py`.
 
 **Run**: `hatch run python packages/luxar/src/luxar/demos/demo_gsplats_lod_tribolium.py`
 
 **Requires**: Precomputed Tribolium splats (Git LFS); no network/GPU needed for the default path. `--recompute` re-fits from Zenodo (network + GPU).
 
-**Demonstrates**: Substitutive LOD via `make_substitutive_lod` (`kmeans_lloyd`), `add_gsplats_from_data(lod_group=True)`, auto level-count from base splat count (#levels scales as log_K(N)), per-level debug coloring, pixel-size LOD selection in the viewer. Options: `--levels=N`, `--factor=K`, `--method=NAME`, `--serve-only`.
+**Demonstrates**: Substitutive LOD via `make_substitutive_lod` (`kmeans_lloyd`), `add_gsplats_from_data(lod_group=True)`, auto level-count from base splat count (#levels scales as log_K(N)), per-level debug coloring, `coverage_fraction` LOD selection in the viewer. Options: `--levels=N`, `--factor=K`, `--method=NAME`, `--serve-only`.
 
 ---
 
 #### demo_gsplats_lod_embryo_line.py - Near-Unlimited Scaling with Adaptive Level of Detail
-Lays out `--count` (default 100) copies of the single adaptive-detail Tribolium embryo along a straight line, drops the camera near the middle of the line, and lets you fly down it. **Level of Detail (LOD)** is the idea that makes this scale: each embryo is kept at several resolutions, and the viewer picks — per object, every frame, by projected pixel size — the simplest version that still looks right. Near embryos render fine (green) while distant ones collapse to a few big splats (red), so the detail actually drawn stays roughly bounded by what the screen can resolve, no matter how long the line. All copies share **byte-identical splat arrays** (per-embryo orientation/jitter lives only in scene-graph transforms), so the encoder's `array_ref` deduplication stores the geometry once: 100 embryos cost ~55 MB on disk instead of ~1.3 GB.
+Lays out `--count` (default 100) copies of the single adaptive-detail Tribolium embryo along a straight line, drops the camera near the middle of the line, and lets you fly down it. **Level of Detail (LOD)** is the idea that makes this scale: each embryo is kept at several resolutions, and the viewer picks — per object, every frame, by viewport-relative `coverage_fraction` (how much of the screen it covers) — the simplest version that still looks right. Near embryos render fine (green) while distant ones collapse to a few big splats (red), so the detail actually drawn stays roughly bounded by what the screen can resolve, no matter how long the line. All copies share **byte-identical splat arrays** (per-embryo orientation/jitter lives only in scene-graph transforms), so the encoder's `array_ref` deduplication stores the geometry once: 100 embryos cost ~55 MB on disk instead of ~1.3 GB.
 
 **Run**: `hatch run python packages/luxar/src/luxar/demos/demo_gsplats_lod_embryo_line.py`
 
 **Requires**: Precomputed Tribolium splats (Git LFS); no network/GPU needed for the default path. `--recompute` re-fits from Zenodo (network + GPU).
 
-**Demonstrates**: Per-object pixel-size LOD selection at scale, scene-graph transforms (`add_group(transform=...)`, `transforms.compose`/`rotate`/`translate`) for placement so splat arrays stay identical, automatic `array_ref` array deduplication in the encoder, and initial-camera setup via `ViewerConfig(camera=CameraConfig(...))`. Options: `--count=N`, `--levels=N`, `--factor=K`, `--method=NAME`, `--serve-only`.
+**Demonstrates**: Per-object `coverage_fraction` LOD selection at scale, scene-graph transforms (`add_group(transform=...)`, `transforms.compose`/`rotate`/`translate`) for placement so splat arrays stay identical, automatic `array_ref` array deduplication in the encoder, and initial-camera setup via `ViewerConfig(camera=CameraConfig(...))`. Options: `--count=N`, `--levels=N`, `--factor=K`, `--method=NAME`, `--serve-only`.
 
 ---
 
-#### demo_gsplats_recipes_tribolium.py - LOD `--recipe` gallery (flat / additive / partitioned / multiscale / mosaic)
-Runs the unified `luxar gsplat lod --recipe` pipeline on the **one** precomputed Tribolium fit to build the five scale-ordered representation topologies and lays them out side by side for direct comparison: **flat** (one leaf) → **additive** (one leaf + a prefix-sum ladder) → **partitioned** (a spatial BSP `kind=partition` where every part carries its own additive ladder) → **multiscale** (an *unbalanced-by-design* `kind=lod`: a cheap coarse substitutive cap for the far view, above a partitioned fine branch for close-up — detail only where you look) → **mosaic** (a BSP `kind=partition` where every part is its own *substitutive* lod group — per-part coarse↔fine replacement, so each cell culls AND picks its own level by its own on-screen size). Structure is colour-coded so the topologies are legible: each BSP part gets a distinct colour, the multiscale coarse cap is red ("far") above cool-coloured fine parts ("near"), and the additive ladder runs blue→cyan coarse→fine. The reference demo for the `cal → fit → lod --recipe → convert → serve` workflow; each recipe build prints the equivalent CLI command.
+#### demo_gsplats_recipes_tribolium.py - LOD `--recipe` gallery (flat / stream / levels / tiles / overview / adaptive)
+Runs the unified `luxar gsplat lod --recipe` pipeline on the **one** precomputed Tribolium fit to build the six scale-ordered representation topologies and lays them out side by side for direct comparison: **flat** (one leaf) → **stream** (one leaf + a prefix-sum ladder) → **levels** (a `kind=lod` of *substitutive* levels — coarse↔fine replacement, one shown at a time) → **tiles** (a spatial BSP `kind=partition` where every part carries its own additive ladder) → **overview** (an *unbalanced-by-design* `kind=lod`: a cheap coarse substitutive cap for the far view, above a `tiles` fine branch for close-up — detail only where you look) → **adaptive** (a BSP `kind=partition` where every part is its own *substitutive* lod group — per-part coarse↔fine replacement, so each cell culls AND picks its own level by its own on-screen size). Structure is colour-coded so the topologies are legible: each BSP part gets a distinct colour, the overview coarse cap is red ("far") above cool-coloured fine parts ("near"), and the stream ladder runs blue→cyan coarse→fine. The reference demo for the `cal → fit → lod --recipe → convert → serve` workflow; each recipe build prints the equivalent CLI command.
 
 **Run**: `hatch run python packages/luxar/src/luxar/demos/demo_gsplats_recipes_tribolium.py`
 
 **Requires**: Precomputed Tribolium splats (Git LFS); no network/GPU needed for the default path. `--recompute` re-fits from Zenodo (network + GPU).
 
-**Demonstrates**: The `lod --recipe` engine (`build_recipe`/`RecipeParams`) and the three novel topologies — `partitioned` (per-part additive ladders), `multiscale` (coarse cap over a partitioned fine branch), and `mosaic` (per-part substitutive lod groups); writing each recipe via the CLI's exact path (`GSplatData.save` for matrix recipes, `write_gsplats_tree` for composed node trees) and grafting them with `add_group(transform=...)` + `add_gsplats_from_file`. Options: `--max-elements=N`, `--factor=K`, `--serve-only`.
+**Demonstrates**: The `lod --recipe` engine (`build_recipe`/`RecipeParams`) and the three novel topologies — `tiles` (per-part additive ladders), `overview` (coarse cap over a `tiles` fine branch), and `adaptive` (per-part substitutive lod groups); writing each recipe via the CLI's exact path (`GSplatData.save` for matrix recipes, `write_gsplats_tree` for composed node trees) and grafting them with `add_group(transform=...)` + `add_gsplats_from_file`. Options: `--max-elements=N`, `--factor=K`, `--serve-only`.
 
 ---
 
@@ -817,6 +806,38 @@ with asection("Writing to Zarr"):
     aprint(f"✓ Written to {path}")
 ```
 
+### 6. Use the shared helpers (don't hand-roll caching)
+
+`luxar.demos` re-exports a small set of helpers — prefer them over hand-rolling
+`Path.home() / ".cache" / ...` logic, `sys.argv` scanning, or HSV→RGB:
+
+```python
+from luxar.demos import (
+    launch_viewer,       # serve + open viewer (serve_args=[...] to pass e.g. --profile)
+    cached_download,     # download once into ~/.cache/luxar/<name>/, skip-if-present
+    cache_computed,      # cache an expensive result (UMAP, field) — versioned, param-keyed
+    require_local_data,  # gate LFS-tracked local data (clear "git lfs pull" message)
+    parse_demo_flags,    # --recompute / --no-serve / --serve-only
+    parse_int_arg,       # --points=N / --sample N integer flags
+    hsv_to_rgb,          # vectorized rainbow / hue-ramp colouring
+    detect_device, warn_if_no_cuda_gpu,          # GPU/MPS/CPU
+    load_precomputed_gsplats, load_precomputed_bundle,  # LFS-shipped gsplat data
+)
+
+# Download once, reused on every later run:
+csv = cached_download("https://…/data.csv", "mydemo", "data.csv")
+
+# Cache an expensive UMAP — the KEY must include every param that changes the
+# output (sample size, feature set, …) so a stale cache is never reused:
+positions = cache_computed(
+    "mydemo", f"umap3d_n{n}_f{len(FEATURES)}", lambda: run_umap(features), version=1
+)
+```
+
+`cache_computed` writes atomically and quarantines a corrupt cache to `.corrupt`
+instead of crashing. Sibling demos are importable normally
+(`from luxar.demos.demo_x import helper`) — no `importlib` file-path tricks.
+
 ## Creating New Demos
 
 1. **Copy a template** (demo_lorenz.py or demo_cubic_array.py)
@@ -922,7 +943,6 @@ hatch run python packages/luxar/src/luxar/demos/demo_spotify_tracks.py
 
 # --- Data-Driven (External Datasets) ---
 hatch run python packages/luxar/src/luxar/demos/demo_gaia_milky_way_3m.py
-hatch run python packages/luxar/src/luxar/demos/demo_gaia_milky_way_8m.py
 hatch run python packages/luxar/src/luxar/demos/demo_earthquakes_3d.py
 hatch run python packages/luxar/src/luxar/demos/demo_storm_3d_microtubules.py
 hatch run python packages/luxar/src/luxar/demos/demo_huri_interactome.py

@@ -3,12 +3,13 @@
  *
  * Loads the compiled WASM module (with TypeScript fallback) once at startup,
  * then exposes a Comlink-RPC surface to the main thread: spatial-index queries,
- * nD visibility kernels, nD→3D projection kernels, and array decoders.
+ * nD→3D projection kernels, and array decoders.
  *
  * Worker responsibilities (CPU-heavy, offloaded from main thread):
  * - Spatial index queries (chunk bounding-box tests)
- * - nD visibility computation (hypersphere intersection / ellipsoid extent)
- * - nD→3D projection of Points / Lines / GSplats (WASM batch kernels)
+ * - nD→3D projection of Lines / GSplats (WASM batch kernels; per-element
+ *   nD visibility/culling is computed INSIDE projection — clip mask,
+ *   effective radius, attenuation — not as a standalone task)
  * - Array decoding (LUT, quantization, log-space)
  *
  * NOT handled here (stays on main thread):
@@ -24,10 +25,6 @@
 import { expose } from 'comlink';
 import { state } from './data-worker/state';
 import { initialize as initializeImpl, type WorkerInitResult } from './data-worker/initialize';
-import { querySpatialIndex as querySpatialIndexImpl } from './data-worker/spatial-index/query';
-import { computeNDVisibilityPoints as computeNDVisibilityPointsImpl } from './data-worker/visibility/points';
-import { computeNDVisibilityLines as computeNDVisibilityLinesImpl } from './data-worker/visibility/lines';
-import { computeNDVisibilityGSplats as computeNDVisibilityGSplatsImpl } from './data-worker/visibility/gsplats';
 import { projectLinesTo3D as projectLinesTo3DImpl } from './data-worker/projection/lines';
 import { projectGSplatsTo3D as projectGSplatsTo3DImpl } from './data-worker/projection/gsplats';
 import { decodeQuantized as decodeQuantizedImpl } from './data-worker/decode/quantized';
@@ -54,14 +51,6 @@ export const workerAPI = {
   // worker), so a relocated WASM binary is loaded here instead of silently
   // falling back to the slower TS implementation.
   initialize: (wasmPath?: string): Promise<WorkerInitResult> => initializeImpl(state, wasmPath),
-  querySpatialIndex: (p: Parameters<typeof querySpatialIndexImpl>[1]) =>
-    querySpatialIndexImpl(state, p),
-  computeNDVisibilityPoints: (p: Parameters<typeof computeNDVisibilityPointsImpl>[1]) =>
-    computeNDVisibilityPointsImpl(state, p),
-  computeNDVisibilityLines: (p: Parameters<typeof computeNDVisibilityLinesImpl>[1]) =>
-    computeNDVisibilityLinesImpl(state, p),
-  computeNDVisibilityGSplats: (p: Parameters<typeof computeNDVisibilityGSplatsImpl>[1]) =>
-    computeNDVisibilityGSplatsImpl(state, p),
   // Decoding functions (main thread fetches, worker decodes)
   decodeQuantized: (p: Parameters<typeof decodeQuantizedImpl>[1]) => decodeQuantizedImpl(state, p),
   decodeLogScalar: (p: Parameters<typeof decodeLogScalarImpl>[1]) => decodeLogScalarImpl(state, p),

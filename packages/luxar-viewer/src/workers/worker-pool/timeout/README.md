@@ -37,8 +37,6 @@ timeout/
 - **`pickTimeoutMs(kind, perf)`** — Maps a `TimeoutKind` (from
   `../errors.ts`) to the matching ms budget in
   `config.dataLoading.performance`:
-  - `'visibility'` → `workerVisibilityTimeoutMs` (bounded by ndim,
-    typically sub-second).
   - `'projection'` and `'decode'` → `workerProjectionTimeoutMs`
     (long-running CPU-bound calls; decode shares the projection knob
     until telemetry justifies a dedicated one).

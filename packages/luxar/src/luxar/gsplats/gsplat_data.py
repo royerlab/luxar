@@ -4,21 +4,21 @@ from __future__ import annotations
 
 import warnings
 from dataclasses import dataclass, field
-from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable, Dict, List, Literal, Optional, Sequence
 
 import numpy as np
 
+from luxar.gsplats._data.culling import CullingMixin
+from luxar.gsplats._data.filtering import FilteringMixin
+from luxar.gsplats._data.io_adapter import IOAdapterMixin
+from luxar.gsplats._data.metrics import _SplatArrayMixin
+from luxar.gsplats._data.render import RenderMixin
+
+# center_at_centroid (kept on GSplatData) shifts only the spatial axes (#487).
+from luxar.gsplats.utils.spatial_axes import spatial_only_shift
+
 if TYPE_CHECKING:
-    from luxar.encoding import EncodingMode
     from luxar.gsplats.tree import GSplatLeaf, GSplatNode, GSplatPartition
-
-
-#: Sentinel for ``GSplatData.save(compressor=...)`` distinguishing "not specified"
-#: (→ default Blosc) from an explicit ``compressor=None`` (→ no compression). A
-#: plain ``None`` default would conflate the two and make uncompressed output
-#: impossible (the bug that produced blosc-bitshuffle fixtures zarrita can't read).
-_USE_DEFAULT_COMPRESSOR = object()
 
 
 def _merge_lod_colors(
@@ -117,281 +117,6 @@ def _concat_additive_levels(
             )
         )
     return merged
-
-
-class _SplatArrayMixin:
-    """Shared computed properties for splat array containers.
-
-    Requires the implementing class to have:
-    - ``centers``: np.ndarray of shape (N, d)
-    - ``amplitudes``: np.ndarray of shape (N,)
-    - ``cholesky_factors``: np.ndarray of shape (N, d*(d+1)//2)
-    """
-
-    centers: np.ndarray
-    amplitudes: np.ndarray
-    cholesky_factors: np.ndarray
-
-    @property
-    def n_splats(self) -> int:
-        """Number of splats."""
-        return int(self.centers.shape[0])
-
-    @property
-    def ndim(self) -> int:
-        """Number of spatial dimensions."""
-        return int(self.centers.shape[1]) if self.centers.ndim >= 2 else 0
-
-    def __len__(self) -> int:
-        """Return number of splats."""
-        return self.n_splats
-
-    def _cholesky_diag_elements(self) -> np.ndarray:
-        """Extract diagonal elements from packed Cholesky factors.
-
-        Returns shape (N, d) where result[i, j] = L_i[j, j].
-        """
-        ndim = self.ndim
-        diag_indices = np.cumsum(np.arange(1, ndim + 1)) - 1
-        return self.cholesky_factors[:, diag_indices]
-
-    def volumes(self) -> np.ndarray:
-        """Per-splat characteristic length: det(Σ)^(1/d).
-
-        This is the geometric mean of the eigenvalues (not a true volume).
-        For lower-triangular L: det(L) = product of diagonal elements,
-        det(Sigma) = det(L)^2.
-
-        Returns:
-            shape (N,) float array.
-        """
-        if self.n_splats == 0:
-            return np.empty(0, dtype=np.float64)
-        diag = self._cholesky_diag_elements()
-        det_L = np.prod(diag, axis=1)
-        result: np.ndarray = np.abs(det_L**2) ** (1.0 / self.ndim)
-        return result
-
-    def masses(self) -> np.ndarray:
-        """Per-splat mass: amplitude * volume.
-
-        Returns:
-            shape (N,) float array.
-        """
-        result: np.ndarray = self.amplitudes * self.volumes()
-        return result
-
-    def marginal_sigmas(self) -> np.ndarray:
-        """Per-dimension standard deviation: sqrt(Sigma_ii).
-
-        For lower-triangular L: Sigma[i,i] = sum_j L[i,j]^2.
-
-        Returns:
-            shape (N, d) float array.
-        """
-        if self.n_splats == 0:
-            return np.empty((0, self.ndim), dtype=np.float64)
-        from luxar.gsplats.utils.trils import unpack_tril
-
-        L = unpack_tril(self.cholesky_factors.astype(np.float64), self.ndim)
-        result: np.ndarray = np.sqrt(np.sum(L**2, axis=2))
-        return result
-
-    def _nondegenerate_axes(self, eps: float = 1e-6) -> np.ndarray:
-        """Axes that carry real extent (max marginal sigma across splats > eps).
-
-        A per-timepoint categorical / time axis (built with ``sigma=0``) has
-        ~zero variance for *every* splat and is dropped, so scale / eccentricity
-        become spatial-by-default on nD timelapses. Falls back to all axes if
-        that would leave nothing (e.g. all-degenerate or empty data).
-        """
-        if self.n_splats == 0:
-            return np.arange(self.ndim)
-        max_sigma = self.marginal_sigmas().max(axis=0)
-        keep = np.flatnonzero(max_sigma > eps)
-        return keep if keep.size > 0 else np.arange(self.ndim)
-
-    def _resolve_axes(self, axes: Optional[Sequence[int]]) -> np.ndarray:
-        """Normalise an ``axes`` argument: ``None`` → auto non-degenerate axes."""
-        if axes is None:
-            return self._nondegenerate_axes()
-        return np.asarray(list(axes), dtype=int)
-
-    def scale(self, axes: Optional[Sequence[int]] = None) -> np.ndarray:
-        """Per-splat characteristic size (world units): geometric mean of the
-        marginal sigmas over ``axes``.
-
-        Unlike ``volumes()`` (``det(Σ)^(1/d)`` over ALL dims, which collapses on
-        a zero-variance time axis), ``scale`` defaults to the auto-detected
-        non-degenerate (spatial) axes, so it is the meaningful "size" metric for
-        nD timelapses. Large scale = diffuse / low-frequency (background).
-
-        Returns:
-            shape (N,) float array.
-        """
-        if self.n_splats == 0:
-            return np.empty(0, dtype=np.float64)
-        ax = self._resolve_axes(axes)
-        sig = np.clip(self.marginal_sigmas()[:, ax], 1e-12, None)
-        result: np.ndarray = np.exp(np.mean(np.log(sig), axis=1))
-        return result
-
-    def eccentricities(self, axes: Optional[Sequence[int]] = None) -> np.ndarray:
-        """Per-splat eccentricity: max marginal sigma / min marginal sigma.
-
-        1.0 = isotropic. Higher values = more elongated. By default the ratio is
-        taken over the auto-detected non-degenerate (spatial) axes — for pure 3D
-        data this is all axes (unchanged), but on a timelapse it ignores the
-        ~zero-variance time axis (which would otherwise force the degenerate
-        1.0 fallback for every splat).
-
-        Returns:
-            shape (N,) float array. Returns 1.0 for degenerate splats.
-        """
-        if self.n_splats == 0:
-            return np.empty(0, dtype=np.float64)
-        ax = self._resolve_axes(axes)
-        sigmas = self.marginal_sigmas()[:, ax]
-        min_s = sigmas.min(axis=1)
-        max_s = sigmas.max(axis=1)
-        result = np.ones(self.n_splats, dtype=np.float64)
-        nonzero = min_s > 0
-        result[nonzero] = max_s[nonzero] / min_s[nonzero]
-        return result
-
-    def principal_radii(self, anisotropy: bool = True) -> np.ndarray:
-        """Per-splat element radius (world units) at the truncation boundary.
-
-        Used by ``gsplat filter`` (eccentricity / volume). The Gaussian is
-        truncated at ``truncation_radius`` sigmas, so the radius is
-        ``truncation_radius * semi_axis``.
-
-        - ``anisotropy=True`` → the largest principal semi-axis
-          ``sqrt(lambda_max(Sigma))`` (worst-case projected radius;
-          orientation-independent — the splat's biggest reach in any direction).
-        - ``anisotropy=False`` → the isotropic-equivalent geometric-mean semi-axis
-          ``det(Sigma)^(1/2d)`` (== ``sqrt(volumes())``).
-
-        Returns:
-            shape (N,) float array.
-        """
-        if self.n_splats == 0:
-            return np.empty(0, dtype=np.float64)
-        trunc = float(getattr(self, "truncation_radius", 3.0))
-        if anisotropy:
-            from luxar.gsplats.utils.trils import unpack_tril
-
-            chol = self.cholesky_factors.astype(np.float64)
-            ell = unpack_tril(chol, self.ndim)
-            sigma = ell @ np.swapaxes(ell, -2, -1)
-            # eigvalsh returns ascending eigenvalues; the last is lambda_max.
-            lam_max = np.linalg.eigvalsh(sigma)[:, -1]
-            semi = np.sqrt(np.clip(lam_max, 0.0, None))
-        else:
-            semi = np.sqrt(self.volumes())
-        result: np.ndarray = trunc * semi
-        return result
-
-    def _grouped_spatial(
-        self,
-        spatial_axes: Optional[Sequence[int]],
-        group_axes: Optional[Sequence[int]],
-    ) -> "tuple[np.ndarray, np.ndarray]":
-        """Split centers into spatial coords + integer group ids.
-
-        Neighbour queries run *within* a group so splats at different
-        timepoints/channels are never neighbours. By default ``spatial_axes`` =
-        auto non-degenerate axes and ``group_axes`` = the complement (the
-        near-constant categorical/time axes). Returns
-        ``(spatial (N, ds) float64, group_ids (N,) int64)``.
-        """
-        ax = self._resolve_axes(spatial_axes)
-        if group_axes is None:
-            grp = np.array(
-                [d for d in range(self.ndim) if d not in set(ax.tolist())], dtype=int
-            )
-        else:
-            grp = np.asarray(list(group_axes), dtype=int)
-        spatial = self.centers[:, ax].astype(np.float64)
-        if grp.size == 0:
-            group_ids = np.zeros(self.n_splats, dtype=np.int64)
-        else:
-            # Round categorical coords to collapse float noise, then map unique
-            # rows → contiguous ids.
-            keys = np.round(self.centers[:, grp].astype(np.float64), 6)
-            _, group_ids = np.unique(keys, axis=0, return_inverse=True)
-        return spatial, group_ids.astype(np.int64)
-
-    def _cell_size_hint(self, spatial: np.ndarray) -> float:
-        """A ~1-point-per-cell grid cell size heuristic for the spatial coords."""
-        n, ds = spatial.shape
-        if n <= 1:
-            return 1.0
-        extent = float(np.max(spatial.max(axis=0) - spatial.min(axis=0)))
-        if extent <= 0:
-            return 1.0
-        return float(max(extent / max(1.0, n ** (1.0 / max(ds, 1))), 1e-6))
-
-    def nearest_neighbor_distances(
-        self,
-        spatial_axes: Optional[Sequence[int]] = None,
-        group_axes: Optional[Sequence[int]] = None,
-        k: int = 1,
-    ) -> np.ndarray:
-        """Distance from each splat to its ``k``-th nearest neighbour.
-
-        Computed over the spatial axes and grouped by the non-spatial axes (so a
-        timelapse's timepoints never count as neighbours). Large distance =
-        spatially isolated (a noise-splat signature). Returns shape ``(N,)``;
-        ``+inf`` where a group has ``<= k`` splats (no neighbour exists).
-        """
-        if self.n_splats == 0:
-            return np.empty(0, dtype=np.float64)
-        from luxar.utils.spatial_hash import BatchedSpatialHashGrid
-
-        spatial, group_ids = self._grouped_spatial(spatial_axes, group_axes)
-        out = np.full(self.n_splats, np.inf, dtype=np.float64)
-        for gid in np.unique(group_ids):
-            idx = np.flatnonzero(group_ids == gid)
-            if idx.size <= k:
-                continue  # no k-th neighbour in this group → stays +inf
-            pts = spatial[idx]
-            grid = BatchedSpatialHashGrid.from_points(
-                pts, cell_size=self._cell_size_hint(pts), device="auto"
-            )
-            dists, _ = grid.query_knn(pts, k=k + 1)  # column 0 is self
-            out[idx] = dists[:, k]
-        return out
-
-    def neighbor_counts(
-        self,
-        radius: float,
-        spatial_axes: Optional[Sequence[int]] = None,
-        group_axes: Optional[Sequence[int]] = None,
-    ) -> np.ndarray:
-        """Number of OTHER splats within ``radius`` (Euclidean, spatial axes),
-        grouped by the non-spatial axes. Returns shape ``(N,)`` int64. Low count
-        = spatially isolated.
-        """
-        if self.n_splats == 0:
-            return np.empty(0, dtype=np.int64)
-        from luxar.utils.spatial_hash import BatchedSpatialHashGrid
-
-        spatial, group_ids = self._grouped_spatial(spatial_axes, group_axes)
-        out = np.zeros(self.n_splats, dtype=np.int64)
-        for gid in np.unique(group_ids):
-            idx = np.flatnonzero(group_ids == gid)
-            if idx.size == 0:
-                continue
-            pts = spatial[idx]
-            # query_radius requires radius <= cell_size.
-            grid = BatchedSpatialHashGrid.from_points(
-                pts, cell_size=float(radius), device="auto"
-            )
-            neigh = grid.query_radius(pts, radius=float(radius))
-            # each list entry includes self → subtract 1.
-            out[idx] = np.array([max(len(n) - 1, 0) for n in neigh], dtype=np.int64)
-        return out
 
 
 @dataclass(frozen=True, eq=False)
@@ -516,7 +241,7 @@ class SubstitutiveLevel:
         return sum(sub.n_splats for sub in self.additive_sublods)
 
 
-class GSplatData(_SplatArrayMixin):
+class GSplatData(RenderMixin, IOAdapterMixin, FilteringMixin, CullingMixin):
     """Container for Gaussian splat data with always-LOD structure.
 
     Every ``GSplatData`` holds one or more LOD levels (``AdditiveSubLOD`` instances).
@@ -940,465 +665,6 @@ class GSplatData(_SplatArrayMixin):
         # matrix round-trip. The matrix views derive finest-first on access.
         return cls(_node=node, stats=stats)
 
-    # ── Filtering ───────────────────────────────────────────
-
-    def filter(self, mask: np.ndarray) -> "GSplatData":
-        """Return new GSplatData with only the splats where mask is True.
-
-        Args:
-            mask: Boolean array of shape (N,).
-
-        Returns:
-            New GSplatData with filtered arrays.
-
-        Example:
-            >>> filtered = data.filter(data.volumes() < 100)
-            >>> filtered = data.filter((data.amplitudes > 0.1) & (data.eccentricities() < 5))
-        """
-        mask = np.asarray(mask, dtype=bool)
-        if mask.shape != (self.n_splats,):
-            raise ValueError(
-                f"Mask shape {mask.shape} doesn't match splat count ({self.n_splats},)"
-            )
-
-        # A raw boolean mask is sized to the default substitutive level, so it
-        # cannot be applied per-level — coarser substitutive levels are dropped.
-        # Warn loudly (never silent) and point at the criteria-based ops, which
-        # DO preserve the full pyramid (see filter_by / cull).
-        if self.n_substitutive > 1:
-            warnings.warn(
-                "filter(mask) keeps only the default substitutive level "
-                f"(n_substitutive={self.n_substitutive}); coarser levels are "
-                "dropped. Use filter_by(...) / cull(...) to filter every "
-                "substitutive level and preserve the pyramid.",
-                UserWarning,
-                stacklevel=2,
-            )
-
-        # Multi-LOD path: split mask across LODs
-        if self.n_additive_sublods > 1:
-            new_lods = []
-            offset = 0
-            for lod in self.additive_sublods:
-                n = lod.n_splats
-                lod_mask = mask[offset : offset + n]
-                new_lods.append(
-                    AdditiveSubLOD(
-                        centers=lod.centers[lod_mask],
-                        amplitudes=lod.amplitudes[lod_mask],
-                        cholesky_factors=lod.cholesky_factors[lod_mask],
-                        colors=lod.colors[lod_mask] if lod.colors is not None else None,
-                        stats=dict(lod.stats),
-                        truncation_radius=lod.truncation_radius,
-                    )
-                )
-                offset += n
-            return GSplatData.from_additive_sublods(new_lods, stats=dict(self.stats))
-
-        return GSplatData(
-            centers=self.centers[mask],
-            amplitudes=self.amplitudes[mask],
-            cholesky_factors=self.cholesky_factors[mask],
-            colors=self.colors[mask] if self.colors is not None else None,
-            stats=dict(self.stats),
-            truncation_radius=self.truncation_radius,
-        )
-
-    @staticmethod
-    def _resolve_threshold(
-        val: float | None,
-        normalized: bool,
-        dataset_values: np.ndarray,
-        percentile: bool = False,
-    ) -> float | None:
-        """Resolve a threshold to an absolute value.
-
-        - ``percentile``: ``val`` in [0,100] → the ``val``-th percentile of
-          ``dataset_values`` (robust on heavy-tailed attributes; preferred over
-          ``normalized``).
-        - ``normalized``: ``val`` in [0,1] → linear map onto [min, max].
-        - otherwise: ``val`` is already absolute.
-        """
-        if val is None:
-            return None
-        if percentile:
-            return float(np.percentile(dataset_values, val))
-        if normalized:
-            dmin, dmax = float(dataset_values.min()), float(dataset_values.max())
-            return dmin + val * (dmax - dmin)
-        return val
-
-    def filter_by(
-        self,
-        *,
-        bbox: list[tuple[float, float]] | None = None,
-        volume_min: float | None = None,
-        volume_max: float | None = None,
-        volume_normalized: bool = False,
-        volume_percentile: bool = False,
-        scale_min: float | None = None,
-        scale_max: float | None = None,
-        scale_normalized: bool = False,
-        scale_percentile: bool = False,
-        amplitude_min: float | None = None,
-        amplitude_max: float | None = None,
-        amplitude_normalized: bool = False,
-        amplitude_percentile: bool = False,
-        eccentricity_min: float | None = None,
-        eccentricity_max: float | None = None,
-        eccentricity_percentile: bool = False,
-        mass_min: float | None = None,
-        mass_max: float | None = None,
-        mass_normalized: bool = False,
-        mass_percentile: bool = False,
-        sigma_axis: int | None = None,
-        sigma_min: float | None = None,
-        sigma_max: float | None = None,
-        sigma_percentile: bool = False,
-        isolation_max: float | None = None,
-        isolation_percentile: bool = False,
-        min_neighbors: int | None = None,
-        neighbor_radius: float | None = None,
-        spatial_dims: Sequence[int] | None = None,
-        truncate: float | None = None,
-    ) -> "GSplatData":
-        """Filter splats by multiple criteria (AND logic).
-
-        All criteria are optional. Only specified criteria are applied.
-        Multiple criteria combine with AND — a splat must satisfy all
-        active criteria to be kept.
-
-        Args:
-            bbox: Bounding box per dimension as [(min0, max0), (min1, max1), ...].
-                  Length must equal ndim. Filters by center position.
-            volume_min: Minimum volume (characteristic length * truncate).
-            volume_max: Maximum volume.
-            volume_normalized: If True, interpret volume thresholds as 0-1
-                mapped to the dataset's [min, max] volume range.
-            amplitude_min: Minimum amplitude.
-            amplitude_max: Maximum amplitude.
-            amplitude_normalized: If True, interpret amplitude thresholds as 0-1
-                mapped to the dataset's [min, max] amplitude range.
-            eccentricity_min: Minimum eccentricity (1.0 = isotropic).
-            eccentricity_max: Maximum eccentricity.
-            mass_min: Minimum mass (amplitude * volume).
-            mass_max: Maximum mass.
-            mass_normalized: If True, interpret mass thresholds as 0-1
-                mapped to the dataset's [min, max] mass range.
-            sigma_axis: Axis index for per-axis sigma filtering.
-            sigma_min: Minimum marginal sigma on sigma_axis.
-            sigma_max: Maximum marginal sigma on sigma_axis.
-            scale_min/scale_max: Characteristic size (geometric-mean marginal
-                sigma over the spatial/``spatial_dims`` axes; see ``scale()``).
-                The recommended "remove large diffuse background" knob — cleaner
-                than ``volume`` on nD timelapses.
-            isolation_max: Remove splats whose nearest-neighbour distance (over
-                the spatial axes, grouped by the non-spatial axes) EXCEEDS this
-                — i.e. spatially isolated noise splats.
-            min_neighbors / neighbor_radius: Remove splats with fewer than
-                ``min_neighbors`` other splats within ``neighbor_radius``.
-            spatial_dims: Override the axes used for scale / eccentricity /
-                isolation (default: auto-detected non-degenerate axes).
-            *_percentile: For volume/scale/amplitude/mass/sigma/eccentricity/
-                isolation — interpret the corresponding min/max as a percentile
-                in [0,100] of that attribute (robust on heavy-tailed data).
-            truncate: Sigma truncation factor for volume computation.
-                Defaults to ``self.truncation_radius``.
-
-        Returns:
-            New GSplatData with only splats that pass all criteria.
-
-        Raises:
-            ValueError: If bbox length doesn't match ndim, sigma_axis is out
-                of range, or sigma_min/sigma_max given without sigma_axis.
-
-        Examples:
-            >>> # Keep splats with amplitude >= 0.1 and eccentricity <= 5
-            >>> filtered = data.filter_by(amplitude_min=0.1, eccentricity_max=5.0)
-            >>>
-            >>> # Spatial crop to a bounding box (3D)
-            >>> filtered = data.filter_by(bbox=[(0, 50), (0, 50), (0, 50)])
-            >>>
-            >>> # Remove top 10% largest volumes (normalized)
-            >>> filtered = data.filter_by(volume_max=0.9, volume_normalized=True)
-        """
-        if truncate is None:
-            truncate = self.truncation_radius
-
-        # Short-circuit for empty data
-        if self.n_splats == 0:
-            result = self.filter(np.ones(0, dtype=bool))
-            result.stats.update(
-                {
-                    "filtered": True,
-                    "filter_criteria": {},
-                    "n_original": 0,
-                    "n_removed": 0,
-                    "truncate": truncate,
-                }
-            )
-            return result
-
-        # Validate sigma_axis usage
-        if (sigma_min is not None or sigma_max is not None) and sigma_axis is None:
-            raise ValueError("sigma_min/sigma_max require sigma_axis to be specified")
-        if sigma_axis is not None and not (0 <= sigma_axis < self.ndim):
-            raise ValueError(
-                f"sigma_axis={sigma_axis} out of range for {self.ndim}D data"
-            )
-        # Local-density filter needs both knobs (mirrors the sigma_axis rule).
-        if (min_neighbors is None) != (neighbor_radius is None):
-            raise ValueError(
-                "min_neighbors and neighbor_radius must be specified together"
-            )
-
-        # Multi-substitutive: apply the SAME criteria to every substitutive
-        # level and rebuild the pyramid (decision 6) rather than silently
-        # collapsing to the default level. Each level is filtered through the
-        # single-substitutive path below (a per-level view); thresholds with
-        # *_normalized resolve per-level (each level to its own range).
-        if self.n_substitutive > 1:
-            new_levels: List[SubstitutiveLevel] = []
-            for s, src in enumerate(self.substitutive_levels):
-                filtered = self._view_of_level(src).filter_by(
-                    bbox=bbox,
-                    volume_min=volume_min,
-                    volume_max=volume_max,
-                    volume_normalized=volume_normalized,
-                    volume_percentile=volume_percentile,
-                    scale_min=scale_min,
-                    scale_max=scale_max,
-                    scale_normalized=scale_normalized,
-                    scale_percentile=scale_percentile,
-                    amplitude_min=amplitude_min,
-                    amplitude_max=amplitude_max,
-                    amplitude_normalized=amplitude_normalized,
-                    amplitude_percentile=amplitude_percentile,
-                    eccentricity_min=eccentricity_min,
-                    eccentricity_max=eccentricity_max,
-                    eccentricity_percentile=eccentricity_percentile,
-                    mass_min=mass_min,
-                    mass_max=mass_max,
-                    mass_normalized=mass_normalized,
-                    mass_percentile=mass_percentile,
-                    sigma_axis=sigma_axis,
-                    sigma_min=sigma_min,
-                    sigma_max=sigma_max,
-                    sigma_percentile=sigma_percentile,
-                    isolation_max=isolation_max,
-                    isolation_percentile=isolation_percentile,
-                    min_neighbors=min_neighbors,
-                    neighbor_radius=neighbor_radius,
-                    spatial_dims=spatial_dims,
-                    truncate=truncate,
-                )
-                new_levels.append(
-                    SubstitutiveLevel(
-                        additive_sublods=filtered.substitutive_levels[
-                            0
-                        ].additive_sublods,
-                        compression_factor=src.compression_factor,
-                        parent_method=src.parent_method,
-                        level_index=src.level_index,
-                        stats=dict(src.stats),
-                    )
-                )
-            out = GSplatData.from_substitutive_levels(
-                new_levels,
-                stats=dict(self.stats),
-            )
-            out.stats.update(
-                {
-                    "filtered": True,
-                    "n_original": self.n_splats,
-                    "n_removed": self.n_splats - out.n_splats,
-                    "truncate": truncate,
-                }
-            )
-            return out
-
-        mask = np.ones(self.n_splats, dtype=bool)
-        criteria: dict[str, object] = {}
-
-        # -- Bounding box (center position)
-        if bbox is not None:
-            if len(bbox) != self.ndim:
-                raise ValueError(
-                    f"bbox has {len(bbox)} dimensions, expected {self.ndim}"
-                )
-            criteria["bbox"] = bbox
-            for i, (lo, hi) in enumerate(bbox):
-                mask &= (self.centers[:, i] >= lo) & (self.centers[:, i] <= hi)
-
-        # -- Volume (characteristic length * truncate)
-        if volume_min is not None or volume_max is not None:
-            vols = self.volumes() * truncate
-            vmin = self._resolve_threshold(
-                volume_min, volume_normalized, vols, volume_percentile
-            )
-            vmax = self._resolve_threshold(
-                volume_max, volume_normalized, vols, volume_percentile
-            )
-            if vmin is not None:
-                mask &= vols >= vmin
-                criteria["volume_min"] = vmin
-            if vmax is not None:
-                mask &= vols <= vmax
-                criteria["volume_max"] = vmax
-            if volume_normalized:
-                criteria["volume_normalized"] = True
-
-        # -- Scale (geometric-mean marginal sigma over the spatial axes)
-        if scale_min is not None or scale_max is not None:
-            scl = self.scale(axes=spatial_dims)
-            smin = self._resolve_threshold(
-                scale_min, scale_normalized, scl, scale_percentile
-            )
-            smax = self._resolve_threshold(
-                scale_max, scale_normalized, scl, scale_percentile
-            )
-            if smin is not None:
-                mask &= scl >= smin
-                criteria["scale_min"] = smin
-            if smax is not None:
-                mask &= scl <= smax
-                criteria["scale_max"] = smax
-
-        # -- Amplitude
-        if amplitude_min is not None or amplitude_max is not None:
-            amps = self.amplitudes
-            amin = self._resolve_threshold(
-                amplitude_min, amplitude_normalized, amps, amplitude_percentile
-            )
-            amax = self._resolve_threshold(
-                amplitude_max, amplitude_normalized, amps, amplitude_percentile
-            )
-            if amin is not None:
-                mask &= amps >= amin
-                criteria["amplitude_min"] = amin
-            if amax is not None:
-                mask &= amps <= amax
-                criteria["amplitude_max"] = amax
-            if amplitude_normalized:
-                criteria["amplitude_normalized"] = True
-
-        # -- Eccentricity (spatial isotropy; auto-ignores degenerate axes)
-        if eccentricity_min is not None or eccentricity_max is not None:
-            ecc = self.eccentricities(axes=spatial_dims)
-            emin = self._resolve_threshold(
-                eccentricity_min, False, ecc, eccentricity_percentile
-            )
-            emax = self._resolve_threshold(
-                eccentricity_max, False, ecc, eccentricity_percentile
-            )
-            if emin is not None:
-                mask &= ecc >= emin
-                criteria["eccentricity_min"] = emin
-            if emax is not None:
-                mask &= ecc <= emax
-                criteria["eccentricity_max"] = emax
-
-        # -- Mass (amplitude * volume)
-        if mass_min is not None or mass_max is not None:
-            m = self.masses()
-            mmin = self._resolve_threshold(
-                mass_min, mass_normalized, m, mass_percentile
-            )
-            mmax = self._resolve_threshold(
-                mass_max, mass_normalized, m, mass_percentile
-            )
-            if mmin is not None:
-                mask &= m >= mmin
-                criteria["mass_min"] = mmin
-            if mmax is not None:
-                mask &= m <= mmax
-                criteria["mass_max"] = mmax
-            if mass_normalized:
-                criteria["mass_normalized"] = True
-
-        # -- Per-axis sigma
-        if sigma_axis is not None and (sigma_min is not None or sigma_max is not None):
-            sigmas = self.marginal_sigmas()[:, sigma_axis]
-            criteria["sigma_axis"] = sigma_axis
-            smn = self._resolve_threshold(sigma_min, False, sigmas, sigma_percentile)
-            smx = self._resolve_threshold(sigma_max, False, sigmas, sigma_percentile)
-            if smn is not None:
-                mask &= sigmas >= smn
-                criteria["sigma_min"] = smn
-            if smx is not None:
-                mask &= sigmas <= smx
-                criteria["sigma_max"] = smx
-
-        # -- Isolation (remove spatially-isolated noise splats)
-        if isolation_max is not None:
-            nn = self.nearest_neighbor_distances(spatial_axes=spatial_dims)
-            finite = nn[np.isfinite(nn)]
-            if isolation_percentile and finite.size == 0:
-                # Every splat is an isolated singleton (no finite NN distance);
-                # a percentile is undefined → drop them all.
-                mask &= False
-                criteria["isolation_max"] = "all-isolated"
-            else:
-                imax = self._resolve_threshold(
-                    isolation_max, False, finite, isolation_percentile
-                )
-                if imax is not None:
-                    # +inf (no neighbour) always exceeds the threshold → removed.
-                    mask &= nn <= imax
-                    criteria["isolation_max"] = imax
-
-        # -- Local density (keep only well-supported splats)
-        if min_neighbors is not None and neighbor_radius is not None:
-            counts = self.neighbor_counts(neighbor_radius, spatial_axes=spatial_dims)
-            mask &= counts >= int(min_neighbors)
-            criteria["min_neighbors"] = int(min_neighbors)
-            criteria["neighbor_radius"] = float(neighbor_radius)
-
-        # Apply mask
-        result = self.filter(mask)
-        result.stats.update(
-            {
-                "filtered": True,
-                "filter_criteria": criteria,
-                "n_original": self.n_splats,
-                "n_removed": self.n_splats - result.n_splats,
-                "truncate": truncate,
-            }
-        )
-        return result
-
-    def slice_by(self, slices: list[slice]) -> "GSplatData":
-        """Slice splats by coordinate ranges per dimension (numpy-style).
-
-        Each slice specifies a [start, stop] range for that dimension's center
-        coordinate. ``None`` in start/stop means unbounded.
-
-        Args:
-            slices: One slice per dimension. ``slice(lo, hi)`` keeps splats
-                with center in [lo, hi]. ``slice(None, None)`` keeps all.
-
-        Returns:
-            New GSplatData with only splats inside all ranges.
-
-        Raises:
-            ValueError: If number of slices doesn't match ndim.
-
-        Examples:
-            >>> # Keep x in [0,50], all y, z in [10,90]
-            >>> sliced = data.slice_by([slice(0, 50), slice(None, None), slice(10, 90)])
-            >>>
-            >>> # Open-ended: x >= 50
-            >>> sliced = data.slice_by([slice(50, None), slice(None, None), slice(None, None)])
-        """
-        if len(slices) != self.ndim:
-            raise ValueError(f"Expected {self.ndim} slices, got {len(slices)}")
-        bbox = []
-        for s in slices:
-            lo = float(s.start) if s.start is not None else float("-inf")
-            hi = float(s.stop) if s.stop is not None else float("inf")
-            bbox.append((lo, hi))
-        return self.filter_by(bbox=bbox)
-
     # ── Combine / Partition / Embed ─────────────────────────────
 
     @classmethod
@@ -1773,12 +1039,12 @@ class GSplatData(_SplatArrayMixin):
                     raise ValueError(
                         f"values shape {values_arr.shape} doesn't match splat count ({n},)"
                     )
-            new_lods = []
-            offset = 0
             dim_mapping = list(range(d))
             fill_sigma = {d: sigma}
-            for lod in self.additive_sublods:
-                nl = lod.n_splats
+
+            def _embed_lod(
+                lod: AdditiveSubLOD, offset: int, nl: int
+            ) -> AdditiveSubLOD:
                 if is_scalar:
                     lod_col = np.full((nl, 1), values, dtype=lod.centers.dtype)
                 else:
@@ -1788,18 +1054,16 @@ class GSplatData(_SplatArrayMixin):
                 lod_cholesky = embed_cholesky_packed(
                     lod.cholesky_factors, d, d + 1, dim_mapping, fill_sigma
                 )
-                new_lods.append(
-                    AdditiveSubLOD(
-                        centers=lod_centers,
-                        amplitudes=lod.amplitudes,
-                        cholesky_factors=lod_cholesky,
-                        colors=lod.colors,
-                        stats=dict(lod.stats),
-                        truncation_radius=lod.truncation_radius,
-                    )
+                return AdditiveSubLOD(
+                    centers=lod_centers,
+                    amplitudes=lod.amplitudes,
+                    cholesky_factors=lod_cholesky,
+                    colors=lod.colors,
+                    stats=dict(lod.stats),
+                    truncation_radius=lod.truncation_radius,
                 )
-                offset += nl
-            return GSplatData.from_additive_sublods(new_lods, stats=dict(self.stats))
+
+            return self._map_additive(_embed_lod)
 
         # Single-LOD fast path (unchanged)
         if np.isscalar(values):
@@ -1857,6 +1121,26 @@ class GSplatData(_SplatArrayMixin):
                 )
             )
         return GSplatData.from_substitutive_levels(new_levels, stats=dict(self.stats))
+
+    def _map_additive(
+        self, fn: "Callable[[AdditiveSubLOD, int, int], AdditiveSubLOD]"
+    ) -> "GSplatData":
+        """Apply a per-sub-LOD transform to EVERY additive sub-LOD, rebuild.
+
+        ``fn`` receives ``(lod, offset, n)`` — the sub-LOD, its start offset
+        into the flattened finest-leaf arrays, and its splat count — and returns
+        a replacement :class:`AdditiveSubLOD` (which may change N, ndim, or
+        array widths). The additive-dimension sibling of :meth:`_map_substitutive`;
+        callers guard the multi-sub-LOD branch with
+        ``if self.n_additive_sublods > 1``.
+        """
+        new_lods: List[AdditiveSubLOD] = []
+        offset = 0
+        for lod in self.additive_sublods:
+            n = lod.n_splats
+            new_lods.append(fn(lod, offset, n))
+            offset += n
+        return GSplatData.from_additive_sublods(new_lods, stats=dict(self.stats))
 
     def transform(self, matrix: np.ndarray) -> "GSplatData":
         """Apply affine transformation to all splats.
@@ -1952,23 +1236,23 @@ class GSplatData(_SplatArrayMixin):
 
         # Multi-LOD path: transform each LOD independently
         if self.n_additive_sublods > 1:
-            new_lods = []
-            for lod in self.additive_sublods:
+
+            def _transform_lod(
+                lod: AdditiveSubLOD, offset: int, n: int
+            ) -> AdditiveSubLOD:
                 lod_centers = (lod.centers.astype(np.float64) @ A.T + t).astype(
                     lod.centers.dtype
                 )
-                lod_cholesky = _transform_cholesky(lod.cholesky_factors)
-                new_lods.append(
-                    AdditiveSubLOD(
-                        centers=lod_centers,
-                        amplitudes=lod.amplitudes,
-                        cholesky_factors=lod_cholesky,
-                        colors=lod.colors,
-                        stats=dict(lod.stats),
-                        truncation_radius=lod.truncation_radius,
-                    )
+                return AdditiveSubLOD(
+                    centers=lod_centers,
+                    amplitudes=lod.amplitudes,
+                    cholesky_factors=_transform_cholesky(lod.cholesky_factors),
+                    colors=lod.colors,
+                    stats=dict(lod.stats),
+                    truncation_radius=lod.truncation_radius,
                 )
-            return GSplatData.from_additive_sublods(new_lods, stats=dict(self.stats))
+
+            return self._map_additive(_transform_lod)
 
         # Single-LOD fast path
         new_centers = (self.centers.astype(np.float64) @ A.T + t).astype(
@@ -1990,22 +1274,16 @@ class GSplatData(_SplatArrayMixin):
     def _with_new_amplitudes(self, new_amplitudes: np.ndarray) -> "GSplatData":
         """Return a new GSplatData with replaced amplitudes, preserving LODs."""
         if self.n_additive_sublods > 1:
-            new_lods = []
-            offset = 0
-            for lod in self.additive_sublods:
-                n = lod.n_splats
-                new_lods.append(
-                    AdditiveSubLOD(
-                        centers=lod.centers,
-                        amplitudes=new_amplitudes[offset : offset + n],
-                        cholesky_factors=lod.cholesky_factors,
-                        colors=lod.colors,
-                        stats=dict(lod.stats),
-                        truncation_radius=lod.truncation_radius,
-                    )
+            return self._map_additive(
+                lambda lod, offset, n: AdditiveSubLOD(
+                    centers=lod.centers,
+                    amplitudes=new_amplitudes[offset : offset + n],
+                    cholesky_factors=lod.cholesky_factors,
+                    colors=lod.colors,
+                    stats=dict(lod.stats),
+                    truncation_radius=lod.truncation_radius,
                 )
-                offset += n
-            return GSplatData.from_additive_sublods(new_lods, stats=dict(self.stats))
+            )
         return GSplatData(
             centers=self.centers,
             amplitudes=new_amplitudes,
@@ -2059,22 +1337,16 @@ class GSplatData(_SplatArrayMixin):
                 f"colors shape {colors.shape} doesn't match ({self.n_splats}, 3)"
             )
         if self.n_additive_sublods > 1:
-            new_lods = []
-            offset = 0
-            for lod in self.additive_sublods:
-                n = lod.n_splats
-                new_lods.append(
-                    AdditiveSubLOD(
-                        centers=lod.centers,
-                        amplitudes=lod.amplitudes,
-                        cholesky_factors=lod.cholesky_factors,
-                        colors=colors[offset : offset + n],
-                        stats=dict(lod.stats),
-                        truncation_radius=lod.truncation_radius,
-                    )
+            return self._map_additive(
+                lambda lod, offset, n: AdditiveSubLOD(
+                    centers=lod.centers,
+                    amplitudes=lod.amplitudes,
+                    cholesky_factors=lod.cholesky_factors,
+                    colors=colors[offset : offset + n],
+                    stats=dict(lod.stats),
+                    truncation_radius=lod.truncation_radius,
                 )
-                offset += n
-            return GSplatData.from_additive_sublods(new_lods, stats=dict(self.stats))
+            )
         return GSplatData(
             centers=self.centers,
             amplitudes=self.amplitudes,
@@ -2141,100 +1413,6 @@ class GSplatData(_SplatArrayMixin):
             new_amps = np.minimum(new_amps, max)
         return self._with_new_amplitudes(new_amps)
 
-    # ── I/O ─────────────────────────────────────────────────
-
-    def save(
-        self,
-        path: str | Path,
-        ordering: Literal["morton", "hilbert", "none"] = "hilbert",
-        encoding_mode: Optional["EncodingMode"] = None,
-        include_fitting_info: bool = True,
-        include_provenance: bool = False,
-        description: Optional[str] = None,
-        compress: Optional[Literal["zip", "tar.gz"]] = None,
-        compressor: Any = _USE_DEFAULT_COMPRESSOR,
-        zip_deflate: bool = False,
-        barrier_dims: Optional[Sequence[int]] = None,
-    ) -> None:
-        """Save splats to .gsplats.zarr format.
-
-        Args:
-            path: Output path (should end with .gsplats.zarr or .gsplats.zarr.zip/.tar.gz if compress is used)
-            ordering: Spatial ordering method ("morton", "hilbert", or "none")
-            encoding_mode: Encoding mode (AUTO, PRECISION, or MEMORY), defaults to AUTO
-            include_fitting_info: Whether to include fitting statistics
-            include_provenance: Whether to include provenance info from stats
-            description: Optional user description
-            compress: Optional compression format ("zip" or "tar.gz"). Creates compressed archive.
-            zip_deflate: Use DEFLATE compression for the outer zip (default: STORED).
-                Useful when metadata overhead matters, e.g. for Git LFS storage.
-            barrier_dims: Explicit categorical/barrier center columns for chunk
-                ordering (e.g. a stacked-time axis). ``None`` (default) derives
-                the barrier from the ``coarsen_dims`` complement in stats, else
-                per-leaf auto-detect — see ``write_gsplats_tree``.
-
-        For a multi-substitutive dataset the per-level ``coverage_fraction`` LOD
-        switch thresholds (``sqrt(N_i/N_finest)``) are derived automatically — the
-        viewer anchors the finest at fills-screen via the live viewport, so there
-        is no per-dataset threshold knob. See
-        ``core.group.lod.group.coverage_fractions``.
-
-        Colors are written via the shared COLOR helper, which auto-detects SDR vs
-        HDR (values > 1) — there is no explicit ``color_mode`` knob.
-
-        Example:
-            >>> result = fit_gaussian_splats(image, n_iters=1000)
-            >>> result.save("fitted.gsplats.zarr", encoding_mode=EncodingMode.MEMORY)
-            >>> # With compression for storage/git-lfs
-            >>> result.save("fitted.gsplats.zarr.zip", compress="zip")
-        """
-        from luxar.encoding import EncodingMode
-        from luxar.gsplats.io.save_gsplats import split_fitting_info, write_gsplats_tree
-        from luxar.io.reader import DEFAULT_COMP
-
-        # Use AUTO as default
-        if encoding_mode is None:
-            encoding_mode = EncodingMode.AUTO
-
-        # Use Blosc(zstd) by default; an EXPLICIT compressor=None disables
-        # compression (e.g. for raw, zarrita-readable cross-language fixtures).
-        # Only the sentinel "not specified" coerces to the default.
-        if compressor is _USE_DEFAULT_COMPRESSOR:
-            compressor = DEFAULT_COMP
-
-        # Extract fitting/provenance/pipeline groups from stats (single-sourced).
-        fitting_info, fitting_config, provenance_info, pipeline_info = (
-            split_fitting_info(
-                self.stats,
-                include_fitting_info=include_fitting_info,
-                include_provenance=include_provenance,
-            )
-        )
-
-        # One authoring path: serialize this dataset's node tree to the current
-        # format (v3.2) via the shared walker (the same machinery the scene
-        # compiler uses for leaves).
-        # Multi-substitutive → a kind=lod group whose per-level coverage_fraction is
-        # derived here (sqrt(N_i/N_finest)); a single level is a bare leaf.
-        from luxar.gsplats.tree import tree_from_substitutive_levels
-
-        tree = tree_from_substitutive_levels(self.substitutive_levels)
-        write_gsplats_tree(
-            path,
-            tree,
-            ordering=ordering,
-            encoding_mode=encoding_mode,
-            fitting_info=fitting_info,
-            fitting_config=fitting_config,
-            provenance_info=provenance_info,
-            pipeline_info=pipeline_info,
-            description=description,
-            compress=compress,
-            compressor=compressor,
-            zip_deflate=zip_deflate,
-            barrier_dims=barrier_dims,
-        )
-
     def translate(self, offset: np.ndarray) -> "GSplatData":
         """Translate all splat centers by an offset vector.
 
@@ -2254,8 +1432,8 @@ class GSplatData(_SplatArrayMixin):
 
         # Multi-LOD path: translate each LOD independently
         if self.n_additive_sublods > 1:
-            new_lods = [
-                AdditiveSubLOD(
+            return self._map_additive(
+                lambda lod, offset_, n: AdditiveSubLOD(
                     centers=lod.centers + offset,
                     amplitudes=lod.amplitudes,
                     cholesky_factors=lod.cholesky_factors,
@@ -2263,9 +1441,7 @@ class GSplatData(_SplatArrayMixin):
                     stats=dict(lod.stats),
                     truncation_radius=lod.truncation_radius,
                 )
-                for lod in self.additive_sublods
-            ]
-            return GSplatData.from_additive_sublods(new_lods, stats=dict(self.stats))
+            )
 
         return GSplatData(
             centers=self.centers + offset,
@@ -2279,17 +1455,20 @@ class GSplatData(_SplatArrayMixin):
     def center_at_centroid(self) -> "GSplatData":
         """Center the splats at their center of mass (amplitude-weighted centroid).
 
-        The centroid is computed as the amplitude-weighted average of splat centers,
-        which corresponds to the center of mass of the represented density.
+        The centroid is the amplitude-weighted average of splat centers (the
+        center of mass of the represented density). Only the **spatial**
+        (non-degenerate) axes are re-origined: a zero-variance categorical axis
+        (a per-timepoint time axis, a channel axis) keeps its original
+        coordinates, because centering it would push integer timepoints to
+        fractional offsets and misalign the viewer's slice navigator. For pure
+        spatial data (no degenerate axis) every axis is centered, as before.
 
         Returns:
-            New GSplatData centered at origin (amplitude-weighted centroid at [0, 0, ...])
+            New GSplatData with its spatial centroid at the origin.
 
         Example:
             >>> # Center splats at origin for easier viewing
             >>> centered = data.center_at_centroid()
-            >>> # Amplitude-weighted centroid is now at origin
-            >>> centroid = (centered.centers.T @ centered.amplitudes) / centered.amplitudes.sum()
         """
         # Empty data: nothing to center. Return a structure-preserving copy
         # (translate by zero) rather than computing mean() of an empty array,
@@ -2304,8 +1483,11 @@ class GSplatData(_SplatArrayMixin):
         else:
             centroid = self.centers.mean(axis=0)
 
-        # Translate to center at origin
-        return self.translate(-centroid)
+        # Shift only the spatial (non-degenerate) axes; leave categorical axes
+        # (zero covariance extent — e.g. a stacked-time axis) at their
+        # coordinates. Mirrors scale()/eccentricities()/isolation grouping.
+        shift = spatial_only_shift(centroid, self._nondegenerate_axes())
+        return self.translate(-shift)
 
     def scale_intensity(self, factor: float) -> "GSplatData":
         """Scale all splat amplitudes by a multiplicative factor.
@@ -2399,444 +1581,6 @@ class GSplatData(_SplatArrayMixin):
             t = (np.log2(scl) - np.log2(float(lowpass))) / w + 0.5
             mult *= _smoothstep(t)
         return self.reweight_amplitude(mult)
-
-    def cull(
-        self,
-        target: np.ndarray | None = None,
-        *,
-        method: str = "auto",
-        shape: tuple[int, ...] | None = None,
-        truncate: float | None = None,
-        # --- error_budget / redundancy params ---
-        error_percentile: float = 99.0,
-        error_tolerance: float = 1.0,
-        redundancy_threshold: float = 0.01,
-        max_binary_search_iters: int = 8,
-        device: str | None = None,
-        intensity_floor: float = 1e-5,
-        # --- heuristic params ---
-        retention: float = 0.95,
-        amplitude_percentile: float = 5.0,
-        volume_percentile: float = 95.0,
-        verbose: bool = False,
-    ) -> "GSplatData":
-        """Cull splats that contribute negligibly to the reconstruction.
-
-        This is the unified entry point for all splat removal strategies,
-        from fast heuristics to principled contribution-based methods.
-        The ``method`` parameter selects which strategy to use.
-
-        Methods (ordered from cheapest to most principled)
-        --------------------------------------------------
-
-        **"cumulative"** — Keep the top splats that account for a target
-        fraction of the total amplitude.  Fast (no rendering), but blind
-        to spatial overlap: a low-amplitude splat covering a unique region
-        will be removed even though it is the sole contributor there.
-
-            >>> data.cull(method="cumulative", retention=0.95)
-
-        **"amplitude_percentile"** — Remove splats in the bottom X
-        percentile of amplitude.  Same limitation as cumulative: ignores
-        spatial context.
-
-            >>> data.cull(method="amplitude_percentile", amplitude_percentile=10)
-
-        **"combined"** — Remove splats that have low amplitude OR unusually
-        large volume (artifacts).  Useful as a quick cleanup pass.
-
-            >>> data.cull(method="combined", amplitude_percentile=5, volume_percentile=95)
-
-        **"redundancy"** — Render the full reconstruction and measure each
-        splat's maximum *fractional contribution* ``g_j(x) / V_pred(x)``.
-        If a splat never contributes more than ``redundancy_threshold`` of
-        the local signal, it is redundant.  Does not need the target volume
-        but requires GPU rendering.
-
-            >>> data.cull(method="redundancy", shape=(128,128,128), redundancy_threshold=0.02)
-
-        **"error_budget"** — The most principled mode.  Requires the
-        original target volume.  Computes the residual ``R = target - V_pred``
-        and derives an error budget from it.  A splat is safe to remove when
-        the worst-case error *increase* from its removal is below the budget.
-        Robust to pre-existing noise and accounts for spatial redundancy.
-
-            >>> data.cull(target_volume, method="error_budget", error_percentile=99)
-
-        **"auto"** (default) — Selects automatically:
-        ``"error_budget"`` if *target* is provided, ``"redundancy"`` if
-        *shape* is provided, ``"cumulative"`` otherwise.
-
-        Joint compounding check (error_budget and redundancy only)
-        ----------------------------------------------------------
-        After identifying individual candidates, verifies that their
-        *joint* removal does not exceed the budget.  If it does, a binary
-        search tightens the per-splat threshold until the joint constraint
-        holds, guaranteeing that the combined removal is safe.
-
-        Args:
-            target: Original target volume.  If provided and ``method="auto"``,
-                selects error-budget mode.
-            method: Culling strategy.  One of ``"auto"``, ``"error_budget"``,
-                ``"redundancy"``, ``"cumulative"``, ``"amplitude_percentile"``,
-                ``"combined"``.
-            shape: Volume shape for rendering (error_budget / redundancy).
-                Defaults to ``target.shape`` when target is provided.
-            truncate: Truncation radius in standard deviations.
-                Defaults to ``self.truncation_radius``.
-            error_percentile: *error_budget only.*  Percentile of ``|residual|``
-                for the budget (0--100).
-            error_tolerance: *error_budget only.*  Multiplier on the budget.
-            redundancy_threshold: *redundancy only.*  Max fractional
-                contribution (0--1) below which a splat is redundant.
-            max_binary_search_iters: *error_budget / redundancy only.*
-                Max iterations for the joint compounding binary search.
-            device: Device for GPU computation.  Auto-detected if None.
-            intensity_floor: Min intensity threshold for AABB computation.
-            retention: *cumulative only.*  Fraction of total amplitude to
-                retain (0--1).
-            amplitude_percentile: *amplitude_percentile / combined only.*
-                Bottom percentile to remove (0--100).
-            volume_percentile: *combined only.*  Remove splats above this
-                volume percentile (0--100).
-            verbose: Print progress information.
-
-        Returns:
-            New GSplatData with culled splats removed.  Stats include
-            ``culled``, ``culling_method``, ``n_original``, ``n_culled``.
-        """
-        if truncate is None:
-            truncate = self.truncation_radius
-
-        # --- Resolve "auto" method ---
-        if method == "auto":
-            if target is not None:
-                method = "error_budget"
-            elif shape is not None:
-                method = "redundancy"
-            else:
-                method = "cumulative"
-
-        # Multi-substitutive: cull EVERY substitutive level and rebuild the
-        # pyramid (decision 6) rather than collapsing to the default level via
-        # the single-level mask that the strategies below feed to self.filter().
-        # Each level is culled through the single-substitutive path (the same
-        # target volume reconstructs every level). Mirrors filter_by().
-        if self.n_substitutive > 1:
-            culled_levels: List[SubstitutiveLevel] = []
-            for s, src in enumerate(self.substitutive_levels):
-                culled_level = self._view_of_level(src).cull(
-                    target,
-                    method=method,
-                    shape=shape,
-                    truncate=truncate,
-                    error_percentile=error_percentile,
-                    error_tolerance=error_tolerance,
-                    redundancy_threshold=redundancy_threshold,
-                    max_binary_search_iters=max_binary_search_iters,
-                    device=device,
-                    intensity_floor=intensity_floor,
-                    retention=retention,
-                    amplitude_percentile=amplitude_percentile,
-                    volume_percentile=volume_percentile,
-                    verbose=verbose,
-                )
-                culled_levels.append(
-                    SubstitutiveLevel(
-                        additive_sublods=culled_level.substitutive_levels[
-                            0
-                        ].additive_sublods,
-                        compression_factor=src.compression_factor,
-                        parent_method=src.parent_method,
-                        level_index=src.level_index,
-                        stats=dict(src.stats),
-                    )
-                )
-            out = GSplatData.from_substitutive_levels(
-                culled_levels,
-                stats=dict(self.stats),
-            )
-            out.stats.update(
-                {
-                    "culled": True,
-                    "culling_method": method,
-                    "n_original": self.n_splats,
-                    "n_culled": self.n_splats - out.n_splats,
-                }
-            )
-            return out
-
-        # =================================================================
-        # Heuristic methods (no rendering, CPU-only, fast)
-        # =================================================================
-        if method in ("cumulative", "amplitude_percentile", "combined"):
-            return self._cull_heuristic(
-                method=method,
-                retention=retention,
-                amplitude_percentile=amplitude_percentile,
-                volume_percentile=volume_percentile,
-            )
-
-        # =================================================================
-        # Rendering-based methods (GPU, contribution-aware)
-        # =================================================================
-        if method not in ("error_budget", "redundancy"):
-            raise ValueError(
-                f"Unknown culling method: {method!r}. "
-                "Choose from: 'auto', 'error_budget', 'redundancy', "
-                "'cumulative', 'amplitude_percentile', 'combined'."
-            )
-
-        import torch
-
-        from luxar.gsplats.culling import cull_by_contribution
-        from luxar.gsplats.rendering.volume_rendering import auto_detect_device
-
-        if target is not None and shape is None:
-            shape = target.shape
-        if shape is None:
-            raise ValueError(
-                "shape is required for error_budget/redundancy modes. "
-                "Pass the volume shape, e.g. shape=(128, 128, 128), "
-                "or provide a target volume."
-            )
-
-        if device is None:
-            device = auto_detect_device()
-
-        # Convert to GPU tensors
-        centers_t = torch.from_numpy(self.centers.astype(np.float32)).to(device)
-        amps_t = torch.from_numpy(self.amplitudes.astype(np.float32)).to(device)
-        target_t = (
-            torch.from_numpy(target.astype(np.float32)).to(device)
-            if target is not None
-            else None
-        )
-
-        # Unpack Cholesky factors: (N, d*(d+1)/2) -> (N, d, d) lower-triangular
-        chol = self.cholesky_factors
-        ndim = self.ndim
-        chol_t = torch.from_numpy(chol).to(device)
-        Ls_t = torch.zeros((len(chol), ndim, ndim), device=device, dtype=torch.float32)
-        if ndim == 2:
-            Ls_t[:, 0, 0] = chol_t[:, 0]
-            Ls_t[:, 1, 0] = chol_t[:, 1]
-            Ls_t[:, 1, 1] = chol_t[:, 2]
-        elif ndim == 3:
-            Ls_t[:, 0, 0] = chol_t[:, 0]
-            Ls_t[:, 1, 0] = chol_t[:, 1]
-            Ls_t[:, 1, 1] = chol_t[:, 2]
-            Ls_t[:, 2, 0] = chol_t[:, 3]
-            Ls_t[:, 2, 1] = chol_t[:, 4]
-            Ls_t[:, 2, 2] = chol_t[:, 5]
-        else:
-            idx = 0
-            for i in range(ndim):
-                for j in range(i + 1):
-                    Ls_t[:, i, j] = chol_t[:, idx]
-                    idx += 1
-        del chol_t
-
-        result = cull_by_contribution(
-            centers_t,
-            Ls_t,
-            amps_t,
-            target_t,
-            shape,
-            truncate=truncate,
-            error_percentile=error_percentile,
-            error_tolerance=error_tolerance,
-            redundancy_threshold=redundancy_threshold,
-            max_binary_search_iters=max_binary_search_iters,
-            intensity_floor=intensity_floor,
-            verbose=verbose,
-        )
-
-        # Free GPU tensors used for culling
-        del centers_t, amps_t, Ls_t
-        if target_t is not None:
-            del target_t
-        if torch.cuda.is_available():
-            torch.cuda.empty_cache()
-
-        culled = self.filter(result.keep_mask)
-        culled.stats.update(
-            {
-                "culled": True,
-                "culling_method": result.mode,
-                "n_original": self.n_splats,
-                "n_culled": result.n_culled,
-                "error_budget": result.error_budget,
-                "phase1_candidates": result.phase1_candidates,
-                "phase2_iterations": result.phase2_iterations,
-                "max_joint_error": result.max_joint_error,
-            }
-        )
-        return culled
-
-    def _cull_heuristic(
-        self,
-        method: str,
-        retention: float = 0.95,
-        amplitude_percentile: float = 5.0,
-        volume_percentile: float = 95.0,
-    ) -> "GSplatData":
-        """Heuristic culling methods (no rendering needed)."""
-        N_original = self.n_splats
-
-        if N_original == 0:
-            result = self.filter(np.ones(0, dtype=bool))
-            result.stats.update(
-                {
-                    "culled": True,
-                    "culling_method": method,
-                    "n_original": 0,
-                    "n_culled": 0,
-                }
-            )
-            return result
-
-        mask = np.ones(N_original, dtype=bool)
-
-        if method == "cumulative":
-            sorted_indices = np.argsort(self.amplitudes)[::-1]
-            sorted_amps = self.amplitudes[sorted_indices]
-            cumsum_amps = np.cumsum(sorted_amps)
-            total_amp = cumsum_amps[-1]
-            if total_amp == 0:
-                mask = (
-                    np.ones(N_original, dtype=bool)
-                    if retention > 0
-                    else np.zeros(N_original, dtype=bool)
-                )
-            else:
-                cumsum_norm = cumsum_amps / total_amp
-                n_keep = np.searchsorted(cumsum_norm, retention) + 1
-                n_keep = min(n_keep, N_original)
-                keep_indices = sorted_indices[:n_keep]
-                mask = np.zeros(N_original, dtype=bool)
-                mask[keep_indices] = True
-
-        elif method == "amplitude_percentile":
-            threshold = np.percentile(self.amplitudes, amplitude_percentile)
-            mask = self.amplitudes >= threshold
-
-        elif method == "combined":
-            vols = self.volumes()
-            amp_threshold = np.percentile(self.amplitudes, amplitude_percentile)
-            vol_threshold = np.percentile(vols, volume_percentile)
-            mask = (self.amplitudes >= amp_threshold) & (vols <= vol_threshold)
-
-        else:
-            raise ValueError(f"Unknown heuristic method: {method!r}")
-
-        result = self.filter(mask)
-
-        total_amp = np.sum(self.amplitudes)
-        result.stats.update(
-            {
-                "culled": True,
-                "culling_method": method,
-                "n_original": N_original,
-                "n_culled": N_original - result.n_splats,
-                "amplitude_retention": (
-                    float(np.sum(result.amplitudes) / total_amp)
-                    if total_amp > 0
-                    else 1.0
-                ),
-            }
-        )
-        return result
-
-    def render_to_volume(
-        self,
-        shape: tuple[int, ...],
-        device: str | None = None,
-        truncate: float | None = None,
-        intensity_floor: float = 1e-5,
-        chunk_size: int | None = None,
-    ) -> np.ndarray:
-        """Render Gaussian splats to a volume using GPU-accelerated rendering.
-
-        This is a convenience method that automatically selects the fastest available
-        backend (CUDA, MPS, or CPU) and uses the optimized PyTorch renderer.
-
-        Parameters
-        ----------
-        shape : tuple[int, ...]
-            Output volume shape (e.g., (128, 128, 128) for 3D).
-        device : str, optional
-            Device to use for rendering. If None, auto-detects the best device.
-            Options: "cuda", "mps", "cpu".
-        truncate : float, optional
-            Truncation radius in standard deviations. Gaussians are evaluated within
-            this radius from their centers. Defaults to ``self.truncation_radius``.
-        intensity_floor : float, default=1e-5
-            Minimum intensity threshold for amplitude-aware culling. Splats with
-            contributions below this threshold are culled early for performance.
-        chunk_size : int, optional
-            Chunk size for memory management when processing large volumes. If None,
-            automatically calculated based on available memory.
-
-        Returns
-        -------
-        np.ndarray
-            Rendered volume with the specified shape.
-
-        Examples
-        --------
-        >>> # Render to 128³ volume
-        >>> volume = gsplat_data.render_to_volume(shape=(128, 128, 128))
-        >>>
-        >>> # Force CPU rendering
-        >>> volume = gsplat_data.render_to_volume(shape=(128, 128, 128), device="cpu")
-        >>>
-        >>> # Use larger truncation radius
-        >>> volume = gsplat_data.render_to_volume(shape=(128, 128, 128), truncate=4.0)
-
-        Notes
-        -----
-        - For 8K splats on 128³ volume: substantially faster than NumPy
-          implementation (often orders of magnitude on GPU; varies by hardware)
-        - Automatically chunks large volumes to prevent out-of-memory errors
-        - Uses specialized fast paths for 2D/3D rendering
-        """
-        if truncate is None:
-            truncate = self.truncation_radius
-
-        from luxar.gsplats.rendering.volume_rendering import render_to_volume
-
-        return render_to_volume(
-            self,
-            shape=tuple(shape),
-            device=device,
-            truncate=truncate,
-            intensity_floor=intensity_floor,
-            chunk_size=chunk_size,
-        )
-
-    @classmethod
-    def load(
-        cls,
-        path: str | Path,
-        include_stats: bool = False,
-    ) -> "GSplatData":
-        """Load splats from .gsplats.zarr format.
-
-        Args:
-            path: Path to .gsplats.zarr directory
-            include_stats: Whether to include fitting/provenance metadata
-
-        Returns:
-            GSplatData with decoded arrays
-
-        Example:
-            >>> data = GSplatData.load("fitted.gsplats.zarr")
-            >>> aprint(data.centers.shape)
-        """
-        from luxar.gsplats.io.load_gsplats import load_gsplats
-
-        return load_gsplats(path, include_stats=include_stats)
 
     @classmethod
     def merge_with_channel_colors(

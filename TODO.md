@@ -143,6 +143,35 @@ to ship after). Sequencing is at the bottom.
 - **R7 [LAUNCH] — License/authorship sanity.** BSD-3 is in place; confirm
   third-party acknowledgments (Three.js, Zarr/Zarrita, datasets) are complete
   and the announce copy doesn't overclaim.
+- **R17 [LAUNCH] — Retire git-LFS for heavy processed datasets → Zenodo
+  (versioned, fetch-on-demand).** The compute-expensive precomputed demo data
+  (`.gsplats.zarr.zip`, catalogs) lives in **git-LFS** under
+  `packages/luxar/src/luxar/demos/data/**` — ~237 MB tracked today, dominated by
+  `gsplats_cmu1_pathology` (~330 MB / 3 ch), `gsplats_celegans` (206 MB), and
+  `milky_way_gaia_8m` (143 MB). This does not scale: newer/larger datasets can't
+  be committed at all, a public repo pays LFS storage+bandwidth limits, the wheel
+  already has to `exclude` `demos/data/**` (see R3), and CI risks shipping broken
+  LFS *pointer* files. Migrate heavy datasets out of the repo and fetch them on
+  demand.
+  - **Access confirmed:** `ZENODO_TOKEN` is on the dev machine (`~/.zshrc`); the
+    Zenodo API is reachable (HTTP 200) and the account already owns 14
+    depositions (zebrahub / ultrack / daxi / …), so there is both access and
+    royerlab precedent. Zenodo records carry a **concept DOI with versioning** —
+    exactly the "multiple steps / versions" the migration wants.
+  - **Reusable mechanism already in-tree:** `demos/demo_cosmicflows_laniakea.py`
+    has the pattern (`~/.cache/luxar/<name>` + atomic `download_file` +
+    `ensure_input_data`). Generalize it into a shared
+    `luxar.demos.data_fetch` helper that pulls a named dataset from a Zenodo
+    record (verifying a checksum) into the cache on first run.
+  - **Plan (incremental, largest-first, keeps LFS as fallback until proven):**
+    (1) shared fetch helper + a committed `demos/data/manifest.json` pinning each
+    dataset's Zenodo record/URL + checksum + expected version; (2) create the
+    "Luxar demo datasets" Zenodo deposition, upload current files; (3) repoint
+    demos at the helper one at a time; (4) `git rm` the migrated files and drop
+    their `.gitattributes` LFS globs. Future large datasets land as **new Zenodo
+    versions**, with the manifest pinning what each Luxar release expects.
+  - **Scope note:** only *heavy processed datasets* move. Small README/doc images
+    (`docs/images/**`) must stay in-repo so GitHub renders them (see R19).
 
 ### B. First-impression polish — what a visitor sees on day one
 
@@ -175,6 +204,53 @@ to ship after). Sequencing is at the bottom.
   block (→ single `luxar serve … --viewer --open`). **Remaining:** verify a
   truly-fresh-machine `make setup-dev`, and optionally regenerate the gallery
   media (`make generate-readme-images/videos`).
+- **R18 [LAUNCH] — Documentation: content pass + confirm it's publicly
+  viewable.** The **hosting is already wired**: `.github/workflows/docs.yml`
+  builds Sphinx (Python API) + typedoc (viewer) and deploys to **GitHub Pages**
+  (`https://royerlab.github.io/luxar/`) on every push to `main` touching
+  `docs/**` or the sources. Two gaps remain for day one:
+  - **Publicly viewable:** the repo is still private, so the Pages site isn't
+    reachable by outsiders yet. Confirm it goes live when the repo is made public
+    (or enable/verify Pages visibility), and that the built site actually renders
+    — nav, API autosummary, viewer typedoc, and images all resolve.
+  - **Content cleanup:** `docs/` carries internal/stale trees that should not
+    ship in public docs — `archive/`, `handoffs/`, `reports/`, `bugs/`,
+    `templates/`, `benchmarks/`. Prune or exclude them from the Sphinx build,
+    then update/improve the user-facing guides + API reference to match the
+    current surface (gsplat cal→fit→lod pipeline, LOD recipes, export/native,
+    batch-fit, filtering). Cross-check against the CLI so examples don't drift.
+- **R19 [LAUNCH] — README refresh + showcase the newer/better demos (images +
+  video).** Extends R11 (whose one open remainder was "regenerate the gallery
+  media"). The pipeline exists: `make generate-readme-demos →
+  generate-readme-images / generate-readme-videos` (Playwright captures of the
+  live viewer → `docs/images/readme/*.{png,gif,webp}`).
+  - **Curate a stronger gallery** from the newer/better datasets (H&E pathology
+    gsplats, 4D *C. elegans* tracking, organoid multichannel, Gaia) — decide
+    which few best convey the range (volumetric splats, nD navigation, scale).
+  - **Regenerate** stills + short loops via the Playwright pipeline; refresh the
+    README gallery section + captions; ensure everything renders on GitHub.
+  - **LFS interaction (coordinate with R17):** README/doc images stay in-repo
+    (GitHub must render them inline) — only the heavy *datasets* move to Zenodo.
+    But the media the gallery captures come from demos whose *inputs* may have
+    moved to Zenodo, so `generate-readme-demos` must run after R17's fetch path
+    exists (or before the migration). Keep gallery media small/optimized.
+- **R20 [LAUNCH] — Demos quality overhaul** (in progress, parallel agent —
+  **PR #488**, branch `worktree-demos-quality-overhaul`, ~+1785/−1286 across the
+  demo suite). Crash fixes, stale-doc fixes, shared caching, alias removal, and
+  colorbar/channel legends across the demos. First-impression-critical: the
+  demos are what `luxar demo` / the gallery / new users hit first. **Land this
+  before R19** (the gallery is captured from these demos) and coordinate with
+  R17 (shared caching should route through the same fetch/cache layer).
+- **R21 [LAUNCH] — New "turnkey three" science demos** (in progress, parallel
+  agent — branch `demos-turnkey-three`, **no PR yet**). Adds three geometry-
+  showcasing demos with tests: **asteroids / solar system** (points),
+  **Milky Way dust** (full-resolution gsplat fit), and **Dip-C 3D genome**
+  (with a Layers-panel haplotype toggle). Strong candidates for the R19 gallery.
+  **⚠ Feeds R17 directly:** this branch commits *new* heavy LFS data
+  (`milkyway_dust.gsplats.zarr.zip`, `dipc_gm12878.npz`) — exactly the kind of
+  compute-expensive processed dataset R17 moves to Zenodo. Open a PR, then either
+  migrate its data as part of R17 or land it to Zenodo from the start rather than
+  adding more git-LFS weight.
 - **R12 [POST] — Theme layout consistency (#7)**, **Python-side panel visibility
   config (#8)** — nice-to-have, not launch-gating.
 
@@ -193,17 +269,55 @@ to ship after). Sequencing is at the bottom.
   `calibration.py` and both PDFs rebuilt (luxar-paper `fc0780c`, pushed). NOTE:
   the named draft/standard/hifi/ultra presets only vary 4 knobs and the paper fits
   by explicit config, so a large per-preset matrix was correctly not added.
-- **R14 [LAUNCH] — Consumer-GPU timing benchmark.** Wall-time is softened to
-  "minutes per dataset" pending a consumer-GPU sweep (only RTX PRO 6000 numbers
-  documented). Run the benchmark on a commodity card (e.g. RTX 3070) to firm up
-  the claim.
+- **R14 [LAUNCH] — Consumer-GPU timing benchmark.** ✅ **DONE** (2026-07-12).
+  Ran the fit-timing sweep on a commodity NVIDIA RTX 3070 (8 GB) across the 9
+  core datasets × 5 splat counts (4K–256K), same config as the main
+  rate-distortion analysis (early stopping). Operating point (32K): all 9 fit in
+  38–355 s (**median ~4.2 min**) — substantiates "minutes per dataset" on
+  commodity hardware. 0/45 cells OOM (peak ≤4.8 GB even for the ~100-Mvox
+  light-sheet volumes, since the render kernel bounds VRAM independently of
+  volume size). Shipped as luxar-paper **SD13** (new supplement + harness), with
+  the claim wired into the main-text wall-time sentence and the Methods hardware
+  paragraph (luxar-paper #5 merged; lint/type sweep #6 merged alongside).
 - **R15 [POST] — Tiled-fitting figure.** Described in Methods + Results but has
   no figure; a reviewer may ask for a seamless-stitching demonstration. The
   `tiled_fitting/` SD is method-only (empirical eval deferred).
-- **R16 [LAUNCH] — Manuscript repo hygiene.** Commit a clean "regenerate all
-  artifacts" pass; prune stale/duplicate figure PDFs (`cross_validation.pdf`,
-  the three `compression_*.pdf` variants); confirm SD6 viewer-perf PDFs use the
-  committed `sweep_v6` numbers, not placeholders.
+- **R16 [LAUNCH] — Manuscript repo hygiene.** Scoped against the repo
+  2026-07-12. The `--floor` decision is **resolved → keep legacy no-floor + document**
+  (see the decision note at the end of section D — a measurement reversed the
+  initial "re-run" call), so there is **no GPU re-run**; R16 stays the light slice:
+  - **No full `run_all.sh` regen for floor.** A quick floor=auto-vs-none check
+    showed floor=auto *lowers* PSNR-vs-original (−5.86 dB kidney_dapi, +0.01
+    organoid — never improves it), because floor drops the background pedestal
+    the PSNR metric still expects. The committed legacy numbers are already the
+    `--floor none` numbers (committed kidney 31.81 dB ≈ floor=none 31.77), so
+    they **stand as-is**. The regenerate-all pipeline (`build_all.sh` →
+    `run_all.sh` → `build_figures` → `build_supp_docs` → `build_preprint`)
+    remains available but is only needed if the analysis inputs change.
+  - ✅ **Prune the confirmed orphan:** `preprint/figs/quantitative_analysis/
+    cross_validation.pdf` is referenced by *no* `.tex` (CV now lives in
+    `quantitative_analysis.pdf` + suppfig `cv_all.pdf`). Delete it.
+  - ❌ **DO NOT prune the `compression_*.pdf` — the old note is stale.** All four
+    (`compression.pdf`, `compression_cv_optimal.pdf`,
+    `compression_rate_distortion.pdf`, `compression_denoised.pdf`) are live
+    `\includegraphics` in `luxar_preprint.tex` (lines ~354/379/390/399) since
+    SD7 (compression) was promoted to a cited document.
+  - ⚠️ **Compression single-source check:** those figs exist in both
+    `preprint/figs/suppfig/` (what the preprint includes) and
+    `supp_doc/compression_comparison/results/`. Confirm one is generated from the
+    other (single source of truth) so they can't diverge.
+  - ✅ **SD6 placeholders — looks already resolved; just verify.** `sweep_v6.json`
+    (216 KB) is committed and is the wired default input
+    (`sweep_latest.json → sweep_v6.json`); the committed SD6 fig PDFs carry no
+    placeholder marker and were committed in the *same commit* as the data
+    (2026-05-04). Residual: a rebuild-and-diff to confirm the committed figs
+    match a fresh build from `sweep_v6.json` (the OUTLINE "regen in progress"
+    note is stale). The `_emit_placeholders` path only fires when the JSON is
+    absent — it isn't.
+  - 🚩 **New (bloat):** `supp_doc/splat_count_vs_quality/splat_count_vs_quality.pdf`
+    is **64 MB** (LFS) — ~10× any other PDF, because it embeds the many 2–8 MB
+    `fig_slice_montage.pdf` uncompressed. Rasterize/downsample the embedded
+    montages at build time. (Overlaps R17's LFS-weight concern.)
 
 ### D. Sequencing (suggested order, parallelizable across tracks)
 
@@ -212,11 +326,21 @@ to ship after). Sequencing is at the bottom.
    no open feature branches, dependabot drained, release pipeline landed (#417).
 2. **Decide versioning & package** — R1 → R3 (PyPI dry-run / TestPyPI) in parallel
    with the day-one polish (R8/R9/R10/R11).
-3. **Post the preprint** — R13 ✅ / R14 / R16 land → bioRxiv → obtain DOI → R4
+3. **Post the preprint** — R13 ✅ / R14 ✅ / R16 land → bioRxiv → obtain DOI → R4
    (wire citation back into the repo).
-4. **Cut the release** — R2 (tag + GitHub release) → flip PyPI to live (R3) →
+4. **Public-repo readiness** (parallel with the preprint track, before the repo
+   goes public) — first land the in-flight demo work: **R20** (demos quality
+   overhaul, PR #488) and **R21** (new "turnkey three" demos, branch
+   `demos-turnkey-three`); then **R17** (retire git-LFS heavy datasets → Zenodo —
+   fold in R21's new `milkyway_dust`/`dipc` data so the public clone is lean and
+   future large datasets are addable), **R18** (docs content pass + confirm the
+   GitHub Pages site is publicly viewable), **R19** (README refresh + regenerated
+   gallery). Order within the step: **R20/R21 → R17 → R19** (the gallery is
+   captured from the finalized demos, whose inputs live in Zenodo by then); R18
+   is independent and can run any time.
+5. **Cut the release** — R2 (tag + GitHub release) → flip PyPI to live (R3) →
    announce.
-5. **Post-launch backlog** — R10 (#24 depth sorting), R12, R15, and the
+6. **Post-launch backlog** — R10 (#24 depth sorting), R12, R15, and the
    remaining Future/Exploratory items below (incl. #25 advanced LOD
    refinements).
 
@@ -229,15 +353,73 @@ to ship after). Sequencing is at the bottom.
 > Update 2026-07-11: R13 (Methods specificity) is **done** (#466) and
 > dependabot is re-drained (R5 note above). All release *tooling* is built and
 > validated — what remains on the critical path is **execution**, in order:
-> **(1) preprint track** — R14 (consumer-GPU timing sweep) + R16 (manuscript
-> repo hygiene); also decide whether the 13-dataset analyses get re-run with
-> floor suppression (`--floor`, #463) before or after bioRxiv — then post →
-> DOI → R4 (CITATION.cff). **(2) day-one leftovers** — R11 remainder
+> **(1) preprint track** — R14 (consumer-GPU timing sweep) ✅ **done**
+> 2026-07-12 (luxar-paper SD13); remaining: R16 (manuscript repo hygiene) — now
+> **coupled to the resolved `--floor` decision** (below) — then post → DOI → R4
+> (CITATION.cff). **(2) day-one leftovers** — R11 remainder
 > (fresh-machine `make setup-dev` verify, optional gallery media regen) + R7
 > (license/acknowledgments audit). **(3) the mechanical cut** — final
 > dependabot/branch drain → `make set-version` → PR → `make release-check` →
 > `make release` (fires PyPI OIDC publish) → one-time npm bootstrap (R3-npm)
 > → GitHub release notes from CHANGELOG `[Unreleased]` → announce.
+
+> Update 2026-07-12: R14 done (see above). Added three **public-repo-readiness**
+> items (new sequencing step 4, all [LAUNCH], parallelizable with the preprint):
+> **R17** — retire git-LFS heavy processed datasets (~237 MB today; pathology
+> /celegans/Gaia dominate) to **Zenodo** with fetch-on-demand + a pinned
+> manifest (access verified: `ZENODO_TOKEN` present, API live, 14 royerlab
+> depositions; reuse the `demo_cosmicflows_laniakea.py` cache pattern; migrate
+> largest-first, versioned). **R18** — docs content pass + confirm the already-
+> wired GitHub Pages site (`royerlab.github.io/luxar`, built by
+> `docs.yml`) is publicly viewable and free of internal `docs/` trees. **R19** —
+> README refresh + regenerated gallery from the newer demos (Playwright pipeline
+> exists; depends on R17's fetch path). These gate a *clean public repo*, not the
+> preprint; they should land before the repo is flipped public in the cut.
+>
+> Also tracking two in-flight demo efforts by parallel agents: **R20** (demos
+> quality overhaul — PR #488) and **R21** (new "turnkey three" demos:
+> asteroids / Milky-Way-dust gsplats / Dip-C genome — branch
+> `demos-turnkey-three`, no PR yet). Sequenced ahead of R17/R19 in step 4:
+> finalize the demos, then migrate their (incl. R21's new) heavy data to Zenodo,
+> then capture the gallery. R21 adds new git-LFS data, so it should be folded
+> into R17 rather than growing LFS further.
+
+> **Decision 2026-07-12 — `--floor`: KEEP LEGACY NO-FLOOR FOR THE PAPER, for
+> pragmatic (not scientific) reasons + DOCUMENT (no GPU re-run).** The initial
+> call was "full re-run with `floor=auto`"; a quick measurement changed the
+> *how*, not the science.
+> - **Scientifically, floor suppression is the right thing** (author's view):
+>   the constant background pedestal is *not real signal*, so removing it before
+>   fitting is principled, and the *correct* way to score a floor-suppressed fit
+>   is against a **floor-suppressed reference** (floor-recon vs floor-original).
+> - **The measured −5.86 dB (kidney_dapi 31.77→25.91; organoid +0.01) is a
+>   reference-mismatch artifact, NOT evidence floor is worse:** it scores a
+>   background-free reconstruction against the *original, pedestal-bearing*
+>   volume, penalising the fit for correctly dropping non-signal. Under the
+>   principled floor-suppressed reference, floor would be fair (and appropriate).
+> - **Why keep no-floor for the paper anyway (pragmatic):** adopting floor
+>   properly means switching the evaluation to background-relative PSNR — a
+>   protocol + narrative change (and re-checking the blind-spot CV story) that
+>   isn't worth doing right before bioRxiv. The committed legacy numbers *are*
+>   the `--floor none` numbers (committed kidney 31.81 dB ≈ floor=none 31.77) and
+>   are internally consistent (original-referenced throughout), so they stand.
+> - **Tool default is confirmed correct and stays:** for general CLI use the
+>   floor should always be removed by default (background isn't signal), so
+>   `gsplat fit`/`cal` keep `--floor auto` — **do not change the shipped
+>   default.** The `--floor none` pin below is a *paper-only* deviation for
+>   original-referenced comparability, not a statement about the tool.
+> - **Resolution (no re-run):** (1) numbers stand as-is; (2) **pin the manuscript
+>   fit harnesses to `--floor none`** (`run_analysis`/`run_convergence`/
+>   `run_noise2self`/`progressive`/`loss_comparison`/`run_noise_floor`) so a
+>   future re-run stays reproducible instead of silently inheriting `floor=auto`;
+>   (3) **Methods paragraph** stating the benchmarks use `--floor none` with
+>   original-referenced PSNR for comparability, while `floor=auto` (the shipped
+>   default) is the more principled fit for real use (background isn't signal),
+>   and noting background-relative evaluation as appropriate future work.
+> - **Deferred (post-bioRxiv / journal / future work):** the floor-suppressed-
+>   reference evaluation, and the small open check of whether floor improves the
+>   blind-spot CV / K\* selection (a `cal`-sweep on a few datasets, not run_all).
+> (Harness pinning + Methods paragraph land as a luxar-paper PR.)
 
 ---
 

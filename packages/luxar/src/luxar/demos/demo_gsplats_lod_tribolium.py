@@ -23,8 +23,10 @@ microscopy dataset, which is where adaptive detail actually earns its keep:
 - **Substitutive levels**: each coarser level *replaces* the finer one with a
   smaller set of synthesized representative splats (built by
   ``make_substitutive_lod``).  This is genuine geometry/memory compression, not
-  just a streaming order.  The viewer auto-picks a level by projected pixel
-  size — zoom out → coarse, zoom in → fine.
+  just a streaming order.  The viewer auto-picks a level by viewport-relative
+  ``coverage_fraction`` (``sqrt(N_i/N_finest)``, derived from per-level splat
+  counts) — the finest level shows when the embryo fills the screen and coarser
+  levels step in as it shrinks: zoom out → coarse, zoom in → fine.
 - **Debug colors** make the level-switching obvious: each level is painted a
   distinct color on a green → amber → red ramp (finest → coarsest).  As you
   zoom, the embryo changes color when the active level changes.
@@ -412,19 +414,14 @@ def main() -> None:
         base = precomputed[0]
     else:
         # --recompute path: re-fit the base splats from the raw volume by
-        # delegating to the base Tribolium demo's fitting pipeline. Demos run
-        # as scripts (their dir is on sys.path) and `luxar.demos` is aliased to
-        # `luxar.utils.demos`, so import the sibling module by file path.
+        # delegating to the base Tribolium demo's fitting pipeline.
         warn_if_no_cuda_gpu()
-        import importlib.util
+        from luxar.demos.demo_gsplats_3d_tribolium_embryo import (
+            fit_tribolium,
+            load_tribolium_volume,
+        )
 
-        sibling = Path(__file__).with_name("demo_gsplats_3d_tribolium_embryo.py")
-        spec = importlib.util.spec_from_file_location("_tribolium_base", sibling)
-        assert spec is not None and spec.loader is not None
-        tri = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(tri)
-
-        base = tri.fit_tribolium(tri.load_tribolium_volume())
+        base = fit_tribolium(load_tribolium_volume())
 
     # Build the substitutive ladder and colorize it.
     colored = build_lod_ladder(base)

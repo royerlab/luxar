@@ -50,7 +50,9 @@ Usage:
     Options:
     --papers=N          Number of papers per field (default: 1000)
     --fields=cs,physics Fields to include (default: cs,physics,biology,medicine,math)
-    --use-cache         Use cached embeddings if available
+
+    Embeddings + 3D UMAP are cached automatically under ~/.cache/luxar/arxiv_paper
+    (keyed on fields + papers-per-field), so repeat runs are instant.
 
 Controls:
     - Rotate to explore the knowledge landscape
@@ -64,7 +66,7 @@ NOTES:
   * Small scale (5k papers): ~2-5 minutes
   * Large scale (100k papers): ~30-60 minutes
   * Very large scale (1M papers): Use bulk dataset API recommended!
-- Subsequent runs can use cached embeddings (--use-cache flag)
+- Subsequent runs load cached embeddings automatically
 - Requires internet connection for Semantic Scholar API
 - Required packages: sentence-transformers, umap-learn
 - API rate limits: ~100 requests/second (use delays for large queries)
@@ -75,7 +77,6 @@ https://api.semanticscholar.org/datasets/v1/release/
 Download pre-computed embeddings and metadata directly!
 """
 
-import json
 import sys
 import tempfile
 import time
@@ -86,7 +87,7 @@ import requests
 from arbol import aprint, asection
 
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
-from luxar.demos import launch_viewer
+from luxar.demos import cache_computed, hsv_to_rgb, launch_viewer, stack_colorings
 from luxar.utils.paths import get_demos_output_dir
 
 # =============================================================================
@@ -369,7 +370,6 @@ def generate_paper_landscape(
     output_path: Path,
     fields: list[str] = None,
     papers_per_field: int = 500,
-    cache_dir: Path | None = None,
 ) -> int:
     """Generate 3D landscape of scientific papers.
 
@@ -377,7 +377,6 @@ def generate_paper_landscape(
         output_path: Where to write zarr
         fields: List of fields to include
         papers_per_field: Papers to download per field
-        cache_dir: Optional directory for caching embeddings
 
     Returns:
         Total number of papers visualized
@@ -385,31 +384,17 @@ def generate_paper_landscape(
     if fields is None:
         fields = DEFAULT_FIELDS
 
-    # Check cache
-    cache_file = None
-    if cache_dir:
-        cache_dir.mkdir(parents=True, exist_ok=True)
-        cache_file = cache_dir / f"papers_{'_'.join(fields)}_{papers_per_field}.json"
-
-    # Download or load papers
-    if cache_file and cache_file.exists():
-        with asection("Loading cached paper data"):
-            with open(cache_file) as f:
-                cached = json.load(f)
-                papers_data = cached["papers"]
-                embeddings_3d = np.array(cached["embeddings_3d"], dtype=np.float32)
-                primary_fields = cached["fields"]
-                citation_counts = cached["citations"]
-            papers_clean = papers_data
-            aprint(f"✓ Loaded {len(papers_clean)} papers from cache")
-            aprint(f"  Embeddings: {embeddings_3d.shape}")
-    else:
-        # Download papers
+    def _compute_bundle() -> dict:
+        # Download papers from Semantic Scholar
         papers = download_papers_across_fields(fields, papers_per_field)
 
         if len(papers) == 0:
-            aprint("❌ No papers found")
-            return 0
+            return {
+                "papers_clean": [],
+                "embeddings_3d": np.zeros((0, 3), dtype=np.float32),
+                "fields": [],
+                "citations": [],
+            }
 
         # Prepare data
         with asection("Preparing paper data"):
@@ -437,56 +422,104 @@ def generate_paper_landscape(
                     }
                 )
 
-        # Cache for future runs
-        if cache_file:
-            with open(cache_file, "w") as f:
-                json.dump(
-                    {
-                        "papers": papers_clean,
-                        "embeddings_3d": embeddings_3d.tolist(),
-                        "fields": primary_fields,
-                        "citations": citation_counts,
-                    },
-                    f,
-                )
-            aprint(f"✓ Cached to {cache_file}")
+        return {
+            "papers_clean": papers_clean,
+            "embeddings_3d": embeddings_3d,
+            "fields": primary_fields,
+            "citations": citation_counts,
+        }
+
+    # Embeddings + UMAP are cached ON BY DEFAULT under ~/.cache/luxar/arxiv_paper,
+    # keyed on the query (fields + papers-per-field), version=1.
+    cache_key = f"embed3d_{'_'.join(fields)}_n{papers_per_field}"
+    bundle = cache_computed("arxiv_paper", cache_key, _compute_bundle, version=1)
+    papers_clean = bundle["papers_clean"]
+    embeddings_3d = np.asarray(bundle["embeddings_3d"], dtype=np.float32)
+    primary_fields = bundle["fields"]
+    citation_counts = bundle["citations"]
+
+    if len(embeddings_3d) == 0:
+        aprint("❌ No papers found")
+        return 0
 
     # Generate colors and sizes
     with asection("Generating visualization attributes"):
         n_papers = len(embeddings_3d)
         positions = embeddings_3d
 
-        # Colors by field
-        colors = np.zeros((n_papers, 3), dtype=np.float32)
-        for i in range(n_papers):
-            field = primary_fields[i]
-            colors[i] = FIELD_COLORS.get(field, FIELD_COLORS["Other"])
+        citation_array = np.array(citation_counts, dtype=np.float32)
+        log_citations = np.log1p(citation_array)  # log(1 + x) to handle 0 citations
+        years = np.array(
+            [
+                int(papers_clean[i].get("year", 2015)) if i < len(papers_clean) else 2015
+                for i in range(n_papers)
+            ],
+            dtype=np.float32,
+        )
 
-        aprint("✓ Colored by field:")
-        field_counts = {}
+        def _norm(a: np.ndarray) -> np.ndarray:
+            rng = float(a.max() - a.min())
+            return (a - a.min()) / rng if rng > 0 else np.zeros_like(a)
+
+        # Three switchable coloring views: research field (categorical), plus
+        # cool→warm sequential ramps over publication year and citation count.
+        field_colors = np.array(
+            [FIELD_COLORS.get(primary_fields[i], FIELD_COLORS["Other"]) for i in range(n_papers)],
+            dtype=np.float32,
+        )
+        year_colors = hsv_to_rgb(0.66 * (1.0 - _norm(years)))  # old=blue → new=red
+        citation_colors = hsv_to_rgb(0.66 * (1.0 - _norm(log_citations)))
+
+        field_counts: dict[str, int] = {}
         for field in primary_fields:
             field_counts[field] = field_counts.get(field, 0) + 1
+        aprint("✓ Colored by field / year / citations:")
         for field, count in sorted(field_counts.items(), key=lambda x: -x[1])[:10]:
-            (FIELD_COLORS.get(field, FIELD_COLORS["Other"]) * 255).astype(int)
             aprint(f"  {field}: {count} papers")
 
-        # Radii based on citation count (log scale)
-        citation_array = np.array(citation_counts, dtype=np.float32)
-        # Log scale for citations (heavily cited papers are much larger)
-        log_citations = np.log1p(citation_array)  # log(1 + x) to handle 0 citations
-        # Normalize to reasonable radius range
-        radii = 0.02 + 0.08 * (log_citations / log_citations.max())
-        radii = radii.astype(np.float32)
+        # Per-point radii by citation count (log scale); tiled across views below.
+        radii_pp = (0.02 + 0.08 * (log_citations / max(log_citations.max(), 1e-9))).astype(
+            np.float32
+        )
 
-        aprint("✓ Radii scaled by citations:")
-        aprint(f"  Min citations: {citation_array.min():.0f}")
-        aprint(f"  Max citations: {citation_array.max():.0f}")
-        aprint(f"  Median citations: {np.median(citation_array):.0f}")
+        def _title(i: int) -> str:
+            t = (
+                papers_clean[i].get("title", "Unknown")
+                if i < len(papers_clean)
+                else "Unknown"
+            )
+            return t[:60] + ("…" if len(t) > 60 else "")
+
+        field_labels = [
+            f"{_title(i)} ({int(citation_array[i])} cites, {primary_fields[i]})"
+            for i in range(n_papers)
+        ]
+        year_labels = [f"{_title(i)} ({int(years[i])})" for i in range(n_papers)]
+        citation_labels = [
+            f"{_title(i)} ({int(citation_array[i])} cites)" for i in range(n_papers)
+        ]
+
+        stacked = stack_colorings(
+            positions,
+            [
+                {"label": "Field", "colors": field_colors, "labels": field_labels},
+                {"label": "Year", "colors": year_colors, "labels": year_labels},
+                {"label": "Citations", "colors": citation_colors, "labels": citation_labels},
+            ],
+        )
+        radii = np.tile(radii_pp, len(stacked.categories)).astype(np.float32)
 
     # Write to Zarr
     with asection("Writing to Zarr"):
         dims = Dimensions(
             [
+                Dimension(
+                    "coloring",
+                    unit="",
+                    categories=stacked.categories,
+                    display=False,
+                    description="Color scheme: research field / year / citations",
+                ),
                 Dimension("x", unit="UMAP", display=True),
                 Dimension("y", unit="UMAP", display=True),
                 Dimension("z", unit="UMAP", display=True),
@@ -496,31 +529,19 @@ def generate_paper_landscape(
         with LuxarZarrCompiler(output_path) as compiler:
             scene = compiler.create_scene(dimensions=dims)
 
-            # Sharp points for clarity
-            sharpness = np.full(n_papers, 0.6, dtype=np.float32)
-
-            # Hover labels: title (citations, field)
-            paper_labels = []
-            for i in range(n_papers):
-                title = (
-                    papers_clean[i].get("title", "Unknown")
-                    if i < len(papers_clean)
-                    else "Unknown"
-                )
-                title_short = title[:60] + ("…" if len(title) > 60 else "")
-                cites = int(citation_counts[i]) if i < len(citation_counts) else 0
-                field = primary_fields[i] if i < len(primary_fields) else "Unknown"
-                paper_labels.append(f"{title_short} ({cites} cites, {field})")
-
+            # Substitutive Points LOD for the (potentially large) paper cloud —
+            # coarse merged levels when zoomed out (census-style wiring; coarse
+            # splats stay pure per coloring via the `coloring` barrier).
             scene.add_points(
                 "papers",
-                positions=positions,
-                colors=colors,
+                positions=stacked.positions,
+                colors=stacked.colors,
                 radii=radii,
-                sharpness=sharpness,
+                sharpness=np.full(len(stacked.positions), 0.6, dtype=np.float32),
                 opacity=0.9,
                 intensity=0.1,
-                labels=paper_labels,
+                labels=stacked.labels,
+                substitutive_lod=dict(compression_factor=8, levels=3, device="auto"),
             )
 
             # --- Overlays ---
@@ -546,6 +567,31 @@ def generate_paper_landscape(
                 "</div>",
                 position=(0.02, 0.97),
                 anchor="bottom-left",
+                visible_range={"coloring": 0},
+                transition="fade",
+                transition_duration=0.3,
+            )
+            scene.add_html(
+                '<div style="font-size:1.3vh;background:rgba(0,0,0,0.5);padding:0.6vh;'
+                'border-radius:3px;color:#ccc">Year: '
+                '<span style="color:#4d80ff">\u2588</span> older \u2192 '
+                '<span style="color:#ff4d4d">\u2588</span> newer</div>',
+                position=(0.02, 0.97),
+                anchor="bottom-left",
+                visible_range={"coloring": 1},
+                transition="fade",
+                transition_duration=0.3,
+            )
+            scene.add_html(
+                '<div style="font-size:1.3vh;background:rgba(0,0,0,0.5);padding:0.6vh;'
+                'border-radius:3px;color:#ccc">Citations: '
+                '<span style="color:#4d80ff">\u2588</span> few \u2192 '
+                '<span style="color:#ff4d4d">\u2588</span> many</div>',
+                position=(0.02, 0.97),
+                anchor="bottom-left",
+                visible_range={"coloring": 2},
+                transition="fade",
+                transition_duration=0.3,
             )
 
             # Info + source
@@ -572,7 +618,6 @@ def main() -> None:
     # Parse arguments
     papers_per_field = DEFAULT_PAPERS_PER_FIELD
     field_list = DEFAULT_FIELDS
-    use_cache = "--use-cache" in sys.argv
 
     for arg in sys.argv[1:]:
         if arg.startswith("--papers="):
@@ -618,7 +663,7 @@ def main() -> None:
     aprint("")
     aprint("⏱️  Expected time:")
     aprint("  • First run: 2-5 minutes (download + compute embeddings)")
-    aprint("  • Cached run: <30 seconds (if --use-cache)")
+    aprint("  • Cached run: <30 seconds (results cached automatically)")
     aprint("")
 
     # Check dependencies
@@ -633,11 +678,6 @@ def main() -> None:
         aprint("")
         sys.exit(1)
 
-    # Setup cache
-    cache_dir = None
-    if use_cache:
-        cache_dir = Path.home() / ".cache" / "luxar" / "arxiv_embeddings"
-
     # If --no-serve, use persistent directory; otherwise temp for auto-cleanup
     if "--no-serve" in sys.argv:
         output_path = get_demos_output_dir() / "arxiv_papers.luxar.zarr"
@@ -646,7 +686,6 @@ def main() -> None:
                 output_path,
                 fields=field_list,
                 papers_per_field=papers_per_field,
-                cache_dir=cache_dir,
             )
             if n_papers == 0:
                 aprint("\nNo papers generated")
@@ -671,7 +710,6 @@ def main() -> None:
                 output_path,
                 fields=field_list,
                 papers_per_field=papers_per_field,
-                cache_dir=cache_dir,
             )
 
             if n_papers == 0:
@@ -722,7 +760,7 @@ def main() -> None:
     aprint("Cleanup complete")
     aprint("")
     aprint("Performance tips:")
-    aprint("  - Use --use-cache to skip re-downloading and re-computing")
+    aprint("  - Embeddings + UMAP are cached automatically (instant re-runs)")
     aprint("  - Reduce --papers=N for faster generation")
     aprint("  - Limit --fields=cs,physics for focused exploration")
     aprint("")

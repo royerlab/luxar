@@ -31,6 +31,10 @@ architecture, trained on billions of protein sequences. It learns to:
 The model generates 1,024-dimensional embeddings that encode a protein's
 characteristics.
 
+Cite: Elnaggar et al. (2021), "ProtTrans: Toward Understanding the Language of
+Life Through Self-Supervised Learning", IEEE TPAMI. DOI: 10.1109/TPAMI.2021.3095381
+CAFA5 challenge: https://www.kaggle.com/competitions/cafa-5-protein-function-prediction
+
 GENE ONTOLOGY (GO) ANNOTATIONS:
 --------------------------------
 Proteins are annotated with GO terms describing:
@@ -86,7 +90,7 @@ import numpy as np
 from arbol import aprint, asection
 
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
-from luxar.demos import launch_viewer
+from luxar.demos import launch_viewer, stack_colorings
 from luxar.utils.paths import get_demos_output_dir
 
 # =============================================================================
@@ -345,10 +349,11 @@ def load_protein_embeddings(
             for func, count in sorted(func_counts.items(), key=lambda x: -x[1])[:5]:
                 aprint(f"  {func}: {count:,}")
 
-        # Sample if requested
+        # Sample if requested (seeded for reproducibility)
         if sample_size and sample_size < len(embeddings):
             aprint(f"Sampling {sample_size:,} proteins...")
-            indices = np.random.choice(len(embeddings), sample_size, replace=False)
+            rng = np.random.default_rng(0)
+            indices = rng.choice(len(embeddings), sample_size, replace=False)
             embeddings = embeddings[indices]
             protein_ids = [protein_ids[i] for i in indices]
             functions = [functions[i] for i in indices]
@@ -360,59 +365,46 @@ def load_protein_embeddings(
 
 
 def classify_go_term(go_id: str) -> str:
-    """Classify GO term ID into broad functional category.
+    """Classify a GO term ID into a broad functional category (coarse heuristic).
 
-    Uses GO term number ranges to classify:
-    - GO:0003xxx: Molecular Function
-    - GO:0008xxx: Biological Process
-    - GO:0005xxx: Cellular Component
+    IMPORTANT: GO accession numbers are sequential IDs and are **not** partitioned
+    by namespace — Molecular Function, Biological Process, and Cellular Component
+    terms are interleaved across the numeric range. So these ranges are only a
+    rough approximation for a splash of colour, not an authoritative MF/BP/CC
+    classification. In practice most CAFA5 proteins carry no GO match here and are
+    coloured by the k-means fallback instead (see ``load_protein_embeddings``).
+
+    Specific sub-ranges are tested before broad ones so every branch is reachable.
 
     Args:
         go_id: GO term ID (e.g., "GO:0003700")
 
     Returns:
-        Broad category name
+        Broad category name (a key of ``FUNCTION_COLORS``).
     """
     try:
-        # Extract numeric part
         go_num = int(go_id.split(":")[1])
-
-        # Molecular Functions (catalytic activities, binding)
-        if 3000 <= go_num < 6000:
-            if 3700 <= go_num < 3800:  # Transcription factors
-                return "regulator"
-            elif 4000 <= go_num < 5000:  # Enzyme activities
-                return "enzyme"
-            elif 5000 <= go_num < 6000:  # Binding
-                return "binding"
-            else:
-                return "catalytic"
-
-        # Biological Processes
-        elif 6000 <= go_num < 9000 or 40000 <= go_num < 100000:
-            if 6350 <= go_num < 6400:  # DNA/RNA processes
-                return "nucleic_acid"
-            elif 6800 <= go_num < 7000:  # Signal transduction
-                return "signaling"
-            elif 6900 <= go_num < 7000:  # Transport
-                return "transporter"
-            else:
-                return "binding"  # General biological process
-
-        # Cellular Components (location-based)
-        elif 5000 <= go_num < 6000 or 9000 <= go_num < 10000:
-            if 5886 == go_num:  # Membrane
-                return "membrane"
-            elif 5840 <= go_num < 5850:  # Ribosome
-                return "structural"
-            else:
-                return "membrane"
-
-        else:
-            return "other"
-
     except (ValueError, IndexError):
         return "other"
+
+    # Specific sub-ranges first (most specific wins), then the broad buckets.
+    if 3700 <= go_num < 3800:  # transcription-factor activity
+        return "regulator"
+    if 4000 <= go_num < 5000:  # enzyme / catalytic activities
+        return "enzyme"
+    if 5840 <= go_num < 5850:  # ribosome
+        return "structural"
+    if go_num == 5886:  # plasma membrane
+        return "membrane"
+    if 6350 <= go_num < 6400:  # DNA/RNA processes
+        return "nucleic_acid"
+    if 6800 <= go_num < 7000:  # signal transduction
+        return "signaling"
+    if 5000 <= go_num < 6000:  # other molecular-function binding
+        return "binding"
+    if 6000 <= go_num < 9000 or 40000 <= go_num < 100000:  # biological process
+        return "catalytic"
+    return "other"
 
 
 # =============================================================================
@@ -541,37 +533,64 @@ def generate_protein_landscape(
     with asection("Generating visualization"):
         n_proteins = len(positions)
 
-        # Colors by function
-        colors = np.zeros((n_proteins, 3), dtype=np.float32)
-        for i, func in enumerate(functions):
-            colors[i] = FUNCTION_COLORS.get(func, FUNCTION_COLORS["other"])
+        # Two switchable coloring views: GO-derived function annotation, and an
+        # unsupervised k-means clustering of the 3D landscape (data-driven regions
+        # — computed from the positions, which are available on the cached path
+        # too, unlike the raw embeddings).
+        function_colors = np.array(
+            [FUNCTION_COLORS.get(f, FUNCTION_COLORS["other"]) for f in functions],
+            dtype=np.float32,
+        )
 
-        # Count functions
-        func_counts = {}
+        n_clusters = min(10, n_proteins)
+        if n_clusters >= 2:
+            from sklearn.cluster import KMeans
+
+            cluster_ids = KMeans(
+                n_clusters=n_clusters, random_state=0, n_init=10
+            ).fit_predict(positions)
+        else:
+            cluster_ids = np.zeros(n_proteins, dtype=int)
+        cluster_colors = np.array(
+            [FUNCTION_COLORS[f"cluster_{int(c) % 10}"] for c in cluster_ids],
+            dtype=np.float32,
+        )
+
+        func_counts: dict[str, int] = {}
         for func in functions:
             func_counts[func] = func_counts.get(func, 0) + 1
-
-        aprint("✓ Proteins by function:")
+        aprint("✓ Proteins by function (also colorable by landscape cluster):")
         for func, count in sorted(func_counts.items(), key=lambda x: -x[1])[:10]:
             aprint(f"  {func}: {count:,}")
 
-        # Size: annotated proteins are 3x larger to stand out!
-        radii = np.zeros(n_proteins, dtype=np.float32)
-        for i, func in enumerate(functions):
-            if func == "other":
-                radii[i] = 0.007  # Small gray background points
-            else:
-                radii[i] = 0.02  # 3x larger for annotated proteins!
+        # Per-point radii: annotated proteins 3x larger; tiled across views below.
+        radii_pp = np.where(
+            np.array([f == "other" for f in functions]), 0.007, 0.02
+        ).astype(np.float32)
 
-        n_annotated = sum(1 for f in functions if f != "other")
-        aprint(
-            f"✓ Radii: {n_annotated:,} annotated (large), {n_proteins - n_annotated:,} unannotated (small)"
+        function_labels = [str(functions[i]) for i in range(n_proteins)]
+        cluster_view_labels = [f"Cluster {int(cluster_ids[i])}" for i in range(n_proteins)]
+
+        stacked = stack_colorings(
+            positions,
+            [
+                {"label": "Function", "colors": function_colors, "labels": function_labels},
+                {"label": "Cluster", "colors": cluster_colors, "labels": cluster_view_labels},
+            ],
         )
+        radii = np.tile(radii_pp, len(stacked.categories)).astype(np.float32)
 
     # Write to Zarr
     with asection("Writing to Zarr"):
         dims = Dimensions(
             [
+                Dimension(
+                    "coloring",
+                    unit="",
+                    categories=stacked.categories,
+                    display=False,
+                    description="Color scheme: GO function / landscape cluster",
+                ),
                 Dimension("x", unit="UMAP", display=True),
                 Dimension("y", unit="UMAP", display=True),
                 Dimension("z", unit="UMAP", display=True),
@@ -581,20 +600,15 @@ def generate_protein_landscape(
         with LuxarZarrCompiler(output_path) as compiler:
             scene = compiler.create_scene(dimensions=dims)
 
-            sharpness = np.full(n_proteins, 0.55, dtype=np.float32)
-
-            # Hover labels: function category for each protein
-            protein_labels = [f"{functions[i]}" for i in range(n_proteins)]
-
             scene.add_points(
                 "proteins",
-                positions=positions,
-                colors=colors,
+                positions=stacked.positions,
+                colors=stacked.colors,
                 radii=radii,
-                sharpness=sharpness,
+                sharpness=np.full(len(stacked.positions), 0.55, dtype=np.float32),
                 opacity=0.9,
                 intensity=0.124,
-                labels=protein_labels,
+                labels=stacked.labels,
             )
 
             # --- Overlays ---
@@ -607,24 +621,32 @@ def generate_protein_landscape(
                 blend_mode="difference",
             )
 
-            # Function color legend
-            legend_items = [
-                ("Enzyme", "#ff8033"),
-                ("Transporter", "#4db3ff"),
-                ("Receptor", "#e64de6"),
-                ("Structural", "#80e680"),
-                ("Regulator", "#ffcc33"),
-                ("Binding", "#994dff"),
-                ("Signaling", "#ff6666"),
-                ("Membrane", "#4de6e6"),
-            ]
+            # Function color legend \u2014 built from the categories ACTUALLY present
+            # (GO-derived categories, or the k-means ``cluster_*`` fallback), each
+            # mapped to its real FUNCTION_COLORS colour. This never advertises
+            # labels that aren't in the scene (the previous hardcoded legend did).
+            def _rgb_to_hex(rgb: np.ndarray) -> str:
+                r, g, b = (int(round(float(c) * 255)) for c in rgb[:3])
+                return f"#{r:02x}{g:02x}{b:02x}"
+
+            def _pretty(name: str) -> str:
+                if name.startswith("cluster_"):
+                    return f"Cluster {name.split('_')[1]}"
+                return name.replace("_", " ").title()
+
+            legend_cats = [
+                c
+                for c, _ in sorted(func_counts.items(), key=lambda x: -x[1])
+                if c != "other"
+            ][:10]
             legend_html = (
                 '<div style="font-size:1.3vh;line-height:1.7;background:rgba(0,0,0,0.5);padding:0.5vh;border-radius:3px">'
                 '<div style="font-weight:bold;color:#ccc;margin-bottom:0.3vh">Function</div>'
             )
-            for name, color in legend_items:
+            for cat in legend_cats:
+                color = _rgb_to_hex(FUNCTION_COLORS.get(cat, FUNCTION_COLORS["other"]))
                 legend_html += (
-                    f'<div><span style="color:{color}">\u2588</span> {name}</div>'
+                    f'<div><span style="color:{color}">\u2588</span> {_pretty(cat)}</div>'
                 )
             legend_html += "</div>"
 
@@ -632,10 +654,35 @@ def generate_protein_landscape(
                 legend_html,
                 position=(0.02, 0.97),
                 anchor="bottom-left",
+                visible_range={"coloring": 0},
+                transition="fade",
+                transition_duration=0.3,
+            )
+
+            # Landscape-cluster legend (view 1).
+            cluster_present = sorted(set(int(c) for c in cluster_ids))
+            cluster_legend = (
+                '<div style="font-size:1.3vh;line-height:1.6;background:rgba(0,0,0,0.5);'
+                'padding:0.5vh;border-radius:3px">'
+                '<div style="font-weight:bold;color:#ccc;margin-bottom:0.3vh">Landscape cluster</div>'
+            )
+            for c in cluster_present:
+                cluster_legend += (
+                    f'<div><span style="color:{_rgb_to_hex(FUNCTION_COLORS[f"cluster_{c % 10}"])}">'
+                    f"█</span> Cluster {c}</div>"
+                )
+            cluster_legend += "</div>"
+            scene.add_html(
+                cluster_legend,
+                position=(0.02, 0.97),
+                anchor="bottom-left",
+                visible_range={"coloring": 1},
+                transition="fade",
+                transition_duration=0.3,
             )
 
             scene.add_text(
-                f"{n_proteins:,} proteins • ProtT5 embeddings • 3D UMAP • Zhou et al. 2024",
+                f"{n_proteins:,} proteins • ProtT5 embeddings • 3D UMAP • Elnaggar et al. 2021",
                 position=(0.98, 0.97),
                 font_size=0.012,
                 anchor="bottom-right",

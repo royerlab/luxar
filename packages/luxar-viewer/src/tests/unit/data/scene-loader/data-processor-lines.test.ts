@@ -158,6 +158,41 @@ describe('processLinesData', () => {
     expect(result).toBeNull();
   });
 
+  it('stages an empty commit (segmentCount 0) for the canonical empty payload', async () => {
+    // Regression: an empty payload (loader found no data at the current
+    // slice of a non-displayed dim) must stage a REAL commit with
+    // segmentCount 0 — that commit is what clears the previous slice's
+    // geometry. Pre-fix, projection rejected the empty payload and the
+    // throw left stale geometry rendered forever (Lines accumulated
+    // across scrubs instead of swapping like Points/GSplats).
+    const root = new THREE.Group();
+    root.add(makeMesh('/lines'));
+    const empty: LoadedLinesData = {
+      positions: new Float32Array(0),
+      segments: new Uint32Array(0),
+      widths: new Float32Array(0),
+      colors: null,
+      sharpness: null,
+      segmentCount: 0,
+      vertexCount: 0,
+      ndim: 4,
+    };
+    mockBuildInstanceBuffers.mockReturnValue(makeDispatcherLinesResult(0));
+
+    const result = await processLinesData(
+      '/lines',
+      empty,
+      { displayDims: [0, 1, 2], slicePosition: [0, 0, 0, 1], tolerance: [0, 0, 0, 0] },
+      root,
+      1
+    );
+
+    expect(result).not.toBeNull();
+    expect(result && !result.noop && result.processed.segmentCount).toBe(0);
+    // Empty data (0 ≤ worker threshold) runs the in-process dispatcher.
+    expect(mockBuildInstanceBuffers).toHaveBeenCalledTimes(1);
+  });
+
   it('uses the in-process dispatcher for small datasets', async () => {
     const root = new THREE.Group();
     root.add(makeMesh('/lines'));

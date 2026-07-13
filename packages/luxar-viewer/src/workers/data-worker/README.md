@@ -17,12 +17,11 @@ scratch-buffer growth, while the entry stays a thin Comlink surface.
 
 ```
 data-worker/
-├── state.ts         — WasmCtx { wasm, visibilityMaskBuffer }
+├── state.ts         — WasmCtx { wasm }
 │                      + the shared `state` instance + requireWasm() helper
 │                      that throws NOT_INITIALIZED_MSG before any task runs.
 ├── initialize.ts    — initialize(ctx): loads WASM via initWasm()
-│                      (or the TypeScript fallback), pre-allocates the
-│                      100K-element visibility scratch buffer, throws if
+│                      (or the TypeScript fallback), throws if
 │                      WebAssembly itself is unavailable.
 ├── types.ts         — ProjectionViewState (narrow ViewState subset the
 │                      worker actually consumes). Re-exports
@@ -36,10 +35,6 @@ data-worker/
 │                      Used by every task before the first WASM call —
 │                      a short buffer would otherwise let WASM read past
 │                      the end of caller-supplied memory.
-├── spatial-index/   — One task: querySpatialIndex (chunk-AABB ∩ nD slice).
-├── visibility/      — Three tasks: computeNDVisibilityPoints / Lines /
-│                      GSplats. Share the pooled visibilityMaskBuffer
-│                      from state.ts (grown as needed).
 ├── projection/      — Two tasks: projectLinesTo3D / projectGSplatsTo3D
 │                      (nD → 3D). Points project on the main thread
 │                      (WASM-accelerated, data/points/projection.ts), so
@@ -61,12 +56,12 @@ a one-line forward into the matching task here:
 // ../data-worker.ts (illustrative — see the file for the full surface)
 import { state } from './data-worker/state';
 import { initialize as initializeImpl } from './data-worker/initialize';
-import { querySpatialIndex as querySpatialIndexImpl } from './data-worker/spatial-index/query';
+import { projectLinesTo3D as projectLinesTo3DImpl } from './data-worker/projection/lines';
 // ...
 
 const workerAPI = {
   initialize: () => initializeImpl(state),
-  querySpatialIndex: (...args) => querySpatialIndexImpl(state, ...args),
+  projectLinesTo3D: (p) => projectLinesTo3DImpl(state, p),
   // ...
 };
 Comlink.expose(workerAPI);
@@ -85,9 +80,6 @@ across calls so:
 
 - `initialize.ts` writes `ctx.wasm` once; every subsequent task reads
   it via `requireWasm(ctx)` and gets a non-null narrowed binding.
-- The three `visibility/*` tasks share `ctx.visibilityMaskBuffer` —
-  initialize allocates 100K elements, each call grows it in place when
-  the input count exceeds the current capacity.
 - Tasks must not mutate `ctx` beyond the documented fields. Anything
   else belongs in a per-task local.
 
@@ -98,10 +90,6 @@ worker.
 
 ## Subpackages
 
-- [spatial-index](./spatial-index/) — chunk-AABB query for the loader's
-  visibility pass.
-- [visibility](./visibility/) — per-geometry hypersphere-intersection
-  kernels (Points, Lines, GSplats) sharing the pooled mask buffer.
 - [projection](./projection/) — Lines/GSplats nD → 3D extraction (worker
   or in-process); Points project on the main thread (WASM-accelerated) in
   `data/points/projection.ts`.

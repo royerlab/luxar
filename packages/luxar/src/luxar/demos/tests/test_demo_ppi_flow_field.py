@@ -1,52 +1,26 @@
 """Smoke tests for pure helpers in demo_ppi_flow_field.
 
-These tests cover deterministic numerical helpers that don't touch the
-network, the cache, or matplotlib. Network-fetching code paths
-(``ensure_data``) are intentionally not exercised here.
-
-The demo file is not importable as ``luxar.demos.demo_ppi_flow_field``
-because ``luxar.__init__`` aliases ``luxar.demos`` to ``luxar.utils.demos``
-for backwards compatibility (see luxar/__init__.py:120). Demos are
-designed to be run as standalone scripts; here we import the module
-directly from its file path so the helpers can be unit-tested without
-disturbing the alias.
+These tests cover deterministic numerical helpers that don't touch the network,
+the cache, or matplotlib. Network-fetching code paths (``ensure_data``) are
+intentionally not exercised here. The heavy graph deps (networkx/umap/scipy) are
+imported lazily inside the demo's functions, so importing the module only needs
+pandas — hence the ``importorskip`` guard before the demo import.
 """
 
 from __future__ import annotations
-
-import importlib.util
-import sys
-from pathlib import Path
 
 import numpy as np
 import pytest
 
 pd = pytest.importorskip("pandas")
 
-_DEMO_PATH = Path(__file__).resolve().parents[1] / "demo_ppi_flow_field.py"
-
-
-def _load_demo_module():
-    name = "_luxar_demo_ppi_flow_field_for_tests"
-    spec = importlib.util.spec_from_file_location(name, _DEMO_PATH)
-    if spec is None or spec.loader is None:
-        pytest.skip(f"Could not locate demo at {_DEMO_PATH}")
-    module = importlib.util.module_from_spec(spec)
-    # Register before exec so @dataclass can resolve the module by __module__.
-    sys.modules[name] = module
-    spec.loader.exec_module(module)
-    return module
-
-
-_demo = _load_demo_module()
-_grid_points_for_flat_indices = _demo._grid_points_for_flat_indices
-array_hash = _demo.array_hash
-network_hash = _demo.network_hash
-
-# Field helpers were moved to luxar.utils.fields in the hardening pass;
-# keep a thin alias here so the existing test bodies stay untouched.
-# Imported below the late `_load_demo_module()` call (E402 is intentional
-# here — the demo file must be loaded by path before its symbols are used).
+# The ``luxar.demos`` package is now importable directly (the sys.modules alias
+# that used to shadow it was removed), so we import the demo's helpers normally.
+from luxar.demos.demo_ppi_flow_field import (  # noqa: E402
+    _grid_points_for_flat_indices,
+    array_hash,
+    network_hash,
+)
 from luxar.utils.fields import FlowField, cubic_bounds, trilinear_vector  # noqa: E402
 
 compute_cubic_bounds = cubic_bounds

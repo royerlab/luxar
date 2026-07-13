@@ -35,7 +35,7 @@ import pandas as pd
 from arbol import aprint, asection
 
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
-from luxar.demos import launch_viewer
+from luxar.demos import launch_viewer, require_local_data
 from luxar.utils._umap_utils import (
     attribute_to_color,
     build_legend_html,
@@ -59,7 +59,7 @@ def load_human_umap_data() -> tuple[np.ndarray, dict, dict]:
         - category_maps: dict of attribute name -> list of category labels
     """
     with asection("Loading Human 3D UMAP Data"):
-        data_path = get_data_dir() / "3d_umap_coords_human.parquet"
+        data_path = require_local_data(get_data_dir() / "3d_umap_coords_human.parquet")
         aprint(f"Loading from {data_path}...")
 
         df = pd.read_parquet(data_path)
@@ -216,6 +216,11 @@ def create_human_scene(
                     per_cell_labels.append("\n".join(parts))
             labels = per_cell_labels * len(available_attrs) if per_cell_labels else None
 
+            # Substitutive Points LOD: ~1M peaks × several attribute views is a
+            # large cloud, so coarse levels replace it with fewer, larger merged
+            # splats when the embedding is small on screen. Auto coarsen_dims
+            # coarsens x/y/z and groups by the categorical `attribute` barrier so
+            # coarse splats stay pure per view (same wiring as the census demo).
             scene.add_points(
                 "Cells",
                 positions_combined,
@@ -225,6 +230,7 @@ def create_human_scene(
                 opacity=0.8,
                 intensity=0.11,
                 labels=labels,
+                substitutive_lod=dict(compression_factor=8, levels=3, device="auto"),
             )
 
             # --- Overlays ---

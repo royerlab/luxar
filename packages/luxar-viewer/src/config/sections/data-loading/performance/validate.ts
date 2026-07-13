@@ -13,12 +13,6 @@ export function validateDataLoadingPerformance(
   // Worker timeouts: 0 disables; otherwise must be a finite positive number
   // (we don't restrict the upper bound — long-running fits can legitimately
   // exceed any "sane" ceiling).
-  const visTimeout = performance.workerVisibilityTimeoutMs;
-  if (!Number.isFinite(visTimeout) || visTimeout < 0) {
-    errors.push(
-      `Invalid workerVisibilityTimeoutMs: ${visTimeout} (must be ≥ 0; 0 disables timeout)`
-    );
-  }
   const projTimeout = performance.workerProjectionTimeoutMs;
   if (!Number.isFinite(projTimeout) || projTimeout < 0) {
     errors.push(

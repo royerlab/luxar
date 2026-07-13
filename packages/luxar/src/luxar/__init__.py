@@ -105,16 +105,19 @@ from . import validation as validation_module
 from .core import dimensions, node, points, scene
 from .io import compiler, writer
 from .utils import array as array_utils
-from .utils import demos
 from .validation import base as validation
 
 # Module aliases for import paths that real consumers rely on (verified live:
-# demos is dynamically imported by demo scripts; dimensions/compiler/transforms/
-# config have in-repo importers). Dead aliases with zero importers — array_utils,
+# dimensions/compiler/transforms/config have in-repo importers). The
+# ``luxar.demos`` alias was removed: it shadowed the real ``luxar/demos/``
+# package (so ``import luxar.demos.demo_x`` failed and demos/tests fell back to
+# importlib file-path loading). ``luxar.demos`` now resolves to the real package,
+# which re-exports the helper API (launch_viewer, parse_demo_flags, …) so
+# ``from luxar.demos import launch_viewer`` keeps working while sibling demos
+# import each other normally. Dead aliases with zero importers — array_utils,
 # node, points, scene, writer, types, _io — were removed (no back-compat burden).
 sys.modules["luxar.dimensions"] = dimensions
 sys.modules["luxar.compiler"] = compiler
-sys.modules["luxar.demos"] = demos
 sys.modules["luxar.transforms"] = transforms
 sys.modules["luxar.config"] = typing_utils.config
 

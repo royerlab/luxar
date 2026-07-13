@@ -131,6 +131,7 @@ import numpy as np
 from arbol import Arbol, aprint, asection
 
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
+from luxar.core.viewer_config import ViewerConfig
 from luxar.encoding import EncodingMode
 from luxar.gsplats.gsplat_data import GSplatData
 from luxar.utils.demos import (
@@ -384,7 +385,12 @@ def create_luxar_scene(gsplats_list, output_path=None):
         with LuxarZarrCompiler(
             output_path, encoding_mode=EncodingMode.PRECISION
         ) as compiler:
-            scene = compiler.create_scene(dimensions=dims)
+            # Neutral tone-mapping keeps the per-channel colormap hues faithful
+            # (the viewer's default ACES shifts scientific LUT colors).
+            scene = compiler.create_scene(
+                dimensions=dims,
+                viewer_config=ViewerConfig(tone_mapping="Neutral"),
+            )
 
             scene.attrs["title"] = "GSplats: 3D Kidney Multi-Channel (Layers panel)"
             scene.attrs["description"] = """
