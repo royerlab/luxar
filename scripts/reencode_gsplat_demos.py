@@ -26,7 +26,7 @@ NOT touched (verify first). Pass ``--apply`` to overwrite the committed files.
 
 Usage:
     hatch run python scripts/reencode_gsplat_demos.py [--only NAME ...] \
-        [--staging DIR] [--recipe stream|overview] [--apply] [--psnr] [--shape Z,Y,X]
+        [--staging DIR] [--recipe stream|overview] [--apply]
 """
 
 from __future__ import annotations
@@ -69,7 +69,8 @@ def find_store_dir(extract_root: Path) -> Path | None:
 def read_root_attrs(store: Path) -> dict:
     zattrs = store / ".zattrs"
     if zattrs.exists():
-        return json.loads(zattrs.read_text())
+        data: dict = json.loads(zattrs.read_text())
+        return data
     return {}
 
 
@@ -179,7 +180,7 @@ def process_bundle_zip(src_zip: Path, out_zip: Path, recipe: str, tmp: Path) -> 
     }
 
 
-def is_bundle(src_zip: Path, tmp: Path) -> bool:
+def is_bundle(src_zip: Path) -> bool:
     """A bundle contains inner `.gsplats.zarr.zip` members (zips within zip)."""
     with zipfile.ZipFile(src_zip) as zf:
         for name in zf.namelist():
@@ -203,13 +204,18 @@ def main() -> int:
     staging = Path(args.staging)
     staging.mkdir(parents=True, exist_ok=True)
 
+    # Scratch base for per-dataset temp dirs — ensured to exist regardless of
+    # where --staging points (TemporaryDirectory(dir=...) needs the parent).
+    work_base = REPO / "delme/gsplat_upgrade"
+    work_base.mkdir(parents=True, exist_ok=True)
+
     zips = sorted(DATA_DIR.glob("gsplats_*/*.zip"))
     if args.only:
         keep = set(args.only)
         zips = [z for z in zips if z.parent.name in keep]
 
     rows: list[tuple[str, dict]] = []
-    with tempfile.TemporaryDirectory(dir=str(REPO / "delme/gsplat_upgrade")) as td:
+    with tempfile.TemporaryDirectory(dir=str(work_base)) as td:
         tmp = Path(td)
         for src in zips:
             rel = src.relative_to(DATA_DIR)
@@ -219,7 +225,7 @@ def main() -> int:
                 continue
             out = (src if args.apply else staging / rel)
             try:
-                if is_bundle(src, tmp):
+                if is_bundle(src):
                     rep = process_bundle_zip(src, out, args.recipe, tmp)
                 else:
                     rep = process_single_zip(src, out, args.recipe, tmp)
