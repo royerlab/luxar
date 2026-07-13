@@ -8,8 +8,8 @@
  *   1. Find the THREE.Points by name in the root group.
  *   2. Update `userData.visiblePointCount` and log on empty data.
  *   3. Write the new attribute data into GPU buffers — either via the
- *      GPU buffer pool (zero allocations on reuse) or the in-place
- *      same-size path / dispose+create different-size path.
+ *      GPU buffer pool (zero allocations on reuse) or, with the pool
+ *      disabled, dispose+recreate via NodeFactory.
  *
  * **Why is there no `data-processor-points.ts`?** Lines and gsplats
  * each have their own `data-processor-{lines,gsplats}.ts` running a
@@ -33,10 +33,6 @@
 
 import * as THREE from 'three';
 import type { LoadedPointsData } from '../../data-loader-types';
-import {
-  widenToFloat32,
-  writeInterleavedAttribute,
-} from '../../../rendering/interleaved-attributes';
 import { isPointsUserData } from '../../../types/points';
 import { stampLadderComplete, stampLoadedViewVersion } from './stamp-view-version';
 import { isAlreadyCommitted, type CommittedDataUserData } from './noop-commit';
@@ -58,9 +54,8 @@ export { syncPointMaterialWithGeometry };
  *   - early return if the rootGroup or the named THREE.Points is gone,
  *   - log + zero `visiblePointCount` on an empty-data frame,
  *   - GPU-buffer-pool path (zero alloc on reuse) when the pool is set,
- *   - same-size in-place attribute update when count matches,
- *   - dispose + recreate via `nodeFactory.createPointsGeometry` when
- *     the count differs.
+ *   - dispose + recreate via `nodeFactory.createPointsGeometry`
+ *     otherwise (the factory owns all dtype/bounds logic).
  */
 export function commitPointsGeometry(
   path: string,
@@ -153,97 +148,29 @@ export function commitPointsGeometry(
       return;
     }
 
-    // Pool disabled: try in-place reuse if the count matches; otherwise
-    // dispose and recreate. Recreation handles all the dtype logic via
-    // NodeFactory. Point attributes use a* names and
-    // InstancedBufferAttribute storage.
+    // Pool disabled: dispose and recreate unconditionally. Recreation
+    // handles all the dtype logic (Uint8/Uint16 `normalized:true`,
+    // Float16 widening, bounds/footprint, radiusScale userData) via
+    // NodeFactory — the single owner of the plain
+    // InstancedBufferAttribute layout points geometries use outside
+    // the pool. (A historical same-count in-place branch assumed the
+    // pool's interleaved layout and threw against factory-built
+    // geometry; correctness over reuse on this non-default fallback.)
     const oldGeometry = points.geometry;
-    // Post-interleaving, the per-instance attributes on a points
-    // geometry are `InterleavedBufferAttribute` views sharing one
-    // `InstancedInterleavedBuffer`. `getAttribute(...).count` returns
-    // the per-instance count from the underlying buffer's
-    // `stride * arrayLength`, which is what we want either way.
-    const oldCenterAttr = oldGeometry?.getAttribute(
-      'aCenter'
-    ) as THREE.InterleavedBufferAttribute | null;
-    const oldCount = oldCenterAttr ? oldCenterAttr.count : 0;
-
-    if (oldCount === data.pointCount && data.pointCount > 0) {
-      // Recover the shared interleaved buffer from any view; every
-      // per-instance attribute on a pooled points geometry points at
-      // the same buffer.
-      const buffer = oldCenterAttr!.data as THREE.InstancedInterleavedBuffer;
-      const positionsF32 =
-        data.positions instanceof Float32Array
-          ? data.positions
-          : widenToFloat32(data.positions as ArrayLike<number>);
-      writeInterleavedAttribute(buffer, oldCenterAttr!.offset, 3, positionsF32, data.pointCount);
-
-      const colorAttr = oldGeometry.getAttribute('aColor') as
-        | THREE.InterleavedBufferAttribute
-        | undefined;
-      if (colorAttr && data.colors) {
-        const widened =
-          data.colors instanceof Float32Array
-            ? data.colors
-            : widenToFloat32(data.colors as ArrayLike<number>, 255);
-        writeInterleavedAttribute(buffer, colorAttr.offset, 3, widened, data.pointCount);
-      }
-
-      const radiiAttr = oldGeometry.getAttribute('aRadius') as
-        | THREE.InterleavedBufferAttribute
-        | undefined;
-      if (radiiAttr && data.radii) {
-        const widened =
-          data.radii instanceof Float32Array
-            ? data.radii
-            : widenToFloat32(data.radii as ArrayLike<number>, 255);
-        writeInterleavedAttribute(buffer, radiiAttr.offset, 1, widened, data.pointCount);
-      }
-
-      const sharpAttr = oldGeometry.getAttribute('aSharpness') as
-        | THREE.InterleavedBufferAttribute
-        | undefined;
-      if (sharpAttr && data.sharpness) {
-        const widened =
-          data.sharpness instanceof Float32Array
-            ? data.sharpness
-            : widenToFloat32(data.sharpness as ArrayLike<number>, 255);
-        writeInterleavedAttribute(buffer, sharpAttr.offset, 1, widened, data.pointCount);
-      }
-
-      // The 'position' attribute holds the unit quad template, not the
-      // per-point world positions — so THREE's computeBoundingBox()/
-      // Sphere() would compute the quad's [-1,1]² bounds, not the
-      // actual scene extent. Source the bounds from the loader metadata
-      // instead (same pattern as the pool-enabled path above).
-      if (data.metadata.bounds) {
-        oldGeometry.boundingBox = data.metadata.bounds.clone();
-        if (footprintRadius > 0) oldGeometry.boundingBox.expandByScalar(footprintRadius);
-        oldGeometry.boundingSphere = new THREE.Sphere();
-        oldGeometry.boundingBox.getBoundingSphere(oldGeometry.boundingSphere);
-      }
-      // Same-size in-place update: no setAttribute calls happened, so
-      // Three's _maxInstanceCount cache does not need invalidation.
-      const instanced = oldGeometry as THREE.InstancedBufferGeometry;
-      instanced.instanceCount = data.pointCount;
-      instanced.setDrawRange(0, 6);
-
-      // in-place reuse — re-sync material scales in case dtype-
-      // aware geometry userData changed since the last commit.
-      syncPointMaterialWithGeometry(points);
-    } else {
-      if (oldGeometry) {
-        oldGeometry.dispose();
-      }
-      // Pass max_radius so the rebuilt geometry bakes the correct
-      // footprint into boundingBox (and the right dtype scale); omitting
-      // it would default maxRadius=1.0 and clip large radii.
-      points.geometry = nodeFactory.createPointsGeometry(data, maxRadius);
-      // dispose+recreate path picks up new dtype-aware scales from
-      // the freshly built geometry's userData.
-      syncPointMaterialWithGeometry(points);
+    if (oldGeometry) {
+      oldGeometry.dispose();
     }
+    // Pass max_radius so the rebuilt geometry bakes the correct
+    // footprint into boundingBox (and the right dtype scale); omitting
+    // it would default maxRadius=1.0 and clip large radii.
+    points.geometry = nodeFactory.createPointsGeometry(data, maxRadius);
+    // dispose+recreate path picks up new dtype-aware scales from
+    // the freshly built geometry's userData.
+    syncPointMaterialWithGeometry(points);
+    // Fresh GPU buffers replaced the geometry: evict Three's cached
+    // RenderObject (stale `vertexBuffers` on the WebGPU backend) —
+    // same contract as the pool path's attributesRebuilt branch.
+    invalidateRenderObjectFor(points);
     // Record the committed data reference (see the pool path above).
     (points.userData as CommittedDataUserData).committedData = data;
   } finally {

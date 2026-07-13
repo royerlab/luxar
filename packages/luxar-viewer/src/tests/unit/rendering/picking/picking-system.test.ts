@@ -75,12 +75,31 @@ describe('computePickBufferSize', () => {
     expect(computePickBufferSize(1920, 1080)).toEqual({ w: 960, h: 540 });
   });
 
-  it('clamps both axes to MAX_PICK_BUFFER_DIM', () => {
-    // 4K wide → /2 = 1920 → clamp to MAX (1024)
+  it('caps the larger axis to MAX_PICK_BUFFER_DIM and scales the other to preserve aspect', () => {
+    // 4K → half-res 1920×1080 → uniform scale 1024/1920 → 1024×576.
+    // Aspect preservation is load-bearing: the gsplat pick shader maps
+    // view space to pixels with uFx == uFy (square-pixel assumption), so
+    // a pick buffer with a different aspect than the camera displaces
+    // gsplat picks horizontally (points/lines go through the
+    // aspect-aware projectionMatrix and were unaffected).
     expect(computePickBufferSize(3840, 2160)).toEqual({
       w: MAX_PICK_BUFFER_DIM,
-      h: MAX_PICK_BUFFER_DIM,
+      h: 576,
     });
+  });
+
+  it('preserves the drawing-buffer aspect ratio when capped', () => {
+    const cases: Array<[number, number]> = [
+      [3840, 2160], // 4K 16:9
+      [3024, 1890], // MacBook Retina fullscreen 16:10
+      [5120, 2880], // 5K
+    ];
+    for (const [w, h] of cases) {
+      const pick = computePickBufferSize(w, h);
+      expect(Math.max(pick.w, pick.h)).toBeLessThanOrEqual(MAX_PICK_BUFFER_DIM);
+      // Within 1% of the true aspect (integer flooring is the only error source).
+      expect(pick.w / pick.h).toBeCloseTo(w / h, 1);
+    }
   });
 
   it('floors odd input to integer pixels', () => {
@@ -92,9 +111,10 @@ describe('computePickBufferSize', () => {
     expect(computePickBufferSize(1, 1)).toEqual({ w: 1, h: 1 });
   });
 
-  it('handles asymmetric clamping (one axis under cap, other over)', () => {
+  it('scales BOTH axes uniformly when only one exceeds the cap (tall input)', () => {
+    // half-res 750×2500 → uniform scale 1024/2500 = 0.4096 → 307×1024.
     expect(computePickBufferSize(1500, 5000)).toEqual({
-      w: 750,
+      w: 307,
       h: MAX_PICK_BUFFER_DIM,
     });
   });
@@ -103,11 +123,11 @@ describe('computePickBufferSize', () => {
   // keep computePickBufferSize coverage in one canonical location (the
   // function lives next to PickingSystem; picking-materials.test.ts now
   // imports it transitively for the boundary case below).
-  it('caps only the axis that exceeds the limit (5120x1440 → asymmetric)', () => {
-    // 5120 / 2 = 2560 → capped; 1440 / 2 = 720 → kept
+  it('scales BOTH axes uniformly when only one exceeds the cap (ultrawide input)', () => {
+    // half-res 2560×720 → uniform scale 1024/2560 = 0.4 → 1024×288.
     expect(computePickBufferSize(5120, 1440)).toEqual({
       w: MAX_PICK_BUFFER_DIM,
-      h: 720,
+      h: 288,
     });
   });
 

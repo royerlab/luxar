@@ -95,7 +95,11 @@ export function commitGSplatsGeometry(
       // rebuilt against the new buffer next draw.
       if (attributesRebuilt) invalidateRenderObjectFor(mesh);
     } else {
-      updateInstancedGSplatsMesh(mesh, {
+      // Non-pool path: a size change rebinds a fresh
+      // InstancedInterleavedBuffer — evict Three's cached RenderObject
+      // exactly like the pool branch above (stale `vertexBuffers` on
+      // the WebGPU backend otherwise).
+      const rebuilt = updateInstancedGSplatsMesh(mesh, {
         centers: processed.centers3D,
         cholesky01,
         cholesky23,
@@ -104,6 +108,7 @@ export function commitGSplatsGeometry(
         colors: processed.colors,
         splatCount: processed.splatCount,
       });
+      if (rebuilt) invalidateRenderObjectFor(mesh);
     }
 
     if (mesh.userData) {
