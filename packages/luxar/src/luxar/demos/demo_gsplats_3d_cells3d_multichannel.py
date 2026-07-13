@@ -99,6 +99,10 @@ CHANNELS = [
     {"index": 1, "name": "Nuclei", "colormap": "bop_blue"},
 ]
 
+# Per-channel brightness multiplier applied before writing (raise for a
+# brighter render; additive blending across channels can saturate above ~0.6).
+LAYER_INTENSITY = 0.4
+
 # Cache directory
 CACHE_DIR = Path.home() / ".cache" / "luxar" / "gsplats_cells3d"
 
@@ -308,7 +312,7 @@ Controls:
                 with asection(f"Adding {ch_name} (layer, {colormap})"):
                     # Transform: shared centroid so channels stay aligned
                     gsplats = gsplats.translate(-shared_centroid)
-                    gsplats = gsplats.scale_intensity(0.1)
+                    gsplats = gsplats.scale_intensity(LAYER_INTENSITY)
 
                     n_splats = len(gsplats.amplitudes)
 
