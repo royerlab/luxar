@@ -102,11 +102,18 @@ NO_SERVE = FLAGS["no_serve"]
 SERVE_ONLY = FLAGS["serve_only"]
 RECOMPUTE = FLAGS["recompute"]
 
-for _arg in sys.argv:
-    if _arg.startswith("--target-size="):
-        TARGET_SIZE = int(_arg.split("=", 1)[1])
-    if _arg.startswith("--max-splats="):
-        MAX_SPLATS = int(_arg.split("=", 1)[1])
+def _int_arg(argv: list[str], flag: str, default: int) -> int:
+    """Parse an int CLI flag in either ``--flag value`` or ``--flag=value`` form."""
+    for i, _arg in enumerate(argv):
+        if _arg == flag and i + 1 < len(argv):
+            return int(argv[i + 1])
+        if _arg.startswith(flag + "="):
+            return int(_arg.split("=", 1)[1])
+    return default
+
+
+TARGET_SIZE = _int_arg(sys.argv, "--target-size", TARGET_SIZE)
+MAX_SPLATS = _int_arg(sys.argv, "--max-splats", MAX_SPLATS)
 
 Arbol.max_depth = 5
 DEVICE = None
