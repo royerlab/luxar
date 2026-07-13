@@ -451,7 +451,12 @@ export class MaterialManager {
 
   /** Dispose all cached materials. */
   dispose(): void {
-    const materials = [...this.registeredMaterials];
+    // Union of both registries: a colormap-clone ORIGINAL is detached
+    // from registeredMaterials (detachFromGlobalUpdates) while staying
+    // in the LRU cache; if it later gets evicted, handleEviction parks
+    // it in ownedMaterials only — registeredMaterials alone would miss
+    // it and leak its GPU program at teardown.
+    const materials = new Set([...this.registeredMaterials, ...this.ownedMaterials]);
     this.registeredMaterials.clear();
     this.ownedMaterials.clear();
     this.pointMaterialCache.clear();

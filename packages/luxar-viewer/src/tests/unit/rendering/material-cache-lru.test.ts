@@ -113,6 +113,28 @@ describe('MaterialManager LRU eviction', () => {
     expect(aDisposed).toBe(true);
   });
 
+  it('disposes an evicted-while-DETACHED material at manager dispose()', () => {
+    // A colormap-clone ORIGINAL is detached from registeredMaterials
+    // (detachFromGlobalUpdates) while staying in the LRU cache. When it
+    // then gets evicted, handleEviction parks it in ownedMaterials only —
+    // dispose() must cover that set too or the original's GPU program
+    // leaks at teardown.
+    config.dataLoading.performance.materialCacheMaxSize = 1;
+    const mm = new MaterialManager();
+    const a = mm.getPointMaterial(baseProps({ opacity: 0.1 }));
+    mm.detachFromGlobalUpdates(a);
+    let aDisposed = false;
+    const origDispose = a.dispose.bind(a);
+    a.dispose = () => {
+      aDisposed = true;
+      origDispose();
+    };
+    mm.getPointMaterial(baseProps({ opacity: 0.2 })); // evicts detached A
+    expect(aDisposed).toBe(false);
+    mm.dispose();
+    expect(aDisposed).toBe(true);
+  });
+
   it('keeps the evicted material registered for camera updates; cache stays bounded', () => {
     config.dataLoading.performance.materialCacheMaxSize = 1;
     const mm = new MaterialManager();
@@ -128,8 +150,8 @@ describe('MaterialManager LRU eviction', () => {
     // updates — including nearCull.
     mm.updateCameraParams(0.9, new THREE.Vector2(640, 480), false, 0.33);
     expect(
-      (a as unknown as { uniforms: { uResolution: { value: THREE.Vector2 } } }).uniforms
-        .uResolution.value.x
+      (a as unknown as { uniforms: { uResolution: { value: THREE.Vector2 } } }).uniforms.uResolution
+        .value.x
     ).toBe(640);
   });
 
