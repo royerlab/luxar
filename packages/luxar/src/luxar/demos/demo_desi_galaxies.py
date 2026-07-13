@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""DESI DR1 — The Cosmic Web in 3D (~14M galaxies & quasars)
+"""DESI DR1 — The Cosmic Web in 3D (~9.75M galaxies & quasars)
 
 Renders the large-scale structure of the Universe as a point cloud built from
 the Dark Energy Spectroscopic Instrument's first data release (DESI DR1). Each
@@ -315,14 +315,23 @@ def load_or_build() -> tuple[np.ndarray, np.ndarray, np.ndarray]:
 
 
 def extract_shipped_scene(zip_path: Path, output_path: Path) -> None:
-    """Unzip the precomputed built scene into ``output_path``."""
+    """Unzip the precomputed built scene into ``output_path``.
+
+    Extracts into a sibling ``.part`` dir and renames into place atomically, so
+    an interrupted extraction never leaves a half-populated ``output_path`` that
+    a later run would mistake for a complete cached scene.
+    """
+    import shutil
     import zipfile
 
     with asection("Unpacking precomputed scene (Git LFS)"):
         aprint(f"Source: {zip_path.name} ({zip_path.stat().st_size / 1e6:.0f} MB)")
-        output_path.mkdir(parents=True, exist_ok=True)
+        staging = output_path.parent / (output_path.name + ".part")
+        shutil.rmtree(staging, ignore_errors=True)
+        staging.mkdir(parents=True, exist_ok=True)
         with zipfile.ZipFile(zip_path, "r") as zf:
-            zf.extractall(output_path)
+            zf.extractall(staging)
+        staging.rename(output_path)
         aprint(f"Scene ready: {output_path}")
 
 
@@ -408,7 +417,7 @@ def create_scene(
                 blend_mode="difference",
             )
             scene.add_text(
-                "~14M galaxies & quasars • spectroscopic redshifts → comoving Mpc",
+                "~9.75M galaxies & quasars • spectroscopic redshifts → comoving Mpc",
                 position=(0.98, 0.97),
                 font_size=0.015,
                 anchor="bottom-right",
