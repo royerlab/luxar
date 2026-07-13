@@ -309,6 +309,17 @@ export async function runInitPipeline(
   // outlives app teardown — inconsistent with every other
   // app-level listener.
   if (typeof sceneManager.addEventListener === 'function') {
+    // Give the SceneManager's 'change' event a live subscriber. The
+    // context-restore path ends with `triggerChange()` ("trigger a
+    // render") — without this, a context restored while the rAF loop is
+    // idle-paused rebuilds + resizes (clearing the canvas) and then no
+    // frame ever renders: blank viewer until the next input event.
+    // startAnimation is idempotent, so the redundant dispatches from the
+    // controls handler are harmless.
+    const onSceneChange = (): void => animationController.startAnimation();
+    sceneManager.addEventListener('change', onSceneChange);
+    ports.events.add(() => sceneManager.removeEventListener('change', onSceneChange));
+
     const onContextRestored = (): void => {
       const sceneLoader = getSceneLoader('default');
       if (sceneLoader && sceneManager.scene) {

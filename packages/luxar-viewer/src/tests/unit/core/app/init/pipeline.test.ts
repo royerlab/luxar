@@ -369,6 +369,31 @@ describe('runInitPipeline', () => {
   });
 
   describe('context-loss listener wiring', () => {
+    it("wires the SceneManager 'change' event to startAnimation (repaint after idle-time context restore)", async () => {
+      // The context-restore path ends with SceneManager dispatching
+      // 'change' ("trigger a render"). Without a subscriber, a context
+      // restored while the rAF loop is idle-paused rebuilds + clears the
+      // canvas and never paints — blank viewer until the next input.
+      const { factories, sceneStub } = makeFactoryOverrides();
+      const ports = makePorts();
+      ports.options.factories = factories as never;
+      const partial: Partial<InitPipelineResult> = {};
+
+      await runInitPipeline(ports, partial);
+
+      const call = sceneStub.addEventListener.mock.calls.find(
+        (c: unknown[]) => c[0] === 'change'
+      );
+      expect(call).toBeDefined();
+
+      const animation = partial.animationController as unknown as {
+        startAnimation: ReturnType<typeof vi.fn>;
+      };
+      animation.startAnimation.mockClear();
+      (call![1] as () => void)();
+      expect(animation.startAnimation).toHaveBeenCalled();
+    });
+
     it('registers webgl-context-restored + webgpu-device-lost via ports.events', async () => {
       const { factories, sceneStub } = makeFactoryOverrides();
       const ports = makePorts();
