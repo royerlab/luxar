@@ -82,6 +82,7 @@ from luxar import Dimension, Dimensions, LuxarZarrCompiler
 from luxar.encoding import EncodingMode
 from luxar.gsplats.gsplat_data import GSplatData
 from luxar.utils.demos import (
+    cached_download,
     launch_viewer,
     load_precomputed_gsplats,
     parse_demo_flags,
@@ -97,8 +98,8 @@ N_CHANNELS = 2
 
 # Channel configuration with colours
 CHANNELS = [
-    {"index": 0, "name": "MAP4-GFP (Microtubules)", "color": (0.0, 1.0, 0.8)},  # Cyan
-    {"index": 1, "name": "Hoechst (Nuclei)", "color": (0.3, 0.3, 1.0)},  # Blue
+    {"index": 0, "name": "MAP4-GFP (Microtubules)", "colormap": "cyan"},
+    {"index": 1, "name": "Hoechst (Nuclei)", "colormap": "blue"},
 ]
 
 # Progressive fitting parameters
@@ -367,21 +368,20 @@ Controls:
                 zip(gsplats_list, CHANNELS[: len(gsplats_list)])
             ):
                 ch_name = ch_config["name"]
-                color = ch_config["color"]
+                ch_colormap = ch_config["colormap"]
 
                 with asection(f"Adding {ch_name} (layer)"):
                     gsplats = gsplats.translate(-shared_centroid)
                     gsplats = gsplats.scale_intensity(0.1)
 
                     n_splats = len(gsplats.amplitudes)
-                    colors = np.tile(np.array(color, dtype=np.float32), (n_splats, 1))
-
-                    scene.add_gsplats(
+                    # Named colormap (viewer-adjustable) instead of baked RGB —
+                    # matches the acto3d demo and lets the Layers panel tune
+                    # display range / gamma / colormap per channel at view time.
+                    scene.add_gsplats_from_data(
                         name=f"gsplats_ch{i}",
-                        centers=gsplats.centers,
-                        amplitudes=gsplats.amplitudes,
-                        cholesky_factors=gsplats.cholesky_factors,
-                        colors=colors,
+                        result=gsplats,
+                        colormap=ch_colormap,
                         dim_order=["z", "y", "x"],
                         opacity=1.0,
                         blending_mode="additive",
@@ -546,23 +546,14 @@ def main():
         elif tiff_path is None and cached_tiff.exists():
             tiff_path = cached_tiff
         elif tiff_path is None:
-            # Auto-download from OpenCell S3 bucket
-            import tempfile
-            import urllib.request
-
+            # Auto-download from OpenCell S3 bucket via the shared cache helper
+            # (retry / resume / skip-if-present) under
+            # ~/.cache/luxar/gsplats_opencell_map4/.
             with asection("Downloading OpenCell MAP4 TIFF (~70 MB)"):
                 aprint(f"URL: {TIFF_URL}")
-                tmp_fd, tmp_path = tempfile.mkstemp(dir=CACHE_DIR, suffix=".tif.tmp")
-                os.close(tmp_fd)
-                try:
-                    urllib.request.urlretrieve(TIFF_URL, tmp_path)
-                    os.replace(tmp_path, cached_tiff)
-                except BaseException:
-                    if os.path.exists(tmp_path):
-                        os.unlink(tmp_path)
-                    raise
-                aprint(f"Saved to {cached_tiff}")
-            tiff_path = cached_tiff
+                tiff_path = cached_download(
+                    TIFF_URL, "gsplats_opencell_map4", "opencell_map4_stack.tif"
+                )
 
         warn_if_no_cuda_gpu()
         volumes = load_opencell_data(tiff_path)

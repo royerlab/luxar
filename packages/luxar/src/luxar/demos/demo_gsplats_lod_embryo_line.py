@@ -22,8 +22,9 @@ WHAT THIS DEMONSTRATES — ADAPTIVE DETAIL MAKES HUGE SCENES TRACTABLE
 embryo. This demo shows why that matters at scale:
 
 - **Per-object detail selection**: the viewer evaluates every embryo
-  independently each frame by its projected on-screen size
-  (``lod-group-registry.ts``). A near embryo gets the finest level (green, full
+  independently each frame by its viewport-relative ``coverage_fraction``
+  (``sqrt(N_i/N_finest)``; ``lod-group-registry.ts``) — effectively how much of
+  the screen it covers. A near embryo gets the finest level (green, full
   detail); a far one gets the coarsest (red, a few big splats). You never pay to
   draw detail you cannot see.
 - **"Never more than the screen can show"**: with the camera in the middle, the
@@ -80,10 +81,8 @@ Output:
     - Automatically opens in browser
 """
 
-import importlib.util
 import sys
 from pathlib import Path
-from types import ModuleType
 
 import numpy as np
 from arbol import Arbol, aprint, asection
@@ -96,6 +95,11 @@ from luxar import (
     ViewerConfig,
 )
 from luxar.core import transforms
+
+# Reuse the single-embryo LOD demo's ladder builder + palette (build_lod_ladder,
+# level_colors, COMPRESSION_FACTOR) as a normal sibling import rather than
+# duplicating the LOD logic.
+from luxar.demos import demo_gsplats_lod_tribolium as _LOD
 from luxar.encoding import EncodingMode
 from luxar.gsplats.gsplat_data import GSplatData
 from luxar.utils.demos import (
@@ -128,25 +132,6 @@ for _arg in sys.argv:
 Arbol.max_depth = 5
 
 
-# =============================================================================
-# Reuse the single-embryo LOD demo's ladder builder + palette
-# =============================================================================
-#
-# The colored substitutive ladder is built exactly as in the single-embryo
-# demo. Demos run as scripts (their dir is on sys.path), so load the sibling by
-# file path and reuse its helpers rather than duplicating the LOD logic.
-def _load_single_embryo_demo() -> ModuleType:
-    sibling = Path(__file__).with_name("demo_gsplats_lod_tribolium.py")
-    spec = importlib.util.spec_from_file_location("_lod_tribolium", sibling)
-    assert spec is not None and spec.loader is not None
-    mod = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(mod)
-    return mod
-
-
-_LOD = _load_single_embryo_demo()
-
-
 def load_base_splats() -> GSplatData:
     """Load the precomputed Tribolium fit (or re-fit on --recompute)."""
     precomputed = load_precomputed_gsplats(
@@ -159,12 +144,12 @@ def load_base_splats() -> GSplatData:
 
     # --recompute path: re-fit from the raw volume via the base Tribolium demo.
     warn_if_no_cuda_gpu()
-    sibling = Path(__file__).with_name("demo_gsplats_3d_tribolium_embryo.py")
-    spec = importlib.util.spec_from_file_location("_tribolium_base", sibling)
-    assert spec is not None and spec.loader is not None
-    tri = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(tri)
-    return tri.fit_tribolium(tri.load_tribolium_volume())
+    from luxar.demos.demo_gsplats_3d_tribolium_embryo import (
+        fit_tribolium,
+        load_tribolium_volume,
+    )
+
+    return fit_tribolium(load_tribolium_volume())
 
 
 # =============================================================================

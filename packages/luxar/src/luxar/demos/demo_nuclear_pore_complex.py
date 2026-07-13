@@ -73,16 +73,16 @@ Controls:
     - Ctrl+C to stop and cleanup
 """
 
+import shutil
 import sys
 import tempfile
-import urllib.request
 from pathlib import Path
 
 import numpy as np
 from arbol import aprint, asection
 
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
-from luxar.demos import launch_viewer
+from luxar.demos import cached_download, launch_viewer
 from luxar.utils.paths import get_demos_output_dir
 
 # =============================================================================
@@ -91,27 +91,23 @@ from luxar.utils.paths import get_demos_output_dir
 
 
 def download_pdb(pdb_id: str, output_path: Path) -> Path:
-    """Download PDB file from RCSB.
+    """Fetch a PDB structure from RCSB, cached across runs.
+
+    The download is cached under ``~/.cache/luxar/nuclear_pore_complex/`` (via
+    :func:`cached_download`), so repeat runs never re-hit RCSB; a copy is placed
+    at ``output_path`` for the caller's temp-dir workflow.
 
     Args:
         pdb_id: 4-character PDB ID
-        output_path: Where to save the file
+        output_path: Where to place the (copied) file
 
     Returns:
-        Path to downloaded file
+        Path to the file at ``output_path``
     """
     url = f"https://files.rcsb.org/download/{pdb_id}.pdb"
-    aprint(f"Downloading {pdb_id} from RCSB PDB...")
-    aprint(f"  URL: {url}")
-
-    try:
-        urllib.request.urlretrieve(url, output_path)
-        size_mb = output_path.stat().st_size / (1024 * 1024)
-        aprint(f"✓ Downloaded {size_mb:.1f} MB")
-        return output_path
-    except Exception as e:
-        aprint(f"❌ Error downloading: {e}")
-        raise
+    cached = cached_download(url, "nuclear_pore_complex", f"{pdb_id}.pdb")
+    shutil.copy2(cached, output_path)
+    return output_path
 
 
 def parse_pdb_atoms(

@@ -62,7 +62,7 @@ This demo shows:
 DATA SOURCE:
 ============
 Zenodo: 3D STORM Dataset - COS7 Cells, Alpha-Tubulin
-https://zenodo.org/record/3547521
+https://zenodo.org/records/3547521
 
 - **Sample**: COS7 cells (monkey kidney fibroblasts)
 - **Target**: Alpha-tubulin (microtubule protein)
@@ -115,7 +115,7 @@ from luxar.utils.paths import get_demos_output_dir
 
 # Zenodo dataset
 ZENODO_RECORD = "3547521"
-ZENODO_BASE_URL = f"https://zenodo.org/record/{ZENODO_RECORD}/files"
+ZENODO_BASE_URL = f"https://zenodo.org/records/{ZENODO_RECORD}/files"
 
 # Default parameters
 DEFAULT_FIELD = 4  # Field of view number
@@ -126,13 +126,12 @@ WIDEFIELD_PSF_SIGMA = 100.0  # nm - conventional microscopy PSF width
 SUPERRES_PSF_SIGMA = 20.0  # nm - super-resolution PSF width
 PIXEL_SIZE = 106.0  # nm - from dataset metadata
 
-# Scale factor for visualization (physical PSF is too small to see in the viewer)
-# The scene spans ~60 μm, so 20 nm splats would be invisible. Scale up for visibility.
-# With VIS_SCALE=40: super-res=800nm≈0.8μm, widefield=4μm - matches original committed scale
-# (Original used SUPER_RES_PRECISION_SCALE_XY=100 with ~8nm precision → 0.8μm sigma)
-VIS_SCALE = (
-    1.0  # Makes splats visible while maintaining relative widefield/superres ratio
-)
+# Visualization scale factor applied to every splat sigma (widefield and
+# super-res alike), preserving their relative sizes. 1.0 = physically faithful
+# widths (super-res splats really are ~tens of nm in a ~60 μm scene, so they
+# read as fine points); raise it only if you want to exaggerate splat size for
+# a zoomed-out overview.
+VIS_SCALE = 1.0
 
 
 # Cache paths
@@ -451,14 +450,19 @@ def parse_storm_localizations(
 
 def extract_centers_and_amplitudes(
     localizations: dict,
-) -> tuple[np.ndarray, np.ndarray]:
-    """Extract centers and amplitudes from STORM localizations.
+) -> tuple[np.ndarray, np.ndarray, np.ndarray | None]:
+    """Extract centers, amplitudes, and per-localization precision.
 
     Args:
-        localizations: Dictionary with x, y, z, photons, etc.
+        localizations: Dictionary with x, y, z, photons, and (optionally) the
+            per-axis localization precision ``precision_x/y/z`` (CRLB, in nm).
 
     Returns:
-        Tuple of (centers_um, amplitudes) where centers are in micrometers
+        Tuple ``(centers_um, amplitudes, precision_um)`` where centers are in
+        micrometers and ``precision_um`` is an ``(N, 3)`` array of per-axis
+        localization precision (σx, σy, σz) in micrometers — the physical width
+        of each super-resolution Gaussian. ``precision_um`` is ``None`` when the
+        dataset carries no CRLB columns (caller falls back to a fixed sigma).
     """
     with asection("Extracting splat data from localizations"):
         n_loc = len(localizations["x"])
@@ -486,13 +490,34 @@ def extract_centers_and_amplitudes(
 
         amplitudes = np.clip(amplitudes, 0.01, 1.0)
 
+        # Per-localization precision (CRLB, nm) → the physical width of each
+        # super-resolution splat. Present only if the dataset carried CRLB
+        # columns; clip to a sane [5, 150] nm range so a degenerate (zero/huge)
+        # estimate can't produce an invisible or scene-spanning splat.
+        precision_um: np.ndarray | None = None
+        if all(f"precision_{a}" in localizations for a in "xyz"):
+            precision_nm = np.column_stack(
+                [localizations[f"precision_{a}"] for a in "xyz"]
+            ).astype(np.float32)
+            precision_nm = np.clip(precision_nm, 5.0, 150.0)
+            precision_um = precision_nm / 1000.0
+            aprint(
+                "  Using per-localization anisotropic precision (CRLB): "
+                f"median σ = [{np.median(precision_nm, axis=0).round(1)}] nm"
+            )
+        else:
+            aprint(
+                "  No CRLB precision columns — super-res will use a fixed "
+                f"{SUPERRES_PSF_SIGMA} nm sigma"
+            )
+
         aprint(f"✓ Extracted {n_loc:,} localizations")
         aprint(f"  Centers: {centers_um.shape}")
         aprint(
             f"  Spatial range: [{centers_um.min(axis=0)}] to [{centers_um.max(axis=0)}] μm"
         )
 
-    return centers_um, amplitudes
+    return centers_um, amplitudes, precision_um
 
 
 # =============================================================================
@@ -503,17 +528,26 @@ def extract_centers_and_amplitudes(
 def create_storm_scene(
     centers_um: np.ndarray,
     amplitudes: np.ndarray,
+    precision_um: np.ndarray | None = None,
     output_path: Path | None = None,
 ) -> Path:
     """Create Luxar scene with STORM data comparing widefield vs super-resolution.
 
-    Uses simple isotropic PSF sigmas for both views:
-    - Widefield: WIDEFIELD_PSF_SIGMA (100 nm) - diffraction-limited
-    - Super-resolution: SUPERRES_PSF_SIGMA (20 nm) - STORM precision
+    Two views on a categorical ``view`` dimension:
+    - Widefield: fixed diffraction-limited PSF (WIDEFIELD_PSF_SIGMA, 100 nm), the
+      blurry reference — a widefield microscope can't resolve better than the
+      diffraction limit no matter how bright a molecule is.
+    - Super-resolution: each splat's covariance is the localization's OWN
+      anisotropic precision (σx, σy, σz from the CRLB in ``precision_um``) — this
+      is the whole point of STORM, so uncertain molecules render as larger, fuzzy
+      splats and well-localized ones as tight points. Falls back to a fixed
+      SUPERRES_PSF_SIGMA sigma only when the dataset has no CRLB columns.
 
     Args:
         centers_um: Splat centers in micrometers (N, 3)
         amplitudes: Splat amplitudes (N,)
+        precision_um: Per-localization precision (N, 3) in μm, or None for a
+            fixed super-resolution sigma.
         output_path: Optional path to save the scene (default: demos directory)
 
     Returns:
@@ -574,14 +608,11 @@ def create_storm_scene(
                     f"  Vis scale: {VIS_SCALE}x (effective: {WIDEFIELD_PSF_SIGMA * VIS_SCALE} nm / {SUPERRES_PSF_SIGMA * VIS_SCALE} nm)"
                 )
 
-                # Precompute covariance matrices (simple isotropic)
-                # Apply visualization scale to make splats visible
-                widefield_sigma_um = (
-                    WIDEFIELD_PSF_SIGMA * VIS_SCALE
-                ) / 1000  # nm -> μm
-                superres_sigma_um = (SUPERRES_PSF_SIGMA * VIS_SCALE) / 1000  # nm -> μm
-
-                # Z has 2x worse resolution (typical for 3D STORM)
+                # Widefield view: a fixed, diffraction-limited isotropic PSF
+                # (z 2× worse, typical for 3D). This is the blurry reference —
+                # a widefield microscope cannot resolve below the diffraction
+                # limit no matter how bright a molecule is.
+                widefield_sigma_um = (WIDEFIELD_PSF_SIGMA * VIS_SCALE) / 1000  # nm→μm
                 widefield_cov = np.diag(
                     [
                         widefield_sigma_um**2,
@@ -589,20 +620,13 @@ def create_storm_scene(
                         (widefield_sigma_um * 2) ** 2,
                     ]
                 )
-                superres_cov = np.diag(
-                    [
-                        superres_sigma_um**2,
-                        superres_sigma_um**2,
-                        (superres_sigma_um * 2) ** 2,
-                    ]
-                )
 
-                # Precompute 4D covariances and their Cholesky factors
                 def make_4d_cholesky(cov_3d: np.ndarray) -> np.ndarray:
-                    """Create 4D Cholesky from 3D covariance."""
+                    """Pack a 3D spatial covariance into a 4D lower-triangular
+                    Cholesky vector (the view axis gets a tiny variance)."""
                     cov_4d = np.zeros((4, 4), dtype=np.float32)
                     cov_4d[1:, 1:] = cov_3d  # Spatial part
-                    cov_4d[0, 0] = 1e-6  # Tiny variance in view dimension
+                    cov_4d[0, 0] = 1e-6  # Tiny variance in the view dimension
                     chol = np.linalg.cholesky(cov_4d)
                     # Pack lower triangular: [L00, L10, L11, L20, L21, L22, L30, L31, L32, L33]
                     return np.array(
@@ -622,12 +646,31 @@ def create_storm_scene(
                     )
 
                 widefield_chol = make_4d_cholesky(widefield_cov)
-                superres_chol = make_4d_cholesky(superres_cov)
+
+                # Super-resolution view: each splat's covariance is the
+                # localization's OWN anisotropic precision (σx, σy, σz from the
+                # CRLB) — the whole point of STORM. The per-splat covariance is
+                # diagonal, so its packed Cholesky is just the per-axis sigma on
+                # the diagonal (L11, L22, L33); build it vectorized for all splats.
+                superres_chol = np.zeros((n_splats, 10), dtype=np.float32)
+                superres_chol[:, 0] = 1e-3  # sqrt(view variance), matches make_4d
+                if precision_um is not None:
+                    sigma_um = (precision_um * VIS_SCALE).astype(np.float32)
+                    superres_chol[:, 2] = sigma_um[:, 0]  # L11 = σx
+                    superres_chol[:, 5] = sigma_um[:, 1]  # L22 = σy
+                    superres_chol[:, 9] = sigma_um[:, 2]  # L33 = σz
+                    aprint(
+                        "  Super-res: per-localization anisotropic σ, median "
+                        f"[{np.median(sigma_um, axis=0).round(4)}] μm"
+                    )
+                else:
+                    s = (SUPERRES_PSF_SIGMA * VIS_SCALE) / 1000
+                    superres_chol[:, 2] = s
+                    superres_chol[:, 5] = s
+                    superres_chol[:, 9] = s * 2  # z 2× worse
+                    aprint(f"  Super-res: fixed σ = {s:.4f} μm (no CRLB in data)")
 
                 aprint(f"  Widefield sigma: {widefield_sigma_um:.3f} μm")
-                aprint(f"  Super-res sigma: {superres_sigma_um:.3f} μm")
-                aprint(f"  Widefield cholesky: {widefield_chol}")
-                aprint(f"  Super-res cholesky: {superres_chol}")
 
                 # Build arrays for both views (vectorized where possible)
                 # VIEW 0: Widefield (gray, dimmer)
@@ -691,7 +734,7 @@ def create_storm_scene(
             )
             scene.add_html(
                 '<div style="font-size:1.5vh;font-weight:bold;color:#44ff88">Super-Resolution</div>'
-                f'<div style="font-size:1.3vh;color:#aaa">\u03c3 \u2248 {SUPERRES_PSF_SIGMA} nm (STORM)</div>',
+                '<div style="font-size:1.3vh;color:#aaa">\u03c3 = per-localization CRLB (STORM)</div>',
                 position=(0.02, 0.97),
                 anchor="bottom-left",
                 visible_range={"view": 1},
@@ -768,21 +811,23 @@ def main() -> None:
         # Parse localizations
         localizations = parse_storm_localizations(csv_file, max_localizations=max_loc)
 
-        # Extract centers and amplitudes (simple, no per-localization covariances)
-        centers_um, amplitudes = extract_centers_and_amplitudes(localizations)
+        # Extract centers, amplitudes, and per-localization CRLB precision.
+        centers_um, amplitudes, precision_um = extract_centers_and_amplitudes(
+            localizations
+        )
 
         # If --no-serve, generate and exit without launching viewer
         if "--no-serve" in sys.argv:
             output_path = get_demos_output_dir() / "storm_3d_microtubules.luxar.zarr"
             scene_path = create_storm_scene(
-                centers_um, amplitudes, output_path=output_path
+                centers_um, amplitudes, precision_um, output_path=output_path
             )
             aprint(f"Dataset generated at {scene_path}")
             aprint(f"Localizations: {len(centers_um):,}")
             return
 
         # Create scene in demos directory for serving
-        scene_path = create_storm_scene(centers_um, amplitudes)
+        scene_path = create_storm_scene(centers_um, amplitudes, precision_um)
 
         # Stats
         aprint("")

@@ -234,6 +234,23 @@ to ship after). Sequencing is at the bottom.
     But the media the gallery captures come from demos whose *inputs* may have
     moved to Zenodo, so `generate-readme-demos` must run after R17's fetch path
     exists (or before the migration). Keep gallery media small/optimized.
+- **R20 [LAUNCH] — Demos quality overhaul** (in progress, parallel agent —
+  **PR #488**, branch `worktree-demos-quality-overhaul`, ~+1785/−1286 across the
+  demo suite). Crash fixes, stale-doc fixes, shared caching, alias removal, and
+  colorbar/channel legends across the demos. First-impression-critical: the
+  demos are what `luxar demo` / the gallery / new users hit first. **Land this
+  before R19** (the gallery is captured from these demos) and coordinate with
+  R17 (shared caching should route through the same fetch/cache layer).
+- **R21 [LAUNCH] — New "turnkey three" science demos** (in progress, parallel
+  agent — branch `demos-turnkey-three`, **no PR yet**). Adds three geometry-
+  showcasing demos with tests: **asteroids / solar system** (points),
+  **Milky Way dust** (full-resolution gsplat fit), and **Dip-C 3D genome**
+  (with a Layers-panel haplotype toggle). Strong candidates for the R19 gallery.
+  **⚠ Feeds R17 directly:** this branch commits *new* heavy LFS data
+  (`milkyway_dust.gsplats.zarr.zip`, `dipc_gm12878.npz`) — exactly the kind of
+  compute-expensive processed dataset R17 moves to Zenodo. Open a PR, then either
+  migrate its data as part of R17 or land it to Zenodo from the start rather than
+  adding more git-LFS weight.
 - **R12 [POST] — Theme layout consistency (#7)**, **Python-side panel visibility
   config (#8)** — nice-to-have, not launch-gating.
 
@@ -265,10 +282,39 @@ to ship after). Sequencing is at the bottom.
 - **R15 [POST] — Tiled-fitting figure.** Described in Methods + Results but has
   no figure; a reviewer may ask for a seamless-stitching demonstration. The
   `tiled_fitting/` SD is method-only (empirical eval deferred).
-- **R16 [LAUNCH] — Manuscript repo hygiene.** Commit a clean "regenerate all
-  artifacts" pass; prune stale/duplicate figure PDFs (`cross_validation.pdf`,
-  the three `compression_*.pdf` variants); confirm SD6 viewer-perf PDFs use the
-  committed `sweep_v6` numbers, not placeholders.
+- **R16 [LAUNCH] — Manuscript repo hygiene.** Scoped against the repo
+  2026-07-12. Splits into a **light do-now slice** and a **heavy slice coupled to
+  the `--floor` decision**:
+  - **Regenerate-all pipeline is staged** (`build_all.sh` → `run_all.sh` [~6h
+    GPU analysis → TSVs] → `build_figures.sh` → `build_supp_docs.sh` →
+    `build_preprint.sh`). Only `run_all.sh` is expensive; if the committed TSVs
+    stand, the figure+doc+preprint rebuild is cheap and GPU-free. **A full regen
+    is the same pass as re-running with `--floor`** — so fold the two together
+    and defer to the `--floor` decision rather than doing it twice.
+  - ✅ **Prune the confirmed orphan:** `preprint/figs/quantitative_analysis/
+    cross_validation.pdf` is referenced by *no* `.tex` (CV now lives in
+    `quantitative_analysis.pdf` + suppfig `cv_all.pdf`). Delete it.
+  - ❌ **DO NOT prune the `compression_*.pdf` — the old note is stale.** All four
+    (`compression.pdf`, `compression_cv_optimal.pdf`,
+    `compression_rate_distortion.pdf`, `compression_denoised.pdf`) are live
+    `\includegraphics` in `luxar_preprint.tex` (lines ~354/379/390/399) since
+    SD7 (compression) was promoted to a cited document.
+  - ⚠️ **Compression single-source check:** those figs exist in both
+    `preprint/figs/suppfig/` (what the preprint includes) and
+    `supp_doc/compression_comparison/results/`. Confirm one is generated from the
+    other (single source of truth) so they can't diverge.
+  - ✅ **SD6 placeholders — looks already resolved; just verify.** `sweep_v6.json`
+    (216 KB) is committed and is the wired default input
+    (`sweep_latest.json → sweep_v6.json`); the committed SD6 fig PDFs carry no
+    placeholder marker and were committed in the *same commit* as the data
+    (2026-05-04). Residual: a rebuild-and-diff to confirm the committed figs
+    match a fresh build from `sweep_v6.json` (the OUTLINE "regen in progress"
+    note is stale). The `_emit_placeholders` path only fires when the JSON is
+    absent — it isn't.
+  - 🚩 **New (bloat):** `supp_doc/splat_count_vs_quality/splat_count_vs_quality.pdf`
+    is **64 MB** (LFS) — ~10× any other PDF, because it embeds the many 2–8 MB
+    `fig_slice_montage.pdf` uncompressed. Rasterize/downsample the embedded
+    montages at build time. (Overlaps R17's LFS-weight concern.)
 
 ### D. Sequencing (suggested order, parallelizable across tracks)
 
@@ -280,11 +326,15 @@ to ship after). Sequencing is at the bottom.
 3. **Post the preprint** — R13 ✅ / R14 ✅ / R16 land → bioRxiv → obtain DOI → R4
    (wire citation back into the repo).
 4. **Public-repo readiness** (parallel with the preprint track, before the repo
-   goes public) — **R17** (retire git-LFS heavy datasets → Zenodo, so the public
-   clone is lean and future large datasets are addable), **R18** (docs content
-   pass + confirm the GitHub Pages site is publicly viewable), **R19** (README
-   refresh + regenerated gallery from the newer demos). R19 depends on R17's
-   fetch path (gallery capture re-runs the demos); R18 is independent.
+   goes public) — first land the in-flight demo work: **R20** (demos quality
+   overhaul, PR #488) and **R21** (new "turnkey three" demos, branch
+   `demos-turnkey-three`); then **R17** (retire git-LFS heavy datasets → Zenodo —
+   fold in R21's new `milkyway_dust`/`dipc` data so the public clone is lean and
+   future large datasets are addable), **R18** (docs content pass + confirm the
+   GitHub Pages site is publicly viewable), **R19** (README refresh + regenerated
+   gallery). Order within the step: **R20/R21 → R17 → R19** (the gallery is
+   captured from the finalized demos, whose inputs live in Zenodo by then); R18
+   is independent and can run any time.
 5. **Cut the release** — R2 (tag + GitHub release) → flip PyPI to live (R3) →
    announce.
 6. **Post-launch backlog** — R10 (#24 depth sorting), R12, R15, and the
@@ -323,6 +373,14 @@ to ship after). Sequencing is at the bottom.
 > README refresh + regenerated gallery from the newer demos (Playwright pipeline
 > exists; depends on R17's fetch path). These gate a *clean public repo*, not the
 > preprint; they should land before the repo is flipped public in the cut.
+>
+> Also tracking two in-flight demo efforts by parallel agents: **R20** (demos
+> quality overhaul — PR #488) and **R21** (new "turnkey three" demos:
+> asteroids / Milky-Way-dust gsplats / Dip-C genome — branch
+> `demos-turnkey-three`, no PR yet). Sequenced ahead of R17/R19 in step 4:
+> finalize the demos, then migrate their (incl. R21's new) heavy data to Zenodo,
+> then capture the gallery. R21 adds new git-LFS data, so it should be folded
+> into R17 rather than growing LFS further.
 
 ---
 

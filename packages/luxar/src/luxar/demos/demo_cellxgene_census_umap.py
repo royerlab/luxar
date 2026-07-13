@@ -46,7 +46,7 @@ import numpy as np
 from arbol import aprint, asection
 
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
-from luxar.demos import launch_viewer, parse_demo_flags
+from luxar.demos import launch_viewer, parse_demo_flags, require_local_data
 from luxar.utils._umap_utils import attribute_to_color
 from luxar.utils.paths import get_demos_output_dir
 
@@ -91,7 +91,9 @@ def normalize_coords(coords: np.ndarray, span: float = 140.0) -> np.ndarray:
 
 
 def load_cache(path: Path):
-    z = np.load(path, allow_pickle=False)
+    # Gate the shipped LFS npz so an unpulled pointer gives the "git lfs pull"
+    # message instead of a cryptic np.load zip error.
+    z = np.load(require_local_data(path), allow_pickle=False)
     labels = json.loads(str(z["labels_json"]))
     codes = {f"{c}": z[f"{c}_code"] for c, _ in COLORINGS}
     return z["coords"], codes, labels
@@ -149,6 +151,16 @@ def build_scene(
     colors = np.vstack([color_arrays[f] for f, _ in COLORINGS]).astype(np.float32)
     radii = np.full(len(positions), 0.35, dtype=np.float32)
 
+    # Per-cell hover labels, aligned with the stacked `coloring` blocks: within
+    # each block a point shows that coloring's category (cell type / tissue /
+    # disease) for its cell — the metadata is already in `codes`/`labels`.
+    hover_labels: list[str] = []
+    for field, _ in COLORINGS:
+        cat_names = labels[field]
+        hover_labels.extend(
+            cat_names[c] if 0 <= c < len(cat_names) else "?" for c in codes[field]
+        )
+
     output_path.parent.mkdir(parents=True, exist_ok=True)
     with asection(f"Building substitutive-LOD scene (device={device})"):
         with LuxarZarrCompiler(str(output_path)) as compiler:
@@ -159,6 +171,7 @@ def build_scene(
                 colors=colors,
                 radii=radii,
                 sharpness=np.full(len(positions), 0.6, np.float32),
+                labels=hover_labels,
                 opacity=0.85,
                 intensity=0.2,
                 # Expose the single cells node in the viewer's Layers panel.

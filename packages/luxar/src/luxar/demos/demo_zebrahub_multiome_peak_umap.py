@@ -46,7 +46,7 @@ import zarr
 from arbol import aprint, asection
 
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
-from luxar.demos import launch_viewer
+from luxar.demos import cache_computed, launch_viewer
 from luxar.utils._umap_utils import (
     attribute_to_color,
     build_legend_html,
@@ -69,7 +69,19 @@ def load_zebrahub_umap_data(
         - attributes: dict of attribute arrays (numeric indices)
         - category_maps: dict of attribute name -> list of category labels
     """
-    with asection("Downloading Zebrahub 3D UMAP Data"):
+    # Attributes fetched from the remote zarr (fold into the cache key so a
+    # changed attribute set never reuses a stale cache).
+    attr_names = [
+        "celltype",
+        "chromosome",
+        "leiden_coarse",
+        "leiden_fine",
+        "lineage",
+        "peak_type",
+        "timepoint",
+    ]
+
+    def _fetch() -> tuple[np.ndarray, dict, dict]:
         # Load coordinates
         aprint("Loading 3D UMAP coordinates...")
         try:
@@ -107,15 +119,7 @@ def load_zebrahub_umap_data(
         attributes = {}
         category_maps = {}
 
-        for attr_name in [
-            "celltype",
-            "chromosome",
-            "leiden_coarse",
-            "leiden_fine",
-            "lineage",
-            "peak_type",
-            "timepoint",
-        ]:
+        for attr_name in attr_names:
             try:
                 attr_store = fsspec.get_mapper(f"{base_url}/attribute_{attr_name}.zarr")
                 z = zarr.open(attr_store, mode="r")
@@ -131,7 +135,15 @@ def load_zebrahub_umap_data(
             except Exception as e:
                 aprint(f"  {attr_name}: Failed to load - {e}")
 
-    return coordinates, attributes, category_maps
+        return coordinates, attributes, category_maps
+
+    # Cache the 640k×N remote fetch under ~/.cache/luxar/zebrahub_multiome_peak
+    # (keyed on the selected attribute set) so repeat runs are offline.
+    cache_key = "coords_attrs_" + "_".join(attr_names)
+    with asection("Downloading Zebrahub 3D UMAP Data"):
+        return cache_computed(
+            "zebrahub_multiome_peak", cache_key, _fetch, version=1
+        )
 
 
 def create_zebrahub_scene(
@@ -154,50 +166,52 @@ def create_zebrahub_scene(
     n_points = len(coordinates)
 
     with asection("Building Multi-Attribute Scene"):
-        # Define attribute types for categorical navigation
-        attr_types = [
-            "celltype",
-            "chromosome",
-            "leiden_coarse",
-            "leiden_fine",
-            "lineage",
-            "peak_type",
-            "timepoint",
-        ]
+        # Attribute types for categorical navigation, with display labels.
+        attr_display_labels = {
+            "celltype": "Cell Type",
+            "chromosome": "Chromosome",
+            "leiden_coarse": "Leiden Coarse",
+            "leiden_fine": "Leiden Fine",
+            "lineage": "Lineage",
+            "peak_type": "Peak Type",
+            "timepoint": "Timepoint",
+        }
+        attr_types = list(attr_display_labels.keys())
 
-        # Create one copy of points per attribute type
-        all_positions = []
-        all_colors = []
+        # Only attributes that actually loaded become views. The view coordinate
+        # is the index within available_attrs (NOT the full attr_types list), so
+        # a failed-to-load attribute does not leave a hole in the view axis or
+        # shift the category labels / overlays out of sync.
         available_attrs = [name for name in attr_types if name in attributes]
 
-        for attr_idx, attr_name in enumerate(attr_types):
-            if attr_name in attributes:
-                # Generate colors for this attribute
-                colors = attribute_to_color(attributes[attr_name], attr_name)
+        # Create one copy of points per available attribute type
+        all_positions = []
+        all_colors = []
+        for view_idx, attr_name in enumerate(available_attrs):
+            # Generate colors for this attribute
+            colors = attribute_to_color(attributes[attr_name], attr_name)
 
-                # Create 4D positions: [attribute_view, x, y, z]
-                positions_4d = np.column_stack(
-                    [
-                        np.full(n_points, attr_idx, dtype=np.float32),
-                        coordinates[:, 0],
-                        coordinates[:, 1],
-                        coordinates[:, 2],
-                    ]
-                )
+            # Create 4D positions: [attribute_view, x, y, z]
+            positions_4d = np.column_stack(
+                [
+                    np.full(n_points, view_idx, dtype=np.float32),
+                    coordinates[:, 0],
+                    coordinates[:, 1],
+                    coordinates[:, 2],
+                ]
+            )
 
-                all_positions.append(positions_4d)
-                all_colors.append(colors)
+            all_positions.append(positions_4d)
+            all_colors.append(colors)
 
-                n_unique = len(np.unique(attributes[attr_name]))
-                aprint(
-                    f"  Attribute {attr_idx} ({attr_name}): {n_unique} unique values"
-                )
+            n_unique = len(np.unique(attributes[attr_name]))
+            aprint(f"  Attribute {view_idx} ({attr_name}): {n_unique} unique values")
 
         # Combine all attribute views
         positions_combined = np.vstack(all_positions)
         colors_combined = np.vstack(all_colors)
 
-        aprint(f"✓ Created {len(attr_types)} attribute views")
+        aprint(f"✓ Created {len(available_attrs)} attribute views")
         aprint(f"  Total points: {len(positions_combined):,} ({n_points:,} per view)")
 
         # Define dimensions with categorical attribute selector
@@ -206,15 +220,7 @@ def create_zebrahub_scene(
                 Dimension(
                     "attribute",
                     unit="",
-                    categories=[
-                        "Cell Type",
-                        "Chromosome",
-                        "Leiden Coarse",
-                        "Leiden Fine",
-                        "Lineage",
-                        "Peak Type",
-                        "Timepoint",
-                    ],
+                    categories=[attr_display_labels[name] for name in available_attrs],
                     display=False,
                     description="Biological attribute for color coding cells in UMAP space",
                 ),
@@ -255,6 +261,9 @@ def create_zebrahub_scene(
                 opacity=0.8,
                 intensity=0.067,
                 labels=labels,
+                # Substitutive Points LOD (coarsen x/y/z, group by the attribute
+                # barrier) — same wiring as the census demo.
+                substitutive_lod=dict(compression_factor=8, levels=3, device="auto"),
             )
 
             # --- Overlays ---
@@ -267,25 +276,8 @@ def create_zebrahub_scene(
                 blend_mode="difference",
             )
 
-            attr_labels = [
-                "Cell Type",
-                "Chromosome",
-                "Leiden Coarse",
-                "Leiden Fine",
-                "Lineage",
-                "Peak Type",
-                "Timepoint",
-            ]
-            attr_keys = [
-                "celltype",
-                "chromosome",
-                "leiden_coarse",
-                "leiden_fine",
-                "lineage",
-                "peak_type",
-                "timepoint",
-            ]
-            for attr_id, (label, attr_key) in enumerate(zip(attr_labels, attr_keys)):
+            for attr_id, attr_key in enumerate(available_attrs):
+                label = attr_display_labels[attr_key]
                 scene.add_text(
                     f"Colored by: {label}",
                     position=(0.02, 0.97),
@@ -314,7 +306,7 @@ def create_zebrahub_scene(
                         )
 
             scene.add_text(
-                f"{n_points:,} peaks • Zebrafish • 3D UMAP • Wagner et al. 2024",
+                f"{n_points:,} peaks • Zebrafish • 3D UMAP • Lange et al., Cell 2024",
                 position=(0.98, 0.97),
                 font_size=0.012,
                 anchor="bottom-right",
