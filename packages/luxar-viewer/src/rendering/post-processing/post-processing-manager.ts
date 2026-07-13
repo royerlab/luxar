@@ -627,6 +627,28 @@ export class PostProcessingManager {
   }
 
   /**
+   * Memo of the last applied allocation. Every window resize reaches
+   * `reallocateForSize` through TWO paths — the window `resize` listener
+   * (rAF-coalesced via ResizeOrchestrator) AND the canvas-parent
+   * ResizeObserver — and the MSAA/SSAA setters call it directly too.
+   * Without a guard, each redundant call disposed + recreated the
+   * full-screen half-float HDR target. The memo keys on everything that
+   * influences the allocation: display (CSS) size, effective logical
+   * size (folds in SSAA), physical size (folds in DPR), and the HDR
+   * target's MSAA sample count. `null` forces the next call to
+   * reallocate (initial state; reset by `rebuildAfterContextRestore`).
+   */
+  private lastAllocation: {
+    displayW: number;
+    displayH: number;
+    logicalW: number;
+    logicalH: number;
+    physW: number;
+    physH: number;
+    msaaSamples: number;
+  } | null = null;
+
+  /**
    * Re-allocate every GPU resource whose size depends on the effective
    * render size. Two unit systems are at play and they must NOT be
    * confused:
@@ -636,10 +658,37 @@ export class PostProcessingManager {
    *   - **Physical** pixels — `logical × pixelRatio`. This is what
    *     `getDrawingBufferSize()` reports to materials, what the canvas
    *     backbuffer is, and what our render targets MUST match.
+   *
+   * A call whose full allocation key matches the last applied one is a
+   * complete no-op (see `lastAllocation`).
    */
   private reallocateForSize(): void {
     const { width: logicalW, height: logicalH } = this.computeEffectiveSize();
     const { width: physW, height: physH } = this.getPhysicalSize();
+    const msaaSamples = this.msaaEnabled ? this.msaaSamples : 0;
+
+    const last = this.lastAllocation;
+    if (
+      last &&
+      last.displayW === this.renderSize.width &&
+      last.displayH === this.renderSize.height &&
+      last.logicalW === logicalW &&
+      last.logicalH === logicalH &&
+      last.physW === physW &&
+      last.physH === physH &&
+      last.msaaSamples === msaaSamples
+    ) {
+      return; // identical allocation — the redundant resize path lands here
+    }
+    this.lastAllocation = {
+      displayW: this.renderSize.width,
+      displayH: this.renderSize.height,
+      logicalW,
+      logicalH,
+      physW,
+      physH,
+      msaaSamples,
+    };
 
     // Renderer takes logical size; it multiplies by pixelRatio for the
     // canvas backbuffer. SceneManager owns CSS sizing.
@@ -775,6 +824,10 @@ export class PostProcessingManager {
     // defaults would clobber user-disabled effects (regression vs. the
     // pre-mega-shader pipeline, which built optional effects lazily).
     this.initializeTransientResources({ applyDefaults: false });
+    // All transient targets were just rebuilt against the fresh context —
+    // invalidate the allocation memo so the restore path's follow-up
+    // updateRendererSize() → resize() is not skipped as a no-op.
+    this.lastAllocation = null;
 
     // Re-apply state.
     this.bloomIntensity = snapshot.bloomIntensity;
