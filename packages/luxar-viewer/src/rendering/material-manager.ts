@@ -240,7 +240,12 @@ export class MaterialManager {
 
     this.registeredMaterials.add(material);
     subscribeToDispose(material, this.lifecycleCtx);
-    material.updateCameraParams(this.currentFov, this.currentResolution, this.currentIsOrtho);
+    material.updateCameraParams(
+      this.currentFov,
+      this.currentResolution,
+      this.currentIsOrtho,
+      this.currentNearCull
+    );
     lruSet(
       this.pointMaterialCache,
       key,
@@ -281,7 +286,12 @@ export class MaterialManager {
 
     this.registeredMaterials.add(material);
     subscribeToDispose(material, this.lifecycleCtx);
-    material.updateCameraParams(this.currentFov, this.currentResolution, this.currentIsOrtho);
+    material.updateCameraParams(
+      this.currentFov,
+      this.currentResolution,
+      this.currentIsOrtho,
+      this.currentNearCull
+    );
     lruSet(
       this.lineMaterialCache,
       key,
@@ -323,7 +333,12 @@ export class MaterialManager {
 
     this.registeredMaterials.add(material);
     subscribeToDispose(material, this.lifecycleCtx);
-    material.updateCameraParams(this.currentFov, this.currentResolution, this.currentIsOrtho);
+    material.updateCameraParams(
+      this.currentFov,
+      this.currentResolution,
+      this.currentIsOrtho,
+      this.currentNearCull
+    );
     lruSet(
       this.gsplatMaterialCache,
       key,
