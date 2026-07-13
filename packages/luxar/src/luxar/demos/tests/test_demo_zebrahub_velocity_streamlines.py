@@ -1,46 +1,25 @@
 """Smoke tests for pure helpers in demo_zebrahub_velocity_streamlines.
 
-These tests cover deterministic numerical helpers that do not touch the
-network, the cache, or matplotlib. Network-fetching code paths
-(``resolve_h5ad`` Drive download, ``load_zebrahub``) are intentionally
-not exercised.
-
-The demo file is loaded by file path because ``luxar.__init__`` aliases
-``luxar.demos`` to ``luxar.utils.demos`` for backwards compatibility. The
-PPI demo's test file uses the same approach.
+These tests cover deterministic numerical helpers that do not touch the network,
+the cache, or matplotlib. Network-fetching code paths (``resolve_h5ad`` Drive
+download, ``load_zebrahub``) are intentionally not exercised. All heavy deps are
+imported lazily via ``_require_module``, so the module imports with no extras.
 """
 
 from __future__ import annotations
 
-import importlib.util
-import sys
-from pathlib import Path
-
 import numpy as np
 import pytest
 
-_DEMO_PATH = (
-    Path(__file__).resolve().parents[1] / "demo_zebrahub_velocity_streamlines.py"
+# The ``luxar.demos`` package is now importable directly (the sys.modules alias
+# that used to shadow it was removed).
+from luxar.demos.demo_zebrahub_velocity_streamlines import (
+    ZebrahubData,
+    _array_hash,
+    _require_module,
+    _select_seeds,
+    _stabilize_3d,
 )
-
-
-def _load_demo_module():
-    name = "_luxar_demo_zebrahub_velocity_streamlines_for_tests"
-    spec = importlib.util.spec_from_file_location(name, _DEMO_PATH)
-    if spec is None or spec.loader is None:
-        pytest.skip(f"Could not locate demo at {_DEMO_PATH}")
-    module = importlib.util.module_from_spec(spec)
-    sys.modules[name] = module
-    spec.loader.exec_module(module)
-    return module
-
-
-_demo = _load_demo_module()
-_array_hash = _demo._array_hash
-_require_module = _demo._require_module
-_select_seeds = _demo._select_seeds
-_stabilize_3d = _demo._stabilize_3d
-ZebrahubData = _demo.ZebrahubData
 
 
 class TestArrayHash:

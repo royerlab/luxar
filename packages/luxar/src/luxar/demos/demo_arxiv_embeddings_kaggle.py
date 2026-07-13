@@ -61,8 +61,7 @@ Usage:
     python demo_arxiv_embeddings_kaggle.py [--sample=N]
 
     Options:
-    --sample=N       Number of papers to sample (default: 50000)
-    --categories=X   Filter by arXiv category (e.g., cs.AI, physics.atom-ph)
+    --sample=N       Number of papers to sample (default: 500000)
     --use-cache      Use cached UMAP coordinates (RECOMMENDED!)
 
 Requirements:
@@ -88,7 +87,13 @@ import numpy as np
 from arbol import aprint, asection
 
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
-from luxar.demos import launch_viewer
+from luxar.demos import (
+    cache_computed,
+    cached_download,
+    hsv_to_rgb,
+    launch_viewer,
+    stack_colorings,
+)
 from luxar.utils.paths import get_demos_output_dir
 
 # =============================================================================
@@ -441,36 +446,20 @@ def reduce_embeddings_umap(
 def generate_paper_landscape(
     output_path: Path,
     sample_size: int = 50000,
-    category_filter: str | None = None,
-    cache_dir: Path | None = None,
 ) -> int:
     """Generate 3D landscape of arXiv papers.
 
     Args:
         output_path: Where to write zarr
         sample_size: Number of papers to sample
-        category_filter: Optional category filter
-        cache_dir: Optional cache for UMAP results
 
     Returns:
         Number of papers visualized
     """
-    # Check cache for UMAP results
-    cache_file = None
-    if cache_dir:
-        cache_dir.mkdir(parents=True, exist_ok=True)
-        cache_file = cache_dir / f"umap_{sample_size}_{category_filter or 'all'}.npz"
 
-    if cache_file and cache_file.exists():
-        with asection("Loading cached UMAP coordinates"):
-            cached = np.load(cache_file, allow_pickle=True)
-            positions = cached["positions"]
-            categories = list(cached["categories"])
-            years = list(cached["years"])
-            titles = list(cached["titles"]) if "titles" in cached else None
-            aprint(f"✓ Loaded {len(positions):,} papers from cache")
-    else:
-        # Check for cached embeddings dataset
+    def _compute_bundle() -> dict:
+        # Check for cached embeddings dataset (the ~30 GB embeddings ZIP is
+        # kept in ~/.cache/luxar with its own completeness / in-progress guards).
         dataset_cache = Path.home() / ".cache" / "luxar" / "arxiv_embeddings.zip"
         metadata_cache = Path.home() / ".cache" / "luxar" / "arxiv_metadata.json"
         expected_emb_size_gb = 30  # Expected embeddings size
@@ -511,14 +500,13 @@ def generate_paper_landscape(
         # Download and load metadata
         if not metadata_cache.exists():
             aprint("Metadata not in cache, downloading...")
-            # First download to Downloads, then extract
-            meta_zip = Path.home() / "Downloads" / "arxiv-metadata.zip"
-            if not meta_zip.exists():
-                aprint("Downloading arXiv metadata (1.5GB compressed)...")
-                download_kaggle_dataset(
-                    meta_zip,
-                    url="https://www.kaggle.com/api/v1/datasets/download/Cornell-University/arxiv",
-                )
+            # Cache the metadata ZIP under ~/.cache/luxar/arxiv_kaggle instead of
+            # polluting the user's ~/Downloads (skip-if-present built in).
+            meta_zip = cached_download(
+                "https://www.kaggle.com/api/v1/datasets/download/Cornell-University/arxiv",
+                "arxiv_kaggle",
+                "arxiv-metadata.zip",
+            )
 
             # Extract metadata
             import zipfile
@@ -548,63 +536,97 @@ def generate_paper_landscape(
         embeddings = np.array(embeddings_list, dtype=np.float32)
 
         if len(embeddings) == 0:
-            aprint("❌ No papers loaded")
-            return 0
+            return {
+                "positions": np.zeros((0, 3), dtype=np.float32),
+                "categories": [],
+                "years": [],
+                "titles": None,
+            }
 
         # Reduce to 3D
         positions = reduce_embeddings_umap(embeddings, n_components=3)
 
-        # Cache UMAP results for instant future runs
-        aprint(
-            f"[DEBUG] About to cache. cache_file={cache_file}, cache_dir={cache_dir}"
-        )
-        with asection("Saving UMAP cache"):
-            if cache_file:
-                aprint(f"Cache path: {cache_file}")
-                np.savez(
-                    cache_file,
-                    positions=positions,
-                    categories=np.array(categories),
-                    years=np.array(years),
-                    titles=np.array(titles, dtype=object),
-                )
-                aprint("✓ UMAP cached successfully!")
-                aprint("  Next run with same sample size will be INSTANT!")
-            else:
-                aprint("⚠️  Cache not enabled (--use-cache flag needed)")
+        return {
+            "positions": positions,
+            "categories": list(categories),
+            "years": list(years),
+            "titles": list(titles) if titles is not None else None,
+        }
+
+    # UMAP + matched metadata cached under ~/.cache/luxar/arxiv_kaggle, keyed on
+    # the sample size (version=1) so a second run with the same size is instant.
+    bundle = cache_computed(
+        "arxiv_kaggle", f"umap3d_n{sample_size}", _compute_bundle, version=1
+    )
+    positions = bundle["positions"]
+    categories = list(bundle["categories"])
+    years = list(bundle["years"])
+    titles = bundle["titles"]
+
+    if len(positions) == 0:
+        aprint("❌ No papers loaded")
+        return 0
 
     # Generate visualization
     with asection("Generating visualization"):
         n_papers = len(positions)
+        year_array = np.array(years, dtype=np.float32)
+        yr_rng = float(year_array.max() - year_array.min())
+        yr_t = (
+            (year_array - year_array.min()) / yr_rng
+            if yr_rng > 0
+            else np.zeros_like(year_array)
+        )
 
-        # Colors by category
-        colors = np.zeros((n_papers, 3), dtype=np.float32)
-        for i, cat in enumerate(categories):
-            colors[i] = CATEGORY_COLORS.get(cat, CATEGORY_COLORS["other"])
+        # Two switchable coloring views: arXiv category (categorical) and a
+        # cool→warm sequential ramp over publication year.
+        category_colors = np.array(
+            [CATEGORY_COLORS.get(c, CATEGORY_COLORS["other"]) for c in categories],
+            dtype=np.float32,
+        )
+        year_colors = hsv_to_rgb(0.66 * (1.0 - yr_t))  # older=blue → newer=red
 
-        # Count categories
-        cat_counts = {}
+        cat_counts: dict[str, int] = {}
         for cat in categories:
             cat_counts[cat] = cat_counts.get(cat, 0) + 1
-
-        aprint("✓ Papers by category:")
+        aprint("✓ Papers by category (colored by category / year):")
         for cat, count in sorted(cat_counts.items(), key=lambda x: -x[1])[:10]:
             aprint(f"  {cat}: {count:,}")
-
-        # Size by recency (newer papers = larger)
-        year_array = np.array(years, dtype=np.float32)
-        year_norm = (year_array - year_array.min()) / (
-            year_array.max() - year_array.min() + 1
-        )
-        radii = (0.03 + 0.07 * year_norm).astype(np.float32)
-
-        aprint("✓ Sizes by year:")
         aprint(f"  Year range: {int(year_array.min())} to {int(year_array.max())}")
+
+        # Per-point radii by recency (newer=larger); tiled across views below.
+        radii_pp = (0.03 + 0.07 * yr_t).astype(np.float32)
+
+        def _title(i: int) -> str:
+            if titles is not None:
+                return titles[i][:60] + ("…" if len(titles[i]) > 60 else "")
+            return str(categories[i])
+
+        category_labels = [
+            f"{_title(i)} ({years[i]}, {categories[i]})" for i in range(n_papers)
+        ]
+        year_labels = [f"{_title(i)} ({years[i]})" for i in range(n_papers)]
+
+        stacked = stack_colorings(
+            positions,
+            [
+                {"label": "Category", "colors": category_colors, "labels": category_labels},
+                {"label": "Year", "colors": year_colors, "labels": year_labels},
+            ],
+        )
+        radii = np.tile(radii_pp, len(stacked.categories)).astype(np.float32)
 
     # Write to Zarr
     with asection("Writing to Zarr"):
         dims = Dimensions(
             [
+                Dimension(
+                    "coloring",
+                    unit="",
+                    categories=stacked.categories,
+                    display=False,
+                    description="Color scheme: arXiv category / publication year",
+                ),
                 Dimension("x", unit="UMAP", display=True),
                 Dimension("y", unit="UMAP", display=True),
                 Dimension("z", unit="UMAP", display=True),
@@ -614,32 +636,22 @@ def generate_paper_landscape(
         with LuxarZarrCompiler(output_path) as compiler:
             scene = compiler.create_scene(dimensions=dims)
 
-            sharpness = np.full(n_papers, 0.6, dtype=np.float32)
-
-            # Hover labels: title + year + category
-            if titles is not None:
-                paper_labels = [
-                    f"{titles[i][:60]}{'…' if len(titles[i]) > 60 else ''} ({years[i]}, {categories[i]})"
-                    for i in range(n_papers)
-                ]
-            else:
-                paper_labels = [
-                    f"{categories[i]} ({years[i]})" for i in range(n_papers)
-                ]
-
+            # Substitutive Points LOD for the large (up to 2M) paper cloud —
+            # coarse merged levels when zoomed out (census-style wiring; coarse
+            # splats stay pure per coloring via the `coloring` barrier).
             scene.add_points(
                 "arxiv_papers",
-                positions=positions,
-                colors=colors,
+                positions=stacked.positions,
+                colors=stacked.colors,
                 radii=radii,
-                sharpness=sharpness,
+                sharpness=np.full(len(stacked.positions), 0.6, dtype=np.float32),
                 opacity=0.9,
                 intensity=0.1,
-                labels=paper_labels,
+                labels=stacked.labels,
+                substitutive_lod=dict(compression_factor=8, levels=3, device="auto"),
             )
 
             # --- Overlays ---
-            # Title
             scene.add_text(
                 "ArXiv Paper Embeddings",
                 position=(0.02, 0.02),
@@ -647,6 +659,41 @@ def generate_paper_landscape(
                 anchor="top-left",
                 color="rgba(255,255,255,0.6)",
                 blend_mode="difference",
+            )
+
+            # Category legend (view 0) + year gradient caption (view 1).
+            _cat_legend = (
+                '<div style="font-size:1.2vh;line-height:1.5;background:rgba(0,0,0,0.5);'
+                'padding:0.5vh;border-radius:3px">'
+                '<div style="font-weight:bold;color:#ccc;margin-bottom:0.3vh">Category</div>'
+            )
+            for cat, _ in sorted(cat_counts.items(), key=lambda x: -x[1])[:10]:
+                r, g, b = (
+                    int(round(v * 255))
+                    for v in CATEGORY_COLORS.get(cat, CATEGORY_COLORS["other"])
+                )
+                _cat_legend += (
+                    f'<div><span style="color:#{r:02x}{g:02x}{b:02x}">█</span> {cat}</div>'
+                )
+            _cat_legend += "</div>"
+            scene.add_html(
+                _cat_legend,
+                position=(0.02, 0.97),
+                anchor="bottom-left",
+                visible_range={"coloring": 0},
+                transition="fade",
+                transition_duration=0.3,
+            )
+            scene.add_html(
+                '<div style="font-size:1.3vh;background:rgba(0,0,0,0.5);padding:0.6vh;'
+                'border-radius:3px;color:#ccc">Year: '
+                '<span style="color:#4d80ff">█</span> older → '
+                '<span style="color:#ff4d4d">█</span> newer</div>',
+                position=(0.02, 0.97),
+                anchor="bottom-left",
+                visible_range={"coloring": 1},
+                transition="fade",
+                transition_duration=0.3,
             )
 
             # Info + source
@@ -671,14 +718,10 @@ def generate_paper_landscape(
 def main() -> None:
     """Main demo entry point."""
     sample_size = DEFAULT_SAMPLE_SIZE
-    category_filter = None
-    _use_cache = True  # Caching is ALWAYS on by default (reserved for future use)
 
     for arg in sys.argv[1:]:
         if arg.startswith("--sample="):
             sample_size = int(arg.split("=")[1])
-        elif arg.startswith("--category="):
-            category_filter = arg.split("=")[1]
 
     aprint("=" * 70)
     aprint("ARXIV PAPER EMBEDDINGS - PRE-COMPUTED FROM KAGGLE")
@@ -696,8 +739,6 @@ def main() -> None:
     aprint("")
     aprint("Parameters:")
     aprint(f"  Sample size: {sample_size:,} papers")
-    if category_filter:
-        aprint(f"  Category filter: {category_filter}")
     aprint("")
 
     # Check dependencies
@@ -711,9 +752,6 @@ def main() -> None:
         aprint("")
         sys.exit(1)
 
-    # ALWAYS use cache
-    cache_dir = Path.home() / ".cache" / "luxar" / "arxiv_umap"
-
     # If --no-serve, use persistent directory; otherwise temp for auto-cleanup
     if "--no-serve" in sys.argv:
         output_path = get_demos_output_dir() / "arxiv_papers_kaggle.luxar.zarr"
@@ -721,8 +759,6 @@ def main() -> None:
             n_papers = generate_paper_landscape(
                 output_path,
                 sample_size=sample_size,
-                category_filter=category_filter,
-                cache_dir=cache_dir,
             )
             if n_papers == 0:
                 return
@@ -744,8 +780,6 @@ def main() -> None:
             n_papers = generate_paper_landscape(
                 output_path,
                 sample_size=sample_size,
-                category_filter=category_filter,
-                cache_dir=cache_dir,
             )
 
             if n_papers == 0:

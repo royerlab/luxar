@@ -554,7 +554,7 @@ Navigation:
                 )
 
             scene.add_text(
-                f"{n_timepoints} timepoints \u2022 Light-sheet microscopy",
+                f"{n_timepoints} timepoints \u2022 Confocal laser-scanning microscopy",
                 position=(0.98, 0.97),
                 font_size=0.015,
                 anchor="bottom-right",

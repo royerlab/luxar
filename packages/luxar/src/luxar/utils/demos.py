@@ -7,12 +7,14 @@ from Git LFS (shipped with the package) or a local cache.
 
 from __future__ import annotations
 
+import pickle
+import re
 import shutil
 import subprocess
 import sys
 import zipfile
 from pathlib import Path, PurePosixPath
-from typing import Optional, Union
+from typing import Any, Callable, NamedTuple, Optional, Union
 
 import numpy as np
 from arbol import aprint, asection
@@ -125,7 +127,7 @@ def warn_if_no_cuda_gpu() -> None:
     aprint("")
     aprint("Options:")
     aprint("  - Use a machine with an NVIDIA GPU (CUDA)")
-    aprint("  - Use --timepoints=2 for a quick test run")
+    aprint("  - Run the default path (shipped precomputed data) instead of --recompute")
     aprint("  - Use --serve-only if a scene was already generated")
     aprint("=" * 70)
     aprint("")
@@ -219,6 +221,289 @@ def parse_demo_flags() -> dict:
         "no_serve": "--no-serve" in sys.argv,
         "serve_only": "--serve-only" in sys.argv,
     }
+
+
+def parse_int_arg(name: str, default: int, argv: Optional[list[str]] = None) -> int:
+    """Parse an integer ``--name=VALUE`` or ``--name VALUE`` flag from argv.
+
+    A tiny shared replacement for the ad-hoc ``sys.argv`` scanning every demo
+    re-implements (``--points``, ``--sample``, ``--grid``, ``--frames``,
+    ``--resolution``, …). Accepts both ``--name=8000`` and ``--name 8000``.
+    Returns ``default`` when the flag is absent or unparseable.
+    """
+    args = list(sys.argv if argv is None else argv)
+    flag = f"--{name}"
+    for i, arg in enumerate(args):
+        try:
+            if arg.startswith(flag + "="):
+                return int(arg.split("=", 1)[1])
+            if arg == flag and i + 1 < len(args):
+                return int(args[i + 1])
+        except (ValueError, IndexError):
+            return default
+    return default
+
+
+# =============================================================================
+# Generic cache helpers (downloads + computed results under ~/.cache/luxar)
+# =============================================================================
+#
+# The ``load_precomputed_*`` helpers above cover LFS-shipped gsplat data. These
+# two cover the other two demo needs — downloading a remote file once, and
+# caching an expensive computed result (a UMAP embedding, a fitted field) — so
+# demos stop hand-rolling ``Path.home() / ".cache" / ...`` logic each time. Both
+# namespace under ``~/.cache/luxar/<name>/``.
+
+
+def _safe_cache_key(key: str) -> str:
+    """Filesystem-safe slug for a cache key (keeps it readable)."""
+    return re.sub(r"[^A-Za-z0-9_.-]+", "_", key).strip("_") or "default"
+
+
+def cached_download(
+    url: str,
+    name: str,
+    filename: Optional[str] = None,
+    *,
+    sha256: Optional[str] = None,
+    expected_size: Optional[int] = None,
+    verbose: bool = True,
+) -> Path:
+    """Download ``url`` once into ``~/.cache/luxar/<name>/<filename>``.
+
+    Reuses :func:`luxar.utils.download.robust_download` /
+    :func:`download_with_checksum` (retry, resume, checksum), but adds the
+    skip-if-already-present behaviour a cache needs: a complete cached file is
+    returned without touching the network.
+
+    Args:
+        url: Source URL.
+        name: Cache namespace (the demo name), e.g. ``"earthquakes"``.
+        filename: Destination basename; inferred from the URL when omitted.
+        sha256: Optional expected SHA-256 (verified on download; a matching
+            cached file is trusted without re-download).
+        expected_size: Optional expected size in bytes (skip-if-matches).
+
+    Returns:
+        Path to the cached file.
+    """
+    from .download import download_with_checksum, robust_download
+
+    cache_dir = _DEFAULT_CACHE_ROOT / name
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    if not filename:
+        filename = url.split("?")[0].rstrip("/").rsplit("/", 1)[-1] or "download.bin"
+    dest = cache_dir / filename
+
+    # Skip-if-present: a complete cached file (not an LFS pointer) is reused.
+    if dest.exists() and not is_lfs_pointer(dest):
+        if sha256 is not None:
+            from .download import verify_file_checksum
+
+            if verify_file_checksum(dest, None, sha256):
+                if verbose:
+                    aprint(f"✓ Cached (checksum ok): {dest}")
+                return dest
+        elif expected_size is not None:
+            if dest.stat().st_size == expected_size:
+                if verbose:
+                    aprint(f"✓ Cached: {dest}")
+                return dest
+        else:
+            if verbose:
+                aprint(f"✓ Cached: {dest}")
+            return dest
+
+    if sha256 is not None:
+        return download_with_checksum(
+            url, dest, expected_sha256=sha256, expected_size=expected_size
+        )
+    return robust_download(url, dest, expected_size=expected_size)
+
+
+def cache_computed(
+    name: str,
+    key: str,
+    compute_fn: Callable[[], Any],
+    *,
+    version: int = 1,
+    recompute: bool = False,
+    verbose: bool = True,
+) -> Any:
+    """Cache the result of ``compute_fn()`` under ``~/.cache/luxar/<name>/``.
+
+    For expensive deterministic results (UMAP embeddings, fitted vector fields).
+    The on-disk file is keyed by ``<key>_v<version>`` — bump ``version`` (or fold
+    the inputs/params into ``key``) whenever the computation's inputs change, so a
+    stale cache is never silently reused. A truncated/corrupt cache file is
+    quarantined (``.corrupt``) and recomputed rather than crashing the demo.
+
+    Args:
+        name: Cache namespace (the demo name).
+        key: Stable identifier for this result (include the sample size / params
+            that affect the output, e.g. ``f"umap3d_n{n}_feat{feat_hash}"``).
+        compute_fn: Zero-arg callable producing the (picklable) result.
+        version: Schema/logic version; bump to invalidate all prior caches.
+        recompute: If True, ignore any cached file and recompute.
+
+    Returns:
+        The cached or freshly computed result.
+    """
+    cache_dir = _DEFAULT_CACHE_ROOT / name
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    cache_file = cache_dir / f"{_safe_cache_key(key)}_v{version}.pkl"
+
+    if not recompute and cache_file.exists():
+        try:
+            with open(cache_file, "rb") as f:
+                result = pickle.load(f)
+            if verbose:
+                aprint(f"✓ Loaded cached result: {cache_file.name}")
+            return result
+        except Exception as exc:  # truncated / incompatible pickle
+            corrupt = cache_file.with_suffix(".pkl.corrupt")
+            cache_file.replace(corrupt)
+            aprint(f"⚠️  Cached result unreadable ({exc}); quarantined to {corrupt.name}")
+
+    result = compute_fn()
+
+    # Atomic write so an interrupted run never leaves a truncated cache.
+    tmp = cache_file.with_suffix(".pkl.tmp")
+    with open(tmp, "wb") as f:
+        pickle.dump(result, f, protocol=pickle.HIGHEST_PROTOCOL)
+    tmp.replace(cache_file)
+    if verbose:
+        aprint(f"✓ Cached result: {cache_file.name}")
+    return result
+
+
+def require_local_data(path: Union[str, Path], hint: Optional[str] = None) -> Path:
+    """Return ``path`` if it is real local data, else raise a helpful error.
+
+    Guards the local-data demos (LFS-tracked parquet/npz) so an unpulled Git LFS
+    pointer raises the clear "run git lfs pull" message instead of a cryptic
+    downstream parse error. Wraps :func:`_validate_lfs_files`.
+    """
+    p = Path(path)
+    _validate_lfs_files([p])
+    if hint and not p.exists():  # pragma: no cover - _validate_lfs_files raised
+        raise FileNotFoundError(hint)
+    return p
+
+
+def hsv_to_rgb(h: np.ndarray, s: Any = 1.0, v: Any = 1.0) -> np.ndarray:
+    """Vectorized HSV→RGB for arrays of hues (all in [0, 1]).
+
+    A single shared implementation for the rainbow/hue-ramp colouring several
+    demos each re-derived by hand. ``h`` is an array (or scalar); ``s``/``v`` may
+    be scalars or broadcastable arrays.
+
+    Returns:
+        ``(..., 3)`` float32 RGB in [0, 1] with the same leading shape as ``h``.
+    """
+    h = np.asarray(h, dtype=np.float32)
+    s = np.asarray(s, dtype=np.float32)
+    v = np.asarray(v, dtype=np.float32)
+    hp = (h % 1.0) * 6.0
+    c = v * s
+    x = c * (1.0 - np.abs(hp % 2.0 - 1.0))
+    m = v - c
+    z = np.zeros_like(hp)
+    sector = np.floor(hp).astype(int) % 6
+    r = np.select(
+        [sector == 0, sector == 1, sector == 2, sector == 3, sector == 4, sector == 5],
+        [c, x, z, z, x, c],
+    )
+    g = np.select(
+        [sector == 0, sector == 1, sector == 2, sector == 3, sector == 4, sector == 5],
+        [x, c, c, x, z, z],
+    )
+    b = np.select(
+        [sector == 0, sector == 1, sector == 2, sector == 3, sector == 4, sector == 5],
+        [z, z, x, c, c, x],
+    )
+    rgb = np.stack([r + m, g + m, b + m], axis=-1)
+    return rgb.astype(np.float32)
+
+
+class StackedColorings(NamedTuple):
+    """Result of :func:`stack_colorings` — a point cloud replicated once per
+    coloring scheme along a leading categorical axis."""
+
+    positions: np.ndarray  # (N*K, D+1) float32; column 0 is the coloring index
+    colors: np.ndarray  # (N*K, 3) float32
+    labels: Optional[list[str]]  # (N*K,) hover labels, or None if any view lacks them
+    categories: list[str]  # K coloring category names (for the `coloring` Dimension)
+
+
+def stack_colorings(
+    coords: np.ndarray,
+    colorings: list[dict],
+) -> StackedColorings:
+    """Replicate a point cloud once per coloring scheme along a categorical axis.
+
+    This is the render-proven pattern used by the census / peak-UMAP demos to
+    give a single embedding several switchable color views: the N points are
+    stacked K times (one block per coloring) and a leading ``coloring`` index
+    column is prepended so a categorical ``coloring`` dimension can select which
+    block (which colour scheme) is shown. Concentrating the stacking here keeps
+    the per-point alignment of positions / colours / hover-labels correct and
+    tested in one place instead of hand-rolled in each demo.
+
+    Args:
+        coords: ``(N, D)`` spatial coordinates (``D`` is usually 3).
+        colorings: ordered list of dicts, one per color scheme. Each dict has:
+            - ``"label"``: category name shown on the ``coloring`` dimension.
+            - ``"colors"``: ``(N, 3)`` float RGB for this scheme.
+            - ``"labels"`` (optional): ``(N,)`` per-point hover strings for this
+              scheme. If ANY coloring omits labels, the combined ``labels`` is
+              ``None`` (hover disabled) rather than misaligned.
+
+    Returns:
+        A :class:`StackedColorings`. ``positions`` has shape ``(N*K, D+1)`` with
+        column 0 = the coloring index; ``categories`` is the ordered label list
+        for building ``Dimension("coloring", categories=...)``.
+    """
+    coords = np.asarray(coords, dtype=np.float32)
+    n = len(coords)
+    if not colorings:
+        raise ValueError("stack_colorings requires at least one coloring")
+
+    positions_blocks: list[np.ndarray] = []
+    color_blocks: list[np.ndarray] = []
+    label_blocks: list[list[str]] = []
+    categories: list[str] = []
+    have_labels = True
+
+    for i, cg in enumerate(colorings):
+        cols = np.asarray(cg["colors"], dtype=np.float32)
+        if cols.shape != (n, 3):
+            raise ValueError(
+                f"coloring {i} ({cg.get('label')!r}) colors shape {cols.shape} "
+                f"!= expected {(n, 3)}"
+            )
+        positions_blocks.append(
+            np.column_stack([np.full(n, i, dtype=np.float32), coords])
+        )
+        color_blocks.append(cols)
+        categories.append(str(cg["label"]))
+        lbls = cg.get("labels")
+        if lbls is None:
+            have_labels = False
+        else:
+            if len(lbls) != n:
+                raise ValueError(
+                    f"coloring {i} ({cg.get('label')!r}) has {len(lbls)} labels "
+                    f"!= {n} points"
+                )
+            label_blocks.append([str(x) for x in lbls])
+
+    positions = np.vstack(positions_blocks).astype(np.float32)
+    colors = np.vstack(color_blocks).astype(np.float32)
+    labels: Optional[list[str]] = None
+    if have_labels:
+        labels = [x for block in label_blocks for x in block]
+    return StackedColorings(positions, colors, labels, categories)
 
 
 def load_precomputed_gsplats(
@@ -381,7 +666,11 @@ def load_precomputed_bundle(
         return results
 
 
-def launch_viewer(output_path: Union[str, Path], open_browser: bool = True) -> None:
+def launch_viewer(
+    output_path: Union[str, Path],
+    open_browser: bool = True,
+    serve_args: Optional[list[str]] = None,
+) -> None:
     """Launch the Luxar viewer to display a dataset.
 
     This function uses sys.executable to ensure it works regardless of how
@@ -390,11 +679,17 @@ def launch_viewer(output_path: Union[str, Path], open_browser: bool = True) -> N
     Args:
         output_path: Path to the .zarr dataset to view
         open_browser: Whether to automatically open a browser window
+        serve_args: Extra arguments forwarded verbatim to ``luxar serve`` — e.g.
+            ``["--profile", "3g"]`` for the network-simulation demo. These let a
+            demo drive server-side behaviour (bandwidth throttling, latency,
+            packet loss) that ``serve`` already supports.
 
     Raises:
         SystemExit: If the viewer fails to launch
     """
     cmd = [sys.executable, "-m", "luxar", "serve", str(output_path), "--viewer"]
+    if serve_args:
+        cmd.extend(serve_args)
     if open_browser:
         cmd.append("--open")
 
