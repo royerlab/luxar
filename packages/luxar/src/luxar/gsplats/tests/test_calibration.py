@@ -179,6 +179,32 @@ class TestHeldOutPSNR:
 
 
 # -----------------------------------------------------------------------------
+# _psnr_db (shared formula helper — deduplicates the 5 inline PSNR sites)
+# -----------------------------------------------------------------------------
+
+
+class TestPsnrDbHelper:
+    def test_matches_inline_formula(self):
+        from luxar.gsplats.calibration.metrics import _psnr_db
+
+        # The literal expression this helper replaced across metrics + driver.
+        for mse, data_range in [(0.01, 1.0), (4.0, 255.0), (1e-6, 2.5)]:
+            expected = 10.0 * math.log10(data_range**2 / mse)
+            assert math.isclose(_psnr_db(mse, data_range), expected, rel_tol=1e-12)
+
+    def test_zero_mse_is_inf(self):
+        from luxar.gsplats.calibration.metrics import _psnr_db
+
+        assert math.isinf(_psnr_db(0.0, 1.0))
+
+    def test_zero_data_range_is_inf(self):
+        from luxar.gsplats.calibration.metrics import _psnr_db
+
+        # Degenerate range short-circuits to +inf (matches held_out_psnr's guard).
+        assert math.isinf(_psnr_db(0.5, 0.0))
+
+
+# -----------------------------------------------------------------------------
 # build_k_grid
 # -----------------------------------------------------------------------------
 

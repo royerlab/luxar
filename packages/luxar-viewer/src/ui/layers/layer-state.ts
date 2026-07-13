@@ -7,6 +7,7 @@
 
 import type { SceneNode } from '../../data/data-loader-types';
 import type { BlendingMode } from '../../rendering/material-manager';
+import type { NodeKind } from '../../types/format-contract';
 import { log, Modules } from '../../utils/log';
 
 /**
@@ -38,8 +39,11 @@ export function isLayerEnabled(value: unknown): boolean {
   return false;
 }
 
-/** Specialized-group discriminant on a layer. */
-export type LayerKind = 'lod' | 'partition';
+/**
+ * Specialized-group discriminant on a layer. Single-sourced from the
+ * cross-language format contract (format-contract/contract.yaml).
+ */
+export type LayerKind = NodeKind;
 
 /** Information about a single layer in the Layers panel */
 export interface LayerInfo {

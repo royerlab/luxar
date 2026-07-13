@@ -72,6 +72,11 @@ jobs:
       - name: Version consistency (Python == viewer)
         run: hatch run python scripts/check_version_consistency.py
 
+      - name: Format contract drift (Python <-> TypeScript)
+        # The generated typing_utils/_format_contract.py + viewer
+        # types/format-contract.ts must match format-contract/contract.yaml.
+        run: hatch run check-contract
+
       - name: Security (bandit)
         # Gates on unwaived medium/high findings. Low findings (subprocess
         # usage, etc.) and demos are out of scope; see [tool.bandit].

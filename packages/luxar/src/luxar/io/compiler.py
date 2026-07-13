@@ -74,6 +74,10 @@ from ._compiler.gsplat_assembly import (
 )
 from ._compiler.labels.image_labels import write_image_labels_csr
 from ._compiler.labels.text_labels import write_labels_csr
+from ._compiler.node_common import (
+    apply_default_render_attrs,
+    prepare_transform_attrs,
+)
 from ._compiler.spatial_ordering.lines import (
     build_lines_ordering,
     write_lines_ordering_to_zarr,
@@ -515,32 +519,11 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
         # 5b. Write colormap LUT if colormap is a custom array
         self._write_colormap_lut_if_needed(group, attrs)
 
-        # 6. Process transform if present using centralized conversion
-        if "transform" in attrs:
-            from ..core.transforms import prepare_transform_for_zarr
-
-            attrs["transform"] = prepare_transform_for_zarr(attrs["transform"])
-
-        # 6b. Validate nd_transform if present
-        if "nd_transform" in attrs:
-            from ..validation.nd_transforms import validate_nd_transform
-
-            dims = None
-            if "scene_dimensions" in self.store.attrs:
-                dims = Dimensions.from_dict(self.store.attrs["scene_dimensions"])
-            attrs["nd_transform"] = validate_nd_transform(attrs["nd_transform"], dims)
+        # 6. Process transform + nd_transform attrs (shared with write_lines)
+        prepare_transform_attrs(attrs, self.store)
 
         # 7. Set default rendering attributes if not provided
-        if "opacity" not in attrs:
-            attrs["opacity"] = 1.0
-        if "gamma" not in attrs:
-            attrs["gamma"] = 1.0
-        if "intensity" not in attrs:
-            attrs["intensity"] = 1.0
-        if "offset" not in attrs:
-            attrs["offset"] = 0.0
-        if "blending_mode" not in attrs:
-            attrs["blending_mode"] = "additive"
+        apply_default_render_attrs(attrs)
 
         # 8. Store attributes
         group.attrs.update(attrs)
@@ -864,32 +847,12 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
         else:
             metadata["ordering"] = "none"
 
-        # Process transform if present
-        if "transform" in attrs:
-            from ..core.transforms import prepare_transform_for_zarr
+        # Process transform + nd_transform attrs (shared with write_points)
+        prepare_transform_attrs(attrs, self.store)
 
-            attrs["transform"] = prepare_transform_for_zarr(attrs["transform"])
-
-        # Validate nd_transform if present
-        if "nd_transform" in attrs:
-            from ..validation.nd_transforms import validate_nd_transform
-
-            dims = None
-            if "scene_dimensions" in self.store.attrs:
-                dims = Dimensions.from_dict(self.store.attrs["scene_dimensions"])
-            attrs["nd_transform"] = validate_nd_transform(attrs["nd_transform"], dims)
-
-        # Set default rendering attributes if not provided (must match write_points/write_gsplats)
-        if "opacity" not in attrs:
-            attrs["opacity"] = 1.0
-        if "gamma" not in attrs:
-            attrs["gamma"] = 1.0
-        if "intensity" not in attrs:
-            attrs["intensity"] = 1.0
-        if "offset" not in attrs:
-            attrs["offset"] = 0.0
-        if "blending_mode" not in attrs:
-            attrs["blending_mode"] = "additive"
+        # Set default rendering attributes if not provided
+        # (must match write_points/write_gsplats)
+        apply_default_render_attrs(attrs)
 
         # Set attributes (all core metadata per spec Section 6.6)
         group.attrs.update(attrs)

@@ -6,6 +6,8 @@
  * and loading statistics in real-time.
  */
 
+import type { NodeKind, NodeTypeName } from './format-contract';
+
 /**
  * Geometry-neutral index range for monitor events and query tracking.
  * `PointRange` / `SegmentRange` / `SplatRange` (the per-geometry query
@@ -463,9 +465,12 @@ export interface GridCellState {
 }
 
 /**
- * Node type for scene graph display
+ * Node type for scene graph display. The shared geometry/container types are
+ * single-sourced from the cross-language format contract
+ * (format-contract/contract.yaml); `mesh` is a viewer-only forward-looking
+ * member with no Python counterpart yet.
  */
-export type SceneGraphNodeType = 'scene' | 'group' | 'points' | 'lines' | 'gsplats' | 'mesh';
+export type SceneGraphNodeType = NodeTypeName | 'mesh';
 
 /**
  * Scene graph node for UI display.
@@ -496,9 +501,10 @@ export interface SceneGraphNode {
    * Specialized-group discriminant, set when the underlying scene-graph
    * node is a `kind=lod` (substitutive LOD) or `kind=partition` (BSP)
    * `Group`. Drives the tree's kind badge + icon. Mirrors `LayerInfo.kind`
-   * in `ui/layers/layer-state.ts`.
+   * in `ui/layers/layer-state.ts`. `NodeKind` is single-sourced from the
+   * cross-language format contract (format-contract/contract.yaml).
    */
-  kind?: 'lod' | 'partition';
+  kind?: NodeKind;
   /**
    * Resolved geometry `display_type` (points / lines / gsplats) for a
    * specialized group — the type the user logically sees the group as.
@@ -535,8 +541,11 @@ export interface SceneGraphNode {
  *                    progressively refined by the refinement loop.
  *   - `partition`  : `kind=partition` BSP group — N disjoint parts, all
  *                    rendered (per-part frustum culling).
+ *
+ * The on-disk `lod`/`partition` kinds come from the format contract's
+ * `NodeKind`; `additive` is a viewer-only progressive-loading shape.
  */
-export type LODNodeKind = 'lod' | 'additive' | 'partition';
+export type LODNodeKind = NodeKind | 'additive';
 
 /**
  * Live, per-node LOD / progressive-refinement / cache-residency state,

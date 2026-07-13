@@ -47,6 +47,10 @@ from luxar.io._compiler.gsplat_tree import (
     write_gsplat_node,
 )
 from luxar.io.reader import DEFAULT_COMP
+from luxar.typing_utils._format_contract import (
+    GSPLATS_FORMAT_VERSION,
+    SUPPORTED_GSPLATS_VERSIONS,
+)
 from luxar.utils.paths import normalize_zarr_path
 
 # Get luxar.gsplats version
@@ -65,7 +69,8 @@ except ImportError:
 #: v3.1 splits the Cholesky factors into ``cholesky_factors_diag`` (N, d) +
 #: ``cholesky_factors_offdiag`` (N, k-d) so each can be encoded independently;
 #: v3.0 stored a single packed ``cholesky_factors`` array.
-FORMAT_VERSION = "3.2"
+#: Single-sourced from ``format-contract/contract.yaml``.
+FORMAT_VERSION = GSPLATS_FORMAT_VERSION
 
 #: Node-tree format versions the readers accept. v3.0 / v3.1 are still read
 #: transparently: the loaders fall back to the single packed Cholesky array
@@ -73,7 +78,8 @@ FORMAT_VERSION = "3.2"
 #: fresh ``coverage_fraction`` thresholds (the legacy ``min_pixel_size`` lod
 #: attrs are ignored on read). The web viewer auto-adapts the legacy lod attrs
 #: too, but warns — upgrade old stores with ``luxar gsplat migrate-format``.
-SUPPORTED_FORMAT_VERSIONS = ("3.0", "3.1", "3.2")
+#: Single-sourced from ``format-contract/contract.yaml``.
+SUPPORTED_FORMAT_VERSIONS = SUPPORTED_GSPLATS_VERSIONS
 
 #: ``stats`` keys lifted into the ``fitting/`` group on save (quality metrics,
 #: culling/filtering provenance). Single-sourced here so every writer (``GSplatData.save``

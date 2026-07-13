@@ -492,7 +492,7 @@ def quick_view(
     try:
         import threading
 
-        from luxar.cli.main import _serve_data, _serve_viewer
+        from luxar.cli.serving import _serve_data, _serve_viewer
         from luxar.cli.utils import (
             build_viewer,
             check_viewer_built,
