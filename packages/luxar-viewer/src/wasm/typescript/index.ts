@@ -7,13 +7,11 @@
  * 3. Documentation of expected behavior
  *
  * Structure mirrors src/wasm/rust/src/:
- * - spatial.ts     -> spatial.rs
  * - effective-radii.ts -> effective_radii.rs
  * - decode.ts      -> decode.rs
  * - lines-clipping.ts -> lines_clipping.rs
  */
 
-export { query_chunks_for_view } from './spatial';
 export { calculate_effective_radii } from './effective-radii';
 export {
   decode_quantized_u8,
@@ -67,7 +65,6 @@ export {
 
 // Re-export as a module class for compatibility with WasmModule interface
 import type { WasmModule } from '../types';
-import { query_chunks_for_view } from './spatial';
 import { calculate_effective_radii } from './effective-radii';
 import {
   decode_quantized_u8,
@@ -123,7 +120,6 @@ import {
  * Used when WASM is unavailable or fails to load.
  */
 export class TypeScriptFallback implements WasmModule {
-  query_chunks_for_view = query_chunks_for_view;
   calculate_effective_radii = calculate_effective_radii;
   decode_quantized_u8 = decode_quantized_u8;
   decode_quantized_u16 = decode_quantized_u16;

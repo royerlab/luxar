@@ -11,7 +11,6 @@ path.
 | File                    | Role                                                                                                             |
 | ----------------------- | ---------------------------------------------------------------------------------------------------------------- |
 | `index.ts`              | Barrel re-exporting every kernel and the `TypeScriptFallback` class implementing the `WasmModule` interface      |
-| `spatial.ts`            | `query_chunks_for_view` — AABB intersection between chunk bounds and the nD slice                                |
 | `lines-clipping.ts`     | Liang-Barsky segment clipping, batched position/scalar/color interpolation, segment lengths, clipped-end flags   |
 | `gsplats-processing.ts` | Marginal Cholesky factorization, Mahalanobis distance, shifted-Gaussian attenuation, visible-Cholesky extraction |
 | `effective-radii.ts`    | `calculate_effective_radii` — `R_eff = sqrt(R² − D²)` for nD points sliced by a hyperplane                       |

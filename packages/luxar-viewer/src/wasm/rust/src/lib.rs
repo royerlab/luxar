@@ -31,7 +31,6 @@
 //!
 //! ## Module Organization
 //!
-//! - `spatial` - Chunk AABB queries for spatial indexing
 //! - `effective_radii` - Effective radius calculation for nD slicing
 //! - `decode` - Data decoding (quantized, LUT, log-space)
 //! - `projection` - nD to 3D projection and bounds
@@ -64,7 +63,6 @@ mod effective_radii;
 mod gsplats_processing;
 mod lines_clipping;
 mod projection;
-mod spatial;
 
 // Re-export all public functions for WASM binding
 pub use decode::{
@@ -89,4 +87,3 @@ pub use projection::{
     calculate_bounds_3d, compact_by_mask, count_visible, extract_3d_positions,
     radii_to_visibility_mask,
 };
-pub use spatial::query_chunks_for_view;

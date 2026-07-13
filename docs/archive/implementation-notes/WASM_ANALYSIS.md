@@ -1,5 +1,13 @@
 # WASM Acceleration Critical Analysis
 
+> **⚠️ Historical document (2025-12).** The standalone nD-visibility worker
+> kernels (`computeNDVisibility{Points,Lines,GSplats}` / `compute_nd_visibility_*`)
+> and the `querySpatialIndex` worker task described below never gained a
+> production caller and were **deleted in 2026-07** (see CHANGELOG). Per-element
+> nD visibility/culling lives inside the projection kernels
+> (`clip_segments_batch`, effective radius, gsplats attenuation), and chunk-AABB
+> spatial queries run on the main thread (`SpatialQueryBuilder`).
+
 **Date**: 2025-12-27
 **Analyst**: Claude Code
 **Status**: Comprehensive Review After Unified Loader Refactoring

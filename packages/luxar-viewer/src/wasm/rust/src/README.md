@@ -20,7 +20,6 @@ build instructions are in the parent [`../README.md`](../README.md).
 src/
 ├── lib.rs                  — crate root: module declarations + WASM re-exports
 ├── common.rs               — shared constants, ndim validation, packed-Cholesky index
-├── spatial.rs              — chunk AABB intersection (nD broadphase)
 ├── lines_clipping.rs       — Liang-Barsky nD slab clipping + attribute interpolation
 ├── gsplats_processing.rs   — Mahalanobis distance, marginal Cholesky, attenuation
 ├── effective_radii.rs      — Pythagorean radius shrinkage when slicing through hidden dims
@@ -31,7 +30,7 @@ src/
 Every module ships a `#[cfg(test)]` block of native Rust unit tests (run via
 `make test-wasm` or `cargo test`). The kernels are organised so that the
 TypeScript fallback in `../../typescript/` has a 1:1 file mapping
-(`spatial.rs` ↔ `spatial.ts`, `lines_clipping.rs` ↔ `lines-clipping.ts`, etc.).
+(`lines_clipping.rs` ↔ `lines-clipping.ts`, `decode.rs` ↔ `decode.ts`, etc.).
 
 ---
 
@@ -93,19 +92,6 @@ Single-file utility module that everything else depends on. Exports
 `MAX_SUPPORTED_DIMS`, `MAX_PACKED_CHOLESKY_SIZE`, `CHOLESKY_EPSILON`, the
 `validate_ndim(ndim, fn_name)` panic helper, and `packed_index(row, col)`
 (`#[inline]`) for indexing lower-triangular Cholesky storage.
-
-### `spatial.rs` — chunk broadphase
-
-| Function                | Purpose                                                    |
-| ----------------------- | ---------------------------------------------------------- |
-| `query_chunks_for_view` | AABB-vs-hypercube intersection across `num_chunks` chunks. |
-
-The chunk bounds array is laid out `[c0_dim0_min, c0_dim0_max, c0_dim1_min, …,
-c1_dim0_min, …]` with stride `2·ndim`. A chunk is **rejected** as soon as any
-dimension's `[chunk_min, chunk_max]` interval lies fully outside
-`slice_position[d] ± tolerance[d]`. Matching chunk indices are packed into a
-caller-supplied `&mut [u32]` and the population count returned. No `ndim`
-validation is required here (no fixed-size buffers).
 
 ### `lines_clipping.rs` — Liang-Barsky clipping in nD
 

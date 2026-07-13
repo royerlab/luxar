@@ -111,42 +111,6 @@ describe('WASM artifact requirement', () => {
 
 describe('WASM vs TypeScript Comparison', () => {
   // ============================================================================
-  // SPATIAL MODULE
-  // ============================================================================
-  describe('spatial: query_chunks_for_view', () => {
-    it.skipIf(!wasmFilesExist)('should produce identical results', () => {
-      const chunkBounds = new Float32Array([
-        0.0, 1.0, 0.0, 1.0, 0.0, 1.0, 1.0, 2.0, 1.0, 2.0, 1.0, 2.0, 5.0, 6.0, 5.0, 6.0, 5.0, 6.0,
-      ]);
-      const slicePos = new Float32Array([0.5, 0.5, 0.5]);
-      const tolerance = new Float32Array([0.6, 0.6, 0.6]);
-
-      const tsOutput = new Uint32Array(3);
-      const wasmOutput = new Uint32Array(3);
-
-      const tsCount = tsModule.query_chunks_for_view(
-        chunkBounds,
-        slicePos,
-        tolerance,
-        3,
-        3,
-        tsOutput
-      );
-      const wasmCount = wasmModule!.query_chunks_for_view(
-        chunkBounds,
-        slicePos,
-        tolerance,
-        3,
-        3,
-        wasmOutput
-      );
-
-      expect(wasmCount).toBe(tsCount);
-      expect(arraysEqual(wasmOutput, tsOutput)).toBe(true);
-    });
-  });
-
-  // ============================================================================
   // LINES CLIPPING MODULE
   // ============================================================================
   describe('regression: lines clip near-parallel epsilon (W1)', () => {

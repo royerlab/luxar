@@ -29,7 +29,6 @@ import { initWasm, isWasmSupported, setWasmJsUrl } from './wasm';
 const wasm = await initWasm();
 
 // Use the unified API
-const chunks = wasm.query_chunks_for_view(/* ... */);
 const count = wasm.clip_segments_batch(/* ... */);
 ```
 
@@ -39,10 +38,6 @@ webpack 5). Use `setWasmJsUrl` only when shipping WASM files from a
 non-standard location.
 
 ## WasmModule API
-
-### Spatial Queries
-
-- `query_chunks_for_view()` — Find chunks intersecting an nD slice
 
 ### nD Visibility
 
@@ -143,7 +138,6 @@ wasm/
 ├── types.ts              — WasmModule interface (unified API)
 ├── typescript/           — Pure TypeScript fallback
 │   ├── index.ts          — TypeScriptFallback class
-│   ├── spatial.ts        — Spatial queries
 │   ├── points.ts         — Point visibility
 │   ├── lines.ts          — Line visibility
 │   ├── lines-clipping.ts — Line clipping

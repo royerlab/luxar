@@ -32,7 +32,6 @@ async function loadWorkerPool(
       dataLoading: {
         performance: {
           workerCount,
-          workerVisibilityTimeoutMs: 30000,
           workerProjectionTimeoutMs: 60000,
           ...perf,
         },
@@ -201,30 +200,11 @@ describe('WorkerPool.runWithTimeout', () => {
     expect(err).toMatchObject({ operation: 'projectPointsTo3D', timeoutMs: 50 });
   });
 
-  it('uses workerVisibilityTimeoutMs for visibility kind', async () => {
-    vi.useFakeTimers();
-    const { WorkerPool, WorkerTimeoutError } = await loadWorkerPool(
-      2,
-      { workerVisibilityTimeoutMs: 30, workerProjectionTimeoutMs: 5000 },
-      { neverResolves: vi.fn(() => new Promise<never>(() => {})) }
-    );
-    const pool = new WorkerPool();
-    const raced = pool
-      .runWithTimeout('querySpatialIndex', 'visibility', (api) =>
-        (api as unknown as { neverResolves: () => Promise<never> }).neverResolves()
-      )
-      .catch((e: unknown) => e);
-    await vi.advanceTimersByTimeAsync(40);
-    const err = await raced;
-    expect(err).toBeInstanceOf(WorkerTimeoutError);
-    expect(err).toMatchObject({ timeoutMs: 30 });
-  });
-
   it('decode kind uses the projection timeout knob (no dedicated decode knob)', async () => {
     vi.useFakeTimers();
     const { WorkerPool } = await loadWorkerPool(
       2,
-      { workerProjectionTimeoutMs: 25, workerVisibilityTimeoutMs: 10000 },
+      { workerProjectionTimeoutMs: 25 },
       { neverResolves: vi.fn(() => new Promise<never>(() => {})) }
     );
     const pool = new WorkerPool();

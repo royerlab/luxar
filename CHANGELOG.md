@@ -20,7 +20,15 @@ All notable changes to Luxar are documented in this file.
   effective radius, GSplats attenuation), making a standalone visibility
   round-trip redundant. Parity tests and benchmarks kept the dead kernels
   looking alive for six months.
-- The `'visibility'` `TimeoutKind` stays — it belongs to `querySpatialIndex`.
+- **Also removed — the dead `querySpatialIndex` worker task and its chain**:
+  the sibling Phase-2 orphan. Chunk-AABB spatial queries run on the main
+  thread (`SpatialQueryBuilder`) and never used the worker round-trip, so the
+  task, its `query_chunks_for_view` WASM kernel (Rust `spatial.rs` + TS
+  `spatial.ts`), `validateChunkQueryInputs`, the `'visibility'` `TimeoutKind`,
+  and the `workerVisibilityTimeoutMs` config knob are gone (projection/decode
+  keep `workerProjectionTimeoutMs`). Archived design docs
+  (`docs/archive/implementation-notes/{WASM_ANALYSIS,WORKER_INFRASTRUCTURE_STATUS}.md`)
+  now carry a historical-status note.
 
 #### Fixed — Lines are re-culled when scrubbing a non-displayed dimension
 

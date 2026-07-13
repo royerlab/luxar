@@ -41,7 +41,7 @@ describe.skipIf(!hasWorkerAPI)('WorkerPool', () => {
     expect(workerCount).toBeGreaterThanOrEqual(1);
     for (const w of calls) {
       expect(w).toBeDefined();
-      expect(typeof (w as { querySpatialIndex?: unknown }).querySpatialIndex).toBe('function');
+      expect(typeof (w as { projectLinesTo3D?: unknown }).projectLinesTo3D).toBe('function');
     }
     const distinct = new Set(calls);
     expect(distinct.size).toBeGreaterThanOrEqual(1);
@@ -63,7 +63,7 @@ describe.skipIf(!hasWorkerAPI)('WorkerPool', () => {
 
     for (const w of workers) {
       expect(w).toBeDefined();
-      expect(typeof (w as { querySpatialIndex?: unknown }).querySpatialIndex).toBe('function');
+      expect(typeof (w as { projectLinesTo3D?: unknown }).projectLinesTo3D).toBe('function');
     }
     const distinct = new Set(workers);
     expect(distinct.size).toBeGreaterThanOrEqual(1);
@@ -98,36 +98,5 @@ describe.skipIf(!hasWorkerAPI)('WorkerPool', () => {
 describe.skipIf(!hasWorkerAPI)('DataWorker Communication', () => {
   afterEach(() => {
     disposeWorkerPool();
-  });
-
-  it('should query spatial index correctly', async () => {
-    const pool = getWorkerPool();
-    const worker = await pool.getWorker();
-
-    // Create test data: 4 chunks in 3D space
-    const chunkBounds = new Float32Array([
-      // Chunk 0: [0,0,0] to [1,1,1]
-      0, 1, 0, 1, 0, 1,
-      // Chunk 1: [1,1,1] to [2,2,2]
-      1, 2, 1, 2, 1, 2,
-      // Chunk 2: [2,2,2] to [3,3,3]
-      2, 3, 2, 3, 2, 3,
-      // Chunk 3: [-1,-1,-1] to [0,0,0]
-      -1, 0, -1, 0, -1, 0,
-    ]);
-
-    // Query at position [0.5, 0.5, 0.5] with tolerance [0.6, 0.6, 0.6]
-    const result = await worker.querySpatialIndex({
-      chunkBounds,
-      slicePosition: new Float32Array([0.5, 0.5, 0.5]),
-      tolerance: new Float32Array([0.6, 0.6, 0.6]),
-      numChunks: 4,
-      ndim: 3,
-    });
-
-    // Should match chunks 0 and 1 (within tolerance)
-    const matchedChunks = Array.from(result);
-    expect(matchedChunks).toContain(0); // Chunk 0 intersects
-    expect(matchedChunks.length).toBeGreaterThan(0);
   });
 });

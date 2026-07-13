@@ -183,69 +183,6 @@ describe.skipIf(!wasmFilesExist)('WASM Performance Benchmarks', () => {
     });
   });
 
-  describe('query_chunks_for_view', () => {
-    const runBenchmark = (numChunks: number) => {
-      const ndim = 3;
-      benchmark(
-        'query_chunks_for_view',
-        numChunks,
-        () => {
-          // Create chunk bounds [minX, maxX, minY, maxY, minZ, maxZ] per chunk
-          const chunkBounds = new Float32Array(numChunks * ndim * 2);
-          for (let i = 0; i < numChunks; i++) {
-            const x = (i % 100) * 10;
-            const y = Math.floor(i / 100) * 10;
-            const z = 0;
-            chunkBounds[i * 6] = x; // minX
-            chunkBounds[i * 6 + 1] = x + 10; // maxX
-            chunkBounds[i * 6 + 2] = y; // minY
-            chunkBounds[i * 6 + 3] = y + 10; // maxY
-            chunkBounds[i * 6 + 4] = z; // minZ
-            chunkBounds[i * 6 + 5] = z + 10; // maxZ
-          }
-          const slicePos = new Float32Array([500, 500, 5]);
-          const tolerance = new Float32Array([Infinity, Infinity, Infinity]);
-          const output = new Uint32Array(numChunks);
-          return {
-            wasm: wasmModule,
-            ts: tsModule,
-            args: { chunkBounds, slicePos, tolerance, ndim, numChunks, output },
-          };
-        },
-        (wasm, { chunkBounds, slicePos, tolerance, ndim, numChunks, output }) => {
-          wasm.query_chunks_for_view(chunkBounds, slicePos, tolerance, ndim, numChunks, output);
-        },
-        (ts, { chunkBounds, slicePos, tolerance, ndim, numChunks, output }) => {
-          ts.query_chunks_for_view(chunkBounds, slicePos, tolerance, ndim, numChunks, output);
-        }
-      );
-    };
-
-    it(`should benchmark with ${SMALL_SIZE.toLocaleString()} chunks`, () => {
-      runBenchmark(SMALL_SIZE);
-      const result = results[results.length - 1];
-      console.log(
-        `  query_chunks_for_view (${SMALL_SIZE.toLocaleString()}): ` +
-          `WASM=${result.wasmTimeMs.toFixed(3)}ms, ` +
-          `TS=${result.tsTimeMs.toFixed(3)}ms, ` +
-          `speedup=${result.speedup.toFixed(2)}x`
-      );
-      expect(result.speedup).toBeGreaterThan(0);
-    });
-
-    it(`should benchmark with ${MEDIUM_SIZE.toLocaleString()} chunks`, () => {
-      runBenchmark(MEDIUM_SIZE);
-      const result = results[results.length - 1];
-      console.log(
-        `  query_chunks_for_view (${MEDIUM_SIZE.toLocaleString()}): ` +
-          `WASM=${result.wasmTimeMs.toFixed(3)}ms, ` +
-          `TS=${result.tsTimeMs.toFixed(3)}ms, ` +
-          `speedup=${result.speedup.toFixed(2)}x`
-      );
-      expect(result.speedup).toBeGreaterThan(0);
-    });
-  });
-
   describe('clip_segments_batch', () => {
     const runBenchmark = (numSegments: number) => {
       const ndim = 4;

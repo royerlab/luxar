@@ -1147,59 +1147,6 @@ const benchmarks: Record<string, BenchmarkFn[]> = {
     },
   ],
 
-  SPATIAL: [
-    (size) => {
-      // For spatial queries, we use fewer chunks but realistic bounds
-      const numChunks = Math.min(size, 10000);
-      const chunkBounds = new Float32Array(numChunks * 6);
-      for (let i = 0; i < numChunks; i++) {
-        const x = (i % 100) * 10;
-        const y = Math.floor(i / 100) * 10;
-        chunkBounds[i * 6 + 0] = x;
-        chunkBounds[i * 6 + 1] = x + 10;
-        chunkBounds[i * 6 + 2] = y;
-        chunkBounds[i * 6 + 3] = y + 10;
-        chunkBounds[i * 6 + 4] = 0;
-        chunkBounds[i * 6 + 5] = 10;
-      }
-      const slicePos = new Float32Array([50, 50, 5]);
-      const tolerance = new Float32Array([100, 100, 100]);
-      const tsOutput = new Uint32Array(numChunks);
-      const wasmOutput = new Uint32Array(numChunks);
-
-      const tsTime = measureTime(
-        () => {
-          tsModule.query_chunks_for_view(chunkBounds, slicePos, tolerance, 3, numChunks, tsOutput);
-        },
-        CONFIG.iterations,
-        CONFIG.warmupIterations
-      );
-
-      const wasmTime = measureTime(
-        () => {
-          wasmModule!.query_chunks_for_view(
-            chunkBounds,
-            slicePos,
-            tolerance,
-            3,
-            numChunks,
-            wasmOutput
-          );
-        },
-        CONFIG.iterations,
-        CONFIG.warmupIterations
-      );
-
-      return {
-        name: 'query_chunks_for_view',
-        category: 'SPATIAL',
-        tsTime,
-        wasmTime,
-        speedup: tsTime / wasmTime,
-      };
-    },
-  ],
-
   'GSPLATS PROCESSING': [
     (size) => {
       const ndim = 4;

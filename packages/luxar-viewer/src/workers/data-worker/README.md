@@ -35,7 +35,6 @@ data-worker/
 │                      Used by every task before the first WASM call —
 │                      a short buffer would otherwise let WASM read past
 │                      the end of caller-supplied memory.
-├── spatial-index/   — One task: querySpatialIndex (chunk-AABB ∩ nD slice).
 ├── projection/      — Two tasks: projectLinesTo3D / projectGSplatsTo3D
 │                      (nD → 3D). Points project on the main thread
 │                      (WASM-accelerated, data/points/projection.ts), so
@@ -57,12 +56,12 @@ a one-line forward into the matching task here:
 // ../data-worker.ts (illustrative — see the file for the full surface)
 import { state } from './data-worker/state';
 import { initialize as initializeImpl } from './data-worker/initialize';
-import { querySpatialIndex as querySpatialIndexImpl } from './data-worker/spatial-index/query';
+import { projectLinesTo3D as projectLinesTo3DImpl } from './data-worker/projection/lines';
 // ...
 
 const workerAPI = {
   initialize: () => initializeImpl(state),
-  querySpatialIndex: (...args) => querySpatialIndexImpl(state, ...args),
+  projectLinesTo3D: (p) => projectLinesTo3DImpl(state, p),
   // ...
 };
 Comlink.expose(workerAPI);
@@ -91,8 +90,6 @@ worker.
 
 ## Subpackages
 
-- [spatial-index](./spatial-index/) — chunk-AABB query for the loader's
-  visibility pass.
 - [projection](./projection/) — Lines/GSplats nD → 3D extraction (worker
   or in-process); Points project on the main thread (WASM-accelerated) in
   `data/points/projection.ts`.

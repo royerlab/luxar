@@ -12,15 +12,14 @@ export const dataLoadingPerformanceConfig: DataLoadingPerformanceConfig = {
   initialAccumulatorCapacity: 8192,
   accumulatorGrowthFactor: 1.5,
 
-  // Web workers offload CPU-heavy operations: nD→3D projection,
-  // visibility, decoding. AABB spatial queries always run on the
-  // main thread (faster than the roundtrip).
+  // Web workers offload CPU-heavy operations: nD→3D projection
+  // (with built-in per-element visibility/culling) and decoding. AABB
+  // spatial queries always run on the main thread (faster than the
+  // roundtrip).
   useWebWorkers: true,
   workerCount: 0, // 0 = auto (uses navigator.hardwareConcurrency - 1)
-  // Per-call worker timeouts. Visibility is fast (chunk-bounding-box
-  // test); projection over millions of items is slow. 0 disables
-  // timeout enforcement.
-  workerVisibilityTimeoutMs: 30000,
+  // Per-call worker timeout (projection + decode). Projection over
+  // millions of items is slow. 0 disables timeout enforcement.
   workerProjectionTimeoutMs: 60000,
   // Worker pool init timeout: protects against unreachable worker
   // scripts (404 on the chunk URL, blocked by route, dev-server

@@ -1,5 +1,5 @@
 /**
- * Edge-case tests for WASM loader (index.ts) and TypeScript-fallback spatial /
+ * Edge-case tests for WASM loader (index.ts) and TypeScript-fallback
  * projection helpers. Closes wasm.md gap cluster:
  *   - [wasm.md G8][P5]  compact_by_mask stride > 1 (multi-component data).
  *   - [wasm.md G22][P5] isWasmSupported with WebAssembly.instantiate set to a
@@ -10,10 +10,6 @@
  *   - [wasm.md G24][P5] setWasmJsUrl: a non-empty override flows through to
  *                       the dynamic import — proven by a partial-shim data:
  *                       URL that resolves but fails the `default()` call.
- *   - [wasm.md G29][P5] query_chunks_for_view NaN bound → all `<`/`>` are
- *                       false → chunk marked intersecting (false positive).
- *   - [wasm.md G30][P5] query_chunks_for_view output.length < numChunks
- *                       silently overflows TypedArray writes (ignored, no crash).
  *   - [wasm.md G31][P5] extract_3d_positions displayDims[j] >= ndim → OOB
  *                       read → undefined → Float32Array stores NaN.
  *
@@ -23,7 +19,6 @@
 import { describe, it, expect } from 'vitest';
 import { initWasm, isWasmSupported, setWasmJsUrl } from '../../../wasm';
 import { TypeScriptFallback } from '../../../wasm/typescript';
-import { query_chunks_for_view } from '../../../wasm/typescript/spatial';
 import { extract_3d_positions, compact_by_mask } from '../../../wasm/typescript/projection';
 
 describe('compact_by_mask — stride > 1 multi-component [wasm.md G8]', () => {
@@ -133,71 +128,6 @@ describe('initWasm + setWasmJsUrl — URL pass-through discriminator [wasm.md G2
     setWasmJsUrl('');
     expect(w1).toBeInstanceOf(TypeScriptFallback);
     expect(w2).toBeInstanceOf(TypeScriptFallback);
-  });
-});
-
-describe('query_chunks_for_view — NaN bound and output overflow [wasm.md G29, G30]', () => {
-  it('[G29] NaN in chunk maxBound → both `<`/`>` checks false → chunk marked INTERSECTING (false positive)', () => {
-    // Documents the actual behaviour: with maxBound=NaN and finite minBound
-    // both branches of the intersection test evaluate false (NaN
-    // comparisons are always false). `intersects=true` survives the
-    // loop and the bogus chunk is reported as visible. Pin this so a
-    // future hardening (e.g. `if (Number.isNaN(...)) intersects=false`)
-    // surfaces as intentional.
-    //
-    // Construction: minBound=0 (sits at slice 100 ± 0.1? no — 0 < 99.9
-    // would normally exclude, but the `minBound > slicePos+tol` check
-    // requires 0 > 100.1 which is FALSE. So that branch passes too.)
-    // For the bug to manifest the chunk MUST have a NaN bound; here only
-    // maxBound is NaN, minBound is 0 (well below slice-tol but the
-    // check is `maxBound < slicePos - tol`, NaN<99.9 = false).
-    const chunkBounds = new Float32Array([0, Number.NaN]); // maxBound=NaN
-    const slicePosition = new Float32Array([100]); // way above the chunk
-    const tolerance = new Float32Array([0.1]);
-    const output = new Uint32Array(1);
-    const n = query_chunks_for_view(chunkBounds, slicePosition, tolerance, 1, 1, output);
-    expect(n).toBe(1); // false positive — pin the contract
-    expect(output[0]).toBe(0);
-  });
-
-  it('[G29] NaN slicePosition → likewise all-false comparisons → false positive', () => {
-    const chunkBounds = new Float32Array([0, 1]);
-    const slicePosition = new Float32Array([Number.NaN]);
-    const tolerance = new Float32Array([0.1]);
-    const output = new Uint32Array(1);
-    const n = query_chunks_for_view(chunkBounds, slicePosition, tolerance, 1, 1, output);
-    expect(n).toBe(1);
-  });
-
-  it('[G30] output.length < numChunks: writes past end of TypedArray are SILENTLY DROPPED (no crash)', () => {
-    // 3 chunks all intersect, but output buffer holds only 2 slots. The
-    // 3rd write `output[2++] = 2` is silently ignored (TypedArray spec).
-    // Pin: function completes, returns 3 (NOT 2), but only first 2 slots
-    // are observable in the output.
-    const chunkBounds = new Float32Array([0, 1, 0, 1, 0, 1]); // 3 chunks all at origin
-    const slicePosition = new Float32Array([0.5]);
-    const tolerance = new Float32Array([1.0]);
-    const output = new Uint32Array(2); // UNDERSIZED
-    const n = query_chunks_for_view(chunkBounds, slicePosition, tolerance, 1, 3, output);
-    expect(n).toBe(3); // return value is uncapped — pin this
-    expect(output[0]).toBe(0);
-    expect(output[1]).toBe(1);
-    // output[2] write was silently dropped; the buffer is length 2.
-    expect(output.length).toBe(2);
-  });
-
-  it('[G30] output.length > numChunks: leftover slots remain 0 (untouched)', () => {
-    // Symmetric: oversized output is fine. Leftovers stay at TypedArray
-    // zero-initialised value.
-    const chunkBounds = new Float32Array([0, 1, 100, 101]); // chunk 0 intersects, chunk 1 doesn't
-    const slicePosition = new Float32Array([0.5]);
-    const tolerance = new Float32Array([1.0]);
-    const output = new Uint32Array(5);
-    const n = query_chunks_for_view(chunkBounds, slicePosition, tolerance, 1, 2, output);
-    expect(n).toBe(1);
-    expect(output[0]).toBe(0);
-    expect(output[1]).toBe(0); // untouched
-    expect(output[4]).toBe(0); // untouched
   });
 });
 

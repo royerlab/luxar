@@ -7,16 +7,13 @@
 /**
  * Class of worker call, used to pick a default timeout from config.
  *
- * - `'visibility'` — spatial-index visibility queries
- *   (`querySpatialIndex`). Bounded by chunk count, typically
- *   sub-second; uses `workerVisibilityTimeoutMs`.
  * - `'projection'` — `project*To3D` round-trips that include WASM
  *   visibility + compaction. Uses `workerProjectionTimeoutMs`.
  * - `'decode'` — `decode*` array-decode calls. Same magnitude as
  *   projection on large chunks; piggybacks on `workerProjectionTimeoutMs`
  *   for now.
  */
-export type TimeoutKind = 'visibility' | 'projection' | 'decode';
+export type TimeoutKind = 'projection' | 'decode';
 
 /**
  * Thrown when a Comlink-routed worker call exceeds its configured

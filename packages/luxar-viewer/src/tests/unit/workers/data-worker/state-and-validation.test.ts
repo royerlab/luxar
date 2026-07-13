@@ -26,7 +26,6 @@ import {
   validateLineSegmentReferences,
   validateNDArrays,
   validateProjectionInputs,
-  validateChunkQueryInputs,
   validateDecodeArgs,
   MAX_WASM_DIMS,
 } from '../../../../workers/data-worker/validation';
@@ -388,59 +387,5 @@ describe('validateDecodeArgs — branch coverage', () => {
 
   it('accepts empty opts (no-op validation)', () => {
     expect(() => validateDecodeArgs('test', new Uint8Array(0))).not.toThrow();
-  });
-});
-
-describe('validateChunkQueryInputs — boundary (P5)', () => {
-  it('rejects numChunks < 0', () => {
-    expect(() =>
-      validateChunkQueryInputs(
-        'test',
-        new Float32Array(30),
-        new Float32Array(3),
-        new Float32Array(3),
-        3,
-        -1
-      )
-    ).toThrow(/numChunks=-1 must be a non-negative integer/);
-  });
-
-  it('rejects non-positive ndim', () => {
-    expect(() =>
-      validateChunkQueryInputs(
-        'test',
-        new Float32Array(0),
-        new Float32Array(20),
-        new Float32Array(20),
-        0,
-        0
-      )
-    ).toThrow(/must be a positive integer/);
-  });
-
-  it('accepts ndim>16 (chunk query is dimension-agnostic, not capped)', () => {
-    expect(() =>
-      validateChunkQueryInputs(
-        'test',
-        new Float32Array(0),
-        new Float32Array(17),
-        new Float32Array(17),
-        17,
-        0
-      )
-    ).not.toThrow();
-  });
-
-  it('passes on exact-fit chunkBounds = numChunks × ndim × 2', () => {
-    expect(() =>
-      validateChunkQueryInputs(
-        'test',
-        new Float32Array(30), // 5 chunks × 3 dims × 2
-        new Float32Array(3),
-        new Float32Array(3),
-        3,
-        5
-      )
-    ).not.toThrow();
   });
 });

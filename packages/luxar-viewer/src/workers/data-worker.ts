@@ -25,7 +25,6 @@
 import { expose } from 'comlink';
 import { state } from './data-worker/state';
 import { initialize as initializeImpl, type WorkerInitResult } from './data-worker/initialize';
-import { querySpatialIndex as querySpatialIndexImpl } from './data-worker/spatial-index/query';
 import { projectLinesTo3D as projectLinesTo3DImpl } from './data-worker/projection/lines';
 import { projectGSplatsTo3D as projectGSplatsTo3DImpl } from './data-worker/projection/gsplats';
 import { decodeQuantized as decodeQuantizedImpl } from './data-worker/decode/quantized';
@@ -52,8 +51,6 @@ export const workerAPI = {
   // worker), so a relocated WASM binary is loaded here instead of silently
   // falling back to the slower TS implementation.
   initialize: (wasmPath?: string): Promise<WorkerInitResult> => initializeImpl(state, wasmPath),
-  querySpatialIndex: (p: Parameters<typeof querySpatialIndexImpl>[1]) =>
-    querySpatialIndexImpl(state, p),
   // Decoding functions (main thread fetches, worker decodes)
   decodeQuantized: (p: Parameters<typeof decodeQuantizedImpl>[1]) => decodeQuantizedImpl(state, p),
   decodeLogScalar: (p: Parameters<typeof decodeLogScalarImpl>[1]) => decodeLogScalarImpl(state, p),

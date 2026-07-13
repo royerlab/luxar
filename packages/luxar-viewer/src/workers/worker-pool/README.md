@@ -15,7 +15,7 @@ subfolders need to talk to each other and to the pool.
 | File        | Purpose                                                                                                                                         |
 | ----------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
 | `types.ts`  | The `WorkerInstance` interface — one live `Worker` + its Comlink-wrapped `DataWorkerAPI` + the `activeQueries` counter used for load balancing. |
-| `errors.ts` | `WorkerTimeoutError`, `WorkerAbortError`, and the `TimeoutKind` discriminator (`'visibility' \| 'projection' \| 'decode'`).                     |
+| `errors.ts` | `WorkerTimeoutError`, `WorkerAbortError`, and the `TimeoutKind` discriminator (`'projection' \| 'decode'`).                     |
 | `stats.ts`  | Pure functions over a `WorkerInstance[]`: `computeStats` (full snapshot) and `computeQueueDepth` (cheap sum for live debug overlays).           |
 
 `errors.ts` is the one module re-exported verbatim from
@@ -87,8 +87,7 @@ orchestrator readable without changing semantics.
 - [`../README.md`](../README.md) — full worker subsystem overview
   (architecture diagram, data flow, fallback behavior, public API).
 - [`../data-worker.ts`](../data-worker.ts) and `../data-worker/` — the
-  worker-side counterpart: WASM bootstrap plus the spatial-index,
-  visibility, projection, and decode task implementations the pool
-  routes calls to.
+  worker-side counterpart: WASM bootstrap plus the projection and
+  decode task implementations the pool routes calls to.
 - `../../config/sections/data-loading/performance/data.ts` — the source of
   truth for the timeout values `pick-timeout-ms.ts` reads.

@@ -10,7 +10,7 @@
  * import { initWasm } from '../wasm';
  *
  * const wasm = await initWasm();
- * const count = wasm.query_chunks_for_view(...);
+ * const count = wasm.clip_segments_batch(...);
  * ```
  *
  * ## Architecture

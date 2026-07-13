@@ -1,30 +1,10 @@
 /**
- * WASM module interface for spatial queries and nD visibility computation.
+ * WASM module interface: projection, effective-radius, and decode kernels.
  *
  * This interface defines the contract between TypeScript and the WASM module.
  * Both the compiled WASM and the TypeScript fallback implement this interface.
  */
 export interface WasmModule {
-  /**
-   * Query chunks whose bounding boxes intersect the nD slice.
-   *
-   * @param chunkBounds - Flattened chunk bounds [numChunks * ndim * 2] (min/max pairs)
-   * @param slicePosition - Current slice position in nD space [ndim]
-   * @param tolerance - Tolerance per dimension [ndim]
-   * @param ndim - Number of dimensions
-   * @param numChunks - Total number of chunks
-   * @param output - Output buffer for matching chunk indices [numChunks]
-   * @returns Number of matching chunks
-   */
-  query_chunks_for_view(
-    chunkBounds: Float32Array,
-    slicePosition: Float32Array,
-    tolerance: Float32Array,
-    ndim: number,
-    numChunks: number,
-    output: Uint32Array
-  ): number;
-
   /**
    * Calculate effective radii for nD points when sliced.
    *
