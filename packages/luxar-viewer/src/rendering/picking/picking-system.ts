@@ -74,13 +74,27 @@ export const MAX_PICK_BUFFER_DIM = 1024;
 
 /**
  * Compute the pick render target size from the renderer's drawing-buffer
- * size: half resolution per axis, capped at MAX_PICK_BUFFER_DIM, never
- * smaller than 1 pixel.
+ * size: half resolution, capped at MAX_PICK_BUFFER_DIM on the larger
+ * axis, never smaller than 1 pixel.
+ *
+ * The cap is applied as a SINGLE uniform scale on both axes so the pick
+ * buffer always preserves the drawing-buffer (= camera) aspect ratio.
+ * This is load-bearing for gsplat picking: the gsplat pick shader maps
+ * view space to pick-buffer pixels manually with uFx == uFy (a
+ * square-pixel assumption), so a pick buffer with a different aspect
+ * than the camera displaces gsplat picks horizontally away from screen
+ * center. Points/lines pick through the aspect-aware projectionMatrix
+ * and tolerate any aspect — but only aspect-preserving sizing keeps all
+ * three geometry types consistent.
  */
 export function computePickBufferSize(drawW: number, drawH: number): { w: number; h: number } {
-  const w = clamp(Math.floor(drawW / 2), 1, MAX_PICK_BUFFER_DIM);
-  const h = clamp(Math.floor(drawH / 2), 1, MAX_PICK_BUFFER_DIM);
-  return { w, h };
+  const halfW = Math.max(drawW / 2, 1);
+  const halfH = Math.max(drawH / 2, 1);
+  const scale = Math.min(1, MAX_PICK_BUFFER_DIM / halfW, MAX_PICK_BUFFER_DIM / halfH);
+  return {
+    w: Math.max(1, Math.floor(halfW * scale)),
+    h: Math.max(1, Math.floor(halfH * scale)),
+  };
 }
 
 export class PickingSystem {

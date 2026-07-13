@@ -69,7 +69,12 @@ export function commitLinesGeometry(
       mesh.geometry = geometry;
       if (acquireRebuilt || updateRebuilt) invalidateRenderObjectFor(mesh);
     } else {
-      updateInstancedLinesMesh(mesh, processed);
+      // Non-pool path: a size/spec-set change rebinds a fresh
+      // InstancedInterleavedBuffer — evict Three's cached RenderObject
+      // exactly like the pool branch above (stale `vertexBuffers` on
+      // the WebGPU backend otherwise).
+      const rebuilt = updateInstancedLinesMesh(mesh, processed);
+      if (rebuilt) invalidateRenderObjectFor(mesh);
     }
 
     if (isLinesUserData(mesh.userData)) {

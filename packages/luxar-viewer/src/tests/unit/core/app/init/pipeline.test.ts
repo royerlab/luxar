@@ -137,6 +137,7 @@ vi.mock('../../../../../data/scene-loader-manager', () => ({
     getInstance: vi.fn().mockReturnValue({
       setMonitorFactory: vi.fn(),
       setLODGroupRegistryFactory: vi.fn(),
+      setRequestRender: vi.fn(),
     }),
   },
   getSceneLoader: vi.fn().mockReturnValue(null),
