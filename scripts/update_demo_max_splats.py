@@ -26,6 +26,10 @@ SUMMARIES = REPO_ROOT / "scripts" / "calibration_results" / "_all_summaries.json
 # Some demos share a calibration (alias_of); each still gets its file updated.
 DEMO_FILE_MAP = {
     "organoid_dapi": ("demo_gsplats_3d_organoid_dapi_nuclei.py", "MAX_SPLATS"),
+    "cells3d_multichannel": (
+        "demo_gsplats_3d_cells3d_multichannel.py",
+        "MAX_SPLATS",
+    ),
     "kidney_multichannel_layers": (
         "demo_gsplats_3d_kidney_multichannel_layers.py",
         "MAX_SPLATS",

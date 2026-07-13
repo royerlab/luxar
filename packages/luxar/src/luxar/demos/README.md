@@ -517,6 +517,17 @@ Multi-channel 3D microscopy data as Gaussian splats, with full compute pipeline 
 
 ---
 
+#### demo_gsplats_3d_cells3d_multichannel.py - 3D Multi-Channel Cells (Layers + BOP LUTs)
+Two-channel scikit-image `cells3d` fluorescence volume (membranes + nuclei) fitted per channel as 3D splats and shown as toggleable **layers**, each coloured by a BOP (Blue-Orange-Purple) microscopy LUT (`bop_orange` membranes, `bop_blue` nuclei). Fully self-contained (skimage downloads the sample) — the cheapest gsplat demo to run from scratch. Uses precomputed gsplats from Git LFS by default.
+
+**Run**: `hatch run python packages/luxar/src/luxar/demos/demo_gsplats_3d_cells3d_multichannel.py [--recompute]`
+
+**Requires**: Git LFS data (default) or `scikit-image` + GPU (with `--recompute`).
+
+**Demonstrates**: Per-channel `layer=True` gsplats nodes with built-in BOP LUTs applied at display time (interactive colormap switching in the Layers panel, press L), shared amplitude-weighted centroid alignment, additive blending, Neutral tone-mapping for faithful hues. The lightweight, no-download sibling of `organoid_multichannel` and `kidney_multichannel_layers`.
+
+---
+
 #### demo_gsplats_3d_kidney_multichannel_toggles.py - 3D Multi-Channel Kidney (Boolean Toggles)
 Three-channel confocal mouse kidney tissue (nuclei, WGA, actin) with independent boolean toggle dimensions for each channel.
 

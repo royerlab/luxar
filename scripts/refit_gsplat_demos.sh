@@ -23,6 +23,7 @@ echo "=========================================="
 DEMOS_DIR=packages/luxar/src/luxar/demos
 declare -a DEMOS=(
     "organoid_dapi:$DEMOS_DIR/demo_gsplats_3d_organoid_dapi_nuclei.py"
+    "cells3d_multichannel:$DEMOS_DIR/demo_gsplats_3d_cells3d_multichannel.py"
     "kidney_layers:$DEMOS_DIR/demo_gsplats_3d_kidney_multichannel_layers.py"
     "kidney_toggles:$DEMOS_DIR/demo_gsplats_3d_kidney_multichannel_toggles.py"
     "organoid_multi:$DEMOS_DIR/demo_gsplats_3d_organoid_multichannel.py"
