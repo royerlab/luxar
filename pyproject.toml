@@ -111,6 +111,7 @@ demos = [
     "cellxgene-census>=1.0.0",
     "esm>=3.0.0",
     "h5py>=3.0.0",
+    "astropy>=6.0.0",
     "mrcfile>=1.4.0",
 ]
 docs = [
