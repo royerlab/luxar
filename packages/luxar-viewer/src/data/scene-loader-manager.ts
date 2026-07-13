@@ -46,6 +46,17 @@ export class SceneLoaderManager {
   private lodGroupRegistryFactory: SceneLoaderLODGroupRegistryFactory | null = null;
 
   /**
+   * Optional render-loop wake-up forwarded to every created loader
+   * (→ `SceneLoader.setRequestRender`). Same dependency-inversion
+   * pattern as ``monitorFactory``: the app pipeline wires it to
+   * `AnimationController.startAnimation` so late geometry commits
+   * (refinement, retries, lazy LOD loads) repaint after the rAF loop
+   * has idle-paused. Null (tests / embedders) means commits never
+   * wake a loop — SceneLoader treats it as a no-op.
+   */
+  private requestRender: (() => void) | null = null;
+
+  /**
    * Private constructor to enforce singleton pattern
    */
   private constructor() {
@@ -70,6 +81,15 @@ export class SceneLoaderManager {
    */
   setLODGroupRegistryFactory(factory: SceneLoaderLODGroupRegistryFactory | null): void {
     this.lodGroupRegistryFactory = factory;
+  }
+
+  /**
+   * Provide the render-loop wake-up callback. Called once at app boot
+   * from the init pipeline; forwarded to each subsequently created
+   * ``SceneLoader`` (see the ``requestRender`` field).
+   */
+  setRequestRender(callback: (() => void) | null): void {
+    this.requestRender = callback;
   }
 
   /**
@@ -119,6 +139,7 @@ export class SceneLoaderManager {
       this.monitorFactory,
       this.lodGroupRegistryFactory
     );
+    loader.setRequestRender(this.requestRender);
     this.loaders.set(id, loader);
 
     if (setAsDefault || !this.defaultLoaderId) {
@@ -161,6 +182,7 @@ export class SceneLoaderManager {
       this.monitorFactory,
       this.lodGroupRegistryFactory
     );
+    loader.setRequestRender(this.requestRender);
     this.loaders.set(id, loader);
 
     if (setAsDefault || !this.defaultLoaderId) {

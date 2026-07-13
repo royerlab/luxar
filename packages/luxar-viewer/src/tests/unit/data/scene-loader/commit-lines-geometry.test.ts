@@ -22,6 +22,7 @@ vi.mock('../../../../rendering/line-geometry', () => ({
 }));
 
 import { commitLinesGeometry } from '../../../../data/scene-loader/commit/commit-lines-geometry';
+import { SOFT_DISPOSE_FLAG } from '../../../../rendering/material-manager';
 import type { StagedLinesCommit } from '../../../../data/scene-loader/process/data-processor-lines';
 import type { ProcessedLinesData } from '../../../../types/lines';
 
@@ -313,5 +314,54 @@ describe('commitLinesGeometry — committedEnergyFraction stamp', () => {
       0
     );
     expect(energy(plain)).toBe(1);
+  });
+});
+
+describe('commitLinesGeometry — RenderObject invalidation on non-pool rebuild', () => {
+  // When updateInstancedLinesMesh reports a REBUILD (size/spec-set change
+  // rebinds a fresh InstancedInterleavedBuffer), the commit must dispatch
+  // the SOFT_DISPOSE-flagged material event so Three's cached RenderObject
+  // (stale `vertexBuffers` on the WebGPU backend) is evicted — the same
+  // contract the pool branch honors via didLastAcquireRebuildAttributes.
+  const softDisposeSeen = (mesh: THREE.Mesh): (() => boolean) => {
+    let seen = false;
+    (mesh.material as THREE.Material).addEventListener('dispose', () => {
+      seen = (mesh.material as unknown as Record<symbol, boolean>)[SOFT_DISPOSE_FLAG] === true;
+    });
+    return () => seen;
+  };
+
+  it('soft-disposes the material when the update reports a rebuild', () => {
+    mockUpdateInstancedLinesMesh.mockReset();
+    mockUpdateInstancedLinesMesh.mockReturnValue(true);
+    const root = new THREE.Group();
+    const mesh = makeMesh('/lines');
+    root.add(mesh);
+    const saw = softDisposeSeen(mesh);
+    commitLinesGeometry(
+      { path: '/lines', sourceData: makeSourceData(3), processed: makeProcessed(3) },
+      root,
+      null,
+      undefined,
+      0
+    );
+    expect(saw()).toBe(true);
+  });
+
+  it('does NOT dispatch when the update was in-place (no rebuild)', () => {
+    mockUpdateInstancedLinesMesh.mockReset();
+    mockUpdateInstancedLinesMesh.mockReturnValue(false);
+    const root = new THREE.Group();
+    const mesh = makeMesh('/lines');
+    root.add(mesh);
+    const saw = softDisposeSeen(mesh);
+    commitLinesGeometry(
+      { path: '/lines', sourceData: makeSourceData(3), processed: makeProcessed(3) },
+      root,
+      null,
+      undefined,
+      0
+    );
+    expect(saw()).toBe(false);
   });
 });

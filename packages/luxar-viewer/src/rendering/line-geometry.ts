@@ -303,11 +303,15 @@ export function createInstancedLinesMesh(
  *
  * @param mesh - Existing mesh to update (must have InstancedBufferGeometry)
  * @param meshConfig - New segment data
+ * @returns `true` when the interleaved buffer was REBUILT (size or
+ *   spec-set change) — the caller must then evict Three's cached
+ *   RenderObject (see `invalidate-render-object.ts`); `false` for the
+ *   in-place write.
  */
 export function updateInstancedLinesMesh(
   mesh: THREE.Mesh,
   meshConfig: InstancedLinesMeshConfig
-): void {
+): boolean {
   const geometry = mesh.geometry as THREE.InstancedBufferGeometry;
   const currentCount = geometry.instanceCount;
   const hasScalars = !!(meshConfig.startScalars && meshConfig.endScalars);
@@ -316,7 +320,8 @@ export function updateInstancedLinesMesh(
   // 'aStartScalar' iff the prior config supplied scalars.
   const hadScalars = geometry.getAttribute('aStartScalar') !== undefined;
 
-  if (meshConfig.segmentCount !== currentCount || hasScalars !== hadScalars) {
+  const rebuilt = meshConfig.segmentCount !== currentCount || hasScalars !== hadScalars;
+  if (rebuilt) {
     // Size changed OR spec-set changed (colormap toggle). Rebuild
     // the interleaved buffer from scratch — it gets a fresh stride
     // (when toggling scalars on/off) and a fresh `.array` (when
@@ -367,4 +372,6 @@ export function updateInstancedLinesMesh(
 
   // Recompute bounding box from segment positions (direct min/max pass, no temp allocations)
   computeLineBounds(geometry, meshConfig);
+
+  return rebuilt;
 }

@@ -444,6 +444,24 @@ export class SceneLoader {
     return this._updateVersion;
   }
 
+  /**
+   * Optional render-loop wake-up, wired by `SceneLoaderManager` from the
+   * app pipeline (→ `AnimationController.startAnimation`). Fired after
+   * every geometry commit so late commits — progressive-refinement
+   * passes, failed-load retries, the online auto-retry, lazy LOD loads —
+   * repaint even when the rAF loop has idle-paused meanwhile. The
+   * callback is idempotent on the receiving side (startAnimation
+   * early-outs while animating and re-arms the idle timer), so per-node
+   * calls inside an atomic sweep are harmless. Null in bare/test
+   * loaders → no-op.
+   */
+  private _requestRender: (() => void) | null = null;
+
+  /** Install (or clear) the render-loop wake-up callback. */
+  setRequestRender(callback: (() => void) | null): void {
+    this._requestRender = callback;
+  }
+
   constructor(
     config: LoaderConfig = {},
     id?: string,
@@ -1157,6 +1175,9 @@ export class SceneLoader {
       session,
       loadedViewVersion
     );
+    // Wake the idle-paused render loop so this commit paints (see
+    // _requestRender).
+    this._requestRender?.();
   }
 
   /**
@@ -1200,6 +1221,9 @@ export class SceneLoader {
       session,
       loadedViewVersion
     );
+    // Wake the idle-paused render loop so this commit paints (see
+    // _requestRender).
+    this._requestRender?.();
   }
 
   /**
@@ -1314,6 +1338,9 @@ export class SceneLoader {
       session,
       loadedViewVersion
     );
+    // Wake the idle-paused render loop so this commit paints (see
+    // _requestRender).
+    this._requestRender?.();
   }
 
   /**

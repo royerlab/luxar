@@ -110,6 +110,8 @@ demos = [
     "anndata>=0.10.0",
     "cellxgene-census>=1.0.0",
     "esm>=3.0.0",
+    "h5py>=3.0.0",
+    "mrcfile>=1.4.0",
 ]
 docs = [
     "sphinx>=7.0.0",
