@@ -427,6 +427,17 @@ Recreates the Cosmicflows-4 / Laniakea visualization by Simone Conradi and Manli
 
 ---
 
+#### demo_desi_galaxies.py - DESI DR1: The Cosmic Web in 3D (~14M galaxies & quasars)
+The large-scale structure of the Universe as a point cloud from the Dark Energy Spectroscopic Instrument's first data release. Each point is a real galaxy or quasar with a measured spectroscopic redshift; the redshift becomes a comoving distance so sky position + depth give true 3D Cartesian coordinates in megaparsecs. You sit at the observer's origin looking out at the two DESI footprint caps fanning into filaments, voids, and the baryon-acoustic shells. Two colorings toggle in the Layers panel: **by tracer** (BGS/LRG/ELG/QSO populations, naturally layered by distance) and **by redshift** (continuous depth colormap).
+
+**Run**: `hatch run python packages/luxar/src/luxar/demos/demo_desi_galaxies.py [--recompute]`
+
+**Requires**: Nothing extra by default — ships a compact precomputed point cloud (quantized XYZ + redshift + tracer id) via Git LFS. With `--recompute` (or if the LFS asset isn't pulled) it auto-downloads the ~1 GB of DR1 LSS clustering catalogs to `~/.cache/luxar/desi_galaxies/` (resumable), reads them with `astropy`, and converts (RA, Dec, z) → comoving Mpc. Adds `astropy` to the `demos` extra. The built scene (with substitutive LOD) is cached in the demos output dir, so only the first launch pays the LOD-build cost.
+
+**Demonstrates**: Real spectroscopic-survey catalogs → a 3D cosmic-web Points cloud, `(RA, Dec, redshift)` → comoving-Mpc conversion via `astropy.cosmology` (DESI fiducial ΛCDM), substitutive Points LOD at ~14M points, dual coloring (categorical tracer vs. continuous redshift colormap) via layer toggles, HDR additive rendering, self-contained download → convert → cache-processed bootstrap. Data: [DESI DR1](https://data.desi.lbl.gov/doc/releases/dr1/) (DESI Collaboration 2025, arXiv:2503.14745; CC BY 4.0).
+
+---
+
 #### demo_asteroids_solar_system.py - The Solar System (~1.5M Real Asteroids, JPL SBDB)
 Every catalogued minor planet placed in real 3D space by propagating its measured Keplerian orbit to a common epoch: ~1.5M asteroids as Points colored by semi-major axis, plus the eight planets, the Sun, and the planets' orbit ellipses (Lines). The main belt, Kirkwood gaps, Hilda triangle, and Jupiter Trojan clouds all emerge from the real orbital-element distribution.
 
@@ -954,6 +965,7 @@ hatch run python packages/luxar/src/luxar/demos/demo_spotify_tracks.py
 
 # --- Data-Driven (External Datasets) ---
 hatch run python packages/luxar/src/luxar/demos/demo_gaia_milky_way_3m.py
+hatch run python packages/luxar/src/luxar/demos/demo_desi_galaxies.py
 hatch run python packages/luxar/src/luxar/demos/demo_earthquakes_3d.py
 hatch run python packages/luxar/src/luxar/demos/demo_storm_3d_microtubules.py
 hatch run python packages/luxar/src/luxar/demos/demo_huri_interactome.py
