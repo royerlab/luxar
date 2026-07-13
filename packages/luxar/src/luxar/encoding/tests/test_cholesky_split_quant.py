@@ -323,7 +323,7 @@ class TestEncodeCholeskySplit:
         # Above COV_CERT_SAMPLE_MAX rows, the certificate measures a bounded
         # evenly-spaced sample (records "sample") — but the quantization scales
         # come from the FULL columns, so the sampled value tracks the full one.
-        import luxar.encoding.encoder as enc_mod
+        import luxar.encoding._encoders.cholesky as enc_mod
 
         diag, off = self._make(n=4000, seed=8)
         full = ArrayEncoder._cov_relf_p95(

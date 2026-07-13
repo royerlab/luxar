@@ -50,7 +50,7 @@ describe('WorkerPool — AbortSignal', () => {
     await expect(
       (pool as any).runWithTimeout(
         'aborted-op',
-        'visibility',
+        'projection',
         (api: any) => api.handle(),
         controller.signal
       )
@@ -68,7 +68,7 @@ describe('WorkerPool — AbortSignal', () => {
     const controller = new AbortController();
     const promise = (pool as any).runWithTimeout(
       'mid-flight-abort',
-      'visibility',
+      'projection',
       (api: any) => api.handle(),
       controller.signal
     );
@@ -85,11 +85,11 @@ describe('WorkerPool — AbortSignal', () => {
     pool.setAbortSignal(controller.signal);
     controller.abort();
     await expect(
-      (pool as any).runWithTimeout('pool-signal-op', 'visibility', (api: any) => api.handle())
+      (pool as any).runWithTimeout('pool-signal-op', 'projection', (api: any) => api.handle())
     ).rejects.toMatchObject({ name: 'WorkerAbortError' });
     // Clearing the pool signal restores normal behavior.
     pool.setAbortSignal(undefined);
-    const result = await (pool as any).runWithTimeout('after-clear-op', 'visibility', (api: any) =>
+    const result = await (pool as any).runWithTimeout('after-clear-op', 'projection', (api: any) =>
       api.handle()
     );
     expect(result).toBe('A');
@@ -110,7 +110,7 @@ describe('WorkerPool — AbortSignal', () => {
 
     const result = await (pool as any).runWithTimeout(
       'after-dispose-op',
-      'visibility',
+      'projection',
       (api: any) => api.handle()
     );
     expect(result).toBe('after-dispose');

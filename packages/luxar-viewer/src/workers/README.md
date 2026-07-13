@@ -1,6 +1,6 @@
 # luxar-viewer/src/workers
 
-Multi-threaded worker pool for offloading CPU-intensive spatial queries, nD visibility computations, projection, clipping, and array decoding from the main thread.
+Multi-threaded worker pool for offloading CPU-intensive nD→3D projection (with built-in per-element visibility/culling), clipping, and array decoding from the main thread.
 
 ## Architecture
 
@@ -30,15 +30,15 @@ sequenceDiagram
     Cache-->>Loader: Return ArrayBuffer / cached bytes
     Loader->>Pool: Request least-busy worker
     Pool-->>Loader: DataWorker API + tracking hooks
-    Loader->>Worker: Decode arrays / compute nD visibility
+    Loader->>Worker: Decode arrays / project nD→3D
     Worker->>WASM: Run accelerated kernel if available
     WASM-->>Worker: Decoded or filtered typed arrays
     Worker-->>Loader: Transfer result buffers
     Loader->>GPU: Update geometry/material buffers
 ```
 
-The main thread owns network I/O, cache coordination, and GPU updates. Workers
-own CPU-heavy decoding, projection, clipping, and visibility kernels. Result
+The main thread owns network I/O, cache coordination, spatial queries, and GPU
+updates. Workers own CPU-heavy decoding, projection, and clipping kernels. Result
 buffers are transferred back to the main thread to avoid copying where possible.
 
 ## Usage
@@ -54,10 +54,9 @@ await pool.initialize();
 // Recommended: route every call through `runWithTimeout()` so
 // hung workers are detected via the per-call budget. The pool
 // picks a worker via load-balanced selection, tracks the call,
-// and applies the configured timeout (visibility / projection /
-// decode kinds map to different default budgets).
-const result = await pool.runWithTimeout('querySpatialIndex', 'visibility', (api) =>
-  api.querySpatialIndex(/* ... */)
+// and applies the configured timeout.
+const result = await pool.runWithTimeout('projectLinesTo3D', 'projection', (api) =>
+  api.projectLinesTo3D(/* ... */)
 );
 
 // Clean up
@@ -94,15 +93,13 @@ Each worker loads a WASM module on `initialize()` and exposes these operations:
 
 | Category            | Methods                                                                                     |
 | ------------------- | ------------------------------------------------------------------------------------------- |
-| **Spatial queries** | `querySpatialIndex()` — find chunks intersecting nD slice                                   |
-| **nD visibility**   | `computeNDVisibilityPoints()`, `computeNDVisibilityLines()`, `computeNDVisibilityGSplats()` |
 | **Decoding**        | `decodeQuantized()`, `decodeLogScalar()`, `decodeGeologScalar()`, `decodePerChannel()`, `decodeLUT()`, `decodeBroadcasted()` |
-| **Projection**      | `projectPointsTo3D()`, `projectLinesTo3D()`, `projectGSplatsTo3D()`                         |
+| **Projection**      | `projectLinesTo3D()`, `projectGSplatsTo3D()` (Points project on the main thread)            |
 
 ### What workers handle
 
-- Spatial index queries (chunk bounding box tests)
-- nD visibility computation (hypersphere intersection)
+- nD→3D projection with built-in per-element visibility/culling
+  (Lines clip mask, GSplats attenuation)
 - Array decoding (LUT, quantization, log-space)
 
 ### What stays on main thread
@@ -149,8 +146,7 @@ workers/
 │                                                 from data-worker/ and exposes
 │                                                 the Comlink workerAPI.
 └── data-worker/
-    ├── state.ts                                — WasmCtx { wasm,
-    │                                            visibilityMaskBuffer }
+    ├── state.ts                                — WasmCtx { wasm }
     │                                            + requireWasm helper
     ├── initialize.ts                           — WASM bootstrap
     ├── types.ts                                — ProjectionViewState,
@@ -159,14 +155,7 @@ workers/
     │                                            from types/points.ts)
     ├── validation.ts                           — JS→WASM boundary checks
     │                                            (worker-internal)
-    ├── spatial-index/
-    │   └── query.ts                            — querySpatialIndex
-    ├── visibility/
-    │   ├── points.ts                           — computeNDVisibilityPoints
-    │   ├── lines.ts                            — computeNDVisibilityLines
-    │   └── gsplats.ts                          — computeNDVisibilityGSplats
     ├── projection/
-    │   ├── points.ts                           — projectPointsTo3D
     │   ├── lines.ts                            — projectLinesTo3D
     │   └── gsplats.ts                          — projectGSplatsTo3D
     └── decode/
@@ -201,7 +190,7 @@ From `worker-pool.ts`:
 - `class WorkerPool` — pool manager (see `runWithTimeout`, `getWorkerWithTracking`, `setAbortSignal`, `reinitialize`, `getStats`, `getQueueDepth`)
 - `setDataWorkerUrl(url)` — override the worker module URL (for embedders whose bundlers can't resolve Vite's `?worker` import)
 - `class WorkerTimeoutError` / `class WorkerAbortError` — distinguish hung-worker eviction from caller-initiated cancellation
-- `type TimeoutKind = 'visibility' | 'projection' | 'decode'` — selects the per-call timeout from `config.dataLoading.performance`
+- `type TimeoutKind = 'projection' | 'decode'` — selects the per-call timeout from `config.dataLoading.performance`
 
 From `data-worker.ts`:
 

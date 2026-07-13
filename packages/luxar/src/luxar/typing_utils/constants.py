@@ -6,9 +6,11 @@ maintainability and provide clear documentation of their purposes.
 
 from typing import Final
 
-# Version constants
-LUXAR_VERSION_CURRENT: Final[str] = "0.1"
-DEFAULT_ZARR_VERSION: Final[str] = "0.1"  # Alias for default version
+from ._format_contract import SCENE_FORMAT_VERSION
+
+# Version constants (single-sourced from format-contract/contract.yaml)
+LUXAR_VERSION_CURRENT: Final[str] = SCENE_FORMAT_VERSION
+DEFAULT_ZARR_VERSION: Final[str] = SCENE_FORMAT_VERSION  # Alias for default version
 
 # Rendering constants
 OPACITY_MIN: Final[float] = 0.0

@@ -30,7 +30,7 @@ import numpy as np
 from arbol import aprint, asection
 
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
-from luxar.demos import launch_viewer
+from luxar.demos import cache_computed, cached_download, launch_viewer
 from luxar.utils.paths import get_demos_output_dir
 
 # =============================================================================
@@ -340,17 +340,12 @@ def _load_via_h5ad_download(
     cells are collected. Only the UMAP coordinates and cell metadata are
     extracted; the large expression matrix is never loaded into memory.
     """
-    from luxar.utils.download import robust_download
-
     h5py = _ensure_h5py()
 
     # Discover available tissue datasets from CELLxGENE
     assets = _discover_tissue_assets()
     if not assets:
         raise RuntimeError("No tissue datasets found via CELLxGENE API")
-
-    h5ad_dir = cache_dir / "h5ad"
-    h5ad_dir.mkdir(parents=True, exist_ok=True)
 
     all_umap: list[np.ndarray] = []
     all_pca: list[np.ndarray] = []
@@ -370,15 +365,17 @@ def _load_via_h5ad_download(
 
             tissue_name = asset["title"].replace("Tabula Sapiens - ", "")
             size_mb = asset["filesize"] / (1024**2)
-            h5ad_path = h5ad_dir / f"{tissue_name.lower().replace(' ', '_')}.h5ad"
+            h5ad_filename = f"{tissue_name.lower().replace(' ', '_')}.h5ad"
 
             with asection(
                 f"{tissue_name} ({asset['cell_count']:,} cells, {size_mb:.0f} MB)"
             ):
-                # robust_download handles skip-if-complete and resume-if-truncated
-                robust_download(
+                # cached_download skips if already present and resumes if truncated,
+                # caching under ~/.cache/luxar/tabula_sapiens/.
+                h5ad_path = cached_download(
                     asset["url"],
-                    h5ad_path,
+                    "tabula_sapiens",
+                    h5ad_filename,
                     expected_size=asset["filesize"] or None,
                 )
 
@@ -607,30 +604,34 @@ def generate_tabula_sapiens(
         return 0
 
     # Compute proper 3D UMAP from PCA/scVI embeddings
-    umap_3d_cache = cache_dir / f"umap3d_{n_cells}.npz"
-    if umap_3d_cache.exists():
-        positions = np.load(umap_3d_cache)["positions"]
-        aprint(f"✓ Loaded 3D UMAP from cache ({len(positions):,} cells)")
-    elif pca is not None:
-        from umap import UMAP
+    if pca is not None:
 
-        with asection(
-            f"Computing 3D UMAP from {pca.shape[1]}D embeddings ({n_cells:,} cells)"
-        ):
-            aprint("This may take a few minutes for large datasets...")
-            reducer = UMAP(
-                n_components=3,
-                n_neighbors=30,
-                min_dist=0.3,
-                metric="euclidean",
-                n_jobs=-1,
-                verbose=True,
-            )
-            positions = reducer.fit_transform(pca).astype(np.float32)
-            positions -= positions.mean(axis=0)
-            aprint(f"✓ 3D UMAP complete: {positions.shape}")
+        def _compute_umap3d() -> np.ndarray:
+            from umap import UMAP
 
-        np.savez(umap_3d_cache, positions=positions)
+            with asection(
+                f"Computing 3D UMAP from {pca.shape[1]}D embeddings ({n_cells:,} cells)"
+            ):
+                aprint("This may take a few minutes for large datasets...")
+                reducer = UMAP(
+                    n_components=3,
+                    n_neighbors=30,
+                    min_dist=0.3,
+                    metric="euclidean",
+                    n_jobs=-1,
+                    verbose=True,
+                )
+                positions = reducer.fit_transform(pca).astype(np.float32)
+                positions -= positions.mean(axis=0)
+                aprint(f"✓ 3D UMAP complete: {positions.shape}")
+            return positions
+
+        # Keyed on the requested sample size AND a data marker (cell count +
+        # embedding dim) so a changed subsample never reuses a stale UMAP.
+        umap_key = f"umap3d_n{n_cells}_s{sample_size}_d{pca.shape[1]}"
+        positions = cache_computed(
+            "tabula_sapiens", umap_key, _compute_umap3d, version=1
+        )
     else:
         # Fallback: flat 2D UMAP with z=0 (no PCA available)
         aprint("⚠ No PCA/scVI embeddings — using flat 2D UMAP (z=0)")
@@ -700,6 +701,24 @@ def generate_tabula_sapiens(
                 anchor="bottom-right",
                 color="rgba(200,200,200,0.45)",
             )
+
+            # Organ/tissue color legend — top tissues actually present, so the
+            # baked organ colors are decodable in-viewer (previously absent).
+            legend_tissues = [
+                t for t, _ in sorted(tissue_counts.items(), key=lambda x: -x[1])
+            ][:14]
+            legend_html = (
+                '<div style="font-size:1.2vh;line-height:1.5;background:rgba(0,0,0,0.5);'
+                'padding:0.5vh;border-radius:3px">'
+                '<div style="font-weight:bold;color:#ccc;margin-bottom:0.3vh">Tissue</div>'
+            )
+            for t in legend_tissues:
+                r, g, b = (int(round(v * 255)) for v in _tissue_color(t))
+                legend_html += (
+                    f'<div><span style="color:#{r:02x}{g:02x}{b:02x}">█</span> {t}</div>'
+                )
+            legend_html += "</div>"
+            scene.add_html(legend_html, position=(0.02, 0.97), anchor="bottom-left")
 
     aprint(f"✓ Wrote {n_cells:,} cells to {output_path}")
     return n_cells

@@ -101,7 +101,7 @@ def compute_orbital_density(
 
     Args:
         n: Principal quantum number
-        l: Angular momentum quantum number
+        l_quantum: Angular momentum quantum number
         m: Magnetic quantum number
         grid_size: Resolution (N^3 points)
         box_size: Physical extent in Bohr radii
@@ -128,7 +128,7 @@ def compute_orbital_density(
     density = (R * np.conj(R)).real * (Y_lm * np.conj(Y_lm)).real
 
     # Threshold to keep only significant density (reduce points)
-    # Keep top regions that sum to 95% of total probability
+    # Keep top regions that sum to 98% of total probability
     density_flat = density.ravel()
     sorted_indices = np.argsort(density_flat)[::-1]
     cumsum = np.cumsum(density_flat[sorted_indices])

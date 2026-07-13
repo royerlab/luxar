@@ -88,7 +88,7 @@ import requests
 from arbol import aprint, asection
 
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
-from luxar.demos import launch_viewer
+from luxar.demos import cached_download, launch_viewer
 from luxar.utils._umap_utils import format_label, get_categorical_color
 from luxar.utils.paths import get_demos_output_dir
 
@@ -183,7 +183,7 @@ def ensure_data(cache_dir: Path) -> tuple[Path, Path]:
     """Download FlyWire annotations + connections if not already cached."""
     global ANNOTATIONS_FILE, CONNECTIONS_FILE
     ANNOTATIONS_FILE = cache_dir / ANNOTATIONS_FILE.name
-    CONNECTIONS_FILE = cache_dir / CONNECTIONS_FILE.name
+    connections_name = CONNECTIONS_FILE.name
 
     with asection("Fetching FlyWire data"):
         _download(
@@ -191,10 +191,12 @@ def ensure_data(cache_dir: Path) -> tuple[Path, Path]:
             ANNOTATIONS_FILE,
             "neuron annotations (Schlegel et al. 2024, ~a few MB)",
         )
-        _download(
+        # Route the large Zenodo connectivity download through the shared cache
+        # helper (retry / resume / skip-if-present) under ~/.cache/luxar/flywire/.
+        CONNECTIONS_FILE = cached_download(
             CONNECTIONS_URL,
-            CONNECTIONS_FILE,
-            "proofread connections (Zenodo 10676866, ~850 MB — one-time)",
+            "flywire",
+            connections_name,
         )
     return ANNOTATIONS_FILE, CONNECTIONS_FILE
 

@@ -12,21 +12,18 @@ from __future__ import annotations
 import tempfile
 import threading
 import time
-from collections.abc import Generator
 from pathlib import Path
-from typing import Any, MutableMapping, Optional, Tuple, cast
+from typing import Optional, cast
 
 import typer
 import uvicorn
-import zarr
 from arbol import aprint, asection
 from fastapi import FastAPI
-from fastapi.middleware.cors import CORSMiddleware
-from fastapi.staticfiles import StaticFiles
 from starlette.types import ASGIApp
 
 from luxar import __version__
 
+from .info_command import _dfs, register_info_command
 from .network_simulation import (
     NETWORK_PROFILES,
     NetworkSimulationMiddleware,
@@ -34,265 +31,42 @@ from .network_simulation import (
     parse_network_options,
     print_network_params,
 )
+from .serving import (
+    DirectoryListingStaticFiles,
+    _add_cors,
+    _is_sensitive_serve_path,
+    _serve_data,
+    _serve_viewer,
+    _validate_serve_path,
+    _warn_if_lan_exposed,
+    create_server_app,
+)
 from .utils import (
     _DEFAULT_CORS_ORIGIN,
-    _LOCAL_CORS_ORIGIN_REGEX,
     build_viewer,
     check_viewer_built,
     find_available_port,
-    format_memory_size,
-    format_tree_node,
-    get_viewer_dist_path,
-    get_zarr_info,
 )
 from .utils import (
     open_browser as open_browser_func,
 )
 
-# Note: _DEFAULT_CORS_ORIGIN / _LOCAL_CORS_ORIGIN_REGEX live in utils.py
-# (rather than at module scope here) so subcommand modules — e.g.
-# gsplat_commands.py — can import them without forming a cycle through
-# this file (main.py imports gsplat_commands at module bottom to attach
-# the subcommand tree).
-
-
-def _add_cors(api: FastAPI, cors_origin: str = _DEFAULT_CORS_ORIGIN) -> None:
-    """Add CORS middleware to a FastAPI application.
-
-    ``cors_origin="local"`` is the safe development default: browser clients
-    on localhost/127.0.0.1/::1 may read served data from any port. Pass
-    ``"*"`` explicitly to allow any origin; credentials are disabled for that
-    mode because wildcard origins and credentials are an unsafe combination.
-
-    Args:
-        api: FastAPI app to extend.
-        cors_origin: Origin to allow. ``"local"`` allows loopback origins.
-            ``"*"`` allows any origin without credentials. Comma-separated
-            explicit origins are also accepted.
-    """
-    origin = cors_origin.strip() or _DEFAULT_CORS_ORIGIN
-    allow_origins: list[str]
-    allow_origin_regex: str | None = None
-    allow_credentials = True
-
-    if origin == _DEFAULT_CORS_ORIGIN:
-        allow_origins = []
-        allow_origin_regex = _LOCAL_CORS_ORIGIN_REGEX
-    elif origin == "*":
-        allow_origins = ["*"]
-        allow_credentials = False
-    else:
-        allow_origins = [item.strip() for item in origin.split(",") if item.strip()]
-
-    api.add_middleware(
-        CORSMiddleware,
-        allow_origins=allow_origins,
-        allow_origin_regex=allow_origin_regex,
-        allow_credentials=allow_credentials,
-        allow_methods=["*"],
-        allow_headers=["*"],
-    )
-
-
-# Genuine loopback addresses only. The all-interfaces sentinel (0.0.0.0 / ::)
-# is deliberately NOT here: binding it exposes the server on every network
-# interface, which is exactly the case the LAN-exposure warning must fire on.
-_LOOPBACK_HOSTS = frozenset({"127.0.0.1", "localhost", "::1"})
-
-
-def _warn_if_lan_exposed(host: str, cors_origin: str) -> None:
-    """Warn when the user is binding a non-loopback address AND opening CORS to all.
-
-    ``host`` is the bind address. Anything that is not a genuine loopback
-    address — an all-interfaces sentinel, a routable LAN address, or a
-    hostname — reaches the network and triggers the warning.
-    """
-    if cors_origin.strip() != "*":
-        return
-    bind_host = host.strip().lower()
-    if bind_host in _LOOPBACK_HOSTS:
-        return
-    aprint(
-        f"⚠️  Serving on host={host} with --cors-origin '*'. "
-        "This exposes the data to anything that can reach this machine on "
-        "the network. Pass --cors-origin local (or an explicit origin) "
-        "if that was not intended."
-    )
-
-
-def _path_is_within(path: Path, base: Path) -> bool:
-    """Return True if ``path`` resolves inside ``base``."""
-    try:
-        path.resolve().relative_to(base.resolve())
-    except ValueError:
-        return False
-    return True
-
-
-def _is_sensitive_serve_path(path: Path) -> bool:
-    """Return True for obvious system locations that should not be served.
-
-    This intentionally does not block ordinary project directories under a
-    user's home or temporary directory. It only catches filesystem roots and
-    well-known sensitive system roots.
-    """
-    resolved = path.resolve()
-    if resolved == Path(resolved.anchor):
-        return True
-
-    # System roots that are never legitimate to serve over a dev HTTP server.
-    # /home and /Users are intentionally NOT on this list — users routinely
-    # store project data there. /var and /private/var are also omitted because
-    # macOS' TMPDIR resolves under /private/var/folders/... and the test
-    # suite (and many user workflows) legitimately serves from tmpdirs.
-    sensitive_roots = [
-        Path("/etc"),
-        Path("/private/etc"),
-        Path("/proc"),
-        Path("/sys"),
-        Path("/dev"),
-        Path("/root"),
-        Path("/usr"),
-        Path("/boot"),
-    ]
-    for root in sensitive_roots:
-        try:
-            root_resolved = root.resolve(strict=False)
-            if resolved == root_resolved or resolved.is_relative_to(root_resolved):
-                return True
-        except OSError:
-            continue
-    return False
-
-
-def _validate_serve_path(path: Path, *, allow_sensitive_path: bool = False) -> None:
-    """Validate that a path is safe enough for the local development server."""
-    if _is_sensitive_serve_path(path) and not allow_sensitive_path:
-        raise ValueError(
-            f"Refusing to serve sensitive system path: {path.resolve()}. "
-            "Pass --allow-sensitive-path if you really intend to expose it."
-        )
-
-
-class DirectoryListingStaticFiles(StaticFiles):
-    """Static files handler with JSON directory listing support."""
-
-    async def get_response(self, path: str, scope: MutableMapping[str, Any]) -> Any:
-        """Override to provide directory listing."""
-        from starlette.responses import Response
-
-        # Handle OPTIONS requests for CORS
-        if scope.get("method") == "OPTIONS":
-            return Response(status_code=204)
-
-        if self.directory is None:
-            raise ValueError("Directory not set")
-
-        base_path = Path(self.directory).resolve()
-        full_path = (base_path / path).resolve() if path else base_path
-        if not _path_is_within(full_path, base_path):
-            return Response("Forbidden", status_code=403)
-
-        # If it's a directory, provide listing
-        if full_path.exists() and full_path.is_dir():
-            # Check Accept header
-            headers = dict(scope.get("headers", []))
-            accept = headers.get(b"accept", b"").decode("utf-8")
-
-            # Zarr dot-files that should appear in directory listings
-            _ZARR_DOT_FILES = {".zgroup", ".zattrs", ".zarray", ".zmetadata"}
-
-            # Generate directory listing
-            entries = []
-            try:
-                for item in sorted(full_path.iterdir()):
-                    # Skip hidden files except zarr metadata files
-                    if item.name.startswith(".") and item.name not in _ZARR_DOT_FILES:
-                        continue
-
-                    item_type = "directory" if item.is_dir() else "file"
-                    # Check if it's a zarr directory
-                    if item.is_dir() and item.name.endswith(".zarr"):
-                        item_type = "zarr"
-                    elif item.is_dir() and (item / ".zgroup").exists():
-                        item_type = "zarr"
-
-                    entries.append(
-                        {
-                            "name": item.name,
-                            "type": item_type,
-                            "size": item.stat().st_size if item.is_file() else None,
-                        }
-                    )
-            except PermissionError:
-                return Response("Permission denied", status_code=403)
-
-            # Return JSON for API requests
-            if "application/json" in accept:
-                from starlette.responses import JSONResponse
-
-                return JSONResponse({"entries": entries})
-
-            # Return HTML for browser requests
-            import html
-            from urllib.parse import quote
-
-            from starlette.responses import HTMLResponse
-
-            html_content = "<html><body><h1>Directory Listing</h1><ul>"
-            if path:
-                html_content += '<li><a href="../">../</a></li>'
-            for entry in entries:
-                name = str(entry["name"])
-                if entry["type"] in ("directory", "zarr"):
-                    name += "/"
-                safe_name = html.escape(name)
-                safe_href = quote(name, safe="/")
-                html_content += f'<li><a href="{safe_href}">{safe_name}</a></li>'
-            html_content += "</ul></body></html>"
-            return HTMLResponse(content=html_content)
-
-        # Fall back to default static file serving
-        return await super().get_response(path, scope)
-
-
-def create_server_app(
-    path: str,
-    serve_viewer: bool = False,
-    *,
-    cors_origin: str = _DEFAULT_CORS_ORIGIN,
-    allow_sensitive_path: bool = False,
-) -> FastAPI:
-    """Create a FastAPI server application for serving Zarr data.
-
-    This function is used by both the CLI and integration tests to create
-    a configured server instance.
-
-    Args:
-        path: Path to directory or Zarr dataset to serve
-        serve_viewer: Whether to include viewer static files (not used in basic tests)
-        cors_origin: Allowed CORS origin. ``"local"`` allows loopback origins.
-        allow_sensitive_path: If True, permit serving system directories.
-
-    Returns:
-        FastAPI application instance
-    """
-    serve_path = Path(path)
-    _validate_serve_path(serve_path, allow_sensitive_path=allow_sensitive_path)
-
-    api = FastAPI(title="Luxar static server", docs_url=None, redoc_url=None)
-    _add_cors(api, cors_origin)
-
-    # Add health check endpoint
-    @api.get("/health")
-    async def health() -> dict[str, str]:
-        """Health check endpoint."""
-        return {"status": "ok"}
-
-    # Mount the static files handler with directory listing
-    api.mount("/", DirectoryListingStaticFiles(directory=serve_path, html=True))
-
-    return api
+# Server plumbing (CORS, path guards, DirectoryListingStaticFiles,
+# create_server_app, _serve_data/_serve_viewer) lives in ``serving.py`` and the
+# ``info`` command in ``info_command.py``; both are re-exported / registered
+# here so ``luxar.cli.main`` stays the single CLI entry point and existing
+# ``luxar.cli.main.*`` imports + mock/monkeypatch targets keep resolving.
+# ``_DEFAULT_CORS_ORIGIN`` similarly lives in utils.py so subcommand modules can
+# import it without forming a cycle through this file.
+__all__ = [
+    "app",
+    "create_server_app",
+    "_serve_data",
+    "_serve_viewer",
+    "_is_sensitive_serve_path",
+    "_warn_if_lan_exposed",
+    "_dfs",
+]
 
 
 def _version_callback(value: bool) -> None:
@@ -325,6 +99,49 @@ def main_callback(
 from .gsplat_commands import app_gsplat  # noqa: E402
 
 app.add_typer(app_gsplat, name="gsplat")
+
+# Register the `info` inspection command (defined in info_command.py).
+register_info_command(app)
+
+
+def _start_data_server_thread(
+    path: Path,
+    host: str,
+    port: int,
+    bandwidth_mbps: Optional[float],
+    latency_ms: Optional[float],
+    jitter_percent: float,
+    packet_loss_rate: float,
+    allow_sensitive_path: bool,
+    cors_origin: str,
+    startup_delay: float = 1.0,
+) -> threading.Thread:
+    """Start the background data server thread shared by ``viewer`` and ``demo``.
+
+    Kept in main.py (not serving.py) so ``threading``, ``time``, and
+    ``_serve_data`` resolve as *this module's* globals — preserving the existing
+    test patch targets (``patch("luxar.cli.main._serve_data")``,
+    ``monkeypatch.setattr(cli_main.threading, "Thread", ...)``,
+    ``monkeypatch.setattr(cli_main.time, "sleep", ...)``).
+    """
+    thread = threading.Thread(
+        target=_serve_data,
+        args=(
+            path,
+            host,
+            port,
+            bandwidth_mbps,
+            latency_ms,
+            jitter_percent,
+            packet_loss_rate,
+            allow_sensitive_path,
+            cors_origin,
+        ),
+        daemon=True,
+    )
+    thread.start()
+    time.sleep(startup_delay)
+    return thread
 
 
 # ────────────────────────────── serve ────────────────────────────────────────
@@ -581,50 +398,6 @@ def serve(
         raise typer.Exit(1)
 
 
-def _serve_viewer(
-    host: str,
-    port: int,
-    data_url: Optional[str] = None,
-    open_browser_flag: bool = True,
-    cors_origin: str = _DEFAULT_CORS_ORIGIN,
-) -> None:
-    """Internal function to serve the viewer.
-
-    Args:
-        host: Host interface for the viewer HTTP server.
-        port: Port for the viewer HTTP server.
-        data_url: Optional data URL appended as ``?src=<data_url>`` to the
-            opened viewer URL (trailing slash stripped to avoid double-slash
-            in viewer fetches).
-        open_browser_flag: If True, open the viewer URL in the system browser
-            shortly after the server starts.
-        cors_origin: Allowed CORS origin (see :func:`_add_cors`).
-    """
-    viewer_dist = get_viewer_dist_path()
-
-    api = FastAPI(title="Luxar Viewer", docs_url=None, redoc_url=None)
-    _add_cors(api, cors_origin)
-
-    # Mount viewer static files
-    api.mount("/", StaticFiles(directory=str(viewer_dist), html=True))
-
-    # Construct viewer URL - ensure data_url has no trailing slash
-    if data_url:
-        # Strip trailing slash from data_url to prevent double-slash in viewer requests
-        data_url_clean = data_url.rstrip("/")
-        viewer_url = f"http://{host}:{port}/?src={data_url_clean}"
-    else:
-        viewer_url = f"http://{host}:{port}/"
-
-    aprint(f"🌐 Viewer available at: {viewer_url}")
-
-    if open_browser_flag:
-        time.sleep(1)
-        open_browser_func(viewer_url)
-
-    uvicorn.run(api, host=host, port=port, reload=False, log_level="warning")
-
-
 # ────────────────────────────── viewer ──────────────────────────────────────
 @app.command()
 def viewer(
@@ -756,23 +529,17 @@ def viewer(
                 raise typer.Exit(1)
 
             # Start data server in background thread
-            data_thread = threading.Thread(
-                target=_serve_data,
-                args=(
-                    data,
-                    host,
-                    actual_data_port,
-                    bandwidth_mbps,
-                    latency_ms,
-                    jitter_percent,
-                    packet_loss_rate,
-                    allow_sensitive_path,
-                    cors_origin,
-                ),
-                daemon=True,
+            _start_data_server_thread(
+                data,
+                host,
+                actual_data_port,
+                bandwidth_mbps,
+                latency_ms,
+                jitter_percent,
+                packet_loss_rate,
+                allow_sensitive_path,
+                cors_origin,
             )
-            data_thread.start()
-            time.sleep(1)  # Give data server time to start
 
             data_url = f"http://{host}:{actual_data_port}"  # No trailing slash!
             if data.name.endswith(".zarr"):
@@ -794,64 +561,6 @@ def viewer(
     except Exception as e:
         aprint(f"❌ Error: {e}")
         raise typer.Exit(1)
-
-
-def _serve_data(
-    path: Path,
-    host: str,
-    port: int,
-    bandwidth_mbps: Optional[float] = None,
-    latency_ms: Optional[float] = None,
-    jitter_percent: float = 0.0,
-    packet_loss_rate: float = 0.0,
-    allow_sensitive_path: bool = False,
-    cors_origin: str = _DEFAULT_CORS_ORIGIN,
-) -> None:
-    """Internal function to serve data in background.
-
-    Args:
-        path: Path to data directory or zarr file
-        host: Host address
-        port: Port number
-        bandwidth_mbps: Bandwidth limit in Mbps (optional)
-        latency_ms: Latency in milliseconds (optional)
-        jitter_percent: Jitter as percentage (0.0-1.0)
-        packet_loss_rate: Packet loss rate (0.0-1.0)
-        allow_sensitive_path: Permit serving system paths.
-        cors_origin: Allowed CORS origin (see :func:`_add_cors`).
-    """
-    _validate_serve_path(path, allow_sensitive_path=allow_sensitive_path)
-
-    api = FastAPI(title="Luxar Data Server", docs_url=None, redoc_url=None)
-    _add_cors(api, cors_origin)
-
-    # Determine serve path
-    if path.is_dir():
-        serve_path = path.parent if path.name.endswith(".zarr") else path
-    else:
-        serve_path = path.parent
-
-    api.mount("/", DirectoryListingStaticFiles(directory=serve_path, html=True))
-
-    aprint(f"💾 Data server running at http://{host}:{port}")
-
-    # Wrap with network simulation if enabled
-    asgi_app: ASGIApp = api
-    if has_network_simulation(
-        bandwidth_mbps, latency_ms, jitter_percent, packet_loss_rate
-    ):
-        asgi_app = cast(
-            ASGIApp,
-            NetworkSimulationMiddleware(
-                api,
-                bandwidth_limit_mbps=bandwidth_mbps,
-                latency_ms=latency_ms,
-                jitter_percent=jitter_percent,
-                packet_loss_rate=packet_loss_rate,
-            ),
-        )
-
-    uvicorn.run(asgi_app, host=host, port=port, reload=False, log_level="warning")
 
 
 # ────────────────────────────── demo ─────────────────────────────────────────
@@ -1021,23 +730,17 @@ def demo(
 
         with asection("Server Startup"):
             # Start data server in background
-            data_thread = threading.Thread(
-                target=_serve_data,
-                args=(
-                    output,
-                    "127.0.0.1",
-                    actual_port,
-                    bandwidth_mbps,
-                    latency_ms,
-                    jitter_percent,
-                    packet_loss_rate,
-                    False,  # allow_sensitive_path
-                    cors_origin,
-                ),
-                daemon=True,
+            _start_data_server_thread(
+                output,
+                "127.0.0.1",
+                actual_port,
+                bandwidth_mbps,
+                latency_ms,
+                jitter_percent,
+                packet_loss_rate,
+                False,  # allow_sensitive_path
+                cors_origin,
             )
-            data_thread.start()
-            time.sleep(1)
 
             # Construct data URL
             data_url = f"http://127.0.0.1:{actual_port}/{output.name}"
@@ -1060,211 +763,6 @@ def demo(
     finally:
         if _temp_dir_ctx is not None:
             _temp_dir_ctx.__exit__(None, None, None)
-
-
-# ────────────────────────────── info ─────────────────────────────────────────
-@app.command()
-def info(
-    path: Path,
-    tree: bool = typer.Option(True, "--tree/--no-tree", help="Show tree view"),
-    stats: bool = typer.Option(False, "--stats", "-s", help="Show detailed statistics"),
-    depth: Optional[int] = typer.Option(None, "--depth", "-d", help="Max tree depth"),
-    format: str = typer.Option("text", "--format", help="Output format (text/json)"),
-) -> None:
-    """Show detailed information about a Zarr scene.
-
-    Args:
-        path (Path): Path to the Zarr store.
-        tree (bool, optional): Show tree view. Defaults to True.
-        stats (bool, optional): Show detailed statistics. Defaults to False.
-        depth (int, optional): Max tree depth. Defaults to None (unlimited).
-        format (str, optional): Output format, "text" or "json". Defaults to "text".
-    """
-    if format not in ("text", "json"):
-        aprint(f"❌ Unknown format: {format}. Use 'text' or 'json'.")
-        raise typer.Exit(1)
-
-    try:
-        if not path.exists():
-            aprint("❌ Path does not exist.")
-            raise typer.Exit(1)
-
-        # Get zarr info
-        info_dict = get_zarr_info(path, detailed=stats)
-
-        if format == "json":
-            import json
-
-            # Use print() not aprint() to avoid ANSI color codes in JSON output
-            print(json.dumps(info_dict, indent=2))
-            return
-
-        # Text format output
-        root = zarr.open_group(path, mode="r")
-
-        # Header
-        aprint(f"\n📁 Zarr Store: {path}")
-        aprint(f"💾 Size: {format_memory_size(info_dict['size'])}")
-        aprint("")
-
-        # Root attributes
-        if root.attrs:
-            aprint("🎯 Root Attributes:")
-            for k, v in root.attrs.items():
-                if k == "scene_dimensions":
-                    # Special formatting for dimensions
-                    aprint(f"  {k}:")
-                    if isinstance(v, dict) and "dimensions" in v:
-                        for dim in v["dimensions"]:
-                            aprint(
-                                f"    - {dim.get('name', '?')}: {dim.get('unit', '?')} [display: {dim.get('display', False)}]"
-                            )
-                elif isinstance(v, (dict, list)) and len(str(v)) > 80:
-                    aprint(f"  {k}: <{type(v).__name__} with {len(v)} items>")
-                else:
-                    aprint(f"  {k}: {v}")
-            aprint("")
-
-        # Tree view
-        if tree:
-            aprint("🌳 Scene Hierarchy:")
-            _print_tree(root, max_depth=depth, show_stats=stats)
-            aprint("")
-
-        # Statistics
-        aprint("📊 Summary Statistics:")
-        aprint(f"  🗂️  Groups: {info_dict['n_groups']}")
-        aprint(f"  📦 Arrays: {info_dict['n_arrays']}")
-        if info_dict["points_objects"]:
-            aprint(f"  ⭕ Points objects: {len(info_dict['points_objects'])}")
-            aprint(f"  ✨ Total points: {info_dict['n_points_total']:,}")
-        if info_dict["lines_objects"]:
-            aprint(f"  📏 Lines objects: {len(info_dict['lines_objects'])}")
-            aprint(f"  ✨ Total vertices: {info_dict['n_lines_vertices_total']:,}")
-        if info_dict["gsplats_objects"]:
-            aprint(f"  💠 GSplats objects: {len(info_dict['gsplats_objects'])}")
-            aprint(f"  ✨ Total splats: {info_dict['n_gsplats_total']:,}")
-
-        if stats:
-            if info_dict["points_objects"]:
-                aprint("\n📦 Points Objects Details:")
-                for pc in info_dict["points_objects"]:
-                    aprint(f"  {pc['path']}:")
-                    aprint(f"    Points: {pc['n_points']:,}")
-                    aprint(f"    Dimensions: {pc['n_dims']}")
-                    aprint(f"    Has colors: {pc['has_colors']}")
-                    aprint(f"    Has radii: {pc['has_radii']}")
-                    aprint(f"    Has sharpness: {pc['has_sharpness']}")
-            if info_dict["lines_objects"]:
-                aprint("\n📏 Lines Objects Details:")
-                for lo in info_dict["lines_objects"]:
-                    aprint(f"  {lo['path']}:")
-                    aprint(f"    Vertices: {lo['n_vertices']:,}")
-                    aprint(f"    Dimensions: {lo['n_dims']}")
-                    aprint(f"    Has colors: {lo['has_colors']}")
-                    aprint(f"    Has widths: {lo['has_widths']}")
-            if info_dict["gsplats_objects"]:
-                aprint("\n💠 GSplats Objects Details:")
-                for gs in info_dict["gsplats_objects"]:
-                    aprint(f"  {gs['path']}:")
-                    aprint(f"    Splats: {gs['n_splats']:,}")
-                    aprint(f"    Dimensions: {gs['n_dims']}")
-                    aprint(f"    Has colors: {gs['has_colors']}")
-    except Exception as e:
-        aprint(f"❌ Error reading info for {path}: {e}")
-        raise typer.Exit(1)
-
-
-def _print_tree(
-    group: zarr.Group,
-    depth: int = 0,
-    max_depth: Optional[int] = None,
-    prefix: str = "",
-    is_last: bool = True,
-    show_stats: bool = False,
-) -> None:
-    """Print a tree view of the zarr hierarchy."""
-    if max_depth is not None and depth > max_depth:
-        return
-
-    # Determine node type from zarr attrs (set by compiler)
-    stored_type = group.attrs.get("type", "")
-    if depth == 0:
-        node_type = "scene"
-    elif stored_type in ("points", "lines", "gsplats"):
-        node_type = stored_type
-    else:
-        node_type = "group"
-    attrs = {}
-
-    if node_type == "points" and "positions" in group:
-        positions = group["positions"]
-        attrs["n_points"] = positions.shape[0]
-        if show_stats:
-            attrs["shape"] = positions.shape
-            attrs["dtype"] = str(positions.dtype)
-    elif node_type == "lines" and "vertices" in group:
-        vertices = group["vertices"]
-        attrs["n_vertices"] = vertices.shape[0]
-        if show_stats:
-            attrs["shape"] = vertices.shape
-            attrs["dtype"] = str(vertices.dtype)
-    elif node_type == "gsplats" and "centers" in group:
-        centers = group["centers"]
-        attrs["n_splats"] = centers.shape[0]
-        if show_stats:
-            attrs["shape"] = centers.shape
-            attrs["dtype"] = str(centers.dtype)
-
-    # Print node
-    if depth == 0:
-        aprint(format_tree_node("/", depth, is_last, prefix, node_type, attrs))
-    else:
-        name = group.basename or "?"
-        aprint(format_tree_node(name, depth, is_last, prefix, node_type, attrs))
-
-    # Update prefix for children
-    if depth > 0:
-        if is_last:
-            new_prefix = prefix + "    "
-        else:
-            new_prefix = prefix + "│   "
-    else:
-        new_prefix = ""
-
-    # Get children
-    subgroups = list(group.group_keys())
-
-    # Print children
-    for i, subgroup_name in enumerate(subgroups):
-        is_last_child = i == len(subgroups) - 1
-        subgroup = group[subgroup_name]
-        _print_tree(
-            subgroup, depth + 1, max_depth, new_prefix, is_last_child, show_stats
-        )
-
-
-def _dfs(
-    group: zarr.Group, depth: int = 0
-) -> Generator[Tuple[int, zarr.Group], None, None]:
-    """Depth-first walk that yields (depth, group) for the given group and
-    every nested subgroup.
-
-    Args:
-        group (zarr.Group): Zarr group to traverse.
-        depth (int, optional): Starting depth for the root group. Defaults to 0.
-
-    Yields:
-        Tuple[int, zarr.Group]: (depth, group) for the input group and each
-        descendant subgroup.
-    """
-    try:
-        yield depth, group
-        for name in group.group_keys():
-            yield from _dfs(group[name], depth + 1)
-    except Exception as e:
-        aprint(f"Error traversing Zarr group hierarchy: {e}")
-        raise
 
 
 # ─────────────────────────────── export ──────────────────────────────────────
@@ -1399,7 +897,7 @@ def _run_native_export(
         get_launcher_path,
         zip_macos_app,
     )
-    from .utils import check_viewer_built, get_viewer_dist_path, validate_zarr_store
+    from .utils import get_viewer_dist_path, validate_zarr_store
 
     is_valid, error = validate_zarr_store(source)
     if not is_valid:

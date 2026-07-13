@@ -5,3 +5,4 @@ docs/images/docs/*.png filter=lfs diff=lfs merge=lfs -text
 packages/luxar/src/luxar/demos/data/**/*.zip filter=lfs diff=lfs merge=lfs -text
 packages/luxar/src/luxar/demos/data/*.parquet filter=lfs diff=lfs merge=lfs -text
 packages/luxar/src/luxar/demos/data/*.npz filter=lfs diff=lfs merge=lfs -text
+packages/luxar/src/luxar/demos/data/**/*.npz filter=lfs diff=lfs merge=lfs -text

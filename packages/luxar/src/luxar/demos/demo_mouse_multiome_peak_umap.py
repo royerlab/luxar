@@ -35,7 +35,7 @@ import pandas as pd
 from arbol import aprint, asection
 
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
-from luxar.demos import launch_viewer
+from luxar.demos import launch_viewer, require_local_data
 from luxar.utils._umap_utils import (
     attribute_to_color,
     build_legend_html,
@@ -59,7 +59,7 @@ def load_mouse_umap_data() -> tuple[np.ndarray, dict, dict]:
         - category_maps: dict of attribute name -> list of category labels
     """
     with asection("Loading Mouse 3D UMAP Data"):
-        data_path = get_data_dir() / "3d_umap_coords_mouse.parquet"
+        data_path = require_local_data(get_data_dir() / "3d_umap_coords_mouse.parquet")
         aprint(f"Loading from {data_path}...")
 
         df = pd.read_parquet(data_path)
@@ -226,6 +226,9 @@ def create_mouse_scene(
                 opacity=0.8,
                 intensity=0.25,
                 labels=labels,
+                # Substitutive Points LOD (coarsen x/y/z, group by the attribute
+                # barrier) — same wiring as the census demo.
+                substitutive_lod=dict(compression_factor=8, levels=3, device="auto"),
             )
 
             # --- Overlays ---
@@ -268,7 +271,7 @@ def create_mouse_scene(
                         )
 
             scene.add_text(
-                f"{n_points:,} peaks • Mouse E7.5–E8.75 • 3D UMAP • Wagner et al. 2024",
+                f"{n_points:,} peaks • Mouse E7.5–E8.75 • 3D UMAP • Lange et al., Cell 2024",
                 position=(0.98, 0.97),
                 font_size=0.012,
                 anchor="bottom-right",

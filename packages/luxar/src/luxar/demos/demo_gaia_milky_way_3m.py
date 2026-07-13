@@ -34,13 +34,6 @@ Visualization Parameters:
   * Betelgeuse: Red, radius 0.35, at 168 pc
   * Rigel: Blue, radius 0.35, at 265 pc
 
-Comparison to demo_gaia_milky_way_8m.py:
-- 3M vs 8M stars
-- 10 kpc vs unknown radius cutoff
-- Real Gaia BP-RP colors vs magnitude-generated colors
-- Has famous star markers vs no markers
-- Scientific provenance vs unknown source
-
 Data Source & Attribution:
     ESA/Gaia/DPAC - Gaia Data Release 3 (2022)
 
@@ -126,7 +119,13 @@ import numpy as np
 import zarr
 from arbol import aprint, asection
 
-from luxar import Dimension, Dimensions, LuxarZarrCompiler
+from luxar import (
+    CameraConfig,
+    Dimension,
+    Dimensions,
+    LuxarZarrCompiler,
+    ViewerConfig,
+)
 from luxar.demos import launch_viewer
 from luxar.utils.paths import get_demos_output_dir
 
@@ -241,10 +240,42 @@ def load_and_convert_gaia_data(data_zarr_path: Path, output_path: Path) -> int:
             ]
         )
 
-        with LuxarZarrCompiler(output_path) as compiler:
-            scene = compiler.create_scene(dimensions=dims)
+        # Start the camera pulled IN, framing the bright stellar bulk (the 3M
+        # brightest stars cluster near the Sun, not the galactic centre). Robust
+        # 2–98th percentile bounds ignore sparse-halo outliers that would
+        # otherwise make the auto-fit zoom way out and leave the galaxy a tiny
+        # dot. Closer start = galaxy fills the view AND the coverage-fraction LOD
+        # immediately shows a finer level.
+        lo, hi = np.percentile(positions, [2, 98], axis=0)
+        center = (lo + hi) / 2.0
+        extent = float(np.max(hi - lo))
+        fov_deg = 47.0
+        fit_dist = (extent * 0.5) / np.tan(np.radians(fov_deg) / 2.0)
+        cam_dist = fit_dist * 0.65  # pull in ~35% tighter than a plain fit
+        camera = CameraConfig(
+            position=(
+                float(center[0]),
+                float(center[1] + extent * 0.15),
+                float(center[2] + cam_dist),
+            ),
+            target=(float(center[0]), float(center[1]), float(center[2])),
+            up=(0.0, 1.0, 0.0),
+            fov=fov_deg,
+            near=float(max(0.5, cam_dist * 0.005)),
+            far=float(cam_dist * 20.0 + extent * 10.0),
+        )
 
-            # Add the stars
+        with LuxarZarrCompiler(output_path) as compiler:
+            scene = compiler.create_scene(
+                dimensions=dims, viewer_config=ViewerConfig(camera=camera)
+            )
+
+            # Add the stars with substitutive Points LOD: coarse levels replace
+            # the 3M-star cloud with fewer, larger mass-preserving Gaussian splats
+            # when the galaxy is small on screen, so the viewer only pays for the
+            # detail it can resolve (the census demo uses the same wiring). The
+            # `layer=True` flag rides onto the wrapper kind=lod group → one "Stars"
+            # layer in the Layers panel.
             scene.add_points(
                 "Stars",
                 positions,
@@ -254,6 +285,7 @@ def load_and_convert_gaia_data(data_zarr_path: Path, output_path: Path) -> int:
                 blending_mode="additive",
                 intensity=0.031,
                 layer=True,
+                substitutive_lod=dict(compression_factor=8, levels=3, device="auto"),
             )
 
             # Add reference markers for famous stars
@@ -425,10 +457,17 @@ def main() -> None:
     if "--no-serve" in sys.argv:
         output_path = get_demos_output_dir() / "galaxy.luxar.zarr"
         try:
+            # Extract the raw .zarr from the zip to a temp dir, then convert to the
+            # persistent output_path (same extraction the serve path uses — reading
+            # the zip in place via a zip:// store is unreliable across zarr versions).
+            import zipfile
+
             with tempfile.TemporaryDirectory(prefix="luxar_demo_gaia_") as tmpdir:
-                tmp_path = Path(tmpdir)
-                # Extract and convert to Luxar format
-                load_and_convert_gaia_data(DATA_FILE, output_path)
+                with zipfile.ZipFile(DATA_FILE, "r") as zf:
+                    zf.extractall(tmpdir)
+                load_and_convert_gaia_data(
+                    Path(tmpdir) / "milky_way_gaia_3m.zarr", output_path
+                )
         except FileNotFoundError as e:
             aprint(f"\n❌ Error: {e}")
             sys.exit(1)

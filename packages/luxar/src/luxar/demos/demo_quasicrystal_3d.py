@@ -152,65 +152,12 @@ def create_icosahedral_projection_matrices():  # type: ignore[no-untyped-def]
     return P_parallel, P_perp
 
 
-def generate_6d_lattice_chunk(center: tuple, radius: int) -> np.ndarray:
-    """Generate chunk of 6D integer lattice.
-
-    Args:
-        center: 6D center point
-        radius: Cube radius around center
-
-    Returns:
-        Array of 6D lattice points (N, 6)
-    """
-    # Generate grid around center
-    ranges = [np.arange(c - radius, c + radius + 1) for c in center]
-
-    # Create meshgrid (6D!)
-    grids = np.meshgrid(*ranges, indexing="ij")
-
-    # Stack into (N, 6) array
-    points = np.column_stack([g.ravel() for g in grids])
-
-    return points.astype(np.float64)  # type: ignore[no-any-return]
-
-
-def adaptive_window_size(
-    P_parallel: np.ndarray,
-    P_perp: np.ndarray,
-    target_points: int,
-    lattice_radius: int,
-) -> float:
-    """Estimate optimal acceptance window radius.
-
-    Args:
-        P_parallel, P_perp: Projection matrices
-        target_points: Desired number of points
-        lattice_radius: 6D lattice sampling radius
-
-    Returns:
-        Estimated window radius
-    """
-    # Rough estimate based on geometry
-    # Volume of 6D cube: (2r)^6
-    # Volume of acceptance region: 4/3 π r_window^3 (ball in E_⊥)
-    # Fraction kept: (4/3 π r_w^3) / (2r)^6 × projection_scaling
-
-    total_6d_points = (2 * lattice_radius) ** 6
-
-    # Estimate: assume ~1% of lattice projects to target
-    density = target_points / total_6d_points
-
-    # Window radius (rough geometric estimate)
-    r_window = (density * lattice_radius) ** (1 / 3)
-
-    return max(0.5, r_window)  # type: ignore[no-any-return]  # At least 0.5
-
-
 def generate_quasicrystal_3d(
     output_path: Path,
     target_points: int = 1_000_000,  # 1M points target
     lattice_radius: int = 18,  # Reasonable: (2×18+1)^6 = 2.3B points
     box_size: float = 45.0,  # Scale box proportionally
+    seed: int = 0,
 ) -> int:
     """Generate 3D icosahedral quasicrystal using cut-and-project.
 
@@ -219,6 +166,7 @@ def generate_quasicrystal_3d(
         target_points: Target number of points (~500k recommended)
         lattice_radius: Radius of 6D lattice to sample
         box_size: Physical 3D box size
+        seed: Seed for the subsampling RNG (reproducible output)
 
     Returns:
         Actual number of points generated
@@ -269,7 +217,10 @@ def generate_quasicrystal_3d(
         ]
         n_chunks = len(chunk_ranges)
 
-        aprint(f"  Processing in {n_chunks} chunks (~18M points per chunk)")
+        aprint(
+            f"  Processing in {n_chunks} chunks "
+            "(~3 × (2·lattice_radius+1)^5 points per chunk)"
+        )
 
         chunk_num = 0
         for coords_chunk in chunk_ranges:
@@ -326,7 +277,8 @@ def generate_quasicrystal_3d(
         # If too many points, subsample
         if len(positions_3d) > target_points:
             aprint(f"  Subsampling to {target_points:,} points...")
-            indices = np.random.choice(len(positions_3d), target_points, replace=False)
+            rng = np.random.default_rng(seed)
+            indices = rng.choice(len(positions_3d), target_points, replace=False)
             positions_3d = positions_3d[indices]
             perp_coords = perp_coords[indices]
 
@@ -409,7 +361,7 @@ def main() -> None:
     aprint("=" * 70)
     aprint("")
     aprint("Generate a 3D Penrose-like quasicrystal!")
-    aprint(f"Target points: {target_points:,} (1 million!)")
+    aprint(f"Target points: {target_points:,}")
     aprint("")
     aprint("What is a quasicrystal?")
     aprint("  • Ordered but NEVER repeating (aperiodic)")
@@ -448,7 +400,7 @@ def main() -> None:
         actual_points = generate_quasicrystal_3d(
             output_path,
             target_points=target_points,
-            # Uses defaults from function: lattice_radius=28, box_size=70
+            # Uses defaults from function: lattice_radius=18, box_size=45
         )
 
         if actual_points == 0:

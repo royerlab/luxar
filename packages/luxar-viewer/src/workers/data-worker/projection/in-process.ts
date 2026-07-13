@@ -51,7 +51,6 @@ async function getInProcessCtx(): Promise<WasmCtx> {
       const built: WasmCtx = {
         wasm,
         tsFallback: isWasmFallback(wasm) ? wasm : getFallback(),
-        visibilityMaskBuffer: null,
       };
       ctx = built;
       return built;
