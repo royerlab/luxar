@@ -286,6 +286,89 @@ describe('PostProcessingManager → resize render-target lifecycle', () => {
 
     mgr.dispose();
   });
+
+  // No-op guard: every window resize reaches reallocateForSize through TWO
+  // paths (the window `resize` listener AND the canvas-parent
+  // ResizeObserver), and reallocateForSize historically disposed +
+  // recreated the full-screen half-float HDR target unconditionally —
+  // twice per resize tick, even at identical size/DPR. An identical
+  // request must now be a complete no-op.
+  it('skips reallocation entirely when size, DPR and MSAA are unchanged', () => {
+    const onResize = vi.fn();
+    const renderer = makeMockRenderer();
+    materialManager.setCaps(mockCaps('webgl2'));
+    const mgr = new PostProcessingManager(
+      renderer,
+      mockCaps('webgl2'),
+      new THREE.Scene(),
+      new THREE.PerspectiveCamera(),
+      { width: 64, height: 64 },
+      onResize
+    );
+
+    mgr.resize(128, 96); // genuine change → reallocates
+    const hdrAfterFirst = peek(mgr).hdrTarget;
+    const hdrDispose = vi.spyOn(hdrAfterFirst, 'dispose');
+    const setSizeCalls = (renderer.setSize as ReturnType<typeof vi.fn>).mock.calls.length;
+    onResize.mockClear();
+
+    mgr.resize(128, 96); // identical → full no-op (the second path of a resize tick)
+
+    expect(hdrDispose).not.toHaveBeenCalled();
+    expect(peek(mgr).hdrTarget).toBe(hdrAfterFirst);
+    expect((renderer.setSize as ReturnType<typeof vi.fn>).mock.calls.length).toBe(setSizeCalls);
+    expect(onResize).not.toHaveBeenCalled();
+
+    mgr.dispose();
+  });
+
+  it('still reallocates when only the device pixel ratio changed', () => {
+    // Adaptive DPR changes renderer.getPixelRatio() without changing the
+    // logical size — the guard must key on PHYSICAL size too.
+    let pixelRatio = 1;
+    const canvas = document.createElement('canvas');
+    const renderer = {
+      outputColorSpace: THREE.LinearSRGBColorSpace,
+      toneMapping: THREE.NoToneMapping,
+      getPixelRatio: () => pixelRatio,
+      setSize: vi.fn(),
+      domElement: canvas,
+    } as unknown as import('../../../rendering/renderer-capabilities').Renderer;
+    materialManager.setCaps(mockCaps('webgl2'));
+    const mgr = new PostProcessingManager(
+      renderer,
+      mockCaps('webgl2'),
+      new THREE.Scene(),
+      new THREE.PerspectiveCamera(),
+      { width: 64, height: 64 }
+    );
+
+    mgr.resize(96, 96);
+    const hdrAfterFirst = peek(mgr).hdrTarget;
+
+    pixelRatio = 2; // adaptive/manual DPR change, same logical size
+    mgr.resize(96, 96);
+
+    expect(peek(mgr).hdrTarget).not.toBe(hdrAfterFirst);
+
+    mgr.dispose();
+  });
+
+  it('reallocates after rebuildAfterContextRestore even at an identical size', () => {
+    // The restore path rebuilds all transient targets; the allocation
+    // memo must be invalidated so the follow-up updateRendererSize()
+    // resize is not silently skipped against the fresh targets.
+    const mgr = makeManager({ width: 64, height: 64 });
+    mgr.resize(96, 96);
+    mgr.rebuildAfterContextRestore();
+    const hdrAfterRebuild = peek(mgr).hdrTarget;
+
+    mgr.resize(96, 96); // same size — but the memo was reset by the rebuild
+
+    expect(peek(mgr).hdrTarget).not.toBe(hdrAfterRebuild);
+
+    mgr.dispose();
+  });
 });
 
 describe('PostProcessingManager → rebuildAfterContextRestore preserves effect toggles', () => {
