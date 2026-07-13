@@ -283,14 +283,17 @@ to ship after). Sequencing is at the bottom.
   no figure; a reviewer may ask for a seamless-stitching demonstration. The
   `tiled_fitting/` SD is method-only (empirical eval deferred).
 - **R16 [LAUNCH] — Manuscript repo hygiene.** Scoped against the repo
-  2026-07-12. Splits into a **light do-now slice** and a **heavy slice coupled to
-  the `--floor` decision**:
-  - **Regenerate-all pipeline is staged** (`build_all.sh` → `run_all.sh` [~6h
-    GPU analysis → TSVs] → `build_figures.sh` → `build_supp_docs.sh` →
-    `build_preprint.sh`). Only `run_all.sh` is expensive; if the committed TSVs
-    stand, the figure+doc+preprint rebuild is cheap and GPU-free. **A full regen
-    is the same pass as re-running with `--floor`** — so fold the two together
-    and defer to the `--floor` decision rather than doing it twice.
+  2026-07-12. The `--floor` decision is **resolved → keep legacy no-floor + document**
+  (see the decision note at the end of section D — a measurement reversed the
+  initial "re-run" call), so there is **no GPU re-run**; R16 stays the light slice:
+  - **No full `run_all.sh` regen for floor.** A quick floor=auto-vs-none check
+    showed floor=auto *lowers* PSNR-vs-original (−5.86 dB kidney_dapi, +0.01
+    organoid — never improves it), because floor drops the background pedestal
+    the PSNR metric still expects. The committed legacy numbers are already the
+    `--floor none` numbers (committed kidney 31.81 dB ≈ floor=none 31.77), so
+    they **stand as-is**. The regenerate-all pipeline (`build_all.sh` →
+    `run_all.sh` → `build_figures` → `build_supp_docs` → `build_preprint`)
+    remains available but is only needed if the analysis inputs change.
   - ✅ **Prune the confirmed orphan:** `preprint/figs/quantitative_analysis/
     cross_validation.pdf` is referenced by *no* `.tex` (CV now lives in
     `quantitative_analysis.pdf` + suppfig `cv_all.pdf`). Delete it.
@@ -351,9 +354,8 @@ to ship after). Sequencing is at the bottom.
 > dependabot is re-drained (R5 note above). All release *tooling* is built and
 > validated — what remains on the critical path is **execution**, in order:
 > **(1) preprint track** — R14 (consumer-GPU timing sweep) ✅ **done**
-> 2026-07-12 (luxar-paper SD13); remaining: R16 (manuscript repo hygiene), and
-> decide whether the 13-dataset analyses get re-run with floor suppression
-> (`--floor`, #463) before or after bioRxiv — then post → DOI → R4
+> 2026-07-12 (luxar-paper SD13); remaining: R16 (manuscript repo hygiene) — now
+> **coupled to the resolved `--floor` decision** (below) — then post → DOI → R4
 > (CITATION.cff). **(2) day-one leftovers** — R11 remainder
 > (fresh-machine `make setup-dev` verify, optional gallery media regen) + R7
 > (license/acknowledgments audit). **(3) the mechanical cut** — final
@@ -381,6 +383,43 @@ to ship after). Sequencing is at the bottom.
 > finalize the demos, then migrate their (incl. R21's new) heavy data to Zenodo,
 > then capture the gallery. R21 adds new git-LFS data, so it should be folded
 > into R17 rather than growing LFS further.
+
+> **Decision 2026-07-12 — `--floor`: KEEP LEGACY NO-FLOOR FOR THE PAPER, for
+> pragmatic (not scientific) reasons + DOCUMENT (no GPU re-run).** The initial
+> call was "full re-run with `floor=auto`"; a quick measurement changed the
+> *how*, not the science.
+> - **Scientifically, floor suppression is the right thing** (author's view):
+>   the constant background pedestal is *not real signal*, so removing it before
+>   fitting is principled, and the *correct* way to score a floor-suppressed fit
+>   is against a **floor-suppressed reference** (floor-recon vs floor-original).
+> - **The measured −5.86 dB (kidney_dapi 31.77→25.91; organoid +0.01) is a
+>   reference-mismatch artifact, NOT evidence floor is worse:** it scores a
+>   background-free reconstruction against the *original, pedestal-bearing*
+>   volume, penalising the fit for correctly dropping non-signal. Under the
+>   principled floor-suppressed reference, floor would be fair (and appropriate).
+> - **Why keep no-floor for the paper anyway (pragmatic):** adopting floor
+>   properly means switching the evaluation to background-relative PSNR — a
+>   protocol + narrative change (and re-checking the blind-spot CV story) that
+>   isn't worth doing right before bioRxiv. The committed legacy numbers *are*
+>   the `--floor none` numbers (committed kidney 31.81 dB ≈ floor=none 31.77) and
+>   are internally consistent (original-referenced throughout), so they stand.
+> - **Tool default is confirmed correct and stays:** for general CLI use the
+>   floor should always be removed by default (background isn't signal), so
+>   `gsplat fit`/`cal` keep `--floor auto` — **do not change the shipped
+>   default.** The `--floor none` pin below is a *paper-only* deviation for
+>   original-referenced comparability, not a statement about the tool.
+> - **Resolution (no re-run):** (1) numbers stand as-is; (2) **pin the manuscript
+>   fit harnesses to `--floor none`** (`run_analysis`/`run_convergence`/
+>   `run_noise2self`/`progressive`/`loss_comparison`/`run_noise_floor`) so a
+>   future re-run stays reproducible instead of silently inheriting `floor=auto`;
+>   (3) **Methods paragraph** stating the benchmarks use `--floor none` with
+>   original-referenced PSNR for comparability, while `floor=auto` (the shipped
+>   default) is the more principled fit for real use (background isn't signal),
+>   and noting background-relative evaluation as appropriate future work.
+> - **Deferred (post-bioRxiv / journal / future work):** the floor-suppressed-
+>   reference evaluation, and the small open check of whether floor improves the
+>   blind-spot CV / K\* selection (a `cal`-sweep on a few datasets, not run_all).
+> (Harness pinning + Methods paragraph land as a luxar-paper PR.)
 
 ---
 
