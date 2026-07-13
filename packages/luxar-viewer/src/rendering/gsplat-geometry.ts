@@ -252,17 +252,21 @@ export function createInstancedGSplatsMesh(
  *
  * @param mesh - Existing gsplats mesh to update
  * @param meshConfig - New splat data
+ * @returns `true` when the interleaved buffer was REBUILT (size change) —
+ *   the caller must then evict Three's cached RenderObject (see
+ *   `invalidate-render-object.ts`); `false` for the in-place write.
  */
 export function updateInstancedGSplatsMesh(
   mesh: THREE.Mesh,
   meshConfig: InstancedGSplatsMeshConfig
-): void {
+): boolean {
   const geometry = mesh.geometry as THREE.InstancedBufferGeometry;
 
   // Update or recreate attributes based on size change
   const currentCount = geometry.instanceCount;
 
-  if (meshConfig.splatCount !== currentCount) {
+  const rebuilt = meshConfig.splatCount !== currentCount;
+  if (rebuilt) {
     // Size changed: rebuild the interleaved buffer + views.
     bindInterleavedAttributes(geometry, meshConfig);
     geometry.instanceCount = meshConfig.splatCount;
@@ -324,4 +328,6 @@ export function updateInstancedGSplatsMesh(
   const sphere = new THREE.Sphere();
   box.getBoundingSphere(sphere);
   geometry.boundingSphere = sphere;
+
+  return rebuilt;
 }

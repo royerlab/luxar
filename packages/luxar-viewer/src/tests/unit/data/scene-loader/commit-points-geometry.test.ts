@@ -9,6 +9,8 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import * as THREE from 'three';
 import { commitPointsGeometry } from '../../../../data/scene-loader/commit/commit-points-geometry';
+import { createPointsGeometry } from '../../../../rendering/node-factory/create-points-node';
+import { SOFT_DISPOSE_FLAG } from '../../../../rendering/material-manager';
 import type { LoadedPointsData } from '../../../../data/data-loader-types';
 import type { NodeFactory } from '../../../../rendering/node-factory';
 
@@ -44,6 +46,14 @@ const mockCreatePointsGeometry = vi.fn(() => {
 });
 const mockNodeFactory = {
   createPointsGeometry: mockCreatePointsGeometry,
+} as unknown as NodeFactory;
+
+// The REAL geometry factory — regression tests below must exercise the
+// commit path against production-shaped geometry (plain
+// InstancedBufferAttributes), which the mocked factory masked.
+const realNodeFactory = {
+  createPointsGeometry: (data: LoadedPointsData, maxRadius?: number) =>
+    createPointsGeometry(data, maxRadius),
 } as unknown as NodeFactory;
 
 beforeEach(() => {
@@ -140,31 +150,24 @@ describe('commitPointsGeometry', () => {
     expect(mockCreatePointsGeometry).toHaveBeenCalledTimes(1);
   });
 
-  it('updates attributes in place when pool disabled and counts match', () => {
+  it('recreates the geometry when pool disabled and counts match (always-recreate contract)', () => {
+    // The non-pool path recreates unconditionally — the historical
+    // same-count in-place branch assumed interleaved attributes, but
+    // createPointsGeometry binds plain InstancedBufferAttributes, so
+    // the branch threw on the 2nd same-count commit. Recreation via
+    // NodeFactory owns all the dtype logic.
     const root = new THREE.Group();
-    const points = new THREE.Mesh();
-    points.name = '/p';
-    points.userData = { nodeType: 'points', visiblePointCount: 0 };
-    // 3-point geometry: production points geometries pack per-instance
-    // attributes into one `InstancedInterleavedBuffer` with views per
-    // attribute. The in-place commit path writes through these views,
-    // so the test fixture must mirror that shape.
-    const geom = new THREE.InstancedBufferGeometry();
-    const stride = 3; // aCenter only — minimal layout for this test.
-    const interleaved = new THREE.InstancedInterleavedBuffer(
-      new Float32Array(3 * stride),
-      stride,
-      1
-    );
-    geom.setAttribute('aCenter', new THREE.InterleavedBufferAttribute(interleaved, 3, 0));
-    points.geometry = geom;
+    const points = makePoints('/p');
     root.add(points);
-
     commitPointsGeometry('/p', makeData(3), root, null, mockNodeFactory, undefined, 0);
-    // No dispose / no recreate → in-place path.
-    expect(mockCreatePointsGeometry).not.toHaveBeenCalled();
-    // The same geometry instance is preserved.
-    expect(points.geometry).toBe(geom);
+    const firstGeometry = points.geometry;
+    const disposeSpy = vi.spyOn(firstGeometry, 'dispose');
+    mockCreatePointsGeometry.mockClear();
+
+    commitPointsGeometry('/p', makeData(3), root, null, mockNodeFactory, undefined, 1);
+    expect(mockCreatePointsGeometry).toHaveBeenCalledTimes(1);
+    expect(disposeSpy).toHaveBeenCalledTimes(1);
+    expect(points.geometry).not.toBe(firstGeometry);
     expect((points.userData as { visiblePointCount: number }).visiblePointCount).toBe(3);
   });
 
@@ -173,24 +176,11 @@ describe('commitPointsGeometry', () => {
     // the rendered disc footprint, not just the centers — so the pick cull
     // (ray-aabb) and camera framing cover large radii. Here centers bounds
     // are [-1,1] and max_radius is 10 → boundingBox grows to [-11,11].
+    // Uses the REAL createPointsGeometry: the recreate path delegates the
+    // footprint expansion to the factory (which receives maxRadius).
     const root = new THREE.Group();
-    const points = new THREE.Mesh();
-    points.name = '/p';
-    points.userData = {
-      nodeType: 'points',
-      visiblePointCount: 0,
-      attrs: { max_radius: 10 },
-    };
-    const stride = 3;
-    const interleaved = new THREE.InstancedInterleavedBuffer(
-      new Float32Array(3 * stride),
-      stride,
-      1
-    );
-    const geom = new THREE.InstancedBufferGeometry();
-    geom.setAttribute('aCenter', new THREE.InterleavedBufferAttribute(interleaved, 3, 0));
-    geom.setAttribute('aRadius', new THREE.InterleavedBufferAttribute(interleaved, 1, 0));
-    points.geometry = geom;
+    const points = makePoints('/p');
+    points.userData.attrs = { max_radius: 10 };
     root.add(points);
 
     commitPointsGeometry(
@@ -198,15 +188,83 @@ describe('commitPointsGeometry', () => {
       makeData(3, /*withRadii=*/ true),
       root,
       null,
-      mockNodeFactory,
+      realNodeFactory,
       undefined,
       0
     );
 
-    expect(points.geometry).toBe(geom);
-    expect(geom.boundingBox).not.toBeNull();
-    expect(geom.boundingBox!.min.x).toBeCloseTo(-11, 5);
-    expect(geom.boundingBox!.max.x).toBeCloseTo(11, 5);
+    expect(points.geometry.boundingBox).not.toBeNull();
+    expect(points.geometry.boundingBox!.min.x).toBeCloseTo(-11, 5);
+    expect(points.geometry.boundingBox!.max.x).toBeCloseTo(11, 5);
+  });
+});
+
+describe('commitPointsGeometry — non-pool path against REAL factory geometry', () => {
+  // Regression suite for the broken useGPUBufferPool:false fallback. The
+  // mocked-factory tests above masked this: production non-pool geometry
+  // is built by createPointsGeometry with plain InstancedBufferAttributes,
+  // but the historical same-count in-place branch cast `.data` to an
+  // interleaved buffer (undefined) and threw on the SECOND same-count
+  // commit — the routine case while scrubbing a dimension whose visible
+  // count is constant.
+
+  it('a second same-count commit does not throw and uploads the new positions', () => {
+    const root = new THREE.Group();
+    const points = makePoints('/p');
+    root.add(points);
+
+    commitPointsGeometry('/p', makeData(3), root, null, realNodeFactory, undefined, 0);
+
+    const second = makeData(3); // fresh reference (no no-op skip), same count
+    second.positions[0] = 7;
+    expect(() =>
+      commitPointsGeometry('/p', second, root, null, realNodeFactory, undefined, 1)
+    ).not.toThrow();
+
+    const center = points.geometry.getAttribute('aCenter');
+    expect(center.array[0]).toBe(7);
+    expect((points.userData as { visiblePointCount: number }).visiblePointCount).toBe(3);
+  });
+
+  it('Uint16 colors keep integer-normalized (÷65535) semantics across a same-count commit', () => {
+    const root = new THREE.Group();
+    const points = makePoints('/p');
+    root.add(points);
+
+    const first = makeData(3);
+    first.colors = new Uint16Array(9).fill(65535);
+    commitPointsGeometry('/p', first, root, null, realNodeFactory, undefined, 0);
+
+    const second = makeData(3);
+    second.colors = new Uint16Array(9).fill(65535);
+    second.positions[0] = 1;
+    commitPointsGeometry('/p', second, root, null, realNodeFactory, undefined, 1);
+
+    // The raw Uint16Array must be bound with `normalized: true` (÷65535 in
+    // the shader). The broken branch widened with ÷255 → colors 257× too
+    // bright (when it didn't crash on aCenter first).
+    const color = points.geometry.getAttribute('aColor');
+    expect(color.array).toBeInstanceOf(Uint16Array);
+    expect(color.normalized).toBe(true);
+  });
+
+  it('evicts Three’s cached RenderObject via a soft material dispose on every non-pool commit', () => {
+    // The recreate path rebinds fresh GPU buffers; on the WebGPU backend
+    // the mesh's cached RenderObject keeps a stale `vertexBuffers` set
+    // unless the commit dispatches the SOFT_DISPOSE-flagged event (same
+    // contract as the pool path's attributesRebuilt branch).
+    const root = new THREE.Group();
+    const points = makePoints('/p');
+    root.add(points);
+
+    let sawSoftDispose = false;
+    (points.material as THREE.Material).addEventListener('dispose', () => {
+      sawSoftDispose =
+        (points.material as unknown as Record<symbol, boolean>)[SOFT_DISPOSE_FLAG] === true;
+    });
+
+    commitPointsGeometry('/p', makeData(3), root, null, realNodeFactory, undefined, 0);
+    expect(sawSoftDispose).toBe(true);
   });
 });
 

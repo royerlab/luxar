@@ -550,6 +550,17 @@ Multi-channel 3D microscopy data as Gaussian splats, with full compute pipeline 
 
 ---
 
+#### demo_gsplats_3d_cells3d_multichannel.py - 3D Multi-Channel Cells (Layers + BOP LUTs)
+Two-channel scikit-image `cells3d` fluorescence volume (membranes + nuclei) fitted per channel as 3D splats and shown as toggleable **layers**, each coloured by a BOP (Blue-Orange-Purple) microscopy LUT (`bop_orange` membranes, `bop_blue` nuclei). Fully self-contained (skimage downloads the sample) — the cheapest gsplat demo to run from scratch. Uses precomputed gsplats from Git LFS by default.
+
+**Run**: `hatch run python packages/luxar/src/luxar/demos/demo_gsplats_3d_cells3d_multichannel.py [--recompute]`
+
+**Requires**: Git LFS data (default) or `scikit-image` + GPU (with `--recompute`).
+
+**Demonstrates**: Per-channel `layer=True` gsplats nodes with built-in BOP LUTs applied at display time (interactive colormap switching in the Layers panel, press L), shared amplitude-weighted centroid alignment, additive blending, Neutral tone-mapping for faithful hues. The lightweight, no-download sibling of `organoid_multichannel` and `kidney_multichannel_layers`.
+
+---
+
 #### demo_gsplats_3d_kidney_multichannel_toggles.py - 3D Multi-Channel Kidney (Boolean Toggles)
 Three-channel confocal mouse kidney tissue (nuclei, WGA, actin) with independent boolean toggle dimensions for each channel.
 
@@ -624,6 +635,17 @@ The human head Gaussian-splatted in **true photographic color** from the NLM Vis
 **Requires**: Nothing extra by default — ships a precomputed fit + per-splat colors via Git LFS. With `--recompute` (or if the LFS assets aren't pulled) it auto-downloads the 377 color head slices (~1.1 GB) to `~/.cache/luxar/gsplats_visible_human_head/`, builds the masked RGB volume, fits luminance (GPU), and samples per-splat colors.
 
 **Demonstrates**: True-color volumetric anatomy → Gaussian splats via a **single luminance fit + per-splat color sampling** (one fit, real photographic color — vs. the scalar-intensity-plus-colormap microscopy demos), warm-vs-blue tissue masking to drop the frozen-gel background, Neutral tone-mapping, self-contained download → mask → fit → cache-processed bootstrap. Data: [NLM Visible Human Project](https://www.nlm.nih.gov/research/visible/visible_human.html) (Male color cryosections, head subset; public domain).
+
+---
+
+#### demo_gsplats_3d_cryoem_virus.py - Cryo-EM Giant Virus Capsid (Structural Biology)
+Gaussian-splats a real cryo-electron-microscopy density map from the EMDB: the icosahedral capsid of *Paramecium bursaria* chlorella virus 1 (PBCV-1), a giant virus. The reconstructed electron-density volume — a hollow ~1650 Å shell tiled with capsomers — is exactly what the Luxar splat fitter eats, so this is the microscopy splat pipeline applied to structural biology (no isosurface threshold needed).
+
+**Run**: `hatch run python packages/luxar/src/luxar/demos/demo_gsplats_3d_cryoem_virus.py [--recompute]`
+
+**Requires**: Nothing extra by default — ships a precomputed fit via Git LFS (~12 MB: the 700³ EMDB map downsampled to 512³, fit to ~1.0M splats, PSNR ~28 dB). With `--recompute` (or if the LFS asset isn't pulled) it auto-downloads the 1.3 GB EMDB map (`emd_5384.map.gz`) to `~/.cache/luxar/gsplats_cryoem_virus/` (resumable), reads it with `mrcfile`, downsamples to 512³, and fits Gaussian splats on the GPU. Adds `mrcfile` to the `demos` extra.
+
+**Demonstrates**: Real *structural-biology* electron density → Gaussian splats (the same `cal → fit → convert` pipeline used for microscopy, on an EMDB MRC/CCP4 map), solvent clipping + percentile normalization, `viridis` colormap + Neutral tone-mapping + additive HDR rendering, self-contained download → read → fit → cache-processed bootstrap. Data: [EMDB EMD-5384](https://www.ebi.ac.uk/emdb/EMD-5384) (Zhang et al. 2011, PNAS 108(36):14837; public domain / CC0).
 
 ---
 
@@ -981,6 +1003,7 @@ hatch run python packages/luxar/src/luxar/demos/demo_gsplats_2d_cmu1_pathology.p
 # --- GSplats: 3D ---
 hatch run python packages/luxar/src/luxar/demos/demo_gsplats_3d_milky_way_dust.py
 hatch run python packages/luxar/src/luxar/demos/demo_gsplats_3d_visible_human_head.py
+hatch run python packages/luxar/src/luxar/demos/demo_gsplats_3d_cryoem_virus.py
 hatch run python packages/luxar/src/luxar/demos/demo_gsplats_3d_organoid_dapi_nuclei.py
 hatch run python packages/luxar/src/luxar/demos/demo_gsplats_3d_organoid_multichannel.py
 hatch run python packages/luxar/src/luxar/demos/demo_gsplats_3d_kidney_multichannel_toggles.py

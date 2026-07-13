@@ -224,6 +224,14 @@ export async function runInitPipeline(
       requestRender: () => animationController.startAnimation(),
     });
   });
+  // Wake the render loop after EVERY geometry commit (forwarded to each
+  // SceneLoader). Late commits — progressive-refinement passes, failed-load
+  // retries, the online auto-retry — land after the sweep that started
+  // them; without this, a loop that idle-paused meanwhile keeps showing
+  // the stale frame until the next user input. startAnimation is
+  // idempotent (early-out while animating + idle-timer re-arm), so
+  // per-node calls inside an atomic sweep are harmless.
+  SceneLoaderManager.getInstance().setRequestRender(() => animationController.startAnimation());
   animationController.addPerFrameCallback('lod-group-selector', () => {
     const loader = getSceneLoader('default');
     // When a substitutive-LOD group swaps its active level (a camera-move
@@ -301,6 +309,17 @@ export async function runInitPipeline(
   // outlives app teardown — inconsistent with every other
   // app-level listener.
   if (typeof sceneManager.addEventListener === 'function') {
+    // Give the SceneManager's 'change' event a live subscriber. The
+    // context-restore path ends with `triggerChange()` ("trigger a
+    // render") — without this, a context restored while the rAF loop is
+    // idle-paused rebuilds + resizes (clearing the canvas) and then no
+    // frame ever renders: blank viewer until the next input event.
+    // startAnimation is idempotent, so the redundant dispatches from the
+    // controls handler are harmless.
+    const onSceneChange = (): void => animationController.startAnimation();
+    sceneManager.addEventListener('change', onSceneChange);
+    ports.events.add(() => sceneManager.removeEventListener('change', onSceneChange));
+
     const onContextRestored = (): void => {
       const sceneLoader = getSceneLoader('default');
       if (sceneLoader && sceneManager.scene) {
