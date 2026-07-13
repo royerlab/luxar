@@ -35,6 +35,7 @@ import { log, Modules, LogEmoji } from '../../../utils/log';
 import { notifier } from '../../../utils/cross-layer/notifier';
 import { getWorkerPool } from '../../../workers/worker-pool';
 import { ZarrSceneAttrs, SceneDimensionAttrs } from '../../../types/zarr';
+import { SUPPORTED_GSPLATS_FORMAT_VERSIONS } from '../../../types/format-contract';
 import type { LoaderConfig, SceneNode, ViewState } from '../../data-loader-types';
 import type { DataLoader } from '../../data-loader-types';
 import type { LinesDataLoader } from '../../../types/lines';
@@ -251,9 +252,8 @@ export async function loadScene(url: string, ctx: LoadSceneCtx): Promise<THREE.G
   // surface a migrate hint rather than failing silently. v3.0–v3.2 are all
   // readable (v3.1 splits the Cholesky factors into diag + offdiag; v3.2
   // renames the lod selector attrs to coverage_fraction — v3.0/3.1 stores with
-  // the legacy attrs are auto-adapted by load-lod-group-node); keep this in
-  // sync with Python's SUPPORTED_FORMAT_VERSIONS (gsplats/io/save_gsplats.py).
-  const SUPPORTED_GSPLATS_FORMAT_VERSIONS = ['3.0', '3.1', '3.2'];
+  // the legacy attrs are auto-adapted by load-lod-group-node). The supported
+  // set is single-sourced from format-contract/contract.yaml.
   const fmtType = (sceneAttrs as Record<string, unknown>)?.format_type;
   const fmtVersion = (sceneAttrs as Record<string, unknown>)?.format_version;
   if (
