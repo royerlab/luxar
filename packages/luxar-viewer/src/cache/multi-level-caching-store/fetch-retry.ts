@@ -1,6 +1,7 @@
 import { log, Modules } from '../../utils/log';
 import { config } from '../../config';
 import { withFetchGate } from '../../utils/fetch-concurrency';
+import { sha256Hex } from './sha256';
 
 const INITIAL_RETRY_DELAY_MS = 50;
 const MAX_RETRY_DELAY_MS = 500;
@@ -52,11 +53,8 @@ export function buildUrl(baseUrl: string, key: string): string {
  * for a dataset.
  */
 export async function hashUrl(url: string): Promise<string> {
-  const encoder = new TextEncoder();
-  const data = encoder.encode(url);
-  const hashBuffer = await crypto.subtle.digest('SHA-256', data);
-  const hashArray = Array.from(new Uint8Array(hashBuffer));
-  const hashHex = hashArray.map((b) => b.toString(16).padStart(2, '0')).join('');
+  const data = new TextEncoder().encode(url);
+  const hashHex = await sha256Hex(data);
   return `zarr-cache-${hashHex.slice(0, 16)}`;
 }
 
