@@ -17,6 +17,7 @@ vi.mock('../../../../rendering/gsplat-geometry', () => ({
 }));
 
 import { commitGSplatsGeometry } from '../../../../data/scene-loader/commit/commit-gsplats-geometry';
+import { SOFT_DISPOSE_FLAG } from '../../../../rendering/material-manager';
 import type { StagedGSplatsCommit } from '../../../../data/scene-loader/process/data-processor-gsplats';
 
 function makeProcessed(splatCount = 2) {
@@ -289,5 +290,42 @@ describe('commitGSplatsGeometry — committedEnergyFraction stamp', () => {
     };
     commitGSplatsGeometry(noop, root, null, undefined, V);
     expect(energy(mesh)).toBe(0.8); // refreshed from the live loader
+  });
+});
+
+describe('commitGSplatsGeometry — RenderObject invalidation on non-pool rebuild', () => {
+  // When updateInstancedGSplatsMesh reports a REBUILD (size change rebinds
+  // a fresh InstancedInterleavedBuffer), the commit must dispatch the
+  // SOFT_DISPOSE-flagged material event so Three's cached RenderObject
+  // (stale `vertexBuffers` on the WebGPU backend) is evicted — the same
+  // contract the pool branch honors via didLastAcquireRebuildAttributes.
+  const softDisposeSeen = (mesh: THREE.Mesh): (() => boolean) => {
+    let seen = false;
+    (mesh.material as THREE.Material).addEventListener('dispose', () => {
+      seen = (mesh.material as unknown as Record<symbol, boolean>)[SOFT_DISPOSE_FLAG] === true;
+    });
+    return () => seen;
+  };
+
+  it('soft-disposes the material when the update reports a rebuild', () => {
+    mockUpdateInstancedMesh.mockReset();
+    mockUpdateInstancedMesh.mockReturnValue(true);
+    const root = new THREE.Group();
+    const mesh = makeMesh('/g');
+    root.add(mesh);
+    const saw = softDisposeSeen(mesh);
+    commitGSplatsGeometry(makeStaged(3), root, null, undefined, V);
+    expect(saw()).toBe(true);
+  });
+
+  it('does NOT dispatch when the update was in-place (no rebuild)', () => {
+    mockUpdateInstancedMesh.mockReset();
+    mockUpdateInstancedMesh.mockReturnValue(false);
+    const root = new THREE.Group();
+    const mesh = makeMesh('/g');
+    root.add(mesh);
+    const saw = softDisposeSeen(mesh);
+    commitGSplatsGeometry(makeStaged(3), root, null, undefined, V);
+    expect(saw()).toBe(false);
   });
 });

@@ -726,7 +726,10 @@ describe('updateInstancedGSplatsMesh', () => {
       splatCount: 2,
     };
 
-    updateInstancedGSplatsMesh(mesh, updateConfig);
+    const rebuilt = updateInstancedGSplatsMesh(mesh, updateConfig);
+    // In-place write → no buffer rebuild → the commit layer must NOT
+    // invalidate the cached RenderObject.
+    expect(rebuilt).toBe(false);
 
     const geometry = mesh.geometry as THREE.InstancedBufferGeometry;
     const centerAttr = geometry.getAttribute('aCenter');
@@ -762,7 +765,10 @@ describe('updateInstancedGSplatsMesh', () => {
       splatCount: 3,
     };
 
-    updateInstancedGSplatsMesh(mesh, updateConfig);
+    const rebuilt = updateInstancedGSplatsMesh(mesh, updateConfig);
+    // Count change rebinds a fresh interleaved buffer → the commit layer
+    // must invalidate the cached RenderObject (WebGPU stale vertexBuffers).
+    expect(rebuilt).toBe(true);
 
     const geometry = mesh.geometry as THREE.InstancedBufferGeometry;
     expect(geometry.instanceCount).toBe(3);

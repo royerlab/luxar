@@ -421,11 +421,39 @@ describe('line-geometry mesh creation/update', () => {
       startScalars: new Float32Array([0.25]),
       endScalars: new Float32Array([0.75]),
     };
-    updateInstancedLinesMesh(mesh, updated);
+    const rebuilt = updateInstancedLinesMesh(mesh, updated);
+    // Same count + same spec-set → in-place write, no buffer rebuild —
+    // the commit layer must NOT invalidate the cached RenderObject.
+    expect(rebuilt).toBe(false);
     const startAttr = mesh.geometry.getAttribute('aStartScalar');
     // Pooled / standalone line attributes are now interleaved views —
     // use `getX(i)` for semantic per-instance reads.
     expect(startAttr.getX(0)).toBeCloseTo(0.25, 5);
+  });
+
+  it('updateInstancedLinesMesh reports a rebuild on a scalar spec-set toggle', () => {
+    const base: InstancedLinesMeshConfig = {
+      startPositions: new Float32Array([0, 0, 0]),
+      endPositions: new Float32Array([1, 0, 0]),
+      startColors: new Float32Array([1, 1, 1]),
+      endColors: new Float32Array([1, 1, 1]),
+      startWidths: new Float32Array([0.1]),
+      endWidths: new Float32Array([0.1]),
+      startSharpness: new Float32Array([2.0]),
+      endSharpness: new Float32Array([2.0]),
+      segmentLengths: new Float32Array([1.0]),
+      startClipped: new Uint8Array([0]),
+      endClipped: new Uint8Array([0]),
+      segmentCount: 1,
+    };
+    const mesh = createInstancedLinesMesh(base, new LineMaterial());
+    // Toggling scalars ON changes the interleaved stride → rebuild.
+    const withScalars: InstancedLinesMeshConfig = {
+      ...base,
+      startScalars: new Float32Array([0.5]),
+      endScalars: new Float32Array([0.5]),
+    };
+    expect(updateInstancedLinesMesh(mesh, withScalars)).toBe(true);
   });
 });
 
