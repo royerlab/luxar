@@ -1,4 +1,5 @@
 import { buildUrl, fetchWithRetry } from './fetch-retry';
+import { sha256Hex } from './sha256';
 
 /**
  * Cross-instance validation serializer.
@@ -127,10 +128,7 @@ export async function getRemoteContentHash(
     // Digest a Uint8Array view rather than the raw ArrayBuffer: `instanceof
     // ArrayBuffer` checks fail across realms (jsdom/worker), and a view
     // carries explicit byteOffset/byteLength either way.
-    const digestBuffer = await crypto.subtle.digest('SHA-256', new Uint8Array(data));
-    const digest = Array.from(new Uint8Array(digestBuffer))
-      .map((b) => b.toString(16).padStart(2, '0'))
-      .join('');
+    const digest = await sha256Hex(new Uint8Array(data));
     return { hash: `zattrs:${digest}`, mode: 'zattrs-hash' };
   } catch {
     return null;
