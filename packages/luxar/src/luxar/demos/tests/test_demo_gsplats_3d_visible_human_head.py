@@ -37,6 +37,27 @@ tissue_mask = _demo.tissue_mask
 mask_background = _demo.mask_background
 crop_to_content = _demo.crop_to_content
 sample_colors = _demo.sample_colors
+_save_colors_u8 = _demo._save_colors_u8
+_load_colors_f32 = _demo._load_colors_f32
+
+
+class TestColorRoundtrip:
+    def test_uint8_roundtrip_within_quantization(self, tmp_path) -> None:
+        colors = np.array([[0.0, 0.5, 1.0], [0.25, 0.75, 0.1]], dtype=np.float32)
+        p = tmp_path / "c.npz"
+        _save_colors_u8(colors, p)
+        assert p.stat().st_size > 0
+        loaded = _load_colors_f32(p)
+        assert loaded.dtype == np.float32
+        assert loaded.min() >= 0.0 and loaded.max() <= 1.0
+        np.testing.assert_allclose(loaded, colors, atol=1.0 / 255 + 1e-6)
+
+    def test_loads_legacy_float_npz(self, tmp_path) -> None:
+        p = tmp_path / "cf.npz"
+        np.savez_compressed(p, colors=np.array([[0.2, 0.4, 0.6]], dtype=np.float32))
+        loaded = _load_colors_f32(p)
+        assert loaded.dtype == np.float32
+        np.testing.assert_allclose(loaded, [[0.2, 0.4, 0.6]], atol=1e-6)
 
 
 class TestLuminance:

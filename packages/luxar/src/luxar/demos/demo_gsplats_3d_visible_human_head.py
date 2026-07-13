@@ -285,6 +285,23 @@ def assemble_volume(png_dir: Path, target_max_dim: int = TARGET_MAX_DIM) -> np.n
 # =============================================================================
 
 
+def _save_colors_u8(colors: np.ndarray, path: Path) -> None:
+    """Save per-splat colors as uint8 (0–255) — ~4× smaller than float32."""
+    u8 = np.clip(np.rint(colors * 255.0), 0, 255).astype(np.uint8)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.parent / (path.name + ".part")
+    with open(tmp, "wb") as fh:
+        np.savez_compressed(fh, colors=u8)
+    tmp.rename(path)
+
+
+def _load_colors_f32(path: Path) -> np.ndarray:
+    """Load per-splat colors as float32 in [0, 1] (uint8 assets are rescaled)."""
+    with np.load(path) as d:
+        c = d["colors"]
+    return c.astype(np.float32) / 255.0 if c.dtype == np.uint8 else c.astype(np.float32)
+
+
 def fit_head(rgb_vol: np.ndarray) -> tuple[GSplatData, np.ndarray]:
     """Fit luminance, sample per-splat colors, cache both. Returns (fit, colors)."""
     global DEVICE
@@ -312,15 +329,15 @@ def fit_head(rgb_vol: np.ndarray) -> tuple[GSplatData, np.ndarray]:
     CACHE_DIR.mkdir(parents=True, exist_ok=True)
     result.save(
         CACHE_FIT,
-        encoding_mode=EncodingMode.MEMORY,
-        include_fitting_info=True,
+        encoding_mode=EncodingMode.MEMORY,  # uint8 Cholesky — smallest on-disk
+        include_fitting_info=False,
         compress="zip",
         zip_deflate=True,
     )
-    tmp = CACHE_COLORS.parent / (CACHE_COLORS.name + ".part")
-    with open(tmp, "wb") as fh:
-        np.savez_compressed(fh, colors=colors)
-    tmp.rename(CACHE_COLORS)
+    _save_colors_u8(colors, CACHE_COLORS)
+    # Round-trip through uint8 so the recompute path matches the shipped/cached
+    # path exactly (both render the quantized colors).
+    colors = np.clip(np.rint(colors * 255.0), 0, 255).astype(np.float32) / 255.0
     return result, colors
 
 
@@ -331,8 +348,7 @@ def load_or_build() -> tuple[GSplatData, np.ndarray]:
         if CACHE_FIT.exists() and CACHE_COLORS.exists():
             aprint("  Using cached fit + colors")
             fit = GSplatData.load(CACHE_FIT, include_stats=False)
-            with np.load(CACHE_COLORS) as d:
-                return fit, d["colors"]
+            return fit, _load_colors_f32(CACHE_COLORS)
         # shipped LFS assets
         if (
             LFS_FIT.exists()
@@ -347,8 +363,7 @@ def load_or_build() -> tuple[GSplatData, np.ndarray]:
             shutil.copy2(LFS_FIT, CACHE_FIT)
             shutil.copy2(LFS_COLORS, CACHE_COLORS)
             fit = GSplatData.load(CACHE_FIT, include_stats=False)
-            with np.load(CACHE_COLORS) as d:
-                return fit, d["colors"]
+            return fit, _load_colors_f32(CACHE_COLORS)
         aprint(
             "Precomputed fit not available (Git LFS assets not pulled). "
             "Falling back to download + fit (one-time; result is cached)."
