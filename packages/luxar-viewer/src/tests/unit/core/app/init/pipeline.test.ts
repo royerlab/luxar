@@ -381,9 +381,7 @@ describe('runInitPipeline', () => {
 
       await runInitPipeline(ports, partial);
 
-      const call = sceneStub.addEventListener.mock.calls.find(
-        (c: unknown[]) => c[0] === 'change'
-      );
+      const call = sceneStub.addEventListener.mock.calls.find((c: unknown[]) => c[0] === 'change');
       expect(call).toBeDefined();
 
       const animation = partial.animationController as unknown as {
