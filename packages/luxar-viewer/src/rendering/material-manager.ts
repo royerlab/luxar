@@ -158,21 +158,29 @@ export class MaterialManager {
   private currentNearCull: number | undefined = undefined;
 
   /**
-   * Callback used by `lruSet` on eviction. Drops the evicted material
-   * from the global camera-update registry, disposes its GPU resources,
-   * and bumps the diagnostic counter. Bound as an arrow field so each
-   * `lruSet` call site can pass it without rebinding `this`.
+   * Callback used by `lruSet` on eviction. DEFER-DISPOSE: cached
+   * materials are shared and attached directly to live meshes (only the
+   * colormap / layers-panel paths clone), so eviction must not dispose —
+   * a disposed-but-still-rendered material is auto-recompiled by Three
+   * but its dispose listener has unregistered it, so it silently stops
+   * receiving `updateCameraParams` and renders with stale
+   * resolution/FOV/nearCull after the next resize. Instead the entry
+   * merely leaves the cache (the bound is enforced by `lruSet`, which
+   * deleted the map entry before calling this); the material stays in
+   * `registeredMaterials` (camera updates keep flowing) and moves to
+   * `ownedMaterials` (leak diagnostics + teardown), so `dispose()` still
+   * cleans it up at end of life. Trade-off: an evicted-and-truly-unused
+   * material is retained until manager disposal — one CPU-side uniforms
+   * object per distinct key ever created (its GPU program is shared and
+   * refcounted by shader key in Three), strictly cheaper than the
+   * use-after-evict bug. Bound as an arrow field so each `lruSet` call
+   * site can pass it without rebinding `this`.
    */
   private readonly handleEviction = (
-    key: string,
+    _key: string,
     material: THREE.Material & CameraAwareMaterial
   ): void => {
-    this.registeredMaterials.delete(material);
-    try {
-      material.dispose();
-    } catch (err) {
-      log.warning(Modules.RENDERER, `Error disposing evicted material '${key}': ${err}`);
-    }
+    this.ownedMaterials.add(material);
     this.evictionCount++;
   };
 

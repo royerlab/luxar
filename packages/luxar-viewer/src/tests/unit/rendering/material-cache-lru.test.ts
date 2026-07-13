@@ -1,14 +1,17 @@
 /**
  * Unit tests for the LRU bound on MaterialManager's caches. Each cache
  * uses an inline LRU pattern: `lruGet` re-inserts on hit (promote to
- * MRU); `lruSet` evicts the oldest entry when at capacity, disposes
- * the evicted material, and removes it from the registry.
+ * MRU); `lruSet` evicts the oldest entry when at capacity. Eviction is
+ * DEFER-DISPOSE: the entry leaves the cache but stays registered for
+ * camera updates (shared materials may still be attached to live
+ * meshes) and is only disposed at manager dispose().
  *
  * The cap is read live from `config.dataLoading.performance.materialCacheMaxSize`
  * so we mutate the config in tests and reset on each cycle.
  */
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import * as THREE from 'three';
 import {
   MaterialManager,
   __resetMaterialManagerForTests,
@@ -85,7 +88,14 @@ describe('MaterialManager LRU eviction', () => {
     expect(stats.keys.some((k) => k.includes('o30'))).toBe(true); // C
   });
 
-  it('disposes the evicted material on eviction', () => {
+  // Defer-dispose policy: cached materials are SHARED and attached
+  // directly to live meshes (only the colormap / layers-panel paths
+  // clone), so eviction must not dispose them — a disposed-but-rendered
+  // material silently stops receiving updateCameraParams and renders
+  // with stale resolution/FOV/nearCull after the next resize. Eviction
+  // only drops the cache entry; the material stays registered (camera
+  // updates keep flowing) and is disposed at manager dispose().
+  it('does NOT dispose the evicted material at eviction time (may still be on a mesh)', () => {
     config.dataLoading.performance.materialCacheMaxSize = 1;
     const mm = new MaterialManager();
     const a = mm.getPointMaterial(baseProps({ opacity: 0.1 }));
@@ -95,18 +105,32 @@ describe('MaterialManager LRU eviction', () => {
       aDisposed = true;
       origDispose();
     };
-    // Force an insert past the cap → A evicts.
+    // Force an insert past the cap → A evicts from the cache.
     mm.getPointMaterial(baseProps({ opacity: 0.2 }));
+    expect(aDisposed).toBe(false);
+    // Teardown still cleans it up.
+    mm.dispose();
     expect(aDisposed).toBe(true);
   });
 
-  it('drops the evicted material from registeredMaterials', () => {
+  it('keeps the evicted material registered for camera updates; cache stays bounded', () => {
     config.dataLoading.performance.materialCacheMaxSize = 1;
     const mm = new MaterialManager();
-    mm.getPointMaterial(baseProps({ opacity: 0.1 }));
+    const a = mm.getPointMaterial(baseProps({ opacity: 0.1 }));
     expect(mm.getCacheStats().totalRegistered).toBe(1);
-    mm.getPointMaterial(baseProps({ opacity: 0.2 }));
-    expect(mm.getCacheStats().totalRegistered).toBe(1);
+    mm.getPointMaterial(baseProps({ opacity: 0.2 })); // evicts A from the cache
+    const stats = mm.getCacheStats();
+    expect(stats.pointMaterials).toBe(1); // cache bound holds
+    expect(stats.evictions).toBe(1);
+    expect(stats.totalRegistered).toBe(2); // A still registered
+
+    // A (potentially still attached to a mesh) keeps receiving camera
+    // updates — including nearCull.
+    mm.updateCameraParams(0.9, new THREE.Vector2(640, 480), false, 0.33);
+    expect(
+      (a as unknown as { uniforms: { uResolution: { value: THREE.Vector2 } } }).uniforms
+        .uResolution.value.x
+    ).toBe(640);
   });
 
   it('disabled (maxSize=0) keeps unbounded behavior', () => {
