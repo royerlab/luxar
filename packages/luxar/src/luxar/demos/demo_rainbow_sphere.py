@@ -50,7 +50,7 @@ def generate_rainbow_sphere(
 
     Args:
         output_path: Where to write the zarr store
-        n_points: Number of points on sphere surface (default: 200k for high density)
+        n_points: Number of points on sphere surface (default: 400k for high density)
         sphere_radius: Radius of the sphere in world units
         sharpness: Point sharpness (higher = crisper edges)
     """
@@ -101,7 +101,7 @@ def generate_rainbow_sphere(
         b = np.sin(2 * np.pi * t + 4 * np.pi / 3) * 0.5 + 0.5  # Blue (240° offset)
 
         colors = np.column_stack([r, g, b]).astype(np.float32)
-        colors *= 3
+        colors *= 3  # HDR intensity boost so points glow under additive blending
         aprint("✓ Generated smooth rainbow gradient (R→G→B→R)")
 
         # === STEP 3: Calculate optimal point radius ===
@@ -159,7 +159,7 @@ def generate_rainbow_sphere(
                 blend_mode="difference",
             )
             scene.add_text(
-                "Fibonacci spiral \u2022 200K points",
+                f"Fibonacci spiral \u2022 {n_points / 1000:.0f}K points",
                 position=(0.98, 0.97),
                 font_size=0.015,
                 anchor="bottom-right",
@@ -173,7 +173,7 @@ def generate_rainbow_sphere(
 def main() -> None:
     """Main demo entry point."""
     # Parse simple command line args (optional)
-    n_points = 400000  # Default: 200k points for high quality
+    n_points = 400000  # Default: 400k points for high quality
     if len(sys.argv) > 1 and sys.argv[1].startswith("--points="):
         n_points = int(sys.argv[1].split("=")[1])
 
@@ -207,7 +207,7 @@ def main() -> None:
         aprint("The viewer will open in your browser automatically.")
         aprint("Press Ctrl+C when done to stop and cleanup.")
         aprint("")
-        aprint("💡 TIP: This demo has high point density (200k points)")
+        aprint(f"💡 TIP: This demo has high point density ({n_points / 1000:.0f}k points)")
         aprint("   - Initial load may take a moment")
         aprint("   - Zoom in to see individual points clearly")
         aprint("   - Notice how evenly distributed the points are")

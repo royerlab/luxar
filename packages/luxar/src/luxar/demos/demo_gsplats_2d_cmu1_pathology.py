@@ -74,7 +74,7 @@ Options:
     --target-size=N:    Downsample target for longest axis (default: 0 = full res)
     --tile-size=N:      Tile size in pixels for tiled fitting (default: 4096)
     --overlap=N:        Tile overlap in pixels (default: 512)
-    --seeds-per-tile=N: Seeds per tile (default: 8000)
+    --seeds-per-tile=N: Gaussian seeds per tile (default: 255000, per tile)
 
 By default, the demo works at full resolution (46,000 x 32,914 pixels)
 using tiled fitting.
@@ -419,9 +419,12 @@ def create_luxar_scene(
                     Dimension("y", unit="px", display=True),
                 ]
             )
-            # 2D data: start in orthographic mode with scale bar visible
+            # 2D data: start in orthographic mode with scale bar visible.
+            # Neutral tone-mapping keeps the H&E R/G/B colors faithful — the
+            # viewer's default ACES shifts hues away from true histology color.
             viewer_config = ViewerConfig(
                 control_type="ortho",
+                tone_mapping="Neutral",
                 ui=UIConfig(show_scale_bar=True),
             )
             scene = compiler.create_scene(dimensions=dims, viewer_config=viewer_config)

@@ -37,7 +37,7 @@ import numpy as np
 from arbol import aprint, asection
 
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
-from luxar.demos import launch_viewer
+from luxar.demos import launch_viewer, stack_colorings
 from luxar.utils.paths import get_demos_output_dir
 
 # =============================================================================
@@ -71,6 +71,31 @@ TAXON_COLORS: dict[str, tuple[float, float, float]] = {
     "Archaea": (1.0, 0.5, 0.1),  # orange
     "Viruses": (0.9, 0.2, 0.2),  # red
     "Other": (0.5, 0.5, 0.5),  # gray fallback
+}
+
+# Coarse domain view: the 12 fine taxa collapse to the major domains of life,
+# giving a second (switchable) coloring alongside the fine taxon view.
+_DOMAIN_OF: dict[str, str] = {
+    "Human": "Eukaryota",
+    "Mouse & Rat": "Eukaryota",
+    "Other Vertebrates": "Eukaryota",
+    "Insects & Worms": "Eukaryota",
+    "Plants": "Eukaryota",
+    "Fungi": "Eukaryota",
+    "Other Eukaryotes": "Eukaryota",
+    "Proteobacteria": "Bacteria",
+    "Firmicutes & Actino": "Bacteria",
+    "Other Bacteria": "Bacteria",
+    "Archaea": "Archaea",
+    "Viruses": "Viruses",
+    "Other": "Other",
+}
+DOMAIN_COLORS: dict[str, tuple[float, float, float]] = {
+    "Eukaryota": (0.25, 0.55, 1.0),  # blue
+    "Bacteria": (0.4, 0.9, 0.5),  # green
+    "Archaea": (1.0, 0.5, 0.1),  # orange
+    "Viruses": (0.9, 0.2, 0.2),  # red
+    "Other": (0.5, 0.5, 0.5),  # gray
 }
 
 # Organism classification rules — checked in order, first match wins.
@@ -608,28 +633,53 @@ def generate_esm3_landscape(
     # --- Step 5: Build Luxar scene ---
     n = len(positions)
     with asection("Generating visualization"):
-        # Colors by kingdom
-        colors = np.zeros((n, 3), dtype=np.float32)
-        kingdom_counts: dict[str, int] = {}
-        for i, k in enumerate(kingdoms):
-            colors[i] = TAXON_COLORS.get(k, TAXON_COLORS["Other"])
-            kingdom_counts[k] = kingdom_counts.get(k, 0) + 1
+        # Two switchable coloring views: fine taxon (12 categories) and coarse
+        # domain of life (Eukaryota / Bacteria / Archaea / Viruses).
+        domains = [_DOMAIN_OF.get(k, "Other") for k in kingdoms]
+        taxon_colors = np.array(
+            [TAXON_COLORS.get(k, TAXON_COLORS["Other"]) for k in kingdoms],
+            dtype=np.float32,
+        )
+        domain_colors = np.array(
+            [DOMAIN_COLORS.get(d, DOMAIN_COLORS["Other"]) for d in domains],
+            dtype=np.float32,
+        )
 
+        kingdom_counts: dict[str, int] = {}
+        for k in kingdoms:
+            kingdom_counts[k] = kingdom_counts.get(k, 0) + 1
         aprint("✓ Proteins by taxon:")
         for k, count in sorted(kingdom_counts.items(), key=lambda x: -x[1]):
             aprint(f"  {k}: {count:,}")
 
-        radii = np.full(n, 0.012, dtype=np.float32)
-
-        # Hover labels: "Insulin — Homo sapiens (Eukaryota)"
-        labels = [
+        # Hover shows the category active in the current view.
+        taxon_labels = [
             f"{protein_names[i]} — {organism_names[i]} ({kingdoms[i]})"
             for i in range(n)
         ]
+        domain_labels = [
+            f"{protein_names[i]} — {organism_names[i]} ({domains[i]})"
+            for i in range(n)
+        ]
+        stacked = stack_colorings(
+            positions,
+            [
+                {"label": "Taxon", "colors": taxon_colors, "labels": taxon_labels},
+                {"label": "Domain", "colors": domain_colors, "labels": domain_labels},
+            ],
+        )
+        radii = np.full(len(stacked.positions), 0.012, dtype=np.float32)
 
     with asection("Writing to Zarr"):
         dims = Dimensions(
             [
+                Dimension(
+                    "coloring",
+                    unit="",
+                    categories=stacked.categories,
+                    display=False,
+                    description="Color scheme: fine taxon vs coarse domain of life",
+                ),
                 Dimension("x", unit="UMAP", display=True),
                 Dimension("y", unit="UMAP", display=True),
                 Dimension("z", unit="UMAP", display=True),
@@ -637,18 +687,30 @@ def generate_esm3_landscape(
         )
 
         model_label = "ESM-3" if "esm3" in model_name else f"ESM C ({model_name})"
+        # Cite the model that actually produced the embeddings: ESM3 → Hayes
+        # et al. 2025; ESM C (esmc-*) → the EvolutionaryScale ESM C release.
+        model_citation = (
+            "Hayes et al. 2025"
+            if "esm3" in model_name
+            else "EvolutionaryScale ESM C, 2024"
+        )
         with LuxarZarrCompiler(output_path) as compiler:
             scene = compiler.create_scene(dimensions=dims)
 
+            # Substitutive Points LOD: ~572k proteins is a large cloud, so coarse
+            # levels replace it with fewer, larger merged splats when zoomed out
+            # (census-style wiring; coarse splats stay pure per coloring via the
+            # `coloring` barrier).
             scene.add_points(
                 "proteins",
-                positions=positions,
-                colors=colors,
+                positions=stacked.positions,
+                colors=stacked.colors,
                 radii=radii,
-                sharpness=np.full(n, 0.6, dtype=np.float32),
+                sharpness=np.full(len(stacked.positions), 0.6, dtype=np.float32),
                 opacity=0.9,
                 intensity=0.12,
-                labels=labels,
+                labels=stacked.labels,
+                substitutive_lod=dict(compression_factor=8, levels=3, device="auto"),
             )
 
             scene.add_text(
@@ -661,11 +723,62 @@ def generate_esm3_landscape(
             )
 
             scene.add_text(
-                f"{n:,} proteins • {model_label} embeddings • 3D UMAP • Hayes et al. 2025",
+                f"{n:,} proteins • {model_label} embeddings • 3D UMAP • {model_citation}",
                 position=(0.98, 0.97),
                 font_size=0.012,
                 anchor="bottom-right",
                 color="rgba(200,200,200,0.45)",
+            )
+
+            # Per-view color legends (each visible only on its coloring slot).
+            def _legend_html(heading: str, items: list) -> str:
+                html = (
+                    '<div style="font-size:1.2vh;line-height:1.5;'
+                    'background:rgba(0,0,0,0.5);padding:0.5vh;border-radius:3px">'
+                    f'<div style="font-weight:bold;color:#ccc;'
+                    f'margin-bottom:0.3vh">{heading}</div>'
+                )
+                for name, rgb in items:
+                    r, g, b = (int(round(v * 255)) for v in rgb)
+                    html += (
+                        f'<div><span style="color:#{r:02x}{g:02x}{b:02x}">█</span> '
+                        f"{name}</div>"
+                    )
+                return html + "</div>"
+
+            taxa_present = [
+                k for k, _ in sorted(kingdom_counts.items(), key=lambda x: -x[1])
+            ]
+            scene.add_html(
+                _legend_html(
+                    "Taxon",
+                    [(k, TAXON_COLORS.get(k, TAXON_COLORS["Other"])) for k in taxa_present],
+                ),
+                position=(0.02, 0.97),
+                anchor="bottom-left",
+                visible_range={"coloring": 0},
+                transition="fade",
+                transition_duration=0.3,
+            )
+            domain_counts: dict[str, int] = {}
+            for d in domains:
+                domain_counts[d] = domain_counts.get(d, 0) + 1
+            domains_present = [
+                d for d, _ in sorted(domain_counts.items(), key=lambda x: -x[1])
+            ]
+            scene.add_html(
+                _legend_html(
+                    "Domain",
+                    [
+                        (d, DOMAIN_COLORS.get(d, DOMAIN_COLORS["Other"]))
+                        for d in domains_present
+                    ],
+                ),
+                position=(0.02, 0.97),
+                anchor="bottom-left",
+                visible_range={"coloring": 1},
+                transition="fade",
+                transition_duration=0.3,
             )
 
     aprint(f"✓ Wrote {n:,} proteins to {output_path}")
@@ -775,7 +888,8 @@ def main() -> None:
         aprint("")
         aprint("Explore the protein universe:")
         aprint(
-            "  - Blue = Eukaryota, Green = Bacteria, Orange = Archaea, Red = Viruses"
+            "  - Colored by taxonomic group (12 categories: vertebrates in blues, "
+            "bacteria in greens, Archaea orange, Viruses red, ...)"
         )
         aprint(
             "  - Clusters = proteins with similar ESM-3 embeddings (shared function/fold)"

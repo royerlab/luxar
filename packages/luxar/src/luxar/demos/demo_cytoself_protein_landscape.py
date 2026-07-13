@@ -40,7 +40,7 @@ import numpy as np
 from arbol import aprint, asection
 
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
-from luxar.demos import launch_viewer
+from luxar.demos import cache_computed, launch_viewer
 from luxar.utils._umap_utils import (
     attribute_to_color,
     build_legend_html,
@@ -310,13 +310,7 @@ def load_cytoself_data(
             )
 
     # --- Compute or load cached 3D UMAP ---
-    umap_cache = cache_dir / "umap_3d.npz"
-
-    if umap_cache.exists() and not recompute:
-        with asection("Loading cached 3D UMAP"):
-            coordinates = np.load(umap_cache)["positions"]
-            aprint(f"Loaded {len(coordinates):,} points from cache")
-    else:
+    def _compute_umap3d() -> np.ndarray:
         from umap import UMAP
 
         with asection("Computing 3D UMAP (this may take 10-30 minutes)"):
@@ -338,8 +332,14 @@ def load_cytoself_data(
             coordinates -= coordinates.mean(axis=0)
             aprint(f"UMAP complete: {coordinates.shape}")
 
-            np.savez(umap_cache, positions=coordinates)
-            aprint(f"Cached to {umap_cache}")
+        return coordinates
+
+    # The CytoSelf embeddings are a single fixed Google-Drive dataset and the
+    # UMAP params above are fixed, so a static key is safe. --recompute forces
+    # a rebuild. Cached under ~/.cache/luxar/cytoself/umap3d_v1.pkl.
+    coordinates = cache_computed(
+        "cytoself", "umap3d", _compute_umap3d, version=1, recompute=recompute
+    )
 
     aprint(f"Coordinates: {len(coordinates):,} points")
     aprint(f"  X range: [{coordinates[:, 0].min():.1f}, {coordinates[:, 0].max():.1f}]")

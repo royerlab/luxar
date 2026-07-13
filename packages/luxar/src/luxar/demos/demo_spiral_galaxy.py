@@ -52,6 +52,7 @@ from luxar.utils.paths import get_demos_output_dir
 def generate_spiral_arm(
     n_stars: int,
     arm_offset: float,
+    rng: np.random.Generator,
     inner_radius: float = 1.0,
     outer_radius: float = 20.0,
     pitch_angle: float = 0.3,
@@ -63,6 +64,7 @@ def generate_spiral_arm(
     Args:
         n_stars: Number of stars in this arm
         arm_offset: Angular offset for this arm (radians)
+        rng: Seeded random generator for reproducibility
         inner_radius: Start of spiral
         outer_radius: End of spiral
         pitch_angle: Spiral tightness (0.2-0.4)
@@ -78,7 +80,7 @@ def generate_spiral_arm(
     sigma_radius = (outer_radius - inner_radius) / 3
 
     # Gaussian distribution centered at mid_radius
-    radii = np.random.normal(mid_radius, sigma_radius, n_stars)
+    radii = rng.normal(mid_radius, sigma_radius, n_stars)
 
     # Only clip negative values, allow natural extension beyond outer_radius
     # This creates perfectly smooth density falloff with no sharp edges
@@ -90,7 +92,7 @@ def generate_spiral_arm(
 
     # Add scatter perpendicular to spiral
     # Tighter scatter for more defined arms (better contrast)
-    scatter_angle = np.random.normal(0, scatter * 0.7, n_stars)
+    scatter_angle = rng.normal(0, scatter * 0.7, n_stars)
     theta = theta_spiral + scatter_angle
 
     # Convert to Cartesian (2D in disk plane)
@@ -98,20 +100,21 @@ def generate_spiral_arm(
     y = radii * np.sin(theta)
 
     # Add vertical thickness (thin disk)
-    z = np.random.normal(0, thickness * (1 + radii / outer_radius * 0.5), n_stars)
+    z = rng.normal(0, thickness * (1 + radii / outer_radius * 0.5), n_stars)
 
     positions = np.column_stack([x, y, z])
 
     # Star age: younger stars in outer arms (blue), older toward center (red)
     # Age inversely proportional to radius
     ages = 1.0 - (radii - inner_radius) / (outer_radius - inner_radius)
-    ages = np.clip(ages + np.random.normal(0, 0.1, n_stars), 0, 1)
+    ages = np.clip(ages + rng.normal(0, 0.1, n_stars), 0, 1)
 
     return positions.astype(np.float32), ages.astype(np.float32)
 
 
 def generate_galactic_bulge(
     n_stars: int,
+    rng: np.random.Generator,
     bulge_radius: float = 3.0,
     bulge_height: float = 2.0,
 ) -> tuple[np.ndarray, np.ndarray]:
@@ -119,6 +122,7 @@ def generate_galactic_bulge(
 
     Args:
         n_stars: Number of stars in bulge
+        rng: Seeded random generator for reproducibility
         bulge_radius: Scale radius (sigma) of bulge
         bulge_height: Vertical scale (sigma)
 
@@ -127,7 +131,7 @@ def generate_galactic_bulge(
     """
     # Pure Gaussian distribution for smooth, natural bulge
     # No hard cutoff - density fades naturally with distance
-    positions = np.random.randn(n_stars, 3)
+    positions = rng.standard_normal((n_stars, 3))
 
     # Scale to ellipsoidal Gaussian (flattened in z)
     positions[:, 0] *= bulge_radius  # x direction
@@ -139,30 +143,32 @@ def generate_galactic_bulge(
 
     # All bulge stars are old (red/yellow)
     # Slight age variation for realism
-    ages = np.random.uniform(0.7, 1.0, n_stars).astype(np.float32)
+    ages = rng.uniform(0.7, 1.0, n_stars).astype(np.float32)
 
     return positions.astype(np.float32), ages
 
 
 def generate_stellar_halo(
     n_stars: int,
+    rng: np.random.Generator,
     halo_radius: float = 30.0,
 ) -> tuple[np.ndarray, np.ndarray]:
     """Generate sparse stellar halo with ancient stars.
 
     Args:
         n_stars: Number of halo stars
+        rng: Seeded random generator for reproducibility
         halo_radius: Extent of halo
 
     Returns:
         Tuple of (positions, ages)
     """
     # Spherical distribution, very sparse
-    positions = np.random.randn(n_stars, 3)
+    positions = rng.standard_normal((n_stars, 3))
     positions = positions / np.linalg.norm(positions, axis=1, keepdims=True)
 
     # Radial distribution (1/r² falloff, confined to halo_radius)
-    u = np.random.random(n_stars)
+    u = rng.random(n_stars)
     r = halo_radius * (1 - u) ** 0.5  # Power law distribution
     positions *= r[:, np.newaxis]
 
@@ -213,6 +219,7 @@ def generate_spiral_galaxy(
     arm_stars_ratio: float = 0.7,
     bulge_stars_ratio: float = 0.25,
     halo_stars_ratio: float = 0.05,
+    seed: int = 0,
 ) -> int:
     """Generate a realistic multi-armed spiral galaxy.
 
@@ -225,10 +232,13 @@ def generate_spiral_galaxy(
         arm_stars_ratio: Fraction of stars in spiral arms
         bulge_stars_ratio: Fraction in central bulge
         halo_stars_ratio: Fraction in stellar halo
+        seed: Seed for the star-distribution RNG (reproducible output)
 
     Returns:
         Total number of stars generated
     """
+    rng = np.random.default_rng(seed)
+
     with asection(f"Generating Spiral Galaxy ({n_stars:,} stars, {n_arms} arms)"):
         # Calculate star counts
         n_arm_stars = int(n_stars * arm_stars_ratio)
@@ -255,6 +265,7 @@ def generate_spiral_galaxy(
                 positions, ages = generate_spiral_arm(
                     stars_per_arm,
                     arm_offset=arm_angle,
+                    rng=rng,
                     inner_radius=2.0,
                     outer_radius=25.0,
                     pitch_angle=0.3,
@@ -271,6 +282,7 @@ def generate_spiral_galaxy(
         with asection("Generating Galactic Bulge"):
             bulge_pos, bulge_ages = generate_galactic_bulge(
                 n_bulge_stars,
+                rng=rng,
                 bulge_radius=4.0,
                 bulge_height=3.0,
             )
@@ -282,6 +294,7 @@ def generate_spiral_galaxy(
         with asection("Generating Stellar Halo"):
             halo_pos, halo_ages = generate_stellar_halo(
                 n_halo_stars,
+                rng=rng,
                 halo_radius=35.0,
             )
             all_positions.append(halo_pos)
@@ -347,7 +360,7 @@ def generate_spiral_galaxy(
                 blend_mode="difference",
             )
             scene.add_text(
-                "4 arms \u2022 500K stars",
+                f"{n_arms} arms \u2022 {len(positions) / 1000:.0f}K stars",
                 position=(0.98, 0.97),
                 font_size=0.015,
                 anchor="bottom-right",

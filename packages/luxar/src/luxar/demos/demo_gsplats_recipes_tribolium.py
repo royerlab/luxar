@@ -3,11 +3,11 @@
 
 Takes the ~256K-splat fit of the *Tribolium castaneum* embryo (the same
 precomputed dataset as ``demo_gsplats_3d_tribolium_embryo.py``) and runs the
-unified ``luxar gsplat lod --recipe`` pipeline to build the FIVE scale-ordered
+unified ``luxar gsplat lod --recipe`` pipeline to build the SIX scale-ordered
 representation topologies side by side, so you can compare them directly:
 
-    flat   →   additive   →   partitioned   →   multiscale   →   mosaic
-   (small)    (medium)        (large)           (huge)            (huge, adaptive)
+    flat  →  stream  →  levels  →  tiles  →  overview  →  adaptive
+   (small)  (medium)  (medium)   (large)    (huge)      (huge, adaptive)
 
 ================================================================================
 WHAT THIS DEMONSTRATES — THE `lod --recipe` PIPELINE + THE NOVEL TOPOLOGIES
@@ -22,27 +22,31 @@ make it render well at any scale is::
     luxar gsplat convert out.gsplats.zarr scene.luxar.zarr && luxar serve ...
 
 This demo runs the ``lod --recipe`` step for each recipe on the SAME base fit and
-grafts the five results into one scene as labelled, colour-coded columns. The three
+grafts the six results into one scene as labelled, colour-coded columns. The three
 novel topologies are the point:
 
-- **partitioned** — a spatial BSP ``kind=partition`` where EACH part carries its
+- **levels** — a ``kind=lod`` of *substitutive* levels: each coarser level
+  REPLACES the finer one with fewer, larger merged splats. The viewer shows
+  exactly one level at a time and swaps by on-screen size, so a switch reads as a
+  single shade jump (coarse = pale, fine = deep) across the whole object.
+- **tiles** — a spatial BSP ``kind=partition`` where EACH part carries its
   own additive LOD ladder. Off-screen parts frustum-cull; visible parts stream
   detail progressively. Each BSP part gets a distinct HUE (see the spatial cells)
   and each ladder level a SHADE of that hue (see the coarse→fine accumulation).
-- **multiscale** — an *unbalanced-by-design* ``kind=lod``: a single cheap coarse
-  substitutive cap for the far/zoomed-out view, ABOVE a ``partitioned`` fine
+- **overview** — an *unbalanced-by-design* ``kind=lod``: a single cheap coarse
+  substitutive cap for the far/zoomed-out view, ABOVE a ``tiles`` fine
   branch for close-up. Detail structure exists only where you look closely. The
   coarse↔fine switch is unmistakable: zoom out → one uniform pale blob (the cap);
   zoom in → it bursts into the multicoloured fine partition parts.
-- **mosaic** — a spatial BSP ``kind=partition`` where EACH part is its own
+- **adaptive** — a spatial BSP ``kind=partition`` where EACH part is its own
   *substitutive* lod group (coarse↔fine *replacement* per part). Unlike
-  ``partitioned`` (additive, accumulating) and ``multiscale`` (one global cap),
+  ``tiles`` (additive, accumulating) and ``overview`` (one global cap),
   every cell picks its own level by its own on-screen size — locally adaptive
   detail. Each part gets a distinct HUE; each substitutive level a SHADE of it,
   so a per-part swap reads as that part's shade jumping as you navigate.
 
 For reference the two primitives bracket them: **flat** (one leaf, neutral grey)
-and **additive** (one leaf + a prefix-sum ladder, each accumulating level painted
+and **stream** (one leaf + a prefix-sum ladder, each accumulating level painted
 its own vivid hue so the coarse→fine streaming is unmistakable).
 
 All colouring is applied AFTER the fact by a generic painter that walks whatever
@@ -52,11 +56,11 @@ only recoloured.
 
 Pipeline:
 1. **Load** the precomputed ~256K-splat Tribolium fit (Git LFS / local cache)
-2. **Center** it so all five columns sit at the origin before placement
+2. **Center** it so all six columns sit at the origin before placement
 3. **Build** each recipe with ``build_recipe`` (the engine behind the CLI) and
    write each to a ``.gsplats.zarr`` — exactly what ``lod --recipe`` does
 4. **Colour-code** the result after the fact (hue = part, shade = LOD level)
-5. **Compose** one scene: five translated columns, each grafted via
+5. **Compose** one scene: six translated columns, each grafted via
    ``add_gsplats_from_file`` (exactly what ``gsplat convert`` does), with a legend
 6. **Visualize** — pan across the row; zoom into a column to watch its LOD switch
 
@@ -76,8 +80,8 @@ Options:
     --recompute:       Force re-fitting the base splats from scratch (download + GPU)
     --no-serve:        Generate scene without launching viewer
     --serve-only:      Just serve a previously generated scene (skips rebuild)
-    --max-elements=N:  Per-part BSP cap for partitioned/multiscale/mosaic (default 50000)
-    --factor=K:        Coarse-cap compression for multiscale (default 8)
+    --max-elements=N:  Per-part BSP cap for tiles/overview/adaptive (default 50000)
+    --factor=K:        Coarse-cap compression for overview/levels (default 8)
 
 Output:
     - Scene saved to:  datasets/demos/gsplats_recipes_tribolium.luxar.zarr
@@ -118,22 +122,23 @@ from luxar.utils.paths import get_demos_output_dir
 # Configuration
 # =============================================================================
 
-# Per-part BSP cap for partitioned / multiscale. The base fit is ~256K splats;
+# Per-part BSP cap for tiles / overview / adaptive. The base fit is ~256K splats;
 # 50K → ~5 spatial parts, enough to see the cells and the frustum-culling story.
 MAX_ELEMENTS = 50_000
-# Coarse-cap compression for multiscale (one substitutive level ≈ N/FACTOR splats).
+# Coarse-cap compression for overview / levels (one substitutive level ≈ N/FACTOR splats).
 FACTOR = 8
-# NB: the multiscale coarse↔fine switch uses viewport-relative coverage_fraction
+# NB: the overview coarse↔fine switch uses viewport-relative coverage_fraction
 # thresholds (sqrt(N_i/N_finest)) — the finest branch shows when the embryo fills
 # the screen and the coarse cap (fewer-but-larger splats) engages as you zoom *out*.
 # The viewer anchors the finest at fills-screen via the live viewport, so there is
 # no per-dataset threshold knob to tune.
-# Additive ladder depth for additive / partitioned-part / multiscale-part ladders.
+# Additive-ladder depth for the stream recipe and the tiles / overview per-part
+# (and per-level) streaming ladders.
 N_LODS = 4
 # Cheap O(N log N) additive ordering — keeps the demo fast on CPU.
 ADDITIVE_METHOD = "self_energy"
 
-RECIPES = ("flat", "stream", "tiles", "overview", "adaptive")
+RECIPES = ("flat", "stream", "levels", "tiles", "overview", "adaptive")
 
 # Parse command-line flags.
 FLAGS = parse_demo_flags()
@@ -155,7 +160,7 @@ Arbol.max_depth = 5
 # instant a level switches. We encode them on two orthogonal axes:
 #     hue   → which spatial partition part   (distinct parts ⇒ distinct hues)
 #     shade → which LOD level within a part   (a switch ⇒ a visible shade jump)
-# A standalone ladder (the ``additive`` recipe — a single "part") instead spreads
+# A standalone ladder (the ``stream`` recipe — a single "part") instead spreads
 # its accumulating levels across the *full* hue wheel, so every streamed-in level
 # is its own vivid colour. ``flat`` stays neutral grey (nothing to differentiate).
 _GREY = (0.72, 0.74, 0.78)  # flat — a single undifferentiated leaf
@@ -234,10 +239,10 @@ def _arc_mid(arc: tuple[float, float]) -> float:
 
 
 def _paint_data(data: GSplatData) -> GSplatData:
-    """A flat ``GSplatData`` (the ``flat`` / ``additive`` matrix recipes).
+    """A flat ``GSplatData`` (the ``flat`` / ``stream`` matrix recipes).
 
     One sub-LOD → neutral grey (``flat``: nothing to differentiate). A multi-level
-    ladder (``additive``) → each accumulating level its own vivid hue across the
+    ladder (``stream``) → each accumulating level its own vivid hue across the
     full wheel, so every streamed-in increment is unmistakably a new colour.
     """
     subs = data.additive_sublods
@@ -256,7 +261,7 @@ def _paint_node(node: GSplatNode, arc: tuple[float, float]) -> GSplatNode:
     * ``GSplatLodGroup``  → siblings are mutually-exclusive levels (only one shown
       at a time), so a switch is read as a colour change. Leaf levels get a
       distinct shade of the arc hue (coarse = pale, fine = deep); a non-leaf level
-      (e.g. ``multiscale``'s partitioned fine branch) self-colours its own parts —
+      (e.g. ``overview``'s tiles fine branch) self-colours its own parts —
       the switch then reads as one uniform blob ⇄ a burst of multicoloured parts.
     * ``GSplatLeaf``      → a partition part carrying an additive ladder: paint its
       sub-LODs as concentric shades (coarse→fine) of the arc hue.
@@ -321,6 +326,8 @@ def _cli_for(recipe: str) -> str:
     )
     if recipe == "stream":
         return base + f" --n-lods {N_LODS} --method {ADDITIVE_METHOD}"
+    if recipe == "levels":
+        return base + f" --compression-factor {FACTOR}"
     if recipe == "tiles":
         return base + f" --max-elements {MAX_ELEMENTS} --n-lods {N_LODS}"
     if recipe == "overview":
@@ -333,16 +340,38 @@ def _cli_for(recipe: str) -> str:
 def build_and_write(base: GSplatData, recipe: str, out_path: Path) -> dict:
     """Build one recipe, colour-code its structure, write the .gsplats.zarr.
 
-    Mirrors ``cli/lod.py`` exactly: matrix recipes (flat/additive) round-trip
-    through ``GSplatData.save``; composed recipes (partitioned/multiscale/mosaic)
-    write the node tree via ``write_gsplats_tree``. Returns a small stats dict for
-    the legend.
+    Mirrors ``cli/lod.py`` exactly: matrix recipes (flat/stream) round-trip
+    through ``GSplatData.save``; the substitutive ``levels`` reduction and the
+    composed recipes (tiles/overview/adaptive) write a node tree via
+    ``write_gsplats_tree``. Returns a small stats dict for the legend.
     """
     with asection(f"lod --recipe {recipe}"):
         aprint(f"$ {_cli_for(recipe)}")
         # Build with the UNMODIFIED engine, then paint the result after the fact
         # (generic, type-driven — see ``paint_recipe``).
-        result = paint_recipe(build_recipe(base, recipe, _params()))  # type: ignore[arg-type]
+        built = build_recipe(base, recipe, _params())  # type: ignore[arg-type]
+
+        # ``levels`` is the substitutive reduction: a matrix GSplatData carrying
+        # one leaf per level (coarsest→finest). Its ``.tree`` is a kind=lod group,
+        # so paint it through the node painter (each level a shade) and write it as
+        # a tree — the viewer treats it as a kind=lod group either way.
+        if recipe == "levels":
+            node = _paint_node(built.tree, (0.0, 1.0))
+            n_levels = built.n_substitutive
+            stats = {
+                "splats": built.at_substitutive(0).n_splats,
+                "structure": f"{n_levels}-level substitutive (coarse↔fine swap)",
+            }
+            write_gsplats_tree(
+                out_path,
+                node,
+                ordering="hilbert",
+                encoding_mode=EncodingMode.PRECISION,
+            )
+            aprint(f"→ {stats['splats']:,} splats · {stats['structure']}")
+            return stats
+
+        result = paint_recipe(built)
 
         # Structure stats for the legend.
         if isinstance(result, GSplatData):
@@ -364,7 +393,7 @@ def build_and_write(base: GSplatData, recipe: str, out_path: Path) -> dict:
             elif recipe == "adaptive":
                 n = result.n_children
                 structure = f"{n} BSP part{'s' if n != 1 else ''}, substitutive each"
-            else:  # multiscale
+            else:  # overview
                 # children are coarsest→finest: [coarse cap, fine partition].
                 fine = result.children[-1]
                 n_parts = fine.n_children if isinstance(fine, GSplatPartition) else 1
@@ -381,7 +410,7 @@ def build_and_write(base: GSplatData, recipe: str, out_path: Path) -> dict:
 
 
 # =============================================================================
-# Scene composition (five columns, exactly as `gsplat convert` would graft them)
+# Scene composition (six columns, exactly as `gsplat convert` would graft them)
 # =============================================================================
 
 # Per-recipe legend descriptions + a representative legend colour.
@@ -391,9 +420,13 @@ _RECIPE_DESC = {
         "one leaf + prefix-sum ladder (streams coarse→fine)",
         "rgb(80,180,242)",
     ),
+    "levels": (
+        "substitutive levels — coarse↔fine replacement (one shown at a time)",
+        "rgb(150,120,240)",
+    ),
     "tiles": ("BSP parts, each its own additive ladder", "rgb(102,217,153)"),
     "overview": (
-        "coarse cap (far) + partitioned fine branch (near)",
+        "coarse cap (far) + tiles fine branch (near)",
         "rgb(255,77,82)",
     ),
     "adaptive": (
@@ -406,7 +439,7 @@ _RECIPE_DESC = {
 def create_luxar_scene(
     recipe_paths: dict[str, Path], recipe_stats: dict[str, dict], output_path: Path
 ) -> Path:
-    """Compose the five recipe .gsplats.zarr files into one side-by-side scene."""
+    """Compose the six recipe .gsplats.zarr files into one side-by-side scene."""
     with asection("Composing recipe-gallery scene"):
         aprint(f"Output: {output_path.name}")
 
@@ -430,20 +463,22 @@ def create_luxar_scene(
 GSplats LOD recipe gallery — Tribolium castaneum embryo (Light-Sheet)
 =====================================================================
 
-The same ~256K-splat fit, laid out left→right as the five `luxar gsplat lod
---recipe` topologies: flat → additive → partitioned → multiscale → mosaic.
+The same ~256K-splat fit, laid out left→right as the six `luxar gsplat lod
+--recipe` topologies: flat → stream → levels → tiles → overview → adaptive.
 
 Colour is applied AFTER the fact: hue = which spatial part, shade = which LOD
 level — so multiple parts read as different hues and any level switch reads as a
 shade jump.
 
-- partitioned: BSP spatial parts (each a distinct hue), each with its own additive
+- levels: substitutive coarse↔fine replacement — one level shown at a time, the
+  swap reads as a single shade jump across the whole object.
+- tiles: BSP spatial parts (each a distinct hue), each with its own additive
   ladder (its levels are shades of that hue) — off-screen parts cull, visible
   parts stream.
-- multiscale: an unbalanced lod tree — a cheap coarse cap above a partitioned fine
+- overview: an unbalanced lod tree — a cheap coarse cap above a tiles fine
   branch. Detail only where you look: zoom out → one uniform pale blob (the cap);
   zoom in → it bursts into the multicoloured fine parts.
-- mosaic: BSP parts (each a distinct hue) where every part is its OWN substitutive
+- adaptive: BSP parts (each a distinct hue) where every part is its OWN substitutive
   lod group — each cell culls AND picks its own level by its own on-screen size
   (the per-part swap shows as that part's shade jumping).
 
@@ -459,7 +494,7 @@ Tracking Challenge / Zenodo 5270323. Cite: Yin et al. 2022; Maska et al. 2023.
                     recipe,
                     str(recipe_paths[recipe]),
                     opacity=1.0,
-                    blending_mode="stream",
+                    blending_mode="additive",
                     layer=True,
                 )
 
@@ -473,7 +508,7 @@ Tracking Challenge / Zenodo 5270323. Cite: Yin et al. 2022; Maska et al. 2023.
                 blend_mode="difference",
             )
             scene.add_text(
-                "Light-sheet microscopy • one fit, five LOD topologies",
+                "Light-sheet microscopy • one fit, six LOD topologies",
                 position=(0.98, 0.97),
                 font_size=0.015,
                 anchor="bottom-right",
@@ -499,10 +534,10 @@ Tracking Challenge / Zenodo 5270323. Cite: Yin et al. 2022; Maska et al. 2023.
                 )
 
             scene.add_text(
-                "Left → right: the scale ladder. partitioned, multiscale & mosaic\n"
+                "Left → right: the scale ladder. tiles, overview & adaptive\n"
                 "are the new BSP/unbalanced topologies. Colour code: hue = which\n"
                 "part, shade = which LOD level — so a switch reads as a shade jump\n"
-                "and multiple parts as different hues. In #4 the coarse cap shows as\n"
+                "and multiple parts as different hues. In #5 the coarse cap shows as\n"
                 "one uniform blob far out, bursting into the fine parts up close.",
                 position=(0.02, 0.86),
                 font_size=0.018,
@@ -531,7 +566,7 @@ def main() -> None:
     aprint("=" * 70)
     aprint("GSplats Demo: lod --recipe gallery — Tribolium castaneum Embryo")
     aprint("=" * 70)
-    aprint("One ~256K-splat fit → flat | additive | partitioned | multiscale | mosaic")
+    aprint("One ~256K-splat fit → flat | stream | levels | tiles | overview | adaptive")
     aprint("")
 
     output_path = get_demos_output_dir() / "gsplats_recipes_tribolium.luxar.zarr"
@@ -554,14 +589,12 @@ def main() -> None:
         base = precomputed[0]
     else:
         warn_if_no_cuda_gpu()
-        import importlib.util
+        from luxar.demos.demo_gsplats_3d_tribolium_embryo import (
+            fit_tribolium,
+            load_tribolium_volume,
+        )
 
-        sibling = Path(__file__).with_name("demo_gsplats_3d_tribolium_embryo.py")
-        spec = importlib.util.spec_from_file_location("_tribolium_base", sibling)
-        assert spec is not None and spec.loader is not None
-        tri = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(tri)
-        base = tri.fit_tribolium(tri.load_tribolium_volume())
+        base = fit_tribolium(load_tribolium_volume())
 
     # Center at the intensity-weighted centroid + dim amplitudes (matches the
     # other gsplat demos) so each column sits at the origin before placement.
