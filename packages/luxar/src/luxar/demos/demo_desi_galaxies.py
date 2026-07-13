@@ -112,6 +112,19 @@ TRACERS = {
 }
 TRACER_ORDER = ["BGS", "LRG", "ELG", "QSO"]
 
+# Exact byte sizes of the (versioned, immutable) v1.5 catalog files, so the
+# resumable download can verify each file landed complete.
+FILE_SIZES = {
+    "BGS_BRIGHT_NGC_clustering.dat.fits": 340464960,
+    "BGS_BRIGHT_SGC_clustering.dat.fits": 122624640,
+    "LRG_NGC_clustering.dat.fits": 143196480,
+    "LRG_SGC_clustering.dat.fits": 64272960,
+    "ELG_LOPnotqso_NGC_clustering.dat.fits": 205819200,
+    "ELG_LOPnotqso_SGC_clustering.dat.fits": 69024960,
+    "QSO_NGC_clustering.dat.fits": 83298240,
+    "QSO_SGC_clustering.dat.fits": 45178560,
+}
+
 # DESI fiducial cosmology (Planck-2018 base ΛCDM): H0=67.36, Om0≈0.3137.
 COSMO_H0 = 67.36
 COSMO_OM0 = 0.3137
@@ -175,6 +188,30 @@ def tracer_colors(tracer_ids: np.ndarray) -> np.ndarray:
         palette[TRACERS[name]["id"]] = TRACERS[name]["color"]
     ids = np.asarray(tracer_ids, dtype=np.intp)
     return palette[ids]
+
+
+def redshift_colors(redshift: np.ndarray) -> np.ndarray:
+    """Map redshift → (N, 3) float32 RGB via the turbo colormap.
+
+    The colormap is baked into per-point colors (rather than passed to the
+    viewer as live ``scalars``) so that EVERY substitutive-LOD level shows the
+    same depth gradient — a scalars layer only keeps the live colormap on its
+    finest level, leaving coarse (zoomed-out) levels with baked colors that no
+    longer track the map. Baking keeps the near→far turbo gradient consistent
+    at all zooms. The range is robust (min → 98th percentile) so the populated
+    z ≲ 1.6 bulk spans the full colormap and the sparse high-z tail clamps to
+    the hot end instead of compressing everything into turbo's cold end.
+    """
+    from luxar.colormaps import scalars_to_colors
+
+    z = np.asarray(redshift, dtype=np.float32)
+    vmin = float(np.nanmin(z)) if z.size else 0.0
+    vmax = float(np.nanpercentile(z, 98)) if z.size else 1.0
+    if not vmax > vmin:
+        vmax = vmin + 1.0
+    return np.asarray(
+        scalars_to_colors(z, "turbo", vmin=vmin, vmax=vmax), dtype=np.float32
+    )
 
 
 def quantize_positions(
@@ -255,7 +292,11 @@ def download_catalogs() -> list[tuple[str, Path]]:
                 dest = CACHE_DIR / fname
                 aprint(f"{name}: {fname}")
                 robust_download(
-                    f"{BASE_URL}/{fname}", dest, max_retries=5, timeout=1800
+                    f"{BASE_URL}/{fname}",
+                    dest,
+                    max_retries=5,
+                    timeout=1800,
+                    expected_size=FILE_SIZES.get(fname),
                 )
                 out.append((name, dest))
     return out
@@ -392,13 +433,14 @@ def create_scene(
                 substitutive_lod=LOD,
             )
 
-            # Layer 2: colored by redshift (continuous depth). Shares the same
-            # positions array → deduplicated by the encoder's array_ref.
+            # Layer 2: colored by redshift (continuous depth), turbo baked into
+            # per-point RGB so the gradient stays consistent across every LOD
+            # level (see redshift_colors). Shares the same positions array →
+            # deduplicated by the encoder's array_ref.
             scene.add_points(
                 "By redshift",
                 positions,
-                scalars=redshift,
-                colormap="turbo",
+                colors=redshift_colors(redshift),
                 radii=POINT_RADIUS,
                 opacity=0.9,
                 blending_mode="additive",

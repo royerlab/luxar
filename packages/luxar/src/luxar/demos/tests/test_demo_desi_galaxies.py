@@ -31,6 +31,7 @@ def _load_demo_module():
 _demo = _load_demo_module()
 radec_z_to_xyz = _demo.radec_z_to_xyz
 tracer_colors = _demo.tracer_colors
+redshift_colors = _demo.redshift_colors
 quantize_positions = _demo.quantize_positions
 dequantize_positions = _demo.dequantize_positions
 save_derived = _demo.save_derived
@@ -67,6 +68,28 @@ class TestTracerColors:
         # Each row is a distinct, in-gamut color.
         assert cols.min() >= 0.0 and cols.max() <= 1.0
         assert len({tuple(row) for row in cols}) == 4
+
+
+class TestRedshiftColors:
+    def test_shape_dtype_gamut(self) -> None:
+        z = np.linspace(0.01, 3.5, 100).astype(np.float32)
+        cols = redshift_colors(z)
+        assert cols.shape == (100, 3)
+        assert cols.dtype == np.float32
+        assert cols.min() >= 0.0 and cols.max() <= 1.0
+
+    def test_low_vs_high_z_distinct(self) -> None:
+        # turbo maps low→cold, high→hot; nearby and distant must differ.
+        cols = redshift_colors(np.array([0.02, 0.05, 0.5, 1.0, 3.0], dtype=np.float32))
+        assert not np.allclose(cols[0], cols[-1])
+        assert len({tuple(np.round(c, 3)) for c in cols}) >= 4
+
+    def test_degenerate_and_empty(self) -> None:
+        # all-equal redshift → valid (no div-by-zero), single color.
+        same = redshift_colors(np.full(5, 0.3, dtype=np.float32))
+        assert same.shape == (5, 3) and np.isfinite(same).all()
+        empty = redshift_colors(np.array([], dtype=np.float32))
+        assert empty.shape == (0, 3)
 
 
 class TestQuantizeRoundtrip:
