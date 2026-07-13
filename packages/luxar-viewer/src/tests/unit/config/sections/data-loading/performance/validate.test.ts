@@ -12,30 +12,6 @@ describe('validateDataLoadingPerformance', () => {
     expect(invokeValidator(validateDataLoadingPerformance).valid).toBe(true);
   });
 
-  it('should error when workerVisibilityTimeoutMs is negative', () => {
-    const cfg = cloneConfig();
-    cfg.dataLoading.performance.workerVisibilityTimeoutMs = -100;
-
-    const result = invokeValidator(validateDataLoadingPerformance, cfg);
-
-    expect(result.valid).toBe(false);
-    expect(result.errors).toContainEqual(
-      expect.stringContaining('Invalid workerVisibilityTimeoutMs')
-    );
-  });
-
-  it('should error when workerVisibilityTimeoutMs is non-finite', () => {
-    const cfg = cloneConfig();
-    cfg.dataLoading.performance.workerVisibilityTimeoutMs = Number.POSITIVE_INFINITY;
-
-    const result = invokeValidator(validateDataLoadingPerformance, cfg);
-
-    expect(result.valid).toBe(false);
-    expect(result.errors).toContainEqual(
-      expect.stringContaining('Invalid workerVisibilityTimeoutMs')
-    );
-  });
-
   it('should error when workerProjectionTimeoutMs is negative', () => {
     const cfg = cloneConfig();
     cfg.dataLoading.performance.workerProjectionTimeoutMs = -1;
@@ -50,7 +26,6 @@ describe('validateDataLoadingPerformance', () => {
 
   it('accepts 0 timeouts (disabled) — emits zero errors', () => {
     const cfg = cloneConfig();
-    cfg.dataLoading.performance.workerVisibilityTimeoutMs = 0;
     cfg.dataLoading.performance.workerProjectionTimeoutMs = 0;
     cfg.dataLoading.performance.workerInitTimeoutMs = 0;
 

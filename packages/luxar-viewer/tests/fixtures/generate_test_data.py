@@ -70,6 +70,7 @@ FIXTURE_NAMES: list[str] = [
     "test_integer_colors.luxar.zarr",
     "test_labelled_points.luxar.zarr",
     "test_lines.luxar.zarr",
+    "test_lines_categorical.luxar.zarr",
     "test_lod_group.luxar.zarr",
     "test_log_scalar.luxar.zarr",
     "test_lut.luxar.zarr",
@@ -730,16 +731,14 @@ def generate_encoding_contract_matrix_test() -> None:
         # cost, making the LUT JSON pure overhead): sized to clear the
         # break-even so the required lut_uint16 coverage is organic
         # producer output, not just the manual threshold cases below.
-        u16_palette = (
-            np.stack(
-                [
-                    np.linspace(0.05, 9.5, 300),
-                    np.linspace(9.5, 0.05, 300),
-                    np.linspace(0.2, 4.0, 300),
-                ],
-                axis=1,
-            ).astype(np.float32)
-        )
+        u16_palette = np.stack(
+            [
+                np.linspace(0.05, 9.5, 300),
+                np.linspace(9.5, 0.05, 300),
+                np.linspace(0.2, 4.0, 300),
+            ],
+            axis=1,
+        ).astype(np.float32)
         encode_case(
             "color_lut_row_uint16_emitted",
             np.tile(u16_palette, (334, 1))[:100_000],
@@ -1636,6 +1635,81 @@ def generate_lines_test() -> None:
         aprint(f"  Vertices: {vertices.shape}, Widths: {widths.shape}")
 
 
+def generate_lines_categorical_test() -> None:
+    """Lines + Points sliced by a non-displayed categorical dimension.
+
+    Regression fixture for the "Lines are not re-culled when scrubbing a
+    non-displayed dimension" bug: a 4D scene with a hidden categorical
+    dim `sel` (categories A/B). One Lines node and one Points node sit at
+    sel=0, a second pair at sel=1. Scrubbing `sel` must SWAP each pair
+    (A xor B) for Lines exactly as it does for Points — pre-fix, Lines
+    accumulated (A ∪ B) because the empty-slice projection threw and the
+    stale mesh was never cleared.
+
+    The Points pair is the known-good control: any E2E assertion on the
+    Lines pair should hold for the Points pair in the same scene.
+    """
+    with asection("Generating Lines Categorical (nD scrub) Test"):
+        output = FIXTURES_DIR / "test_lines_categorical.luxar.zarr"
+
+        def helix(cx: float, phase: float, n: int = 400) -> np.ndarray:
+            t = np.linspace(0, 6 * np.pi, n)
+            return np.column_stack(
+                [
+                    cx + 0.3 * np.cos(t + phase),
+                    0.3 * np.sin(t + phase),
+                    t / (6 * np.pi) - 0.5,
+                ]
+            ).astype(np.float32)
+
+        dims = Dimensions(
+            [
+                Dimension("x", unit="units", display=True),
+                Dimension("y", unit="units", display=True),
+                Dimension("z", unit="units", display=True),
+                Dimension("sel", display=False, categories=["A", "B"]),
+            ]
+        )
+
+        with LuxarZarrCompiler(
+            output,
+            encoding_mode=EncodingMode.PRECISION,
+            compressor=None,
+            float16_allowed=False,
+        ) as compiler:
+            scene = compiler.create_scene(dimensions=dims)
+
+            for slot, phase in [(0, 0.0), (1, np.pi)]:
+                color = [1.0, 0.4, 0.2] if slot == 0 else [0.2, 0.6, 1.0]
+
+                v = helix(-0.6, phase)
+                v4 = np.column_stack([v, np.full(len(v), slot, dtype=np.float32)])
+                scene.add_lines(
+                    f"line_{'ab'[slot]}",
+                    vertices=v4,
+                    widths=0.02,
+                    colors=np.tile(color, (len(v), 1)).astype(np.float32),
+                    line_type="polyline",
+                    extend_to_all=[],  # intentionally sliced by `sel`
+                )
+
+                p = helix(0.6, phase)
+                p4 = np.column_stack([p, np.full(len(p), slot, dtype=np.float32)])
+                scene.add_points(
+                    f"pts_{'ab'[slot]}",
+                    p4,
+                    radii=0.03,
+                    colors=np.tile(color, (len(p), 1)).astype(np.float32),
+                    extend_to_all=[],  # intentionally sliced by `sel`
+                )
+
+        aprint(f"  Created {output}")
+        aprint(
+            "  line_a/pts_a at sel=0, line_b/pts_b at sel=1 (399 segments / 400 points each)"
+        )
+        aprint("  Scrubbing `sel` must swap the pairs for Lines exactly as for Points")
+
+
 def generate_gsplats_test() -> None:
     """Test dataset with GSplats (Gaussian Splats) geometry type.
 
@@ -1988,6 +2062,9 @@ def main() -> None:
         aprint("")
 
         generate_lines_test()
+        aprint("")
+
+        generate_lines_categorical_test()
         aprint("")
 
         generate_gsplats_test()

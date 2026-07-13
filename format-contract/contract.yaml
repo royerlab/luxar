@@ -1,0 +1,96 @@
+# Luxar cross-language format contract — SINGLE SOURCE OF TRUTH.
+#
+# This file is the authoritative descriptor of the format vocabulary that the
+# Python WRITER (luxar) and the TypeScript CONSUMER (luxar-viewer) must agree
+# on. Rust holds zero format strings (it exposes one decode function per scheme
+# and TS decides which to call), so it is intentionally NOT a party here.
+#
+# Edit THIS file, then regenerate the language projections:
+#     make gen-contract          # or: hatch run gen-contract
+# Generated artifacts (DO NOT EDIT BY HAND):
+#     packages/luxar/src/luxar/typing_utils/_format_contract.py
+#     packages/luxar-viewer/src/types/format-contract.ts
+# The CI gate `hatch run check-contract` fails if either projection drifts from
+# this file, so a new version / encoding / node kind is a one-file edit that
+# cannot silently desync the two languages.
+#
+# Source of record for the values below: docs/specs/GSPLATS_ZARR_FORMAT.md.
+
+# Scene (.luxar.zarr) format version.
+#   Python source of truth today: typing_utils/constants.py, typing_utils/config.py
+scene_format:
+  current: "0.1"
+  supported: ["0.1", "0.2", "0.3"]
+
+# Standalone gsplats (.gsplats.zarr) node-tree format version.
+#   Python: gsplats/io/save_gsplats.py   TS: data/scene-loader/.../load-scene.ts
+gsplats_format:
+  current: "3.2"
+  supported: ["3.0", "3.1", "3.2"]
+
+# Root-header `format_type` attr that identifies a standalone gsplats store.
+format_type_gsplats: "gsplats_zarr"
+
+# Scene-graph node geometry/container types.
+#   Python: typing_utils/enums.py::NodeType   TS: types/data-monitor-types.ts
+# ('mesh' is a TS-only forward-looking member and is intentionally excluded —
+#  the viewer extends this base union locally.)
+node_types: ["scene", "group", "points", "lines", "gsplats"]
+
+# Specialized-group kinds written by the compiler.
+#   Python: io/_compiler/gsplat_tree.py   TS: types/data-monitor-types.ts
+node_kinds: ["lod", "partition"]
+
+# On-disk array encoding scheme names: emitted by the Python ArrayEncoder,
+# recognized by the TS ArrayDecoder. NOTE the two bit-width suffix conventions
+# are NOT interchangeable: the per-channel family uses `_uN`; the scalar /
+# bounded / geolog-scalar families use `_uintN`.
+encodings:
+  - none
+  - broadcasted
+  - array_ref
+  - lut_uint8
+  - lut_uint16
+  - rgb_uint8
+  - rgb_uint16
+  - bounded_scalar_uint8
+  - bounded_scalar_uint16
+  - geolog_scalar_uint8
+  - geolog_scalar_uint16
+  - log_scalar_uint8
+  - log_scalar_uint16
+  - linear_perchannel_u8
+  - linear_perchannel_u16
+  - log_perchannel_u8
+  - log_perchannel_u16
+  - signed_log_perchannel_u8
+  - signed_log_perchannel_u16
+  - geolog_perchannel_u8
+  - geolog_perchannel_u16
+  - float16
+  - float32
+  - uint8
+  - uint16
+  - uint32
+  - uint64
+
+# Canonical metadata attribute keys on scene/gsplats nodes.
+attr_keys:
+  - format_version
+  - format_type
+  - content_hash
+  - display_type
+  - max_elements
+  - position_bounds
+  - kind
+
+# Canonical array names inside a gsplats node (v3.1 split the packed
+# `cholesky_factors` into `_diag` + `_offdiag`; the packed name stays a read
+# fallback for v3.0 stores).
+array_names:
+  - centers
+  - amplitudes
+  - cholesky_factors
+  - cholesky_factors_diag
+  - cholesky_factors_offdiag
+  - colors

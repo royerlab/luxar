@@ -222,11 +222,7 @@ describe('combineSignals — pure helper (G7)', () => {
 });
 
 describe('pickTimeoutMs — pure helper', () => {
-  const perf = { workerVisibilityTimeoutMs: 30000, workerProjectionTimeoutMs: 60000 };
-
-  it('visibility kind returns workerVisibilityTimeoutMs', () => {
-    expect(pickTimeoutMs('visibility', perf)).toBe(30000);
-  });
+  const perf = { workerProjectionTimeoutMs: 60000 };
 
   it('projection kind returns workerProjectionTimeoutMs', () => {
     expect(pickTimeoutMs('projection', perf)).toBe(60000);

@@ -3,9 +3,6 @@
  *
  * - `wasm` holds the compiled WASM module (or the TypeScript fallback)
  *   loaded once at `initialize()` and read by every task.
- * - `visibilityMaskBuffer` is a pooled scratch buffer reused across
- *   visibility calls so the worker doesn't allocate per task. The three
- *   `computeNDVisibility*` tasks grow it as needed.
  *
  * Tasks receive the `state` object as an argument; mutating `state.wasm`
  * inside `initialize` is visible to subsequent task calls because they
@@ -25,13 +22,11 @@ export interface WasmCtx {
    * so test harnesses that only exercise the `ndim <= 16` WASM path need not set it.
    */
   tsFallback?: WasmModule | null;
-  visibilityMaskBuffer: Uint8Array | null;
 }
 
 export const state: WasmCtx = {
   wasm: null,
   tsFallback: null,
-  visibilityMaskBuffer: null,
 };
 
 /**
