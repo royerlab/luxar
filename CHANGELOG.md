@@ -6,6 +6,55 @@ All notable changes to Luxar are documented in this file.
 
 ### July 2026
 
+#### Removed — dead `computeNDVisibility{Points,Lines,GSplats}` worker kernels
+
+- Deleted the three standalone nD-visibility worker tasks, their TS wrappers
+  (`workers/data-worker/visibility/`), TypeScript reference kernels
+  (`wasm/typescript/{points,lines,gsplats}.ts`), Rust WASM kernels
+  (`wasm/rust/src/{points,lines,gsplats}.rs`), the pooled
+  `visibilityMaskBuffer` worker state, and their tests/benchmarks.
+- **Why**: they were speculative Phase-2 (2025-12) infrastructure that never
+  gained a production caller — two days after they were built, projection
+  moved to the worker (`projectXTo3D`) and per-element nD visibility/culling
+  was fused INTO projection (Lines `clip_segments_batch` mask, Points
+  effective radius, GSplats attenuation), making a standalone visibility
+  round-trip redundant. Parity tests and benchmarks kept the dead kernels
+  looking alive for six months.
+- **Also removed — the dead `querySpatialIndex` worker task and its chain**:
+  the sibling Phase-2 orphan. Chunk-AABB spatial queries run on the main
+  thread (`SpatialQueryBuilder`) and never used the worker round-trip, so the
+  task, its `query_chunks_for_view` WASM kernel (Rust `spatial.rs` + TS
+  `spatial.ts`), `validateChunkQueryInputs`, the `'visibility'` `TimeoutKind`,
+  and the `workerVisibilityTimeoutMs` config knob are gone (projection/decode
+  keep `workerProjectionTimeoutMs`). Archived design docs
+  (`docs/archive/implementation-notes/{WASM_ANALYSIS,WORKER_INFRASTRUCTURE_STATUS}.md`)
+  now carry a historical-status note.
+
+#### Fixed — Lines are re-culled when scrubbing a non-displayed dimension
+
+- **Symptom**: scrubbing a non-displayed dimension (categorical toggle, time
+  slider) only ever *added* Lines geometry — every visited slot stayed
+  rendered (A ∪ B) while Points/GSplats correctly swapped (A xor B). A
+  categorical or time dimension was therefore unusable for slicing Lines.
+- **Root cause**: the Lines projection dispatcher
+  (`workers/data-worker/projection/lines.ts`) hardcoded `numItems = 1` in its
+  input validation, rejecting the canonical *empty* payload the loader
+  returns when a node has no data at the current slice
+  (`positions array too short (got 0, expected ≥ ndim)`). The throw was
+  swallowed as a failed loader update (`staged: null`), so the empty commit
+  that clears the previous slot's mesh never ran. The same throw fired on
+  the initial load of any Lines node that starts out-of-slice (error log +
+  spurious failure/retry bookkeeping).
+- **Fix**: validate with `numItems = 0` — the real positions invariant
+  ("covers the max vertex referenced by segments") is fully enforced by
+  `validateLineSegmentReferences`, and the empty payload now flows through
+  the existing zero-visible early-exit to a mesh-clearing commit.
+  Regression coverage: dispatcher golden test (TS + WASM backends), worker
+  happy-path tests, data-processor staging test, and a new E2E spec
+  (`lines-nd-dimension-visibility.spec.ts`) driving a hidden categorical
+  scrub over the new `test_lines_categorical.luxar.zarr` fixture with a
+  Points pair as the in-frame control.
+
 #### Fixed — `center_at_centroid` / `gsplat convert --center` no longer centers categorical axes
 
 - **Why**: `center_at_centroid()` subtracted the amplitude-weighted centroid from

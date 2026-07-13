@@ -18,9 +18,6 @@ async function loadWorker(): Promise<WorkerModule> {
   const wasmStub = {
     extract_3d_positions: vi.fn(),
     calculate_effective_radii: vi.fn(),
-    compute_nd_visibility_points: vi.fn(() => 0),
-    compute_nd_visibility_lines: vi.fn(() => 0),
-    compute_nd_visibility_gsplats: vi.fn(() => 0),
     clip_segments_batch: vi.fn(() => 0),
     interpolate_clipped_positions: vi.fn(),
     interpolate_colors_batch: vi.fn(),
@@ -501,109 +498,6 @@ describe('data-worker validation — segment/color/query gaps', () => {
         truncate: 3.0,
       })
     ).rejects.toThrow(/sharpness too short/);
-  });
-
-  it('querySpatialIndex rejects non-positive / non-integer ndim', async () => {
-    const mod = await loadWorker();
-    await expect(
-      mod.workerAPI.querySpatialIndex({
-        chunkBounds: new Float32Array(0),
-        slicePosition: new Float32Array(20),
-        tolerance: new Float32Array(20),
-        numChunks: 0,
-        ndim: 0,
-      })
-    ).rejects.toThrow(/must be a positive integer/);
-  });
-
-  it('querySpatialIndex accepts ndim>16 (chunk AABB query is dimension-agnostic)', async () => {
-    const mod = await loadWorker();
-    // query_chunks_for_view uses dynamic indexing (no fixed 16-dim cap), so >16D
-    // is handled natively — it must not be rejected.
-    await expect(
-      mod.workerAPI.querySpatialIndex({
-        chunkBounds: new Float32Array(0),
-        slicePosition: new Float32Array(17),
-        tolerance: new Float32Array(17),
-        numChunks: 0,
-        ndim: 17,
-      })
-    ).resolves.toBeDefined();
-  });
-
-  it('querySpatialIndex rejects chunkBounds shorter than numChunks × ndim × 2', async () => {
-    const mod = await loadWorker();
-    // 5 chunks × 3 dims × 2 = 30 bounds entries needed
-    await expect(
-      mod.workerAPI.querySpatialIndex({
-        chunkBounds: new Float32Array(20),
-        slicePosition: new Float32Array(3),
-        tolerance: new Float32Array(3),
-        numChunks: 5,
-        ndim: 3,
-      })
-    ).rejects.toThrow(/chunkBounds too short/);
-  });
-
-  it('querySpatialIndex rejects slicePosition shorter than ndim', async () => {
-    const mod = await loadWorker();
-    await expect(
-      mod.workerAPI.querySpatialIndex({
-        chunkBounds: new Float32Array(30),
-        slicePosition: new Float32Array(2), // need 3
-        tolerance: new Float32Array(3),
-        numChunks: 5,
-        ndim: 3,
-      })
-    ).rejects.toThrow(/slicePosition too short/);
-  });
-
-  // gaps the reviewer identified that weren't yet covered.
-
-  it('querySpatialIndex rejects tolerance shorter than ndim', async () => {
-    const mod = await loadWorker();
-    await expect(
-      mod.workerAPI.querySpatialIndex({
-        chunkBounds: new Float32Array(30),
-        slicePosition: new Float32Array(3),
-        tolerance: new Float32Array(2), // need 3
-        numChunks: 5,
-        ndim: 3,
-      })
-    ).rejects.toThrow(/tolerance too short/);
-  });
-
-  it('computeNDVisibilityLines rejects segment indices past end of vertices', async () => {
-    const mod = await loadWorker();
-    // ndim=3, 2 segments, segments[3]=8 references vertex 8; vertices
-    // has only 5 vertices (15 floats). The line-segment validator must
-    // catch this before WASM clip_segments_batch.
-    await expect(
-      mod.workerAPI.computeNDVisibilityLines({
-        vertices: new Float32Array(15),
-        segments: new Uint32Array([0, 1, 2, 8]),
-        widths: new Float32Array(9),
-        slicePosition: new Float32Array(3),
-        tolerance: new Float32Array(3),
-        ndim: 3,
-        numSegments: 2,
-      })
-    ).rejects.toThrow(/vertices too short|positions too short for max segment vertex 8/);
-  });
-
-  it('computeNDVisibilityLines rejects widths shorter than max-vertex+1', async () => {
-    const mod = await loadWorker();
-    await expect(
-      mod.workerAPI.computeNDVisibilityLines({
-        vertices: new Float32Array(30),
-        segments: new Uint32Array([0, 1, 2, 3]),
-        widths: new Float32Array(2), // need at least max-vertex+1 = 4
-        slicePosition: new Float32Array(3),
-        tolerance: new Float32Array(3),
-        ndim: 3,
-        numSegments: 2,
-      })
-    ).rejects.toThrow(/widths too short/);
   });
 
   it('projectLinesTo3D rejects sharpness shorter than max-vertex+1', async () => {

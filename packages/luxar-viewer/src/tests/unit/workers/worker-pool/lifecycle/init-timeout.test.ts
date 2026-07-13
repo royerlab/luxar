@@ -45,7 +45,6 @@ async function loadWorkerPool(
         performance: {
           workerCount,
           workerInitTimeoutMs: perf.workerInitTimeoutMs ?? 30000,
-          workerVisibilityTimeoutMs: 30000,
           workerProjectionTimeoutMs: 60000,
           ...perf,
         },

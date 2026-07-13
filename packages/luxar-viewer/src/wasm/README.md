@@ -29,8 +29,7 @@ import { initWasm, isWasmSupported, setWasmJsUrl } from './wasm';
 const wasm = await initWasm();
 
 // Use the unified API
-const chunks = wasm.query_chunks_for_view(/* ... */);
-const visibility = wasm.compute_nd_visibility_points(/* ... */);
+const count = wasm.clip_segments_batch(/* ... */);
 ```
 
 The default URL resolution (`new URL('../wasm/luxar_wasm.js', import.meta.url)`)
@@ -40,16 +39,12 @@ non-standard location.
 
 ## WasmModule API
 
-### Spatial Queries
-
-- `query_chunks_for_view()` — Find chunks intersecting an nD slice
-
 ### nD Visibility
 
-- `compute_nd_visibility_points()` — Hypersphere intersection for point clouds
-- `compute_nd_visibility_lines()` — Endpoint-based visibility for line segments
-- `compute_nd_visibility_gsplats()` — Ellipsoid extent for Gaussian splats
 - `calculate_effective_radii()` — Radius when sliced through higher dimensions
+  (per-element nD visibility/culling otherwise lives INSIDE the projection
+  kernels: `clip_segments_batch` for Lines, the attenuation/fused kernel for
+  GSplats)
 
 ### Decoding
 
@@ -143,7 +138,6 @@ wasm/
 ├── types.ts              — WasmModule interface (unified API)
 ├── typescript/           — Pure TypeScript fallback
 │   ├── index.ts          — TypeScriptFallback class
-│   ├── spatial.ts        — Spatial queries
 │   ├── points.ts         — Point visibility
 │   ├── lines.ts          — Line visibility
 │   ├── lines-clipping.ts — Line clipping
