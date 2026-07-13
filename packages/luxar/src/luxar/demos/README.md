@@ -616,6 +616,17 @@ The human head Gaussian-splatted in **true photographic color** from the NLM Vis
 
 ---
 
+#### demo_gsplats_3d_cryoem_virus.py - Cryo-EM Giant Virus Capsid (Structural Biology)
+Gaussian-splats a real cryo-electron-microscopy density map from the EMDB: the icosahedral capsid of *Paramecium bursaria* chlorella virus 1 (PBCV-1), a giant virus. The reconstructed electron-density volume — a hollow ~1650 Å shell tiled with capsomers — is exactly what the Luxar splat fitter eats, so this is the microscopy splat pipeline applied to structural biology (no isosurface threshold needed).
+
+**Run**: `hatch run python packages/luxar/src/luxar/demos/demo_gsplats_3d_cryoem_virus.py [--recompute]`
+
+**Requires**: Nothing extra by default — ships a precomputed fit via Git LFS (~12 MB: the 700³ EMDB map downsampled to 512³, fit to ~1.0M splats, PSNR ~28 dB). With `--recompute` (or if the LFS asset isn't pulled) it auto-downloads the 1.3 GB EMDB map (`emd_5384.map.gz`) to `~/.cache/luxar/gsplats_cryoem_virus/` (resumable), reads it with `mrcfile`, downsamples to 512³, and fits Gaussian splats on the GPU. Adds `mrcfile` to the `demos` extra.
+
+**Demonstrates**: Real *structural-biology* electron density → Gaussian splats (the same `cal → fit → convert` pipeline used for microscopy, on an EMDB MRC/CCP4 map), solvent clipping + percentile normalization, `viridis` colormap + Neutral tone-mapping + additive HDR rendering, self-contained download → read → fit → cache-processed bootstrap. Data: [EMDB EMD-5384](https://www.ebi.ac.uk/emdb/EMD-5384) (Zhang et al. 2011, PNAS 108(36):14837; public domain / CC0).
+
+---
+
 #### demo_gsplats_lod_tribolium.py - Adaptive Level of Detail on the Tribolium Embryo
 Takes the precomputed Tribolium embryo fit and builds an **adaptive Level of Detail (LOD)** pyramid on it — the embryo is stored at several resolutions, and the viewer shows the simplest one that still looks right at the current zoom. This demo uses *substitutive* LOD (each coarser level *replaces* the finer one with fewer, larger splats), and ships it with per-level debug colors (green→amber→red, finest→coarsest) so the viewer's `coverage_fraction` level-switching is visible as you zoom. The scaled-up companion to `examples/gsplats_lod_example.py`.
 
@@ -969,6 +980,7 @@ hatch run python packages/luxar/src/luxar/demos/demo_gsplats_2d_cmu1_pathology.p
 # --- GSplats: 3D ---
 hatch run python packages/luxar/src/luxar/demos/demo_gsplats_3d_milky_way_dust.py
 hatch run python packages/luxar/src/luxar/demos/demo_gsplats_3d_visible_human_head.py
+hatch run python packages/luxar/src/luxar/demos/demo_gsplats_3d_cryoem_virus.py
 hatch run python packages/luxar/src/luxar/demos/demo_gsplats_3d_organoid_dapi_nuclei.py
 hatch run python packages/luxar/src/luxar/demos/demo_gsplats_3d_organoid_multichannel.py
 hatch run python packages/luxar/src/luxar/demos/demo_gsplats_3d_kidney_multichannel_toggles.py
