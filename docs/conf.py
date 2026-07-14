@@ -79,6 +79,9 @@ myst_enable_extensions = [
     "deflist",
     "tasklist",
 ]
+# Generate anchors for markdown headings (levels 1-4) so in-document
+# TOC links like [Architecture](#architecture) resolve.
+myst_heading_anchors = 4
 
 templates_path = ["_templates"]
 exclude_patterns = [
@@ -90,11 +93,14 @@ exclude_patterns = [
     "archive/**",
     "benchmarks/**",
     "code_reviews/**",
+    "handoffs/**",
+    "reports/**",
 ]
 
 # -- Options for HTML output -------------------------------------------------
 html_theme = "sphinx_rtd_theme"  # Popular Read the Docs theme
-html_static_path = ["_static"]
+# No static assets are shipped; an empty list avoids the missing-dir warning.
+html_static_path: list[str] = []
 html_title = "Luxar Documentation"
 html_short_title = "Luxar"
 html_logo = None  # Add logo path if you have one

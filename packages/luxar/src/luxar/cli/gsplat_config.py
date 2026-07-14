@@ -1,7 +1,7 @@
 """Configuration system for gsplat CLI commands.
 
 Provides:
-- Fitting presets (draft/standard/hifi/ultra)
+- Fitting presets (draft/standard/hifi/ultra/n2s)
 - YAML config loading with priority chain
 - Commented YAML config dump
 - Volume file loaders (.npy, .npz, .tiff, .zarr, imageio fallback)
@@ -117,12 +117,12 @@ def load_fit_config(
         CLI flags > YAML config > preset > function defaults
 
     Args:
-        preset: Preset name ("draft", "standard", "hifi", "ultra") or None
+        preset: Preset name ("draft", "standard", "hifi", "ultra", "n2s") or None
         config_path: Path to YAML config file or None
         cli_overrides: Dict of CLI-provided values (None values are ignored)
 
     Returns:
-        Merged config dict ready to pass as **kwargs to fit_gaussian_splats
+        Merged config dict ready to pass as ``**kwargs`` to fit_gaussian_splats
     """
     # Start with function defaults
     config = get_fit_defaults()

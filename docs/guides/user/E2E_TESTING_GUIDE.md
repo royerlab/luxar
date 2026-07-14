@@ -427,7 +427,7 @@ await page.screenshot({
 The Luxar E2E test suite is:
 - **Comprehensive** — covers all major features
 - **Reliable** — condition-based waits, not arbitrary timeouts
-- **Fast** — optimized waits save 40%+ test time
+- **Fast** — settle-based waits instead of fixed sleeps keep runs short
 - **Robust** — error recovery prevents crashes
 - **Regression-Proof** — performance tracking catches slowdowns
 - **AI-Ready** — full console access for autonomous debugging
