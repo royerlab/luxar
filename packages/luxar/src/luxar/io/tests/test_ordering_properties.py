@@ -61,30 +61,35 @@ def test_hilbert_is_permutation_equivariant(
 # it produces byte-identical codes — so the fallback is verified AND kept in
 # parity with the JIT kernel.
 
-import luxar.io.ordering as _ordering  # noqa: E402
+# The lazy-compiled numba kernels are cached as module globals inside the
+# curve encoders (io/_ordering/curves/{morton,hilbert}.py); patch them there.
+import luxar.io._ordering.curves.hilbert as _hilbert_mod  # noqa: E402
+import luxar.io._ordering.curves.morton as _morton_mod  # noqa: E402
 
 
 def _encode_forcing_numpy_fallback(fn, coords: np.ndarray) -> np.ndarray:
     """Run ``fn`` with both Numba kernels forced OFF (pure-NumPy path)."""
-    saved = (_ordering._morton_numba_kernel, _ordering._hilbert_numba_kernel)
+    saved = (_morton_mod._morton_numba_kernel, _hilbert_mod._hilbert_numba_kernel)
     try:
-        _ordering._morton_numba_kernel = False
-        _ordering._hilbert_numba_kernel = False
+        _morton_mod._morton_numba_kernel = False
+        _hilbert_mod._hilbert_numba_kernel = False
         return fn(coords, bits_per_dim=16)
     finally:
-        _ordering._morton_numba_kernel, _ordering._hilbert_numba_kernel = saved
+        _morton_mod._morton_numba_kernel = saved[0]
+        _hilbert_mod._hilbert_numba_kernel = saved[1]
 
 
 def _encode_forcing_numba(fn, coords: np.ndarray) -> np.ndarray:
     """Run ``fn`` with the kernels reset to None so the JIT path lazy-loads
     (falls back to NumPy only if Numba is genuinely unavailable)."""
-    saved = (_ordering._morton_numba_kernel, _ordering._hilbert_numba_kernel)
+    saved = (_morton_mod._morton_numba_kernel, _hilbert_mod._hilbert_numba_kernel)
     try:
-        _ordering._morton_numba_kernel = None
-        _ordering._hilbert_numba_kernel = None
+        _morton_mod._morton_numba_kernel = None
+        _hilbert_mod._hilbert_numba_kernel = None
         return fn(coords, bits_per_dim=16)
     finally:
-        _ordering._morton_numba_kernel, _ordering._hilbert_numba_kernel = saved
+        _morton_mod._morton_numba_kernel = saved[0]
+        _hilbert_mod._hilbert_numba_kernel = saved[1]
 
 
 def test_morton_numba_numpy_parity() -> None:
