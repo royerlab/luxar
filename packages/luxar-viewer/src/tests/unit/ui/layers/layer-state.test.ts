@@ -188,6 +188,42 @@ describe('LayerStateManager', () => {
     expect(layer.dataMax).toBe(1);
   });
 
+  it('derives a composite group layer range from its finest descendant leaf', () => {
+    // Regression: a kind=partition/lod group carries no range of its own; the
+    // [0, 1] fallback makes a colormapped gsplat render near-black. Derive from
+    // the finest (largest-n_splats) descendant so the layer window is correct.
+    const graph: SceneNode = {
+      path: '/',
+      type: 'scene',
+      attrs: {},
+      children: [
+        {
+          path: '/g',
+          type: 'group',
+          attrs: { layer: true, kind: 'partition', display_type: 'gsplats' },
+          children: [
+            {
+              path: '/g/coarse',
+              type: 'gsplats',
+              attrs: { amplitude_data_range: [0, 0.25] as [number, number], n_splats: 100 },
+              children: [],
+            },
+            {
+              path: '/g/fine',
+              type: 'gsplats',
+              attrs: { amplitude_data_range: [0, 0.03] as [number, number], n_splats: 5000 },
+              children: [],
+            },
+          ],
+        },
+      ],
+    } as unknown as SceneNode;
+    mgr.initFromSceneGraph(graph);
+    const layer = mgr.getLayer('/g')!;
+    // Finest leaf (n_splats=5000) wins → [0, 0.03], NOT the [0, 1] fallback.
+    expect(layer.dataMax).toBeCloseTo(0.03, 5);
+  });
+
   it('expands slider bounds to encompass authored intensity/offset display range', () => {
     // Regression: when a node has authored intensity != 1, the recovered
     // display range can extend beyond color_data_range. If the slider's
