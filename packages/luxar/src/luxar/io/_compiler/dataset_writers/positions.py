@@ -46,10 +46,8 @@ def write_positions(
         compressor=ctx.compressor,
     )
 
-    # Log encoding result
+    # Log encoding result (e.g. linear_perchannel_u16 under AUTO, float32
+    # under PRECISION or the large-extent fallback)
     enc = group["positions"].attrs.get("encoding", {})
     enc_name = enc.get("name", "unknown")
-    if enc_name == "float16":
-        aprint("  ✓ Wrote positions (float16 - MEMORY mode)")
-    else:
-        aprint("  ✓ Wrote positions (float32)")
+    aprint(f"  ✓ Wrote positions ({enc_name})")

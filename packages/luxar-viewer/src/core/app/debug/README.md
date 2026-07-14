@@ -14,8 +14,8 @@ to extend that stub with live runtime components, helper functions, and the
 synthetic-scene injector.
 
 Everything here is private to `LuxarApp` — only `app.ts` imports these files
-(see `installDebugInterface` at `core/app.ts:435`, `openCacheStatsView` re-export
-at `core/app.ts:45`).
+(`LuxarApp.setupDebugInterface()` calls `installDebugInterface`, and a private
+`openCacheStatsView()` wrapper delegates to `cache-stats-view.ts`).
 
 ## File Structure
 
@@ -131,9 +131,10 @@ Single function `openCacheStatsView(): void`. Resolves
 no monitor exists (embedded contexts that disable the monitor).
 
 Triggered from two places: `LuxarApp.init()` when `options.openCacheStats` is
-set, and `loadDataset` when the `?cache-stats` URL flag is present (the
-re-export lives at `core/app.ts:46`, called by
-`core/app/dataset/load-dataset.ts:99`).
+set, and `loadDataset` when the `?cache-stats` URL flag is present
+(`core/app.ts` wires its private `openCacheStatsView()` wrapper into the
+load-dataset ports, and `core/app/dataset/load-dataset.ts` calls
+`ports.openCacheStatsView()` after the monitor exists).
 
 ## `window.__luxarDebug` Surface
 
@@ -175,6 +176,6 @@ their own host page pass `debug: true` to `LuxarApp.init()`.
 
 - `../../README.md` — Core package overview (debug section)
 - `../../bootstrap.ts` — Where the `__luxarDebug` stub is first seeded
-- `../../app.ts` — Caller; line 435 wires the ports
+- `../../app.ts` — Caller; `setupDebugInterface()` wires the ports
 - `../../../utils/console-interceptor.ts` — Console buffer surfaced as `__luxarDebug.consoleInterceptor`
 - `../../../ui/data-monitor-manager.ts` — Backs `openCacheStatsView`

@@ -22,7 +22,6 @@ The default backend is `THREE.WebGLRenderer` (GLSL `ShaderMaterial`). `WebGPURen
 
 ```
 rendering/
-├── post-processing-manager.ts          # Public API — HDR pipeline orchestrator
 ├── material-manager.ts                 # Material creation, caching, and global camera updates
 ├── node-factory.ts                     # Scene-node factories for Points / Lines / GSplats
 ├── gpu-buffer-pool.ts                  # Geometry reuse with count and byte-budget eviction
@@ -59,7 +58,8 @@ rendering/
 │   ├── create-lines-node.ts            # createLinesNode + createEmptyLinesNode
 │   └── create-gsplats-node.ts          # createGSplatsNode + createEmptyGSplatsNode
 │
-├── post-processing/                    # Private helpers for post-processing-manager
+├── post-processing/                    # HDR post-processing pipeline
+│   ├── post-processing-manager.ts      # Public API — HDR pipeline orchestrator
 │   ├── bloom/                          # chain / shaders / bloom.tsl
 │   ├── fxaa/                           # pass / shaders / fxaa.tsl
 │   ├── fullscreen/                     # pass / geometry
@@ -75,6 +75,7 @@ rendering/
 ├── picking/                            # GPU picking materials + orchestration
 │   ├── index.ts                        # Picking barrel
 │   ├── picking-system.ts               # Orchestrator
+│   ├── PICKING_DESIGN.md               # Backend readback strategy + 1-frame-latency rationale
 │   ├── point/    { material, material-tsl, shaders (GLSL), pick.tsl (TSL) }
 │   ├── line/     { material, material-tsl, shaders (GLSL), pick.tsl (TSL) }
 │   ├── gsplat/   { material, material-tsl, shaders (GLSL), pick.tsl (TSL) }

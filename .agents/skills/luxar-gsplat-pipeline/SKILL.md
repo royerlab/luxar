@@ -14,8 +14,8 @@ description: >-
 # Luxar GSplat pipeline
 
 Luxar fits **Gaussian splats** to scientific volumes and serves them to a WebGL
-viewer. The standalone artifact is a `.gsplats.zarr` (format v3.1 — a node tree;
-v3.0 files are still read transparently).
+viewer. The standalone artifact is a `.gsplats.zarr` (format v3.2 — a node tree;
+older v3.x files are still read transparently).
 All commands below are subcommands of `luxar gsplat`.
 
 GSplats need optional deps: `pip install "luxar[gsplats]"` (PyTorch, scipy). GPU
@@ -52,6 +52,28 @@ Presets: `draft` / `standard` / `hifi` / `ultra`. Override any preset knob, e.g.
 Supported `fit` inputs: `.zarr`, `.zarr.zip`, `.tiff`, `.npy`, `.npz`. For a
 nested zarr group use `--array-key h2afva/fused`.
 
+### Background floor suppression (`--floor`, default `auto`)
+
+A constant pedestal (camera offset, autofluorescence) is the worst case for a
+localized-Gaussian basis, so `fit`, `cal`, and `batch-fit` all subtract a
+background floor (clip at 0) BEFORE normalization — output amplitudes are
+therefore background-relative. `--floor` is ON by default (`auto`):
+
+- `auto` — histogram-mode estimate, capped at the median (a no-op on clean data
+  with no pedestal).
+- `pNN` — subtract that percentile, e.g. `--floor p10`.
+- a plain number — subtract a fixed value, e.g. `--floor 110`.
+- `none` — disable (legacy hard-min behaviour; use to reproduce old numbers).
+
+`cal` applies the same `--floor` up front so K* is measured on floor-suppressed
+data, matching how you fit.
+
+```bash
+luxar gsplat fit volume.tiff out.gsplats.zarr                 # --floor auto (default)
+luxar gsplat fit volume.tiff out.gsplats.zarr --floor p10     # subtract 10th percentile
+luxar gsplat cal volume.tiff cal.json --floor none            # legacy (no floor)
+```
+
 ## Choosing a LOD recipe (`lod --recipe`)
 
 Recipes are scale-ordered — pick by element count `N`:
@@ -72,8 +94,9 @@ luxar gsplat lod in.gsplats.zarr out.gsplats.zarr --recipe overview -K 8 --max-e
 luxar gsplat lod in.gsplats.zarr out.gsplats.zarr --recipe adaptive --parts 8 -K 4 -L 2
 ```
 
-`stream` default method `greedy` (optimal at every prefix); for very large N use
-`--method self_energy`. For `levels`/`overview`/`adaptive`,
+`stream` default method is `auto`: `greedy` (optimal at every prefix) at
+N ≤ 5000, else the cheap O(N log N) `self_energy` for large N. Override with
+`--method` if you want to force one. For `levels`/`overview`/`adaptive`,
 `--coarsen-dims` lists center-column indices coarsening may merge over (the rest
 become hard barriers — e.g. a time or channel axis must stay a barrier).
 
@@ -118,7 +141,7 @@ luxar gsplat slice in.gsplats.zarr out.gsplats.zarr "0:50, :, 10:90"
 luxar gsplat transform in.gsplats.zarr out.gsplats.zarr --scale 4,1,1,1 --center
 luxar gsplat merge a.gsplats.zarr b.gsplats.zarr -o merged.gsplats.zarr
 luxar gsplat partition in.gsplats.zarr part.gsplats.zarr --parts 4 --rule sah
-luxar gsplat migrate-format legacy.gsplats.zarr v3.gsplats.zarr      # legacy -> v3.0
+luxar gsplat migrate-format legacy.gsplats.zarr v3.gsplats.zarr      # legacy -> v3.2
 ```
 
 ## Python fitting API
@@ -189,4 +212,4 @@ does (a) for you and writes a ready-to-serve scene.
   skill summarizes the common paths; the CLI is the source of truth.
 - The `lod` command **rejects an existing partition** — to add LOD to tiled output,
   use `fit --recipe` / `batch-fit merge --recipe` instead (per-part LOD as it streams).
-- See `docs/specs/GSPLATS_ZARR_FORMAT.md` for the v3.1 node-tree format.
+- See `docs/specs/GSPLATS_ZARR_FORMAT.md` for the v3.2 node-tree format.

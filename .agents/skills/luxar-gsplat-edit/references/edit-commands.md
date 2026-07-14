@@ -33,7 +33,29 @@ Shared: `--truncate`, `--device`/`-d`, `--channel`/`-c`, `--timepoint`.
 Keep splats matching ALL given criteria (unspecified = skipped):
 `--bbox "x0,x1,y0,y1,z0,z1"`, `--amplitude-min/--amplitude-max` (+ `--amplitude-normalized`),
 `--volume-min/--volume-max` (+ `--volume-normalized`), `--eccentricity-min/--eccentricity-max`
-(1.0 = sphere), `--mass-min/--mass-max` (amplitude × volume), `--sigma-axis` + `--sigma-min/--sigma-max`.
+(1.0 = sphere; spatial by default), `--mass-min/--mass-max` (amplitude × volume),
+`--sigma-axis` + `--sigma-min/--sigma-max`.
+
+**Percentiles:** any min/max threshold accepts a plain number OR a percentile of
+that attribute written `pNN` / `NN%` (e.g. `--scale-max p90`) — robust on
+heavy-tailed attributes.
+
+Additional criteria:
+- `--scale-min/--scale-max` — characteristic size = geometric-mean SPATIAL sigma;
+  timelapse-safe (auto-ignores a zero-variance time axis). The recommended
+  "remove large diffuse background" knob (e.g. `--scale-max p90`).
+- `--isolation-max` — remove spatially-isolated noise splats by nearest-neighbour
+  distance (e.g. `--isolation-max p99`).
+- `--min-neighbors` + `--neighbor-radius` — remove splats with too few neighbours
+  within a radius (local density). Grouped by the non-spatial axis so timepoints
+  never count as neighbours.
+- `--soft-highpass` / `--soft-lowpass` (+ `--soft-width` octaves) — SOFT
+  reweighting: attenuate amplitude by a smooth function of scale instead of
+  hard-removing (no popping; splat count unchanged). High-pass suppresses
+  large/diffuse background.
+- `--spatial-dims 0,1,2` — override the auto spatial-axis detection used by
+  scale / eccentricity / isolation.
+- `--dry-run` — preview impact (splats / mass / amplitude removed); write nothing.
 
 ## slice IN OUT RANGES
 Numpy-style, comma-separated per spatial axis; float coords allowed:
@@ -61,8 +83,46 @@ Wrap a fitted dataset as a web scene. `--center`/`--no-center` (default on),
 `normal` / `max` / `opaque`).
 
 ## migrate-format IN OUT
-Upgrade legacy layouts (v1.0 / v1.1 / v2.0 / substitutive dir) → v3.1.
+Upgrade legacy layouts (v1.0 / v1.1 / v2.0 / substitutive dir) → v3.2.
 `--overwrite`, `--lossless` (preserve float32 Cholesky), `--quiet`/`-q`.
+
+## reencode IN OUT
+Re-quantize a fitted dataset's Cholesky factors to another encoding (a
+structure-preserving copy: the whole node tree — leaf / additive ladder /
+`kind=lod` / partition / nested — plus `fitting`/`provenance`/`pipeline` groups
+are carried over verbatim; only the on-disk Cholesky encoding changes). Splat
+count and geometry are unchanged; decode is always to float32, so
+viewer/GPU/WASM paths are unaffected. Unlike `migrate-format` (legacy → current,
+float32-vs-AUTO-uint16 only), this exposes the full ladder including `memory`
+(uint8) and works on already-current files.
+| Flag | Default | Meaning |
+| --- | --- | --- |
+| `--encoding` / `-e` | `memory` | `memory` = uint8 (smallest, ~93 dB); `auto` = adaptive u8→u16→f32 ladder (near-lossless); `precision` = float32 (exact/archival) |
+| `--ordering` | `hilbert` | output spatial chunk ordering (`hilbert` / `morton` / `none`) |
+| `--quiet` / `-q` | off | suppress trailing summary |
+
+## additive IN OUT
+Give every leaf of an existing tree a per-leaf additive (streaming) ladder,
+structure-preservingly — `kind=lod` levels, partition parts, adaptive/overview
+groups all keep their shape — WITHOUT recomputing the expensive
+substitutive/partition structure. The per-leaf counterpart of
+`lod --recipe stream` (which needs a flat input) and the inverse companion of
+`flatten`. Its exact use case: giving tiled/partitioned output a streaming
+ladder. Same streaming knobs as `lod --recipe stream`: `--n-lods`,
+`--method`, `--breakpoints` (incl. `stream:C`), `--target-ms`,
+`--bandwidth-mbps`, `--bytes-per-splat`, `--encoding`/`-e`, `--compress`,
+`--overwrite`.
+
+## annotate-quality IN
+Retrofit Q·e quality stamps onto an existing `.gsplats.zarr`, **in place** (no
+refit / re-ladder): per-additive-sub-LOD cumulative energy `e(k)` + per-leaf
+reference energy `w` (cheap O(N); enables the viewer's early energy-threshold
+LOD upgrades on legacy datasets). Re-stamps the root `content_hash` so viewer
+caches invalidate automatically. Directory stores only (unpack `.zip` first).
+| Flag | Meaning |
+| --- | --- |
+| `--with-quality` | also measure per-level mixture-L² Q vs each lod group's finest content |
+| `--dry-run` | compute and print the stamps; write nothing |
 
 ---
 

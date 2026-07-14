@@ -1018,6 +1018,7 @@ hatch run python packages/luxar/src/luxar/demos/demo_gsplats_3d_cryoem_virus.py
 hatch run python packages/luxar/src/luxar/demos/demo_gsplats_3d_ct_totalsegmentator.py
 hatch run python packages/luxar/src/luxar/demos/demo_gsplats_3d_organoid_dapi_nuclei.py
 hatch run python packages/luxar/src/luxar/demos/demo_gsplats_3d_organoid_multichannel.py
+hatch run python packages/luxar/src/luxar/demos/demo_gsplats_3d_cells3d_multichannel.py
 hatch run python packages/luxar/src/luxar/demos/demo_gsplats_3d_kidney_multichannel_toggles.py
 hatch run python packages/luxar/src/luxar/demos/demo_gsplats_3d_kidney_multichannel_layers.py
 hatch run python packages/luxar/src/luxar/demos/demo_gsplats_3d_acto3d_heart.py
@@ -1029,6 +1030,7 @@ hatch run python packages/luxar/src/luxar/demos/demo_gsplats_recipes_tribolium.p
 
 # --- GSplats: 4D ---
 hatch run python packages/luxar/src/luxar/demos/demo_gsplats_4d_zebrafish_timelapse.py
+hatch run python packages/luxar/src/luxar/demos/demo_gsplats_4d_neuromast_2ch.py
 hatch run python packages/luxar/src/luxar/demos/demo_gsplats_4d_celegans_tracking.py
 ```
 

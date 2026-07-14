@@ -4,7 +4,10 @@ TypeScript re-implementations of every Rust/WASM kernel exposed in
 `src/wasm/`. These run when the WASM module is unavailable (failed
 to load, mobile Safari without WebAssembly, dev environment, unit
 tests) and preserve the exact same numerical contract as the WASM
-path.
+path. They are also the **production path for >16D data**: the WASM
+kernels use fixed-size 16-dim arrays, so `pickBackend(ctx, ndim)` in
+`src/workers/data-worker/state.ts` routes every `ndim > 16` operation
+here automatically — not just when WASM is missing.
 
 ## Files
 
@@ -22,8 +25,11 @@ path.
 A single `TypeScriptFallback` class that implements the `WasmModule`
 interface from `../types.ts`. The WASM loader constructs a
 `TypeScriptFallback` instance whenever the real WASM module fails to
-load. Every individual kernel is also exported by name from
-`index.ts` for direct use (e.g. by unit tests).
+load; the data worker also keeps one alongside compiled WASM
+(`WasmCtx.tsFallback`) so `pickBackend` can serve `ndim > 16`
+operations that the WASM kernels cannot handle. Every individual
+kernel is also exported by name from `index.ts` for direct use
+(e.g. by unit tests).
 
 ## Parity contract
 
@@ -36,9 +42,11 @@ WASM binary isn't built; CI builds it and runs parity checks).
 ## Performance
 
 The TypeScript path is intentionally slower (3-5×) than WASM for
-projection and visibility kernels. It exists for correctness coverage
-and as a fallback; users with large datasets should build the WASM
-module (`make build-wasm`) for production performance.
+projection and visibility kernels. It exists for correctness coverage,
+as a fallback, and as the uncapped production backend for >16D data
+(WASM supports at most 16 dimensions); users with large datasets
+should build the WASM module (`make build-wasm`) for production
+performance.
 
 ## Constants
 

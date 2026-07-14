@@ -52,10 +52,20 @@ application with CORS headers and a health endpoint already configured.
    When ``True``, the built-in Luxar viewer static files are bundled into the
    app so the browser can render the data directly.
 
+``cors_origin`` (str, keyword-only, default ``"local"``)
+   Which browser origins may fetch data via CORS:
+
+   * ``"local"`` (default) — allow only loopback origins
+     (``localhost`` / ``127.0.0.1`` / ``[::1]`` on any port). This is the safe
+     development default; a remote page cannot read the served data.
+   * ``"*"`` — allow any origin (credentials are disabled in this mode).
+   * a comma-separated list of explicit origins, e.g.
+     ``"https://viewer.example.com"``.
+
 The returned app includes:
 
-* **CORS middleware** with ``allow_origins=["*"]``, so any browser origin can
-  fetch data.
+* **CORS middleware** configured from ``cors_origin`` (loopback-only by
+  default; pass ``cors_origin="*"`` to allow any origin).
 * A ``/health`` endpoint that returns ``{"status": "ok"}``.
 * A static file mount at ``/`` backed by ``DirectoryListingStaticFiles``.
 
@@ -127,12 +137,20 @@ The pattern below mirrors the approach used in the Luxar test suite itself
        assert resp.status_code == 200
        assert resp.json() == {"status": "ok"}
 
-       # CORS headers should be present
+       # CORS headers should be present for an allowed (loopback) origin.
+       # The default cors_origin="local" allows localhost/127.0.0.1/[::1] on
+       # any port, so a same-machine viewer can read the data.
        resp = requests.options(
            f"{base_url}/health",
-           headers={"Origin": "http://example.com"},
+           headers={
+               "Origin": "http://localhost:5173",
+               "Access-Control-Request-Method": "GET",
+           },
        )
        assert "access-control-allow-origin" in resp.headers
+
+       # To allow any browser origin, create the app with cors_origin="*":
+       #   app = create_server_app(path, cors_origin="*")
 
        # Zarr metadata is accessible
        resp = requests.get(f"{base_url}/.zattrs")

@@ -11,10 +11,40 @@ Main API
 
 .. autofunction:: luxar.gsplats.fit_gaussian_splats
 
+.. autofunction:: luxar.gsplats.fit_progressive_gaussian_splats
+
 .. autoclass:: luxar.gsplats.GSplatData
    :members:
    :undoc-members:
    :show-inheritance:
+
+Tiled Fitting
+-------------
+
+Fit large volumes tile-by-tile with cosine (Hann) apodization for seamless
+stitching. Used by ``luxar gsplat fit --tiling uniform/content``.
+
+.. autofunction:: luxar.gsplats.fit_tiled_gaussian_splats
+
+.. autofunction:: luxar.gsplats.fit_tile
+
+.. autofunction:: luxar.gsplats.fit_tiled
+
+.. automodule:: luxar.gsplats.tiling
+   :members:
+   :show-inheritance:
+
+Lifting Points and Lines to Splats
+----------------------------------
+
+Convert existing Points/Lines geometry into Gaussian splats.
+
+.. autofunction:: luxar.gsplats.lift_points_to_gsplats
+
+.. autofunction:: luxar.gsplats.lift_lines_to_gsplats
+
+.. automodule:: luxar.gsplats.lift
+   :no-members:
 
 Fitting Pipeline
 ----------------
@@ -220,14 +250,17 @@ Level of Detail (LOD)
 ---------------------
 
 Post-fit LOD construction for streaming and view-dependent rendering. Used by
-the ``luxar gsplat lod --recipe ...`` CLI command (recipes ``flat`` / ``additive``
-/ ``partitioned`` / ``multiscale`` / ``mosaic`` / ``substitutive`` / ``pyramid``).
+the ``luxar gsplat lod --recipe ...`` CLI command (recipes ``flat`` / ``stream``
+/ ``levels`` / ``tiles`` / ``overview`` / ``adaptive``).
 
-* **Additive** — same N splats, reordered into a prefix-monotone ladder
+* **stream** — same N splats, reordered into a prefix-monotone additive ladder
   (``make_additive_lod``). Loading the first k splats is the best L²
   approximation at that budget.
-* **Substitutive** — synthesise M < N representative splats per coarser
+* **levels** — synthesise M < N representative splats per coarser
   level via Gaussian mixture reduction (``make_substitutive_lod``).
+* **tiles** / **overview** / **adaptive** — spatial-partition topologies for
+  large datasets (per-tile streaming ladders, an optional coarse overview cap,
+  or per-tile level swaps).
 
 .. automodule:: luxar.gsplats.lod
    :members:
@@ -241,6 +274,65 @@ the ``luxar gsplat lod --recipe ...`` CLI command (recipes ``flat`` / ``additive
 .. automodule:: luxar.gsplats.lod.substitutive
    :members:
    :undoc-members:
+
+.. automodule:: luxar.gsplats.lod.recipes
+   :members:
+   :undoc-members:
+
+.. automodule:: luxar.gsplats.lod.annotate
+   :members:
+   :undoc-members:
+
+.. automodule:: luxar.gsplats.lod.quality
+   :members:
+   :undoc-members:
+
+.. automodule:: luxar.gsplats.lod.volume_refit
+   :members:
+   :undoc-members:
+
+Node Tree
+---------
+
+The in-memory gsplat node tree (leaf / lod / partition nodes) shared by the
+fitting, LOD, and I/O layers — the v3.2 ``.gsplats.zarr`` on-disk structure.
+
+.. automodule:: luxar.gsplats.tree
+   :members:
+   :show-inheritance:
+
+Content Planning
+----------------
+
+Density-driven box planning for content-adaptive tiled fits
+(``luxar gsplat fit --tiling content``).
+
+.. automodule:: luxar.gsplats.planner
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
+Scene Interop
+-------------
+
+Bridge fitted gsplats into Luxar scenes (``add_gsplats_from_file`` and related
+conversion helpers).
+
+.. automodule:: luxar.gsplats.interop
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
+Preprocessing
+-------------
+
+Volume preprocessing shared by fitting and calibration (background-floor
+suppression, normalization, denoising).
+
+.. automodule:: luxar.gsplats.preprocessing
+   :members:
+   :undoc-members:
+   :show-inheritance:
 
 GPU Profiling
 -------------

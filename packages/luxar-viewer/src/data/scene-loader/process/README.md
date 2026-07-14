@@ -12,7 +12,7 @@ atomic commit phase.
 
 | File                        | Role                                                                                                                                                                                                                                                                                                                                                                                |
 | --------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `data-processor-lines.ts`   | Lines pipeline. Computes per-dim tolerance via `loaders/tolerance-computer`, applies `EXTEND_TO_ALL_TOLERANCE` for any `extend_to_all` dim, then projects via worker (`projectLinesTo3DUsingWorker`) when `useWebWorkers && segmentCount > 1000`, else `projectLinesTo3D` on the main thread. Returns `StagedLinesCommit`.                                                          |
+| `data-processor-lines.ts`   | Lines pipeline. Computes per-dim tolerance via `loaders/tolerance-computer`, applies `EXTEND_TO_ALL_TOLERANCE` for any `extend_to_all` dim, then projects via worker (`projectLinesTo3DUsingWorker`) when `useWebWorkers && segmentCount > 1000`, else `projectLinesInProcess` (the same dispatcher kernel run in-process, from `workers/data-worker/projection/in-process.ts`). Returns `StagedLinesCommit`.                                                          |
 | `data-processor-gsplats.ts` | GSplats pipeline. Reads the mesh's `uTruncate` uniform (or `DEFAULT_TRUNCATE = 3.0`), derives `discreteDims` / `discreteSteps` / `extendToAllDims` from `viewState.dimensions`, projects via worker (`projectGSplatsTo3DUsingWorker`) when `useWebWorkers && splatCount > 1000 && ndim > 3`, packs Cholesky factors via `packCholeskyForShader`, and returns `StagedGSplatsCommit`. |
 
 Both files also **re-export** their sibling commit helper
@@ -112,8 +112,11 @@ in `nodes/build-ctx.ts`, never via direct import.
   `processLinesData` / `processGSplatsData` to the per-node loaders.
 - `../lifecycle/retry.ts` — re-runs the same `process → commit` pair
   when a previous attempt failed.
-- `../../lines/projection.ts`, `../../gsplats/projection.ts` —
-  main-thread projection kernels used as the worker fallback.
+- `../../../workers/data-worker/projection/in-process.ts` —
+  `projectLinesInProcess` / `projectGSplatsInProcess`, the same
+  dispatcher kernels run in-process as the worker fallback
+  (`../../lines/projection.ts` / `../../gsplats/projection.ts` export
+  only the empty-payload factories).
 - `../../loaders/spatial-query/tolerance-computer.ts` — geometry-aware
   per-dim tolerance used by `processLinesData` (imported via the
   `../../loaders` index).

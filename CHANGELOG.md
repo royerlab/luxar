@@ -6,6 +6,43 @@ All notable changes to Luxar are documented in this file.
 
 ### July 2026
 
+#### Changed — gsplat demo LFS baselines upgraded to format v3.2 + AUTO quantization; cells3d demo resurrected (PR #505)
+
+- All 19 precomputed `.gsplats.zarr` demo baselines shipped via Git LFS were
+  rewritten from format v3.0 (float32) to v3.2 with AUTO (uint16 Cholesky)
+  quantization — a lossless write-time `reencode` (no refit), shrinking the
+  bundled demo data ~2.7× (573 MB → 212 MB).
+- `demo_gsplats_3d_cells3d_multichannel.py` is resurrected as a BOP-LUT
+  layers demo (3D multi-channel cells3d).
+
+#### Fixed — script tidying: `reencode_gsplat_demos.py` and `calibrate_gsplat_demos.py` (PRs #506, #508)
+
+- `reencode_gsplat_demos.py`: docstring, mypy-clean, robustness improvements.
+- `calibrate_gsplat_demos.py`: cells3d calibration parity fix; mypy-clean.
+
+#### Added — new spectacular-science gsplat + Lines demos (PRs #496, #497, #500, #502)
+
+- **Cryo-EM giant virus capsid** (`demo_gsplats_3d_cryoem_virus.py`): Gaussian
+  splats a real EMDB density map (EMD-5384, PBCV-1) — the microscopy splat
+  pipeline applied to structural biology.
+- **Visible Human head** (`demo_gsplats_3d_visible_human_head.py`): true-color
+  anatomy from NLM cryosection photographs; luminance fit + per-splat RGB
+  sampled from the original color volume.
+- **3D interstellar dust** (`demo_gsplats_3d_milky_way_dust.py`): the Leike &
+  Enßlin (2020) solar-neighborhood dust cube fit to Gaussian splats.
+- **4D two-channel neuromast timelapse** (`demo_gsplats_4d_neuromast_2ch.py`):
+  membranes + nuclei as layers.
+- **Single-cell 3D genome (Dip-C)** (`demo_dipc_3d_genome.py`): chromosomes as
+  3D Lines, with a non-displayed `haplotype` dimension to scrub maternal /
+  paternal copies.
+
+#### Fixed — viewer works over plain HTTP (PR #501)
+
+- The viewer crashed on any plain-HTTP / non-localhost origin because
+  `crypto.subtle` is undefined outside a secure context (used for content-hash
+  cache keys). A vendored SHA-256 fallback is now used when `crypto.subtle` is
+  unavailable, so the viewer loads over LAN / Tailscale HTTP.
+
 #### Fixed — seven viewer rendering-engine bugs from a WebGL-path deep read (PRs #503, #507)
 
 A full read of the viewer's Three.js WebGL rendering path surfaced seven

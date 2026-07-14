@@ -63,12 +63,17 @@ ui/
 ├── rendering-controls/
 │   ├── focus-manager.ts, cinematic-mode.ts, apply-settings.ts,
 │   │ sync-current-state.ts, settings-persistence.ts,
-│   │ clipping-display.ts, controls-utils.ts, fov-utils.ts, types.ts
+│   │ clipping-display.ts, controls-utils.ts, fov-utils.ts,
+│   │ folder-icons.ts, types.ts
 │   └── setup/                          # *-setup.ts files
 │       ├── camera-setup.ts, hdr-setup.ts,
 │       │ anti-aliasing-setup.ts, post-processing-setup.ts,
 │       │ performance-setup.ts, theme-setup.ts
 ├── recording-panel/
+│   ├── session.ts                      # RecordingSession — shared scaffolding
+│   ├── capture-strategy.ts             # CaptureStrategy interface + SessionState view
+│   ├── screenshot-strategy.ts, video-recording-strategy.ts,
+│   │ offline-capture-strategy.ts       # per-kind capture strategies
 │   ├── types.ts, media-utilities.ts, video-codec-selection.ts,
 │   │ animation-sync.ts, overlay-compositor.ts, screenshot-exporter.ts,
 │   │ zip-sequence-capture.ts, gui-builder.ts
@@ -99,6 +104,12 @@ ui/
 │   └── ui-component.ts
 ├── help-overlay/                       # Help overlay's private helper
 │   └── focus-trap.ts                   # Tab/Shift+Tab focus trap (also used by error-overlay)
+├── control-rail/                       # Always-visible left activity rail (folder module)
+│   ├── index.ts (ControlRail), rail-overlay.ts (flyout + popover lifecycle),
+│   │ icons.ts (RAIL_ICONS), dom-helpers.ts, types.ts
+├── rail-panels/                        # Rich popovers hosted by the control rail
+│   ├── settings-popover.ts, performance-popover.ts,
+│   │ navigation-popover.ts, home-popover.ts, popover-gui.ts
 └── panels/                             # Reserved namespace for a future shared panel framework (currently empty)
 ```
 
@@ -300,17 +311,12 @@ Each stop doubles or halves the brightness, providing perceptually uniform contr
 
 **Panel Layout:**
 
+Navigation controls (control type, orbit/fly parameters) are **not** in this
+panel — they live in the Navigation rail popover
+(`rail-panels/navigation-popover.ts`; navigation is not a rendering concern).
+
 ```
 Rendering Controls
-├── Navigation
-│   ├── Control Type (Orbit|Fly|Ortho)
-│   ├── Orbit Controls
-│   │   ├── Auto Rotate □
-│   │   └── Rotation Speed (slider)
-│   └── Fly Controls
-│       ├── Movement Speed (slider)
-│       ├── Rotation Speed (slider)
-│       └── Inertial Mode □
 ├── Camera
 │   ├── FOV Preset (dropdown: 28mm/35mm/50mm/85mm/135mm/Custom)
 │   ├── Field of View (slider, 10°-200°)
@@ -700,9 +706,9 @@ ThemeManager.getInstance().onChange((theme) => {
 
 **Via UI**:
 
-- Press `R` to open Rendering Controls
-- Expand "🎨 Theme" folder
-- Select theme from dropdown
+- Open the Settings popover (gear button on the control rail)
+- Select theme from the "Theme" dropdown
+  (`rail-panels/settings-popover.ts` → `setupThemeControls`)
 
 **Via URL**:
 
@@ -1165,8 +1171,13 @@ _For implementation details, see the source files in this directory._
 ## Subpackages
 
 Each sibling folder holds the private helpers for the public-API file
-of the same name at this folder's root. All have their own README:
+of the same name at this folder's root (plus the folder-modules
+`control-rail/` and `rail-panels/`). Most have their own README:
 
+- `control-rail/` — Always-visible left-edge activity rail
+  (`ControlRail`, `RailOverlay` flyout/popover lifecycle, `RAIL_ICONS`,
+  DOM helpers); one button per panel, wired to the exact commands the
+  keyboard shortcuts fire. See §0 above.
 - [`data-loading-monitor/`](./data-loading-monitor/README.md) — Internals
   for `data-loading-monitor.ts` (templates, advisor, event queue,
   polling loop, timing panel; `metrics/` and `tabs/` helpers).
@@ -1190,6 +1201,9 @@ of the same name at this folder's root. All have their own README:
   colormap legend).
 - [`panels/`](./panels/README.md) — Reserved namespace for a future
   shared panel framework. Currently empty.
+- [`rail-panels/`](./rail-panels/README.md) — Rich control popovers
+  hosted by the control rail (Settings, Performance, Navigation, Home
+  builders plus the shared `makePopoverGui` helper).
 - [`recording-panel/`](./recording-panel/README.md) — Recording panel
   internals (capture drivers, GUI construction, media utilities,
   overlay compositor, sequence/ZIP exporters).

@@ -186,6 +186,7 @@ Single source of truth for every `localStorage` key the viewer touches. Keys are
 
 - `StorageKeys.theme` — Active theme id (`'dark' | 'light' | 'frosted-glass' | 'liquid-glass'`)
 - `StorageKeys.debug` — Persisted debug-mode toggle (mirrors `?debug` URL param)
+- `StorageKeys.settings` — Global viewer preferences (`'luxar.settings'`, the Settings popover; see `config/user-settings.ts`)
 - `StorageKeys.rendering(sceneId)` — Per-scene rendering settings; segment is sanitized to `[a-zA-Z0-9-_]`
 
 ### viewer-container.ts - Mount-Root Registry

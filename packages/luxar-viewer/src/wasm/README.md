@@ -138,18 +138,16 @@ wasm/
 ├── types.ts              — WasmModule interface (unified API)
 ├── typescript/           — Pure TypeScript fallback
 │   ├── index.ts          — TypeScriptFallback class
-│   ├── points.ts         — Point visibility
-│   ├── lines.ts          — Line visibility
-│   ├── lines-clipping.ts — Line clipping
-│   ├── gsplats.ts        — GSplat visibility
-│   ├── gsplats-processing.ts — GSplat processing
 │   ├── decode.ts         — Array decoding
 │   ├── effective-radii.ts — Radius calculations
+│   ├── gsplats-processing.ts — GSplat processing
+│   ├── lines-clipping.ts — Line clipping
 │   └── projection.ts     — nD → 3D projection
 └── rust/                 — Rust source (parallel to TypeScript)
     ├── Cargo.toml
+    ├── README.md         — Crate overview + build/test commands
     └── src/              — Mirror of TypeScript modules in Rust
-        └── README.md     — Detailed Rust/WASM build docs
+        └── README.md     — Detailed per-module kernel docs
 ```
 
 ## Subpackages
