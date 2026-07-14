@@ -347,6 +347,30 @@ describe('SceneLoader', () => {
     });
   });
 
+  describe('updateView — dispose race', () => {
+    it('resolves (does not hang) when called after dispose while the update lock is held', async () => {
+      // Reproduce the dispose race: a refinement pass holds the update lock
+      // (_updateInProgress) when dispose() runs, so a late updateView — e.g. an
+      // in-flight dimension-animation tick landing during the dispose() await —
+      // takes the "queue and park a waiter" branch. dispose() flushes waiters
+      // once BEFORE teardown, and the refinement loop's isActive-return exit
+      // hands off via noopReleaseLock without draining, so nothing ever resolves
+      // that parked waiter. The _disposed guard at updateView's head must settle
+      // it immediately instead (resolve-only, never reject).
+      (sceneLoader as unknown as { _updateInProgress: boolean })._updateInProgress = true;
+      await sceneLoader.dispose();
+
+      await expect(
+        Promise.race([
+          sceneLoader.updateView({ slicePosition: [0, 0, 0, 1] }),
+          new Promise<never>((_resolve, reject) =>
+            setTimeout(() => reject(new Error('updateView hung after dispose')), 1000)
+          ),
+        ])
+      ).resolves.toBeUndefined();
+    });
+  });
+
   describe('updateView — foreground preempts the t+1 shadow prefetch', () => {
     beforeEach(async () => {
       await sceneLoader.loadScene('http://localhost:8000/test.zarr');

@@ -127,7 +127,12 @@ export async function runGSplatsRefinement(ctx: GSplatsRefinementCtx): Promise<v
           const data = await loader.updateView(gsplatsViewState, session, ctx.signal);
           if (data) {
             const staged = await ctx.processGSplats(path, data, gsplatsViewState, session);
-            if (staged) ctx.commitGSplats(staged, session);
+            // Superseded/disposed while we were loading + processing: an abort
+            // landing during the async process round-trip is not a throw (so
+            // the AbortError catch below misses it). Skip the commit so no
+            // stale-slice geometry reaches the GPU — mirrors runAtomicCommit's
+            // signal.aborted guard on the main path (atomic-commit.ts).
+            if (staged && ctx.signal?.aborted !== true) ctx.commitGSplats(staged, session);
           }
         } finally {
           session?.end();
