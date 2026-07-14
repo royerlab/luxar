@@ -1,0 +1,41 @@
+{
+  "name": "cells3d_multichannel",
+  "status": "ok",
+  "k_min": 1000,
+  "k_max": 128000,
+  "n_grid": 10,
+  "preset": "n2s",
+  "aggregate": "max",
+  "recommended_k_star": 25398,
+  "per_sample": [
+    {
+      "label": "cells3d_multichannel__ch0",
+      "k_star": 25398,
+      "type": "peak",
+      "confidence_db": 0.19322264257993993,
+      "volume_shape": [
+        60,
+        256,
+        256
+      ],
+      "elapsed_seconds": 2559.0035679377615,
+      "json_path": "scripts/calibration_results/cells3d_multichannel/cells3d_multichannel__ch0.json",
+      "noise_floor_psnr_db": 56.91843891189595
+    },
+    {
+      "label": "cells3d_multichannel__ch1",
+      "k_star": 25398,
+      "type": "peak",
+      "confidence_db": 0.033407980472503596,
+      "volume_shape": [
+        60,
+        256,
+        256
+      ],
+      "elapsed_seconds": 1899.379029191099,
+      "json_path": "scripts/calibration_results/cells3d_multichannel/cells3d_multichannel__ch1.json",
+      "noise_floor_psnr_db": 41.41836128545029
+    }
+  ],
+  "comment": "skimage cells3d 2-channel 60x256x256"
+}

@@ -326,22 +326,18 @@ def fit_timepoint(
 
         DEVICE = detect_device()
 
-    from luxar.gsplats import fit_progressive_gaussian_splats
+    from luxar.gsplats import fit_gaussian_splats
 
     aprint(
         f"  Fitting {label} (progressive: max_splats={MAX_SPLATS}, "
         f"{MAX_SPLATS_PER_PASS}/pass, {ITERS_PER_PASS} iters/pass)..."
     )
 
-    result = fit_progressive_gaussian_splats(
+    result = fit_gaussian_splats(
         volume,
-        max_splats=MAX_SPLATS,
-        max_splats_per_pass=MAX_SPLATS_PER_PASS,
-        iters_per_pass=ITERS_PER_PASS,
-        psnr_patience=PSNR_PATIENCE,
+        seeds=MAX_SPLATS,
         device=DEVICE,
         verbose=True,
-        enable_dynamic_ops=True,
         voxel_size=voxel_size,
     )
 

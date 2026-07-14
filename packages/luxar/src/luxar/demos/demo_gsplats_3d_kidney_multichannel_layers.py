@@ -147,7 +147,7 @@ from luxar.utils.paths import get_demos_output_dir
 # =============================================================================
 
 # Progressive fitting parameters
-MAX_SPLATS = 140000
+MAX_SPLATS = 75000
 MAX_SPLATS_PER_PASS = 28000
 ITERS_PER_PASS = 5000
 PSNR_PATIENCE = 0.1
@@ -292,7 +292,7 @@ def fit_channel(volume, channel_name, cache_file):
 
         DEVICE = detect_device()
 
-    from luxar.gsplats import fit_progressive_gaussian_splats
+    from luxar.gsplats import fit_gaussian_splats
 
     aprint(
         f"Fitting {channel_name} (progressive: "
@@ -300,15 +300,11 @@ def fit_channel(volume, channel_name, cache_file):
         f"iters_per_pass={ITERS_PER_PASS}, psnr_patience={PSNR_PATIENCE})..."
     )
 
-    result = fit_progressive_gaussian_splats(
+    result = fit_gaussian_splats(
         volume,
-        max_splats=MAX_SPLATS,
-        max_splats_per_pass=MAX_SPLATS_PER_PASS,
-        iters_per_pass=ITERS_PER_PASS,
-        psnr_patience=PSNR_PATIENCE,
+        seeds=MAX_SPLATS,
         device=DEVICE,
         verbose=True,
-        enable_dynamic_ops=True,
         # boundary_penalty=0.1,
         # clip_to_bounds=True,
         voxel_size=VOXEL_SIZE_ZYX,

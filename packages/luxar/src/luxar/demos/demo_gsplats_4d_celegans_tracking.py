@@ -95,7 +95,7 @@ from arbol import Arbol, aprint, asection
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
 from luxar.encoding import EncodingMode
 from luxar.gsplats.clahe import apply_clahe
-from luxar.gsplats.fit_progressive_gsplats import fit_progressive_gaussian_splats
+from luxar.gsplats import fit_gaussian_splats
 from luxar.gsplats.gsplat_data import GSplatData
 from luxar.utils.demos import (
     launch_viewer,
@@ -890,13 +890,9 @@ def fit_timepoint(
     # Pass voxel_size so GSplats account for the strong Z-anisotropy
     # (0.75 µm Z vs 0.15 µm XY = 5x).  output_space defaults to "real",
     # so centers come back in physical µm coordinates.
-    result = fit_progressive_gaussian_splats(
+    result = fit_gaussian_splats(
         volume,
-        max_splats=MAX_SPLATS,
-        max_splats_per_pass=MAX_SPLATS_PER_PASS,
-        iters_per_pass=ITERS_PER_PASS,
-        psnr_patience=PSNR_PATIENCE,
-        enable_dynamic_ops=True,
+        seeds=MAX_SPLATS,
         device=DEVICE,
         verbose=True,
         lr=0.01,

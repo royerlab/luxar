@@ -296,7 +296,7 @@ DEMOS: List[Dict[str, Any]] = [
         "name": "tribolium_embryo",
         "loader": _load_tribolium,
         "k_min": 2_000,
-        "k_max": 2_000_000,
+        "k_max": 1_000_000,
         "comment": "Light-sheet Tribolium embryo (large)",
     },
     {
@@ -319,14 +319,14 @@ DEMOS: List[Dict[str, Any]] = [
         "name": "cmu1_pathology",
         "loader": _load_cmu1_pathology_tile,
         "k_min": 1_000,
-        "k_max": 1_000_000,
+        "k_max": 4_000_000,
         "comment": "RGB H&E, per-tile (TILE_SIZE^2) crop per channel",
     },
     {
         "name": "codex_pancreas",
         "loader": _load_codex_pancreas_tile,
         "k_min": 1_000,
-        "k_max": 1_000_000,
+        "k_max": 4_000_000,
         "comment": "CODEX, per-tile (TILE_SIZE^2) crop per channel",
     },
 ]

@@ -115,7 +115,7 @@ CHANNELS = [
 ]
 
 # Fitting parameters (progressive)
-MAX_SPLATS = 510000
+MAX_SPLATS = 860000
 MAX_SPLATS_PER_PASS = 102000
 ITERS_PER_PASS = 3000
 PSNR_PATIENCE = 0.2
@@ -427,7 +427,7 @@ def fit_channel(
     Returns:
         Fitted GSplatData.
     """
-    from luxar.gsplats.fit_progressive_gsplats import fit_progressive_gaussian_splats
+    from luxar.gsplats import fit_gaussian_splats
 
     global DEVICE
     if DEVICE is None:
@@ -442,16 +442,12 @@ def fit_channel(
     )
     aprint(f"  Volume: {volume.shape}, Device: {DEVICE}")
 
-    result = fit_progressive_gaussian_splats(
+    result = fit_gaussian_splats(
         volume,
-        max_splats=MAX_SPLATS,
-        max_splats_per_pass=MAX_SPLATS_PER_PASS,
-        iters_per_pass=ITERS_PER_PASS,
-        psnr_patience=PSNR_PATIENCE,
+        seeds=MAX_SPLATS,
         device=DEVICE,
         voxel_size=voxel_size,
         verbose=True,
-        enable_dynamic_ops=True,
     )
 
     n_splats = len(result.amplitudes)
