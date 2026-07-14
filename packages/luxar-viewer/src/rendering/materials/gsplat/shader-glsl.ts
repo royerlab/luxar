@@ -126,27 +126,25 @@ export const GSPLAT_VERTEX_SHADER = /* glsl */ `
         // Fade starts at 50% of the limit and reaches ~0% AT the limit, so the
         // amplitude is negligible before the extent clamp (below) kicks in.
         // This avoids visible hard edges from clamped quads. Applies in BOTH
-        // projections: the extent CLAMP below runs unconditionally, so ortho
-        // previously showed hard-edged clamped rectangles with no fade
-        // (perspective-only was a leftover from when the clamp was too).
-        // Ortho projected size is depth-independent (divisor 1).
-        // CAVEAT (inherited, unchanged here): the maxLateralVar > 0.01
-        // gate below is an ABSOLUTE world-units² threshold, so splats
-        // with spatial sigma < 0.1 world units skip the fade entirely
-        // while the extent clamp still applies — deep-zoomed tiny-sigma
-        // (or nm-unit-scale) scenes can still show clamped rectangles.
-        float coverageFade = 1.0;
+        // projections (ortho projected size is depth-independent, divisor 1)
+        // and is computed UNCONDITIONALLY: below maxExtent*0.5 the smoothstep
+        // is 0 and the fade is a no-op, so no size gate is needed. (The former
+        // absolute maxLateralVar > 0.01 gate — a perf leftover from the
+        // pre-#51 two-stage near cull — skipped the fade for splats with
+        // spatial sigma < 0.1 world units while the extent clamp still
+        // applied, leaving hard-edged clamped rectangles on deep-zoomed
+        // tiny-sigma / nm-unit-scale scenes.) The 1e-8 floors match the
+        // TSL twin's expressions exactly.
+        float coverageFade;
         {
             float maxLateralVar = max(Sigma_cam[0][0], max(Sigma_cam[1][1], Sigma_cam[2][2]));
-            if (maxLateralVar > 0.01) {
-                float extentDivisor = (uIsOrtho == 1) ? 1.0 : zDepth;
-                float projectedExtent = uFx * sqrt(maxLateralVar) * uTruncate / extentDivisor;
-                float maxExtent = max(uResolution.x, uResolution.y) * uMaxExtentFactor;
-                coverageFade = 1.0 - smoothstep(maxExtent * 0.5, maxExtent, projectedExtent);
-                if (coverageFade < 0.01) {
-                    gl_Position = vec4(0.0, 0.0, -2.0, 1.0);
-                    return;
-                }
+            float extentDivisor = (uIsOrtho == 1) ? 1.0 : max(zDepth, 1e-8);
+            float projectedExtent = uFx * sqrt(max(maxLateralVar, 1e-8)) * uTruncate / extentDivisor;
+            float maxExtent = max(uResolution.x, uResolution.y) * uMaxExtentFactor;
+            coverageFade = 1.0 - smoothstep(maxExtent * 0.5, maxExtent, projectedExtent);
+            if (coverageFade < 0.01) {
+                gl_Position = vec4(0.0, 0.0, -2.0, 1.0);
+                return;
             }
         }
 

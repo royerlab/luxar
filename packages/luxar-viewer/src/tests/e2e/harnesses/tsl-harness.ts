@@ -330,7 +330,8 @@ function buildLineInstancedMesh(material: THREE.Material): THREE.Object3D {
  */
 function buildGSplatInstancedMesh(
   material: THREE.Material,
-  center: readonly [number, number, number] = [0, 0, 0]
+  center: readonly [number, number, number] = [0, 0, 0],
+  sigma: number = 0.1
 ): THREE.Object3D {
   // PRODUCTION assembly (createInstancedGSplatsMesh), not a hand-rolled
   // geometry: the previous version decorated the plain BufferGeometry
@@ -338,13 +339,13 @@ function buildGSplatInstancedMesh(
   // That accidentally rendered on the WebGLRenderer path but drew ZERO
   // pixels through WebGPURenderer — every gsplat parity variant's TSL
   // side was black and the tests passed vacuously under the tolerance.
-  // Isotropic: L = 0.1 · I, packed [L00, L10, L11, L20, L21, L22].
+  // Isotropic: L = sigma · I, packed [L00, L10, L11, L20, L21, L22].
   const mesh = createInstancedGSplatsMesh(
     {
       centers: new Float32Array([center[0], center[1], center[2]]),
-      cholesky01: new Float32Array([0.1, 0]),
-      cholesky23: new Float32Array([0.1, 0]),
-      cholesky45: new Float32Array([0, 0.1]),
+      cholesky01: new Float32Array([sigma, 0]),
+      cholesky23: new Float32Array([sigma, 0]),
+      cholesky45: new Float32Array([0, sigma]),
       amplitudes: new Float32Array([1.0]),
       colors: new Float32Array([1.0, 0.5, 0.25]),
       splatCount: 1,
@@ -841,6 +842,79 @@ const SHADER_REGISTRY: Record<string, RegistryEntry> = {
       return m;
     },
     buildMesh: (material) => buildGSplatInstancedMesh(material, [0, 0.5, 0]),
+  },
+  // TINY-SIGMA splat (sigma = 0.005, maxLateralVar = 2.5e-5) whose
+  // PROJECTED extent lands in the coverage-fade band: uFx = 3200 →
+  // projectedExtent = 3200·0.005·3 = 48 px, band (32, 64) → fade 0.5.
+  // Guards the fade being computed UNCONDITIONALLY: the former
+  // maxLateralVar > 0.01 gate skipped it for sub-0.1-sigma splats, so
+  // this splat rendered at FULL amplitude (peak ~255) instead of the
+  // faded ~127. Both backends shared the gate, so plain parity is
+  // blind — the spec also asserts the ABSOLUTE peak brightness.
+  'gsplat-tiny-sigma-fade': {
+    source: GSPLAT_SOURCE,
+    buildUniforms: () => ({
+      uResolution: { value: new THREE.Vector2(64, 64) },
+      uFx: { value: 3200.0 },
+      uFy: { value: 3200.0 },
+      uTruncate: { value: 3.0 },
+      uTruncateSq: { value: 9.0 },
+      uRayIntegralFactor: { value: 2.433 },
+      uProjectionMode: { value: 1 },
+      uIsOrtho: { value: 1 },
+      uNearCull: { value: 0.01 },
+      uMaxExtentFactor: { value: 1.0 },
+      uOpacity: { value: 1.0 },
+      uInvGamma: { value: 1.0 / 2.2 },
+      uIntensity: { value: 1.0 },
+      uOffset: { value: 0.0 },
+      uShiftC: { value: Math.exp(-0.5 * 9) },
+      uInvOneMinusC: { value: 1.0 / (1.0 - Math.exp(-0.5 * 9)) },
+    }),
+    buildTSLMaterial: (uniforms) => {
+      const m = gsplatWebGPUFactory(buildGSplatTSLNodesFromUniforms(uniforms), {
+        blendingMode: 'max',
+      }) as unknown as THREE.Material;
+      m.transparent = false;
+      m.blending = THREE.NoBlending;
+      return m;
+    },
+    buildMesh: (material) => buildGSplatInstancedMesh(material, [0, 0, 0], 0.005),
+  },
+  // TINY-SIGMA splat pushed PAST the fade band (uFx = 12800 →
+  // projectedExtent = 192 px > maxExtent = 64) — the coverage cull must
+  // reject the vertex entirely. Pre-fix, the gate skipped the fade and
+  // the unconditional extent clamp squashed the 192-px quad into a
+  // full-intensity hard-edged rectangle (the deep-zoom artifact).
+  'gsplat-tiny-sigma-reject': {
+    source: GSPLAT_SOURCE,
+    buildUniforms: () => ({
+      uResolution: { value: new THREE.Vector2(64, 64) },
+      uFx: { value: 12800.0 },
+      uFy: { value: 12800.0 },
+      uTruncate: { value: 3.0 },
+      uTruncateSq: { value: 9.0 },
+      uRayIntegralFactor: { value: 2.433 },
+      uProjectionMode: { value: 1 },
+      uIsOrtho: { value: 1 },
+      uNearCull: { value: 0.01 },
+      uMaxExtentFactor: { value: 1.0 },
+      uOpacity: { value: 1.0 },
+      uInvGamma: { value: 1.0 / 2.2 },
+      uIntensity: { value: 1.0 },
+      uOffset: { value: 0.0 },
+      uShiftC: { value: Math.exp(-0.5 * 9) },
+      uInvOneMinusC: { value: 1.0 / (1.0 - Math.exp(-0.5 * 9)) },
+    }),
+    buildTSLMaterial: (uniforms) => {
+      const m = gsplatWebGPUFactory(buildGSplatTSLNodesFromUniforms(uniforms), {
+        blendingMode: 'max',
+      }) as unknown as THREE.Material;
+      m.transparent = false;
+      m.blending = THREE.NoBlending;
+      return m;
+    },
+    buildMesh: (material) => buildGSplatInstancedMesh(material, [0, 0, 0], 0.005),
   },
   // GSplat with the gamma==1 fast path enabled. Same geometry as `gsplat`
   // but uInvGamma=1 + `gammaOne: true`, so the fragment-stage color pow()

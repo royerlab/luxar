@@ -105,21 +105,21 @@ export const GSPLAT_PICK_VERTEX_SHADER = /* glsl */ `
 
         // Coverage fade applies in BOTH projections (matches the visual
         // shader — ortho projected size is depth-independent, divisor 1)
-        // so pickability tracks what is actually visible. Same inherited
-        // caveat as the visual shader: the absolute maxLateralVar > 0.01
-        // gate skips the fade for sigma < 0.1 world-unit splats.
-        float coverageFade = 1.0;
+        // so pickability tracks what is actually visible. Computed
+        // UNCONDITIONALLY (visual twin updated in lockstep): below
+        // maxExtent*0.5 the smoothstep is 0 and the fade is a no-op, so
+        // no size gate is needed — the former maxLateralVar > 0.01 gate
+        // skipped the fade for sigma < 0.1 world-unit splats.
+        float coverageFade;
         {
             float maxLateralVar = max(Sigma_cam[0][0], max(Sigma_cam[1][1], Sigma_cam[2][2]));
-            if (maxLateralVar > 0.01) {
-                float extentDivisor = (uIsOrtho == 1) ? 1.0 : zDepth;
-                float projectedExtent = uFx * sqrt(maxLateralVar) * uTruncate / extentDivisor;
-                float maxExtent = max(uResolution.x, uResolution.y) * uMaxExtentFactor;
-                coverageFade = 1.0 - smoothstep(maxExtent * 0.5, maxExtent, projectedExtent);
-                if (coverageFade < 0.01) {
-                    gl_Position = vec4(0.0, 0.0, -2.0, 1.0);
-                    return;
-                }
+            float extentDivisor = (uIsOrtho == 1) ? 1.0 : max(zDepth, 1e-8);
+            float projectedExtent = uFx * sqrt(max(maxLateralVar, 1e-8)) * uTruncate / extentDivisor;
+            float maxExtent = max(uResolution.x, uResolution.y) * uMaxExtentFactor;
+            coverageFade = 1.0 - smoothstep(maxExtent * 0.5, maxExtent, projectedExtent);
+            if (coverageFade < 0.01) {
+                gl_Position = vec4(0.0, 0.0, -2.0, 1.0);
+                return;
             }
         }
 

@@ -82,12 +82,7 @@ function nonUniformPixelCount(pixels: number[]): number {
   const a0 = pixels[3];
   let n = 0;
   for (let i = 0; i < pixels.length; i += 4) {
-    if (
-      pixels[i] !== r0 ||
-      pixels[i + 1] !== g0 ||
-      pixels[i + 2] !== b0 ||
-      pixels[i + 3] !== a0
-    ) {
+    if (pixels[i] !== r0 || pixels[i + 1] !== g0 || pixels[i + 2] !== b0 || pixels[i + 3] !== a0) {
       n++;
     }
   }
@@ -112,10 +107,7 @@ function assertBothRendered(glsl: number[], tsl: number[], name: string): void {
   // The per-covered metric treats each buffer's own first pixel as its
   // background, so a cross-backend BACKGROUND divergence (clear color /
   // output transform drift) would be invisible to it. Pin equality here.
-  expect(
-    glsl.slice(0, 4),
-    `${name}: backgrounds differ between backends`
-  ).toEqual(tsl.slice(0, 4));
+  expect(glsl.slice(0, 4), `${name}: backgrounds differ between backends`).toEqual(tsl.slice(0, 4));
 }
 
 /**
@@ -553,6 +545,60 @@ test.describe('TSL ↔ GLSL shader parity', () => {
       diff,
       `GSplat-offcenter parity: mean abs diff ${diff.toFixed(2)} on 0-255 scale.`
     ).toBeLessThan(3.0);
+  });
+
+  test('gsplat-tiny-sigma-fade: sub-0.1-sigma splat in the fade band renders at HALF amplitude', async ({
+    page,
+  }) => {
+    await bootHarness(page);
+
+    const glslPixels = await runGLSL(page, 'gsplat-tiny-sigma-fade');
+    const tslResult = await runTSL(page, 'gsplat-tiny-sigma-fade');
+
+    assertBothRendered(glslPixels, tslResult.pixels, 'gsplat-tiny-sigma-fade');
+    expect(
+      meanAbsDiffPerCoveredPixel(glslPixels, tslResult.pixels),
+      'gsplat-tiny-sigma-fade: per-covered-pixel parity'
+    ).toBeLessThan(2.0);
+
+    // ABSOLUTE brightness assertion — parity alone is blind to this
+    // bug because BOTH backends shared the maxLateralVar > 0.01 gate.
+    // projectedExtent = uFx·sigma·truncate = 3200·0.005·3 = 48 px sits
+    // mid-band (32, 64) → coverageFade = 0.5 → red-channel peak ≈ 127.
+    // Pre-fix the gate skipped the fade for this sigma and the peak
+    // saturated at ~255.
+    let peak = 0;
+    for (let i = 0; i < glslPixels.length; i += 4) {
+      if (glslPixels[i] > peak) peak = glslPixels[i];
+    }
+    expect(
+      peak,
+      `tiny-sigma splat in the fade band must be coverage-faded (~50%); ` +
+        `red peak ${peak} implies the fade was skipped`
+    ).toBeLessThan(200);
+    expect(peak).toBeGreaterThan(60); // sanity: still visibly rendered
+  });
+
+  test('gsplat-tiny-sigma-reject: sub-0.1-sigma splat past the fade band is coverage-culled on both backends', async ({
+    page,
+  }) => {
+    await bootHarness(page);
+
+    const glslPixels = await runGLSL(page, 'gsplat-tiny-sigma-reject');
+    const tslResult = await runTSL(page, 'gsplat-tiny-sigma-reject');
+
+    // projectedExtent = 12800·0.005·3 = 192 px > maxExtent = 64 → the
+    // coverage cull rejects the vertex. Pre-fix, the gate skipped the
+    // fade and the unconditional extent clamp rendered a full-intensity
+    // hard-edged rectangle (the deep-zoom artifact this guards).
+    expect(
+      nonUniformPixelCount(glslPixels),
+      'GLSL: tiny-sigma splat past the fade band must be culled, not clamped to a hard rectangle'
+    ).toBe(0);
+    expect(
+      nonUniformPixelCount(tslResult.pixels),
+      'TSL: tiny-sigma splat past the fade band must be culled, not clamped to a hard rectangle'
+    ).toBe(0);
   });
 
   test('gsplat-normal-premult: LUXAR_NORMAL_PREMULT coverage alpha matches TSL normal branch', async ({

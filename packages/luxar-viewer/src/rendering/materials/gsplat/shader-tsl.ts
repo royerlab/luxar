@@ -254,29 +254,26 @@ export function gsplatWebGPUFactory(
       .toVar();
     const depthFadeReject: TSLNode = depthFade.lessThan(0.01);
 
-    // Coverage fade — gated on the max diagonal variance vs viewport
-    // extent; applies in BOTH projections (see below).
+    // Coverage fade — computed UNCONDITIONALLY (GLSL twin updated in
+    // lockstep): below maxExtent*0.5 the smoothstep is 0 and the fade
+    // is a no-op, so no size gate is needed. The former absolute
+    // maxLateralVar > 0.01 gate skipped the fade for splats with
+    // spatial sigma < 0.1 world units while the extent clamp still
+    // applied (hard-edged clamped rectangles on deep zoom). Applies
+    // in BOTH projections: ortho projected size is depth-independent
+    // (divisor 1).
     const maxLateralVar: TSLNode = max(
       SigmaCam.element(int(0)).element(int(0)),
       max(SigmaCam.element(int(1)).element(int(1)), SigmaCam.element(int(2)).element(int(2)))
     ).toVar();
-    // Coverage fade applies in BOTH projections (GLSL twin updated in
-    // lockstep): ortho projected size is depth-independent (divisor 1).
-    // Same inherited caveat as the GLSL twin: the absolute
-    // maxLateralVar > 0.01 gate skips the fade for splats with spatial
-    // sigma < 0.1 world units while the extent clamp still applies.
     const isOrtho: TSLNode = int(uIsOrtho).equal(int(1)).toVar();
     const projectedExtent: TSLNode = uFx
       .mul(sqrt(max(maxLateralVar, float(1e-8))))
       .mul(uTruncate)
       .div(isOrtho.select(float(1.0), max(zDepth, float(1e-8))));
     const maxExtent: TSLNode = max(uResolution.x, uResolution.y).mul(uMaxExtentFactor);
-    const coverageFadeRaw: TSLNode = float(1.0).sub(
-      smoothstep(maxExtent.mul(0.5), maxExtent, projectedExtent)
-    );
-    const coverageFade: TSLNode = maxLateralVar
-      .greaterThan(0.01)
-      .select(coverageFadeRaw, float(1.0))
+    const coverageFade: TSLNode = float(1.0)
+      .sub(smoothstep(maxExtent.mul(0.5), maxExtent, projectedExtent))
       .toVar();
     const coverageFadeReject: TSLNode = coverageFade.lessThan(0.01);
 
