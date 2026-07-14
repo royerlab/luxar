@@ -52,3 +52,56 @@ def test_hilbert_is_permutation_equivariant(
     base = hilbert_encode_nd(coords, bits_per_dim=16)
     permuted = hilbert_encode_nd(coords[perm_arr], bits_per_dim=16)
     np.testing.assert_array_equal(permuted, base[perm_arr])
+
+
+# --- numba path vs numpy-fallback parity -------------------------------------
+# The encoders have a Numba-JIT fast path and a pure-NumPy fallback (used when
+# Numba is unavailable). With Numba installed the property tests above only
+# exercise the JIT path; these deterministic tests force the fallback and assert
+# it produces byte-identical codes — so the fallback is verified AND kept in
+# parity with the JIT kernel.
+
+import luxar.io.ordering as _ordering  # noqa: E402
+
+
+def _encode_forcing_numpy_fallback(fn, coords: np.ndarray) -> np.ndarray:
+    """Run ``fn`` with both Numba kernels forced OFF (pure-NumPy path)."""
+    saved = (_ordering._morton_numba_kernel, _ordering._hilbert_numba_kernel)
+    try:
+        _ordering._morton_numba_kernel = False
+        _ordering._hilbert_numba_kernel = False
+        return fn(coords, bits_per_dim=16)
+    finally:
+        _ordering._morton_numba_kernel, _ordering._hilbert_numba_kernel = saved
+
+
+def _encode_forcing_numba(fn, coords: np.ndarray) -> np.ndarray:
+    """Run ``fn`` with the kernels reset to None so the JIT path lazy-loads
+    (falls back to NumPy only if Numba is genuinely unavailable)."""
+    saved = (_ordering._morton_numba_kernel, _ordering._hilbert_numba_kernel)
+    try:
+        _ordering._morton_numba_kernel = None
+        _ordering._hilbert_numba_kernel = None
+        return fn(coords, bits_per_dim=16)
+    finally:
+        _ordering._morton_numba_kernel, _ordering._hilbert_numba_kernel = saved
+
+
+def test_morton_numba_numpy_parity() -> None:
+    """morton: JIT path and NumPy fallback yield byte-identical codes."""
+    rng = np.random.default_rng(0)
+    coords = rng.integers(0, 2**16, size=(256, 3), dtype=np.int64)
+    np.testing.assert_array_equal(
+        _encode_forcing_numpy_fallback(morton_encode_nd, coords),
+        _encode_forcing_numba(morton_encode_nd, coords),
+    )
+
+
+def test_hilbert_numba_numpy_parity() -> None:
+    """hilbert: JIT path and NumPy fallback yield byte-identical codes."""
+    rng = np.random.default_rng(1)
+    coords = rng.integers(0, 2**16, size=(256, 3), dtype=np.int64)
+    np.testing.assert_array_equal(
+        _encode_forcing_numpy_fallback(hilbert_encode_nd, coords),
+        _encode_forcing_numba(hilbert_encode_nd, coords),
+    )
