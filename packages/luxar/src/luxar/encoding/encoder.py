@@ -13,25 +13,14 @@ from typing import Any, Callable, Literal, Optional, Union
 import numpy as np
 import zarr
 
-from ._encoders.cholesky import (
-    COV_CERT_RELF_P95_MAX,
-    COV_CERT_SAMPLE_MAX,
-    CholeskyEncoderMixin,
-)
+from ._encoders.cholesky import CholeskyEncoderMixin
 from ._encoders.perchannel import PerChannelEncoderMixin
-from ._encoders.structural import StructuralEncoderMixin, _LutPlan
+from ._encoders.structural import StructuralEncoderMixin
 from .modes import EncodingMode
 from .registry import ArrayRefRegistry
 from .semantic_types import SemanticType
 
-# Back-compat re-exports: COV_CERT_* and _LutPlan historically lived in this
-# module; some tests still reference them via ``luxar.encoding.encoder``.
-__all__ = [
-    "ArrayEncoder",
-    "COV_CERT_RELF_P95_MAX",
-    "COV_CERT_SAMPLE_MAX",
-    "_LutPlan",
-]
+__all__ = ["ArrayEncoder"]
 
 
 class ArrayEncoder(
@@ -365,9 +354,6 @@ class ArrayEncoder(
                 zarr_group, name, data, mode, chunks, compressor, perchannel_bits
             ),
             SemanticType.INDEX: lambda: self._encode_index(
-                zarr_group, name, data, mode, chunks, compressor
-            ),
-            SemanticType.UNIT_VECTOR: lambda: self._encode_unit_vector(
                 zarr_group, name, data, mode, chunks, compressor
             ),
         }

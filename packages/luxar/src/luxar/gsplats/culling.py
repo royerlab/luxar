@@ -509,7 +509,8 @@ def _compute_per_splat_error(
     )
 
 
-# Keep the old public name as an alias for backwards compatibility
+# Public error-budget entry point (the private worker also serves the
+# fractional=True redundancy path).
 def compute_per_splat_deletion_error(
     centers: torch.Tensor,
     Ls: torch.Tensor,

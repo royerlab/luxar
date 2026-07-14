@@ -19,7 +19,7 @@ def calculate_intelligent_chunks(
     target_chunk_bytes: int = TARGET_CHUNK_BYTES,
     spatial_index_data: Optional[Dict[str, Any]] = None,
     *,
-    dtype: np.dtype = np.dtype(np.float32),
+    dtype: np.dtype,
 ) -> Tuple[int, ...]:
     """Calculate optimal chunk shape for a dataset.
 
@@ -27,18 +27,14 @@ def calculate_intelligent_chunks(
 
     The byte-target heuristic depends on dtype itemsize: a uint8 colors
     array of shape (N, 3) yields different optimal chunks than a float32
-    positions array of the same shape. CC-1-r: previous versions of this
-    helper accepted ``itemsize: int = 4`` which silently under-chunked any
-    non-float32 caller that forgot to thread the parameter through. The
-    ``dtype=`` form makes the contract explicit at every call site.
+    positions array of the same shape, so ``dtype`` is required and
+    keyword-only — every call site passes the actual array dtype.
 
     Args:
         shape: Shape of the dataset.
         target_chunk_bytes: Target chunk payload size in bytes.
         spatial_index_data: Optional ordering data (with chunk_size).
-        dtype: NumPy dtype of the array being chunked. Defaults to float32
-            for backwards compatibility but every call site should pass the
-            actual array dtype explicitly.
+        dtype: NumPy dtype of the array being chunked.
 
     Returns:
         Optimized chunk shape.

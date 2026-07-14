@@ -134,6 +134,26 @@ def test_integer_color_ranges_do_not_emit_hdr_warning() -> None:
             "Widths must be positive",
             "all_zeros",
         ),
+        # NaN values — caught by the shared validator's finite check
+        # (symmetric with radii; previously passed the positivity check
+        # silently because NaN comparisons are False)
+        (
+            lambda: np.full(100, np.nan, dtype=np.float32),
+            "NaN or Inf",
+            "nan_values",
+        ),
+        # Inf values
+        (
+            lambda: np.full(100, np.inf, dtype=np.float32),
+            "NaN or Inf",
+            "inf_values",
+        ),
+        # 2D array — widths must be one value per vertex
+        (
+            lambda: np.random.uniform(0.1, 2.0, (100, 1)).astype(np.float32),
+            "Expected 1D array",
+            "2d_array",
+        ),
     ],
     ids=lambda x: x if isinstance(x, str) else None,
 )
@@ -184,6 +204,26 @@ def test_valid_widths(tmp_path) -> None:
     decoder = ArrayDecoder()
     stored = decoder.decode(root["test/widths"], root)
     np.testing.assert_array_equal(stored, widths)
+
+
+def test_broadcast_width_array_accepted(tmp_path) -> None:
+    """A shape-(1,) broadcast widths array is accepted and applied to every
+    vertex — mirrors the Points radii broadcast contract (three-geometry
+    symmetry). Downstream (build_lines_ordering, the scalar writer) already
+    expands (1,) to n_vertices; the validator must not reject it."""
+    store = tmp_path / "broadcast_width.luxar.zarr"
+    with LuxarZarrCompiler(
+        store, encoding_mode=EncodingMode.PRECISION, enable_spatial_index=False
+    ) as compiler:
+        compiler.create_scene(dimensions=Dimensions.default_3d())
+        vertices = _polyline_vertices(100)
+        compiler.write_lines(
+            "test", vertices, widths=np.array([0.75], dtype=np.float32)
+        )
+
+    root = zarr.open_group(store, mode="r")
+    assert "test/widths" in root
+    assert float(root["test"].attrs["max_width"]) == pytest.approx(0.75)
 
 
 # =============================================================================
