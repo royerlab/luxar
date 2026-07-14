@@ -236,24 +236,35 @@ export class PointsBufferAdapter {
       }
     }
 
+    // BEST-fit, not first-fit — see the gsplats adapter for rationale.
+    let bestList: PooledBuffer[] | null = null;
+    let bestIndex = -1;
+    let bestCapacity = Infinity;
     for (const pooled of this.pointBuffers.values()) {
       for (let i = pooled.length - 1; i >= 0; i--) {
         const candidate = pooled[i];
         if (
           candidate.attributeTypes &&
           candidate.capacity >= pointCount &&
+          candidate.capacity < bestCapacity &&
           attributeTypesMatch(candidate.attributeTypes, types)
         ) {
-          pooled.splice(i, 1);
-          candidate.inUse = true;
-          candidate.lastUsedFrame = host.frameCount;
-          host.activeBuffers.set(nodeId, candidate);
-          host.stats.reuses++;
-          host.typeStats.points.reuses++;
-          host._lastAcquireRebuilt = true;
-          return preparePointsGeometryForDraw(candidate.geometry, pointCount);
+          bestList = pooled;
+          bestIndex = i;
+          bestCapacity = candidate.capacity;
         }
       }
+    }
+    if (bestList) {
+      const candidate = bestList[bestIndex];
+      bestList.splice(bestIndex, 1);
+      candidate.inUse = true;
+      candidate.lastUsedFrame = host.frameCount;
+      host.activeBuffers.set(nodeId, candidate);
+      host.stats.reuses++;
+      host.typeStats.points.reuses++;
+      host._lastAcquireRebuilt = true;
+      return preparePointsGeometryForDraw(candidate.geometry, pointCount);
     }
 
     host._lastAcquireRebuilt = true;

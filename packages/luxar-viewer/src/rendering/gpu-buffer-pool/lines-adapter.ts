@@ -137,20 +137,30 @@ export class LinesBufferAdapter {
       }
     }
 
+    // BEST-fit, not first-fit — see the gsplats adapter for rationale.
+    let bestList: PooledBuffer[] | null = null;
+    let bestIndex = -1;
+    let bestCapacity = Infinity;
     for (const pooled of this.lineBuffers.values()) {
       for (let i = pooled.length - 1; i >= 0; i--) {
         const candidate = pooled[i];
-        if (candidate.capacity >= segmentCount) {
-          pooled.splice(i, 1);
-          candidate.inUse = true;
-          candidate.lastUsedFrame = host.frameCount;
-          host.activeBuffers.set(nodeId, candidate);
-          host.stats.reuses++;
-          host.typeStats.lines.reuses++;
-          host._lastAcquireRebuilt = true;
-          return candidate.geometry as THREE.InstancedBufferGeometry;
+        if (candidate.capacity >= segmentCount && candidate.capacity < bestCapacity) {
+          bestList = pooled;
+          bestIndex = i;
+          bestCapacity = candidate.capacity;
         }
       }
+    }
+    if (bestList) {
+      const candidate = bestList[bestIndex];
+      bestList.splice(bestIndex, 1);
+      candidate.inUse = true;
+      candidate.lastUsedFrame = host.frameCount;
+      host.activeBuffers.set(nodeId, candidate);
+      host.stats.reuses++;
+      host.typeStats.lines.reuses++;
+      host._lastAcquireRebuilt = true;
+      return candidate.geometry as THREE.InstancedBufferGeometry;
     }
 
     host._lastAcquireRebuilt = true;

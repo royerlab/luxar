@@ -122,20 +122,33 @@ export class GSplatsBufferAdapter {
       }
     }
 
+    // BEST-fit, not first-fit: scan every pooled candidate and claim the
+    // smallest adequate one. Map iteration order is bucket-insertion
+    // order, so first-fit could pin an arbitrarily oversized buffer
+    // (e.g. a 52 MB 1M-capacity buffer) to a small node until release.
+    let bestList: PooledBuffer[] | null = null;
+    let bestIndex = -1;
+    let bestCapacity = Infinity;
     for (const pooled of this.gsplatBuffers.values()) {
       for (let i = pooled.length - 1; i >= 0; i--) {
         const candidate = pooled[i];
-        if (candidate.capacity >= splatCount) {
-          pooled.splice(i, 1);
-          candidate.inUse = true;
-          candidate.lastUsedFrame = host.frameCount;
-          host.activeBuffers.set(nodeId, candidate);
-          host.stats.reuses++;
-          host.typeStats.gsplats.reuses++;
-          host._lastAcquireRebuilt = true;
-          return candidate.geometry as THREE.InstancedBufferGeometry;
+        if (candidate.capacity >= splatCount && candidate.capacity < bestCapacity) {
+          bestList = pooled;
+          bestIndex = i;
+          bestCapacity = candidate.capacity;
         }
       }
+    }
+    if (bestList) {
+      const candidate = bestList[bestIndex];
+      bestList.splice(bestIndex, 1);
+      candidate.inUse = true;
+      candidate.lastUsedFrame = host.frameCount;
+      host.activeBuffers.set(nodeId, candidate);
+      host.stats.reuses++;
+      host.typeStats.gsplats.reuses++;
+      host._lastAcquireRebuilt = true;
+      return candidate.geometry as THREE.InstancedBufferGeometry;
     }
 
     host._lastAcquireRebuilt = true;
