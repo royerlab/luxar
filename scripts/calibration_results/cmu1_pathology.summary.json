@@ -2,48 +2,48 @@
   "name": "cmu1_pathology",
   "status": "ok",
   "k_min": 1000,
-  "k_max": 256000,
+  "k_max": 4000000,
   "n_grid": 10,
   "preset": "n2s",
   "aggregate": "max",
-  "recommended_k_star": 256000,
+  "recommended_k_star": 1591590,
   "per_sample": [
     {
       "label": "cmu1_pathology__ch0_tile",
-      "k_star": 256000,
-      "type": "signal_limited",
-      "confidence_db": 8.430985143476022,
+      "k_star": 633289,
+      "type": "peak",
+      "confidence_db": 0.1287329310374261,
       "volume_shape": [
         4096,
         4096
       ],
-      "elapsed_seconds": 343.95095327700255,
+      "elapsed_seconds": 1875.8530850959942,
       "json_path": "scripts/calibration_results/cmu1_pathology/cmu1_pathology__ch0_tile.json",
       "noise_floor_psnr_db": null
     },
     {
       "label": "cmu1_pathology__ch1_tile",
-      "k_star": 256000,
-      "type": "signal_limited",
-      "confidence_db": 11.418361791990442,
+      "k_star": 1591590,
+      "type": "peak",
+      "confidence_db": 0.11073617802368574,
       "volume_shape": [
         4096,
         4096
       ],
-      "elapsed_seconds": 387.0826090390037,
+      "elapsed_seconds": 1770.8638548371382,
       "json_path": "scripts/calibration_results/cmu1_pathology/cmu1_pathology__ch1_tile.json",
       "noise_floor_psnr_db": null
     },
     {
       "label": "cmu1_pathology__ch2_tile",
-      "k_star": 256000,
-      "type": "signal_limited",
-      "confidence_db": 9.692237876101842,
+      "k_star": 1591590,
+      "type": "peak",
+      "confidence_db": 0.2615330380387988,
       "volume_shape": [
         4096,
         4096
       ],
-      "elapsed_seconds": 319.61442046100274,
+      "elapsed_seconds": 1714.1872149263509,
       "json_path": "scripts/calibration_results/cmu1_pathology/cmu1_pathology__ch2_tile.json",
       "noise_floor_psnr_db": null
     }

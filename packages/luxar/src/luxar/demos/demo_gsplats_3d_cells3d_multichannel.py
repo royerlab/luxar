@@ -81,11 +81,8 @@ from luxar.utils.paths import get_demos_output_dir
 # Configuration
 # =============================================================================
 
-# Progressive fitting parameters
-MAX_SPLATS = 6000
-MAX_SPLATS_PER_PASS = 1000
-ITERS_PER_PASS = 3000
-PSNR_PATIENCE = 0.2
+# Fit parameters (fixed-K, seeds=K*)
+MAX_SPLATS = 25000
 
 # Voxel spacing (Z, Y, X) in micrometres for cells3d
 # Original: (0.29, 0.065, 0.065) µm, 4x downsampled in Y/X → (0.29, 0.26, 0.26) µm
@@ -98,6 +95,10 @@ CHANNELS = [
     {"index": 0, "name": "Membranes", "colormap": "bop_orange"},
     {"index": 1, "name": "Nuclei", "colormap": "bop_blue"},
 ]
+
+# Per-channel brightness multiplier applied before writing (raise for a
+# brighter render; additive blending across channels can saturate above ~0.6).
+LAYER_INTENSITY = 0.4
 
 # Cache directory
 CACHE_DIR = Path.home() / ".cache" / "luxar" / "gsplats_cells3d"
@@ -182,23 +183,16 @@ def fit_channel(volume, channel_name, cache_file):
 
         DEVICE = detect_device()
 
-    from luxar.gsplats import fit_progressive_gaussian_splats
+    from luxar.gsplats import fit_gaussian_splats
 
-    aprint(
-        f"Fitting {channel_name} (progressive: max_splats={MAX_SPLATS}, "
-        f"{MAX_SPLATS_PER_PASS}/pass, {ITERS_PER_PASS} iters/pass, "
-        f"psnr_patience={PSNR_PATIENCE})..."
-    )
+    aprint(f"Fitting {channel_name} (fixed-K joint fit: seeds={MAX_SPLATS})...")
 
-    result = fit_progressive_gaussian_splats(
+    result = fit_gaussian_splats(
         volume,
-        max_splats=MAX_SPLATS,
-        max_splats_per_pass=MAX_SPLATS_PER_PASS,
-        iters_per_pass=ITERS_PER_PASS,
-        psnr_patience=PSNR_PATIENCE,
+        seeds=MAX_SPLATS,
         device=DEVICE,
+        seed_method="edges",
         verbose=True,
-        enable_dynamic_ops=True,
         voxel_size=VOXEL_SIZE_ZYX,
     )
 
@@ -308,7 +302,7 @@ Controls:
                 with asection(f"Adding {ch_name} (layer, {colormap})"):
                     # Transform: shared centroid so channels stay aligned
                     gsplats = gsplats.translate(-shared_centroid)
-                    gsplats = gsplats.scale_intensity(0.1)
+                    gsplats = gsplats.scale_intensity(LAYER_INTENSITY)
 
                     n_splats = len(gsplats.amplitudes)
 

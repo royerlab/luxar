@@ -6,35 +6,35 @@
   "n_grid": 10,
   "preset": "n2s",
   "aggregate": "max",
-  "recommended_k_star": 40317,
+  "recommended_k_star": 21773,
   "per_sample": [
     {
       "label": "organoid_multichannel__ch0",
-      "k_star": 40317,
+      "k_star": 21773,
       "type": "peak",
-      "confidence_db": 0.009826118932480199,
+      "confidence_db": 0.011320608041508251,
       "volume_shape": [
         236,
         275,
         271
       ],
-      "elapsed_seconds": 439.8488735369756,
+      "elapsed_seconds": 2895.143052510917,
       "json_path": "scripts/calibration_results/organoid_multichannel/organoid_multichannel__ch0.json",
-      "noise_floor_psnr_db": 53.45517234291886
+      "noise_floor_psnr_db": 53.566643982397366
     },
     {
       "label": "organoid_multichannel__ch1",
-      "k_star": 11758,
-      "type": "plateau",
-      "confidence_db": 0.15668025603392977,
+      "k_star": 21773,
+      "type": "peak",
+      "confidence_db": 0.021674697926933106,
       "volume_shape": [
         236,
         275,
         271
       ],
-      "elapsed_seconds": 261.00747481000144,
+      "elapsed_seconds": 4926.801274930127,
       "json_path": "scripts/calibration_results/organoid_multichannel/organoid_multichannel__ch1.json",
-      "noise_floor_psnr_db": 50.15263796005225
+      "noise_floor_psnr_db": 50.413994476888895
     }
   ],
   "comment": "256^3 2-channel organoid"
