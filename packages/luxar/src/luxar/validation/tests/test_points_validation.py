@@ -58,6 +58,16 @@ def test_mismatched_colors(tmp_path) -> None:
             "colors: Contains 1 NaN or Inf",
         ),
         (
+            "colors_inf",
+            {"colors": np.array([[1.0, np.inf, 0.0]], dtype=np.float32)},
+            "colors: Contains 1 NaN or Inf",
+        ),
+        (
+            "radii_nan",
+            {"radii": np.array([np.nan], dtype=np.float32)},
+            "radii: Contains 1 NaN or Inf",
+        ),
+        (
             "radii_inf",
             {"radii": np.array([np.inf], dtype=np.float32)},
             "radii: Contains 1 NaN or Inf",
