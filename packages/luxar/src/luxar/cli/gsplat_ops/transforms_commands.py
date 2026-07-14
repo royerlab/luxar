@@ -1,7 +1,7 @@
-"""``luxar gsplat transforms`` commands (extracted from gsplat_commands.py).
+"""``luxar gsplat transforms`` commands.
 
 Each command is a plain function; ``register_transforms_commands(app)`` wires them onto
-the shared ``app_gsplat`` Typer (package-refactor-plan P3/P4/P6).
+the shared ``app_gsplat`` Typer.
 """
 
 from __future__ import annotations

@@ -1,4 +1,4 @@
-"""Tests for the new gsplat CLI commands: fit, convert, render, merge.
+"""Tests for the gsplat CLI commands: fit, convert, render, merge.
 
 Also tests the config system (presets, YAML loading, dump) and volume loader.
 """
@@ -494,8 +494,8 @@ class TestConvertCommand:
         self, runner: CliRunner, sample_gsplats: Path, tmp_path: Path
     ) -> None:
         """`gsplat convert` on a kind=partition file grafts the node tree into
-        the scene (review finding #2: it used to crash with a raw traceback
-        because GSplatData.load can't represent a partition root)."""
+        the scene. Regression: it used to crash with a raw traceback because
+        GSplatData.load can't represent a partition root."""
         part = tmp_path / "part.gsplats.zarr"
         assert (
             runner.invoke(

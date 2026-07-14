@@ -1,9 +1,8 @@
 """Tests for Gaussian-splat data validation.
 
-This module mirrors `test_points_validation.py` for GSplats geometry
-(audit G2 in `delme/test-audit-luxar-codebase/findings-global-pattern-sweep.md`
-and G1 in `python-core-validation`). Points/Lines/GSplats symmetry rule
-requires that every Points validation test has a parallel GSplats variant.
+This module mirrors `test_points_validation.py` for GSplats geometry. The
+Points/Lines/GSplats symmetry rule requires that every Points validation
+test has a parallel GSplats variant.
 
 For GSplats the per-splat scalar attributes are:
 - ``amplitudes`` (mandatory, must be non-negative — parallel to Points ``radii``
