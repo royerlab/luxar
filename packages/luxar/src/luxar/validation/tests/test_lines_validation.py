@@ -71,6 +71,11 @@ def test_mismatched_colors(tmp_path) -> None:
             "colors: Contains 1 NaN or Inf",
         ),
         (
+            "colors_inf",
+            {"colors": np.array([[1.0, np.inf, 0.0]], dtype=np.float32)},
+            "colors: Contains 1 NaN or Inf",
+        ),
+        (
             "sharpness_nan",
             {"sharpness": np.array([np.nan, 1.0], dtype=np.float32)},
             "sharpness: Contains 1 NaN or Inf",

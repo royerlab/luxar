@@ -96,6 +96,24 @@ def test_mismatched_colors(tmp_path) -> None:
             {"colors": np.array([[1.0, np.nan, 0.0]], dtype=np.float32)},
             "colors: Contains 1 NaN or Inf",
         ),
+        (
+            "colors_inf",
+            {"colors": np.array([[1.0, np.inf, 0.0]], dtype=np.float32)},
+            "colors: Contains 1 NaN or Inf",
+        ),
+        # Amplitudes NaN/Inf: a NaN would silently pass the `>= 0` check
+        # (nan < 0 is False) and corrupt the store — the bug class the
+        # Points/Lines size-scalar finiteness checks already catch.
+        (
+            "amplitudes_nan",
+            {"amplitudes": np.array([np.nan], dtype=np.float32)},
+            "amplitudes: Contains 1 NaN or Inf",
+        ),
+        (
+            "amplitudes_inf",
+            {"amplitudes": np.array([np.inf], dtype=np.float32)},
+            "amplitudes: Contains 1 NaN or Inf",
+        ),
     ],
 )
 def test_non_finite_gsplat_attributes_rejected(

@@ -3,7 +3,6 @@ Tests for the enhanced luxar CLI commands.
 """
 
 import json
-import threading
 from unittest.mock import patch
 
 import numpy as np
@@ -64,17 +63,15 @@ class TestViewerCommand:
         """Test basic viewer command."""
         mock_check.return_value = True
 
-        # Run in a thread to avoid blocking
-        def run_command() -> None:
-            result = runner.invoke(app, ["viewer", "--no-open"])
-            assert result.exit_code == 0
+        # _serve_viewer is mocked, so the command returns instead of blocking.
+        # Invoke synchronously so the exit-code assertion actually runs on the
+        # main thread — an assertion inside a daemon thread is swallowed by the
+        # threading runtime and can never fail the test.
+        result = runner.invoke(app, ["viewer", "--no-open"])
 
-        thread = threading.Thread(target=run_command)
-        thread.daemon = True
-        thread.start()
-        thread.join(timeout=0.5)
-
+        assert result.exit_code == 0, result.output
         mock_check.assert_called_once()
+        mock_serve.assert_called_once()
 
     @patch("luxar.cli.main.check_viewer_built")
     @patch("luxar.cli.main.build_viewer")
@@ -98,9 +95,18 @@ class TestViewerCommand:
         """Test viewer with data option."""
         mock_check.return_value = True
 
-        runner.invoke(app, ["viewer", "--data", str(sample_scene), "--no-open"])
-        # Both servers should be started
-        assert mock_data.called or mock_viewer.called  # At least one should be called
+        result = runner.invoke(
+            app, ["viewer", "--data", str(sample_scene), "--no-open"]
+        )
+
+        assert result.exit_code == 0, result.output
+        # The viewer server is started synchronously; the data server runs in a
+        # background thread (so mock_data is racy). Assert the viewer was served
+        # once AND received a non-None data_url pointing at the dataset — that
+        # proves --data was wired through without depending on thread timing.
+        mock_viewer.assert_called_once()
+        data_url = mock_viewer.call_args.args[2]
+        assert data_url is not None and sample_scene.name in data_url
 
 
 class TestDemoCommand:
@@ -223,13 +229,31 @@ class TestEnhancedServeCommand:
     @patch("luxar.cli.main.find_available_port", return_value=8000)
     @patch("luxar.cli.main.uvicorn.run")
     @patch("luxar.cli.main.open_browser_func")
-    def test_serve_with_open(
+    def test_serve_open_without_viewer_is_ignored(
         self, mock_browser, mock_uvicorn, _mock_port, runner, sample_scene
     ) -> None:
-        """Test serve with open browser option."""
+        """`serve --open` without `--viewer` is ignored — there is nothing to
+        open, so the browser is never launched and a warning is printed."""
         result = runner.invoke(app, ["serve", str(sample_scene), "--open"])
-        # Browser open might be called depending on timing
         assert result.exit_code == 0
+        mock_browser.assert_not_called()
+        assert "--open requires --viewer" in result.stdout
+
+    @patch("luxar.cli.main.find_available_port", return_value=8000)
+    @patch("luxar.cli.main.uvicorn.run")
+    @patch("luxar.cli.main.open_browser_func")
+    @patch("luxar.cli.main.check_viewer_built")
+    def test_serve_with_viewer_and_open_opens_browser(
+        self, mock_check, mock_browser, mock_uvicorn, _mock_port, runner, sample_scene
+    ) -> None:
+        """`serve --viewer --open` (viewer built) opens the browser exactly once
+        — the positive twin of test_serve_with_viewer_not_built_skips_open."""
+        mock_check.return_value = True
+        result = runner.invoke(
+            app, ["serve", str(sample_scene), "--viewer", "--open"]
+        )
+        assert result.exit_code == 0, result.output
+        mock_browser.assert_called_once()
 
     @patch("luxar.cli.main.find_available_port", return_value=8000)
     @patch("luxar.cli.main.uvicorn.run")
