@@ -1598,6 +1598,20 @@ export class SceneLoader {
     // against future refactors that share registries across scenes.
     this.lodGroupRegistry?.clear();
 
+    // Strip every mesh's `committedData` no-op stamp. The stamp holds the
+    // loader-returned source arrays (for gsplats, the full memoized LOD
+    // concat — potentially the whole CPU-side dataset) alive for as long
+    // as the MESH is reachable. Nulling `rootGroup` below is not enough:
+    // any longer-lived registry that retains a mesh (picking
+    // registrations, debug handles) would otherwise pin those arrays
+    // across dataset switches. Historically the stamp was only cleared
+    // on LOD demotion.
+    this.rootGroup?.traverse((obj) => {
+      if (obj.userData && 'committedData' in obj.userData) {
+        delete (obj.userData as { committedData?: unknown }).committedData;
+      }
+    });
+
     // Clear the orchestrator's nullable fields. The helper handled the
     // actual resource-release work; the references stay live across the
     // await so the helper can address them.

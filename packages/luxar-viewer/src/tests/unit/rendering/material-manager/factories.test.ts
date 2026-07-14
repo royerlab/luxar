@@ -113,8 +113,32 @@ describe('pointCacheKey', () => {
   });
 
   it('encodes the transparent flag t=1 for non-opaque, t=0 for opaque blending mode', () => {
-    expect(pointCacheKey({ ...basePoint, blendingMode: 'additive' }, 'glsl')).toMatch(/_t1$/);
-    expect(pointCacheKey({ ...basePoint, blendingMode: 'opaque' }, 'glsl')).toMatch(/_t0$/);
+    expect(pointCacheKey({ ...basePoint, blendingMode: 'additive' }, 'glsl')).toMatch(/_t1_dw0$/);
+    expect(pointCacheKey({ ...basePoint, blendingMode: 'opaque' }, 'glsl')).toMatch(/_t0_dw0$/);
+  });
+
+  it('normal-mode depthWrite flip (0.99) never shares a key across the flip, even inside one 1% bucket', () => {
+    // 0.985 and 0.994 both round to opacity bucket 99, but sit on
+    // opposite sides of the depthWrite predicate — first-requester-wins
+    // would hand one of them the wrong depth state.
+    const below = pointCacheKey({ ...basePoint, blendingMode: 'normal', opacity: 0.985 }, 'glsl');
+    const above = pointCacheKey({ ...basePoint, blendingMode: 'normal', opacity: 0.994 }, 'glsl');
+    expect(below).toMatch(/_o99_/);
+    expect(above).toMatch(/_o99_/);
+    expect(below).toMatch(/_dw0$/);
+    expect(above).toMatch(/_dw1$/);
+    expect(below).not.toBe(above);
+
+    // Non-normal modes have no opacity-derived depthWrite: same bucket
+    // → same key on both sides of 0.99.
+    const addBelow = pointCacheKey({ ...basePoint, opacity: 0.985 }, 'glsl');
+    const addAbove = pointCacheKey({ ...basePoint, opacity: 0.994 }, 'glsl');
+    expect(addBelow).toBe(addAbove);
+
+    // Lines share the discriminator.
+    const lBelow = lineCacheKey({ ...baseLine, blendingMode: 'normal', opacity: 0.985 }, 'glsl');
+    const lAbove = lineCacheKey({ ...baseLine, blendingMode: 'normal', opacity: 0.994 }, 'glsl');
+    expect(lBelow).not.toBe(lAbove);
   });
 
   it('encodes radiusScale into a bucket suffix (default = 1000)', () => {
@@ -143,8 +167,8 @@ describe('lineCacheKey', () => {
   });
 
   it('encodes the transparent flag the same as pointCacheKey', () => {
-    expect(lineCacheKey({ ...baseLine, blendingMode: 'opaque' }, 'glsl')).toMatch(/_t0$/);
-    expect(lineCacheKey({ ...baseLine, blendingMode: 'additive' }, 'glsl')).toMatch(/_t1$/);
+    expect(lineCacheKey({ ...baseLine, blendingMode: 'opaque' }, 'glsl')).toMatch(/_t0_dw0$/);
+    expect(lineCacheKey({ ...baseLine, blendingMode: 'additive' }, 'glsl')).toMatch(/_t1_dw0$/);
   });
 });
 

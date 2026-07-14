@@ -73,24 +73,35 @@ export function isNormalMode(mode: BlendingMode): boolean {
   return mode === 'normal';
 }
 
+/**
+ * The generic `normal`-mode depthWrite predicate: a (near-)fully-opaque
+ * normal layer writes depth so it occludes additive layers behind it.
+ * Single source of truth — the material caches key on this SAME
+ * predicate so two opacities on either side of the threshold can never
+ * share a cached material (1%-opacity buckets straddle 0.99: 0.985 and
+ * 0.994 both bucket to 99 but need different depthWrite).
+ */
+export function normalModeDepthWrite(opacity: number): boolean {
+  return opacity >= 0.99;
+}
+
 export interface CompleteBlendingState {
   blending: THREE.Blending;
   blendEquation: THREE.BlendingEquation;
   blendSrc: THREE.BlendingSrcFactor;
   blendDst: THREE.BlendingDstFactor;
-  /** Optional alpha-channel blending. Defaults to RGB equivalents. */
-  blendEquationAlpha?: THREE.BlendingEquation;
-  blendSrcAlpha?: THREE.BlendingSrcFactor;
-  blendDstAlpha?: THREE.BlendingDstFactor;
   depthTest: boolean;
   depthWrite: boolean;
   transparent: boolean;
   /**
    * Hint for shader RGB output composition. `max` mode needs RGB to
    * already include the soft kernel contribution because the framebuffer
-   * equation compares premultiplied contributions.
+   * equation compares premultiplied contributions. `premultiplied-alpha`
+   * (GSplat `normal` mode) means RGB carries the full premultiplied
+   * contribution AND alpha carries a clamped coverage term for
+   * `OneMinusSrcAlpha` destination attenuation.
    */
-  shaderOutputMode: 'alpha-weighted' | 'rgb-contribution' | 'opaque';
+  shaderOutputMode: 'alpha-weighted' | 'rgb-contribution' | 'opaque' | 'premultiplied-alpha';
 }
 
 /**
@@ -183,9 +194,57 @@ export function getCompleteBlendingState(
     blendSrc: THREE.SrcAlphaFactor,
     blendDst: THREE.OneMinusSrcAlphaFactor,
     depthTest: true,
-    depthWrite: opacity >= 0.99,
+    depthWrite: normalModeDepthWrite(opacity),
     transparent: true,
     shaderOutputMode: 'alpha-weighted',
+  };
+}
+
+/**
+ * GSplat-specific `normal`-mode blending state: premultiplied alpha-over.
+ *
+ * The gsplat fragment shader premultiplies intensity into RGB and (only
+ * in this mode) emits a clamped coverage alpha, so the source factor is
+ * `One`, not `SrcAlpha` (which would multiply the contribution by
+ * coverage a second time). This replaces the generic `normal` entry for
+ * gsplats, whose alpha-always-1 output made `normal` degenerate
+ * ("opaque dimmed by opacity") — see GSPLAT_DEPTH_SORTING_SPEC.md §3.
+ *
+ * Deliberate choices (each load-bearing):
+ * - `CustomBlending` with SYMMETRIC alpha channel (the material's
+ *   `blendEquationAlpha`/`blendSrcAlpha`/`blendDstAlpha` stay null):
+ *   separate alpha-channel blend state is exactly what trips a
+ *   `gl.getError()` flag under WebGPURenderer's WebGL2 bridge (see
+ *   materials/gsplat/material-tsl.ts). Alpha then composites as
+ *   `a_src + (1 - a_src)·a_dst` — correct coverage accumulation.
+ * - NEVER set `material.premultipliedAlpha` instead: on the TSL path
+ *   `NodeMaterial.setup()` auto-injects an output RGB×alpha transform
+ *   when that flag is set, double-premultiplying a shader that already
+ *   premultiplies (and desyncing GLSL vs TSL).
+ * - `depthWrite: false` unconditionally (unlike the generic `normal`
+ *   entry's `opacity >= 0.99` flip): a coverage-alpha splat fragment
+ *   with alpha as low as ~1e-4 survives the shader's discards, and
+ *   letting it write depth punches occlusion halos across everything
+ *   behind the splat's footprint. Sorted transparency never
+ *   depth-writes. Trade-off: a gsplat `normal` layer does not occlude
+ *   additive layers behind it.
+ *
+ * No `opacity` parameter — the state is opacity-independent by
+ * construction (depthWrite never flips).
+ *
+ * @returns The complete THREE.js material state for gsplat `normal`.
+ * @public
+ */
+export function getGSplatNormalBlendingState(): CompleteBlendingState {
+  return {
+    blending: THREE.CustomBlending,
+    blendEquation: THREE.AddEquation,
+    blendSrc: THREE.OneFactor,
+    blendDst: THREE.OneMinusSrcAlphaFactor,
+    depthTest: true,
+    depthWrite: false,
+    transparent: true,
+    shaderOutputMode: 'premultiplied-alpha',
   };
 }
 

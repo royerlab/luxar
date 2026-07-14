@@ -8,11 +8,17 @@ export const webglConfig: WebGLConfig = {
   // WebGL2 context attributes for canvas
   context: {
     alpha: false, // No transparency in canvas background
-    antialias: true, // Enable antialiasing for smoother edges
+    // The scene never renders to the backbuffer — everything goes through
+    // the HDR render target (renderTarget.samples controls real MSAA), so
+    // an antialiased backbuffer is a dead multisample allocation.
+    antialias: false,
     depth: true, // Enable depth buffer for 3D rendering
     stencil: false, // No stencil buffer needed (saves memory)
     powerPreference: 'high-performance' as const, // Request high-performance GPU
-    colorSpace: 'display-p3', // Wide color gamut for better colors
+    // NOTE: no `colorSpace` here — it is NOT a WebGL context attribute
+    // (drawing-buffer color space is `gl.drawingBufferColorSpace`) and the
+    // previous 'display-p3' entry was silently ignored. Output color
+    // handling lives in the HDR pipeline (post-processing-manager).
     preserveDrawingBuffer: false, // Don't preserve buffer (better performance)
     desynchronized: true, // Better performance with async updates
     premultipliedAlpha: true, // Standard alpha blending

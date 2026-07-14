@@ -64,15 +64,19 @@ describe('applyLensDistortion', () => {
     expect(out.y).toBeCloseTo(0.5, 6);
   });
 
-  it('matches the GLSL reference (parity contract with mega/shader.glsl.ts)', () => {
-    // GLSL formula from mega/shader.glsl.ts:118-127, ported verbatim:
+  it('is the flip-CONJUGATE of the GLSL reference (parity contract with mega/shader.glsl.ts)', () => {
+    // GLSL formula from mega/shader.glsl.ts (applyDistortion), ported
+    // verbatim INCLUDING the negated principalPoint.y / skew — the GLSL
+    // runs under WebGLRenderer's BOTTOM-UP fullscreen uv and applies
+    // the exact y-flip conjugation of this file's canonical TOP-DOWN
+    // map by negating the two flip-odd intrinsics:
     //   vec2 xn = 2.0 * (uv - 0.5);
     //   float r2 = dot(xn, xn);
     //   vec3 xDistorted = vec3((1.0 + distortionCoeff * r2) * xn, 1.0);
     //   mat3 kk = mat3(
     //     vec3(uFocalLength.x, 0.0, 0.0),
-    //     vec3(uSkew * uFocalLength.x, uFocalLength.y, 0.0),
-    //     vec3(uPrincipalPoint.x, uPrincipalPoint.y, 1.0)
+    //     vec3(-uSkew * uFocalLength.x, uFocalLength.y, 0.0),
+    //     vec3(uPrincipalPoint.x, -uPrincipalPoint.y, 1.0)
     //   );
     //   return (kk * xDistorted).xy * 0.5 + 0.5;
     function glslReference(
@@ -87,20 +91,21 @@ describe('applyLensDistortion', () => {
       const xdY = (1.0 + params.distortion.y * r2) * xnY;
       // mat3 stored column-major in GLSL; compute (kk · xDistorted).xy
       const kkX =
-        params.focalLength.x * xdX +
+        params.focalLength.x * xdX -
         params.skew * params.focalLength.x * xdY +
         params.principalPoint.x;
-      const kkY = params.focalLength.y * xdY + params.principalPoint.y;
+      const kkY = params.focalLength.y * xdY - params.principalPoint.y;
       return { x: kkX * 0.5 + 0.5, y: kkY * 0.5 + 0.5 };
     }
 
-    // Realistic-ish params: barrel distortion, focal length slightly < 1,
-    // off-centre principal point, small skew.
+    // Deliberately LARGE flip-odd intrinsics — the whole point of the
+    // conjugation contract is the ppy/skew terms that a same-space
+    // textual-identity test is blind to.
     const params: LensDistortionParams = {
       distortion: new THREE.Vector2(0.2, 0.15),
       focalLength: new THREE.Vector2(0.95, 0.95),
-      principalPoint: new THREE.Vector2(0.02, -0.01),
-      skew: 0.001,
+      principalPoint: new THREE.Vector2(0.02, 0.3),
+      skew: 0.05,
     };
 
     const samples = [
@@ -112,10 +117,52 @@ describe('applyLensDistortion', () => {
     ];
     const out = makeScratch();
     for (const [u, v] of samples) {
+      // Same physical screen point: top-down (u, v) here, bottom-up
+      // (u, 1-v) in the GLSL. The sampled source points must coincide:
+      //   flipY(glsl(u, 1 - v)) === canonical(u, v)
       applyLensDistortion(u, v, params, out);
-      const ref = glslReference(u, v, params);
-      expect(out.x).toBeCloseTo(ref.x, 6);
-      expect(out.y).toBeCloseTo(ref.y, 6);
+      const ref = glslReference(u, 1 - v, params);
+      expect(ref.x).toBeCloseTo(out.x, 6);
+      expect(1 - ref.y).toBeCloseTo(out.y, 6);
+    }
+  });
+
+  it('GLSL reference degenerates to the canonical formula when ppy = skew = 0 (baseline invariance)', () => {
+    // With both flip-odd intrinsics at zero the negations are no-ops —
+    // the GLSL matrix is bit-identical to the historical one, which is
+    // why the conjugation fix cannot move any shipped visual baseline
+    // (every shipped lens preset has principalPointY = 0, skew = 0).
+    const params: LensDistortionParams = {
+      distortion: new THREE.Vector2(0.35, 0.35),
+      focalLength: new THREE.Vector2(0.9, 0.9),
+      principalPoint: new THREE.Vector2(0.04, 0.0),
+      skew: 0.0,
+    };
+    function glslReference(u: number, v: number): { x: number; y: number } {
+      const xnX = 2.0 * (u - 0.5);
+      const xnY = 2.0 * (v - 0.5);
+      const r2 = xnX * xnX + xnY * xnY;
+      const xdX = (1.0 + params.distortion.x * r2) * xnX;
+      const xdY = (1.0 + params.distortion.y * r2) * xnY;
+      const kkX =
+        params.focalLength.x * xdX -
+        params.skew * params.focalLength.x * xdY +
+        params.principalPoint.x;
+      const kkY = params.focalLength.y * xdY - params.principalPoint.y;
+      return { x: kkX * 0.5 + 0.5, y: kkY * 0.5 + 0.5 };
+    }
+    const out = makeScratch();
+    for (const [u, v] of [
+      [0.2, 0.2],
+      [0.5, 0.5],
+      [0.8, 0.4],
+    ]) {
+      // Radial + focal + ppx are flip-EVEN: same-space evaluation
+      // already agrees, no conjugation needed.
+      applyLensDistortion(u, v, params, out);
+      const ref = glslReference(u, v);
+      expect(ref.x).toBeCloseTo(out.x, 6);
+      expect(ref.y).toBeCloseTo(out.y, 6);
     }
   });
 

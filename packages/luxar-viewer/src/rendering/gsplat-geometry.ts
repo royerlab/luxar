@@ -266,18 +266,28 @@ export function updateInstancedGSplatsMesh(
   const currentCount = geometry.instanceCount;
 
   const rebuilt = meshConfig.splatCount !== currentCount;
+  let liveGeometry = geometry;
   if (rebuilt) {
-    // Size changed: rebuild the interleaved buffer + views.
-    bindInterleavedAttributes(geometry, meshConfig);
-    geometry.instanceCount = meshConfig.splatCount;
-
-    // CRITICAL: Force THREE.js to recalculate _maxInstanceCount from the new attributes.
-    // When a mesh is initially created with 0 instances (e.g., a gsplat node not at the
-    // current time slice), THREE.js caches _maxInstanceCount=0. Later updates that add
-    // instances via setAttribute won't trigger recalculation, so the renderer still draws
-    // min(instanceCount, 0) = 0 instances. Deleting the cached value forces recalculation
-    // on the next render frame.
-    delete (geometry as unknown as { _maxInstanceCount?: number })._maxInstanceCount;
+    // Size changed: build a FRESH geometry and dispose the old one —
+    // never rebind new attributes onto a rendered geometry, which
+    // strands the old interleaved GPU buffer in the renderer caches
+    // (freed only at GC mercy on classic WebGL; pinned FOREVER by the
+    // WebGPU renderer's strong Info.memoryMap). geometry.dispose() on
+    // the old object frees its buffers correctly on every backend
+    // because its dispose listeners were registered when it rendered.
+    // (Same pattern as the points non-pool fallback in
+    // commit-points-geometry.ts.)
+    const fresh = new THREE.InstancedBufferGeometry();
+    fresh.index = geometry.index; // shared static quad index
+    fresh.setAttribute('aQuadCorner', geometry.getAttribute('aQuadCorner'));
+    bindInterleavedAttributes(fresh, meshConfig);
+    fresh.instanceCount = meshConfig.splatCount;
+    mesh.geometry = fresh;
+    liveGeometry = fresh;
+    // dispose() also deletes the shared index/aQuadCorner GPU buffers
+    // registered under the old geometry; three re-uploads them for
+    // `fresh` on its first render (tiny static buffers — negligible).
+    geometry.dispose();
   } else {
     // Same size: write new data into the existing interleaved
     // buffer at the correct strided offsets. The buffer object is
@@ -324,10 +334,10 @@ export function updateInstancedGSplatsMesh(
   const truncationRadius = material.uniforms?.uTruncate?.value ?? 3.0;
   box.expandByScalar(maxRowNorm * truncationRadius);
 
-  geometry.boundingBox = box;
+  liveGeometry.boundingBox = box;
   const sphere = new THREE.Sphere();
   box.getBoundingSphere(sphere);
-  geometry.boundingSphere = sphere;
+  liveGeometry.boundingSphere = sphere;
 
   return rebuilt;
 }

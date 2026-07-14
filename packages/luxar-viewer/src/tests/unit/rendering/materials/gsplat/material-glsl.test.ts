@@ -92,16 +92,19 @@ describe('GSplatMaterial', () => {
       expect(material.transparent).toBe(true);
       expect(material.depthWrite).toBe(false);
       expect(material.toneMapped).toBe(false);
-      // Default 'additive' mode uses CustomBlending with OneFactor for correct linear sum
-      // (AdditiveBlending uses SrcAlpha which would incorrectly square the intensity)
-      expect(material.blending).toBe('CustomBlending');
+      // Default 'additive' takes the SHARED blending state (AdditiveBlending,
+      // SrcAlpha + One). With the shader's alpha=1.0 contract, SrcAlpha is
+      // the identity factor — pixel-identical to the historical
+      // CustomBlending One/One dance, now unified with the TSL wrapper.
+      expect(material.blending).toBe('AdditiveBlending');
       expect(material.blendEquation).toBe('AddEquation');
-      expect(material.blendSrc).toBe('OneFactor');
+      expect(material.blendSrc).toBe(THREE.SrcAlphaFactor);
       expect(material.blendDst).toBe('OneFactor');
-      // Alpha uses MaxEquation to prevent accumulation (bloom/postprocessing artifacts)
-      expect(material.blendEquationAlpha).toBe('MaxEquation');
-      expect(material.blendSrcAlpha).toBe('OneFactor');
-      expect(material.blendDstAlpha).toBe('OneFactor');
+      // Symmetric alpha channel — the alpha-MaxEquation overflow guard is
+      // gone (raw-scene-hdr capture sanitizes alpha at readback instead).
+      expect(material.blendEquationAlpha).toBe(null);
+      expect(material.blendSrcAlpha).toBe(null);
+      expect(material.blendDstAlpha).toBe(null);
       expect(material.side).toBe('DoubleSide');
       expect(material.uniforms.uProjectionMode.value).toBe(0); // Default additive uses sum projection
       // 'additive' ignores depth (depthTest=false)
@@ -149,9 +152,11 @@ describe('GSplatMaterial', () => {
 
       expect(material.uniforms.uOpacity.value).toBe(0.5);
       expect(material.uniforms.uTruncate.value).toBe(4.0);
-      expect(material.blending).toBe('NormalBlending');
-      // depthWrite is only true for normal blending when opacity >= 0.99
-      expect(material.depthWrite).toBe(false); // opacity 0.5 < 0.99, so no depth write
+      // normal mode = gsplat premultiplied alpha-over: CustomBlending
+      // One/OneMinusSrcAlpha (see getGSplatNormalBlendingState).
+      expect(material.blending).toBe('CustomBlending');
+      // GSplat normal mode never writes depth (no opacity gate).
+      expect(material.depthWrite).toBe(false);
       expect(material.uniforms.uProjectionMode.value).toBe(0); // Sum projection for normal
     });
 
@@ -168,17 +173,19 @@ describe('GSplatMaterial', () => {
       expect(material.uniforms.uProjectionMode.value).toBe(1); // Max projection
     });
 
-    it('should configure luminous mode with alpha accumulation prevention', () => {
+    it('should configure luminous mode via the shared additive state + depth test', () => {
       const material = new GSplatMaterial({ blendingMode: 'luminous' });
 
-      expect(material.blending).toBe('CustomBlending');
+      expect(material.blending).toBe('AdditiveBlending');
       expect(material.blendEquation).toBe('AddEquation');
-      expect(material.blendSrc).toBe('OneFactor');
+      expect(material.blendSrc).toBe(THREE.SrcAlphaFactor);
       expect(material.blendDst).toBe('OneFactor');
-      // Alpha uses MaxEquation to prevent accumulation (same fix as additive)
-      expect(material.blendEquationAlpha).toBe('MaxEquation');
-      expect(material.blendSrcAlpha).toBe('OneFactor');
-      expect(material.blendDstAlpha).toBe('OneFactor');
+      // Symmetric alpha channel (shared state; no per-alpha overrides).
+      expect(material.blendEquationAlpha).toBe(null);
+      expect(material.blendSrcAlpha).toBe(null);
+      expect(material.blendDstAlpha).toBe(null);
+      // luminous = additive visuals + depth occlusion.
+      expect(material.userData.depthTest).toBe(true);
     });
   });
 
@@ -395,13 +402,21 @@ describe('GSplatMaterial', () => {
       expect(cloned.uniforms.uInvGamma.value).toBeCloseTo(1.0 / 2.2, 5);
       expect(cloned.userData.gamma).toBe(2.2);
 
-      // Clone preserves alpha blend properties (prevents alpha accumulation)
-      expect(cloned.blendEquationAlpha).toBe('MaxEquation');
-      expect(cloned.blendSrcAlpha).toBe('OneFactor');
-      expect(cloned.blendDstAlpha).toBe('OneFactor');
+      // Clone preserves the (symmetric) alpha blend channel state.
+      expect(cloned.blendEquationAlpha).toBe(null);
+      expect(cloned.blendSrcAlpha).toBe(null);
+      expect(cloned.blendDstAlpha).toBe(null);
 
       // Ensure it's a new instance
       expect(cloned).not.toBe(original);
+    });
+
+    it('clone preserves a tuned uMaxExtentFactor (was silently reset to 0.33)', () => {
+      const material = new GSplatMaterial({ maxExtentFactor: 0.7 });
+      expect(material.uniforms.uMaxExtentFactor.value).toBe(0.7);
+
+      const cloned = material.clone();
+      expect(cloned.uniforms.uMaxExtentFactor.value).toBe(0.7);
     });
   });
 
@@ -411,8 +426,9 @@ describe('GSplatMaterial', () => {
 
       // 'additive' ignores depth entirely (renders on top of everything)
       expect(material.userData.depthTest).toBe(false);
-      // Uses CustomBlending with OneFactor for correct linear sum (not AdditiveBlending)
-      expect(material.blending).toBe('CustomBlending');
+      // Shared blending state (unified with TSL): AdditiveBlending —
+      // SrcAlpha is identity under the shader's alpha=1.0 contract.
+      expect(material.blending).toBe('AdditiveBlending');
     });
 
     it('should have depthTest true for luminous mode (respects depth occlusion)', () => {
@@ -420,15 +436,20 @@ describe('GSplatMaterial', () => {
 
       // 'luminous' respects depth occlusion but uses same visual output as additive
       expect(material.userData.depthTest).toBe(true);
-      // Uses CustomBlending with OneFactor for correct linear sum (same as additive)
-      expect(material.blending).toBe('CustomBlending');
+      // Shared blending state (unified with TSL): AdditiveBlending.
+      expect(material.blending).toBe('AdditiveBlending');
     });
 
-    it('should have depthTest true for normal mode', () => {
+    it('should have depthTest true for normal mode (premultiplied alpha-over)', () => {
       const material = new GSplatMaterial({ blendingMode: 'normal' });
 
       expect(material.userData.depthTest).toBe(true);
-      expect(material.blending).toBe('NormalBlending');
+      // Premultiplied coverage-alpha state — CustomBlending with
+      // One / OneMinusSrcAlpha, NOT the generic NormalBlending
+      // (the shader premultiplies; SrcAlpha would double-multiply).
+      expect(material.blending).toBe('CustomBlending');
+      expect(material.blendSrc).toBe('OneFactor');
+      expect(material.blendDst).toBe(THREE.OneMinusSrcAlphaFactor);
     });
 
     it('should apply opacity directly to RGB for linear additive blending', () => {
@@ -479,7 +500,7 @@ describe('GSplatMaterial', () => {
       expect(material.needsUpdate).toBe(true);
     });
 
-    it('switches max → additive: uProjectionMode resets to 0, alpha gets MaxEquation', () => {
+    it('switches max → additive: uProjectionMode resets to 0, shared additive state', () => {
       // Before this fix, switching from max → additive via the layers
       // panel left blendEquation stuck at MaxEquation (wrong intensity)
       // and uProjectionMode stuck at 1 (shader took max-projection
@@ -491,14 +512,14 @@ describe('GSplatMaterial', () => {
       material.applyBlendingMode('additive');
 
       expect(material.uniforms.uProjectionMode.value).toBe(0);
-      expect(material.blending).toBe('CustomBlending');
+      expect(material.blending).toBe('AdditiveBlending');
       expect(material.blendEquation).toBe('AddEquation');
-      expect(material.blendSrc).toBe('OneFactor');
+      expect(material.blendSrc).toBe(THREE.SrcAlphaFactor);
       expect(material.blendDst).toBe('OneFactor');
-      // Alpha gets its own equation to prevent accumulation overflow.
-      expect(material.blendEquationAlpha).toBe('MaxEquation');
-      expect(material.blendSrcAlpha).toBe('OneFactor');
-      expect(material.blendDstAlpha).toBe('OneFactor');
+      // Symmetric alpha channel — no stranded MaxEquation state.
+      expect(material.blendEquationAlpha).toBe(null);
+      expect(material.blendSrcAlpha).toBe(null);
+      expect(material.blendDstAlpha).toBe(null);
       expect(material.userData.blendingMode).toBe('additive');
     });
 
@@ -507,9 +528,9 @@ describe('GSplatMaterial', () => {
 
       material.applyBlendingMode('luminous');
 
-      expect(material.blending).toBe('CustomBlending');
+      expect(material.blending).toBe('AdditiveBlending');
       expect(material.blendEquation).toBe('AddEquation');
-      expect(material.blendSrc).toBe('OneFactor');
+      expect(material.blendSrc).toBe(THREE.SrcAlphaFactor);
       expect(material.blendDst).toBe('OneFactor');
       expect(material.uniforms.uProjectionMode.value).toBe(0);
       // luminous respects depth (vs additive which ignores it).
@@ -519,8 +540,8 @@ describe('GSplatMaterial', () => {
 
     it('switches additive → opaque: transparent flips, alpha state resets to defaults', () => {
       const material = new GSplatMaterial({ blendingMode: 'additive' });
-      // additive sets alpha equation = MaxEquation
-      expect(material.blendEquationAlpha).toBe('MaxEquation');
+      // additive keeps a symmetric alpha channel (shared state).
+      expect(material.blendEquationAlpha).toBe(null);
 
       material.applyBlendingMode('opaque');
 
@@ -541,11 +562,11 @@ describe('GSplatMaterial', () => {
 
       // Should be identical to a freshly-constructed additive material.
       expect(material.uniforms.uProjectionMode.value).toBe(0);
-      expect(material.blending).toBe('CustomBlending');
+      expect(material.blending).toBe('AdditiveBlending');
       expect(material.blendEquation).toBe('AddEquation');
-      expect(material.blendSrc).toBe('OneFactor');
+      expect(material.blendSrc).toBe(THREE.SrcAlphaFactor);
       expect(material.blendDst).toBe('OneFactor');
-      expect(material.blendEquationAlpha).toBe('MaxEquation');
+      expect(material.blendEquationAlpha).toBe(null);
     });
 
     it('clone after applyBlendingMode preserves the live mode', () => {
@@ -557,6 +578,91 @@ describe('GSplatMaterial', () => {
       expect(cloned.userData.blendingMode).toBe('max');
       expect(cloned.uniforms.uProjectionMode.value).toBe(1);
       expect(cloned.blendEquation).toBe('MaxEquation');
+    });
+  });
+
+  describe('normal mode — premultiplied coverage alpha (LUXAR_NORMAL_PREMULT)', () => {
+    it('constructor normal: define set, One/OneMinusSrcAlpha, symmetric alpha, depthWrite off', () => {
+      const material = new GSplatMaterial({ blendingMode: 'normal' });
+
+      expect('LUXAR_NORMAL_PREMULT' in material.defines).toBe(true);
+      expect(material.blending).toBe('CustomBlending');
+      expect(material.blendEquation).toBe('AddEquation');
+      expect(material.blendSrc).toBe('OneFactor');
+      expect(material.blendDst).toBe(THREE.OneMinusSrcAlphaFactor);
+      // Symmetric alpha channel (null = track RGB) — separate alpha
+      // equation state trips gl.getError() under the WebGPU bridge.
+      expect(material.blendEquationAlpha).toBe(null);
+      expect(material.blendSrcAlpha).toBe(null);
+      expect(material.blendDstAlpha).toBe(null);
+      expect(material.transparent).toBe(true);
+      expect(material.depthTest).toBe(true);
+      expect(material.depthWrite).toBe(false);
+      expect(material.uniforms.uProjectionMode.value).toBe(0); // sum projection
+    });
+
+    it('depthWrite stays OFF at opacity 1.0 (no generic opacity>=0.99 gate)', () => {
+      // The generic normal state flips depthWrite on at high opacity; a
+      // coverage-alpha splat fragment with alpha ~1e-4 writing depth
+      // would punch occlusion halos, so the gsplat state never writes.
+      const material = new GSplatMaterial({ blendingMode: 'normal', opacity: 1.0 });
+      expect(material.depthWrite).toBe(false);
+    });
+
+    it('fragment shader has both output branches (premult under the define)', () => {
+      const material = new GSplatMaterial({ blendingMode: 'normal' });
+      expect(material.fragmentShader).toContain('#ifdef LUXAR_NORMAL_PREMULT');
+      expect(material.fragmentShader).toContain('clamp(intensity * uOpacity, 0.0, 1.0)');
+      expect(material.fragmentShader).toContain('fragColor = vec4(finalColor, coverage)');
+      // The alpha=1.0 contract stays intact for every other mode.
+      expect(material.fragmentShader).toContain('fragColor = vec4(finalColor, 1.0)');
+    });
+
+    it('round-trips normal → additive → normal without stranding state', () => {
+      const material = new GSplatMaterial({ blendingMode: 'normal' });
+
+      material.applyBlendingMode('additive');
+      // Define removed; shared additive state applied.
+      expect('LUXAR_NORMAL_PREMULT' in material.defines).toBe(false);
+      expect(material.blending).toBe('AdditiveBlending');
+      expect(material.blendEquationAlpha).toBe(null);
+      expect(material.blendSrc).toBe(THREE.SrcAlphaFactor);
+      expect(material.blendDst).toBe('OneFactor');
+      expect(material.depthTest).toBe(false);
+
+      material.applyBlendingMode('normal');
+      // Identical to a freshly-constructed normal material.
+      expect('LUXAR_NORMAL_PREMULT' in material.defines).toBe(true);
+      expect(material.blending).toBe('CustomBlending');
+      expect(material.blendEquation).toBe('AddEquation');
+      expect(material.blendSrc).toBe('OneFactor');
+      expect(material.blendDst).toBe(THREE.OneMinusSrcAlphaFactor);
+      expect(material.blendEquationAlpha).toBe(null);
+      expect(material.depthWrite).toBe(false);
+      expect(material.transparent).toBe(true);
+      expect(material.needsUpdate).toBe(true);
+    });
+
+    it('normal → max: define removed, MaxEquation + projection-mode flip', () => {
+      const material = new GSplatMaterial({ blendingMode: 'normal' });
+
+      material.applyBlendingMode('max');
+
+      expect('LUXAR_NORMAL_PREMULT' in material.defines).toBe(false);
+      expect(material.blendEquation).toBe('MaxEquation');
+      expect(material.uniforms.uProjectionMode.value).toBe(1);
+    });
+
+    it('clone preserves normal mode and the define', () => {
+      const material = new GSplatMaterial({ blendingMode: 'additive' });
+      material.applyBlendingMode('normal');
+
+      const cloned = material.clone();
+
+      expect(cloned.userData.blendingMode).toBe('normal');
+      expect('LUXAR_NORMAL_PREMULT' in cloned.defines).toBe(true);
+      expect(cloned.blendDst).toBe(THREE.OneMinusSrcAlphaFactor);
+      expect(cloned.depthWrite).toBe(false);
     });
   });
 });

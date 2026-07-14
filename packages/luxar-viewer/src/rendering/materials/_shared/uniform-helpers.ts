@@ -32,6 +32,16 @@ export function clampGamma(gamma: number | undefined): number {
  *
  * Shared across all three geometry types (Point / Line / GSplat) ×
  * both backends so the fast-path threshold is identical everywhere.
+ *
+ * DELIBERATELY no hysteresis (2026-07 debt-remediation decision):
+ * crossing the boundary flips the LUXAR_GAMMA_ONE define and costs one
+ * shader recompile per crossing. A hysteresis band wide enough to
+ * matter would keep the pow()-skipping fast path engaged at gamma
+ * values measurably off 1.0 — a silent visual error on scientific
+ * data — while the band below is already ±1e-4 (effectively "exactly
+ * 1.0"), so per-frame toggle thrash would require a slider oscillating
+ * inside a 0.0002-wide window. Two bounded recompiles per deliberate
+ * crossing is the correct trade.
  */
 export function isGammaOne(gamma: number): boolean {
   return Math.abs(gamma - 1.0) < 1e-4;
