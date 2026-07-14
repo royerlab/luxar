@@ -465,6 +465,15 @@ export class MaterialManager {
     for (const material of materials) {
       material.dispose();
     }
+    // Release the page-level singleton reference: after a full dispose
+    // the instance is a husk (empty registries, disposed programs), and
+    // the lazy Proxy would keep re-serving it to a dispose-then-reinit
+    // embedder. Nulling here makes the next access construct a fresh
+    // manager instead. (Tests use __resetMaterialManagerForTests, which
+    // does the same without disposing.)
+    if (_materialManagerInstance === this) {
+      _materialManagerInstance = undefined;
+    }
   }
 
   /**
