@@ -8,11 +8,24 @@ This module provides Morton and Hilbert ordering for:
 
 from __future__ import annotations
 
-from typing import Any, Literal, Optional, Sequence
+from typing import Literal, Optional, Sequence
 
 import numpy as np
 
 from luxar.core import Dimension
+
+# Curve/grid encoders live in _ordering/; re-exported here so the historical
+# public paths (luxar.io.ordering.<name>) keep resolving. Some are used only by
+# external callers, not by the remaining module body.
+from ._ordering.curves.hilbert import hilbert_encode_nd  # noqa: F401
+from ._ordering.curves.morton import (  # noqa: F401
+    morton_encode_128bit,
+    morton_encode_nd,
+)
+from ._ordering.grid import (  # noqa: F401
+    compute_auto_resolution,
+    normalize_coords_to_grid,
+)
 
 # Padding added to barrier/discrete-dimension chunk bounds. This is ONLY a
 # float-boundary safety margin — the query "reach" (how far a slice query
@@ -29,235 +42,6 @@ from luxar.core import Dimension
 # builders; discrete/categorical dims with milli-scale steps are not a
 # supported layout (rescale the axis instead).
 _BARRIER_BOUND_EPS = 1e-3
-
-
-def _get_morton_numba_kernel():  # type: ignore[no-untyped-def]
-    """Lazy-compile the Numba Morton encoding kernel on first use."""
-    import numba
-
-    @numba.njit(cache=True)  # type: ignore[misc]
-    def _morton_kernel(coords: np.ndarray, bits_per_dim: int, out: np.ndarray) -> None:
-        n_points = coords.shape[0]
-        n_dims = coords.shape[1]
-        for idx in range(n_points):
-            h = np.uint64(0)
-            for bit in range(bits_per_dim):
-                for d in range(n_dims):
-                    h |= np.uint64((coords[idx, d] >> bit) & 1) << np.uint64(
-                        bit * n_dims + d
-                    )
-            out[idx] = h
-
-    return _morton_kernel
-
-
-# None = not tried, False = tried and failed, callable = compiled kernel
-_morton_numba_kernel: Any = None
-
-
-def morton_encode_nd(coords: np.ndarray, bits_per_dim: int = 16) -> np.ndarray:
-    """Encode nD integer coordinates to Morton codes via bit interleaving.
-
-    Uses a Numba JIT-compiled kernel when available, falling back to
-    vectorized NumPy.
-
-    Args:
-        coords: Integer coordinates, shape (N, d)
-        bits_per_dim: Bits to use per dimension (default 16)
-
-    Returns:
-        Morton codes, shape (N,), dtype uint64
-    """
-    global _morton_numba_kernel  # noqa: PLW0603
-
-    n_points, n_dims = coords.shape
-
-    if _morton_numba_kernel is None:
-        try:
-            _morton_numba_kernel = _get_morton_numba_kernel()  # type: ignore[no-untyped-call]
-        except (ImportError, Exception):
-            _morton_numba_kernel = False
-
-    if _morton_numba_kernel:
-        out = np.empty(n_points, dtype=np.uint64)
-        coords_i64 = np.ascontiguousarray(coords, dtype=np.int64)
-        _morton_numba_kernel(coords_i64, bits_per_dim, out)
-        return out
-
-    # Fallback: vectorized NumPy
-    morton = np.zeros(n_points, dtype=np.uint64)
-    for bit in range(bits_per_dim):
-        for dim in range(n_dims):
-            coord_bit = (coords[:, dim] >> bit) & 1
-            morton |= coord_bit.astype(np.uint64) << (bit * n_dims + dim)
-    return morton
-
-
-def _get_hilbert_numba_kernel():  # type: ignore[no-untyped-def]
-    """Lazy-compile the Numba Hilbert encoding kernel on first use."""
-    import numba
-
-    @numba.njit(cache=True)  # type: ignore[misc]
-    def _hilbert_kernel(coords: np.ndarray, bits_per_dim: int, out: np.ndarray) -> None:
-        """Numba-accelerated Hilbert curve encoding.
-
-        Implements the same algorithm as the hilbertcurve library
-        (Skilling's "Programming the Hilbert curve") but compiled to
-        native code and parallelised over points.
-        """
-        n_points = coords.shape[0]
-        n_dims = coords.shape[1]
-        m = np.int64(1) << np.int64(bits_per_dim - 1)
-
-        for idx in range(n_points):
-            # Copy point to local mutable array
-            pt = np.empty(n_dims, dtype=np.int64)
-            for d in range(n_dims):
-                pt[d] = np.int64(coords[idx, d])
-
-            # --- Inverse undo excess work ---
-            q = m
-            while q > 1:
-                p = q - 1
-                for i in range(n_dims):
-                    if pt[i] & q:
-                        pt[0] ^= p
-                    else:
-                        t = (pt[0] ^ pt[i]) & p
-                        pt[0] ^= t
-                        pt[i] ^= t
-                q >>= 1
-
-            # --- Gray encode ---
-            for i in range(1, n_dims):
-                pt[i] ^= pt[i - 1]
-
-            t2 = np.int64(0)
-            q = m
-            while q > 1:
-                if pt[n_dims - 1] & q:
-                    t2 ^= q - 1
-                q >>= 1
-
-            for i in range(n_dims):
-                pt[i] ^= t2
-
-            # --- Transpose to Hilbert integer (MSB-first bit interleave) ---
-            # Matches hilbertcurve library convention: MSB of dim 0 first.
-            h = np.uint64(0)
-            for bit in range(bits_per_dim - 1, -1, -1):
-                for d in range(n_dims):
-                    h = (h << np.uint64(1)) | np.uint64((pt[d] >> bit) & 1)
-
-            out[idx] = h
-
-    return _hilbert_kernel
-
-
-# None = not tried, False = tried and failed, callable = compiled kernel
-_hilbert_numba_kernel: Any = None
-
-
-def hilbert_encode_nd(coords: np.ndarray, bits_per_dim: int = 16) -> np.ndarray:
-    """Encode nD integer coordinates to Hilbert curve indices.
-
-    Uses a Numba JIT-compiled kernel for fast parallel encoding.
-    Falls back to the hilbertcurve library if Numba is unavailable.
-
-    Args:
-        coords: Integer coordinates, shape (N, d)
-        bits_per_dim: Bits to use per dimension (default 16)
-
-    Returns:
-        Hilbert indices, shape (N,), dtype uint64
-    """
-    global _hilbert_numba_kernel  # noqa: PLW0603
-
-    n_points, n_dims = coords.shape
-
-    # Try Numba first (compiled, parallel, no memory overhead)
-    if _hilbert_numba_kernel is None:
-        try:
-            _hilbert_numba_kernel = _get_hilbert_numba_kernel()  # type: ignore[no-untyped-call]
-        except (ImportError, Exception):
-            _hilbert_numba_kernel = False
-
-    if _hilbert_numba_kernel:
-        out = np.empty(n_points, dtype=np.uint64)
-        _hilbert_numba_kernel(coords.astype(np.int64), bits_per_dim, out)
-        return out
-
-    # Fallback: hilbertcurve library (pure Python, slow for large N)
-    try:
-        from hilbertcurve.hilbertcurve import (  # type: ignore[import-untyped]
-            HilbertCurve,
-        )
-    except ImportError:
-        raise ImportError(
-            "Either numba or hilbertcurve package is required for Hilbert ordering. "
-            "Install with: pip install numba  (or: pip install hilbertcurve)"
-        )
-
-    hilbert = HilbertCurve(bits_per_dim, n_dims)
-    hilbert_indices = np.array(
-        [hilbert.distance_from_point(coords[i]) for i in range(n_points)],
-        dtype=np.uint64,
-    )
-    return hilbert_indices
-
-
-def normalize_coords_to_grid(
-    coords: np.ndarray, min_coords: np.ndarray, max_coords: np.ndarray, resolution: int
-) -> np.ndarray:
-    """Normalize float coordinates to integer grid [0, resolution-1].
-
-    Args:
-        coords: Float coordinates, shape (N, d)
-        min_coords: Minimum bounds, shape (d,)
-        max_coords: Maximum bounds, shape (d,)
-        resolution: Grid resolution (e.g., 2^16 = 65536)
-
-    Returns:
-        Integer coordinates, shape (N, d), dtype uint32
-    """
-    # Normalize to [0, 1]
-    ranges = max_coords - min_coords
-    # Handle degenerate dimensions (zero range)
-    ranges = np.where(ranges > 0, ranges, 1.0)
-    normalized = (coords - min_coords) / ranges
-
-    # Clamp to [0, 1] (handle floating point errors)
-    normalized = np.clip(normalized, 0.0, 1.0)
-
-    # Scale to [0, resolution-1]
-    grid_coords = (normalized * (resolution - 1)).astype(np.uint32)
-
-    return np.asarray(grid_coords)
-
-
-def compute_auto_resolution(coords: np.ndarray, max_resolution: int = 2**16) -> int:
-    """Compute appropriate resolution based on data spread.
-
-    Args:
-        coords: Float coordinates, shape (N, d)
-        max_resolution: Maximum resolution (default 65536)
-
-    Returns:
-        Resolution as power of 2, capped at max_resolution
-    """
-    spread = coords.max(axis=0) - coords.min(axis=0)
-    max_spread = spread.max()
-
-    # Target ~10 grid cells per unit of spread
-    target_resolution = int(max_spread * 10)
-
-    # Clamp to [256, max_resolution]
-    resolution = min(max_resolution, max(256, target_resolution))
-
-    # Round to nearest power of 2
-    resolution = int(2 ** int(np.log2(resolution)))
-
-    return resolution
 
 
 def _compound_sort(
@@ -683,38 +467,6 @@ def convert_to_indexed(
         raise ValueError(
             f"Invalid line_type '{line_type}'. Must be one of: segments, polyline, loop, indexed"
         )
-
-
-def morton_encode_128bit(
-    coords: np.ndarray, bits_per_dim: int
-) -> tuple[np.ndarray, np.ndarray]:
-    """Encode nD integer coordinates to 128-bit Morton codes as (high, low) pairs.
-
-    For high-dimensional data (> 6 dims), 64-bit Morton codes have insufficient
-    precision. This function produces 128-bit codes as paired uint64 values.
-
-    Args:
-        coords: Integer coordinates, shape (N, d)
-        bits_per_dim: Bits to use per dimension
-
-    Returns:
-        high: Upper 64 bits of Morton codes, shape (N,), dtype uint64
-        low: Lower 64 bits of Morton codes, shape (N,), dtype uint64
-    """
-    n_points, n_dims = coords.shape
-    high = np.zeros(n_points, dtype=np.uint64)
-    low = np.zeros(n_points, dtype=np.uint64)
-
-    for bit in range(bits_per_dim):
-        for dim in range(n_dims):
-            coord_bit = (coords[:, dim] >> bit) & 1
-            bit_pos = bit * n_dims + dim
-            if bit_pos < 64:
-                low |= coord_bit.astype(np.uint64) << bit_pos
-            else:
-                high |= coord_bit.astype(np.uint64) << (bit_pos - 64)
-
-    return high, low
 
 
 def sort_segments_compound(
