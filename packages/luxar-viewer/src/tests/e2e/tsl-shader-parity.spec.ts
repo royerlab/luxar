@@ -573,7 +573,7 @@ test.describe('TSL ↔ GLSL shader parity', () => {
     }
     expect(
       peak,
-      `tiny-sigma splat in the fade band must be coverage-faded (~50%); ` +
+      'tiny-sigma splat in the fade band must be coverage-faded (~50%); ' +
         `red peak ${peak} implies the fade was skipped`
     ).toBeLessThan(200);
     expect(peak).toBeGreaterThan(60); // sanity: still visibly rendered
