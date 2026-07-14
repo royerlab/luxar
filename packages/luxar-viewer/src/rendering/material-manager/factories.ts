@@ -12,6 +12,7 @@
  * @module rendering/material-manager/factories
  */
 
+import { clampTruncationRadius } from '../materials/gsplat/math';
 import { PointMaterial } from '../materials/point/material-glsl';
 import { LineMaterial } from '../materials/line/material-glsl';
 import { GSplatMaterial } from '../materials/gsplat/material-glsl';
@@ -176,7 +177,10 @@ export function lineCacheKey(props: LineMaterialProperties, backend: MaterialBac
 export function gsplatCacheKey(props: GSplatMaterialProperties, backend: MaterialBackend): string {
   const { opacityBucket, gammaBucket, intensityBucket, offsetBucket } =
     getCommonMaterialBuckets(props);
-  const truncBucket = Math.round((props.truncationRadius ?? 3.0) * 10);
+  // Bucket the CLAMPED radius — the wrappers clamp sub-floor radii to the
+  // same material, so unclamped bucketing would create duplicate cache
+  // entries for pixel-identical materials.
+  const truncBucket = Math.round(clampTruncationRadius(props.truncationRadius ?? 3.0) * 10);
   const transparent = props.blendingMode !== 'opaque';
   return `gsplat_${backend}_${props.blendingMode}_o${opacityBucket}_g${gammaBucket}_i${intensityBucket}_f${offsetBucket}_tr${truncBucket}_t${transparent ? 1 : 0}`;
 }

@@ -1,3 +1,5 @@
+import { log, Modules } from '../../../utils/log';
+
 /**
  * Shared mathematical helpers for the GSplat material pair.
  *
@@ -43,7 +45,21 @@ export function computeRayIntegralFactor(truncate: number): number {
  */
 export const MIN_TRUNCATION_RADIUS = 0.1;
 
-/** Clamp a truncation radius to the degeneracy floor. */
+let truncationClampWarned = false;
+
+/** Clamp a truncation radius to the degeneracy floor (warns once). */
 export function clampTruncationRadius(radius: number): number {
-  return Math.max(MIN_TRUNCATION_RADIUS, radius);
+  if (radius < MIN_TRUNCATION_RADIUS) {
+    if (!truncationClampWarned) {
+      truncationClampWarned = true;
+      log.warning(
+        Modules.RENDERER,
+        `truncation_radius ${radius} clamped to ${MIN_TRUNCATION_RADIUS}σ ` +
+          '(below this the shifted-Gaussian normalization degenerates to an ' +
+          'Infinity uniform / invisible layer). Further clamps are silent.'
+      );
+    }
+    return MIN_TRUNCATION_RADIUS;
+  }
+  return radius;
 }
