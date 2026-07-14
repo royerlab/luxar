@@ -152,4 +152,55 @@ describe('runLinesRefinement — Lines-specific behaviour', () => {
     expect(processLines).toHaveBeenCalledTimes(1);
     expect(commitLines).not.toHaveBeenCalled();
   });
+
+  it('does NOT commit when the signal aborts during the async process step', async () => {
+    // loader.updateView resolves cleanly (no throw), then the supersede aborts
+    // the run's controller WHILE processLines is in flight. The commit must be
+    // skipped so no stale-slice geometry reaches the GPU — mirroring
+    // runAtomicCommit's signal.aborted guard on the main path.
+    const controller = new AbortController();
+    let hasMore = true;
+    const refinedData = {
+      positions: new Float32Array(6),
+      segments: new Uint32Array([0, 1]),
+      widths: new Float32Array([1, 1]),
+      colors: null,
+      sharpness: null,
+      segmentCount: 1,
+      vertexCount: 2,
+      ndim: 3,
+    };
+    const loader: LinesDataLoader = {
+      get hasMoreLODs() {
+        return hasMore;
+      },
+      updateView: vi.fn().mockImplementation(async () => {
+        hasMore = false;
+        return refinedData;
+      }),
+    } as unknown as LinesDataLoader;
+
+    const staged = { foo: 'commit' } as unknown as StagedLinesCommit;
+    const processLines = vi.fn().mockImplementation(async () => {
+      controller.abort();
+      return staged;
+    });
+    const commitLines = vi.fn();
+
+    await runLinesRefinement({
+      rootGroup: new THREE.Group(),
+      viewStateQueue: new ViewStateQueue(),
+      linesLoaders: new Map([['/l', loader]]),
+      deriveNodeViewState: () => ({ skip: false, viewState: baseViewState }),
+      processLines,
+      commitLines,
+      updateVisibleCountsInMonitor: vi.fn(),
+      releaseLock: vi.fn(),
+      retriggerUpdate: vi.fn(),
+      signal: controller.signal,
+    });
+
+    expect(processLines).toHaveBeenCalledTimes(1);
+    expect(commitLines).not.toHaveBeenCalled();
+  });
 });
