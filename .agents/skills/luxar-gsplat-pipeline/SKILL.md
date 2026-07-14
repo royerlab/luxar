@@ -80,12 +80,16 @@ Recipes are scale-ordered — pick by element count `N`:
 
 | Recipe | What it builds | Use when |
 | --- | --- | --- |
-| `flat` | single leaf, no LOD | small N |
-| `stream` | one leaf + prefix-sum ladder | medium N |
-| `tiles` | BSP parts, each its own additive ladder | large N |
-| `overview` | coarse substitutive cap + tiled fine branch | huge N |
-| `adaptive` | BSP parts, each its own substitutive group | huge N, adaptive |
-| `levels` | pure synthesised-level pyramid | primitive |
+| `flat` | single bare leaf, no LOD | tiny N / debug |
+| `stream` | one leaf + additive prefix-sum ladder (fast first paint) | small/medium N |
+| `levels` | coarse→fine substitutive replacement levels (zoom across scales) | medium/large N |
+| `tiles` | spatial BSP parts, each culled + its own stream ladder | large N |
+| `overview` | instant coarse substitutive cap + fine tiles branch | huge N |
+| `adaptive` | BSP parts, each its own substitutive `levels` group | largest N |
+
+`stream` is *additive* (progressively refines ONE leaf); `levels` is *substitutive*
+(swaps a coarse level for a finer one as the object grows on screen). `overview` and
+`adaptive` compose the two over spatial tiles.
 
 ```bash
 luxar gsplat lod in.gsplats.zarr out.gsplats.zarr --recipe stream --n-lods 6
@@ -211,5 +215,8 @@ does (a) for you and writes a ready-to-serve scene.
 - Run `luxar gsplat <command> --help` for the authoritative live flag list — this
   skill summarizes the common paths; the CLI is the source of truth.
 - The `lod` command **rejects an existing partition** — to add LOD to tiled output,
-  use `fit --recipe` / `batch-fit merge --recipe` instead (per-part LOD as it streams).
+  use `fit --recipe` / `batch-fit merge --recipe` (per-part LOD as it streams), or
+  `gsplat additive` to ladder every leaf of an existing tree structure-preservingly.
+- LOD switch thresholds are auto-derived as viewport-relative `coverage_fraction`
+  = `sqrt(N_i/N_finest)` (no threshold knob; self-calibrates on any monitor).
 - See `docs/specs/GSPLATS_ZARR_FORMAT.md` for the v3.2 node-tree format.
