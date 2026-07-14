@@ -60,10 +60,10 @@ in float nodeVarying4;
 
 // vars
 vec4 DiffuseColor;
-float nodeVar3;
-float nodeVar6;
+float nodeVar2;
+float nodeVar4;
 vec4 Output;
-vec4 nodeVar7;
+vec4 nodeVar5;
 
 // codes
 
@@ -81,31 +81,31 @@ void main() {
 
 	}
 
-	nodeVar3 = dot( ( nodeVarying1 - vec2( 0.5 ) ), ( nodeVarying1 - vec2( 0.5 ) ) );
+	nodeVar2 = dot( ( nodeVarying1 - vec2( 0.5 ) ), ( nodeVarying1 - vec2( 0.5 ) ) );
 
-	if ( ( nodeVar3 > 0.25 ) ) {
-
-		discard;
-		
-
-	}
-
-	nodeVar6 = ( max( ( exp( ( pow( sqrt( ( nodeVar3 * 4.0 ) ), nodeVarying2 ) * -4.6051702 ) ) - 0.01 ), 0.0 ) * 1.0101010101010102 );
-
-	if ( ( nodeVar6 < 0.0001 ) ) {
+	if ( ( nodeVar2 > 0.25 ) ) {
 
 		discard;
 		
 
 	}
 
-	DiffuseColor = vec4( nodeVarying3, nodeVarying4, nodeVar6, 1.0 );
+	nodeVar4 = ( max( ( exp( ( pow( sqrt( ( nodeVar2 * 4.0 ) ), nodeVarying2 ) * -4.6051702 ) ) - 0.01 ), 0.0 ) * 1.0101010101010102 );
+
+	if ( ( nodeVar4 < 0.0001 ) ) {
+
+		discard;
+		
+
+	}
+
+	DiffuseColor = vec4( nodeVarying3, nodeVarying4, nodeVar4, 1.0 );
 	DiffuseColor.w = ( DiffuseColor.w * nodeUniform2 );
-	nodeVar7 = max( vec4( DiffuseColor.xyz, DiffuseColor.w ), 0.0 );
-	Output = nodeVar7;
-	gl_FragDepth = ( 1.0 - clamp( ( max( ( exp( ( pow( sqrt( ( dot( ( nodeVarying1 - vec2( 0.5 ) ), ( nodeVarying1 - vec2( 0.5 ) ) ) * 4.0 ) ), nodeVarying2 ) * -4.6051702 ) ) - 0.01 ), 0.0 ) * 1.0101010101010102 ), 0.0, 1.0 ) );
+	nodeVar5 = max( vec4( DiffuseColor.xyz, DiffuseColor.w ), 0.0 );
+	Output = nodeVar5;
+	gl_FragDepth = ( 1.0 - clamp( nodeVar4, 0.0, 1.0 ) );
 
 	// result
-	fragColor = nodeVar7;
+	fragColor = nodeVar5;
 
 }

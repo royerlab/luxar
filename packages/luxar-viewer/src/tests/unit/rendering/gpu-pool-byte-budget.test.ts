@@ -221,6 +221,33 @@ describe('byte-budget eviction', () => {
     expect(after.pooledBytes).toBe(before.pooledBytes);
   });
 
+  it('acquire-triggered sweep graces buffers RELEASED this frame, even when last acquired frames ago', () => {
+    // Regression: releaseGeometry must stamp lastUsedFrame with the
+    // release frame — without the stamp, a buffer acquired at frame 0
+    // and released at frame 3 carries lastUsedFrame=0, the grace
+    // (graceFrame=3) never matches, and the dataset-switch sweep
+    // disposes the very buffer the grace exists to preserve.
+    let budget = 1_000_000_000;
+    const gracePool = new GPUBufferPool(20, 300, 5, () => budget);
+    gracePool.acquirePointsGeometry('old', pointsData(500), 500); // stamped frame 0
+    gracePool.beginFrame();
+    gracePool.beginFrame();
+    gracePool.beginFrame(); // frame 3
+    gracePool.releasePointsGeometry('old'); // release sweep: under budget, survives
+    expect(gracePool.getStats().pooledBuffers).toBe(1);
+
+    // Shrink the budget so the next acquire's sweep is over budget, and
+    // request more than 'old''s capacity so best-fit reuse cannot
+    // short-circuit the fresh allocation (+ its acquire-triggered sweep).
+    budget = 1;
+    gracePool.acquirePointsGeometry('fresh', pointsData(5000), 5000);
+    expect(gracePool.getStats().pooledBuffers).toBe(1); // 'old' spared by the grace
+
+    // A release-triggered sweep (graceFrame -1) still enforces the budget.
+    gracePool.releasePointsGeometry('fresh');
+    expect(gracePool.getStats().pooledBytes).toBe(0);
+  });
+
   it('byte-budget eviction triggers in the auto-eviction path (release → evict)', () => {
     // Acquire+release a buffer that's much larger than the 200-byte budget.
     pool.acquirePointsGeometry('p1', pointsData(500), 500);

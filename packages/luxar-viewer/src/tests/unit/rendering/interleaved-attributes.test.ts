@@ -130,6 +130,32 @@ describe('writeInterleavedAttribute', () => {
     expect(Array.from(buffer.array as Float32Array)).toEqual([0, 0, 0, 1, 2, 3, 0, 0, 0, 4, 5, 6]);
   });
 
+  it('collapses per-attribute and cross-commit update ranges to a single prefix union', () => {
+    // The WebGPU backends replay `updateRanges` verbatim (no flush-time
+    // merge), and nothing clears ranges while a mesh is not drawn — so
+    // repeated writes must leave exactly ONE range covering the widest
+    // prefix, or a hidden layer scrubbed through k timepoints uploads
+    // k× duplicate full prefixes on its first visible frame.
+    const { buffer, offsets } = packInterleavedAttributes(
+      [
+        { name: 'a', data: new Float32Array(9), itemSize: 3 },
+        { name: 'b', data: new Float32Array(3), itemSize: 1 },
+      ],
+      3 // stride 4, capacity 3 instances
+    );
+    buffer.clearUpdateRanges(); // start from a clean slate
+
+    // Same-commit pattern: one write per attribute, same count.
+    writeInterleavedAttribute(buffer, offsets.a, 3, new Float32Array(9), 3);
+    writeInterleavedAttribute(buffer, offsets.b, 1, new Float32Array(3), 3);
+    expect(buffer.updateRanges).toEqual([{ start: 0, count: 12 }]);
+
+    // Cross-commit shrink (fewer instances next timepoint): the union
+    // must KEEP the wider unflushed prefix, not clobber it.
+    writeInterleavedAttribute(buffer, offsets.a, 3, new Float32Array(3), 1);
+    expect(buffer.updateRanges).toEqual([{ start: 0, count: 12 }]);
+  });
+
   it('rejects an over-sized source', () => {
     const { buffer, offsets } = packInterleavedAttributes(
       [{ name: 's', data: new Float32Array([0, 0]), itemSize: 1 }],

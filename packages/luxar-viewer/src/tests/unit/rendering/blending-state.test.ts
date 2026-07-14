@@ -14,6 +14,7 @@ import {
   isNormalMode,
   isOpaqueMode,
   getCompleteBlendingState,
+  getGSplatNormalBlendingState,
 } from '../../../rendering/blending-state';
 import type { BlendingMode } from '../../../rendering/material-manager';
 
@@ -123,6 +124,53 @@ describe('H.1 — getCompleteBlendingState canonical state per mode', () => {
     void getCompleteBlendingState('additive');
     const second = getCompleteBlendingState('max');
     expect(second).toEqual(first);
+  });
+});
+
+describe('getGSplatNormalBlendingState (premultiplied alpha-over for gsplats)', () => {
+  it('CustomBlending + AddEquation + One/OneMinusSrcAlpha, premultiplied-alpha output', () => {
+    const s = getGSplatNormalBlendingState();
+    expect(s.blending).toBe(THREE.CustomBlending);
+    expect(s.blendEquation).toBe(THREE.AddEquation);
+    expect(s.blendSrc).toBe(THREE.OneFactor); // shader premultiplies — SrcAlpha would double-multiply
+    expect(s.blendDst).toBe(THREE.OneMinusSrcAlphaFactor);
+    expect(s.shaderOutputMode).toBe('premultiplied-alpha');
+  });
+
+  it('symmetric alpha channel: no separate alpha equation/factors (WebGPU-bridge safe)', () => {
+    // CompleteBlendingState deliberately declares NO alpha-channel
+    // fields (they had no producer and applyBlendingStateToMaterial
+    // never applied them) — the symmetric-alpha guarantee is
+    // structural. Guard against the fields being re-added and set.
+    const s = getGSplatNormalBlendingState() as unknown as Record<string, unknown>;
+    expect(s.blendEquationAlpha).toBeUndefined();
+    expect(s.blendSrcAlpha).toBeUndefined();
+    expect(s.blendDstAlpha).toBeUndefined();
+  });
+
+  it('transparent, depthTest on, depthWrite unconditionally OFF (no opacity gate)', () => {
+    // Unlike the generic normal entry (opacity >= 0.99 flips depthWrite),
+    // coverage-alpha splat fragments must never write depth — a fragment
+    // with alpha ~1e-4 writing depth punches occlusion halos.
+    const s = getGSplatNormalBlendingState();
+    expect(s.transparent).toBe(true);
+    expect(s.depthTest).toBe(true);
+    expect(s.depthWrite).toBe(false);
+  });
+
+  it('differs from the generic normal state exactly where intended', () => {
+    const generic = getCompleteBlendingState('normal', 1.0);
+    const gsplat = getGSplatNormalBlendingState();
+    // Same alpha-over intent…
+    expect(gsplat.blendEquation).toBe(generic.blendEquation);
+    expect(gsplat.blendDst).toBe(generic.blendDst);
+    expect(gsplat.transparent).toBe(generic.transparent);
+    expect(gsplat.depthTest).toBe(generic.depthTest);
+    // …but premultiplied source factor and no opacity-gated depth write.
+    expect(generic.blendSrc).toBe(THREE.SrcAlphaFactor);
+    expect(gsplat.blendSrc).toBe(THREE.OneFactor);
+    expect(generic.depthWrite).toBe(true); // opacity 1.0 gates it on
+    expect(gsplat.depthWrite).toBe(false);
   });
 });
 

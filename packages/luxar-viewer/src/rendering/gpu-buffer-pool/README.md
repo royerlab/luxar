@@ -12,8 +12,9 @@ gpu-buffer-pool/
 │                              PooledBufferRef, PointsAttributeTypes
 ├── eviction-policy.ts       # Pure largest-first selector — selectBuffersToEvict()
 ├── byte-budget-evictor.ts   # Cross-type eviction loop — evictUntilUnderByteBudget()
-├── attribute-codec.ts       # Geometry-agnostic interleaved-buffer helpers
-│                              (rebuildInterleavedBuffer, writePooledAttribute)
+├── attribute-codec.ts       # Geometry-agnostic interleaved-buffer helper
+│                              (writePooledAttribute — strided writes only;
+│                              there is deliberately NO in-place rebuild)
 ├── geometry-bytes.ts        # Cached per-geometry byte estimate
 │                              (estimateGeometryBytes, invalidateCachedByteSize)
 ├── capacity.ts              # Buffer-capacity sizing primitive
@@ -31,7 +32,7 @@ Each adapter (`PointsBufferAdapter`, `LinesBufferAdapter`, `GSplatsBufferAdapter
 
 - A bucketed `Map<number, PooledBuffer[]>` of released-but-reusable geometries, keyed by capacity bucket.
 - A canonical per-instance attribute spec list (`POINTS_BASE_ATTRIBUTE_SPECS`, `LINES_BASE_ATTRIBUTE_SPECS`, `GSPLATS_ATTRIBUTE_SPECS`) used to allocate the geometry's single `InstancedInterleavedBuffer`.
-- `acquireGeometry(nodeId, …)` — first checks `host.activeBuffers` for in-place reuse (matching capacity and, for points, matching attribute dtypes), then scans bucketed pools, then falls back to allocation. Capacity-grow paths call `attribute-codec.rebuildInterleavedBuffer` to widen the buffer while carrying old attribute data forward.
+- `acquireGeometry(nodeId, …)` — first checks `host.activeBuffers` for in-place reuse (matching capacity and, for points, matching attribute dtypes; for lines, a matching scalar spec set via the `hasScalars` parameter), then scans bucketed pools best-fit, then falls back to allocation. **Growth is release + reacquire, never an in-place rebuild**: an undersized active buffer is released to the pool intact and the acquire falls through to best-fit/fresh allocation. Replacing a rendered geometry's attributes would strand the old GPU buffer in the renderer caches (freed only at GC mercy on classic WebGL; pinned permanently by the WebGPU renderer's strong `Info.memoryMap`). Content carry-forward is unnecessary — every commit rewrites all attributes for the full count right after acquire.
 - `releaseGeometry(nodeId)` — moves the buffer into a per-capacity bucket and calls `host.evictUnused()`.
 - `updateGeometry(geometry, data, count, …)` — writes per-instance attributes via `writePooledAttribute`, then recomputes `boundingBox` / `boundingSphere`. The lines adapter expands the box by max line width; the gsplats adapter expands by max Cholesky row-norm × truncation radius.
 
@@ -43,14 +44,15 @@ Points geometries are pooled with full dtype awareness (`PointsAttributeTypes` i
 
 ### Optional scalar attributes (colormaps)
 
-Both points (`aScalar`) and lines (`aStartScalar` / `aEndScalar`) lazily add their scalar attribute slot the first time a colormap-bearing upload arrives. `attribute-codec.rebuildInterleavedBuffer` handles the spec-set transition: it carries forward every attribute that exists in both the old and new spec sets and binds the new ones at zero, so a colormap toggle costs one buffer rebuild rather than a full geometry replacement.
+Points carry their scalar dtype in `PointsAttributeTypes` (a dtype mismatch releases and reacquires). Lines declare scalar presence at ACQUIRE time — `acquireLinesGeometry(nodeId, count, hasScalars)` includes `aStartScalar`/`aEndScalar` in the creation spec set when the commit carries colormap data, and a spec-set mismatch on a pooled/active candidate releases and reacquires. `updateGeometry` never rebuilds in place (it throws if scalar data arrives on a base-only geometry — an acquire-contract violation).
 
 ### Interleaved-attribute codec
 
-`attribute-codec.ts` is the single source of truth for buffer rebuild and strided-write logic:
+`attribute-codec.ts` holds the strided-write logic:
 
-- `rebuildInterleavedBuffer(geometry, newCapacity, newSpecs)` — allocates a new `InstancedInterleavedBuffer`, deinterlaces from the old strided layout into the new one (carrying as many instances as fit), binds the new views, deletes attributes the new spec-set drops, and clears the `_maxInstanceCount` cache that r184 stashes on `InstancedBufferGeometry`.
 - `writePooledAttribute(geometry, name, src, count)` — strided write of a packed source array into the interleaved buffer at the right offset. Adapters call this from `updateGeometry` instead of poking each attribute view individually.
+
+There is deliberately no in-place rebuild helper: a geometry's attribute views are never replaced after creation (see the growth note above).
 
 ### Capacity sizing
 

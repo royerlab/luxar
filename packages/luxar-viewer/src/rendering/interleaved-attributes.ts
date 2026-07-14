@@ -289,6 +289,25 @@ export function writeInterleavedAttribute(
         break;
     }
   }
+  // Ranged upload: only the written prefix ([0, instanceCount × stride))
+  // goes to the GPU. Without a range, THREE's `bufferSubData(…, 0, array)`
+  // uploads the ENTIRE backing array — including the pool's 1.5×-growth /
+  // bucket-capacity tail — on every commit. All backends honor ranges on
+  // interleaved buffers, but ONLY the classic WebGLRenderer merges
+  // duplicates at flush time — both WebGPU backends (native and
+  // WebGL2-fallback) replay `updateRanges` verbatim, and ranges also
+  // accumulate across commits while the mesh is not drawn (nothing
+  // clears them until a flush). Six per-attribute writes per gsplat
+  // commit — or 6k writes while a hidden layer scrubs k timepoints —
+  // must therefore collapse to ONE range here, not at flush time.
+  // Every write is a [0, end) prefix, so the union is the max end.
+  let rangeEnd = instanceCount * stride;
+  for (const range of buffer.updateRanges) {
+    const end = range.start + range.count;
+    if (end > rangeEnd) rangeEnd = end;
+  }
+  buffer.clearUpdateRanges();
+  buffer.addUpdateRange(0, rangeEnd);
   buffer.needsUpdate = true;
 }
 

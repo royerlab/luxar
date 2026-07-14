@@ -125,19 +125,26 @@ export const GSPLAT_VERTEX_SHADER = /* glsl */ `
         // Prevents GPU overload from splats whose projected quad is too large.
         // Fade starts at 50% of the limit and reaches ~0% AT the limit, so the
         // amplitude is negligible before the extent clamp (below) kicks in.
-        // This avoids visible hard edges from clamped quads.
-        // Applies in perspective only (ortho projection size is depth-independent).
-        float coverageFade = 1.0;
-        if (uIsOrtho == 0) {
+        // This avoids visible hard edges from clamped quads. Applies in BOTH
+        // projections (ortho projected size is depth-independent, divisor 1)
+        // and is computed UNCONDITIONALLY: below maxExtent*0.5 the smoothstep
+        // is 0 and the fade is a no-op, so no size gate is needed. (The former
+        // absolute maxLateralVar > 0.01 gate — a perf leftover from the
+        // pre-#51 two-stage near cull — skipped the fade for splats with
+        // spatial sigma < 0.1 world units while the extent clamp still
+        // applied, leaving hard-edged clamped rectangles on deep-zoomed
+        // tiny-sigma / nm-unit-scale scenes.) The 1e-8 floors match the
+        // TSL twin's expressions exactly.
+        float coverageFade;
+        {
             float maxLateralVar = max(Sigma_cam[0][0], max(Sigma_cam[1][1], Sigma_cam[2][2]));
-            if (maxLateralVar > 0.01) {
-                float projectedExtent = uFx * sqrt(maxLateralVar) * uTruncate / zDepth;
-                float maxExtent = max(uResolution.x, uResolution.y) * uMaxExtentFactor;
-                coverageFade = 1.0 - smoothstep(maxExtent * 0.5, maxExtent, projectedExtent);
-                if (coverageFade < 0.01) {
-                    gl_Position = vec4(0.0, 0.0, -2.0, 1.0);
-                    return;
-                }
+            float extentDivisor = (uIsOrtho == 1) ? 1.0 : max(zDepth, 1e-8);
+            float projectedExtent = uFx * sqrt(max(maxLateralVar, 1e-8)) * uTruncate / extentDivisor;
+            float maxExtent = max(uResolution.x, uResolution.y) * uMaxExtentFactor;
+            coverageFade = 1.0 - smoothstep(maxExtent * 0.5, maxExtent, projectedExtent);
+            if (coverageFade < 0.01) {
+                gl_Position = vec4(0.0, 0.0, -2.0, 1.0);
+                return;
             }
         }
 
@@ -400,17 +407,25 @@ export const GSPLAT_FRAGMENT_SHADER = /* glsl */ `
         // With OneFactor blending (additive/luminous/max modes), alpha is ignored,
         // so apply opacity to RGB directly. This gives correct LINEAR sum projection
         // without the intensity-squaring bug that AdditiveBlending (SrcAlpha) would cause.
-        //
-        // For 'normal' blending mode, this shader outputs alpha=1.0,
-        // which means the framebuffer behind the splat won't show
-        // through — 'normal' on a GSplat layer behaves as "opaque
-        // dimmed by uOpacity," not as semi-transparent compositing.
-        // See material-manager.ts BlendingMode docs. Proper transparent
-        // normal blending for gsplats requires premultiplied alpha with
-        // ONE / ONE_MINUS_SRC_ALPHA blend func (a deeper shader change
-        // deferred until needed).
         vec3 finalColor = gammaColor * intensity * uOpacity;
+
+        #ifdef LUXAR_NORMAL_PREMULT
+        // 'normal' mode: premultiplied alpha-over. RGB already carries the
+        // full (unclamped, HDR) contribution; alpha carries a CLAMPED
+        // coverage term so the One / OneMinusSrcAlpha framebuffer state
+        // (see blending-state.ts getGSplatNormalBlendingState) attenuates
+        // the destination without ever over-subtracting. Dim splats
+        // (intensity·opacity << 1) occlude proportionally little — an
+        // emitter-with-occlusion model, deliberate for HDR scientific data.
+        float coverage = clamp(intensity * uOpacity, 0.0, 1.0);
+        fragColor = vec4(finalColor, coverage);
+        #else
+        // All other modes keep the alpha=1.0 contract: additive/luminous
+        // rely on SrcAlpha being the identity factor (what makes the
+        // shared AdditiveBlending state equal the linear One+One sum),
+        // and max compares premultiplied RGB contributions directly.
         fragColor = vec4(finalColor, 1.0);
+        #endif
     }
   `;
 
