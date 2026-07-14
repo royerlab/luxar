@@ -790,7 +790,7 @@ def serve(
     profile: Optional[str] = typer.Option(
         None,
         "--profile",
-        help="Network profile (3g, 4g, 5g, broadband, satellite, etc.)",
+        help="Network profile (3g, 4g, 5g, slow-broadband, broadband, fast-broadband, satellite, rural, congested)",
     ),
     bandwidth: Optional[str] = typer.Option(
         None,
@@ -823,7 +823,8 @@ def serve(
         realistic network conditions. You can use a preset profile or
         specify individual parameters.
 
-        Profiles: 3g, 4g, 5g, broadband, satellite, rural, congested
+        Profiles: 3g, 4g, 5g, slow-broadband, broadband, fast-broadband,
+        satellite, rural, congested
 
         Individual parameters override profile defaults.
 

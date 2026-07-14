@@ -112,6 +112,8 @@ Each worker loads a WASM module on `initialize()` and exposes these operations:
 
 If WASM is unavailable, each worker falls back to a pure TypeScript implementation of the same API (slower but functionally identical). See `src/wasm/` for details.
 
+Independently of that, `pickBackend(ctx, ndim)` in `data-worker/state.ts` routes **every** operation with more than 16 dimensions to the TypeScript backend — the compiled WASM kernels use fixed-size 16-dim arrays and cannot go higher. For >16D data the TypeScript implementation is therefore the production path, not just a WASM-missing fallback.
+
 ## File Structure
 
 ```
@@ -146,11 +148,12 @@ workers/
 │                                                 from data-worker/ and exposes
 │                                                 the Comlink workerAPI.
 └── data-worker/
-    ├── state.ts                                — WasmCtx { wasm }
-    │                                            + requireWasm helper
+    ├── state.ts                                — WasmCtx { wasm, tsFallback }
+    │                                            + requireWasm/pickBackend
+    │                                            helpers (ndim > 16 routes
+    │                                            to the TS backend)
     ├── initialize.ts                           — WASM bootstrap
-    ├── types.ts                                — ProjectionViewState,
-    │                                            PointsOutputBuffers
+    ├── types.ts                                — ProjectionViewState
     │                                            (re-exports EffectiveRadiusConfig
     │                                            from types/points.ts)
     ├── validation.ts                           — JS→WASM boundary checks
@@ -195,7 +198,6 @@ From `worker-pool.ts`:
 From `data-worker.ts`:
 
 - `type DataWorkerAPI` — Comlink-proxied surface (`workerAPI`)
-- `type PointsOutputBuffers` — transferable result shape for `projectPointsTo3D`
 - `type EffectiveRadiusConfig`, `type ProjectionViewState` — projection input shapes
   (`EffectiveRadiusConfig` is canonically defined in `types/points.ts`; re-exported here for worker-API self-documentation)
 

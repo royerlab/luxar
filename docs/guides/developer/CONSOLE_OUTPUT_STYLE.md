@@ -21,7 +21,7 @@ This document defines the consistent console output style for the Luxar project.
 ### Examples
 ```
 [🚀] [Luxar] Application starting...
-[📥] [PointSpatialIndexLoader] Loading positions for 1 ranges
+[📥] [PointsSpatialIndexLoader] Loading positions for 1 ranges
 [✅] [SceneLoader] Scene loaded successfully
 [❌] [DataMonitor] Failed to load data: Network timeout
 [🔄] [SceneManager] Updating view state
@@ -61,7 +61,7 @@ Use consistent module names for easy filtering:
 
 ### Data Loading
 - `SceneLoader` - Scene loading operations
-- `PointSpatialIndexLoader` - Point spatial index queries
+- `PointsSpatialIndexLoader` - Point spatial index queries
 - `DataMonitor` - Data loading monitoring
 - `ZarrLoader` - Zarr file operations
 
@@ -137,7 +137,7 @@ logger.success('Scene ready');
 ### 1. Appropriate Verbosity
 - **Production**: Only log important events (start, success, errors)
 - **Development**: Include detailed debugging information
-- **Use Environment Checks**: Wrap verbose logs in `process.env.NODE_ENV === 'development'`
+- **Use Environment Checks**: Wrap verbose logs in `import.meta.env.DEV` (Vite)
 
 ### 2. Message Clarity
 - Be concise but informative
@@ -216,7 +216,7 @@ log.success(Modules.SCENE_LOADER, `Loaded ${size} bytes in ${time}ms`);
 
 ### Development-Only Logs
 ```typescript
-if (process.env.NODE_ENV === 'development') {
+if (import.meta.env.DEV) {
   log.info(Modules.SPATIAL_INDEX_LOADER, `  Query bounds: [${bounds}]`);
   log.info(Modules.SPATIAL_INDEX_LOADER, `  Cell sizes: [${sizes}]`);
 }

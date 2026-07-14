@@ -108,6 +108,9 @@ Each script prints the absolute output path on completion. Defaults to
 | `partition_only_example.py` | Pure spatial partition (auto and manual), no LOD. |
 | `lines_partition_and_sampling_example.py` | Polyline-atomic BSP, Poisson-disk LOD, SAH BSP. |
 | `energy_breakpoints_example.py` | Energy-aware LOD ordering + explicit coverage_fraction. |
+| `points_substitutive_lod_example.py` | `substitutive_lod=` for Points: coarse levels synthesised as mass-preserving Gaussian splats (vs additive decimation baseline). |
+| `lines_substitutive_lod_example.py` | `substitutive_lod=` for Lines: segments lifted to gsplat "beads" for smooth, bright coarse levels (vs polyline decimation baseline). |
+| `progressive_timelapse_example.py` | Additive LOD ladders across a discrete time dimension; SliceCache instant revisits when scrubbing frames. |
 
 ### Gaussian splats
 

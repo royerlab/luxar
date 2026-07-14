@@ -259,8 +259,9 @@ Saving and Visualizing Results
    # Save to zarr
    result.save("fitted_splats.gsplats.zarr", encoding_mode=EncodingMode.MEMORY)
 
-   # Visualize in viewer
-   # Terminal: luxar serve fitted_splats.gsplats.zarr --viewer
+   # Visualize in viewer (canonical one-liner)
+   # Terminal: luxar gsplat view fitted_splats.gsplats.zarr
+   # (alternative: luxar serve fitted_splats.gsplats.zarr --viewer)
 
 .. image:: ../images/docs/gsplats-scene.png
    :alt: Luxar viewer showing Gaussian splats
@@ -369,16 +370,16 @@ topology on top with ``luxar gsplat lod --recipe ...`` (the ``--recipe`` flag
 is required). Recipes are ordered by dataset scale:
 
 * **flat** — a single leaf (no LOD, no partition).
-* **additive** — same N splats, *reordered* so the prefix sum at any k splats
+* **stream** — same N splats, *reordered* so the prefix sum at any k splats
   is the best L² approximation of the full scene (streaming-friendly).
-* **partitioned** — a spatial BSP partition where each part carries its own
-  additive ladder (frustum-cull off-screen parts; stream detail in view).
-* **multiscale** — an unbalanced ``kind=lod``: a coarse substitutive cap for
-  the far view plus a ``partitioned`` fine branch for close-up.
-
-plus the lower-level primitives ``substitutive`` (synthesise M < N
-representative splats per coarser level) and ``pyramid`` (the balanced
-substitutive × additive matrix).
+* **levels** — synthesise M < N representative splats per coarser level
+  (coarse→fine replacement levels; zoom across scales).
+* **tiles** — a spatial BSP partition where each tile carries its own
+  streaming ladder (frustum-cull off-screen tiles; stream detail in view).
+* **overview** — an instant coarse overview level for the far view plus a
+  ``tiles`` fine branch for close-up.
+* **adaptive** — spatial tiles where each tile picks its own detail level
+  (per-tile coarse↔fine swap).
 
 .. code-block:: bash
 

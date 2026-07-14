@@ -81,8 +81,9 @@ luxar gsplat batch-fit cancel out/             # scancel all jobs for this run
 
 `merge --recipe` is the memory-safe way to add LOD to tiled output: each spatial
 tile-part gets its own ladder as it streams (the plain `lod` command rejects a
-partition). additive → `partitioned`; substitutive → `mosaic`. The stacked-timepoint
-axis is always a hard coarsening barrier.
+partition). `--recipe stream` → `tiles` topology (a per-part prefix-sum
+ladder); `--recipe levels` → `adaptive` (per-part coarse↔fine levels). The
+stacked-timepoint axis is always a hard coarsening barrier.
 
 ## GPU profile (enables auto tile-size)
 

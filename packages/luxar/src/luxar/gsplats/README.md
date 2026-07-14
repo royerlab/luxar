@@ -71,7 +71,13 @@ Each Gaussian splat is parameterized using covariance matrix representation:
 - **Centers (μ)**: Sigmoid-bounded to stay within image domain
 - **Covariance (Σ)**: Cholesky decomposition `Σ = L @ L^T` ensures positive definiteness
 - **Amplitudes (a)**: Softplus activation for non-negativity
-- **Sharpness (s)**: Exponential mapping `s = 2 * exp(s')` controls edge falloff (default s=2 for standard Gaussian)
+
+These three (centers, Cholesky factors, amplitudes) are the only optimized
+parameters — the falloff exponent is fixed at 2 (a standard Gaussian). The
+normalized `[0, 1]` sharpness attribute found on Points/Lines (mapping to a
+super-Gaussian exponent `β = 2^(6s−2)`, with `s = 0.5` ⇒ Gaussian) is a viewer
+rendering knob for those geometry types and is not part of the gsplat fitting
+model.
 
 Mathematical form (shifted Gaussian for C⁰ continuity at truncation boundary):
 ```
@@ -1406,4 +1412,4 @@ If you use this implementation in your research, please cite:
 
 ## License
 
-MIT License - See repository for details
+BSD 3-Clause License - See the repository `LICENSE` file for details

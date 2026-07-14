@@ -61,7 +61,7 @@ with LuxarZarrCompiler("hdr_example.luxar.zarr") as compiler:
         [0.5, 0.7, 1.2],  # Slightly bright blue
     ], dtype=np.float32)
 
-    # Float32 colors are automatically treated as HDR
+    # Float32 colors with values > 1.0 are automatically detected as HDR
     scene.add_points(
         name="emissive",
         positions=positions,
@@ -72,11 +72,18 @@ with LuxarZarrCompiler("hdr_example.luxar.zarr") as compiler:
 
 ### HDR Color Detection
 
-Luxar automatically detects HDR colors based on the data type:
-- **`np.float32`** colors: Treated as HDR-capable (values can exceed 1.0)
-- **`np.uint8`** colors: Standard 8-bit colors (values 0-255)
+Luxar automatically detects HDR colors based on the **values**, not just the
+dtype (`io/_compiler/dataset_writers/colors.py`):
+- **`np.float32`** colors with **any value > 1.0**: detected as HDR — stored
+  as `geolog_perchannel_u16` under AUTO (float32 under PRECISION)
+- **`np.float32`** colors that are **all ≤ 1.0**: detected as SDR — under
+  AUTO they are quantized to 8-bit `rgb_uint8` (lossy). If you need exact
+  float SDR values preserved, use `EncodingMode.PRECISION`.
+- **`np.uint8`** colors: standard 8-bit colors (values 0-255), stored as-is
 
-No explicit `color_mode` parameter is needed.
+No explicit `color_mode` parameter is needed — but note the consequence: a
+float32 array that never exceeds 1.0 is NOT kept in a wide format; it lands
+in the same 8-bit encoding as uint8 input under the default AUTO mode.
 
 ### Example Scenes
 
@@ -262,7 +269,7 @@ console.log('Float support:', !!gl.getExtension('EXT_color_buffer_float'));
 - ✅ 16-bit float (HalfFloatType) render targets
 - ✅ HDR intensity multipliers (configurable)
 - ✅ ACES filmic tone mapping (default — the most consistent, pleasing HDR look)
-- ✅ Multiple tone mapping operators (ACES, Neutral, AgX, Reinhard, Linear)
+- ✅ Multiple tone mapping operators (None, Linear, Reinhard, Cineon, ACES, AgX, Neutral)
 - ✅ Automatic HDR capability detection on startup
 - ✅ Per-node gamma correction
 - ✅ Additive blending for bright emissive materials

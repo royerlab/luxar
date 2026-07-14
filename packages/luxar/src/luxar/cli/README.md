@@ -19,11 +19,11 @@ luxar info my_data.luxar.zarr --stats
 
 **What Each Does**:
 - `luxar demo` - Creates a demo dataset and opens it in the viewer automatically
-- `luxar serve --viewer` - Serves your data via HTTP and launches the viewer
+- `luxar serve --viewer` - Serves your data via HTTP alongside the viewer (add `--open` to launch the browser)
 - `luxar info --stats` - Shows dataset structure, dimensions, and compression stats
 
 **Pro Tips**:
-- Add `--no-open` to any command to skip browser launch
+- Browser launch: `demo`, `viewer`, and `gsplat view` open the browser by default (add `--no-open` to skip); `serve` and `export` do not (add `--open` to launch it)
 - Use `luxar profiles` to list network simulation profiles
 - Use `luxar serve --help` for all serving options
 - Use `luxar export --native macos` (or `linux-amd64`/`linux-arm64`) for double-clickable native bundles backed by an embedded Go launcher (requires `make build-launchers` first)
@@ -32,9 +32,12 @@ luxar info my_data.luxar.zarr --stats
 ## Module Structure
 
 - `__init__.py` - Package initialization, exports the main app
-- `main.py` - Main CLI application with all commands
-- `gsplat_commands.py` - Gaussian splat subcommands (info, view, napari, cull, filter, partition, flatten, additive, slice, transform, denoise, fit, convert, render, compare, cal, migrate-format, reencode, merge, benchmark; the `batch-fit` group: run/submit/status/validate/cancel/merge/denoise-calibrate/denoise-preprocess)
-- `lod.py` - the unified `lod --recipe {flat,additive,partitioned,multiscale,mosaic,substitutive,pyramid}` command (thin wrapper over `gsplats/lod/recipes.py`; registered onto the `gsplat` app)
+- `main.py` - Main CLI application with the top-level commands
+- `serving.py` - HTTP serving internals (`create_server_app`, data/viewer servers; re-exported by `main.py`)
+- `info_command.py` - The `luxar info` command implementation
+- `gsplat_commands.py` - Thin registration hub (~56 lines) that assembles the `gsplat` sub-app: fit, cal, render, denoise, lod, convert, migrate-format, reencode, info, napari, view, compare, annotate-quality, transform, merge, cull, filter, slice, partition, flatten, additive, benchmark; the `batch-fit` group: run/submit/status/validate/cancel/merge/denoise-calibrate/denoise-preprocess
+- `gsplat_ops/` - The gsplat subcommand implementations (~35 modules: fitting, calibration, transforms, batch orchestration, inspection, ...)
+- `lod.py` - the unified `lod --recipe {flat,stream,levels,tiles,overview,adaptive}` command (thin wrapper over `gsplats/lod/recipes.py`; registered onto the `gsplat` app)
 - `gsplat_config.py` - Config system: presets, YAML loading, volume loaders, helpers
 - `utils.py` - Utility functions for CLI operations
 - `export.py` - Standalone scene export (viewer + data + serve script)
@@ -64,7 +67,8 @@ luxar serve --viewer-only      # Serve only viewer
 ```
 
 Security defaults are optimized for local development: CORS allows local
-browser origins (`localhost`, `127.0.0.1`, `0.0.0.0`, `::1`) by default, directory listing
+browser origins (`localhost`, `127.0.0.1`, `[::1]`; `0.0.0.0` is deliberately
+excluded) by default, directory listing
 requests cannot escape the served root, and obvious system paths such as `/`,
 `/etc`, `/proc`, `/sys`, and `/dev` are refused unless you pass
 `--allow-sensitive-path`. Use `--cors-origin '*'` only when you intentionally
@@ -187,10 +191,13 @@ Filter splats by multiple criteria (AND logic).
 ```bash
 luxar gsplat filter input.gsplats.zarr out.gsplats.zarr --amplitude-min 0.1 --eccentricity-max 5
 luxar gsplat filter input.gsplats.zarr out.gsplats.zarr --bbox "0,50,0,50,0,50" --volume-max 100
-luxar gsplat filter input.gsplats.zarr out.gsplats.zarr --mass-min 0.01
+luxar gsplat filter input.gsplats.zarr out.gsplats.zarr --scale-max p90            # drop largest 10% (diffuse background)
+luxar gsplat filter input.gsplats.zarr out.gsplats.zarr --scale-max p90 --dry-run  # preview impact, write nothing
+luxar gsplat filter input.gsplats.zarr out.gsplats.zarr --isolation-max p99        # strip the 1% most-isolated (noise)
+luxar gsplat filter input.gsplats.zarr out.gsplats.zarr --soft-highpass p90        # attenuate large splats (no popping)
 ```
 
-**Criteria**: `--bbox`, `--amplitude-min/max`, `--volume-min/max`, `--eccentricity-min/max`, `--mass-min/max`, `--sigma-axis`/`--sigma-min/max`. Supports `--*-normalized` flags.
+**Criteria**: `--bbox`, `--amplitude-min/max`, `--scale-min/max` (characteristic size = geometric-mean spatial sigma; timelapse-safe — `--scale-max` is the recommended background-removal knob), `--volume-min/max`, `--eccentricity-min/max`, `--mass-min/max`, `--sigma-axis`/`--sigma-min/max`, `--isolation-max` (nearest-neighbour distance), `--min-neighbors`/`--neighbor-radius` (local density), `--soft-highpass`/`--soft-lowpass`/`--soft-width` (soft reweighting: attenuate amplitude by scale instead of deleting). Every min/max threshold accepts a plain number OR a percentile written as `pNN`/`NN%`. Supports `--*-normalized` flags (volume/scale/amplitude/mass). Extras: `--spatial-dims` (override auto axis detection), `--dry-run` (report impact without saving), `--truncate` (sigma truncation for volume computation).
 
 #### `luxar gsplat partition`
 Partition a dataset into a single `kind=partition` file via spatial BSP
@@ -225,7 +232,7 @@ luxar gsplat cal volume.tiff cal.json --pdf cal_report.pdf       # Multi-page PD
 luxar gsplat cal volume.zarr cal.json --progression power --power 2  # Polynomial K spacing
 ```
 
-**Options**: `--k-grid` (explicit comma-separated K values), `--n-grid` (default 10), `--k-min` (default 1000), `--k-max` (default 512000), `--progression` (exp/power), `--power`, `--mask-seed`, `--mask-fraction` (default 0.05), `--preset` (default n2s), `--config`, `--device/-d`, plus volume-loader pass-through (`--channel/-c`, `--timepoint`, `--array-key`).
+**Options**: `--k-grid` (explicit comma-separated K values), `--n-grid` (default 10), `--k-min` (default 1000), `--k-max` (default 512000), `--progression` (exp/power), `--power`, `--mask-seed`, `--mask-fraction` (default 0.05), `--preset` (default n2s), `--config`, `--floor` (background floor / DC-offset suppression, default `auto` — K* is measured on floor-suppressed data, matching `fit`; pass `none` for the legacy hard-min behavior), `--device/-d`, `--k-star-metric` (psnr_minmax/psnr_foreground/gain), `--auto-region/--no-auto-region` + `--region-size`/`--region-strategy` (calibrate on a content-rich sub-region), `--feature-metric`, `--saturation-exponent`, `--rd-model/--no-rd-model`, `--fit-exponent`/`--exponent-scales` (measure the saturation exponent alpha instead of assuming the default), `--pdf` (multi-page PDF report), `--keep-fits` (persist per-K fits), `--quiet/-q`, plus volume-loader pass-through (`--channel/-c`, `--timepoint`, `--array-key`, `--axes`).
 
 #### `luxar gsplat migrate-format`
 Convert a legacy `.gsplats.zarr` layout to the current node-tree format. Five input shapes are auto-detected: v1.0 (single flat splat set), v1.1 (multi-LOD additive `/splats/lod_<i>/` subgroups), a pre-v2.0 substitutive directory (`manifest.json` + `level_<i>.gsplats.zarr`), the v2.0 `substitutive_<s>/additive_<a>/` matrix, and a v3.0/v3.1 store whose `kind=lod` groups still carry the pre-v3.2 `pixel_size` selector attrs (rewritten as `selector: "coverage"` + derived per-child `coverage_fraction`). All migrate to a single current-format (v3.2) `.gsplats.zarr`. By default the output adopts the AUTO encoding policy, so legacy float32 Cholesky factors are re-encoded as the split diagonal/off-diagonal arrays with certified uint8 per-column quantization (the encode-time covariance certificate escalates to uint16 when the measured Σ error demands it); pass `--lossless` to keep them float32 for archival fidelity.
@@ -248,9 +255,9 @@ luxar gsplat reencode fit.gsplats.zarr fit_f32.gsplats.zarr -e precision   # flo
 
 #### `luxar gsplat lod`
 Build a **representation topology** from a pre-fitted `.gsplats.zarr` via a single
-required `--recipe` flag. Recipes are scale-ordered: `flat`, `additive`,
-`partitioned`, `multiscale`, `mosaic`, plus the `substitutive` and `pyramid`
-primitives.
+required `--recipe` flag. Recipes are scale-ordered: `flat`, `stream`, `levels`,
+`tiles`, `overview`, `adaptive`. (The pre-2026-07 names — additive, substitutive,
+pyramid, partitioned, multiscale, mosaic — error with a pointer to the new name.)
 Output is a standalone `.gsplats.zarr` (graft into a scene from Python via
 `add_gsplats_from_file` / `gsplat convert`).
 
@@ -280,6 +287,34 @@ luxar gsplat lod in.gsplats.zarr out.gsplats.zarr --recipe levels \
 ```
 
 An option irrelevant to the chosen recipe (e.g. `--max-elements` with `--recipe stream`) is rejected with a clear error.
+
+#### `luxar gsplat additive`
+Give every leaf of an **existing** gsplat tree an additive (streaming) ladder, structure-preservingly — `kind=lod` levels, partition parts, and adaptive groups all keep their shape. The per-leaf counterpart of `lod --recipe stream` (which needs a flat input) and the inverse companion of `flatten`. Explicit `counts:` breakpoints are clamped per leaf; an existing ladder is rebuilt from its union.
+```bash
+luxar gsplat additive sub.gsplats.zarr pyr.gsplats.zarr --target-ms 200   # ~200ms first paint per leaf
+luxar gsplat additive in.gsplats.zarr out.gsplats.zarr -b stream:14000
+luxar gsplat additive in.gsplats.zarr out.gsplats.zarr --n-lods 4         # classic equal-count
+```
+
+**Options**: `--n-lods` (default 4, equal-count), `--method/-m` (auto/greedy/self_energy/mass/amplitude ordering), `--breakpoints/-b` (`equal-count` | `stream:C` | explicit `counts:`/`energy:` lists), `--target-ms` (+ `--bandwidth-mbps`, default 25; `--bytes-per-splat` override) to size the first chunk from a download budget, `--encoding/-e`, `--compress/-c`, `--overwrite`.
+
+#### `luxar gsplat flatten`
+Collapse **any** gsplat tree (leaf, LOD/matrix tree, partition, nested) into one flat matrix-shaped leaf. Use for compatibility with tools that expect a flat `.gsplats.zarr`, or before rebuilding a new global LOD from a tiled/partitioned result.
+```bash
+luxar gsplat flatten partitioned.gsplats.zarr flat.gsplats.zarr
+```
+
+**Options**: `--encoding/-e` (auto/precision/memory), `--compress/-c` (zip/tar.gz), `--overwrite`.
+
+#### `luxar gsplat annotate-quality`
+Retrofit Q·e quality stamps onto an **existing** `.gsplats.zarr`, in place (no refit / re-ladder): the cumulative energy fraction `e(k)` per additive sub-LOD plus a reference energy `w` per leaf (cheap O(N); enables the viewer's early energy-threshold LOD upgrades on legacy datasets). The root `content_hash` is re-stamped so viewer caches invalidate automatically. Directory stores only — unpack `.zip`/`.tar.gz` first. New builds stamp by default.
+```bash
+luxar gsplat annotate-quality splats.gsplats.zarr                 # e(k) + w only (fast)
+luxar gsplat annotate-quality splats.gsplats.zarr --with-quality  # + measured Q per level
+luxar gsplat annotate-quality splats.gsplats.zarr --dry-run       # print stamps, write nothing
+```
+
+**Options**: `--with-quality` (also measure per-level mixture-L2 quality Q vs each lod group's finest content; slower), `--max-pair-splats` (subsample cap for the Q measurement, default 2000000), `--device` (auto/cpu/cuda/mps), `--dry-run`.
 
 #### Tiled Fitting
 For large volumes, use tiled fitting. `--tiling auto` (the default) picks the mode automatically: `none` if the volume fits one tile, `content` if a density is supplied (`--cal`/density knobs), else `uniform`. A tiled fit (`--tiling uniform` or `--tiling content`) emits a `kind=partition` by default (one part per tile/box, for viewer frustum culling); pass `--flat` for a single flat leaf. Whole-volume fits (`--tiling none`/small auto) stay a single leaf.
@@ -356,13 +391,13 @@ luxar gsplat batch-fit submit data.zarr.zip output/ -p gpu --preset draft     # 
 ```
 
 #### `luxar gsplat batch-fit status`
-Check the status of a Slurm fitting run.
+Check the status of a batch fitting run (local `run` or Slurm `submit`).
 ```bash
 luxar gsplat batch-fit status output/
 ```
 
 #### `luxar gsplat batch-fit merge`
-Merge completed tiles from a Slurm fitting run into a single dataset.
+Merge completed tiles from a batch fitting run (local `run` or Slurm `submit`) into a single dataset.
 ```bash
 luxar gsplat batch-fit merge output/
 ```

@@ -269,7 +269,7 @@ All features described in this document are **fully implemented**:
 ## Implementation Locations
 
 ### Python
-- `packages/luxar/src/luxar/core/node.py` — `intensity` and `offset` properties
+- `packages/luxar/src/luxar/core/node/node.py` — `intensity` and `offset` properties
 - `packages/luxar/src/luxar/core/viewer_config.py` — `exposure`, `global_offset`, `global_gamma` fields (replaced `hdr_multiplier`)
 - `packages/luxar/src/luxar/io/compiler.py` — writes defaults for all three geometry write methods
 - `packages/luxar/src/luxar/validation/types.py` — validators for intensity, offset
@@ -297,8 +297,8 @@ Dual-stack: each geometry has a parallel GLSL (WebGL2 path) and TSL (WebGPU path
 - `packages/luxar-viewer/src/data/scene-loader.ts` — per-node `intensity`/`offset` from zarr attrs
 
 ### TypeScript (config + propagation)
-- `packages/luxar-viewer/src/config/types.ts` — `exposure`/`globalOffset`/`globalGamma` in RenderingSettings
-- `packages/luxar-viewer/src/config/index.ts` — defaults
+- `packages/luxar-viewer/src/config/sections/rendering-controls/types.ts` — `exposure`/`globalOffset`/`globalGamma` in RenderingSettings
+- `packages/luxar-viewer/src/config/sections/rendering-controls/data.ts` — defaults
 - `packages/luxar-viewer/src/config/zarr-bridge/viewer-config-utils.ts` — `RENDERING_SETTINGS_MAP` snake_case → camelCase
 - `packages/luxar-viewer/src/types/zarr.ts` — `ZarrViewerConfig` fields
 

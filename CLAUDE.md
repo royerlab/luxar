@@ -498,7 +498,8 @@ luxar gsplat lod in.gsplats.zarr out.gsplats.zarr --recipe levels --coarsen-dims
 # fills the screen and coarser levels step in as it shrinks (the viewer anchors to
 # the live viewport, so it self-calibrates on any monitor — no threshold knob).
 
-# Migrate legacy .gsplats.zarr layouts (v1.0 / v1.1 / pre-v2.0 substitutive dir / v2.0 matrix) → v3.2
+# Migrate legacy .gsplats.zarr layouts (v1.0 / v1.1 / pre-v2.0 substitutive dir / v2.0 matrix /
+# v3.0-v3.1 with pre-v3.2 pixel_size lod selector attrs) → v3.2
 luxar gsplat migrate-format legacy.gsplats.zarr v3.gsplats.zarr               # single file
 luxar gsplat migrate-format old_pyr/ v3.gsplats.zarr                          # substitutive directory
 
@@ -650,7 +651,8 @@ The Makefile follows consistent naming conventions with **action-first** pattern
   /guides/                 # Organized guides by purpose
     /user/                 # User guides (format, HDR, testing)
     /developer/            # Developer guides (style, console, network)
-    /specs/                # Technical specs (cache, dimensions, lines)
+    /specs/                # Technical specs (cache prefetching, nD transforms, subpixel jitter/TAA)
+  /specs/                  # Format specs (GSPLATS_ZARR_FORMAT.md, GSPLATS_DIMENSION_MAPPING.md)
   /api/                    # Sphinx API reference files (.rst)
   /concepts/               # Architecture and concepts (.rst)
   /tutorials/              # Step-by-step tutorials (.rst)
