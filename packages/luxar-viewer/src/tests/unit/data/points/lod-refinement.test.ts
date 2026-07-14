@@ -109,4 +109,52 @@ describe('runPointsRefinement — Points-specific behaviour', () => {
     // Third arg is the profiler pass session — undefined when no profiler is wired.
     expect(updatePointsGeometry).toHaveBeenCalledWith('/p', refinedData, undefined);
   });
+
+  it('does NOT commit when the signal aborts during the load', async () => {
+    // Points commits directly (no async process step), so model a supersede
+    // that aborts the run's controller during the awaited load which still
+    // resolves (served from cache / abort raced the fetch completion). The
+    // commit must be skipped so no stale-slice geometry reaches the GPU —
+    // mirroring runAtomicCommit's signal.aborted guard on the main path.
+    const controller = new AbortController();
+    let hasMore = true;
+    const refinedData = {
+      positions: new Float32Array(9),
+      pointCount: 3,
+      ndim: 3,
+      metadata: {
+        totalPoints: 3,
+        loadedPoints: 3,
+        bounds: new THREE.Box3(),
+        usedSpatialIndex: false,
+      },
+    };
+    const loader: PointsDataLoader = {
+      get hasMoreLODs() {
+        return hasMore;
+      },
+      updateView: vi.fn().mockImplementation(async () => {
+        hasMore = false;
+        controller.abort();
+        return refinedData;
+      }),
+    } as unknown as PointsDataLoader;
+
+    const updatePointsGeometry = vi.fn();
+
+    await runPointsRefinement({
+      rootGroup: new THREE.Group(),
+      viewStateQueue: new ViewStateQueue(),
+      pointsLoaders: new Map([['/p', loader]]),
+      deriveNodeViewState: () => ({ skip: false, viewState: baseViewState }),
+      updatePointsGeometry,
+      updateVisibleCountsInMonitor: vi.fn(),
+      releaseLock: vi.fn(),
+      retriggerUpdate: vi.fn(),
+      signal: controller.signal,
+    });
+
+    expect(loader.updateView).toHaveBeenCalledTimes(1);
+    expect(updatePointsGeometry).not.toHaveBeenCalled();
+  });
 });
