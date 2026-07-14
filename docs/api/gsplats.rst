@@ -16,7 +16,11 @@ Main API
 .. autoclass:: luxar.gsplats.GSplatData
    :members:
    :undoc-members:
+   :exclude-members: additive_sublods
    :show-inheritance:
+
+.. autoproperty:: luxar.gsplats.GSplatData.additive_sublods
+   :no-index:
 
 Tiled Fitting
 -------------
@@ -32,6 +36,7 @@ stitching. Used by ``luxar gsplat fit --tiling uniform/content``.
 
 .. automodule:: luxar.gsplats.tiling
    :members:
+   :no-undoc-members:
    :show-inheritance:
 
 Lifting Points and Lines to Splats
@@ -62,6 +67,7 @@ Fitting Configuration
 .. automodule:: luxar.gsplats.fitting.config
    :members:
    :undoc-members:
+   :no-index:
 
 Fitting Stages
 ~~~~~~~~~~~~~~
@@ -127,6 +133,7 @@ Gaussian Splat Models
    :members:
    :undoc-members:
    :show-inheritance:
+   :no-index:
 
 Model Utilities
 ~~~~~~~~~~~~~~~
@@ -218,7 +225,7 @@ Gaussian splat culling strategies for reducing splat count while preserving qual
 
 .. automodule:: luxar.gsplats.culling
    :members:
-   :undoc-members:
+   :no-undoc-members:
 
 Quality Metrics
 ---------------
@@ -299,6 +306,7 @@ fitting, LOD, and I/O layers — the v3.2 ``.gsplats.zarr`` on-disk structure.
 
 .. automodule:: luxar.gsplats.tree
    :members:
+   :no-undoc-members:
    :show-inheritance:
 
 Content Planning

@@ -120,14 +120,19 @@ def inspect_gsplats_zarr(path: str | Path) -> Dict[str, Any]:
         info["ordering_bits_per_dim"] = splats_attrs.get(
             "ordering_bits_per_dim"
         ) or splats_attrs.get("morton_bits_per_dim")
-        if info["ordering"] == "morton":
-            info["ordering_resolution"] = splats_attrs.get(
-                "ordering_resolution"
-            ) or splats_attrs.get("morton_resolution")
-        else:
-            info["ordering_resolution"] = splats_attrs.get(
-                "ordering_resolution"
-            ) or splats_attrs.get("hilbert_resolution")
+        # Legacy-only key: current writers emit a per-axis bit budget, not a
+        # grid resolution — include `ordering_resolution` only when a value
+        # actually exists (pre-v3.0 morton_/hilbert_resolution files).
+        legacy_key = (
+            "morton_resolution"
+            if info["ordering"] == "morton"
+            else "hilbert_resolution"
+        )
+        resolution = splats_attrs.get("ordering_resolution") or splats_attrs.get(
+            legacy_key
+        )
+        if resolution is not None:
+            info["ordering_resolution"] = resolution
 
     # Ranges
     info["amplitude_range"] = splats_attrs.get("amplitude_range")

@@ -353,7 +353,9 @@ def cache_computed(
         except Exception as exc:  # truncated / incompatible pickle
             corrupt = cache_file.with_suffix(".pkl.corrupt")
             cache_file.replace(corrupt)
-            aprint(f"⚠️  Cached result unreadable ({exc}); quarantined to {corrupt.name}")
+            aprint(
+                f"⚠️  Cached result unreadable ({exc}); quarantined to {corrupt.name}"
+            )
 
     result = compute_fn()
 
@@ -443,6 +445,7 @@ def stack_colorings(
     Args:
         coords: ``(N, D)`` spatial coordinates (``D`` is usually 3).
         colorings: ordered list of dicts, one per color scheme. Each dict has:
+
             - ``"label"``: category name shown on the ``coloring`` dimension.
             - ``"colors"``: ``(N, 3)`` float RGB for this scheme.
             - ``"labels"`` (optional): ``(N,)`` per-point hover strings for this
