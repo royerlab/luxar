@@ -94,8 +94,8 @@ from arbol import Arbol, aprint, asection
 
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
 from luxar.encoding import EncodingMode
-from luxar.gsplats.clahe import apply_clahe
 from luxar.gsplats import fit_gaussian_splats
+from luxar.gsplats.clahe import apply_clahe
 from luxar.gsplats.gsplat_data import GSplatData
 from luxar.utils.demos import (
     launch_viewer,
