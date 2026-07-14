@@ -247,11 +247,15 @@ TypeScript Layer (Viewer)
 
 **Design Decisions**:
 
-*Why three cache levels?*
+*Why multiple cache levels?*
 
-* L1 (Memory): Ultra-fast (~1μs) for active chunks
+* L0 (decompressed in-memory): Ready-to-use decoded chunks, no re-decompress
+* L1 (memory, segmented LRU): Ultra-fast (~1μs) compressed chunks
 * L2 (OPFS): Persistent (~1ms) across page reloads
-* L3 (HTTP): Unlimited (~100ms) source of truth
+* HTTP: Unlimited (~100ms) source of truth
+
+(An additional in-flight "S-cache" coalesces and paces concurrent range
+requests.)
 
 *Why nD slicing vs dimension reduction?*
 
@@ -581,9 +585,14 @@ Workflow 2: Multi-Channel Imaging
        Dimension("X", unit="um", spatial=True),
        Dimension("Y", unit="um", spatial=True),
        Dimension("Z", unit="um", spatial=True),
-       Dimension("Channel", discrete=True, categories=["DAPI", "GFP", "mCherry"]),
-       Dimension("Wavelength", unit="nm", display=False),
+       Dimension("Channel", discrete=True, display=False, categories=["DAPI", "GFP", "mCherry"]),
+       Dimension("Wavelength", unit="nm", display=False, discrete=True),
    ])
+
+   # At most 3 dimensions can be displayed, so Channel and Wavelength are
+   # non-displayed (navigated with the [ ] keys). A non-spatial, non-displayed
+   # dimension must be discrete, so Wavelength is marked discrete=True
+   # explicitly (otherwise Luxar sets it automatically and emits a warning).
 
    # Categorical dimension allows channel selection by name
    # Discrete + spatial ordering groups all DAPI points together

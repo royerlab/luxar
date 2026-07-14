@@ -66,37 +66,56 @@ Best practices:
 
 ## 🧪 Test Suite Organization
 
-### Test Files (check `packages/luxar-viewer/src/tests/e2e/` for current count)
+### Test Files
 
-Key test suites include:
+The authoritative list is the directory itself — run
+`ls packages/luxar-viewer/src/tests/e2e/*.spec.ts` for the current set
+(50+ specs). Key test suites include:
 
 | File | Purpose |
 |------|---------|
 | **all-examples-smoke-test.spec.ts** | Comprehensive smoke tests for all examples |
 | **basic-rendering.spec.ts** | Initialization, canvas, errors |
+| **blending-modes.spec.ts** | Blending-mode rendering |
+| **cache-persistence.spec.ts** | Cache persistence across reloads |
 | **cache-system.spec.ts** | OPFS caching functionality |
+| **colormap-system.spec.ts** | Colormap application and switching |
 | **controls-interaction.spec.ts** | Keyboard, mouse, camera |
 | **custom-gui-library.spec.ts** | Custom GUI panel testing |
+| **data-integrity.spec.ts** | Loaded data matches source |
 | **data-monitor-metrics.spec.ts** | Performance monitoring |
+| **dataset-switching.spec.ts** | Switching datasets at runtime |
 | **demo-validation.spec.ts** | Python script syntax + `.luxar.zarr` output checks |
 | **dimension-animation.spec.ts** | Dimension animation playback |
 | **dimension-initialization.spec.ts** | nD dimension setup |
 | **error-recovery.spec.ts** | ⭐ Error handling |
 | **first-time-ux.spec.ts** | Browser, help, error messages |
 | **geometry-types.spec.ts** | Lines & GSplats rendering |
+| **gsplat-rendering-visual.spec.ts** | GSplat visual rendering |
 | **keyboard-input-system.spec.ts** | Fly controls, shortcuts, modifiers |
+| **layers-panel.spec.ts** | Layers panel UI |
+| **lod-group.spec.ts** | LOD group switching and streaming |
+| **luxar-serve-integration.spec.ts** | `luxar serve` integration |
+| **mouse-interactions.spec.ts** | Mouse picking and hover interactions |
 | **nd-navigation.spec.ts** | ⭐ Core nD feature! |
 | **nd-transforms.spec.ts** | nD transform inverse-query |
+| **ortho-mode.spec.ts** | Orthographic camera mode |
 | **performance-tracking-perf-bench.spec.ts** | ⭐ Regression detection + memory/FPS (opt-in: `pnpm test:perf:e2e`) |
 | **position-bounds-clipping.spec.ts** | Boundary testing |
+| **post-processing-pipeline.spec.ts** | Bloom/AO/AA pipeline |
 | **python-typescript-integration.spec.ts** | ⭐ Cross-language E2E |
 | **real-dataset-loading.spec.ts** | Real `.luxar.zarr` files + dataset switching |
 | **recording-panel.spec.ts** | Screenshot/video capture panel |
+| **renderer-url-param.spec.ts** | `?renderer=` backend selection (WebGL vs WebGPU) |
 | **rendering-controls.spec.ts** | Rendering panel, FOV, controls |
+| **slice-cache.spec.ts** | SliceCache (per-slice decoded-geometry reuse) |
 | **spatial-index-accuracy.spec.ts** | Query accuracy, caching |
+| **standalone-gsplats.spec.ts** | Standalone `.gsplats.zarr` loading |
 | **test-fixtures-rendering.spec.ts** | Encoding/decoding compatibility |
 | **theme-visual-regression.spec.ts** | Theme visual regression |
 | **transform-hierarchy.spec.ts** | ⭐ Transform correctness |
+| **tsl-shader-parity.spec.ts** | GLSL vs TSL shader parity |
+| **url-parameters.spec.ts** | URL parameter handling (`?src`, flags, budgets) |
 | **viewer-initialization.spec.ts** | Viewer startup without data |
 | **visual-regression.spec.ts** | Screenshot comparison |
 | **webgl-errors.spec.ts** | WebGL error detection |

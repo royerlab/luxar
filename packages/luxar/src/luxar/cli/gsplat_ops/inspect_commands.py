@@ -472,7 +472,7 @@ def quick_view(
 ) -> None:
     """Quick view of a Gaussian splat dataset in the Luxar web viewer.
 
-    The standalone ``.gsplats.zarr`` is a v3.0 node subtree — exactly what the
+    The standalone ``.gsplats.zarr`` is a v3.2 node subtree — exactly what the
     viewer renders inside a scene — so it is served **directly** (``?src=``) and
     opened with no scene-compile round-trip. This works for every tree shape:
     a single leaf, an additive ladder, a ``kind=lod`` substitutive hierarchy, a

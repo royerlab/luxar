@@ -32,9 +32,11 @@ returns it for `additive_<i>` subgroups; `scene-loader.ts` drives
 `runLinesRefinement` (from `lod-refinement.ts`) to stream the remaining
 LODs in the background once the first level is on screen.
 
-`projectLinesTo3D` is exported for the main-thread fallback path
-and for unit tests that exercise per-vertex interpolation without a
-WASM context.
+There is no main-thread projection export in this folder: the
+main-thread fallback is `projectLinesInProcess` from
+`src/workers/data-worker/projection/in-process.ts`, which runs the same
+worker dispatcher kernel in-process. `projection.ts` here exports only
+`createEmptyLinesData`.
 
 ## Invariants
 
@@ -62,18 +64,17 @@ Uint8Array | null`; `interpolate_scalars_batch` (the same WASM
   kernel that handles widths and sharpness) produces compacted
   `startScalars` / `endScalars`. Uint8 inputs are normalized by
   `1/255` to match the colormap shader's `[0, 1]` contract.
-- **Main-thread `projectLinesTo3D` is the fallback.** It is
-  slower (~600 ms / 1M segments per
-  `src/tests/benchmarks/lines-ts-fallback-alloc-bench.ts`) but
-  preserves numerical parity with the worker path. The fallback
-  fires only on WASM init failure / worker timeout / dataset-switch
-  abort (the abort path now re-throws rather than falling back —
-  see `WorkerAbortError`).
-- **Scalar length validation is fail-closed.** If the scalar array
-  length doesn't match the vertex count,
-  `projectLinesTo3D` logs a warning and emits the output with
-  no scalars; the line shader's `USE_COLORMAP` path stays inactive
-  rather than reading garbage scalar values.
+- **In-process `projectLinesInProcess` is the fallback.** On worker
+  failure or timeout, `processLinesData` re-runs the SAME dispatcher
+  kernel on the main thread via
+  `workers/data-worker/projection/in-process.ts`, so numerical parity
+  with the worker path holds by construction. A dataset-switch abort
+  re-throws rather than falling back (see `WorkerAbortError`).
+- **Scalar length validation is fail-closed.** The projection
+  dispatcher's input validation (`workers/data-worker/validation.ts`)
+  rejects a scalars array shorter than the referenced vertex count
+  with a clear error, rather than letting the interpolation kernel
+  read past the end of the buffer.
 
 ## See also
 
@@ -91,5 +92,6 @@ Uint8Array | null`; `interpolate_scalars_batch` (the same WASM
 - `src/data/loaders/README.md` — encoding dispatch /
   range-loader contract
 - `src/data/README.md` — Lines spatial-index overview
-- `src/tests/benchmarks/lines-ts-fallback-alloc-bench.ts` —
-  performance benchmark for the main-thread fallback
+- `src/workers/data-worker/projection/in-process.ts` —
+  `projectLinesInProcess`, the in-process (main-thread) fallback for
+  the worker projection path

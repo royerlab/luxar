@@ -10,9 +10,11 @@ to the viewer's internal state. This is intended for:
 - AI-assisted debugging via the agent driver (`pnpm agent:debug`)
 - Generating state dumps for bug reports
 
-The interface is defined in two stages: `main.ts` creates the base object with
-the `app` reference and version string, then `app.ts` extends it with runtime
-components (scene, camera, cache helpers, etc.) after initialization completes.
+The interface is defined in two stages: `src/core/bootstrap.ts` creates the
+base object with the `app` reference and version string, then
+`installDebugInterface()` (in `src/core/app/debug/debug-interface.ts`, invoked
+from `app.ts` via `setupDebugInterface()`) extends it with runtime components
+(scene, camera, cache helpers, etc.) after initialization completes.
 
 ## Enabling the Debug Interface
 
@@ -25,10 +27,14 @@ http://localhost:5173/?src=http://127.0.0.1:8000&debug
 **localStorage** (persists across page loads):
 
 ```js
-localStorage.setItem('luxar_debug', 'true');
+localStorage.setItem('luxar.debug', 'true');
 ```
 
-Note: `localStorage.setItem('luxar_debug', 'true')` creates the base debug object in `main.ts`, but the full runtime debug interface (with scene, camera, controls, etc.) requires the `?debug` URL parameter, which triggers `setupDebugInterface()` in `app.ts`.
+Note: either flag — the `?debug` URL parameter or the persisted `luxar.debug`
+localStorage entry — enables full debug mode: `bootstrap.ts` seeds the base
+debug object, and `setupDebugInterface()` in `app.ts` (which delegates to
+`installDebugInterface()` in `src/core/app/debug/debug-interface.ts`) adds the
+runtime components (scene, camera, controls, etc.) once initialization completes.
 
 When enabled, the viewer logs `Debug interface available at window.__luxarDebug`
 to the console and, after initialization, prints a summary of available commands.
@@ -38,7 +44,7 @@ object is never created, so there is zero overhead in production.
 
 ## Available Properties and Methods
 
-### Base properties (from `main.ts`, available immediately)
+### Base properties (from `bootstrap.ts`, available immediately)
 
 | Property | Type | Description |
 |---|---|---|
@@ -46,7 +52,7 @@ object is never created, so there is zero overhead in production.
 | `consoleInterceptor` | `ConsoleInterceptor` | Captures all console output for replay. |
 | `version` | `string` | Viewer version string (currently `"1.0.0"`). |
 
-### Runtime components (from `app.ts`, available once `runtimeReady` is `true`)
+### Runtime components (from `installDebugInterface()`, available once `runtimeReady` is `true`)
 
 | Property | Type | Description |
 |---|---|---|
@@ -231,6 +237,7 @@ Typical workflow:
 
 | File | Role |
 |---|---|
-| `packages/luxar-viewer/src/core/main.ts` | Creates the base `__luxarDebug` object and checks activation flags. |
-| `packages/luxar-viewer/src/core/app.ts` | Extends the object with runtime components in `setupDebugInterface()`. |
+| `packages/luxar-viewer/src/core/bootstrap.ts` | Creates the base `__luxarDebug` object and checks activation flags (`?debug` URL param / `luxar.debug` localStorage). |
+| `packages/luxar-viewer/src/core/app.ts` | Calls `setupDebugInterface()` after init, delegating to `installDebugInterface()`. |
+| `packages/luxar-viewer/src/core/app/debug/debug-interface.ts` | `installDebugInterface()` — assigns the runtime components (scene, camera, cache helpers, `getState`, etc.) onto `__luxarDebug`. |
 | `packages/luxar-viewer/src/tests/e2e/helpers.ts` | Playwright helper functions that consume the debug interface. |

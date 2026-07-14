@@ -90,7 +90,7 @@ The setup process has 5 steps:
 #### Step 2: Node.js Environment
 
 1. Sources nvm if already installed (`~/.nvm/nvm.sh`)
-2. Checks Node.js version (requires 20.19+ for Vite 7.x)
+2. Checks Node.js version (requires 20.19+ for Vite 8.x)
 3. If Node.js is missing or too old:
    - **macOS**: Uses Homebrew (`brew install node@22`)
    - **Linux**: Installs nvm, then `nvm install 22`
@@ -209,13 +209,18 @@ MIN_NODE_MINOR := 19
 | `make install-pnpm` | Install pnpm package manager |
 | `make install-hatch` | Install Hatch via pipx |
 | `make install-rust` | Install Rust toolchain and wasm-pack |
+| `make install-go` | Install Go toolchain for native launcher builds (no sudo) |
+| `make install-viewer-deps` | Install viewer dependencies (node_modules) |
+| `make install-dev` | Install Luxar Python package in editable mode |
+| `make enable-pre-commit` | Enable and activate pre-commit hooks |
+| `make check-wasm-deps` | Check WASM dev dependencies (Rust, wasm-pack) |
 | `make clean-setup` | Remove ALL dev tools to simulate fresh machine |
 
 ### Quality & Testing
 
 | Command | Description |
 |---------|-------------|
-| `make check-all` | Run all quality checks (Python + TypeScript) |
+| `make check-all` | Run all quality checks (Python, TypeScript, Go) |
 | `make check-typescript` | Run all TypeScript checks (typecheck, lint, test) |
 | `make test-all` | Run all tests (Python + Rust + TypeScript) |
 | `make test-python` | Run Python tests only |
@@ -228,7 +233,14 @@ MIN_NODE_MINOR := 19
 | `make security` | Run bandit security scan |
 | `make format-python` | Format Python code |
 | `make format-typescript` | Format TypeScript code |
-| `make format-all` | Format all code (Python + TypeScript) |
+| `make format-rust` | Format Rust code with cargo fmt |
+| `make format-go` | Format the Go launcher with gofmt |
+| `make format-cuda` | Format CUDA/C++ code with clang-format |
+| `make format-all` | Format all code (Python, TypeScript, Rust, Go, CUDA) |
+| `make run-pre-commit` | Run pre-commit hooks on all files |
+| `make gen-contract` | Regenerate Python + TS format-contract projections from contract.yaml |
+| `make benchmark-metal` | Run Metal (MPS) performance benchmarks (M-series only) |
+| `make benchmark-metal-stress` | Run Metal RSS leak-check |
 
 ### Viewer Development
 
@@ -249,6 +261,20 @@ MIN_NODE_MINOR := 19
 | `make benchmark-wasm` | Run WASM vs TypeScript performance benchmarks |
 | `make clean-wasm` | Clean WASM build artifacts |
 
+### CUDA & GPU Extensions
+
+| Command | Description |
+|---------|-------------|
+| `make setup-cuda` | Install CUDA deps + build extension |
+| `make check-cuda-deps` | Check CUDA dependencies (nvcc, PyTorch CUDA, etc.) |
+| `make build-cuda` | Build CUDA splatting extension (`SLURM=1` to build on a GPU node) |
+| `make test-cuda` | Run CUDA tests |
+| `make benchmark-cuda` | Run CUDA performance benchmarks |
+| `make clean-cuda` | Clean CUDA build artifacts |
+| `make build-nlm-cuda` | Build the NLM CUDA denoising extension |
+| `make test-nlm-cuda` | Run NLM CUDA extension tests |
+| `make clean-nlm-cuda` | Clean NLM CUDA build artifacts |
+
 ### Data & Demos
 
 | Command | Description |
@@ -256,8 +282,12 @@ MIN_NODE_MINOR := 19
 | `make demo` | Generate demo dataset (100k points) |
 | `luxar demo` | Generate demo + serve + open browser (all-in-one) |
 | `make run-examples` | Generate all example datasets |
+| `make run-demos` | Generate ALL demo datasets (output to `datasets/demos/`) |
 | `make serve-examples` | Serve datasets directory |
 | `make serve-dataset` | Serve a specific dataset |
+| `make generate-readme-demos` | Generate only the demo datasets needed for README screenshots |
+| `make generate-readme-images` | Generate README screenshots using Playwright |
+| `make generate-readme-videos` | Generate README videos (GIF/WebP) using Playwright |
 
 ### Documentation
 
@@ -267,6 +297,8 @@ MIN_NODE_MINOR := 19
 | `make serve-docs` | Serve documentation locally |
 | `make clean-docs` | Clean documentation artifacts |
 | `make check-docs` | Check documentation quality |
+| `make check-docs-verbose` | Check documentation with detailed output |
+| `make build-typedoc` | Generate TypeScript API documentation with TypeDoc |
 
 ### Utilities
 
@@ -275,10 +307,22 @@ MIN_NODE_MINOR := 19
 | `make help` | Show all available commands |
 | `make clean-all` | Clean all artifacts (Python, TypeScript, WASM, CUDA, datasets) |
 | `make clean-examples` | Clean generated example datasets |
+| `make clean-python` | Clean Python build artifacts and caches |
+| `make clean-cache` | Clear the Luxar user cache (`~/.cache/luxar`) |
 | `make stats` | Generate project statistics report |
 | `make shell` | Enter Hatch development shell |
 | `make show-env` | Show Hatch environments |
 | `make prune-env` | Remove unused Hatch environments |
+
+### Release & Publishing
+
+| Command | Description |
+|---------|-------------|
+| `make build` | Build wheel + sdist (builds the viewer first so it is bundled) |
+| `make set-version` | Set release version in code (`DATE=YYYY.MM.DD`, default today) |
+| `make release-check` | Dry-run release: run ALL preflight checks, tag/push nothing |
+| `make release` | Cut release: validate main + CI green, tag `v<version>`, push (triggers PyPI publish) |
+| `make publish` / `make publish-test` | Disabled — use `make release` (tag-triggered OIDC publish via CI) |
 
 ## Dependency Management
 
@@ -586,7 +630,7 @@ hatch run luxar gsplat batch-fit submit data.zarr.zip output/ -p gpu \
 | `--tile-size` | Manual tile size in voxels — skips GPU profile requirement |
 | `--tasks-per-job` | Number of tasks per Slurm job (auto-calculated from GPU capacity) |
 | `--parallel` / `--sequential` | Run packed tasks concurrently or one-by-one (default: sequential) |
-| `--preset` | Fitting preset: `draft` (500 iter), `standard` (3000), `hifi` (6000) |
+| `--preset` | Fitting preset: `draft` (2000 iter), `standard` (5000), `hifi` (10000), `ultra` (20000) |
 | `--gpu` | GPU profile name when auto-detect unavailable (login node) |
 
 **Auto-tiling**: compares total spatial voxels against the GPU's benchmarked
@@ -683,7 +727,7 @@ For automated environments (GitHub Actions, etc.):
 | Tool | Minimum Version | Reason |
 |------|----------------|--------|
 | Python | 3.10 | Type hints, dataclasses, match statements |
-| Node.js | 20.19 | Vite 7.x requirements |
+| Node.js | 20.19 | Vite 8.x requirements |
 | Rust | stable | WASM compilation |
 | wasm-pack | latest | WASM packaging |
 

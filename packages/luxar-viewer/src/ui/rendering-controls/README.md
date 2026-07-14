@@ -17,6 +17,7 @@ rendering-controls/
 ├── clipping-display.ts        # ClippingDisplay — RAF loop showing live near/far when dynamic
 ├── focus-manager.ts           # FocusManager — outside-click blur + canvas refocus
 ├── fov-utils.ts               # Pure: 35mm focal-length ↔ FOV conversions
+├── folder-icons.ts            # FOLDER_ICONS — inline-SVG glyphs for top-level folder headers
 └── setup/                     # Per-category GUI builders (see ./setup/README.md)
 ```
 
@@ -101,6 +102,10 @@ focalLengthToFov(focalLengthMm: number): number // 2 · atan(sensorWidth / (2 ·
 ```
 
 Reference sensor is the 36 mm-wide 35mm-film sensor (`FILM_35MM_SENSOR_WIDTH_MM`). `fovToFocalLength` rounds to the nearest integer mm since the GUI only displays whole-millimetre labels (e.g. `~50mm` next to the FOV slider when the preset is `Custom`).
+
+### `folder-icons.ts`
+
+`FOLDER_ICONS` — inline-SVG line icons for the panel's top-level folder headers (Camera, HDR, Anti-Aliasing, Post-Processing, Performance, Theme). Same convention as the control rail's `RAIL_ICONS` (`viewBox="0 0 24 24"`, no inline sizing/stroke — CSS strokes with `currentColor`); passed to `Folder.addFolder(name, icon)` so folder headers get a monochrome glyph that matches the rail instead of an emoji.
 
 ## Subpackages
 

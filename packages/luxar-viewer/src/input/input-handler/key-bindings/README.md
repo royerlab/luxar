@@ -9,7 +9,8 @@ Keyboard binding table split per context.
   Includes the `blur` + `visibilitychange` listeners that reset the
   counter when the page loses focus.
 - `navigation-bindings.ts` — every NAVIGATION-context application binding
-  (orbit-mode UI shortcuts: H, P, R, V, I, F, C, B, T, G, N, O, [, ],
+  (orbit-mode UI shortcuts: H, P, R, V, I, F, C, B, T, G, N,
+  M (cycle data loading monitor), O, [, ],
   digit keys 1-9, Space, Escape, Ctrl+L, Ctrl+Shift+S). The colormap
   legend (J), overlays (U), and layers panel (L) keys are read from
   `config.input.keyboard.shortcuts` rather than hard-coded, so they

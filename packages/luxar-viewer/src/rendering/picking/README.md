@@ -24,7 +24,7 @@ picking/
 │                                #   See child README.
 │
 ├── point/                       # Per-geometry picking sources for points
-│   ├── material.ts              #   GLSL ShaderMaterial wrapper (50%-radius truncation)
+│   ├── material.ts              #   GLSL ShaderMaterial wrapper (80%-radius truncation)
 │   ├── material-tsl.ts          #   WebGPU NodeMaterial counterpart
 │   ├── pick.tsl.ts              #   TSL node factory
 │   └── shaders.ts               #   GLSL3 vertex/fragment source + ShaderSource record
@@ -52,7 +52,7 @@ Each geometry has one GLSL wrapper and one TSL wrapper, both implementing the sh
 
 | Geometry | GLSL wrapper            | TSL wrapper                | TSL factory          | Pick footprint vs visual                            |
 | -------- | ----------------------- | -------------------------- | -------------------- | --------------------------------------------------- |
-| Points   | `PointPickingMaterial`  | `PointPickingTSLMaterial`  | `point/pick.tsl.ts`  | **50% radius** (bright core only)                   |
+| Points   | `PointPickingMaterial`  | `PointPickingTSLMaterial`  | `point/pick.tsl.ts`  | **80% radius** (biased toward the bright core)      |
 | Lines    | `LinePickingMaterial`   | `LinePickingTSLMaterial`   | `line/pick.tsl.ts`   | **Full width** (thin lines, super-Gaussian profile) |
 | GSplats  | `GSplatPickingMaterial` | `GSplatPickingTSLMaterial` | `gsplat/pick.tsl.ts` | **1.5σ** truncation (vs 3σ visual), max-proj        |
 

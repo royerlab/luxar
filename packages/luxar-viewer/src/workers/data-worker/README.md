@@ -17,9 +17,14 @@ scratch-buffer growth, while the entry stays a thin Comlink surface.
 
 ```
 data-worker/
-├── state.ts         — WasmCtx { wasm }
-│                      + the shared `state` instance + requireWasm() helper
-│                      that throws NOT_INITIALIZED_MSG before any task runs.
+├── state.ts         — WasmCtx { wasm, tsFallback }
+│                      + the shared `state` instance, the requireWasm() helper
+│                      that throws NOT_INITIALIZED_MSG before any task runs,
+│                      and pickBackend(ctx, ndim), which routes EVERY
+│                      ndim > 16 operation to the TypeScript backend (the
+│                      compiled WASM kernels cap at 16 dims — for >16D data
+│                      TS is the production path, not just a WASM-missing
+│                      fallback).
 ├── initialize.ts    — initialize(ctx): loads WASM via initWasm()
 │                      (or the TypeScript fallback), throws if
 │                      WebAssembly itself is unavailable.
@@ -29,8 +34,7 @@ data-worker/
 │                      producers and worker can't drift.
 ├── validation.ts    — Pure JS→WASM boundary guards: validateNDArrays,
 │                      validateProjectionInputs, validateDecodeArgs,
-│                      validateLineSegmentReferences,
-│                      validateChunkQueryInputs, plus MAX_WASM_DIMS
+│                      validateLineSegmentReferences, plus MAX_WASM_DIMS
 │                      (aliased to config/constants MAX_SUPPORTED_DIMS).
 │                      Used by every task before the first WASM call —
 │                      a short buffer would otherwise let WASM read past
@@ -40,10 +44,10 @@ data-worker/
 │                      (WASM-accelerated, data/points/projection.ts), so
 │                      they are not a worker task; this dir also hosts the
 │                      shared in-process dispatcher + getPointsBackend.
-└── decode/          — Four tasks: decodeQuantized, decodeLogScalar,
-                       decodeLUT, decodeBroadcasted. Per-attribute
-                       dequantization paths called from the loaders'
-                       chunk-decode stage.
+└── decode/          — Six tasks: decodeQuantized, decodeLogScalar,
+                       decodeGeologScalar, decodePerChannel, decodeLUT,
+                       decodeBroadcasted. Per-attribute dequantization
+                       paths called from the loaders' chunk-decode stage.
 ```
 
 ## Dispatch shape
@@ -93,8 +97,9 @@ worker.
 - [projection](./projection/) — Lines/GSplats nD → 3D extraction (worker
   or in-process); Points project on the main thread (WASM-accelerated) in
   `data/points/projection.ts`.
-- [decode](./decode/) — quantized / log-scalar / LUT / broadcasted
-  dequantization tasks called from the loader chunk-decode stage.
+- [decode](./decode/) — quantized / log-scalar / geolog-scalar /
+  per-channel / LUT / broadcasted dequantization tasks called from the
+  loader chunk-decode stage.
 
 ## See also
 
