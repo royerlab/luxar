@@ -307,6 +307,31 @@ describe('GSplatsProgressiveLoader', () => {
       expect(lodB.updateView).not.toHaveBeenCalled();
       expect(lodC.updateView).not.toHaveBeenCalled();
     });
+
+    it('reports hasMoreLODs=false after an empty LOD 0 (no wasted refinement passes)', async () => {
+      // An empty slice has no content at any level. Leaving hasMoreLODs=true
+      // (loadedLODs.length 1 < nLods) makes queueNext schedule refinement,
+      // which then fetches+decodes every higher (also-empty) LOD one pass at a
+      // time — pure waste, repeated on every revisit. The empty LOD 0 must mark
+      // the ladder terminal.
+      lodA.updateView.mockResolvedValue(makeLodData(0));
+      await loader.loadGSplats(baseViewState);
+      expect(loader.hasMoreLODs).toBe(false);
+    });
+
+    it('does NOT load higher LODs on a same-view re-invoke after an empty LOD 0', async () => {
+      // refine-on-pause fires setDimensionValue(current) → a SAME-view,
+      // budget-free updateView. hasMoreLODs gates *refinement*, not a direct
+      // re-invoke: without the terminal-ladder short-circuit the loop would
+      // re-enter at startLevel=1 and fetch the higher (empty) LODs once.
+      lodA.updateView.mockResolvedValue(makeLodData(0));
+      await loader.loadGSplats(baseViewState);
+      lodB.updateViewWithResidency.mockClear();
+      lodC.updateViewWithResidency.mockClear();
+      await loader.loadGSplats(baseViewState); // same view again
+      expect(lodB.updateViewWithResidency).not.toHaveBeenCalled();
+      expect(lodC.updateViewWithResidency).not.toHaveBeenCalled();
+    });
   });
 
   describe('cache-hit timing short-circuit', () => {
