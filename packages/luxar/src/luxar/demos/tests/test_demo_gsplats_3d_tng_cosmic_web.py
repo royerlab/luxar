@@ -65,6 +65,12 @@ class TestDepositCIC:
         assert grid[0, 0, 0] > 0.0  # wrapped contribution
         assert np.isclose(grid.sum(), 1.0, rtol=1e-5)
 
+    def test_out_of_range_coords_wrap(self) -> None:
+        # Coords at/beyond the box and negatives wrap periodically; mass kept.
+        for c in ([[10.0, 10.0, 10.0]], [[12.5, 0.0, 0.0]], [[-1.0, 0.0, 0.0]]):
+            grid = deposit_cic(np.array(c), box=10.0, grid=10)
+            assert np.isclose(grid.sum(), 1.0, rtol=1e-5)
+
 
 class TestFinalizeDensity:
     def test_range_and_dtype(self) -> None:
@@ -91,3 +97,10 @@ class TestFinalizeDensity:
         np.testing.assert_array_equal(
             finalize_density(raw, 0.7), finalize_density(raw, 0.7)
         )
+
+    def test_all_zero_input_no_division(self) -> None:
+        # An all-zero field must not divide by zero (guarded): all zeros, no NaN.
+        out = finalize_density(np.zeros((6, 6, 6), dtype=np.float32), sigma=0.25)
+        assert out.shape == (6, 6, 6)
+        assert float(out.max()) == 0.0
+        assert not np.isnan(out).any()
