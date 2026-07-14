@@ -81,7 +81,8 @@ gsplats = [
 test = [
     "luxar[gsplats]",
     "pytest>=7.4.0",
-    "pytest-cov>=4.1.0"
+    "pytest-cov>=4.1.0",
+    "hypothesis>=6.0"
 ]
 dev = [
     "luxar[test]",
