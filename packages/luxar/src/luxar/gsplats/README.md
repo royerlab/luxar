@@ -754,7 +754,8 @@ luxar gsplat lod fit.gsplats.zarr pyramid.gsplats.zarr --recipe levels -K 4 -L 3
 # Collapse any tree (LOD/partition/nested) into one flat matrix-shaped leaf
 luxar gsplat flatten partitioned.gsplats.zarr flat.gsplats.zarr
 
-# Migrate legacy v1.0 / v1.1 / v2.0 / pre-v2.0 substitutive-directory layouts → v3.2
+# Migrate legacy v1.0 / v1.1 / v2.0 / pre-v2.0 substitutive-directory /
+# v3.0-v3.1 (pre-v3.2 pixel_size selector attrs) layouts → v3.2
 luxar gsplat migrate-format legacy.gsplats.zarr v3.gsplats.zarr
 ```
 
@@ -1157,7 +1158,7 @@ gsplats/
 │   ├── save_gsplats.py            # Save GSplatData to .gsplats.zarr
 │   ├── load_gsplats.py            # Load GSplatData from .gsplats.zarr
 │   ├── inspect_gsplats.py         # Inspect and summarize .gsplats.zarr files
-│   └── migrate.py                 # Migrate legacy v1.0 / v1.1 / v2.0 / substitutive-dir layouts → v3.2
+│   └── migrate.py                 # Migrate legacy v1.0 / v1.1 / v2.0 / substitutive-dir / v3.0-v3.1 (pre-v3.2 pixel_size attrs) layouts → v3.2
 │
 ├── batch/                         # HPC batch fitting (Slurm integration)
 │   ├── manifest.py                # Batch job manifest management

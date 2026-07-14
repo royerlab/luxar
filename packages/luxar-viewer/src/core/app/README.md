@@ -2,12 +2,14 @@
 
 `LuxarApp` (in `../app.ts`) is intentionally thin: every method delegates
 to a helper in this folder. The class itself owns state and ordering; the
-helpers own the actual work. With one exception, nothing under `app/` is
+helpers own the actual work. With two exceptions, nothing under `app/` is
 re-exported from the package barrel — these files exist as the
-orchestrator's private support code, grouped thematically. The exception is
-`embedder/`: its public value/event types (`LuxarEmbedderEventMap`,
+orchestrator's private support code, grouped thematically. The exceptions:
+`embedder/`, whose public value/event types (`LuxarEmbedderEventMap`,
 `EmbedderDimensions`, `ScreenshotOptions`, …) are re-exported from
-`src/index.ts` as part of the programmatic embedder API.
+`src/index.ts` as part of the programmatic embedder API, and
+`snapshot/viewer-snapshot.ts`, whose `type ViewerSnapshot` is also
+re-exported from `src/index.ts`.
 
 Tests mirror the layout under `tests/unit/core/app/<theme>/`.
 

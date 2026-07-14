@@ -276,7 +276,7 @@ dataset.zarr/
 - **Positions**: Float32 arrays with shape `[N, D]` where D matches dimension count
 - **Colors**: Uint8 arrays with shape `[N, 3]` (RGB values 0-255)
 - **Radii**: Float32 arrays with shape `[N]` (per-point radius)
-- **Sharpness**: Float32 arrays with shape `[N]` (edge falloff 0.5-10.0)
+- **Sharpness**: Float32 arrays with shape `[N]` (edge falloff, normalized 0-1; 0.5 = Gaussian)
 - **Transform**: Optional 4x4 transformation matrix for positioning/scaling
 
 ## 🌟 nD Visualization
@@ -656,7 +656,7 @@ monitor.element; // the widget element (mounted by the control rail)
 
 - `?src=<path>` — Path to Zarr dataset
 - `?debug` — Expose `window.__luxarDebug` for Playwright / dev console
-- `?no-cache` — Disable all cache tiers (L0 + L1 + L2) for this session
+- `?no-cache` — Disable all cache tiers (S-cache + L0 + L1 + L2) for this session
 - `?cache-debug` — Verbose cache logging
 - `?clear-cache` — Clear all caches before loading
 - `?no-prefetch` — Disable adjacent-chunk prefetching (caches still active)

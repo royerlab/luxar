@@ -133,10 +133,10 @@ Coordination-heavy UI classes (`recording-panel.ts`, `data-loading-monitor.ts`, 
 The always-visible discoverability affordance (`ui/control-rail/`) — a slim
 vertical activity rail docked to the left edge. Luxar's panels are otherwise
 keyboard-triggered, so the rail is the one visible entry point: one recognizable
-icon per panel (Help, Navigation, Dimensions, Rendering, Layers, Data monitor,
-Datasets, Recording, Logs, View options, Settings, Performance), each with a
-hover tooltip showing its shortcut. Navigation/Settings/Performance open rail
-popovers (see [`rail-panels/`](./rail-panels/README.md)).
+icon per panel (Help, Home, Navigation, Dimensions, Rendering, Layers,
+Data monitor, Datasets, Recording, Logs, View options, Settings, Performance),
+each with a hover tooltip showing its shortcut. Home, Navigation, Settings and
+Performance open rail popovers (see [`rail-panels/`](./rail-panels/README.md)).
 
 **Design:**
 
@@ -744,14 +744,22 @@ src/styles/
 │   ├── layout.css
 │   └── utilities.css   # 80+ utility classes
 └── components/         # Component-specific styles
+    ├── colormap-legend.css
+    ├── control-rail.css
+    ├── data-loading-monitor.css
+    ├── dataset-browser.css
+    ├── debug-console.css
+    ├── dimension-sliders.css
     ├── error-dialog.css
     ├── help-overlay.css
-    ├── dimension-sliders.css
-    ├── debug-console.css
-    ├── dataset-browser.css
-    ├── data-loading-monitor.css
+    ├── layers-panel.css
+    ├── overlay-layer.css
+    ├── performance-monitor.css
     ├── recording-panel.css
-    └── scale-bar.css
+    ├── resolution-indicator.css
+    ├── scale-bar.css
+    ├── select-menu.css
+    └── toast.css
 ```
 
 **BEM Naming Convention**:
@@ -825,7 +833,7 @@ These components fully support theming:
 - ✅ Debug Console (debug-console.ts) - proper BEM naming (.luxar-debug-console)
 - ✅ Dataset Browser (dataset-browser.ts)
 - ✅ Data Loading Monitor (data-loading-monitor.ts) - CSS complete, core templates theme-aware
-- ✅ Rendering Controls (rendering-controls.ts) - lil-gui theme integration via CSS variables
+- ✅ Rendering Controls (rendering-controls.ts) - custom GUI library (ui/gui.ts, lil-gui drop-in replacement) theme integration via CSS variables
 
 ---
 
@@ -1069,7 +1077,7 @@ emitter, so there is no `on()` / `setDimensions()` / `setValue()` API.
 | `toggleCinematicMode()`              | Toggle cinematic mode (bloom + ACES + vignette)     |
 | `dispose()`                          | Clean up resources and event listeners              |
 
-**Architecture**: RenderingControls uses a modular setup architecture where each category of controls (navigation, camera, HDR, anti-aliasing, post-processing) is initialized by a dedicated setup module in `./rendering-controls/`. This improves maintainability and keeps files under token limits. See [`./rendering-controls/README.md`](./rendering-controls/README.md) for details.
+**Architecture**: RenderingControls uses a modular setup architecture where each category of controls (camera, HDR, anti-aliasing, post-processing) is initialized by a dedicated setup module in `./rendering-controls/setup/`. Two further setup modules live there but are consumed by the rail popovers instead: `performance-setup.ts` (rail-panels/performance-popover.ts) and `theme-setup.ts` (rail-panels/settings-popover.ts). This improves maintainability and keeps files under token limits. See [`./rendering-controls/README.md`](./rendering-controls/README.md) for details.
 
 ### PerformanceMonitor
 

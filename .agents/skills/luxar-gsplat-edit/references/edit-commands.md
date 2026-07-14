@@ -1,9 +1,13 @@
 # `luxar gsplat` editing & inspection commands — full reference
 
-Verified from `cli/gsplat_ops/transforms.py`, `scene.py`, `inspect.py`. All operate on
-a `.gsplats.zarr` (flat, partition, or nested LOD) and accept `--encoding`/`-e`
-(`auto`/`precision`/`memory`) and usually `--compress` (`zip`/`tar.gz`). NOTE: the old
-`split` command is gone — use `partition`.
+Verified from `cli/gsplat_ops/transforms_*.py`, `scene_commands.py`,
+`inspect_commands.py`. All operate on a `.gsplats.zarr` (flat, partition, or nested
+LOD). These write-output commands take `--encoding`/`-e` (`auto`/`precision`/`memory`,
+default `auto`): `transform`, `slice`, `filter`, `cull`, `merge`, `partition`,
+`flatten`, `additive`, `convert`. All of those except `convert` also take
+`--compress` (`zip`/`tar.gz`). `reencode` takes `--encoding` too but defaults to
+`memory`. `migrate-format`, `annotate-quality`, `denoise`, and the inspection
+commands have neither. NOTE: the old `split` command is gone — use `partition`.
 
 ---
 
@@ -26,15 +30,21 @@ Remove low-value splats. `--method`/`-m` (default `auto`):
   `--error-tolerance` (1.0), `--max-iters` (8).
 - `redundancy` (needs `--shape` e.g. `41,512,512`): `--redundancy-threshold` (0.01).
 - `cumulative`: `--retention`/`-r` (0.95) — keep top fraction of cumulative amplitude.
-- also `amplitude_percentile`, `combined`.
+- `amplitude_percentile`: `--amplitude-percentile`/`-a` (5.0) — remove the weakest N% by amplitude.
+- `combined` (low amp OR large vol): `--amplitude-percentile`/`-a` (5.0) + `--volume-percentile`/`-v` (95.0).
 Shared: `--truncate`, `--device`/`-d`, `--channel`/`-c`, `--timepoint`.
 
 ## filter IN OUT
 Keep splats matching ALL given criteria (unspecified = skipped):
 `--bbox "x0,x1,y0,y1,z0,z1"`, `--amplitude-min/--amplitude-max` (+ `--amplitude-normalized`),
 `--volume-min/--volume-max` (+ `--volume-normalized`), `--eccentricity-min/--eccentricity-max`
-(1.0 = sphere; spatial by default), `--mass-min/--mass-max` (amplitude × volume),
+(1.0 = sphere; spatial by default), `--mass-min/--mass-max` (amplitude × volume, + `--mass-normalized`),
 `--sigma-axis` + `--sigma-min/--sigma-max`.
+
+**Normalized thresholds:** `--amplitude-normalized`, `--volume-normalized`,
+`--scale-normalized`, `--mass-normalized` interpret the corresponding min/max as
+0–1 linear-normalized values instead of raw units. `--truncate` sets the sigma
+truncation radius for the volume computation (defaults to the dataset's stored value).
 
 **Percentiles:** any min/max threshold accepts a plain number OR a percentile of
 that attribute written `pNN` / `NN%` (e.g. `--scale-max p90`) — robust on
@@ -82,11 +92,24 @@ Wrap a fitted dataset as a web scene. `--center`/`--no-center` (default on),
 `--scale-intensity`, `--opacity` (1.0), `--blending-mode` (`additive` default /
 `normal` / `max` / `opaque`).
 
+Appearance is baked in here:
+- `--colormap` (default `gray`) — builtin or any matplotlib/colorcet name (e.g. `plasma`).
+- `--tone-mapping` (default `ACES`, the viewer default) — `None`/`Linear`/`Reinhard`/
+  `Cineon`/`ACES`/`AgX`/`Neutral`. Pair a colormap with `Neutral` for faithful
+  scientific colors (ACES shifts hues).
+- `--gamma` (1.0) — display gamma.
+- `--intensity` (1.0) — display intensity multiplier.
+- `--layer`/`--no-layer` (default `layer`) — list the gsplats node in the viewer Layers panel.
+
 ## migrate-format IN OUT
-Upgrade legacy layouts (v1.0 / v1.1 / v2.0 substitutive dir / v3.0/v3.1) → v3.2.
-`--overwrite`, `--lossless` (preserve float32 Cholesky), `--quiet`/`-q`. (For a
-structure-preserving re-quantization of a current-format file, use `reencode`
-instead — it exposes the full encoding ladder.)
+Upgrade legacy layouts → v3.2. Five input shapes are auto-detected: v1.0 (flat),
+v1.1 (multi-LOD additive), v2.0 (substitutive×additive matrix), a substitutive
+directory (manifest.json + level_<i> files), and a v3.0/v3.1 store still carrying
+the pre-v3.2 `pixel_size` lod selector attrs (rewritten to `coverage` +
+derived `coverage_fraction` thresholds). `--overwrite`, `--lossless` (preserve
+float32 Cholesky), `--quiet`/`-q`. (For a structure-preserving re-quantization
+of a current-format file, use `reencode` instead — it exposes the full encoding
+ladder.)
 
 ## reencode IN OUT
 Re-quantize a fitted dataset's Cholesky factors to another encoding (a
@@ -124,6 +147,8 @@ caches invalidate automatically. Directory stores only (unpack `.zip` first).
 | Flag | Meaning |
 | --- | --- |
 | `--with-quality` | also measure per-level mixture-L² Q vs each lod group's finest content |
+| `--max-pair-splats` | subsample cap per mixture for the Q measurement (default 2,000,000) |
+| `--device` | compute device for Q: `auto`/`cpu`/`cuda`/`mps` |
 | `--dry-run` | compute and print the stamps; write nothing |
 
 ---
