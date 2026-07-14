@@ -17,7 +17,7 @@ def _get_morton_numba_kernel():  # type: ignore[no-untyped-def]
     """Lazy-compile the Numba Morton encoding kernel on first use."""
     import numba
 
-    @numba.njit(cache=True)
+    @numba.njit(cache=True)  # type: ignore[misc]
     def _morton_kernel(coords: np.ndarray, bits_per_dim: int, out: np.ndarray) -> None:
         n_points = coords.shape[0]
         n_dims = coords.shape[1]
