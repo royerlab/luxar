@@ -119,7 +119,8 @@ data/
 │   │   └── label-loader.ts        # Lazy CSR-style label fetching from zarr
 │   ├── overlays/                  # Overlay config loading
 │   │   └── overlay-loader.ts      # Reads overlay configurations from zarr store
-│   └── progressive/               # Shared progressive-LOD helpers (concat, constants)
+│   └── progressive/               # Shared progressive-LOD helpers (concat, constants,
+│                                  #   slice-cache-helper.ts — S-cache restore/store, see §S-cache)
 │
 └── (related: ../workers/)         # Web Worker infrastructure
     ├── worker-pool.ts             # Pool manager with load balancing
@@ -537,10 +538,15 @@ CPU-intensive operations are offloaded to Web Workers for parallel execution:
 
 **Operations offloaded to workers**:
 
-- Spatial index queries (chunk bounding box intersection)
-- nD visibility computation (hypersphere/ellipsoid intersection)
-- Encoded data decoding (quantized, LUT, broadcasted)
-- nD → 3D projection with visibility filtering
+- Encoded data decoding — six tasks: `decodeQuantized`, `decodeLogScalar`,
+  `decodeGeologScalar`, `decodePerChannel`, `decodeLUT`, `decodeBroadcasted`
+- nD → 3D projection of Lines and GSplats (`projectLinesTo3D` /
+  `projectGSplatsTo3D`); per-element nD visibility (clip mask, effective
+  radius, attenuation) is computed inside these projection kernels
+
+**Kept on the main thread**: spatial index queries (chunk bounding box
+intersection) and Points projection (WASM-accelerated in
+`data/points/projection.ts` with a zero-alloc accumulator).
 
 **Performance benefits**:
 

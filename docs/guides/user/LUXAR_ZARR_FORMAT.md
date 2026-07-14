@@ -82,9 +82,10 @@ This diagram shows how data flows from Python creation through storage to WebGL 
 │                                                                             │
 │  cache/                                                                     │
 │  ┌──────────────────┐                                                      │
+│  │ S-cache + L0     │  Decoded slices + decompressed chunks (RAM)          │
 │  │ L1: Memory LRU   │  ~100MB, ~1μs access                                 │
 │  │ L2: OPFS         │  ~2GB, ~1ms access                                   │
-│  │ L3: HTTP fetch   │  Unlimited, ~100ms access                            │
+│  │ HTTP fetch       │  Unlimited, ~100ms access                            │
 │  │ Prefetcher       │  Adjacent chunks (±1 in each dimension)              │
 │  └────────┬─────────┘                                                      │
 │           │                                                                 │
@@ -418,7 +419,7 @@ subgroups in this convention.
 **Per-type unit:**
 
 - **Points** — per-element. Each subgroup contains a subset of
-  `positions` + per-element attrs (`colors` / `radii` / `sharpness` /
+  `positions` + per-element attrs (`colors` / `radii` / `sharpnesses` /
   `scalars`).
 - **GSplats** — per-element. Each subgroup contains a subset of
   `centers` / `amplitudes` / `cholesky_factors_diag` (+ `cholesky_factors_offdiag`) / `colors`.
@@ -1017,7 +1018,7 @@ When building points with spatial index (`enable_spatial_index=True`):
 
 1. **Identify Dimension Types**: Classify dimensions as discrete vs spatial
 2. **Compute Sort Order**: Lexsort on discrete dims, then Morton/Hilbert code
-3. **Reorder All Arrays**: Apply same sort order to positions, colors, radii, sharpness
+3. **Reorder All Arrays**: Apply same sort order to positions, colors, radii, sharpnesses
 4. **Compute Chunk Bounds**: Calculate bounding boxes including radius extent
 5. **Store Metadata**: Write ordering info to group attributes
 6. **Store Bounds Array**: Write chunk_bounds array to group
@@ -1209,7 +1210,7 @@ Optimal chunk sizes balance memory usage and access patterns:
 - **Minimum chunk payload:** 16KB (`MIN_CHUNK_BYTES`)
 - **Maximum chunk payload:** 256KB (`MAX_CHUNK_BYTES`)
 - **2D arrays (positions, colors):** Chunk along first dimension only, deriving element counts from dtype and row width
-- **1D arrays (radii, sharpness):** Simple 1D chunking, deriving element counts from dtype
+- **1D arrays (radii, sharpnesses):** Simple 1D chunking, deriving element counts from dtype
 
 ### Chunking with Spatial Index
 

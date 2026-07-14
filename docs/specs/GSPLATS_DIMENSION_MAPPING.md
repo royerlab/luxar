@@ -1,7 +1,7 @@
 # Gaussian Splats Dimension Mapping
 
 **Version**: 2.0
-**Last Updated**: 2026-04-03
+**Last Updated**: 2026-07-13
 
 ## Overview
 

@@ -63,8 +63,9 @@ Inputs: `.npy`, `.npz`, `.tiff`/`.tif`, `.zarr`, `.zarr.zip` (TIFF/other need `p
 | `--plan-only` | false | write the box plan JSON and stop (no fit) |
 
 ### Per-part LOD at fit time (tiled partition only)
-`--recipe stream` → `tiles` topology; `--recipe levels` → `adaptive`.
+`--recipe`/`-r` `stream` → `tiles` topology; `--recipe levels` → `adaptive`.
 Knobs mirror `lod`: `--n-lods`, `--additive-method`/`-m`, `--breakpoints`/`-b`,
+`--target-ms`, `--bandwidth-mbps` (default 25), `--bytes-per-splat`,
 `--compression-factor`/`-K`, `--levels`/`-L`, `--substitutive-method`,
 `--coarsen-dims`. LOD switch thresholds are auto-derived (`coverage_fraction`,
 no knob — see "LOD switch tuning" below).
@@ -80,7 +81,7 @@ no knob — see "LOD switch tuning" below).
 ### Post-fit culling & denoising
 | Flag | Default | Meaning |
 | --- | --- | --- |
-| `--cull-retention` | none | keep top fraction of cumulative amplitude (e.g. 0.95) |
+| `--cull-retention` | 0.95 | keep top fraction of cumulative amplitude (presets set 0.999); 0 keeps every splat |
 | `--denoise` | false | NLM-denoise the volume before fitting |
 | `--denoise-h` | auto | manual NLM strength (skip auto-calibration) |
 | `--denoise-2d` | false | slice-by-slice 2D NLM |
@@ -207,6 +208,12 @@ object fills the screen and coarser levels step in as it shrinks — self-
 calibrating on any monitor. The former `extent`/`count` methods and the
 `--lod-method` / `--extent-percentile` / `--extent-anisotropy` /
 `--base-pixel-size` flags have been removed.
+
+### Quality stamps
+| Flag | Default | Meaning |
+| --- | --- | --- |
+| `--quality-stamps` / `--no-quality-stamps` | on | measure each coarse substitutive level's mixture-L² quality `Q` vs its group's finest content and stamp it (with the reference-energy weight `w`) into the level stats — the viewer folds `Q` with committed-energy `e(k)` into a recursive quality estimate |
+| `--quality-max-pair-splats` | 2,000,000 | subsample cap per mixture for the quality measurement (lower = faster, noisier `Q`) |
 
 ### Universal
 `--ordering` (hilbert/morton/none, default hilbert), `--device` (auto), `--seed`,

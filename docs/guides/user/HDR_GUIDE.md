@@ -75,7 +75,8 @@ with LuxarZarrCompiler("hdr_example.luxar.zarr") as compiler:
 Luxar automatically detects HDR colors based on the **values**, not just the
 dtype (`io/_compiler/dataset_writers/colors.py`):
 - **`np.float32`** colors with **any value > 1.0**: detected as HDR — stored
-  as `geolog_perchannel_u16` under AUTO (float32 under PRECISION)
+  as `geolog_perchannel_u16` under AUTO (float32 under PRECISION; an array with
+  few unique colors may instead store as an exact LUT/broadcast encoding)
 - **`np.float32`** colors that are **all ≤ 1.0**: detected as SDR — under
   AUTO they are quantized to 8-bit `rgb_uint8` (lossy), unless the array has
   few unique colors, in which case an exact LUT/broadcast encoding applies
