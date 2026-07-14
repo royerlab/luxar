@@ -13,9 +13,8 @@
 
 import * as THREE from 'three';
 import { packInterleavedAttributes, widenToFloat32 } from '../interleaved-attributes';
-import { invalidateCachedByteSize } from './geometry-bytes';
 import type { ProcessedLinesData } from '../../types/lines';
-import { rebuildInterleavedBuffer, writePooledAttribute } from './attribute-codec';
+import { writePooledAttribute } from './attribute-codec';
 import type { PooledBuffer } from './pool-stats';
 import { chooseCapacity } from './capacity';
 
@@ -24,8 +23,9 @@ import { chooseCapacity } from './capacity';
  * The pool pre-allocates a single `InstancedInterleavedBuffer` over
  * these specs (Float32 throughout — Uint8 clipped flags get widened
  * at upload time). Optional scalar attributes (aStartScalar /
- * aEndScalar) are added via a spec-set rebuild when colormap data
- * first arrives, mirroring the line-geometry.ts pattern.
+ * aEndScalar) are included at CREATION time when the acquire call
+ * declares colormap data (hasScalars) — never via an in-place rebuild,
+ * which would strand the old GPU buffer in the renderer caches.
  *
  * Declaration order matters only for stride bookkeeping; the shader
  * reads attributes by name through the views.
@@ -55,34 +55,34 @@ const LINES_SCALAR_ATTRIBUTE_SPECS: ReadonlyArray<{
   { name: 'aEndScalar', itemSize: 1 },
 ];
 
-function createLinesGeometry(segmentCapacity: number): THREE.InstancedBufferGeometry {
+function createLinesGeometry(
+  segmentCapacity: number,
+  hasScalars: boolean
+): THREE.InstancedBufferGeometry {
   const geometry = new THREE.InstancedBufferGeometry();
 
   const quadPositions = new Float32Array([-1, -1, 1, -1, -1, 1, 1, 1]);
   geometry.setAttribute('aQuadCorner', new THREE.Float32BufferAttribute(quadPositions, 2));
   geometry.setIndex([0, 1, 2, 2, 1, 3]);
 
-  const baseSpecs = LINES_BASE_ATTRIBUTE_SPECS.map((spec) => ({
+  const specTemplates = hasScalars
+    ? [...LINES_BASE_ATTRIBUTE_SPECS, ...LINES_SCALAR_ATTRIBUTE_SPECS]
+    : LINES_BASE_ATTRIBUTE_SPECS;
+  const specs = specTemplates.map((spec) => ({
     ...spec,
     data: new Float32Array(segmentCapacity * spec.itemSize),
   }));
-  const { buffer, views } = packInterleavedAttributes(baseSpecs, segmentCapacity);
+  const { buffer, views } = packInterleavedAttributes(specs, segmentCapacity);
   buffer.setUsage(THREE.DynamicDrawUsage);
-  for (const spec of baseSpecs) {
+  for (const spec of specs) {
     geometry.setAttribute(spec.name, views[spec.name]);
   }
   return geometry;
 }
 
-function growLinesGeometry(geometry: THREE.InstancedBufferGeometry, neededCount: number): void {
-  const newCapacity = chooseCapacity(neededCount);
-  invalidateCachedByteSize(geometry);
-
-  const hasScalars = geometry.getAttribute('aStartScalar') !== undefined;
-  const specs = hasScalars
-    ? [...LINES_BASE_ATTRIBUTE_SPECS, ...LINES_SCALAR_ATTRIBUTE_SPECS]
-    : LINES_BASE_ATTRIBUTE_SPECS;
-  rebuildInterleavedBuffer(geometry, newCapacity, specs);
+/** Whether a pooled lines geometry carries the colormap scalar columns. */
+function linesGeometryHasScalars(geometry: THREE.BufferGeometry): boolean {
+  return geometry.getAttribute('aStartScalar') !== undefined;
 }
 
 export interface LinesAdapterHost {
@@ -111,40 +111,50 @@ export class LinesBufferAdapter {
 
   constructor(private readonly host: LinesAdapterHost) {}
 
-  acquireGeometry(nodeId: string, segmentCount: number): THREE.InstancedBufferGeometry {
+  acquireGeometry(
+    nodeId: string,
+    segmentCount: number,
+    hasScalars: boolean
+  ): THREE.InstancedBufferGeometry {
     const host = this.host;
     host._lastAcquireRebuilt = false;
 
     const active = host.activeBuffers.get(nodeId);
     if (active && active.type === 'lines') {
-      if (active.capacity >= segmentCount) {
+      const scalarsMatch = linesGeometryHasScalars(active.geometry) === hasScalars;
+      if (scalarsMatch && active.capacity >= segmentCount) {
         active.lastUsedFrame = host.frameCount;
         host.stats.reuses++;
         host.typeStats.lines.reuses++;
         return active.geometry as THREE.InstancedBufferGeometry;
-      } else {
-        growLinesGeometry(active.geometry as THREE.InstancedBufferGeometry, segmentCount);
-        active.capacity = chooseCapacity(segmentCount);
-        active.lastUsedFrame = host.frameCount;
-        host.stats.capacityGrowths++;
-        // Growth can push total pool bytes past the budget without any
-        // release happening (a streaming session that only grows).
-        // Sweep idle pooled buffers now instead of waiting for the next
-        // releaseGeometry (historically the ONLY byte-budget trigger).
-        host.evictUnused(true);
-        host._lastAcquireRebuilt = true;
-        return active.geometry as THREE.InstancedBufferGeometry;
       }
+      // Undersized OR spec-set change (colormap scalars appearing/
+      // disappearing): RELEASE + REACQUIRE, never an in-place
+      // interleaved-buffer rebuild — replacing a rendered geometry's
+      // attributes strands the old GL/GPU buffer in the renderer
+      // caches (hard leak under the WebGPU renderer via the strong
+      // Info.memoryMap). See the points adapter for the full
+      // rationale. The scalar spec set is decided HERE, at acquire
+      // time, so updateGeometry never needs to rebuild.
+      if (scalarsMatch) host.stats.capacityGrowths++;
+      this.releaseGeometry(nodeId);
     }
 
     // BEST-fit, not first-fit — see the gsplats adapter for rationale.
+    // Candidates must carry the SAME scalar spec set (a base-only
+    // buffer cannot serve colormap data, and a scalar buffer serving
+    // base-only data would render stale scalar columns).
     let bestList: PooledBuffer[] | null = null;
     let bestIndex = -1;
     let bestCapacity = Infinity;
     for (const pooled of this.lineBuffers.values()) {
       for (let i = pooled.length - 1; i >= 0; i--) {
         const candidate = pooled[i];
-        if (candidate.capacity >= segmentCount && candidate.capacity < bestCapacity) {
+        if (
+          candidate.capacity >= segmentCount &&
+          candidate.capacity < bestCapacity &&
+          linesGeometryHasScalars(candidate.geometry) === hasScalars
+        ) {
           bestList = pooled;
           bestIndex = i;
           bestCapacity = candidate.capacity;
@@ -165,7 +175,7 @@ export class LinesBufferAdapter {
 
     host._lastAcquireRebuilt = true;
     const capacity = chooseCapacity(segmentCount);
-    const geometry = createLinesGeometry(capacity);
+    const geometry = createLinesGeometry(capacity, hasScalars);
 
     const newBuffer: PooledBuffer = {
       geometry,
@@ -213,17 +223,15 @@ export class LinesBufferAdapter {
     count: number
   ): void {
     const hasScalarsInData = !!(data.startScalars && data.endScalars);
-    const hasScalarsInBuffer = geometry.getAttribute('aStartScalar') !== undefined;
-    if (hasScalarsInData && !hasScalarsInBuffer) {
-      const startView = geometry.getAttribute('aStartPos') as THREE.InterleavedBufferAttribute;
-      const capacity = Math.floor(
-        (startView.data.array as Float32Array).length / startView.data.stride
+    if (hasScalarsInData && !linesGeometryHasScalars(geometry)) {
+      // The scalar spec set is decided at acquire time (acquireGeometry's
+      // hasScalars parameter) — an in-place rebuild here would strand the
+      // old GPU buffer in the renderer caches. Reaching this means the
+      // caller passed hasScalars=false and then supplied scalar data.
+      throw new Error(
+        'LinesBufferAdapter.updateGeometry: geometry has no scalar columns but data ' +
+          'carries scalars — acquireLinesGeometry must be called with hasScalars=true.'
       );
-      rebuildInterleavedBuffer(geometry, capacity, [
-        ...LINES_BASE_ATTRIBUTE_SPECS,
-        ...LINES_SCALAR_ATTRIBUTE_SPECS,
-      ]);
-      this.host._lastAcquireRebuilt = true;
     }
 
     const startClippedF32 = widenToFloat32(data.startClipped);

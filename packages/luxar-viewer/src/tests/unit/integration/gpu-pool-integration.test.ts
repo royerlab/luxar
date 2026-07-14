@@ -263,14 +263,18 @@ describe('GPU Buffer Pool Integration Tests', () => {
       // Acquire with small data
       const geom1 = pool.acquirePointsGeometry('/node1', smallData, 1000);
 
-      // Acquire with large data (exceeds capacity, should grow)
+      // Acquire with large data (exceeds capacity → grow-swap)
       const geom2 = pool.acquirePointsGeometry('/node1', largeData, 2000);
 
-      // Should be same geometry (grown)
-      expect(geom2).toBe(geom1);
+      // Growth is release + reacquire, never an in-place rebuild (that
+      // strands the old GPU buffer in the renderer caches): a FRESH
+      // geometry comes back and the undersized one returns to the pool.
+      expect(geom2).not.toBe(geom1);
+      expect(pool.didLastAcquireRebuildAttributes()).toBe(true);
 
-      // Verify growth happened
+      // Verify growth happened and the old geometry was pooled intact.
       expect(pool.getStats().capacityGrowths).toBe(1);
+      expect(pool.getStats().pooledBuffers).toBeGreaterThan(0);
     });
 
     it('should evict unused geometries over time', () => {
@@ -333,7 +337,7 @@ describe('GPU Buffer Pool Integration Tests', () => {
   describe('Three-geometry symmetry: Lines + GSplats acquire/release', () => {
     it('acquireLinesGeometry returns an InstancedBufferGeometry of the requested capacity', () => {
       const pool = new GPUBufferPool(20, 300);
-      const geom = pool.acquireLinesGeometry('/lines-1', 16);
+      const geom = pool.acquireLinesGeometry('/lines-1', 16, false);
       expect(geom).toBeInstanceOf(THREE.InstancedBufferGeometry);
       expect(() => pool.releaseLinesGeometry('/lines-1')).not.toThrow();
     });
@@ -347,8 +351,8 @@ describe('GPU Buffer Pool Integration Tests', () => {
 
     it('acquireLinesGeometry reuses the same geometry across acquisitions for the same nodeId', () => {
       const pool = new GPUBufferPool(20, 300);
-      const g1 = pool.acquireLinesGeometry('/lines-reuse', 16);
-      const g2 = pool.acquireLinesGeometry('/lines-reuse', 16);
+      const g1 = pool.acquireLinesGeometry('/lines-reuse', 16, false);
+      const g2 = pool.acquireLinesGeometry('/lines-reuse', 16, false);
       // Pool dedupes by nodeId — same node should get the same underlying geometry.
       expect(g2).toBe(g1);
     });

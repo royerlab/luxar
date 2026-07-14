@@ -88,15 +88,20 @@ describe('GPUBufferPool', () => {
       expect(stats.reuses).toBe(1); // Second call reused
     });
 
-    it('should grow geometry when count exceeds capacity', () => {
+    it('should grow-swap to a FRESH geometry when count exceeds capacity', () => {
       const data1 = createMockLoadedPointsData(1000);
       const data2 = createMockLoadedPointsData(2000);
       const geom1 = pool.acquirePointsGeometry('node1', data1, 1000); // Capacity ~1500
       const geom2 = pool.acquirePointsGeometry('node1', data2, 2000); // Needs >1500
 
-      expect(geom2).toBe(geom1); // Same geometry, grown
+      // Growth is release + reacquire, never an in-place rebuild (that
+      // strands the old GPU buffer in the renderer caches — a permanent
+      // leak under the WebGPU renderer). The undersized geometry is
+      // pooled intact for future best-fit reuse.
+      expect(geom2).not.toBe(geom1);
       const stats = pool.getStats();
       expect(stats.capacityGrowths).toBe(1);
+      expect(stats.pooledBuffers).toBeGreaterThan(0);
     });
 
     it('grow path bumps byType.points.allocations (MED-11 regression)', () => {
@@ -239,7 +244,7 @@ describe('GPUBufferPool', () => {
 
   describe('Lines Geometry', () => {
     it('should create InstancedBufferGeometry for lines', () => {
-      const geom = pool.acquireLinesGeometry('line1', 500);
+      const geom = pool.acquireLinesGeometry('line1', 500, false);
       expect(geom).toBeInstanceOf(THREE.InstancedBufferGeometry);
 
       // Check instance attributes
@@ -250,18 +255,18 @@ describe('GPUBufferPool', () => {
     });
 
     it('should reuse lines geometry', () => {
-      const geom1 = pool.acquireLinesGeometry('line1', 500);
-      const geom2 = pool.acquireLinesGeometry('line1', 400);
+      const geom1 = pool.acquireLinesGeometry('line1', 500, false);
+      const geom2 = pool.acquireLinesGeometry('line1', 400, false);
 
       expect(geom2).toBe(geom1);
       expect(pool.getStats().reuses).toBe(1);
     });
 
     it('should handle lines release and reuse', () => {
-      pool.acquireLinesGeometry('line1', 500);
+      pool.acquireLinesGeometry('line1', 500, false);
       pool.releaseLinesGeometry('line1');
 
-      pool.acquireLinesGeometry('line2', 450);
+      pool.acquireLinesGeometry('line2', 450, false);
       expect(pool.getStats().allocations).toBe(1);
       expect(pool.getStats().reuses).toBe(1);
     });
@@ -320,7 +325,7 @@ describe('GPUBufferPool', () => {
 
     it('should dispose all geometries on pool disposal', () => {
       pool.acquirePointsGeometry('node1', createMockLoadedPointsData(1000), 1000);
-      pool.acquireLinesGeometry('line1', 500);
+      pool.acquireLinesGeometry('line1', 500, false);
       pool.acquireGSplatsGeometry('splat1', 300);
 
       pool.dispose();
@@ -400,7 +405,7 @@ describe('GPUBufferPool', () => {
 
     it('should track active vs pooled buffers', () => {
       pool.acquirePointsGeometry('node1', createMockLoadedPointsData(1000), 1000);
-      pool.acquireLinesGeometry('line1', 500);
+      pool.acquireLinesGeometry('line1', 500, false);
 
       let stats = pool.getStats();
       expect(stats.activeBuffers).toBe(2);
@@ -496,7 +501,7 @@ describe('GPUBufferPool', () => {
       try {
         const empty = new GPUBufferPool(20, 300, 5, () => 0);
 
-        const lineGeom = empty.acquireLinesGeometry('zero-lines', 0);
+        const lineGeom = empty.acquireLinesGeometry('zero-lines', 0, false);
         const lineBuf = (lineGeom.getAttribute('aStartPos') as THREE.InterleavedBufferAttribute)
           .data;
         expect((lineBuf.array as Float32Array).length).toBeGreaterThan(0);

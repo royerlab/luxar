@@ -16,8 +16,7 @@ import {
   packInterleavedAttributes,
   type InterleavedAttributeSpec,
 } from '../interleaved-attributes';
-import { invalidateCachedByteSize } from './geometry-bytes';
-import { rebuildInterleavedBuffer, writePooledAttribute } from './attribute-codec';
+import { writePooledAttribute } from './attribute-codec';
 import type { PooledBuffer } from './pool-stats';
 import { chooseCapacity } from './capacity';
 
@@ -64,12 +63,6 @@ function createGSplatsGeometry(splatCapacity: number): THREE.InstancedBufferGeom
   return geometry;
 }
 
-function growGSplatsGeometry(geometry: THREE.InstancedBufferGeometry, neededCount: number): void {
-  const newCapacity = chooseCapacity(neededCount);
-  invalidateCachedByteSize(geometry);
-  rebuildInterleavedBuffer(geometry, newCapacity, GSPLATS_ATTRIBUTE_SPECS);
-}
-
 export interface GSplatsAdapterHost {
   activeBuffers: Map<string, PooledBuffer>;
   readonly frameCount: number;
@@ -108,17 +101,13 @@ export class GSplatsBufferAdapter {
         host.typeStats.gsplats.reuses++;
         return active.geometry as THREE.InstancedBufferGeometry;
       } else {
-        growGSplatsGeometry(active.geometry as THREE.InstancedBufferGeometry, splatCount);
-        active.capacity = chooseCapacity(splatCount);
-        active.lastUsedFrame = host.frameCount;
+        // Grow = RELEASE + REACQUIRE — an in-place rebuild strands the
+        // old GL/GPU buffer in the renderer caches (hard leak under the
+        // WebGPU renderer via the strong Info.memoryMap). See the
+        // points adapter for the full rationale. Fall-through best-fit/
+        // fresh-alloc sets _lastAcquireRebuilt + allocation counters.
         host.stats.capacityGrowths++;
-        // Growth can push total pool bytes past the budget without any
-        // release happening (a streaming session that only grows).
-        // Sweep idle pooled buffers now instead of waiting for the next
-        // releaseGeometry (historically the ONLY byte-budget trigger).
-        host.evictUnused(true);
-        host._lastAcquireRebuilt = true;
-        return active.geometry as THREE.InstancedBufferGeometry;
+        this.releaseGeometry(nodeId);
       }
     }
 

@@ -321,27 +321,23 @@ export function updateInstancedLinesMesh(
   const hadScalars = geometry.getAttribute('aStartScalar') !== undefined;
 
   const rebuilt = meshConfig.segmentCount !== currentCount || hasScalars !== hadScalars;
+  let liveGeometry = geometry;
   if (rebuilt) {
-    // Size changed OR spec-set changed (colormap toggle). Rebuild
-    // the interleaved buffer from scratch — it gets a fresh stride
-    // (when toggling scalars on/off) and a fresh `.array` (when
-    // resizing).
-    //
-    // If the prior buffer had scalar views the new buffer omits,
-    // remove them explicitly so they don't dangle on the geometry.
-    if (hadScalars && !hasScalars) {
-      geometry.deleteAttribute('aStartScalar');
-      geometry.deleteAttribute('aEndScalar');
-    }
-    bindInterleavedAttributes(geometry, meshConfig);
-    geometry.instanceCount = meshConfig.segmentCount;
-
-    // CRITICAL: Force THREE.js to recalculate _maxInstanceCount.
-    // Meshes created with 0 instances cache _maxInstanceCount=0
-    // and subsequent attribute replacements don't invalidate it,
-    // so the renderer keeps drawing 0 instances. Mirrors the same
-    // workaround in gsplat-geometry.ts.
-    delete (geometry as unknown as { _maxInstanceCount?: number })._maxInstanceCount;
+    // Size changed OR spec-set changed (colormap toggle): build a
+    // FRESH geometry and dispose the old one — never rebind new
+    // attributes onto a rendered geometry, which strands the old
+    // interleaved GPU buffer in the renderer caches (freed only at GC
+    // mercy on classic WebGL; pinned FOREVER by the WebGPU renderer's
+    // strong Info.memoryMap). Mirrors gsplat-geometry.ts and the
+    // points non-pool fallback.
+    const fresh = new THREE.InstancedBufferGeometry();
+    fresh.index = geometry.index; // shared static quad index
+    fresh.setAttribute('aQuadCorner', geometry.getAttribute('aQuadCorner'));
+    bindInterleavedAttributes(fresh, meshConfig);
+    fresh.instanceCount = meshConfig.segmentCount;
+    mesh.geometry = fresh;
+    liveGeometry = fresh;
+    geometry.dispose();
   } else {
     // Same size + same spec-set: write the new data into the
     // existing interleaved buffer at the correct strided offsets.
@@ -371,7 +367,7 @@ export function updateInstancedLinesMesh(
   }
 
   // Recompute bounding box from segment positions (direct min/max pass, no temp allocations)
-  computeLineBounds(geometry, meshConfig);
+  computeLineBounds(liveGeometry, meshConfig);
 
   return rebuilt;
 }

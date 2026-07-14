@@ -261,7 +261,7 @@ describe('projectLinesTo3D scalar interpolation', () => {
 describe('GPU pool updateLinesGeometry scalar attribute', () => {
   it('does NOT create scalar attributes when data has no scalars', () => {
     const pool = new GPUBufferPool(20, 300, 5, () => 0);
-    const g = pool.acquireLinesGeometry('l1', 4);
+    const g = pool.acquireLinesGeometry('l1', 4, /*hasScalars=*/ false);
     const processed: ProcessedLinesData = {
       startPositions: new Float32Array(12),
       endPositions: new Float32Array(12),
@@ -281,9 +281,9 @@ describe('GPU pool updateLinesGeometry scalar attribute', () => {
     expect(g.hasAttribute('aEndScalar')).toBe(false);
   });
 
-  it('lazily creates aStartScalar/aEndScalar on first scalar commit', () => {
+  it('creates aStartScalar/aEndScalar at ACQUIRE time when hasScalars is declared', () => {
     const pool = new GPUBufferPool(20, 300, 5, () => 0);
-    const g = pool.acquireLinesGeometry('l2', 2);
+    const g = pool.acquireLinesGeometry('l2', 2, /*hasScalars=*/ true);
     const processed: ProcessedLinesData = {
       startPositions: new Float32Array(6),
       endPositions: new Float32Array(6),
@@ -312,62 +312,62 @@ describe('GPU pool updateLinesGeometry scalar attribute', () => {
     expect(startAttr.getX(1)).toBeCloseTo(0.9, 5);
   });
 
-  it('growLinesGeometry preserves scalar attribute contents on resize', () => {
+  it('grow = release + reacquire: a larger acquire returns a FRESH geometry and pools the old one', () => {
     const pool = new GPUBufferPool(20, 300, 5, () => 0);
-    // Acquire a small capacity, write scalars, then grow.
-    const g = pool.acquireLinesGeometry('l-grow', 2);
-    const small: ProcessedLinesData = {
-      startPositions: new Float32Array(6),
-      endPositions: new Float32Array(6),
-      startColors: new Float32Array(6),
-      endColors: new Float32Array(6),
-      startWidths: new Float32Array(2),
-      endWidths: new Float32Array(2),
-      startSharpness: new Float32Array(2),
-      endSharpness: new Float32Array(2),
-      segmentLengths: new Float32Array(2),
-      startClipped: new Uint8Array(2),
-      endClipped: new Uint8Array(2),
-      startScalars: new Float32Array([0.25, 0.75]),
-      endScalars: new Float32Array([0.5, 1.0]),
-      segmentCount: 2,
-    };
-    pool.updateLinesGeometry(g, small, 2);
-    // Pre-grow capacity = floor(buffer.array.length / stride), reads
-    // through the interleaved view (every per-instance attribute on a
-    // pooled line geometry shares one buffer).
-    const startBefore = g.getAttribute('aStartScalar') as THREE.InterleavedBufferAttribute;
-    const endBefore = g.getAttribute('aEndScalar') as THREE.InterleavedBufferAttribute;
-    const capacityBefore = Math.floor(
-      (startBefore.data.array as Float32Array).length / startBefore.data.stride
-    );
-    const endCapacityBefore = Math.floor(
-      (endBefore.data.array as Float32Array).length / endBefore.data.stride
-    );
+    const g = pool.acquireLinesGeometry('l-grow', 2, /*hasScalars=*/ true);
+    expect(g.hasAttribute('aStartScalar')).toBe(true);
 
-    // Force growth by acquiring with a much larger count for the same nodeId.
-    pool.acquireLinesGeometry('l-grow', 200);
-    const startAfter = g.getAttribute('aStartScalar') as THREE.InterleavedBufferAttribute;
-    const endAfter = g.getAttribute('aEndScalar') as THREE.InterleavedBufferAttribute;
-    const capacityAfter = Math.floor(
-      (startAfter.data.array as Float32Array).length / startAfter.data.stride
-    );
-    const endCapacityAfter = Math.floor(
-      (endAfter.data.array as Float32Array).length / endAfter.data.stride
-    );
-    expect(capacityAfter).toBeGreaterThan(capacityBefore);
-    expect(endCapacityAfter).toBeGreaterThan(endCapacityBefore);
-    // Preserved contents at indices [0, 1] — semantic accessors handle
-    // the new strided storage transparently.
-    expect(startAfter.getX(0)).toBeCloseTo(0.25, 5);
-    expect(startAfter.getX(1)).toBeCloseTo(0.75, 5);
-    expect(endAfter.getX(0)).toBeCloseTo(0.5, 5);
-    expect(endAfter.getX(1)).toBeCloseTo(1.0, 5);
+    // Growth is NEVER an in-place interleaved-buffer rebuild (that
+    // strands the old GPU buffer in the renderer caches — permanent
+    // leak under the WebGPU renderer). The undersized geometry is
+    // released to the pool intact and a fresh one is allocated;
+    // content carry-forward is not needed because every commit
+    // rewrites all attributes for the full count right after acquire.
+    const before = pool.getStats();
+    const grown = pool.acquireLinesGeometry('l-grow', 200, /*hasScalars=*/ true);
+    expect(grown).not.toBe(g);
+    expect(grown.hasAttribute('aStartScalar')).toBe(true);
+    expect(pool.didLastAcquireRebuildAttributes()).toBe(true);
+    expect(pool.getStats().capacityGrowths).toBe(before.capacityGrowths + 1);
+
+    // The old geometry went back to the pool with its buffer intact
+    // (its interleaved views were not replaced).
+    const startView = g.getAttribute('aStartScalar') as THREE.InterleavedBufferAttribute;
+    expect(startView).toBeDefined();
+    expect(pool.getStats().pooledBuffers).toBeGreaterThan(0);
+
+    // A scalar spec-set change likewise swaps geometries instead of
+    // rebuilding in place.
+    const baseOnly = pool.acquireLinesGeometry('l-grow', 200, /*hasScalars=*/ false);
+    expect(baseOnly).not.toBe(grown);
+    expect(baseOnly.hasAttribute('aStartScalar')).toBe(false);
+  });
+
+  it('updateLinesGeometry THROWS when scalar data arrives on a base-only geometry', () => {
+    const pool = new GPUBufferPool(20, 300, 5, () => 0);
+    const g = pool.acquireLinesGeometry('l-contract', 1, /*hasScalars=*/ false);
+    const withScalars: ProcessedLinesData = {
+      startPositions: new Float32Array(3),
+      endPositions: new Float32Array(3),
+      startColors: new Float32Array(3),
+      endColors: new Float32Array(3),
+      startWidths: new Float32Array(1),
+      endWidths: new Float32Array(1),
+      startSharpness: new Float32Array(1),
+      endSharpness: new Float32Array(1),
+      segmentLengths: new Float32Array(1),
+      startClipped: new Uint8Array(1),
+      endClipped: new Uint8Array(1),
+      startScalars: new Float32Array([0.5]),
+      endScalars: new Float32Array([0.5]),
+      segmentCount: 1,
+    };
+    expect(() => pool.updateLinesGeometry(g, withScalars, 1)).toThrow(/hasScalars=true/);
   });
 
   it('reuses scalar attributes on subsequent commits', () => {
     const pool = new GPUBufferPool(20, 300, 5, () => 0);
-    const g = pool.acquireLinesGeometry('l3', 1);
+    const g = pool.acquireLinesGeometry('l3', 1, /*hasScalars=*/ true);
     const make = (s: number, e: number): ProcessedLinesData => ({
       startPositions: new Float32Array(3),
       endPositions: new Float32Array(3),

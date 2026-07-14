@@ -17,9 +17,8 @@ import {
   widenToFloat32,
   writeInterleavedAttribute,
 } from '../interleaved-attributes';
-import { invalidateCachedByteSize } from './geometry-bytes';
 import type { LoadedPointsData } from '../../data/data-loader-types';
-import { rebuildInterleavedBuffer, writePooledAttribute } from './attribute-codec';
+import { writePooledAttribute } from './attribute-codec';
 import type { PointsAttributeTypes, PooledBuffer } from './pool-stats';
 import { chooseCapacity } from './capacity';
 
@@ -145,20 +144,6 @@ function createPointsGeometry(
   return geometry;
 }
 
-function growPointsGeometry(
-  geometry: THREE.BufferGeometry,
-  neededCount: number,
-  types: PointsAttributeTypes
-): void {
-  const newCapacity = chooseCapacity(neededCount);
-  invalidateCachedByteSize(geometry);
-  rebuildInterleavedBuffer(
-    geometry as THREE.InstancedBufferGeometry,
-    newCapacity,
-    pointAttributeSpecs(types)
-  );
-}
-
 /**
  * Shared-state surface the points adapter reads/writes on the parent
  * GPUBufferPool. Kept narrow so the adapter can be unit-tested with a
@@ -209,27 +194,20 @@ export class PointsBufferAdapter {
           host.typeStats.points.reuses++;
           return preparePointsGeometryForDraw(active.geometry, pointCount);
         } else {
-          growPointsGeometry(
-            active.geometry as THREE.BufferGeometry,
-            pointCount,
-            active.attributeTypes
-          );
-          active.capacity = chooseCapacity(pointCount);
-          active.lastUsedFrame = host.frameCount;
+          // Grow = RELEASE + REACQUIRE, never an in-place interleaved-
+          // buffer rebuild: replacing a rendered geometry's attributes
+          // strands the old GL/GPU buffer in the renderer caches —
+          // classic WebGL frees it only at unbounded GC mercy, and the
+          // WebGPU renderer (native AND forceWebGL) pins it FOREVER via
+          // the strong Info.memoryMap, plus an equal-size CPU copy.
+          // Releasing lets the old geometry reach geometry.dispose()
+          // through the normal evictor, which frees its buffers
+          // correctly on every backend. The released buffer cannot be
+          // re-picked below (capacity < pointCount); the fall-through
+          // best-fit/fresh-alloc paths set _lastAcquireRebuilt and the
+          // allocation counters.
           host.stats.capacityGrowths++;
-          // Growth can push total pool bytes past the budget without any
-          // release happening (a streaming session that only grows).
-          // Sweep idle pooled buffers now instead of waiting for the next
-          // releaseGeometry (historically the ONLY byte-budget trigger).
-          host.evictUnused(true);
-          // growPointsGeometry reallocates the interleaved buffer (a real
-          // GPU buffer creation), so bump the per-type allocation counter
-          // to keep `typeStats.points.allocations` in sync with actual
-          // GPU buffer churn. Without this, the data-loading-monitor
-          // reuse-rate metric underreports grows as "free" reuses.
-          host.typeStats.points.allocations++;
-          host._lastAcquireRebuilt = true;
-          return preparePointsGeometryForDraw(active.geometry, pointCount);
+          this.releaseGeometry(nodeId);
         }
       } else {
         this.releaseGeometry(nodeId);

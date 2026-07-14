@@ -234,9 +234,19 @@ export class GPUBufferPool {
   // Lines Geometry Management
   // =========================================================================
 
-  /** Acquire geometry for Lines (instanced per-segment attributes). */
-  acquireLinesGeometry(nodeId: string, segmentCount: number): THREE.InstancedBufferGeometry {
-    return this.lines.acquireGeometry(nodeId, segmentCount);
+  /**
+   * Acquire geometry for Lines (instanced per-segment attributes).
+   * `hasScalars` declares whether the commit carries colormap scalar
+   * columns — the spec set is decided here, at acquire time (a
+   * mismatch releases and reacquires; updateLinesGeometry never
+   * rebuilds in place).
+   */
+  acquireLinesGeometry(
+    nodeId: string,
+    segmentCount: number,
+    hasScalars: boolean
+  ): THREE.InstancedBufferGeometry {
+    return this.lines.acquireGeometry(nodeId, segmentCount, hasScalars);
   }
 
   /** Release Lines geometry back to pool. */
