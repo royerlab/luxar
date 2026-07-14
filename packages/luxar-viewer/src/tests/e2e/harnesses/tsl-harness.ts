@@ -47,7 +47,7 @@ import {
   linePickWebGPUFactory,
   buildLinePickTSLNodesFromUniforms,
 } from '../../../rendering/picking/line/pick.tsl';
-import { createLineQuadGeometry } from '../../../rendering/line-geometry';
+import { createInstancedLinesMesh } from '../../../rendering/line-geometry';
 import { GSPLAT_SOURCE } from '../../../rendering/materials/gsplat/shader-glsl';
 import {
   gsplatWebGPUFactory,
@@ -58,7 +58,7 @@ import {
   gsplatPickWebGPUFactory,
   buildGSplatPickTSLNodesFromUniforms,
 } from '../../../rendering/picking/gsplat/pick.tsl';
-import { createGSplatQuadGeometry } from '../../../rendering/gsplat-geometry';
+import { createInstancedGSplatsMesh } from '../../../rendering/gsplat-geometry';
 import {
   requireWebGLSources,
   type ShaderSource,
@@ -291,45 +291,34 @@ function buildPointInstancedMesh(
  * many pixels and exposes both the perpendicular falloff and edge AA.
  */
 function buildLineInstancedMesh(material: THREE.Material): THREE.Object3D {
-  const geom = createLineQuadGeometry();
-  geom.setAttribute(
-    'aStartPos',
-    new THREE.InstancedBufferAttribute(new Float32Array([-0.5, 0, 0]), 3)
+  // PRODUCTION assembly (createInstancedLinesMesh), not a hand-rolled
+  // geometry: the previous version decorated the plain BufferGeometry
+  // quad TEMPLATE with instanced attributes — never a real
+  // InstancedBufferGeometry — which the WebGPU-path draw dispatch
+  // (three.webgpu.js drawParams: `instanceCount = geometry.instanceCount`
+  // only when isInstancedBufferGeometry) does not draw as intended.
+  // Using the production creator keeps parity testing the real path and
+  // makes instancing correct by construction. (Same fix the point
+  // builder got earlier — see the instanceCount note there.)
+  const mesh = createInstancedLinesMesh(
+    {
+      startPositions: new Float32Array([-0.5, 0, 0]),
+      endPositions: new Float32Array([0.5, 0, 0]),
+      startColors: new Float32Array([1.0, 0.5, 0.25]),
+      endColors: new Float32Array([1.0, 0.5, 0.25]),
+      startWidths: new Float32Array([0.1]),
+      endWidths: new Float32Array([0.1]),
+      // Sharpness is the normalised [0, 1] knob -> super-Gaussian exponent
+      // beta = 2^(6s - 2). 0.5 -> beta=2 (a true Gaussian, the default).
+      startSharpness: new Float32Array([0.5]),
+      endSharpness: new Float32Array([0.5]),
+      segmentLengths: new Float32Array([1.0]),
+      startClipped: new Uint8Array([0]),
+      endClipped: new Uint8Array([0]),
+      segmentCount: 1,
+    },
+    material
   );
-  geom.setAttribute(
-    'aEndPos',
-    new THREE.InstancedBufferAttribute(new Float32Array([0.5, 0, 0]), 3)
-  );
-  geom.setAttribute(
-    'aStartColor',
-    new THREE.InstancedBufferAttribute(new Float32Array([1.0, 0.5, 0.25]), 3)
-  );
-  geom.setAttribute(
-    'aEndColor',
-    new THREE.InstancedBufferAttribute(new Float32Array([1.0, 0.5, 0.25]), 3)
-  );
-  geom.setAttribute('aStartWidth', new THREE.InstancedBufferAttribute(new Float32Array([0.1]), 1));
-  geom.setAttribute('aEndWidth', new THREE.InstancedBufferAttribute(new Float32Array([0.1]), 1));
-  // Sharpness is the normalised [0, 1] knob -> super-Gaussian exponent
-  // beta = 2^(6s - 2). 0.5 -> beta=2 (a true Gaussian, the default).
-  geom.setAttribute(
-    'aStartSharpness',
-    new THREE.InstancedBufferAttribute(new Float32Array([0.5]), 1)
-  );
-  geom.setAttribute(
-    'aEndSharpness',
-    new THREE.InstancedBufferAttribute(new Float32Array([0.5]), 1)
-  );
-  geom.setAttribute(
-    'aSegmentLength',
-    new THREE.InstancedBufferAttribute(new Float32Array([1.0]), 1)
-  );
-  geom.setAttribute(
-    'aStartClipped',
-    new THREE.InstancedBufferAttribute(new Float32Array([0.0]), 1)
-  );
-  geom.setAttribute('aEndClipped', new THREE.InstancedBufferAttribute(new Float32Array([0.0]), 1));
-  const mesh = new THREE.Mesh(geom, material);
   mesh.frustumCulled = false;
   return mesh;
 }
@@ -340,27 +329,25 @@ function buildLineInstancedMesh(material: THREE.Material): THREE.Object3D {
  * covariance projection + Mahalanobis fragment math.
  */
 function buildGSplatInstancedMesh(material: THREE.Material): THREE.Object3D {
-  const geom = createGSplatQuadGeometry();
-  geom.setAttribute('aCenter', new THREE.InstancedBufferAttribute(new Float32Array([0, 0, 0]), 3));
-  // Isotropic: L = 0.1 · I, so packed [L00, L10, L11, L20, L21, L22] = [0.1, 0, 0.1, 0, 0, 0.1].
-  geom.setAttribute(
-    'aCholesky01',
-    new THREE.InstancedBufferAttribute(new Float32Array([0.1, 0]), 2)
+  // PRODUCTION assembly (createInstancedGSplatsMesh), not a hand-rolled
+  // geometry: the previous version decorated the plain BufferGeometry
+  // quad TEMPLATE (createGSplatQuadGeometry) with instanced attributes.
+  // That accidentally rendered on the WebGLRenderer path but drew ZERO
+  // pixels through WebGPURenderer — every gsplat parity variant's TSL
+  // side was black and the tests passed vacuously under the tolerance.
+  // Isotropic: L = 0.1 · I, packed [L00, L10, L11, L20, L21, L22].
+  const mesh = createInstancedGSplatsMesh(
+    {
+      centers: new Float32Array([0, 0, 0]),
+      cholesky01: new Float32Array([0.1, 0]),
+      cholesky23: new Float32Array([0.1, 0]),
+      cholesky45: new Float32Array([0, 0.1]),
+      amplitudes: new Float32Array([1.0]),
+      colors: new Float32Array([1.0, 0.5, 0.25]),
+      splatCount: 1,
+    },
+    material
   );
-  geom.setAttribute(
-    'aCholesky23',
-    new THREE.InstancedBufferAttribute(new Float32Array([0.1, 0]), 2)
-  );
-  geom.setAttribute(
-    'aCholesky45',
-    new THREE.InstancedBufferAttribute(new Float32Array([0, 0.1]), 2)
-  );
-  geom.setAttribute('aAmplitude', new THREE.InstancedBufferAttribute(new Float32Array([1.0]), 1));
-  geom.setAttribute(
-    'aColor',
-    new THREE.InstancedBufferAttribute(new Float32Array([1.0, 0.5, 0.25]), 3)
-  );
-  const mesh = new THREE.Mesh(geom, material);
   mesh.frustumCulled = false;
   return mesh;
 }
@@ -801,10 +788,14 @@ const SHADER_REGISTRY: Record<string, RegistryEntry> = {
       uInvOneMinusC: { value: 1.0 / (1.0 - Math.exp(-0.5 * 9)) },
     }),
     buildTSLMaterial: (uniforms) => {
-      const m = gsplatWebGPUFactory(
-        buildGSplatTSLNodesFromUniforms(uniforms),
-        {}
-      ) as unknown as THREE.Material;
+      // blendingMode 'max' matches uProjectionMode=1 above: the TSL
+      // factory JS-specializes the graph on the mode (sum emits the
+      // Σ⁻¹ ray-integral block), so an inconsistent pair compares a
+      // GLSL max-projection against a TSL sum-projection — a real
+      // mismatch that was hidden while the TSL side rendered nothing.
+      const m = gsplatWebGPUFactory(buildGSplatTSLNodesFromUniforms(uniforms), {
+        blendingMode: 'max',
+      }) as unknown as THREE.Material;
       m.transparent = false;
       m.blending = THREE.NoBlending;
       return m;
@@ -839,6 +830,7 @@ const SHADER_REGISTRY: Record<string, RegistryEntry> = {
     buildTSLMaterial: (uniforms) => {
       const m = gsplatWebGPUFactory(buildGSplatTSLNodesFromUniforms(uniforms), {
         gammaOne: true,
+        blendingMode: 'max', // matches uProjectionMode=1 (see `gsplat` variant note)
       }) as unknown as THREE.Material;
       m.transparent = false;
       m.blending = THREE.NoBlending;
@@ -917,6 +909,7 @@ const SHADER_REGISTRY: Record<string, RegistryEntry> = {
     buildTSLMaterial: (uniforms) => {
       const m = gsplatWebGPUFactory(buildGSplatTSLNodesFromUniforms(uniforms), {
         useColormap: true,
+        blendingMode: 'max', // matches uProjectionMode=1 (see `gsplat` variant note)
       }) as unknown as THREE.Material;
       m.transparent = false;
       m.blending = THREE.NoBlending;
@@ -1185,7 +1178,9 @@ async function renderTSL(
   scene.add(mesh);
 
   renderer.setRenderTarget(target);
-  await renderer.renderAsync(scene, camera);
+  // `renderAsync()` is deprecated in r184 — `init()` is already awaited
+  // at renderer creation above, so plain render() is the supported form.
+  renderer.render(scene, camera);
   renderer.setRenderTarget(null);
 
   // Restore the original NodeManager method now that the capture
