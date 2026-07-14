@@ -42,10 +42,15 @@ export interface EvictorCtx {
    * acquires the new dataset's nodes in the same frame — without the
    * grace, each fresh allocation's sweep would dispose the
    * just-released buffers before later acquires can best-fit them
-   * (alloc/dispose churn replacing free reuse). Release-triggered
-   * sweeps pass -1 (never matches), keeping the original semantics of
-   * byte enforcement on release. Enforcement is delayed at most one
-   * frame on the acquire path.
+   * (alloc/dispose churn replacing free reuse). `releaseGeometry`
+   * stamps `lastUsedFrame` with the release frame so the grace
+   * actually matches (an acquire-time stamp alone would carry a stale
+   * frame into the release). Release-triggered sweeps pass -1 (never
+   * matches) — byte enforcement on release is unconditional, which is
+   * also the backstop bounding the grace: if the frame counter is not
+   * advancing (no render loop), acquire sweeps may keep sparing
+   * released buffers, but every release re-enforces the budget without
+   * grace.
    */
   readonly graceFrame: number;
   /** Per-type eviction counters; mutated as buffers dispose. */

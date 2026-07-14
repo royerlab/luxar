@@ -217,11 +217,11 @@ export class PointsBufferAdapter {
           active.capacity = chooseCapacity(pointCount);
           active.lastUsedFrame = host.frameCount;
           host.stats.capacityGrowths++;
-        // Growth can push total pool bytes past the budget without any
-        // release happening (a streaming session that only grows).
-        // Sweep idle pooled buffers now instead of waiting for the next
-        // releaseGeometry (historically the ONLY byte-budget trigger).
-        host.evictUnused(true);
+          // Growth can push total pool bytes past the budget without any
+          // release happening (a streaming session that only grows).
+          // Sweep idle pooled buffers now instead of waiting for the next
+          // releaseGeometry (historically the ONLY byte-budget trigger).
+          host.evictUnused(true);
           // growPointsGeometry reallocates the interleaved buffer (a real
           // GPU buffer creation), so bump the per-type allocation counter
           // to keep `typeStats.points.allocations` in sync with actual
@@ -297,6 +297,12 @@ export class PointsBufferAdapter {
 
     host.activeBuffers.delete(nodeId);
     buffer.inUse = false;
+    // Stamp the release frame so acquire-triggered byte sweeps later in
+    // this same frame grace the buffer (see EvictorCtx.graceFrame) — a
+    // released buffer otherwise carries the frame of its last ACQUIRE
+    // and the dataset-switch grace never matches. Also makes the
+    // just-released buffer the freshest LRU reuse candidate.
+    buffer.lastUsedFrame = host.frameCount;
 
     const bucket = host.getBucket(buffer.capacity);
     if (!this.pointBuffers.has(bucket)) {

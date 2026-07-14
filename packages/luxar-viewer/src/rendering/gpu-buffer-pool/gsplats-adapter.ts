@@ -179,6 +179,12 @@ export class GSplatsBufferAdapter {
 
     host.activeBuffers.delete(nodeId);
     buffer.inUse = false;
+    // Stamp the release frame so acquire-triggered byte sweeps later in
+    // this same frame grace the buffer (see EvictorCtx.graceFrame) — a
+    // released buffer otherwise carries the frame of its last ACQUIRE
+    // and the dataset-switch grace never matches. Also makes the
+    // just-released buffer the freshest LRU reuse candidate.
+    buffer.lastUsedFrame = host.frameCount;
 
     const bucket = host.getBucket(buffer.capacity);
     if (!this.gsplatBuffers.has(bucket)) {
