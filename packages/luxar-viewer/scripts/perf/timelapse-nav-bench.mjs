@@ -24,6 +24,7 @@ const renderer = arg('renderer', 'webgl');
 const scrubs = Number(arg('scrubs', '3'));
 const dataPort = Number(arg('data-port', '9009'));
 const tpsCap = Number(arg('tps', '0')); // 0 = all timepoints
+const channel = arg('channel', ''); // 'chrome' = real Chrome (native WebGPU on macOS)
 const dataset = arg(
   'dataset',
   `http://127.0.0.1:${dataPort}/datasets/demos/gsplats_4d_neuromast_2ch.luxar.zarr`
@@ -58,9 +59,12 @@ try {
 
   const browser = await chromium.launch({
     headless: true,
+    ...(channel ? { channel } : {}),
     args: [
       '--disable-web-security', // same as playwright.config.ts — CORS for the local data server
-      '--use-gl=egl',
+      // --use-gl=egl forces ANGLE-GL and DISABLES the Dawn/Metal WebGPU
+      // adapter in real Chrome — omit it in native-WebGPU (channel) mode.
+      ...(channel ? [] : ['--use-gl=egl']),
       '--ignore-gpu-blocklist',
       '--no-sandbox',
       '--disable-background-timer-throttling',
@@ -160,6 +164,10 @@ try {
       poolStats: pool ? pool.getStats() : null,
       memory: dbg.renderer?.info?.memory ?? null,
       userAgentData: navigator.userAgent,
+      hasGpu: !!navigator.gpu,
+      backend: dbg.renderer?.backend
+        ? { isWebGLBackend: dbg.renderer.backend.isWebGLBackend === true }
+        : null,
     };
   });
 

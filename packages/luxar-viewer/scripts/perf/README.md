@@ -32,3 +32,26 @@ Caveats learned the hard way:
   phase only.
 - The headless `?renderer=webgpu` path occasionally crashes the page
   mid-scrub (device-loss recovery reload); rerun or cap with --tps.
+
+## Native WebGPU (real Dawn/Metal adapter)
+
+Playwright's BUNDLED chromium has `navigator.gpu` but **no Metal
+adapter** (`requestAdapter()` → null), so every `?renderer=webgpu` run
+on it silently exercises the WebGL2 fallback. Real Chrome
+(`channel: 'chrome'`, works headless) has a full Metal-3 adapter — pass
+`--channel chrome` to the bench / `--chrome` to the probes. Two traps:
+- `navigator.gpu` only exists in SECURE contexts — probing it on
+  `about:blank` reads as "no WebGPU" (goto a localhost page first).
+- `--use-gl=egl` (our E2E GPU-acceleration flag) forces ANGLE-GL and
+  DISABLES the Dawn/Metal adapter — the tools omit it in channel mode.
+
+## grow-leak-probe.mjs
+
+Forces the GPU pool's GROW path (same nodeId, doubling counts, rendered
+each step), then releases + LRU-evicts, reporting
+`renderer.info.memory.attributes` per step. On native WebGPU this
+demonstrates the in-place-rebuild strand directly: pre-fix (main), each
+grow permanently pins the replaced buffer generation (+5 views/gen,
+never reclaimed — +23.4 MB after 5 doublings of a 64K node); post-fix
+(grow = release + reacquire), everything returns to the clean floor
+after eviction.
