@@ -54,14 +54,6 @@ from ._compiler.context import (
     GSplatsWriteCtx,
     OrderingCtx,
 )
-from ._compiler.dataset_writers.colors import write_colors
-from ._compiler.dataset_writers.positions import write_positions
-from ._compiler.dataset_writers.scalars import (
-    write_bounded_scalar,
-    write_positive_scalar,
-    write_radii,
-    write_scalars,
-)
 from ._compiler.finalize.hashing import compute_content_hashes
 from ._compiler.finalize.lod_backfill import (
     finalize_lod_display_types,
@@ -75,12 +67,6 @@ from ._compiler.geometry_writers.gsplats import write_gsplats as _write_gsplats_
 from ._compiler.geometry_writers.lines import write_lines as _write_lines_impl
 from ._compiler.geometry_writers.points import write_points as _write_points_impl
 from ._compiler.gsplat_assembly import apply_gsplat_group_attrs
-from ._compiler.labels.image_labels import write_image_labels_csr
-from ._compiler.labels.text_labels import write_labels_csr
-from ._compiler.spatial_ordering.points import (
-    build_points_ordering,
-    write_points_ordering_to_zarr,
-)
 
 # Ordering functions will be imported locally where needed to avoid circular imports
 
@@ -843,33 +829,6 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
         aprint(f"📝 Created resizable dataset: {path}")
         return dataset
 
-    def _build_spatial_ordering_if_enabled(
-        self,
-        positions: NDArray[np.float32],
-        n_points: int,
-        n_dims: int,
-        radii: Optional[Union[NDArray[np.float32], float]],
-    ) -> Optional[Dict[str, Any]]:
-        """Apply spatial ordering using Morton/Hilbert curves.
-
-        Args:
-            positions: Point positions
-            n_points: Number of points
-            n_dims: Number of dimensions
-            radii: Optional radii array
-
-        Returns:
-            Dict with:
-            - sorted_positions: Reordered positions
-            - sort_order: Indices to apply to other arrays
-            - chunk_bounds: (num_chunks, n_dims, 2) array
-            - ordering_metadata: Dict from sort_points_compound
-            Or None if ordering disabled/not applicable
-        """
-        return build_points_ordering(
-            positions, n_points, n_dims, radii, self._make_ordering_ctx(), self.store
-        )
-
     # ------------------------------------------------------------------
     # Scene bounds — bodies live in _compiler/bounds.py
     # ------------------------------------------------------------------
@@ -941,112 +900,6 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
             apply_gsplat_group_attrs=self._apply_gsplat_group_attrs,
         )
 
-    def _write_positions_dataset(
-        self,
-        group: zarr.Group,
-        positions: NDArray[np.float32],
-        spatial_index_data: Optional[Dict[str, Any]],
-    ) -> None:
-        write_positions(group, positions, spatial_index_data, self._make_dataset_ctx())
-
-    def _write_colors_dataset(
-        self,
-        group: zarr.Group,
-        colors: Union[NDArray[np.float32], tuple, list],
-        spatial_index_data: Optional[Dict[str, Any]],
-        n_elements: int,
-    ) -> None:
-        write_colors(
-            group, colors, spatial_index_data, n_elements, self._make_dataset_ctx()
-        )
-
-    def _write_positive_scalar_dataset(
-        self,
-        group: zarr.Group,
-        data: Union[NDArray[np.float32], float, int],
-        name: str,
-        spatial_index_data: Optional[Dict[str, Any]],
-        n_elements: int,
-        log_label_singular: Optional[str] = None,
-    ) -> float:
-        return write_positive_scalar(
-            group,
-            data,
-            name,
-            spatial_index_data,
-            n_elements,
-            self._make_dataset_ctx(),
-            log_label_singular,
-        )
-
-    def _write_bounded_scalar_dataset(
-        self,
-        group: zarr.Group,
-        data: Union[NDArray[np.float32], float, int],
-        name: str,
-        bounds: Tuple[float, float],
-        spatial_index_data: Optional[Dict[str, Any]],
-        n_elements: int,
-        log_label_singular: Optional[str] = None,
-    ) -> float:
-        return write_bounded_scalar(
-            group,
-            data,
-            name,
-            bounds,
-            spatial_index_data,
-            n_elements,
-            self._make_dataset_ctx(),
-            log_label_singular,
-        )
-
-    def _write_radii_dataset(
-        self,
-        group: zarr.Group,
-        radii: Union[NDArray[np.float32], float, int],
-        spatial_index_data: Optional[Dict[str, Any]],
-        n_points: int,
-    ) -> float:
-        return write_radii(
-            group, radii, spatial_index_data, n_points, self._make_dataset_ctx()
-        )
-
-    def _write_scalars_dataset(
-        self,
-        group: zarr.Group,
-        scalars: Union[NDArray[np.float32], float, int],
-        spatial_index_data: Optional[Dict[str, Any]],
-        n_elements: int,
-    ) -> None:
-        write_scalars(
-            group, scalars, spatial_index_data, n_elements, self._make_dataset_ctx()
-        )
-
-    # ------------------------------------------------------------------
-    # Labels (per-element string + image blobs, CSR-encoded) —
-    # bodies live in _compiler/labels/
-    # ------------------------------------------------------------------
-
-    def _write_labels_csr(
-        self,
-        group: zarr.Group,
-        labels: "Sequence[str]",
-        n_elements: int,
-        sort_order: Optional[np.ndarray] = None,
-    ) -> None:
-        write_labels_csr(group, labels, n_elements, self.compressor, sort_order)
-
-    def _write_image_labels_csr(
-        self,
-        group: zarr.Group,
-        image_labels: Any,
-        n_elements: int,
-        sort_order: Optional[np.ndarray] = None,
-    ) -> None:
-        write_image_labels_csr(
-            group, image_labels, n_elements, self.compressor, sort_order
-        )
-
     def _write_colormap_lut_if_needed(
         self,
         group: zarr.Group,
@@ -1058,17 +911,6 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
         self._lut_tone_mapping_warned = write_colormap_lut_if_needed(
             group, attrs, scene_tone_mapping, self._lut_tone_mapping_warned
         )
-
-    def _write_spatial_ordering_to_zarr(
-        self, group: zarr.Group, ordering_data: Dict[str, Any]
-    ) -> None:
-        """Write spatial ordering metadata and chunk bounds to Zarr.
-
-        Args:
-            group: Parent Zarr group
-            ordering_data: Ordering data with chunk_bounds and metadata
-        """
-        write_points_ordering_to_zarr(group, ordering_data, self.compressor)
 
     def _compute_content_hashes(self, store: zarr.Group) -> str:
         return compute_content_hashes(store)
