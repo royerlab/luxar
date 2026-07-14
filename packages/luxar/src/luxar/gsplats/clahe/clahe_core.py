@@ -20,8 +20,9 @@ def apply_clahe(
     """
     Apply CLAHE (Contrast Limited Adaptive Histogram Equalization) to nD volume.
 
-    CLAHE enhances local contrast by performing histogram equalization on small
-    tiles, then applying contrast limiting to prevent noise amplification.
+    CLAHE [CLAHE1994]_ enhances local contrast by performing histogram
+    equalization on small tiles, then applying contrast limiting to prevent
+    noise amplification.
 
     Algorithm:
 

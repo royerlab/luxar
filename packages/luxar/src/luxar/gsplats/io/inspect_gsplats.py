@@ -200,14 +200,16 @@ def format_gsplats_info(info: Dict[str, Any]) -> str:
     # Header
     lines.append(f"GSplats: {info['n_splats']:,} splats, {info['ndim']}D")
 
-    # Ordering
+    # Ordering — current files carry the per-axis bit budget; only legacy
+    # (pre-v3.0 morton_*) files still have a grid resolution.
     ordering = info["ordering"]
-    if ordering == "morton":
-        resolution = info.get("ordering_resolution") or "unknown"
-        lines.append(f"Ordering: morton (resolution={resolution})")
-    elif ordering == "hilbert":
-        resolution = info.get("ordering_resolution") or "unknown"
-        lines.append(f"Ordering: hilbert (resolution={resolution})")
+    if ordering in ("morton", "hilbert"):
+        bits = info.get("ordering_bits_per_dim")
+        if bits is not None:
+            lines.append(f"Ordering: {ordering} (bits_per_dim={bits})")
+        else:
+            resolution = info.get("ordering_resolution") or "unknown"
+            lines.append(f"Ordering: {ordering} (resolution={resolution})")
     else:
         lines.append("Ordering: none")
 
