@@ -638,6 +638,17 @@ Gaussian-splats a real cryo-electron-microscopy density map from the EMDB: the i
 
 ---
 
+#### demo_gsplats_3d_ct_totalsegmentator.py - Whole-Body CT Anatomical Atlas (Organs in Color)
+Gaussian-splats a real whole-body clinical CT scan and colors every splat by the anatomical structure it belongs to, using the TotalSegmentator dataset's 117-organ segmentation. The result is a glowing, rotatable atlas — ivory skeleton, red great vessels, cyan lungs, and colored abdominal organs in their true 3D positions. The same **one-fit + per-splat color sampling** idea as the Visible Human head demo, but the color encodes *organ identity* (sampled from the label volume at each splat center, via a tissue-grouped palette) instead of photographic RGB — the splat pipeline applied to whole-body radiology.
+
+**Run**: `hatch run python packages/luxar/src/luxar/demos/demo_gsplats_3d_ct_totalsegmentator.py [--recompute]`
+
+**Requires**: Nothing extra by default — ships a precomputed fit + per-splat colors via Git LFS (~8 MB: a neck-to-pelvis subject at 1.5 mm, fit to ~0.66M splats, PSNR ~43 dB). With `--recompute` (or if the LFS assets aren't pulled) it auto-downloads the 3.2 GB TotalSegmentator subset to `~/.cache/luxar/gsplats_ct_totalsegmentator/` (resumable), extracts one subject, combines its 117 organ masks with `nibabel`, windows + fits on the GPU, and samples per-splat organ colors. Adds `nibabel` to the `demos` extra.
+
+**Demonstrates**: Real *whole-body CT* + multi-organ segmentation → colored Gaussian splats, combining per-structure NIfTI masks into one label volume, Hounsfield windowing, per-splat organ-label color sampling with a tissue-grouped palette (bone/vessel/lung/GI/muscle/…), cubic-voxel resampling, Neutral tone-mapping + additive HDR rendering, self-contained download → combine → fit → cache-processed bootstrap. Data: [TotalSegmentator](https://zenodo.org/records/10047263) (Wasserthal et al. 2023, Radiology: AI; CC BY 4.0).
+
+---
+
 #### demo_gsplats_lod_tribolium.py - Adaptive Level of Detail on the Tribolium Embryo
 Takes the precomputed Tribolium embryo fit and builds an **adaptive Level of Detail (LOD)** pyramid on it — the embryo is stored at several resolutions, and the viewer shows the simplest one that still looks right at the current zoom. This demo uses *substitutive* LOD (each coarser level *replaces* the finer one with fewer, larger splats), and ships it with per-level debug colors (green→amber→red, finest→coarsest) so the viewer's `coverage_fraction` level-switching is visible as you zoom. The scaled-up companion to `examples/gsplats_lod_example.py`.
 
@@ -992,6 +1003,7 @@ hatch run python packages/luxar/src/luxar/demos/demo_gsplats_2d_cmu1_pathology.p
 hatch run python packages/luxar/src/luxar/demos/demo_gsplats_3d_milky_way_dust.py
 hatch run python packages/luxar/src/luxar/demos/demo_gsplats_3d_visible_human_head.py
 hatch run python packages/luxar/src/luxar/demos/demo_gsplats_3d_cryoem_virus.py
+hatch run python packages/luxar/src/luxar/demos/demo_gsplats_3d_ct_totalsegmentator.py
 hatch run python packages/luxar/src/luxar/demos/demo_gsplats_3d_organoid_dapi_nuclei.py
 hatch run python packages/luxar/src/luxar/demos/demo_gsplats_3d_organoid_multichannel.py
 hatch run python packages/luxar/src/luxar/demos/demo_gsplats_3d_kidney_multichannel_toggles.py

@@ -112,6 +112,7 @@ demos = [
     "esm>=3.0.0",
     "h5py>=3.0.0",
     "mrcfile>=1.4.0",
+    "nibabel>=5.0.0",
 ]
 docs = [
     "sphinx>=7.0.0",
