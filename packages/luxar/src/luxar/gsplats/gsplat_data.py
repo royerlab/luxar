@@ -1042,9 +1042,7 @@ class GSplatData(RenderMixin, IOAdapterMixin, FilteringMixin, CullingMixin):
             dim_mapping = list(range(d))
             fill_sigma = {d: sigma}
 
-            def _embed_lod(
-                lod: AdditiveSubLOD, offset: int, nl: int
-            ) -> AdditiveSubLOD:
+            def _embed_lod(lod: AdditiveSubLOD, offset: int, nl: int) -> AdditiveSubLOD:
                 if is_scalar:
                     lod_col = np.full((nl, 1), values, dtype=lod.centers.dtype)
                 else:
@@ -1545,6 +1543,7 @@ class GSplatData(RenderMixin, IOAdapterMixin, FilteringMixin, CullingMixin):
         - ``lowpass``: suppress splats with scale BELOW the cutoff (removes fine
           detail / high-frequency). Multiplier → 0 for very small scales, → 1
           for large.
+
         Both may be combined (a band-pass). ``width`` is the transition softness
         in octaves (log2 scale); larger = gentler roll-off.
 

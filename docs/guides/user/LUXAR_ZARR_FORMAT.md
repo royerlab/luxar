@@ -171,7 +171,7 @@ scene.luxar.zarr/
 
 The root `.zattrs` file contains scene-wide configuration:
 
-```json
+```javascript
 {
   "luxar_version": "0.1",
   "type": "scene",
@@ -203,7 +203,7 @@ The root `.zattrs` file contains scene-wide configuration:
 Group nodes organize the scene hierarchy and can contain child nodes.
 
 **Attributes (.zattrs):**
-```json
+```javascript
 {
   "type": "group",
   "transform": [1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1],  // 4x4 matrix as 16-element array
@@ -265,7 +265,7 @@ stamps `default_level: 0` (the coarsest child) — a progressive-load hint
 default (the finest level the `.centers` accessor returns).
 
 **Attributes (.zattrs):**
-```json
+```javascript
 {
   "type": "group",
   "kind": "lod",
@@ -340,7 +340,7 @@ directly (`?src=<file>.gsplats.zarr`) and frames on `position_bounds`. The
 (`--parts` / `--max-elements` / `--rule median|midpoint|sah`).
 
 **Attributes (.zattrs):**
-```json
+```javascript
 {
   "type": "group",
   "kind": "partition",
@@ -400,7 +400,7 @@ and refines toward the full data over `requestAnimationFrame()`
 frames once initial paint commits.
 
 **Parent attributes (.zattrs):**
-```json
+```javascript
 {
   "type": "points",                 // or "lines" / "gsplats"
   "n_points": 10000,                // (or n_segments / n_splats — total across levels)
@@ -454,7 +454,7 @@ spatial part gets its own LOD ladder.
 Points nodes contain the actual point data.
 
 **Attributes (.zattrs):**
-```json
+```javascript
 {
   "type": "points",
   "transform": [1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1],
@@ -557,7 +557,7 @@ pairs — so the on-disk layout is identical for every type; the user's original
 choice is recorded in `original_line_type`.
 
 **Attributes (.zattrs):**
-```json
+```javascript
 {
   "type": "lines",
   "n_vertices": 10000,
@@ -678,7 +678,7 @@ may be exposed as a layer in the viewer's Layers panel by setting
 per-layer visibility, display-range, gamma, opacity, blending mode, and
 colormap controls.
 
-```json
+```javascript
 {
   "type": "points",
   "layer": true,      // Expose this node as a layer in the panel
@@ -811,7 +811,7 @@ The spatial index uses a simple but effective approach:
 The spatial index stores metadata in the points group `.zattrs` and chunk bounds as a separate array:
 
 #### Points Group .zattrs (Spatial Index Metadata)
-```json
+```javascript
 {
   "type": "points",
   "n_points": 100000,
