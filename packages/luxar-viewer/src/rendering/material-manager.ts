@@ -132,7 +132,7 @@ export class MaterialManager {
    * THREE's EventDispatcher.
    */
   private subscribedMaterials = new WeakSet<THREE.Material & CameraAwareMaterial>();
-  /** Per-cache eviction count (read by getCacheStats; no behavior). */
+  /** Total evictions across ALL three caches (shared counter, not per-cache). */
   private evictionCount = 0;
 
   /**

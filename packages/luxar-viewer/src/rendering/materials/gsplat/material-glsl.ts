@@ -31,10 +31,11 @@
 import * as THREE from 'three';
 import { GSPLAT_VERTEX_SHADER, GSPLAT_FRAGMENT_SHADER } from './shader-glsl';
 import type { CameraAwareMaterial } from '../_shared/camera-aware-material';
+import type { BlendingMode } from '../../material-manager';
 import type { ColormapAwareMaterial } from '../_shared/colormap-aware-material';
 import { clampGamma, isGammaOne } from '../_shared/uniform-helpers';
 import { computeFocalLength } from '../_shared/camera-uniforms';
-import { computeRayIntegralFactor } from './math';
+import { computeRayIntegralFactor, clampTruncationRadius } from './math';
 import {
   applyColormapTextureToMaterial,
   applyScalarRangeToMaterial,
@@ -61,7 +62,7 @@ export interface GSplatMaterialConfig {
   /** Truncation radius in sigmas (default 3.0) */
   truncationRadius?: number;
   /** Blending mode */
-  blendingMode?: 'additive' | 'normal' | 'max' | 'opaque' | 'luminous';
+  blendingMode?: BlendingMode;
   /**
    * Explicit override, applied AFTER `applyBlendingMode`'s
    * mode-derived value (true for every mode except `opaque`).
@@ -135,7 +136,7 @@ export class GSplatMaterial
     const blendingMode = materialConfig.blendingMode ?? 'additive';
     const gammaValue = clampGamma(materialConfig.gamma);
 
-    const truncate = materialConfig.truncationRadius ?? 3.0;
+    const truncate = clampTruncationRadius(materialConfig.truncationRadius ?? 3.0);
     const shiftC = Math.exp(-0.5 * truncate * truncate);
     const invOneMinusC = 1.0 / (1.0 - shiftC);
 
@@ -261,6 +262,7 @@ export class GSplatMaterial
    * Update truncation radius and recompute shifted Gaussian parameters.
    */
   updateTruncationRadius(radius: number): void {
+    radius = clampTruncationRadius(radius);
     this.uniforms.uTruncate.value = radius;
     this.uniforms.uTruncateSq.value = radius * radius;
     const shiftC = Math.exp(-0.5 * radius * radius);
@@ -359,7 +361,8 @@ export class GSplatMaterial
       maxExtentFactor: this.uniforms.uMaxExtentFactor.value,
     });
 
-    // Copy blend equation settings for custom blending (additive/luminous/max modes)
+    // Copy blend equation settings for custom blending (max/normal —
+    // additive/luminous use plain AdditiveBlending since the unification)
     if (this.blending === THREE.CustomBlending) {
       cloned.blendEquation = this.blendEquation;
       cloned.blendSrc = this.blendSrc;
@@ -403,15 +406,14 @@ export class GSplatMaterial
    * layers panel. After this returns, `userData.blendingMode` reflects
    * the live mode so subsequent `clone()` calls preserve it.
    */
-  applyBlendingMode(mode: 'additive' | 'normal' | 'max' | 'opaque' | 'luminous'): void {
-    const previousMode = this.userData.blendingMode as
-      | 'additive'
-      | 'normal'
-      | 'max'
-      | 'opaque'
-      | 'luminous'
-      | undefined;
+  applyBlendingMode(mode: BlendingMode): void {
+    const previousMode = this.userData.blendingMode as BlendingMode | undefined;
     const isMax = isMaxMode(mode);
+    // NOTE: opacity is INERT for gsplat blend state — the only
+    // opacity-sensitive entry in getCompleteBlendingState is the
+    // generic 'normal' one, and gsplat normal early-returns to the
+    // opacity-independent getGSplatNormalBlendingState above. Passed
+    // only to satisfy the shared helper's signature.
     const opacity = (this.uniforms.uOpacity?.value as number | undefined) ?? 1.0;
 
     if (isNormalMode(mode)) {

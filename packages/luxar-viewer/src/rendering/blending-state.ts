@@ -78,10 +78,6 @@ export interface CompleteBlendingState {
   blendEquation: THREE.BlendingEquation;
   blendSrc: THREE.BlendingSrcFactor;
   blendDst: THREE.BlendingDstFactor;
-  /** Optional alpha-channel blending. Defaults to RGB equivalents. */
-  blendEquationAlpha?: THREE.BlendingEquation;
-  blendSrcAlpha?: THREE.BlendingSrcFactor;
-  blendDstAlpha?: THREE.BlendingDstFactor;
   depthTest: boolean;
   depthWrite: boolean;
   transparent: boolean;
@@ -203,8 +199,8 @@ export function getCompleteBlendingState(
  * ("opaque dimmed by opacity") — see GSPLAT_DEPTH_SORTING_SPEC.md §3.
  *
  * Deliberate choices (each load-bearing):
- * - `CustomBlending` with SYMMETRIC alpha channel (no
- *   `blendEquationAlpha`/`blendSrcAlpha`/`blendDstAlpha` overrides):
+ * - `CustomBlending` with SYMMETRIC alpha channel (the material's
+ *   `blendEquationAlpha`/`blendSrcAlpha`/`blendDstAlpha` stay null):
  *   separate alpha-channel blend state is exactly what trips a
  *   `gl.getError()` flag under WebGPURenderer's WebGL2 bridge (see
  *   materials/gsplat/material-tsl.ts). Alpha then composites as

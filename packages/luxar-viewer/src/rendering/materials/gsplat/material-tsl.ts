@@ -39,7 +39,7 @@ import type { CameraAwareMaterial } from '../_shared/camera-aware-material';
 import type { ColormapAwareMaterial } from '../_shared/colormap-aware-material';
 import { clampGamma, isGammaOne } from '../_shared/uniform-helpers';
 import { computeFocalLength } from '../_shared/camera-uniforms';
-import { computeRayIntegralFactor } from './math';
+import { computeRayIntegralFactor, clampTruncationRadius } from './math';
 import {
   applyColormapTextureToMaterial,
   applyScalarRangeToMaterial,
@@ -97,7 +97,7 @@ export class GSplatTSLMaterial
     super();
 
     const gammaValue = clampGamma(materialConfig.gamma);
-    const truncate = materialConfig.truncationRadius ?? 3.0;
+    const truncate = clampTruncationRadius(materialConfig.truncationRadius ?? 3.0);
     const shiftC = Math.exp(-0.5 * truncate * truncate);
     const invOneMinusC = 1.0 / (1.0 - shiftC);
 
@@ -249,6 +249,7 @@ export class GSplatTSLMaterial
   }
 
   updateTruncationRadius(radius: number): void {
+    radius = clampTruncationRadius(radius);
     this.uniforms.uTruncate.value = radius;
     this.uniforms.uTruncateSq.value = radius * radius;
     const shiftC = Math.exp(-0.5 * radius * radius);

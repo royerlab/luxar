@@ -138,7 +138,11 @@ describe('getGSplatNormalBlendingState (premultiplied alpha-over for gsplats)', 
   });
 
   it('symmetric alpha channel: no separate alpha equation/factors (WebGPU-bridge safe)', () => {
-    const s = getGSplatNormalBlendingState();
+    // CompleteBlendingState deliberately declares NO alpha-channel
+    // fields (they had no producer and applyBlendingStateToMaterial
+    // never applied them) — the symmetric-alpha guarantee is
+    // structural. Guard against the fields being re-added and set.
+    const s = getGSplatNormalBlendingState() as unknown as Record<string, unknown>;
     expect(s.blendEquationAlpha).toBeUndefined();
     expect(s.blendSrcAlpha).toBeUndefined();
     expect(s.blendDstAlpha).toBeUndefined();
