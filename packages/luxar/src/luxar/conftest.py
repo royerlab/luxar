@@ -1,9 +1,6 @@
 """
 Root pytest configuration for the luxar package.
 
-Audit ref: W1-W3 in `delme/test-audit-luxar-codebase/findings-python-core-validation.md`,
-and the broader determinism principle (P7) in the global pattern sweep.
-
 Adds an autouse fixture that seeds numpy's global RNG to a fixed value
 before every test in the package. Tests using `np.random.*` (without an
 explicit `default_rng(seed)`) inherit determinism for free. Tests that

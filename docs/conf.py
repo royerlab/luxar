@@ -92,7 +92,6 @@ exclude_patterns = [
     # Archived/internal docs not part of the main documentation build
     "archive/**",
     "benchmarks/**",
-    "bugs/**",
     "code_reviews/**",
     "handoffs/**",
     "reports/**",

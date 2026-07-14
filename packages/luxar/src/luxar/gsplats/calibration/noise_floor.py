@@ -147,8 +147,7 @@ def estimate_floor(V: np.ndarray, method: str = "mode") -> float:
 
     A constant background is the worst case for a localized Gaussian-splat
     basis, so subtracting it before normalisation is the single
-    highest-leverage preprocessing step on real microscopy (see
-    ``docs/handoffs/floor-suppression-handoff.md``).
+    highest-leverage preprocessing step on real microscopy.
 
     Parameters
     ----------
