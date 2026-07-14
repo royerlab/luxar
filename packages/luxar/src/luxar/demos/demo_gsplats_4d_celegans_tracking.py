@@ -116,14 +116,11 @@ ZENODO_URL = "https://zenodo.org/api/records/6460303/files/mskcc_confocal.zip/co
 VOXEL_SIZE_ZYX = (0.75, 0.15, 0.15)  # Micrometres
 IMAGE_SHAPE = (41, 512, 512)  # Z, Y, X per timepoint
 
-# Progressive fitting parameters
+# Fit parameters (fixed-K, seeds=K*)
 # Note: peak GPU memory scales with accumulated splats * volume_size.
 # For 41x512x512 volumes on a 24 GB GPU, ~4000 accumulated splats is the
 # safe ceiling (~18 GB peak during quality-evaluation rendering).
 MAX_SPLATS = 22000  # Total splats per timepoint
-MAX_SPLATS_PER_PASS = 4500  # Splats added per progressive pass
-ITERS_PER_PASS = 3000  # Iterations per pass
-PSNR_PATIENCE = 0.3  # Stop if ΔPSNR < this (dB) — tighter to save a pass
 
 # Cache location
 CACHE_DIR = Path.home() / ".cache" / "luxar" / "gsplats_celegans"
@@ -879,11 +876,7 @@ def fit_timepoint(
 
         DEVICE = detect_device()
 
-    aprint(
-        f"  Progressive fitting {label} "
-        f"(max {MAX_SPLATS} splats, {MAX_SPLATS_PER_PASS}/pass, "
-        f"patience {PSNR_PATIENCE} dB)..."
-    )
+    aprint(f"Fitting {label} (fixed-K joint fit: seeds={MAX_SPLATS})...")
 
     # Progressive fitting: iteratively fits residuals in multiple passes,
     # building a multi-LOD representation from coarse to fine detail.

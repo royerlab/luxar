@@ -102,11 +102,8 @@ CHANNELS = [
     {"index": 1, "name": "Hoechst (Nuclei)", "colormap": "blue"},
 ]
 
-# Progressive fitting parameters
+# Fit parameters (fixed-K, seeds=K*)
 MAX_SPLATS = 81000
-MAX_SPLATS_PER_PASS = 16000
-ITERS_PER_PASS = 5000
-PSNR_PATIENCE = 0.1
 
 # Data source URL (OpenCell S3 bucket)
 TIFF_URL = (
@@ -232,10 +229,7 @@ def fit_channel(
 
         DEVICE = detect_device()
 
-    aprint(
-        f"Fitting {channel_name} (progressive: max {MAX_SPLATS} splats, "
-        f"{MAX_SPLATS_PER_PASS}/pass, {ITERS_PER_PASS} iters/pass)..."
-    )
+    aprint(f"Fitting {channel_name} (fixed-K joint fit: seeds={MAX_SPLATS})...")
     aprint(f"  Volume: {volume.shape}, Device: {DEVICE}")
 
     result = fit_gaussian_splats(

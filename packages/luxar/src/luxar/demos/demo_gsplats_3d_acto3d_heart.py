@@ -114,11 +114,8 @@ CHANNELS = [
     {"index": 2, "name": "TNNI3 (Cardiac Tissue)", "colormap": "blue"},
 ]
 
-# Fitting parameters (progressive)
+# Fit parameters (fixed-K, seeds=K*)
 MAX_SPLATS = 860000
-MAX_SPLATS_PER_PASS = 102000
-ITERS_PER_PASS = 3000
-PSNR_PATIENCE = 0.2
 
 # Cache location
 CACHE_DIR = Path.home() / ".cache" / "luxar" / "gsplats_acto3d_heart"
@@ -435,11 +432,7 @@ def fit_channel(
 
         DEVICE = detect_device()
 
-    aprint(
-        f"Fitting {channel_name} (progressive: "
-        f"max_splats={MAX_SPLATS}, {MAX_SPLATS_PER_PASS}/pass, "
-        f"{ITERS_PER_PASS} iters/pass, patience={PSNR_PATIENCE} dB)..."
-    )
+    aprint(f"Fitting {channel_name} (fixed-K joint fit: seeds={MAX_SPLATS})...")
     aprint(f"  Volume: {volume.shape}, Device: {DEVICE}")
 
     result = fit_gaussian_splats(

@@ -99,11 +99,8 @@ ZENODO_URL = (
 # Volume specs
 VOXEL_SIZE_UM = 0.381  # Isotropic voxel size in micrometres
 
-# Fitting parameters (progressive)
+# Fit parameters (fixed-K, seeds=K*)
 MAX_SPLATS = 510000
-MAX_SPLATS_PER_PASS = 102000
-ITERS_PER_PASS = 5_000
-PSNR_PATIENCE = 0.1
 
 # Cache location
 CACHE_DIR = Path.home() / ".cache" / "luxar" / "gsplats_tribolium"
@@ -292,10 +289,7 @@ def fit_tribolium(volume: np.ndarray) -> GSplatData:
 
     from luxar.gsplats import fit_gaussian_splats
 
-    with asection(
-        f"Fitting GSplats (progressive: max {MAX_SPLATS} splats, "
-        f"{MAX_SPLATS_PER_PASS}/pass, {ITERS_PER_PASS} iters/pass)"
-    ):
+    with asection(f"Fitting GSplats (fixed-K joint fit: seeds={MAX_SPLATS})"):
         aprint(f"Volume shape: {volume.shape}")
         aprint(f"Device: {DEVICE}")
 

@@ -81,11 +81,8 @@ from luxar.utils.paths import get_demos_output_dir
 # Configuration
 # =============================================================================
 
-# Progressive fitting parameters
+# Fit parameters (fixed-K, seeds=K*)
 MAX_SPLATS = 25000
-MAX_SPLATS_PER_PASS = 1000
-ITERS_PER_PASS = 3000
-PSNR_PATIENCE = 0.0
 
 # Voxel spacing (Z, Y, X) in micrometres for cells3d
 # Original: (0.29, 0.065, 0.065) µm, 4x downsampled in Y/X → (0.29, 0.26, 0.26) µm
@@ -188,11 +185,7 @@ def fit_channel(volume, channel_name, cache_file):
 
     from luxar.gsplats import fit_gaussian_splats
 
-    aprint(
-        f"Fitting {channel_name} (progressive: max_splats={MAX_SPLATS}, "
-        f"{MAX_SPLATS_PER_PASS}/pass, {ITERS_PER_PASS} iters/pass, "
-        f"psnr_patience={PSNR_PATIENCE})..."
-    )
+    aprint(f"Fitting {channel_name} (fixed-K joint fit: seeds={MAX_SPLATS})...")
 
     result = fit_gaussian_splats(
         volume,

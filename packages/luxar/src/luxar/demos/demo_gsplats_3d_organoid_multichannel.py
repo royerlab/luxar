@@ -130,11 +130,8 @@ CHANNELS = [
     {"index": 1, "name": "DAPI", "color": (0.0, 1.0, 0.5)},  # Cyan
 ]
 
-# Progressive fitting parameters
+# Fit parameters (fixed-K, seeds=K*)
 MAX_SPLATS = 22000
-MAX_SPLATS_PER_PASS = 8000
-ITERS_PER_PASS = 3000
-PSNR_PATIENCE = 0.2
 DEVICE = None  # Auto-detect (cuda/mps/cpu)
 
 # Cache paths
@@ -277,10 +274,7 @@ def fit_channel(volume, channel_name, cache_file):
             aprint("Using CPU device")
 
     # Fit gsplats progressively
-    aprint(
-        f"Fitting {channel_name} (progressive: up to {MAX_SPLATS} splats, "
-        f"{MAX_SPLATS_PER_PASS}/pass, {ITERS_PER_PASS} iters/pass)..."
-    )
+    aprint(f"Fitting {channel_name} (fixed-K joint fit: seeds={MAX_SPLATS})...")
 
     result = fit_gaussian_splats(
         volume,
