@@ -73,7 +73,7 @@ def write_positive_scalar(
         else:
             n_elems = None
             chunks = calculate_intelligent_chunks(
-                data.shape, spatial_index_data=spatial_index_data
+                data.shape, spatial_index_data=spatial_index_data, dtype=data.dtype
             )
 
     aprint(f"  ✓ Max {label}: {max_value:.3f}")
@@ -136,7 +136,7 @@ def write_bounded_scalar(
         else:
             n_elems = None
             chunks = calculate_intelligent_chunks(
-                data.shape, spatial_index_data=spatial_index_data
+                data.shape, spatial_index_data=spatial_index_data, dtype=data.dtype
             )
 
     aprint(f"  ✓ Max {label}: {max_value:.3f}")
@@ -262,7 +262,9 @@ def write_scalars(
         else:
             n_elems = None
             chunks = calculate_intelligent_chunks(
-                scalars.shape, spatial_index_data=spatial_index_data
+                scalars.shape,
+                spatial_index_data=spatial_index_data,
+                dtype=scalars.dtype,
             )
 
     ctx.encoder.encode(

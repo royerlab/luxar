@@ -12,6 +12,7 @@ from .base import (
     validate_positions_for_writing,
     validate_radii_for_writing,
     validate_sharpness_for_writing,
+    validate_widths_for_writing,
     validate_zarr_attributes,
 )
 from .category_validation import validate_categories
@@ -46,6 +47,7 @@ __all__ = [
     "validate_positions_for_writing",
     "validate_radii_for_writing",
     "validate_sharpness_for_writing",
+    "validate_widths_for_writing",
     "validate_zarr_attributes",
     # From types (basic validation and type guards)
     "validate_positions",
