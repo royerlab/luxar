@@ -22,6 +22,7 @@ def robust_download(
     chunk_size: int = 1024 * 1024,  # 1MB chunks
     verify_size: bool = True,
     expected_size: Optional[int] = None,
+    extra_headers: Optional[dict] = None,
 ) -> Path:
     """Download a file with automatic retry, resume capability, and progress tracking.
 
@@ -40,6 +41,8 @@ def robust_download(
         chunk_size: Size of download chunks in bytes (default: 1MB)
         verify_size: Whether to verify final file size matches Content-Length
         expected_size: Expected file size in bytes (optional, for validation)
+        extra_headers: Extra HTTP headers to send on every request (e.g. an
+            API key: ``{"api-key": "..."}``). Merged with the Range header.
 
     Returns:
         Path to downloaded file
@@ -96,7 +99,7 @@ def robust_download(
     while attempt <= max_retries:
         try:
             # Set up headers for resume
-            headers = {}
+            headers = dict(extra_headers or {})
             if resume_byte_pos > 0:
                 headers["Range"] = f"bytes={resume_byte_pos}-"
 
