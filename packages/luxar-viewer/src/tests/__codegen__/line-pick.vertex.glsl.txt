@@ -57,9 +57,8 @@ flat  out float nodeVarying5;
 out float nodeVarying6;
 out float nodeVarying7;
 out float nodeVarying8;
-out float nodeVarying9;
+flat  out float nodeVarying9;
 flat  out float nodeVarying10;
-flat  out float nodeVarying11;
 
 
 // attributes
@@ -180,9 +179,8 @@ void main() {
 	}
 
 	nodeVarying8 = nodeVar15;
-	nodeVarying9 = 1.0;
-	nodeVarying10 = nodeUniform6;
-	nodeVarying11 = float( uint( gl_InstanceID ) );
+	nodeVarying9 = nodeUniform6;
+	nodeVarying10 = float( uint( gl_InstanceID ) );
 	nodeVar19 = mix( nodeVar1, nodeVar0, nodeVar4 );
 
 	if ( ( nodeVar2 > 0.0001 ) ) {

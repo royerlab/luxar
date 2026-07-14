@@ -61,7 +61,6 @@ flat  out float nodeVarying6;
 out float nodeVarying7;
 out float nodeVarying8;
 out float nodeVarying9;
-out float nodeVarying10;
 
 
 // attributes
@@ -185,7 +184,6 @@ void main() {
 	}
 
 	nodeVarying9 = nodeVar17;
-	nodeVarying10 = 1.0;
 	nodeVar21 = mix( nodeVar1, nodeVar0, nodeVar5 );
 
 	if ( ( nodeVar2 > 0.0001 ) ) {

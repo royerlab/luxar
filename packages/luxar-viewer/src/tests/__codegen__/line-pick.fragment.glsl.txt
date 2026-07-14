@@ -58,9 +58,8 @@ flat  in float nodeVarying5;
 in float nodeVarying6;
 in float nodeVarying7;
 in float nodeVarying8;
-in float nodeVarying9;
+flat  in float nodeVarying9;
 flat  in float nodeVarying10;
-flat  in float nodeVarying11;
 
 
 // vars
@@ -103,7 +102,7 @@ void main() {
 
 	}
 
-	lineBrightness = ( ( ( ( mix( ( 0.5 + ( nodeVar11 * 0.5 ) ), 1.0, mix( nodeVarying4, nodeVarying5, step( nodeVar5, nodeVar6 ) ) ) * ( max( ( exp( ( pow( abs( nodeVarying0 ), pow( 2.0, ( ( nodeVarying6 * 6.0 ) - 2.0 ) ) ) * -4.6051702 ) ) - 0.01 ), 0.0 ) * 1.0101010101010102 ) ) * min( ( nodeVarying7 / 1.5 ), 1.0 ) ) * nodeVarying8 ) * nodeVarying9 );
+	lineBrightness = ( ( ( ( mix( ( 0.5 + ( nodeVar11 * 0.5 ) ), 1.0, mix( nodeVarying4, nodeVarying5, step( nodeVar5, nodeVar6 ) ) ) * ( max( ( exp( ( pow( abs( nodeVarying0 ), pow( 2.0, ( ( nodeVarying6 * 6.0 ) - 2.0 ) ) ) * -4.6051702 ) ) - 0.01 ), 0.0 ) * 1.0101010101010102 ) ) * min( ( nodeVarying7 / 1.5 ), 1.0 ) ) * nodeVarying8 ) * 1.0 );
 
 	if ( ( lineBrightness < 0.0001 ) ) {
 
@@ -112,7 +111,7 @@ void main() {
 
 	}
 
-	DiffuseColor = vec4( nodeVarying10, nodeVarying11, lineBrightness, 1.0 );
+	DiffuseColor = vec4( nodeVarying9, nodeVarying10, lineBrightness, 1.0 );
 	DiffuseColor.w = ( DiffuseColor.w * nodeUniform7 );
 	nodeVar18 = max( vec4( DiffuseColor.xyz, DiffuseColor.w ), 0.0 );
 	Output = nodeVar18;

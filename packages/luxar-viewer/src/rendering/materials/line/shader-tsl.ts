@@ -371,11 +371,13 @@ export function lineWebGPUFactory(
   const vWidthAtT: TSLNode = varying(width);
   const vPixelWidth: TSLNode = varying(rawPixelWidth);
   const vWidthFade: TSLNode = varying(vWidthFadeVal);
-  // Unified near fade at this vertex's own depth (static ortho variant
-  // returns a constant 1.0 → no varying cost in ortho graphs).
-  const vNearFade: TSLNode = varying(
-    perspectiveNearFadeStaticTSL(config.isOrtho === true, mvPos.z, nearCull)
-  );
+  // View-space z travels to the FRAGMENT, which computes the near fade
+  // per-fragment — interpolating the FADE itself is wrong on long
+  // segments (fade(lerp(z)) != lerp(fade(z)); one endpoint at the
+  // camera plane would dim mid-segment fragments far outside the fade
+  // band). Ortho graphs skip the varying entirely (compile-time
+  // variant; fade is identically 1).
+  const vViewZ: TSLNode | null = config.isOrtho ? null : varying(mvPos.z);
   // Clipped flags are per-instance — same across all 4 quad verts.
   const vClippedStart: TSLNode = varying(aStartClipped).setInterpolation('flat');
   const vClippedEnd: TSLNode = varying(aEndClipped).setInterpolation('flat');
@@ -427,7 +429,7 @@ export function lineWebGPUFactory(
       .mul(edgeAA)
       .mul(widthScale)
       .mul(vWidthFade)
-      .mul(vNearFade);
+      .mul(vViewZ ? perspectiveNearFadeStaticTSL(false, vViewZ, nearCull) : float(1.0));
 
     // GOG. Fast path: when the wrapper knows intensity==1 && offset==0,
     // the mul/add/clamp chain is identity for non-negative vColor.

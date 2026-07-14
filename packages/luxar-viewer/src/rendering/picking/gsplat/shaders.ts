@@ -89,7 +89,7 @@ export const GSPLAT_PICK_VERTEX_SHADER = /* glsl */ `
         // Unified near handling — see the visual gsplat shader: the
         // shared perspectiveNearFade subsumes the old standalone
         // behind-camera reject; ortho falls through to NDC clipping.
-        float depthFade = perspectiveNearFade(uIsOrtho, centerCam.z, uNearCull);
+        float depthFade = perspectiveNearFade(uIsOrtho, centerCam.z, max(uNearCull, 1e-4));
         if (depthFade < 0.01) {
             gl_Position = vec4(0.0, 0.0, -2.0, 1.0);
             return;

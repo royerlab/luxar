@@ -103,7 +103,7 @@ export const GSPLAT_VERTEX_SHADER = /* glsl */ `
         // splat falls through to NDC clipping, which drops it (ortho
         // near > 0 in this viewer), and no 1/z is consumed on the
         // ortho path.
-        float depthFade = perspectiveNearFade(uIsOrtho, centerCam.z, uNearCull);
+        float depthFade = perspectiveNearFade(uIsOrtho, centerCam.z, max(uNearCull, 1e-4));
         if (depthFade < 0.01) {
             gl_Position = vec4(0.0, 0.0, -2.0, 1.0);
             return;

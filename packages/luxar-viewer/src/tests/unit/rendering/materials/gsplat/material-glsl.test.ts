@@ -264,7 +264,7 @@ describe('GSplatMaterial', () => {
 
       // Near-cull uses the shared perspectiveNearFade helper (smooth
       // fade, not hard discard) with the uNearCull uniform
-      expect(material.vertexShader).toContain('perspectiveNearFade(uIsOrtho, centerCam.z, uNearCull)');
+      expect(material.vertexShader).toContain('perspectiveNearFade(uIsOrtho, centerCam.z, max(uNearCull, 1e-4))');
       // Screen-coverage fade uses projected extent and uMaxExtentFactor
       expect(material.vertexShader).toContain('uMaxExtentFactor');
       expect(material.vertexShader).toContain('projectedExtent');

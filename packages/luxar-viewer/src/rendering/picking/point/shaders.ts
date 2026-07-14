@@ -94,7 +94,7 @@ export const POINT_PICK_VERTEX_SHADER = /* glsl */ `
       // truncates at the sprite edge, so basePointSize IS the visible extent
       // (matches shader-glsl.ts).
       float pointSize = basePointSize * 0.8;
-      pointSize = max(1.0, min(pointSize, maxPointSize));
+      pointSize = clamp(pointSize, 1.5, maxPointSize); // 1.5px floor tracks the VISUAL sprite floor — the drawn outer ring stays pickable
 
       // Instanced quad expansion (matches shader-glsl.ts approach, including
       // the behind-camera guard above).

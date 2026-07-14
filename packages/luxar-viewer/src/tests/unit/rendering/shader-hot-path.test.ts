@@ -68,7 +68,7 @@ describe('Shader hot-path string regressions', () => {
   describe('GSplat vertex', () => {
     it('applies the unified perspectiveNearFade around uNearCull', () => {
       expect(GSPLAT_VERTEX_SHADER).toMatch(
-        /perspectiveNearFade\s*\(\s*uIsOrtho\s*,\s*centerCam\.z\s*,\s*uNearCull\s*\)/
+        /perspectiveNearFade\s*\(\s*uIsOrtho\s*,\s*centerCam\.z\s*,\s*max\(uNearCull, 1e-4\)\s*\)/
       );
       // The shared helper carries the smoothstep.
       expect(GSPLAT_VERTEX_SHADER).toMatch(

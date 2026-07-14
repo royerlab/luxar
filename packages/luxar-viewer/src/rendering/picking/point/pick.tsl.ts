@@ -111,10 +111,9 @@ export function pointPickWebGPUFactory(
   // with shaders.ts). No sharpness size compensation — the shifted-truncated
   // super-Gaussian truncates at the sprite edge, so basePointSize IS the
   // visible extent (matches shader-tsl.ts).
-  const pickPointSize: TSLNode = max(
-    float(1.0),
-    clamp(basePointSize.mul(0.8), float(1.0), uMaxPointSize)
-  );
+  // 1.5px floor tracks the VISUAL sprite floor (the drawn outer ring
+  // stays pickable); keep in sync with shaders.ts.
+  const pickPointSize: TSLNode = clamp(basePointSize.mul(0.8), float(1.5), uMaxPointSize);
 
   const offsetClip: TSLNode = aQuadCorner.mul(pickPointSize.div(uResolution)).mul(projCenter.w);
   // Reject points behind the camera (perspective only; camera looks down -Z).

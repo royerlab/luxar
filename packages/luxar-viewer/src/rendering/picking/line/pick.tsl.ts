@@ -227,9 +227,9 @@ export function linePickWebGPUFactory(
   const vWidthAtT: TSLNode = varying(width);
   const vPixelWidth: TSLNode = varying(rawPixelWidth);
   const vWidthFade: TSLNode = varying(vWidthFadeVal);
-  const vNearFade: TSLNode = varying(
-    perspectiveNearFadeStaticTSL(config.isOrtho === true, mvPos.z, nearCull)
-  );
+  // View-space z to the fragment (fade computed per-fragment; see the
+  // visual line TSL). Ortho graphs skip it.
+  const vViewZ: TSLNode | null = config.isOrtho ? null : varying(mvPos.z);
   const vClippedStart: TSLNode = varying(aStartClipped).setInterpolation('flat');
   const vClippedEnd: TSLNode = varying(aEndClipped).setInterpolation('flat');
   const vNodeId: TSLNode = varying(uNodeId).setInterpolation('flat');
@@ -268,7 +268,11 @@ export function linePickWebGPUFactory(
     const nearestClipped: TSLNode = mix(vClippedEnd, vClippedStart, nearestIsStart);
     const capFactor: TSLNode = mix(baseCap, float(1.0), nearestClipped);
 
-    return capFactor.mul(perpFalloff).mul(widthScale).mul(vWidthFade).mul(vNearFade);
+    return capFactor
+      .mul(perpFalloff)
+      .mul(widthScale)
+      .mul(vWidthFade)
+      .mul(vViewZ ? perspectiveNearFadeStaticTSL(false, vViewZ, nearCull) : float(1.0));
   }).once();
   const brightness: TSLNode = brightnessShared().toVar('lineBrightness');
 

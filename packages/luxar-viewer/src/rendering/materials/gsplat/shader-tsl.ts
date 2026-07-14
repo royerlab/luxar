@@ -250,7 +250,11 @@ export function gsplatWebGPUFactory(
     // (subsumes the old standalone behindCamera reject), the near-plane
     // approach fades across [uNearCull, 2*uNearCull], ortho passes
     // through to NDC clipping.
-    const depthFade: TSLNode = perspectiveNearFadeTSL(uIsOrtho, centerCam.z, uNearCull).toVar();
+    const depthFade: TSLNode = perspectiveNearFadeTSL(
+      uIsOrtho,
+      centerCam.z,
+      max(uNearCull, float(1e-4))
+    ).toVar();
     const depthFadeReject: TSLNode = depthFade.lessThan(0.01);
 
     // Coverage fade — computed UNCONDITIONALLY (GLSL twin updated in

@@ -144,7 +144,11 @@ export function gsplatPickWebGPUFactory(
 
     // Unified near handling (shared helper; subsumes the old
     // standalone behind-camera reject — see shader-tsl.ts).
-    const depthFade: TSLNode = perspectiveNearFadeTSL(uIsOrtho, centerCam.z, uNearCull).toVar();
+    const depthFade: TSLNode = perspectiveNearFadeTSL(
+      uIsOrtho,
+      centerCam.z,
+      max(uNearCull, float(1e-4))
+    ).toVar();
     const depthFadeReject: TSLNode = depthFade.lessThan(0.01);
 
     // Coverage fade (both projections; see shader-tsl.ts). Computed

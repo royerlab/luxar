@@ -179,7 +179,7 @@ void main() {
 
 		}
 
-		nodeVar10 = ( nodeVar12 + vec4( ( ( aQuadCorner * ( vec2( max( 1.0, clamp( ( ( ( nodeVar13 * nodeUniform8 ) * nodeVar15 ) * 0.8 ), 1.0, nodeUniform9 ) ) ) / nodeUniform10 ) ) * vec2( nodeVar12.w ) ), 0.0, 0.0 ) );
+		nodeVar10 = ( nodeVar12 + vec4( ( ( aQuadCorner * ( vec2( clamp( ( ( ( nodeVar13 * nodeUniform8 ) * nodeVar15 ) * 0.8 ), 1.5, nodeUniform9 ) ) / nodeUniform10 ) ) * vec2( nodeVar12.w ) ), 0.0, 0.0 ) );
 
 	}
 

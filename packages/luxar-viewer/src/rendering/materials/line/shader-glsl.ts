@@ -98,7 +98,7 @@ export const LINE_VERTEX_SHADER = /* glsl */ `
     out float vWidthAtT;      // interpolated world-space width (or half-width)
     out float vPixelWidth;   // Raw line width in pixels (for anti-aliasing)
     out float vWidthFade;    // in [0..1], fades intensity when pixel-width clamped
-    out float vNearFade;     // Perspective near fade (1.0 under ortho)
+    out float vViewZ;        // View-space z (fragment computes the near fade)
     flat out float vClippedStart; // flat: same value across all 4 quad vertices
     flat out float vClippedEnd;
 
@@ -152,15 +152,17 @@ export const LINE_VERTEX_SHADER = /* glsl */ `
         vPerpNorm = 0.0;
         vPixelWidth = 0.0;
         vWidthFade = 0.0;
-        vNearFade = 0.0;
+        vViewZ = 0.0;
         return;
       }
 
       vec4 mvPos = mix(mvStart, mvEnd, t);
-      // Unified near fade (this vertex's own depth): smooth
-      // [nearCull, 2*nearCull] fade under perspective, 1.0 under ortho.
-      // Replaces the hard pop at the nearCull wall.
-      vNearFade = perspectiveNearFade(uIsOrtho, mvPos.z, nearCull);
+      // View-space z travels to the FRAGMENT, which computes the near
+      // fade per-fragment. Interpolating the FADE itself would be wrong
+      // on long segments: fade(lerp(z)) != lerp(fade(z)) — one endpoint
+      // at the camera plane would dim fragments far outside the
+      // [nearCull, 2*nearCull] band (mid-segment at ~50%).
+      vViewZ = mvPos.z;
 
       // === Below here only runs when the segment passed the cheap cull. ===
 
@@ -270,7 +272,7 @@ export const LINE_VERTEX_SHADER = /* glsl */ `
         vPerpNorm = 0.0;
         vPixelWidth = 0.0;
         vWidthFade = 0.0;
-        vNearFade = 0.0;
+        vViewZ = 0.0;
         return;
       }
       float clampedPixelWidth = clamp(rawPixelWidth, minPixelWidth, maxPW);
@@ -308,7 +310,10 @@ export const LINE_VERTEX_SHADER = /* glsl */ `
  */
 export const LINE_FRAGMENT_SHADER = /* glsl */ `
     precision highp float;
+    ${GLSL_NEAR_FADE_FUNCTIONS}
 
+    uniform int uIsOrtho;   // shared with the vertex stage
+    uniform float uNearCull;
     uniform float uOpacity;
     uniform float uInvGamma; // Pre-computed 1/gamma for performance
     uniform float uIntensity; // Per-node linear color multiplier (gain)
@@ -322,7 +327,7 @@ export const LINE_FRAGMENT_SHADER = /* glsl */ `
     in float vWidthAtT;     // interpolated world-space width
     in float vPixelWidth;   // Raw line width in pixels (before minimum clamping)
     in float vWidthFade;    // max-pixel-width clamp fade
-    in float vNearFade; // Perspective near fade (1.0 under ortho)
+    in float vViewZ; // View-space z (near fade computed here per-fragment)
     flat in float vClippedStart;
     flat in float vClippedEnd;
 
@@ -384,7 +389,11 @@ export const LINE_FRAGMENT_SHADER = /* glsl */ `
       float capFactor = mix(baseCap, 1.0, nearestClipped);
 
       // Apply cap factor for correct joint intensity
-      float intensity = capFactor * perpFalloff * edgeAA * widthScale * vWidthFade * vNearFade;
+      // Per-fragment near fade from the interpolated view depth (see
+      // the vertex stage note on why the fade itself must not be the
+      // varying).
+      float nearFade = perspectiveNearFade(uIsOrtho, vViewZ, max(uNearCull, 1e-4));
+      float intensity = capFactor * perpFalloff * edgeAA * widthScale * vWidthFade * nearFade;
 
       // Per-node GOG (Gain-Offset-Gamma) color adjustment. When the
       // wrapper knows intensity==1 && offset==0 (the default), the
