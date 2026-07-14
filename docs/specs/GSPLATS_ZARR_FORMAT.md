@@ -1,7 +1,7 @@
 # luxar.gsplats.io - Technical Specification
 
 **Version**: 3.2.0
-**Last Updated**: 2026-07-03
+**Last Updated**: 2026-07-13
 
 > **Cross-language contract:** the format *vocabulary* shared by the Python
 > writer and the TypeScript viewer — format versions, encoding-scheme names,
@@ -80,7 +80,10 @@ zero-centred) with **per-channel signed-log** (`signed_log_perchannel_u8`/`u16`)
 Encoding mode picks the bit depth: PRECISION→float32; **AUTO→uint8 with an
 encode-time certificate** — the writer measures the actual Σ = L·Lᵀ reconstruction
 error (p95 relative Frobenius) and escalates to uint16 only when it exceeds 0.05
-(e.g. merged stores whose σ columns span many decades), recording the measurement in
+(e.g. merged stores whose σ columns span many decades) — with a final float32 rung
+should even uint16 fail (practically unreachable on real fits; degenerate/tiny
+groups, e.g. single-splat sub-LODs, may decline certification and store float32
+directly) — recording the measurement in
 each array's `encoding.certificate`; MEMORY→uint8 unconditionally. uint8 is visually
 lossless on real fits (94.5 dB vs the float32 render, ~46 dB below the fit-error
 floor; 2.48 B/splat compressed vs 8.25 at uint16). Per-array `encoding` metadata
@@ -169,10 +172,10 @@ fitted.gsplats.zarr/
 │                     # format_version: "3.2", format_type: "gsplats_zarr",
 │                     # timestamp, luxar_gsplats_version, description?
 ├── .zmetadata        # Consolidated metadata for fast loading
-├── centers                   # (N, d) uint16 (AUTO) / float32 (PRECISION), spatially ordered
+├── centers                   # (N, d) uint16 (AUTO; float32 if an axis extent ≥ 2¹⁶) / float32 (PRECISION), spatially ordered
 ├── amplitudes                # (N,) uint8/uint16 (AUTO) / float32 (PRECISION)
-├── cholesky_factors_diag     # (N, d) uint8 (AUTO) / float32 (PRECISION)  (diagonal of L)
-├── cholesky_factors_offdiag  # (N, d*(d-1)/2) uint8 (AUTO) / float32 (PRECISION) (off-diagonal; absent if d=1)
+├── cholesky_factors_diag     # (N, d) uint8 (AUTO, certified — escalates to uint16 if the covariance certificate fails) / float32 (PRECISION)  (diagonal of L)
+├── cholesky_factors_offdiag  # (N, d*(d-1)/2) uint8 (AUTO, certified as above) / float32 (PRECISION) (off-diagonal; absent if d=1)
 ├── colors            # (N, 3) uint8/uint16 (AUTO) / float32 (PRECISION)  (optional)
 ├── chunk_bounds      # (num_chunks, d, 2) float32  (when ordering ≠ "none")
 ├── fitting/          # Optimization info (optional)
@@ -339,7 +342,8 @@ per-array quantization bounds.
 
 **Amplitude ranges**: `amplitude_range` (`{"min", "max"}` dict) is the
 metadata bounds record; `amplitude_data_range` (`[min, max]` list, written
-alongside it for non-broadcast amplitude arrays) mirrors the Points/Lines
+alongside it whenever amplitudes are given as a non-empty array — a scalar amplitude
+skips it) mirrors the Points/Lines
 `color_data_range` convention and seeds the viewer's layer display-range
 controls. Both hold the min/max of the original (pre-quantization) amplitudes.
 
@@ -591,19 +595,20 @@ The system supports both Morton and Hilbert ordering methods:
 def sort_splats_spatial(
     centers: np.ndarray,
     method: Literal["morton", "hilbert"] = "hilbert",
-    resolution: int = None,  # Auto if None, max 2^16
-) -> np.ndarray:
-    """Return sort indices for spatial ordering."""
+    resolution: Optional[int] = None,  # Ignored (kept for signature stability)
+    slice_dims: Optional[Sequence[int]] = None,  # Barrier axes (time/channel)
+) -> tuple[np.ndarray, dict]:
+    """Return sort indices + ordering metadata (barrier-aware compound sort)."""
     ...
 ```
 
-**Resolution auto-calculation**:
-```python
-# Compute based on data spread, capped at 2^16
-spread = centers.max(axis=0) - centers.min(axis=0)
-max_spread = spread.max()
-resolution = min(2**16, max(256, int(max_spread * 10)))
-```
+The grid resolution is **derived per-axis from the bit budget** (capped at 21
+bits per dimension — `min(21, budget // n_ordering_dims)`, exact for the
+typical ≤3 ordering dims, matching the `ordering_bits_per_dim: 21` leaf attr) — the
+`resolution` parameter is ignored. When `slice_dims` names categorical/barrier
+axes (time, channel), splats are grouped by those axes first and the space-
+filling curve orders spatially within each barrier value, so a chunk never
+straddles two timepoints.
 
 ---
 
@@ -628,7 +633,8 @@ float32 (visually lossless, sub-unit, ~2× smaller). float16 is NOT used (relati
 precision is a footgun for absolute positions); a per-axis extent ≥ 2¹⁶ falls back to
 float32. **Cholesky factors** are stored split (diagonal + off-diagonal); bit depth
 follows the mode: PRECISION→float32; AUTO→uint8, escalating to uint16 only when the
-encode-time covariance certificate measures excessive Σ error; MEMORY→uint8.
+encode-time covariance certificate measures excessive Σ error (float32 as the
+practically-unreachable last rung); MEMORY→uint8.
 
 **Log-scale amplitudes**: For high dynamic range (HDR) amplitudes, use log encoding:
 ```python
@@ -752,7 +758,7 @@ When arrays are written to `.gsplats.zarr`, encoding transformations are applied
 // Example: amplitudes/.zattrs
 {
   "encoding": {
-    "name": "positive_scalar_uint8",
+    "name": "bounded_scalar_uint8",
     "min": 0.0,
     "max": 10.0,
     "bits": 8,
@@ -761,23 +767,27 @@ When arrays are written to `.gsplats.zarr`, encoding transformations are applied
 }
 ```
 
-**Color Mode Storage**:
-For float32 colors, the `color_mode` is stored in encoding metadata:
+**Color Storage**:
+There is no separate `color_mode` attribute — the SDR/HDR decision is implied
+by the encoding name chosen at write time:
 ```json
-// colors/.zattrs - SDR colors
+// colors/.zattrs - SDR float colors (all values ≤ 1.0) under AUTO
 {
   "encoding": {
     "name": "rgb_uint8",
-    "original_dtype": "float32",
-    "color_mode": "sdr"
+    "original_dtype": "float32"
   }
 }
 
-// colors/.zattrs - HDR colors (no quantization)
+// colors/.zattrs - HDR float colors (any value > 1.0) under AUTO
 {
   "encoding": {
-    "name": "none",
-    "color_mode": "hdr"
+    "name": "geolog_perchannel_u16",
+    "col_lo": [0.001, 0.001, 0.001],
+    "col_hi": [42.0, 38.5, 40.1],
+    "bits": 16,
+    "zero_level": true,
+    "original_dtype": "float32"
   }
 }
 ```
@@ -842,13 +852,17 @@ result.save(
 **Encoding modes** (see `packages/luxar/src/luxar/encoding/README.md`):
 - `AUTO`: Analyze data and select encoding (may be lossy for some types, e.g., SDR colors → uint8)
 - `PRECISION`: Full float32, lossless only (broadcasting still allowed)
-- `MEMORY`: Aggressive quantization for minimum storage (uses float16 only if float16_allowed=True)
+- `MEMORY`: Aggressive quantization for minimum storage (8-bit where AUTO uses
+  16-bit for the geolog family; centers stay uint16; Cholesky uint8)
 - `CUSTOM`: Explicit encoder selection per array (advanced use)
 
-**Float16 compatibility** (`float16_allowed` parameter in save_gsplats()):
+**Float16 compatibility** (`float16_allowed` parameter on `ArrayEncoder` /
+`LuxarZarrCompiler` — `save_gsplats()` itself has no such parameter):
 - Default: `False` for TypeScript/WebGL compatibility (no native float16 support)
-- When False, MEMORY mode uses float32 instead of float16 for coordinates, colors, cholesky factors
-- Set to `True` only if decoder supports float16 natively
+- Today this flag only affects UNIT_VECTOR arrays, the legacy packed-CHOLESKY
+  dtype encoder, and the wide-range bounded-scalar float fallback — centers,
+  colors, and split Cholesky factors never use float16 in any mode
+- Set to `True` only if the decoder supports float16 natively
 
 ### Loading
 
@@ -871,12 +885,11 @@ print(result.stats['time_seconds'])
 ```python
 from luxar.gsplats.io import inspect_gsplats_zarr
 
-info = inspect_gsplats_zarr("fitted.gsplats.zarr")
-print(info)
-# GSplats: 10,000 splats, 3D
-# Ordering: hilbert (resolution=65536)
-# Size: 1.2 MB (compression ratio: 3.2x)
-# Fitting time: 45.3s, 850 iterations
+info = inspect_gsplats_zarr("fitted.gsplats.zarr")  # returns a plain dict
+print(info["n_splats"], info["ndim"])               # 10000 3
+print(info["ordering"], info["ordering_bits_per_dim"])  # hilbert 21
+print(info["storage_mb"], info["compression_ratio"])
+print(info["fitting"]["time_seconds"], info["fitting"]["iterations"])
 ```
 
 ---

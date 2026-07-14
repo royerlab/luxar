@@ -160,7 +160,7 @@ construction).
    :undoc-members:
 
 Info Command
-~~~~~~~~~~~~
+------------
 
 Implementation of the ``luxar info`` dataset-inspection command.
 

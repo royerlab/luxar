@@ -40,7 +40,7 @@ core/
 │                                    #   codec warm, debug surface) + the standalone
 │                                    #   factory `bootstrapStandalone()`
 ├── app.ts                           # `LuxarApp` — the core embed surface
-│                                    #   (`init` / `loadDataset` / `dispose`)
+│                                    #   (`init` / `switchDataset` / `dispose`)
 │                                    # ~600 LOC of orchestration glue: every method is
 │                                    # a 3–15 line delegate to a helper in `app/`.
 └── app/                             # LuxarApp's support tree (private except embedder/ types)
@@ -87,10 +87,10 @@ core/
 **Layout rule** (Principle 1: depth ≠ specificity, applied recursively):
 
 - `app.ts`, `bootstrap.ts`, `main.ts` sit at the package root because they have external importers (the package barrel + the standalone bundler entry).
-- Nearly every file under `app/` has zero non-test external importers — it's LuxarApp's private support code, grouped thematically into `init/`, `lifecycle/`, `dataset/`, `viewer-config/`, `snapshot/`, `embedder/`, `debug/`, `picking/`, `overlays/`. The one public exception is `app/embedder/events.ts`, whose types are re-exported from `src/index.ts`.
+- Nearly every file under `app/` has zero non-test external importers — it's LuxarApp's private support code, grouped thematically into `init/`, `lifecycle/`, `dataset/`, `viewer-config/`, `snapshot/`, `embedder/`, `debug/`, `picking/`, `overlays/`. The public exceptions are `app/embedder/events.ts` (event/screenshot types) and `app/snapshot/viewer-snapshot.ts` (`type ViewerSnapshot`), both re-exported from `src/index.ts`; nothing else under `app/` is exported.
 - Tests mirror the source layout under `tests/unit/core/app/<theme>/`.
 
-**Public exports**: `class LuxarApp` (with `init(options)`, `dispose()`, `captureSnapshot()`, `restoreSnapshot(snap)`, plus the programmatic embedder API: `on(event, listener)`, `switchDataset(src)`, `getDimensions()`, `setDimensionValue(index, value)`, `resize()`, `screenshot(opts)`) and `LuxarAppOptions` from `app.ts`; `bootstrapStandalone()` from `bootstrap.ts`. Inside `app/`, only the embedder types from `app/embedder/events.ts` (`LuxarEmbedderEventMap`, `EmbedderDimensions`, `ScreenshotOptions`, …) are exported externally — they are re-exported from `src/index.ts`.
+**Public exports**: `class LuxarApp` (with `init(options)`, `dispose()`, `captureSnapshot()`, `restoreSnapshot(snap)`, plus the programmatic embedder API: `on(event, listener)`, `switchDataset(src)`, `getDimensions()`, `setDimensionValue(index, value)`, `resize()`, `screenshot(opts)`) and `LuxarAppOptions` from `app.ts`; `bootstrapStandalone()` from `bootstrap.ts`. Inside `app/`, only the embedder types from `app/embedder/events.ts` (`LuxarEmbedderEventMap`, `EmbedderDimensions`, `ScreenshotOptions`, …) and `type ViewerSnapshot` from `app/snapshot/viewer-snapshot.ts` are exported externally — they are re-exported from `src/index.ts`.
 
 **Dependencies**: internally couples to `scene`, `controls`, `input`, `data`,
 `rendering`, `ui/*`, `config`, `themes`, and `utils`; externally only `three`.
