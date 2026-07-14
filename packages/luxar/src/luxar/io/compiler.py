@@ -51,7 +51,7 @@ from ._compiler.bounds import (
 )
 from ._compiler.chunking import calculate_intelligent_chunks
 from ._compiler.colormap import write_colormap_lut_if_needed
-from ._compiler.context import DatasetCtx, OrderingCtx
+from ._compiler.context import DatasetCtx, GeometryWriteCtx, OrderingCtx
 from ._compiler.dataset_writers.colors import write_colors
 from ._compiler.dataset_writers.positions import write_positions
 from ._compiler.dataset_writers.scalars import (
@@ -66,6 +66,7 @@ from ._compiler.finalize.lod_backfill import (
     finalize_lod_position_bounds,
 )
 from ._compiler.finalize.validation import validate_discrete_dimension_ranges
+from ._compiler.geometry_writers.points import write_points as _write_points_impl
 from ._compiler.gsplat_assembly import (
     apply_gsplat_group_attrs,
     apply_gsplat_spatial_ordering,
@@ -404,170 +405,19 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
             Metadata dictionary about the written data
         """
         self._check_not_finalized("write_points")
-
-        # Import validation functions locally to avoid circular imports
-        from ..validation.base import (
-            validate_colors_for_writing,
-            validate_positions_for_writing,
-            validate_radii_for_writing,
-            validate_sharpness_for_writing,
+        metadata = _write_points_impl(
+            self._make_geometry_ctx(),
+            path,
+            positions,
+            colors,
+            radii,
+            sharpness,
+            scalars,
+            labels,
+            image_labels,
+            **attrs,
         )
-
-        # 1. Setup: Create group and validate positions
-        path = path.lstrip("/")
-        group = self.store.require_group(path)
-        n_points, n_dims = validate_positions_for_writing(positions)
-
-        aprint(f"📝 Writing {n_points:,} points ({n_dims}D) to {path}")
-
-        # 2. Log scalar inputs (no expansion - passed to encoder)
-        if radii is not None and isinstance(radii, (int, float)):
-            aprint(f"  → Uniform radius {radii:.3f} for all points")
-        if sharpness is not None and isinstance(sharpness, (int, float)):
-            aprint(f"  → Uniform sharpness {sharpness:.1f} for all points")
-        if colors is not None and isinstance(colors, (list, tuple)):
-            aprint(f"  → Uniform color RGB{list(colors)} for all points")
-
-        # 3. Apply spatial ordering if enabled (reorders arrays only)
-        # Note: Spatial ordering uses radii to compute chunk_bounds.
-        # Scalar/broadcasted radii are handled without expanding to full arrays.
-        radii_for_ordering = radii
-
-        ordering_data = self._build_spatial_ordering_if_enabled(
-            positions, n_points, n_dims, radii_for_ordering
-        )
-
-        # Apply spatial reordering to arrays only (skip scalars and broadcasted arrays)
-        if ordering_data is not None:
-            positions = ordering_data["sorted_positions"]
-            # Apply sort order only to non-broadcasted array attributes
-            # Broadcasted arrays (shape[0] == 1) should NOT be reordered
-            if colors is not None and isinstance(colors, np.ndarray):
-                if colors.shape[0] > 1:  # Not broadcasted
-                    colors = colors[ordering_data["sort_order"]]
-                # else: broadcasted, skip reordering
-            if radii is not None and isinstance(radii, np.ndarray):
-                if radii.shape[0] > 1:  # Not broadcasted
-                    radii = radii[ordering_data["sort_order"]]
-                # else: broadcasted, skip reordering
-            if sharpness is not None and isinstance(sharpness, np.ndarray):
-                if sharpness.shape[0] > 1:  # Not broadcasted
-                    sharpness = sharpness[ordering_data["sort_order"]]
-                # else: broadcasted, skip reordering
-            if scalars is not None and isinstance(scalars, np.ndarray):
-                if scalars.shape[0] > 1:  # Not broadcasted
-                    scalars = scalars[ordering_data["sort_order"]]
-                # else: broadcasted, skip reordering
-
-        # 3. Write positions dataset
-        self._write_positions_dataset(group, positions, ordering_data)
-
-        # 4. Initialize metadata
-        metadata: PointsMetadata = {
-            "n_points": n_points,
-            "ndim": n_dims,
-            "path": path,
-            "has_colors": False,
-            "has_radii": False,
-            "has_sharpness": False,
-        }
-
-        # 5. Write optional datasets
-        if colors is not None:
-            # Validate arrays only (scalars validated by encoder)
-            if isinstance(colors, np.ndarray):
-                validate_colors_for_writing(colors, n_points)
-            self._write_colors_dataset(group, colors, ordering_data, n_points)
-            metadata["has_colors"] = True
-
-        if radii is not None:
-            # Validate arrays only (scalars validated by encoder)
-            if isinstance(radii, np.ndarray):
-                validate_radii_for_writing(radii, n_points)
-            max_radius = self._write_radii_dataset(
-                group, radii, ordering_data, n_points
-            )
-            metadata["max_radius"] = max_radius
-            metadata["has_radii"] = True
-            group.attrs["max_radius"] = max_radius
-
-        if sharpness is not None:
-            # Validate arrays only (scalars validated by encoder)
-            if isinstance(sharpness, np.ndarray):
-                validate_sharpness_for_writing(sharpness, n_points)
-            # Canonical BOUNDED_SCALAR helper (shared with Lines
-            # "sharpnesses"). Sharpness is a normalized [0, 1] knob, so it
-            # carries no `max_sharpness` — the bounds tuple is fixed at
-            # (0.0, SHARPNESS_MAX) and the decoder reads it from the encoding
-            # metadata (mirrors the radii-without-max pattern).
-            self._write_bounded_scalar_dataset(
-                group=group,
-                data=sharpness,
-                name="sharpnesses",
-                bounds=(0.0, SHARPNESS_MAX),
-                spatial_index_data=ordering_data,
-                n_elements=n_points,
-                log_label_singular="sharpness",
-            )
-            metadata["has_sharpness"] = True
-
-        if scalars is not None:
-            self._write_scalars_dataset(group, scalars, ordering_data, n_points)
-            metadata["has_scalars"] = True
-            group.attrs["has_scalars"] = True
-
-        # 5b. Write colormap LUT if colormap is a custom array
-        self._write_colormap_lut_if_needed(group, attrs)
-
-        # 6. Process transform + nd_transform attrs (shared with write_lines)
-        prepare_transform_attrs(attrs, self.store)
-
-        # 7. Set default rendering attributes if not provided
-        apply_default_render_attrs(attrs)
-
-        # 8. Store attributes
-        group.attrs.update(attrs)
-        group.attrs["type"] = "points"
-        group.attrs["n_points"] = n_points
-
-        # 9. Compute and store position bounds (nD bounding box)
-        # This is computed from the final positions (potentially reordered)
-        position_bounds = self._compute_position_bounds(positions)
-        group.attrs["position_bounds"] = position_bounds
-        metadata["position_bounds"] = position_bounds
-
-        # Update scene-level bounds (union of all node bounds). Skipped
-        # when ``write_points_multi_lod`` is the caller — the parent
-        # multi-LOD writer aggregates the global bounds once instead of
-        # accumulating each subgroup's contribution separately.
-        if not attrs.pop("_skip_scene_bounds", False):
-            self._update_scene_bounds(position_bounds)
-
-        # 10. Write spatial ordering metadata if built
-        if ordering_data is not None:
-            self._write_spatial_ordering_to_zarr(group, ordering_data)
-            metadata["has_spatial_index"] = True
-
-        # 11. Write labels if provided (CSR-style: label_offsets + label_bytes)
-        if labels is not None:
-            sort_order = (
-                ordering_data["sort_order"] if ordering_data is not None else None
-            )
-            self._write_labels_csr(group, labels, n_points, sort_order)
-            metadata["has_labels"] = True
-
-        # 12. Write image labels if provided (CSR-style, no compression on blobs)
-        if image_labels is not None:
-            sort_order = (
-                ordering_data["sort_order"] if ordering_data is not None else None
-            )
-            self._write_image_labels_csr(group, image_labels, n_points, sort_order)
-            metadata["has_image_labels"] = True
-
-        # 13. Cache metadata and finish
-        self._metadata_cache[path] = metadata
-        aprint(f"✅ Points written to {path}")
-
+        self._metadata_cache[metadata["path"]] = metadata
         return metadata
 
     def write_lines(  # type: ignore[override]
@@ -1531,6 +1381,22 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
             encoder=self._encoder,
             encoding_mode=self._encoding_mode,
             compressor=self.compressor,
+        )
+
+    def _make_geometry_ctx(self) -> GeometryWriteCtx:
+        """Build the narrow context for the extracted geometry write pipelines.
+
+        Bundles the dataset/ordering configs + compressor with two bound-method
+        hooks for the orchestrator state a write mutates: the scene-bounds
+        accumulator and the warn-once colormap-LUT flag.
+        """
+        return GeometryWriteCtx(
+            store=self.store,
+            dataset_ctx=self._make_dataset_ctx(),
+            ordering_ctx=self._make_ordering_ctx(),
+            compressor=self.compressor,
+            update_scene_bounds=self._update_scene_bounds,
+            write_colormap_lut=self._write_colormap_lut_if_needed,
         )
 
     def _write_positions_dataset(

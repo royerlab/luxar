@@ -8,11 +8,13 @@ instance. They are built by the ``_make_*_ctx()`` methods on the orchestrator.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING, Any, Callable, Dict, List, Literal
 
 from ...encoding import ArrayEncoder, EncodingMode
 
 if TYPE_CHECKING:
+    import zarr
+
     from ...encoding.compression import CompressorLike
 
 
@@ -38,3 +40,22 @@ class OrderingCtx:
 
     enable_spatial_index: bool
     ordering_method: Literal["morton", "hilbert"]
+
+
+@dataclass(frozen=True)
+class GeometryWriteCtx:
+    """Narrow context for the extracted Points/Lines write pipelines.
+
+    Carries the encoder/ordering configs + scene compressor the dataset
+    serializers and ordering writers need, plus two bound-method hooks for the
+    orchestrator state a write must mutate: the scene-bounds accumulator and the
+    warn-once colormap-LUT flag. The finalized guard and the metadata-cache write
+    stay on the orchestrator (they bracket the extracted body in its delegate).
+    """
+
+    store: "zarr.Group"
+    dataset_ctx: DatasetCtx
+    ordering_ctx: OrderingCtx
+    compressor: "CompressorLike"
+    update_scene_bounds: "Callable[[Dict[str, List[float]]], None]"
+    write_colormap_lut: "Callable[[zarr.Group, Dict[str, Any]], None]"
