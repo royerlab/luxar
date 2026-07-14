@@ -537,8 +537,11 @@ export function gsplatWebGPUFactory(
       const coverage: TSLNode = clamp(intensity.mul(uOpacity), float(0.0), float(1.0));
       return vec4(finalColor, coverage);
     }
-    // All other modes keep the alpha=1.0 contract (OneFactor blending
-    // ignores alpha at composite time).
+    // All other modes keep the alpha=1.0 contract: additive/luminous
+    // rely on SrcAlpha being the IDENTITY factor (what makes the shared
+    // AdditiveBlending state equal the linear One+One sum — alpha is
+    // consumed, not ignored), and max compares premultiplied RGB
+    // contributions directly. Mirrors the GLSL twin's #else branch.
     return vec4(finalColor, float(1.0));
   });
 
