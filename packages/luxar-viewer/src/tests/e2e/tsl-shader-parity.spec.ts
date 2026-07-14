@@ -428,6 +428,37 @@ test.describe('TSL ↔ GLSL shader parity', () => {
     ).toBeLessThan(3.0);
   });
 
+  test('gsplat-normal-premult: LUXAR_NORMAL_PREMULT coverage alpha matches TSL normal branch', async ({
+    page,
+  }) => {
+    await bootHarness(page);
+
+    const glslPixels = await runGLSL(page, 'gsplat-normal-premult');
+    const tslResult = await runTSL(page, 'gsplat-normal-premult');
+
+    const diff = meanAbsDiff(glslPixels, tslResult.pixels);
+    const samplePx = (px: number[], x: number, y: number) =>
+      `${px[(y * 64 + x) * 4]},${px[(y * 64 + x) * 4 + 1]},${px[(y * 64 + x) * 4 + 2]},${px[(y * 64 + x) * 4 + 3]}`;
+    const samples = [
+      `  (32,32) GLSL=${samplePx(glslPixels, 32, 32)} TSL=${samplePx(tslResult.pixels, 32, 32)}`,
+      `  (28,32) GLSL=${samplePx(glslPixels, 28, 32)} TSL=${samplePx(tslResult.pixels, 28, 32)}`,
+    ].join('\n');
+    // The alpha channel must carry clamp(intensity·uOpacity) identically on
+    // both backends (guards the NodeMaterial double-premultiplication trap).
+    const centerAlpha = glslPixels[(32 * 64 + 32) * 4 + 3];
+    expect(
+      centerAlpha,
+      `GSplat-normal-premult: expected sub-saturated coverage alpha at splat center, got ${centerAlpha}`
+    ).toBeGreaterThan(0);
+    expect(centerAlpha).toBeLessThan(255);
+    // Same looser tolerance as `gsplat` — covariance projection drift (this
+    // variant additionally exercises the sum-projection ray-integral path).
+    expect(
+      diff,
+      `GSplat-normal-premult parity: mean abs diff ${diff.toFixed(2)} on 0-255 scale.\nSamples:\n${samples}`
+    ).toBeLessThan(3.0);
+  });
+
   test('gsplat-pick: covariance projection with nodeId / elementId / brightness output', async ({
     page,
   }) => {

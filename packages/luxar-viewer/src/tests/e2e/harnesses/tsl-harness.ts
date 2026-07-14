@@ -846,6 +846,46 @@ const SHADER_REGISTRY: Record<string, RegistryEntry> = {
     },
     buildMesh: buildGSplatInstancedMesh,
   },
+  // GSplat 'normal' premultiplied coverage alpha (LUXAR_NORMAL_PREMULT ↔
+  // TSL blendingMode:'normal'). The interesting channel is ALPHA: the
+  // fragment writes clamp(intensity·uOpacity, 0, 1) instead of 1.0, and
+  // meanAbsDiff compares full RGBA. uOpacity=0.6 keeps the coverage
+  // sub-saturated so alpha varies across the splat. uProjectionMode=0
+  // (sum) matches the TSL factory's normal-mode graph — this variant is
+  // also the only gsplat case exercising the Σ⁻¹ ray-integral path.
+  'gsplat-normal-premult': {
+    source: GSPLAT_SOURCE,
+    buildUniforms: () => ({
+      uResolution: { value: new THREE.Vector2(64, 64) },
+      uFx: { value: 32.0 },
+      uFy: { value: 32.0 },
+      uTruncate: { value: 3.0 },
+      uTruncateSq: { value: 9.0 },
+      uRayIntegralFactor: { value: 2.433 },
+      uProjectionMode: { value: 0 }, // sum projection (normal mode)
+      uIsOrtho: { value: 1 },
+      uNearCull: { value: 0.01 },
+      uMaxExtentFactor: { value: 1.0 },
+      uOpacity: { value: 0.6 },
+      uInvGamma: { value: 1.0 / 2.2 },
+      uIntensity: { value: 1.0 },
+      uOffset: { value: 0.0 },
+      uShiftC: { value: Math.exp(-0.5 * 9) },
+      uInvOneMinusC: { value: 1.0 / (1.0 - Math.exp(-0.5 * 9)) },
+    }),
+    buildDefines: () => ({ LUXAR_NORMAL_PREMULT: '' }),
+    buildTSLMaterial: (uniforms) => {
+      const m = gsplatWebGPUFactory(buildGSplatTSLNodesFromUniforms(uniforms), {
+        blendingMode: 'normal',
+      }) as unknown as THREE.Material;
+      // The harness compares raw fragment output — override the
+      // factory-applied blend state exactly like the other variants.
+      m.transparent = false;
+      m.blending = THREE.NoBlending;
+      return m;
+    },
+    buildMesh: buildGSplatInstancedMesh,
+  },
   // GSplat colormap parity: USE_COLORMAP LUT path keyed on aAmplitude.
   // uScalarScale=0.5 maps the amplitude (1.0) to t=0.5 so gamma — applied
   // to the value pre-LUT — actually shifts the lookup (pow is identity at

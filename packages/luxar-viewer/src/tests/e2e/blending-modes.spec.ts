@@ -14,10 +14,13 @@ import {
   waitForNextRender,
   getWebGLErrors,
   assertNoConsoleErrors,
+  samplePixelsAt,
 } from './helpers';
 
 const DATASET = 'http://localhost:9000/datasets/examples/rendering_modes_example.luxar.zarr';
 const MULTI_DATASET = 'http://localhost:9000/datasets/examples/multiple_objects_example.luxar.zarr';
+const GSPLAT_OVERLAP_FIXTURE =
+  'http://localhost:9000/packages/luxar-viewer/tests/fixtures/test_gsplats_normal_overlap.luxar.zarr';
 
 test.describe('Blending Modes', () => {
   // The blending-mode datasets contain multiple groups (5+ point clouds) and
@@ -172,5 +175,158 @@ test.describe('Blending Modes', () => {
       maxDiffPixelRatio: 0.08,
       threshold: 0.25,
     });
+  });
+});
+
+test.describe('GSplat normal mode (premultiplied coverage alpha)', () => {
+  // Fixture: two large overlapping splats (red behind, green in front,
+  // storage order = back-to-front for the default camera) + one small
+  // blue reference splat, blending_mode='normal', opacity=0.5. See
+  // generate_gsplats_normal_overlap_test() and
+  // GSPLAT_DEPTH_SORTING_SPEC.md §3 (Phase 0).
+  test.slow();
+
+  /** Wait until a gsplats mesh has committed instances. */
+  async function waitForGSplatsCommitted(page: import('@playwright/test').Page): Promise<void> {
+    await page.waitForFunction(
+      () => {
+        const debug = (window as unknown as { __luxarDebug?: { scene?: unknown } }).__luxarDebug;
+        if (!debug?.scene) return false;
+        let committed = false;
+        (debug.scene as { traverse: (cb: (obj: unknown) => void) => void }).traverse((obj) => {
+          const o = obj as {
+            userData?: { nodeType?: string };
+            geometry?: { instanceCount?: number };
+          };
+          if (o.userData?.nodeType === 'gsplats' && (o.geometry?.instanceCount ?? 0) > 0) {
+            committed = true;
+          }
+        });
+        return committed;
+      },
+      undefined,
+      { timeout: 30000 }
+    );
+  }
+
+  test('material carries the gsplat premultiplied normal state', async ({ page }) => {
+    await page.goto(`/?src=${GSPLAT_OVERLAP_FIXTURE}&debug`);
+    await waitForLuxarReady(page);
+    await waitForGSplatsCommitted(page);
+
+    const state = await page.evaluate(() => {
+      const debug = (window as any).__luxarDebug;
+      let found: any = null;
+      debug.scene.traverse((obj: any) => {
+        if (obj.userData?.nodeType === 'gsplats' && obj.material && !found) {
+          const m = obj.material;
+          found = {
+            blending: m.blending,
+            blendEquation: m.blendEquation,
+            blendSrc: m.blendSrc,
+            blendDst: m.blendDst,
+            blendEquationAlpha: m.blendEquationAlpha,
+            transparent: m.transparent,
+            depthTest: m.depthTest,
+            depthWrite: m.depthWrite,
+            premultipliedAlpha: m.premultipliedAlpha,
+            blendingMode: m.userData?.blendingMode,
+          };
+        }
+      });
+      return found;
+    });
+
+    expect(state).not.toBeNull();
+    expect(state.blendingMode).toBe('normal');
+    // getGSplatNormalBlendingState: CustomBlending(5) + AddEquation(100)
+    // + One(201) / OneMinusSrcAlpha(205), symmetric alpha channel.
+    expect(state.blending).toBe(5);
+    expect(state.blendEquation).toBe(100);
+    expect(state.blendSrc).toBe(201);
+    expect(state.blendDst).toBe(205);
+    expect(state.blendEquationAlpha).toBe(null);
+    expect(state.transparent).toBe(true);
+    expect(state.depthTest).toBe(true);
+    expect(state.depthWrite).toBe(false);
+    // The premultipliedAlpha flag must stay OFF (NodeMaterial would
+    // auto-inject a second RGB×alpha on the TSL path).
+    expect(state.premultipliedAlpha).toBe(false);
+  });
+
+  test('TSL path under ?renderer=webgpu carries the same state without GL errors', async ({
+    page,
+  }) => {
+    // In headless CI this runs WebGPURenderer's WebGL2 fallback backend —
+    // exactly the bridge where separate alpha-channel blend state trips
+    // gl.getError(); the premult-normal state must stay symmetric-clean.
+    await page.goto(`/?src=${GSPLAT_OVERLAP_FIXTURE}&renderer=webgpu&debug`);
+    await waitForLuxarReady(page);
+    await waitForGSplatsCommitted(page);
+    await waitForNextRender(page, 5);
+
+    const state = await page.evaluate(() => {
+      const debug = (window as any).__luxarDebug;
+      let found: any = null;
+      debug.scene.traverse((obj: any) => {
+        if (obj.userData?.nodeType === 'gsplats' && obj.material && !found) {
+          const m = obj.material;
+          found = {
+            blending: m.blending,
+            blendSrc: m.blendSrc,
+            blendDst: m.blendDst,
+            depthWrite: m.depthWrite,
+            transparent: m.transparent,
+            premultipliedAlpha: m.premultipliedAlpha,
+            blendingMode: m.userData?.blendingMode,
+          };
+        }
+      });
+      return found;
+    });
+
+    expect(state).not.toBeNull();
+    expect(state.blendingMode).toBe('normal');
+    expect(state.blending).toBe(5); // CustomBlending
+    expect(state.blendSrc).toBe(201); // OneFactor
+    expect(state.blendDst).toBe(205); // OneMinusSrcAlphaFactor
+    expect(state.depthWrite).toBe(false);
+    expect(state.transparent).toBe(true);
+    expect(state.premultipliedAlpha).toBe(false);
+
+    const webglErrors = await getWebGLErrors(page);
+    expect(webglErrors.length).toBe(0);
+  });
+
+  test('background splat shows through the overlap (real alpha-over)', async ({ page }) => {
+    // ?dpr=1 pins the pixel ratio for deterministic sampling.
+    await page.goto(`/?src=${GSPLAT_OVERLAP_FIXTURE}&debug&dpr=1`);
+    await waitForLuxarReady(page);
+    await waitForGSplatsCommitted(page);
+    await waitForNextRender(page, 5);
+
+    // Dense grid over the central region where the two big splats live.
+    const offsets: Array<[number, number]> = [];
+    for (let gx = 0.15; gx <= 0.85; gx += 0.05) {
+      for (let gy = 0.25; gy <= 0.75; gy += 0.05) {
+        offsets.push([gx, gy]);
+      }
+    }
+    const samples = await samplePixelsAt(page, 'canvas', offsets);
+
+    const redDominant = samples.filter((s) => s.r > 40 && s.r > 2 * s.g);
+    const greenDominant = samples.filter((s) => s.g > 40 && s.g > 2 * s.r);
+    // The alpha-over discriminator: pre-fix, gsplat 'normal' emitted
+    // alpha=1.0, so the front (green) splat fully REPLACED the back
+    // (red) splat wherever it covered — no pixel could carry both
+    // channels. With premultiplied coverage alpha at opacity 0.5 the
+    // overlap composites green over red and both channels survive.
+    const mixed = samples.filter((s) => s.r > 30 && s.g > 30);
+
+    // Both splats render…
+    expect(redDominant.length).toBeGreaterThan(0);
+    expect(greenDominant.length).toBeGreaterThan(0);
+    // …and the background shows through the overlap (fails pre-fix).
+    expect(mixed.length).toBeGreaterThan(0);
   });
 });

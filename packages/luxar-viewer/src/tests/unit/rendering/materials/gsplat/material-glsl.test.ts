@@ -149,9 +149,11 @@ describe('GSplatMaterial', () => {
 
       expect(material.uniforms.uOpacity.value).toBe(0.5);
       expect(material.uniforms.uTruncate.value).toBe(4.0);
-      expect(material.blending).toBe('NormalBlending');
-      // depthWrite is only true for normal blending when opacity >= 0.99
-      expect(material.depthWrite).toBe(false); // opacity 0.5 < 0.99, so no depth write
+      // normal mode = gsplat premultiplied alpha-over: CustomBlending
+      // One/OneMinusSrcAlpha (see getGSplatNormalBlendingState).
+      expect(material.blending).toBe('CustomBlending');
+      // GSplat normal mode never writes depth (no opacity gate).
+      expect(material.depthWrite).toBe(false);
       expect(material.uniforms.uProjectionMode.value).toBe(0); // Sum projection for normal
     });
 
@@ -424,11 +426,16 @@ describe('GSplatMaterial', () => {
       expect(material.blending).toBe('CustomBlending');
     });
 
-    it('should have depthTest true for normal mode', () => {
+    it('should have depthTest true for normal mode (premultiplied alpha-over)', () => {
       const material = new GSplatMaterial({ blendingMode: 'normal' });
 
       expect(material.userData.depthTest).toBe(true);
-      expect(material.blending).toBe('NormalBlending');
+      // Premultiplied coverage-alpha state — CustomBlending with
+      // One / OneMinusSrcAlpha, NOT the generic NormalBlending
+      // (the shader premultiplies; SrcAlpha would double-multiply).
+      expect(material.blending).toBe('CustomBlending');
+      expect(material.blendSrc).toBe('OneFactor');
+      expect(material.blendDst).toBe(THREE.OneMinusSrcAlphaFactor);
     });
 
     it('should apply opacity directly to RGB for linear additive blending', () => {
@@ -557,6 +564,90 @@ describe('GSplatMaterial', () => {
       expect(cloned.userData.blendingMode).toBe('max');
       expect(cloned.uniforms.uProjectionMode.value).toBe(1);
       expect(cloned.blendEquation).toBe('MaxEquation');
+    });
+  });
+
+  describe('normal mode — premultiplied coverage alpha (LUXAR_NORMAL_PREMULT)', () => {
+    it('constructor normal: define set, One/OneMinusSrcAlpha, symmetric alpha, depthWrite off', () => {
+      const material = new GSplatMaterial({ blendingMode: 'normal' });
+
+      expect('LUXAR_NORMAL_PREMULT' in material.defines).toBe(true);
+      expect(material.blending).toBe('CustomBlending');
+      expect(material.blendEquation).toBe('AddEquation');
+      expect(material.blendSrc).toBe('OneFactor');
+      expect(material.blendDst).toBe(THREE.OneMinusSrcAlphaFactor);
+      // Symmetric alpha channel (null = track RGB) — separate alpha
+      // equation state trips gl.getError() under the WebGPU bridge.
+      expect(material.blendEquationAlpha).toBe(null);
+      expect(material.blendSrcAlpha).toBe(null);
+      expect(material.blendDstAlpha).toBe(null);
+      expect(material.transparent).toBe(true);
+      expect(material.depthTest).toBe(true);
+      expect(material.depthWrite).toBe(false);
+      expect(material.uniforms.uProjectionMode.value).toBe(0); // sum projection
+    });
+
+    it('depthWrite stays OFF at opacity 1.0 (no generic opacity>=0.99 gate)', () => {
+      // The generic normal state flips depthWrite on at high opacity; a
+      // coverage-alpha splat fragment with alpha ~1e-4 writing depth
+      // would punch occlusion halos, so the gsplat state never writes.
+      const material = new GSplatMaterial({ blendingMode: 'normal', opacity: 1.0 });
+      expect(material.depthWrite).toBe(false);
+    });
+
+    it('fragment shader has both output branches (premult under the define)', () => {
+      const material = new GSplatMaterial({ blendingMode: 'normal' });
+      expect(material.fragmentShader).toContain('#ifdef LUXAR_NORMAL_PREMULT');
+      expect(material.fragmentShader).toContain('clamp(intensity * uOpacity, 0.0, 1.0)');
+      expect(material.fragmentShader).toContain('fragColor = vec4(finalColor, coverage)');
+      // The alpha=1.0 contract stays intact for every other mode.
+      expect(material.fragmentShader).toContain('fragColor = vec4(finalColor, 1.0)');
+    });
+
+    it('round-trips normal → additive → normal without stranding state', () => {
+      const material = new GSplatMaterial({ blendingMode: 'normal' });
+
+      material.applyBlendingMode('additive');
+      // Define removed; additive alpha-MaxEquation guard restored.
+      expect('LUXAR_NORMAL_PREMULT' in material.defines).toBe(false);
+      expect(material.blendEquationAlpha).toBe('MaxEquation');
+      expect(material.blendSrc).toBe('OneFactor');
+      expect(material.blendDst).toBe('OneFactor');
+      expect(material.depthTest).toBe(false);
+
+      material.applyBlendingMode('normal');
+      // Identical to a freshly-constructed normal material.
+      expect('LUXAR_NORMAL_PREMULT' in material.defines).toBe(true);
+      expect(material.blending).toBe('CustomBlending');
+      expect(material.blendEquation).toBe('AddEquation');
+      expect(material.blendSrc).toBe('OneFactor');
+      expect(material.blendDst).toBe(THREE.OneMinusSrcAlphaFactor);
+      expect(material.blendEquationAlpha).toBe(null);
+      expect(material.depthWrite).toBe(false);
+      expect(material.transparent).toBe(true);
+      expect(material.needsUpdate).toBe(true);
+    });
+
+    it('normal → max: define removed, MaxEquation + projection-mode flip', () => {
+      const material = new GSplatMaterial({ blendingMode: 'normal' });
+
+      material.applyBlendingMode('max');
+
+      expect('LUXAR_NORMAL_PREMULT' in material.defines).toBe(false);
+      expect(material.blendEquation).toBe('MaxEquation');
+      expect(material.uniforms.uProjectionMode.value).toBe(1);
+    });
+
+    it('clone preserves normal mode and the define', () => {
+      const material = new GSplatMaterial({ blendingMode: 'additive' });
+      material.applyBlendingMode('normal');
+
+      const cloned = material.clone();
+
+      expect(cloned.userData.blendingMode).toBe('normal');
+      expect('LUXAR_NORMAL_PREMULT' in cloned.defines).toBe(true);
+      expect(cloned.blendDst).toBe(THREE.OneMinusSrcAlphaFactor);
+      expect(cloned.depthWrite).toBe(false);
     });
   });
 });
