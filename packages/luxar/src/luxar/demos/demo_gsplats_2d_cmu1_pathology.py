@@ -135,7 +135,7 @@ CHANNELS = [
 # Tiled fitting parameters
 TILE_SIZE = 4096  # Pixels per tile axis — fits comfortably in GPU memory
 OVERLAP = 512  # Overlap for Hann cosine apodization (seamless stitching)
-SEEDS_PER_TILE = 255000  # Seeds per tile
+SEEDS_PER_TILE = 500000  # Seeds per tile
 N_ITERS = 6_000
 
 # Cache location

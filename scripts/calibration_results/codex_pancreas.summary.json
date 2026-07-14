@@ -2,165 +2,165 @@
   "name": "codex_pancreas",
   "status": "ok",
   "k_min": 1000,
-  "k_max": 256000,
+  "k_max": 1000000,
   "n_grid": 10,
   "preset": "n2s",
   "aggregate": "max",
-  "recommended_k_star": 256000,
+  "recommended_k_star": 1000000,
   "per_sample": [
     {
       "label": "codex_pancreas__ch0_tile",
-      "k_star": 256000,
+      "k_star": 1000000,
       "type": "signal_limited",
-      "confidence_db": 19.104169349392578,
+      "confidence_db": 24.398845486085172,
       "volume_shape": [
         4096,
         4096
       ],
-      "elapsed_seconds": 395.23163567701704,
+      "elapsed_seconds": 1086.1508580720983,
       "json_path": "scripts/calibration_results/codex_pancreas/codex_pancreas__ch0_tile.json",
-      "noise_floor_psnr_db": 60.250763385207044
+      "noise_floor_psnr_db": 67.43001397378421
     },
     {
       "label": "codex_pancreas__ch1_tile",
-      "k_star": 74658,
-      "type": "peak",
-      "confidence_db": 0.1429036896785476,
+      "k_star": 1000000,
+      "type": "signal_limited",
+      "confidence_db": 4.745280932674959,
       "volume_shape": [
         4096,
         4096
       ],
-      "elapsed_seconds": 479.5799681649951,
+      "elapsed_seconds": 1432.6325081870891,
       "json_path": "scripts/calibration_results/codex_pancreas/codex_pancreas__ch1_tile.json",
-      "noise_floor_psnr_db": 78.10185136760091
+      "noise_floor_psnr_db": 78.10170377402218
     },
     {
       "label": "codex_pancreas__ch2_tile",
-      "k_star": 256000,
+      "k_star": 1000000,
       "type": "signal_limited",
-      "confidence_db": 15.236924554012642,
+      "confidence_db": 19.548830044254153,
       "volume_shape": [
         4096,
         4096
       ],
-      "elapsed_seconds": 437.7812906919862,
+      "elapsed_seconds": 1325.2083001942374,
       "json_path": "scripts/calibration_results/codex_pancreas/codex_pancreas__ch2_tile.json",
       "noise_floor_psnr_db": null
     },
     {
       "label": "codex_pancreas__ch3_tile",
-      "k_star": 256000,
-      "type": "signal_limited",
-      "confidence_db": 9.46921106527752,
+      "k_star": 464159,
+      "type": "peak",
+      "confidence_db": 0.13969882115283383,
       "volume_shape": [
         4096,
         4096
       ],
-      "elapsed_seconds": 543.1575398280111,
+      "elapsed_seconds": 1445.437420786824,
       "json_path": "scripts/calibration_results/codex_pancreas/codex_pancreas__ch3_tile.json",
       "noise_floor_psnr_db": null
     },
     {
       "label": "codex_pancreas__ch4_tile",
-      "k_star": 256000,
+      "k_star": 1000000,
       "type": "signal_limited",
-      "confidence_db": 14.768561026342205,
+      "confidence_db": 20.530410389211422,
       "volume_shape": [
         4096,
         4096
       ],
-      "elapsed_seconds": 463.1035354709893,
+      "elapsed_seconds": 1529.4123438447714,
       "json_path": "scripts/calibration_results/codex_pancreas/codex_pancreas__ch4_tile.json",
-      "noise_floor_psnr_db": 68.8267055043673
+      "noise_floor_psnr_db": 69.9685762662626
     },
     {
       "label": "codex_pancreas__ch5_tile",
-      "k_star": 256000,
+      "k_star": 1000000,
       "type": "signal_limited",
-      "confidence_db": 20.800511628445356,
+      "confidence_db": 22.303787574992057,
       "volume_shape": [
         4096,
         4096
       ],
-      "elapsed_seconds": 470.25871038797777,
+      "elapsed_seconds": 2147.466321544256,
       "json_path": "scripts/calibration_results/codex_pancreas/codex_pancreas__ch5_tile.json",
       "noise_floor_psnr_db": null
     },
     {
       "label": "codex_pancreas__ch6_tile",
-      "k_star": 256000,
-      "type": "signal_limited",
-      "confidence_db": 16.72015598673775,
+      "k_star": 464159,
+      "type": "plateau",
+      "confidence_db": 0.027072842371708816,
       "volume_shape": [
         4096,
         4096
       ],
-      "elapsed_seconds": 436.3456116169982,
+      "elapsed_seconds": 1889.1271513761021,
       "json_path": "scripts/calibration_results/codex_pancreas/codex_pancreas__ch6_tile.json",
-      "noise_floor_psnr_db": 68.04834418375991
+      "noise_floor_psnr_db": 68.26215598273004
     },
     {
       "label": "codex_pancreas__ch7_tile",
-      "k_star": 256000,
+      "k_star": 1000000,
       "type": "signal_limited",
-      "confidence_db": 10.044429162880824,
+      "confidence_db": 11.368681083354609,
       "volume_shape": [
         4096,
         4096
       ],
-      "elapsed_seconds": 510.5387294650136,
+      "elapsed_seconds": 1542.2283592112362,
       "json_path": "scripts/calibration_results/codex_pancreas/codex_pancreas__ch7_tile.json",
-      "noise_floor_psnr_db": 90.09687634361933
+      "noise_floor_psnr_db": null
     },
     {
       "label": "codex_pancreas__ch8_tile",
-      "k_star": 256000,
+      "k_star": 1000000,
       "type": "signal_limited",
-      "confidence_db": 14.193762550078198,
+      "confidence_db": 18.64740813235683,
       "volume_shape": [
         4096,
         4096
       ],
-      "elapsed_seconds": 451.0442390019889,
+      "elapsed_seconds": 1339.543770682998,
       "json_path": "scripts/calibration_results/codex_pancreas/codex_pancreas__ch8_tile.json",
       "noise_floor_psnr_db": null
     },
     {
       "label": "codex_pancreas__ch9_tile",
-      "k_star": 256000,
+      "k_star": 1000000,
       "type": "signal_limited",
-      "confidence_db": 12.529836428459163,
+      "confidence_db": 15.113475407767297,
       "volume_shape": [
         4096,
         4096
       ],
-      "elapsed_seconds": 492.6178633160016,
+      "elapsed_seconds": 1150.5511955139227,
       "json_path": "scripts/calibration_results/codex_pancreas/codex_pancreas__ch9_tile.json",
-      "noise_floor_psnr_db": 78.92970507076542
+      "noise_floor_psnr_db": 78.92947396744113
     },
     {
       "label": "codex_pancreas__ch10_tile",
-      "k_star": 256000,
+      "k_star": 1000000,
       "type": "signal_limited",
-      "confidence_db": 17.427860577877983,
+      "confidence_db": 20.977428060992032,
       "volume_shape": [
         4096,
         4096
       ],
-      "elapsed_seconds": 470.4768851950066,
+      "elapsed_seconds": 1081.2414443921298,
       "json_path": "scripts/calibration_results/codex_pancreas/codex_pancreas__ch10_tile.json",
-      "noise_floor_psnr_db": 66.06065154104166
+      "noise_floor_psnr_db": 67.78521190849924
     },
     {
       "label": "codex_pancreas__ch11_tile",
-      "k_star": 256000,
-      "type": "signal_limited",
-      "confidence_db": 14.378537894556906,
+      "k_star": 464159,
+      "type": "plateau",
+      "confidence_db": 0.09549046973532427,
       "volume_shape": [
         4096,
         4096
       ],
-      "elapsed_seconds": 444.8138328430068,
+      "elapsed_seconds": 1052.7241752790287,
       "json_path": "scripts/calibration_results/codex_pancreas/codex_pancreas__ch11_tile.json",
       "noise_floor_psnr_db": null
     }

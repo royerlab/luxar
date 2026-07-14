@@ -2,51 +2,51 @@
   "name": "acto3d_heart",
   "status": "ok",
   "k_min": 1000,
-  "k_max": 512000,
+  "k_max": 2000000,
   "n_grid": 10,
   "preset": "n2s",
   "aggregate": "max",
-  "recommended_k_star": 512000,
+  "recommended_k_star": 859506,
   "per_sample": [
     {
       "label": "acto3d_heart__ch0",
-      "k_star": 512000,
-      "type": "signal_limited",
-      "confidence_db": 6.766173985199131,
+      "k_star": 859506,
+      "type": "peak",
+      "confidence_db": 0.04953918289363912,
       "volume_shape": [
         256,
         256,
         256
       ],
-      "elapsed_seconds": 847.5795442009985,
+      "elapsed_seconds": 3320.709040787071,
       "json_path": "scripts/calibration_results/acto3d_heart/acto3d_heart__ch0.json",
       "noise_floor_psnr_db": null
     },
     {
       "label": "acto3d_heart__ch1",
-      "k_star": 256000,
-      "type": "plateau",
-      "confidence_db": 0.014889352524882327,
+      "k_star": 369375,
+      "type": "peak",
+      "confidence_db": 0.1603464034583979,
       "volume_shape": [
         256,
         256,
         256
       ],
-      "elapsed_seconds": 892.13717979801,
+      "elapsed_seconds": 4158.402674959041,
       "json_path": "scripts/calibration_results/acto3d_heart/acto3d_heart__ch1.json",
       "noise_floor_psnr_db": null
     },
     {
       "label": "acto3d_heart__ch2",
-      "k_star": 512000,
-      "type": "signal_limited",
-      "confidence_db": 4.827993701617498,
+      "k_star": 859506,
+      "type": "peak",
+      "confidence_db": 0.8406613549974153,
       "volume_shape": [
         256,
         256,
         256
       ],
-      "elapsed_seconds": 854.256194415997,
+      "elapsed_seconds": 5581.980904068798,
       "json_path": "scripts/calibration_results/acto3d_heart/acto3d_heart__ch2.json",
       "noise_floor_psnr_db": null
     }

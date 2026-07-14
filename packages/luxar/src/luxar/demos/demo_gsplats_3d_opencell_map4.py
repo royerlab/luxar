@@ -102,11 +102,8 @@ CHANNELS = [
     {"index": 1, "name": "Hoechst (Nuclei)", "colormap": "blue"},
 ]
 
-# Progressive fitting parameters
+# Fit parameters (fixed-K, seeds=K*)
 MAX_SPLATS = 81000
-MAX_SPLATS_PER_PASS = 16000
-ITERS_PER_PASS = 5000
-PSNR_PATIENCE = 0.1
 
 # Data source URL (OpenCell S3 bucket)
 TIFF_URL = (
@@ -224,7 +221,7 @@ def fit_channel(
     Returns:
         Fitted GSplatData.
     """
-    from luxar.gsplats.fit_progressive_gsplats import fit_progressive_gaussian_splats
+    from luxar.gsplats import fit_gaussian_splats
 
     global DEVICE
     if DEVICE is None:
@@ -232,21 +229,14 @@ def fit_channel(
 
         DEVICE = detect_device()
 
-    aprint(
-        f"Fitting {channel_name} (progressive: max {MAX_SPLATS} splats, "
-        f"{MAX_SPLATS_PER_PASS}/pass, {ITERS_PER_PASS} iters/pass)..."
-    )
+    aprint(f"Fitting {channel_name} (fixed-K joint fit: seeds={MAX_SPLATS})...")
     aprint(f"  Volume: {volume.shape}, Device: {DEVICE}")
 
-    result = fit_progressive_gaussian_splats(
+    result = fit_gaussian_splats(
         volume,
-        max_splats=MAX_SPLATS,
-        max_splats_per_pass=MAX_SPLATS_PER_PASS,
-        iters_per_pass=ITERS_PER_PASS,
-        psnr_patience=PSNR_PATIENCE,
+        seeds=MAX_SPLATS,
         device=DEVICE,
         verbose=True,
-        enable_dynamic_ops=True,
         cull_retention=0.99,
     )
 
