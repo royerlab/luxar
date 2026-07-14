@@ -58,23 +58,10 @@ describe('validateWebGL', () => {
     }
   });
 
-  it('should warn on unusual colorSpace', () => {
-    const cfg = cloneConfig();
-    cfg.webgl.context.colorSpace = 'adobe-rgb';
-
-    const result = invokeValidator(validateWebGL, cfg);
-
-    expect(result.warnings).toContainEqual(expect.stringContaining('Unusual color space'));
-  });
-
-  it('should accept valid colorSpace values', () => {
-    const cfg = cloneConfig();
-    for (const colorSpace of ['srgb', 'display-p3', 'rec2020']) {
-      cfg.webgl.context.colorSpace = colorSpace;
-      const result = invokeValidator(validateWebGL, cfg);
-      expect(result.warnings.filter((w) => w.includes('color space'))).toHaveLength(0);
-    }
-  });
+  // `colorSpace` was removed from the context attributes: it is not a
+  // WebGL context-attribute key (drawing-buffer color space is
+  // `gl.drawingBufferColorSpace`) and the old 'display-p3' entry was
+  // silently ignored. Output color handling lives in the HDR pipeline.
 
   // [G16][P5] Audit: pre-audit `samples=3` was the only "unusual" case.
   // The source uses `Array.includes` which has identity-comparison

@@ -7,7 +7,6 @@ export interface WebGLContextAttributes {
   depth: boolean;
   stencil: boolean;
   powerPreference: 'high-performance' | 'low-power' | 'default';
-  colorSpace: string;
   preserveDrawingBuffer: boolean;
   desynchronized: boolean;
   premultipliedAlpha: boolean;
