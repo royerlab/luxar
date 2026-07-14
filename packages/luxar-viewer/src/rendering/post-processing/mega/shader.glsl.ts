@@ -115,14 +115,30 @@ export const MEGA_FRAGMENT_SHADER = /* glsl */ `
   uniform float uDispersion;       // chromatic dispersion strength
 
   // Brown-Conrady radial distortion + camera intrinsic matrix.
+  //
+  // Y-CONVENTION (load-bearing): the canonical distortion map is
+  // defined in TOP-DOWN uv space (what the TSL twin's uv() delivers
+  // under WebGPURenderer, and what the TS picking mirror in
+  // picking-system/lens-distortion.ts uses). This GLSL runs ONLY
+  // under WebGLRenderer (resolveMaterialBackend keys on the same
+  // renderer class as framebufferYDown), where the fullscreen
+  // triangle delivers BOTTOM-UP uv. Radial/focal terms are even
+  // under the y-flip, but principalPoint.y and skew are ODD — so we
+  // apply the exact flip-conjugation by negating those two intrinsics
+  // instead of flipping uv on entry/exit (branch-free, and
+  // bit-identical to the canonical formula when ppy = skew = 0, i.e.
+  // every shipped preset). Re-syncing this matrix verbatim from the
+  // TSL twin WOULD REINTRODUCE the wrong-direction bug — the
+  // conjugation-identity unit test in lens-distortion.test.ts guards
+  // that.
   vec2 applyDistortion(vec2 uv, vec2 distortionCoeff) {
     vec2 xn = 2.0 * (uv - 0.5);
     float r2 = dot(xn, xn);
     vec3 xDistorted = vec3((1.0 + distortionCoeff * r2) * xn, 1.0);
     mat3 kk = mat3(
       vec3(uFocalLength.x, 0.0, 0.0),
-      vec3(uSkew * uFocalLength.x, uFocalLength.y, 0.0),
-      vec3(uPrincipalPoint.x, uPrincipalPoint.y, 1.0)
+      vec3(-uSkew * uFocalLength.x, uFocalLength.y, 0.0),
+      vec3(uPrincipalPoint.x, -uPrincipalPoint.y, 1.0)
     );
     return (kk * xDistorted).xy * 0.5 + 0.5;
   }

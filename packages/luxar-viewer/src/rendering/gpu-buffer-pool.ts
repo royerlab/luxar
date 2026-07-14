@@ -234,9 +234,19 @@ export class GPUBufferPool {
   // Lines Geometry Management
   // =========================================================================
 
-  /** Acquire geometry for Lines (instanced per-segment attributes). */
-  acquireLinesGeometry(nodeId: string, segmentCount: number): THREE.InstancedBufferGeometry {
-    return this.lines.acquireGeometry(nodeId, segmentCount);
+  /**
+   * Acquire geometry for Lines (instanced per-segment attributes).
+   * `hasScalars` declares whether the commit carries colormap scalar
+   * columns — the spec set is decided here, at acquire time (a
+   * mismatch releases and reacquires; updateLinesGeometry never
+   * rebuilds in place).
+   */
+  acquireLinesGeometry(
+    nodeId: string,
+    segmentCount: number,
+    hasScalars: boolean
+  ): THREE.InstancedBufferGeometry {
+    return this.lines.acquireGeometry(nodeId, segmentCount, hasScalars);
   }
 
   /** Release Lines geometry back to pool. */
@@ -306,7 +316,7 @@ export class GPUBufferPool {
    *
    * Public for testing and manual pool management.
    */
-  evictUnused(): number {
+  evictUnused(fromAcquire: boolean = false): number {
     let evicted = 0;
     const currentFrame = this.frameCount;
 
@@ -388,7 +398,7 @@ export class GPUBufferPool {
     // then reclaims them. `0` disables the pass (count-only behavior).
     const budget = this.getByteBudget();
     if (budget > 0) {
-      const byteEvicted = this._evictUntilUnderByteBudget(budget);
+      const byteEvicted = this._evictUntilUnderByteBudget(budget, fromAcquire);
       evicted += byteEvicted;
       this.stats.evictions += byteEvicted;
     }
@@ -400,7 +410,7 @@ export class GPUBufferPool {
     return evicted;
   }
 
-  private _evictUntilUnderByteBudget(budget: number): number {
+  private _evictUntilUnderByteBudget(budget: number, fromAcquire: boolean = false): number {
     if (budget <= 0) return 0; // disabled — never dispose on bytes
     // The pooled-disposal target is the budget MINUS bytes held by active
     // (in-use) buffers, which cannot be disposed. Pooled buffers are then
@@ -417,6 +427,11 @@ export class GPUBufferPool {
         maxPoolBytes: pooledTarget,
         maxPoolSize: this.maxPoolSize,
         typeEvictionCounters: this.typeStats,
+        // Same-frame grace applies ONLY to acquire-triggered sweeps —
+        // the release path keeps its original semantics (a release
+        // followed by evictUnused() may reclaim that very buffer).
+        // graceFrame -1 never matches a real frame counter.
+        graceFrame: fromAcquire ? this.frameCount : -1,
       },
       sentinel
     );
