@@ -52,7 +52,7 @@ luxar info my_data.luxar.zarr --stats
 Quick demo generation with automatic viewer launch.
 ```bash
 luxar demo                    # Generate demo and open in browser
-luxar demo --points 10000     # Custom point count
+luxar demo --points 50000     # Custom point count (default is 10000)
 luxar demo --no-open          # Don't open browser
 luxar demo --no-serve --output demo.luxar.zarr  # Generate demo without serving
 luxar demo --no-serve --output demo.luxar.zarr --points 100000  # Custom point count, no serve
@@ -124,7 +124,7 @@ luxar export my_scene.luxar.zarr -o out/ --native macos,linux-amd64,linux-arm64 
 
 **Options** (in addition to the parent command's): `--native PLATFORMS` (comma-separated; choices: `macos`, `linux-amd64`, `linux-arm64`), `--name NAME` (defaults to the zarr stem), `--zip/--no-zip` (when `--native macos`, also produces a sibling `<name>.app.zip` — via `ditto` on Darwin to preserve resource forks and extended attributes, or `zipfile` on cross-build hosts with executable-bit preservation; on by default, pass `--no-zip` to skip).
 
-**Prerequisites**: run `make build-launchers` first to populate `cli/_launchers/` with the host-platform binary. CGO blocks pure cross-compilation, so Linux + Windows binaries must be built on hosts of the matching OS (typically via CI).
+**Prerequisites**: run `make build-launchers` first to populate `cli/_launchers/` with the host-platform binary. `--native` produces `macos`, `linux-amd64`, and `linux-arm64` bundles only. CGO blocks pure cross-compilation, so each platform's binary must be built on a host of the matching OS (typically via CI).
 
 **Runtime fallback**: setting `LUXAR_LAUNCHER_NO_WEBVIEW=1` makes the launcher open the user's default browser instead of an embedded WebView — useful for headless smoke tests and minimal Linux installs without `libwebkit2gtk`.
 
@@ -140,7 +140,7 @@ luxar gsplat info splats.gsplats.zarr
 ```
 
 #### `luxar gsplat view`
-Convert a `.gsplats.zarr` to a Luxar scene on the fly and open it in the web viewer.
+Open a `.gsplats.zarr` in the web viewer. The standalone `.gsplats.zarr` is a v3.2 node subtree — exactly what the viewer renders inside a scene — so it is served **directly** via `?src=` with no scene-compile round-trip (works for a single leaf, an additive ladder, a `kind=lod` hierarchy, a `kind=partition` split, and arbitrary nestings; archives are extracted first).
 ```bash
 luxar gsplat view splats.gsplats.zarr
 ```
@@ -154,6 +154,8 @@ luxar gsplat fit --dump-config --preset hifi > config.yaml  # Generate config te
 ```
 
 **Presets:** `draft` (fast preview), `standard` (balanced), `hifi` (high quality), `ultra` (max quality)
+
+`--floor` (default `auto`) subtracts a background pedestal (clip at 0) before normalization, so output amplitudes are background-relative. `auto` = histogram-mode estimate (a no-op on clean data); `pNN` subtracts that percentile, a plain number a fixed value, `none` disables it (legacy hard-min).
 
 #### `luxar gsplat convert`
 Convert .gsplats.zarr to a Luxar scene for the web viewer.
@@ -296,7 +298,7 @@ luxar gsplat additive in.gsplats.zarr out.gsplats.zarr -b stream:14000
 luxar gsplat additive in.gsplats.zarr out.gsplats.zarr --n-lods 4         # classic equal-count
 ```
 
-**Options**: `--n-lods` (default 4, equal-count), `--method/-m` (auto/greedy/self_energy/mass/amplitude ordering), `--breakpoints/-b` (`equal-count` | `stream:C` | explicit `counts:`/`energy:` lists), `--target-ms` (+ `--bandwidth-mbps`, default 25; `--bytes-per-splat` override) to size the first chunk from a download budget, `--encoding/-e`, `--compress/-c`, `--overwrite`.
+**Options**: `--n-lods` (default 4, equal-count), `--method/-m` (auto/greedy/self_energy/mass/amplitude/spectral/random ordering), `--breakpoints/-b` (`equal-count` | `stream:C` | explicit `counts:`/`energy:` lists), `--target-ms` (+ `--bandwidth-mbps`, default 25; `--bytes-per-splat` override) to size the first chunk from a download budget, `--encoding/-e`, `--compress/-c`, `--overwrite`.
 
 #### `luxar gsplat flatten`
 Collapse **any** gsplat tree (leaf, LOD/matrix tree, partition, nested) into one flat matrix-shaped leaf. Use for compatibility with tools that expect a flat `.gsplats.zarr`, or before rebuilding a new global LOD from a tiled/partitioned result.
@@ -403,7 +405,7 @@ luxar gsplat batch-fit merge output/
 ```
 
 #### `luxar gsplat batch-fit validate`
-Validate integrity of all tiles in a Slurm output directory. Checks each tile for completeness (metadata, arrays, shapes) and reports OK, MISSING, CORRUPT, and STALE_TMP counts. Use `--fix` to delete corrupt tiles and leftover `.tmp` directories so they get re-fitted on the next submit.
+Validate integrity of all tiles in a batch output directory (local `run` or Slurm `submit`). Checks each tile for completeness (metadata, arrays, shapes) and reports OK, MISSING, CORRUPT, and STALE_TMP counts. Use `--fix` to delete corrupt tiles and leftover `.tmp` directories so they get re-fitted on the next submit.
 ```bash
 luxar gsplat batch-fit validate output_dir/
 luxar gsplat batch-fit validate output_dir/ --fix

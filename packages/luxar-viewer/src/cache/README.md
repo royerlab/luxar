@@ -596,6 +596,10 @@ Dispose the prefetcher, clearing all internal state (seen set, parsed cache, bou
 
 **MultiLevelCachingStore** - Main orchestrator for L1/L2 caching, implements AsyncReadable interface
 
+**SliceCache** - "S-cache" above L0/L1/L2: per-(node, view) LRU of fully decoded per-slice geometry (skips the query + fetch + dequant + gather pipeline on slice revisits)
+
+**computeCacheBudgets** (`heap-budget.ts`) - Heap-aware per-tier byte budgets for L0/L1/S-cache (scales up on big heaps, down on small ones)
+
 **ChunkPrefetcher** - Intelligent adjacent chunk prefetcher (enabled by default)
 
 **LRUCache** - Generic LRU cache with O(1) operations
@@ -849,6 +853,13 @@ await window.__luxarDebug.cache.clearAll();
 - `decompressed-chunk-cache.ts` — L0 LRU of decoded TypedArrays.
 - `chunk-prefetcher.ts` — Background prefetcher for adjacent chunks
   with per-array bounds registration and high/normal priority queues.
+- `slice-cache.ts` — `SliceCache` (S-cache): per-(node, view) byte-budget
+  LRU of decoded per-slice geometry, keyed by node path +
+  slice/tolerance/displayDims signature; sits above the chunk caches so
+  slice revisits skip everything but the nD→3D projection.
+- `heap-budget.ts` — `computeCacheBudgets`: derives L0/L1/S-cache byte
+  ceilings from the device heap (`performance.memory`, Chrome-only;
+  fixed config sizes elsewhere).
 - `lru-cache.ts` — Generic LRU with O(1) get/set/delete.
 - `residency-probe.ts` — `ResidencyProbe` interface + `ResidencyAccumulator`:
   a per-load sink the L0 proxy reports chunk hit/miss outcomes to, so a
