@@ -104,7 +104,7 @@ from arbol import Arbol, aprint, asection
 from luxar import Dimensions, LuxarZarrCompiler
 from luxar.core.viewer_config import ViewerConfig
 from luxar.encoding import EncodingMode
-from luxar.gsplats.fit_progressive_gsplats import fit_progressive_gaussian_splats
+from luxar.gsplats import fit_gaussian_splats
 from luxar.gsplats.gsplat_data import GSplatData
 from luxar.gsplats.models.gsplats.metal import is_metal_available
 from luxar.utils.demos import (
@@ -130,11 +130,8 @@ CHANNELS = [
     {"index": 1, "name": "DAPI", "color": (0.0, 1.0, 0.5)},  # Cyan
 ]
 
-# Progressive fitting parameters
-MAX_SPLATS = 40000
-MAX_SPLATS_PER_PASS = 8000
-ITERS_PER_PASS = 3000
-PSNR_PATIENCE = 0.2
+# Fit parameters (fixed-K, seeds=K*)
+MAX_SPLATS = 22000
 DEVICE = None  # Auto-detect (cuda/mps/cpu)
 
 # Cache paths
@@ -277,20 +274,13 @@ def fit_channel(volume, channel_name, cache_file):
             aprint("Using CPU device")
 
     # Fit gsplats progressively
-    aprint(
-        f"Fitting {channel_name} (progressive: up to {MAX_SPLATS} splats, "
-        f"{MAX_SPLATS_PER_PASS}/pass, {ITERS_PER_PASS} iters/pass)..."
-    )
+    aprint(f"Fitting {channel_name} (fixed-K joint fit: seeds={MAX_SPLATS})...")
 
-    result = fit_progressive_gaussian_splats(
+    result = fit_gaussian_splats(
         volume,
-        max_splats=MAX_SPLATS,
-        max_splats_per_pass=MAX_SPLATS_PER_PASS,
-        iters_per_pass=ITERS_PER_PASS,
-        psnr_patience=PSNR_PATIENCE,
+        seeds=MAX_SPLATS,
         device=DEVICE,
         verbose=True,
-        enable_dynamic_ops=True,
     )
 
     n_splats = len(result.amplitudes)

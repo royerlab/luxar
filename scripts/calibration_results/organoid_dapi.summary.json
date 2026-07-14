@@ -12,15 +12,15 @@
       "label": "organoid_dapi__dapi",
       "k_star": 11758,
       "type": "peak",
-      "confidence_db": 0.15847196383392514,
+      "confidence_db": 0.10656586357515607,
       "volume_shape": [
         128,
         128,
         128
       ],
-      "elapsed_seconds": 230.8223822209984,
+      "elapsed_seconds": 6132.879597750027,
       "json_path": "scripts/calibration_results/organoid_dapi/organoid_dapi__dapi.json",
-      "noise_floor_psnr_db": 54.02933820627279
+      "noise_floor_psnr_db": 54.26825039020621
     }
   ],
   "comment": "128^3 single-channel DAPI from IDR"

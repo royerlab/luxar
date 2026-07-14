@@ -10,15 +10,15 @@
   "per_sample": [
     {
       "label": "zebrafish_timelapse__t0000",
-      "k_star": 3429,
+      "k_star": 1852,
       "type": "peak",
-      "confidence_db": 0.09281186367280725,
+      "confidence_db": 0.16979675153176998,
       "volume_shape": [
         44,
         256,
         256
       ],
-      "elapsed_seconds": 693.6322134479997,
+      "elapsed_seconds": 2498.2081958618946,
       "json_path": "scripts/calibration_results/zebrafish_timelapse/zebrafish_timelapse__t0000.json",
       "noise_floor_psnr_db": null
     },
@@ -26,13 +26,13 @@
       "label": "zebrafish_timelapse__t0032",
       "k_star": 1852,
       "type": "peak",
-      "confidence_db": 0.12927358965051639,
+      "confidence_db": 0.190921474682618,
       "volume_shape": [
         44,
         256,
         256
       ],
-      "elapsed_seconds": 763.5674558710016,
+      "elapsed_seconds": 1928.7209260491654,
       "json_path": "scripts/calibration_results/zebrafish_timelapse/zebrafish_timelapse__t0032.json",
       "noise_floor_psnr_db": null
     },
@@ -40,13 +40,13 @@
       "label": "zebrafish_timelapse__t0063",
       "k_star": 1852,
       "type": "peak",
-      "confidence_db": 0.3562592916952525,
+      "confidence_db": 0.36808100377292163,
       "volume_shape": [
         44,
         256,
         256
       ],
-      "elapsed_seconds": 765.934995210002,
+      "elapsed_seconds": 1710.5828365413472,
       "json_path": "scripts/calibration_results/zebrafish_timelapse/zebrafish_timelapse__t0063.json",
       "noise_floor_psnr_db": null
     }
