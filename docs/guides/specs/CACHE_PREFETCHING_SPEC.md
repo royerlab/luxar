@@ -1,12 +1,24 @@
 # Cache Prefetching Specification
 
-**Version**: 1.1.0
-**Last Updated**: 2025-12-13
+**Version**: 1.2.0
+**Last Updated**: 2026-07-13
 **Status**: Implemented
+
+> **Current architecture (2026-07).** The store class is
+> `MultiLevelCachingStore` (`packages/luxar-viewer/src/cache/multi-level-caching-store.ts`).
+> The L1 (memory LRU) / L2 (OPFS) / L3 (remote HTTP) tiers described below are
+> the **compressed-chunk** path the prefetcher operates on; the full cache
+> system has since grown additional tiers ABOVE it — an **L0 decompressed-chunk
+> cache** (decoded TypedArrays, skips Blosc) and the **S-cache**
+> (`SliceCache`, fully decoded per-slice geometry ladders) — which prefetching
+> does not touch. See `packages/luxar-viewer/src/cache/README.md` for the live
+> S-cache/L0/L1/L2 + HTTP picture and heap-aware budgets. The
+> `ChunkPrefetcher` part of this spec matches the implementation
+> (`packages/luxar-viewer/src/cache/chunk-prefetcher.ts`).
 
 ## Overview
 
-This document specifies a prefetching system for the Luxar viewer's two-level cache. The goal is to reduce perceived latency by proactively fetching adjacent zarr chunks before they are explicitly requested.
+This document specifies a prefetching system for the Luxar viewer's multi-level cache. The goal is to reduce perceived latency by proactively fetching adjacent zarr chunks before they are explicitly requested.
 
 ### Motivation
 
@@ -23,7 +35,7 @@ By prefetching adjacent chunks after cache hits, we can hide network latency and
 
 ### Design Decision: Separate PrefetchManager
 
-The prefetching logic is implemented as a **separate `ChunkPrefetcher` class** rather than inline in `TwoLevelCachingStore`. This provides:
+The prefetching logic is implemented as a **separate `ChunkPrefetcher` class** rather than inline in `MultiLevelCachingStore`. This provides:
 
 1. **Separation of concerns** - Store remains a simple zarr backend
 2. **Testability** - Prefetch logic can be unit tested in isolation
@@ -34,7 +46,7 @@ The prefetching logic is implemented as a **separate `ChunkPrefetcher` class** r
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
-│                     TwoLevelCachingStore                        │
+│                     MultiLevelCachingStore                        │
 │  ┌──────────┐    ┌──────────┐    ┌──────────┐                  │
 │  │ L1 Cache │───►│ L2 Cache │───►│ L3 HTTP  │                  │
 │  │ (Memory) │    │ (OPFS)   │    │ (Remote) │                  │
@@ -251,7 +263,7 @@ Normal requests go directly to `store.get()` with no limit. Prefetch requests ar
 
 ```typescript
 class ChunkPrefetcher {
-  private store: TwoLevelCachingStore;
+  private store: MultiLevelCachingStore;
   private maxConcurrent = 4;
   private inFlight = new Set<string>();  // Track in-flight keys
   private queue = new Set<string>();
@@ -332,10 +344,10 @@ This is a **hint**, not a guarantee. Our concurrency limiting is the primary mec
 
 ### Store Modifications Required
 
-The current `TwoLevelCachingStore` needs these additions to support prefetching:
+The current `MultiLevelCachingStore` needs these additions to support prefetching:
 
 ```typescript
-// Add to TwoLevelCachingStore class:
+// Add to MultiLevelCachingStore class:
 
 private prefetcher: ChunkPrefetcher | null = null;
 
@@ -400,11 +412,11 @@ async dispose(): Promise<void> {
 
 ### Lifecycle Management
 
-The prefetcher lifecycle is tied to the `TwoLevelCachingStore`:
+The prefetcher lifecycle is tied to the `MultiLevelCachingStore`:
 
 ```typescript
 // Creation (in scene-loader.ts or similar)
-const store = new TwoLevelCachingStore(baseUrl, options);
+const store = new MultiLevelCachingStore(baseUrl, options);
 await store.init();
 
 // Create prefetcher with reference to store
@@ -534,6 +546,13 @@ Separate prefetched data from L1 to prevent evicting hot data:
 ---
 
 ## Changelog
+
+- **v1.2.0** (2026-07-13): Sync with current cache architecture
+  - Class renamed to match the implementation: `TwoLevelCachingStore` →
+    `MultiLevelCachingStore`
+  - Added "Current architecture (2026-07)" note: L0 decompressed cache and
+    S-cache (SliceCache) sit above the L1/L2/L3 compressed-chunk path this
+    spec covers; see `packages/luxar-viewer/src/cache/README.md`
 
 - **v1.1.0** (2025-01-06): Critical review and simplification
   - Fixed race condition in `processQueue()` (re-trigger via queueMicrotask when slots free up)

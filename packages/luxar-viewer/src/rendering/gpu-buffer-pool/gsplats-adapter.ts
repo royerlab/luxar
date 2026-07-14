@@ -16,8 +16,7 @@ import {
   packInterleavedAttributes,
   type InterleavedAttributeSpec,
 } from '../interleaved-attributes';
-import { invalidateCachedByteSize } from './geometry-bytes';
-import { rebuildInterleavedBuffer, writePooledAttribute } from './attribute-codec';
+import { writePooledAttribute } from './attribute-codec';
 import type { PooledBuffer } from './pool-stats';
 import { chooseCapacity } from './capacity';
 
@@ -64,12 +63,6 @@ function createGSplatsGeometry(splatCapacity: number): THREE.InstancedBufferGeom
   return geometry;
 }
 
-function growGSplatsGeometry(geometry: THREE.InstancedBufferGeometry, neededCount: number): void {
-  const newCapacity = chooseCapacity(neededCount);
-  invalidateCachedByteSize(geometry);
-  rebuildInterleavedBuffer(geometry, newCapacity, GSPLATS_ATTRIBUTE_SPECS);
-}
-
 export interface GSplatsAdapterHost {
   activeBuffers: Map<string, PooledBuffer>;
   readonly frameCount: number;
@@ -87,7 +80,7 @@ export interface GSplatsAdapterHost {
   };
   _lastAcquireRebuilt: boolean;
   getBucket(count: number): number;
-  evictUnused(): number;
+  evictUnused(fromAcquire?: boolean): number;
 }
 
 export class GSplatsBufferAdapter {
@@ -108,29 +101,43 @@ export class GSplatsBufferAdapter {
         host.typeStats.gsplats.reuses++;
         return active.geometry as THREE.InstancedBufferGeometry;
       } else {
-        growGSplatsGeometry(active.geometry as THREE.InstancedBufferGeometry, splatCount);
-        active.capacity = chooseCapacity(splatCount);
-        active.lastUsedFrame = host.frameCount;
+        // Grow = RELEASE + REACQUIRE — an in-place rebuild strands the
+        // old GL/GPU buffer in the renderer caches (hard leak under the
+        // WebGPU renderer via the strong Info.memoryMap). See the
+        // points adapter for the full rationale. Fall-through best-fit/
+        // fresh-alloc sets _lastAcquireRebuilt + allocation counters.
         host.stats.capacityGrowths++;
-        host._lastAcquireRebuilt = true;
-        return active.geometry as THREE.InstancedBufferGeometry;
+        this.releaseGeometry(nodeId);
       }
     }
 
+    // BEST-fit, not first-fit: scan every pooled candidate and claim the
+    // smallest adequate one. Map iteration order is bucket-insertion
+    // order, so first-fit could pin an arbitrarily oversized buffer
+    // (e.g. a 52 MB 1M-capacity buffer) to a small node until release.
+    let bestList: PooledBuffer[] | null = null;
+    let bestIndex = -1;
+    let bestCapacity = Infinity;
     for (const pooled of this.gsplatBuffers.values()) {
       for (let i = pooled.length - 1; i >= 0; i--) {
         const candidate = pooled[i];
-        if (candidate.capacity >= splatCount) {
-          pooled.splice(i, 1);
-          candidate.inUse = true;
-          candidate.lastUsedFrame = host.frameCount;
-          host.activeBuffers.set(nodeId, candidate);
-          host.stats.reuses++;
-          host.typeStats.gsplats.reuses++;
-          host._lastAcquireRebuilt = true;
-          return candidate.geometry as THREE.InstancedBufferGeometry;
+        if (candidate.capacity >= splatCount && candidate.capacity < bestCapacity) {
+          bestList = pooled;
+          bestIndex = i;
+          bestCapacity = candidate.capacity;
         }
       }
+    }
+    if (bestList) {
+      const candidate = bestList[bestIndex];
+      bestList.splice(bestIndex, 1);
+      candidate.inUse = true;
+      candidate.lastUsedFrame = host.frameCount;
+      host.activeBuffers.set(nodeId, candidate);
+      host.stats.reuses++;
+      host.typeStats.gsplats.reuses++;
+      host._lastAcquireRebuilt = true;
+      return candidate.geometry as THREE.InstancedBufferGeometry;
     }
 
     host._lastAcquireRebuilt = true;
@@ -147,6 +154,9 @@ export class GSplatsBufferAdapter {
 
     host.activeBuffers.set(nodeId, newBuffer);
     host.stats.allocations++;
+    // Fresh allocations count against the byte budget too — sweep idle
+    // pooled buffers (see growth-path note above).
+    host.evictUnused(true);
     host.typeStats.gsplats.allocations++;
     return geometry;
   }
@@ -158,6 +168,12 @@ export class GSplatsBufferAdapter {
 
     host.activeBuffers.delete(nodeId);
     buffer.inUse = false;
+    // Stamp the release frame so acquire-triggered byte sweeps later in
+    // this same frame grace the buffer (see EvictorCtx.graceFrame) — a
+    // released buffer otherwise carries the frame of its last ACQUIRE
+    // and the dataset-switch grace never matches. Also makes the
+    // just-released buffer the freshest LRU reuse candidate.
+    buffer.lastUsedFrame = host.frameCount;
 
     const bucket = host.getBucket(buffer.capacity);
     if (!this.gsplatBuffers.has(bucket)) {

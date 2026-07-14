@@ -120,14 +120,19 @@ def inspect_gsplats_zarr(path: str | Path) -> Dict[str, Any]:
         info["ordering_bits_per_dim"] = splats_attrs.get(
             "ordering_bits_per_dim"
         ) or splats_attrs.get("morton_bits_per_dim")
-        if info["ordering"] == "morton":
-            info["ordering_resolution"] = splats_attrs.get(
-                "ordering_resolution"
-            ) or splats_attrs.get("morton_resolution")
-        else:
-            info["ordering_resolution"] = splats_attrs.get(
-                "ordering_resolution"
-            ) or splats_attrs.get("hilbert_resolution")
+        # Legacy-only key: current writers emit a per-axis bit budget, not a
+        # grid resolution — include `ordering_resolution` only when a value
+        # actually exists (pre-v3.0 morton_/hilbert_resolution files).
+        legacy_key = (
+            "morton_resolution"
+            if info["ordering"] == "morton"
+            else "hilbert_resolution"
+        )
+        resolution = splats_attrs.get("ordering_resolution") or splats_attrs.get(
+            legacy_key
+        )
+        if resolution is not None:
+            info["ordering_resolution"] = resolution
 
     # Ranges
     info["amplitude_range"] = splats_attrs.get("amplitude_range")
@@ -200,14 +205,16 @@ def format_gsplats_info(info: Dict[str, Any]) -> str:
     # Header
     lines.append(f"GSplats: {info['n_splats']:,} splats, {info['ndim']}D")
 
-    # Ordering
+    # Ordering — current files carry the per-axis bit budget; only legacy
+    # (pre-v3.0 morton_*) files still have a grid resolution.
     ordering = info["ordering"]
-    if ordering == "morton":
-        resolution = info.get("ordering_resolution") or "unknown"
-        lines.append(f"Ordering: morton (resolution={resolution})")
-    elif ordering == "hilbert":
-        resolution = info.get("ordering_resolution") or "unknown"
-        lines.append(f"Ordering: hilbert (resolution={resolution})")
+    if ordering in ("morton", "hilbert"):
+        bits = info.get("ordering_bits_per_dim")
+        if bits is not None:
+            lines.append(f"Ordering: {ordering} (bits_per_dim={bits})")
+        else:
+            resolution = info.get("ordering_resolution") or "unknown"
+            lines.append(f"Ordering: {ordering} (resolution={resolution})")
     else:
         lines.append("Ordering: none")
 

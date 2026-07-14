@@ -1,7 +1,7 @@
-"""``luxar gsplat fitting`` commands (extracted from gsplat_commands.py).
+"""``luxar gsplat fitting`` commands.
 
 Each command is a plain function; ``register_fitting_commands(app)`` wires them onto
-the shared ``app_gsplat`` Typer (package-refactor-plan P3/P4/P6).
+the shared ``app_gsplat`` Typer.
 """
 
 from __future__ import annotations

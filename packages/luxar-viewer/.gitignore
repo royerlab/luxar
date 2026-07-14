@@ -1,4 +1,6 @@
-# WASM build output
+# WASM build output — wasm-pack owns this dir and overwrites everything in it
+# on each build (including copying the crate README over any README placed
+# here), so nothing inside is trackable. See src/wasm/README.md instead.
 public/wasm/
 viewer_code_reviews/
 

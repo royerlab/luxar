@@ -69,7 +69,7 @@ info = inspect_gsplats_zarr("fitted.gsplats.zarr")
 print(format_gsplats_info(info))
 # Output:
 # GSplats: 10,000 splats, 3D
-# Ordering: hilbert (resolution=65536)
+# Ordering: hilbert (bits_per_dim=21)
 # Size: 1.2 MB (3.8 MB uncompressed, 3.2x compression)
 # Fitting: 45.3s, 850 iterations (converged)
 ```

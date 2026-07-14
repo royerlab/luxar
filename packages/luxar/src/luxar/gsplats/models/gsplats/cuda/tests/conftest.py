@@ -82,10 +82,7 @@ def seed_all(seed: int) -> None:
 
     Tests that need explicit per-test determinism should call this instead
     of `np.random.seed(...)` alone — `torch.rand(...)` calls draw from
-    torch's RNG, which numpy seeding does not touch. The audit (C1 in
-    `delme/test-audit-luxar-codebase/findings-global-pattern-sweep.md`)
-    flagged the mixed-seed pattern as misleading even though the autouse
-    fixture below makes tests technically reproducible at seed=42.
+    torch's RNG, which numpy seeding does not touch.
     """
     np.random.seed(seed)
     torch.manual_seed(seed)

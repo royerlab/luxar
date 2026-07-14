@@ -1,7 +1,7 @@
-"""``luxar gsplat scene`` commands (extracted from gsplat_commands.py).
+"""``luxar gsplat scene`` commands.
 
 Each command is a plain function; ``register_scene_commands(app)`` wires them onto
-the shared ``app_gsplat`` Typer (package-refactor-plan P3/P4/P6).
+the shared ``app_gsplat`` Typer.
 """
 
 from __future__ import annotations
@@ -275,7 +275,7 @@ def migrate_format_command(
             # Post-write read-back: confirm the output is a loadable current-format
             # file rather than reporting success blind. load_gsplat_node (not
             # GSplatData.load) so nested trees — a migrated v3.x partition /
-            # multiscale / mosaic, which has no flat matrix equivalent — verify
+            # overview / adaptive, which has no flat matrix equivalent — verify
             # too, not just leaf/lod-matrix shapes.
             import zarr
 

@@ -22,21 +22,21 @@ pnpm test:e2e:report   # View HTML report
 pnpm test:generate-fixtures   # Generate fixtures from Python
 pnpm test:with-fixtures       # Generate + run tests
 
-# Coverage
-pnpm run test:coverage        # Generate coverage report
-open coverage/typescript/index.html
+# Coverage (summary printed to terminal; JSON at coverage/coverage-summary.json)
+pnpm run test:coverage
 
 # Quality gates
 pnpm run check                # Fast dev-loop: typecheck + lint + unit tests
-pnpm run check:ci             # Merge gate: typecheck + lint + layers + coverage thresholds
+pnpm run check:ci             # Merge gate: typecheck + lint + layers + knip + coverage thresholds
 ```
 
 `check` keeps the iteration fast. `check:ci` is what `make check-all`
 runs and what should run in CI — it adds the dependency-cruiser
-layer rule check and enforces the ratcheted coverage thresholds
+layer rule check, the `check:knip:ci` unused-export/unused-file gate,
+and enforces the ratcheted coverage thresholds
 declared in `vitest.config.ts`. A PR can pass `check` while
-violating layers or dropping coverage; that cannot happen with
-`check:ci`.
+violating layers, leaving dead exports, or dropping coverage; that
+cannot happen with `check:ci`.
 
 ### E2E console-error fixture (opt-in)
 
@@ -99,13 +99,14 @@ tests/
 │   └── orbit-controls.mock.ts     # OrbitControls mock
 │
 ├── unit/                          # Unit tests (fast, isolated)
-│   ├── data/                      # Data loading & encoding
+│   ├── data/                      # Data loading & encoding (incl. nav/ dataset browsing)
 │   ├── ndim/                      # nD slicing & spatial queries
 │   ├── cache/                     # Caching system
-│   ├── controls/                  # Camera controls & input
+│   ├── controls/                  # Camera controls (orbit / fly / manager)
+│   ├── input/                     # Keyboard/mouse input & context system
 │   ├── rendering/                 # Materials, shaders, post-processing
 │   ├── scene/                     # Scene management
-│   └── architecture/              # Global state, clean architecture
+│   └── ui/                        # UI panels (monitor, rail, …) — plus more sibling dirs
 │
 ├── e2e/                           # End-to-end tests (full browser)
 │   ├── *.spec.ts                  # Playwright E2E test files
@@ -250,13 +251,13 @@ Tests for Python-TypeScript data compatibility and the complete loading pipeline
 
 **Key Files**:
 
-- `array-decoder.test.ts` - **Python ↔ TypeScript encoding compatibility**
+- `array-decoder/` (directory of split tests: `decoder.test.ts`, `array-roundtrip.test.ts`, `load-and-decode.test.ts`, `ref-registry.test.ts`, ...) - **Python ↔ TypeScript encoding compatibility**
   - Broadcasting: `(1, 3) → (1000, 3)` color expansion
   - LUT encoding: Indexed color/radius lookup
   - Quantization: Float32 → Uint16 compression
   - Array references: Shared data via `array_ref` metadata
 
-- `encoded-range-extraction.test.ts` - **Critical bug fix**: Range extraction with encoded arrays
+- `array-decoder/encoded-range-extraction.test.ts` - **Critical bug fix**: Range extraction with encoded arrays
   - Bug: LUT-encoded arrays used wrong `elementsPerPoint` (1 instead of 3)
   - Result: Only 1/3 of points rendered, 2/3 appeared black
   - Tests: Verify range extraction uses correct `elementsPerPoint`
@@ -266,7 +267,7 @@ Tests for Python-TypeScript data compatibility and the complete loading pipeline
   - Node naming and metadata
   - Dimension specifications
 
-- `point-spatial-index-loader.test.ts` - Spatial index-based loading
+- `points/spatial-index-loader.test.ts` (plus `lines/` and `gsplats/` siblings) - Spatial index-based loading
   - Efficient range queries
   - Cell-based organization
   - nD spatial indexing
@@ -275,19 +276,19 @@ Tests for Python-TypeScript data compatibility and the complete loading pipeline
   - Tests internal logic with mocked zarr/THREE.js
   - Fast feedback loop
 
-- `data-loading-monitor.test.ts` - Loading UI monitor unit tests
+- `unit/ui/data-loading-monitor.test.ts` - Loading UI monitor unit tests (lives in `unit/ui/`, not `unit/data/`)
   - Progress tracking
   - Error handling
   - Cancellation
 
-- `data-monitor-integration.test.ts` - **Unit integration**: Monitor + loader interaction with mocks
+- `unit/ui/integration/data-monitor-integration.test.ts` - **Unit integration**: Monitor + loader interaction with mocks
   - Event system verification
   - State synchronization
 
 **Test Boundaries**:
 
 - **Unit tests** (`unit/data/`): Mock zarr data, focus on logic
-- **E2E tests** (`e2e/data-loading.spec.ts`): Real browser + real files
+- **E2E tests** (`e2e/real-dataset-loading.spec.ts`, `e2e/data-integrity.spec.ts`): Real browser + real files
 
 ---
 
@@ -309,10 +310,9 @@ Tests for multi-dimensional (4D, 5D+) visualization and slicing.
   - 4D+ visibility calculation
   - Edge cases (point on plane, behind plane)
 
-- `nd-navigation-utils.test.ts` - Dimension navigation helpers
-  - Step size calculation
-  - Value formatting
-  - Keyboard navigation utilities
+- `effective-radius-calculator.property.test.ts` - Property-based tests for hypersphere slicing
+  - Formula invariants across random radii/distances
+  - Complements the example-based tests above
 
 **Why This Matters**: 4D+ datasets require special handling. These tests prevent regressions of critical bugs that cause rendering artifacts.
 
@@ -354,7 +354,7 @@ Tests for memory management and performance optimization.
 
 ---
 
-### 4. Controls & Input (`unit/controls/`)
+### 4. Controls & Input (`unit/controls/`, `unit/input/`)
 
 Tests for camera controls and input management.
 
@@ -362,25 +362,24 @@ Tests for camera controls and input management.
 
 **Key Files**:
 
-- `controls-manager.test.ts` - Control switching (orbit ↔ fly)
+- `controls/controls-manager.test.ts` (+ `controls/controls-manager/`) - Control switching (orbit ↔ fly)
   - Mode switching
   - State preservation
   - Event handling
 
-- `luxar-fly-controls.test.ts` - Fly controls physics
+- `controls/luxar-fly-controls.test.ts` / `controls/luxar-orbit-controls.test.ts` (+ subdirs) - Fly/orbit controls behaviour
   - Inertial movement
   - Keyboard/mouse input
-  - Collision detection
+  - Damping and target handling
 
-- `input-context-manager.test.ts` - **Input context system**
+- `input/input-handler-class.test.ts` / `input/input-handler-utilities.test.ts` - InputHandler orchestrator + helpers
+  - Command dispatch and UI actions
+  - Shortcut → command routing
+
+- `input/input-handler/` (context-manager-*.test.ts, keyboard-validation.test.ts, key-bindings/, …) - **Input context system**
   - Prevents WASD conflicts with text fields
   - Context stack (global, UI, text input)
-  - Automatic context switching
-
-- `input-validation.test.ts` - Input validation utilities
-  - Block shortcuts when typing
-  - FOV calculation
-  - Key press validation
+  - Block shortcuts when typing; key press validation
 
 **Key Innovation**: Input context system prevents control interference (e.g., pressing 'W' in text field doesn't move camera)
 
@@ -399,7 +398,7 @@ Tests for WebGL rendering, shaders, and post-processing.
   - Uniform updates
   - Dispose tracking
 
-- `point-material.test.ts` - Point shader material
+- `materials/point/material-glsl.test.ts` (+ `blending-mode.test.ts`, and `line/` / `gsplat/` siblings with GLSL + TSL parity tests) - Geometry shader materials
   - Vertex/fragment shaders
   - World-space sizing
   - HDR color support
@@ -446,25 +445,18 @@ Tests for scene graph and state management.
 
 ---
 
-### 7. Architecture (`unit/architecture/`)
+### 7. Dataset Navigation (`unit/data/nav/`)
 
-Tests for clean architecture and global state management.
+Tests for the dataset-browser's directory navigation.
 
-**Scope**: Singleton managers, no global pollution, clean separation of concerns
+**Scope**: Directory listing, path navigation, file selection
 
 **Key Files**:
-
-- `global-state.test.ts` - **Verifies no global variable pollution**
-  - No global THREE.js leaks
-  - No global state accumulation
-  - Clean test isolation
 
 - `directory-navigator.test.ts` - File navigation UI
   - Directory listing
   - Path navigation
   - File selection
-
-**Why This Matters**: Global state causes test interference and memory leaks
 
 ---
 
@@ -482,10 +474,10 @@ Full browser tests using Playwright that exercise the complete pipeline.
 - `visual-regression.spec.ts` - Snapshot testing for visual correctness
 - `spatial-index-accuracy.spec.ts` - Spatial index correctness
 - `nd-navigation.spec.ts` - nD slicing in browser
-- `performance-benchmarks.spec.ts` - Performance tracking
+- `performance-tracking-perf-bench.spec.ts` - Performance tracking (opt-in perf suite: `pnpm test:perf:e2e`)
 - `error-recovery.spec.ts` - Error handling and recovery
-- `scene-integration.spec.ts` - Scene loading integration
-- `webgl-error-detection.spec.ts` - WebGL error handling
+- `real-dataset-loading.spec.ts` - Real dataset loading integration
+- `webgl-errors.spec.ts` - WebGL error handling
 
 **Why E2E Tests Matter**:
 
@@ -558,7 +550,7 @@ Regenerate fixtures when:
 - Scene metadata schema changes
 - Dimension system changes
 
-**Important**: Fixtures are checked into git to ensure consistent test data across machines
+**Important**: Fixtures are **not** checked into git (`*.zarr` is excluded by the repo `.gitignore`) — they are generated on demand. `pnpm test` auto-regenerates missing or stale fixtures via `src/tests/global-setup.ts`; see `tests/fixtures/README.md` for details
 
 ---
 
@@ -601,11 +593,10 @@ pnpm test:e2e:report
 ### Coverage
 
 ```bash
-# Generate coverage report
+# Generate coverage report (text summary in the terminal + machine-readable
+# coverage/coverage-summary.json — the configured reporters are
+# ['text', 'json-summary']; no HTML report is generated)
 pnpm run test:coverage
-
-# View HTML report
-open coverage/typescript/index.html
 
 # Coverage requirements
 # - Minimum: 80%
@@ -650,7 +641,7 @@ make test-all                   # All tests (Python + TypeScript + WASM)
 
 ### Test File Naming
 
-- **Unit tests**: `*.test.ts` (e.g., `array-decoder.test.ts`)
+- **Unit tests**: `*.test.ts` (e.g., `zarr-loader.test.ts`)
 - **E2E tests**: `*.spec.ts` (e.g., `basic-rendering.spec.ts`)
 - **Descriptive names**: Describe what's being tested, not generic names
 
@@ -781,7 +772,7 @@ Several tests document and prevent regressions of critical bugs:
 - **Fix**: Calculate ndim from positions array shape
 - **Test**: Verify ndim calculated from actual data
 
-#### 2. Encoded Range Extraction Bug (`encoded-range-extraction.test.ts`)
+#### 2. Encoded Range Extraction Bug (`array-decoder/encoded-range-extraction.test.ts`)
 
 - **Bug**: LUT-encoded arrays used wrong `elementsPerPoint` (1 instead of 3)
 - **Impact**: Only 1/3 of points rendered, 2/3 appeared black
@@ -789,7 +780,7 @@ Several tests document and prevent regressions of critical bugs:
 - **Fix**: Use correct `elementsPerPoint` from metadata
 - **Test**: Verify range extraction with LUT/quantization
 
-#### 3. Array Reference Bug (`array-decoder.test.ts`)
+#### 3. Array Reference Bug (`array-decoder/decoder.test.ts`)
 
 - **Bug**: Array references not resolved correctly
 - **Impact**: Duplicated point data not shared (memory waste)
@@ -810,12 +801,12 @@ When multiple test files test similar functionality at different levels, clarify
    - **What**: Tests internal logic with mocked zarr/THREE.js
    - **Fast**: No browser, no real files (~100ms per test)
 
-2. **`unit/data/data-monitor-integration.test.ts`**
+2. **`unit/ui/integration/data-monitor-integration.test.ts`**
    - **Scope**: Unit tests for monitor + loader interaction with mocks
    - **What**: Tests event system and state synchronization
    - **Fast**: No browser, no real files (~50ms per test)
 
-3. **`e2e/data-loading.spec.ts`**
+3. **`e2e/real-dataset-loading.spec.ts`**
    - **Scope**: E2E tests with real browser and real files
    - **What**: Tests full pipeline including WebGL rendering
    - **Slow**: Real browser, real datasets, real OPFS (~5s per test)
@@ -886,10 +877,15 @@ Tests run automatically on:
 **CI Requirements**:
 
 - All unit tests pass (see CI for current count)
-- All E2E tests pass
 - Coverage ≥ 80%
 - No TypeScript errors
 - No linting errors
+
+**E2E in CI**: the GitHub Actions `e2e-tests` job is intentionally
+disabled (`if: false` in `.github/workflows/ci.yml`) — a dormant
+smoke subset (`pnpm test:e2e:smoke`) is defined and re-enabling is a
+one-line change. Until then, run E2E locally (`pnpm test:e2e`)
+before PR/merge.
 
 **Pre-commit Checklist**:
 

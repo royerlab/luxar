@@ -80,17 +80,21 @@ The setup process has 5 steps:
 
 #### Step 1: Python Environment
 
-1. Verifies Python 3.10+ is available
+1. Verifies a `python3` binary is present (any version — the version itself
+   is not checked here)
 2. Checks for Hatch (Python environment manager)
 3. If Hatch is missing:
    - Checks for pipx (required on modern Ubuntu/Debian)
    - Installs Hatch via `pipx install hatch`
+   - Without pipx, falls back to `pip install --user` / a venv — this
+     fallback is where a Python 3.10+ interpreter is scanned for
+     (`python3.13` → `python3.12` → ... → `python3`)
    - Handles edge cases (broken symlinks, already installed)
 
 #### Step 2: Node.js Environment
 
 1. Sources nvm if already installed (`~/.nvm/nvm.sh`)
-2. Checks Node.js version (requires 20.19+ for Vite 7.x)
+2. Checks Node.js version (requires 20.19+ for Vite 8.x)
 3. If Node.js is missing or too old:
    - **macOS**: Uses Homebrew (`brew install node@22`)
    - **Linux**: Installs nvm, then `nvm install 22`
@@ -106,11 +110,14 @@ The setup process has 5 steps:
 1. Runs `pnpm install` in `packages/luxar-viewer/`
 2. Downloads all npm packages (~300 packages)
 
-#### Step 5: Optional WASM Support
+#### Step 5: Optional Accelerators (WASM + CUDA)
 
 1. Checks for Rust/wasm-pack
 2. Displays instructions for `make install-rust` if not installed
 3. WASM is optional - viewer works without it (uses TypeScript fallback)
+4. Reports CUDA status: whether the CUDA toolkit (`nvcc`) is installed and
+   whether PyTorch CUDA is available (pointing at `make check-cuda-deps` /
+   `make build-cuda` as next steps)
 
 ### Rust/WASM Setup Details
 
@@ -140,7 +147,7 @@ make build-viewer
 
 ### Native Launcher Setup Details
 
-The native launcher backs `luxar export --native macos|linux-amd64|linux-arm64`, which produces double-clickable native bundles. The launcher is a small Go program (`packages/luxar-launcher/main.go`, ~150 lines) that opens the bundled viewer inside a system WebView and serves the bundled zarr over a local HTTP server.
+The native launcher backs `luxar export --native macos|linux-amd64|linux-arm64`, which produces double-clickable native bundles. The launcher is a small Go program (`packages/luxar-launcher/main.go`) that opens the bundled viewer inside a system WebView and serves the bundled zarr over a local HTTP server.
 
 **What `make install-go` does:**
 1. macOS: installs Go via Homebrew (no sudo)
@@ -209,17 +216,27 @@ MIN_NODE_MINOR := 19
 | `make install-pnpm` | Install pnpm package manager |
 | `make install-hatch` | Install Hatch via pipx |
 | `make install-rust` | Install Rust toolchain and wasm-pack |
+| `make install-go` | Install Go toolchain for native launcher builds (no sudo) |
+| `make build-launchers` | Build native launchers for the host platform (requires Go + CGO) |
+| `make install-viewer-deps` | Install viewer dependencies (node_modules) |
+| `make install-dev` | Install Luxar Python package in editable mode |
+| `make enable-pre-commit` | Enable and activate pre-commit hooks |
+| `make check-wasm-deps` | Check WASM dev dependencies (Rust, wasm-pack) |
 | `make clean-setup` | Remove ALL dev tools to simulate fresh machine |
 
 ### Quality & Testing
 
 | Command | Description |
 |---------|-------------|
-| `make check-all` | Run all quality checks (Python + TypeScript) |
+| `make check-all` | Run all quality checks (Python, TypeScript, Go) |
 | `make check-typescript` | Run all TypeScript checks (typecheck, lint, test) |
-| `make test-all` | Run all tests (Python + Rust + TypeScript) |
+| `make check-rust` | Run Rust type/lint checks (cargo check + clippy) |
+| `make test-all` | Run all tests (Python + Rust/WASM + TypeScript, plus CUDA extension tests and Go launcher tests when those toolchains are available) |
+| `make test-cov-all` | Run all tests with coverage (Python + TypeScript) |
 | `make test-python` | Run Python tests only |
 | `make test-cov-python` | Run Python tests with coverage |
+| `make test-fixtures` | Generate test fixtures for TypeScript tests |
+| `make test-viewer-fixtures` | Generate fixtures + run TypeScript tests |
 | `make test-e2e` | Run Playwright E2E tests |
 | `make lint-python` | Run ruff linting on Python |
 | `make lint-typescript` | Run ESLint on TypeScript |
@@ -228,14 +245,21 @@ MIN_NODE_MINOR := 19
 | `make security` | Run bandit security scan |
 | `make format-python` | Format Python code |
 | `make format-typescript` | Format TypeScript code |
-| `make format-all` | Format all code (Python + TypeScript) |
+| `make format-rust` | Format Rust code with cargo fmt |
+| `make format-go` | Format the Go launcher with gofmt |
+| `make format-cuda` | Format CUDA/C++ code with clang-format |
+| `make format-all` | Format all code (Python, TypeScript, Rust, Go, CUDA) |
+| `make run-pre-commit` | Run pre-commit hooks on all files |
+| `make gen-contract` | Regenerate Python + TS format-contract projections from contract.yaml |
+| `make benchmark-metal` | Run Metal (MPS) performance benchmarks (M-series only) |
+| `make benchmark-metal-stress` | Run Metal RSS leak-check |
 
 ### Viewer Development
 
 | Command | Description |
 |---------|-------------|
 | `make viewer` | Start viewer dev server (port 5173) |
-| `make build-viewer` | Build viewer for production (requires Rust) |
+| `make build-viewer` | Build viewer for production (auto-installs Rust/wasm-pack via `install-rust` if missing) |
 | `make rebuild-viewer` | Clean rebuild of viewer |
 | `make test-viewer` | Run TypeScript unit tests |
 | `make test-cov-typescript` | Run TypeScript tests with coverage |
@@ -249,6 +273,21 @@ MIN_NODE_MINOR := 19
 | `make benchmark-wasm` | Run WASM vs TypeScript performance benchmarks |
 | `make clean-wasm` | Clean WASM build artifacts |
 
+### CUDA & GPU Extensions
+
+| Command | Description |
+|---------|-------------|
+| `make setup-cuda` | Install CUDA deps + build extension |
+| `make check-cuda-deps` | Check CUDA dependencies (nvcc, PyTorch CUDA, etc.) |
+| `make build-cuda` | Build CUDA splatting extension (`SLURM=1` to build on a GPU node) |
+| `make build-cuda-slurm` | Submit CUDA extension build as a Slurm job (alias for `make build-cuda SLURM=1`) |
+| `make test-cuda` | Run CUDA tests |
+| `make benchmark-cuda` | Run CUDA performance benchmarks |
+| `make clean-cuda` | Clean CUDA build artifacts |
+| `make build-nlm-cuda` | Build the NLM CUDA denoising extension |
+| `make test-nlm-cuda` | Run NLM CUDA extension tests |
+| `make clean-nlm-cuda` | Clean NLM CUDA build artifacts |
+
 ### Data & Demos
 
 | Command | Description |
@@ -256,29 +295,51 @@ MIN_NODE_MINOR := 19
 | `make demo` | Generate demo dataset (100k points) |
 | `luxar demo` | Generate demo + serve + open browser (all-in-one) |
 | `make run-examples` | Generate all example datasets |
+| `make run-demos` | Generate ALL demo datasets (output to `datasets/demos/`) |
 | `make serve-examples` | Serve datasets directory |
 | `make serve-dataset` | Serve a specific dataset |
+| `make generate-readme-demos` | Generate only the demo datasets needed for README screenshots |
+| `make generate-readme-images` | Generate README screenshots using Playwright |
+| `make generate-readme-videos` | Generate README videos (GIF/WebP) using Playwright |
 
 ### Documentation
 
 | Command | Description |
 |---------|-------------|
-| `make build-docs` | Build Sphinx documentation |
+| `make build-docs` | Build documentation: first runs `generate-doc-images` (generates demo datasets + Playwright screenshots — needs pnpm and Playwright browsers), then Sphinx, then `build-typedoc` |
+| `make generate-doc-images` | Generate documentation screenshots using Playwright (depends on `generate-readme-demos`) |
 | `make serve-docs` | Serve documentation locally |
 | `make clean-docs` | Clean documentation artifacts |
 | `make check-docs` | Check documentation quality |
+| `make check-docs-verbose` | Check documentation with detailed output |
+| `make build-typedoc` | Generate TypeScript API documentation with TypeDoc |
 
 ### Utilities
 
 | Command | Description |
 |---------|-------------|
 | `make help` | Show all available commands |
-| `make clean-all` | Clean all artifacts (Python, TypeScript, WASM, CUDA, datasets) |
+| `make clean-all` | Clean all artifacts (Python, TypeScript, WASM, CUDA, launchers, datasets, and the `~/.cache/luxar` user cache via `clean-launchers` + `clean-cache`) |
 | `make clean-examples` | Clean generated example datasets |
+| `make clean-python` | Clean Python build artifacts and caches |
+| `make clean-viewer` | Clean viewer build artifacts (node_modules, dist, etc.) |
+| `make clean-launchers` | Clean native launcher binaries |
+| `make clean-cache` | Clear the Luxar user cache (`~/.cache/luxar`) |
 | `make stats` | Generate project statistics report |
+| `make stats-fast` | Generate project statistics without running tests (file counts only) |
 | `make shell` | Enter Hatch development shell |
 | `make show-env` | Show Hatch environments |
 | `make prune-env` | Remove unused Hatch environments |
+
+### Release & Publishing
+
+| Command | Description |
+|---------|-------------|
+| `make build` | Build wheel + sdist (builds the viewer first so it is bundled) |
+| `make set-version` | Set release version in code (`DATE=YYYY.MM.DD`, default today) |
+| `make release-check` | Dry-run release: run ALL preflight checks, tag/push nothing |
+| `make release` | Cut release: validate main + CI green, tag `v<version>`, push (triggers PyPI publish) |
+| `make publish` / `make publish-test` | Disabled — use `make release` (tag-triggered OIDC publish via CI) |
 
 ## Dependency Management
 
@@ -542,6 +603,12 @@ CUDA_ARCHS="86;90" make build-cuda SLURM=1       # Only sm_86 and sm_90 (faster 
 CUDA_ARCHS="100;120" make build-cuda SLURM=1     # Blackwell-only (requires CUDA 12.8+)
 ```
 
+**Caveat with `SLURM=1`**: `CUDA_ARCHS` is not baked into the generated
+sbatch script (`scripts/build_cuda_slurm.py` never references it). It only
+reaches the compute node through sbatch's default environment propagation
+(`--export=ALL`), so it must be set in the shell that runs the `make
+build-cuda SLURM=1` submission.
+
 ### Build metadata (`cuda_build_info.json`)
 
 After compilation, `build.py` writes `cuda_build_info.json` alongside the `.so` recording:
@@ -586,7 +653,7 @@ hatch run luxar gsplat batch-fit submit data.zarr.zip output/ -p gpu \
 | `--tile-size` | Manual tile size in voxels — skips GPU profile requirement |
 | `--tasks-per-job` | Number of tasks per Slurm job (auto-calculated from GPU capacity) |
 | `--parallel` / `--sequential` | Run packed tasks concurrently or one-by-one (default: sequential) |
-| `--preset` | Fitting preset: `draft` (500 iter), `standard` (3000), `hifi` (6000) |
+| `--preset` | Fitting preset: `draft` (2000 iter), `standard` (5000), `hifi` (10000), `ultra` (20000), `n2s` (= ultra; canonical Noise2Self protocol name) |
 | `--gpu` | GPU profile name when auto-detect unavailable (login node) |
 
 **Auto-tiling**: compares total spatial voxels against the GPU's benchmarked
@@ -683,13 +750,13 @@ For automated environments (GitHub Actions, etc.):
 | Tool | Minimum Version | Reason |
 |------|----------------|--------|
 | Python | 3.10 | Type hints, dataclasses, match statements |
-| Node.js | 20.19 | Vite 7.x requirements |
+| Node.js | 20.19 | Vite 8.x requirements |
 | Rust | stable | WASM compilation |
-| wasm-pack | latest | WASM packaging |
+| wasm-pack | 0.14.0 (pinned) | WASM packaging — `install-rust` installs exactly `wasm-pack 0.14.0` with `cargo install --locked` |
 
 ## Related Documentation
 
-- [CONTRIBUTING.md](../../../CONTRIBUTING.md) - Contributing guidelines
-- [CLAUDE.md](../../../CLAUDE.md) - AI assistant instructions
+- `CONTRIBUTING.md` (repo root) - Contributing guidelines
+- `CLAUDE.md` (repo root) - AI assistant instructions
 - [TESTING_GUIDELINES.md](./TESTING_GUIDELINES.md) - Testing best practices
 - [PLAYWRIGHT_GUIDE.md](./PLAYWRIGHT_GUIDE.md) - E2E testing guide

@@ -6,6 +6,134 @@ All notable changes to Luxar are documented in this file.
 
 ### July 2026
 
+#### Fixed — LUT-on-COORDINATE line-vertex corruption + remaining doc-audit flags (PR #517)
+
+- Grid-snapped line vertices (few unique coordinate values) could store as
+  `lut_uint8` indices while the viewer's lines spatial-index loader reads
+  `vertices` as raw chunked zarr — corrupted geometry. New `allow_lut` knob on
+  `ArrayEncoder.encode`; line vertices now always materialise
+  (`linear_perchannel_u16`), with a regression test.
+- `format_gsplats_info` prints the real ordering metadata (`bits_per_dim=21`)
+  instead of `resolution=unknown`; a vacuous CLI port-conflict test (passing a
+  nonexistent `--no-viewer` flag) now genuinely exercises the conflict path;
+  assorted stale docstrings/READMEs corrected (worker responsibilities, GSplats
+  sharpness, cache tiers, per-part recipe names).
+
+#### Fixed — Python completeness-audit sweep (PR #515)
+
+- Deleted dead/unreachable surfaces, synced stale docs, and shared the widths
+  validator across geometry writers (net −32 lines; behavior-preserving except
+  where noted in the PR).
+
+#### Documentation — full documentation-sync audit (PRs #513, #516)
+
+- Audited every documentation surface against the code (CLI help, format
+  writers/readers, viewer source, Sphinx targets, executed tutorial snippets)
+  and fixed ~185 findings: stale LOD recipe names, wrong compression/encoding
+  claims in `LUXAR_ZARR_FORMAT.md`, a new Lines on-disk format section, broken
+  tutorial snippets, a fictional CI section in the E2E guide, missing skills
+  coverage for `--floor`/`reencode`/`annotate-quality`/`additive`, and Sphinx
+  autodoc for previously undocumented public modules.
+
+#### Changed — gsplat demo LFS baselines upgraded to format v3.2 + AUTO quantization; cells3d demo resurrected (PR #505)
+
+- All 19 precomputed `.gsplats.zarr` demo baselines shipped via Git LFS were
+  rewritten from format v3.0 (float32) to v3.2 with AUTO (uint16 Cholesky)
+  quantization — a lossless write-time `reencode` (no refit), shrinking the
+  bundled demo data ~2.7× (573 MB → 212 MB).
+- `demo_gsplats_3d_cells3d_multichannel.py` is resurrected as a BOP-LUT
+  layers demo (3D multi-channel cells3d).
+
+#### Fixed — script tidying: `reencode_gsplat_demos.py` and `calibrate_gsplat_demos.py` (PRs #506, #508)
+
+- `reencode_gsplat_demos.py`: docstring, mypy-clean, robustness improvements.
+- `calibrate_gsplat_demos.py`: cells3d calibration parity fix; mypy-clean.
+
+#### Added — new spectacular-science gsplat + Lines demos (PRs #496, #497, #500, #502)
+
+- **Cryo-EM giant virus capsid** (`demo_gsplats_3d_cryoem_virus.py`): Gaussian
+  splats a real EMDB density map (EMD-5384, PBCV-1) — the microscopy splat
+  pipeline applied to structural biology.
+- **Visible Human head** (`demo_gsplats_3d_visible_human_head.py`): true-color
+  anatomy from NLM cryosection photographs; luminance fit + per-splat RGB
+  sampled from the original color volume.
+- **3D interstellar dust** (`demo_gsplats_3d_milky_way_dust.py`): the Leike &
+  Enßlin (2020) solar-neighborhood dust cube fit to Gaussian splats.
+- **4D two-channel neuromast timelapse** (`demo_gsplats_4d_neuromast_2ch.py`):
+  membranes + nuclei as layers.
+- **Single-cell 3D genome (Dip-C)** (`demo_dipc_3d_genome.py`): chromosomes as
+  3D Lines, with a non-displayed `haplotype` dimension to scrub maternal /
+  paternal copies.
+
+#### Fixed — viewer works over plain HTTP (PR #501)
+
+- The viewer crashed on any plain-HTTP / non-localhost origin because
+  `crypto.subtle` is undefined outside a secure context (used for content-hash
+  cache keys). A vendored SHA-256 fallback is now used when `crypto.subtle` is
+  unavailable, so the viewer loads over LAN / Tailscale HTTP.
+
+#### Fixed — seven viewer rendering-engine bugs from a WebGL-path deep read (PRs #503, #507)
+
+A full read of the viewer's Three.js WebGL rendering path surfaced seven
+confirmed bugs; each fix shipped with a failing-first regression test.
+
+- **Non-pool geometry commit was broken (all three geometry types)**. With
+  `useGPUBufferPool: false`, the points same-count commit cast a plain
+  `InstancedBufferAttribute` to an interleaved view and threw
+  `Cannot read properties of undefined (reading 'stride')` on the *second*
+  same-count commit (routine while scrubbing a constant-count dimension); the
+  same branch also normalized `Uint16` colors with ÷255 instead of ÷65535
+  (~257× too bright). Points now dispose+recreate via `createPointsGeometry`
+  (the single owner of the dtype/bounds logic). `updateInstanced{Lines,GSplats}Mesh`
+  now return whether they rebuilt the buffer so all three non-pool commit paths
+  evict Three's cached `RenderObject` on rebuild (WebGPU stale-`vertexBuffers`
+  parity with the pool path).
+- **`nearCull` dropped for newly created materials**. The three `getXMaterial`
+  factories omitted the stored `currentNearCull`, so a gsplat/line material
+  created after camera setup kept its constructor default (0.1 / 0.05 world
+  units) until the next resize/FOV event — geometry near the camera was
+  wrongly faded/culled on first paint ("splats missing until the camera
+  moves") on scenes whose world scale differs from those defaults.
+- **LRU material eviction disposed materials still attached to live meshes**.
+  Cache churn could dispose a shared material still on a mesh; Three
+  auto-recompiled it (so it kept rendering) but its dispose listener had
+  unregistered it, so it permanently stopped receiving `updateCameraParams`
+  and rendered with stale resolution/FOV/nearCull after the next resize.
+  Eviction is now defer-dispose: the entry leaves the cache but stays
+  registered for camera updates and is disposed at teardown. (`dispose()` also
+  now covers the `registeredMaterials ∪ ownedMaterials` union so a
+  colormap-clone original that was detached then evicted is still freed.)
+- **GSplat picking was displaced on wide / HiDPI displays**. `computePickBufferSize`
+  clamped each axis independently to 1024 px, so any drawing buffer wider than
+  2048 px (Retina fullscreen, 4K, ultrawide) produced a pick buffer whose
+  aspect no longer matched the camera. The gsplat pick shader assumes square
+  pixels (`uFx == uFy`), so hover/selection landed up to ~1.5–1.8× off
+  horizontally away from screen center (points/lines pick through the
+  aspect-aware projection matrix and were unaffected). The cap is now a single
+  uniform scale on both axes, preserving aspect.
+- **Progressive-refinement / retry commits never woke the render loop**.
+  Refinement passes, failed-load retries, and the online auto-retry commit
+  geometry *after* the sweep that started them; with the rAF loop idle-paused
+  (2 s), LOD chunks were fetched, decoded, and uploaded invisibly until the
+  next input. A `requestRender` callback now funnels through the three
+  SceneLoader commit methods (`SceneLoaderManager.setRequestRender` →
+  `AnimationController.startAnimation`, idempotent).
+- **The SceneManager `change` event had no subscriber → blank canvas after an
+  idle-time context restore**. The WebGL context-restore path ends with
+  `triggerChange()` ("trigger a render"), but nothing listened. A context
+  restored while the loop was idle-paused (GPU driver reset with the page
+  visible but untouched) rebuilt resources and resized the renderer (clearing
+  the canvas), then never painted — blank viewer until the next input. The
+  init pipeline now wires `change → startAnimation`.
+- **Every window resize reallocated the HDR render target twice, unconditionally**.
+  `reallocateForSize()` disposed + recreated the full-screen half-float HDR
+  target on every call, and every resize reaches it through *two* paths (the
+  window `resize` listener via `ResizeOrchestrator` **and** the canvas-parent
+  `ResizeObserver`). The allocation is now memoized on display size, effective
+  logical size (SSAA), physical size (DPR), and MSAA sample count — an
+  identical request is a complete no-op, while DPR/MSAA/SSAA changes still
+  reallocate and `rebuildAfterContextRestore` resets the memo.
+
 #### Removed — dead `computeNDVisibility{Points,Lines,GSplats}` worker kernels
 
 - Deleted the three standalone nD-visibility worker tasks, their TS wrappers

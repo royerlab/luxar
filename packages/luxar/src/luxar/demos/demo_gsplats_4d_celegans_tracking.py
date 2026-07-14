@@ -704,7 +704,7 @@ def calibrate_nlm_once(first_volume: np.ndarray | None) -> float:
     if first_volume is None:
         raise RuntimeError(
             "NLM calibration cache is missing or corrupt and no volume was "
-            "provided for re-calibration.  Re-run with --no-cache."
+            "provided for re-calibration.  Re-run with --recompute."
         )
 
     with asection("Calibrating NLM denoiser (Noise2Self / J-invariant)"):

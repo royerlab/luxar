@@ -94,6 +94,7 @@ Features
 
    guides/specs/ND_TRANSFORMS_SPEC
    guides/specs/CACHE_PREFETCHING_SPEC
+   guides/specs/SUBPIXEL_JITTER_TAA_SPEC
    specs/GSPLATS_DIMENSION_MAPPING
 
 .. toctree::
@@ -156,6 +157,9 @@ Gaussian Splatting
 * **luxar.gsplats.utils** - Matrix utilities
 * **luxar.gsplats.seeds** - Seed generation strategies
 * **luxar.gsplats.clahe** - CLAHE-based sampling
+* **luxar.gsplats.calibration** - Blind-spot cross-validation for splat count K
+* **luxar.gsplats.lod** - Level-of-detail topology construction
+* **luxar.gsplats.batch** - Batch fitting across GPUs / Slurm clusters
 
 Quick Links
 -----------

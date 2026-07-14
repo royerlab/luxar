@@ -274,13 +274,12 @@ print(f"Radii: {radii.shape}, {radii.dtype}")
 
 | Type | Description | Constraints | Valid Dtypes |
 |------|-------------|-------------|--------------|
-| **COORDINATE** | Spatial positions/centers | Can be negative | float32, float16 |
+| **COORDINATE** | Spatial positions/centers | Can be negative | float32, uint16 (per-axis fixed-point; float16 deliberately never used) |
 | **COLOR** | RGB/RGBA colors | Non-negative, SDR [0,1] or HDR | uint8, uint16, float16, float32 |
 | **BOUNDED_SCALAR** | Scalars with known [min, max] | Within bounds | uint8, uint16, float16, float32 |
 | **POSITIVE_SCALAR** | Non-negative scalars | ≥ 0 | uint8, uint16, float16, float32 |
 | **CHOLESKY** | Packed Cholesky factors | Shape (N, d(d+1)/2) | float32, float16 |
 | **INDEX** | Non-negative integer indices | Non-negative integers | uint8, uint16, uint32, uint64 |
-| **UNIT_VECTOR** | Normalized vectors (‖v‖=1) | Unit length | float32, float16 |
 
 **Usage Example:**
 ```python
@@ -919,7 +918,7 @@ The `float16_allowed` parameter controls whether float16 encoding is used:
 **Default: `False`** - Uses float32 for maximum compatibility (TypeScript/zarrita/web)
 **Set to `True`** - Uses float16 for 50% memory savings (Python-only workflows)
 
-**Affected Semantic Types**: COORDINATE, COLOR (HDR), POSITIVE_SCALAR, CHOLESKY, UNIT_VECTOR
+**Affected Semantic Types**: COORDINATE, COLOR (HDR), POSITIVE_SCALAR, CHOLESKY
 
 **Usage**:
 ```python

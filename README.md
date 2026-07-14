@@ -471,7 +471,7 @@ luxar gsplat flatten IN OUT             # Collapse a gsplat tree (LOD/partition)
 See [`docs/tutorials/distributing_scenes.rst`](docs/tutorials/distributing_scenes.rst) for the full distribution story (folder export, native bundles, sharing across OSes, Gatekeeper handling).
 
 **Serve Options:**
-- `--viewer` / `--no-viewer` - Launch viewer alongside server
+- `--viewer` - Launch viewer alongside server
 - `--open` - Open browser automatically
 - `--port PORT` - Data server port (default: 8000)
 - `--viewer-port PORT` - Viewer port (default: 5173)
@@ -605,7 +605,7 @@ If you see "GPU fitting will use slower PyTorch fallback", fitting still works â
 | `?src=<url>` | Data source URL (Zarr store) |
 | `?theme=light` | Set UI theme (`light` or `dark`) |
 | `?debug` | Enable debug mode (`window.__luxarDebug`) |
-| `?no-cache` | Disable all chunk caching (L0/L1/L2) |
+| `?no-cache` | Disable all caching tiers (S-cache + L0/L1/L2) |
 | `?cache-debug` | Show cache hit/miss statistics |
 | `?clear-cache` | Clear the OPFS persistent cache on load |
 | `?no-prefetch` | Disable predictive chunk prefetching |

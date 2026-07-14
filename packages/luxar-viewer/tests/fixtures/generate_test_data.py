@@ -65,6 +65,7 @@ FIXTURE_NAMES: list[str] = [
     "test_encoding_contract_matrix.luxar.zarr",
     "test_encoding_edge_cases.luxar.zarr",
     "test_gsplats.luxar.zarr",
+    "test_gsplats_normal_overlap.luxar.zarr",
     "test_hdr_colors.luxar.zarr",
     "test_hierarchical_transforms.luxar.zarr",
     "test_integer_colors.luxar.zarr",
@@ -878,20 +879,6 @@ def generate_encoding_contract_matrix_test() -> None:
             SemanticType.INDEX,
             "index values requiring uint64 storage",
             mode=EncodingMode.MEMORY,
-        )
-
-        # UNIT_VECTOR: direct float path with signed normalized rows.
-        unit_vectors = np.array(
-            [[1.0, 0.0, 0.0], [0.0, -1.0, 0.0], [0.0, 0.0, 1.0], [0.57735026] * 3],
-            dtype=np.float32,
-        )
-        encode_case(
-            "unit_vector_float32",
-            unit_vectors,
-            SemanticType.UNIT_VECTOR,
-            "signed 3D unit vectors direct float32",
-            mode=EncodingMode.PRECISION,
-            chunks=(2, 3),
         )
 
         # Manual LUT threshold cases. The encoder now emits lut_uint16 itself
@@ -1776,6 +1763,81 @@ def generate_gsplats_test() -> None:
         aprint(f"  Centers: {centers.shape}, Cholesky: {cholesky.shape}")
 
 
+def generate_gsplats_normal_overlap_test() -> None:
+    """Two large overlapping splats at staggered depth, 'normal' blending.
+
+    Exercises the gsplat premultiplied coverage-alpha path
+    (LUXAR_NORMAL_PREMULT; see GSPLAT_DEPTH_SORTING_SPEC.md Phase 0):
+    with real alpha-over compositing the framebuffer behind the front
+    splat must show through (pre-fix, gsplat 'normal' emitted alpha=1.0
+    and occluded everything behind it). The two splats overlap in
+    screen space from the default camera; a third small reference splat
+    sits outside the overlap as an anchor for visual assertions.
+    """
+    with asection("Generating GSplats Normal-Overlap Test"):
+        output = FIXTURES_DIR / "test_gsplats_normal_overlap.luxar.zarr"
+
+        # Two overlapping splats staggered in z, plus one small off-axis
+        # reference splat. Sigmas are deliberately modest relative to the
+        # scene span: the viewer's screen-coverage safety fade
+        # (uMaxExtentFactor, default 0.33 of the viewport) starts fading
+        # splats at HALF that fraction — oversized splats would be
+        # legitimately culled and the fixture would render black (see the
+        # warning in generate_gsplats_test).
+        centers = np.array(
+            [
+                [-0.25, 0.0, 0.0],  # back splat (red)
+                [0.25, 0.0, 1.0],  # front splat (green), overlaps in screen space
+                [3.0, 2.0, 0.0],  # small reference splat (blue), no overlap
+            ],
+            dtype=np.float32,
+        )
+        amplitudes = np.array([2.0, 2.0, 1.0], dtype=np.float32)
+
+        cholesky = np.zeros((3, 6), dtype=np.float32)
+        for i, sigma in enumerate((0.35, 0.35, 0.3)):
+            cholesky[i, 0] = sigma  # L11
+            cholesky[i, 2] = sigma  # L22
+            cholesky[i, 5] = sigma  # L33
+
+        colors = np.array(
+            [
+                [1.0, 0.1, 0.1],  # red
+                [0.1, 1.0, 0.1],  # green
+                [0.1, 0.1, 1.0],  # blue
+            ],
+            dtype=np.float32,
+        )
+
+        dims = Dimensions(
+            [
+                Dimension("x", unit="units", display=True),
+                Dimension("y", unit="units", display=True),
+                Dimension("z", unit="units", display=True),
+            ]
+        )
+
+        with LuxarZarrCompiler(
+            output,
+            encoding_mode=EncodingMode.PRECISION,
+            compressor=None,
+            float16_allowed=False,
+        ) as compiler:
+            scene = compiler.create_scene(dimensions=dims)
+
+            scene.add_gsplats(
+                "overlap_splats",
+                centers,
+                amplitudes=amplitudes,
+                cholesky_factors=cholesky,
+                colors=colors,
+                blending_mode="normal",
+                opacity=0.5,
+            )
+
+        aprint(f"  Created {output}")
+
+
 def generate_standalone_gsplats_test() -> None:
     """Standalone v3.1 ``.gsplats.zarr`` — a *detached* gsplats leaf node.
 
@@ -2068,6 +2130,7 @@ def main() -> None:
         aprint("")
 
         generate_gsplats_test()
+        generate_gsplats_normal_overlap_test()
         aprint("")
 
         generate_standalone_gsplats_test()

@@ -70,8 +70,9 @@ interface SpatialDataLoader<TViewState, TLoadedData> {
 Unified encoding dispatch. The orchestrator (`spatial-query/range-loader.ts`)
 is a thin dispatcher; each encoding's body lives in a sibling helper
 under `spatial-query/range-loader/` (`broadcasted.ts`, `quantized.ts`,
-`lut.ts`, `direct.ts`, `array-ref.ts`, plus `detect-encoding.ts`,
-`ref-resolution.ts`, `shared-instance.ts`, and the shared `encoding-types.ts`).
+`perchannel.ts`, `lut.ts`, `direct.ts`, `array-ref.ts`, plus
+`detect-encoding.ts`, `ref-resolution.ts`, `shared-instance.ts`, and the
+shared `encoding-types.ts`).
 
 ```typescript
 import { RangeLoader, getSharedRangeLoader } from './loaders';
@@ -96,6 +97,8 @@ Supported encodings:
 - **quantized**: uint8/uint16 → float32 dequantization
 - **lut**: Index-based lookup table decoding
 - **array_ref**: Reference to another array (resolved at init)
+- **perchannel**: Per-column (`col_lo`/`col_hi`) log / signed-log / linear
+  dequantization of `*_perchannel_*` uint8/uint16 arrays → float32
 - **direct**: No encoding, pass-through
 
 ### 3. spatial-query/spatial-query-builder.ts
@@ -395,6 +398,7 @@ src/data/loaders/
 ├── index.ts                      # Module exports (barrel — only public surface)
 ├── README.md                     # This file
 ├── base-types.ts                 # Common type definitions (BaseViewState, LoadRange, BaseLoader, ...)
+├── abort-error.ts                # isAbortError — realm-proof "superseded, not failed" classifier
 ├── chunk-bounds-loader.ts        # Shared chunk_bounds zarr probe (Points/Lines/GSplats)
 ├── color-loader.ts               # Shared color-range loader with native-dtype preservation
 ├── transferable-accumulator.ts   # Zero-allocation + worker offload buffer pattern
@@ -409,12 +413,14 @@ src/data/loaders/
 ├── spatial-query/                # Chunk-bounds → tolerance → AABB scan → range fetch
 │   ├── spatial-query-builder.ts  # Canonical chunk-bounds AABB query + helpers
 │   ├── tolerance-computer.ts     # Geometry-aware per-dimension tolerance
+│   ├── prefetch-ranges.ts        # prefetchRangesIntoCache — shared cache-warming read
 │   ├── range-loader.ts           # Encoding-dispatch orchestrator (thin dispatcher)
 │   └── range-loader/             # Per-encoding helper bodies (private to range-loader.ts)
 │       ├── encoding-types.ts     # EncodingType, RangeLoaderConfig, shared helpers
 │       ├── detect-encoding.ts    # Encoding detection from ArrayMetadata
 │       ├── broadcasted.ts        # Single value → all elements
 │       ├── quantized.ts          # uint8/uint16 → float32 dequantization
+│       ├── perchannel.ts         # Per-column (col_lo/col_hi) dequant → float32
 │       ├── lut.ts                # Lookup-table decoding
 │       ├── direct.ts             # Unencoded pass-through
 │       ├── array-ref.ts          # Array ref diagnostic (should be pre-resolved)
@@ -427,6 +433,7 @@ src/data/loaders/
 │
 ├── progressive/                  # Shared helpers for additive-LOD progressive loaders
 │   ├── concat-helpers.ts         # Generic typed-array field concatenation across LOD parts
+│   ├── slice-cache-helper.ts     # Shared SliceCache key/snapshot/lookup helpers (S-cache)
 │   └── constants.ts              # CACHE_HIT_THRESHOLD_MS — shared streaming threshold
 │
 └── overlays/                     # Overlay metadata loader

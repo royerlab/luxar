@@ -242,7 +242,7 @@ def run_transform_dataset(
                                 node, _leaf_op(lambda gd: gd.scale_intensity(factor))
                             )
                 # Scrub the coverage_fraction LOD-switch threshold from EVERY node
-                # (leaves AND group nodes — a multiscale partition child, a mosaic
+                # (leaves AND group nodes — an overview partition child, an adaptive
                 # per-part lod group) after a geometry transform so the writer
                 # re-derives it. coverage_fraction is a per-level COUNT ratio, hence
                 # invariant to scale/rotate/translate/center — so this re-derives the

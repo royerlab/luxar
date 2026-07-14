@@ -111,7 +111,9 @@ demos = [
     "cellxgene-census>=1.0.0",
     "esm>=3.0.0",
     "h5py>=3.0.0",
+    "astropy>=6.0.0",
     "mrcfile>=1.4.0",
+    "nibabel>=5.0.0",
 ]
 docs = [
     "sphinx>=7.0.0",
@@ -124,7 +126,12 @@ docs = [
 # the optional demo viewer. Keep this publish-safe: no git/direct references.
 tracksdata = [
     "tracksdata>=0.1.0rc5",
-    "napari[pyqt6]>=0.4.18",
+    # <0.8: napari 0.8.0's optional-base extra requires zarr>=3.0.8, which is
+    # unsatisfiable with our zarr<3.0 pin — the resolver then backtracks napari
+    # into 2018-era sdist-only releases whose setup.py imports the long-removed
+    # setuptools.Feature (broke every CI env-create on 2026-07-14). Lift when
+    # the project migrates to zarr 3.
+    "napari[pyqt6]>=0.4.18,<0.8",
 ]
 
 # CLI entry point
@@ -161,6 +168,9 @@ exclude = [
     # `git lfs pull`) it would otherwise ship as broken ~130-byte pointer files.
     # Demo *scripts* stay; the data is fetched/regenerated separately.
     "**/demos/data/**",
+    # Multiscale-decomposition research demos are source-tree-only (kept for
+    # development; not part of the installed package surface).
+    "**/gsplats/multiscale/demos/**",
 ]
 
 [tool.hatch.build.targets.wheel.force-include]
@@ -203,7 +213,9 @@ dependencies = [
     "scikit-image>=0.19.0",
     "tifffile>=2023.1.0",
     "imagecodecs>=2023.1.0",
-    "napari[all]>=0.4.18",
+    # <0.8: napari 0.8 requires zarr>=3 (conflicts with our zarr<3 pin); see
+    # the tracksdata group note. Lift when the project migrates to zarr 3.
+    "napari[all]>=0.4.18,<0.8",
     "pandas>=1.5.0",
     "pyarrow>=12.0.0",
     "networkx>=3.0",

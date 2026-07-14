@@ -43,8 +43,8 @@ class TestCameraConfig:
             CameraConfig(fov=200)
 
     def test_fov_boundary_values(self) -> None:
-        CameraConfig(fov=1)
-        CameraConfig(fov=180)
+        assert CameraConfig(fov=1).fov == 1
+        assert CameraConfig(fov=180).fov == 180
 
     def test_invalid_position_length(self) -> None:
         with pytest.raises(ValueError, match="position must have 3 elements"):
@@ -227,9 +227,10 @@ class TestViewerConfig:
             ViewerConfig(background_color="#fff")
 
     def test_valid_background_color(self) -> None:
-        ViewerConfig(background_color="#000000")
-        ViewerConfig(background_color="#FFFFFF")
-        ViewerConfig(background_color="#1a2B3c")
+        for hexcol in ("#000000", "#FFFFFF", "#1a2B3c"):
+            assert ViewerConfig(background_color=hexcol).background_color.lower() == (
+                hexcol.lower()
+            )
 
     def test_invalid_tone_mapping(self) -> None:
         with pytest.raises(ValueError, match="tone_mapping must be one of"):
@@ -237,7 +238,7 @@ class TestViewerConfig:
 
     def test_valid_tone_mappings(self) -> None:
         for tm in ("None", "Linear", "Reinhard", "Cineon", "ACES", "AgX", "Neutral"):
-            ViewerConfig(tone_mapping=tm)
+            assert ViewerConfig(tone_mapping=tm).tone_mapping == tm
 
     def test_invalid_control_type(self) -> None:
         with pytest.raises(ValueError, match="control_type must be one of"):
@@ -245,7 +246,7 @@ class TestViewerConfig:
 
     def test_valid_control_types(self) -> None:
         for ct in ("orbit", "fly", "ortho"):
-            ViewerConfig(control_type=ct)
+            assert ViewerConfig(control_type=ct).control_type == ct
 
     def test_invalid_exposure_out_of_range(self) -> None:
         with pytest.raises(ValueError, match="exposure"):
@@ -254,11 +255,11 @@ class TestViewerConfig:
             ViewerConfig(exposure=11.0)
 
     def test_exposure_zero(self) -> None:
-        ViewerConfig(exposure=0.0)  # should pass
+        assert ViewerConfig(exposure=0.0).exposure == 0.0
 
     def test_exposure_range_bounds(self) -> None:
-        ViewerConfig(exposure=10.0)  # should pass
-        ViewerConfig(exposure=-10.0)  # should pass
+        assert ViewerConfig(exposure=10.0).exposure == 10.0
+        assert ViewerConfig(exposure=-10.0).exposure == -10.0
 
     def test_invalid_global_gamma(self) -> None:
         with pytest.raises(ValueError, match="global_gamma"):
@@ -288,7 +289,7 @@ class TestViewerConfig:
 
     def test_valid_themes(self) -> None:
         for t in ("dark", "light", "frosted-glass", "liquid-glass"):
-            ViewerConfig(theme=t)
+            assert ViewerConfig(theme=t).theme == t
 
     # -- New fields --
 

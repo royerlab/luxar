@@ -345,7 +345,6 @@ def _generate_seeds(
     np.ndarray
         Generated seed centers (N, ndim)
     """
-    from luxar.gsplats.gsplat_data import GSplatData
     from luxar.gsplats.seeds import generate_seeds
 
     # Generate seeds using specified method (returns GSplatData)
@@ -365,17 +364,13 @@ def _generate_seeds(
             V, method=seed_method, verbose=verbose, **seed_kwargs
         )
 
-    # Extract centers from GSplatData
-    if isinstance(seeds_result, GSplatData):
-        seed_centers = seeds_result.centers
-        # If init_ctx provided, extract pre-initialized parameters
-        if init_ctx is not None:
-            _extract_gsplatdata_init(init_ctx, seeds_result)
-            if verbose:
-                aprint("Using scale-informed initialization from seeding method")
-    else:
-        # Fallback for any legacy return type
-        seed_centers = seeds_result  # type: ignore[unreachable]
+    # Extract centers from the GSplatData returned by generate_seeds
+    seed_centers = seeds_result.centers
+    # If init_ctx provided, extract pre-initialized parameters
+    if init_ctx is not None:
+        _extract_gsplatdata_init(init_ctx, seeds_result)
+        if verbose:
+            aprint("Using scale-informed initialization from seeding method")
 
     # Log initial generation
     if verbose:

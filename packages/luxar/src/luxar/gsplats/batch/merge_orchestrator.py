@@ -54,8 +54,8 @@ def merge_batch_results(
             streaming spatial partition. ``flat=True`` reloads ALL tiles into
             memory (the OOM the partition path avoids); use only for small scenes.
         recipe: Optional per-part LOD recipe applied to each spatial tile-part as
-            it streams (one of :data:`PER_PART_RECIPES`: ``stream`` →
-            ``partitioned`` topology, ``substitutive`` → ``mosaic``).
+            it streams (one of :data:`PER_PART_RECIPES`: ``stream`` → the
+            ``tiles`` topology, ``levels`` → ``adaptive``).
             ``None`` keeps the historical bare-leaf parts. Mutually exclusive with
             ``flat`` (flat has no parts to give a ladder to).
         recipe_params: Knobs for ``recipe`` (a :class:`RecipeParams`); ignored when
@@ -299,7 +299,7 @@ def _finalize_part_node(
         if n_spatial < part.ndim:
             params = dataclasses.replace(params, coarsen_dims=tuple(range(n_spatial)))
     # build_part_lod clamps LOD depth to the part's splat count (small tiles never
-    # synthesise degenerate levels) — the exact per-part logic of partitioned/mosaic.
+    # synthesise degenerate levels) — the exact per-part logic of tiles/adaptive.
     return build_part_lod(part.tree, recipe, params)
 
 

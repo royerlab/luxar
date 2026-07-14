@@ -289,17 +289,22 @@ class TestDecompositionLoss:
         model = MultiScaleDecomposer(simple_2d_image.shape, scales=[1, 2])
 
         loss, _ = decomposition_loss(model, target)
+        assert loss.item() > 0, "loss must be positive so gradients are meaningful"
         loss.backward()  # type: ignore[no-untyped-call]
 
-        # Check that gradients exist and are non-zero for at least some parameters
-        has_nonzero_grad = False
-        for param in model.parameters():
-            if param.grad is not None:
-                if torch.any(param.grad != 0):
-                    has_nonzero_grad = True
-                    break
-
-        assert has_nonzero_grad, "No parameters received non-zero gradients"
+        # EVERY trainable parameter must receive a finite gradient (not just
+        # "some parameter got one") — a backward that severed all-but-one param
+        # would survive a first-nonzero-and-break check. At least one gradient
+        # must also be non-zero (the loss actually depends on the parameters).
+        params = [p for p in model.parameters() if p.requires_grad]
+        assert params, "model has no trainable parameters"
+        any_nonzero = False
+        for i, param in enumerate(params):
+            assert param.grad is not None, f"param {i} received no gradient"
+            assert torch.isfinite(param.grad).all(), f"param {i} has non-finite grad"
+            if torch.any(param.grad != 0):
+                any_nonzero = True
+        assert any_nonzero, "no parameter received a non-zero gradient"
 
 
 class TestDecomposeImage:

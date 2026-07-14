@@ -2,9 +2,14 @@
 
 `LuxarApp` (in `../app.ts`) is intentionally thin: every method delegates
 to a helper in this folder. The class itself owns state and ordering; the
-helpers own the actual work. Nothing under `app/` is re-exported from the
-package barrel — these files have zero external importers and exist
-solely as the orchestrator's private support code, grouped thematically.
+helpers own the actual work. With two exceptions, nothing under `app/` is
+re-exported from the package barrel — these files exist as the
+orchestrator's private support code, grouped thematically. The exceptions:
+`embedder/`, whose public value/event types (`LuxarEmbedderEventMap`,
+`EmbedderDimensions`, `ScreenshotOptions`, …) are re-exported from
+`src/index.ts` as part of the programmatic embedder API, and
+`snapshot/viewer-snapshot.ts`, whose `type ViewerSnapshot` is also
+re-exported from `src/index.ts`.
 
 Tests mirror the layout under `tests/unit/core/app/<theme>/`.
 
@@ -13,7 +18,7 @@ Tests mirror the layout under `tests/unit/core/app/<theme>/`.
 | File           | Role                                                                                                                                                                                                                                                                                                                |
 | -------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `factories.ts` | `AppFactories` interface, `defaultFactories`, and `resolveFactories(overrides)`. Optional construction overrides for the heavy subsystems built in `init()` (SceneManager, AnimationController, RenderingControls, RecordingPanel, LayersPanel). Embedders + tests inject pre-built stubs here without subclassing. |
-| `options.ts`   | `LuxarAppOptions` interface — every init-time knob the orchestrator accepts: `canvas`, `src`, `debug`, `loaderConfig`, `updateBrowserUrl`, `wasmPath`, `workerPath`, `openCacheStats`, `factories`, `renderer`, `webgpuForceWebGL`, `perfTimestamp`. Re-exported from `app.ts`.                                     |
+| `options.ts`   | `LuxarAppOptions` interface — every init-time knob the orchestrator accepts: `canvas`, `container`, `src`, `debug`, `loaderConfig`, `updateBrowserUrl`, `wasmPath`, `workerPath`, `openCacheStats`, `factories`, `renderer`, `webgpuForceWebGL`, `perfTimestamp`, `pinnedDPR`. Re-exported from `app.ts`.           |
 
 ## Subpackages
 
@@ -24,6 +29,7 @@ app/
 ├── dataset/        # src URL → scene routing: browser-vs-load decision + load sequence
 ├── viewer-config/  # Apply zarr viewer_config onto the live app + panel-visibility capture
 ├── snapshot/       # JSON capture/restore of camera + per-dimension slice position
+├── embedder/       # Public programmatic embedder API — event/value types + headless screenshot
 ├── debug/          # window.__luxarDebug surface — runtime hook for AI drivers + Playwright
 ├── picking/        # GPU picking session lifecycle + pick-result → hover overlay routing
 └── overlays/       # Screen-space HUD layers — OverlayManager, ScaleBar, ColormapLegend
@@ -48,6 +54,13 @@ app/
   types. JSON-serialisable view state (camera + slice position only) for
   tests, share-view links, and regression harnesses. Layer-panel and
   rendering-controls settings live on other abstractions and are excluded.
+- **`embedder/`** — The public programmatic embedder API. `events.ts` defines
+  the app-scoped event catalog (`LuxarEmbedderEventMap`) and value types
+  (`EmbedderDimensions`, `ScreenshotOptions`, …) behind `LuxarApp.on()`,
+  `getDimensions()` / `setDimensionValue()`, and `screenshot()`;
+  `screenshot.ts` implements `captureScreenshot` (headless frame → encoded
+  Blob, no Recording-panel dependency). Unlike the rest of `app/`, these
+  types are re-exported from the package root (`src/index.ts`).
 - **`debug/`** — Owns the `window.__luxarDebug` global. The bootstrap seeds a
   minimal stub from the first JS tick; `installDebugInterface(ports)` extends
   it with live runtime components, cache helpers, scene-walking state, and

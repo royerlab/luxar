@@ -20,6 +20,9 @@ Each subdirectory contains pre-fitted `.gsplats.zarr.zip` files for one demo:
 | `gsplats_opencell_map4/` | 3D OpenCell MAP4 (cytoskeleton) | 2 channel files (~4.0 MB total) |
 | `gsplats_cmu1_pathology/` | 2D CMU-1 pathology (H&E) | 3 channel files (pending) |
 | `gsplats_celegans/` | 4D C. elegans tracking | 1 bundle zip with 400 timepoints (~64 MB) |
+| `gsplats_cryoem_virus/` | 3D cryo-EM giant-virus capsid (EMDB EMD-5384, PBCV-1) | 1 `.gsplats.zarr.zip` |
+| `gsplats_milkyway_dust/` | 3D interstellar dust of the solar neighborhood (Leike & Enßlin 2020) | 1 `.gsplats.zarr.zip` (~8 MB) |
+| `gsplats_visible_human_head/` | 3D Visible Human head, true-color cryosections (NLM) | 1 `.gsplats.zarr.zip` + `vh_head_colors.npz` (per-splat RGB) |
 | _(not bundled)_ `gsplats_neuromast_2ch` | 4D two-channel neuromast timelapse | 2 channel `.gsplats.zarr` (~220 MB) — **local-only, not in Git LFS yet** |
 
 > **Note — `demo_gsplats_4d_neuromast_2ch.py` data is not hosted yet.** Its two
@@ -31,10 +34,10 @@ Each subdirectory contains pre-fitted `.gsplats.zarr.zip` files for one demo:
 
 ### Other Data Files (top level)
 
-- `milky_way_gaia_3m.zarr.zip` — Gaia DR3 star catalog (3M stars)
-- `milky_way_gaia_8m.zarr.zip` — Gaia DR3 star catalog (8M stars)
+- `milky_way_gaia_3m.zarr.zip` — Gaia DR3 star catalog (3M stars; loaded by `demo_gaia_milky_way_3m.py`)
 - `3d_umap_coords_human.parquet` — Human cell UMAP coordinates
 - `3d_umap_coords_mouse.parquet` — Mouse cell UMAP coordinates
+- `dipc_genome/dipc_gm12878.npz` — Single-cell 3D genome (Dip-C) bead coordinates, GM12878 cell (Lines demo `demo_dipc_3d_genome.py`)
 
 ## How Demos Use This Data
 
@@ -94,5 +97,13 @@ Outer zip containing many per-frame `.gsplats.zarr.zip` files. Automatically ext
   - Yin et al. (2022) J. Cell Sci. 135(5), jcs259022
 - **C. elegans data**: Zenodo record 6460303
   - Hirsch et al. (2022) DOI: 10.5281/zenodo.6460303
+- **Cryo-EM virus capsid**: EMDB EMD-5384 (PBCV-1, CC0)
+  - Zhang et al. (2011) PNAS 108(36):14837–14842
+- **Interstellar dust**: Zenodo record 3993082 (CC BY 4.0)
+  - Leike, Glatzle & Enßlin (2020) A&A 639, A138
+- **Visible Human head**: NLM Visible Human Project (Male), public domain
+  - https://www.nlm.nih.gov/research/visible/visible_human.html
+- **Dip-C 3D genome**: GEO GSE117876 (GM12878)
+  - Tan et al. (2018) Science 361(6405):924–928
 
 See individual demo scripts for full citation information.

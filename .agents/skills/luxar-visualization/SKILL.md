@@ -16,8 +16,8 @@ archive served to a WebGL viewer. This skill builds a scene from a dataset.
 
 **The repo's demos and examples are the canonical know-how** — when in doubt, read a
 matching one before writing code:
-- `packages/luxar/src/luxar/demos/demo_*.py` (~59 complete demos)
-- `packages/luxar/examples/*_example.py` (~50 focused examples)
+- `packages/luxar/src/luxar/demos/demo_*.py` (~67 complete demos)
+- `packages/luxar/examples/*_example.py` (~51 focused examples)
 
 ## The canonical pattern (every demo follows this)
 

@@ -11,7 +11,15 @@ sys.path.insert(0, os.path.abspath("../packages/luxar/src"))
 project = "Luxar"
 copyright = "2025-2026, Luxar Development Team"
 author = "Luxar Development Team"
-release = "2025.08.03"
+
+# Derive the version from the installed package metadata (pyproject uses a
+# dynamic version), falling back to a placeholder if Luxar is not installed.
+try:
+    from importlib.metadata import version as _pkg_version
+
+    release = _pkg_version("luxar")
+except Exception:
+    release = "0.0.0"
 
 # -- General configuration ---------------------------------------------------
 extensions = [
@@ -71,6 +79,9 @@ myst_enable_extensions = [
     "deflist",
     "tasklist",
 ]
+# Generate anchors for markdown headings (levels 1-4) so in-document
+# TOC links like [Architecture](#architecture) resolve.
+myst_heading_anchors = 4
 
 templates_path = ["_templates"]
 exclude_patterns = [
@@ -81,13 +92,15 @@ exclude_patterns = [
     # Archived/internal docs not part of the main documentation build
     "archive/**",
     "benchmarks/**",
-    "bugs/**",
     "code_reviews/**",
+    "handoffs/**",
+    "reports/**",
 ]
 
 # -- Options for HTML output -------------------------------------------------
 html_theme = "sphinx_rtd_theme"  # Popular Read the Docs theme
-html_static_path = ["_static"]
+# No static assets are shipped; an empty list avoids the missing-dir warning.
+html_static_path: list[str] = []
 html_title = "Luxar Documentation"
 html_short_title = "Luxar"
 html_logo = None  # Add logo path if you have one

@@ -47,11 +47,17 @@ order MUST match the Python spec or behavior diverges:
    BEFORE generic quantization because the name contains `uint`. Decodes
    via `expm1(normalized × max_log)`. Used for radii and other
    wide-dynamic-range positive scalars.
-5. **quantized** (`rgb_uint8`, `rgb_uint16`, `bounded_scalar_uint8`,
+5. **perchannel** (`log_perchannel_*`, `signed_log_perchannel_*`,
+   `linear_perchannel_*`, `geolog_perchannel_*`) — also checked before
+   generic quantization. Per-column dequantization via the `col_lo` /
+   `col_hi` scale arrays (column count from the array's own last
+   dimension). Mirrors the RangeLoader's dedicated `'perchannel'` path
+   and Python's `_decode_*_perchannel`.
+6. **quantized** (`rgb_uint8`, `rgb_uint16`, `bounded_scalar_uint8`,
    `bounded_scalar_uint16`) — linear dequantization to `[min, max]`.
    Bounds resolved from `enc.bounds`, then `enc.min`/`enc.max`, then
    inferred (only `rgb_*` is inferrable → `[0, 1]`).
-6. **direct** — `undefined` / `'none'` / `float16` / `float32` /
+7. **direct** — `undefined` / `'none'` / `float16` / `float32` /
    `uint8` / `uint16` / `uint32` / `uint64` — raw zarr buffer converted
    to `Float32Array`. Registered under `enc.hash` if present.
 
@@ -110,8 +116,9 @@ instance helpers on `ArrayDecoder` support that:
 Classification helpers (`isEncoded`, `isLUTEncoded`, `isBroadcasted`,
 `isArrayRef`, `isDirectEncodingName`, `isLUTEncodingName`,
 `isLogScalarEncodingName`, `isQuantizedEncoding`, `isQuantizedEncodingName`,
-`isKnownEncodingName`, `getEncodingMode`) let callers choose the right
-loading strategy without parsing `enc.name` themselves.
+`isPerChannelQuantEncodingName`, `isKnownEncodingName`, `getEncodingMode`)
+let callers choose the right loading strategy without parsing `enc.name`
+themselves.
 
 ## Optional-Array Helper
 

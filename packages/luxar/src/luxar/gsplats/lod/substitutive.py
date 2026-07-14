@@ -76,10 +76,9 @@ barrier dims under ``coarsen_dims`` grouping.
 
 The returned value is a single :class:`GSplatData` with
 ``n_substitutive = levels + 1`` and ``M_i = 1`` per substitutive level
-(one additive sub-LOD each). On disk this is a single v2.0
-``.gsplats.zarr`` file with ``splats/substitutive_<s>/additive_0/``
-nested groups; the legacy directory + manifest.json layout is replaced
-by the unified format.
+(one additive sub-LOD each). Saved to disk, this becomes a single v3.2
+node-tree ``.gsplats.zarr`` (a ``kind=lod`` group with one child per
+level — see :mod:`luxar.gsplats.tree`).
 """
 
 from __future__ import annotations
@@ -591,7 +590,7 @@ def make_substitutive_lod(
     Returns
     -------
     GSplatData
-        A v2.0 dataset with ``n_substitutive = levels + 1`` and a
+        A matrix-shaped dataset with ``n_substitutive = levels + 1`` and a
         single additive sub-LOD per substitutive level (the finest at
         ``substitutive_levels[0]``).
 

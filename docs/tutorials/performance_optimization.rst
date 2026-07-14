@@ -19,7 +19,7 @@ Understanding the Bottlenecks
 
 2. **Decompression**: Blosc decompression (~5ms per chunk)
 
-   * **Solution**: Parallel decompression, L1 cache for decoded data
+   * **Solution**: Parallel decompression, L0 cache for decoded chunks
 
 3. **GPU Rendering**: Drawing millions of points (~60ms for 10M points)
 
@@ -34,8 +34,9 @@ Understanding the Bottlenecks
 .. code-block:: text
 
    User navigates → Query chunks (1ms)
-                  → L1 check (1μs)
-                  → L2 check (1ms) ← Usually hits here (80-95%)
+                  → S-cache / L0 check (decoded slices & chunks, ~1μs)
+                  → L1 check (compressed, ~1μs)
+                  → L2 check (OPFS, ~1ms) ← Usually hits here (80-95%)
                   → HTTP fetch (100ms) ← Only first time
                   → Decode (5ms)
                   → GPU upload (2ms)
@@ -217,7 +218,7 @@ The viewer applies several optimizations automatically:
 .. code-block:: text
 
    ?src=data.luxar.zarr                # Default: all caching enabled
-   ?src=data.luxar.zarr&no-cache       # Disable L0/L1/L2 caching
+   ?src=data.luxar.zarr&no-cache       # Disable all caching tiers (S-cache + L0/L1/L2)
    ?src=data.luxar.zarr&clear-cache    # Clear all caches on startup
    ?src=data.luxar.zarr&cache-debug    # Enable cache debug logging
 
