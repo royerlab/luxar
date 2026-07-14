@@ -40,6 +40,9 @@ Chunk request → L0 (Decompressed) → L1 (Memory) → L2 (OPFS) → Remote HTT
 | L0      | Memory  | ~1μs          | heap-aware†   | Session only | Decompressed data     |
 | L1      | Memory  | ~1μs + ~2ms\* | heap-aware†   | Session only | Compressed chunks     |
 | L2      | OPFS    | ~1ms + ~2ms\* | 2GB           | Permanent    | Compressed chunks     |
+| L3      | Remote  | ~100ms        | ∞             | N/A          | Compressed chunks     |
+
+\*~2ms is Blosc decompression time per chunk (skipped on L0 hit)
 
 † The three in-memory tiers are sized two-sidedly from the device heap by
 `heap-budget.ts` — the config `l0MaxSizeMB` (200) / `l1MaxSizeMB` (100) /
@@ -61,9 +64,6 @@ weak `hardwareConcurrency ≥ 12` proxy (there is no in-browser RAM signal on
 WebKit — `navigator.deviceMemory` is Chromium-only — and laptop/desktop aren't
 reliably distinguishable, so this is an educated guess, safe on 8 GB+ machines).
 The fixed config sizes are the last resort (non-browser / no device signals).
-| L3      | Remote  | ~100ms        | ∞     | N/A          | Compressed chunks     |
-
-\*~2ms is Blosc decompression time per chunk (skipped on L0 hit)
 
 ## Quick Start
 
@@ -596,6 +596,10 @@ Dispose the prefetcher, clearing all internal state (seen set, parsed cache, bou
 
 **MultiLevelCachingStore** - Main orchestrator for L1/L2 caching, implements AsyncReadable interface
 
+**SliceCache** - "S-cache" above L0/L1/L2: per-(node, view) LRU of fully decoded per-slice geometry (skips the query + fetch + dequant + gather pipeline on slice revisits)
+
+**computeCacheBudgets** (`heap-budget.ts`) - Heap-aware per-tier byte budgets for L0/L1/S-cache (scales up on big heaps, down on small ones)
+
 **ChunkPrefetcher** - Intelligent adjacent chunk prefetcher (enabled by default)
 
 **LRUCache** - Generic LRU cache with O(1) operations
@@ -849,6 +853,13 @@ await window.__luxarDebug.cache.clearAll();
 - `decompressed-chunk-cache.ts` — L0 LRU of decoded TypedArrays.
 - `chunk-prefetcher.ts` — Background prefetcher for adjacent chunks
   with per-array bounds registration and high/normal priority queues.
+- `slice-cache.ts` — `SliceCache` (S-cache): per-(node, view) byte-budget
+  LRU of decoded per-slice geometry, keyed by node path +
+  slice/tolerance/displayDims signature; sits above the chunk caches so
+  slice revisits skip everything but the nD→3D projection.
+- `heap-budget.ts` — `computeCacheBudgets`: derives L0/L1/S-cache byte
+  ceilings from the device heap (`performance.memory`, Chrome-only;
+  fixed config sizes elsewhere).
 - `lru-cache.ts` — Generic LRU with O(1) get/set/delete.
 - `residency-probe.ts` — `ResidencyProbe` interface + `ResidencyAccumulator`:
   a per-load sink the L0 proxy reports chunk hit/miss outcomes to, so a

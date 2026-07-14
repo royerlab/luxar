@@ -416,15 +416,19 @@ class TestChunkBoundsZarrAlignment:
         spatial = {"chunk_size": 512}
 
         # Without spatial data: uses byte-based default (64 KiB / float32)
-        result = calculate_intelligent_chunks((10000,))
+        result = calculate_intelligent_chunks((10000,), dtype=np.dtype(np.float32))
         assert result == (10000,)
 
         # With spatial data: uses chunk_size
-        result = calculate_intelligent_chunks((10000,), spatial_index_data=spatial)
+        result = calculate_intelligent_chunks(
+            (10000,), spatial_index_data=spatial, dtype=np.dtype(np.float32)
+        )
         assert result == (512,)
 
         # Small array clamped to actual size
-        result = calculate_intelligent_chunks((100,), spatial_index_data=spatial)
+        result = calculate_intelligent_chunks(
+            (100,), spatial_index_data=spatial, dtype=np.dtype(np.float32)
+        )
         assert result == (100,)
 
     def testcalculate_intelligent_chunks_2d_uses_spatial_data(self) -> None:
@@ -434,12 +438,14 @@ class TestChunkBoundsZarrAlignment:
         spatial = {"chunk_size": 1024}
 
         # Without spatial data: uses byte-based default (64 KiB / float32 / 4 dims)
-        result = calculate_intelligent_chunks((5000, 4))
+        result = calculate_intelligent_chunks((5000, 4), dtype=np.dtype(np.float32))
         assert result[1] == 4
         assert result[0] == min(5000, (65536 // 4) // 4)
 
         # With spatial data: uses chunk_size
-        result = calculate_intelligent_chunks((5000, 4), spatial_index_data=spatial)
+        result = calculate_intelligent_chunks(
+            (5000, 4), spatial_index_data=spatial, dtype=np.dtype(np.float32)
+        )
         assert result == (1024, 4)
 
     # [Python-R6 / io-MAJOR] Dtype awareness — the byte-target heuristic
@@ -917,16 +923,15 @@ class TestCalculateIntelligentChunksDtype:
                 f"{dtype_str}: {chunk_bytes} > target {TARGET_CHUNK_BYTES}"
             )
 
-    def test_default_dtype_is_float32(self) -> None:
+    def test_dtype_is_required(self) -> None:
         from luxar.io._compiler.chunking import calculate_intelligent_chunks
 
-        # Without an explicit dtype, behaviour matches the explicit float32
-        # default. This pins the default contract so a future signature
-        # change is caught.
+        # dtype is a required keyword-only argument: the byte-target heuristic
+        # cannot pick chunks without knowing the element size, and an implicit
+        # float32 default silently under-chunked non-float32 callers.
         shape = (10_000, 3)
-        implicit = calculate_intelligent_chunks(shape)
-        explicit = calculate_intelligent_chunks(shape, dtype=np.dtype(np.float32))
-        assert implicit == explicit
+        with pytest.raises(TypeError, match="dtype"):
+            calculate_intelligent_chunks(shape)  # type: ignore[call-arg]
 
 
 class TestFinalizeGuards:

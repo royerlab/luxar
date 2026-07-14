@@ -14,6 +14,7 @@ Inputs: `.npy`, `.npz`, `.tiff`/`.tif`, `.zarr`, `.zarr.zip` (TIFF/other need `p
 | Flag | Default | Meaning |
 | --- | --- | --- |
 | `--seeds` / `-s` | auto | int = splat count; float in (0,1) = compression ratio; `auto` |
+| `--floor` | auto | background floor / DC-offset suppression subtracted (clip at 0) BEFORE normalization, so output amplitudes are background-relative. `auto` = histogram-mode estimate (capped at the median; a no-op on clean data). `pNN` = subtract that percentile; a plain number = fixed value; `none` = disable (legacy hard-min) |
 | `--iters` / `-n` | preset | max optimization iterations |
 | `--preset` | none | `draft` / `standard` / `hifi` / `ultra` / `n2s` (see preset table) |
 | `--config` | none | YAML config file (overrides preset) |
@@ -62,8 +63,9 @@ Inputs: `.npy`, `.npz`, `.tiff`/`.tif`, `.zarr`, `.zarr.zip` (TIFF/other need `p
 | `--plan-only` | false | write the box plan JSON and stop (no fit) |
 
 ### Per-part LOD at fit time (tiled partition only)
-`--recipe stream` → `tiles` topology; `--recipe levels` → `adaptive`.
+`--recipe`/`-r` `stream` → `tiles` topology; `--recipe levels` → `adaptive`.
 Knobs mirror `lod`: `--n-lods`, `--additive-method`/`-m`, `--breakpoints`/`-b`,
+`--target-ms`, `--bandwidth-mbps` (default 25), `--bytes-per-splat`,
 `--compression-factor`/`-K`, `--levels`/`-L`, `--substitutive-method`,
 `--coarsen-dims`. LOD switch thresholds are auto-derived (`coverage_fraction`,
 no knob — see "LOD switch tuning" below).
@@ -79,7 +81,7 @@ no knob — see "LOD switch tuning" below).
 ### Post-fit culling & denoising
 | Flag | Default | Meaning |
 | --- | --- | --- |
-| `--cull-retention` | none | keep top fraction of cumulative amplitude (e.g. 0.95) |
+| `--cull-retention` | 0.95 | keep top fraction of cumulative amplitude (presets set 0.999); 0 keeps every splat |
 | `--denoise` | false | NLM-denoise the volume before fitting |
 | `--denoise-h` | auto | manual NLM strength (skip auto-calibration) |
 | `--denoise-2d` | false | slice-by-slice 2D NLM |
@@ -99,7 +101,9 @@ no knob — see "LOD switch tuning" below).
 
 ## `luxar gsplat cal INPUT OUTPUT_JSON`
 
-Blind-spot (Noise2Self) K-sweep → K*, curve type, noise floor, PSNR ceiling.
+Blind-spot (Noise2Self) K-sweep → K*, `k_knee` operating point (diminishing-returns
+elbow, ≤ K*), curve type, noise floor, PSNR ceiling. Also writes a `splat_density`
+block (saturation exponent alpha etc.) consumed by `fit --tiling content`.
 
 ### K grid
 | Flag | Default | Meaning |
@@ -119,6 +123,10 @@ Blind-spot (Noise2Self) K-sweep → K*, curve type, noise floor, PSNR ceiling.
 ### Fit config & loader pass-through
 `--preset` (default `n2s`), `--config`, `--device`/`-d`, and the same input-selection
 flags as `fit`: `--channel`/`-c`, `--timepoint`, `--array-key`, `--axes`.
+
+`cal` also honours `--floor` (default `auto`, same semantics as `fit`): the floor
+is subtracted ONCE up front so K* is measured on floor-suppressed data (matching
+how you fit). Pass `--floor none` to reproduce the legacy hard-min numbers.
 
 ### Regime-robust extensions
 | Flag | Default | Meaning |
@@ -140,10 +148,12 @@ flags as `fit`: `--channel`/`-c`, `--timepoint`, `--array-key`, `--axes`.
 
 ## `luxar gsplat lod INPUT OUTPUT`
 
-`--recipe` is REQUIRED. Recipes scale-ordered: `flat` < `stream` < `tiles`
-< `overview` / `adaptive`; primitive `levels`.
+`--recipe` is REQUIRED. Recipes scale-ordered by element count N:
+`flat` < `stream` < `levels` < `tiles` < `overview` < `adaptive`. `stream` is
+additive (refines one leaf); `levels` is substitutive (coarse↔fine swap);
+`overview`/`adaptive` compose the two over spatial tiles.
 
-### Additive ladder (additive / partitioned / multiscale / pyramid)
+### Additive ladder (stream / tiles / overview / levels)
 | Flag | Default | Meaning |
 | --- | --- | --- |
 | `--n-lods` | 4 | additive LOD levels |
@@ -183,7 +193,7 @@ luxar gsplat additive sub.gsplats.zarr pyr.gsplats.zarr --target-ms 200   # ~200
 | `--lloyd-iters` | 5 | Lloyd refinement passes |
 | `--candidate-bins-k` | 12 | Lloyd spatial-hash top-k |
 | `--coverage-inflation` | 3.0 | widen merged reps' inter-center spread (mass-preserving) so coarse splats sum flat — suppresses the grid ripple; 1.0 = pure moment match |
-| `--additive` / `--no-additive` | on | additive ladder in every substitutive level / mosaic part / multiscale cap (streaming first paint); `--no-additive` = bare leaves |
+| `--additive` / `--no-additive` | on | additive ladder in every substitutive level / adaptive tile / overview cap (streaming first paint); `--no-additive` = bare leaves |
 | `--conserve-mass` / `--no-conserve-mass` | on | pin each level's mass over coarsened dims to its fine input (per barrier group) — kills the LOD brightness pop |
 | `--refine` | none | `l2` = post-merge L2 refit of each level against its fine input (slower, higher fidelity, peak-preserving; mass pinned); `volume` = warm-start re-fit against the source volume given via `--target` (highest fidelity; never worse than the merge; levels/overview only, no barrier dims) |
 | `--refine-iters` | 120 / 300 | steps per refined level (120 for `l2`, 300 for `volume`; requires `--refine l2\|volume`) |
@@ -198,6 +208,12 @@ object fills the screen and coarser levels step in as it shrinks — self-
 calibrating on any monitor. The former `extent`/`count` methods and the
 `--lod-method` / `--extent-percentile` / `--extent-anisotropy` /
 `--base-pixel-size` flags have been removed.
+
+### Quality stamps
+| Flag | Default | Meaning |
+| --- | --- | --- |
+| `--quality-stamps` / `--no-quality-stamps` | on | measure each coarse substitutive level's mixture-L² quality `Q` vs its group's finest content and stamp it (with the reference-energy weight `w`) into the level stats — the viewer folds `Q` with committed-energy `e(k)` into a recursive quality estimate |
+| `--quality-max-pair-splats` | 2,000,000 | subsample cap per mixture for the quality measurement (lower = faster, noisier `Q`) |
 
 ### Universal
 `--ordering` (hilbert/morton/none, default hilbert), `--device` (auto), `--seed`,

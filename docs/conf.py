@@ -11,7 +11,15 @@ sys.path.insert(0, os.path.abspath("../packages/luxar/src"))
 project = "Luxar"
 copyright = "2025-2026, Luxar Development Team"
 author = "Luxar Development Team"
-release = "2025.08.03"
+
+# Derive the version from the installed package metadata (pyproject uses a
+# dynamic version), falling back to a placeholder if Luxar is not installed.
+try:
+    from importlib.metadata import version as _pkg_version
+
+    release = _pkg_version("luxar")
+except Exception:
+    release = "0.0.0"
 
 # -- General configuration ---------------------------------------------------
 extensions = [
@@ -81,7 +89,6 @@ exclude_patterns = [
     # Archived/internal docs not part of the main documentation build
     "archive/**",
     "benchmarks/**",
-    "bugs/**",
     "code_reviews/**",
 ]
 

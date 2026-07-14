@@ -14,8 +14,8 @@ through it (plus the L0 `wrapWithCache` proxy), so there is one place that calls
 
 - **`loadRanges()` / `loadRangesResolvingRef()`** detect the encoding written by
   the Python `luxar.encoding` layer and delegate to the matching `load*`
-  function below. Encoded decoders (lut/quantized/broadcasted) always produce a
-  `Float32Array`.
+  function below. Encoded decoders (lut/quantized/perchannel/broadcasted)
+  always produce a `Float32Array`.
 - **`loadDirectTyped()`** is the direct-read entry for callers that allocate a
   natively-typed output buffer and branch on encoding _before_ dispatch — Points
   non-color attributes, the direct/`rgb_*` color path (`color-loader.ts`), and
@@ -49,6 +49,7 @@ range-loader/
 ├── detect-encoding.ts   # ArrayMetadata → EncodingType (priority-ordered)
 ├── direct.ts            # loadDirect    — raw values, dtype-preserving copy
 ├── quantized.ts         # loadQuantized — uint8/uint16 → float (linear or log)
+├── perchannel.ts        # loadPerChannel — per-column (col_lo/col_hi) dequant → float32
 ├── lut.ts               # loadLUT       — index → palette row/scalar lookup
 ├── broadcasted.ts       # loadBroadcasted — one value replicated to N items
 ├── array-ref.ts         # loadArrayRef  — unresolved ref guard (throws)
@@ -67,6 +68,7 @@ Encoding detection follows the same priority order as the Python encoder
 | `array_ref`   | `loadArrayRef`    | reference to another array               | Must be pre-resolved upstream — reaching the loader throws.    |
 | `lut`         | `loadLUT`         | small `uint8`/`uint16` indices + palette | Map each index through the LUT (`row` or `scalar` mode).       |
 | `quantized`   | `loadQuantized`   | `uint8`/`uint16` quantized values        | Dequantize via bounds (linear) or `maxLog` (log-space).        |
+| `perchannel`  | `loadPerChannel`  | `*_perchannel_*` uint8/uint16 levels     | Per-column dequant via `col_lo`/`col_hi` (log / signed-log / linear / geolog) to float32. |
 | `direct`      | `loadDirect`      | raw values in any numeric dtype          | Slice the requested ranges, copy preserving the output dtype.  |
 
 `direct` is also the fallback when an array has no `encoding` metadata.
@@ -128,7 +130,7 @@ the first call. `resetSharedRangeLoader()` clears both singletons (test-only).
 | `workerThreshold` | `1000`                         | Min elements before a decode uses workers. |
 | `logModule`       | `Modules.SPATIAL_INDEX_LOADER` | Log module tag for verbose output.         |
 
-`EncodingType` is the union `'broadcasted' | 'quantized' | 'lut' | 'array_ref' | 'direct'`.
+`EncodingType` is the union `'broadcasted' | 'quantized' | 'lut' | 'array_ref' | 'perchannel' | 'direct'`.
 
 ## See Also
 

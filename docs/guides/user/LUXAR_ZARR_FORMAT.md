@@ -65,7 +65,7 @@ This diagram shows how data flows from Python creation through storage to WebGL 
 │  ├── .zattrs              Scene metadata (dimensions, units, transforms)   │
 │  ├── .zmetadata           Consolidated metadata                            │
 │  └── node_name/                                                            │
-│      ├── positions/       Blosc(zstd-3) compressed uint16 chunks           │
+│      ├── positions/       Blosc(zstd-9) compressed uint16 chunks           │
 │      ├── colors/          Blosc compressed uint8/float32                   │
 │      ├── radii/           Compressed or broadcast scalar                   │
 │      └── chunk_bounds/    AABB per chunk for spatial queries               │
@@ -82,9 +82,10 @@ This diagram shows how data flows from Python creation through storage to WebGL 
 │                                                                             │
 │  cache/                                                                     │
 │  ┌──────────────────┐                                                      │
+│  │ S-cache + L0     │  Decoded slices + decompressed chunks (RAM)          │
 │  │ L1: Memory LRU   │  ~100MB, ~1μs access                                 │
 │  │ L2: OPFS         │  ~2GB, ~1ms access                                   │
-│  │ L3: HTTP fetch   │  Unlimited, ~100ms access                            │
+│  │ HTTP fetch       │  Unlimited, ~100ms access                            │
 │  │ Prefetcher       │  Adjacent chunks (±1 in each dimension)              │
 │  └────────┬─────────┘                                                      │
 │           │                                                                 │
@@ -152,10 +153,12 @@ scene.luxar.zarr/
 │   ├── positions/          # Point positions (required for points, spatially sorted)
 │   ├── colors/             # Point colors (optional, same order as positions)
 │   ├── radii/              # Point radii (optional, same order as positions)
-│   ├── sharpness/          # Point sharpness (optional, same order as positions)
+│   ├── sharpnesses/        # Point sharpness (optional, same order as positions)
 │   ├── chunk_bounds/       # Chunk bounding boxes for spatial queries (optional)
 │   ├── label_offsets/      # Per-element label byte offsets, CSR-style (optional)
 │   ├── label_bytes/        # Concatenated UTF-8 label strings (optional)
+│   ├── image_label_offsets/ # Per-element image byte offsets, CSR-style (optional)
+│   ├── image_label_bytes/  # Concatenated encoded image blobs (optional)
 │   └── <child_nodes>/      # Nested child nodes (recursive structure)
 └── overlays/               # Screen-space overlays (optional)
     └── <overlay_name>/     # Individual overlay
@@ -252,12 +255,14 @@ LOD group). The finest child's resolved `display_type` becomes the LOD
 group's `display_type`.
 
 **Standalone `.gsplats.zarr` root**: a `kind=lod` group is also a valid
-root of a standalone `.gsplats.zarr` file — the file root IS the node. The
-viewer opens such a file directly (`?src=<file>.gsplats.zarr`) and frames
-on its `position_bounds`. On-disk, children are `child_<i>/` in
-**coarsest→finest** order; `default_level` is 0-based in that same order
-(`default_level = (n-1) - default_substitutive`, so a finest-default
-`default_substitutive=0` maps to `default_level = n-1`).
+root of a standalone `.gsplats.zarr` file — the file root IS the node
+(current standalone format version: **v3.2**, see
+`docs/specs/GSPLATS_ZARR_FORMAT.md`). The viewer opens such a file directly
+(`?src=<file>.gsplats.zarr`) and frames on its `position_bounds`. On-disk,
+children are `child_<i>/` in **coarsest→finest** order; the writer always
+stamps `default_level: 0` (the coarsest child) — a progressive-load hint
+(render cheap first, then refine), deliberately decoupled from the data-model
+default (the finest level the `.centers` accessor returns).
 
 **Attributes (.zattrs):**
 ```json
@@ -414,14 +419,17 @@ subgroups in this convention.
 **Per-type unit:**
 
 - **Points** — per-element. Each subgroup contains a subset of
-  `positions` + per-element attrs (`colors` / `radii` / `sharpness` /
+  `positions` + per-element attrs (`colors` / `radii` / `sharpnesses` /
   `scalars`).
 - **GSplats** — per-element. Each subgroup contains a subset of
   `centers` / `amplitudes` / `cholesky_factors_diag` (+ `cholesky_factors_offdiag`) / `colors`.
   (Since format v3.1 the in-memory packed `cholesky_factors` is stored on disk split
   into `_diag` + `_offdiag` so each can be encoded independently; `_offdiag` is absent
   for 1D splats. Legacy v3.0 files store a single packed `cholesky_factors`, read via a
-  presence-detect fallback.)
+  presence-detect fallback. The current gsplats format is **v3.2**, which only
+  renames the `kind=lod` selector attrs to the coverage semantics described
+  above — `selector: "coverage"` + per-child `coverage_fraction`; see
+  `docs/specs/GSPLATS_ZARR_FORMAT.md`, the authoritative gsplats format spec.)
 - **Lines** — per-polyline. Each subgroup contains WHOLE polylines
   (vertices + their segments). Segment indices are local to the
   subgroup so topology stays valid during partial loads; the viewer
@@ -468,12 +476,35 @@ Points nodes contain the actual point data.
 
 **Data Arrays:**
 
+The dtypes below describe the default `EncodingMode.AUTO`. Every array
+self-describes its on-disk encoding via an `encoding` attr in its `.zattrs`
+(see `luxar.encoding` and *Array Encodings* below); readers dispatch on
+`encoding.name` and decode to float32 (or the array's original integer
+dtype, e.g. uint8 colors stay uint8). `PRECISION` stores raw float32
+everywhere; `MEMORY` quantizes more aggressively for the wide-range geolog
+family (8-bit where AUTO uses 16-bit — HDR colors, wide-range positive
+scalars); coordinates stay uint16 and bounded scalars pick 8-vs-16 bits from
+their dynamic range identically in both modes. Uniform arrays are stored as
+a single `broadcasted` value and byte-identical duplicates as an
+`array_ref`, regardless of mode.
+
+Chunking is **byte-based**, not a fixed element count: the first-dimension
+chunk length is derived from the 64 KB target (`TARGET_CHUNK_BYTES` ÷
+bytes-per-row for the array's *input* dtype — computed before encoding, so
+float32 rows even when the stored code is uint8/uint16), or aligned to the spatial
+index's `chunk_size` when spatial ordering is enabled (the default), so a
+chunk-index range maps to exactly one zarr chunk.
+
 #### positions/ (Required)
 - **Shape:** `(N, D)` where N = number of points, D = dimensionality
-- **Dtype:** `float32`
-- **Chunks:** `(min(N, 32768), D)` for 2D chunking
+- **Dtype/Encoding:** `uint16` per-axis fixed-point (`linear_perchannel_u16`)
+  under AUTO/MEMORY — each axis quantized over its own `[min, max]` to 65536
+  levels, decoded back to float32 on read (visually lossless, ~2× smaller).
+  `float32` under PRECISION, or when a per-axis extent ≥ 2¹⁶ forces the
+  float32 fallback (uint16 could no longer resolve a unit step).
+- **Chunks:** `(chunk_rows, D)` — byte-based / spatial-index-aligned (see above)
 - **Compression:** Blosc with zstd, level 9 (width-aware shuffle policy)
-- **Description:** Point positions in D-dimensional space
+- **Description:** Point positions in D-dimensional space (never broadcast)
 
 #### colors/ (Optional)
 - **Shape:** `(N, 3)` for RGB
@@ -481,7 +512,7 @@ Points nodes contain the actual point data.
   `rgb_uint8`, or HDR under MEMORY) / `float32` (PRECISION). HDR colors are
   quantized per channel on a true-log grid (uniform relative precision, code 0
   reserved for exact zeros) and decoded back to float32.
-- **Chunks:** `(min(N, 32768), 3)`
+- **Chunks:** `(chunk_rows, 3)` — byte-based / spatial-index-aligned
 - **Compression:** Blosc with zstd, level 9 (width-aware shuffle policy)
 - **Description:** HDR RGB colors in normalized range
   - **SDR Range:** 0.0-1.0 (standard dynamic range)
@@ -492,17 +523,23 @@ Points nodes contain the actual point data.
 
 #### radii/ (Optional)
 - **Shape:** `(N,)`
-- **Dtype:** `float32`
-- **Chunks:** `(min(N, 32768),)` for 1D chunking
+- **Dtype/Encoding:** POSITIVE_SCALAR — under AUTO, quantized to
+  `bounded_scalar_uint8`/`bounded_scalar_uint16` (rescale-first, anchored at
+  the array's own `[min, max]`) or, for wide dynamic range (> 65536:1),
+  `geolog_scalar_uint16` (geometric-log grid, code 0 reserved for exact
+  zeros). `float32` under PRECISION; `broadcasted` when uniform.
+- **Chunks:** `(chunk_rows,)` — byte-based / spatial-index-aligned
 - **Compression:** Blosc with zstd, level 9 (width-aware shuffle policy)
 - **Description:** Point radii in scene units
 - **Default:** 0.5 if not provided (see `DEFAULT_POINT_RADIUS` in `core/scene.py`)
 - **Validation:** All values must be positive
 
-#### sharpness/ (Optional)
+#### sharpnesses/ (Optional)
 - **Shape:** `(N,)`
-- **Dtype:** `float32`
-- **Chunks:** `(min(N, 32768),)` for 1D chunking
+- **Dtype/Encoding:** BOUNDED_SCALAR with fixed bounds `(0.0, 1.0)` — under
+  AUTO, quantized to `bounded_scalar_uint8`/`uint16`; `float32` under
+  PRECISION; `broadcasted` when uniform.
+- **Chunks:** `(chunk_rows,)` — byte-based / spatial-index-aligned
 - **Compression:** Blosc with zstd, level 9 (width-aware shuffle policy)
 - **Description:** Point edge sharpness — a normalised `[0, 1]` knob. The viewer
   maps it to the super-Gaussian falloff exponent `β = 2^(6s − 2)`: `s = 0.5 → β = 2`
@@ -510,6 +547,83 @@ Points nodes contain the actual point data.
   peakier cusp (β down to 0.25).
 - **Default:** 0.5 (→ β = 2, Gaussian) if not provided
 - **Validation:** All values must be in `[0, 1]`
+
+### 4. Lines Nodes
+
+Lines nodes contain polyline/segment data. All four user-facing line types
+(`segments`, `polyline`, `loop`, `indexed`) are converted to a unified
+**indexed representation** at write time — a `segments` array of vertex-index
+pairs — so the on-disk layout is identical for every type; the user's original
+choice is recorded in `original_line_type`.
+
+**Attributes (.zattrs):**
+```json
+{
+  "type": "lines",
+  "n_vertices": 10000,
+  "n_segments": 9999,
+  "ndim": 3,
+  "original_line_type": "polyline",  // "segments" | "polyline" | "loop" | "indexed"
+  "has_colors": true,
+  "has_sharpness": false,
+  "max_width": 1.5,
+  "position_bounds": {"min": [...], "max": [...]},
+  "ordering": "hilbert",             // or "morton" / "none"
+  "vertex_ordering": { ... },        // Vertex spatial-index metadata (D-space)
+  "segment_ordering": { ... },       // Segment spatial-index metadata (2×D-space)
+  /* transform, nd_transform, opacity, gamma, intensity, offset,
+     blending_mode, layer, visible — same as Points */
+}
+```
+
+Lines use **dual spatial indexing**: vertices are curve-ordered in D-space
+(like Points) and segments are independently curve-ordered in (2×D)-space
+(concatenating both endpoints), each with its own chunk-bounds array
+(`vertex_chunk_bounds` / `segment_chunk_bounds`, both
+`(num_chunks, D, 2)` float32 — segment *bounds* are deliberately D-space
+even though the segment *ordering* sorts in 2×D, so both support view-frustum
+intersection tests directly).
+
+**Data Arrays** (same AUTO/PRECISION/MEMORY conventions as Points; all
+per-vertex arrays are reordered by the vertex sort):
+
+#### vertices/ (Required)
+- **Shape:** `(N, D)` — vertex positions
+- **Dtype/Encoding:** COORDINATE, same as Points `positions/`:
+  `linear_perchannel_u16` under AUTO/MEMORY (float32 under PRECISION or the
+  ≥ 2¹⁶-extent fallback). Never deduplicated to an `array_ref` and never
+  LUT-encoded — the lines spatial-index loader reads it as raw chunked zarr
+  with no structural-encoding dispatch (grid-snapped vertices would otherwise
+  store as LUT indices).
+
+#### segments/ (Required, auto-generated)
+- **Shape:** `(M, 2)` — vertex-index pairs, indices local to this node
+- **Dtype/Encoding:** INDEX — stored as the smallest unsigned integer dtype
+  that fits the max index (`uint8`/`uint16`/`uint32`), read raw (never
+  LUT-encoded or deduplicated).
+
+#### widths/ (Required)
+- **Shape:** `(N,)` — per-vertex line widths (scene units, must be positive)
+- **Dtype/Encoding:** POSITIVE_SCALAR, same rules as Points `radii/`
+  (`bounded_scalar_uint8/16` or `geolog_scalar_uint16` under AUTO; float32
+  under PRECISION; `broadcasted` when a scalar width is given).
+
+#### colors/ (Optional)
+- **Shape:** `(N, 3)` — per-vertex RGB, same COLOR encoding rules as Points
+  (SDR → `rgb_uint8`; HDR → `geolog_perchannel_u16` under AUTO).
+
+#### sharpnesses/ (Optional)
+- **Shape:** `(N,)` — per-vertex edge sharpness, same BOUNDED_SCALAR `[0, 1]`
+  rules and semantics as Points `sharpnesses/`.
+
+#### scalars/ (Optional)
+- **Shape:** `(N,)` — **per-vertex** colormap scalars (matching `widths`, not
+  per-segment); declared via `has_scalars` / `scalar_data_range` / `colormap`
+  attrs (see *Scalar Colormap Attributes* below).
+
+Per-vertex labels (`label_offsets`/`label_bytes`) and image labels
+(`image_label_offsets`/`image_label_bytes`) are supported with the same
+CSR-style layout as Points (see *Per-Element Labels*).
 
 ## Scalar Colormap Attributes
 
@@ -742,6 +856,31 @@ label_i = utf8_decode(label_bytes[offsets[i] : offsets[i+1]])
 
 Empty strings are treated as null labels (no tooltip shown on hover). Labels are reordered to match spatial ordering if enabled.
 
+#### Per-Element Image Labels (CSR-style)
+
+Optional per-element **image** labels for hover thumbnails, written via the
+`image_labels=` parameter of `add_points` / `add_lines` / `add_gsplats`
+(accepts pre-encoded bytes, PIL images, `(H, W[, C])` uint8 numpy arrays, or
+file paths; PIL images and numpy arrays are encoded to WebP, while bytes and
+file contents are stored as-is — a PNG file stays PNG). When present, `.zattrs`
+includes `"has_image_labels": true`.
+
+**image_label_offsets/** Array:
+- **Shape:** `(N+1,)` where N = number of elements
+- **Dtype:** `uint64`
+- **Description:** CSR-style byte offsets into `image_label_bytes`. Image for
+  element `i` spans bytes `[offsets[i], offsets[i+1])`; empty entries have
+  `offsets[i] == offsets[i+1]`.
+
+**image_label_bytes/** Array:
+- **Shape:** `(total_bytes,)`
+- **Dtype:** `uint8`
+- **Compression:** **None** (deliberately uncompressed — the blobs are already
+  compressed JPEG/WebP/PNG; the small offsets array uses the scene default)
+- **Description:** Concatenated encoded image blobs.
+
+Image labels are reordered to match spatial ordering, like text labels.
+
 ### Hover Overlays
 
 Overlays with `"hover": true` in their `.zattrs` act as hover tooltips. Their `text` (or `html`) field can contain template variables that are substituted by the viewer when GPU picking resolves an element:
@@ -881,7 +1020,7 @@ When building points with spatial index (`enable_spatial_index=True`):
 
 1. **Identify Dimension Types**: Classify dimensions as discrete vs spatial
 2. **Compute Sort Order**: Lexsort on discrete dims, then Morton/Hilbert code
-3. **Reorder All Arrays**: Apply same sort order to positions, colors, radii, sharpness
+3. **Reorder All Arrays**: Apply same sort order to positions, colors, radii, sharpnesses
 4. **Compute Chunk Bounds**: Calculate bounding boxes including radius extent
 5. **Store Metadata**: Write ordering info to group attributes
 6. **Store Bounds Array**: Write chunk_bounds array to group
@@ -1073,7 +1212,7 @@ Optimal chunk sizes balance memory usage and access patterns:
 - **Minimum chunk payload:** 16KB (`MIN_CHUNK_BYTES`)
 - **Maximum chunk payload:** 256KB (`MAX_CHUNK_BYTES`)
 - **2D arrays (positions, colors):** Chunk along first dimension only, deriving element counts from dtype and row width
-- **1D arrays (radii, sharpness):** Simple 1D chunking, deriving element counts from dtype
+- **1D arrays (radii, sharpnesses):** Simple 1D chunking, deriving element counts from dtype
 
 ### Chunking with Spatial Index
 
@@ -1083,14 +1222,50 @@ When using spatial indices:
 - **Benefits**: Loading a chunk index range loads exactly that zarr chunk
 - **Morton Ordering**: Points within a chunk are spatially nearby due to Morton ordering
 
+## Array Encodings
+
+Every data array self-describes its on-disk encoding via an `encoding` attr
+in its `.zattrs` (`{"name": "<scheme>", ...}`); readers dispatch on
+`encoding.name` and decode back to float32 (or the original integer dtype).
+The full scheme vocabulary is single-sourced in
+`format-contract/contract.yaml`. Besides the quantization schemes described
+per-array above (`linear_perchannel_u16`, `rgb_uint8`,
+`geolog_perchannel_u16`, `bounded_scalar_uint8/16`, `geolog_scalar_uint16`,
+…), three **structural encodings** are part of the reader contract:
+
+- **`broadcasted`** — all elements share one value: the array is stored with
+  shape `(1,)` / `(1, d)` and `encoding.n_elements` records the logical count
+  N. Readers expand on load.
+- **`array_ref`** — content-deduplication: a byte-identical duplicate of
+  another array in the same store is stored as an **empty** array (physical
+  shape `(0,)` / `(0, D)`) whose `encoding` carries `target` (path of the
+  original array), `hash`, `original_shape`, and `original_dtype`. Readers
+  must resolve and load the target array. (Structural arrays whose consumers
+  read raw zarr — line `vertices`/`segments` — are never dedup- or
+  LUT-encoded.)
+- **`lut_uint8` / `lut_uint16`** — look-up-table encoding for arrays with few
+  unique values (or few unique color rows): the array stores indices and the
+  `encoding.lut` attr carries the unique values as JSON (`lut_mode` +
+  `original_shape` added for 2D/row-mode). Exact (lossless); INDEX arrays
+  never LUT-encode.
+
 ## Compression
 
-Default compression uses Blosc with:
-- **Codec:** zstd (balanced speed/ratio)
-- **Level:** 3 (moderate compression)
-- **Shuffle:** bit-shuffle (optimized for scientific data)
+Default compression is a **width-aware per-dtype Blosc policy**
+(`luxar.encoding.compression`), resolved from each array's stored dtype at
+write time:
+- **Multi-byte integer codes** (uint16 fixed-point / quantized): zstd level 9
+  with **byte SHUFFLE**
+- **Single-byte codes (uint8) and floats:** zstd level 9, **no shuffle**
+  (shuffle filters are no-ops or harmful for these payloads)
 
-Supported alternatives:
+Bit-shuffle is deliberately not used — Blosc silently neutralises it above
+level 1 at 64 KiB chunks; byte shuffle at high level is what actually engages.
+Decode speed is level-independent (natively and in wasm), so the high level is
+purely a write-time budget.
+
+Supported alternatives (pass an explicit compressor to override, or `None` to
+store uncompressed):
 - Blosc with lz4, blosclz, snappy, zlib
 - Native: gzip, bz2, lzma
 - External: zstd, lz4
@@ -1187,9 +1362,7 @@ with LuxarZarrCompiler("output.luxar.zarr", enable_spatial_index=True) as compil
 ## Future Extensions (Planned)
 
 - Multiple blending modes per layer
-- Support for meshes, lines, volumes
+- Support for meshes, volumes
 - Material system with shading models
 - Temporal interpolation for smooth animations
-- Hierarchical level-of-detail (LOD) support
-- Hilbert curve option for improved spatial locality (vs Morton)
 - Multi-resolution spatial indices for LOD

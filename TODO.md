@@ -476,6 +476,8 @@ to ship after). Sequencing is at the bottom.
     - **Virtual residency via zarr chunks** — PARTIAL (close). Coarse eager levels stay resident, fine lazy levels fetch on demand and evict off-screen-first/furthest-first — but driven by byte-budget pressure over LOD geometry + decoded-chunk caches, not per-chunk camera-keyed paging.
     - **nD LOD metric for non-displayed dimensions, split-seam handling, split-granularity tuning** — MISSING (`extend_to_all` governs visibility only, not LOD; granularity is `max_elements`-count-driven).
 
+26 - **Lines compiler auto-partition heuristic** (three-geometry symmetry gap, staged): `add_points` auto-partitions large clouds at the compiler level; `add_lines` does not (documented at the seam in `core/group/adders/lines.py` — the `partition=False` sentinel is already normalized for the day it's wired). Wire the same heuristic for Lines (and evaluate GSplats parity) or decide it's permanently Points-only and update the adder docs.
+
 ---
 
 ## Completed (Archive)

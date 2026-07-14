@@ -30,6 +30,11 @@ timepoint instead. Tuning: `--saturation-exponent` (0.44), `--saturation-cap`,
 `--splats-per-pass`, `--psnr-patience`, `--max-passes`, `--cull-retention`
 (default 0.95 uniform / 0.999 content; 0 keeps all).
 
+`--floor` (default `auto`, same as `fit`/`cal`): subtract a background floor /
+DC-offset (clip at 0) before normalization, so amplitudes are background-relative.
+`auto` = histogram-mode estimate (capped at median; no-op on clean data);
+`pNN` = subtract that percentile; a number = fixed value; `none` = disable.
+
 ## Shared denoising (NLM)
 `--denoise`, `--denoise-h`, `--denoise-2d`, `--denoise-patch-size` (3),
 `--denoise-search-distance` (5), `--denoise-backend` (auto).

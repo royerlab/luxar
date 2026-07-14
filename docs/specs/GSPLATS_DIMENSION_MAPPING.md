@@ -1,7 +1,7 @@
 # Gaussian Splats Dimension Mapping
 
 **Version**: 2.0
-**Last Updated**: 2026-04-03
+**Last Updated**: 2026-07-13
 
 ## Overview
 
@@ -30,13 +30,17 @@ def add_gsplats(
     amplitudes: Union[float, np.ndarray],
     cholesky_factors: np.ndarray,  # Shape (N, k) where k = D_splat*(D_splat+1)/2
     colors: Optional[np.ndarray] = None,
+    labels: Optional[Sequence[str]] = None,        # Per-splat hover labels (CSR text)
+    image_labels: Optional[Any] = None,            # Per-splat hover thumbnails (CSR images)
     parent: Optional[Node] = None,
     extend_to_all: Optional[Union[List[str], str]] = None,
     dim_order: Optional[List[str]] = None,
     fill: Optional[Dict[str, float]] = None,
     fill_sigma: Optional[Dict[str, float]] = None,
+    partition: Any = None,                         # True / dict(max_elements=..., rule=...) →
+                                                   #   compile-time kind=partition wrapper
     **attrs: Any,
-) -> GSplats:
+) -> Union[GSplats, Group]:
 ```
 
 **`dim_order`** — Maps data columns to scene dimensions by name. Also reorders and embeds Cholesky factors automatically. For example, `dim_order=["z", "y", "x"]` declares that the first column of `centers` corresponds to the scene's "z" dimension, etc.
@@ -220,12 +224,16 @@ Key fields:
 ```
 gsplat_node/
   ├── .zattrs                   (metadata above)
-  ├── centers                   (N, ndim) float32
-  ├── amplitudes                (N,) or (1,) float32
-  ├── cholesky_factors_diag     (N, d) or (1, d) float32, d=ndim (diagonal, scale-like terms)
-  ├── cholesky_factors_offdiag  (N, k-d) or (1, k-d) float32 (signed off-diagonal; omitted when ndim==1; k=ndim*(ndim+1)/2)
-  └── colors                    (N, 3) or (1, 3) uint8/float32
+  ├── centers                   (N, ndim) uint16 (AUTO; float32 if an axis extent ≥ 2¹⁶) / float32 (PRECISION)
+  ├── amplitudes                (N,) or (1,) uint8/uint16 (AUTO) / float32 (PRECISION)
+  ├── cholesky_factors_diag     (N, d) or (1, d) uint8 (AUTO, certified — escalates to uint16 if the covariance certificate fails) / float32 (PRECISION), d=ndim (diagonal, scale-like terms)
+  ├── cholesky_factors_offdiag  (N, k-d) or (1, k-d) uint8 (AUTO, certified as above) / float32 (PRECISION) (signed off-diagonal; omitted when ndim==1; k=ndim*(ndim+1)/2)
+  └── colors                    (N, 3) or (1, 3) uint8/uint16 (AUTO) / float32 (PRECISION)
 ```
+
+On-disk dtypes follow the encoding mode (default `AUTO` quantizes; all arrays
+decode to float32 on read — see
+[GSplats Zarr Format](GSPLATS_ZARR_FORMAT.md) for the per-array encodings).
 
 Arrays use scene dimensionality (after `dim_order` expansion), not the original data dimensionality. Since format **v3.1** the Cholesky factors are stored on disk split into `cholesky_factors_diag` (N, ndim) + `cholesky_factors_offdiag` (N, k-ndim) — each encoded/quantized independently — and recombined into the packed (N, k) `cholesky_factors` form immediately on read (Python reader and viewer loader), so nothing downstream of the storage boundary sees the split. (1D splats have no off-diagonal terms, so `cholesky_factors_offdiag` is omitted; legacy v3.0 files store a single packed `cholesky_factors`, read via presence-detect fallback.)
 

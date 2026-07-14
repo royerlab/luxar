@@ -488,7 +488,7 @@ def test_without_meta_key_scrubs_group_and_leaf_meta():
     nodes that ``map_leaves`` copies verbatim — while preserving other meta.
 
     This is the mechanism that fixes the stale-``coverage_fraction`` bug on the
-    transform tree path for multiscale / mosaic topologies.
+    transform tree path for overview / adaptive topologies.
     """
     from luxar.gsplats.tree import map_leaves, without_meta_key
 

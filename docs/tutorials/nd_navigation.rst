@@ -168,6 +168,7 @@ Categorical Dimensions
        Dimension(
            "Channel",
            discrete=True,
+           display=False,  # Non-displayed: at most 3 dims can be displayed
            categories=["DAPI", "GFP", "mCherry", "Cy5"]  # Named channels!
        ),
    ])

@@ -71,7 +71,13 @@ Each Gaussian splat is parameterized using covariance matrix representation:
 - **Centers (μ)**: Sigmoid-bounded to stay within image domain
 - **Covariance (Σ)**: Cholesky decomposition `Σ = L @ L^T` ensures positive definiteness
 - **Amplitudes (a)**: Softplus activation for non-negativity
-- **Sharpness (s)**: Exponential mapping `s = 2 * exp(s')` controls edge falloff (default s=2 for standard Gaussian)
+
+These three (centers, Cholesky factors, amplitudes) are the only optimized
+parameters — the falloff exponent is fixed at 2 (a standard Gaussian). The
+normalized `[0, 1]` sharpness attribute found on Points/Lines (mapping to a
+super-Gaussian exponent `β = 2^(6s−2)`, with `s = 0.5` ⇒ Gaussian) is a viewer
+rendering knob for those geometry types and is not part of the gsplat fitting
+model.
 
 Mathematical form (shifted Gaussian for C⁰ continuity at truncation boundary):
 ```
@@ -748,7 +754,8 @@ luxar gsplat lod fit.gsplats.zarr pyramid.gsplats.zarr --recipe levels -K 4 -L 3
 # Collapse any tree (LOD/partition/nested) into one flat matrix-shaped leaf
 luxar gsplat flatten partitioned.gsplats.zarr flat.gsplats.zarr
 
-# Migrate legacy v1.0 / v1.1 / v2.0 / pre-v2.0 substitutive-directory layouts → v3.2
+# Migrate legacy v1.0 / v1.1 / v2.0 / pre-v2.0 substitutive-directory /
+# v3.0-v3.1 (pre-v3.2 pixel_size selector attrs) layouts → v3.2
 luxar gsplat migrate-format legacy.gsplats.zarr v3.gsplats.zarr
 ```
 
@@ -1151,7 +1158,7 @@ gsplats/
 │   ├── save_gsplats.py            # Save GSplatData to .gsplats.zarr
 │   ├── load_gsplats.py            # Load GSplatData from .gsplats.zarr
 │   ├── inspect_gsplats.py         # Inspect and summarize .gsplats.zarr files
-│   └── migrate.py                 # Migrate legacy v1.0 / v1.1 / v2.0 / substitutive-dir layouts → v3.2
+│   └── migrate.py                 # Migrate legacy v1.0 / v1.1 / v2.0 / substitutive-dir / v3.0-v3.1 (pre-v3.2 pixel_size attrs) layouts → v3.2
 │
 ├── batch/                         # HPC batch fitting (Slurm integration)
 │   ├── manifest.py                # Batch job manifest management
@@ -1406,4 +1413,4 @@ If you use this implementation in your research, please cite:
 
 ## License
 
-MIT License - See repository for details
+BSD 3-Clause License - See the repository `LICENSE` file for details

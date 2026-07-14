@@ -151,13 +151,9 @@ def validate_chunk_bytes(chunk_bytes: Any) -> int:
     otherwise.
 
     .. note::
-        Earlier versions of this function were named ``validate_chunk_size``
-        and operated on element counts; the units flipped to bytes when the
-        chunking heuristic became byte-targeted. Callers passing element
-        counts (e.g. 1024) will now hit the "too small" branch. The older
-        function name is preserved as a deprecated alias that emits
-        ``DeprecationWarning`` — update call sites at your earliest
-        convenience.
+        This function validates **bytes**, not element counts — a caller
+        passing an element count (e.g. 1024) hits the "too small" branch.
+        The chunking heuristic is byte-targeted throughout.
 
     Args:
         chunk_bytes: Chunk size in bytes.

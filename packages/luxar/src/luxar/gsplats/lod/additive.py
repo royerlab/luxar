@@ -759,7 +759,7 @@ def make_additive_lod(
     Returns
     -------
     GSplatData
-        A v2.0 ``GSplatData`` with the same ``n_substitutive`` as
+        A matrix-shaped ``GSplatData`` with the same ``n_substitutive`` as
         ``data``; the selected level's additive sub-LODs form the new
         ladder, other substitutive levels are passed through unchanged.
     """

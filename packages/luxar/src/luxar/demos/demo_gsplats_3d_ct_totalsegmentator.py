@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
-"""GSplats Demo: Whole-Body CT Anatomical Atlas (TotalSegmentator) — Organs in Color
+"""GSplats Demo: CT Anatomical Atlas (TotalSegmentator) — Organs in Color
 
-Gaussian-splats a real whole-body clinical CT scan and colors every splat by the
-anatomical structure it belongs to, using the TotalSegmentator dataset's
-117-structure segmentation. The result is a glowing, rotatable 3D atlas: the
-ivory skeleton, red great vessels, cyan lungs, and colored abdominal organs all
-in their true 3D positions — the microscopy splat pipeline applied to whole-body
-radiology.
+Gaussian-splats a real clinical CT scan (a neck-to-pelvis study — the fullest
+common coverage in routine CT; head and distal limbs are outside the scan) and
+colors every splat by the anatomical structure it belongs to, using the
+TotalSegmentator dataset's 117-structure segmentation. The result is a glowing,
+rotatable 3D atlas: the ivory skeleton, red great vessels, cyan lungs, and
+colored abdominal organs all in their true 3D positions — the microscopy splat
+pipeline applied to clinical radiology.
 
 ================================================================================
 CT VOLUME + 117-LABEL SEGMENTATION → COLORED GAUSSIAN SPLATS
@@ -17,9 +18,11 @@ segmentation (one binary mask per organ). We combine the masks into one
 label volume, window the CT to the body, fit oriented Gaussians to the
 segmented anatomy, then sample the label at each splat center and map it to a
 tissue-grouped color palette (bone = ivory, vessels = red, lungs = cyan, GI =
-green, abdominal organs = warm, muscle = pink, brain/cord = yellow). One fit +
-per-splat color sampling — the same idea as the Visible Human head demo, but the
-color encodes organ identity instead of photographic RGB.
+green, abdominal organs = warm, muscle = dim flesh). One fit + per-splat label
+sampling — the same idea as the Visible Human head demo, but the sampled organ
+label drives both the color and a hover tooltip (the specific structure name,
+all 117 tissue types), and the splats are split into toggle-able Layers-panel
+groups (Skeleton / Organs / Vessels & heart / Nervous system / Muscles).
 
 DATA SOURCE & CITATION
 ----------------------
@@ -35,13 +38,14 @@ Label scheme: the 117-class `total` map from the TotalSegmentator tool
 SELF-CONTAINED / CACHING
 ------------------------
 On a fresh machine this demo bootstraps itself with no manual steps:
-  1. Fast path: a precomputed fit + per-splat colors shipped via Git LFS
-     (``demos/data/gsplats_ct_totalsegmentator/``); loads instantly.
+  1. Fast path: a precomputed fit + per-splat organ labels shipped via Git LFS
+     (``demos/data/gsplats_ct_totalsegmentator/``); loads instantly (colors,
+     layers, and hover tooltips are all derived from the labels at scene build).
   2. If those assets aren't pulled, ``--recompute`` (or missing assets)
      AUTOMATICALLY downloads the 3.2 GB subset to
      ``~/.cache/luxar/gsplats_ct_totalsegmentator/`` (resumable), extracts one
-     subject, combines its masks with ``nibabel``, fits on the GPU, samples
-     per-splat organ colors, and caches.
+     subject, combines its masks with ``nibabel``, fits on the GPU, samples the
+     per-splat organ label, and caches.
 
 USAGE
 -----
@@ -79,22 +83,22 @@ SUBSET_URL = (
     "Totalsegmentator_dataset_small_v201.zip/content"
 )
 SUBSET_SIZE = 3_244_617_817  # bytes
-# A whole-body subject in the subset (neck-thorax-abdomen-pelvis, all 117
-# structures, 1.5 mm isotropic, ~668 mm head→pelvis coverage).
+# The broadest-coverage subject in the subset (neck-thorax-abdomen-pelvis, ~109
+# of the 117 structures present, 1.5 mm isotropic, ~668 mm neck→pelvis).
 SUBJECT_ID = "s0720"
 
 DEMO_NAME = "gsplats_ct_totalsegmentator"
 FIT_FILE = "ct_atlas.gsplats.zarr.zip"
-COLORS_FILE = "ct_atlas_colors.npz"
+LABELS_FILE = "ct_atlas_labels.npz"
 
 CACHE_DIR = Path.home() / ".cache" / "luxar" / DEMO_NAME
 CACHE_ZIP = CACHE_DIR / "totalsegmentator_small.zip"
 CACHE_FIT = CACHE_DIR / FIT_FILE
-CACHE_COLORS = CACHE_DIR / COLORS_FILE
+CACHE_LABELS = CACHE_DIR / LABELS_FILE
 
 DATA_DIR = Path(__file__).parent / "data" / DEMO_NAME
 LFS_FIT = DATA_DIR / FIT_FILE
-LFS_COLORS = DATA_DIR / COLORS_FILE
+LFS_LABELS = DATA_DIR / LABELS_FILE
 
 # CT windowing (Hounsfield units): soft tissue + bone. Below LO → 0, above HI → 1.
 HU_LO = -150.0
@@ -240,8 +244,8 @@ CLASS_MAP = {
 # while the organs/vessels stay vivid, letting them read through the additive
 # blend instead of drowning in a bright pink+ivory mush.
 GROUP_COLORS = {
-    "bone": (0.86, 0.82, 0.70),  # warm ivory skeleton (context)
-    "muscle": (0.46, 0.28, 0.28),  # dim flesh — recedes behind organs
+    "bone": (0.90, 0.90, 0.88),  # near-neutral white (additive-safe: no yellow cast)
+    "muscle": (0.85, 0.45, 0.42),  # salmon flesh — visible but not garish
     "vessel": (0.95, 0.18, 0.18),  # arteries/veins — vivid red
     "heart": (0.90, 0.12, 0.30),  # crimson
     "lung": (0.35, 0.80, 0.92),  # cyan
@@ -252,6 +256,19 @@ GROUP_COLORS = {
     "brain": (0.98, 0.92, 0.50),  # pale yellow
     "spinal": (0.98, 0.82, 0.25),  # yellow
 }
+
+# Toggle-able Layers-panel groups: (name, member tissue groups, opacity,
+# amplitude_boost). Order sets the Layers-panel order. Muscle has low CT
+# amplitude (soft tissue) so it needs an amplitude boost to be visible — the
+# boost multiplies the splat amplitudes at build (a true intensity gain, not
+# capped at opacity=1); it stays semi-transparent so organs still read through.
+SUPERGROUPS: list[tuple[str, tuple[str, ...], float, float]] = [
+    ("Skeleton", ("bone",), 1.0, 1.0),
+    ("Organs", ("lung", "gi", "abdominal_organ", "urinary", "misc_organ"), 1.0, 1.0),
+    ("Vessels & heart", ("vessel", "heart"), 1.0, 1.0),
+    ("Nervous system", ("brain", "spinal"), 1.0, 1.0),
+    ("Muscles", ("muscle",), 0.55, 3.0),
+]
 
 FLAGS = parse_demo_flags()
 NO_SERVE = FLAGS["no_serve"]
@@ -361,6 +378,30 @@ def label_colors(label_ids: np.ndarray, palette: np.ndarray) -> np.ndarray:
     return palette[ids].astype(np.float32)
 
 
+def _label_to_supergroup_index() -> dict[int, int]:
+    """label id → SUPERGROUPS index (background label 0 → -1)."""
+    group_to_super = {
+        g: i for i, (_, groups, *_) in enumerate(SUPERGROUPS) for g in groups
+    }
+    return {lid: group_to_super[tissue_group(name)] for lid, name in CLASS_MAP.items()}
+
+
+def splat_layer_indices(label_ids: np.ndarray) -> np.ndarray:
+    """Per-splat SUPERGROUPS index (-1 for background/label 0)."""
+    lut = np.full(118, -1, dtype=np.int32)
+    for lid, sidx in _label_to_supergroup_index().items():
+        lut[lid] = sidx
+    return lut[np.clip(np.asarray(label_ids, dtype=np.intp), 0, 117)]
+
+
+def organ_label_text(label_id: int) -> str:
+    """Human-readable organ name for a hover tooltip (e.g. 'Kidney right')."""
+    name = CLASS_MAP.get(int(label_id))
+    if not name:
+        return ""
+    return name.replace("_", " ").capitalize()
+
+
 def crop_to_content(
     mask: np.ndarray, pad: int = 2
 ) -> tuple[int, int, int, int, int, int]:
@@ -376,24 +417,20 @@ def crop_to_content(
     return tuple(out)  # type: ignore[return-value]
 
 
-def _save_colors_u8(colors: np.ndarray, path: Path) -> None:
-    """Persist per-splat colors as uint8 (quantized RGB)."""
-    u8 = np.clip(np.rint(np.asarray(colors, dtype=np.float32) * 255.0), 0, 255).astype(
-        np.uint8
-    )
+def _save_labels_u8(labels: np.ndarray, path: Path) -> None:
+    """Persist the per-splat organ label id as uint8 (0-117)."""
+    u8 = np.clip(np.asarray(labels), 0, 117).astype(np.uint8)
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_suffix(path.suffix + ".part")
     with open(tmp, "wb") as fh:
-        np.savez_compressed(fh, colors_u8=u8)
+        np.savez_compressed(fh, labels_u8=u8)
     tmp.rename(path)
 
 
-def _load_colors_f32(path: Path) -> np.ndarray:
-    """Load per-splat colors as float32 in [0, 1] (uint8 or legacy float npz)."""
+def _load_labels(path: Path) -> np.ndarray:
+    """Load the per-splat organ label id array (int32)."""
     with np.load(path) as data:
-        if "colors_u8" in data:
-            return data["colors_u8"].astype(np.float32) / 255.0
-        return data["colors"].astype(np.float32)
+        return data["labels_u8"].astype(np.int32)
 
 
 # =============================================================================
@@ -521,7 +558,7 @@ def load_ct_and_labels() -> tuple[np.ndarray, np.ndarray, np.ndarray]:
 def fit_atlas(
     fit_vol: np.ndarray, label_vol: np.ndarray
 ) -> tuple[GSplatData, np.ndarray]:
-    """Fit splats to the CT, sample per-splat organ colors, cache both."""
+    """Fit splats to the CT, sample the per-splat organ label, cache both."""
     global DEVICE
     if DEVICE is None:
         DEVICE = detect_device()
@@ -540,9 +577,8 @@ def fit_atlas(
         )
         aprint(f"Fitted {len(result.amplitudes):,} splats")
 
-    with asection("Sampling per-splat organ colors"):
-        palette = organ_palette()
-        colors = label_colors(sample_labels(label_vol, result.centers), palette)
+    with asection("Sampling per-splat organ labels"):
+        labels = sample_labels(label_vol, result.centers)
 
     CACHE_DIR.mkdir(parents=True, exist_ok=True)
     result.save(
@@ -552,29 +588,27 @@ def fit_atlas(
         compress="zip",
         zip_deflate=True,
     )
-    _save_colors_u8(colors, CACHE_COLORS)
-    # Round-trip through uint8 so recompute matches the shipped path exactly.
-    colors = np.clip(np.rint(colors * 255.0), 0, 255).astype(np.float32) / 255.0
-    return result, colors
+    _save_labels_u8(labels, CACHE_LABELS)
+    return result, labels
 
 
 def load_or_build() -> tuple[GSplatData, np.ndarray]:
-    """Return (fit, colors), self-contained on a fresh system."""
+    """Return (fit, per-splat labels), self-contained on a fresh system."""
     if not RECOMPUTE:
-        if CACHE_FIT.exists() and CACHE_COLORS.exists():
+        if CACHE_FIT.exists() and CACHE_LABELS.exists():
             precomputed = load_precomputed_gsplats(
                 DEMO_NAME, [FIT_FILE], recompute=False
             )
             if precomputed is not None:
-                return precomputed[0], _load_colors_f32(CACHE_COLORS)
+                return precomputed[0], _load_labels(CACHE_LABELS)
         if (
             LFS_FIT.exists()
-            and LFS_COLORS.exists()
+            and LFS_LABELS.exists()
             and not is_lfs_pointer(LFS_FIT)
-            and not is_lfs_pointer(LFS_COLORS)
+            and not is_lfs_pointer(LFS_LABELS)
         ):
             fit = GSplatData.load(LFS_FIT)
-            return fit, _load_colors_f32(LFS_COLORS)
+            return fit, _load_labels(LFS_LABELS)
         aprint(
             "Precomputed atlas not available (Git LFS assets not pulled). "
             "Falling back to download + fit (one-time; result is cached)."
@@ -590,10 +624,15 @@ def load_or_build() -> tuple[GSplatData, np.ndarray]:
 # =============================================================================
 
 
-def create_luxar_scene(fit: GSplatData, colors: np.ndarray, output_path: Path) -> Path:
-    """Build the CT anatomical-atlas scene."""
+def create_luxar_scene(fit: GSplatData, labels: np.ndarray, output_path: Path) -> Path:
+    """Build the CT anatomical-atlas scene, split into per-tissue toggle layers."""
     with asection("Creating Luxar Scene"):
         centered = fit.center_at_centroid().scale_intensity(SCENE_INTENSITY)
+        palette = organ_palette()
+        colors = label_colors(labels, palette)
+        layer_idx = splat_layer_indices(labels)
+        # Per-splat hover text: the specific organ name (all 117 tissue types).
+        name_lut = [organ_label_text(i) for i in range(118)]
         dims = Dimensions(
             [
                 Dimension("x", unit="mm", display=True),
@@ -626,19 +665,35 @@ def create_luxar_scene(fit: GSplatData, colors: np.ndarray, output_path: Path) -
                 dimensions=dims,
                 viewer_config=ViewerConfig(tone_mapping="Neutral", camera=camera),
             )
-            scene.attrs["title"] = "GSplats: Whole-Body CT Atlas (TotalSegmentator)"
-            scene.add_gsplats(
-                name="ct_atlas",
-                centers=centered.centers,
-                amplitudes=centered.amplitudes,
-                cholesky_factors=centered.cholesky_factors,
-                colors=colors.astype(np.float32),
-                opacity=1.0,
-                blending_mode="additive",
-                layer=True,
-            )
+            scene.attrs["title"] = "GSplats: CT Anatomical Atlas (TotalSegmentator)"
+            # One toggle-able layer per tissue supergroup (Layers panel); each
+            # splat keeps its specific organ name as a hover tooltip.
+            centers = centered.centers
+            amps = centered.amplitudes
+            chol = centered.cholesky_factors
+            for i, (layer_name, _groups, opacity, amp_boost) in enumerate(SUPERGROUPS):
+                mask = layer_idx == i
+                n = int(mask.sum())
+                if n == 0:
+                    continue
+                lids = labels[mask]
+                scene.add_gsplats(
+                    name=layer_name,
+                    centers=centers[mask],
+                    amplitudes=(amps[mask] * amp_boost).astype(np.float32),
+                    cholesky_factors=chol[mask],
+                    colors=colors[mask].astype(np.float32),
+                    labels=[name_lut[int(lid)] for lid in lids],
+                    opacity=float(opacity),
+                    blending_mode="additive",
+                    layer=True,
+                )
+                aprint(
+                    f"Layer '{layer_name}': {n:,} splats "
+                    f"(opacity {opacity}, ×{amp_boost} amplitude)"
+                )
             scene.add_text(
-                "Whole-Body CT Atlas — organs in color",
+                "CT Anatomical Atlas — organs in color",
                 position=(0.02, 0.02),
                 font_size=0.045,
                 anchor="top-left",
@@ -663,7 +718,7 @@ def create_luxar_scene(fit: GSplatData, colors: np.ndarray, output_path: Path) -
 
 def main() -> None:
     aprint("=" * 70)
-    aprint("GSplats Demo: Whole-Body CT Anatomical Atlas (TotalSegmentator)")
+    aprint("GSplats Demo: CT Anatomical Atlas (TotalSegmentator)")
     aprint("=" * 70)
 
     output_path = get_demos_output_dir() / "gsplats_3d_ct_totalsegmentator.luxar.zarr"
@@ -675,9 +730,9 @@ def main() -> None:
             aprint(f"No scene at {output_path}. Run without --serve-only first.")
         return
 
-    fit, colors = load_or_build()
+    fit, labels = load_or_build()
     aprint(f"Splats: {len(fit.amplitudes):,}")
-    scene_path = create_luxar_scene(fit, colors, output_path)
+    scene_path = create_luxar_scene(fit, labels, output_path)
 
     if NO_SERVE:
         aprint(f"Dataset generated at {scene_path}")

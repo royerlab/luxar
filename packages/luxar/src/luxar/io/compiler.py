@@ -621,6 +621,7 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
         from ..validation.base import (
             validate_colors_for_writing,
             validate_positions_for_writing,
+            validate_widths_for_writing,
         )
 
         # Setup and validation
@@ -665,20 +666,8 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
             if np.max(indices) >= n_vertices:
                 raise ValueError(f"Index {np.max(indices)} >= n_vertices {n_vertices}")
 
-        # Validate widths (must be positive like radii)
-        # Skip array-specific validation for scalars (handled by encoder)
-        if isinstance(widths, np.ndarray):
-            if widths.shape[0] != n_vertices:
-                raise ValueError(
-                    f"Widths shape {widths.shape} doesn't match n_vertices {n_vertices}"
-                )
-            if np.any(widths <= 0):
-                min_val = float(np.min(widths))
-                raise ValueError(
-                    f"Widths must be positive (> 0). Found minimum value: {min_val:.3f}"
-                )
-        elif isinstance(widths, (int, float)) and widths <= 0:
-            raise ValueError(f"Width must be positive (> 0). Got {widths}")
+        # Shared validator (the Lines sibling of validate_radii_for_writing)
+        validate_widths_for_writing(widths, n_vertices)
 
         # Convert line type to indexed representation (unified internal format)
         from .ordering import convert_to_indexed
@@ -733,6 +722,7 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
             spatial_index_data=ordering_data.get("vertex_ordering")
             if ordering_data
             else None,
+            dtype=vertices.dtype,
         )
         self._encoder.encode(
             data=vertices,
@@ -746,7 +736,11 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
             # chunked zarr and does not resolve array_ref, so dedup of these
             # structural arrays would silently drop geometry for a byte-
             # identical sibling (e.g. two identical components in a partition).
+            # LUT is blocked for the same raw-read reason: grid-snapped
+            # vertices (few unique coordinate values) would store as
+            # lut_uint8/16 indices and decode as garbage geometry.
             deduplicate=False,
+            allow_lut=False,
         )
 
         # Write segments array (always, not just for indexed type)

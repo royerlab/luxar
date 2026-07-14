@@ -182,7 +182,7 @@ pnpm agent:debug
 [BROWSER-CONSOLE-LOG] Query result: 0 cells → 0 ranges → 0 points
 
 # 3. Add instrumentation
-# Edit src/data/point-spatial-index-loader.ts
+# Edit src/data/points/points-spatial-index-loader.ts
 console.log('[DEBUG] Slice position:', slicePosition);
 console.log('[DEBUG] Query tolerance:', queryTolerance);
 

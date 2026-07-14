@@ -4,8 +4,8 @@ The convenience entry point :func:`make_lod_pyramid` chains the two LOD
 axes: substitutive reduction first (outer axis, see
 :mod:`luxar.gsplats.lod.substitutive`), then an additive ladder inside
 each substitutive level (inner axis, see
-:mod:`luxar.gsplats.lod.additive`). The result is a single v2.0
-``.gsplats.zarr`` carrying the full 2-D pyramid.
+:mod:`luxar.gsplats.lod.additive`). Saved to disk, the result is a
+single v3.2 node-tree ``.gsplats.zarr`` carrying the full 2-D pyramid.
 """
 
 from __future__ import annotations
@@ -63,7 +63,7 @@ def make_lod_pyramid(
 
     The pipeline runs :func:`make_substitutive_lod` first (outer axis)
     and then calls :func:`make_additive_lod` on each substitutive level
-    (inner axis). The result is a single v2.0 :class:`GSplatData` with
+    (inner axis). The result is a single matrix-shaped :class:`GSplatData` with
     ``n_substitutive = levels + 1`` and ``M_i = n_additive_lods`` (or as
     resolved by ``breakpoints``) per level.
 
@@ -95,8 +95,8 @@ def make_lod_pyramid(
     Returns
     -------
     GSplatData
-        A v2.0 dataset with the full ``[levels+1, n_additive_lods]``
-        pyramid.
+        A matrix-shaped dataset with the full
+        ``[levels+1, n_additive_lods]`` pyramid.
     """
     # Explicit `counts:` breakpoints must still be sane for the FULL dataset:
     # the finest pyramid level IS the input's (flattened) default substitutive

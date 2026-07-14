@@ -168,7 +168,7 @@ positions[:, 4] = np.random.choice([0, 1, 2], n_points)  # discrete channels
 # Per-point attributes
 colors = np.random.randint(0, 255, (n_points, 3), dtype=np.uint8)
 radii = np.random.uniform(0.1, 2.0, n_points).astype(np.float32)
-sharpness = np.random.uniform(0.5, 10.0, n_points).astype(np.float32)
+sharpness = np.random.uniform(0.0, 1.0, n_points).astype(np.float32)
 
 scene.add_points(
     "Points5D",
@@ -246,8 +246,9 @@ class LuxarZarrCompiler:
         version: str = DEFAULT_VERSION,
         enable_spatial_index: bool = True,
         encoding_mode: EncodingMode = EncodingMode.AUTO,
-        ordering_method: Literal["morton", "hilbert"] = "morton",
+        ordering_method: Literal["morton", "hilbert"] = "hilbert",
         float16_allowed: bool = False,
+        auto_partition_max_elements: Optional[int] = None,
     ) -> None:
         """
         Create a new Zarr compiler for progressive writing.
@@ -258,8 +259,11 @@ class LuxarZarrCompiler:
             version: Luxar format version
             enable_spatial_index: Whether to build spatial indices (default: True)
             encoding_mode: Encoding mode (AUTO/PRECISION/MEMORY)
-            ordering_method: Spatial ordering ("morton" or "hilbert")
+            ordering_method: Spatial ordering ("morton" or "hilbert", default: "hilbert")
             float16_allowed: Whether to allow float16 encoding (default: False)
+            auto_partition_max_elements: If set, add_points/add_gsplats auto-apply
+                partition=dict(max_elements=N) when the element count exceeds N
+                (explicit partition= at the call site always wins; default None)
         """
 
     def create_scene(self, dimensions: Dimensions) -> Scene:
@@ -271,6 +275,7 @@ class LuxarZarrCompiler:
         Returns:
             Scene object for building the scene graph
         """
+```
 
 ### Scene Class
 
@@ -307,7 +312,7 @@ class Scene:
             positions: nD coordinates where D matches scene dimensions
             colors: RGB colors (0-255)
             radii: Per-point radii for size control
-            sharpness: Edge falloff (0.5-10.0)
+            sharpness: Edge falloff, normalized [0, 1] (0.5 = Gaussian)
             parent: Parent node in hierarchy
             **attrs: Additional attributes including:
                 opacity: float (0.0-1.0, default 1.0) - Node opacity
@@ -367,31 +372,35 @@ class Dimensions:
 ### Dimension Class
 
 ```python
+@dataclass
 class Dimension:
-    """Single dimension definition with metadata."""
+    """Single dimension definition with metadata.
 
-    def __init__(
-        self,
-        name: str,
-        unit: str = "",
-        scale: float = 1.0,
-        range: Optional[Tuple[float, float]] = None,
-        display: bool = True,
-        discrete: bool = False,
-        step: Optional[float] = None
-    ) -> None:
-        """
-        Define a dimension.
+    Attributes:
+        name: Dimension name (e.g., "x", "time", "channel")
+        unit: Physical unit (e.g., "μm", "s", "nm")
+        range: Min/max values as (min, max)
+        step: Step size for navigation (None = auto-calculate)
+        display: Whether shown in 3D viewer (max 3)
+        discrete: Whether dimension has discrete steps
+        cyclic: Whether dimension wraps around (for angles, periodic states)
+        scale: Scale factor for unit conversion (default 1.0)
+        spatial: Whether points extend through this dimension (None = auto-determine)
+        categories: Optional category labels for categorical dimensions
+        description: Optional human-readable description
+    """
 
-        Args:
-            name: Dimension name (e.g., "x", "time", "channel")
-            unit: Physical unit (e.g., "μm", "s", "nm")
-            scale: Scale factor for unit conversion
-            range: Min/max values as (min, max)
-            display: Whether shown in 3D viewer (max 3)
-            discrete: Whether dimension has discrete steps
-            step: Step size for navigation
-        """
+    name: str
+    unit: str = ""
+    range: Optional[Tuple[float, float]] = None
+    step: Optional[float] = None
+    display: bool = True
+    discrete: bool = False
+    cyclic: bool = False
+    scale: float = 1.0
+    spatial: Optional[bool] = None
+    categories: CategoryList = None
+    description: str = ""
 ```
 
 ## 🖥️ Command Line Interface

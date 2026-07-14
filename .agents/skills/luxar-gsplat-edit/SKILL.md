@@ -5,8 +5,10 @@ description: >-
   CLI. Use when a user has already-fitted Gaussian splats and wants to crop/slice,
   spatially transform (scale/rotate/translate/center), rescale intensity, cull or
   filter splats, partition into spatial parts, flatten an LOD/partition tree to a
-  single leaf, merge datasets (e.g. multichannel or as a new time dimension),
-  convert to a web scene, migrate a legacy format, or inspect quality
+  single leaf, ladder existing leaves (additive), re-quantize the Cholesky
+  encoding (reencode), retrofit LOD quality stamps (annotate-quality), merge
+  datasets (e.g. multichannel or as a new time dimension), convert to a web
+  scene, migrate a legacy format, or inspect quality
   (info / render / compare / view / napari). This is the post-fit
   toolbox — for FITTING a volume use the gsplat-pipeline skill instead.
 ---
@@ -17,8 +19,11 @@ These `luxar gsplat` subcommands operate on an **already-fitted** dataset (the o
 of `fit` / `batch-fit`). For fitting a volume, calibration, and LOD recipes, use the
 **`luxar-gsplat-pipeline`** skill; for whole-timelapse fitting, **`luxar-hpc-batch-fit`**.
 
-All commands take a `.gsplats.zarr` (flat, partition, or nested LOD), accept
-`--encoding`/`-e` and usually `--compress`, and write a new dataset (non-destructive).
+All commands take a `.gsplats.zarr` (flat, partition, or nested LOD). Most
+*editing* commands accept `--encoding`/`-e` and usually `--compress`, and write a
+new dataset (non-destructive). Exceptions: `annotate-quality` stamps the input
+IN PLACE (no `-e`), and the inspection commands
+(`info` / `render` / `compare` / `view` / `napari`) are read-only.
 
 ## Pick the operation
 
@@ -31,8 +36,11 @@ All commands take a `.gsplats.zarr` (flat, partition, or nested LOD), accept
 | Keep splats matching property thresholds | `filter` |
 | Split into spatial parts (frustum culling) | `partition` |
 | Collapse LOD/partition tree to one flat leaf | `flatten` |
+| Give every leaf a streaming ladder (inverse of flatten) | `additive` |
 | Combine datasets (channels, timepoints) | `merge` |
 | Make a web-viewer scene | `convert` |
+| Re-quantize the on-disk Cholesky encoding (smaller/exact) | `reencode` |
+| Retrofit Q·e LOD quality stamps in place | `annotate-quality` |
 | Upgrade an old-format file | `migrate-format` |
 | Look at stats / quality | `info` / `render` / `compare` / `view` / `napari` |
 
@@ -48,9 +56,20 @@ luxar gsplat cull in.gsplats.zarr culled.gsplats.zarr --target vol.npy -p 95
 # ...or simple cumulative-amplitude retention
 luxar gsplat cull in.gsplats.zarr culled.gsplats.zarr -m cumulative -r 0.90
 
-# Property filters (all AND-combined)
+# Property filters (all AND-combined). Any min/max accepts a number OR a
+# percentile written 'pNN' / 'NN%' (robust on heavy-tailed attributes).
 luxar gsplat filter in.gsplats.zarr out.gsplats.zarr --amplitude-min 0.1 --eccentricity-max 5
 luxar gsplat filter in.gsplats.zarr out.gsplats.zarr --bbox "0,50,0,50,0,50" --volume-max 100
+# --scale-min/max = characteristic size (geometric-mean SPATIAL sigma), the
+# recommended "remove large diffuse background" knob (timelapse-safe).
+luxar gsplat filter in.gsplats.zarr out.gsplats.zarr --scale-max p90            # drop largest 10%
+luxar gsplat filter in.gsplats.zarr out.gsplats.zarr --scale-max p90 --dry-run  # preview impact only
+# Remove spatially-isolated noise splats (NN distance / local density).
+luxar gsplat filter in.gsplats.zarr out.gsplats.zarr --isolation-max p99
+luxar gsplat filter in.gsplats.zarr out.gsplats.zarr --min-neighbors 3 --neighbor-radius 5
+# Soft reweighting (no popping; count unchanged): attenuate by scale.
+luxar gsplat filter in.gsplats.zarr out.gsplats.zarr --soft-highpass p90 --soft-width 1.0
+# --spatial-dims 0,1,2 overrides auto spatial-axis detection.
 
 # Spatial partition for viewer frustum culling
 luxar gsplat partition in.gsplats.zarr part.gsplats.zarr --parts 4 --rule sah
@@ -59,6 +78,28 @@ luxar gsplat partition in.gsplats.zarr part.gsplats.zarr --parts 4 --rule sah
 # Useful for compatibility with tools that expect a flat .gsplats.zarr, or before
 # rebuilding a fresh global LOD topology from partitioned output.
 luxar gsplat flatten part.gsplats.zarr flat.gsplats.zarr
+
+# Add a per-leaf streaming ladder WITHOUT flattening (inverse companion of
+# flatten): every leaf of an existing partition/LOD/nested tree gains an
+# additive prefix-sum ladder, keeping the tree structure intact. This is the
+# tool for "give partitioned output a streaming ladder" — the per-leaf
+# counterpart of `lod --recipe stream` (which needs a flat input). Same
+# streaming knobs (--n-lods / --method / --breakpoints / --target-ms).
+luxar gsplat additive part.gsplats.zarr streamed.gsplats.zarr --target-ms 200
+luxar gsplat additive in.gsplats.zarr out.gsplats.zarr --n-lods 4
+
+# Re-quantize the on-disk Cholesky encoding (structure-preserving copy; decode
+# is always float32 so viewer/GPU are unaffected). -e memory = uint8 (smallest,
+# ~93 dB); -e auto = adaptive u8→u16→f32 ladder (near-lossless); -e precision =
+# float32 (exact/archival).
+luxar gsplat reencode fit.gsplats.zarr fit_u8.gsplats.zarr -e memory
+luxar gsplat reencode fit.gsplats.zarr fit_f32.gsplats.zarr -e precision
+
+# Retrofit Q·e quality stamps onto an existing LOD dataset, in place (no refit /
+# re-ladder) — enables the viewer's early energy-threshold LOD upgrades.
+luxar gsplat annotate-quality in.gsplats.zarr                # e(k) + w only (fast)
+luxar gsplat annotate-quality in.gsplats.zarr --with-quality # + measured per-level Q
+luxar gsplat annotate-quality in.gsplats.zarr --dry-run      # print stamps, write nothing
 
 # Merge: stack two channels with colors, or stack timepoints as a new dimension
 luxar gsplat merge ch0.gsplats.zarr ch1.gsplats.zarr -o multi.gsplats.zarr \

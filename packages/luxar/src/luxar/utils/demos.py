@@ -205,19 +205,9 @@ def parse_demo_flags() -> dict:
     """Parse common GSplat demo command-line flags from ``sys.argv``.
 
     Returns a dict with keys: ``recompute``, ``no_serve``, ``serve_only``.
-
-    Handles the ``--no-cache`` → ``--recompute`` deprecation.
     """
-    recompute = "--recompute" in sys.argv
-    if "--no-cache" in sys.argv:
-        aprint(
-            "WARNING: --no-cache is deprecated, use --recompute instead. "
-            "Treating as --recompute."
-        )
-        recompute = True
-
     return {
-        "recompute": recompute,
+        "recompute": "--recompute" in sys.argv,
         "no_serve": "--no-serve" in sys.argv,
         "serve_only": "--serve-only" in sys.argv,
     }

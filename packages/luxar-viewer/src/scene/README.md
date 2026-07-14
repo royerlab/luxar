@@ -28,6 +28,8 @@ scene/
 ├── animation/                      # animation-controller, dimension-animation-manager
 ├── scene-dims-manager.ts           # nD dimension coordination
 ├── lod-group-registry.ts           # Per-frame LOD-group selector + VRAM-budget LRU
+├── lod-display-gate.ts             # Never-downgrade display gate (energy-threshold release)
+├── lod-freshness.ts                # Pure LOD freshness + settle helpers for the registry
 ├── synthetic-scene.ts              # Synthetic perf-bench scene generators (lines)
 └── README.md                       # This documentation
 ```
@@ -758,8 +760,8 @@ if (sceneManager.isWebGLContextLost()) {
   return;
 }
 
-// Safe to render
-sceneManager.render();
+// Safe to render (one frame through the post-processing pipeline)
+sceneManager.postProcessing.render();
 ```
 
 **Best Practice**: Don't create WebGL-dependent operations during context loss. Wait for restoration.
@@ -984,6 +986,18 @@ _For implementation details, see the source files in this directory._
   - asymmetric hysteresis), lazy-load gating, and shared-VRAM-budget
     LRU eviction. Exports pure helpers `projectBoxDiagonalPx` and
     `pickChildWithHysteresis` for unit testing.
+- `lod-display-gate.ts` — The never-downgrade display gate for the
+  registry: `shouldHoldPreviousDisplay` holds the previously-displayed
+  level while a streaming upgrade is strictly worse than what is shown,
+  releasing on committed energy e(k) ≥ `ENERGY_RELEASE_THRESHOLD`
+  (0.6), ladder completion, count crossover, or freshness loss;
+  `subtreeDisplayProgress` aggregates commit stamps over nested-group
+  levels. Pure policy over commit-time stamps — no THREE import.
+- `lod-freshness.ts` — Pure, dependency-free freshness + settle
+  primitives for the registry: `coarsestFreshIndex` (which level's
+  committed geometry reflects the current view version) and
+  `SettleTracker` ("has the version been stable for N ticks?" — the
+  debounce behind deferred fine-level reloads).
 - `synthetic-scene.ts` — Mulberry32-seeded synthetic line-segment
   scene generator (`generateSyntheticLines`) used by the perf bench
   and the `__luxarDebug.injectSyntheticScene` debug API.

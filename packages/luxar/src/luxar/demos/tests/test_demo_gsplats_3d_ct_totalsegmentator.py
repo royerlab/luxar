@@ -37,10 +37,13 @@ organ_palette = _demo.organ_palette
 window_ct = _demo.window_ct
 sample_labels = _demo.sample_labels
 label_colors = _demo.label_colors
+splat_layer_indices = _demo.splat_layer_indices
+organ_label_text = _demo.organ_label_text
 crop_to_content = _demo.crop_to_content
-_save_colors_u8 = _demo._save_colors_u8
-_load_colors_f32 = _demo._load_colors_f32
+_save_labels_u8 = _demo._save_labels_u8
+_load_labels = _demo._load_labels
 CLASS_MAP = _demo.CLASS_MAP
+SUPERGROUPS = _demo.SUPERGROUPS
 
 
 class TestTissueGroup:
@@ -119,11 +122,48 @@ class TestCropToContent:
         assert crop_to_content(m) == (0, 4, 0, 4, 0, 4)
 
 
-class TestColorRoundtrip:
+class TestLayerSplit:
+    def test_every_label_maps_to_a_layer(self) -> None:
+        # every one of the 117 structures lands in exactly one supergroup
+        idx = splat_layer_indices(np.arange(1, 118, dtype=np.int32))
+        assert idx.min() >= 0 and idx.max() < len(SUPERGROUPS)
+        # background label 0 → -1 (no layer)
+        assert splat_layer_indices(np.array([0]))[0] == -1
+
+    def test_known_label_layers(self) -> None:
+        names = [g[0] for g in SUPERGROUPS]
+        skeleton = names.index("Skeleton")
+        organs = names.index("Organs")
+        muscles = names.index("Muscles")
+        # 5=liver→Organs, 27=vertebrae_L5→Skeleton, 80=gluteus→Muscles
+        got = splat_layer_indices(np.array([5, 27, 80], dtype=np.int32))
+        assert got.tolist() == [organs, skeleton, muscles]
+
+    def test_muscle_layer_semi_transparent_and_boosted(self) -> None:
+        muscle = next(g for g in SUPERGROUPS if g[0] == "Muscles")
+        assert 0.0 < muscle[2] < 1.0  # semi-transparent so organs read through
+        assert muscle[3] >= 2.0  # amplitude boost so low-HU muscle is visible
+
+    def test_layer_tuple_shape(self) -> None:
+        # (name, tissue groups, opacity, amplitude boost)
+        for name, groups, opacity, boost in SUPERGROUPS:
+            assert isinstance(name, str) and len(groups) >= 1
+            assert 0.0 < opacity <= 1.0 and boost >= 1.0
+
+
+class TestOrganLabelText:
+    def test_pretty_names(self) -> None:
+        assert organ_label_text(5) == "Liver"
+        assert organ_label_text(2) == "Kidney right"
+        assert organ_label_text(52) == "Aorta"
+        assert organ_label_text(0) == ""
+
+
+class TestLabelRoundtrip:
     def test_uint8_roundtrip(self, tmp_path) -> None:
-        colors = np.array([[0.0, 0.5, 1.0], [0.25, 0.75, 0.1]], dtype=np.float32)
-        p = tmp_path / "c.npz"
-        _save_colors_u8(colors, p)
-        loaded = _load_colors_f32(p)
-        assert loaded.dtype == np.float32
-        np.testing.assert_allclose(loaded, colors, atol=1.0 / 255 + 1e-6)
+        labels = np.array([0, 5, 52, 117, 80], dtype=np.int32)
+        p = tmp_path / "labels.npz"
+        _save_labels_u8(labels, p)
+        loaded = _load_labels(p)
+        assert loaded.dtype == np.int32
+        np.testing.assert_array_equal(loaded, labels)

@@ -1,9 +1,10 @@
 # App lifecycle
 
-`LuxarApp`'s teardown and runtime power-management glue. Three helpers
+`LuxarApp`'s teardown and runtime power-management glue. Four helpers
 the orchestrator wires up at the end of `init()` to keep the render
-loop in step with page state and to tear every subsystem down in the
-correct order when the app — or the host page — goes away.
+loop in step with page state, retry failed loads when connectivity
+returns, and tear every subsystem down in the correct order when the
+app — or the host page — goes away.
 
 The render loop itself lives in `../../../scene/animation/` (see
 `animation-controller.ts`). This folder does not drive frames; it only
@@ -17,6 +18,7 @@ external lifecycle signals (window focus, document visibility,
 lifecycle/
 ├── dispose-pipeline.ts   # Ordered, fault-tolerant teardown of every subsystem
 ├── focus-handling.ts     # window focus + document visibilitychange → animate pause/resume
+├── online-retry.ts       # window online → retry every failed loader (failed-load recovery)
 └── unload-handling.ts    # window beforeunload → app.dispose()
 ```
 
@@ -24,6 +26,7 @@ lifecycle/
 | --------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `dispose-pipeline.ts` | `runDisposePipeline(ports)` — runs every subsystem's `dispose()` through a `safeDispose` wrapper that catches and logs without bubbling. Component order is the teardown contract; singletons (`ThemeManager`, `DataMonitorManager`, `SceneLoaderManager`, `disposeWorkerPool`) tear down last. `DisposePipelinePorts` declares the snapshot of orchestrator state plus per-field clear callbacks. |
 | `focus-handling.ts`   | `installFocusHandling(ports)` registers `window.focus` and `document.visibilitychange` listeners on the shared `EventGroup`. Both early-return when `getRecordingPanel()?.isCurrentlyRecording()` reports an active capture so offline recording keeps a stable loop.                                                                                                                              |
+| `online-retry.ts`     | `installOnlineRetry(ports)` registers a `window` `online` listener that retries every failed loader when connectivity is restored — the trigger half of the failed-load recovery story (`SceneLoader.retryAllFailedLoaders` is the engine). No failures → silent no-op; deferred batches (update lock held) re-attempt every `DEFERRED_RETRY_DELAY_MS` up to `MAX_DEFERRED_RETRY_ATTEMPTS` times; re-entrancy guarded; `getLoader` is a live accessor so dataset switches don't go stale. Listener + pending timer are owned by the shared `EventGroup`. |
 | `unload-handling.ts`  | `installUnloadHandler(ports)` registers a `beforeunload` listener that invokes the supplied `dispose` callback inside a defensive try/catch (unload is terminal — a throw would otherwise bubble to `window.onerror` and block other unload work). The listener is owned by the shared `EventGroup`, so it is removed automatically by `events.dispose()` inside `runDisposePipeline`.             |
 
 ## Animate-tick orchestration

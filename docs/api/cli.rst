@@ -12,7 +12,8 @@ Main Application
 ----------------
 
 The main application provides the ``luxar`` command-line interface with commands for
-serving data, building the viewer, and inspecting datasets.
+serving data and inspecting datasets. (There is no separate viewer-build command —
+the bundled viewer is served automatically when you serve data with ``--viewer``.)
 
 .. automodule:: luxar.cli.main
    :no-members:
@@ -38,6 +39,17 @@ Key Functions
 
       # Run with uvicorn
       uvicorn.run(app, host="127.0.0.1", port=8000)
+
+Serving
+-------
+
+The server application factory and CORS/serving helpers. ``create_server_app``
+is re-exported from ``luxar.cli.main`` (used above) but its real home is
+``luxar.cli.serving``.
+
+.. automodule:: luxar.cli.serving
+   :members:
+   :undoc-members:
 
 Utilities
 ---------
@@ -122,5 +134,36 @@ GSplat Configuration
 Configuration loading and validation for GSplat CLI commands.
 
 .. automodule:: luxar.cli.gsplat_config
+   :members:
+   :undoc-members:
+
+GSplat Operations
+~~~~~~~~~~~~~~~~~
+
+Post-fit GSplat editing/inspection operations (transform, slice, filter, cull,
+partition, flatten, merge, migrate, info, render, compare, ...). This is a
+package split across several submodules; the top-level module aggregates the
+Click command group used by the ``luxar gsplat`` CLI.
+
+.. automodule:: luxar.cli.gsplat_ops
+   :members:
+   :undoc-members:
+
+LOD Command
+~~~~~~~~~~~
+
+Implementation of the ``luxar gsplat lod`` command (recipe-driven LOD topology
+construction).
+
+.. automodule:: luxar.cli.lod
+   :members:
+   :undoc-members:
+
+Info Command
+------------
+
+Implementation of the ``luxar info`` dataset-inspection command.
+
+.. automodule:: luxar.cli.info_command
    :members:
    :undoc-members:

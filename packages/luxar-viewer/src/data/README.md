@@ -88,18 +88,20 @@ data/
 │   └── aggregator.ts              # Accumulator stats aggregation across loaders
 │
 ├── scene-loader/                  # Modules composed by scene-loader.ts, organised into
-│                                  #   ten subpackages: cache/, loaders/, view-state/,
-│                                  #   lifecycle/, monitor/, commit/, nodes/, process/,
-│                                  #   progressive/, update-view/, plus the top-level
-│                                  #   lod-load-stats.ts. See scene-loader/README.md.
+│                                  #   eleven subpackages: cache/, loaders/, view-state/,
+│                                  #   lifecycle/, monitor/, commit/, nodes/, prefetch/,
+│                                  #   process/, progressive/, update-view/, plus the
+│                                  #   top-level lod-load-stats.ts. See scene-loader/README.md.
 │
 ├── loaders/                       # Unified loader infrastructure (see loaders/README.md)
 │   ├── index.ts                   # Barrel — external callers import from here
 │   ├── base-types.ts              # Common types (BaseViewState, LoadRange)
+│   ├── abort-error.ts             # isAbortError — "superseded, not failed" classifier
 │   ├── chunk-bounds-loader.ts     # Shared chunk_bounds zarr probe
 │   ├── color-loader.ts            # Shared color-range loader (points, lines, gsplats)
 │   ├── extend-to-all-preflight.ts # Resolves extend_to_all dim names → indices
 │   ├── transferable-accumulator.ts # Zero-allocation buffer management
+│   ├── spatial-facade.ts          # Shared loadX/updateView facade orchestration (incl. S-cache restore/store)
 │   ├── loader-metrics.ts          # Shared latency / event metrics (per-geometry)
 │   ├── aggregate-loader-metrics.ts # Roll up per-loader metrics for the monitor
 │   ├── monitor-events.ts          # Shared LoaderEventEmitter for monitor events
@@ -117,7 +119,8 @@ data/
 │   │   └── label-loader.ts        # Lazy CSR-style label fetching from zarr
 │   ├── overlays/                  # Overlay config loading
 │   │   └── overlay-loader.ts      # Reads overlay configurations from zarr store
-│   └── progressive/               # Shared progressive-LOD helpers (concat, constants)
+│   └── progressive/               # Shared progressive-LOD helpers (concat, constants,
+│                                  #   slice-cache-helper.ts — S-cache restore/store, see §S-cache)
 │
 └── (related: ../workers/)         # Web Worker infrastructure
     ├── worker-pool.ts             # Pool manager with load balancing
@@ -207,9 +210,10 @@ SceneLoader is split into focused, testable modules:
 - **Maintainability**: Clear responsibility boundaries
 - **Reduced Complexity**: `scene-loader.ts` is now ~1,180 lines (down
   from ~2,100) thanks to ongoing extraction. See `scene-loader/` for
-  the extracted modules, organised into ten thematic subpackages:
+  the extracted modules, organised into eleven thematic subpackages:
   `cache/`, `loaders/`, `view-state/`, `lifecycle/`, `monitor/`,
-  `commit/`, `nodes/`, `process/`, `progressive/`, and `update-view/`.
+  `commit/`, `nodes/`, `prefetch/`, `process/`, `progressive/`, and
+  `update-view/`.
   The top level of `scene-loader/` holds a single helper,
   `lod-load-stats.ts`; every other helper lives in one of the
   subpackages above.
@@ -534,10 +538,15 @@ CPU-intensive operations are offloaded to Web Workers for parallel execution:
 
 **Operations offloaded to workers**:
 
-- Spatial index queries (chunk bounding box intersection)
-- nD visibility computation (hypersphere/ellipsoid intersection)
-- Encoded data decoding (quantized, LUT, broadcasted)
-- nD → 3D projection with visibility filtering
+- Encoded data decoding — six tasks: `decodeQuantized`, `decodeLogScalar`,
+  `decodeGeologScalar`, `decodePerChannel`, `decodeLUT`, `decodeBroadcasted`
+- nD → 3D projection of Lines and GSplats (`projectLinesTo3D` /
+  `projectGSplatsTo3D`); per-element nD visibility (clip mask, effective
+  radius, attenuation) is computed inside these projection kernels
+
+**Kept on the main thread**: spatial index queries (chunk bounding box
+intersection) and Points projection (WASM-accelerated in
+`data/points/projection.ts` with a zero-alloc accumulator).
 
 **Performance benefits**:
 
@@ -690,6 +699,26 @@ await updateView({
 2. **Navigation**: As user navigates, queries update to find new visible chunks
 3. **Caching**: Recently accessed ranges are cached for fast re-access
 4. **Memory Management**: Automatic eviction of least-recently-used cached ranges
+
+### Slice Cache (S-cache) and t+1 Prefetch
+
+One level above the chunk caches, decoded slices are cached whole: the
+shared `SliceCache` (`src/cache/slice-cache.ts`) stores each node's
+decoded per-slice LOD ladder keyed by a view signature (displayDims,
+slicePosition, tolerance, dimensions). The key/snapshot/lookup logic is
+shared by the plain spatial-index loaders and the progressive loaders via
+`loaders/progressive/slice-cache-helper.ts` (the restore/store hook sits
+in `loaders/spatial-facade.ts`), so revisiting a slice — e.g. scrubbing
+back through time — restores the decoded ladder without re-fetching or
+re-decoding chunks.
+
+During dimension playback, `SceneLoader.prefetchSlice(viewState, budgetMs)`
+(driven by `zarr-loader.ts::prefetchSceneForDimensions`) warms the NEXT
+tick's ladder into the S-cache using shadow loaders
+(`scene-loader/prefetch/slice-prefetcher.ts`). The pass is
+fire-and-forget, aborted at the top of every foreground `updateView`, and
+its resources are freed via `releasePrefetchResources()` when playback
+ends.
 
 ### Chunking Strategy
 
@@ -1034,6 +1063,8 @@ location /data/ {
 | `loadScene(url, config?, loaderId?)`                      | Load complete Zarr dataset with chunk-based indexing                               |
 | `updateView(viewState, loaderId?)`                        | Update all points for new view state                                               |
 | `updateSceneForDimensions(dims, scene, loaderId?, opts?)` | Update scene when navigating dimensions (opts.frameBudgetMs = playback LOD budget) |
+| `prefetchSceneForDimensions(dims, scene, loaderId, opts)` | Fire-and-forget t+1 slice prefetch for a PREDICTED dimension state (playback) — routes to `SceneLoader.prefetchSlice`, never moves the real view |
+| `releasePrefetchResources(loaderId?)`                     | Release the loader's t+1 prefetch resources (shadow loaders) when playback ends    |
 | `dispose(loaderId?)`                                      | Clean up resources (specific or all)                                               |
 
 Cache inspection and clearing are not on the `zarr-loader.ts` surface;
@@ -1048,6 +1079,7 @@ get the loader via `SceneLoaderManager.getDefaultLoader()` (or
 | `SceneLoaderManager`                       | Singleton manager for SceneLoader instances                          |
 | `getInstance()`                            | Get the singleton manager instance                                   |
 | `createLoader(id, config?, setAsDefault?)` | Create a new loader instance                                         |
+| `createLoaderAsync(id, config?, setAsDefault?)` | Like `createLoader` but awaits the previous same-ID loader's full disposal (dataset switches). |
 | `getLoader(id)`                            | Get a specific loader by ID                                          |
 | `getDefaultLoader()`                       | Get the default loader instance                                      |
 | `getAllLoaders()`                          | Get all active loader instances                                      |
@@ -1057,6 +1089,8 @@ get the loader via `SceneLoaderManager.getDefaultLoader()` (or
 | `destroyAllAsync()`                        | Like `destroyAll` but awaits every loader's `dispose()` to settle.   |
 | `hasLoader(id)` / `getLoaderCount()`       | Lookup and count helpers for the loader registry.                    |
 | `setMonitorFactory(factory)`               | Inject a `SceneLoaderMonitorFactory` (called from `core/app.ts`).    |
+| `setLODGroupRegistryFactory(factory)`      | Inject the LOD-group registry factory (app init pipeline owns SceneManager + camera). |
+| `setRequestRender(callback)`               | Inject the render-loop wake-up forwarded to every created loader.    |
 | `getProfiler()`                            | Return the shared `UpdateProfiler` singleton.                        |
 | `disposeInstance()`                        | Dispose the singleton (call from app dispose; preserved for re-init) |
 
@@ -1077,6 +1111,8 @@ get the loader via `SceneLoaderManager.getDefaultLoader()` (or
 | `toggleMonitor()`                                       | Toggle data loading monitor UI                                           |
 | `retryFailedLoader(path)`                               | Retry a failed loader (identified by zarr path).                         |
 | `retryAllFailedLoaders()`                               | Retry all failed loaders.                                                |
+| `prefetchSlice(viewState, budgetMs)`                    | Fire-and-forget t+1 S-cache warm pass via shadow loaders (playback).     |
+| `releasePrefetchResources()`                            | Free the prefetcher's shadow loaders + accumulators (playback end).      |
 | `dispose()`                                             | Async — clean up all resources, drain caches, await teardown.            |
 
 ### Node Factories (scene-loader/nodes/)
@@ -1262,9 +1298,9 @@ _For implementation details, see the source files in this directory._
 - [points](./points/README.md) — Points spatial-index loader and
   effective-radius math.
 - [scene-loader](./scene-loader/) — Modules composed by
-  `scene-loader.ts`, grouped into nine thematic subpackages
+  `scene-loader.ts`, grouped into eleven thematic subpackages
   (cache, loaders, view-state, lifecycle, monitor, commit, nodes,
-  process, update-view).
+  prefetch, process, progressive, update-view).
 - [stats](./stats/) — Scene and per-loader statistics aggregation for
   the monitor.
 - [transforms](./transforms/) — nD inverse-query helper for

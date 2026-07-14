@@ -44,7 +44,7 @@ config/
 ├── sections/
 │   ├── camera/             {data,types,validate}.ts
 │   ├── animation/          {data,types}.ts
-│   ├── adaptive-dpr/       {data,types}.ts
+│   ├── adaptive-dpr/       {data,types,validate}.ts
 │   ├── scene/              {data,types,validate}.ts   # includes ShaderConfig
 │   ├── ui/                 {data,types}.ts            # includes DebugConsoleConfig, UIComponentsConfig
 │   ├── rendering-controls/ {data,types,validate}.ts   # includes RenderingSettings, validateBloomConsistency
@@ -518,7 +518,7 @@ The config package is the foundation that ensures consistent behavior across all
 
 - **[sections/](sections/README.md)** — per-slice `data.ts` / `types.ts` /
   (optional) `validate.ts` triples; one folder per `AppConfig` section.
-  Sections without cross-field invariants (`adaptive-dpr/`, `animation/`,
+  Sections without cross-field invariants (`animation/`,
   `dimension-animation/`, `ui/`) omit `validate.ts`.
 - **[zarr-bridge/](zarr-bridge/README.md)** — snake_case ↔ camelCase
   conversion between zarr `viewer_config` and `RenderingSettings`, plus the

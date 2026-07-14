@@ -6,8 +6,7 @@ group (inspect / transforms / fitting / scene / benchmark / batch), plus the
 Typer and registers each group onto it, keeping itself a thin registration
 surface rather than a multi-thousand-line god-file.
 
-``main.py`` mounts ``app_gsplat``; ``_resolve_encoding_mode`` is re-exported
-for consumers that historically imported it from this module.
+``main.py`` mounts ``app_gsplat``.
 """
 
 from __future__ import annotations
@@ -16,7 +15,6 @@ import typer
 
 from .gsplat_ops.batch_commands import app_batch
 from .gsplat_ops.benchmark import register_benchmark_commands
-from .gsplat_ops.encoding import _resolve_encoding_mode
 from .gsplat_ops.fitting import register_fitting_commands
 from .gsplat_ops.inspect_commands import register_inspect_commands
 from .gsplat_ops.scene_commands import register_scene_commands
@@ -52,5 +50,4 @@ app_gsplat.add_typer(app_batch, name="batch-fit")  # run (local) + submit (Slurm
 
 __all__ = [
     "app_gsplat",
-    "_resolve_encoding_mode",
 ]
