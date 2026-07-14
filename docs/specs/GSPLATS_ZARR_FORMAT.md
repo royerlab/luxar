@@ -169,10 +169,10 @@ fitted.gsplats.zarr/
 │                     # format_version: "3.2", format_type: "gsplats_zarr",
 │                     # timestamp, luxar_gsplats_version, description?
 ├── .zmetadata        # Consolidated metadata for fast loading
-├── centers                   # (N, d) uint16 (AUTO) / float32 (PRECISION), spatially ordered
+├── centers                   # (N, d) uint16 (AUTO; float32 if an axis extent ≥ 2¹⁶) / float32 (PRECISION), spatially ordered
 ├── amplitudes                # (N,) uint8/uint16 (AUTO) / float32 (PRECISION)
-├── cholesky_factors_diag     # (N, d) uint8 (AUTO) / float32 (PRECISION)  (diagonal of L)
-├── cholesky_factors_offdiag  # (N, d*(d-1)/2) uint8 (AUTO) / float32 (PRECISION) (off-diagonal; absent if d=1)
+├── cholesky_factors_diag     # (N, d) uint8 (AUTO, certified — escalates to uint16 if the covariance certificate fails) / float32 (PRECISION)  (diagonal of L)
+├── cholesky_factors_offdiag  # (N, d*(d-1)/2) uint8 (AUTO, certified as above) / float32 (PRECISION) (off-diagonal; absent if d=1)
 ├── colors            # (N, 3) uint8/uint16 (AUTO) / float32 (PRECISION)  (optional)
 ├── chunk_bounds      # (num_chunks, d, 2) float32  (when ordering ≠ "none")
 ├── fitting/          # Optimization info (optional)
@@ -339,7 +339,8 @@ per-array quantization bounds.
 
 **Amplitude ranges**: `amplitude_range` (`{"min", "max"}` dict) is the
 metadata bounds record; `amplitude_data_range` (`[min, max]` list, written
-alongside it for non-broadcast amplitude arrays) mirrors the Points/Lines
+alongside it whenever amplitudes are given as an array — a scalar amplitude
+skips it) mirrors the Points/Lines
 `color_data_range` convention and seeds the viewer's layer display-range
 controls. Both hold the min/max of the original (pre-quantization) amplitudes.
 

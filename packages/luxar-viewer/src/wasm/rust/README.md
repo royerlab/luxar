@@ -42,7 +42,8 @@ pnpm build:wasm:dev    # bash scripts/build-wasm.sh --dev (fast compile, unoptim
 pnpm test:wasm         # cd src/wasm/rust && cargo test
 ```
 
-`scripts/build-wasm.sh` runs `wasm-pack build --target web -- --locked` and
+`scripts/build-wasm.sh` runs `wasm-pack build --target web --out-dir
+../../../public/wasm --scope luxar -- --locked` and
 writes the ES-module glue (`luxar_wasm.js`), the binary
 (`luxar_wasm_bg.wasm`), and TypeScript definitions to `public/wasm/` so Vite
 can serve them. The toolchain is pinned by `rust-toolchain.toml` for

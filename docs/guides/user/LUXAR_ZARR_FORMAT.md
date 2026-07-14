@@ -478,14 +478,19 @@ Points nodes contain the actual point data.
 The dtypes below describe the default `EncodingMode.AUTO`. Every array
 self-describes its on-disk encoding via an `encoding` attr in its `.zattrs`
 (see `luxar.encoding` and *Array Encodings* below); readers dispatch on
-`encoding.name` and always decode to float32. `PRECISION` stores raw float32
-everywhere; `MEMORY` quantizes more aggressively (8-bit where AUTO uses
-16-bit). Uniform arrays are stored as a single `broadcasted` value and
-byte-identical duplicates as an `array_ref`, regardless of mode.
+`encoding.name` and decode to float32 (or the array's original integer
+dtype, e.g. uint8 colors stay uint8). `PRECISION` stores raw float32
+everywhere; `MEMORY` quantizes more aggressively for the wide-range geolog
+family (8-bit where AUTO uses 16-bit — HDR colors, wide-range positive
+scalars); coordinates stay uint16 and bounded scalars pick 8-vs-16 bits from
+their dynamic range identically in both modes. Uniform arrays are stored as
+a single `broadcasted` value and byte-identical duplicates as an
+`array_ref`, regardless of mode.
 
 Chunking is **byte-based**, not a fixed element count: the first-dimension
 chunk length is derived from the 64 KB target (`TARGET_CHUNK_BYTES` ÷
-bytes-per-row for the array's encoded dtype), or aligned to the spatial
+bytes-per-row for the array's *input* dtype — computed before encoding, so
+float32 rows even when the stored code is uint8/uint16), or aligned to the spatial
 index's `chunk_size` when spatial ordering is enabled (the default), so a
 chunk-index range maps to exactly one zarr chunk.
 
@@ -574,7 +579,9 @@ Lines use **dual spatial indexing**: vertices are curve-ordered in D-space
 (like Points) and segments are independently curve-ordered in (2×D)-space
 (concatenating both endpoints), each with its own chunk-bounds array
 (`vertex_chunk_bounds` / `segment_chunk_bounds`, both
-`(num_chunks, D_or_2D, 2)` float32).
+`(num_chunks, D, 2)` float32 — segment *bounds* are deliberately D-space
+even though the segment *ordering* sorts in 2×D, so both support view-frustum
+intersection tests directly).
 
 **Data Arrays** (same AUTO/PRECISION/MEMORY conventions as Points; all
 per-vertex arrays are reordered by the vertex sort):
@@ -851,7 +858,8 @@ Empty strings are treated as null labels (no tooltip shown on hover). Labels are
 Optional per-element **image** labels for hover thumbnails, written via the
 `image_labels=` parameter of `add_points` / `add_lines` / `add_gsplats`
 (accepts pre-encoded bytes, PIL images, `(H, W[, C])` uint8 numpy arrays, or
-file paths; non-bytes inputs are encoded to WebP). When present, `.zattrs`
+file paths; PIL images and numpy arrays are encoded to WebP, while bytes and
+file contents are stored as-is — a PNG file stays PNG). When present, `.zattrs`
 includes `"has_image_labels": true`.
 
 **image_label_offsets/** Array:

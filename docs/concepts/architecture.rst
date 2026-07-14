@@ -254,8 +254,9 @@ TypeScript Layer (Viewer)
 * L2 (OPFS): Persistent (~1ms) across page reloads
 * HTTP: Unlimited (~100ms) source of truth
 
-(An additional in-flight "S-cache" coalesces and paces concurrent range
-requests.)
+(An additional "S-cache" — the SliceCache — sits above L0 and LRU-caches
+fully *decoded* per-slice geometry ladders, so revisiting a slice skips the
+whole query→fetch→decode pipeline.)
 
 *Why nD slicing vs dimension reduction?*
 

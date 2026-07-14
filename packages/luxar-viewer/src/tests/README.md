@@ -22,9 +22,8 @@ pnpm test:e2e:report   # View HTML report
 pnpm test:generate-fixtures   # Generate fixtures from Python
 pnpm test:with-fixtures       # Generate + run tests
 
-# Coverage
-pnpm run test:coverage        # Generate coverage report
-open coverage/index.html
+# Coverage (summary printed to terminal; JSON at coverage/coverage-summary.json)
+pnpm run test:coverage
 
 # Quality gates
 pnpm run check                # Fast dev-loop: typecheck + lint + unit tests
@@ -601,11 +600,10 @@ pnpm test:e2e:report
 ### Coverage
 
 ```bash
-# Generate coverage report
+# Generate coverage report (text summary in the terminal + machine-readable
+# coverage/coverage-summary.json — the configured reporters are
+# ['text', 'json-summary']; no HTML report is generated)
 pnpm run test:coverage
-
-# View HTML report
-open coverage/index.html
 
 # Coverage requirements
 # - Minimum: 80%
