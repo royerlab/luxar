@@ -37,28 +37,22 @@ from ..core.dimensions import Dimensions
 from ..encoding import (
     ArrayEncoder,
     EncodingMode,
-    SemanticType,
 )
 from ..io.reader import DEFAULT_COMP
 from ..io.writer import ZarrWriterProtocol
 from ..typing_utils.aliases import ChunkSpec, MaxShape, NodePath, PointsMetadata
 from ..typing_utils.config import DEFAULT_VERSION
-from ..typing_utils.constants import SHARPNESS_MAX
 from ._compiler.bounds import (
     compute_position_bounds,
     expand_bounds_with_transforms,
     update_scene_bounds,
 )
-from ._compiler.chunking import calculate_intelligent_chunks
 from ._compiler.colormap import write_colormap_lut_if_needed
-from ._compiler.context import DatasetCtx, OrderingCtx
-from ._compiler.dataset_writers.colors import write_colors
-from ._compiler.dataset_writers.positions import write_positions
-from ._compiler.dataset_writers.scalars import (
-    write_bounded_scalar,
-    write_positive_scalar,
-    write_radii,
-    write_scalars,
+from ._compiler.context import (
+    DatasetCtx,
+    GeometryWriteCtx,
+    GSplatsWriteCtx,
+    OrderingCtx,
 )
 from ._compiler.finalize.hashing import compute_content_hashes
 from ._compiler.finalize.lod_backfill import (
@@ -66,26 +60,13 @@ from ._compiler.finalize.lod_backfill import (
     finalize_lod_position_bounds,
 )
 from ._compiler.finalize.validation import validate_discrete_dimension_ranges
-from ._compiler.gsplat_assembly import (
-    apply_gsplat_group_attrs,
-    apply_gsplat_spatial_ordering,
-    validate_gsplat_inputs,
-    write_gsplat_arrays,
+from ._compiler.geometry_writers.gsplats import (
+    write_gsplat_leaf_subtree as _write_gsplat_leaf_subtree_impl,
 )
-from ._compiler.labels.image_labels import write_image_labels_csr
-from ._compiler.labels.text_labels import write_labels_csr
-from ._compiler.node_common import (
-    apply_default_render_attrs,
-    prepare_transform_attrs,
-)
-from ._compiler.spatial_ordering.lines import (
-    build_lines_ordering,
-    write_lines_ordering_to_zarr,
-)
-from ._compiler.spatial_ordering.points import (
-    build_points_ordering,
-    write_points_ordering_to_zarr,
-)
+from ._compiler.geometry_writers.gsplats import write_gsplats as _write_gsplats_impl
+from ._compiler.geometry_writers.lines import write_lines as _write_lines_impl
+from ._compiler.geometry_writers.points import write_points as _write_points_impl
+from ._compiler.gsplat_assembly import apply_gsplat_group_attrs
 
 # Ordering functions will be imported locally where needed to avoid circular imports
 
@@ -404,170 +385,19 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
             Metadata dictionary about the written data
         """
         self._check_not_finalized("write_points")
-
-        # Import validation functions locally to avoid circular imports
-        from ..validation.base import (
-            validate_colors_for_writing,
-            validate_positions_for_writing,
-            validate_radii_for_writing,
-            validate_sharpness_for_writing,
+        metadata = _write_points_impl(
+            self._make_geometry_ctx(),
+            path,
+            positions,
+            colors,
+            radii,
+            sharpness,
+            scalars,
+            labels,
+            image_labels,
+            **attrs,
         )
-
-        # 1. Setup: Create group and validate positions
-        path = path.lstrip("/")
-        group = self.store.require_group(path)
-        n_points, n_dims = validate_positions_for_writing(positions)
-
-        aprint(f"📝 Writing {n_points:,} points ({n_dims}D) to {path}")
-
-        # 2. Log scalar inputs (no expansion - passed to encoder)
-        if radii is not None and isinstance(radii, (int, float)):
-            aprint(f"  → Uniform radius {radii:.3f} for all points")
-        if sharpness is not None and isinstance(sharpness, (int, float)):
-            aprint(f"  → Uniform sharpness {sharpness:.1f} for all points")
-        if colors is not None and isinstance(colors, (list, tuple)):
-            aprint(f"  → Uniform color RGB{list(colors)} for all points")
-
-        # 3. Apply spatial ordering if enabled (reorders arrays only)
-        # Note: Spatial ordering uses radii to compute chunk_bounds.
-        # Scalar/broadcasted radii are handled without expanding to full arrays.
-        radii_for_ordering = radii
-
-        ordering_data = self._build_spatial_ordering_if_enabled(
-            positions, n_points, n_dims, radii_for_ordering
-        )
-
-        # Apply spatial reordering to arrays only (skip scalars and broadcasted arrays)
-        if ordering_data is not None:
-            positions = ordering_data["sorted_positions"]
-            # Apply sort order only to non-broadcasted array attributes
-            # Broadcasted arrays (shape[0] == 1) should NOT be reordered
-            if colors is not None and isinstance(colors, np.ndarray):
-                if colors.shape[0] > 1:  # Not broadcasted
-                    colors = colors[ordering_data["sort_order"]]
-                # else: broadcasted, skip reordering
-            if radii is not None and isinstance(radii, np.ndarray):
-                if radii.shape[0] > 1:  # Not broadcasted
-                    radii = radii[ordering_data["sort_order"]]
-                # else: broadcasted, skip reordering
-            if sharpness is not None and isinstance(sharpness, np.ndarray):
-                if sharpness.shape[0] > 1:  # Not broadcasted
-                    sharpness = sharpness[ordering_data["sort_order"]]
-                # else: broadcasted, skip reordering
-            if scalars is not None and isinstance(scalars, np.ndarray):
-                if scalars.shape[0] > 1:  # Not broadcasted
-                    scalars = scalars[ordering_data["sort_order"]]
-                # else: broadcasted, skip reordering
-
-        # 3. Write positions dataset
-        self._write_positions_dataset(group, positions, ordering_data)
-
-        # 4. Initialize metadata
-        metadata: PointsMetadata = {
-            "n_points": n_points,
-            "ndim": n_dims,
-            "path": path,
-            "has_colors": False,
-            "has_radii": False,
-            "has_sharpness": False,
-        }
-
-        # 5. Write optional datasets
-        if colors is not None:
-            # Validate arrays only (scalars validated by encoder)
-            if isinstance(colors, np.ndarray):
-                validate_colors_for_writing(colors, n_points)
-            self._write_colors_dataset(group, colors, ordering_data, n_points)
-            metadata["has_colors"] = True
-
-        if radii is not None:
-            # Validate arrays only (scalars validated by encoder)
-            if isinstance(radii, np.ndarray):
-                validate_radii_for_writing(radii, n_points)
-            max_radius = self._write_radii_dataset(
-                group, radii, ordering_data, n_points
-            )
-            metadata["max_radius"] = max_radius
-            metadata["has_radii"] = True
-            group.attrs["max_radius"] = max_radius
-
-        if sharpness is not None:
-            # Validate arrays only (scalars validated by encoder)
-            if isinstance(sharpness, np.ndarray):
-                validate_sharpness_for_writing(sharpness, n_points)
-            # Canonical BOUNDED_SCALAR helper (shared with Lines
-            # "sharpnesses"). Sharpness is a normalized [0, 1] knob, so it
-            # carries no `max_sharpness` — the bounds tuple is fixed at
-            # (0.0, SHARPNESS_MAX) and the decoder reads it from the encoding
-            # metadata (mirrors the radii-without-max pattern).
-            self._write_bounded_scalar_dataset(
-                group=group,
-                data=sharpness,
-                name="sharpnesses",
-                bounds=(0.0, SHARPNESS_MAX),
-                spatial_index_data=ordering_data,
-                n_elements=n_points,
-                log_label_singular="sharpness",
-            )
-            metadata["has_sharpness"] = True
-
-        if scalars is not None:
-            self._write_scalars_dataset(group, scalars, ordering_data, n_points)
-            metadata["has_scalars"] = True
-            group.attrs["has_scalars"] = True
-
-        # 5b. Write colormap LUT if colormap is a custom array
-        self._write_colormap_lut_if_needed(group, attrs)
-
-        # 6. Process transform + nd_transform attrs (shared with write_lines)
-        prepare_transform_attrs(attrs, self.store)
-
-        # 7. Set default rendering attributes if not provided
-        apply_default_render_attrs(attrs)
-
-        # 8. Store attributes
-        group.attrs.update(attrs)
-        group.attrs["type"] = "points"
-        group.attrs["n_points"] = n_points
-
-        # 9. Compute and store position bounds (nD bounding box)
-        # This is computed from the final positions (potentially reordered)
-        position_bounds = self._compute_position_bounds(positions)
-        group.attrs["position_bounds"] = position_bounds
-        metadata["position_bounds"] = position_bounds
-
-        # Update scene-level bounds (union of all node bounds). Skipped
-        # when ``write_points_multi_lod`` is the caller — the parent
-        # multi-LOD writer aggregates the global bounds once instead of
-        # accumulating each subgroup's contribution separately.
-        if not attrs.pop("_skip_scene_bounds", False):
-            self._update_scene_bounds(position_bounds)
-
-        # 10. Write spatial ordering metadata if built
-        if ordering_data is not None:
-            self._write_spatial_ordering_to_zarr(group, ordering_data)
-            metadata["has_spatial_index"] = True
-
-        # 11. Write labels if provided (CSR-style: label_offsets + label_bytes)
-        if labels is not None:
-            sort_order = (
-                ordering_data["sort_order"] if ordering_data is not None else None
-            )
-            self._write_labels_csr(group, labels, n_points, sort_order)
-            metadata["has_labels"] = True
-
-        # 12. Write image labels if provided (CSR-style, no compression on blobs)
-        if image_labels is not None:
-            sort_order = (
-                ordering_data["sort_order"] if ordering_data is not None else None
-            )
-            self._write_image_labels_csr(group, image_labels, n_points, sort_order)
-            metadata["has_image_labels"] = True
-
-        # 13. Cache metadata and finish
-        self._metadata_cache[path] = metadata
-        aprint(f"✅ Points written to {path}")
-
+        self._metadata_cache[metadata["path"]] = metadata
         return metadata
 
     def write_lines(  # type: ignore[override]
@@ -617,291 +447,21 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
             Metadata dictionary about the written lines
         """
         self._check_not_finalized("write_lines")
-
-        from ..validation.base import (
-            validate_colors_for_writing,
-            validate_positions_for_writing,
-            validate_widths_for_writing,
+        metadata = _write_lines_impl(
+            self._make_geometry_ctx(),
+            path,
+            vertices,
+            widths,
+            colors,
+            sharpness,
+            scalars,
+            indices,
+            line_type,
+            labels,
+            image_labels,
+            **attrs,
         )
-
-        # Setup and validation
-        path = path.lstrip("/")
-        group = self.store.require_group(path)
-        n_vertices, n_dims = validate_positions_for_writing(vertices)
-
-        aprint(f"📝 Writing {n_vertices:,} line vertices ({n_dims}D) to {path}")
-
-        # Scalars are now passed directly to encoder - no expansion needed
-        # Just log what we're receiving
-        if isinstance(widths, (int, float)):
-            aprint(f"  → Uniform width {widths:.3f} for all vertices")
-        if sharpness is not None and isinstance(sharpness, (int, float)):
-            aprint(f"  → Uniform sharpness {sharpness:.1f} for all vertices")
-        if colors is not None and isinstance(colors, (list, tuple)):
-            aprint(f"  → Uniform color RGB{list(colors)} for all vertices")
-
-        # Validate line type
-        valid_line_types = ("segments", "polyline", "loop", "indexed")
-        if line_type not in valid_line_types:
-            raise ValueError(
-                f"Invalid line_type '{line_type}'. Must be one of {valid_line_types}"
-            )
-
-        # Validate type-specific requirements
-        if line_type == "segments" and n_vertices % 2 != 0:
-            raise ValueError(
-                f"Segments require even number of vertices, got {n_vertices}"
-            )
-        if line_type == "polyline" and n_vertices < 2:
-            raise ValueError(f"Polyline requires at least 2 vertices, got {n_vertices}")
-        if line_type == "loop" and n_vertices < 3:
-            raise ValueError(f"Loop requires at least 3 vertices, got {n_vertices}")
-        if line_type == "indexed":
-            if indices is None:
-                raise ValueError("Indexed line type requires indices array")
-            if len(indices) < 2:
-                raise ValueError("Indexed requires at least 2 indices")
-            if len(indices) % 2 != 0:
-                raise ValueError("Indices must have even length (pairs)")
-            if np.max(indices) >= n_vertices:
-                raise ValueError(f"Index {np.max(indices)} >= n_vertices {n_vertices}")
-
-        # Shared validator (the Lines sibling of validate_radii_for_writing)
-        validate_widths_for_writing(widths, n_vertices)
-
-        # Convert line type to indexed representation (unified internal format)
-        from .ordering import convert_to_indexed
-
-        segments = convert_to_indexed(n_vertices, line_type, indices)
-        n_segments = segments.shape[0]
-
-        aprint(f"  → Converted {line_type} to {n_segments:,} indexed segments")
-
-        # Get max_width before spatial ordering
-        if isinstance(widths, (int, float)):
-            max_width = float(widths)
-        else:
-            max_width = float(np.max(widths))
-
-        # Apply dual spatial ordering if enabled
-        ordering_data = self._build_lines_spatial_ordering_if_enabled(
-            vertices, segments, widths, n_vertices, n_dims, n_segments
-        )
-
-        # Apply reordering if spatial ordering was applied
-        if ordering_data is not None:
-            vertices = ordering_data["sorted_vertices"]
-            segments = ordering_data["sorted_segments"]
-            vertex_sort_order = ordering_data["vertex_sort_indices"]
-
-            # Reorder per-vertex arrays (skip scalars and broadcasted)
-            if isinstance(widths, np.ndarray) and widths.shape[0] > 1:
-                widths = widths[vertex_sort_order]
-            if (
-                colors is not None
-                and isinstance(colors, np.ndarray)
-                and colors.shape[0] > 1
-            ):
-                colors = colors[vertex_sort_order]
-            if (
-                sharpness is not None
-                and isinstance(sharpness, np.ndarray)
-                and sharpness.shape[0] > 1
-            ):
-                sharpness = sharpness[vertex_sort_order]
-            if (
-                scalars is not None
-                and isinstance(scalars, np.ndarray)
-                and scalars.shape[0] > 1
-            ):
-                scalars = scalars[vertex_sort_order]
-
-        # Write vertices using ArrayEncoder (COORDINATE)
-        chunks_2d = calculate_intelligent_chunks(
-            (n_vertices, n_dims),
-            spatial_index_data=ordering_data.get("vertex_ordering")
-            if ordering_data
-            else None,
-            dtype=vertices.dtype,
-        )
-        self._encoder.encode(
-            data=vertices,
-            zarr_group=group,
-            name="vertices",
-            semantic_type=SemanticType.COORDINATE,
-            mode=self._encoding_mode,
-            chunks=chunks_2d,
-            compressor=self.compressor,
-            # The lines spatial-index loader reads vertices/segments as raw
-            # chunked zarr and does not resolve array_ref, so dedup of these
-            # structural arrays would silently drop geometry for a byte-
-            # identical sibling (e.g. two identical components in a partition).
-            # LUT is blocked for the same raw-read reason: grid-snapped
-            # vertices (few unique coordinate values) would store as
-            # lut_uint8/16 indices and decode as garbage geometry.
-            deduplicate=False,
-            allow_lut=False,
-        )
-
-        # Write segments array (always, not just for indexed type)
-        segment_chunk_size = (
-            ordering_data["segment_ordering"]["chunk_size"] if ordering_data else 2048
-        )
-        self._encoder.encode(
-            data=segments,
-            zarr_group=group,
-            name="segments",
-            semantic_type=SemanticType.INDEX,
-            mode=self._encoding_mode,
-            chunks=(segment_chunk_size, 2),
-            compressor=self.compressor,
-            deduplicate=False,  # see vertices note above
-        )
-        aprint(f"  ✓ Wrote segments ({n_segments:,} pairs)")
-
-        # Write widths via the canonical POSITIVE_SCALAR helper (shared
-        # with Points "radii" and GSplats "amplitudes"). The helper
-        # picks the same default precision for every geometry.
-        self._write_positive_scalar_dataset(
-            group=group,
-            data=widths,
-            name="widths",
-            spatial_index_data=ordering_data.get("vertex_ordering")
-            if ordering_data
-            else None,
-            n_elements=n_vertices,
-            log_label_singular="width",
-        )
-
-        # Initialize metadata
-        metadata: dict[str, Any] = {
-            "n_vertices": n_vertices,
-            "n_segments": n_segments,
-            "ndim": n_dims,
-            "original_line_type": line_type,  # Store original user-specified type
-            "has_colors": False,
-            "has_sharpness": False,
-            "max_width": max_width,
-        }
-
-        # Write optional datasets
-        if colors is not None:
-            if isinstance(colors, np.ndarray):
-                validate_colors_for_writing(colors, n_vertices)
-            # Use the canonical COLOR helper (shared with Points / GSplats)
-            # so the default-precision and color_mode-detection logic is
-            # symmetric across all three geometry types.
-            self._write_colors_dataset(
-                group=group,
-                colors=colors,
-                spatial_index_data=ordering_data.get("vertex_ordering")
-                if ordering_data
-                else None,
-                n_elements=n_vertices,
-            )
-            metadata["has_colors"] = True
-
-        if sharpness is not None:
-            from ..validation.base import validate_sharpness_for_writing
-
-            if isinstance(sharpness, np.ndarray):
-                validate_sharpness_for_writing(sharpness, n_vertices)
-            # Canonical BOUNDED_SCALAR helper (shared with Points
-            # "sharpnesses"). Same bounds tuple as Points so the
-            # encoder's Uint8-quantization step produces matching disk
-            # layouts.
-            self._write_bounded_scalar_dataset(
-                group=group,
-                data=sharpness,
-                name="sharpnesses",
-                bounds=(0.0, SHARPNESS_MAX),
-                spatial_index_data=ordering_data.get("vertex_ordering")
-                if ordering_data
-                else None,
-                n_elements=n_vertices,
-                log_label_singular="sharpness",
-            )
-            metadata["has_sharpness"] = True
-
-        if scalars is not None:
-            self._write_scalars_dataset(group, scalars, ordering_data, n_vertices)
-            metadata["has_scalars"] = True
-            group.attrs["has_scalars"] = True
-
-        # Write colormap LUT if colormap is a custom array
-        self._write_colormap_lut_if_needed(group, attrs)
-
-        # Write spatial ordering data (chunk bounds and metadata)
-        if ordering_data is not None:
-            self._write_lines_spatial_ordering_to_zarr(group, ordering_data)
-            metadata["has_spatial_index"] = True
-            metadata["ordering"] = ordering_data["ordering"]
-            metadata["vertex_ordering"] = ordering_data["vertex_ordering"]
-            metadata["segment_ordering"] = ordering_data["segment_ordering"]
-        else:
-            metadata["ordering"] = "none"
-
-        # Process transform + nd_transform attrs (shared with write_points)
-        prepare_transform_attrs(attrs, self.store)
-
-        # Set default rendering attributes if not provided
-        # (must match write_points/write_gsplats)
-        apply_default_render_attrs(attrs)
-
-        # Set attributes (all core metadata per spec Section 6.6)
-        group.attrs.update(attrs)
-        group.attrs["type"] = "lines"
-        group.attrs["n_vertices"] = n_vertices
-        group.attrs["n_segments"] = n_segments
-        group.attrs["ndim"] = n_dims
-        group.attrs["original_line_type"] = line_type
-        group.attrs["has_colors"] = metadata["has_colors"]
-        group.attrs["has_sharpness"] = metadata["has_sharpness"]
-        group.attrs["max_width"] = max_width
-
-        # Add ordering metadata to attrs if present
-        if ordering_data is not None:
-            group.attrs["ordering"] = ordering_data["ordering"]
-            group.attrs["vertex_ordering"] = ordering_data["vertex_ordering"]
-            group.attrs["segment_ordering"] = ordering_data["segment_ordering"]
-        else:
-            group.attrs["ordering"] = "none"
-
-        # Compute and store position bounds (nD bounding box) for dynamic clipping
-        position_bounds = self._compute_position_bounds(vertices)
-        group.attrs["position_bounds"] = position_bounds
-        metadata["position_bounds"] = position_bounds
-
-        # Update scene-level bounds (union of all node bounds). Skipped
-        # when ``write_lines_multi_lod`` is the caller — the parent
-        # writer aggregates global bounds once.
-        if not attrs.pop("_skip_scene_bounds", False):
-            self._update_scene_bounds(position_bounds)
-
-        # Write labels if provided (CSR-style: label_offsets + label_bytes)
-        # For lines, labels are per-vertex (n_vertices)
-        if labels is not None:
-            sort_order = (
-                ordering_data["vertex_sort_indices"]
-                if ordering_data is not None
-                else None
-            )
-            self._write_labels_csr(group, labels, n_vertices, sort_order)
-            metadata["has_labels"] = True
-
-        # Write image labels if provided (CSR-style, no compression on blobs)
-        if image_labels is not None:
-            sort_order = (
-                ordering_data["vertex_sort_indices"]
-                if ordering_data is not None
-                else None
-            )
-            self._write_image_labels_csr(group, image_labels, n_vertices, sort_order)
-            metadata["has_image_labels"] = True
-
-        self._metadata_cache[path] = metadata
-        aprint(f"✅ Lines written to {path}")
-
+        self._metadata_cache[path.lstrip("/")] = metadata
         return metadata
 
     # ── GSplats helpers (composable building blocks) ─────────────
@@ -915,102 +475,6 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
         return OrderingCtx(
             enable_spatial_index=self.enable_spatial_index,
             ordering_method=self.ordering_method,
-        )
-
-    def _validate_gsplat_inputs(
-        self,
-        centers: NDArray[np.float32],
-        amplitudes: Union[NDArray[np.float32], float],
-        cholesky_factors: NDArray[np.float32],
-        colors: Optional[
-            Union[NDArray[np.float32], List[float], Tuple[float, ...]]
-        ] = None,
-    ) -> Tuple[
-        NDArray[np.float32],
-        Union[NDArray[np.float32], float],
-        NDArray[np.float32],
-        Optional[Union[NDArray[np.float32], List[float], Tuple[float, ...]]],
-        int,
-        int,
-        bool,
-    ]:
-        return validate_gsplat_inputs(centers, amplitudes, cholesky_factors, colors)
-
-    def _apply_gsplat_spatial_ordering(
-        self,
-        centers: NDArray[np.float32],
-        amplitudes: Union[NDArray[np.float32], float],
-        cholesky_factors: NDArray[np.float32],
-        colors: Optional[Union[NDArray[np.float32], List[float], Tuple[float, ...]]],
-        n_splats: int,
-        n_dims: int,
-        cholesky_is_uniform: bool,
-        coverage_sigma: float = 3.0,
-    ) -> Tuple[
-        NDArray[np.float32],
-        Union[NDArray[np.float32], float],
-        NDArray[np.float32],
-        Optional[Union[NDArray[np.float32], List[float], Tuple[float, ...]]],
-        Optional[Dict[str, Any]],
-    ]:
-        return apply_gsplat_spatial_ordering(
-            centers,
-            amplitudes,
-            cholesky_factors,
-            colors,
-            n_splats,
-            n_dims,
-            cholesky_is_uniform,
-            self._make_ordering_ctx(),
-            coverage_sigma,
-            # Scene gsplats carry authoritative dimension semantics — use the
-            # discrete non-displayed axes as the ordering barrier, exactly like
-            # the Points/Lines scene path (sort_points_compound slice_dims).
-            # This is authoritative regardless of coordinate value spacing, so a
-            # non-integer categorical axis (e.g. physical-time seconds) is
-            # handled where the value-based auto-detect fallback would miss it.
-            barrier_dims=self._scene_barrier_dims(n_dims),
-        )
-
-    def _scene_barrier_dims(self, n_dims: int) -> Optional[List[int]]:
-        """Barrier (categorical) axes from the scene's ``Dimension`` metadata.
-
-        Mirrors the Points/Lines slice-dim split (``d.discrete and not
-        d.display``). Returns ``None`` when the scene carries no dimensions (→
-        per-leaf auto-detect); an explicit list (possibly empty) otherwise.
-        """
-        if "scene_dimensions" not in self.store.attrs:
-            return None
-        from ..core.dimensions import Dimensions
-
-        dims = Dimensions.from_dict(self.store.attrs["scene_dimensions"]).dimensions
-        return [
-            i for i, d in enumerate(dims) if i < n_dims and d.discrete and not d.display
-        ]
-
-    def _write_gsplat_arrays(
-        self,
-        group: zarr.Group,
-        centers: NDArray[np.float32],
-        amplitudes: Union[NDArray[np.float32], float],
-        cholesky_factors: NDArray[np.float32],
-        colors: Optional[Union[NDArray[np.float32], List[float], Tuple[float, ...]]],
-        n_splats: int,
-        n_dims: int,
-        cholesky_is_uniform: bool,
-        ordering_data: Optional[Dict[str, Any]],
-    ) -> dict[str, Any]:
-        return write_gsplat_arrays(
-            group,
-            centers,
-            amplitudes,
-            cholesky_factors,
-            colors,
-            n_splats,
-            n_dims,
-            cholesky_is_uniform,
-            ordering_data,
-            self._make_dataset_ctx(),
         )
 
     def _apply_gsplat_group_attrs(
@@ -1267,91 +731,18 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
             Metadata dictionary about the written gsplats
         """
         self._check_not_finalized("write_gsplats")
-
-        path = path.lstrip("/")
-        group = self.store.require_group(path)
-
-        # Validate
-        (
+        metadata = _write_gsplats_impl(
+            self._make_gsplats_ctx(),
+            path,
             centers,
             amplitudes,
             cholesky_factors,
             colors,
-            n_splats,
-            n_dims,
-            cholesky_is_uniform,
-        ) = self._validate_gsplat_inputs(centers, amplitudes, cholesky_factors, colors)
-
-        # Extract truncation_radius for spatial ordering (default 3.0)
-        truncation_radius = float(attrs.get("truncation_radius", 3.0))
-
-        aprint(f"📝 Writing {n_splats:,} gsplats ({n_dims}D) to {path}")
-        if isinstance(amplitudes, (int, float)):
-            aprint(f"  → Uniform amplitude {amplitudes:.3f} for all splats")
-        if colors is not None and isinstance(colors, (list, tuple)):
-            aprint(f"  → Uniform color RGB{list(colors)} for all splats")
-        if cholesky_is_uniform:
-            aprint(
-                f"  → Uniform Cholesky factors (shape {n_dims * (n_dims + 1) // 2}) "
-                f"for all splats"
-            )
-
-        # Spatial ordering
-        (
-            centers,
-            amplitudes,
-            cholesky_factors,
-            colors,
-            ordering_data,
-        ) = self._apply_gsplat_spatial_ordering(
-            centers,
-            amplitudes,
-            cholesky_factors,
-            colors,
-            n_splats,
-            n_dims,
-            cholesky_is_uniform,
-            coverage_sigma=truncation_radius,
+            labels,
+            image_labels,
+            **attrs,
         )
-
-        # Write arrays
-        metadata = self._write_gsplat_arrays(
-            group,
-            centers,
-            amplitudes,
-            cholesky_factors,
-            colors,
-            n_splats,
-            n_dims,
-            cholesky_is_uniform,
-            ordering_data,
-        )
-
-        # Set group attrs
-        self._apply_gsplat_group_attrs(group, metadata, attrs)
-
-        # Update scene-level bounds
-        self._update_scene_bounds(metadata["position_bounds"])
-
-        # Write labels if provided (CSR-style: label_offsets + label_bytes)
-        if labels is not None:
-            sort_order = (
-                ordering_data["sort_order"] if ordering_data is not None else None
-            )
-            self._write_labels_csr(group, labels, n_splats, sort_order)
-            metadata["has_labels"] = True
-
-        # Write image labels if provided (CSR-style, no compression on blobs)
-        if image_labels is not None:
-            sort_order = (
-                ordering_data["sort_order"] if ordering_data is not None else None
-            )
-            self._write_image_labels_csr(group, image_labels, n_splats, sort_order)
-            metadata["has_image_labels"] = True
-
-        self._metadata_cache[path] = metadata
-        aprint(f"✅ GSplats written to {path}")
-
+        self._metadata_cache[path.lstrip("/")] = metadata
         return metadata
 
     def write_gsplat_leaf_subtree(
@@ -1385,38 +776,10 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
             Aggregate metadata dict (incl. ``position_bounds``).
         """
         self._check_not_finalized("write_gsplat_leaf_subtree")
-
-        from ._compiler.gsplat_tree import write_gsplat_leaf
-
-        path = path.lstrip("/")
-        group = self.store.require_group(path)
-
-        scene_tone_mapping = None
-        if self._scene is not None and self._scene.viewer_config is not None:
-            scene_tone_mapping = self._scene.viewer_config.tone_mapping
-
-        metadata = write_gsplat_leaf(
-            group,
-            leaf,
-            dataset_ctx=self._make_dataset_ctx(),
-            ordering_ctx=self._make_ordering_ctx(),
-            store=self.store,
-            attrs=attrs,
-            scene_tone_mapping=scene_tone_mapping,
-            # Scene-embedded GSplatData (flat leaf / additive ladder) uses the
-            # same authoritative scene-dimension barrier as the array path, so a
-            # non-integer categorical axis is grouped correctly (not left to the
-            # value-based auto-detect fallback).
-            barrier_dims=self._scene_barrier_dims(leaf.ndim),
+        metadata = _write_gsplat_leaf_subtree_impl(
+            self._make_gsplats_ctx(), path, leaf, **attrs
         )
-
-        self._update_scene_bounds(metadata["position_bounds"])
-        self._metadata_cache[path] = metadata
-        n_sub = metadata.get("n_additive_sublods", 1)
-        aprint(
-            f"✅ GSplats leaf written to {path} "
-            f"({metadata['n_splats']:,} splats, {n_sub} additive sub-LOD(s))"
-        )
+        self._metadata_cache[path.lstrip("/")] = metadata
         return metadata
 
     def create_resizable_dataset(
@@ -1466,33 +829,6 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
         aprint(f"📝 Created resizable dataset: {path}")
         return dataset
 
-    def _build_spatial_ordering_if_enabled(
-        self,
-        positions: NDArray[np.float32],
-        n_points: int,
-        n_dims: int,
-        radii: Optional[Union[NDArray[np.float32], float]],
-    ) -> Optional[Dict[str, Any]]:
-        """Apply spatial ordering using Morton/Hilbert curves.
-
-        Args:
-            positions: Point positions
-            n_points: Number of points
-            n_dims: Number of dimensions
-            radii: Optional radii array
-
-        Returns:
-            Dict with:
-            - sorted_positions: Reordered positions
-            - sort_order: Indices to apply to other arrays
-            - chunk_bounds: (num_chunks, n_dims, 2) array
-            - ordering_metadata: Dict from sort_points_compound
-            Or None if ordering disabled/not applicable
-        """
-        return build_points_ordering(
-            positions, n_points, n_dims, radii, self._make_ordering_ctx(), self.store
-        )
-
     # ------------------------------------------------------------------
     # Scene bounds — bodies live in _compiler/bounds.py
     # ------------------------------------------------------------------
@@ -1533,110 +869,35 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
             compressor=self.compressor,
         )
 
-    def _write_positions_dataset(
-        self,
-        group: zarr.Group,
-        positions: NDArray[np.float32],
-        spatial_index_data: Optional[Dict[str, Any]],
-    ) -> None:
-        write_positions(group, positions, spatial_index_data, self._make_dataset_ctx())
+    def _make_geometry_ctx(self) -> GeometryWriteCtx:
+        """Build the narrow context for the extracted geometry write pipelines.
 
-    def _write_colors_dataset(
-        self,
-        group: zarr.Group,
-        colors: Union[NDArray[np.float32], tuple, list],
-        spatial_index_data: Optional[Dict[str, Any]],
-        n_elements: int,
-    ) -> None:
-        write_colors(
-            group, colors, spatial_index_data, n_elements, self._make_dataset_ctx()
+        Bundles the dataset/ordering configs + compressor with two bound-method
+        hooks for the orchestrator state a write mutates: the scene-bounds
+        accumulator and the warn-once colormap-LUT flag.
+        """
+        return GeometryWriteCtx(
+            store=self.store,
+            dataset_ctx=self._make_dataset_ctx(),
+            ordering_ctx=self._make_ordering_ctx(),
+            compressor=self.compressor,
+            update_scene_bounds=self._update_scene_bounds,
+            write_colormap_lut=self._write_colormap_lut_if_needed,
         )
 
-    def _write_positive_scalar_dataset(
-        self,
-        group: zarr.Group,
-        data: Union[NDArray[np.float32], float, int],
-        name: str,
-        spatial_index_data: Optional[Dict[str, Any]],
-        n_elements: int,
-        log_label_singular: Optional[str] = None,
-    ) -> float:
-        return write_positive_scalar(
-            group,
-            data,
-            name,
-            spatial_index_data,
-            n_elements,
-            self._make_dataset_ctx(),
-            log_label_singular,
-        )
-
-    def _write_bounded_scalar_dataset(
-        self,
-        group: zarr.Group,
-        data: Union[NDArray[np.float32], float, int],
-        name: str,
-        bounds: Tuple[float, float],
-        spatial_index_data: Optional[Dict[str, Any]],
-        n_elements: int,
-        log_label_singular: Optional[str] = None,
-    ) -> float:
-        return write_bounded_scalar(
-            group,
-            data,
-            name,
-            bounds,
-            spatial_index_data,
-            n_elements,
-            self._make_dataset_ctx(),
-            log_label_singular,
-        )
-
-    def _write_radii_dataset(
-        self,
-        group: zarr.Group,
-        radii: Union[NDArray[np.float32], float, int],
-        spatial_index_data: Optional[Dict[str, Any]],
-        n_points: int,
-    ) -> float:
-        return write_radii(
-            group, radii, spatial_index_data, n_points, self._make_dataset_ctx()
-        )
-
-    def _write_scalars_dataset(
-        self,
-        group: zarr.Group,
-        scalars: Union[NDArray[np.float32], float, int],
-        spatial_index_data: Optional[Dict[str, Any]],
-        n_elements: int,
-    ) -> None:
-        write_scalars(
-            group, scalars, spatial_index_data, n_elements, self._make_dataset_ctx()
-        )
-
-    # ------------------------------------------------------------------
-    # Labels (per-element string + image blobs, CSR-encoded) —
-    # bodies live in _compiler/labels/
-    # ------------------------------------------------------------------
-
-    def _write_labels_csr(
-        self,
-        group: zarr.Group,
-        labels: "Sequence[str]",
-        n_elements: int,
-        sort_order: Optional[np.ndarray] = None,
-    ) -> None:
-        write_labels_csr(group, labels, n_elements, self.compressor, sort_order)
-
-    def _write_image_labels_csr(
-        self,
-        group: zarr.Group,
-        image_labels: Any,
-        n_elements: int,
-        sort_order: Optional[np.ndarray] = None,
-    ) -> None:
-        write_image_labels_csr(
-            group, image_labels, n_elements, self.compressor, sort_order
+    def _make_gsplats_ctx(self) -> GSplatsWriteCtx:
+        """Build the narrow context for the extracted GSplats write pipelines."""
+        scene_tone_mapping = None
+        if self._scene is not None and self._scene.viewer_config is not None:
+            scene_tone_mapping = self._scene.viewer_config.tone_mapping
+        return GSplatsWriteCtx(
+            store=self.store,
+            dataset_ctx=self._make_dataset_ctx(),
+            ordering_ctx=self._make_ordering_ctx(),
+            compressor=self.compressor,
+            scene_tone_mapping=scene_tone_mapping,
+            update_scene_bounds=self._update_scene_bounds,
+            apply_gsplat_group_attrs=self._apply_gsplat_group_attrs,
         )
 
     def _write_colormap_lut_if_needed(
@@ -1650,62 +911,6 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
         self._lut_tone_mapping_warned = write_colormap_lut_if_needed(
             group, attrs, scene_tone_mapping, self._lut_tone_mapping_warned
         )
-
-    def _write_spatial_ordering_to_zarr(
-        self, group: zarr.Group, ordering_data: Dict[str, Any]
-    ) -> None:
-        """Write spatial ordering metadata and chunk bounds to Zarr.
-
-        Args:
-            group: Parent Zarr group
-            ordering_data: Ordering data with chunk_bounds and metadata
-        """
-        write_points_ordering_to_zarr(group, ordering_data, self.compressor)
-
-    def _build_lines_spatial_ordering_if_enabled(
-        self,
-        vertices: NDArray[np.float32],
-        segments: NDArray[np.uint32],
-        widths: Union[NDArray[np.float32], float],
-        n_vertices: int,
-        n_dims: int,
-        n_segments: int,
-    ) -> Optional[Dict[str, Any]]:
-        """Build dual spatial ordering for Lines (vertices + segments).
-
-        Args:
-            vertices: Vertex positions
-            segments: Segment index pairs
-            widths: Vertex widths (array or scalar)
-            n_vertices: Number of vertices
-            n_dims: Number of dimensions
-            n_segments: Number of segments
-
-        Returns:
-            Dict with sorted arrays, sort indices, chunk bounds, and ordering metadata.
-            Or None if spatial ordering is disabled.
-        """
-        return build_lines_ordering(
-            vertices,
-            segments,
-            widths,
-            n_vertices,
-            n_dims,
-            n_segments,
-            self._make_ordering_ctx(),
-            self.store,
-        )
-
-    def _write_lines_spatial_ordering_to_zarr(
-        self, group: zarr.Group, ordering_data: Dict[str, Any]
-    ) -> None:
-        """Write Lines spatial ordering metadata and dual chunk bounds to Zarr.
-
-        Args:
-            group: Parent Zarr group
-            ordering_data: Ordering data with chunk bounds and metadata
-        """
-        write_lines_ordering_to_zarr(group, ordering_data, self.compressor)
 
     def _compute_content_hashes(self, store: zarr.Group) -> str:
         return compute_content_hashes(store)

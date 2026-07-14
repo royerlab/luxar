@@ -403,9 +403,14 @@ follow_imports = "skip"
 # numba is installed (typed decorator -> untyped-decorator error) but is
 # "unused" in envs without numba, where the ignore_missing_imports override
 # turns the decorator into Any. Silence the env-dependent unused-ignore
-# warning for this one module.
+# warning for the modules that host those decorators (the curve encoders now
+# live in io/_ordering/curves/; ordering.py stays listed as the public facade).
 [[tool.mypy.overrides]]
-module = ["luxar.io.ordering"]
+module = [
+    "luxar.io.ordering",
+    "luxar.io._ordering.curves.morton",
+    "luxar.io._ordering.curves.hilbert",
+]
 warn_unused_ignores = false
 
 # Relax strict rules for test files. ignore_errors is kept on:
