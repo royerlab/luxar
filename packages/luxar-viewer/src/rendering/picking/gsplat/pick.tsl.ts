@@ -44,7 +44,11 @@ import {
   screenSize,
 } from 'three/tsl';
 import { NodeMaterial } from 'three/webgpu';
-import { invalidFloatTSL, type TSLNode } from '../../materials/_shared/tsl-helpers';
+import {
+  perspectiveNearFadeTSL,
+  invalidFloatTSL,
+  type TSLNode,
+} from '../../materials/_shared/tsl-helpers';
 
 const vec2: (a?: TSLNode, b?: TSLNode) => TSLNode = _vec2 as TSLNode;
 const vec3: (a?: TSLNode, b?: TSLNode, c?: TSLNode) => TSLNode = _vec3 as TSLNode;
@@ -120,7 +124,6 @@ export function gsplatPickWebGPUFactory(
   const vertexBody = Fn(() => {
     const centerCam4: TSLNode = modelViewMatrix.mul(vec4(aCenter, 1.0)).toVar();
     const centerCam: TSLNode = vec3(centerCam4).toVar();
-    const behindCamera: TSLNode = centerCam.z.greaterThanEqual(0.0).toVar();
     const zDepth: TSLNode = centerCam.z.negate().toVar();
 
     const L00 = aCholesky01.x;
@@ -139,10 +142,9 @@ export function gsplatPickWebGPUFactory(
     const L_cam: TSLNode = R.mul(L3D).toVar();
     const SigmaCam: TSLNode = L_cam.mul(L_cam.transpose()).toVar();
 
-    const depthFade: TSLNode = int(uIsOrtho)
-      .equal(int(0))
-      .select(smoothstep(uNearCull, uNearCull.mul(2.0), zDepth), float(1.0))
-      .toVar();
+    // Unified near handling (shared helper; subsumes the old
+    // standalone behind-camera reject — see shader-tsl.ts).
+    const depthFade: TSLNode = perspectiveNearFadeTSL(uIsOrtho, centerCam.z, uNearCull).toVar();
     const depthFadeReject: TSLNode = depthFade.lessThan(0.01);
 
     // Coverage fade (both projections; see shader-tsl.ts). Computed
@@ -274,11 +276,7 @@ export function gsplatPickWebGPUFactory(
       .or(invalidFloatTSL(Sigma2D11));
     const validClipPos: TSLNode = vec4(ndcXY, ndcZ, float(1.0));
     const rejectClipPos: TSLNode = vec4(float(0.0), float(0.0), float(-2.0), float(1.0));
-    const rejected: TSLNode = behindCamera
-      .or(depthFadeReject)
-      .or(coverageFadeReject)
-      .or(invalidAmp)
-      .or(invalidCov);
+    const rejected: TSLNode = depthFadeReject.or(coverageFadeReject).or(invalidAmp).or(invalidCov);
 
     // Pickability always uses max projection — amplitude = aAmplitude · nearFade.
     vAmplitude2D.assign(aAmplitude.mul(nearFade));

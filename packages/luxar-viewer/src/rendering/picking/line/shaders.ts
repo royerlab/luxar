@@ -19,6 +19,7 @@
  */
 
 import type { ShaderSource } from '../../materials/_shared/shader-source';
+import { GLSL_NEAR_FADE_FUNCTIONS } from '../../materials/_shared/glsl-lib';
 import { linePickWebGPUFactory, buildLinePickTSLNodesFromUniforms } from './pick.tsl';
 
 /**
@@ -30,6 +31,7 @@ import { linePickWebGPUFactory, buildLinePickTSLNodesFromUniforms } from './pick
  */
 export const LINE_PICK_VERTEX_SHADER = /* glsl */ `
     precision highp float;
+    ${GLSL_NEAR_FADE_FUNCTIONS}
 
     in vec2 aQuadCorner;
 
@@ -61,6 +63,7 @@ export const LINE_PICK_VERTEX_SHADER = /* glsl */ `
     out float vWidthAtT;
     out float vPixelWidth;
     out float vWidthFade;     // visual-shader parity
+    out float vNearFade;      // Perspective near fade (1.0 under ortho)
     flat out float vClippedStart;
     flat out float vClippedEnd;
     flat out highp float vNodeId;
@@ -91,17 +94,25 @@ export const LINE_PICK_VERTEX_SHADER = /* glsl */ `
       vec4 mvStart = modelViewMatrix * vec4(aStartPos, 1.0);
       vec4 mvEnd = modelViewMatrix * vec4(aEndPos, 1.0);
       vec4 mvPos = mix(mvStart, mvEnd, t);
+      // Inline max() — nearCull is declared below (pick shader ordering
+      // differs from the visual shader).
+      vNearFade = perspectiveNearFade(uIsOrtho, mvPos.z, max(uNearCull, 1e-4));
 
       // Visual-shader parity: near-plane safety (degenerate quad if both endpoints behind).
+      // PERSPECTIVE ONLY — see the visual line shader: under ortho NDC
+      // clipping is the sole cull authority (the ungated cull wrongly
+      // made near-slab lines unpickable while points/gsplats picked).
       float nearCull = max(uNearCull, 1e-4);
       float startDepth = -mvStart.z;
       float endDepth = -mvEnd.z;
-      bool bothBehind = (startDepth < nearCull) && (endDepth < nearCull);
+      bool bothBehind =
+        (uIsOrtho == 0) && (startDepth < nearCull) && (endDepth < nearCull);
       if (bothBehind) {
-        gl_Position = vec4(2.0, 2.0, 2.0, 1.0);
+        gl_Position = vec4(0.0, 0.0, -2.0, 1.0);
         vPerpNorm = 0.0;
         vPixelWidth = 0.0;
         vWidthFade = 0.0;
+        vNearFade = 0.0;
         vNodeId = uNodeId;
         vElementId = float(gl_InstanceID);
         return;
@@ -140,14 +151,16 @@ export const LINE_PICK_VERTEX_SHADER = /* glsl */ `
       // past clamp by 2×). Without this, picking still rasterizes the
       // half-viewport quad the visual pass already culled.
       if (
+        uIsOrtho == 0 &&
         startDepth < nearCull * 2.0 &&
         endDepth < nearCull * 2.0 &&
         rawPixelWidth > maxPW * 2.0
       ) {
-        gl_Position = vec4(2.0, 2.0, 2.0, 1.0);
+        gl_Position = vec4(0.0, 0.0, -2.0, 1.0);
         vPerpNorm = 0.0;
         vPixelWidth = 0.0;
         vWidthFade = 0.0;
+        vNearFade = 0.0;
         vNodeId = uNodeId;
         vElementId = float(gl_InstanceID);
         return;
@@ -189,6 +202,7 @@ export const LINE_PICK_FRAGMENT_SHADER = /* glsl */ `
     in float vWidthAtT;
     in float vPixelWidth;
     in float vWidthFade;
+    in float vNearFade;
     flat in float vClippedStart;
     flat in float vClippedEnd;
     flat in highp float vNodeId;
@@ -227,7 +241,7 @@ export const LINE_PICK_FRAGMENT_SHADER = /* glsl */ `
       float nearestClipped = mix(vClippedEnd, vClippedStart, nearestIsStart);
       float capFactor = mix(baseCap, 1.0, nearestClipped);
 
-      float brightness = capFactor * perpFalloff * widthScale * vWidthFade;
+      float brightness = capFactor * perpFalloff * widthScale * vWidthFade * vNearFade;
       if (brightness < 1e-4) discard;
 
       fragColor = vec4(vNodeId, vElementId, brightness, 1.0);

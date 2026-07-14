@@ -32,14 +32,19 @@ precision highp samplerCubeShadow;
 
 // uniforms
 
+layout( std140 ) uniform render {
+	mat4 cameraProjectionMatrix;
+	mat4 cameraViewMatrix;
+};
+
 layout( std140 ) uniform object {
-	vec2 nodeUniform0;
-	float nodeUniform1;
-	float nodeUniform2;
+	mat4 nodeUniform1;
+	vec2 nodeUniform2;
 	float nodeUniform3;
 	float nodeUniform4;
 	float nodeUniform5;
-	mat4 nodeUniform7;
+	float nodeUniform6;
+	float nodeUniform7;
 	float nodeUniform8;
 	float nodeUniform9;
 	vec2 nodeUniform10;
@@ -47,11 +52,6 @@ layout( std140 ) uniform object {
 	float nodeUniform12;
 	float nodeUniform13;
 	float nodeUniform14;
-};
-
-layout( std140 ) uniform render {
-	mat4 cameraViewMatrix;
-	mat4 cameraProjectionMatrix;
 };
 
 
@@ -73,15 +73,15 @@ layout( location = 5 ) in vec2 aQuadCorner;
 
 
 // vars
+mat4 modelViewMatrix;
 vec2 nodeVar0;
 vec3 nodeVar1;
-mat4 modelViewMatrix;
 vec4 nodeVar8;
 vec3 nodeVar9;
-bool nodeVar10;
-float nodeVar11;
+float nodeVar10;
+mat3 nodeVar11;
 mat3 nodeVar12;
-mat3 nodeVar13;
+float nodeVar13;
 float nodeVar14;
 float nodeVar15;
 float nodeVar16;
@@ -136,33 +136,43 @@ void main() {
 	// flow
 	// code
 
+	modelViewMatrix = ( cameraViewMatrix * nodeUniform1 );
 	nodeVar0 = vec2( 0.0, 0.0 );
 	nodeVarying2 = nodeVar0;
 	nodeVar1 = vec3( 0.0, 0.0, 0.0 );
 	nodeVarying1 = nodeVar1;
 	nodeVarying0 = 0.0;
-	nodeVarying3 = nodeUniform4;
+	nodeVarying3 = nodeUniform6;
 	nodeVarying4 = float( uint( gl_InstanceID ) );
-	modelViewMatrix = ( cameraViewMatrix * nodeUniform7 );
 	nodeVar8 = ( modelViewMatrix * vec4( aCenter, 1.0 ) );
 	nodeVar9 = nodeVar8.xyz;
-	nodeVar10 = ( nodeVar9.z >= 0.0 );
-	nodeVar11 = ( - nodeVar9.z );
-	nodeVar12 = ( mat3( modelViewMatrix[ 0 ].xyz, modelViewMatrix[ 1 ].xyz, modelViewMatrix[ 2 ].xyz ) * mat3( vec3( aCholesky01.x, aCholesky01.y, aCholesky23.y ), vec3( 0.0, aCholesky23.x, aCholesky45.x ), vec3( 0.0, 0.0, aCholesky45.y ) ) );
-	nodeVar13 = ( nodeVar12 * transpose( nodeVar12 ) );
+	nodeVar10 = ( - nodeVar9.z );
+	nodeVar11 = ( mat3( modelViewMatrix[ 0 ].xyz, modelViewMatrix[ 1 ].xyz, modelViewMatrix[ 2 ].xyz ) * mat3( vec3( aCholesky01.x, aCholesky01.y, aCholesky23.y ), vec3( 0.0, aCholesky23.x, aCholesky45.x ), vec3( 0.0, 0.0, aCholesky45.y ) ) );
+	nodeVar12 = ( nodeVar11 * transpose( nodeVar11 ) );
 
-	if ( ( int( nodeUniform8 ) == 0 ) ) {
+	if ( ( int( nodeUniform8 ) == 1 ) ) {
 
-		nodeVar14 = smoothstep( nodeUniform9, ( nodeUniform9 * 2.0 ), nodeVar11 );
+		nodeVar13 = 1.0;
 
 	} else {
 
-		nodeVar14 = 1.0;
+
+		if ( ( nodeVar9.z >= 0.0 ) ) {
+
+			nodeVar14 = 0.0;
+
+		} else {
+
+			nodeVar14 = smoothstep( nodeUniform9, ( nodeUniform9 * 2.0 ), ( - nodeVar9.z ) );
+
+		}
+
+		nodeVar13 = nodeVar14;
 
 	}
 
-	nodeVar15 = nodeVar14;
-	nodeVar16 = max( nodeVar13[ 0 ][ 0 ], max( nodeVar13[ 1 ][ 1 ], nodeVar13[ 2 ][ 2 ] ) );
+	nodeVar15 = nodeVar13;
+	nodeVar16 = max( nodeVar12[ 0 ][ 0 ], max( nodeVar12[ 1 ][ 1 ], nodeVar12[ 2 ][ 2 ] ) );
 	nodeVar17 = ( int( nodeUniform8 ) == 1 );
 	nodeVar18 = ( max( nodeUniform10.x, nodeUniform10.y ) * nodeUniform11 );
 
@@ -172,13 +182,13 @@ void main() {
 
 	} else {
 
-		nodeVar19 = max( nodeVar11, 1e-8 );
+		nodeVar19 = max( nodeVar10, 1e-8 );
 
 	}
 
 	nodeVar20 = ( 1.0 - smoothstep( ( nodeVar18 * 0.5 ), nodeVar18, ( ( ( nodeUniform12 * sqrt( max( nodeVar16, 1e-8 ) ) ) * nodeUniform13 ) / nodeVar19 ) ) );
 	nodeVar21 = min( nodeVar15, nodeVar20 );
-	nodeVar22 = ( 1.0 / max( nodeVar11, 1e-8 ) );
+	nodeVar22 = ( 1.0 / max( nodeVar10, 1e-8 ) );
 
 	if ( nodeVar17 ) {
 
@@ -216,9 +226,9 @@ void main() {
 	}
 
 	nodeVar29 = nodeVar27;
-	nodeVar30 = ( ( ( nodeVar24 * vec2( nodeVar13[ 0 ][ 0 ] ) ) + ( nodeVar26 * vec2( nodeVar13[ 0 ][ 1 ] ) ) ) + ( nodeVar29 * vec2( nodeVar13[ 0 ][ 2 ] ) ) );
-	nodeVar31 = ( ( ( nodeVar24 * vec2( nodeVar13[ 1 ][ 0 ] ) ) + ( nodeVar26 * vec2( nodeVar13[ 1 ][ 1 ] ) ) ) + ( nodeVar29 * vec2( nodeVar13[ 1 ][ 2 ] ) ) );
-	nodeVar32 = ( ( ( nodeVar24 * vec2( nodeVar13[ 2 ][ 0 ] ) ) + ( nodeVar26 * vec2( nodeVar13[ 2 ][ 1 ] ) ) ) + ( nodeVar29 * vec2( nodeVar13[ 2 ][ 2 ] ) ) );
+	nodeVar30 = ( ( ( nodeVar24 * vec2( nodeVar12[ 0 ][ 0 ] ) ) + ( nodeVar26 * vec2( nodeVar12[ 0 ][ 1 ] ) ) ) + ( nodeVar29 * vec2( nodeVar12[ 0 ][ 2 ] ) ) );
+	nodeVar31 = ( ( ( nodeVar24 * vec2( nodeVar12[ 1 ][ 0 ] ) ) + ( nodeVar26 * vec2( nodeVar12[ 1 ][ 1 ] ) ) ) + ( nodeVar29 * vec2( nodeVar12[ 1 ][ 2 ] ) ) );
+	nodeVar32 = ( ( ( nodeVar24 * vec2( nodeVar12[ 2 ][ 0 ] ) ) + ( nodeVar26 * vec2( nodeVar12[ 2 ][ 1 ] ) ) ) + ( nodeVar29 * vec2( nodeVar12[ 2 ][ 2 ] ) ) );
 	nodeVar33 = ( ( ( nodeVar30.x * nodeVar24.x ) + ( nodeVar31.x * nodeVar26.x ) ) + ( nodeVar32.x * nodeVar29.x ) );
 	nodeVar34 = ( ( ( nodeVar30.x * nodeVar24.y ) + ( nodeVar31.x * nodeVar26.y ) ) + ( nodeVar32.x * nodeVar29.y ) );
 	nodeVar35 = ( ( ( nodeVar30.y * nodeVar24.y ) + ( nodeVar31.y * nodeVar26.y ) ) + ( nodeVar32.y * nodeVar29.y ) );
@@ -285,7 +295,7 @@ void main() {
 	nodeVarying1 = vec3( nodeVar36, nodeVar37, ( 1.0 / sqrt( max( ( nodeVar35 - ( nodeVar37 * nodeVar37 ) ), 1e-8 ) ) ) );
 	nodeVarying2 = nodeVar53;
 
-	if ( ( ( ( ( nodeVar10 || ( nodeVar15 < 0.01 ) ) || ( nodeVar20 < 0.01 ) ) || (!( ( aAmplitude < 1e30 ) && ( aAmplitude > -1e30 ) )) ) || ( ( (!( ( nodeVar33 < 1e30 ) && ( nodeVar33 > -1e30 ) )) || (!( ( nodeVar34 < 1e30 ) && ( nodeVar34 > -1e30 ) )) ) || (!( ( nodeVar35 < 1e30 ) && ( nodeVar35 > -1e30 ) )) ) ) ) {
+	if ( ( ( ( ( nodeVar15 < 0.01 ) || ( nodeVar20 < 0.01 ) ) || (!( ( aAmplitude < 1e30 ) && ( aAmplitude > -1e30 ) )) ) || ( ( (!( ( nodeVar33 < 1e30 ) && ( nodeVar33 > -1e30 ) )) || (!( ( nodeVar34 < 1e30 ) && ( nodeVar34 > -1e30 ) )) ) || (!( ( nodeVar35 < 1e30 ) && ( nodeVar35 > -1e30 ) )) ) ) ) {
 
 		nodeVar55 = vec4( 0.0, 0.0, -2.0, 1.0 );
 

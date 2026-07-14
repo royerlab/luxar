@@ -56,7 +56,11 @@ import {
   Discard,
 } from 'three/tsl';
 import { NodeMaterial } from 'three/webgpu';
-import { sanitizeNonNegative, type TSLNode } from '../_shared/tsl-helpers';
+import {
+  perspectiveNearFadeStaticTSL,
+  sanitizeNonNegative,
+  type TSLNode,
+} from '../_shared/tsl-helpers';
 import { applyBlendingStateToMaterial, getCompleteBlendingState } from '../../blending-state';
 import type { BlendingMode } from '../../material-manager';
 
@@ -252,11 +256,17 @@ export function lineWebGPUFactory(
   const mvEnd: TSLNode = modelViewMatrix.mul(vec4(aEndPos, 1.0));
   const mvPos: TSLNode = mix(mvStart, mvEnd, t);
 
-  // Near-plane / behind-camera safety. View-space depth = -z.
+  // Near-plane / behind-camera safety — PERSPECTIVE ONLY (compile-time
+  // graph variant: ortho graphs carry no cull/fade code at all; under
+  // ortho NDC clipping is the sole authority and the previous ungated
+  // cull wrongly hid in-frustum lines in the near slab). View-space
+  // depth = -z.
   const nearCull: TSLNode = max(uNearCull, float(1e-4));
   const startDepth: TSLNode = mvStart.z.negate();
   const endDepth: TSLNode = mvEnd.z.negate();
-  const bothBehind: TSLNode = startDepth.lessThan(nearCull).and(endDepth.lessThan(nearCull));
+  const bothBehind: TSLNode | null = config.isOrtho
+    ? null
+    : startDepth.lessThan(nearCull).and(endDepth.lessThan(nearCull));
 
   const clipStart: TSLNode = cameraProjectionMatrix.mul(mvStart);
   const clipEnd: TSLNode = cameraProjectionMatrix.mul(mvEnd);
@@ -305,12 +315,16 @@ export function lineWebGPUFactory(
     .lessThanEqual(maxPW)
     .select(float(1.0), maxPW.div(max(rawPixelWidth, float(1e-4))).toVar());
 
-  // Pathological-segment cull: both endpoints inside near-cull margin
-  // AND rawPixelWidth blows past clamp by 2× → degenerate quad.
-  const pathological: TSLNode = startDepth
-    .lessThan(nearCull.mul(2.0))
-    .and(endDepth.lessThan(nearCull.mul(2.0)))
-    .and(rawPixelWidth.greaterThan(maxPW.mul(2.0)));
+  // Pathological-segment cull (perspective only — ortho width is
+  // depth-independent, a depth gate there is meaningless): both
+  // endpoints inside near-cull margin AND rawPixelWidth blows past
+  // clamp by 2× → degenerate quad.
+  const pathological: TSLNode | null = config.isOrtho
+    ? null
+    : startDepth
+        .lessThan(nearCull.mul(2.0))
+        .and(endDepth.lessThan(nearCull.mul(2.0)))
+        .and(rawPixelWidth.greaterThan(maxPW.mul(2.0)));
 
   // Final clip-space position with perpendicular expansion.
   // pixelOffset = perpendicular × aQuadCorner.y × clampedPixelWidth
@@ -329,17 +343,22 @@ export function lineWebGPUFactory(
   // Route culled / pathological segments to off-screen via real
   // TSL control flow. `If(predicate, () => { ... })` emits actual
   // `if` blocks in the generated WGSL/GLSL so only one branch runs
-  // per vertex — unlike `select(...)` which evaluates both. Default
-  // value `vec4(2,2,2,1)` is outside the clip cube; the rasterizer
-  // drops the segment when the not-culled branch doesn't fire.
-  const culled: TSLNode = bothBehind.or(pathological);
-  const clipPos: TSLNode = Fn(() => {
-    const out = vec4(2.0, 2.0, 2.0, 1.0).toVar('clipPos');
-    If(culled.not(), () => {
-      out.assign(expandedClip);
-    });
-    return out;
-  })();
+  // per vertex — unlike `select(...)` which evaluates both. Ortho
+  // graphs (culls null) skip the wrapper entirely — dead code drops
+  // from the ortho codegen, consistent with the config.isOrtho
+  // graph-variant design above. Sentinel vec4(0,0,-2,1) matches the
+  // point/gsplat reject convention.
+  const culled: TSLNode | null =
+    bothBehind && pathological ? bothBehind.or(pathological) : (bothBehind ?? pathological);
+  const clipPos: TSLNode = culled
+    ? Fn(() => {
+        const out = vec4(0.0, 0.0, -2.0, 1.0).toVar('clipPos');
+        If(culled.not(), () => {
+          out.assign(expandedClip);
+        });
+        return out;
+      })()
+    : expandedClip;
 
   // Varyings to the fragment stage. Per-segment-constant values use
   // `flat` interpolation so the rasterizer skips the perspective
@@ -352,6 +371,11 @@ export function lineWebGPUFactory(
   const vWidthAtT: TSLNode = varying(width);
   const vPixelWidth: TSLNode = varying(rawPixelWidth);
   const vWidthFade: TSLNode = varying(vWidthFadeVal);
+  // Unified near fade at this vertex's own depth (static ortho variant
+  // returns a constant 1.0 → no varying cost in ortho graphs).
+  const vNearFade: TSLNode = varying(
+    perspectiveNearFadeStaticTSL(config.isOrtho === true, mvPos.z, nearCull)
+  );
   // Clipped flags are per-instance — same across all 4 quad verts.
   const vClippedStart: TSLNode = varying(aStartClipped).setInterpolation('flat');
   const vClippedEnd: TSLNode = varying(aEndClipped).setInterpolation('flat');
@@ -402,7 +426,8 @@ export function lineWebGPUFactory(
       .mul(perpFalloff)
       .mul(edgeAA)
       .mul(widthScale)
-      .mul(vWidthFade);
+      .mul(vWidthFade)
+      .mul(vNearFade);
 
     // GOG. Fast path: when the wrapper knows intensity==1 && offset==0,
     // the mul/add/clamp chain is identity for non-negative vColor.

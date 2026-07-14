@@ -34,7 +34,6 @@ import {
   int,
   max,
   clamp,
-  length,
   dot,
   exp,
   Discard,
@@ -42,7 +41,11 @@ import {
   cameraProjectionMatrix,
 } from 'three/tsl';
 import { NodeMaterial } from 'three/webgpu';
-import { sanitizeNonNegative, type TSLNode } from '../../materials/_shared/tsl-helpers';
+import {
+  perspectiveNearFadeTSL,
+  sanitizeNonNegative,
+  type TSLNode,
+} from '../../materials/_shared/tsl-helpers';
 
 /**
  * Pre-created TSL leaf nodes supplied by the wrapper class. See
@@ -55,6 +58,7 @@ export interface PointPickTSLNodes {
   readonly maxPointSize: TSLNode;
   readonly radiusScale: TSLNode;
   readonly uIsOrtho: TSLNode;
+  readonly uNearCull: TSLNode;
   readonly uNodeId: TSLNode;
   readonly uResolution: TSLNode;
 }
@@ -79,6 +83,7 @@ export function pointPickWebGPUFactory(
   const uMaxPointSize = nodes.maxPointSize;
   const uRadiusScale = nodes.radiusScale;
   const uIsOrtho = nodes.uIsOrtho;
+  const uNearCull = nodes.uNearCull;
   const uNodeId = nodes.uNodeId;
   const uResolution = nodes.uResolution;
 
@@ -95,9 +100,11 @@ export function pointPickWebGPUFactory(
   const mvPos: TSLNode = modelViewMatrix.mul(vec4(aCenter, 1.0));
   const projCenter: TSLNode = cameraProjectionMatrix.mul(mvPos);
 
+  // View-space depth, matching the visual point shader (B9a) so the
+  // pick footprint stays congruent with the visible sprite.
   const invDistance: TSLNode = int(uIsOrtho)
     .equal(int(1))
-    .select(float(1.0), length(mvPos.xyz).reciprocal());
+    .select(float(1.0), mvPos.z.negate().max(float(1e-4)).reciprocal());
   const basePointSize: TSLNode = normalizedRadius.mul(uPointSizeFactor).mul(invDistance);
 
   // Picking footprint: × 0.8 vs the visual material (keep the 0.8 in sync
@@ -111,20 +118,25 @@ export function pointPickWebGPUFactory(
 
   const offsetClip: TSLNode = aQuadCorner.mul(pickPointSize.div(uResolution)).mul(projCenter.w);
   // Reject points behind the camera (perspective only; camera looks down -Z).
-  // projCenter.w is <= 0 behind the camera and the expansion above would
-  // flip/degenerate the pick sprite (spurious hits). Keep in sync with the
-  // visual point shader (shader-tsl.ts) and the gsplat pick guard; ortho keeps
-  // w == 1 and is excluded.
-  const behindCamera: TSLNode = int(uIsOrtho).equal(int(0)).and(mvPos.z.greaterThanEqual(0.0));
-  const clipPos: TSLNode = behindCamera.select(
-    vec4(0.0, 0.0, -2.0, 1.0),
-    projCenter.add(vec4(offsetClip, 0.0, 0.0))
-  );
+  // Unified near handling — keep in sync with the visual point shader
+  // and the line/gsplat pick guards: pickability tracks visibility
+  // (behind-camera fade 0 — projCenter.w <= 0 there would flip the
+  // sprite; smooth [nearCull, 2*nearCull] fade; ortho = 1, NDC clip
+  // authority).
+  const depthFade: TSLNode = perspectiveNearFadeTSL(
+    uIsOrtho,
+    mvPos.z,
+    max(uNearCull, float(1e-4))
+  ).toVar();
+  const clipPos: TSLNode = depthFade
+    .lessThan(0.01)
+    .select(vec4(0.0, 0.0, -2.0, 1.0), projCenter.add(vec4(offsetClip, 0.0, 0.0)));
 
   // Varyings.
   const vSpriteCoord: TSLNode = varying(aQuadCorner.add(1.0).mul(0.5));
   const vRadius: TSLNode = varying(normalizedRadius);
   const vBeta: TSLNode = varying(beta);
+  const vNearFade: TSLNode = varying(depthFade);
   // nodeId and elementId are flat in the GLSL path. TSL's `varying()`
   // wraps with per-vertex linear interpolation by default; for a
   // single-instance quad all 4 corners carry the same value, so
@@ -146,10 +158,12 @@ export function pointPickWebGPUFactory(
   const K = 4.6051702; // ln(100)
   const C = 0.01; // exp(-K) = floor
   const invOneMinusC = 1.0 / (1.0 - C);
+  // nearFade folded into brightness (matches gsplat pick).
   const brightness: TSLNode = exp(normalizedR.pow(vBeta).mul(-K))
     .sub(C)
     .max(float(0.0))
     .mul(invOneMinusC)
+    .mul(vNearFade)
     .toVar();
 
   const colorNode = Fn(() => {
@@ -193,6 +207,7 @@ export function buildPointPickTSLNodesFromUniforms(
     maxPointSize: uniform((uniforms.maxPointSize?.value as number) ?? 1.0),
     radiusScale: uniform((uniforms.radiusScale?.value as number) ?? 1.0),
     uIsOrtho: uniform((uniforms.uIsOrtho?.value as number) ?? 0),
+    uNearCull: uniform((uniforms.uNearCull?.value as number) ?? 0.1),
     uNodeId: uniform((uniforms.uNodeId?.value as number) ?? 0),
     uResolution: uniform(
       (uniforms.uResolution?.value as THREE.Vector2 | undefined) ?? new THREE.Vector2(1, 1)

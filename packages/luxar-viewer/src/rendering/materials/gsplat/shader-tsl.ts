@@ -65,7 +65,7 @@ import {
   screenSize,
 } from 'three/tsl';
 import { NodeMaterial } from 'three/webgpu';
-import { invalidFloatTSL, type TSLNode } from '../_shared/tsl-helpers';
+import { invalidFloatTSL, perspectiveNearFadeTSL, type TSLNode } from '../_shared/tsl-helpers';
 import {
   applyBlendingStateToMaterial,
   getCompleteBlendingState,
@@ -221,8 +221,6 @@ export function gsplatWebGPUFactory(
     const centerCam4: TSLNode = modelViewMatrix.mul(vec4(aCenter, 1.0)).toVar();
     const centerCam: TSLNode = vec3(centerCam4).toVar();
 
-    // Behind-camera (camera looks down -Z; +Z means behind).
-    const behindCamera: TSLNode = centerCam.z.greaterThanEqual(0.0).toVar();
     const zDepth: TSLNode = centerCam.z.negate().toVar();
 
     // 3D Cholesky as a mat3 (column-major).
@@ -247,11 +245,12 @@ export function gsplatWebGPUFactory(
     // result for downstream cofactor / variance math.
     const SigmaCam: TSLNode = L_cam.mul(L_cam.transpose()).toVar();
 
-    // Near-plane depth fade (perspective only).
-    const depthFade: TSLNode = int(uIsOrtho)
-      .equal(int(0))
-      .select(smoothstep(uNearCull, uNearCull.mul(2.0), zDepth), float(1.0))
-      .toVar();
+    // Unified near handling (shared perspectiveNearFadeTSL; matches the
+    // point + line graphs and the GLSL twin): behind-camera fades to 0
+    // (subsumes the old standalone behindCamera reject), the near-plane
+    // approach fades across [uNearCull, 2*uNearCull], ortho passes
+    // through to NDC clipping.
+    const depthFade: TSLNode = perspectiveNearFadeTSL(uIsOrtho, centerCam.z, uNearCull).toVar();
     const depthFadeReject: TSLNode = depthFade.lessThan(0.01);
 
     // Coverage fade — computed UNCONDITIONALLY (GLSL twin updated in
@@ -446,11 +445,9 @@ export function gsplatWebGPUFactory(
       .or(invalidFloatTSL(Sigma2D11));
     const validClipPos: TSLNode = vec4(ndcXY, ndcZ, float(1.0));
     const rejectClipPos: TSLNode = vec4(float(0.0), float(0.0), float(-2.0), float(1.0));
-    const rejected: TSLNode = behindCamera
-      .or(depthFadeReject)
-      .or(coverageFadeReject)
-      .or(invalidAmp)
-      .or(invalidCov);
+    // behindCamera is subsumed by depthFadeReject (perspective fade = 0
+    // behind the camera; ortho behind-camera falls to NDC clipping).
+    const rejected: TSLNode = depthFadeReject.or(coverageFadeReject).or(invalidAmp).or(invalidCov);
 
     // Per-instance colour (LUT or attribute). aAmplitude doubles as
     // the colormap scalar — matches the GLSL `(aAmplitude - uScalarMin)`

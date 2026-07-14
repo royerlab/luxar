@@ -33,7 +33,7 @@
  *     looks "stranded" — every visible fragment paints at full
  *     intensity regardless of opacity, intensity, or fade.
  */
-import { GLSL_SANITIZE_FUNCTIONS } from '../_shared/glsl-lib';
+import { GLSL_SANITIZE_FUNCTIONS, GLSL_NEAR_FADE_FUNCTIONS } from '../_shared/glsl-lib';
 import { lineWebGPUFactory, buildLineTSLNodesFromUniforms } from './shader-tsl';
 import type { ShaderSource } from '../_shared/shader-source';
 
@@ -41,6 +41,7 @@ export const LINE_VERTEX_SHADER = /* glsl */ `
     precision highp float;
 
     ${GLSL_SANITIZE_FUNCTIONS}
+    ${GLSL_NEAR_FADE_FUNCTIONS}
 
     // Static geometry attribute (per quad vertex)
     in vec2 aQuadCorner;  // (-1,-1), (1,-1), (-1,1), (1,1)
@@ -97,6 +98,7 @@ export const LINE_VERTEX_SHADER = /* glsl */ `
     out float vWidthAtT;      // interpolated world-space width (or half-width)
     out float vPixelWidth;   // Raw line width in pixels (for anti-aliasing)
     out float vWidthFade;    // in [0..1], fades intensity when pixel-width clamped
+    out float vNearFade;     // Perspective near fade (1.0 under ortho)
     flat out float vClippedStart; // flat: same value across all 4 quad vertices
     flat out float vClippedEnd;
 
@@ -120,20 +122,26 @@ export const LINE_VERTEX_SHADER = /* glsl */ `
       vec4 mvStart = modelViewMatrix * vec4(aStartPos, 1.0);
       vec4 mvEnd = modelViewMatrix * vec4(aEndPos, 1.0);
 
-      // near-plane / behind-camera safety. Three.js view space has
-      // -z pointing into the scene, so a positive viewDepth means the
-      // point is in front of the camera. Reject segments where BOTH
-      // endpoints fail the near-cull (degenerate the quad to clip).
-      // When only ONE endpoint is behind, we keep the full quad: the
-      // shader will produce extreme NDC for that endpoint, but the
-      // pixel-width clamp and vWidthFade keep the visible footprint
-      // bounded. Matches the GSplat near-fade pattern.
+      // near-plane / behind-camera safety — PERSPECTIVE ONLY. Three.js
+      // view space has -z pointing into the scene, so a positive
+      // viewDepth means the point is in front of the camera. Reject
+      // segments where BOTH endpoints fail the near-cull (degenerate
+      // the quad to clip). When only ONE endpoint is behind, we keep
+      // the full quad: the shader will produce extreme NDC for that
+      // endpoint, but the pixel-width clamp and vWidthFade keep the
+      // visible footprint bounded. Under ORTHO there is no 1/z
+      // singularity and NDC near/far clipping is the sole cull
+      // authority — the previous ungated cull WRONGLY hid in-frustum
+      // lines in the near slab (< uNearCull from the camera plane)
+      // where points/gsplats still drew. Matches the unified
+      // perspectiveNearFade semantics (point + gsplat shaders).
       float nearCull = max(uNearCull, 1e-4);
       float startDepth = -mvStart.z;
       float endDepth = -mvEnd.z;
-      bool bothBehind = (startDepth < nearCull) && (endDepth < nearCull);
+      bool bothBehind =
+        (uIsOrtho == 0) && (startDepth < nearCull) && (endDepth < nearCull);
       if (bothBehind) {
-        gl_Position = vec4(2.0, 2.0, 2.0, 1.0); // off-screen (NDC > 1) → no fragments
+        gl_Position = vec4(0.0, 0.0, -2.0, 1.0); // off-screen → no fragments
         // Defensive: zero the remaining varyings the fragment-stage
         // can read. The rasterizer drops this segment entirely so the
         // values don't actually matter, but uninitialised out-vars can
@@ -144,10 +152,15 @@ export const LINE_VERTEX_SHADER = /* glsl */ `
         vPerpNorm = 0.0;
         vPixelWidth = 0.0;
         vWidthFade = 0.0;
+        vNearFade = 0.0;
         return;
       }
 
       vec4 mvPos = mix(mvStart, mvEnd, t);
+      // Unified near fade (this vertex's own depth): smooth
+      // [nearCull, 2*nearCull] fade under perspective, 1.0 under ortho.
+      // Replaces the hard pop at the nearCull wall.
+      vNearFade = perspectiveNearFade(uIsOrtho, mvPos.z, nearCull);
 
       // === Below here only runs when the segment passed the cheap cull. ===
 
@@ -241,16 +254,23 @@ export const LINE_VERTEX_SHADER = /* glsl */ `
       // are within the near cull margin AND rawPixelWidth blows past
       // the clamp by 2× (a clear pathological case, not a normal
       // close-up).
+      // PERSPECTIVE ONLY: under ortho rawPixelWidth is depth-independent
+      // (width * uOrthoLineScale), so a depth gate here would make a
+      // legitimately wide line vanish only while inside the 2*nearCull
+      // slab and pop back one unit deeper — depth-dependent visibility
+      // with no physical rationale in a depth-independent projection.
       if (
+        uIsOrtho == 0 &&
         startDepth < nearCull * 2.0 &&
         endDepth < nearCull * 2.0 &&
         rawPixelWidth > maxPW * 2.0
       ) {
-        gl_Position = vec4(2.0, 2.0, 2.0, 1.0);
+        gl_Position = vec4(0.0, 0.0, -2.0, 1.0);
         vColor = vec3(0.0);
         vPerpNorm = 0.0;
         vPixelWidth = 0.0;
         vWidthFade = 0.0;
+        vNearFade = 0.0;
         return;
       }
       float clampedPixelWidth = clamp(rawPixelWidth, minPixelWidth, maxPW);
@@ -302,6 +322,7 @@ export const LINE_FRAGMENT_SHADER = /* glsl */ `
     in float vWidthAtT;     // interpolated world-space width
     in float vPixelWidth;   // Raw line width in pixels (before minimum clamping)
     in float vWidthFade;    // max-pixel-width clamp fade
+    in float vNearFade; // Perspective near fade (1.0 under ortho)
     flat in float vClippedStart;
     flat in float vClippedEnd;
 
@@ -363,7 +384,7 @@ export const LINE_FRAGMENT_SHADER = /* glsl */ `
       float capFactor = mix(baseCap, 1.0, nearestClipped);
 
       // Apply cap factor for correct joint intensity
-      float intensity = capFactor * perpFalloff * edgeAA * widthScale * vWidthFade;
+      float intensity = capFactor * perpFalloff * edgeAA * widthScale * vWidthFade * vNearFade;
 
       // Per-node GOG (Gain-Offset-Gamma) color adjustment. When the
       // wrapper knows intensity==1 && offset==0 (the default), the

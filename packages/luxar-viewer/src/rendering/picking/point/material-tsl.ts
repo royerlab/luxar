@@ -39,6 +39,7 @@ export class PointPickingTSLMaterial extends NodeMaterial implements CameraAware
     maxPointSize: TSLNode;
     radiusScale: TSLNode;
     uIsOrtho: TSLNode;
+    uNearCull: TSLNode;
     uNodeId: TSLNode;
     uResolution: TSLNode;
   };
@@ -55,6 +56,7 @@ export class PointPickingTSLMaterial extends NodeMaterial implements CameraAware
       maxPointSize: uniform(defaultResolutionY * 0.5),
       radiusScale: uniform(config.radiusScale ?? 1.0),
       uIsOrtho: uniform(0),
+      uNearCull: uniform(0.1),
       uNodeId: uniform(config.nodeId),
       uResolution: uniform(new THREE.Vector2(1920, defaultResolutionY)),
     };
@@ -64,6 +66,7 @@ export class PointPickingTSLMaterial extends NodeMaterial implements CameraAware
       maxPointSize: proxyIUniform(this.tslNodes.maxPointSize),
       radiusScale: proxyIUniform(this.tslNodes.radiusScale),
       uIsOrtho: proxyIUniform(this.tslNodes.uIsOrtho),
+      uNearCull: proxyIUniform(this.tslNodes.uNearCull),
       uNodeId: proxyIUniform(this.tslNodes.uNodeId),
       uResolution: proxyIUniform(this.tslNodes.uResolution),
     };
@@ -77,9 +80,10 @@ export class PointPickingTSLMaterial extends NodeMaterial implements CameraAware
     fov: number,
     resolution: THREE.Vector2,
     isOrtho: boolean = false,
-    _nearCull?: number
+    nearCull?: number
   ): void {
     this.uniforms.uIsOrtho.value = isOrtho ? 1 : 0;
+    if (nearCull !== undefined) this.uniforms.uNearCull.value = nearCull;
     this.uniforms.pointSizeFactor.value = computePointSizeFactor(fov, resolution.y, isOrtho);
     this.uniforms.maxPointSize.value = computeMaxPointSize(resolution.y);
     (this.uniforms.uResolution.value as THREE.Vector2).copy(resolution);

@@ -17,9 +17,11 @@
 /**
  * Point-size factor for Point/PointPicking materials.
  *
- * The shader multiplies this by the inverse view-space distance to size
- * a point by its world-space radius (perspective) or by 1 (ortho, where
- * the full distance scaling is baked into the factor below).
+ * The shader multiplies this by the inverse view-space DEPTH
+ * (`1 / max(-mvPosition.z, 1e-4)`, matching the line + gsplat shaders)
+ * to size a point by its world-space radius (perspective) or by 1
+ * (ortho, where the full distance scaling is baked into the factor
+ * below).
  *
  * - Perspective: `2 * resY / tan(fov/2)`.
  * - Ortho: `(2 * resY) / (frustumHeight / 2) = (4 * resY) / frustumHeight`.

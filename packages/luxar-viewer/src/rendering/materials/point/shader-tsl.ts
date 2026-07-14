@@ -37,8 +37,8 @@ import {
   float,
   int,
   max,
+  min,
   clamp,
-  length,
   dot,
   exp,
   Discard,
@@ -47,7 +47,7 @@ import {
   cameraProjectionMatrix,
 } from 'three/tsl';
 import { NodeMaterial } from 'three/webgpu';
-import { sanitizeNonNegative, type TSLNode } from '../_shared/tsl-helpers';
+import { sanitizeNonNegative, perspectiveNearFadeTSL, type TSLNode } from '../_shared/tsl-helpers';
 import { applyBlendingStateToMaterial, getCompleteBlendingState } from '../../blending-state';
 import type { BlendingMode } from '../../material-manager';
 
@@ -126,6 +126,10 @@ export function pointWebGPUFactory(
   );
   const uIsOrtho = uniform((uniforms.uIsOrtho.value as number) ?? 0).onUpdate(
     () => (uniforms.uIsOrtho.value as number) ?? 0,
+    'render'
+  );
+  const uNearCull = uniform((uniforms.uNearCull?.value as number) ?? 0.1).onUpdate(
+    () => (uniforms.uNearCull?.value as number) ?? 0.1,
     'render'
   );
   // Vector2 is passed by reference — the wrapper mutates the same
@@ -216,30 +220,37 @@ export function pointWebGPUFactory(
   const mvPos: TSLNode = modelViewMatrix.mul(vec4(aCenter, 1.0));
   const projCenter: TSLNode = cameraProjectionMatrix.mul(mvPos);
 
-  // World-space size: perspective gets 1/length(view-z) attenuation;
-  // ortho stays constant.
+  // World-space size from VIEW-SPACE DEPTH (-mvPos.z), matching the
+  // line + gsplat shaders (Euclidean distance shrank edge-of-screen
+  // points by cos(theta)); ortho stays constant. 1e-4 floor mirrors
+  // the line shader's nearCull floor.
   const invDistance: TSLNode = int(uIsOrtho)
     .equal(int(1))
-    .select(float(1.0), length(vec3(mvPos)).reciprocal());
+    .select(float(1.0), mvPos.z.negate().max(float(1e-4)).reciprocal());
   const basePointSize: TSLNode = normalizedRadius.mul(uPointSizeFactor).mul(invDistance);
 
   // No size compensation: the shifted-truncated super-Gaussian truncates at
   // the sprite edge (rho = 1), so basePointSize already IS the visible extent.
-  const pointSize: TSLNode = max(float(1.0), clamp(basePointSize, float(1.0), uMaxPointSize));
+  // Minimum sprite size 1.5px (matches the LINE shader — thinner quads
+  // cause rasterization gaps); sub-pixel energy is preserved by the
+  // fragment's sizeScale^2 compensation via vPointSize.
+  const pointSize: TSLNode = clamp(basePointSize, float(1.5), uMaxPointSize);
 
   // Expand the unit quad to a sprite in clip space.
   const offsetClip: TSLNode = aQuadCorner.mul(pointSize.div(uResolution)).mul(projCenter.w);
-  // Reject points behind the camera (perspective only; camera looks down -Z,
-  // so mvPos.z >= 0 is behind the near plane). projCenter.w is <= 0 for such
-  // points and the quad expansion above would flip/degenerate the sprite.
-  // Emit an off-screen position so no fragments are produced. Mirrors the GLSL
-  // shader's guard and the gsplat behind-camera reject; ortho keeps w == 1 and
-  // is excluded.
-  const behindCamera: TSLNode = int(uIsOrtho).equal(int(0)).and(mvPos.z.greaterThanEqual(0.0));
-  const clipPos: TSLNode = behindCamera.select(
-    vec4(0.0, 0.0, -2.0, 1.0),
-    projCenter.add(vec4(offsetClip, 0.0, 0.0))
-  );
+  // Unified near handling (matches line + gsplat shaders and the GLSL
+  // twin): behind-camera fades to 0 (projCenter.w <= 0 there would flip
+  // the sprite), the near-plane approach fades across
+  // [nearCull, 2*nearCull], ortho passes through (NDC clipping is the
+  // authority). Reject below 0.01, multiply the survivor into alpha.
+  const depthFade: TSLNode = perspectiveNearFadeTSL(
+    uIsOrtho,
+    mvPos.z,
+    max(uNearCull, float(1e-4))
+  ).toVar();
+  const clipPos: TSLNode = depthFade
+    .lessThan(0.01)
+    .select(vec4(0.0, 0.0, -2.0, 1.0), projCenter.add(vec4(offsetClip, 0.0, 0.0)));
 
   // Sprite UV (replaces gl_PointCoord). Computed per-vertex,
   // interpolated to the fragment via the `varying()` wrapper —
@@ -252,6 +263,8 @@ export function pointWebGPUFactory(
   const vRadius: TSLNode = varying(normalizedRadius);
   const vBeta: TSLNode = varying(beta);
   const vColor: TSLNode = varying(perPointColor);
+  const vPointSize: TSLNode = varying(basePointSize);
+  const vNearFade: TSLNode = varying(depthFade);
 
   // ---- Fragment computation ----
 
@@ -286,7 +299,10 @@ export function pointWebGPUFactory(
     const finalColor: TSLNode =
       config.useColormap || config.gammaOne ? adjusted : adjusted.pow(vec3(uInvGamma));
 
-    const alpha: TSLNode = falloff.mul(uOpacity);
+    // Sub-pixel intensity compensation (mirrors the line shader's
+    // widthScale, SQUARED: both sprite dimensions clamp, energy ∝ area).
+    const sizeScale: TSLNode = min(vPointSize.div(float(1.5)), float(1.0));
+    const alpha: TSLNode = falloff.mul(uOpacity).mul(sizeScale.mul(sizeScale)).mul(vNearFade);
 
     if (premultiplyRGB) {
       // RGB premultiplied by alpha — CustomBlending + MaxEquation.

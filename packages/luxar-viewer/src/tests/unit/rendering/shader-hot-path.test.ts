@@ -7,10 +7,11 @@
  * patterns have no test coverage and can silently regress when shader
  * code changes:
  *
- * - Point vertex uses `inversesqrt(dot(...))` — a native GPU
- *   instruction; replacing it with `1.0 / sqrt(...)` is a real cost.
- * - GSplat vertex applies a near-plane fade
- *   (`smoothstep(uNearCull, uNearCull * 2.0, zDepth)`) and a screen-
+ * - Point vertex sizes from VIEW-SPACE DEPTH (`-mvPosition.z`, matching
+ *   lines/gsplats) — reverting to Euclidean distance shrinks
+ *   edge-of-screen points by cos(theta).
+ * - GSplat vertex applies the unified near fade
+ *   (`perspectiveNearFade(uIsOrtho, centerCam.z, uNearCull)`) and a screen-
  *   coverage fade (`smoothstep(maxExtent * 0.5, maxExtent, projectedExtent)`)
  *   combined via `min(depthFade, coverageFade)`. Removing either side
  *   re-introduces large-splat flicker near the camera.
@@ -47,8 +48,11 @@ import { LINE_VERTEX_SHADER } from '../../../rendering/materials/line/shader-gls
 
 describe('Shader hot-path string regressions', () => {
   describe('Point vertex', () => {
-    it('uses inversesqrt for 1/distance (native GPU instruction)', () => {
-      expect(POINT_VERTEX_SHADER).toMatch(/inversesqrt\s*\(\s*dot\s*\(/);
+    it('sizes from view-space depth, not Euclidean distance', () => {
+      expect(POINT_VERTEX_SHADER).toMatch(/max\s*\(\s*-mvPosition\.z\s*,\s*1e-4\s*\)/);
+      // Reverting to Euclidean distance would shrink edge-of-screen
+      // points by cos(theta) relative to lines/gsplats.
+      expect(POINT_VERTEX_SHADER).not.toMatch(/inversesqrt\s*\(\s*dot\s*\(/);
     });
   });
 
@@ -62,9 +66,13 @@ describe('Shader hot-path string regressions', () => {
   });
 
   describe('GSplat vertex', () => {
-    it('applies the near-plane fade smoothstep around uNearCull', () => {
+    it('applies the unified perspectiveNearFade around uNearCull', () => {
       expect(GSPLAT_VERTEX_SHADER).toMatch(
-        /smoothstep\s*\(\s*uNearCull\s*,\s*uNearCull\s*\*\s*2\.0\s*,\s*zDepth\s*\)/
+        /perspectiveNearFade\s*\(\s*uIsOrtho\s*,\s*centerCam\.z\s*,\s*uNearCull\s*\)/
+      );
+      // The shared helper carries the smoothstep.
+      expect(GSPLAT_VERTEX_SHADER).toMatch(
+        /smoothstep\s*\(\s*nearCull\s*,\s*nearCull\s*\*\s*2\.0\s*,\s*-viewZ\s*\)/
       );
     });
 
