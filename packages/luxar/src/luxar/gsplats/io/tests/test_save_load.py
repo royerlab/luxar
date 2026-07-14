@@ -1355,3 +1355,60 @@ class TestBarrierAwareOrdering:
             assert np.all(extents.max(axis=0) > 1.5)
             got = GSplatData.load(path)
             assert got.n_splats == 2000
+
+
+class TestRobustDisplayRange:
+    """amplitude_data_range (the viewer's colormap display window) must use a
+    robust upper (p99.9), not the raw max — and land on the SAME node as the
+    'gray' colormap so a colormapped gsplat doesn't render near-black."""
+
+    @staticmethod
+    def _skewed_gsplat(n: int = 40000):
+        rng = np.random.default_rng(0)
+        amp = rng.exponential(0.003, n).astype(np.float32)  # heavy right skew
+        amp[rng.integers(0, n, 40)] = rng.uniform(0.1, 0.3, 40)  # bright outliers
+        c = (rng.random((n, 3)) * 100).astype(np.float32)
+        chol = np.zeros((n, 6), np.float32)
+        chol[:, [0, 2, 5]] = 2.0
+        return GSplatData(centers=c, amplitudes=amp, cholesky_factors=chol), amp
+
+    def test_leaf_display_range_is_robust_not_max(self) -> None:
+        gd, amp = self._skewed_gsplat()
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "skew.gsplats.zarr"
+            gd.save(path, ordering="none")
+            root = zarr.open_group(str(path), mode="r")
+            adr = root.attrs.get("amplitude_data_range")
+            assert adr is not None, "leaf must carry a display range"
+            hi = adr[1]
+            # Robust: the upper is near p99.9, well below the outlier max.
+            assert hi < float(amp.max()) * 0.5, (hi, float(amp.max()))
+            assert abs(hi - float(np.percentile(amp, 99.9))) < 1e-4
+            # Colocated with the default 'gray' colormap on the SAME node.
+            assert root.attrs.get("colormap") == "gray"
+            assert "amplitude_data_range" in dict(root.attrs)
+
+    def test_lod_level_carries_display_range_with_colormap(self) -> None:
+        """An additive-laddered LOD level (colormap on the level, arrays on its
+        sub-LODs) must still carry a display range on the level node itself."""
+        from luxar.gsplats.lod import make_substitutive_lod
+
+        gd, _ = self._skewed_gsplat()
+        pyr = make_substitutive_lod(
+            gd,
+            compression_factor=4,
+            levels=2,
+            method="kmeans_lloyd",
+            device="cpu",
+            verbose=False,
+        )
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "pyr.gsplats.zarr"
+            pyr.save(path, ordering="none")
+            root = zarr.open_group(str(path), mode="r")
+            # Every colormapped level node must ALSO have amplitude_data_range.
+            for lvl in [k for k in root.group_keys() if k.startswith("child_")]:
+                a = dict(root[lvl].attrs)
+                if a.get("colormap"):
+                    assert "amplitude_data_range" in a, f"{lvl} colormap without range"
+                    assert a["amplitude_data_range"][1] > a["amplitude_data_range"][0]
