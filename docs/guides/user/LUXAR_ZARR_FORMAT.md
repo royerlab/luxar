@@ -591,8 +591,10 @@ per-vertex arrays are reordered by the vertex sort):
 - **Shape:** `(N, D)` — vertex positions
 - **Dtype/Encoding:** COORDINATE, same as Points `positions/`:
   `linear_perchannel_u16` under AUTO/MEMORY (float32 under PRECISION or the
-  ≥ 2¹⁶-extent fallback). Never deduplicated to an `array_ref` (the lines
-  spatial-index loader reads it as raw chunked zarr).
+  ≥ 2¹⁶-extent fallback). Never deduplicated to an `array_ref` and never
+  LUT-encoded — the lines spatial-index loader reads it as raw chunked zarr
+  with no structural-encoding dispatch (grid-snapped vertices would otherwise
+  store as LUT indices).
 
 #### segments/ (Required, auto-generated)
 - **Shape:** `(M, 2)` — vertex-index pairs, indices local to this node
@@ -1239,7 +1241,8 @@ per-array above (`linear_perchannel_u16`, `rgb_uint8`,
   shape `(0,)` / `(0, D)`) whose `encoding` carries `target` (path of the
   original array), `hash`, `original_shape`, and `original_dtype`. Readers
   must resolve and load the target array. (Structural arrays whose consumers
-  read raw zarr — line `vertices`/`segments` — are never dedup-encoded.)
+  read raw zarr — line `vertices`/`segments` — are never dedup- or
+  LUT-encoded.)
 - **`lut_uint8` / `lut_uint16`** — look-up-table encoding for arrays with few
   unique values (or few unique color rows): the array stores indices and the
   `encoding.lut` attr carries the unique values as JSON (`lut_mode` +

@@ -736,7 +736,11 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
             # chunked zarr and does not resolve array_ref, so dedup of these
             # structural arrays would silently drop geometry for a byte-
             # identical sibling (e.g. two identical components in a partition).
+            # LUT is blocked for the same raw-read reason: grid-snapped
+            # vertices (few unique coordinate values) would store as
+            # lut_uint8/16 indices and decode as garbage geometry.
             deduplicate=False,
+            allow_lut=False,
         )
 
         # Write segments array (always, not just for indexed type)

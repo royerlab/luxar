@@ -44,6 +44,7 @@ class BaseEncoderMixin:
         chunks: Optional[tuple] = None,
         compressor: Optional[Any] = None,
         deduplicate: bool = True,
+        allow_lut: bool = True,
         _perchannel_bits: Optional[int] = None,
     ) -> None:
         raise NotImplementedError

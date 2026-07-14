@@ -2,11 +2,10 @@
  * Data processing worker — entry point bundled by Vite's `?worker` import.
  *
  * Loads the compiled WASM module (with TypeScript fallback) once at startup,
- * then exposes a Comlink-RPC surface to the main thread: spatial-index queries,
- * nD→3D projection kernels, and array decoders.
+ * then exposes a Comlink-RPC surface to the main thread: nD→3D projection
+ * kernels and array decoders.
  *
  * Worker responsibilities (CPU-heavy, offloaded from main thread):
- * - Spatial index queries (chunk bounding-box tests)
  * - nD→3D projection of Lines / GSplats (WASM batch kernels; per-element
  *   nD visibility/culling is computed INSIDE projection — clip mask,
  *   effective radius, attenuation — not as a standalone task)
