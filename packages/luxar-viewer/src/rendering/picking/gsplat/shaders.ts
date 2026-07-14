@@ -103,11 +103,15 @@ export const GSPLAT_PICK_VERTEX_SHADER = /* glsl */ `
             }
         }
 
+        // Coverage fade applies in BOTH projections (matches the visual
+        // shader — ortho projected size is depth-independent, divisor 1)
+        // so pickability tracks what is actually visible.
         float coverageFade = 1.0;
-        if (uIsOrtho == 0) {
+        {
             float maxLateralVar = max(Sigma_cam[0][0], max(Sigma_cam[1][1], Sigma_cam[2][2]));
             if (maxLateralVar > 0.01) {
-                float projectedExtent = uFx * sqrt(maxLateralVar) * uTruncate / zDepth;
+                float extentDivisor = (uIsOrtho == 1) ? 1.0 : zDepth;
+                float projectedExtent = uFx * sqrt(maxLateralVar) * uTruncate / extentDivisor;
                 float maxExtent = max(uResolution.x, uResolution.y) * uMaxExtentFactor;
                 coverageFade = 1.0 - smoothstep(maxExtent * 0.5, maxExtent, projectedExtent);
                 if (coverageFade < 0.01) {

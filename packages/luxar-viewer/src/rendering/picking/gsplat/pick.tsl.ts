@@ -148,17 +148,19 @@ export function gsplatPickWebGPUFactory(
       SigmaCam.element(int(0)).element(int(0)),
       max(SigmaCam.element(int(1)).element(int(1)), SigmaCam.element(int(2)).element(int(2)))
     ).toVar();
+    // Coverage fade applies in BOTH projections (GLSL twin updated in
+    // lockstep): ortho projected size is depth-independent (divisor 1).
+    const isOrtho: TSLNode = int(uIsOrtho).equal(int(1)).toVar();
     const projectedExtent: TSLNode = uFx
       .mul(sqrt(max(maxLateralVar, float(1e-8))))
       .mul(uTruncate)
-      .div(max(zDepth, float(1e-8)));
+      .div(isOrtho.select(float(1.0), max(zDepth, float(1e-8))));
     const maxExtent: TSLNode = max(uResolution.x, uResolution.y).mul(uMaxExtentFactor);
     const coverageFadeRaw: TSLNode = float(1.0).sub(
       smoothstep(maxExtent.mul(0.5), maxExtent, projectedExtent)
     );
-    const coverageFade: TSLNode = int(uIsOrtho)
-      .equal(int(0))
-      .and(maxLateralVar.greaterThan(0.01))
+    const coverageFade: TSLNode = maxLateralVar
+      .greaterThan(0.01)
       .select(coverageFadeRaw, float(1.0))
       .toVar();
     const coverageFadeReject: TSLNode = coverageFade.lessThan(0.01);
@@ -172,7 +174,6 @@ export function gsplatPickWebGPUFactory(
     // Projection Jacobian.
     const invZ: TSLNode = float(1.0).div(max(zDepth, float(1e-8))).toVar();
     const invZ2: TSLNode = invZ.mul(invZ);
-    const isOrtho: TSLNode = int(uIsOrtho).equal(int(1)).toVar();
     const J0: TSLNode = isOrtho.select(vec2(uFx, float(0.0)), vec2(uFx.mul(invZ), float(0.0))).toVar();
     const J1: TSLNode = isOrtho.select(vec2(float(0.0), uFy), vec2(float(0.0), uFy.mul(invZ))).toVar();
     const J2: TSLNode = isOrtho

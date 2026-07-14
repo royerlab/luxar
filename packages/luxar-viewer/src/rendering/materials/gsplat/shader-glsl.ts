@@ -125,13 +125,17 @@ export const GSPLAT_VERTEX_SHADER = /* glsl */ `
         // Prevents GPU overload from splats whose projected quad is too large.
         // Fade starts at 50% of the limit and reaches ~0% AT the limit, so the
         // amplitude is negligible before the extent clamp (below) kicks in.
-        // This avoids visible hard edges from clamped quads.
-        // Applies in perspective only (ortho projection size is depth-independent).
+        // This avoids visible hard edges from clamped quads. Applies in BOTH
+        // projections: the extent CLAMP below runs unconditionally, so ortho
+        // previously showed hard-edged clamped rectangles with no fade
+        // (perspective-only was a leftover from when the clamp was too).
+        // Ortho projected size is depth-independent (divisor 1).
         float coverageFade = 1.0;
-        if (uIsOrtho == 0) {
+        {
             float maxLateralVar = max(Sigma_cam[0][0], max(Sigma_cam[1][1], Sigma_cam[2][2]));
             if (maxLateralVar > 0.01) {
-                float projectedExtent = uFx * sqrt(maxLateralVar) * uTruncate / zDepth;
+                float extentDivisor = (uIsOrtho == 1) ? 1.0 : zDepth;
+                float projectedExtent = uFx * sqrt(maxLateralVar) * uTruncate / extentDivisor;
                 float maxExtent = max(uResolution.x, uResolution.y) * uMaxExtentFactor;
                 coverageFade = 1.0 - smoothstep(maxExtent * 0.5, maxExtent, projectedExtent);
                 if (coverageFade < 0.01) {
