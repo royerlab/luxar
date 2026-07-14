@@ -747,7 +747,8 @@ npx playwright test keyboard-input-system.spec.ts controls-interaction.spec.ts
 # Visual regression
 npx playwright test visual-regression.spec.ts theme-visual-regression.spec.ts
 
-# Geometry & rendering
+# Geometry & rendering (blending-modes needs generate-fixtures!)
+pnpm test:generate-fixtures
 npx playwright test geometry-types.spec.ts blending-modes.spec.ts colormap-system.spec.ts \
   post-processing-pipeline.spec.ts rendering-controls.spec.ts ortho-mode.spec.ts
 

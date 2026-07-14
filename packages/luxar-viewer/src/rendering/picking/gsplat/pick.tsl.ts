@@ -41,6 +41,7 @@ import {
   modelViewMatrix,
   cameraProjectionMatrix,
   screenCoordinate,
+  screenSize,
 } from 'three/tsl';
 import { NodeMaterial } from 'three/webgpu';
 import { invalidFloatTSL, type TSLNode } from '../../materials/_shared/tsl-helpers';
@@ -172,10 +173,16 @@ export function gsplatPickWebGPUFactory(
     const nearFade: TSLNode = min(depthFade, coverageFade).toVar();
 
     // Projection Jacobian.
-    const invZ: TSLNode = float(1.0).div(max(zDepth, float(1e-8))).toVar();
+    const invZ: TSLNode = float(1.0)
+      .div(max(zDepth, float(1e-8)))
+      .toVar();
     const invZ2: TSLNode = invZ.mul(invZ);
-    const J0: TSLNode = isOrtho.select(vec2(uFx, float(0.0)), vec2(uFx.mul(invZ), float(0.0))).toVar();
-    const J1: TSLNode = isOrtho.select(vec2(float(0.0), uFy), vec2(float(0.0), uFy.mul(invZ))).toVar();
+    const J0: TSLNode = isOrtho
+      .select(vec2(uFx, float(0.0)), vec2(uFx.mul(invZ), float(0.0)))
+      .toVar();
+    const J1: TSLNode = isOrtho
+      .select(vec2(float(0.0), uFy), vec2(float(0.0), uFy.mul(invZ)))
+      .toVar();
     const J2: TSLNode = isOrtho
       .select(
         vec2(float(0.0), float(0.0)),
@@ -195,21 +202,9 @@ export function gsplatPickWebGPUFactory(
     const JS0: TSLNode = J0.mul(S00).add(J1.mul(S01)).add(J2.mul(S02)).toVar();
     const JS1: TSLNode = J0.mul(S10).add(J1.mul(S11)).add(J2.mul(S12)).toVar();
     const JS2: TSLNode = J0.mul(S20).add(J1.mul(S21)).add(J2.mul(S22)).toVar();
-    const Sigma2D00: TSLNode = JS0.x
-      .mul(J0.x)
-      .add(JS1.x.mul(J1.x))
-      .add(JS2.x.mul(J2.x))
-      .toVar();
-    const Sigma2D10: TSLNode = JS0.x
-      .mul(J0.y)
-      .add(JS1.x.mul(J1.y))
-      .add(JS2.x.mul(J2.y))
-      .toVar();
-    const Sigma2D11: TSLNode = JS0.y
-      .mul(J0.y)
-      .add(JS1.y.mul(J1.y))
-      .add(JS2.y.mul(J2.y))
-      .toVar();
+    const Sigma2D00: TSLNode = JS0.x.mul(J0.x).add(JS1.x.mul(J1.x)).add(JS2.x.mul(J2.x)).toVar();
+    const Sigma2D10: TSLNode = JS0.x.mul(J0.y).add(JS1.x.mul(J1.y)).add(JS2.x.mul(J2.y)).toVar();
+    const Sigma2D11: TSLNode = JS0.y.mul(J0.y).add(JS1.y.mul(J1.y)).add(JS2.y.mul(J2.y)).toVar();
 
     // 2D Cholesky for the fragment's Mahalanobis solve.
     const s00: TSLNode = max(Sigma2D00, float(1e-8));
@@ -257,9 +252,7 @@ export function gsplatPickWebGPUFactory(
       uFx.mul(centerCam.x).mul(invZ).add(uResolution.x.mul(0.5)),
       uFy.mul(centerCam.y).mul(invZ).add(uResolution.y.mul(0.5))
     );
-    const vCenterScreenVal: TSLNode = isOrtho
-      .select(centerScreenOrtho, centerScreenPersp)
-      .toVar();
+    const vCenterScreenVal: TSLNode = isOrtho.select(centerScreenOrtho, centerScreenPersp).toVar();
 
     const quadOffset: TSLNode = majorAxis
       .mul(aQuadCorner.x)
@@ -314,7 +307,12 @@ export function gsplatPickWebGPUFactory(
   // splat-heavy scenes.
   // Bottom-left fragcoord reconstruction — same top-left/bottom-left
   // mismatch fix as the visual factory (see shader-tsl.ts fragment).
-  const fragCoordBL: TSLNode = vec2(screenCoordinate.x, uResolution.y.sub(screenCoordinate.y));
+  // Un-flip with `screenSize` (the bound target's size — the exact term
+  // the builder's top-left flip used), not the app-stamped uResolution;
+  // see shader-tsl.ts. For picking they currently coincide (uResolution
+  // is re-stamped to the pick target dims), but screenSize is exact by
+  // construction in every configuration.
+  const fragCoordBL: TSLNode = vec2(screenCoordinate.x, screenSize.y.sub(screenCoordinate.y));
   const d: TSLNode = vec2(fragCoordBL.sub(vCenterScreen));
   const y0: TSLNode = d.x.mul(vL2D.x).toVar();
   const y1: TSLNode = d.y.sub(vL2D.y.mul(y0)).mul(vL2D.z).toVar();

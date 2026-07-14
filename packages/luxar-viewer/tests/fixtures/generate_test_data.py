@@ -1406,9 +1406,9 @@ def generate_uint16_quantization_test() -> None:
         # Using linspace ensures exact 1000:1 ratio for reliable uint16 triggering
         radii = np.linspace(0.001, 1.0, num_points).astype(np.float32)
         dynamic_range = radii.max() / radii.min()
-        assert (
-            dynamic_range > 256
-        ), f"Need >256:1 range for uint16, got {dynamic_range:.1f}:1"
+        assert dynamic_range > 256, (
+            f"Need >256:1 range for uint16, got {dynamic_range:.1f}:1"
+        )
 
         # Simple colors (use uint8 encoding as comparison)
         colors = np.random.rand(num_points, 3).astype(np.float32)

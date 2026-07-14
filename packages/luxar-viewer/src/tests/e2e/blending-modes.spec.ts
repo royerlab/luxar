@@ -186,6 +186,27 @@ test.describe('GSplat normal mode (premultiplied coverage alpha)', () => {
   // GSPLAT_DEPTH_SORTING_SPEC.md §3 (Phase 0).
   test.slow();
 
+  // Fail fast with an actionable message instead of a 30 s
+  // waitForGSplatsCommitted timeout + opaque 404: this fixture is
+  // Python-generated and NOT covered by the Playwright global-setup
+  // (which only checks datasets/examples).
+  test.beforeAll(async () => {
+    const { existsSync } = await import('node:fs');
+    const path = await import('node:path');
+    const { fileURLToPath } = await import('node:url');
+    const specDir = path.dirname(fileURLToPath(import.meta.url));
+    const fixtureDir = path.resolve(
+      specDir,
+      '../../../tests/fixtures/test_gsplats_normal_overlap.luxar.zarr'
+    );
+    if (!existsSync(fixtureDir)) {
+      throw new Error(
+        `Missing fixture ${fixtureDir} — run \`pnpm test:generate-fixtures\` ` +
+          'from packages/luxar-viewer/ first.'
+      );
+    }
+  });
+
   /** Wait until a gsplats mesh has committed instances. */
   async function waitForGSplatsCommitted(page: import('@playwright/test').Page): Promise<void> {
     await page.waitForFunction(

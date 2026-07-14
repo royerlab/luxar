@@ -62,6 +62,7 @@ import {
   cameraProjectionMatrix,
   texture,
   screenCoordinate,
+  screenSize,
 } from 'three/tsl';
 import { NodeMaterial } from 'three/webgpu';
 import { invalidFloatTSL, type TSLNode } from '../_shared/tsl-helpers';
@@ -281,7 +282,9 @@ export function gsplatWebGPUFactory(
     // Projection Jacobian. mat3x2 in GLSL = three vec2 columns; we
     // represent it as three independent vec2 nodes to sidestep TSL's
     // missing mat3x2 type. JS0/JS1/JS2 form the matrix M = J·Σ_cam.
-    const invZ: TSLNode = float(1.0).div(max(zDepth, float(1e-8))).toVar();
+    const invZ: TSLNode = float(1.0)
+      .div(max(zDepth, float(1e-8)))
+      .toVar();
     const invZ2: TSLNode = invZ.mul(invZ);
     // Perspective Jacobian columns.
     const J0p: TSLNode = vec2(uFx.mul(invZ), float(0.0));
@@ -311,21 +314,9 @@ export function gsplatWebGPUFactory(
     // Materialized UNCONDITIONALLY — these are exactly the shared
     // values that used to be first-consumed inside the major-axis
     // branch and read uninitialized on the near-diagonal path.
-    const Sigma2D00: TSLNode = JS0.x
-      .mul(J0.x)
-      .add(JS1.x.mul(J1.x))
-      .add(JS2.x.mul(J2.x))
-      .toVar();
-    const Sigma2D10: TSLNode = JS0.x
-      .mul(J0.y)
-      .add(JS1.x.mul(J1.y))
-      .add(JS2.x.mul(J2.y))
-      .toVar();
-    const Sigma2D11: TSLNode = JS0.y
-      .mul(J0.y)
-      .add(JS1.y.mul(J1.y))
-      .add(JS2.y.mul(J2.y))
-      .toVar();
+    const Sigma2D00: TSLNode = JS0.x.mul(J0.x).add(JS1.x.mul(J1.x)).add(JS2.x.mul(J2.x)).toVar();
+    const Sigma2D10: TSLNode = JS0.x.mul(J0.y).add(JS1.x.mul(J1.y)).add(JS2.x.mul(J2.y)).toVar();
+    const Sigma2D11: TSLNode = JS0.y.mul(J0.y).add(JS1.y.mul(J1.y)).add(JS2.y.mul(J2.y)).toVar();
 
     // 2D Cholesky factorisation: [invL00, L10, invL11] for fragment-side
     // MUL-instead-of-DIV.
@@ -359,7 +350,9 @@ export function gsplatWebGPUFactory(
         .mul(d.mul(f).sub(e.mul(e)))
         .sub(b.mul(b.mul(f).sub(c.mul(e))))
         .add(c.mul(b.mul(e).sub(c.mul(d))));
-      const invDet: TSLNode = float(1.0).div(max(detSigma, float(1e-12))).toVar();
+      const invDet: TSLNode = float(1.0)
+        .div(max(detSigma, float(1e-12)))
+        .toVar();
       const i00: TSLNode = d.mul(f).sub(e.mul(e)).mul(invDet).toVar();
       const i11: TSLNode = a.mul(f).sub(c.mul(c)).mul(invDet).toVar();
       const i22: TSLNode = a.mul(d).sub(b.mul(b)).mul(invDet).toVar();
@@ -428,9 +421,7 @@ export function gsplatWebGPUFactory(
       uFx.mul(centerCam.x).mul(invZ).add(uResolution.x.mul(0.5)),
       uFy.mul(centerCam.y).mul(invZ).add(uResolution.y.mul(0.5))
     );
-    const vCenterScreenVal: TSLNode = isOrtho
-      .select(centerScreenOrtho, centerScreenPersp)
-      .toVar();
+    const vCenterScreenVal: TSLNode = isOrtho.select(centerScreenOrtho, centerScreenPersp).toVar();
 
     // Expand quad in oriented screen space.
     const quadOffset: TSLNode = majorAxis
@@ -503,10 +494,13 @@ export function gsplatWebGPUFactory(
     // (invisible) and midline-crossing quads show garbage edges. The
     // centered, mirror-symmetric parity fixtures are blind to a y-flip;
     // the off-center parity variant exists to catch exactly this.
-    const fragCoordBL: TSLNode = vec2(
-      screenCoordinate.x,
-      uResolution.y.sub(screenCoordinate.y)
-    );
+    // The un-flip term MUST be `screenSize` (the bound render target's
+    // size — exactly what the builder's flip used), NOT the app-stamped
+    // uResolution: they differ whenever the target isn't
+    // drawing-buffer-sized (e.g. SSAA multiplied), and only screenSize
+    // reconstructs gl_FragCoord.y byte-identically to the GLSL twin in
+    // every configuration.
+    const fragCoordBL: TSLNode = vec2(screenCoordinate.x, screenSize.y.sub(screenCoordinate.y));
     const d: TSLNode = vec2(fragCoordBL.sub(vCenterScreen));
     // Forward substitution: solve L · y = d.
     const y0: TSLNode = d.x.mul(vL2D.x);
