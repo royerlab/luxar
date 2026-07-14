@@ -471,7 +471,7 @@ luxar gsplat flatten IN OUT             # Collapse a gsplat tree (LOD/partition)
 See [`docs/tutorials/distributing_scenes.rst`](docs/tutorials/distributing_scenes.rst) for the full distribution story (folder export, native bundles, sharing across OSes, Gatekeeper handling).
 
 **Serve Options:**
-- `--viewer` / `--no-viewer` - Launch viewer alongside server
+- `--viewer` - Launch viewer alongside server
 - `--open` - Open browser automatically
 - `--port PORT` - Data server port (default: 8000)
 - `--viewer-port PORT` - Viewer port (default: 5173)

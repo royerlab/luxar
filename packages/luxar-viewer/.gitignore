@@ -1,5 +1,6 @@
-# WASM build output
-public/wasm/
+# WASM build output (keep the README explaining what lands here)
+public/wasm/*
+!public/wasm/README.md
 viewer_code_reviews/
 
 # Generated TypeDoc output

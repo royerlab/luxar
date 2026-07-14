@@ -67,6 +67,7 @@ Each UI component has a dedicated CSS file:
 | File                       | Component                              |
 | -------------------------- | -------------------------------------- |
 | `colormap-legend.css`      | Colormap legend display                |
+| `control-rail.css`         | Left-edge activity rail and popovers   |
 | `data-loading-monitor.css` | Loading progress indicators            |
 | `dataset-browser.css`      | Directory listing and dataset selector |
 | `debug-console.css`        | In-viewer debug console overlay        |
@@ -75,9 +76,11 @@ Each UI component has a dedicated CSS file:
 | `help-overlay.css`         | Keyboard shortcut help overlay         |
 | `layers-panel.css`         | Per-node layer visibility controls     |
 | `overlay-layer.css`        | Generic overlay layer container        |
+| `performance-monitor.css`  | Rail-docked performance readout        |
 | `recording-panel.css`      | Screenshot and video capture panel     |
 | `resolution-indicator.css` | Adaptive DPR resolution badge          |
 | `scale-bar.css`            | Physical unit scale bar                |
+| `select-menu.css`          | Native `<select>` option styling       |
 | `toast.css`                | Toast notification messages            |
 
 ## Theme Overrides

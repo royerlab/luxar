@@ -443,6 +443,11 @@ repo root and used by `luxar export --native ...`) honor:
   exported scene in the system default browser instead. Useful on
   headless / minimal Linux installs (missing libwebkit2gtk) and for
   smoke-testing the launcher itself without a graphical session.
+- `LUXAR_CACHE_BUDGET_MB=<N>` — Total in-memory cache pool (L0 + L1 +
+  S-cache) the launcher passes to the viewer via `?cacheBudgetMB=`
+  (default 2048). WebKit WebViews don't implement `performance.memory`,
+  so the viewer can't auto-size its caches from the JS heap; lower this
+  on a memory-constrained machine (e.g. `=512`).
 
 ### Configuration
 
@@ -659,6 +664,7 @@ monitor.element; // the widget element (mounted by the control rail)
 - `?renderer=webgpu` — Use `WebGPURenderer` (TSL `NodeMaterial`) instead of the default `WebGLRenderer`
 - `?renderer=webgpu&webgpu-force-webgl` — TSL/WebGPU API surface but Three.js routes through its internal WebGL2 backend (diagnostic)
 - `?dpr=<value>` — Pin a fixed device pixel ratio for the session (clamped to [0.25, native]) and lock adaptive resolution off; used by E2E/visual-regression runs and bug repros where deterministic buffer sizes matter
+- `?cacheBudgetMB=<N>` — Override the total in-memory cache pool (L0 + L1 + S-cache) in megabytes; used where `performance.memory` is unavailable (WKWebView, Safari) so heap-aware sizing has a real budget to split. This is the native launcher's contract — it injects the parameter automatically (see `LUXAR_CACHE_BUDGET_MB` above)
 
 ### Programmatic Usage
 

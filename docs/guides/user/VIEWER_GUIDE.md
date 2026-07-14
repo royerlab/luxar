@@ -52,8 +52,13 @@ Append parameters to the viewer URL to control startup behavior.
 | `clear-cache` | flag | Clear all caches on startup. |
 | `no-prefetch` | flag | Disable adjacent-chunk prefetching. |
 | `prefetch-debug` | flag | Enable prefetch logging to the browser console. |
+| `cache-stats` | flag | Auto-open the data-loading monitor expanded on the Cache tab (L0/L1/L2 hit rates). |
 | `renderer` | `webgl` \| `webgpu` | Select the default GLSL WebGLRenderer path or opt into the WebGPURenderer + TSL path. |
 | `webgpu-force-webgl` | flag | Diagnostic flag for `renderer=webgpu`: keep WebGPURenderer + TSL materials but force Three.js's internal WebGL2 backend. |
+| `perf-timestamp` | flag | Opt into GPU timestamp queries (WebGPU only, `timestamp-query` feature). Small runtime cost; intended for the perf bench. |
+| `gpuBudgetMB` | number | Pin the GPU-geometry byte budget in MB, bypassing auto-sizing. `0` disables the budget (unbounded resident geometry). |
+| `cacheBudgetMB` | number | Total in-memory cache pool (L0 + L1 + S-cache) in MB, for environments without `performance.memory` (Safari, WKWebView). |
+| `dpr` | number | Pin a fixed device pixel ratio and disable adaptive DPR (clamped to [0.25, native DPR]). For deterministic E2E/visual runs. |
 
 Flag parameters do not take a value; their presence activates the feature.
 

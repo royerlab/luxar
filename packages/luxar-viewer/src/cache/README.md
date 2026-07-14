@@ -40,6 +40,9 @@ Chunk request → L0 (Decompressed) → L1 (Memory) → L2 (OPFS) → Remote HTT
 | L0      | Memory  | ~1μs          | heap-aware†   | Session only | Decompressed data     |
 | L1      | Memory  | ~1μs + ~2ms\* | heap-aware†   | Session only | Compressed chunks     |
 | L2      | OPFS    | ~1ms + ~2ms\* | 2GB           | Permanent    | Compressed chunks     |
+| L3      | Remote  | ~100ms        | ∞             | N/A          | Compressed chunks     |
+
+\*~2ms is Blosc decompression time per chunk (skipped on L0 hit)
 
 † The three in-memory tiers are sized two-sidedly from the device heap by
 `heap-budget.ts` — the config `l0MaxSizeMB` (200) / `l1MaxSizeMB` (100) /
@@ -61,9 +64,6 @@ weak `hardwareConcurrency ≥ 12` proxy (there is no in-browser RAM signal on
 WebKit — `navigator.deviceMemory` is Chromium-only — and laptop/desktop aren't
 reliably distinguishable, so this is an educated guess, safe on 8 GB+ machines).
 The fixed config sizes are the last resort (non-browser / no device signals).
-| L3      | Remote  | ~100ms        | ∞     | N/A          | Compressed chunks     |
-
-\*~2ms is Blosc decompression time per chunk (skipped on L0 hit)
 
 ## Quick Start
 

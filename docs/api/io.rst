@@ -117,3 +117,31 @@ Writer Protocol
 It defines the writer contract that any Zarr writer implementation must satisfy. This
 allows for alternative implementations (e.g., remote writers, streaming writers) while
 maintaining compatibility with the compiler.
+
+Volume Loading
+--------------
+
+Load an nD image / volume from ``.zarr``, ``.zarr.zip``, ``.tiff``, ``.npy``, or
+``.npz`` — with channel/timepoint selection and axis-order handling — for
+Gaussian splat fitting and calibration.
+
+.. automodule:: luxar.io.volume
+   :no-members:
+
+.. autofunction:: luxar.io.volume.load_volume
+
+OME-Zarr Discovery
+------------------
+
+Discover the shape, axis labels, and voxel size of an OME-Zarr multiscale
+dataset without loading the pixel data.
+
+.. automodule:: luxar.io.ome_zarr
+   :no-members:
+
+.. autofunction:: luxar.io.ome_zarr.discover_ome_zarr_shape
+
+.. autoclass:: luxar.io.ome_zarr.OMEZarrInfo
+   :members:
+   :undoc-members:
+   :show-inheritance:

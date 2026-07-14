@@ -35,7 +35,7 @@ The SceneLoader has three external entry points:
 
 ## Layout
 
-This folder is split into ten subpackages — thematic clusters plus the
+This folder is split into eleven subpackages — thematic clusters plus the
 pre-existing per-step folders — named for their concern. Two `.ts`
 files sit directly under `scene-loader/`:
 
@@ -59,6 +59,7 @@ The subfolders:
 | [commit](./commit/README.md)           | Synchronous GPU-commit step. One module per geometry plus the renderer-cache eviction helper. Runs atomically at the tail of `updateView`.                                                                                                                                                                      |
 | [nodes](./nodes/README.md)             | Initial-load helpers that walk the zarr scene graph and attach matching THREE.js objects, with empty placeholders before the first fetch and per-leaf error isolation.                                                                                                                                          |
 | [process](./process/README.md)         | Async nD→3D projection step for Lines and GSplats (worker preferred, main-thread fallback). Returns `Staged*Commit` payloads without mutating geometry.                                                                                                                                                         |
+| [prefetch](./prefetch/README.md)       | `SlicePrefetcher` — background t+1 slice prefetch during dimension playback: shadow loaders warm the NEXT tick's decoded ladder into the shared SliceCache (S-cache) so the real tick's restore hits instantly. Driven via `SceneLoader.prefetchSlice`; aborted at the top of every foreground `updateView`.    |
 | [update-view](./update-view/README.md) | Orchestration helpers extracted from `scene-loader.ts::updateView`: per-type ctx construction, atomic Stage 2 commit, and the `finally`-phase dispatcher that chooses between rAF re-entry, GSplats refinement, and lock release.                                                                               |
 | progressive (`refinement.ts`)          | The generic progressive-LOD refinement loop (`runProgressiveRefinement`) shared by all three leaf types via their `data/{points,lines,gsplats}/lod-refinement.ts` wrappers: per-frame rAF yield, view-state-queue cancellation handoff, per-loader processing, and lock release when no LODs remain. No README. |
 

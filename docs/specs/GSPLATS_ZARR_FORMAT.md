@@ -163,17 +163,17 @@ The file root IS the node. The same three primitives nest arbitrarily:
 fitted.gsplats.zarr/
 ├── .zattrs           # type: "gsplats", n_splats, ndim, has_colors, ordering,
 │                     # ordering_min/max/bits, slice_dims, ordering_dims,
-│                     # chunk_size, amplitude_range,
+│                     # chunk_size, amplitude_range, amplitude_data_range,
 │                     # center_bounds, position_bounds, truncation_radius,
 │                     # opacity, gamma, intensity, offset, blending_mode,
 │                     # format_version: "3.2", format_type: "gsplats_zarr",
 │                     # timestamp, luxar_gsplats_version, description?
 ├── .zmetadata        # Consolidated metadata for fast loading
-├── centers                   # (N, d) float32, spatially ordered
-├── amplitudes                # (N,) float32
-├── cholesky_factors_diag     # (N, d) float32       (diagonal of L)
-├── cholesky_factors_offdiag  # (N, d*(d-1)/2) float32 (off-diagonal; absent if d=1)
-├── colors            # (N, 3) float32/uint8  (optional)
+├── centers                   # (N, d) uint16 (AUTO) / float32 (PRECISION), spatially ordered
+├── amplitudes                # (N,) uint8/uint16 (AUTO) / float32 (PRECISION)
+├── cholesky_factors_diag     # (N, d) uint8 (AUTO) / float32 (PRECISION)  (diagonal of L)
+├── cholesky_factors_offdiag  # (N, d*(d-1)/2) uint8 (AUTO) / float32 (PRECISION) (off-diagonal; absent if d=1)
+├── colors            # (N, 3) uint8/uint16 (AUTO) / float32 (PRECISION)  (optional)
 ├── chunk_bounds      # (num_chunks, d, 2) float32  (when ordering ≠ "none")
 ├── fitting/          # Optimization info (optional)
 │   ├── .zattrs       # time_seconds, iterations, converged, psnr_db, …
@@ -315,6 +315,7 @@ attrs are `type`, `kind`, `selector`, `default_level`, `display_type`,
   "ordering_dims": [0, 1, 2],
   "chunk_size": 2048,
   "amplitude_range": {"min": 0.01, "max": 1.5},
+  "amplitude_data_range": [0.01, 1.5],
   "center_bounds": {
     "min": [0.0, 0.0, 0.0],
     "max": [256.0, 256.0, 128.0]
@@ -335,6 +336,12 @@ attrs are `type`, `kind`, `selector`, `default_level`, `display_type`,
 `position_bounds` is the same value (centers only — chunk bounds widen per-chunk
 by the ellipsoidal extent). Encoding metadata on each array carries tighter
 per-array quantization bounds.
+
+**Amplitude ranges**: `amplitude_range` (`{"min", "max"}` dict) is the
+metadata bounds record; `amplitude_data_range` (`[min, max]` list, written
+alongside it for non-broadcast amplitude arrays) mirrors the Points/Lines
+`color_data_range` convention and seeds the viewer's layer display-range
+controls. Both hold the min/max of the original (pre-quantization) amplitudes.
 
 **Note**: Broadcasting information is stored per-array via encoding metadata
 (see Broadcasting Convention above), not in the group attributes.
@@ -434,9 +441,22 @@ substitutive/pyramid/recipe build round-trips its parameters:
   "refine": "l2",
   "refine_iters": 120,
   "coarsen_dims": null,
-  "n_substitutive_levels": 4
+  "n_substitutive_levels": 4,
+  "image_min": 98.0,
+  "image_max": 4095.0,
+  "intensity_range": 3997.0,
+  "floor": 110.0
 }
 ```
+
+Every fit also persists its **normalization metadata** here (routed through
+the same splitter from the fit `stats` — see `gsplats/fitting/results.py`):
+`image_min` / `image_max` / `intensity_range` record how the source volume
+was normalized, and `floor` is the background level subtracted before
+fitting (`null` when floor suppression was disabled). **Semantic contract:**
+the floor is NOT added back — stored amplitudes are background-relative
+(intensity above the subtracted pedestal), so renders reconstruct the
+floor-suppressed volume, not the raw one.
 
 Values are JSON-attr-safe (numpy scalars coerced; non-serializable values
 dropped at write). Readers merge these into `stats` on
@@ -500,7 +520,9 @@ chunk_bounds[i, d, 1] = max(centers[chunk_i, d] + extent[chunk_i, d])
 - `ordering_min`, `ordering_max`: Coordinate bounds for normalization
 - `ordering_bits_per_dim`: Bits allocated per dimension (typically 21 for 3D)
 
-  (Legacy files may carry `morton_*` keys; readers accept those as a fallback.)
+  (Legacy files may carry `morton_*` keys; only the Python inspector
+  (`gsplats/io/inspect_gsplats.py`) still accepts those as a fallback — the
+  web viewer reads only the `ordering_*` keys.)
 
 **Spatial Index Array**:
 - `chunk_bounds`: (num_chunks, d, 2) float32 array
@@ -979,7 +1001,7 @@ finest level instead). Both paths go through the shared
 | Checkpoint/Resume | Deferred | Focus on basic I/O first |
 | Node-tree LOD | v3.0 nestable primitives (leaf / kind=lod / kind=partition) | Substitutive, additive, and partition axes compose freely as a tree rather than a fixed matrix |
 | Image embedding | No | Keep format focused on splats |
-| Compression | Blosc + BITSHUFFLE + zstd | Standard, well-supported |
+| Compression | Blosc zstd-9, width-aware shuffle | Byte shuffle for multi-byte int codes; no shuffle for uint8/floats (see §Blosc Settings) |
 | Delta encoding | No | Blosc shuffle sufficient |
 | Streaming write | No | Not needed |
 | `numpy-hilbert-curve` | Required dependency | Needed for Hilbert ordering |

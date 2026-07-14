@@ -19,7 +19,8 @@ common work:
    scan over the chunk bounds, converts matching chunks to ranges, and
    coalesces them.
 3. **Fetch** — `range-loader.ts` loads each range from zarr, dispatching on
-   the array's encoding (direct / quantized / LUT / broadcasted / array_ref).
+   the array's encoding (direct / quantized / LUT / broadcasted / array_ref /
+   perchannel).
 
 The query side runs on the **main thread** — an AABB scan is
 O(numChunks × ndim) and finishes in microseconds, so worker dispatch would
@@ -35,7 +36,7 @@ spatial-query/
 ├── range-loader.ts            # Encoding-dispatch range loader (entry point)
 └── range-loader/              # Per-encoding loader bodies (see its README)
     ├── detect-encoding.ts
-    ├── direct.ts  quantized.ts  lut.ts  broadcasted.ts
+    ├── direct.ts  quantized.ts  perchannel.ts  lut.ts  broadcasted.ts
     ├── array-ref.ts  ref-resolution.ts
     ├── encoding-types.ts  shared-instance.ts
     └── README.md
@@ -157,7 +158,7 @@ const written = await loader.loadRangesResolvingRef(
 ```
 
 - `loadRanges(...)` — dispatch on encoding (`broadcasted` / `quantized` /
-  `lut` / `array_ref` / `direct`, defaulting to `direct`).
+  `lut` / `array_ref` / `perchannel` / `direct`, defaulting to `direct`).
 - `loadRangesResolvingRef(...)` — same, but first resolves `array_ref`
   encodings (opens the target array via `resolveArrayRef`) and delegates
   against the resolved array. The standard entry point for loaders.
