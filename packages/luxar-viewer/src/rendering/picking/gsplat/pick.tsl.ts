@@ -312,7 +312,10 @@ export function gsplatPickWebGPUFactory(
   // builder) the cost is equivalent to today's duplicated graph;
   // best case it halves the per-fragment picking cost on
   // splat-heavy scenes.
-  const d: TSLNode = vec2(screenCoordinate.xy.sub(vCenterScreen));
+  // Bottom-left fragcoord reconstruction — same top-left/bottom-left
+  // mismatch fix as the visual factory (see shader-tsl.ts fragment).
+  const fragCoordBL: TSLNode = vec2(screenCoordinate.x, uResolution.y.sub(screenCoordinate.y));
+  const d: TSLNode = vec2(fragCoordBL.sub(vCenterScreen));
   const y0: TSLNode = d.x.mul(vL2D.x).toVar();
   const y1: TSLNode = d.y.sub(vL2D.y.mul(y0)).mul(vL2D.z).toVar();
   const mahalSq: TSLNode = y0.mul(y0).add(y1.mul(y1)).toVar();

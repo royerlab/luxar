@@ -328,7 +328,10 @@ function buildLineInstancedMesh(material: THREE.Material): THREE.Object3D {
  * Cholesky) at world origin, fixed amplitude. Test exercises 3D→2D
  * covariance projection + Mahalanobis fragment math.
  */
-function buildGSplatInstancedMesh(material: THREE.Material): THREE.Object3D {
+function buildGSplatInstancedMesh(
+  material: THREE.Material,
+  center: readonly [number, number, number] = [0, 0, 0]
+): THREE.Object3D {
   // PRODUCTION assembly (createInstancedGSplatsMesh), not a hand-rolled
   // geometry: the previous version decorated the plain BufferGeometry
   // quad TEMPLATE (createGSplatQuadGeometry) with instanced attributes.
@@ -338,7 +341,7 @@ function buildGSplatInstancedMesh(material: THREE.Material): THREE.Object3D {
   // Isotropic: L = 0.1 · I, packed [L00, L10, L11, L20, L21, L22].
   const mesh = createInstancedGSplatsMesh(
     {
-      centers: new Float32Array([0, 0, 0]),
+      centers: new Float32Array([center[0], center[1], center[2]]),
       cholesky01: new Float32Array([0.1, 0]),
       cholesky23: new Float32Array([0.1, 0]),
       cholesky45: new Float32Array([0, 0.1]),
@@ -801,6 +804,43 @@ const SHADER_REGISTRY: Record<string, RegistryEntry> = {
       return m;
     },
     buildMesh: buildGSplatInstancedMesh,
+  },
+  // GSplat at an OFF-CENTER position (world y=0.5 → screen y≈48 of 64).
+  // Every other sprite fixture sits at the exact viewport center and is
+  // mirror-symmetric about y = H/2, which makes the parity suite BLIND
+  // to top-left/bottom-left fragcoord convention bugs (a y-mirror is
+  // the identity on them). This variant exists to catch exactly that
+  // class — the screenCoordinate-vs-vCenterScreen mismatch made every
+  // off-center TSL splat invisible while all centered parity passed.
+  'gsplat-offcenter': {
+    source: GSPLAT_SOURCE,
+    buildUniforms: () => ({
+      uResolution: { value: new THREE.Vector2(64, 64) },
+      uFx: { value: 32.0 },
+      uFy: { value: 32.0 },
+      uTruncate: { value: 3.0 },
+      uTruncateSq: { value: 9.0 },
+      uRayIntegralFactor: { value: 2.433 },
+      uProjectionMode: { value: 1 },
+      uIsOrtho: { value: 1 },
+      uNearCull: { value: 0.01 },
+      uMaxExtentFactor: { value: 1.0 },
+      uOpacity: { value: 1.0 },
+      uInvGamma: { value: 1.0 / 2.2 },
+      uIntensity: { value: 1.0 },
+      uOffset: { value: 0.0 },
+      uShiftC: { value: Math.exp(-0.5 * 9) },
+      uInvOneMinusC: { value: 1.0 / (1.0 - Math.exp(-0.5 * 9)) },
+    }),
+    buildTSLMaterial: (uniforms) => {
+      const m = gsplatWebGPUFactory(buildGSplatTSLNodesFromUniforms(uniforms), {
+        blendingMode: 'max',
+      }) as unknown as THREE.Material;
+      m.transparent = false;
+      m.blending = THREE.NoBlending;
+      return m;
+    },
+    buildMesh: (material) => buildGSplatInstancedMesh(material, [0, 0.5, 0]),
   },
   // GSplat with the gamma==1 fast path enabled. Same geometry as `gsplat`
   // but uInvGamma=1 + `gammaOne: true`, so the fragment-stage color pow()

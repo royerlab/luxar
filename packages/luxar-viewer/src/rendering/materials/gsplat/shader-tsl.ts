@@ -19,7 +19,7 @@
  *   1. Project centre to camera space.
  *   2. Reject splats behind camera (gl_Position = -2 NDC).
  *   3. Rotate 3D Cholesky to camera space; Σ_cam = L_cam·L_camᵀ.
- *   4. Apply near-plane fade + coverage fade (perspective only).
+ *   4. Apply near-plane fade (perspective only) + coverage fade (both projections).
  *   5. Project covariance via Jacobian: Σ_2D = J·Σ_cam·Jᵀ.
  *   6. Compute 2D Cholesky for the fragment Mahalanobis math.
  *   7. Sum vs max projection modes: sum integrates along ray
@@ -253,8 +253,8 @@ export function gsplatWebGPUFactory(
       .toVar();
     const depthFadeReject: TSLNode = depthFade.lessThan(0.01);
 
-    // Coverage fade — perspective only, gated on the max diagonal
-    // variance vs viewport extent.
+    // Coverage fade — gated on the max diagonal variance vs viewport
+    // extent; applies in BOTH projections (see below).
     const maxLateralVar: TSLNode = max(
       SigmaCam.element(int(0)).element(int(0)),
       max(SigmaCam.element(int(1)).element(int(1)), SigmaCam.element(int(2)).element(int(2)))
@@ -337,15 +337,15 @@ export function gsplatWebGPUFactory(
     const invLf11: TSLNode = float(1.0).div(Lf11);
     const vL2DVal: TSLNode = vec3(invLf00, Lf10, invLf11);
 
-  // Sum vs max projection amplitude. The cofactor / ray-integration
-  // block is expensive (≈20-30 ops/vertex) and is only used in sum
-  // mode. The GLSL path branches at runtime on `uProjectionMode`,
-  // which the GPU handles efficiently because the uniform is warp-
-  // coherent. TSL's `.select()` does NOT short-circuit — both
-  // branches would otherwise materialise — so we JS-conditionally
-  // emit only the path that the active blending mode uses, mirroring
-  // the GLSL preprocessor's compile-time `if`. The wrapper class
-  // calls `rebuildGraph()` whenever the sum/max boundary is crossed.
+    // Sum vs max projection amplitude. The cofactor / ray-integration
+    // block is expensive (≈20-30 ops/vertex) and is only used in sum
+    // mode. The GLSL path branches at runtime on `uProjectionMode`,
+    // which the GPU handles efficiently because the uniform is warp-
+    // coherent. TSL's `.select()` does NOT short-circuit — both
+    // branches would otherwise materialise — so we JS-conditionally
+    // emit only the path that the active blending mode uses, mirroring
+    // the GLSL preprocessor's compile-time `if`. The wrapper class
+    // calls `rebuildGraph()` whenever the sum/max boundary is crossed.
     const useSumProjection = !isMaxMode(config.blendingMode ?? 'additive');
     let vAmplitude2DVal: TSLNode;
     if (useSumProjection) {
@@ -492,7 +492,22 @@ export function gsplatWebGPUFactory(
   // Fragment uses `screenCoordinate` (= gl_FragCoord.xy in TSL) to
   // recover pixel position relative to the splat centre.
   const fragmentNode = Fn(() => {
-    const d: TSLNode = vec2(screenCoordinate.xy.sub(vCenterScreen));
+    // `screenCoordinate` is TOP-LEFT-origin on BOTH backends (three
+    // normalizes: the WebGL fallback emits `size.y - gl_FragCoord.y`,
+    // native WGSL's position builtin is already top-left), but
+    // vCenterScreen is BOTTOM-LEFT window coords (it feeds y-up NDC in
+    // the vertex). Un-flip back to bottom-left so `d` matches the GLSL
+    // reference (`gl_FragCoord.xy - vCenterScreen`) exactly — without
+    // this the Gaussian is evaluated around a center MIRRORED about the
+    // horizontal midline, so off-center splats discard their whole quad
+    // (invisible) and midline-crossing quads show garbage edges. The
+    // centered, mirror-symmetric parity fixtures are blind to a y-flip;
+    // the off-center parity variant exists to catch exactly this.
+    const fragCoordBL: TSLNode = vec2(
+      screenCoordinate.x,
+      uResolution.y.sub(screenCoordinate.y)
+    );
+    const d: TSLNode = vec2(fragCoordBL.sub(vCenterScreen));
     // Forward substitution: solve L · y = d.
     const y0: TSLNode = d.x.mul(vL2D.x);
     const y1: TSLNode = d.y.sub(vL2D.y.mul(y0)).mul(vL2D.z);

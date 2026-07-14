@@ -109,6 +109,13 @@ function assertBothRendered(glsl: number[], tsl: number[], name: string): void {
   const t = nonUniformPixelCount(tsl);
   expect(g, `${name}: GLSL side rendered ZERO pixels — vacuous parity`).toBeGreaterThan(0);
   expect(t, `${name}: TSL side rendered ZERO pixels — vacuous parity`).toBeGreaterThan(0);
+  // The per-covered metric treats each buffer's own first pixel as its
+  // background, so a cross-backend BACKGROUND divergence (clear color /
+  // output transform drift) would be invisible to it. Pin equality here.
+  expect(
+    glsl.slice(0, 4),
+    `${name}: backgrounds differ between backends`
+  ).toEqual(tsl.slice(0, 4));
 }
 
 /**
@@ -522,6 +529,29 @@ test.describe('TSL ↔ GLSL shader parity', () => {
     expect(
       diff,
       `GSplat-gamma-one parity: mean abs diff ${diff.toFixed(2)} on 0-255 scale.\nSamples:\n${samples}`
+    ).toBeLessThan(3.0);
+  });
+
+  test('gsplat-offcenter: off-center splat parity (fragcoord y-convention guard)', async ({
+    page,
+  }) => {
+    await bootHarness(page);
+
+    const glslPixels = await runGLSL(page, 'gsplat-offcenter');
+    const tslResult = await runTSL(page, 'gsplat-offcenter');
+
+    assertBothRendered(glslPixels, tslResult.pixels, 'gsplat-offcenter');
+    expect(
+      meanAbsDiffPerCoveredPixel(glslPixels, tslResult.pixels),
+      'gsplat-offcenter: per-covered-pixel parity (footprint-invariant)'
+    ).toBeLessThan(2.0);
+    const diff = meanAbsDiff(glslPixels, tslResult.pixels);
+    // Centered fixtures are mirror-symmetric about y = H/2, so they are
+    // blind to top-left/bottom-left fragcoord convention bugs; this
+    // off-center case is the guard for that whole class.
+    expect(
+      diff,
+      `GSplat-offcenter parity: mean abs diff ${diff.toFixed(2)} on 0-255 scale.`
     ).toBeLessThan(3.0);
   });
 
