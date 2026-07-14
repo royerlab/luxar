@@ -1,8 +1,7 @@
 """``luxar gsplat batch-fit`` — cluster-scale fitting via Slurm.
 
 Owns the ``app_batch`` Typer sub-app and its commands; the aggregator
-(``cli/gsplat_commands.py``) mounts it via ``add_typer``. Extracted from the
-former monolithic ``gsplat_commands.py`` (package-refactor-plan P3/P4/P6).
+(``cli/gsplat_commands.py``) mounts it via ``add_typer``.
 """
 
 from __future__ import annotations

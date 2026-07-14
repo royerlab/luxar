@@ -115,8 +115,7 @@ def calibrate(
     # target, the render reference, AND the held-out truth are all on the same
     # floor-suppressed scale. (A per-fit floor would subtract only inside each
     # fit, mismatching the raw held-out reference and tanking the PSNR.) Default
-    # is on ("auto"); K* is thus measured the same way you will fit. See
-    # docs/handoffs/floor-suppression-handoff.md.
+    # is on ("auto"); K* is thus measured the same way you will fit.
     from luxar.gsplats.fitting.preprocessing import _resolve_floor
     from luxar.gsplats.fitting.validation import _validate_floor
 

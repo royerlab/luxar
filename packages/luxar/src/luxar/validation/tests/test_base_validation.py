@@ -1,6 +1,4 @@
-"""Tests for `luxar.validation.base` (audit O2 — renamed from
-``test_validation_module.py`` to match the source module it covers).
-"""
+"""Tests for `luxar.validation.base`."""
 
 from typing import Any, cast
 
