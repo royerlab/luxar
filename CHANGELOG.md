@@ -6,6 +6,35 @@ All notable changes to Luxar are documented in this file.
 
 ### July 2026
 
+#### Fixed — LUT-on-COORDINATE line-vertex corruption + remaining doc-audit flags (PR #517)
+
+- Grid-snapped line vertices (few unique coordinate values) could store as
+  `lut_uint8` indices while the viewer's lines spatial-index loader reads
+  `vertices` as raw chunked zarr — corrupted geometry. New `allow_lut` knob on
+  `ArrayEncoder.encode`; line vertices now always materialise
+  (`linear_perchannel_u16`), with a regression test.
+- `format_gsplats_info` prints the real ordering metadata (`bits_per_dim=21`)
+  instead of `resolution=unknown`; a vacuous CLI port-conflict test (passing a
+  nonexistent `--no-viewer` flag) now genuinely exercises the conflict path;
+  assorted stale docstrings/READMEs corrected (worker responsibilities, GSplats
+  sharpness, cache tiers, per-part recipe names).
+
+#### Fixed — Python completeness-audit sweep (PR #515)
+
+- Deleted dead/unreachable surfaces, synced stale docs, and shared the widths
+  validator across geometry writers (net −32 lines; behavior-preserving except
+  where noted in the PR).
+
+#### Documentation — full documentation-sync audit (PRs #513, #516)
+
+- Audited every documentation surface against the code (CLI help, format
+  writers/readers, viewer source, Sphinx targets, executed tutorial snippets)
+  and fixed ~185 findings: stale LOD recipe names, wrong compression/encoding
+  claims in `LUXAR_ZARR_FORMAT.md`, a new Lines on-disk format section, broken
+  tutorial snippets, a fictional CI section in the E2E guide, missing skills
+  coverage for `--floor`/`reencode`/`annotate-quality`/`additive`, and Sphinx
+  autodoc for previously undocumented public modules.
+
 #### Changed — gsplat demo LFS baselines upgraded to format v3.2 + AUTO quantization; cells3d demo resurrected (PR #505)
 
 - All 19 precomputed `.gsplats.zarr` demo baselines shipped via Git LFS were

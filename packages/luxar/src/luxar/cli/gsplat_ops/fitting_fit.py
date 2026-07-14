@@ -40,7 +40,7 @@ def run_fit_volume(
         None, "--device", "-d", help="Device: auto/cpu/cuda/mps"
     ),
     preset: Optional[str] = typer.Option(
-        None, "--preset", help="Parameter preset: draft/standard/hifi/ultra"
+        None, "--preset", help="Parameter preset: draft/standard/hifi/ultra/n2s"
     ),
     loss: Optional[str] = typer.Option(
         None, "--loss", help="Loss function: l1/mse/poisson"

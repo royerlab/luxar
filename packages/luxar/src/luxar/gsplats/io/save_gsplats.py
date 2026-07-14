@@ -53,13 +53,27 @@ from luxar.typing_utils._format_contract import (
 )
 from luxar.utils.paths import normalize_zarr_path
 
-# Get luxar.gsplats version
-try:
-    from luxar.gsplats import (  # type: ignore[attr-defined]
-        __version__ as GSPLATS_VERSION,
-    )
-except ImportError:
-    GSPLATS_VERSION: str = "unknown"  # type: ignore[no-redef]
+
+# Get luxar.gsplats version — the subpackage has no own __version__, so fall
+# back to the installed luxar distribution version (resolves under editable
+# installs too); "unknown" only when the package metadata itself is missing.
+def _resolve_gsplats_version() -> str:
+    try:
+        from luxar.gsplats import (  # type: ignore[attr-defined]
+            __version__,
+        )
+
+        return str(__version__)
+    except ImportError:
+        try:
+            from importlib.metadata import version
+
+            return version("luxar")
+        except Exception:
+            return "unknown"
+
+
+GSPLATS_VERSION: str = _resolve_gsplats_version()
 
 #: On-disk format version for the node-tree ``.gsplats.zarr`` layout.
 #: v3.2 renames the ``kind=lod`` selector attrs: the group ``selector`` value
