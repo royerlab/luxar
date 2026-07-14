@@ -100,7 +100,9 @@ no knob — see "LOD switch tuning" below).
 
 ## `luxar gsplat cal INPUT OUTPUT_JSON`
 
-Blind-spot (Noise2Self) K-sweep → K*, curve type, noise floor, PSNR ceiling.
+Blind-spot (Noise2Self) K-sweep → K*, `k_knee` operating point (diminishing-returns
+elbow, ≤ K*), curve type, noise floor, PSNR ceiling. Also writes a `splat_density`
+block (saturation exponent alpha etc.) consumed by `fit --tiling content`.
 
 ### K grid
 | Flag | Default | Meaning |
@@ -145,8 +147,10 @@ how you fit). Pass `--floor none` to reproduce the legacy hard-min numbers.
 
 ## `luxar gsplat lod INPUT OUTPUT`
 
-`--recipe` is REQUIRED. Recipes scale-ordered: `flat` < `stream` < `tiles`
-< `overview` / `adaptive`; primitive `levels`.
+`--recipe` is REQUIRED. Recipes scale-ordered by element count N:
+`flat` < `stream` < `levels` < `tiles` < `overview` < `adaptive`. `stream` is
+additive (refines one leaf); `levels` is substitutive (coarse↔fine swap);
+`overview`/`adaptive` compose the two over spatial tiles.
 
 ### Additive ladder (stream / tiles / overview / levels)
 | Flag | Default | Meaning |

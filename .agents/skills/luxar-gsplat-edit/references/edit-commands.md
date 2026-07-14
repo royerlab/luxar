@@ -83,8 +83,10 @@ Wrap a fitted dataset as a web scene. `--center`/`--no-center` (default on),
 `normal` / `max` / `opaque`).
 
 ## migrate-format IN OUT
-Upgrade legacy layouts (v1.0 / v1.1 / v2.0 / substitutive dir) → v3.2.
-`--overwrite`, `--lossless` (preserve float32 Cholesky), `--quiet`/`-q`.
+Upgrade legacy layouts (v1.0 / v1.1 / v2.0 substitutive dir / v3.0/v3.1) → v3.2.
+`--overwrite`, `--lossless` (preserve float32 Cholesky), `--quiet`/`-q`. (For a
+structure-preserving re-quantization of a current-format file, use `reencode`
+instead — it exposes the full encoding ladder.)
 
 ## reencode IN OUT
 Re-quantize a fitted dataset's Cholesky factors to another encoding (a
