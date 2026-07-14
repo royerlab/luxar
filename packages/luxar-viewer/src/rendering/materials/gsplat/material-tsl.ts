@@ -366,6 +366,8 @@ export class GSplatTSLMaterial
       depthTest: this.userData.depthTest ?? true,
       colormapTexture: this.uniforms.uColormapTex?.value ?? undefined,
       scalarRange: this.userData.scalarRange ?? undefined,
+      // Mirror of the GLSL clone fix: preserve a tuned extent factor.
+      maxExtentFactor: this.uniforms.uMaxExtentFactor.value,
     });
 
     if (this.blending === THREE.CustomBlending) {

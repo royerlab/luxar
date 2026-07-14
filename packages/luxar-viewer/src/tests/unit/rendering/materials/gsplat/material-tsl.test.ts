@@ -147,6 +147,14 @@ describe('GSplatTSLMaterial clone', () => {
     cloned.uniforms.uOpacity.value = 0.123;
     expect(original.uniforms.uOpacity.value).not.toBe(0.123);
   });
+
+  it('clone preserves a tuned uMaxExtentFactor (was silently reset to 0.33)', () => {
+    const original = new GSplatTSLMaterial({ maxExtentFactor: 0.7 });
+    expect(original.uniforms.uMaxExtentFactor.value).toBe(0.7);
+
+    const cloned = original.clone();
+    expect(cloned.uniforms.uMaxExtentFactor.value).toBe(0.7);
+  });
 });
 
 describe('GSplatTSLMaterial normal mode — premultiplied coverage alpha', () => {

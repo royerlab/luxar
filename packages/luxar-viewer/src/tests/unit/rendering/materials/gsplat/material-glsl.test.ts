@@ -410,6 +410,14 @@ describe('GSplatMaterial', () => {
       // Ensure it's a new instance
       expect(cloned).not.toBe(original);
     });
+
+    it('clone preserves a tuned uMaxExtentFactor (was silently reset to 0.33)', () => {
+      const material = new GSplatMaterial({ maxExtentFactor: 0.7 });
+      expect(material.uniforms.uMaxExtentFactor.value).toBe(0.7);
+
+      const cloned = material.clone();
+      expect(cloned.uniforms.uMaxExtentFactor.value).toBe(0.7);
+    });
   });
 
   describe('blending mode depth test configuration', () => {

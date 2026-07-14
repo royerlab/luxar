@@ -347,6 +347,9 @@ export class GSplatMaterial
       depthTest: this.userData.depthTest ?? true,
       colormapTexture: this.uniforms.uColormapTex?.value ?? undefined,
       scalarRange: this.userData.scalarRange ?? undefined,
+      // Without this a clone silently reset a tuned extent factor to the
+      // 0.33 constructor default (screen-coverage fade threshold).
+      maxExtentFactor: this.uniforms.uMaxExtentFactor.value,
     });
 
     // Copy blend equation settings for custom blending (additive/luminous/max modes)
