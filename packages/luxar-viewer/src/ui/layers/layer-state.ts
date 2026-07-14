@@ -40,6 +40,32 @@ export function isLayerEnabled(value: unknown): boolean {
 }
 
 /**
+ * Derive a display data-range for a composite group (kind=lod / kind=partition)
+ * that carries no range of its own, by walking to the FINEST descendant leaf
+ * (largest `n_splats`) that declares one. The finest level is the full-detail
+ * data, so its range is the representative signal window; using it avoids the
+ * near-black render a [0, 1] fallback produces for a colormapped gsplat layer.
+ * Returns undefined when no descendant declares a range.
+ */
+function deriveRangeFromDescendants(node: SceneNode): [number, number] | undefined {
+  let best: [number, number] | undefined;
+  let bestCount = -1;
+  const visit = (n: SceneNode): void => {
+    const r = (n.attrs.scalar_data_range ||
+      n.attrs.color_data_range ||
+      n.attrs.amplitude_data_range) as [number, number] | undefined;
+    const count = (n.attrs.n_splats as number | undefined) ?? 0;
+    if (r && count > bestCount) {
+      best = r;
+      bestCount = count;
+    }
+    n.children?.forEach(visit);
+  };
+  node.children?.forEach(visit);
+  return best;
+}
+
+/**
  * Specialized-group discriminant on a layer. Single-sourced from the
  * cross-language format contract (format-contract/contract.yaml).
  */
@@ -221,12 +247,18 @@ export class LayerStateManager {
       if (isLayerType) {
         const name = node.path.split('/').pop() || node.path;
 
-        // Determine data range from zarr attrs. Groups don't have their
-        // own ranges — fall back to [0, 1] so the slider remains usable.
+        // Determine data range from zarr attrs. A composite group (kind=lod /
+        // kind=partition) carries no range of its own, so derive it from the
+        // finest (largest-n_splats) descendant leaf — otherwise the [0, 1]
+        // fallback makes a colormapped gsplat layer render near-black (the
+        // signal occupies only the bottom few % of [0, 1]).
         const colorRange = node.attrs.color_data_range as [number, number] | undefined;
         const ampRange = node.attrs.amplitude_data_range as [number, number] | undefined;
         const scalarRange = node.attrs.scalar_data_range as [number, number] | undefined;
-        const dataRange = scalarRange || colorRange || ampRange || [0, 1];
+        const dataRange = scalarRange ||
+          colorRange ||
+          ampRange ||
+          deriveRangeFromDescendants(node) || [0, 1];
 
         // Colormap support — groups inherit no colormap, but they do apply
         // a chosen colormap to every data descendant that can accept one.
@@ -239,7 +271,7 @@ export class LayerStateManager {
         // plain group.
         const colormap = node.attrs.colormap as string | undefined;
         const supportsColormap = node.type === 'group' || !!node.attrs.has_scalars || !!colormap;
-        const colormapScalarRange = scalarRange || ampRange;
+        const colormapScalarRange = scalarRange || ampRange || deriveRangeFromDescendants(node);
 
         // Initialize display range from existing intensity/offset if present,
         // otherwise default to full data range

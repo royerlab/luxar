@@ -451,9 +451,10 @@ export function gsplatWebGPUFactory(
 
     // GOG. Colormap mode bypasses color GOG — gamma + display-range
     // shaped the scalar VALUE (amplitude) pre-LUT (vertex stage).
-    const adjusted: TSLNode = config.useColormap
-      ? max(vColor, vec3(0.0))
-      : max(vColor.mul(uIntensity).add(uOffset), vec3(0.0));
+    // uIntensity (gain) + uOffset apply in BOTH modes so the layer
+    // intensity/offset controls work for a colormapped gsplat too (GLSL parity).
+    // Colormap mode still skips the post-LUT gamma (already applied pre-LUT).
+    const adjusted: TSLNode = max(vColor.mul(uIntensity).add(uOffset), vec3(0.0));
     Discard(max(adjusted.r, max(adjusted.g, adjusted.b)).lessThan(1e-4));
     // Colormap mode (gamma applied pre-LUT) OR gammaOne both skip the pow().
     const gammaColor: TSLNode =
