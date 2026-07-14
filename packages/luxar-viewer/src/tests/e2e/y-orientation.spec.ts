@@ -146,6 +146,30 @@ test.describe('Y-orientation contract — renderToImageData cross-backend parity
     try {
       await load(pageA, `/?renderer=webgl&src=${DATASET}&debug`);
       await load(pageB, `/?renderer=webgpu&src=${DATASET}&debug`);
+      // Without a real WebGPU adapter (the headless-CI norm),
+      // ?renderer=webgpu silently runs the WebGL2 fallback and this
+      // test becomes a vacuous duplicate of the forceWebGL one above —
+      // while pixel-utils load-bears on this spec pinning the NATIVE
+      // readback orientation. Skip explicitly instead (same pattern as
+      // webgpu-native-smoke.spec.ts).
+      const isNative = await pageB.evaluate(() => {
+        const dbg = (
+          window as unknown as {
+            __luxarDebug?: {
+              app?: { sceneManager?: { capabilities?: { apiSurface?: string } } };
+              renderer?: { backend?: { isWebGLBackend?: boolean } };
+            };
+          }
+        ).__luxarDebug;
+        return (
+          dbg?.app?.sceneManager?.capabilities?.apiSurface === 'webgpu' &&
+          dbg?.renderer?.backend?.isWebGLBackend !== true
+        );
+      });
+      test.skip(
+        !isNative,
+        'No native WebGPU adapter — fallback path is covered by the forceWebGL test'
+      );
       await assertOrientationParity(pageA, pageB, '?renderer=webgl', '?renderer=webgpu');
     } finally {
       await ctxA.close();

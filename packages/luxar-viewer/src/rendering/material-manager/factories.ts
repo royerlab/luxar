@@ -13,6 +13,7 @@
  */
 
 import { clampTruncationRadius } from '../materials/gsplat/math';
+import { normalModeDepthWrite } from '../blending-state';
 import { PointMaterial } from '../materials/point/material-glsl';
 import { LineMaterial } from '../materials/line/material-glsl';
 import { GSplatMaterial } from '../materials/gsplat/material-glsl';
@@ -162,7 +163,12 @@ export function pointCacheKey(props: PointMaterialProperties, backend: MaterialB
     getCommonMaterialBuckets(props);
   const radiusBucket = props.radiusScale ? Math.round(Math.max(0, props.radiusScale) * 1000) : 1000;
   const transparent = props.blendingMode !== 'opaque';
-  return `point_${backend}_${props.blendingMode}_o${opacityBucket}_g${gammaBucket}_i${intensityBucket}_f${offsetBucket}_r${radiusBucket}_t${transparent ? 1 : 0}`;
+  // depthWrite discriminator: generic normal mode flips depthWrite at
+  // exactly 0.99, which sits INSIDE opacity bucket 99 (0.985-0.9949) —
+  // without this bit, whichever side of the flip is requested first
+  // wins the bucket for both.
+  const dw = props.blendingMode === 'normal' && normalModeDepthWrite(props.opacity) ? 1 : 0;
+  return `point_${backend}_${props.blendingMode}_o${opacityBucket}_g${gammaBucket}_i${intensityBucket}_f${offsetBucket}_r${radiusBucket}_t${transparent ? 1 : 0}_dw${dw}`;
 }
 
 /** Cache key for a Lines material variant. */
@@ -170,7 +176,9 @@ export function lineCacheKey(props: LineMaterialProperties, backend: MaterialBac
   const { opacityBucket, gammaBucket, intensityBucket, offsetBucket } =
     getCommonMaterialBuckets(props);
   const transparent = props.blendingMode !== 'opaque';
-  return `line_${backend}_${props.blendingMode}_o${opacityBucket}_g${gammaBucket}_i${intensityBucket}_f${offsetBucket}_t${transparent ? 1 : 0}`;
+  // depthWrite discriminator — see pointCacheKey.
+  const dw = props.blendingMode === 'normal' && normalModeDepthWrite(props.opacity) ? 1 : 0;
+  return `line_${backend}_${props.blendingMode}_o${opacityBucket}_g${gammaBucket}_i${intensityBucket}_f${offsetBucket}_t${transparent ? 1 : 0}_dw${dw}`;
 }
 
 /** Cache key for a GSplats material variant. */

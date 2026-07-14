@@ -132,48 +132,38 @@ export function pointPickWebGPUFactory(
   const vNodeId: TSLNode = varying(uNodeId);
   const vElementId: TSLNode = varying(float(instanceIndex));
 
-  // Fragment.
+  // ---- Fragment ----
+  //
+  // Compute the super-Gaussian brightness ONCE, materialised via
+  // `.toVar()` so both color and depth fragment outputs reference the
+  // same computation instead of each rebuilding the pow + exp chain —
+  // the same "compile once, reference twice" pattern as the gsplat
+  // pick factory (picking/gsplat/pick.tsl.ts).
+  const centered: TSLNode = vec2(vSpriteCoord.sub(0.5));
+  const r2: TSLNode = dot(centered, centered).toVar();
+  const normalizedR: TSLNode = r2.mul(4.0).sqrt();
+  // Shifted-truncated super-Gaussian (matches shader-tsl.ts).
+  const K = 4.6051702; // ln(100)
+  const C = 0.01; // exp(-K) = floor
+  const invOneMinusC = 1.0 / (1.0 - C);
+  const brightness: TSLNode = exp(normalizedR.pow(vBeta).mul(-K))
+    .sub(C)
+    .max(float(0.0))
+    .mul(invOneMinusC)
+    .toVar();
+
   const colorNode = Fn(() => {
     Discard(vRadius.lessThan(0.0001));
-
-    const centered: TSLNode = vec2(vSpriteCoord.sub(0.5));
-    const r2: TSLNode = dot(centered, centered);
     Discard(r2.greaterThan(0.25));
-
-    const normalizedR: TSLNode = r2.mul(4.0).sqrt();
-    // Shifted-truncated super-Gaussian (matches shader-tsl.ts).
-    const K = 4.6051702; // ln(100)
-    const C = 0.01; // exp(-K) = floor
-    const invOneMinusC = 1.0 / (1.0 - C);
-    const falloff: TSLNode = exp(normalizedR.pow(vBeta).mul(-K))
-      .sub(C)
-      .max(float(0.0))
-      .mul(invOneMinusC);
-    const brightness: TSLNode = falloff;
     Discard(brightness.lessThan(1e-4));
 
     return vec4(vNodeId, vElementId, brightness, 1.0);
   });
 
   // Depth = 1.0 - brightness (the brightest hit takes precedence).
-  // TSL doesn't easily share scope between colorNode and depthNode,
-  // so we recompute brightness on the depth path. Same math, same
-  // discard-gating happens via colorNode → depth is only written
-  // when colorNode also writes.
-  const depthNode = Fn(() => {
-    const centered: TSLNode = vec2(vSpriteCoord.sub(0.5));
-    const r2: TSLNode = dot(centered, centered);
-    const normalizedR: TSLNode = r2.mul(4.0).sqrt();
-    // Shifted-truncated super-Gaussian (matches shader-tsl.ts).
-    const K = 4.6051702; // ln(100)
-    const C = 0.01; // exp(-K) = floor
-    const invOneMinusC = 1.0 / (1.0 - C);
-    const falloff: TSLNode = exp(normalizedR.pow(vBeta).mul(-K))
-      .sub(C)
-      .max(float(0.0))
-      .mul(invOneMinusC);
-    return float(1.0).sub(clamp(falloff, 0.0, 1.0));
-  });
+  // Discard-gating happens via colorNode → depth is only written when
+  // colorNode also writes.
+  const depthNode = Fn(() => float(1.0).sub(clamp(brightness, 0.0, 1.0)));
 
   const material = outMaterial ?? new NodeMaterial();
   material.vertexNode = clipPos;

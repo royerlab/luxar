@@ -73,6 +73,18 @@ export function isNormalMode(mode: BlendingMode): boolean {
   return mode === 'normal';
 }
 
+/**
+ * The generic `normal`-mode depthWrite predicate: a (near-)fully-opaque
+ * normal layer writes depth so it occludes additive layers behind it.
+ * Single source of truth — the material caches key on this SAME
+ * predicate so two opacities on either side of the threshold can never
+ * share a cached material (1%-opacity buckets straddle 0.99: 0.985 and
+ * 0.994 both bucket to 99 but need different depthWrite).
+ */
+export function normalModeDepthWrite(opacity: number): boolean {
+  return opacity >= 0.99;
+}
+
 export interface CompleteBlendingState {
   blending: THREE.Blending;
   blendEquation: THREE.BlendingEquation;
@@ -182,7 +194,7 @@ export function getCompleteBlendingState(
     blendSrc: THREE.SrcAlphaFactor,
     blendDst: THREE.OneMinusSrcAlphaFactor,
     depthTest: true,
-    depthWrite: opacity >= 0.99,
+    depthWrite: normalModeDepthWrite(opacity),
     transparent: true,
     shaderOutputMode: 'alpha-weighted',
   };
