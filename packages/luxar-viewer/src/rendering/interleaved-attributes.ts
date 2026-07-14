@@ -289,6 +289,15 @@ export function writeInterleavedAttribute(
         break;
     }
   }
+  // Ranged upload: only the written prefix ([0, instanceCount × stride))
+  // goes to the GPU. Without a range, THREE's `bufferSubData(…, 0, array)`
+  // uploads the ENTIRE backing array — including the pool's 1.5×-growth /
+  // bucket-capacity tail — on every commit. Both backends honor ranges on
+  // interleaved buffers (WebGL merges adjacent ranges; the WebGPU
+  // fallback's updateAttribute reads `attribute.data.updateRanges`).
+  // Per-attribute calls in one commit push identical ranges; THREE
+  // sorts + merges them at flush time.
+  buffer.addUpdateRange(0, instanceCount * stride);
   buffer.needsUpdate = true;
 }
 
