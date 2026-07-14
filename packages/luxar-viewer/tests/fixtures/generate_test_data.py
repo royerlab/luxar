@@ -1406,9 +1406,9 @@ def generate_uint16_quantization_test() -> None:
         # Using linspace ensures exact 1000:1 ratio for reliable uint16 triggering
         radii = np.linspace(0.001, 1.0, num_points).astype(np.float32)
         dynamic_range = radii.max() / radii.min()
-        assert dynamic_range > 256, (
-            f"Need >256:1 range for uint16, got {dynamic_range:.1f}:1"
-        )
+        assert (
+            dynamic_range > 256
+        ), f"Need >256:1 range for uint16, got {dynamic_range:.1f}:1"
 
         # Simple colors (use uint8 encoding as comparison)
         colors = np.random.rand(num_points, 3).astype(np.float32)
@@ -1791,20 +1791,25 @@ def generate_gsplats_normal_overlap_test() -> None:
     with asection("Generating GSplats Normal-Overlap Test"):
         output = FIXTURES_DIR / "test_gsplats_normal_overlap.luxar.zarr"
 
-        # Two big overlapping splats staggered in z, plus one small
-        # off-axis reference splat.
+        # Two overlapping splats staggered in z, plus one small off-axis
+        # reference splat. Sigmas are deliberately modest relative to the
+        # scene span: the viewer's screen-coverage safety fade
+        # (uMaxExtentFactor, default 0.33 of the viewport) starts fading
+        # splats at HALF that fraction — oversized splats would be
+        # legitimately culled and the fixture would render black (see the
+        # warning in generate_gsplats_test).
         centers = np.array(
             [
-                [-0.4, 0.0, 0.0],  # back splat (red)
-                [0.4, 0.0, 1.5],  # front splat (green), overlaps in screen space
+                [-0.25, 0.0, 0.0],  # back splat (red)
+                [0.25, 0.0, 1.0],  # front splat (green), overlaps in screen space
                 [3.0, 2.0, 0.0],  # small reference splat (blue), no overlap
             ],
             dtype=np.float32,
         )
-        amplitudes = np.array([1.0, 1.0, 1.0], dtype=np.float32)
+        amplitudes = np.array([2.0, 2.0, 1.0], dtype=np.float32)
 
         cholesky = np.zeros((3, 6), dtype=np.float32)
-        for i, sigma in enumerate((1.2, 1.2, 0.3)):
+        for i, sigma in enumerate((0.35, 0.35, 0.3)):
             cholesky[i, 0] = sigma  # L11
             cholesky[i, 2] = sigma  # L22
             cholesky[i, 5] = sigma  # L33
