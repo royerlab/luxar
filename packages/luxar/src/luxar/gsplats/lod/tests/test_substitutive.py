@@ -551,7 +551,7 @@ class TestApiContract:
                 assert lev.parent_method == "kmeans_lloyd"
 
     def test_save_load_roundtrip(self, tmp_path):
-        """The pyramid round-trips through a single v2.0 .gsplats.zarr."""
+        """The pyramid round-trips through a single .gsplats.zarr node tree."""
         data = _make_isotropic_3d(n=16, seed=0)
         pyramid = make_substitutive_lod(
             data,

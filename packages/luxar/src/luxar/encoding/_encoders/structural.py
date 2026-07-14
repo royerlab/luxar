@@ -441,55 +441,6 @@ class StructuralEncoderMixin(BaseEncoderMixin):
             "original_dtype": original_dtype,
         }
 
-    def _encode_unit_vector(
-        self,
-        zarr_group: zarr.Group,
-        name: str,
-        data: np.ndarray,
-        mode: EncodingMode,
-        chunks: Optional[tuple] = None,
-        compressor: Optional[Any] = None,
-    ) -> None:
-        """Encode UNIT_VECTOR semantic type.
-
-        Currently uses standard float encoding. Specialized encodings
-        (octahedral) are not yet implemented.
-
-        Args:
-            zarr_group: Zarr group to write to
-            name: Array name
-            data: Array data
-            mode: Encoding mode
-            chunks: Optional chunk shape
-            compressor: Optional compressor
-        """
-        original_dtype = str(data.dtype)
-
-        target_dtype: np.dtype[Any]
-        if mode == EncodingMode.PRECISION or mode == EncodingMode.AUTO:
-            target_dtype = np.dtype("float32")
-        elif mode == EncodingMode.MEMORY:
-            # Check if float16 is allowed, fallback to float32 if not
-            if self._float16_allowed:
-                target_dtype = np.dtype("float16")
-            else:
-                target_dtype = np.dtype("float32")
-        else:
-            raise ValueError(f"Unexpected mode for UNIT_VECTOR: {mode}")
-
-        encoded_data = data.astype(target_dtype)
-        zarr_group.create_dataset(
-            name,
-            data=encoded_data,
-            chunks=chunks,
-            compressor=resolve_compressor(compressor, encoded_data.dtype),
-            overwrite=True,
-        )
-        zarr_group[name].attrs["encoding"] = {
-            "name": target_dtype.name,
-            "original_dtype": original_dtype,
-        }
-
     #: CUSTOM-mode dispatch: encoding name -> the handler method that produces
     #: ``(encoded_data, metadata)``. Replaces a string-keyed if/elif ladder;
     #: every key must be a valid format-contract encoding name (see

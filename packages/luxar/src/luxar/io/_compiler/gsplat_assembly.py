@@ -207,7 +207,7 @@ def write_gsplat_arrays(
 
     # Write centers
     chunks_centers = calculate_intelligent_chunks(
-        centers.shape, spatial_index_data=ordering_data
+        centers.shape, spatial_index_data=ordering_data, dtype=centers.dtype
     )
     ctx.encoder.encode(
         data=centers,
@@ -268,7 +268,9 @@ def write_gsplat_arrays(
         # Chunk both halves with the SAME row-chunk size (derived from the
         # packed shape) so the viewer's aligned per-chunk range reads line up.
         chunk_rows = calculate_intelligent_chunks(
-            cholesky_factors.shape, spatial_index_data=ordering_data
+            cholesky_factors.shape,
+            spatial_index_data=ordering_data,
+            dtype=cholesky_factors.dtype,
         )[0]
         chunks_diag = (chunk_rows, chol_diag.shape[1])
         chunks_offdiag = (chunk_rows, chol_offdiag.shape[1])

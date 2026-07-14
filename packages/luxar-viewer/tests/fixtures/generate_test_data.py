@@ -880,20 +880,6 @@ def generate_encoding_contract_matrix_test() -> None:
             mode=EncodingMode.MEMORY,
         )
 
-        # UNIT_VECTOR: direct float path with signed normalized rows.
-        unit_vectors = np.array(
-            [[1.0, 0.0, 0.0], [0.0, -1.0, 0.0], [0.0, 0.0, 1.0], [0.57735026] * 3],
-            dtype=np.float32,
-        )
-        encode_case(
-            "unit_vector_float32",
-            unit_vectors,
-            SemanticType.UNIT_VECTOR,
-            "signed 3D unit vectors direct float32",
-            mode=EncodingMode.PRECISION,
-            chunks=(2, 3),
-        )
-
         # Manual LUT threshold cases. The encoder now emits lut_uint16 itself
         # (see the *_uint16_emitted cases above); these hand-written variants
         # stay to pin the DECODE contract independent of producer behavior.

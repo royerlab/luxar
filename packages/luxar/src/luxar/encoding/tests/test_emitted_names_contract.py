@@ -52,10 +52,7 @@ def _collect_emitted_names() -> set[str]:
     names.add(_emit(np.full(500, 2.0, dtype=np.float32), SemanticType.POSITIVE_SCALAR))
     names.add(_emit(np.zeros((0, 3), dtype=np.float32), SemanticType.COORDINATE))
 
-    # UNIT_VECTOR → float32; INDEX → smallest uint
-    uv = rng.standard_normal((200, 3)).astype(np.float32)
-    uv /= np.linalg.norm(uv, axis=1, keepdims=True)
-    names.add(_emit(uv, SemanticType.UNIT_VECTOR))
+    # INDEX → smallest uint
     names.add(_emit(np.arange(70000, dtype=np.int64), SemanticType.INDEX))
 
     # CHOLESKY split entry point → log_perchannel_u8 + signed_log_perchannel_u8

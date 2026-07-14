@@ -257,7 +257,6 @@ def _manifest(fixtures: dict[str, Any]) -> dict[str, Any]:
             "positive_scalar",
             "cholesky",
             "index",
-            "unit_vector",
         ],
         "shape_classes": ["empty", "singleton", "vector_1d", "matrix_2d"],
     }
