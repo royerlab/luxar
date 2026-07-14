@@ -182,6 +182,13 @@ export class GSplatsProgressiveLoader implements GSplatsDataLoader {
   // "complete for playback" (display gate accepts it without holding).
   private _frameBudgetMs: number | null = null;
 
+  // Set when LOD 0 committed 0 elements for the current view: the slice is
+  // empty, so every higher (spatially-coextensive) LOD is empty too and the
+  // ladder is TERMINAL. Makes `hasMoreLODs` read false so the refinement
+  // scheduler doesn't fetch+decode the higher empty LODs one pass at a time.
+  // Reset on every view change (the next slice may have content).
+  private _emptyLadder = false;
+
   constructor(
     lodLoaders: GSplatsSpatialIndexLoader[],
     nLods: number,
@@ -208,6 +215,10 @@ export class GSplatsProgressiveLoader implements GSplatsDataLoader {
     // refinement loop holding a stale reference stops instead of indexing
     // into the now-empty lodLoaders.
     if (this._disposed) return false;
+    // Empty slice (LOD 0 committed 0 elements): the ladder is terminal, so
+    // report no further work rather than let refinement fetch the higher
+    // (also-empty) LODs pass after pass.
+    if (this._emptyLadder) return false;
     // While a playback frame budget is active, the budgeted prefix IS the
     // target: report no further work so the refinement scheduler stays idle
     // between animation ticks and the commit stamps the prefix as complete
@@ -311,6 +322,7 @@ export class GSplatsProgressiveLoader implements GSplatsDataLoader {
       // levels into loadedLODs and must never mutate the cache's payload
       // array (the elements stay shared read-only — store deep-clones).
       this.loadedLODs = restored ? [...restored] : [];
+      this._emptyLadder = false; // new view — may have content
       this._resetGeneration++;
       this.lastViewState = {
         displayDims: [...viewState.displayDims],
@@ -330,6 +342,15 @@ export class GSplatsProgressiveLoader implements GSplatsDataLoader {
           return this.concatenateMemoized(session);
         }
       }
+    }
+
+    // Known-empty slice: LOD 0 committed 0 splats on a prior pass for this
+    // SAME view (the reset branch cleared the flag on any view change). The
+    // ladder is terminal, so skip the streaming loop AND prefetch — otherwise a
+    // same-view re-invoke (e.g. refine-on-pause's setDimensionValue(current))
+    // would re-enter at startLevel=1 and fetch the higher (also-empty) LODs.
+    if (this._emptyLadder) {
+      return this.concatenateMemoized(session);
     }
 
     // Load LODs sequentially, stopping at first slow (cache-miss) load
@@ -364,8 +385,11 @@ export class GSplatsProgressiveLoader implements GSplatsDataLoader {
       }
 
       // Short-circuit: if LOD 0 returned 0 splats, no higher LODs will have
-      // visible splats either (LODs are spatially coextensive, LOD 0 is coarsest)
+      // visible splats either (LODs are spatially coextensive, LOD 0 is coarsest).
+      // Mark the ladder terminal so `hasMoreLODs` reads false and refinement
+      // does not fetch+decode the higher (empty) LODs pass after pass.
       if (level === 0 && lodData.splatCount === 0) {
+        this._emptyLadder = true;
         break;
       }
 

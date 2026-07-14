@@ -186,6 +186,13 @@ export class PointsProgressiveLoader implements PointsDataLoader {
   // Mirrors GSplatsProgressiveLoader.
   private _frameBudgetMs: number | null = null;
 
+  // Set when LOD 0 committed 0 elements for the current view: the slice is
+  // empty, so every higher (spatially-coextensive) LOD is empty too and the
+  // ladder is TERMINAL. Makes `hasMoreLODs` read false so refinement doesn't
+  // fetch+decode the higher empty LODs pass after pass. Reset on view change.
+  // Mirrors GSplatsProgressiveLoader.
+  private _emptyLadder = false;
+
   constructor(
     lodLoaders: PointsSpatialIndexLoader[],
     nLods: number,
@@ -210,6 +217,9 @@ export class PointsProgressiveLoader implements PointsDataLoader {
     // refinement loop holding a stale reference stops instead of indexing
     // into the now-empty lodLoaders. Mirrors GSplatsProgressiveLoader.
     if (this._disposed) return false;
+    // Empty slice (LOD 0 committed 0 elements): terminal ladder — no further
+    // work, so refinement doesn't fetch the higher empty LODs pass after pass.
+    if (this._emptyLadder) return false;
     // While a playback frame budget is active, the budgeted prefix IS the
     // target: no background refinement between animation ticks; the commit
     // stamps the prefix complete. Mirrors GSplatsProgressiveLoader.
@@ -293,6 +303,7 @@ export class PointsProgressiveLoader implements PointsDataLoader {
       // levels and must never mutate the cache's payload array (elements
       // stay shared read-only). Mirrors GSplatsProgressiveLoader.
       this.loadedLODs = restored ? [...restored] : [];
+      this._emptyLadder = false; // new view — may have content
       this._resetGeneration++;
       this.lastViewState = {
         displayDims: [...viewState.displayDims],
@@ -309,6 +320,15 @@ export class PointsProgressiveLoader implements PointsDataLoader {
           return this.concatenateMemoized(session);
         }
       }
+    }
+
+    // Known-empty slice: LOD 0 committed 0 points on a prior pass for this SAME
+    // view (the reset branch cleared the flag on any view change). Terminal
+    // ladder — skip the streaming loop AND prefetch so a same-view re-invoke
+    // (e.g. refine-on-pause) doesn't fetch the higher (empty) LODs. Mirrors
+    // GSplatsProgressiveLoader.
+    if (this._emptyLadder) {
+      return this.concatenateMemoized(session);
     }
 
     const startLevel = this.loadedLODs.length;
@@ -342,8 +362,10 @@ export class PointsProgressiveLoader implements PointsDataLoader {
       }
 
       // Short-circuit: LOD 0 with 0 points → higher LODs would also
-      // have 0 visible (LODs are spatially coextensive).
+      // have 0 visible (LODs are spatially coextensive). Mark terminal so
+      // `hasMoreLODs` reads false and refinement skips the empty higher LODs.
       if (level === 0 && lodData.positions.length === 0) {
+        this._emptyLadder = true;
         break;
       }
 
