@@ -47,7 +47,10 @@ def validate_gsplat_inputs(
         (centers, amplitudes, cholesky_factors, colors,
          n_splats, n_dims, cholesky_is_uniform)
     """
-    from ...validation.base import validate_positions_for_writing
+    from ...validation.base import (
+        _validate_numeric_finite_values,
+        validate_positions_for_writing,
+    )
 
     n_splats, n_dims = validate_positions_for_writing(centers)
     expected_k = n_dims * (n_dims + 1) // 2
@@ -67,19 +70,24 @@ def validate_gsplat_inputs(
             f"got {cholesky_factors.shape}"
         )
 
-    # Validate amplitudes
+    # Validate amplitudes (finiteness first, mirroring radii/widths — a NaN
+    # would silently pass `< 0` since `nan < 0` is False and corrupt the store).
     if isinstance(amplitudes, np.ndarray):
         if amplitudes.shape[0] != n_splats:
             raise ValueError(
                 f"Amplitudes shape {amplitudes.shape} doesn't match n_splats {n_splats}"
             )
+        _validate_numeric_finite_values(amplitudes, "amplitudes")
         if np.any(amplitudes < 0):
             min_val = float(np.min(amplitudes))
             raise ValueError(
                 f"Amplitudes must be non-negative (>= 0). Found minimum value: {min_val:.3f}"
             )
-    elif isinstance(amplitudes, (int, float)) and amplitudes < 0:
-        raise ValueError(f"Amplitude must be non-negative (>= 0). Got {amplitudes}")
+    elif isinstance(amplitudes, (int, float)):
+        if not np.isfinite(amplitudes):
+            raise ValueError(f"Amplitude must be finite. Got {amplitudes}")
+        if amplitudes < 0:
+            raise ValueError(f"Amplitude must be non-negative (>= 0). Got {amplitudes}")
 
     return (
         centers,
