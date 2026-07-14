@@ -19,8 +19,11 @@ These `luxar gsplat` subcommands operate on an **already-fitted** dataset (the o
 of `fit` / `batch-fit`). For fitting a volume, calibration, and LOD recipes, use the
 **`luxar-gsplat-pipeline`** skill; for whole-timelapse fitting, **`luxar-hpc-batch-fit`**.
 
-All commands take a `.gsplats.zarr` (flat, partition, or nested LOD), accept
-`--encoding`/`-e` and usually `--compress`, and write a new dataset (non-destructive).
+All commands take a `.gsplats.zarr` (flat, partition, or nested LOD). Most
+*editing* commands accept `--encoding`/`-e` and usually `--compress`, and write a
+new dataset (non-destructive). Exceptions: `annotate-quality` stamps the input
+IN PLACE (no `-e`), and the inspection commands
+(`info` / `render` / `compare` / `view` / `napari`) are read-only.
 
 ## Pick the operation
 

@@ -123,11 +123,23 @@ class TestPrincipalRadii:
 
 
 class TestMasses:
-    def test_basic(self):
-        gs = _make_3d_gsplat(n=5)
-        masses = gs.masses()
-        expected = gs.amplitudes * gs.volumes()
-        assert np.allclose(masses, expected)
+    def test_mass_is_amplitude_times_det_sigma_root_d(self):
+        # Independent hand-computed expectation (does NOT call volumes(), so a
+        # mutation of either masses() or volumes() is caught). Cholesky packing
+        # is lower-triangular [L00,L10,L11,L20,L21,L22]; the diagonal sets the
+        # characteristic length volume = det(Sigma)^(1/d) = (prod(diag)^2)^(1/d).
+        gs = GSplatData(
+            centers=np.zeros((2, 3), dtype=np.float32),
+            amplitudes=np.array([0.5, 2.0], dtype=np.float32),
+            cholesky_factors=np.array(
+                [[2, 0, 3, 0, 0, 4], [1, 0, 1, 0, 0, 1]], dtype=np.float32
+            ),
+        )
+        d = 3
+        vol0 = ((2.0 * 3.0 * 4.0) ** 2) ** (1.0 / d)  # = 576 ** (1/3)
+        vol1 = ((1.0 * 1.0 * 1.0) ** 2) ** (1.0 / d)  # = 1.0
+        expected = np.array([0.5 * vol0, 2.0 * vol1])
+        np.testing.assert_allclose(gs.masses(), expected, rtol=1e-6)
 
     def test_zero_amplitudes(self):
         gs = GSplatData(
@@ -209,11 +221,18 @@ class TestEccentricities:
 
 
 class TestFilter:
-    def test_basic(self):
+    def test_filter_keeps_exactly_the_masked_splats(self):
         gs = _make_3d_gsplat(n=5)
         mask = np.array([True, True, False, True, False])
         filtered = gs.filter(mask)
+        # Assert IDENTITY, not just the count — a mutant that kept the wrong
+        # rows (or reordered) would pass a bare `n_splats == 3` check.
         assert filtered.n_splats == 3
+        np.testing.assert_array_equal(filtered.centers, gs.centers[mask])
+        np.testing.assert_array_equal(filtered.amplitudes, gs.amplitudes[mask])
+        np.testing.assert_array_equal(
+            filtered.cholesky_factors, gs.cholesky_factors[mask]
+        )
 
     def test_all_true(self):
         gs = _make_3d_gsplat(n=3)

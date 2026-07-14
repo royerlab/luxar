@@ -82,9 +82,10 @@ This diagram shows how data flows from Python creation through storage to WebGL 
 │                                                                             │
 │  cache/                                                                     │
 │  ┌──────────────────┐                                                      │
+│  │ S-cache + L0     │  Decoded slices + decompressed chunks (RAM)          │
 │  │ L1: Memory LRU   │  ~100MB, ~1μs access                                 │
 │  │ L2: OPFS         │  ~2GB, ~1ms access                                   │
-│  │ L3: HTTP fetch   │  Unlimited, ~100ms access                            │
+│  │ HTTP fetch       │  Unlimited, ~100ms access                            │
 │  │ Prefetcher       │  Adjacent chunks (±1 in each dimension)              │
 │  └────────┬─────────┘                                                      │
 │           │                                                                 │
@@ -170,7 +171,7 @@ scene.luxar.zarr/
 
 The root `.zattrs` file contains scene-wide configuration:
 
-```json
+```javascript
 {
   "luxar_version": "0.1",
   "type": "scene",
@@ -202,7 +203,7 @@ The root `.zattrs` file contains scene-wide configuration:
 Group nodes organize the scene hierarchy and can contain child nodes.
 
 **Attributes (.zattrs):**
-```json
+```javascript
 {
   "type": "group",
   "transform": [1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1],  // 4x4 matrix as 16-element array
@@ -264,7 +265,7 @@ stamps `default_level: 0` (the coarsest child) — a progressive-load hint
 default (the finest level the `.centers` accessor returns).
 
 **Attributes (.zattrs):**
-```json
+```javascript
 {
   "type": "group",
   "kind": "lod",
@@ -339,7 +340,7 @@ directly (`?src=<file>.gsplats.zarr`) and frames on `position_bounds`. The
 (`--parts` / `--max-elements` / `--rule median|midpoint|sah`).
 
 **Attributes (.zattrs):**
-```json
+```javascript
 {
   "type": "group",
   "kind": "partition",
@@ -399,7 +400,7 @@ and refines toward the full data over `requestAnimationFrame()`
 frames once initial paint commits.
 
 **Parent attributes (.zattrs):**
-```json
+```javascript
 {
   "type": "points",                 // or "lines" / "gsplats"
   "n_points": 10000,                // (or n_segments / n_splats — total across levels)
@@ -418,7 +419,7 @@ subgroups in this convention.
 **Per-type unit:**
 
 - **Points** — per-element. Each subgroup contains a subset of
-  `positions` + per-element attrs (`colors` / `radii` / `sharpness` /
+  `positions` + per-element attrs (`colors` / `radii` / `sharpnesses` /
   `scalars`).
 - **GSplats** — per-element. Each subgroup contains a subset of
   `centers` / `amplitudes` / `cholesky_factors_diag` (+ `cholesky_factors_offdiag`) / `colors`.
@@ -453,7 +454,7 @@ spatial part gets its own LOD ladder.
 Points nodes contain the actual point data.
 
 **Attributes (.zattrs):**
-```json
+```javascript
 {
   "type": "points",
   "transform": [1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1],
@@ -478,14 +479,19 @@ Points nodes contain the actual point data.
 The dtypes below describe the default `EncodingMode.AUTO`. Every array
 self-describes its on-disk encoding via an `encoding` attr in its `.zattrs`
 (see `luxar.encoding` and *Array Encodings* below); readers dispatch on
-`encoding.name` and always decode to float32. `PRECISION` stores raw float32
-everywhere; `MEMORY` quantizes more aggressively (8-bit where AUTO uses
-16-bit). Uniform arrays are stored as a single `broadcasted` value and
-byte-identical duplicates as an `array_ref`, regardless of mode.
+`encoding.name` and decode to float32 (or the array's original integer
+dtype, e.g. uint8 colors stay uint8). `PRECISION` stores raw float32
+everywhere; `MEMORY` quantizes more aggressively for the wide-range geolog
+family (8-bit where AUTO uses 16-bit — HDR colors, wide-range positive
+scalars); coordinates stay uint16 and bounded scalars pick 8-vs-16 bits from
+their dynamic range identically in both modes. Uniform arrays are stored as
+a single `broadcasted` value and byte-identical duplicates as an
+`array_ref`, regardless of mode.
 
 Chunking is **byte-based**, not a fixed element count: the first-dimension
 chunk length is derived from the 64 KB target (`TARGET_CHUNK_BYTES` ÷
-bytes-per-row for the array's encoded dtype), or aligned to the spatial
+bytes-per-row for the array's *input* dtype — computed before encoding, so
+float32 rows even when the stored code is uint8/uint16), or aligned to the spatial
 index's `chunk_size` when spatial ordering is enabled (the default), so a
 chunk-index range maps to exactly one zarr chunk.
 
@@ -551,7 +557,7 @@ pairs — so the on-disk layout is identical for every type; the user's original
 choice is recorded in `original_line_type`.
 
 **Attributes (.zattrs):**
-```json
+```javascript
 {
   "type": "lines",
   "n_vertices": 10000,
@@ -574,7 +580,9 @@ Lines use **dual spatial indexing**: vertices are curve-ordered in D-space
 (like Points) and segments are independently curve-ordered in (2×D)-space
 (concatenating both endpoints), each with its own chunk-bounds array
 (`vertex_chunk_bounds` / `segment_chunk_bounds`, both
-`(num_chunks, D_or_2D, 2)` float32).
+`(num_chunks, D, 2)` float32 — segment *bounds* are deliberately D-space
+even though the segment *ordering* sorts in 2×D, so both support view-frustum
+intersection tests directly).
 
 **Data Arrays** (same AUTO/PRECISION/MEMORY conventions as Points; all
 per-vertex arrays are reordered by the vertex sort):
@@ -583,8 +591,10 @@ per-vertex arrays are reordered by the vertex sort):
 - **Shape:** `(N, D)` — vertex positions
 - **Dtype/Encoding:** COORDINATE, same as Points `positions/`:
   `linear_perchannel_u16` under AUTO/MEMORY (float32 under PRECISION or the
-  ≥ 2¹⁶-extent fallback). Never deduplicated to an `array_ref` (the lines
-  spatial-index loader reads it as raw chunked zarr).
+  ≥ 2¹⁶-extent fallback). Never deduplicated to an `array_ref` and never
+  LUT-encoded — the lines spatial-index loader reads it as raw chunked zarr
+  with no structural-encoding dispatch (grid-snapped vertices would otherwise
+  store as LUT indices).
 
 #### segments/ (Required, auto-generated)
 - **Shape:** `(M, 2)` — vertex-index pairs, indices local to this node
@@ -668,7 +678,7 @@ may be exposed as a layer in the viewer's Layers panel by setting
 per-layer visibility, display-range, gamma, opacity, blending mode, and
 colormap controls.
 
-```json
+```javascript
 {
   "type": "points",
   "layer": true,      // Expose this node as a layer in the panel
@@ -801,7 +811,7 @@ The spatial index uses a simple but effective approach:
 The spatial index stores metadata in the points group `.zattrs` and chunk bounds as a separate array:
 
 #### Points Group .zattrs (Spatial Index Metadata)
-```json
+```javascript
 {
   "type": "points",
   "n_points": 100000,
@@ -851,7 +861,8 @@ Empty strings are treated as null labels (no tooltip shown on hover). Labels are
 Optional per-element **image** labels for hover thumbnails, written via the
 `image_labels=` parameter of `add_points` / `add_lines` / `add_gsplats`
 (accepts pre-encoded bytes, PIL images, `(H, W[, C])` uint8 numpy arrays, or
-file paths; non-bytes inputs are encoded to WebP). When present, `.zattrs`
+file paths; PIL images and numpy arrays are encoded to WebP, while bytes and
+file contents are stored as-is — a PNG file stays PNG). When present, `.zattrs`
 includes `"has_image_labels": true`.
 
 **image_label_offsets/** Array:
@@ -1009,7 +1020,7 @@ When building points with spatial index (`enable_spatial_index=True`):
 
 1. **Identify Dimension Types**: Classify dimensions as discrete vs spatial
 2. **Compute Sort Order**: Lexsort on discrete dims, then Morton/Hilbert code
-3. **Reorder All Arrays**: Apply same sort order to positions, colors, radii, sharpness
+3. **Reorder All Arrays**: Apply same sort order to positions, colors, radii, sharpnesses
 4. **Compute Chunk Bounds**: Calculate bounding boxes including radius extent
 5. **Store Metadata**: Write ordering info to group attributes
 6. **Store Bounds Array**: Write chunk_bounds array to group
@@ -1201,7 +1212,7 @@ Optimal chunk sizes balance memory usage and access patterns:
 - **Minimum chunk payload:** 16KB (`MIN_CHUNK_BYTES`)
 - **Maximum chunk payload:** 256KB (`MAX_CHUNK_BYTES`)
 - **2D arrays (positions, colors):** Chunk along first dimension only, deriving element counts from dtype and row width
-- **1D arrays (radii, sharpness):** Simple 1D chunking, deriving element counts from dtype
+- **1D arrays (radii, sharpnesses):** Simple 1D chunking, deriving element counts from dtype
 
 ### Chunking with Spatial Index
 
@@ -1230,7 +1241,8 @@ per-array above (`linear_perchannel_u16`, `rgb_uint8`,
   shape `(0,)` / `(0, D)`) whose `encoding` carries `target` (path of the
   original array), `hash`, `original_shape`, and `original_dtype`. Readers
   must resolve and load the target array. (Structural arrays whose consumers
-  read raw zarr — line `vertices`/`segments` — are never dedup-encoded.)
+  read raw zarr — line `vertices`/`segments` — are never dedup- or
+  LUT-encoded.)
 - **`lut_uint8` / `lut_uint16`** — look-up-table encoding for arrays with few
   unique values (or few unique color rows): the array stores indices and the
   `encoding.lut` attr carries the unique values as JSON (`lut_mode` +

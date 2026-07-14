@@ -47,7 +47,10 @@ def validate_gsplat_inputs(
         (centers, amplitudes, cholesky_factors, colors,
          n_splats, n_dims, cholesky_is_uniform)
     """
-    from ...validation.base import validate_positions_for_writing
+    from ...validation.base import (
+        _validate_numeric_finite_values,
+        validate_positions_for_writing,
+    )
 
     n_splats, n_dims = validate_positions_for_writing(centers)
     expected_k = n_dims * (n_dims + 1) // 2
@@ -67,19 +70,24 @@ def validate_gsplat_inputs(
             f"got {cholesky_factors.shape}"
         )
 
-    # Validate amplitudes
+    # Validate amplitudes (finiteness first, mirroring radii/widths — a NaN
+    # would silently pass `< 0` since `nan < 0` is False and corrupt the store).
     if isinstance(amplitudes, np.ndarray):
         if amplitudes.shape[0] != n_splats:
             raise ValueError(
                 f"Amplitudes shape {amplitudes.shape} doesn't match n_splats {n_splats}"
             )
+        _validate_numeric_finite_values(amplitudes, "amplitudes")
         if np.any(amplitudes < 0):
             min_val = float(np.min(amplitudes))
             raise ValueError(
                 f"Amplitudes must be non-negative (>= 0). Found minimum value: {min_val:.3f}"
             )
-    elif isinstance(amplitudes, (int, float)) and amplitudes < 0:
-        raise ValueError(f"Amplitude must be non-negative (>= 0). Got {amplitudes}")
+    elif isinstance(amplitudes, (int, float)):
+        if not np.isfinite(amplitudes):
+            raise ValueError(f"Amplitude must be finite. Got {amplitudes}")
+        if amplitudes < 0:
+            raise ValueError(f"Amplitude must be non-negative (>= 0). Got {amplitudes}")
 
     return (
         centers,
@@ -207,7 +215,7 @@ def write_gsplat_arrays(
 
     # Write centers
     chunks_centers = calculate_intelligent_chunks(
-        centers.shape, spatial_index_data=ordering_data
+        centers.shape, spatial_index_data=ordering_data, dtype=centers.dtype
     )
     ctx.encoder.encode(
         data=centers,
@@ -268,7 +276,9 @@ def write_gsplat_arrays(
         # Chunk both halves with the SAME row-chunk size (derived from the
         # packed shape) so the viewer's aligned per-chunk range reads line up.
         chunk_rows = calculate_intelligent_chunks(
-            cholesky_factors.shape, spatial_index_data=ordering_data
+            cholesky_factors.shape,
+            spatial_index_data=ordering_data,
+            dtype=cholesky_factors.dtype,
         )[0]
         chunks_diag = (chunk_rows, chol_diag.shape[1])
         chunks_offdiag = (chunk_rows, chol_offdiag.shape[1])

@@ -36,8 +36,8 @@ The SceneLoader has three external entry points:
 ## Layout
 
 This folder is split into eleven subpackages — thematic clusters plus the
-pre-existing per-step folders — named for their concern. Two `.ts`
-files sit directly under `scene-loader/`:
+pre-existing per-step folders — named for their concern. One `.ts`
+file sits directly under `scene-loader/`:
 
 - **`lod-load-stats.ts`** — debug-only per-stage timing accumulator for
   lazy LOD level loads (fetch/decode, projection+pack, GPU commit,

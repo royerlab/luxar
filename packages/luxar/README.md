@@ -168,7 +168,7 @@ positions[:, 4] = np.random.choice([0, 1, 2], n_points)  # discrete channels
 # Per-point attributes
 colors = np.random.randint(0, 255, (n_points, 3), dtype=np.uint8)
 radii = np.random.uniform(0.1, 2.0, n_points).astype(np.float32)
-sharpness = np.random.uniform(0.5, 10.0, n_points).astype(np.float32)
+sharpness = np.random.uniform(0.0, 1.0, n_points).astype(np.float32)
 
 scene.add_points(
     "Points5D",
@@ -275,6 +275,7 @@ class LuxarZarrCompiler:
         Returns:
             Scene object for building the scene graph
         """
+```
 
 ### Scene Class
 
@@ -311,7 +312,7 @@ class Scene:
             positions: nD coordinates where D matches scene dimensions
             colors: RGB colors (0-255)
             radii: Per-point radii for size control
-            sharpness: Edge falloff (0.5-10.0)
+            sharpness: Edge falloff, normalized [0, 1] (0.5 = Gaussian)
             parent: Parent node in hierarchy
             **attrs: Additional attributes including:
                 opacity: float (0.0-1.0, default 1.0) - Node opacity

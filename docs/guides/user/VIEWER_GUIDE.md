@@ -80,10 +80,16 @@ Standard trackball camera for inspecting a scene from the outside.
 
 | Input | Action |
 |-------|--------|
-| Left-click + drag | Rotate around the target point |
-| Right-click + drag | Pan the camera |
+| Left-click + drag | Rotate around the target point (natural drag ON) / pan (OFF) |
+| Right-click + drag | Pan the camera (natural drag ON) / rotate (OFF) |
+| Middle-click + drag | Dolly (either setting) |
 | Scroll wheel | Zoom in/out |
 | Ctrl/Cmd + Scroll | Adjust field of view |
+
+The left/right drag mapping depends on the **natural drag** setting, which
+defaults to ON on macOS and OFF on other platforms: with natural drag,
+left-drag rotates and right-drag pans; without it, the mapping is inverted
+(left-drag pans, right-drag rotates).
 
 Press **F** to recenter the camera so the entire scene fits in view.
 
@@ -94,10 +100,12 @@ First-person controls for moving through the interior of a dataset.
 | Input | Action |
 |-------|--------|
 | W / A / S / D | Move forward / left / backward / right |
-| Q / E | Move down / up |
+| Alt/Option + W / S | Move up / down |
+| Q / E | Roll left / right |
 | Arrow keys | Look around |
 | Shift (held) | Speed boost |
-| Mouse drag | Look direction |
+| Right-click + drag | Look around |
+| Left-click + drag | Strafe (screen-space translation) |
 
 Enable **inertial mode** (press **I**) to add momentum to fly movement so the
 camera coasts after releasing keys.
@@ -172,7 +180,8 @@ Orthographic projection for 2D viewing. The camera looks straight down one axis.
 | Key | Action |
 |-----|--------|
 | W / A / S / D | Move forward / left / backward / right |
-| Q / E | Move down / up |
+| Alt/Option + W / S | Move up / down |
+| Q / E | Roll left / right |
 | Arrow keys | Look direction |
 | Shift (held) | Speed boost |
 
@@ -212,7 +221,8 @@ that axis. See the nD Navigation section below.
 
 ### Performance Monitor (P)
 
-Displays live statistics: frames per second, frame time, and draw call count.
+Displays one live metric at a time — click it (or press Enter/Space) to cycle
+between frames per second, frame time (ms), and a scrolling FPS graph.
 Useful for diagnosing performance on large scenes.
 
 ### Recording Panel (T)
@@ -346,6 +356,8 @@ vc = luxar.ViewerConfig(
     auto_rotate=True,
 )
 
+dims = luxar.Dimensions.default_3d()
+
 with luxar.LuxarZarrCompiler("output.luxar.zarr") as compiler:
     scene = compiler.create_scene(dimensions=dims, viewer_config=vc)
     # ... add geometry to scene
@@ -360,8 +372,10 @@ file, then reload it in Python:
 vc = luxar.ViewerConfig.from_file("my_view.json")
 vc.bloom_strength = 0.8  # tweak as needed
 
+dims = luxar.Dimensions.default_3d()
+
 with luxar.LuxarZarrCompiler("output.luxar.zarr") as compiler:
-    scene = compiler.create_scene(viewer_config=vc)
+    scene = compiler.create_scene(dimensions=dims, viewer_config=vc)
     # ... add geometry to scene
 ```
 

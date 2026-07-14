@@ -215,16 +215,16 @@ WebGL context and renderer settings for optimal 3D rendering:
 webgl: {
   context: {
     alpha: false,                       // No canvas transparency
-    antialias: true,                   // Enable edge smoothing
+    antialias: false,                  // Backbuffer MSAA off (scene renders
+                                       // to the HDR target; renderTarget.samples
+                                       // controls real MSAA)
     depth: true,                       // Enable depth buffer
     stencil: false,                    // No stencil (saves memory)
     powerPreference: 'high-performance', // GPU preference
-    colorSpace: 'display-p3',          // Wide color gamut
     preserveDrawingBuffer: false,      // Better performance
     desynchronized: true,              // Async updates
   },
   renderer: {
-    antialias: true,                   // MSAA antialiasing
     precision: 'highp',                // Shader precision
     logarithmicDepthBuffer: false,    // Standard depth (faster)
   },

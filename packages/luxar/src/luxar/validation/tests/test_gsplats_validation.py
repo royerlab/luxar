@@ -1,9 +1,8 @@
 """Tests for Gaussian-splat data validation.
 
-This module mirrors `test_points_validation.py` for GSplats geometry
-(audit G2 in `delme/test-audit-luxar-codebase/findings-global-pattern-sweep.md`
-and G1 in `python-core-validation`). Points/Lines/GSplats symmetry rule
-requires that every Points validation test has a parallel GSplats variant.
+This module mirrors `test_points_validation.py` for GSplats geometry. The
+Points/Lines/GSplats symmetry rule requires that every Points validation
+test has a parallel GSplats variant.
 
 For GSplats the per-splat scalar attributes are:
 - ``amplitudes`` (mandatory, must be non-negative — parallel to Points ``radii``
@@ -96,6 +95,24 @@ def test_mismatched_colors(tmp_path) -> None:
             "colors_nan",
             {"colors": np.array([[1.0, np.nan, 0.0]], dtype=np.float32)},
             "colors: Contains 1 NaN or Inf",
+        ),
+        (
+            "colors_inf",
+            {"colors": np.array([[1.0, np.inf, 0.0]], dtype=np.float32)},
+            "colors: Contains 1 NaN or Inf",
+        ),
+        # Amplitudes NaN/Inf: a NaN would silently pass the `>= 0` check
+        # (nan < 0 is False) and corrupt the store — the bug class the
+        # Points/Lines size-scalar finiteness checks already catch.
+        (
+            "amplitudes_nan",
+            {"amplitudes": np.array([np.nan], dtype=np.float32)},
+            "amplitudes: Contains 1 NaN or Inf",
+        ),
+        (
+            "amplitudes_inf",
+            {"amplitudes": np.array([np.inf], dtype=np.float32)},
+            "amplitudes: Contains 1 NaN or Inf",
         ),
     ],
 )

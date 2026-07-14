@@ -686,7 +686,10 @@ class TestGSplatsWithoutSharpness:
 
         s = LuxarScene.load(path)
         data = s.get_lines("ln")
+        # Assert the VALUE round-trips (mirrors the points twin above) — a bare
+        # `is not None` would pass even if the encoder garbled every value.
         assert data["sharpness"] is not None
+        np.testing.assert_allclose(data["sharpness"], [0.5, 0.5], atol=1.0 / 255)
 
     def test_fitting_returns_no_sharpness(self):
         """fit_gaussian_splats should work and not return sharpness."""

@@ -82,16 +82,58 @@ function nonUniformPixelCount(pixels: number[]): number {
   const a0 = pixels[3];
   let n = 0;
   for (let i = 0; i < pixels.length; i += 4) {
-    if (
-      pixels[i] !== r0 ||
-      pixels[i + 1] !== g0 ||
-      pixels[i + 2] !== b0 ||
-      pixels[i + 3] !== a0
-    ) {
+    if (pixels[i] !== r0 || pixels[i + 1] !== g0 || pixels[i + 2] !== b0 || pixels[i + 3] !== a0) {
       n++;
     }
   }
   return n;
+}
+
+/**
+ * Non-vacuousness guard: a parity comparison is meaningless if either
+ * side rendered nothing. This is exactly how the gsplat TSL
+ * uninitialized-eigenvalue bug stayed invisible — every gsplat
+ * variant's TSL side was empty and the mean-abs-diff of a small GLSL
+ * sprite against a black buffer squeaked under the tolerance. Applies
+ * to sprite/instanced variants (which have background); fullscreen
+ * variants (const-rgb, mega, fxaa) are uniform by design and are
+ * covered by their own solid-colour assertions.
+ */
+function assertBothRendered(glsl: number[], tsl: number[], name: string): void {
+  const g = nonUniformPixelCount(glsl);
+  const t = nonUniformPixelCount(tsl);
+  expect(g, `${name}: GLSL side rendered ZERO pixels — vacuous parity`).toBeGreaterThan(0);
+  expect(t, `${name}: TSL side rendered ZERO pixels — vacuous parity`).toBeGreaterThan(0);
+  // The per-covered metric treats each buffer's own first pixel as its
+  // background, so a cross-backend BACKGROUND divergence (clear color /
+  // output transform drift) would be invisible to it. Pin equality here.
+  expect(glsl.slice(0, 4), `${name}: backgrounds differ between backends`).toEqual(tsl.slice(0, 4));
+}
+
+/**
+ * Mean absolute per-channel difference normalized by COVERED pixels —
+ * quadruplets where either buffer differs from its own background
+ * (first pixel). The whole-buffer `meanAbsDiff` dilutes errors by
+ * footprint: a 200-px sprite that is ENTIRELY wrong contributes only
+ * ~5% of a 64×64 buffer and can pass a small global tolerance. This
+ * metric is footprint-invariant.
+ */
+function meanAbsDiffPerCoveredPixel(a: number[], b: number[]): number {
+  if (a.length !== b.length) {
+    throw new Error(`Length mismatch: ${a.length} vs ${b.length}`);
+  }
+  const isBg = (px: number[], i: number) =>
+    px[i] === px[0] && px[i + 1] === px[1] && px[i + 2] === px[2] && px[i + 3] === px[3];
+  let sum = 0;
+  let covered = 0;
+  for (let i = 0; i < a.length; i += 4) {
+    if (isBg(a, i) && isBg(b, i)) continue;
+    covered++;
+    for (let c = 0; c < 4; c++) {
+      sum += Math.abs(a[i + c] - b[i + c]);
+    }
+  }
+  return covered === 0 ? 0 : sum / (covered * 4);
 }
 
 /** First N RGBA quadruplets of a buffer, formatted for human reading. */
@@ -231,6 +273,12 @@ test.describe('TSL ↔ GLSL shader parity', () => {
     const glslPixels = await runGLSL(page, 'point');
     const tslResult = await runTSL(page, 'point');
 
+    assertBothRendered(glslPixels, tslResult.pixels, 'point');
+    expect(
+      meanAbsDiffPerCoveredPixel(glslPixels, tslResult.pixels),
+      'point: per-covered-pixel parity (footprint-invariant)'
+    ).toBeLessThan(2.0);
+
     const diff = meanAbsDiff(glslPixels, tslResult.pixels);
     // Sample sprite-area pixels. 64x64 viewport, sprite centred at (32, 32).
     const samplePx = (px: number[], x: number, y: number) => {
@@ -258,6 +306,12 @@ test.describe('TSL ↔ GLSL shader parity', () => {
       await bootHarness(page);
       const glslPixels = await runGLSL(page, variant);
       const tslResult = await runTSL(page, variant);
+
+      assertBothRendered(glslPixels, tslResult.pixels, variant);
+      expect(
+        meanAbsDiffPerCoveredPixel(glslPixels, tslResult.pixels),
+        `${variant}: per-covered-pixel parity (footprint-invariant)`
+      ).toBeLessThan(2.0);
       const diff = meanAbsDiff(glslPixels, tslResult.pixels);
       expect(
         diff,
@@ -273,6 +327,12 @@ test.describe('TSL ↔ GLSL shader parity', () => {
 
     const glslPixels = await runGLSL(page, 'point-colormap');
     const tslResult = await runTSL(page, 'point-colormap');
+
+    assertBothRendered(glslPixels, tslResult.pixels, 'point-colormap');
+    expect(
+      meanAbsDiffPerCoveredPixel(glslPixels, tslResult.pixels),
+      'point-colormap: per-covered-pixel parity (footprint-invariant)'
+    ).toBeLessThan(2.0);
 
     const diff = meanAbsDiff(glslPixels, tslResult.pixels);
     const samplePx = (px: number[], x: number, y: number) =>
@@ -297,6 +357,12 @@ test.describe('TSL ↔ GLSL shader parity', () => {
     const glslPixels = await runGLSL(page, 'point-gamma-one');
     const tslResult = await runTSL(page, 'point-gamma-one');
 
+    assertBothRendered(glslPixels, tslResult.pixels, 'point-gamma-one');
+    expect(
+      meanAbsDiffPerCoveredPixel(glslPixels, tslResult.pixels),
+      'point-gamma-one: per-covered-pixel parity (footprint-invariant)'
+    ).toBeLessThan(2.0);
+
     const diff = meanAbsDiff(glslPixels, tslResult.pixels);
     const samplePx = (px: number[], x: number, y: number) =>
       `${px[(y * 64 + x) * 4]},${px[(y * 64 + x) * 4 + 1]},${px[(y * 64 + x) * 4 + 2]},${px[(y * 64 + x) * 4 + 3]}`;
@@ -317,6 +383,12 @@ test.describe('TSL ↔ GLSL shader parity', () => {
 
     const glslPixels = await runGLSL(page, 'line');
     const tslResult = await runTSL(page, 'line');
+
+    assertBothRendered(glslPixels, tslResult.pixels, 'line');
+    expect(
+      meanAbsDiffPerCoveredPixel(glslPixels, tslResult.pixels),
+      'line: per-covered-pixel parity (footprint-invariant)'
+    ).toBeLessThan(2.0);
 
     const diff = meanAbsDiff(glslPixels, tslResult.pixels);
     // Line should run horizontally across y=32 in the 64×64 viewport.
@@ -346,6 +418,12 @@ test.describe('TSL ↔ GLSL shader parity', () => {
     const glslPixels = await runGLSL(page, 'line-colormap');
     const tslResult = await runTSL(page, 'line-colormap');
 
+    assertBothRendered(glslPixels, tslResult.pixels, 'line-colormap');
+    expect(
+      meanAbsDiffPerCoveredPixel(glslPixels, tslResult.pixels),
+      'line-colormap: per-covered-pixel parity (footprint-invariant)'
+    ).toBeLessThan(2.0);
+
     const diff = meanAbsDiff(glslPixels, tslResult.pixels);
     const samplePx = (px: number[], x: number, y: number) =>
       `${px[(y * 64 + x) * 4]},${px[(y * 64 + x) * 4 + 1]},${px[(y * 64 + x) * 4 + 2]},${px[(y * 64 + x) * 4 + 3]}`;
@@ -366,6 +444,12 @@ test.describe('TSL ↔ GLSL shader parity', () => {
 
     const glslPixels = await runGLSL(page, 'gsplat');
     const tslResult = await runTSL(page, 'gsplat');
+
+    assertBothRendered(glslPixels, tslResult.pixels, 'gsplat');
+    expect(
+      meanAbsDiffPerCoveredPixel(glslPixels, tslResult.pixels),
+      'gsplat: per-covered-pixel parity (footprint-invariant)'
+    ).toBeLessThan(2.0);
 
     const diff = meanAbsDiff(glslPixels, tslResult.pixels);
     const samplePx = (px: number[], x: number, y: number) =>
@@ -392,6 +476,12 @@ test.describe('TSL ↔ GLSL shader parity', () => {
     const glslPixels = await runGLSL(page, 'gsplat-colormap');
     const tslResult = await runTSL(page, 'gsplat-colormap');
 
+    assertBothRendered(glslPixels, tslResult.pixels, 'gsplat-colormap');
+    expect(
+      meanAbsDiffPerCoveredPixel(glslPixels, tslResult.pixels),
+      'gsplat-colormap: per-covered-pixel parity (footprint-invariant)'
+    ).toBeLessThan(2.0);
+
     const diff = meanAbsDiff(glslPixels, tslResult.pixels);
     const samplePx = (px: number[], x: number, y: number) =>
       `${px[(y * 64 + x) * 4]},${px[(y * 64 + x) * 4 + 1]},${px[(y * 64 + x) * 4 + 2]},${px[(y * 64 + x) * 4 + 3]}`;
@@ -414,6 +504,12 @@ test.describe('TSL ↔ GLSL shader parity', () => {
     const glslPixels = await runGLSL(page, 'gsplat-gamma-one');
     const tslResult = await runTSL(page, 'gsplat-gamma-one');
 
+    assertBothRendered(glslPixels, tslResult.pixels, 'gsplat-gamma-one');
+    expect(
+      meanAbsDiffPerCoveredPixel(glslPixels, tslResult.pixels),
+      'gsplat-gamma-one: per-covered-pixel parity (footprint-invariant)'
+    ).toBeLessThan(2.0);
+
     const diff = meanAbsDiff(glslPixels, tslResult.pixels);
     const samplePx = (px: number[], x: number, y: number) =>
       `${px[(y * 64 + x) * 4]},${px[(y * 64 + x) * 4 + 1]},${px[(y * 64 + x) * 4 + 2]},${px[(y * 64 + x) * 4 + 3]}`;
@@ -428,6 +524,120 @@ test.describe('TSL ↔ GLSL shader parity', () => {
     ).toBeLessThan(3.0);
   });
 
+  test('gsplat-offcenter: off-center splat parity (fragcoord y-convention guard)', async ({
+    page,
+  }) => {
+    await bootHarness(page);
+
+    const glslPixels = await runGLSL(page, 'gsplat-offcenter');
+    const tslResult = await runTSL(page, 'gsplat-offcenter');
+
+    assertBothRendered(glslPixels, tslResult.pixels, 'gsplat-offcenter');
+    expect(
+      meanAbsDiffPerCoveredPixel(glslPixels, tslResult.pixels),
+      'gsplat-offcenter: per-covered-pixel parity (footprint-invariant)'
+    ).toBeLessThan(2.0);
+    const diff = meanAbsDiff(glslPixels, tslResult.pixels);
+    // Centered fixtures are mirror-symmetric about y = H/2, so they are
+    // blind to top-left/bottom-left fragcoord convention bugs; this
+    // off-center case is the guard for that whole class.
+    expect(
+      diff,
+      `GSplat-offcenter parity: mean abs diff ${diff.toFixed(2)} on 0-255 scale.`
+    ).toBeLessThan(3.0);
+  });
+
+  test('gsplat-tiny-sigma-fade: sub-0.1-sigma splat in the fade band renders at HALF amplitude', async ({
+    page,
+  }) => {
+    await bootHarness(page);
+
+    const glslPixels = await runGLSL(page, 'gsplat-tiny-sigma-fade');
+    const tslResult = await runTSL(page, 'gsplat-tiny-sigma-fade');
+
+    assertBothRendered(glslPixels, tslResult.pixels, 'gsplat-tiny-sigma-fade');
+    expect(
+      meanAbsDiffPerCoveredPixel(glslPixels, tslResult.pixels),
+      'gsplat-tiny-sigma-fade: per-covered-pixel parity'
+    ).toBeLessThan(2.0);
+
+    // ABSOLUTE brightness assertion — parity alone is blind to this
+    // bug because BOTH backends shared the maxLateralVar > 0.01 gate.
+    // projectedExtent = uFx·sigma·truncate = 3200·0.005·3 = 48 px sits
+    // mid-band (32, 64) → coverageFade = 0.5 → red-channel peak ≈ 127.
+    // Pre-fix the gate skipped the fade for this sigma and the peak
+    // saturated at ~255.
+    let peak = 0;
+    for (let i = 0; i < glslPixels.length; i += 4) {
+      if (glslPixels[i] > peak) peak = glslPixels[i];
+    }
+    expect(
+      peak,
+      'tiny-sigma splat in the fade band must be coverage-faded (~50%); ' +
+        `red peak ${peak} implies the fade was skipped`
+    ).toBeLessThan(200);
+    expect(peak).toBeGreaterThan(60); // sanity: still visibly rendered
+  });
+
+  test('gsplat-tiny-sigma-reject: sub-0.1-sigma splat past the fade band is coverage-culled on both backends', async ({
+    page,
+  }) => {
+    await bootHarness(page);
+
+    const glslPixels = await runGLSL(page, 'gsplat-tiny-sigma-reject');
+    const tslResult = await runTSL(page, 'gsplat-tiny-sigma-reject');
+
+    // projectedExtent = 12800·0.005·3 = 192 px > maxExtent = 64 → the
+    // coverage cull rejects the vertex. Pre-fix, the gate skipped the
+    // fade and the unconditional extent clamp rendered a full-intensity
+    // hard-edged rectangle (the deep-zoom artifact this guards).
+    expect(
+      nonUniformPixelCount(glslPixels),
+      'GLSL: tiny-sigma splat past the fade band must be culled, not clamped to a hard rectangle'
+    ).toBe(0);
+    expect(
+      nonUniformPixelCount(tslResult.pixels),
+      'TSL: tiny-sigma splat past the fade band must be culled, not clamped to a hard rectangle'
+    ).toBe(0);
+  });
+
+  test('gsplat-normal-premult: LUXAR_NORMAL_PREMULT coverage alpha matches TSL normal branch', async ({
+    page,
+  }) => {
+    await bootHarness(page);
+
+    const glslPixels = await runGLSL(page, 'gsplat-normal-premult');
+    const tslResult = await runTSL(page, 'gsplat-normal-premult');
+
+    assertBothRendered(glslPixels, tslResult.pixels, 'gsplat-normal-premult');
+    expect(
+      meanAbsDiffPerCoveredPixel(glslPixels, tslResult.pixels),
+      'gsplat-normal-premult: per-covered-pixel parity (footprint-invariant)'
+    ).toBeLessThan(2.0);
+
+    const diff = meanAbsDiff(glslPixels, tslResult.pixels);
+    const samplePx = (px: number[], x: number, y: number) =>
+      `${px[(y * 64 + x) * 4]},${px[(y * 64 + x) * 4 + 1]},${px[(y * 64 + x) * 4 + 2]},${px[(y * 64 + x) * 4 + 3]}`;
+    const samples = [
+      `  (32,32) GLSL=${samplePx(glslPixels, 32, 32)} TSL=${samplePx(tslResult.pixels, 32, 32)}`,
+      `  (28,32) GLSL=${samplePx(glslPixels, 28, 32)} TSL=${samplePx(tslResult.pixels, 28, 32)}`,
+    ].join('\n');
+    // The alpha channel must carry clamp(intensity·uOpacity) identically on
+    // both backends (guards the NodeMaterial double-premultiplication trap).
+    const centerAlpha = glslPixels[(32 * 64 + 32) * 4 + 3];
+    expect(
+      centerAlpha,
+      `GSplat-normal-premult: expected sub-saturated coverage alpha at splat center, got ${centerAlpha}`
+    ).toBeGreaterThan(0);
+    expect(centerAlpha).toBeLessThan(255);
+    // Same looser tolerance as `gsplat` — covariance projection drift (this
+    // variant additionally exercises the sum-projection ray-integral path).
+    expect(
+      diff,
+      `GSplat-normal-premult parity: mean abs diff ${diff.toFixed(2)} on 0-255 scale.\nSamples:\n${samples}`
+    ).toBeLessThan(3.0);
+  });
+
   test('gsplat-pick: covariance projection with nodeId / elementId / brightness output', async ({
     page,
   }) => {
@@ -435,6 +645,12 @@ test.describe('TSL ↔ GLSL shader parity', () => {
 
     const glslPixels = await runGLSL(page, 'gsplat-pick');
     const tslResult = await runTSL(page, 'gsplat-pick');
+
+    assertBothRendered(glslPixels, tslResult.pixels, 'gsplat-pick');
+    expect(
+      meanAbsDiffPerCoveredPixel(glslPixels, tslResult.pixels),
+      'gsplat-pick: per-covered-pixel parity (footprint-invariant)'
+    ).toBeLessThan(2.0);
 
     const diff = meanAbsDiff(glslPixels, tslResult.pixels);
     expect(
@@ -453,6 +669,12 @@ test.describe('TSL ↔ GLSL shader parity', () => {
     const glslPixels = await runGLSL(page, 'line-pick');
     const tslResult = await runTSL(page, 'line-pick');
 
+    assertBothRendered(glslPixels, tslResult.pixels, 'line-pick');
+    expect(
+      meanAbsDiffPerCoveredPixel(glslPixels, tslResult.pixels),
+      'line-pick: per-covered-pixel parity (footprint-invariant)'
+    ).toBeLessThan(2.0);
+
     const diff = meanAbsDiff(glslPixels, tslResult.pixels);
     expect(
       diff,
@@ -467,6 +689,12 @@ test.describe('TSL ↔ GLSL shader parity', () => {
 
     const glslPixels = await runGLSL(page, 'point-pick');
     const tslResult = await runTSL(page, 'point-pick');
+
+    assertBothRendered(glslPixels, tslResult.pixels, 'point-pick');
+    expect(
+      meanAbsDiffPerCoveredPixel(glslPixels, tslResult.pixels),
+      'point-pick: per-covered-pixel parity (footprint-invariant)'
+    ).toBeLessThan(2.0);
 
     const diff = meanAbsDiff(glslPixels, tslResult.pixels);
     expect(

@@ -30,11 +30,4 @@ export function validateWebGL(config: AppConfig, errors: string[], warnings: str
     );
   }
 
-  // Validate color space
-  const validColorSpaces = ['srgb', 'display-p3', 'rec2020'];
-  if (!validColorSpaces.includes(webgl.context.colorSpace)) {
-    warnings.push(
-      `Unusual color space: ${webgl.context.colorSpace} (typical values: ${validColorSpaces.join(', ')})`
-    );
-  }
 }

@@ -642,19 +642,19 @@ def lod_recipe(
 
     One recipe, scale-ordered; every recipe streams by default (each leaf
     carries a progressive "stream" ladder unless --no-additive). Pick by what
-    you need:
+    you need::
 
-    \b
-      recipe     structure                        use when
-      flat       one bare leaf                    tiny data / debugging
-      stream     one leaf + progressive ladder    small data, fast first paint
-      levels     coarse->fine replacement levels  zooming across scales
-      tiles      spatial tiles (culled), each     large scene, one scale
-                 with its own ladder
-      overview   instant coarse overview level    huge scene, "see everything
-                 + fine tiles on zoom             first" (detail where you look)
-      adaptive   tiles where EVERY tile picks     largest scenes, locally
-                 its own detail level             adaptive detail
+      \b
+        recipe     structure                        use when
+        flat       one bare leaf                    tiny data / debugging
+        stream     one leaf + progressive ladder    small data, fast first paint
+        levels     coarse->fine replacement levels  zooming across scales
+        tiles      spatial tiles (culled), each     large scene, one scale
+                   with its own ladder
+        overview   instant coarse overview level    huge scene, "see everything
+                   + fine tiles on zoom             first" (detail where you look)
+        adaptive   tiles where EVERY tile picks     largest scenes, locally
+                   its own detail level             adaptive detail
 
     (Renamed 2026-07: additive->stream, substitutive/pyramid->levels,
     partitioned->tiles, multiscale->overview, mosaic->adaptive.)
@@ -665,8 +665,10 @@ def lod_recipe(
     \b
     Examples:
         luxar gsplat lod fit.gsplats.zarr out.gsplats.zarr --recipe stream --n-lods 6
+
         luxar gsplat lod fit.gsplats.zarr out.gsplats.zarr --recipe tiles \\
             --max-elements 250000
+
         luxar gsplat lod fit.gsplats.zarr out.gsplats.zarr --recipe overview \\
             --compression-factor 8
     """

@@ -156,6 +156,36 @@ class TestCompilerIntegration:
             decoded = ArrayDecoder().decode(store[path], store)
             assert decoded.shape[0] == len(positions)
 
+    def test_grid_line_vertices_never_lut_encode(self, tmp_path) -> None:
+        """Grid-snapped line vertices must not LUT-encode (raw-read loader).
+
+        The viewer's lines spatial-index loader reads ``vertices`` as raw
+        chunked zarr with no structural-encoding dispatch, so a lut_uint8
+        store (triggered by few unique coordinate values, e.g. a lattice)
+        would decode as garbage geometry. Regression test for the
+        allow_lut=False carve-out (sibling of deduplicate=False).
+        """
+        output_path = tmp_path / "test.luxar.zarr"
+        rng = np.random.default_rng(0)
+        lattice = np.arange(8, dtype=np.float32)
+        vertices = lattice[rng.integers(0, 8, size=(500, 3))].astype(np.float32)
+
+        with LuxarZarrCompiler(output_path) as compiler:
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+            scene.add_lines(
+                "grid_lines", vertices, widths=np.full(500, 0.1, np.float32)
+            )
+
+        store = zarr.open(str(output_path), mode="r")
+        enc = store["grid_lines/vertices"].attrs["encoding"]
+        assert not enc["name"].startswith("lut"), enc
+        assert enc["name"] == "linear_perchannel_u16"
+        decoded = ArrayDecoder().decode(store["grid_lines/vertices"], store)
+        # Sort-invariant comparison (spatial ordering permutes rows).
+        np.testing.assert_allclose(
+            np.sort(decoded, axis=0), np.sort(vertices, axis=0), atol=1e-3
+        )
+
     def test_hdr_colors_and_attributes(self, tmp_path) -> None:
         """Test HDR colors and rendering attributes."""
         output_path = tmp_path / "test.luxar.zarr"

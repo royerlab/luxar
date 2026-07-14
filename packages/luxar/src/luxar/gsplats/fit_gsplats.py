@@ -328,6 +328,7 @@ def fit_gaussian_splats(
     seeds : np.ndarray (N, d), int, float, GSplatData, or None
         Initial seed center positions, count, compression ratio, or full
         warm-start dataset.
+
         - If np.ndarray: Explicit seed centers in voxel coordinates
         - If int: Exact number (keeps highest intensity if more detected)
         - If float (0 < seeds <= 1.0): Compression ratio - the ratio of floats
@@ -351,11 +352,13 @@ def fit_gaussian_splats(
         (subtracts a constant pedestal that a localized-Gaussian basis cannot
         represent efficiently). Raises the effective image_min so sub-floor
         intensity clips to 0.
+
         - "auto": histogram-mode estimate (capped at the median; a no-op on
           clean data with no pedestal).
         - "pN" (e.g. "p10"): the Nth intensity percentile.
         - float: a fixed intensity value.
         - "none" / 0 / None: disabled (today's hard-min normalization).
+
         Orthogonal to ``norm_percentile`` (which still governs image_max).
     downscale : int, sequence of int, or None, default=None
         Downsample the volume by integer factor(s) before fitting.
@@ -402,6 +405,7 @@ def fit_gaussian_splats(
         single-voxel splats while preventing degeneracy.
     sigma_max_diag : Sequence[float] | float, optional
         Maximum diagonal values for Cholesky factor L along each axis.
+
         - If Sequence[float]: Per-axis absolute bounds (one per dimension).
         - If float: Fraction of volume extent per axis. Each dimension gets
           ``shape[i] * fraction`` independently. E.g., ``sigma_max_diag=1/16``
@@ -532,6 +536,7 @@ def fit_gaussian_splats(
         If None (default), all voxels are treated as unit-spaced.
     output_space : str, default="real"
         Coordinate system for output Gaussians:
+
         - ``"real"``: Physical coordinates (centers and Cholesky scaled by voxel_size).
           When voxel_size is None, identical to ``"voxel"``.
         - ``"voxel"``: Raw voxel indices (no conversion).

@@ -9,7 +9,7 @@
  * payloads at the JS boundary with a clear, namespaced error message
  * instead of letting WASM corrupt or crash.
  *
- * All five helpers + `MAX_WASM_DIMS` are pure functions with no
+ * All four helpers + `MAX_WASM_DIMS` are pure functions with no
  * worker-local state, which is why they extract cleanly.
  */
 

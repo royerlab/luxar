@@ -160,7 +160,15 @@ workers/
     │                                            (worker-internal)
     ├── projection/
     │   ├── lines.ts                            — projectLinesTo3D
-    │   └── gsplats.ts                          — projectGSplatsTo3D
+    │   ├── gsplats.ts                          — projectGSplatsTo3D
+    │   ├── constants.ts                        — shared numeric thresholds
+    │   │                                         (single source of truth)
+    │   ├── hidden-dims.ts                      — hidden-dimension classification
+    │   │                                         (extend_to_all / discrete /
+    │   │                                         continuous)
+    │   └── in-process.ts                       — main-thread dispatcher running
+    │                                             the same kernels on a local
+    │                                             WasmCtx (worker-less fallback)
     └── decode/
         ├── quantized.ts                        — uint8/uint16 → float32
         ├── log-scalar.ts                       — log-space dequantization

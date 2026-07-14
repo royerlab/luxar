@@ -884,7 +884,7 @@ class TestRDModel:
 
 
 class TestRegimeFixes:
-    """Regressions for the deep-review findings (C1/H1/H3/H4)."""
+    """Regressions for calibration regime-detection edge cases."""
 
     def test_feature_threshold_method_aware(self):
         from luxar.gsplats.calibration import feature_threshold

@@ -1,8 +1,8 @@
 /**
  * Main-thread (in-process) projection dispatcher.
  *
- * The worker dispatchers in this directory (`gsplats.ts`, `lines.ts`,
- * `points.ts`) take a {@link WasmCtx} and run the WASM kernels. They are
+ * The worker dispatchers in this directory (`gsplats.ts`, `lines.ts`)
+ * take a {@link WasmCtx} and run the WASM kernels. They are
  * normally invoked across the Comlink RPC boundary from the worker pool,
  * but the exact same functions can run on the main thread against a
  * locally-initialized `WasmCtx`. This module provides that path.

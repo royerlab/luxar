@@ -14,13 +14,15 @@
  *     max) in addition to the THREE blending state. The shader has
  *     separate sum vs. max branches; the uniform drives the
  *     selection at runtime.
- *   - The blending state for additive / luminous / max uses
- *     `CustomBlending` with `OneFactor` factors (not THREE's
- *     `AdditiveBlending`, which would square intensity via
- *     SrcAlpha). The shared `blending-state.ts` helper provides
- *     the right state for `max`; additive / luminous go through
- *     a GSplat-specific path below to keep the alpha-MaxEquation
- *     hack that prevents HalfFloat16 overflow.
+ *   - Blending state is fully unified with the GLSL wrapper: the
+ *     shared `getCompleteBlendingState` for additive / luminous /
+ *     max / opaque (AdditiveBlending's SrcAlpha factor is identity
+ *     under the shader's alpha = 1.0 contract) and
+ *     `getGSplatNormalBlendingState` for `normal` (premultiplied
+ *     coverage alpha). No separate alpha-channel blend state
+ *     anywhere — it trips gl.getError() under the WebGPU→WebGL2
+ *     bridge, and its historical overflow-guard purpose is now
+ *     handled by the raw-scene-hdr capture sanitization.
  *
  * Mechanics identical to `PointTSLMaterial` for the
  * uniforms-by-reference binding pattern.
@@ -37,7 +39,7 @@ import type { CameraAwareMaterial } from '../_shared/camera-aware-material';
 import type { ColormapAwareMaterial } from '../_shared/colormap-aware-material';
 import { clampGamma, isGammaOne } from '../_shared/uniform-helpers';
 import { computeFocalLength } from '../_shared/camera-uniforms';
-import { computeRayIntegralFactor } from './math';
+import { computeRayIntegralFactor, clampTruncationRadius } from './math';
 import {
   applyColormapTextureToMaterial,
   applyScalarRangeToMaterial,
@@ -45,7 +47,9 @@ import {
 import {
   applyBlendingStateToMaterial,
   getCompleteBlendingState,
+  getGSplatNormalBlendingState,
   isMaxMode,
+  isNormalMode,
   type CompleteBlendingState,
 } from '../../blending-state';
 import { proxyIUniform, type TSLNode } from '../_shared/tsl-helpers';
@@ -93,7 +97,7 @@ export class GSplatTSLMaterial
     super();
 
     const gammaValue = clampGamma(materialConfig.gamma);
-    const truncate = materialConfig.truncationRadius ?? 3.0;
+    const truncate = clampTruncationRadius(materialConfig.truncationRadius ?? 3.0);
     const shiftC = Math.exp(-0.5 * truncate * truncate);
     const invOneMinusC = 1.0 / (1.0 - shiftC);
 
@@ -192,18 +196,17 @@ export class GSplatTSLMaterial
    * presence is not the source of truth — see PointTSLMaterial for
    * the in-depth note).
    *
-   * Blending state is applied by the factory tail via
-   * `getCompleteBlendingState(mode)`. For the TSL path that produces
-   * the right result without a GSplat-specific override: the gsplat
-   * shader always outputs `alpha = 1.0`, so the difference between
-   * `AdditiveBlending` (`SrcAlpha + One`) and the GLSL-side
-   * `CustomBlending + OneFactor` collapses to identity — both reduce
-   * to `srcColor + dstColor`. The GLSL wrapper's `CustomBlending`
-   * dance is vestigial; reproducing it under WebGPURenderer's WebGL2
-   * backend also triggers a `gl.getError()` flag (separate
-   * `blendEquationAlpha` state propagation is not perfectly tracked
-   * across the WebGPU↔WebGL2 bridge), so the cleanest path is to
-   * let `getCompleteBlendingState` drive the state.
+   * Blending state is applied by the factory tail: `normal` gets the
+   * gsplat-specific `getGSplatNormalBlendingState()` (the fragment
+   * emits a real premultiplied coverage alpha in that mode — see
+   * shader-tsl.ts), every other mode gets the shared
+   * `getCompleteBlendingState(mode)` — now the SAME sources of truth
+   * the GLSL wrapper uses, so the two backends are state-identical.
+   * `AdditiveBlending`'s SrcAlpha factor is the identity under the
+   * shader's alpha = 1.0 contract. No separate alpha-channel blend
+   * state anywhere (it trips `gl.getError()` under WebGPURenderer's
+   * WebGL2 bridge; its historical HalfFloat-overflow-guard purpose is
+   * handled by the raw-scene-hdr capture sanitization).
    *
    * (`max` mode goes through the same factory path and gets
    * `CustomBlending + MaxEquation + OneFactor` straight from
@@ -246,6 +249,7 @@ export class GSplatTSLMaterial
   }
 
   updateTruncationRadius(radius: number): void {
+    radius = clampTruncationRadius(radius);
     this.uniforms.uTruncate.value = radius;
     this.uniforms.uTruncateSq.value = radius * radius;
     const shiftC = Math.exp(-0.5 * radius * radius);
@@ -301,20 +305,18 @@ export class GSplatTSLMaterial
   }
 
   /**
-   * Apply a Luxar blending mode at runtime. Drives the THREE blending
-   * state through the shared `getCompleteBlendingState` helper — same
-   * source of truth used by the factory tail in `rebuildGraph`, so
-   * subsequent rebuilds (e.g. colormap toggles) don't strand the
-   * material in a divergent state.
+   * Apply a Luxar blending mode at runtime. Same source of truth as
+   * the factory tail in `rebuildGraph` — `normal` via
+   * `getGSplatNormalBlendingState()` (premultiplied coverage-alpha
+   * output; see shader-tsl.ts), everything else via the shared
+   * `getCompleteBlendingState` — so subsequent rebuilds (e.g. colormap
+   * toggles) don't strand the material in a divergent state.
    *
-   * Diverges from the GLSL wrapper (which uses `CustomBlending +
-   * OneFactor` for additive / luminous): the gsplat shader emits
-   * `alpha = 1.0` so `AdditiveBlending` (`SrcAlpha + One`) produces
-   * identical pixels, and `CustomBlending` here would also trip a
-   * `gl.getError()` flag under WebGPURenderer's WebGL2 backend (the
-   * separate alpha-equation state propagation isn't tracked through
-   * the bridge). `max` mode still gets `CustomBlending + MaxEquation
-   * + OneFactor` straight from `getCompleteBlendingState`.
+   * State-identical with the GLSL wrapper (both draw from the same
+   * two helpers). `max` gets `CustomBlending + MaxEquation + OneFactor`
+   * from `getCompleteBlendingState`; the gsplat-normal state is
+   * bridge-safe (symmetric alpha channel; separate alpha-equation
+   * state would trip `gl.getError()` under the WebGPU→WebGL2 bridge).
    *
    * Also toggles `uProjectionMode` (0 = sum, 1 = max) so the shader
    * picks the right projection branch.
@@ -322,7 +324,9 @@ export class GSplatTSLMaterial
   applyBlendingMode(mode: BlendingMode): void {
     const previousMode = this.userData.blendingMode as BlendingMode | undefined;
     const opacity = (this.uniforms.uOpacity?.value as number | undefined) ?? 1.0;
-    const state: CompleteBlendingState = getCompleteBlendingState(mode, opacity);
+    const state: CompleteBlendingState = isNormalMode(mode)
+      ? getGSplatNormalBlendingState()
+      : getCompleteBlendingState(mode, opacity);
     const stateChanged = applyBlendingStateToMaterial(this, state);
 
     if (this.uniforms.uProjectionMode) {
@@ -332,14 +336,19 @@ export class GSplatTSLMaterial
     this.userData.blendingMode = mode;
     this.userData.depthTest = state.depthTest;
 
-    // Cross the sum↔max boundary? The TSL factory JS-conditionally
-    // emits the cofactor / ray-integration block only in sum mode, so
-    // crossing the boundary requires a graph rebuild (same pattern
-    // bloom / vignette toggles use). Cheaper than computing the
-    // cofactors unconditionally on every vertex in max mode.
+    // Two boundaries force a graph rebuild (the factory JS-conditions
+    // fragments/vertex blocks on the mode):
+    //   - sum↔max: the cofactor / ray-integration block is emitted
+    //     only in sum mode (cheaper than computing it in max mode);
+    //   - normal↔other: the fragment output flips between coverage
+    //     alpha and the alpha=1.0 contract (GLSL twin: the
+    //     LUXAR_NORMAL_PREMULT define toggle).
+    // Same pattern bloom / vignette toggles use.
     const projectionChanged =
       previousMode === undefined || isMaxMode(previousMode) !== isMaxMode(mode);
-    if (projectionChanged) {
+    const premultChanged =
+      previousMode === undefined || isNormalMode(previousMode) !== isNormalMode(mode);
+    if (projectionChanged || premultChanged) {
       this.rebuildGraph();
     } else if (previousMode !== mode && stateChanged) {
       this.needsUpdate = true;
@@ -358,6 +367,8 @@ export class GSplatTSLMaterial
       depthTest: this.userData.depthTest ?? true,
       colormapTexture: this.uniforms.uColormapTex?.value ?? undefined,
       scalarRange: this.userData.scalarRange ?? undefined,
+      // Mirror of the GLSL clone fix: preserve a tuned extent factor.
+      maxExtentFactor: this.uniforms.uMaxExtentFactor.value,
     });
 
     if (this.blending === THREE.CustomBlending) {

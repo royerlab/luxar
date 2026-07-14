@@ -1,7 +1,7 @@
 # Gaussian Splats Dimension Mapping
 
 **Version**: 2.0
-**Last Updated**: 2026-04-03
+**Last Updated**: 2026-07-13
 
 ## Overview
 
@@ -224,10 +224,10 @@ Key fields:
 ```
 gsplat_node/
   ├── .zattrs                   (metadata above)
-  ├── centers                   (N, ndim) uint16 (AUTO) / float32 (PRECISION)
+  ├── centers                   (N, ndim) uint16 (AUTO; float32 if an axis extent ≥ 2¹⁶) / float32 (PRECISION)
   ├── amplitudes                (N,) or (1,) uint8/uint16 (AUTO) / float32 (PRECISION)
-  ├── cholesky_factors_diag     (N, d) or (1, d) uint8 (AUTO) / float32 (PRECISION), d=ndim (diagonal, scale-like terms)
-  ├── cholesky_factors_offdiag  (N, k-d) or (1, k-d) uint8 (AUTO) / float32 (PRECISION) (signed off-diagonal; omitted when ndim==1; k=ndim*(ndim+1)/2)
+  ├── cholesky_factors_diag     (N, d) or (1, d) uint8 (AUTO, certified — escalates to uint16 if the covariance certificate fails) / float32 (PRECISION), d=ndim (diagonal, scale-like terms)
+  ├── cholesky_factors_offdiag  (N, k-d) or (1, k-d) uint8 (AUTO, certified as above) / float32 (PRECISION) (signed off-diagonal; omitted when ndim==1; k=ndim*(ndim+1)/2)
   └── colors                    (N, 3) or (1, 3) uint8/uint16 (AUTO) / float32 (PRECISION)
 ```
 

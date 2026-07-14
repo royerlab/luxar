@@ -59,15 +59,19 @@ export function commitLinesGeometry(
   const bufferSession = session?.begin('Update Buffers');
   try {
     if (gpuBufferPool) {
-      const geometry = gpuBufferPool.acquireLinesGeometry(staged.path, processed.segmentCount);
-      // Capture the acquire's rebuild flag BEFORE updateLinesGeometry,
-      // which may itself trigger a spec-set rebuild (lazy scalar
-      // promotion) and OR onto the same flag.
+      const hasScalars = !!(processed.startScalars && processed.endScalars);
+      const geometry = gpuBufferPool.acquireLinesGeometry(
+        staged.path,
+        processed.segmentCount,
+        hasScalars
+      );
+      // The scalar spec set is decided by the acquire (no lazy in-place
+      // rebuild remains in updateLinesGeometry), so the acquire flag is
+      // the complete rebuild signal.
       const acquireRebuilt = gpuBufferPool.didLastAcquireRebuildAttributes();
       gpuBufferPool.updateLinesGeometry(geometry, processed, processed.segmentCount);
-      const updateRebuilt = gpuBufferPool.didLastAcquireRebuildAttributes();
       mesh.geometry = geometry;
-      if (acquireRebuilt || updateRebuilt) invalidateRenderObjectFor(mesh);
+      if (acquireRebuilt) invalidateRenderObjectFor(mesh);
     } else {
       // Non-pool path: a size/spec-set change rebinds a fresh
       // InstancedInterleavedBuffer — evict Three's cached RenderObject

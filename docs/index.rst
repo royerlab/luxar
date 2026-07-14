@@ -94,6 +94,7 @@ Features
 
    guides/specs/ND_TRANSFORMS_SPEC
    guides/specs/CACHE_PREFETCHING_SPEC
+   guides/specs/SUBPIXEL_JITTER_TAA_SPEC
    specs/GSPLATS_DIMENSION_MAPPING
 
 .. toctree::

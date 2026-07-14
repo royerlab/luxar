@@ -25,6 +25,7 @@
 import { describe, expect, it } from 'vitest';
 import * as THREE from 'three';
 import { GSplatTSLMaterial } from '../../../../../rendering/materials/gsplat/material-tsl';
+import { getGSplatNormalBlendingState } from '../../../../../rendering/blending-state';
 
 describe('GSplatTSLMaterial clone', () => {
   it('preserves the max-projection blending mode through clone', () => {
@@ -145,5 +146,67 @@ describe('GSplatTSLMaterial clone', () => {
 
     cloned.uniforms.uOpacity.value = 0.123;
     expect(original.uniforms.uOpacity.value).not.toBe(0.123);
+  });
+
+  it('clone preserves a tuned uMaxExtentFactor (was silently reset to 0.33)', () => {
+    const original = new GSplatTSLMaterial({ maxExtentFactor: 0.7 });
+    expect(original.uniforms.uMaxExtentFactor.value).toBe(0.7);
+
+    const cloned = original.clone();
+    expect(cloned.uniforms.uMaxExtentFactor.value).toBe(0.7);
+  });
+});
+
+describe('GSplatTSLMaterial normal mode — premultiplied coverage alpha', () => {
+  it('constructor normal: gsplat-specific state (CustomBlending One/OneMinusSrcAlpha, no depth write)', () => {
+    const material = new GSplatTSLMaterial({ blendingMode: 'normal' });
+
+    const expected = getGSplatNormalBlendingState();
+    expect(material.blending).toBe(expected.blending);
+    expect(material.blendEquation).toBe(expected.blendEquation);
+    expect(material.blendSrc).toBe(expected.blendSrc);
+    expect(material.blendDst).toBe(expected.blendDst);
+    expect(material.transparent).toBe(true);
+    expect(material.depthTest).toBe(true);
+    expect(material.depthWrite).toBe(false);
+    // Never the premultipliedAlpha flag — NodeMaterial.setup() would
+    // auto-inject a second RGB×alpha transform on this path.
+    expect(material.premultipliedAlpha).toBe(false);
+    expect(material.uniforms.uProjectionMode.value).toBe(0);
+  });
+
+  it('depthWrite stays OFF at opacity 1.0 (no generic opacity>=0.99 gate)', () => {
+    const material = new GSplatTSLMaterial({ blendingMode: 'normal', opacity: 1.0 });
+    expect(material.depthWrite).toBe(false);
+  });
+
+  it('round-trips normal → additive → normal restoring both states exactly', () => {
+    const material = new GSplatTSLMaterial({ blendingMode: 'normal' });
+
+    material.applyBlendingMode('additive');
+    expect(material.blending).toBe(THREE.AdditiveBlending);
+    expect(material.depthTest).toBe(false);
+    expect(material.userData.blendingMode).toBe('additive');
+
+    material.applyBlendingMode('normal');
+    const expected = getGSplatNormalBlendingState();
+    expect(material.blending).toBe(expected.blending);
+    expect(material.blendSrc).toBe(expected.blendSrc);
+    expect(material.blendDst).toBe(expected.blendDst);
+    expect(material.depthWrite).toBe(false);
+    expect(material.transparent).toBe(true);
+    expect(material.userData.blendingMode).toBe('normal');
+  });
+
+  it('clone preserves normal mode with the premultiplied state', () => {
+    const original = new GSplatTSLMaterial({ blendingMode: 'normal' });
+    const cloned = original.clone();
+
+    expect(cloned.userData.blendingMode).toBe('normal');
+    const expected = getGSplatNormalBlendingState();
+    expect(cloned.blending).toBe(expected.blending);
+    expect(cloned.blendSrc).toBe(expected.blendSrc);
+    expect(cloned.blendDst).toBe(expected.blendDst);
+    expect(cloned.depthWrite).toBe(false);
   });
 });

@@ -107,9 +107,9 @@ def test_gsplat_info_handles_partition_file():
 
 def test_partition_file_grafts_into_a_scene():
     """A kind=partition .gsplats.zarr embeds into a scene as the identical
-    kind=partition subtree (review finding #2: convert/add_gsplats_from_file
-    used to crash on a partition root because GSplatData.load can't represent
-    it). The graft composes the scene's own builders."""
+    kind=partition subtree. Regression: convert/add_gsplats_from_file used to
+    crash on a partition root because GSplatData.load can't represent it. The
+    graft composes the scene's own builders."""
     from luxar import Dimensions, LuxarZarrCompiler
 
     data = _clustered(40)  # 80 splats, 2 clusters

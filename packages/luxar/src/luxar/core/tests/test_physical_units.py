@@ -60,14 +60,15 @@ class TestPhysicalUnits:
             PhysicalUnit.validate("invalid_unit")
 
     def test_units_in_config_match_types(self) -> None:
-        """Test that SUPPORTED_UNITS in config matches validation in types."""
+        """Every unit in SUPPORTED_UNITS validates and round-trips unchanged."""
         from luxar.config import SUPPORTED_UNITS
         from luxar.validation.types import validate_physical_unit
 
-        # All units in config should be valid
+        assert SUPPORTED_UNITS, "SUPPORTED_UNITS is empty — the loop would be vacuous"
         for unit in SUPPORTED_UNITS:
-            # Should not raise
-            validate_physical_unit(unit)
+            # Each supported unit validates (no raise) AND is returned unchanged
+            # — not merely "does not raise".
+            assert validate_physical_unit(unit) == unit
 
     def test_dimensions_with_mixed_units(self, tmp_path) -> None:
         """Test that different dimensions can have different units."""
