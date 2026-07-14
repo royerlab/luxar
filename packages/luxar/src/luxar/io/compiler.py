@@ -51,7 +51,12 @@ from ._compiler.bounds import (
 )
 from ._compiler.chunking import calculate_intelligent_chunks
 from ._compiler.colormap import write_colormap_lut_if_needed
-from ._compiler.context import DatasetCtx, GeometryWriteCtx, OrderingCtx
+from ._compiler.context import (
+    DatasetCtx,
+    GeometryWriteCtx,
+    GSplatsWriteCtx,
+    OrderingCtx,
+)
 from ._compiler.dataset_writers.colors import write_colors
 from ._compiler.dataset_writers.positions import write_positions
 from ._compiler.dataset_writers.scalars import (
@@ -66,13 +71,12 @@ from ._compiler.finalize.lod_backfill import (
     finalize_lod_position_bounds,
 )
 from ._compiler.finalize.validation import validate_discrete_dimension_ranges
-from ._compiler.geometry_writers.points import write_points as _write_points_impl
-from ._compiler.gsplat_assembly import (
-    apply_gsplat_group_attrs,
-    apply_gsplat_spatial_ordering,
-    validate_gsplat_inputs,
-    write_gsplat_arrays,
+from ._compiler.geometry_writers.gsplats import (
+    write_gsplat_leaf_subtree as _write_gsplat_leaf_subtree_impl,
 )
+from ._compiler.geometry_writers.gsplats import write_gsplats as _write_gsplats_impl
+from ._compiler.geometry_writers.points import write_points as _write_points_impl
+from ._compiler.gsplat_assembly import apply_gsplat_group_attrs
 from ._compiler.labels.image_labels import write_image_labels_csr
 from ._compiler.labels.text_labels import write_labels_csr
 from ._compiler.node_common import (
@@ -767,102 +771,6 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
             ordering_method=self.ordering_method,
         )
 
-    def _validate_gsplat_inputs(
-        self,
-        centers: NDArray[np.float32],
-        amplitudes: Union[NDArray[np.float32], float],
-        cholesky_factors: NDArray[np.float32],
-        colors: Optional[
-            Union[NDArray[np.float32], List[float], Tuple[float, ...]]
-        ] = None,
-    ) -> Tuple[
-        NDArray[np.float32],
-        Union[NDArray[np.float32], float],
-        NDArray[np.float32],
-        Optional[Union[NDArray[np.float32], List[float], Tuple[float, ...]]],
-        int,
-        int,
-        bool,
-    ]:
-        return validate_gsplat_inputs(centers, amplitudes, cholesky_factors, colors)
-
-    def _apply_gsplat_spatial_ordering(
-        self,
-        centers: NDArray[np.float32],
-        amplitudes: Union[NDArray[np.float32], float],
-        cholesky_factors: NDArray[np.float32],
-        colors: Optional[Union[NDArray[np.float32], List[float], Tuple[float, ...]]],
-        n_splats: int,
-        n_dims: int,
-        cholesky_is_uniform: bool,
-        coverage_sigma: float = 3.0,
-    ) -> Tuple[
-        NDArray[np.float32],
-        Union[NDArray[np.float32], float],
-        NDArray[np.float32],
-        Optional[Union[NDArray[np.float32], List[float], Tuple[float, ...]]],
-        Optional[Dict[str, Any]],
-    ]:
-        return apply_gsplat_spatial_ordering(
-            centers,
-            amplitudes,
-            cholesky_factors,
-            colors,
-            n_splats,
-            n_dims,
-            cholesky_is_uniform,
-            self._make_ordering_ctx(),
-            coverage_sigma,
-            # Scene gsplats carry authoritative dimension semantics — use the
-            # discrete non-displayed axes as the ordering barrier, exactly like
-            # the Points/Lines scene path (sort_points_compound slice_dims).
-            # This is authoritative regardless of coordinate value spacing, so a
-            # non-integer categorical axis (e.g. physical-time seconds) is
-            # handled where the value-based auto-detect fallback would miss it.
-            barrier_dims=self._scene_barrier_dims(n_dims),
-        )
-
-    def _scene_barrier_dims(self, n_dims: int) -> Optional[List[int]]:
-        """Barrier (categorical) axes from the scene's ``Dimension`` metadata.
-
-        Mirrors the Points/Lines slice-dim split (``d.discrete and not
-        d.display``). Returns ``None`` when the scene carries no dimensions (→
-        per-leaf auto-detect); an explicit list (possibly empty) otherwise.
-        """
-        if "scene_dimensions" not in self.store.attrs:
-            return None
-        from ..core.dimensions import Dimensions
-
-        dims = Dimensions.from_dict(self.store.attrs["scene_dimensions"]).dimensions
-        return [
-            i for i, d in enumerate(dims) if i < n_dims and d.discrete and not d.display
-        ]
-
-    def _write_gsplat_arrays(
-        self,
-        group: zarr.Group,
-        centers: NDArray[np.float32],
-        amplitudes: Union[NDArray[np.float32], float],
-        cholesky_factors: NDArray[np.float32],
-        colors: Optional[Union[NDArray[np.float32], List[float], Tuple[float, ...]]],
-        n_splats: int,
-        n_dims: int,
-        cholesky_is_uniform: bool,
-        ordering_data: Optional[Dict[str, Any]],
-    ) -> dict[str, Any]:
-        return write_gsplat_arrays(
-            group,
-            centers,
-            amplitudes,
-            cholesky_factors,
-            colors,
-            n_splats,
-            n_dims,
-            cholesky_is_uniform,
-            ordering_data,
-            self._make_dataset_ctx(),
-        )
-
     def _apply_gsplat_group_attrs(
         self,
         group: zarr.Group,
@@ -1117,91 +1025,18 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
             Metadata dictionary about the written gsplats
         """
         self._check_not_finalized("write_gsplats")
-
-        path = path.lstrip("/")
-        group = self.store.require_group(path)
-
-        # Validate
-        (
+        metadata = _write_gsplats_impl(
+            self._make_gsplats_ctx(),
+            path,
             centers,
             amplitudes,
             cholesky_factors,
             colors,
-            n_splats,
-            n_dims,
-            cholesky_is_uniform,
-        ) = self._validate_gsplat_inputs(centers, amplitudes, cholesky_factors, colors)
-
-        # Extract truncation_radius for spatial ordering (default 3.0)
-        truncation_radius = float(attrs.get("truncation_radius", 3.0))
-
-        aprint(f"📝 Writing {n_splats:,} gsplats ({n_dims}D) to {path}")
-        if isinstance(amplitudes, (int, float)):
-            aprint(f"  → Uniform amplitude {amplitudes:.3f} for all splats")
-        if colors is not None and isinstance(colors, (list, tuple)):
-            aprint(f"  → Uniform color RGB{list(colors)} for all splats")
-        if cholesky_is_uniform:
-            aprint(
-                f"  → Uniform Cholesky factors (shape {n_dims * (n_dims + 1) // 2}) "
-                f"for all splats"
-            )
-
-        # Spatial ordering
-        (
-            centers,
-            amplitudes,
-            cholesky_factors,
-            colors,
-            ordering_data,
-        ) = self._apply_gsplat_spatial_ordering(
-            centers,
-            amplitudes,
-            cholesky_factors,
-            colors,
-            n_splats,
-            n_dims,
-            cholesky_is_uniform,
-            coverage_sigma=truncation_radius,
+            labels,
+            image_labels,
+            **attrs,
         )
-
-        # Write arrays
-        metadata = self._write_gsplat_arrays(
-            group,
-            centers,
-            amplitudes,
-            cholesky_factors,
-            colors,
-            n_splats,
-            n_dims,
-            cholesky_is_uniform,
-            ordering_data,
-        )
-
-        # Set group attrs
-        self._apply_gsplat_group_attrs(group, metadata, attrs)
-
-        # Update scene-level bounds
-        self._update_scene_bounds(metadata["position_bounds"])
-
-        # Write labels if provided (CSR-style: label_offsets + label_bytes)
-        if labels is not None:
-            sort_order = (
-                ordering_data["sort_order"] if ordering_data is not None else None
-            )
-            self._write_labels_csr(group, labels, n_splats, sort_order)
-            metadata["has_labels"] = True
-
-        # Write image labels if provided (CSR-style, no compression on blobs)
-        if image_labels is not None:
-            sort_order = (
-                ordering_data["sort_order"] if ordering_data is not None else None
-            )
-            self._write_image_labels_csr(group, image_labels, n_splats, sort_order)
-            metadata["has_image_labels"] = True
-
-        self._metadata_cache[path] = metadata
-        aprint(f"✅ GSplats written to {path}")
-
+        self._metadata_cache[path.lstrip("/")] = metadata
         return metadata
 
     def write_gsplat_leaf_subtree(
@@ -1235,38 +1070,10 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
             Aggregate metadata dict (incl. ``position_bounds``).
         """
         self._check_not_finalized("write_gsplat_leaf_subtree")
-
-        from ._compiler.gsplat_tree import write_gsplat_leaf
-
-        path = path.lstrip("/")
-        group = self.store.require_group(path)
-
-        scene_tone_mapping = None
-        if self._scene is not None and self._scene.viewer_config is not None:
-            scene_tone_mapping = self._scene.viewer_config.tone_mapping
-
-        metadata = write_gsplat_leaf(
-            group,
-            leaf,
-            dataset_ctx=self._make_dataset_ctx(),
-            ordering_ctx=self._make_ordering_ctx(),
-            store=self.store,
-            attrs=attrs,
-            scene_tone_mapping=scene_tone_mapping,
-            # Scene-embedded GSplatData (flat leaf / additive ladder) uses the
-            # same authoritative scene-dimension barrier as the array path, so a
-            # non-integer categorical axis is grouped correctly (not left to the
-            # value-based auto-detect fallback).
-            barrier_dims=self._scene_barrier_dims(leaf.ndim),
+        metadata = _write_gsplat_leaf_subtree_impl(
+            self._make_gsplats_ctx(), path, leaf, **attrs
         )
-
-        self._update_scene_bounds(metadata["position_bounds"])
-        self._metadata_cache[path] = metadata
-        n_sub = metadata.get("n_additive_sublods", 1)
-        aprint(
-            f"✅ GSplats leaf written to {path} "
-            f"({metadata['n_splats']:,} splats, {n_sub} additive sub-LOD(s))"
-        )
+        self._metadata_cache[path.lstrip("/")] = metadata
         return metadata
 
     def create_resizable_dataset(
@@ -1397,6 +1204,21 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
             compressor=self.compressor,
             update_scene_bounds=self._update_scene_bounds,
             write_colormap_lut=self._write_colormap_lut_if_needed,
+        )
+
+    def _make_gsplats_ctx(self) -> GSplatsWriteCtx:
+        """Build the narrow context for the extracted GSplats write pipelines."""
+        scene_tone_mapping = None
+        if self._scene is not None and self._scene.viewer_config is not None:
+            scene_tone_mapping = self._scene.viewer_config.tone_mapping
+        return GSplatsWriteCtx(
+            store=self.store,
+            dataset_ctx=self._make_dataset_ctx(),
+            ordering_ctx=self._make_ordering_ctx(),
+            compressor=self.compressor,
+            scene_tone_mapping=scene_tone_mapping,
+            update_scene_bounds=self._update_scene_bounds,
+            apply_gsplat_group_attrs=self._apply_gsplat_group_attrs,
         )
 
     def _write_positions_dataset(

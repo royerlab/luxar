@@ -8,7 +8,7 @@ instance. They are built by the ``_make_*_ctx()`` methods on the orchestrator.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Callable, Dict, List, Literal
+from typing import TYPE_CHECKING, Any, Callable, Dict, List, Literal, Optional
 
 from ...encoding import ArrayEncoder, EncodingMode
 
@@ -59,3 +59,25 @@ class GeometryWriteCtx:
     compressor: "CompressorLike"
     update_scene_bounds: "Callable[[Dict[str, List[float]]], None]"
     write_colormap_lut: "Callable[[zarr.Group, Dict[str, Any]], None]"
+
+
+@dataclass(frozen=True)
+class GSplatsWriteCtx:
+    """Narrow context for the extracted GSplats write pipelines.
+
+    Like :class:`GeometryWriteCtx` but with the gsplat-specific group-attrs hook
+    (``apply_gsplat_group_attrs`` owns the warn-once colormap-LUT flag) and the
+    scene tone-mapping value the leaf-subtree writer threads into
+    ``write_gsplat_leaf``. The barrier-dim inference is a pure function of the
+    store (see ``scene_barrier_dims`` in geometry_writers/gsplats.py).
+    """
+
+    store: "zarr.Group"
+    dataset_ctx: DatasetCtx
+    ordering_ctx: OrderingCtx
+    compressor: "CompressorLike"
+    scene_tone_mapping: "Optional[str]"
+    update_scene_bounds: "Callable[[Dict[str, List[float]]], None]"
+    apply_gsplat_group_attrs: (
+        "Callable[[zarr.Group, Dict[str, Any], Dict[str, Any]], None]"
+    )
