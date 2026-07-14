@@ -274,7 +274,7 @@ print(f"Radii: {radii.shape}, {radii.dtype}")
 
 | Type | Description | Constraints | Valid Dtypes |
 |------|-------------|-------------|--------------|
-| **COORDINATE** | Spatial positions/centers | Can be negative | float32, float16 |
+| **COORDINATE** | Spatial positions/centers | Can be negative | float32, uint16 (per-axis fixed-point; float16 deliberately never used) |
 | **COLOR** | RGB/RGBA colors | Non-negative, SDR [0,1] or HDR | uint8, uint16, float16, float32 |
 | **BOUNDED_SCALAR** | Scalars with known [min, max] | Within bounds | uint8, uint16, float16, float32 |
 | **POSITIVE_SCALAR** | Non-negative scalars | ≥ 0 | uint8, uint16, float16, float32 |

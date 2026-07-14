@@ -93,6 +93,7 @@ class ArrayEncoder(
         chunks: Optional[tuple] = None,
         compressor: Optional[Any] = None,
         deduplicate: bool = True,
+        allow_lut: bool = True,
         _perchannel_bits: Optional[int] = None,
     ) -> None:
         """Encode array or scalar and write to zarr group.
@@ -132,6 +133,12 @@ class ArrayEncoder(
                          cannot resolve refs (e.g. line vertices/segments,
                          read as raw chunked zarr) so they are always
                          materialised.
+            allow_lut: When True (default), arrays with few unique values may
+                         store as an exact ``lut_uint8/16``. Pass False for
+                         arrays whose reader has no encoding dispatch (line
+                         vertices — same raw-read rationale as
+                         ``deduplicate``); grid-snapped coordinates would
+                         otherwise LUT-encode and decode as indices.
             _perchannel_bits: Internal-only. Forces the quantization tier (8 or
                          16) of the per-channel log encoders for the
                          CHOLESKY_DIAG / CHOLESKY_OFFDIAG semantic types. Set
@@ -251,8 +258,10 @@ class ArrayEncoder(
                 )
                 return
 
-        # Priority 3: LUT Encoding (skip in PRECISION mode)
-        if mode != EncodingMode.PRECISION:
+        # Priority 3: LUT Encoding (skip in PRECISION mode; callers pass
+        # allow_lut=False for arrays whose reader has no encoding dispatch —
+        # same rationale as deduplicate=False above)
+        if allow_lut and mode != EncodingMode.PRECISION:
             plan = self._lut_plan(data, semantic_type)
             if plan is not None:
                 self._encode_lut(zarr_group, name, data, plan, chunks, compressor)

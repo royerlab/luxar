@@ -622,9 +622,13 @@ class TestPortHandling:
             from luxar.cli import app
 
             runner = CliRunner()
+            # NOTE: serve has no --no-viewer flag (the viewer is opt-in via
+            # --viewer); passing it here used to make this test vacuously
+            # pass on the unknown-option exit code without ever exercising
+            # the occupied-port path.
             result = runner.invoke(
                 app,
-                ["serve", "--port", str(available_port), "--no-viewer"],
+                ["serve", "--port", str(available_port)],
                 catch_exceptions=True,
             )
 
