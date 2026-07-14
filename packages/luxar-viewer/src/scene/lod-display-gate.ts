@@ -11,9 +11,11 @@
  * {@link shouldHoldPreviousDisplay} holds the previously-displayed level
  * while the streaming aspiration is strictly worse than what is shown, and
  * releases on ladder completion, the committed-energy threshold (stamped
- * datasets: committed e(k) ≥ {@link ENERGY_RELEASE_THRESHOLD} — the primary,
- * much earlier release), committed-count crossover (the unstamped fallback),
- * ladder failure, or the previous level losing freshness — never blocking a
+ * datasets, UPGRADE direction only: committed e(k) ≥
+ * {@link ENERGY_RELEASE_THRESHOLD} — the primary, much earlier release on
+ * zoom-in), committed-count crossover (the unstamped fallback, and the sole
+ * early release on a downgrade), ladder failure, or the previous level losing
+ * freshness — never blocking a
  * swap when nothing better is on screen (fast first paint is preserved).
  *
  * **Committed state only.** The gate reads the per-mesh commit stamps
@@ -284,7 +286,10 @@ function sideProgress(child: FreshnessChild, version: number | null): SideProgre
  * shared-base ladders, while e(k) passes 0.6 mid-ladder (and at chunk 1-2 on
  * sibling-aware ladders, which size their first chunk for exactly this).
  * Counts compare apples to oranges across substitutive levels; the energy
- * fraction is the additive orderer's own criterion.
+ * fraction is the additive orderer's own criterion. Applied only on an UPGRADE
+ * (finer aspiration than the held level); on a downgrade the fraction is of an
+ * already-coarser level, so releasing early would dip below the held finer
+ * level — see {@link shouldHoldPreviousDisplay}'s `isUpgrade` guard.
  */
 export const ENERGY_RELEASE_THRESHOLD = 0.6;
 
@@ -305,26 +310,32 @@ export const ENERGY_RELEASE_THRESHOLD = 0.6;
  *   - `prev` is fresh for `version` (aggregate freshness for a group prev;
  *     merely ready when `version` is ``null``): staleness always beats
  *     quality — a stale `prev` shows the wrong slice and must not be held.
- *   - the aspiration's committed energy is unknown (unstamped dataset) or
- *     still below {@link ENERGY_RELEASE_THRESHOLD} — a stamped aspiration
+ *   - `isUpgrade` (aspiration FINER than `prev` — zoom-in) AND the aspiration's
+ *     committed energy is unknown (unstamped dataset) or still below
+ *     {@link ENERGY_RELEASE_THRESHOLD}. On an upgrade a stamped aspiration
  *     carrying ≥ that fraction of its own total self-energy swaps in
- *     immediately (the energy release; strictly earlier than or equal to
- *     the count release below, never later).
+ *     immediately (the energy release; earlier than or equal to the count
+ *     release below). On a DOWNGRADE (coarser aspiration — zoom-out) the energy
+ *     short-circuit is skipped entirely: the fraction is of an already-coarser
+ *     level, so releasing early would dip below the held finer `prev`; the
+ *     count rule alone then governs (holds until the coarse ladder completes).
  *   - both committed element counts are known, comparable (same leaf
  *     geometry type on both sides — splat counts vs segment counts are
  *     meaningless to compare, and `'mixed'` subtrees are never comparable),
  *     `prev`'s is non-zero, and the aspiration's is strictly below it.
  *
  * Releases (returns ``false``) on ladder completion (commit landed), the
- * committed-energy threshold (stamped datasets — the rest of the ladder then
- * streams *visibly*), count crossover (the unstamped fallback / early exit),
- * failure, a stale/empty/unknown `prev`, or no `prev` at all — so a group
- * with nothing better on screen always swaps immediately (fast first paint).
+ * committed-energy threshold (stamped datasets, UPGRADE only — the rest of the
+ * ladder then streams *visibly*), count crossover (the unstamped fallback / the
+ * sole early release on a downgrade), failure, a stale/empty/unknown `prev`, or
+ * no `prev` at all — so a group with nothing better on screen always swaps
+ * immediately (fast first paint).
  */
 export function shouldHoldPreviousDisplay(
   aspiration: HoldCandidate,
   prev: FreshnessChild | undefined,
-  version: number | null
+  version: number | null,
+  isUpgrade: boolean = true
 ): boolean {
   if (!prev) return false;
   const asp = sideProgress(aspiration, version);
@@ -334,6 +345,19 @@ export function shouldHoldPreviousDisplay(
   if (!prevProgress || !prevProgress.freshForHold) return false;
   if (prevProgress.count <= 0) return false;
   if (asp.nodeType !== prevProgress.nodeType || asp.nodeType === 'mixed') return false;
-  if (asp.energy != null && asp.energy >= ENERGY_RELEASE_THRESHOLD) return false;
+  // Energy release is UPGRADE-ONLY. On an upgrade (aspiration FINER than the
+  // held prev, i.e. zoom-in) a committed prefix carrying ≥ the threshold of the
+  // finer level's own energy is close enough to its complete self to swap in
+  // early — this is the validated fast-first-paint behavior. On a DOWNGRADE
+  // (aspiration COARSER than prev, i.e. zoom-out) the aspiration's energy is a
+  // fraction of an already-coarser level: releasing at 0.6 would show a
+  // coarse-partial dip below BOTH the held finer prev and the final coarse
+  // level (fine-complete → coarse-60% → coarse-100%), violating the
+  // never-downgrade contract. So on a downgrade we skip the short-circuit and
+  // fall through to the count rule, which holds until the coarse ladder is
+  // committed-complete (the top `asp.complete` guard). `isUpgrade` defaults to
+  // true so legacy/direction-agnostic callers keep the pre-fix behavior; the
+  // registry passes it explicitly from the child indices.
+  if (isUpgrade && asp.energy != null && asp.energy >= ENERGY_RELEASE_THRESHOLD) return false;
   return asp.count < prevProgress.count;
 }
