@@ -81,10 +81,9 @@ def create_loss_function(
         elif loss_type.lower() == "mse":
             data = mse_loss(pred, V_t, asymmetric_penalty)
         else:
-            # Audit C1 fix (delme/test-audit-luxar-codebase/findings-python-gsplats-fitting-seeds-preproc.md):
-            # previously, any unknown loss_type silently fell through to
-            # MSE. Now a typo ("poisson_deviance", "mes", etc.) raises
-            # ValueError so the caller knows immediately.
+            # An unknown loss_type must raise, not silently fall through to
+            # MSE — a typo ("poisson_deviance", "mes", etc.) should fail
+            # immediately so the caller knows.
             raise ValueError(
                 f"Unknown loss_type: {loss_type!r}. "
                 f"Expected one of: 'poisson', 'l1', 'mse'."

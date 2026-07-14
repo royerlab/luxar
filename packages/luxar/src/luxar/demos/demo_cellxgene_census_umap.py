@@ -3,7 +3,7 @@
 
 A 3D UMAP of millions of human cells from the CZ CELLxGENE Census, embedded from
 their precomputed **scVI latent** (50-d) with cuML UMAP, rendered in Luxar with
-**substitutive Points LOD** (PR #379/#390). A categorical ``coloring`` dimension
+**substitutive Points LOD**. A categorical ``coloring`` dimension
 switches the colour scheme (navigate with ``[`` / ``]``):
 
   0: Cell type        (hundreds of categories — hashed hue)
