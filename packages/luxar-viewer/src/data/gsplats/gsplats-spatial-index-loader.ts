@@ -241,22 +241,31 @@ export class GSplatsSpatialIndexLoader implements GSplatsDataLoader {
       throw e;
     }
 
-    // Try to open optional arrays
-    try {
-      let colorsArray = await zarr.open(this.zarrLocation.resolve('colors'), { kind: 'array' });
-      this.registerBounds('colors', colorsArray);
-      if (this.l0Cache) {
-        colorsArray = wrapWithCache(
-          colorsArray,
-          this.l0Cache,
-          `${this.node.path}/colors`,
-          () => this._activeProbe,
-          () => this._activeSignal
+    // Try to open the optional colors array. Skip the probe entirely when the
+    // node declares `has_colors: false` (e.g. single-channel / colormapped
+    // gsplats) — otherwise each leaf fires ~3 doomed 404s (colors/.zattrs,
+    // .zarray, zarr.json) that spam the console and waste round-trips per
+    // refinement. `undefined` (legacy datasets) still probes for compatibility.
+    if (attrs.has_colors !== false) {
+      try {
+        let colorsArray = await zarr.open(this.zarrLocation.resolve('colors'), { kind: 'array' });
+        this.registerBounds('colors', colorsArray);
+        if (this.l0Cache) {
+          colorsArray = wrapWithCache(
+            colorsArray,
+            this.l0Cache,
+            `${this.node.path}/colors`,
+            () => this._activeProbe,
+            () => this._activeSignal
+          );
+        }
+        this.arrays.colors = colorsArray;
+      } catch {
+        log.info(
+          Modules.GSPLATS_SPATIAL_INDEX_LOADER,
+          'No colors array found (using default white)'
         );
       }
-      this.arrays.colors = colorsArray;
-    } catch {
-      log.info(Modules.GSPLATS_SPATIAL_INDEX_LOADER, 'No colors array found (using default white)');
     }
 
     // Initialize data accumulator for object pooling. The hot path
