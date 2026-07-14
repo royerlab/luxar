@@ -46,9 +46,6 @@ class SemanticType(str, Enum):
       halves always share one tier).
     - INDEX: Non-negative integer indices or counts.
       Valid: uint8, uint16, uint32, uint64
-    - UNIT_VECTOR: Normalized vectors with ||v|| = 1.
-      Examples: surface normals, directions
-      Valid: float32, float16, or specialized encodings (octahedral)
     """
 
     COORDINATE = "coordinate"
@@ -59,4 +56,3 @@ class SemanticType(str, Enum):
     CHOLESKY_DIAG = "cholesky_diag"
     CHOLESKY_OFFDIAG = "cholesky_offdiag"
     INDEX = "index"
-    UNIT_VECTOR = "unit_vector"

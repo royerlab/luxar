@@ -258,6 +258,63 @@ def validate_radii_for_writing(
         )
 
 
+def validate_widths_for_writing(
+    widths: Any, n_vertices: int, context: str = "widths"
+) -> None:
+    """Validate line widths for writing.
+
+    Accepts a per-vertex 1D array of shape ``(n_vertices,)``, a broadcast
+    array of shape ``(1,)``, or a scalar width. The Lines sibling of
+    :func:`validate_radii_for_writing` (Points), per the three-geometry
+    symmetry rule.
+
+    Args:
+        widths: Per-vertex widths array, broadcast ``(1,)`` array, or scalar
+        n_vertices: Expected number of vertices
+        context: Context for error messages
+
+    Raises:
+        ValidationError: If widths are invalid
+    """
+    if isinstance(widths, np.ndarray):
+        if widths.ndim != 1:
+            raise ValidationError(
+                f"{context}: Expected 1D array, got {widths.ndim}D array "
+                f"with shape {widths.shape}",
+                "Widths must be a 1D array with one value per vertex",
+            )
+
+        # Allow broadcast shape (1,) or full shape (n_vertices,) — mirrors radii
+        if widths.shape[0] != n_vertices and widths.shape[0] != 1:
+            raise ValidationError(
+                f"{context}: Widths shape {widths.shape} doesn't match "
+                f"n_vertices {n_vertices} and is not 1 (broadcast)",
+                f"Provide exactly {n_vertices} width values or use shape (1,) "
+                f"for broadcasting",
+            )
+
+        _validate_numeric_finite_values(widths, context)
+
+        if np.any(widths <= 0):
+            min_val: float = float(np.min(widths))
+            raise ValidationError(
+                f"{context}: Widths must be positive (> 0). "
+                f"Found minimum value: {min_val:.3f}",
+                "Use np.clip(widths, 0.01, None) to ensure positive values",
+            )
+    elif isinstance(widths, (int, float)):
+        if not np.isfinite(widths):
+            raise ValidationError(
+                f"{context}: Width must be finite. Got {widths}",
+                "Provide a finite positive width value",
+            )
+        if widths <= 0:
+            raise ValidationError(
+                f"{context}: Width must be positive (> 0). Got {widths}",
+                "Provide a positive width value",
+            )
+
+
 def validate_sharpness_for_writing(
     sharpness: NDArray[Any], n_points: int, context: str = "sharpness"
 ) -> None:

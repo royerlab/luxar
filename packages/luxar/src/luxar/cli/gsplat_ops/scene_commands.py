@@ -275,7 +275,7 @@ def migrate_format_command(
             # Post-write read-back: confirm the output is a loadable current-format
             # file rather than reporting success blind. load_gsplat_node (not
             # GSplatData.load) so nested trees — a migrated v3.x partition /
-            # multiscale / mosaic, which has no flat matrix equivalent — verify
+            # overview / adaptive, which has no flat matrix equivalent — verify
             # too, not just leaf/lod-matrix shapes.
             import zarr
 

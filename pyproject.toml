@@ -161,6 +161,9 @@ exclude = [
     # `git lfs pull`) it would otherwise ship as broken ~130-byte pointer files.
     # Demo *scripts* stay; the data is fetched/regenerated separately.
     "**/demos/data/**",
+    # Multiscale-decomposition research demos are source-tree-only (kept for
+    # development; not part of the installed package surface).
+    "**/gsplats/multiscale/demos/**",
 ]
 
 [tool.hatch.build.targets.wheel.force-include]
