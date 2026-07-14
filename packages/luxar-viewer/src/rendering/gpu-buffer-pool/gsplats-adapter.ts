@@ -112,6 +112,11 @@ export class GSplatsBufferAdapter {
         active.capacity = chooseCapacity(splatCount);
         active.lastUsedFrame = host.frameCount;
         host.stats.capacityGrowths++;
+        // Growth can push total pool bytes past the budget without any
+        // release happening (a streaming session that only grows).
+        // Sweep idle pooled buffers now instead of waiting for the next
+        // releaseGeometry (historically the ONLY byte-budget trigger).
+        host.evictUnused();
         host._lastAcquireRebuilt = true;
         return active.geometry as THREE.InstancedBufferGeometry;
       }
@@ -147,6 +152,9 @@ export class GSplatsBufferAdapter {
 
     host.activeBuffers.set(nodeId, newBuffer);
     host.stats.allocations++;
+    // Fresh allocations count against the byte budget too — sweep idle
+    // pooled buffers (see growth-path note above).
+    host.evictUnused();
     host.typeStats.gsplats.allocations++;
     return geometry;
   }

@@ -217,6 +217,11 @@ export class PointsBufferAdapter {
           active.capacity = chooseCapacity(pointCount);
           active.lastUsedFrame = host.frameCount;
           host.stats.capacityGrowths++;
+        // Growth can push total pool bytes past the budget without any
+        // release happening (a streaming session that only grows).
+        // Sweep idle pooled buffers now instead of waiting for the next
+        // releaseGeometry (historically the ONLY byte-budget trigger).
+        host.evictUnused();
           // growPointsGeometry reallocates the interleaved buffer (a real
           // GPU buffer creation), so bump the per-type allocation counter
           // to keep `typeStats.points.allocations` in sync with actual
@@ -266,6 +271,9 @@ export class PointsBufferAdapter {
 
     host.activeBuffers.set(nodeId, newBuffer);
     host.stats.allocations++;
+    // Fresh allocations count against the byte budget too — sweep idle
+    // pooled buffers (see growth-path note above).
+    host.evictUnused();
     host.typeStats.points.allocations++;
 
     return preparePointsGeometryForDraw(geometry, pointCount);

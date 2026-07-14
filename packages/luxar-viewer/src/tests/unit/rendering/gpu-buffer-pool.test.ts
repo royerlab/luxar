@@ -309,10 +309,13 @@ describe('GPUBufferPool', () => {
         // Don't release - keep active
       }
 
-      // Now evict - the first two should be evicted (unused for >2 frames)
-      const evicted = testPool.evictUnused();
-
-      expect(evicted).toBeGreaterThanOrEqual(2);
+      // The stale pooled geometries must be gone. Note: acquire paths now
+      // sweep idle buffers themselves (byte-budget-on-growth fix), so the
+      // eviction may already have happened during the loop above — assert
+      // the cumulative OUTCOME via stats plus a final explicit sweep,
+      // not the return value of one manual call.
+      testPool.evictUnused();
+      expect(testPool.getStats().evictions).toBeGreaterThanOrEqual(2);
     });
 
     it('should dispose all geometries on pool disposal', () => {
