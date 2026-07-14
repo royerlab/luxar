@@ -356,6 +356,8 @@ vc = luxar.ViewerConfig(
     auto_rotate=True,
 )
 
+dims = luxar.Dimensions.default_3d()
+
 with luxar.LuxarZarrCompiler("output.luxar.zarr") as compiler:
     scene = compiler.create_scene(dimensions=dims, viewer_config=vc)
     # ... add geometry to scene
@@ -369,6 +371,8 @@ file, then reload it in Python:
 ```python
 vc = luxar.ViewerConfig.from_file("my_view.json")
 vc.bloom_strength = 0.8  # tweak as needed
+
+dims = luxar.Dimensions.default_3d()
 
 with luxar.LuxarZarrCompiler("output.luxar.zarr") as compiler:
     scene = compiler.create_scene(dimensions=dims, viewer_config=vc)

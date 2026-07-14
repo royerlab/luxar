@@ -81,7 +81,9 @@ Encoding mode picks the bit depth: PRECISION→float32; **AUTO→uint8 with an
 encode-time certificate** — the writer measures the actual Σ = L·Lᵀ reconstruction
 error (p95 relative Frobenius) and escalates to uint16 only when it exceeds 0.05
 (e.g. merged stores whose σ columns span many decades) — with a final float32 rung
-should even uint16 fail (practically unreachable) — recording the measurement in
+should even uint16 fail (practically unreachable on real fits; degenerate/tiny
+groups, e.g. single-splat sub-LODs, may decline certification and store float32
+directly) — recording the measurement in
 each array's `encoding.certificate`; MEMORY→uint8 unconditionally. uint8 is visually
 lossless on real fits (94.5 dB vs the float32 render, ~46 dB below the fit-error
 floor; 2.48 B/splat compressed vs 8.25 at uint16). Per-array `encoding` metadata
@@ -600,8 +602,9 @@ def sort_splats_spatial(
     ...
 ```
 
-The grid resolution is **derived per-axis from the bit budget** (21 bits per
-dimension, matching the `ordering_bits_per_dim: 21` leaf attr) — the
+The grid resolution is **derived per-axis from the bit budget** (capped at 21
+bits per dimension — `min(21, budget // n_ordering_dims)`, exact for the
+typical ≤3 ordering dims, matching the `ordering_bits_per_dim: 21` leaf attr) — the
 `resolution` parameter is ignored. When `slice_dims` names categorical/barrier
 axes (time, channel), splats are grouped by those axes first and the space-
 filling curve orders spatially within each barrier value, so a chunk never
@@ -853,7 +856,8 @@ result.save(
   16-bit for the geolog family; centers stay uint16; Cholesky uint8)
 - `CUSTOM`: Explicit encoder selection per array (advanced use)
 
-**Float16 compatibility** (`float16_allowed` parameter in save_gsplats()):
+**Float16 compatibility** (`float16_allowed` parameter on `ArrayEncoder` /
+`LuxarZarrCompiler` — `save_gsplats()` itself has no such parameter):
 - Default: `False` for TypeScript/WebGL compatibility (no native float16 support)
 - Today this flag only affects UNIT_VECTOR arrays, the legacy packed-CHOLESKY
   dtype encoder, and the wide-range bounded-scalar float fallback — centers,
@@ -881,12 +885,11 @@ print(result.stats['time_seconds'])
 ```python
 from luxar.gsplats.io import inspect_gsplats_zarr
 
-info = inspect_gsplats_zarr("fitted.gsplats.zarr")
-print(info)
-# GSplats: 10,000 splats, 3D
-# Ordering: hilbert (bits_per_dim=21)
-# Size: 1.2 MB (compression ratio: 3.2x)
-# Fitting time: 45.3s, 850 iterations
+info = inspect_gsplats_zarr("fitted.gsplats.zarr")  # returns a plain dict
+print(info["n_splats"], info["ndim"])               # 10000 3
+print(info["ordering"], info["ordering_bits_per_dim"])  # hilbert 21
+print(info["storage_mb"], info["compression_ratio"])
+print(info["fitting"]["time_seconds"], info["fitting"]["iterations"])
 ```
 
 ---
