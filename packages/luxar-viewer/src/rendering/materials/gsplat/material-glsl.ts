@@ -40,12 +40,10 @@ import {
   applyScalarRangeToMaterial,
 } from '../../material-colormap-helpers';
 import {
+  getCompleteBlendingState,
   getGSplatNormalBlendingState,
-  isAdditiveMode,
-  isLuminousMode,
   isMaxMode,
   isNormalMode,
-  isOpaqueMode,
 } from '../../blending-state';
 
 /**
@@ -128,27 +126,7 @@ export class GSplatMaterial
    */
   constructor(materialConfig: GSplatMaterialConfig = {}) {
     const blendingMode = materialConfig.blendingMode ?? 'additive';
-    const isOpaque = blendingMode === 'opaque';
-    const isAdditive = blendingMode === 'additive';
     const gammaValue = clampGamma(materialConfig.gamma);
-
-    // Determine THREE.js blending mode
-    // CRITICAL: For sum projection, we need LINEAR addition of intensities.
-    // THREE.AdditiveBlending uses SrcAlpha which SQUARES the intensity - WRONG!
-    // We use CustomBlending with OneFactor for correct linear sum projection.
-    let blending: THREE.Blending;
-    if (isOpaque || blendingMode === 'normal') {
-      blending = THREE.NormalBlending;
-    } else if (
-      blendingMode === 'additive' ||
-      blendingMode === 'luminous' ||
-      blendingMode === 'max'
-    ) {
-      // All additive-style modes use CustomBlending for correct linear contribution
-      blending = THREE.CustomBlending;
-    } else {
-      blending = THREE.NormalBlending;
-    }
 
     const truncate = materialConfig.truncationRadius ?? 3.0;
     const shiftC = Math.exp(-0.5 * truncate * truncate);
@@ -203,13 +181,14 @@ export class GSplatMaterial
       // GLSL ES 3.0 for flat interpolation and modern syntax
       glslVersion: THREE.GLSL3,
 
-      transparent: materialConfig.transparent ?? !isOpaque,
-      depthWrite:
-        isOpaque || (blendingMode === 'normal' && (materialConfig.opacity ?? 1.0) >= 0.99),
-      // Additive ignores depth (renders on top), luminous respects depth occlusion
-      depthTest: materialConfig.depthTest ?? !isAdditive,
+      // Blending / transparency / depth state is fully owned by
+      // applyBlendingMode (called right below) — the same path live
+      // mode updates take. Neutral placeholders here.
+      transparent: true,
+      depthWrite: false,
+      depthTest: materialConfig.depthTest ?? true,
       toneMapped: false, // HDR values pass through to post-processing
-      blending: blending,
+      blending: THREE.NormalBlending,
       side: THREE.DoubleSide, // Splats visible from both sides
     });
 
@@ -231,9 +210,12 @@ export class GSplatMaterial
     }
 
     // Store gamma + scalarRange in userData for clone(); blendingMode
-    // and depthTest are already set by applyBlendingMode.
+    // and userData.depthTest are already set by applyBlendingMode —
+    // only an explicit config override re-stamps it here.
     this.userData.gamma = gammaValue;
-    this.userData.depthTest = materialConfig.depthTest ?? !isAdditive;
+    if (materialConfig.depthTest !== undefined) {
+      this.userData.depthTest = materialConfig.depthTest;
+    }
     this.userData.scalarRange = materialConfig.scalarRange;
   }
 
@@ -394,16 +376,13 @@ export class GSplatMaterial
   /**
    * Apply a blending mode to this material in-place.
    *
-   * GSplat-specific because the constructor uses `CustomBlending +
-   * OneFactor` (NOT `THREE.AdditiveBlending` — that uses SrcAlpha which
-   * squares intensity) for additive/luminous, and toggles the
-   * `uProjectionMode` uniform when switching to/from `max`. Without a
-   * type-specific method, the layers panel's generic
-   * `mat.blending = state.blending` would either:
-   *   - assign `AdditiveBlending` (squaring intensity) when switching to
-   *     additive/luminous, or
-   *   - leave `uProjectionMode = 0` while the framebuffer blends with
-   *     `MaxEquation` — physically wrong max projection.
+   * GSplat-specific because the method toggles the `uProjectionMode`
+   * uniform when switching to/from `max` (the shader has separate sum
+   * vs max branches) and owns the `LUXAR_NORMAL_PREMULT` define
+   * lifecycle. Without a type-specific method, the layers panel's
+   * generic `mat.blending = state.blending` would leave
+   * `uProjectionMode = 0` while the framebuffer blends with
+   * `MaxEquation` — physically wrong max projection.
    *
    * `normal` is gsplat-specific too: the shader emits premultiplied
    * coverage alpha under the `LUXAR_NORMAL_PREMULT` define (toggled
@@ -422,10 +401,8 @@ export class GSplatMaterial
       | 'opaque'
       | 'luminous'
       | undefined;
-    // Predicate-driven mode dispatch.
-    const isOpaque = isOpaqueMode(mode);
-    const isAdditive = isAdditiveMode(mode);
     const isMax = isMaxMode(mode);
+    const opacity = (this.uniforms.uOpacity?.value as number | undefined) ?? 1.0;
 
     if (isNormalMode(mode)) {
       // Premultiplied alpha-over — the one mode where the fragment
@@ -461,56 +438,39 @@ export class GSplatMaterial
     // Every non-normal mode renders with the alpha=1.0 fragment contract.
     delete this.defines.LUXAR_NORMAL_PREMULT;
 
-    // Pick base blending. Additive-style modes go through CustomBlending
-    // so the alpha factors below take effect.
-    if (isOpaque) {
-      this.blending = THREE.NormalBlending;
-    } else {
-      this.blending = THREE.CustomBlending;
-    }
-
-    this.transparent = !isOpaque;
-    this.depthWrite = isOpaque;
-    // Additive ignores depth (renders on top); luminous respects it.
-    this.depthTest = !isAdditive;
+    // Non-normal modes take the SHARED blending state — the same source
+    // of truth the TSL wrapper uses, so both backends are identical:
+    //   additive/luminous → AdditiveBlending (SrcAlpha + One). With the
+    //     shader's alpha = 1.0 contract, SrcAlpha is the identity factor,
+    //     so this is exactly the linear One + One sum (TSL relied on
+    //     this equivalence all along; parity is pixel-exact).
+    //   max → CustomBlending + MaxEquation + One/One.
+    //   opaque → NormalBlending + depth write.
+    // The historical GLSL-only CustomBlending dance with a SEPARATE
+    // alpha-channel MaxEquation guard is gone: its only remaining
+    // purpose was keeping accumulated alpha finite for the
+    // raw-scene-hdr capture path, which now sanitizes alpha at the
+    // readback boundary for every geometry type (see
+    // post-processing-manager/capture.ts).
+    const state = getCompleteBlendingState(mode, opacity);
+    this.blending = state.blending;
+    this.blendEquation = state.blendEquation;
+    this.blendSrc = state.blendSrc;
+    this.blendDst = state.blendDst;
+    // Symmetric alpha channel: null = "track the RGB equation". Also
+    // clears any stranded per-alpha state from materials created before
+    // this unification.
+    this.blendEquationAlpha = null;
+    this.blendSrcAlpha = null;
+    this.blendDstAlpha = null;
+    this.transparent = state.transparent;
+    this.depthTest = state.depthTest;
+    this.depthWrite = state.depthWrite;
 
     // Projection mode uniform: 0=sum (additive/luminous/normal/opaque),
     // 1=max. The shader has separate sum vs max branches.
     if (this.uniforms.uProjectionMode) {
       this.uniforms.uProjectionMode.value = isMax ? 1 : 0;
-    }
-
-    // Mode-specific blend factors.
-    if (isAdditive || isLuminousMode(mode)) {
-      // Linear sum projection — OneFactor avoids the SrcAlpha squaring.
-      this.blendEquation = THREE.AddEquation;
-      this.blendSrc = THREE.OneFactor;
-      this.blendDst = THREE.OneFactor;
-      // MaxEquation on alpha prevents accumulation that would otherwise
-      // overflow HalfFloat16 and produce dark halos in post-processing.
-      this.blendEquationAlpha = THREE.MaxEquation;
-      this.blendSrcAlpha = THREE.OneFactor;
-      this.blendDstAlpha = THREE.OneFactor;
-    } else if (isMax) {
-      this.blendEquation = THREE.MaxEquation;
-      this.blendSrc = THREE.OneFactor;
-      this.blendDst = THREE.OneFactor;
-      // Alpha tracks RGB by default in CustomBlending — null means "use
-      // the RGB equation". Reset so a previous additive→max switch
-      // doesn't strand MaxEquation alpha state.
-      this.blendEquationAlpha = null;
-      this.blendSrcAlpha = null;
-      this.blendDstAlpha = null;
-    } else {
-      // opaque: NormalBlending is selected above and ignores these.
-      // Reset to THREE defaults so a switch back from custom blending
-      // starts from a clean slate.
-      this.blendEquation = THREE.AddEquation;
-      this.blendSrc = THREE.SrcAlphaFactor;
-      this.blendDst = THREE.OneMinusSrcAlphaFactor;
-      this.blendEquationAlpha = null;
-      this.blendSrcAlpha = null;
-      this.blendDstAlpha = null;
     }
 
     this.userData.blendingMode = mode;

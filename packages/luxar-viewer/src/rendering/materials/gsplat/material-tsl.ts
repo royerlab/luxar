@@ -14,13 +14,15 @@
  *     max) in addition to the THREE blending state. The shader has
  *     separate sum vs. max branches; the uniform drives the
  *     selection at runtime.
- *   - The blending state for additive / luminous / max uses
- *     `CustomBlending` with `OneFactor` factors (not THREE's
- *     `AdditiveBlending`, which would square intensity via
- *     SrcAlpha). The shared `blending-state.ts` helper provides
- *     the right state for `max`; additive / luminous go through
- *     a GSplat-specific path below to keep the alpha-MaxEquation
- *     hack that prevents HalfFloat16 overflow.
+ *   - Blending state is fully unified with the GLSL wrapper: the
+ *     shared `getCompleteBlendingState` for additive / luminous /
+ *     max / opaque (AdditiveBlending's SrcAlpha factor is identity
+ *     under the shader's alpha = 1.0 contract) and
+ *     `getGSplatNormalBlendingState` for `normal` (premultiplied
+ *     coverage alpha). No separate alpha-channel blend state
+ *     anywhere — it trips gl.getError() under the WebGPU→WebGL2
+ *     bridge, and its historical overflow-guard purpose is now
+ *     handled by the raw-scene-hdr capture sanitization.
  *
  * Mechanics identical to `PointTSLMaterial` for the
  * uniforms-by-reference binding pattern.
@@ -198,16 +200,13 @@ export class GSplatTSLMaterial
    * gsplat-specific `getGSplatNormalBlendingState()` (the fragment
    * emits a real premultiplied coverage alpha in that mode — see
    * shader-tsl.ts), every other mode gets the shared
-   * `getCompleteBlendingState(mode)`. For those non-normal modes the
-   * shared state is correct without a GSplat override: the shader
-   * outputs `alpha = 1.0`, so `AdditiveBlending` (`SrcAlpha + One`)
-   * and the GLSL-side `CustomBlending + OneFactor` collapse to the
-   * same `srcColor + dstColor`. The GLSL wrapper's separate
-   * alpha-channel MaxEquation state is deliberately NOT reproduced
-   * here — separate `blendEquationAlpha` propagation trips a
-   * `gl.getError()` flag under WebGPURenderer's WebGL2 bridge. (The
-   * gsplat-normal state is bridge-safe: CustomBlending with a
-   * SYMMETRIC alpha channel.)
+   * `getCompleteBlendingState(mode)` — now the SAME sources of truth
+   * the GLSL wrapper uses, so the two backends are state-identical.
+   * `AdditiveBlending`'s SrcAlpha factor is the identity under the
+   * shader's alpha = 1.0 contract. No separate alpha-channel blend
+   * state anywhere (it trips `gl.getError()` under WebGPURenderer's
+   * WebGL2 bridge; its historical HalfFloat-overflow-guard purpose is
+   * handled by the raw-scene-hdr capture sanitization).
    *
    * (`max` mode goes through the same factory path and gets
    * `CustomBlending + MaxEquation + OneFactor` straight from
@@ -312,15 +311,11 @@ export class GSplatTSLMaterial
    * `getCompleteBlendingState` — so subsequent rebuilds (e.g. colormap
    * toggles) don't strand the material in a divergent state.
    *
-   * Diverges from the GLSL wrapper for additive / luminous (which use
-   * `CustomBlending + OneFactor` + a separate alpha-MaxEquation): the
-   * gsplat shader emits `alpha = 1.0` in those modes so
-   * `AdditiveBlending` (`SrcAlpha + One`) produces identical pixels,
-   * and separate alpha-equation state would trip a `gl.getError()`
-   * flag under WebGPURenderer's WebGL2 backend (not tracked through
-   * the bridge). `max` still gets `CustomBlending + MaxEquation +
-   * OneFactor` straight from `getCompleteBlendingState`; the
-   * gsplat-normal state is bridge-safe (symmetric alpha channel).
+   * State-identical with the GLSL wrapper (both draw from the same
+   * two helpers). `max` gets `CustomBlending + MaxEquation + OneFactor`
+   * from `getCompleteBlendingState`; the gsplat-normal state is
+   * bridge-safe (symmetric alpha channel; separate alpha-equation
+   * state would trip `gl.getError()` under the WebGPU→WebGL2 bridge).
    *
    * Also toggles `uProjectionMode` (0 = sum, 1 = max) so the shader
    * picks the right projection branch.
