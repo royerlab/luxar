@@ -403,17 +403,25 @@ export const GSPLAT_FRAGMENT_SHADER = /* glsl */ `
         // With OneFactor blending (additive/luminous/max modes), alpha is ignored,
         // so apply opacity to RGB directly. This gives correct LINEAR sum projection
         // without the intensity-squaring bug that AdditiveBlending (SrcAlpha) would cause.
-        //
-        // For 'normal' blending mode, this shader outputs alpha=1.0,
-        // which means the framebuffer behind the splat won't show
-        // through — 'normal' on a GSplat layer behaves as "opaque
-        // dimmed by uOpacity," not as semi-transparent compositing.
-        // See material-manager.ts BlendingMode docs. Proper transparent
-        // normal blending for gsplats requires premultiplied alpha with
-        // ONE / ONE_MINUS_SRC_ALPHA blend func (a deeper shader change
-        // deferred until needed).
         vec3 finalColor = gammaColor * intensity * uOpacity;
+
+        #ifdef LUXAR_NORMAL_PREMULT
+        // 'normal' mode: premultiplied alpha-over. RGB already carries the
+        // full (unclamped, HDR) contribution; alpha carries a CLAMPED
+        // coverage term so the One / OneMinusSrcAlpha framebuffer state
+        // (see blending-state.ts getGSplatNormalBlendingState) attenuates
+        // the destination without ever over-subtracting. Dim splats
+        // (intensity·opacity << 1) occlude proportionally little — an
+        // emitter-with-occlusion model, deliberate for HDR scientific data.
+        float coverage = clamp(intensity * uOpacity, 0.0, 1.0);
+        fragColor = vec4(finalColor, coverage);
+        #else
+        // All other modes keep the alpha=1.0 contract: with OneFactor
+        // blending alpha is ignored at composite time, and the GLSL
+        // additive path's alpha-MaxEquation HalfFloat16-overflow guard
+        // depends on alpha never accumulating past 1.
         fragColor = vec4(finalColor, 1.0);
+        #endif
     }
   `;
 

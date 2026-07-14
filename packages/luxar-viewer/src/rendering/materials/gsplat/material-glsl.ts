@@ -40,6 +40,7 @@ import {
   applyScalarRangeToMaterial,
 } from '../../material-colormap-helpers';
 import {
+  getGSplatNormalBlendingState,
   isAdditiveMode,
   isLuminousMode,
   isMaxMode,
@@ -404,6 +405,11 @@ export class GSplatMaterial
    *   - leave `uProjectionMode = 0` while the framebuffer blends with
    *     `MaxEquation` — physically wrong max projection.
    *
+   * `normal` is gsplat-specific too: the shader emits premultiplied
+   * coverage alpha under the `LUXAR_NORMAL_PREMULT` define (toggled
+   * here — the only mode-driven define this material has), paired with
+   * `getGSplatNormalBlendingState()`'s One / OneMinusSrcAlpha state.
+   *
    * Used by both the constructor and runtime mode changes from the
    * layers panel. After this returns, `userData.blendingMode` reflects
    * the live mode so subsequent `clone()` calls preserve it.
@@ -420,18 +426,51 @@ export class GSplatMaterial
     const isOpaque = isOpaqueMode(mode);
     const isAdditive = isAdditiveMode(mode);
     const isMax = isMaxMode(mode);
-    const opacity = (this.uniforms.uOpacity?.value as number | undefined) ?? 1.0;
+
+    if (isNormalMode(mode)) {
+      // Premultiplied alpha-over — the one mode where the fragment
+      // shader emits a real (coverage) alpha. State comes from the
+      // shared helper; see its doc for why CustomBlending + symmetric
+      // alpha channel + depthWrite:false are each load-bearing.
+      const state = getGSplatNormalBlendingState();
+      this.blending = state.blending;
+      this.blendEquation = state.blendEquation;
+      this.blendSrc = state.blendSrc;
+      this.blendDst = state.blendDst;
+      // Symmetric alpha channel: reset any stranded additive
+      // alpha-MaxEquation state (null = "track the RGB equation").
+      this.blendEquationAlpha = null;
+      this.blendSrcAlpha = null;
+      this.blendDstAlpha = null;
+      this.transparent = state.transparent;
+      this.depthTest = state.depthTest;
+      this.depthWrite = state.depthWrite;
+      this.defines.LUXAR_NORMAL_PREMULT = '';
+      if (this.uniforms.uProjectionMode) {
+        this.uniforms.uProjectionMode.value = 0; // sum projection
+      }
+      this.userData.blendingMode = mode;
+      this.userData.depthTest = this.depthTest;
+      // Define toggled ⇒ program recompile needed on a real mode change.
+      if (previousMode !== mode) {
+        this.needsUpdate = true;
+      }
+      return;
+    }
+
+    // Every non-normal mode renders with the alpha=1.0 fragment contract.
+    delete this.defines.LUXAR_NORMAL_PREMULT;
 
     // Pick base blending. Additive-style modes go through CustomBlending
     // so the alpha factors below take effect.
-    if (isOpaque || isNormalMode(mode)) {
+    if (isOpaque) {
       this.blending = THREE.NormalBlending;
     } else {
       this.blending = THREE.CustomBlending;
     }
 
     this.transparent = !isOpaque;
-    this.depthWrite = isOpaque || (isNormalMode(mode) && opacity >= 0.99);
+    this.depthWrite = isOpaque;
     // Additive ignores depth (renders on top); luminous respects it.
     this.depthTest = !isAdditive;
 
@@ -463,9 +502,9 @@ export class GSplatMaterial
       this.blendSrcAlpha = null;
       this.blendDstAlpha = null;
     } else {
-      // normal/opaque: NormalBlending is selected above and ignores
-      // these. Reset to THREE defaults so a switch back from custom
-      // blending starts from a clean slate.
+      // opaque: NormalBlending is selected above and ignores these.
+      // Reset to THREE defaults so a switch back from custom blending
+      // starts from a clean slate.
       this.blendEquation = THREE.AddEquation;
       this.blendSrc = THREE.SrcAlphaFactor;
       this.blendDst = THREE.OneMinusSrcAlphaFactor;
@@ -476,9 +515,9 @@ export class GSplatMaterial
 
     this.userData.blendingMode = mode;
     this.userData.depthTest = this.depthTest;
-    // only mark needsUpdate when mode actually changed. The
-    // GSplat shader doesn't toggle defines on mode switches, but
-    // changes to blending state need to flush to the renderer once.
+    // Mark needsUpdate when the mode actually changed — blending-state
+    // flushes and (normal↔other) LUXAR_NORMAL_PREMULT toggles both need
+    // one program-state refresh.
     if (previousMode !== mode) {
       this.needsUpdate = true;
     }

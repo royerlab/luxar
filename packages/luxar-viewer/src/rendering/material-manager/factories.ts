@@ -33,16 +33,18 @@ import { clamp } from '../../utils/clamp';
  * Supported blending modes for materials.
  *
  * - 'normal': Standard alpha blending (semi-transparent). For
- *   **Points** and **Lines** this works as expected — the shader
- *   emits a per-fragment alpha derived from opacity and edge
- *   softness. For **GSplats** the shader emits `alpha = 1.0` and
- *   modulates RGB by uOpacity instead, so 'normal' on a GSplat layer
- *   behaves like "opaque dimmed by opacity": the framebuffer behind
- *   the splat is not revealed. Proper alpha-on-GSplats requires
- *   premultiplied-alpha output + a `ONE` / `ONE_MINUS_SRC_ALPHA`
- *   blend func, which is a deeper shader change deferred until
- *   needed. Users wanting semi-transparent splats today should use
- *   'luminous' or 'additive'.
+ *   **Points** and **Lines** the shader emits a straight per-fragment
+ *   alpha (opacity × edge softness) over SrcAlpha/OneMinusSrcAlpha.
+ *   For **GSplats** the shader emits PREMULTIPLIED coverage alpha
+ *   (`clamp(intensity·opacity, 0, 1)`, `LUXAR_NORMAL_PREMULT` define)
+ *   over `One / OneMinusSrcAlpha` — see
+ *   `getGSplatNormalBlendingState()` in blending-state.ts. The
+ *   framebuffer behind a splat IS revealed in proportion to coverage;
+ *   dim splats occlude proportionally little (emitter-with-occlusion,
+ *   deliberate for HDR scientific data). GSplat normal mode never
+ *   writes depth, so it does not occlude additive layers behind it.
+ *   NOTE: compositing is order-dependent and splats are not yet
+ *   depth-sorted — see GSPLAT_DEPTH_SORTING_SPEC.md Phases 1-3.
  * - 'additive': Classic additive blending, ignores depth (renders on top of everything)
  * - 'max': Maximum of source and destination (brightest wins)
  * - 'opaque': Solid rendering with depth write (closest object wins)

@@ -65,9 +65,14 @@ import {
 } from 'three/tsl';
 import { NodeMaterial } from 'three/webgpu';
 import { invalidFloatTSL, type TSLNode } from '../_shared/tsl-helpers';
-import { applyBlendingStateToMaterial, getCompleteBlendingState } from '../../blending-state';
+import {
+  applyBlendingStateToMaterial,
+  getCompleteBlendingState,
+  getGSplatNormalBlendingState,
+  isMaxMode,
+  isNormalMode,
+} from '../../blending-state';
 import type { BlendingMode } from '../../material-manager';
-import { isMaxMode } from '../../blending-state';
 
 // Type-erased constructor aliases. TSL's typed `vec2`/`vec3`/`vec4`/`mat3`
 // overloads reject many valid combinations of intermediate `Node<…>`
@@ -90,10 +95,15 @@ export interface GSplatTSLConfig {
    */
   readonly gammaOne?: boolean;
   /**
-   * Luxar blending mode. GSplats premultiply intensity into RGB
-   * unconditionally so the shader-output style does not need to flip
-   * with the mode — only the THREE blending state changes. Defaults
-   * to `'additive'` to match the GLSL wrapper class.
+   * Luxar blending mode. GSplats premultiply intensity into RGB in
+   * every mode; `normal` ADDITIONALLY emits a clamped coverage alpha
+   * (premultiplied alpha-over — mirrors the GLSL
+   * `LUXAR_NORMAL_PREMULT` define) and pairs it with
+   * `getGSplatNormalBlendingState()`'s One / OneMinusSrcAlpha state.
+   * All other modes keep the alpha = 1.0 output contract. The factory
+   * derives both the fragment-output style and the THREE blending
+   * state from this one field. Defaults to `'additive'` to match the
+   * GLSL wrapper class.
    */
   readonly blendingMode?: BlendingMode;
 }
@@ -460,6 +470,17 @@ export function gsplatWebGPUFactory(
       config.useColormap || config.gammaOne ? adjusted : adjusted.pow(vec3(uInvGamma));
     const finalColor: TSLNode = gammaColor.mul(intensity).mul(uOpacity);
 
+    if (isNormalMode(config.blendingMode ?? 'additive')) {
+      // 'normal': premultiplied alpha-over (GLSL LUXAR_NORMAL_PREMULT
+      // twin). RGB carries the full unclamped HDR contribution; alpha
+      // carries a CLAMPED coverage term for the One/OneMinusSrcAlpha
+      // state below. Never via material.premultipliedAlpha — NodeMaterial
+      // would auto-inject a second RGB×alpha on this path.
+      const coverage: TSLNode = clamp(intensity.mul(uOpacity), float(0.0), float(1.0));
+      return vec4(finalColor, coverage);
+    }
+    // All other modes keep the alpha=1.0 contract (OneFactor blending
+    // ignores alpha at composite time).
     return vec4(finalColor, float(1.0));
   });
 
@@ -470,7 +491,13 @@ export function gsplatWebGPUFactory(
 
   const blendingMode: BlendingMode = config.blendingMode ?? 'additive';
   const opacityValue = (nodes.uOpacity.value as number | undefined) ?? 1.0;
-  const blendingState = getCompleteBlendingState(blendingMode, opacityValue);
+  // 'normal' takes the gsplat-specific premultiplied state (symmetric
+  // alpha channel — separate alpha-equation state trips gl.getError()
+  // under the WebGPU→WebGL2 bridge); every other mode keeps the shared
+  // helper's state, equivalent here because the shader emits alpha=1.
+  const blendingState = isNormalMode(blendingMode)
+    ? getGSplatNormalBlendingState()
+    : getCompleteBlendingState(blendingMode, opacityValue);
   applyBlendingStateToMaterial(material, blendingState);
   return material;
 }
