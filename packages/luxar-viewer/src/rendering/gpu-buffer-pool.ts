@@ -306,7 +306,7 @@ export class GPUBufferPool {
    *
    * Public for testing and manual pool management.
    */
-  evictUnused(): number {
+  evictUnused(fromAcquire: boolean = false): number {
     let evicted = 0;
     const currentFrame = this.frameCount;
 
@@ -388,7 +388,7 @@ export class GPUBufferPool {
     // then reclaims them. `0` disables the pass (count-only behavior).
     const budget = this.getByteBudget();
     if (budget > 0) {
-      const byteEvicted = this._evictUntilUnderByteBudget(budget);
+      const byteEvicted = this._evictUntilUnderByteBudget(budget, fromAcquire);
       evicted += byteEvicted;
       this.stats.evictions += byteEvicted;
     }
@@ -400,7 +400,7 @@ export class GPUBufferPool {
     return evicted;
   }
 
-  private _evictUntilUnderByteBudget(budget: number): number {
+  private _evictUntilUnderByteBudget(budget: number, fromAcquire: boolean = false): number {
     if (budget <= 0) return 0; // disabled — never dispose on bytes
     // The pooled-disposal target is the budget MINUS bytes held by active
     // (in-use) buffers, which cannot be disposed. Pooled buffers are then
@@ -417,6 +417,11 @@ export class GPUBufferPool {
         maxPoolBytes: pooledTarget,
         maxPoolSize: this.maxPoolSize,
         typeEvictionCounters: this.typeStats,
+        // Same-frame grace applies ONLY to acquire-triggered sweeps —
+        // the release path keeps its original semantics (a release
+        // followed by evictUnused() may reclaim that very buffer).
+        // graceFrame -1 never matches a real frame counter.
+        graceFrame: fromAcquire ? this.frameCount : -1,
       },
       sentinel
     );

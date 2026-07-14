@@ -102,7 +102,7 @@ export interface LinesAdapterHost {
   };
   _lastAcquireRebuilt: boolean;
   getBucket(count: number): number;
-  evictUnused(): number;
+  evictUnused(fromAcquire?: boolean): number;
 }
 
 export class LinesBufferAdapter {
@@ -131,7 +131,7 @@ export class LinesBufferAdapter {
         // release happening (a streaming session that only grows).
         // Sweep idle pooled buffers now instead of waiting for the next
         // releaseGeometry (historically the ONLY byte-budget trigger).
-        host.evictUnused();
+        host.evictUnused(true);
         host._lastAcquireRebuilt = true;
         return active.geometry as THREE.InstancedBufferGeometry;
       }
@@ -179,7 +179,7 @@ export class LinesBufferAdapter {
     host.stats.allocations++;
     // Fresh allocations count against the byte budget too — sweep idle
     // pooled buffers (see growth-path note above).
-    host.evictUnused();
+    host.evictUnused(true);
     host.typeStats.lines.allocations++;
     return geometry;
   }

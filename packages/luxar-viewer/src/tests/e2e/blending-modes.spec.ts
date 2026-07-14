@@ -299,6 +299,13 @@ test.describe('GSplat normal mode (premultiplied coverage alpha)', () => {
   });
 
   test('background splat shows through the overlap (real alpha-over)', async ({ page }) => {
+    // Suppress the one-time control-rail hint popup: its gray pixels
+    // (~rgb 42,45,49) sit inside the sampling grid and would satisfy a
+    // naive r>30 && g>30 test — the discriminator below also excludes
+    // grays, but keeping the frame clean makes failures readable.
+    await page.addInitScript(() => {
+      localStorage.setItem('luxar-control-rail-hint-dismissed', '1');
+    });
     // ?dpr=1 pins the pixel ratio for deterministic sampling.
     await page.goto(`/?src=${GSPLAT_OVERLAP_FIXTURE}&debug&dpr=1`);
     await waitForLuxarReady(page);
@@ -321,7 +328,10 @@ test.describe('GSplat normal mode (premultiplied coverage alpha)', () => {
     // (red) splat wherever it covered — no pixel could carry both
     // channels. With premultiplied coverage alpha at opacity 0.5 the
     // overlap composites green over red and both channels survive.
-    const mixed = samples.filter((s) => s.r > 30 && s.g > 30);
+    // The b < min(r,g)/2 term excludes NEUTRAL pixels (UI chrome,
+    // grays): the fixture's red+green overlap has near-zero blue, so a
+    // gray popup pixel (r≈g≈b) can never satisfy this vacuously.
+    const mixed = samples.filter((s) => s.r > 30 && s.g > 30 && s.b < Math.min(s.r, s.g) / 2);
 
     // Both splats render…
     expect(redDominant.length).toBeGreaterThan(0);

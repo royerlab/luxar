@@ -62,7 +62,12 @@ export interface GSplatMaterialConfig {
   truncationRadius?: number;
   /** Blending mode */
   blendingMode?: 'additive' | 'normal' | 'max' | 'opaque' | 'luminous';
-  /** Whether material is transparent (default true) */
+  /**
+   * DERIVED, no longer consumed: `transparent` is owned by
+   * `applyBlendingMode` (true for every mode except `opaque`) — the
+   * same derivation the material-manager cache keys use. Kept on the
+   * config shape for clone() call-site compatibility.
+   */
   transparent?: boolean;
   /** Whether to test against depth buffer (default true; additive sets false) */
   depthTest?: boolean;

@@ -420,10 +420,10 @@ export const GSPLAT_FRAGMENT_SHADER = /* glsl */ `
         float coverage = clamp(intensity * uOpacity, 0.0, 1.0);
         fragColor = vec4(finalColor, coverage);
         #else
-        // All other modes keep the alpha=1.0 contract: with OneFactor
-        // blending alpha is ignored at composite time, and the GLSL
-        // additive path's alpha-MaxEquation HalfFloat16-overflow guard
-        // depends on alpha never accumulating past 1.
+        // All other modes keep the alpha=1.0 contract: additive/luminous
+        // rely on SrcAlpha being the identity factor (what makes the
+        // shared AdditiveBlending state equal the linear One+One sum),
+        // and max compares premultiplied RGB contributions directly.
         fragColor = vec4(finalColor, 1.0);
         #endif
     }

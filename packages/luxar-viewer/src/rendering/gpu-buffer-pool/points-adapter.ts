@@ -181,7 +181,7 @@ export interface PointsAdapterHost {
   };
   _lastAcquireRebuilt: boolean;
   getBucket(count: number): number;
-  evictUnused(): number;
+  evictUnused(fromAcquire?: boolean): number;
 }
 
 export class PointsBufferAdapter {
@@ -221,7 +221,7 @@ export class PointsBufferAdapter {
         // release happening (a streaming session that only grows).
         // Sweep idle pooled buffers now instead of waiting for the next
         // releaseGeometry (historically the ONLY byte-budget trigger).
-        host.evictUnused();
+        host.evictUnused(true);
           // growPointsGeometry reallocates the interleaved buffer (a real
           // GPU buffer creation), so bump the per-type allocation counter
           // to keep `typeStats.points.allocations` in sync with actual
@@ -284,7 +284,7 @@ export class PointsBufferAdapter {
     host.stats.allocations++;
     // Fresh allocations count against the byte budget too — sweep idle
     // pooled buffers (see growth-path note above).
-    host.evictUnused();
+    host.evictUnused(true);
     host.typeStats.points.allocations++;
 
     return preparePointsGeometryForDraw(geometry, pointCount);
