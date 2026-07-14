@@ -130,7 +130,7 @@ tracksdata = [
     # unsatisfiable with our zarr<3.0 pin — the resolver then backtracks napari
     # into 2018-era sdist-only releases whose setup.py imports the long-removed
     # setuptools.Feature (broke every CI env-create on 2026-07-14). Lift when
-    # the project migrates to zarr 3. (Mirrors PR #520.)
+    # the project migrates to zarr 3.
     "napari[pyqt6]>=0.4.18,<0.8",
 ]
 
@@ -215,7 +215,6 @@ dependencies = [
     "imagecodecs>=2023.1.0",
     # <0.8: napari 0.8 requires zarr>=3 (conflicts with our zarr<3 pin); see
     # the tracksdata group note. Lift when the project migrates to zarr 3.
-    # (Mirrors PR #520.)
     "napari[all]>=0.4.18,<0.8",
     "pandas>=1.5.0",
     "pyarrow>=12.0.0",
