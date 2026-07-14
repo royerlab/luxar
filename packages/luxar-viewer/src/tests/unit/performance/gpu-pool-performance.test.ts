@@ -185,13 +185,13 @@ describe('GPU Buffer Pool Performance Regression Tests', () => {
         shortEvictionPool.acquirePointsGeometry(`active${i}`, createMockData(5000), 5000);
       }
 
-      // Trigger eviction
-      const evicted = shortEvictionPool.evictUnused();
+      // Trigger a final sweep. Acquire paths now sweep idle buffers
+      // themselves (byte-budget-on-growth fix), so evictions may fire
+      // during the loop above — assert the cumulative outcome via stats.
+      shortEvictionPool.evictUnused();
 
       // Should have evicted old geometries (at least some)
-      expect(evicted).toBeGreaterThan(0);
-      // Note: Eviction count might be less than evicted due to timing
-      expect(shortEvictionPool.getStats().evictions).toBeGreaterThanOrEqual(0);
+      expect(shortEvictionPool.getStats().evictions).toBeGreaterThan(0);
     });
   });
 

@@ -51,7 +51,22 @@ export async function captureHDRPixels(
       ctx.renderer.setRenderTarget(ctx.hdrTarget);
       ctx.renderer.clear();
       ctx.renderer.render(ctx.scene, ctx.camera);
-      return await readTarget(ctx, ctx.hdrTarget, opts);
+      const result = await readTarget(ctx, ctx.hdrTarget, opts);
+      // Sanitize alpha: this mode reads the HDR target DIRECTLY — the
+      // only capture path that bypasses the mega-shader's unconditional
+      // alpha=1.0 write. Additive blending accumulates alpha unbounded
+      // (points/lines emit real alpha over SrcAlpha+One; gsplats emit
+      // 1.0 per overlapping splat), so the target's alpha channel is a
+      // meaningless overdraw count that can reach HalfFloat Inf on
+      // dense scenes. Exporting it (EXR alpha) hands external
+      // compositors garbage — force opaque here, once, for every
+      // geometry type. (This also lets the gsplat GLSL wrapper drop
+      // its historical alpha-MaxEquation blend guard, whose only
+      // remaining purpose was protecting this path.)
+      for (let i = 3; i < result.pixels.length; i += 4) {
+        result.pixels[i] = 1.0;
+      }
+      return result;
     } finally {
       ctx.renderer.setRenderTarget(prevTarget as THREE.WebGLRenderTarget | null);
       ctx.renderer.autoClear = prevAutoClear;

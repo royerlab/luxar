@@ -35,6 +35,24 @@ export interface EvictorCtx {
   readonly gsplatBuffers: Map<number, PooledBuffer[]>;
   readonly maxPoolBytes: number;
   readonly maxPoolSize: number;
+  /**
+   * Same-frame grace for ACQUIRE-triggered sweeps: buffers whose
+   * `lastUsedFrame` equals this value are exempt from the byte pass.
+   * A dataset switch releases every old-node buffer then immediately
+   * acquires the new dataset's nodes in the same frame — without the
+   * grace, each fresh allocation's sweep would dispose the
+   * just-released buffers before later acquires can best-fit them
+   * (alloc/dispose churn replacing free reuse). `releaseGeometry`
+   * stamps `lastUsedFrame` with the release frame so the grace
+   * actually matches (an acquire-time stamp alone would carry a stale
+   * frame into the release). Release-triggered sweeps pass -1 (never
+   * matches) — byte enforcement on release is unconditional, which is
+   * also the backstop bounding the grace: if the frame counter is not
+   * advancing (no render loop), acquire sweeps may keep sparing
+   * released buffers, but every release re-enforces the budget without
+   * grace.
+   */
+  readonly graceFrame: number;
   /** Per-type eviction counters; mutated as buffers dispose. */
   readonly typeEvictionCounters: {
     points: { evictions: number };
@@ -57,6 +75,8 @@ export function evictUntilUnderByteBudget(
     for (const [bucket, arr] of pool.entries()) {
       for (let i = 0; i < arr.length; i++) {
         const buffer = arr[i];
+        // Same-frame grace — see EvictorCtx.graceFrame.
+        if (buffer.lastUsedFrame === ctx.graceFrame) continue;
         refs.push({
           pool,
           bucket,

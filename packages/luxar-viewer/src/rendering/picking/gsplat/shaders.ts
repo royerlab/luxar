@@ -103,17 +103,23 @@ export const GSPLAT_PICK_VERTEX_SHADER = /* glsl */ `
             }
         }
 
-        float coverageFade = 1.0;
-        if (uIsOrtho == 0) {
+        // Coverage fade applies in BOTH projections (matches the visual
+        // shader — ortho projected size is depth-independent, divisor 1)
+        // so pickability tracks what is actually visible. Computed
+        // UNCONDITIONALLY (visual twin updated in lockstep): below
+        // maxExtent*0.5 the smoothstep is 0 and the fade is a no-op, so
+        // no size gate is needed — the former maxLateralVar > 0.01 gate
+        // skipped the fade for sigma < 0.1 world-unit splats.
+        float coverageFade;
+        {
             float maxLateralVar = max(Sigma_cam[0][0], max(Sigma_cam[1][1], Sigma_cam[2][2]));
-            if (maxLateralVar > 0.01) {
-                float projectedExtent = uFx * sqrt(maxLateralVar) * uTruncate / zDepth;
-                float maxExtent = max(uResolution.x, uResolution.y) * uMaxExtentFactor;
-                coverageFade = 1.0 - smoothstep(maxExtent * 0.5, maxExtent, projectedExtent);
-                if (coverageFade < 0.01) {
-                    gl_Position = vec4(0.0, 0.0, -2.0, 1.0);
-                    return;
-                }
+            float extentDivisor = (uIsOrtho == 1) ? 1.0 : max(zDepth, 1e-8);
+            float projectedExtent = uFx * sqrt(max(maxLateralVar, 1e-8)) * uTruncate / extentDivisor;
+            float maxExtent = max(uResolution.x, uResolution.y) * uMaxExtentFactor;
+            coverageFade = 1.0 - smoothstep(maxExtent * 0.5, maxExtent, projectedExtent);
+            if (coverageFade < 0.01) {
+                gl_Position = vec4(0.0, 0.0, -2.0, 1.0);
+                return;
             }
         }
 

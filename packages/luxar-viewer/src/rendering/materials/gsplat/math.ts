@@ -1,3 +1,5 @@
+import { log, Modules } from '../../../utils/log';
+
 /**
  * Shared mathematical helpers for the GSplat material pair.
  *
@@ -30,4 +32,34 @@ export function computeRayIntegralFactor(truncate: number): number {
       Math.exp(-x * x);
   const erf = x >= 0 ? erfVal : -erfVal;
   return SQRT_2PI * erf - 2 * truncate * Math.exp(-0.5 * truncate * truncate);
+}
+
+/**
+ * Minimum truncation radius (in sigmas). Below this the shifted-Gaussian
+ * normalization degenerates: `shiftC = exp(-r²/2)` approaches 1 and
+ * `uInvOneMinusC = 1/(1 - shiftC)` blows up to Infinity — an invisible
+ * layer with an Infinity uniform and zero diagnostics. Dataset attrs
+ * pass `truncation_radius` through unvalidated, so both material
+ * wrappers clamp at this boundary (mirrors `updateMaxExtentFactor`'s
+ * 0.01 floor).
+ */
+export const MIN_TRUNCATION_RADIUS = 0.1;
+
+let truncationClampWarned = false;
+
+/** Clamp a truncation radius to the degeneracy floor (warns once). */
+export function clampTruncationRadius(radius: number): number {
+  if (radius < MIN_TRUNCATION_RADIUS) {
+    if (!truncationClampWarned) {
+      truncationClampWarned = true;
+      log.warning(
+        Modules.RENDERER,
+        `truncation_radius ${radius} clamped to ${MIN_TRUNCATION_RADIUS}σ ` +
+          '(below this the shifted-Gaussian normalization degenerates to an ' +
+          'Infinity uniform / invisible layer). Further clamps are silent.'
+      );
+    }
+    return MIN_TRUNCATION_RADIUS;
+  }
+  return radius;
 }

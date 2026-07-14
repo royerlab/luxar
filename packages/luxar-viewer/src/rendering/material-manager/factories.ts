@@ -12,6 +12,8 @@
  * @module rendering/material-manager/factories
  */
 
+import { clampTruncationRadius } from '../materials/gsplat/math';
+import { normalModeDepthWrite } from '../blending-state';
 import { PointMaterial } from '../materials/point/material-glsl';
 import { LineMaterial } from '../materials/line/material-glsl';
 import { GSplatMaterial } from '../materials/gsplat/material-glsl';
@@ -33,16 +35,18 @@ import { clamp } from '../../utils/clamp';
  * Supported blending modes for materials.
  *
  * - 'normal': Standard alpha blending (semi-transparent). For
- *   **Points** and **Lines** this works as expected — the shader
- *   emits a per-fragment alpha derived from opacity and edge
- *   softness. For **GSplats** the shader emits `alpha = 1.0` and
- *   modulates RGB by uOpacity instead, so 'normal' on a GSplat layer
- *   behaves like "opaque dimmed by opacity": the framebuffer behind
- *   the splat is not revealed. Proper alpha-on-GSplats requires
- *   premultiplied-alpha output + a `ONE` / `ONE_MINUS_SRC_ALPHA`
- *   blend func, which is a deeper shader change deferred until
- *   needed. Users wanting semi-transparent splats today should use
- *   'luminous' or 'additive'.
+ *   **Points** and **Lines** the shader emits a straight per-fragment
+ *   alpha (opacity × edge softness) over SrcAlpha/OneMinusSrcAlpha.
+ *   For **GSplats** the shader emits PREMULTIPLIED coverage alpha
+ *   (`clamp(intensity·opacity, 0, 1)`, `LUXAR_NORMAL_PREMULT` define)
+ *   over `One / OneMinusSrcAlpha` — see
+ *   `getGSplatNormalBlendingState()` in blending-state.ts. The
+ *   framebuffer behind a splat IS revealed in proportion to coverage;
+ *   dim splats occlude proportionally little (emitter-with-occlusion,
+ *   deliberate for HDR scientific data). GSplat normal mode never
+ *   writes depth, so it does not occlude additive layers behind it.
+ *   NOTE: compositing is order-dependent and splats are not yet
+ *   depth-sorted — see GSPLAT_DEPTH_SORTING_SPEC.md Phases 1-3.
  * - 'additive': Classic additive blending, ignores depth (renders on top of everything)
  * - 'max': Maximum of source and destination (brightest wins)
  * - 'opaque': Solid rendering with depth write (closest object wins)
@@ -159,7 +163,12 @@ export function pointCacheKey(props: PointMaterialProperties, backend: MaterialB
     getCommonMaterialBuckets(props);
   const radiusBucket = props.radiusScale ? Math.round(Math.max(0, props.radiusScale) * 1000) : 1000;
   const transparent = props.blendingMode !== 'opaque';
-  return `point_${backend}_${props.blendingMode}_o${opacityBucket}_g${gammaBucket}_i${intensityBucket}_f${offsetBucket}_r${radiusBucket}_t${transparent ? 1 : 0}`;
+  // depthWrite discriminator: generic normal mode flips depthWrite at
+  // exactly 0.99, which sits INSIDE opacity bucket 99 (0.985-0.9949) —
+  // without this bit, whichever side of the flip is requested first
+  // wins the bucket for both.
+  const dw = props.blendingMode === 'normal' && normalModeDepthWrite(props.opacity) ? 1 : 0;
+  return `point_${backend}_${props.blendingMode}_o${opacityBucket}_g${gammaBucket}_i${intensityBucket}_f${offsetBucket}_r${radiusBucket}_t${transparent ? 1 : 0}_dw${dw}`;
 }
 
 /** Cache key for a Lines material variant. */
@@ -167,14 +176,19 @@ export function lineCacheKey(props: LineMaterialProperties, backend: MaterialBac
   const { opacityBucket, gammaBucket, intensityBucket, offsetBucket } =
     getCommonMaterialBuckets(props);
   const transparent = props.blendingMode !== 'opaque';
-  return `line_${backend}_${props.blendingMode}_o${opacityBucket}_g${gammaBucket}_i${intensityBucket}_f${offsetBucket}_t${transparent ? 1 : 0}`;
+  // depthWrite discriminator — see pointCacheKey.
+  const dw = props.blendingMode === 'normal' && normalModeDepthWrite(props.opacity) ? 1 : 0;
+  return `line_${backend}_${props.blendingMode}_o${opacityBucket}_g${gammaBucket}_i${intensityBucket}_f${offsetBucket}_t${transparent ? 1 : 0}_dw${dw}`;
 }
 
 /** Cache key for a GSplats material variant. */
 export function gsplatCacheKey(props: GSplatMaterialProperties, backend: MaterialBackend): string {
   const { opacityBucket, gammaBucket, intensityBucket, offsetBucket } =
     getCommonMaterialBuckets(props);
-  const truncBucket = Math.round((props.truncationRadius ?? 3.0) * 10);
+  // Bucket the CLAMPED radius — the wrappers clamp sub-floor radii to the
+  // same material, so unclamped bucketing would create duplicate cache
+  // entries for pixel-identical materials.
+  const truncBucket = Math.round(clampTruncationRadius(props.truncationRadius ?? 3.0) * 10);
   const transparent = props.blendingMode !== 'opaque';
   return `gsplat_${backend}_${props.blendingMode}_o${opacityBucket}_g${gammaBucket}_i${intensityBucket}_f${offsetBucket}_tr${truncBucket}_t${transparent ? 1 : 0}`;
 }

@@ -489,6 +489,11 @@ export function megaWebGPUFactory(
       uSkew &&
       uDispersion
     ) {
+      // This is the CANONICAL top-down distortion map (uv() under
+      // WebGPURenderer is top-down; matches the TS picking mirror in
+      // picking-system/lens-distortion.ts verbatim). The GLSL twin runs
+      // under WebGLRenderer's bottom-up uv and conjugates by negating
+      // principalPoint.y and skew — do not copy its matrix here.
       const applyDistortion = (sampleUV: TSLNode, distortionCoeff: TSLNode) => {
         const xn: TSLNode = vec2(sampleUV.sub(0.5).mul(2.0));
         const r2 = dot(xn, xn);

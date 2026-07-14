@@ -7,7 +7,6 @@ export interface WebGLContextAttributes {
   depth: boolean;
   stencil: boolean;
   powerPreference: 'high-performance' | 'low-power' | 'default';
-  colorSpace: string;
   preserveDrawingBuffer: boolean;
   desynchronized: boolean;
   premultipliedAlpha: boolean;
@@ -16,7 +15,7 @@ export interface WebGLContextAttributes {
 
 /**
  * THREE.WebGLRenderer configuration (renderer-specific settings only).
- * Shared attributes (antialias, powerPreference, preserveDrawingBuffer,
+ * Shared attributes (alpha, antialias, depth, stencil, powerPreference, preserveDrawingBuffer,
  * premultipliedAlpha) live in WebGLContextAttributes and are spread
  * alongside these at renderer creation time.
  */
