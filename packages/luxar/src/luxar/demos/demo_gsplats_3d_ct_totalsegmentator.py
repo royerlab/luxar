@@ -111,7 +111,7 @@ MAX_SPLATS_PER_PASS = 400_000
 ITERS_PER_PASS = 4_000
 PSNR_PATIENCE = 0.1
 
-SCENE_INTENSITY = 0.02  # additive brightness (dense body — dial down; see VH demo)
+SCENE_INTENSITY = 0.012  # additive brightness (dense body — dial down; see VH demo)
 
 # TotalSegmentator v2 `total` task — 117 structures (label index → name).
 CLASS_MAP = {
@@ -235,18 +235,22 @@ CLASS_MAP = {
 }
 
 # Tissue-group base colors (RGB in [0, 1]) — no canonical LUT exists upstream.
+# Muscle is ~26% of splats (paraspinal/gluteus/iliopsoas) and bone ~38%, so both
+# are kept as receding, low-saturation "context" tones (dim flesh, warm ivory)
+# while the organs/vessels stay vivid, letting them read through the additive
+# blend instead of drowning in a bright pink+ivory mush.
 GROUP_COLORS = {
-    "bone": (0.93, 0.90, 0.80),  # ivory skeleton
-    "vessel": (0.90, 0.20, 0.20),  # arteries/veins — red
-    "heart": (0.78, 0.10, 0.16),  # deep crimson
+    "bone": (0.86, 0.82, 0.70),  # warm ivory skeleton (context)
+    "muscle": (0.46, 0.28, 0.28),  # dim flesh — recedes behind organs
+    "vessel": (0.95, 0.18, 0.18),  # arteries/veins — vivid red
+    "heart": (0.90, 0.12, 0.30),  # crimson
     "lung": (0.35, 0.80, 0.92),  # cyan
-    "gi": (0.55, 0.72, 0.30),  # olive green
-    "abdominal_organ": (0.78, 0.46, 0.28),  # liver/spleen/pancreas/gallbladder
-    "urinary": (0.93, 0.72, 0.25),  # kidney/adrenal/bladder — amber
-    "misc_organ": (0.40, 0.78, 0.58),  # trachea/thyroid/prostate — teal
-    "muscle": (0.90, 0.45, 0.66),  # pink
-    "brain": (0.96, 0.90, 0.55),  # pale yellow
-    "spinal": (0.96, 0.80, 0.30),  # yellow
+    "gi": (0.55, 0.78, 0.28),  # green
+    "abdominal_organ": (0.90, 0.52, 0.22),  # liver/spleen/pancreas — vivid amber-brown
+    "urinary": (0.98, 0.78, 0.20),  # kidney/adrenal/bladder — gold
+    "misc_organ": (0.30, 0.82, 0.60),  # trachea/thyroid/prostate — teal
+    "brain": (0.98, 0.92, 0.50),  # pale yellow
+    "spinal": (0.98, 0.82, 0.25),  # yellow
 }
 
 FLAGS = parse_demo_flags()
@@ -330,8 +334,9 @@ def organ_palette() -> np.ndarray:
     palette[0] = (0.12, 0.12, 0.14)  # background — near-black
     for label, name in CLASS_MAP.items():
         base = np.array(GROUP_COLORS[tissue_group(name)], dtype=np.float32)
-        # deterministic ±12% brightness ripple keyed on label id
-        f = 0.88 + 0.24 * (((label * 2654435761) % 1000) / 1000.0)
+        # deterministic ±8% brightness ripple keyed on label id (keeps
+        # left/right & adjacent structures separable without muddying the hue)
+        f = 0.92 + 0.16 * (((label * 2654435761) % 1000) / 1000.0)
         palette[label] = np.clip(base * f, 0.0, 1.0)
     return palette
 
