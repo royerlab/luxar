@@ -105,7 +105,9 @@ export const GSPLAT_PICK_VERTEX_SHADER = /* glsl */ `
 
         // Coverage fade applies in BOTH projections (matches the visual
         // shader — ortho projected size is depth-independent, divisor 1)
-        // so pickability tracks what is actually visible.
+        // so pickability tracks what is actually visible. Same inherited
+        // caveat as the visual shader: the absolute maxLateralVar > 0.01
+        // gate skips the fade for sigma < 0.1 world-unit splats.
         float coverageFade = 1.0;
         {
             float maxLateralVar = max(Sigma_cam[0][0], max(Sigma_cam[1][1], Sigma_cam[2][2]));

@@ -130,6 +130,11 @@ export const GSPLAT_VERTEX_SHADER = /* glsl */ `
         // previously showed hard-edged clamped rectangles with no fade
         // (perspective-only was a leftover from when the clamp was too).
         // Ortho projected size is depth-independent (divisor 1).
+        // CAVEAT (inherited, unchanged here): the maxLateralVar > 0.01
+        // gate below is an ABSOLUTE world-units² threshold, so splats
+        // with spatial sigma < 0.1 world units skip the fade entirely
+        // while the extent clamp still applies — deep-zoomed tiny-sigma
+        // (or nm-unit-scale) scenes can still show clamped rectangles.
         float coverageFade = 1.0;
         {
             float maxLateralVar = max(Sigma_cam[0][0], max(Sigma_cam[1][1], Sigma_cam[2][2]));

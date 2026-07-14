@@ -262,6 +262,9 @@ export function gsplatWebGPUFactory(
     ).toVar();
     // Coverage fade applies in BOTH projections (GLSL twin updated in
     // lockstep): ortho projected size is depth-independent (divisor 1).
+    // Same inherited caveat as the GLSL twin: the absolute
+    // maxLateralVar > 0.01 gate skips the fade for splats with spatial
+    // sigma < 0.1 world units while the extent clamp still applies.
     const isOrtho: TSLNode = int(uIsOrtho).equal(int(1)).toVar();
     const projectedExtent: TSLNode = uFx
       .mul(sqrt(max(maxLateralVar, float(1e-8))))

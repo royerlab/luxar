@@ -63,10 +63,12 @@ export interface GSplatMaterialConfig {
   /** Blending mode */
   blendingMode?: 'additive' | 'normal' | 'max' | 'opaque' | 'luminous';
   /**
-   * DERIVED, no longer consumed: `transparent` is owned by
-   * `applyBlendingMode` (true for every mode except `opaque`) — the
-   * same derivation the material-manager cache keys use. Kept on the
-   * config shape for clone() call-site compatibility.
+   * Explicit override, applied AFTER `applyBlendingMode`'s
+   * mode-derived value (true for every mode except `opaque`).
+   * Production callers never pass it; clone() passes the parent's
+   * current (already mode-derived) value, so the round-trip is a
+   * no-op — but the constructor DOES consume it, so a caller-supplied
+   * value wins over the mode derivation.
    */
   transparent?: boolean;
   /** Whether to test against depth buffer (default true; additive sets false) */

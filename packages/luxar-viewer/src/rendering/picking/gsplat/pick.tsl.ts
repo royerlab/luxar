@@ -145,6 +145,9 @@ export function gsplatPickWebGPUFactory(
       .toVar();
     const depthFadeReject: TSLNode = depthFade.lessThan(0.01);
 
+    // Coverage fade (both projections; see shader-tsl.ts). Same
+    // inherited caveat: the absolute maxLateralVar > 0.01 gate skips
+    // the fade for splats with spatial sigma < 0.1 world units.
     const maxLateralVar: TSLNode = max(
       SigmaCam.element(int(0)).element(int(0)),
       max(SigmaCam.element(int(1)).element(int(1)), SigmaCam.element(int(2)).element(int(2)))
