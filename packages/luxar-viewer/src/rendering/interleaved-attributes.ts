@@ -8,14 +8,17 @@
  * vertex-buffer slot instead of 12.
  *
  * This matters because Chrome's compat-mode WebGPU adapter
- * hard-caps `maxVertexBuffers=8`; line / gsplat materials with 6+
- * attributes won't build their pipeline otherwise. Interleaving
- * also gives better vertex-throughput (one cache line per instance
- * vs N parallel fetches) and fewer driver calls per `setVertexBuffer`.
+ * hard-caps `maxVertexBuffers=8`; line materials with 6+ attributes
+ * won't build their pipeline otherwise. Interleaving also gives
+ * better vertex-throughput (one cache line per instance vs N
+ * parallel fetches) and fewer driver calls per `setVertexBuffer`.
  *
- * Symmetry: Points / Lines / GSplats all flow through the same
- * helper so the geometry construction shape stays parallel across
- * the three node types (project policy: three-geometry symmetry).
+ * Symmetry: Points / Lines flow through this helper so their
+ * geometry construction stays parallel. GSplats left this path in
+ * depth-sorting Phase 1 — their per-splat data lives in an RGBA32F
+ * splat texture (`gsplat-geometry.ts::attachSplatStorage`), with a
+ * single `aSortedIndex` instanced attribute (symmetry restored
+ * when/if Points/Lines migrate — spec §8).
  *
  * **Single-dtype today.** Every attribute is packed as Float32 into
  * one shared buffer. The first attempt at narrowing
@@ -297,9 +300,11 @@ export function writeInterleavedAttribute(
   // duplicates at flush time — both WebGPU backends (native and
   // WebGL2-fallback) replay `updateRanges` verbatim, and ranges also
   // accumulate across commits while the mesh is not drawn (nothing
-  // clears them until a flush). Six per-attribute writes per gsplat
-  // commit — or 6k writes while a hidden layer scrubs k timepoints —
+  // clears them until a flush). Multiple per-attribute writes per
+  // commit — or thousands while a hidden layer scrubs k timepoints —
   // must therefore collapse to ONE range here, not at flush time.
+  // (The gsplat commit that motivated this now writes a texture, but
+  // points/lines commits still take this path per attribute.)
   // Every write is a [0, end) prefix, so the union is the max end.
   let rangeEnd = instanceCount * stride;
   for (const range of buffer.updateRanges) {

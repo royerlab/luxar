@@ -31,16 +31,16 @@ gpu-buffer-pool/
 Each adapter (`PointsBufferAdapter`, `LinesBufferAdapter`, `GSplatsBufferAdapter`) owns:
 
 - A bucketed `Map<number, PooledBuffer[]>` of released-but-reusable geometries, keyed by capacity bucket.
-- A canonical per-instance attribute spec list (`POINTS_BASE_ATTRIBUTE_SPECS`, `LINES_BASE_ATTRIBUTE_SPECS`, `GSPLATS_ATTRIBUTE_SPECS`) used to allocate the geometry's single `InstancedInterleavedBuffer`.
+- Points/Lines: a canonical per-instance attribute spec list (`POINTS_BASE_ATTRIBUTE_SPECS`, `LINES_BASE_ATTRIBUTE_SPECS`) used to allocate the geometry's single `InstancedInterleavedBuffer`. GSplats instead attach an RGBA32F **splat texture** + a `aSortedIndex` (Uint32) ordering attribute via `gsplat-geometry.ts::attachSplatStorage` (depth-sorting Phase 1); the texture is disposed by the geometry's own `dispose` event at every dispose site.
 - `acquireGeometry(nodeId, …)` — first checks `host.activeBuffers` for in-place reuse (matching capacity and, for points, matching attribute dtypes; for lines, a matching scalar spec set via the `hasScalars` parameter), then scans bucketed pools best-fit, then falls back to allocation. **Growth is release + reacquire, never an in-place rebuild**: an undersized active buffer is released to the pool intact and the acquire falls through to best-fit/fresh allocation. Replacing a rendered geometry's attributes would strand the old GPU buffer in the renderer caches (freed only at GC mercy on classic WebGL; pinned permanently by the WebGPU renderer's strong `Info.memoryMap`). Content carry-forward is unnecessary — every commit rewrites all attributes for the full count right after acquire.
 - `releaseGeometry(nodeId)` — moves the buffer into a per-capacity bucket and calls `host.evictUnused()`.
-- `updateGeometry(geometry, data, count, …)` — writes per-instance attributes via `writePooledAttribute`, then recomputes `boundingBox` / `boundingSphere`. The lines adapter expands the box by max line width; the gsplats adapter expands by max Cholesky row-norm × truncation radius.
+- `updateGeometry(geometry, data, count, …)` — Points/Lines write per-instance attributes via `writePooledAttribute`; GSplats run one fused texel pass (`writeSplatTexels`) plus an identity `aSortedIndex` fill. All recompute `boundingBox` / `boundingSphere`; the lines adapter expands the box by max line width, the gsplats adapter by max Cholesky row-norm × truncation radius.
 
 Adapters interact with the parent pool only through the narrow `*AdapterHost` interfaces — they read `activeBuffers`, `frameCount`, `stats`, `typeStats`, call `host.getBucket(count)` and `host.evictUnused()`, and set `host._lastAcquireRebuilt` so the parent knows whether the returned geometry still has its previous attribute bindings.
 
 ### Points-specific dtype tracking
 
-Points geometries are pooled with full dtype awareness (`PointsAttributeTypes` in `pool-stats.ts`). A pooled point buffer is only reused when `attributeTypesMatch` confirms the new upload has the same color/radius/sharpness/scalar dtypes. This avoids hard-to-debug reuse bugs where, e.g., a Uint8 color view is reinterpreted as Float32. Lines and gsplats pool by capacity alone — their attribute layouts are uniformly Float32.
+Points geometries are pooled with full dtype awareness (`PointsAttributeTypes` in `pool-stats.ts`). A pooled point buffer is only reused when `attributeTypesMatch` confirms the new upload has the same color/radius/sharpness/scalar dtypes. This avoids hard-to-debug reuse bugs where, e.g., a Uint8 color view is reinterpreted as Float32. Lines and gsplats pool by capacity alone — lines' attribute layout is uniformly Float32, and gsplat splat textures are always RGBA32F.
 
 ### Optional scalar attributes (colormaps)
 
