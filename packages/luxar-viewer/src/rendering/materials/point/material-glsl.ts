@@ -202,6 +202,11 @@ export class PointMaterial
     this.uniforms.opacity.value = opacity;
   }
 
+  /** Current opacity multiplier (the LOD cross-fade snapshots this as its fade base). */
+  getOpacity(): number {
+    return this.uniforms.opacity.value as number;
+  }
+
   /**
    * Update gamma correction
    * Only invGamma is used in shader; gamma value stored in userData for clone()

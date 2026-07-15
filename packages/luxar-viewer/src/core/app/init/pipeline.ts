@@ -19,6 +19,8 @@ import { notifier } from '../../../utils/cross-layer/notifier';
 import { log, Modules } from '../../../utils/log';
 import { config } from '../../../config';
 import { getGpuByteBudget } from '../../../rendering/gpu-byte-budget';
+import { materialManager } from '../../../rendering';
+import { readUrlParams } from '../../../config/url-params';
 import { resolveFactories, type AppFactories } from '../factories';
 import type { LuxarAppOptions } from '../options';
 import type { EventGroup } from '../../../utils/cross-layer/event-group';
@@ -183,6 +185,9 @@ export async function runInitPipeline(
   // only the DEFAULT loader's registry is evaluated per frame. The
   // registry DEPS below are per-owner already, so when per-loader
   // callbacks arrive no further wiring changes are needed.)
+  // LOD cross-fade is ON by default; ?no-lod-fade disables it. Captured once at
+  // wiring time (a reload re-reads it).
+  const lodCrossFadeEnabled = readUrlParams().lodFade;
   SceneLoaderManager.getInstance().setLODGroupRegistryFactory((owner) => {
     return new LODGroupRegistry({
       getCamera: () => sceneManager.camera,
@@ -222,6 +227,15 @@ export async function runInitPipeline(
       // (it commits outside the per-slice sweep and can outlast the idle
       // timeout), so the swap-up to the fresh level fires when it lands.
       requestRender: () => animationController.startAnimation(),
+      // LOD cross-fade (ON by default; ?no-lod-fade disables): the registry
+      // blends adjacent LOD levels' opacity across a zoom transition instead of
+      // a hard swap (additive/luminous only). Read once at wiring time.
+      getCrossFadeEnabled: () => lodCrossFadeEnabled,
+      // Register a fade's clone-on-first-use material so it keeps receiving
+      // per-frame camera-uniform updates (an unregistered gsplat clone would
+      // project with stale camera params).
+      registerMaterial: (material) =>
+        materialManager.register(material as Parameters<typeof materialManager.register>[0]),
     });
   });
   // Wake the render loop after EVERY geometry commit (forwarded to each

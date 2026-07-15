@@ -55,7 +55,48 @@ import {
   SettleTracker,
   visibleElementCount,
 } from './lod-freshness';
-import { shouldHoldPreviousDisplay, subtreeDisplayProgress, type ProgressNode } from './lod-display-gate';
+import {
+  shouldHoldPreviousDisplay,
+  subtreeDisplayProgress,
+  type ProgressNode,
+} from './lod-display-gate';
+import { coverageBlendPlan } from './lod-blend';
+
+/**
+ * The subset of a leaf material's surface the LOD cross-fade drives: read the
+ * authored opacity as a fade base, write `base × α`, and clone-on-first-use
+ * (materials are cached by props, so an in-place write would fade every layer
+ * sharing the instance). `getOpacity` is the symmetric companion to
+ * `updateOpacity` added to the material classes for exactly this.
+ */
+interface FadeableMaterial extends THREE.Material {
+  updateOpacity(opacity: number): void;
+  getOpacity(): number;
+}
+
+/** True when a material exposes the {@link FadeableMaterial} opacity surface. */
+function isFadeable(mat: THREE.Material): mat is FadeableMaterial {
+  const m = mat as Partial<FadeableMaterial>;
+  return typeof m.updateOpacity === 'function' && typeof m.getOpacity === 'function';
+}
+
+/** Blend modes whose additive/order-independent compositing cross-fades correctly. */
+const BLENDABLE_MODES: ReadonlySet<string> = new Set(['additive', 'luminous']);
+
+/**
+ * Cross-fade band half-width as a FRACTION of the local inter-level gap. The two
+ * levels straddling a boundary blend while the coverage metric is within
+ * `±fraction·min(adjacent gaps)` of it; outside, a single level renders. Because
+ * the `coverage_fraction` thresholds are geometrically spaced, a proportional
+ * band keeps the dissolve the same fraction of a step at every level (a constant
+ * width would be over-wide at the coarse end). ~0.4 → the middle ~20% of each
+ * step is crisp single-level, the rest a dissolve; `< 0.5` guarantees no
+ * overlapping bands. See `coverageBlendPlan`.
+ */
+const CROSSFADE_BAND_FRACTION = 0.4;
+
+/** Below this the finer level's blend weight is treated as 0/1 (single level). */
+const FADE_EPSILON = 0.01;
 
 /**
  * Frames the view-update version must hold steady before the registry reloads a
@@ -321,6 +362,27 @@ export interface LODGroupRegistryDeps {
    * no-op (unit tests don't run a loop).
    */
   requestRender?: () => void;
+  /**
+   * Whether the LOD cross-fade is enabled (ON by default; `?no-lod-fade`
+   * disables). When true and an additive/luminous group is zooming across a LOD
+   * boundary, the registry
+   * blends the two straddling levels' opacity — the finer at
+   * `smoothstep(coverage metric across a ±band around the boundary)`, the
+   * coarser at the complement — instead of a hard visibility swap. Distance-
+   * driven (a function of the coverage metric), independent of additive
+   * streaming. Omitted / false ⇒ the pre-cross-fade hard swap, byte-identical.
+   * Read live so the flag applies without a reload. The default for unit tests
+   * (off).
+   */
+  getCrossFadeEnabled?: () => boolean;
+  /**
+   * Register a clone-on-first-fade material with the material manager so it keeps
+   * receiving per-frame camera-uniform updates (the fade clones the shared cached
+   * material to fade one level independently; an unregistered gsplat clone would
+   * project with stale camera params). Wired to `materialManager.register`;
+   * omitted in unit tests (no camera loop).
+   */
+  registerMaterial?: (material: THREE.Material) => void;
 }
 
 /**
@@ -731,6 +793,10 @@ export class LODGroupRegistry {
   ): boolean {
     // Pick the desired child index.
     let desired: number;
+    // The dimensionless coverage metric for this frame (projected diagonal ÷
+    // FILL_FACTOR·viewportDiag), hoisted so the coverage-band cross-fade below
+    // can blend around a boundary. -1 ⇒ not computed (locked / off-screen).
+    let coverageMetric = -1;
     if (entry.selectorMode !== 'auto') {
       // Explicit lock bypasses the off-screen gate: a user who pins a level
       // keeps it whether or not the group is on screen.
@@ -768,7 +834,7 @@ export class LODGroupRegistry {
         // finest, unchanged. viewportDiag is > 0 here (evaluatePerFrame guards
         // width/height == 0).
         const viewportDiag = Math.hypot(viewport.width, viewport.height);
-        const coverageMetric = diagonalPx / (FILL_FACTOR * viewportDiag);
+        coverageMetric = diagonalPx / (FILL_FACTOR * viewportDiag);
         desired = pickChildWithHysteresis(cache.thresholds, entry.activeChildIndex, coverageMetric);
         entry.offScreen = false;
       }
@@ -870,16 +936,13 @@ export class LODGroupRegistry {
     // ── Never-downgrade display gate ──
     // A lazy level flips ``ready`` after its FIRST additive chunk commits, so
     // an ungated swap to a fresh-but-still-streaming aspiration pops displayed
-    // quality down to chunk-1 (on zoom in, zoom out, or after a scrub settles)
-    // and climbs back. Hold the previously-displayed level while the streaming
-    // aspiration is strictly worse than what is on screen; release on ladder
-    // completion (committed, not just fetched — see shouldHoldPreviousDisplay),
-    // committed-count crossover (the rest of the ladder then streams VISIBLY),
-    // ladder failure, or the previous level losing freshness. A group with
-    // nothing better on screen swaps immediately (fast first paint preserved).
-    // Bypassed for an explicit lock (the user wants that level now) and while
-    // off-screen (frustum-culled: no visual pop, and holding would pin the
-    // previous level's VRAM for nothing).
+    // quality down to chunk-1 and climbs back. Hold the previously-displayed
+    // level while the streaming aspiration is strictly worse than what is on
+    // screen; release on ladder completion, committed-count crossover, ladder
+    // failure, or the previous level losing freshness. Bypassed for an explicit
+    // lock and while off-screen. This is a STREAMING/loading concern (WHEN a
+    // just-loaded level is good enough to show) — orthogonal to the
+    // distance-driven cross-fade below, and stays a hard hold.
     if (
       displayIdx === entry.activeChildIndex &&
       entry.selectorMode === 'auto' &&
@@ -891,19 +954,66 @@ export class LODGroupRegistry {
       const prevIdx = entry.heldDisplayChildIndex;
       if (prevIdx != null && prevIdx !== displayIdx) {
         const prev = entry.children[prevIdx];
-        // Children are coarsest→finest, so displayIdx (== activeChildIndex, the
-        // aspiration) being FINER than the held prev means an upgrade (zoom-in).
-        // The gate's early energy-release is sound only then; on a downgrade
-        // (coarser aspiration) it would pop below the held finer level.
+        // Children are coarsest→finest, so displayIdx (== activeChildIndex) being
+        // FINER than the held prev means an upgrade (zoom-in); the gate's early
+        // energy-release is sound only then (downgrade would pop below the held).
         const isUpgrade = displayIdx > prevIdx;
         if (shouldHoldPreviousDisplay(aspiration!, prev, version ?? null, isUpgrade)) {
           displayIdx = prevIdx;
-          // The held aspiration is semantically in use — keep it warm in the
-          // eviction LRU. The never-shown stamp below only fires once
-          // (``lastVisibleTick == null``), so during a failure-cooldown window
-          // (ready, not loading, not displayed) it would otherwise be the
-          // globally coldest eviction candidate and churn release→re-stream.
           aspiration!.lastVisibleTick = this.tick;
+        }
+      }
+    }
+
+    // ── Coverage-band cross-fade (distance-driven) ──
+    // As the camera zooms across a LOD boundary, blend the two levels straddling
+    // it — coarser at (1−w), finer at w = smoothstep of the coverage metric
+    // across a ±band around the boundary — so the substitutive switch dissolves
+    // instead of popping. Purely a function of DISTANCE (the coverage metric),
+    // independent of additive streaming; brightness is preserved by the levels'
+    // build-time mass conservation (both integrate to the same DC). Additive/
+    // luminous only (order-independent compositing). Off / non-blendable /
+    // off-screen / locked / a held-stale display ⇒ no blend (byte-identical hard
+    // swap). The finer partner must be resident to fade against; if it is not,
+    // kick its load so the NEXT crossing blends (the first hard-swaps meanwhile).
+    let blendPartnerIdx: number | null = null;
+    let primaryWeight = 1;
+    if (
+      this.deps.getCrossFadeEnabled?.() === true &&
+      entry.selectorMode === 'auto' &&
+      !entry.offScreen &&
+      displayIdx === entry.activeChildIndex &&
+      coverageMetric >= 0
+    ) {
+      const cache = this.caches.get(entry.path);
+      const plan = cache
+        ? coverageBlendPlan(cache.thresholds, coverageMetric, CROSSFADE_BAND_FRACTION)
+        : null;
+      if (
+        plan &&
+        plan.hiWeight > FADE_EPSILON &&
+        plan.hiWeight < 1 - FADE_EPSILON &&
+        (displayIdx === plan.lo || displayIdx === plan.hi)
+      ) {
+        const partnerIdx = displayIdx === plan.hi ? plan.lo : plan.hi;
+        const partner = entry.children[partnerIdx];
+        const partnerFresh = version == null || this.childFreshAndCount(partner, version).fresh;
+        const aspBlendable = this.isBlendable(aspiration!);
+        if (partner && isReady(partner) && partnerFresh && aspBlendable && this.isBlendable(partner)) {
+          blendPartnerIdx = partnerIdx;
+          // primaryWeight is the OPACITY of the primary (displayIdx); the plan's
+          // hiWeight is the FINER level's opacity, mapped to whichever is primary.
+          primaryWeight = displayIdx === plan.hi ? plan.hiWeight : 1 - plan.hiWeight;
+          // Keep both warm in the eviction LRU (both are on screen). The blend
+          // weight is a function of the coverage metric (camera distance), so
+          // camera motion already keeps the on-demand loop awake through the
+          // band; a parked camera settles on the correct static blended frame.
+          partner.lastVisibleTick = this.tick;
+          aspiration!.lastVisibleTick = this.tick;
+        } else if (partner && !isReady(partner) && aspBlendable) {
+          // Approaching a not-yet-resident finer level: load it so the next
+          // crossing can blend (this crossing hard-swaps while it loads).
+          this.maybeKickLoad(partner);
         }
       }
     }
@@ -930,12 +1040,27 @@ export class LODGroupRegistry {
     // level changes so ``evaluatePerFrame`` refreshes the monitor's visible
     // tally, which counts the displayed level, not the aspiration.
     let changed = false;
+    // Opacity is touched ONLY while the cross-fade feature is enabled. When off,
+    // ``blendPartnerIdx`` is null and this reduces to the original single-level
+    // visibility swap with no material writes — byte-identical to before.
+    const manageFade = this.deps.getCrossFadeEnabled?.() === true;
     for (let i = 0; i < entry.children.length; i++) {
       const child = entry.children[i];
-      const shouldShow = i === displayIdx && isReady(child);
+      const isPrimary = i === displayIdx;
+      const shouldShow = (isPrimary || i === blendPartnerIdx) && isReady(child);
       if (child.object.visible !== shouldShow) {
         child.object.visible = shouldShow;
         if (shouldShow) changed = true; // a new level became visible
+      }
+      if (manageFade) {
+        if (shouldShow && blendPartnerIdx != null) {
+          // Cross-fade in flight: primary at α, held partner at 1−α.
+          this.applyChildFade(child, isPrimary ? primaryWeight : 1 - primaryWeight);
+        } else {
+          // No blend / left the plan: restore authored opacity if we faded it
+          // (idempotent — a no-op on any never-faded child).
+          this.applyChildFade(child, null);
+        }
       }
     }
     // Mark the on-screen level most-recently-used and record it for the eviction
@@ -1109,6 +1234,73 @@ export class LODGroupRegistry {
       return i;
     }
     return -1;
+  }
+
+  /**
+   * Whether every fadeable leaf material under ``child.object`` uses a blend
+   * mode that cross-fades correctly ({@link BLENDABLE_MODES} — additive /
+   * luminous, order-independent + mass-conserved ⇒ brightness-exact). A group
+   * child (overview partition branch) must be uniformly blendable. No fadeable
+   * material at all ⇒ not blendable (nothing to fade — e.g. a not-yet-loaded
+   * placeholder, or a `max`/`normal` layer which keeps the hard swap).
+   */
+  private isBlendable(child: LODGroupChild): boolean {
+    let sawFadeable = false;
+    let allBlendable = true;
+    const visit = (mesh: THREE.Object3D): void => {
+      const mat = (mesh as THREE.Mesh).material;
+      if (!mat || Array.isArray(mat) || !isFadeable(mat)) return;
+      sawFadeable = true;
+      const mode = (mat.userData?.blendingMode as string | undefined) ?? '';
+      if (!BLENDABLE_MODES.has(mode)) allBlendable = false;
+    };
+    const obj = child.object as THREE.Mesh;
+    if (obj.material) visit(child.object);
+    else child.object.traverse(visit);
+    return sawFadeable && allBlendable;
+  }
+
+  /**
+   * Apply the cross-fade opacity (``base × weight``) to a child's leaf
+   * materials, or restore the authored opacity when ``weight`` is ``null``.
+   * Clones the shared cached material on the first fade — materials are cached
+   * by props, so an in-place opacity write would fade every layer sharing the
+   * instance; this mirrors the layers panel's clone-on-first-use and reuses its
+   * ``_layerMaterialCloned`` marker so the two never double-clone the same mesh.
+   * Snapshots the pre-fade opacity as the fade base on the mesh userData.
+   * ``child.object`` is a leaf mesh or a group subtree (overview partition
+   * branch) → applied to each fadeable leaf. Idempotent: restore is a no-op on a
+   * never-faded mesh, so a steady-state / non-blendable group is left untouched.
+   */
+  private applyChildFade(child: LODGroupChild, weight: number | null): void {
+    const visit = (mesh: THREE.Object3D): void => {
+      const current = (mesh as THREE.Mesh).material;
+      if (!current || Array.isArray(current) || !isFadeable(current)) return;
+      const ud = mesh.userData as { _lodFadeBase?: number; _layerMaterialCloned?: boolean };
+      if (weight == null) {
+        // Restore the authored opacity, but only on a mesh we actually faded.
+        if (ud._lodFadeBase != null) {
+          current.updateOpacity(ud._lodFadeBase);
+          ud._lodFadeBase = undefined;
+        }
+        return;
+      }
+      let mat = current;
+      if (!ud._layerMaterialCloned) {
+        const cloned = current.clone() as FadeableMaterial;
+        (mesh as THREE.Mesh).material = cloned;
+        ud._layerMaterialCloned = true;
+        this.deps.registerMaterial?.(cloned); // keep camera uniforms live
+        mat = cloned;
+      }
+      // Snapshot the composed authored opacity once per fade; hold it steady
+      // while fading so the ratio is exact, clear it on restore.
+      if (ud._lodFadeBase == null) ud._lodFadeBase = mat.getOpacity();
+      mat.updateOpacity(ud._lodFadeBase * weight);
+    };
+    const obj = child.object as THREE.Mesh;
+    if (obj.material) visit(child.object);
+    else child.object.traverse(visit);
   }
 
   private coarsestFreshOrReadyIndex(entry: LODGroupEntry, version: number): number {
