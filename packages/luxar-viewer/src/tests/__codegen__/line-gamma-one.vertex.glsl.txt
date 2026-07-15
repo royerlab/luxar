@@ -33,8 +33,8 @@ precision highp samplerCubeShadow;
 // uniforms
 
 layout( std140 ) uniform render {
-	mat4 cameraViewMatrix;
 	mat4 cameraProjectionMatrix;
+	mat4 cameraViewMatrix;
 };
 
 layout( std140 ) uniform object {
@@ -46,7 +46,6 @@ layout( std140 ) uniform object {
 	float nodeUniform7;
 	float nodeUniform8;
 	float nodeUniform9;
-	float nodeUniform10;
 };
 
 
@@ -82,27 +81,21 @@ layout( location = 11 ) in float aEndSharpness;
 mat4 modelViewMatrix;
 vec4 nodeVar0;
 vec4 nodeVar1;
-vec4 nodeVar2;
-vec4 nodeVar3;
-vec2 nodeVar4;
-float nodeVar6;
+float nodeVar2;
+vec2 nodeVar3;
+float nodeVar5;
+float nodeVar8;
 float nodeVar9;
 float nodeVar10;
-float nodeVar11;
+float nodeVar14;
 float nodeVar15;
 float nodeVar16;
 float nodeVar17;
 float nodeVar18;
 float nodeVar19;
-float nodeVar20;
-vec4 clipPos;
-float nodeVar22;
-float nodeVar23;
-float nodeVar24;
-vec4 nodeVar25;
-vec4 nodeVar26;
-vec4 nodeVar27;
-vec2 nodeVar28;
+vec4 nodeVar21;
+vec2 nodeVar22;
+vec4 nodeVar23;
 
 // codes
 
@@ -116,19 +109,29 @@ void main() {
 	// code
 
 	modelViewMatrix = ( cameraViewMatrix * nodeUniform2 );
-	nodeVar0 = ( modelViewMatrix * vec4( aEndPos, 1.0 ) );
-	nodeVar1 = ( cameraProjectionMatrix * nodeVar0 );
-	nodeVar2 = ( modelViewMatrix * vec4( aStartPos, 1.0 ) );
-	nodeVar3 = ( cameraProjectionMatrix * nodeVar2 );
-	nodeVar4 = ( ( ( ( nodeVar1.xy / vec2( max( nodeVar1.w, 0.0001 ) ) ) - ( nodeVar3.xy / vec2( max( nodeVar3.w, 0.0001 ) ) ) ) * ( nodeUniform3 * vec2( 0.5 ) ) ) / vec2( length( ( ( ( nodeVar1.xy / vec2( max( nodeVar1.w, 0.0001 ) ) ) - ( nodeVar3.xy / vec2( max( nodeVar3.w, 0.0001 ) ) ) ) * ( nodeUniform3 * vec2( 0.5 ) ) ) ) ) );
+	nodeVar0 = ( cameraProjectionMatrix * ( modelViewMatrix * vec4( aEndPos, 1.0 ) ) );
+	nodeVar1 = ( cameraProjectionMatrix * ( modelViewMatrix * vec4( aStartPos, 1.0 ) ) );
+	nodeVar2 = length( ( ( ( nodeVar0.xy / vec2( max( nodeVar0.w, 0.0001 ) ) ) - ( nodeVar1.xy / vec2( max( nodeVar1.w, 0.0001 ) ) ) ) * ( nodeUniform3 * vec2( 0.5 ) ) ) );
+	nodeVar3 = ( ( ( ( nodeVar0.xy / vec2( max( nodeVar0.w, 0.0001 ) ) ) - ( nodeVar1.xy / vec2( max( nodeVar1.w, 0.0001 ) ) ) ) * ( nodeUniform3 * vec2( 0.5 ) ) ) / vec2( nodeVar2 ) );
 	nodeVarying0 = aQuadCorner.y;
-	nodeVar6 = ( ( aQuadCorner.x * 0.5 ) + 0.5 );
-	nodeVarying1 = nodeVar6;
+	nodeVar5 = ( ( aQuadCorner.x * 0.5 ) + 0.5 );
+	nodeVarying1 = nodeVar5;
 	nodeVarying2 = aSegmentLength;
 
 	if ( ( ( ( aStartWidth < 1e30 ) && ( aStartWidth > -1e30 ) ) && ( aStartWidth >= 0.0 ) ) ) {
 
-		nodeVar9 = aStartWidth;
+		nodeVar8 = aStartWidth;
+
+	} else {
+
+		nodeVar8 = 0.0;
+
+	}
+
+
+	if ( ( ( ( aEndWidth < 1e30 ) && ( aEndWidth > -1e30 ) ) && ( aEndWidth >= 0.0 ) ) ) {
+
+		nodeVar9 = aEndWidth;
 
 	} else {
 
@@ -136,26 +139,26 @@ void main() {
 
 	}
 
-
-	if ( ( ( ( aEndWidth < 1e30 ) && ( aEndWidth > -1e30 ) ) && ( aEndWidth >= 0.0 ) ) ) {
-
-		nodeVar10 = aEndWidth;
-
-	} else {
-
-		nodeVar10 = 0.0;
-
-	}
-
-	nodeVar11 = mix( nodeVar9, nodeVar10, nodeVar6 );
-	nodeVarying3 = nodeVar11;
-	nodeVarying4 = mix( aStartColor, aEndColor, nodeVar6 );
+	nodeVar10 = mix( nodeVar8, nodeVar9, nodeVar5 );
+	nodeVarying3 = nodeVar10;
+	nodeVarying4 = mix( aStartColor, aEndColor, nodeVar5 );
 	nodeVarying5 = aEndClipped;
 	nodeVarying6 = aStartClipped;
 
 	if ( ( ( ( aStartSharpness < 1e30 ) && ( aStartSharpness > -1e30 ) ) && ( aStartSharpness >= 0.0 ) ) ) {
 
-		nodeVar15 = aStartSharpness;
+		nodeVar14 = aStartSharpness;
+
+	} else {
+
+		nodeVar14 = 0.5;
+
+	}
+
+
+	if ( ( ( ( aEndSharpness < 1e30 ) && ( aEndSharpness > -1e30 ) ) && ( aEndSharpness >= 0.0 ) ) ) {
+
+		nodeVar15 = aEndSharpness;
 
 	} else {
 
@@ -163,63 +166,39 @@ void main() {
 
 	}
 
+	nodeVarying7 = mix( clamp( nodeVar14, 0.0, 1.0 ), clamp( nodeVar15, 0.0, 1.0 ), nodeVar5 );
+	nodeVar16 = ( nodeVar10 * nodeUniform6 );
+	nodeVarying8 = nodeVar16;
+	nodeVar18 = max( nodeUniform7, ( 1.5 + 1.0 ) );
 
-	if ( ( ( ( aEndSharpness < 1e30 ) && ( aEndSharpness > -1e30 ) ) && ( aEndSharpness >= 0.0 ) ) ) {
+	if ( ( nodeVar16 <= nodeVar18 ) ) {
 
-		nodeVar16 = aEndSharpness;
-
-	} else {
-
-		nodeVar16 = 0.5;
-
-	}
-
-	nodeVarying7 = mix( clamp( nodeVar15, 0.0, 1.0 ), clamp( nodeVar16, 0.0, 1.0 ), nodeVar6 );
-	nodeVar17 = ( nodeVar11 * nodeUniform6 );
-	nodeVarying8 = nodeVar17;
-	nodeVar19 = max( nodeUniform7, ( 1.5 + 1.0 ) );
-
-	if ( ( nodeVar17 <= nodeVar19 ) ) {
-
-		nodeVar18 = 1.0;
+		nodeVar17 = 1.0;
 
 	} else {
 
-		nodeVar20 = ( nodeVar19 / max( nodeVar17, 0.0001 ) );
-		nodeVar18 = nodeVar20;
+		nodeVar19 = ( nodeVar18 / max( nodeVar16, 0.0001 ) );
+		nodeVar17 = nodeVar19;
 
 	}
 
-	nodeVarying9 = nodeVar18;
-	clipPos = vec4( 2.0, 2.0, 2.0, 1.0 );
-	nodeVar22 = ( - nodeVar2.z );
-	nodeVar23 = max( nodeUniform10, 0.0001 );
-	nodeVar24 = ( - nodeVar0.z );
+	nodeVarying9 = nodeVar17;
+	nodeVar21 = mix( nodeVar1, nodeVar0, nodeVar5 );
 
-	if ( (!( ( ( nodeVar22 < nodeVar23 ) && ( nodeVar24 < nodeVar23 ) ) || ( ( ( nodeVar22 < ( nodeVar23 * 2.0 ) ) && ( nodeVar24 < ( nodeVar23 * 2.0 ) ) ) && ( nodeVar17 > ( nodeVar19 * 2.0 ) ) ) )) ) {
+	if ( ( nodeVar2 > 0.0001 ) ) {
 
-		nodeVar25 = ( cameraProjectionMatrix * nodeVar2 );
-		nodeVar26 = ( cameraProjectionMatrix * nodeVar0 );
-		nodeVar27 = mix( nodeVar25, nodeVar26, nodeVar6 );
+		nodeVar22 = nodeVar3;
 
-		if ( ( length( ( ( ( nodeVar26.xy / vec2( max( nodeVar26.w, 0.0001 ) ) ) - ( nodeVar25.xy / vec2( max( nodeVar25.w, 0.0001 ) ) ) ) * ( nodeUniform3 * vec2( 0.5 ) ) ) ) > 0.0001 ) ) {
+	} else {
 
-			nodeVar28 = nodeVar4;
-
-		} else {
-
-			nodeVar28 = vec2( 1.0, 0.0 );
-
-		}
-
-		clipPos = vec4( ( nodeVar27.xy + ( ( ( ( ( vec2( ( - nodeVar28.y ), nodeVar28.x ) * vec2( aQuadCorner.y ) ) * vec2( clamp( nodeVar17, 1.5, nodeVar19 ) ) ) / nodeUniform3 ) * vec2( 2.0 ) ) * vec2( nodeVar27.w ) ) ), nodeVar27.z, nodeVar27.w );
-		
+		nodeVar22 = vec2( 1.0, 0.0 );
 
 	}
 
+	nodeVar23 = vec4( ( nodeVar21.xy + ( ( ( ( ( vec2( ( - nodeVar22.y ), nodeVar22.x ) * vec2( aQuadCorner.y ) ) * vec2( clamp( nodeVar16, 1.5, nodeVar18 ) ) ) / nodeUniform3 ) * vec2( 2.0 ) ) * vec2( nodeVar21.w ) ) ), nodeVar21.z, nodeVar21.w );
 
 	// result
-	gl_Position = clipPos;
+	gl_Position = nodeVar23;
 
 	gl_PointSize = 1.0;
 

@@ -21,6 +21,7 @@
  */
 
 import type { IUniform } from 'three';
+import { float, int, smoothstep } from 'three/tsl';
 
 /**
  * Loosely-typed TSL node alias. TSL's typed overloads return many
@@ -78,4 +79,39 @@ export function proxyIUniform<T>(node: TSLNode): IUniform<T> {
       node.value = v;
     },
   } as IUniform<T>;
+}
+
+/**
+ * Unified perspective near-plane fade (runtime-uniform variant, for
+ * the point/gsplat graphs whose ortho flag is the `uIsOrtho` uniform).
+ * Mirrors GLSL `perspectiveNearFade` in glsl-lib.ts: perspective =
+ * 0.0 behind the camera, smoothstep across [nearCull, 2*nearCull];
+ * ortho = 1.0 always (NDC clipping is the sole cull authority).
+ * Callers reject the vertex when the result < 0.01 and multiply the
+ * surviving amplitude/alpha/brightness by it.
+ */
+export function perspectiveNearFadeTSL(
+  uIsOrtho: TSLNode,
+  viewZ: TSLNode,
+  uNearCull: TSLNode
+): TSLNode {
+  const fade = smoothstep(uNearCull, uNearCull.mul(2.0), viewZ.negate());
+  const persp = viewZ.greaterThanEqual(0.0).select(float(0.0), fade);
+  return int(uIsOrtho).equal(int(1)).select(float(1.0), persp);
+}
+
+/**
+ * Compile-time-ortho variant for the line graphs (their ortho flag is
+ * the factory `config.isOrtho`, baked into the graph): ortho variants
+ * carry NO fade/cull code at all.
+ */
+export function perspectiveNearFadeStaticTSL(
+  isOrtho: boolean,
+  viewZ: TSLNode,
+  uNearCull: TSLNode
+): TSLNode {
+  if (isOrtho) return float(1.0);
+  return viewZ
+    .greaterThanEqual(0.0)
+    .select(float(0.0), smoothstep(uNearCull, uNearCull.mul(2.0), viewZ.negate()));
 }

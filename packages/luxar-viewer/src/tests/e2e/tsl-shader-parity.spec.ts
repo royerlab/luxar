@@ -721,8 +721,15 @@ test.describe('TSL ↔ GLSL shader parity', () => {
   // snapshots contain the `mvPosition.z >= 0 → vec4(0,0,-2,1)` reject). The
   // guard itself is a defensive early-out (skips wasted vertex math; explicit
   // intent; safe at the w≈0 singularity).
-  for (const variant of ['point-behind', 'point-pick-behind'] as const) {
-    test(`${variant}: behind-camera point renders identically (empty) in both backends`, async ({
+  for (const variant of [
+    'point-behind',
+    'point-pick-behind',
+    'line-behind',
+    'line-pick-behind',
+    'gsplat-behind',
+    'gsplat-pick-behind',
+  ] as const) {
+    test(`${variant}: behind-camera element renders identically (empty) in both backends`, async ({
       page,
     }) => {
       await bootHarness(page);
@@ -750,6 +757,140 @@ test.describe('TSL ↔ GLSL shader parity', () => {
       ).toBe(0);
     });
   }
+
+  test('point-persp: off-axis point footprint equals the centered one (view-z sizing, B9a)', async ({
+    page,
+  }) => {
+    await bootHarness(page);
+
+    const center = await runGLSL(page, 'point-persp-center');
+    const offaxis = await runGLSL(page, 'point-persp-offaxis');
+    const centerTSL = await runTSL(page, 'point-persp-center');
+    const offaxisTSL = await runTSL(page, 'point-persp-offaxis');
+
+    assertBothRendered(center, centerTSL.pixels, 'point-persp-center');
+    assertBothRendered(offaxis, offaxisTSL.pixels, 'point-persp-offaxis');
+    expect(
+      meanAbsDiffPerCoveredPixel(center, centerTSL.pixels),
+      'point-persp-center parity'
+    ).toBeLessThan(2.0);
+    expect(
+      meanAbsDiffPerCoveredPixel(offaxis, offaxisTSL.pixels),
+      'point-persp-offaxis parity'
+    ).toBeLessThan(2.0);
+
+    // Both points sit at view depth 1; the off-axis one is 26.6° from
+    // the view axis. With view-z sizing their footprints are EQUAL;
+    // the old Euclidean sizing shrank the off-axis sprite by
+    // cos(26.6°) ≈ 0.894 linear (~20% fewer covered pixels).
+    const centerCount = nonUniformPixelCount(center);
+    const offaxisCount = nonUniformPixelCount(offaxis);
+    expect(centerCount).toBeGreaterThan(20);
+    const ratio = offaxisCount / centerCount;
+    expect(
+      ratio,
+      `off-axis footprint ${offaxisCount}px vs centered ${centerCount}px — ` +
+        'view-z sizing requires equal footprints (Euclidean sizing shrinks off-axis)'
+    ).toBeGreaterThan(0.9);
+    expect(ratio).toBeLessThan(1.1);
+  });
+
+  test('point-subpixel: sub-pixel point is energy-compensated, not full-brightness (B9b)', async ({
+    page,
+  }) => {
+    await bootHarness(page);
+
+    const glslPixels = await runGLSL(page, 'point-subpixel');
+    const tslResult = await runTSL(page, 'point-subpixel');
+
+    // The 1.5px sprite floor guarantees rasterization on both backends.
+    assertBothRendered(glslPixels, tslResult.pixels, 'point-subpixel');
+    expect(
+      meanAbsDiffPerCoveredPixel(glslPixels, tslResult.pixels),
+      'point-subpixel parity'
+    ).toBeLessThan(2.0);
+
+    // Raw projected size ≈ 0.96px → sizeScale² = (0.96/1.5)² ≈ 0.41.
+    // The sprite center sits exactly on pixel (32,32)'s center where
+    // falloff = 1, so the written alpha is deterministically
+    // ≈ 0.41·255 ≈ 105. Pre-fix (no compensation) it wrote 255 —
+    // indistinguishable from the opaque clear alpha. Scan the 3×3
+    // around the center for the MIN alpha (the sprite is the only
+    // thing lowering alpha; row order is irrelevant by symmetry).
+    let alphaMin = 255;
+    for (let y = 31; y <= 33; y++) {
+      for (let x = 31; x <= 33; x++) {
+        const a = glslPixels[(y * 64 + x) * 4 + 3];
+        if (a < alphaMin) alphaMin = a;
+      }
+    }
+    expect(
+      alphaMin,
+      `sub-pixel point center alpha ${alphaMin} — must be ≈105 (0.41× compensated); ` +
+        '255 means the sizeScale² compensation is missing'
+    ).toBeLessThan(160);
+    expect(alphaMin).toBeGreaterThan(60);
+  });
+
+  test('point-near-fade: mid-band near fade renders identically across backends (B9c)', async ({
+    page,
+  }) => {
+    await bootHarness(page);
+
+    const glslPixels = await runGLSL(page, 'point-near-fade');
+    const tslResult = await runTSL(page, 'point-near-fade');
+
+    // Fade ≈ 0.39 at view depth 1 with uNearCull 0.7 — visible but
+    // dimmed, and byte-identical across backends (shared helper).
+    assertBothRendered(glslPixels, tslResult.pixels, 'point-near-fade');
+    expect(
+      meanAbsDiffPerCoveredPixel(glslPixels, tslResult.pixels),
+      'point-near-fade parity'
+    ).toBeLessThan(2.0);
+
+    // Clear alpha is opaque (255); the faded sprite LOWERS alpha at
+    // the center. smoothstep((1-0.7)/(1.4-0.7)) ≈ 0.39 → center ≈ 100;
+    // pre-fix points had NO near fade → 255.
+    let centerAlpha = 255;
+    for (const [x, y] of [
+      [31, 31],
+      [32, 31],
+      [31, 32],
+      [32, 32],
+    ]) {
+      const a = glslPixels[(y * 64 + x) * 4 + 3];
+      if (a < centerAlpha) centerAlpha = a;
+    }
+    expect(centerAlpha).toBeLessThan(160);
+    expect(centerAlpha).toBeGreaterThan(40);
+  });
+
+  test('line-ortho-near: in-frustum ortho line inside the nearCull slab RENDERS (B9c bug A)', async ({
+    page,
+  }) => {
+    await bootHarness(page);
+
+    const glslPixels = await runGLSL(page, 'line-ortho-near');
+    const tslResult = await runTSL(page, 'line-ortho-near');
+
+    // View depth 0.15 < uNearCull 0.5 but inside the ortho frustum
+    // (near 0.1): pre-fix the ungated bothBehind cull hid this line
+    // while a point/gsplat at the same spot drew — under ortho, NDC
+    // clipping is the sole cull authority.
+    assertBothRendered(glslPixels, tslResult.pixels, 'line-ortho-near');
+    expect(
+      meanAbsDiffPerCoveredPixel(glslPixels, tslResult.pixels),
+      'line-ortho-near parity'
+    ).toBeLessThan(2.0);
+    expect(
+      nonUniformPixelCount(glslPixels),
+      'ortho near-slab line must render (GLSL)'
+    ).toBeGreaterThan(20);
+    expect(
+      nonUniformPixelCount(tslResult.pixels),
+      'ortho near-slab line must render (TSL)'
+    ).toBeGreaterThan(20);
+  });
 
   test('mega with USE_VIGNETTE matches across backends', async ({ page }) => {
     await bootHarness(page);

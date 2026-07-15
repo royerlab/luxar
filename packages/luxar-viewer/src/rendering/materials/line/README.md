@@ -37,7 +37,7 @@ shader has no `tan()` or projection-mode divide), clamps to
 `[1.5 px, uMaxLinePixelWidth]` with an intensity-fading `vWidthFade`, then
 offsets `clipPos.xy` by `perpendicular × aQuadCorner.y × clampedPixelWidth`.
 The fragment stage shades
-`capFactor × perpFalloff × edgeAA × widthScale × vWidthFade`, where the
+`capFactor × perpFalloff × edgeAA × widthScale × vWidthFade × vNearFade`, where the
 perpendicular cross-section `perpFalloff(p) = max(exp(−K·p^β) − C, 0)/(1 − C)`
 is a **shifted-truncated super-Gaussian** (`p = |vPerpNorm| ∈ [0, 1]` from the
 centerline, `K = ln(100) ≈ 4.605`, `C = exp(−K) = 0.01`, the 1% iso-contour

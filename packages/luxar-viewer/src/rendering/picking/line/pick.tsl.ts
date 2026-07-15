@@ -39,7 +39,11 @@ import {
   Discard,
 } from 'three/tsl';
 import { NodeMaterial } from 'three/webgpu';
-import { sanitizeNonNegative, type TSLNode } from '../../materials/_shared/tsl-helpers';
+import {
+  perspectiveNearFadeStaticTSL,
+  sanitizeNonNegative,
+  type TSLNode,
+} from '../../materials/_shared/tsl-helpers';
 
 /**
  * Pre-created TSL leaf nodes supplied by the wrapper class. Same
@@ -133,10 +137,15 @@ export function linePickWebGPUFactory(
   const mvEnd: TSLNode = modelViewMatrix.mul(vec4(aEndPos, 1.0));
   const mvPos: TSLNode = mix(mvStart, mvEnd, t);
 
+  // PERSPECTIVE ONLY (compile-time graph variant; see the visual line
+  // TSL): ortho graphs carry no cull/fade code — NDC clipping is the
+  // sole cull authority there.
   const nearCull: TSLNode = max(uNearCull, float(1e-4));
   const startDepth: TSLNode = mvStart.z.negate();
   const endDepth: TSLNode = mvEnd.z.negate();
-  const bothBehind: TSLNode = startDepth.lessThan(nearCull).and(endDepth.lessThan(nearCull));
+  const bothBehind: TSLNode | null = config.isOrtho
+    ? null
+    : startDepth.lessThan(nearCull).and(endDepth.lessThan(nearCull));
 
   const clipStart: TSLNode = cameraProjectionMatrix.mul(mvStart);
   const clipEnd: TSLNode = cameraProjectionMatrix.mul(mvEnd);
@@ -179,10 +188,12 @@ export function linePickWebGPUFactory(
   // inside near-cull margin AND rawPixelWidth blows past the clamp by
   // 2× → degenerate to off-screen. Otherwise picking still rasterizes
   // the half-viewport quad the visual pass already culled.
-  const pathological: TSLNode = startDepth
-    .lessThan(nearCull.mul(2.0))
-    .and(endDepth.lessThan(nearCull.mul(2.0)))
-    .and(rawPixelWidth.greaterThan(maxPW.mul(2.0)));
+  const pathological: TSLNode | null = config.isOrtho
+    ? null
+    : startDepth
+        .lessThan(nearCull.mul(2.0))
+        .and(endDepth.lessThan(nearCull.mul(2.0)))
+        .and(rawPixelWidth.greaterThan(maxPW.mul(2.0)));
 
   const pixelOffset: TSLNode = perpendicular.mul(aQuadCorner.y).mul(clampedPixelWidth);
   const ndcOffset: TSLNode = pixelOffset.div(uResolution).mul(2.0);
@@ -194,14 +205,17 @@ export function linePickWebGPUFactory(
 
   // Real TSL control flow — see visual `line.tsl` for the rationale
   // (one branch per draw instead of evaluating both via select()).
-  const culled: TSLNode = bothBehind.or(pathological);
-  const clipPos: TSLNode = Fn(() => {
-    const out = vec4(2.0, 2.0, 2.0, 1.0).toVar('clipPos');
-    If(culled.not(), () => {
-      out.assign(expandedClip);
-    });
-    return out;
-  })();
+  const culled: TSLNode | null =
+    bothBehind && pathological ? bothBehind.or(pathological) : (bothBehind ?? pathological);
+  const clipPos: TSLNode = culled
+    ? Fn(() => {
+        const out = vec4(0.0, 0.0, -2.0, 1.0).toVar('clipPos');
+        If(culled.not(), () => {
+          out.assign(expandedClip);
+        });
+        return out;
+      })()
+    : expandedClip;
 
   // Varyings. Per-segment-constant values (segment length, clipped
   // flags, node id, element id) use `flat` interpolation — matches the
@@ -213,6 +227,9 @@ export function linePickWebGPUFactory(
   const vWidthAtT: TSLNode = varying(width);
   const vPixelWidth: TSLNode = varying(rawPixelWidth);
   const vWidthFade: TSLNode = varying(vWidthFadeVal);
+  // View-space z to the fragment (fade computed per-fragment; see the
+  // visual line TSL). Ortho graphs skip it.
+  const vViewZ: TSLNode | null = config.isOrtho ? null : varying(mvPos.z);
   const vClippedStart: TSLNode = varying(aStartClipped).setInterpolation('flat');
   const vClippedEnd: TSLNode = varying(aEndClipped).setInterpolation('flat');
   const vNodeId: TSLNode = varying(uNodeId).setInterpolation('flat');
@@ -251,7 +268,11 @@ export function linePickWebGPUFactory(
     const nearestClipped: TSLNode = mix(vClippedEnd, vClippedStart, nearestIsStart);
     const capFactor: TSLNode = mix(baseCap, float(1.0), nearestClipped);
 
-    return capFactor.mul(perpFalloff).mul(widthScale).mul(vWidthFade);
+    return capFactor
+      .mul(perpFalloff)
+      .mul(widthScale)
+      .mul(vWidthFade)
+      .mul(vViewZ ? perspectiveNearFadeStaticTSL(false, vViewZ, nearCull) : float(1.0));
   }).once();
   const brightness: TSLNode = brightnessShared().toVar('lineBrightness');
 

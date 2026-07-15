@@ -290,7 +290,11 @@ function buildPointInstancedMesh(
  * segment across the viewport in NDC, generous width so it covers
  * many pixels and exposes both the perpendicular falloff and edge AA.
  */
-function buildLineInstancedMesh(material: THREE.Material): THREE.Object3D {
+function buildLineInstancedMesh(
+  material: THREE.Material,
+  start: readonly [number, number, number] = [-0.5, 0, 0],
+  end: readonly [number, number, number] = [0.5, 0, 0]
+): THREE.Object3D {
   // PRODUCTION assembly (createInstancedLinesMesh), not a hand-rolled
   // geometry: the previous version decorated the plain BufferGeometry
   // quad TEMPLATE with instanced attributes — never a real
@@ -302,8 +306,8 @@ function buildLineInstancedMesh(material: THREE.Material): THREE.Object3D {
   // builder got earlier — see the instanceCount note there.)
   const mesh = createInstancedLinesMesh(
     {
-      startPositions: new Float32Array([-0.5, 0, 0]),
-      endPositions: new Float32Array([0.5, 0, 0]),
+      startPositions: new Float32Array([start[0], start[1], start[2]]),
+      endPositions: new Float32Array([end[0], end[1], end[2]]),
       startColors: new Float32Array([1.0, 0.5, 0.25]),
       endColors: new Float32Array([1.0, 0.5, 0.25]),
       startWidths: new Float32Array([0.1]),
@@ -1142,6 +1146,252 @@ const SHADER_REGISTRY: Record<string, RegistryEntry> = {
         buildPointPickTSLNodesFromUniforms(uniforms)
       ) as unknown as THREE.Material,
     buildMesh: (m) => buildPointInstancedMesh(m, 0.5, [0, 0, 3]),
+    buildCamera: buildBehindCamera,
+  },
+  // ---- B9a/B9b/B9c regression variants ----
+  //
+  // B9a proof pair: identical points at the SAME view depth, one centered
+  // and one off-axis, under PERSPECTIVE. Post-fix (view-z sizing, matching
+  // lines/gsplats) their footprints are equal; the old Euclidean-distance
+  // sizing shrank the off-axis sprite by cos(theta) (~11% linear at 26.6°
+  // here). The spec compares covered-pixel counts across the two renders.
+  'point-persp-center': {
+    source: POINT_SOURCE,
+    buildUniforms: () => ({
+      pointSizeFactor: { value: 221.7 }, // 2*64/tan(30°) — fov 60 at 64px
+      maxPointSize: { value: 32.0 },
+      radiusScale: { value: 0.1 }, // ~11px sprite at view depth 1
+      uIsOrtho: { value: 0 },
+      uNearCull: { value: 0.01 },
+      uResolution: { value: new THREE.Vector2(64, 64) },
+      opacity: { value: 1.0 },
+      invGamma: { value: 1.0 / 2.2 },
+      uIntensity: { value: 1.0 },
+      uOffset: { value: 0.0 },
+    }),
+    buildTSLMaterial: (uniforms) => {
+      const m = pointWebGPUFactory(uniforms, {}) as unknown as THREE.Material;
+      m.transparent = false;
+      m.blending = THREE.NoBlending;
+      return m;
+    },
+    buildMesh: (m) => buildPointInstancedMesh(m, 0.5, [0, 0, 0]),
+    buildCamera: buildBehindCamera,
+  },
+  'point-persp-offaxis': {
+    source: POINT_SOURCE,
+    buildUniforms: () => ({
+      pointSizeFactor: { value: 221.7 }, // 2*64/tan(30°) — fov 60 at 64px
+      maxPointSize: { value: 32.0 },
+      radiusScale: { value: 0.1 }, // ~11px sprite at view depth 1
+      uIsOrtho: { value: 0 },
+      uNearCull: { value: 0.01 },
+      uResolution: { value: new THREE.Vector2(64, 64) },
+      opacity: { value: 1.0 },
+      invGamma: { value: 1.0 / 2.2 },
+      uIntensity: { value: 1.0 },
+      uOffset: { value: 0.0 },
+    }),
+    buildTSLMaterial: (uniforms) => {
+      const m = pointWebGPUFactory(uniforms, {}) as unknown as THREE.Material;
+      m.transparent = false;
+      m.blending = THREE.NoBlending;
+      return m;
+    },
+    // World x=0.5 at view depth 1 → 26.6° off-axis, NDC x ≈ 0.87 (on-screen
+    // at fov 60, aspect 1).
+    buildMesh: (m) => buildPointInstancedMesh(m, 0.5, [0.5, 0, 0]),
+    buildCamera: buildBehindCamera,
+  },
+  // B9b proof: raw projected size ≈ 0.96px (radiusScale 0.06 × attr 0.5 ×
+  // factor 32). The 1.5px sprite floor guarantees rasterization, and the
+  // fragment's sizeScale² compensation scales the ALPHA output by
+  // (0.96/1.5)² ≈ 0.41. The point is positioned so the sprite center
+  // lands EXACTLY on pixel (32,32)'s center (world 1.5/96 with the
+  // [-1,1] ortho frustum on 64px) — falloff there is exactly 1, so the
+  // written alpha is deterministically ≈ 0.41·255 ≈ 105 (pre-fix: 255,
+  // indistinguishable from the opaque clear).
+  'point-subpixel': {
+    source: POINT_SOURCE,
+    buildUniforms: () => ({
+      pointSizeFactor: { value: 32.0 },
+      maxPointSize: { value: 32.0 },
+      radiusScale: { value: 0.06 },
+      uIsOrtho: { value: 1 },
+      uNearCull: { value: 0.01 },
+      uResolution: { value: new THREE.Vector2(64, 64) },
+      opacity: { value: 1.0 },
+      invGamma: { value: 1.0 / 2.2 },
+      uIntensity: { value: 1.0 },
+      uOffset: { value: 0.0 },
+    }),
+    buildTSLMaterial: (uniforms) => {
+      const m = pointWebGPUFactory(uniforms, {}) as unknown as THREE.Material;
+      m.transparent = false;
+      m.blending = THREE.NoBlending;
+      return m;
+    },
+    buildMesh: (m) => buildPointInstancedMesh(m, 0.5, [0.015625, 0.015625, 0]),
+  },
+  // B9c: unified near fade, mid-band. Point at view depth 1 with
+  // uNearCull 0.7 → smoothstep((1-0.7)/0.7) ≈ 0.39 fade — non-empty,
+  // identical across backends (shared perspectiveNearFade helper).
+  'point-near-fade': {
+    source: POINT_SOURCE,
+    buildUniforms: () => ({
+      pointSizeFactor: { value: 221.7 },
+      maxPointSize: { value: 32.0 },
+      radiusScale: { value: 0.1 },
+      uIsOrtho: { value: 0 },
+      uNearCull: { value: 0.7 },
+      uResolution: { value: new THREE.Vector2(64, 64) },
+      opacity: { value: 1.0 },
+      invGamma: { value: 1.0 / 2.2 },
+      uIntensity: { value: 1.0 },
+      uOffset: { value: 0.0 },
+    }),
+    buildTSLMaterial: (uniforms) => {
+      const m = pointWebGPUFactory(uniforms, {}) as unknown as THREE.Material;
+      m.transparent = false;
+      m.blending = THREE.NoBlending;
+      return m;
+    },
+    buildMesh: buildPointInstancedMesh,
+    buildCamera: buildBehindCamera,
+  },
+  // B9c: line behind-camera parity (was point-only coverage). Both
+  // endpoints at world z=3 → view z=+2 → the perspective-gated
+  // bothBehind cull must produce an empty frame on BOTH backends.
+  'line-behind': {
+    source: LINE_SOURCE,
+    buildUniforms: () => ({
+      uFOV: { value: 2.0 },
+      uResolution: { value: new THREE.Vector2(64, 64) },
+      uIsOrtho: { value: 0 },
+      uNearCull: { value: 0.01 },
+      uMaxLinePixelWidth: { value: 32.0 },
+      uPerspectiveLineScale: { value: 64.0 },
+      uOrthoLineScale: { value: 1.0 },
+      uOpacity: { value: 1.0 },
+      uInvGamma: { value: 1.0 / 2.2 },
+      uIntensity: { value: 1.0 },
+      uOffset: { value: 0.0 },
+    }),
+    buildTSLMaterial: (uniforms) => {
+      const m = lineWebGPUFactory(buildLineTSLNodesFromUniforms(uniforms, {}), {
+        isOrtho: false,
+      }) as unknown as THREE.Material;
+      m.transparent = false;
+      m.blending = THREE.NoBlending;
+      return m;
+    },
+    buildMesh: (m) => buildLineInstancedMesh(m, [-0.5, 0, 3], [0.5, 0, 3]),
+    buildCamera: buildBehindCamera,
+  },
+  'line-pick-behind': {
+    source: LINE_PICK_SOURCE,
+    buildUniforms: () => ({
+      uFOV: { value: 2.0 },
+      uResolution: { value: new THREE.Vector2(64, 64) },
+      uIsOrtho: { value: 0 },
+      uNodeId: { value: 42 },
+      uNearCull: { value: 0.01 },
+      uMaxLinePixelWidth: { value: 32.0 },
+      uPerspectiveLineScale: { value: 64.0 },
+      uOrthoLineScale: { value: 1.0 },
+    }),
+    buildTSLMaterial: (uniforms) =>
+      linePickWebGPUFactory(buildLinePickTSLNodesFromUniforms(uniforms), {
+        isOrtho: false,
+      }) as unknown as THREE.Material,
+    buildMesh: (m) => buildLineInstancedMesh(m, [-0.5, 0, 3], [0.5, 0, 3]),
+    buildCamera: buildBehindCamera,
+  },
+  // B9c BUG-A regression: ortho line INSIDE the frustum but within the
+  // uNearCull slab (view depth 0.15 < nearCull 0.5, camera near 0.1).
+  // Pre-fix the ungated bothBehind cull hid it (while a point/gsplat at
+  // the same spot drew); post-fix it renders on both backends — NDC
+  // clipping is the sole ortho cull authority.
+  'line-ortho-near': {
+    source: LINE_SOURCE,
+    buildUniforms: () => ({
+      uFOV: { value: 2.0 },
+      uResolution: { value: new THREE.Vector2(64, 64) },
+      uIsOrtho: { value: 1 },
+      uNearCull: { value: 0.5 },
+      uMaxLinePixelWidth: { value: 32.0 },
+      uPerspectiveLineScale: { value: 1.0 },
+      uOrthoLineScale: { value: 64.0 },
+      uOpacity: { value: 1.0 },
+      uInvGamma: { value: 1.0 / 2.2 },
+      uIntensity: { value: 1.0 },
+      uOffset: { value: 0.0 },
+    }),
+    buildTSLMaterial: (uniforms) => {
+      const m = lineWebGPUFactory(buildLineTSLNodesFromUniforms(uniforms, {}), {
+        isOrtho: true,
+      }) as unknown as THREE.Material;
+      m.transparent = false;
+      m.blending = THREE.NoBlending;
+      return m;
+    },
+    // Camera at z=1 (ortho near 0.1): world z=0.85 → view depth 0.15.
+    buildMesh: (m) => buildLineInstancedMesh(m, [-0.5, 0, 0.85], [0.5, 0, 0.85]),
+  },
+  // B9c: gsplat behind-camera parity (was point-only coverage). The
+  // unified perspectiveNearFade subsumes the old standalone reject —
+  // a center at view z=+2 must yield an empty frame on both backends.
+  'gsplat-behind': {
+    source: GSPLAT_SOURCE,
+    buildUniforms: () => ({
+      uResolution: { value: new THREE.Vector2(64, 64) },
+      uFx: { value: 32.0 },
+      uFy: { value: 32.0 },
+      uTruncate: { value: 3.0 },
+      uTruncateSq: { value: 9.0 },
+      uRayIntegralFactor: { value: 2.433 },
+      uProjectionMode: { value: 1 },
+      uIsOrtho: { value: 0 },
+      uNearCull: { value: 0.01 },
+      uMaxExtentFactor: { value: 1.0 },
+      uOpacity: { value: 1.0 },
+      uInvGamma: { value: 1.0 / 2.2 },
+      uIntensity: { value: 1.0 },
+      uOffset: { value: 0.0 },
+      uShiftC: { value: Math.exp(-0.5 * 9) },
+      uInvOneMinusC: { value: 1.0 / (1.0 - Math.exp(-0.5 * 9)) },
+    }),
+    buildTSLMaterial: (uniforms) => {
+      const m = gsplatWebGPUFactory(buildGSplatTSLNodesFromUniforms(uniforms), {
+        blendingMode: 'max',
+      }) as unknown as THREE.Material;
+      m.transparent = false;
+      m.blending = THREE.NoBlending;
+      return m;
+    },
+    buildMesh: (m) => buildGSplatInstancedMesh(m, [0, 0, 3]),
+    buildCamera: buildBehindCamera,
+  },
+  'gsplat-pick-behind': {
+    source: GSPLAT_PICK_SOURCE,
+    buildUniforms: () => ({
+      uResolution: { value: new THREE.Vector2(64, 64) },
+      uFx: { value: 32.0 },
+      uFy: { value: 32.0 },
+      uTruncate: { value: 1.5 },
+      uTruncateSq: { value: 2.25 },
+      uIsOrtho: { value: 0 },
+      uNearCull: { value: 0.01 },
+      uMaxExtentFactor: { value: 1.0 },
+      uNodeId: { value: 42 },
+      uShiftC: { value: Math.exp(-0.5 * 2.25) },
+      uInvOneMinusC: { value: 1.0 / (1.0 - Math.exp(-0.5 * 2.25)) },
+    }),
+    buildTSLMaterial: (uniforms) =>
+      gsplatPickWebGPUFactory(
+        buildGSplatPickTSLNodesFromUniforms(uniforms)
+      ) as unknown as THREE.Material,
+    buildMesh: (m) => buildGSplatInstancedMesh(m, [0, 0, 3]),
     buildCamera: buildBehindCamera,
   },
 };

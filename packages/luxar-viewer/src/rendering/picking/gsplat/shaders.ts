@@ -17,7 +17,10 @@
  */
 
 import type { ShaderSource } from '../../materials/_shared/shader-source';
-import { GLSL_SANITIZE_FUNCTIONS } from '../../materials/_shared/glsl-lib';
+import {
+  GLSL_SANITIZE_FUNCTIONS,
+  GLSL_NEAR_FADE_FUNCTIONS,
+} from '../../materials/_shared/glsl-lib';
 import { gsplatPickWebGPUFactory, buildGSplatPickTSLNodesFromUniforms } from './pick.tsl';
 
 /**
@@ -29,6 +32,7 @@ export const GSPLAT_PICK_VERTEX_SHADER = /* glsl */ `
     precision highp float;
 
     ${GLSL_SANITIZE_FUNCTIONS}
+    ${GLSL_NEAR_FADE_FUNCTIONS}
 
     in vec2 aQuadCorner;
 
@@ -82,7 +86,11 @@ export const GSPLAT_PICK_VERTEX_SHADER = /* glsl */ `
         vec4 centerCam4 = modelViewMatrix * vec4(aCenter, 1.0);
         vec3 centerCam = centerCam4.xyz;
 
-        if (centerCam.z >= 0.0) {
+        // Unified near handling — see the visual gsplat shader: the
+        // shared perspectiveNearFade subsumes the old standalone
+        // behind-camera reject; ortho falls through to NDC clipping.
+        float depthFade = perspectiveNearFade(uIsOrtho, centerCam.z, max(uNearCull, 1e-4));
+        if (depthFade < 0.01) {
             gl_Position = vec4(0.0, 0.0, -2.0, 1.0);
             return;
         }
@@ -93,15 +101,6 @@ export const GSPLAT_PICK_VERTEX_SHADER = /* glsl */ `
         mat3 Sigma_cam = L_cam * transpose(L_cam);
 
         float zDepth = -centerCam.z;
-
-        float depthFade = 1.0;
-        if (uIsOrtho == 0) {
-            depthFade = smoothstep(uNearCull, uNearCull * 2.0, zDepth);
-            if (depthFade < 0.01) {
-                gl_Position = vec4(0.0, 0.0, -2.0, 1.0);
-                return;
-            }
-        }
 
         // Coverage fade applies in BOTH projections (matches the visual
         // shader — ortho projected size is depth-independent, divisor 1)
