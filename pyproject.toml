@@ -115,6 +115,7 @@ demos = [
     "astropy>=6.0.0",
     "mrcfile>=1.4.0",
     "nibabel>=5.0.0",
+    "pyshp>=2.3.0",
 ]
 docs = [
     "sphinx>=7.0.0",
