@@ -215,6 +215,7 @@ the more expensive falloff/GOG/colormap fragment work is skipped.
 | `pointSizeFactor` | float     | `updateCameraParams` (camera math)            | Pre-computed `2·resY/tan(fov/2)` (or ortho form)                          |
 | `maxPointSize`    | float     | `updateCameraParams`                          | Pre-computed `resY · 0.5`                                                 |
 | `uIsOrtho`        | int       | `updateCameraParams`                          | `0` = perspective, `1` = ortho                                            |
+| `uNearCull`       | float     | `updateCameraParams`                          | Near-fade start (world units, scene-bounds-scaled); shader floors at 1e-4 |
 | `uResolution`     | vec2      | `updateCameraParams` (mutates same Vector2)   | Physical framebuffer pixels; vertex uses for `pixel → NDC` conversion     |
 | `radiusScale`     | float     | `updateRadiusScale`                           | Dtype normalisation (e.g. `1/255` for uint8 radii)                        |
 | `uColormapTex`    | sampler2D | `setColormapTexture`                          | 256×1 LUT; `USE_COLORMAP` only                                            |
