@@ -293,4 +293,5 @@ export function disposeDepthSort(): void {
   initPromise = null;
   camera = null;
   requestRender = null;
+  requestReprocess = null;
 }
