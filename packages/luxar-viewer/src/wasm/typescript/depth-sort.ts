@@ -91,9 +91,12 @@ export function sort_splats_by_depth(
     let key = 0;
     if (!(z >= 0.0)) {
       const scaled = Math.fround(Math.fround(Math.fround(z - zMin) * invRange) * DEPTH_KEY_MAX);
-      // Truncating cast with a 65535 clamp; NaN floors to 0 like Rust's
-      // saturating `as u16` (Math.min(NaN, x) is NaN, and NaN | 0 === 0).
-      key = Math.min(scaled, DEPTH_KEY_MAX) | 0;
+      // Truncating cast with a 65535 clamp. NOT Math.min: Rust's
+      // `f32::min(NaN, 65535.0)` returns 65535 (min yields the OTHER
+      // operand on NaN — the saturating `as u16` is never reached with
+      // NaN), while `Math.min(NaN, x)` is NaN. The `<` comparison is
+      // false for NaN, so a NaN z keys to 65535 exactly like Rust.
+      key = (scaled < DEPTH_KEY_MAX ? scaled : DEPTH_KEY_MAX) | 0;
     }
     keys[i] = key;
     histogram[keys[i]]++;

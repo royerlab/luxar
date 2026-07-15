@@ -312,6 +312,24 @@ mod tests {
     }
 
     #[test]
+    fn test_nan_center_keys_to_near_bucket() {
+        // A NaN view z never updates the bounds (NaN < 0.0 is false) and
+        // never takes the behind-camera branch (NaN >= 0.0 is false), so
+        // it reaches the key math where `f32::min(NaN, 65535.0)` returns
+        // 65535 — the NEAR bucket. Pinned because the TS twin must
+        // reproduce this exactly (Math.min(NaN, x) is NaN, so the twin
+        // uses a `<` comparison instead); the NaN splat itself is
+        // degenerate in the shader, but parity is exact-permutation.
+        let zs = [f32::NAN, -3.0, -8.0];
+        let (ordering, sorted) = sort(&zs);
+        assert_eq!(sorted, 3);
+        assert_is_permutation(&ordering, 3);
+        // Keys: idx2 (zmin) -> 0; idx1 (zmax) -> 65535; idx0 (NaN) ->
+        // 65535. Bucket 65535 keeps input order: [0, 1].
+        assert_eq!(ordering, vec![2, 0, 1]);
+    }
+
+    #[test]
     fn test_nanometer_scale_magnitudes() {
         // ~1e-6 coordinate magnitudes — raw f16 keys would underflow to a
         // single bucket; normalized keys must still order correctly.

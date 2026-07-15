@@ -30,6 +30,8 @@ let mockApi: MockApi;
 let transferCalls: Array<{ value: unknown; transferables: Transferable[] }>;
 /** Pending resolvers for controllable in-flight sorts (FIFO). */
 let sortResolvers: Array<(r: SortResult) => void>;
+/** Matching rejectors (same FIFO index as sortResolvers). */
+let sortRejectors: Array<(e: Error) => void>;
 
 function makeMockApi(): MockApi {
   return {
@@ -37,8 +39,9 @@ function makeMockApi(): MockApi {
     registerNode: vi.fn(async () => undefined),
     sort: vi.fn(
       () =>
-        new Promise<SortResult>((resolve) => {
+        new Promise<SortResult>((resolve, reject) => {
           sortResolvers.push(resolve);
+          sortRejectors.push(reject);
         })
     ),
     releaseNode: vi.fn(async () => undefined),
@@ -51,6 +54,7 @@ async function loadCoordinator() {
   terminatedWorkers.length = 0;
   transferCalls = [];
   sortResolvers = [];
+  sortRejectors = [];
   mockApi = makeMockApi();
 
   vi.doMock('../../../utils/log', () => ({
@@ -180,14 +184,60 @@ describe('depth-sort coordinator', () => {
     coord.noteGSplatsCommit(mesh, new Float32Array([0, 0, -1, 1, 0, -2]), 2);
     await flush();
 
-    // Three commits, but only ONE sort RPC outstanding.
+    // Three commits, but only ONE sort RPC outstanding — and only ONE
+    // worker ever spawned/initialized (the initPromise cache).
     expect(mockApi.sort).toHaveBeenCalledTimes(1);
+    expect(mockApi.initialize).toHaveBeenCalledTimes(1);
 
     // Resolving it triggers exactly one queued re-sort (for the latest generation).
     sortResolvers[0]({ generation: 1, ordering: new Uint32Array([0, 1]) });
     await flush();
     expect(mockApi.sort).toHaveBeenCalledTimes(2);
     expect(mockApi.sort.mock.calls[1][0]).toMatchObject({ generation: 3 });
+  });
+
+  it('derives the model-view from fresh matrices, not renderer-maintained caches', async () => {
+    // A commit can fire before the next render (first commit of a load,
+    // idle-paused loop): camera.matrixWorldInverse and mesh.matrixWorld
+    // are then STALE. The coordinator must refresh both at sort time —
+    // reading the cached inverse here would send an identity view matrix.
+    const coord = await loadCoordinator();
+    const camera = new THREE.PerspectiveCamera();
+    camera.position.set(0, 0, 50);
+    // Deliberately DO NOT update matrixWorld / matrixWorldInverse — that
+    // is the renderer's job, which has not run yet.
+    coord.configureDepthSort({ camera, requestRender: vi.fn() });
+
+    const mesh = makeGSplatsMesh(2, 'normal');
+    mesh.position.set(0, 0, 10);
+    coord.noteGSplatsCommit(mesh, new Float32Array([0, 0, -1, 1, 0, -2]), 2);
+    await flush();
+
+    expect(mockApi.sort).toHaveBeenCalledTimes(1);
+    const mv = mockApi.sort.mock.calls[0][0].modelView as Float32Array;
+    // modelView = inverse(camera at z=50) × mesh at z=10 → z-translation
+    // 10 − 50 = −40. Stale matrices would give 0 (identity × identity).
+    expect(mv[14]).toBeCloseTo(-40, 5);
+  });
+
+  it('drains a queued re-sort even when the in-flight sort RPC fails', async () => {
+    const coord = await loadCoordinator();
+    coord.configureDepthSort({ camera: makeCamera(), requestRender: vi.fn() });
+
+    const mesh = makeGSplatsMesh(2, 'normal');
+    coord.noteGSplatsCommit(mesh, new Float32Array([0, 0, -1, 1, 0, -2]), 2);
+    await flush();
+    // A second commit queues a re-sort while the first sort is in flight.
+    coord.noteGSplatsCommit(mesh, new Float32Array([0, 0, -1, 1, 0, -2]), 2);
+    await flush();
+    expect(mockApi.sort).toHaveBeenCalledTimes(1);
+
+    // The in-flight sort FAILS — the queued request must still run
+    // (dropping it would leave the node stale until the next commit).
+    sortRejectors[0](new Error('worker transport error'));
+    await flush();
+    expect(mockApi.sort).toHaveBeenCalledTimes(2);
+    expect(mockApi.sort.mock.calls[1][0]).toMatchObject({ generation: 2 });
   });
 
   it('releaseDepthSortNode drops state and discards an in-flight result', async () => {

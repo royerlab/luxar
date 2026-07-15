@@ -78,6 +78,8 @@ let initPromise: Promise<void> | null = null;
 let camera: THREE.Camera | null = null;
 let requestRender: (() => void) | null = null;
 let requestReprocess: (() => void) | null = null;
+/** One-shot flag for the SortWorker-unavailable error (see noteGSplatsCommit). */
+let warnedWorkerUnavailable = false;
 const nodeStates = new Map<string, NodeSortState>();
 
 /**
@@ -151,7 +153,7 @@ export function noteGSplatsCommit(mesh: THREE.Mesh, centers3: Float32Array, coun
     // Commutative blending (or an empty frame): no ordering needed. Drop
     // any worker-side registration so the worker doesn't hold stale
     // centers for a node that may not sort again for a long time.
-    if (api) void api.releaseNode(nodeId);
+    releaseWorkerNode(nodeId);
     return;
   }
 
@@ -161,12 +163,41 @@ export function noteGSplatsCommit(mesh: THREE.Mesh, centers3: Float32Array, coun
       if (!api) return;
       // A newer commit may have landed while the worker was spawning.
       if (nodeStates.get(nodeId)?.generation !== generation) return;
-      void api.registerNode(transfer({ nodeId, generation, centers3, count }, [centers3.buffer]));
+      // The register RPC is its own promise — the surrounding .catch
+      // only sees synchronous throws, so a transport/transfer rejection
+      // here would otherwise float as an unhandled rejection.
+      api
+        .registerNode(transfer({ nodeId, generation, centers3, count }, [centers3.buffer]))
+        .catch((error: unknown) => {
+          log.error(Modules.WORKER_POOL, `SortWorker registerNode failed for ${nodeId}`, error);
+        });
       scheduleSort(mesh, nodeId);
     })
     .catch((error) => {
-      log.error(Modules.WORKER_POOL, `SortWorker registration failed for ${nodeId}`, error);
+      // Once per session: a failed worker init stays failed (the cached
+      // initPromise is rejected), so EVERY later commit lands here —
+      // per-commit error lines would flood a timelapse scrub. Rendering
+      // degrades gracefully to unsorted normal mode.
+      if (!warnedWorkerUnavailable) {
+        warnedWorkerUnavailable = true;
+        log.error(
+          Modules.WORKER_POOL,
+          'SortWorker unavailable — depth sorting disabled for this session ' +
+            `(first failing node: ${nodeId})`,
+          error
+        );
+      }
     });
+}
+
+/**
+ * Fire-and-forget worker-side release. Swallows rejections: releases
+ * run during teardown flows where the worker may already be
+ * terminating, and a never-settling/rejected cleanup RPC is expected
+ * there, not actionable.
+ */
+function releaseWorkerNode(nodeId: string): void {
+  api?.releaseNode(nodeId).catch(() => {});
 }
 
 /**
@@ -183,10 +214,16 @@ function scheduleSort(mesh: THREE.Mesh, nodeId: string): void {
   state.inFlight = true;
 
   const generation = state.generation;
-  const modelView = new THREE.Matrix4().multiplyMatrices(
-    camera.matrixWorldInverse,
-    mesh.matrixWorld
-  );
+  // Both matrices are normally renderer-maintained (updated during
+  // render), but a commit can fire BEFORE the next frame — the first
+  // commit of a load, or while the on-demand loop is idle-paused — and
+  // would otherwise read a stale/identity pose. Refresh them here and
+  // derive the view matrix locally (camera.matrixWorldInverse is only
+  // refreshed by renderer.render, not by updateMatrixWorld).
+  mesh.updateWorldMatrix(true, false);
+  camera.updateMatrixWorld();
+  const viewMatrix = new THREE.Matrix4().copy(camera.matrixWorld).invert();
+  const modelView = viewMatrix.multiply(mesh.matrixWorld);
 
   void api
     .sort({ nodeId, generation, modelView: new Float32Array(modelView.elements) })
@@ -219,8 +256,17 @@ function scheduleSort(mesh: THREE.Mesh, nodeId: string): void {
     })
     .catch((error) => {
       const current = nodeStates.get(nodeId);
-      if (current) current.inFlight = false;
       log.error(Modules.WORKER_POOL, `SortWorker sort failed for ${nodeId}`, error);
+      if (!current) return;
+      current.inFlight = false;
+      // Drain a queued re-sort even on failure — a commit landed while
+      // this sort was out, and dropping its request would leave the node
+      // stale until the NEXT commit. Bounded: only a real commit sets
+      // resortQueued, so a persistently failing worker cannot loop.
+      if (current.resortQueued) {
+        current.resortQueued = false;
+        scheduleSort(mesh, nodeId);
+      }
     });
 }
 
@@ -260,7 +306,7 @@ export function noteGSplatsBlendingModeSwitch(
       state.generation++;
       state.resortQueued = false;
     }
-    if (api) void api.releaseNode(mesh.uuid);
+    releaseWorkerNode(mesh.uuid);
   }
 }
 
@@ -272,13 +318,13 @@ export function noteGSplatsBlendingModeSwitch(
 export function releaseDepthSortNode(mesh: THREE.Mesh): void {
   const nodeId = mesh.uuid;
   if (!nodeStates.delete(nodeId)) return;
-  if (api) void api.releaseNode(nodeId);
+  releaseWorkerNode(nodeId);
 }
 
 /** Drop every node (dataset switch). */
 export function releaseAllDepthSortNodes(): void {
   nodeStates.clear();
-  if (api) void api.releaseAllNodes();
+  api?.releaseAllNodes().catch(() => {});
 }
 
 /**
@@ -294,4 +340,5 @@ export function disposeDepthSort(): void {
   camera = null;
   requestRender = null;
   requestReprocess = null;
+  warnedWorkerUnavailable = false;
 }

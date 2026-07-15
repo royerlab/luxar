@@ -6,6 +6,19 @@ All notable changes to Luxar are documented in this file.
 
 ### July 2026
 
+#### Added — GSplat depth sorting: correct `normal`-mode transparency (PRs #511, #535, #540)
+
+- Gaussian splats with `blending_mode="normal"` now composite in true
+  back-to-front order. Phase 0 (PR #511) fixed the premultiplied coverage
+  alpha; Phase 1 (PR #535) moved per-splat data into an RGBA32F splat
+  texture indexed by an `aSortedIndex` ordering attribute; Phase 2
+  (PR #540) added the WASM depth-sort kernel (`sort_splats_by_depth`,
+  scale-invariant normalized-key counting sort with an exact-parity
+  TypeScript twin), a persistent SortWorker, and commit-time wiring with a
+  per-node generation guard. Ordering refreshes on every data commit and
+  on blending-mode switches; camera-motion re-sorts are the planned
+  Phase 3 (`docs/guides/specs/GSPLAT_DEPTH_SORTING_SPEC.md`).
+
 #### Fixed — LUT-on-COORDINATE line-vertex corruption + remaining doc-audit flags (PR #517)
 
 - Grid-snapped line vertices (few unique coordinate values) could store as
