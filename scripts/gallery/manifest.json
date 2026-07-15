@@ -1,0 +1,521 @@
+{
+  "$comment": "Single source of truth for the Luxar gallery harness. Consumed by BOTH scripts/gallery/generate_gallery_datasets.py (dataset generation) and packages/luxar-viewer/src/tests/screenshots/generate-gallery.spec.ts (still + orbit-video capture). Add a demo here to include it in the gallery; nothing else needs updating. Fields: id (gallery media filename stem + dataset stem), title (caption), geometry, category, script (demo_*.py under packages/luxar/src/luxar/demos, or null if the demo lives only on a feature branch and its dataset must be pre-generated), dataset (path under datasets/demos, relative to repo root), exposure (OPTIONAL log2-stops override; omit for auto-exposure), autoFrame (OPTIONAL, default true; set false for very heavy scenes to skip fill-to-screen and use the baked camera), autoExpose (OPTIONAL, default true; set false to use the demo's baked exposure), dimensionNav (OPTIONAL {key, steps} for nD demos), readme (true = a current top pick for the README gallery). zoom (OPTIONAL multiplicative zoom after fill: >1 in, <1 out). timelapse (OPTIONAL {framePoint} — advance the time dim while recording a 4D series; framePoint = fraction of the range used to frame the still). distance (OPTIONAL absolute camera distance in world units — bypasses fill; for faint/diffuse subjects). orbitUp (OPTIONAL 'x'|'y'|'z' world up-axis the rock revolves about; default y; use z for a subject lying along Z). timelapse.framePoint (OPTIONAL still-framing fraction of time range).",
+  "demos": [
+    {
+      "id": "lorenz",
+      "title": "Lorenz Attractor",
+      "geometry": "points",
+      "category": "synthetic",
+      "script": "demo_lorenz.py",
+      "dataset": "datasets/demos/lorenz.luxar.zarr",
+      "exposure": 1.3,
+      "readme": true
+    },
+    {
+      "id": "spiral_galaxy",
+      "title": "Spiral Galaxy",
+      "geometry": "points",
+      "category": "synthetic",
+      "script": "demo_spiral_galaxy.py",
+      "dataset": "datasets/demos/spiral_galaxy.luxar.zarr",
+      "readme": true
+    },
+    {
+      "id": "mandelbulb",
+      "title": "Mandelbulb Fractal",
+      "geometry": "points",
+      "category": "synthetic",
+      "script": "demo_mandelbulb.py",
+      "dataset": "datasets/demos/mandelbulb.luxar.zarr"
+    },
+    {
+      "id": "rainbow_sphere",
+      "title": "Rainbow Sphere",
+      "geometry": "points",
+      "category": "synthetic",
+      "script": "demo_rainbow_sphere.py",
+      "dataset": "datasets/demos/rainbow_sphere.luxar.zarr"
+    },
+    {
+      "id": "quantum_orbitals",
+      "title": "Quantum Atomic Orbitals",
+      "geometry": "points",
+      "category": "synthetic",
+      "script": "demo_quantum_orbitals.py",
+      "dataset": "datasets/demos/quantum_orbitals.luxar.zarr",
+      "dimensionNav": {
+        "key": "1",
+        "steps": 2
+      },
+      "viewAngle": {
+        "azimuth": 90,
+        "elevation": 8
+      },
+      "distance": 32,
+      "exposure": 1.2
+    },
+    {
+      "id": "desi_galaxies",
+      "title": "DESI DR1 Cosmic Web",
+      "geometry": "points",
+      "category": "astronomy",
+      "script": null,
+      "dataset": "datasets/demos/desi_galaxies.luxar.zarr",
+      "fillTarget": 0.55,
+      "viewAngle": {
+        "azimuth": 90,
+        "elevation": 25
+      },
+      "readme": true
+    },
+    {
+      "id": "galaxy",
+      "title": "Gaia Milky Way (3M stars)",
+      "geometry": "points",
+      "category": "astronomy",
+      "script": "demo_gaia_milky_way_3m.py",
+      "dataset": "datasets/demos/galaxy.luxar.zarr",
+      "autoFrame": false,
+      "autoExpose": false,
+      "readme": true
+    },
+    {
+      "id": "asteroids_solar_system",
+      "title": "Solar System — 1.5M Asteroids",
+      "geometry": "points",
+      "category": "astronomy",
+      "script": "demo_asteroids_solar_system.py",
+      "dataset": "datasets/demos/asteroids_solar_system.luxar.zarr"
+    },
+    {
+      "id": "gsplats_3d_milky_way_dust",
+      "title": "Milky Way Dust (Gaussian splats)",
+      "geometry": "gsplats",
+      "category": "astronomy",
+      "script": "demo_gsplats_3d_milky_way_dust.py",
+      "dataset": "datasets/demos/gsplats_3d_milky_way_dust.luxar.zarr"
+    },
+    {
+      "id": "gsplats_3d_visible_human_head",
+      "title": "Visible Human Head (cryosection anatomy)",
+      "geometry": "gsplats",
+      "category": "medical",
+      "script": "demo_gsplats_3d_visible_human_head.py",
+      "dataset": "datasets/demos/gsplats_3d_visible_human_head.luxar.zarr",
+      "viewAngle": {
+        "azimuth": 90,
+        "elevation": 0
+      },
+      "readme": true
+    },
+    {
+      "id": "gsplats_3d_ct_totalsegmentator",
+      "title": "CT Anatomy Atlas (TotalSegmentator)",
+      "geometry": "gsplats",
+      "category": "medical",
+      "script": null,
+      "dataset": "datasets/demos/gsplats_3d_ct_totalsegmentator.luxar.zarr",
+      "readme": true,
+      "orbitUp": "z",
+      "distance": 600,
+      "note": "body lies along Z; up=Z gives upright coronal + turntable (not roll)"
+    },
+    {
+      "id": "gsplats_3d_cryoem_virus",
+      "title": "Cryo-EM Giant Virus Capsid",
+      "geometry": "gsplats",
+      "category": "microscopy",
+      "script": null,
+      "dataset": "datasets/demos/gsplats_3d_cryoem_virus.luxar.zarr"
+    },
+    {
+      "id": "gsplats_3d_cells3d_multichannel",
+      "title": "Cells3D Multichannel Microscopy",
+      "geometry": "gsplats",
+      "category": "microscopy",
+      "script": "demo_gsplats_3d_cells3d_multichannel.py",
+      "dataset": "datasets/demos/gsplats_3d_cells3d_multichannel.luxar.zarr"
+    },
+    {
+      "id": "gsplats_3d_organoid_multichannel",
+      "title": "Multichannel 3D Organoid",
+      "geometry": "gsplats",
+      "category": "microscopy",
+      "script": "demo_gsplats_3d_organoid_multichannel.py",
+      "dataset": "datasets/demos/gsplats_3d_organoid_multichannel.luxar.zarr",
+      "distance": 400,
+      "exposure": 2.5,
+      "note": "was underexposed+small; bright+65pct fill"
+    },
+    {
+      "id": "gsplats_4d_neuromast_2ch",
+      "title": "4D Neuromast (2-channel timelapse)",
+      "geometry": "gsplats",
+      "category": "microscopy",
+      "script": "demo_gsplats_4d_neuromast_2ch.py",
+      "dataset": "datasets/demos/gsplats_4d_neuromast_2ch.luxar.zarr",
+      "viewAngle": {
+        "azimuth": 90,
+        "elevation": 0
+      }
+    },
+    {
+      "id": "gsplats_4d_celegans_tracking",
+      "title": "4D C. elegans Nuclei Tracking",
+      "geometry": "mixed",
+      "category": "microscopy",
+      "script": "demo_gsplats_4d_celegans_tracking.py",
+      "dataset": "datasets/demos/gsplats_4d_celegans_tracking.luxar.zarr",
+      "readme": true,
+      "timelapse": {
+        "framePoint": 0.87
+      },
+      "distance": 100,
+      "note": "still frames rich t~347; video plays 12->100pct; dist100 ~60pct fill"
+    },
+    {
+      "id": "gsplats_lod_embryo_line",
+      "title": "Embryo LOD (splats + lines)",
+      "geometry": "mixed",
+      "category": "microscopy",
+      "script": "demo_gsplats_lod_embryo_line.py",
+      "dataset": "datasets/demos/gsplats_lod_embryo_line.luxar.zarr",
+      "autoFrame": false
+    },
+    {
+      "id": "dipc_3d_genome",
+      "title": "Single-Cell 3D Genome (Dip-C)",
+      "geometry": "lines",
+      "category": "genomics",
+      "script": "demo_dipc_3d_genome.py",
+      "dataset": "datasets/demos/dipc_3d_genome.luxar.zarr",
+      "readme": true
+    },
+    {
+      "id": "cellxgene_census_umap",
+      "title": "CELLxGENE Census UMAP",
+      "geometry": "points",
+      "category": "embeddings",
+      "script": "demo_cellxgene_census_umap.py",
+      "dataset": "datasets/demos/cellxgene_census_umap.luxar.zarr"
+    },
+    {
+      "id": "cosmicflows_laniakea",
+      "title": "Cosmicflows — Laniakea Supercluster",
+      "geometry": "points",
+      "category": "astronomy",
+      "script": "demo_cosmicflows_laniakea.py",
+      "dataset": "datasets/demos/cosmicflows_laniakea_full.luxar.zarr"
+    },
+    {
+      "id": "flywire_connectome",
+      "title": "FlyWire Connectome",
+      "geometry": "points",
+      "category": "connectome",
+      "script": "demo_flywire_connectome.py",
+      "dataset": "datasets/demos/flywire_connectome.luxar.zarr",
+      "exposure": -1.0
+    },
+    {
+      "id": "arxiv_papers_kaggle",
+      "title": "arXiv Paper Embeddings",
+      "geometry": "points",
+      "category": "embeddings",
+      "script": "demo_arxiv_embeddings_kaggle.py",
+      "dataset": "datasets/demos/arxiv_papers_kaggle.luxar.zarr"
+    },
+    {
+      "id": "tabula_sapiens",
+      "title": "Tabula Sapiens (human cell atlas)",
+      "geometry": "points",
+      "category": "embeddings",
+      "script": "demo_tabula_sapiens.py",
+      "dataset": "datasets/demos/tabula_sapiens.luxar.zarr"
+    },
+    {
+      "id": "zebrahub_multiome_peak_umap",
+      "title": "Zebrahub Multiome Peak UMAP",
+      "geometry": "points",
+      "category": "embeddings",
+      "script": "demo_zebrahub_multiome_peak_umap.py",
+      "dataset": "datasets/demos/zebrahub_multiome_peak_umap.luxar.zarr"
+    },
+    {
+      "id": "earthquakes",
+      "title": "Global Earthquakes (3D)",
+      "geometry": "points",
+      "category": "geoscience",
+      "script": "demo_earthquakes_3d.py",
+      "dataset": "datasets/demos/earthquakes.luxar.zarr",
+      "note": "real Earth + short spikes, no override needed"
+    },
+    {
+      "id": "nuclear_pore_complex",
+      "title": "Nuclear Pore Complex",
+      "geometry": "points",
+      "category": "structural",
+      "script": "demo_nuclear_pore_complex.py",
+      "dataset": "datasets/demos/nuclear_pore_complex.luxar.zarr"
+    },
+    {
+      "id": "fractals_4d",
+      "title": "Fractals 4D",
+      "geometry": "points",
+      "category": "synthetic",
+      "script": "demo_4d_fractals.py",
+      "dataset": "datasets/demos/fractals_4d.luxar.zarr"
+    },
+    {
+      "id": "spiral_galaxy_5d",
+      "title": "Spiral Galaxy 5D",
+      "geometry": "points",
+      "category": "astronomy",
+      "script": "demo_5d_spiral_galaxy.py",
+      "dataset": "datasets/demos/spiral_galaxy_5d.luxar.zarr"
+    },
+    {
+      "id": "arxiv_papers",
+      "title": "Arxiv Papers",
+      "geometry": "points",
+      "category": "embeddings",
+      "script": "demo_arxiv_paper_embeddings.py",
+      "dataset": "datasets/demos/arxiv_papers.luxar.zarr"
+    },
+    {
+      "id": "atp_synthase",
+      "title": "Atp Synthase",
+      "geometry": "points",
+      "category": "synthetic",
+      "script": "demo_atp_synthase.py",
+      "dataset": "datasets/demos/atp_synthase.luxar.zarr",
+      "distance": 27,
+      "note": "absolute dist reliable vs off-center bbox-fill"
+    },
+    {
+      "id": "ocean",
+      "title": "Ocean",
+      "geometry": "points",
+      "category": "synthetic",
+      "script": "demo_bioluminescent_ocean.py",
+      "dataset": "datasets/demos/ocean.luxar.zarr"
+    },
+    {
+      "id": "caida_as_topology",
+      "title": "Caida As Topology",
+      "geometry": "lines",
+      "category": "networks",
+      "script": "demo_caida_as_topology.py",
+      "dataset": "datasets/demos/caida_as_topology.luxar.zarr"
+    },
+    {
+      "id": "chromatrace_choir_umap",
+      "title": "Chromatrace Choir Umap",
+      "geometry": "points",
+      "category": "embeddings",
+      "script": "demo_chromatrace_choir_umap.py",
+      "dataset": "datasets/demos/chromatrace_choir_umap.luxar.zarr"
+    },
+    {
+      "id": "cytoself_protein_landscape",
+      "title": "Cytoself Protein Landscape",
+      "geometry": "points",
+      "category": "embeddings",
+      "script": "demo_cytoself_protein_landscape.py",
+      "dataset": "datasets/demos/cytoself_protein_landscape.luxar.zarr"
+    },
+    {
+      "id": "esm3_protein_landscape",
+      "title": "Esm3 Protein Landscape",
+      "geometry": "points",
+      "category": "embeddings",
+      "script": "demo_esm3_protein_landscape.py",
+      "dataset": "datasets/demos/esm3_protein_landscape.luxar.zarr"
+    },
+    {
+      "id": "gsplats_3d_acto3d_heart",
+      "title": "3D Acto3D Heart",
+      "geometry": "gsplats",
+      "category": "microscopy",
+      "script": "demo_gsplats_3d_acto3d_heart.py",
+      "dataset": "datasets/demos/gsplats_3d_acto3d_heart.luxar.zarr"
+    },
+    {
+      "id": "gsplats_3d_kidney_multichannel_layers",
+      "title": "3D Kidney Multichannel Layers",
+      "geometry": "gsplats",
+      "category": "microscopy",
+      "script": "demo_gsplats_3d_kidney_multichannel_layers.py",
+      "dataset": "datasets/demos/gsplats_3d_kidney_multichannel_layers.luxar.zarr"
+    },
+    {
+      "id": "gsplats_6d_kidney_multichannel_toggles",
+      "title": "6D Kidney Multichannel Toggles",
+      "geometry": "gsplats",
+      "category": "microscopy",
+      "script": "demo_gsplats_3d_kidney_multichannel_toggles.py",
+      "dataset": "datasets/demos/gsplats_6d_kidney_multichannel_toggles.luxar.zarr"
+    },
+    {
+      "id": "gsplats_3d_opencell_map4",
+      "title": "3D Opencell Map4",
+      "geometry": "gsplats",
+      "category": "microscopy",
+      "script": "demo_gsplats_3d_opencell_map4.py",
+      "dataset": "datasets/demos/gsplats_3d_opencell_map4.luxar.zarr"
+    },
+    {
+      "id": "gsplats_3d_organoid_dapi_nuclei",
+      "title": "3D Organoid Dapi Nuclei",
+      "geometry": "gsplats",
+      "category": "microscopy",
+      "script": "demo_gsplats_3d_organoid_dapi_nuclei.py",
+      "dataset": "datasets/demos/gsplats_3d_organoid_dapi_nuclei.luxar.zarr"
+    },
+    {
+      "id": "gsplats_3d_tribolium_embryo",
+      "title": "3D Tribolium Embryo",
+      "geometry": "gsplats",
+      "category": "microscopy",
+      "script": "demo_gsplats_3d_tribolium_embryo.py",
+      "dataset": "datasets/demos/gsplats_3d_tribolium_embryo.luxar.zarr",
+      "exposure": -2.0,
+      "note": "Neutral+intensity fixed white; -2 reveals structure; faint bg rectangle remains"
+    },
+    {
+      "id": "gsplats_4d_zebrafish_timelapse",
+      "title": "4D Zebrafish Timelapse",
+      "geometry": "gsplats",
+      "category": "microscopy",
+      "script": "demo_gsplats_4d_zebrafish_timelapse.py",
+      "dataset": "datasets/demos/gsplats_4d_zebrafish_timelapse.luxar.zarr"
+    },
+    {
+      "id": "hilbert_curve_3d",
+      "title": "Hilbert Curve 3D",
+      "geometry": "points",
+      "category": "synthetic",
+      "script": "demo_hilbert_curve_3d.py",
+      "dataset": "datasets/demos/hilbert_curve_3d.luxar.zarr",
+      "dimensionNav": {
+        "key": "1",
+        "steps": 3
+      },
+      "viewAngle": {
+        "azimuth": 32,
+        "elevation": 24
+      },
+      "zoom": 0.6
+    },
+    {
+      "id": "human_multiome_peak_umap",
+      "title": "Human Multiome Peak Umap",
+      "geometry": "points",
+      "category": "embeddings",
+      "script": "demo_human_multiome_peak_umap.py",
+      "dataset": "datasets/demos/human_multiome_peak_umap.luxar.zarr"
+    },
+    {
+      "id": "huri_interactome",
+      "title": "Huri Interactome",
+      "geometry": "lines",
+      "category": "networks",
+      "script": "demo_huri_interactome.py",
+      "dataset": "datasets/demos/huri_interactome.luxar.zarr"
+    },
+    {
+      "id": "forest",
+      "title": "Forest",
+      "geometry": "points",
+      "category": "synthetic",
+      "script": "demo_lsystem_forest.py",
+      "dataset": "datasets/demos/forest.luxar.zarr"
+    },
+    {
+      "id": "mouse_multiome_peak_umap",
+      "title": "Mouse Multiome Peak Umap",
+      "geometry": "points",
+      "category": "embeddings",
+      "script": "demo_mouse_multiome_peak_umap.py",
+      "dataset": "datasets/demos/mouse_multiome_peak_umap.luxar.zarr"
+    },
+    {
+      "id": "collision",
+      "title": "Collision",
+      "geometry": "points",
+      "category": "synthetic",
+      "script": "demo_particle_collision.py",
+      "dataset": "datasets/demos/collision.luxar.zarr"
+    },
+    {
+      "id": "protein_landscape",
+      "title": "Protein Landscape",
+      "geometry": "points",
+      "category": "embeddings",
+      "script": "demo_protein_embeddings_cafa5.py",
+      "dataset": "datasets/demos/protein_landscape.luxar.zarr",
+      "autoFrame": false,
+      "note": "bounds-fit shows whole embedding incl outlier clusters; fixes too-close"
+    },
+    {
+      "id": "quasicrystal",
+      "title": "Quasicrystal",
+      "geometry": "points",
+      "category": "synthetic",
+      "script": "demo_quasicrystal_3d.py",
+      "dataset": "datasets/demos/quasicrystal.luxar.zarr"
+    },
+    {
+      "id": "spotify_tracks",
+      "title": "Spotify Tracks",
+      "geometry": "points",
+      "category": "embeddings",
+      "script": "demo_spotify_tracks.py",
+      "dataset": "datasets/demos/spotify_tracks.luxar.zarr",
+      "fillTarget": 0.55,
+      "exposure": -1.0,
+      "note": "main cluster ~55pct + colored satellites; bounds-fit was too small"
+    },
+    {
+      "id": "storm_3d_microtubules",
+      "title": "Storm 3D Microtubules",
+      "geometry": "points",
+      "category": "synthetic",
+      "script": "demo_storm_3d_microtubules.py",
+      "dataset": "datasets/demos/storm_3d_microtubules.luxar.zarr"
+    },
+    {
+      "id": "turing_patterns",
+      "title": "Turing Patterns",
+      "geometry": "points",
+      "category": "synthetic",
+      "script": "demo_turing_patterns.py",
+      "dataset": "datasets/demos/turing_patterns.luxar.zarr"
+    },
+    {
+      "id": "cloud",
+      "title": "Cloud",
+      "geometry": "points",
+      "category": "synthetic",
+      "script": "demo_volumetric_cloud.py",
+      "dataset": "datasets/demos/cloud.luxar.zarr"
+    },
+    {
+      "id": "zebrahub_multiome",
+      "title": "Zebrahub Multiome",
+      "geometry": "points",
+      "category": "embeddings",
+      "script": "demo_zebrahub_multiome.py",
+      "dataset": "datasets/demos/zebrahub_multiome.luxar.zarr"
+    },
+    {
+      "id": "gsplats_3d_tng_cosmic_web",
+      "title": "IllustrisTNG Cosmic Web",
+      "geometry": "gsplats",
+      "category": "astronomy",
+      "script": "demo_gsplats_3d_tng_cosmic_web.py",
+      "dataset": "datasets/demos/gsplats_3d_tng_cosmic_web.luxar.zarr",
+      "autoExpose": false,
+      "readme": true
+    }
+  ]
+}

@@ -88,6 +88,7 @@ import requests
 from arbol import aprint, asection
 
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
+from luxar.core.viewer_config import ViewerConfig
 from luxar.demos import cached_download, launch_viewer
 from luxar.utils._umap_utils import format_label, get_categorical_color
 from luxar.utils.paths import get_demos_output_dir
@@ -573,7 +574,12 @@ def build_scene(
         )
 
         with LuxarZarrCompiler(output_path) as compiler:
-            scene = compiler.create_scene(dimensions=dims)
+            scene = compiler.create_scene(
+                dimensions=dims,
+                # Neutral tone-mapping (not the viewer default ACES, which lifts
+                # highlights) — the luminous connection glow was blowing out.
+                viewer_config=ViewerConfig(tone_mapping="Neutral"),
+            )
 
             # One toggleable Points layer per super_class — optic, central,
             # sensory, descending etc. each get their own checkbox in the
@@ -615,8 +621,12 @@ def build_scene(
                     sharpness=np.full(len(nt_verts), 0.85, dtype=np.float32),
                     line_type="segments",
                     blending_mode="luminous",
-                    opacity=0.35,
-                    intensity=0.5,
+                    # Very faint: 300K luminous connection lines otherwise
+                    # accumulate into a white wash that hides the (beautifully
+                    # colored) neuron cell bodies. Keep them as a subtle
+                    # connective glow so the neurons dominate the view.
+                    opacity=0.08,
+                    intensity=0.08,
                     labels=nt_labels,
                     layer=True,
                 )

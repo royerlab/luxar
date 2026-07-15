@@ -136,6 +136,15 @@ const HYSTERESIS_RATIO = 0.1;
 const FILL_FACTOR = 1.0;
 
 /**
+ * `?lod-finest` URL override: always select the finest LOD level regardless of
+ * projected screen coverage (and never coarsen off-screen). For high-quality
+ * still/video capture (the gallery harness) where a coarse level would look
+ * blurry even though the subject is small in frame. Read once at module load.
+ */
+const FORCE_FINEST_LOD =
+  typeof location !== 'undefined' && new URLSearchParams(location.search).has('lod-finest');
+
+/**
  * Frames a lazy level stays in the ``failed`` state before the registry
  * retries its deferred load. ~2 s at 60 fps — long enough to avoid
  * per-frame retry storms after a hard failure, short enough that a
@@ -844,7 +853,7 @@ export class LODGroupRegistry {
       // visibility toggle rather than a reload.
       WORLD_BOX3_SCRATCH.min.set(worldBox.min.x, worldBox.min.y, worldBox.min.z);
       WORLD_BOX3_SCRATCH.max.set(worldBox.max.x, worldBox.max.y, worldBox.max.z);
-      if (!frustum.intersectsBox(WORLD_BOX3_SCRATCH)) {
+      if (!FORCE_FINEST_LOD && !frustum.intersectsBox(WORLD_BOX3_SCRATCH)) {
         desired = this.coarsestReadyIndex(entry);
         entry.offScreen = true;
       } else {
@@ -856,9 +865,11 @@ export class LODGroupRegistry {
         // coverage_fraction thresholds anchor the finest at fills-screen on any
         // monitor. diagonalPx == +Infinity (camera inside the box) → Infinity →
         // finest, unchanged. viewportDiag is > 0 here (evaluatePerFrame guards
-        // width/height == 0).
+        // width/height == 0). ``?lod-finest`` forces Infinity → always finest.
         const viewportDiag = Math.hypot(viewport.width, viewport.height);
-        coverageMetric = diagonalPx / (FILL_FACTOR * viewportDiag);
+        coverageMetric = FORCE_FINEST_LOD
+          ? Infinity
+          : diagonalPx / (FILL_FACTOR * viewportDiag);
         desired = pickChildWithHysteresis(cache.thresholds, entry.activeChildIndex, coverageMetric);
         entry.offScreen = false;
       }

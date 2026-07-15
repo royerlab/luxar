@@ -119,8 +119,12 @@ CLOUD_RADIUS = 1.015  # About 1.5% above Earth surface (~100km at Earth scale)
 EARTH_POINTS = 120000  # High resolution for texture mapping (4x increase)
 CLOUD_POINTS = 60000  # Fewer points for clouds (they're diffuse)
 
-# NASA Blue Marble image URL (5400x2700 equirectangular projection)
-BLUE_MARBLE_URL = "https://neo.gsfc.nasa.gov/archive/bluemarble/bmng/world_8km/world.200401.3x5400x2700.jpg"
+# NASA Blue Marble image URL (2048x1024 equirectangular projection). The former
+# neo.gsfc.nasa.gov/archive URL 404s; this eoimages.gsfc.nasa.gov Blue Marble
+# "land shallow topo" image is the stable NASA replacement (already 2048x1024, so
+# it needs no downscale). If this fetch fails the code falls back to a crude
+# rectangular land heuristic (blocky continents) — keep this URL live.
+BLUE_MARBLE_URL = "https://eoimages.gsfc.nasa.gov/images/imagerecords/57000/57752/land_shallow_topo_2048.jpg"
 
 # Downscale target (balance between quality and memory)
 TEXTURE_WIDTH = 2048
@@ -130,8 +134,10 @@ TEXTURE_HEIGHT = 1024
 DEFAULT_DAYS = 30  # Last 30 days
 DEFAULT_MIN_MAGNITUDE = 4.5  # Magnitude 4.5+ (significant earthquakes)
 
-# Magnitude to height scaling
-MAGNITUDE_SCALE = 0.18  # Height = magnitude × scale
+# Magnitude to height scaling. Earth radius is 1.0, so at 0.18 a mag 4.5-9 quake
+# produced spikes 0.8-1.6 Earth-radii long (as tall as the planet). 0.03 keeps
+# them short and readable (~0.13-0.27 radii).
+MAGNITUDE_SCALE = 0.03  # Height = magnitude × scale
 
 # Color scheme for time gradient
 # Recent earthquakes are hot (red/orange), older ones are cool (blue/purple)
