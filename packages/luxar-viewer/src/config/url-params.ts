@@ -96,6 +96,14 @@ export interface UrlParams {
   cacheDebug: boolean;
   /** Clear caches on init (`?clear-cache`). */
   clearCache: boolean;
+  /**
+   * Whether the substitutive-LOD cross-fade is enabled: blend adjacent LOD
+   * levels' opacity as the camera zooms across their boundary instead of a hard
+   * visibility swap, for additive/luminous layers (anti-popping). **On by
+   * default**; pass `?no-lod-fade` to disable it (e.g. to compare against the
+   * hard swap or isolate a rendering issue).
+   */
+  lodFade: boolean;
   /** Disable adjacent-chunk prefetching (`?no-prefetch`). */
   noPrefetch: boolean;
   /** Verbose prefetch logging (`?prefetch-debug`). */
@@ -191,6 +199,7 @@ export function readUrlParams(search?: string): UrlParams {
     noSliceCache: params.has('no-slice-cache'),
     cacheDebug: params.has('cache-debug'),
     clearCache: params.has('clear-cache'),
+    lodFade: !params.has('no-lod-fade'),
     noPrefetch: params.has('no-prefetch'),
     prefetchDebug: params.has('prefetch-debug'),
     cacheStats: params.has('cache-stats'),
