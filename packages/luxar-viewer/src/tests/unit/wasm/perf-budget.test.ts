@@ -225,7 +225,6 @@ describeIfWasm(
       }
       const medianMs = median(wasmTimes);
       const splatsPerSecond = SIZE / (medianMs / 1000);
-      // eslint-disable-next-line no-console
       console.log(
         `sort_splats_by_depth: ${(splatsPerSecond / 1e6).toFixed(0)} M splats/s ` +
           `(median ${medianMs.toFixed(2)} ms @ ${SIZE.toLocaleString()}; speedup ${r.speedup.toFixed(2)}×)`

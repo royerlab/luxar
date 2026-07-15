@@ -90,9 +90,7 @@ export function sort_splats_by_depth(
     const z = zScratch[i];
     let key = 0;
     if (!(z >= 0.0)) {
-      const scaled = Math.fround(
-        Math.fround(Math.fround(z - zMin) * invRange) * DEPTH_KEY_MAX
-      );
+      const scaled = Math.fround(Math.fround(Math.fround(z - zMin) * invRange) * DEPTH_KEY_MAX);
       // Truncating cast with a 65535 clamp; NaN floors to 0 like Rust's
       // saturating `as u16` (Math.min(NaN, x) is NaN, and NaN | 0 === 0).
       key = Math.min(scaled, DEPTH_KEY_MAX) | 0;

@@ -66,6 +66,7 @@ FIXTURE_NAMES: list[str] = [
     "test_encoding_edge_cases.luxar.zarr",
     "test_gsplats.luxar.zarr",
     "test_gsplats_normal_overlap.luxar.zarr",
+    "test_gsplats_normal_overlap_reversed.luxar.zarr",
     "test_hdr_colors.luxar.zarr",
     "test_hierarchical_transforms.luxar.zarr",
     "test_integer_colors.luxar.zarr",
@@ -1838,6 +1839,78 @@ def generate_gsplats_normal_overlap_test() -> None:
         aprint(f"  Created {output}")
 
 
+def generate_gsplats_normal_overlap_reversed_test() -> None:
+    """The normal-overlap scene declared FRONT-TO-BACK (depth-sort gate).
+
+    Identical to :func:`generate_gsplats_normal_overlap_test` except the
+    splats are DECLARED in reversed (front-first) order. NOTE: the
+    compiler Morton-reorders storage, so the on-disk order is spatial,
+    not the declaration order — what makes this fixture a depth-sort
+    gate is its geometry: under the viewer's auto-framed camera the near
+    (green) splat sits BETWEEN the two far splats in storage order, so
+    the identity ordering is not back-to-front and the E2E assertion
+    (aSortedIndex non-identity + view-z monotone, see
+    blending-modes.spec.ts Phase 2 test) fails without a working
+    SortWorker (spec §5).
+    """
+    with asection("Generating GSplats Normal-Overlap-Reversed Test"):
+        output = FIXTURES_DIR / "test_gsplats_normal_overlap_reversed.luxar.zarr"
+
+        # Same splats as the canonical overlap fixture, front splat FIRST.
+        centers = np.array(
+            [
+                [0.25, 0.0, 1.0],  # front splat (green) stored first
+                [-0.25, 0.0, 0.0],  # back splat (red) stored second
+                [3.0, 2.0, 0.0],  # small reference splat (blue), no overlap
+            ],
+            dtype=np.float32,
+        )
+        amplitudes = np.array([2.0, 2.0, 1.0], dtype=np.float32)
+
+        cholesky = np.zeros((3, 6), dtype=np.float32)
+        for i, sigma in enumerate((0.35, 0.35, 0.3)):
+            cholesky[i, 0] = sigma  # L11
+            cholesky[i, 2] = sigma  # L22
+            cholesky[i, 5] = sigma  # L33
+
+        colors = np.array(
+            [
+                [0.1, 1.0, 0.1],  # green (front)
+                [1.0, 0.1, 0.1],  # red (back)
+                [0.1, 0.1, 1.0],  # blue
+            ],
+            dtype=np.float32,
+        )
+
+        dims = Dimensions(
+            [
+                Dimension("x", unit="units", display=True),
+                Dimension("y", unit="units", display=True),
+                Dimension("z", unit="units", display=True),
+            ]
+        )
+
+        with LuxarZarrCompiler(
+            output,
+            encoding_mode=EncodingMode.PRECISION,
+            compressor=None,
+            float16_allowed=False,
+        ) as compiler:
+            scene = compiler.create_scene(dimensions=dims)
+
+            scene.add_gsplats(
+                "overlap_splats_reversed",
+                centers,
+                amplitudes=amplitudes,
+                cholesky_factors=cholesky,
+                colors=colors,
+                blending_mode="normal",
+                opacity=0.5,
+            )
+
+        aprint(f"  Created {output}")
+
+
 def generate_standalone_gsplats_test() -> None:
     """Standalone v3.1 ``.gsplats.zarr`` — a *detached* gsplats leaf node.
 
@@ -2131,6 +2204,7 @@ def main() -> None:
 
         generate_gsplats_test()
         generate_gsplats_normal_overlap_test()
+        generate_gsplats_normal_overlap_reversed_test()
         aprint("")
 
         generate_standalone_gsplats_test()

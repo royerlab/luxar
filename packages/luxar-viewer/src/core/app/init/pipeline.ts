@@ -19,6 +19,7 @@ import { notifier } from '../../../utils/cross-layer/notifier';
 import { log, Modules } from '../../../utils/log';
 import { config } from '../../../config';
 import { getGpuByteBudget } from '../../../rendering/gpu-byte-budget';
+import { configureDepthSort } from '../../../rendering/depth-sort-coordinator';
 import { materialManager } from '../../../rendering';
 import { readUrlParams } from '../../../config/url-params';
 import { resolveFactories, type AppFactories } from '../factories';
@@ -246,6 +247,20 @@ export async function runInitPipeline(
   // idempotent (early-out while animating + idle-timer re-arm), so
   // per-node calls inside an atomic sweep are harmless.
   SceneLoaderManager.getInstance().setRequestRender(() => animationController.startAnimation());
+  // Depth-sort coordinator (Phase 2): the gsplats commit path has no
+  // camera (SceneLoader deliberately owns no camera state), so the
+  // coordinator gets the live camera + render wake-up here — the same
+  // dependency-inversion as setRequestRender above.
+  configureDepthSort({
+    camera: sceneManager.camera,
+    requestRender: () => animationController.startAnimation(),
+    // Blending-mode-switch hook (spec §5.4): switching a gsplat layer TO
+    // `normal` clears its noop stamp and forces a reprocess so the next
+    // commit registers with the SortWorker.
+    requestReprocess: () => {
+      void getSceneLoader('default')?.updateView({});
+    },
+  });
   animationController.addPerFrameCallback('lod-group-selector', () => {
     const loader = getSceneLoader('default');
     // When a substitutive-LOD group swaps its active level (a camera-move
