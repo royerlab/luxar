@@ -32,6 +32,28 @@ export interface WasmModule {
     output: Float32Array
   ): number;
 
+  /**
+   * Sort splats back-to-front by camera-space depth.
+   *
+   * Produces the permutation consumed by the `aSortedIndex` instance
+   * attribute: `ordering[j]` is the original splat index drawn at instance
+   * slot `j` (slot 0 = farthest). Degenerate depth ranges (single depth
+   * plane, everything behind the camera) yield the identity ordering.
+   * Input is always projected 3D centers, so no ndim cap applies.
+   *
+   * @param centers3 - Projected 3D splat centers [count * 3]
+   * @param modelView - Column-major 4x4 model-view matrix [16]
+   * @param ordering - Output permutation [count]
+   * @param count - Number of splats
+   * @returns Number of splats placed via depth keys (0 = identity fallback)
+   */
+  sort_splats_by_depth(
+    centers3: Float32Array,
+    modelView: Float32Array,
+    ordering: Uint32Array,
+    count: number
+  ): number;
+
   // ============================================================================
   // DECODE FUNCTIONS - Dequantize compressed data formats
   // ============================================================================

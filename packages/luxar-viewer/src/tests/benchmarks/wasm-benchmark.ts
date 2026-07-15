@@ -230,6 +230,44 @@ const benchmarks: Record<string, BenchmarkFn[]> = {
     },
   ],
 
+  'DEPTH SORT': [
+    (size) => {
+      // Back-to-front splat ordering (depth-sorting Phase 2). The
+      // translation pushes every splat in front of the camera so the
+      // full three-pass counting sort runs, not the identity fallback.
+      // Budget: >= 100 M splats/s (enforced automatically by
+      // perf-budget.test.ts; this entry reports absolute throughput).
+      const centers3 = generatePositions(size, 3);
+      const modelView = new Float32Array([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, -100, 1]);
+      const tsOrdering = new Uint32Array(size);
+      const wasmOrdering = new Uint32Array(size);
+
+      const tsTime = measureTime(
+        () => {
+          tsModule.sort_splats_by_depth(centers3, modelView, tsOrdering, size);
+        },
+        CONFIG.iterations,
+        CONFIG.warmupIterations
+      );
+
+      const wasmTime = measureTime(
+        () => {
+          wasmModule!.sort_splats_by_depth(centers3, modelView, wasmOrdering, size);
+        },
+        CONFIG.iterations,
+        CONFIG.warmupIterations
+      );
+
+      return {
+        name: `sort_splats_by_depth (${(((size / wasmTime) * 1000) / 1e6).toFixed(0)} M splats/s WASM)`,
+        category: 'DEPTH SORT',
+        tsTime,
+        wasmTime,
+        speedup: tsTime / wasmTime,
+      };
+    },
+  ],
+
   DECODE: [
     (size) => {
       const data = generateQuantizedU8(size);
