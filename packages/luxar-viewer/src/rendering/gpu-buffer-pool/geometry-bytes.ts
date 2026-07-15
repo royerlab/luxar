@@ -57,6 +57,17 @@ export function estimateGeometryBytes(geometry: THREE.BufferGeometry): number {
       total += idxArr.byteLength;
     }
   }
+  // GSplat geometries carry their splat data in an RGBA32F texture
+  // (64 B/splat) riding `userData.splatTexture` (see
+  // `gsplat-geometry.ts::attachSplatStorage`); it shares the
+  // geometry's lifetime, so its footprint belongs to the geometry.
+  const splatTexture = (geometry.userData as { splatTexture?: THREE.DataTexture }).splatTexture;
+  if (splatTexture) {
+    const texArr = splatTexture.image.data as ArrayBufferView | undefined;
+    if (texArr && typeof texArr.byteLength === 'number') {
+      total += texArr.byteLength;
+    }
+  }
   userData.cachedByteSize = total;
   return total;
 }

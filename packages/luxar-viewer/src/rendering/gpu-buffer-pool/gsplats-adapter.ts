@@ -13,10 +13,12 @@
 
 import * as THREE from 'three';
 import {
-  packInterleavedAttributes,
-  type InterleavedAttributeSpec,
-} from '../interleaved-attributes';
-import { writePooledAttribute } from './attribute-codec';
+  attachSplatStorage,
+  getSplatTexture,
+  writeSplatTexels,
+  writeSortedIndexIdentity,
+} from '../gsplat-geometry';
+import { clampSplatCapacity } from '../splat-texture-layout';
 import type { PooledBuffer } from './pool-stats';
 import { chooseCapacity } from './capacity';
 
@@ -31,19 +33,6 @@ export interface PackedGSplatsData {
   splatCount: number;
 }
 
-/** Canonical per-splat attribute layout for pooled gsplat geometries. */
-const GSPLATS_ATTRIBUTE_SPECS: ReadonlyArray<{
-  name: string;
-  itemSize: 1 | 2 | 3 | 4;
-}> = [
-  { name: 'aCenter', itemSize: 3 },
-  { name: 'aCholesky01', itemSize: 2 },
-  { name: 'aCholesky23', itemSize: 2 },
-  { name: 'aCholesky45', itemSize: 2 },
-  { name: 'aAmplitude', itemSize: 1 },
-  { name: 'aColor', itemSize: 3 },
-];
-
 function createGSplatsGeometry(splatCapacity: number): THREE.InstancedBufferGeometry {
   const geometry = new THREE.InstancedBufferGeometry();
 
@@ -51,15 +40,10 @@ function createGSplatsGeometry(splatCapacity: number): THREE.InstancedBufferGeom
   geometry.setAttribute('aQuadCorner', new THREE.Float32BufferAttribute(quadPositions, 2));
   geometry.setIndex([0, 1, 2, 2, 1, 3]);
 
-  const specsWithData: InterleavedAttributeSpec[] = GSPLATS_ATTRIBUTE_SPECS.map((spec) => ({
-    ...spec,
-    data: new Float32Array(splatCapacity * spec.itemSize),
-  }));
-  const { buffer, views } = packInterleavedAttributes(specsWithData, splatCapacity);
-  buffer.setUsage(THREE.DynamicDrawUsage);
-  for (const spec of specsWithData) {
-    geometry.setAttribute(spec.name, views[spec.name]);
-  }
+  // Splat data lives in the RGBA32F texture attached here (disposed BY
+  // the geometry's dispose event, so every pool dispose site frees it);
+  // `aSortedIndex` is the only per-instance attribute.
+  attachSplatStorage(geometry, splatCapacity);
   return geometry;
 }
 
@@ -92,6 +76,11 @@ export class GSplatsBufferAdapter {
   acquireGeometry(nodeId: string, splatCount: number): THREE.InstancedBufferGeometry {
     const host = this.host;
     host._lastAcquireRebuilt = false;
+
+    // Per-node texture bound: width × maxTextureSize / 4 texels (4.19M
+    // splats on a 4096-class device). Warns once; the update path
+    // clamps its written count to the texture capacity to match.
+    splatCount = clampSplatCapacity(splatCount);
 
     const active = host.activeBuffers.get(nodeId);
     if (active && active.type === 'gsplats') {
@@ -141,7 +130,9 @@ export class GSplatsBufferAdapter {
     }
 
     host._lastAcquireRebuilt = true;
-    const capacity = chooseCapacity(splatCount);
+    // Growth headroom (1.5×) can itself cross the texture bound; clamp
+    // the chosen capacity too (still >= splatCount, which was clamped).
+    const capacity = clampSplatCapacity(chooseCapacity(splatCount));
     const geometry = createGSplatsGeometry(capacity);
 
     const newBuffer: PooledBuffer = {
@@ -190,17 +181,31 @@ export class GSplatsBufferAdapter {
     count: number,
     truncationRadius: number = 3.0
   ): void {
-    const updates: Array<[string, Float32Array]> = [
-      ['aCenter', data.centers3D],
-      ['aCholesky01', data.cholesky01],
-      ['aCholesky23', data.cholesky23],
-      ['aCholesky45', data.cholesky45],
-      ['aAmplitude', data.amplitudes],
-      ['aColor', data.colors],
-    ];
-    for (const [name, source] of updates) {
-      writePooledAttribute(geometry, name, source, count);
+    const texture = getSplatTexture(geometry);
+    if (!texture) {
+      throw new Error(
+        'GSplatsBufferAdapter.updateGeometry: geometry has no splat texture — ' +
+          'was it acquired from the pool?'
+      );
     }
+    // One fused pass over the staged arrays into the texel layout
+    // (replaces the six per-attribute strided writes), then identity
+    // ordering. The writer clamps to the texture capacity; mirror that
+    // clamp in instanceCount so a bound-clamped node never draws
+    // instances whose texels were not written.
+    count = writeSplatTexels(
+      texture,
+      {
+        centers: data.centers3D,
+        cholesky01: data.cholesky01,
+        cholesky23: data.cholesky23,
+        cholesky45: data.cholesky45,
+        amplitudes: data.amplitudes,
+        colors: data.colors,
+      },
+      count
+    );
+    writeSortedIndexIdentity(geometry, count);
 
     geometry.instanceCount = count;
 

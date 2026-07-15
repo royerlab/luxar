@@ -2,20 +2,31 @@
  * GSplat Geometry Creation for Luxar
  *
  * Creates and updates instanced quad geometry for Gaussian splat
- * rendering. Per-splat attributes are packed into a single shared
- * `InstancedInterleavedBuffer` (with `InterleavedBufferAttribute`
- * views per attribute) for symmetry with `point-geometry.ts` and
- * `line-geometry.ts`, and for better vertex-cache locality.
+ * rendering. Per-splat data lives in an RGBA32F **splat texture**
+ * (4 texels/splat — see `./splat-texture-layout` for the layout
+ * authority) sampled by the vertex shader via `texelFetch`; the only
+ * per-instance attribute is `aSortedIndex` (Uint32), which maps the
+ * draw slot to a storage slot so draw order can be permuted without
+ * rewriting splat data (depth-sorting plan §4). Phase 1 writes
+ * identity ordering; the sort worker (Phase 2+) rewrites it.
+ *
+ * Texture lifetime = geometry lifetime: `attachSplatStorage` registers
+ * a `dispose` listener on the geometry, so every dispose site (pool
+ * evictors, `pool.dispose()`, the fallback rebuild swap) frees the
+ * texture with the geometry — no site-by-site bookkeeping.
+ *
+ * Points/Lines keep the shared `InstancedInterleavedBuffer` path
+ * (symmetry is restored when/if they migrate — spec §8).
  *
  * @module rendering/gsplat-geometry
  */
 
 import * as THREE from 'three';
 import {
-  packInterleavedAttributes,
-  writeInterleavedAttribute,
-  type InterleavedAttributeSpec,
-} from './interleaved-attributes';
+  SPLAT_FLOATS_PER_SPLAT,
+  getSplatTextureWidth,
+  splatTextureHeightForCapacity,
+} from './splat-texture-layout';
 
 /**
  * Create the base quad geometry for gsplat instances.
@@ -123,39 +134,159 @@ export function packCholeskyForShader(
 }
 
 /**
- * Build the per-instance attribute specs in canonical declaration
- * order. The shader reads via `attribute('aCenter', 'vec3')` etc.,
- * so the layout order within the buffer is only relevant for the
- * stride, but keeping it consistent makes the in-place update path
- * predictable.
+ * The per-splat arrays the texel writer consumes. Structurally
+ * satisfied by both `InstancedGSplatsMeshConfig` (non-pool fallback)
+ * and the pool adapter's remapped `PackedGSplatsData`.
  */
-function buildGSplatAttributeSpecs(
-  meshConfig: InstancedGSplatsMeshConfig
-): InterleavedAttributeSpec[] {
-  return [
-    { name: 'aCenter', data: meshConfig.centers, itemSize: 3, semantic: 'coordinate' },
-    { name: 'aCholesky01', data: meshConfig.cholesky01, itemSize: 2, semantic: 'cholesky' },
-    { name: 'aCholesky23', data: meshConfig.cholesky23, itemSize: 2, semantic: 'cholesky' },
-    { name: 'aCholesky45', data: meshConfig.cholesky45, itemSize: 2, semantic: 'cholesky' },
-    { name: 'aAmplitude', data: meshConfig.amplitudes, itemSize: 1, semantic: 'positive_scalar' },
-    { name: 'aColor', data: meshConfig.colors, itemSize: 3, semantic: 'color' },
-  ];
+export interface SplatTexelSource {
+  /** Splat centers (count × 3). */
+  centers: Float32Array;
+  /** Packed Cholesky [L00, L10] (count × 2). */
+  cholesky01: Float32Array;
+  /** Packed Cholesky [L11, L20] (count × 2). */
+  cholesky23: Float32Array;
+  /** Packed Cholesky [L21, L22] (count × 2). */
+  cholesky45: Float32Array;
+  /** Amplitudes (count). */
+  amplitudes: Float32Array;
+  /** Colors RGB (count × 3). */
+  colors: Float32Array;
+}
+
+/** `geometry.userData` slot carrying the splat texture. */
+interface SplatStorageUserData {
+  splatTexture?: THREE.DataTexture;
 }
 
 /**
- * Bind a fresh `InstancedInterleavedBuffer` + per-attribute views to
- * a geometry. Used by both the create path and the size-change branch
- * of the update path.
+ * Create the splat data texture + `aSortedIndex` attribute pair on a
+ * geometry, sized for `capacity` splats. Returns the texture.
+ *
+ * - The texture is RGBA32F, `NearestFilter`, no mips, `flipY: false`
+ *   — pure structured storage, addressed by `texelFetch` in the
+ *   vertex shader (colormap-LUT precedent).
+ * - The texture rides `geometry.userData.splatTexture` and is
+ *   disposed BY the geometry's own `dispose` event, so texture
+ *   lifetime is structurally pinned to geometry lifetime at every
+ *   dispose site. Growth therefore follows the pool contract for
+ *   free: release + reacquire swaps in a fresh geometry+texture pair,
+ *   never an in-place reallocation (the `Info.memoryMap` strand
+ *   class).
+ * - `aSortedIndex` is a `Uint32Array` instanced attribute — the GL
+ *   type `UNSIGNED_INT` makes three bind it via `vertexAttribIPointer`
+ *   (matching the shader's `in uint`), and the WebGPU path derives its
+ *   `uint32` vertex format from the array constructor.
  */
-function bindInterleavedAttributes(
+export function attachSplatStorage(
   geometry: THREE.InstancedBufferGeometry,
-  meshConfig: InstancedGSplatsMeshConfig
-): void {
-  const specs = buildGSplatAttributeSpecs(meshConfig);
-  const { views } = packInterleavedAttributes(specs, meshConfig.splatCount);
-  for (const spec of specs) {
-    geometry.setAttribute(spec.name, views[spec.name]);
+  capacity: number
+): THREE.DataTexture {
+  const sortedIndex = new THREE.InstancedBufferAttribute(new Uint32Array(capacity), 1);
+  sortedIndex.setUsage(THREE.DynamicDrawUsage);
+  geometry.setAttribute('aSortedIndex', sortedIndex);
+
+  const width = getSplatTextureWidth();
+  const height = splatTextureHeightForCapacity(capacity);
+  const texture = new THREE.DataTexture(
+    new Float32Array(width * height * 4),
+    width,
+    height,
+    THREE.RGBAFormat,
+    THREE.FloatType
+  );
+  texture.magFilter = THREE.NearestFilter;
+  texture.minFilter = THREE.NearestFilter;
+  texture.generateMipmaps = false;
+  texture.flipY = false;
+  texture.needsUpdate = true;
+
+  (geometry.userData as SplatStorageUserData).splatTexture = texture;
+  geometry.addEventListener('dispose', () => texture.dispose());
+  return texture;
+}
+
+/** The splat texture attached by `attachSplatStorage`, if any. */
+export function getSplatTexture(geometry: THREE.BufferGeometry): THREE.DataTexture | null {
+  return (geometry.userData as SplatStorageUserData).splatTexture ?? null;
+}
+
+/**
+ * Number of splats the texture's backing store can hold (its
+ * row-padded float capacity, NOT the pool bucket capacity).
+ */
+export function splatTexelCapacity(texture: THREE.DataTexture): number {
+  const arr = texture.image.data as Float32Array;
+  return Math.floor(arr.length / SPLAT_FLOATS_PER_SPLAT);
+}
+
+/**
+ * Fused texel writer: one pass over the staged arrays into the
+ * texture's backing store, in the 4-texel layout documented in
+ * `./splat-texture-layout`. Replaces the six per-attribute strided
+ * writes of the interleaved era — fewer passes over the data.
+ *
+ * Returns the written count, clamped to the texture's capacity
+ * (capacity clamping warns once at acquire time; this clamp keeps the
+ * write memory-safe if a caller slips past it).
+ */
+export function writeSplatTexels(
+  texture: THREE.DataTexture,
+  src: SplatTexelSource,
+  count: number
+): number {
+  const arr = texture.image.data as Float32Array;
+  const n = Math.min(count, Math.floor(arr.length / SPLAT_FLOATS_PER_SPLAT));
+  const { centers, cholesky01, cholesky23, cholesky45, amplitudes, colors } = src;
+  for (let i = 0; i < n; i++) {
+    const o = i * SPLAT_FLOATS_PER_SPLAT;
+    const c3 = i * 3;
+    const c2 = i * 2;
+    // texel 0: center.xyz, amplitude
+    arr[o] = centers[c3];
+    arr[o + 1] = centers[c3 + 1];
+    arr[o + 2] = centers[c3 + 2];
+    arr[o + 3] = amplitudes[i];
+    // texel 1: cholesky01.xy, cholesky23.xy
+    arr[o + 4] = cholesky01[c2];
+    arr[o + 5] = cholesky01[c2 + 1];
+    arr[o + 6] = cholesky23[c2];
+    arr[o + 7] = cholesky23[c2 + 1];
+    // texel 2: cholesky45.xy, color.rg
+    arr[o + 8] = cholesky45[c2];
+    arr[o + 9] = cholesky45[c2 + 1];
+    arr[o + 10] = colors[c3];
+    arr[o + 11] = colors[c3 + 1];
+    // texel 3: color.b (rest of the texel stays zero)
+    arr[o + 12] = colors[c3 + 2];
   }
+  texture.needsUpdate = true;
+  return n;
+}
+
+/**
+ * Fill `aSortedIndex[0..count)` with identity ordering and register a
+ * single collapsed prefix update range. Ranges accumulate across
+ * commits while a mesh is not drawn and the WebGPU backends replay
+ * them verbatim (no flush-time merge — see
+ * `interleaved-attributes.ts`), so every write collapses the pending
+ * set to one `[0, max-end)` range.
+ */
+export function writeSortedIndexIdentity(
+  geometry: THREE.InstancedBufferGeometry,
+  count: number
+): void {
+  const attr = geometry.getAttribute('aSortedIndex') as THREE.InstancedBufferAttribute;
+  const arr = attr.array as Uint32Array;
+  const n = Math.min(count, arr.length);
+  for (let i = 0; i < n; i++) arr[i] = i;
+  let rangeEnd = n;
+  for (const range of attr.updateRanges) {
+    const end = range.start + range.count;
+    if (end > rangeEnd) rangeEnd = end;
+  }
+  attr.clearUpdateRanges();
+  attr.addUpdateRange(0, rangeEnd);
+  attr.needsUpdate = true;
 }
 
 /**
@@ -209,8 +340,11 @@ export function createInstancedGSplatsMesh(
   geometry.index = baseGeometry.index;
   geometry.setAttribute('aQuadCorner', baseGeometry.getAttribute('aQuadCorner'));
 
-  // Pack all per-instance attributes into one interleaved buffer.
-  bindInterleavedAttributes(geometry, meshConfig);
+  // Mesh-owned splat texture + identity ordering (exact-size — the
+  // non-pool fallback carries no capacity headroom).
+  const texture = attachSplatStorage(geometry, meshConfig.splatCount);
+  writeSplatTexels(texture, meshConfig, meshConfig.splatCount);
+  writeSortedIndexIdentity(geometry, meshConfig.splatCount);
 
   // Set instance count
   geometry.instanceCount = meshConfig.splatCount;
@@ -242,6 +376,16 @@ export function createInstancedGSplatsMesh(
   const mesh = new THREE.Mesh(geometry, material);
   mesh.frustumCulled = true;
 
+  // Bind the mesh-owned texture on the material right away so a mesh
+  // created WITH data renders before any commit (node factory initial
+  // data, parity harness, tests). Structural: any material exposing
+  // the gsplat wrappers' `updateSplatTexture` surface participates.
+  (
+    material as THREE.Material & {
+      updateSplatTexture?: (t: THREE.DataTexture | null) => void;
+    }
+  ).updateSplatTexture?.(texture);
+
   return mesh;
 }
 
@@ -268,52 +412,47 @@ export function updateInstancedGSplatsMesh(
   const rebuilt = meshConfig.splatCount !== currentCount;
   let liveGeometry = geometry;
   if (rebuilt) {
-    // Size changed: build a FRESH geometry and dispose the old one —
-    // never rebind new attributes onto a rendered geometry, which
-    // strands the old interleaved GPU buffer in the renderer caches
+    // Size changed: build a FRESH geometry+texture pair and dispose the
+    // old one — never rebind new storage onto a rendered geometry,
+    // which strands the old GPU resources in the renderer caches
     // (freed only at GC mercy on classic WebGL; pinned FOREVER by the
-    // WebGPU renderer's strong Info.memoryMap). geometry.dispose() on
-    // the old object frees its buffers correctly on every backend
-    // because its dispose listeners were registered when it rendered.
-    // (Same pattern as the points non-pool fallback in
-    // commit-points-geometry.ts.)
+    // WebGPU renderer's strong Info.memoryMap). The old splat texture
+    // rides the old geometry's dispose event (attachSplatStorage), so
+    // the swap frees both. (Same pattern as the points non-pool
+    // fallback in commit-points-geometry.ts.)
     const fresh = new THREE.InstancedBufferGeometry();
     fresh.index = geometry.index; // shared static quad index
     fresh.setAttribute('aQuadCorner', geometry.getAttribute('aQuadCorner'));
-    bindInterleavedAttributes(fresh, meshConfig);
+    const texture = attachSplatStorage(fresh, meshConfig.splatCount);
+    writeSplatTexels(texture, meshConfig, meshConfig.splatCount);
+    writeSortedIndexIdentity(fresh, meshConfig.splatCount);
     fresh.instanceCount = meshConfig.splatCount;
     mesh.geometry = fresh;
     liveGeometry = fresh;
+    // Rebind the render material to the FRESH texture (same structural
+    // hook as createInstancedGSplatsMesh; the pick material rides the
+    // commit path's syncGSplatMaterialWithGeometry).
+    (
+      mesh.material as THREE.Material & {
+        updateSplatTexture?: (t: THREE.DataTexture | null) => void;
+      }
+    ).updateSplatTexture?.(texture);
     // dispose() also deletes the shared index/aQuadCorner GPU buffers
     // registered under the old geometry; three re-uploads them for
     // `fresh` on its first render (tiny static buffers — negligible).
     geometry.dispose();
   } else {
-    // Same size: write new data into the existing interleaved
-    // buffer at the correct strided offsets. The buffer object is
-    // recovered from any one view (every view points at the same
-    // underlying buffer).
-    const sampleView = geometry.getAttribute('aCenter') as THREE.InterleavedBufferAttribute;
-    const buffer = sampleView.data as THREE.InstancedInterleavedBuffer;
-    const specs = buildGSplatAttributeSpecs(meshConfig);
-    let offset = 0;
-    for (const spec of specs) {
-      // `spec.data` is typed as `Float32 | Uint16 | Uint8` at the
-      // interface level, but the GSplats spec builder always emits
-      // `Float32Array` today (every semantic resolves to `'float32'`
-      // post Float16 revert — see `interleaved-attributes.ts` module
-      // header). The cast is safe as long as that contract holds; a
-      // future narrowing redesign will widen the update path
-      // alongside flipping the semantic defaults.
-      writeInterleavedAttribute(
-        buffer,
-        offset,
-        spec.itemSize,
-        spec.data as Float32Array,
-        meshConfig.splatCount
+    // Same size: rewrite the existing texture's backing store in one
+    // fused pass and refresh the identity ordering.
+    const texture = getSplatTexture(geometry);
+    if (!texture) {
+      throw new Error(
+        'updateInstancedGSplatsMesh: geometry has no splat texture — ' +
+          'was it created by createInstancedGSplatsMesh/attachSplatStorage?'
       );
-      offset += spec.itemSize;
     }
+    writeSplatTexels(texture, meshConfig, meshConfig.splatCount);
+    writeSortedIndexIdentity(geometry, meshConfig.splatCount);
   }
 
   // Update bounding box from centers (direct loop, no temp geometry allocation)

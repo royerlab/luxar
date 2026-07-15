@@ -18,13 +18,15 @@ export const GSPLAT_VERTEX_SHADER = /* glsl */ `
     // Quad corner attribute (static geometry)
     in vec2 aQuadCorner;  // (-1,-1), (1,-1), (-1,1), (1,1)
 
-    // Per-instance attributes
-    in vec3 aCenter;           // 3D center (after nD slicing)
-    in vec2 aCholesky01;       // [L00, L10]
-    in vec2 aCholesky23;       // [L11, L20]
-    in vec2 aCholesky45;       // [L21, L22]
-    in float aAmplitude;       // Already attenuated by hidden dims
-    in vec3 aColor;
+    // Draw-slot → storage-slot mapping. Identity in Phase 1; the sort
+    // worker permutes it (Phase 2+) so draw order tracks view depth
+    // without rewriting splat data. Uint32Array attribute → bound via
+    // vertexAttribIPointer, matching this uint declaration.
+    in uint aSortedIndex;
+
+    // Splat data texture: RGBA32F, 4 texels/splat (see
+    // rendering/splat-texture-layout.ts for the texel layout).
+    uniform highp sampler2D uSplatTex;
 
     // Uniforms (modelViewMatrix and projectionMatrix are built-in THREE.js uniforms)
     uniform vec2 uResolution;
@@ -57,12 +59,12 @@ export const GSPLAT_VERTEX_SHADER = /* glsl */ `
 
     // Unpack 3D Cholesky to matrix (column-major order for GLSL mat3)
     // Packed order: [L00, L10, L11, L20, L21, L22]
-    // aCholesky01 = [L00, L10], aCholesky23 = [L11, L20], aCholesky45 = [L21, L22]
-    mat3 unpackCholesky3D() {
+    // c01 = [L00, L10], c23 = [L11, L20], c45 = [L21, L22]
+    mat3 unpackCholesky3D(vec2 c01, vec2 c23, vec2 c45) {
         return mat3(
-            aCholesky01.x, aCholesky01.y, aCholesky23.y,  // Column 0: [L00, L10, L20]
-            0.0,           aCholesky23.x, aCholesky45.x,  // Column 1: [0, L11, L21]
-            0.0,           0.0,           aCholesky45.y   // Column 2: [0, 0, L22]
+            c01.x, c01.y, c23.y,  // Column 0: [L00, L10, L20]
+            0.0,   c23.x, c45.x,  // Column 1: [0, L11, L21]
+            0.0,   0.0,   c45.y   // Column 2: [0, 0, L22]
         );
     }
 
@@ -90,6 +92,26 @@ export const GSPLAT_VERTEX_SHADER = /* glsl */ `
     }
 
     void main() {
+        // === Splat-texture fetch prologue ===
+        // Four texelFetch reads reconstruct the per-splat values into
+        // the exact local names the math below has always used — zero
+        // changes downstream of this block. The width is a multiple of
+        // 4 (splat-texture-layout.ts), so a splat's 4 texels share one
+        // row and only x advances.
+        int splatBase = int(aSortedIndex) * 4;
+        int splatTexW = textureSize(uSplatTex, 0).x;
+        ivec2 texel0 = ivec2(splatBase % splatTexW, splatBase / splatTexW);
+        vec4 splatT0 = texelFetch(uSplatTex, texel0, 0);
+        vec4 splatT1 = texelFetch(uSplatTex, ivec2(texel0.x + 1, texel0.y), 0);
+        vec4 splatT2 = texelFetch(uSplatTex, ivec2(texel0.x + 2, texel0.y), 0);
+        vec4 splatT3 = texelFetch(uSplatTex, ivec2(texel0.x + 3, texel0.y), 0);
+        vec3 aCenter = splatT0.xyz;        // 3D center (after nD slicing)
+        float aAmplitude = splatT0.w;      // Already attenuated by hidden dims
+        vec2 aCholesky01 = splatT1.xy;     // [L00, L10]
+        vec2 aCholesky23 = splatT1.zw;     // [L11, L20]
+        vec2 aCholesky45 = splatT2.xy;     // [L21, L22]
+        vec3 aColor = vec3(splatT2.zw, splatT3.x);
+
         // Transform center to camera space
         vec4 centerCam4 = modelViewMatrix * vec4(aCenter, 1.0);
         vec3 centerCam = centerCam4.xyz;
@@ -111,7 +133,7 @@ export const GSPLAT_VERTEX_SHADER = /* glsl */ `
 
         // Transform Cholesky to camera space (rotation only)
         mat3 R = mat3(modelViewMatrix);
-        mat3 L3D = unpackCholesky3D();
+        mat3 L3D = unpackCholesky3D(aCholesky01, aCholesky23, aCholesky45);
         mat3 L_cam = R * L3D;
         mat3 Sigma_cam = L_cam * transpose(L_cam);
 

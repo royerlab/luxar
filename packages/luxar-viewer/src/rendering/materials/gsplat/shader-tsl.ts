@@ -7,15 +7,15 @@
  * vectors gives an axis-aligned bounding quad of the Gaussian's
  * truncation extent.
  *
- * Per-instance attributes:
- *   - aCenter      (vec3) — 3D world centre
- *   - aCholesky01  (vec2) — [L00, L10]
- *   - aCholesky23  (vec2) — [L11, L20]
- *   - aCholesky45  (vec2) — [L21, L22]
- *   - aAmplitude   (float)
- *   - aColor       (vec3) — replaced by colormap LUT under USE_COLORMAP
+ * Per-splat data comes from the RGBA32F splat texture (`uSplatTex`,
+ * 4 texels/splat — layout in `rendering/splat-texture-layout.ts`),
+ * fetched in the vertex stage via `textureLoad` and indexed by the
+ * only per-instance attribute:
+ *   - aSortedIndex (uint) — draw-slot → storage-slot mapping
+ *     (identity in Phase 1; the sort worker permutes it in Phase 2+)
  *
  * Vertex pipeline:
+ *   0. Fetch center/cholesky/amplitude/color from the splat texture.
  *   1. Project centre to camera space.
  *   2. Reject splats behind camera (gl_Position = -2 NDC).
  *   3. Rotate 3D Cholesky to camera space; Σ_cam = L_cam·L_camᵀ.
@@ -47,8 +47,10 @@ import {
   vec3 as _vec3,
   vec4 as _vec4,
   mat3 as _mat3,
+  ivec2 as _ivec2,
   float,
   int,
+  textureSize,
   max,
   min,
   abs,
@@ -85,6 +87,7 @@ const vec2: (a?: TSLNode, b?: TSLNode) => TSLNode = _vec2 as TSLNode;
 const vec3: (a?: TSLNode, b?: TSLNode, c?: TSLNode) => TSLNode = _vec3 as TSLNode;
 const vec4: (a?: TSLNode, b?: TSLNode, c?: TSLNode, d?: TSLNode) => TSLNode = _vec4 as TSLNode;
 const mat3: (a?: TSLNode, b?: TSLNode, c?: TSLNode) => TSLNode = _mat3 as TSLNode;
+const ivec2: (a?: TSLNode, b?: TSLNode) => TSLNode = _ivec2 as TSLNode;
 
 export interface GSplatTSLConfig {
   readonly useColormap?: boolean;
@@ -117,12 +120,18 @@ export interface GSplatTSLConfig {
  * reuses the same leaves so mutations remain visible after a
  * defines change.
  *
- * The colormap texture node is factory-time bound (TSL
+ * The colormap AND splat texture nodes are factory-time bound (TSL
  * `texture(...)` captures the THREE.Texture at call time); the
- * wrapper rebuilds the graph when the texture identity changes
- * (see `setColormapTexture` in the wrapper).
+ * wrapper rebuilds the graph when either texture's identity changes
+ * (see `setColormapTexture` / `updateSplatTexture` in the wrapper).
  */
 export interface GSplatTSLNodes {
+  /**
+   * Splat data texture node (RGBA32F, 4 texels/splat). Every gsplat
+   * material has one; the pool commit rebinds it per node via
+   * `updateSplatTexture`.
+   */
+  readonly uSplatTex: TSLNode;
   readonly uResolution: TSLNode;
   readonly uFx: TSLNode;
   readonly uFy: TSLNode;
@@ -161,18 +170,16 @@ export function gsplatWebGPUFactory(
   config: GSplatTSLConfig = {},
   outMaterial?: NodeMaterial
 ): NodeMaterial {
-  // Per-vertex / per-instance attributes.
+  // Per-vertex / per-instance attributes. Splat data itself lives in
+  // the splat texture; `aSortedIndex` maps the draw slot to a storage
+  // slot (identity in Phase 1, permuted by the sort worker in Phase 2+).
   const aQuadCorner: TSLNode = attribute<'vec2'>('aQuadCorner', 'vec2');
-  const aCenter: TSLNode = attribute<'vec3'>('aCenter', 'vec3');
-  const aCholesky01: TSLNode = attribute<'vec2'>('aCholesky01', 'vec2');
-  const aCholesky23: TSLNode = attribute<'vec2'>('aCholesky23', 'vec2');
-  const aCholesky45: TSLNode = attribute<'vec2'>('aCholesky45', 'vec2');
-  const aAmplitude: TSLNode = attribute<'float'>('aAmplitude', 'float');
-  const aColor: TSLNode = attribute<'vec3'>('aColor', 'vec3');
+  const aSortedIndex: TSLNode = attribute<'uint'>('aSortedIndex', 'uint');
 
   // Uniform leaves come from the wrapper. No per-render callbacks:
   // mutations to `material.uniforms.X.value` already route to
   // `node.value` via `proxyIUniform`.
+  const uSplatTex = nodes.uSplatTex;
   const uResolution = nodes.uResolution;
   const uFx = nodes.uFx;
   const uFy = nodes.uFy;
@@ -217,6 +224,35 @@ export function gsplatWebGPUFactory(
   const vCenterScreen: TSLNode = varying(vec2(float(0.0), float(0.0)));
 
   const vertexBody = Fn(() => {
+    // === Splat-texture fetch prologue ===
+    // Four textureLoad reads reconstruct the per-splat values into the
+    // exact local names the math below has always used — zero changes
+    // downstream of this block. Every value is a `.toVar()` STATEMENT
+    // (the Fn house rule; see the block comment above). The texture
+    // width is a multiple of 4 (splat-texture-layout.ts), so a splat's
+    // 4 texels share one row and only x advances.
+    const splatBase: TSLNode = int(aSortedIndex).mul(int(4)).toVar();
+    // int() wrap is LOAD-BEARING: TSL types textureSize() as uint (the
+    // WGSL textureDimensions convention), but the WebGL2 fallback emits
+    // GLSL textureSize() which returns int -- without the explicit
+    // conversion the generated `uint nodeVar = textureSize(...).x;`
+    // fails to compile on the forceWebGL backend.
+    const splatTexW: TSLNode = int(
+      (textureSize(uSplatTex, int(0)) as unknown as TSLNode).x
+    ).toVar();
+    const texelX: TSLNode = splatBase.mod(splatTexW).toVar();
+    const texelY: TSLNode = splatBase.div(splatTexW).toVar();
+    const splatT0: TSLNode = uSplatTex.load(ivec2(texelX, texelY)).toVar();
+    const splatT1: TSLNode = uSplatTex.load(ivec2(texelX.add(int(1)), texelY)).toVar();
+    const splatT2: TSLNode = uSplatTex.load(ivec2(texelX.add(int(2)), texelY)).toVar();
+    const splatT3: TSLNode = uSplatTex.load(ivec2(texelX.add(int(3)), texelY)).toVar();
+    const aCenter: TSLNode = vec3(splatT0).toVar(); // 3D world centre
+    const aAmplitude: TSLNode = splatT0.w.toVar();
+    const aCholesky01: TSLNode = splatT1.xy.toVar(); // [L00, L10]
+    const aCholesky23: TSLNode = splatT1.zw.toVar(); // [L11, L20]
+    const aCholesky45: TSLNode = splatT2.xy.toVar(); // [L21, L22]
+    const aColor: TSLNode = vec3(splatT2.z, splatT2.w, splatT3.x).toVar();
+
     // Centre in camera space.
     const centerCam4: TSLNode = modelViewMatrix.mul(vec4(aCenter, 1.0)).toVar();
     const centerCam: TSLNode = vec3(centerCam4).toVar();
@@ -573,6 +609,13 @@ export function buildGSplatTSLNodesFromUniforms(
   uniforms: Record<string, THREE.IUniform>
 ): GSplatTSLNodes {
   const nodes: GSplatTSLNodes = {
+    // Splat data texture — bound from the caller's uniform when
+    // present (harness / material paths), else a 4×1 RGBA32F
+    // placeholder so codegen-only consumers still build a valid graph.
+    uSplatTex: texture(
+      (uniforms.uSplatTex?.value as THREE.Texture | null) ??
+        new THREE.DataTexture(new Float32Array(16), 4, 1, THREE.RGBAFormat, THREE.FloatType)
+    ),
     uResolution: uniform(
       (uniforms.uResolution?.value as THREE.Vector2 | undefined) ?? new THREE.Vector2(1, 1)
     ),

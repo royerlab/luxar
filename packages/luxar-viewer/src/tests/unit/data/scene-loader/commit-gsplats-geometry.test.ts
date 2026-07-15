@@ -11,9 +11,14 @@ import { describe, it, expect, vi } from 'vitest';
 import * as THREE from 'three';
 
 const mockUpdateInstancedMesh = vi.fn();
+const mockGetSplatTexture = vi.fn((..._args: unknown[]) => null);
 vi.mock('../../../../rendering/gsplat-geometry', () => ({
   updateInstancedGSplatsMesh: (...args: unknown[]) => mockUpdateInstancedMesh(...args),
   packCholeskyForShader: vi.fn(),
+  // material-sync-helpers reaches getSplatTexture through this module;
+  // returning null makes syncGSplatMaterialWithGeometry a no-op here
+  // (the sync itself is covered by its own describe below).
+  getSplatTexture: (...args: unknown[]) => mockGetSplatTexture(...args),
 }));
 
 import { commitGSplatsGeometry } from '../../../../data/scene-loader/commit/commit-gsplats-geometry';
