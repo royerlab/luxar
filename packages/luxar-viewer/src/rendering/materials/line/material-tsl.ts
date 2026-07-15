@@ -279,6 +279,11 @@ export class LineTSLMaterial
     this.uniforms.uOpacity.value = opacity;
   }
 
+  /** Current opacity multiplier (the LOD cross-fade snapshots this as its fade base). */
+  getOpacity(): number {
+    return this.uniforms.uOpacity.value as number;
+  }
+
   updateGamma(gamma: number): void {
     const safeGamma = clampGamma(gamma);
     this.userData.gamma = safeGamma;
