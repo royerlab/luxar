@@ -361,7 +361,9 @@ export function buildGSplatPickTSLNodesFromUniforms(
     uFx: uniform((uniforms.uFx?.value as number) ?? 1.0),
     uFy: uniform((uniforms.uFy?.value as number) ?? 1.0),
     uTruncate: uniform((uniforms.uTruncate?.value as number) ?? 1.5),
-    uTruncateSq: uniform((uniforms.uTruncateSq?.value as number) ?? 9.0),
+    // 1.5² — keep the default PAIR consistent (9.0 was half-copied from the
+    // visual builder's 3.0/9.0 and sized the quad for 1.5σ while discarding at 3σ).
+    uTruncateSq: uniform((uniforms.uTruncateSq?.value as number) ?? 2.25),
     uIsOrtho: uniform((uniforms.uIsOrtho?.value as number) ?? 0),
     uNearCull: uniform((uniforms.uNearCull?.value as number) ?? 1e-4),
     uMaxExtentFactor: uniform((uniforms.uMaxExtentFactor?.value as number) ?? 1.0),
