@@ -27,6 +27,51 @@ import * as THREE from 'three';
 import { GSplatTSLMaterial } from '../../../../../rendering/materials/gsplat/material-tsl';
 import { getGSplatNormalBlendingState } from '../../../../../rendering/blending-state';
 
+describe('GSplatTSLMaterial updateSplatTexture', () => {
+  it('rebinds to a new texture (graph rebuild) and no-ops on identical identity', () => {
+    const mat = new GSplatTSLMaterial({});
+    const tex = new THREE.DataTexture(
+      new Float32Array(16),
+      4,
+      1,
+      THREE.RGBAFormat,
+      THREE.FloatType
+    );
+
+    mat.updateSplatTexture(tex);
+    expect(mat.uniforms.uSplatTex.value).toBe(tex);
+    // Identity-unchanged rebind is the per-commit hot path: it must be
+    // a no-op (the uniforms record is rebuilt only on a real change).
+    const recordAfterBind = mat.uniforms;
+    mat.updateSplatTexture(tex);
+    expect(mat.uniforms).toBe(recordAfterBind);
+
+    const tex2 = new THREE.DataTexture(
+      new Float32Array(16),
+      4,
+      1,
+      THREE.RGBAFormat,
+      THREE.FloatType
+    );
+    mat.updateSplatTexture(tex2);
+    expect(mat.uniforms.uSplatTex.value).toBe(tex2);
+  });
+
+  it('clone carries the bound splat texture', () => {
+    const mat = new GSplatTSLMaterial({});
+    const tex = new THREE.DataTexture(
+      new Float32Array(16),
+      4,
+      1,
+      THREE.RGBAFormat,
+      THREE.FloatType
+    );
+    mat.updateSplatTexture(tex);
+    const cloned = mat.clone();
+    expect(cloned.uniforms.uSplatTex.value).toBe(tex);
+  });
+});
+
 describe('GSplatTSLMaterial clone', () => {
   it('preserves the max-projection blending mode through clone', () => {
     // P8 symmetry with LineTSLMaterial.clone preserving

@@ -32,6 +32,7 @@ import { GPUBufferPool } from '../../../rendering/gpu-buffer-pool';
 import { estimateGeometryBytes } from '../../../rendering/gpu-buffer-pool/geometry-bytes';
 import { syncGSplatMaterialWithGeometry } from '../../../rendering/material-sync-helpers';
 import { GSplatMaterial } from '../../../rendering/materials/gsplat/material-glsl';
+import { materialManager } from '../../../rendering/material-manager';
 import { GSplatPickingMaterial } from '../../../rendering/picking/gsplat/material';
 
 function makeSource(count: number): SplatTexelSource {
@@ -211,6 +212,31 @@ describe('pool adapter — growth, dispose, byte accounting', () => {
     expect(getSplatTexture(geom3)).toBe(tex1);
   });
 
+  it('byte-budget eviction frees a pooled gsplat texture (pressure path end-to-end)', () => {
+    // Tiny budget: the pooled buffer's texture bytes alone exceed it,
+    // so the acquire-triggered sweep must evict and dispose the texture.
+    let budget = Infinity;
+    const tight = new GPUBufferPool(20, 0, 5, () => budget);
+    try {
+      const geom = tight.acquireGSplatsGeometry('a', 1000);
+      const tex = getSplatTexture(geom)!;
+      let disposed = false;
+      tex.addEventListener('dispose', () => {
+        disposed = true;
+      });
+      tight.releaseGSplatsGeometry('a');
+      budget = 1; // now over budget
+      // Advance past the eviction grace and trigger a sweep.
+      tight.beginFrame();
+      tight.beginFrame();
+      tight.evictUnused();
+      expect(disposed).toBe(true);
+      expect(tight.getStats().pooledBuffers).toBe(0);
+    } finally {
+      tight.dispose();
+    }
+  });
+
   it('pool.dispose() disposes pooled textures through the geometry dispose event', () => {
     const geom = pool.acquireGSplatsGeometry('node', 100);
     const tex = getSplatTexture(geom)!;
@@ -285,6 +311,31 @@ describe('pool adapter — growth, dispose, byte accounting', () => {
     const arr = getSplatTexture(geom)!.image.data as Float32Array;
     expect(arr[SPLAT_FLOATS_PER_SPLAT * 3]).toBe(src.centers[9]); // splat 3 center.x
     expect(geom.boundingBox).not.toBeNull();
+  });
+});
+
+describe('per-node gsplat materials — manager registration lifecycle', () => {
+  it('creates DISTINCT materials per call (LRU bypass) and unregisters on dispose', () => {
+    // Spec §4 exit criterion: material-disposal leak check. Per-node
+    // materials are only safe if dispose() removes them from the
+    // manager's registered set (camera-broadcast registry) — otherwise
+    // every node teardown leaks a strongly-held material.
+    const props = {
+      blendingMode: 'additive',
+      opacity: 1.0,
+      gamma: 1.0,
+      intensity: 1.0,
+      offset: 0.0,
+    } as Parameters<typeof materialManager.getGSplatMaterial>[0];
+    const before = materialManager.getCacheStats().totalRegistered;
+    const a = materialManager.getGSplatMaterial(props);
+    const b = materialManager.getGSplatMaterial(props);
+    expect(a).not.toBe(b); // same props, still per-node
+    expect(materialManager.getCacheStats().totalRegistered).toBe(before + 2);
+    a.dispose();
+    expect(materialManager.getCacheStats().totalRegistered).toBe(before + 1);
+    b.dispose();
+    expect(materialManager.getCacheStats().totalRegistered).toBe(before);
   });
 });
 
