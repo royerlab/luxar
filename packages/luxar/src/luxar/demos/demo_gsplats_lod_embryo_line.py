@@ -198,18 +198,26 @@ def embryo_transforms(
 
 
 def camera_for_line(n: int, spacing: float, diameter: float) -> CameraConfig:
-    """Stand in front of, and near the middle of, the line, looking down it."""
+    """Stand just off the NEAR end of the line and look ALONG its axis.
+
+    The camera sits a hair before the first embryo, shifted sideways by about
+    one embryo diameter (and slightly raised), aiming down the +X axis at the
+    far end — so the whole row of embryos recedes into the distance rather than
+    the front one occluding the rest.
+    """
     radius = diameter / 2.0
     total_len = (n - 1) * spacing
-    # In front of the middle (offset in +Z), slightly raised, looking down +X
-    # so the line recedes into the distance.
-    position = (-total_len * 0.08, radius * 0.7, radius * 4.5)
-    target = (total_len * 0.30, 0.0, 0.0)
+    # Stand back off the near end (−X), offset sideways ~2 diameters in +Z and
+    # raised ~1 diameter in +Y, and aim at the MIDDLE of the row — so the whole
+    # sequence recedes diagonally and stays centred (standing right at the first
+    # embryo blows it out and crams the line into a corner).
+    position = (-total_len * 0.12, diameter * 1.0, diameter * 2.2)
+    target = (total_len * 0.45, 0.0, 0.0)
     return CameraConfig(
         position=position,
         target=target,
         up=(0.0, 1.0, 0.0),
-        fov=55.0,
+        fov=50.0,
         near=max(0.1, radius * 0.02),
         far=total_len * 1.5 + radius * 10.0,
     )

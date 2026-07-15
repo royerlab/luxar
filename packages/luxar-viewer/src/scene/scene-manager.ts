@@ -678,7 +678,10 @@ export class SceneManager extends THREE.EventDispatcher<{
       // (must run AFTER autoFrameCamera since camera position affects clipping)
       this.autoAdjustClippingPlanes();
 
-      log.info(Modules.SCENE_MANAGER, 'Scene loaded. Press F to re-center camera on bounding box.');
+      log.info(
+        Modules.SCENE_MANAGER,
+        'Scene loaded. Press F to reset the camera (authored view if set, else fit to bounds).'
+      );
     } catch (error) {
       notifier.hideLoading();
       log.error(Modules.SCENE_MANAGER, 'Failed to load scene:', error);
@@ -739,6 +742,29 @@ export class SceneManager extends THREE.EventDispatcher<{
    * ```
    */
   public centerCameraOnScene(): void {
+    // Prefer the scene's AUTHORED camera (zarr viewer_config) when it pins an
+    // explicit position: F should return to the author's intended framing, not
+    // re-fit to the raw min/max bounding box. A bounds fit zooms out to include
+    // sparse outliers (e.g. Gaia halo stars out to ~10 kpc), shrinking the
+    // subject to a dot — the author already framed around a robust extent, so
+    // honour it. Fall back to the bounds fit only when there is no authored
+    // camera position.
+    const root = this.scene.children.find((c) => c.name === 'LuxarScene') as
+      | THREE.Group
+      | undefined;
+    const viewerConfig = root?.userData?.viewerConfig as ZarrViewerConfig | undefined;
+    if (root && viewerConfig?.camera?.position) {
+      // Reset the up vector to the scene up first: orbiting overwrites
+      // camera.up every frame, so re-applying the authored camera without this
+      // would inherit the accumulated roll (the bounds-fit path does the same
+      // reset). If the author pinned an up, applyZarrViewerConfig overrides it.
+      this.camera.up.copy(this.sceneUp);
+      this.applyZarrViewerConfig(root);
+      this.controls.saveState();
+      this.lastBoundingBoxCenter.copy(this.controls.getFocusTarget());
+      log.info(Modules.SCENE_MANAGER, 'Recentered to authored camera (viewer_config)');
+      return;
+    }
     const center = centerCameraOnScene(this.scene, this.camera, this.controls, this.sceneUp);
     if (center) this.lastBoundingBoxCenter.copy(center);
   }

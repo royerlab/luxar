@@ -728,6 +728,37 @@ describe('SceneManager', () => {
       expect(spies.autoFrameCamera).toHaveBeenCalledWith(true);
     });
 
+    it('F (centerCameraOnScene) restores the authored camera when a position is pinned', async () => {
+      const spies = installSpies({
+        positionApplied: true,
+        viewerConfig: { camera: { position: [10, 20, 30] } },
+      });
+      await sceneManager.loadSceneData('http://example.com/data.zarr');
+      spies.applyZarrViewerConfig.mockClear();
+
+      // Pressing F must re-apply the authored camera (viewer_config), NOT
+      // re-fit to raw min/max bounds — the fit would zoom out to include
+      // sparse outliers and shrink the subject to a dot.
+      sceneManager.centerCameraOnScene();
+
+      expect(spies.applyZarrViewerConfig).toHaveBeenCalledTimes(1);
+    });
+
+    it('F falls back to the bounds fit when the scene has no authored camera position', async () => {
+      const spies = installSpies({
+        positionApplied: false,
+        viewerConfig: { camera: { target: [5, 5, 5] } }, // target only, no position
+      });
+      await sceneManager.loadSceneData('http://example.com/data.zarr');
+      spies.applyZarrViewerConfig.mockClear();
+
+      sceneManager.centerCameraOnScene();
+
+      // No authored position → do NOT re-apply viewer_config; the bounds-fit
+      // path runs instead.
+      expect(spies.applyZarrViewerConfig).not.toHaveBeenCalled();
+    });
+
     it('establishes scene-scale distance limits BEFORE applying the author camera (regression: a far establishing-shot camera must not be clamped to the orbit default maxDistance)', async () => {
       // Give the scene non-trivial metadata bounds so the scale step fires.
       const internals = sceneManager as unknown as {
