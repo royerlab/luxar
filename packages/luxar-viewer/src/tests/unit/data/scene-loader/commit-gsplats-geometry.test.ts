@@ -12,6 +12,10 @@ import * as THREE from 'three';
 
 const mockUpdateInstancedMesh = vi.fn();
 const mockGetSplatTexture = vi.fn((..._args: unknown[]) => null);
+const mockSyncGSplatMaterial = vi.fn();
+vi.mock('../../../../rendering/material-sync-helpers', () => ({
+  syncGSplatMaterialWithGeometry: (...args: unknown[]) => mockSyncGSplatMaterial(...args),
+}));
 vi.mock('../../../../rendering/gsplat-geometry', () => ({
   updateInstancedGSplatsMesh: (...args: unknown[]) => mockUpdateInstancedMesh(...args),
   packCholeskyForShader: vi.fn(),
@@ -87,6 +91,9 @@ describe('commitGSplatsGeometry', () => {
     commitGSplatsGeometry(makeStaged(11), root, null, undefined, V);
     expect((mesh.userData as { visibleSplatCount: number }).visibleSplatCount).toBe(11);
     expect(mockUpdateInstancedMesh).toHaveBeenCalledTimes(1);
+    // Non-pool commits rebind uSplatTex too (rebuilds swap in a fresh
+    // mesh-owned texture).
+    expect(mockSyncGSplatMaterial).toHaveBeenCalledWith(mesh);
     // C7[P2][P11]: a mutant that drops the GPU update call would still pass
     // the userData write above — pin the actual dispatch. The no-pool path
     // calls updateInstancedGSplatsMesh(mesh, {centers, cholesky*, amplitudes,
@@ -157,6 +164,10 @@ describe('commitGSplatsGeometry', () => {
     expect(mesh.geometry).toBe(newGeometry);
     expect(mesh.geometry).not.toBe(oldGeometry);
     expect((mesh.userData as { committedData?: unknown }).committedData).toBeUndefined();
+    // The splat-texture rebind lives in the same finally as the
+    // ownership handoff: even on a throw, the material must be
+    // re-pointed at the acquired geometry's texture.
+    expect(mockSyncGSplatMaterial).toHaveBeenCalledWith(mesh);
   });
 
   it('[C7] pool path: calls acquire/update exactly once, replaces mesh.geometry, SKIPS updateInstancedGSplatsMesh', () => {
@@ -179,6 +190,9 @@ describe('commitGSplatsGeometry', () => {
     expect(pool.updateGSplatsGeometry).toHaveBeenCalledTimes(1);
     expect(mesh.geometry).toBe(newGeometry);
     expect(mesh.geometry).not.toBe(beforeGeom);
+    // Every pool commit rebinds uSplatTex (acquire may hand the node a
+    // different geometry+texture pair).
+    expect(mockSyncGSplatMaterial).toHaveBeenCalledWith(mesh);
     // Pool path skips updateInstancedGSplatsMesh — that's only the
     // no-pool fallback path. Pin BOTH directions of the contract.
     expect(mockUpdateInstancedMesh).not.toHaveBeenCalled();

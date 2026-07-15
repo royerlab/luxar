@@ -70,7 +70,10 @@ function effectiveMaxTextureSize(): number {
  * read garbage).
  */
 export function getSplatTextureWidth(): number {
-  return Math.min(SPLAT_TEXTURE_MAX_WIDTH, effectiveMaxTextureSize()) & ~3;
+  // Floor of 4: a sub-4 maxTextureSize (impossible on real devices —
+  // the WebGL2 spec floor is 2048) would otherwise round to width 0
+  // and divide-by-zero the height math.
+  return Math.max(4, Math.min(SPLAT_TEXTURE_MAX_WIDTH, effectiveMaxTextureSize()) & ~3);
 }
 
 /**

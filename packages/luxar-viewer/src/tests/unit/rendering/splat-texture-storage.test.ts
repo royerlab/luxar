@@ -75,6 +75,11 @@ describe('splat-texture-layout — texel address math', () => {
     // splat's 4 texels can never straddle a row boundary.
     configureSplatTextureLayout(2050);
     expect(getSplatTextureWidth()).toBe(2048);
+
+    // Sub-4 limits floor at 4 (would otherwise round to width 0 and
+    // divide-by-zero the height math).
+    configureSplatTextureLayout(3);
+    expect(getSplatTextureWidth()).toBe(4);
   });
 
   it('computes row-padded texture heights', () => {
@@ -130,6 +135,13 @@ describe('attachSplatStorage / writeSplatTexels — fused writer round-trip', ()
       expect(arr[o + 12]).toBe(src.colors[i * 3 + 2]);
       expect(arr[o + 13]).toBe(0);
     }
+  });
+
+  it('throws on source arrays shorter than the requested count (fail-loud contract)', () => {
+    const geometry = new THREE.InstancedBufferGeometry();
+    const texture = attachSplatStorage(geometry, 8);
+    const src = makeSource(4); // arrays sized for 4, count says 8
+    expect(() => writeSplatTexels(texture, src, 8)).toThrow(/shorter than count/);
   });
 
   it('clamps the written count to the texture capacity (memory safety)', () => {
@@ -220,6 +232,37 @@ describe('pool adapter — growth, dispose, byte accounting', () => {
     const rowBytes = getSplatTextureWidth() * 16;
     expect(bytes).toBeGreaterThanOrEqual(capacity * 68);
     expect(bytes).toBeLessThanOrEqual(capacity * 68 + rowBytes + 256);
+  });
+
+  it('clamps acquire capacity AND written count to the per-node texture bound', () => {
+    // Shrink the bound so the clamp is testable at unit scale:
+    // maxTextureSize 16 -> width 16, bound = 16*16/4 = 64 splats.
+    configureSplatTextureLayout(16);
+    const small = new GPUBufferPool(20, 300, 5, () => Infinity);
+    try {
+      const geom = small.acquireGSplatsGeometry('big', 1000);
+      const texture = getSplatTexture(geom)!;
+      expect(splatTexelCapacity(texture)).toBe(64);
+      const src = makeSource(64); // writer clamps count to capacity first
+      small.updateGSplatsGeometry(
+        geom,
+        {
+          centers3D: src.centers,
+          amplitudes: src.amplitudes,
+          cholesky01: src.cholesky01,
+          cholesky23: src.cholesky23,
+          cholesky45: src.cholesky45,
+          colors: src.colors,
+          splatCount: 1000,
+        },
+        1000
+      );
+      // instanceCount mirrors the clamped written count — a
+      // bound-clamped node never draws instances without texels.
+      expect(geom.instanceCount).toBe(64);
+    } finally {
+      small.dispose();
+    }
   });
 
   it('updateGeometry writes texels + identity and sets instanceCount', () => {
