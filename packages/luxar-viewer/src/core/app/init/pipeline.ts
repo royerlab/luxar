@@ -186,9 +186,12 @@ export async function runInitPipeline(
   // only the DEFAULT loader's registry is evaluated per frame. The
   // registry DEPS below are per-owner already, so when per-loader
   // callbacks arrive no further wiring changes are needed.)
-  // LOD cross-fade is ON by default; ?no-lod-fade disables it. Captured once at
-  // wiring time (a reload re-reads it).
-  const lodCrossFadeEnabled = readUrlParams().lodFade;
+  // LOD cross-fade is ON by default; ?no-lod-fade disables it. Streaming energy
+  // compensation is ON by default; ?no-lod-energy disables it. Both captured once
+  // at wiring time (a reload re-reads them).
+  const lodUrlParams = readUrlParams();
+  const lodCrossFadeEnabled = lodUrlParams.lodFade;
+  const lodEnergyCompEnabled = lodUrlParams.lodEnergyComp;
   SceneLoaderManager.getInstance().setLODGroupRegistryFactory((owner) => {
     return new LODGroupRegistry({
       getCamera: () => sceneManager.camera,
@@ -232,6 +235,11 @@ export async function runInitPipeline(
       // blends adjacent LOD levels' opacity across a zoom transition instead of
       // a hard swap (additive/luminous only). Read once at wiring time.
       getCrossFadeEnabled: () => lodCrossFadeEnabled,
+      // Streaming brightness compensation (ON by default; ?no-lod-energy disables):
+      // scale a streaming additive/luminous leaf's opacity by 1/e(k) so its
+      // partial ladder prefix renders at full-level brightness (no brightening
+      // pop as chunks arrive). Read once at wiring time.
+      getEnergyCompEnabled: () => lodEnergyCompEnabled,
       // Register a fade's clone-on-first-use material so it keeps receiving
       // per-frame camera-uniform updates (an unregistered gsplat clone would
       // project with stale camera params).
