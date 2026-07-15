@@ -89,6 +89,20 @@ try {
     if (!host) return { error: 'no gsplat mesh' };
     const MeshCtor = host.constructor;
 
+    // Render until the measurement ground truth moves: the wrapper's
+    // attribute views REGISTER in info.memory (or timeout). Frame
+    // counters and fixed rAF waits both proved unreliable across
+    // display timings (a headed X11 run registered nothing).
+    const renderUntilRegistered = async (prevAttrs) => {
+      const t0 = performance.now();
+      while (performance.now() - t0 < 8000) {
+        dbg.renderOnce();
+        await new Promise((r) => requestAnimationFrame(r));
+        await new Promise((r) => setTimeout(r, 50));
+        if (renderer.info.memory.attributes !== prevAttrs) return true;
+      }
+      return false;
+    };
     const renderTick = async () => {
       dbg.renderOnce();
       await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
@@ -99,6 +113,49 @@ try {
     });
 
     const steps = [];
+
+    // DRAIN the pool of initial-load leftovers first: best-fit reuse
+    // would otherwise serve small 'grows' from an already-registered
+    // pooled buffer (observed: a ladder leftover with capacity >= 32K
+    // absorbed grows 0-3, so only ONE real grow ever happened and the
+    // in-place-rebuild strand went unexercised).
+    for (let i = 0; i < 305; i++) pool.beginFrame();
+    pool.evictUnused();
+    steps.push({ step: 'drained', ...mem(), pool: pool.getStats().pooledBuffers });
+
+    // PRE-WARM: the first draw of a wrapper mesh needs the (async)
+    // WebGPU pipeline compile for this material+geometry-layout combo —
+    // observed at 10+ seconds cold on Vulkan, swallowing several grow
+    // windows and making generations 'invisible' to registration. Warm
+    // it once with a throwaway acquire, wait for registration, release.
+    {
+      const warmGeo = pool.acquireGSplatsGeometry('synthetic-warm', 1000);
+      warmGeo.instanceCount = 1000;
+      const warm = new MeshCtor(warmGeo, host.material);
+      warm.frustumCulled = false;
+      let warmDraws = 0;
+      warm.onAfterRender = () => warmDraws++;
+      dbg.scene.add(warm);
+      const a0 = renderer.info.memory.attributes;
+      const t0 = performance.now();
+      let warmed = false;
+      while (performance.now() - t0 < 45000) {
+        dbg.renderOnce();
+        await new Promise((r) => requestAnimationFrame(r));
+        await new Promise((r) => setTimeout(r, 50));
+        if (renderer.info.memory.attributes !== a0) {
+          warmed = true;
+          break;
+        }
+      }
+      dbg.scene.remove(warm);
+      pool.releaseGSplatsGeometry('synthetic-warm');
+      // Drain the warm buffer too — it must not be best-fit-served to
+      // the measured grows below.
+      for (let i = 0; i < 305; i++) pool.beginFrame();
+      pool.evictUnused();
+      steps.push({ step: 'prewarm', ...mem(), warmed, warmDraws });
+    }
     steps.push({ step: 'baseline', ...mem() });
 
     let wrapper = null;
@@ -113,8 +170,20 @@ try {
       wrapper = new MeshCtor(geo, host.material);
       wrapper.frustumCulled = false;
       dbg.scene.add(wrapper);
-      await renderTick();
-      steps.push({ step: `grow${g}(n=${count})`, ...mem(), sameGeom: wrapper.geometry === geo });
+      const framesBefore = renderer.info.render?.frame ?? -1;
+      const callsBefore = renderer.info.render?.calls ?? -1;
+      const registered = await renderUntilRegistered(renderer.info.memory.attributes);
+      steps.push({
+        step: `grow${g}(n=${count})`,
+        ...mem(),
+        registered,
+        sameGeom: wrapper.geometry === geo,
+        frames: `${framesBefore}->${renderer.info.render?.frame ?? -1}`,
+        calls: `${callsBefore}->${renderer.info.render?.calls ?? -1}`,
+        wrapperInScene: wrapper.parent === dbg.scene,
+        geoInstanceCount: geo.instanceCount,
+        geoAttrCount: Object.keys(geo.attributes).length,
+      });
       count *= 2;
     }
 
