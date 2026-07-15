@@ -11,8 +11,10 @@
  * WebGPU renderer).
  *
  * Per-type spec arrays (POINTS_BASE_ATTRIBUTE_SPECS,
- * LINES_BASE_ATTRIBUTE_SPECS, GSPLATS_ATTRIBUTE_SPECS, etc.) stay with
- * their adapters — only the generic codec functions live here.
+ * LINES_BASE_ATTRIBUTE_SPECS, etc.) stay with their adapters — only
+ * the generic codec functions live here. (GSplats no longer use this
+ * path: their data lives in the splat texture — see
+ * `../gsplat-geometry.ts`.)
  */
 
 import * as THREE from 'three';

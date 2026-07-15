@@ -237,6 +237,24 @@ export function writeSplatTexels(
   const arr = texture.image.data as Float32Array;
   const n = Math.min(count, Math.floor(arr.length / SPLAT_FLOATS_PER_SPLAT));
   const { centers, cholesky01, cholesky23, cholesky45, amplitudes, colors } = src;
+  // Fail loud on source/count mismatch (the interleaved-era writer
+  // threw here too) — a silent short read would write NaN texels that
+  // the shaders' NaN guards then drop invisibly.
+  if (
+    centers.length < n * 3 ||
+    cholesky01.length < n * 2 ||
+    cholesky23.length < n * 2 ||
+    cholesky45.length < n * 2 ||
+    amplitudes.length < n ||
+    colors.length < n * 3
+  ) {
+    throw new Error(
+      `writeSplatTexels: source arrays shorter than count=${n} ` +
+        `(centers=${centers.length}, cholesky01=${cholesky01.length}, ` +
+        `cholesky23=${cholesky23.length}, cholesky45=${cholesky45.length}, ` +
+        `amplitudes=${amplitudes.length}, colors=${colors.length})`
+    );
+  }
   for (let i = 0; i < n; i++) {
     const o = i * SPLAT_FLOATS_PER_SPLAT;
     const c3 = i * 3;
