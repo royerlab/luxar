@@ -689,19 +689,20 @@ async function captureOrbitFrames(
     });
     if (found) {
       const lo = Math.round(found.min + 0.12 * (found.max - found.min)); // skip near-empty start
-      tl = { ...found, lo };
+      const tlv = { ...found, lo };
+      tl = tlv;
       // Prime the slice cache: load each of the TL_STEPS distinct capture
       // timepoints once (much cheaper than the old 400-frame play warm-up). The
       // capture pass then largely hits cache.
       for (let k = 0; k < TL_STEPS; k++) {
-        const v = Math.round(tl.lo + ((tl.max - tl.lo) * k) / (TL_STEPS - 1));
+        const v = Math.round(tlv.lo + ((tlv.max - tlv.lo) * k) / (TL_STEPS - 1));
         await page.evaluate(
           async ({ timeIdx, value }: { timeIdx: number; value: number }) => {
             const sdm = (window as any).__luxarDebug?.sceneDimsManager;
             sdm?.setDimensionValue?.(timeIdx, value);
             await sdm?.waitForUpdate?.();
           },
-          { timeIdx: tl.timeIdx, value: v }
+          { timeIdx: tlv.timeIdx, value: v }
         );
       }
     }
