@@ -13,8 +13,12 @@ import * as THREE from 'three';
 const mockUpdateInstancedMesh = vi.fn();
 const mockGetSplatTexture = vi.fn((..._args: unknown[]) => null);
 const mockSyncGSplatMaterial = vi.fn();
+const mockNoteGSplatsCommit = vi.fn();
 vi.mock('../../../../rendering/material-sync-helpers', () => ({
   syncGSplatMaterialWithGeometry: (...args: unknown[]) => mockSyncGSplatMaterial(...args),
+}));
+vi.mock('../../../../rendering/depth-sort-coordinator', () => ({
+  noteGSplatsCommit: (...args: unknown[]) => mockNoteGSplatsCommit(...args),
 }));
 vi.mock('../../../../rendering/gsplat-geometry', () => ({
   updateInstancedGSplatsMesh: (...args: unknown[]) => mockUpdateInstancedMesh(...args),
@@ -94,6 +98,9 @@ describe('commitGSplatsGeometry', () => {
     // Non-pool commits rebind uSplatTex too (rebuilds swap in a fresh
     // mesh-owned texture).
     expect(mockSyncGSplatMaterial).toHaveBeenCalledWith(mesh);
+    // Depth-sorting Phase 2: every non-noop commit notifies the sort
+    // coordinator (generation bump + order-dependent register/sort).
+    expect(mockNoteGSplatsCommit).toHaveBeenCalledWith(mesh, expect.any(Float32Array), 11);
     // C7[P2][P11]: a mutant that drops the GPU update call would still pass
     // the userData write above — pin the actual dispatch. The no-pool path
     // calls updateInstancedGSplatsMesh(mesh, {centers, cholesky*, amplitudes,
@@ -213,6 +220,7 @@ describe('commitGSplatsGeometry — no-op commit skip (committedData)', () => {
 
   it('noop staged commit stamps loadedViewVersion but touches no geometry', () => {
     mockUpdateInstancedMesh.mockReset();
+    mockNoteGSplatsCommit.mockReset();
     const root = new THREE.Group();
     const mesh = makeMesh('/g');
     root.add(mesh);
@@ -230,6 +238,9 @@ describe('commitGSplatsGeometry — no-op commit skip (committedData)', () => {
     expect((mesh.userData as { loadedViewVersion?: number }).loadedViewVersion).toBe(9);
     expect(mesh.geometry).toBe(geometryBefore);
     expect(mockUpdateInstancedMesh).not.toHaveBeenCalled();
+    // The sort generation must NOT bump on a stamp-only noop — an
+    // in-flight sort stays valid across it (spec §5 generation contract).
+    expect(mockNoteGSplatsCommit).not.toHaveBeenCalled();
   });
 });
 

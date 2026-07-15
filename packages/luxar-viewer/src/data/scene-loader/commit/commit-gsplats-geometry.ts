@@ -14,6 +14,7 @@
 
 import * as THREE from 'three';
 import { updateInstancedGSplatsMesh } from '../../../rendering/gsplat-geometry';
+import { noteGSplatsCommit } from '../../../rendering/depth-sort-coordinator';
 import { syncGSplatMaterialWithGeometry } from '../../../rendering/material-sync-helpers';
 import type { GSplatsUserData } from '../../../types/gsplats';
 import { log, Modules } from '../../../utils/log';
@@ -150,6 +151,14 @@ export function commitGSplatsGeometry(
         `Clearing gsplats for ${staged.path} (no visible splats at current slice)`
       );
     }
+
+    // Depth-sorting Phase 2: every non-noop commit bumps the node's sort
+    // generation; order-dependent (`normal`) nodes additionally transfer
+    // their projected centers to the SortWorker and get one sort from the
+    // current camera pose. Runs LAST: the texture-write/bbox loops above
+    // are the final main-thread readers of `centers3D`, and the transfer
+    // detaches it (safe — the memoized-concat noop keys on `sourceData`).
+    noteGSplatsCommit(mesh, processed.centers3D, processed.splatCount);
   } finally {
     bufferSession?.end();
   }

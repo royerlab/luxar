@@ -1,5 +1,6 @@
 import { setWasmJsUrl } from '../../../wasm';
 import { setDataWorkerUrl, setDataWorkerWasmPath } from '../../../workers/worker-pool';
+import { setSortWorkerWasmPath } from '../../../rendering/depth-sort-coordinator';
 import type { LuxarAppOptions } from '../options';
 
 /**
@@ -26,6 +27,12 @@ export function applyModuleOverrides(
   if (options.wasmPath) {
     setWasmJsUrl(options.wasmPath);
     setDataWorkerWasmPath(options.wasmPath);
+    // Third consumer: the depth-sort worker (its own module instance,
+    // same shim URL).
+    setSortWorkerWasmPath(options.wasmPath);
   }
+  // NOTE: `workerPath` is deliberately NOT forwarded to the sort worker —
+  // it names the DATA worker bundle, which is a different chunk. Embedders
+  // relocating the sort worker call `setSortWorkerUrl` directly.
   if (options.workerPath) setDataWorkerUrl(options.workerPath);
 }

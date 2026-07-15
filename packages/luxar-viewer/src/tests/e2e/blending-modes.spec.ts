@@ -21,6 +21,8 @@ const DATASET = 'http://localhost:9000/datasets/examples/rendering_modes_example
 const MULTI_DATASET = 'http://localhost:9000/datasets/examples/multiple_objects_example.luxar.zarr';
 const GSPLAT_OVERLAP_FIXTURE =
   'http://localhost:9000/packages/luxar-viewer/tests/fixtures/test_gsplats_normal_overlap.luxar.zarr';
+const GSPLAT_OVERLAP_REVERSED_FIXTURE =
+  'http://localhost:9000/packages/luxar-viewer/tests/fixtures/test_gsplats_normal_overlap_reversed.luxar.zarr';
 
 test.describe('Blending Modes', () => {
   // The blending-mode datasets contain multiple groups (5+ point clouds) and
@@ -195,15 +197,17 @@ test.describe('GSplat normal mode (premultiplied coverage alpha)', () => {
     const path = await import('node:path');
     const { fileURLToPath } = await import('node:url');
     const specDir = path.dirname(fileURLToPath(import.meta.url));
-    const fixtureDir = path.resolve(
-      specDir,
-      '../../../tests/fixtures/test_gsplats_normal_overlap.luxar.zarr'
-    );
-    if (!existsSync(fixtureDir)) {
-      throw new Error(
-        `Missing fixture ${fixtureDir} — run \`pnpm test:generate-fixtures\` ` +
-          'from packages/luxar-viewer/ first.'
-      );
+    for (const name of [
+      'test_gsplats_normal_overlap.luxar.zarr',
+      'test_gsplats_normal_overlap_reversed.luxar.zarr',
+    ]) {
+      const fixtureDir = path.resolve(specDir, `../../../tests/fixtures/${name}`);
+      if (!existsSync(fixtureDir)) {
+        throw new Error(
+          `Missing fixture ${fixtureDir} — run \`pnpm test:generate-fixtures\` ` +
+            'from packages/luxar-viewer/ first.'
+        );
+      }
     }
   });
 
@@ -359,5 +363,156 @@ test.describe('GSplat normal mode (premultiplied coverage alpha)', () => {
     expect(greenDominant.length).toBeGreaterThan(0);
     // …and the background shows through the overlap (fails pre-fix).
     expect(mixed.length).toBeGreaterThan(0);
+  });
+
+  test('depth sort applies a back-to-front ordering after load settle (Phase 2)', async ({
+    page,
+  }) => {
+    // The reversed fixture declares its splats front-to-back; the
+    // compiler may Morton-reorder storage, so the gate does NOT assume a
+    // specific on-disk order. Instead it asserts the applied
+    // `aSortedIndex` permutation directly: (a) it departs from identity,
+    // and (b) it is back-to-front — view z (from the live camera + the
+    // splat-texture centers) is non-decreasing along the ordering. For
+    // this scene's camera framing the identity ordering is NOT monotone
+    // (the near green splat sits between the two far splats in storage),
+    // so pre-Phase-2 the non-identity wait times out — the non-vacuous
+    // gate. The overlap pixels are then checked for the correct
+    // green-over-red compositing.
+    await page.addInitScript(() => {
+      localStorage.setItem('luxar-control-rail-hint-dismissed', '1');
+    });
+    await page.goto(`/?src=${GSPLAT_OVERLAP_REVERSED_FIXTURE}&debug&dpr=1`);
+    await waitForLuxarReady(page);
+    await waitForGSplatsCommitted(page);
+
+    // The sort lands asynchronously after the commit: wait until the
+    // permutation departs from identity.
+    await page.waitForFunction(
+      () => {
+        const debug = (window as unknown as { __luxarDebug?: { scene?: unknown } }).__luxarDebug;
+        if (!debug?.scene) return false;
+        let sorted = false;
+        (debug.scene as { traverse: (cb: (obj: unknown) => void) => void }).traverse((obj) => {
+          const o = obj as {
+            userData?: { nodeType?: string; visibleSplatCount?: number };
+            geometry?: { attributes?: { aSortedIndex?: { array?: ArrayLike<number> } } };
+          };
+          if (o.userData?.nodeType !== 'gsplats') return;
+          const arr = o.geometry?.attributes?.aSortedIndex?.array;
+          const count = o.userData?.visibleSplatCount ?? 0;
+          if (!arr || count < 2) return;
+          for (let i = 0; i < count; i++) {
+            if (arr[i] !== i) {
+              sorted = true;
+              return;
+            }
+          }
+        });
+        return sorted;
+      },
+      undefined,
+      { timeout: 30000 }
+    );
+
+    // Assert the applied permutation is back-to-front: view z of the
+    // drawn splats (splat-texture centers under modelView) never
+    // decreases along the instance order.
+    const monotone = await page.evaluate(() => {
+      const debug = (window as any).__luxarDebug;
+      const results: Array<{ ordering: number[]; viewZs: number[]; ok: boolean }> = [];
+      debug.scene.traverse((obj: any) => {
+        if (obj.userData?.nodeType !== 'gsplats') return;
+        const count = obj.userData?.visibleSplatCount ?? 0;
+        const arr = obj.geometry?.attributes?.aSortedIndex?.array;
+        const texData = obj.geometry?.userData?.splatTexture?.image?.data;
+        if (!arr || !texData || count < 2) return;
+        const mwi = debug.camera.matrixWorldInverse.elements;
+        const mw = obj.matrixWorld.elements;
+        // modelView = matrixWorldInverse × matrixWorld (column-major).
+        const viewZof = (x: number, y: number, z: number) => {
+          const wx = mw[0] * x + mw[4] * y + mw[8] * z + mw[12];
+          const wy = mw[1] * x + mw[5] * y + mw[9] * z + mw[13];
+          const wz = mw[2] * x + mw[6] * y + mw[10] * z + mw[14];
+          return mwi[2] * wx + mwi[6] * wy + mwi[10] * wz + mwi[14];
+        };
+        const ordering: number[] = [];
+        const viewZs: number[] = [];
+        let ok = true;
+        let prev = -Infinity;
+        for (let j = 0; j < count; j++) {
+          const idx = arr[j];
+          ordering.push(idx);
+          const zv = viewZof(texData[idx * 16], texData[idx * 16 + 1], texData[idx * 16 + 2]);
+          viewZs.push(zv);
+          // Small epsilon: equal-depth splats share a key bucket.
+          if (zv < prev - 1e-4) ok = false;
+          prev = Math.max(prev, zv);
+        }
+        results.push({ ordering, viewZs, ok });
+      });
+      return results;
+    });
+    expect(monotone.length).toBeGreaterThan(0);
+    for (const r of monotone) {
+      expect(r.ok, `ordering ${r.ordering} viewZs ${r.viewZs} not back-to-front`).toBe(true);
+    }
+
+    await waitForNextRender(page, 5);
+
+    // Visual sanity: the overlap core composites green over red (the
+    // correct image; the wrong draw order gives the mirror-image
+    // red-dominant core). The overlap's screen position depends on the
+    // auto-framing, so project the red/green splat centers to screen
+    // coordinates in-page and sample the middle of the segment between
+    // them — where the two Gaussians weigh equally and the compositing
+    // order alone decides the dominant channel (~2:1).
+    const midOffsets = await page.evaluate(() => {
+      const debug = (window as any).__luxarDebug;
+      let offsets: Array<[number, number]> | null = null;
+      debug.scene.traverse((obj: any) => {
+        if (obj.userData?.nodeType !== 'gsplats' || offsets) return;
+        const texData = obj.geometry?.userData?.splatTexture?.image?.data;
+        if (!texData) return;
+        const mwi = debug.camera.matrixWorldInverse.elements;
+        const pm = debug.camera.projectionMatrix.elements;
+        const mw = obj.matrixWorld.elements;
+        const toScreen = (x: number, y: number, z: number): [number, number] => {
+          const wx = mw[0] * x + mw[4] * y + mw[8] * z + mw[12];
+          const wy = mw[1] * x + mw[5] * y + mw[9] * z + mw[13];
+          const wz = mw[2] * x + mw[6] * y + mw[10] * z + mw[14];
+          const vx = mwi[0] * wx + mwi[4] * wy + mwi[8] * wz + mwi[12];
+          const vy = mwi[1] * wx + mwi[5] * wy + mwi[9] * wz + mwi[13];
+          const vz = mwi[2] * wx + mwi[6] * wy + mwi[10] * wz + mwi[14];
+          const cx = pm[0] * vx + pm[4] * vy + pm[8] * vz + pm[12];
+          const cy = pm[1] * vx + pm[5] * vy + pm[9] * vz + pm[13];
+          const cw = pm[3] * vx + pm[7] * vy + pm[11] * vz + pm[15];
+          return [(cx / cw + 1) / 2, (1 - cy / cw) / 2];
+        };
+        // Identify red (z≈0, x<1) and green (z≈1) among the first splats.
+        let red: [number, number] | null = null;
+        let green: [number, number] | null = null;
+        for (let i = 0; i < 3; i++) {
+          const x = texData[i * 16];
+          const z = texData[i * 16 + 2];
+          if (z > 0.5) green = toScreen(x, texData[i * 16 + 1], z);
+          else if (x < 1.0) red = toScreen(x, texData[i * 16 + 1], z);
+        }
+        if (red && green) {
+          offsets = [];
+          for (let t = 0.35; t <= 0.65; t += 0.05) {
+            offsets.push([red[0] + (green[0] - red[0]) * t, red[1] + (green[1] - red[1]) * t]);
+          }
+        }
+      });
+      return offsets;
+    });
+    expect(midOffsets).not.toBeNull();
+    const samples = await samplePixelsAt(page, 'canvas', midOffsets!);
+    const lit = samples.filter((s) => s.r > 20 || s.g > 20);
+    expect(lit.length).toBeGreaterThan(0);
+    const greenOverRed = lit.filter((s) => s.g > s.r).length;
+    const redOverGreen = lit.filter((s) => s.r > s.g).length;
+    expect(greenOverRed).toBeGreaterThan(redOverGreen);
   });
 });

@@ -4,6 +4,7 @@ import { ThemeManager } from '../../../themes/theme-manager';
 import { DataMonitorManager } from '../../../ui/data-monitor-manager';
 import { SceneLoaderManager } from '../../../data/scene-loader-manager';
 import { disposeWorkerPool } from '../../../workers/worker-pool';
+import { disposeDepthSort } from '../../../rendering/depth-sort-coordinator';
 import { disposeConsoleInterceptor } from '../../../utils/console-interceptor';
 import { clearNotifierBackend } from '../../../utils/cross-layer/notifier';
 import { sceneDimsManager } from '../../../scene/scene-dims-manager';
@@ -190,6 +191,9 @@ export function runDisposePipeline(ports: DisposePipelinePorts): void {
   safeDispose('dataMonitorManager', () => DataMonitorManager.disposeInstance());
   safeDispose('sceneLoaderManager', () => SceneLoaderManager.disposeInstance());
   safeDispose('workerPool', () => disposeWorkerPool());
+  // Depth-sort worker last for the same reason as the pool: any
+  // in-flight sort resolves onto already-cleared coordinator state.
+  safeDispose('sortWorker', () => disposeDepthSort());
 
   if (errors.length > 0) {
     log.error(
