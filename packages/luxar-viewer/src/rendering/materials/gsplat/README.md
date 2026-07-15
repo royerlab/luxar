@@ -16,10 +16,20 @@ Both backends ship side-by-side through the `ShaderSource` pattern documented in
 | `shader-tsl.ts`    | `gsplatWebGPUFactory(nodes, config, outMaterial?)` — emits the TSL graph onto a `NodeMaterial`. Exports `GSplatTSLNodes` (the persistent leaf-node contract the wrapper owns) and `buildGSplatTSLNodesFromUniforms` (snapshot adapter for callers that don't own persistent nodes — the `ShaderSource.webgpu` factory and the TSL parity harness).                                                       |
 | `math.ts`          | `computeRayIntegralFactor(truncate)` — the shifted Gaussian ray integral `sqrt(2π)·erf(T/√2) − 2·T·exp(−½·T²)` (Abramowitz & Stegun erf, max error 1.5e-7). Lives outside both material wrappers so the two backends compute byte-identical numeric values from identical inputs — the `tsl-shader-parity.spec.ts` harness depends on this.                                                              |
 
+## Splat data storage (Phase 1 texture migration)
+
+Per-splat data (`center`, `cholesky01/23/45`, `amplitude`, `color`) does **not** live in vertex attributes. It lives in an RGBA32F **splat texture** (`uSplatTex`, 4 texels/splat — layout authority in `../../splat-texture-layout.ts`), fetched in the vertex stage via `texelFetch` (GLSL) / `textureLoad` (TSL). The only per-instance attribute is `aSortedIndex` (Uint32): the draw-slot → storage-slot map, written as identity by every commit today and permuted by the sort worker from depth-sorting Phase 2 on. Consequences:
+
+- **Materials are per node.** Each gsplat material binds its node's texture, so the material-manager LRU is bypassed for gsplats (`getGSplatMaterial` always creates). The commit rebinds `uSplatTex` on render + pick materials via `syncGSplatMaterialWithGeometry` (pool acquire may hand the node a different geometry+texture pair on growth/reuse).
+- **Texture lifetime = geometry lifetime.** `attachSplatStorage` registers a geometry-`dispose` listener; every pool/fallback dispose site frees the texture with its geometry.
+- **TSL texture-node lifecycle.** The TSL `texture()` node is factory-time bound, so `updateSplatTexture` rebuilds the graph on an identity change (exact mirror of the colormap-texture lifecycle) and no-ops otherwise.
+- **GLSL fallback trap (load-bearing `int()`).** TSL types `textureSize()` as `uint` (WGSL convention) but GLSL's `textureSize` returns `int` — the width read is wrapped in `int(...)` or the generated GLSL fails to compile on the `forceWebGL` backend.
+
 ## Vertex pipeline
 
-The vertex shader is the bulk of the work. Both backends implement the same ten-step sequence:
+The vertex shader is the bulk of the work. Both backends implement the same sequence, prefixed by the splat-texture fetch prologue (step 0):
 
+0. Fetch the splat's 4 texels by `aSortedIndex` and reconstruct `aCenter` / `aCholesky*` / `aAmplitude` / `aColor` as locals — zero changes downstream.
 1. Transform centre to camera space; reject behind-camera splats (camera looks down `-Z`).
 2. Rotate the 3D Cholesky to camera space using the top-left 3×3 of `modelViewMatrix`; compute `Σ_cam = L_cam · L_camᵀ`.
 3. Apply two independent fades and combine via `min` (near-plane fade is perspective-only; coverage fade applies in both projections):

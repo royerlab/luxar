@@ -110,6 +110,11 @@ try {
     const mem = () => ({
       attributes: renderer.info.memory.attributes,
       attributesSize: renderer.info.memory.attributesSize,
+      // Phase 1 texture storage: splat data lives in RGBA32F textures
+      // that must return to the clean floor after grows + evict, same
+      // as attributes (the Info.memoryMap strand class applies to
+      // textures too).
+      textures: renderer.info.memory.textures,
     });
 
     const steps = [];

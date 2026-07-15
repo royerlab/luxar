@@ -14,6 +14,11 @@ import { PointMaterial } from './materials/point/material-glsl';
 import { PointTSLMaterial } from './materials/point/material-tsl';
 import { PointPickingMaterial } from './picking/point/material';
 import { PointPickingTSLMaterial } from './picking/point/material-tsl';
+import { GSplatMaterial } from './materials/gsplat/material-glsl';
+import { GSplatTSLMaterial } from './materials/gsplat/material-tsl';
+import { GSplatPickingMaterial } from './picking/gsplat/material';
+import { GSplatPickingTSLMaterial } from './picking/gsplat/material-tsl';
+import { getSplatTexture } from './gsplat-geometry';
 
 /**
  * Synchronize a Points material's dtype-scale uniforms after a geometry
@@ -47,6 +52,42 @@ export function syncPointMaterialWithGeometry(points: THREE.Mesh): void {
     const pickMat = (pickNode as THREE.Mesh | THREE.Points).material as THREE.Material | undefined;
     if (pickMat instanceof PointPickingMaterial || pickMat instanceof PointPickingTSLMaterial) {
       pickMat.updateRadiusScale(radiusScale);
+    }
+  }
+}
+
+/**
+ * Synchronize a GSplats material's splat-texture binding after a
+ * geometry commit.
+ *
+ * Splat data lives in an RGBA32F texture that shares the geometry's
+ * lifetime (`gsplat-geometry.ts::attachSplatStorage`). A pool acquire
+ * may hand the node a DIFFERENT geometry+texture pair (growth,
+ * best-fit reuse, first commit after the placeholder mesh), so the
+ * commit rebinds `uSplatTex` on the render material and — via
+ * `userData.pickNode` — the pick material. Idempotent: both wrapper
+ * classes no-op when the texture identity is unchanged (the common
+ * same-geometry commit), so this is safe to call on every commit.
+ * (The geometry itself is re-pointed by the commit's ownership
+ * handoff + `invalidateRenderObjectFor`; this helper covers only the
+ * material side.)
+ */
+export function syncGSplatMaterialWithGeometry(mesh: THREE.Mesh): void {
+  const geometry = mesh.geometry;
+  if (!geometry) return;
+  const splatTexture = getSplatTexture(geometry);
+  if (!splatTexture) return;
+
+  const renderMat = mesh.material as THREE.Material | null;
+  if (renderMat instanceof GSplatMaterial || renderMat instanceof GSplatTSLMaterial) {
+    renderMat.updateSplatTexture(splatTexture);
+  }
+
+  const pickNode = mesh.userData?.pickNode as THREE.Object3D | undefined;
+  if (pickNode) {
+    const pickMat = (pickNode as THREE.Mesh).material as THREE.Material | undefined;
+    if (pickMat instanceof GSplatPickingMaterial || pickMat instanceof GSplatPickingTSLMaterial) {
+      pickMat.updateSplatTexture(splatTexture);
     }
   }
 }

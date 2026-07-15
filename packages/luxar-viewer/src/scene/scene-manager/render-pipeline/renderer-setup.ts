@@ -30,6 +30,7 @@ import {
   type Renderer,
   type RendererCapabilities,
 } from '../../../rendering/renderer-capabilities';
+import { configureSplatTextureLayout } from '../../../rendering/splat-texture-layout';
 import { configureHDRRenderer, logHDRCapabilities } from '../../../utils/hdr/hdr-detection';
 import { log, Modules } from '../../../utils/log';
 import { notifier } from '../../../utils/cross-layer/notifier';
@@ -117,6 +118,7 @@ export async function createWebGLRenderer(canvas: HTMLCanvasElement): Promise<Cr
   });
 
   const capabilities = createRendererCapabilities(renderer);
+  configureSplatTextureLayout(capabilities.maxTextureSize);
 
   log.info(Modules.RENDERER, `Rendering API: ${capabilities.apiSurface}`);
 
@@ -294,6 +296,7 @@ export async function createWebGPURenderer(
   await gpuRenderer.init();
 
   const capabilities = createRendererCapabilities(gpuRenderer);
+  configureSplatTextureLayout(capabilities.maxTextureSize);
   log.info(Modules.RENDERER, `Rendering API: ${capabilities.apiSurface}`);
 
   const hdrCapabilities = capabilities.hdr;

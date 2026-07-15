@@ -36,7 +36,6 @@ import {
   resolveMaterialBackend,
   pointCacheKey,
   lineCacheKey,
-  gsplatCacheKey,
   type BlendingMode,
   type PointMaterialProperties,
   type LineMaterialProperties,
@@ -313,7 +312,17 @@ export class MaterialManager {
   }
 
   /**
-   * Get or create a gsplat material with caching.
+   * Create a gsplat material — PER NODE, no LRU cache.
+   *
+   * Splat data lives in a per-node texture (`uSplatTex`), so two nodes
+   * can never share a gsplat material: sharing would rebind one node's
+   * texture onto another's mesh at every commit. Every call creates a
+   * fresh material that the node owns for its lifetime (the node
+   * factory stamps `_layerMaterialCloned: true`, so LayersPanel /
+   * LOD-cross-fade mutate it directly instead of clone-on-first-use).
+   * `gsplatMaterialCache` stays permanently empty — it remains in the
+   * lifecycle/stats context shapes shared with points/lines, where an
+   * empty map is a truthful no-op.
    *
    * Dispatches to `GSplatTSLMaterial` (NodeMaterial / TSL) when the
    * active renderer reports `caps.apiSurface === 'webgpu'`, otherwise to the
@@ -322,13 +331,9 @@ export class MaterialManager {
    */
   getGSplatMaterial(props: GSplatMaterialProperties): LuxarGSplatMaterial {
     const backend = resolveMaterialBackend(this.caps);
-    const key = gsplatCacheKey(props, backend);
-
-    let material = lruGet(this.gsplatMaterialCache, key);
-    if (material) return material;
 
     const createStart = performance.now();
-    material = new VISUAL_FACTORIES.gsplat[backend]({
+    const material = new VISUAL_FACTORIES.gsplat[backend]({
       opacity: props.opacity,
       gamma: props.gamma,
       intensity: props.intensity,
@@ -347,15 +352,8 @@ export class MaterialManager {
       this.currentIsOrtho,
       this.currentNearCull
     );
-    lruSet(
-      this.gsplatMaterialCache,
-      key,
-      material,
-      config.dataLoading.performance.materialCacheMaxSize,
-      this.handleEviction
-    );
 
-    log.info(Modules.RENDERER, `Created gsplat material: ${key}`);
+    log.info(Modules.RENDERER, `Created per-node gsplat material (${backend})`);
     return material;
   }
 

@@ -36,11 +36,17 @@ export const GSPLAT_PICK_VERTEX_SHADER = /* glsl */ `
 
     in vec2 aQuadCorner;
 
-    in vec3 aCenter;
-    in vec2 aCholesky01;
-    in vec2 aCholesky23;
-    in vec2 aCholesky45;
-    in float aAmplitude;
+    // Draw-slot -> storage-slot mapping (identity in Phase 1; permuted
+    // by the sort worker in Phase 2+). Also the pick ELEMENT id: the
+    // pick buffer must report the storage slot -- the id the rest of
+    // the pipeline (loaders, selection) addresses splats by -- not the
+    // transient draw slot.
+    in uint aSortedIndex;
+
+    // Splat data texture: RGBA32F, 4 texels/splat (see
+    // rendering/splat-texture-layout.ts). Picking needs texels 0-2
+    // only (center/amplitude/cholesky) -- color is not fetched.
+    uniform highp sampler2D uSplatTex;
 
     uniform vec2 uResolution;
     uniform float uFx, uFy;
@@ -57,11 +63,11 @@ export const GSPLAT_PICK_VERTEX_SHADER = /* glsl */ `
     flat out highp float vNodeId;
     flat out highp float vElementId;
 
-    mat3 unpackCholesky3D() {
+    mat3 unpackCholesky3D(vec2 c01, vec2 c23, vec2 c45) {
         return mat3(
-            aCholesky01.x, aCholesky01.y, aCholesky23.y,
-            0.0,           aCholesky23.x, aCholesky45.x,
-            0.0,           0.0,           aCholesky45.y
+            c01.x, c01.y, c23.y,
+            0.0,   c23.x, c45.x,
+            0.0,   0.0,   c45.y
         );
     }
 
@@ -83,6 +89,20 @@ export const GSPLAT_PICK_VERTEX_SHADER = /* glsl */ `
     }
 
     void main() {
+        // === Splat-texture fetch prologue (visual-shader parity) ===
+        // Width is a multiple of 4, so a splat's texels share one row.
+        int splatBase = int(aSortedIndex) * 4;
+        int splatTexW = textureSize(uSplatTex, 0).x;
+        ivec2 texel0 = ivec2(splatBase % splatTexW, splatBase / splatTexW);
+        vec4 splatT0 = texelFetch(uSplatTex, texel0, 0);
+        vec4 splatT1 = texelFetch(uSplatTex, ivec2(texel0.x + 1, texel0.y), 0);
+        vec4 splatT2 = texelFetch(uSplatTex, ivec2(texel0.x + 2, texel0.y), 0);
+        vec3 aCenter = splatT0.xyz;
+        float aAmplitude = splatT0.w;
+        vec2 aCholesky01 = splatT1.xy;
+        vec2 aCholesky23 = splatT1.zw;
+        vec2 aCholesky45 = splatT2.xy;
+
         vec4 centerCam4 = modelViewMatrix * vec4(aCenter, 1.0);
         vec3 centerCam = centerCam4.xyz;
 
@@ -96,7 +116,7 @@ export const GSPLAT_PICK_VERTEX_SHADER = /* glsl */ `
         }
 
         mat3 R = mat3(modelViewMatrix);
-        mat3 L3D = unpackCholesky3D();
+        mat3 L3D = unpackCholesky3D(aCholesky01, aCholesky23, aCholesky45);
         mat3 L_cam = R * L3D;
         mat3 Sigma_cam = L_cam * transpose(L_cam);
 
@@ -212,7 +232,10 @@ export const GSPLAT_PICK_VERTEX_SHADER = /* glsl */ `
         gl_Position = vec4(ndcXY, ndcZ, 1.0);
 
         vNodeId = uNodeId;
-        vElementId = float(gl_InstanceID);
+        // Storage slot, NOT gl_InstanceID (the draw slot): identical
+        // under Phase-1 identity ordering, and stays correct once the
+        // sort worker permutes draw order (Phase 2+).
+        vElementId = float(aSortedIndex);
     }
 `;
 

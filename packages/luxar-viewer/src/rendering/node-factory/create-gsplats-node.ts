@@ -8,6 +8,7 @@ import * as THREE from 'three';
 import { materialManager, type BlendingMode, type LuxarGSplatMaterial } from '../material-manager';
 import { getColormapTexture } from '../colormap-textures';
 import { createInstancedGSplatsMesh, type InstancedGSplatsMeshConfig } from '../gsplat-geometry';
+import { syncGSplatMaterialWithGeometry } from '../material-sync-helpers';
 import type { GSplatsMetadata, GSplatsUserData, GSplatsDataLoader } from '../../types/gsplats';
 import type { PickingSystem } from '../picking/picking-system';
 import { applyTransform } from './transforms';
@@ -21,7 +22,7 @@ export function createGSplatsNode(
   loader: GSplatsDataLoader,
   pickingSystem: PickingSystem | null
 ): THREE.Mesh {
-  let material: LuxarGSplatMaterial = materialManager.getGSplatMaterial({
+  const material: LuxarGSplatMaterial = materialManager.getGSplatMaterial({
     opacity: (attrs.opacity as number | undefined) ?? 1.0,
     gamma: (attrs.gamma as number | undefined) ?? 1.0,
     intensity: (attrs.intensity as number | undefined) ?? 1.0,
@@ -33,19 +34,14 @@ export function createGSplatsNode(
   // Apply colormap if specified. With colormap='custom', the scene
   // loader has stashed bytes as `nodeAttrs.customLutBytes`; the
   // texture helper falls back to viridis on missing/invalid bytes.
+  // GSplat materials are PER NODE (each carries the node's own
+  // `uSplatTex`), so the colormap applies directly to the node-owned
+  // material — the historical clone-on-divergence dance is gone.
   const gsColormapName = nodeAttrs.colormap as string | undefined;
-  let gsplatMaterialCloned = false;
   if (gsColormapName) {
     const gsLutBytes = nodeAttrs.customLutBytes as Uint8Array | undefined;
     const gsColormapTex = getColormapTexture(gsColormapName, gsLutBytes);
     if (gsColormapTex) {
-      materialManager.detachFromGlobalUpdates(material);
-      // Both clones (GSplatMaterial.clone() / GSplatTSLMaterial.clone())
-      // satisfy LuxarGSplatMaterial; `as typeof material` keeps the
-      // backend-agnostic type and avoids narrowing to the WebGL2 class.
-      material = material.clone() as typeof material;
-      materialManager.register(material);
-      gsplatMaterialCloned = true;
       material.updateColormapTexture(gsColormapTex);
       const ampRange = nodeAttrs.amplitude_data_range as [number, number] | undefined;
       const gsScalarRange = ampRange ?? [0, 1];
@@ -60,7 +56,10 @@ export function createGSplatsNode(
     loader,
     attrs,
     visibleSplatCount: meshConfig.splatCount,
-    _layerMaterialCloned: gsplatMaterialCloned,
+    // Per-node material from creation: LayersPanel and the LOD
+    // cross-fade honor this marker and mutate the material directly
+    // instead of clone-on-first-use.
+    _layerMaterialCloned: true,
   } as GSplatsUserData;
 
   if (attrs.transform) applyTransform(mesh, attrs.transform);
@@ -74,6 +73,11 @@ export function createGSplatsNode(
     const pickNode = new THREE.Mesh(mesh.geometry, pickMaterial);
     pickNode.matrixWorld.copy(mesh.matrixWorld);
     pickingSystem.registerNode(mesh, pickNode, pickId);
+    // Bind the mesh-owned splat texture on BOTH materials (the render
+    // material was already bound by createInstancedGSplatsMesh; this
+    // covers the just-created pick material so picking works before
+    // the first commit's sync).
+    syncGSplatMaterialWithGeometry(mesh);
   }
 
   return mesh;

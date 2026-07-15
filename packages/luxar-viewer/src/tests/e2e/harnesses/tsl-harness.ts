@@ -58,7 +58,7 @@ import {
   gsplatPickWebGPUFactory,
   buildGSplatPickTSLNodesFromUniforms,
 } from '../../../rendering/picking/gsplat/pick.tsl';
-import { createInstancedGSplatsMesh } from '../../../rendering/gsplat-geometry';
+import { createInstancedGSplatsMesh, writeSplatTexels } from '../../../rendering/gsplat-geometry';
 import {
   requireWebGLSources,
   type ShaderSource,
@@ -358,6 +358,44 @@ function buildGSplatInstancedMesh(
   );
   mesh.frustumCulled = false;
   return mesh;
+}
+
+/**
+ * Pre-built splat data texture for a gsplat parity variant. Since the
+ * texture-storage migration the shaders read splat data via
+ * `texelFetch(uSplatTex, ...)`; the TSL texture node is FACTORY-time
+ * bound, so the texture must exist in the uniforms record BEFORE the
+ * material is built (the same reason the production wrapper rebuilds
+ * its graph on a texture identity change). Every gsplat registry
+ * entry's `buildUniforms` supplies one of these with the SAME
+ * (center, sigma) its `buildMesh` passes to
+ * `buildGSplatInstancedMesh`, and the production `writeSplatTexels`
+ * writes the layout so the harness can never drift from the real
+ * texel packing. (The mesh's own geometry-attached texture holds
+ * identical data; the shaders sample the uniform's.)
+ */
+function buildGSplatSplatDataTexture(
+  center: readonly [number, number, number] = [0, 0, 0],
+  sigma: number = 0.1
+): THREE.DataTexture {
+  const tex = new THREE.DataTexture(new Float32Array(16), 4, 1, THREE.RGBAFormat, THREE.FloatType);
+  tex.magFilter = THREE.NearestFilter;
+  tex.minFilter = THREE.NearestFilter;
+  tex.generateMipmaps = false;
+  tex.flipY = false;
+  writeSplatTexels(
+    tex,
+    {
+      centers: new Float32Array([center[0], center[1], center[2]]),
+      cholesky01: new Float32Array([sigma, 0]),
+      cholesky23: new Float32Array([sigma, 0]),
+      cholesky45: new Float32Array([0, sigma]),
+      amplitudes: new Float32Array([1.0]),
+      colors: new Float32Array([1.0, 0.5, 0.25]),
+    },
+    1
+  );
+  return tex;
 }
 
 /**
@@ -778,6 +816,7 @@ const SHADER_REGISTRY: Record<string, RegistryEntry> = {
   gsplat: {
     source: GSPLAT_SOURCE,
     buildUniforms: () => ({
+      uSplatTex: { value: buildGSplatSplatDataTexture() },
       uResolution: { value: new THREE.Vector2(64, 64) },
       uFx: { value: 32.0 }, // ortho frustum 2 units → 32 px/unit
       uFy: { value: 32.0 },
@@ -820,6 +859,7 @@ const SHADER_REGISTRY: Record<string, RegistryEntry> = {
   'gsplat-offcenter': {
     source: GSPLAT_SOURCE,
     buildUniforms: () => ({
+      uSplatTex: { value: buildGSplatSplatDataTexture([0, 0.5, 0]) },
       uResolution: { value: new THREE.Vector2(64, 64) },
       uFx: { value: 32.0 },
       uFy: { value: 32.0 },
@@ -858,6 +898,7 @@ const SHADER_REGISTRY: Record<string, RegistryEntry> = {
   'gsplat-tiny-sigma-fade': {
     source: GSPLAT_SOURCE,
     buildUniforms: () => ({
+      uSplatTex: { value: buildGSplatSplatDataTexture([0, 0, 0], 0.005) },
       uResolution: { value: new THREE.Vector2(64, 64) },
       uFx: { value: 3200.0 },
       uFy: { value: 3200.0 },
@@ -893,6 +934,7 @@ const SHADER_REGISTRY: Record<string, RegistryEntry> = {
   'gsplat-tiny-sigma-reject': {
     source: GSPLAT_SOURCE,
     buildUniforms: () => ({
+      uSplatTex: { value: buildGSplatSplatDataTexture([0, 0, 0], 0.005) },
       uResolution: { value: new THREE.Vector2(64, 64) },
       uFx: { value: 12800.0 },
       uFy: { value: 12800.0 },
@@ -927,6 +969,7 @@ const SHADER_REGISTRY: Record<string, RegistryEntry> = {
   'gsplat-gamma-one': {
     source: GSPLAT_SOURCE,
     buildUniforms: () => ({
+      uSplatTex: { value: buildGSplatSplatDataTexture() },
       uResolution: { value: new THREE.Vector2(64, 64) },
       uFx: { value: 32.0 },
       uFy: { value: 32.0 },
@@ -966,6 +1009,7 @@ const SHADER_REGISTRY: Record<string, RegistryEntry> = {
   'gsplat-normal-premult': {
     source: GSPLAT_SOURCE,
     buildUniforms: () => ({
+      uSplatTex: { value: buildGSplatSplatDataTexture() },
       uResolution: { value: new THREE.Vector2(64, 64) },
       uFx: { value: 32.0 },
       uFy: { value: 32.0 },
@@ -1003,6 +1047,7 @@ const SHADER_REGISTRY: Record<string, RegistryEntry> = {
   'gsplat-colormap': {
     source: GSPLAT_SOURCE,
     buildUniforms: () => ({
+      uSplatTex: { value: buildGSplatSplatDataTexture() },
       uResolution: { value: new THREE.Vector2(64, 64) },
       uFx: { value: 32.0 },
       uFy: { value: 32.0 },
@@ -1041,6 +1086,7 @@ const SHADER_REGISTRY: Record<string, RegistryEntry> = {
   'gsplat-pick': {
     source: GSPLAT_PICK_SOURCE,
     buildUniforms: () => ({
+      uSplatTex: { value: buildGSplatSplatDataTexture() },
       uResolution: { value: new THREE.Vector2(64, 64) },
       uFx: { value: 32.0 },
       uFy: { value: 32.0 },
@@ -1344,6 +1390,7 @@ const SHADER_REGISTRY: Record<string, RegistryEntry> = {
   'gsplat-behind': {
     source: GSPLAT_SOURCE,
     buildUniforms: () => ({
+      uSplatTex: { value: buildGSplatSplatDataTexture([0, 0, 3]) },
       uResolution: { value: new THREE.Vector2(64, 64) },
       uFx: { value: 32.0 },
       uFy: { value: 32.0 },
@@ -1375,6 +1422,7 @@ const SHADER_REGISTRY: Record<string, RegistryEntry> = {
   'gsplat-pick-behind': {
     source: GSPLAT_PICK_SOURCE,
     buildUniforms: () => ({
+      uSplatTex: { value: buildGSplatSplatDataTexture([0, 0, 3]) },
       uResolution: { value: new THREE.Vector2(64, 64) },
       uFx: { value: 32.0 },
       uFy: { value: 32.0 },

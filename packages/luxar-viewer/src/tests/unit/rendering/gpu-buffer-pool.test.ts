@@ -9,6 +9,7 @@ import {
 } from '../../../rendering/gpu-buffer-pool';
 import type { LoadedPointsData } from '../../../data/data-loader-types';
 import * as THREE from 'three';
+import { getSplatTexture } from '../../../rendering/gsplat-geometry';
 
 describe('GPUBufferPool', () => {
   let pool: GPUBufferPool;
@@ -277,12 +278,15 @@ describe('GPUBufferPool', () => {
       const geom = pool.acquireGSplatsGeometry('splat1', 300);
       expect(geom).toBeInstanceOf(THREE.InstancedBufferGeometry);
 
-      // Check instance attributes
-      expect(geom.getAttribute('aCenter')).toBeDefined();
-      expect(geom.getAttribute('aCholesky01')).toBeDefined();
-      expect(geom.getAttribute('aCholesky23')).toBeDefined();
-      expect(geom.getAttribute('aCholesky45')).toBeDefined();
-      expect(geom.getAttribute('aAmplitude')).toBeDefined();
+      // Texture-backed storage: splat data lives in the pooled RGBA32F
+      // texture; aSortedIndex is the only per-instance attribute.
+      const texture = getSplatTexture(geom);
+      expect(texture).not.toBeNull();
+      // Capacity = ceil(300 * 1.5) = 450 splats -> >= 450*16 floats.
+      expect((texture!.image.data as Float32Array).length).toBeGreaterThanOrEqual(450 * 16);
+      const sortedIndex = geom.getAttribute('aSortedIndex');
+      expect(sortedIndex).toBeDefined();
+      expect(sortedIndex.array).toBeInstanceOf(Uint32Array);
     });
 
     it('should reuse gsplats geometry', () => {
@@ -529,9 +533,11 @@ describe('GPUBufferPool', () => {
         expect((pointBuf.array as Float32Array).length).toBeGreaterThan(0);
 
         const gsplatGeom = empty.acquireGSplatsGeometry('zero-gsplats', 0);
-        const gsplatBuf = (gsplatGeom.getAttribute('aCenter') as THREE.InterleavedBufferAttribute)
-          .data;
-        expect((gsplatBuf.array as Float32Array).length).toBeGreaterThan(0);
+        // Texture-backed storage: the zero-capacity hazard for gsplats is
+        // the ordering attribute (the texture always has >= 1 row).
+        const gsplatIdx = gsplatGeom.getAttribute('aSortedIndex');
+        expect((gsplatIdx.array as Uint32Array).length).toBeGreaterThan(0);
+        expect((getSplatTexture(gsplatGeom)!.image.data as Float32Array).length).toBeGreaterThan(0);
       } finally {
         __setMinInstanceCapacityForTesting(0);
       }

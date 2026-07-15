@@ -38,6 +38,7 @@ import type { GSplatMaterialConfig } from './material-glsl';
 import type { CameraAwareMaterial } from '../_shared/camera-aware-material';
 import type { ColormapAwareMaterial } from '../_shared/colormap-aware-material';
 import { clampGamma, isGammaOne } from '../_shared/uniform-helpers';
+import { getPlaceholderSplatTexture } from '../../splat-texture-layout';
 import { computeFocalLength } from '../_shared/camera-uniforms';
 import { computeRayIntegralFactor, clampTruncationRadius } from './math';
 import {
@@ -72,6 +73,7 @@ export class GSplatTSLMaterial
    * mutations stay live after a defines change.
    */
   private tslNodes: {
+    uSplatTex: TSLNode;
     uResolution: TSLNode;
     uFx: TSLNode;
     uFy: TSLNode;
@@ -102,6 +104,11 @@ export class GSplatTSLMaterial
     const invOneMinusC = 1.0 / (1.0 - shiftC);
 
     this.tslNodes = {
+      // Splat data texture node. Starts on the shared placeholder; the
+      // commit's material sync rebinds the acquired pool entry's
+      // texture via `updateSplatTexture` (node identity change ->
+      // graph rebuild, same lifecycle as the colormap texture).
+      uSplatTex: texture(getPlaceholderSplatTexture()),
       uResolution: uniform(new THREE.Vector2(1, 1)),
       uFx: uniform(500),
       uFy: uniform(500),
@@ -161,6 +168,7 @@ export class GSplatTSLMaterial
    */
   private buildUniformProxies(): Record<string, THREE.IUniform> {
     const u: Record<string, THREE.IUniform> = {
+      uSplatTex: proxyIUniform(this.tslNodes.uSplatTex),
       uResolution: proxyIUniform(this.tslNodes.uResolution),
       uFx: proxyIUniform(this.tslNodes.uFx),
       uFy: proxyIUniform(this.tslNodes.uFy),
@@ -295,6 +303,22 @@ export class GSplatTSLMaterial
     this.uniforms.uOffset.value = offset;
   }
 
+  /**
+   * Rebind the splat data texture. TSL `texture()` captures the
+   * THREE.Texture at factory time, so an identity change needs a
+   * fresh node + graph rebuild (exact mirror of the colormap
+   * texture lifecycle). No-op when the texture is unchanged — the
+   * common per-commit case.
+   */
+  updateSplatTexture(tex: THREE.DataTexture | null): void {
+    const current = (this.uniforms.uSplatTex?.value as THREE.Texture | null | undefined) ?? null;
+    const next = tex ?? getPlaceholderSplatTexture();
+    if (current === next) return;
+    this.tslNodes.uSplatTex = texture(next);
+    this.uniforms = this.buildUniformProxies();
+    this.rebuildGraph();
+  }
+
   updateColormapTexture(tex: THREE.DataTexture | null): void {
     const oldTexture =
       (this.uniforms.uColormapTex?.value as THREE.Texture | null | undefined) ?? null;
@@ -385,6 +409,8 @@ export class GSplatTSLMaterial
       cloned.blendDstAlpha = this.blendDstAlpha;
     }
 
+    const splatTex = this.uniforms.uSplatTex?.value as THREE.DataTexture | null | undefined;
+    if (splatTex) cloned.updateSplatTexture(splatTex);
     cloned.uniforms.uFx.value = this.uniforms.uFx.value;
     cloned.uniforms.uFy.value = this.uniforms.uFy.value;
     (cloned.uniforms.uResolution.value as THREE.Vector2).copy(
