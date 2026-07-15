@@ -60,7 +60,7 @@ import {
   subtreeDisplayProgress,
   type ProgressNode,
 } from './lod-display-gate';
-import { coverageBlendPlan } from './lod-blend';
+import { coverageBlendPlan, energyCompensation } from './lod-blend';
 
 /**
  * The subset of a leaf material's surface the LOD cross-fade drives: read the
@@ -80,7 +80,13 @@ function isFadeable(mat: THREE.Material): mat is FadeableMaterial {
   return typeof m.updateOpacity === 'function' && typeof m.getOpacity === 'function';
 }
 
-/** Blend modes whose additive/order-independent compositing cross-fades correctly. */
+/**
+ * Blend modes whose additive/order-independent compositing sums energy linearly
+ * in opacity — so both LOD anti-popping mechanisms are brightness-exact there:
+ * the coverage cross-fade (mass-conserved levels) and the streaming energy
+ * compensation (`1/e(k)`). `max` (a max, not a sum) and `normal` (nonlinear
+ * alpha-over) are excluded from both.
+ */
 const BLENDABLE_MODES: ReadonlySet<string> = new Set(['additive', 'luminous']);
 
 /**
@@ -97,6 +103,14 @@ const CROSSFADE_BAND_FRACTION = 0.4;
 
 /** Below this the finer level's blend weight is treated as 0/1 (single level). */
 const FADE_EPSILON = 0.01;
+
+/**
+ * Floor for the streaming brightness-compensation energy fraction `e(k)`: the
+ * `1/e(k)` boost is capped at `1/ENERGY_FLOOR` so a tiny early prefix can't
+ * over-brighten its (energy-descending, core-heavy) splats into tone-map
+ * clipping. 0.1 ⇒ at most a 10× boost. See `energyCompensation`.
+ */
+const ENERGY_FLOOR = 0.1;
 
 /**
  * Frames the view-update version must hold steady before the registry reloads a
@@ -375,6 +389,16 @@ export interface LODGroupRegistryDeps {
    * (off).
    */
   getCrossFadeEnabled?: () => boolean;
+  /**
+   * Whether streaming brightness compensation is enabled: as an additive/luminous
+   * leaf's ladder streams in, scale its opacity by `1/e(k)` so the partial prefix
+   * renders at the full-level energy (no brightening pop). Distinct axis from the
+   * cross-fade (time, not distance) and independently gated; either flag on
+   * enables the registry's per-frame opacity management. Omitted / false ⇒
+   * byte-identical (no material writes). Read live so the flag applies without a
+   * reload. The default for unit tests (off).
+   */
+  getEnergyCompEnabled?: () => boolean;
   /**
    * Register a clone-on-first-fade material with the material manager so it keeps
    * receiving per-frame camera-uniform updates (the fade clones the shared cached
@@ -1040,10 +1064,14 @@ export class LODGroupRegistry {
     // level changes so ``evaluatePerFrame`` refreshes the monitor's visible
     // tally, which counts the displayed level, not the aspiration.
     let changed = false;
-    // Opacity is touched ONLY while the cross-fade feature is enabled. When off,
-    // ``blendPartnerIdx`` is null and this reduces to the original single-level
-    // visibility swap with no material writes — byte-identical to before.
-    const manageFade = this.deps.getCrossFadeEnabled?.() === true;
+    // Opacity is managed only while at least one anti-popping feature is on: the
+    // coverage cross-fade (blends the two levels straddling a distance boundary)
+    // and/or the streaming energy compensation (per-leaf `1/e(k)` on the displayed
+    // streaming level). When BOTH are off, `manageFade` is false and this reduces
+    // to the original single-level visibility swap with no material writes —
+    // byte-identical to before.
+    const energyComp = this.deps.getEnergyCompEnabled?.() === true;
+    const manageFade = this.deps.getCrossFadeEnabled?.() === true || energyComp;
     for (let i = 0; i < entry.children.length; i++) {
       const child = entry.children[i];
       const isPrimary = i === displayIdx;
@@ -1053,13 +1081,18 @@ export class LODGroupRegistry {
         if (shouldShow) changed = true; // a new level became visible
       }
       if (manageFade) {
-        if (shouldShow && blendPartnerIdx != null) {
-          // Cross-fade in flight: primary at α, held partner at 1−α.
-          this.applyChildFade(child, isPrimary ? primaryWeight : 1 - primaryWeight);
+        if (shouldShow) {
+          // Cross-fade weight only when a partner is in flight (primary at α,
+          // partner at 1−α); otherwise no coverage weight (null ⇒ 1). Energy
+          // compensation is folded in PER-LEAF inside applyChildFade, so it also
+          // covers a plainly-displayed streaming level with no cross-fade partner.
+          const coverageWeight =
+            blendPartnerIdx != null ? (isPrimary ? primaryWeight : 1 - primaryWeight) : null;
+          this.applyChildFade(child, coverageWeight, energyComp);
         } else {
-          // No blend / left the plan: restore authored opacity if we faded it
+          // Hidden / left the plan: restore authored opacity if we faded it
           // (idempotent — a no-op on any never-faded child).
-          this.applyChildFade(child, null);
+          this.applyChildFade(child, null, false);
         }
       }
     }
@@ -1261,24 +1294,54 @@ export class LODGroupRegistry {
   }
 
   /**
-   * Apply the cross-fade opacity (``base × weight``) to a child's leaf
-   * materials, or restore the authored opacity when ``weight`` is ``null``.
-   * Clones the shared cached material on the first fade — materials are cached
-   * by props, so an in-place opacity write would fade every layer sharing the
-   * instance; this mirrors the layers panel's clone-on-first-use and reuses its
-   * ``_layerMaterialCloned`` marker so the two never double-clone the same mesh.
-   * Snapshots the pre-fade opacity as the fade base on the mesh userData.
-   * ``child.object`` is a leaf mesh or a group subtree (overview partition
-   * branch) → applied to each fadeable leaf. Idempotent: restore is a no-op on a
-   * never-faded mesh, so a steady-state / non-blendable group is left untouched.
+   * Apply the per-leaf LOD anti-popping opacity to a child's leaf materials, or
+   * restore the authored opacity. The effective multiplier is the product of two
+   * independent opacity terms:
+   *
+   * - `coverageWeight` = `weight ?? 1` — the cross-fade blend opacity of this
+   *   level (`null` ⇒ 1, no cross-fade in flight). Per-CHILD (the whole level).
+   * - `energyFactor` — the streaming brightness compensation `1/e(k)` read
+   *   PER-LEAF from `committedEnergyFraction`, applied only when `energyComp` is on
+   *   AND the leaf's blend mode sums energy ({@link BLENDABLE_MODES}). Complete /
+   *   unstamped / non-blendable leaves ⇒ 1.
+   *
+   * When the product is ≈ 1 the leaf needs no adjustment: restore the authored
+   * opacity if we had faded it (idempotent no-op otherwise) and, crucially, never
+   * clone a material we don't have to — so a steady-state / disabled /
+   * non-blendable / complete child stays byte-identical. Otherwise clone-on-
+   * first-use (materials are cached by props, so an in-place write would fade
+   * every layer sharing the instance; mirrors the layers panel's
+   * ``_layerMaterialCloned`` marker so the two never double-clone), snapshot the
+   * authored opacity as the fade base, and write `base × product`.
+   *
+   * ``child.object`` is a leaf mesh or a group subtree (overview/partition
+   * branch) → each fadeable leaf is visited individually, so `energyFactor` is
+   * genuinely per-leaf across a partition of independently-streaming leaves.
    */
-  private applyChildFade(child: LODGroupChild, weight: number | null): void {
+  private applyChildFade(
+    child: LODGroupChild,
+    weight: number | null,
+    energyComp: boolean
+  ): void {
+    const coverageWeight = weight ?? 1;
     const visit = (mesh: THREE.Object3D): void => {
       const current = (mesh as THREE.Mesh).material;
       if (!current || Array.isArray(current) || !isFadeable(current)) return;
-      const ud = mesh.userData as { _lodFadeBase?: number; _layerMaterialCloned?: boolean };
-      if (weight == null) {
-        // Restore the authored opacity, but only on a mesh we actually faded.
+      const ud = mesh.userData as {
+        _lodFadeBase?: number;
+        _layerMaterialCloned?: boolean;
+        committedEnergyFraction?: number;
+      };
+      // The blend mode lives on the MATERIAL's userData; energy compensation
+      // only makes physical sense where compositing sums energy linearly.
+      let energyFactor = 1;
+      if (energyComp && BLENDABLE_MODES.has((current.userData?.blendingMode as string) ?? '')) {
+        energyFactor = energyCompensation(ud.committedEnergyFraction, ENERGY_FLOOR);
+      }
+      const product = coverageWeight * energyFactor;
+      if (Math.abs(product - 1) < FADE_EPSILON) {
+        // Nothing to adjust: restore the authored opacity if we faded it, else
+        // leave the shared material untouched (no clone).
         if (ud._lodFadeBase != null) {
           current.updateOpacity(ud._lodFadeBase);
           ud._lodFadeBase = undefined;
@@ -1293,10 +1356,10 @@ export class LODGroupRegistry {
         this.deps.registerMaterial?.(cloned); // keep camera uniforms live
         mat = cloned;
       }
-      // Snapshot the composed authored opacity once per fade; hold it steady
-      // while fading so the ratio is exact, clear it on restore.
+      // Snapshot the composed authored opacity once; hold it steady while the
+      // multiplier changes (per-frame as the ladder fills in), clear it on restore.
       if (ud._lodFadeBase == null) ud._lodFadeBase = mat.getOpacity();
-      mat.updateOpacity(ud._lodFadeBase * weight);
+      mat.updateOpacity(ud._lodFadeBase * product);
     };
     const obj = child.object as THREE.Mesh;
     if (obj.material) visit(child.object);

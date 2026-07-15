@@ -1,21 +1,27 @@
 /**
- * Pure, dependency-free math for the **substitutive-LOD cross-fade** — the
- * smooth opacity blend between two adjacent `kind=lod` levels as the camera
- * zooms across their boundary, replacing the registry's hard `object.visible`
- * swap (which pops).
+ * Pure, dependency-free opacity math for the two **orthogonal LOD anti-popping**
+ * mechanisms, kept together (and THREE/camera-free) so both are unit-testable
+ * over plain numbers, like `lod-freshness.ts` / `lod-display-gate.ts`.
  *
- * The blend is driven ENTIRELY by the viewport **coverage metric** (the
- * projected size / distance) — NOT by how a level's data streams in. Which
- * substitutive level to show is a function of distance (`coverage_fraction`),
- * so the transition between two levels is smoothed across a distance band
- * around their boundary. The additive ladder (how a single level loads
- * progressively) is an orthogonal, data-loading concern and plays no part
- * here. Brightness is preserved by the levels' build-time mass conservation
- * (both integrate to the same DC), not by anything in this module.
+ * The two mechanisms act on independent axes and compose by multiplying their
+ * opacity factors:
  *
- * Kept out of `lod-group-registry.ts` (THREE/camera-bound) so the math is
- * unit-testable over plain numbers, like `lod-freshness.ts` /
- * `lod-display-gate.ts`.
+ * 1. **Coverage cross-fade (distance axis)** — {@link coverageBlendPlan}. As the
+ *    camera zooms across a `kind=lod` boundary, blend the two adjacent levels'
+ *    opacity instead of a hard `object.visible` swap. Driven ENTIRELY by the
+ *    viewport coverage metric (projected size); which level to show is a
+ *    function of distance (`coverage_fraction`). Brightness across the switch is
+ *    preserved by the levels' build-time mass conservation (both integrate to
+ *    the same DC).
+ *
+ * 2. **Streaming brightness compensation (time axis)** — {@link
+ *    energyCompensation}. As a single level's additive ladder streams in over
+ *    time, its rendered energy climbs from `e(k)·E` toward `E` (additive/luminous
+ *    compositing sums energy; the ladder commits highest-energy splats first),
+ *    which reads as a brightening pop. Scaling opacity by `1/e(k)` — opacity is a
+ *    linear multiplier on summed energy in additive/luminous — holds the total at
+ *    `E` throughout, the temporal twin of mechanism 1's build-time mass
+ *    conservation (same conservation law, time axis instead of scale axis).
  *
  * @module scene/lod-blend
  */
@@ -106,4 +112,28 @@ export function coverageBlendPlan(
   const boundary = thresholds[best + 1];
   const hiWeight = smoothstep(boundary - bestHalf, boundary + bestHalf, metric);
   return { lo: best, hi: best + 1, hiWeight };
+}
+
+/**
+ * Brightness-compensation factor for a streaming additive/luminous LOD leaf
+ * (mechanism 2 in the module doc).
+ *
+ * As a leaf's additive ladder streams in, its committed prefix carries only `e`
+ * (∈ (0, 1]) of the leaf's full self-energy `E`, so it renders at `e·E` and
+ * brightens toward `E` as chunks arrive — a pop. Because opacity linearly scales
+ * summed energy in additive/luminous compositing, multiplying opacity by `1/e`
+ * renders the partial prefix at the full `E` at every step: brightness stays
+ * constant and converges to the authored value (factor → 1) as `e → 1`.
+ *
+ * `floor` caps the boost at `1/floor` so a tiny early prefix can't over-brighten
+ * its (energy-descending, hence core-heavy) splats into tone-map clipping.
+ *
+ * Returns `1` (no compensation, so the leaf is left byte-identical) whenever
+ * there is nothing to compensate: `e` absent (unstamped dataset), already
+ * complete (`e >= 1`; a non-progressive leaf stamps `1`), or degenerate (`e <= 0`
+ * before any chunk commits, or `NaN`).
+ */
+export function energyCompensation(e: number | undefined, floor: number): number {
+  if (typeof e !== 'number' || !(e > 0) || e >= 1) return 1;
+  return 1 / Math.max(e, floor);
 }
