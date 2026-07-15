@@ -248,6 +248,11 @@ export class GSplatTSLMaterial
     this.uniforms.uOpacity.value = opacity;
   }
 
+  /** Current opacity multiplier (the LOD cross-fade snapshots this as its fade base). */
+  getOpacity(): number {
+    return this.uniforms.uOpacity.value as number;
+  }
+
   updateTruncationRadius(radius: number): void {
     radius = clampTruncationRadius(radius);
     this.uniforms.uTruncate.value = radius;

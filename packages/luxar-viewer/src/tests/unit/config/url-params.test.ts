@@ -17,6 +17,7 @@ describe('readUrlParams', () => {
       noSliceCache: false,
       cacheDebug: false,
       clearCache: false,
+      lodFade: true, // LOD cross-fade is ON by default (opt-out via ?no-lod-fade)
       noPrefetch: false,
       prefetchDebug: false,
       cacheStats: false,
@@ -27,6 +28,12 @@ describe('readUrlParams', () => {
       cacheBudgetMB: null,
       dpr: null,
     });
+  });
+
+  it('lodFade defaults ON and is disabled only by ?no-lod-fade', () => {
+    expect(readUrlParams('').lodFade).toBe(true);
+    expect(readUrlParams('?debug').lodFade).toBe(true);
+    expect(readUrlParams('?no-lod-fade').lodFade).toBe(false);
   });
 
   it('parses dpr as a positive float, rejecting zero/negative/non-numeric', () => {

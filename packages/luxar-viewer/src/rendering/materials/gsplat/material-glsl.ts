@@ -258,6 +258,11 @@ export class GSplatMaterial
     this.uniforms.uOpacity.value = opacity;
   }
 
+  /** Current opacity multiplier (the LOD cross-fade snapshots this as its fade base). */
+  getOpacity(): number {
+    return this.uniforms.uOpacity.value as number;
+  }
+
   /**
    * Update truncation radius and recompute shifted Gaussian parameters.
    */

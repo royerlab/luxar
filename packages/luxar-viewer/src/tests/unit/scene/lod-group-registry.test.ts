@@ -1794,3 +1794,168 @@ describe('LODGroupRegistry — never-downgrade display gate', () => {
     expect(fine.object.visible).toBe(false);
   });
 });
+
+// ────────────────────────────────────────────────────────────────────────
+// Coverage-band cross-fade (on by default; ?no-lod-fade disables) — two adjacent
+// additive/luminous levels
+// render with complementary opacity as the DISTANCE (coverage metric) crosses
+// their boundary. Distance-driven, independent of streaming. Off / non-blendable
+// / off-screen ⇒ the byte-identical hard swap. A unit-cube tile under the
+// identity test camera projects to a coverage metric of exactly 0.5, so placing
+// the finer level's threshold at/near 0.5 lands the metric in its blend band.
+// ────────────────────────────────────────────────────────────────────────
+
+describe('LODGroupRegistry — coverage-band cross-fade', () => {
+  interface FadeMatStub {
+    userData: { blendingMode: string };
+    _op: number;
+    updateOpacity(v: number): void;
+    getOpacity(): number;
+    clone(): FadeMatStub;
+  }
+  function fadeMat(blendingMode = 'additive'): FadeMatStub {
+    return {
+      userData: { blendingMode },
+      _op: 1,
+      updateOpacity(v: number) {
+        this._op = v;
+      },
+      getOpacity() {
+        return this._op;
+      },
+      clone() {
+        return fadeMat(blendingMode);
+      },
+    };
+  }
+  // A gsplats leaf whose object is a real Mesh (so .material / .traverse work),
+  // with a UNIT-CUBE position bounds → projects to coverage metric 0.5.
+  function fadeChild(coverageFraction: number, opts: { mode?: string; ready?: boolean } = {}): LODGroupChild {
+    const mesh = new THREE.Mesh();
+    mesh.material = fadeMat(opts.mode ?? 'additive') as unknown as THREE.Material;
+    mesh.userData = {
+      nodeType: 'gsplats',
+      loadedViewVersion: 2,
+      visibleSplatCount: 100,
+      committedLadderComplete: true, // complete single-set level (no streaming)
+    };
+    return {
+      object: mesh,
+      coverageFraction,
+      positionBounds: { min: [0, 0, 0], max: [1, 1, 1] },
+      ready: opts.ready ?? true,
+    };
+  }
+  function makeReg(crossFade: boolean) {
+    const camera = new THREE.Camera();
+    camera.matrixWorldInverse.identity();
+    camera.projectionMatrix.identity();
+    return new LODGroupRegistry({
+      getCamera: () => camera,
+      getViewportSize: () => ({ width: 800, height: 600 }),
+      getDisplayDims: () => [0, 1, 2],
+      getViewVersion: () => 2,
+      getCrossFadeEnabled: () => crossFade,
+    });
+  }
+  const liveOpacity = (c: LODGroupChild): number =>
+    ((c.object as THREE.Mesh).material as unknown as FadeMatStub).getOpacity();
+
+  it('blends the two levels 50/50 exactly at the boundary (metric == threshold)', () => {
+    const reg = makeReg(true);
+    const coarse = fadeChild(0); // threshold 0
+    const fine = fadeChild(0.5); // boundary at 0.5 == the metric
+    reg.register(makeEntry([coarse, fine], 0, '/g'));
+    reg.evaluatePerFrame();
+    expect(coarse.object.visible).toBe(true);
+    expect(fine.object.visible).toBe(true);
+    expect(liveOpacity(fine)).toBeCloseTo(0.5, 6);
+    expect(liveOpacity(coarse)).toBeCloseTo(0.5, 6);
+    expect(coarse.lastVisibleTick).toBeGreaterThan(0);
+    expect(fine.lastVisibleTick).toBeGreaterThan(0);
+  });
+
+  it('weights shift with the metric position in the band (finer boundary just above the metric ⇒ coarse dominant)', () => {
+    // Proportional band: boundary 0.625, gap 0.625 → half-width 0.4·0.625=0.25,
+    // band [0.375,0.875]. metric 0.5 → finer weight smoothstep(0.375,0.875,0.5)=0.15625.
+    const reg = makeReg(true);
+    const coarse = fadeChild(0);
+    const fine = fadeChild(0.625);
+    reg.register(makeEntry([coarse, fine], 0, '/g'));
+    reg.evaluatePerFrame();
+    expect(coarse.object.visible).toBe(true);
+    expect(fine.object.visible).toBe(true);
+    expect(liveOpacity(fine)).toBeCloseTo(0.15625, 5);
+    expect(liveOpacity(coarse)).toBeCloseTo(0.84375, 5);
+    expect(liveOpacity(fine) + liveOpacity(coarse)).toBeCloseTo(1, 6);
+  });
+
+  it('shows a single level (no partner) when the metric is outside every band', () => {
+    // boundary 0.9, gap 0.9 → band [0.54,1.26]; metric 0.5 < 0.54 ⇒ coarse alone.
+    const reg = makeReg(true);
+    const coarse = fadeChild(0);
+    const fine = fadeChild(0.9);
+    reg.register(makeEntry([coarse, fine], 0, '/g'));
+    reg.evaluatePerFrame();
+    expect(coarse.object.visible).toBe(true);
+    expect(fine.object.visible).toBe(false);
+    expect(liveOpacity(coarse)).toBe(1); // untouched
+  });
+
+  it('flag OFF ⇒ hard swap, one level visible, opacity untouched (byte-identical)', () => {
+    const reg = makeReg(false);
+    const coarse = fadeChild(0);
+    const fine = fadeChild(0.5);
+    reg.register(makeEntry([coarse, fine], 0, '/g'));
+    reg.evaluatePerFrame();
+    // metric 0.5 ≥ threshold 0.5 ⇒ finest selected, shown alone; no opacity writes.
+    expect(fine.object.visible).toBe(true);
+    expect(coarse.object.visible).toBe(false);
+    expect(liveOpacity(fine)).toBe(1);
+    expect(liveOpacity(coarse)).toBe(1);
+  });
+
+  it('non-blendable mode (max) ⇒ no blend even with the flag on', () => {
+    const reg = makeReg(true);
+    const coarse = fadeChild(0, { mode: 'max' });
+    const fine = fadeChild(0.5, { mode: 'max' });
+    reg.register(makeEntry([coarse, fine], 0, '/g'));
+    reg.evaluatePerFrame();
+    expect(fine.object.visible).toBe(true);
+    expect(coarse.object.visible).toBe(false); // hard swap to finest
+    expect(liveOpacity(fine)).toBe(1);
+    expect(liveOpacity(coarse)).toBe(1);
+  });
+
+  it('brightness invariance: the two levels’ opacities always sum to 1 across the band', () => {
+    // The physics guarantee (additive shader = energy·opacity, mass-conserved
+    // levels ⇒ equal integrated E): blendedDC = E·(1−w) + E·w = E for all w. The
+    // JS-side invariant underwriting it is exactly-complementary opacities.
+    for (const boundary of [0.4, 0.45, 0.5, 0.55, 0.6]) {
+      const reg = makeReg(true);
+      const coarse = fadeChild(0);
+      const fine = fadeChild(boundary);
+      reg.register(makeEntry([coarse, fine], 0, '/g'));
+      reg.evaluatePerFrame();
+      if (coarse.object.visible && fine.object.visible) {
+        expect(liveOpacity(coarse) + liveOpacity(fine)).toBeCloseTo(1, 6);
+      }
+    }
+  });
+
+  it('kicks the finer level’s load (no blend yet) when it is not resident, so the next crossing blends', () => {
+    const reg = makeReg(true);
+    const coarse = fadeChild(0);
+    let loaded = false;
+    const fine = fadeChild(0.5, { ready: false });
+    fine.ensureLoaded = () => {
+      loaded = true;
+    };
+    reg.register(makeEntry([coarse, fine], 0, '/g'));
+    reg.evaluatePerFrame();
+    // Partner (finer) not resident → no two-level blend this frame, but its load
+    // is kicked so a subsequent crossing can fade against it.
+    expect(loaded).toBe(true);
+    expect(fine.object.visible).toBe(false);
+  });
+});
