@@ -7,12 +7,16 @@ A rotatable 3D globe built from two of Luxar's geometry types at once:
     spiral-sphere** (uniform, no pole clustering), each point displaced radially
     by its **ETOPO 2022** elevation and colored by a hypsometric palette (deep
     abyssal navy -> ocean blue -> coastal cyan -> green lowland -> tan -> snow).
-    Rendered near-transparent (opacity 0.05) as a subtle backdrop.
-  * **Rivers (Lines)** — every river reach on Earth from **HydroRIVERS**
-    (HydroSHEDS), draped just above the terrain and colored by log-discharge in a
-    glowing cyan->white ramp so the Amazon / Congo / Nile / Mississippi blaze
-    while the fine tributary filigree glows faintly. Additive-LOD (salience by
-    energy) puts the biggest rivers in the coarse level and streams the rest.
+    Rendered near-transparent (opacity 0.05) as a subtle backdrop, with
+    additive-LOD for a fast progressive first paint.
+  * **Rivers (Lines)** — every HydroRIVERS reach (Strahler order >= 3), kept as
+    **connected polylines** (so the line material renders seamless joints),
+    draped just above the terrain and colored teal->white by Strahler order so
+    minor tributaries read teal and major rivers white. Additive-LOD streams the
+    biggest rivers first.
+
+This exercises two of Luxar's three geometry types (Points + Lines) at global
+scale with level-of-detail, in real geographic 3D.
 
 ================================================================================
 SELF-CONTAINED / REGENERATING (no LFS asset)
@@ -22,10 +26,11 @@ regenerate + cache it. This demo ships ONLY code:
 
   * First run downloads ~1 GB of *source* data (both public, direct download,
     no API key): HydroRIVERS_v10 (~544 MB) + ETOPO 2022 60-arc-sec (~466 MB),
-    parses + builds the globe scene, and caches everything under
+    parses + builds the globe scene (to the standard demos-output dir), and
+    caches the source + parsed polylines under
     ``~/.cache/luxar/global_rivers_earth/``.
-  * Subsequent runs load the cached scene instantly.
-  * ``--recompute`` forces a full rebuild.
+  * Subsequent runs load the built scene instantly; ``--recompute`` forces a
+    rebuild (source/polylines stay cached, so it never re-fetches the ~1 GB).
 
 Requires: ``pyshp`` (shapefile reader) and ``tifffile`` (GeoTIFF reader).
 
@@ -67,13 +72,13 @@ ETOPO_URL = (
 
 N_GLOBE = 8_000_000       # Fibonacci-sphere terrain points
 MIN_ORDER = 3             # keep HydroRIVERS reaches with Strahler order >= this
-DECIMATE_DEG = 0.06      # drop river vertices closer than this (~line width)
+DECIMATE_DEG = 0.06       # drop river vertices closer than this (~2-3x line width)
 RADIUS = 100.0            # globe radius (scene units)
 EXAGG = 45.0              # vertical exaggeration of elevation relief
 POINT_RADII = 0.09        # terrain point size (8M points form a dense shell)
 EARTH_OPACITY = 0.05      # near-transparent backdrop; lets the rivers dominate
 RIVER_LIFT = 0.004        # lift rivers barely above the terrain surface
-RIVER_WIDTH = 0.04
+RIVER_WIDTH = 0.015
 RIVER_INTENSITY = 1.6
 R_EARTH = 6_371_000.0     # metres, for elevation -> relief fraction
 
@@ -105,7 +110,9 @@ def fibonacci_sphere(n: int) -> tuple[np.ndarray, np.ndarray]:
 def lonlat_to_xyz(lon: np.ndarray, lat: np.ndarray, relief: np.ndarray) -> np.ndarray:
     """Map geographic (lon, lat) degrees + radial ``relief`` fraction to sphere xyz.
 
-    ``y`` is the north pole axis; longitude increases eastward.
+    ``y`` is the north pole axis; longitude increases eastward. The ``-z`` makes
+    the mapping right-handed (East x North = outward) so the globe is NOT
+    mirror-imaged when viewed from outside.
     """
     la, lo = np.radians(lat), np.radians(lon)
     rr = RADIUS * (1.0 + relief)
@@ -144,7 +151,7 @@ def decimate_polyline(pts: np.ndarray, min_len_deg: float) -> np.ndarray:
     """Drop intermediate vertices closer than ``min_len_deg`` (cos-lat weighted).
 
     Removes sub-line-width wiggles from a (k, 2) lon/lat polyline while keeping the
-    first and last vertex. Cuts HydroRIVERS segment count ~3x with no visible loss.
+    first and last vertex, so no rendered segment is much shorter than the line.
     """
     if len(pts) < 3:
         return pts
@@ -160,7 +167,7 @@ def decimate_polyline(pts: np.ndarray, min_len_deg: float) -> np.ndarray:
     return pts[keep]
 
 
-# Hypsometric terrain palette and glowing cyan->white river palette.
+# Hypsometric terrain palette and teal->white river palette (Strahler order).
 EARTH_LUT = _lut_from([
     (0.00, (2, 5, 22)), (0.08, (8, 20, 70)), (0.18, (18, 80, 140)),
     (0.215, (45, 150, 185)), (0.221, (28, 105, 55)), (0.30, (70, 135, 62)),
@@ -168,7 +175,7 @@ EARTH_LUT = _lut_from([
     (0.88, (185, 175, 165)), (1.00, (255, 255, 255)),
 ])
 RIVER_LUT = _lut_from([
-    (0.00, (30, 110, 145)), (0.45, (80, 200, 230)), (1.00, (245, 255, 255)),
+    (0.00, (30, 110, 145)), (0.50, (80, 200, 230)), (1.00, (245, 255, 255)),
 ])
 
 
@@ -198,50 +205,54 @@ def _download_sources() -> tuple[Path, Path]:
     return etopo, rivers_shp
 
 
-def _parse_river_segments(shp_path: Path) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """Parse + decimate HydroRIVERS into explicit line segments (cached as .npz).
+def _parse_river_polylines(shp_path: Path) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Parse + decimate HydroRIVERS into connected polylines (cached as .npz).
 
-    Returns ``(seg, order, discharge)``: ``seg`` (Ns, 2, 2) lon/lat endpoint pairs,
-    ``order`` per-segment Strahler order (uint8), ``discharge`` per-segment
-    long-term average flow m^3/s. Only order >= 2 is cached; the build filters
-    higher. Each reach is decimated (``DECIMATE_DEG``) before segmenting.
+    Returns ``(pts, offsets, order)``: ``pts`` (Nv, 2) lon/lat vertices of all
+    reaches concatenated; ``offsets`` (Nr+1,) so reach r is
+    ``pts[offsets[r]:offsets[r+1]]``; ``order`` (Nr,) per-reach Strahler order.
+    Only order >= 2 is cached (the build filters higher). Keeping reaches as
+    connected polylines (not independent segments) lets the line material render
+    seamless joints instead of overlapping end-caps.
     """
     import shapefile  # pyshp
 
-    cache = CACHE_DIR / "river_segments.npz"
+    cache = CACHE_DIR / "river_polylines.npz"
     if cache.exists():
-        with asection("Loading cached river segments"):
+        with asection("Loading cached river polylines"):
             d = np.load(cache)
-            return d["seg"], d["order"], d["discharge"]
+            return d["pts"], d["offsets"], d["order"]
 
-    with asection("Parsing + decimating HydroRIVERS reaches -> segments"):
+    with asection("Parsing + decimating HydroRIVERS reaches -> polylines"):
         r = shapefile.Reader(str(shp_path))
         flds = [f[0] for f in r.fields[1:]]
-        i_dis, i_ord = flds.index("DIS_AV_CMS"), flds.index("ORD_STRA")
-        segs, sord, sdis = [], [], []
+        i_ord = flds.index("ORD_STRA")
+        pts_list: list[np.ndarray] = []
+        offsets = [0]
+        orders: list[int] = []
+        off = 0
         for sr in r.iterShapeRecords():
             o = int(sr.record[i_ord])
             if o < 2:
                 continue
-            pts = np.asarray(sr.shape.points, dtype=np.float32)
-            parts = list(sr.shape.parts) + [len(pts)]
-            dis = np.float32(sr.record[i_dis])
+            allpts = np.asarray(sr.shape.points, dtype=np.float32)
+            parts = list(sr.shape.parts) + [len(allpts)]
             for a, b in zip(parts[:-1], parts[1:]):
                 if b - a < 2:
                     continue
-                p = decimate_polyline(pts[a:b], DECIMATE_DEG)
+                p = decimate_polyline(allpts[a:b], DECIMATE_DEG)
                 if len(p) < 2:
                     continue
-                s = np.stack([p[:-1], p[1:]], axis=1)
-                segs.append(s)
-                sord.append(np.full(len(s), o, dtype=np.uint8))
-                sdis.append(np.full(len(s), dis, dtype=np.float32))
-        seg = np.concatenate(segs)
-        order = np.concatenate(sord)
-        discharge = np.concatenate(sdis)
-        np.savez(cache, seg=seg, order=order, discharge=discharge)
-        aprint(f"Parsed {len(seg):,} river segments (order >= 2, decimated)")
-        return seg, order, discharge
+                pts_list.append(p)
+                off += len(p)
+                offsets.append(off)
+                orders.append(o)
+        pts = np.concatenate(pts_list)
+        offs = np.array(offsets, dtype=np.int64)
+        order = np.array(orders, dtype=np.uint8)
+        np.savez(cache, pts=pts, offsets=offs, order=order)
+        aprint(f"Parsed {len(order):,} river polylines ({len(pts):,} vertices)")
+        return pts, offs, order
 
 
 # =============================================================================
@@ -271,29 +282,36 @@ def build_scene(etopo_path: Path, shp_path: Path, output_path: Path) -> Path:
         # pre-bake terrain colors from the LUT (identical across additive-LOD
         # levels; avoids serialising a LUT array on the additive-LOD path)
         gcolors = (
-            EARTH_LUT[np.clip((gscal * 255).astype(np.int64), 0, 255)].astype(
-                np.float32
-            )
+            EARTH_LUT[np.clip((gscal * 255).astype(np.int64), 0, 255)].astype(np.float32)
             / 255.0
         )
 
     with asection(f"Building rivers (order >= {MIN_ORDER})"):
-        seg, order, _discharge = _parse_river_segments(shp_path)
+        pts, offsets, order = _parse_river_polylines(shp_path)
+        lengths = offsets[1:] - offsets[:-1]
         keep = order >= MIN_ORDER
-        seg, seg_order = seg[keep], order[keep]
-        verts2 = seg.reshape(-1, 2)  # (2*Ns, 2) lon/lat; consecutive pairs = segments
-        rrelief = np.maximum(_sample_elevation(etopo, verts2[:, 0], verts2[:, 1]), 0.0)
-        rpos = lonlat_to_xyz(
-            verts2[:, 0], verts2[:, 1], rrelief / R_EARTH * EXAGG + RIVER_LIFT
+        # gather the kept polylines' vertices (vectorized) and rebuild offsets
+        vtx_keep = np.repeat(keep, lengths)
+        rlon = pts[vtx_keep, 0]
+        rlat = pts[vtx_keep, 1]
+        kept_lengths = lengths[keep]
+        new_off = np.concatenate([[0], np.cumsum(kept_lengths)])
+        rrelief = np.maximum(_sample_elevation(etopo, rlon, rlat), 0.0)
+        rpos = lonlat_to_xyz(rlon, rlat, rrelief / R_EARTH * EXAGG + RIVER_LIFT)
+        # per-vertex colors by Strahler order (3..10 -> teal..white)
+        overt = np.repeat(order[keep].astype(np.float32), kept_lengths)
+        onorm = np.clip((overt - 3.0) / 7.0, 0.0, 1.0)
+        rcolors = (
+            RIVER_LUT[np.clip((onorm * 255).astype(np.int64), 0, 255)].astype(np.float32)
+            / 255.0
         )
-        # Pre-bake per-vertex colors by Strahler order (3..10 -> teal..white): even,
-        # readable "prominence" bands (minor tributaries teal, major rivers white).
-        # Baked colors keep fine + additive-LOD levels identical and avoid
-        # serialising a LUT array.
-        onorm = np.clip((seg_order.astype(np.float32) - 3.0) / 7.0, 0.0, 1.0)
-        rcolors = RIVER_LUT[np.clip((np.repeat(onorm, 2) * 255).astype(np.int64), 0, 255)]
-        rcolors = rcolors.astype(np.float32) / 255.0
-        aprint(f"{len(seg):,} river segments kept")
+        # connected indices: consecutive pairs WITHIN each polyline (shared
+        # vertices at joints -> the line material renders seamless joins, not
+        # overlapping end-caps). Boundary pairs (crossing reaches) are excluded.
+        i0 = np.arange(len(rlon) - 1)
+        valid = i0[~np.isin(i0 + 1, new_off[1:-1])]
+        rindices = np.column_stack([valid, valid + 1]).ravel().astype(np.uint32)
+        aprint(f"{int(keep.sum()):,} river polylines, {len(valid):,} segments")
 
     with asection("Writing scene"):
         dims = Dimensions([
@@ -311,11 +329,14 @@ def build_scene(etopo_path: Path, shp_path: Path, output_path: Path) -> Path:
                 blending_mode="normal", opacity=EARTH_OPACITY, layer=True,
                 additive_lod=dict(method="spatial-uniform", n_lods=5),
             )
+            # Connected polylines (indexed) so the material renders seamless
+            # joints. No additive-LOD here: LOD-ing connected lines requires an
+            # O(N) union-find over ~2M polylines (minutes to build) for little
+            # gain — the rivers stream via the spatial-chunk index instead.
             scene.add_lines(
                 "rivers", vertices=rpos, widths=RIVER_WIDTH, colors=rcolors,
-                line_type="segments", blending_mode="additive", opacity=0.95,
-                intensity=RIVER_INTENSITY, layer=True,
-                additive_lod=dict(method="salience", salience_kind="energy", n_lods=5),
+                indices=rindices, line_type="indexed", blending_mode="additive",
+                opacity=0.95, intensity=RIVER_INTENSITY, layer=True,
             )
             scene.add_text(
                 "Rivers of Earth", position=(0.02, 0.02), font_size=0.045,
@@ -335,7 +356,7 @@ def load_or_build_scene(output_path: Path) -> Path:
     """Return the built scene path, regenerating on a fresh system.
 
     The scene is written to ``output_path`` (the standard demos-output location);
-    the expensive source downloads + parsed segments are cached under
+    the expensive source downloads + parsed polylines are cached under
     ``CACHE_DIR`` so a rebuild / ``--recompute`` never re-fetches the ~1 GB.
     """
     if output_path.exists() and not RECOMPUTE:
