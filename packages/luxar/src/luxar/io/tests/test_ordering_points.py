@@ -14,7 +14,12 @@ querying orbital=3.
 import numpy as np
 import pytest
 
-from luxar.io.ordering import _BARRIER_BOUND_EPS, compute_chunk_bounds_points
+from luxar.core.dimensions import Dimension
+from luxar.io.ordering import (
+    _BARRIER_BOUND_EPS,
+    compute_chunk_bounds_points,
+    sort_points_compound,
+)
 
 
 class TestChunkBoundsPoints:
@@ -368,3 +373,42 @@ class TestChunkBoundsDiscreteFiltering:
         assert matching_chunks == [2], (
             f"Query for orbital=2 must select only its own chunk, got {matching_chunks}"
         )
+
+
+class TestSortPointsCompound:
+    """Unit coverage for sort_points_compound — the Points sort mirroring
+    TestSortSplatsSpatial (GSplats) and TestSortSegmentsCompound (Lines)."""
+
+    def test_sort_indices_are_a_permutation(self) -> None:
+        rng = np.random.default_rng(0)
+        pos = rng.random((50, 3)).astype(np.float32)
+        dims = [Dimension(n, display=True) for n in ("x", "y", "z")]
+        idx, meta = sort_points_compound(pos, dims, method="morton")
+        # Pure permutation — no point dropped or duplicated.
+        np.testing.assert_array_equal(np.sort(idx), np.arange(50))
+        assert meta["ordering"] in ("morton", "hilbert")
+
+    def test_both_curves_permute(self) -> None:
+        rng = np.random.default_rng(1)
+        pos = rng.random((32, 3)).astype(np.float32)
+        dims = [Dimension(n, display=True) for n in ("x", "y", "z")]
+        for method in ("morton", "hilbert"):
+            idx, _ = sort_points_compound(pos, dims, method=method)
+            np.testing.assert_array_equal(np.sort(idx), np.arange(32))
+
+    def test_discrete_dim_groups_before_spatial(self) -> None:
+        # A non-displayed (=> discrete) "time" axis is a barrier: after ordering,
+        # points must be grouped by their time value (non-decreasing) so a chunk
+        # never straddles two timepoints — the compound-ordering contract.
+        rng = np.random.default_rng(2)
+        spatial = rng.random((9, 2)).astype(np.float32)
+        times = np.array([2, 0, 1, 2, 0, 1, 2, 0, 1], dtype=np.float32)
+        pos = np.column_stack([times, spatial]).astype(np.float32)
+        dims = [
+            Dimension("Time", display=False, range=(0, 2)),
+            Dimension("y", display=True),
+            Dimension("x", display=True),
+        ]
+        idx, _ = sort_points_compound(pos, dims)
+        ordered_times = pos[idx, 0]
+        assert np.all(np.diff(ordered_times) >= 0), ordered_times

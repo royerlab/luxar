@@ -709,6 +709,17 @@ export class SceneLoader {
    * are discarded), ensuring eventual convergence without starvation.
    */
   async updateView(viewState: Partial<ViewState>): Promise<void> {
+    // Disposed loader: never runs another pass. dispose() already flushed the
+    // queued-update waiters (resolve-only), so a late call — e.g. an in-flight
+    // dimension-animation tick landing during the dispose() await while a
+    // refinement pass still holds the update lock — must resolve immediately
+    // rather than take the queue branch below and park a waiter in
+    // `_passWaiters` that nothing will ever drain (the refinement loop's
+    // isActive-return exit hands off via noopReleaseLock, and
+    // scheduleGSplatsRefinement early-returns on `_disposed`, so no later
+    // resolvePassWaiters runs). Resolve-only, never reject (matches dispose()).
+    if (this._disposed) return;
+
     // A foreground pass always preempts the background t+1 shadow prefetch
     // (both branches below): the shadow pass is strictly lower priority and
     // must never compete with a real tick for fetch slots or CPU.

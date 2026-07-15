@@ -456,6 +456,23 @@ describe('committed-energy release', () => {
     expect(shouldHoldPreviousDisplay(streamingAsp(100, 0.3), shown(100), 2)).toBe(false);
   });
 
+  it('does NOT energy-release on a DOWNGRADE (zoom-out): holds the finer prev until the coarse ladder completes', () => {
+    // Direction matters. On zoom-out the aspiration is the COARSER level and
+    // `prev` is the finer level that was on screen. Releasing at 60% of the
+    // coarse level's OWN energy would show fine-complete -> coarse-60% ->
+    // coarse-100% — a transient dip BELOW both, violating the never-downgrade
+    // contract. The energy short-circuit is upgrade-only; on a downgrade the
+    // gate falls through to the count rule (holds until the coarse ladder
+    // completes). isUpgrade=false models the coarser-aspiration case.
+    expect(shouldHoldPreviousDisplay(streamingAsp(10, 0.7), shown(100), 2, false)).toBe(true);
+    // Same inputs as an UPGRADE still release at the threshold (unchanged).
+    expect(shouldHoldPreviousDisplay(streamingAsp(10, 0.7), shown(100), 2, true)).toBe(false);
+    // Downgrade releases once the coarse ladder is committed-complete.
+    const complete = streamingAsp(10, 1.0);
+    complete.object.userData!.committedLadderComplete = true;
+    expect(shouldHoldPreviousDisplay(complete, shown(100), 2, false)).toBe(false);
+  });
+
   it('aggregates a group aspiration as the w-weighted mean of its leaves', () => {
     // Heavy leaf nearly done, light leaf barely started → mean 0.82 → release.
     const heavyDone = group([energyLeaf(10, 0.9, 90), energyLeaf(5, 0.1, 10)]);

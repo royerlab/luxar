@@ -48,7 +48,7 @@ Dimensions
 
 .. autoclass:: luxar.core.Dimension
    :members:
-   :undoc-members:
+   :no-undoc-members:
    :show-inheritance:
 
 Transforms

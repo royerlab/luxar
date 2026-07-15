@@ -67,6 +67,21 @@ export function isReady(child: { ready?: boolean }): boolean {
 }
 
 /**
+ * Whether a child's own mesh carries one of the freshness-tracked LEAF types
+ * (gsplats / points / lines) — i.e. it is a stamped leaf rather than a
+ * `group` subtree (a deferred `kind=partition` / nested `lod` LOD child).
+ * A leaf's per-slice staleness lives in its `loadedViewVersion` stamp
+ * ({@link isFresh}); a group's must be folded from its subtree leaves. This is
+ * the correct leaf/group discriminant — a leaf's committed COUNT can be absent
+ * (not yet committed) even though it is a leaf, so "has a count stamp" is NOT a
+ * safe proxy for "is a leaf".
+ */
+export function isTrackedLeaf(child: FreshnessChild): boolean {
+  const t = child.object.userData?.nodeType;
+  return t != null && FRESHNESS_TRACKED_TYPES.has(t);
+}
+
+/**
  * Whether `child` is ready AND fresh for view-version `version`. Freshness is
  * tracked only for the three stamped leaf types; a ready non-leaf child (nested
  * group / partition wrapper) has no per-slice staleness and is always fresh —

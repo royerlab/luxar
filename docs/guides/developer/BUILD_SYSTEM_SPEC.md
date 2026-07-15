@@ -653,7 +653,7 @@ hatch run luxar gsplat batch-fit submit data.zarr.zip output/ -p gpu \
 | `--tile-size` | Manual tile size in voxels — skips GPU profile requirement |
 | `--tasks-per-job` | Number of tasks per Slurm job (auto-calculated from GPU capacity) |
 | `--parallel` / `--sequential` | Run packed tasks concurrently or one-by-one (default: sequential) |
-| `--preset` | Fitting preset: `draft` (2000 iter), `standard` (5000), `hifi` (10000), `ultra` (20000) |
+| `--preset` | Fitting preset: `draft` (2000 iter), `standard` (5000), `hifi` (10000), `ultra` (20000), `n2s` (= ultra; canonical Noise2Self protocol name) |
 | `--gpu` | GPU profile name when auto-detect unavailable (login node) |
 
 **Auto-tiling**: compares total spatial voxels against the GPU's benchmarked
@@ -756,7 +756,7 @@ For automated environments (GitHub Actions, etc.):
 
 ## Related Documentation
 
-- [CONTRIBUTING.md](../../../CONTRIBUTING.md) - Contributing guidelines
-- [CLAUDE.md](../../../CLAUDE.md) - AI assistant instructions
+- `CONTRIBUTING.md` (repo root) - Contributing guidelines
+- `CLAUDE.md` (repo root) - AI assistant instructions
 - [TESTING_GUIDELINES.md](./TESTING_GUIDELINES.md) - Testing best practices
 - [PLAYWRIGHT_GUIDE.md](./PLAYWRIGHT_GUIDE.md) - E2E testing guide

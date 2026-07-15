@@ -174,11 +174,19 @@ class TestSolveLowerTriangular:
         loss = torch.sum(x**2)
         loss.backward()  # type: ignore[no-untyped-call]
 
-        # Check that gradients were computed
-        assert L.grad is not None
-        assert b.grad is not None
-        assert not torch.allclose(L.grad, torch.zeros_like(L.grad))
-        assert not torch.allclose(b.grad, torch.zeros_like(b.grad))
+        # Gradients exist, are finite, and non-zero for both inputs.
+        for name, t in (("L", L), ("b", b)):
+            assert t.grad is not None, f"{name} received no gradient"
+            assert torch.isfinite(t.grad).all(), f"{name} grad is non-finite"
+            assert not torch.allclose(t.grad, torch.zeros_like(t.grad))
+
+        # Analytic gradients match numerical ones (gradcheck, float64) — this is
+        # what actually proves the backward is correct, not merely present.
+        Ld = torch.tensor(
+            [[2.0, 0.0], [1.0, 3.0]], dtype=torch.float64, requires_grad=True
+        )
+        bd = torch.tensor([[4.0], [7.0]], dtype=torch.float64, requires_grad=True)
+        assert torch.autograd.gradcheck(solve_lower_triangular, (Ld, bd), atol=1e-6)
 
 
 class TestErrorHandling:

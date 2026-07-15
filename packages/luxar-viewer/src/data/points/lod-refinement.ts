@@ -95,7 +95,12 @@ export async function runPointsRefinement(ctx: PointsRefinementCtx): Promise<voi
         const session = pass?.begin(`Points (${path})`);
         try {
           const data = await loader.updateView(pointsVS, session, ctx.signal);
-          if (data) {
+          // Superseded/disposed while we were loading: an abort that raced the
+          // load's resolution (served from cache / abort after the fetch) is
+          // not a throw. Skip the commit so no stale-slice geometry reaches the
+          // GPU — mirrors runAtomicCommit's signal.aborted guard on the main
+          // path (atomic-commit.ts).
+          if (data && ctx.signal?.aborted !== true) {
             ctx.updatePointsGeometry(path, data, session);
           }
         } finally {

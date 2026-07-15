@@ -49,13 +49,13 @@ import { log, Modules } from '../utils/log';
 import type { LODGroupSelectorMode } from '../types/lod-group';
 import {
   coarsestFreshIndex,
-  coarsestFreshNonEmptyIndex,
   isFresh,
   isReady,
+  isTrackedLeaf,
   SettleTracker,
   visibleElementCount,
 } from './lod-freshness';
-import { shouldHoldPreviousDisplay } from './lod-display-gate';
+import { shouldHoldPreviousDisplay, subtreeDisplayProgress, type ProgressNode } from './lod-display-gate';
 
 /**
  * Frames the view-update version must hold steady before the registry reloads a
@@ -806,7 +806,13 @@ export class LODGroupRegistry {
     // display == aspiration (identical to the pre-feature behaviour).
     const version = this.deps.getViewVersion?.();
     const aspirationReady = !!aspiration && isReady(aspiration);
-    const aspirationFresh = version == null || isFresh(aspiration, version);
+    // Freshness resolves a GROUP-typed aspiration (deferred kind=partition /
+    // nested lod subtree — the overview recipe) through the subtree aggregate,
+    // not the leaf-only stamp: a bare THREE.Group has no leaf nodeType, so
+    // ``isFresh`` would call it unconditionally fresh and a re-slice would show
+    // the stale subtree with no coarse fallback. Leaf aspirations are unchanged.
+    const aspirationFresh =
+      version == null || (!!aspiration && this.childFreshAndCount(aspiration, version).fresh);
     let displayIdx: number;
     if (aspirationReady && aspirationFresh) {
       // Aspiration is committed and fresh (or freshness untracked) → show it.
@@ -835,8 +841,15 @@ export class LODGroupRegistry {
     // A genuinely empty slice (every fresh level empty) is unchanged.
     if (version != null && displayIdx >= 0) {
       const chosen = entry.children[displayIdx];
-      if (chosen && isFresh(chosen, version) && visibleElementCount(chosen) === 0) {
-        const fallback = coarsestFreshNonEmptyIndex(entry.children, version);
+      // Group-aware: a deferred kind=partition / nested lod subtree whose visible
+      // stamped leaves are all fresh-but-empty (poisoned/stale cache serving an
+      // old layout) would otherwise slip past the leaf-only ``visibleElementCount
+      // === 0`` check and blank the group. ``childFreshAndCount`` folds the
+      // subtree so the guard fires for a group chosen too; the redirect target
+      // stays the coarsest fresh non-empty leaf level.
+      const chosenProgress = chosen ? this.childFreshAndCount(chosen, version) : undefined;
+      if (chosen && chosenProgress?.fresh && chosenProgress.count === 0) {
+        const fallback = this.coarsestFreshNonEmptyIndex(entry, version);
         if (fallback >= 0 && fallback !== displayIdx) {
           if (!this.warnedEmptyLevel.has(entry.path)) {
             this.warnedEmptyLevel.add(entry.path);
@@ -878,7 +891,12 @@ export class LODGroupRegistry {
       const prevIdx = entry.heldDisplayChildIndex;
       if (prevIdx != null && prevIdx !== displayIdx) {
         const prev = entry.children[prevIdx];
-        if (shouldHoldPreviousDisplay(aspiration!, prev, version ?? null)) {
+        // Children are coarsest→finest, so displayIdx (== activeChildIndex, the
+        // aspiration) being FINER than the held prev means an upgrade (zoom-in).
+        // The gate's early energy-release is sound only then; on a downgrade
+        // (coarser aspiration) it would pop below the held finer level.
+        const isUpgrade = displayIdx > prevIdx;
+        if (shouldHoldPreviousDisplay(aspiration!, prev, version ?? null, isUpgrade)) {
           displayIdx = prevIdx;
           // The held aspiration is semantically in use — keep it warm in the
           // eviction LRU. The never-shown stamp below only fires once
@@ -1038,6 +1056,61 @@ export class LODGroupRegistry {
    * blank. Thin wrapper over the pure ``coarsestFreshIndex`` (lod-freshness.ts)
    * + ``coarsestReadyIndex``.
    */
+  /**
+   * Freshness + committed element count of a child, resolving a GROUP-typed LOD
+   * child (a deferred ``kind=partition`` / nested ``lod`` subtree — the
+   * ``overview`` recipe) through {@link subtreeDisplayProgress} rather than the
+   * leaf-only stamps. A bare ``THREE.Group`` carries no leaf ``nodeType``, so
+   * ``isFresh`` would report it unconditionally fresh and ``visibleElementCount``
+   * would return ``null`` — hiding a stale re-slice and defeating the empty
+   * guard. Mirrors the never-downgrade gate's ``sideProgress`` so both paths
+   * agree on what "fresh" means for a group. Leaf children (a direct count
+   * stamp) keep the exact pre-existing behaviour. A group with no stamped leaf
+   * committed yet reports ``fresh: false`` so the slice-aware fallback shows the
+   * coarse level meanwhile.
+   */
+  private childFreshAndCount(
+    child: LODGroupChild,
+    version: number
+  ): { fresh: boolean; count: number | null } {
+    // Leaf detection is by tracked nodeType, NOT by "has a count stamp": a leaf
+    // that has not committed a count yet is still a leaf whose freshness is its
+    // own ``loadedViewVersion`` stamp. Only a genuine group subtree folds.
+    if (isTrackedLeaf(child)) {
+      return { fresh: isFresh(child, version), count: visibleElementCount(child) };
+    }
+    const aggregate = subtreeDisplayProgress(child.object as unknown as ProgressNode, version);
+    // No stamped leaf under the subtree (nested group with no slice-dependent
+    // geometry, or nothing committed yet): no per-slice staleness signal, so
+    // treat as fresh — exactly the pre-existing ``isFresh`` behaviour for a
+    // non-leaf. Only a subtree that DOES carry stamped-but-stale leaves (a
+    // non-null aggregate with ``fresh === false``) triggers the coarse fallback.
+    if (!aggregate) return { fresh: true, count: null };
+    return { fresh: aggregate.fresh, count: aggregate.count };
+  }
+
+  /**
+   * Index of the coarsest child that is fresh for ``version`` AND has a
+   * non-zero committed element count — or ``-1`` when none qualifies. The
+   * group-aware counterpart of the empty-level display guard's fallback: it
+   * resolves each child through {@link childFreshAndCount}, so a fresh-but-empty
+   * GROUP child (a deferred ``kind=partition`` subtree whose visible leaves all
+   * committed 0) is correctly skipped rather than treated as non-empty (a bare
+   * ``THREE.Group`` has no leaf count stamp). A child with an UNTRACKED count
+   * (``null`` — never-committed leaf / group with no stamped leaf) is accepted,
+   * matching the leaf-only helper it replaced: the guard only redirects away
+   * from KNOWN-empty levels.
+   */
+  private coarsestFreshNonEmptyIndex(entry: LODGroupEntry, version: number): number {
+    for (let i = 0; i < entry.children.length; i++) {
+      const p = this.childFreshAndCount(entry.children[i], version);
+      if (!p.fresh) continue;
+      if (p.count === 0) continue;
+      return i;
+    }
+    return -1;
+  }
+
   private coarsestFreshOrReadyIndex(entry: LODGroupEntry, version: number): number {
     const fresh = coarsestFreshIndex(entry.children, version);
     return fresh >= 0 ? fresh : this.coarsestReadyIndex(entry);

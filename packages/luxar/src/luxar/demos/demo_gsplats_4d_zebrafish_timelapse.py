@@ -91,11 +91,8 @@ from luxar.utils.paths import get_demos_output_dir
 # Data source
 ZENODO_URL = "https://zenodo.org/api/records/1211599/files/cxcr4aMO2_290112.lsm/content"
 
-# Fitting parameters (progressive)
+# Fit parameters (fixed-K, seeds=K*)
 MAX_SPLATS = 2000
-MAX_SPLATS_PER_PASS = 500
-ITERS_PER_PASS = 3000
-PSNR_PATIENCE = 0.2
 
 # Cache location
 CACHE_DIR = Path.home() / ".cache" / "luxar" / "gsplats_zebrafish"
@@ -326,22 +323,15 @@ def fit_timepoint(
 
         DEVICE = detect_device()
 
-    from luxar.gsplats import fit_progressive_gaussian_splats
+    from luxar.gsplats import fit_gaussian_splats
 
-    aprint(
-        f"  Fitting {label} (progressive: max_splats={MAX_SPLATS}, "
-        f"{MAX_SPLATS_PER_PASS}/pass, {ITERS_PER_PASS} iters/pass)..."
-    )
+    aprint(f"Fitting {label} (fixed-K joint fit: seeds={MAX_SPLATS})...")
 
-    result = fit_progressive_gaussian_splats(
+    result = fit_gaussian_splats(
         volume,
-        max_splats=MAX_SPLATS,
-        max_splats_per_pass=MAX_SPLATS_PER_PASS,
-        iters_per_pass=ITERS_PER_PASS,
-        psnr_patience=PSNR_PATIENCE,
+        seeds=MAX_SPLATS,
         device=DEVICE,
         verbose=True,
-        enable_dynamic_ops=True,
         voxel_size=voxel_size,
     )
 

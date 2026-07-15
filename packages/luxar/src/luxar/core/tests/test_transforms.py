@@ -201,12 +201,14 @@ class TestTransformUtilities:
         # Compose multiple transforms
         combined = compose(t1, t2)
 
-        # Test on a simple point
+        # compose(t1, t2) applies t1 FIRST, then t2 → the matrix is t2 @ t1
+        # (right-multiply; the CLAUDE.md compose-order gotcha).
+        np.testing.assert_allclose(combined, t2 @ t1, atol=1e-6)
+
+        # [1,0,0] --t1 (translate +5x)--> [6,0,0] --t2 (rotate_z 90°)--> [0,6,0]
         point = np.array([1, 0, 0, 1])
         result = combined @ point
-
-        # Just verify the compose function runs without error
-        assert result.shape == (4,)
+        np.testing.assert_allclose(result, [0.0, 6.0, 0.0, 1.0], atol=1e-5)
 
         # Empty compose
         assert np.allclose(compose(), identity())

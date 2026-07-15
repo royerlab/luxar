@@ -244,6 +244,8 @@ def write_gsplat_leaf(
     center_maxs: List[List[float]] = []
     amp_mins: List[float] = []
     amp_maxs: List[float] = []
+    disp_los: List[float] = []
+    disp_his: List[float] = []
     for i, sub in enumerate(sublods):
         sub_group = group.require_group(f"additive_{i}")
         meta = _write_single_splat_set(
@@ -263,6 +265,10 @@ def write_gsplat_leaf(
         center_maxs.append(meta["center_bounds"]["max"])
         amp_mins.append(meta["amplitude_range"]["min"])
         amp_maxs.append(meta["amplitude_range"]["max"])
+        adr = meta.get("amplitude_data_range")
+        if adr is not None:
+            disp_los.append(adr[0])
+            disp_his.append(adr[1])
 
     assert n_dims is not None
     agg_min = [min(m[d] for m in center_mins) for d in range(n_dims)]
@@ -276,6 +282,10 @@ def write_gsplat_leaf(
         "ordering": "none",
         "n_additive_sublods": len(sublods),
     }
+    if disp_his:
+        # Aggregate robust display window across the ladder's sub-LODs, so the
+        # colormap-bearing ladder node carries a range (not the [0,1] fallback).
+        agg_meta["amplitude_data_range"] = [min(disp_los), max(disp_his)]
     parent_attrs = dict(attrs or {})
     apply_gsplat_group_attrs(
         group,

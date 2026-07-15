@@ -103,6 +103,7 @@ class ArrayEncoder(
             semantic_type: Semantic type (REQUIRED - must be explicit)
             mode: Encoding mode (AUTO, PRECISION, MEMORY, CUSTOM)
             n_elements: Broadcast target element count.
+
                         - Required if data is scalar/tuple/list because the
                           scalar value is stored once and represents this many
                           elements.

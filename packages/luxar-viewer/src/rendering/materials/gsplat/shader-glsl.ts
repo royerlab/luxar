@@ -381,16 +381,13 @@ export const GSPLAT_FRAGMENT_SHADER = /* glsl */ `
         // Early discard for negligible contribution (raised threshold for performance)
         if (intensity < 1e-4) discard;
 
-        // Per-node GOG (Gain-Offset-Gamma) color adjustment.
-        // Colormap (LUT) mode: gamma + display-range already shaped the
-        // scalar VALUE (amplitude) before the LUT lookup, so the mapped
-        // color passes through untouched. Direct-color mode: GOG on color.
-        #ifdef USE_COLORMAP
-        vec3 adjusted = max(vColor, vec3(0.0));
-        #else
-        vec3 adjusted = vColor * uIntensity + uOffset;
-        adjusted = max(adjusted, vec3(0.0));
-        #endif
+        // Per-node GOG (Gain-Offset-Gamma) color adjustment. uIntensity (gain)
+        // and uOffset apply in BOTH modes so the layer intensity/offset controls
+        // work for a colormapped gsplat too. Colormap (LUT) mode: gamma + the
+        // display-range window already shaped the scalar VALUE (amplitude) before
+        // the LUT lookup, so only gain/offset apply post-LUT (no extra gamma).
+        // Direct-color mode: full GOG on the raw color.
+        vec3 adjusted = max(vColor * uIntensity + uOffset, vec3(0.0));
 
         // Early discard for zero-contribution fragments after offset
         if (max(adjusted.r, max(adjusted.g, adjusted.b)) < 1e-4) discard;

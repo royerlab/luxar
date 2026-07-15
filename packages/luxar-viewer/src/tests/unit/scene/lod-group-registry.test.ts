@@ -1242,6 +1242,116 @@ describe('LODGroupRegistry — slice-aware freshness fallback', () => {
 });
 
 // ────────────────────────────────────────────────────────────────────────
+// Group-typed LOD child freshness/emptiness (overview / nested lod). A group
+// LOD child (a deferred kind=partition or nested lod subtree) carries no leaf
+// nodeType on its own node, so leaf-only isFresh would call it unconditionally
+// fresh and visibleElementCount would return null. The registry must fold the
+// subtree's visible stamped leaves instead (matches the never-downgrade gate).
+// ────────────────────────────────────────────────────────────────────────
+
+describe('LODGroupRegistry — group-typed LOD child freshness', () => {
+  /**
+   * A group LOD child (bare THREE.Group placeholder, no leaf nodeType) with one
+   * visible stamped gsplats leaf under it — what the overview recipe's deferred
+   * kind=partition branch looks like once activated.
+   */
+  function makeGroupChildWithLeaf(
+    coverageFraction: number,
+    leafVersion: number,
+    count: number
+  ): { child: LODGroupChild; leaf: THREE.Object3D } {
+    const group = new THREE.Group();
+    const leaf = new THREE.Group();
+    leaf.visible = true;
+    leaf.userData = {
+      nodeType: 'gsplats',
+      loadedViewVersion: leafVersion,
+      visibleSplatCount: count,
+      committedLadderComplete: true,
+    };
+    group.add(leaf);
+    return {
+      child: {
+        object: group,
+        coverageFraction,
+        positionBounds: { min: [0, 0, 0], max: [10, 10, 10] },
+        ready: true,
+      },
+      leaf,
+    };
+  }
+
+  function makeCoarseLeaf(count: number, version = 2): LODGroupChild {
+    return makeLeafAt(0, count, version);
+  }
+
+  function makeLeafAt(coverageFraction: number, count: number, version = 2): LODGroupChild {
+    const child = { ...makeGsplatChild(coverageFraction, version), ready: true };
+    child.object.userData = {
+      nodeType: 'gsplats',
+      loadedViewVersion: version,
+      visibleSplatCount: count,
+    };
+    return child;
+  }
+
+  it('folds a STALE group subtree → shows the coarse leaf, then swaps up when the subtree recommits', () => {
+    // Pins F3: a group aspiration whose inner leaves are stale for the current
+    // version must NOT be treated as fresh (leaf-only isFresh returns true for a
+    // group nodeType). Pre-fix the stale group displays the previous slice with
+    // no coarse fallback.
+    const reg = makeRegistry([0, 1, 2], undefined, undefined, () => 2);
+    const coarse = makeCoarseLeaf(50);
+    const { child: fineGroup, leaf } = makeGroupChildWithLeaf(0.5, 1, 100); // subtree stale@1
+    reg.register(makeEntry([coarse, fineGroup], 0, '/ov'));
+
+    reg.evaluatePerFrame();
+    expect(coarse.object.visible).toBe(true); // fresh coarse shown while the group is stale
+    expect(fineGroup.object.visible).toBe(false);
+    expect(reg.list()[0].activeChildIndex).toBe(1); // aspiration still the finest (the group)
+
+    // Inner leaf recommits for v2 → the group folds fresh → swap up.
+    (leaf.userData as { loadedViewVersion: number }).loadedViewVersion = 2;
+    reg.evaluatePerFrame();
+    expect(fineGroup.object.visible).toBe(true);
+    expect(coarse.object.visible).toBe(false);
+  });
+
+  it('redirects when a FRESH group subtree committed all-empty leaves (fresh-but-empty guard)', () => {
+    // Pins F4: a fresh group whose visible leaves all committed 0 elements
+    // (poisoned/stale cache) would blank the group; leaf-only visibleElementCount
+    // returns null for a group so the guard never fired. Now it folds to count 0
+    // and redirects to the coarse non-empty leaf.
+    const reg = makeRegistry([0, 1, 2], undefined, undefined, () => 2);
+    const coarse = makeCoarseLeaf(100);
+    const { child: fineGroup } = makeGroupChildWithLeaf(0.5, 2, 0); // fresh@2 but empty
+    reg.register(makeEntry([coarse, fineGroup], 0, '/ov'));
+
+    reg.evaluatePerFrame();
+    expect(coarse.object.visible).toBe(true); // redirected to the non-empty coarse leaf
+    expect(fineGroup.object.visible).toBe(false);
+  });
+
+  it('empty-guard fallback SKIPS a fresh-but-empty GROUP child (group-aware scan)', () => {
+    // coarsest→finest: [empty GROUP, non-empty leaf, empty leaf]. The finest
+    // (empty leaf) is chosen then redirected by the fresh-but-empty guard; the
+    // fallback scan must SKIP the empty GROUP at index 0 (a leaf-only element
+    // count reads null for a group and would wrongly accept it as non-empty,
+    // redirecting onto a blank group) and land on the non-empty leaf at index 1.
+    const reg = makeRegistry([0, 1, 2], undefined, undefined, () => 2);
+    const { child: emptyGroup } = makeGroupChildWithLeaf(0, 2, 0); // fresh@2, subtree empty
+    const nonEmptyLeaf = makeLeafAt(0.5, 100);
+    const emptyFineLeaf = makeLeafAt(1.0, 0); // finest, fresh, empty → chosen then redirected
+    reg.register(makeEntry([emptyGroup, nonEmptyLeaf, emptyFineLeaf], 0, '/ov'));
+
+    reg.evaluatePerFrame();
+    expect(nonEmptyLeaf.object.visible).toBe(true); // group-aware fallback landed here
+    expect(emptyGroup.object.visible).toBe(false); // NOT redirected onto the empty group
+    expect(emptyFineLeaf.object.visible).toBe(false);
+  });
+});
+
+// ────────────────────────────────────────────────────────────────────────
 // Settle-gated reload of a stale fine level (B2 decoupling). A lazy fine level
 // that has left the per-slice sweep is reloaded by the REGISTRY — but only once
 // the scrub has settled (the view version held steady for FINE_RELOAD_SETTLE_TICKS

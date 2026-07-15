@@ -47,7 +47,10 @@ def validate_gsplat_inputs(
         (centers, amplitudes, cholesky_factors, colors,
          n_splats, n_dims, cholesky_is_uniform)
     """
-    from ...validation.base import validate_positions_for_writing
+    from ...validation.base import (
+        _validate_numeric_finite_values,
+        validate_positions_for_writing,
+    )
 
     n_splats, n_dims = validate_positions_for_writing(centers)
     expected_k = n_dims * (n_dims + 1) // 2
@@ -67,19 +70,24 @@ def validate_gsplat_inputs(
             f"got {cholesky_factors.shape}"
         )
 
-    # Validate amplitudes
+    # Validate amplitudes (finiteness first, mirroring radii/widths — a NaN
+    # would silently pass `< 0` since `nan < 0` is False and corrupt the store).
     if isinstance(amplitudes, np.ndarray):
         if amplitudes.shape[0] != n_splats:
             raise ValueError(
                 f"Amplitudes shape {amplitudes.shape} doesn't match n_splats {n_splats}"
             )
+        _validate_numeric_finite_values(amplitudes, "amplitudes")
         if np.any(amplitudes < 0):
             min_val = float(np.min(amplitudes))
             raise ValueError(
                 f"Amplitudes must be non-negative (>= 0). Found minimum value: {min_val:.3f}"
             )
-    elif isinstance(amplitudes, (int, float)) and amplitudes < 0:
-        raise ValueError(f"Amplitude must be non-negative (>= 0). Got {amplitudes}")
+    elif isinstance(amplitudes, (int, float)):
+        if not np.isfinite(amplitudes):
+            raise ValueError(f"Amplitude must be finite. Got {amplitudes}")
+        if amplitudes < 0:
+            raise ValueError(f"Amplitude must be non-negative (>= 0). Got {amplitudes}")
 
     return (
         centers,
@@ -244,11 +252,20 @@ def write_gsplat_arrays(
         log_label_singular="amplitude",
     )
 
+    # Display range for the viewer's colormap window. GSplat amplitudes are
+    # heavily right-skewed (a few bright cells over a dim background), so the
+    # raw max makes a [0, max] LUT window map ~99% of splats to near-black. Use
+    # a robust upper (p99.9) so the signal spans the LUT; the brightest 0.1%
+    # clip to white (fine for additive rendering). The user can still widen it
+    # via the layer display-range slider.
+    amp_data_range: Optional[List[float]] = None
     if isinstance(amplitudes, np.ndarray) and amplitudes.size > 0:
-        group.attrs["amplitude_data_range"] = [
-            float(amplitudes.min()),
-            float(amplitudes.max()),
-        ]
+        lo = float(amplitudes.min())
+        hi = float(np.percentile(amplitudes, 99.9))
+        if not (hi > lo):  # degenerate (constant / tiny) — fall back to max
+            hi = float(amplitudes.max())
+        amp_data_range = [lo, hi]
+        group.attrs["amplitude_data_range"] = amp_data_range
 
     # Write cholesky_factors as two arrays. The diagonal (positive, scale-like)
     # and the off-diagonal (signed, zero-centred) are split so each can be
@@ -306,6 +323,12 @@ def write_gsplat_arrays(
         "amplitude_range": {"min": amplitude_min, "max": amplitude_max},
         "center_bounds": {"min": center_min, "max": center_max},
     }
+    if amp_data_range is not None:
+        # Robust display window; propagated onto the colormap-bearing group by
+        # apply_gsplat_group_attrs (the colormap node is often a parent of the
+        # array leaf, e.g. an additive-ladder level), so the viewer reads the
+        # colormap and its display range from the SAME node.
+        metadata["amplitude_data_range"] = amp_data_range
 
     if ordering_data is not None:
         metadata.update(
@@ -418,6 +441,12 @@ def apply_gsplat_group_attrs(
     group.attrs["ndim"] = metadata["ndim"]
     group.attrs["has_colors"] = metadata["has_colors"]
     group.attrs["amplitude_range"] = metadata["amplitude_range"]
+    # Robust display window on the SAME node as the colormap (set above), so the
+    # viewer reads colormap + range together. Without this, an additive-ladder
+    # level carries the colormap but not the range (that lives on its sublods),
+    # and the viewer falls back to [0, 1] → a near-black render.
+    if "amplitude_data_range" in metadata:
+        group.attrs["amplitude_data_range"] = metadata["amplitude_data_range"]
     group.attrs["center_bounds"] = metadata["center_bounds"]
     group.attrs["ordering"] = metadata["ordering"]
 

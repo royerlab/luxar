@@ -16,7 +16,7 @@
 4. [Architecture](#architecture)
 5. [Component Specifications](#component-specifications)
 6. [CLI Interface](#cli-interface)
-7. [Connection Profiles](#connection-profiles)
+7. [Connection Profiles](#1-connection-profiles)
 8. [Implementation Details](#implementation-details)
 9. [Error Handling](#error-handling)
 10. [Testing Strategy](#testing-strategy)
@@ -1043,7 +1043,7 @@ All parsing functions should raise `ValueError` with helpful messages:
 
 "Jitter must be between 0% and 100% (or 0.0 and 1.0), got: 150%"
 
-"Unknown network profile: 'fast-5g'. Available profiles: 3g, 4g, 5g, broadband, satellite, rural, congested"
+"Unknown network profile: 'fast-5g'. Available profiles: 3g, 4g, 5g, slow-broadband, broadband, fast-broadband, satellite, rural, congested"
 ```
 
 ### CLI Error Display

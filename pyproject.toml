@@ -81,7 +81,8 @@ gsplats = [
 test = [
     "luxar[gsplats]",
     "pytest>=7.4.0",
-    "pytest-cov>=4.1.0"
+    "pytest-cov>=4.1.0",
+    "hypothesis>=6.0"
 ]
 dev = [
     "luxar[test]",
@@ -126,7 +127,12 @@ docs = [
 # the optional demo viewer. Keep this publish-safe: no git/direct references.
 tracksdata = [
     "tracksdata>=0.1.0rc5",
-    "napari[pyqt6]>=0.4.18",
+    # <0.8: napari 0.8.0's optional-base extra requires zarr>=3.0.8, which is
+    # unsatisfiable with our zarr<3.0 pin — the resolver then backtracks napari
+    # into 2018-era sdist-only releases whose setup.py imports the long-removed
+    # setuptools.Feature (broke every CI env-create on 2026-07-14). Lift when
+    # the project migrates to zarr 3.
+    "napari[pyqt6]>=0.4.18,<0.8",
 ]
 
 # CLI entry point
@@ -208,7 +214,9 @@ dependencies = [
     "scikit-image>=0.19.0",
     "tifffile>=2023.1.0",
     "imagecodecs>=2023.1.0",
-    "napari[all]>=0.4.18",
+    # <0.8: napari 0.8 requires zarr>=3 (conflicts with our zarr<3 pin); see
+    # the tracksdata group note. Lift when the project migrates to zarr 3.
+    "napari[all]>=0.4.18,<0.8",
     "pandas>=1.5.0",
     "pyarrow>=12.0.0",
     "networkx>=3.0",
@@ -395,9 +403,14 @@ follow_imports = "skip"
 # numba is installed (typed decorator -> untyped-decorator error) but is
 # "unused" in envs without numba, where the ignore_missing_imports override
 # turns the decorator into Any. Silence the env-dependent unused-ignore
-# warning for this one module.
+# warning for the modules that host those decorators (the curve encoders now
+# live in io/_ordering/curves/; ordering.py stays listed as the public facade).
 [[tool.mypy.overrides]]
-module = ["luxar.io.ordering"]
+module = [
+    "luxar.io.ordering",
+    "luxar.io._ordering.curves.morton",
+    "luxar.io._ordering.curves.hilbert",
+]
 warn_unused_ignores = false
 
 # Relax strict rules for test files. ignore_errors is kept on:

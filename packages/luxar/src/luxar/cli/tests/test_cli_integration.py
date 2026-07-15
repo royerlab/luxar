@@ -97,7 +97,10 @@ def test_server(sample_scene, available_port):
                 break
         except requests.exceptions.RequestException:
             if i == max_retries - 1:
-                pytest.skip("Server failed to start")
+                pytest.fail(
+                    f"Server failed to start after {max_retries} retries — "
+                    "a real regression, not a reason to skip."
+                )
             time.sleep(0.5)
 
     yield f"http://127.0.0.1:{available_port}"
