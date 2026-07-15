@@ -245,6 +245,95 @@ describe('WASM vs TypeScript Comparison', () => {
   });
 
   // ============================================================================
+  // DEPTH SORT MODULE
+  // ============================================================================
+  describe('depth_sort: sort_splats_by_depth', () => {
+    /**
+     * Parity for a sorting kernel is EXACT-permutation equality: the TS
+     * twin frounds every float step in the Rust op order, so both
+     * backends must compute identical uint16 keys — a one-bucket key
+     * difference would reorder splats, which `arraysAlmostEqual` cannot
+     * excuse.
+     */
+    function runBoth(
+      centers3: Float32Array,
+      modelView: Float32Array,
+      count: number
+    ): { ts: Uint32Array; wasm: Uint32Array; tsSorted: number; wasmSorted: number } {
+      const ts = new Uint32Array(count);
+      const wasm = new Uint32Array(count);
+      const tsSorted = tsModule.sort_splats_by_depth(centers3, modelView, ts, count);
+      const wasmSorted = wasmModule!.sort_splats_by_depth(centers3, modelView, wasm, count);
+      return { ts, wasm, tsSorted, wasmSorted };
+    }
+
+    const IDENTITY_MV = new Float32Array([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]);
+
+    it.skipIf(!wasmFilesExist)('identical ordering on a small mixed scene', () => {
+      // Includes behind-camera, duplicate-depth, and near/far splats.
+      const zs = [-1, 3, -10, -5, -5, 0, -2.5];
+      const centers3 = new Float32Array(zs.length * 3);
+      zs.forEach((z, i) => {
+        centers3[i * 3] = i;
+        centers3[i * 3 + 2] = z;
+      });
+      const { ts, wasm, tsSorted, wasmSorted } = runBoth(centers3, IDENTITY_MV, zs.length);
+      expect(wasmSorted).toBe(tsSorted);
+      expect(arraysEqual(wasm, ts)).toBe(true);
+    });
+
+    it.skipIf(!wasmFilesExist)('identical ordering at unit extremes (nm and km scales)', () => {
+      for (const scale of [1e-6, 1.0, 1e6]) {
+        const zs = [-1, -9, -5, -3, -7, -2].map((z) => z * scale);
+        const centers3 = new Float32Array(zs.length * 3);
+        zs.forEach((z, i) => {
+          centers3[i * 3 + 2] = z;
+        });
+        const { ts, wasm, tsSorted, wasmSorted } = runBoth(centers3, IDENTITY_MV, zs.length);
+        expect(wasmSorted).toBe(tsSorted);
+        expect(arraysEqual(wasm, ts)).toBe(true);
+      }
+    });
+
+    it.skipIf(!wasmFilesExist)('identical identity fallback on degenerate depth', () => {
+      const centers3 = new Float32Array([0, 0, -4, 1, 0, -4, 2, 0, -4]);
+      const { ts, wasm, tsSorted, wasmSorted } = runBoth(centers3, IDENTITY_MV, 3);
+      expect(wasmSorted).toBe(0);
+      expect(tsSorted).toBe(0);
+      expect(arraysEqual(wasm, ts)).toBe(true);
+    });
+
+    it.skipIf(!wasmFilesExist)(
+      'identical ordering on 100k pseudo-random splats under a general model-view',
+      () => {
+        const count = 100_000;
+        const centers3 = new Float32Array(count * 3);
+        // Deterministic xorshift32 positions in [-500, 500]^3.
+        let state = 0xdeadbeef;
+        const next = () => {
+          state ^= (state << 13) >>> 0;
+          state >>>= 0;
+          state ^= state >>> 17;
+          state ^= (state << 5) >>> 0;
+          state >>>= 0;
+          return (state / 0xffffffff) * 1000 - 500;
+        };
+        for (let i = 0; i < centers3.length; i++) {
+          centers3[i] = next();
+        }
+        // A rotation+translation model-view (columns are orthonormal-ish):
+        // exercises all four z-row coefficients, not just m14.
+        const mv = new Float32Array([
+          0.866, 0, -0.5, 0, 0, 1, 0, 0, 0.5, 0, 0.866, 0, 10, -20, -1500, 1,
+        ]);
+        const { ts, wasm, tsSorted, wasmSorted } = runBoth(centers3, mv, count);
+        expect(wasmSorted).toBe(tsSorted);
+        expect(arraysEqual(wasm, ts)).toBe(true);
+      }
+    );
+  });
+
+  // ============================================================================
   // DECODE MODULE
   // ============================================================================
   describe('decode: quantized functions', () => {

@@ -59,6 +59,7 @@ pub mod common;
 
 // Declare modules
 mod decode;
+mod depth_sort;
 mod effective_radii;
 mod gsplats_processing;
 mod lines_clipping;
@@ -73,6 +74,7 @@ pub use decode::{
     decode_lut_row_u8, decode_lut_scalar_u16, decode_lut_scalar_u8, decode_quantized_u16,
     decode_quantized_u8, decode_signed_log_perchannel_u16, decode_signed_log_perchannel_u8,
 };
+pub use depth_sort::sort_splats_by_depth;
 pub use effective_radii::calculate_effective_radii;
 pub use gsplats_processing::{
     compact_attenuated_amplitudes, compute_gsplats_attenuation, extract_cholesky_submatrix,

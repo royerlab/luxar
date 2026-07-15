@@ -27,6 +27,7 @@ import { showToast } from '../toast';
 import type { AnimationController } from '../../scene/animation/animation-controller';
 import { getColormapTexture } from '../../rendering/colormap-textures';
 import { supportsScalarColormap } from '../../rendering/material-colormap-helpers';
+import { noteGSplatsBlendingModeSwitch } from '../../rendering/depth-sort-coordinator';
 import { COLORMAP_CATEGORIES } from '../../rendering/colormap-data';
 import { SceneLoaderManager } from '../../data/scene-loader-manager';
 import type { LODGroupRegistry } from '../../scene/lod-group-registry';
@@ -1184,7 +1185,19 @@ export class LayersPanel {
       if (!eff) continue;
       mat.updateOpacity(eff.opacity);
       applyColorAdjustments(mat, eff.gamma, eff.intensity, eff.offset);
+      const prevBlendingMode = mat.userData?.blendingMode as BlendingMode | undefined;
       this.applyBlendingStateToMaterial(mat, eff.blending_mode);
+      // Depth-sorting Phase 2: a gsplat layer switching blending mode may
+      // need to start (TO `normal`: clear the noop stamp + reprocess so
+      // the next commit registers with the SortWorker) or stop (AWAY:
+      // release) depth sorting.
+      if (obj.userData?.nodeType === 'gsplats') {
+        noteGSplatsBlendingModeSwitch(
+          obj as THREE.Mesh,
+          eff.blending_mode as BlendingMode | undefined,
+          prevBlendingMode
+        );
+      }
     }
     this.requestRender();
   }

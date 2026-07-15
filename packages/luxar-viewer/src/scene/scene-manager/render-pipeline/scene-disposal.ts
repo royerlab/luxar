@@ -21,6 +21,7 @@
  */
 
 import * as THREE from 'three';
+import { releaseDepthSortNode } from '../../../rendering/depth-sort-coordinator';
 
 /**
  * Recursively dispose `obj` and every descendant, removing each child
@@ -35,6 +36,11 @@ import * as THREE from 'three';
  */
 export function disposeObjectTree(obj: THREE.Object3D): void {
   if (obj instanceof THREE.Mesh || obj instanceof THREE.InstancedMesh) {
+    // Depth-sorting Phase 2: drop the node's SortWorker registration
+    // (transferred center buffers) with the mesh. No-op for non-gsplats
+    // and never-registered nodes; an in-flight sort resolves onto the
+    // deleted coordinator state and is discarded.
+    if (obj.userData?.nodeType === 'gsplats') releaseDepthSortNode(obj);
     if (obj.geometry) obj.geometry.dispose();
     if (obj.material) {
       if (Array.isArray(obj.material)) {

@@ -297,6 +297,35 @@ export function writeSortedIndexIdentity(
   const arr = attr.array as Uint32Array;
   const n = Math.min(count, arr.length);
   for (let i = 0; i < n; i++) arr[i] = i;
+  collapseSortedIndexRanges(attr, n);
+}
+
+/**
+ * Write a depth-sort permutation into `aSortedIndex[0..count)` (the
+ * SortWorker's back-to-front ordering, depth-sorting Phase 2). Same
+ * collapsed-prefix update-range discipline as
+ * {@link writeSortedIndexIdentity}. Returns the number of entries
+ * written (clamped to both the ordering's and the attribute's length).
+ */
+export function writeSortedIndexOrdering(
+  geometry: THREE.InstancedBufferGeometry,
+  ordering: Uint32Array,
+  count: number
+): number {
+  const attr = geometry.getAttribute('aSortedIndex') as THREE.InstancedBufferAttribute;
+  const arr = attr.array as Uint32Array;
+  const n = Math.min(count, ordering.length, arr.length);
+  arr.set(ordering.subarray(0, n));
+  collapseSortedIndexRanges(attr, n);
+  return n;
+}
+
+/**
+ * Register a single collapsed `[0, max-end)` update range covering `n`
+ * fresh entries plus any still-pending ranges (see the identity writer's
+ * doc comment for why ranges must never accumulate).
+ */
+function collapseSortedIndexRanges(attr: THREE.InstancedBufferAttribute, n: number): void {
   let rangeEnd = n;
   for (const range of attr.updateRanges) {
     const end = range.start + range.count;

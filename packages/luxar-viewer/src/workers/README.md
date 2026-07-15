@@ -176,17 +176,43 @@ workers/
         ├── perchannel.ts                       — per-column linear/log/signed-log/geolog
         ├── lut.ts                              — row + scalar LUT decode
         └── broadcasted.ts                      — single value → N×k array
+├── sort-worker.ts                              — Depth-sort worker entry
+│                                                 (Vite ?worker target, Comlink;
+│                                                 depth-sorting Phase 2)
+└── sort-worker/
+    ├── state.ts                                — SortWorkerCtx { wasm, nodes }
+    │                                             (per-node center registry)
+    ├── initialize.ts                           — WASM bootstrap (mirrors
+    │                                             data-worker/initialize.ts)
+    └── sorting.ts                              — registerNode / sortNode /
+                                                  releaseNode task bodies
+                                                  (generation stale-drop guard)
 ```
+
+### SortWorker (depth-sorting Phase 2)
+
+A **single persistent** Comlink worker — deliberately NOT part of the
+round-robin pool: each gsplat node's projected 3D centers are
+TRANSFERRED into it once per non-noop commit (`registerNode`), so
+camera-driven re-sorts never re-copy them. `sort(nodeId, generation,
+modelView)` runs the WASM `sort_splats_by_depth` kernel (back-to-front
+normalized-key counting sort, `wasm/rust/src/depth_sort.rs`) and
+transfers the ordering back; requests whose `generation` no longer
+matches the node's latest registration return `null` — a stale shorter
+permutation applied to a grown buffer would be corrupt, not just
+outdated. The main-thread side — lazy spawn, the one-in-flight-per-node
+rule, applying orderings to `aSortedIndex`, node release and teardown —
+lives in `rendering/depth-sort-coordinator.ts`.
 
 ## Internal Layout
 
-External callers only import from the three package-root files
-(`worker-pool.ts`, `color-utils.ts`, `data-worker.ts` via the Vite
-`?worker` URL). Everything under `worker-pool/` and `data-worker/` is
-worker-internal: helpers grouped by concern, each file owning a single
-piece of the pool's or the worker's responsibility. The recursive
-layout follows the audience: the more widely a file is imported, the
-shallower it lives.
+External callers only import from the package-root files
+(`worker-pool.ts`, `color-utils.ts`, `data-worker.ts` / `sort-worker.ts`
+via the Vite `?worker` URL). Everything under `worker-pool/`,
+`data-worker/`, and `sort-worker/` is worker-internal: helpers grouped
+by concern, each file owning a single piece of the pool's or the
+worker's responsibility. The recursive layout follows the audience: the
+more widely a file is imported, the shallower it lives.
 
 Task functions under `data-worker/` take a shared `state: WasmCtx`
 (defined in `data-worker/state.ts`) so they can read the WASM module
