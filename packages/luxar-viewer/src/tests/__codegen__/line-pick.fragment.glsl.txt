@@ -45,7 +45,6 @@ layout( std140 ) uniform object {
 	float nodeUniform5;
 	float nodeUniform6;
 	float nodeUniform7;
-	float nodeUniform8;
 };
 
 
@@ -65,13 +64,13 @@ flat  in float nodeVarying10;
 
 // vars
 vec4 DiffuseColor;
+float nodeVar5;
 float nodeVar6;
-float nodeVar7;
+float nodeVar10;
 float nodeVar11;
-float nodeVar12;
 float lineBrightness;
 vec4 Output;
-vec4 nodeVar19;
+vec4 nodeVar18;
 
 // codes
 
@@ -89,21 +88,21 @@ void main() {
 
 	}
 
-	nodeVar6 = ( nodeVarying1 * nodeVarying2 );
-	nodeVar7 = ( ( 1.0 - nodeVarying1 ) * nodeVarying2 );
-	nodeVar11 = clamp( ( min( nodeVar6, nodeVar7 ) / nodeVarying3 ), 0.0, 1.0 );
+	nodeVar5 = ( nodeVarying1 * nodeVarying2 );
+	nodeVar6 = ( ( 1.0 - nodeVarying1 ) * nodeVarying2 );
+	nodeVar10 = clamp( ( min( nodeVar5, nodeVar6 ) / nodeVarying3 ), 0.0, 1.0 );
 
 	if ( ( nodeVarying3 > 0.0001 ) ) {
 
-		nodeVar12 = nodeVar11;
+		nodeVar11 = nodeVar10;
 
 	} else {
 
-		nodeVar12 = 1.0;
+		nodeVar11 = 1.0;
 
 	}
 
-	lineBrightness = ( ( ( mix( ( 0.5 + ( nodeVar12 * 0.5 ) ), 1.0, mix( nodeVarying4, nodeVarying5, step( nodeVar6, nodeVar7 ) ) ) * ( max( ( exp( ( pow( abs( nodeVarying0 ), pow( 2.0, ( ( nodeVarying6 * 6.0 ) - 2.0 ) ) ) * -4.6051702 ) ) - 0.01 ), 0.0 ) * 1.0101010101010102 ) ) * min( ( nodeVarying7 / 1.5 ), 1.0 ) ) * nodeVarying8 );
+	lineBrightness = ( ( ( ( mix( ( 0.5 + ( nodeVar11 * 0.5 ) ), 1.0, mix( nodeVarying4, nodeVarying5, step( nodeVar5, nodeVar6 ) ) ) * ( max( ( exp( ( pow( abs( nodeVarying0 ), pow( 2.0, ( ( nodeVarying6 * 6.0 ) - 2.0 ) ) ) * -4.6051702 ) ) - 0.01 ), 0.0 ) * 1.0101010101010102 ) ) * min( ( nodeVarying7 / 1.5 ), 1.0 ) ) * nodeVarying8 ) * 1.0 );
 
 	if ( ( lineBrightness < 0.0001 ) ) {
 
@@ -114,11 +113,11 @@ void main() {
 
 	DiffuseColor = vec4( nodeVarying9, nodeVarying10, lineBrightness, 1.0 );
 	DiffuseColor.w = ( DiffuseColor.w * nodeUniform7 );
-	nodeVar19 = max( vec4( DiffuseColor.xyz, DiffuseColor.w ), 0.0 );
-	Output = nodeVar19;
+	nodeVar18 = max( vec4( DiffuseColor.xyz, DiffuseColor.w ), 0.0 );
+	Output = nodeVar18;
 	gl_FragDepth = ( 1.0 - clamp( lineBrightness, 0.0, 1.0 ) );
 
 	// result
-	fragColor = nodeVar19;
+	fragColor = nodeVar18;
 
 }

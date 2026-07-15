@@ -110,8 +110,8 @@ describe('PointMaterial', () => {
         'float normalizedRadius = sanitizeNonNegative(aRadius * radiusScale'
       );
 
-      // OPTIMIZATION: Check for inversesqrt with ortho branching
-      expect(material.vertexShader).toContain('inversesqrt(dot(mvPosition.xyz, mvPosition.xyz))');
+      // View-space depth sizing (matches lines/gsplats), ortho branch = 1.0
+      expect(material.vertexShader).toContain('1.0 / max(-mvPosition.z, 1e-4)');
 
       // OPTIMIZATION: Check for pre-computed pointSizeFactor uniform
       expect(material.vertexShader).toContain('uniform float pointSizeFactor');
@@ -121,7 +121,7 @@ describe('PointMaterial', () => {
 
       // Check pointSize clamp + sprite expansion (replaces gl_PointSize).
       expect(material.vertexShader).toContain('uniform float maxPointSize');
-      expect(material.vertexShader).toContain('pointSize = max(1.0, min(pointSize, maxPointSize))');
+      expect(material.vertexShader).toContain('clamp(basePointSize, 1.5, maxPointSize)');
       expect(material.vertexShader).toContain(
         'vec2 offsetClip = aQuadCorner * (pointSize / uResolution) * projCenter.w'
       );
@@ -129,7 +129,7 @@ describe('PointMaterial', () => {
       // Sharpness compensation is GONE — the shifted-truncated super-Gaussian
       // truncates at the sprite edge, so the sprite size IS the visible extent.
       expect(material.vertexShader).not.toContain('sharpnessCompensation');
-      expect(material.vertexShader).toContain('float pointSize = basePointSize');
+      expect(material.vertexShader).toContain('vPointSize = basePointSize');
 
       // Per-instance attributes. aQuadCorner is per-vertex.
       expect(material.vertexShader).toContain('in vec2 aQuadCorner');
@@ -295,12 +295,13 @@ describe('PointMaterial', () => {
     it('should clamp point size to avoid undefined behavior', () => {
       const material = new PointMaterial();
 
-      // Point size clamps to [1, maxPointSize]; the sprite is then
-      // expanded in NDC via aQuadCorner.
-      expect(material.vertexShader).toContain('pointSize = max(1.0, min(pointSize, maxPointSize))');
+      // Point size clamps to [1.5, maxPointSize] (1.5px floor matches
+      // the line shader; sub-pixel energy preserved via sizeScale^2);
+      // the sprite is then expanded in NDC via aQuadCorner.
+      expect(material.vertexShader).toContain('clamp(basePointSize, 1.5, maxPointSize)');
 
       // Check comment about zero-radius filtering
-      expect(material.vertexShader).toContain('Zero-radius filtering happens in fragment shader');
+      expect(material.vertexShader).toContain('Zero-radius filtering happens in the fragment');
     });
 
     it('should discard zero-radius points in fragment shader', () => {
@@ -323,15 +324,16 @@ describe('PointMaterial', () => {
       expect(material.fragmentShader).toContain('discard');
     });
 
-    it('should use inversesqrt optimization for distance calculation', () => {
+    it('should size from view-space depth, not Euclidean distance', () => {
       const material = new PointMaterial();
 
-      // inversesqrt is a native GPU instruction (faster than length + divide)
-      expect(material.vertexShader).toContain('inversesqrt');
-      expect(material.vertexShader).toContain('dot(mvPosition.xyz, mvPosition.xyz)');
+      // View-z (matches lines/gsplats): edge-of-screen points render
+      // the same size as centered ones.
+      expect(material.vertexShader).toContain('max(-mvPosition.z, 1e-4)');
 
-      // Should NOT use length() for distance calculation
+      // Should NOT use Euclidean distance for sizing
       expect(material.vertexShader).not.toContain('length(mvPosition');
+      expect(material.vertexShader).not.toContain('inversesqrt(dot(mvPosition');
     });
   });
 

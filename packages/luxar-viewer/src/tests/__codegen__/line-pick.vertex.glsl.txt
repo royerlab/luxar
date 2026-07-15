@@ -33,8 +33,8 @@ precision highp samplerCubeShadow;
 // uniforms
 
 layout( std140 ) uniform render {
-	mat4 cameraViewMatrix;
 	mat4 cameraProjectionMatrix;
+	mat4 cameraViewMatrix;
 };
 
 layout( std140 ) uniform object {
@@ -44,7 +44,6 @@ layout( std140 ) uniform object {
 	float nodeUniform5;
 	float nodeUniform6;
 	float nodeUniform7;
-	float nodeUniform8;
 };
 
 
@@ -79,27 +78,21 @@ layout( location = 9 ) in float aEndSharpness;
 mat4 modelViewMatrix;
 vec4 nodeVar0;
 vec4 nodeVar1;
-vec4 nodeVar2;
-vec4 nodeVar3;
-vec2 nodeVar4;
-float nodeVar5;
+float nodeVar2;
+vec2 nodeVar3;
+float nodeVar4;
+float nodeVar7;
 float nodeVar8;
 float nodeVar9;
-float nodeVar10;
+float nodeVar12;
 float nodeVar13;
 float nodeVar14;
 float nodeVar15;
 float nodeVar16;
 float nodeVar17;
-float nodeVar18;
-vec4 clipPos;
-float nodeVar20;
-float nodeVar21;
-float nodeVar22;
-vec4 nodeVar23;
-vec4 nodeVar24;
-vec4 nodeVar25;
-vec2 nodeVar26;
+vec4 nodeVar19;
+vec2 nodeVar20;
+vec4 nodeVar21;
 
 // codes
 
@@ -113,19 +106,29 @@ void main() {
 	// code
 
 	modelViewMatrix = ( cameraViewMatrix * nodeUniform2 );
-	nodeVar0 = ( modelViewMatrix * vec4( aEndPos, 1.0 ) );
-	nodeVar1 = ( cameraProjectionMatrix * nodeVar0 );
-	nodeVar2 = ( modelViewMatrix * vec4( aStartPos, 1.0 ) );
-	nodeVar3 = ( cameraProjectionMatrix * nodeVar2 );
-	nodeVar4 = ( ( ( ( nodeVar1.xy / vec2( max( nodeVar1.w, 0.0001 ) ) ) - ( nodeVar3.xy / vec2( max( nodeVar3.w, 0.0001 ) ) ) ) * ( nodeUniform3 * vec2( 0.5 ) ) ) / vec2( length( ( ( ( nodeVar1.xy / vec2( max( nodeVar1.w, 0.0001 ) ) ) - ( nodeVar3.xy / vec2( max( nodeVar3.w, 0.0001 ) ) ) ) * ( nodeUniform3 * vec2( 0.5 ) ) ) ) ) );
+	nodeVar0 = ( cameraProjectionMatrix * ( modelViewMatrix * vec4( aEndPos, 1.0 ) ) );
+	nodeVar1 = ( cameraProjectionMatrix * ( modelViewMatrix * vec4( aStartPos, 1.0 ) ) );
+	nodeVar2 = length( ( ( ( nodeVar0.xy / vec2( max( nodeVar0.w, 0.0001 ) ) ) - ( nodeVar1.xy / vec2( max( nodeVar1.w, 0.0001 ) ) ) ) * ( nodeUniform3 * vec2( 0.5 ) ) ) );
+	nodeVar3 = ( ( ( ( nodeVar0.xy / vec2( max( nodeVar0.w, 0.0001 ) ) ) - ( nodeVar1.xy / vec2( max( nodeVar1.w, 0.0001 ) ) ) ) * ( nodeUniform3 * vec2( 0.5 ) ) ) / vec2( nodeVar2 ) );
 	nodeVarying0 = aQuadCorner.y;
-	nodeVar5 = ( ( aQuadCorner.x * 0.5 ) + 0.5 );
-	nodeVarying1 = nodeVar5;
+	nodeVar4 = ( ( aQuadCorner.x * 0.5 ) + 0.5 );
+	nodeVarying1 = nodeVar4;
 	nodeVarying2 = aSegmentLength;
 
 	if ( ( ( ( aStartWidth < 1e30 ) && ( aStartWidth > -1e30 ) ) && ( aStartWidth >= 0.0 ) ) ) {
 
-		nodeVar8 = aStartWidth;
+		nodeVar7 = aStartWidth;
+
+	} else {
+
+		nodeVar7 = 0.0;
+
+	}
+
+
+	if ( ( ( ( aEndWidth < 1e30 ) && ( aEndWidth > -1e30 ) ) && ( aEndWidth >= 0.0 ) ) ) {
+
+		nodeVar8 = aEndWidth;
 
 	} else {
 
@@ -133,25 +136,25 @@ void main() {
 
 	}
 
-
-	if ( ( ( ( aEndWidth < 1e30 ) && ( aEndWidth > -1e30 ) ) && ( aEndWidth >= 0.0 ) ) ) {
-
-		nodeVar9 = aEndWidth;
-
-	} else {
-
-		nodeVar9 = 0.0;
-
-	}
-
-	nodeVar10 = mix( nodeVar8, nodeVar9, nodeVar5 );
-	nodeVarying3 = nodeVar10;
+	nodeVar9 = mix( nodeVar7, nodeVar8, nodeVar4 );
+	nodeVarying3 = nodeVar9;
 	nodeVarying4 = aEndClipped;
 	nodeVarying5 = aStartClipped;
 
 	if ( ( ( ( aStartSharpness < 1e30 ) && ( aStartSharpness > -1e30 ) ) && ( aStartSharpness >= 0.0 ) ) ) {
 
-		nodeVar13 = aStartSharpness;
+		nodeVar12 = aStartSharpness;
+
+	} else {
+
+		nodeVar12 = 0.5;
+
+	}
+
+
+	if ( ( ( ( aEndSharpness < 1e30 ) && ( aEndSharpness > -1e30 ) ) && ( aEndSharpness >= 0.0 ) ) ) {
+
+		nodeVar13 = aEndSharpness;
 
 	} else {
 
@@ -159,65 +162,41 @@ void main() {
 
 	}
 
+	nodeVarying6 = mix( clamp( nodeVar12, 0.0, 1.0 ), clamp( nodeVar13, 0.0, 1.0 ), nodeVar4 );
+	nodeVar14 = ( nodeVar9 * nodeUniform4 );
+	nodeVarying7 = nodeVar14;
+	nodeVar16 = max( nodeUniform5, ( 1.5 + 1.0 ) );
 
-	if ( ( ( ( aEndSharpness < 1e30 ) && ( aEndSharpness > -1e30 ) ) && ( aEndSharpness >= 0.0 ) ) ) {
+	if ( ( nodeVar14 <= nodeVar16 ) ) {
 
-		nodeVar14 = aEndSharpness;
-
-	} else {
-
-		nodeVar14 = 0.5;
-
-	}
-
-	nodeVarying6 = mix( clamp( nodeVar13, 0.0, 1.0 ), clamp( nodeVar14, 0.0, 1.0 ), nodeVar5 );
-	nodeVar15 = ( nodeVar10 * nodeUniform4 );
-	nodeVarying7 = nodeVar15;
-	nodeVar17 = max( nodeUniform5, ( 1.5 + 1.0 ) );
-
-	if ( ( nodeVar15 <= nodeVar17 ) ) {
-
-		nodeVar16 = 1.0;
+		nodeVar15 = 1.0;
 
 	} else {
 
-		nodeVar18 = ( nodeVar17 / max( nodeVar15, 0.0001 ) );
-		nodeVar16 = nodeVar18;
+		nodeVar17 = ( nodeVar16 / max( nodeVar14, 0.0001 ) );
+		nodeVar15 = nodeVar17;
 
 	}
 
-	nodeVarying8 = nodeVar16;
+	nodeVarying8 = nodeVar15;
 	nodeVarying9 = nodeUniform6;
 	nodeVarying10 = float( uint( gl_InstanceID ) );
-	clipPos = vec4( 2.0, 2.0, 2.0, 1.0 );
-	nodeVar20 = ( - nodeVar2.z );
-	nodeVar21 = max( nodeUniform8, 0.0001 );
-	nodeVar22 = ( - nodeVar0.z );
+	nodeVar19 = mix( nodeVar1, nodeVar0, nodeVar4 );
 
-	if ( (!( ( ( nodeVar20 < nodeVar21 ) && ( nodeVar22 < nodeVar21 ) ) || ( ( ( nodeVar20 < ( nodeVar21 * 2.0 ) ) && ( nodeVar22 < ( nodeVar21 * 2.0 ) ) ) && ( nodeVar15 > ( nodeVar17 * 2.0 ) ) ) )) ) {
+	if ( ( nodeVar2 > 0.0001 ) ) {
 
-		nodeVar23 = ( cameraProjectionMatrix * nodeVar2 );
-		nodeVar24 = ( cameraProjectionMatrix * nodeVar0 );
-		nodeVar25 = mix( nodeVar23, nodeVar24, nodeVar5 );
+		nodeVar20 = nodeVar3;
 
-		if ( ( length( ( ( ( nodeVar24.xy / vec2( max( nodeVar24.w, 0.0001 ) ) ) - ( nodeVar23.xy / vec2( max( nodeVar23.w, 0.0001 ) ) ) ) * ( nodeUniform3 * vec2( 0.5 ) ) ) ) > 0.0001 ) ) {
+	} else {
 
-			nodeVar26 = nodeVar4;
-
-		} else {
-
-			nodeVar26 = vec2( 1.0, 0.0 );
-
-		}
-
-		clipPos = vec4( ( nodeVar25.xy + ( ( ( ( ( vec2( ( - nodeVar26.y ), nodeVar26.x ) * vec2( aQuadCorner.y ) ) * vec2( clamp( nodeVar15, 1.5, nodeVar17 ) ) ) / nodeUniform3 ) * vec2( 2.0 ) ) * vec2( nodeVar25.w ) ) ), nodeVar25.z, nodeVar25.w );
-		
+		nodeVar20 = vec2( 1.0, 0.0 );
 
 	}
 
+	nodeVar21 = vec4( ( nodeVar19.xy + ( ( ( ( ( vec2( ( - nodeVar20.y ), nodeVar20.x ) * vec2( aQuadCorner.y ) ) * vec2( clamp( nodeVar14, 1.5, nodeVar16 ) ) ) / nodeUniform3 ) * vec2( 2.0 ) ) * vec2( nodeVar19.w ) ) ), nodeVar19.z, nodeVar19.w );
 
 	// result
-	gl_Position = clipPos;
+	gl_Position = nodeVar21;
 
 	gl_PointSize = 1.0;
 

@@ -262,15 +262,17 @@ describe('GSplatMaterial', () => {
     it('should have near-plane guard with smooth fade and screen-coverage cull', () => {
       const material = new GSplatMaterial();
 
-      // Near-cull uses smoothstep fade (not hard discard) with uNearCull uniform
-      expect(material.vertexShader).toContain('smoothstep(uNearCull');
+      // Near-cull uses the shared perspectiveNearFade helper (smooth
+      // fade, not hard discard) with the uNearCull uniform
+      expect(material.vertexShader).toContain('perspectiveNearFade(uIsOrtho, centerCam.z, max(uNearCull, 1e-4))');
       // Screen-coverage fade uses projected extent and uMaxExtentFactor
       expect(material.vertexShader).toContain('uMaxExtentFactor');
       expect(material.vertexShader).toContain('projectedExtent');
       // Hard cull only when fully faded
       expect(material.vertexShader).toContain('gl_Position = vec4(0.0, 0.0, -2.0, 1.0)');
-      // Perspective-only guard (ortho has no 1/z singularity)
-      expect(material.vertexShader).toContain('if (uIsOrtho == 0)');
+      // Ortho passes through the helper (fade = 1; NDC clipping is the
+      // cull authority) — the helper body carries the isOrtho branch.
+      expect(material.vertexShader).toContain('if (isOrtho == 1) return 1.0;');
       // nearFade applied to amplitude
       expect(material.vertexShader).toContain('nearFade');
     });

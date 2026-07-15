@@ -18,7 +18,7 @@
  *     vertexColors=true auto-injected `color` attribute)
  *   - aScalar    (float, USE_COLORMAP only)
  */
-import { GLSL_SANITIZE_FUNCTIONS } from '../_shared/glsl-lib';
+import { GLSL_SANITIZE_FUNCTIONS, GLSL_NEAR_FADE_FUNCTIONS } from '../_shared/glsl-lib';
 import type { ShaderSource } from '../_shared/shader-source';
 import { pointWebGPUFactory } from './shader-tsl';
 
@@ -26,6 +26,7 @@ export const POINT_VERTEX_SHADER = /* glsl */ `
     precision highp float;
 
     ${GLSL_SANITIZE_FUNCTIONS}
+    ${GLSL_NEAR_FADE_FUNCTIONS}
 
     // Per-vertex (4 corners): -1..1 normalised quad coordinates.
     in vec2 aQuadCorner;
@@ -49,11 +50,14 @@ export const POINT_VERTEX_SHADER = /* glsl */ `
     uniform float radiusScale;
     uniform int uIsOrtho;          // 0 = perspective, 1 = orthographic
     uniform vec2 uResolution;      // Physical framebuffer size in pixels
+    uniform float uNearCull;       // Near-fade start distance (world units)
 
     out mediump vec3 vColor;
     out mediump float vBeta;       // Super-Gaussian exponent beta (per-instance)
     out highp float vRadius;       // Pass radius to fragment for zero-check (needs precision)
     out mediump vec2 vSpriteCoord; // [0, 1] sprite UV, replaces gl_PointCoord
+    out mediump float vPointSize;  // RAW projected size (pre-clamp) for sub-pixel compensation
+    out mediump float vNearFade;   // Perspective near fade (1.0 under ortho)
 
     void main() {
       // Pass vertex color — either from attribute or colormap LUT.
@@ -86,33 +90,43 @@ export const POINT_VERTEX_SHADER = /* glsl */ `
       // Transform per-instance centre from world space to view + clip space.
       vec4 mvPosition = modelViewMatrix * vec4(aCenter, 1.0);
 
-      // Reject points behind the camera (perspective only; camera looks down -Z,
-      // so mvPosition.z >= 0 is behind the near plane). The quad expansion below
-      // multiplies by projCenter.w, which is <= 0 for such points and would
-      // produce a degenerate/flipped sprite. Mirrors the gsplat shader's guard.
-      // Ortho keeps projCenter.w == 1, so it is excluded.
-      if (uIsOrtho == 0 && mvPosition.z >= 0.0) {
+      // Unified near handling (matches line + gsplat shaders): behind-
+      // camera vertices fade to 0 (the quad expansion multiplies by
+      // projCenter.w, which is <= 0 there and would flip the sprite),
+      // near-plane approach fades smoothly across [nearCull, 2*nearCull]
+      // instead of drawing a full-brightness maxPointSize sprite until
+      // z crosses 0. Ortho: fade = 1, NDC clipping is the authority.
+      vNearFade = perspectiveNearFade(uIsOrtho, mvPosition.z, max(uNearCull, 1e-4));
+      if (vNearFade < 0.01) {
         gl_Position = vec4(0.0, 0.0, -2.0, 1.0); // off-screen → no fragments
         return;
       }
 
       vec4 projCenter = projectionMatrix * mvPosition;
 
-      // OPTIMIZED world-space point sizing:
-      // - inversesqrt is a native GPU instruction (faster than sqrt + divide)
-      // - pointSizeFactor pre-computed in JS: 2.0 * resolution.y / tanHalfFov
-      float invDistance = (uIsOrtho == 1) ? 1.0 : inversesqrt(dot(mvPosition.xyz, mvPosition.xyz));
+      // World-space point sizing from VIEW-SPACE DEPTH (-mvPosition.z),
+      // matching the line + gsplat shaders: screen-space size scales
+      // with view-z, not Euclidean distance from the camera position,
+      // so identical points render the same size across the field of
+      // view (Euclidean shrank edge-of-screen points by cos(theta)).
+      // The 1e-4 floor mirrors the line shader's nearCull floor — the
+      // behind-camera reject above only guarantees z < 0, not z << 0.
+      // pointSizeFactor pre-computed in JS: 2.0 * resolution.y / tanHalfFov
+      float invDistance = (uIsOrtho == 1) ? 1.0 : 1.0 / max(-mvPosition.z, 1e-4);
       float basePointSize = normalizedRadius * pointSizeFactor * invDistance;
 
       // The shifted-truncated super-Gaussian falloff (fragment shader)
       // truncates to zero exactly at the sprite edge (rho = 1), so the
       // sprite size already IS the visible extent — no sharpness-dependent
       // size compensation is needed (the old polynomial kernel required it).
-      float pointSize = basePointSize;
-
-      // Clamp: minimum 1.0 (avoids degenerate quads) and maxPointSize cap.
-      // Zero-radius filtering happens in fragment shader.
-      pointSize = max(1.0, min(pointSize, maxPointSize));
+      //
+      // Minimum sprite size 1.5px, matching the LINE shader: quads
+      // thinner than ~1.5px cause rasterization gaps (flicker).
+      // Sub-pixel points keep their visual weight via the fragment's
+      // sizeScale^2 energy compensation (vPointSize carries the raw,
+      // pre-clamp size). Zero-radius filtering happens in the fragment.
+      vPointSize = basePointSize;
+      float pointSize = clamp(basePointSize, 1.5, maxPointSize);
 
       // Expand the unit quad to a screen-space sprite. aQuadCorner is
       // in [-1, 1] per axis, so aQuadCorner * (pointSize / uResolution)
@@ -147,6 +161,8 @@ export const POINT_FRAGMENT_SHADER = /* glsl */ `
     in mediump float vBeta; // Super-Gaussian exponent beta (per-instance)
     in highp float vRadius; // Radius from vertex shader (needs precision for zero-check)
     in mediump vec2 vSpriteCoord; // [0,1] sprite UV (replaces gl_PointCoord)
+    in mediump float vPointSize; // Raw pre-clamp sprite size (sub-pixel compensation)
+    in mediump float vNearFade; // Perspective near fade (1.0 under ortho)
 
     out vec4 fragColor;
 
@@ -204,8 +220,14 @@ export const POINT_FRAGMENT_SHADER = /* glsl */ `
       mediump vec3 finalColor = pow(adjusted, vec3(invGamma));
       #endif
 
+      // Sub-pixel intensity compensation (mirrors the line shader's
+      // widthScale, SQUARED because both sprite dimensions clamp:
+      // energy ∝ area ∝ size²). Points at or above the 1.5px floor
+      // are unaffected (sizeScale = 1).
+      mediump float sizeScale = min(vPointSize / 1.5, 1.0);
+
       // Calculate alpha (intensity) for additive blending
-      mediump float alpha = falloff * opacity;
+      mediump float alpha = falloff * opacity * sizeScale * sizeScale * vNearFade;
 
       // max-mode RGB premultiplication.
       //

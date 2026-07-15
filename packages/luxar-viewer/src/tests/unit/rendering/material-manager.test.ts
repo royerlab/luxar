@@ -729,9 +729,10 @@ describe('MaterialManager', () => {
         offset: 0.0,
       }) as PointMaterial;
 
-      // Verify optimized world-space sizing formula using inversesqrt and pre-computed pointSizeFactor
+      // Verify world-space sizing from VIEW-SPACE DEPTH (matches the
+      // line + gsplat shaders) and the pre-computed pointSizeFactor.
       expect(material.vertexShader).toContain('normalizedRadius * pointSizeFactor * invDistance');
-      expect(material.vertexShader).toContain('inversesqrt(dot(mvPosition.xyz, mvPosition.xyz))');
+      expect(material.vertexShader).toContain('1.0 / max(-mvPosition.z, 1e-4)');
     });
 
     it('should generate shaders with the sharpness -> beta mapping (no size compensation)', () => {
