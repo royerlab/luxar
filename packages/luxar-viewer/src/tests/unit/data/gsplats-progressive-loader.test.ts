@@ -366,6 +366,10 @@ describe('GSplatsProgressiveLoader', () => {
 
       await l.loadGSplats(viewA); // empty LOD 0 → terminal 1-level ladder
       expect(l.hasMoreLODs).toBe(false);
+      // The DISCOVERY pass itself must not prefetch the (empty) next LOD —
+      // prefetch goes through prefetchChunks, a separate surface from
+      // updateViewWithResidency, so pin it explicitly.
+      expect(b.prefetchChunks).not.toHaveBeenCalled();
       await l.loadGSplats(viewB); // departure: stores viewA's ladder
 
       a.updateViewWithResidency.mockClear();
@@ -377,6 +381,7 @@ describe('GSplatsProgressiveLoader', () => {
       // …and the restored empty prefix is TERMINAL: no higher-LOD fetch,
       // and refinement stays off.
       expect(b.updateViewWithResidency).not.toHaveBeenCalled();
+      expect(b.prefetchChunks).not.toHaveBeenCalled();
       expect(l.hasMoreLODs).toBe(false);
     });
   });

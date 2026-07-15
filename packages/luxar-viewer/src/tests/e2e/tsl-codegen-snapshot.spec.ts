@@ -6,7 +6,8 @@
  * brightness computations across `colorNode` and `depthNode`,
  * unnecessary varyings, etc.). This spec captures the actual shader
  * code emitted by `WebGPURenderer({ forceWebGL: true })` for each
- * line-shader variant and pins it to a checked-in snapshot file under
+ * pinned shader variant (points, lines, gsplats + their pick and
+ * fast-path builds) and pins it to a checked-in snapshot file under
  * `src/tests/__codegen__/`.
  *
  * Two purposes:
@@ -136,7 +137,9 @@ const SHADERS = [
 ] as const;
 
 test.describe('TSL → generated-shader snapshots', () => {
-  test('line + line-pick: generated GLSL matches checked-in snapshot', async ({ page }) => {
+  test('all geometry + pick variants: generated GLSL matches checked-in snapshots', async ({
+    page,
+  }) => {
     await bootHarness(page);
 
     for (const shader of SHADERS) {
