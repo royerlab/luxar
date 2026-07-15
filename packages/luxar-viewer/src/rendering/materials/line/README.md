@@ -37,7 +37,9 @@ shader has no `tan()` or projection-mode divide), clamps to
 `[1.5 px, uMaxLinePixelWidth]` with an intensity-fading `vWidthFade`, then
 offsets `clipPos.xy` by `perpendicular × aQuadCorner.y × clampedPixelWidth`.
 The fragment stage shades
-`capFactor × perpFalloff × edgeAA × widthScale × vWidthFade × vNearFade`, where the
+`capFactor × perpFalloff × edgeAA × widthScale × vWidthFade × nearFade` (the near
+fade is computed PER-FRAGMENT from the interpolated view depth `vViewZ` — a
+fade varying would mis-interpolate on long segments), where the
 perpendicular cross-section `perpFalloff(p) = max(exp(−K·p^β) − C, 0)/(1 − C)`
 is a **shifted-truncated super-Gaussian** (`p = |vPerpNorm| ∈ [0, 1]` from the
 centerline, `K = ln(100) ≈ 4.605`, `C = exp(−K) = 0.01`, the 1% iso-contour
@@ -47,7 +49,9 @@ Gaussian, the default — identical to the GSplat kernel's shape), `s = 1 → β
 (hard edge), `s = 0 → β = 0.25` (cusp). It is C⁰-continuous at the line edge
 (`perpFalloff(0) = 1`, `perpFalloff(1) = 0`, no hard ring). The stage then
 applies the per-node GOG (`color × uIntensity + uOffset`, clamped) and the
-`pow(·, uInvGamma)` gamma curve, and writes `vec4(rgb, intensity × uOpacity)`.
+`pow(·, uInvGamma)` gamma curve — EXCEPT under `USE_COLORMAP`, where GOG and
+the post-LUT gamma are bypassed (gamma + display range shape the scalar
+pre-LUT in the vertex stage) — and writes `vec4(rgb, intensity × uOpacity)`.
 The `capFactor` joint trick (next section) is **independent** of the
 perpendicular falloff — only `perpFalloff` changed when the kernel was swapped
 to the super-Gaussian.

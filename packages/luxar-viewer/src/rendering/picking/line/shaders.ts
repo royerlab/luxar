@@ -19,7 +19,10 @@
  */
 
 import type { ShaderSource } from '../../materials/_shared/shader-source';
-import { GLSL_NEAR_FADE_FUNCTIONS } from '../../materials/_shared/glsl-lib';
+import {
+  GLSL_NEAR_FADE_FUNCTIONS,
+  GLSL_SANITIZE_FUNCTIONS,
+} from '../../materials/_shared/glsl-lib';
 import { linePickWebGPUFactory, buildLinePickTSLNodesFromUniforms } from './pick.tsl';
 
 /**
@@ -31,6 +34,7 @@ import { linePickWebGPUFactory, buildLinePickTSLNodesFromUniforms } from './pick
  */
 export const LINE_PICK_VERTEX_SHADER = /* glsl */ `
     precision highp float;
+    ${GLSL_SANITIZE_FUNCTIONS}
     ${GLSL_NEAR_FADE_FUNCTIONS}
 
     in vec2 aQuadCorner;
@@ -82,10 +86,10 @@ export const LINE_PICK_VERTEX_SHADER = /* glsl */ `
       // in the fragment); a valid s=0 must NOT be rejected, so clamp a
       // non-negative-sanitised value into [0, 1] with the 0.5 default.
       // Mirrors the visual shader (shader-glsl.ts).
-      float startW = (isnan(aStartWidth) || isinf(aStartWidth) || aStartWidth < 0.0) ? 0.0 : aStartWidth;
-      float endW = (isnan(aEndWidth) || isinf(aEndWidth) || aEndWidth < 0.0) ? 0.0 : aEndWidth;
-      float startS = clamp((isnan(aStartSharpness) || isinf(aStartSharpness) || aStartSharpness < 0.0) ? 0.5 : aStartSharpness, 0.0, 1.0);
-      float endS = clamp((isnan(aEndSharpness) || isinf(aEndSharpness) || aEndSharpness < 0.0) ? 0.5 : aEndSharpness, 0.0, 1.0);
+      float startW = sanitizeNonNegative(aStartWidth, 0.0);
+      float endW = sanitizeNonNegative(aEndWidth, 0.0);
+      float startS = clamp(sanitizeNonNegative(aStartSharpness, 0.5), 0.0, 1.0);
+      float endS = clamp(sanitizeNonNegative(aEndSharpness, 0.5), 0.0, 1.0);
 
       float width = mix(startW, endW, t);
       vSharpness = mix(startS, endS, t);

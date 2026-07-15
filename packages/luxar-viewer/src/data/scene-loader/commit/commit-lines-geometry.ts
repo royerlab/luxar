@@ -69,9 +69,18 @@ export function commitLinesGeometry(
       // rebuild remains in updateLinesGeometry), so the acquire flag is
       // the complete rebuild signal.
       const acquireRebuilt = gpuBufferPool.didLastAcquireRebuildAttributes();
-      gpuBufferPool.updateLinesGeometry(geometry, processed, processed.segmentCount);
-      mesh.geometry = geometry;
-      if (acquireRebuilt) invalidateRenderObjectFor(mesh);
+      try {
+        gpuBufferPool.updateLinesGeometry(geometry, processed, processed.segmentCount);
+      } finally {
+        // Ownership handoff must happen even if the update throws: the
+        // acquire may have RELEASED the mesh's current geometry into the
+        // free pool (grow / scalar-spec-mismatch path), so bailing out
+        // before this assignment would leave the mesh rendering a
+        // free-pooled geometry that the evictor can dispose — or another
+        // node adopt — mid-render. See commit-points-geometry.ts.
+        mesh.geometry = geometry;
+        if (acquireRebuilt) invalidateRenderObjectFor(mesh);
+      }
     } else {
       // Non-pool path: a size/spec-set change rebinds a fresh
       // InstancedInterleavedBuffer — evict Three's cached RenderObject

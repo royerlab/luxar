@@ -199,16 +199,22 @@ Advanced shader material for points rendering with custom vertex and fragment sh
 
 **Vertex Shader Features:**
 
-- World-space sizing with correct angular calculation
-- Sharpness compensation using mathematical model
+- World-space sizing from view-space depth (matches lines/gsplats — no
+  off-axis shrink)
+- 1.5px sprite floor (anti-rasterization-gap, matches lines); no
+  sharpness size compensation — the shifted-truncated super-Gaussian
+  truncates exactly at the sprite edge
 - FOV-independent sizing
 - Automatic viewport adaptation
+- Unified `perspectiveNearFade` near handling (shared with lines/gsplats)
 
 **Fragment Shader Features:**
 
-- Power-based falloff for smooth edges
+- Shifted-truncated super-Gaussian falloff `max(exp(-K·ρ^β) - C, 0)/(1 - C)`
+  with `β = 2^(6·sharpness - 2)` (C⁰-continuous at the sprite edge)
+- Sub-pixel energy compensation: alpha × `sizeScale²` for sprites below
+  the 1.5px floor (energy ∝ area)
 - Per-node GOG (Gain-Offset-Gamma) color adjustment: `color * intensity + offset; clip; pow(color, 1/gamma)`
-- Per-point sharpness control
 - Optimized with pre-computed uniforms
 
 ### 3. Line Material
@@ -235,20 +241,23 @@ Specialized shader material for volumetric Gaussian splatting with nD slicing su
 
 - **Oriented Anisotropic Gaussian**: Full 3D covariance via Cholesky factors
 - **Perspective Projection**: Projects 3D covariance to 2D screen space using Jacobian
-- **Standard Gaussian Falloff**: `exp(-½ · r²)` for physically correct rendering
+- **Shifted-Truncated Gaussian Falloff**: `max(exp(-½·r²) - C, 0)/(1 - C)` (C⁰-continuous at the truncation radius)
 - **Sum/Max Projection Modes**: Ray integration for additive, peak value for max blending
-- **Two-Stage Near-Plane Culling**: Fixed threshold (1 cycle) + adaptive threshold (6 cycles) for large splats
+- **Unified Near Fade**: shared `perspectiveNearFade` (smoothstep across `[uNearCull, 2·uNearCull]`, behind-camera → 0, ortho → 1) + an independent screen-coverage fade
 - **GPU Optimizations**: Flat interpolation, reciprocal precomputation, early discard at 3σ
 
 **Culling Strategy:**
 
-- **Behind-camera rejection**: Prevents rendering splats behind the viewer
-- **Near-plane culling**: Two-stage approach prevents overdraw from splats very close to camera
-  - Stage 1: Fixed threshold (z < 0.1) culls most splats instantly
-  - Stage 2: Adaptive threshold (z < sigma × truncate) only for large splats (sigma > 0.1)
-  - Prevents white-screen artifacts when navigating inside datasets
+- **Unified near handling** (`perspectiveNearFade`, shared across all
+  three geometry types, visual + pick): perspective = 0 behind the
+  camera, smoothstep fade across `[uNearCull, 2·uNearCull]`, vertex
+  rejected below 0.01 and the surviving fade multiplied into amplitude;
+  ortho = fade 1 with NDC clipping as the sole cull authority.
+  Prevents white-screen artifacts when navigating inside datasets
+- **Screen-coverage fade**: unconditional amplitude fade toward the
+  extent clamp (no hard-edged clamped rectangles, any sigma scale)
 
-**Architecture Note:** GSplats use `THREE.Mesh` with `InstancedBufferGeometry` for instanced quad rendering, similar to line material approach.
+**Architecture Note:** GSplats use `THREE.Mesh` with `InstancedBufferGeometry` for instanced quad rendering, similar to the line material approach — but since the depth-sorting Phase 1 migration their per-splat data does NOT live in vertex attributes: it lives in an RGBA32F **splat texture** (4 texels/splat; layout authority in `splat-texture-layout.ts`) fetched in the vertex stage via `texelFetch`, indexed by the sole per-instance attribute `aSortedIndex` (Uint32, identity today). This decouples draw order from storage order so the sort worker (Phase 2+) can permute draw order without rewriting splat data. The texture shares its geometry's lifetime (`attachSplatStorage` registers a geometry-`dispose` listener) and costs ≈68 B/splat (+31% vs the interleaved era; see `gpu-byte-budget.ts`). GSplat materials are therefore **per node** (each binds its node's `uSplatTex`) — the material-manager LRU applies to Points/Lines only.
 
 ### 5. Material Manager
 

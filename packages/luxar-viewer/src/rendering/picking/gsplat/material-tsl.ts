@@ -17,18 +17,20 @@
  */
 
 import * as THREE from 'three';
-import { uniform } from 'three/tsl';
+import { texture, uniform } from 'three/tsl';
 import { NodeMaterial } from 'three/webgpu';
 import { gsplatPickWebGPUFactory, type GSplatPickTSLNodes } from './pick.tsl';
 import type { CameraAwareMaterial } from '../../materials/_shared/camera-aware-material';
 import { computeFocalLength } from '../../materials/_shared/camera-uniforms';
 import { proxyIUniform, type TSLNode } from '../../materials/_shared/tsl-helpers';
+import { getPlaceholderSplatTexture } from '../../splat-texture-layout';
 import type { GSplatPickingMaterialConfig } from './material';
 
 export class GSplatPickingTSLMaterial extends NodeMaterial implements CameraAwareMaterial {
   uniforms: Record<string, THREE.IUniform>;
 
   private tslNodes: {
+    uSplatTex: TSLNode;
     uResolution: TSLNode;
     uFx: TSLNode;
     uFy: TSLNode;
@@ -51,6 +53,9 @@ export class GSplatPickingTSLMaterial extends NodeMaterial implements CameraAwar
     const invOneMinusC = 1.0 / (1.0 - shiftC);
 
     this.tslNodes = {
+      // Splat data texture node (placeholder until the commit sync
+      // rebinds the pool texture; identity change -> factory re-run).
+      uSplatTex: texture(getPlaceholderSplatTexture()),
       uResolution: uniform(new THREE.Vector2(1, 1)),
       uFx: uniform(500),
       uFy: uniform(500),
@@ -65,6 +70,7 @@ export class GSplatPickingTSLMaterial extends NodeMaterial implements CameraAwar
     };
 
     this.uniforms = {
+      uSplatTex: proxyIUniform(this.tslNodes.uSplatTex),
       uResolution: proxyIUniform(this.tslNodes.uResolution),
       uFx: proxyIUniform(this.tslNodes.uFx),
       uFy: proxyIUniform(this.tslNodes.uFy),
@@ -82,6 +88,21 @@ export class GSplatPickingTSLMaterial extends NodeMaterial implements CameraAwar
     this.side = THREE.DoubleSide;
 
     gsplatPickWebGPUFactory(this.tslNodes as GSplatPickTSLNodes, this);
+  }
+
+  /**
+   * Rebind the splat data texture. Same node-identity lifecycle as
+   * the visual TSL wrapper: fresh texture node + factory re-run on an
+   * identity change, no-op otherwise.
+   */
+  updateSplatTexture(tex: THREE.DataTexture | null): void {
+    const current = (this.uniforms.uSplatTex?.value as THREE.Texture | null | undefined) ?? null;
+    const next = tex ?? getPlaceholderSplatTexture();
+    if (current === next) return;
+    this.tslNodes.uSplatTex = texture(next);
+    this.uniforms.uSplatTex = proxyIUniform(this.tslNodes.uSplatTex);
+    gsplatPickWebGPUFactory(this.tslNodes as GSplatPickTSLNodes, this);
+    this.needsUpdate = true;
   }
 
   updateCameraParams(

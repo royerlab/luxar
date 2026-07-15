@@ -281,6 +281,58 @@ describe('LinesProgressiveLoader', () => {
     });
   });
 
+  describe('S-cache restored EMPTY prefix (terminal re-derivation)', () => {
+    const viewA: LinesViewState = {
+      displayDims: [0, 1, 2],
+      slicePosition: [0, 0, 0, 0],
+      tolerance: [0, 0, 0, 0],
+    };
+    const viewB: LinesViewState = {
+      displayDims: [0, 1, 2],
+      slicePosition: [0, 0, 0, 1],
+      tolerance: [0, 0, 0, 0],
+    };
+
+    it('does not re-stream higher LODs when a restored prefix has an empty LOD 0', async () => {
+      // Scrub away from an empty slice (the departure store snapshots the
+      // [empty-LOD0] 1-level ladder), then scrub back: the restore path
+      // must RE-DERIVE the terminal flag from the restored prefix — the
+      // level===0 empty check only fires for freshly LOADED levels, so
+      // without re-derivation the loop resumes at startLevel=1 and
+      // re-fetches every higher (equally empty) LOD on every revisit.
+      const sc = new SliceCache({ maxSize: 10 * 1024 * 1024 });
+      const a = makeSubLoader(makeLodData(0, 0));
+      const b = makeSubLoader(makeLodData(10, 5, 3, { color: 'uint8' }));
+      const l = new LinesProgressiveLoader(
+        [a, b] as unknown as LinesSpatialIndexLoader[],
+        2,
+        '/l-empty',
+        undefined,
+        sc
+      );
+
+      await l.loadLines(viewA); // empty LOD 0 → terminal 1-level ladder
+      expect(l.hasMoreLODs).toBe(false);
+      // The DISCOVERY pass itself must not prefetch the (empty) next LOD —
+      // prefetch goes through prefetchChunks, a separate surface from
+      // updateViewWithResidency, so pin it explicitly.
+      expect(b.prefetchChunks).not.toHaveBeenCalled();
+      await l.loadLines(viewB); // departure: stores viewA's ladder
+
+      a.updateViewWithResidency.mockClear();
+      b.updateViewWithResidency.mockClear();
+      await l.loadLines(viewA); // revisit the empty slice
+
+      // Restored from the S-cache (LOD 0 not re-fetched)…
+      expect(a.updateViewWithResidency).not.toHaveBeenCalled();
+      // …and the restored empty prefix is TERMINAL: no higher-LOD fetch,
+      // and refinement stays off.
+      expect(b.updateViewWithResidency).not.toHaveBeenCalled();
+      expect(b.prefetchChunks).not.toHaveBeenCalled();
+      expect(l.hasMoreLODs).toBe(false);
+    });
+  });
+
   describe('cache-hit timing short-circuit', () => {
     it(`stops loading further LODs when one takes > ${CACHE_HIT_THRESHOLD_MS}ms`, async () => {
       let now = 0;

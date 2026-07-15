@@ -14,6 +14,7 @@
 
 import * as THREE from 'three';
 import { updateInstancedGSplatsMesh } from '../../../rendering/gsplat-geometry';
+import { syncGSplatMaterialWithGeometry } from '../../../rendering/material-sync-helpers';
 import type { GSplatsUserData } from '../../../types/gsplats';
 import { log, Modules } from '../../../utils/log';
 import type { UpdateSession } from '../../../profiling/update-profiler';
@@ -75,30 +76,45 @@ export function commitGSplatsGeometry(
       const geometry = gpuBufferPool.acquireGSplatsGeometry(staged.path, processed.splatCount);
       const attributesRebuilt = gpuBufferPool.didLastAcquireRebuildAttributes();
       const truncationRadius = readTruncate(mesh);
-      gpuBufferPool.updateGSplatsGeometry(
-        geometry,
-        {
-          centers3D: processed.centers3D,
-          amplitudes: processed.amplitudes,
-          cholesky01,
-          cholesky23,
-          cholesky45,
-          colors: processed.colors,
-          splatCount: processed.splatCount,
-        },
-        processed.splatCount,
-        truncationRadius
-      );
-      mesh.geometry = geometry;
-      // Pool rebuilt the geometry's InstancedInterleavedBuffer; evict
-      // Three's cached RenderObject so its `vertexBuffers` set is
-      // rebuilt against the new buffer next draw.
-      if (attributesRebuilt) invalidateRenderObjectFor(mesh);
+      try {
+        gpuBufferPool.updateGSplatsGeometry(
+          geometry,
+          {
+            centers3D: processed.centers3D,
+            amplitudes: processed.amplitudes,
+            cholesky01,
+            cholesky23,
+            cholesky45,
+            colors: processed.colors,
+            splatCount: processed.splatCount,
+          },
+          processed.splatCount,
+          truncationRadius
+        );
+      } finally {
+        // Ownership handoff must happen even if the update throws: the
+        // acquire may have RELEASED the mesh's current geometry into the
+        // free pool (grow path), so bailing out before this assignment
+        // would leave the mesh rendering a free-pooled geometry that the
+        // evictor can dispose — or another node adopt — mid-render. See
+        // commit-points-geometry.ts.
+        mesh.geometry = geometry;
+        // Rebind uSplatTex (render + pick materials) to the acquired
+        // entry's texture — the acquire may have handed the node a
+        // different geometry+texture pair. In the finally for the same
+        // reason as the handoff: the mesh must never render a geometry
+        // whose texture its material doesn't reference.
+        syncGSplatMaterialWithGeometry(mesh);
+        // Pool rebuilt the geometry's splat storage; evict Three's
+        // cached RenderObject so its `vertexBuffers` set is rebuilt
+        // against the new buffers next draw.
+        if (attributesRebuilt) invalidateRenderObjectFor(mesh);
+      }
     } else {
-      // Non-pool path: a size change rebinds a fresh
-      // InstancedInterleavedBuffer — evict Three's cached RenderObject
-      // exactly like the pool branch above (stale `vertexBuffers` on
-      // the WebGPU backend otherwise).
+      // Non-pool path: a size change swaps in a fresh geometry+texture
+      // pair — evict Three's cached RenderObject exactly like the pool
+      // branch above (stale `vertexBuffers` on the WebGPU backend
+      // otherwise) and rebind the materials' splat texture.
       const rebuilt = updateInstancedGSplatsMesh(mesh, {
         centers: processed.centers3D,
         cholesky01,
@@ -108,6 +124,7 @@ export function commitGSplatsGeometry(
         colors: processed.colors,
         splatCount: processed.splatCount,
       });
+      syncGSplatMaterialWithGeometry(mesh);
       if (rebuilt) invalidateRenderObjectFor(mesh);
     }
 

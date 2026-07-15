@@ -52,6 +52,7 @@ export const POINT_PICK_VERTEX_SHADER = /* glsl */ `
     out highp float vRadius;
     out mediump float vBeta;
     out mediump float vNearFade;
+    out mediump float vPickSize;  // RAW pick sprite size (pre-clamp) — sizeScale² parity with the visual shader
     out mediump vec2 vSpriteCoord;
     flat out highp float vNodeId;
     flat out highp float vElementId;
@@ -94,6 +95,7 @@ export const POINT_PICK_VERTEX_SHADER = /* glsl */ `
       // truncates at the sprite edge, so basePointSize IS the visible extent
       // (matches shader-glsl.ts).
       float pointSize = basePointSize * 0.8;
+      vPickSize = pointSize; // raw, pre-clamp — fragment applies sizeScale²
       pointSize = clamp(pointSize, 1.5, maxPointSize); // 1.5px floor tracks the VISUAL sprite floor — the drawn outer ring stays pickable
 
       // Instanced quad expansion (matches shader-glsl.ts approach, including
@@ -120,6 +122,7 @@ export const POINT_PICK_FRAGMENT_SHADER = /* glsl */ `
     in highp float vRadius;
     in mediump float vBeta;
     in mediump float vNearFade;
+    in mediump float vPickSize; // raw pick sprite size (sub-pixel compensation)
     in mediump vec2 vSpriteCoord;
     flat in highp float vNodeId;
     flat in highp float vElementId;
@@ -144,7 +147,12 @@ export const POINT_PICK_FRAGMENT_SHADER = /* glsl */ `
       float falloff = max(exp(-K * pow(normalizedR, vBeta)) - C, 0.0) * INV_ONE_MINUS_C;
 
       // nearFade folded into brightness (matches gsplat pick).
-      float brightness = falloff * vNearFade;
+      // Sub-pixel compensation (sizeScale², matching the VISUAL point and
+      // the line pick's widthScale): pick salience must track visual
+      // salience, or a sub-pixel (visually dimmed) point wins the
+      // brightness-as-depth tie-break over a visually brighter neighbor.
+      mediump float pickSizeScale = min(vPickSize / 1.5, 1.0);
+      float brightness = falloff * vNearFade * pickSizeScale * pickSizeScale;
       if (brightness < 1e-4) discard;
 
       fragColor = vec4(vNodeId, vElementId, brightness, 1.0);

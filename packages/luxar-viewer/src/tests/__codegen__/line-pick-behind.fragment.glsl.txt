@@ -1,0 +1,140 @@
+#version 300 es
+
+// Three.js r184 - Node System
+
+
+// extensions
+
+
+// precision
+
+precision highp float;
+precision highp int;
+precision highp sampler2D;
+precision highp sampler3D;
+precision highp samplerCube;
+precision highp sampler2DArray;
+
+precision highp usampler2D;
+precision highp usampler3D;
+precision highp usamplerCube;
+precision highp usampler2DArray;
+
+precision highp isampler2D;
+precision highp isampler3D;
+precision highp isamplerCube;
+precision highp isampler2DArray;
+
+precision highp sampler2DShadow;
+precision highp sampler2DArrayShadow;
+precision highp samplerCubeShadow;
+
+
+// structs
+
+layout( location = 0 ) out vec4 fragColor;
+
+
+
+// uniforms
+
+layout( std140 ) uniform object {
+	mat4 nodeUniform2;
+	vec2 nodeUniform3;
+	float nodeUniform4;
+	float nodeUniform5;
+	float nodeUniform6;
+	float nodeUniform7;
+	float nodeUniform8;
+	float nodeUniform9;
+};
+
+
+// varyings
+in float nodeVarying0;
+in float nodeVarying1;
+flat  in float nodeVarying2;
+in float nodeVarying3;
+in float nodeVarying4;
+flat  in float nodeVarying5;
+flat  in float nodeVarying6;
+in float nodeVarying7;
+in float nodeVarying8;
+in float nodeVarying9;
+flat  in float nodeVarying10;
+flat  in float nodeVarying11;
+
+
+// vars
+vec4 DiffuseColor;
+float nodeVar6;
+float nodeVar7;
+float nodeVar11;
+float nodeVar12;
+float nodeVar20;
+float nodeVar21;
+float lineBrightness;
+vec4 Output;
+vec4 nodeVar22;
+
+// codes
+
+
+void main() {
+
+	// flow
+	// code
+
+
+	if ( ( abs( nodeVarying0 ) >= 1.0 ) ) {
+
+		discard;
+		
+
+	}
+
+	nodeVar6 = ( nodeVarying1 * nodeVarying2 );
+	nodeVar7 = ( ( 1.0 - nodeVarying1 ) * nodeVarying2 );
+	nodeVar11 = clamp( ( min( nodeVar6, nodeVar7 ) / nodeVarying3 ), 0.0, 1.0 );
+
+	if ( ( nodeVarying3 > 0.0001 ) ) {
+
+		nodeVar12 = nodeVar11;
+
+	} else {
+
+		nodeVar12 = 1.0;
+
+	}
+
+
+	if ( ( nodeVarying4 >= 0.0 ) ) {
+
+		nodeVar20 = 0.0;
+
+	} else {
+
+		nodeVar21 = max( nodeUniform7, 0.0001 );
+		nodeVar20 = smoothstep( nodeVar21, ( nodeVar21 * 2.0 ), ( - nodeVarying4 ) );
+
+	}
+
+	lineBrightness = ( ( ( ( mix( ( 0.5 + ( nodeVar12 * 0.5 ) ), 1.0, mix( nodeVarying5, nodeVarying6, step( nodeVar6, nodeVar7 ) ) ) * ( max( ( exp( ( pow( abs( nodeVarying0 ), pow( 2.0, ( ( nodeVarying7 * 6.0 ) - 2.0 ) ) ) * -4.6051702 ) ) - 0.01 ), 0.0 ) * 1.0101010101010102 ) ) * min( ( nodeVarying8 / 1.5 ), 1.0 ) ) * nodeVarying9 ) * nodeVar20 );
+
+	if ( ( lineBrightness < 0.0001 ) ) {
+
+		discard;
+		
+
+	}
+
+	DiffuseColor = vec4( nodeVarying10, nodeVarying11, lineBrightness, 1.0 );
+	DiffuseColor.w = ( DiffuseColor.w * nodeUniform9 );
+	nodeVar22 = max( vec4( DiffuseColor.xyz, DiffuseColor.w ), 0.0 );
+	Output = nodeVar22;
+	gl_FragDepth = ( 1.0 - clamp( lineBrightness, 0.0, 1.0 ) );
+
+	// result
+	fragColor = nodeVar22;
+
+}
