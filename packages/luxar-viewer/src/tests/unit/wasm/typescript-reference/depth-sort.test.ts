@@ -94,6 +94,17 @@ describe('depth_sort: sort_splats_by_depth', () => {
     expect(sort_splats_by_depth(new Float32Array(0), IDENTITY_MV, ordering, 0)).toBe(0);
   });
 
+  it('keys a NaN center to the NEAR bucket (Rust f32::min semantics)', () => {
+    // Rust's `f32::min(NaN, 65535.0)` returns 65535 — the saturating
+    // `as u16` is never reached with NaN. The twin must reproduce that
+    // (a naive `Math.min(NaN, x) | 0` would key to 0, the far bucket,
+    // and diverge from WASM). Mirrors test_nan_center_keys_to_near_bucket.
+    const { ordering, sorted } = sortZs([NaN, -3, -8]);
+    expect(sorted).toBe(3);
+    assertIsPermutation(ordering, 3);
+    expect(Array.from(ordering)).toEqual([2, 0, 1]);
+  });
+
   it('orders nanometer-scale magnitudes (~1e-6) correctly', () => {
     // Raw f16 keys would underflow to a single bucket at this scale.
     const { ordering, sorted } = sortZs([-1e-6, -9e-6, -5e-6, -3e-6]);
