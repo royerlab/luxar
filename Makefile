@@ -12,6 +12,7 @@
         check-docs check-docs-verbose clean-docs build-docs build-typedoc serve-docs \
         demo run-demos run-examples serve-examples serve-dataset install-viewer-deps viewer build-viewer rebuild-viewer \
         install-rust build-wasm clean-wasm generate-readme-demos generate-readme-images generate-doc-images generate-readme-videos \
+	generate-gallery-datasets generate-gallery \
         stats stats-fast show-env prune-env shell build publish-test publish \
         check-deps install-node install-pnpm install-hatch \
         setup-cuda check-cuda-deps build-cuda build-cuda-slurm clean-cuda test-cuda benchmark-cuda \
@@ -1349,6 +1350,33 @@ generate-readme-videos: generate-readme-demos  ## Generate README videos (GIF/We
 	@ls -la docs/images/readme/*.gif docs/images/readme/*.webp 2>/dev/null || echo "   No videos found"
 	@echo ""
 	@echo "💡 Commit these videos to include them in the README"
+
+generate-gallery-datasets:  ## Generate the demo datasets for the gallery harness (idempotent)
+	@echo "🖼️  Generating gallery demo datasets..."
+	@mkdir -p datasets/demos
+	$(HATCH) run python scripts/gallery/generate_gallery_datasets.py $(if $(ONLY),--only $(ONLY),)
+
+generate-gallery: generate-gallery-datasets  ## Capture still + orbit video for every gallery demo → docs/images/gallery/
+	@echo "🎥 Capturing gallery stills + orbit videos..."
+	@echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+	@if ! command -v ffmpeg >/dev/null 2>&1; then \
+		echo "❌ ffmpeg is required for video conversion"; \
+		echo "   Install with: brew install ffmpeg (macOS) or apt-get install ffmpeg (Linux)"; \
+		exit 1; \
+	fi
+	@if [ ! -d "packages/luxar-viewer/node_modules" ]; then \
+		echo "📦 Installing TypeScript dependencies first..."; \
+		cd packages/luxar-viewer && pnpm install; \
+	fi
+	@export NVM_DIR="$$HOME/.nvm"; \
+	if [ -s "$$NVM_DIR/nvm.sh" ]; then . "$$NVM_DIR/nvm.sh"; fi; \
+	cd packages/luxar-viewer && $(if $(ONLY),GALLERY_ONLY=$(ONLY) ,)pnpm gallery
+	@echo ""
+	@echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+	@echo "✅ Gallery media generated in docs/images/gallery/"
+	@ls -la docs/images/gallery/*.png 2>/dev/null | head || echo "   No media found"
+	@echo ""
+	@echo "💡 Review docs/images/gallery/, then wire the best into README.md"
 
 serve-examples:  ## Serve the datasets directory for browsing generated datasets
 	@echo "🌐 Serving datasets/ directory at http://localhost:8000"

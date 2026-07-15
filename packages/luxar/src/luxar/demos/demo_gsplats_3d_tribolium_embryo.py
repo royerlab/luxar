@@ -77,6 +77,7 @@ import numpy as np
 from arbol import Arbol, aprint, asection
 
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
+from luxar.core.viewer_config import ViewerConfig
 from luxar.encoding import EncodingMode
 from luxar.gsplats.gsplat_data import GSplatData
 from luxar.utils.demos import (
@@ -355,6 +356,9 @@ def create_luxar_scene(
         ) as compiler:
             scene = compiler.create_scene(
                 dimensions=dims,
+                # Neutral tone-mapping (not the viewer's default ACES, which lifts
+                # highlights and shifts hue) — matches the known-good gsplat demos.
+                viewer_config=ViewerConfig(tone_mapping="Neutral"),
             )
 
             scene.attrs["title"] = "GSplats: Tribolium castaneum Embryo (Light-Sheet)"
@@ -385,7 +389,7 @@ Navigation:
                     @ gsplats_data.amplitudes
                     / gsplats_data.amplitudes.sum()
                 )
-                gsplats_data = gsplats_data.scale_intensity(0.1)
+                gsplats_data = gsplats_data.scale_intensity(0.03)
 
                 n_splats = len(gsplats_data.amplitudes)
 

@@ -85,6 +85,7 @@ import numpy as np
 from arbol import Arbol, aprint, asection
 
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
+from luxar.core.viewer_config import ViewerConfig
 from luxar.encoding import EncodingMode
 from luxar.gsplats import make_substitutive_lod
 from luxar.gsplats.gsplat_data import (
@@ -224,7 +225,7 @@ def build_lod_ladder(base: GSplatData) -> GSplatData:
     # Center at intensity-weighted centroid + dim the amplitudes, BEFORE building
     # the ladder so every synthesized level inherits consistent coords/intensity.
     base = base.translate(-base.centers.T @ base.amplitudes / base.amplitudes.sum())
-    base = base.scale_intensity(0.1)
+    base = base.scale_intensity(0.03)
 
     n_base = len(base.amplitudes)
     n_levels = LEVELS if LEVELS is not None else auto_levels(n_base)
@@ -274,7 +275,12 @@ def create_luxar_scene(colored: GSplatData, output_path: Path) -> Path:
         with LuxarZarrCompiler(
             output_path, encoding_mode=EncodingMode.PRECISION
         ) as compiler:
-            scene = compiler.create_scene(dimensions=dims)
+            scene = compiler.create_scene(
+                dimensions=dims,
+                # Neutral tone-mapping (not the viewer default ACES) + matched
+                # intensity, consistent with the other gsplat demos.
+                viewer_config=ViewerConfig(tone_mapping="Neutral"),
+            )
 
             scene.attrs["title"] = (
                 "GSplats: Adaptive Level of Detail — Tribolium Embryo"

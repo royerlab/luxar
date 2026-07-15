@@ -89,12 +89,16 @@ CHANNELS = [
         "file": "neuromast_membranes.gsplats.zarr",
         "colormap": "bop_blue",  # mScarlet membranes, iSIM 561/605
         "marker": "cldnb:lyn-mScarlet (membranes)",
+        # Membranes are a dense diffuse shell that otherwise dominates and hides
+        # the nuclei — render at half opacity so both channels read.
+        "opacity": 0.5,
     },
     {
         "name": "nuclei",
         "file": "neuromast_nuclei.gsplats.zarr",
         "colormap": "bop_orange",  # GFP nuclei, iSIM 488/525
         "marker": "she:GFP (nuclei)",
+        "opacity": 1.0,
     },
 ]
 
@@ -190,7 +194,7 @@ def create_luxar_scene(channel_paths: list[Path], output_path: Path) -> Path:
                     scene.add_gsplats_from_file(
                         name=ch["name"],
                         path=str(path),
-                        opacity=1.0,
+                        opacity=ch.get("opacity", 1.0),
                         blending_mode="additive",
                         layer=True,
                         colormap=ch["colormap"],
