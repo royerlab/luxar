@@ -234,6 +234,19 @@ to ship after). Sequencing is at the bottom.
     which few best convey the range (volumetric splats, nD navigation, scale).
   - **Regenerate** stills + short loops via the Playwright pipeline; refresh the
     README gallery section + captions; ensure everything renders on GitHub.
+  - ✅ **Gallery harness built** (2026-07-13): a manifest-driven capture tool that
+    produces a still PNG **and** a 30 s 360° orbit video (WebP+GIF) for every
+    demo in one pass — auto-center + fill-to-frame, chrome hidden, robust
+    screenshot-based auto-exposure (percentile target; per-demo override). SSOT
+    is `scripts/gallery/manifest.json` (~20 curated demos spanning
+    Points/Lines/GSplats + synthetic/astronomy/microscopy/medical/genomics);
+    `scripts/gallery/generate_gallery_datasets.py` builds the datasets and
+    `packages/luxar-viewer/.../generate-gallery.spec.ts` captures. Run:
+    `make generate-gallery` (or `ONLY=id`). Output → `docs/images/gallery/`
+    (gitignored staging); copy curated picks into `docs/images/readme/`. Per
+    user calls: **DESI included** (astronomy), **cmu1_pathology dropped**. Next:
+    run the full sweep (incl. heavy datasets: `galaxy`/organoid/celegans need
+    generation), curate the winners, wire them into the README gallery table.
   - **LFS interaction (coordinate with R17):** README/doc images stay in-repo
     (GitHub must render them inline) — only the heavy *datasets* move to Zenodo.
     But the media the gallery captures come from demos whose *inputs* may have

@@ -147,6 +147,9 @@ target/
 # Temporary files
 # Testing
 test-results/
+# Gallery-harness staging media (review here, then copy curated picks into
+# docs/images/readme/ which IS committed). See scripts/gallery/README.md.
+docs/images/gallery/
 *.tmp
 .tox/
 # Translations
