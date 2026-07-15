@@ -303,6 +303,32 @@ describe('WASM vs TypeScript Comparison', () => {
       expect(arraysEqual(wasm, ts)).toBe(true);
     });
 
+    it.skipIf(!wasmFilesExist)('identical ordering with non-finite centers (NaN/±Inf)', () => {
+      // NaN z reaches the key math where Rust's f32::min(NaN, 65535)
+      // returns 65535 — a naive Math.min twin would key it to 0 and
+      // diverge (caught by this exact case). ±Inf exercises the
+      // Inf-range → inv_range 0 → NaN-key collapse.
+      for (const zs of [
+        [NaN, -3, -8],
+        [-1, -Infinity, -5],
+        [Infinity, -3, -8],
+        [NaN, Infinity, -Infinity, -2, -7],
+        // Denormal z values: the range is denormal, so inv_range
+        // overflows to Inf and every key collapses through Inf/NaN
+        // (also exercises f32 denormal handling in both backends).
+        [-1e-40, -2e-40, -3e-40],
+      ]) {
+        const centers3 = new Float32Array(zs.length * 3);
+        zs.forEach((z, i) => {
+          centers3[i * 3] = i;
+          centers3[i * 3 + 2] = z;
+        });
+        const { ts, wasm, tsSorted, wasmSorted } = runBoth(centers3, IDENTITY_MV, zs.length);
+        expect(wasmSorted).toBe(tsSorted);
+        expect(arraysEqual(wasm, ts), `zs=${zs}: wasm=[${wasm}] ts=[${ts}]`).toBe(true);
+      }
+    });
+
     it.skipIf(!wasmFilesExist)(
       'identical ordering on 100k pseudo-random splats under a general model-view',
       () => {
