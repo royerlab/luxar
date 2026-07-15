@@ -119,6 +119,14 @@ const SHADERS = [
   'line-pick',
   'line-gamma-one',
   'line-no-gog',
+  // Lines are the only geometry whose ortho/perspective split is a
+  // BUILD-time TSL option (points/gsplats branch on the uIsOrtho
+  // uniform at runtime), so the perspective line shaders are distinct
+  // generated code that the four ortho variants above never pin. The
+  // `-behind` harness variants build with `isOrtho: false` — reuse
+  // them to snapshot the perspective visual + pick branches.
+  'line-behind',
+  'line-pick-behind',
   'point',
   'point-pick',
   'point-gamma-one',

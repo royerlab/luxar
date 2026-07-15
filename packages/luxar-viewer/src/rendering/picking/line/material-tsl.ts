@@ -91,7 +91,12 @@ export class LinePickingTSLMaterial extends NodeMaterial implements CameraAwareM
     this.uniforms.uFOV.value = fov;
     (this.uniforms.uResolution.value as THREE.Vector2).copy(resolution);
     this.uniforms.uIsOrtho.value = isOrtho ? 1 : 0;
-    if (nearCull !== undefined && nearCull > 0) {
+    // Accept ANY defined value, including 0 — matching the point/gsplat
+    // wrappers (the shader floors at 1e-4). The old `> 0` gate silently
+    // KEPT a stale value on zero-diagonal scenes (or, with LRU-cached
+    // materials, the previous dataset's nearCull), re-creating the
+    // cross-geometry near-fade divergence B9c fixed.
+    if (nearCull !== undefined) {
       this.uniforms.uNearCull.value = nearCull;
     }
     this.uniforms.uMaxLinePixelWidth.value = Math.max(2, resolution.y * 0.5);

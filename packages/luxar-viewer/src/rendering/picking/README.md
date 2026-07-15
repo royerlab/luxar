@@ -96,7 +96,7 @@ WebGPU device loss is currently treated as unrecoverable — see `scene-manager.
 - `../README.md` — Rendering package overview (picking sits alongside the visual material stacks in the larger pipeline)
 - `../materials/_shared/camera-aware-material.ts` — Shared `CameraAwareMaterial` interface that all six picking materials implement
 - `../materials/_shared/shader-source.ts` — `ShaderSource` shape used by each `<geometry>/shaders.ts` to ship a GLSL+TSL pair
-- `../materials/_shared/glsl-lib.ts` — `GLSL_SANITIZE_FUNCTIONS` used in the point/gsplat pick vertex shaders for parity with their visual counterparts
+- `../materials/_shared/glsl-lib.ts` — `GLSL_SANITIZE_FUNCTIONS` used in all three pick vertex shaders for parity with their visual counterparts
 - `../post-processing/hdr/pixel-utils.ts` — `readPixelsCompactAsync` (unified WebGL2/WebGPU readback)
 - `../post-processing/mega/shader.glsl.ts` — GLSL `applyDistortion` that `picking-system/lens-distortion.ts` must stay byte-for-byte equivalent to
 - `../../tests/e2e/harnesses/tsl-harness.ts` — Imports `POINT_PICK_SOURCE` / `LINE_PICK_SOURCE` / `GSPLAT_PICK_SOURCE` directly from each `<geometry>/shaders.ts` to drive the GLSL/TSL parity tests
