@@ -40,3 +40,25 @@ float sanitizeNonNegative(float v, float fallback) {
   return (isInvalidFloat(v) || v < 0.0) ? fallback : v;
 }
 `;
+
+/**
+ * Unified perspective near-plane fade, shared by the point / line /
+ * gsplat vertex shaders (visual + pick).
+ *
+ * Perspective: 0.0 behind the camera (viewZ >= 0 — camera looks down
+ * -Z, and the quad expansion math flips/degenerates for such
+ * vertices), smoothstep fade across [nearCull, 2*nearCull], else 1.0.
+ * Ortho: always 1.0 — there is no 1/z singularity, and NDC near/far
+ * clipping is the sole cull authority (an explicit vertex-level cull
+ * under ortho WRONGLY hid in-frustum content in the near slab).
+ *
+ * Callers reject the vertex when the result < 0.01 and multiply the
+ * surviving amplitude/alpha/brightness by it (no hard pop).
+ */
+export const GLSL_NEAR_FADE_FUNCTIONS = `
+float perspectiveNearFade(int isOrtho, float viewZ, float nearCull) {
+  if (isOrtho == 1) return 1.0;
+  if (viewZ >= 0.0) return 0.0;
+  return smoothstep(nearCull, nearCull * 2.0, -viewZ);
+}
+`;

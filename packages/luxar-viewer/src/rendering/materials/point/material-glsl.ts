@@ -104,6 +104,7 @@ export class PointMaterial
 
         // Projection mode
         uIsOrtho: { value: 0 }, // 0 = perspective, 1 = orthographic
+        uNearCull: { value: 0.1 }, // near-fade start (world units; scene-bounds scaled)
 
         // Physical framebuffer size in pixels (used by the
         // instanced-quad vertex shader to convert pixel offsets to
@@ -184,9 +185,10 @@ export class PointMaterial
     fov: number,
     resolution: THREE.Vector2,
     isOrtho: boolean = false,
-    _nearCull?: number
+    nearCull?: number
   ): void {
     this.uniforms.uIsOrtho.value = isOrtho ? 1 : 0;
+    if (nearCull !== undefined) this.uniforms.uNearCull.value = nearCull;
     this.uniforms.pointSizeFactor.value = computePointSizeFactor(fov, resolution.y, isOrtho);
     this.uniforms.maxPointSize.value = computeMaxPointSize(resolution.y);
     // The instanced-quad vertex shader needs the framebuffer size to

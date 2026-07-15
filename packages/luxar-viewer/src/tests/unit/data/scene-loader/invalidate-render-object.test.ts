@@ -94,6 +94,31 @@ describe('invalidateRenderObjectFor', () => {
   });
 });
 
+describe('pick-mesh geometry resync', () => {
+  it('re-points the paired pick mesh at the new geometry (grow-swap pinning guard)', () => {
+    // Geometry identity changes on grow-swap / pool swap; the picking
+    // system re-syncs only lazily at pick time, so without the eager
+    // resync the pick mesh pins the OLD geometry (and its attribute
+    // views under the WebGPU renderer's strong Info.memoryMap) until
+    // the next pick.
+    const oldGeom = new THREE.BufferGeometry();
+    const newGeom = new THREE.BufferGeometry();
+    const mesh = new THREE.Mesh(oldGeom, new THREE.MeshBasicMaterial());
+    const pick = new THREE.Mesh(oldGeom, new THREE.MeshBasicMaterial());
+    mesh.userData.pickNode = pick;
+
+    mesh.geometry = newGeom;
+    invalidateRenderObjectFor(mesh);
+
+    expect(pick.geometry).toBe(newGeom);
+  });
+
+  it('is a no-op without a registered pick node', () => {
+    const mesh = new THREE.Mesh(new THREE.BufferGeometry(), new THREE.MeshBasicMaterial());
+    expect(() => invalidateRenderObjectFor(mesh)).not.toThrow();
+  });
+});
+
 describe('SOFT_DISPOSE_FLAG <-> MaterialManager contract', () => {
   // We can't reach into the private subscribedMaterials directly
   // without spinning up the full manager + a real luxar material. The

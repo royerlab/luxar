@@ -17,7 +17,10 @@
  */
 
 import type { ShaderSource } from '../../materials/_shared/shader-source';
-import { GLSL_SANITIZE_FUNCTIONS } from '../../materials/_shared/glsl-lib';
+import {
+  GLSL_SANITIZE_FUNCTIONS,
+  GLSL_NEAR_FADE_FUNCTIONS,
+} from '../../materials/_shared/glsl-lib';
 import { pointPickWebGPUFactory, buildPointPickTSLNodesFromUniforms } from './pick.tsl';
 
 /**
@@ -28,6 +31,7 @@ export const POINT_PICK_VERTEX_SHADER = /* glsl */ `
     precision highp float;
 
     ${GLSL_SANITIZE_FUNCTIONS}
+    ${GLSL_NEAR_FADE_FUNCTIONS}
 
     // Per-vertex (4 corners shared across all instances)
     in vec2 aQuadCorner;
@@ -41,11 +45,14 @@ export const POINT_PICK_VERTEX_SHADER = /* glsl */ `
     uniform float maxPointSize;
     uniform float radiusScale;
     uniform int uIsOrtho;
+    uniform float uNearCull;
     uniform float uNodeId;
     uniform vec2 uResolution;
 
     out highp float vRadius;
     out mediump float vBeta;
+    out mediump float vNearFade;
+    out mediump float vPickSize;  // RAW pick sprite size (pre-clamp) — sizeScale² parity with the visual shader
     out mediump vec2 vSpriteCoord;
     flat out highp float vNodeId;
     flat out highp float vElementId;
@@ -62,19 +69,21 @@ export const POINT_PICK_VERTEX_SHADER = /* glsl */ `
 
       vec4 mvPosition = modelViewMatrix * vec4(aCenter, 1.0);
 
-      // Reject points behind the camera (perspective only; camera looks down -Z).
-      // The quad expansion below multiplies by projCenter.w, which is <= 0 behind
-      // the camera and would produce a degenerate/flipped pick sprite (and thus
-      // spurious hover/pick hits). Keep in sync with the visual point shader
-      // (shader-glsl.ts) and the gsplat pick guard. Ortho keeps projCenter.w == 1.
-      if (uIsOrtho == 0 && mvPosition.z >= 0.0) {
+      // Unified near handling — keep in sync with the visual point
+      // shader and the line/gsplat pick guards: pickability must track
+      // what is actually visible (behind-camera fade 0; smooth
+      // [nearCull, 2*nearCull] fade; ortho = 1, NDC clip authority).
+      vNearFade = perspectiveNearFade(uIsOrtho, mvPosition.z, max(uNearCull, 1e-4));
+      if (vNearFade < 0.01) {
         gl_Position = vec4(0.0, 0.0, -2.0, 1.0); // off-screen → no fragments
         return;
       }
 
       vec4 projCenter = projectionMatrix * mvPosition;
 
-      float invDistance = (uIsOrtho == 1) ? 1.0 : inversesqrt(dot(mvPosition.xyz, mvPosition.xyz));
+      // View-space depth, matching the visual point shader (B9a) so the
+      // pick footprint stays congruent with the visible sprite.
+      float invDistance = (uIsOrtho == 1) ? 1.0 : 1.0 / max(-mvPosition.z, 1e-4);
       float basePointSize = normalizedRadius * pointSizeFactor * invDistance;
 
       // Picking footprint: 80% of the visual radius (the 0.8 factor below).
@@ -86,7 +95,8 @@ export const POINT_PICK_VERTEX_SHADER = /* glsl */ `
       // truncates at the sprite edge, so basePointSize IS the visible extent
       // (matches shader-glsl.ts).
       float pointSize = basePointSize * 0.8;
-      pointSize = max(1.0, min(pointSize, maxPointSize));
+      vPickSize = pointSize; // raw, pre-clamp — fragment applies sizeScale²
+      pointSize = clamp(pointSize, 1.5, maxPointSize); // 1.5px floor tracks the VISUAL sprite floor — the drawn outer ring stays pickable
 
       // Instanced quad expansion (matches shader-glsl.ts approach, including
       // the behind-camera guard above).
@@ -111,6 +121,8 @@ export const POINT_PICK_FRAGMENT_SHADER = /* glsl */ `
 
     in highp float vRadius;
     in mediump float vBeta;
+    in mediump float vNearFade;
+    in mediump float vPickSize; // raw pick sprite size (sub-pixel compensation)
     in mediump vec2 vSpriteCoord;
     flat in highp float vNodeId;
     flat in highp float vElementId;
@@ -134,7 +146,13 @@ export const POINT_PICK_FRAGMENT_SHADER = /* glsl */ `
       const float INV_ONE_MINUS_C = 1.0 / (1.0 - C);
       float falloff = max(exp(-K * pow(normalizedR, vBeta)) - C, 0.0) * INV_ONE_MINUS_C;
 
-      float brightness = falloff;
+      // nearFade folded into brightness (matches gsplat pick).
+      // Sub-pixel compensation (sizeScale², matching the VISUAL point and
+      // the line pick's widthScale): pick salience must track visual
+      // salience, or a sub-pixel (visually dimmed) point wins the
+      // brightness-as-depth tie-break over a visually brighter neighbor.
+      mediump float pickSizeScale = min(vPickSize / 1.5, 1.0);
+      float brightness = falloff * vNearFade * pickSizeScale * pickSizeScale;
       if (brightness < 1e-4) discard;
 
       fragColor = vec4(vNodeId, vElementId, brightness, 1.0);

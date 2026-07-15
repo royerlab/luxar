@@ -49,6 +49,7 @@ layout( std140 ) uniform object {
 	float nodeUniform9;
 	float nodeUniform10;
 	float nodeUniform11;
+	float nodeUniform12;
 };
 
 
@@ -62,6 +63,8 @@ flat  in float nodeVarying5;
 flat  in float nodeVarying6;
 in float nodeVarying7;
 in float nodeVarying8;
+in float nodeVarying9;
+in float nodeVarying10;
 
 
 // vars
@@ -72,9 +75,10 @@ float nodeVar8;
 float nodeVar12;
 vec3 nodeVar13;
 float nodeVar14;
-float nodeVar15;
+float nodeVar22;
+float nodeVar23;
 vec4 Output;
-vec4 nodeVar20;
+vec4 nodeVar24;
 
 // codes
 
@@ -116,13 +120,24 @@ void main() {
 
 	}
 
-	nodeVar15 = max( ( 1.0 - ( nodeVar5 * nodeVar5 ) ), 0.0 );
-	DiffuseColor = vec4( pow( nodeVar13, vec3( nodeUniform6 ) ), ( ( ( ( ( mix( ( 0.5 + ( nodeVar14 * 0.5 ) ), 1.0, mix( nodeVarying5, nodeVarying6, step( nodeVar7, nodeVar8 ) ) ) * ( nodeVar15 * nodeVar15 ) ) * ( 1.0 - smoothstep( ( 1.0 - ( 1.0 / max( nodeVarying7, 1.5 ) ) ), 1.0, nodeVar5 ) ) ) * min( ( nodeVarying7 / 1.5 ), 1.0 ) ) * nodeVarying8 ) * nodeUniform9 ) );
-	DiffuseColor.w = ( DiffuseColor.w * nodeUniform10 );
-	nodeVar20 = max( vec4( DiffuseColor.xyz, DiffuseColor.w ), 0.0 );
-	Output = nodeVar20;
+
+	if ( ( nodeVarying10 >= 0.0 ) ) {
+
+		nodeVar22 = 0.0;
+
+	} else {
+
+		nodeVar23 = max( nodeUniform10, 0.0001 );
+		nodeVar22 = smoothstep( nodeVar23, ( nodeVar23 * 2.0 ), ( - nodeVarying10 ) );
+
+	}
+
+	DiffuseColor = vec4( pow( nodeVar13, vec3( nodeUniform6 ) ), ( ( ( ( ( ( mix( ( 0.5 + ( nodeVar14 * 0.5 ) ), 1.0, mix( nodeVarying5, nodeVarying6, step( nodeVar7, nodeVar8 ) ) ) * ( max( ( exp( ( pow( nodeVar5, pow( 2.0, ( ( nodeVarying7 * 6.0 ) - 2.0 ) ) ) * -4.6051702 ) ) - 0.01 ), 0.0 ) * 1.0101010101010102 ) ) * ( 1.0 - smoothstep( ( 1.0 - ( 1.0 / max( nodeVarying8, 1.5 ) ) ), 1.0, nodeVar5 ) ) ) * min( ( nodeVarying8 / 1.5 ), 1.0 ) ) * nodeVarying9 ) * nodeVar22 ) * nodeUniform11 ) );
+	DiffuseColor.w = ( DiffuseColor.w * nodeUniform12 );
+	nodeVar24 = max( vec4( DiffuseColor.xyz, DiffuseColor.w ), 0.0 );
+	Output = nodeVar24;
 
 	// result
-	fragColor = nodeVar20;
+	fragColor = nodeVar24;
 
 }

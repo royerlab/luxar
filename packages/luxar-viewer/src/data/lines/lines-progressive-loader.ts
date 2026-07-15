@@ -301,7 +301,14 @@ export class LinesProgressiveLoader implements LinesDataLoader {
       // levels and must never mutate the cache's payload array (elements
       // stay shared read-only). Mirrors GSplatsProgressiveLoader.
       this.loadedLODs = restored ? [...restored] : [];
-      this._emptyLadder = false; // new view — may have content
+      // Re-derive the terminal empty-ladder flag from the RESTORED prefix:
+      // an S-cache-restored LOD 0 with zero elements is just as terminal
+      // as a freshly loaded one. The level===0 empty check in the
+      // streaming loop only fires for freshly LOADED levels, so a
+      // restored 1-level empty prefix would otherwise stream the higher
+      // (equally empty) LODs again on every revisit of the empty slice.
+      this._emptyLadder =
+        restored !== null && restored.length > 0 && restored[0].segmentCount === 0;
       this._resetGeneration++;
       this.lastViewState = {
         displayDims: [...viewState.displayDims],
@@ -388,7 +395,10 @@ export class LinesProgressiveLoader implements LinesDataLoader {
       );
     }
 
-    this.prefetchNextLOD(viewState);
+    // A terminal empty ladder has nothing to prefetch — this also covers
+    // the very pass that DISCOVERS the empty LOD 0 (the known-empty
+    // early-return above only guards subsequent same-view invokes).
+    if (!this._emptyLadder) this.prefetchNextLOD(viewState);
 
     // Snapshot into the SliceCache (upgrade-if-longer): full ladders always;
     // PREFIXES only while a playback budget is active. Mirrors

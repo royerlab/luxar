@@ -81,6 +81,7 @@ export class PointTSLMaterial
       radiusScale: { value: materialConfig.radiusScale ?? 1.0 },
 
       uIsOrtho: { value: 0 },
+      uNearCull: { value: 0.1 },
       uResolution: { value: new THREE.Vector2(1920, defaultResolutionY) },
 
       ...(materialConfig.colormapTexture
@@ -172,9 +173,12 @@ export class PointTSLMaterial
     fov: number,
     resolution: THREE.Vector2,
     isOrtho: boolean = false,
-    _nearCull?: number
+    nearCull?: number
   ): void {
     this.uniforms.uIsOrtho.value = isOrtho ? 1 : 0;
+    if (nearCull !== undefined && this.uniforms.uNearCull) {
+      this.uniforms.uNearCull.value = nearCull;
+    }
     this.uniforms.pointSizeFactor.value = computePointSizeFactor(fov, resolution.y, isOrtho);
     this.uniforms.maxPointSize.value = computeMaxPointSize(resolution.y);
     (this.uniforms.uResolution.value as THREE.Vector2).copy(resolution);

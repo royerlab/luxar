@@ -157,6 +157,36 @@ describe('commitLinesGeometry', () => {
   // (c) updateLinesGeometry was called EXACTLY once.
   // Pin the same contract for Lines so a mutation that swapped to the
   // dispose+create fallback (or double-invoked update) is caught.
+  it('hands the acquired geometry to the mesh even when the pool update throws', () => {
+    // Exception-window ownership handoff — see commit-points-geometry.test.ts.
+    const root = new THREE.Group();
+    const mesh = makeMesh('/lines');
+    root.add(mesh);
+    const oldGeometry = mesh.geometry;
+
+    const newGeometry = new THREE.BufferGeometry();
+    const pool = {
+      acquireLinesGeometry: vi.fn(() => newGeometry),
+      updateLinesGeometry: vi.fn(() => {
+        throw new Error('upload failed');
+      }),
+      releaseLinesGeometry: vi.fn(),
+      didLastAcquireRebuildAttributes: vi.fn(() => true),
+    };
+    const staged: StagedLinesCommit = {
+      path: '/lines',
+      sourceData: makeSourceData(3),
+      processed: makeProcessed(3),
+    };
+    expect(() => commitLinesGeometry(staged, root, pool as never, undefined, 0)).toThrow(
+      'upload failed'
+    );
+
+    expect(mesh.geometry).toBe(newGeometry);
+    expect(mesh.geometry).not.toBe(oldGeometry);
+    expect((mesh.userData as { committedData?: unknown }).committedData).toBeUndefined();
+  });
+
   it('[C6] pool path: replaces mesh.geometry and calls acquire/update exactly once', () => {
     const root = new THREE.Group();
     const mesh = makeMesh('/lines');

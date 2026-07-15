@@ -61,13 +61,23 @@ camera changes update **only** the precomputed scalar uniforms, not the shader.
   GSplat materials and their picking counterparts pull from.
 - `maxPointSize = resolution.y · 0.5` — `computeMaxPointSize`, same module.
 - `uIsOrtho` (`int`) branches the inverse-distance term: `1.0` for ortho,
-  `inversesqrt(dot(mvPosition.xyz, mvPosition.xyz))` for perspective. `inversesqrt`
-  is a native GPU instruction — faster than `sqrt + divide`.
-- `pointSize = max(1.0, min(basePointSize, maxPointSize))`. There is **no
+  `1.0 / max(-mvPosition.z, 1e-4)` for perspective — VIEW-SPACE DEPTH, matching
+  the line + gsplat shaders. (Euclidean camera distance shrank edge-of-screen
+  points by `cos θ` relative to identical centered points.)
+- `pointSize = clamp(basePointSize, 1.5, maxPointSize)`. There is **no
   sharpness size compensation** — the shifted-truncated super-Gaussian falloff
   truncates to zero exactly at the sprite edge (`ρ = 1`), so `basePointSize`
-  already is the visible extent. The lower bound of `1.0` avoids degenerate
-  quads; zero-radius filtering happens in the fragment shader (see "nD slicing").
+  already is the visible extent. The `1.5` px floor matches the line shader
+  (thinner quads cause rasterization gaps); the raw pre-clamp size travels to
+  the fragment as `vPointSize`, where sub-pixel sprites are energy-compensated
+  by `sizeScale² = min(vPointSize/1.5, 1)²` on alpha (squared because both
+  sprite dimensions clamp — energy ∝ area; the line shader's `widthScale` is
+  linear because only width clamps). Zero-radius filtering happens in the
+  fragment shader (see "nD slicing").
+- `uNearCull` + the shared `perspectiveNearFade` helper: behind-camera fade 0,
+  smooth `[nearCull, 2·nearCull]` fade under perspective (reject < 0.01,
+  `vNearFade` multiplied into alpha), fade ≡ 1 under ortho where NDC clipping
+  is the sole cull authority — unified with the line + gsplat shaders.
 
 `MaterialManager.updateCameraParams(fov, resolution, isOrtho?)` broadcasts to
 every registered material via the `CameraAwareMaterial` interface, so a single
@@ -205,6 +215,7 @@ the more expensive falloff/GOG/colormap fragment work is skipped.
 | `pointSizeFactor` | float     | `updateCameraParams` (camera math)            | Pre-computed `2·resY/tan(fov/2)` (or ortho form)                          |
 | `maxPointSize`    | float     | `updateCameraParams`                          | Pre-computed `resY · 0.5`                                                 |
 | `uIsOrtho`        | int       | `updateCameraParams`                          | `0` = perspective, `1` = ortho                                            |
+| `uNearCull`       | float     | `updateCameraParams`                          | Near-fade start (world units, scene-bounds-scaled); shader floors at 1e-4 |
 | `uResolution`     | vec2      | `updateCameraParams` (mutates same Vector2)   | Physical framebuffer pixels; vertex uses for `pixel → NDC` conversion     |
 | `radiusScale`     | float     | `updateRadiusScale`                           | Dtype normalisation (e.g. `1/255` for uint8 radii)                        |
 | `uColormapTex`    | sampler2D | `setColormapTexture`                          | 256×1 LUT; `USE_COLORMAP` only                                            |

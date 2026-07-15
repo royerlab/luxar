@@ -66,6 +66,20 @@ import { SOFT_DISPOSE_FLAG } from '../../../rendering/material-manager';
  * is signaled.
  */
 export function invalidateRenderObjectFor(mesh: THREE.Mesh): void {
+  // Geometry identity changed (grow-swap / pool swap / fresh alloc):
+  // eagerly re-point the paired pick mesh at the new geometry. The
+  // picking system also re-syncs lazily at pick time
+  // (picking-system.ts renderPickBuffer), but between the swap and the
+  // next pick the pick mesh would otherwise keep the OLD geometry
+  // alive — and under the WebGPU renderer's strong Info.memoryMap,
+  // its attribute views with it. Pick meshes share the main mesh's
+  // geometry by design (they never own one), so this is a pure
+  // reference update.
+  const pickNode = (mesh.userData as { pickNode?: THREE.Mesh } | undefined)?.pickNode;
+  if (pickNode?.isMesh) {
+    pickNode.geometry = mesh.geometry;
+  }
+
   const material = mesh.material;
   if (Array.isArray(material)) {
     for (const m of material) {

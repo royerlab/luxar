@@ -14,7 +14,7 @@ export interface CameraAwareMaterial {
    * @param fov - Field of view in radians (perspective) or frustum height in world units (ortho)
    * @param resolution - Viewport resolution in pixels
    * @param isOrtho - Whether camera is orthographic (default false)
-   * @param nearCull - Near cull distance in world units (used by GSplats, ignored by others)
+   * @param nearCull - Near-fade start distance in world units (consumed by all three geometry materials via the shared perspectiveNearFade)
    */
   updateCameraParams(
     fov: number,

@@ -84,7 +84,7 @@ The evictor sees pooled-only buffers — active (in-use) buffers are never candi
 
 - The parent `GPUBufferPool` is the **only** writer to `activeBuffers`, `stats`, `typeStats`, and `_lastAcquireRebuilt`. Adapters mutate these fields through their `Host` interface — never via direct construction or back-doors.
 - Per-bucket arrays inside an adapter (`pointBuffers`, `lineBuffers`, `gsplatBuffers`) only ever contain pooled (not active) buffers. Active buffers live in `host.activeBuffers` keyed by `nodeId`.
-- Capacity-grow rebuilds always `delete (geometry as { _maxInstanceCount? })._maxInstanceCount` — r184 caches this value on the geometry and replacing the underlying interleaved buffer doesn't invalidate it.
+- `updateGeometry` deletes the r184 `_maxInstanceCount` cache after writes (gsplats/lines adapters) — r184 caches this value on the geometry and won't refresh it spontaneously. (Capacity-grow rebuilds no longer exist; growth swaps in a fresh geometry, which has no stale cache by construction.)
 - After any `updateGeometry`, `boundingBox` and `boundingSphere` are recomputed. Frustum culling depends on these being current — the lines and gsplats paths additionally expand the box to cover the rendered footprint (line width, Cholesky row-norm × σ).
 
 ## See Also
