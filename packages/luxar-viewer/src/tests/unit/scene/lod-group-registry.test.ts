@@ -1959,3 +1959,156 @@ describe('LODGroupRegistry — coverage-band cross-fade', () => {
     expect(fine.object.visible).toBe(false);
   });
 });
+
+// Streaming energy compensation (ON by default; ?no-lod-energy disables) — as an additive/
+// luminous leaf's additive ladder streams in, its committed prefix carries only
+// e(k) of the leaf's full energy, so it renders at e·E and brightens toward E as
+// chunks arrive (a pop). Scaling the leaf's opacity by 1/e(k) holds the rendered
+// energy at E throughout. Time-axis and PER-LEAF, orthogonal to the distance-
+// driven cross-fade; the two compose multiplicatively. ENERGY_FLOOR=0.1 caps the
+// boost at 10×. Off / non-blendable / complete / unstamped ⇒ byte-identical.
+// ────────────────────────────────────────────────────────────────────────
+describe('LODGroupRegistry — streaming energy compensation', () => {
+  interface FadeMatStub {
+    userData: { blendingMode: string };
+    _op: number;
+    updateOpacity(v: number): void;
+    getOpacity(): number;
+    clone(): FadeMatStub;
+  }
+  function fadeMat(blendingMode = 'additive'): FadeMatStub {
+    return {
+      userData: { blendingMode },
+      _op: 1,
+      updateOpacity(v: number) {
+        this._op = v;
+      },
+      getOpacity() {
+        return this._op;
+      },
+      clone() {
+        return fadeMat(blendingMode);
+      },
+    };
+  }
+  // A gsplats leaf (unit-cube bounds → coverage metric 0.5). `energy` stamps the
+  // committed prefix's energy fraction e(k); omitted ⇒ unstamped (no field).
+  // `committedLadderComplete: true` keeps the never-downgrade gate out of the way
+  // so these tests isolate the opacity math from the (orthogonal) hold logic.
+  function fadeChild(
+    coverageFraction: number,
+    opts: { mode?: string; energy?: number } = {}
+  ): LODGroupChild {
+    const mesh = new THREE.Mesh();
+    mesh.material = fadeMat(opts.mode ?? 'additive') as unknown as THREE.Material;
+    mesh.userData = {
+      nodeType: 'gsplats',
+      loadedViewVersion: 2,
+      visibleSplatCount: 100,
+      committedLadderComplete: true,
+      ...(opts.energy != null ? { committedEnergyFraction: opts.energy } : {}),
+    };
+    return {
+      object: mesh,
+      coverageFraction,
+      positionBounds: { min: [0, 0, 0], max: [1, 1, 1] },
+      ready: true,
+    };
+  }
+  function makeReg(crossFade: boolean, energyComp: boolean) {
+    const camera = new THREE.Camera();
+    camera.matrixWorldInverse.identity();
+    camera.projectionMatrix.identity();
+    return new LODGroupRegistry({
+      getCamera: () => camera,
+      getViewportSize: () => ({ width: 800, height: 600 }),
+      getDisplayDims: () => [0, 1, 2],
+      getViewVersion: () => 2,
+      getCrossFadeEnabled: () => crossFade,
+      getEnergyCompEnabled: () => energyComp,
+    });
+  }
+  const liveOpacity = (c: LODGroupChild): number =>
+    ((c.object as THREE.Mesh).material as unknown as FadeMatStub).getOpacity();
+  // Returned untyped: only used for referential-identity (toBe) clone checks.
+  const liveMaterial = (c: LODGroupChild): unknown => (c.object as THREE.Mesh).material;
+
+  it('boosts a streaming leaf’s opacity by 1/e (energyComp on, no cross-fade)', () => {
+    // Finest (threshold 0.5) is selected alone at metric 0.5; e=0.5 ⇒ opacity ×2.
+    const reg = makeReg(false, true);
+    const coarse = fadeChild(0);
+    const fine = fadeChild(0.5, { energy: 0.5 });
+    reg.register(makeEntry([coarse, fine], 0, '/g'));
+    reg.evaluatePerFrame();
+    expect(fine.object.visible).toBe(true);
+    expect(coarse.object.visible).toBe(false);
+    expect(liveOpacity(fine)).toBeCloseTo(2, 6);
+    expect(liveOpacity(coarse)).toBe(1); // hidden, untouched
+  });
+
+  it('caps the boost at 1/ENERGY_FLOOR (10×) for a tiny early prefix', () => {
+    const reg = makeReg(false, true);
+    const fine = fadeChild(0.5, { energy: 0.02 });
+    reg.register(makeEntry([fadeChild(0), fine], 0, '/g'));
+    reg.evaluatePerFrame();
+    expect(liveOpacity(fine)).toBeCloseTo(10, 6); // 1/0.1, not 1/0.02 = 50
+  });
+
+  it('leaves a complete/unstamped leaf byte-identical (no compensation, no clone)', () => {
+    const reg = makeReg(false, true);
+    const fine = fadeChild(0.5); // no energy stamp ⇒ factor 1
+    const matBefore = liveMaterial(fine);
+    reg.register(makeEntry([fadeChild(0), fine], 0, '/g'));
+    reg.evaluatePerFrame();
+    expect(liveOpacity(fine)).toBe(1);
+    expect(liveMaterial(fine)).toBe(matBefore); // never cloned
+  });
+
+  it('both anti-popping flags off ⇒ byte-identical even for a streaming leaf', () => {
+    const reg = makeReg(false, false);
+    const fine = fadeChild(0.5, { energy: 0.5 });
+    const matBefore = liveMaterial(fine);
+    reg.register(makeEntry([fadeChild(0), fine], 0, '/g'));
+    reg.evaluatePerFrame();
+    expect(liveOpacity(fine)).toBe(1);
+    expect(liveMaterial(fine)).toBe(matBefore); // no writes, no clone
+  });
+
+  it('does not compensate a non-blendable (max) streaming leaf', () => {
+    const reg = makeReg(false, true);
+    const fine = fadeChild(0.5, { mode: 'max', energy: 0.5 });
+    reg.register(makeEntry([fadeChild(0, { mode: 'max' }), fine], 0, '/g'));
+    reg.evaluatePerFrame();
+    expect(liveOpacity(fine)).toBe(1); // max doesn't sum energy → no 1/e
+  });
+
+  it('composes with the cross-fade so rendered energy stays E (opacity·e sums to 1)', () => {
+    // Both flags on. Boundary 0.5, metric 0.5 ⇒ 50/50 coverage. The finer level's
+    // prefix carries e=0.5, so its opacity = 0.5 (coverage) × 2 (1/e) = 1.0; the
+    // complete coarse = 0.5 × 1 = 0.5. Rendered energy 1.0·0.5 + 0.5·1.0 = 1.0 = E.
+    const reg = makeReg(true, true);
+    const coarse = fadeChild(0); // complete (e = 1)
+    const fine = fadeChild(0.5, { energy: 0.5 });
+    reg.register(makeEntry([coarse, fine], 0, '/g'));
+    reg.evaluatePerFrame();
+    expect(coarse.object.visible).toBe(true);
+    expect(fine.object.visible).toBe(true);
+    expect(liveOpacity(fine)).toBeCloseTo(1.0, 6);
+    expect(liveOpacity(coarse)).toBeCloseTo(0.5, 6);
+    const renderedEnergy = liveOpacity(fine) * 0.5 + liveOpacity(coarse) * 1.0;
+    expect(renderedEnergy).toBeCloseTo(1, 6);
+  });
+
+  it('relaxes to the authored opacity as the ladder completes', () => {
+    const reg = makeReg(false, true);
+    const coarse = fadeChild(0);
+    const fine = fadeChild(0.5, { energy: 0.5 });
+    reg.register(makeEntry([coarse, fine], 0, '/g'));
+    reg.evaluatePerFrame();
+    expect(liveOpacity(fine)).toBeCloseTo(2, 6);
+    // Ladder finishes: e → 1. The (now cloned) material restores to its base.
+    (fine.object.userData as { committedEnergyFraction?: number }).committedEnergyFraction = 1;
+    reg.evaluatePerFrame();
+    expect(liveOpacity(fine)).toBe(1);
+  });
+});

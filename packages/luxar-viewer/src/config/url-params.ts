@@ -104,6 +104,15 @@ export interface UrlParams {
    * hard swap or isolate a rendering issue).
    */
   lodFade: boolean;
+  /**
+   * Whether streaming brightness compensation is enabled: as an additive/luminous
+   * LOD leaf's additive ladder streams in, scale its opacity by `1/e(k)` so the
+   * partial prefix renders at full-level brightness instead of brightening up as
+   * chunks arrive (anti-popping on the time axis, orthogonal to `lodFade`'s
+   * distance axis). **On by default**; pass `?no-lod-energy` to disable it (e.g.
+   * to compare against the uncompensated brightening ramp).
+   */
+  lodEnergyComp: boolean;
   /** Disable adjacent-chunk prefetching (`?no-prefetch`). */
   noPrefetch: boolean;
   /** Verbose prefetch logging (`?prefetch-debug`). */
@@ -200,6 +209,7 @@ export function readUrlParams(search?: string): UrlParams {
     cacheDebug: params.has('cache-debug'),
     clearCache: params.has('clear-cache'),
     lodFade: !params.has('no-lod-fade'),
+    lodEnergyComp: !params.has('no-lod-energy'),
     noPrefetch: params.has('no-prefetch'),
     prefetchDebug: params.has('prefetch-debug'),
     cacheStats: params.has('cache-stats'),

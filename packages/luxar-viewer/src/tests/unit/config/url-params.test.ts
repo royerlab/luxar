@@ -18,6 +18,7 @@ describe('readUrlParams', () => {
       cacheDebug: false,
       clearCache: false,
       lodFade: true, // LOD cross-fade is ON by default (opt-out via ?no-lod-fade)
+      lodEnergyComp: true, // streaming brightness compensation is ON (opt-out via ?no-lod-energy)
       noPrefetch: false,
       prefetchDebug: false,
       cacheStats: false,
@@ -34,6 +35,12 @@ describe('readUrlParams', () => {
     expect(readUrlParams('').lodFade).toBe(true);
     expect(readUrlParams('?debug').lodFade).toBe(true);
     expect(readUrlParams('?no-lod-fade').lodFade).toBe(false);
+  });
+
+  it('lodEnergyComp defaults ON and is disabled only by ?no-lod-energy', () => {
+    expect(readUrlParams('').lodEnergyComp).toBe(true);
+    expect(readUrlParams('?debug').lodEnergyComp).toBe(true);
+    expect(readUrlParams('?no-lod-energy').lodEnergyComp).toBe(false);
   });
 
   it('parses dpr as a positive float, rejecting zero/negative/non-numeric', () => {
