@@ -75,25 +75,34 @@ export function commitGSplatsGeometry(
       const geometry = gpuBufferPool.acquireGSplatsGeometry(staged.path, processed.splatCount);
       const attributesRebuilt = gpuBufferPool.didLastAcquireRebuildAttributes();
       const truncationRadius = readTruncate(mesh);
-      gpuBufferPool.updateGSplatsGeometry(
-        geometry,
-        {
-          centers3D: processed.centers3D,
-          amplitudes: processed.amplitudes,
-          cholesky01,
-          cholesky23,
-          cholesky45,
-          colors: processed.colors,
-          splatCount: processed.splatCount,
-        },
-        processed.splatCount,
-        truncationRadius
-      );
-      mesh.geometry = geometry;
-      // Pool rebuilt the geometry's InstancedInterleavedBuffer; evict
-      // Three's cached RenderObject so its `vertexBuffers` set is
-      // rebuilt against the new buffer next draw.
-      if (attributesRebuilt) invalidateRenderObjectFor(mesh);
+      try {
+        gpuBufferPool.updateGSplatsGeometry(
+          geometry,
+          {
+            centers3D: processed.centers3D,
+            amplitudes: processed.amplitudes,
+            cholesky01,
+            cholesky23,
+            cholesky45,
+            colors: processed.colors,
+            splatCount: processed.splatCount,
+          },
+          processed.splatCount,
+          truncationRadius
+        );
+      } finally {
+        // Ownership handoff must happen even if the update throws: the
+        // acquire may have RELEASED the mesh's current geometry into the
+        // free pool (grow path), so bailing out before this assignment
+        // would leave the mesh rendering a free-pooled geometry that the
+        // evictor can dispose — or another node adopt — mid-render. See
+        // commit-points-geometry.ts.
+        mesh.geometry = geometry;
+        // Pool rebuilt the geometry's InstancedInterleavedBuffer; evict
+        // Three's cached RenderObject so its `vertexBuffers` set is
+        // rebuilt against the new buffer next draw.
+        if (attributesRebuilt) invalidateRenderObjectFor(mesh);
+      }
     } else {
       // Non-pool path: a size change rebinds a fresh
       // InstancedInterleavedBuffer — evict Three's cached RenderObject

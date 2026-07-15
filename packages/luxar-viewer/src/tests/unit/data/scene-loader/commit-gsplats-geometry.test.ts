@@ -129,6 +129,31 @@ describe('commitGSplatsGeometry', () => {
   // pool branch does NOT call updateInstancedGSplatsMesh (that's the
   // ELSE/no-pool path) — pin BOTH directions: pool path SKIPS the
   // instanced-mesh update.
+  it('hands the acquired geometry to the mesh even when the pool update throws', () => {
+    // Exception-window ownership handoff — see commit-points-geometry.test.ts.
+    const root = new THREE.Group();
+    const mesh = makeMesh('/g');
+    root.add(mesh);
+    const oldGeometry = mesh.geometry;
+
+    const newGeometry = new THREE.BufferGeometry();
+    const pool = {
+      acquireGSplatsGeometry: vi.fn(() => newGeometry),
+      updateGSplatsGeometry: vi.fn(() => {
+        throw new Error('upload failed');
+      }),
+      releaseGSplatsGeometry: vi.fn(),
+      didLastAcquireRebuildAttributes: vi.fn(() => true),
+    };
+    expect(() => commitGSplatsGeometry(makeStaged(3), root, pool as never, undefined, 0)).toThrow(
+      'upload failed'
+    );
+
+    expect(mesh.geometry).toBe(newGeometry);
+    expect(mesh.geometry).not.toBe(oldGeometry);
+    expect((mesh.userData as { committedData?: unknown }).committedData).toBeUndefined();
+  });
+
   it('[C7] pool path: calls acquire/update exactly once, replaces mesh.geometry, SKIPS updateInstancedGSplatsMesh', () => {
     mockUpdateInstancedMesh.mockReset();
     const root = new THREE.Group();

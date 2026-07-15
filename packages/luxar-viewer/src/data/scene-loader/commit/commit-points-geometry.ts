@@ -120,27 +120,37 @@ export function commitPointsGeometry(
       // helper dispatches a `dispose` event on the material to evict
       // that cache. No-op under WebGL2 / pre-init / no cached entry.
       const attributesRebuilt = gpuBufferPool.didLastAcquireRebuildAttributes();
-      gpuBufferPool.updatePointsGeometry(geometry, data, data.pointCount);
+      try {
+        gpuBufferPool.updatePointsGeometry(geometry, data, data.pointCount);
 
-      if (data.metadata.bounds) {
-        geometry.boundingBox = data.metadata.bounds.clone();
-        if (footprintRadius > 0) geometry.boundingBox.expandByScalar(footprintRadius);
-        geometry.boundingSphere = new THREE.Sphere();
-        geometry.boundingBox.getBoundingSphere(geometry.boundingSphere);
+        if (data.metadata.bounds) {
+          geometry.boundingBox = data.metadata.bounds.clone();
+          if (footprintRadius > 0) geometry.boundingBox.expandByScalar(footprintRadius);
+          geometry.boundingSphere = new THREE.Sphere();
+          geometry.boundingBox.getBoundingSphere(geometry.boundingSphere);
+        }
+
+        // propagate dtype-aware radius scale onto geometry userData and
+        // immediately sync render + pick material uniforms. Without this,
+        // a placeholder→real-data transition would leave radiusScale=1
+        // even though Uint8 normalized radii should map to [0, max_radius].
+        if (!geometry.userData) {
+          geometry.userData = {};
+        }
+        geometry.userData.radiusScale = data.radii instanceof Uint8Array ? maxRadius : 1.0;
+      } finally {
+        // Ownership handoff must happen even if the update throws: the
+        // acquire may have RELEASED the mesh's current geometry into the
+        // free pool (grow / attribute-spec-mismatch path), so bailing out
+        // before this assignment would leave the mesh rendering a
+        // free-pooled geometry that the evictor can dispose — or another
+        // node adopt — mid-render. On a throw the mesh shows one frame of
+        // partially-written data instead; the skipped committedData stamp
+        // below guarantees the next update re-uploads in full.
+        points.geometry = geometry;
+        syncPointMaterialWithGeometry(points);
+        if (attributesRebuilt) invalidateRenderObjectFor(points);
       }
-
-      // propagate dtype-aware radius scale onto geometry userData and
-      // immediately sync render + pick material uniforms. Without this,
-      // a placeholder→real-data transition would leave radiusScale=1
-      // even though Uint8 normalized radii should map to [0, max_radius].
-      if (!geometry.userData) {
-        geometry.userData = {};
-      }
-      geometry.userData.radiusScale = data.radii instanceof Uint8Array ? maxRadius : 1.0;
-
-      points.geometry = geometry;
-      syncPointMaterialWithGeometry(points);
-      if (attributesRebuilt) invalidateRenderObjectFor(points);
       // Record the committed data reference — a later update returning the
       // SAME reference (memoized progressive concat) takes the stamp-only
       // no-op path above instead of re-uploading.

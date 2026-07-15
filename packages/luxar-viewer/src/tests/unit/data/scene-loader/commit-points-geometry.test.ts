@@ -268,6 +268,39 @@ describe('commitPointsGeometry — non-pool path against REAL factory geometry',
   });
 });
 
+describe('commitPointsGeometry — exception-window ownership handoff', () => {
+  it('hands the acquired geometry to the mesh even when the pool update throws', () => {
+    // Grow / spec-mismatch acquires RELEASE the mesh's current geometry
+    // into the free pool before updatePointsGeometry runs. If the update
+    // throws, the mesh must still be switched to the acquired geometry —
+    // otherwise it keeps rendering a free-pooled geometry the evictor can
+    // dispose (or another node adopt) mid-render. committedData must stay
+    // unstamped so the next update re-uploads in full.
+    const root = new THREE.Group();
+    const points = makePoints('/p');
+    root.add(points);
+    const oldGeometry = points.geometry;
+
+    const newGeometry = new THREE.BufferGeometry();
+    const gpuBufferPool = {
+      acquirePointsGeometry: vi.fn(() => newGeometry),
+      updatePointsGeometry: vi.fn(() => {
+        throw new Error('upload failed');
+      }),
+      didLastAcquireRebuildAttributes: vi.fn(() => true),
+    };
+
+    const data = makeData(3);
+    expect(() =>
+      commitPointsGeometry('/p', data, root, gpuBufferPool as never, mockNodeFactory, undefined, 0)
+    ).toThrow('upload failed');
+
+    expect(points.geometry).toBe(newGeometry);
+    expect(points.geometry).not.toBe(oldGeometry);
+    expect((points.userData as { committedData?: unknown }).committedData).toBeUndefined();
+  });
+});
+
 describe('commitPointsGeometry — no-op commit skip (committedData)', () => {
   it('stamps committedData with the raw data on a real commit', () => {
     const root = new THREE.Group();
