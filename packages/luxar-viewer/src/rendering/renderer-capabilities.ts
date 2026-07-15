@@ -114,6 +114,14 @@ export interface RendererCapabilities {
   readonly hdr: HDRCapabilities;
   /** Maximum MSAA sample count the GPU supports (0 if unsupported). */
   readonly maxMSAASamples: number;
+  /**
+   * Maximum 2D texture dimension (`MAX_TEXTURE_SIZE` /
+   * `maxTextureDimension2D`). Sizes the gsplat splat-data texture
+   * (see `rendering/splat-texture-layout.ts`): width is capped at
+   * `min(4096, maxTextureSize)` and height bounds per-node splat
+   * capacity.
+   */
+  readonly maxTextureSize: number;
   /** `[min, max]` `gl_PointSize` range — used for debug logging. */
   readonly pointSizeRange: readonly [number, number];
 
@@ -188,6 +196,12 @@ export function createRendererCapabilities(
     const maxMSAASamplesRaw = gl.getParameter(gl.MAX_SAMPLES) as number | null;
     const maxMSAASamples = typeof maxMSAASamplesRaw === 'number' ? maxMSAASamplesRaw : 0;
 
+    // WebGL2 guarantees >= 2048; every real device in the wild reports
+    // >= 4096. Fall back to the guaranteed floor if the probe misbehaves.
+    const maxTextureSizeRaw = gl.getParameter(gl.MAX_TEXTURE_SIZE) as number | null;
+    const maxTextureSize =
+      typeof maxTextureSizeRaw === 'number' && maxTextureSizeRaw > 0 ? maxTextureSizeRaw : 2048;
+
     const rawRange = gl.getParameter(gl.ALIASED_POINT_SIZE_RANGE);
     const pointSizeRange: readonly [number, number] =
       rawRange &&
@@ -213,6 +227,7 @@ export function createRendererCapabilities(
       framebufferYDown,
       hdr,
       maxMSAASamples,
+      maxTextureSize,
       pointSizeRange,
       readBackbufferPixels() {
         // Bind the canvas backbuffer explicitly. `runPipeline` is
@@ -242,11 +257,35 @@ export function createRendererCapabilities(
     colorDepth: { red: 8, green: 8, blue: 8 },
   };
 
+  // WebGPU surface: read the live limit from whichever backend is
+  // actually running (createRendererCapabilities runs post-init on the
+  // production path). Real WebGPU exposes `device.limits`; the WebGL2
+  // compat backend exposes the raw `gl` context instead — probe it so a
+  // 4096-class device under `?webgpu-force-webgl` isn't overestimated.
+  // Fall back to WebGPU's guaranteed default limit (8192).
+  const backend = (
+    renderer as unknown as {
+      backend?: {
+        device?: { limits?: { maxTextureDimension2D?: number } };
+        gl?: WebGL2RenderingContext;
+      };
+    }
+  ).backend;
+  let maxTextureSize = 8192;
+  const maxTextureDimension2D = backend?.device?.limits?.maxTextureDimension2D;
+  if (typeof maxTextureDimension2D === 'number' && maxTextureDimension2D > 0) {
+    maxTextureSize = maxTextureDimension2D;
+  } else if (backend?.gl && typeof backend.gl.getParameter === 'function') {
+    const glMax = backend.gl.getParameter(backend.gl.MAX_TEXTURE_SIZE) as number | null;
+    if (typeof glMax === 'number' && glMax > 0) maxTextureSize = glMax;
+  }
+
   return {
     apiSurface: 'webgpu',
     framebufferYDown,
     hdr,
     maxMSAASamples: 4, // WebGPU adapters guarantee at least 4× MSAA
+    maxTextureSize,
     pointSizeRange: [1, 1024],
     readBackbufferPixels() {
       // WebGPU backbuffer readback. WebGPURenderer doesn't have a

@@ -5,6 +5,7 @@ import { clampTruncationRadius } from '../../../../../rendering/materials/gsplat
 import {
   createGSplatQuadGeometry,
   createInstancedGSplatsMesh,
+  getSplatTexture,
   packCholeskyForShader,
   updateInstancedGSplatsMesh,
 } from '../../../../../rendering/gsplat-geometry';
@@ -213,13 +214,15 @@ describe('GSplatMaterial', () => {
       // Check for quad corner attribute (GLSL ES 3.0 uses "in" instead of "attribute")
       expect(material.vertexShader).toContain('in vec2 aQuadCorner');
 
-      // Check for per-instance attributes
-      expect(material.vertexShader).toContain('in vec3 aCenter');
-      expect(material.vertexShader).toContain('in vec2 aCholesky01');
-      expect(material.vertexShader).toContain('in vec2 aCholesky23');
-      expect(material.vertexShader).toContain('in vec2 aCholesky45');
-      expect(material.vertexShader).toContain('in float aAmplitude');
-      expect(material.vertexShader).toContain('in vec3 aColor');
+      // Splat data lives in the RGBA32F splat texture; the only
+      // per-instance attribute is the draw-slot -> storage-slot map.
+      expect(material.vertexShader).toContain('in uint aSortedIndex');
+      expect(material.vertexShader).toContain('uniform highp sampler2D uSplatTex');
+      // texelFetch prologue reconstructs the per-splat locals.
+      expect(material.vertexShader).toContain('texelFetch(uSplatTex');
+      expect(material.vertexShader).toContain('vec3 aCenter = splatT0.xyz');
+      expect(material.vertexShader).toContain('float aAmplitude = splatT0.w');
+      expect(material.vertexShader).toContain('vec3 aColor = vec3(splatT2.zw, splatT3.x)');
 
       // Check for uniforms
       expect(material.vertexShader).toContain('uniform vec2 uResolution');
@@ -237,8 +240,11 @@ describe('GSplatMaterial', () => {
     it('should have Cholesky unpacking function', () => {
       const material = new GSplatMaterial();
 
-      // Check for unpackCholesky3D function
-      expect(material.vertexShader).toContain('mat3 unpackCholesky3D()');
+      // Check for unpackCholesky3D function (takes the texel-fetched
+      // values as parameters since the texture-storage migration)
+      expect(material.vertexShader).toContain(
+        'mat3 unpackCholesky3D(vec2 c01, vec2 c23, vec2 c45)'
+      );
       expect(material.vertexShader).toContain('return mat3(');
     });
 
@@ -787,13 +793,22 @@ describe('createInstancedGSplatsMesh', () => {
     const geometry = mesh.geometry as THREE.InstancedBufferGeometry;
     expect(geometry.instanceCount).toBe(2);
 
-    // Check instanced attributes exist
-    expect(geometry.getAttribute('aCenter')).toBeDefined();
-    expect(geometry.getAttribute('aCholesky01')).toBeDefined();
-    expect(geometry.getAttribute('aCholesky23')).toBeDefined();
-    expect(geometry.getAttribute('aCholesky45')).toBeDefined();
-    expect(geometry.getAttribute('aAmplitude')).toBeDefined();
-    expect(geometry.getAttribute('aColor')).toBeDefined();
+    // Texture-backed storage: the geometry carries the splat texture +
+    // the identity ordering attribute (no per-splat data attributes).
+    const texture = getSplatTexture(geometry);
+    expect(texture).not.toBeNull();
+    const sortedIndex = geometry.getAttribute('aSortedIndex');
+    expect(sortedIndex).toBeDefined();
+    expect((sortedIndex.array as Uint32Array)[0]).toBe(0);
+    expect((sortedIndex.array as Uint32Array)[1]).toBe(1);
+    // Texel layout round-trip for splat 1: center/amplitude in texel 0,
+    // color split across texels 2-3.
+    const texels = texture!.image.data as Float32Array;
+    expect(texels[16 + 0]).toBe(1); // center.x of splat 1
+    expect(texels[16 + 3]).toBe(0.5); // amplitude of splat 1
+    expect(texels[16 + 11]).toBe(1); // color.g of splat 1
+    // The material was bound to the mesh-owned texture at creation.
+    expect(material.uniforms.uSplatTex.value).toBe(texture);
   });
 
   it('should compute bounding box from centers', () => {
@@ -856,12 +871,11 @@ describe('updateInstancedGSplatsMesh', () => {
     expect(rebuilt).toBe(false);
 
     const geometry = mesh.geometry as THREE.InstancedBufferGeometry;
-    const centerAttr = geometry.getAttribute('aCenter');
-    const centerArray = centerAttr.array as Float32Array;
+    const texels = getSplatTexture(geometry)!.image.data as Float32Array;
 
-    expect(centerArray[0]).toBe(2);
-    expect(centerArray[1]).toBe(2);
-    expect(centerArray[2]).toBe(2);
+    expect(texels[0]).toBe(2); // center.x of splat 0
+    expect(texels[1]).toBe(2);
+    expect(texels[2]).toBe(2);
   });
 
   it('should recreate attributes when count changes', () => {

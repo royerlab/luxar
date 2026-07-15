@@ -22,11 +22,13 @@ import {
   uniform,
   attribute,
   varying,
-  instanceIndex,
+  texture,
+  textureSize,
   vec2 as _vec2,
   vec3 as _vec3,
   vec4 as _vec4,
   mat3 as _mat3,
+  ivec2 as _ivec2,
   float,
   int,
   max,
@@ -54,6 +56,7 @@ const vec2: (a?: TSLNode, b?: TSLNode) => TSLNode = _vec2 as TSLNode;
 const vec3: (a?: TSLNode, b?: TSLNode, c?: TSLNode) => TSLNode = _vec3 as TSLNode;
 const vec4: (a?: TSLNode, b?: TSLNode, c?: TSLNode, d?: TSLNode) => TSLNode = _vec4 as TSLNode;
 const mat3: (a?: TSLNode, b?: TSLNode, c?: TSLNode) => TSLNode = _mat3 as TSLNode;
+const ivec2: (a?: TSLNode, b?: TSLNode) => TSLNode = _ivec2 as TSLNode;
 
 /**
  * Pre-created TSL leaf nodes supplied by the wrapper class. See
@@ -62,6 +65,12 @@ const mat3: (a?: TSLNode, b?: TSLNode, c?: TSLNode) => TSLNode = _mat3 as TSLNod
  * references directly).
  */
 export interface GSplatPickTSLNodes {
+  /**
+   * Splat data texture node (RGBA32F, 4 texels/splat) — shared with
+   * the visual material's storage; rebound per node by the commit's
+   * material sync.
+   */
+  readonly uSplatTex: TSLNode;
   readonly uResolution: TSLNode;
   readonly uFx: TSLNode;
   readonly uFy: TSLNode;
@@ -87,12 +96,11 @@ export function gsplatPickWebGPUFactory(
   outMaterial?: NodeMaterial
 ): NodeMaterial {
   const aQuadCorner: TSLNode = attribute<'vec2'>('aQuadCorner', 'vec2');
-  const aCenter: TSLNode = attribute<'vec3'>('aCenter', 'vec3');
-  const aCholesky01: TSLNode = attribute<'vec2'>('aCholesky01', 'vec2');
-  const aCholesky23: TSLNode = attribute<'vec2'>('aCholesky23', 'vec2');
-  const aCholesky45: TSLNode = attribute<'vec2'>('aCholesky45', 'vec2');
-  const aAmplitude: TSLNode = attribute<'float'>('aAmplitude', 'float');
+  // Draw-slot -> storage-slot mapping; splat data comes from the splat
+  // texture (visual-factory parity, shader-tsl.ts).
+  const aSortedIndex: TSLNode = attribute<'uint'>('aSortedIndex', 'uint');
 
+  const uSplatTex = nodes.uSplatTex;
   const uResolution = nodes.uResolution;
   const uFx = nodes.uFx;
   const uFy = nodes.uFy;
@@ -119,9 +127,37 @@ export function gsplatPickWebGPUFactory(
   const vL2D: TSLNode = varying(vec3(float(0.0), float(0.0), float(0.0)));
   const vCenterScreen: TSLNode = varying(vec2(float(0.0), float(0.0)));
   const vNodeId: TSLNode = varying(uNodeId);
-  const vElementId: TSLNode = varying(float(instanceIndex));
+  // Storage slot, NOT instanceIndex (the draw slot): identical under
+  // Phase-1 identity ordering, and stays the id the rest of the
+  // pipeline addresses splats by once the sort worker permutes draw
+  // order (Phase 2+). Mirrors the GLSL pick shader.
+  const vElementId: TSLNode = varying(float(aSortedIndex));
 
   const vertexBody = Fn(() => {
+    // === Splat-texture fetch prologue (visual-factory parity) ===
+    // Picking needs texels 0-2 only (center/amplitude/cholesky); color
+    // is not fetched. Every value is a `.toVar()` STATEMENT (Fn house
+    // rule). Width is a multiple of 4 -> one row per splat.
+    const splatBase: TSLNode = int(aSortedIndex).mul(int(4)).toVar();
+    // int() wrap is LOAD-BEARING: TSL types textureSize() as uint (the
+    // WGSL textureDimensions convention), but the WebGL2 fallback emits
+    // GLSL textureSize() which returns int -- without the explicit
+    // conversion the generated `uint nodeVar = textureSize(...).x;`
+    // fails to compile on the forceWebGL backend.
+    const splatTexW: TSLNode = int(
+      (textureSize(uSplatTex, int(0)) as unknown as TSLNode).x
+    ).toVar();
+    const texelX: TSLNode = splatBase.mod(splatTexW).toVar();
+    const texelY: TSLNode = splatBase.div(splatTexW).toVar();
+    const splatT0: TSLNode = uSplatTex.load(ivec2(texelX, texelY)).toVar();
+    const splatT1: TSLNode = uSplatTex.load(ivec2(texelX.add(int(1)), texelY)).toVar();
+    const splatT2: TSLNode = uSplatTex.load(ivec2(texelX.add(int(2)), texelY)).toVar();
+    const aCenter: TSLNode = vec3(splatT0).toVar();
+    const aAmplitude: TSLNode = splatT0.w.toVar();
+    const aCholesky01: TSLNode = splatT1.xy.toVar();
+    const aCholesky23: TSLNode = splatT1.zw.toVar();
+    const aCholesky45: TSLNode = splatT2.xy.toVar();
+
     const centerCam4: TSLNode = modelViewMatrix.mul(vec4(aCenter, 1.0)).toVar();
     const centerCam: TSLNode = vec3(centerCam4).toVar();
     const zDepth: TSLNode = centerCam.z.negate().toVar();
@@ -355,6 +391,12 @@ export function buildGSplatPickTSLNodesFromUniforms(
   uniforms: Record<string, THREE.IUniform>
 ): GSplatPickTSLNodes {
   return {
+    // Splat data texture -- bound from the caller's uniform when present,
+    // else a 4x1 RGBA32F placeholder (codegen-only consumers).
+    uSplatTex: texture(
+      (uniforms.uSplatTex?.value as THREE.Texture | null) ??
+        new THREE.DataTexture(new Float32Array(16), 4, 1, THREE.RGBAFormat, THREE.FloatType)
+    ),
     uResolution: uniform(
       (uniforms.uResolution?.value as THREE.Vector2 | undefined) ?? new THREE.Vector2(1, 1)
     ),

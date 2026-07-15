@@ -14,6 +14,7 @@
 
 import * as THREE from 'three';
 import { updateInstancedGSplatsMesh } from '../../../rendering/gsplat-geometry';
+import { syncGSplatMaterialWithGeometry } from '../../../rendering/material-sync-helpers';
 import type { GSplatsUserData } from '../../../types/gsplats';
 import { log, Modules } from '../../../utils/log';
 import type { UpdateSession } from '../../../profiling/update-profiler';
@@ -98,16 +99,22 @@ export function commitGSplatsGeometry(
         // evictor can dispose — or another node adopt — mid-render. See
         // commit-points-geometry.ts.
         mesh.geometry = geometry;
-        // Pool rebuilt the geometry's InstancedInterleavedBuffer; evict
-        // Three's cached RenderObject so its `vertexBuffers` set is
-        // rebuilt against the new buffer next draw.
+        // Rebind uSplatTex (render + pick materials) to the acquired
+        // entry's texture — the acquire may have handed the node a
+        // different geometry+texture pair. In the finally for the same
+        // reason as the handoff: the mesh must never render a geometry
+        // whose texture its material doesn't reference.
+        syncGSplatMaterialWithGeometry(mesh);
+        // Pool rebuilt the geometry's splat storage; evict Three's
+        // cached RenderObject so its `vertexBuffers` set is rebuilt
+        // against the new buffers next draw.
         if (attributesRebuilt) invalidateRenderObjectFor(mesh);
       }
     } else {
-      // Non-pool path: a size change rebinds a fresh
-      // InstancedInterleavedBuffer — evict Three's cached RenderObject
-      // exactly like the pool branch above (stale `vertexBuffers` on
-      // the WebGPU backend otherwise).
+      // Non-pool path: a size change swaps in a fresh geometry+texture
+      // pair — evict Three's cached RenderObject exactly like the pool
+      // branch above (stale `vertexBuffers` on the WebGPU backend
+      // otherwise) and rebind the materials' splat texture.
       const rebuilt = updateInstancedGSplatsMesh(mesh, {
         centers: processed.centers3D,
         cholesky01,
@@ -117,6 +124,7 @@ export function commitGSplatsGeometry(
         colors: processed.colors,
         splatCount: processed.splatCount,
       });
+      syncGSplatMaterialWithGeometry(mesh);
       if (rebuilt) invalidateRenderObjectFor(mesh);
     }
 

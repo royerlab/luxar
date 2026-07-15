@@ -142,6 +142,10 @@ export class GSplatMaterial
 
     super({
       uniforms: {
+        // Splat data texture (RGBA32F, 4 texels/splat) — bound by the
+        // commit's material sync from the acquired pool entry (or the
+        // fallback mesh's own texture). Null until the first commit.
+        uSplatTex: { value: null },
         uResolution: { value: new THREE.Vector2(1, 1) },
         uFx: { value: 500 }, // Default focal length in pixels
         uFy: { value: 500 },
@@ -325,6 +329,15 @@ export class GSplatMaterial
   }
 
   /**
+   * Rebind the splat data texture (pool acquire may hand the node a
+   * different geometry+texture pair on growth or best-fit reuse).
+   * Plain uniform update — no shader recompilation involved.
+   */
+  updateSplatTexture(texture: THREE.DataTexture | null): void {
+    this.uniforms.uSplatTex.value = texture;
+  }
+
+  /**
    * Update the colormap texture and enable/disable colormap mode.
    *
    * @param texture - Colormap LUT texture (256x1 RGB), or null to disable
@@ -377,6 +390,7 @@ export class GSplatMaterial
       cloned.blendDstAlpha = this.blendDstAlpha;
     }
 
+    cloned.uniforms.uSplatTex.value = this.uniforms.uSplatTex.value;
     cloned.uniforms.uFx.value = this.uniforms.uFx.value;
     cloned.uniforms.uFy.value = this.uniforms.uFy.value;
     cloned.uniforms.uResolution.value.copy(this.uniforms.uResolution.value);

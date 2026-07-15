@@ -35,6 +35,9 @@ export class GSplatPickingMaterial extends THREE.ShaderMaterial implements Camer
 
     super({
       uniforms: {
+        // Splat data texture — rebound by the commit's material sync
+        // (shared with the visual material's pool-owned storage).
+        uSplatTex: { value: null },
         uResolution: { value: new THREE.Vector2(1, 1) },
         uFx: { value: 500 },
         uFy: { value: 500 },
@@ -57,6 +60,11 @@ export class GSplatPickingMaterial extends THREE.ShaderMaterial implements Camer
       toneMapped: false,
       side: THREE.DoubleSide,
     });
+  }
+
+  /** Rebind the splat data texture (plain uniform update). */
+  updateSplatTexture(texture: THREE.DataTexture | null): void {
+    this.uniforms.uSplatTex.value = texture;
   }
 
   updateCameraParams(

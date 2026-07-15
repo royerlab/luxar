@@ -257,7 +257,7 @@ Specialized shader material for volumetric Gaussian splatting with nD slicing su
 - **Screen-coverage fade**: unconditional amplitude fade toward the
   extent clamp (no hard-edged clamped rectangles, any sigma scale)
 
-**Architecture Note:** GSplats use `THREE.Mesh` with `InstancedBufferGeometry` for instanced quad rendering, similar to line material approach.
+**Architecture Note:** GSplats use `THREE.Mesh` with `InstancedBufferGeometry` for instanced quad rendering, similar to the line material approach — but since the depth-sorting Phase 1 migration their per-splat data does NOT live in vertex attributes: it lives in an RGBA32F **splat texture** (4 texels/splat; layout authority in `splat-texture-layout.ts`) fetched in the vertex stage via `texelFetch`, indexed by the sole per-instance attribute `aSortedIndex` (Uint32, identity today). This decouples draw order from storage order so the sort worker (Phase 2+) can permute draw order without rewriting splat data. The texture shares its geometry's lifetime (`attachSplatStorage` registers a geometry-`dispose` listener) and costs ≈68 B/splat (+31% vs the interleaved era; see `gpu-byte-budget.ts`). GSplat materials are therefore **per node** (each binds its node's `uSplatTex`) — the material-manager LRU applies to Points/Lines only.
 
 ### 5. Material Manager
 
