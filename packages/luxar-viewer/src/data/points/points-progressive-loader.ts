@@ -330,7 +330,7 @@ export class PointsProgressiveLoader implements PointsDataLoader {
     }
 
     // Known-empty slice: LOD 0 committed 0 points on a prior pass for this SAME
-    // view (the reset branch cleared the flag on any view change). Terminal
+    // view (the view-change branch re-derives the flag from the restored prefix). Terminal
     // ladder — skip the streaming loop AND prefetch so a same-view re-invoke
     // (e.g. refine-on-pause) doesn't fetch the higher (empty) LODs. Mirrors
     // GSplatsProgressiveLoader.

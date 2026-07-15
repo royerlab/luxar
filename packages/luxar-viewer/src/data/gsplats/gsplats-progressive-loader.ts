@@ -351,7 +351,7 @@ export class GSplatsProgressiveLoader implements GSplatsDataLoader {
     }
 
     // Known-empty slice: LOD 0 committed 0 splats on a prior pass for this
-    // SAME view (the reset branch cleared the flag on any view change). The
+    // SAME view (the view-change branch re-derives the flag from the restored prefix). The
     // ladder is terminal, so skip the streaming loop AND prefetch — otherwise a
     // same-view re-invoke (e.g. refine-on-pause's setDimensionValue(current))
     // would re-enter at startLevel=1 and fetch the higher (also-empty) LODs.
