@@ -819,4 +819,63 @@ describe('depth-sort scheduler (Phase 3)', () => {
     expect(root.metadata?.splats).toBe(2);
     expect(root.metadata?.info).toMatch(/up$/);
   });
+
+  it('recovers a node whose first dispatch raced a null camera (registered, never sorted)', async () => {
+    // Init-ordering window: the commit lands while getCamera still
+    // returns null. Registration reaches the worker (it does not need a
+    // camera) but no sort dispatches, so `lastSortAxis` stays null and
+    // no camera motion could ever re-trigger it — only the per-frame
+    // recovery branch can.
+    const coord = await loadCoordinator();
+    let camera: THREE.Camera | null = null;
+    const requestRender = vi.fn();
+    coord.configureDepthSort({ getCamera: () => camera, requestRender });
+
+    const mesh = makeGSplatsMesh(2, 'normal');
+    coord.noteGSplatsCommit(mesh, new Float32Array([0, 0, -1, 1, 0, -2]), 2);
+    await flush();
+    expect(mockApi.registerNode).toHaveBeenCalledTimes(1);
+    expect(mockApi.sort).not.toHaveBeenCalled();
+
+    // Camera appears: the next frame dispatches exactly one recovery
+    // sort; the frame after stays quiet (in flight).
+    camera = makeCamera();
+    coord.evaluateDepthSortPerFrame();
+    expect(mockApi.sort).toHaveBeenCalledTimes(1);
+    coord.evaluateDepthSortPerFrame();
+    expect(mockApi.sort).toHaveBeenCalledTimes(1);
+
+    // The recovered sort applies like any other.
+    sortResolvers[0]({ generation: 1, ordering: new Uint32Array([1, 0]) });
+    await flush();
+    const attr = (mesh.geometry as THREE.InstancedBufferGeometry).getAttribute('aSortedIndex');
+    expect(Array.from(attr.array as Uint32Array)).toEqual([1, 0]);
+    expect(requestRender).toHaveBeenCalled();
+  });
+
+  it('an empty (count=0) commit silences camera-motion re-sorts until real content returns', async () => {
+    // The zero-splat commit releases the worker registration; keeping
+    // the recorded sort pose would fire a guaranteed-null sort RPC on
+    // every threshold crossing (the slice has no visible splats).
+    const coord = await loadCoordinator();
+    const camera = makeCamera();
+    const mesh = await sortedSetup(coord, camera);
+
+    coord.noteGSplatsCommit(mesh, new Float32Array(0), 0);
+    await flush();
+    expect(mockApi.releaseNode).toHaveBeenCalledWith(mesh.uuid);
+
+    // Way past the angle threshold: neither the motion trigger (pose
+    // cleared) nor the recovery branch (registration cleared) may fire.
+    camera.rotateY(Math.PI / 2);
+    coord.evaluateDepthSortPerFrame();
+    coord.evaluateDepthSortPerFrame();
+    expect(mockApi.sort).toHaveBeenCalledTimes(1); // the setup sort only
+
+    // A later non-empty commit restores the full register + sort cycle.
+    coord.noteGSplatsCommit(mesh, new Float32Array([0, 0, -1, 1, 0, -2]), 2);
+    await flush();
+    expect(mockApi.registerNode).toHaveBeenCalledTimes(2);
+    expect(mockApi.sort).toHaveBeenCalledTimes(2);
+  });
 });

@@ -197,8 +197,9 @@ describe('createFlyControls', () => {
 });
 
 describe('createOrthoControls — zoom-limit fallback (M5)', () => {
-  // Ortho fallback chain:
-  //   minZoom = storedZoomLimits?.min ?? m.minDistanceFactor
+  // Ortho fallback chain (zoom ~ 1/distance, so each zoom bound maps to the
+  // OPPOSITE distance factor):
+  //   minZoom = storedZoomLimits?.min ?? 1.0 / m.maxDistanceFactor
   //   maxZoom = storedZoomLimits?.max ?? 1.0 / m.minDistanceFactor
   const m = config.controls.scaleMultipliers;
 
@@ -209,9 +210,9 @@ describe('createOrthoControls — zoom-limit fallback (M5)', () => {
     c.dispose();
   });
 
-  it('falls back to scaleMultipliers.minDistanceFactor when no stored zoom limits', () => {
+  it('falls back to inverted scaleMultipliers when no stored zoom limits', () => {
     const c = createOrthoControls(makeCtx({ storedZoomLimits: null }));
-    expect(c.minZoom).toBeCloseTo(m.minDistanceFactor, 5);
+    expect(c.minZoom).toBeCloseTo(1.0 / m.maxDistanceFactor, 9);
     expect(c.maxZoom).toBeCloseTo(1.0 / m.minDistanceFactor, 5);
     c.dispose();
   });

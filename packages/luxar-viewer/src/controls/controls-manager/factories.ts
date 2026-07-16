@@ -100,7 +100,12 @@ export function createOrthoControls(ctx: ControlsCreationCtx): LuxarOrbitControl
   const m = config.controls.scaleMultipliers;
 
   // Use stored zoom limits (from auto-frame) if available, else wide defaults.
-  const minZoom = ctx.storedZoomLimits?.min ?? m.minDistanceFactor;
+  // Ortho zoom ~ 1/distance, so each zoom bound maps to the OPPOSITE distance
+  // factor: minZoom (zoom-out floor) ← maxDistanceFactor, maxZoom (zoom-in
+  // ceiling) ← minDistanceFactor. (With the old symmetric 0.01/100 factors
+  // the two legs were coincidentally equal; the asymmetric split makes the
+  // mapping load-bearing.)
+  const minZoom = ctx.storedZoomLimits?.min ?? 1.0 / m.maxDistanceFactor;
   const maxZoom = ctx.storedZoomLimits?.max ?? 1.0 / m.minDistanceFactor;
 
   const controls = new LuxarOrbitControls(ctx.camera, ctx.domElement, {

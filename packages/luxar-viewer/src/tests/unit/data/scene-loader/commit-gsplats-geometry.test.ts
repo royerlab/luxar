@@ -7,8 +7,12 @@
  * orchestration (rootGroup / mesh guards + visibleSplatCount write).
  */
 
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, afterEach } from 'vitest';
 import * as THREE from 'three';
+import {
+  configureSplatTextureLayout,
+  resetSplatTextureLayoutForTests,
+} from '../../../../rendering/splat-texture-layout';
 
 const mockUpdateInstancedMesh = vi.fn();
 const mockGetSplatTexture = vi.fn((..._args: unknown[]) => null);
@@ -345,6 +349,38 @@ describe('commitGSplatsGeometry — committedEnergyFraction stamp', () => {
     };
     commitGSplatsGeometry(noop, root, null, undefined, V);
     expect(energy(mesh)).toBe(0.8); // refreshed from the live loader
+  });
+});
+
+describe('commitGSplatsGeometry — capacity-clamp consistency', () => {
+  afterEach(() => {
+    resetSplatTextureLayoutForTests();
+  });
+
+  // The GPU writers clamp the WRITTEN splats to the per-node texture bound
+  // (splat-texture-layout), so every count the commit records or hands out
+  // must be the clamped one — an unclamped count fed to the sort
+  // coordinator makes the SortWorker return permutation values ≥ the
+  // texture capacity (OOB texel fetches → splats vanish).
+  it('notifies the sort coordinator and stamps visibleSplatCount with the CLAMPED count', () => {
+    // maxTextureSize 8 → width 8, per-node bound = 8×8/4 = 16 splats.
+    configureSplatTextureLayout(8);
+    mockUpdateInstancedMesh.mockReset();
+    mockNoteGSplatsCommit.mockReset();
+    const root = new THREE.Group();
+    const mesh = makeMesh('/g');
+    root.add(mesh);
+    commitGSplatsGeometry(makeStaged(100), root, null, undefined, V);
+
+    expect((mesh.userData as { visibleSplatCount: number }).visibleSplatCount).toBe(16);
+    expect(mockNoteGSplatsCommit).toHaveBeenCalledWith(mesh, expect.any(Float32Array), 16);
+    // The non-pool GPU dispatch carries the clamped count too — every
+    // consumer downstream of the commit sees ONE consistent count.
+    const [, payload] = mockUpdateInstancedMesh.mock.calls[0] as [
+      THREE.Mesh,
+      { splatCount: number },
+    ];
+    expect(payload.splatCount).toBe(16);
   });
 });
 

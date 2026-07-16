@@ -15,6 +15,7 @@
 import * as THREE from 'three';
 import { updateInstancedGSplatsMesh } from '../../../rendering/gsplat-geometry';
 import { noteGSplatsCommit } from '../../../rendering/depth-sort-coordinator';
+import { clampSplatCapacity } from '../../../rendering/splat-texture-layout';
 import { syncGSplatMaterialWithGeometry } from '../../../rendering/material-sync-helpers';
 import type { GSplatsUserData } from '../../../types/gsplats';
 import { log, Modules } from '../../../utils/log';
@@ -71,10 +72,18 @@ export function commitGSplatsGeometry(
 
   const { processed, cholesky01, cholesky23, cholesky45 } = staged;
 
+  // SEMANTIC clamp at the commit choke point: the GPU writers below clamp
+  // the WRITTEN splats to the per-node texture bound (splat-texture-layout),
+  // so every count this commit records or hands out — visibleSplatCount,
+  // the sort coordinator's `count` — must be the clamped one. Otherwise the
+  // SortWorker returns a permutation with slot values ≥ the texture
+  // capacity, and those aSortedIndex entries fetch out-of-bounds texels.
+  const splatCount = clampSplatCapacity(processed.splatCount);
+
   const bufferSession = session?.begin('Update Buffers');
   try {
     if (gpuBufferPool) {
-      const geometry = gpuBufferPool.acquireGSplatsGeometry(staged.path, processed.splatCount);
+      const geometry = gpuBufferPool.acquireGSplatsGeometry(staged.path, splatCount);
       const attributesRebuilt = gpuBufferPool.didLastAcquireRebuildAttributes();
       const truncationRadius = readTruncate(mesh);
       try {
@@ -87,9 +96,9 @@ export function commitGSplatsGeometry(
             cholesky23,
             cholesky45,
             colors: processed.colors,
-            splatCount: processed.splatCount,
+            splatCount,
           },
-          processed.splatCount,
+          splatCount,
           truncationRadius
         );
       } finally {
@@ -123,14 +132,14 @@ export function commitGSplatsGeometry(
         cholesky45,
         amplitudes: processed.amplitudes,
         colors: processed.colors,
-        splatCount: processed.splatCount,
+        splatCount,
       });
       syncGSplatMaterialWithGeometry(mesh);
       if (rebuilt) invalidateRenderObjectFor(mesh);
     }
 
     if (mesh.userData) {
-      (mesh.userData as GSplatsUserData).visibleSplatCount = processed.splatCount;
+      (mesh.userData as GSplatsUserData).visibleSplatCount = splatCount;
       // Stamp the view-version this geometry was loaded for so the LOD registry
       // can distinguish "fresh for the current slice" from merely "ready" (a
       // re-slice overwrites the buffers in place above without flipping any
@@ -145,7 +154,7 @@ export function commitGSplatsGeometry(
       (mesh.userData as CommittedDataUserData).committedData = staged.sourceData;
     }
 
-    if (processed.splatCount === 0) {
+    if (splatCount === 0) {
       log.info(
         Modules.SCENE_LOADER,
         `Clearing gsplats for ${staged.path} (no visible splats at current slice)`
@@ -158,7 +167,9 @@ export function commitGSplatsGeometry(
     // current camera pose. Runs LAST: the texture-write/bbox loops above
     // are the final main-thread readers of `centers3D`, and the transfer
     // detaches it (safe — the memoized-concat noop keys on `sourceData`).
-    noteGSplatsCommit(mesh, processed.centers3D, processed.splatCount);
+    // The CLAMPED count keeps the SortWorker's permutation values inside
+    // [0, textureCapacity) — the worker clamps its own count to it.
+    noteGSplatsCommit(mesh, processed.centers3D, splatCount);
   } finally {
     bufferSession?.end();
   }
