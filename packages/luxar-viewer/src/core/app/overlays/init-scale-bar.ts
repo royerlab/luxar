@@ -28,7 +28,10 @@ export function initScaleBar(ports: InitScaleBarPorts): ScaleBar {
   }
 
   const scaleBar = new ScaleBar({
-    camera: ports.sceneManager.camera,
+    // Live accessor: the scene manager replaces the camera on
+    // perspective ↔ ortho swaps, so the scale bar must re-read it per
+    // update (see ScaleBarConfig.getCamera).
+    getCamera: () => ports.sceneManager.camera,
     controls: ports.sceneManager.controls,
     canvas: ports.sceneManager.renderer.domElement,
     targetWidthPx: config.ui.scaleBar.targetWidthPx,

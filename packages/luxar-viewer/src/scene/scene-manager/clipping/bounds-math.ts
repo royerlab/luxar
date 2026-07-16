@@ -196,9 +196,36 @@ export function validateFOV(fov: number, min: number = 10, max: number = 120): n
 }
 
 /**
- * Minimum near plane distance to prevent numerical issues
+ * Absolute last-resort near-plane floor (degenerate / zero-radius
+ * scenes only). For any real scene the SCALE-AWARE floor from
+ * {@link minNearForRadius} dominates — see the rationale there.
  */
-export const MIN_NEAR_PLANE = 0.0001;
+export const MIN_NEAR_PLANE = 1e-9;
+
+/**
+ * Relative near-plane floor: near is never smaller than this fraction
+ * of the (safety-expanded) scene bounding-sphere radius.
+ *
+ * Why relative and not absolute: the historical absolute floor
+ * (0.0001) silently broke tiny scenes — with the 1000x zoom-in
+ * headroom, a scene of diagonal ≲ 0.1 world units lets the camera
+ * orbit closer to the target than the floor itself, clipping all
+ * nearby geometry. A floor proportional to scene scale keeps the same
+ * zoom-in depth working at every scale.
+ *
+ * The factor is chosen for continuity with the historical constant: a
+ * typical diagonal-100 scene has expanded radius ~52.5, and
+ * 52.5 x 2e-6 ~ 1e-4 — exactly the old absolute floor.
+ */
+export const MIN_NEAR_RADIUS_FACTOR = 2e-6;
+
+/**
+ * Scale-aware near-plane floor for a scene with the given
+ * (safety-expanded) bounding-sphere radius.
+ */
+export function minNearForRadius(expandedRadius: number): number {
+  return Math.max(MIN_NEAR_PLANE, expandedRadius * MIN_NEAR_RADIUS_FACTOR);
+}
 
 /**
  * 3D bounding sphere representation
@@ -243,14 +270,16 @@ export function calculateClippingPlanesFromSphere(
   const R = sphere.radius * SPHERE_SAFETY_EXPANSION;
 
   const far = dist + R;
+  const minNear = minNearForRadius(R);
 
   if (dist < R) {
-    // Inside sphere: use minimum near plane to see all surrounding geometry
-    return { near: MIN_NEAR_PLANE, far };
+    // Inside sphere: use the scale-aware near floor to see all
+    // surrounding geometry
+    return { near: minNear, far };
   }
 
   // Outside sphere: nearest point on sphere surface
-  const near = Math.max(MIN_NEAR_PLANE, dist - R);
+  const near = Math.max(minNear, dist - R);
   return { near, far };
 }
 
