@@ -678,11 +678,11 @@ the full citation.
 
 **Single-cell atlases & embeddings**
 - **Tabula Sapiens** — Tabula Sapiens Consortium (2022), *Science*, [doi:10.1126/science.abl4896](https://doi.org/10.1126/science.abl4896); accessed via [CZ CELLxGENE Discover](https://cellxgene.cziscience.com/) (CC BY 4.0).
-- **Zebrahub** — [CZ Biohub Zebrahub](https://zebrahub.org); Lange et al. (2024), [biorxiv:2024.10.18.618987](https://www.biorxiv.org/content/10.1101/2024.10.18.618987v1).
+- **Zebrahub** — [CZ Biohub Zebrahub](https://zebrahub.org); Zebrahub-Multiome, Kim et al. (2024), [bioRxiv:2024.10.18.618987](https://www.biorxiv.org/content/10.1101/2024.10.18.618987v2).
 - **Protein Landscape** — CAFA5 protein embeddings via ProtT5 (Elnaggar et al. 2021, *IEEE TPAMI*, [doi:10.1109/TPAMI.2021.3095381](https://doi.org/10.1109/TPAMI.2021.3095381)); [CAFA5 challenge](https://www.kaggle.com/competitions/cafa-5-protein-function-prediction).
 - **Spotify Tracks** — [`maharshipandya/spotify-tracks-dataset`](https://huggingface.co/datasets/maharshipandya/spotify-tracks-dataset) (Hugging Face), derived from the Spotify Web API audio features.
-- **Human Multiome** — peak-accessibility UMAP of a human single-cell multiome; data from Domcke et al. (2020), *A human cell atlas of fetal chromatin accessibility*, *Science* 370:eaba7612, [doi:10.1126/science.aba7612](https://doi.org/10.1126/science.aba7612); peak-UMAP analysis from Kim et al. (Royer lab, CZ Biohub SF), bioRxiv preprint.
-- **Mouse Multiome** — peak-accessibility UMAP of a mouse single-cell multiome; data from Argelaguet et al. (2022), *Decoding gene regulation in the mouse embryo using single-cell multi-omics*, [bioRxiv:2022.06.15.496239](https://doi.org/10.1101/2022.06.15.496239); peak-UMAP analysis from Kim et al. (Royer lab, CZ Biohub SF), bioRxiv preprint.
+- **Human Multiome** — peak-accessibility UMAP of a human single-cell multiome; data from Domcke et al. (2020), *A human cell atlas of fetal chromatin accessibility*, *Science* 370:eaba7612, [doi:10.1126/science.aba7612](https://doi.org/10.1126/science.aba7612); peak-UMAP analysis from Zebrahub-Multiome, Kim et al. (2024), [bioRxiv:2024.10.18.618987](https://www.biorxiv.org/content/10.1101/2024.10.18.618987v2).
+- **Mouse Multiome** — peak-accessibility UMAP of a mouse single-cell multiome; data from Argelaguet et al. (2022), *Decoding gene regulation in the mouse embryo using single-cell multi-omics*, [bioRxiv:2022.06.15.496239](https://doi.org/10.1101/2022.06.15.496239); peak-UMAP analysis from Zebrahub-Multiome, Kim et al. (2024), [bioRxiv:2024.10.18.618987](https://www.biorxiv.org/content/10.1101/2024.10.18.618987v2).
 
 Synthetic / procedurally-generated demos — **Lorenz Attractor**, **Spiral Galaxy** (3D & 5D), **Rainbow Sphere**, **Quantum Orbitals**, **Hilbert Curve**, **Bioluminescent Ocean**, and **Particle Collision** (inspired by CERN LHC events) — use no external data.
 
