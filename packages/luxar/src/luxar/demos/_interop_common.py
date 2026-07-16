@@ -88,10 +88,11 @@ def build_interop_scene(
     """Build a single-layer scene from a cached (possibly LOD'd) ``.gsplats.zarr``.
 
     Classical captures carry per-splat color, so ``colormap`` is normally
-    ``None``. Imports render best under ``blending_mode="normal"`` (correct
-    once depth-sorted rendering lands, acceptable today). Both matrix and
-    partition caches embed through ``add_gsplats_from_file``, which grafts
-    whatever node shape the recipe produced.
+    ``None``. Imports render under ``blending_mode="normal"`` (alpha-over) —
+    the surface-like, occluding look these photogrammetric scenes need, which
+    composites correctly now that depth-sorted rendering has landed (R10). Both
+    matrix and partition caches embed through ``add_gsplats_from_file``, which
+    grafts whatever node shape the recipe produced.
     """
     with asection("Building scene"):
         dims = Dimensions([Dimension(a, unit=unit, display=True) for a in "xyz"])
