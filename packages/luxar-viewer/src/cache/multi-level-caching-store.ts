@@ -652,6 +652,12 @@ export class MultiLevelCachingStore implements AsyncReadable {
             this.log(`External dataset TTL expired (${age}ms > ${ttlMs}ms), clearing cache`);
             this.clearL1();
             await this.clearL2();
+            // CRIT-5 parity with the content-hash path: cancel in-flight
+            // coalesced gets so a fetch racing this TTL clear cannot
+            // repopulate the just-cleared L1/L2 with pre-clear bytes. (The
+            // L2 epoch alone does NOT cover this — a fetch still in flight
+            // here resolves AFTER the clear and enqueues with the new epoch.)
+            this.abortPendingGets();
             this.invalidationCallbacks.forEach((cb) => cb());
           }
         }
@@ -677,16 +683,10 @@ export class MultiLevelCachingStore implements AsyncReadable {
         // L1 (e.g. content-hash refresh during a long session).
         this.clearL1();
         await this.clearL2();
-        // CRIT-5: cancel every in-flight coalesced get so a fetch that
-        // started before validation completed cannot resurrect stale
-        // bytes by writing back into the just-cleared L1/L2 after this
-        // returns. Each pending entry's controller signal is composed
-        // into fetchKeyChain, so abort() trips the post-arrayBuffer
-        // populate guard.
-        for (const [, pending] of this.pendingGets) {
-          pending.controller.abort();
-        }
-        this.pendingGets.clear();
+        // CRIT-5: cancel in-flight coalesced gets so a fetch that started
+        // before validation completed cannot resurrect stale bytes after the
+        // clear (see abortPendingGets).
+        this.abortPendingGets();
         this.invalidationCallbacks.forEach((cb) => cb());
       }
 
@@ -696,6 +696,21 @@ export class MultiLevelCachingStore implements AsyncReadable {
       // Offline or error - use cached data
       this.log('Cannot validate (offline?), using cached data');
     }
+  }
+
+  /**
+   * CRIT-5: cancel every in-flight coalesced get and forget them, so a fetch
+   * that started before an invalidation cannot resurrect stale bytes by writing
+   * back into the just-cleared L1/L2 after it resolves. Each pending entry's
+   * controller signal is composed into `fetchKeyChain`, so `abort()` trips the
+   * post-arrayBuffer populate guard. Shared by the content-hash-mismatch and
+   * TTL-expiry clear paths so the two stay in lockstep.
+   */
+  private abortPendingGets(): void {
+    for (const [, pending] of this.pendingGets) {
+      pending.controller.abort();
+    }
+    this.pendingGets.clear();
   }
 
   /**

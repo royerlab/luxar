@@ -570,6 +570,52 @@ describe('MultiLevelCachingStore', () => {
       }
     });
 
+    it('CRIT-5: TTL expiry cancels in-flight gets so they cannot repopulate post-clear', async () => {
+      // Parity with the content-hash CRIT-5 test below: a TTL-triggered clear
+      // must also abort in-flight coalesced gets, or a fetch racing the clear
+      // resurrects stale bytes into the just-cleared L1/L2. FAILS on the
+      // pre-fix code (the TTL branch didn't call abortPendingGets).
+      const realConfig = (await import('../../../config')).config;
+      const original = realConfig.cache.externalDatasetTtlMs;
+      realConfig.cache.externalDatasetTtlMs = 1_000;
+      try {
+        await store.init();
+        const l2Store = (store as any).l2Store as OPFSStore;
+        vi.spyOn(l2Store, 'getValidationState').mockReturnValue({
+          mode: 'ttl',
+          lastValidatedAt: Date.now() - 5 * 60 * 1000, // stale → TTL expired
+        });
+        // .zattrs unreachable so the TTL branch (not zattrs-hash) runs.
+        global.fetch = vi.fn(async () => ({
+          ok: false,
+          status: 404,
+          async arrayBuffer() {
+            return new ArrayBuffer(0);
+          },
+        })) as unknown as typeof fetch;
+
+        // Inject an in-flight coalesced get, as if a fetch were mid-flight
+        // when the TTL clear fires.
+        const controller = new AbortController();
+        (store as any).pendingGets.set('chunk.k', {
+          promise: Promise.resolve({
+            result: { ok: true, value: new Uint8Array() },
+            source: 'network',
+          }),
+          controller,
+        });
+
+        const ac = new AbortController();
+        await (store as any).doValidateCache(ac.signal);
+
+        // The racing get was cancelled and forgotten.
+        expect(controller.signal.aborted).toBe(true);
+        expect((store as any).pendingGets.size).toBe(0);
+      } finally {
+        realConfig.cache.externalDatasetTtlMs = original;
+      }
+    });
+
     it('content-hash mismatch defensively clears L1 (commit 4.1)', async () => {
       // doValidateCache is private but unit-testable via reflection.
       // The real OPFSStore is reused; setContentHash sets the 'old-hash'
