@@ -1001,6 +1001,68 @@ class TestCoverageInflation:
 
 
 # ─────────────────────────────────────────────────────────────────────
+# Per-bin amplitude mode (amplitude="l2" | "mass")
+# ─────────────────────────────────────────────────────────────────────
+
+
+class TestAmplitudeMode:
+    """amplitude="mass": every bin's merged splat carries exactly its members'
+    summed a·|det L| mass — the per-channel colored-light invariant the lifted
+    points/lines LOD path relies on for hue coherence across levels."""
+
+    _KW = dict(
+        compression_factor=4,
+        levels=1,
+        method="kmeans",  # warm start only → deterministic identical partitions
+        lloyd_iterations=0,
+        candidate_bins_k=2,
+        device="cpu",
+        seed=0,
+        conserve_mass=False,  # isolate the PER-BIN rule from the global net
+    )
+
+    @staticmethod
+    def _colored_mass(lev) -> np.ndarray:
+        L = unpack_tril(np.asarray(lev.cholesky_factors, np.float64), 3)
+        det = np.abs(np.prod(np.diagonal(L, axis1=-2, axis2=-1), axis=-1))
+        a = np.asarray(lev.amplitudes, np.float64)
+        c = np.asarray(lev.colors, np.float64)
+        return (a * det) @ c  # (3,) per-channel colored mass
+
+    def _data_with_colors(self, n=256, seed=5):
+        base = _make_anisotropic_3d(n, seed=seed)
+        rng = np.random.RandomState(seed + 1)
+        return GSplatData(
+            centers=np.asarray(base.centers),
+            amplitudes=np.asarray(base.amplitudes),
+            cholesky_factors=np.asarray(base.cholesky_factors),
+            colors=rng.rand(n, 3).astype(np.float32) * 0.9 + 0.05,
+        )
+
+    def test_mass_mode_conserves_colored_mass_exactly(self):
+        data = self._data_with_colors()
+        out = make_substitutive_lod(data, amplitude="mass", **self._KW)
+        fine = self._colored_mass(out.at_substitutive(0).flattened())
+        coarse = self._colored_mass(out.at_substitutive(1).flattened())
+        np.testing.assert_allclose(coarse, fine, rtol=1e-6)
+
+    def test_l2_default_differs_from_mass(self):
+        # Guard that the knob is live: with the global conserve_mass net off,
+        # the L2-optimal amplitudes drift (3-17% measured, content-dependent).
+        data = self._data_with_colors()
+        out_l2 = make_substitutive_lod(data, **self._KW)  # default amplitude="l2"
+        fine = self._colored_mass(out_l2.at_substitutive(0).flattened())
+        coarse = self._colored_mass(out_l2.at_substitutive(1).flattened())
+        assert float(np.abs(coarse / fine - 1.0).max()) > 1e-3
+
+    def test_invalid_amplitude_rejected(self):
+        with pytest.raises(ValueError, match="amplitude"):
+            make_substitutive_lod(
+                self._data_with_colors(), amplitude="peak", **self._KW
+            )
+
+
+# ─────────────────────────────────────────────────────────────────────
 # L2 refinement (refine="l2")
 # ─────────────────────────────────────────────────────────────────────
 

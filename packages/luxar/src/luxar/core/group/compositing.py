@@ -13,6 +13,9 @@ Exposed:
   index, leaving scalars / None / mis-sized inputs untouched.
 * :func:`position_bounds_from_array` — per-axis min/max of an (N, D)
   position array, in the writer's shape.
+* :func:`sync_custom_colormap_attr` — mirror the writer's custom-colormap
+  resolution (`ndarray / non-builtin name -> 'custom'`) into the adder's
+  attrs dict so the returned node object matches what zarr stores.
 """
 
 from __future__ import annotations
@@ -41,6 +44,25 @@ COMPOSITING_ATTRS = frozenset(
         "nd_transform",
     }
 )
+
+
+def sync_custom_colormap_attr(attrs: Dict[str, Any]) -> None:
+    """Sync ``attrs['colormap']`` with what the compiler wrote to zarr.
+
+    The writer resolves any non-builtin colormap — an ndarray LUT or a
+    matplotlib/colorcet name — to a ``colormap_lut`` dataset plus
+    ``colormap='custom'`` (``io/_compiler/colormap.py``), but it mutates its
+    OWN copy of the attrs (the ``**attrs`` packing boundary), so the adder
+    must mirror the substitution for the node object it returns. No-op when
+    ``colormap`` is absent or a builtin name.
+    """
+    if "colormap" not in attrs:
+        return
+    from ...colormaps.builtins import BUILTIN_COLORMAP_NAMES
+
+    cm = attrs["colormap"]
+    if not isinstance(cm, str) or cm not in BUILTIN_COLORMAP_NAMES:
+        attrs["colormap"] = "custom"
 
 
 def slice_optional_array(value: Any, indices: np.ndarray, n_elements: int) -> Any:
