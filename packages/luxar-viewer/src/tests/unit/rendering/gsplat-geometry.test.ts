@@ -21,6 +21,7 @@ import {
   createInstancedGSplatsMesh,
   updateInstancedGSplatsMesh,
   packCholeskyForShader,
+  writeSortedIndexOrdering,
   type InstancedGSplatsMeshConfig,
 } from '../../../rendering/gsplat-geometry';
 import {
@@ -125,5 +126,42 @@ describe('non-pool writers — capacity clamp self-consistency', () => {
     expect(rebuilt).toBe(false);
     expect(mesh.geometry).toBe(geometryBefore);
     expect((mesh.geometry as THREE.InstancedBufferGeometry).instanceCount).toBe(16);
+  });
+});
+
+describe('updateInstancedGSplatsMesh — preserveOrdering (same-node same-count recommit)', () => {
+  const orderingOf = (mesh: THREE.Mesh, n: number): number[] =>
+    Array.from((mesh.geometry.getAttribute('aSortedIndex').array as Uint32Array).subarray(0, n));
+
+  it('same-size branch keeps the sort permutation when the flag is set', () => {
+    const mesh = createInstancedGSplatsMesh(makeConfig(4), materialWithTruncate(3.0));
+    const geometry = mesh.geometry as THREE.InstancedBufferGeometry;
+    // The SortWorker landed a depth-sort permutation between commits.
+    writeSortedIndexOrdering(geometry, new Uint32Array([3, 2, 1, 0]), 4);
+
+    const rebuilt = updateInstancedGSplatsMesh(mesh, makeConfig(4), { preserveOrdering: true });
+    expect(rebuilt).toBe(false);
+    expect(mesh.geometry).toBe(geometry);
+    expect(orderingOf(mesh, 4)).toEqual([3, 2, 1, 0]);
+
+    // Without the flag the same-size branch restores identity (default).
+    updateInstancedGSplatsMesh(mesh, makeConfig(4));
+    expect(orderingOf(mesh, 4)).toEqual([0, 1, 2, 3]);
+  });
+
+  it('rebuild branch IGNORES the flag — the fresh geometry gets identity', () => {
+    const mesh = createInstancedGSplatsMesh(makeConfig(4), materialWithTruncate(3.0));
+    writeSortedIndexOrdering(
+      mesh.geometry as THREE.InstancedBufferGeometry,
+      new Uint32Array([3, 2, 1, 0]),
+      4
+    );
+
+    // Count change: fresh geometry+texture pair. Fresh aSortedIndex arrays
+    // are zero-filled, not identity, so the identity write is structurally
+    // required regardless of preserveOrdering.
+    const rebuilt = updateInstancedGSplatsMesh(mesh, makeConfig(6), { preserveOrdering: true });
+    expect(rebuilt).toBe(true);
+    expect(orderingOf(mesh, 6)).toEqual([0, 1, 2, 3, 4, 5]);
   });
 });
