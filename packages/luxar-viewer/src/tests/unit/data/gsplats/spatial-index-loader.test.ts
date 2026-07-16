@@ -513,6 +513,49 @@ describe('GSplatsSpatialIndexLoader', () => {
       });
     });
 
+    // ────────────────────────────────────────────────────────────────
+    // Dataset-switch race: dispose() lands while loadGSplats' chunk
+    // reads are in flight. Pre-fix this dereferenced the nulled
+    // `_accumulator` after the awaits ("Cannot read properties of null
+    // (reading 'getData')") and the scene-loader retry path logged it
+    // as a FAILURE. The load must instead bail as a cancellation
+    // (DOMException name 'AbortError' — run-loader-updates' quiet
+    // isAbortError branch). Symmetric block in the lines loader tests.
+    describe('dispose during in-flight load (dataset-switch race)', () => {
+      it('rejects with AbortError, not a TypeError', async () => {
+        const viewState: ViewState = {
+          displayDims: [0, 1, 2],
+          slicePosition: [0, 0, 0],
+          tolerance: [0, 0, 0],
+        };
+
+        // Make every chunk read hang on a gate we control.
+        let releaseReads!: () => void;
+        const gate = new Promise<void>((resolve) => {
+          releaseReads = resolve;
+        });
+        const baseGet = zarr.get as unknown as ReturnType<typeof vi.fn>;
+        const realImpl = baseGet.getMockImplementation() as (
+          array: unknown,
+          slices?: unknown
+        ) => Promise<unknown>;
+        baseGet.mockImplementation(async (array: unknown, slices?: unknown) => {
+          const result = await realImpl(array, slices);
+          if (array !== chunkBoundsArray) await gate; // chunk-bounds init stays fast
+          return result;
+        });
+
+        const pending = bodyLoader.loadGSplats(viewState);
+        // Let the load reach its in-flight awaits, then tear the loader
+        // down mid-read (what a dataset switch does).
+        await new Promise((r) => setTimeout(r, 10));
+        bodyLoader.dispose();
+        releaseReads();
+
+        await expect(pending).rejects.toMatchObject({ name: 'AbortError' });
+      });
+    });
+
     describe('data loading (direct per-splat path)', () => {
       it('should produce arrays sized to the loaded splat count', async () => {
         mockExecute.mockResolvedValueOnce([{ start: 0, end: 4 }]);

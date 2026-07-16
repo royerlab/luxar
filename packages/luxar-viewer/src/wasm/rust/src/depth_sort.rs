@@ -76,6 +76,11 @@ pub fn sort_splats_by_depth(
     ordering: &mut [u32],
     count: usize,
 ) -> u32 {
+    // Undersized buffers are SAFE in release too: the debug_asserts
+    // below only add friendlier messages — Rust's slice bounds checks
+    // trap (`unreachable`) before any out-of-bounds access, and a trap
+    // does not poison the instance (verified empirically: subsequent
+    // calls succeed), so a bad call degrades to one rejected worker RPC.
     debug_assert!(
         centers3.len() >= count * 3,
         "centers3 too small: {} < {}",

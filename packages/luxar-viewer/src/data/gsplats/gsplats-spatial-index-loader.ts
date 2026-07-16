@@ -384,8 +384,14 @@ export class GSplatsSpatialIndexLoader implements GSplatsDataLoader {
 
     // Load directly into the accumulator buffers (zero allocations).
     if (this._accumulator && appConfig.dataLoading.performance.useAccumulators) {
+      // Capture locally: dispose() (dataset switch) can null + dispose
+      // `this._accumulator` while the chunk loads below are in flight —
+      // dereferencing the field again after the awaits raced a TypeError
+      // ("Cannot read properties of null"). The identity re-check after
+      // the loads turns that race into a quiet cancellation.
+      const accumulator = this._accumulator;
       // Ensure capacity FIRST
-      this._accumulator.ensureCapacity(totalSplats);
+      accumulator.ensureCapacity(totalSplats);
 
       // Initialize accumulator types based on array metadata (must be done BEFORE loading!)
       // This ensures colorBuffer has the correct type (Uint8/Uint16/Float32)
@@ -407,7 +413,7 @@ export class GSplatsSpatialIndexLoader implements GSplatsDataLoader {
             : colorType === 'Uint16Array'
               ? new Uint16Array(3)
               : new Float32Array(3);
-        this._accumulator.fill(0, {
+        accumulator.fill(0, {
           positions: new Float32Array(attrs.ndim),
           amplitudes: new Float32Array(1),
           choleskyFactors: new Float32Array(choleskyPackedSize(attrs.ndim)),
@@ -416,9 +422,9 @@ export class GSplatsSpatialIndexLoader implements GSplatsDataLoader {
       }
 
       // Get direct buffer references for zero-allocation loading (now colorBuffer has correct type!)
-      const centerBuffer = this._accumulator.getCenterBuffer();
-      const amplitudeBuffer = this._accumulator.getAmplitudeBuffer();
-      const choleskyBuffer = this._accumulator.getCholeskyBuffer();
+      const centerBuffer = accumulator.getCenterBuffer();
+      const amplitudeBuffer = accumulator.getAmplitudeBuffer();
+      const choleskyBuffer = accumulator.getCholeskyBuffer();
 
       // Load directly into accumulator buffers (ZERO intermediate allocations!)
       // All four attribute arrays load CONCURRENTLY — distinct zarr arrays
@@ -432,7 +438,7 @@ export class GSplatsSpatialIndexLoader implements GSplatsDataLoader {
               // NOTE: For LUT encoding, loadColorRanges may return a different buffer type
               // (Float32Array) than the accumulator's colorBuffer (Uint8Array based on stored dtype).
               // We MUST use the returned buffer since it contains the decoded colors.
-              const colorBuffer = this._accumulator!.getColorBuffer();
+              const colorBuffer = accumulator.getColorBuffer();
               const loadedColors = await this.loadColorRanges(splatRanges, colorBuffer);
 
               // If loadColorRanges returned a different buffer (e.g., LUT decoded to Float32Array),
@@ -440,7 +446,7 @@ export class GSplatsSpatialIndexLoader implements GSplatsDataLoader {
               if (loadedColors !== colorBuffer) {
                 // Replace accumulator's color buffer with the decoded colors
                 // This handles LUT encoding where decoded output is Float32Array
-                this._accumulator!.setColorBuffer(loadedColors);
+                accumulator.setColorBuffer(loadedColors);
               }
             })()
           : Promise.resolve();
@@ -455,9 +461,21 @@ export class GSplatsSpatialIndexLoader implements GSplatsDataLoader {
         loadSession?.end();
       }
 
+      // Disposed mid-load (dataset switch tore this loader down while the
+      // chunk reads were in flight): the update was abandoned on purpose.
+      // Bail as a cancellation — run-loader-updates' isAbortError branch
+      // stages null quietly (no failure record, no retry, no error log) —
+      // instead of reading subarrays out of a disposed accumulator.
+      if (this._accumulator !== accumulator) {
+        throw new DOMException(
+          `GSplats loader disposed during load: ${this.node.path}`,
+          'AbortError'
+        );
+      }
+
       // Return from accumulator (subarrays, zero copy!)
       // NO fill() needed - data already in buffers!
-      return this._accumulator.getData(totalSplats);
+      return accumulator.getData(totalSplats);
     }
 
     // Fallback: Load to separate arrays (allocations when accumulator disabled)
