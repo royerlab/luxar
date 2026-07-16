@@ -189,6 +189,19 @@ describe('attachSplatStorage / writeSplatTexels — fused writer round-trip', ()
     expect(attr.updateRanges[0].start).toBe(0);
   });
 
+  it('clamps the attach capacity to the per-node bound (structural safety net)', () => {
+    // maxTextureSize 8 → width 8, bound = 8×8/4 = 16 splats — so an
+    // over-bound request must yield a texture no taller than 8 rows
+    // (height ≤ maxTextureSize by construction) and a matching
+    // aSortedIndex length, whatever the caller asked for.
+    configureSplatTextureLayout(8);
+    const geometry = new THREE.InstancedBufferGeometry();
+    const texture = attachSplatStorage(geometry, 100);
+    expect(texture.image.height).toBeLessThanOrEqual(8);
+    expect((geometry.getAttribute('aSortedIndex').array as Uint32Array).length).toBe(16);
+    expect(splatTexelCapacity(texture)).toBe(16);
+  });
+
   it('disposes the texture WITH the geometry (structural lifetime pin)', () => {
     const geometry = new THREE.InstancedBufferGeometry();
     const texture = attachSplatStorage(geometry, 4);
