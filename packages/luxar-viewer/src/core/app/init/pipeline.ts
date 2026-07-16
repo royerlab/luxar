@@ -265,7 +265,11 @@ export async function runInitPipeline(
   // dependency-inversion as setRequestRender above.
   setDepthSortEnabled(config.depthSort.enabled && lodUrlParams.depthSort);
   configureDepthSort({
-    camera: sceneManager.camera,
+    // A live GETTER, not sceneManager.camera captured by value: the
+    // ortho-mode toggle replaces the camera object, and sorts must track
+    // whichever camera is current (same pattern as the LOD registry's
+    // getCamera above).
+    getCamera: () => sceneManager.camera,
     requestRender: () => animationController.startAnimation(),
     // Blending-mode-switch hook (spec §5.4): switching a gsplat layer TO
     // `normal` clears its noop stamp and forces a reprocess so the next

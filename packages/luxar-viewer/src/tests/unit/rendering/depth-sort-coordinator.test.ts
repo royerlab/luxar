@@ -113,7 +113,7 @@ describe('depth-sort coordinator', () => {
   it('registers + sorts an order-dependent (normal) commit and applies the ordering', async () => {
     const coord = await loadCoordinator();
     const requestRender = vi.fn();
-    coord.configureDepthSort({ camera: makeCamera(), requestRender });
+    coord.configureDepthSort({ getCamera: () => makeCamera(), requestRender });
 
     const mesh = makeGSplatsMesh(3, 'normal');
     const centers = new Float32Array([0, 0, -10, 1, 0, -1, 2, 0, -5]);
@@ -136,7 +136,7 @@ describe('depth-sort coordinator', () => {
 
   it('does not register order-independent (additive) commits', async () => {
     const coord = await loadCoordinator();
-    coord.configureDepthSort({ camera: makeCamera(), requestRender: vi.fn() });
+    coord.configureDepthSort({ getCamera: () => makeCamera(), requestRender: vi.fn() });
 
     const mesh = makeGSplatsMesh(3, 'additive');
     coord.noteGSplatsCommit(mesh, new Float32Array(9), 3);
@@ -149,7 +149,7 @@ describe('depth-sort coordinator', () => {
   it('generation guard: a stale ordering resolving after a newer commit is dropped', async () => {
     const coord = await loadCoordinator();
     const requestRender = vi.fn();
-    coord.configureDepthSort({ camera: makeCamera(), requestRender });
+    coord.configureDepthSort({ getCamera: () => makeCamera(), requestRender });
 
     const mesh = makeGSplatsMesh(3, 'normal');
     coord.noteGSplatsCommit(mesh, new Float32Array([0, 0, -10, 1, 0, -1, 2, 0, -5]), 3);
@@ -178,7 +178,7 @@ describe('depth-sort coordinator', () => {
 
   it('enforces at most one in-flight sort per node', async () => {
     const coord = await loadCoordinator();
-    coord.configureDepthSort({ camera: makeCamera(), requestRender: vi.fn() });
+    coord.configureDepthSort({ getCamera: () => makeCamera(), requestRender: vi.fn() });
 
     const mesh = makeGSplatsMesh(2, 'normal');
     coord.noteGSplatsCommit(mesh, new Float32Array([0, 0, -1, 1, 0, -2]), 2);
@@ -209,7 +209,7 @@ describe('depth-sort coordinator', () => {
     camera.position.set(0, 0, 50);
     // Deliberately DO NOT update matrixWorld / matrixWorldInverse — that
     // is the renderer's job, which has not run yet.
-    coord.configureDepthSort({ camera, requestRender: vi.fn() });
+    coord.configureDepthSort({ getCamera: () => camera, requestRender: vi.fn() });
 
     const mesh = makeGSplatsMesh(2, 'normal');
     mesh.position.set(0, 0, 10);
@@ -225,7 +225,7 @@ describe('depth-sort coordinator', () => {
 
   it('respawns a fresh worker after dispose + reconfigure (app re-init)', async () => {
     const coord = await loadCoordinator();
-    coord.configureDepthSort({ camera: makeCamera(), requestRender: vi.fn() });
+    coord.configureDepthSort({ getCamera: () => makeCamera(), requestRender: vi.fn() });
     const meshA = makeGSplatsMesh(2, 'normal');
     coord.noteGSplatsCommit(meshA, new Float32Array([0, 0, -1, 1, 0, -2]), 2);
     await flush();
@@ -235,7 +235,7 @@ describe('depth-sort coordinator', () => {
     expect(terminatedWorkers.length).toBe(1);
 
     // Re-init (a second LuxarApp.init in the same page/session).
-    coord.configureDepthSort({ camera: makeCamera(), requestRender: vi.fn() });
+    coord.configureDepthSort({ getCamera: () => makeCamera(), requestRender: vi.fn() });
     const meshB = makeGSplatsMesh(2, 'normal');
     coord.noteGSplatsCommit(meshB, new Float32Array([0, 0, -1, 1, 0, -2]), 2);
     await flush();
@@ -255,7 +255,7 @@ describe('depth-sort coordinator', () => {
     const coord = await loadCoordinator();
     // Simulate a broken embedder override / CSP-blocked worker script.
     mockApi.initialize.mockRejectedValue(new Error('worker init blocked'));
-    coord.configureDepthSort({ camera: makeCamera(), requestRender: vi.fn() });
+    coord.configureDepthSort({ getCamera: () => makeCamera(), requestRender: vi.fn() });
 
     const mesh = makeGSplatsMesh(2, 'normal');
     // Two commits: neither may throw; register/sort never happen.
@@ -276,7 +276,7 @@ describe('depth-sort coordinator', () => {
     // releasing one mid-flight must not disturb the other's resolve.
     const coord = await loadCoordinator();
     const requestRender = vi.fn();
-    coord.configureDepthSort({ camera: makeCamera(), requestRender });
+    coord.configureDepthSort({ getCamera: () => makeCamera(), requestRender });
 
     const meshA = makeGSplatsMesh(2, 'normal');
     const meshB = makeGSplatsMesh(2, 'normal');
@@ -307,7 +307,7 @@ describe('depth-sort coordinator', () => {
     // model-view would put it at position.z + 1 — the opposite depth
     // order. Pins the full matrixWorld path.
     const coord = await loadCoordinator();
-    coord.configureDepthSort({ camera: makeCamera(), requestRender: vi.fn() });
+    coord.configureDepthSort({ getCamera: () => makeCamera(), requestRender: vi.fn() });
 
     const mesh = makeGSplatsMesh(2, 'normal');
     mesh.position.set(0, 0, -10);
@@ -328,7 +328,7 @@ describe('depth-sort coordinator', () => {
 
   it('drains a queued re-sort even when the in-flight sort RPC fails', async () => {
     const coord = await loadCoordinator();
-    coord.configureDepthSort({ camera: makeCamera(), requestRender: vi.fn() });
+    coord.configureDepthSort({ getCamera: () => makeCamera(), requestRender: vi.fn() });
 
     const mesh = makeGSplatsMesh(2, 'normal');
     coord.noteGSplatsCommit(mesh, new Float32Array([0, 0, -1, 1, 0, -2]), 2);
@@ -349,7 +349,7 @@ describe('depth-sort coordinator', () => {
   it('releaseDepthSortNode drops state and discards an in-flight result', async () => {
     const coord = await loadCoordinator();
     const requestRender = vi.fn();
-    coord.configureDepthSort({ camera: makeCamera(), requestRender });
+    coord.configureDepthSort({ getCamera: () => makeCamera(), requestRender });
 
     const mesh = makeGSplatsMesh(2, 'normal');
     coord.noteGSplatsCommit(mesh, new Float32Array([0, 0, -1, 1, 0, -2]), 2);
@@ -367,7 +367,7 @@ describe('depth-sort coordinator', () => {
 
   it('a cleared committedData stamp (LOD demotion) blocks a resolving ordering', async () => {
     const coord = await loadCoordinator();
-    coord.configureDepthSort({ camera: makeCamera(), requestRender: vi.fn() });
+    coord.configureDepthSort({ getCamera: () => makeCamera(), requestRender: vi.fn() });
 
     const mesh = makeGSplatsMesh(2, 'normal');
     coord.noteGSplatsCommit(mesh, new Float32Array([0, 0, -1, 1, 0, -2]), 2);
@@ -384,7 +384,7 @@ describe('depth-sort coordinator', () => {
     const coord = await loadCoordinator();
     const requestReprocess = vi.fn();
     coord.configureDepthSort({
-      camera: makeCamera(),
+      getCamera: () => makeCamera(),
       requestRender: vi.fn(),
       requestReprocess,
     });
@@ -397,7 +397,7 @@ describe('depth-sort coordinator', () => {
 
   it('mode switch AWAY from normal releases the node and kills in-flight applies', async () => {
     const coord = await loadCoordinator();
-    coord.configureDepthSort({ camera: makeCamera(), requestRender: vi.fn() });
+    coord.configureDepthSort({ getCamera: () => makeCamera(), requestRender: vi.fn() });
 
     const mesh = makeGSplatsMesh(2, 'normal');
     coord.noteGSplatsCommit(mesh, new Float32Array([0, 0, -1, 1, 0, -2]), 2);
@@ -417,7 +417,7 @@ describe('depth-sort coordinator', () => {
 
   it('disposeDepthSort terminates the worker and resets state', async () => {
     const coord = await loadCoordinator();
-    coord.configureDepthSort({ camera: makeCamera(), requestRender: vi.fn() });
+    coord.configureDepthSort({ getCamera: () => makeCamera(), requestRender: vi.fn() });
 
     const mesh = makeGSplatsMesh(2, 'normal');
     coord.noteGSplatsCommit(mesh, new Float32Array([0, 0, -1, 1, 0, -2]), 2);
@@ -433,7 +433,7 @@ describe('depth-sort coordinator', () => {
 
   it('a zero-splat commit releases instead of registering', async () => {
     const coord = await loadCoordinator();
-    coord.configureDepthSort({ camera: makeCamera(), requestRender: vi.fn() });
+    coord.configureDepthSort({ getCamera: () => makeCamera(), requestRender: vi.fn() });
 
     const mesh = makeGSplatsMesh(2, 'normal');
     // First a real commit so the worker exists.
@@ -469,7 +469,7 @@ describe('depth-sort scheduler (Phase 3)', () => {
     camera: THREE.Camera,
     extra: Partial<Parameters<(typeof coord)['configureDepthSort']>[0]> = {}
   ): Promise<THREE.Mesh> {
-    coord.configureDepthSort({ camera, requestRender: vi.fn(), ...extra });
+    coord.configureDepthSort({ getCamera: () => camera, requestRender: vi.fn(), ...extra });
     const mesh = makeGSplatsMesh(2, 'normal');
     coord.noteGSplatsCommit(mesh, new Float32Array([0, 0, -1, 1, 0, -2]), 2);
     await flush();
@@ -532,6 +532,51 @@ describe('depth-sort scheduler (Phase 3)', () => {
     expect(mockApi.sort).toHaveBeenCalledTimes(2);
   });
 
+  it('tracks a REPLACED camera object (ortho-mode toggle swaps the camera)', async () => {
+    // The scene manager's ortho toggle constructs a NEW camera and
+    // replaces `sceneManager.camera` — the coordinator must read the
+    // camera through the live getter, not a reference captured at init.
+    const coord = await loadCoordinator();
+    let current: THREE.Camera = makeCamera();
+    await sortedSetup(coord, current, { getCamera: () => current });
+
+    // Swap in a differently-posed camera (as the ortho toggle does).
+    const swapped = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.1, 1000);
+    swapped.position.set(100, 0, 0);
+    swapped.lookAt(0, 0, 0);
+    current = swapped;
+
+    // The 90° pose change must dispatch on the next frame; a captured
+    // init-time camera would never see it.
+    coord.evaluateDepthSortPerFrame();
+    expect(mockApi.sort).toHaveBeenCalledTimes(2);
+  });
+
+  it('translation threshold scales with the mesh transform (offset normalized by |axis|)', async () => {
+    // Scaled mesh (×10): the offset is measured in MODEL-LOCAL units
+    // (e[14]/|axis|), matching the model-local bounding radius, so the
+    // world-space trigger distance is fraction × radius × scale =
+    // 0.05 × 10 × 10 = 5 world units. An UN-normalized offset (raw e[14],
+    // world units) would trip at 0.5 world units — 10× too eager.
+    const coord = await loadCoordinator();
+    const camera = makeCamera();
+    coord.configureDepthSort({ getCamera: () => camera, requestRender: vi.fn() });
+    const mesh = makeGSplatsMesh(2, 'normal');
+    mesh.scale.set(10, 10, 10);
+    coord.noteGSplatsCommit(mesh, new Float32Array([0, 0, -1, 1, 0, -2]), 2);
+    await flush();
+    sortResolvers[0]({ generation: 1, ordering: new Uint32Array([0, 1]) });
+    await flush();
+
+    camera.position.z += 3; // 0.3 local units — under the 0.5 threshold
+    coord.evaluateDepthSortPerFrame();
+    expect(mockApi.sort).toHaveBeenCalledTimes(1);
+
+    camera.position.z += 4; // 0.7 local units total — past it
+    coord.evaluateDepthSortPerFrame();
+    expect(mockApi.sort).toHaveBeenCalledTimes(2);
+  });
+
   it('without geometry bounds the translation trigger is inert (angle-only)', async () => {
     const coord = await loadCoordinator();
     const camera = makeCamera();
@@ -575,6 +620,16 @@ describe('depth-sort scheduler (Phase 3)', () => {
     expect(mockApi.sort).toHaveBeenCalledTimes(1);
     mesh.visible = true;
 
+    // A hidden ANCESTOR must gate too: an LOD level can be a group
+    // (partition tiles) whose visibility toggle never touches the
+    // member meshes' own flags.
+    const parent = new THREE.Group();
+    parent.add(mesh);
+    parent.visible = false;
+    coord.evaluateDepthSortPerFrame();
+    expect(mockApi.sort).toHaveBeenCalledTimes(1);
+    parent.visible = true;
+
     const committed = mesh.userData.committedData;
     delete mesh.userData.committedData;
     coord.evaluateDepthSortPerFrame();
@@ -595,7 +650,7 @@ describe('depth-sort scheduler (Phase 3)', () => {
     const coord = await loadCoordinator();
     coord.setDepthSortEnabled(false);
     const requestReprocess = vi.fn();
-    coord.configureDepthSort({ camera: makeCamera(), requestRender: vi.fn(), requestReprocess });
+    coord.configureDepthSort({ getCamera: () => makeCamera(), requestRender: vi.fn(), requestReprocess });
 
     // A normal-mode commit neither spawns the worker nor sorts: the
     // identity (storage) ordering is pinned.

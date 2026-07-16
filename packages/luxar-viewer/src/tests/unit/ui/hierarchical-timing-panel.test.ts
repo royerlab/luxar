@@ -503,4 +503,70 @@ describe('LOD Refinement tree', () => {
       '9 updates · 6 refinement passes'
     );
   });
+
+  function makeDepthSortRoot(count = 3): TimingEntry {
+    return makeEntry({
+      name: 'Depth Sort',
+      count,
+      lastMs: 4.2,
+      avgMs: 5.1,
+      metadata: { splats: 1_000_000, info: '4.0 MB up' },
+    });
+  }
+
+  it('renders the depth-sort tree as a third section with a sort count and metadata tags', () => {
+    const html = renderHierarchicalTimingPanel(
+      makeEntry({ count: 8 }),
+      makeRefinementRoot(),
+      makeDepthSortRoot()
+    );
+    expect(html).toContain('Depth Sort');
+    expect(html).toContain('8 updates · 5 refinement passes · 3 sorts');
+    expect(html).toContain('1.0M splats');
+    expect(html).toContain('4.0 MB up');
+  });
+
+  it('omits the depth-sort section when no sort has recorded', () => {
+    const html = renderHierarchicalTimingPanel(
+      makeEntry({ count: 8 }),
+      undefined,
+      makeDepthSortRoot(0)
+    );
+    expect(html).not.toContain('Depth Sort');
+    expect(html).not.toMatch(/\d+ sorts/);
+  });
+
+  it('renders depth-sort data even when Total Update has no updates yet', () => {
+    const html = renderHierarchicalTimingPanel(
+      makeEntry({ count: 0 }),
+      undefined,
+      makeDepthSortRoot(1)
+    );
+    expect(html).not.toContain('luxar-timing-panel--empty');
+    expect(html).toContain('Depth Sort');
+    expect(html).toContain('0 updates · 1 sort');
+  });
+
+  it('updateTimingPanelValues requests a full re-render when the depth-sort tree first appears', () => {
+    const container = renderInto(renderHierarchicalTimingPanel(makeEntry({ count: 8 })));
+    expect(
+      updateTimingPanelValues(container, makeEntry({ count: 9 }), undefined, makeDepthSortRoot())
+    ).toBe(false);
+  });
+
+  it('updateTimingPanelValues patches the depth-sort section in place once rendered', () => {
+    const depthSort = makeDepthSortRoot();
+    const container = renderInto(
+      renderHierarchicalTimingPanel(makeEntry({ count: 8 }), undefined, depthSort)
+    );
+    const ok = updateTimingPanelValues(container, makeEntry({ count: 9 }), undefined, {
+      ...depthSort,
+      count: 4,
+      lastMs: 7.7,
+    });
+    expect(ok).toBe(true);
+    expect(container.querySelector('.luxar-timing-panel__update-count')?.textContent).toBe(
+      '9 updates · 4 sorts'
+    );
+  });
 });

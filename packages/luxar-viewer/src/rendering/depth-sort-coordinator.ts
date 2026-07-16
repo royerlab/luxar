@@ -95,7 +95,7 @@ interface NodeSortState {
 let worker: Worker | null = null;
 let api: Remote<SortWorkerAPI> | null = null;
 let initPromise: Promise<void> | null = null;
-let camera: THREE.Camera | null = null;
+let getCamera: (() => THREE.Camera | null) | null = null;
 let requestRender: (() => void) | null = null;
 let requestReprocess: (() => void) | null = null;
 let isLoadInProgress: (() => boolean) | null = null;
@@ -112,12 +112,19 @@ let warnedWorkerUnavailable = false;
 const nodeStates = new Map<string, NodeSortState>();
 
 /**
- * Wire the camera + frame-request + reprocess callbacks. Called once at
- * app init (the commit path has none of these — the scene loader
+ * Wire the camera accessor + frame-request + reprocess callbacks. Called
+ * once at app init (the commit path has none of these — the scene loader
  * deliberately owns no camera state). Safe to call again on renderer swap.
  */
 export function configureDepthSort(options: {
-  camera: THREE.Camera;
+  /**
+   * Live camera accessor — a GETTER, not a captured reference: the
+   * ortho-mode toggle REPLACES the scene manager's camera object, and a
+   * value captured at init would keep sorting from the abandoned
+   * perspective camera's frozen pose (the `lod-group-registry`
+   * `getCamera` precedent).
+   */
+  getCamera: () => THREE.Camera | null;
   requestRender: () => void;
   /**
    * Force a full view reprocess (`SceneLoader.updateView({})`) — used by
@@ -138,7 +145,7 @@ export function configureDepthSort(options: {
    */
   getProfiler?: () => UpdateProfiler | null;
 }): void {
-  camera = options.camera;
+  getCamera = options.getCamera;
   requestRender = options.requestRender;
   requestReprocess = options.requestReprocess ?? null;
   isLoadInProgress = options.isLoadInProgress ?? null;
@@ -285,6 +292,7 @@ function recordSortPose(state: NodeSortState, modelView: THREE.Matrix4): void {
  */
 function scheduleSort(mesh: THREE.Mesh, nodeId: string): void {
   const state = nodeStates.get(nodeId);
+  const camera = getCamera?.();
   if (!state || !api || !camera) return;
   if (state.inFlight) {
     state.resortQueued = true;
@@ -382,6 +390,21 @@ interface EvaluateScratch {
 let scratch: EvaluateScratch | null = null;
 
 /**
+ * True when the mesh AND all its ancestors are visible. `mesh.visible`
+ * alone misses a hidden ancestor: an LOD level can be a GROUP (partition
+ * tiles), and the registry toggles `child.object.visible` on the group —
+ * the member meshes' own flags stay true. Sorting a hidden mesh is wasted
+ * worker time; when it re-shows, the next frame's pose comparison catches
+ * any past-threshold camera motion immediately.
+ */
+function isEffectivelyVisible(mesh: THREE.Object3D): boolean {
+  for (let o: THREE.Object3D | null = mesh; o; o = o.parent) {
+    if (!o.visible) return false;
+  }
+  return true;
+}
+
+/**
  * Per-frame camera-motion re-sort scheduler (depth-sorting Phase 3, spec
  * §6). Registered as the 'depth-sort-scheduler' per-frame callback beside
  * 'lod-group-selector'.
@@ -409,7 +432,9 @@ let scratch: EvaluateScratch | null = null;
  * nodes whose live mode is no longer order-dependent.
  */
 export function evaluateDepthSortPerFrame(): void {
-  if (!depthSortEnabled || !api || !camera || nodeStates.size === 0) return;
+  if (!depthSortEnabled || !api || nodeStates.size === 0) return;
+  const camera = getCamera?.();
+  if (!camera) return;
   if (isLoadInProgress?.()) return;
 
   if (!scratch) {
@@ -421,7 +446,7 @@ export function evaluateDepthSortPerFrame(): void {
   for (const [nodeId, state] of nodeStates) {
     if (state.inFlight || !state.lastSortAxis) continue;
     const mesh = state.mesh;
-    if (!mesh.visible) continue;
+    if (!isEffectivelyVisible(mesh)) continue;
     // LOD demotion returned the geometry to the pool — same signal the
     // resolve path checks; a sort dispatched now would be dropped there.
     if ((mesh.userData as { committedData?: unknown }).committedData === undefined) continue;
@@ -532,7 +557,7 @@ export function disposeDepthSort(): void {
   worker = null;
   api = null;
   initPromise = null;
-  camera = null;
+  getCamera = null;
   requestRender = null;
   requestReprocess = null;
   isLoadInProgress = null;
