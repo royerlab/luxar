@@ -15,13 +15,18 @@
  * Pure buffer + Box3 math — no GL context needed (jsdom-safe).
  */
 
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, afterEach } from 'vitest';
 import * as THREE from 'three';
 import {
   createInstancedGSplatsMesh,
+  updateInstancedGSplatsMesh,
   packCholeskyForShader,
   type InstancedGSplatsMeshConfig,
 } from '../../../rendering/gsplat-geometry';
+import {
+  configureSplatTextureLayout,
+  resetSplatTextureLayoutForTests,
+} from '../../../rendering/splat-texture-layout';
 
 /**
  * One splat at the origin with a diagonal Cholesky factor
@@ -76,5 +81,49 @@ describe('createInstancedGSplatsMesh — bounding-box footprint expansion', () =
     const margin = 2 * 3.0; // maxRowNorm 2 × default truncation 3.0
     expect(box.max.x).toBeCloseTo(margin, 5);
     expect(box.min.x).toBeCloseTo(-margin, 5);
+  });
+});
+
+/** A zero-filled config with `count` splats (clamp tests only need sizes). */
+function makeConfig(count: number): InstancedGSplatsMeshConfig {
+  return {
+    centers: new Float32Array(count * 3),
+    cholesky01: new Float32Array(count * 2),
+    cholesky23: new Float32Array(count * 2),
+    cholesky45: new Float32Array(count * 2),
+    amplitudes: new Float32Array(count),
+    colors: new Float32Array(count * 3),
+    splatCount: count,
+  };
+}
+
+describe('non-pool writers — capacity clamp self-consistency', () => {
+  afterEach(() => {
+    resetSplatTextureLayoutForTests();
+  });
+
+  it('createInstancedGSplatsMesh clamps instanceCount to the texture bound', () => {
+    // maxTextureSize 8 → width 8, per-node bound = 8×8/4 = 16 splats.
+    configureSplatTextureLayout(8);
+    const mesh = createInstancedGSplatsMesh(makeConfig(100), materialWithTruncate(3.0));
+    const geometry = mesh.geometry as THREE.InstancedBufferGeometry;
+    // Instances, ordering, and texels all sized to the clamped count —
+    // an over-bound node renders its clamped prefix instead of going black
+    // (pre-fix, the uncapped texture height blew past maxTextureSize).
+    expect(geometry.instanceCount).toBe(16);
+    expect((geometry.getAttribute('aSortedIndex').array as Uint32Array).length).toBe(16);
+  });
+
+  it('updateInstancedGSplatsMesh does NOT rebuild on a same-count-over-bound recommit', () => {
+    configureSplatTextureLayout(8); // bound = 16 splats
+    const mesh = createInstancedGSplatsMesh(makeConfig(100), materialWithTruncate(3.0));
+    const geometryBefore = mesh.geometry;
+    // Same over-bound request again: both sides of the rebuild check are
+    // clamped, so this must take the in-place path — comparing the raw
+    // request against the clamped instanceCount would rebuild forever.
+    const rebuilt = updateInstancedGSplatsMesh(mesh, makeConfig(100));
+    expect(rebuilt).toBe(false);
+    expect(mesh.geometry).toBe(geometryBefore);
+    expect((mesh.geometry as THREE.InstancedBufferGeometry).instanceCount).toBe(16);
   });
 });

@@ -41,6 +41,8 @@ export interface CacheStatsSnapshot {
   slice: ReturnType<SliceCache['getStats']> | null;
   l1: ReturnType<MultiLevelCachingStore['getStats']>['l1'] | null;
   l2: ReturnType<MultiLevelCachingStore['getStats']>['l2'] | null;
+  /** Background L2 write-queue backpressure (depth / in-flight / dropped). */
+  l2WriteQueue?: ReturnType<MultiLevelCachingStore['getStats']>['l2WriteQueue'] | null;
   network?: ReturnType<MultiLevelCachingStore['getStats']>['network'] | null;
   demand?: ReturnType<MultiLevelCachingStore['getStats']>['demand'] | null;
   prefetch?: { queued: number; inFlight: number; enabled: boolean } | null;
@@ -77,6 +79,7 @@ export function getCacheStats(
     slice: sliceCache?.getStats() ?? null,
     l1: stats?.l1 ?? null,
     l2: stats?.l2 ?? null,
+    l2WriteQueue: stats?.l2WriteQueue ?? null,
     network: stats?.network ?? null,
     demand: stats?.demand ?? null,
     prefetch: prefetcher

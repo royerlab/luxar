@@ -570,6 +570,73 @@ describe('MultiLevelCachingStore', () => {
       }
     });
 
+    it('CRIT-5: TTL expiry cancels in-flight gets so they cannot repopulate post-clear', async () => {
+      // Parity with the content-hash CRIT-5 test below: a TTL-triggered clear
+      // must also abort in-flight coalesced gets, or a fetch racing the clear
+      // resurrects stale bytes into the just-cleared L1/L2. FAILS on the
+      // pre-fix code (the TTL branch didn't call abortPendingGets).
+      const realConfig = (await import('../../../config')).config;
+      const original = realConfig.cache.externalDatasetTtlMs;
+      realConfig.cache.externalDatasetTtlMs = 1_000;
+      try {
+        await store.init();
+        const l2Store = (store as any).l2Store as OPFSStore;
+        vi.spyOn(l2Store, 'getValidationState').mockReturnValue({
+          mode: 'ttl',
+          lastValidatedAt: Date.now() - 5 * 60 * 1000, // stale → TTL expired
+        });
+        // .zattrs unreachable so the TTL branch (not zattrs-hash) runs.
+        global.fetch = vi.fn(async () => ({
+          ok: false,
+          status: 404,
+          async arrayBuffer() {
+            return new ArrayBuffer(0);
+          },
+        })) as unknown as typeof fetch;
+
+        // Inject an in-flight coalesced get, as if a fetch were mid-flight
+        // when the TTL clear fires.
+        const controller = new AbortController();
+        (store as any).pendingGets.set('chunk.k', {
+          promise: Promise.resolve({
+            result: { ok: true, value: new Uint8Array() },
+            source: 'network',
+          }),
+          controller,
+        });
+
+        const ac = new AbortController();
+        await (store as any).doValidateCache(ac.signal);
+
+        // The racing get was cancelled and forgotten.
+        expect(controller.signal.aborted).toBe(true);
+        expect((store as any).pendingGets.size).toBe(0);
+      } finally {
+        realConfig.cache.externalDatasetTtlMs = original;
+      }
+    });
+
+    it('CRIT-5: mid-session clearAll cancels in-flight gets so they cannot repopulate', async () => {
+      // A user-triggered clearAll (monitor / settings / debug) while data is
+      // loading must abort in-flight coalesced gets, or a racing fetch
+      // resurrects stale bytes into the just-cleared L1/L2. FAILS on pre-fix
+      // code (clearAll didn't call abortPendingGets).
+      await store.init();
+      const controller = new AbortController();
+      (store as any).pendingGets.set('chunk.k', {
+        promise: Promise.resolve({
+          result: { ok: true, value: new Uint8Array() },
+          source: 'network',
+        }),
+        controller,
+      });
+
+      await store.clearAll();
+
+      expect(controller.signal.aborted).toBe(true);
+      expect((store as any).pendingGets.size).toBe(0);
+    });
+
     it('content-hash mismatch defensively clears L1 (commit 4.1)', async () => {
       // doValidateCache is private but unit-testable via reflection.
       // The real OPFSStore is reused; setContentHash sets the 'old-hash'
@@ -712,6 +779,72 @@ describe('MultiLevelCachingStore', () => {
       expect(l1Stats.chunksCount).toBe(0);
       expect(l1Stats.metadataSize).toBe(0);
       expect(l1Stats.chunksSize).toBe(0);
+    });
+
+    it('CRIT-5: a fetch resolving DURING the clear (mid clearL2 await) cannot repopulate L1', async () => {
+      // Harder race than the test above: the in-flight fetch resolves in the
+      // window AFTER clearL1() but BEFORE pendingGets is aborted (i.e. while
+      // clearL2()'s OPFS wipe is still awaiting). If abort runs only after the
+      // clear, that fetch passes the not-yet-aborted populate guard and writes
+      // stale bytes into the just-cleared L1.
+      await store.init();
+      const l2Store = (store as any).l2Store as OPFSStore;
+      l2Store.setContentHash('old-hash');
+      l2Store.setValidationMode('content-hash');
+
+      // Gate the chunk fetch.
+      let releaseChunk!: () => void;
+      const chunkGate = new Promise<void>((r) => {
+        releaseChunk = r;
+      });
+      global.fetch = vi.fn(async (url: string) => {
+        if (url.includes('.zattrs')) {
+          return {
+            ok: true,
+            async arrayBuffer() {
+              return new TextEncoder().encode(JSON.stringify({ content_hash: 'new-hash' })).buffer;
+            },
+          } as Response;
+        }
+        await chunkGate;
+        return {
+          ok: true,
+          async arrayBuffer() {
+            return new Uint8Array([9, 9, 9, 9]).buffer;
+          },
+        } as Response;
+      }) as any;
+
+      // Gate l2Store.clear so we can act WHILE clearL2()'s await is suspended.
+      let releaseClear!: () => void;
+      const clearGate = new Promise<void>((r) => {
+        releaseClear = r;
+      });
+      const origClear = l2Store.clear.bind(l2Store);
+      vi.spyOn(l2Store, 'clear').mockImplementation(async () => {
+        await clearGate;
+        return origClear();
+      });
+
+      const inflight = store.getResult('stale-chunk'); // fetch blocked on chunkGate
+      const validation = (store as any).doValidateCache(new AbortController().signal);
+
+      // Let doValidateCache reach the gated clearL2 (past .zattrs + clearL1).
+      for (let i = 0; i < 20; i++) await Promise.resolve();
+
+      // Release the chunk fetch NOW — it resolves during the clearL2 await.
+      releaseChunk();
+      for (let i = 0; i < 20; i++) await Promise.resolve();
+
+      // Now let the clear finish (this is where abortPendingGets currently runs).
+      releaseClear();
+      await validation;
+      await inflight;
+
+      // The stale fetch must NOT have repopulated L1.
+      const l1 = store.getStats().l1;
+      expect(l1.chunksCount).toBe(0);
+      expect(l1.chunksSize).toBe(0);
     });
 
     it('should bypass cache when validating content_hash (critical fix)', async () => {
@@ -2053,6 +2186,115 @@ describe('MultiLevelCachingStore', () => {
       expect(zattrsUrls[0]).toBe('https://example.com/data.zarr/.zattrs');
       // No double slashes before .zattrs
       expect(zattrsUrls.some((u) => u.includes('//.zattrs'))).toBe(false);
+    });
+  });
+
+  describe('background L2 write queue', () => {
+    // Gate the mock's chunk (ArrayBuffer) writes so a test can prove the
+    // foreground get() does NOT wait on the OPFS write. Metadata (string)
+    // writes are left ungated.
+    function installChunkWriteGate(m: ReturnType<typeof createMocks>) {
+      let resolve: (() => void) | null = null;
+      let gate: Promise<void> | null = null;
+      const dir = m.mockDirHandle;
+      const origGetFileHandle = dir.getFileHandle.bind(dir);
+      dir.getFileHandle = async (name: string, opts?: { create?: boolean }) => {
+        const handle = await origGetFileHandle(name, opts);
+        const origCreateWritable = handle.createWritable.bind(handle);
+        handle.createWritable = async () => {
+          const w = await origCreateWritable();
+          const origWrite = w.write.bind(w);
+          w.write = async (data: ArrayBuffer | string) => {
+            if (typeof data !== 'string' && gate) await gate;
+            return origWrite(data);
+          };
+          return w;
+        };
+        return handle;
+      };
+      return {
+        open() {
+          gate = new Promise<void>((r) => {
+            resolve = r;
+          });
+        },
+        release() {
+          resolve?.();
+          gate = null;
+        },
+      };
+    }
+
+    it('does not block get() on the L2 write, then persists it in the background', async () => {
+      const gate = installChunkWriteGate(mocks);
+      gate.open();
+      const before = mocks.files.size;
+
+      // Must resolve even though the chunk write is gated shut — proving the
+      // durable OPFS write is off the get() critical path.
+      const data = await store.get('chunk.0.0');
+      expect(data).toBeInstanceOf(Uint8Array);
+
+      // Write is deferred: nothing persisted yet, but it is queued/in-flight.
+      expect(mocks.files.size).toBe(before);
+      const q = store.getStats().l2WriteQueue;
+      expect(q.inFlight + q.depth).toBeGreaterThanOrEqual(1);
+      expect(store.getStats().l2.writes).toBe(0);
+
+      // Release + drain → the background write lands.
+      gate.release();
+      await (
+        store as unknown as { l2WriteQueue: { drain: () => Promise<void> } }
+      ).l2WriteQueue.drain();
+      await new Promise((r) => setTimeout(r, 0));
+
+      expect(mocks.files.size).toBeGreaterThan(before);
+      expect(store.getStats().l2.writes).toBeGreaterThanOrEqual(1);
+    });
+
+    it('clearL2 synchronously drops queued (not-yet-started) writes', async () => {
+      const s = new MultiLevelCachingStore('https://example.com/data.zarr', {
+        l1MaxSize: 20 * 1024 * 1024,
+        l2MaxSize: 4096,
+        opfsWriteConcurrency: 1, // one slot → the 2nd write stays pending
+        opfsWriteQueueMax: 100,
+      });
+      await s.init();
+      s.clearL1();
+
+      const l2 = (s as unknown as { l2Store: OPFSStore }).l2Store;
+      const setSpy = vi.spyOn(l2, 'set');
+
+      const gate = installChunkWriteGate(mocks);
+      gate.open();
+
+      await s.get('chunk.a'); // occupies the single slot (write gated, in-flight)
+      await s.get('chunk.b'); // no slot free → pending in the queue
+      expect(s.getStats().l2WriteQueue.depth).toBe(1);
+
+      // clearL2's synchronous prefix bumps the epoch and empties the queue.
+      const clearP = s.clearL2();
+      expect(s.getStats().l2WriteQueue.depth).toBe(0);
+
+      gate.release();
+      await clearP;
+      await (s as unknown as { l2WriteQueue: { drain: () => Promise<void> } }).l2WriteQueue.drain();
+
+      // 'chunk.b' was dropped before it ever reached l2Store.set; 'chunk.a'
+      // (already in flight) did reach it.
+      const setKeys = setSpy.mock.calls.map((c) => c[0]);
+      expect(setKeys).toContain('chunk.a');
+      expect(setKeys).not.toContain('chunk.b');
+
+      await s.dispose();
+    });
+
+    it('dispose() drops queued writes and resolves without hanging', async () => {
+      // A normal (ungated) get enqueues a write; dispose must drain/clear
+      // cleanly. Exercises the dispose→clear(queue)→l2Store.dispose ordering.
+      await store.get('chunk.z');
+      await expect(store.dispose()).resolves.toBeUndefined();
+      expect(store.getStats().l2WriteQueue.depth).toBe(0);
     });
   });
 });

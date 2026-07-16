@@ -6,9 +6,13 @@
  * warped the mapped colors (pow(LUT(t), invGamma)) instead of warping
  * which value mapped to which color (LUT(pow(t, invGamma))). The fix
  * applies gamma to the normalized scalar in the VERTEX stage before the
- * LUT lookup and bypasses the per-fragment color GOG in colormap mode.
+ * LUT lookup and skips the per-fragment color gamma pow() in colormap
+ * mode. Intensity (gain) + offset are NOT part of that bypass: they
+ * apply POST-LUT to the mapped color in ALL modes (matching the gsplat
+ * shader) so the layer intensity/offset controls work on colormapped
+ * nodes too — see the companion describe block below.
  *
- * Direct-color mode is unchanged: GOG still operates on the color.
+ * Direct-color mode is unchanged: full GOG operates on the color.
  *
  * These assertions inspect the GLSL3 source strings (the canonical
  * reference shaders) for the structural invariant. The TSL counterparts
@@ -102,6 +106,45 @@ describe('colormap gamma operates on the value, pre-LUT', () => {
           passthrough.test(frag),
           `${s.name}: expected a USE_COLORMAP branch that passes adjusted through without gamma pow()`
         ).toBe(true);
+      });
+    });
+  }
+});
+
+describe('intensity/offset apply POST-LUT to the mapped color (all modes)', () => {
+  // The gamma bypass above must not extend to gain/offset: the layer
+  // Intensity/Offset sliders drive uIntensity/uOffset, and colormapped
+  // Points/Lines must honor them exactly like GSplats do. The old
+  // shaders short-circuited the whole GOG chain under USE_COLORMAP
+  // (`adjusted = max(vColor, vec3(0.0))`), which made the sliders
+  // no-ops on colormapped nodes.
+  for (const s of SHADERS) {
+    describe(s.name, () => {
+      const frag = stripComments(s.fragment);
+
+      it('applies vColor * uIntensity + uOffset unconditionally', () => {
+        expect(
+          /vColor\s*\*\s*uIntensity\s*\+\s*uOffset/.test(frag),
+          `${s.name}: expected the GOG gain/offset chain on vColor in the fragment shader`
+        ).toBe(true);
+        // The gain/offset chain must not be gated on colormap mode. The
+        // only permitted compile-out is the line shader's LUXAR_NO_GOG
+        // identity fast path (stamped solely from intensity==1 &&
+        // offset==0, never from colormap state).
+        const gogIndex = frag.search(/vColor\s*\*\s*uIntensity\s*\+\s*uOffset/);
+        const directivesBefore = frag.slice(0, gogIndex).match(/#(?:el)?if[^\n]*/g) ?? [];
+        const lastGate = directivesBefore[directivesBefore.length - 1] ?? '';
+        expect(
+          lastGate.includes('USE_COLORMAP'),
+          `${s.name}: the GOG chain must not sit behind a USE_COLORMAP gate (found "${lastGate}")`
+        ).toBe(false);
+      });
+
+      it('has no colormap-only GOG bypass (max(vColor, vec3(0.0)))', () => {
+        expect(
+          /max\(\s*vColor\s*,\s*vec3\(0\.0\)\)/.test(frag),
+          `${s.name}: found the legacy USE_COLORMAP GOG bypass — intensity/offset would be no-ops on colormapped nodes`
+        ).toBe(false);
       });
     });
   }

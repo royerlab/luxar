@@ -75,13 +75,18 @@ describe('initScaleBar', () => {
 
     expect(mocks.ScaleBarCtor).toHaveBeenCalledOnce();
     const args = mocks.ScaleBarCtor.mock.calls[0][0] as {
-      camera: unknown;
+      getCamera: () => unknown;
       controls: unknown;
       canvas: unknown;
       targetWidthPx: number;
       position: string;
     };
-    expect(args.camera).toEqual({ id: 'camera' });
+    // getCamera is a LIVE accessor (the app swaps cameras on
+    // perspective ↔ ortho) — it must read through to the scene
+    // manager's current camera, not capture it.
+    expect(args.getCamera()).toEqual({ id: 'camera' });
+    (ports.sceneManager as unknown as { camera: unknown }).camera = { id: 'swapped' };
+    expect(args.getCamera()).toEqual({ id: 'swapped' });
     expect(args.controls).toEqual({ id: 'controls' });
     expect(args.canvas).toBe(
       (ports.sceneManager as unknown as { renderer: { domElement: HTMLCanvasElement } }).renderer

@@ -686,6 +686,75 @@ test.describe('TSL ↔ GLSL shader parity', () => {
     ).toBeLessThan(3.0);
   });
 
+  // Surface-pick depth behaviour (S2, front-most-wins for normal-mode
+  // gsplats). The harness scene is two overlapping splats along the view
+  // axis: instance 0 NEARER but DIMMER (amplitude 0.3), instance 1
+  // FARTHER but BRIGHTER (1.0), footprints coinciding at the
+  // viewport-centre probe pixel (32,32). The pick buffer encodes
+  // (nodeId, elementId, brightness, 1): in the RGBA8 readback nodeId 42
+  // clamps to R=255 (coverage marker), elementId quantises to G=0
+  // (instance 0) or G=255 (instance 1), and brightness lands in B
+  // (≈77 for the dim splat, 255 for the bright one).
+  //   - uSurfaceDepth=1 (surface / 'normal' mode): real projected depth
+  //     → the NEARER, DIMMER splat must win (elementId 0).
+  //   - uSurfaceDepth=0 (commutative modes): brightness-as-depth
+  //     → the BRIGHTER, FARTHER splat must win (elementId 1).
+  // Asserted on BOTH backends, plus the usual cross-backend parity.
+  for (const { variant, wantNear } of [
+    { variant: 'gsplat-pick-surface', wantNear: true },
+    { variant: 'gsplat-pick-surface-off', wantNear: false },
+  ] as const) {
+    test(`${variant}: ${
+      wantNear ? 'front-most (dimmer, near)' : 'brightest (farther)'
+    } splat wins the overlap pixel on both backends`, async ({ page }) => {
+      await bootHarness(page);
+
+      const glslPixels = await runGLSL(page, variant);
+      const tslResult = await runTSL(page, variant);
+
+      assertBothRendered(glslPixels, tslResult.pixels, variant);
+      expect(
+        meanAbsDiffPerCoveredPixel(glslPixels, tslResult.pixels),
+        `${variant}: per-covered-pixel parity (footprint-invariant)`
+      ).toBeLessThan(2.0);
+
+      for (const [backend, pixels] of [
+        ['GLSL', glslPixels],
+        ['TSL', tslResult.pixels],
+      ] as const) {
+        const o = (32 * 64 + 32) * 4;
+        const [r, g, b] = [pixels[o], pixels[o + 1], pixels[o + 2]];
+        // Coverage marker: nodeId 42 clamps to 255 in the RGBA8 readback.
+        expect(
+          r,
+          `${variant} (${backend}): probe pixel (32,32) not covered by any splat (r=${r})`
+        ).toBe(255);
+        if (wantNear) {
+          // elementId 0 = the near, dim splat; its brightness 0.3 ≈ 77.
+          expect(
+            g,
+            `${variant} (${backend}): expected NEAR splat (elementId 0) to win, got g=${g}`
+          ).toBeLessThan(128);
+          expect(
+            b,
+            `${variant} (${backend}): winner should carry the DIM brightness (~77), got b=${b}`
+          ).toBeGreaterThan(40);
+          expect(b).toBeLessThan(120);
+        } else {
+          // elementId 1 = the far, bright splat; its brightness 1.0 → 255.
+          expect(
+            g,
+            `${variant} (${backend}): expected FAR bright splat (elementId 1) to win, got g=${g}`
+          ).toBeGreaterThan(128);
+          expect(
+            b,
+            `${variant} (${backend}): winner should carry FULL brightness (255), got b=${b}`
+          ).toBeGreaterThan(200);
+        }
+      }
+    });
+  }
+
   test('line-pick: instanced quad line with nodeId / elementId / brightness output', async ({
     page,
   }) => {
