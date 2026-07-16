@@ -3,18 +3,25 @@
 
 Downloads the iconic Mip-NeRF 360 *garden* scene — a table with a potted plant
 in a lush backyard, the de-facto "hello world" of 3D Gaussian Splatting — as an
-antimatter15 ``.splat`` file and imports it into Luxar. At ~5 M splats it also
-exercises the tiled-LOD path: the import is partitioned into spatially culled
-tiles with streaming ladders so it loads smoothly in the web viewer.
+antimatter15 ``.splat`` file and imports it into Luxar. At ~5 M splats it uses
+the ``stream`` recipe: a SINGLE leaf with a progressive additive ladder (fast
+first paint) rather than a spatial partition.
 
 ================================================================================
-CLASSICAL GAUSSIAN SPLATS (.splat) → LUXAR, TILED FOR STREAMING
+CLASSICAL GAUSSIAN SPLATS (.splat) → LUXAR, SINGLE-LEAF FOR CORRECT DEPTH ORDER
 ================================================================================
 
 The antimatter15 ``.splat`` format is flat 32-byte records (position, linear
 scale, RGBA, quantized rotation). Luxar imports it, then `gsplat lod --recipe
-tiles` (here via the Python engine) builds a spatial BSP of streaming tiles so
-the viewer only fetches what the frustum needs.
+stream` (here via the Python engine) builds one leaf + a streaming ladder.
+
+Why one leaf, not tiles: these surface-like captures render in ``normal``
+(alpha-over) mode, which is order-DEPENDENT. Depth sorting orders splats within
+a mesh; a spatial partition would be multiple meshes, so splats straddling two
+tiles' shared boundary composite wrong (THREE only sorts the tiles by centroid,
+not per-splat). A single leaf is one mesh → one global per-splat depth sort →
+correct compositing with no tile-boundary seams. (Frustum culling is traded
+away, but a whole-scene surface capture is viewed in full anyway.)
 
 DATA SOURCE & CITATION
 ----------------------
@@ -59,7 +66,6 @@ SCENES = {
     "garden": {"file": "garden.splat", "size": 186_713_088},
     "bicycle": {"file": "bicycle.splat", "size": 196_222_528},
 }
-MAX_ELEMENTS_PER_TILE = 1_000_000  # ~5 M splats → a handful of streaming tiles
 
 FLAGS = parse_demo_flags()
 Arbol.max_depth = 5
@@ -75,7 +81,7 @@ def _scene_arg(default: str = "garden") -> str:
 
 
 def build_scene(scene_key: str = "garden") -> Path:
-    """Download + import one Mip-NeRF .splat scene (tiled) and build its scene."""
+    """Download + import one Mip-NeRF .splat scene (single-leaf stream)."""
     if scene_key not in SCENES:
         raise ValueError(f"Unknown scene {scene_key!r}; choose from {list(SCENES)}")
     spec = SCENES[scene_key]
@@ -93,15 +99,17 @@ def build_scene(scene_key: str = "garden") -> Path:
         expected_size=spec["size"],
     )
     cache_file = src.with_suffix(".gsplats.zarr")
-    # ~5 M splats: tiles bound the viewer working set (a single stream ladder
-    # would keep them all in one node).
+    # ~5 M splats in ONE leaf (+ a progressive additive ladder for fast first
+    # paint). Single-leaf so the whole scene is one mesh → one global per-splat
+    # depth sort → correct alpha-over with no tile-boundary seams (see the
+    # module docstring). The ladder streams; the full leaf sorts async off the
+    # main thread on camera moves.
     build_gsplats_cache(
         src,
         cache_file,
-        recipe="tiles",
+        recipe="stream",
         recompute=FLAGS["recompute"],
-        max_elements=MAX_ELEMENTS_PER_TILE,
-        n_lods=4,
+        n_lods=6,
     )
     out = get_demos_output_dir() / f"gsplats_interop_mipnerf_{scene_key}.luxar.zarr"
     return build_interop_scene(

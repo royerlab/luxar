@@ -8,14 +8,17 @@ The twist: the official checkpoint lives inside a single 14.7 GB
 member over HTTP Range requests, never downloading the other 13 GB.
 
 ================================================================================
-RANGE-EXTRACTED INRIA PLY → LUXAR, TILED FOR STREAMING
+RANGE-EXTRACTED INRIA PLY → LUXAR, SINGLE-LEAF FOR CORRECT DEPTH ORDER
 ================================================================================
 
 ``luxar.utils.download.download_zip_member`` reads the remote zip's central
 directory (Zip64-aware — the archive is >4 GB) via Range requests, then streams
 and inflates only the requested member. The INRIA PLY is then imported (SH DC
-term baked to color) and tiled for smooth streaming, exactly like the
-``.splat`` Mip-NeRF demo but at full training fidelity.
+term baked to color) and built as a single ``stream`` leaf (one mesh +
+progressive ladder), exactly like the ``.splat`` Mip-NeRF demo but at full
+training fidelity. Single-leaf (not tiles) so the surface-like ``normal``
+alpha-over compositing is one global per-splat depth sort — no tile-boundary
+seams (see the Mip-NeRF demo's docstring for the full rationale).
 
 DATA SOURCE & CITATION
 ----------------------
@@ -63,7 +66,6 @@ MODELS_ZIP = (
 # extraction goes through the Zip64 path).
 MEMBER = "garden/point_cloud/iteration_30000/point_cloud.ply"
 MEMBER_SIZE = 1_447_027_964  # bytes
-MAX_ELEMENTS_PER_TILE = 1_000_000
 
 CACHE_DIR = Path.home() / ".cache" / "luxar" / DEMO_NAME
 CACHE_PLY = CACHE_DIR / "garden_point_cloud.ply"
@@ -92,7 +94,7 @@ def fetch_member() -> Path:
 
 
 def build_scene() -> Path:
-    """Range-extract + import the full-quality garden PLY (tiled)."""
+    """Range-extract + import the full-quality garden PLY (single-leaf stream)."""
     print_data_provenance(
         title="INRIA 3DGS garden (full-quality, 30k iters)",
         source="repo-sam.inria.fr pretrained models.zip",
@@ -106,10 +108,9 @@ def build_scene() -> Path:
     build_gsplats_cache(
         CACHE_PLY,
         CACHE_GSPLATS,
-        recipe="tiles",
+        recipe="stream",
         recompute=FLAGS["recompute"],
-        max_elements=MAX_ELEMENTS_PER_TILE,
-        n_lods=4,
+        n_lods=6,
     )
     out = get_demos_output_dir() / "gsplats_interop_inria_garden.luxar.zarr"
     return build_interop_scene(
