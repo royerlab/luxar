@@ -177,6 +177,27 @@ class TestAddPointsSubstitutiveLod:
         for lvl in coarse:
             assert render_light(lvl) == pytest.approx(target, rel=1e-4)
 
+    def test_coarse_level_aspect_capped(self) -> None:
+        # Points mirror of the Lines anisotropy cap (default max_aspect=3):
+        # coarse merged splats of a lifted (isotropic) cloud must stay near-
+        # isotropic so their rendered brightness is not view-dependent.
+        from luxar.gsplats.utils.trils import unpack_tril
+
+        rng = np.random.RandomState(1)
+        # An elongated filament-like cloud, the worst case for bin elongation.
+        pos = np.zeros((4000, 3), np.float32)
+        pos[:, 2] = np.linspace(0, 400, 4000)
+        pos[:, :2] = rng.normal(0, 0.5, (4000, 2))
+        lifted = lift_points_to_gsplats(pos, 0.6, colors=None)
+        coarse = coarse_substitutive_levels(
+            lifted, compression_factor=4, levels=3, device="cpu", seed=0
+        )
+        for lvl in coarse:
+            L = unpack_tril(np.asarray(lvl.cholesky_factors, np.float64), 3)
+            ev = np.linalg.eigvalsh(L @ np.swapaxes(L, 1, 2))
+            aspects = np.sqrt(ev[:, -1] / np.maximum(ev[:, 0], 1e-30))
+            assert float(aspects.max()) <= 3.0 * (1 + 1e-4)
+
     def test_explicit_coverage_fractions_override(self, tmp_path) -> None:
         grp, _ = _build(tmp_path, levels=3, coverage_fractions=[0.0, 0.05, 0.25, 1.0])
         cf = [float(grp[f"child_{i}"].attrs["coverage_fraction"]) for i in range(4)]

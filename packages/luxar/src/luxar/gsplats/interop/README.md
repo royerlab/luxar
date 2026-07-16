@@ -1,8 +1,93 @@
 # `luxar.gsplats.interop`
 
-Adapters that connect Luxar's fitted Gaussian splats to external tools. The
-external dependencies are imported **lazily**, so this subpackage imports fine
-without any extra installed.
+Adapters that connect Luxar's fitted Gaussian splats to external tools and
+file formats. The external dependencies are imported **lazily**, so this
+subpackage imports fine without any extra installed.
+
+## Classical (photogrammetric) splat import
+
+`classical_splats.py` reads the four common classical 3D-Gaussian-Splatting
+file dialects into a `GSplatData` — after which the entire Luxar toolchain
+(LOD recipes, partition, filter, `gsplat convert`, scenes, viewer) applies
+unchanged. Everything is NumPy + stdlib; **no new dependencies**.
+
+| Dialect | Files | Notes |
+|---------|-------|-------|
+| `inria` | `point_cloud.ply` from INRIA-style trainers | Header-driven (any SH degree); opacity logit → sigmoid, log-scales → exp, quaternions normalized |
+| `splat` | antimatter15 `.splat` | Flat 32-byte records; color/alpha already baked |
+| `spz` | Niantic/Scaniverse `.spz` | Legacy gzip container v1–v3 (the format Scaniverse writes). v4 NGSP/zstd is detected and rejected with a clear error |
+| `supersplat` | SuperSplat compressed `.ply` | Chunked bit-packed (11-10-11 positions/scales, smallest-three rotations, 8888 color); 12- and 18-property chunk layouts |
+
+**Conversion semantics:**
+
+- Covariance is rebuilt as `Σ = R·diag(scales²)·Rᵀ` and factorized to Luxar's
+  packed lower-triangular Cholesky (with an eigenvalue-clamp guard for
+  degenerate splats in real files).
+- **Opacity → `amplitudes`** (both in [0, 1]).
+- **SH color is reduced to the DC band**: `rgb = 0.5 + C₀·f_dc`, baked to
+  per-splat SDR colors; view-dependent `f_rest` bands are dropped.
+- **Orientation**: COLMAP-convention dialects (INRIA/.splat/SuperSplat store
+  +Y down) get a 180°-about-X fix by default so scenes are upright in Y-up
+  viewers; SPZ declares Y-up (RUB) data and is left untouched. Override with
+  `rotate_x180=`/`flip=` (CLI: `--reorient/--no-reorient`, `--flip`).
+- Columns stay in world **(x, y, z)** order — dimension inference labels them
+  x/y/z. The applied orientation and source dialect are recorded in
+  `stats["interop"]` so a future export can invert them.
+- Imported scenes render best with `blending_mode="normal"` (correct once
+  depth-sorted rendering lands; acceptable today).
+
+### Usage
+
+```bash
+# CLI: sniffs the dialect from extension + header
+luxar gsplat import garden.splat garden.gsplats.zarr
+luxar gsplat import point_cloud.ply scene.gsplats.zarr --no-reorient
+luxar gsplat import capture.spz capture.gsplats.zarr -e precision
+```
+
+```python
+from luxar.gsplats.interop import import_gsplats
+
+data = import_gsplats("garden.splat")          # → GSplatData
+data.save("garden.gsplats.zarr")
+
+# Or straight into a scene — add_gsplats_from_file sniffs classical formats:
+scene.add_gsplats_from_file("garden", "garden.splat", blending_mode="normal")
+```
+
+Tests generate miniature files of every dialect on the fly
+(`tests/_synthetic.py`) and assert reader parity plus covariance fidelity
+through the full read → convert → save → load pipeline.
+
+## Classical splat export (INRIA PLY)
+
+`inria_export.py` is the inverse: a `.gsplats.zarr` becomes a
+`point_cloud.ply` that SuperSplat/PlayCanvas/gsplat.js/antimatter15 load
+directly. Packed Cholesky factors are eigendecomposed back to log-scales +
+rotation quaternions (det-corrected; eigenvalues floored so degenerate splats
+stay finite).
+
+```bash
+luxar gsplat export fit.gsplats.zarr fit.ply --colormap viridis   # microscopy → classical viewers
+luxar gsplat export imported.gsplats.zarr back.ply --opacity amplitude
+luxar gsplat export timelapse.gsplats.zarr t42.ply --timepoint 42
+```
+
+- **Opacity policy** (`--opacity`): `normalized` (default — robust 99.5th-pct
+  rescale of unbounded amplitudes into (0, 1)), `amplitude` (clip raw values;
+  lossless for data that came from `gsplat import`), `constant`.
+- **Color precedence** (`--color auto`): per-splat colors → `--colormap`
+  baked from normalized amplitudes → white. Inverted to the SH DC band.
+- **SH**: degree 0 by default (DC only); `--sh-degree N` emits zero-filled
+  `f_rest` bands for viewers that insist on the full layout.
+- **Orientation**: the import-time orientation recorded in `stats["interop"]`
+  is inverted by default, so import → export round-trips exactly in the
+  source frame (`--keep-orientation` to stay in the Luxar frame). Note this
+  requires loading with `include_stats=True` (the file-level API does).
+- **nD**: strictly-3D output — `--timepoint N` slices the last (stacked)
+  dimension, `--slice-dim/--slice-index` any other; 1D/2D data is embedded
+  with a tiny isotropic sigma. Partitions must be `gsplat flatten`ed first.
+- The CLI read-back-verifies every export with our own INRIA reader.
 
 ## tracksdata bridge
 

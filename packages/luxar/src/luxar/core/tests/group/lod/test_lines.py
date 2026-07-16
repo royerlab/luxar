@@ -278,6 +278,35 @@ class TestResolveAdditiveAxisLines:
 
 
 class TestAddLinesAdditiveLod:
+    def test_colors_and_colormap_rejected_on_additive_path(self, tmp_path) -> None:
+        # Regression: the additive multi-LOD branch used to return before the
+        # colors/colormap mutual-exclusivity validation, silently accepting
+        # invalid combinations that the flat path rejects.
+        output = tmp_path / "t.luxar.zarr"
+        rng = np.random.RandomState(0)
+        vertices = rng.rand(40, 3).astype(np.float32)
+        with LuxarZarrCompiler(output) as compiler:
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+            with pytest.raises(ValueError, match="colors.*colormap"):
+                scene.add_lines(
+                    "ln",
+                    vertices,
+                    0.1,
+                    colors=rng.rand(40, 3).astype(np.float32),
+                    colormap="viridis",
+                    line_type="segments",
+                    additive_lod=dict(n_lods=3, method="random"),
+                )
+            with pytest.raises(ValueError, match="scalars.*colormap"):
+                scene.add_lines(
+                    "ln2",
+                    vertices,
+                    0.1,
+                    scalars=rng.rand(40).astype(np.float32),
+                    line_type="segments",
+                    additive_lod=dict(n_lods=3, method="random"),
+                )
+
     def test_segments_round_trip(self, tmp_path) -> None:
         output = tmp_path / "t.luxar.zarr"
         rng = np.random.RandomState(0)

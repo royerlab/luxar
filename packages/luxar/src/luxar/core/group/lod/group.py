@@ -405,7 +405,9 @@ def resolve_substitutive_axis(spec: Any, geometry: str) -> Optional[Dict[str, An
     * ``dict(...)`` → keys ``compression_factor`` (alias ``K``), ``levels``
       (alias ``n_lods``), ``method`` (reduction algorithm), ``truncation_radius``,
       ``device``, ``seed``, ``coverage_fractions`` (explicit per-level
-      viewport-relative thresholds, strict-ascending in [0, 1]), ``coarsen_dims``.
+      viewport-relative thresholds, strict-ascending in [0, 1]), ``coarsen_dims``,
+      ``max_aspect`` (per-splat anisotropy cap on the coarse levels, default 3.0;
+      ``None`` disables — see :func:`luxar.gsplats.lift._cap_aspect`).
       Unrecognized keys raise. LOD switch thresholds are otherwise auto-derived as
       ``coverage_fractions`` (``sqrt(N_i/N_finest)``) — no method selector or
       per-dataset anchor knob.
@@ -469,11 +471,23 @@ def resolve_substitutive_axis(spec: Any, geometry: str) -> Optional[Dict[str, An
     # default are resolved in the scene-aware adder via resolve_coarsen_dims().
     coarsen_dims = _validate_coarsen_dims_spec(kwargs.pop("coarsen_dims", None))
 
+    # Per-splat anisotropy cap on the coarse levels (None disables). The merge
+    # elongates lifted isotropic beads level over level; the cap bounds the
+    # view-dependent ray-integral flare at max_aspect (mass-preserving).
+    max_aspect = kwargs.pop("max_aspect", 3.0)
+    if max_aspect is not None:
+        max_aspect = float(max_aspect)
+        if max_aspect < 1.0:
+            raise ValueError(
+                f"max_aspect must be >= 1 (or None to disable), got {max_aspect}"
+            )
+
     if kwargs:
         raise ValueError(
             f"substitutive_lod for {geometry}: unrecognized keys {sorted(kwargs)}. "
             "Valid keys: compression_factor (K), levels (n_lods), method, "
-            "truncation_radius, device, seed, coverage_fractions, coarsen_dims."
+            "truncation_radius, device, seed, coverage_fractions, coarsen_dims, "
+            "max_aspect."
         )
 
     return {
@@ -485,4 +499,5 @@ def resolve_substitutive_axis(spec: Any, geometry: str) -> Optional[Dict[str, An
         "seed": seed,
         "coverage_fractions": explicit_coverage,
         "coarsen_dims": coarsen_dims,
+        "max_aspect": max_aspect,
     }
