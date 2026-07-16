@@ -818,6 +818,11 @@ export class MultiLevelCachingStore implements AsyncReadable {
   async clearAll(): Promise<void> {
     this.clearL1();
     await this.clearL2();
+    // CRIT-5 parity with the content-hash/TTL clear paths: cancel in-flight
+    // coalesced gets so a fetch racing a (possibly user-triggered, mid-session)
+    // clearAll cannot repopulate the just-cleared L1/L2 with pre-clear bytes.
+    // Harmless no-op on the `?clear-cache` init path (no gets in flight yet).
+    this.abortPendingGets();
     this.invalidationCallbacks.forEach((cb) => cb());
   }
 

@@ -149,4 +149,74 @@ describe('OpfsWriteQueue', () => {
     expect(q.stats().concurrency).toBe(1);
     expect(q.stats().maxDepth).toBe(1);
   });
+
+  it('holds the concurrency cap even if a task re-enters enqueue() during its own run', async () => {
+    // A task whose run() synchronously enqueues more work must not let the
+    // re-entrant pump start extra tasks past the cap (the re-entrant call sees
+    // the current task before it is counted in inFlightPromises).
+    const concurrency = 1;
+    const q = new OpfsWriteQueue({ concurrency, maxDepth: 100 });
+    const gate = makeGate();
+    let maxInFlight = 0;
+    let reentered = false;
+
+    q.enqueue('a', async () => {
+      // Re-enter synchronously (before the first await) — the danger window.
+      if (!reentered) {
+        reentered = true;
+        q.enqueue('b', async () => {
+          await Promise.resolve();
+        });
+      }
+      maxInFlight = Math.max(maxInFlight, q.stats().inFlight);
+      await gate.promise;
+    });
+
+    // With concurrency 1, 'b' must NOT be running while 'a' is in flight.
+    expect(q.stats().inFlight).toBe(1);
+    gate.release();
+    await q.drain();
+    expect(maxInFlight).toBeLessThanOrEqual(concurrency);
+    expect(q.stats().inFlight).toBe(0);
+    expect(q.stats().depth).toBe(0);
+  });
+
+  it('stress: concurrency cap holds and accounting is exact under out-of-order completion', async () => {
+    const concurrency = 3;
+    const q = new OpfsWriteQueue({ concurrency, maxDepth: 10_000 });
+    const N = 60;
+    const gates: Array<() => void> = [];
+    let completed = 0;
+    let maxInFlight = 0;
+
+    for (let i = 0; i < N; i++) {
+      q.enqueue(`k${i}`, async () => {
+        await new Promise<void>((r) => gates.push(r));
+        completed++;
+      });
+    }
+    // Right after the synchronous enqueue burst: exactly `concurrency` running,
+    // the rest pending (distinct keys → none coalesced/dropped).
+    expect(q.stats().inFlight).toBe(concurrency);
+    expect(q.stats().depth).toBe(N - concurrency);
+
+    // Release gates in a deliberately scrambled order; sample the cap each step.
+    let idx = 0;
+    while (gates.length > 0 || q.stats().inFlight > 0) {
+      maxInFlight = Math.max(maxInFlight, q.stats().inFlight);
+      // scrambled pick (deterministic, no Math.random): jump by 7 through the queue
+      const pick = gates.length > 0 ? (idx * 7) % gates.length : 0;
+      idx++;
+      const g = gates.splice(pick, 1)[0];
+      if (g) g();
+      await Promise.resolve();
+    }
+    await q.drain();
+
+    expect(maxInFlight).toBeLessThanOrEqual(concurrency);
+    expect(completed).toBe(N); // every distinct-key task ran (no loss)
+    expect(q.stats().dropped).toBe(0);
+    expect(q.stats().inFlight).toBe(0);
+    expect(q.stats().depth).toBe(0);
+  });
 });

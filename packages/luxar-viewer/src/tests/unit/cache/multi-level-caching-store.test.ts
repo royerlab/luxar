@@ -616,6 +616,27 @@ describe('MultiLevelCachingStore', () => {
       }
     });
 
+    it('CRIT-5: mid-session clearAll cancels in-flight gets so they cannot repopulate', async () => {
+      // A user-triggered clearAll (monitor / settings / debug) while data is
+      // loading must abort in-flight coalesced gets, or a racing fetch
+      // resurrects stale bytes into the just-cleared L1/L2. FAILS on pre-fix
+      // code (clearAll didn't call abortPendingGets).
+      await store.init();
+      const controller = new AbortController();
+      (store as any).pendingGets.set('chunk.k', {
+        promise: Promise.resolve({
+          result: { ok: true, value: new Uint8Array() },
+          source: 'network',
+        }),
+        controller,
+      });
+
+      await store.clearAll();
+
+      expect(controller.signal.aborted).toBe(true);
+      expect((store as any).pendingGets.size).toBe(0);
+    });
+
     it('content-hash mismatch defensively clears L1 (commit 4.1)', async () => {
       // doValidateCache is private but unit-testable via reflection.
       // The real OPFSStore is reused; setContentHash sets the 'old-hash'

@@ -58,6 +58,12 @@ export class OpfsWriteQueue {
   /** Currently-running task promises (for `drain()`). */
   private readonly inFlightPromises = new Set<Promise<void>>();
   private droppedCount = 0;
+  // Re-entrancy guard for pump(): a task's run() that synchronously calls
+  // enqueue() would re-enter pump() BEFORE the current task's promise has been
+  // added to inFlightPromises, letting the re-entrant call under-count and
+  // start work past the cap. The guard makes the re-entrant call a no-op; the
+  // still-running outer loop (and the post-settle finally→pump) pick the work up.
+  private pumping = false;
   private readonly concurrency: number;
   private readonly maxDepth: number;
 
@@ -92,23 +98,31 @@ export class OpfsWriteQueue {
 
   /** Start tasks up to the concurrency cap. */
   private pump(): void {
-    while (this.inFlightPromises.size < this.concurrency && this.pending.size > 0) {
-      const key = this.pending.keys().next().value as string;
-      const run = this.pending.get(key)!;
-      this.pending.delete(key);
+    // Re-entrancy guard (see `pumping`): a synchronous enqueue() from within a
+    // task's run() must not start extra tasks; the active loop below continues.
+    if (this.pumping) return;
+    this.pumping = true;
+    try {
+      while (this.inFlightPromises.size < this.concurrency && this.pending.size > 0) {
+        const key = this.pending.keys().next().value as string;
+        const run = this.pending.get(key)!;
+        this.pending.delete(key);
 
-      const p = (async () => {
-        try {
-          await run();
-        } catch {
-          // run() owns its own error handling; swallow so one failed write
-          // never breaks the pump chain.
-        }
-      })().finally(() => {
-        this.inFlightPromises.delete(p);
-        this.pump();
-      });
-      this.inFlightPromises.add(p);
+        const p = (async () => {
+          try {
+            await run();
+          } catch {
+            // run() owns its own error handling; swallow so one failed write
+            // never breaks the pump chain.
+          }
+        })().finally(() => {
+          this.inFlightPromises.delete(p);
+          this.pump();
+        });
+        this.inFlightPromises.add(p);
+      }
+    } finally {
+      this.pumping = false;
     }
   }
 
