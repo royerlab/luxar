@@ -138,8 +138,8 @@ A cross-section of Luxar's built-in demos — all three geometry types (**Points
 | [![Spiral Galaxy — barred multi-armed disk](docs/images/readme/gallery/spiral_galaxy.webp)](docs/images/readme/gallery/spiral_galaxy.webm) | [![Spiral Galaxy — 5D navigable](docs/images/readme/gallery/spiral_galaxy_5d.webp)](docs/images/readme/gallery/spiral_galaxy_5d.webm) | [![Global Earthquakes — USGS on the globe](docs/images/readme/gallery/earthquakes.webp)](docs/images/readme/gallery/earthquakes.webm) |
 |:--:|:--:|:--:|
 | **Spiral Galaxy**<br>barred multi-armed disk | **Spiral Galaxy**<br>5D navigable | **Global Earthquakes**<br>USGS on the globe |
-| [![Particle Collision — physics event](docs/images/readme/gallery/collision.webp)](docs/images/readme/gallery/collision.webm) | [![Ocean — bioluminescent jellyfish](docs/images/readme/gallery/ocean.webp)](docs/images/readme/gallery/ocean.webm) |
-| **Particle Collision**<br>physics event | **Ocean**<br>bioluminescent jellyfish |
+| [![Rivers of Earth — topography + river networks](docs/images/readme/gallery/global_rivers_earth.webp)](docs/images/readme/gallery/global_rivers_earth.webm) | [![Particle Collision — physics event](docs/images/readme/gallery/collision.webp)](docs/images/readme/gallery/collision.webm) | [![Ocean — bioluminescent jellyfish](docs/images/readme/gallery/ocean.webp)](docs/images/readme/gallery/ocean.webm) |
+| **Rivers of Earth**<br>topography + river networks | **Particle Collision**<br>physics event | **Ocean**<br>bioluminescent jellyfish |
 
 ### Networks & embeddings
 
