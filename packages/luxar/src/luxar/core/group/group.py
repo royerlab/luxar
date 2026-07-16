@@ -163,8 +163,10 @@ class Group(Node):
                 substitutive pipeline (mass-preserving), assembled as a
                 ``kind="lod"`` Group whose finest child is the original Points
                 node. ``dict(...)`` keys: ``compression_factor`` (``K``),
-                ``levels`` (``n_lods``), ``method``,
-                ``truncation_radius``, ``device``, ``seed``, ``coverage_fractions``.
+                ``levels`` (``n_lods``), ``method``, ``truncation_radius``,
+                ``device``, ``seed``, ``coverage_fractions``, ``coarsen_dims``,
+                ``max_aspect`` (anisotropy cap on the coarse levels, default
+                3.0; ``None`` disables).
                 Mutually exclusive with ``additive_lod`` and ``partition``.
                 ``scalars``+``colormap``
                 points are supported by baking scalars→RGB for the coarse gsplat

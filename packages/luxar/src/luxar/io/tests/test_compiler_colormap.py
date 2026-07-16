@@ -518,3 +518,94 @@ class TestColormapNodeProperty:
                 colors = np.random.rand(50, 3).astype(np.float32)
                 pts = scene.add_points("pts", positions, colors=colors)
                 assert pts.colormap is None
+
+
+class TestColormapMultiLodAdditive:
+    """Custom (ndarray / non-builtin) colormaps on the additive-LOD writers.
+
+    Regression: ``write_points_multi_lod`` / ``write_lines_multi_lod`` dumped
+    the raw attrs to JSON without the colormap-LUT resolution the flat writers
+    do, so ``additive_lod= + colormap=<ndarray>`` crashed with
+    ``Object of type ndarray is not JSON serializable``.
+    """
+
+    def test_points_additive_lod_custom_colormap_array(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "test.luxar.zarr"
+            dims = Dimensions([Dimension("x"), Dimension("y"), Dimension("z")])
+            custom_lut = np.random.randint(0, 256, (256, 3), dtype=np.uint8)
+            with LuxarZarrCompiler(path) as c:
+                scene = c.create_scene(dimensions=dims)
+                positions = np.random.rand(500, 3).astype(np.float32)
+                scalars = np.random.rand(500).astype(np.float32)
+                pts = scene.add_points(
+                    "pts",
+                    positions,
+                    scalars=scalars,
+                    colormap=custom_lut,
+                    additive_lod=dict(method="random", n_lods=2, seed=0),
+                )
+                # Adder-side sync: the returned node mirrors the writer.
+                assert pts.colormap == "custom"
+
+            store = zarr.open(str(path), mode="r")
+            assert store["pts"].attrs["colormap"] == "custom"
+            assert store["pts"].attrs["n_additive_sublods"] == 2
+            lut = np.array(store["pts"]["colormap_lut"])
+            np.testing.assert_array_equal(lut, custom_lut)
+            # The LUT rides on the parent (the logical node); children carry none.
+            for i in range(2):
+                assert "colormap_lut" not in store[f"pts/additive_{i}"]
+
+    def test_lines_additive_lod_custom_colormap_array(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "test.luxar.zarr"
+            dims = Dimensions([Dimension("x"), Dimension("y"), Dimension("z")])
+            custom_lut = np.random.randint(0, 256, (256, 3), dtype=np.uint8)
+            with LuxarZarrCompiler(path) as c:
+                scene = c.create_scene(dimensions=dims)
+                # Many 2-vertex segments: the lines additive ladder is
+                # per-polyline, so >1 polyline is required for >1 level.
+                vertices = np.random.rand(400, 3).astype(np.float32)
+                scalars = np.random.rand(400).astype(np.float32)
+                lines = scene.add_lines(
+                    "lns",
+                    vertices,
+                    0.05,
+                    scalars=scalars,
+                    colormap=custom_lut,
+                    line_type="segments",
+                    additive_lod=dict(method="random", n_lods=2, seed=0),
+                )
+                assert lines.colormap == "custom"
+
+            store = zarr.open(str(path), mode="r")
+            assert store["lns"].attrs["colormap"] == "custom"
+            assert store["lns"].attrs["n_additive_sublods"] == 2
+            lut = np.array(store["lns"]["colormap_lut"])
+            np.testing.assert_array_equal(lut, custom_lut)
+            for i in range(2):
+                assert "colormap_lut" not in store[f"lns/additive_{i}"]
+
+    def test_points_additive_lod_matplotlib_name(self) -> None:
+        # The same missing LUT call also broke non-builtin string names.
+        pytest.importorskip("matplotlib")
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "test.luxar.zarr"
+            dims = Dimensions([Dimension("x"), Dimension("y"), Dimension("z")])
+            with LuxarZarrCompiler(path) as c:
+                scene = c.create_scene(dimensions=dims)
+                positions = np.random.rand(300, 3).astype(np.float32)
+                scalars = np.random.rand(300).astype(np.float32)
+                pts = scene.add_points(
+                    "pts",
+                    positions,
+                    scalars=scalars,
+                    colormap="cividis",
+                    additive_lod=dict(method="random", n_lods=2, seed=0),
+                )
+                assert pts.colormap == "custom"
+
+            store = zarr.open(str(path), mode="r")
+            assert store["pts"].attrs["colormap"] == "custom"
+            assert "colormap_lut" in store["pts"]

@@ -18,6 +18,7 @@ from ..compositing import (
     COMPOSITING_ATTRS,
     position_bounds_from_array,
     slice_optional_array,
+    sync_custom_colormap_attr,
 )
 from ..dim_order import apply_dim_order_cholesky, apply_dim_order_positions
 
@@ -178,14 +179,7 @@ def add_gsplats_impl(
         )
 
         # Sync colormap attr with what the compiler wrote to zarr
-        if "colormap" in attrs:
-            from ....colormaps.builtins import BUILTIN_COLORMAP_NAMES
-
-            cm = attrs["colormap"]
-            if not isinstance(cm, str) or (
-                isinstance(cm, str) and cm not in BUILTIN_COLORMAP_NAMES
-            ):
-                attrs["colormap"] = "custom"
+        sync_custom_colormap_attr(attrs)
 
         # The compiler sets default "gray" colormap for gsplats without
         # colors/colormap. Propagate that to the Node attrs so the

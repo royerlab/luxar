@@ -5,12 +5,14 @@ import pytest
 
 from luxar.gsplats.gsplat_data import GSplatData
 from luxar.gsplats.lift import (
+    _cap_aspect,
+    coarse_substitutive_levels,
     compute_ray_integral_factor,
     lift_lines_to_gsplats,
     lift_points_to_gsplats,
     render_light,
 )
-from luxar.gsplats.utils.trils import unpack_tril
+from luxar.gsplats.utils.trils import pack_tril, unpack_tril
 
 
 def test_ray_integral_factor_matches_ts_reference():
@@ -452,3 +454,97 @@ def test_lines_total_bead_cap(monkeypatch):
     # >=1 bead per segment is the floor, so the total can't drop below n_seg, but
     # it must be near the budget — and crucially far below the ~3000 raw count.
     assert n_seg <= data.n_splats <= 400
+
+
+# ---------------------------------------------------------------------------
+# _cap_aspect — anisotropy cap on lifted coarse levels
+# ---------------------------------------------------------------------------
+
+
+def _diag_gsplats(sigmas, amps):
+    """Flat GSplatData with diagonal covariances (one row of sigmas per splat)."""
+    sig = np.asarray(sigmas, np.float64)
+    n, d = sig.shape
+    L = np.zeros((n, d, d))
+    for i in range(d):
+        L[:, i, i] = sig[:, i]
+    return GSplatData(
+        centers=np.zeros((n, d), np.float32),
+        amplitudes=np.asarray(amps, np.float32),
+        cholesky_factors=pack_tril(L).astype(np.float32),
+        truncation_radius=3.0,
+    )
+
+
+def test_cap_aspect_fattens_and_preserves_mass():
+    # sigma (10, 1, 1) at tau=3 -> thin axes fattened to 10/3; mass a*|det L|
+    # exactly unchanged (the cap must never change a splat's X-ray integral).
+    data = _diag_gsplats([[10.0, 1.0, 1.0]], [2.0])
+    capped = _cap_aspect(data, None, 3.0)
+    L = unpack_tril(np.asarray(capped.cholesky_factors, np.float64), 3)
+    ev = np.linalg.eigvalsh(L @ np.swapaxes(L, 1, 2))
+    s = np.sqrt(ev[0])
+    assert s.max() / s.min() == pytest.approx(3.0, rel=1e-6)
+    assert s.max() == pytest.approx(10.0, rel=1e-6)  # long axis untouched
+    mass_before = 2.0 * 10.0 * 1.0 * 1.0
+    mass_after = float(capped.amplitudes[0]) * float(np.prod(s))
+    assert mass_after == pytest.approx(mass_before, rel=1e-5)
+
+
+def test_cap_aspect_isotropic_noop():
+    # Isotropic input is already within any cap: bitwise-unchanged output.
+    data = _diag_gsplats([[2.0, 2.0, 2.0], [0.5, 0.5, 0.5]], [1.0, 3.0])
+    capped = _cap_aspect(data, None, 3.0)
+    np.testing.assert_array_equal(
+        np.asarray(capped.cholesky_factors), np.asarray(data.cholesky_factors)
+    )
+    np.testing.assert_array_equal(
+        np.asarray(capped.amplitudes), np.asarray(data.amplitudes)
+    )
+
+
+def test_cap_aspect_excludes_barrier_dims():
+    # 4D splat with a near-delta time axis (dim 0) and an elongated spatial
+    # block; coarsen_dims=(1,2,3). The cap must (a) bound the SPATIAL aspect,
+    # (b) leave the time row/col bitwise untouched — fattening a sliced axis
+    # would bleed geometry across slices.
+    sig = [[1e-9, 8.0, 1.0, 1.0]]
+    data = _diag_gsplats(sig, [1.0])
+    capped = _cap_aspect(data, (1, 2, 3), 2.0)
+    L = unpack_tril(np.asarray(capped.cholesky_factors, np.float64), 4)[0]
+    Sig = L @ L.T
+    assert Sig[0, 0] == pytest.approx(1e-18, rel=1e-6)  # sigma_t^2 untouched
+    np.testing.assert_allclose(Sig[0, 1:], 0.0, atol=1e-30)
+    s_spatial = np.sqrt(np.linalg.eigvalsh(Sig[1:, 1:]))
+    assert s_spatial.max() / s_spatial.min() == pytest.approx(2.0, rel=1e-5)
+    # Mass over ALL dims still preserved (submatrix det ratio == full ratio).
+    mass_before = 1.0 * 1e-9 * 8.0
+    mass_after = float(capped.amplitudes[0]) * float(
+        np.prod(np.sqrt(np.linalg.eigvalsh(Sig)))
+    )
+    assert mass_after == pytest.approx(mass_before, rel=1e-4)
+
+
+def test_coarse_substitutive_levels_max_aspect_none_disables():
+    # The knob must be live: None keeps the raw (elongated) merge output.
+    v = np.zeros((400, 3), np.float32)
+    v[:, 2] = np.repeat(np.arange(200) * 2.0, 2)
+    v[1::2, 2] += 2.0  # 200 collinear segments -> a long bead string
+    lifted = lift_lines_to_gsplats(v, 0.5, line_type="segments")
+
+    def max_aspect_of(levels_list):
+        worst = 1.0
+        for lvl in levels_list:
+            L = unpack_tril(np.asarray(lvl.cholesky_factors, np.float64), 3)
+            ev = np.linalg.eigvalsh(L @ np.swapaxes(L, 1, 2))
+            worst = max(worst, float(np.sqrt(ev[:, -1] / ev[:, 0]).max()))
+        return worst
+
+    capped = coarse_substitutive_levels(
+        lifted, compression_factor=4, levels=2, device="cpu", seed=0
+    )
+    uncapped = coarse_substitutive_levels(
+        lifted, compression_factor=4, levels=2, device="cpu", seed=0, max_aspect=None
+    )
+    assert max_aspect_of(capped) <= 3.0 * (1 + 1e-4)
+    assert max_aspect_of(uncapped) > 3.0
