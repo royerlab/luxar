@@ -203,9 +203,10 @@ export function pointWebGPUFactory(
   const normalizedRadius: TSLNode = sanitizeNonNegative(aRadius.mul(uRadiusScale), float(0.0));
 
   // Per-instance colour from LUT or attribute. In colormap mode the
-  // display range (uScalarMin/uScalarScale) and gamma operate on the
-  // scalar VALUE before the LUT lookup, not on the resulting color —
-  // mirrors the GLSL3 USE_COLORMAP path.
+  // display range (uScalarMin/uScalarScale) and gamma shape the scalar
+  // VALUE before the LUT lookup, not the resulting color; intensity/
+  // offset apply POST-LUT in the fragment stage (matching the gsplat
+  // shader) — mirrors the GLSL3 USE_COLORMAP path.
   let perPointColor: TSLNode;
   if (config.useColormap && aScalar && uColormapTex && uScalarMin && uScalarScale) {
     const t0 = clamp(aScalar.sub(uScalarMin).mul(uScalarScale), 0.0, 1.0);
@@ -288,12 +289,12 @@ export function pointWebGPUFactory(
       .max(float(0.0))
       .mul(invOneMinusC);
 
-    // GOG: colour × intensity + offset, clamped, then gamma.
-    // Colormap mode bypasses color GOG — gamma + display-range shaped the
-    // scalar VALUE pre-LUT (vertex stage), matching the GLSL3 path.
-    const adjusted: TSLNode = config.useColormap
-      ? max(vColor, vec3(0.0))
-      : max(vColor.mul(uIntensity).add(uOffset), vec3(0.0));
+    // GOG. uIntensity (gain) + uOffset apply in BOTH modes so the layer
+    // intensity/offset controls work for a colormapped point too (GLSL
+    // parity, matching the gsplat shader). Colormap mode: gamma +
+    // display-range shaped the scalar VALUE pre-LUT (vertex stage), so
+    // only gain/offset apply post-LUT (no extra gamma).
+    const adjusted: TSLNode = max(vColor.mul(uIntensity).add(uOffset), vec3(0.0));
     Discard(max(adjusted.r, max(adjusted.g, adjusted.b)).lessThan(1e-4));
     // Colormap mode (gamma applied pre-LUT) OR gammaOne both skip the pow().
     const finalColor: TSLNode =

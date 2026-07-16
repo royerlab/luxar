@@ -46,20 +46,29 @@ layout( std140 ) uniform object {
 	float nodeUniform5;
 	float nodeUniform6;
 	float nodeUniform7;
-	mat3 nodeUniform9;
-	uint nodeUniform10;
+	float nodeUniform8;
 	mat3 nodeUniform11;
 	uint nodeUniform12;
 	mat3 nodeUniform13;
 	uint nodeUniform14;
-	float nodeUniform15;
-	float nodeUniform16;
-	vec2 nodeUniform17;
+	mat3 nodeUniform15;
+	uint nodeUniform16;
+	float nodeUniform17;
 	float nodeUniform18;
-	float nodeUniform19;
+	vec2 nodeUniform19;
 	float nodeUniform20;
 	float nodeUniform21;
 	float nodeUniform22;
+	float nodeUniform23;
+	float nodeUniform24;
+};
+
+layout( std140 ) uniform render {
+	float cameraNear;
+	float cameraFar;
+	mat4 cameraProjectionMatrix;
+	mat4 cameraViewMatrix;
+	mat4 cameraProjectionMatrixInverse;
 };
 
 
@@ -69,6 +78,7 @@ in vec3 nodeVarying1;
 in vec2 nodeVarying2;
 in float nodeVarying3;
 in float nodeVarying4;
+in vec4 v_clipSpace;
 
 
 // vars
@@ -80,6 +90,9 @@ float nodeVar5;
 float nodeVar6;
 vec4 Output;
 vec4 nodeVar7;
+float nodeVar8;
+vec4 nodeVar82;
+vec3 positionView;
 
 // codes
 
@@ -114,7 +127,20 @@ void main() {
 	DiffuseColor.w = ( DiffuseColor.w * nodeUniform7 );
 	nodeVar7 = max( vec4( DiffuseColor.xyz, DiffuseColor.w ), 0.0 );
 	Output = nodeVar7;
-	gl_FragDepth = ( 1.0 - nodeVar6 );
+
+	if ( ( int( nodeUniform8 ) == 1 ) ) {
+
+		nodeVar82 = ( cameraProjectionMatrixInverse * v_clipSpace );
+		positionView = ( nodeVar82.xyz / vec3( nodeVar82.w ) );
+		nodeVar8 = ( ( positionView.z + cameraNear ) / ( cameraNear - cameraFar ) );
+
+	} else {
+
+		nodeVar8 = ( 1.0 - nodeVar6 );
+
+	}
+
+	gl_FragDepth = nodeVar8;
 
 	// result
 	fragColor = nodeVar7;
