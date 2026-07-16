@@ -93,6 +93,7 @@ const EMPTY_PARAMS: UrlParams = {
   clearCache: false,
   lodFade: true,
   lodEnergyComp: true,
+  depthSort: true,
   noPrefetch: false,
   prefetchDebug: false,
   cacheStats: false,

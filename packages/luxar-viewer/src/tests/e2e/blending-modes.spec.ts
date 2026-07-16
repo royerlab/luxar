@@ -515,4 +515,152 @@ test.describe('GSplat normal mode (premultiplied coverage alpha)', () => {
     const redOverGreen = lit.filter((s) => s.r > s.g).length;
     expect(greenOverRed).toBeGreaterThan(redOverGreen);
   });
+
+  /** In-page predicate: every gsplats node's applied `aSortedIndex`
+   *  permutation is view-z monotone (back-to-front) under the CURRENT
+   *  camera pose. Serialized into waitForFunction, so it must be
+   *  self-contained. */
+  const orderingIsBackToFront = () => {
+    const debug = (window as unknown as { __luxarDebug?: any }).__luxarDebug;
+    if (!debug?.scene) return false;
+    let checked = 0;
+    let allOk = true;
+    debug.scene.traverse((obj: any) => {
+      if (obj.userData?.nodeType !== 'gsplats') return;
+      const count = obj.userData?.visibleSplatCount ?? 0;
+      const arr = obj.geometry?.attributes?.aSortedIndex?.array;
+      const texData = obj.geometry?.userData?.splatTexture?.image?.data;
+      if (!arr || !texData || count < 2) return;
+      checked++;
+      const mwi = debug.camera.matrixWorldInverse.elements;
+      const mw = obj.matrixWorld.elements;
+      let prev = -Infinity;
+      for (let j = 0; j < count; j++) {
+        const idx = arr[j];
+        const x = texData[idx * 16];
+        const y = texData[idx * 16 + 1];
+        const z = texData[idx * 16 + 2];
+        const wx = mw[0] * x + mw[4] * y + mw[8] * z + mw[12];
+        const wy = mw[1] * x + mw[5] * y + mw[9] * z + mw[13];
+        const wz = mw[2] * x + mw[6] * y + mw[10] * z + mw[14];
+        const zv = mwi[2] * wx + mwi[6] * wy + mwi[10] * wz + mwi[14];
+        if (zv < prev - 1e-4) allOk = false;
+        prev = Math.max(prev, zv);
+      }
+    });
+    return checked > 0 && allOk;
+  };
+
+  test('camera orbit re-sorts — ordering settles back-to-front from every angle (Phase 3)', async ({
+    page,
+  }) => {
+    await page.addInitScript(() => {
+      localStorage.setItem('luxar-control-rail-hint-dismissed', '1');
+    });
+    await page.goto(`/?src=${GSPLAT_OVERLAP_REVERSED_FIXTURE}&debug&dpr=1`);
+    await waitForLuxarReady(page);
+    await waitForGSplatsCommitted(page);
+    // Settle the commit-time sort first (the Phase-2 behavior).
+    await page.waitForFunction(orderingIsBackToFront, undefined, { timeout: 30000 });
+
+    // Orbit in three large steps (each far past the 3° threshold). For
+    // each: the profiler's Depth Sort pass count MUST increase (a
+    // camera-motion re-sort actually dispatched — the non-vacuous gate;
+    // pre-Phase-3 no sort ever fires after load settle) and the applied
+    // ordering must settle back-to-front under the NEW pose.
+    for (const stepDeg of [60, 75, 90]) {
+      const sortsBefore: number = await page.evaluate(
+        () =>
+          (window as unknown as { __luxarDebug?: any }).__luxarDebug
+            .getSceneLoader()
+            .getProfiler()
+            .getDepthSortTimings().count
+      );
+
+      await page.evaluate((deg: number) => {
+        const debug = (window as unknown as { __luxarDebug?: any }).__luxarDebug;
+        const pose = debug.app.getCameraPose();
+        const rad = (deg * Math.PI) / 180;
+        const [px, py, pz] = pose.position;
+        const [tx, , tz] = pose.target;
+        // Rotate the camera about the target around +Y (world up).
+        const dx = px - tx;
+        const dz = pz - tz;
+        const nx = tx + dx * Math.cos(rad) + dz * Math.sin(rad);
+        const nz = tz - dx * Math.sin(rad) + dz * Math.cos(rad);
+        debug.app.setCameraPose({ ...pose, position: [nx, py, nz] });
+        // Kick the rAF loop so the per-frame scheduler evaluates.
+        debug.renderOnce();
+      }, stepDeg);
+
+      await page.waitForFunction(
+        (before: number) =>
+          (window as unknown as { __luxarDebug?: any }).__luxarDebug
+            .getSceneLoader()
+            .getProfiler()
+            .getDepthSortTimings().count > before,
+        sortsBefore,
+        { timeout: 15000 }
+      );
+      await page.waitForFunction(orderingIsBackToFront, undefined, { timeout: 15000 });
+    }
+
+    const errors = await getWebGLErrors(page);
+    expect(errors).toHaveLength(0);
+  });
+
+  test('?depthSort=0 pins the identity ordering across load and camera motion (Phase 3)', async ({
+    page,
+  }) => {
+    await page.addInitScript(() => {
+      localStorage.setItem('luxar-control-rail-hint-dismissed', '1');
+    });
+    await page.goto(`/?src=${GSPLAT_OVERLAP_REVERSED_FIXTURE}&debug&dpr=1&depthSort=0`);
+    await waitForLuxarReady(page);
+    await waitForGSplatsCommitted(page);
+    // Give any (buggy) async sort a chance to land before asserting.
+    await waitForNextRender(page, 10);
+
+    const readState = () =>
+      page.evaluate(() => {
+        const debug = (window as unknown as { __luxarDebug?: any }).__luxarDebug;
+        const nodes: Array<{ identity: boolean; count: number }> = [];
+        debug.scene.traverse((obj: any) => {
+          if (obj.userData?.nodeType !== 'gsplats') return;
+          const count = obj.userData?.visibleSplatCount ?? 0;
+          const arr = obj.geometry?.attributes?.aSortedIndex?.array;
+          if (!arr || count < 1) return;
+          let identity = true;
+          for (let i = 0; i < count; i++) {
+            if (arr[i] !== i) identity = false;
+          }
+          nodes.push({ identity, count });
+        });
+        const sorts = debug.getSceneLoader().getProfiler().getDepthSortTimings().count;
+        return { nodes, sorts };
+      });
+
+    const afterLoad = await readState();
+    expect(afterLoad.nodes.length).toBeGreaterThan(0);
+    for (const node of afterLoad.nodes) expect(node.identity).toBe(true);
+    expect(afterLoad.sorts).toBe(0);
+
+    // Large camera motion must not wake the scheduler either.
+    await page.evaluate(() => {
+      const debug = (window as unknown as { __luxarDebug?: any }).__luxarDebug;
+      const pose = debug.app.getCameraPose();
+      const [px, py, pz] = pose.position;
+      const [tx, , tz] = pose.target;
+      debug.app.setCameraPose({
+        ...pose,
+        position: [tx - (pz - tz), py, tz + (px - tx)], // 90° about +Y
+      });
+      debug.renderOnce();
+    });
+    await waitForNextRender(page, 10);
+
+    const afterOrbit = await readState();
+    for (const node of afterOrbit.nodes) expect(node.identity).toBe(true);
+    expect(afterOrbit.sorts).toBe(0);
+  });
 });

@@ -49,6 +49,14 @@ export const TOTAL_UPDATE_ROOT = 'Total Update';
 export const REFINEMENT_ROOT = 'LOD Refinement';
 
 /**
+ * Name of the persistent root for gsplat depth-sort round-trips
+ * (depth-sorting Phase 3, spec §6): one pass per SortWorker dispatch,
+ * spanning dispatch → ordering applied. `lastMs` on this root is the
+ * latest sort's round-trip latency.
+ */
+export const DEPTH_SORT_ROOT = 'Depth Sort';
+
+/**
  * Metadata that can be attached to timing entries
  */
 export interface TimingMetadata {
@@ -350,6 +358,7 @@ export class UpdateProfiler {
   private roots = new Map<string, TimingEntry>([
     [TOTAL_UPDATE_ROOT, UpdateProfiler.makeRoot(TOTAL_UPDATE_ROOT)],
     [REFINEMENT_ROOT, UpdateProfiler.makeRoot(REFINEMENT_ROOT)],
+    [DEPTH_SORT_ROOT, UpdateProfiler.makeRoot(DEPTH_SORT_ROOT)],
   ]);
 
   // Current active session (null when not profiling)
@@ -364,13 +373,15 @@ export class UpdateProfiler {
   // Uses AsyncLocalStorage-like pattern: each sync execution path has its own context
   private currentSessionContext: UpdateSession | null = null;
 
-  // Per-update sequence for the 'Total Update' tree (bumped in beginUpdate)
-  // and per-pass sequence for the 'LOD Refinement' tree (bumped in beginPass).
-  // Sessions capture their seq at (root) construction; the merge uses it to
-  // sum same-update siblings, roll over on a new update, and DROP merges
-  // that arrive late from a superseded update.
+  // Per-update sequence for the 'Total Update' tree (bumped in beginUpdate),
+  // per-pass sequence for the 'LOD Refinement' tree (bumped in beginPass),
+  // and per-sort sequence for the 'Depth Sort' tree (bumped in
+  // beginDepthSortPass). Sessions capture their seq at (root) construction;
+  // the merge uses it to sum same-update siblings, roll over on a new
+  // update, and DROP merges that arrive late from a superseded update.
   private updateSeq = 0;
   private passSeq = 0;
+  private sortSeq = 0;
 
   // Generation counter, bumped on every reset(). Sessions capture the
   // generation at construction; their end() is a no-op if the profiler's
@@ -442,6 +453,22 @@ export class UpdateProfiler {
   beginPass(): UpdateSession {
     this.passSeq++;
     return new SessionImpl(REFINEMENT_ROOT, null, this, REFINEMENT_ROOT, this.passSeq);
+  }
+
+  /**
+   * Begin a gsplat depth-sort round-trip (depth-sorting Phase 3). Returns
+   * a detached root session that merges into the 'Depth Sort' persistent
+   * tree — same isolation contract as {@link beginPass}: it never touches
+   * the active update session or the ambient context, so a sort resolving
+   * mid-update cannot disable the update's own profiling.
+   *
+   * The depth-sort coordinator opens one per SortWorker dispatch, stamps
+   * `setMetadata({ splats, info })` (splat count + uploaded ordering
+   * bytes), and ends it when the ordering is applied (or the RPC fails).
+   */
+  beginDepthSortPass(): UpdateSession {
+    this.sortSeq++;
+    return new SessionImpl(DEPTH_SORT_ROOT, null, this, DEPTH_SORT_ROOT, this.sortSeq);
   }
 
   /**
@@ -622,6 +649,15 @@ export class UpdateProfiler {
   }
 
   /**
+   * Get the 'Depth Sort' timing hierarchy (gsplat sort round-trips).
+   * `count` on this root is the number of sorts recorded; `lastMs` is the
+   * latest sort's dispatch→applied round-trip latency.
+   */
+  getDepthSortTimings(): TimingEntry {
+    return this.roots.get(DEPTH_SORT_ROOT)!;
+  }
+
+  /**
    * Reset all timing data
    *
    * Clears active-session state too: if reset() is called mid-update, any
@@ -639,9 +675,11 @@ export class UpdateProfiler {
     this.activeSessions.clear();
     this.updateSeq = 0;
     this.passSeq = 0;
+    this.sortSeq = 0;
     this.roots = new Map<string, TimingEntry>([
       [TOTAL_UPDATE_ROOT, UpdateProfiler.makeRoot(TOTAL_UPDATE_ROOT)],
       [REFINEMENT_ROOT, UpdateProfiler.makeRoot(REFINEMENT_ROOT)],
+      [DEPTH_SORT_ROOT, UpdateProfiler.makeRoot(DEPTH_SORT_ROOT)],
     ]);
     this.notifyListeners();
   }
