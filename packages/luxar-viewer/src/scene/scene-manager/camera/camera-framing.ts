@@ -33,12 +33,22 @@ import {
 import type { ControlsManager } from '../../../controls/controls-manager';
 
 /**
- * How far the user can zoom in or out relative to the "scene fits in
- * view" distance/zoom. A value of 100 means 100x zoom-in and
- * 100x zoom-out from the auto-framed view. Mirrors the original
- * inline constant in scene-manager.ts.
+ * How far the user can zoom IN relative to the "scene fits in view"
+ * distance/zoom (1000 = down to 1/1000 of the framed distance).
+ * Kept finite because orbit math degenerates as the target distance
+ * approaches zero, and deep zoom-in is where the pinned near plane
+ * (MIN_NEAR_PLANE) starts costing Z-buffer precision.
  */
-export const ZOOM_RANGE_FACTOR = 100;
+export const ZOOM_IN_FACTOR = 1000;
+
+/**
+ * How far the user can zoom OUT relative to the "scene fits in view"
+ * distance/zoom (10000 = up to 10000x the framed distance). The
+ * dynamic clipping planes follow the camera outward, so this limit is
+ * a "don't lose the scene" guardrail rather than a technical one —
+ * hence much looser than {@link ZOOM_IN_FACTOR}.
+ */
+export const ZOOM_OUT_FACTOR = 10000;
 
 /** Result of a scene-graph traversal that aggregates Points / Lines / GSplats / InstancedMesh bounds. */
 export interface SceneBoundingBoxResult {
@@ -144,11 +154,11 @@ export interface FitCameraOptions {
  *   - Set the controls' scene scale from the box diagonal.
  *   - For perspective cameras: compute the FOV/aspect-aware distance,
  *     position the camera at `lookAtTarget + (0, 0, distance)`, and
- *     set distance limits to ±`ZOOM_RANGE_FACTOR`.
+ *     set distance limits to `ZOOM_IN_FACTOR` in / `ZOOM_OUT_FACTOR` out.
  *   - For orthographic cameras: compute the zoom that fits the largest
  *     dimension into the frustum, position the camera at
  *     `lookAtTarget + (0, 0, diagonal)`, and set zoom limits to
- *     ±`ZOOM_RANGE_FACTOR`.
+ *     `ZOOM_IN_FACTOR` in / `ZOOM_OUT_FACTOR` out.
  *   - Run `lookAt(lookAtTarget) → updateMatrixWorld(true) →
  *     controls.setTarget(...) → controls.reinitialize() →
  *     controls.update() → controls.saveState()` so the orbit state is
@@ -188,7 +198,7 @@ export function fitCameraToBounds(
     };
     const distance = calculateCameraDistance(bounds, cameraConfig);
     camera.position.set(lookAtTarget.x, lookAtTarget.y, lookAtTarget.z + distance);
-    controls.setDistanceLimits(distance / ZOOM_RANGE_FACTOR, distance * ZOOM_RANGE_FACTOR);
+    controls.setDistanceLimits(distance / ZOOM_IN_FACTOR, distance * ZOOM_OUT_FACTOR);
   } else if (isOrthographicCamera(camera)) {
     const frustumHeight = camera.top - camera.bottom;
     const frustumWidth = camera.right - camera.left;
@@ -199,7 +209,9 @@ export function fitCameraToBounds(
       const zoomW = frustumWidth / (maxDim / fitRatio);
       camera.zoom = Math.min(zoomH, zoomW);
       camera.updateProjectionMatrix();
-      controls.setZoomLimits(camera.zoom / ZOOM_RANGE_FACTOR, camera.zoom * ZOOM_RANGE_FACTOR);
+      // Ortho zoom-IN means a LARGER camera.zoom, so the factors swap
+      // sides relative to the perspective distance clamp above.
+      controls.setZoomLimits(camera.zoom / ZOOM_OUT_FACTOR, camera.zoom * ZOOM_IN_FACTOR);
     }
     camera.position.set(lookAtTarget.x, lookAtTarget.y, lookAtTarget.z + diagonal);
   }
