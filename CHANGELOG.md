@@ -6,6 +6,17 @@ All notable changes to Luxar are documented in this file.
 
 ### July 2026
 
+#### Fixed — depth-sort teardown sweep + embedder control of feature flags
+
+- Dataset switches now drop ALL depth-sort registrations wholesale
+  (`releaseAllDepthSortNodes` wired into the scene teardown) instead of
+  relying solely on the per-mesh scene walk — registrations whose mesh
+  was never attached no longer outlive their dataset.
+- `lodFade`, `lodEnergyComp`, and `depthSort` are now real
+  `LuxarAppOptions` threaded from the bootstrap's `urlParams`: an
+  embedder-supplied `urlParams` object (or direct option) controls them,
+  and the init pipeline no longer reads `window.location` itself.
+
 #### Fixed — view-coherent Lines/Points substitutive LOD + additive-LOD custom-colormap crash (PR #549)
 
 - `substitutive_lod=` coarse levels on Lines (and Points) no longer pop

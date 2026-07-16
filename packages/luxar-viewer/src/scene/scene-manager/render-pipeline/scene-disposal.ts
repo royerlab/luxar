@@ -21,7 +21,10 @@
  */
 
 import * as THREE from 'three';
-import { releaseDepthSortNode } from '../../../rendering/depth-sort-coordinator';
+import {
+  releaseDepthSortNode,
+  releaseAllDepthSortNodes,
+} from '../../../rendering/depth-sort-coordinator';
 
 /**
  * Recursively dispose `obj` and every descendant, removing each child
@@ -65,9 +68,18 @@ export function disposeObjectTree(obj: THREE.Object3D): void {
  * For each remaining direct child, disposes its full subtree via
  * `disposeObjectTree` and removes it from the scene.
  *
+ * This is the dataset-switch teardown, so it ALSO drops every
+ * depth-sort registration wholesale: the per-mesh release inside
+ * `disposeObjectTree` covers meshes reachable from the scene walk, and
+ * `releaseAllDepthSortNodes` sweeps any coordinator/worker state whose
+ * mesh was never attached (or was detached before the switch) — the old
+ * dataset's registrations must not outlive it either way.
+ *
  * @returns number of removed objects (for logging by the caller).
  */
 export function clearLoadedSceneContent(scene: THREE.Scene): number {
+  releaseAllDepthSortNodes();
+
   const objectsToRemove: THREE.Object3D[] = [];
 
   // Snapshot the removable children — iterate from the back so the
