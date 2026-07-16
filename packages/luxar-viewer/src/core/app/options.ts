@@ -126,4 +126,28 @@ export interface LuxarAppOptions {
    * deterministic E2E/visual-regression runs and bug repros.
    */
   pinnedDPR?: number;
+
+  /**
+   * Substitutive-LOD cross-fade (blend adjacent LOD levels' opacity across
+   * a zoom transition instead of a hard swap). Default: true. Mirrors
+   * `UrlParams.lodFade` (`?no-lod-fade` disables) — the standalone
+   * bootstrap threads it here; embedders set it directly.
+   */
+  lodFade?: boolean;
+
+  /**
+   * Streaming brightness compensation (scale a streaming additive LOD
+   * leaf's opacity by 1/e(k) so partial ladders render at full-level
+   * brightness). Default: true. Mirrors `UrlParams.lodEnergyComp`
+   * (`?no-lod-energy` disables).
+   */
+  lodEnergyComp?: boolean;
+
+  /**
+   * GSplat depth sorting (worker back-to-front sorting of `normal`-mode
+   * splats + the camera-motion re-sort scheduler). Default: true; false
+   * pins the identity storage ordering for deterministic runs. Mirrors
+   * `UrlParams.depthSort` (`?depthSort=0` disables).
+   */
+  depthSort?: boolean;
 }
