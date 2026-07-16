@@ -280,7 +280,9 @@ test.describe('Position Bounds and Clipping Planes', () => {
     // The implementation uses calculateClippingPlanesFromSphere():
     // - Converts bounding box to circumscribed sphere (center + radius)
     // - Expands radius by SPHERE_SAFETY_EXPANSION (5%)
-    // - near = max(MIN_NEAR_PLANE, dist - R), far = dist + R
+    // - near = max(minNearForRadius(R), dist - R), far = dist + R
+    //   where minNearForRadius(R) = max(1e-9, R * 2e-6) — the scale-aware
+    //   near floor (see scene-manager/clipping/bounds-math.ts)
     const info = await page.evaluate(() => {
       const debug = (window as any).__luxarDebug;
       let foundBounds: { min: number[]; max: number[] } | null = null;
@@ -315,9 +317,10 @@ test.describe('Position Bounds and Clipping Planes', () => {
       const dz = cameraPos.z - cz;
       const dist = Math.sqrt(dx * dx + dy * dy + dz * dz);
 
-      const MIN_NEAR_PLANE = 0.0001;
+      // Mirror minNearForRadius from bounds-math.ts (scale-aware floor)
+      const minNear = Math.max(1e-9, R * 2e-6);
       const expectedFar = dist + R;
-      const expectedNear = dist < R ? MIN_NEAR_PLANE : Math.max(MIN_NEAR_PLANE, dist - R);
+      const expectedNear = dist < R ? minNear : Math.max(minNear, dist - R);
 
       return {
         actual: {

@@ -31,7 +31,7 @@ import {
   boundingBoxToSphere,
   calculateClippingPlanesFromSphere,
   getBoundingBoxDiagonal,
-  MIN_NEAR_PLANE,
+  minNearForRadius,
   SPHERE_SAFETY_EXPANSION,
 } from './bounds-math';
 import type { SceneBoundsCache } from './scene-bounds-cache';
@@ -165,7 +165,8 @@ export function updateDynamicFromCache(ctx: ClippingCtx): void {
   const dist = Math.sqrt(dx * dx + dy * dy + dz * dz);
   const R = s.radius * SPHERE_SAFETY_EXPANSION;
   const far = dist + R;
-  const near = dist < R ? MIN_NEAR_PLANE : Math.max(MIN_NEAR_PLANE, dist - R);
+  const minNear = minNearForRadius(R);
+  const near = dist < R ? minNear : Math.max(minNear, dist - R);
 
   // Only update when values changed > 0.1% — avoids thrashing the
   // projection matrix on sub-pixel camera moves.

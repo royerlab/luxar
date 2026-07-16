@@ -89,13 +89,16 @@ test.describe('Orthographic Camera Mode', () => {
     expect(pointsAfter).toBe(pointsBefore);
   });
 
-  test.skip('should zoom in ortho mode via scroll wheel', async ({ page }) => {
-    // PERMANENT SKIP — neither synthetic WheelEvent dispatch nor real
-    // Playwright `page.mouse.wheel()` (after `canvas#app.hover()`) triggers
-    // the ortho zoom path: camera.zoom stays at 1.0. The orbit-controls
-    // wheel handler may listen on a parent target or require a specific
-    // pointer-event-source that headless Chromium doesn't synthesize.
-    // Functionality works correctly under real browser interaction.
+  test('should zoom in ortho mode via scroll wheel', async ({ page }) => {
+    // Previously PERMANENT SKIP with a misdiagnosis: the wheel path works
+    // fine in headless Chromium, but TWO test-harness bugs masked it —
+    //   1. `__luxarDebug.camera` was a stale snapshot of the perspective
+    //      camera taken at install time; after the V-key ortho swap the
+    //      test watched the abandoned camera's zoom (forever 1.0). Now a
+    //      live getter (see core/app/debug/debug-interface.ts).
+    //   2. The synthetic WheelEvent carried no clientX/clientY, so the
+    //      handler's pointer-anchored zoom path ignored it. Dispatching
+    //      at the canvas center works.
     // Switch to ortho mode (V twice)
     await page.keyboard.press('v');
     await waitForNextRender(page);
@@ -116,11 +119,21 @@ test.describe('Orthographic Camera Mode', () => {
     });
     expect(typeof initialZoom).toBe('number');
 
-    // Scroll to zoom in (dispatch directly on canvas for reliability)
+    // Scroll to zoom in (dispatch on canvas at its center — the handler
+    // needs client coordinates)
     await page.evaluate(() => {
       const canvas = document.querySelector('canvas');
       if (canvas) {
-        canvas.dispatchEvent(new WheelEvent('wheel', { deltaY: -500, bubbles: true }));
+        const rect = canvas.getBoundingClientRect();
+        canvas.dispatchEvent(
+          new WheelEvent('wheel', {
+            deltaY: -500,
+            clientX: rect.left + rect.width / 2,
+            clientY: rect.top + rect.height / 2,
+            bubbles: true,
+            cancelable: true,
+          })
+        );
       }
     });
     await waitForNextRender(page, 3);
@@ -166,10 +179,10 @@ test.describe('Orthographic Camera Mode', () => {
     expect(labelText.length).toBeGreaterThan(0);
   });
 
-  test.skip('should update scale bar on zoom', async ({ page }) => {
-    // PERMANENT SKIP — same root cause as 'should zoom in ortho mode via
-    // scroll wheel': neither synthetic nor real Playwright wheel events
-    // trigger the ortho-controls zoom path in headless Chromium.
+  test('should update scale bar on zoom', async ({ page }) => {
+    // Previously PERMANENT SKIP — same misdiagnosis as 'should zoom in
+    // ortho mode via scroll wheel' (see that test): wheel works when the
+    // event carries client coordinates.
     // Switch to ortho mode for predictable zoom behavior
     await page.keyboard.press('v');
     await waitForNextRender(page);
@@ -187,38 +200,46 @@ test.describe('Orthographic Camera Mode', () => {
     });
     expect(initialLabel.length).toBeGreaterThan(0);
 
-    // Zoom in significantly (dispatch directly on canvas)
+    // Zoom in far enough to leave the current 1-2-5 label bucket
+    // (dispatch on canvas at its center — the handler needs client
+    // coordinates). 15 notches ≈ 10x+ zoom, several buckets away.
     await page.evaluate(() => {
       const canvas = document.querySelector('canvas');
       if (canvas) {
-        for (let i = 0; i < 5; i++) {
-          canvas.dispatchEvent(new WheelEvent('wheel', { deltaY: -500, bubbles: true }));
+        const rect = canvas.getBoundingClientRect();
+        for (let i = 0; i < 15; i++) {
+          canvas.dispatchEvent(
+            new WheelEvent('wheel', {
+              deltaY: -500,
+              clientX: rect.left + rect.width / 2,
+              clientY: rect.top + rect.height / 2,
+              bubbles: true,
+              cancelable: true,
+            })
+          );
         }
       }
     });
     await waitForNextRender(page, 3);
 
-    // Force render updates for damping
-    await page.evaluate(() => {
-      const debug = (window as any).__luxarDebug;
-      for (let i = 0; i < 10; i++) {
-        debug?.renderOnce?.();
-      }
-    });
-    // Same damping-settle pattern; the scale-bar label updates from a
-    // paint-driven observer, so we need a wall-clock paint window past
-    // the renderOnce loop before reading textContent.
-    await page.waitForTimeout(500);
-
-    // Read label text after zoom
-    const newLabel = await page.evaluate(() => {
-      const label = document.querySelector('.luxar-scale-bar__label');
-      return label?.textContent?.trim() ?? '';
-    });
-
-    // Scale bar label should have changed after zooming
-    expect(newLabel.length).toBeGreaterThan(0);
-    expect(newLabel).not.toBe(initialLabel);
+    // The zoom damps in over many frames and the scale-bar label updates
+    // from a paint-driven observer, so poll (driving frames each probe)
+    // instead of guessing a fixed settle window.
+    await expect
+      .poll(
+        async () => {
+          await page.evaluate(() => {
+            const debug = (window as any).__luxarDebug;
+            for (let i = 0; i < 5; i++) debug?.renderOnce?.();
+          });
+          return page.evaluate(() => {
+            const label = document.querySelector('.luxar-scale-bar__label');
+            return label?.textContent?.trim() ?? '';
+          });
+        },
+        { timeout: 10000 }
+      )
+      .not.toBe(initialLabel);
   });
 
   test('should switch back to orbit cleanly', async ({ page }) => {
