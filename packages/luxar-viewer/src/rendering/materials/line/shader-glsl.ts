@@ -168,9 +168,11 @@ export const LINE_VERTEX_SHADER = /* glsl */ `
 
       // Interpolate attributes along segment.
       // Colormap mode: display range (uScalarMin/uScalarScale) and gamma
-      // operate on the scalar VALUE before the LUT lookup, not on the
-      // resulting color. The gamma fast path (LUXAR_GAMMA_ONE) skips the
-      // pow() when gamma == 1.0.
+      // shape the scalar VALUE before the LUT lookup, not the resulting
+      // color; intensity/offset apply POST-LUT to the mapped color
+      // (fragment shader, matching the gsplat shader) so the layer
+      // gain/offset controls work on colormapped nodes too. The gamma
+      // fast path (LUXAR_GAMMA_ONE) skips the pow() when gamma == 1.0.
       #ifdef USE_COLORMAP
       float s = mix(aStartScalar, aEndScalar, t);
       float st = clamp((s - uScalarMin) * uScalarScale, 0.0, 1.0);
@@ -395,17 +397,16 @@ export const LINE_FRAGMENT_SHADER = /* glsl */ `
       float nearFade = perspectiveNearFade(uIsOrtho, vViewZ, max(uNearCull, 1e-4));
       float intensity = capFactor * perpFalloff * edgeAA * widthScale * vWidthFade * nearFade;
 
-      // Per-node GOG (Gain-Offset-Gamma) color adjustment. When the
-      // wrapper knows intensity==1 && offset==0 (the default), the
-      // mul/add/clamp chain is identity for the common non-negative
-      // vColor range; the wrapper stamps LUXAR_NO_GOG to skip it.
-      //
-      // Colormap (LUT) mode takes precedence: gamma + display-range
+      // Per-node GOG (Gain-Offset-Gamma) color adjustment. uIntensity (gain)
+      // and uOffset apply in BOTH modes so the layer intensity/offset
+      // controls work for a colormapped line too (matching the gsplat
+      // shader). Colormap (LUT) mode: gamma + the display-range window
       // already shaped the scalar VALUE before the LUT lookup (vertex
-      // shader), so the mapped color passes through untouched here.
-      #ifdef USE_COLORMAP
-      vec3 adjusted = max(vColor, vec3(0.0));
-      #elif defined(LUXAR_NO_GOG)
+      // shader), so only gain/offset apply post-LUT (no extra gamma).
+      // When the wrapper knows intensity==1 && offset==0 (the default),
+      // the mul/add/clamp chain is identity for the common non-negative
+      // vColor range; the wrapper stamps LUXAR_NO_GOG to skip it.
+      #ifdef LUXAR_NO_GOG
       vec3 adjusted = vColor;
       #else
       vec3 adjusted = vColor * uIntensity + uOffset;

@@ -537,8 +537,8 @@ export class ControlsManager extends THREE.EventDispatcher<ControlsManagerEventM
 
   /**
    * Set orbit distance limits (perspective camera zoom range).
-   * Called after auto-framing with the scene-fitting distance to give
-   * symmetric zoom range (e.g. 100x in, 100x out).
+   * Called after auto-framing with the scene-fitting distance to give an
+   * asymmetric zoom range (ZOOM_IN_FACTOR in, ZOOM_OUT_FACTOR out).
    * Persisted across mode switches so limits survive control recreation.
    */
   public setDistanceLimits(min: number, max: number): void {
@@ -551,8 +551,8 @@ export class ControlsManager extends THREE.EventDispatcher<ControlsManagerEventM
 
   /**
    * Set ortho zoom limits (orthographic camera zoom range).
-   * Called after auto-framing with the scene-fitting zoom to give
-   * symmetric zoom range (e.g. 100x in, 100x out).
+   * Called after auto-framing with the scene-fitting zoom to give an
+   * asymmetric zoom range (ZOOM_IN_FACTOR in, ZOOM_OUT_FACTOR out).
    * Persisted across mode switches so limits survive control recreation.
    */
   public setZoomLimits(min: number, max: number): void {

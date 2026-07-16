@@ -24,6 +24,7 @@
 import * as THREE from 'three';
 import {
   SPLAT_FLOATS_PER_SPLAT,
+  clampSplatCapacity,
   getSplatTextureWidth,
   splatTextureHeightForCapacity,
 } from './splat-texture-layout';
@@ -181,6 +182,11 @@ export function attachSplatStorage(
   geometry: THREE.InstancedBufferGeometry,
   capacity: number
 ): THREE.DataTexture {
+  // STRUCTURAL invariant: every splat texture is allocated here, so this
+  // clamp alone guarantees texture height ≤ maxTextureSize by construction
+  // (and caps aSortedIndex to match). Idempotent for the pool path, which
+  // already clamps at acquire time.
+  capacity = clampSplatCapacity(capacity);
   const sortedIndex = new THREE.InstancedBufferAttribute(new Uint32Array(capacity), 1);
   sortedIndex.setUsage(THREE.DynamicDrawUsage);
   geometry.setAttribute('aSortedIndex', sortedIndex);
@@ -342,10 +348,14 @@ function collapseSortedIndexRanges(attr: THREE.InstancedBufferAttribute, n: numb
  * the bounding box so frustum culling doesn't clip visible splats at screen edges.
  *
  * Cholesky layout: cholesky01=[L00,L10], cholesky23=[L11,L20], cholesky45=[L21,L22]
+ *
+ * `count` is the WRITTEN (capacity-clamped) splat count — never
+ * `meshConfig.splatCount`, whose tail past the texture bound was not
+ * uploaded and must not influence the cull box.
  */
-function computeMaxCholeskyRowNorm(meshConfig: InstancedGSplatsMeshConfig): number {
+function computeMaxCholeskyRowNorm(meshConfig: InstancedGSplatsMeshConfig, count: number): number {
   let maxRowNorm = 0;
-  for (let i = 0; i < meshConfig.splatCount; i++) {
+  for (let i = 0; i < count; i++) {
     const L00 = meshConfig.cholesky01[i * 2];
     const L10 = meshConfig.cholesky01[i * 2 + 1];
     const L11 = meshConfig.cholesky23[i * 2];
@@ -380,6 +390,11 @@ export function createInstancedGSplatsMesh(
   meshConfig: InstancedGSplatsMeshConfig,
   material: THREE.Material
 ): THREE.Mesh {
+  // SEMANTIC clamp: every consumer below (storage size, texel/ordering
+  // writes, instanceCount, bbox/row-norm loops) uses the same clamped
+  // count, so a request above the per-node texture bound stays
+  // self-consistent instead of drawing instances without texels.
+  const count = clampSplatCapacity(meshConfig.splatCount);
   const baseGeometry = createGSplatQuadGeometry();
 
   // Create instanced buffer geometry
@@ -389,17 +404,17 @@ export function createInstancedGSplatsMesh(
 
   // Mesh-owned splat texture + identity ordering (exact-size — the
   // non-pool fallback carries no capacity headroom).
-  const texture = attachSplatStorage(geometry, meshConfig.splatCount);
-  writeSplatTexels(texture, meshConfig, meshConfig.splatCount);
-  writeSortedIndexIdentity(geometry, meshConfig.splatCount);
+  const texture = attachSplatStorage(geometry, count);
+  writeSplatTexels(texture, meshConfig, count);
+  writeSortedIndexIdentity(geometry, count);
 
   // Set instance count
-  geometry.instanceCount = meshConfig.splatCount;
+  geometry.instanceCount = count;
 
   // Compute bounding box from centers using direct min/max loop (no temp geometry allocation)
   const box = new THREE.Box3();
   const v = new THREE.Vector3();
-  for (let i = 0; i < meshConfig.splatCount; i++) {
+  for (let i = 0; i < count; i++) {
     v.set(meshConfig.centers[i * 3], meshConfig.centers[i * 3 + 1], meshConfig.centers[i * 3 + 2]);
     box.expandByPoint(v);
   }
@@ -407,7 +422,7 @@ export function createInstancedGSplatsMesh(
   // Expand bounding box by max splat extent for correct frustum culling.
   // `material` is either GSplatMaterial or GSplatTSLMaterial; both expose
   // `uniforms.uTruncate` in identical shape.
-  const maxRowNorm = computeMaxCholeskyRowNorm(meshConfig);
+  const maxRowNorm = computeMaxCholeskyRowNorm(meshConfig, count);
   const matWithUniforms = material as THREE.Material & {
     uniforms?: { uTruncate?: { value: number } };
   };
@@ -451,12 +466,17 @@ export function updateInstancedGSplatsMesh(
   mesh: THREE.Mesh,
   meshConfig: InstancedGSplatsMeshConfig
 ): boolean {
+  // SEMANTIC clamp, mirrored from createInstancedGSplatsMesh. Also
+  // load-bearing for the rebuild check below: instanceCount holds the
+  // CLAMPED count, so comparing against the raw request would make an
+  // over-bound node take the rebuild branch on every commit forever.
+  const count = clampSplatCapacity(meshConfig.splatCount);
   const geometry = mesh.geometry as THREE.InstancedBufferGeometry;
 
   // Update or recreate attributes based on size change
   const currentCount = geometry.instanceCount;
 
-  const rebuilt = meshConfig.splatCount !== currentCount;
+  const rebuilt = count !== currentCount;
   let liveGeometry = geometry;
   if (rebuilt) {
     // Size changed: build a FRESH geometry+texture pair and dispose the
@@ -470,10 +490,10 @@ export function updateInstancedGSplatsMesh(
     const fresh = new THREE.InstancedBufferGeometry();
     fresh.index = geometry.index; // shared static quad index
     fresh.setAttribute('aQuadCorner', geometry.getAttribute('aQuadCorner'));
-    const texture = attachSplatStorage(fresh, meshConfig.splatCount);
-    writeSplatTexels(texture, meshConfig, meshConfig.splatCount);
-    writeSortedIndexIdentity(fresh, meshConfig.splatCount);
-    fresh.instanceCount = meshConfig.splatCount;
+    const texture = attachSplatStorage(fresh, count);
+    writeSplatTexels(texture, meshConfig, count);
+    writeSortedIndexIdentity(fresh, count);
+    fresh.instanceCount = count;
     mesh.geometry = fresh;
     liveGeometry = fresh;
     // Rebind the render material to the FRESH texture (same structural
@@ -498,20 +518,20 @@ export function updateInstancedGSplatsMesh(
           'was it created by createInstancedGSplatsMesh/attachSplatStorage?'
       );
     }
-    writeSplatTexels(texture, meshConfig, meshConfig.splatCount);
-    writeSortedIndexIdentity(geometry, meshConfig.splatCount);
+    writeSplatTexels(texture, meshConfig, count);
+    writeSortedIndexIdentity(geometry, count);
   }
 
   // Update bounding box from centers (direct loop, no temp geometry allocation)
   const box = new THREE.Box3();
   const _v = new THREE.Vector3();
-  for (let i = 0; i < meshConfig.splatCount; i++) {
+  for (let i = 0; i < count; i++) {
     _v.set(meshConfig.centers[i * 3], meshConfig.centers[i * 3 + 1], meshConfig.centers[i * 3 + 2]);
     box.expandByPoint(_v);
   }
 
   // Expand by max splat extent (Cholesky row norm × truncation radius)
-  const maxRowNorm = computeMaxCholeskyRowNorm(meshConfig);
+  const maxRowNorm = computeMaxCholeskyRowNorm(meshConfig, count);
   // Either GSplatMaterial (ShaderMaterial-backed) or GSplatTSLMaterial
   // (NodeMaterial-backed) — both expose the same `uniforms.uTruncate`.
   const material = mesh.material as THREE.Material & {

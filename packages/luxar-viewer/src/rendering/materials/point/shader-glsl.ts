@@ -62,9 +62,10 @@ export const POINT_VERTEX_SHADER = /* glsl */ `
     void main() {
       // Pass vertex color — either from attribute or colormap LUT.
       // In colormap mode the display range (uScalarMin/uScalarScale) and
-      // gamma operate on the scalar VALUE before the LUT lookup, not on
-      // the resulting color. Direct-color mode keeps GOG on the color
-      // (fragment shader). See the fragment-shader note.
+      // gamma shape the scalar VALUE before the LUT lookup, not the
+      // resulting color. Intensity/offset apply POST-LUT to the mapped
+      // color (fragment shader, matching the gsplat shader) so the layer
+      // gain/offset controls work on colormapped nodes too.
       #ifdef USE_COLORMAP
       float t = clamp((aScalar - uScalarMin) * uScalarScale, 0.0, 1.0);
       #ifndef LUXAR_GAMMA_ONE
@@ -196,18 +197,14 @@ export const POINT_FRAGMENT_SHADER = /* glsl */ `
       const mediump float INV_ONE_MINUS_C = 1.0 / (1.0 - C);
       mediump float falloff = max(exp(-K * pow(normalizedR, vBeta)) - C, 0.0) * INV_ONE_MINUS_C;
 
-      // Per-node GOG (Gain-Offset-Gamma) color adjustment.
-      //
-      // Colormap (LUT) mode: gamma + display-range already shaped the
-      // scalar VALUE before the LUT lookup (vertex shader), so the mapped
-      // color passes through untouched — gamma must NOT warp LUT colors.
-      // Direct-color mode: GOG operates on the color, as intended.
-      #ifdef USE_COLORMAP
-      mediump vec3 adjusted = max(vColor, vec3(0.0));
-      #else
-      mediump vec3 adjusted = vColor * uIntensity + uOffset;
-      adjusted = max(adjusted, vec3(0.0));
-      #endif
+      // Per-node GOG (Gain-Offset-Gamma) color adjustment. uIntensity (gain)
+      // and uOffset apply in BOTH modes so the layer intensity/offset controls
+      // work for a colormapped point too (matching the gsplat shader).
+      // Colormap (LUT) mode: gamma + the display-range window already shaped
+      // the scalar VALUE before the LUT lookup (vertex shader), so only
+      // gain/offset apply post-LUT (no extra gamma). Direct-color mode: full
+      // GOG on the raw color.
+      mediump vec3 adjusted = max(vColor * uIntensity + uOffset, vec3(0.0));
 
       // Early discard for zero-contribution fragments after offset
       if (max(adjusted.r, max(adjusted.g, adjusted.b)) < 1e-4) discard;

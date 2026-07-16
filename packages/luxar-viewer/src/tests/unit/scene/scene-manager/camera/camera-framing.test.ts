@@ -23,7 +23,8 @@ import {
   centerCameraOnScene,
   centerOnOrigin,
   autoFrameCamera,
-  ZOOM_RANGE_FACTOR,
+  ZOOM_IN_FACTOR,
+  ZOOM_OUT_FACTOR,
 } from '../../../../../scene/scene-manager/camera/camera-framing';
 import type { ControlsManager } from '../../../../../controls/controls-manager';
 import type { BoundingBox } from '../../../../../scene/scene-manager/clipping/bounds-math';
@@ -224,6 +225,17 @@ describe('fitCameraToBounds', () => {
     expect(setSceneScale).not.toHaveBeenCalled();
   });
 
+  it('zoom factors encode the design relation: zoom-out looser than zoom-in', () => {
+    // The whole point of the asymmetric split: zoom-out is only a
+    // "don't lose the scene" guardrail, so it must be strictly looser
+    // than the technically-bounded zoom-in. Also guards against an
+    // accidental transposition of the two constant values, which the
+    // relative assertions below cannot catch (they use the same
+    // constants the implementation does).
+    expect(ZOOM_IN_FACTOR).toBeGreaterThan(1);
+    expect(ZOOM_OUT_FACTOR).toBeGreaterThan(ZOOM_IN_FACTOR);
+  });
+
   it('perspective: positions camera at target + (0, 0, distance), sets distance limits', () => {
     const {
       controls,
@@ -248,7 +260,12 @@ describe('fitCameraToBounds', () => {
     expect(perspectiveCamera.position.z).toBeGreaterThan(0); // some positive distance from origin
     expect(setDistanceLimits).toHaveBeenCalledTimes(1);
     const [near, far] = setDistanceLimits.mock.calls[0];
-    expect(far / near).toBeCloseTo(ZOOM_RANGE_FACTOR ** 2, 6);
+    // Asymmetric limits: min = distance / ZOOM_IN_FACTOR, max = distance *
+    // ZOOM_OUT_FACTOR. Recover the framed distance from the camera position
+    // (placed at target + (0, 0, distance), target.z = 0 here).
+    const framedDistance = perspectiveCamera.position.z;
+    expect(near).toBeCloseTo(framedDistance / ZOOM_IN_FACTOR, 6);
+    expect(far).toBeCloseTo(framedDistance * ZOOM_OUT_FACTOR, 3);
     expect(setTarget).toHaveBeenCalledTimes(1);
     expect(reinitialize).toHaveBeenCalledTimes(1);
     expect(update).toHaveBeenCalledTimes(1);
@@ -264,6 +281,11 @@ describe('fitCameraToBounds', () => {
     expect(diagonal).toBeGreaterThan(0);
     expect(setZoomLimits).toHaveBeenCalledTimes(1);
     expect(setDistanceLimits).not.toHaveBeenCalled(); // ortho path uses zoom, not distance
+    // Ortho zoom-IN = larger camera.zoom, so the factors swap sides:
+    // maxZoom = zoom * ZOOM_IN_FACTOR, minZoom = zoom / ZOOM_OUT_FACTOR.
+    const [minZoom, maxZoom] = setZoomLimits.mock.calls[0];
+    expect(maxZoom).toBeCloseTo(ortho.zoom * ZOOM_IN_FACTOR, 6);
+    expect(minZoom).toBeCloseTo(ortho.zoom / ZOOM_OUT_FACTOR, 9);
   });
 
   // G2: degenerate-but-nonzero geometry. A flat slab (zero Y extent) still has
