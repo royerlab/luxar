@@ -116,17 +116,24 @@ kwarg (`None`/`False` no-op; `True`/`dict()` defaults `K=4, levels=3,
 method="auto"`; dict keys `compression_factor` (`K`), `levels` (`n_lods`),
 `method`, `truncation_radius`, `device`, `seed`, `coverage_fractions`
 (explicit per-level viewport-relative thresholds, strict-ascending in
-`[0, 1]`), `coarsen_dims`). `add_points_substitutive_lod_wrapper_impl`
-(`adders/points.py`) then:
+`[0, 1]`), `coarsen_dims`, `max_aspect` (per-splat anisotropy cap on the
+coarse levels, default 3.0; `None` disables)).
+`add_points_substitutive_lod_wrapper_impl` (`adders/points.py`) then:
 
 1. **Lifts** each point to an isotropic Gaussian
    (`gsplats.lift.lift_points_to_gsplats`): `σ = 2R/T`, `a = opacity/(uRIF·σ)`
    — calibrated against the viewer shaders so a single lifted splat renders like
    its point (peak ratio 1.0, profile rel-L2 0.45% at the default `T=3`).
 2. **Coarsens** via `gsplats.lift.coarse_substitutive_levels` →
-   `make_substitutive_lod`, drops the 1:1 level 0 (the Points node is the finest
-   level), and **rescales** each coarse level's amplitudes to conserve
-   render-light (`Σ a·σ³`) so the LOD seam does not dim on zoom-out.
+   `make_substitutive_lod` with per-bin **mass-preserving amplitudes**
+   (`amplitude="mass"` — per-channel colored light is conserved bin-by-bin, so
+   hue stays coherent across levels), drops the 1:1 level 0 (the Points node is
+   the finest level), **caps** each merged splat's anisotropy at `max_aspect`
+   (default 3, mass-preserving — the merge would otherwise elongate the
+   isotropic lifted splats level over level, whose view-dependent ray integrals
+   flare end-on and pop between levels), and **rescales** each coarse level's
+   amplitudes to conserve render-light (`Σ a·σ³`) so the LOD seam does not dim
+   on zoom-out.
 3. **Assembles** a `kind=lod` group: coarse gsplat children (coarsest-first) +
    the original Points node as the finest child; `display_type="points"`.
 
@@ -180,8 +187,11 @@ so the two can't drift). `add_lines_substitutive_lod_wrapper_impl`
    isotropic beads are view-independent and sum to a smooth tube. Per-bead
    amplitude divides by the Gaussian-comb overlap `√(2π)` so the tube centreline
    = `opacity`.
-2. **Coarsens** via `coarse_substitutive_levels` (drop level 0, render-light
-   rescale) — identical to Points.
+2. **Coarsens** via `coarse_substitutive_levels` (drop level 0, per-bin mass
+   amplitudes, `max_aspect` anisotropy cap, render-light rescale) — identical
+   to Points. The cap matters most here: Morton bins chunk a 1D bead string,
+   so uncapped representatives elongate ~K× more per level and flare when
+   viewed end-on (the "haphazard brightness/hue pops between levels" bug).
 3. **Assembles** a `kind=lod` group: coarse gsplat children (coarsest-first) +
    the original Lines node as the finest child; `display_type="lines"`.
    Thresholds are auto-derived `coverage_fractions` (`sqrt(N_i/N_finest)`,

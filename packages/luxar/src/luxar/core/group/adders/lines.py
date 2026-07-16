@@ -26,6 +26,7 @@ from ..compositing import (
     COMPOSITING_ATTRS,
     position_bounds_from_array,
     slice_optional_array,
+    sync_custom_colormap_attr,
 )
 from ..dim_order import apply_dim_order_positions
 
@@ -336,14 +337,7 @@ def add_lines_impl(
         )
 
         # Sync colormap attr with what the compiler wrote to zarr
-        if "colormap" in attrs:
-            from ....colormaps.builtins import BUILTIN_COLORMAP_NAMES
-
-            cm = attrs["colormap"]
-            if not isinstance(cm, str) or (
-                isinstance(cm, str) and cm not in BUILTIN_COLORMAP_NAMES
-            ):
-                attrs["colormap"] = "custom"
+        sync_custom_colormap_attr(attrs)
 
         if labels is not None:
             scene._notify_labels_added()
@@ -624,6 +618,10 @@ def add_lines_multi_lod_wrapper_impl(
         **attrs,
     )
 
+    # Mirror the writer's custom-colormap resolution (ndarray/matplotlib name
+    # -> 'custom') so the returned node matches what zarr stores.
+    sync_custom_colormap_attr(attrs)
+
     return Lines(
         name,
         metadata=metadata,
@@ -657,8 +655,11 @@ def add_lines_substitutive_lod_wrapper_impl(
     :func:`luxar.gsplats.lift.lift_lines_to_gsplats` — beads are view-independent
     and sum to a smooth tube, unlike one elongated anisotropic Gaussian), the
     gsplat substitutive pipeline synthesises fewer-but-larger representative
-    levels, and those become the coarse children of a ``kind=lod`` Group whose
-    **finest** child is the original Lines node. Mirrors
+    levels (per-bin mass-preserving amplitudes + a ``max_aspect`` anisotropy cap
+    keep every level's brightness and hue view-coherent — see
+    :func:`luxar.gsplats.lift.coarse_substitutive_levels`), and those become the
+    coarse children of a ``kind=lod`` Group whose **finest** child is the
+    original Lines node. Mirrors
     :func:`add_points_substitutive_lod_wrapper_impl`.
     """
     from ....gsplats.lift import coarse_substitutive_levels, lift_lines_to_gsplats
@@ -709,6 +710,7 @@ def add_lines_substitutive_lod_wrapper_impl(
         device=spec.get("device", "auto"),
         seed=spec.get("seed"),
         coarsen_dims=coarsen_dims,
+        max_aspect=spec.get("max_aspect", 3.0),
     )
 
     # Degenerate -> flat Lines node. Covers BOTH no coarse levels AND an

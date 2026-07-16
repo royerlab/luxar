@@ -58,6 +58,15 @@ class TestResolveSubstitutiveAxisLines:
         assert (
             r["compression_factor"] == 4 and r["levels"] == 3 and r["method"] == "auto"
         )
+
+    def test_max_aspect_key_resolved(self) -> None:
+        assert resolve_substitutive_axis_lines(True)["max_aspect"] == 3.0
+        assert resolve_substitutive_axis_lines(dict(max_aspect=5))["max_aspect"] == 5.0
+        assert resolve_substitutive_axis_lines(dict(max_aspect=None))["max_aspect"] is (
+            None
+        )
+        with pytest.raises(ValueError, match="max_aspect"):
+            resolve_substitutive_axis_lines(dict(max_aspect=0.5))
         assert (
             resolve_substitutive_axis_lines(dict(K=8, n_lods=2))["compression_factor"]
             == 8
@@ -267,6 +276,71 @@ class TestSubstitutiveLinesConservationAndSymmetry:
         assert len(coarse) == 3
         for lvl in coarse:
             assert render_light(lvl) == pytest.approx(target, rel=1e-4)
+
+    @staticmethod
+    def _aspects(lvl) -> np.ndarray:
+        from luxar.gsplats.utils.trils import unpack_tril
+
+        L = unpack_tril(np.asarray(lvl.cholesky_factors, np.float64), int(lvl.ndim))
+        ev = np.linalg.eigvalsh(L @ np.swapaxes(L, 1, 2))
+        return np.sqrt(ev[:, -1] / np.maximum(ev[:, 0], 1e-30))
+
+    def test_coarse_level_aspect_capped(self) -> None:
+        # THE brightness/hue-pop fix: the merge of a 1D bead string elongates
+        # representatives level over level (aspect ~1.9/6.6/25 uncapped), and an
+        # elongated gaussian's ray integral flares ~aspect x when viewed end-on
+        # — per-splat, per-orientation, per-level flares = haphazard pops. The
+        # default max_aspect=3 bounds every coarse splat's aspect.
+        verts = _segments(2000, seed=3)
+        lifted = lift_lines_to_gsplats(verts, 0.8, line_type="segments")
+        coarse = coarse_substitutive_levels(
+            lifted, compression_factor=4, levels=3, device="cpu", seed=0
+        )
+        for lvl in coarse:
+            assert float(self._aspects(lvl).max()) <= 3.0 * (1 + 1e-4)
+
+    def test_max_aspect_none_disables_cap(self) -> None:
+        # Guard that the knob is live: uncapped coarse levels of a bead string
+        # DO exceed aspect 3 (otherwise the capped test above proves nothing).
+        verts = _segments(2000, seed=3)
+        lifted = lift_lines_to_gsplats(verts, 0.8, line_type="segments")
+        coarse = coarse_substitutive_levels(
+            lifted,
+            compression_factor=4,
+            levels=3,
+            device="cpu",
+            seed=0,
+            max_aspect=None,
+        )
+        assert float(self._aspects(coarse[-1]).max()) > 3.0
+
+    def test_colored_light_per_channel_conserved_across_levels(self) -> None:
+        # Hue coherence: per-channel colored light (sum a*|det L|*c_ch) must
+        # match the lifted level's on EVERY coarse level. Exact per bin with
+        # amplitude="mass" (mass-weighted mean colors x mass-preserving
+        # amplitudes); the aspect cap and render-light rescale preserve it.
+        verts = _segments(2000, seed=3)
+        rng = np.random.default_rng(7)
+        colors = rng.uniform(0.05, 1.0, (verts.shape[0], 3)).astype(np.float32)
+        lifted = lift_lines_to_gsplats(verts, 0.8, line_type="segments", colors=colors)
+        from luxar.gsplats.utils.trils import unpack_tril
+
+        def colored_light(d):
+            flat = d.flattened()
+            L = unpack_tril(
+                np.asarray(flat.cholesky_factors, np.float64), int(flat.ndim)
+            )
+            det = np.abs(np.linalg.det(L))
+            a = np.asarray(flat.amplitudes, np.float64)
+            c = np.asarray(flat.colors, np.float64)
+            return (a * det) @ c
+
+        target = colored_light(lifted)
+        coarse = coarse_substitutive_levels(
+            lifted, compression_factor=4, levels=3, device="cpu", seed=0
+        )
+        for lvl in coarse:
+            np.testing.assert_allclose(colored_light(lvl), target, rtol=1e-4)
 
     def test_opacity_rides_on_group_not_baked_into_amplitudes(self, tmp_path) -> None:
         # opacity is a compositing attr on the kind=lod group; the lift always uses

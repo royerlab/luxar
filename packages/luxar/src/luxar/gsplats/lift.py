@@ -36,7 +36,13 @@ The lift is **strictly isotropic** on purpose: ``sigmaRay`` equals ``sigma_world
 only for isotropic covariances, so anisotropy would make brightness view-dependent
 and break the seam match. (Lines lift to a *string of isotropic beads* for the very
 same reason — never one elongated anisotropic Gaussian — see
-:func:`lift_lines_to_gsplats` below.)
+:func:`lift_lines_to_gsplats` below.) The substitutive merge would silently
+re-introduce anisotropy — Morton bins chunk a bead string into elongated
+representatives whose aspect grows ~K× per level — so
+:func:`coarse_substitutive_levels` caps each coarse splat's aspect at
+``max_aspect`` (default 3, mass-preserving; see :func:`_cap_aspect`) and uses
+per-bin mass-preserving amplitudes, keeping every level's brightness and hue
+view-coherent with the finest one.
 
 Sharpness/``beta`` is intentionally NOT used: the point kernel is a *truncated*
 super-Gaussian, and an (untruncated) moment-match to ``beta = 2`` overspreads it
@@ -443,6 +449,132 @@ def lift_lines_to_gsplats(
     )
 
 
+#: Rows per chunk in :func:`_cap_aspect`'s eigendecomposition loop — bounds the
+#: float64 ``(chunk, d, d)`` transients (a lifted level can reach ~2M splats).
+_CAP_ASPECT_CHUNK: int = 1_000_000
+
+
+def _cap_aspect(
+    level: GSplatData,
+    coarsen_dims: Optional[Sequence[int]],
+    max_aspect: float,
+) -> GSplatData:
+    """Cap per-splat anisotropy (mass-preservingly) on the coarsened dims.
+
+    The lift is *strictly isotropic* (module docstring): ``sigmaRay ==
+    sigma_world`` only for isotropic covariances, so an anisotropic splat's
+    ray integral — hence its rendered brightness — is view-dependent (an
+    elongated Gaussian is ``sigma_max/sigma_perp`` brighter end-on than
+    broadside). The substitutive merge of a 1D bead string violates that
+    invariant: Morton bins chunk the string, so representatives elongate
+    ~K× more per level, and the resulting per-splat, per-orientation flares
+    read as haphazard brightness/hue pops between LOD levels. This helper
+    restores the invariant up to ``max_aspect``: each splat's covariance is
+    eigendecomposed on the ``coarsen_dims`` submatrix and the small axes are
+    fattened so ``sigma_i >= sigma_max / max_aspect``, with the amplitude
+    rescaled by ``det_old/det_new`` so the splat's integral (its additive
+    X-ray light) is exactly unchanged — coarse levels become fatter, softer,
+    proportionally dimmer tubes (image-pyramid semantics) instead of flarey
+    elongated shards.
+
+    Barrier dims (not in ``coarsen_dims``) are left bitwise untouched: they
+    carry near-delta widths on sliced nD data, and fattening them would bleed
+    geometry across slices. The block edit is exact because barrier↔coarsen
+    cross-covariances are zero on the lifted path (beads have diagonal
+    isotropic covariances and the grouped reduction keeps barrier coordinates
+    constant per bin, so neither the intra nor inter moment term develops
+    cross entries). This helper is private to the lift path on purpose:
+    anisotropic representatives are *correct* for fitted volumetric gsplats.
+
+    ``coarsen_dims=None`` means all dims. Splats whose capped covariance
+    fails to re-factorize even after a proportional ridge are left uncapped
+    (never crash the build).
+    """
+    flat = level.flattened()
+    n = int(flat.n_splats)
+    d = int(flat.ndim)
+    if n == 0 or max_aspect is None:
+        return level
+    tau = float(max_aspect)
+    if tau < 1.0:
+        raise ValueError(f"max_aspect must be >= 1 (or None to disable); got {tau}")
+
+    cd = (
+        tuple(range(d))
+        if coarsen_dims is None
+        else tuple(sorted({int(i) for i in coarsen_dims}))
+    )
+    if len(cd) <= 1:
+        return level  # 1x1 submatrix: aspect is identically 1
+
+    from .utils.trils import pack_tril, unpack_tril
+
+    chol = np.asarray(flat.cholesky_factors, dtype=np.float32)
+    amps = np.asarray(flat.amplitudes, dtype=np.float64).copy()
+    out_chol = chol.copy()
+    cd_idx = np.asarray(cd, dtype=np.intp)
+    changed_any = False
+
+    for start in range(0, n, _CAP_ASPECT_CHUNK):
+        sl = slice(start, min(n, start + _CAP_ASPECT_CHUNK))
+        L = unpack_tril(chol[sl].astype(np.float64), d)  # (m, d, d)
+        Sig = L @ np.swapaxes(L, 1, 2)
+        sub = Sig[:, cd_idx][:, :, cd_idx]  # (m, c, c)
+        ev, evec = np.linalg.eigh(sub)  # ascending eigenvalues
+        s = np.sqrt(np.maximum(ev, 0.0))
+        s_new = np.maximum(s, s[:, -1:] / tau)
+        needs = np.any(s_new > s * (1.0 + 1e-12), axis=1)
+        if not np.any(needs):
+            continue
+        changed_any = True
+        idx = np.nonzero(needs)[0]
+        sub_new = (evec[idx] * (s_new[idx] ** 2)[:, None, :]) @ np.swapaxes(
+            evec[idx], 1, 2
+        )
+        Sig_new = Sig[idx]
+        Sig_new[:, cd_idx[:, None], cd_idx[None, :]] = sub_new
+
+        # Re-factorize; on failure add a proportional ridge on the coarsened
+        # diagonal and retry once; still-failing splats stay uncapped.
+        ok = np.ones(idx.shape[0], dtype=bool)
+        L_new = np.empty_like(Sig_new)
+        try:
+            L_new = np.linalg.cholesky(Sig_new)
+        except np.linalg.LinAlgError:
+            for j in range(idx.shape[0]):
+                try:
+                    L_new[j] = np.linalg.cholesky(Sig_new[j])
+                except np.linalg.LinAlgError:
+                    ridge = np.zeros(d, dtype=np.float64)
+                    ridge[cd_idx] = 1e-9 * np.diagonal(Sig_new[j])[cd_idx]
+                    try:
+                        L_new[j] = np.linalg.cholesky(Sig_new[j] + np.diag(ridge))
+                    except np.linalg.LinAlgError:
+                        ok[j] = False
+        keep = np.nonzero(ok)[0]
+        if keep.size == 0:
+            continue
+        rows = np.asarray(sl.indices(n)[0] + idx[keep], dtype=np.intp)
+        # Mass preservation: a' = a * det_old/det_new. The submatrix det ratio
+        # equals the full-matrix one (barrier block + zero cross terms are
+        # untouched), so both render_light and the sliced per-barrier mass
+        # are conserved exactly.
+        det_old = np.prod(s[idx[keep]], axis=1)
+        det_new = np.prod(s_new[idx[keep]], axis=1)
+        amps[rows] *= det_old / np.maximum(det_new, 1e-300)
+        out_chol[rows] = pack_tril(L_new[keep]).astype(np.float32)
+
+    if not changed_any:
+        return level
+    return GSplatData(
+        centers=np.asarray(flat.centers, dtype=np.float32),
+        amplitudes=amps.astype(np.float32),
+        cholesky_factors=out_chol,
+        colors=(None if flat.colors is None else np.asarray(flat.colors, np.float32)),
+        truncation_radius=float(flat.truncation_radius),
+    )
+
+
 def coarse_substitutive_levels(
     lifted: GSplatData,
     *,
@@ -452,16 +584,24 @@ def coarse_substitutive_levels(
     device: Any = "auto",
     seed: Optional[int] = None,
     coarsen_dims: Optional[Sequence[int]] = None,
+    max_aspect: Optional[float] = 3.0,
 ) -> "List[GSplatData]":
     """Coarse substitutive levels of a lifted point cloud (render-light conserved).
 
     Runs :func:`luxar.gsplats.lod.substitutive.make_substitutive_lod` on
-    ``lifted``, **drops level 0** (the 1:1 lifted set — the original Points node
-    is the finest LOD level, so a 1:1 gsplat copy would double-render at the
-    seam), and **rescales each remaining level's amplitudes** so its
-    :func:`render_light` equals the finest (lifted) level's. The substitutive
-    L2-optimal amplitude otherwise undershoots total light (~9% over 3 levels at
-    K=4), which would read as zoom-out dimming; the rescale removes it.
+    ``lifted`` with **per-bin mass-preserving amplitudes** (``amplitude="mass"``
+    — every bin's merged splat carries exactly its members' summed
+    ``a·|det L|`` mass, so per-channel colored light is conserved bin-by-bin
+    together with the mass-weighted mean colors), **drops level 0** (the 1:1
+    lifted set — the original Points/Lines node is the finest LOD level, so a
+    1:1 gsplat copy would double-render at the seam), **caps each level's
+    per-splat anisotropy** at ``max_aspect`` (see :func:`_cap_aspect` — the
+    merge would otherwise elongate representatives level over level, whose
+    view-dependent ray integrals read as haphazard brightness/hue pops between
+    LOD levels; ``None`` disables), and finally **rescales each level's
+    amplitudes** so its :func:`render_light` equals the finest (lifted)
+    level's (a near-no-op safety net under mass amplitudes; it also absorbs
+    the cull of zero-amplitude bins).
 
     Returns the coarse levels **finest → coarsest** (substitutive index 1..L),
     each a flat :class:`GSplatData` — one entry per synthesised coarser level.
@@ -479,11 +619,14 @@ def coarse_substitutive_levels(
         device=device,
         seed=seed,
         coarsen_dims=coarsen_dims,
+        amplitude="mass",
     )
     light0 = render_light(pyramid.at_substitutive(0))
     out: List[GSplatData] = []
     for s in range(1, pyramid.n_substitutive):
         lvl = pyramid.at_substitutive(s).flattened()
+        if max_aspect is not None:
+            lvl = _cap_aspect(lvl, coarsen_dims, float(max_aspect)).flattened()
         ls = render_light(lvl)
         scale = (light0 / ls) if ls > 0 else 1.0
         out.append(

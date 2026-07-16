@@ -105,6 +105,7 @@ def _build_representatives_vectorized(
     *,
     M: int,
     coverage_inflation: float = 1.0,
+    amplitude: str = "l2",
 ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, Optional[torch.Tensor]]:
     """Vectorised replacement for the per-bin :func:`_build_representatives`.
 
@@ -120,7 +121,19 @@ def _build_representatives_vectorized(
     across levels (σ_ℓ² = σ_{ℓ-1}² + β(d_ℓ² − d_{ℓ-1}²)/12) has σ = √(β/12)·d
     as its exact fixed point, so the calibration holds at every level with no
     compounding. Single-member bins have ``inter = 0`` and are untouched.
+
+    ``amplitude`` selects the merged amplitude: ``"l2"`` (default) is the
+    L²-optimal projection ``a* = ⟨f_S, Ḡ⟩ / ‖Ḡ‖²`` (highest render fidelity
+    for fitted volumetric gsplats); ``"mass"`` makes each bin exactly
+    mass-preserving — ``a = (Σ_i a_i·|det L_i|) / |det L_out|``, computed on
+    the FINAL covariance (after inflation and the PD ridge) — so per-bin
+    colored light is conserved together with the bin-mass-weighted mean
+    colors below (the lifted points/lines path uses this: the "fine" beads
+    are a stroke stand-in, not a density to L²-fit, and per-bin conservation
+    is what keeps brightness/hue coherent across LOD levels).
     """
+    if amplitude not in ("l2", "mass"):
+        raise ValueError(f"amplitude must be 'l2' or 'mass', got {amplitude!r}")
     N, D = centres.shape
     device = centres.device
     dt = centres.dtype
@@ -170,6 +183,20 @@ def _build_representatives_vectorized(
         eye = torch.eye(D, dtype=dt, device=device).expand(M, D, D)
         L_bar = torch.where(bad.view(M, 1, 1), eye, L_bar)
         a_star = torch.where(bad, torch.zeros_like(a_star), a_star)
+
+    if amplitude == "mass":
+        # Per-bin mass-preserving amplitude on the FINAL covariance: the bin's
+        # merged splat carries exactly its members' summed a·|det L| mass, so
+        # per-channel colored light (mass × mean color) is conserved per bin.
+        masses = amps * sqrt_det  # (N,)
+        bin_mass = torch.zeros(M, dtype=dt, device=device)
+        bin_mass.index_add_(0, assignments, masses)
+        det_out = torch.diagonal(L_bar, dim1=-2, dim2=-1).prod(dim=-1).abs()
+        a_star = torch.where(
+            det_out > 0, bin_mass / det_out.clamp_min(_TINY), torch.zeros_like(a_star)
+        )
+        if bool(bad.any()):
+            a_star = torch.where(bad, torch.zeros_like(a_star), a_star)
 
     if colors is not None:
         cdt = colors.dtype
