@@ -781,6 +781,72 @@ describe('MultiLevelCachingStore', () => {
       expect(l1Stats.chunksSize).toBe(0);
     });
 
+    it('CRIT-5: a fetch resolving DURING the clear (mid clearL2 await) cannot repopulate L1', async () => {
+      // Harder race than the test above: the in-flight fetch resolves in the
+      // window AFTER clearL1() but BEFORE pendingGets is aborted (i.e. while
+      // clearL2()'s OPFS wipe is still awaiting). If abort runs only after the
+      // clear, that fetch passes the not-yet-aborted populate guard and writes
+      // stale bytes into the just-cleared L1.
+      await store.init();
+      const l2Store = (store as any).l2Store as OPFSStore;
+      l2Store.setContentHash('old-hash');
+      l2Store.setValidationMode('content-hash');
+
+      // Gate the chunk fetch.
+      let releaseChunk!: () => void;
+      const chunkGate = new Promise<void>((r) => {
+        releaseChunk = r;
+      });
+      global.fetch = vi.fn(async (url: string) => {
+        if (url.includes('.zattrs')) {
+          return {
+            ok: true,
+            async arrayBuffer() {
+              return new TextEncoder().encode(JSON.stringify({ content_hash: 'new-hash' })).buffer;
+            },
+          } as Response;
+        }
+        await chunkGate;
+        return {
+          ok: true,
+          async arrayBuffer() {
+            return new Uint8Array([9, 9, 9, 9]).buffer;
+          },
+        } as Response;
+      }) as any;
+
+      // Gate l2Store.clear so we can act WHILE clearL2()'s await is suspended.
+      let releaseClear!: () => void;
+      const clearGate = new Promise<void>((r) => {
+        releaseClear = r;
+      });
+      const origClear = l2Store.clear.bind(l2Store);
+      vi.spyOn(l2Store, 'clear').mockImplementation(async () => {
+        await clearGate;
+        return origClear();
+      });
+
+      const inflight = store.getResult('stale-chunk'); // fetch blocked on chunkGate
+      const validation = (store as any).doValidateCache(new AbortController().signal);
+
+      // Let doValidateCache reach the gated clearL2 (past .zattrs + clearL1).
+      for (let i = 0; i < 20; i++) await Promise.resolve();
+
+      // Release the chunk fetch NOW — it resolves during the clearL2 await.
+      releaseChunk();
+      for (let i = 0; i < 20; i++) await Promise.resolve();
+
+      // Now let the clear finish (this is where abortPendingGets currently runs).
+      releaseClear();
+      await validation;
+      await inflight;
+
+      // The stale fetch must NOT have repopulated L1.
+      const l1 = store.getStats().l1;
+      expect(l1.chunksCount).toBe(0);
+      expect(l1.chunksSize).toBe(0);
+    });
+
     it('should bypass cache when validating content_hash (critical fix)', async () => {
       // This test verifies the fix for the cache validation bug where
       // validation was reading .zattrs from cache, comparing cached hash

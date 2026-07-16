@@ -650,15 +650,7 @@ export class MultiLevelCachingStore implements AsyncReadable {
           const age = Date.now() - state.lastValidatedAt;
           if (age > ttlMs) {
             this.log(`External dataset TTL expired (${age}ms > ${ttlMs}ms), clearing cache`);
-            this.clearL1();
-            await this.clearL2();
-            // CRIT-5 parity with the content-hash path: cancel in-flight
-            // coalesced gets so a fetch racing this TTL clear cannot
-            // repopulate the just-cleared L1/L2 with pre-clear bytes. (The
-            // L2 epoch alone does NOT cover this — a fetch still in flight
-            // here resolves AFTER the clear and enqueues with the new epoch.)
-            this.abortPendingGets();
-            this.invalidationCallbacks.forEach((cb) => cb());
+            await this.invalidateAllTiers();
           }
         }
         this.l2Store?.setValidationMode(ttlMs != null ? 'ttl' : 'none');
@@ -681,13 +673,7 @@ export class MultiLevelCachingStore implements AsyncReadable {
         // ("hash mismatch ⇒ every tier dropped") explicit, and protects
         // future call paths that might revalidate against a populated
         // L1 (e.g. content-hash refresh during a long session).
-        this.clearL1();
-        await this.clearL2();
-        // CRIT-5: cancel in-flight coalesced gets so a fetch that started
-        // before validation completed cannot resurrect stale bytes after the
-        // clear (see abortPendingGets).
-        this.abortPendingGets();
-        this.invalidationCallbacks.forEach((cb) => cb());
+        await this.invalidateAllTiers();
       }
 
       this.l2Store?.setContentHash(remoteHash);
@@ -711,6 +697,22 @@ export class MultiLevelCachingStore implements AsyncReadable {
       pending.controller.abort();
     }
     this.pendingGets.clear();
+  }
+
+  /**
+   * Drop every cache tier for an invalidation (content-hash mismatch, TTL
+   * expiry, or a user-triggered clearAll). Ordering is load-bearing:
+   * `abortPendingGets()` runs FIRST so no in-flight coalesced fetch can pass
+   * `fetchKeyChain`'s populate guard and repopulate a tier DURING the async
+   * `clearL2()` wipe — the residual window a clear-then-abort order leaves open.
+   * L2's epoch is bumped inside `clearL2()`; L0 is dropped via the invalidation
+   * callbacks. Shared by all three invalidation paths so they stay in lockstep.
+   */
+  private async invalidateAllTiers(): Promise<void> {
+    this.abortPendingGets();
+    this.clearL1();
+    await this.clearL2();
+    this.invalidationCallbacks.forEach((cb) => cb());
   }
 
   /**
@@ -813,17 +815,12 @@ export class MultiLevelCachingStore implements AsyncReadable {
   }
 
   /**
-   * Clear all caches (L1 + L2).
+   * Clear all caches (L1 + L2). Reachable mid-session from the monitor /
+   * settings "clear caches" controls and `__luxarDebug`, so it aborts in-flight
+   * gets FIRST (see invalidateAllTiers) to prevent stale repopulation.
    */
   async clearAll(): Promise<void> {
-    this.clearL1();
-    await this.clearL2();
-    // CRIT-5 parity with the content-hash/TTL clear paths: cancel in-flight
-    // coalesced gets so a fetch racing a (possibly user-triggered, mid-session)
-    // clearAll cannot repopulate the just-cleared L1/L2 with pre-clear bytes.
-    // Harmless no-op on the `?clear-cache` init path (no gets in flight yet).
-    this.abortPendingGets();
-    this.invalidationCallbacks.forEach((cb) => cb());
+    await this.invalidateAllTiers();
   }
 
   /**
