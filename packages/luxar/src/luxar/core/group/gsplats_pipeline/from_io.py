@@ -38,6 +38,26 @@ def add_gsplats_from_file_impl(
     if not path.exists():
         raise FileNotFoundError(f"GSplats file not found: {path}")
 
+    # Classical (photogrammetric) splat files — INRIA/SuperSplat .ply,
+    # antimatter15 .splat, Niantic .spz — are imported on the fly and embedded
+    # through the normal data path, so `scene.add_gsplats_from_file("garden",
+    # "garden.splat")` works one-line. Luxar's own stores never carry these
+    # suffixes (.gsplats.zarr / .zip / .tar.gz), so extension sniffing is safe.
+    if path.suffix.lower() in (".ply", ".splat", ".spz"):
+        from luxar.gsplats.interop.classical_splats import import_gsplats
+
+        return add_gsplats_from_data_impl(
+            group,
+            name=name,
+            result=import_gsplats(path),
+            parent=parent,
+            extend_to_all=extend_to_all,
+            dim_order=dim_order,
+            fill=fill,
+            fill_sigma=fill_sigma,
+            **attrs,
+        )
+
     # Read the v3.0 node tree once. A matrix-shaped tree (leaf / additive ladder
     # / kind=lod of leaves) maps to a GSplatData and embeds via the normal data
     # path (which applies dim_order / extend_to_all / fill). A genuinely nested
