@@ -34,7 +34,7 @@ export const GSPLAT_VERTEX_SHADER = /* glsl */ `
     uniform float uTruncate;          // Truncation radius (in sigmas)
     uniform float uTruncateSq;        // Truncation radius squared
     uniform float uRayIntegralFactor; // Shifted Gaussian ray integral factor
-    uniform int uProjectionMode;      // 0 = sum projection (additive), 1 = max projection (max blending)
+    uniform int uProjectionMode;      // 0 = sum (ray-integral: additive/luminous), 1 = peak (2D-projected: max + normal/alpha-over surfaces)
     uniform int uIsOrtho;             // 0 = perspective, 1 = orthographic
     uniform float uNearCull;          // Near cull distance (scene-scale-aware)
     uniform float uMaxExtentFactor;   // Max projected extent as fraction of viewport before fade
@@ -56,7 +56,7 @@ export const GSPLAT_VERTEX_SHADER = /* glsl */ `
     // OPTIMIZATION: vL2D stores [1/L00, L10, 1/L11] to replace fragment divisions with multiplications
     flat out highp vec3 vL2D;                // 2D Cholesky packed as [invL00, L10, invL11]
     flat out highp vec2 vCenterScreen;       // Splat center in screen pixels
-    flat out int vProjectionMode;            // 0=sum (additive), 1=max
+    flat out int vProjectionMode;            // 0=sum (additive/luminous), 1=peak (max+normal)
 
     // Unpack 3D Cholesky to matrix (column-major order for GLSL mat3)
     // Packed order: [L00, L10, L11, L20, L21, L22]
@@ -378,7 +378,7 @@ export const GSPLAT_FRAGMENT_SHADER = /* glsl */ `
     // OPTIMIZATION: vL2D stores [1/L00, L10, 1/L11] for MUL instead of DIV
     flat in highp vec3 vL2D;          // 2D Cholesky packed as [invL00, L10, invL11]
     flat in highp vec2 vCenterScreen;
-    flat in int vProjectionMode;      // 0=sum (additive), 1=max
+    flat in int vProjectionMode;      // 0=sum (additive/luminous), 1=peak (max+normal)
 
     uniform mediump float uOpacity;
     uniform mediump float uInvGamma; // Pre-computed 1/gamma for performance

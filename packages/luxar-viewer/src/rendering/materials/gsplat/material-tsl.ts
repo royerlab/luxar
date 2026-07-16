@@ -360,8 +360,10 @@ export class GSplatTSLMaterial
    * bridge-safe (symmetric alpha channel; separate alpha-equation
    * state would trip `gl.getError()` under the WebGPU→WebGL2 bridge).
    *
-   * Also toggles `uProjectionMode` (0 = sum, 1 = max) so the shader
-   * picks the right projection branch.
+   * Also sets `uProjectionMode` — peak (1) for surface modes (max +
+   * normal/alpha-over), sum (0) for emissive (additive/luminous). In TSL the
+   * uniform is decorative (the graph JS-branches on the mode); the crossing is
+   * what triggers `rebuildGraph()` below.
    */
   applyBlendingMode(mode: BlendingMode): void {
     const previousMode = this.userData.blendingMode as BlendingMode | undefined;

@@ -109,7 +109,7 @@ export interface GSplatMaterialUniforms {
   uTruncate: { value: number };
   /** Opacity multiplier */
   uOpacity: { value: number };
-  /** Projection mode: 0=sum (additive/normal), 1=max (max blending) */
+  /** Projection mode: 0=sum ray-integral (additive/luminous), 1=peak 2D-projected (max + normal surfaces) */
   uProjectionMode: { value: number };
   /** Pre-computed 1/gamma for performance */
   uInvGamma: { value: number };
@@ -429,13 +429,13 @@ export class GSplatMaterial
   /**
    * Apply a blending mode to this material in-place.
    *
-   * GSplat-specific because the method toggles the `uProjectionMode`
-   * uniform when switching to/from `max` (the shader has separate sum
-   * vs max branches) and owns the `LUXAR_NORMAL_PREMULT` define
-   * lifecycle. Without a type-specific method, the layers panel's
-   * generic `mat.blending = state.blending` would leave
-   * `uProjectionMode = 0` while the framebuffer blends with
-   * `MaxEquation` — physically wrong max projection.
+   * GSplat-specific because the method sets the `uProjectionMode`
+   * uniform — PEAK (1) for the surface modes (`max` + `normal`/alpha-over),
+   * SUM ray-integral (0) for emissive (`additive`/`luminous`) — and owns the
+   * `LUXAR_NORMAL_PREMULT` define lifecycle. Without a type-specific method,
+   * the layers panel's generic `mat.blending = state.blending` would leave a
+   * stale `uProjectionMode` while the framebuffer blend state changed —
+   * physically wrong projection.
    *
    * `normal` is gsplat-specific too: the shader emits premultiplied
    * coverage alpha under the `LUXAR_NORMAL_PREMULT` define (toggled
