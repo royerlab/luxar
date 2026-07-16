@@ -79,9 +79,27 @@ export async function loadPartitionGroupNode(
     return partitionGroup;
   }
 
-  for (const child of sceneChildren) {
+  for (let i = 0; i < sceneChildren.length; i++) {
+    const child = sceneChildren[i];
     const childLoc = parentLoc.resolve(child.path.slice(1));
+    const before = partitionGroup.children.length;
     await loadChildren(child, partitionGroup, childLoc, ctx);
+    // Tag the part's THREE object(s) with their part index (the on-disk
+    // `child_index`, falling back to load order) so the depth-sort coordinator
+    // can map a part's render mesh back to a `bsp_tree` leaf for exact
+    // back-to-front ordering. A part subtree may add >1 object (e.g. a per-part
+    // lod group) — tag them all.
+    const partIndex = (child.attrs?.child_index as number | undefined) ?? i;
+    for (let j = before; j < partitionGroup.children.length; j++) {
+      partitionGroup.children[j].userData.partIndex = partIndex;
+    }
+  }
+
+  // Stash the BSP split-plane tree (when present) for the coordinator's exact
+  // back-to-front part ordering; absent for streamed grid/content merges, where
+  // the coordinator falls back to a per-part centroid heuristic.
+  if (attrs.bsp_tree) {
+    partitionGroup.userData.bspTree = attrs.bsp_tree;
   }
 
   log.info(

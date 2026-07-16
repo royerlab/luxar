@@ -247,9 +247,9 @@ ladder) is valid as a child.
 ```
 fitted.gsplats.zarr/
 ├── .zattrs           # type: "group", kind: "partition", display_type: "gsplats",
-│                     # max_elements: <int>, position_bounds, format_version: "3.2", …
+│                     # max_elements: <int>, position_bounds, bsp_tree?, format_version: "3.2", …
 ├── part_0/           # BSP part 0 (any node shape valid per part)
-│   ├── .zattrs       # position_bounds (per-part bounds for frustum culling)
+│   ├── .zattrs       # position_bounds (per-part bounds for frustum culling), child_index
 │   └── centers, amplitudes, cholesky_factors_diag, cholesky_factors_offdiag, colors?, chunk_bounds?
 ├── part_1/
 │   └── …
@@ -260,6 +260,32 @@ fitted.gsplats.zarr/
 The viewer renders ALL parts simultaneously; THREE.js per-mesh frustum culling
 selects visible parts. The partition writer uses recursive BSP (`median`,
 `midpoint`, or `sah` rule) to build spatially balanced parts.
+
+**`bsp_tree` (optional).** When the parts came from a single recursive BSP
+(the `to_spatial_partition` path — the `tiles`/`adaptive` recipes and the
+`gsplat partition` command), the root additionally carries the split-plane
+record of that BSP as a nested dict:
+
+```json
+{ "axis": 0, "split": 12.5,
+  "left":  { "axis": 2, "split": -3.0, "left": {"part": 0}, "right": {"part": 1} },
+  "right": { "part": 2 } }
+```
+
+An internal node holds the split `axis` (always a spatial axis `0`/`1`/`2` —
+splits only ever fall on the first three center dims) and `split` coordinate
+(in the centers' own space), with `left` = the side where `coord < split` and
+`right` = `coord >= split`. A leaf holds `{"part": i}`, referencing `part_<i>`
+(the same index as its `child_index`), numbered in left-first DFS order.
+
+Because these are BSP cells, a viewer can order the parts **exactly**
+back-to-front (painter's algorithm, Fuchs–Kedem–Naylor): recurse the far side
+of each split first — correct for any camera pose, including inside the volume.
+This matters only for order-dependent (`normal`/alpha-over) compositing; it is
+inert for additive/commutative rendering. Partitions that did NOT come from a
+single BSP (e.g. a streamed grid/content-box merge — `write_partition_streaming`)
+omit `bsp_tree`; a viewer then falls back to a per-part centroid-distance
+heuristic.
 
 ### Shape 5 — full pyramid (substitutive × additive, nested)
 

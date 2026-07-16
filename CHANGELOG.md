@@ -6,6 +6,23 @@ All notable changes to Luxar are documented in this file.
 
 ### July 2026
 
+#### Fixed — exact back-to-front ordering of gsplat partition tiles (classical-3DGS imports)
+
+- Classical Gaussian-splat imports (Mip-NeRF `.splat`, INRIA PLY) built as a
+  `kind=partition` (the `tiles` recipe) now composite correctly in `normal`
+  (alpha-over) mode. Previously the co-located tile meshes drew in creation
+  order, and the per-part centroid `renderOrder` heuristic degenerated when the
+  camera was inside the volume — visible seams.
+- The spatial partition now persists its **BSP split planes** (a `bsp_tree`
+  attr on the `kind=partition` group; see `docs/specs/GSPLATS_ZARR_FORMAT.md`),
+  and the viewer traverses them to order the tiles back-to-front **exactly**
+  (Fuchs–Kedem–Naylor painter's algorithm) — correct for any camera pose,
+  including inside the volume. Partitions without a stored tree (streamed
+  grid/content merges) fall back to the centroid heuristic.
+- The Mip-NeRF and INRIA garden interop demos return to the `tiles` recipe
+  (per-tile frustum culling + streaming ladder), reversing the earlier
+  single-leaf workaround now that tiles sort correctly.
+
 #### Fixed — responsive timelapse playback (decode/caching), symmetric across Points/Lines/GSplats
 
 - Playing/scrubbing a dimension (e.g. a 4D gsplat timelapse) is now

@@ -8,17 +8,18 @@ The twist: the official checkpoint lives inside a single 14.7 GB
 member over HTTP Range requests, never downloading the other 13 GB.
 
 ================================================================================
-RANGE-EXTRACTED INRIA PLY → LUXAR, SINGLE-LEAF FOR CORRECT DEPTH ORDER
+RANGE-EXTRACTED INRIA PLY → LUXAR, TILED PARTITION (BSP-ORDERED)
 ================================================================================
 
 ``luxar.utils.download.download_zip_member`` reads the remote zip's central
 directory (Zip64-aware — the archive is >4 GB) via Range requests, then streams
 and inflates only the requested member. The INRIA PLY is then imported (SH DC
-term baked to color) and built as a single ``stream`` leaf (one mesh +
-progressive ladder), exactly like the ``.splat`` Mip-NeRF demo but at full
-training fidelity. Single-leaf (not tiles) so the surface-like ``normal``
-alpha-over compositing is one global per-splat depth sort — no tile-boundary
-seams (see the Mip-NeRF demo's docstring for the full rationale).
+term baked to color) and built as a ``tiles`` spatial BSP partition (per-tile
+frustum culling + per-tile streaming ladder), exactly like the ``.splat``
+Mip-NeRF demo but at full training fidelity. The surface-like ``normal``
+alpha-over compositing draws the tiles back-to-front via the partition's stored
+BSP split planes — an exact painter's order, camera-inside-safe (see the
+Mip-NeRF demo's docstring for the full rationale).
 
 DATA SOURCE & CITATION
 ----------------------
@@ -71,6 +72,9 @@ CACHE_DIR = Path.home() / ".cache" / "luxar" / DEMO_NAME
 CACHE_PLY = CACHE_DIR / "garden_point_cloud.ply"
 CACHE_GSPLATS = CACHE_DIR / "garden.gsplats.zarr"
 
+# Per-tile splat cap for the `tiles` BSP partition (see the Mip-NeRF demo).
+MAX_ELEMENTS_PER_TILE = 1_000_000
+
 FLAGS = parse_demo_flags()
 Arbol.max_depth = 5
 
@@ -108,8 +112,9 @@ def build_scene() -> Path:
     build_gsplats_cache(
         CACHE_PLY,
         CACHE_GSPLATS,
-        recipe="stream",
+        recipe="tiles",
         recompute=FLAGS["recompute"],
+        max_elements=MAX_ELEMENTS_PER_TILE,
         n_lods=6,
     )
     out = get_demos_output_dir() / "gsplats_interop_inria_garden.luxar.zarr"
