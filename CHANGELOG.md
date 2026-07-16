@@ -6,6 +6,21 @@ All notable changes to Luxar are documented in this file.
 
 ### July 2026
 
+#### Fixed — view-coherent Lines/Points substitutive LOD + additive-LOD custom-colormap crash (PR #549)
+
+- `substitutive_lod=` coarse levels on Lines (and Points) no longer pop
+  haphazardly in brightness/hue between LOD levels: the merge's elongated
+  representatives (aspect up to ~25× by level 3) flared view-dependently and
+  ACES re-hued the over-brightness. Coarse splats are now anisotropy-capped
+  (`max_aspect`, default 3, mass-preserving, coarsened dims only) and merged
+  with per-bin mass-preserving amplitudes (`amplitude="mass"`, lift path only)
+  so per-channel colored light is conserved exactly per bin. Fitted-gsplat
+  pipelines keep the L²-optimal default.
+- `additive_lod=` + `colormap=<ndarray LUT>` no longer crashes with
+  "ndarray is not JSON serializable" (Lines and Points): the multi-LOD writers
+  now resolve custom colormaps to a `colormap_lut` dataset + `colormap='custom'`
+  like the flat writers, and the returned node objects mirror the substitution.
+
 #### Added — GSplat depth sorting: correct `normal`-mode transparency (PRs #511, #535, #540)
 
 - Gaussian splats with `blending_mode="normal"` now composite in true

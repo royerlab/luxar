@@ -72,6 +72,23 @@ class TestResolveSubstitutiveAxisLines:
             == 8
         )
 
+    def test_max_aspect_threaded_spec_to_lift(self, tmp_path, monkeypatch) -> None:
+        # The adder must forward the USER'S max_aspect to
+        # coarse_substitutive_levels — the signature default would silently
+        # mask a dropped forward (a mutation no output-based test catches).
+        import luxar.gsplats.lift as lift_mod
+
+        seen: list = []
+        real = lift_mod.coarse_substitutive_levels
+
+        def spy(*args, **kwargs):
+            seen.append(kwargs.get("max_aspect"))
+            return real(*args, **kwargs)
+
+        monkeypatch.setattr(lift_mod, "coarse_substitutive_levels", spy)
+        _build(tmp_path, n_seg=300, levels=1, max_aspect=5)
+        assert seen == [5.0]
+
     def test_unknown_key_mentions_lines(self) -> None:
         with pytest.raises(ValueError, match="Lines"):
             resolve_substitutive_axis_lines(dict(bogus=1))

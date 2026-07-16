@@ -652,9 +652,10 @@ def render_light(data: GSplatData) -> float:
     isotropic splat is proportional to ``a * sigma^3`` (amplitude * 3D volume
     integral, ``D = 3`` convention), so the conserved "no zoom-dimming" quantity is
     ``sum_i a_i * sigma_geo_i^D`` with ``sigma_geo = det(L)^(1/D)`` the
-    geometric-mean sigma. Used by the points-substitutive builder to rescale each
-    coarse level's amplitudes so total light is conserved across LOD levels (the
-    substitutive L2-optimal amplitude otherwise undershoots by ~9% over 3 levels).
+    geometric-mean sigma. Used by :func:`coarse_substitutive_levels` to rescale
+    each coarse level's amplitudes so total light is conserved across LOD levels
+    (a near-no-op safety net now that the lift path merges with per-bin
+    mass-preserving amplitudes; it still absorbs cull/ridge/float32 residue).
 
     ``sigma_geo^D == |det(L)|`` and ``L`` is lower-triangular, so the determinant
     is the product of the packed diagonal — no ``unpack_tril`` or general LU
