@@ -12,6 +12,18 @@ import { log, Modules } from '../../../utils/log';
  */
 
 /**
+ * Screen-space 2D-covariance low-pass dilation, in pixels² (the standard 3DGS
+ * anti-aliasing term). Added to the diagonal of the projected covariance Σ_2D
+ * so every splat covers at least ~1 pixel — this prevents extremely anisotropic
+ * splats (near-degenerate, edge-on flat disks, common in imported classical 3DGS
+ * fits) from collapsing to razor-thin sub-pixel spikes. Negligible for the
+ * near-isotropic splats produced by Luxar's own volume fitting. Kept here as the
+ * single source of truth so every GLSL/TSL material + picking constructor uses
+ * an identical default (avoids the uMaxExtentFactor 0.33-vs-1.0 default drift).
+ */
+export const GSPLAT_COV2D_DILATION_DEFAULT = 0.3;
+
+/**
  * Ray-integral factor for the shifted Gaussian:
  *   sqrt(2π) · erf(T/√2) − 2·T·exp(−½·T²)
  *

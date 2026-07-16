@@ -38,6 +38,7 @@ export const GSPLAT_VERTEX_SHADER = /* glsl */ `
     uniform int uIsOrtho;             // 0 = perspective, 1 = orthographic
     uniform float uNearCull;          // Near cull distance (scene-scale-aware)
     uniform float uMaxExtentFactor;   // Max projected extent as fraction of viewport before fade
+    uniform float uCov2DDilation;     // 2D-covariance low-pass dilation in px² (3DGS anti-aliasing)
 
     // Colormap uniforms (only active when USE_COLORMAP is defined)
     #ifdef USE_COLORMAP
@@ -205,6 +206,15 @@ export const GSPLAT_VERTEX_SHADER = /* glsl */ `
         Sigma2D[1][0] = JS0.x * J[0].y + JS1.x * J[1].y + JS2.x * J[2].y;
         Sigma2D[0][1] = Sigma2D[1][0];  // Symmetric (J*S*J^T preserves symmetry)
         Sigma2D[1][1] = JS0.y * J[0].y + JS1.y * J[1].y + JS2.y * J[2].y;
+
+        // 2D low-pass dilation (standard 3DGS anti-aliasing): widen the diagonal
+        // so every splat covers at least ~1px. Guarantees near-degenerate
+        // (edge-on/flat) splats render as a soft ellipse instead of a razor-thin
+        // sub-pixel spike. Applied before the Cholesky + eigen extent below so
+        // the fragment footprint and the quad stay consistent. Diagonal only —
+        // adding to the off-diagonal would rotate/shear the ellipse.
+        Sigma2D[0][0] += uCov2DDilation;
+        Sigma2D[1][1] += uCov2DDilation;
 
         if (invalidCov2D(Sigma2D) || invalidFloat(aAmplitude)) {
             gl_Position = vec4(0.0, 0.0, -2.0, 1.0);

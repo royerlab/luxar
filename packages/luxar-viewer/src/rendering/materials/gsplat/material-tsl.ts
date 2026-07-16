@@ -10,10 +10,12 @@
  *
  * GSplat-specific behaviours:
  *
- *   - `applyBlendingMode` toggles `uProjectionMode` (0 = sum, 1 =
- *     max) in addition to the THREE blending state. The shader has
- *     separate sum vs. max branches; the uniform drives the
- *     selection at runtime.
+ *   - `applyBlendingMode` selects the projection model: PEAK
+ *     (2D-projected) for surface modes (max + normal/alpha-over),
+ *     SUM (ray-integral) for emissive (additive/luminous). In TSL
+ *     the graph JS-branches on the mode at build time; the
+ *     `uProjectionMode` uniform is decorative (clone/telemetry
+ *     parity). The GLSL twin drives the same split via the uniform.
  *   - Blending state is fully unified with the GLSL wrapper: the
  *     shared `getCompleteBlendingState` for additive / luminous /
  *     max / opaque (AdditiveBlending's SrcAlpha factor is identity
@@ -40,7 +42,11 @@ import type { ColormapAwareMaterial } from '../_shared/colormap-aware-material';
 import { clampGamma, isGammaOne } from '../_shared/uniform-helpers';
 import { getPlaceholderSplatTexture } from '../../splat-texture-layout';
 import { computeFocalLength } from '../_shared/camera-uniforms';
-import { computeRayIntegralFactor, clampTruncationRadius } from './math';
+import {
+  computeRayIntegralFactor,
+  clampTruncationRadius,
+  GSPLAT_COV2D_DILATION_DEFAULT,
+} from './math';
 import {
   applyColormapTextureToMaterial,
   applyScalarRangeToMaterial,
@@ -90,6 +96,7 @@ export class GSplatTSLMaterial
     uIsOrtho: TSLNode;
     uNearCull: TSLNode;
     uMaxExtentFactor: TSLNode;
+    uCov2DDilation: TSLNode;
     uColormapTex?: TSLNode;
     uScalarMin?: TSLNode;
     uScalarScale?: TSLNode;
@@ -118,13 +125,18 @@ export class GSplatTSLMaterial
       uInvOneMinusC: uniform(invOneMinusC),
       uRayIntegralFactor: uniform(computeRayIntegralFactor(truncate)),
       uOpacity: uniform(materialConfig.opacity ?? 1.0),
-      uProjectionMode: uniform(materialConfig.blendingMode === 'max' ? 1 : 0),
+      // Decorative in TSL (the graph JS-branches on blendingMode); kept for
+      // clone/telemetry parity. Peak (1) for surface modes (max + normal).
+      uProjectionMode: uniform(
+        materialConfig.blendingMode === 'max' || materialConfig.blendingMode === 'normal' ? 1 : 0
+      ),
       uInvGamma: uniform(1.0 / gammaValue),
       uIntensity: uniform(materialConfig.intensity ?? 1.0),
       uOffset: uniform(materialConfig.offset ?? 0.0),
       uIsOrtho: uniform(0),
       uNearCull: uniform(0.1),
       uMaxExtentFactor: uniform(materialConfig.maxExtentFactor ?? 0.33),
+      uCov2DDilation: uniform(materialConfig.cov2DDilation ?? GSPLAT_COV2D_DILATION_DEFAULT),
     };
     if (materialConfig.colormapTexture) {
       this.tslNodes.uColormapTex = texture(materialConfig.colormapTexture);
@@ -185,6 +197,7 @@ export class GSplatTSLMaterial
       uIsOrtho: proxyIUniform(this.tslNodes.uIsOrtho),
       uNearCull: proxyIUniform(this.tslNodes.uNearCull),
       uMaxExtentFactor: proxyIUniform(this.tslNodes.uMaxExtentFactor),
+      uCov2DDilation: proxyIUniform(this.tslNodes.uCov2DDilation),
     };
     if (this.tslNodes.uColormapTex) {
       u.uColormapTex = proxyIUniform(this.tslNodes.uColormapTex);
@@ -359,7 +372,9 @@ export class GSplatTSLMaterial
     const stateChanged = applyBlendingStateToMaterial(this, state);
 
     if (this.uniforms.uProjectionMode) {
-      this.uniforms.uProjectionMode.value = isMaxMode(mode) ? 1 : 0;
+      // Decorative (graph JS-branches on the mode); kept for clone/telemetry
+      // parity. Peak (1) for surface modes (max + normal/alpha-over).
+      this.uniforms.uProjectionMode.value = isMaxMode(mode) || isNormalMode(mode) ? 1 : 0;
     }
 
     this.userData.blendingMode = mode;
@@ -367,8 +382,10 @@ export class GSplatTSLMaterial
 
     // Two boundaries force a graph rebuild (the factory JS-conditions
     // fragments/vertex blocks on the mode):
-    //   - sum↔max: the cofactor / ray-integration block is emitted
-    //     only in sum mode (cheaper than computing it in max mode);
+    //   - projection sum↔peak: the cofactor / ray-integration block is
+    //     emitted only in SUM mode (additive/luminous); SURFACE modes
+    //     (max + normal) use peak. A surface-mode flip always changes either
+    //     isMaxMode or isNormalMode, so the two checks below cover it.
     //   - normal↔other: the fragment output flips between coverage
     //     alpha and the alpha=1.0 contract (GLSL twin: the
     //     LUXAR_NORMAL_PREMULT define toggle).
@@ -398,6 +415,7 @@ export class GSplatTSLMaterial
       scalarRange: this.userData.scalarRange ?? undefined,
       // Mirror of the GLSL clone fix: preserve a tuned extent factor.
       maxExtentFactor: this.uniforms.uMaxExtentFactor.value,
+      cov2DDilation: this.uniforms.uCov2DDilation.value,
     });
 
     if (this.blending === THREE.CustomBlending) {
