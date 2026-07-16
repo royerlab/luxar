@@ -22,6 +22,7 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { SceneLoader, type LoaderConfig, type ViewState } from '../../../data';
+import { releaseDepthSortNode } from '../../../rendering/depth-sort-coordinator';
 import * as THREE from 'three';
 import * as zarr from 'zarrita';
 
@@ -64,6 +65,20 @@ vi.mock('../../../rendering/material-manager', () => ({
   // in jsdom even though MaterialManager itself is mocked away.
   SOFT_DISPOSE_FLAG: Symbol.for('luxar.material.softDispose.test-mock'),
 }));
+
+// The lazy-LOD demotion path (ctx.releaseLazyGSplats) must also drop the
+// demoted level's depth-sort coordinator state (worker-side transferred
+// centers). Partial mock via importOriginal so only releaseDepthSortNode is
+// intercepted — SceneLoader's commit path imports noteGSplatsCommit from the
+// same module and must keep the real implementation.
+vi.mock('../../../rendering/depth-sort-coordinator', async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import('../../../rendering/depth-sort-coordinator')>();
+  return {
+    ...actual,
+    releaseDepthSortNode: vi.fn(),
+  };
+});
 
 // SceneLoader now uses `notifier.toast` for the >16D scene-dimensions
 // warning. Mock the notifier so the test can assert toast() was called.
@@ -713,6 +728,36 @@ describe('SceneLoader', () => {
       expect(result).toBeInstanceOf(Promise);
       await result;
       expect((sceneLoader as any)._zarrStore).toBeNull();
+    });
+  });
+
+  describe('releaseLazyGSplats — depth-sort release on LOD demotion', () => {
+    // B4 fix: demoting a lazy gsplats LOD level must ALSO release the node's
+    // depth-sort coordinator state (worker-side transferred centers,
+    // 12 B/splat) — otherwise the SortWorker pins the demoted level's
+    // centers until node disposal / dataset switch. Re-promotion
+    // re-registers via the fresh commit's noteGSplatsCommit.
+    it('releases the demoted mesh from the depth-sort coordinator', () => {
+      const rootGroup = new THREE.Group();
+      const mesh = new THREE.Mesh();
+      mesh.name = '/lod/child_1';
+      rootGroup.add(mesh);
+      (sceneLoader as any).rootGroup = rootGroup;
+
+      const ctx = (sceneLoader as any).makeNodeBuildCtx();
+      ctx.releaseLazyGSplats('/lod/child_1');
+
+      expect(vi.mocked(releaseDepthSortNode)).toHaveBeenCalledTimes(1);
+      expect(vi.mocked(releaseDepthSortNode)).toHaveBeenCalledWith(mesh);
+    });
+
+    it('is a no-op (no call, no throw) when no mesh with that path exists', () => {
+      (sceneLoader as any).rootGroup = new THREE.Group();
+
+      const ctx = (sceneLoader as any).makeNodeBuildCtx();
+      expect(() => ctx.releaseLazyGSplats('/lod/missing_child')).not.toThrow();
+
+      expect(vi.mocked(releaseDepthSortNode)).not.toHaveBeenCalled();
     });
   });
 
