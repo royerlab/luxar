@@ -225,6 +225,17 @@ describe('fitCameraToBounds', () => {
     expect(setSceneScale).not.toHaveBeenCalled();
   });
 
+  it('zoom factors encode the design relation: zoom-out looser than zoom-in', () => {
+    // The whole point of the asymmetric split: zoom-out is only a
+    // "don't lose the scene" guardrail, so it must be strictly looser
+    // than the technically-bounded zoom-in. Also guards against an
+    // accidental transposition of the two constant values, which the
+    // relative assertions below cannot catch (they use the same
+    // constants the implementation does).
+    expect(ZOOM_IN_FACTOR).toBeGreaterThan(1);
+    expect(ZOOM_OUT_FACTOR).toBeGreaterThan(ZOOM_IN_FACTOR);
+  });
+
   it('perspective: positions camera at target + (0, 0, distance), sets distance limits', () => {
     const {
       controls,
