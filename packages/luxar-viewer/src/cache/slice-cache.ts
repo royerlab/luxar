@@ -23,13 +23,19 @@
  *
  * PRE- vs POST-projection payloads (a deliberate, inherent asymmetry):
  * Lines/GSplats cache PRE-projection decoded data — their projection is a
- * downstream worker step owned by the scene-loader's data processors, and a
- * same-reference revisit already skips it via the handlers'
- * `isAlreadyCommitted` fast path, so caching its output here would only
- * duplicate memory and couple this cache to the processors. Points caches
- * POST-projection data because its projection is folded into the loader
- * itself and consumes only key fields + node-static context — so a hit
- * safely skips the WASM projection too.
+ * downstream worker step owned by the scene-loader's data processors. Note the
+ * projection DOES re-run on a slice REVISIT (a scrub-back bumps the progressive
+ * loader's reset generation, so the memoized concat yields a NEW object
+ * reference and the handlers' `isAlreadyCommitted` identity fast path does NOT
+ * fire — that fast path only skips a redundant re-commit of the CURRENT view).
+ * The reason projection is not cached post-hoc here is that gsplat projection
+ * depends on the live `uTruncate` material uniform (it feeds
+ * `project_gsplats_nd_to_3d` and changes the visible count), which is outside
+ * this cache's view key — so a post-projection payload would need to key on
+ * (and invalidate with) rendering controls, coupling this cache to the
+ * processors. Points caches POST-projection data because its projection is
+ * folded into the loader itself and consumes only key fields + node-static
+ * context (no live uniform) — so a hit safely skips the WASM projection too.
  *
  * @module cache/slice-cache
  */

@@ -46,6 +46,22 @@ export function validateCache(config: AppConfig, errors: string[], _warnings: st
     );
   }
 
+  // R1: the background L2 write queue caps. Concurrency 0/negative would stall
+  // all persistence; a 0/negative depth would drop every write. NaN passes
+  // `<= 0` (always false), so reject it explicitly.
+  const writeConcurrency = cache.opfsWriteConcurrency;
+  if (!Number.isFinite(writeConcurrency) || writeConcurrency <= 0) {
+    errors.push(
+      `Invalid cache.opfsWriteConcurrency: ${writeConcurrency} (must be a finite positive number; 4 recommended)`
+    );
+  }
+  const writeQueueMax = cache.opfsWriteQueueMax;
+  if (!Number.isFinite(writeQueueMax) || writeQueueMax <= 0) {
+    errors.push(
+      `Invalid cache.opfsWriteQueueMax: ${writeQueueMax} (must be a finite positive number; 1024 recommended)`
+    );
+  }
+
   // R1: externalDatasetTtlMs is allowed to be null (no TTL — content-hash
   // validation only). Anything else must be a finite positive number.
   // NaN passes `> 0` checks (always false), so reject it explicitly.
