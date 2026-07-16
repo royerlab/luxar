@@ -9,6 +9,18 @@ import {
   clearLoadedSceneContent,
   disposeSceneGraphResources,
 } from '../../../../../scene/scene-manager/render-pipeline/scene-disposal';
+import {
+  releaseDepthSortNode,
+  releaseAllDepthSortNodes,
+} from '../../../../../rendering/depth-sort-coordinator';
+
+// The disposal helpers call into the depth-sort coordinator (per-mesh
+// release + the dataset-switch wholesale sweep); mock it so these tests
+// assert the WIRING without spinning up worker machinery.
+vi.mock('../../../../../rendering/depth-sort-coordinator', () => ({
+  releaseDepthSortNode: vi.fn(),
+  releaseAllDepthSortNodes: vi.fn(),
+}));
 
 function makeMesh(): {
   mesh: THREE.Mesh;
@@ -129,6 +141,24 @@ describe('disposeObjectTree', () => {
 });
 
 describe('clearLoadedSceneContent', () => {
+  it('drops ALL depth-sort registrations wholesale (dataset-switch teardown)', () => {
+    vi.mocked(releaseAllDepthSortNodes).mockClear();
+    const scene = new THREE.Scene();
+    scene.add(makeMesh().mesh);
+    clearLoadedSceneContent(scene);
+    expect(releaseAllDepthSortNodes).toHaveBeenCalledTimes(1);
+  });
+
+  it('releases the per-mesh depth-sort registration of gsplats meshes', () => {
+    vi.mocked(releaseDepthSortNode).mockClear();
+    const scene = new THREE.Scene();
+    const { mesh } = makeMesh();
+    mesh.userData.nodeType = 'gsplats';
+    scene.add(mesh);
+    clearLoadedSceneContent(scene);
+    expect(releaseDepthSortNode).toHaveBeenCalledWith(mesh);
+  });
+
   it('removes plain meshes and reports the count', () => {
     const scene = new THREE.Scene();
     const { mesh: a } = makeMesh();
