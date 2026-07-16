@@ -24,6 +24,7 @@ src/
 ├── gsplats_processing.rs   — Mahalanobis distance, marginal Cholesky, attenuation
 ├── effective_radii.rs      — Pythagorean radius shrinkage when slicing through hidden dims
 ├── projection.rs           — extract 3D positions, bounds, compact-by-mask
+├── depth_sort.rs           — back-to-front splat ordering (depth-sorting Phase 2)
 └── decode.rs               — quantized / log / LUT / broadcast decoders
 ```
 
@@ -156,6 +157,18 @@ integer-labelled, must match `slice_position[d]` within `0.5` or the point
 is culled). The hot loop fuses the discrete-match check and the spatial
 distance accumulation, breaking out early on a discrete mismatch. Display
 dims are looked up via a fixed-size `[bool; 16]` array.
+
+### `depth_sort.rs` — back-to-front splat ordering
+
+| Function              | Purpose                                                                                              |
+| --------------------- | ---------------------------------------------------------------------------------------------------- |
+| `sort_splats_by_depth` | Camera-space z per splat, min/max-normalized uint16 keys, stable 65536-bucket counting sort (back-to-front permutation for `aSortedIndex`). |
+
+Scale-invariant (per-sort normalization — nm..km units; raw f16 keys were
+deliberately rejected), stable on ties, behind-camera splats key to the far
+bucket, degenerate depth ranges fall back to the identity ordering. Input is
+always projected 3D centers, so the 16-dimension cap does not apply. See
+`docs/guides/specs/GSPLAT_DEPTH_SORTING_SPEC.md` §5.
 
 ### `projection.rs` — extraction, bounds, compaction
 
