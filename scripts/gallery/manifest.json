@@ -250,6 +250,17 @@
       "note": "real Earth + short spikes, no override needed"
     },
     {
+      "id": "global_rivers_earth",
+      "title": "Rivers of Earth",
+      "geometry": "points+lines",
+      "category": "geoscience",
+      "script": "demo_global_rivers_earth.py",
+      "dataset": "datasets/demos/global_rivers_earth.luxar.zarr",
+      "lodFinest": false,
+      "distance": 340,
+      "note": "topographic globe (Points) + 2.3M-segment HydroRIVERS networks (Lines); lodFinest:false so the coverage LOD stays light enough for a software-GL orbit video, absolute distance frames the whole globe (sparse rivers fool the coverage fill)"
+    },
+    {
       "id": "nuclear_pore_complex",
       "title": "Nuclear Pore Complex",
       "geometry": "points",
