@@ -6,6 +6,16 @@ All notable changes to Luxar are documented in this file.
 
 ### July 2026
 
+#### Fixed — `?lod-finest` registered as a real URL param + app option
+
+- The gallery harness's force-finest LOD override was read directly from
+  `location.search` at module scope deep in the scene layer, unregistered
+  in `UrlParams` (the last direct `window.location` feature-flag read).
+  Now `UrlParams.lodFinest` → `LuxarAppOptions.lodFinest` →
+  `LODGroupRegistryDeps.getForceFinestLOD` (read live, like the sibling
+  cross-fade/energy-comp deps); embedders can force capture-quality LOD
+  programmatically. Behavior under `?lod-finest` URLs is unchanged.
+
 #### Fixed — depth-sort teardown sweep + embedder control of feature flags
 
 - Dataset switches now drop ALL depth-sort registrations wholesale
