@@ -42,6 +42,7 @@ from pathlib import Path
 
 from arbol import Arbol, aprint
 
+from luxar.core.viewer_config import CameraConfig
 from luxar.demos._interop_common import build_gsplats_cache, build_interop_scene
 from luxar.utils.demos import (
     cached_download,
@@ -57,6 +58,14 @@ SCENES = {
     "hornedlizard": {"file": "hornedlizard.spz", "layer": "horned_lizard"},
     "racoonfamily": {"file": "racoonfamily.spz", "layer": "raccoon_family"},
 }
+
+# Scaniverse object scans put the subject in a dense core at the origin (~85% of
+# splats within radius 5) surrounded by a sparse, far environment shell out at
+# radius ~200. Bounding-sphere auto-fit would frame that shell — parking the
+# camera outside an opaque marble with the subject an invisible speck inside. A
+# fixed close pose looking at the origin frames the subject instead; the sparse
+# environment falls far into the background. (Y-up: SPZ is already Y-up.)
+SUBJECT_CAMERA = CameraConfig(position=(6.0, 7.0, 19.0), target=(0.0, 0.0, 0.0))
 
 FLAGS = parse_demo_flags()
 Arbol.max_depth = 5
@@ -84,6 +93,7 @@ def build_scene(scene_key: str = "hornedlizard") -> Path:
         title=f"Scaniverse SPZ capture — {scene_key} (Niantic)",
         layer_name=spec["layer"],
         credit="Niantic spz samples • MIT • SPZ → Luxar",
+        camera=SUBJECT_CAMERA,
     )
 
 
