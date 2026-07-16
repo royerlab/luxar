@@ -3,8 +3,8 @@ import type { ControlsConfig } from './types';
 /** Control system configuration. */
 export const controlsConfig: ControlsConfig = {
   scaleMultipliers: {
-    minDistanceFactor: 0.01,
-    maxDistanceFactor: 100,
+    minDistanceFactor: 0.001,
+    maxDistanceFactor: 10000,
     flySpeedFactor: 0.05,
   },
   fly: {
