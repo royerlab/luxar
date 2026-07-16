@@ -30,8 +30,11 @@ import {
   calculateBoundingBoxFromPositions,
   expandBoundingBox,
   boundingBoxToSphere,
+  calculateClippingPlanesFromSphere,
   getBoundingBoxDiagonal,
   isPointInBoundingBox,
+  minNearForRadius,
+  SPHERE_SAFETY_EXPANSION,
 } from '../../../../../scene/scene-manager/clipping/bounds-math';
 
 // Finite, well-scaled coordinate (avoids NaN/Inf and float-blowup noise).
@@ -181,6 +184,78 @@ describe('bounds-math properties', () => {
           }
           expect(diag).toBeCloseTo(maxPair, 6);
         })
+      );
+    });
+  });
+
+  describe('calculateClippingPlanesFromSphere (scale-aware near floor)', () => {
+    // Camera along +z from a sphere at the origin — the planes depend only
+    // on (dist, radius), so one axis covers the full input space.
+    const radiusArb = fc.double({ min: 1e-6, max: 1e4, noNaN: true, noDefaultInfinity: true });
+    const distArb = fc.double({ min: 0, max: 1e6, noNaN: true, noDefaultInfinity: true });
+    const planesAt = (radius: number, dist: number) =>
+      calculateClippingPlanesFromSphere(
+        { center: { x: 0, y: 0, z: 0 }, radius },
+        { x: 0, y: 0, z: dist }
+      );
+
+    test('always yields a valid frustum (0 < near < far) for any non-degenerate sphere', () => {
+      fc.assert(
+        fc.property(radiusArb, distArb, (radius, dist) => {
+          const { near, far } = planesAt(radius, dist);
+          expect(near).toBeGreaterThan(0);
+          expect(far).toBeGreaterThan(near);
+        })
+      );
+    });
+
+    test('near never drops below the scale-aware floor', () => {
+      fc.assert(
+        fc.property(radiusArb, distArb, (radius, dist) => {
+          const { near } = planesAt(radius, dist);
+          expect(near).toBeGreaterThanOrEqual(
+            minNearForRadius(radius * SPHERE_SAFETY_EXPANSION)
+          );
+        })
+      );
+    });
+
+    test('near and far are monotone non-decreasing in camera distance', () => {
+      fc.assert(
+        fc.property(radiusArb, distArb, distArb, (radius, d1, d2) => {
+          const lo = Math.min(d1, d2);
+          const hi = Math.max(d1, d2);
+          const a = planesAt(radius, lo);
+          const b = planesAt(radius, hi);
+          expect(b.near).toBeGreaterThanOrEqual(a.near);
+          expect(b.far).toBeGreaterThanOrEqual(a.far);
+        })
+      );
+    });
+
+    test('near is continuous across the sphere-surface boundary (dist == R)', () => {
+      // Crossing from inside (near = floor) to just outside
+      // (near = max(floor, dist - R)) must not jump: at dist = R + ε the
+      // outside branch gives max(floor, ε) which converges to the floor
+      // as ε → 0. A discontinuity here would visibly pop the near plane
+      // while orbiting through the sphere surface.
+      fc.assert(
+        fc.property(
+          radiusArb,
+          fc.double({ min: 1e-12, max: 1e-3, noNaN: true, noDefaultInfinity: true }),
+          (radius, epsFraction) => {
+            const R = radius * SPHERE_SAFETY_EXPANSION;
+            const eps = R * epsFraction;
+            const inside = planesAt(radius, R - eps);
+            const outside = planesAt(radius, R + eps);
+            // Jump bounded by the crossing step (2ε) plus float64 rounding
+            // at the working magnitude (a few ulps of R — the 1e-12-style
+            // absolute slack is smaller than ulp(2R) for R ≳ 1e4).
+            const slack = 2 * eps + 8 * R * Number.EPSILON;
+            expect(Math.abs(outside.near - inside.near)).toBeLessThanOrEqual(slack);
+            expect(Math.abs(outside.far - inside.far)).toBeLessThanOrEqual(slack);
+          }
+        )
       );
     });
   });

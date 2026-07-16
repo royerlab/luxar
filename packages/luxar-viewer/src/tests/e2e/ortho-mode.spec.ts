@@ -13,6 +13,7 @@
  */
 
 import { test, expect } from './fixtures';
+import type { Page } from './fixtures';
 import {
   waitForLuxarReady,
   waitForPointsLoaded,
@@ -24,6 +25,51 @@ import {
 } from './helpers';
 
 const DATASET = 'http://localhost:9000/datasets/examples/scene_dimensions_example.luxar.zarr';
+
+/**
+ * Cycle V twice (orbit → fly → ortho) and assert the mode landed.
+ * The 'switch to ortho mode via V key' test intentionally does NOT use
+ * this helper — it asserts each intermediate mode step-by-step.
+ */
+async function switchToOrtho(page: Page): Promise<void> {
+  await page.keyboard.press('v');
+  await waitForNextRender(page);
+  await page.keyboard.press('v');
+  await waitForNextRender(page);
+  const controlType = await page.evaluate(() => {
+    const debug = (window as any).__luxarDebug;
+    return debug.controls?.getControlType?.();
+  });
+  expect(controlType).toBe('ortho');
+}
+
+/**
+ * Dispatch `count` synthetic wheel notches at the canvas center. The
+ * orbit-controls wheel handler requires client coordinates — a
+ * coordinate-less WheelEvent is silently ignored (the root cause of the
+ * old PERMANENT SKIPs in this file).
+ */
+async function wheelAtCanvasCenter(page: Page, deltaY: number, count = 1): Promise<void> {
+  await page.evaluate(
+    ({ dy, n }) => {
+      const canvas = document.querySelector('canvas');
+      if (!canvas) return;
+      const rect = canvas.getBoundingClientRect();
+      for (let i = 0; i < n; i++) {
+        canvas.dispatchEvent(
+          new WheelEvent('wheel', {
+            deltaY: dy,
+            clientX: rect.left + rect.width / 2,
+            clientY: rect.top + rect.height / 2,
+            bubbles: true,
+            cancelable: true,
+          })
+        );
+      }
+    },
+    { dy: deltaY, n: count }
+  );
+}
 
 test.describe('Orthographic Camera Mode', () => {
   test.beforeEach(async ({ page }) => {
@@ -69,17 +115,7 @@ test.describe('Orthographic Camera Mode', () => {
     expect(pointsBefore).toBeGreaterThan(0);
 
     // Switch to ortho mode (V twice: orbit -> fly -> ortho)
-    await page.keyboard.press('v');
-    await waitForNextRender(page);
-    await page.keyboard.press('v');
-    await waitForNextRender(page);
-
-    // Verify ortho mode
-    const controlType = await page.evaluate(() => {
-      const debug = (window as any).__luxarDebug;
-      return debug.controls?.getControlType?.();
-    });
-    expect(controlType).toBe('ortho');
+    await switchToOrtho(page);
 
     // Get point count after switching
     const stateAfter = await getLuxarState(page);
@@ -100,17 +136,7 @@ test.describe('Orthographic Camera Mode', () => {
     //      handler's pointer-anchored zoom path ignored it. Dispatching
     //      at the canvas center works.
     // Switch to ortho mode (V twice)
-    await page.keyboard.press('v');
-    await waitForNextRender(page);
-    await page.keyboard.press('v');
-    await waitForNextRender(page);
-
-    // Verify ortho mode
-    const controlType = await page.evaluate(() => {
-      const debug = (window as any).__luxarDebug;
-      return debug.controls?.getControlType?.();
-    });
-    expect(controlType).toBe('ortho');
+    await switchToOrtho(page);
 
     // Read initial camera zoom
     const initialZoom = await page.evaluate(() => {
@@ -119,23 +145,8 @@ test.describe('Orthographic Camera Mode', () => {
     });
     expect(typeof initialZoom).toBe('number');
 
-    // Scroll to zoom in (dispatch on canvas at its center — the handler
-    // needs client coordinates)
-    await page.evaluate(() => {
-      const canvas = document.querySelector('canvas');
-      if (canvas) {
-        const rect = canvas.getBoundingClientRect();
-        canvas.dispatchEvent(
-          new WheelEvent('wheel', {
-            deltaY: -500,
-            clientX: rect.left + rect.width / 2,
-            clientY: rect.top + rect.height / 2,
-            bubbles: true,
-            cancelable: true,
-          })
-        );
-      }
-    });
+    // Scroll to zoom in
+    await wheelAtCanvasCenter(page, -500);
     await waitForNextRender(page, 3);
 
     // Force render to apply damping
@@ -184,10 +195,7 @@ test.describe('Orthographic Camera Mode', () => {
     // ortho mode via scroll wheel' (see that test): wheel works when the
     // event carries client coordinates.
     // Switch to ortho mode for predictable zoom behavior
-    await page.keyboard.press('v');
-    await waitForNextRender(page);
-    await page.keyboard.press('v');
-    await waitForNextRender(page);
+    await switchToOrtho(page);
 
     // Show scale bar
     await page.keyboard.press('b');
@@ -200,26 +208,9 @@ test.describe('Orthographic Camera Mode', () => {
     });
     expect(initialLabel.length).toBeGreaterThan(0);
 
-    // Zoom in far enough to leave the current 1-2-5 label bucket
-    // (dispatch on canvas at its center — the handler needs client
-    // coordinates). 15 notches ≈ 10x+ zoom, several buckets away.
-    await page.evaluate(() => {
-      const canvas = document.querySelector('canvas');
-      if (canvas) {
-        const rect = canvas.getBoundingClientRect();
-        for (let i = 0; i < 15; i++) {
-          canvas.dispatchEvent(
-            new WheelEvent('wheel', {
-              deltaY: -500,
-              clientX: rect.left + rect.width / 2,
-              clientY: rect.top + rect.height / 2,
-              bubbles: true,
-              cancelable: true,
-            })
-          );
-        }
-      }
-    });
+    // Zoom in far enough to leave the current 1-2-5 label bucket:
+    // 15 notches ≈ 10x+ zoom, several buckets away.
+    await wheelAtCanvasCenter(page, -500, 15);
     await waitForNextRender(page, 3);
 
     // The zoom damps in over many frames and the scale-bar label updates
@@ -244,16 +235,7 @@ test.describe('Orthographic Camera Mode', () => {
 
   test('should switch back to orbit cleanly', async ({ page }) => {
     // Switch to ortho: orbit -> fly -> ortho
-    await page.keyboard.press('v');
-    await waitForNextRender(page);
-    await page.keyboard.press('v');
-    await waitForNextRender(page);
-
-    const orthoType = await page.evaluate(() => {
-      const debug = (window as any).__luxarDebug;
-      return debug.controls?.getControlType?.();
-    });
-    expect(orthoType).toBe('ortho');
+    await switchToOrtho(page);
 
     // Switch back: ortho -> orbit
     await page.keyboard.press('v');
