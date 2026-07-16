@@ -6,6 +6,35 @@ All notable changes to Luxar are documented in this file.
 
 ### July 2026
 
+#### Fixed — responsive timelapse playback (decode/caching), symmetric across Points/Lines/GSplats
+
+- Playing/scrubbing a dimension (e.g. a 4D gsplat timelapse) is now
+  responsive: the visible content updates smoothly instead of stalling
+  hundreds of ms per timepoint. The bottleneck was never the texture- or
+  sort-based rendering (texture upload ~1 ms; depth sort doesn't run for
+  additive blending) — it was per-timepoint decode latency plus a cache
+  that missed on revisit.
+- **Foreground never blocks on fine levels during playback.** A budgeted
+  (playing) foreground pass now commits the restored cached prefix plus a
+  LOD-0 first-paint floor and returns immediately, rather than
+  synchronously decoding cold LOD levels mid-tick. The new shared
+  `data/loaders/progressive/streaming-policy.ts` encodes the three
+  disciplines (`playback` / `prefetch` / `refine`) so all three geometry
+  loaders stay identical by construction.
+- **Background prefetch deepens the cache across loops.** The `t+1`
+  `SlicePrefetcher` now persists across ticks (a cold LOD level outlives
+  one frame, so it is no longer aborted every foreground tick) and deepens
+  each slice's cached ladder toward full. Result: the first loop is
+  fast-but-coarse and each subsequent loop is higher-quality, still fast —
+  and it skips the wasted concat on shadow passes so background work never
+  stalls a frame.
+- **SliceCache key canonicalization.** The per-slice cache key is now a
+  canonical projection of the query determinants, so the two viewState
+  builders (navigation vs. init/reprocess) produce identical keys for the
+  same slice. Previously they disagreed on a query-irrelevant discrete-dim
+  tolerance (`0` vs `0.5`), `step` (`null` vs `1`), and JSON property order,
+  so every timepoint was stored under two keys and revisits missed forever.
+
 #### Fixed — `?lod-finest` registered as a real URL param + app option
 
 - The gallery harness's force-finest LOD override was read directly from

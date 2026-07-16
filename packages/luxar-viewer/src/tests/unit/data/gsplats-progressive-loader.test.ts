@@ -472,9 +472,22 @@ describe('GSplatsProgressiveLoader', () => {
       expect(loader.hasMoreLODs).toBe(false);
     });
 
-    it('loads as many levels as fit the budget', async () => {
-      // Budget 70ms fits two 30ms levels; the third's loop-top check fails.
+    it('a foreground PLAYBACK pass loads ONLY the LOD-0 first-paint floor (never blocks on fine levels)', async () => {
+      // Even with a budget that fits two 30ms levels, a budgeted foreground
+      // (non-prefetch) pass commits just the floor and stays responsive —
+      // deepening is the background prefetch's job.
       await loader.updateView({ ...baseViewState, frameBudgetMs: 70 });
+
+      expect(lodA.updateViewWithResidency).toHaveBeenCalledTimes(1);
+      expect(lodB.updateViewWithResidency).not.toHaveBeenCalled();
+      expect(lodC.updateViewWithResidency).not.toHaveBeenCalled();
+      expect(loader.loadedLODCount).toBe(1);
+    });
+
+    it('a background PREFETCH pass deepens as many levels as fit the budget', async () => {
+      // Budget 50ms fits two 30ms levels; the third's loop-top check fails.
+      // Prefetch has no first-paint floor — it deepens toward the full ladder.
+      await loader.updateView({ ...baseViewState, frameBudgetMs: 50, prefetch: true });
 
       expect(lodA.updateViewWithResidency).toHaveBeenCalledTimes(1);
       expect(lodB.updateViewWithResidency).toHaveBeenCalledTimes(1);
@@ -511,13 +524,20 @@ describe('GSplatsProgressiveLoader', () => {
       expect(loader.loadedLODCount).toBe(1);
 
       await loader.updateView({ ...baseViewState, frameBudgetMs: 70 });
-      // No reset: level 0 loaded once; the second pass continued at level 1.
+      // No reset: level 0 is NOT reloaded (same-view, ladder survives). Playback
+      // stays at the floor — deepening is the background prefetch's job, not the
+      // foreground tick's.
       expect(lodA.updateViewWithResidency).toHaveBeenCalledTimes(1);
-      expect(loader.loadedLODCount).toBeGreaterThanOrEqual(2);
+      expect(loader.loadedLODCount).toBe(1);
     });
 
-    it('playback prefix caching: capped ladders are stored, restored, and deepened loop-over-loop', async () => {
+    it('background prefetch deepens a capped ladder loop-over-loop; playback restores it responsively', async () => {
       // Mirrored in points/lines loader tests (three-geometry symmetry).
+      // The responsiveness contract: foreground PLAYBACK ticks commit only the
+      // cached prefix (never block on fine levels), while background PREFETCH
+      // passes deepen the SAME slice's cached ladder +1 level at a time. So a
+      // later playback tick restores a DEEPER prefix — higher quality, still
+      // instant.
       const sc = new SliceCache({ maxSize: 10 * 1024 * 1024 });
       const l = new GSplatsProgressiveLoader(
         [lodA, lodB, lodC] as unknown as GSplatsSpatialIndexLoader[],
@@ -529,38 +549,28 @@ describe('GSplatsProgressiveLoader', () => {
       const viewA = baseViewState;
       const viewB = { ...baseViewState, slicePosition: [0, 0, 0, 1] };
 
-      // Loop-1 tick at view A: budget 10 < one 30ms level → prefix(1) STORED.
+      // Loop-1 playback tick at A: budget 10 < one 30ms level → floor(1) STORED.
       await l.updateView({ ...viewA, frameBudgetMs: 10 });
       expect(l.loadedLODCount).toBe(1);
       expect(sc.getStats().count).toBe(1);
 
-      await l.updateView({ ...viewB, frameBudgetMs: 10 }); // move on (stores B's prefix)
+      await l.updateView({ ...viewB, frameBudgetMs: 10 }); // move on (stores B's floor)
 
-      // Loop-2 tick at view A (budget 20): the prefix restores WITHOUT
-      // re-streaming level 0, and the budget deepens the ladder by one level.
+      // Background prefetch at A (budget 20): restores the floor WITHOUT
+      // re-streaming level 0 and deepens the cached ladder by one level.
       lodA.updateViewWithResidency.mockClear();
       lodB.updateViewWithResidency.mockClear();
       lodC.updateViewWithResidency.mockClear();
-      await l.updateView({ ...viewA, frameBudgetMs: 20 });
-      expect(lodA.updateViewWithResidency).not.toHaveBeenCalled(); // from cache
-      expect(lodB.updateViewWithResidency).toHaveBeenCalledTimes(1); // deepened
+      await l.updateView({ ...viewA, frameBudgetMs: 20, prefetch: true });
+      expect(lodA.updateViewWithResidency).not.toHaveBeenCalled(); // level 0 from cache
+      expect(lodB.updateViewWithResidency).toHaveBeenCalledTimes(1); // deepened +1
       expect(l.loadedLODCount).toBe(2);
 
-      // Idle revisit (pause → no budget): prefix(2) restores, ladder completes,
-      // the FULL ladder upgrades the cache entry.
-      await l.updateView({ ...viewB, frameBudgetMs: 10 });
-      lodA.updateViewWithResidency.mockClear();
-      lodB.updateViewWithResidency.mockClear();
-      lodC.updateViewWithResidency.mockClear();
-      await l.updateView(viewA);
-      expect(lodA.updateViewWithResidency).not.toHaveBeenCalled();
-      expect(lodB.updateViewWithResidency).not.toHaveBeenCalled();
-      expect(lodC.updateViewWithResidency).toHaveBeenCalledTimes(1); // only the tail
-      expect(l.loadedLODCount).toBe(3);
-      expect(l.hasMoreLODs).toBe(false);
+      await l.updateView({ ...viewB, frameBudgetMs: 10 }); // move on
 
-      // Loop-3 tick at view A: FULL restore — zero streaming even under budget.
-      await l.updateView({ ...viewB, frameBudgetMs: 10 });
+      // Loop-2 PLAYBACK tick at A: restores the DEEPER prefix(2) — higher
+      // quality than loop 1 — and commits it with ZERO streaming (responsive:
+      // the floor gate blocks any further foreground decode).
       lodA.updateViewWithResidency.mockClear();
       lodB.updateViewWithResidency.mockClear();
       lodC.updateViewWithResidency.mockClear();
@@ -568,7 +578,7 @@ describe('GSplatsProgressiveLoader', () => {
       expect(lodA.updateViewWithResidency).not.toHaveBeenCalled();
       expect(lodB.updateViewWithResidency).not.toHaveBeenCalled();
       expect(lodC.updateViewWithResidency).not.toHaveBeenCalled();
-      expect(l.loadedLODCount).toBe(3);
+      expect(l.loadedLODCount).toBe(2); // shows the deepened quality, no re-decode
     });
 
     it('partial restore copies the container: resume never mutates the cached payload', async () => {
@@ -657,13 +667,14 @@ describe('GSplatsProgressiveLoader', () => {
       expect(setSpy.mock.calls.at(-1)![2]).toEqual({ scan: true, pin: true });
     });
 
-    it('shadow-prefetch handoff: a prefix stored by ANOTHER instance restores here and deepens', async () => {
+    it('shadow-prefetch handoff: a prefix stored by ANOTHER (prefetch) instance restores here', async () => {
       // Mirrored across the three progressive loader tests (symmetry). The
-      // t+1 SlicePrefetcher runs SHADOW loader instances whose only handoff
-      // to the foreground is the shared S-cache: the shadow stores view B's
-      // prefix while the foreground displays A; the real tick at B then
-      // restores that prefix (no level-0 re-stream) and deepens with its
-      // own budget.
+      // t+1 SlicePrefetcher runs SHADOW loader instances (prefetch: true) whose
+      // only handoff to the foreground is the shared S-cache: the shadow
+      // deepens view B's ladder while the foreground displays A; the real
+      // PLAYBACK tick at B then restores that cached prefix (no level-0
+      // re-stream) and commits it responsively (the floor gate blocks any
+      // foreground decode).
       const sc = new SliceCache({ maxSize: 10 * 1024 * 1024 });
       const shadow = new GSplatsProgressiveLoader(
         [lodA, lodB, lodC] as unknown as GSplatsSpatialIndexLoader[],
@@ -682,19 +693,20 @@ describe('GSplatsProgressiveLoader', () => {
       const viewA = baseViewState;
       const viewB = { ...baseViewState, slicePosition: [0, 0, 0, 1] };
 
-      await foreground.updateView({ ...viewA, frameBudgetMs: 10 }); // real tick at A
-      await shadow.updateView({ ...viewB, frameBudgetMs: 10 }); // shadow prefetches B: prefix(1)
+      await foreground.updateView({ ...viewA, frameBudgetMs: 10 }); // real tick at A: floor
+      await shadow.updateView({ ...viewB, frameBudgetMs: 10, prefetch: true }); // shadow caches B
 
       lodA.updateViewWithResidency.mockClear();
       lodB.updateViewWithResidency.mockClear();
       lodC.updateViewWithResidency.mockClear();
 
-      // Real tick at B (budget 20 = one more 30ms level): level 0 comes from
-      // the SHADOW's cache entry; the budget deepens from startLevel = 1.
+      // Real PLAYBACK tick at B: level 0 comes from the SHADOW's cache entry —
+      // no LOD loader runs (restored, not re-streamed).
       await foreground.updateView({ ...viewB, frameBudgetMs: 20 });
       expect(lodA.updateViewWithResidency).not.toHaveBeenCalled();
-      expect(lodB.updateViewWithResidency).toHaveBeenCalledTimes(1);
-      expect(foreground.loadedLODCount).toBe(2);
+      expect(lodB.updateViewWithResidency).not.toHaveBeenCalled();
+      expect(lodC.updateViewWithResidency).not.toHaveBeenCalled();
+      expect(foreground.loadedLODCount).toBe(1);
     });
   });
 

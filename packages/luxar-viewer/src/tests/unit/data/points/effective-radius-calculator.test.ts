@@ -18,6 +18,7 @@ import { describe, it, expect } from 'vitest';
 import {
   calculateEffectiveRadii,
   calculateSpatialQueryTolerance,
+  fallbackQueryTolerance,
   shouldApplyEffectiveRadius,
 } from '../../../../data/points/effective-radius-calculator';
 import type { EffectiveRadiusConfig } from '../../../../types/points';
@@ -39,6 +40,90 @@ function makeConfig(overrides: Partial<EffectiveRadiusConfig> = {}): EffectiveRa
     ...overrides,
   };
 }
+
+describe('fallbackQueryTolerance — config-null query reach', () => {
+  const dims = [
+    { name: 'X', unit: '', scale: 1, spatial: true },
+    { name: 'Y', unit: '', scale: 1, spatial: true },
+    { name: 'Z', unit: '', scale: 1, spatial: true },
+    { name: 'T', unit: '', scale: 1, discrete: true, spatial: false, step: 1 },
+  ] as ViewState['dimensions'];
+
+  it('discrete non-spatial reach is the quarter-cell rule (0.25×step), NOT the ride-along tolerance', () => {
+    // The two viewState builders set the discrete ride-along to 0.5 (nav) vs 0
+    // (init); the fetch reach MUST be independent of it (the SliceCache key
+    // drops it). Pre-fix the fallback used `tolerance[d]` directly → this
+    // returned 0.5 / 0, letting a cache hit serve a different-reach decode.
+    const navView = makeViewState({
+      slicePosition: [0, 0, 0, 3],
+      tolerance: [0, 0, 0, 0.5],
+      dimensions: dims,
+    });
+    const initView = makeViewState({
+      slicePosition: [0, 0, 0, 3],
+      tolerance: [0, 0, 0, 0],
+      dimensions: dims,
+    });
+    const nav = fallbackQueryTolerance(navView, 4, 1);
+    const init = fallbackQueryTolerance(initView, 4, 1);
+    expect(nav[3]).toBeCloseTo(0.25); // 0.25 × step(1), not 0.5
+    expect(init[3]).toBeCloseTo(0.25); // and not 0 either
+    expect(nav[3]).toBe(init[3]); // builder-independent — no cache collision
+  });
+
+  it('scales the quarter-cell reach with the discrete step', () => {
+    const view = makeViewState({
+      slicePosition: [0, 0, 0, 3],
+      tolerance: [0, 0, 0, 0.5],
+      dimensions: [
+        dims![0],
+        dims![1],
+        dims![2],
+        { name: 'T', unit: '', scale: 1, discrete: true, spatial: false, step: 4 },
+      ],
+    });
+    expect(fallbackQueryTolerance(view, 4, 1)[3]).toBeCloseTo(1.0); // 0.25 × 4
+  });
+
+  it('displayed dims and the extend_to_all sentinel load all chunks (1e10)', () => {
+    const view = makeViewState({
+      displayDims: [0, 1, 2],
+      slicePosition: [0, 0, 0, 3],
+      tolerance: [0, 0, 0, 1e10], // extend_to_all on the discrete dim
+      dimensions: dims,
+    });
+    const t = fallbackQueryTolerance(view, 4, 1);
+    expect(t[0]).toBe(1e10); // displayed
+    expect(t[3]).toBe(1e10); // extend_to_all sentinel wins over the discrete rule
+  });
+
+  it('non-displayed spatial/continuous dims fall back to maxRadius (ride-along kept when present)', () => {
+    // A 4D view where dim 3 is spatial (not discrete) and non-displayed. Unlike
+    // discrete dims, the SliceCache key KEEPS a continuous dim's tolerance, so
+    // the query legitimately uses `tolerance[d] ?? maxRadius` (unchanged
+    // behaviour): the ride-along when present, else maxRadius.
+    const spatialDims = [
+      dims![0],
+      dims![1],
+      dims![2],
+      { name: 'W', unit: '', scale: 1, spatial: true, discrete: false },
+    ];
+    // No ride-along at dim 3 → maxRadius.
+    const noTol = makeViewState({
+      slicePosition: [0, 0, 0, 5],
+      tolerance: [0, 0, 0],
+      dimensions: spatialDims,
+    });
+    expect(fallbackQueryTolerance(noTol, 4, 7)[3]).toBe(7);
+    // Ride-along present → used verbatim (kept in the key, so no collision).
+    const withTol = makeViewState({
+      slicePosition: [0, 0, 0, 5],
+      tolerance: [0, 0, 0, 2],
+      dimensions: spatialDims,
+    });
+    expect(fallbackQueryTolerance(withTol, 4, 7)[3]).toBe(2);
+  });
+});
 
 describe('calculateEffectiveRadii — Pythagorean invariant', () => {
   it('returns R_eff = √(R² − D²) ≤ R for a point offset in a non-displayed spatial dim', () => {

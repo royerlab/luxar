@@ -41,7 +41,11 @@ import type {
 } from '../../types/data-monitor-types';
 import { ProgressiveMonitorAdapter } from '../loaders/progressive-monitor-adapter';
 import { concatOptionalField, concatRequiredField } from '../loaders/progressive/concat-helpers';
-import { CACHE_HIT_THRESHOLD_MS } from '../loaders/progressive/constants';
+import {
+  classifyStreamingPass,
+  shouldLoadLevel,
+  shouldStopAfterLevel,
+} from '../loaders/progressive/streaming-policy';
 import { restoreLadder, storeLadder } from '../loaders/progressive/slice-cache-helper';
 import type { SliceCache } from '../../cache/slice-cache';
 import { log, Modules, LogEmoji } from '../../utils/log';
@@ -279,6 +283,14 @@ export class PointsProgressiveLoader implements PointsDataLoader {
     const budgetDeadline =
       this._frameBudgetMs !== null ? performance.now() + this._frameBudgetMs : null;
 
+    // Background prefetch (shadow) passes only warm the SliceCache — the
+    // SlicePrefetcher discards the return value — so hand back a cheap empty
+    // result instead of the O(N) main-thread concat, which would stall
+    // foreground frames as the ladder deepens. Mirrors GSplatsProgressiveLoader.
+    const isPrefetch = viewState.prefetch === true;
+    const finish = (): LoadedPointsData =>
+      isPrefetch ? concatenatePointsData([]) : this.concatenateMemoized(session);
+
     if (!this.lastViewState || !viewStatesEqual(viewState, this.lastViewState)) {
       // DEPARTURE store: snapshot the OUTGOING view's partial ladder before
       // discarding it, keyed under the OUTGOING view (lastViewState — never
@@ -324,7 +336,7 @@ export class PointsProgressiveLoader implements PointsDataLoader {
         // FULL ladder short-circuits; a PREFIX falls through to the loop
         // (startLevel = prefix length). Mirrors GSplatsProgressiveLoader.
         if (restored.length === this.nLods) {
-          return this.concatenateMemoized(session);
+          return finish();
         }
       }
     }
@@ -335,15 +347,23 @@ export class PointsProgressiveLoader implements PointsDataLoader {
     // (e.g. refine-on-pause) doesn't fetch the higher (empty) LODs. Mirrors
     // GSplatsProgressiveLoader.
     if (this._emptyLadder) {
-      return this.concatenateMemoized(session);
+      return finish();
     }
 
+    // Stream under the shared streaming policy (see `streaming-policy.ts`):
+    // `playback` commits the cached prefix + a LOD-0 first-paint floor and
+    // never blocks on fine levels; `prefetch` deepens toward the full decoded
+    // ladder (abort-safe, stored per level); `refine` streams resident levels
+    // and stops at the first cold/slow one. Mirrors GSplatsProgressiveLoader.
+    const pass = classifyStreamingPass(budgetDeadline !== null, isPrefetch);
     const startLevel = this.loadedLODs.length;
 
     for (let level = startLevel; level < this.nLods; level++) {
+      if (!shouldLoadLevel(pass, level, startLevel)) {
+        break;
+      }
       // Playback frame budget: stop as soon as the tick's time is spent
-      // (≥1 level always loads — `level > startLevel` guard). Mirrors
-      // GSplatsProgressiveLoader.
+      // (≥1 level always loads — `level > startLevel` guard).
       if (budgetDeadline !== null && level > startLevel && performance.now() > budgetDeadline) {
         break;
       }
@@ -376,9 +396,7 @@ export class PointsProgressiveLoader implements PointsDataLoader {
         break;
       }
 
-      // Stop after a cache miss; refinement loop continues next frame. The
-      // wall-clock budget remains a secondary guard. LOD 0 always loads.
-      if (level > startLevel && (!allResident || elapsed > CACHE_HIT_THRESHOLD_MS)) {
+      if (shouldStopAfterLevel(pass, level, startLevel, allResident, elapsed)) {
         break;
       }
     }
@@ -415,7 +433,7 @@ export class PointsProgressiveLoader implements PointsDataLoader {
       });
     }
 
-    return this.concatenateMemoized(session);
+    return finish();
   }
 
   /**
