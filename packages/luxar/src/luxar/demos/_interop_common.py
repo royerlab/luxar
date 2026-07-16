@@ -18,7 +18,7 @@ from typing import Optional
 from arbol import aprint, asection
 
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
-from luxar.core.viewer_config import ViewerConfig
+from luxar.core.viewer_config import CameraConfig, ViewerConfig
 
 
 def build_gsplats_cache(
@@ -84,21 +84,29 @@ def build_interop_scene(
     unit: str = "px",
     tone_mapping: str = "Neutral",
     intensity: float = 1.0,
+    camera: Optional[CameraConfig] = None,
 ) -> Path:
     """Build a single-layer scene from a cached (possibly LOD'd) ``.gsplats.zarr``.
 
     Classical captures carry per-splat color, so ``colormap`` is normally
-    ``None``. Imports render best under ``blending_mode="normal"`` (correct
-    once depth-sorted rendering lands, acceptable today). Both matrix and
-    partition caches embed through ``add_gsplats_from_file``, which grafts
-    whatever node shape the recipe produced.
+    ``None``. Imports render under ``blending_mode="normal"`` (alpha-over) —
+    the surface-like, occluding look these photogrammetric scenes need, which
+    composites correctly now that depth-sorted rendering has landed (R10). Both
+    matrix and partition caches embed through ``add_gsplats_from_file``, which
+    grafts whatever node shape the recipe produced.
+
+    ``camera`` sets an initial viewer pose (overriding bounding-sphere
+    auto-fit). Immersive 360° environment captures (e.g. Scaniverse room/yard
+    scans) reconstruct the *whole surroundings* as a sphere, so auto-fit parks
+    the camera outside looking at an opaque shell — pass a centered
+    ``CameraConfig`` so the scene opens from inside, looking out.
     """
     with asection("Building scene"):
         dims = Dimensions([Dimension(a, unit=unit, display=True) for a in "xyz"])
         with LuxarZarrCompiler(output_path) as compiler:
             scene = compiler.create_scene(
                 dimensions=dims,
-                viewer_config=ViewerConfig(tone_mapping=tone_mapping),
+                viewer_config=ViewerConfig(tone_mapping=tone_mapping, camera=camera),
             )
             scene.attrs["title"] = title
             attrs: dict[str, object] = dict(
