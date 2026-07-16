@@ -19,6 +19,7 @@ sections/
 │   ├── memory/            # Heap-usage targets and check cadence
 │   ├── monitor/           # Event ring-buffer limits and alert thresholds
 │   └── performance/       # Accumulators, workers, WASM, GPU buffer pool
+├── depth-sort/            # GSplat camera-motion re-sort scheduling thresholds
 ├── dimension-animation/   # FPS-based playback through dimension ranges
 ├── input/                 # Sensitivity + keyboard shortcuts + fly/dim keys
 ├── rendering-controls/    # User-adjustable rendering settings (single source of truth)
@@ -35,6 +36,7 @@ sections/
 - **[camera/](camera/README.md)** — initial position, FOV zoom limits and sensitivity, and the photography-style FOV / lens-distortion preset tables. Note: `fov`/`near`/`far` live in `rendering-controls/`, not here.
 - **[controls/](controls/README.md)** — defaults for the `fly` and `orbit` control modes plus the scene-scale multipliers used to adapt control parameters to the bounding-box diagonal.
 - **[data-loading/](data-loading/README.md)** — composite section that bundles five sub-slices (`spatial`, `network`, `memory`, `monitor`, `performance`) into a single `DataLoadingConfig`; dispatches per-sub-section validation.
+- **[depth-sort/](depth-sort/README.md)** — gsplat depth-sort scheduling (depth-sorting Phase 3): the master `enabled` switch (URL escape hatch `?depthSort=0`) and the camera-motion re-sort thresholds (`angleThresholdDeg`, `translationFraction`).
 - **[dimension-animation/](dimension-animation/README.md)** — defaults and presets for FPS-based playback through dimension ranges, including loop mode (`once` / `loop` / `bounce`), direction, frame-time floors, and target-vs-actual FPS feedback.
 - **[input/](input/README.md)** — default adjustment sensitivity, the global keyboard shortcut map, the fly-mode movement key set, and the dimension-navigation keys.
 - **[rendering-controls/](rendering-controls/README.md)** — the single source of truth for user-adjustable rendering settings: camera FOV/clipping, bloom, global EOG, anti-aliasing, tone mapping, vignette, detector noise, lens distortion, navigation mode, and adaptive-DPR toggles.

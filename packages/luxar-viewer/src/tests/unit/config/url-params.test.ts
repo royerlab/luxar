@@ -19,6 +19,7 @@ describe('readUrlParams', () => {
       clearCache: false,
       lodFade: true, // LOD cross-fade is ON by default (opt-out via ?no-lod-fade)
       lodEnergyComp: true, // streaming brightness compensation is ON (opt-out via ?no-lod-energy)
+      depthSort: true, // gsplat depth sorting is ON by default (opt-out via ?depthSort=0)
       noPrefetch: false,
       prefetchDebug: false,
       cacheStats: false,
@@ -41,6 +42,19 @@ describe('readUrlParams', () => {
     expect(readUrlParams('').lodEnergyComp).toBe(true);
     expect(readUrlParams('?debug').lodEnergyComp).toBe(true);
     expect(readUrlParams('?no-lod-energy').lodEnergyComp).toBe(false);
+  });
+
+  it('depthSort defaults ON and is disabled only by an explicit 0/false/off value', () => {
+    expect(readUrlParams('').depthSort).toBe(true);
+    expect(readUrlParams('?debug').depthSort).toBe(true);
+    // Flag-only and truthy forms keep it enabled.
+    expect(readUrlParams('?depthSort').depthSort).toBe(true);
+    expect(readUrlParams('?depthSort=1').depthSort).toBe(true);
+    expect(readUrlParams('?depthSort=true').depthSort).toBe(true);
+    // The escape hatch (deterministic E2E/visual runs).
+    expect(readUrlParams('?depthSort=0').depthSort).toBe(false);
+    expect(readUrlParams('?depthSort=false').depthSort).toBe(false);
+    expect(readUrlParams('?depthSort=OFF').depthSort).toBe(false);
   });
 
   it('parses dpr as a positive float, rejecting zero/negative/non-numeric', () => {
