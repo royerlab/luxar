@@ -189,11 +189,17 @@ def graft_gsplat_node(
         return wrapper
 
     if isinstance(node, GSplatPartition):
+        partition_attrs = dict(wrapper_attrs)
+        # Carry the BSP split planes into the scene so the viewer keeps its
+        # exact back-to-front part ordering (the standalone file has it; the
+        # graft must not drop it). Absent for non-BSP (streamed) partitions.
+        if node.bsp_tree is not None:
+            partition_attrs["bsp_tree"] = node.bsp_tree
         wrapper = parent_node.add_partition_group(
             name=name,
             display_type="gsplats",
             max_elements=int(node.max_elements),
-            **wrapper_attrs,
+            **partition_attrs,
         )
         for i, child in enumerate(node.children):
             graft_gsplat_node(

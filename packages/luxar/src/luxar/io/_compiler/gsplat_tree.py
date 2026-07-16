@@ -533,6 +533,11 @@ def write_gsplat_node(
         group.attrs["kind"] = "partition"
         group.attrs["display_type"] = "gsplats"
         group.attrs["max_elements"] = int(node.max_elements)
+        # Split-plane record for exact viewer back-to-front ordering (present
+        # only when the parts came from a single BSP split; a streamed grid
+        # merge has none and the viewer falls back to centroids).
+        if node.bsp_tree is not None:
+            group.attrs["bsp_tree"] = node.bsp_tree
         bounds = _union_bounds(child_bounds)
         meta = {"n_children": len(node.children)}
         if bounds is not None:
@@ -630,10 +635,14 @@ def read_gsplat_node(
         children = [
             read_gsplat_node(group[f"part_{i}"], root, decoder) for i in range(n)
         ]
+        bsp_tree = group.attrs.get("bsp_tree")
         return GSplatPartition(
             children=children,
             max_elements=int(group.attrs.get("max_elements", 0)),
             meta=_node_meta_from_attrs(group),
+            # Restore the split-plane record (if written) so a disk→node→disk
+            # round-trip and the scene graft preserve exact viewer ordering.
+            bsp_tree=dict(bsp_tree) if bsp_tree is not None else None,
         )
 
     # Leaf — either a single set or an additive ladder.
