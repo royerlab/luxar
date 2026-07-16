@@ -304,8 +304,8 @@ controls: {
     zoom: { minDistance: 0.1, maxDistance: 1000 },
   },
   scaleMultipliers: {
-    minDistanceFactor: 0.01,
-    maxDistanceFactor: 100,
+    minDistanceFactor: 0.001,
+    maxDistanceFactor: 10000,
     flySpeedFactor: 0.05,
   },
 }
