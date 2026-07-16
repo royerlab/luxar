@@ -448,6 +448,27 @@ describe('bounds-math', () => {
     });
   });
 
+  describe('minNearForRadius', () => {
+    // Literal-value pins: the plane tests below assert against
+    // minNearForRadius(R) itself (wiring), which cannot catch a broken
+    // formula. These pin the formula's actual values.
+    it('reproduces the historical 1e-4 floor at a typical diagonal-100 scene', () => {
+      // diagonal 100 → radius 50 → expanded radius 52.5 → 52.5 * 2e-6.
+      expect(minNearForRadius(52.5)).toBeCloseTo(1.05e-4, 9);
+    });
+
+    it('scales down proportionally for tiny scenes', () => {
+      // diagonal 0.01 → expanded radius ~0.0053 → ~1.05e-8 (well below
+      // the old absolute 1e-4, above the 1e-9 last-resort floor).
+      expect(minNearForRadius(0.00525)).toBeCloseTo(1.05e-8, 12);
+    });
+
+    it('falls back to the absolute floor for a degenerate zero radius', () => {
+      expect(minNearForRadius(0)).toBe(MIN_NEAR_PLANE);
+      expect(minNearForRadius(0)).toBe(1e-9);
+    });
+  });
+
   describe('calculateClippingPlanesFromSphere', () => {
     it('should calculate clipping planes when outside sphere', () => {
       const box: BoundingBox = {

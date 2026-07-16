@@ -284,4 +284,55 @@ describe('updateDynamicFromCache', () => {
     expect(camera.near).toBeGreaterThan(0);
     expect(camera.far).toBeGreaterThan(camera.near);
   });
+
+  // Inside-sphere PARITY with the pure helper (the W7 test above covers
+  // the outside branch): the per-frame inlined math must produce the
+  // exact same scale-aware near floor as calculateClippingPlanesFromSphere
+  // when the camera is inside the sphere. Kills a mutant that reverts
+  // the dynamic path's floor to a constant while the helper stays
+  // scale-aware (the paths are intentionally duplicated for the
+  // zero-allocation contract, so parity is the seam that stops drift).
+  it('matches calculateClippingPlanesFromSphere inside the sphere (scale-aware floor parity)', () => {
+    const scene = new THREE.Scene();
+    scene.userData = { positionBounds: { min: [-100, -100, -100], max: [100, 100, 100] } };
+    const camera = makeCamera(new THREE.Vector3(5, -3, 10), 0.001, 1000);
+    const { ctx } = makeCtx({ camera, scene, metadataBounds: null });
+    ctx.boundsCache.ensure(scene);
+
+    updateDynamicFromCache(ctx);
+
+    const sphere = ctx.boundsCache.getSphere();
+    expect(sphere).not.toBeNull();
+    const expected = calculateClippingPlanesFromSphere(sphere!, { x: 5, y: -3, z: 10 });
+    // Inside the sphere the helper returns the scale-aware floor —
+    // pin the dynamic path to the identical value (exact, not close).
+    expect(camera.near).toBe(expected.near);
+    expect(camera.far).toBeCloseTo(expected.far, 10);
+  });
+
+  // Degenerate guard: a zero-extent (single-point) scene produces a
+  // radius-0 sphere, for which near == far (camera away from the point)
+  // or near > far (camera at the point). Writing either to the camera
+  // puts (far - near) = 0 into the projection matrix and NaNs the
+  // frustum — the function must refuse, like applyClippingPlanes does
+  // on the explicit path.
+  it('refuses to write a degenerate frustum from a radius-0 sphere', () => {
+    const scene = new THREE.Scene();
+    scene.userData = { positionBounds: { min: [5, 5, 5], max: [5, 5, 5] } };
+    const camera = makeCamera(new THREE.Vector3(0, 0, 100), 0.001, 1000);
+    const { ctx } = makeCtx({ camera, scene, metadataBounds: null });
+    ctx.boundsCache.ensure(scene);
+
+    // Prove the guard (not the empty-cache early return) is what fires:
+    // the cache DOES hold a sphere — a degenerate radius-0 one.
+    expect(ctx.boundsCache.getSphere()).not.toBeNull();
+    expect(ctx.boundsCache.getSphere()!.radius).toBe(0);
+
+    const updateSpy = vi.spyOn(camera, 'updateProjectionMatrix');
+    updateDynamicFromCache(ctx);
+
+    expect(updateSpy).not.toHaveBeenCalled();
+    expect(camera.near).toBe(0.001);
+    expect(camera.far).toBe(1000);
+  });
 });

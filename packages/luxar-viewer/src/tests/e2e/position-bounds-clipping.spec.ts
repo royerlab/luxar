@@ -281,8 +281,9 @@ test.describe('Position Bounds and Clipping Planes', () => {
     // - Converts bounding box to circumscribed sphere (center + radius)
     // - Expands radius by SPHERE_SAFETY_EXPANSION (5%)
     // - near = max(minNearForRadius(R), dist - R), far = dist + R
-    //   where minNearForRadius(R) = max(1e-9, R * 2e-6) — the scale-aware
-    //   near floor (see scene-manager/clipping/bounds-math.ts)
+    //   (minNearForRadius is the scale-aware near floor — authoritative
+    //   definition in scene-manager/clipping/bounds-math.ts; not mirrored
+    //   here, see the outside-sphere note below)
     const info = await page.evaluate(() => {
       const debug = (window as any).__luxarDebug;
       let foundBounds: { min: number[]; max: number[] } | null = null;
@@ -317,10 +318,15 @@ test.describe('Position Bounds and Clipping Planes', () => {
       const dz = cameraPos.z - cz;
       const dist = Math.sqrt(dx * dx + dy * dy + dz * dz);
 
-      // Mirror minNearForRadius from bounds-math.ts (scale-aware floor)
-      const minNear = Math.max(1e-9, R * 2e-6);
+      // The auto-framed camera sits OUTSIDE the sphere (dist > R), where
+      // near = dist - R and the scale-aware floor (minNearForRadius in
+      // bounds-math.ts) is orders of magnitude below — so the expectation
+      // needs no floor constants here. If a future variant moves the
+      // camera inside the sphere, this expectation goes tiny and the
+      // assertion fails loudly, pointing back to the authoritative
+      // formula rather than silently drifting from a mirrored copy.
       const expectedFar = dist + R;
-      const expectedNear = dist < R ? minNear : Math.max(minNear, dist - R);
+      const expectedNear = dist - R;
 
       return {
         actual: {
@@ -333,11 +339,15 @@ test.describe('Position Bounds and Clipping Planes', () => {
         },
         dist,
         R,
+        outsideSphere: dist > R,
       };
     });
 
     expect(info).not.toBeNull();
     if (!info) return;
+
+    // Precondition for the constant-free expectation above.
+    expect(info.outsideSphere).toBe(true);
 
     // Verify near plane is approximately correct (with some tolerance for floating point)
     expect(info.actual.near).toBeCloseTo(info.expected.near, 2);
