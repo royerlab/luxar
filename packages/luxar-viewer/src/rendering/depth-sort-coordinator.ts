@@ -521,6 +521,10 @@ function isEffectivelyVisible(mesh: THREE.Object3D): boolean {
  * nodes whose live mode is no longer order-dependent.
  */
 export function evaluateDepthSortPerFrame(): void {
+  // Drop the previous frame's per-wrapper rank memo FIRST — before any
+  // early-return — so a disposed/dataset-switched frame can't leave the
+  // module-scoped cache holding stale partition-wrapper subtrees alive.
+  partitionRankCache.clear();
   if (!depthSortEnabled || !api || nodeStates.size === 0) return;
   const camera = getCamera?.();
   if (!camera) return;
@@ -537,9 +541,6 @@ export function evaluateDepthSortPerFrame(): void {
       camPos: new THREE.Vector3(),
     };
   }
-  // Per-partition back-to-front order is memoized per wrapper for the frame;
-  // it must not outlive this call (camera moves every frame).
-  partitionRankCache.clear();
   const cosThreshold = Math.cos((config.depthSort.angleThresholdDeg * Math.PI) / 180);
   let viewComputed = false;
 
