@@ -34,10 +34,11 @@ export const GSPLAT_VERTEX_SHADER = /* glsl */ `
     uniform float uTruncate;          // Truncation radius (in sigmas)
     uniform float uTruncateSq;        // Truncation radius squared
     uniform float uRayIntegralFactor; // Shifted Gaussian ray integral factor
-    uniform int uProjectionMode;      // 0 = sum projection (additive), 1 = max projection (max blending)
+    uniform int uProjectionMode;      // 0 = sum (ray-integral: additive/luminous), 1 = peak (2D-projected: max + normal/alpha-over surfaces)
     uniform int uIsOrtho;             // 0 = perspective, 1 = orthographic
     uniform float uNearCull;          // Near cull distance (scene-scale-aware)
     uniform float uMaxExtentFactor;   // Max projected extent as fraction of viewport before fade
+    uniform float uCov2DDilation;     // 2D-covariance low-pass dilation in px² (3DGS anti-aliasing)
 
     // Colormap uniforms (only active when USE_COLORMAP is defined)
     #ifdef USE_COLORMAP
@@ -55,7 +56,7 @@ export const GSPLAT_VERTEX_SHADER = /* glsl */ `
     // OPTIMIZATION: vL2D stores [1/L00, L10, 1/L11] to replace fragment divisions with multiplications
     flat out highp vec3 vL2D;                // 2D Cholesky packed as [invL00, L10, invL11]
     flat out highp vec2 vCenterScreen;       // Splat center in screen pixels
-    flat out int vProjectionMode;            // 0=sum (additive), 1=max
+    flat out int vProjectionMode;            // 0=sum (additive/luminous), 1=peak (max+normal)
 
     // Unpack 3D Cholesky to matrix (column-major order for GLSL mat3)
     // Packed order: [L00, L10, L11, L20, L21, L22]
@@ -205,6 +206,15 @@ export const GSPLAT_VERTEX_SHADER = /* glsl */ `
         Sigma2D[1][0] = JS0.x * J[0].y + JS1.x * J[1].y + JS2.x * J[2].y;
         Sigma2D[0][1] = Sigma2D[1][0];  // Symmetric (J*S*J^T preserves symmetry)
         Sigma2D[1][1] = JS0.y * J[0].y + JS1.y * J[1].y + JS2.y * J[2].y;
+
+        // 2D low-pass dilation (standard 3DGS anti-aliasing): widen the diagonal
+        // so every splat covers at least ~1px. Guarantees near-degenerate
+        // (edge-on/flat) splats render as a soft ellipse instead of a razor-thin
+        // sub-pixel spike. Applied before the Cholesky + eigen extent below so
+        // the fragment footprint and the quad stay consistent. Diagonal only —
+        // adding to the off-diagonal would rotate/shear the ellipse.
+        Sigma2D[0][0] += uCov2DDilation;
+        Sigma2D[1][1] += uCov2DDilation;
 
         if (invalidCov2D(Sigma2D) || invalidFloat(aAmplitude)) {
             gl_Position = vec4(0.0, 0.0, -2.0, 1.0);
@@ -368,7 +378,7 @@ export const GSPLAT_FRAGMENT_SHADER = /* glsl */ `
     // OPTIMIZATION: vL2D stores [1/L00, L10, 1/L11] for MUL instead of DIV
     flat in highp vec3 vL2D;          // 2D Cholesky packed as [invL00, L10, invL11]
     flat in highp vec2 vCenterScreen;
-    flat in int vProjectionMode;      // 0=sum (additive), 1=max
+    flat in int vProjectionMode;      // 0=sum (additive/luminous), 1=peak (max+normal)
 
     uniform mediump float uOpacity;
     uniform mediump float uInvGamma; // Pre-computed 1/gamma for performance

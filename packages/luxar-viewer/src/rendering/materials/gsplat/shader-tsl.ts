@@ -142,6 +142,7 @@ export interface GSplatTSLNodes {
   readonly uIsOrtho: TSLNode;
   readonly uNearCull: TSLNode;
   readonly uMaxExtentFactor: TSLNode;
+  readonly uCov2DDilation: TSLNode;
   readonly uOpacity: TSLNode;
   readonly uInvGamma: TSLNode;
   readonly uIntensity: TSLNode;
@@ -189,6 +190,7 @@ export function gsplatWebGPUFactory(
   const uIsOrtho = nodes.uIsOrtho;
   const uNearCull = nodes.uNearCull;
   const uMaxExtentFactor = nodes.uMaxExtentFactor;
+  const uCov2DDilation = nodes.uCov2DDilation;
   const uColormapTex = config.useColormap ? nodes.uColormapTex : null;
   const uScalarMin = config.useColormap ? nodes.uScalarMin : null;
   const uScalarScale = config.useColormap ? nodes.uScalarScale : null;
@@ -357,6 +359,15 @@ export function gsplatWebGPUFactory(
     const Sigma2D10: TSLNode = JS0.x.mul(J0.y).add(JS1.x.mul(J1.y)).add(JS2.x.mul(J2.y)).toVar();
     const Sigma2D11: TSLNode = JS0.y.mul(J0.y).add(JS1.y.mul(J1.y)).add(JS2.y.mul(J2.y)).toVar();
 
+    // 2D low-pass dilation (standard 3DGS anti-aliasing) — GLSL twin in
+    // shader-glsl.ts. Widen the diagonal so every splat covers ≥ ~1px, so
+    // near-degenerate (edge-on/flat) splats render as a soft ellipse instead
+    // of a razor-thin sub-pixel spike. Applied to the shared `.toVar()`s before
+    // the Cholesky + eigen extent below so footprint and quad stay consistent.
+    // Diagonal only — the off-diagonal would rotate/shear the ellipse.
+    Sigma2D00.addAssign(uCov2DDilation);
+    Sigma2D11.addAssign(uCov2DDilation);
+
     // 2D Cholesky factorisation: [invL00, L10, invL11] for fragment-side
     // MUL-instead-of-DIV.
     const s00: TSLNode = max(Sigma2D00, float(1e-6));
@@ -376,7 +387,16 @@ export function gsplatWebGPUFactory(
     // emit only the path that the active blending mode uses, mirroring
     // the GLSL preprocessor's compile-time `if`. The wrapper class
     // calls `rebuildGraph()` whenever the sum/max boundary is crossed.
-    const useSumProjection = !isMaxMode(config.blendingMode ?? 'additive');
+    // Peak (2D-projected) projection for SURFACE modes (max + normal/alpha-over);
+    // sum ray-integral only for emissive (additive/luminous). GLSL twin: the
+    // applyBlendingMode normal branch sets uProjectionMode=1. Alpha-over surfaces
+    // want the projected 2D-Gaussian peak, not the emissive line-integral (whose
+    // ~2.4×·sigmaRay boost would saturate coverage-alpha to opaque and streak at
+    // grazing angles). The wrapper calls rebuildGraph() when this boundary flips.
+    const surfaceMode =
+      isMaxMode(config.blendingMode ?? 'additive') ||
+      isNormalMode(config.blendingMode ?? 'additive');
+    const useSumProjection = !surfaceMode;
     let vAmplitude2DVal: TSLNode;
     if (useSumProjection) {
       const a = S00;
@@ -628,6 +648,10 @@ export function buildGSplatTSLNodesFromUniforms(
     uIsOrtho: uniform((uniforms.uIsOrtho?.value as number) ?? 0),
     uNearCull: uniform((uniforms.uNearCull?.value as number) ?? 1e-4),
     uMaxExtentFactor: uniform((uniforms.uMaxExtentFactor?.value as number) ?? 1.0),
+    // Neutral fallback 0 (no dilation) — matches GLSL's missing-uniform default,
+    // like uMaxExtentFactor's neutral 1.0 above; this adapter is harness/snapshot
+    // only (production materials set the 0.3 default in their own constructor).
+    uCov2DDilation: uniform((uniforms.uCov2DDilation?.value as number) ?? 0),
     uOpacity: uniform((uniforms.uOpacity?.value as number) ?? 1.0),
     uInvGamma: uniform((uniforms.uInvGamma?.value as number) ?? 1.0),
     uIntensity: uniform((uniforms.uIntensity?.value as number) ?? 1.0),
