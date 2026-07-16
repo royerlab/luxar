@@ -547,6 +547,31 @@ test.describe('TSL ↔ GLSL shader parity', () => {
     ).toBeLessThan(3.0);
   });
 
+  test('gsplat-thin-cov: 2D-covariance dilation on a near-degenerate splat matches across backends', async ({
+    page,
+  }) => {
+    await bootHarness(page);
+
+    const glslPixels = await runGLSL(page, 'gsplat-thin-cov');
+    const tslResult = await runTSL(page, 'gsplat-thin-cov');
+
+    assertBothRendered(glslPixels, tslResult.pixels, 'gsplat-thin-cov');
+    // GLSL and TSL must apply the identical Σ_2D diagonal dilation.
+    expect(
+      meanAbsDiffPerCoveredPixel(glslPixels, tslResult.pixels),
+      'gsplat-thin-cov: per-covered-pixel parity (footprint-invariant)'
+    ).toBeLessThan(2.0);
+    const diff = meanAbsDiff(glslPixels, tslResult.pixels);
+    expect(
+      diff,
+      `GSplat-thin-cov parity: mean abs diff ${diff.toFixed(2)} on 0-255 scale.`
+    ).toBeLessThan(3.0);
+    // assertBothRendered above already guards that the dilated near-degenerate
+    // splat produces a non-empty, non-uniform footprint on BOTH backends — so a
+    // dilation regression that collapsed the sliver on one side (or produced NaN
+    // via a near-singular Cholesky) would fail here, not pass vacuously.
+  });
+
   test('gsplat-tiny-sigma-fade: sub-0.1-sigma splat in the fade band renders at HALF amplitude', async ({
     page,
   }) => {

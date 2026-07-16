@@ -79,6 +79,7 @@ export interface GSplatPickTSLNodes {
   readonly uIsOrtho: TSLNode;
   readonly uNearCull: TSLNode;
   readonly uMaxExtentFactor: TSLNode;
+  readonly uCov2DDilation: TSLNode;
   readonly uNodeId: TSLNode;
   readonly uShiftC: TSLNode;
   readonly uInvOneMinusC: TSLNode;
@@ -108,6 +109,7 @@ export function gsplatPickWebGPUFactory(
   const uIsOrtho = nodes.uIsOrtho;
   const uNearCull = nodes.uNearCull;
   const uMaxExtentFactor = nodes.uMaxExtentFactor;
+  const uCov2DDilation = nodes.uCov2DDilation;
   const uNodeId = nodes.uNodeId;
   const uShiftC = nodes.uShiftC;
   const uInvOneMinusC = nodes.uInvOneMinusC;
@@ -245,6 +247,11 @@ export function gsplatPickWebGPUFactory(
     const Sigma2D00: TSLNode = JS0.x.mul(J0.x).add(JS1.x.mul(J1.x)).add(JS2.x.mul(J2.x)).toVar();
     const Sigma2D10: TSLNode = JS0.x.mul(J0.y).add(JS1.x.mul(J1.y)).add(JS2.x.mul(J2.y)).toVar();
     const Sigma2D11: TSLNode = JS0.y.mul(J0.y).add(JS1.y.mul(J1.y)).add(JS2.y.mul(J2.y)).toVar();
+
+    // 2D low-pass dilation — visual/GLSL-pick parity (widen the pickable
+    // footprint to match the dilated visual splat). Diagonal only.
+    Sigma2D00.addAssign(uCov2DDilation);
+    Sigma2D11.addAssign(uCov2DDilation);
 
     // 2D Cholesky for the fragment's Mahalanobis solve.
     const s00: TSLNode = max(Sigma2D00, float(1e-8));
@@ -409,6 +416,8 @@ export function buildGSplatPickTSLNodesFromUniforms(
     uIsOrtho: uniform((uniforms.uIsOrtho?.value as number) ?? 0),
     uNearCull: uniform((uniforms.uNearCull?.value as number) ?? 1e-4),
     uMaxExtentFactor: uniform((uniforms.uMaxExtentFactor?.value as number) ?? 1.0),
+    // Neutral fallback 0 (harness/snapshot adapter; production sets 0.3).
+    uCov2DDilation: uniform((uniforms.uCov2DDilation?.value as number) ?? 0),
     uNodeId: uniform((uniforms.uNodeId?.value as number) ?? 0),
     uShiftC: uniform((uniforms.uShiftC?.value as number) ?? 0.0),
     uInvOneMinusC: uniform((uniforms.uInvOneMinusC?.value as number) ?? 1.0),

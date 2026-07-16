@@ -35,7 +35,11 @@ import type { BlendingMode } from '../../material-manager';
 import type { ColormapAwareMaterial } from '../_shared/colormap-aware-material';
 import { clampGamma, isGammaOne } from '../_shared/uniform-helpers';
 import { computeFocalLength } from '../_shared/camera-uniforms';
-import { computeRayIntegralFactor, clampTruncationRadius } from './math';
+import {
+  computeRayIntegralFactor,
+  clampTruncationRadius,
+  GSPLAT_COV2D_DILATION_DEFAULT,
+} from './math';
 import {
   applyColormapTextureToMaterial,
   applyScalarRangeToMaterial,
@@ -80,6 +84,13 @@ export interface GSplatMaterialConfig {
   scalarRange?: [number, number];
   /** Max projected splat extent as a fraction of viewport size before fade-out (default 0.33) */
   maxExtentFactor?: number;
+  /**
+   * 2D-covariance low-pass dilation in pixels² added to the Σ_2D diagonal
+   * (standard 3DGS anti-aliasing; default 0.3). Guarantees every splat covers
+   * ≥ ~1px so near-degenerate (edge-on flat) splats — common in imported
+   * classical 3DGS fits — render as soft ellipses instead of razor-thin spikes.
+   */
+  cov2DDilation?: number;
 }
 
 /**
@@ -98,7 +109,7 @@ export interface GSplatMaterialUniforms {
   uTruncate: { value: number };
   /** Opacity multiplier */
   uOpacity: { value: number };
-  /** Projection mode: 0=sum (additive/normal), 1=max (max blending) */
+  /** Projection mode: 0=sum ray-integral (additive/luminous), 1=peak 2D-projected (max + normal surfaces) */
   uProjectionMode: { value: number };
   /** Pre-computed 1/gamma for performance */
   uInvGamma: { value: number };
@@ -106,6 +117,8 @@ export interface GSplatMaterialUniforms {
   uNearCull: { value: number };
   /** Max projected splat extent as fraction of viewport before fade-out */
   uMaxExtentFactor: { value: number };
+  /** 2D-covariance low-pass dilation in px² added to the Σ_2D diagonal */
+  uCov2DDilation: { value: number };
   /** Shifted Gaussian: exp(-0.5 * truncate²) — boundary value */
   uShiftC: { value: number };
   /** Shifted Gaussian: 1/(1 - shiftC) — peak-preserving rescale */
@@ -157,13 +170,20 @@ export class GSplatMaterial
           value: computeRayIntegralFactor(truncate),
         },
         uOpacity: { value: materialConfig.opacity ?? 1.0 },
-        uProjectionMode: { value: blendingMode === 'max' ? 1 : 0 }, // 0=sum, 1=max
+        // Placeholder — applyBlendingMode() below is the source of truth. Peak (1)
+        // for surface modes (max + normal/alpha-over), sum (0) for emissive.
+        uProjectionMode: {
+          value: blendingMode === 'max' || blendingMode === 'normal' ? 1 : 0,
+        },
         uInvGamma: { value: 1.0 / gammaValue }, // Pre-computed inverse for performance
         uIntensity: { value: materialConfig.intensity ?? 1.0 },
         uOffset: { value: materialConfig.offset ?? 0.0 },
         uIsOrtho: { value: 0 }, // 0 = perspective, 1 = orthographic
         uNearCull: { value: 0.1 }, // Default; overridden per-scene by updateCameraParams
         uMaxExtentFactor: { value: materialConfig.maxExtentFactor ?? 0.33 },
+        uCov2DDilation: {
+          value: materialConfig.cov2DDilation ?? GSPLAT_COV2D_DILATION_DEFAULT,
+        },
         // Colormap uniforms (only when USE_COLORMAP define is set)
         ...(materialConfig.colormapTexture
           ? {
@@ -377,6 +397,7 @@ export class GSplatMaterial
       // Without this a clone silently reset a tuned extent factor to the
       // 0.33 constructor default (screen-coverage fade threshold).
       maxExtentFactor: this.uniforms.uMaxExtentFactor.value,
+      cov2DDilation: this.uniforms.uCov2DDilation.value,
     });
 
     // Copy blend equation settings for custom blending (max/normal —
@@ -408,13 +429,13 @@ export class GSplatMaterial
   /**
    * Apply a blending mode to this material in-place.
    *
-   * GSplat-specific because the method toggles the `uProjectionMode`
-   * uniform when switching to/from `max` (the shader has separate sum
-   * vs max branches) and owns the `LUXAR_NORMAL_PREMULT` define
-   * lifecycle. Without a type-specific method, the layers panel's
-   * generic `mat.blending = state.blending` would leave
-   * `uProjectionMode = 0` while the framebuffer blends with
-   * `MaxEquation` — physically wrong max projection.
+   * GSplat-specific because the method sets the `uProjectionMode`
+   * uniform — PEAK (1) for the surface modes (`max` + `normal`/alpha-over),
+   * SUM ray-integral (0) for emissive (`additive`/`luminous`) — and owns the
+   * `LUXAR_NORMAL_PREMULT` define lifecycle. Without a type-specific method,
+   * the layers panel's generic `mat.blending = state.blending` would leave a
+   * stale `uProjectionMode` while the framebuffer blend state changed —
+   * physically wrong projection.
    *
    * `normal` is gsplat-specific too: the shader emits premultiplied
    * coverage alpha under the `LUXAR_NORMAL_PREMULT` define (toggled
@@ -455,7 +476,15 @@ export class GSplatMaterial
       this.depthWrite = state.depthWrite;
       this.defines.LUXAR_NORMAL_PREMULT = '';
       if (this.uniforms.uProjectionMode) {
-        this.uniforms.uProjectionMode.value = 0; // sum projection
+        // Peak (2D-projected) projection, NOT the sum ray-integral: alpha-over
+        // is the SURFACE compositing model, so a splat's contribution is its
+        // projected 2D-Gaussian peak (surface density at the ray hit), not the
+        // emissive line-integral through the 3D Gaussian. The ray-integral boost
+        // (~2.4×·sigmaRay) would inflate both brightness AND the coverage alpha —
+        // saturating classical-3DGS surface splats to fully opaque and producing
+        // grazing streaks. Matches standard 3DGS rasterizers. (additive/luminous
+        // stay sum; max is already peak.)
+        this.uniforms.uProjectionMode.value = 1; // peak projection
       }
       this.userData.blendingMode = mode;
       this.userData.depthTest = this.depthTest;

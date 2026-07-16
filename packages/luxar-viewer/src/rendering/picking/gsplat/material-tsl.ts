@@ -25,6 +25,7 @@ import { computeFocalLength } from '../../materials/_shared/camera-uniforms';
 import { proxyIUniform, type TSLNode } from '../../materials/_shared/tsl-helpers';
 import { getPlaceholderSplatTexture } from '../../splat-texture-layout';
 import type { GSplatPickingMaterialConfig } from './material';
+import { GSPLAT_COV2D_DILATION_DEFAULT } from '../../materials/gsplat/math';
 
 export class GSplatPickingTSLMaterial extends NodeMaterial implements CameraAwareMaterial {
   uniforms: Record<string, THREE.IUniform>;
@@ -41,6 +42,7 @@ export class GSplatPickingTSLMaterial extends NodeMaterial implements CameraAwar
     uIsOrtho: TSLNode;
     uNearCull: TSLNode;
     uMaxExtentFactor: TSLNode;
+    uCov2DDilation: TSLNode;
     uNodeId: TSLNode;
   };
 
@@ -66,6 +68,7 @@ export class GSplatPickingTSLMaterial extends NodeMaterial implements CameraAwar
       uIsOrtho: uniform(0),
       uNearCull: uniform(0.1),
       uMaxExtentFactor: uniform(0.33),
+      uCov2DDilation: uniform(GSPLAT_COV2D_DILATION_DEFAULT),
       uNodeId: uniform(config.nodeId),
     };
 
@@ -81,6 +84,7 @@ export class GSplatPickingTSLMaterial extends NodeMaterial implements CameraAwar
       uIsOrtho: proxyIUniform(this.tslNodes.uIsOrtho),
       uNearCull: proxyIUniform(this.tslNodes.uNearCull),
       uMaxExtentFactor: proxyIUniform(this.tslNodes.uMaxExtentFactor),
+      uCov2DDilation: proxyIUniform(this.tslNodes.uCov2DDilation),
       uNodeId: proxyIUniform(this.tslNodes.uNodeId),
     };
 

@@ -132,6 +132,17 @@ def graft_gsplat_node(
     parent_node = parent or group
     wrapper_attrs = {k: v for k, v in attrs.items() if k in COMPOSITING_ATTRS}
     child_attrs = {k: v for k, v in attrs.items() if k not in COMPOSITING_ATTRS}
+    # `blending_mode` also propagates to EVERY grafted child, not just the
+    # wrapper. Unlike transform/opacity/gamma — hierarchically combined at render
+    # time, so wrapper-only is correct and duplicating would double them —
+    # blending_mode is a per-material choice, and the leaf writer stamps a DEFAULT
+    # ("additive") on each part. The viewer reads each part's own value, so a
+    # wrapper-only blending_mode is shadowed by that default: a `normal` (surface,
+    # alpha-over) import of a tiled/partition file (e.g. the classical-3DGS
+    # interop demos) would render as `additive` glow. Propagating it keeps one
+    # consistent mode across the whole grafted layer. Recurses via `child_attrs`.
+    if "blending_mode" in wrapper_attrs:
+        child_attrs["blending_mode"] = wrapper_attrs["blending_mode"]
     # A ``coverage_fraction`` passed down by a parent lod-group is THIS node's own
     # selector threshold. For a leaf it is applied via ``add_gsplats_from_data``
     # (the leaf branch above); for a kind=lod / kind=partition WRAPPER it must land
