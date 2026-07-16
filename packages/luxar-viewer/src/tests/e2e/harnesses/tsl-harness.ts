@@ -680,9 +680,11 @@ const SHADER_REGISTRY: Record<string, RegistryEntry> = {
     buildMesh: buildPointInstancedMesh,
   },
   // Point colormap parity: USE_COLORMAP LUT path. Gamma is applied to the
-  // scalar VALUE before the LUT lookup (vertex stage) and the color GOG is
-  // bypassed. invGamma != 1 with aScalar = 0.5 so the gamma warp is
-  // observable and must match across backends.
+  // scalar VALUE before the LUT lookup (vertex stage); intensity/offset
+  // apply POST-LUT to the mapped color (matching the gsplat shader).
+  // invGamma != 1 with aScalar = 0.5 so the gamma warp is observable,
+  // and non-default uIntensity/uOffset so the post-LUT gain/offset path
+  // is exercised and must match across backends.
   'point-colormap': {
     source: POINT_SOURCE,
     buildUniforms: () => ({
@@ -693,8 +695,8 @@ const SHADER_REGISTRY: Record<string, RegistryEntry> = {
       uResolution: { value: new THREE.Vector2(64, 64) },
       opacity: { value: 1.0 },
       invGamma: { value: 1.0 / 2.2 },
-      uIntensity: { value: 1.0 },
-      uOffset: { value: 0.0 },
+      uIntensity: { value: 1.5 },
+      uOffset: { value: 0.05 },
       uColormapTex: { value: buildColormapTexture() },
       uScalarMin: { value: 0.0 },
       uScalarScale: { value: 1.0 },
@@ -805,7 +807,9 @@ const SHADER_REGISTRY: Record<string, RegistryEntry> = {
   },
   // Line colormap parity: USE_COLORMAP LUT path with per-endpoint scalars
   // (0.2 → 0.8). Gamma applied to the value pre-LUT (gammaOne=false here);
-  // color GOG bypassed.
+  // intensity/offset apply POST-LUT to the mapped color (matching the
+  // gsplat shader) — non-default values here so the post-LUT gain/offset
+  // path is exercised and must match across backends.
   'line-colormap': {
     source: LINE_SOURCE,
     buildUniforms: () => ({
@@ -818,8 +822,8 @@ const SHADER_REGISTRY: Record<string, RegistryEntry> = {
       uOrthoLineScale: { value: 64.0 },
       uOpacity: { value: 1.0 },
       uInvGamma: { value: 1.0 / 2.2 },
-      uIntensity: { value: 1.0 },
-      uOffset: { value: 0.0 },
+      uIntensity: { value: 1.5 },
+      uOffset: { value: 0.05 },
       uColormapTex: { value: buildColormapTexture() },
       uScalarMin: { value: 0.0 },
       uScalarScale: { value: 1.0 },

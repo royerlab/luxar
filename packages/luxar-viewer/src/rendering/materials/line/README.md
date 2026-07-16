@@ -49,9 +49,11 @@ Gaussian, the default — identical to the GSplat kernel's shape), `s = 1 → β
 (hard edge), `s = 0 → β = 0.25` (cusp). It is C⁰-continuous at the line edge
 (`perpFalloff(0) = 1`, `perpFalloff(1) = 0`, no hard ring). The stage then
 applies the per-node GOG (`color × uIntensity + uOffset`, clamped) and the
-`pow(·, uInvGamma)` gamma curve — EXCEPT under `USE_COLORMAP`, where GOG and
-the post-LUT gamma are bypassed (gamma + display range shape the scalar
-pre-LUT in the vertex stage) — and writes `vec4(rgb, intensity × uOpacity)`.
+`pow(·, uInvGamma)` gamma curve — under `USE_COLORMAP` only the post-LUT
+gamma is skipped (gamma + display range shape the scalar pre-LUT in the
+vertex stage); intensity/offset still apply post-LUT to the mapped colour,
+matching the GSplat shader, so the layer gain/offset controls work on
+colormapped nodes — and writes `vec4(rgb, intensity × uOpacity)`.
 The `capFactor` joint trick (next section) is **independent** of the
 perpendicular falloff — only `perpFalloff` changed when the kernel was swapped
 to the super-Gaussian.
