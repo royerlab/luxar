@@ -196,6 +196,8 @@ export async function runInitPipeline(
   // and are captured once at wiring time (a reload re-reads them).
   const lodCrossFadeEnabled = ports.options.lodFade ?? true;
   const lodEnergyCompEnabled = ports.options.lodEnergyComp ?? true;
+  // Opt-in: force the finest LOD for capture-quality output (?lod-finest).
+  const lodFinestEnabled = ports.options.lodFinest ?? false;
   SceneLoaderManager.getInstance().setLODGroupRegistryFactory((owner) => {
     return new LODGroupRegistry({
       getCamera: () => sceneManager.camera,
@@ -244,6 +246,9 @@ export async function runInitPipeline(
       // partial ladder prefix renders at full-level brightness (no brightening
       // pop as chunks arrive). Read once at wiring time.
       getEnergyCompEnabled: () => lodEnergyCompEnabled,
+      // Force-finest capture override (?lod-finest via LuxarAppOptions.lodFinest):
+      // always select the finest level and never coarsen off-screen.
+      getForceFinestLOD: () => lodFinestEnabled,
       // Register a fade's clone-on-first-use material so it keeps receiving
       // per-frame camera-uniform updates (an unregistered gsplat clone would
       // project with stale camera params).

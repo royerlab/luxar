@@ -237,6 +237,8 @@ export async function bootstrapStandalone(opts: BootstrapOptions): Promise<Luxar
     lodFade: urlParams.lodFade,
     lodEnergyComp: urlParams.lodEnergyComp,
     depthSort: urlParams.depthSort,
+    // Opt-in capture-quality override (`?lod-finest` — the gallery harness).
+    lodFinest: urlParams.lodFinest,
   };
 
   const app = new LuxarApp();
