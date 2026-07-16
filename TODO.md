@@ -146,9 +146,12 @@ to ship after). Sequencing is at the bottom.
 - **R17 [LAUNCH] — Retire git-LFS for heavy processed datasets → Zenodo
   (versioned, fetch-on-demand).** The compute-expensive precomputed demo data
   (`.gsplats.zarr.zip`, catalogs) lives in **git-LFS** under
-  `packages/luxar/src/luxar/demos/data/**` — ~237 MB tracked today, dominated by
-  `gsplats_cmu1_pathology` (~330 MB / 3 ch), `gsplats_celegans` (206 MB), and
-  `milky_way_gaia_8m` (143 MB). This does not scale: newer/larger datasets can't
+  `packages/luxar/src/luxar/demos/data/**` — **~468 MB across 32 files today**
+  (re-measured 2026-07-15; the old "~237 MB" was stale — the data nearly doubled),
+  dominated by `gsplats_celegans` (75 MB), `desi_galaxies` (72 MB),
+  `gsplats_cmu1_pathology` (122 MB / 3 ch), `milky_way_gaia_3m` (42 MB), and the
+  `3d_umap_coords_human` parquet (36 MB). (`docs/images/**` adds 42 MB but stays
+  in-repo — see Scope note.) This does not scale: newer/larger datasets can't
   be committed at all, a public repo pays LFS storage+bandwidth limits, the wheel
   already has to `exclude` `demos/data/**` (see R3), and CI risks shipping broken
   LFS *pointer* files. Migrate heavy datasets out of the repo and fetch them on
@@ -170,6 +173,49 @@ to ship after). Sequencing is at the bottom.
     demos at the helper one at a time; (4) `git rm` the migrated files and drop
     their `.gitattributes` LFS globs. Future large datasets land as **new Zenodo
     versions**, with the manifest pinning what each Luxar release expects.
+  - **License audit — DONE (web-verified 2026-07-15).** A gsplat fit / point
+    catalog is a *derived* product (lossy transform, not the raw voxels/pixels),
+    which is broadly redistributable — but "derived" does **not** launder three
+    hazards: ShareAlike, Non-Commercial, and access-gate/no-license. **We only
+    ever redistribute the derived/processed product, never the raw source.** The
+    verified per-dataset verdict splits the datasets into three buckets:
+    - **Bucket 1 — regenerate client-side, NOT on Zenodo:** the ~17 procedural
+      demos (no data file at all) + `dipc_genome` (CPU polyline build, no GPU;
+      already has an auto-download+rebuild fallback). Nothing to migrate.
+    - **Bucket 2 — redistribute the derived product on Zenodo,** but under **three
+      different license stamps** (so a single blanket-licensed record is
+      impossible — group records by license family and pin per-dataset license in
+      the manifest):
+      - *Clean CC0 / CC-BY / public-domain (attribution only):* kidney (CC0),
+        cmu1 (CC0), cryoem/EMDB (CC0), ct_totalsegmentator (CC BY 4.0),
+        milkyway_dust (CC BY 4.0), desi (CC BY 4.0), celegans (CC BY 4.0),
+        organoid + dapi (IDR idr0062, CC BY 4.0), visible_human_head (US public
+        domain — NLM license gate retired Jul 2019), cells3d (skimage), census +
+        multiome UMAP (our derived coords over CC-BY sources).
+      - *CC BY-**SA** (derived product MUST be relicensed CC BY-SA 4.0):*
+        `gsplats_zebrafish` (Zenodo 1211599), `gsplats_opencell_map4` (CZ Biohub,
+        via AWS Open Data registry — SA, not plain CC-BY as once assumed).
+      - *CC BY-**NC** 3.0 IGO (**non-commercial only** + mandatory "ESA/Gaia/DPAC"
+        acknowledgement):* `milky_way_gaia_3m`. Fine for Luxar-as-academic-OSS,
+        but must carry the NC tag + acknowledgement; cannot be labeled "free for
+        any use."
+    - **Bucket 3 — CANNOT redistribute even the derived product → SHIP THE DEMO
+      WITH FETCH-RAW-AND-PROCESS-LOCALLY (not dropped; no data on Zenodo):**
+      - `gsplats_tng_cosmic_web` — IllustrisTNG is access-gated (account + API
+        key) and no license grant exists on authoritative pages (a CC-BY claim was
+        an unverified search artifact); citation-request model only.
+      - `gsplats_acto3d_heart` — repo MIT covers *software only*; the sample data
+        has no license → default all-rights-reserved.
+      - `gsplats_tribolium` — license CONFLICT: the Cell Tracking Challenge origin
+        forbids cloning "or their parts" and requires permission for non-CTC use,
+        while the Zenodo re-host (5270303) is CC BY 4.0 applied by an uploader who
+        may lack authority. Local fetch-and-fit (or seek CTC permission) until
+        resolved.
+      These three total only ~35 MB, so the cost is a GPU-gated first run for
+      those demos, not storage. (Optional: email each source for written
+      redistribution permission, or swap in a redistributable alternative, to
+      promote them into Bucket 2 later.)
+    - Full evidence + source URLs recorded in the license-audit memory.
   - **Scope note:** only *heavy processed datasets* move. Small README/doc images
     (`docs/images/**`) must stay in-repo so GitHub renders them (see R19).
   - **Also here (from R16):** the **64 MB** `luxar-paper`
@@ -196,10 +242,44 @@ to ship after). Sequencing is at the bottom.
   `blending_mode="max"` (#430) — the washout was additive *summation* of the
   self-overlapping spiral (order-independent, so NOT a #24 depth-sorting
   issue), and `max` (brightest-wins) shows each colormap's true hues.
-- **R10 [POST] — Depth sorting for alpha blending** (see detailed item
-  **#24**). Translucent geometry composites in submission order → view-dependent
-  artifacts, visible in any splat/point demo. **DEFERRED post-publication/release**
-  (re-confirmed 2026-07-11; retagged [LAUNCH] → [POST] — not launch-gating).
+- **R10 [LAUNCH] — Depth sorting for alpha blending** (see detailed item
+  **#24** and the full plan in `docs/guides/specs/GSPLAT_DEPTH_SORTING_SPEC.md`).
+  Translucent geometry composites in submission order → view-dependent artifacts.
+  **RE-PROMOTED to pre-release [LAUNCH] (decision 2026-07-15):** correct
+  order-dependent (`normal`-mode) gsplat transparency is now wanted *before*
+  release, both to raise general rendering quality and — the load-bearing reason
+  — to **incorporate "normal" (alpha-over, surface-like) gsplat datasets into the
+  demos/gallery**, which cannot render correctly without it. This pulls three
+  planned phases onto the critical path and adds a demo item (see R10a below):
+  - ✅ **Phase 0** (normal-mode premultiplied alpha) — MERGED (#511, squash
+    `e1e079e6`).
+  - ✅ **Shader-symmetry B9a–c** + native-WebGPU perf validation — MERGED (#523).
+  - ⏳ **Land PR #534** (double-check fixes orphaned by the #532 merge race) and
+    refresh green visual baselines — prerequisite for Phase 1's pixel-identical
+    gate.
+  - ⏳ **Phase-0 product checkpoint (gate, cheap to retire):** confirm `normal`
+    alpha-over actually *looks right* on real HDR microscopy (neuromast, h2afva)
+    before sinking Phase-1 effort. Decision to ship implies "verdict expected
+    yes" — do the explicit look anyway (spec risk register §10 item 2).
+  - ⏳ **Phase 1 — texture-backed splat storage + always-on ordering attribute.**
+    Size **L**, the highest-blast-radius PR of the campaign (4 shader stacks +
+    material system → per-node + pool adapter rebuilt, under a *pixel-identical*
+    merge gate). Land right after a green-baseline refresh; review it like a
+    rendering-engine change, not a refactor (`?dpr=1` pinning; grow-leak probe on
+    native WebGPU).
+  - ⏳ **Phase 2 — SortWorker + sort-at-commit** (M/L). `normal` correct at rest.
+  - ⏳ **Phase 3 — camera-triggered re-sort** (M). The live feature; required for
+    orbit **videos** to look right. If schedule slips, Phase 2 + still-only
+    gallery is a viable fallback.
+  - ⏭️ **Phase 4** (partial texture appends) — optional perf win, stays **[POST]**.
+- **R10a [LAUNCH] — "Normal" (surface-like) gsplat demos + gallery datasets.**
+  New item created by R10's promotion. Once Phase 2/3 land, build one or more
+  demos that showcase `normal`-mode alpha-over gsplats (the realistic, occluding,
+  surface-like look — distinct from the additive/luminous glow the current demos
+  use), with tests. These are strong gallery candidates (R19). **Feeds R17
+  directly:** their fitted datasets are new heavy data — land them to Zenodo from
+  the start rather than growing git-LFS. Gated on R10 Phase 2 (correct at rest);
+  Phase 3 for good orbit captures.
 - **R11 [LAUNCH] — README/landing pass.** ✅ **Mostly done** (2026-07-01):
   audited the quick-start end-to-end — `luxar demo` generates + renders
   flawlessly (10k-pt Lorenz), every documented Python snippet runs, and all
@@ -340,21 +420,33 @@ to ship after). Sequencing is at the bottom.
    with the day-one polish (R8/R9/R10/R11).
 3. **Post the preprint** — R13 ✅ / R14 ✅ / R16 ✅ → bioRxiv → obtain DOI → R4
    (wire citation back into the repo).
-4. **Public-repo readiness** (parallel with the preprint track, before the repo
-   goes public) — first land the in-flight demo work: **R20** (demos quality
-   overhaul, PR #488) and **R21** (new "turnkey three" demos, branch
-   `demos-turnkey-three`); then **R17** (retire git-LFS heavy datasets → Zenodo —
-   fold in R21's new `milkyway_dust`/`dipc` data so the public clone is lean and
-   future large datasets are addable), **R18** (docs content pass + confirm the
-   GitHub Pages site is publicly viewable), **R19** (README refresh + regenerated
-   gallery). Order within the step: **R20/R21 → R17 → R19** (the gallery is
-   captured from the finalized demos, whose inputs live in Zenodo by then); R18
-   is independent and can run any time.
-5. **Cut the release** — R2 (tag + GitHub release) → flip PyPI to live (R3) →
-   announce.
-6. **Post-launch backlog** — R10 (#24 depth sorting), R12, R15, and the
+4. **Engineering spine — depth sorting → new demos** (the engineering long pole,
+   serial): **R10** Phase 1 → Phase 2 → Phase 3 (one PR per phase, `main`
+   shippable after each), then **R10a** (build the normal-mode gsplat demos +
+   fit their datasets). Land **PR #534** and refresh green baselines first. This
+   gates the finalized demo set (R10a's demos + R20/R21's, all done by now) that
+   R19's gallery is captured from.
+5. **Public-repo readiness** (parallel with the preprint track AND the R10 spine,
+   before the repo goes public). **R20** (demos quality overhaul) ✅ MERGED (#488)
+   and **R21** (turnkey-three demos) ✅ MERGED (#496) are done. Remaining:
+   **R17** (retire git-LFS heavy datasets → Zenodo) — **split it**: build the
+   fetch helper + `manifest.json` and migrate the *existing* datasets early (this
+   step, parallel with R10), then **append R10a's new normal-gsplat data as new
+   Zenodo versions** once those demos exist; **R18** (docs content pass + confirm
+   the GitHub Pages site is publicly viewable) — fully independent, run any time;
+   **R19** (README refresh + regenerated gallery) — capture **once**, after R10a's
+   demos exist and R17's fetch path is live (fold in the R11 fresh-machine
+   `make setup-dev` verify). Order within the step: **R17-infra (early) → R10a
+   data → R19**; R18 anytime.
+6. **Cut the release** — final dependabot/branch drain → R1 (`make set-version`)
+   → PR + merge → R2 (`make release-check` → `make release`: tag + GitHub release,
+   fires PyPI OIDC) → flip PyPI live (R3) + extras check on a clean machine →
+   R3-npm one-time bootstrap → flip repo public (confirm R18 Pages live) → release
+   notes from CHANGELOG `[Unreleased]` → announce.
+7. **Post-launch backlog** — R10 Phase 4 (partial appends), R12, R15, and the
    remaining Future/Exploratory items below (incl. #25 advanced LOD
-   refinements).
+   refinements). (#24 depth sorting Phases 1–3 moved *into* the pre-release
+   spine, step 4.)
 
 > Update 2026-07-01: R5/R6 (clean `main`) and the day-one polish R8/R9/R11 have
 > landed (R8 control rail merged #432); R10 (#24 depth sorting) is **deferred
@@ -434,6 +526,27 @@ to ship after). Sequencing is at the bottom.
 >   blind-spot CV / K\* selection (a `cal`-sweep on a few datasets, not run_all).
 > (Harness pinning + Methods paragraph land as a luxar-paper PR.)
 
+> **Decision 2026-07-15 — DEPTH SORTING SHIPS PRE-RELEASE (R10 [POST] → [LAUNCH]).**
+> Correct order-dependent (`normal`-mode) gsplat transparency is now launch-gating,
+> to raise general rendering quality *and* — the load-bearing reason — to
+> incorporate "normal" (alpha-over, surface-like) gsplat datasets into the
+> demos/gallery, which cannot render correctly without it. Effect on the plan:
+> - **New pre-release work** (see R10 / R10a / item #24): depth-sorting Phases 1
+>   (texture storage, high blast radius), 2 (SortWorker), 3 (live re-sort) — all
+>   [LAUNCH]; plus R10a (new normal-mode gsplat demos, gated on Phase 2/3). Phase 0
+>   + shader-symmetry already merged (#511/#523). Phase 4 stays [POST].
+> - **The release now has TWO parallel long poles, not one:** (A) the **preprint**
+>   — author read → bioRxiv → DOI → R4 (external latency, days; start immediately,
+>   finish last); and (B) the **engineering spine** — depth-sorting Phases 1–3 →
+>   R10a demos → (data) R17 → R19 gallery. The cut waits on whichever finishes
+>   last. R18 docs, R17-infra (migrate *existing* data), and R6/R7 hygiene are
+>   cheap parallel filler that should all be green before either long pole lands,
+>   so the cut (step 6) is purely mechanical.
+> - **R17 is split** so it doesn't block the spine: build the fetch helper +
+>   manifest and migrate current datasets early; append R10a's new data as new
+>   Zenodo versions once those demos exist.
+> - Full phased plan + risk register: `docs/guides/specs/GSPLAT_DEPTH_SORTING_SPEC.md`.
+
 ---
 
 ## Infrastructure & Polish
@@ -466,7 +579,7 @@ to ship after). Sequencing is at the bottom.
 
 ## Rendering & Performance (MEDIUM Priority)
 
-24 - **Depth sorting for proper alpha blending** (**deferred post-publication/release**, re-confirmed 2026-07-11 — see R10): Sort transparent geometry (Points, Lines, GSplats) back-to-front per frame so semi-transparent elements composite correctly. Without depth sorting, overlapping translucent primitives blend in submission order rather than depth order, producing incorrect colors and visible artifacts depending on view angle.
+24 - **Depth sorting for proper alpha blending** (**RE-PROMOTED to pre-release [LAUNCH]** 2026-07-15 — see R10): Sort transparent geometry (Points, Lines, GSplats) back-to-front per frame so semi-transparent elements composite correctly. Without depth sorting, overlapping translucent primitives blend in submission order rather than depth order, producing incorrect colors and visible artifacts depending on view angle. Full phased plan (Option 3a — viewer-only, no format change): `docs/guides/specs/GSPLAT_DEPTH_SORTING_SPEC.md`. Status: Phase 0 (normal-mode premultiplied alpha) + shader-symmetry B9a–c MERGED (#511/#523); Phases 1 (texture-backed storage, high blast radius), 2 (SortWorker), 3 (camera-triggered re-sort) remain — all pre-release. Phase 4 (partial appends) stays POST. GSplats-first; Points/Lines sorting symmetry is a documented deferral (spec §8).
 
 22 - ~~**Level-of-Detail (LOD) with PartitionNode**~~: **DONE for release** (code-verified 2026-07-11). Beyond the core (archive item 22-core), the 2026-07 wave shipped: intent-first `--recipe` topologies (flat/stream/levels/tiles/overview/adaptive) with stream ladders on by default, viewport-relative coverage-fraction switching (`sqrt(N_i/N_finest)`, self-calibrating — no threshold knob), Q·e quality stamps + energy-gated upgrade release (`e(k) ≥ 0.6`), the never-downgrade display gate with subtree aggregation and refinement kick, sibling-aware ladders, per-part LOD at fit/merge time (`--recipe` on tiled fits and batch-fit merges), coverage inflation + mass conservation + `--refine l2|volume`, `annotate-quality` retrofitting, and byte-budget VRAM residency (coarse eager levels stay resident; fine lazy levels load on demand and evict off-screen-first under pressure). The advanced refinements formerly listed here were re-verified against the code (2026-07-11: 3 missing, 4 partial) and **demoted to Future/Exploratory item 25** — none is release-gating.
 
