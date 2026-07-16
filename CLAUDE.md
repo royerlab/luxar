@@ -511,6 +511,19 @@ luxar gsplat import garden.splat garden.gsplats.zarr
 luxar gsplat import point_cloud.ply scene.gsplats.zarr --no-reorient
 luxar gsplat import capture.spz capture.gsplats.zarr -e precision
 
+# Export .gsplats.zarr → classical INRIA PLY (opens in SuperSplat/PlayCanvas/
+# gsplat.js). Cholesky → eigh → log-scales + quaternion; --opacity
+# normalized|amplitude|constant maps amplitudes → opacity (normalized default;
+# amplitude = lossless for imported data); --color auto|colors|colormap|white
+# (+ --colormap NAME bakes scalar amplitudes); --sh-degree 0 default (DC only).
+# Import-time orientation is auto-inverted (--keep-orientation to skip); >3D
+# needs --timepoint (slices the LAST stacked dim) or --slice-dim/--slice-index;
+# partitions must be `gsplat flatten`ed first. Distinct from top-level
+# `luxar export` (scene → offline viewer folder).
+luxar gsplat export fit.gsplats.zarr fit.ply --colormap viridis
+luxar gsplat export imported.gsplats.zarr back.ply --opacity amplitude
+luxar gsplat export timelapse.gsplats.zarr t42.ply --timepoint 42
+
 # Migrate legacy .gsplats.zarr layouts (v1.0 / v1.1 / pre-v2.0 substitutive dir / v2.0 matrix /
 # v3.0-v3.1 with pre-v3.2 pixel_size lod selector attrs) → v3.2
 luxar gsplat migrate-format legacy.gsplats.zarr v3.gsplats.zarr               # single file

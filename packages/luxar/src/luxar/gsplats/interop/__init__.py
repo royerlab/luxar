@@ -21,6 +21,10 @@ from luxar.gsplats.interop.classical_splats import (
     read_supersplat_ply,
     rotmat_to_quat,
 )
+from luxar.gsplats.interop.inria_export import (
+    export_inria_ply,
+    gsplat_data_to_inria_ply,
+)
 from luxar.gsplats.interop.tracksdata import (
     gsplats_to_tracksdata_graph,
     splat_mask_and_bbox,
@@ -31,6 +35,8 @@ __all__ = [
     "ClassicalSplats",
     "classical_to_gsplat_data",
     "detect_classical_format",
+    "export_inria_ply",
+    "gsplat_data_to_inria_ply",
     "gsplats_to_tracksdata_graph",
     "import_gsplats",
     "quat_to_rotmat",
