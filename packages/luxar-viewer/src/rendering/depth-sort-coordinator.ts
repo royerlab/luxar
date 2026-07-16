@@ -541,7 +541,13 @@ export function releaseDepthSortNode(mesh: THREE.Mesh): void {
   releaseWorkerNode(nodeId);
 }
 
-/** Drop every node (dataset switch). */
+/**
+ * Drop every node's sort state + all worker-side registrations in one
+ * sweep. Wired to the dataset-switch teardown (`clearLoadedSceneContent`)
+ * ahead of the per-mesh walk — the walk's per-mesh releases then no-op,
+ * and registrations whose mesh was never attached to the scene are
+ * covered too.
+ */
 export function releaseAllDepthSortNodes(): void {
   nodeStates.clear();
   api?.releaseAllNodes().catch(() => {});

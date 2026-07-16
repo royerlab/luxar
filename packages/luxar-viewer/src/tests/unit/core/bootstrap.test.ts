@@ -340,6 +340,25 @@ describe('bootstrapStandalone', () => {
       expect(mocks.init.mock.calls.at(-1)?.[0].pinnedDPR).toBeUndefined();
     });
 
+    it('threads the on-by-default feature flags (lodFade/lodEnergyComp/depthSort) into init()', async () => {
+      // An embedder-supplied urlParams object must control these flags —
+      // the init pipeline reads options, never window.location.
+      await bootstrapStandalone({
+        canvas: CANVAS,
+        urlParams: { ...EMPTY_PARAMS, lodFade: false, lodEnergyComp: false, depthSort: false },
+      });
+      const disabled = mocks.init.mock.calls.at(-1)?.[0];
+      expect(disabled.lodFade).toBe(false);
+      expect(disabled.lodEnergyComp).toBe(false);
+      expect(disabled.depthSort).toBe(false);
+
+      await bootstrapStandalone({ canvas: CANVAS, urlParams: EMPTY_PARAMS });
+      const defaults = mocks.init.mock.calls.at(-1)?.[0];
+      expect(defaults.lodFade).toBe(true);
+      expect(defaults.lodEnergyComp).toBe(true);
+      expect(defaults.depthSort).toBe(true);
+    });
+
     it('does not set perfTimestamp on the init() call when urlParams.perfTimestamp is false', async () => {
       await bootstrapStandalone({
         canvas: CANVAS,

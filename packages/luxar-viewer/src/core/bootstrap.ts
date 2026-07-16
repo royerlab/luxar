@@ -230,6 +230,13 @@ export async function bootstrapStandalone(opts: BootstrapOptions): Promise<Luxar
     // `?dpr=<value>` pins a fixed pixel ratio for deterministic
     // E2E/visual runs; undefined → normal adaptive-DPR behavior.
     pinnedDPR: urlParams.dpr ?? undefined,
+    // On-by-default rendering feature flags (`?no-lod-fade`,
+    // `?no-lod-energy`, `?depthSort=0` disable). Threaded as options so
+    // an embedder-supplied `urlParams` object controls them too — the
+    // init pipeline reads options, never window.location.
+    lodFade: urlParams.lodFade,
+    lodEnergyComp: urlParams.lodEnergyComp,
+    depthSort: urlParams.depthSort,
   };
 
   const app = new LuxarApp();

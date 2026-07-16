@@ -25,7 +25,6 @@ import {
   evaluateDepthSortPerFrame,
 } from '../../../rendering/depth-sort-coordinator';
 import { materialManager } from '../../../rendering';
-import { readUrlParams } from '../../../config/url-params';
 import { resolveFactories, type AppFactories } from '../factories';
 import type { LuxarAppOptions } from '../options';
 import type { EventGroup } from '../../../utils/cross-layer/event-group';
@@ -191,11 +190,12 @@ export async function runInitPipeline(
   // registry DEPS below are per-owner already, so when per-loader
   // callbacks arrive no further wiring changes are needed.)
   // LOD cross-fade is ON by default; ?no-lod-fade disables it. Streaming energy
-  // compensation is ON by default; ?no-lod-energy disables it. Both captured once
-  // at wiring time (a reload re-reads them).
-  const lodUrlParams = readUrlParams();
-  const lodCrossFadeEnabled = lodUrlParams.lodFade;
-  const lodEnergyCompEnabled = lodUrlParams.lodEnergyComp;
+  // compensation is ON by default; ?no-lod-energy disables it. Both come in as
+  // app OPTIONS (the standalone bootstrap threads them from the URL params;
+  // embedders set them directly — the pipeline never reads window.location)
+  // and are captured once at wiring time (a reload re-reads them).
+  const lodCrossFadeEnabled = ports.options.lodFade ?? true;
+  const lodEnergyCompEnabled = ports.options.lodEnergyComp ?? true;
   SceneLoaderManager.getInstance().setLODGroupRegistryFactory((owner) => {
     return new LODGroupRegistry({
       getCamera: () => sceneManager.camera,
@@ -263,7 +263,7 @@ export async function runInitPipeline(
   // camera (SceneLoader deliberately owns no camera state), so the
   // coordinator gets the live camera + render wake-up here — the same
   // dependency-inversion as setRequestRender above.
-  setDepthSortEnabled(config.depthSort.enabled && lodUrlParams.depthSort);
+  setDepthSortEnabled(config.depthSort.enabled && (ports.options.depthSort ?? true));
   configureDepthSort({
     // A live GETTER, not sceneManager.camera captured by value: the
     // ortho-mode toggle replaces the camera object, and sorts must track
