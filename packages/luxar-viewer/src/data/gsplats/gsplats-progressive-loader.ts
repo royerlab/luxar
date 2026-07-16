@@ -28,7 +28,11 @@ import type {
 } from '../../types/data-monitor-types';
 import { ProgressiveMonitorAdapter } from '../loaders/progressive-monitor-adapter';
 import { concatRequiredField } from '../loaders/progressive/concat-helpers';
-import { CACHE_HIT_THRESHOLD_MS } from '../loaders/progressive/constants';
+import {
+  classifyStreamingPass,
+  shouldLoadLevel,
+  shouldStopAfterLevel,
+} from '../loaders/progressive/streaming-policy';
 import { restoreLadder, storeLadder } from '../loaders/progressive/slice-cache-helper';
 import type { SliceCache } from '../../cache/slice-cache';
 import { log, Modules, LogEmoji } from '../../utils/log';
@@ -298,6 +302,15 @@ export class GSplatsProgressiveLoader implements GSplatsDataLoader {
     const budgetDeadline =
       this._frameBudgetMs !== null ? performance.now() + this._frameBudgetMs : null;
 
+    // A background prefetch (shadow) pass only warms the SliceCache — the
+    // SlicePrefetcher discards its return value. So every return below hands
+    // back a cheap empty result instead of running `concatenateMemoized`: that
+    // O(N) main-thread concat is pure waste for the shadow and, as the ladder
+    // deepens across loops, would stall foreground frames.
+    const isPrefetch = viewState.prefetch === true;
+    const finish = (): LoadedGSplatsData =>
+      isPrefetch ? concatenateGSplatsData([]) : this.concatenateMemoized(session);
+
     // Reset if view state changed. Before discarding the ladder, try the
     // SliceCache: a full-ladder snapshot for this exact view lets us restore
     // `loadedLODs` outright (so `hasMoreLODs` reads false and the refinement
@@ -345,7 +358,7 @@ export class GSplatsProgressiveLoader implements GSplatsDataLoader {
         // startLevel = prefix length — within this pass's budget during
         // play, or to completion when idle.
         if (restored.length === this.nLods) {
-          return this.concatenateMemoized(session);
+          return finish();
         }
       }
     }
@@ -356,18 +369,25 @@ export class GSplatsProgressiveLoader implements GSplatsDataLoader {
     // same-view re-invoke (e.g. refine-on-pause's setDimensionValue(current))
     // would re-enter at startLevel=1 and fetch the higher (also-empty) LODs.
     if (this._emptyLadder) {
-      return this.concatenateMemoized(session);
+      return finish();
     }
 
-    // Load LODs sequentially, stopping at first slow (cache-miss) load
+    // Stream the LOD ladder under the shared streaming policy (see
+    // `streaming-policy.ts`): `playback` commits the cached prefix + a LOD-0
+    // first-paint floor and never blocks on fine levels; `prefetch` deepens
+    // toward the full decoded ladder (bounded by the pass budget + abort);
+    // `refine` streams resident levels and stops at the first cold/slow one.
+    const pass = classifyStreamingPass(budgetDeadline !== null, isPrefetch);
     const startLevel = this.loadedLODs.length;
 
     for (let level = startLevel; level < this.nLods; level++) {
-      // Playback frame budget: stop as soon as the tick's time is spent —
-      // whether many fast levels consumed it or one slow level did. Checked
-      // at loop top (skips work known to be over budget); the
-      // `level > startLevel` guard keeps the ≥1-level first-paint floor
-      // even under tiny budgets.
+      if (!shouldLoadLevel(pass, level, startLevel)) {
+        break;
+      }
+      // Frame-budget guard: stop as soon as the pass's time is spent — whether
+      // many fast levels consumed it or one slow level did. The
+      // `level > startLevel` guard keeps the ≥1-level first-paint floor even
+      // under tiny budgets.
       if (budgetDeadline !== null && level > startLevel && performance.now() > budgetDeadline) {
         break;
       }
@@ -399,12 +419,7 @@ export class GSplatsProgressiveLoader implements GSplatsDataLoader {
         break;
       }
 
-      // Stop after a cache miss (this level required a fresh fetch/decode) so
-      // the frame can render; the refinement loop picks up the rest. The
-      // wall-clock budget is kept only as a secondary guard against a huge
-      // resident-but-slow level (GC pause, slow projection, probe gap).
-      // Always load at least LOD 0 (level === startLevel) regardless.
-      if (level > startLevel && (!allResident || elapsed > CACHE_HIT_THRESHOLD_MS)) {
+      if (shouldStopAfterLevel(pass, level, startLevel, allResident, elapsed)) {
         break;
       }
     }
@@ -447,7 +462,7 @@ export class GSplatsProgressiveLoader implements GSplatsDataLoader {
       });
     }
 
-    return this.concatenateMemoized(session);
+    return finish();
   }
 
   /**

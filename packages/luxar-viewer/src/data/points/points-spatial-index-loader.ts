@@ -20,6 +20,7 @@ import {
 } from '../data-loader-types';
 import {
   calculateSpatialQueryTolerance,
+  fallbackQueryTolerance,
   type EffectiveRadiusConfig,
 } from './effective-radius-calculator';
 import {
@@ -836,7 +837,7 @@ export class PointsSpatialIndexLoader implements DataLoader, LoaderMonitor {
       });
     }
 
-    const { slicePosition, tolerance } = viewState;
+    const { slicePosition } = viewState;
     const maxRadius = this.node.attrs.max_radius ?? appConfig.dataLoading.spatial.defaultMaxRadius;
     const fullDim = this.chunkIndex.metadata.ndim;
 
@@ -857,10 +858,11 @@ export class PointsSpatialIndexLoader implements DataLoader, LoaderMonitor {
         `Query tolerance (with discrete awareness): [${queryTolerance.map((t) => t.toFixed(3)).join(', ')}]`
       );
     } else {
-      queryTolerance = new Array<number>(fullDim).fill(0);
-      for (let d = 0; d < fullDim; d++) {
-        queryTolerance[d] = viewState.displayDims.includes(d) ? 1e10 : (tolerance[d] ?? maxRadius);
-      }
+      // No effective-radius config: uniform fallback. Discrete non-spatial dims
+      // use the shared quarter-cell reach (NOT the ride-along tolerance the
+      // SliceCache key drops) so a cache hit can't serve a different-reach
+      // decode. See fallbackQueryTolerance.
+      queryTolerance = fallbackQueryTolerance(viewState, fullDim, maxRadius);
     }
 
     log.query(Modules.SPATIAL_INDEX_LOADER, 'Querying spatial index:');

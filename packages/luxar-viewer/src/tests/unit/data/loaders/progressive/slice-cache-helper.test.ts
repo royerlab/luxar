@@ -170,19 +170,48 @@ describe('slice-cache-helper — prefix ladders', () => {
   });
 });
 
-// Regression (deep-double-check, mutation-killers): the SliceCache key must
-// discriminate on EVERY field of the loaders' viewStatesEqual contract —
-// displayDims, slicePosition, tolerance, AND dimensions. Dropping any one of
-// them from buildSliceViewSig previously survived the whole suite (all
-// cache-wired tests varied only slicePosition), which would let the cache
-// serve geometry loaded under a different view as a hit.
-describe('buildSliceViewSig — key discrimination (one test per field)', () => {
+// The SliceCache key is a CANONICAL projection: it MUST discriminate every
+// field that changes the DECODED SET (slicePosition, displayDims, a
+// non-displayed continuous tolerance, a non-displayed discrete step) and MUST
+// ignore fields that don't (the query-irrelevant discrete ride-along
+// tolerance, displayed-dim metadata, JSON property order) so the same slice
+// keys identically no matter which viewState builder produced it. Getting the
+// "ignore" half wrong is the timelapse-nav regression this fixes: the nav and
+// init builders emit different discrete tolerance / step / key order, so a raw
+// serialization stored each timepoint under two keys and never hit on revisit.
+describe('buildSliceViewSig — canonical key', () => {
+  // 4D: three displayed spatial dims + one non-displayed discrete (time) dim.
   const base = {
     displayDims: [0, 1, 2],
     slicePosition: [0, 0, 0, 7],
-    tolerance: [0, 0, 0, 0.25],
-    dimensions: [{ name: 't', discrete: true, step: 1 }],
+    tolerance: [0, 0, 0, 0.5],
+    dimensions: [
+      { name: 'Z', discrete: false, cyclic: false, step: 1, spatial: true },
+      { name: 'Y', discrete: false, cyclic: false, step: 1, spatial: true },
+      { name: 'X', discrete: false, cyclic: false, step: 1, spatial: true },
+      { name: 'Time', discrete: true, cyclic: false, step: 1, spatial: false },
+    ],
   };
+
+  it('THE FIX: the init-path and nav-path viewStates of the same slice key identically', () => {
+    // Nav builder (dims-to-view-state.ts): discrete tolerance 0.5, step 1.
+    const nav = base;
+    // Init builder (view-state-manager.ts): discrete tolerance 0, displayed
+    // dims carry an absent step, and the metadata objects are built in a
+    // different property order. None of that changes which elements load.
+    const init = {
+      displayDims: [0, 1, 2],
+      slicePosition: [0, 0, 0, 7],
+      tolerance: [0, 0, 0, 0],
+      dimensions: [
+        { name: 'Z', spatial: true, step: undefined, discrete: false, cyclic: false },
+        { name: 'Y', spatial: true, step: undefined, discrete: false, cyclic: false },
+        { name: 'X', spatial: true, step: undefined, discrete: false, cyclic: false },
+        { name: 'Time', spatial: false, step: 1, discrete: true, cyclic: false },
+      ],
+    };
+    expect(buildSliceViewSig(init)).toBe(buildSliceViewSig(nav));
+  });
 
   it('differs when slicePosition differs', () => {
     expect(buildSliceViewSig(base)).not.toBe(
@@ -196,15 +225,34 @@ describe('buildSliceViewSig — key discrimination (one test per field)', () => 
     );
   });
 
-  it('differs when tolerance differs (e.g. extend_to_all widened a dim)', () => {
-    expect(buildSliceViewSig(base)).not.toBe(
-      buildSliceViewSig({ ...base, tolerance: [0, 0, 0, 1e10] })
-    );
+  it('differs when a non-displayed discrete step differs (fetch reach = 0.25×step)', () => {
+    const steppier = {
+      ...base,
+      dimensions: base.dimensions.map((d) => (d.discrete ? { ...d, step: 2 } : d)),
+    };
+    expect(buildSliceViewSig(base)).not.toBe(buildSliceViewSig(steppier));
   });
 
-  it('differs when dimensions metadata differs (executed fetch reach derives from step)', () => {
-    expect(buildSliceViewSig(base)).not.toBe(
-      buildSliceViewSig({ ...base, dimensions: [{ name: 't', discrete: true, step: 2 }] })
+  it('IGNORES the query-irrelevant discrete ride-along tolerance (0 vs 0.5)', () => {
+    // The real query recomputes the discrete reach from step; the tolerance
+    // array only rides along, and the two builders disagree on its value.
+    expect(buildSliceViewSig(base)).toBe(buildSliceViewSig({ ...base, tolerance: [0, 0, 0, 0] }));
+  });
+
+  it('differs when a non-displayed CONTINUOUS dim tolerance differs (extent selects the set)', () => {
+    const cont = {
+      displayDims: [0, 1, 2],
+      slicePosition: [0, 0, 0, 50],
+      tolerance: [0, 0, 0, 100],
+      dimensions: [
+        { spatial: true },
+        { spatial: true },
+        { spatial: true },
+        { name: 'w', discrete: false, spatial: false },
+      ],
+    };
+    expect(buildSliceViewSig(cont)).not.toBe(
+      buildSliceViewSig({ ...cont, tolerance: [0, 0, 0, 200] })
     );
   });
 
