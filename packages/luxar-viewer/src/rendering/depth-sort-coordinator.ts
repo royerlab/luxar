@@ -42,6 +42,7 @@ import type { SortWorkerAPI } from '../workers/sort-worker';
 import { writeSortedIndexOrdering } from './gsplat-geometry';
 import { isNormalMode } from './blending-state';
 import type { BlendingMode } from './material-manager';
+import type { BspTreeNode } from '../types/partition-group';
 import { config } from '../config';
 import type { UpdateProfiler } from '../profiling/update-profiler';
 import { log, Modules } from '../utils/log';
@@ -387,8 +388,95 @@ interface EvaluateScratch {
   mv: THREE.Matrix4;
   axis: THREE.Vector3;
   center: THREE.Vector3;
+  /** Inverse of a partition wrapper's world matrix (camera → wrapper-local). */
+  wrapperInv: THREE.Matrix4;
+  /** Camera position in a partition wrapper's local space (BSP traversal). */
+  eyeLocal: THREE.Vector3;
+  /** Camera world position (source for {@link EvaluateScratch.eyeLocal}). */
+  camPos: THREE.Vector3;
 }
 let scratch: EvaluateScratch | null = null;
+
+/**
+ * Per-frame cache of a partition wrapper's back-to-front part order, keyed by
+ * the wrapper `THREE.Object3D`. Value maps a part index (the leaf `part` /
+ * `child_index`) to its draw RANK — 0 = farthest, drawn first. `null` marks a
+ * wrapper with no usable `bspTree` (→ the centroid fallback). Cleared at the
+ * top of every {@link evaluateDepthSortPerFrame} so it never outlives a frame.
+ */
+const partitionRankCache = new Map<THREE.Object3D, Map<number, number> | null>();
+
+/**
+ * Nearest partition-wrapper ancestor of `mesh` plus the mesh's part index
+ * (the `userData.partIndex` stamped on the wrapper's direct child by
+ * `load-partition-group-node`). Returns `null` when `mesh` is not inside a
+ * partition (a single-leaf gsplat scene) — the caller then uses the centroid
+ * heuristic, a harmless no-op for one mesh.
+ */
+function bspPartOf(mesh: THREE.Object3D): { wrapper: THREE.Object3D; partIndex: number } | null {
+  let child: THREE.Object3D = mesh;
+  for (let o: THREE.Object3D | null = mesh.parent; o; child = o, o = o.parent) {
+    if ((o.userData as { kind?: string }).kind === 'partition') {
+      const partIndex = (child.userData as { partIndex?: number }).partIndex;
+      return partIndex === undefined ? null : { wrapper: o, partIndex };
+    }
+  }
+  return null;
+}
+
+/**
+ * Emit the leaf part indices of a BSP tree in EXACT back-to-front order for an
+ * eye at `eyeLocal` (the parts' own local space). At each split the eye is on
+ * one side of the plane; everything on the far side draws before everything on
+ * the near side (Fuchs–Kedem–Naylor painter's algorithm) — correct for any
+ * camera pose, including inside the volume. `left` holds `coord < split`
+ * (the near side when `eyeLocal[axis] < split`).
+ */
+function traverseBspBackToFront(node: BspTreeNode, eyeLocal: THREE.Vector3, out: number[]): void {
+  if (node.part !== undefined) {
+    out.push(node.part);
+    return;
+  }
+  const eye = node.axis === 0 ? eyeLocal.x : node.axis === 1 ? eyeLocal.y : eyeLocal.z;
+  if (eye < node.split) {
+    // Eye on the small-coord (left) side → left is near, right is far.
+    traverseBspBackToFront(node.right, eyeLocal, out);
+    traverseBspBackToFront(node.left, eyeLocal, out);
+  } else {
+    traverseBspBackToFront(node.left, eyeLocal, out);
+    traverseBspBackToFront(node.right, eyeLocal, out);
+  }
+}
+
+/**
+ * Back-to-front part RANK map for a partition wrapper (memoized per frame in
+ * {@link partitionRankCache}). Transforms the camera into the wrapper's local
+ * space once, traverses its `bspTree`, and numbers the resulting order
+ * (0 = farthest). Returns `null` for a wrapper without a stored tree.
+ */
+function wrapperPartRanks(
+  wrapper: THREE.Object3D,
+  camPos: THREE.Vector3,
+  s: EvaluateScratch
+): Map<number, number> | null {
+  const cached = partitionRankCache.get(wrapper);
+  if (cached !== undefined) return cached;
+
+  const tree = (wrapper.userData as { bspTree?: BspTreeNode }).bspTree;
+  if (!tree) {
+    partitionRankCache.set(wrapper, null);
+    return null;
+  }
+  wrapper.updateWorldMatrix(true, false);
+  s.wrapperInv.copy(wrapper.matrixWorld).invert();
+  s.eyeLocal.copy(camPos).applyMatrix4(s.wrapperInv);
+  const order: number[] = [];
+  traverseBspBackToFront(tree, s.eyeLocal, order);
+  const ranks = new Map<number, number>();
+  for (let rank = 0; rank < order.length; rank++) ranks.set(order[rank], rank);
+  partitionRankCache.set(wrapper, ranks);
+  return ranks;
+}
 
 /**
  * True when the mesh AND all its ancestors are visible. `mesh.visible`
@@ -433,6 +521,10 @@ function isEffectivelyVisible(mesh: THREE.Object3D): boolean {
  * nodes whose live mode is no longer order-dependent.
  */
 export function evaluateDepthSortPerFrame(): void {
+  // Drop the previous frame's per-wrapper rank memo FIRST — before any
+  // early-return — so a disposed/dataset-switched frame can't leave the
+  // module-scoped cache holding stale partition-wrapper subtrees alive.
+  partitionRankCache.clear();
   if (!depthSortEnabled || !api || nodeStates.size === 0) return;
   const camera = getCamera?.();
   if (!camera) return;
@@ -444,6 +536,9 @@ export function evaluateDepthSortPerFrame(): void {
       mv: new THREE.Matrix4(),
       axis: new THREE.Vector3(),
       center: new THREE.Vector3(),
+      wrapperInv: new THREE.Matrix4(),
+      eyeLocal: new THREE.Vector3(),
+      camPos: new THREE.Vector3(),
     };
   }
   const cosThreshold = Math.cos((config.depthSort.angleThresholdDeg * Math.PI) / 180);
@@ -470,6 +565,7 @@ export function evaluateDepthSortPerFrame(): void {
       // nothing changed.
       camera.updateMatrixWorld();
       scratch.view.copy(camera.matrixWorld).invert();
+      scratch.camPos.setFromMatrixPosition(camera.matrixWorld);
       viewComputed = true;
     }
 
@@ -480,19 +576,23 @@ export function evaluateDepthSortPerFrame(): void {
     // MESHES by their matrixWorld origin — but every gsplat part shares the
     // world origin (splat centers are baked into the geometry), so THREE's
     // per-object sort key is identical for all parts and they draw in fixed
-    // creation order, NOT back-to-front. Give THREE a real signal: set each
-    // normal-mode mesh's renderOrder to its CONTENT centroid's view-space z
-    // (the geometry bounding-sphere center through the model-view matrix).
-    // THREE sorts transparent objects by renderOrder before z, ascending, so
-    // the farthest part (most-negative view z) draws first → correct
-    // alpha-over across parts. Per-object (centroid) ordering: exact for
-    // disjoint convex cells, approximate only where splat footprints spill
-    // across a tile boundary (a single-leaf scene has one mesh and needs no
-    // cross-mesh order — this is a harmless no-op there). Updated every frame
-    // (cheap: one matrix-vector), independent of the within-mesh re-sort
-    // hysteresis below.
+    // creation order, NOT back-to-front. Give THREE a real signal via
+    // renderOrder (compared before z, ascending → lowest drawn first).
+    //
+    // For a BSP partition the parts are the leaf cells of a kd-tree, so the
+    // stored split planes (`bspTree`) yield the EXACT back-to-front order by a
+    // single traversal (Fuchs–Kedem–Naylor) — correct for any camera pose,
+    // including inside the volume. Each part gets its painter's-order RANK
+    // (0 = farthest). Otherwise — a single-leaf scene (one mesh, no cross-mesh
+    // order needed) or a legacy partition with no stored tree — fall back to
+    // the part's content-centroid view-space z (an approximation that
+    // degenerates when the camera is inside, which the BSP path fixes).
     const bs = (mesh.geometry as THREE.BufferGeometry | undefined)?.boundingSphere;
-    if (bs) {
+    const part = bspPartOf(mesh);
+    const ranks = part ? wrapperPartRanks(part.wrapper, scratch.camPos, scratch) : null;
+    if (part && ranks) {
+      mesh.renderOrder = ranks.get(part.partIndex) ?? 0;
+    } else if (bs) {
       scratch.center.copy(bs.center).applyMatrix4(scratch.mv);
       mesh.renderOrder = scratch.center.z;
     }

@@ -39,7 +39,8 @@ This module hosts:
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, List, Union
+from dataclasses import dataclass
+from typing import TYPE_CHECKING, Any, Dict, Iterator, List, Optional, Union
 
 import numpy as np
 from arbol import aprint
@@ -63,6 +64,282 @@ PartitionSpec = Union[None, bool, dict]
 #: a single tile is still a comfortable WebGL batch, small enough that
 #: partitioning is worth it for the 10M+ node sizes the feature targets.
 DEFAULT_MAX_ELEMENTS: int = 1_000_000
+
+
+# ────────────────────────────────────────────────────────────────────────
+# BSP tree — the recursion structure (split planes) the splitters produce
+# ────────────────────────────────────────────────────────────────────────
+
+
+@dataclass
+class BSPNode:
+    """A node of the recursive BSP the spatial splitters build.
+
+    An **internal** node carries the split plane it applied: ``axis`` (one of
+    the first-3 spatial axes, ``0``/``1``/``2``) and the ``split`` coordinate
+    (in the positions' own coordinate space), plus its two children. A
+    **leaf** carries the index array of the elements it contains. The split
+    convention matches the splitters exactly: the ``left`` subtree holds
+    ``coord < split`` and ``right`` holds ``coord >= split``.
+
+    The tree is the split-plane record needed for an exact, camera-position-
+    safe back-to-front (painter's) ordering of the leaf parts in the viewer:
+    at each node the eye is on one side of ``split`` and everything on the far
+    side draws before everything on the near side (Fuchs–Kedem–Naylor).
+    """
+
+    # Leaf payload (``None`` on internal nodes).
+    indices: Optional[NDArray[np.intp]] = None
+    # Internal split (``None`` on leaves).
+    axis: Optional[int] = None
+    split: Optional[float] = None
+    left: Optional["BSPNode"] = None
+    right: Optional["BSPNode"] = None
+
+    @property
+    def is_leaf(self) -> bool:
+        return self.left is None and self.right is None
+
+    def leaves(self) -> Iterator["BSPNode"]:
+        """Yield leaf nodes in left-first DFS order.
+
+        This is the SAME order the flat splitters append parts in (they
+        ``recurse(left); recurse(right)``), so leaf *k* here corresponds to
+        flat part *k* — the numbering the serialized tree's ``"part"`` refs and
+        the on-disk ``child_index`` both use.
+        """
+        if self.is_leaf:
+            yield self
+        else:
+            assert self.left is not None and self.right is not None
+            yield from self.left.leaves()
+            yield from self.right.leaves()
+
+    def to_serializable(self) -> Dict[str, Any]:
+        """Serialize to a JSON/zarr-attr-friendly nested dict.
+
+        Leaves are numbered in :meth:`leaves` order (``0, 1, 2, …``) so each
+        leaf's ``"part"`` index lines up with the flat parts list and the
+        on-disk ``part_<i>`` / ``child_index``. Internal nodes emit
+        ``{"axis", "split", "left", "right"}``.
+        """
+        counter = [0]
+
+        def build(node: "BSPNode") -> Dict[str, Any]:
+            if node.is_leaf:
+                part = counter[0]
+                counter[0] += 1
+                return {"part": part}
+            assert node.axis is not None and node.split is not None
+            assert node.left is not None and node.right is not None
+            return {
+                "axis": int(node.axis),
+                "split": float(node.split),
+                "left": build(node.left),
+                "right": build(node.right),
+            }
+
+        return build(self)
+
+
+def _bsp_tree_median(
+    spatial: NDArray, max_elements: int, indices: NDArray[np.intp]
+) -> BSPNode:
+    """Median-split BSP tree recursion (see :func:`median_bsp_partition`)."""
+    if indices.size <= max_elements:
+        return BSPNode(indices=indices)
+    sub = spatial[indices]
+    mins = sub.min(axis=0)
+    maxs = sub.max(axis=0)
+    extents = maxs - mins
+    axis = int(np.argmax(extents))
+    if extents[axis] == 0:
+        return BSPNode(indices=indices)
+    coords = sub[:, axis]
+    median = float(np.median(coords))
+    left_mask = coords < median
+    left = indices[left_mask]
+    right = indices[~left_mask]
+    split = median
+    if left.size == 0 or right.size == 0:
+        order = np.argsort(coords, kind="stable")
+        half = indices.size // 2
+        left = indices[order[:half]]
+        right = indices[order[half:]]
+        # The plane that separates the two rank-bisected halves (the first
+        # right element's coordinate); ties at it fall in ``left``, so the
+        # ``left < split`` convention holds up to coincident coordinates.
+        split = float(coords[order[half]])
+    return BSPNode(
+        axis=axis,
+        split=split,
+        left=_bsp_tree_median(spatial, max_elements, left),
+        right=_bsp_tree_median(spatial, max_elements, right),
+    )
+
+
+def _bsp_tree_midpoint(
+    spatial: NDArray, max_elements: int, indices: NDArray[np.intp]
+) -> BSPNode:
+    """Midpoint-split BSP tree recursion (see :func:`midpoint_bsp_partition`)."""
+    if indices.size <= max_elements:
+        return BSPNode(indices=indices)
+    sub = spatial[indices]
+    mins = sub.min(axis=0)
+    maxs = sub.max(axis=0)
+    extents = maxs - mins
+    axis = int(np.argmax(extents))
+    if extents[axis] == 0:
+        return BSPNode(indices=indices)
+    mid = float((mins[axis] + maxs[axis]) * 0.5)
+    coords = sub[:, axis]
+    left_mask = coords < mid
+    left = indices[left_mask]
+    right = indices[~left_mask]
+    split = mid
+    if left.size == 0 or right.size == 0:
+        order = np.argsort(coords, kind="stable")
+        half = indices.size // 2
+        left = indices[order[:half]]
+        right = indices[order[half:]]
+        split = float(coords[order[half]])
+    return BSPNode(
+        axis=axis,
+        split=split,
+        left=_bsp_tree_midpoint(spatial, max_elements, left),
+        right=_bsp_tree_midpoint(spatial, max_elements, right),
+    )
+
+
+def _bsp_tree_sah(
+    spatial: NDArray,
+    max_elements: int,
+    indices: NDArray[np.intp],
+    n_candidates: int,
+) -> BSPNode:
+    """SAH-split BSP tree recursion (see :func:`sah_bsp_partition`)."""
+
+    def surface_area(mins: NDArray, maxs: NDArray) -> float:
+        ext = np.maximum(0.0, maxs - mins)
+        return float(2.0 * (ext[0] * ext[1] + ext[0] * ext[2] + ext[1] * ext[2]))
+
+    if indices.size <= max_elements:
+        return BSPNode(indices=indices)
+    sub = spatial[indices]
+    mins = sub.min(axis=0)
+    maxs = sub.max(axis=0)
+    extents = maxs - mins
+    if not np.any(extents > 0):
+        return BSPNode(indices=indices)
+
+    best_score = np.inf
+    best_axis = -1
+    best_pos = 0.0
+    for axis in range(3):
+        if extents[axis] == 0:
+            continue
+        cand = np.linspace(mins[axis], maxs[axis], n_candidates + 2)[1:-1]
+        for pos in cand:
+            left_mask = sub[:, axis] < pos
+            n_left = int(left_mask.sum())
+            n_right = int(indices.size - n_left)
+            if n_left == 0 or n_right == 0:
+                continue
+            left_mins = mins.copy()
+            left_maxs = maxs.copy()
+            left_maxs[axis] = pos
+            right_mins = mins.copy()
+            right_maxs = maxs.copy()
+            right_mins[axis] = pos
+            score = n_left * surface_area(left_mins, left_maxs) + n_right * surface_area(
+                right_mins, right_maxs
+            )
+            if score < best_score:
+                best_score = score
+                best_axis = axis
+                best_pos = float(pos)
+
+    if best_axis < 0:
+        return BSPNode(indices=indices)
+
+    coords = sub[:, best_axis]
+    left_mask = coords < best_pos
+    left = indices[left_mask]
+    right = indices[~left_mask]
+    split = best_pos
+    if left.size == 0 or right.size == 0:
+        order = np.argsort(coords, kind="stable")
+        half = indices.size // 2
+        left = indices[order[:half]]
+        right = indices[order[half:]]
+        split = float(coords[order[half]])
+    return BSPNode(
+        axis=best_axis,
+        split=split,
+        left=_bsp_tree_sah(spatial, max_elements, left, n_candidates),
+        right=_bsp_tree_sah(spatial, max_elements, right, n_candidates),
+    )
+
+
+def spatial_bsp_tree(
+    positions: NDArray,
+    max_elements: int,
+    *,
+    rule: str = "median",
+    n_candidates: int = 32,
+) -> BSPNode:
+    """Build the BSP **tree** (split planes retained) for ``positions``.
+
+    The tree sibling of the three flat splitters: its :meth:`BSPNode.leaves`
+    (left-first DFS) yield exactly the parts (and in the same order) the
+    matching ``*_bsp_partition`` returns, but every internal node also records
+    the split ``axis``/``split`` — the information a viewer needs for an exact
+    back-to-front ordering of the parts. ``rule`` selects the splitter
+    (``"median"`` default / ``"midpoint"`` / ``"sah"``); ``n_candidates`` is
+    forwarded to the SAH rule only.
+
+    Splits only ever fall on one of the first three (spatial) axes, so a
+    serialized tree's ``axis`` is always ``0``/``1``/``2`` — directly
+    comparable in the viewer's 3D local space.
+    """
+    if positions.ndim != 2:
+        raise ValueError(f"positions must be 2-D (N, d); got shape {positions.shape}")
+    if positions.shape[1] < 3:
+        raise ValueError(
+            "spatial_bsp_tree needs at least 3 spatial dimensions; "
+            f"got positions with shape {positions.shape}"
+        )
+    if max_elements < 1:
+        raise ValueError(f"max_elements must be >= 1, got {max_elements}")
+
+    n = positions.shape[0]
+    if n == 0:
+        raise ValueError("spatial_bsp_tree needs a non-empty positions array")
+
+    spatial = positions[:, :3]
+    root = np.arange(n, dtype=np.intp)
+    if rule == "median":
+        return _bsp_tree_median(spatial, max_elements, root)
+    if rule == "midpoint":
+        return _bsp_tree_midpoint(spatial, max_elements, root)
+    if rule == "sah":
+        if n_candidates < 2:
+            raise ValueError(
+                f"n_candidates must be >= 2 (need at least one interior split); "
+                f"got {n_candidates}"
+            )
+        return _bsp_tree_sah(spatial, max_elements, root, n_candidates)
+    raise ValueError(f"rule must be 'median', 'midpoint', or 'sah'; got {rule!r}")
+
+
+def _flat_parts(root: BSPNode) -> List[NDArray[np.intp]]:
+    """Flatten a BSP tree to the leaf index-arrays list (the ``*_bsp_partition``
+    return shape), in :meth:`BSPNode.leaves` order."""
+    parts: List[NDArray[np.intp]] = []
+    for leaf in root.leaves():
+        assert leaf.indices is not None
+        parts.append(leaf.indices)
+    return parts
 
 
 def warn_if_oversized_single_part(
@@ -133,44 +410,11 @@ def midpoint_bsp_partition(
     if n == 0:
         return []
 
-    # Work over the first 3 spatial dims only (the rest ride along).
+    # Work over the first 3 spatial dims only (the rest ride along). The tree
+    # builder is the single source of truth; the flat list is its leaves in
+    # left-first DFS order (see :func:`spatial_bsp_tree` / :class:`BSPNode`).
     spatial = positions[:, :3]
-
-    result: List[NDArray[np.intp]] = []
-
-    def recurse(indices: NDArray[np.intp]) -> None:
-        if indices.size <= max_elements:
-            result.append(indices)
-            return
-        sub = spatial[indices]
-        mins = sub.min(axis=0)
-        maxs = sub.max(axis=0)
-        extents = maxs - mins
-        axis = int(np.argmax(extents))
-        if extents[axis] == 0:
-            # Every element coincides on every spatial axis — splitting
-            # cannot make progress. Emit as one (oversized) part and let
-            # the caller decide whether to surface a warning.
-            result.append(indices)
-            return
-        mid = (mins[axis] + maxs[axis]) * 0.5
-        left_mask = sub[:, axis] < mid
-        left = indices[left_mask]
-        right = indices[~left_mask]
-        # Degenerate partition (everything on one side because of equality
-        # at the midpoint): force a single-element move so we make progress.
-        if left.size == 0 or right.size == 0:
-            half = indices.size // 2
-            # Stable: re-sort by the split axis and split at the midpoint
-            # of the sorted array. O(n log n) for this edge case only.
-            order = np.argsort(sub[:, axis], kind="stable")
-            left = indices[order[:half]]
-            right = indices[order[half:]]
-        recurse(left)
-        recurse(right)
-
-    recurse(np.arange(n, dtype=np.intp))
-    return result
+    return _flat_parts(_bsp_tree_midpoint(spatial, max_elements, np.arange(n, dtype=np.intp)))
 
 
 # ────────────────────────────────────────────────────────────────────────
@@ -227,40 +471,10 @@ def median_bsp_partition(
     if n == 0:
         return []
 
+    # The tree builder is the single source of truth; the flat list is its
+    # leaves in left-first DFS order (see :func:`spatial_bsp_tree`).
     spatial = positions[:, :3]
-
-    result: List[NDArray[np.intp]] = []
-
-    def recurse(indices: NDArray[np.intp]) -> None:
-        if indices.size <= max_elements:
-            result.append(indices)
-            return
-        sub = spatial[indices]
-        mins = sub.min(axis=0)
-        maxs = sub.max(axis=0)
-        extents = maxs - mins
-        axis = int(np.argmax(extents))
-        if extents[axis] == 0:
-            # All elements coincide spatially — no split makes progress.
-            result.append(indices)
-            return
-        coords = sub[:, axis]
-        median = float(np.median(coords))
-        left_mask = coords < median
-        left = indices[left_mask]
-        right = indices[~left_mask]
-        # All coordinates equal to (or above) the median — the ``<`` test
-        # put everything on the right. Fall back to a stable count-bisection.
-        if left.size == 0 or right.size == 0:
-            order = np.argsort(coords, kind="stable")
-            half = indices.size // 2
-            left = indices[order[:half]]
-            right = indices[order[half:]]
-        recurse(left)
-        recurse(right)
-
-    recurse(np.arange(n, dtype=np.intp))
-    return result
+    return _flat_parts(_bsp_tree_median(spatial, max_elements, np.arange(n, dtype=np.intp)))
 
 
 # ────────────────────────────────────────────────────────────────────────
@@ -501,79 +715,12 @@ def sah_bsp_partition(
     if n == 0:
         return []
 
+    # The tree builder is the single source of truth; the flat list is its
+    # leaves in left-first DFS order (see :func:`spatial_bsp_tree`).
     spatial = positions[:, :3]
-
-    def surface_area(mins: NDArray, maxs: NDArray) -> float:
-        ext = np.maximum(0.0, maxs - mins)
-        # 2*(xy + xz + yz) — half-surface-area also works (constant
-        # factor washes through the argmin), but full SA matches the
-        # textbook form.
-        return float(2.0 * (ext[0] * ext[1] + ext[0] * ext[2] + ext[1] * ext[2]))
-
-    result: List[NDArray[np.intp]] = []
-
-    def recurse(indices: NDArray[np.intp]) -> None:
-        if indices.size <= max_elements:
-            result.append(indices)
-            return
-        sub = spatial[indices]
-        mins = sub.min(axis=0)
-        maxs = sub.max(axis=0)
-        extents = maxs - mins
-        if not np.any(extents > 0):
-            result.append(indices)
-            return
-
-        best_score = np.inf
-        best_axis = -1
-        best_pos = 0.0
-        for axis in range(3):
-            if extents[axis] == 0:
-                continue
-            # Uniform candidate positions strictly interior to the box.
-            cand = np.linspace(mins[axis], maxs[axis], n_candidates + 2)[1:-1]
-            for pos in cand:
-                left_mask = sub[:, axis] < pos
-                n_left = int(left_mask.sum())
-                n_right = int(indices.size - n_left)
-                if n_left == 0 or n_right == 0:
-                    continue
-                # Left/right boxes have the same extent on the
-                # non-split axes; on the split axis they shrink to
-                # [mins[axis], pos] and [pos, maxs[axis]] respectively.
-                left_mins = mins.copy()
-                left_maxs = maxs.copy()
-                left_maxs[axis] = pos
-                right_mins = mins.copy()
-                right_maxs = maxs.copy()
-                right_mins[axis] = pos
-                score = n_left * surface_area(
-                    left_mins, left_maxs
-                ) + n_right * surface_area(right_mins, right_maxs)
-                if score < best_score:
-                    best_score = score
-                    best_axis = axis
-                    best_pos = float(pos)
-
-        if best_axis < 0:
-            # No interior split made progress — emit as one part.
-            result.append(indices)
-            return
-
-        left_mask = sub[:, best_axis] < best_pos
-        left = indices[left_mask]
-        right = indices[~left_mask]
-        if left.size == 0 or right.size == 0:
-            # Shouldn't happen given the SAH selection, but guard.
-            order = np.argsort(sub[:, best_axis], kind="stable")
-            half = indices.size // 2
-            left = indices[order[:half]]
-            right = indices[order[half:]]
-        recurse(left)
-        recurse(right)
-
-    recurse(np.arange(n, dtype=np.intp))
-    return result
+    return _flat_parts(
+        _bsp_tree_sah(spatial, max_elements, np.arange(n, dtype=np.intp), n_candidates)
+    )
 
 
 # ────────────────────────────────────────────────────────────────────────

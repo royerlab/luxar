@@ -100,6 +100,33 @@ function makeCamera(): THREE.PerspectiveCamera {
   return camera;
 }
 
+/** A camera parked at a world position (identity rotation) for BSP tests. */
+function cameraAt(x: number, y: number, z: number): THREE.PerspectiveCamera {
+  const camera = new THREE.PerspectiveCamera();
+  camera.position.set(x, y, z);
+  camera.updateMatrixWorld();
+  camera.matrixWorldInverse.copy(camera.matrixWorld).invert();
+  return camera;
+}
+
+/**
+ * Wrap `parts` in a kind=partition `THREE.Group` carrying `bspTree`, tagging
+ * each part with its `partIndex` — exactly what `load-partition-group-node`
+ * stamps at load. Parts stay at the wrapper's (identity) local space, so the
+ * BSP `split` coordinates are directly comparable to the camera position.
+ */
+function makePartitionWrapper(bspTree: unknown, parts: THREE.Mesh[]): THREE.Group {
+  const wrapper = new THREE.Group();
+  wrapper.userData.kind = 'partition';
+  wrapper.userData.bspTree = bspTree;
+  parts.forEach((mesh, i) => {
+    mesh.userData.partIndex = i;
+    wrapper.add(mesh);
+  });
+  wrapper.updateMatrixWorld(true);
+  return wrapper;
+}
+
 /** Drain microtasks so ensureWorker → registerNode → scheduleSort settles. */
 async function flush(): Promise<void> {
   for (let i = 0; i < 10; i++) await Promise.resolve();
@@ -301,14 +328,71 @@ describe('depth-sort coordinator', () => {
     expect(Array.from(attrB.array as Uint32Array)).toEqual([1, 0]); // applied
   });
 
-  it('sets per-part renderOrder to the content-centroid view depth (back-to-front across meshes)', async () => {
-    // Partition parts all share the world origin (splat centers baked into the
-    // geometry), so THREE's per-object transparent sort — keyed on the mesh
-    // matrixWorld origin — gives every part the SAME key and draws them in
-    // fixed creation order, not back-to-front. The scheduler must instead set
-    // each normal-mode mesh's renderOrder to its bounding-sphere-center view
-    // depth so THREE orders the parts correctly. Camera is at the origin
-    // looking down −z, so view ≈ identity and renderOrder ≈ center.z.
+  it('orders BSP-partition parts back-to-front from the stored split planes (camera outside)', async () => {
+    // Partition parts share the world origin (splat centers baked in), so
+    // THREE's per-object transparent sort gives every part the SAME key and
+    // draws them in creation order. With a stored bspTree the coordinator
+    // instead assigns each part its EXACT painter's-order rank (0 = farthest).
+    // Tree: three splits on x (axis 0) → 4 leaf cells left→right along x.
+    const bspTree = {
+      axis: 0,
+      split: 0,
+      left: { axis: 0, split: -50, left: { part: 0 }, right: { part: 1 } },
+      right: { axis: 0, split: 50, left: { part: 2 }, right: { part: 3 } },
+    };
+    const coord = await loadCoordinator();
+    // Camera far out on +x: the x>=50 cell (part 3) is nearest, x<-50 (part 0)
+    // farthest → ranks must be [0, 1, 2, 3] left→right.
+    coord.configureDepthSort({ getCamera: () => cameraAt(1000, 0, 0), requestRender: vi.fn() });
+
+    const parts = [0, 1, 2, 3].map(() => makeGSplatsMesh(2, 'normal'));
+    makePartitionWrapper(bspTree, parts);
+    for (const m of parts) coord.noteGSplatsCommit(m, new Float32Array([0, 0, -1, 1, 0, -2]), 2);
+    await flush();
+
+    coord.evaluateDepthSortPerFrame();
+
+    // renderOrder == painter's rank; THREE draws transparent objects by
+    // renderOrder ASCENDING, so rank 0 (x<-50, farthest) draws first.
+    expect(parts.map((m) => m.renderOrder)).toEqual([0, 1, 2, 3]);
+  });
+
+  it('orders BSP-partition parts correctly with the camera INSIDE the volume (centroid fails here)', async () => {
+    // The camera-inside case the per-part centroid heuristic gets wrong: parts
+    // spread perpendicular to the view axis all share ~the same centroid
+    // view-z (→ a THREE tie → creation order), and a part can sit behind the
+    // camera (positive view-z). The BSP traversal uses the split geometry, not
+    // a projected centroid, so it stays exact from any interior viewpoint.
+    const bspTree = {
+      axis: 0,
+      split: 0,
+      left: { axis: 0, split: -50, left: { part: 0 }, right: { part: 1 } },
+      right: { axis: 0, split: 50, left: { part: 2 }, right: { part: 3 } },
+    };
+    const coord = await loadCoordinator();
+    // Camera at x=+25 — INSIDE the x∈[-100,100] span, between the inner splits.
+    // Far side of x=0 is the left branch (drawn first); within the near (right)
+    // branch, x>=50 (part 3) is farther than 0<=x<50 (part 2). Correct
+    // back-to-front leaf order = part0, part1, part3, part2.
+    coord.configureDepthSort({ getCamera: () => cameraAt(25, 0, 0), requestRender: vi.fn() });
+
+    const parts = [0, 1, 2, 3].map(() => makeGSplatsMesh(2, 'normal'));
+    makePartitionWrapper(bspTree, parts);
+    for (const m of parts) coord.noteGSplatsCommit(m, new Float32Array([0, 0, -1, 1, 0, -2]), 2);
+    await flush();
+
+    coord.evaluateDepthSortPerFrame();
+
+    // ranks: part0→0, part1→1, part3→2, part2→3.
+    expect(parts.map((m) => m.renderOrder)).toEqual([0, 1, 3, 2]);
+  });
+
+  it('falls back to content-centroid view depth when a mesh has no BSP tree (single leaf / legacy)', async () => {
+    // A single-leaf scene (no partition wrapper) or a legacy partition with no
+    // stored bspTree: each normal-mode mesh's renderOrder is its
+    // bounding-sphere-center view-space z. Camera at the origin looking −z, so
+    // view ≈ identity and renderOrder ≈ center.z. Exact for disjoint convex
+    // cells, degrades only where footprints spill / the camera is inside.
     const coord = await loadCoordinator();
     coord.configureDepthSort({ getCamera: () => makeCamera(), requestRender: vi.fn() });
 
@@ -318,7 +402,7 @@ describe('depth-sort coordinator', () => {
     near.geometry.boundingSphere!.center.set(0, 0, -10);
     mid.geometry.boundingSphere!.center.set(0, 0, -20);
     far.geometry.boundingSphere!.center.set(0, 0, -30);
-    // Insertion order deliberately NOT depth order — the fix must reorder.
+    // Insertion order deliberately NOT depth order — the fallback must reorder.
     coord.noteGSplatsCommit(mid, new Float32Array([0, 0, -1, 1, 0, -2]), 2);
     coord.noteGSplatsCommit(far, new Float32Array([0, 0, -1, 1, 0, -2]), 2);
     coord.noteGSplatsCommit(near, new Float32Array([0, 0, -1, 1, 0, -2]), 2);
@@ -326,12 +410,9 @@ describe('depth-sort coordinator', () => {
 
     coord.evaluateDepthSortPerFrame();
 
-    // renderOrder == the centroid's view-space z (more negative = farther).
     expect(near.renderOrder).toBeCloseTo(-10, 3);
     expect(mid.renderOrder).toBeCloseTo(-20, 3);
     expect(far.renderOrder).toBeCloseTo(-30, 3);
-    // THREE draws transparent objects by renderOrder ASCENDING, so the draw
-    // order is far → mid → near = strictly back-to-front.
     const drawOrder = [near, mid, far].slice().sort((a, b) => a.renderOrder - b.renderOrder);
     expect(drawOrder).toEqual([far, mid, near]);
   });

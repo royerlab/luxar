@@ -90,6 +90,88 @@ def test_spatial_partition_validates_max_elements():
         _clustered(5).to_spatial_partition(max_elements=0)
 
 
+def _bsp_leaf_order(tree: dict) -> list[int]:
+    """Leaf `part` refs of a serialized bsp_tree in left-first DFS order."""
+    out: list[int] = []
+
+    def walk(node: dict) -> None:
+        if "part" in node:
+            out.append(node["part"])
+        else:
+            walk(node["left"])
+            walk(node["right"])
+
+    walk(tree)
+    return out
+
+
+def test_spatial_partition_emits_bsp_tree_and_is_plane_consistent():
+    """`to_spatial_partition` records the BSP split planes (`bsp_tree`): its
+    leaves reference every part exactly once (in child_index order), and each
+    internal split cleanly separates its subtrees (left coords < split <=
+    right coords) — the invariant the viewer's exact back-to-front order relies
+    on."""
+    rng = np.random.default_rng(3)
+    n = 400
+    centers = (rng.random((n, 3)) * 100).astype(np.float32)
+    chol = np.zeros((n, 6), dtype=np.float32)
+    chol[:, [0, 2, 5]] = 1.0
+    data = GSplatData(
+        centers=centers,
+        amplitudes=np.ones(n, dtype=np.float32),
+        cholesky_factors=chol,
+    )
+    part = data.to_spatial_partition(max_elements=60, rule="median")
+    tree = part.bsp_tree
+    assert tree is not None, "bsp_tree must be recorded"
+
+    # Leaves reference each part once, in child_index (DFS) order.
+    leaves = list(iter_leaves(part))
+    assert _bsp_leaf_order(tree) == list(range(len(leaves)))
+
+    # Split axes are spatial (0/1/2) — comparable in the viewer's 3D space.
+    part_centers = {i: leaf.additive_sublods[0].centers for i, leaf in enumerate(leaves)}
+
+    def parts_under(node: dict) -> list[int]:
+        if "part" in node:
+            return [node["part"]]
+        return parts_under(node["left"]) + parts_under(node["right"])
+
+    def check(node: dict) -> None:
+        if "part" in node:
+            return
+        ax = node["axis"]
+        assert ax in (0, 1, 2)
+        sp = node["split"]
+        left_coords = np.concatenate([part_centers[p][:, ax] for p in parts_under(node["left"])])
+        right_coords = np.concatenate([part_centers[p][:, ax] for p in parts_under(node["right"])])
+        # left holds coord < split; right holds coord >= split (ties → left).
+        assert left_coords.max() <= sp + 1e-4
+        assert right_coords.min() >= sp - 1e-4
+        check(node["left"])
+        check(node["right"])
+
+    check(tree)
+
+
+def test_spatial_partition_bsp_tree_round_trips_on_disk():
+    data = _clustered(40)
+    with tempfile.TemporaryDirectory() as tmp:
+        p = Path(tmp) / "part.gsplats.zarr"
+        src = data.to_spatial_partition(max_elements=40)
+        write_gsplats_tree(p, src, ordering="none", encoding_mode=EncodingMode.PRECISION)
+        root = zarr.open_group(str(p), mode="r")
+        assert "bsp_tree" in root.attrs
+        # Same leaf→part structure survives the write.
+        assert _bsp_leaf_order(dict(root.attrs["bsp_tree"])) == _bsp_leaf_order(src.bsp_tree)
+        # And read_gsplat_node restores it onto the in-memory node (disk→node),
+        # the path the scene graft depends on.
+        node = read_gsplat_node(root, root)
+        assert isinstance(node, GSplatPartition)
+        assert node.bsp_tree is not None
+        assert _bsp_leaf_order(node.bsp_tree) == _bsp_leaf_order(src.bsp_tree)
+
+
 def test_gsplat_info_handles_partition_file():
     """`gsplat info` must report a partition file's tree shape, not crash
     (GSplatData.load raises on a non-matrix tree — decision 5 gap)."""
@@ -143,6 +225,11 @@ def test_partition_file_grafts_into_a_scene():
             for d in range(len(part_pb["min"])):
                 assert wrapper_pb["min"][d] <= part_pb["min"][d]
                 assert wrapper_pb["max"][d] >= part_pb["max"][d]
+        # The BSP split planes must survive the graft (disk→node→scene) so the
+        # viewer keeps exact back-to-front part ordering — the graft used to
+        # drop everything but max_elements/position_bounds.
+        assert "bsp_tree" in root.attrs, "grafted partition wrapper lost bsp_tree"
+        assert _bsp_leaf_order(dict(root.attrs["bsp_tree"])) == list(range(n_parts))
 
 
 def test_grafting_a_partition_rejects_dim_order():

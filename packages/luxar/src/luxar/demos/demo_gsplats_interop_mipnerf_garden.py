@@ -4,24 +4,26 @@
 Downloads the iconic Mip-NeRF 360 *garden* scene — a table with a potted plant
 in a lush backyard, the de-facto "hello world" of 3D Gaussian Splatting — as an
 antimatter15 ``.splat`` file and imports it into Luxar. At ~5 M splats it uses
-the ``stream`` recipe: a SINGLE leaf with a progressive additive ladder (fast
-first paint) rather than a spatial partition.
+the ``tiles`` recipe: a spatial BSP partition (per-tile frustum culling + a
+per-tile streaming ladder for fast first paint).
 
 ================================================================================
-CLASSICAL GAUSSIAN SPLATS (.splat) → LUXAR, SINGLE-LEAF FOR CORRECT DEPTH ORDER
+CLASSICAL GAUSSIAN SPLATS (.splat) → LUXAR, TILED PARTITION (BSP-ORDERED)
 ================================================================================
 
 The antimatter15 ``.splat`` format is flat 32-byte records (position, linear
 scale, RGBA, quantized rotation). Luxar imports it, then `gsplat lod --recipe
-stream` (here via the Python engine) builds one leaf + a streaming ladder.
+tiles` (here via the Python engine) builds a spatial BSP partition, each tile
+with its own additive streaming ladder.
 
-Why one leaf, not tiles: these surface-like captures render in ``normal``
-(alpha-over) mode, which is order-DEPENDENT. Depth sorting orders splats within
-a mesh; a spatial partition would be multiple meshes, so splats straddling two
-tiles' shared boundary composite wrong (THREE only sorts the tiles by centroid,
-not per-splat). A single leaf is one mesh → one global per-splat depth sort →
-correct compositing with no tile-boundary seams. (Frustum culling is traded
-away, but a whole-scene surface capture is viewed in full anyway.)
+These surface-like captures render in ``normal`` (alpha-over) mode, which is
+order-DEPENDENT. Depth sorting orders splats WITHIN a tile; the tiles themselves
+draw back-to-front via the partition's stored BSP split planes (``bsp_tree``) —
+an EXACT painter's-algorithm order the viewer computes by traversing the tree,
+correct even with the camera inside the volume. Only splats straddling a shared
+tile boundary can still interleave (per-object ordering can't resolve that);
+the BSP tiling keeps those cuts clean. Tiling buys back per-tile frustum culling
+a single leaf gives up.
 
 DATA SOURCE & CITATION
 ----------------------
@@ -67,6 +69,11 @@ SCENES = {
     "bicycle": {"file": "bicycle.splat", "size": 196_222_528},
 }
 
+# Per-tile splat cap for the `tiles` BSP partition. ~5 M splats → a handful of
+# tiles — few enough that per-tile frustum culling helps, coarse enough that the
+# BSP back-to-front tile order stays cheap.
+MAX_ELEMENTS_PER_TILE = 1_000_000
+
 FLAGS = parse_demo_flags()
 Arbol.max_depth = 5
 
@@ -99,16 +106,17 @@ def build_scene(scene_key: str = "garden") -> Path:
         expected_size=spec["size"],
     )
     cache_file = src.with_suffix(".gsplats.zarr")
-    # ~5 M splats in ONE leaf (+ a progressive additive ladder for fast first
-    # paint). Single-leaf so the whole scene is one mesh → one global per-splat
-    # depth sort → correct alpha-over with no tile-boundary seams (see the
-    # module docstring). The ladder streams; the full leaf sorts async off the
-    # main thread on camera moves.
+    # ~5 M splats as a spatial BSP partition (a few tiles under the per-tile
+    # cap), each tile carrying a progressive additive ladder for fast first
+    # paint. The partition stores its BSP split planes so the viewer orders the
+    # tiles back-to-front EXACTLY (see the module docstring); splats WITHIN a
+    # tile sort async off the main thread on camera moves.
     build_gsplats_cache(
         src,
         cache_file,
-        recipe="stream",
+        recipe="tiles",
         recompute=FLAGS["recompute"],
+        max_elements=MAX_ELEMENTS_PER_TILE,
         n_lods=6,
     )
     out = get_demos_output_dir() / f"gsplats_interop_mipnerf_{scene_key}.luxar.zarr"

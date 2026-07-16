@@ -176,4 +176,47 @@ describe('loadPartitionGroupNode', () => {
     expect(wrapper.children).toHaveLength(0);
     expect(loadSceneNodesMock).not.toHaveBeenCalled();
   });
+
+  it('stashes bsp_tree on the wrapper and tags each part with its child_index', async () => {
+    // The depth-sort coordinator reads `userData.bspTree` off the wrapper and
+    // `userData.partIndex` off each part object to map a `bsp_tree` leaf back
+    // to its render mesh for exact back-to-front ordering.
+    attachStubChildren();
+    const ctx = makeCtx();
+    const bspTree = { axis: 0, split: 0, left: { part: 0 }, right: { part: 1 } };
+    const parts = [
+      { ...makePartNode('/partition/part_0'), attrs: { type: 'points', child_index: 0 } },
+      { ...makePartNode('/partition/part_1'), attrs: { type: 'points', child_index: 1 } },
+    ] as SceneNode[];
+    const node = makePartitionGroupNode(parts, { bsp_tree: bspTree });
+
+    const wrapper = await loadPartitionGroupNode(
+      node,
+      new THREE.Group(),
+      makeStubLoc(),
+      ctx,
+      loadSceneNodesMock
+    );
+
+    expect(wrapper.userData.bspTree).toEqual(bspTree);
+    expect(wrapper.children.map((c) => c.userData.partIndex)).toEqual([0, 1]);
+  });
+
+  it('leaves bspTree undefined when the partition has no stored tree (fallback path)', async () => {
+    attachStubChildren();
+    const ctx = makeCtx();
+    const node = makePartitionGroupNode([makePartNode('/partition/part_0')]);
+
+    const wrapper = await loadPartitionGroupNode(
+      node,
+      new THREE.Group(),
+      makeStubLoc(),
+      ctx,
+      loadSceneNodesMock
+    );
+
+    expect(wrapper.userData.bspTree).toBeUndefined();
+    // Still tagged by load order (child_index absent → falls back to index).
+    expect(wrapper.children[0].userData.partIndex).toBe(0);
+  });
 });

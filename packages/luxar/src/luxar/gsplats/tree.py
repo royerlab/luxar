@@ -177,11 +177,22 @@ class GSplatPartition:
 
     Each child is a spatial part; ``max_elements`` records the BSP target used
     to build the partition.
+
+    ``bsp_tree`` (optional) is the serialized split-plane record of the BSP
+    that produced the parts — a nested ``{"axis", "split", "left", "right"}`` /
+    leaf ``{"part": i}`` dict (see :meth:`luxar.core.group.partition.BSPNode.
+    to_serializable`). When present it is written to the ``kind=partition``
+    group's attrs so the viewer can order the parts back-to-front exactly
+    (painter's algorithm), correct even with the camera inside the volume.
+    ``None`` when the parts did not come from a single BSP split (e.g. a
+    streamed grid/content merge) — the viewer then falls back to a centroid
+    heuristic.
     """
 
     children: "List[GSplatNode]"
     max_elements: int = 0
     meta: Dict[str, Any] = field(default_factory=dict)
+    bsp_tree: Optional[Dict[str, Any]] = None
 
     def __post_init__(self) -> None:
         if not self.children:

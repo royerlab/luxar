@@ -876,16 +876,16 @@ class GSplatData(RenderMixin, IOAdapterMixin, FilteringMixin, CullingMixin):
         A multi-LOD input is flattened to its default substitutive level first
         (BSP partitions a single splat set), matching :meth:`partition`.
         """
-        from luxar.core.group.partition import (
-            median_bsp_partition,
-            midpoint_bsp_partition,
-            sah_bsp_partition,
-        )
+        from luxar.core.group.partition import spatial_bsp_tree
 
         from .tree import GSplatLeaf, GSplatPartition
 
         if max_elements < 1:
             raise ValueError(f"max_elements must be >= 1, got {max_elements}")
+        if rule not in ("median", "midpoint", "sah"):
+            raise ValueError(
+                f"rule must be 'median', 'midpoint', or 'sah'; got {rule!r}"
+            )
 
         src: GSplatData = self
         if self.n_substitutive > 1 or self.n_additive_sublods > 1:
@@ -901,18 +901,15 @@ class GSplatData(RenderMixin, IOAdapterMixin, FilteringMixin, CullingMixin):
             src = self.flattened()
 
         centers = np.asarray(src.centers)
-        if rule == "median":
-            parts = median_bsp_partition(centers, max_elements)
-        elif rule == "midpoint":
-            parts = midpoint_bsp_partition(centers, max_elements)
-        elif rule == "sah":
-            parts = sah_bsp_partition(centers, max_elements)
-        else:
-            raise ValueError(
-                f"rule must be 'median', 'midpoint', or 'sah'; got {rule!r}"
-            )
+        # Build the BSP TREE (retains split planes), then read its leaves in
+        # left-first DFS order as the parts. The serialized tree rides along on
+        # the partition so the viewer can order parts back-to-front exactly
+        # (see GSplatPartition.bsp_tree); leaf part index k == child index k.
+        tree = spatial_bsp_tree(centers, max_elements, rule=rule)
+        parts = [leaf.indices for leaf in tree.leaves()]
         children: List["GSplatNode"] = []
         for idx in parts:
+            assert idx is not None
             children.append(
                 GSplatLeaf(
                     additive_sublods=[
@@ -926,7 +923,11 @@ class GSplatData(RenderMixin, IOAdapterMixin, FilteringMixin, CullingMixin):
                     ]
                 )
             )
-        return GSplatPartition(children=children, max_elements=max_elements)
+        return GSplatPartition(
+            children=children,
+            max_elements=max_elements,
+            bsp_tree=tree.to_serializable(),
+        )
 
     @staticmethod
     def partition_from_regions(

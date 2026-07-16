@@ -291,6 +291,9 @@ def build_tiles(
         children=children,
         max_elements=partition.max_elements,
         meta=dict(partition.meta),
+        # Per-part ladders preserve child order + count, so the BSP tree's
+        # leaf→part-index mapping still holds — carry it for viewer ordering.
+        bsp_tree=partition.bsp_tree,
     )
 
 
@@ -388,6 +391,9 @@ def build_adaptive(data: GSplatData, params: RecipeParams) -> GSplatPartition:
         children=children,
         max_elements=partition.max_elements,
         meta=dict(partition.meta),
+        # Per-part lod groups preserve child order + count — carry the BSP
+        # tree's leaf→part-index mapping for viewer back-to-front ordering.
+        bsp_tree=partition.bsp_tree,
     )
 
 
