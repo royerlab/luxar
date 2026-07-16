@@ -542,6 +542,53 @@ describe('LinesSpatialIndexLoader', () => {
       });
     });
 
+    // ────────────────────────────────────────────────────────────────
+    // Dataset-switch race: dispose() lands while loadLines' vertex
+    // reads are in flight. Pre-fix this dereferenced the nulled
+    // `_accumulator` after the awaits and the scene-loader retry path
+    // logged it as a FAILURE. The load must instead bail as a
+    // cancellation (DOMException name 'AbortError'). Symmetric block
+    // in the gsplats loader tests.
+    describe('dispose during in-flight load (dataset-switch race)', () => {
+      it('rejects with AbortError, not a TypeError', async () => {
+        const viewState: ViewState = {
+          displayDims: [0, 1, 2],
+          slicePosition: [0, 0, 0],
+          tolerance: [0, 0, 0],
+        };
+
+        // Gate the VERTEX-side reads; bounds + segment reads stay fast
+        // so the load reaches the accumulator awaits.
+        let releaseReads!: () => void;
+        const gate = new Promise<void>((resolve) => {
+          releaseReads = resolve;
+        });
+        const baseGet = zarr.get as unknown as ReturnType<typeof vi.fn>;
+        const realImpl = baseGet.getMockImplementation() as (
+          array: unknown,
+          slices?: unknown
+        ) => Promise<unknown>;
+        baseGet.mockImplementation(async (array: unknown, slices?: unknown) => {
+          const result = await realImpl(array, slices);
+          if (
+            array !== vertexBoundsArray &&
+            array !== segmentBoundsArray &&
+            array !== mockArrays.segments
+          ) {
+            await gate;
+          }
+          return result;
+        });
+
+        const pending = bodyLoader.loadLines(viewState);
+        await new Promise((r) => setTimeout(r, 10));
+        bodyLoader.dispose();
+        releaseReads();
+
+        await expect(pending).rejects.toMatchObject({ name: 'AbortError' });
+      });
+    });
+
     describe('data loading (segment-first path)', () => {
       // Lines-specific: Points and gsplats project nD → 3D directly
       // inside the loader. Lines instead does segment indices → unique

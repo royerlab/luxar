@@ -498,6 +498,19 @@ luxar gsplat lod in.gsplats.zarr out.gsplats.zarr --recipe levels --coarsen-dims
 # fills the screen and coarser levels step in as it shrinks (the viewer anchors to
 # the live viewport, so it self-calibrates on any monitor — no threshold knob).
 
+# Import classical (photogrammetric) Gaussian-splat files → .gsplats.zarr.
+# Dialects (auto-sniffed): INRIA point_cloud.ply, antimatter15 .splat,
+# Niantic/Scaniverse .spz (legacy gzip v1-3), SuperSplat compressed .ply.
+# SH color is reduced to the DC band (baked per-splat RGB); opacity → amplitudes.
+# Orientation: Y-down dialects get a 180°-about-X fix by default (SPZ is already
+# Y-up and is left alone); --no-reorient / --flip override. Result is a normal
+# single-leaf .gsplats.zarr — pipe through `gsplat lod` / `gsplat convert`.
+# Python: `from luxar.gsplats.interop import import_gsplats` (→ GSplatData), or
+# one-line scene embed: scene.add_gsplats_from_file("garden", "garden.splat").
+luxar gsplat import garden.splat garden.gsplats.zarr
+luxar gsplat import point_cloud.ply scene.gsplats.zarr --no-reorient
+luxar gsplat import capture.spz capture.gsplats.zarr -e precision
+
 # Migrate legacy .gsplats.zarr layouts (v1.0 / v1.1 / pre-v2.0 substitutive dir / v2.0 matrix /
 # v3.0-v3.1 with pre-v3.2 pixel_size lod selector attrs) → v3.2
 luxar gsplat migrate-format legacy.gsplats.zarr v3.gsplats.zarr               # single file

@@ -26,6 +26,7 @@ import {
   splatTexelCapacity,
   writeSplatTexels,
   writeSortedIndexIdentity,
+  writeSortedIndexOrdering,
   type SplatTexelSource,
 } from '../../../rendering/gsplat-geometry';
 import { GPUBufferPool } from '../../../rendering/gpu-buffer-pool';
@@ -167,6 +168,25 @@ describe('attachSplatStorage / writeSplatTexels — fused writer round-trip', ()
     expect(attr.updateRanges[0].count).toBe(10); // union of both writes
     const arr = attr.array as Uint32Array;
     for (let i = 0; i < 10; i++) expect(arr[i]).toBe(i);
+  });
+
+  it('writeSortedIndexOrdering clamps to ordering AND attribute lengths', () => {
+    const geometry = new THREE.InstancedBufferGeometry();
+    attachSplatStorage(geometry, 8);
+    // ordering shorter than count: writes only ordering.length entries.
+    let n = writeSortedIndexOrdering(geometry, new Uint32Array([3, 1]), 5);
+    expect(n).toBe(2);
+    const arr = geometry.getAttribute('aSortedIndex').array as Uint32Array;
+    expect(arr[0]).toBe(3);
+    expect(arr[1]).toBe(1);
+    // ordering longer than the attribute: clamps to the attribute.
+    const long = new Uint32Array(32).fill(7);
+    n = writeSortedIndexOrdering(geometry, long, 32);
+    expect(n).toBe(arr.length);
+    // Update ranges stay a single collapsed prefix across mixed writes.
+    const attr = geometry.getAttribute('aSortedIndex') as THREE.InstancedBufferAttribute;
+    expect(attr.updateRanges.length).toBe(1);
+    expect(attr.updateRanges[0].start).toBe(0);
   });
 
   it('disposes the texture WITH the geometry (structural lifetime pin)', () => {

@@ -17,6 +17,7 @@ from .gsplat_ops.batch_commands import app_batch
 from .gsplat_ops.benchmark import register_benchmark_commands
 from .gsplat_ops.fitting import register_fitting_commands
 from .gsplat_ops.inspect_commands import register_inspect_commands
+from .gsplat_ops.interchange_commands import register_interchange_commands
 from .gsplat_ops.scene_commands import register_scene_commands
 from .gsplat_ops.transforms_commands import register_transforms_commands
 from .lod import register_lod_command
@@ -41,6 +42,7 @@ app_gsplat = typer.Typer(
 register_fitting_commands(app_gsplat)  # fit, cal, render, denoise
 register_lod_command(app_gsplat)  # lod
 register_scene_commands(app_gsplat)  # convert, migrate-format
+register_interchange_commands(app_gsplat)  # import (classical splat formats)
 register_inspect_commands(app_gsplat)  # info, view, napari, compare
 register_transforms_commands(
     app_gsplat
