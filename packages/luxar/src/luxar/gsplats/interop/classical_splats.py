@@ -721,23 +721,25 @@ def _robust_cholesky(sigma: np.ndarray) -> np.ndarray:
     except np.linalg.LinAlgError:
         pass
 
-    n = sigma.shape[0]
-    out = np.empty_like(sigma)
-    # Vectorized retry on the (usually tiny) failing subset.
-    ok = np.ones(n, dtype=bool)
-    for i in range(n):
-        try:
-            out[i] = np.linalg.cholesky(sigma[i])
-        except np.linalg.LinAlgError:
-            ok[i] = False
-    if not np.all(ok):
-        bad = np.flatnonzero(~ok)
-        eigvals, eigvecs = np.linalg.eigh(sigma[bad])
-        floor = max(np.abs(eigvals).max() * 1e-9, 1e-14)
-        eigvals = np.maximum(eigvals, floor)
-        fixed = eigvecs @ (eigvals[..., None] * np.swapaxes(eigvecs, -2, -1))
-        out[bad] = np.linalg.cholesky(fixed)
-    return out
+    # Fully vectorized detect-and-repair (no per-splat Python loop, so a single
+    # degenerate splat among millions doesn't drop the whole import to O(N)
+    # scalar LAPACK calls). Batch eigvalsh finds the non-PD subset; only those
+    # get their eigenvalues floored and recomposed via batch eigh.
+    eigvals_all = np.linalg.eigvalsh(sigma)  # ascending per splat
+    scale = np.maximum(np.abs(eigvals_all[:, -1]), 1e-14)
+    floor = scale * 1e-9  # per-splat relative floor
+    bad = eigvals_all[:, 0] < floor
+    if not np.any(bad):
+        # PD everywhere but the batch call still failed (rare numerical noise) —
+        # symmetrize and retry once.
+        sym = (sigma + np.swapaxes(sigma, -2, -1)) / 2.0
+        return np.linalg.cholesky(sym)
+
+    fixed = sigma.copy()
+    eigvals, eigvecs = np.linalg.eigh(sigma[bad])
+    eigvals = np.maximum(eigvals, floor[bad, None])
+    fixed[bad] = eigvecs @ (eigvals[..., None] * np.swapaxes(eigvecs, -2, -1))
+    return np.linalg.cholesky(fixed)
 
 
 def classical_to_gsplat_data(
