@@ -2055,4 +2055,113 @@ describe('MultiLevelCachingStore', () => {
       expect(zattrsUrls.some((u) => u.includes('//.zattrs'))).toBe(false);
     });
   });
+
+  describe('background L2 write queue', () => {
+    // Gate the mock's chunk (ArrayBuffer) writes so a test can prove the
+    // foreground get() does NOT wait on the OPFS write. Metadata (string)
+    // writes are left ungated.
+    function installChunkWriteGate(m: ReturnType<typeof createMocks>) {
+      let resolve: (() => void) | null = null;
+      let gate: Promise<void> | null = null;
+      const dir = m.mockDirHandle;
+      const origGetFileHandle = dir.getFileHandle.bind(dir);
+      dir.getFileHandle = async (name: string, opts?: { create?: boolean }) => {
+        const handle = await origGetFileHandle(name, opts);
+        const origCreateWritable = handle.createWritable.bind(handle);
+        handle.createWritable = async () => {
+          const w = await origCreateWritable();
+          const origWrite = w.write.bind(w);
+          w.write = async (data: ArrayBuffer | string) => {
+            if (typeof data !== 'string' && gate) await gate;
+            return origWrite(data);
+          };
+          return w;
+        };
+        return handle;
+      };
+      return {
+        open() {
+          gate = new Promise<void>((r) => {
+            resolve = r;
+          });
+        },
+        release() {
+          resolve?.();
+          gate = null;
+        },
+      };
+    }
+
+    it('does not block get() on the L2 write, then persists it in the background', async () => {
+      const gate = installChunkWriteGate(mocks);
+      gate.open();
+      const before = mocks.files.size;
+
+      // Must resolve even though the chunk write is gated shut — proving the
+      // durable OPFS write is off the get() critical path.
+      const data = await store.get('chunk.0.0');
+      expect(data).toBeInstanceOf(Uint8Array);
+
+      // Write is deferred: nothing persisted yet, but it is queued/in-flight.
+      expect(mocks.files.size).toBe(before);
+      const q = store.getStats().l2WriteQueue;
+      expect(q.inFlight + q.depth).toBeGreaterThanOrEqual(1);
+      expect(store.getStats().l2.writes).toBe(0);
+
+      // Release + drain → the background write lands.
+      gate.release();
+      await (
+        store as unknown as { l2WriteQueue: { drain: () => Promise<void> } }
+      ).l2WriteQueue.drain();
+      await new Promise((r) => setTimeout(r, 0));
+
+      expect(mocks.files.size).toBeGreaterThan(before);
+      expect(store.getStats().l2.writes).toBeGreaterThanOrEqual(1);
+    });
+
+    it('clearL2 synchronously drops queued (not-yet-started) writes', async () => {
+      const s = new MultiLevelCachingStore('https://example.com/data.zarr', {
+        l1MaxSize: 20 * 1024 * 1024,
+        l2MaxSize: 4096,
+        opfsWriteConcurrency: 1, // one slot → the 2nd write stays pending
+        opfsWriteQueueMax: 100,
+      });
+      await s.init();
+      s.clearL1();
+
+      const l2 = (s as unknown as { l2Store: OPFSStore }).l2Store;
+      const setSpy = vi.spyOn(l2, 'set');
+
+      const gate = installChunkWriteGate(mocks);
+      gate.open();
+
+      await s.get('chunk.a'); // occupies the single slot (write gated, in-flight)
+      await s.get('chunk.b'); // no slot free → pending in the queue
+      expect(s.getStats().l2WriteQueue.depth).toBe(1);
+
+      // clearL2's synchronous prefix bumps the epoch and empties the queue.
+      const clearP = s.clearL2();
+      expect(s.getStats().l2WriteQueue.depth).toBe(0);
+
+      gate.release();
+      await clearP;
+      await (s as unknown as { l2WriteQueue: { drain: () => Promise<void> } }).l2WriteQueue.drain();
+
+      // 'chunk.b' was dropped before it ever reached l2Store.set; 'chunk.a'
+      // (already in flight) did reach it.
+      const setKeys = setSpy.mock.calls.map((c) => c[0]);
+      expect(setKeys).toContain('chunk.a');
+      expect(setKeys).not.toContain('chunk.b');
+
+      await s.dispose();
+    });
+
+    it('dispose() drops queued writes and resolves without hanging', async () => {
+      // A normal (ungated) get enqueues a write; dispose must drain/clear
+      // cleanly. Exercises the dispose→clear(queue)→l2Store.dispose ordering.
+      await store.get('chunk.z');
+      await expect(store.dispose()).resolves.toBeUndefined();
+      expect(store.getStats().l2WriteQueue.depth).toBe(0);
+    });
+  });
 });
