@@ -720,10 +720,17 @@ export class SceneLoader {
     // resolvePassWaiters runs). Resolve-only, never reject (matches dispose()).
     if (this._disposed) return;
 
-    // A foreground pass always preempts the background t+1 shadow prefetch
-    // (both branches below): the shadow pass is strictly lower priority and
-    // must never compete with a real tick for fetch slots or CPU.
-    this._slicePrefetcher?.abortInFlight();
+    // Foreground passes deliberately do NOT abort the background slice
+    // prefetch. The foreground now commits from the SliceCache without
+    // decoding fine levels (the progressive loaders' `playback` streaming
+    // policy), so the shadow deepen must survive across ticks: a cold LOD
+    // level outlives one frame, and a per-tick abort would never let it
+    // complete + cache a level — playback quality could then never climb
+    // across loops. The shadow runs on its own loader instances (own
+    // accumulator + signal), decodes on the worker pool, and only writes the
+    // shared SliceCache under content-keyed entries, so it cannot corrupt or
+    // stall a foreground tick. It is torn down on playback end
+    // (`releasePrefetchResources`) and on dispose.
 
     // SERIALIZATION: If an update is already in progress, queue this one and return
     if (this._updateInProgress) {
