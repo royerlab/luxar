@@ -59,6 +59,36 @@ Tests generate miniature files of every dialect on the fly
 (`tests/_synthetic.py`) and assert reader parity plus covariance fidelity
 through the full read → convert → save → load pipeline.
 
+## Classical splat export (INRIA PLY)
+
+`inria_export.py` is the inverse: a `.gsplats.zarr` becomes a
+`point_cloud.ply` that SuperSplat/PlayCanvas/gsplat.js/antimatter15 load
+directly. Packed Cholesky factors are eigendecomposed back to log-scales +
+rotation quaternions (det-corrected; eigenvalues floored so degenerate splats
+stay finite).
+
+```bash
+luxar gsplat export fit.gsplats.zarr fit.ply --colormap viridis   # microscopy → classical viewers
+luxar gsplat export imported.gsplats.zarr back.ply --opacity amplitude
+luxar gsplat export timelapse.gsplats.zarr t42.ply --timepoint 42
+```
+
+- **Opacity policy** (`--opacity`): `normalized` (default — robust 99.5th-pct
+  rescale of unbounded amplitudes into (0, 1)), `amplitude` (clip raw values;
+  lossless for data that came from `gsplat import`), `constant`.
+- **Color precedence** (`--color auto`): per-splat colors → `--colormap`
+  baked from normalized amplitudes → white. Inverted to the SH DC band.
+- **SH**: degree 0 by default (DC only); `--sh-degree N` emits zero-filled
+  `f_rest` bands for viewers that insist on the full layout.
+- **Orientation**: the import-time orientation recorded in `stats["interop"]`
+  is inverted by default, so import → export round-trips exactly in the
+  source frame (`--keep-orientation` to stay in the Luxar frame). Note this
+  requires loading with `include_stats=True` (the file-level API does).
+- **nD**: strictly-3D output — `--timepoint N` slices the last (stacked)
+  dimension, `--slice-dim/--slice-index` any other; 1D/2D data is embedded
+  with a tiny isotropic sigma. Partitions must be `gsplat flatten`ed first.
+- The CLI read-back-verifies every export with our own INRIA reader.
+
 ## tracksdata bridge
 
 [`tracksdata`](https://github.com/royerlab/tracksdata) is the Royer-lab common
