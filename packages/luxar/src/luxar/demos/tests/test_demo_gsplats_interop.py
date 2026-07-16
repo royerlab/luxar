@@ -13,6 +13,7 @@ import sys
 from pathlib import Path
 
 import pytest
+import zarr
 
 from luxar.demos._interop_common import build_gsplats_cache, build_interop_scene
 from luxar.gsplats.gsplat_data import GSplatData
@@ -20,6 +21,13 @@ from luxar.gsplats.interop.tests._synthetic import (
     make_ground_truth,
     write_antimatter_splat,
 )
+
+
+def _find_gsplats_blending_mode(scene_path: Path, layer_name: str) -> str | None:
+    """Return the ``blending_mode`` attr stored on a scene's gsplats layer node."""
+    root = zarr.open_group(str(scene_path), mode="r")
+    return dict(root[layer_name].attrs).get("blending_mode")
+
 
 _DEMOS_DIR = Path(__file__).resolve().parents[1]
 
@@ -94,6 +102,26 @@ class TestInteropCommon:
         data = GSplatData.load(cache)
         assert data.n_splats == 64
         assert data.colors is not None
+
+    def test_scene_uses_normal_blending_mode(
+        self, splat_fixture: Path, tmp_path: Path
+    ) -> None:
+        # R10a-critical invariant: classical/photogrammetric captures are
+        # surface-like and MUST composite via ``normal`` (alpha-over) blending,
+        # which only renders correctly once depth sorting is on. If a refactor
+        # silently reverted this to additive glow the demos would look wrong,
+        # so pin it explicitly (the config smoke tests never check the scene).
+        cache = build_gsplats_cache(
+            splat_fixture, tmp_path / "s.gsplats.zarr", recipe="stream", n_lods=2
+        )
+        scene = build_interop_scene(
+            cache,
+            tmp_path / "scene.luxar.zarr",
+            title="t",
+            layer_name="lizard",
+            credit="c",
+        )
+        assert _find_gsplats_blending_mode(scene, "lizard") == "normal"
 
 
 class TestDemoConfig:
