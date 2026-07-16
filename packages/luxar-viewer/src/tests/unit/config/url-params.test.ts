@@ -20,6 +20,7 @@ describe('readUrlParams', () => {
       lodFade: true, // LOD cross-fade is ON by default (opt-out via ?no-lod-fade)
       lodEnergyComp: true, // streaming brightness compensation is ON (opt-out via ?no-lod-energy)
       depthSort: true, // gsplat depth sorting is ON by default (opt-out via ?depthSort=0)
+      lodFinest: false, // capture-quality force-finest is OFF by default (opt-in via ?lod-finest)
       noPrefetch: false,
       prefetchDebug: false,
       cacheStats: false,
@@ -55,6 +56,12 @@ describe('readUrlParams', () => {
     expect(readUrlParams('?depthSort=0').depthSort).toBe(false);
     expect(readUrlParams('?depthSort=false').depthSort).toBe(false);
     expect(readUrlParams('?depthSort=OFF').depthSort).toBe(false);
+  });
+
+  it('lodFinest defaults OFF and is enabled only by ?lod-finest', () => {
+    expect(readUrlParams('').lodFinest).toBe(false);
+    expect(readUrlParams('?debug').lodFinest).toBe(false);
+    expect(readUrlParams('?lod-finest').lodFinest).toBe(true);
   });
 
   it('parses dpr as a positive float, rejecting zero/negative/non-numeric', () => {
