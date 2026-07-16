@@ -30,7 +30,7 @@ Scientific visualization is often software-limited. Luxar changes this by separa
 
 - **Python** compiles your data into optimized Zarr archives
 - **WebGL** renders at GPU speeds in any browser
-- **Result**: Performance limited only by your graphics card, not software
+- **Result**: rendering is GPU-bound, not application-bound — real-world speed scales with your graphics card (headless software-GL, with no GPU, is the slow exception)
 
 ### Key Capabilities
 
@@ -53,6 +53,7 @@ Scientific visualization is often software-limited. Luxar changes this by separa
 
 - Python 3.10+ (usually pre-installed on Linux/macOS)
 - Modern browser with WebGL 2.0
+- **Gaussian-splat _fitting_** also needs an NVIDIA **CUDA GPU** (see `make build-cuda`); _viewing_ splats in the browser does not.
 - **Ubuntu/Debian only**: `sudo apt-get install -y pipx && pipx ensurepath`
 
 ### Install and Run Demo
@@ -697,9 +698,10 @@ BSD-3-Clause License. See [LICENSE](LICENSE) for details.
 ## Citation
 
 ```bibtex
-@software{luxar2024,
+@software{luxar2026,
   title = {Luxar: High-Performance n-Dimensional Scientific Visualization},
-  year = {2024},
+  author = {Royer, Lo{\"i}c A. and the Luxar contributors},
+  year = {2026},
   url = {https://github.com/royerlab/luxar}
 }
 ```
