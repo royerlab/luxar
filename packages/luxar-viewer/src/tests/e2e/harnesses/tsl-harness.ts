@@ -30,7 +30,10 @@ import { BLOOM_THRESHOLD_SOURCE } from '../../../rendering/post-processing/bloom
 import { MEGA_SOURCE } from '../../../rendering/post-processing/mega/shader.glsl';
 import { megaWebGPUFactory } from '../../../rendering/post-processing/mega/shader.tsl';
 import { POINT_SOURCE } from '../../../rendering/materials/point/shader-glsl';
-import { pointWebGPUFactory } from '../../../rendering/materials/point/shader-tsl';
+import {
+  pointWebGPUFactory,
+  buildPointTSLNodesFromUniforms,
+} from '../../../rendering/materials/point/shader-tsl';
 import { POINT_PICK_SOURCE } from '../../../rendering/picking/point/shaders';
 import {
   pointPickWebGPUFactory,
@@ -596,7 +599,10 @@ const SHADER_REGISTRY: Record<string, RegistryEntry> = {
       uOffset: { value: 0.0 },
     }),
     buildTSLMaterial: (uniforms) => {
-      const m = pointWebGPUFactory(uniforms, {}) as unknown as THREE.Material;
+      const m = pointWebGPUFactory(
+        buildPointTSLNodesFromUniforms(uniforms, {}),
+        {}
+      ) as unknown as THREE.Material;
       // Disable blending for raw-pixel parity against the harness's
       // ShaderMaterial path (which uses transparent: false). Production
       // sets AdditiveBlending; the parity test only checks fragment
@@ -625,7 +631,10 @@ const SHADER_REGISTRY: Record<string, RegistryEntry> = {
       uOffset: { value: 0.0 },
     }),
     buildTSLMaterial: (uniforms) => {
-      const m = pointWebGPUFactory(uniforms, {}) as unknown as THREE.Material;
+      const m = pointWebGPUFactory(
+        buildPointTSLNodesFromUniforms(uniforms, {}),
+        {}
+      ) as unknown as THREE.Material;
       m.transparent = false;
       m.blending = THREE.NoBlending;
       return m;
@@ -646,7 +655,10 @@ const SHADER_REGISTRY: Record<string, RegistryEntry> = {
       uOffset: { value: 0.0 },
     }),
     buildTSLMaterial: (uniforms) => {
-      const m = pointWebGPUFactory(uniforms, {}) as unknown as THREE.Material;
+      const m = pointWebGPUFactory(
+        buildPointTSLNodesFromUniforms(uniforms, {}),
+        {}
+      ) as unknown as THREE.Material;
       m.transparent = false;
       m.blending = THREE.NoBlending;
       return m;
@@ -672,7 +684,9 @@ const SHADER_REGISTRY: Record<string, RegistryEntry> = {
     }),
     buildDefines: () => ({ LUXAR_GAMMA_ONE: '' }),
     buildTSLMaterial: (uniforms) => {
-      const m = pointWebGPUFactory(uniforms, { gammaOne: true }) as unknown as THREE.Material;
+      const m = pointWebGPUFactory(buildPointTSLNodesFromUniforms(uniforms, {}), {
+        gammaOne: true,
+      }) as unknown as THREE.Material;
       m.transparent = false;
       m.blending = THREE.NoBlending;
       return m;
@@ -703,7 +717,10 @@ const SHADER_REGISTRY: Record<string, RegistryEntry> = {
     }),
     buildDefines: () => ({ USE_COLORMAP: '' }),
     buildTSLMaterial: (uniforms) => {
-      const m = pointWebGPUFactory(uniforms, { useColormap: true }) as unknown as THREE.Material;
+      const m = pointWebGPUFactory(
+        buildPointTSLNodesFromUniforms(uniforms, { useColormap: true }),
+        { useColormap: true }
+      ) as unknown as THREE.Material;
       m.transparent = false;
       m.blending = THREE.NoBlending;
       return m;
@@ -1238,7 +1255,10 @@ const SHADER_REGISTRY: Record<string, RegistryEntry> = {
       uOffset: { value: 0.0 },
     }),
     buildTSLMaterial: (uniforms) => {
-      const m = pointWebGPUFactory(uniforms, {}) as unknown as THREE.Material;
+      const m = pointWebGPUFactory(
+        buildPointTSLNodesFromUniforms(uniforms, {}),
+        {}
+      ) as unknown as THREE.Material;
       m.transparent = false;
       m.blending = THREE.NoBlending;
       return m;
@@ -1288,7 +1308,10 @@ const SHADER_REGISTRY: Record<string, RegistryEntry> = {
       uOffset: { value: 0.0 },
     }),
     buildTSLMaterial: (uniforms) => {
-      const m = pointWebGPUFactory(uniforms, {}) as unknown as THREE.Material;
+      const m = pointWebGPUFactory(
+        buildPointTSLNodesFromUniforms(uniforms, {}),
+        {}
+      ) as unknown as THREE.Material;
       m.transparent = false;
       m.blending = THREE.NoBlending;
       return m;
@@ -1311,7 +1334,10 @@ const SHADER_REGISTRY: Record<string, RegistryEntry> = {
       uOffset: { value: 0.0 },
     }),
     buildTSLMaterial: (uniforms) => {
-      const m = pointWebGPUFactory(uniforms, {}) as unknown as THREE.Material;
+      const m = pointWebGPUFactory(
+        buildPointTSLNodesFromUniforms(uniforms, {}),
+        {}
+      ) as unknown as THREE.Material;
       m.transparent = false;
       m.blending = THREE.NoBlending;
       return m;
@@ -1344,7 +1370,10 @@ const SHADER_REGISTRY: Record<string, RegistryEntry> = {
       uOffset: { value: 0.0 },
     }),
     buildTSLMaterial: (uniforms) => {
-      const m = pointWebGPUFactory(uniforms, {}) as unknown as THREE.Material;
+      const m = pointWebGPUFactory(
+        buildPointTSLNodesFromUniforms(uniforms, {}),
+        {}
+      ) as unknown as THREE.Material;
       m.transparent = false;
       m.blending = THREE.NoBlending;
       return m;
@@ -1369,7 +1398,10 @@ const SHADER_REGISTRY: Record<string, RegistryEntry> = {
       uOffset: { value: 0.0 },
     }),
     buildTSLMaterial: (uniforms) => {
-      const m = pointWebGPUFactory(uniforms, {}) as unknown as THREE.Material;
+      const m = pointWebGPUFactory(
+        buildPointTSLNodesFromUniforms(uniforms, {}),
+        {}
+      ) as unknown as THREE.Material;
       m.transparent = false;
       m.blending = THREE.NoBlending;
       return m;
