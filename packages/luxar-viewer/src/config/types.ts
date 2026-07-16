@@ -16,6 +16,9 @@ export type { AdaptiveDPRConfig };
 import type { CacheConfig } from './sections/cache/types';
 export type { CacheConfig };
 
+import type { DepthSortConfig } from './sections/depth-sort/types';
+export type { DepthSortConfig };
+
 import type { DimensionAnimationConfig } from './sections/dimension-animation/types';
 export type { DimensionAnimationConfig };
 
@@ -84,6 +87,7 @@ export interface AppConfig {
   camera: CameraConfig;
   animation: AnimationConfig;
   adaptiveDPR: AdaptiveDPRConfig;
+  depthSort: DepthSortConfig;
   scene: SceneConfig;
   shader: ShaderConfig;
   ui: UIConfig;

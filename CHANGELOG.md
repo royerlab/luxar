@@ -21,7 +21,7 @@ All notable changes to Luxar are documented in this file.
   now resolve custom colormaps to a `colormap_lut` dataset + `colormap='custom'`
   like the flat writers, and the returned node objects mirror the substitution.
 
-#### Added — GSplat depth sorting: correct `normal`-mode transparency (PRs #511, #535, #540)
+#### Added — GSplat depth sorting: correct `normal`-mode transparency (PRs #511, #535, #540, #553)
 
 - Gaussian splats with `blending_mode="normal"` now composite in true
   back-to-front order. Phase 0 (PR #511) fixed the premultiplied coverage
@@ -31,8 +31,15 @@ All notable changes to Luxar are documented in this file.
   scale-invariant normalized-key counting sort with an exact-parity
   TypeScript twin), a persistent SortWorker, and commit-time wiring with a
   per-node generation guard. Ordering refreshes on every data commit and
-  on blending-mode switches; camera-motion re-sorts are the planned
-  Phase 3 (`docs/guides/specs/GSPLAT_DEPTH_SORTING_SPEC.md`).
+  on blending-mode switches. Phase 3 completed the feature with live
+  camera tracking: a per-frame scheduler re-sorts a node when the
+  node-relative view axis rotates past `config.depthSort.angleThresholdDeg`
+  (default 3°) or the camera translates along it past
+  `config.depthSort.translationFraction` (default 0.05) of the node's
+  bounding radius; `?depthSort=0` pins the identity ordering for
+  deterministic runs, and sort round-trips surface as the data-loading
+  monitor's 'Depth Sort' timing line
+  (`docs/guides/specs/GSPLAT_DEPTH_SORTING_SPEC.md`).
 
 #### Fixed — LUT-on-COORDINATE line-vertex corruption + remaining doc-audit flags (PR #517)
 

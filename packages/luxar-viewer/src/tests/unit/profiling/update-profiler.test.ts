@@ -915,3 +915,71 @@ describe('UpdateProfiler — refinement passes (beginPass)', () => {
     expect(profiler.getRefinementTimings().children).toEqual([]);
   });
 });
+
+describe('UpdateProfiler — depth-sort passes (beginDepthSortPass)', () => {
+  let clock: ReturnType<typeof controlledClock>;
+
+  beforeEach(() => {
+    clock = controlledClock();
+  });
+
+  afterEach(() => {
+    clock.restore();
+  });
+
+  it('records sort round-trips under the Depth Sort root with metadata, touching no other tree', () => {
+    const profiler = new UpdateProfiler();
+
+    const sort = profiler.beginDepthSortPass();
+    clock.advance(12);
+    sort.setMetadata({ splats: 1_000_000, info: '4.0 MB up' });
+    sort.end();
+
+    const depthSort = profiler.getDepthSortTimings();
+    expect(depthSort.count).toBe(1);
+    expect(depthSort.lastMs).toBe(12);
+    expect(depthSort.metadata).toMatchObject({ splats: 1_000_000, info: '4.0 MB up' });
+    expect(profiler.getTimings().count).toBe(0);
+    expect(profiler.getRefinementTimings().count).toBe(0);
+  });
+
+  it('a sort pass ending mid-update does NOT disable the active update session', () => {
+    const profiler = new UpdateProfiler();
+
+    profiler.beginUpdate();
+    const sort = profiler.beginDepthSortPass();
+    sort.end(); // must NOT null the active update session
+
+    expect(profiler.isActive()).toBe(true);
+    const top = profiler.beginTopLevel('GSplats (/g)');
+    clock.advance(5);
+    top.end();
+    profiler.endUpdate();
+
+    expect(findChild(profiler.getTimings(), 'GSplats (/g)')!.lastMs).toBe(5);
+  });
+
+  it('successive sorts roll the count and lastMs forward', () => {
+    const profiler = new UpdateProfiler();
+
+    const first = profiler.beginDepthSortPass();
+    clock.advance(20);
+    first.end();
+    const second = profiler.beginDepthSortPass();
+    clock.advance(8);
+    second.end();
+
+    const depthSort = profiler.getDepthSortTimings();
+    expect(depthSort.count).toBe(2);
+    expect(depthSort.lastMs).toBe(8);
+  });
+
+  it('reset clears the depth-sort tree and sort counter', () => {
+    const profiler = new UpdateProfiler();
+    profiler.beginDepthSortPass().end();
+    expect(profiler.getDepthSortTimings().count).toBe(1);
+
+    profiler.reset();
+    expect(profiler.getDepthSortTimings().count).toBe(0);
+  });
+});

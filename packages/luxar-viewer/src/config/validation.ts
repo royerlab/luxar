@@ -19,6 +19,7 @@ import {
 import { validateDataLoading } from './sections/data-loading/validate';
 import { validateCache } from './sections/cache/validate';
 import { validateAdaptiveDPR } from './sections/adaptive-dpr/validate';
+import { validateDepthSort } from './sections/depth-sort/validate';
 
 /**
  * Validation result interface
@@ -65,6 +66,9 @@ export function validateConfig(config: AppConfig): ValidationResult {
 
   // Validate adaptive DPR control-loop configuration
   validateAdaptiveDPR(config, errors, warnings);
+
+  // Validate depth-sort scheduling configuration
+  validateDepthSort(config, errors, warnings);
 
   return {
     valid: errors.length === 0,
