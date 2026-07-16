@@ -158,6 +158,8 @@ A cross-section of Luxar's built-in demos — all three geometry types (**Points
 | **Hilbert Curve**<br>3D space-filling |
 
 > The full curated set (and more datasets) lives in `scripts/gallery/manifest.json`. A few very large point clouds (Gaia 3M stars, DESI cosmic web) and heavy volumes render too slowly under headless software-GL to include as videos here — regenerate with a GPU via `make generate-gallery`.
+>
+> These demos visualize openly-shared scientific datasets — see [Acknowledgments → Datasets & scientific data](#datasets--scientific-data) for full sources and citations.
 
 ### Running Demos
 
@@ -635,12 +637,53 @@ If you see "GPU fitting will use slower PyTorch fallback", fitting still works �
 
 ## Acknowledgments
 
+### Software
+
 Built with:
 - [Three.js](https://threejs.org/) - WebGL rendering
 - [Zarr](https://zarr.readthedocs.io/) / [Zarrita](https://github.com/manzt/zarrita.js) - Chunked array storage
 - [NumPy](https://numpy.org/) - Numerical computing
 - [FastAPI](https://fastapi.tiangolo.com/) - Data serving
 - [Vite](https://vitejs.dev/) - Frontend tooling
+
+### Datasets & scientific data
+
+The gallery and demos visualize openly-available scientific datasets — with
+gratitude to the authors, labs, and consortia who produced and shared them.
+Luxar only *renders* these data; all rights and credit remain with the original
+providers, under their respective licenses. Each demo script's docstring carries
+the full citation.
+
+**Microscopy & cell biology**
+- **Cells3D** — fluorescence microscopy sample data via scikit-image (`skimage.data.cells3d`); van der Walt et al. (2014), *PeerJ* 2:e453, [doi:10.7717/peerj.453](https://doi.org/10.7717/peerj.453).
+- **3D Organoid** — Blin et al. (2019), via the [Image Data Resource](https://idr.openmicroscopy.org/) (IDR; Williams et al. 2017, *Nat. Methods*, [doi:10.1038/nmeth.4326](https://doi.org/10.1038/nmeth.4326)).
+- **Zebrafish Neuromast** — Adrian Jacobo lab (CZ Biohub SF / Rockefeller); iSIM, deconvolved 4D timelapse.
+- **Tribolium Embryo** — [Cell Tracking Challenge](https://celltrackingchallenge.net/) ([Zenodo](https://zenodo.org/records/5270323)); Yin et al. (2022), *J. Cell Sci.*, [doi:10.1242/jcs.259022](https://doi.org/10.1242/jcs.259022); Maška et al. (2023), *Nat. Methods*.
+- **C. elegans nuclei tracking** — Hirsch et al. (2022), 3D+time confocal nuclei dataset, [Zenodo 6460303](https://doi.org/10.5281/zenodo.6460303).
+
+**Medical & anatomy**
+- **CT Anatomy Atlas** — [TotalSegmentator](https://zenodo.org/records/10047263) (102-subject subset, v2.0.1, CC BY 4.0); Wasserthal et al. (2023), *Radiology: AI*, [doi:10.1148/ryai.230024](https://doi.org/10.1148/ryai.230024).
+
+**Astronomy & geoscience**
+- **Milky Way Dust** — Leike, Glatzle & Enßlin (2020), *A&A*, [doi:10.1051/0004-6361/202038169](https://doi.org/10.1051/0004-6361/202038169); data [Zenodo](https://doi.org/10.5281/zenodo.3993082) (CC BY 4.0).
+- **Global Earthquakes** — [USGS Earthquake Catalog](https://earthquake.usgs.gov/) (real-time feed); Earth texture: NASA Blue Marble.
+- **Rivers of Earth** — [HydroRIVERS v10](https://www.hydrosheds.org/products/hydrorivers) (HydroSHEDS; Lehner & Grill 2013, *Hydrol. Process.* 27(15), CC BY 4.0) + [ETOPO 2022](https://www.ncei.noaa.gov/products/etopo-global-relief-model) global relief (NOAA NCEI, [doi:10.25921/fd45-gt74](https://doi.org/10.25921/fd45-gt74), public domain).
+
+**Connectomes, structures & networks**
+- **FlyWire Connectome** — FlyWire whole-brain connectome, public release 783; Dorkenwald et al. (2024) & Schlegel et al. (2024), *Nature*; [annotations](https://github.com/flyconnectome/flywire_annotations), [connectivity (Zenodo)](https://zenodo.org/records/10676866), [Codex](https://codex.flywire.ai/).
+- **Single-Cell 3D Genome** — Dip-C; Tan et al. (2018), *Science* 361:924, [doi:10.1126/science.aat5641](https://doi.org/10.1126/science.aat5641); GEO GSE117876.
+- **ATP Synthase** — molecular structure after Zhou et al. (2015), *eLife*, [doi:10.7554/eLife.10180](https://doi.org/10.7554/eLife.10180); RCSB [PDB-101](https://pdb101.rcsb.org/motm/72).
+- **CAIDA AS topology** — [CAIDA](https://asrank.caida.org/) AS-relationships, AS-organizations & AS Rank (UC San Diego / CAIDA).
+- **HuRI interactome** — Luck et al. (2020), *Nature* 580:402, [doi:10.1038/s41586-020-2188-x](https://doi.org/10.1038/s41586-020-2188-x); [Human Reference Interactome](https://interactome-atlas.org/).
+
+**Single-cell atlases & embeddings**
+- **Tabula Sapiens** — Tabula Sapiens Consortium (2022), *Science*, [doi:10.1126/science.abl4896](https://doi.org/10.1126/science.abl4896); accessed via [CZ CELLxGENE Discover](https://cellxgene.cziscience.com/) (CC BY 4.0).
+- **Zebrahub** — [CZ Biohub Zebrahub](https://zebrahub.org); Lange et al. (2024), [biorxiv:2024.10.18.618987](https://www.biorxiv.org/content/10.1101/2024.10.18.618987v1).
+- **Protein Landscape** — CAFA5 protein embeddings via ProtT5 (Elnaggar et al. 2021, *IEEE TPAMI*, [doi:10.1109/TPAMI.2021.3095381](https://doi.org/10.1109/TPAMI.2021.3095381)); [CAFA5 challenge](https://www.kaggle.com/competitions/cafa-5-protein-function-prediction).
+- **Spotify Tracks** — [`maharshipandya/spotify-tracks-dataset`](https://huggingface.co/datasets/maharshipandya/spotify-tracks-dataset) (Hugging Face), derived from the Spotify Web API audio features.
+- **Human Multiome** — single-cell ATAC-seq peak multiome UMAP (bundled coordinate set).
+
+Synthetic / procedurally-generated demos — **Lorenz Attractor**, **Spiral Galaxy** (3D & 5D), **Rainbow Sphere**, **Quantum Orbitals**, **Hilbert Curve**, **Bioluminescent Ocean**, and **Particle Collision** (inspired by CERN LHC events) — use no external data.
 
 ---
 
