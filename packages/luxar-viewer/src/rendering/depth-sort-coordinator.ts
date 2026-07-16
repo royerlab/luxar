@@ -386,6 +386,7 @@ interface EvaluateScratch {
   view: THREE.Matrix4;
   mv: THREE.Matrix4;
   axis: THREE.Vector3;
+  center: THREE.Vector3;
 }
 let scratch: EvaluateScratch | null = null;
 
@@ -438,20 +439,29 @@ export function evaluateDepthSortPerFrame(): void {
   if (isLoadInProgress?.()) return;
 
   if (!scratch) {
-    scratch = { view: new THREE.Matrix4(), mv: new THREE.Matrix4(), axis: new THREE.Vector3() };
+    scratch = {
+      view: new THREE.Matrix4(),
+      mv: new THREE.Matrix4(),
+      axis: new THREE.Vector3(),
+      center: new THREE.Vector3(),
+    };
   }
   const cosThreshold = Math.cos((config.depthSort.angleThresholdDeg * Math.PI) / 180);
   let viewComputed = false;
 
   for (const [nodeId, state] of nodeStates) {
-    if (state.inFlight || !state.lastSortAxis) continue;
     const mesh = state.mesh;
     if (!isEffectivelyVisible(mesh)) continue;
     // LOD demotion returned the geometry to the pool — same signal the
     // resolve path checks; a sort dispatched now would be dropped there.
     if ((mesh.userData as { committedData?: unknown }).committedData === undefined) continue;
     const mode = liveBlendingMode(mesh);
-    if (!mode || !isNormalMode(mode)) continue;
+    if (!mode || !isNormalMode(mode)) {
+      // No longer order-dependent (e.g. switched to additive) — clear any
+      // cross-part renderOrder bias so it doesn't strand a stale ordering.
+      if (mesh.renderOrder !== 0) mesh.renderOrder = 0;
+      continue;
+    }
 
     if (!viewComputed) {
       // One-frame-stale matrices are fine for the TRIGGER test (the
@@ -464,6 +474,31 @@ export function evaluateDepthSortPerFrame(): void {
     }
 
     scratch.mv.multiplyMatrices(scratch.view, mesh.matrixWorld);
+
+    // === Cross-mesh (inter-part) back-to-front ordering ===
+    // Depth sorting orders splats WITHIN a mesh; THREE orders transparent
+    // MESHES by their matrixWorld origin — but every gsplat part shares the
+    // world origin (splat centers are baked into the geometry), so THREE's
+    // per-object sort key is identical for all parts and they draw in fixed
+    // creation order, NOT back-to-front. Give THREE a real signal: set each
+    // normal-mode mesh's renderOrder to its CONTENT centroid's view-space z
+    // (the geometry bounding-sphere center through the model-view matrix).
+    // THREE sorts transparent objects by renderOrder before z, ascending, so
+    // the farthest part (most-negative view z) draws first → correct
+    // alpha-over across parts. Per-object (centroid) ordering: exact for
+    // disjoint convex cells, approximate only where splat footprints spill
+    // across a tile boundary (a single-leaf scene has one mesh and needs no
+    // cross-mesh order — this is a harmless no-op there). Updated every frame
+    // (cheap: one matrix-vector), independent of the within-mesh re-sort
+    // hysteresis below.
+    const bs = (mesh.geometry as THREE.BufferGeometry | undefined)?.boundingSphere;
+    if (bs) {
+      scratch.center.copy(bs.center).applyMatrix4(scratch.mv);
+      mesh.renderOrder = scratch.center.z;
+    }
+
+    // === Within-mesh re-sort trigger (Phase 3) ===
+    if (state.inFlight || !state.lastSortAxis) continue;
     const e = scratch.mv.elements;
     scratch.axis.set(e[2], e[6], e[10]);
     const len = scratch.axis.length();
@@ -473,7 +508,7 @@ export function evaluateDepthSortPerFrame(): void {
 
     let moved = scratch.axis.dot(state.lastSortAxis) < cosThreshold;
     if (!moved) {
-      const radius = (mesh.geometry as THREE.BufferGeometry | undefined)?.boundingSphere?.radius;
+      const radius = bs?.radius;
       // Without bounds (never computed / empty) the translation trigger
       // has no scale reference — rely on the angle trigger alone.
       if (radius !== undefined && radius > 0) {
