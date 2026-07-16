@@ -19,6 +19,7 @@ here automatically — not just when WASM is missing.
 | `effective-radii.ts`    | `calculate_effective_radii` — `R_eff = sqrt(R² − D²)` for nD points sliced by a hyperplane                       |
 | `decode.ts`             | LUT / quantized / log-scalar / geolog-scalar / per-channel (linear, log, signed-log, geolog) decoders + `decode_broadcasted` |
 | `projection.ts`         | nD→3D position extraction, AABB bounds, `compact_by_mask`, `count_visible`, `radii_to_visibility_mask`           |
+| `depth-sort.ts`         | `sort_splats_by_depth` — back-to-front splat ordering; frounds every float step in the Rust op order so WASM↔TS parity is exact-permutation |
 
 ## Public surface
 
