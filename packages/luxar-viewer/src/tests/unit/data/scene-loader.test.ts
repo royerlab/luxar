@@ -371,7 +371,7 @@ describe('SceneLoader', () => {
     });
   });
 
-  describe('updateView — foreground preempts the t+1 shadow prefetch', () => {
+  describe('updateView — does NOT abort the background deepen prefetch', () => {
     beforeEach(async () => {
       await sceneLoader.loadScene('http://localhost:8000/test.zarr');
     });
@@ -386,13 +386,19 @@ describe('SceneLoader', () => {
       return { abortInFlight: abortSpy as unknown as ReturnType<typeof vi.fn> };
     }
 
-    it('aborts an in-flight prefetch at updateView entry (main branch)', async () => {
+    // The foreground now commits from the SliceCache without decoding fine
+    // levels, so the background deepen must SURVIVE across ticks — a cold LOD
+    // level outlives one frame, and a per-tick abort would never let it
+    // complete + cache a level (playback quality could then never climb across
+    // loops). The shadow runs on its own loader instances + worker decode with
+    // cache-keyed writes, so it can't stall or corrupt a foreground tick.
+    it('leaves an in-flight prefetch running at updateView entry (main branch)', async () => {
       const spy = armPrefetcher();
       await sceneLoader.updateView({ slicePosition: [0, 0, 0, 7] });
-      expect(spy.abortInFlight).toHaveBeenCalled();
+      expect(spy.abortInFlight).not.toHaveBeenCalled();
     });
 
-    it('aborts the prefetch in the QUEUED branch too (before parking as a waiter)', async () => {
+    it('leaves the prefetch running in the QUEUED branch too', async () => {
       const spy = armPrefetcher();
       const internals = sceneLoader as unknown as {
         _updateInProgress: boolean;
@@ -400,7 +406,7 @@ describe('SceneLoader', () => {
       };
       internals._updateInProgress = true; // simulate an in-flight pass
       const parked = sceneLoader.updateView({ slicePosition: [0, 0, 0, 8] });
-      expect(spy.abortInFlight).toHaveBeenCalledTimes(1); // fired synchronously at entry
+      expect(spy.abortInFlight).not.toHaveBeenCalled();
       internals.resolvePassWaiters(); // unpark (the simulated pass "completes")
       await parked;
       internals._updateInProgress = false;

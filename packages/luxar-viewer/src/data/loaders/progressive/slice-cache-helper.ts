@@ -33,22 +33,56 @@ export interface SliceViewLike {
 
 /**
  * Build the view signature used as the SliceCache key (namespaced per node by
- * the cache itself). Covers exactly the query determinants — displayDims,
- * slicePosition, tolerance, dimensions — matching the progressive loaders'
- * `viewStatesEqual` field-for-field (that equality is the loaders' stale-skip
- * contract; a key narrower than it can restore a snapshot the loader itself
- * would have reloaded). Nothing projection- or render-dependent enters the
- * key: projection re-runs on every hit, and a dataset content-hash change
- * clears the whole cache. `dimensions` may be undefined (serializes as null —
- * deterministic).
+ * the cache itself). It is a CANONICAL projection of the query determinants,
+ * so two viewStates that decode the SAME elements produce the SAME key
+ * regardless of which builder created them.
+ *
+ * Why canonical (not a raw JSON of the four fields): two builders feed the
+ * loaders — the navigation/playback builder (`dims-to-view-state.ts`) and the
+ * init/reprocess builder (`view-state-manager.ts`) — and they differ in ways
+ * that DON'T change which elements load: the discrete-dim ride-along tolerance
+ * (`0.5` vs `0`), a displayed dim's `step` (`1` vs `null`), and JSON property
+ * order. A raw serialization keys the same timepoint under two strings, so a
+ * scrub/playback revisit misses forever (observed: N entries, 0 evictions,
+ * ~0 hits). The projection strips exactly that query-irrelevant noise:
+ *
+ * - Displayed dims: the in-plane query uses a fixed huge tolerance, so neither
+ *   position, tolerance, nor metadata changes which elements load — contribute
+ *   only a marker so a change to the DISPLAYED SET still rekeys.
+ * - Non-displayed discrete non-spatial dims: the executed query derives its
+ *   reach from `step` (0.25×step via `tolerance-computer.ts`), NOT from the
+ *   ride-along `tolerance` value — key on `step`, drop the ride-along.
+ * - Non-displayed continuous/spatial dims: key on position + tolerance +
+ *   spatial (the tolerance value genuinely selects the decoded set here).
+ *
+ * This is never NARROWER than the decoded-set determinant (it drops only fields
+ * that provably cannot change the loaded elements), so it upholds the loaders'
+ * `viewStatesEqual` stale-skip contract — it cannot restore a snapshot the
+ * loader would have reloaded. Nothing projection- or render-dependent enters
+ * the key: projection re-runs on every hit, and a dataset content-hash change
+ * clears the whole cache. `dimensions` may be undefined (each dim then keys on
+ * position/tolerance alone — deterministic).
  */
 export function buildSliceViewSig(view: SliceViewLike): string {
-  return JSON.stringify([
-    view.displayDims,
-    view.slicePosition,
-    view.tolerance,
-    view.dimensions ?? null,
-  ]);
+  const dims = view.dimensions;
+  const perDim = view.slicePosition.map((pos, i) => {
+    if (view.displayDims.includes(i)) return 0;
+    const m = dims?.[i];
+    const discrete = m?.discrete === true;
+    const spatial = m?.spatial === true;
+    // Discrete non-spatial: the ride-along tolerance is query-irrelevant
+    // (the real reach is 0.25×step) and builder-inconsistent — key on step.
+    const tol = discrete && !spatial ? null : (view.tolerance[i] ?? 0);
+    return {
+      p: pos,
+      t: tol,
+      di: discrete,
+      sp: spatial,
+      st: m?.step ?? null,
+      cy: m?.cyclic === true,
+    };
+  });
+  return JSON.stringify([[...view.displayDims], perDim]);
 }
 
 /** Non-DataView ArrayBufferView (i.e. a TypedArray) with a `.slice()`. */

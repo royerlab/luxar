@@ -235,6 +235,39 @@ export function calculateSpatialQueryTolerance(
 }
 
 /**
+ * Query tolerance for the Points loader when NO {@link EffectiveRadiusConfig}
+ * is available (root `scene_dimensions` absent, or a root-attr read failed).
+ *
+ * A uniform fallback that mirrors {@link calculateSpatialQueryTolerance}'s
+ * first branches: `1e10` for displayed dims and the `extend_to_all` sentinel,
+ * `maxRadius` for non-displayed spatial/continuous dims. Discrete non-spatial
+ * dims use the shared quarter-cell reach ({@link discreteDimTolerance},
+ * `0.25×step`) — crucially NOT the ride-along `viewState.tolerance`, which the
+ * nav and init viewState builders set inconsistently (`0.5` vs `0`). The
+ * SliceCache key deliberately drops that ride-along, so the QUERY must be
+ * independent of it too; otherwise a cache hit could serve a decode fetched at
+ * a different discrete reach.
+ */
+export function fallbackQueryTolerance(
+  viewState: ViewState,
+  ndim: number,
+  maxRadius: number
+): number[] {
+  const queryTolerance = new Array<number>(ndim).fill(0);
+  for (let d = 0; d < ndim; d++) {
+    const dimInfo = viewState.dimensions?.[d];
+    if (viewState.displayDims.includes(d) || (viewState.tolerance[d] ?? 0) >= 1e9) {
+      queryTolerance[d] = 1e10;
+    } else if (dimInfo?.discrete && !dimInfo?.spatial) {
+      queryTolerance[d] = discreteDimTolerance(dimInfo);
+    } else {
+      queryTolerance[d] = viewState.tolerance[d] ?? maxRadius;
+    }
+  }
+  return queryTolerance;
+}
+
+/**
  * Check if effective radius calculation should be applied.
  *
  * Returns true if:

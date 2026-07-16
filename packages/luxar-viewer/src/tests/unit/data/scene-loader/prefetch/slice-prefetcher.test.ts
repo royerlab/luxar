@@ -10,8 +10,10 @@
  *   - every shadow pass carries frameBudgetMs (the store-prefix invariant)
  *     and the pass's abort signal;
  *   - extend_to_all-skipped nodes and no-hidden-dims views are skipped;
- *   - single-flight (a second prefetch aborts the first), abortInFlight,
- *     releaseShadows (dispose + lazy rebuild), dispose;
+ *   - persist-across-ticks: a prefetch while a batch is in flight is a no-op
+ *     (NOT abort+restart — a cold level outlives one frame), so background
+ *     deepening can complete; abortInFlight / releaseShadows (dispose + lazy
+ *     rebuild) / dispose still tear it down;
  *   - a failed shadow build is dropped so the next pass retries.
  */
 
@@ -172,19 +174,58 @@ describe('SlicePrefetcher', () => {
     expect(factoryCalls).toHaveLength(0); // no hidden dims — S-cache ineligible
   });
 
-  it('is single-flight: a second prefetch (and abortInFlight) aborts the first signal', async () => {
+  it('persists across ticks: a prefetch while a batch is in flight is a no-op (not abort+restart)', async () => {
+    // Batch 1 starts; inFlight > 0 synchronously. A cold LOD level outlives one
+    // playback frame, so the next tick's prefetch must NOT abort+restart it —
+    // that would never let a level complete + cache. The in-flight target
+    // wins; the second call is dropped.
     prefetcher.prefetch(view, 10);
+    prefetcher.prefetch({ ...view, slicePosition: [0, 0, 0, 8] }, 10); // in-flight → skipped
     await flushAsync();
-    const firstSignal = shadowLoaders.get('/splats')!.updateView.mock.calls[0][2] as AbortSignal;
 
-    prefetcher.prefetch({ ...view, slicePosition: [0, 0, 0, 8] }, 10);
-    expect(firstSignal.aborted).toBe(true);
-    await flushAsync();
-    const secondSignal = shadowLoaders.get('/splats')!.updateView.mock.calls[1][2] as AbortSignal;
-    expect(secondSignal.aborted).toBe(false);
+    const shadow = shadowLoaders.get('/splats')!;
+    expect(shadow.updateView).toHaveBeenCalledTimes(1); // only batch 1 ran
+    expect(shadow.updateView.mock.calls[0][0].slicePosition).toEqual([0, 0, 0, 7]);
+    const signal = shadow.updateView.mock.calls[0][2] as AbortSignal;
+    expect(signal.aborted).toBe(false); // the skipped second call never aborted it
 
+    // Playback end / dataset switch DOES tear the batch down.
     prefetcher.abortInFlight();
-    expect(secondSignal.aborted).toBe(true);
+    expect(signal.aborted).toBe(true);
+  });
+
+  it('re-targets on the NEXT tick once the in-flight batch has settled', async () => {
+    prefetcher.prefetch(view, 10);
+    await flushAsync(); // batch 1 completes → inFlight gate reopens
+    prefetcher.prefetch({ ...view, slicePosition: [0, 0, 0, 8] }, 10);
+    await flushAsync();
+    const shadow = shadowLoaders.get('/splats')!;
+    expect(shadow.updateView).toHaveBeenCalledTimes(2); // batch 2 ran after batch 1 settled
+    expect(shadow.updateView.mock.calls[1][0].slicePosition).toEqual([0, 0, 0, 8]);
+  });
+
+  it('supersedes a STALLED batch so a hung task cannot pin the gate for the session', () => {
+    // A shadow fetch/build with no timeout could hang forever; its
+    // `Promise.allSettled` would then never resolve and `inFlight` would stay
+    // > 0, disabling prefetch for the rest of the session (the per-tick
+    // foreground abort that used to self-correct this is gone). The stall guard
+    // reclaims the gate. Synchronous test: the batch's tasks stay pending (no
+    // flush), so `inFlight` stays > 0 the whole time; only the clock advances.
+    let now = 1000;
+    const nowSpy = vi.spyOn(performance, 'now').mockImplementation(() => now);
+    const abortSpy = vi.spyOn(prefetcher, 'abortInFlight');
+    try {
+      prefetcher.prefetch(view, 10); // batch A: inFlight > 0, started at t=1000
+      prefetcher.prefetch(view, 10); // still fresh → no-op, does NOT abort A
+      expect(abortSpy).not.toHaveBeenCalled();
+
+      now += 6000; // > MAX_BATCH_STALL_MS (5000): batch A is now stalled
+      prefetcher.prefetch(view, 10); // stale → supersede
+      expect(abortSpy).toHaveBeenCalledTimes(1);
+    } finally {
+      abortSpy.mockRestore();
+      nowSpy.mockRestore();
+    }
   });
 
   it('releaseShadows disposes every shadow and the next pass lazily rebuilds', async () => {
