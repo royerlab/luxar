@@ -49,6 +49,44 @@ class TestResolveSubstitutiveAxisPoints:
         assert r["compression_factor"] == 8
         assert r["levels"] == 2
 
+    def test_max_aspect_key_resolved(self) -> None:
+        # Mirror of the Lines resolver test (shared implementation, but the
+        # per-geometry wrapper must expose the key identically).
+        assert resolve_substitutive_axis_points(True)["max_aspect"] == 3.0
+        assert resolve_substitutive_axis_points(dict(max_aspect=5))["max_aspect"] == 5.0
+        assert (
+            resolve_substitutive_axis_points(dict(max_aspect=None))["max_aspect"]
+            is None
+        )
+        with pytest.raises(ValueError, match="max_aspect"):
+            resolve_substitutive_axis_points(dict(max_aspect=0.5))
+
+    def test_max_aspect_threaded_spec_to_lift(self, tmp_path, monkeypatch) -> None:
+        # Mirror of the Lines spy test: the Points adder must forward the
+        # USER'S max_aspect to coarse_substitutive_levels (the signature
+        # default masks a dropped forward from output-based tests).
+        import luxar.gsplats.lift as lift_mod
+
+        seen: list = []
+        real = lift_mod.coarse_substitutive_levels
+
+        def spy(*args, **kwargs):
+            seen.append(kwargs.get("max_aspect"))
+            return real(*args, **kwargs)
+
+        monkeypatch.setattr(lift_mod, "coarse_substitutive_levels", spy)
+        out = tmp_path / "spy.luxar.zarr"
+        rng = np.random.default_rng(0)
+        with LuxarZarrCompiler(out) as compiler:
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+            scene.add_points(
+                "pts",
+                rng.uniform(0, 40, (400, 3)).astype(np.float32),
+                radii=0.5,
+                substitutive_lod=dict(levels=1, device="cpu", seed=0, max_aspect=5),
+            )
+        assert seen == [5.0]
+
     def test_method_hyphen_normalized(self) -> None:
         r = resolve_substitutive_axis_points(dict(method="kmeans-lloyd"))
         assert r["method"] == "kmeans_lloyd"
