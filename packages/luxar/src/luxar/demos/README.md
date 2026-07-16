@@ -693,6 +693,38 @@ Runs the unified `luxar gsplat lod --recipe` pipeline on the **one** precomputed
 
 ---
 
+#### Classical Gaussian-splat interop demos (import from the photogrammetric ecosystem)
+
+These four demos download **pre-captured** Gaussian-splat scenes from the classical/photogrammetric 3DGS ecosystem and import them into Luxar via `luxar gsplat import` — no fitting. Each prints a data-provenance/licence notice before downloading; Luxar redistributes none of the data. They render best with `blending_mode="normal"` and become fully correct once depth-sorted rendering lands.
+
+##### demo_gsplats_interop_spz_scaniverse.py - Scaniverse SPZ captures (Niantic)
+Downloads the two official Niantic `spz` sample scans (a horned lizard, a raccoon-family sculpture — phone captures) and imports them with a streaming LOD ladder.
+**Run**: `hatch run python packages/luxar/src/luxar/demos/demo_gsplats_interop_spz_scaniverse.py`
+**Requires**: Network (~18 + 24 MB). No GPU.
+**Data**: [nianticlabs/spz](https://github.com/nianticlabs/spz) samples — **MIT**.
+
+##### demo_gsplats_interop_mipnerf_garden.py - Mip-NeRF 360 garden / bicycle (`.splat`)
+Downloads the iconic Mip-NeRF 360 *garden* (or `--scene bicycle`) scene as an antimatter15 `.splat` (~187/196 MB) and imports it with a **tiled** LOD (spatial BSP + per-tile streaming ladders) since it is ~5 M splats.
+**Run**: `hatch run python packages/luxar/src/luxar/demos/demo_gsplats_interop_mipnerf_garden.py [--scene garden|bicycle]`
+**Requires**: Network (~187 MB). No GPU.
+**Data**: [cakewalk/splat-data](https://huggingface.co/cakewalk/splat-data); Mip-NeRF 360 (Barron et al. 2022) trained to 3DGS (Kerbl et al. 2023) — **research use** (Google), fetched at runtime, not redistributed.
+
+##### demo_gsplats_interop_observatory.py - Astronomical observatories (SuperSplat compressed PLY)
+Downloads a Gaussian-splat capture of the Vera C. Rubin Observatory (`--scene gemini-south` for Gemini South) as a SuperSplat *compressed* PLY and imports it with a streaming LOD.
+**Run**: `hatch run python packages/luxar/src/luxar/demos/demo_gsplats_interop_observatory.py [--scene rubin|gemini-south]`
+**Requires**: Network (~41/83 MB). No GPU.
+**Data**: [khyron/Gaussian-Splatting](https://github.com/khyron/Gaussian-Splatting) — **CC BY 4.0**.
+
+##### demo_gsplats_interop_inria_garden.py - Full-quality INRIA garden (HTTP-Range zip extraction)
+Extracts just the ~1.45 GB `point_cloud.ply` member from INRIA's 14.7 GB `models.zip` over **HTTP Range requests** (Zip64 central-directory parsing — the member sits at byte offset ~5.6 GB), then imports it with a tiled LOD. The full-training-fidelity counterpart of the `.splat` demo.
+**Run**: `hatch run python packages/luxar/src/luxar/demos/demo_gsplats_interop_inria_garden.py`
+**Requires**: Network (~1.45 GB range-extracted from a 14.7 GB archive; server must honor byte ranges — INRIA's does). No GPU.
+**Data**: [INRIA 3DGS pretrained models](https://repo-sam.inria.fr/fungraph/3d-gaussian-splatting/); INRIA Gaussian-Splatting license (**research / non-commercial**); Mip-NeRF 360 scenes (Google research use). Fetched at runtime, not redistributed.
+
+**Demonstrates**: the classical-splat import path (all four dialects), the `download_zip_member` HTTP-Range/Zip64 extractor, and applying `stream`/`tiles` LOD recipes to imported scenes via `build_recipe`.
+
+---
+
 #### demo_gsplats_4d_zebrafish_timelapse.py - 4D Zebrafish Embryo Time-Lapse
 4D (3D + time) confocal recording of a living zebrafish embryo during gastrulation, with per-timepoint Gaussian splatting and a time dimension slider.
 

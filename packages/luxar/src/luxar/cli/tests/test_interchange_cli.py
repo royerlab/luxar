@@ -109,3 +109,73 @@ class TestGsplatImport:
         result = runner.invoke(app, ["gsplat", "--help"])
         assert result.exit_code == 0
         assert "import" in result.stdout
+
+
+class TestGsplatExport:
+    @pytest.fixture()
+    def imported_store(self, fixtures: dict[str, Path], tmp_path: Path) -> Path:
+        out = tmp_path / "imported.gsplats.zarr"
+        result = runner.invoke(
+            app, ["gsplat", "import", str(fixtures["splat"]), str(out)]
+        )
+        assert result.exit_code == 0, result.stdout
+        return out
+
+    def test_export_round_trip_via_cli(
+        self, imported_store: Path, tmp_path: Path
+    ) -> None:
+        from luxar.gsplats.interop.classical_splats import read_inria_ply
+
+        out = tmp_path / "back.ply"
+        result = runner.invoke(
+            app,
+            [
+                "gsplat",
+                "export",
+                str(imported_store),
+                str(out),
+                "--opacity",
+                "amplitude",
+            ],
+        )
+        assert result.exit_code == 0, result.stdout
+        assert "✓ Verified INRIA PLY" in result.stdout
+        cs = read_inria_ply(out)
+        assert cs.n_splats == 16
+        assert np.isfinite(cs.scales).all()
+
+    def test_export_requires_overwrite(
+        self, imported_store: Path, tmp_path: Path
+    ) -> None:
+        out = tmp_path / "twice.ply"
+        first = runner.invoke(app, ["gsplat", "export", str(imported_store), str(out)])
+        assert first.exit_code == 0, first.stdout
+        second = runner.invoke(app, ["gsplat", "export", str(imported_store), str(out)])
+        assert second.exit_code != 0
+        third = runner.invoke(
+            app, ["gsplat", "export", str(imported_store), str(out), "--overwrite"]
+        )
+        assert third.exit_code == 0, third.stdout
+
+    def test_export_rejects_unknown_colormap(
+        self, imported_store: Path, tmp_path: Path
+    ) -> None:
+        result = runner.invoke(
+            app,
+            [
+                "gsplat",
+                "export",
+                str(imported_store),
+                str(tmp_path / "o.ply"),
+                "--color",
+                "colormap",
+                "--colormap",
+                "definitely-not-a-colormap",
+            ],
+        )
+        assert result.exit_code != 0
+
+    def test_help_lists_export(self) -> None:
+        result = runner.invoke(app, ["gsplat", "--help"])
+        assert result.exit_code == 0
+        assert "export" in result.stdout

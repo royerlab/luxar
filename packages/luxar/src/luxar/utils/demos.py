@@ -133,6 +133,28 @@ def warn_if_no_cuda_gpu() -> None:
     aprint("")
 
 
+def print_data_provenance(
+    *, title: str, source: str, license: str, url: str, note: str = ""
+) -> None:
+    """Print a dataset provenance/licence notice before a runtime download.
+
+    Demos that fetch third-party data at runtime print this first, so the user
+    sees the source and licence terms of what is about to be downloaded (Luxar
+    itself redistributes none of it). See the DATA SOURCE & CITATION docstring
+    block each demo also carries.
+    """
+    aprint("")
+    aprint("─" * 70)
+    aprint(f"  Dataset: {title}")
+    aprint(f"  Source:  {source}")
+    aprint(f"  License: {license}")
+    aprint(f"  URL:     {url}")
+    if note:
+        aprint(f"  Note:    {note}")
+    aprint("─" * 70)
+    aprint("")
+
+
 # =============================================================================
 # Precomputed Data Helpers
 # =============================================================================

@@ -42,7 +42,7 @@ app_gsplat = typer.Typer(
 register_fitting_commands(app_gsplat)  # fit, cal, render, denoise
 register_lod_command(app_gsplat)  # lod
 register_scene_commands(app_gsplat)  # convert, migrate-format
-register_interchange_commands(app_gsplat)  # import (classical splat formats)
+register_interchange_commands(app_gsplat)  # import/export (classical splat formats)
 register_inspect_commands(app_gsplat)  # info, view, napari, compare
 register_transforms_commands(
     app_gsplat
