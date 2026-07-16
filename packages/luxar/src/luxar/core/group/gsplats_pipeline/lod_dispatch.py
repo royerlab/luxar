@@ -16,7 +16,7 @@ import numpy as np
 from arbol import aprint
 
 from ...gsplats import GSplats
-from ..compositing import COMPOSITING_ATTRS
+from ..compositing import COMPOSITING_ATTRS, sync_custom_colormap_attr
 from ..dim_order import apply_dim_order_cholesky, apply_dim_order_positions
 
 if TYPE_CHECKING:
@@ -220,14 +220,7 @@ def add_gsplats_multi_lod_impl(
             **attrs,
         )
 
-        if "colormap" in attrs:
-            from ....colormaps.builtins import BUILTIN_COLORMAP_NAMES
-
-            cm = attrs["colormap"]
-            if not isinstance(cm, str) or (
-                isinstance(cm, str) and cm not in BUILTIN_COLORMAP_NAMES
-            ):
-                attrs["colormap"] = "custom"
+        sync_custom_colormap_attr(attrs)
 
         if not metadata.get("has_colors") and "colormap" not in attrs:
             attrs["colormap"] = "gray"
