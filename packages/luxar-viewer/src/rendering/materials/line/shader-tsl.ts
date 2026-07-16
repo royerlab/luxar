@@ -228,8 +228,10 @@ export function lineWebGPUFactory(
   let perPointColor: TSLNode;
   if (config.useColormap) {
     // Colormap mode: display range (uScalarMin/uScalarScale) and gamma
-    // operate on the scalar VALUE before the LUT lookup, not on the
-    // resulting color. gammaOne skips the pow() when gamma == 1.0.
+    // shape the scalar VALUE before the LUT lookup, not the resulting
+    // color; intensity/offset apply POST-LUT in the fragment stage
+    // (matching the gsplat shader). gammaOne skips the pow() when
+    // gamma == 1.0.
     const s: TSLNode = mix(aStartScalar!, aEndScalar!, t);
     const st0: TSLNode = clamp(s.sub(uScalarMin!).mul(uScalarScale!), 0.0, 1.0);
     const st: TSLNode = config.gammaOne ? st0 : st0.pow(uInvGamma);
@@ -431,16 +433,16 @@ export function lineWebGPUFactory(
       .mul(vWidthFade)
       .mul(vViewZ ? perspectiveNearFadeStaticTSL(false, vViewZ, nearCull) : float(1.0));
 
-    // GOG. Fast path: when the wrapper knows intensity==1 && offset==0,
-    // the mul/add/clamp chain is identity for non-negative vColor.
-    // Colormap (LUT) mode takes precedence: gamma + display-range already
-    // shaped the scalar VALUE pre-LUT (vertex stage), so color passes
-    // through untouched — matches the GLSL3 USE_COLORMAP path.
-    const adjusted: TSLNode = config.useColormap
-      ? max(vColor, vec3(0.0))
-      : config.noGOG
-        ? vColor
-        : max(vColor.mul(uIntensity).add(uOffset), vec3(0.0));
+    // GOG. uIntensity (gain) + uOffset apply in BOTH modes so the layer
+    // intensity/offset controls work for a colormapped line too (GLSL
+    // parity, matching the gsplat shader). Colormap mode: gamma +
+    // display-range shaped the scalar VALUE pre-LUT (vertex stage), so
+    // only gain/offset apply post-LUT (no extra gamma). Fast path: when
+    // the wrapper knows intensity==1 && offset==0, the mul/add/clamp
+    // chain is identity for non-negative vColor (noGOG).
+    const adjusted: TSLNode = config.noGOG
+      ? vColor
+      : max(vColor.mul(uIntensity).add(uOffset), vec3(0.0));
     Discard(max(adjusted.r, max(adjusted.g, adjusted.b)).lessThan(1e-4));
     // Gamma fast path: when the wrapper knows gamma==1.0 the pow() is
     // identity. JS-level branch so the generated WGSL/GLSL omits the
