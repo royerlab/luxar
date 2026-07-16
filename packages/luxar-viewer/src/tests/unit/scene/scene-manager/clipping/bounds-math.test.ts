@@ -16,6 +16,7 @@ import {
   projectBoundsToDisplayDims,
   SPHERE_SAFETY_EXPANSION,
   MIN_NEAR_PLANE,
+  minNearForRadius,
   isValidBoundingBox,
   expandBoundingBox,
   isPointInBoundingBox,
@@ -447,6 +448,27 @@ describe('bounds-math', () => {
     });
   });
 
+  describe('minNearForRadius', () => {
+    // Literal-value pins: the plane tests below assert against
+    // minNearForRadius(R) itself (wiring), which cannot catch a broken
+    // formula. These pin the formula's actual values.
+    it('reproduces the historical 1e-4 floor at a typical diagonal-100 scene', () => {
+      // diagonal 100 → radius 50 → expanded radius 52.5 → 52.5 * 2e-6.
+      expect(minNearForRadius(52.5)).toBeCloseTo(1.05e-4, 9);
+    });
+
+    it('scales down proportionally for tiny scenes', () => {
+      // diagonal 0.01 → expanded radius ~0.0053 → ~1.05e-8 (well below
+      // the old absolute 1e-4, above the 1e-9 last-resort floor).
+      expect(minNearForRadius(0.00525)).toBeCloseTo(1.05e-8, 12);
+    });
+
+    it('falls back to the absolute floor for a degenerate zero radius', () => {
+      expect(minNearForRadius(0)).toBe(MIN_NEAR_PLANE);
+      expect(minNearForRadius(0)).toBe(1e-9);
+    });
+  });
+
   describe('calculateClippingPlanesFromSphere', () => {
     it('should calculate clipping planes when outside sphere', () => {
       const box: BoundingBox = {
@@ -468,9 +490,9 @@ describe('bounds-math', () => {
     });
 
     // W3: camera exactly on the (expanded) sphere surface, dist == R. The
-    // `dist < R` branch is false, so near = max(MIN_NEAR_PLANE, dist - R) =
-    // max(MIN_NEAR_PLANE, 0) = MIN_NEAR_PLANE, and far = dist + R = 2R.
-    it('clamps near to MIN_NEAR_PLANE when camera sits on the sphere surface (dist == R)', () => {
+    // `dist < R` branch is false, so near = max(minNearForRadius(R), dist - R)
+    // = max(minNearForRadius(R), 0) = the scale-aware floor, and far = 2R.
+    it('clamps near to the scale-aware floor when camera sits on the sphere surface (dist == R)', () => {
       const box: BoundingBox = {
         min: { x: -10, y: -10, z: -10 },
         max: { x: 10, y: 10, z: 10 },
@@ -479,7 +501,7 @@ describe('bounds-math', () => {
       const R = sphere.radius * SPHERE_SAFETY_EXPANSION;
       // Place the camera exactly R away from the center along +z.
       const planes = calculateClippingPlanesFromSphere(sphere, { x: 0, y: 0, z: R });
-      expect(planes.near).toBe(MIN_NEAR_PLANE);
+      expect(planes.near).toBe(minNearForRadius(R));
       expect(planes.far).toBeCloseTo(2 * R, 6);
     });
 
@@ -511,11 +533,11 @@ describe('bounds-math', () => {
       const cameraPos = { x: 0, y: 0, z: 8 };
       const planes = calculateClippingPlanesFromSphere(sphere, cameraPos);
 
-      expect(planes.near).toBe(MIN_NEAR_PLANE);
+      expect(planes.near).toBe(minNearForRadius(R));
       expect(planes.far).toBeCloseTo(8 + R, 1);
     });
 
-    it('should enforce minimum near plane for tiny scenes', () => {
+    it('should enforce a positive near plane for tiny scenes', () => {
       const box: BoundingBox = {
         min: { x: 0, y: 0, z: 0 },
         max: { x: 0.01, y: 0.01, z: 0.01 },
@@ -526,6 +548,33 @@ describe('bounds-math', () => {
       const planes = calculateClippingPlanesFromSphere(sphere, cameraPos);
 
       expect(planes.near).toBeGreaterThanOrEqual(MIN_NEAR_PLANE);
+      expect(planes.near).toBeGreaterThan(0);
+    });
+
+    // Regression for the scale-aware near floor: with the 1000x zoom-in
+    // headroom, a tiny scene (diagonal ~0.01) lets the camera orbit at
+    // distances far below the OLD absolute floor (0.0001). The floor must
+    // scale with the scene so target-adjacent geometry is never behind
+    // the near plane at the deepest legal zoom.
+    it('keeps near below the deepest zoom-in distance for tiny scenes (scale-aware floor)', () => {
+      const box: BoundingBox = {
+        min: { x: 0, y: 0, z: 0 },
+        max: { x: 0.01, y: 0.01, z: 0.01 },
+      };
+      const sphere = boundingBoxToSphere(box);
+      const R = sphere.radius * SPHERE_SAFETY_EXPANSION;
+      // Deepest legal orbit distance ~ framed distance / ZOOM_IN_FACTOR;
+      // framed distance is on the order of the diagonal (~2R), so use
+      // 2R / 1000 as the representative deepest zoom.
+      const deepestZoom = (2 * R) / 1000;
+      const cameraPos = { x: sphere.center.x, y: sphere.center.y, z: sphere.center.z + deepestZoom };
+      const planes = calculateClippingPlanesFromSphere(sphere, cameraPos);
+
+      // Inside the sphere → near is the scale-aware floor, which must sit
+      // strictly below the camera-to-target distance (the old absolute
+      // 0.0001 floor failed this: 0.0001 > ~1.8e-5).
+      expect(planes.near).toBe(minNearForRadius(R));
+      expect(planes.near).toBeLessThan(deepestZoom);
     });
 
     it('should provide smooth near-plane transition approaching the sphere', () => {
