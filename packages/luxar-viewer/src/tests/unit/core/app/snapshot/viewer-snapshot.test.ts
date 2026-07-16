@@ -12,12 +12,12 @@ interface FakeControls {
   getFocusTarget: () => THREE.Vector3;
   setTarget: (v: THREE.Vector3) => void;
   reinitialize: () => void;
+  dispatchEvent: ReturnType<typeof vi.fn>;
 }
 
 interface FakeSceneManager {
   camera: THREE.Camera;
   controls: FakeControls;
-  dispatchEvent: ReturnType<typeof vi.fn>;
 }
 
 function makePerspectiveSceneManager(): FakeSceneManager {
@@ -31,8 +31,8 @@ function makePerspectiveSceneManager(): FakeSceneManager {
       getFocusTarget: () => target.clone(),
       setTarget: (v) => target.copy(v),
       reinitialize: vi.fn(),
+      dispatchEvent: vi.fn(),
     },
-    dispatchEvent: vi.fn(),
   };
 }
 
@@ -48,8 +48,8 @@ function makeOrthoSceneManager(): FakeSceneManager {
       getFocusTarget: () => target.clone(),
       setTarget: (v) => target.copy(v),
       reinitialize: vi.fn(),
+      dispatchEvent: vi.fn(),
     },
-    dispatchEvent: vi.fn(),
   };
 }
 
@@ -166,11 +166,12 @@ describe('restoreSnapshot', () => {
     expect(persp.fov).toBe(45);
     expect(sm.controls.getFocusTarget().toArray()).toEqual([9, 8, 7]);
     expect(sm.controls.reinitialize).toHaveBeenCalledOnce();
-    // The programmatic path must fire the same 'change' event an interactive
-    // camera move produces — it wakes the render loop so the per-frame LOD
-    // evaluation sees the new pose (regression: setCameraPose left the
+    // The programmatic path must fire the same CONTROLS 'change' event an
+    // interactive camera move produces — it wakes the render loop (per-frame
+    // LOD evaluation sees the new pose), refreshes ortho materials, and
+    // dirties the picking system (regression: setCameraPose left the
     // previous LOD level pinned).
-    expect(sm.dispatchEvent).toHaveBeenCalledWith({ type: 'change' });
+    expect(sm.controls.dispatchEvent).toHaveBeenCalledWith({ type: 'change' });
   });
 
   it('restores ortho-specific zoom when projection is ortho', () => {

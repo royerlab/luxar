@@ -116,12 +116,14 @@ export function restoreCamera(sceneManager: SceneManager, cam: CameraSnapshot): 
   sceneManager.controls.setTarget(new THREE.Vector3(cam.target[0], cam.target[1], cam.target[2]));
   sceneManager.controls.reinitialize();
 
-  // Fire the same 'change' event an interactive camera move produces.
-  // Without it the animation loop stays idle-paused: no frame renders and
-  // the per-frame LOD evaluation (`lodGroupRegistry.evaluatePerFrame`)
-  // never sees the new pose — a programmatic `setCameraPose()` would leave
-  // the previous LOD level pinned on screen.
-  sceneManager.dispatchEvent({ type: 'change' });
+  // Fire the same controls 'change' event an interactive camera move
+  // produces. Its subscribers are exactly what a programmatic pose change
+  // needs: the SceneManager handler (ortho-zoom material refresh + scene
+  // 'change' → wakes the render loop, whose per-frame
+  // `lodGroupRegistry.evaluatePerFrame` then sees the new pose) and the
+  // picking system's dirty handler. Without it the loop stays idle-paused
+  // and `setCameraPose()` leaves the previous LOD level pinned on screen.
+  sceneManager.controls.dispatchEvent({ type: 'change' });
 }
 
 /**
