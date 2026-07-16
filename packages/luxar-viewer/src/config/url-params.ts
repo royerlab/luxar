@@ -114,6 +114,14 @@ export interface UrlParams {
    */
   lodEnergyComp: boolean;
   /**
+   * Force the finest LOD level regardless of projected screen coverage
+   * (`?lod-finest`). For high-quality still/video capture — the gallery
+   * harness appends it — where a coarse level would look blurry even though
+   * the subject is small in frame. **Off by default** (opt-in, unlike the
+   * three on-by-default flags above).
+   */
+  lodFinest: boolean;
+  /**
    * Whether gsplat depth sorting is enabled (depth-sorting Phases 2-3): the
    * async worker sort that keeps `normal`-mode splats composited back-to-front,
    * plus the per-frame camera-motion re-sort scheduler. **On by default**; pass
@@ -219,6 +227,7 @@ export function readUrlParams(search?: string): UrlParams {
     clearCache: params.has('clear-cache'),
     lodFade: !params.has('no-lod-fade'),
     lodEnergyComp: !params.has('no-lod-energy'),
+    lodFinest: params.has('lod-finest'),
     depthSort: parseEnabledFlag(params.get('depthSort')),
     noPrefetch: params.has('no-prefetch'),
     prefetchDebug: params.has('prefetch-debug'),

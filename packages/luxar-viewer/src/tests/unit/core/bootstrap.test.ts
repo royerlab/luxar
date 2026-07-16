@@ -94,6 +94,7 @@ const EMPTY_PARAMS: UrlParams = {
   lodFade: true,
   lodEnergyComp: true,
   depthSort: true,
+  lodFinest: false, // capture-quality force-finest is OFF by default (opt-in via ?lod-finest)
   noPrefetch: false,
   prefetchDebug: false,
   cacheStats: false,
@@ -345,18 +346,26 @@ describe('bootstrapStandalone', () => {
       // the init pipeline reads options, never window.location.
       await bootstrapStandalone({
         canvas: CANVAS,
-        urlParams: { ...EMPTY_PARAMS, lodFade: false, lodEnergyComp: false, depthSort: false },
+        urlParams: {
+          ...EMPTY_PARAMS,
+          lodFade: false,
+          lodEnergyComp: false,
+          depthSort: false,
+          lodFinest: true, // opt-IN flag — flipped the other way
+        },
       });
-      const disabled = mocks.init.mock.calls.at(-1)?.[0];
-      expect(disabled.lodFade).toBe(false);
-      expect(disabled.lodEnergyComp).toBe(false);
-      expect(disabled.depthSort).toBe(false);
+      const flipped = mocks.init.mock.calls.at(-1)?.[0];
+      expect(flipped.lodFade).toBe(false);
+      expect(flipped.lodEnergyComp).toBe(false);
+      expect(flipped.depthSort).toBe(false);
+      expect(flipped.lodFinest).toBe(true);
 
       await bootstrapStandalone({ canvas: CANVAS, urlParams: EMPTY_PARAMS });
       const defaults = mocks.init.mock.calls.at(-1)?.[0];
       expect(defaults.lodFade).toBe(true);
       expect(defaults.lodEnergyComp).toBe(true);
       expect(defaults.depthSort).toBe(true);
+      expect(defaults.lodFinest).toBe(false);
     });
 
     it('does not set perfTimestamp on the init() call when urlParams.perfTimestamp is false', async () => {

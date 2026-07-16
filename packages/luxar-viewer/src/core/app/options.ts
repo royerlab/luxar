@@ -144,6 +144,14 @@ export interface LuxarAppOptions {
   lodEnergyComp?: boolean;
 
   /**
+   * Force the finest LOD level regardless of projected screen coverage
+   * (never coarsen, even off-screen). For high-quality still/video capture
+   * where a coarse level looks blurry despite the subject being small in
+   * frame. Default: false. Mirrors `UrlParams.lodFinest` (`?lod-finest`).
+   */
+  lodFinest?: boolean;
+
+  /**
    * GSplat depth sorting (worker back-to-front sorting of `normal`-mode
    * splats + the camera-motion re-sort scheduler). Default: true; false
    * pins the identity storage ordering for deterministic runs. Mirrors
