@@ -19,7 +19,10 @@
  *
  * The pick buffer encodes: R=nodeId, G=elementId, B=brightness, A=1.0
  * Brightness-as-depth (gl_FragDepth = 1 - brightness) ensures the
- * brightest element at each pixel wins the depth test.
+ * brightest element at each pixel wins the depth test. Exception:
+ * gsplat nodes in surface ('normal') blending mode write real projected
+ * depth instead (front-most wins) — renderPickBuffer syncs the
+ * convention from each main material's blendingMode per render.
  *
  * Caching: the pick buffer is only re-rendered when dirty (camera move,
  * geometry update, window resize). World AABBs are cached per node and
@@ -30,6 +33,8 @@
 import * as THREE from 'three';
 import type { PostProcessingManager } from '../post-processing/post-processing-manager';
 import { isCameraAwareMaterial } from '../materials/_shared/camera-aware-material';
+import { isNormalMode } from '../blending-state';
+import type { BlendingMode } from '../material-manager';
 import {
   disposePickMaterial,
   unregisterAllPickMaterials,
@@ -612,6 +617,25 @@ export class PickingSystem {
       const mat = (entry.pick as THREE.Mesh).material;
       if (isCameraAwareMaterial(mat)) {
         mat.updateCameraParams(fov, pickRes, isOrtho);
+      }
+
+      // Pick-depth convention sync: under depth-sorted alpha-over
+      // ('normal') the user sees an occluding surface, so the pick
+      // depth must be the real projected depth (front-most wins)
+      // instead of brightness-as-depth (brightest wins — right for the
+      // commutative modes, but it could pick a brighter splat BEHIND
+      // the visible surface). Only gsplat pick materials implement
+      // setSurfacePickDepth; points/lines are unaffected.
+      const surfaceAware = mat as { setSurfacePickDepth?: (on: boolean) => void };
+      if (typeof surfaceAware.setSurfacePickDepth === 'function') {
+        // entry.main is typed Object3D — non-mesh mains have no material.
+        const mainMat = (entry.main as THREE.Mesh).material as
+          | THREE.Material
+          | THREE.Material[]
+          | undefined;
+        const single = Array.isArray(mainMat) ? mainMat[0] : mainMat;
+        const mode = (single?.userData.blendingMode ?? 'additive') as BlendingMode;
+        surfaceAware.setSurfacePickDepth(isNormalMode(mode));
       }
 
       this.pickScene.add(entry.pick);
