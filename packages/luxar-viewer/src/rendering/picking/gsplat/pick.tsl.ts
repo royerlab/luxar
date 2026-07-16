@@ -8,7 +8,9 @@
  *   - G: elementId (instance index)
  *   - B: brightness clamped to [0, 1]
  *   - A: 1.0
- * Depth = 1.0 - brightness (brightness-as-depth tie-breaking).
+ * Depth = 1.0 - brightness (brightness-as-depth tie-breaking) — or the
+ * real fragment depth when `uSurfaceDepth == 1` (surface/'normal' mode:
+ * front-most wins, matching the depth-sorted occluding surface).
  *
  * Picking always uses max-projection mode — no ray integration boost
  * — so the Σ_cam⁻¹ cofactor expansion is omitted vs gsplat.tsl.
@@ -40,6 +42,7 @@ import {
   smoothstep,
   normalize,
   Discard,
+  depth,
   modelViewMatrix,
   cameraProjectionMatrix,
   screenCoordinate,
@@ -80,6 +83,12 @@ export interface GSplatPickTSLNodes {
   readonly uNearCull: TSLNode;
   readonly uMaxExtentFactor: TSLNode;
   readonly uCov2DDilation: TSLNode;
+  /**
+   * Pick depth convention selector: 0 = brightness-as-depth (brightest
+   * wins; commutative modes), 1 = real fragment depth (front-most wins;
+   * surface/'normal' mode). Mirrors the GLSL `uSurfaceDepth` uniform.
+   */
+  readonly uSurfaceDepth: TSLNode;
   readonly uNodeId: TSLNode;
   readonly uShiftC: TSLNode;
   readonly uInvOneMinusC: TSLNode;
@@ -110,6 +119,7 @@ export function gsplatPickWebGPUFactory(
   const uNearCull = nodes.uNearCull;
   const uMaxExtentFactor = nodes.uMaxExtentFactor;
   const uCov2DDilation = nodes.uCov2DDilation;
+  const uSurfaceDepth = nodes.uSurfaceDepth;
   const uNodeId = nodes.uNodeId;
   const uShiftC = nodes.uShiftC;
   const uInvOneMinusC = nodes.uInvOneMinusC;
@@ -372,7 +382,18 @@ export function gsplatPickWebGPUFactory(
     return vec4(vNodeId, vElementId, brightness, 1.0);
   });
 
-  const depthNode = Fn(() => float(1.0).sub(brightness));
+  // Pick depth convention — mirrors the GLSL fragment (shaders.ts):
+  // surface ('normal') mode writes the REAL fragment depth (`depth` =
+  // the builtin fragment depth; the vertex puts the splat-center NDC z
+  // in the clip position, so this is the true projected depth) — the
+  // front-most splat wins, matching the depth-sorted occluding surface
+  // the user sees. Commutative modes (additive/max/luminous/opaque)
+  // keep brightness-as-depth — the brightest splat wins.
+  const depthNode = Fn(() =>
+    int(uSurfaceDepth)
+      .equal(int(1))
+      .select(depth as unknown as TSLNode, float(1.0).sub(brightness))
+  );
 
   const material = outMaterial ?? new NodeMaterial();
   material.vertexNode = clipPos;
@@ -418,6 +439,8 @@ export function buildGSplatPickTSLNodesFromUniforms(
     uMaxExtentFactor: uniform((uniforms.uMaxExtentFactor?.value as number) ?? 1.0),
     // Neutral fallback 0 (harness/snapshot adapter; production sets 0.3).
     uCov2DDilation: uniform((uniforms.uCov2DDilation?.value as number) ?? 0),
+    // Default 0 = brightness-as-depth (the commutative-mode convention).
+    uSurfaceDepth: uniform((uniforms.uSurfaceDepth?.value as number) ?? 0),
     uNodeId: uniform((uniforms.uNodeId?.value as number) ?? 0),
     uShiftC: uniform((uniforms.uShiftC?.value as number) ?? 0.0),
     uInvOneMinusC: uniform((uniforms.uInvOneMinusC?.value as number) ?? 1.0),
