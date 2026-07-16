@@ -69,7 +69,9 @@ const VIEWER_URL = `http://localhost:${process.env.GALLERY_VITE_PORT ?? 5199}`;
 // 1:1 at ORBIT_FPS — zero synthesized frames, zero warping. The rock is slow, so
 // 12 fps already reads as smooth; mci was expensive, so dropping it roughly
 // offsets the extra screenshots. Loops seamlessly (sin returns to start).
-const ORBIT_FRAMES = 120; // real screenshots per cycle (played 1:1, no interp)
+// real screenshots per cycle (played 1:1, no interp). GALLERY_ORBIT_FRAMES lets
+// a quick smoke run (or a heavy software-GL demo) use fewer frames.
+const ORBIT_FRAMES = Number(process.env.GALLERY_ORBIT_FRAMES ?? 120);
 // Timelapse: number of DISTINCT timepoints sampled across the clip. Each is a
 // separate gsplat-slice load, so loading one per orbit frame (120) is far too
 // slow; ~40 distinct steps (each held ~3 frames) keeps the development legible
@@ -171,6 +173,12 @@ interface DemoEntry {
     // developmental series is empty at t0, so the poster wants a late timepoint.
     framePoint?: number;
   };
+  // Force the finest LOD (adds ``&lod-finest``). Default TRUE — a coarse level
+  // looks blurry in a hero still. Set FALSE for a very heavy scene (e.g. the
+  // 2.3M-segment global rivers globe) where forcing all elements makes each
+  // software-GL frame take minutes: the viewport-relative coverage LOD then
+  // picks a lighter level sized to the framing, so the orbit video is feasible.
+  lodFinest?: boolean;
   readme?: boolean;
 }
 
@@ -846,7 +854,10 @@ for (const demo of DEMOS) {
     const dataUrl = `${DATA_SERVER}/${demo.dataset}`;
     // &lod-finest forces the finest LOD level regardless of screen coverage —
     // a coarse level looks blurry in a hero still even when the subject is small.
-    const viewerUrl = `${VIEWER_URL}/?src=${dataUrl}&debug&lod-finest`;
+    // Opt out (lodFinest:false) for a very heavy scene where forcing every
+    // element makes each software-GL frame take minutes (see DemoEntry.lodFinest).
+    const finestParam = demo.lodFinest === false ? '' : '&lod-finest';
+    const viewerUrl = `${VIEWER_URL}/?src=${dataUrl}&debug${finestParam}`;
     console.log(`[${demo.id}] ${dataUrl}`);
 
     await installChromeHider(page); // survives Vite reloads (must precede goto)
