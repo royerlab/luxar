@@ -220,6 +220,109 @@ describe('depth-sort coordinator', () => {
     expect(mv[14]).toBeCloseTo(-40, 5);
   });
 
+  it('respawns a fresh worker after dispose + reconfigure (app re-init)', async () => {
+    const coord = await loadCoordinator();
+    coord.configureDepthSort({ camera: makeCamera(), requestRender: vi.fn() });
+    const meshA = makeGSplatsMesh(2, 'normal');
+    coord.noteGSplatsCommit(meshA, new Float32Array([0, 0, -1, 1, 0, -2]), 2);
+    await flush();
+    expect(mockApi.initialize).toHaveBeenCalledTimes(1);
+
+    coord.disposeDepthSort();
+    expect(terminatedWorkers.length).toBe(1);
+
+    // Re-init (a second LuxarApp.init in the same page/session).
+    coord.configureDepthSort({ camera: makeCamera(), requestRender: vi.fn() });
+    const meshB = makeGSplatsMesh(2, 'normal');
+    coord.noteGSplatsCommit(meshB, new Float32Array([0, 0, -1, 1, 0, -2]), 2);
+    await flush();
+
+    // A FRESH worker was spawned and initialized; sorts flow again.
+    expect(mockApi.initialize).toHaveBeenCalledTimes(2);
+    sortResolvers[sortResolvers.length - 1]({
+      generation: 1,
+      ordering: new Uint32Array([1, 0]),
+    });
+    await flush();
+    const attrB = (meshB.geometry as THREE.InstancedBufferGeometry).getAttribute('aSortedIndex');
+    expect(Array.from(attrB.array as Uint32Array)).toEqual([1, 0]);
+  });
+
+  it('degrades gracefully (warn-once, no throw) when the worker cannot be created', async () => {
+    const coord = await loadCoordinator();
+    // Simulate a broken embedder override / CSP-blocked worker script.
+    mockApi.initialize.mockRejectedValue(new Error('worker init blocked'));
+    coord.configureDepthSort({ camera: makeCamera(), requestRender: vi.fn() });
+
+    const mesh = makeGSplatsMesh(2, 'normal');
+    // Two commits: neither may throw; register/sort never happen.
+    coord.noteGSplatsCommit(mesh, new Float32Array([0, 0, -1, 1, 0, -2]), 2);
+    await flush();
+    coord.noteGSplatsCommit(mesh, new Float32Array([0, 0, -1, 1, 0, -2]), 2);
+    await flush();
+    expect(mockApi.registerNode).not.toHaveBeenCalled();
+    expect(mockApi.sort).not.toHaveBeenCalled();
+    // Rendering itself is unaffected — identity ordering stays in place.
+    const attr = (mesh.geometry as THREE.InstancedBufferGeometry).getAttribute('aSortedIndex');
+    expect(Array.from(attr.array as Uint32Array)).toEqual([0, 0]);
+  });
+
+  it('keeps per-node state independent across two nodes sharing the worker', async () => {
+    // Two order-dependent nodes → two independent in-flight sorts on
+    // the SAME worker; resolving one must not touch the other, and
+    // releasing one mid-flight must not disturb the other's resolve.
+    const coord = await loadCoordinator();
+    const requestRender = vi.fn();
+    coord.configureDepthSort({ camera: makeCamera(), requestRender });
+
+    const meshA = makeGSplatsMesh(2, 'normal');
+    const meshB = makeGSplatsMesh(2, 'normal');
+    coord.noteGSplatsCommit(meshA, new Float32Array([0, 0, -1, 1, 0, -2]), 2);
+    await flush();
+    coord.noteGSplatsCommit(meshB, new Float32Array([0, 0, -3, 1, 0, -4]), 2);
+    await flush();
+
+    // One sort per node, concurrently in flight (per-node rule, not global).
+    expect(mockApi.sort).toHaveBeenCalledTimes(2);
+    expect(mockApi.initialize).toHaveBeenCalledTimes(1); // still one worker
+
+    // Release A mid-flight, then resolve BOTH (A's first).
+    coord.releaseDepthSortNode(meshA);
+    sortResolvers[0]({ generation: 1, ordering: new Uint32Array([1, 0]) });
+    sortResolvers[1]({ generation: 1, ordering: new Uint32Array([1, 0]) });
+    await flush();
+
+    const attrA = (meshA.geometry as THREE.InstancedBufferGeometry).getAttribute('aSortedIndex');
+    const attrB = (meshB.geometry as THREE.InstancedBufferGeometry).getAttribute('aSortedIndex');
+    expect(Array.from(attrA.array as Uint32Array)).toEqual([0, 0]); // discarded
+    expect(Array.from(attrB.array as Uint32Array)).toEqual([1, 0]); // applied
+  });
+
+  it('applies the mesh ROTATION to the model-view (not just translation)', async () => {
+    // A 180° rotation about y negates the mesh-local z axis: local
+    // z = +1 lands at world z = position.z − 1. A translation-only
+    // model-view would put it at position.z + 1 — the opposite depth
+    // order. Pins the full matrixWorld path.
+    const coord = await loadCoordinator();
+    coord.configureDepthSort({ camera: makeCamera(), requestRender: vi.fn() });
+
+    const mesh = makeGSplatsMesh(2, 'normal');
+    mesh.position.set(0, 0, -10);
+    mesh.rotation.y = Math.PI;
+    coord.noteGSplatsCommit(mesh, new Float32Array([0, 0, 1, 0, 0, 3]), 2);
+    await flush();
+
+    const mv = mockApi.sort.mock.calls[0][0].modelView as Float32Array;
+    // Rotation flips the z column: m10 ≈ −1; translation stays −10.
+    expect(mv[10]).toBeCloseTo(-1, 5);
+    expect(mv[14]).toBeCloseTo(-10, 5);
+    // View z of the two splats: −10−1 = −11 and −10−3 = −13 → the
+    // second (farther) splat must draw first under this model-view.
+    const z0 = mv[10] * 1 + mv[14];
+    const z1 = mv[10] * 3 + mv[14];
+    expect(z1).toBeLessThan(z0);
+  });
+
   it('drains a queued re-sort even when the in-flight sort RPC fails', async () => {
     const coord = await loadCoordinator();
     coord.configureDepthSort({ camera: makeCamera(), requestRender: vi.fn() });
