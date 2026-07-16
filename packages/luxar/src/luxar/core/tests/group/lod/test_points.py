@@ -189,6 +189,31 @@ class TestResolveAdditiveAxisPoints:
 
 
 class TestAddPointsAdditiveLod:
+    def test_colors_and_colormap_rejected_on_additive_path(self, tmp_path) -> None:
+        # Regression: the additive multi-LOD branch used to return before the
+        # colors/colormap mutual-exclusivity validation, silently accepting
+        # invalid combinations that the flat path rejects.
+        output = tmp_path / "t.luxar.zarr"
+        rng = np.random.RandomState(0)
+        positions = rng.rand(200, 3).astype(np.float32)
+        with LuxarZarrCompiler(output) as compiler:
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+            with pytest.raises(ValueError, match="colors.*colormap"):
+                scene.add_points(
+                    "pts",
+                    positions,
+                    colors=rng.rand(200, 3).astype(np.float32),
+                    colormap="viridis",
+                    additive_lod=dict(n_lods=3, method="random"),
+                )
+            with pytest.raises(ValueError, match="scalars.*colormap"):
+                scene.add_points(
+                    "pts2",
+                    positions,
+                    scalars=rng.rand(200).astype(np.float32),
+                    additive_lod=dict(n_lods=3, method="random"),
+                )
+
     def test_default_true_writes_4_levels(self, tmp_path) -> None:
         output = tmp_path / "t.luxar.zarr"
         rng = np.random.RandomState(0)

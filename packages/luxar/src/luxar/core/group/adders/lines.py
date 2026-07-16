@@ -87,6 +87,19 @@ def add_lines_impl(
         n_vertices = vert_arr.shape[0]
         ndim = vert_arr.shape[1]
 
+        # Colormap / colors mutual exclusivity — validated BEFORE the
+        # substitutive/partition/additive branches so every path rejects
+        # invalid combinations (the LOD wrappers used to return early and
+        # skip these checks entirely).
+        if colors is not None and attrs.get("colormap") is not None:
+            raise ValueError(
+                "Cannot specify both 'colors' and 'colormap'. Use one or the other."
+            )
+        if scalars is not None and attrs.get("colormap") is None:
+            raise ValueError(
+                "'scalars' requires a 'colormap' attribute to map values to colors."
+            )
+
         # Substitutive-LOD branch — coarse levels are synthesised gsplats (each
         # segment lifted to isotropic "bead" Gaussians, then reduced by the
         # gsplat substitutive pipeline) under a kind=lod Group whose finest
@@ -306,17 +319,6 @@ def add_lines_impl(
         if final_extend_dims:
             attrs["extend_to_all"] = final_extend_dims
             aprint(f"  📡 Extending visibility across: {final_extend_dims}")
-
-        # Colormap / colors mutual exclusivity
-        colormap = attrs.get("colormap")
-        if colors is not None and colormap is not None:
-            raise ValueError(
-                "Cannot specify both 'colors' and 'colormap'. Use one or the other."
-            )
-        if scalars is not None and colormap is None:
-            raise ValueError(
-                "'scalars' requires a 'colormap' attribute to map values to colors."
-            )
 
         parent_node = parent or group
 

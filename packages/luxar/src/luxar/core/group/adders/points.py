@@ -93,6 +93,19 @@ def add_points_impl(
         n_points = pos_arr.shape[0]
         ndim = pos_arr.shape[1]
 
+        # Colormap / colors mutual exclusivity — validated BEFORE the
+        # substitutive/partition/additive branches so every path rejects
+        # invalid combinations (the LOD wrappers used to return early and
+        # skip these checks entirely).
+        if colors is not None and attrs.get("colormap") is not None:
+            raise ValueError(
+                "Cannot specify both 'colors' and 'colormap'. Use one or the other."
+            )
+        if scalars is not None and attrs.get("colormap") is None:
+            raise ValueError(
+                "'scalars' requires a 'colormap' attribute to map values to colors."
+            )
+
         # Substitutive-LOD branch — coarse levels are synthesised gsplats (each
         # point lifted to an isotropic Gaussian, then reduced by the gsplat
         # substitutive pipeline) under a kind=lod Group whose finest child is the
@@ -277,17 +290,6 @@ def add_points_impl(
             aprint(f"  📡 Extending visibility across: {final_extend_dims}")
 
         parent_node = parent or group
-
-        # Colormap / colors mutual exclusivity
-        colormap = attrs.get("colormap")
-        if colors is not None and colormap is not None:
-            raise ValueError(
-                "Cannot specify both 'colors' and 'colormap'. Use one or the other."
-            )
-        if scalars is not None and colormap is None:
-            raise ValueError(
-                "'scalars' requires a 'colormap' attribute to map values to colors."
-            )
 
         if radii is None:
             radii = DEFAULT_POINT_RADIUS
