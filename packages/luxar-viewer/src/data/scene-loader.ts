@@ -87,6 +87,7 @@ import { SliceCache } from '../cache/slice-cache';
 import type { CacheBudgets } from '../cache/heap-budget';
 import type { LinesDataLoader, LinesViewState, LoadedLinesData } from '../types/lines';
 import type { GSplatsDataLoader, GSplatsViewState, LoadedGSplatsData } from '../types/gsplats';
+import { releaseDepthSortNode } from '../rendering/depth-sort-coordinator';
 import { GPUBufferPool } from '../rendering/gpu-buffer-pool';
 import { getGpuByteBudget } from '../rendering/gpu-byte-budget';
 import { NodeFactory } from '../rendering/node-factory';
@@ -1269,6 +1270,12 @@ export class SceneLoader {
         this._gpuBufferPool?.releaseGSplatsGeometry(path);
         this.registry.unregisterGSplatsLoader(path);
         this.clearCommittedDataStamp(path);
+        // Also drop the level's depth-sort state + worker-side centers: a
+        // demoted level won't sort again until re-promotion re-registers it
+        // (fresh commit → noteGSplatsCommit). Mirrors the coordinator's
+        // empty-commit release hygiene.
+        const mesh = this.rootGroup?.getObjectByName(path);
+        if (mesh) releaseDepthSortNode(mesh as THREE.Mesh);
       },
       releaseLazyPoints: (path) => {
         // Points peer of releaseLazyGSplats: return the level's GPU buffer to

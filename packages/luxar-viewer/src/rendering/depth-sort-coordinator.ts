@@ -91,6 +91,15 @@ interface NodeSortState {
   lastSortAxis: THREE.Vector3 | null;
   /** Normalized view-axis offset (m14 / |axis|) at the last dispatched sort. */
   lastSortOffset: number;
+  /**
+   * True iff centers for the CURRENT generation were dispatched to the
+   * worker. Set where the register RPC is issued; cleared on every
+   * release branch (empty/commutative commit, mode-switch-away). The
+   * per-frame scheduler uses it to recover a node whose FIRST dispatch
+   * raced a null camera: registered but `lastSortAxis === null` means
+   * "worker has centers, no sort ever left" — dispatch one now.
+   */
+  registered: boolean;
 }
 
 let worker: Worker | null = null;
@@ -211,6 +220,7 @@ export function noteGSplatsCommit(mesh: THREE.Mesh, centers3: Float32Array, coun
       resortQueued: false,
       lastSortAxis: null,
       lastSortOffset: 0,
+      registered: false,
     };
     nodeStates.set(nodeId, state);
   }
@@ -222,6 +232,14 @@ export function noteGSplatsCommit(mesh: THREE.Mesh, centers3: Float32Array, coun
     // blending, or an empty frame: no ordering needed. Drop any
     // worker-side registration so the worker doesn't hold stale
     // centers for a node that may not sort again for a long time.
+    // Clearing the recorded sort pose alongside is load-bearing: a
+    // kept `lastSortAxis` would let the per-frame scheduler keep
+    // firing guaranteed-null sort RPCs against the released
+    // registration on every threshold crossing.
+    state.lastSortAxis = null;
+    state.lastSortOffset = 0;
+    state.registered = false;
+    state.resortQueued = false;
     releaseWorkerNode(nodeId);
     return;
   }
@@ -231,7 +249,9 @@ export function noteGSplatsCommit(mesh: THREE.Mesh, centers3: Float32Array, coun
     .then(() => {
       if (!api) return;
       // A newer commit may have landed while the worker was spawning.
-      if (nodeStates.get(nodeId)?.generation !== generation) return;
+      const current = nodeStates.get(nodeId);
+      if (current?.generation !== generation) return;
+      current.registered = true;
       // The register RPC is its own promise — the surrounding .catch
       // only sees synchronous throws, so a transport/transfer rejection
       // here would otherwise float as an unhandled rejection.
@@ -598,7 +618,16 @@ export function evaluateDepthSortPerFrame(): void {
     }
 
     // === Within-mesh re-sort trigger (Phase 3) ===
-    if (state.inFlight || !state.lastSortAxis) continue;
+    if (state.inFlight) continue;
+    if (!state.lastSortAxis) {
+      // Registered with the worker but no sort ever dispatched — the
+      // first commit raced a null camera (init ordering / renderer
+      // swap window). The camera exists on this frame; recover with
+      // one dispatch. No retry-loop risk: `scheduleSort` records the
+      // pose BEFORE the RPC, so even a failing sort leaves this branch.
+      if (state.registered) scheduleSort(mesh, nodeId);
+      continue;
+    }
     const e = scratch.mv.elements;
     scratch.axis.set(e[2], e[6], e[10]);
     const len = scratch.axis.length();
@@ -657,9 +686,15 @@ export function noteGSplatsBlendingModeSwitch(
     const state = nodeStates.get(mesh.uuid);
     if (state) {
       // Invalidate any in-flight sort's result; keep the counter
-      // monotonic for the node's next order-dependent commit.
+      // monotonic for the node's next order-dependent commit. Clear
+      // the sort pose + registration alongside (same hygiene as the
+      // commit path's release branch) so the per-frame scheduler
+      // neither re-triggers nor "recovers" a released node.
       state.generation++;
       state.resortQueued = false;
+      state.lastSortAxis = null;
+      state.lastSortOffset = 0;
+      state.registered = false;
     }
     releaseWorkerNode(mesh.uuid);
   }
