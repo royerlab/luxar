@@ -87,6 +87,38 @@ class TestInteropCommon:
         )
         assert scene.exists()
 
+    def test_tiled_scene_propagates_normal_blending_to_parts(
+        self, splat_fixture: Path, tmp_path: Path
+    ) -> None:
+        # A tiled import is a kind=partition: the leaf writer stamps a DEFAULT
+        # blending_mode="additive" on each part, which the viewer reads per-part
+        # and which shadows the wrapper's "normal". Without the graft propagating
+        # blending_mode to children, tiled photogrammetric imports would render
+        # as additive GLOW instead of the surface-like alpha-over they need.
+        # Assert every part carries the wrapper's "normal" (not "additive").
+        cache = build_gsplats_cache(
+            splat_fixture,
+            tmp_path / "t.gsplats.zarr",
+            recipe="tiles",
+            max_elements=16,
+            n_lods=2,
+        )
+        scene = build_interop_scene(
+            cache,
+            tmp_path / "scene_t.luxar.zarr",
+            title="t",
+            layer_name="lizard",
+            credit="c",
+        )
+        root = zarr.open_group(str(scene), mode="r")
+        layer = root["lizard"]
+        part_names = [k for k in layer.group_keys() if k.startswith("part_")]
+        assert part_names, "expected a kind=partition with part_* children"
+        for pn in part_names:
+            assert dict(layer[pn].attrs).get("blending_mode") == "normal", (
+                f"part {pn} must inherit the layer's normal blending, not additive"
+            )
+
     def test_cache_is_reused(self, splat_fixture: Path, tmp_path: Path) -> None:
         out = tmp_path / "c.gsplats.zarr"
         build_gsplats_cache(splat_fixture, out)

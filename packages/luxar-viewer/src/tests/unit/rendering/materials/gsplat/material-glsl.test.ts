@@ -172,7 +172,10 @@ describe('GSplatMaterial', () => {
       expect(material.blending).toBe('CustomBlending');
       // GSplat normal mode never writes depth (no opacity gate).
       expect(material.depthWrite).toBe(false);
-      expect(material.uniforms.uProjectionMode.value).toBe(0); // Sum projection for normal
+      // Peak (2D-projected) projection: alpha-over is the surface model, so a
+      // splat's contribution is its projected-Gaussian peak, not the emissive
+      // ray-integral (which would saturate coverage-alpha to opaque + streak).
+      expect(material.uniforms.uProjectionMode.value).toBe(1); // Peak projection for normal
     });
 
     it('should configure max blending with max projection', () => {
@@ -442,6 +445,15 @@ describe('GSplatMaterial', () => {
       const cloned = material.clone();
       expect(cloned.uniforms.uMaxExtentFactor.value).toBe(0.7);
     });
+
+    it('defaults and clone-preserves uCov2DDilation (2D low-pass, default 0.3)', () => {
+      const material = new GSplatMaterial({});
+      expect(material.uniforms.uCov2DDilation.value).toBe(0.3);
+
+      const tuned = new GSplatMaterial({ cov2DDilation: 0.5 });
+      expect(tuned.uniforms.uCov2DDilation.value).toBe(0.5);
+      expect(tuned.clone().uniforms.uCov2DDilation.value).toBe(0.5);
+    });
   });
 
   describe('blending mode depth test configuration', () => {
@@ -622,7 +634,7 @@ describe('GSplatMaterial', () => {
       expect(material.transparent).toBe(true);
       expect(material.depthTest).toBe(true);
       expect(material.depthWrite).toBe(false);
-      expect(material.uniforms.uProjectionMode.value).toBe(0); // sum projection
+      expect(material.uniforms.uProjectionMode.value).toBe(1); // peak projection (surface)
     });
 
     it('depthWrite stays OFF at opacity 1.0 (no generic opacity>=0.99 gate)', () => {

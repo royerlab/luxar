@@ -399,6 +399,33 @@ function buildGSplatSplatDataTexture(
 }
 
 /**
+ * A highly anisotropic (near-flat) splat: full extent in X and Z, a near-zero
+ * minor axis in Y. Under the default ortho camera (which projects the XY block)
+ * this yields a near-degenerate 2D covariance — the case the 2D low-pass
+ * dilation exists for. Cholesky diagonal = (sx, sy, sz); off-diagonals zero.
+ */
+function buildThinCovSplatTexture(sx = 0.4, sy = 0.004, sz = 0.4): THREE.DataTexture {
+  const tex = new THREE.DataTexture(new Float32Array(16), 4, 1, THREE.RGBAFormat, THREE.FloatType);
+  tex.magFilter = THREE.NearestFilter;
+  tex.minFilter = THREE.NearestFilter;
+  tex.generateMipmaps = false;
+  tex.flipY = false;
+  writeSplatTexels(
+    tex,
+    {
+      centers: new Float32Array([0, 0, 0]),
+      cholesky01: new Float32Array([sx, 0]),
+      cholesky23: new Float32Array([sy, 0]),
+      cholesky45: new Float32Array([0, sz]),
+      amplitudes: new Float32Array([1.0]),
+      colors: new Float32Array([1.0, 0.5, 0.25]),
+    },
+    1
+  );
+  return tex;
+}
+
+/**
  * Default parity camera: `OrthographicCamera` at (0,0,1) looking at the
  * origin, so world (0,0,0) projects to NDC centre. Shared by every case that
  * doesn't override `buildCamera`.
@@ -1003,9 +1030,10 @@ const SHADER_REGISTRY: Record<string, RegistryEntry> = {
   // TSL blendingMode:'normal'). The interesting channel is ALPHA: the
   // fragment writes clamp(intensity·uOpacity, 0, 1) instead of 1.0, and
   // meanAbsDiff compares full RGBA. uOpacity=0.6 keeps the coverage
-  // sub-saturated so alpha varies across the splat. uProjectionMode=0
-  // (sum) matches the TSL factory's normal-mode graph — this variant is
-  // also the only gsplat case exercising the Σ⁻¹ ray-integral path.
+  // sub-saturated so alpha varies across the splat. uProjectionMode=1
+  // (PEAK) matches the TSL factory's normal-mode graph: alpha-over is the
+  // surface model, so normal mode uses the 2D-projected peak, not the
+  // Σ⁻¹ ray-integral (that path is now exercised only by additive variants).
   'gsplat-normal-premult': {
     source: GSPLAT_SOURCE,
     buildUniforms: () => ({
@@ -1016,7 +1044,7 @@ const SHADER_REGISTRY: Record<string, RegistryEntry> = {
       uTruncate: { value: 3.0 },
       uTruncateSq: { value: 9.0 },
       uRayIntegralFactor: { value: 2.433 },
-      uProjectionMode: { value: 0 }, // sum projection (normal mode)
+      uProjectionMode: { value: 1 }, // peak projection (normal = surface)
       uIsOrtho: { value: 1 },
       uNearCull: { value: 0.01 },
       uMaxExtentFactor: { value: 1.0 },
@@ -1034,6 +1062,46 @@ const SHADER_REGISTRY: Record<string, RegistryEntry> = {
       }) as unknown as THREE.Material;
       // The harness compares raw fragment output — override the
       // factory-applied blend state exactly like the other variants.
+      m.transparent = false;
+      m.blending = THREE.NoBlending;
+      return m;
+    },
+    buildMesh: buildGSplatInstancedMesh,
+  },
+  // GSplat 2D-covariance DILATION on a near-degenerate splat. The splat is
+  // near-flat (tiny minor axis in Y), so its projected Σ_2D is near-singular —
+  // exactly what the low-pass dilation guards. uCov2DDilation=0.3 is set on
+  // BOTH backends (GLSL reads the uniform; the TSL adapter reads the same
+  // value), so this asserts GLSL and TSL dilate identically. No existing
+  // variant exercises a degenerate covariance, so without this a shared
+  // dilation regression would be invisible. (max projection isolates the
+  // dilation from the ray-integral path.)
+  'gsplat-thin-cov': {
+    source: GSPLAT_SOURCE,
+    buildUniforms: () => ({
+      uSplatTex: { value: buildThinCovSplatTexture() },
+      uResolution: { value: new THREE.Vector2(64, 64) },
+      uFx: { value: 32.0 },
+      uFy: { value: 32.0 },
+      uTruncate: { value: 3.0 },
+      uTruncateSq: { value: 9.0 },
+      uRayIntegralFactor: { value: 2.433 },
+      uProjectionMode: { value: 1 }, // max projection (isolate dilation)
+      uIsOrtho: { value: 1 },
+      uNearCull: { value: 0.01 },
+      uMaxExtentFactor: { value: 1.0 },
+      uCov2DDilation: { value: 0.3 }, // the term under test — same on both backends
+      uOpacity: { value: 1.0 },
+      uInvGamma: { value: 1.0 / 2.2 },
+      uIntensity: { value: 1.0 },
+      uOffset: { value: 0.0 },
+      uShiftC: { value: Math.exp(-0.5 * 9) },
+      uInvOneMinusC: { value: 1.0 / (1.0 - Math.exp(-0.5 * 9)) },
+    }),
+    buildTSLMaterial: (uniforms) => {
+      const m = gsplatWebGPUFactory(buildGSplatTSLNodesFromUniforms(uniforms), {
+        blendingMode: 'max',
+      }) as unknown as THREE.Material;
       m.transparent = false;
       m.blending = THREE.NoBlending;
       return m;

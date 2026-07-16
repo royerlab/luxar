@@ -63,6 +63,7 @@ layout( std140 ) uniform object {
 	float nodeUniform24;
 	float nodeUniform25;
 	float nodeUniform26;
+	float nodeUniform27;
 };
 uniform sampler2D nodeUniform11;
 
@@ -341,6 +342,8 @@ void main() {
 	nodeVar65 = ( ( ( nodeVar62.x * nodeVar56.x ) + ( nodeVar63.x * nodeVar58.x ) ) + ( nodeVar64.x * nodeVar61.x ) );
 	nodeVar66 = ( ( ( nodeVar62.x * nodeVar56.y ) + ( nodeVar63.x * nodeVar58.y ) ) + ( nodeVar64.x * nodeVar61.y ) );
 	nodeVar67 = ( ( ( nodeVar62.y * nodeVar56.y ) + ( nodeVar63.y * nodeVar58.y ) ) + ( nodeVar64.y * nodeVar61.y ) );
+	nodeVar65 = ( nodeVar65 + nodeUniform27 );
+	nodeVar67 = ( nodeVar67 + nodeUniform27 );
 	nodeVar68 = ( 1.0 / sqrt( max( nodeVar65, 0.000001 ) ) );
 	nodeVar69 = ( nodeVar66 * nodeVar68 );
 	nodeVar70 = ( nodeVar65 + nodeVar67 );

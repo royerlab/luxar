@@ -301,6 +301,59 @@ describe('depth-sort coordinator', () => {
     expect(Array.from(attrB.array as Uint32Array)).toEqual([1, 0]); // applied
   });
 
+  it('sets per-part renderOrder to the content-centroid view depth (back-to-front across meshes)', async () => {
+    // Partition parts all share the world origin (splat centers baked into the
+    // geometry), so THREE's per-object transparent sort — keyed on the mesh
+    // matrixWorld origin — gives every part the SAME key and draws them in
+    // fixed creation order, not back-to-front. The scheduler must instead set
+    // each normal-mode mesh's renderOrder to its bounding-sphere-center view
+    // depth so THREE orders the parts correctly. Camera is at the origin
+    // looking down −z, so view ≈ identity and renderOrder ≈ center.z.
+    const coord = await loadCoordinator();
+    coord.configureDepthSort({ getCamera: () => makeCamera(), requestRender: vi.fn() });
+
+    const near = makeGSplatsMesh(2, 'normal'); // centroid closest to camera
+    const mid = makeGSplatsMesh(2, 'normal');
+    const far = makeGSplatsMesh(2, 'normal'); // centroid farthest
+    near.geometry.boundingSphere!.center.set(0, 0, -10);
+    mid.geometry.boundingSphere!.center.set(0, 0, -20);
+    far.geometry.boundingSphere!.center.set(0, 0, -30);
+    // Insertion order deliberately NOT depth order — the fix must reorder.
+    coord.noteGSplatsCommit(mid, new Float32Array([0, 0, -1, 1, 0, -2]), 2);
+    coord.noteGSplatsCommit(far, new Float32Array([0, 0, -1, 1, 0, -2]), 2);
+    coord.noteGSplatsCommit(near, new Float32Array([0, 0, -1, 1, 0, -2]), 2);
+    await flush();
+
+    coord.evaluateDepthSortPerFrame();
+
+    // renderOrder == the centroid's view-space z (more negative = farther).
+    expect(near.renderOrder).toBeCloseTo(-10, 3);
+    expect(mid.renderOrder).toBeCloseTo(-20, 3);
+    expect(far.renderOrder).toBeCloseTo(-30, 3);
+    // THREE draws transparent objects by renderOrder ASCENDING, so the draw
+    // order is far → mid → near = strictly back-to-front.
+    const drawOrder = [near, mid, far].slice().sort((a, b) => a.renderOrder - b.renderOrder);
+    expect(drawOrder).toEqual([far, mid, near]);
+  });
+
+  it('clears renderOrder to 0 when a mesh is no longer order-dependent (additive)', async () => {
+    const coord = await loadCoordinator();
+    coord.configureDepthSort({ getCamera: () => makeCamera(), requestRender: vi.fn() });
+
+    const mesh = makeGSplatsMesh(2, 'normal');
+    mesh.geometry.boundingSphere!.center.set(0, 0, -15);
+    coord.noteGSplatsCommit(mesh, new Float32Array([0, 0, -1, 1, 0, -2]), 2);
+    await flush();
+    coord.evaluateDepthSortPerFrame();
+    expect(mesh.renderOrder).toBeCloseTo(-15, 3); // biased while normal
+
+    // Switch to a commutative mode — renderOrder bias must be cleared so it
+    // doesn't strand a stale ordering (additive is order-independent).
+    (mesh.material as THREE.Material).userData.blendingMode = 'additive';
+    coord.evaluateDepthSortPerFrame();
+    expect(mesh.renderOrder).toBe(0);
+  });
+
   it('applies the mesh ROTATION to the model-view (not just translation)', async () => {
     // A 180° rotation about y negates the mesh-local z axis: local
     // z = +1 lands at world z = position.z − 1. A translation-only
@@ -650,7 +703,11 @@ describe('depth-sort scheduler (Phase 3)', () => {
     const coord = await loadCoordinator();
     coord.setDepthSortEnabled(false);
     const requestReprocess = vi.fn();
-    coord.configureDepthSort({ getCamera: () => makeCamera(), requestRender: vi.fn(), requestReprocess });
+    coord.configureDepthSort({
+      getCamera: () => makeCamera(),
+      requestRender: vi.fn(),
+      requestReprocess,
+    });
 
     // A normal-mode commit neither spawns the worker nor sorts: the
     // identity (storage) ordering is pinned.

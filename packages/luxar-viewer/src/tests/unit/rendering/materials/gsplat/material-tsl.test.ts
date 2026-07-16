@@ -217,7 +217,8 @@ describe('GSplatTSLMaterial normal mode — premultiplied coverage alpha', () =>
     // Never the premultipliedAlpha flag — NodeMaterial.setup() would
     // auto-inject a second RGB×alpha transform on this path.
     expect(material.premultipliedAlpha).toBe(false);
-    expect(material.uniforms.uProjectionMode.value).toBe(0);
+    // Peak (surface) projection for normal/alpha-over — see material-glsl twin.
+    expect(material.uniforms.uProjectionMode.value).toBe(1);
   });
 
   it('depthWrite stays OFF at opacity 1.0 (no generic opacity>=0.99 gate)', () => {

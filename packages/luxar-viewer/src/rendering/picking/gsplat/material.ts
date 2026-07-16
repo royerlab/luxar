@@ -12,6 +12,7 @@ import type { CameraAwareMaterial } from '../../materials/_shared/camera-aware-m
 import { computeFocalLength } from '../../materials/_shared/camera-uniforms';
 import { GSPLAT_PICK_SOURCE } from './shaders';
 import { requireWebGLSources } from '../../materials/_shared/shader-source';
+import { GSPLAT_COV2D_DILATION_DEFAULT } from '../../materials/gsplat/math';
 
 // Module-load assertion: the GLSL wrapper requires the GLSL source.
 const GSPLAT_PICK_GLSL = requireWebGLSources(GSPLAT_PICK_SOURCE);
@@ -48,6 +49,7 @@ export class GSplatPickingMaterial extends THREE.ShaderMaterial implements Camer
         uIsOrtho: { value: 0 },
         uNearCull: { value: 0.1 },
         uMaxExtentFactor: { value: 0.33 },
+        uCov2DDilation: { value: GSPLAT_COV2D_DILATION_DEFAULT },
         uNodeId: { value: config.nodeId },
       },
       vertexShader: GSPLAT_PICK_GLSL.vertex,
