@@ -8,7 +8,10 @@
  *     is the bright core only.
  *   - Always max-projection (no ray-integral) — picking only needs the
  *     brightest fragment, not the integrated path.
- *   - Brightness-as-depth so the brightest overlapping fragment wins.
+ *   - Brightness-as-depth so the brightest overlapping fragment wins —
+ *     except in surface ('normal') mode (`uSurfaceDepth == 1`), where the
+ *     real projected depth is written so the FRONT-MOST splat wins,
+ *     matching the depth-sorted occluding surface the user sees.
  *
  * Source-of-truth for GLSL3; the WebGPU counterpart lives in `./pick.tsl`
  * and is referenced through the `ShaderSource.webgpu` factory below.
@@ -248,7 +251,8 @@ export const GSPLAT_PICK_VERTEX_SHADER = /* glsl */ `
 
 /**
  * Picking fragment shader for gsplats.
- * Outputs vec4(nodeId, elementId, brightness, 1.0) with brightness-as-depth.
+ * Outputs vec4(nodeId, elementId, brightness, 1.0) with brightness-as-depth
+ * (or real projected depth when `uSurfaceDepth == 1` — surface/'normal' mode).
  * Uses tighter truncation (1.5σ squared = 2.25) for precise picking.
  */
 export const GSPLAT_PICK_FRAGMENT_SHADER = /* glsl */ `
@@ -263,6 +267,9 @@ export const GSPLAT_PICK_FRAGMENT_SHADER = /* glsl */ `
     uniform highp float uShiftC;
     uniform highp float uInvOneMinusC;
     uniform highp float uTruncateSq;
+    // 1 = surface ('normal') mode: write real projected depth (front-most
+    // wins). 0 = commutative modes: brightness-as-depth (brightest wins).
+    uniform int uSurfaceDepth;
 
     out vec4 fragColor;
 
@@ -281,7 +288,15 @@ export const GSPLAT_PICK_FRAGMENT_SHADER = /* glsl */ `
         float brightness = clamp(intensity, 0.0, 1.0);
 
         fragColor = vec4(vNodeId, vElementId, brightness, 1.0);
-        gl_FragDepth = 1.0 - brightness;
+        // Pick depth convention (synced from the MAIN material's blending
+        // mode by PickingSystem.renderPickBuffer):
+        //   - surface ('normal') mode: the user sees a depth-sorted
+        //     occluding surface, so write the real projected depth (the
+        //     vertex puts the splat-center NDC z in gl_Position.z, so
+        //     gl_FragCoord.z is the true depth) — FRONT-MOST wins.
+        //   - commutative modes (additive/max/luminous/opaque):
+        //     brightness-as-depth — BRIGHTEST wins.
+        gl_FragDepth = (uSurfaceDepth == 1) ? gl_FragCoord.z : 1.0 - brightness;
     }
 `;
 

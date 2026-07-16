@@ -43,6 +43,7 @@ export class GSplatPickingTSLMaterial extends NodeMaterial implements CameraAwar
     uNearCull: TSLNode;
     uMaxExtentFactor: TSLNode;
     uCov2DDilation: TSLNode;
+    uSurfaceDepth: TSLNode;
     uNodeId: TSLNode;
   };
 
@@ -69,6 +70,11 @@ export class GSplatPickingTSLMaterial extends NodeMaterial implements CameraAwar
       uNearCull: uniform(0.1),
       uMaxExtentFactor: uniform(0.33),
       uCov2DDilation: uniform(GSPLAT_COV2D_DILATION_DEFAULT),
+      // 0 = brightness-as-depth (brightest wins; commutative modes),
+      // 1 = real fragment depth (front-most wins; surface/'normal'
+      // mode). Synced per pick render by PickingSystem via
+      // setSurfacePickDepth() — mirrors the GLSL wrapper.
+      uSurfaceDepth: uniform(0),
       uNodeId: uniform(config.nodeId),
     };
 
@@ -85,6 +91,7 @@ export class GSplatPickingTSLMaterial extends NodeMaterial implements CameraAwar
       uNearCull: proxyIUniform(this.tslNodes.uNearCull),
       uMaxExtentFactor: proxyIUniform(this.tslNodes.uMaxExtentFactor),
       uCov2DDilation: proxyIUniform(this.tslNodes.uCov2DDilation),
+      uSurfaceDepth: proxyIUniform(this.tslNodes.uSurfaceDepth),
       uNodeId: proxyIUniform(this.tslNodes.uNodeId),
     };
 
@@ -107,6 +114,44 @@ export class GSplatPickingTSLMaterial extends NodeMaterial implements CameraAwar
     this.uniforms.uSplatTex = proxyIUniform(this.tslNodes.uSplatTex);
     gsplatPickWebGPUFactory(this.tslNodes as GSplatPickTSLNodes, this);
     this.needsUpdate = true;
+  }
+
+  /**
+   * Select the pick depth convention. `true` = surface ('normal')
+   * blending: write the real fragment depth so the FRONT-MOST splat
+   * wins — matching the depth-sorted occluding surface the user sees.
+   * `false` (default) = brightness-as-depth so the BRIGHTEST splat wins
+   * — correct for the commutative modes (additive/max/luminous/opaque).
+   * Mirrors the GLSL wrapper's method one-for-one; synced per pick
+   * render by `PickingSystem.renderPickBuffer()`.
+   */
+  setSurfacePickDepth(on: boolean): void {
+    this.uniforms.uSurfaceDepth.value = on ? 1 : 0;
+  }
+
+  /**
+   * Clone this picking material. Mirrors the GLSL wrapper's explicit
+   * clone (the inherited `Material.clone()` calls the constructor with
+   * no config and would throw; `NodeMaterial.copy` would alias the
+   * source's node graph instead of this instance's own uniform nodes).
+   */
+  clone(): this {
+    const cloned = new GSplatPickingTSLMaterial({
+      nodeId: this.uniforms.uNodeId.value as number,
+    });
+    const splatTex = this.uniforms.uSplatTex?.value as THREE.DataTexture | null | undefined;
+    if (splatTex) cloned.updateSplatTexture(splatTex);
+    (cloned.uniforms.uResolution.value as THREE.Vector2).copy(
+      this.uniforms.uResolution.value as THREE.Vector2
+    );
+    cloned.uniforms.uFx.value = this.uniforms.uFx.value;
+    cloned.uniforms.uFy.value = this.uniforms.uFy.value;
+    cloned.uniforms.uIsOrtho.value = this.uniforms.uIsOrtho.value;
+    cloned.uniforms.uNearCull.value = this.uniforms.uNearCull.value;
+    cloned.uniforms.uMaxExtentFactor.value = this.uniforms.uMaxExtentFactor.value;
+    cloned.uniforms.uCov2DDilation.value = this.uniforms.uCov2DDilation.value;
+    cloned.uniforms.uSurfaceDepth.value = this.uniforms.uSurfaceDepth.value;
+    return cloned as this;
   }
 
   updateCameraParams(

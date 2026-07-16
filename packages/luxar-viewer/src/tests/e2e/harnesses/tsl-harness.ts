@@ -110,6 +110,16 @@ interface RegistryEntry {
    * 'vec3')` and doesn't need a parallel flag.
    */
   readonly vertexColors?: boolean;
+  /**
+   * Enable depthTest/depthWrite on the GLSL3 `ShaderMaterial` (the
+   * harness default is depth-off, fine for the single-primitive parity
+   * cases). Required by scenarios where two fragments COMPETE through
+   * the depth test — e.g. the surface-pick depth variants, whose whole
+   * point is which of two overlapping splats wins. The TSL side needs
+   * no flag: the pick factories already set depthTest/depthWrite true
+   * on their NodeMaterial.
+   */
+  readonly depthCompete?: boolean;
 }
 
 /**
@@ -423,6 +433,69 @@ function buildThinCovSplatTexture(sx = 0.4, sy = 0.004, sz = 0.4): THREE.DataTex
     1
   );
   return tex;
+}
+
+/**
+ * Two overlapping splats along the VIEW axis for the surface-pick depth
+ * scenario (front-most-wins for normal-mode gsplats):
+ *   - instance 0: NEARER but DIMMER  — amplitude 0.3, world z=-4
+ *     (view depth 5 under the default camera at z=1);
+ *   - instance 1: FARTHER but BRIGHTER — amplitude 1.0, world z=-8
+ *     (view depth 9, inside the default ortho far plane of 10).
+ * Both are centred on the optical axis with the SAME isotropic sigma, so
+ * under the default ortho camera their footprints coincide exactly at the
+ * viewport-centre probe pixel (32,32). Shared by the texture and mesh
+ * builders below — they must carry identical data (see the
+ * buildGSplatSplatDataTexture doc for why the texture is factory-bound).
+ */
+const SURFACE_PICK_SPLATS = {
+  centers: new Float32Array([0, 0, -4, 0, 0, -8]),
+  cholesky01: new Float32Array([0.1, 0, 0.1, 0]),
+  cholesky23: new Float32Array([0.1, 0, 0.1, 0]),
+  cholesky45: new Float32Array([0, 0.1, 0, 0.1]),
+  amplitudes: new Float32Array([0.3, 1.0]),
+  colors: new Float32Array([1.0, 0.5, 0.25, 1.0, 0.5, 0.25]),
+  splatCount: 2,
+} as const;
+
+/** Two-splat data texture for the surface-pick depth variants (4 texels/splat). */
+function buildSurfacePickSplatTexture(): THREE.DataTexture {
+  const tex = new THREE.DataTexture(new Float32Array(32), 8, 1, THREE.RGBAFormat, THREE.FloatType);
+  tex.magFilter = THREE.NearestFilter;
+  tex.minFilter = THREE.NearestFilter;
+  tex.generateMipmaps = false;
+  tex.flipY = false;
+  writeSplatTexels(tex, SURFACE_PICK_SPLATS, SURFACE_PICK_SPLATS.splatCount);
+  return tex;
+}
+
+/** Two-splat instanced mesh matching {@link SURFACE_PICK_SPLATS}. */
+function buildSurfacePickMesh(material: THREE.Material): THREE.Object3D {
+  const mesh = createInstancedGSplatsMesh(SURFACE_PICK_SPLATS, material);
+  mesh.frustumCulled = false;
+  return mesh;
+}
+
+/**
+ * Shared uniforms for the surface-pick depth variants — identical to the
+ * `gsplat-pick` parity entry plus the `uSurfaceDepth` selector under test.
+ */
+function buildSurfacePickUniforms(surfaceDepth: 0 | 1): Record<string, THREE.IUniform> {
+  return {
+    uSplatTex: { value: buildSurfacePickSplatTexture() },
+    uResolution: { value: new THREE.Vector2(64, 64) },
+    uFx: { value: 32.0 },
+    uFy: { value: 32.0 },
+    uTruncate: { value: 1.5 },
+    uTruncateSq: { value: 2.25 },
+    uIsOrtho: { value: 1 },
+    uNearCull: { value: 0.01 },
+    uMaxExtentFactor: { value: 1.0 },
+    uNodeId: { value: 42 },
+    uShiftC: { value: Math.exp(-0.5 * 2.25) },
+    uInvOneMinusC: { value: 1.0 / (1.0 - Math.exp(-0.5 * 2.25)) },
+    uSurfaceDepth: { value: surfaceDepth },
+  };
 }
 
 /**
@@ -1514,6 +1587,40 @@ const SHADER_REGISTRY: Record<string, RegistryEntry> = {
     buildMesh: (m) => buildGSplatInstancedMesh(m, [0, 0, 3]),
     buildCamera: buildBehindCamera,
   },
+  // Surface-pick depth (S2, front-most-wins for normal-mode gsplats):
+  // two overlapping splats along the view axis — instance 0 NEARER but
+  // DIMMER (amplitude 0.3), instance 1 FARTHER but BRIGHTER (1.0); see
+  // SURFACE_PICK_SPLATS. With uSurfaceDepth=1 the fragment writes REAL
+  // projected depth, so the centre probe pixel must carry elementId 0
+  // (the near, dim splat — what the user's cursor is on under the
+  // depth-sorted occluding surface). `depthCompete` opts the GLSL
+  // material into depthTest/depthWrite so the two fragments actually
+  // compete (the TSL pick factory already sets them).
+  'gsplat-pick-surface': {
+    source: GSPLAT_PICK_SOURCE,
+    depthCompete: true,
+    buildUniforms: () => buildSurfacePickUniforms(1),
+    buildTSLMaterial: (uniforms) =>
+      gsplatPickWebGPUFactory(
+        buildGSplatPickTSLNodesFromUniforms(uniforms)
+      ) as unknown as THREE.Material,
+    buildMesh: buildSurfacePickMesh,
+  },
+  // Control twin: SAME two-splat scene with uSurfaceDepth=0
+  // (brightness-as-depth, the commutative-mode convention) — the centre
+  // probe pixel must instead carry elementId 1 (the farther, brighter
+  // splat). Together the pair proves the uSurfaceDepth selector flips
+  // the winner identically on both backends.
+  'gsplat-pick-surface-off': {
+    source: GSPLAT_PICK_SOURCE,
+    depthCompete: true,
+    buildUniforms: () => buildSurfacePickUniforms(0),
+    buildTSLMaterial: (uniforms) =>
+      gsplatPickWebGPUFactory(
+        buildGSplatPickTSLNodesFromUniforms(uniforms)
+      ) as unknown as THREE.Material,
+    buildMesh: buildSurfacePickMesh,
+  },
 };
 
 const HARNESS_SIZE = 64;
@@ -1540,8 +1647,11 @@ function renderGLSL(shaderName: string): Uint8Array {
     fragmentShader: glsl.fragment,
     uniforms,
     glslVersion: THREE.GLSL3,
-    depthTest: false,
-    depthWrite: false,
+    // Depth stays off for the single-primitive parity cases; entries
+    // whose scenario needs fragments to COMPETE through the depth test
+    // (surface-pick depth) opt in via `depthCompete`.
+    depthTest: entry.depthCompete ?? false,
+    depthWrite: entry.depthCompete ?? false,
     transparent: false,
   };
   if (entry.buildDefines) {
