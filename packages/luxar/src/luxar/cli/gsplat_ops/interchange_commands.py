@@ -1,11 +1,15 @@
-"""`gsplat import` — bring classical (photogrammetric) splat files into Luxar.
+"""`gsplat import` / `gsplat export` — classical (photogrammetric) splat interchange.
 
-Reads the four common classical Gaussian-splat dialects (INRIA ``point_cloud.ply``,
-antimatter15 ``.splat``, Niantic/Scaniverse ``.spz``, SuperSplat compressed
-``.ply``) into a :class:`~luxar.gsplats.gsplat_data.GSplatData` and writes a
-current-format ``.gsplats.zarr``. The heavy lifting lives in
-:mod:`luxar.gsplats.interop.classical_splats`; this module is the thin Typer
-surface (`gsplat export` — the PLY writer — joins it in a follow-up).
+``import`` reads the four common classical Gaussian-splat dialects (INRIA
+``point_cloud.ply``, antimatter15 ``.splat``, Niantic/Scaniverse ``.spz``,
+SuperSplat compressed ``.ply``) into a
+:class:`~luxar.gsplats.gsplat_data.GSplatData` and writes a current-format
+``.gsplats.zarr``. ``export`` is the inverse: a ``.gsplats.zarr`` becomes an
+INRIA PLY that classical viewers load directly. The heavy lifting lives in
+:mod:`luxar.gsplats.interop.classical_splats` /
+:mod:`luxar.gsplats.interop.inria_export`; this module is the thin Typer
+surface. (Distinct from top-level ``luxar export``, which packages a whole
+scene + viewer into an offline folder.)
 """
 
 from __future__ import annotations
@@ -161,6 +165,184 @@ def run_import(
         )
 
 
+def export_command(
+    input_path: Path = typer.Argument(
+        ...,
+        exists=True,
+        help="Input .gsplats.zarr (flat / additive ladder / lod-matrix shapes; "
+        "flatten partitions first with `gsplat flatten`).",
+    ),
+    output_path: Path = typer.Argument(
+        ..., help="Output .ply (INRIA 3DGS point_cloud format)."
+    ),
+    format: Literal["inria"] = typer.Option(
+        "inria",
+        "--format",
+        "-f",
+        help="Output dialect (only 'inria' in v1; more may follow).",
+    ),
+    opacity: Literal["normalized", "amplitude", "constant"] = typer.Option(
+        "normalized",
+        "--opacity",
+        help="Amplitude → opacity mapping: normalized=robust rescale into "
+        "(0,1) (default; honest for unbounded emission weights), "
+        "amplitude=clip raw values (lossless for imported data), "
+        "constant=fixed value.",
+    ),
+    constant_opacity: float = typer.Option(
+        1.0, "--constant-opacity", help="Opacity used with --opacity constant."
+    ),
+    color: Literal["auto", "colors", "colormap", "white"] = typer.Option(
+        "auto",
+        "--color",
+        help="Color source: auto=per-splat colors if present, else --colormap "
+        "if given, else white.",
+    ),
+    colormap: Optional[str] = typer.Option(
+        None,
+        "--colormap",
+        help="Colormap name for baking scalar amplitudes to RGB "
+        "(builtin/matplotlib/colorcet).",
+    ),
+    sh_degree: int = typer.Option(
+        0,
+        "--sh-degree",
+        min=0,
+        max=3,
+        help="0 (default) writes only the DC band; higher degrees emit "
+        "zero-filled f_rest bands for viewers that insist on them.",
+    ),
+    timepoint: Optional[int] = typer.Option(
+        None,
+        "--timepoint",
+        help="For >3D data: slice the LAST dimension (where `gsplat merge "
+        "--as-dimension` stacks time) at this index.",
+    ),
+    slice_dim: Optional[int] = typer.Option(
+        None, "--slice-dim", help="For >3D data: dimension to slice away."
+    ),
+    slice_index: Optional[int] = typer.Option(
+        None, "--slice-index", help="For >3D data: index along --slice-dim."
+    ),
+    keep_orientation: bool = typer.Option(
+        False,
+        "--keep-orientation",
+        help="Do NOT invert the orientation recorded at import time "
+        "(by default import → export round-trips in the source frame).",
+    ),
+    overwrite: bool = typer.Option(
+        False, "--overwrite", help="Overwrite output if it exists."
+    ),
+) -> None:
+    """Export a .gsplats.zarr to a classical INRIA 3DGS PLY file.
+
+    Cholesky factors are eigendecomposed back to log-scales + rotation
+    quaternions; amplitudes map to opacity logits; per-splat colors (or a
+    baked colormap) become the SH DC band. The result opens in SuperSplat,
+    PlayCanvas, gsplat.js and other classical viewers.
+
+    \b
+    Examples:
+      luxar gsplat export fit.gsplats.zarr fit.ply --colormap viridis
+      luxar gsplat export imported.gsplats.zarr back.ply --opacity amplitude
+      luxar gsplat export timelapse.gsplats.zarr t42.ply --timepoint 42
+    """
+    try:
+        run_export(
+            input_path=input_path,
+            output_path=output_path,
+            format=format,
+            opacity=opacity,
+            constant_opacity=constant_opacity,
+            color=color,
+            colormap=colormap,
+            sh_degree=sh_degree,
+            timepoint=timepoint,
+            slice_dim=slice_dim,
+            slice_index=slice_index,
+            keep_orientation=keep_orientation,
+            overwrite=overwrite,
+        )
+    except typer.Exit:
+        raise
+    except typer.BadParameter:
+        raise
+    except FileNotFoundError as exc:
+        aprint(f"Error: {exc}")
+        raise typer.Exit(1)
+    except ValueError as exc:
+        aprint(f"Error: {exc}")
+        raise typer.Exit(1)
+    except Exception as exc:
+        aprint(f"Error: {exc}")
+        import traceback
+
+        traceback.print_exc()
+        raise typer.Exit(1)
+
+
+def run_export(
+    *,
+    input_path: Path,
+    output_path: Path,
+    format: str,
+    opacity: str,
+    constant_opacity: float,
+    color: str,
+    colormap: Optional[str],
+    sh_degree: int,
+    timepoint: Optional[int],
+    slice_dim: Optional[int],
+    slice_index: Optional[int],
+    keep_orientation: bool,
+    overwrite: bool,
+) -> None:
+    """Implementation of `gsplat export` (kept separate from the Typer surface)."""
+    from luxar.gsplats.interop.classical_splats import read_inria_ply
+    from luxar.gsplats.interop.inria_export import export_inria_ply
+
+    if format != "inria":
+        raise typer.BadParameter(f"Unknown export format {format!r} (v1: inria)")
+    if output_path.exists() and not overwrite:
+        raise typer.BadParameter(
+            f"Output already exists: {output_path} (pass --overwrite)"
+        )
+    if colormap is not None:
+        from luxar.colormaps import resolve_colormap
+
+        try:
+            resolve_colormap(colormap)
+        except Exception as exc:
+            raise typer.BadParameter(f"Unknown colormap {colormap!r}: {exc}")
+
+    with asection(f"Exporting {input_path.name} → INRIA PLY"):
+        n = export_inria_ply(
+            input_path,
+            output_path,
+            opacity_policy=opacity,
+            constant_opacity=constant_opacity,
+            color_source=color,
+            colormap=colormap,
+            sh_degree=sh_degree,
+            undo_orientation=not keep_orientation,
+            timepoint=timepoint,
+            slice_dim=slice_dim,
+            slice_index=slice_index,
+        )
+        # Post-write read-back: the exported PLY must parse with our own
+        # INRIA reader (same contract as `gsplat import`'s verification).
+        verified = read_inria_ply(output_path)
+        if verified.n_splats != n:
+            aprint(
+                f"❌ Export wrote {n:,} splats but read-back found "
+                f"{verified.n_splats:,}"
+            )
+            raise typer.Exit(1)
+        size_mb = output_path.stat().st_size / 1e6
+        aprint(f"✓ Verified INRIA PLY: {n:,} splats, {size_mb:.1f} MB → {output_path}")
+
+
 def register_interchange_commands(app: typer.Typer) -> None:
     """Attach the classical-format interchange commands to the gsplat CLI."""
     app.command("import")(import_command)
+    app.command("export")(export_command)

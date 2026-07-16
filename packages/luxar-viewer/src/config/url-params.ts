@@ -113,6 +113,15 @@ export interface UrlParams {
    * to compare against the uncompensated brightening ramp).
    */
   lodEnergyComp: boolean;
+  /**
+   * Whether gsplat depth sorting is enabled (depth-sorting Phases 2-3): the
+   * async worker sort that keeps `normal`-mode splats composited back-to-front,
+   * plus the per-frame camera-motion re-sort scheduler. **On by default**; pass
+   * `?depthSort=0` (also `false`/`off`) to disable it — `normal`-mode gsplats
+   * then keep the identity (storage) order, which pins deterministic output for
+   * E2E/visual runs and reproduces pre-Phase-2 behavior for comparison.
+   */
+  depthSort: boolean;
   /** Disable adjacent-chunk prefetching (`?no-prefetch`). */
   noPrefetch: boolean;
   /** Verbose prefetch logging (`?prefetch-debug`). */
@@ -210,6 +219,7 @@ export function readUrlParams(search?: string): UrlParams {
     clearCache: params.has('clear-cache'),
     lodFade: !params.has('no-lod-fade'),
     lodEnergyComp: !params.has('no-lod-energy'),
+    depthSort: parseEnabledFlag(params.get('depthSort')),
     noPrefetch: params.has('no-prefetch'),
     prefetchDebug: params.has('prefetch-debug'),
     cacheStats: params.has('cache-stats'),
@@ -220,6 +230,17 @@ export function readUrlParams(search?: string): UrlParams {
     cacheBudgetMB: parseNonNegativeInt(params.get('cacheBudgetMB')),
     dpr: parsePositiveFloat(params.get('dpr')),
   };
+}
+
+/**
+ * Parse an on-by-default enable flag: only an explicit `0`/`false`/`off`
+ * value (case-insensitive) disables; missing or any other value keeps the
+ * feature enabled. Used by `?depthSort=0`.
+ */
+function parseEnabledFlag(raw: string | null): boolean {
+  if (raw === null) return true;
+  const v = raw.trim().toLowerCase();
+  return v !== '0' && v !== 'false' && v !== 'off';
 }
 
 /**
