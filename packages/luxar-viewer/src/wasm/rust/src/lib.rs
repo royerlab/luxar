@@ -34,6 +34,9 @@
 //! - `effective_radii` - Effective radius calculation for nD slicing
 //! - `decode` - Data decoding (quantized, LUT, log-space)
 //! - `projection` - nD to 3D projection and bounds
+//! - `gsplats_processing` - GSplat nD->3D projection, attenuation, Cholesky
+//! - `lines_clipping` - Line segment clipping for nD slicing
+//! - `depth_sort` - Back-to-front splat ordering (depth-sorting Phase 2)
 
 // Clippy lint configuration for this numerical WASM crate.
 //
