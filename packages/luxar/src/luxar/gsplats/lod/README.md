@@ -337,6 +337,15 @@ dim (an absolute `1e-6·I` ridge inflated a near-delta barrier width, e.g. a
 lifted time σ of ~1e-9, by ×300,000). `--no-conserve-mass` restores the raw
 per-bin amplitudes.
 
+For the **lifted points/lines LOD path** (and any caller passing
+`amplitude="mass"` to `make_substitutive_lod`), the merge goes one step
+further: each bin's amplitude is set to exactly its members' summed
+`a·|det L|` mass on the final (inflated, ridged) covariance instead of the
+L²-optimal projection. Per-bin per-channel colored light is then conserved
+together with the mass-weighted mean colors (hue coherence across levels),
+and the global `conserve_mass` rescale becomes a near-no-op safety net.
+The default stays `amplitude="l2"` for fitted volumetric gsplats.
+
 ### Substitutive methods
 
 | Method          | Warm start        | Refinement        | Recommended for                                |

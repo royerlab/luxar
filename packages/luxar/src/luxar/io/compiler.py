@@ -572,7 +572,11 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
             level_metas.append(level_meta)
 
         # Parent-node attrs. Persist after subgroup writes so they
-        # don't get clobbered by side effects.
+        # don't get clobbered by side effects. A custom colormap (ndarray /
+        # matplotlib name) must be resolved to a colormap_lut dataset +
+        # colormap='custom' BEFORE the attrs land in JSON — same contract as
+        # the flat writer (an ndarray in attrs is not JSON serializable).
+        self._write_colormap_lut_if_needed(group, attrs)
         group.attrs.update(attrs)
         group.attrs["type"] = "points"
         group.attrs["n_points"] = n_points_total
@@ -665,6 +669,10 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
         # `n_segments` as undefined → "0% of 0 total" in the data monitor.
         n_segments_total = sum(int(m.get("n_segments", 0)) for m in level_metas)
 
+        # Resolve a custom colormap (ndarray / matplotlib name) to a
+        # colormap_lut dataset + colormap='custom' before the JSON attr dump —
+        # same contract as the flat writer.
+        self._write_colormap_lut_if_needed(group, attrs)
         group.attrs.update(attrs)
         group.attrs["type"] = "lines"
         group.attrs["n_vertices"] = n_vertices_total

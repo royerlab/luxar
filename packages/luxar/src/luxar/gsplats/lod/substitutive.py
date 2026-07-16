@@ -341,6 +341,7 @@ def _reduce_one_level_grouped(
     coverage_inflation: float,
     device: torch.device,
     conserve_mass: bool = True,
+    amplitude: str = "l2",
     refine_config: "Optional[L2RefineConfig]" = None,
     generator: "Optional[torch.Generator]" = None,
     refine_stats: Optional[dict] = None,
@@ -377,6 +378,7 @@ def _reduce_one_level_grouped(
             device=device,
             conserve_mass=conserve_mass,
             mass_dims=None,
+            amplitude=amplitude,
             refine_config=refine_config,
             generator=generator,
             refine_stats=refine_stats,
@@ -398,6 +400,7 @@ def _reduce_one_level_grouped(
             device=device,
             conserve_mass=conserve_mass,
             mass_dims=tuple(coarsen_dims),
+            amplitude=amplitude,
             refine_config=refine_config,
             refine_frozen_dims=tuple(barrier),
             generator=generator,
@@ -436,6 +439,7 @@ def _reduce_one_level_grouped(
                     device=device,
                     conserve_mass=conserve_mass,
                     mass_dims=tuple(coarsen_dims),
+                    amplitude=amplitude,
                     refine_config=refine_config,
                     refine_frozen_dims=tuple(barrier),
                     generator=generator,
@@ -460,6 +464,7 @@ def make_substitutive_lod(
     candidate_bins_k: int = 12,
     coverage_inflation: float = 3.0,
     conserve_mass: bool = True,
+    amplitude: Literal["l2", "mass"] = "l2",
     refine: RefineName = "none",
     refine_iters: Optional[int] = None,
     volume: Optional[np.ndarray] = None,
@@ -524,6 +529,20 @@ def make_substitutive_lod(
         The rescale is skipped (with a warning) when the implied factor
         falls outside ``[0.1, 10]`` — a numerically degenerate coarsened-dim
         mass, where "conserving" it would blow the amplitudes up instead.
+    amplitude
+        Per-bin merged-amplitude rule. ``"l2"`` (default) is the L²-optimal
+        projection amplitude — the right choice for fitted volumetric
+        gsplats. ``"mass"`` makes every bin exactly mass-preserving
+        (``a = Σ member a·|det L| / |det L_out|``, on the final inflated
+        covariance): per-bin colored light is then conserved together with
+        the bin-mass-weighted mean colors, which is what the lifted
+        points/lines LOD path uses to keep brightness/hue coherent across
+        levels (the beads are a stroke stand-in, not a density to L²-fit).
+        Under ``"mass"`` the global ``conserve_mass`` rescale is a no-op by
+        construction (kept as a safety net). Exactness note: with barrier
+        groups the conserved per-bin quantity is the full-determinant mass;
+        the sliced (coarsened-dims-only) mass coincides when member barrier
+        widths are equal within a bin — true for lifted isotropic beads.
     refine
         Post-merge per-level refinement. ``"l2"`` Adam-optimizes each
         merged level's ``(mu, Σ, a)`` against that level's fine input
@@ -610,6 +629,8 @@ def make_substitutive_lod(
         )
     if coverage_inflation < 1.0:
         raise ValueError(f"coverage_inflation must be >= 1.0, got {coverage_inflation}")
+    if amplitude not in ("l2", "mass"):
+        raise ValueError(f"amplitude must be 'l2' or 'mass', got {amplitude!r}")
     if refine not in _VALID_REFINE:
         raise ValueError(f"refine must be one of {list(_VALID_REFINE)}, got {refine!r}")
     if refine_iters is not None and refine_iters < 1:
@@ -710,6 +731,7 @@ def make_substitutive_lod(
                 device=target_device,
                 conserve_mass=conserve_mass,
                 mass_dims=None,
+                amplitude=amplitude,
                 refine_config=refine_cfg,
                 generator=refine_gen,
                 refine_stats=sink,
@@ -724,6 +746,7 @@ def make_substitutive_lod(
             coverage_inflation=coverage_inflation,
             device=target_device,
             conserve_mass=conserve_mass,
+            amplitude=amplitude,
             refine_config=refine_cfg,
             generator=refine_gen,
             refine_stats=sink,
@@ -937,6 +960,7 @@ def _reduce_one_level(
     device: torch.device,
     conserve_mass: bool = True,
     mass_dims: Optional[tuple[int, ...]] = None,
+    amplitude: str = "l2",
     refine_config: Optional[L2RefineConfig] = None,
     refine_frozen_dims: tuple[int, ...] = (),
     generator: Optional[torch.Generator] = None,
@@ -1019,6 +1043,7 @@ def _reduce_one_level(
         assignments,
         M=M_target,
         coverage_inflation=coverage_inflation,
+        amplitude=amplitude,
     )
 
     # Cull empty / degenerate bins (zero optimal amplitude).
