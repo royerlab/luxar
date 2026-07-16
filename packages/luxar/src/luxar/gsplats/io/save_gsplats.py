@@ -441,6 +441,10 @@ def write_partition_streaming(
     ``position_bounds``), plus the v3.0 self-identifying header. Each part carries
     a ``child_index`` for napari-style sibling ordering — matching
     :func:`~luxar.io._compiler.gsplat_tree.write_gsplat_node`'s partition branch.
+    (The standalone branch additionally writes an optional ``bsp_tree`` split-plane
+    record when the parts came from a single BSP; a streamed grid/content merge has
+    no single tree, so this writer intentionally omits it and the viewer falls back
+    to a per-part centroid order.)
 
     The producer is responsible for skipping empty tile-regions (it must yield
     only non-empty subtrees). Compression is intentionally not supported here
@@ -493,8 +497,10 @@ def write_partition_streaming(
     if n_written == 0:
         raise ValueError("write_partition_streaming: no non-empty parts to write")
 
-    # Root partition attrs — byte-identical to the GSplatPartition branch of
-    # write_gsplat_node (type/kind/display_type/max_elements/position_bounds).
+    # Root partition attrs — same set the GSplatPartition branch of
+    # write_gsplat_node emits (type/kind/display_type/max_elements/position_bounds).
+    # That branch may ALSO write an optional bsp_tree; a streamed merge has no
+    # single BSP tree, so this writer omits it (viewer falls back to centroids).
     root.attrs["type"] = "group"
     root.attrs["kind"] = "partition"
     root.attrs["display_type"] = "gsplats"
