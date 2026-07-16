@@ -129,6 +129,21 @@ class TestReaders:
                 write_inria_ply(path, ground_truth, sh_degree=degree)
                 assert read_inria_ply(path).sh_degree == degree
 
+    def test_supersplat_12_property_chunk(self, ground_truth: GroundTruth) -> None:
+        # Older SuperSplat files omit the 6 per-chunk color bounds (12-prop
+        # chunk); color is then a raw unorm with no lerp. The reader must
+        # accept both layouts.
+        from luxar.gsplats.interop.classical_splats import read_supersplat_ply
+        from luxar.gsplats.interop.tests._synthetic import write_supersplat_ply
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "chunk12.ply"
+            write_supersplat_ply(path, ground_truth, color_bounds=False)
+            cs = read_supersplat_ply(path)
+        assert cs.n_splats == ground_truth.positions.shape[0]
+        assert np.allclose(cs.colors, ground_truth.colors, atol=1 / 255)
+        assert np.allclose(cs.positions, ground_truth.positions, atol=5e-3)
+
     def test_spz_declares_y_up_others_do_not(self, ground_truth: GroundTruth) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             for fmt in CLASSICAL_FORMATS:
