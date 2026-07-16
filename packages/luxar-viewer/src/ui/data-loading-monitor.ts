@@ -1341,8 +1341,14 @@ export class DataLoadingMonitor {
           if (this.profiler) {
             const timingData = this.profiler.getTimings();
             const refinementData = this.profiler.getRefinementTimings();
-            if (timingData.count > 0 || refinementData.count > 0) {
-              updated = updateTimingPanelValues(this.contentContainer, timingData, refinementData);
+            const depthSortData = this.profiler.getDepthSortTimings();
+            if (timingData.count > 0 || refinementData.count > 0 || depthSortData.count > 0) {
+              updated = updateTimingPanelValues(
+                this.contentContainer,
+                timingData,
+                refinementData,
+                depthSortData
+              );
             }
           }
           break;
@@ -1906,7 +1912,11 @@ export class DataLoadingMonitor {
 
     return `
       <div class="luxar-performance-content">
-        ${renderHierarchicalTimingPanel(timingData, this.profiler?.getRefinementTimings())}
+        ${renderHierarchicalTimingPanel(
+          timingData,
+          this.profiler?.getRefinementTimings(),
+          this.profiler?.getDepthSortTimings()
+        )}
       </div>
     `;
   }

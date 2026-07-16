@@ -91,10 +91,10 @@ The pool tracks `activeQueries` per worker and selects the worker with the fewes
 
 Each worker loads a WASM module on `initialize()` and exposes these operations:
 
-| Category            | Methods                                                                                     |
-| ------------------- | ------------------------------------------------------------------------------------------- |
-| **Decoding**        | `decodeQuantized()`, `decodeLogScalar()`, `decodeGeologScalar()`, `decodePerChannel()`, `decodeLUT()`, `decodeBroadcasted()` |
-| **Projection**      | `projectLinesTo3D()`, `projectGSplatsTo3D()` (Points project on the main thread)            |
+| Category       | Methods                                                                                                                      |
+| -------------- | ---------------------------------------------------------------------------------------------------------------------------- |
+| **Decoding**   | `decodeQuantized()`, `decodeLogScalar()`, `decodeGeologScalar()`, `decodePerChannel()`, `decodeLUT()`, `decodeBroadcasted()` |
+| **Projection** | `projectLinesTo3D()`, `projectGSplatsTo3D()` (Points project on the main thread)                                             |
 
 ### What workers handle
 
@@ -201,8 +201,10 @@ transfers the ordering back; requests whose `generation` no longer
 matches the node's latest registration return `null` — a stale shorter
 permutation applied to a grown buffer would be corrupt, not just
 outdated. The main-thread side — lazy spawn, the one-in-flight-per-node
-rule, applying orderings to `aSortedIndex`, node release and teardown —
-lives in `rendering/depth-sort-coordinator.ts`.
+rule, applying orderings to `aSortedIndex`, node release and teardown,
+and the Phase-3 per-frame camera-motion re-sort scheduler that drives
+`sort()` as the camera orbits — lives in
+`rendering/depth-sort-coordinator.ts`.
 
 ## Internal Layout
 

@@ -82,6 +82,9 @@ function makeGSplatsMesh(count: number, blendingMode: string): THREE.Mesh {
   const geometry = new THREE.InstancedBufferGeometry();
   const attr = new THREE.InstancedBufferAttribute(new Uint32Array(count), 1);
   geometry.setAttribute('aSortedIndex', attr);
+  // Committed gsplat geometry always carries bounds (the commit path
+  // computes them); the Phase-3 translation threshold is bounds-relative.
+  geometry.boundingSphere = new THREE.Sphere(new THREE.Vector3(0, 0, 0), 10);
   const material = new THREE.Material();
   material.userData.blendingMode = blendingMode;
   const mesh = new THREE.Mesh(geometry, material);
@@ -442,5 +445,185 @@ describe('depth-sort coordinator', () => {
     await flush();
     expect(mockApi.registerNode).toHaveBeenCalledTimes(1); // unchanged
     expect(mockApi.releaseNode).toHaveBeenCalledWith(mesh.uuid);
+  });
+});
+
+/**
+ * Phase 3 (spec §6): the per-frame camera-motion re-sort scheduler.
+ *
+ * Defaults from config.depthSort: angleThresholdDeg = 3,
+ * translationFraction = 0.05; test meshes carry a bounding sphere of
+ * radius 10, so the view-axis translation threshold is 0.5 world units.
+ */
+describe('depth-sort scheduler (Phase 3)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  /**
+   * Commit one normal-mode mesh and resolve its commit-time sort so the
+   * node is registered, quiet, and has a recorded dispatch pose.
+   */
+  async function sortedSetup(
+    coord: Awaited<ReturnType<typeof loadCoordinator>>,
+    camera: THREE.Camera,
+    extra: Partial<Parameters<(typeof coord)['configureDepthSort']>[0]> = {}
+  ): Promise<THREE.Mesh> {
+    coord.configureDepthSort({ camera, requestRender: vi.fn(), ...extra });
+    const mesh = makeGSplatsMesh(2, 'normal');
+    coord.noteGSplatsCommit(mesh, new Float32Array([0, 0, -1, 1, 0, -2]), 2);
+    await flush();
+    expect(mockApi.sort).toHaveBeenCalledTimes(1);
+    sortResolvers[0]({ generation: 1, ordering: new Uint32Array([0, 1]) });
+    await flush();
+    return mesh;
+  }
+
+  it('rotation past the angle threshold dispatches ONE re-sort; sub-threshold and post-dispatch frames stay quiet', async () => {
+    const coord = await loadCoordinator();
+    const camera = makeCamera();
+    await sortedSetup(coord, camera);
+
+    // Stationary camera: no dispatch, frame after frame.
+    coord.evaluateDepthSortPerFrame();
+    coord.evaluateDepthSortPerFrame();
+    expect(mockApi.sort).toHaveBeenCalledTimes(1);
+
+    // 1° — below the 3° threshold.
+    camera.rotateY((1 * Math.PI) / 180);
+    coord.evaluateDepthSortPerFrame();
+    expect(mockApi.sort).toHaveBeenCalledTimes(1);
+
+    // 5° total — past the threshold: exactly one dispatch...
+    camera.rotateY((4 * Math.PI) / 180);
+    coord.evaluateDepthSortPerFrame();
+    expect(mockApi.sort).toHaveBeenCalledTimes(2);
+
+    // ...and hysteresis: while in flight AND after it resolves, the same
+    // pose never re-dispatches (the dispatch re-recorded the reference).
+    coord.evaluateDepthSortPerFrame();
+    expect(mockApi.sort).toHaveBeenCalledTimes(2);
+    sortResolvers[1]({ generation: 1, ordering: new Uint32Array([1, 0]) });
+    await flush();
+    coord.evaluateDepthSortPerFrame();
+    expect(mockApi.sort).toHaveBeenCalledTimes(2);
+  });
+
+  it('view-axis translation past fraction×radius dispatches; orthogonal translation never does', async () => {
+    const coord = await loadCoordinator();
+    const camera = makeCamera();
+    await sortedSetup(coord, camera);
+
+    // Orthogonal to the view axis (camera looks -z; slide along x): the
+    // permutation cannot change (view-z of every splat is unchanged), so
+    // even a huge slide must not dispatch.
+    camera.position.x += 100;
+    coord.evaluateDepthSortPerFrame();
+    expect(mockApi.sort).toHaveBeenCalledTimes(1);
+
+    // Along the view axis, below 0.05 × radius 10 = 0.5 units: quiet.
+    camera.position.z += 0.3;
+    coord.evaluateDepthSortPerFrame();
+    expect(mockApi.sort).toHaveBeenCalledTimes(1);
+
+    // Past the threshold: dispatch (the behind-camera set may change).
+    camera.position.z += 0.7;
+    coord.evaluateDepthSortPerFrame();
+    expect(mockApi.sort).toHaveBeenCalledTimes(2);
+  });
+
+  it('without geometry bounds the translation trigger is inert (angle-only)', async () => {
+    const coord = await loadCoordinator();
+    const camera = makeCamera();
+    const mesh = await sortedSetup(coord, camera);
+    (mesh.geometry as THREE.InstancedBufferGeometry).boundingSphere = null;
+
+    camera.position.z += 100;
+    coord.evaluateDepthSortPerFrame();
+    expect(mockApi.sort).toHaveBeenCalledTimes(1);
+
+    camera.rotateY((10 * Math.PI) / 180);
+    coord.evaluateDepthSortPerFrame();
+    expect(mockApi.sort).toHaveBeenCalledTimes(2);
+  });
+
+  it('skips dispatch while a view update is in flight (pending-load signal)', async () => {
+    const coord = await loadCoordinator();
+    const camera = makeCamera();
+    let loading = false;
+    await sortedSetup(coord, camera, { isLoadInProgress: () => loading });
+
+    loading = true;
+    camera.rotateY(Math.PI / 2);
+    coord.evaluateDepthSortPerFrame();
+    expect(mockApi.sort).toHaveBeenCalledTimes(1);
+
+    // Load settles → the very next frame dispatches.
+    loading = false;
+    coord.evaluateDepthSortPerFrame();
+    expect(mockApi.sort).toHaveBeenCalledTimes(2);
+  });
+
+  it('skips invisible, LOD-demoted, and mode-switched-away nodes', async () => {
+    const coord = await loadCoordinator();
+    const camera = makeCamera();
+    const mesh = await sortedSetup(coord, camera);
+    camera.rotateY(Math.PI / 2); // way past the threshold from here on
+
+    mesh.visible = false;
+    coord.evaluateDepthSortPerFrame();
+    expect(mockApi.sort).toHaveBeenCalledTimes(1);
+    mesh.visible = true;
+
+    const committed = mesh.userData.committedData;
+    delete mesh.userData.committedData;
+    coord.evaluateDepthSortPerFrame();
+    expect(mockApi.sort).toHaveBeenCalledTimes(1);
+    mesh.userData.committedData = committed;
+
+    (mesh.material as THREE.Material).userData.blendingMode = 'additive';
+    coord.evaluateDepthSortPerFrame();
+    expect(mockApi.sort).toHaveBeenCalledTimes(1);
+    (mesh.material as THREE.Material).userData.blendingMode = 'normal';
+
+    // All gates lifted: the pending camera motion dispatches.
+    coord.evaluateDepthSortPerFrame();
+    expect(mockApi.sort).toHaveBeenCalledTimes(2);
+  });
+
+  it('setDepthSortEnabled(false) makes the subsystem inert (?depthSort=0)', async () => {
+    const coord = await loadCoordinator();
+    coord.setDepthSortEnabled(false);
+    const requestReprocess = vi.fn();
+    coord.configureDepthSort({ camera: makeCamera(), requestRender: vi.fn(), requestReprocess });
+
+    // A normal-mode commit neither spawns the worker nor sorts: the
+    // identity (storage) ordering is pinned.
+    const mesh = makeGSplatsMesh(2, 'normal');
+    coord.noteGSplatsCommit(mesh, new Float32Array([0, 0, -1, 1, 0, -2]), 2);
+    await flush();
+    expect(mockApi.initialize).not.toHaveBeenCalled();
+    expect(mockApi.sort).not.toHaveBeenCalled();
+
+    // The mode-switch hook must not force a reprocess either.
+    coord.noteGSplatsBlendingModeSwitch(mesh, 'normal', 'additive');
+    expect(requestReprocess).not.toHaveBeenCalled();
+
+    // And the per-frame scheduler no-ops.
+    coord.evaluateDepthSortPerFrame();
+    expect(mockApi.sort).not.toHaveBeenCalled();
+  });
+
+  it('records each sort round-trip as a Depth Sort profiler pass with splat count + upload bytes', async () => {
+    const coord = await loadCoordinator();
+    // Fresh module instance to match the coordinator's post-reset module graph.
+    const { UpdateProfiler } = await import('../../../profiling/update-profiler');
+    const profiler = new UpdateProfiler();
+    await sortedSetup(coord, makeCamera(), { getProfiler: () => profiler });
+
+    const root = profiler.getDepthSortTimings();
+    expect(root.count).toBe(1);
+    expect(root.metadata?.splats).toBe(2);
+    expect(root.metadata?.info).toMatch(/up$/);
   });
 });

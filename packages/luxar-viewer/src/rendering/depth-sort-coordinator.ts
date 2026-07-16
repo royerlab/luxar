@@ -1,6 +1,7 @@
 /**
  * Depth-sort coordinator — main-thread side of the SortWorker
- * (depth-sorting Phase 2, `docs/guides/specs/GSPLAT_DEPTH_SORTING_SPEC.md` §5).
+ * (depth-sorting Phases 2-3,
+ * `docs/guides/specs/GSPLAT_DEPTH_SORTING_SPEC.md` §5-§6).
  *
  * Module-scoped live authority (the `splat-texture-layout.ts` pattern):
  * the commit path (`commit-gsplats-geometry.ts`) and the app lifecycle
@@ -21,6 +22,10 @@
  * - Applies resolved orderings via `writeSortedIndexOrdering` (the pick
  *   node shares the render mesh's geometry object, so one write covers
  *   both) and requests a frame.
+ * - Phase 3: keeps the ordering tracking the camera via the per-frame
+ *   scheduler `evaluateDepthSortPerFrame` (angle / view-axis-translation
+ *   thresholds from `config.depthSort`; `?depthSort=0` disables the whole
+ *   subsystem via {@link setDepthSortEnabled}).
  *
  * Ordering only matters for order-dependent blending (`normal`); all
  * other modes are commutative. Commits of non-`normal` nodes still bump
@@ -37,6 +42,8 @@ import type { SortWorkerAPI } from '../workers/sort-worker';
 import { writeSortedIndexOrdering } from './gsplat-geometry';
 import { isNormalMode } from './blending-state';
 import type { BlendingMode } from './material-manager';
+import { config } from '../config';
+import type { UpdateProfiler } from '../profiling/update-profiler';
 import { log, Modules } from '../utils/log';
 
 /**
@@ -64,12 +71,25 @@ export function setSortWorkerWasmPath(url: string): void {
 }
 
 interface NodeSortState {
+  /** The node's render mesh (the pick node shares its geometry). */
+  mesh: THREE.Mesh;
   /** Per-node monotonic non-noop commit counter (the generation contract). */
   generation: number;
   /** True while a sort RPC is outstanding for this node. */
   inFlight: boolean;
   /** A newer commit landed mid-sort — re-sort once the current one resolves. */
   resortQueued: boolean;
+  /**
+   * Model-space view axis (the model-view matrix's z-row direction) at the
+   * last DISPATCHED sort; null before the first dispatch. The sort kernel
+   * orders by view-space z = axis·p + offset, so the resulting permutation
+   * depends only on this axis direction and the offset below — the
+   * per-frame scheduler (Phase 3) compares against them to decide when a
+   * re-sort is due.
+   */
+  lastSortAxis: THREE.Vector3 | null;
+  /** Normalized view-axis offset (m14 / |axis|) at the last dispatched sort. */
+  lastSortOffset: number;
 }
 
 let worker: Worker | null = null;
@@ -78,6 +98,15 @@ let initPromise: Promise<void> | null = null;
 let camera: THREE.Camera | null = null;
 let requestRender: (() => void) | null = null;
 let requestReprocess: (() => void) | null = null;
+let isLoadInProgress: (() => boolean) | null = null;
+let getProfiler: (() => UpdateProfiler | null) | null = null;
+/**
+ * Session master switch (Phase 3): config `depthSort.enabled` combined with
+ * the `?depthSort=0` URL escape hatch at app init. When false the whole
+ * subsystem is inert — commits keep the identity (storage) ordering, the
+ * worker is never spawned, and the per-frame scheduler no-ops.
+ */
+let depthSortEnabled = true;
 /** One-shot flag for the SortWorker-unavailable error (see noteGSplatsCommit). */
 let warnedWorkerUnavailable = false;
 const nodeStates = new Map<string, NodeSortState>();
@@ -95,10 +124,34 @@ export function configureDepthSort(options: {
    * the blending-mode-switch hook, see {@link noteGSplatsBlendingModeSwitch}.
    */
   requestReprocess?: () => void;
+  /**
+   * True while a view-update sweep is in flight (the same signal the
+   * refinement loop consults). The per-frame scheduler skips dispatching
+   * camera-motion re-sorts during loads — the pending commit will sort
+   * from the then-current pose anyway.
+   */
+  isLoadInProgress?: () => boolean;
+  /**
+   * Update-profiler accessor for the 'Depth Sort' monitor line: each
+   * SortWorker dispatch opens a detached pass whose duration is the
+   * dispatch→applied round-trip latency.
+   */
+  getProfiler?: () => UpdateProfiler | null;
 }): void {
   camera = options.camera;
   requestRender = options.requestRender;
   requestReprocess = options.requestReprocess ?? null;
+  isLoadInProgress = options.isLoadInProgress ?? null;
+  getProfiler = options.getProfiler ?? null;
+}
+
+/**
+ * Session master switch, applied at app init from `config.depthSort.enabled`
+ * combined with the `?depthSort=0` URL escape hatch. Disabling pins the
+ * identity (storage) ordering for deterministic E2E/visual runs.
+ */
+export function setDepthSortEnabled(enabled: boolean): void {
+  depthSortEnabled = enabled;
 }
 
 /** Lazily spawn + initialize the persistent sort worker. */
@@ -143,15 +196,23 @@ export function noteGSplatsCommit(mesh: THREE.Mesh, centers3: Float32Array, coun
   const nodeId = mesh.uuid;
   let state = nodeStates.get(nodeId);
   if (!state) {
-    state = { generation: 0, inFlight: false, resortQueued: false };
+    state = {
+      mesh,
+      generation: 0,
+      inFlight: false,
+      resortQueued: false,
+      lastSortAxis: null,
+      lastSortOffset: 0,
+    };
     nodeStates.set(nodeId, state);
   }
   state.generation++;
 
   const mode = liveBlendingMode(mesh);
-  if (!mode || !isNormalMode(mode) || count === 0) {
-    // Commutative blending (or an empty frame): no ordering needed. Drop
-    // any worker-side registration so the worker doesn't hold stale
+  if (!depthSortEnabled || !mode || !isNormalMode(mode) || count === 0) {
+    // Depth sorting disabled (identity ordering pinned), commutative
+    // blending, or an empty frame: no ordering needed. Drop any
+    // worker-side registration so the worker doesn't hold stale
     // centers for a node that may not sort again for a long time.
     releaseWorkerNode(nodeId);
     return;
@@ -201,6 +262,24 @@ function releaseWorkerNode(nodeId: string): void {
 }
 
 /**
+ * Record the pose a sort was dispatched from (the model-view z-row that
+ * fully determines the resulting permutation — see NodeSortState). The
+ * per-frame scheduler compares live poses against this.
+ */
+function recordSortPose(state: NodeSortState, modelView: THREE.Matrix4): void {
+  const e = modelView.elements;
+  if (!state.lastSortAxis) state.lastSortAxis = new THREE.Vector3();
+  state.lastSortAxis.set(e[2], e[6], e[10]);
+  const len = state.lastSortAxis.length();
+  if (len > 0) {
+    state.lastSortAxis.divideScalar(len);
+    state.lastSortOffset = e[14] / len;
+  } else {
+    state.lastSortOffset = e[14];
+  }
+}
+
+/**
  * Request one sort for a registered node, respecting the
  * single-in-flight rule. Queues a re-sort if one is already running.
  */
@@ -224,12 +303,20 @@ function scheduleSort(mesh: THREE.Mesh, nodeId: string): void {
   camera.updateMatrixWorld();
   const viewMatrix = new THREE.Matrix4().copy(camera.matrixWorld).invert();
   const modelView = viewMatrix.multiply(mesh.matrixWorld);
+  recordSortPose(state, modelView);
+
+  // One detached profiler pass per dispatch — its duration is the
+  // dispatch→applied round-trip the monitor's 'Depth Sort' line shows.
+  const session = getProfiler?.()?.beginDepthSortPass() ?? null;
 
   void api
     .sort({ nodeId, generation, modelView: new Float32Array(modelView.elements) })
     .then((result) => {
       const current = nodeStates.get(nodeId);
-      if (!current) return; // released mid-sort
+      if (!current) {
+        session?.end();
+        return; // released mid-sort
+      }
       current.inFlight = false;
 
       // Stale-drop: apply only when the ordering matches the node's
@@ -245,9 +332,20 @@ function scheduleSort(mesh: THREE.Mesh, nodeId: string): void {
         const geometry = mesh.geometry as THREE.InstancedBufferGeometry;
         if (geometry?.getAttribute?.('aSortedIndex')) {
           writeSortedIndexOrdering(geometry, result.ordering, result.ordering.length);
+          // Ordering upload = 4 bytes/splat through the attribute
+          // update-range machinery (the architecture's headline number).
+          const bytes = result.ordering.length * 4;
+          session?.setMetadata({
+            splats: result.ordering.length,
+            info:
+              bytes >= 1_000_000
+                ? `${(bytes / 1_000_000).toFixed(1)} MB up`
+                : `${Math.round(bytes / 1000)} KB up`,
+          });
           requestRender?.();
         }
       }
+      session?.end();
 
       if (current.resortQueued) {
         current.resortQueued = false;
@@ -255,6 +353,7 @@ function scheduleSort(mesh: THREE.Mesh, nodeId: string): void {
       }
     })
     .catch((error) => {
+      session?.end();
       const current = nodeStates.get(nodeId);
       log.error(Modules.WORKER_POOL, `SortWorker sort failed for ${nodeId}`, error);
       if (!current) return;
@@ -268,6 +367,98 @@ function scheduleSort(mesh: THREE.Mesh, nodeId: string): void {
         scheduleSort(mesh, nodeId);
       }
     });
+}
+
+// Per-frame scratch (no allocation on the hot path — the
+// 'lod-group-selector' invariant). Allocated lazily on first use rather
+// than at module load: several unit-test files partially mock 'three',
+// and an import-time `new THREE.Matrix4()` would break every test that
+// transitively imports this module.
+interface EvaluateScratch {
+  view: THREE.Matrix4;
+  mv: THREE.Matrix4;
+  axis: THREE.Vector3;
+}
+let scratch: EvaluateScratch | null = null;
+
+/**
+ * Per-frame camera-motion re-sort scheduler (depth-sorting Phase 3, spec
+ * §6). Registered as the 'depth-sort-scheduler' per-frame callback beside
+ * 'lod-group-selector'.
+ *
+ * For each order-dependent node with a completed dispatch on record,
+ * compare the live model-view z-row against the pose the last sort was
+ * dispatched from and dispatch a re-sort when either
+ * - the view axis has rotated past `config.depthSort.angleThresholdDeg`
+ *   (relative to the node — a spinning node triggers it too), or
+ * - the camera has translated ALONG the view axis past
+ *   `config.depthSort.translationFraction` × the node's bounding-sphere
+ *   radius (which changes the behind-camera set the kernel clamps to the
+ *   far bucket).
+ *
+ * Translation orthogonal to the view axis is deliberately ignored: the
+ * kernel sorts by view-space z = axis·p + offset, so the permutation
+ * cannot change unless the axis direction or the offset does.
+ *
+ * Hysteresis is dispatch-updates-reference: `scheduleSort` records the
+ * fresh pose, so a triggered node goes quiet until the camera moves past
+ * the threshold AGAIN. Frames between dispatch and resolve render the
+ * previous order — bounded staleness, standard 3DGS behavior. Skips:
+ * pending view updates (the commit will sort anyway), in-flight sorts
+ * (the resolve is at most a frame away), invisible/demoted meshes, and
+ * nodes whose live mode is no longer order-dependent.
+ */
+export function evaluateDepthSortPerFrame(): void {
+  if (!depthSortEnabled || !api || !camera || nodeStates.size === 0) return;
+  if (isLoadInProgress?.()) return;
+
+  if (!scratch) {
+    scratch = { view: new THREE.Matrix4(), mv: new THREE.Matrix4(), axis: new THREE.Vector3() };
+  }
+  const cosThreshold = Math.cos((config.depthSort.angleThresholdDeg * Math.PI) / 180);
+  let viewComputed = false;
+
+  for (const [nodeId, state] of nodeStates) {
+    if (state.inFlight || !state.lastSortAxis) continue;
+    const mesh = state.mesh;
+    if (!mesh.visible) continue;
+    // LOD demotion returned the geometry to the pool — same signal the
+    // resolve path checks; a sort dispatched now would be dropped there.
+    if ((mesh.userData as { committedData?: unknown }).committedData === undefined) continue;
+    const mode = liveBlendingMode(mesh);
+    if (!mode || !isNormalMode(mode)) continue;
+
+    if (!viewComputed) {
+      // One-frame-stale matrices are fine for the TRIGGER test (the
+      // dispatch itself re-derives fresh ones in scheduleSort), but the
+      // camera's matrixWorld must at least exist post-move — cheap when
+      // nothing changed.
+      camera.updateMatrixWorld();
+      scratch.view.copy(camera.matrixWorld).invert();
+      viewComputed = true;
+    }
+
+    scratch.mv.multiplyMatrices(scratch.view, mesh.matrixWorld);
+    const e = scratch.mv.elements;
+    scratch.axis.set(e[2], e[6], e[10]);
+    const len = scratch.axis.length();
+    if (len === 0) continue; // degenerate transform — nothing sortable
+    scratch.axis.divideScalar(len);
+    const offset = e[14] / len;
+
+    let moved = scratch.axis.dot(state.lastSortAxis) < cosThreshold;
+    if (!moved) {
+      const radius = (mesh.geometry as THREE.BufferGeometry | undefined)?.boundingSphere?.radius;
+      // Without bounds (never computed / empty) the translation trigger
+      // has no scale reference — rely on the angle trigger alone.
+      if (radius !== undefined && radius > 0) {
+        moved =
+          Math.abs(offset - state.lastSortOffset) > config.depthSort.translationFraction * radius;
+      }
+    }
+
+    if (moved) scheduleSort(mesh, nodeId);
+  }
 }
 
 /**
@@ -293,6 +484,10 @@ export function noteGSplatsBlendingModeSwitch(
   newMode: BlendingMode | undefined,
   prevMode: BlendingMode | undefined
 ): void {
+  // Disabled session: identity ordering is pinned for every mode, so a
+  // switch TO normal must not force the (expensive) reprocess; there is
+  // also no worker-side state to release on a switch away.
+  if (!depthSortEnabled) return;
   if (!newMode || newMode === prevMode) return;
   const wasNormal = prevMode !== undefined && isNormalMode(prevMode);
   if (isNormalMode(newMode) && !wasNormal) {
@@ -340,5 +535,8 @@ export function disposeDepthSort(): void {
   camera = null;
   requestRender = null;
   requestReprocess = null;
+  isLoadInProgress = null;
+  getProfiler = null;
+  depthSortEnabled = true;
   warnedWorkerUnavailable = false;
 }

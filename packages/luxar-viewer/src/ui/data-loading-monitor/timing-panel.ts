@@ -7,7 +7,12 @@
  */
 
 import type { TimingEntry, TimingMetadata } from '../../profiling/update-profiler';
-import { formatMs, hasOverBudget, REFINEMENT_ROOT } from '../../profiling/update-profiler';
+import {
+  formatMs,
+  hasOverBudget,
+  REFINEMENT_ROOT,
+  DEPTH_SORT_ROOT,
+} from '../../profiling/update-profiler';
 import { escapeHtml } from '../../utils/escape-html';
 
 /**
@@ -23,6 +28,11 @@ const TOOLTIPS: Record<string, string> = {
     'Background work that streams in the remaining level-of-detail data AFTER the first quick ' +
     'paint — the view sharpens progressively without blocking interaction. Timed separately ' +
     'from Total Update because it runs behind the scenes',
+  'Depth Sort':
+    'Async depth sorting of Gaussian splats in the order-dependent normal blending mode: ' +
+    'each entry is one worker round-trip from dispatch to the sorted ordering being applied. ' +
+    'Frames in between render the previous order, so this never blocks interaction — the tags ' +
+    'show the splat count sorted and the ordering bytes uploaded to the GPU',
   Points:
     'All work to update point-cloud layers this update: spatial query, chunk loading, nD→3D ' +
     'projection, and GPU upload. With several point layers, this shows the slowest one ' +
@@ -569,10 +579,12 @@ function createAggregatedRoot(root: TimingEntry): TimingEntry {
  */
 export function renderHierarchicalTimingPanel(
   root: TimingEntry,
-  refinementRoot?: TimingEntry
+  refinementRoot?: TimingEntry,
+  depthSortRoot?: TimingEntry
 ): string {
   const hasRefinement = refinementRoot !== undefined && refinementRoot.count > 0;
-  if (root.count === 0 && !hasRefinement) {
+  const hasDepthSort = depthSortRoot !== undefined && depthSortRoot.count > 0;
+  if (root.count === 0 && !hasRefinement && !hasDepthSort) {
     return `
       <div class="luxar-timing-panel luxar-timing-panel--empty">
         <div class="luxar-timing-panel__empty-msg">
@@ -587,8 +599,12 @@ export function renderHierarchicalTimingPanel(
   const refinementHtml = hasRefinement
     ? renderEntry(createAggregatedRoot(refinementRoot), 0, '')
     : '';
+  const depthSortHtml = hasDepthSort ? renderEntry(createAggregatedRoot(depthSortRoot), 0, '') : '';
   const refinementCount = hasRefinement
     ? ` · ${refinementRoot.count} refinement ${refinementRoot.count === 1 ? 'pass' : 'passes'}`
+    : '';
+  const depthSortCount = hasDepthSort
+    ? ` · ${depthSortRoot.count} ${depthSortRoot.count === 1 ? 'sort' : 'sorts'}`
     : '';
 
   return `
@@ -601,7 +617,7 @@ export function renderHierarchicalTimingPanel(
         </div>
       </div>
       <div class="luxar-timing-panel__body">
-        ${renderEntry(aggregatedRoot, 0, '')}${refinementHtml}
+        ${renderEntry(aggregatedRoot, 0, '')}${refinementHtml}${depthSortHtml}
       </div>
       <div class="luxar-timing-panel__footer">
         <span class="luxar-timing-panel__legend">
@@ -609,7 +625,7 @@ export function renderHierarchicalTimingPanel(
           <span class="luxar-timing-panel__legend-item luxar-timing-panel__legend-item--over" title="Highlighted rows took longer than 16.7ms — the per-frame budget for smooth 60fps interaction. Occasional overruns during navigation are normal; persistent ones point at the bottleneck">&gt;16ms (60fps)</span>
           <span class="luxar-timing-panel__legend-item luxar-timing-panel__legend-item--skip" title="The step did not need to run this update (e.g. nothing changed for that layer) — its tag shows the skip reason">Skipped</span>
         </span>
-        <span class="luxar-timing-panel__update-count" title="How many view updates (and background refinement passes) have been profiled since load">${root.count} updates${refinementCount}</span>
+        <span class="luxar-timing-panel__update-count" title="How many view updates (and background refinement passes / depth sorts) have been profiled since load">${root.count} updates${refinementCount}${depthSortCount}</span>
       </div>
     </div>
   `;
@@ -648,20 +664,27 @@ export function attachTimingPanelHandlers(container: HTMLElement, onUpdate: () =
 export function updateTimingPanelValues(
   container: HTMLElement,
   root: TimingEntry,
-  refinementRoot?: TimingEntry
+  refinementRoot?: TimingEntry,
+  depthSortRoot?: TimingEntry
 ): boolean {
   const timingBody = container.querySelector('.luxar-timing-panel__body');
   if (!timingBody) return false;
 
   const hasRefinement = refinementRoot !== undefined && refinementRoot.count > 0;
+  const hasDepthSort = depthSortRoot !== undefined && depthSortRoot.count > 0;
 
-  // The refinement tree appears once its first pass records — that structural
-  // change needs a full re-render.
+  // The refinement/depth-sort trees appear once their first pass records —
+  // that structural change needs a full re-render.
   const refinementRendered =
     timingBody.querySelector(
       `:scope > .luxar-timing-panel__row[data-path="${REFINEMENT_ROOT}"]`
     ) !== null;
   if (hasRefinement !== refinementRendered) return false;
+  const depthSortRendered =
+    timingBody.querySelector(
+      `:scope > .luxar-timing-panel__row[data-path="${DEPTH_SORT_ROOT}"]`
+    ) !== null;
+  if (hasDepthSort !== depthSortRendered) return false;
 
   // Update the update count in footer
   const updateCount = container.querySelector('.luxar-timing-panel__update-count');
@@ -669,7 +692,10 @@ export function updateTimingPanelValues(
     const refinementCount = hasRefinement
       ? ` · ${refinementRoot.count} refinement ${refinementRoot.count === 1 ? 'pass' : 'passes'}`
       : '';
-    updateCount.textContent = `${root.count} updates${refinementCount}`;
+    const depthSortCount = hasDepthSort
+      ? ` · ${depthSortRoot.count} ${depthSortRoot.count === 1 ? 'sort' : 'sorts'}`
+      : '';
+    updateCount.textContent = `${root.count} updates${refinementCount}${depthSortCount}`;
   }
 
   // Aggregate to match the rendered structure
@@ -680,12 +706,14 @@ export function updateTimingPanelValues(
     return false;
   }
   if (hasRefinement) {
-    return updateEntryValues(
-      timingBody as HTMLElement,
-      createAggregatedRoot(refinementRoot),
-      0,
-      ''
-    );
+    if (
+      !updateEntryValues(timingBody as HTMLElement, createAggregatedRoot(refinementRoot), 0, '')
+    ) {
+      return false;
+    }
+  }
+  if (hasDepthSort) {
+    return updateEntryValues(timingBody as HTMLElement, createAggregatedRoot(depthSortRoot), 0, '');
   }
   return true;
 }

@@ -19,7 +19,11 @@ import { notifier } from '../../../utils/cross-layer/notifier';
 import { log, Modules } from '../../../utils/log';
 import { config } from '../../../config';
 import { getGpuByteBudget } from '../../../rendering/gpu-byte-budget';
-import { configureDepthSort } from '../../../rendering/depth-sort-coordinator';
+import {
+  configureDepthSort,
+  setDepthSortEnabled,
+  evaluateDepthSortPerFrame,
+} from '../../../rendering/depth-sort-coordinator';
 import { materialManager } from '../../../rendering';
 import { readUrlParams } from '../../../config/url-params';
 import { resolveFactories, type AppFactories } from '../factories';
@@ -255,10 +259,11 @@ export async function runInitPipeline(
   // idempotent (early-out while animating + idle-timer re-arm), so
   // per-node calls inside an atomic sweep are harmless.
   SceneLoaderManager.getInstance().setRequestRender(() => animationController.startAnimation());
-  // Depth-sort coordinator (Phase 2): the gsplats commit path has no
+  // Depth-sort coordinator (Phases 2-3): the gsplats commit path has no
   // camera (SceneLoader deliberately owns no camera state), so the
   // coordinator gets the live camera + render wake-up here — the same
   // dependency-inversion as setRequestRender above.
+  setDepthSortEnabled(config.depthSort.enabled && lodUrlParams.depthSort);
   configureDepthSort({
     camera: sceneManager.camera,
     requestRender: () => animationController.startAnimation(),
@@ -268,6 +273,18 @@ export async function runInitPipeline(
     requestReprocess: () => {
       void getSceneLoader('default')?.updateView({});
     },
+    // Phase 3: the per-frame scheduler skips dispatching while a view
+    // update is in flight — the pending commit sorts from the
+    // then-current pose anyway (same signal the refinement loop reads).
+    isLoadInProgress: () => getSceneLoader('default')?.isUpdateInProgress() ?? false,
+    // Sort round-trips show up as the monitor's 'Depth Sort' line.
+    getProfiler: () => SceneLoaderManager.getInstance().getProfiler(),
+  });
+  // Camera-motion re-sort scheduler (Phase 3, spec §6). Same per-frame
+  // slot pattern as 'lod-group-selector' below; the evaluation is
+  // allocation-free and early-outs when no order-dependent node exists.
+  animationController.addPerFrameCallback('depth-sort-scheduler', () => {
+    evaluateDepthSortPerFrame();
   });
   animationController.addPerFrameCallback('lod-group-selector', () => {
     const loader = getSceneLoader('default');
