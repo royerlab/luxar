@@ -496,6 +496,12 @@ export class LinesSpatialIndexLoader implements LinesDataLoader {
     const useAccumulator = this._accumulator && appConfig.dataLoading.performance.useAccumulators;
 
     if (useAccumulator && this._accumulator) {
+      // Capture locally: dispose() (dataset switch) can null + dispose
+      // `this._accumulator` while the vertex loads below are in flight —
+      // dereferencing the field again after the awaits raced a TypeError.
+      // The identity re-check before getData turns that race into a
+      // quiet cancellation (mirrors the gsplats loader).
+      const accumulator = this._accumulator;
       // Ensure capacity FIRST using ACTUAL counts (not estimated!)
       if (segmentData.length % 2 !== 0) {
         log.warning(
@@ -507,7 +513,7 @@ export class LinesSpatialIndexLoader implements LinesDataLoader {
       const actualVertexCount = sortedIndices.length; // ACTUAL count from unique indices!
       // FIXED: Pass BOTH vertex count AND segment count to avoid buffer truncation
       // For particle tracks, N vertices → N-1 segments (ratio ~1:1, not 1.5:1)
-      this._accumulator.ensureCapacity(actualVertexCount, segmentCount);
+      accumulator.ensureCapacity(actualVertexCount, segmentCount);
 
       // Initialize accumulator types based on array metadata (must be done BEFORE loading!)
       // This ensures colorBuffer has the correct type (Uint8/Uint16/Float32)
@@ -526,7 +532,7 @@ export class LinesSpatialIndexLoader implements LinesDataLoader {
             : colorType === 'Uint16Array'
               ? new Uint16Array(3)
               : new Float32Array(3);
-        this._accumulator.fill(0, 0, {
+        accumulator.fill(0, 0, {
           positions: new Float32Array(attrs.ndim),
           segments: new Uint32Array(2),
           widths: new Float32Array(1),
@@ -536,13 +542,13 @@ export class LinesSpatialIndexLoader implements LinesDataLoader {
       }
 
       // Get direct buffer references (now colorBuffer has correct type!)
-      const vertexBuffer = this._accumulator.getVertexBuffer();
-      const segmentBuffer = this._accumulator.getSegmentBuffer();
-      const widthBuffer = this._accumulator.getWidthBuffer();
-      const colorBuffer = this.arrays.colors ? this._accumulator.getColorBuffer() : null;
-      const sharpnessBuffer = this.arrays.sharpness ? this._accumulator.getSharpnessBuffer() : null;
+      const vertexBuffer = accumulator.getVertexBuffer();
+      const segmentBuffer = accumulator.getSegmentBuffer();
+      const widthBuffer = accumulator.getWidthBuffer();
+      const colorBuffer = this.arrays.colors ? accumulator.getColorBuffer() : null;
+      const sharpnessBuffer = this.arrays.sharpness ? accumulator.getSharpnessBuffer() : null;
       // per-vertex scalar buffer when available.
-      const scalarBuffer = this.arrays.scalars ? this._accumulator.getScalarBuffer() : null;
+      const scalarBuffer = this.arrays.scalars ? accumulator.getScalarBuffer() : null;
 
       // Profile vertex loading (accumulator path)
       const loadVertSession = session?.begin('Load Vertices');
@@ -588,7 +594,7 @@ export class LinesSpatialIndexLoader implements LinesDataLoader {
                 scalarBuffer as Float32Array
               ).then(() => {
                 // Flip the hasScalars flag — direct buffer writes bypass fill().
-                this._accumulator!.markScalarsLoaded();
+                accumulator.markScalarsLoaded();
               })
             : Promise.resolve(),
         ]);
@@ -622,8 +628,19 @@ export class LinesSpatialIndexLoader implements LinesDataLoader {
         remapSession?.end();
       }
 
+      // Disposed mid-load (dataset switch tore this loader down while the
+      // vertex reads were in flight): bail as a cancellation —
+      // run-loader-updates' isAbortError branch stages null quietly —
+      // instead of reading subarrays out of a disposed accumulator.
+      if (this._accumulator !== accumulator) {
+        throw new DOMException(
+          `Lines loader disposed during load: ${this.node.path}`,
+          'AbortError'
+        );
+      }
+
       // Return from accumulator (subarrays, zero copy!)
-      return this._accumulator.getData(segmentCount, vertexCount);
+      return accumulator.getData(segmentCount, vertexCount);
     }
 
     // Fallback: Load to separate arrays (allocations when accumulator disabled)
