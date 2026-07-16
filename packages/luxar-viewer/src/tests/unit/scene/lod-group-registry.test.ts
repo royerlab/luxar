@@ -2112,3 +2112,61 @@ describe('LODGroupRegistry — streaming energy compensation', () => {
     expect(liveOpacity(fine)).toBe(1);
   });
 });
+
+describe('LODGroupRegistry — force-finest capture override (?lod-finest / LuxarAppOptions.lodFinest)', () => {
+  function makeForceFinestRegistry(force: boolean): LODGroupRegistry {
+    const camera = new THREE.Camera();
+    camera.matrixWorldInverse.identity();
+    camera.projectionMatrix.identity();
+    return new LODGroupRegistry({
+      getCamera: () => camera,
+      getViewportSize: () => ({ width: 800, height: 600 }),
+      getDisplayDims: () => [0, 1, 2],
+      getForceFinestLOD: () => force,
+    });
+  }
+
+  /** A child whose bounds project to ~zero screen coverage (coarse pick). */
+  function tinyChild(coverageFraction: number): LODGroupChild {
+    const child = makeChild(coverageFraction);
+    child.positionBounds = { min: [0, 0, 0], max: [1e-4, 1e-4, 1e-4] };
+    return child;
+  }
+
+  /** A child whose bounds sit entirely outside the identity frustum. */
+  function offScreenChild(coverageFraction: number): LODGroupChild {
+    const child = makeChild(coverageFraction);
+    child.positionBounds = { min: [100, 100, 100], max: [101, 101, 101] };
+    return child;
+  }
+
+  function settle(reg: LODGroupRegistry): void {
+    for (let i = 0; i < 5; i++) reg.evaluatePerFrame();
+  }
+
+  it('selects the FINEST level despite near-zero screen coverage (capture-quality override)', () => {
+    const reg = makeForceFinestRegistry(true);
+    const children = [tinyChild(0), tinyChild(0.5), tinyChild(1.0)];
+    reg.register(makeEntry(children, 0, '/g'));
+    settle(reg);
+    expect(children[2].object.visible).toBe(true);
+    expect(children[0].object.visible).toBe(false);
+  });
+
+  it('control: without the flag the same tiny group stays at the coarsest level', () => {
+    const reg = makeForceFinestRegistry(false);
+    const children = [tinyChild(0), tinyChild(0.5), tinyChild(1.0)];
+    reg.register(makeEntry(children, 0, '/g'));
+    settle(reg);
+    expect(children[0].object.visible).toBe(true);
+    expect(children[2].object.visible).toBe(false);
+  });
+
+  it('bypasses the off-screen coarsening gate (never coarsen during capture)', () => {
+    const reg = makeForceFinestRegistry(true);
+    const children = [offScreenChild(0), offScreenChild(0.5), offScreenChild(1.0)];
+    reg.register(makeEntry(children, 0, '/g'));
+    settle(reg);
+    expect(children[2].object.visible).toBe(true);
+  });
+});
