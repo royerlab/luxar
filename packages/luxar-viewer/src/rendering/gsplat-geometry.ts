@@ -458,13 +458,20 @@ export function createInstancedGSplatsMesh(
  *
  * @param mesh - Existing gsplats mesh to update
  * @param meshConfig - New splat data
+ * @param options - `preserveOrdering`: keep the existing `aSortedIndex`
+ *   permutation on the SAME-SIZE (in-place) branch instead of resetting
+ *   it to identity (same-node same-count recommit — the commit path
+ *   decides; see commit-gsplats-geometry.ts). Ignored on the rebuild
+ *   branch: fresh geometries are zero-filled, not identity, so the
+ *   identity write is structurally required there.
  * @returns `true` when the interleaved buffer was REBUILT (size change) —
  *   the caller must then evict Three's cached RenderObject (see
  *   `invalidate-render-object.ts`); `false` for the in-place write.
  */
 export function updateInstancedGSplatsMesh(
   mesh: THREE.Mesh,
-  meshConfig: InstancedGSplatsMeshConfig
+  meshConfig: InstancedGSplatsMeshConfig,
+  options?: { preserveOrdering?: boolean }
 ): boolean {
   // SEMANTIC clamp, mirrored from createInstancedGSplatsMesh. Also
   // load-bearing for the rebuild check below: instanceCount holds the
@@ -510,7 +517,10 @@ export function updateInstancedGSplatsMesh(
     geometry.dispose();
   } else {
     // Same size: rewrite the existing texture's backing store in one
-    // fused pass and refresh the identity ordering.
+    // fused pass and refresh the identity ordering — unless the caller
+    // vouched for the existing permutation (preserveOrdering; the
+    // attribute content is unchanged, so skipping the write correctly
+    // skips its update-range registration too).
     const texture = getSplatTexture(geometry);
     if (!texture) {
       throw new Error(
@@ -519,7 +529,9 @@ export function updateInstancedGSplatsMesh(
       );
     }
     writeSplatTexels(texture, meshConfig, count);
-    writeSortedIndexIdentity(geometry, count);
+    if (!options?.preserveOrdering) {
+      writeSortedIndexIdentity(geometry, count);
+    }
   }
 
   // Update bounding box from centers (direct loop, no temp geometry allocation)

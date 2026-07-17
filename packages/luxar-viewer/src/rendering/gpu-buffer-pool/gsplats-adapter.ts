@@ -179,7 +179,8 @@ export class GSplatsBufferAdapter {
     geometry: THREE.InstancedBufferGeometry,
     data: PackedGSplatsData,
     count: number,
-    truncationRadius: number = 3.0
+    truncationRadius: number = 3.0,
+    options?: { preserveOrdering?: boolean }
   ): void {
     const texture = getSplatTexture(geometry);
     if (!texture) {
@@ -205,7 +206,17 @@ export class GSplatsBufferAdapter {
       },
       count
     );
-    writeSortedIndexIdentity(geometry, count);
+    // `preserveOrdering` (commit path decides — see
+    // commit-gsplats-geometry.ts): keep the node's existing depth-sort
+    // permutation instead of resetting to identity, so a same-count
+    // recommit doesn't flash storage order while the re-sort lands.
+    // Skipping the write also skips registering an update range — correct
+    // because the attribute content didn't change (the already-uploaded
+    // permutation stays valid; any still-pending ranges from earlier
+    // writes remain registered on the attribute and flush as usual).
+    if (!options?.preserveOrdering) {
+      writeSortedIndexIdentity(geometry, count);
+    }
 
     geometry.instanceCount = count;
 

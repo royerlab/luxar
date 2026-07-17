@@ -345,6 +345,37 @@ describe('pool adapter — growth, dispose, byte accounting', () => {
     expect(arr[SPLAT_FLOATS_PER_SPLAT * 3]).toBe(src.centers[9]); // splat 3 center.x
     expect(geom.boundingBox).not.toBeNull();
   });
+
+  it('preserveOrdering keeps the sort permutation while still rewriting texels', () => {
+    const geom = pool.acquireGSplatsGeometry('node', 4);
+    const src = makeSource(4);
+    const packed = (amplitudes: Float32Array) => ({
+      centers3D: src.centers,
+      amplitudes,
+      cholesky01: src.cholesky01,
+      cholesky23: src.cholesky23,
+      cholesky45: src.cholesky45,
+      colors: src.colors,
+      splatCount: 4,
+    });
+    pool.updateGSplatsGeometry(geom, packed(src.amplitudes), 4);
+    // The SortWorker landed a depth-sort permutation between commits.
+    writeSortedIndexOrdering(geom, new Uint32Array([3, 2, 1, 0]), 4);
+
+    // Same-count recommit with preserveOrdering: permutation intact,
+    // texels + instanceCount + bounds refreshed as usual.
+    const newAmplitudes = new Float32Array([9, 8, 7, 6]);
+    pool.updateGSplatsGeometry(geom, packed(newAmplitudes), 4, 3.0, { preserveOrdering: true });
+    const ordering = geom.getAttribute('aSortedIndex').array as Uint32Array;
+    expect(Array.from(ordering.subarray(0, 4))).toEqual([3, 2, 1, 0]);
+    const texels = getSplatTexture(geom)!.image.data as Float32Array;
+    expect(texels[3]).toBe(9); // splat 0 amplitude — texels WERE rewritten
+    expect(geom.instanceCount).toBe(4);
+
+    // Without the flag the identity reset is restored (default behavior).
+    pool.updateGSplatsGeometry(geom, packed(src.amplitudes), 4);
+    expect(Array.from(ordering.subarray(0, 4))).toEqual([0, 1, 2, 3]);
+  });
 });
 
 describe('per-node gsplat materials — manager registration lifecycle', () => {
