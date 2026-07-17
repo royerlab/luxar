@@ -764,6 +764,107 @@ describe('PickingSystem.dispose', () => {
 });
 
 // =============================================================================
+// renderPickBuffer — surface-pick depth sync (front-most-wins for
+// normal-mode gsplats)
+// =============================================================================
+
+describe('PickingSystem — surface-pick depth sync', () => {
+  // renderPickBuffer must read each MAIN material's blending mode and,
+  // when the pick material exposes setSurfacePickDepth (gsplats only),
+  // call it with isNormalMode(mode): 'normal' → real projected depth
+  // (front-most wins under the depth-sorted occluding surface), every
+  // other mode → brightness-as-depth (brightest wins).
+  function makeRenderCapableRenderer(): THREE.WebGLRenderer {
+    // renderPickBuffer saves/restores renderer state and issues one
+    // render — stub the full surface it touches (no GL needed).
+    return {
+      domElement: document.createElement('canvas'),
+      getDrawingBufferSize: vi.fn(),
+      readRenderTargetPixels: vi.fn(),
+      getRenderTarget: vi.fn(() => null),
+      getScissorTest: vi.fn(() => false),
+      getClearColor: vi.fn(),
+      getClearAlpha: vi.fn(() => 0),
+      setRenderTarget: vi.fn(),
+      setScissorTest: vi.fn(),
+      setClearColor: vi.fn(),
+      clear: vi.fn(),
+      render: vi.fn(),
+    } as unknown as THREE.WebGLRenderer;
+  }
+
+  function buildSystem() {
+    const system = new PickingSystem(
+      makeRenderCapableRenderer(),
+      makeStubCapabilities(),
+      makeCamera(),
+      vi.fn()
+    );
+    const renderPickBuffer = (
+      system as unknown as { renderPickBuffer: () => void }
+    ).renderPickBuffer.bind(system);
+    return { system, renderPickBuffer };
+  }
+
+  /** Register a main/pick mesh pair; returns the pick material's spy. */
+  function registerPair(system: PickingSystem, blendingMode?: string) {
+    const geom = new THREE.BufferGeometry();
+    const mainMaterial = new THREE.MeshBasicMaterial();
+    if (blendingMode !== undefined) mainMaterial.userData.blendingMode = blendingMode;
+    const mainNode = new THREE.Mesh(geom, mainMaterial);
+    const setSurfacePickDepth = vi.fn();
+    const pickMaterial = new THREE.MeshBasicMaterial();
+    (
+      pickMaterial as unknown as { setSurfacePickDepth?: typeof setSurfacePickDepth }
+    ).setSurfacePickDepth = setSurfacePickDepth;
+    const pickNode = new THREE.Mesh(geom, pickMaterial);
+    system.registerNode(mainNode, pickNode, system.allocatePickId());
+    return setSurfacePickDepth;
+  }
+
+  it("main material in 'normal' mode → setSurfacePickDepth(true)", () => {
+    const { system, renderPickBuffer } = buildSystem();
+    const spy = registerPair(system, 'normal');
+    renderPickBuffer();
+    expect(spy).toHaveBeenCalledExactlyOnceWith(true);
+  });
+
+  it("main material in 'additive' mode → setSurfacePickDepth(false)", () => {
+    const { system, renderPickBuffer } = buildSystem();
+    const spy = registerPair(system, 'additive');
+    renderPickBuffer();
+    expect(spy).toHaveBeenCalledExactlyOnceWith(false);
+  });
+
+  it('missing blendingMode defaults to additive → setSurfacePickDepth(false)', () => {
+    const { system, renderPickBuffer } = buildSystem();
+    const spy = registerPair(system); // no userData.blendingMode
+    renderPickBuffer();
+    expect(spy).toHaveBeenCalledExactlyOnceWith(false);
+  });
+
+  it('mixed registrations sync each pick material from its own main node', () => {
+    const { system, renderPickBuffer } = buildSystem();
+    const normalSpy = registerPair(system, 'normal');
+    const additiveSpy = registerPair(system, 'additive');
+    renderPickBuffer();
+    expect(normalSpy).toHaveBeenCalledExactlyOnceWith(true);
+    expect(additiveSpy).toHaveBeenCalledExactlyOnceWith(false);
+  });
+
+  it('pick materials without setSurfacePickDepth (points/lines) are skipped safely', () => {
+    const { system, renderPickBuffer } = buildSystem();
+    const geom = new THREE.BufferGeometry();
+    const mainMaterial = new THREE.MeshBasicMaterial();
+    mainMaterial.userData.blendingMode = 'normal';
+    const mainNode = new THREE.Mesh(geom, mainMaterial);
+    const pickNode = new THREE.Mesh(geom, new THREE.MeshBasicMaterial());
+    system.registerNode(mainNode, pickNode, system.allocatePickId());
+    expect(() => renderPickBuffer()).not.toThrow();
+  });
+});
+
+// =============================================================================
 // performPick — pick-target resize guard (MED-25 regression)
 // =============================================================================
 
