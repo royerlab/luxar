@@ -76,21 +76,58 @@ export interface PointTSLConfig {
 }
 
 /**
+ * Pre-created TSL leaf nodes supplied by a wrapper class. Same
+ * pattern as `LineTSLNodes` / `PointPickTSLNodes`: consumers own the
+ * `UniformNode`s and the factory references them directly, which
+ * avoids the `.onUpdate('render')` callback bridge that the old
+ * uniform-record-based path used. Mutations on the wrapper's
+ * `material.uniforms.X.value` (proxied via `proxyIUniform`) land
+ * directly on `node.value`.
+ *
+ * Keys match the public `PointMaterial.uniforms` names (some are
+ * historically un-prefixed — `opacity`, `invGamma`, …) so the wrapper
+ * proxy table maps 1:1.
+ *
+ * Colormap nodes are optional and bound only when the consumer is
+ * built with `config.useColormap === true`. The factory throws if
+ * the config says yes but the colormap nodes are missing.
+ */
+export interface PointTSLNodes {
+  readonly pointSizeFactor: TSLNode;
+  readonly maxPointSize: TSLNode;
+  readonly radiusScale: TSLNode;
+  readonly uIsOrtho: TSLNode;
+  readonly uNearCull: TSLNode;
+  readonly uResolution: TSLNode;
+  readonly opacity: TSLNode;
+  readonly invGamma: TSLNode;
+  readonly uIntensity: TSLNode;
+  readonly uOffset: TSLNode;
+  /** Set only when colormap mode is active. */
+  readonly uColormapTex?: TSLNode;
+  readonly uScalarMin?: TSLNode;
+  readonly uScalarScale?: TSLNode;
+}
+
+/**
  * Point-material TSL factory.
  *
- * The `uniforms` table must include the full set the GLSL3 shader
- * reads. Missing fields are tolerated only on optional branches
- * (colormap uniforms when `useColormap === false`).
+ * Consumes pre-created `UniformNode` references via `nodes`; the
+ * wrapper class (`PointTSLMaterial`) owns those nodes and exposes
+ * them through `material.uniforms` as `IUniform`-shaped
+ * getter/setter proxies. The harness / `POINT_SOURCE` ShaderSource
+ * registry constructs the nodes from a plain `uniforms` record via
+ * {@link buildPointTSLNodesFromUniforms}.
  *
  * Pass `outMaterial` to configure an existing NodeMaterial subclass
  * (e.g. `PointTSLMaterial`) rather than allocating a new one — the
- * subclass owns the IUniforms table, so the factory just attaches
+ * subclass owns the nodes table, so the factory just attaches
  * `vertexNode` / `colorNode` / blending state. When omitted, a
  * fresh NodeMaterial is allocated (the common standalone case used
  * by `tsl-shader-parity.spec.ts`).
  */
 export function pointWebGPUFactory(
-  uniforms: Record<string, THREE.IUniform>,
+  nodes: PointTSLNodes,
   config: PointTSLConfig = {},
   outMaterial?: NodeMaterial
 ): NodeMaterial {
@@ -103,83 +140,33 @@ export function pointWebGPUFactory(
   const aColor: TSLNode = attribute<'vec3'>('aColor', 'vec3');
   const aScalar: TSLNode = config.useColormap ? attribute<'float'>('aScalar', 'float') : null;
 
-  // Uniforms — vertex stage. Each uniform binds via `.onUpdate(() =>
-  // iuniform.value)` so the TSL node tracks the host's IUniform table
-  // by reference. This is the property that lets a wrapper class
-  // (PointTSLMaterial) mutate `this.uniforms.X.value` and have the
-  // change propagate to the shader — exactly the same pattern the
-  // GLSL ShaderMaterial wrapper relies on. The initial value handed
-  // to `uniform(...)` matches the IUniform's first read so the
-  // generated shader's constant-folding is identical to the GLSL3
-  // path.
-  const uPointSizeFactor = uniform((uniforms.pointSizeFactor.value as number) ?? 1.0).onUpdate(
-    () => (uniforms.pointSizeFactor.value as number) ?? 1.0,
-    'render'
-  );
-  const uMaxPointSize = uniform((uniforms.maxPointSize.value as number) ?? 1.0).onUpdate(
-    () => (uniforms.maxPointSize.value as number) ?? 1.0,
-    'render'
-  );
-  const uRadiusScale = uniform((uniforms.radiusScale.value as number) ?? 1.0).onUpdate(
-    () => (uniforms.radiusScale.value as number) ?? 1.0,
-    'render'
-  );
-  const uIsOrtho = uniform((uniforms.uIsOrtho.value as number) ?? 0).onUpdate(
-    () => (uniforms.uIsOrtho.value as number) ?? 0,
-    'render'
-  );
-  const uNearCull = uniform((uniforms.uNearCull?.value as number) ?? 0.1).onUpdate(
-    () => (uniforms.uNearCull?.value as number) ?? 0.1,
-    'render'
-  );
-  // Vector2 is passed by reference — the wrapper mutates the same
-  // Vector2 (via .set) and the TSL node picks up the change without
-  // needing onUpdate. The fallback below only fires when the IUniform
-  // value is missing at graph-build time.
-  const uResolution = uniform(
-    (uniforms.uResolution.value as THREE.Vector2) ?? new THREE.Vector2(1, 1)
-  );
-
-  // Colormap (optional). Texture references propagate via the same
-  // shared-reference rule as Vector2; if `uColormapTex.value` is
-  // reassigned to a different Texture, we need `onUpdate` to swap
-  // it (texture nodes hold the THREE.Texture by reference).
-  const uColormapTex =
-    config.useColormap && uniforms.uColormapTex
-      ? texture((uniforms.uColormapTex.value as THREE.Texture | null) ?? new THREE.Texture())
-      : null;
-  const uScalarMin =
-    config.useColormap && uniforms.uScalarMin
-      ? uniform((uniforms.uScalarMin.value as number) ?? 0.0).onUpdate(
-          () => (uniforms.uScalarMin?.value as number) ?? 0.0,
-          'render'
-        )
-      : null;
-  const uScalarScale =
-    config.useColormap && uniforms.uScalarScale
-      ? uniform((uniforms.uScalarScale.value as number) ?? 1.0).onUpdate(
-          () => (uniforms.uScalarScale?.value as number) ?? 1.0,
-          'render'
-        )
-      : null;
-
-  // Uniforms — fragment stage.
-  const uOpacity = uniform((uniforms.opacity.value as number) ?? 1.0).onUpdate(
-    () => (uniforms.opacity.value as number) ?? 1.0,
-    'render'
-  );
-  const uInvGamma = uniform((uniforms.invGamma.value as number) ?? 1.0).onUpdate(
-    () => (uniforms.invGamma.value as number) ?? 1.0,
-    'render'
-  );
-  const uIntensity = uniform((uniforms.uIntensity.value as number) ?? 1.0).onUpdate(
-    () => (uniforms.uIntensity.value as number) ?? 1.0,
-    'render'
-  );
-  const uOffset = uniform((uniforms.uOffset.value as number) ?? 0.0).onUpdate(
-    () => (uniforms.uOffset.value as number) ?? 0.0,
-    'render'
-  );
+  // Bind directly to the persistent `UniformNode`s owned by the
+  // wrapper class (or by `buildPointTSLNodesFromUniforms` for the
+  // harness path). Mutations on `material.uniforms.X.value` go via
+  // `proxyIUniform` straight to `node.value` — no per-render
+  // `.onUpdate` callbacks needed. Unlike lines, `uIsOrtho` stays a
+  // RUNTIME uniform here (the graph selects the ortho branch per
+  // vertex), so no rebuild is needed on camera-mode flips.
+  const uPointSizeFactor = nodes.pointSizeFactor;
+  const uMaxPointSize = nodes.maxPointSize;
+  const uRadiusScale = nodes.radiusScale;
+  const uIsOrtho = nodes.uIsOrtho;
+  const uNearCull = nodes.uNearCull;
+  const uResolution = nodes.uResolution;
+  const uOpacity = nodes.opacity;
+  const uInvGamma = nodes.invGamma;
+  const uIntensity = nodes.uIntensity;
+  const uOffset = nodes.uOffset;
+  if (config.useColormap) {
+    if (!nodes.uColormapTex || !nodes.uScalarMin || !nodes.uScalarScale) {
+      throw new Error(
+        'pointWebGPUFactory: config.useColormap=true but nodes.uColormapTex / uScalarMin / uScalarScale are not bound.'
+      );
+    }
+  }
+  const uColormapTex = config.useColormap ? nodes.uColormapTex! : null;
+  const uScalarMin = config.useColormap ? nodes.uScalarMin! : null;
+  const uScalarScale = config.useColormap ? nodes.uScalarScale! : null;
 
   // RGB premultiplication is driven by the blending mode: `max` mode
   // routes through CustomBlending + MaxEquation which needs RGB to
@@ -324,8 +311,50 @@ export function pointWebGPUFactory(
   // shape (premultiplied RGB vs alpha-weighted) is derived from the
   // blending mode unless the caller passed an explicit override.
   const blendingMode: BlendingMode = config.blendingMode ?? 'additive';
-  const opacityValue = (uniforms.opacity?.value as number | undefined) ?? 1.0;
+  const opacityValue = (nodes.opacity.value as number | undefined) ?? 1.0;
   const blendingState = getCompleteBlendingState(blendingMode, opacityValue);
   applyBlendingStateToMaterial(material, blendingState);
   return material;
+}
+
+/**
+ * Build a `PointTSLNodes` set from a plain `IUniform` record. Used by
+ * the test harness and the `POINT_SOURCE` ShaderSource factory in
+ * `shader-glsl.ts` — callers that don't own persistent
+ * wrapper-side `UniformNode`s. Mirrors
+ * `buildLineTSLNodesFromUniforms`.
+ *
+ * Note: the resulting nodes capture the current `iuniform.value` at
+ * build time. Mutations to the host `IUniform`'s `.value` after this
+ * function returns will NOT propagate — appropriate for the harness
+ * (which builds once and renders once) but not for live wrappers
+ * (which must use `proxyIUniform` against persistent nodes).
+ */
+export function buildPointTSLNodesFromUniforms(
+  uniforms: Record<string, THREE.IUniform>,
+  config: PointTSLConfig = {}
+): PointTSLNodes {
+  const base: PointTSLNodes = {
+    pointSizeFactor: uniform((uniforms.pointSizeFactor?.value as number) ?? 1.0),
+    maxPointSize: uniform((uniforms.maxPointSize?.value as number) ?? 1.0),
+    radiusScale: uniform((uniforms.radiusScale?.value as number) ?? 1.0),
+    uIsOrtho: uniform((uniforms.uIsOrtho?.value as number) ?? 0),
+    uNearCull: uniform((uniforms.uNearCull?.value as number) ?? 0.1),
+    uResolution: uniform(
+      (uniforms.uResolution?.value as THREE.Vector2 | undefined) ?? new THREE.Vector2(1, 1)
+    ),
+    opacity: uniform((uniforms.opacity?.value as number) ?? 1.0),
+    invGamma: uniform((uniforms.invGamma?.value as number) ?? 1.0),
+    uIntensity: uniform((uniforms.uIntensity?.value as number) ?? 1.0),
+    uOffset: uniform((uniforms.uOffset?.value as number) ?? 0.0),
+  };
+  if (!config.useColormap) return base;
+  return {
+    ...base,
+    uColormapTex: texture(
+      (uniforms.uColormapTex?.value as THREE.Texture | null) ?? new THREE.Texture()
+    ),
+    uScalarMin: uniform((uniforms.uScalarMin?.value as number) ?? 0.0),
+    uScalarScale: uniform((uniforms.uScalarScale?.value as number) ?? 1.0),
+  };
 }

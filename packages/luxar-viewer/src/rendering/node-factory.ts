@@ -16,7 +16,7 @@ import { materialManager, type LuxarPointMaterial } from './material-manager';
 import { type InstancedLinesMeshConfig } from './line-geometry';
 import { type InstancedGSplatsMeshConfig } from './gsplat-geometry';
 import type { LoadedPointsData, DataLoader } from '../data/data-loader-types';
-import type { PointsMetadata, PointsUserData } from '../types/points';
+import type { PointsMetadata } from '../types/points';
 import type { LinesMetadata, LinesDataLoader } from '../types/lines';
 import type { GSplatsMetadata, GSplatsDataLoader } from '../types/gsplats';
 import { log, Modules } from '../utils/log';
@@ -30,6 +30,8 @@ import { applyTransform as applyTransformImpl } from './node-factory/transforms'
 import {
   createPointsGeometry as createPointsGeometryImpl,
   createPointsMaterial as createPointsMaterialImpl,
+  createPointsNode as createPointsNodeImpl,
+  createEmptyPointsNode as createEmptyPointsNodeImpl,
 } from './node-factory/create-points-node';
 import {
   createLinesNode as createLinesNodeImpl,
@@ -84,8 +86,9 @@ export class NodeFactory {
           radiusScale,
         });
         materialManager.register(pickMaterial);
+        // Shares the visual geometry (instance-spanning, footprint-expanded
+        // bounds), so the pick node culls safely — same as lines/gsplats.
         const pickNode = new THREE.Mesh(obj.geometry, pickMaterial);
-        pickNode.frustumCulled = false;
         pickNode.matrixWorld.copy(obj.matrixWorld);
         this.pickingSystem!.registerNode(obj, pickNode, pickId);
       } else if (nodeType === 'lines' && obj instanceof THREE.Mesh) {
@@ -142,18 +145,6 @@ export class NodeFactory {
   // Points Node Creation
   // ============================================================================
 
-  /**
-   * Create a THREE.Mesh object from loaded point data.
-   *
-   * Each point is rendered as an instanced quad sprite, matching the
-   * line + gsplat geometry pattern. The mesh's geometry is built by
-   * `createPointsGeometry`, which attaches per-instance attributes
-   * (aCenter, aRadius, aSharpness, aColor, optional aScalar) to a
-   * shared unit-quad base.
-   *
-   * Handles geometry creation, material selection, userData, and
-   * transforms.
-   */
   createPointsNode(
     path: string,
     attrs: PointsMetadata,
@@ -161,48 +152,7 @@ export class NodeFactory {
     loader: DataLoader,
     isPlaceholder: boolean = false
   ): THREE.Mesh {
-    const maxRadius = attrs.max_radius ?? 1.0;
-    const geometry = this.createPointsGeometry(data, maxRadius, isPlaceholder);
-
-    const radiusScale = geometry.userData.radiusScale ?? 1.0;
-    const material = this.createPointsMaterial(attrs, radiusScale, geometry, path);
-
-    const points = new THREE.Mesh(geometry, material);
-    points.name = path;
-    // Three's per-mesh frustum culling tests the bounding sphere of
-    // the base quad geometry, not the spread of instances. Disable so
-    // we don't lose all points because the unit-sized base quad sits
-    // outside the camera frustum.
-    points.frustumCulled = false;
-
-    points.userData = {
-      nodeType: 'points',
-      loader,
-      attrs,
-      maxRadius: attrs.max_radius ?? 1.0,
-      visiblePointCount: data.pointCount,
-    } as PointsUserData;
-
-    if (attrs.transform) {
-      this.applyTransform(points, attrs.transform);
-    }
-
-    // Create picking shadow node if picking system is active
-    if (this.pickingSystem) {
-      const pickId = this.pickingSystem.allocatePickId();
-      points.userData.pickId = pickId;
-      const pickMaterial = materialManager.createPointPickingMaterial({
-        nodeId: pickId,
-        radiusScale,
-      });
-      materialManager.register(pickMaterial);
-      const pickNode = new THREE.Mesh(geometry, pickMaterial);
-      pickNode.frustumCulled = false;
-      pickNode.matrixWorld.copy(points.matrixWorld);
-      this.pickingSystem.registerNode(points, pickNode, pickId);
-    }
-
-    return points;
+    return createPointsNodeImpl(path, attrs, data, loader, this.pickingSystem, isPlaceholder);
   }
 
   createLinesNode(
@@ -247,41 +197,11 @@ export class NodeFactory {
   // when the real data arrives.
 
   /**
-   * Create a `THREE.Points` placeholder with an empty geometry.
-   *
-   * Constructs a minimal {@link LoadedPointsData} inline rather than
-   * routing through `createEmptyPointsData()` (which needs a full
-   * `ProjectionContext` with `chunkIndex`); the values that distinguish
-   * the two paths (`ndim`, `dtypes`) are overwritten on the first
-   * successful commit.
+   * Create a `THREE.Mesh` (instanced points) placeholder with an empty
+   * geometry.
    */
   createEmptyPointsNode(path: string, attrs: PointsMetadata, loader: DataLoader): THREE.Mesh {
-    const emptyData: LoadedPointsData = {
-      positions: new Float32Array(0) as LoadedPointsData['positions'],
-      pointCount: 0,
-      ndim: 3,
-      metadata: {
-        totalPoints: attrs.n_points ?? 0,
-        loadedPoints: 0,
-        bounds: new THREE.Box3(),
-        usedSpatialIndex: true,
-        dtypes: {},
-      },
-    };
-    // When the node carries a scalar field + colormap, bind an empty
-    // `aScalar` on the placeholder geometry so the fail-closed colormap
-    // guard in `createPointsMaterial` (`supportsScalarColormap`) passes at
-    // material-creation time. Without it the guard sees no `aScalar`,
-    // suppresses USE_COLORMAP on the placeholder material, and nothing
-    // ever re-enables it once the real scalars stream in — leaving the
-    // points white. This mirrors the placeholder-first handling of
-    // radii/sharpness (see `syncPointMaterialWithGeometry`); the buffer
-    // pool's attribute types then match between placeholder and real
-    // data (both carry a scalar), avoiding an extra geometry rebuild.
-    if (attrs.has_scalars && attrs.colormap) {
-      emptyData.scalars = new Float32Array(0) as LoadedPointsData['scalars'];
-    }
-    return this.createPointsNode(path, attrs, emptyData, loader, /* isPlaceholder */ true);
+    return createEmptyPointsNodeImpl(path, attrs, loader, this.pickingSystem);
   }
 
   /**
