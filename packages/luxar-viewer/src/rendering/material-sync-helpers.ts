@@ -6,6 +6,11 @@
  * Kept here so rendering paths can reuse the helper without pulling in
  * the data-loading dependency cone.
  *
+ * There is deliberately no `syncLineMaterialWithGeometry`: line
+ * materials carry no geometry-derived uniform (widths are raw Float32
+ * per-instance attributes with no dtype-scale analog of
+ * `radiusScale`, and there is no mesh-owned texture like `uSplatTex`).
+ *
  * @module rendering/material-sync-helpers
  */
 
