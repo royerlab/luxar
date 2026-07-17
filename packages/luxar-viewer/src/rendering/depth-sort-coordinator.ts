@@ -591,7 +591,7 @@ export function evaluateDepthSortPerFrame(): void {
 
     scratch.mv.multiplyMatrices(scratch.view, mesh.matrixWorld);
 
-    // === Cross-mesh (inter-part) back-to-front ordering ===
+    // === Cross-mesh (inter-node) back-to-front ordering: COLLECT ===
     // Depth sorting orders splats WITHIN a mesh; THREE orders transparent
     // MESHES by their matrixWorld origin — but every gsplat part shares the
     // world origin (splat centers are baked into the geometry), so THREE's
@@ -599,23 +599,30 @@ export function evaluateDepthSortPerFrame(): void {
     // creation order, NOT back-to-front. Give THREE a real signal via
     // renderOrder (compared before z, ascending → lowest drawn first).
     //
-    // For a BSP partition the parts are the leaf cells of a kd-tree, so the
-    // stored split planes (`bspTree`) yield the EXACT back-to-front order by a
-    // single traversal (Fuchs–Kedem–Naylor) — correct for any camera pose,
-    // including inside the volume. Each part gets its painter's-order RANK
-    // (0 = farthest). Otherwise — a single-leaf scene (one mesh, no cross-mesh
-    // order needed) or a legacy partition with no stored tree — fall back to
-    // the part's content-centroid view-space z (an approximation that
-    // degenerates when the camera is inside, which the BSP path fixes).
+    // Collected here, ASSIGNED after the loop by
+    // {@link assignGlobalRenderOrder}: renderOrder is compared globally
+    // across all transparent meshes, so per-wrapper BSP ranks and raw
+    // view-z fallbacks must land on ONE comparable scale — mixing them
+    // (two partitions, or partition + single leaf) previously drew every
+    // negative-z leaf before every rank>=0 partition part regardless of
+    // actual depth.
     const bs = (mesh.geometry as THREE.BufferGeometry | undefined)?.boundingSphere;
     const part = bspPartOf(mesh);
     const ranks = part ? wrapperPartRanks(part.wrapper, scratch.camPos, scratch) : null;
-    if (part && ranks) {
-      mesh.renderOrder = ranks.get(part.partIndex) ?? 0;
-    } else if (bs) {
+    if (bs) {
       scratch.center.copy(bs.center).applyMatrix4(scratch.mv);
-      mesh.renderOrder = scratch.center.z;
     }
+    orderSlots.push({
+      mesh,
+      // Meshes sharing a partition wrapper form one order group; a
+      // single-leaf mesh is its own group of one.
+      groupKey: part ? part.wrapper : mesh,
+      partRank: part && ranks ? (ranks.get(part.partIndex) ?? -1) : -1,
+      // View-space z of the content centroid (negative in front of the
+      // camera; MORE negative = farther). Without bounds there is no
+      // depth reference — 0 keeps the mesh comparable without NaN.
+      viewZ: bs ? scratch.center.z : 0,
+    });
 
     // === Within-mesh re-sort trigger (Phase 3) ===
     if (state.inFlight) continue;
@@ -647,6 +654,84 @@ export function evaluateDepthSortPerFrame(): void {
     }
 
     if (moved) scheduleSort(mesh, nodeId);
+  }
+
+  assignGlobalRenderOrder();
+}
+
+/**
+ * One order-pass entry per visible normal-mode gsplat mesh, rebuilt every
+ * frame in {@link evaluateDepthSortPerFrame} (fresh array per frame — a
+ * grow-only pool would pin disposed meshes across frames; counts are tens,
+ * matching the per-frame allocations {@link wrapperPartRanks} already makes).
+ */
+interface OrderSlot {
+  mesh: THREE.Mesh;
+  /** Partition wrapper, or the mesh itself for a single-leaf node. */
+  groupKey: THREE.Object3D;
+  /** BSP painter rank within the wrapper (0 = farthest), or -1 when none. */
+  partRank: number;
+  /** View-space z of the bounding-sphere center (more negative = farther). */
+  viewZ: number;
+}
+let orderSlots: OrderSlot[] = [];
+
+/**
+ * Cross-node back-to-front ordering: ASSIGN (the second half of the
+ * collect pass in {@link evaluateDepthSortPerFrame}).
+ *
+ * Every visible normal-mode gsplat mesh lands on ONE global integer
+ * renderOrder scale, farthest first:
+ * 1. Slots group by partition wrapper (single leaves are groups of one).
+ * 2. Groups order by the MEAN view-z of their members' content centroids —
+ *    a documented approximation: exact inter-group ordering does not exist
+ *    for arbitrarily interleaved groups, but wrappers/leaves are normally
+ *    spatially disjoint datasets, and co-located overlapping layers have
+ *    no meaningful cross order anyway.
+ * 3. Within a group, BSP painter ranks order the parts where a stored
+ *    tree exists (EXACT Fuchs–Kedem–Naylor order, any camera pose,
+ *    including inside the volume — the #565 guarantee, preserved as the
+ *    single-wrapper special case); otherwise members fall back to their
+ *    own view-z (legacy partitions without a stored tree).
+ * 4. Sequential global integers 0..M-1 are written to mesh.renderOrder.
+ *
+ * Non-gsplat transparent objects keep renderOrder 0 and tie with the
+ * globally-farthest gsplat mesh (falling back to THREE's per-object z) —
+ * cross-TYPE depth interleaving stays out of scope, unchanged from the
+ * per-wrapper scheme this replaces.
+ */
+function assignGlobalRenderOrder(): void {
+  const slots = orderSlots;
+  orderSlots = [];
+  if (slots.length === 0) return;
+
+  // Group by wrapper/leaf identity (insertion order is stable).
+  const groups = new Map<THREE.Object3D, { slots: OrderSlot[]; sumZ: number }>();
+  for (const slot of slots) {
+    const group = groups.get(slot.groupKey);
+    if (group) {
+      group.slots.push(slot);
+      group.sumZ += slot.viewZ;
+    } else {
+      groups.set(slot.groupKey, { slots: [slot], sumZ: slot.viewZ });
+    }
+  }
+
+  // Farthest group first (ascending mean view-z: more negative = farther).
+  const ordered = [...groups.values()].sort(
+    (a, b) => a.sumZ / a.slots.length - b.sumZ / b.slots.length
+  );
+
+  let nextRank = 0;
+  for (const group of ordered) {
+    // BSP ranks where both sides have one (a ranked wrapper ranks ALL its
+    // members); view-z otherwise (rank-less legacy wrapper members).
+    group.slots.sort((a, b) =>
+      a.partRank >= 0 && b.partRank >= 0 ? a.partRank - b.partRank : a.viewZ - b.viewZ
+    );
+    for (const slot of group.slots) {
+      slot.mesh.renderOrder = nextRank++;
+    }
   }
 }
 

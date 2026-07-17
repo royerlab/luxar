@@ -171,6 +171,53 @@ describe('GSplatPickingMaterial', () => {
     expect(material.uniforms.uNearCull.value).toBe(initialNearCull);
     material.dispose();
   });
+
+  // Front-most-wins pick depth for normal-mode gsplats (S2): under
+  // depth-sorted alpha-over the user sees an occluding surface, so the
+  // pick shader must write real projected depth instead of
+  // brightness-as-depth. Default OFF — commutative modes keep
+  // brightest-wins.
+  it('defaults to brightness-as-depth (uSurfaceDepth = 0)', () => {
+    const material = new GSplatPickingMaterial({ nodeId: 1 });
+    expect(material.uniforms.uSurfaceDepth.value).toBe(0);
+    material.dispose();
+  });
+
+  it('setSurfacePickDepth toggles uSurfaceDepth 0 ↔ 1', () => {
+    const material = new GSplatPickingMaterial({ nodeId: 1 });
+    material.setSurfacePickDepth(true);
+    expect(material.uniforms.uSurfaceDepth.value).toBe(1);
+    material.setSurfacePickDepth(false);
+    expect(material.uniforms.uSurfaceDepth.value).toBe(0);
+    material.dispose();
+  });
+
+  it('fragment shader selects real depth vs brightness-as-depth on uSurfaceDepth', () => {
+    const material = new GSplatPickingMaterial({ nodeId: 1 });
+    expect(material.fragmentShader).toContain('uniform int uSurfaceDepth;');
+    expect(material.fragmentShader).toContain(
+      'gl_FragDepth = (uSurfaceDepth == 1) ? gl_FragCoord.z : 1.0 - brightness;'
+    );
+    material.dispose();
+  });
+
+  it('clone preserves uSurfaceDepth (and the other tuned uniforms)', () => {
+    const material = new GSplatPickingMaterial({ nodeId: 5 });
+    material.setSurfacePickDepth(true);
+    material.uniforms.uCov2DDilation.value = 0.7;
+
+    const cloned = material.clone();
+    expect(cloned.uniforms.uNodeId.value).toBe(5);
+    expect(cloned.uniforms.uSurfaceDepth.value).toBe(1);
+    expect(cloned.uniforms.uCov2DDilation.value).toBe(0.7);
+
+    // Clone is independent — flipping the source must not leak.
+    material.setSurfacePickDepth(false);
+    expect(cloned.uniforms.uSurfaceDepth.value).toBe(1);
+
+    material.dispose();
+    cloned.dispose();
+  });
 });
 
 // rendering.md G3, G4 fix: GSplatPickingTSLMaterial had ZERO direct
@@ -241,6 +288,51 @@ describe('GSplatPickingTSLMaterial', () => {
     material.uniforms.uNodeId.value = 42;
     expect(material.uniforms.uNodeId.value).toBe(42);
     material.dispose();
+  });
+
+  // Surface-pick depth — one-for-one mirror of the GLSL wrapper block
+  // (three-geometry/material symmetry rule: same names, same surface).
+  it('defaults to brightness-as-depth (uSurfaceDepth = 0)', () => {
+    const material = new GSplatPickingTSLMaterial({ nodeId: 1 });
+    expect(material.uniforms.uSurfaceDepth.value).toBe(0);
+    material.dispose();
+  });
+
+  it('setSurfacePickDepth toggles uSurfaceDepth 0 ↔ 1', () => {
+    const material = new GSplatPickingTSLMaterial({ nodeId: 1 });
+    material.setSurfacePickDepth(true);
+    expect(material.uniforms.uSurfaceDepth.value).toBe(1);
+    material.setSurfacePickDepth(false);
+    expect(material.uniforms.uSurfaceDepth.value).toBe(0);
+    material.dispose();
+  });
+
+  it('clone preserves uSurfaceDepth (and the other tuned uniforms)', () => {
+    const material = new GSplatPickingTSLMaterial({ nodeId: 5 });
+    material.setSurfacePickDepth(true);
+    material.uniforms.uCov2DDilation.value = 0.7;
+
+    const cloned = material.clone();
+    expect(cloned.uniforms.uNodeId.value).toBe(5);
+    expect(cloned.uniforms.uSurfaceDepth.value).toBe(1);
+    expect(cloned.uniforms.uCov2DDilation.value).toBe(0.7);
+
+    // Clone is independent — flipping the source must not leak.
+    material.setSurfacePickDepth(false);
+    expect(cloned.uniforms.uSurfaceDepth.value).toBe(1);
+
+    material.dispose();
+    cloned.dispose();
+  });
+
+  it('both wrappers expose the same setSurfacePickDepth surface (GLSL ↔ TSL symmetry)', () => {
+    const glsl = new GSplatPickingMaterial({ nodeId: 1 });
+    const tsl = new GSplatPickingTSLMaterial({ nodeId: 1 });
+    expect(typeof glsl.setSurfacePickDepth).toBe('function');
+    expect(typeof tsl.setSurfacePickDepth).toBe('function');
+    expect(glsl.uniforms.uSurfaceDepth.value).toBe(tsl.uniforms.uSurfaceDepth.value);
+    glsl.dispose();
+    tsl.dispose();
   });
 });
 

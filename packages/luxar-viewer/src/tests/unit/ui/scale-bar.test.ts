@@ -157,12 +157,18 @@ describe('Scale Bar', () => {
       document.body.innerHTML = '';
     });
 
-    function createMockConfig(): import('../../../ui/scale-bar').ScaleBarConfig {
+    function createMockConfig(): import('../../../ui/scale-bar').ScaleBarConfig & {
+      camera: THREE.PerspectiveCamera;
+    } {
       const camera = new THREE.PerspectiveCamera(47, 1, 0.1, 1000);
       camera.position.set(0, 0, 10);
       camera.position.distanceTo = vi.fn(() => 10);
       return {
-        camera: camera as any,
+        // getCamera is a live accessor (the app swaps cameras on
+        // perspective ↔ ortho); `camera` is kept alongside so tests can
+        // mutate the instance the accessor returns.
+        camera,
+        getCamera: () => camera as any,
         controls: {
           getFocusTarget: vi.fn(() => ({ x: 0, y: 0, z: 0 })),
         } as any,
@@ -218,6 +224,32 @@ describe('Scale Bar', () => {
       expect(bar.style.width).toMatch(/^\d+px$/);
       // Label should contain the unit from the first displayed dimension (index 1 = 'um')
       expect(label?.textContent).toContain('um');
+    });
+
+    it('tracks a runtime camera swap (perspective → ortho) via getCamera', () => {
+      // Regression: ScaleBar used to capture the camera instance at
+      // construction; after the app's perspective ↔ ortho swap it kept
+      // computing from the abandoned camera, freezing the label in
+      // ortho mode. getCamera must be re-read every update.
+      let current: any = new THREE.PerspectiveCamera(47, 1, 0.1, 1000);
+      current.position.set(0, 0, 10);
+      current.position.distanceTo = vi.fn(() => 10);
+      const config = { ...createMockConfig(), getCamera: () => current };
+      const scaleBar = new ScaleBar(config);
+      scaleBar.show();
+      scaleBar.update();
+      const bar = scaleBar.getElement().querySelector('.luxar-scale-bar__bar') as HTMLElement;
+      const widthBefore = bar.style.width;
+
+      // Swap to an ortho camera with a very different world-per-pixel.
+      const ortho = new THREE.OrthographicCamera(-5, 5, 5, -5, 0.1, 1000);
+      ortho.zoom = 100;
+      ortho.position.set(0, 0, 10);
+      ortho.position.distanceTo = vi.fn(() => 10);
+      current = ortho;
+      scaleBar.update();
+
+      expect(bar.style.width).not.toBe(widthBefore);
     });
 
     it('should handle zero canvas height gracefully', () => {

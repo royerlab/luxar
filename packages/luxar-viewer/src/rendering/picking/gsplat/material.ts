@@ -50,6 +50,11 @@ export class GSplatPickingMaterial extends THREE.ShaderMaterial implements Camer
         uNearCull: { value: 0.1 },
         uMaxExtentFactor: { value: 0.33 },
         uCov2DDilation: { value: GSPLAT_COV2D_DILATION_DEFAULT },
+        // 0 = brightness-as-depth (brightest wins; commutative modes),
+        // 1 = real projected depth (front-most wins; surface/'normal'
+        // mode). Synced per pick render by PickingSystem from the main
+        // material's blending mode via setSurfacePickDepth().
+        uSurfaceDepth: { value: 0 },
         uNodeId: { value: config.nodeId },
       },
       vertexShader: GSPLAT_PICK_GLSL.vertex,
@@ -67,6 +72,39 @@ export class GSplatPickingMaterial extends THREE.ShaderMaterial implements Camer
   /** Rebind the splat data texture (plain uniform update). */
   updateSplatTexture(texture: THREE.DataTexture | null): void {
     this.uniforms.uSplatTex.value = texture;
+  }
+
+  /**
+   * Select the pick depth convention. `true` = surface ('normal')
+   * blending: write the real projected depth so the FRONT-MOST splat
+   * wins — matching the depth-sorted occluding surface the user sees.
+   * `false` (default) = brightness-as-depth so the BRIGHTEST splat wins
+   * — correct for the commutative modes (additive/max/luminous/opaque).
+   * Synced per pick render by `PickingSystem.renderPickBuffer()`.
+   */
+  setSurfacePickDepth(on: boolean): void {
+    this.uniforms.uSurfaceDepth.value = on ? 1 : 0;
+  }
+
+  /**
+   * Clone this picking material. The inherited `Material.clone()` calls
+   * the constructor with no config (throws on `config.nodeId`), so —
+   * mirroring the visual `GSplatMaterial.clone()` pattern — construct
+   * with the same nodeId and copy the runtime-tuned uniform values
+   * (camera params, dilation, surface-pick depth) across explicitly.
+   */
+  clone(): this {
+    const cloned = new GSplatPickingMaterial({ nodeId: this.uniforms.uNodeId.value });
+    cloned.uniforms.uSplatTex.value = this.uniforms.uSplatTex.value;
+    cloned.uniforms.uResolution.value.copy(this.uniforms.uResolution.value);
+    cloned.uniforms.uFx.value = this.uniforms.uFx.value;
+    cloned.uniforms.uFy.value = this.uniforms.uFy.value;
+    cloned.uniforms.uIsOrtho.value = this.uniforms.uIsOrtho.value;
+    cloned.uniforms.uNearCull.value = this.uniforms.uNearCull.value;
+    cloned.uniforms.uMaxExtentFactor.value = this.uniforms.uMaxExtentFactor.value;
+    cloned.uniforms.uCov2DDilation.value = this.uniforms.uCov2DDilation.value;
+    cloned.uniforms.uSurfaceDepth.value = this.uniforms.uSurfaceDepth.value;
+    return cloned as this;
   }
 
   updateCameraParams(

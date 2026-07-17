@@ -12,6 +12,8 @@ export const cacheConfig: CacheConfig = {
   l1MaxSizeMB: 100,
   l2MaxSizeMB: 2048,
   opfsOperationTimeoutMs: 10_000,
+  opfsWriteConcurrency: 4, // background L2 writes run at most 4-wide (bounds OPFS contention)
+  opfsWriteQueueMax: 1024, // pending L2 writes cap; oldest dropped past this (best-effort tier)
   externalDatasetTtlMs: null,
   debug: false,
 };

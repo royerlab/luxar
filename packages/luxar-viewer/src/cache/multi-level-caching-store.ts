@@ -13,6 +13,7 @@ import {
   getRemoteContentHash,
 } from './multi-level-caching-store/validation-queue';
 import type { ChunkPrefetcher } from './chunk-prefetcher';
+import { OpfsWriteQueue } from './multi-level-caching-store/opfs-write-queue';
 import { log, Modules } from '../utils/log';
 import { config } from '../config';
 import { type Result, ok, err, isErr } from '../utils/result';
@@ -40,6 +41,17 @@ export interface MultiLevelCachingStoreOptions {
   noCache?: boolean;
   /** Clear caches on init (e.g. driven by `?clear-cache`). Default false. */
   clearCache?: boolean;
+  /**
+   * Background L2 write-queue concurrency cap. Defaults to
+   * `config.cache.opfsWriteConcurrency`. Exposed mainly so tests can inject a
+   * tiny cap.
+   */
+  opfsWriteConcurrency?: number;
+  /**
+   * Background L2 write-queue max pending depth. Defaults to
+   * `config.cache.opfsWriteQueueMax`.
+   */
+  opfsWriteQueueMax?: number;
 }
 
 /**
@@ -77,6 +89,17 @@ export class MultiLevelCachingStore implements AsyncReadable {
   // getResult so a dataset switch cancels every in-flight data/prefetch
   // fetch this store kicked off, not only the validation request.
   private readonly dataAbort = new AbortController();
+
+  // Background L2 (OPFS) write queue — moves the durable write off the fetch
+  // critical path (see opfs-write-queue.ts). Assigned in the constructor.
+  private readonly l2WriteQueue: OpfsWriteQueue;
+
+  // MLC-level epoch, bumped on every cache clear/invalidation. A queued L2
+  // write captures the epoch at enqueue and self-drops at drain if it changed
+  // — the fire-and-forget analogue of OPFSStore's `generation` guard. Needed
+  // because `dataAbort` is aborted only on dispose, NOT on a content-hash/TTL
+  // clear, so it can't distinguish a clear from normal running state.
+  private l2Epoch = 0;
 
   // Same-key in-flight coalescing: concurrent getResult callers for the
   // same key share a single L2/network fetch. Each caller still does
@@ -144,6 +167,12 @@ export class MultiLevelCachingStore implements AsyncReadable {
 
     // Save L2 max size for later initialization
     this.l2MaxSize = options?.l2MaxSize ?? MultiLevelCachingStore.DEFAULT_L2_SIZE;
+
+    // Background L2 write queue (defaults from config; options override for tests).
+    this.l2WriteQueue = new OpfsWriteQueue({
+      concurrency: options?.opfsWriteConcurrency ?? config.cache.opfsWriteConcurrency,
+      maxDepth: options?.opfsWriteQueueMax ?? config.cache.opfsWriteQueueMax,
+    });
   }
 
   /**
@@ -549,16 +578,31 @@ export class MultiLevelCachingStore implements AsyncReadable {
       return { result: err({ kind: 'Aborted' }), source: 'network' };
     }
 
-    // Populate caches once.
+    // Populate caches once. L1 synchronously (the caller may read it back
+    // immediately); L2 (OPFS) is DEFERRED to the background write queue so the
+    // durable disk write never blocks this fetch — profiling showed the awaited
+    // OPFS write dominated the cold-load critical path (~6× the network fetch).
+    // The bytes are already in hand + promoted to L1, so a queued write carries
+    // no correctness weight for THIS session; it only persists for the next.
     if (this.enabled) {
       this.l1Cache.set(key, data);
       if (this.l2Store) {
-        try {
-          await this.l2Store.set(key, data);
-        } catch (e) {
-          const msg = e instanceof Error ? e.message : String(e);
-          log.warning(Modules.CACHE, `L2 write failed for ${key}: ${msg}`);
-        }
+        const l2Store = this.l2Store;
+        // Capture the epoch NOW; re-check at drain time so a clear/dispose that
+        // interleaves between enqueue and the actual write drops the stale write
+        // (the enqueue→drain window that the inline await used to make atomic).
+        const epoch = this.l2Epoch;
+        this.l2WriteQueue.enqueue(key, async () => {
+          if (this.disposed || this.dataAbort.signal.aborted || this.l2Epoch !== epoch) {
+            return; // superseded by dispose or a cache clear — do not persist
+          }
+          try {
+            await l2Store.set(key, data);
+          } catch (e) {
+            const msg = e instanceof Error ? e.message : String(e);
+            log.warning(Modules.CACHE, `L2 write failed for ${key}: ${msg}`);
+          }
+        });
       }
     }
 
@@ -606,9 +650,7 @@ export class MultiLevelCachingStore implements AsyncReadable {
           const age = Date.now() - state.lastValidatedAt;
           if (age > ttlMs) {
             this.log(`External dataset TTL expired (${age}ms > ${ttlMs}ms), clearing cache`);
-            this.clearL1();
-            await this.clearL2();
-            this.invalidationCallbacks.forEach((cb) => cb());
+            await this.invalidateAllTiers();
           }
         }
         this.l2Store?.setValidationMode(ttlMs != null ? 'ttl' : 'none');
@@ -631,19 +673,7 @@ export class MultiLevelCachingStore implements AsyncReadable {
         // ("hash mismatch ⇒ every tier dropped") explicit, and protects
         // future call paths that might revalidate against a populated
         // L1 (e.g. content-hash refresh during a long session).
-        this.clearL1();
-        await this.clearL2();
-        // CRIT-5: cancel every in-flight coalesced get so a fetch that
-        // started before validation completed cannot resurrect stale
-        // bytes by writing back into the just-cleared L1/L2 after this
-        // returns. Each pending entry's controller signal is composed
-        // into fetchKeyChain, so abort() trips the post-arrayBuffer
-        // populate guard.
-        for (const [, pending] of this.pendingGets) {
-          pending.controller.abort();
-        }
-        this.pendingGets.clear();
-        this.invalidationCallbacks.forEach((cb) => cb());
+        await this.invalidateAllTiers();
       }
 
       this.l2Store?.setContentHash(remoteHash);
@@ -652,6 +682,37 @@ export class MultiLevelCachingStore implements AsyncReadable {
       // Offline or error - use cached data
       this.log('Cannot validate (offline?), using cached data');
     }
+  }
+
+  /**
+   * CRIT-5: cancel every in-flight coalesced get and forget them, so a fetch
+   * that started before an invalidation cannot resurrect stale bytes by writing
+   * back into the just-cleared L1/L2 after it resolves. Each pending entry's
+   * controller signal is composed into `fetchKeyChain`, so `abort()` trips the
+   * post-arrayBuffer populate guard. Shared by the content-hash-mismatch and
+   * TTL-expiry clear paths so the two stay in lockstep.
+   */
+  private abortPendingGets(): void {
+    for (const [, pending] of this.pendingGets) {
+      pending.controller.abort();
+    }
+    this.pendingGets.clear();
+  }
+
+  /**
+   * Drop every cache tier for an invalidation (content-hash mismatch, TTL
+   * expiry, or a user-triggered clearAll). Ordering is load-bearing:
+   * `abortPendingGets()` runs FIRST so no in-flight coalesced fetch can pass
+   * `fetchKeyChain`'s populate guard and repopulate a tier DURING the async
+   * `clearL2()` wipe — the residual window a clear-then-abort order leaves open.
+   * L2's epoch is bumped inside `clearL2()`; L0 is dropped via the invalidation
+   * callbacks. Shared by all three invalidation paths so they stay in lockstep.
+   */
+  private async invalidateAllTiers(): Promise<void> {
+    this.abortPendingGets();
+    this.clearL1();
+    await this.clearL2();
+    this.invalidationCallbacks.forEach((cb) => cb());
   }
 
   /**
@@ -697,6 +758,7 @@ export class MultiLevelCachingStore implements AsyncReadable {
         // real per-tier limit to sum (L2 is disk, not heap, but it is a tier).
         maxSize: this.l2MaxSize,
       },
+      l2WriteQueue: this.l2WriteQueue.stats(),
       network: {
         bytesTransferred: this.networkBytesTransferred,
         requestCount: this.networkRequestCount,
@@ -736,20 +798,29 @@ export class MultiLevelCachingStore implements AsyncReadable {
 
   /**
    * Clear L2 OPFS cache only.
+   *
+   * Bumps `l2Epoch` and drops queued background writes FIRST (synchronously),
+   * so a write enqueued before this clear can never land after it and resurrect
+   * stale bytes: not-yet-started tasks are dropped here, and an already-running
+   * task self-drops on its epoch re-check (with the OPFS `generation` counter as
+   * a final backstop). This is the single chokepoint for every L2-clearing path
+   * (`clearAll`, content-hash mismatch, TTL expiry, `?clear-cache`).
    */
   async clearL2(): Promise<void> {
+    this.l2Epoch++;
+    this.l2WriteQueue.clear();
     if (this.l2Store) {
       await this.l2Store.clear();
     }
   }
 
   /**
-   * Clear all caches (L1 + L2).
+   * Clear all caches (L1 + L2). Reachable mid-session from the monitor /
+   * settings "clear caches" controls and `__luxarDebug`, so it aborts in-flight
+   * gets FIRST (see invalidateAllTiers) to prevent stale repopulation.
    */
   async clearAll(): Promise<void> {
-    this.clearL1();
-    await this.clearL2();
-    this.invalidationCallbacks.forEach((cb) => cb());
+    await this.invalidateAllTiers();
   }
 
   /**
@@ -779,6 +850,13 @@ export class MultiLevelCachingStore implements AsyncReadable {
     if (this.datasetId !== undefined) {
       ValidationQueue.cancel(this.datasetId);
     }
+
+    // Drop not-yet-started background L2 writes (best-effort tier; keeps
+    // dataset-switch teardown fast). Writes that already entered `l2Store.set`
+    // are registered in OPFSStore.pendingWrites and drained by its dispose()
+    // below; the `disposed` flag set above also makes any dequeued-but-unstarted
+    // task self-drop on its epoch/disposed re-check.
+    this.l2WriteQueue.clear();
 
     if (this.l2Store) {
       await this.l2Store.dispose();

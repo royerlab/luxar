@@ -31,7 +31,7 @@ import {
   boundingBoxToSphere,
   calculateClippingPlanesFromSphere,
   getBoundingBoxDiagonal,
-  MIN_NEAR_PLANE,
+  minNearForRadius,
   SPHERE_SAFETY_EXPANSION,
 } from './bounds-math';
 import type { SceneBoundsCache } from './scene-bounds-cache';
@@ -151,6 +151,8 @@ export function autoAdjustFromBounds(ctx: ClippingCtx): { near: number; far: num
  *
  * Returns false (no-op) when:
  *  - the bounds cache is empty (no metadata available);
+ *  - the sphere is degenerate (near >= far — e.g. a zero-extent
+ *    single-point scene, whose radius-0 sphere yields no valid frustum);
  *  - changes are below the 0.1% threshold.
  */
 export function updateDynamicFromCache(ctx: ClippingCtx): void {
@@ -165,7 +167,14 @@ export function updateDynamicFromCache(ctx: ClippingCtx): void {
   const dist = Math.sqrt(dx * dx + dy * dy + dz * dz);
   const R = s.radius * SPHERE_SAFETY_EXPANSION;
   const far = dist + R;
-  const near = dist < R ? MIN_NEAR_PLANE : Math.max(MIN_NEAR_PLANE, dist - R);
+  const minNear = minNearForRadius(R);
+  const near = dist < R ? minNear : Math.max(minNear, dist - R);
+
+  // Degenerate guard (zero-extent scene → radius-0 sphere → near >= far):
+  // writing that to the camera puts (far - near) = 0 into the projection
+  // matrix and NaNs the frustum. Same contract as applyClippingPlanes,
+  // which refuses near >= far on the explicit path.
+  if (near >= far) return;
 
   // Only update when values changed > 0.1% — avoids thrashing the
   // projection matrix on sub-pixel camera moves.
