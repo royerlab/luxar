@@ -117,7 +117,7 @@ export function createEmptyLinesNode(
   // scalars stream in (the commit writes into the existing placeholder
   // geometry). Gate on the SAME `nodeAttrs` fields the colormap-application
   // path above reads, so the placeholder matches exactly when colormap will
-  // apply. Mirrors `node-factory.ts::createEmptyPointsNode`.
+  // apply. Mirrors `create-points-node.ts::createEmptyPointsNode`.
   if (nodeAttrs.colormap && nodeAttrs.has_scalars) {
     emptyConfig.startScalars = new Float32Array(0);
     emptyConfig.endScalars = new Float32Array(0);
