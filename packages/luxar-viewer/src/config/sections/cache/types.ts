@@ -28,6 +28,20 @@ export interface CacheConfig {
    */
   opfsOperationTimeoutMs: number;
   /**
+   * Max L2 (OPFS) writes running concurrently in the background write queue.
+   * L2 writes are deferred off the fetch critical path; this caps how many run
+   * at once so they don't stampede the single OPFS backend (each write balloons
+   * under high contention). Default: 4.
+   */
+  opfsWriteConcurrency: number;
+  /**
+   * Max pending (not-yet-started) L2 writes held in the background queue.
+   * Past this depth the oldest pending write is dropped (L2 is best-effort —
+   * L1 still serves the session and the next session re-fetches). Bounds the
+   * queue's memory (it retains the chunk bytes until written). Default: 1024.
+   */
+  opfsWriteQueueMax: number;
+  /**
    * TTL in ms for external datasets that lack Luxar's `content_hash`.
    * When set, a cached external dataset older than this is invalidated
    * on next init. `null` (default) means no TTL — the cache may be

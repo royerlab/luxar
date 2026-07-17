@@ -388,11 +388,11 @@ describe('depth-sort coordinator', () => {
   });
 
   it('falls back to content-centroid view depth when a mesh has no BSP tree (single leaf / legacy)', async () => {
-    // A single-leaf scene (no partition wrapper) or a legacy partition with no
-    // stored bspTree: each normal-mode mesh's renderOrder is its
-    // bounding-sphere-center view-space z. Camera at the origin looking −z, so
-    // view ≈ identity and renderOrder ≈ center.z. Exact for disjoint convex
-    // cells, degrades only where footprints spill / the camera is inside.
+    // Leaf meshes without a partition wrapper: each is its own order group,
+    // and groups sort by their bounding-sphere-center view-space z (camera
+    // at the origin looking −z, so view ≈ identity and view-z ≈ center.z).
+    // renderOrder is the GLOBAL sequential rank (0 = farthest), not the raw
+    // z — all normal-mode gsplat meshes share one comparable integer scale.
     const coord = await loadCoordinator();
     coord.configureDepthSort({ getCamera: () => makeCamera(), requestRender: vi.fn() });
 
@@ -410,29 +410,143 @@ describe('depth-sort coordinator', () => {
 
     coord.evaluateDepthSortPerFrame();
 
-    expect(near.renderOrder).toBeCloseTo(-10, 3);
-    expect(mid.renderOrder).toBeCloseTo(-20, 3);
-    expect(far.renderOrder).toBeCloseTo(-30, 3);
-    const drawOrder = [near, mid, far].slice().sort((a, b) => a.renderOrder - b.renderOrder);
-    expect(drawOrder).toEqual([far, mid, near]);
+    expect(far.renderOrder).toBe(0);
+    expect(mid.renderOrder).toBe(1);
+    expect(near.renderOrder).toBe(2);
+  });
+
+  it('two BSP wrappers land on ONE global scale: the far wrapper draws entirely first', async () => {
+    // The core cross-domain fix: per-wrapper painter ranks are only
+    // comparable WITHIN a wrapper. Two partitions must interleave on a
+    // shared global scale — previously both wrappers' parts got 0..N-1 and
+    // THREE drew them arbitrarily interleaved.
+    const xSplitTree = {
+      axis: 0,
+      split: 0,
+      left: { part: 0 },
+      right: { part: 1 },
+    };
+    const coord = await loadCoordinator();
+    // Camera at the origin looking −z; group depth = mean member view-z.
+    coord.configureDepthSort({ getCamera: () => makeCamera(), requestRender: vi.fn() });
+
+    const farParts = [0, 1].map(() => makeGSplatsMesh(2, 'normal'));
+    farParts[0].geometry.boundingSphere!.center.set(-50, 0, -100);
+    farParts[1].geometry.boundingSphere!.center.set(50, 0, -100);
+    makePartitionWrapper(xSplitTree, farParts);
+
+    const nearParts = [0, 1].map(() => makeGSplatsMesh(2, 'normal'));
+    nearParts[0].geometry.boundingSphere!.center.set(-50, 0, -20);
+    nearParts[1].geometry.boundingSphere!.center.set(50, 0, -20);
+    makePartitionWrapper(xSplitTree, nearParts);
+
+    // Commit near wrapper FIRST so insertion order can't fake the result.
+    for (const m of [...nearParts, ...farParts]) {
+      coord.noteGSplatsCommit(m, new Float32Array([0, 0, -1, 1, 0, -2]), 2);
+    }
+    await flush();
+
+    coord.evaluateDepthSortPerFrame();
+
+    // Far wrapper (mean z −100) ranks 0..1, near wrapper (mean z −20)
+    // ranks 2..3; each wrapper internally keeps its BSP traversal order
+    // (eye x=0 is not < split 0 → left leaf drawn first).
+    expect(farParts.map((m) => m.renderOrder)).toEqual([0, 1]);
+    expect(nearParts.map((m) => m.renderOrder)).toEqual([2, 3]);
+  });
+
+  it('a partition and single leaves share the global scale by depth', async () => {
+    // Partition + leaf was the worst mixed case: leaves carried raw
+    // negative view-z while parts carried ranks >= 0, so every leaf drew
+    // before every part regardless of actual depth.
+    const xSplitTree = {
+      axis: 0,
+      split: 0,
+      left: { part: 0 },
+      right: { part: 1 },
+    };
+    const coord = await loadCoordinator();
+    coord.configureDepthSort({ getCamera: () => makeCamera(), requestRender: vi.fn() });
+
+    const parts = [0, 1].map(() => makeGSplatsMesh(2, 'normal'));
+    parts[0].geometry.boundingSphere!.center.set(-50, 0, -100);
+    parts[1].geometry.boundingSphere!.center.set(50, 0, -100);
+    makePartitionWrapper(xSplitTree, parts);
+
+    const behindLeaf = makeGSplatsMesh(2, 'normal'); // farther than the wrapper
+    behindLeaf.geometry.boundingSphere!.center.set(0, 0, -200);
+    const frontLeaf = makeGSplatsMesh(2, 'normal'); // between wrapper and camera
+    frontLeaf.geometry.boundingSphere!.center.set(0, 0, -20);
+
+    for (const m of [frontLeaf, ...parts, behindLeaf]) {
+      coord.noteGSplatsCommit(m, new Float32Array([0, 0, -1, 1, 0, -2]), 2);
+    }
+    await flush();
+
+    coord.evaluateDepthSortPerFrame();
+
+    // behind leaf → wrapper parts (BSP order) → front leaf.
+    expect(behindLeaf.renderOrder).toBe(0);
+    expect(parts.map((m) => m.renderOrder)).toEqual([1, 2]);
+    expect(frontLeaf.renderOrder).toBe(3);
+  });
+
+  it('camera inside wrapper A: wrapper B behind still draws first, A keeps exact interior BSP order', async () => {
+    const treeA = {
+      axis: 0,
+      split: 0,
+      left: { axis: 0, split: -50, left: { part: 0 }, right: { part: 1 } },
+      right: { axis: 0, split: 50, left: { part: 2 }, right: { part: 3 } },
+    };
+    const coord = await loadCoordinator();
+    // Camera at x=25 (inside A's x∈[-100,100] span), looking −z.
+    coord.configureDepthSort({ getCamera: () => cameraAt(25, 0, 0), requestRender: vi.fn() });
+
+    const partsA = [0, 1, 2, 3].map(() => makeGSplatsMesh(2, 'normal'));
+    // A's content straddles the camera plane (mean view-z 0 — the
+    // camera-inside signature).
+    partsA.forEach((m, i) => m.geometry.boundingSphere!.center.set(-75 + i * 50, 0, 0));
+    makePartitionWrapper(treeA, partsA);
+
+    const partsB = [0, 1].map(() => makeGSplatsMesh(2, 'normal'));
+    partsB[0].geometry.boundingSphere!.center.set(-50, 0, -50);
+    partsB[1].geometry.boundingSphere!.center.set(50, 0, -50);
+    makePartitionWrapper({ axis: 0, split: 0, left: { part: 0 }, right: { part: 1 } }, partsB);
+
+    for (const m of [...partsA, ...partsB]) {
+      coord.noteGSplatsCommit(m, new Float32Array([0, 0, -1, 1, 0, -2]), 2);
+    }
+    await flush();
+
+    coord.evaluateDepthSortPerFrame();
+
+    // B (mean view-z −50) is globally farther than A (mean 0) → ranks 0..1.
+    expect(partsB.map((m) => m.renderOrder)).toEqual([0, 1]);
+    // A keeps the exact interior FKN order (eye x=25): part0, part1, part3, part2.
+    expect(partsA.map((m) => m.renderOrder)).toEqual([2, 3, 5, 4]);
   });
 
   it('clears renderOrder to 0 when a mesh is no longer order-dependent (additive)', async () => {
     const coord = await loadCoordinator();
     coord.configureDepthSort({ getCamera: () => makeCamera(), requestRender: vi.fn() });
 
-    const mesh = makeGSplatsMesh(2, 'normal');
-    mesh.geometry.boundingSphere!.center.set(0, 0, -15);
-    coord.noteGSplatsCommit(mesh, new Float32Array([0, 0, -1, 1, 0, -2]), 2);
+    // Two leaves so the NEARER one carries a nonzero global rank — a
+    // single mesh would rank 0 and be indistinguishable from "cleared".
+    const far = makeGSplatsMesh(2, 'normal');
+    far.geometry.boundingSphere!.center.set(0, 0, -30);
+    const near = makeGSplatsMesh(2, 'normal');
+    near.geometry.boundingSphere!.center.set(0, 0, -15);
+    coord.noteGSplatsCommit(far, new Float32Array([0, 0, -1, 1, 0, -2]), 2);
+    coord.noteGSplatsCommit(near, new Float32Array([0, 0, -1, 1, 0, -2]), 2);
     await flush();
     coord.evaluateDepthSortPerFrame();
-    expect(mesh.renderOrder).toBeCloseTo(-15, 3); // biased while normal
+    expect(near.renderOrder).toBe(1); // biased while normal
 
     // Switch to a commutative mode — renderOrder bias must be cleared so it
     // doesn't strand a stale ordering (additive is order-independent).
-    (mesh.material as THREE.Material).userData.blendingMode = 'additive';
+    (near.material as THREE.Material).userData.blendingMode = 'additive';
     coord.evaluateDepthSortPerFrame();
-    expect(mesh.renderOrder).toBe(0);
+    expect(near.renderOrder).toBe(0);
   });
 
   it('applies the mesh ROTATION to the model-view (not just translation)', async () => {
@@ -818,5 +932,64 @@ describe('depth-sort scheduler (Phase 3)', () => {
     expect(root.count).toBe(1);
     expect(root.metadata?.splats).toBe(2);
     expect(root.metadata?.info).toMatch(/up$/);
+  });
+
+  it('recovers a node whose first dispatch raced a null camera (registered, never sorted)', async () => {
+    // Init-ordering window: the commit lands while getCamera still
+    // returns null. Registration reaches the worker (it does not need a
+    // camera) but no sort dispatches, so `lastSortAxis` stays null and
+    // no camera motion could ever re-trigger it — only the per-frame
+    // recovery branch can.
+    const coord = await loadCoordinator();
+    let camera: THREE.Camera | null = null;
+    const requestRender = vi.fn();
+    coord.configureDepthSort({ getCamera: () => camera, requestRender });
+
+    const mesh = makeGSplatsMesh(2, 'normal');
+    coord.noteGSplatsCommit(mesh, new Float32Array([0, 0, -1, 1, 0, -2]), 2);
+    await flush();
+    expect(mockApi.registerNode).toHaveBeenCalledTimes(1);
+    expect(mockApi.sort).not.toHaveBeenCalled();
+
+    // Camera appears: the next frame dispatches exactly one recovery
+    // sort; the frame after stays quiet (in flight).
+    camera = makeCamera();
+    coord.evaluateDepthSortPerFrame();
+    expect(mockApi.sort).toHaveBeenCalledTimes(1);
+    coord.evaluateDepthSortPerFrame();
+    expect(mockApi.sort).toHaveBeenCalledTimes(1);
+
+    // The recovered sort applies like any other.
+    sortResolvers[0]({ generation: 1, ordering: new Uint32Array([1, 0]) });
+    await flush();
+    const attr = (mesh.geometry as THREE.InstancedBufferGeometry).getAttribute('aSortedIndex');
+    expect(Array.from(attr.array as Uint32Array)).toEqual([1, 0]);
+    expect(requestRender).toHaveBeenCalled();
+  });
+
+  it('an empty (count=0) commit silences camera-motion re-sorts until real content returns', async () => {
+    // The zero-splat commit releases the worker registration; keeping
+    // the recorded sort pose would fire a guaranteed-null sort RPC on
+    // every threshold crossing (the slice has no visible splats).
+    const coord = await loadCoordinator();
+    const camera = makeCamera();
+    const mesh = await sortedSetup(coord, camera);
+
+    coord.noteGSplatsCommit(mesh, new Float32Array(0), 0);
+    await flush();
+    expect(mockApi.releaseNode).toHaveBeenCalledWith(mesh.uuid);
+
+    // Way past the angle threshold: neither the motion trigger (pose
+    // cleared) nor the recovery branch (registration cleared) may fire.
+    camera.rotateY(Math.PI / 2);
+    coord.evaluateDepthSortPerFrame();
+    coord.evaluateDepthSortPerFrame();
+    expect(mockApi.sort).toHaveBeenCalledTimes(1); // the setup sort only
+
+    // A later non-empty commit restores the full register + sort cycle.
+    coord.noteGSplatsCommit(mesh, new Float32Array([0, 0, -1, 1, 0, -2]), 2);
+    await flush();
+    expect(mockApi.registerNode).toHaveBeenCalledTimes(2);
+    expect(mockApi.sort).toHaveBeenCalledTimes(2);
   });
 });

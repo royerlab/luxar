@@ -131,10 +131,12 @@ The fragment shader runs in this order:
 1e-4`, the default) skips this `pow()` — `pow(x, 1) == x` — and also the
    pre-LUT value `pow()` in colormap mode. Mirrors the Line/GSplat fast path
    (`isGammaOne` in `../_shared/uniform-helpers`).
-   In `USE_COLORMAP` mode the fragment GOG is bypassed entirely
-   (`adjusted = max(vColor, 0)`): gamma and the display range already shaped
-   the scalar **value** before the LUT lookup in the vertex stage, so warping
-   the mapped LUT colour again would be wrong. See the colormap section.
+   In `USE_COLORMAP` mode only the gamma `pow()` is skipped: gamma and the
+   display range already shaped the scalar **value** before the LUT lookup in
+   the vertex stage, so warping the mapped LUT colour again would be wrong.
+   `uIntensity`/`uOffset` still apply post-LUT to the mapped colour (matching
+   the GSplat shader) so the layer intensity/offset controls work on
+   colormapped nodes too. See the colormap section.
 5. **Alpha** — `alpha = falloff * opacity`.
 6. **Max-mode RGB premultiplication** —
    `#ifdef LUXAR_MAX_RGB_CONTRIBUTION` returns `vec4(finalColor * alpha, alpha)`;
@@ -177,9 +179,11 @@ mapped colour is carried to the fragment as `vColor`.
 
 Gamma and the display range act on the scalar **value** pre-LUT, not on the
 resulting colour: `t = pow(t, invGamma)` (skipped under `LUXAR_GAMMA_ONE`) is
-applied to `t` before the texture read, and the fragment GOG is bypassed
-(see step 4 above). This keeps gamma/black-level controls meaningful on the
-data axis while leaving the chosen LUT palette undistorted.
+applied to `t` before the texture read, and the fragment gamma `pow()` is
+skipped (see step 4 above). Intensity/offset apply **post-LUT** to the mapped
+colour, matching the GSplat shader, so the layer gain/offset controls work on
+colormapped nodes. This keeps gamma controls meaningful on the data axis
+while leaving the chosen LUT palette undistorted.
 
 - **GLSL** path: a `#ifdef USE_COLORMAP` block. `updateColormapTexture` flips
   the define and sets `material.needsUpdate = true` to trigger recompilation.

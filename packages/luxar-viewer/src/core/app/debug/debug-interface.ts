@@ -73,7 +73,14 @@ export function installDebugInterface(ports: InstallDebugInterfacePorts): void {
 
     // Add runtime components (only available after initialization)
     scene: ports.sceneManager.scene,
-    camera: ports.sceneManager.camera,
+    // Live getter, NOT a snapshot: the camera is the one component the
+    // scene manager REPLACES at runtime (perspective ↔ ortho swap in
+    // camera-mode.ts). A snapshot taken here goes stale after the first
+    // V-key mode switch — tests reading `__luxarDebug.camera.zoom` in
+    // ortho mode would silently watch the abandoned perspective camera.
+    get camera() {
+      return ports.sceneManager.camera;
+    },
     renderer: ports.sceneManager.renderer,
     controls: ports.sceneManager.controls,
     postProcessing: ports.sceneManager.postProcessing,

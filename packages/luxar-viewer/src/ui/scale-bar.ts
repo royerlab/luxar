@@ -16,7 +16,14 @@ import { sceneDimsManager } from '../scene/scene-dims-manager';
 import { type LuxarCamera, isPerspectiveCamera } from '../utils/camera-utils';
 
 export interface ScaleBarConfig {
-  camera: LuxarCamera;
+  /**
+   * Live camera accessor, NOT a captured instance: the camera is the one
+   * component the scene manager REPLACES at runtime (perspective ↔ ortho
+   * swap in camera-mode.ts). A captured reference goes stale after the
+   * first V-key mode switch, freezing the scale bar on the abandoned
+   * camera (ortho zoom then never updates the label).
+   */
+  getCamera: () => LuxarCamera;
   controls: ControlsManager;
   canvas: HTMLCanvasElement;
   targetWidthPx: number;
@@ -87,7 +94,8 @@ export class ScaleBar extends UIComponent<ScaleBarConfig> {
   update(): void {
     if (!this.isVisible()) return;
 
-    const { camera, controls, canvas, targetWidthPx } = this.config;
+    const { getCamera, controls, canvas, targetWidthPx } = this.config;
+    const camera = getCamera();
 
     // Compute world-units-per-pixel at the orbit target depth
     const target = controls.getFocusTarget();
