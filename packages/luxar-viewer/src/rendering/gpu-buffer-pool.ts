@@ -281,14 +281,19 @@ export class GPUBufferPool {
    * Update GSplats geometry in place.
    * @param truncationRadius - Truncation radius in sigmas (default 3.0).
    *   Must match the material's truncationRadius for correct frustum culling.
+   * @param options - `preserveOrdering`: keep the geometry's existing
+   *   `aSortedIndex` permutation instead of resetting it to identity
+   *   (same-node same-count recommit — the commit path decides; see
+   *   commit-gsplats-geometry.ts).
    */
   updateGSplatsGeometry(
     geometry: THREE.InstancedBufferGeometry,
     data: PackedGSplatsData,
     count: number,
-    truncationRadius: number = 3.0
+    truncationRadius: number = 3.0,
+    options?: { preserveOrdering?: boolean }
   ): void {
-    this.gsplats.updateGeometry(geometry, data, count, truncationRadius);
+    this.gsplats.updateGeometry(geometry, data, count, truncationRadius, options);
   }
 
   // =========================================================================

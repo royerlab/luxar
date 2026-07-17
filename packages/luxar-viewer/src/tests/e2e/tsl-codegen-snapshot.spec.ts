@@ -134,6 +134,13 @@ const SHADERS = [
   'gsplat',
   'gsplat-pick',
   'gsplat-gamma-one',
+  // Blending-mode-specialized gsplat builds: `normal` emits the
+  // premultiplied coverage-alpha fragment branch (peak projection,
+  // GLSL twin: LUXAR_NORMAL_PREMULT), and the colormap variant emits
+  // the LUT-lookup path (USE_COLORMAP). Both are distinct generated
+  // code that the base `gsplat` snapshot never pins.
+  'gsplat-normal-premult',
+  'gsplat-colormap',
 ] as const;
 
 test.describe('TSL → generated-shader snapshots', () => {

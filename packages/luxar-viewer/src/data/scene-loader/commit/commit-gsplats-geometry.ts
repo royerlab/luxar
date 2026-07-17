@@ -80,12 +80,42 @@ export function commitGSplatsGeometry(
   // capacity, and those aSortedIndex entries fetch out-of-bounds texels.
   const splatCount = clampSplatCapacity(processed.splatCount);
 
+  // Pre-commit state for the preserve-ordering predicate below. Captured
+  // BEFORE the writers run: the pool branch reassigns `mesh.geometry`,
+  // and `visibleSplatCount` is overwritten near the end of this function.
+  const prevGeometry = mesh.geometry;
+  const hadCommittedData = (mesh.userData as CommittedDataUserData)?.committedData !== undefined;
+  const prevCount = (mesh.userData as GSplatsUserData)?.visibleSplatCount;
+
   const bufferSession = session?.begin('Update Buffers');
   try {
     if (gpuBufferPool) {
       const geometry = gpuBufferPool.acquireGSplatsGeometry(staged.path, splatCount);
       const attributesRebuilt = gpuBufferPool.didLastAcquireRebuildAttributes();
       const truncationRadius = readTruncate(mesh);
+      // Keep the previous depth-sort permutation on a same-node same-count
+      // in-place recommit (timepoint scrub): a permutation of [0,count) is a
+      // strictly-no-worse prior than storage order for the ≥1 frame until the
+      // re-sort dispatched by noteGSplatsCommit below lands. Every guard is
+      // load-bearing:
+      // - !attributesRebuilt / geometry === prevGeometry: pool best-fit reuse
+      //   can hand this node a geometry holding ANOTHER node's permutation
+      //   over a different prior count — entries could point at texels never
+      //   rewritten for this commit.
+      // - hadCommittedData: covers this node's own first commit after LOD
+      //   demotion (stamp cleared) — the retained geometry's ordering is no
+      //   longer vouched for.
+      // - prevCount === splatCount: a permutation of [0,prevCount) is not a
+      //   permutation of [0,count).
+      // No blending-mode gate: under commutative modes / depth-sort-off the
+      // ordering is identity anyway (never permuted), so skipping the
+      // redundant rewrite is a no-op; under normal mode the sort corrects
+      // draw order within ~a frame.
+      const preserveOrdering =
+        hadCommittedData &&
+        !attributesRebuilt &&
+        geometry === prevGeometry &&
+        prevCount === splatCount;
       try {
         gpuBufferPool.updateGSplatsGeometry(
           geometry,
@@ -99,7 +129,8 @@ export function commitGSplatsGeometry(
             splatCount,
           },
           splatCount,
-          truncationRadius
+          truncationRadius,
+          { preserveOrdering }
         );
       } finally {
         // Ownership handoff must happen even if the update throws: the
@@ -125,15 +156,28 @@ export function commitGSplatsGeometry(
       // pair — evict Three's cached RenderObject exactly like the pool
       // branch above (stale `vertexBuffers` on the WebGPU backend
       // otherwise) and rebind the materials' splat texture.
-      const rebuilt = updateInstancedGSplatsMesh(mesh, {
-        centers: processed.centers3D,
-        cholesky01,
-        cholesky23,
-        cholesky45,
-        amplitudes: processed.amplitudes,
-        colors: processed.colors,
-        splatCount,
-      });
+      //
+      // Same preserve-ordering predicate as the pool branch (see the
+      // comment there), minus the pool-reuse guards: nothing has swapped
+      // `mesh.geometry` yet at this point (a size change swaps it INSIDE
+      // updateInstancedGSplatsMesh, whose rebuild branch always writes
+      // identity regardless of the flag — fresh geometries are
+      // zero-filled), so geometry identity + count are the guards.
+      const preserveOrdering =
+        hadCommittedData && mesh.geometry === prevGeometry && prevCount === splatCount;
+      const rebuilt = updateInstancedGSplatsMesh(
+        mesh,
+        {
+          centers: processed.centers3D,
+          cholesky01,
+          cholesky23,
+          cholesky45,
+          amplitudes: processed.amplitudes,
+          colors: processed.colors,
+          splatCount,
+        },
+        { preserveOrdering }
+      );
       syncGSplatMaterialWithGeometry(mesh);
       if (rebuilt) invalidateRenderObjectFor(mesh);
     }

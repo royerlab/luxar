@@ -384,6 +384,108 @@ describe('commitGSplatsGeometry — capacity-clamp consistency', () => {
   });
 });
 
+describe('commitGSplatsGeometry — preserve-ordering on same-node same-count recommits', () => {
+  // The commit path decides; the writers obey the flag. These tests pin the
+  // predicate (hadCommittedData && !attributesRebuilt && same geometry &&
+  // same count) by asserting the options arg threaded to the writers —
+  // the writers' own skip behavior is covered in splat-texture-storage.test.ts
+  // and gsplat-geometry.test.ts.
+  const makePool = (geometry: THREE.BufferGeometry) => ({
+    acquireGSplatsGeometry: vi.fn(() => geometry),
+    updateGSplatsGeometry: vi.fn(),
+    releaseGSplatsGeometry: vi.fn(),
+    didLastAcquireRebuildAttributes: vi.fn(() => false),
+  });
+  const lastPoolPreserve = (pool: ReturnType<typeof makePool>) =>
+    (pool.updateGSplatsGeometry.mock.calls.at(-1) as unknown[])[4];
+  const lastNonPoolPreserve = () => (mockUpdateInstancedMesh.mock.calls.at(-1) as unknown[])[2];
+
+  it('pool path: same-count recommit → preserveOrdering true (first commit → false)', () => {
+    const root = new THREE.Group();
+    const mesh = makeMesh('/g');
+    root.add(mesh);
+    const pool = makePool(new THREE.BufferGeometry());
+    // First commit: no committedData stamp yet → the geometry's ordering
+    // is unvouched-for, identity must be written.
+    commitGSplatsGeometry(makeStaged(7), root, pool as never, undefined, V);
+    expect(lastPoolPreserve(pool)).toEqual({ preserveOrdering: false });
+    // Same-node same-count recommit on the SAME pooled geometry: the
+    // previous permutation of [0,7) is still valid — keep it.
+    commitGSplatsGeometry(makeStaged(7), root, pool as never, undefined, V);
+    expect(lastPoolPreserve(pool)).toEqual({ preserveOrdering: true });
+  });
+
+  it('pool path: count-change recommit → preserveOrdering false', () => {
+    const root = new THREE.Group();
+    const mesh = makeMesh('/g');
+    root.add(mesh);
+    const pool = makePool(new THREE.BufferGeometry());
+    commitGSplatsGeometry(makeStaged(7), root, pool as never, undefined, V);
+    // A permutation of [0,7) is not a permutation of [0,9).
+    commitGSplatsGeometry(makeStaged(9), root, pool as never, undefined, V);
+    expect(lastPoolPreserve(pool)).toEqual({ preserveOrdering: false });
+  });
+
+  it('pool path: recommit after committedData was cleared (LOD demotion) → false', () => {
+    const root = new THREE.Group();
+    const mesh = makeMesh('/g');
+    root.add(mesh);
+    const pool = makePool(new THREE.BufferGeometry());
+    commitGSplatsGeometry(makeStaged(7), root, pool as never, undefined, V);
+    delete (mesh.userData as { committedData?: unknown }).committedData;
+    commitGSplatsGeometry(makeStaged(7), root, pool as never, undefined, V);
+    expect(lastPoolPreserve(pool)).toEqual({ preserveOrdering: false });
+  });
+
+  it('pool path: geometry swap / attribute rebuild defeats the flag', () => {
+    const root = new THREE.Group();
+    const mesh = makeMesh('/g');
+    root.add(mesh);
+    const pool = makePool(new THREE.BufferGeometry());
+    commitGSplatsGeometry(makeStaged(7), root, pool as never, undefined, V);
+    // Best-fit reuse handed the node a DIFFERENT geometry (holding some
+    // other node's permutation over a different prior count) and reported
+    // an attribute rebuild — identity must be written.
+    pool.acquireGSplatsGeometry.mockReturnValue(new THREE.BufferGeometry());
+    pool.didLastAcquireRebuildAttributes.mockReturnValue(true);
+    commitGSplatsGeometry(makeStaged(7), root, pool as never, undefined, V);
+    expect(lastPoolPreserve(pool)).toEqual({ preserveOrdering: false });
+  });
+
+  it('non-pool path: same-count recommit → preserveOrdering true (first commit → false)', () => {
+    mockUpdateInstancedMesh.mockReset();
+    const root = new THREE.Group();
+    const mesh = makeMesh('/g');
+    root.add(mesh);
+    commitGSplatsGeometry(makeStaged(11), root, null, undefined, V);
+    expect(lastNonPoolPreserve()).toEqual({ preserveOrdering: false });
+    commitGSplatsGeometry(makeStaged(11), root, null, undefined, V);
+    expect(lastNonPoolPreserve()).toEqual({ preserveOrdering: true });
+    expect((mesh.userData as { visibleSplatCount: number }).visibleSplatCount).toBe(11);
+  });
+
+  it('non-pool path: count-change recommit → preserveOrdering false', () => {
+    mockUpdateInstancedMesh.mockReset();
+    const root = new THREE.Group();
+    const mesh = makeMesh('/g');
+    root.add(mesh);
+    commitGSplatsGeometry(makeStaged(11), root, null, undefined, V);
+    commitGSplatsGeometry(makeStaged(5), root, null, undefined, V);
+    expect(lastNonPoolPreserve()).toEqual({ preserveOrdering: false });
+  });
+
+  it('non-pool path: recommit after committedData was cleared → false', () => {
+    mockUpdateInstancedMesh.mockReset();
+    const root = new THREE.Group();
+    const mesh = makeMesh('/g');
+    root.add(mesh);
+    commitGSplatsGeometry(makeStaged(11), root, null, undefined, V);
+    delete (mesh.userData as { committedData?: unknown }).committedData;
+    commitGSplatsGeometry(makeStaged(11), root, null, undefined, V);
+    expect(lastNonPoolPreserve()).toEqual({ preserveOrdering: false });
+  });
+});
+
 describe('commitGSplatsGeometry — RenderObject invalidation on non-pool rebuild', () => {
   // When updateInstancedGSplatsMesh reports a REBUILD (size change rebinds
   // a fresh InstancedInterleavedBuffer), the commit must dispatch the

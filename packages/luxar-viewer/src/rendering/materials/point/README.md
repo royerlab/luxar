@@ -16,9 +16,9 @@ the [shared infrastructure README](../_shared/README.md).
 | File               | Role                                                                                                                                                                                                              |
 | ------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `shader-glsl.ts`   | `POINT_VERTEX_SHADER` + `POINT_FRAGMENT_SHADER` GLSL3 strings, plus the `POINT_SOURCE: ShaderSource` that pairs them with the TSL factory.                                                                        |
-| `shader-tsl.ts`    | `pointWebGPUFactory(uniforms, config, outMaterial?)` — TSL counterpart to the GLSL shaders. Builds `vertexNode` + `colorNode` and wires blending via `getCompleteBlendingState` + `applyBlendingStateToMaterial`. |
+| `shader-tsl.ts`    | `pointWebGPUFactory(nodes, config, outMaterial?)` — TSL counterpart to the GLSL shaders. Consumes wrapper-owned `PointTSLNodes` (see `buildPointTSLNodesFromUniforms` for the harness/ShaderSource path), builds `vertexNode` + `colorNode`, and wires blending via `getCompleteBlendingState` + `applyBlendingStateToMaterial`. |
 | `material-glsl.ts` | `PointMaterial extends THREE.ShaderMaterial` — the default WebGL2 wrapper. Owns the IUniform table, the `applyBlendingMode` state machine, `clone()`, and the `ColormapAwareMaterial` setters.                    |
-| `material-tsl.ts`  | `PointTSLMaterial extends NodeMaterial` — the WebGPU counterpart. Same public surface as `PointMaterial`; the constructor calls `pointWebGPUFactory(..., this)` to attach the TSL graph in place.                 |
+| `material-tsl.ts`  | `PointTSLMaterial extends NodeMaterial` — the WebGPU counterpart. Same public surface as `PointMaterial`; owns persistent `UniformNode`s exposed as `proxyIUniform` bridges and calls `pointWebGPUFactory(..., this)` to attach the TSL graph in place.                 |
 
 `MaterialManager.getPointMaterial` dispatches on `caps.apiSurface` so callers
 (`NodeFactory.createPointsMaterial`, `LayersPanel`, …) never see the
@@ -262,8 +262,8 @@ this file stays out of the manager's import graph.)
 - `../../point-geometry.ts` — the 4-vertex unit-quad base geometry the
   instancing builds on.
 - `../../node-factory/create-points-node.ts` — `createPointsGeometry` (sets up
-  the `InstancedBufferAttribute`s) and `createPointsMaterial` (the entry point
-  for callers).
+  the `InstancedBufferAttribute`s), `createPointsMaterial` (the entry point
+  for callers), and `createPointsNode` (full mesh + picking assembly).
 - `../../material-manager.ts` — `getPointMaterial(config)` is the dispatch
   entry that selects `PointMaterial` vs `PointTSLMaterial`.
 - `../../picking/point/material.ts` / `material-tsl.ts` — picking counterpart;
