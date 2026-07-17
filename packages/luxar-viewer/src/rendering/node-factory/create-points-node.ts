@@ -1,12 +1,12 @@
 /**
  * Points-node creation helpers for NodeFactory.
  *
- * Two free functions: `createPointsGeometry` builds the
- * InstancedBufferGeometry (one shared unit-quad base + per-instance
- * attributes for center / color / radius / sharpness / scalar);
- * `createPointsMaterial` resolves the material backend through
- * materialManager and applies the colormap clone path when scalars
- * are requested.
+ * `createPointsGeometry` builds the InstancedBufferGeometry (one
+ * shared unit-quad base + per-instance attributes for center / color
+ * / radius / sharpness / scalar); `createPointsMaterial` resolves the
+ * material backend through materialManager and applies the colormap
+ * clone path when scalars are requested; `createPointsNode` assembles
+ * both into the mesh + optional picking shadow node.
  *
  * @module rendering/node-factory/create-points-node
  */
@@ -16,9 +16,11 @@ import { materialManager, type BlendingMode, type LuxarPointMaterial } from '../
 import { getColormapTexture } from '../colormap-textures';
 import { supportsScalarColormap } from '../material-colormap-helpers';
 import { createPointQuadGeometry } from '../point-geometry';
-import type { LoadedPointsData } from '../../data/data-loader-types';
-import type { PointsMetadata } from '../../types/points';
+import type { LoadedPointsData, DataLoader } from '../../data/data-loader-types';
+import type { PointsMetadata, PointsUserData } from '../../types/points';
 import { log, Modules } from '../../utils/log';
+import type { PickingSystem } from '../picking/picking-system';
+import { applyTransform } from './transforms';
 import { validateLoadedPointsData, validateColorMode } from './validation';
 
 /** Build a Points InstancedBufferGeometry from loaded data. */
@@ -156,9 +158,10 @@ export function createPointsGeometry(
   // rendered footprint (the per-instance disc radius). This is the shared
   // three-geometry invariant: lines (`line-geometry.ts`) expand by max
   // half-width and gsplats (`gsplat-geometry.ts`) by maxRowNorm × truncation,
-  // so the pick cull (`ray-aabb.ts`) and camera framing treat all three
-  // identically off `boundingBox` alone — no per-geometry special-casing.
-  // (The base-quad bounds are irrelevant; frustum culling is disabled here.)
+  // so frustum culling, the pick cull (`ray-aabb.ts`), and camera framing
+  // treat all three identically off `boundingBox` alone — no per-geometry
+  // special-casing. (The base-quad bounds never participate: mesh-level
+  // culling tests these explicit instance-spanning bounds.)
   geometry.boundingBox = data.metadata.bounds.clone();
   if (footprintRadius > 0) geometry.boundingBox.expandByScalar(footprintRadius);
   geometry.boundingSphere = new THREE.Sphere();
@@ -220,4 +223,113 @@ export function createPointsMaterial(
   }
 
   return material;
+}
+
+/**
+ * Build a Points mesh + optional picking shadow node.
+ *
+ * Each point is rendered as an instanced quad sprite, matching the
+ * line + gsplat geometry pattern. The mesh's geometry is built by
+ * `createPointsGeometry`, which attaches per-instance attributes
+ * (aCenter, aRadius, aSharpness, aColor, optional aScalar) to a
+ * shared unit-quad base.
+ *
+ * Handles geometry creation, material selection, userData, and
+ * transforms.
+ */
+export function createPointsNode(
+  path: string,
+  attrs: PointsMetadata,
+  data: LoadedPointsData,
+  loader: DataLoader,
+  pickingSystem: PickingSystem | null,
+  isPlaceholder: boolean = false
+): THREE.Mesh {
+  const maxRadius = attrs.max_radius ?? 1.0;
+  const geometry = createPointsGeometry(data, maxRadius, isPlaceholder);
+
+  const radiusScale = geometry.userData.radiusScale ?? 1.0;
+  const material = createPointsMaterial(attrs, radiusScale, geometry, path);
+
+  const points = new THREE.Mesh(geometry, material);
+  points.name = path;
+  // Frustum culling is safe because the geometry's bounds are
+  // instance-spanning AND footprint-expanded (see the boundingBox block
+  // in `createPointsGeometry`) — the shared three-geometry invariant
+  // that already lets lines (`line-geometry.ts`) and gsplats
+  // (`gsplat-geometry.ts`) cull with `frustumCulled = true`. Every
+  // commit path refreshes the bounds (pool adapter + commit helper, or
+  // full geometry recreation), so the sphere never goes stale.
+  points.frustumCulled = true;
+
+  points.userData = {
+    nodeType: 'points',
+    loader,
+    attrs,
+    maxRadius: attrs.max_radius ?? 1.0,
+    visiblePointCount: data.pointCount,
+  } as PointsUserData;
+
+  if (attrs.transform) applyTransform(points, attrs.transform);
+
+  if (pickingSystem) {
+    const pickId = pickingSystem.allocatePickId();
+    points.userData.pickId = pickId;
+    const pickMaterial = materialManager.createPointPickingMaterial({
+      nodeId: pickId,
+      radiusScale,
+    });
+    materialManager.register(pickMaterial);
+    // Share the same InstancedBufferGeometry — only material differs.
+    // The shared instance-spanning bounds make the pick node cullable
+    // too (default `frustumCulled = true`, matching lines/gsplats).
+    const pickNode = new THREE.Mesh(geometry, pickMaterial);
+    pickNode.matrixWorld.copy(points.matrixWorld);
+    pickingSystem.registerNode(points, pickNode, pickId);
+  }
+
+  return points;
+}
+
+/**
+ * Empty-buffer placeholder for the points node (pre-fetch placeholder).
+ *
+ * Constructs a minimal {@link LoadedPointsData} inline rather than
+ * routing through `createEmptyPointsData()` (which needs a full
+ * `ProjectionContext` with `chunkIndex`); the values that distinguish
+ * the two paths (`ndim`, `dtypes`) are overwritten on the first
+ * successful commit.
+ */
+export function createEmptyPointsNode(
+  path: string,
+  attrs: PointsMetadata,
+  loader: DataLoader,
+  pickingSystem: PickingSystem | null
+): THREE.Mesh {
+  const emptyData: LoadedPointsData = {
+    positions: new Float32Array(0) as LoadedPointsData['positions'],
+    pointCount: 0,
+    ndim: 3,
+    metadata: {
+      totalPoints: attrs.n_points ?? 0,
+      loadedPoints: 0,
+      bounds: new THREE.Box3(),
+      usedSpatialIndex: true,
+      dtypes: {},
+    },
+  };
+  // When the node carries a scalar field + colormap, bind an empty
+  // `aScalar` on the placeholder geometry so the fail-closed colormap
+  // guard in `createPointsMaterial` (`supportsScalarColormap`) passes at
+  // material-creation time. Without it the guard sees no `aScalar`,
+  // suppresses USE_COLORMAP on the placeholder material, and nothing
+  // ever re-enables it once the real scalars stream in — leaving the
+  // points white. This mirrors the placeholder-first handling of
+  // radii/sharpness (see `syncPointMaterialWithGeometry`); the buffer
+  // pool's attribute types then match between placeholder and real
+  // data (both carry a scalar), avoiding an extra geometry rebuild.
+  if (attrs.has_scalars && attrs.colormap) {
+    emptyData.scalars = new Float32Array(0) as LoadedPointsData['scalars'];
+  }
+  return createPointsNode(path, attrs, emptyData, loader, pickingSystem, /* isPlaceholder */ true);
 }

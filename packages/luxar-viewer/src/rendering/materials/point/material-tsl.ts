@@ -10,26 +10,28 @@
  * `caps.apiSurface`, so callers (NodeFactory, LayersPanel, etc.) never see
  * the divergence.
  *
- * Backend mechanics:
+ * **Uniform plumbing.** This class owns one persistent `UniformNode`
+ * per shader input via the `tslNodes` table. The public `uniforms`
+ * record exposes each node as an `IUniform`-shaped getter/setter
+ * proxy (see `proxyIUniform` in `tsl-helpers.ts`), so mutations to
+ * `material.uniforms.X.value` land directly on `node.value` — no
+ * per-render `.onUpdate('render')` callback bridge. Matches the
+ * pattern already in use by `LineTSLMaterial`, `GSplatTSLMaterial`,
+ * and `PointPickingTSLMaterial`.
  *
- *   - Holds a `uniforms` table of `THREE.IUniform` records, exactly
- *     like the GLSL wrapper. The `pointWebGPUFactory` binds each TSL
- *     uniform node to its matching IUniform via `.onUpdate(() =>
- *     iuniform.value)`, so every `this.uniforms.X.value = …` write
- *     from an update method propagates to the shader on the next
- *     render frame.
- *   - `defines` carries the same `USE_COLORMAP` shader flag the GLSL
- *     wrapper toggles. Flipping it on the TSL side requires a graph
- *     rebuild (the colormap branch in the factory uses a JS-side
- *     `if`), which is what `updateColormapTexture` triggers via
- *     `rebuildGraph()` whenever the on/off state changes.
+ * `defines` carries the same `USE_COLORMAP` shader flag the GLSL
+ * wrapper toggles. Flipping it on the TSL side requires a graph
+ * rebuild (the colormap branch in the factory uses a JS-side `if`),
+ * which is what `updateColormapTexture` triggers via `rebuildGraph()`
+ * whenever the on/off state changes.
  *
  * @module rendering/materials/point/material-tsl
  */
 
 import * as THREE from 'three';
+import { uniform, texture } from 'three/tsl';
 import { NodeMaterial } from 'three/webgpu';
-import { pointWebGPUFactory } from './shader-tsl';
+import { pointWebGPUFactory, type PointTSLNodes } from './shader-tsl';
 import type { PointMaterialConfig } from './material-glsl';
 import type { CameraAwareMaterial } from '../_shared/camera-aware-material';
 import type { ColormapAwareMaterial } from '../_shared/colormap-aware-material';
@@ -45,6 +47,30 @@ import {
   type CompleteBlendingState,
 } from '../../blending-state';
 import type { BlendingMode } from '../../material-manager';
+import { proxyIUniform, type TSLNode } from '../_shared/tsl-helpers';
+
+/**
+ * Persistent TSL node table owned by the wrapper. Colormap nodes are
+ * (re)created lazily inside `rebuildGraph()` when colormap mode
+ * toggles — the `PointTSLNodes` factory contract treats them as
+ * optional. Keys match the public `uniforms` record (the un-prefixed
+ * names mirror the GLSL `PointMaterial`).
+ */
+interface PointMaterialTSLNodeTable {
+  pointSizeFactor: TSLNode;
+  maxPointSize: TSLNode;
+  radiusScale: TSLNode;
+  uIsOrtho: TSLNode;
+  uNearCull: TSLNode;
+  uResolution: TSLNode;
+  opacity: TSLNode;
+  invGamma: TSLNode;
+  uIntensity: TSLNode;
+  uOffset: TSLNode;
+  uColormapTex?: TSLNode;
+  uScalarMin?: TSLNode;
+  uScalarScale?: TSLNode;
+}
 
 /**
  * Points material rendered via TSL / NodeMaterial.
@@ -61,6 +87,8 @@ export class PointTSLMaterial
   /** Public uniforms table, same shape as `PointMaterial.uniforms`. */
   uniforms: Record<string, THREE.IUniform>;
 
+  private tslNodes: PointMaterialTSLNodeTable;
+
   constructor(materialConfig: PointMaterialConfig = {}) {
     super();
 
@@ -69,34 +97,46 @@ export class PointTSLMaterial
     const defaultResolutionY = 1080;
     const defaultTanHalfFov = Math.tan(defaultFov / 2);
 
-    this.uniforms = {
-      opacity: { value: materialConfig.opacity ?? 1.0 },
-      invGamma: { value: 1.0 / gammaValue },
-      uIntensity: { value: materialConfig.intensity ?? 1.0 },
-      uOffset: { value: materialConfig.offset ?? 0.0 },
-
-      pointSizeFactor: { value: (2.0 * defaultResolutionY) / defaultTanHalfFov },
-      maxPointSize: { value: defaultResolutionY * 0.5 },
-
-      radiusScale: { value: materialConfig.radiusScale ?? 1.0 },
-
-      uIsOrtho: { value: 0 },
-      uNearCull: { value: 0.1 },
-      uResolution: { value: new THREE.Vector2(1920, defaultResolutionY) },
-
-      ...(materialConfig.colormapTexture
-        ? {
-            uColormapTex: { value: materialConfig.colormapTexture },
-            uScalarMin: { value: materialConfig.scalarRange?.[0] ?? 0.0 },
-            uScalarScale: {
-              value: materialConfig.scalarRange
-                ? 1.0 /
-                  Math.max(1e-10, materialConfig.scalarRange[1] - materialConfig.scalarRange[0])
-                : 1.0,
-            },
-          }
-        : {}),
+    this.tslNodes = {
+      opacity: uniform(materialConfig.opacity ?? 1.0),
+      invGamma: uniform(1.0 / gammaValue),
+      uIntensity: uniform(materialConfig.intensity ?? 1.0),
+      uOffset: uniform(materialConfig.offset ?? 0.0),
+      pointSizeFactor: uniform((2.0 * defaultResolutionY) / defaultTanHalfFov),
+      maxPointSize: uniform(defaultResolutionY * 0.5),
+      radiusScale: uniform(materialConfig.radiusScale ?? 1.0),
+      uIsOrtho: uniform(0),
+      uNearCull: uniform(0.1),
+      uResolution: uniform(new THREE.Vector2(1920, defaultResolutionY)),
     };
+
+    // Build the public IUniform-proxy table. Mutations to
+    // `material.uniforms.X.value` land directly on the TSL node's
+    // value via `proxyIUniform`, so the GPU sees the new value on the
+    // next frame without any `.onUpdate('render')` callback.
+    this.uniforms = {
+      opacity: proxyIUniform(this.tslNodes.opacity),
+      invGamma: proxyIUniform(this.tslNodes.invGamma),
+      uIntensity: proxyIUniform(this.tslNodes.uIntensity),
+      uOffset: proxyIUniform(this.tslNodes.uOffset),
+      pointSizeFactor: proxyIUniform(this.tslNodes.pointSizeFactor),
+      maxPointSize: proxyIUniform(this.tslNodes.maxPointSize),
+      radiusScale: proxyIUniform(this.tslNodes.radiusScale),
+      uIsOrtho: proxyIUniform(this.tslNodes.uIsOrtho),
+      uNearCull: proxyIUniform(this.tslNodes.uNearCull),
+      uResolution: proxyIUniform(this.tslNodes.uResolution),
+    };
+
+    // Colormap uniforms are added lazily — see `rebuildColormapNodes`.
+    if (materialConfig.colormapTexture) {
+      this.uniforms.uColormapTex = { value: materialConfig.colormapTexture };
+      this.uniforms.uScalarMin = { value: materialConfig.scalarRange?.[0] ?? 0.0 };
+      this.uniforms.uScalarScale = {
+        value: materialConfig.scalarRange
+          ? 1.0 / Math.max(1e-10, materialConfig.scalarRange[1] - materialConfig.scalarRange[0])
+          : 1.0,
+      };
+    }
 
     this.defines = materialConfig.colormapTexture ? { USE_COLORMAP: '' } : {};
     // LUXAR_GAMMA_ONE mirrors the GLSL define; it drives the `gammaOne`
@@ -129,10 +169,41 @@ export class PointTSLMaterial
       this.defines.LUXAR_MAX_RGB_CONTRIBUTION = '';
     }
 
-    // Build the TSL graph and attach to ourselves. The factory wires
-    // every primitive uniform via `.onUpdate(() => iuniform.value)`,
-    // so mutating `this.uniforms.X.value` flows through to the GPU.
+    // Build the TSL graph and attach to ourselves. The factory binds
+    // directly to the wrapper-owned `tslNodes`, so mutating
+    // `this.uniforms.X.value` (via the proxies) flows through to the
+    // GPU without per-frame callbacks.
     this.rebuildGraph();
+  }
+
+  /**
+   * Refresh the colormap TSL nodes so they bind to the current
+   * `this.uniforms.uColormap*.value`. `TextureNode` is bound to a
+   * specific `Texture` instance at construction; a texture swap
+   * requires a fresh node, hence this lives in `rebuildGraph()`.
+   * Mirrors `LineTSLMaterial.rebuildColormapNodes`.
+   */
+  private rebuildColormapNodes(useColormap: boolean): void {
+    if (useColormap) {
+      const tex =
+        (this.uniforms.uColormapTex?.value as THREE.Texture | null | undefined) ??
+        new THREE.Texture();
+      this.tslNodes.uColormapTex = texture(tex);
+      this.tslNodes.uScalarMin = uniform((this.uniforms.uScalarMin?.value as number) ?? 0.0);
+      this.tslNodes.uScalarScale = uniform((this.uniforms.uScalarScale?.value as number) ?? 1.0);
+      // Re-point the IUniform proxies at the new nodes so updates
+      // flow through. (For the texture, we keep the plain IUniform
+      // because TextureNode value mutations don't propagate without a
+      // rebuild — `setColormapTexture` triggers rebuild explicitly.)
+      this.uniforms.uScalarMin = proxyIUniform(this.tslNodes.uScalarMin);
+      this.uniforms.uScalarScale = proxyIUniform(this.tslNodes.uScalarScale);
+      // Restore uColormapTex.value pointer to the texture we just bound.
+      this.uniforms.uColormapTex = { value: tex };
+    } else {
+      this.tslNodes.uColormapTex = undefined;
+      this.tslNodes.uScalarMin = undefined;
+      this.tslNodes.uScalarScale = undefined;
+    }
   }
 
   /**
@@ -152,10 +223,12 @@ export class PointTSLMaterial
    * uniform existence outlives the colormap-enabled state.
    */
   private rebuildGraph(): void {
+    const useColormap = !!this.defines && 'USE_COLORMAP' in this.defines;
+    this.rebuildColormapNodes(useColormap);
     pointWebGPUFactory(
-      this.uniforms,
+      this.tslNodes as PointTSLNodes,
       {
-        useColormap: !!this.defines && 'USE_COLORMAP' in this.defines,
+        useColormap,
         gammaOne: !!this.defines && 'LUXAR_GAMMA_ONE' in this.defines,
         blendingMode: (this.userData.blendingMode as BlendingMode | undefined) ?? 'additive',
       },
@@ -166,8 +239,8 @@ export class PointTSLMaterial
 
   /**
    * CameraAwareMaterial. Same body shape as `PointMaterial`: mutate
-   * `this.uniforms.X.value`; the TSL uniform nodes track these by
-   * reference via the factory's `onUpdate` bindings.
+   * `this.uniforms.X.value`; the writes land directly on the
+   * wrapper-owned TSL uniform nodes via the `proxyIUniform` bridges.
    */
   updateCameraParams(
     fov: number,

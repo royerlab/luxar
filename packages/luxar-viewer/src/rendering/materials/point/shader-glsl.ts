@@ -20,7 +20,7 @@
  */
 import { GLSL_SANITIZE_FUNCTIONS, GLSL_NEAR_FADE_FUNCTIONS } from '../_shared/glsl-lib';
 import type { ShaderSource } from '../_shared/shader-source';
-import { pointWebGPUFactory } from './shader-tsl';
+import { pointWebGPUFactory, buildPointTSLNodesFromUniforms } from './shader-tsl';
 
 export const POINT_VERTEX_SHADER = /* glsl */ `
     precision highp float;
@@ -254,5 +254,7 @@ export const POINT_SOURCE: ShaderSource = {
   // toggles. Consumers needing USE_COLORMAP / LUXAR_MAX_RGB_CONTRIBUTION
   // call `pointWebGPUFactory(uniforms, { ...flags })` directly.
   webgpu: (uniforms: Record<string, unknown>) =>
-    pointWebGPUFactory(uniforms as Record<string, import('three').IUniform>),
+    pointWebGPUFactory(
+      buildPointTSLNodesFromUniforms(uniforms as Record<string, import('three').IUniform>)
+    ),
 };

@@ -1,0 +1,137 @@
+#version 300 es
+
+// Three.js r184 - Node System
+
+
+// extensions
+
+
+// precision
+
+precision highp float;
+precision highp int;
+precision highp sampler2D;
+precision highp sampler3D;
+precision highp samplerCube;
+precision highp sampler2DArray;
+
+precision highp usampler2D;
+precision highp usampler3D;
+precision highp usamplerCube;
+precision highp usampler2DArray;
+
+precision highp isampler2D;
+precision highp isampler3D;
+precision highp isamplerCube;
+precision highp isampler2DArray;
+
+precision highp sampler2DShadow;
+precision highp sampler2DArrayShadow;
+precision highp samplerCubeShadow;
+
+
+// structs
+
+layout( location = 0 ) out vec4 fragColor;
+
+
+
+// uniforms
+
+layout( std140 ) uniform object {
+	mat4 nodeUniform1;
+	vec2 nodeUniform2;
+	float nodeUniform3;
+	float nodeUniform4;
+	float nodeUniform5;
+	float nodeUniform6;
+	float nodeUniform7;
+	float nodeUniform8;
+	float nodeUniform9;
+	mat3 nodeUniform11;
+	uint nodeUniform12;
+	mat3 nodeUniform13;
+	uint nodeUniform14;
+	mat3 nodeUniform15;
+	uint nodeUniform16;
+	mat3 nodeUniform17;
+	uint nodeUniform18;
+	float nodeUniform19;
+	float nodeUniform20;
+	vec2 nodeUniform21;
+	float nodeUniform22;
+	float nodeUniform23;
+	float nodeUniform24;
+	float nodeUniform25;
+	float nodeUniform26;
+	mat3 nodeUniform29;
+	float nodeUniform30;
+	float nodeUniform31;
+	float nodeUniform32;
+	uint nodeUniform33;
+};
+
+
+// varyings
+in vec3 nodeVarying0;
+in float nodeVarying1;
+in vec3 nodeVarying2;
+in vec2 nodeVarying3;
+
+
+// vars
+vec4 DiffuseColor;
+float nodeVar2;
+float nodeVar3;
+float nodeVar4;
+float nodeVar5;
+vec3 nodeVar7;
+vec4 Output;
+vec4 nodeVar8;
+
+// codes
+
+
+void main() {
+
+	// flow
+	// code
+
+	nodeVar2 = ( ( vec2( vec2( gl_FragCoord.xy.x, nodeUniform2.y - gl_FragCoord.xy.y ).x, ( nodeUniform2.y - vec2( gl_FragCoord.xy.x, nodeUniform2.y - gl_FragCoord.xy.y ).y ) ) - nodeVarying3 ).x * nodeVarying2.x );
+	nodeVar3 = ( ( ( vec2( vec2( gl_FragCoord.xy.x, nodeUniform2.y - gl_FragCoord.xy.y ).x, ( nodeUniform2.y - vec2( gl_FragCoord.xy.x, nodeUniform2.y - gl_FragCoord.xy.y ).y ) ) - nodeVarying3 ).y - ( nodeVarying2.y * nodeVar2 ) ) * nodeVarying2.z );
+	nodeVar4 = ( ( nodeVar2 * nodeVar2 ) + ( nodeVar3 * nodeVar3 ) );
+
+	if ( ( nodeVar4 > nodeUniform3 ) ) {
+
+		discard;
+		
+
+	}
+
+	nodeVar5 = ( ( nodeVarying1 * nodeUniform4 ) * max( ( exp( ( nodeVar4 * -0.5 ) ) - nodeUniform5 ), 0.0 ) );
+
+	if ( ( nodeVar5 < 0.0001 ) ) {
+
+		discard;
+		
+
+	}
+
+	nodeVar7 = max( ( ( nodeVarying0 * vec3( nodeUniform6 ) ) + vec3( nodeUniform7 ) ), vec3( 0.0, 0.0, 0.0 ) );
+
+	if ( ( max( nodeVar7.x, max( nodeVar7.y, nodeVar7.z ) ) < 0.0001 ) ) {
+
+		discard;
+		
+
+	}
+
+	DiffuseColor = vec4( ( ( nodeVar7 * vec3( nodeVar5 ) ) * vec3( nodeUniform8 ) ), 1.0 );
+	DiffuseColor.w = ( DiffuseColor.w * nodeUniform9 );
+	nodeVar8 = max( vec4( DiffuseColor.xyz, DiffuseColor.w ), 0.0 );
+	Output = nodeVar8;
+
+	// result
+	fragColor = nodeVar8;
+
+}
