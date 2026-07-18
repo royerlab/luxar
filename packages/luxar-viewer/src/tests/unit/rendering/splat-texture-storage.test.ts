@@ -312,7 +312,6 @@ describe('pool adapter — growth, dispose, byte accounting', () => {
           cholesky23: src.cholesky23,
           cholesky45: src.cholesky45,
           colors: src.colors,
-          splatCount: 1000,
         },
         1000
       );
@@ -336,7 +335,6 @@ describe('pool adapter — growth, dispose, byte accounting', () => {
         cholesky23: src.cholesky23,
         cholesky45: src.cholesky45,
         colors: src.colors,
-        splatCount: 4,
       },
       4
     );
@@ -356,7 +354,6 @@ describe('pool adapter — growth, dispose, byte accounting', () => {
       cholesky23: src.cholesky23,
       cholesky45: src.cholesky45,
       colors: src.colors,
-      splatCount: 4,
     });
     pool.updateGSplatsGeometry(geom, packed(src.amplitudes), 4);
     // The SortWorker landed a depth-sort permutation between commits.
