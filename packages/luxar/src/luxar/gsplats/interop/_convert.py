@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING, Optional
 
 import numpy as np
 
+from luxar.gsplats.interop._color import srgb_to_linear
 from luxar.gsplats.interop._quat import quat_to_rotmat
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
@@ -86,8 +87,9 @@ def classical_to_gsplat_data(
     ``R`` comes from the quaternion and ``M`` is the orientation matrix
     (:func:`_orientation_matrix`), then factorized to Luxar's packed
     lower-triangular Cholesky form. Opacities become ``amplitudes``; the DC
-    color becomes per-splat SDR RGB. Columns stay in world (x, y, z) order —
-    that is what downstream dimension inference labels x/y/z.
+    color (display-referred sRGB) is converted to Luxar's linear-light store via
+    :func:`~luxar.gsplats.interop._color.srgb_to_linear`. Columns stay in world
+    (x, y, z) order — that is what downstream dimension inference labels x/y/z.
 
     ``rotate_x180=None`` (default) applies the 180°-about-X COLMAP → Y-up fix
     exactly when the source dialect needs it (``cs.y_up`` False); SPZ declares
@@ -114,7 +116,11 @@ def classical_to_gsplat_data(
     cholesky_factors = pack_tril(L).astype(np.float32)
 
     amplitudes = np.ascontiguousarray(cs.opacities, dtype=np.float32)
-    colors = np.clip(cs.colors, 0.0, 1.0).astype(np.float32)
+    # Classical DC color is display-referred (sRGB); Luxar's viewer treats
+    # per-splat color as linear light and applies the sRGB OETF once at output.
+    # Convert sRGB → linear here so imports render with the same colors a
+    # reference viewer (SuperSplat/PlayCanvas) shows instead of washing white.
+    colors = srgb_to_linear(cs.colors)
 
     stats = {
         "interop": {
