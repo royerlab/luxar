@@ -20,7 +20,7 @@ import type { GPUBufferPool } from '../../../rendering/gpu-buffer-pool';
 import { updateInstancedLinesMesh } from '../../../rendering/line-geometry';
 import { invalidateRenderObjectFor } from './invalidate-render-object';
 import { stampLadderComplete, stampLoadedViewVersion } from './stamp-view-version';
-import type { CommittedDataUserData } from './noop-commit';
+import { setCommittedData } from '../../../types/committed-data';
 import type { StagedLinesCommit } from '../process/data-processor-lines';
 
 /**
@@ -99,7 +99,7 @@ export function commitLinesGeometry(
       // Record the committed data reference — a later update returning the
       // SAME reference (memoized progressive concat) can then take the
       // stamp-only no-op path instead of re-projecting + re-uploading.
-      (mesh.userData as CommittedDataUserData).committedData = staged.sourceData;
+      setCommittedData(mesh, staged.sourceData);
     }
 
     if (processed.segmentCount === 0) {

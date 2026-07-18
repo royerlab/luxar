@@ -87,6 +87,7 @@ import { SliceCache } from '../cache/slice-cache';
 import type { CacheBudgets } from '../cache/heap-budget';
 import type { LinesDataLoader, LinesViewState, LoadedLinesData } from '../types/lines';
 import type { GSplatsDataLoader, GSplatsViewState, LoadedGSplatsData } from '../types/gsplats';
+import { clearCommittedData } from '../types/committed-data';
 import { releaseDepthSortNode } from '../rendering/depth-sort-coordinator';
 import { GPUBufferPool } from '../rendering/gpu-buffer-pool';
 import { getGpuByteBudget } from '../rendering/gpu-byte-budget';
@@ -1126,8 +1127,8 @@ export class SceneLoader {
    */
   private clearCommittedDataStamp(path: string): void {
     const mesh = this.rootGroup?.getObjectByName(path);
-    if (mesh?.userData) {
-      delete (mesh.userData as { committedData?: unknown }).committedData;
+    if (mesh) {
+      clearCommittedData(mesh);
     }
   }
 
@@ -1632,8 +1633,8 @@ export class SceneLoader {
     // across dataset switches. Historically the stamp was only cleared
     // on LOD demotion.
     this.rootGroup?.traverse((obj) => {
-      if (obj.userData && 'committedData' in obj.userData) {
-        delete (obj.userData as { committedData?: unknown }).committedData;
+      if (obj.userData) {
+        clearCommittedData(obj);
       }
     });
 

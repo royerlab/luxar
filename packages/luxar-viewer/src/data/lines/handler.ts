@@ -88,7 +88,7 @@ export async function loadAndStage(
   // last commit (memoized progressive concat, unchanged view state) — the
   // GPU already holds exactly this data. Skip the expensive projection and
   // stage a stamp-only commit (see noop-commit.ts).
-  if (isAlreadyCommitted(mesh?.userData, data)) {
+  if (isAlreadyCommitted(mesh, data)) {
     session.setMetadata({
       segments: data.segments ? data.segments.length / 2 : 0,
       info: 'unchanged',
