@@ -49,12 +49,16 @@ function makeMockApi(): MockApi {
   };
 }
 
+/** When true the mocked worker CONSTRUCTOR throws (CSP-blocked script). */
+let workerConstructThrows = false;
+
 async function loadCoordinator() {
   vi.resetModules();
   terminatedWorkers.length = 0;
   transferCalls = [];
   sortResolvers = [];
   sortRejectors = [];
+  workerConstructThrows = false;
   mockApi = makeMockApi();
 
   vi.doMock('../../../utils/log', () => ({
@@ -70,6 +74,9 @@ async function loadCoordinator() {
   }));
   vi.doMock('../../../workers/sort-worker?worker', () => ({
     default: class MockSortWorker {
+      constructor() {
+        if (workerConstructThrows) throw new Error('worker construction blocked');
+      }
       terminate = vi.fn(() => terminatedWorkers.push(this));
     },
   }));
@@ -295,6 +302,31 @@ describe('depth-sort coordinator', () => {
     // Rendering itself is unaffected — identity ordering stays in place.
     const attr = (mesh.geometry as THREE.InstancedBufferGeometry).getAttribute('aSortedIndex');
     expect(Array.from(attr.array as Uint32Array)).toEqual([0, 0]);
+  });
+
+  it('cross-node renderOrder still assigns when the worker was never constructed', async () => {
+    // The renderOrder pass is pure main-thread — the degraded
+    // no-SortWorker mode (constructor throw, e.g. a CSP-blocked worker
+    // script, leaves `api` null forever) loses within-mesh splat order
+    // (unavoidable) but must NOT lose cross-node back-to-front mesh
+    // order (avoidable: it needs no worker).
+    const coord = await loadCoordinator();
+    workerConstructThrows = true;
+    coord.configureDepthSort({ getCamera: () => makeCamera(), requestRender: vi.fn() });
+
+    const far = makeGSplatsMesh(2, 'normal');
+    far.geometry.boundingSphere!.center.set(0, 0, -30);
+    const near = makeGSplatsMesh(2, 'normal');
+    near.geometry.boundingSphere!.center.set(0, 0, -10);
+    coord.noteGSplatsCommit(near, new Float32Array([0, 0, -1, 1, 0, -2]), 2);
+    coord.noteGSplatsCommit(far, new Float32Array([0, 0, -1, 1, 0, -2]), 2);
+    await flush();
+
+    coord.evaluateDepthSortPerFrame();
+
+    expect(far.renderOrder).toBe(0);
+    expect(near.renderOrder).toBe(1);
+    expect(mockApi.sort).not.toHaveBeenCalled(); // worker path stays inert
   });
 
   it('keeps per-node state independent across two nodes sharing the worker', async () => {

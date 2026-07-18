@@ -29,7 +29,10 @@
  * - Cross-node draw order: the same per-frame pass collects every visible
  *   normal-mode gsplat mesh and assigns ONE global back-to-front
  *   `renderOrder` scale (wrapper groups by mean view-z, exact BSP ranks
- *   within a wrapper — see {@link assignGlobalRenderOrder}).
+ *   within a wrapper) — machinery owned by the
+ *   `depth-sort-coordinator/render-order.ts` submodule, driven here via
+ *   {@link clearRenderOrderFrameState} / {@link collectRenderOrderSlot} /
+ *   {@link assignGlobalRenderOrder}.
  *
  * Ordering only matters for order-dependent blending (`normal`); all
  * other modes are commutative. Commits of non-`normal` nodes still bump
@@ -483,7 +486,14 @@ export function evaluateDepthSortPerFrame(): void {
   // early-return — so a disposed/dataset-switched frame can't leave the
   // module-scoped rank memo holding stale partition-wrapper subtrees alive.
   clearRenderOrderFrameState();
-  if (!depthSortEnabled || !api || nodeStates.size === 0) return;
+  // Deliberately NOT gated on `api`: the cross-node renderOrder pass is
+  // pure main-thread and must keep ordering meshes back-to-front even
+  // when the SortWorker was never constructed (`api` stays null forever
+  // after a constructor throw — e.g. a CSP-blocked worker script — the
+  // documented degrade-to-unsorted-normal mode). The within-mesh
+  // re-sort triggers are worker-dependent, but `scheduleSort` guards
+  // `!api` itself.
+  if (!depthSortEnabled || nodeStates.size === 0) return;
   const camera = getCamera?.();
   if (!camera) return;
   if (isLoadInProgress?.()) return;
