@@ -647,6 +647,24 @@ encoded = clip(value * 255, 0, 255).astype(uint8)
 value = encoded / 255.0
 ```
 
+### 5. Delta Pre-Filter (`_encoders/delta_codec.py`)
+
+Quantized code arrays (coordinates, Cholesky halves, amplitudes) may carry the
+`luxar_delta_v1` **zarr filter**: columnar per-chunk modular delta + zigzag on
+the uint8/uint16 codes, applied below the encoding layer (the `encoding` attrs
+and all decode kernels are untouched — zarr/zarrita undoes the filter when
+reconstructing each chunk). Hilbert ordering makes consecutive codes a smooth
+ramp; the residuals compress ~12% smaller whole-store under the same Blosc
+policy, losslessly.
+
+The filter is **probe-gated** in the per-channel/scalar encoders
+(`probe_delta_filter`): one representative chunk is compressed both ways and
+the filter applies only where it wins — deterministic, never worse. Importing
+`luxar.encoding` registers the codec with numcodecs (needed on the read path
+too); the viewer twin lives at `luxar-viewer/src/data/codecs/luxar-delta.ts`
+(keep the wire format in 1:1 sync — the unit tests on both sides lock the
+same hand-computed byte vectors).
+
 ## HDR Color Support
 
 The encoding system has special handling for HDR (High Dynamic Range) colors.

@@ -6,6 +6,29 @@ All notable changes to Luxar are documented in this file.
 
 ### July 2026
 
+#### Added — `luxar_delta_v1` delta pre-filter (format v3.3, ~12% smaller stores)
+
+- Quantized code arrays (coordinates `linear_perchannel_u16`, Cholesky
+  `log`/`signed_log_perchannel` halves, `bounded`/`geolog_scalar` amplitudes)
+  can now carry the Luxar-owned zarr v2 filter `luxar_delta_v1`: per-axis
+  modular delta + zigzag residuals, column-major within each chunk, under the
+  unchanged width-aware Blosc policy. Hilbert ordering makes consecutive codes
+  a smooth ramp; the residuals compress ~12% smaller whole-store on real fits
+  — lossless, and **probe-gated** at encode time (one representative chunk
+  compressed both ways; the filter applies only where it wins, so output is
+  never larger than before). `.gsplats.zarr` format v3.2 → v3.3; stores where
+  the probe declines everywhere remain byte-identical to v3.2.
+- A pure storage transform below the `encoding` layer (origin: the PlayCanvas
+  SOG comparison — its size edge was WebP's spatial prediction): `encoding`
+  attrs, the WASM/TS decode kernels, and the sub-chunk range-loader are all
+  untouched; zarr/zarrita undoes the filter during whole-chunk reconstruction.
+  Python codec: `luxar/encoding/_encoders/delta_codec.py` (registered with
+  numcodecs on `import luxar.encoding`); viewer twin:
+  `luxar-viewer/src/data/codecs/luxar-delta.ts` (registered as
+  `numcodecs.luxar_delta_v1` in the zarr facade, so main thread and workers
+  both resolve it). Wire format locked by identical hand-computed byte
+  vectors in both languages' unit tests.
+
 #### Fixed — depth-sorting correctness hardening (review campaign)
 
 - A deep review of the depth-sorting + texture-based splat rendering

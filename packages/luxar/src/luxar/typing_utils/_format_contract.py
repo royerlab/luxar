@@ -18,12 +18,13 @@ SCENE_FORMAT_VERSION: Final[SceneFormatVersion] = "0.1"
 SUPPORTED_SCENE_VERSIONS: Final[tuple[SceneFormatVersion, ...]] = ("0.1", "0.2", "0.3")
 
 # --- standalone gsplats (.gsplats.zarr) node-tree format version ---
-GSplatsFormatVersion = Literal["3.0", "3.1", "3.2"]
-GSPLATS_FORMAT_VERSION: Final[GSplatsFormatVersion] = "3.2"
+GSplatsFormatVersion = Literal["3.0", "3.1", "3.2", "3.3"]
+GSPLATS_FORMAT_VERSION: Final[GSplatsFormatVersion] = "3.3"
 SUPPORTED_GSPLATS_VERSIONS: Final[tuple[GSplatsFormatVersion, ...]] = (
     "3.0",
     "3.1",
     "3.2",
+    "3.3",
 )
 
 # --- root-header format_type identifying a standalone gsplats store ---

@@ -20,6 +20,7 @@ from luxar.gsplats.io import (
     load_gsplats,
     save_gsplats,
 )
+from luxar.typing_utils._format_contract import GSPLATS_FORMAT_VERSION
 
 
 def create_test_splats_3d(n_splats: int = 100) -> dict:
@@ -45,7 +46,7 @@ class TestSaveGsplats:
             assert root.attrs["format_type"] == "gsplats_zarr"
             # v3.2 renames the lod selector attrs (coverage_fraction); leaf
             # layout is unchanged from v3.1.
-            assert root.attrs["format_version"] == "3.2"
+            assert root.attrs["format_version"] == GSPLATS_FORMAT_VERSION
             # v3.1+: leaf at root, no "splats" group; Cholesky factors split.
             assert "splats" not in root
             assert "cholesky_factors_diag" in root
