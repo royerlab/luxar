@@ -52,12 +52,6 @@ import {
  * avoiding the `.onUpdate('render')` callback churn.
  */
 export interface LinePickTSLNodes {
-  /**
-   * uFOV is unused by the shader after the pixel-scale precomputation
-   * but is kept here so the wrapper class's uniform table remains
-   * structurally identical to the visual material's.
-   */
-  readonly uFOV: TSLNode;
   readonly uResolution: TSLNode;
   readonly uIsOrtho: TSLNode;
   readonly uNodeId: TSLNode;
@@ -107,9 +101,9 @@ export function linePickWebGPUFactory(
   const aStartClipped: TSLNode = attribute<'float'>('aStartClipped', 'float');
   const aEndClipped: TSLNode = attribute<'float'>('aEndClipped', 'float');
 
-  // uFOV intentionally not bound: pixel-width math now consumes the
-  // CPU-precomputed uPerspectiveLineScale / uOrthoLineScale instead.
-  // uIsOrtho also unbound — projection mode is a JS-level config
+  // Pixel-width math consumes the CPU-precomputed
+  // uPerspectiveLineScale / uOrthoLineScale (no FOV uniform exists).
+  // uIsOrtho is unbound — projection mode is a JS-level config
   // branch (`config.isOrtho`), not a runtime uniform.
   const uResolution = nodes.uResolution;
   const uNodeId = nodes.uNodeId;
@@ -314,7 +308,6 @@ export function buildLinePickTSLNodesFromUniforms(
   uniforms: Record<string, THREE.IUniform>
 ): LinePickTSLNodes {
   return {
-    uFOV: uniform((uniforms.uFOV?.value as number) ?? 1.0),
     uResolution: uniform(
       (uniforms.uResolution?.value as THREE.Vector2 | undefined) ?? new THREE.Vector2(1, 1)
     ),

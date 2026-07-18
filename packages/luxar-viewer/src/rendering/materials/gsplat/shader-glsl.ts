@@ -32,7 +32,6 @@ export const GSPLAT_VERTEX_SHADER = /* glsl */ `
     uniform vec2 uResolution;
     uniform float uFx, uFy;           // Focal lengths in pixels
     uniform float uTruncate;          // Truncation radius (in sigmas)
-    uniform float uTruncateSq;        // Truncation radius squared
     uniform float uRayIntegralFactor; // Shifted Gaussian ray integral factor
     uniform int uProjectionMode;      // 0 = sum (ray-integral: additive/luminous), 1 = peak (2D-projected: max + normal/alpha-over surfaces)
     uniform int uIsOrtho;             // 0 = perspective, 1 = orthographic
@@ -56,7 +55,6 @@ export const GSPLAT_VERTEX_SHADER = /* glsl */ `
     // OPTIMIZATION: vL2D stores [1/L00, L10, 1/L11] to replace fragment divisions with multiplications
     flat out highp vec3 vL2D;                // 2D Cholesky packed as [invL00, L10, invL11]
     flat out highp vec2 vCenterScreen;       // Splat center in screen pixels
-    flat out int vProjectionMode;            // 0=sum (additive/luminous), 1=peak (max+normal)
 
     // Unpack 3D Cholesky to matrix (column-major order for GLSL mat3)
     // Packed order: [L00, L10, L11, L20, L21, L22]
@@ -285,8 +283,6 @@ export const GSPLAT_VERTEX_SHADER = /* glsl */ `
         float lambda1 = max(0.5 * (trace + sqrtDisc), 1e-6);
         float lambda2 = max(0.5 * (trace - sqrtDisc), 1e-6);
 
-        vProjectionMode = uProjectionMode;
-
         // Eigenvector for major axis (for oriented quad)
         vec2 majorAxis;
         if (abs(Sigma2D[0][1]) > 1e-6) {
@@ -378,7 +374,6 @@ export const GSPLAT_FRAGMENT_SHADER = /* glsl */ `
     // OPTIMIZATION: vL2D stores [1/L00, L10, 1/L11] for MUL instead of DIV
     flat in highp vec3 vL2D;          // 2D Cholesky packed as [invL00, L10, invL11]
     flat in highp vec2 vCenterScreen;
-    flat in int vProjectionMode;      // 0=sum (additive/luminous), 1=peak (max+normal)
 
     uniform mediump float uOpacity;
     uniform mediump float uInvGamma; // Pre-computed 1/gamma for performance

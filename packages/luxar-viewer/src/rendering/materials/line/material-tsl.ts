@@ -94,13 +94,7 @@ export class LineTSLMaterial
     // `material.uniforms.X.value` land directly on the TSL node's
     // value via `proxyIUniform`, so the GPU sees the new value on the
     // next frame without any `.onUpdate('render')` callback.
-    //
-    // `uFOV` stays as a plain IUniform because the TSL graph no
-    // longer reads it (the CPU precomputes `uPerspectiveLineScale` /
-    // `uOrthoLineScale`); we keep the slot for downstream consumers
-    // (clone(), direct uniform reads).
     this.uniforms = {
-      uFOV: { value: (60 * Math.PI) / 180 },
       uResolution: proxyIUniform(this.tslNodes.uResolution),
       uIsOrtho: proxyIUniform(this.tslNodes.uIsOrtho),
       uNearCull: proxyIUniform(this.tslNodes.uNearCull),
@@ -247,7 +241,6 @@ export class LineTSLMaterial
     nearCull?: number
   ): void {
     const prevIsOrtho = (this.uniforms.uIsOrtho.value as number) === 1;
-    this.uniforms.uFOV.value = fov;
     (this.uniforms.uResolution.value as THREE.Vector2).copy(resolution);
     this.uniforms.uIsOrtho.value = isOrtho ? 1 : 0;
     // Accept ANY defined value, including 0 — matching the point/gsplat
@@ -378,7 +371,6 @@ export class LineTSLMaterial
       cloned.blendDst = this.blendDst;
     }
 
-    cloned.uniforms.uFOV.value = this.uniforms.uFOV.value;
     (cloned.uniforms.uResolution.value as THREE.Vector2).copy(
       this.uniforms.uResolution.value as THREE.Vector2
     );

@@ -12,7 +12,6 @@
  * @module rendering/material-manager/factories
  */
 
-import { clampTruncationRadius } from '../materials/gsplat/math';
 import { normalModeDepthWrite } from '../blending-state';
 import { PointMaterial } from '../materials/point/material-glsl';
 import { LineMaterial } from '../materials/line/material-glsl';
@@ -138,10 +137,11 @@ export const MEGA_SHADER_FACTORIES = {
 } as const;
 
 /**
- * Compute the integer-bucketed cache-key components shared by all three
- * material caches (Points / Lines / GSplats). All four properties have
- * the same valid ranges and bucketing rules across material types, so
- * having one helper avoids drift the next time the rules change.
+ * Compute the integer-bucketed cache-key components shared by the
+ * cached material kinds (Points / Lines — gsplat materials are per
+ * node and uncached). All four properties have the same valid ranges
+ * and bucketing rules across material types, so having one helper
+ * avoids drift the next time the rules change.
  */
 function getCommonMaterialBuckets(props: {
   opacity: number;
@@ -179,16 +179,4 @@ export function lineCacheKey(props: LineMaterialProperties, backend: MaterialBac
   // depthWrite discriminator — see pointCacheKey.
   const dw = props.blendingMode === 'normal' && normalModeDepthWrite(props.opacity) ? 1 : 0;
   return `line_${backend}_${props.blendingMode}_o${opacityBucket}_g${gammaBucket}_i${intensityBucket}_f${offsetBucket}_t${transparent ? 1 : 0}_dw${dw}`;
-}
-
-/** Cache key for a GSplats material variant. */
-export function gsplatCacheKey(props: GSplatMaterialProperties, backend: MaterialBackend): string {
-  const { opacityBucket, gammaBucket, intensityBucket, offsetBucket } =
-    getCommonMaterialBuckets(props);
-  // Bucket the CLAMPED radius — the wrappers clamp sub-floor radii to the
-  // same material, so unclamped bucketing would create duplicate cache
-  // entries for pixel-identical materials.
-  const truncBucket = Math.round(clampTruncationRadius(props.truncationRadius ?? 3.0) * 10);
-  const transparent = props.blendingMode !== 'opaque';
-  return `gsplat_${backend}_${props.blendingMode}_o${opacityBucket}_g${gammaBucket}_i${intensityBucket}_f${offsetBucket}_tr${truncBucket}_t${transparent ? 1 : 0}`;
 }
