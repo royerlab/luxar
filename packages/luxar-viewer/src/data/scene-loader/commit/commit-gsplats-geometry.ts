@@ -23,7 +23,7 @@ import type { UpdateSession } from '../../../profiling/update-profiler';
 import type { GPUBufferPool } from '../../../rendering/gpu-buffer-pool';
 import { invalidateRenderObjectFor } from './invalidate-render-object';
 import { stampLadderComplete, stampLoadedViewVersion } from './stamp-view-version';
-import type { CommittedDataUserData } from './noop-commit';
+import { hasCommittedData, setCommittedData } from '../../../types/committed-data';
 import type { StagedGSplatsCommit } from '../process/data-processor-gsplats';
 
 const DEFAULT_TRUNCATE = 3.0;
@@ -84,7 +84,7 @@ export function commitGSplatsGeometry(
   // BEFORE the writers run: the pool branch reassigns `mesh.geometry`,
   // and `visibleSplatCount` is overwritten near the end of this function.
   const prevGeometry = mesh.geometry;
-  const hadCommittedData = (mesh.userData as CommittedDataUserData).committedData !== undefined;
+  const hadCommittedData = hasCommittedData(mesh);
   const prevCount = mesh.userData.visibleSplatCount;
 
   const bufferSession = session?.begin('Update Buffers');
@@ -194,7 +194,7 @@ export function commitGSplatsGeometry(
       // Record the committed data reference — a later update returning the
       // SAME reference (memoized progressive concat) can then take the
       // stamp-only no-op path instead of re-projecting + re-uploading.
-      (mesh.userData as CommittedDataUserData).committedData = staged.sourceData;
+      setCommittedData(mesh, staged.sourceData);
     }
 
     if (splatCount === 0) {
