@@ -6,6 +6,51 @@ All notable changes to Luxar are documented in this file.
 
 ### July 2026
 
+#### Fixed — depth-sorting correctness hardening (review campaign)
+
+- A deep review of the depth-sorting + texture-based splat rendering
+  subsystem fixed six lifecycle/consistency bugs (#568, #569, #571, #587,
+  #596): a node whose first sort raced a null camera recovers instead of
+  staying unsorted until the next commit; splat counts are clamped
+  consistently across the texture, the sorted ordering, and the sort
+  worker (previously a `normal`-mode node above the per-node texture bound
+  — ~4.19M splats on a 4096-class GPU — lost an arbitrary subset of splats
+  the moment its first sort landed, and the non-pool path could allocate
+  an over-tall texture → black node); LOD demotion releases the sort
+  worker's transferred centers; non-finite bounds can no longer scramble
+  the cross-node draw order; and the cross-node ordering keeps working
+  when the sort worker itself cannot be constructed (CSP-blocked script).
+
+#### Fixed — one global back-to-front order across gsplat nodes (`normal` mode)
+
+- Mixed scenes — several partitions, or partitions plus single-leaf gsplat
+  nodes — now composite in true back-to-front order (#575): all visible
+  `normal`-mode gsplat meshes share ONE sequential `renderOrder` scale
+  (wrapper groups by mean view-depth, exact BSP ranks within a wrapper).
+  Previously the per-wrapper painter ranks and the raw view-z fallback
+  were mutually incomparable, so every single-leaf layer drew before every
+  partition tile regardless of actual depth.
+
+#### Fixed — Intensity/Offset controls work on colormapped Points and Lines
+
+- Dragging a layer's Intensity/Offset sliders now affects colormapped
+  Points and Lines layers exactly as it always did colormapped GSplats
+  (#570): gain/offset apply post-LUT to the mapped color (gamma still
+  shapes the scalar value pre-LUT). Defaults are pixel-identical.
+
+#### Changed — front-most-wins picking for depth-sorted (`normal`) gsplats
+
+- Clicking a `normal`-mode gsplat layer now picks the FRONT-MOST splat at
+  the cursor — matching the occluding surface the user sees — instead of
+  the brightest splat, which could sit behind the visible surface (#572).
+  Commutative modes (additive/luminous/max) keep brightest-wins.
+
+#### Changed — timepoint scrubbing keeps the previous sort order (`normal` mode)
+
+- Re-committing a gsplat node at the same splat count (per-timepoint
+  navigation) now retains the previous depth-sort permutation instead of
+  flashing storage order for a frame until the fresh sort lands (#577).
+
 #### Fixed — exact back-to-front ordering of gsplat partition tiles (classical-3DGS imports)
 
 - Classical Gaussian-splat imports (Mip-NeRF `.splat`, INRIA PLY) built as a
