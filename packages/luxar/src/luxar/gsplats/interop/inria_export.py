@@ -29,6 +29,7 @@ from typing import TYPE_CHECKING, Literal, Optional, Union
 
 import numpy as np
 
+from luxar.gsplats.interop._color import linear_to_srgb
 from luxar.gsplats.interop.classical_splats import SH_C0, rotmat_to_quat
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
@@ -81,11 +82,18 @@ def _resolve_colors(
     color_source: ColorSource,
     colormap: Optional[str],
 ) -> np.ndarray:
-    """Per-splat RGB in [0, 1] following the auto > colors > colormap > white chain."""
+    """Per-splat RGB in [0, 1] following the auto > colors > colormap > white chain.
+
+    Per-splat ``colors`` are Luxar's *linear-light* store, so they are converted
+    back to display-referred sRGB here — the inverse of the import boundary's
+    sRGB → linear (see :mod:`._color`) — so the exported DC round-trips and
+    reference viewers show the original colors. Colormap / white sources already
+    produce display values and are passed through unchanged.
+    """
     if color_source == "colors" and colors is None:
         raise ValueError("color_source='colors' but the dataset has no colors array")
     if color_source == "colors" or (color_source == "auto" and colors is not None):
-        return np.clip(np.asarray(colors, dtype=np.float64), 0.0, 1.0)
+        return linear_to_srgb(np.asarray(colors, dtype=np.float64)).astype(np.float64)
 
     use_colormap = color_source == "colormap" or (
         color_source == "auto" and colormap is not None
