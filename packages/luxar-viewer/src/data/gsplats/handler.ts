@@ -97,7 +97,7 @@ export async function loadAndStage(
   // last commit (memoized progressive concat, unchanged view state) — the
   // GPU already holds exactly this data. Skip the expensive nD→3D
   // projection and stage a stamp-only commit (see noop-commit.ts).
-  if (isAlreadyCommitted(mesh?.userData, data)) {
+  if (isAlreadyCommitted(mesh, data)) {
     session.setMetadata({ splats: data.splatCount, info: 'unchanged' });
     if (!ctx.signal?.aborted) {
       ctx.viewStateQueue.dispatchPrefetch(path, gsplatsViewState, loader);

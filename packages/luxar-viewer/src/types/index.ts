@@ -48,6 +48,15 @@ export {
   CHOLESKY_SIZES,
 } from './gsplats';
 
+// Committed-data stamp (memoized-concat no-op contract)
+export type { CommittedDataUserData } from './committed-data';
+export {
+  hasCommittedData,
+  getCommittedData,
+  setCommittedData,
+  clearCommittedData,
+} from './committed-data';
+
 // Zarr types
 export type { ZarrSceneAttrs, ZarrNodeAttrs } from './zarr';
 export { hasContentsMethod } from './zarr';
