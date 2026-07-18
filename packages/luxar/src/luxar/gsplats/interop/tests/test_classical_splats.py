@@ -463,3 +463,99 @@ class TestSog:
             cs = read_sog(bundle)  # must NOT try to read the (absent) shN files
         assert cs.sh_degree == 2
         assert np.allclose(cs.colors, ground_truth.colors, atol=0.01)
+
+    def test_rejects_wrong_channel_count(self, ground_truth: GroundTruth) -> None:
+        # quats/sh0 must be RGBA; a malformed RGB image should fail with a clear
+        # message, not a bare IndexError deep in the decode.
+        from PIL import Image
+
+        from luxar.gsplats.interop.classical_splats import read_sog
+        from luxar.gsplats.interop.tests._synthetic import write_sog
+
+        with tempfile.TemporaryDirectory() as tmp:
+            bundle = Path(tmp) / "bundle"
+            write_sog(bundle, ground_truth)
+            n = ground_truth.positions.shape[0]
+            # Re-save sh0 as RGB (drop the alpha/opacity channel).
+            rgba = np.asarray(Image.open(bundle / "sh0.webp"))
+            Image.fromarray(rgba[:, :, :3], mode="RGB").save(
+                bundle / "sh0.webp", format="WEBP", lossless=True
+            )
+            with pytest.raises(ValueError, match="channel"):
+                read_sog(bundle)
+        assert n > 0  # sanity: fixture was non-empty
+
+    def test_rejects_count_exceeding_pixels(self, ground_truth: GroundTruth) -> None:
+        import json
+
+        from luxar.gsplats.interop.classical_splats import read_sog
+        from luxar.gsplats.interop.tests._synthetic import write_sog
+
+        with tempfile.TemporaryDirectory() as tmp:
+            bundle = Path(tmp) / "bundle"
+            write_sog(bundle, ground_truth)
+            meta = json.loads((bundle / "meta.json").read_text())
+            meta["count"] = 10_000_000  # far more than the fixture's pixels
+            (bundle / "meta.json").write_text(json.dumps(meta))
+            with pytest.raises(ValueError, match="pixels"):
+                read_sog(bundle)
+
+    def test_golden_decode_independent_of_writer(self) -> None:
+        # Hardcoded byte-level bundle → spec-computed expectations, decoded
+        # WITHOUT write_sog, so a shared encoder/decoder spec-misread can't hide.
+        import json
+
+        from PIL import Image
+
+        from luxar.gsplats.interop.classical_splats import SH_C0, read_sog
+
+        with tempfile.TemporaryDirectory() as tmp:
+            b = Path(tmp)
+            # 3 Gaussians in a 1x3 image (row-major, count=3).
+            def wr(name, rows, mode):
+                arr = np.array(rows, np.uint8).reshape(1, len(rows), len(rows[0]))
+                Image.fromarray(arr, mode=mode).save(b / name, format="WEBP", lossless=True)
+
+            # means: q16 = 0, 65535, and an ASYMMETRIC low=1/high=0 (=1) on x so
+            # a swapped hi/lo byte order (→256) is caught, not just symmetric ends.
+            wr("means_l.webp", [[0, 0, 0], [255, 255, 255], [1, 0, 0]], "RGB")
+            wr("means_u.webp", [[0, 0, 0], [255, 255, 255], [0, 0, 0]], "RGB")
+            wr("scales.webp", [[0, 0, 0], [1, 1, 1], [0, 0, 0]], "RGB")
+            # quats: splat0 alpha=253 → mode 1 (x largest); splat1 alpha=252 → w.
+            wr("quats.webp",
+               [[128, 128, 128, 253], [128, 128, 128, 252], [128, 128, 128, 252]], "RGBA")
+            # sh0: rgb idx into DC codebook; alpha = opacity byte.
+            wr("sh0.webp", [[0, 0, 0, 51], [1, 1, 1, 255], [0, 0, 0, 128]], "RGBA")
+            meta = {
+                "version": 2, "count": 3,
+                "means": {"mins": [-2.0, -2.0, -2.0], "maxs": [2.0, 2.0, 2.0],
+                          "files": ["means_l.webp", "means_u.webp"]},
+                "scales": {"codebook": [np.log(0.5)] + [np.log(2.0)] + [0.0] * 254,
+                           "files": ["scales.webp"]},
+                "quats": {"files": ["quats.webp"]},
+                "sh0": {"codebook": [1.0, -1.0] + [0.0] * 254, "files": ["sh0.webp"]},
+            }
+            (b / "meta.json").write_text(json.dumps(meta))
+            cs = read_sog(b)
+
+        # Means: q16=0 → log-min=-2 → sign*expm1(2)= -(e^2-1); q16=65535 → +(e^2-1).
+        exp_lo = -(np.expm1(2.0))
+        exp_hi = np.expm1(2.0)
+        assert np.allclose(cs.positions[0], exp_lo, atol=1e-3)
+        assert np.allclose(cs.positions[1], exp_hi, atol=1e-3)
+        # Asymmetric splat2 x: q16=1 (NOT 256) → decodes just above the min; a
+        # swapped hi/lo byte order would give q16=256 and a very different x.
+        n2 = -2.0 + 4.0 * (1.0 / 65535.0)
+        exp_x2 = np.sign(n2) * np.expm1(abs(n2))
+        assert np.allclose(cs.positions[2, 0], exp_x2, atol=1e-4)
+        # Scales: exp(codebook[0])=0.5, exp(codebook[1])=2.0.
+        assert np.allclose(cs.scales[0], 0.5, rtol=1e-3)
+        assert np.allclose(cs.scales[1], 2.0, rtol=1e-3)
+        # Quat modes: splat0 largest = x (index 1); splat1 largest = w (index 0).
+        assert int(np.argmax(np.abs(cs.quaternions[0]))) == 1
+        assert int(np.argmax(np.abs(cs.quaternions[1]))) == 0
+        # Opacity from alpha byte: 51/255, 255/255, 128/255.
+        assert np.allclose(cs.opacities, [51 / 255, 1.0, 128 / 255], atol=1e-6)
+        # Color: 0.5 + SH_C0*codebook[idx]; idx0→+1.0, idx1→-1.0.
+        assert np.allclose(cs.colors[0], np.clip(0.5 + SH_C0 * 1.0, 0, 1), atol=1e-6)
+        assert np.allclose(cs.colors[1], np.clip(0.5 + SH_C0 * -1.0, 0, 1), atol=1e-6)

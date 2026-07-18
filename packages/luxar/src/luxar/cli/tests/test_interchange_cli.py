@@ -31,7 +31,7 @@ def fixtures(tmp_path_factory: pytest.TempPathFactory) -> dict[str, Path]:
 
 
 class TestGsplatImport:
-    @pytest.mark.parametrize("fmt", ["inria", "splat", "spz", "supersplat"])
+    @pytest.mark.parametrize("fmt", ["inria", "splat", "spz", "supersplat", "sog"])
     def test_import_each_dialect(
         self, fmt: str, fixtures: dict[str, Path], tmp_path: Path
     ) -> None:
