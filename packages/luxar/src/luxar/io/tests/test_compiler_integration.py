@@ -218,7 +218,9 @@ class TestCompilerIntegration:
         assert store["hdr_points"].attrs["blending_mode"] == "additive"
 
     def test_write_lines_rendering_attribute_defaults(self, tmp_path) -> None:
-        """Test that write_lines sets default rendering attributes (opacity, gamma, blending_mode)."""
+        """Test that write_lines sets identity-valued rendering defaults but
+        deliberately does NOT stamp blending_mode (no identity value — a
+        stamped default would shadow ancestor-set modes in the viewer)."""
         output_path = tmp_path / "test.luxar.zarr"
 
         with LuxarZarrCompiler(output_path) as compiler:
@@ -234,7 +236,87 @@ class TestCompilerIntegration:
         # Verify defaults are set (matching write_points/write_gsplats behavior)
         assert attrs["opacity"] == 1.0
         assert attrs["gamma"] == 1.0
-        assert attrs["blending_mode"] == "additive"
+        assert "blending_mode" not in attrs
+
+    def test_group_blending_mode_not_shadowed_by_leaf_default(self, tmp_path) -> None:
+        """A group-authored blending_mode must reach modeless leaves.
+
+        The viewer composes blending_mode nearest-setter-wins, so a leaf that
+        does not author a mode must OMIT the attr on disk — a stamped default
+        would silently override the ancestor (the historical bug: partition
+        parts of a `normal` import rendered as additive glow).
+        """
+        output_path = tmp_path / "test.luxar.zarr"
+
+        with LuxarZarrCompiler(output_path) as compiler:
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+            group = scene.add_group("surface", blending_mode="normal")
+
+            positions = np.random.randn(50, 3).astype(np.float32)
+            group.add_points("pts", positions)
+            group.add_lines(
+                "lns",
+                np.array([[0, 0, 0], [1, 1, 1]], dtype=np.float32),
+                widths=0.1,
+            )
+
+        store = zarr.open_group(output_path, mode="r")
+        assert store["surface"].attrs["blending_mode"] == "normal"
+        for leaf in ("surface/pts", "surface/lns"):
+            assert "blending_mode" not in dict(store[leaf].attrs), (
+                f"{leaf} carries a stamped blending_mode that shadows the "
+                "group's 'normal' under nearest-setter-wins composition"
+            )
+
+    def test_gsplat_leaf_omits_blending_mode_when_unset(self, tmp_path) -> None:
+        """GSplat leaves mirror points/lines: no stamped blending_mode."""
+        output_path = tmp_path / "test.luxar.zarr"
+
+        rng = np.random.default_rng(0)
+        n = 16
+        centers = rng.standard_normal((n, 3)).astype(np.float32)
+        amplitudes = np.abs(rng.standard_normal(n)).astype(np.float32)
+        cholesky = np.tile(np.array([1, 0, 0, 1, 0, 1], dtype=np.float32), (n, 1))
+
+        with LuxarZarrCompiler(output_path) as compiler:
+            compiler.create_scene(dimensions=Dimensions.default_3d())
+            compiler.write_gsplats("splats", centers, amplitudes, cholesky)
+
+        store = zarr.open_group(output_path, mode="r")
+        assert "blending_mode" not in dict(store["splats"].attrs)
+
+    def test_invalid_blending_mode_rejected_before_write(self, tmp_path) -> None:
+        """An invalid blending_mode fails BEFORE any group lands on disk.
+
+        Historically the writers wrote the group first and Node validation
+        raised afterwards, leaving a partial leaf on disk. All three geometry
+        writers must now fail fast (three-geometry symmetry).
+        """
+        output_path = tmp_path / "test.luxar.zarr"
+
+        rng = np.random.default_rng(0)
+        positions = rng.standard_normal((10, 3)).astype(np.float32)
+        vertices = np.array([[0, 0, 0], [1, 1, 1]], dtype=np.float32)
+        amplitudes = np.abs(rng.standard_normal(10)).astype(np.float32)
+        cholesky = np.tile(np.array([1, 0, 0, 1, 0, 1], dtype=np.float32), (10, 1))
+
+        with LuxarZarrCompiler(output_path) as compiler:
+            compiler.create_scene(dimensions=Dimensions.default_3d())
+
+            with pytest.raises(ValueError, match="Invalid blending mode"):
+                compiler.write_points("bad_pts", positions, blending_mode="bogus")
+            with pytest.raises(ValueError, match="Invalid blending mode"):
+                compiler.write_lines(
+                    "bad_lns", vertices, widths=0.1, blending_mode="bogus"
+                )
+            with pytest.raises(ValueError, match="Invalid blending mode"):
+                compiler.write_gsplats(
+                    "bad_gs", positions, amplitudes, cholesky, blending_mode="bogus"
+                )
+
+        store = zarr.open_group(output_path, mode="r")
+        for leaf in ("bad_pts", "bad_lns", "bad_gs"):
+            assert leaf not in store, f"partial node {leaf} left on disk"
 
     def test_memory_efficiency(self, tmp_path) -> None:
         """Test that large data doesn't accumulate in memory."""

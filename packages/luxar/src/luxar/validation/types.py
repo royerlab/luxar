@@ -426,7 +426,8 @@ def validate_blending_mode(mode: Any) -> BlendingMode:
     if not isinstance(mode, str):
         raise TypeError(f"Blending mode must be a string, got {type(mode).__name__}")
 
-    valid_modes = {"normal", "additive", "max", "opaque", "luminous"}
+    # Derived from the enum so adding a mode cannot desync validation.
+    valid_modes = {m.value for m in BlendingMode}
     if mode not in valid_modes:
         raise ValueError(
             f"Invalid blending mode '{mode}'. Must be one of: {', '.join(sorted(valid_modes))}"

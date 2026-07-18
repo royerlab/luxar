@@ -660,7 +660,9 @@ class Node:
             Blending mode string, defaults to "additive" if not set.
             Valid modes: "normal", "additive", "max", "opaque", "luminous"
         """
-        return str(self.attrs.get("blending_mode", "additive"))
+        from ...typing_utils.constants import DEFAULT_BLENDING_MODE
+
+        return str(self.attrs.get("blending_mode", DEFAULT_BLENDING_MODE))
 
     @blending_mode.setter
     def blending_mode(self, value: Any) -> None:

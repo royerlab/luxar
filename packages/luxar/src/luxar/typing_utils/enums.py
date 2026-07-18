@@ -23,7 +23,14 @@ class BlendingMode(str, Enum):
     - LUMINOUS: depthTest=true, depthWrite=false (respects occlusion, doesn't occlude others)
     - OPAQUE: depthTest=true, depthWrite=true (solid rendering)
     - NORMAL: depthTest=true, depthWrite=true when opacity >= 0.99
+      (points/lines only — GSplats in NORMAL mode never depth-write: their
+      coverage-alpha fragments would punch occlusion halos; see the viewer's
+      ``blending-state.ts::getGSplatNormalBlendingState``)
     - MAX: depthTest=true, depthWrite=false
+
+    Validation of raw strings lives in
+    :func:`luxar.validation.types.validate_blending_mode`, which derives its
+    accepted set from this enum.
     """
 
     NORMAL = "normal"  # Standard alpha blending
@@ -31,27 +38,6 @@ class BlendingMode(str, Enum):
     MAX = "max"  # Maximum of source and destination (brightest wins)
     OPAQUE = "opaque"  # Solid rendering with depth write
     LUMINOUS = "luminous"  # Same visual as additive, but respects depth occlusion
-
-    @classmethod
-    def validate(cls, value: str) -> "BlendingMode":
-        """Validate and convert string to BlendingMode.
-
-        Args:
-            value: String representation of blending mode
-
-        Returns:
-            BlendingMode enum value
-
-        Raises:
-            ValueError: If value is not a valid blending mode
-        """
-        try:
-            return cls(value)
-        except ValueError:
-            valid = ", ".join([f"'{mode.value}'" for mode in cls])
-            raise ValueError(
-                f"Invalid blending mode '{value}'. Must be one of: {valid}"
-            )
 
 
 class NodeType(str, Enum):
@@ -176,7 +162,7 @@ class Defaults:
     OPACITY = 1.0
     GAMMA = 1.0
     SHARPNESS = 0.5  # Normalised knob -> super-Gaussian beta = 2 (Gaussian)
-    BLENDING_MODE = BlendingMode.ADDITIVE
+    # Blending default lives in typing_utils.constants.DEFAULT_BLENDING_MODE
     CHUNK_SIZE = 32768  # Default chunk size in elements
     RADIUS = 0.1
 

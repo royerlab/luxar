@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING, Literal, Optional
 import typer
 from arbol import aprint, asection
 
+from ...typing_utils.constants import DEFAULT_BLENDING_MODE
 from .encoding import _resolve_encoding_mode
 
 if TYPE_CHECKING:
@@ -34,7 +35,9 @@ def convert_to_scene(
     ),
     opacity: float = typer.Option(1.0, "--opacity", help="Opacity (0.0-1.0)"),
     blending_mode: str = typer.Option(
-        "additive", "--blending-mode", help="Blending: additive/normal/max/opaque"
+        DEFAULT_BLENDING_MODE,
+        "--blending-mode",
+        help="Blending: additive/normal/max/opaque/luminous",
     ),
     colormap: Optional[str] = typer.Option(
         None,
@@ -91,6 +94,13 @@ def convert_to_scene(
         from luxar.gsplats.tree import center_bounds, is_matrix_shaped
 
         # Validate + assemble appearance attrs (only forward what was set).
+        from luxar.validation.types import validate_blending_mode
+
+        try:
+            validate_blending_mode(blending_mode)
+        except (ValueError, TypeError) as e:
+            raise typer.BadParameter(str(e)) from e
+
         appearance: dict = {"layer": layer}
         if colormap is not None:
             from luxar.colormaps import BUILTIN_COLORMAP_NAMES
