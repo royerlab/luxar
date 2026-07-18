@@ -54,7 +54,6 @@ export const GSPLAT_PICK_VERTEX_SHADER = /* glsl */ `
     uniform vec2 uResolution;
     uniform float uFx, uFy;
     uniform float uTruncate;
-    uniform float uTruncateSq;
     uniform int uIsOrtho;
     uniform float uNearCull;
     uniform float uMaxExtentFactor;

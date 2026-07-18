@@ -180,7 +180,7 @@ export function lineWebGPUFactory(
   // harness path). Mutations on `material.uniforms.X.value` go via
   // `proxyIUniform` straight to `node.value` — no per-render
   // `.onUpdate` callbacks needed.
-  // uFOV is intentionally absent: the TSL graph reads the CPU-precomputed
+  // No FOV uniform exists: the TSL graph reads the CPU-precomputed
   // `uPerspectiveLineScale` / `uOrthoLineScale` instead.
   // uIsOrtho is also intentionally absent — projection mode is a
   // JS-level config branch (`config.isOrtho`), not a runtime uniform.

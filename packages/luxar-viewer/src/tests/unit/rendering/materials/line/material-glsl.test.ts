@@ -43,9 +43,6 @@ describe('LineMaterial', () => {
     it('should create a material with default values', () => {
       const material = new LineMaterial();
 
-      // Default FOV is 60 degrees in radians
-      const expectedFOV = (60 * Math.PI) / 180;
-      expect(material.uniforms.uFOV.value).toBeCloseTo(expectedFOV, 5);
       expect(material.uniforms.uResolution.value).toBeInstanceOf(THREE.Vector2);
       expect(material.uniforms.uOpacity.value).toBe(1.0);
 
@@ -112,7 +109,6 @@ describe('LineMaterial', () => {
       expect(material.vertexShader).toContain('in float aEndClipped');
 
       // Check for uniforms
-      expect(material.vertexShader).toContain('uniform float uFOV');
       expect(material.vertexShader).toContain('uniform vec2 uResolution');
 
       // Check for varyings (GLSL ES 3.0 uses "out" instead of "varying")
@@ -187,7 +183,6 @@ describe('LineMaterial', () => {
 
       material.updateCameraParams(fov, resolution);
 
-      expect(material.uniforms.uFOV.value).toBe(fov);
       expect(material.uniforms.uResolution.value.x).toBe(1920);
       expect(material.uniforms.uResolution.value.y).toBe(1080);
     });

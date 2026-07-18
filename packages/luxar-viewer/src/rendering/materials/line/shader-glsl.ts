@@ -71,7 +71,6 @@ export const LINE_VERTEX_SHADER = /* glsl */ `
     in float aEndClipped;
 
     // Uniforms
-    uniform float uFOV;
     uniform vec2 uResolution;
     uniform int uIsOrtho;  // 0 = perspective, 1 = orthographic
     uniform float uNearCull;          // near-plane safety distance (view-space, +z toward camera)
@@ -227,7 +226,7 @@ export const LINE_VERTEX_SHADER = /* glsl */ `
 
       // World-space to pixel conversion. Both branches consume a scale
       // precomputed on the CPU once per camera/resolution change so
-      // the shader avoids per-vertex tan() and divisions by uFOV.
+      // the shader avoids per-vertex tan() and FOV divisions.
       float rawPixelWidth;
       if (uIsOrtho == 1) {
         // Orthographic: constant screen size regardless of distance.

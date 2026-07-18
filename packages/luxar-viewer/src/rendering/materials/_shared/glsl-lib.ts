@@ -18,7 +18,7 @@
  *
  * ```ts
  * const vertexShader = `
- *   uniform float uFOV;
+ *   uniform vec2 uResolution;
  *   ${GLSL_SANITIZE_FUNCTIONS}
  *   void main() { ... }
  * `;
