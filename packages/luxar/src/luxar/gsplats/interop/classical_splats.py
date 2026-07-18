@@ -4,7 +4,7 @@ Classical 3D Gaussian Splatting — the INRIA reference implementation and the
 ecosystem around it (SuperSplat, Scaniverse, antimatter15's web viewer, …) —
 stores splats as *position + per-axis scale + rotation quaternion + opacity +
 spherical-harmonics color*. Luxar stores *center + packed lower-triangular
-Cholesky factor + amplitude + RGB color*. This module reads the four common
+Cholesky factor + amplitude + RGB color*. This module reads the five common
 on-disk dialects into a shared :class:`ClassicalSplats` intermediate and
 converts it to a :class:`~luxar.gsplats.gsplat_data.GSplatData`, after which
 the entire Luxar toolchain (LOD recipes, partition, filter, scenes, viewer)
@@ -16,23 +16,40 @@ Supported dialects
 - ``splat``      — antimatter15 ``.splat`` (flat 32-byte records)
 - ``spz``        — Niantic/Scaniverse ``.spz`` (gzipped, quantized)
 - ``supersplat`` — PlayCanvas/SuperSplat *compressed* ``.ply`` (chunked, bit-packed)
+- ``sog``        — PlayCanvas SOG bundle (``meta.json`` + WebP images)
 
 Spherical harmonics are reduced to the DC band: view-dependent ``f_rest``
 coefficients are dropped and the DC term is baked to per-splat RGB. Opacity
 maps to Luxar ``amplitudes`` (both live in ``[0, 1]`` after the sigmoid).
 
-Everything here is NumPy + stdlib only — no torch, no external parsers.
+This file owns the ``ClassicalSplats`` intermediate, the per-dialect readers,
+format detection, and the ``import_gsplats`` dispatcher; the cohesive helpers
+live in sibling modules and are re-exported here for a stable import surface:
+``_ply`` (PLY header parsing), ``_quat`` (quaternion/rotation math), and
+``_convert`` (``classical_to_gsplat_data`` covariance rebuild). Everything is
+NumPy + stdlib only (Pillow is lazily imported for SOG's WebP images).
 """
 
 from __future__ import annotations
 
 import gzip
-import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Callable, Optional, Union
 
 import numpy as np
+
+from luxar.gsplats.interop._convert import classical_to_gsplat_data
+from luxar.gsplats.interop._ply import (
+    _parse_ply_header,
+    _read_ply_elements,
+    _stack_fields,
+)
+from luxar.gsplats.interop._quat import (
+    _normalize_quat,
+    quat_to_rotmat,
+    rotmat_to_quat,
+)
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from luxar.gsplats.gsplat_data import GSplatData
@@ -102,195 +119,13 @@ class ClassicalSplats:
         return int(self.positions.shape[0])
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Quaternion / rotation helpers (w-first convention throughout)
-# ─────────────────────────────────────────────────────────────────────────────
-
-
-def quat_to_rotmat(q: np.ndarray) -> np.ndarray:
-    """Convert unit quaternions ``(N, 4)`` (w, x, y, z) to rotation matrices ``(N, 3, 3)``.
-
-    Quaternions are re-normalized defensively; zero-norm quaternions decode to
-    the identity rotation.
-    """
-    q = np.asarray(q, dtype=np.float64)
-    if q.ndim != 2 or q.shape[1] != 4:
-        raise ValueError(f"q must be (N, 4); got {q.shape}")
-    norm = np.linalg.norm(q, axis=1, keepdims=True)
-    q = np.divide(q, norm, out=np.zeros_like(q), where=norm > 0)
-    w, x, y, z = q[:, 0], q[:, 1], q[:, 2], q[:, 3]
-    identity = norm[:, 0] == 0
-    w = np.where(identity, 1.0, w)
-
-    R = np.empty((q.shape[0], 3, 3), dtype=np.float64)
-    R[:, 0, 0] = 1 - 2 * (y * y + z * z)
-    R[:, 0, 1] = 2 * (x * y - w * z)
-    R[:, 0, 2] = 2 * (x * z + w * y)
-    R[:, 1, 0] = 2 * (x * y + w * z)
-    R[:, 1, 1] = 1 - 2 * (x * x + z * z)
-    R[:, 1, 2] = 2 * (y * z - w * x)
-    R[:, 2, 0] = 2 * (x * z - w * y)
-    R[:, 2, 1] = 2 * (y * z + w * x)
-    R[:, 2, 2] = 1 - 2 * (x * x + y * y)
-    return R
-
-
-def rotmat_to_quat(R: np.ndarray) -> np.ndarray:
-    """Convert rotation matrices ``(N, 3, 3)`` to unit quaternions ``(N, 4)`` (w, x, y, z).
-
-    Uses Shepperd's method (branch on the largest diagonal combination) for
-    numerical stability near 180° rotations. Inputs must be proper rotations
-    (``det = +1``); the caller is responsible for reflection correction.
-    """
-    R = np.asarray(R, dtype=np.float64)
-    if R.ndim != 3 or R.shape[1:] != (3, 3):
-        raise ValueError(f"R must be (N, 3, 3); got {R.shape}")
-    n = R.shape[0]
-    q = np.empty((n, 4), dtype=np.float64)
-
-    trace = R[:, 0, 0] + R[:, 1, 1] + R[:, 2, 2]
-    # Candidate squared components (all >= 0 up to rounding); branch on the
-    # largest so the divisor 4s below is always well-conditioned.
-    qw2 = np.maximum(0.0, 1.0 + trace) / 4.0
-    qx2 = np.maximum(0.0, 1.0 + R[:, 0, 0] - R[:, 1, 1] - R[:, 2, 2]) / 4.0
-    qy2 = np.maximum(0.0, 1.0 - R[:, 0, 0] + R[:, 1, 1] - R[:, 2, 2]) / 4.0
-    qz2 = np.maximum(0.0, 1.0 - R[:, 0, 0] - R[:, 1, 1] + R[:, 2, 2]) / 4.0
-    branch = np.argmax(np.stack([qw2, qx2, qy2, qz2], axis=1), axis=1)
-
-    def _fill(
-        mask: np.ndarray, sq: np.ndarray, cols: list[Optional[np.ndarray]]
-    ) -> None:
-        if np.any(mask):
-            s = np.sqrt(sq[mask])
-            for target, col in enumerate(cols):
-                q[mask, target] = s if col is None else col[mask] / (4 * s)
-
-    r = R  # column shorthands (differences/sums of off-diagonal entries)
-    wx = r[:, 2, 1] - r[:, 1, 2]
-    wy = r[:, 0, 2] - r[:, 2, 0]
-    wz = r[:, 1, 0] - r[:, 0, 1]
-    xy = r[:, 0, 1] + r[:, 1, 0]
-    xz = r[:, 0, 2] + r[:, 2, 0]
-    yz = r[:, 1, 2] + r[:, 2, 1]
-    _fill(branch == 0, qw2, [None, wx, wy, wz])
-    _fill(branch == 1, qx2, [wx, None, xy, xz])
-    _fill(branch == 2, qy2, [wy, xy, None, yz])
-    _fill(branch == 3, qz2, [wz, xz, yz, None])
-
-    q /= np.linalg.norm(q, axis=1, keepdims=True)
-    # Canonical sign: w >= 0.
-    q[q[:, 0] < 0] *= -1
-    return q
-
-
 def _sigmoid(x: np.ndarray) -> np.ndarray:
     """Numerically safe sigmoid (clips the exponent to avoid overflow warnings)."""
     return np.asarray(1.0 / (1.0 + np.exp(-np.clip(x, -30.0, 30.0))))
 
 
-def _normalize_quat(q: np.ndarray) -> np.ndarray:
-    """Normalize quaternions to unit length (zero-norm rows become identity)."""
-    q = q.astype(np.float32, copy=True)
-    norm = np.linalg.norm(q, axis=1, keepdims=True)
-    q = np.divide(q, norm, out=q, where=norm > 0)
-    q[norm[:, 0] == 0] = np.array([1.0, 0.0, 0.0, 0.0], dtype=np.float32)
-    return q
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# PLY header parsing (shared by the INRIA and SuperSplat dialects)
-# ─────────────────────────────────────────────────────────────────────────────
-
-_PLY_DTYPES = {
-    "char": "i1",
-    "int8": "i1",
-    "uchar": "u1",
-    "uint8": "u1",
-    "short": "i2",
-    "int16": "i2",
-    "ushort": "u2",
-    "uint16": "u2",
-    "int": "i4",
-    "int32": "i4",
-    "uint": "u4",
-    "uint32": "u4",
-    "float": "f4",
-    "float32": "f4",
-    "double": "f8",
-    "float64": "f8",
-}
-
-
-@dataclass
-class _PlyElement:
-    name: str
-    count: int
-    properties: list[tuple[str, str]] = field(default_factory=list)  # (name, np dtype)
-
-    def dtype(self) -> np.dtype:
-        return np.dtype([(name, "<" + dt) for name, dt in self.properties])
-
-
-def _parse_ply_header(raw: bytes) -> tuple[list[_PlyElement], int]:
-    """Parse a binary-little-endian PLY header.
-
-    Returns the declared elements (in file order) and the byte offset of the
-    binary body. Only scalar properties are supported (3DGS dialects never use
-    ``property list``).
-    """
-    end = raw.find(b"end_header\n")
-    if not raw.startswith(b"ply") or end < 0:
-        raise ValueError("Not a PLY file (missing 'ply' magic or 'end_header')")
-    header = raw[:end].decode("ascii", errors="replace")
-    body_offset = end + len(b"end_header\n")
-
-    if not re.search(r"^format\s+binary_little_endian\s+1\.0\s*$", header, re.M):
-        raise ValueError(
-            "Only binary_little_endian PLY is supported (ASCII / big-endian "
-            "Gaussian-splat PLY files are not produced by any known tool)"
-        )
-
-    elements: list[_PlyElement] = []
-    for line in header.splitlines():
-        parts = line.strip().split()
-        if not parts:
-            continue
-        if parts[0] == "element":
-            elements.append(_PlyElement(name=parts[1], count=int(parts[2])))
-        elif parts[0] == "property":
-            if not elements:
-                raise ValueError("PLY property declared before any element")
-            if parts[1] == "list":
-                raise ValueError("PLY list properties are not supported")
-            dt = _PLY_DTYPES.get(parts[1])
-            if dt is None:
-                raise ValueError(f"Unsupported PLY property type: {parts[1]}")
-            elements[-1].properties.append((parts[-1], dt))
-    return elements, body_offset
-
-
-def _read_ply_elements(path: Path) -> dict[str, np.ndarray]:
-    """Read all elements of a binary PLY into structured arrays keyed by name."""
-    with open(path, "rb") as f:
-        head = f.read(64 * 1024)
-        elements, body_offset = _parse_ply_header(head)
-        f.seek(body_offset)
-        out: dict[str, np.ndarray] = {}
-        for el in elements:
-            dtype = el.dtype()
-            arr = np.fromfile(f, dtype=dtype, count=el.count)
-            if arr.shape[0] != el.count:
-                raise ValueError(
-                    f"PLY element '{el.name}' truncated: expected {el.count} "
-                    f"records, read {arr.shape[0]}"
-                )
-            out[el.name] = arr
-    return out
-
-
-def _stack_fields(arr: np.ndarray, names: list[str]) -> np.ndarray:
-    """Stack structured-array fields into a float32 (N, len(names)) array."""
-    return np.stack([arr[name].astype(np.float32) for name in names], axis=1)
+# PLY header parsing (``_parse_ply_header`` / ``_read_ply_elements`` /
+# ``_stack_fields`` / ``_PlyElement``) lives in ``_ply.py``; imported at the top.
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -831,125 +666,6 @@ _READERS = {
     "supersplat": read_supersplat_ply,
     "sog": read_sog,
 }
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Conversion to GSplatData
-# ─────────────────────────────────────────────────────────────────────────────
-
-
-def _orientation_matrix(rotate_x180: bool, flip: str) -> np.ndarray:
-    """Build the (3, 3) orientation matrix applied to imported world coordinates.
-
-    ``rotate_x180`` is the canonical COLMAP fix (captures store +Y down / +Z
-    forward, so they appear upside-down in Y-up viewers); ``flip`` mirrors the
-    named axes on top of that (a reflection — allowed here because the
-    covariance is rebuilt from scratch rather than routed through
-    ``GSplatData.transform``, whose diagonal path rejects negative scales).
-    """
-    M = np.eye(3, dtype=np.float64)
-    if rotate_x180:
-        M = np.diag([1.0, -1.0, -1.0]) @ M
-    for axis in flip:
-        try:
-            idx = "xyz".index(axis.lower())
-        except ValueError:
-            raise ValueError(f"flip axes must be drawn from 'xyz'; got {flip!r}")
-        M[idx] *= -1.0
-    return M
-
-
-def _robust_cholesky(sigma: np.ndarray) -> np.ndarray:
-    """Batch Cholesky with a per-splat eigenvalue-clamp fallback for non-PD input.
-
-    Mirrors the regularization strategy of
-    :func:`luxar.gsplats.utils.trils.embed_cholesky_packed`: quantized or
-    degenerate source files can yield covariance matrices that are only
-    positive *semi*-definite; those get their eigenvalues floored and are
-    re-factorized individually.
-    """
-    try:
-        return np.linalg.cholesky(sigma)
-    except np.linalg.LinAlgError:
-        pass
-
-    # Fully vectorized detect-and-repair (no per-splat Python loop, so a single
-    # degenerate splat among millions doesn't drop the whole import to O(N)
-    # scalar LAPACK calls). Batch eigvalsh finds the non-PD subset; only those
-    # get their eigenvalues floored and recomposed via batch eigh.
-    eigvals_all = np.linalg.eigvalsh(sigma)  # ascending per splat
-    scale = np.maximum(np.abs(eigvals_all[:, -1]), 1e-14)
-    floor = scale * 1e-9  # per-splat relative floor
-    bad = eigvals_all[:, 0] < floor
-    if not np.any(bad):
-        # PD everywhere but the batch call still failed (rare numerical noise) —
-        # symmetrize and retry once.
-        sym = (sigma + np.swapaxes(sigma, -2, -1)) / 2.0
-        return np.linalg.cholesky(sym)
-
-    fixed = sigma.copy()
-    eigvals, eigvecs = np.linalg.eigh(sigma[bad])
-    eigvals = np.maximum(eigvals, floor[bad, None])
-    fixed[bad] = eigvecs @ (eigvals[..., None] * np.swapaxes(eigvecs, -2, -1))
-    return np.linalg.cholesky(fixed)
-
-
-def classical_to_gsplat_data(
-    cs: ClassicalSplats,
-    *,
-    rotate_x180: Optional[bool] = None,
-    flip: str = "",
-) -> "GSplatData":
-    """Convert decoded classical splats to a :class:`GSplatData`.
-
-    The covariance is rebuilt as ``Σ = (M·R) · diag(scales²) · (M·R)ᵀ`` where
-    ``R`` comes from the quaternion and ``M`` is the orientation matrix
-    (:func:`_orientation_matrix`), then factorized to Luxar's packed
-    lower-triangular Cholesky form. Opacities become ``amplitudes``; the DC
-    color becomes per-splat SDR RGB. Columns stay in world (x, y, z) order —
-    that is what downstream dimension inference labels x/y/z.
-
-    ``rotate_x180=None`` (default) applies the 180°-about-X COLMAP → Y-up fix
-    exactly when the source dialect needs it (``cs.y_up`` False); SPZ declares
-    RUB/Y-up data and is left untouched. Pass an explicit bool to override.
-
-    The applied orientation and source dialect are recorded under
-    ``stats["interop"]`` so an eventual export can invert them.
-    """
-    from luxar.gsplats.gsplat_data import GSplatData
-    from luxar.gsplats.utils.trils import pack_tril
-
-    if cs.n_splats == 0:
-        raise ValueError("Cannot convert an empty splat set")
-
-    if rotate_x180 is None:
-        rotate_x180 = not cs.y_up
-    M = _orientation_matrix(rotate_x180, flip)
-
-    positions = (cs.positions.astype(np.float64) @ M.T).astype(np.float32)
-    R = M @ quat_to_rotmat(cs.quaternions)  # (N, 3, 3), orientation folded in
-    s2 = (cs.scales.astype(np.float64) ** 2)[:, None, :]  # (N, 1, 3)
-    sigma = (R * s2) @ np.swapaxes(R, -2, -1)  # R · diag(s²) · Rᵀ
-    L = _robust_cholesky(sigma)
-    cholesky_factors = pack_tril(L).astype(np.float32)
-
-    amplitudes = np.ascontiguousarray(cs.opacities, dtype=np.float32)
-    colors = np.clip(cs.colors, 0.0, 1.0).astype(np.float32)
-
-    stats = {
-        "interop": {
-            "source_format": cs.source_format,
-            "source_sh_degree": int(cs.sh_degree),
-            "orientation_matrix": M.tolist(),
-        }
-    }
-    return GSplatData(
-        centers=positions,
-        amplitudes=amplitudes,
-        cholesky_factors=cholesky_factors,
-        colors=colors,
-        stats=stats,
-    )
 
 
 def import_gsplats(
