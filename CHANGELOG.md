@@ -68,6 +68,20 @@ All notable changes to Luxar are documented in this file.
   (per-tile frustum culling + streaming ladder), reversing the earlier
   single-leaf workaround now that tiles sort correctly.
 
+#### Fixed — classical-splat imports no longer render washed-out (sRGB → linear)
+
+- Importing a classical Gaussian-splat file (INRIA/`.splat`/SPZ/SuperSplat/SOG)
+  now renders with the same colors a reference viewer (SuperSplat/PlayCanvas)
+  shows, instead of washing toward white (#599). The DC band's baked color
+  (`0.5 + C₀·f_dc`) is **display-referred sRGB**, but Luxar's viewer treats
+  per-splat color as linear light and applies the sRGB OETF once at output — so
+  importing it untouched double-encoded it. The import boundary now converts
+  sRGB → linear (new `gsplats/interop/_color.py`, applied at the single
+  `classical_to_gsplat_data` chokepoint all dialects funnel through), and the
+  INRIA exporter inverts it (linear → sRGB) so round-trips and reference-viewer
+  colors match. The transfer curve is the exact IEC 61966-2-1 piecewise sRGB,
+  bit-for-bit the inverse of the viewer's output encode.
+
 #### Fixed — responsive timelapse playback (decode/caching), symmetric across Points/Lines/GSplats
 
 - Playing/scrubbing a dimension (e.g. a 4D gsplat timelapse) is now
