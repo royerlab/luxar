@@ -13,13 +13,11 @@ import {
   resolveMaterialBackend,
   pointCacheKey,
   lineCacheKey,
-  gsplatCacheKey,
   VISUAL_FACTORIES,
   PICKING_FACTORIES,
   MEGA_SHADER_FACTORIES,
   type PointMaterialProperties,
   type LineMaterialProperties,
-  type GSplatMaterialProperties,
 } from '../../../../rendering/material-manager/factories';
 import type { RendererCapabilities } from '../../../../rendering/renderer-capabilities';
 
@@ -37,14 +35,6 @@ const basePoint: PointMaterialProperties = {
 };
 
 const baseLine: LineMaterialProperties = {
-  blendingMode: 'additive',
-  opacity: 1.0,
-  gamma: 1.0,
-  intensity: 1.0,
-  offset: 0.0,
-};
-
-const baseGSplat: GSplatMaterialProperties = {
   blendingMode: 'additive',
   opacity: 1.0,
   gamma: 1.0,
@@ -172,33 +162,11 @@ describe('lineCacheKey', () => {
   });
 });
 
-describe('gsplatCacheKey', () => {
-  it('starts with `gsplat_<backend>_<blendingMode>_…`', () => {
-    expect(gsplatCacheKey(baseGSplat, 'glsl')).toMatch(/^gsplat_glsl_additive_/);
-  });
-
-  it('encodes truncationRadius into a tr<N> bucket; default 3.0 → tr30', () => {
-    expect(gsplatCacheKey(baseGSplat, 'glsl')).toMatch(/_tr30_/);
-    expect(gsplatCacheKey({ ...baseGSplat, truncationRadius: 2.5 }, 'glsl')).toMatch(/_tr25_/);
-    expect(gsplatCacheKey({ ...baseGSplat, truncationRadius: 4.7 }, 'glsl')).toMatch(/_tr47_/);
-  });
-
-  it('uses the same opacity/gamma/intensity/offset/transparent buckets as point/line', () => {
-    const key = gsplatCacheKey(baseGSplat, 'tsl');
-    // opacity=1.0 → 100, gamma=1.0 → 100, intensity=1.0 → 100,
-    // offset=0.0 → (0+10)*10 = 100
-    expect(key).toContain('_o100_g100_i100_f100_');
-  });
-});
-
 describe('cross-kind isolation', () => {
-  it('point / line / gsplat keys never collide even with identical numeric buckets', () => {
+  it('point / line keys never collide even with identical numeric buckets', () => {
     const p = pointCacheKey(basePoint, 'glsl');
     const l = lineCacheKey(baseLine, 'glsl');
-    const g = gsplatCacheKey(baseGSplat, 'glsl');
     expect(p).not.toBe(l);
-    expect(p).not.toBe(g);
-    expect(l).not.toBe(g);
   });
 
   it('glsl vs tsl keys differ for the same geometry kind + props', () => {

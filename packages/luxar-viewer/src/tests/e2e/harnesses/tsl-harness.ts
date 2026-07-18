@@ -805,13 +805,12 @@ const SHADER_REGISTRY: Record<string, RegistryEntry> = {
   line: {
     source: LINE_SOURCE,
     buildUniforms: () => ({
-      uFOV: { value: 2.0 }, // ortho frustum height
       uResolution: { value: new THREE.Vector2(64, 64) },
       uIsOrtho: { value: 1 },
       uNearCull: { value: 0.01 },
       uMaxLinePixelWidth: { value: 32.0 },
       // Pre-baked pixel-width scales for this ortho config:
-      //   uOrthoLineScale = 2 * 64 / 2 = 64 (matches old 2*resY/uFOV)
+      //   uOrthoLineScale = 2 * 64 / 2 = 64 (2*resY/frustumHeight)
       //   uPerspectiveLineScale is unused (uIsOrtho=1) — benign 1.0.
       uPerspectiveLineScale: { value: 1.0 },
       uOrthoLineScale: { value: 64.0 },
@@ -839,7 +838,6 @@ const SHADER_REGISTRY: Record<string, RegistryEntry> = {
   'line-gamma-one': {
     source: LINE_SOURCE,
     buildUniforms: () => ({
-      uFOV: { value: 2.0 },
       uResolution: { value: new THREE.Vector2(64, 64) },
       uIsOrtho: { value: 1 },
       uNearCull: { value: 0.01 },
@@ -871,7 +869,6 @@ const SHADER_REGISTRY: Record<string, RegistryEntry> = {
   'line-no-gog': {
     source: LINE_SOURCE,
     buildUniforms: () => ({
-      uFOV: { value: 2.0 },
       uResolution: { value: new THREE.Vector2(64, 64) },
       uIsOrtho: { value: 1 },
       uNearCull: { value: 0.01 },
@@ -903,7 +900,6 @@ const SHADER_REGISTRY: Record<string, RegistryEntry> = {
   'line-colormap': {
     source: LINE_SOURCE,
     buildUniforms: () => ({
-      uFOV: { value: 2.0 },
       uResolution: { value: new THREE.Vector2(64, 64) },
       uIsOrtho: { value: 1 },
       uNearCull: { value: 0.01 },
@@ -1273,7 +1269,6 @@ const SHADER_REGISTRY: Record<string, RegistryEntry> = {
   'line-pick': {
     source: LINE_PICK_SOURCE,
     buildUniforms: () => ({
-      uFOV: { value: 2.0 },
       uResolution: { value: new THREE.Vector2(64, 64) },
       uIsOrtho: { value: 1 },
       uNodeId: { value: 42 },
@@ -1488,7 +1483,6 @@ const SHADER_REGISTRY: Record<string, RegistryEntry> = {
   'line-behind': {
     source: LINE_SOURCE,
     buildUniforms: () => ({
-      uFOV: { value: 2.0 },
       uResolution: { value: new THREE.Vector2(64, 64) },
       uIsOrtho: { value: 0 },
       uNearCull: { value: 0.01 },
@@ -1514,7 +1508,6 @@ const SHADER_REGISTRY: Record<string, RegistryEntry> = {
   'line-pick-behind': {
     source: LINE_PICK_SOURCE,
     buildUniforms: () => ({
-      uFOV: { value: 2.0 },
       uResolution: { value: new THREE.Vector2(64, 64) },
       uIsOrtho: { value: 0 },
       uNodeId: { value: 42 },
@@ -1538,7 +1531,6 @@ const SHADER_REGISTRY: Record<string, RegistryEntry> = {
   'line-ortho-near': {
     source: LINE_SOURCE,
     buildUniforms: () => ({
-      uFOV: { value: 2.0 },
       uResolution: { value: new THREE.Vector2(64, 64) },
       uIsOrtho: { value: 1 },
       uNearCull: { value: 0.5 },

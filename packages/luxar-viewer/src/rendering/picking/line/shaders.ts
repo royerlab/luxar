@@ -50,7 +50,6 @@ export const LINE_PICK_VERTEX_SHADER = /* glsl */ `
     in float aStartClipped;
     in float aEndClipped;
 
-    uniform float uFOV;
     uniform vec2 uResolution;
     uniform int uIsOrtho;
     uniform float uNodeId;

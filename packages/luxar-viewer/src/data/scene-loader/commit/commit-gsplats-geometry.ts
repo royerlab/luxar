@@ -17,7 +17,7 @@ import { updateInstancedGSplatsMesh } from '../../../rendering/gsplat-geometry';
 import { noteGSplatsCommit } from '../../../rendering/depth-sort-coordinator';
 import { clampSplatCapacity } from '../../../rendering/splat-texture-layout';
 import { syncGSplatMaterialWithGeometry } from '../../../rendering/material-sync-helpers';
-import type { GSplatsUserData } from '../../../types/gsplats';
+import { isGSplatsUserData } from '../../../types/gsplats';
 import { log, Modules } from '../../../utils/log';
 import type { UpdateSession } from '../../../profiling/update-profiler';
 import type { GPUBufferPool } from '../../../rendering/gpu-buffer-pool';
@@ -59,13 +59,13 @@ export function commitGSplatsGeometry(
   if (!rootGroup) return;
 
   const mesh = rootGroup.getObjectByName(staged.path) as THREE.Mesh;
-  if (!mesh || mesh.userData?.nodeType !== 'gsplats') return;
+  if (!mesh || !isGSplatsUserData(mesh.userData)) return;
 
   if (staged.noop) {
     // Stamp-only commit: the data reference matches what the GPU already
     // holds (see noop-commit.ts). Refresh the LOD freshness + ladder stamps
     // so the registry keeps treating this node as fresh; touch no geometry.
-    stampLoadedViewVersion(mesh.userData as GSplatsUserData, loadedViewVersion);
+    stampLoadedViewVersion(mesh.userData, loadedViewVersion);
     stampLadderComplete(mesh.userData);
     return;
   }
@@ -84,8 +84,8 @@ export function commitGSplatsGeometry(
   // BEFORE the writers run: the pool branch reassigns `mesh.geometry`,
   // and `visibleSplatCount` is overwritten near the end of this function.
   const prevGeometry = mesh.geometry;
-  const hadCommittedData = (mesh.userData as CommittedDataUserData)?.committedData !== undefined;
-  const prevCount = (mesh.userData as GSplatsUserData)?.visibleSplatCount;
+  const hadCommittedData = (mesh.userData as CommittedDataUserData).committedData !== undefined;
+  const prevCount = mesh.userData.visibleSplatCount;
 
   const bufferSession = session?.begin('Update Buffers');
   try {
@@ -182,13 +182,13 @@ export function commitGSplatsGeometry(
       if (rebuilt) invalidateRenderObjectFor(mesh);
     }
 
-    if (mesh.userData) {
-      (mesh.userData as GSplatsUserData).visibleSplatCount = splatCount;
+    if (isGSplatsUserData(mesh.userData)) {
+      mesh.userData.visibleSplatCount = splatCount;
       // Stamp the view-version this geometry was loaded for so the LOD registry
       // can distinguish "fresh for the current slice" from merely "ready" (a
       // re-slice overwrites the buffers in place above without flipping any
       // readiness flag). Shared with the points/lines commits via the helper.
-      stampLoadedViewVersion(mesh.userData as GSplatsUserData, loadedViewVersion);
+      stampLoadedViewVersion(mesh.userData, loadedViewVersion);
       // Ladder-completeness stamp for the never-downgrade display gate
       // (see stamp-view-version.ts) — commit-synchronized with the count above.
       stampLadderComplete(mesh.userData);
