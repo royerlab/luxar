@@ -3,15 +3,11 @@
  *
  * Sibling of `materials/point/blending-mode.test.ts` (three-geometry
  * test symmetry). Ensures runtime UI transitions produce the same
- * complete blend state as material creation, on BOTH backends:
- *
- *   - GLSL (`LineMaterial`): hand-rolled per-mode dispatch. Non-max
- *     modes reset the CustomBlending factors to
- *     SrcAlpha / OneMinusSrcAlpha (the preset blending modes ignore
- *     them — this only prevents stranded MaxEquation state).
- *   - TSL (`LineTSLMaterial`): draws from the shared
- *     `getCompleteBlendingState`, so additive/luminous pin
- *     SrcAlpha / One instead.
+ * complete blend state as material creation, on BOTH backends. Both
+ * wrappers draw from the SHARED `getCompleteBlendingState` +
+ * `applyBlendingStateToMaterial` helpers, so for every mode the GLSL
+ * and TSL materials carry identical blending / blend-factor / depth /
+ * transparency state (the convergence suite below pins that).
  *
  * Both toggle the LUXAR_MAX_RGB_CONTRIBUTION shader define when
  * entering max and clear it when leaving.
@@ -20,6 +16,8 @@ import { describe, it, expect } from 'vitest';
 import * as THREE from 'three';
 import { LineMaterial } from '../../../../../rendering/materials/line/material-glsl';
 import { LineTSLMaterial } from '../../../../../rendering/materials/line/material-tsl';
+import { getCompleteBlendingState } from '../../../../../rendering/blending-state';
+import type { BlendingMode } from '../../../../../rendering/material-manager';
 
 describe('LineMaterial.applyBlendingMode (GLSL)', () => {
   it('max mode sets CustomBlending + MaxEquation + OneFactor/OneFactor', () => {
@@ -36,17 +34,17 @@ describe('LineMaterial.applyBlendingMode (GLSL)', () => {
     expect(mat.userData.blendingMode).toBe('max');
   });
 
-  it('additive mode resets CustomBlending state (no stranded MaxEquation/OneFactor)', () => {
+  it('additive mode resets CustomBlending state via the shared helper (SrcAlpha/One)', () => {
     const mat = new LineMaterial();
     mat.applyBlendingMode('max');
     mat.applyBlendingMode('additive');
     expect(mat.blending).toBe(THREE.AdditiveBlending);
     expect(mat.blendEquation).toBe(THREE.AddEquation);
-    // GLSL line resets to SrcAlpha/OneMinusSrcAlpha (unlike the shared
-    // helper's SrcAlpha/One) — inert under the AdditiveBlending preset,
-    // pinned so a stranded OneFactor can never reappear.
+    // Shared getCompleteBlendingState: SrcAlpha/One (resets stranded
+    // OneFactor from the previous max state; inert under the
+    // AdditiveBlending preset, and now byte-identical to the TSL twin).
     expect(mat.blendSrc).toBe(THREE.SrcAlphaFactor);
-    expect(mat.blendDst).toBe(THREE.OneMinusSrcAlphaFactor);
+    expect(mat.blendDst).toBe(THREE.OneFactor);
     expect(mat.depthTest).toBe(false);
     expect(mat.depthWrite).toBe(false);
     expect(mat.transparent).toBe(true);
@@ -199,5 +197,55 @@ describe('LineTSLMaterial.applyBlendingMode (TSL)', () => {
     // Define toggled → rebuildGraph → needsUpdate → version bump
     expect(mat.version).toBeGreaterThan(versionAfterMax);
     expect(mat.defines?.LUXAR_MAX_RGB_CONTRIBUTION).toBeUndefined();
+  });
+});
+
+// Both wrappers delegate to getCompleteBlendingState +
+// applyBlendingStateToMaterial, so for EVERY mode the applied THREE
+// state must equal the helper's canonical values and the two backends
+// must agree field-for-field. This is the convergence contract that
+// replaced the GLSL wrapper's hand-rolled per-mode dispatch.
+describe('LineMaterial ↔ LineTSLMaterial blending-state convergence', () => {
+  const ALL_MODES: BlendingMode[] = ['additive', 'normal', 'max', 'opaque', 'luminous'];
+  const STATE_FIELDS = [
+    'blending',
+    'blendEquation',
+    'blendSrc',
+    'blendDst',
+    'depthTest',
+    'depthWrite',
+    'transparent',
+  ] as const;
+
+  for (const mode of ALL_MODES) {
+    it(`'${mode}': GLSL state equals getCompleteBlendingState and matches TSL`, () => {
+      const glsl = new LineMaterial();
+      const tsl = new LineTSLMaterial();
+      glsl.applyBlendingMode(mode);
+      tsl.applyBlendingMode(mode);
+      const expected = getCompleteBlendingState(mode, 1.0);
+      for (const field of STATE_FIELDS) {
+        expect(glsl[field], `GLSL ${field} for '${mode}'`).toBe(expected[field]);
+        expect(tsl[field], `TSL ${field} for '${mode}'`).toBe(expected[field]);
+      }
+      expect(glsl.userData.blendingMode).toBe(mode);
+      expect(tsl.userData.blendingMode).toBe(mode);
+    });
+  }
+});
+
+// H — TSL constructors honor explicit transparent/depthTest overrides
+// AFTER the factory tail's mode-derived state, exactly like the GLSL
+// twins (additive state otherwise forces depthTest=false).
+describe('LineTSLMaterial constructor explicit overrides', () => {
+  it('depthTest: true survives additive construction', () => {
+    const mat = new LineTSLMaterial({ blendingMode: 'additive', depthTest: true });
+    expect(mat.depthTest).toBe(true);
+    expect(mat.userData.depthTest).toBe(true);
+  });
+
+  it('transparent: false survives additive construction', () => {
+    const mat = new LineTSLMaterial({ blendingMode: 'additive', transparent: false });
+    expect(mat.transparent).toBe(false);
   });
 });

@@ -11,8 +11,9 @@
  * GSplat-specific behaviours:
  *
  *   - `applyBlendingMode` selects the projection model: PEAK
- *     (2D-projected) for surface modes (max + normal/alpha-over),
- *     SUM (ray-integral) for emissive (additive/luminous). In TSL
+ *     (2D-projected) for surface modes (max/normal/opaque —
+ *     `usesPeakProjection`), SUM (ray-integral) for emissive
+ *     (additive/luminous). In TSL
  *     the graph JS-branches on the mode at build time; the
  *     `uProjectionMode` uniform is decorative (clone/telemetry
  *     parity). The GLSL twin drives the same split via the uniform.
@@ -55,8 +56,8 @@ import {
   applyBlendingStateToMaterial,
   getCompleteBlendingState,
   getGSplatNormalBlendingState,
-  isMaxMode,
   isNormalMode,
+  usesPeakProjection,
   type CompleteBlendingState,
 } from '../../blending-state';
 import { proxyIUniform, type TSLNode } from '../_shared/tsl-helpers';
@@ -126,9 +127,9 @@ export class GSplatTSLMaterial
       uRayIntegralFactor: uniform(computeRayIntegralFactor(truncate)),
       uOpacity: uniform(materialConfig.opacity ?? 1.0),
       // Decorative in TSL (the graph JS-branches on blendingMode); kept for
-      // clone/telemetry parity. Peak (1) for surface modes (max + normal).
+      // clone/telemetry parity. Peak (1) for surface modes (max/normal/opaque).
       uProjectionMode: uniform(
-        materialConfig.blendingMode === 'max' || materialConfig.blendingMode === 'normal' ? 1 : 0
+        usesPeakProjection(materialConfig.blendingMode ?? 'additive') ? 1 : 0
       ),
       uInvGamma: uniform(1.0 / gammaValue),
       uIntensity: uniform(materialConfig.intensity ?? 1.0),
@@ -158,8 +159,9 @@ export class GSplatTSLMaterial
     this.toneMapped = false;
     this.side = THREE.DoubleSide;
 
+    // depthTest is stamped after `rebuildGraph` below, from the
+    // mode-derived state the factory tail applies.
     this.userData.gamma = gammaValue;
-    this.userData.depthTest = materialConfig.depthTest ?? true;
     this.userData.scalarRange = materialConfig.scalarRange;
 
     // Stamp the requested mode on userData BEFORE rebuildGraph so
@@ -171,6 +173,22 @@ export class GSplatTSLMaterial
     this.userData.blendingMode = materialConfig.blendingMode ?? 'additive';
 
     this.rebuildGraph();
+
+    // Stamp the mode-derived depthTest the factory tail just applied
+    // (GLSL twin: applyBlendingMode stamps userData.depthTest) so
+    // clone() round-trips the real state.
+    this.userData.depthTest = this.depthTest;
+
+    // Honor explicit overrides from config after the factory's
+    // mode-derived blending state (mirrors the GLSL twin's constructor
+    // tail).
+    if (materialConfig.transparent !== undefined) {
+      this.transparent = materialConfig.transparent;
+    }
+    if (materialConfig.depthTest !== undefined) {
+      this.depthTest = materialConfig.depthTest;
+      this.userData.depthTest = materialConfig.depthTest;
+    }
   }
 
   /**
@@ -360,10 +378,11 @@ export class GSplatTSLMaterial
    * bridge-safe (symmetric alpha channel; separate alpha-equation
    * state would trip `gl.getError()` under the WebGPU→WebGL2 bridge).
    *
-   * Also sets `uProjectionMode` — peak (1) for surface modes (max +
-   * normal/alpha-over), sum (0) for emissive (additive/luminous). In TSL the
-   * uniform is decorative (the graph JS-branches on the mode); the crossing is
-   * what triggers `rebuildGraph()` below.
+   * Also sets `uProjectionMode` — peak (1) for surface modes
+   * (max/normal/opaque, `usesPeakProjection`), sum (0) for emissive
+   * (additive/luminous). In TSL the uniform is decorative (the graph
+   * JS-branches on the mode); the crossing is what triggers
+   * `rebuildGraph()` below.
    */
   applyBlendingMode(mode: BlendingMode): void {
     const previousMode = this.userData.blendingMode as BlendingMode | undefined;
@@ -375,8 +394,8 @@ export class GSplatTSLMaterial
 
     if (this.uniforms.uProjectionMode) {
       // Decorative (graph JS-branches on the mode); kept for clone/telemetry
-      // parity. Peak (1) for surface modes (max + normal/alpha-over).
-      this.uniforms.uProjectionMode.value = isMaxMode(mode) || isNormalMode(mode) ? 1 : 0;
+      // parity. Peak (1) for surface modes (max/normal/opaque).
+      this.uniforms.uProjectionMode.value = usesPeakProjection(mode) ? 1 : 0;
     }
 
     this.userData.blendingMode = mode;
@@ -385,15 +404,18 @@ export class GSplatTSLMaterial
     // Two boundaries force a graph rebuild (the factory JS-conditions
     // fragments/vertex blocks on the mode):
     //   - projection sum↔peak: the cofactor / ray-integration block is
-    //     emitted only in SUM mode (additive/luminous); SURFACE modes
-    //     (max + normal) use peak. A surface-mode flip always changes either
-    //     isMaxMode or isNormalMode, so the two checks below cover it.
+    //     emitted only in SUM mode (additive/luminous); the SURFACE
+    //     modes (max/normal/opaque) use peak. Compared through
+    //     `usesPeakProjection` — the SAME predicate the factory's
+    //     `surfaceMode` derivation uses — so any emissive↔surface
+    //     switch (e.g. additive→opaque) rebuilds instead of keeping a
+    //     stale graph.
     //   - normal↔other: the fragment output flips between coverage
     //     alpha and the alpha=1.0 contract (GLSL twin: the
     //     LUXAR_NORMAL_PREMULT define toggle).
     // Same pattern bloom / vignette toggles use.
     const projectionChanged =
-      previousMode === undefined || isMaxMode(previousMode) !== isMaxMode(mode);
+      previousMode === undefined || usesPeakProjection(previousMode) !== usesPeakProjection(mode);
     const premultChanged =
       previousMode === undefined || isNormalMode(previousMode) !== isNormalMode(mode);
     if (projectionChanged || premultChanged) {

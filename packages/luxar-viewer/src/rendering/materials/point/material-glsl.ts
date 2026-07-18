@@ -38,7 +38,6 @@ export interface PointMaterialConfig {
    * `LUXAR_MAX_RGB_CONTRIBUTION` define via `applyBlendingMode`.
    */
   blendingMode?: BlendingMode;
-  depthWrite?: boolean;
   depthTest?: boolean; // Whether to test against depth buffer (default true)
   transparent?: boolean; // Whether material is transparent (default true)
   radiusScale?: number; // Scale factor for radius normalization (e.g., 1/255 for uint8)
@@ -149,7 +148,7 @@ export class PointMaterial
       // instanced mesh layout does not use.
       vertexColors: false,
       transparent: materialConfig.transparent ?? !isOpaque,
-      depthWrite: materialConfig.depthWrite ?? false, // Usually false for additive blending
+      depthWrite: false, // applyBlendingMode below overwrites immediately
       depthTest: materialConfig.depthTest ?? !isAdditive,
       toneMapped: false, // HDR values pass through to post-processing
       blending: initialBlending,
@@ -343,7 +342,6 @@ export class PointMaterial
       intensity: this.uniforms.uIntensity.value,
       offset: this.uniforms.uOffset.value,
       blendingMode: (this.userData.blendingMode as BlendingMode | undefined) ?? 'additive',
-      depthWrite: this.depthWrite,
       depthTest: this.userData.depthTest ?? true, // depthTest stored in userData
       transparent: this.transparent,
       colormapTexture: this.uniforms.uColormapTex?.value ?? undefined,

@@ -13,8 +13,9 @@
  *     generic opacity >= 0.99 depth-write flip) — not the generic
  *     `normal` entry.
  *   - `uProjectionMode` selects PEAK (1, 2D-projected surface density)
- *     for the surface modes `max` AND `normal`, SUM ray-integral (0)
- *     for the emissive modes `additive`/`luminous` (and `opaque`).
+ *     for the surface modes `max`/`normal`/`opaque`
+ *     (`usesPeakProjection`), SUM ray-integral (0) for the emissive
+ *     modes `additive`/`luminous`.
  *   - The GLSL wrapper owns the `LUXAR_NORMAL_PREMULT` define
  *     lifecycle (set on `normal`, deleted on every other mode); the
  *     TSL wrapper JS-branches the graph on the mode instead and never
@@ -109,14 +110,15 @@ describe('GSplatMaterial.applyBlendingMode (GLSL)', () => {
     expect(mat.defines.LUXAR_NORMAL_PREMULT).toBeUndefined();
   });
 
-  it('opaque mode disables transparency, writes depth, sum projection', () => {
+  it('opaque mode disables transparency, writes depth, PEAK projection (surface mode)', () => {
     const mat = new GSplatMaterial();
     mat.applyBlendingMode('opaque');
     expect(mat.transparent).toBe(false);
     expect(mat.depthWrite).toBe(true);
     expect(mat.depthTest).toBe(true);
     expect(mat.blending).toBe(THREE.NormalBlending);
-    expect(mat.uniforms.uProjectionMode.value).toBe(0);
+    // Opaque alpha-overs a surface — 2D-projected peak, like max/normal.
+    expect(mat.uniforms.uProjectionMode.value).toBe(1);
     expect(mat.userData.blendingMode).toBe('opaque');
   });
 
@@ -224,14 +226,15 @@ describe('GSplatTSLMaterial.applyBlendingMode (TSL)', () => {
     expect(mat.blendDst).toBe(THREE.OneFactor);
   });
 
-  it('opaque mode disables transparency, writes depth, sum projection', () => {
+  it('opaque mode disables transparency, writes depth, PEAK projection (surface mode)', () => {
     const mat = new GSplatTSLMaterial();
     mat.applyBlendingMode('opaque');
     expect(mat.transparent).toBe(false);
     expect(mat.depthWrite).toBe(true);
     expect(mat.depthTest).toBe(true);
     expect(mat.blending).toBe(THREE.NormalBlending);
-    expect(mat.uniforms.uProjectionMode.value).toBe(0);
+    // Opaque alpha-overs a surface — 2D-projected peak, like max/normal.
+    expect(mat.uniforms.uProjectionMode.value).toBe(1);
     expect(mat.userData.blendingMode).toBe('opaque');
   });
 
@@ -262,5 +265,34 @@ describe('GSplatTSLMaterial.applyBlendingMode (TSL)', () => {
     // sum↔peak crossing → rebuildGraph → needsUpdate → version bump
     expect(mat.version).toBeGreaterThan(versionAfterMax);
     expect(mat.uniforms.uProjectionMode.value).toBe(0);
+  });
+
+  it('additive→opaque crosses the sum↔peak boundary and rebuilds the graph', () => {
+    // LOAD-BEARING: the rebuild boundary compares usesPeakProjection —
+    // an isMaxMode-only comparison would keep the SUM graph alive on an
+    // additive→opaque switch (stale ray-integral projection). Mirrors
+    // the max→additive crossing test above.
+    const mat = new GSplatTSLMaterial({ blendingMode: 'additive' });
+    const versionAfterAdditive = mat.version;
+    mat.applyBlendingMode('opaque');
+    expect(mat.version).toBeGreaterThan(versionAfterAdditive);
+    expect(mat.uniforms.uProjectionMode.value).toBe(1); // peak
+    expect(mat.userData.blendingMode).toBe('opaque');
+  });
+});
+
+// H — TSL constructor honors explicit transparent/depthTest overrides
+// AFTER the factory tail's mode-derived state, exactly like the GLSL
+// twin (additive state otherwise forces depthTest=false).
+describe('GSplatTSLMaterial constructor explicit overrides', () => {
+  it('depthTest: true survives additive construction', () => {
+    const mat = new GSplatTSLMaterial({ blendingMode: 'additive', depthTest: true });
+    expect(mat.depthTest).toBe(true);
+    expect(mat.userData.depthTest).toBe(true);
+  });
+
+  it('transparent: false survives additive construction', () => {
+    const mat = new GSplatTSLMaterial({ blendingMode: 'additive', transparent: false });
+    expect(mat.transparent).toBe(false);
   });
 });

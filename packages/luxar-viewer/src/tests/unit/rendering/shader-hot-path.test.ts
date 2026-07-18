@@ -15,8 +15,10 @@
  *   coverage fade (`smoothstep(maxExtent * 0.5, maxExtent, projectedExtent)`)
  *   combined via `min(depthFade, coverageFade)`. Removing either side
  *   re-introduces large-splat flicker near the camera.
- * - GSplat fragment in `'normal'` blending writes
- *   `fragColor = vec4(finalColor, 1.0)` (opaque-dimmed contract).
+ * - GSplat fragment alpha contract (PR #561): the
+ *   `LUXAR_NORMAL_PREMULT` branch ('normal' mode) emits the clamped
+ *   coverage alpha `clamp(intensity * uOpacity, 0, 1)`; every OTHER
+ *   mode keeps `fragColor = vec4(finalColor, 1.0)`.
  * - Line vertex computes `vWidthFade` to keep pixel-clamped lines
  *   from overcontributing to additive blending.
  *
@@ -106,15 +108,39 @@ describe('Shader hot-path string regressions', () => {
     });
   });
 
-  describe('GSplat fragment', () => {
-    it("writes opaque alpha (1.0) in 'normal' blending mode", () => {
-      // The 'normal' mode is dimmed-opaque: fragColor.a is 1.0 and
-      // finalColor is pre-dimmed by opacity. See material-manager.ts
-      // header note. Locking this string prevents turning 'normal' into
-      // transparent-additive by accident.
-      expect(GSPLAT_FRAGMENT_SHADER).toMatch(
-        /fragColor\s*=\s*vec4\s*\(\s*finalColor\s*,\s*1\.0\s*\)/
+  describe('GSplat fragment alpha contract (LUXAR_NORMAL_PREMULT split)', () => {
+    // Split the fragment source on the preprocessor markers so each
+    // regex asserts within its OWN branch text — matching against the
+    // whole source could hit the other branch and pass vacuously.
+    const ifdefStart = GSPLAT_FRAGMENT_SHADER.indexOf('#ifdef LUXAR_NORMAL_PREMULT');
+    const elseIdx = GSPLAT_FRAGMENT_SHADER.indexOf('#else', ifdefStart);
+    const endifIdx = GSPLAT_FRAGMENT_SHADER.indexOf('#endif', elseIdx);
+    const premultBranch = GSPLAT_FRAGMENT_SHADER.slice(ifdefStart, elseIdx);
+    const nonNormalBranch = GSPLAT_FRAGMENT_SHADER.slice(elseIdx, endifIdx);
+
+    it('has exactly the #ifdef / #else / #endif structure the branch split relies on', () => {
+      expect(ifdefStart).toBeGreaterThanOrEqual(0);
+      expect(elseIdx).toBeGreaterThan(ifdefStart);
+      expect(endifIdx).toBeGreaterThan(elseIdx);
+    });
+
+    it("'normal' (#ifdef branch) emits the clamped coverage alpha, premultiplied", () => {
+      // PR #561: normal mode is real alpha-over — RGB carries the full
+      // premultiplied contribution, alpha a CLAMPED coverage term for
+      // the One / OneMinusSrcAlpha framebuffer state.
+      expect(premultBranch).toMatch(
+        /coverage\s*=\s*clamp\s*\(\s*intensity\s*\*\s*uOpacity\s*,\s*0\.0\s*,\s*1\.0\s*\)/
       );
+      expect(premultBranch).toMatch(/fragColor\s*=\s*vec4\s*\(\s*finalColor\s*,\s*coverage\s*\)/);
+      expect(premultBranch).not.toMatch(/vec4\s*\(\s*finalColor\s*,\s*1\.0\s*\)/);
+    });
+
+    it('every non-normal mode (#else branch) keeps the alpha=1.0 contract', () => {
+      // additive/luminous rely on SrcAlpha being the identity factor
+      // (what makes the shared AdditiveBlending state the linear
+      // One + One sum); max compares premultiplied RGB directly.
+      expect(nonNormalBranch).toMatch(/fragColor\s*=\s*vec4\s*\(\s*finalColor\s*,\s*1\.0\s*\)/);
+      expect(nonNormalBranch).not.toMatch(/coverage/);
     });
   });
 

@@ -188,6 +188,48 @@ describe('LayerStateManager', () => {
     expect(layer.dataMax).toBe(1);
   });
 
+  describe('blendingMode init composes along the ancestry', () => {
+    it('a layer leaf without its own mode inherits the nearest ancestor mode', () => {
+      // The material renders with the COMPOSED mode, so the panel must
+      // initialize from it — reading only the node's own attr showed
+      // 'additive' for a leaf inside a blending_mode:'max' group.
+      const graph: SceneNode = {
+        path: '',
+        type: 'scene',
+        attrs: {},
+        hasSpatialIndex: false,
+        children: [
+          {
+            path: 'grp',
+            type: 'group',
+            attrs: { blending_mode: 'max' },
+            hasSpatialIndex: false,
+            children: [
+              {
+                path: 'grp/pts',
+                type: 'points',
+                attrs: { layer: true },
+                hasSpatialIndex: true,
+              },
+            ],
+          },
+        ],
+      };
+      mgr.initFromSceneGraph(graph);
+      expect(mgr.getLayer('grp/pts')!.blendingMode).toBe('max');
+    });
+
+    it("a malformed blending_mode attr initializes as 'normal' (composed + normalized)", () => {
+      mgr.initFromSceneGraph(makeSceneGraph([{ blending_mode: 'bogus' }]));
+      expect(mgr.getLayers()[0].blendingMode).toBe('normal');
+    });
+
+    it("defaults to 'additive' when no mode is set anywhere in the chain", () => {
+      mgr.initFromSceneGraph(makeSceneGraph([{}]));
+      expect(mgr.getLayers()[0].blendingMode).toBe('additive');
+    });
+  });
+
   it('derives a composite group layer range from its finest descendant leaf', () => {
     // Regression: a kind=partition/lod group carries no range of its own; the
     // [0, 1] fallback makes a colormapped gsplat render near-black. Derive from
