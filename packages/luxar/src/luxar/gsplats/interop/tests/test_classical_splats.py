@@ -35,14 +35,28 @@ from luxar.gsplats.interop.tests._synthetic import (
 from luxar.gsplats.utils.trils import unpack_tril
 
 # Reader-level tolerances per dialect (dominated by each format's quantization).
-_POSITION_ATOL = {"inria": 1e-6, "splat": 1e-6, "spz": 5e-4, "supersplat": 5e-3}
-_SCALE_RTOL = {"inria": 1e-6, "splat": 1e-6, "spz": 0.04, "supersplat": 0.02}
+# SOG: 16-bit log-domain means, 8-bit smallest-three quats, 256-entry codebooks
+# for scales/DC (synthetic writer uses a linspace codebook, so error ≤ half a
+# codebook step — the reader must tolerate that).
+_POSITION_ATOL = {
+    "inria": 1e-6, "splat": 1e-6, "spz": 5e-4, "supersplat": 5e-3, "sog": 5e-3
+}
+_SCALE_RTOL = {
+    "inria": 1e-6, "splat": 1e-6, "spz": 0.04, "supersplat": 0.02, "sog": 0.02
+}
 # SPZ v2 stores (x, y, z) and recomputes w = sqrt(1 - |xyz|²): the 1/127.5
 # xyz quantization error is amplified into w when w is small, so SPZ's real
 # error profile is looser than the raw 8-bit step.
-_QUAT_ATOL = {"inria": 1e-6, "splat": 0.01, "spz": 0.04, "supersplat": 0.002}
-_OPACITY_ATOL = {"inria": 1e-6, "splat": 1 / 255, "spz": 1 / 255, "supersplat": 1 / 255}
-_COLOR_ATOL = {"inria": 1e-6, "splat": 1 / 255, "spz": 0.01, "supersplat": 0.01}
+_QUAT_ATOL = {
+    "inria": 1e-6, "splat": 0.01, "spz": 0.04, "supersplat": 0.002, "sog": 0.02
+}
+_OPACITY_ATOL = {
+    "inria": 1e-6, "splat": 1 / 255, "spz": 1 / 255, "supersplat": 1 / 255,
+    "sog": 1 / 255,
+}
+_COLOR_ATOL = {
+    "inria": 1e-6, "splat": 1 / 255, "spz": 0.01, "supersplat": 0.01, "sog": 0.01
+}
 
 
 def _write_fixture(fmt: str, gt: GroundTruth, tmp: Path) -> Path:
@@ -367,3 +381,85 @@ class TestSceneApi:
                 )
                 assert node.blending_mode == "normal"
             assert scene_path.exists()
+
+
+class TestSog:
+    """SOG-specific paths beyond the shared parametrized reader parity."""
+
+    def test_reads_from_meta_json_path(self, ground_truth: GroundTruth) -> None:
+        from luxar.gsplats.interop.classical_splats import read_sog
+        from luxar.gsplats.interop.tests._synthetic import write_sog
+
+        with tempfile.TemporaryDirectory() as tmp:
+            bundle = Path(tmp) / "bundle"
+            write_sog(bundle, ground_truth)
+            # Pointing at meta.json resolves the same bundle as the directory.
+            cs_dir = read_sog(bundle)
+            cs_meta = read_sog(bundle / "meta.json")
+        assert np.allclose(cs_dir.positions, cs_meta.positions)
+        assert detect_classical_format(bundle / "meta.json") == "sog"
+
+    def test_reads_from_sog_zip(self, ground_truth: GroundTruth) -> None:
+        import zipfile
+
+        from luxar.gsplats.interop.classical_splats import read_sog
+        from luxar.gsplats.interop.tests._synthetic import write_sog
+
+        with tempfile.TemporaryDirectory() as tmp:
+            bundle = Path(tmp) / "bundle"
+            write_sog(bundle, ground_truth)
+            zpath = Path(tmp) / "scene.sog"
+            with zipfile.ZipFile(zpath, "w") as zf:
+                for member in bundle.iterdir():
+                    zf.write(member, member.name)
+            assert detect_classical_format(zpath) == "sog"
+            cs = read_sog(zpath)
+        assert cs.n_splats == ground_truth.positions.shape[0]
+        assert np.allclose(cs.positions, ground_truth.positions, atol=5e-3)
+
+    def test_import_end_to_end_records_source_format(
+        self, ground_truth: GroundTruth
+    ) -> None:
+        from luxar.gsplats.interop.tests._synthetic import write_sog
+
+        with tempfile.TemporaryDirectory() as tmp:
+            bundle = Path(tmp) / "bundle"
+            write_sog(bundle, ground_truth)
+            data = import_gsplats(bundle)
+        assert data.n_splats == ground_truth.positions.shape[0]
+        assert data.colors is not None
+        assert data.stats["interop"]["source_format"] == "sog"
+
+    def test_rejects_unsupported_version(self, ground_truth: GroundTruth) -> None:
+        import json
+
+        from luxar.gsplats.interop.classical_splats import read_sog
+        from luxar.gsplats.interop.tests._synthetic import write_sog
+
+        with tempfile.TemporaryDirectory() as tmp:
+            bundle = Path(tmp) / "bundle"
+            write_sog(bundle, ground_truth)
+            meta = json.loads((bundle / "meta.json").read_text())
+            meta["version"] = 1
+            (bundle / "meta.json").write_text(json.dumps(meta))
+            with pytest.raises(ValueError, match="SOG version"):
+                read_sog(bundle)
+
+    def test_shn_present_in_meta_is_dropped(self, ground_truth: GroundTruth) -> None:
+        # shN is optional and Luxar bakes DC only; a meta with an shN block must
+        # still decode (DC color), reporting the source SH degree from bands.
+        import json
+
+        from luxar.gsplats.interop.classical_splats import read_sog
+        from luxar.gsplats.interop.tests._synthetic import write_sog
+
+        with tempfile.TemporaryDirectory() as tmp:
+            bundle = Path(tmp) / "bundle"
+            write_sog(bundle, ground_truth)
+            meta = json.loads((bundle / "meta.json").read_text())
+            meta["shN"] = {"count": 1, "bands": 2, "codebook": [0.0] * 256,
+                           "files": ["shN_centroids.webp", "shN_labels.webp"]}
+            (bundle / "meta.json").write_text(json.dumps(meta))
+            cs = read_sog(bundle)  # must NOT try to read the (absent) shN files
+        assert cs.sh_degree == 2
+        assert np.allclose(cs.colors, ground_truth.colors, atol=0.01)

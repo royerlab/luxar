@@ -200,6 +200,19 @@ class TestDemoConfig:
 
         assert "credit=CREDIT" in inspect.getsource(m.build_scene)
 
+    def test_sog_matrixcity_bundle_and_files(self) -> None:
+        m = _load("demo_gsplats_interop_sog_matrixcity")
+        assert m.BASE_URL.startswith("https://") and "ace6e5b0" in m.BASE_URL
+        # meta.json + the 5 DC-group files; the shN palette images are NOT
+        # fetched (Luxar bakes DC only), so the bundle stays lean.
+        assert m.SOG_FILES[0] == "meta.json"
+        assert "sh0.webp" in m.SOG_FILES
+        assert not any("shN" in f for f in m.SOG_FILES)
+        # It must build the large-scale hierarchy via the overview recipe.
+        import inspect
+
+        assert 'recipe="overview"' in inspect.getsource(m.build_scene)
+
     def test_unknown_scene_raises(self) -> None:
         m = _load("demo_gsplats_interop_mipnerf_garden")
         with pytest.raises(ValueError, match="Unknown scene"):
