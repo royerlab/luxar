@@ -289,9 +289,11 @@ export async function runInitPipeline(
     // Sort round-trips show up as the monitor's 'Depth Sort' line.
     getProfiler: () => SceneLoaderManager.getInstance().getProfiler(),
   });
-  // Camera-motion re-sort scheduler (Phase 3, spec §6). Same per-frame
-  // slot pattern as 'lod-group-selector' below; the evaluation is
-  // allocation-free and early-outs when no order-dependent node exists.
+  // Camera-motion re-sort scheduler (Phase 3, spec §6) + global cross-node
+  // renderOrder assignment. Same per-frame slot pattern as
+  // 'lod-group-selector' below; the evaluation early-outs when no
+  // order-dependent node exists (with nodes it allocates only the small
+  // per-frame order slots — documented in assignGlobalRenderOrder).
   animationController.addPerFrameCallback('depth-sort-scheduler', () => {
     evaluateDepthSortPerFrame();
   });

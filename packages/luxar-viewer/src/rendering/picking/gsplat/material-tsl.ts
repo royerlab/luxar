@@ -24,10 +24,13 @@ import type { CameraAwareMaterial } from '../../materials/_shared/camera-aware-m
 import { computeFocalLength } from '../../materials/_shared/camera-uniforms';
 import { proxyIUniform, type TSLNode } from '../../materials/_shared/tsl-helpers';
 import { getPlaceholderSplatTexture } from '../../splat-texture-layout';
-import type { GSplatPickingMaterialConfig } from './material';
+import type { GSplatPickingMaterialConfig, SurfacePickAwareMaterial } from './material';
 import { GSPLAT_COV2D_DILATION_DEFAULT } from '../../materials/gsplat/math';
 
-export class GSplatPickingTSLMaterial extends NodeMaterial implements CameraAwareMaterial {
+export class GSplatPickingTSLMaterial
+  extends NodeMaterial
+  implements CameraAwareMaterial, SurfacePickAwareMaterial
+{
   uniforms: Record<string, THREE.IUniform>;
 
   private tslNodes: {
