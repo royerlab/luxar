@@ -127,7 +127,7 @@
     "@vitest/coverage-v8": "~4.1.5",
     "@vitest/ui": "~4.1.5",
     "@zarrita/storage": "^0.2.0",
-    "dependency-cruiser": "^18.0.0",
+    "dependency-cruiser": "^18.1.0",
     "eslint": "^9.39.4",
     "fast-check": "^4.9.0",
     "globals": "^17.6.0",
