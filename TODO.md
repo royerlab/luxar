@@ -254,24 +254,24 @@ to ship after). Sequencing is at the bottom.
   - ✅ **Phase 0** (normal-mode premultiplied alpha) — MERGED (#511, squash
     `e1e079e6`).
   - ✅ **Shader-symmetry B9a–c** + native-WebGPU perf validation — MERGED (#523).
-  - ⏳ **Land PR #534** (double-check fixes orphaned by the #532 merge race) and
-    refresh green visual baselines — prerequisite for Phase 1's pixel-identical
-    gate.
-  - ⏳ **Phase-0 product checkpoint (gate, cheap to retire):** confirm `normal`
-    alpha-over actually *looks right* on real HDR microscopy (neuromast, h2afva)
-    before sinking Phase-1 effort. Decision to ship implies "verdict expected
-    yes" — do the explicit look anyway (spec risk register §10 item 2).
-  - ⏳ **Phase 1 — texture-backed splat storage + always-on ordering attribute.**
-    Size **L**, the highest-blast-radius PR of the campaign (4 shader stacks +
-    material system → per-node + pool adapter rebuilt, under a *pixel-identical*
-    merge gate). Land right after a green-baseline refresh; review it like a
-    rendering-engine change, not a refactor (`?dpr=1` pinning; grow-leak probe on
-    native WebGPU).
-  - ⏳ **Phase 2 — SortWorker + sort-at-commit** (M/L). `normal` correct at rest.
-  - ⏳ **Phase 3 — camera-triggered re-sort** (M). The live feature; required for
-    orbit **videos** to look right. If schedule slips, Phase 2 + still-only
-    gallery is a viable fallback.
+  - ✅ **Phases 1–3 ALL MERGED** (#535 texture-backed storage, #540 SortWorker +
+    sort-at-commit, #553 camera-triggered re-sorts), plus the cross-node
+    ordering follow-ups (#563 per-part renderOrder, #565 exact BSP tile order,
+    #575 one global cross-node renderOrder domain).
+  - ✅ **2026-07 review + hardening campaign MERGED** (16 PRs, #568–#596): six
+    lifecycle/consistency bugs (capacity-clamp vs sorted ordering, null-camera
+    recovery, demotion worker-release, NaN-safe ordering, worker-less
+    renderOrder), colormapped Points/Lines Intensity/Offset, front-most-wins
+    picking for `normal` gsplats, permutation retention on same-count commits,
+    plus structural cleanups (render-order submodule, committedData accessors,
+    parity-harness split) — see `CHANGELOG.md` July 2026 and the spec's status
+    block.
   - ⏭️ **Phase 4** (partial texture appends) — optional perf win, stays **[POST]**.
+  - ⏭️ **[POST] residue from the campaign reviews:** instance-based coordinator
+    DI (only if multi-instance embedding lands), front-most picking in MIXED
+    normal+additive scenes (single shared pick depth buffer — documented in
+    `rendering/picking/README.md`), cross-TYPE (points/lines vs gsplat)
+    transparent interleaving.
 - **R10a [LAUNCH] — "Normal" (surface-like) gsplat demos + gallery datasets.**
   New item created by R10's promotion. Once Phase 2/3 land, build one or more
   demos that showcase `normal`-mode alpha-over gsplats (the realistic, occluding,
