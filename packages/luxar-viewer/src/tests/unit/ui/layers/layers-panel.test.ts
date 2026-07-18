@@ -788,6 +788,70 @@ describe('LayersPanel — LOD active-level dropdown', () => {
   });
 });
 
+describe('LayersPanel — blend select drives the leaf material', () => {
+  let container: HTMLElement;
+  let animationController: AnimationController;
+
+  beforeEach(() => {
+    document.body.innerHTML = '';
+    container = document.createElement('div');
+    document.body.appendChild(container);
+    animationController = makeAnimationController();
+  });
+
+  /** Find the blend <select> by its 'Blend' control-group label. */
+  function findBlendSelect(root: HTMLElement): HTMLSelectElement | null {
+    const groups = Array.from(root.querySelectorAll('.luxar-layers-panel__control-group'));
+    for (const group of groups) {
+      const label = group.querySelector('.luxar-layers-panel__control-label');
+      if (label?.textContent === 'Blend') {
+        return group.querySelector('.luxar-layers-panel__select') as HTMLSelectElement | null;
+      }
+    }
+    return null;
+  }
+
+  it('change event applies the new mode to the leaf material via applyBlendingMode', () => {
+    // Minimal LuxarMaterial-shaped stub: isLuxarMaterial checks
+    // updateIntensity + updateGamma; applyComposed also calls
+    // updateOpacity/updateOffset; getLeafMaterial clones on first use
+    // (clone returns the same stub so the spy survives).
+    const applyBlendingMode = vi.fn();
+    const stubMat: Record<string, unknown> = {
+      userData: { blendingMode: 'additive' },
+      uniforms: { uOpacity: { value: 1.0 } },
+      defines: {},
+      updateIntensity: vi.fn(),
+      updateOffset: vi.fn(),
+      updateGamma: vi.fn(),
+      updateOpacity: vi.fn(),
+      applyBlendingMode,
+    };
+    stubMat.clone = vi.fn(() => stubMat);
+
+    const mesh = new THREE.Mesh(new THREE.BufferGeometry(), stubMat as unknown as THREE.Material);
+    mesh.name = '/cloud'; // getMesh resolves the layer path by object name
+    const rootGroup = new THREE.Group();
+    rootGroup.add(mesh);
+
+    const panel = new LayersPanel(container, animationController);
+    panel.initFromScene(rootGroup, makeLayeredSceneGraph());
+    panel.show();
+    panel.layerState.select('/cloud', 'single');
+    applyBlendingMode.mockClear(); // drop init-time composed applies
+
+    const select = findBlendSelect(container);
+    expect(select).not.toBeNull();
+    select!.value = 'max';
+    select!.dispatchEvent(new Event('change', { bubbles: true }));
+
+    // The real UI path (select change → applyToSelected → applyComposed)
+    // must reach the material's own applyBlendingMode with the new mode.
+    expect(applyBlendingMode).toHaveBeenCalledWith('max');
+    expect(panel.layerState.getLayer('/cloud')!.blendingMode).toBe('max');
+  });
+});
+
 // ---------------------------------------------------------------------------
 // Display-range / gamma routing: colormap (LUT) vs direct-color.
 //
