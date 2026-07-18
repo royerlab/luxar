@@ -17,6 +17,7 @@ unchanged. Everything is NumPy + stdlib; **no new dependencies**.
 | `splat` | antimatter15 `.splat` | Flat 32-byte records; color/alpha already baked |
 | `spz` | Niantic/Scaniverse `.spz` | Legacy gzip container v1–v3 (the format Scaniverse writes). v4 NGSP/zstd is detected and rejected with a clear error |
 | `supersplat` | SuperSplat compressed `.ply` | Chunked bit-packed (11-10-11 positions/scales, smallest-three rotations, 8888 color); 12- and 18-property chunk layouts |
+| `sog` | PlayCanvas **SOG** bundle (dir with `meta.json` + WebPs, that `meta.json`, or a `.sog` ZIP) | Spatially Ordered Gaussians v2: 16-bit log-domain positions (`means_l`/`means_u`), 256-entry codebook scales/DC, smallest-three quats; higher `shN` palette dropped (DC only). Needs Pillow+WebP |
 
 **Conversion semantics:**
 
@@ -26,7 +27,7 @@ unchanged. Everything is NumPy + stdlib; **no new dependencies**.
 - **Opacity → `amplitudes`** (both in [0, 1]).
 - **SH color is reduced to the DC band**: `rgb = 0.5 + C₀·f_dc`, baked to
   per-splat SDR colors; view-dependent `f_rest` bands are dropped.
-- **Orientation**: COLMAP-convention dialects (INRIA/.splat/SuperSplat store
+- **Orientation**: COLMAP-convention dialects (INRIA/.splat/SuperSplat/SOG store
   +Y down) get a 180°-about-X fix by default so scenes are upright in Y-up
   viewers; SPZ declares Y-up (RUB) data and is left untouched. Override with
   `rotate_x180=`/`flip=` (CLI: `--reorient/--no-reorient`, `--flip`).
