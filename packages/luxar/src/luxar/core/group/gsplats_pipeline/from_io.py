@@ -135,12 +135,12 @@ def graft_gsplat_node(
     # `blending_mode` also propagates to EVERY grafted child, not just the
     # wrapper. Unlike transform/opacity/gamma — hierarchically combined at render
     # time, so wrapper-only is correct and duplicating would double them —
-    # blending_mode is a per-material choice, and the leaf writer stamps a DEFAULT
-    # ("additive") on each part. The viewer reads each part's own value, so a
-    # wrapper-only blending_mode is shadowed by that default: a `normal` (surface,
-    # alpha-over) import of a tiled/partition file (e.g. the classical-3DGS
-    # interop demos) would render as `additive` glow. Propagating it keeps one
-    # consistent mode across the whole grafted layer. Recurses via `child_attrs`.
+    # blending_mode is nearest-setter-wins, and stamping it explicitly on each
+    # part keeps the parts self-consistent even when later flattened or
+    # re-exported outside the scene graph (belt-and-suspenders: the viewer's
+    # ancestor inheritance would also resolve a wrapper-only mode now that the
+    # leaf writers no longer stamp a shadowing "additive" default).
+    # Recurses via `child_attrs`.
     if "blending_mode" in wrapper_attrs:
         child_attrs["blending_mode"] = wrapper_attrs["blending_mode"]
     # A ``coverage_fraction`` passed down by a parent lod-group is THIS node's own

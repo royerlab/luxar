@@ -40,8 +40,15 @@ def prepare_transform_attrs(attrs: Dict[str, Any], store: zarr.Group) -> None:
 
 
 def apply_default_render_attrs(attrs: Dict[str, Any]) -> None:
-    """Stamp the default compositing attrs (opacity/gamma/intensity/offset/\
-    blending_mode) in place, only where the caller did not supply them.
+    """Stamp the default compositing attrs (opacity/gamma/intensity/offset) in
+    place, only where the caller did not supply them.
+
+    ``blending_mode`` is deliberately NOT stamped: unlike these identity-valued
+    attrs (multiplicative/additive no-ops under the viewer's hierarchical
+    composition), a stamped blending default would OVERRIDE an ancestor-set
+    mode under the viewer's nearest-setter-wins rule. An unset leaf inherits
+    from the nearest ancestor; the viewer defaults to ``additive`` when no
+    ancestor sets it.
 
     Mirrors the GSplat defaults in :func:`~luxar.io._compiler.gsplat_assembly.\
     apply_gsplat_group_attrs` (which additionally defaults ``truncation_radius``).
@@ -51,7 +58,19 @@ def apply_default_render_attrs(attrs: Dict[str, Any]) -> None:
         ("gamma", 1.0),
         ("intensity", 1.0),
         ("offset", 0.0),
-        ("blending_mode", "additive"),
     ):
         if key not in attrs:
             attrs[key] = default
+
+
+def validate_render_attrs(attrs: Dict[str, Any]) -> None:
+    """Validate render attrs that would corrupt a node if written unchecked.
+
+    Called as the FIRST step of every geometry writer — before the zarr group
+    is created — so an invalid value fails the write without leaving a partial
+    node on disk.
+    """
+    if "blending_mode" in attrs:
+        from ...validation.types import validate_blending_mode
+
+        validate_blending_mode(attrs["blending_mode"])
