@@ -72,13 +72,47 @@ class _LimitedFile:
         self._f.close()
 
 
-@pytest.fixture()
-def range_server(tmp_path: Path):
-    """Serve tmp_path over HTTP with Range support; yields the base URL."""
-    handler = lambda *a, **kw: _RangeHTTPHandler(*a, directory=str(tmp_path), **kw)  # noqa: E731
+class _RedirectRangeHTTPHandler(_RangeHTTPHandler):
+    """Range handler that 302-redirects ``/dl/<x>`` → ``/<x>`` with
+    ``Content-Length: 0`` on the redirect — mimicking GitHub/HF release-asset
+    hosts that bounce the canonical URL to a signed CDN. Reproduces the bug
+    where an unfollowed HEAD reads the 302's zero length. Both GET and HEAD
+    route through ``send_head``, so this covers both verbs.
+    """
+
+    def send_head(self):  # noqa: ANN201 - stdlib override
+        if self.path.startswith("/dl/"):
+            self.send_response(302)
+            self.send_header("Location", self.path[3:])  # strip "/dl"
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+            return None
+        return super().send_head()
+
+
+def _serve(directory: Path, handler_cls):  # noqa: ANN001, ANN202
+    handler = lambda *a, **kw: handler_cls(*a, directory=str(directory), **kw)  # noqa: E731
     server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), handler)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
+    return server, thread
+
+
+@pytest.fixture()
+def range_server(tmp_path: Path):
+    """Serve tmp_path over HTTP with Range support; yields the base URL."""
+    server, thread = _serve(tmp_path, _RangeHTTPHandler)
+    try:
+        yield f"http://127.0.0.1:{server.server_address[1]}"
+    finally:
+        server.shutdown()
+        thread.join(timeout=5)
+
+
+@pytest.fixture()
+def redirect_range_server(tmp_path: Path):
+    """Serve tmp_path with Range support + a 302-redirecting ``/dl/`` prefix."""
+    server, thread = _serve(tmp_path, _RedirectRangeHTTPHandler)
     try:
         yield f"http://127.0.0.1:{server.server_address[1]}"
     finally:
@@ -182,6 +216,22 @@ class TestDownloadZipMember:
                 tmp_path / "o.txt",
                 expected_size=999,
             )
+
+    def test_extracts_through_a_redirecting_host(
+        self, redirect_range_server: str, tmp_path: Path
+    ) -> None:
+        """Regression: a HEAD that 302-redirects with Content-Length: 0 must
+        be followed (allow_redirects=True), or archive_size reads as 0 and the
+        tail range becomes `bytes=0--1` — which strict CDNs reject with 501.
+        """
+        payloads = _make_payloads()
+        archive = tmp_path / "archive.zip"
+        _build_zip(archive, payloads)
+        member = "models/train/point_cloud.ply"
+        out = tmp_path / "via_redirect.ply"
+        # /dl/archive.zip 302-redirects to /archive.zip on every hop.
+        download_zip_member(f"{redirect_range_server}/dl/archive.zip", member, out)
+        assert out.read_bytes() == payloads[member]
 
     def test_matches_zipfile_extraction(
         self, range_server: str, tmp_path: Path
