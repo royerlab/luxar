@@ -76,6 +76,27 @@ export class PointPickingTSLMaterial extends NodeMaterial implements CameraAware
     pointPickWebGPUFactory(this.tslNodes as PointPickTSLNodes, this);
   }
 
+  /**
+   * Clone this picking material. Mirrors the GLSL wrapper's explicit
+   * clone (the inherited `Material.clone()` calls the constructor with
+   * no config and would throw; `NodeMaterial.copy` would alias the
+   * source's node graph instead of this instance's own uniform nodes).
+   */
+  clone(): this {
+    const cloned = new PointPickingTSLMaterial({
+      nodeId: this.uniforms.uNodeId.value as number,
+      radiusScale: this.uniforms.radiusScale.value as number,
+    });
+    cloned.uniforms.pointSizeFactor.value = this.uniforms.pointSizeFactor.value;
+    cloned.uniforms.maxPointSize.value = this.uniforms.maxPointSize.value;
+    cloned.uniforms.uIsOrtho.value = this.uniforms.uIsOrtho.value;
+    cloned.uniforms.uNearCull.value = this.uniforms.uNearCull.value;
+    (cloned.uniforms.uResolution.value as THREE.Vector2).copy(
+      this.uniforms.uResolution.value as THREE.Vector2
+    );
+    return cloned as this;
+  }
+
   updateCameraParams(
     fov: number,
     resolution: THREE.Vector2,

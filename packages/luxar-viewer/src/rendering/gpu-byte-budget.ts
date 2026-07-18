@@ -63,14 +63,14 @@ function computeAutoBudget(): number {
 }
 
 /**
- * Initialize the budget once at startup from the resolved config value
+ * Configure the budget once at startup from the resolved config value
  * (or the ``?gpuBudgetMB`` URL param, which the caller passes in):
  *
  * - ``null`` / ``undefined`` → **auto-size** from device memory.
  * - ``0`` → disable byte-budget eviction (unbounded resident geometry).
  * - a positive number → pin the budget to exactly that many bytes.
  */
-export function initGpuByteBudget(overrideBytes?: number | null): void {
+export function configureGpuByteBudget(overrideBytes?: number | null): void {
   if (overrideBytes == null) {
     budgetBytes = computeAutoBudget();
     const dm = (navigator as Navigator & { deviceMemory?: number }).deviceMemory;

@@ -22,7 +22,14 @@ import { clampSplatCapacity } from '../splat-texture-layout';
 import type { PooledBuffer } from './pool-stats';
 import { chooseCapacity } from './capacity';
 
-/** Packed GSplats data ready for GPU upload (from gsplats/projection.ts). */
+/**
+ * Packed GSplats data ready for GPU upload (from gsplats/projection.ts).
+ *
+ * Carries arrays only — the splat count M travels as the positional
+ * `count` argument of `updateGeometry`, matching the points/lines
+ * adapters (whose payloads' own count fields are pipeline metadata the
+ * pool never reads).
+ */
 export interface PackedGSplatsData {
   centers3D: Float32Array; // M * 3
   amplitudes: Float32Array; // M
@@ -30,7 +37,6 @@ export interface PackedGSplatsData {
   cholesky23: Float32Array; // M * 2 [L11, L20]
   cholesky45: Float32Array; // M * 2 [L21, L22]
   colors: Float32Array; // M * 3 (RGB)
-  splatCount: number;
 }
 
 function createGSplatsGeometry(splatCapacity: number): THREE.InstancedBufferGeometry {
