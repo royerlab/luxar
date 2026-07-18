@@ -415,6 +415,36 @@ describe('depth-sort coordinator', () => {
     expect(near.renderOrder).toBe(2);
   });
 
+  it('meshes without usable depth (no bounds / non-finite center) rank at view-z 0, no NaN poisoning', async () => {
+    // A boundless mesh has no depth reference; a NaN bounding-sphere
+    // center (NaN input data propagates into the bbox) must not poison
+    // the group-sort comparators — both degrade to view-z 0 and stay
+    // comparable, ranking between farther (< 0) and behind-camera (> 0)
+    // content.
+    const coord = await loadCoordinator();
+    coord.configureDepthSort({ getCamera: () => makeCamera(), requestRender: vi.fn() });
+
+    const farMesh = makeGSplatsMesh(2, 'normal');
+    farMesh.geometry.boundingSphere!.center.set(0, 0, -30);
+    const boundless = makeGSplatsMesh(2, 'normal');
+    boundless.geometry.boundingSphere = null;
+    const nanCenter = makeGSplatsMesh(2, 'normal');
+    nanCenter.geometry.boundingSphere!.center.set(NaN, NaN, NaN);
+
+    for (const m of [boundless, nanCenter, farMesh]) {
+      coord.noteGSplatsCommit(m, new Float32Array([0, 0, -1, 1, 0, -2]), 2);
+    }
+    await flush();
+
+    coord.evaluateDepthSortPerFrame();
+
+    // The finite far mesh (view-z -30) ranks first; the two degenerate
+    // meshes tie at view-z 0 and take the remaining ranks in insertion
+    // order — every mesh got exactly one integer rank (no NaN fallout).
+    expect(farMesh.renderOrder).toBe(0);
+    expect([boundless.renderOrder, nanCenter.renderOrder].sort()).toEqual([1, 2]);
+  });
+
   it('two BSP wrappers land on ONE global scale: the far wrapper draws entirely first', async () => {
     // The core cross-domain fix: per-wrapper painter ranks are only
     // comparable WITHIN a wrapper. Two partitions must interleave on a
