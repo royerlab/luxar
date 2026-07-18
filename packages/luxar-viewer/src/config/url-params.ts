@@ -265,7 +265,7 @@ function parsePositiveFloat(raw: string | null): number | null {
 /**
  * Parse a non-negative integer query value; null on missing/invalid/<0.
  * `0` is a valid value — for `?gpuBudgetMB=0` it flows through to
- * `initGpuByteBudget` as the explicit "disable the byte budget" signal,
+ * `configureGpuByteBudget` as the explicit "disable the byte budget" signal,
  * matching the config-level `0` semantics.
  */
 function parseNonNegativeInt(raw: string | null): number | null {
