@@ -1,4 +1,4 @@
-"""Pure-helper smoke tests for the four gsplats interop demos.
+"""Pure-helper smoke tests for the gsplats interop demos.
 
 Exercises the shared scene-building scaffolding (``_interop_common``) on a
 synthetic ``.splat`` fixture — no network, no GPU — plus the per-demo config
@@ -180,6 +180,20 @@ class TestDemoConfig:
         assert m.MEMBER == "garden/point_cloud/iteration_30000/point_cloud.ply"
         assert m.MEMBER_SIZE == 1_447_027_964
         assert m.MODELS_ZIP.endswith("pretrained/models.zip")
+
+    def test_clusterfly_member_and_license(self) -> None:
+        m = _load("demo_gsplats_interop_macro_clusterfly")
+        # Range-extracts the L-level PLY member from the GitHub release zip.
+        assert m.MEMBER == "cluster fly L.ply"
+        assert m.MEMBER_SIZE == 71_263_622
+        assert m.ARCHIVE_URL.startswith(
+            "https://github.com/danybittel/splats/releases/download"
+        )
+        # CC BY 4.0 attribution must be surfaced in the in-scene credit.
+        import inspect
+
+        src = inspect.getsource(m.build_scene)
+        assert "CC BY 4.0" in src and "danybittel" in src
 
     def test_unknown_scene_raises(self) -> None:
         m = _load("demo_gsplats_interop_mipnerf_garden")
