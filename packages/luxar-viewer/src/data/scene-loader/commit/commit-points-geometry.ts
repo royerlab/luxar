@@ -35,7 +35,8 @@ import * as THREE from 'three';
 import type { LoadedPointsData } from '../../data-loader-types';
 import { isPointsUserData } from '../../../types/points';
 import { stampLadderComplete, stampLoadedViewVersion } from './stamp-view-version';
-import { isAlreadyCommitted, type CommittedDataUserData } from './noop-commit';
+import { isAlreadyCommitted } from './noop-commit';
+import { setCommittedData } from '../../../types/committed-data';
 import { log, Modules } from '../../../utils/log';
 import type { UpdateSession } from '../../../profiling/update-profiler';
 import type { GPUBufferPool } from '../../../rendering/gpu-buffer-pool';
@@ -80,7 +81,7 @@ export function commitPointsGeometry(
   // separate process step, so unlike lines/gsplats the check lives here in
   // the commit helper, covering the atomic-commit, refinement, retry, and
   // lazy paths uniformly. Refresh only the LOD freshness stamp.
-  if (isAlreadyCommitted(points.userData, data)) {
+  if (isAlreadyCommitted(points, data)) {
     stampLoadedViewVersion(points.userData, loadedViewVersion);
     stampLadderComplete(points.userData);
     return;
@@ -154,7 +155,7 @@ export function commitPointsGeometry(
       // Record the committed data reference — a later update returning the
       // SAME reference (memoized progressive concat) takes the stamp-only
       // no-op path above instead of re-uploading.
-      (points.userData as CommittedDataUserData).committedData = data;
+      setCommittedData(points, data);
       return;
     }
 
@@ -182,7 +183,7 @@ export function commitPointsGeometry(
     // same contract as the pool path's attributesRebuilt branch.
     invalidateRenderObjectFor(points);
     // Record the committed data reference (see the pool path above).
-    (points.userData as CommittedDataUserData).committedData = data;
+    setCommittedData(points, data);
   } finally {
     bufferSession?.end();
   }

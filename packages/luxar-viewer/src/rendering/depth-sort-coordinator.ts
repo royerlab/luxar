@@ -45,6 +45,7 @@ import SortWorker from '../workers/sort-worker?worker';
 import type { SortWorkerAPI } from '../workers/sort-worker';
 import { writeSortedIndexOrdering } from './gsplat-geometry';
 import { isNormalMode } from './blending-state';
+import { clearCommittedData, hasCommittedData } from '../types/committed-data';
 import type { BlendingMode } from './material-manager';
 import {
   assignGlobalRenderOrder,
@@ -379,8 +380,7 @@ function scheduleSort(mesh: THREE.Mesh, nodeId: string): void {
       // level's geometry returned to the evictable pool (and may since
       // belong to another node) — the cleared stamp is exactly the signal
       // that the mesh's geometry no longer holds this commit's splats.
-      const stillCommitted =
-        (mesh.userData as { committedData?: unknown })?.committedData !== undefined;
+      const stillCommitted = hasCommittedData(mesh);
       if (result && result.generation === current.generation && stillCommitted) {
         const geometry = mesh.geometry as THREE.InstancedBufferGeometry;
         if (geometry?.getAttribute?.('aSortedIndex')) {
@@ -504,7 +504,7 @@ export function evaluateDepthSortPerFrame(): void {
     if (!isEffectivelyVisible(mesh)) continue;
     // LOD demotion returned the geometry to the pool — same signal the
     // resolve path checks; a sort dispatched now would be dropped there.
-    if ((mesh.userData as { committedData?: unknown }).committedData === undefined) continue;
+    if (!hasCommittedData(mesh)) continue;
     const mode = liveBlendingMode(mesh);
     if (!mode || !isNormalMode(mode)) {
       // No longer order-dependent (e.g. switched to additive) — clear any
@@ -599,7 +599,7 @@ export function noteGSplatsBlendingModeSwitch(
   if (!newMode || newMode === prevMode) return;
   const wasNormal = prevMode !== undefined && isNormalMode(prevMode);
   if (isNormalMode(newMode) && !wasNormal) {
-    delete (mesh.userData as { committedData?: unknown }).committedData;
+    clearCommittedData(mesh);
     requestReprocess?.();
   } else if (!isNormalMode(newMode) && wasNormal) {
     const state = nodeStates.get(mesh.uuid);
