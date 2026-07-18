@@ -55,6 +55,26 @@ export class PointPickingMaterial extends THREE.ShaderMaterial implements Camera
     });
   }
 
+  /**
+   * Clone this picking material. The inherited `Material.clone()` calls
+   * the constructor with no config (throws on `config.nodeId`), so —
+   * mirroring `GSplatPickingMaterial.clone()` — construct with the same
+   * config and copy the runtime-tuned uniform values (camera params)
+   * across explicitly.
+   */
+  clone(): this {
+    const cloned = new PointPickingMaterial({
+      nodeId: this.uniforms.uNodeId.value,
+      radiusScale: this.uniforms.radiusScale.value,
+    });
+    cloned.uniforms.pointSizeFactor.value = this.uniforms.pointSizeFactor.value;
+    cloned.uniforms.maxPointSize.value = this.uniforms.maxPointSize.value;
+    cloned.uniforms.uIsOrtho.value = this.uniforms.uIsOrtho.value;
+    cloned.uniforms.uNearCull.value = this.uniforms.uNearCull.value;
+    cloned.uniforms.uResolution.value.copy(this.uniforms.uResolution.value);
+    return cloned as this;
+  }
+
   updateCameraParams(
     fov: number,
     resolution: THREE.Vector2,

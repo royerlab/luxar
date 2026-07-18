@@ -126,7 +126,6 @@ export function commitGSplatsGeometry(
             cholesky23,
             cholesky45,
             colors: processed.colors,
-            splatCount,
           },
           splatCount,
           truncationRadius,

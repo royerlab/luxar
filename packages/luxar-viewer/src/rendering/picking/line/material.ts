@@ -48,6 +48,24 @@ export class LinePickingMaterial extends THREE.ShaderMaterial implements CameraA
     });
   }
 
+  /**
+   * Clone this picking material. The inherited `Material.clone()` calls
+   * the constructor with no config (throws on `config.nodeId`), so —
+   * mirroring `GSplatPickingMaterial.clone()` — construct with the same
+   * nodeId and copy the runtime-tuned uniform values (camera params,
+   * pixel-width scales) across explicitly.
+   */
+  clone(): this {
+    const cloned = new LinePickingMaterial({ nodeId: this.uniforms.uNodeId.value });
+    cloned.uniforms.uResolution.value.copy(this.uniforms.uResolution.value);
+    cloned.uniforms.uIsOrtho.value = this.uniforms.uIsOrtho.value;
+    cloned.uniforms.uNearCull.value = this.uniforms.uNearCull.value;
+    cloned.uniforms.uMaxLinePixelWidth.value = this.uniforms.uMaxLinePixelWidth.value;
+    cloned.uniforms.uPerspectiveLineScale.value = this.uniforms.uPerspectiveLineScale.value;
+    cloned.uniforms.uOrthoLineScale.value = this.uniforms.uOrthoLineScale.value;
+    return cloned as this;
+  }
+
   updateCameraParams(
     fov: number,
     resolution: THREE.Vector2,
