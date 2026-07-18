@@ -72,8 +72,8 @@ import {
   applyBlendingStateToMaterial,
   getCompleteBlendingState,
   getGSplatNormalBlendingState,
-  isMaxMode,
   isNormalMode,
+  usesPeakProjection,
 } from '../../blending-state';
 import type { BlendingMode } from '../../material-manager';
 
@@ -387,15 +387,16 @@ export function gsplatWebGPUFactory(
     // emit only the path that the active blending mode uses, mirroring
     // the GLSL preprocessor's compile-time `if`. The wrapper class
     // calls `rebuildGraph()` whenever the sum/max boundary is crossed.
-    // Peak (2D-projected) projection for SURFACE modes (max + normal/alpha-over);
-    // sum ray-integral only for emissive (additive/luminous). GLSL twin: the
-    // applyBlendingMode normal branch sets uProjectionMode=1. Alpha-over surfaces
-    // want the projected 2D-Gaussian peak, not the emissive line-integral (whose
-    // ~2.4×·sigmaRay boost would saturate coverage-alpha to opaque and streak at
-    // grazing angles). The wrapper calls rebuildGraph() when this boundary flips.
-    const surfaceMode =
-      isMaxMode(config.blendingMode ?? 'additive') ||
-      isNormalMode(config.blendingMode ?? 'additive');
+    // Peak (2D-projected) projection for SURFACE modes (max / normal /
+    // opaque — `usesPeakProjection`); sum ray-integral only for emissive
+    // (additive/luminous). GLSL twin: applyBlendingMode sets
+    // uProjectionMode=1 for every surface mode. Surface compositing
+    // wants the projected 2D-Gaussian peak, not the emissive
+    // line-integral (whose ~2.4×·sigmaRay boost would over-brighten and,
+    // in normal mode, saturate coverage-alpha to opaque and streak at
+    // grazing angles). The wrapper calls rebuildGraph() when this
+    // boundary flips.
+    const surfaceMode = usesPeakProjection(config.blendingMode ?? 'additive');
     const useSumProjection = !surfaceMode;
     let vAmplitude2DVal: TSLNode;
     if (useSumProjection) {

@@ -26,6 +26,7 @@
 
 import * as THREE from 'three';
 import type { BlendingMode } from './material-manager';
+import { log, Modules } from '../utils/log';
 
 /**
  * Discriminator predicates over `BlendingMode`. Centralising the
@@ -74,6 +75,61 @@ export function isNormalMode(mode: BlendingMode): boolean {
 }
 
 /**
+ * Projection-model taxonomy over the blending modes (PR #561): SURFACE
+ * modes composite the projected 2D-Gaussian PEAK (surface density at
+ * the ray hit) — `max` compares peak contributions, `normal` and
+ * `opaque` alpha-over a surface — while EMISSIVE modes
+ * (`additive`/`luminous`) integrate the ray through the 3D Gaussian
+ * (the ~2.4×·sigmaRay line-integral boost). GSplat materials key the
+ * sum↔peak projection split off this single predicate so the two
+ * backends and the rebuild-boundary logic can never disagree on the
+ * grouping.
+ *
+ * @param mode - the blending mode to test
+ * @returns `true` when `mode` projects the 2D-Gaussian peak
+ * @public
+ */
+export function usesPeakProjection(mode: BlendingMode): boolean {
+  return isMaxMode(mode) || isNormalMode(mode) || isOpaqueMode(mode);
+}
+
+/**
+ * The five canonical Luxar blending modes. Runtime source of truth for
+ * validating raw `blending_mode` strings (zarr attrs, URL params)
+ * before they reach the string-typed `BlendingMode` world.
+ */
+export const BLENDING_MODES = ['additive', 'normal', 'max', 'opaque', 'luminous'] as const;
+
+/** Unknown mode strings already warned about — one warning per distinct value. */
+const warnedUnknownModes = new Set<string>();
+
+/**
+ * Normalize a raw `blending_mode` string to a canonical
+ * {@link BlendingMode}.
+ *
+ * - `undefined` → `'additive'` (the composition identity —
+ *   `composeAttrs`' default when no ancestor sets a mode).
+ * - A member of {@link BLENDING_MODES} → passed through unchanged.
+ * - Anything else → `'normal'`, warning once per distinct string.
+ *   `'normal'` matches `getCompleteBlendingState`'s fallthrough AND
+ *   keeps `isNormalMode()` true, so unknown-mode gsplats still get
+ *   depth-sorted instead of rendering alpha-over unsorted.
+ *
+ * @param raw - the raw attribute value (possibly absent or malformed)
+ * @returns The validated blending mode.
+ * @public
+ */
+export function normalizeBlendingMode(raw: string | undefined): BlendingMode {
+  if (raw === undefined) return 'additive';
+  if ((BLENDING_MODES as readonly string[]).includes(raw)) return raw as BlendingMode;
+  if (!warnedUnknownModes.has(raw)) {
+    warnedUnknownModes.add(raw);
+    log.warning(Modules.RENDERER, `Unknown blending_mode "${raw}" — falling back to 'normal'.`);
+  }
+  return 'normal';
+}
+
+/**
  * The generic `normal`-mode depthWrite predicate: a (near-)fully-opaque
  * normal layer writes depth so it occludes additive layers behind it.
  * Single source of truth — the material caches key on this SAME
@@ -94,12 +150,19 @@ export interface CompleteBlendingState {
   depthWrite: boolean;
   transparent: boolean;
   /**
-   * Hint for shader RGB output composition. `max` mode needs RGB to
-   * already include the soft kernel contribution because the framebuffer
-   * equation compares premultiplied contributions. `premultiplied-alpha`
-   * (GSplat `normal` mode) means RGB carries the full premultiplied
-   * contribution AND alpha carries a clamped coverage term for
-   * `OneMinusSrcAlpha` destination attenuation.
+   * Hint for shader RGB output composition. Only `'rgb-contribution'`
+   * is machine-consumed: the Point and Line `applyBlendingMode`
+   * wrappers toggle the `LUXAR_MAX_RGB_CONTRIBUTION` define off it so
+   * `max` mode premultiplies RGB by intensity·opacity (required
+   * because MaxEquation + OneFactor compares contributions, not flat
+   * colour). The other three values document the fragment-output
+   * contract for readers but are consumed by no wrapper:
+   * `'alpha-weighted'` (additive/luminous/normal — RGB unweighted,
+   * alpha = intensity·opacity), `'opaque'`, and `'premultiplied-alpha'`
+   * (gsplat `normal` — RGB carries the full premultiplied contribution,
+   * alpha a clamped coverage term for `OneMinusSrcAlpha` destination
+   * attenuation; the gsplat wrappers key that branch off
+   * `isNormalMode`, not off this field).
    */
   shaderOutputMode: 'alpha-weighted' | 'rgb-contribution' | 'opaque' | 'premultiplied-alpha';
 }

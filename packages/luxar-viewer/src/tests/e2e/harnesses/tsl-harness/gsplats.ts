@@ -1,9 +1,10 @@
 /**
  * GSplat shader family for the TSL ↔ GLSL parity harness: the visual
  * gaussian-splat variants (covariance projection, tiny-sigma fade/
- * reject, gamma fast path, normal premult, thin-covariance dilation,
- * colormap LUT, behind-camera guard) plus the gsplat-pick counterparts
- * including the surface-pick depth pair. 13 registry entries.
+ * reject, gamma fast path, normal premult, opaque peak, thin-covariance
+ * dilation, colormap LUT, behind-camera guard) plus the gsplat-pick
+ * counterparts including the surface-pick depth pair. 14 registry
+ * entries.
  *
  * @module tests/e2e/harnesses/tsl-harness/gsplats
  */
@@ -411,6 +412,45 @@ export const GSPLAT_SHADERS: Record<string, RegistryEntry> = {
     buildTSLMaterial: (uniforms) => {
       const m = gsplatWebGPUFactory(buildGSplatTSLNodesFromUniforms(uniforms), {
         blendingMode: 'normal',
+      }) as unknown as THREE.Material;
+      // The harness compares raw fragment output — override the
+      // factory-applied blend state exactly like the other variants.
+      m.transparent = false;
+      m.blending = THREE.NoBlending;
+      return m;
+    },
+    buildMesh: buildGSplatInstancedMesh,
+  },
+  // GSplat 'opaque' — a SURFACE mode like max/normal (usesPeakProjection),
+  // so the TSL factory emits the peak-projection graph (no Σ⁻¹
+  // ray-integral block) while the fragment keeps the alpha=1.0 contract
+  // (no premult branch). Same graph family as the base `gsplat`/max
+  // entry; exists to pin the opaque→peak mapping in the codegen
+  // snapshot. uProjectionMode=1 keeps the GLSL side on the same branch.
+  'gsplat-opaque': {
+    source: GSPLAT_SOURCE,
+    buildUniforms: () => ({
+      uSplatTex: { value: buildGSplatSplatDataTexture() },
+      uResolution: { value: new THREE.Vector2(64, 64) },
+      uFx: { value: 32.0 },
+      uFy: { value: 32.0 },
+      uTruncate: { value: 3.0 },
+      uTruncateSq: { value: 9.0 },
+      uRayIntegralFactor: { value: 2.433 },
+      uProjectionMode: { value: 1 }, // peak projection (opaque = surface)
+      uIsOrtho: { value: 1 },
+      uNearCull: { value: 0.01 },
+      uMaxExtentFactor: { value: 1.0 },
+      uOpacity: { value: 1.0 },
+      uInvGamma: { value: 1.0 / 2.2 },
+      uIntensity: { value: 1.0 },
+      uOffset: { value: 0.0 },
+      uShiftC: { value: Math.exp(-0.5 * 9) },
+      uInvOneMinusC: { value: 1.0 / (1.0 - Math.exp(-0.5 * 9)) },
+    }),
+    buildTSLMaterial: (uniforms) => {
+      const m = gsplatWebGPUFactory(buildGSplatTSLNodesFromUniforms(uniforms), {
+        blendingMode: 'opaque',
       }) as unknown as THREE.Material;
       // The harness compares raw fragment output — override the
       // factory-applied blend state exactly like the other variants.

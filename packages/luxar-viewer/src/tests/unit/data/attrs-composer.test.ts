@@ -43,6 +43,22 @@ describe('composeAttrs', () => {
     );
   });
 
+  it("normalizes an unknown winning blending_mode to 'normal'", () => {
+    // The composed mode is the material chokepoint — a malformed zarr
+    // attr must come out canonical, not leak an arbitrary string.
+    expect(composeAttrs([{ blending_mode: 'compose-bogus' }]).blending_mode).toBe('normal');
+    expect(
+      composeAttrs([{ blending_mode: 'additive' }, { blending_mode: 'compose-bogus-2' }])
+        .blending_mode
+    ).toBe('normal');
+  });
+
+  it("composes to 'additive' when no level in the chain sets a mode", () => {
+    expect(composeAttrs([]).blending_mode).toBe('additive');
+    expect(composeAttrs([{ opacity: 0.5 }, { gamma: 2 }]).blending_mode).toBe('additive');
+    expect(composeAttrs([{ blending_mode: undefined }]).blending_mode).toBe('additive');
+  });
+
   it('clamps opacity to [0, 1]', () => {
     expect(composeAttrs([{ opacity: 2.0 }]).opacity).toBe(1);
     expect(composeAttrs([{ opacity: -0.5 }]).opacity).toBe(0);
@@ -196,7 +212,10 @@ const attrArb: fc.Arbitrary<{
   offset: fc.option(fc.float({ min: f(-1), max: f(1), noNaN: true, noDefaultInfinity: true }), {
     nil: undefined,
   }),
-  blending_mode: fc.option(fc.constantFrom('normal', 'additive', 'max', 'min'), {
+  // Only the five canonical modes: composeAttrs normalizes the winning
+  // string (unknown → 'normal'), so probing invented modes would test
+  // the normalizer, not the right-bias — covered separately below.
+  blending_mode: fc.option(fc.constantFrom('normal', 'additive', 'max', 'opaque', 'luminous'), {
     nil: undefined,
   }),
 });
@@ -262,7 +281,7 @@ describe('composeAttrs — algebraic invariants (data.md H6)', () => {
   test('blending_mode is right-biased (later wins)', () => {
     fc.assert(
       fc.property(
-        fc.array(fc.constantFrom('normal', 'additive', 'max', 'min'), {
+        fc.array(fc.constantFrom('normal', 'additive', 'max', 'opaque', 'luminous'), {
           minLength: 1,
           maxLength: 6,
         }),

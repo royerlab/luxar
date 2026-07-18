@@ -16,9 +16,9 @@ import type { ComposableAttrs } from '../../data/attrs-composer';
 import { clamp } from '../gui/format/value-formatting';
 import {
   getCompleteBlendingState,
+  normalizeBlendingMode,
   type CompleteBlendingState,
 } from '../../rendering/blending-state';
-import type { BlendingMode } from '../../rendering/material-manager';
 
 /** Clamp gamma to a sensible UI range. Centralised to match material defaults. */
 export function clampGamma(gamma: number): number {
@@ -53,9 +53,10 @@ export interface BlendingState {
 /**
  * Map a blending-mode name to its concrete THREE.js material settings.
  *
- * Falls back to `'normal'`-equivalent state for unknown modes so a
- * malformed zarr attribute can't crash the panel (the existing
- * implementation simply ignored unknown modes — same effect).
+ * Unknown modes coerce to `'normal'`-equivalent state via the shared
+ * `normalizeBlendingMode` chokepoint so a malformed zarr attribute
+ * can't crash the panel (and gets the same one-time warning every
+ * other consumer of the raw string gets).
  *
  * this delegates to `getCompleteBlendingState` so the LayersPanel
  * generic fallback path agrees with material-side `applyBlendingMode`
@@ -65,9 +66,7 @@ export interface BlendingState {
  * time max state (`OneFactor`/`OneFactor`).
  */
 export function getBlendingState(mode: string, opacity: number = 1.0): BlendingState {
-  // Coerce unknown modes to 'normal' (same fallback as before).
-  const known = ['additive', 'normal', 'max', 'opaque', 'luminous'];
-  const safeMode = (known.includes(mode) ? mode : 'normal') as BlendingMode;
+  const safeMode = normalizeBlendingMode(mode);
   const complete: CompleteBlendingState = getCompleteBlendingState(safeMode, opacity);
   return {
     blending: complete.blending,

@@ -8,7 +8,7 @@
  * - Instanced oriented quad geometry (4 vertices per splat)
  * - Full 3D covariance via Cholesky factors
  * - Perspective-correct projection of covariance to 2D
- * - Blending-mode-aware projection (sum for additive/normal, max for max blending)
+ * - Blending-mode-aware projection (sum ray-integral for emissive additive/luminous, peak for surface max/normal/opaque)
  * - Shifted Gaussian falloff: scale · max(0, exp(-½ · r²) - C) with C⁰ continuity at truncation
  * - Per-splat attributes (center, cholesky, amplitude, color)
  *
@@ -47,8 +47,8 @@ import {
 import {
   getCompleteBlendingState,
   getGSplatNormalBlendingState,
-  isMaxMode,
   isNormalMode,
+  usesPeakProjection,
 } from '../../blending-state';
 
 /**
@@ -109,7 +109,7 @@ export interface GSplatMaterialUniforms {
   uTruncate: { value: number };
   /** Opacity multiplier */
   uOpacity: { value: number };
-  /** Projection mode: 0=sum ray-integral (additive/luminous), 1=peak 2D-projected (max + normal surfaces) */
+  /** Projection mode: 0=sum ray-integral (additive/luminous), 1=peak 2D-projected (surface modes max/normal/opaque) */
   uProjectionMode: { value: number };
   /** Pre-computed 1/gamma for performance */
   uInvGamma: { value: number };
@@ -171,9 +171,9 @@ export class GSplatMaterial
         },
         uOpacity: { value: materialConfig.opacity ?? 1.0 },
         // Placeholder — applyBlendingMode() below is the source of truth. Peak (1)
-        // for surface modes (max + normal/alpha-over), sum (0) for emissive.
+        // for surface modes (max/normal/opaque), sum (0) for emissive.
         uProjectionMode: {
-          value: blendingMode === 'max' || blendingMode === 'normal' ? 1 : 0,
+          value: usesPeakProjection(blendingMode) ? 1 : 0,
         },
         uInvGamma: { value: 1.0 / gammaValue }, // Pre-computed inverse for performance
         uIntensity: { value: materialConfig.intensity ?? 1.0 },
@@ -430,8 +430,9 @@ export class GSplatMaterial
    * Apply a blending mode to this material in-place.
    *
    * GSplat-specific because the method sets the `uProjectionMode`
-   * uniform — PEAK (1) for the surface modes (`max` + `normal`/alpha-over),
-   * SUM ray-integral (0) for emissive (`additive`/`luminous`) — and owns the
+   * uniform — PEAK (1) for the surface modes (`max` / `normal` /
+   * `opaque`, see `usesPeakProjection`), SUM ray-integral (0) for
+   * emissive (`additive`/`luminous`) — and owns the
    * `LUXAR_NORMAL_PREMULT` define lifecycle. Without a type-specific method,
    * the layers panel's generic `mat.blending = state.blending` would leave a
    * stale `uProjectionMode` while the framebuffer blend state changed —
@@ -448,7 +449,6 @@ export class GSplatMaterial
    */
   applyBlendingMode(mode: BlendingMode): void {
     const previousMode = this.userData.blendingMode as BlendingMode | undefined;
-    const isMax = isMaxMode(mode);
     // NOTE: opacity is INERT for gsplat blend state — the only
     // opacity-sensitive entry in getCompleteBlendingState is the
     // generic 'normal' one, and gsplat normal early-returns to the
@@ -483,7 +483,7 @@ export class GSplatMaterial
         // (~2.4×·sigmaRay) would inflate both brightness AND the coverage alpha —
         // saturating classical-3DGS surface splats to fully opaque and producing
         // grazing streaks. Matches standard 3DGS rasterizers. (additive/luminous
-        // stay sum; max is already peak.)
+        // stay sum; the other surface modes max/opaque are peak too.)
         this.uniforms.uProjectionMode.value = 1; // peak projection
       }
       this.userData.blendingMode = mode;
@@ -527,10 +527,12 @@ export class GSplatMaterial
     this.depthTest = state.depthTest;
     this.depthWrite = state.depthWrite;
 
-    // Projection mode uniform: 0=sum (additive/luminous/normal/opaque),
-    // 1=max. The shader has separate sum vs max branches.
+    // Projection mode uniform: 0=sum (additive/luminous), 1=peak
+    // (max/normal/opaque). The shader has separate sum vs peak
+    // branches; the surface modes all project the 2D-Gaussian peak
+    // (see usesPeakProjection's taxonomy note).
     if (this.uniforms.uProjectionMode) {
-      this.uniforms.uProjectionMode.value = isMax ? 1 : 0;
+      this.uniforms.uProjectionMode.value = usesPeakProjection(mode) ? 1 : 0;
     }
 
     this.userData.blendingMode = mode;
