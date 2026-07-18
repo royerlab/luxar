@@ -26,6 +26,11 @@ The Luxar Data package provides the critical data loading infrastructure for vis
 data/
 ├── zarr-loader.ts                 # Main API entry point for loading scenes
 ├── zarr.ts                        # Zarrita facade (only module allowed to import zarrita directly)
+├── codecs/
+│   └── luxar-delta.ts             # `luxar_delta_v1` zarr filter (columnar delta+zigzag on
+│                                  #   quantized codes; registered by zarr.ts as
+│                                  #   `numcodecs.luxar_delta_v1`; Python twin in
+│                                  #   luxar/encoding/_encoders/delta_codec.py)
 ├── scene-loader.ts                # Orchestrates hierarchical scene loading (spans all geometries)
 ├── scene-loader-manager.ts        # Singleton manager for SceneLoader instances
 ├── scene-loader-monitor-port.ts   # Port interface bridging SceneLoader → DataLoadingMonitor

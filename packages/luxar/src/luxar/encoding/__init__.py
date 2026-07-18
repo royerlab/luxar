@@ -8,6 +8,10 @@ This package handles:
 - Encoding metadata specification
 """
 
+# Importing delta_codec registers the ``luxar_delta_v1`` zarr filter with
+# numcodecs — required on BOTH the write and the read path (zarr resolves
+# ``.zarray`` filters through the numcodecs registry).
+from ._encoders.delta_codec import LuxarDelta
 from .decoder import ArrayDecoder
 from .encoder import ArrayEncoder
 from .modes import EncodingMode
@@ -22,4 +26,5 @@ __all__ = [
     "EncodingMode",
     "ArrayRefRegistry",
     "ArrayRefMatch",
+    "LuxarDelta",
 ]

@@ -10,6 +10,7 @@
 import * as zarrita from 'zarrita';
 
 import { boundedConcurrencyStore } from '../utils/fetch-concurrency';
+import { LuxarDeltaCodec } from './codecs/luxar-delta';
 import type {
   AbsolutePath,
   AsyncReadable,
@@ -65,6 +66,18 @@ export type OpenOptions = {
  * promise, so the loosened element type is sufficient.
  */
 export const codecRegistry: Map<string, () => Promise<unknown>> = zarrita.registry;
+
+// Register the Luxar-owned `luxar_delta_v1` zarr filter (columnar per-chunk
+// delta+zigzag on quantized codes — see `./codecs/luxar-delta.ts`). Module
+// scope, not bootstrap: any context that opens zarr arrays imports this
+// facade, so main thread AND workers get the codec before any array open.
+// zarrita maps a v2 `.zarray` filter `{id: "luxar_delta_v1"}` to the codec
+// name `numcodecs.luxar_delta_v1`. The typeof guard only matters under unit
+// tests that vi.mock('zarrita') with a registry stub lacking `.set` — in
+// every real context the registry is zarrita's live Map.
+if (typeof codecRegistry?.set === 'function') {
+  codecRegistry.set('numcodecs.luxar_delta_v1', () => Promise.resolve(LuxarDeltaCodec));
+}
 
 /** Create the default HTTP-backed store for browser/network datasets.
  *
