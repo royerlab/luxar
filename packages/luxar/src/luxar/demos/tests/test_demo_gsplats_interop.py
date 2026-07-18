@@ -189,11 +189,16 @@ class TestDemoConfig:
         assert m.ARCHIVE_URL.startswith(
             "https://github.com/danybittel/splats/releases/download"
         )
-        # CC BY 4.0 attribution must be surfaced in the in-scene credit.
+        # CC BY 4.0 attribution must be surfaced in the in-scene credit
+        # OVERLAY specifically (the artifact-level credit baked into the
+        # scene) — not merely somewhere in the source, which the console-only
+        # provenance print would also satisfy. Assert on the CREDIT constant
+        # that is actually passed to build_interop_scene.
+        assert "CC BY 4.0" in m.CREDIT and "danybittel" in m.CREDIT
+        # And that CREDIT is the value wired into the scene builder.
         import inspect
 
-        src = inspect.getsource(m.build_scene)
-        assert "CC BY 4.0" in src and "danybittel" in src
+        assert "credit=CREDIT" in inspect.getsource(m.build_scene)
 
     def test_unknown_scene_raises(self) -> None:
         m = _load("demo_gsplats_interop_mipnerf_garden")

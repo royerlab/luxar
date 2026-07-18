@@ -69,6 +69,12 @@ ARCHIVE_URL = (
 MEMBER = "cluster fly L.ply"
 MEMBER_SIZE = 71_263_622  # bytes
 
+# CC BY 4.0 REQUIRES visible attribution. This is the in-scene text overlay
+# (rendered in the viewer AND baked into exported scenes) — the actual
+# artifact-level credit, distinct from the console-only provenance print. Kept
+# as a module constant so the license test can assert on it directly.
+CREDIT = "Cluster fly • Dany Bittel (danybittel.ch) • CC BY 4.0 • macro 3DGS → Luxar"
+
 CACHE_DIR = Path.home() / ".cache" / "luxar" / DEMO_NAME
 CACHE_PLY = CACHE_DIR / "cluster_fly_L.ply"
 CACHE_GSPLATS = CACHE_DIR / "cluster_fly.gsplats.zarr"
@@ -102,7 +108,7 @@ def fetch_member() -> Path:
 
 
 def build_scene() -> Path:
-    """Range-extract + import the cluster fly, build a subject-framed scene."""
+    """Range-extract + import the cluster fly, build an auto-framed scene."""
     print_data_provenance(
         title="Cluster fly (Pollenia) — macro Gaussian splat",
         source="Dany Bittel (danybittel.ch)",
@@ -126,7 +132,7 @@ def build_scene() -> Path:
         out,
         title="Macro cluster fly (Dany Bittel) → Luxar",
         layer_name="cluster_fly",
-        credit="Cluster fly • Dany Bittel (danybittel.ch) • CC BY 4.0 • macro 3DGS → Luxar",
+        credit=CREDIT,
     )
 
 
