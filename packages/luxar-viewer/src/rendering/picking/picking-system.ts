@@ -33,6 +33,7 @@
 import * as THREE from 'three';
 import type { PostProcessingManager } from '../post-processing/post-processing-manager';
 import { isCameraAwareMaterial } from '../materials/_shared/camera-aware-material';
+import { isSurfacePickAwareMaterial } from './gsplat/material';
 import { isNormalMode } from '../blending-state';
 import type { BlendingMode } from '../material-manager';
 import {
@@ -625,9 +626,8 @@ export class PickingSystem {
       // instead of brightness-as-depth (brightest wins — right for the
       // commutative modes, but it could pick a brighter splat BEHIND
       // the visible surface). Only gsplat pick materials implement
-      // setSurfacePickDepth; points/lines are unaffected.
-      const surfaceAware = mat as { setSurfacePickDepth?: (on: boolean) => void };
-      if (typeof surfaceAware.setSurfacePickDepth === 'function') {
+      // SurfacePickAwareMaterial; points/lines are unaffected.
+      if (isSurfacePickAwareMaterial(mat)) {
         // entry.main is typed Object3D — non-mesh mains have no material.
         const mainMat = (entry.main as THREE.Mesh).material as
           | THREE.Material
@@ -635,7 +635,7 @@ export class PickingSystem {
           | undefined;
         const single = Array.isArray(mainMat) ? mainMat[0] : mainMat;
         const mode = (single?.userData.blendingMode ?? 'additive') as BlendingMode;
-        surfaceAware.setSurfacePickDepth(isNormalMode(mode));
+        mat.setSurfacePickDepth(isNormalMode(mode));
       }
 
       this.pickScene.add(entry.pick);
