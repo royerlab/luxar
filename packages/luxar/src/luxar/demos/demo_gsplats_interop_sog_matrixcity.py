@@ -42,13 +42,13 @@ page for its license terms.
 
 SELF-CONTAINED / CACHING
 ------------------------
-Fetches the ~146 MB SOG bundle (``meta.json`` + 5 WebP images; the optional
+Fetches the ~156 MB SOG bundle (``meta.json`` + 5 WebP images; the optional
 higher-order-SH images are skipped — Luxar bakes DC only) to
 ``~/.cache/luxar/gsplats_interop_sog/`` and caches the LOD-built
 ``.gsplats.zarr`` next to it. ``--recompute`` forces re-import + re-LOD.
 
-HEAVY: importing 13.6M splats and building the LOD needs plenty of RAM (~8 GB
-peak) and a few minutes; a workstation is recommended over a laptop.
+HEAVY: importing 13.6M splats and building the LOD needs several GB of RAM
+and a few minutes; a workstation is recommended over a laptop.
 
 USAGE
 -----
@@ -75,7 +75,7 @@ DEMO_NAME = "gsplats_interop_sog"
 # SuperSplat/PlayCanvas CDN bundle for the MatrixCity aerial scene (id ace6e5b0).
 BASE_URL = "https://d28zzqy0iyovbz.cloudfront.net/ace6e5b0/v1"
 # Only the DC groups are needed — Luxar's SOG reader bakes SH-DC and drops the
-# higher-order shN palette, so shN_centroids/shN_labels (~38 MB) aren't fetched.
+# higher-order shN palette, so shN_centroids/shN_labels (~28 MB) aren't fetched.
 SOG_FILES = (
     "meta.json",
     "means_l.webp",
@@ -114,7 +114,7 @@ def build_scene() -> Path:
         source="MatrixCity (Li et al. 2023); 3DGS via FriendlySplat, hosted on SuperSplat",
         license="Research/education — see the MatrixCity dataset page",
         url="https://superspl.at/scene/ace6e5b0",
-        note="SOG bundle fetched at runtime (~146 MB); not redistributed.",
+        note="SOG bundle fetched at runtime (~156 MB); not redistributed.",
     )
     if not (CACHE_GSPLATS.exists() and not FLAGS["recompute"]):
         fetch_bundle()
