@@ -15,9 +15,9 @@ export const SUPPORTED_SCENE_VERSIONS: readonly string[] = ['0.1', '0.2', '0.3']
 export type SceneFormatVersion = '0.1' | '0.2' | '0.3';
 
 // --- standalone gsplats (.gsplats.zarr) node-tree format version ---
-export const GSPLATS_FORMAT_VERSION = '3.2';
-export const SUPPORTED_GSPLATS_FORMAT_VERSIONS: readonly string[] = ['3.0', '3.1', '3.2'];
-export type GSplatsFormatVersion = '3.0' | '3.1' | '3.2';
+export const GSPLATS_FORMAT_VERSION = '3.3';
+export const SUPPORTED_GSPLATS_FORMAT_VERSIONS: readonly string[] = ['3.0', '3.1', '3.2', '3.3'];
+export type GSplatsFormatVersion = '3.0' | '3.1' | '3.2' | '3.3';
 
 // --- root-header format_type identifying a standalone gsplats store ---
 export const FORMAT_TYPE_GSPLATS = 'gsplats_zarr';

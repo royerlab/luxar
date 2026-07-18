@@ -1,6 +1,6 @@
 # luxar.gsplats.io - Technical Specification
 
-**Version**: 3.2.0
+**Version**: 3.3.0
 **Last Updated**: 2026-07-13
 
 > **Cross-language contract:** the format *vocabulary* shared by the Python
@@ -122,7 +122,11 @@ The `n_splats` attribute on a leaf's `.zattrs` always reflects the true count (N
 
 ## Format Versions
 
-The current format is **v3.2**, a node tree (§ "On-disk grammar"). It differs
+The current format is **v3.3**, a node tree (§ "On-disk grammar"). It differs
+from **v3.2** only in allowing quantized code arrays (coordinates, Cholesky
+halves, amplitudes) to carry the optional `luxar_delta_v1` zarr v2 **filter**
+(columnar per-chunk delta+zigzag — § "The `luxar_delta_v1` delta filter");
+a v3.3 store without the filter is byte-identical to v3.2. **v3.2** differs
 from **v3.1** only in the `kind=lod` selector attrs: the group `selector` value
 `pixel_size` and the per-child `min_pixel_size` (absolute pixels) are renamed
 to `coverage` / `coverage_fraction` (viewport-relative `sqrt(N_i/N_finest)` in
@@ -723,6 +727,49 @@ Decode speed is level-independent (natively and in wasm), so the high level
 is purely a write-time budget. Pass an explicit `Blosc(...)` to override, or
 `None` to store uncompressed.
 
+### The `luxar_delta_v1` delta filter (v3.3, optional, probe-gated)
+
+Quantized code arrays (COORDINATE `linear_perchannel_u16`, the Cholesky
+`log_perchannel` / `signed_log_perchannel` halves, and the scalar
+`bounded_scalar` / `geolog_scalar` amplitudes) may carry a zarr v2 **filter**
+in `.zarray`:
+
+```json
+"filters": [{"id": "luxar_delta_v1", "cols": 3, "bits": 16}]
+```
+
+Hilbert ordering makes consecutive codes a smooth ramp; the filter stores
+per-axis **modular delta + zigzag** residuals, laid out **column-major within
+each chunk** (all column-0 residuals, then column-1, …), which the Blosc
+policy above then compresses ~12% smaller whole-store (lossless — a pure
+storage transform below the `encoding` layer; `encoding` attrs, decode
+kernels, and the range-loader are untouched). Per chunk of `rows × cols`
+codes, per column, all arithmetic mod `2^bits` with an implicit `0` anchor at
+each chunk start:
+
+```
+encode:  d  = (code - prev) mod 2^bits          # prev = 0 at chunk start
+         s  = d >= 2^(bits-1) ? d - 2^bits : d  # signed interpretation
+         zz = (s << 1) ^ (s >> (bits-1))        # zigzag -> uint8/uint16
+decode:  s    = (zz >> 1) ^ -(zz & 1)
+         code = (prev + s) mod 2^bits
+```
+
+The filter is **probe-gated at encode time**: one representative chunk is
+compressed both ways and the filter is applied only where it wins
+(deterministic; never worse). Arrays where it cannot apply are excluded
+structurally: float32 fallbacks, LUT/broadcast/array_ref priority paths, and
+INDEX arrays never carry it.
+
+Reader requirements: chunks are whole-chunk reconstructed inside the zarr
+codec pipeline, so sub-chunk range reads keep working unchanged. The Python
+reader registers the codec with numcodecs on `import luxar.encoding`
+(`_encoders/delta_codec.py`); the web viewer registers the TypeScript twin
+(`data/codecs/luxar-delta.ts`) as `numcodecs.luxar_delta_v1` in its zarr
+facade. Third-party vanilla-zarr readers need the codec registered to read
+affected arrays; unregistered readers fail loudly (unknown codec), never
+silently corrupt.
+
 ### Chunk Sizing
 
 **Strategy**: Byte-based target converted to element counts (Zarr chunks by elements, not bytes).
@@ -1041,7 +1088,7 @@ finest level instead). Both paths go through the shared
 | Node-tree LOD | v3.0 nestable primitives (leaf / kind=lod / kind=partition) | Substitutive, additive, and partition axes compose freely as a tree rather than a fixed matrix |
 | Image embedding | No | Keep format focused on splats |
 | Compression | Blosc zstd-9, width-aware shuffle | Byte shuffle for multi-byte int codes; no shuffle for uint8/floats (see §Blosc Settings) |
-| Delta encoding | No | Blosc shuffle sufficient |
+| Delta encoding | Yes (v3.3, probe-gated) | `luxar_delta_v1` zarr filter on quantized codes; ~12% smaller whole-store (see §The `luxar_delta_v1` delta filter) |
 | Streaming write | No | Not needed |
 | `numpy-hilbert-curve` | Required dependency | Needed for Hilbert ordering |
 
@@ -1058,6 +1105,23 @@ finest level instead). Both paths go through the shared
 ---
 
 ## Changelog
+
+- **v3.3.0** (2026-07-18): optional `luxar_delta_v1` delta filter on quantized codes
+  - Quantized code arrays (coordinates, Cholesky halves, amplitudes) may carry
+    the zarr v2 filter `{"id": "luxar_delta_v1", "cols", "bits"}`: per-axis
+    modular delta + zigzag residuals, column-major within each chunk, under
+    the unchanged Blosc policy. Lossless and probe-gated at encode time (one
+    representative chunk compressed both ways; applied only where it wins) —
+    measured **~12% smaller whole-store** on real Hilbert-ordered fits
+    (centers 1.20–1.31×, cholesky_offdiag ~1.15×, diag ~1.07×).
+  - A pure storage transform below the `encoding` layer: `encoding` attrs,
+    decode kernels (WASM/TS), and the sub-chunk range-loader are untouched —
+    chunks are whole-chunk reconstructed inside the zarr codec pipeline.
+    Origin: the PlayCanvas SOG comparison — SOG's size edge was WebP's spatial
+    prediction; this replicates it while keeping chunked random access.
+  - Readers must have the codec registered: Python via `import luxar.encoding`
+    (numcodecs), viewer via its zarr facade (`numcodecs.luxar_delta_v1`).
+    Stores not carrying the filter are byte-identical to v3.2.
 
 - **encoding policy** (2026-07-05, no format change): HDR COLOR arrays are now
   quantized with the new **`geolog_perchannel_u8/u16`** encoding (AUTO → u16,

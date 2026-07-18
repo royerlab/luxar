@@ -19,6 +19,7 @@ import zarr
 
 from luxar.encoding import EncodingMode
 from luxar.gsplats.io import save_gsplats
+from luxar.typing_utils._format_contract import GSPLATS_FORMAT_VERSION
 
 
 def create_test_splats_3d(n_splats: int = 100) -> dict:
@@ -42,7 +43,7 @@ class TestFormatCompliance:
             )
             root = zarr.open_group(str(path), mode="r")
 
-            assert root.attrs["format_version"] == "3.2"
+            assert root.attrs["format_version"] == GSPLATS_FORMAT_VERSION
             assert root.attrs["format_type"] == "gsplats_zarr"
             assert "timestamp" in root.attrs
             assert "luxar_gsplats_version" in root.attrs

@@ -10,6 +10,7 @@ import zarr
 from ..compression import resolve_compressor
 from ..modes import EncodingMode
 from .base import BaseEncoderMixin
+from .delta_codec import probe_delta_filter
 
 
 class PerChannelEncoderMixin(BaseEncoderMixin):
@@ -279,11 +280,13 @@ class PerChannelEncoderMixin(BaseEncoderMixin):
         else:
             raise ValueError(f"Unexpected mode for BOUNDED_SCALAR: {mode}")
 
+        comp = resolve_compressor(compressor, encoded_data.dtype)
         zarr_group.create_dataset(
             name,
             data=encoded_data,
             chunks=chunks,
-            compressor=resolve_compressor(compressor, encoded_data.dtype),
+            compressor=comp,
+            filters=probe_delta_filter(encoded_data, chunks, comp),
             overwrite=True,
         )
         zarr_group[name].attrs["encoding"] = metadata
@@ -407,11 +410,13 @@ class PerChannelEncoderMixin(BaseEncoderMixin):
         else:
             raise ValueError(f"Unexpected mode for POSITIVE_SCALAR: {mode}")
 
+        comp = resolve_compressor(compressor, encoded_data.dtype)
         zarr_group.create_dataset(
             name,
             data=encoded_data,
             chunks=chunks,
-            compressor=resolve_compressor(compressor, encoded_data.dtype),
+            compressor=comp,
+            filters=probe_delta_filter(encoded_data, chunks, comp),
             overwrite=True,
         )
         zarr_group[name].attrs["encoding"] = metadata
@@ -445,11 +450,13 @@ class PerChannelEncoderMixin(BaseEncoderMixin):
                 f"geolog encoding bug: nonzero values of '{name}' mapped to "
                 "the reserved zero level"
             )
+        comp = resolve_compressor(compressor, codes.dtype)
         zarr_group.create_dataset(
             name,
             data=codes,
             chunks=chunks,
-            compressor=resolve_compressor(compressor, codes.dtype),
+            compressor=comp,
+            filters=probe_delta_filter(codes, chunks, comp),
             overwrite=True,
         )
         zarr_group[name].attrs["encoding"] = {
@@ -486,11 +493,13 @@ class PerChannelEncoderMixin(BaseEncoderMixin):
         """
         y = np.asarray(data).astype(np.float64)
         u, lo_list, hi_list = self._quantize_per_column(y, bits, lo=lo, hi=hi)
+        comp = resolve_compressor(compressor, u.dtype)
         zarr_group.create_dataset(
             name,
             data=u,
             chunks=chunks,
-            compressor=resolve_compressor(compressor, u.dtype),
+            compressor=comp,
+            filters=probe_delta_filter(u, chunks, comp),
             overwrite=True,
         )
         zarr_group[name].attrs["encoding"] = {
@@ -537,11 +546,13 @@ class PerChannelEncoderMixin(BaseEncoderMixin):
         y = self._perchannel_log_forward(x, signed=False)
         nonzero = self._perchannel_nonzero_mask(x, signed=False)
         u = self._quantize_perchannel_zero_level(y, nonzero, bits, lo, hi)
+        comp = resolve_compressor(compressor, u.dtype)
         zarr_group.create_dataset(
             name,
             data=u,
             chunks=chunks,
-            compressor=resolve_compressor(compressor, u.dtype),
+            compressor=comp,
+            filters=probe_delta_filter(u, chunks, comp),
             overwrite=True,
         )
         zarr_group[name].attrs["encoding"] = {
@@ -587,11 +598,13 @@ class PerChannelEncoderMixin(BaseEncoderMixin):
         y = self._perchannel_log_forward(x, signed=True)
         nonzero = self._perchannel_nonzero_mask(x, signed=True)
         u = self._quantize_perchannel_zero_level(y, nonzero, bits, lo, hi)
+        comp = resolve_compressor(compressor, u.dtype)
         zarr_group.create_dataset(
             name,
             data=u,
             chunks=chunks,
-            compressor=resolve_compressor(compressor, u.dtype),
+            compressor=comp,
+            filters=probe_delta_filter(u, chunks, comp),
             overwrite=True,
         )
         zarr_group[name].attrs["encoding"] = {
@@ -649,4 +662,3 @@ class PerChannelEncoderMixin(BaseEncoderMixin):
             "zero_level": True,
             "original_dtype": original_dtype,
         }
-
