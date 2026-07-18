@@ -695,7 +695,7 @@ Runs the unified `luxar gsplat lod --recipe` pipeline on the **one** precomputed
 
 #### Classical Gaussian-splat interop demos (import from the photogrammetric ecosystem)
 
-These four demos download **pre-captured** Gaussian-splat scenes from the classical/photogrammetric 3DGS ecosystem and import them into Luxar via `luxar gsplat import` — no fitting. Each prints a data-provenance/licence notice before downloading; Luxar redistributes none of the data. They render best with `blending_mode="normal"` and become fully correct once depth-sorted rendering lands.
+These five demos download **pre-captured** Gaussian-splat scenes from the classical/photogrammetric 3DGS ecosystem and import them into Luxar via `luxar gsplat import` — no fitting. Each prints a data-provenance/licence notice before downloading; Luxar redistributes none of the data. They render best with `blending_mode="normal"` and become fully correct once depth-sorted rendering lands.
 
 ##### demo_gsplats_interop_spz_scaniverse.py - Scaniverse SPZ captures (Niantic)
 Downloads the two official Niantic `spz` sample scans (a horned lizard, a raccoon-family sculpture — phone captures) and imports them with a streaming LOD ladder.
@@ -721,7 +721,13 @@ Extracts just the ~1.45 GB `point_cloud.ply` member from INRIA's 14.7 GB `models
 **Requires**: Network (~1.45 GB range-extracted from a 14.7 GB archive; server must honor byte ranges — INRIA's does). No GPU.
 **Data**: [INRIA 3DGS pretrained models](https://repo-sam.inria.fr/fungraph/3d-gaussian-splatting/); INRIA Gaussian-Splatting license (**research / non-commercial**); Mip-NeRF 360 scenes (Google research use). Fetched at runtime, not redistributed.
 
-**Demonstrates**: the classical-splat import path (all four dialects), the `download_zip_member` HTTP-Range/Zip64 extractor, and applying `stream`/`tiles` LOD recipes to imported scenes via `build_recipe`.
+##### demo_gsplats_interop_macro_clusterfly.py - Macro cluster fly (Dany Bittel)
+Range-extracts just the ~68 MB `cluster fly L.ply` member (~300 k splats) from Dany Bittel's ~1 GB macro-photogrammetry release archive on GitHub — a real cluster fly (*Pollenia*) captured under a macro rig and 3DGS-trained — then imports it with a streaming LOD. A millimetre-scale "fly in digital amber": the smallest, most detailed subject of the interop set, and the one that exercises the range extractor against a **redirecting** host (GitHub release assets → signed CDN).
+**Run**: `hatch run python packages/luxar/src/luxar/demos/demo_gsplats_interop_macro_clusterfly.py`
+**Requires**: Network (~68 MB range-extracted from a ~1 GB archive; server must honor byte ranges — GitHub's asset CDN does). No GPU.
+**Data**: [Dany Bittel macro splats](https://danybittel.ch/macro) — **CC BY 4.0** (attributed in-scene). Fetched at runtime, not redistributed.
+
+**Demonstrates**: the classical-splat import path (all four dialects), the `download_zip_member` HTTP-Range/Zip64 extractor (including redirect-following HEAD for signed-CDN hosts), and applying `stream`/`tiles` LOD recipes to imported scenes via `build_recipe`.
 
 ---
 

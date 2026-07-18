@@ -396,7 +396,15 @@ def _parse_remote_zip_directory(
     """
     import struct
 
-    head = session.head(url, timeout=timeout, headers=dict(extra_headers or {}))
+    # allow_redirects=True is REQUIRED: requests' HEAD does not follow
+    # redirects by default, so on a redirecting host (GitHub release assets,
+    # Hugging Face /resolve/ → signed CDN) an unfollowed HEAD returns the 3xx
+    # with Content-Length: 0, making archive_size 0 and the tail range
+    # `bytes=0--1` — which such CDNs reject with 501. The ranged GETs below
+    # follow redirects on their own; HEAD must match.
+    head = session.head(
+        url, timeout=timeout, headers=dict(extra_headers or {}), allow_redirects=True
+    )
     head.raise_for_status()
     if "content-length" not in head.headers:
         raise ValueError("Remote server did not report Content-Length")
