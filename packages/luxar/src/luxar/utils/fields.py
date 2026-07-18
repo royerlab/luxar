@@ -28,6 +28,8 @@ from typing import Any
 
 import numpy as np
 
+from ..typing_utils.constants import DEFAULT_BLENDING_MODE
+
 
 @dataclass(frozen=True)
 class FlowField:
@@ -215,7 +217,7 @@ def add_reference_cube_to_scene(
     intensity: float = 0.35,
     color: tuple[float, float, float] = (0.55, 0.62, 0.80),
     sharpness: float = 0.8,
-    blending_mode: str = "additive",
+    blending_mode: str = DEFAULT_BLENDING_MODE,
     layer: bool = True,
     visible: bool = False,
 ) -> None:

@@ -14,6 +14,7 @@ from luxar.gsplats.interop.tests._synthetic import (
     WRITERS,
     make_ground_truth,
 )
+from luxar.typing_utils._format_contract import GSPLATS_FORMAT_VERSION
 
 runner = CliRunner()
 
@@ -40,7 +41,7 @@ class TestGsplatImport:
         out = tmp_path / f"{fmt}.gsplats.zarr"
         result = runner.invoke(app, ["gsplat", "import", str(fixtures[fmt]), str(out)])
         assert result.exit_code == 0, result.stdout
-        assert "✓ Verified v3.2 output" in result.stdout
+        assert f"✓ Verified v{GSPLATS_FORMAT_VERSION} output" in result.stdout
 
         loaded = GSplatData.load(out)
         assert loaded.n_splats == 16

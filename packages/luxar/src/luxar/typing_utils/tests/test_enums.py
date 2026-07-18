@@ -23,39 +23,29 @@ class TestBlendingMode:
     """Tests for BlendingMode enum."""
 
     def test_values(self) -> None:
-        """Test that BlendingMode has expected values."""
+        """Test that BlendingMode has exactly the 5 expected values."""
         assert BlendingMode.NORMAL.value == "normal"
         assert BlendingMode.ADDITIVE.value == "additive"
         assert BlendingMode.MAX.value == "max"
+        assert BlendingMode.OPAQUE.value == "opaque"
+        assert BlendingMode.LUMINOUS.value == "luminous"
+        assert {m.value for m in BlendingMode} == {
+            "normal",
+            "additive",
+            "max",
+            "opaque",
+            "luminous",
+        }
 
-    def test_validate_normal(self) -> None:
-        """Test validate with 'normal' string."""
-        result = BlendingMode.validate("normal")
-        assert result == BlendingMode.NORMAL
+    def test_string_construction_all_modes(self) -> None:
+        """Every mode string constructs its enum member (str-enum contract)."""
+        for mode in BlendingMode:
+            assert BlendingMode(mode.value) is mode
 
-    def test_validate_additive(self) -> None:
-        """Test validate with 'additive' string."""
-        result = BlendingMode.validate("additive")
-        assert result == BlendingMode.ADDITIVE
-
-    def test_validate_max(self) -> None:
-        """Test validate with 'max' string."""
-        result = BlendingMode.validate("max")
-        assert result == BlendingMode.MAX
-
-    def test_validate_invalid(self) -> None:
-        """Test validate raises for invalid value."""
-        with pytest.raises(ValueError, match="Invalid blending mode"):
-            BlendingMode.validate("invalid")
-
-    def test_validate_error_lists_valid_options(self) -> None:
-        """Test that error message lists valid options."""
-        with pytest.raises(ValueError) as exc_info:
-            BlendingMode.validate("bad")
-        error_msg = str(exc_info.value)
-        assert "'normal'" in error_msg
-        assert "'additive'" in error_msg
-        assert "'max'" in error_msg
+    def test_invalid_string_rejected(self) -> None:
+        """Constructing from an unknown string raises ValueError."""
+        with pytest.raises(ValueError):
+            BlendingMode("invalid")
 
 
 class TestNodeType:
@@ -267,7 +257,6 @@ class TestDefaults:
         assert Defaults.OPACITY == 1.0
         assert Defaults.GAMMA == 1.0
         assert Defaults.SHARPNESS == 0.5  # -> super-Gaussian beta = 2 (Gaussian)
-        assert Defaults.BLENDING_MODE == BlendingMode.ADDITIVE
 
     def test_storage_defaults(self) -> None:
         """Test storage-related defaults."""

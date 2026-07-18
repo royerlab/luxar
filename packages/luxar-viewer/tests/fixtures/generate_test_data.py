@@ -62,6 +62,7 @@ FIXTURE_NAMES: list[str] = [
     "test_array_ref_broadcasting.luxar.zarr",
     "test_array_refs.luxar.zarr",
     "test_broadcasting.luxar.zarr",
+    "test_delta_filter.luxar.zarr",
     "test_encoding_contract_matrix.luxar.zarr",
     "test_encoding_edge_cases.luxar.zarr",
     "test_gsplats.luxar.zarr",
@@ -1364,6 +1365,71 @@ def generate_4d_scalar_lut_test() -> None:
         aprint("  CRITICAL: Tests scalar LUT + 4D + partial range extraction")
 
 
+def generate_delta_filter_test() -> None:
+    """Cross-language fixture for the ``luxar_delta_v1`` zarr filter (v3.3).
+
+    Positions are a smooth 3D random walk, so after spatial ordering the
+    uint16 codes ramp and the encode-time probe ENABLES the delta filter on
+    the positions array. The compressor is **zlib**, not the COMPRESSOR_DISABLED
+    default: the probe requires a real compressor (no compressor -> no filter),
+    blosc cannot run under Node.js (see the audit note at the top of this
+    file), and zarrita ships a pure-JS zlib codec — so the Node unit suite
+    decodes this fixture end-to-end THROUGH the registered
+    ``numcodecs.luxar_delta_v1`` codec (`zarr-delta-fixture.test.ts` +
+    the generic round-trip expectations).
+
+    The generator asserts the filter actually engaged — if probe gating or
+    the encoder wiring regresses, fixture generation fails loudly instead of
+    the TS test silently exercising an unfiltered array.
+    """
+    with asection("Generating Delta Filter Test"):
+        import json
+
+        from numcodecs import Zlib
+
+        output = FIXTURES_DIR / "test_delta_filter.luxar.zarr"
+
+        rng = np.random.default_rng(1234)
+        num_points = 20000
+        # Smooth random walk normalized to a few-hundred-unit extent: after
+        # Hilbert/Morton ordering the per-axis uint16 codes are locally
+        # coherent, which is exactly what the delta filter exploits.
+        walk = np.cumsum(rng.normal(0.0, 1.0, size=(num_points, 3)), axis=0)
+        lo, hi = walk.min(axis=0), walk.max(axis=0)
+        positions = ((walk - lo) / (hi - lo) * [300.0, 500.0, 800.0]).astype(np.float32)
+        colors = rng.random((num_points, 3)).astype(np.float32)
+
+        dims = Dimensions(
+            [
+                Dimension("x", unit="units", display=True),
+                Dimension("y", unit="units", display=True),
+                Dimension("z", unit="units", display=True),
+            ]
+        )
+
+        with LuxarZarrCompiler(
+            output,
+            encoding_mode=EncodingMode.AUTO,
+            compressor=Zlib(level=6),  # Node-decodable; probe needs a compressor
+            float16_allowed=FLOAT16_ALLOWED,
+        ) as compiler:
+            scene = compiler.create_scene(dimensions=dims)
+            scene.add_points("points", positions, colors=colors)
+
+        # Fail fast if the filter did not engage (probe/wiring regression).
+        zarray = json.loads((output / "points" / "positions" / ".zarray").read_text())
+        filters = zarray.get("filters") or []
+        if not any(f.get("id") == "luxar_delta_v1" for f in filters):
+            raise RuntimeError(
+                "test_delta_filter fixture: positions array did not receive the "
+                f"luxar_delta_v1 filter (filters={filters}). The encode-time "
+                "probe or the encoder wiring regressed."
+            )
+
+        aprint(f"✓ Created {output}")
+        aprint(f"  Positions: {positions.shape} (uint16 + luxar_delta_v1 + zlib)")
+
+
 def generate_uint16_quantization_test() -> None:
     """Test dataset with uint16 quantization (wide dynamic range).
 
@@ -1393,9 +1459,9 @@ def generate_uint16_quantization_test() -> None:
         # Using linspace ensures exact 1000:1 ratio for reliable uint16 triggering
         radii = np.linspace(0.001, 1.0, num_points).astype(np.float32)
         dynamic_range = radii.max() / radii.min()
-        assert dynamic_range > 256, (
-            f"Need >256:1 range for uint16, got {dynamic_range:.1f}:1"
-        )
+        assert (
+            dynamic_range > 256
+        ), f"Need >256:1 range for uint16, got {dynamic_range:.1f}:1"
 
         # Simple colors (use uint8 encoding as comparison)
         colors = np.random.rand(num_points, 3).astype(np.float32)
@@ -2191,6 +2257,9 @@ def main() -> None:
         aprint("")
 
         generate_uint16_quantization_test()
+        aprint("")
+
+        generate_delta_filter_test()
         aprint("")
 
         generate_nd_transforms_test()

@@ -25,6 +25,7 @@ from ..gsplat_assembly import (
 )
 from ..labels.image_labels import write_image_labels_csr
 from ..labels.text_labels import write_labels_csr
+from ..node_common import validate_render_attrs
 
 
 def scene_barrier_dims(store: zarr.Group, n_dims: int) -> Optional[List[int]]:
@@ -59,6 +60,10 @@ def write_gsplats(
 
     Returns the node metadata; the caller records it in the metadata cache.
     """
+    # Fail fast on invalid render attrs BEFORE creating the group, so a bad
+    # value cannot leave a partial node on disk.
+    validate_render_attrs(attrs)
+
     path = path.lstrip("/")
     group = ctx.store.require_group(path)
 
@@ -134,17 +139,13 @@ def write_gsplats(
 
     # Write labels if provided (CSR-style: label_offsets + label_bytes)
     if labels is not None:
-        sort_order = (
-            ordering_data["sort_order"] if ordering_data is not None else None
-        )
+        sort_order = ordering_data["sort_order"] if ordering_data is not None else None
         write_labels_csr(group, labels, n_splats, ctx.compressor, sort_order)
         metadata["has_labels"] = True
 
     # Write image labels if provided (CSR-style, no compression on blobs)
     if image_labels is not None:
-        sort_order = (
-            ordering_data["sort_order"] if ordering_data is not None else None
-        )
+        sort_order = ordering_data["sort_order"] if ordering_data is not None else None
         write_image_labels_csr(
             group, image_labels, n_splats, ctx.compressor, sort_order
         )
@@ -170,6 +171,10 @@ def write_gsplat_leaf_subtree(
     Returns the aggregate metadata; the caller records it in the metadata cache.
     """
     from ..gsplat_tree import write_gsplat_leaf
+
+    # Fail fast on invalid render attrs BEFORE creating the group, so a bad
+    # value cannot leave a partial node on disk.
+    validate_render_attrs(attrs)
 
     path = path.lstrip("/")
     group = ctx.store.require_group(path)

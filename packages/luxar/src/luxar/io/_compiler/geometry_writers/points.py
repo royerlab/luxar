@@ -28,7 +28,11 @@ from ..dataset_writers.scalars import (
 )
 from ..labels.image_labels import write_image_labels_csr
 from ..labels.text_labels import write_labels_csr
-from ..node_common import apply_default_render_attrs, prepare_transform_attrs
+from ..node_common import (
+    apply_default_render_attrs,
+    prepare_transform_attrs,
+    validate_render_attrs,
+)
 from ..spatial_ordering.points import (
     build_points_ordering,
     write_points_ordering_to_zarr,
@@ -58,6 +62,10 @@ def write_points(
         validate_radii_for_writing,
         validate_sharpness_for_writing,
     )
+
+    # 0. Fail fast on invalid render attrs BEFORE creating the group, so a
+    # bad value cannot leave a partial node on disk.
+    validate_render_attrs(attrs)
 
     # 1. Setup: Create group and validate positions
     path = path.lstrip("/")
@@ -130,9 +138,7 @@ def write_points(
         # Validate arrays only (scalars validated by encoder)
         if isinstance(radii, np.ndarray):
             validate_radii_for_writing(radii, n_points)
-        max_radius = write_radii(
-            group, radii, ordering_data, n_points, ctx.dataset_ctx
-        )
+        max_radius = write_radii(group, radii, ordering_data, n_points, ctx.dataset_ctx)
         metadata["max_radius"] = max_radius
         metadata["has_radii"] = True
         group.attrs["max_radius"] = max_radius
@@ -197,17 +203,13 @@ def write_points(
 
     # 11. Write labels if provided (CSR-style: label_offsets + label_bytes)
     if labels is not None:
-        sort_order = (
-            ordering_data["sort_order"] if ordering_data is not None else None
-        )
+        sort_order = ordering_data["sort_order"] if ordering_data is not None else None
         write_labels_csr(group, labels, n_points, ctx.compressor, sort_order)
         metadata["has_labels"] = True
 
     # 12. Write image labels if provided (CSR-style, no compression on blobs)
     if image_labels is not None:
-        sort_order = (
-            ordering_data["sort_order"] if ordering_data is not None else None
-        )
+        sort_order = ordering_data["sort_order"] if ordering_data is not None else None
         write_image_labels_csr(
             group, image_labels, n_points, ctx.compressor, sort_order
         )

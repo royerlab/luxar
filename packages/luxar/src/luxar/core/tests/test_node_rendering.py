@@ -107,7 +107,7 @@ class TestNodeRenderingAttributes:
             node = scene.add_group("test_node")
 
             # CL-2: must run before finalize.
-            for mode in ["normal", "additive", "max"]:
+            for mode in ["normal", "additive", "max", "opaque", "luminous"]:
                 node.blending_mode = mode
                 assert node.blending_mode == mode
                 assert node.attrs["blending_mode"] == mode

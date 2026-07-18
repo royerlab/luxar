@@ -48,7 +48,10 @@ _PARITY_ATTRS = (
     "gamma",
     "intensity",
     "offset",
-    "blending_mode",
+    # NOTE: blending_mode is intentionally absent — the writers no longer
+    # stamp a default (it has no identity value, so a stamped default would
+    # shadow ancestor-set modes under the viewer's nearest-setter-wins
+    # composition). Both paths share one writer, so parity still holds.
     "truncation_radius",
 )
 
