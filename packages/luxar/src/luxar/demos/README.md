@@ -730,7 +730,7 @@ Range-extracts just the ~68 MB `cluster fly L.ply` member (~300 k splats) from D
 ##### demo_gsplats_interop_sog_matrixcity.py - MatrixCity aerial (PlayCanvas SOG, ~13.6M — the largest)
 Fetches the aerial "small city" MatrixCity scene — **13,589,514 Gaussians** — from SuperSplat in PlayCanvas's compact **SOG** (Spatially Ordered Gaussians) format (`meta.json` + lossless WebP images, ~15–20× smaller than PLY), decodes it with Luxar's SOG reader, and builds an **overview** LOD: one coarse global level (instant whole-city first paint) over a BSP partition of stream-laddered fine tiles. The largest scene in the interop set (~45× the cluster fly) and the city-scale stress test for Luxar's LOD.
 **Run**: `hatch run python packages/luxar/src/luxar/demos/demo_gsplats_interop_sog_matrixcity.py`
-**Requires**: Network (~146 MB SOG bundle), ~8 GB RAM for the import + LOD build (workstation recommended). No GPU required. `Pillow` (WebP) from the `demos` extra.
+**Requires**: Network (~156 MB SOG bundle), several GB RAM for the import + LOD build (workstation recommended). No GPU required. `Pillow` (WebP) from the `demos` extra.
 **Data**: [MatrixCity](https://city-super.github.io/matrixcity/) (Li et al. 2023), 3DGS via FriendlySplat on [SuperSplat](https://superspl.at/scene/ace6e5b0) — research/education; fetched at runtime, not redistributed.
 
 **Demonstrates**: the classical-splat import path (all five dialects incl. **SOG** / WebP-compressed), the `download_zip_member` HTTP-Range/Zip64 extractor (including redirect-following HEAD for signed-CDN hosts), and applying `stream`/`tiles`/`overview` LOD recipes to imported scenes via `build_recipe`.

@@ -653,13 +653,18 @@ def _sog_accessor(path: Path) -> "Callable[[str], bytes]":
 
 
 def _sog_load_image(
-    read: "Callable[[str], bytes]", filename: str, count: int
+    read: "Callable[[str], bytes]",
+    filename: str,
+    count: int,
+    min_channels: int = 1,
 ) -> np.ndarray:
     """Decode one SOG WebP to a ``(count, C)`` uint8 array (row-major, top-left).
 
     All property images share the pixel→Gaussian layout: the same pixel across
     images is the same Gaussian, so only the first ``count`` row-major pixels
-    are valid (the tail is padding up to W×H).
+    are valid (the tail is padding up to W×H). ``min_channels`` guards the
+    per-attribute channel requirement (e.g. quats/sh0 need RGBA) so a malformed
+    image fails with a clear message instead of a bare ``IndexError`` later.
     """
     try:
         from PIL import Image
@@ -674,7 +679,18 @@ def _sog_load_image(
     arr = np.asarray(Image.open(io.BytesIO(read(filename))))
     if arr.ndim == 2:
         arr = arr[:, :, None]
-    return arr.reshape(-1, arr.shape[-1])[:count]
+    flat = arr.reshape(-1, arr.shape[-1])
+    if flat.shape[1] < min_channels:
+        raise ValueError(
+            f"SOG image {filename!r} has {flat.shape[1]} channel(s); "
+            f"expected at least {min_channels}"
+        )
+    if flat.shape[0] < count:
+        raise ValueError(
+            f"SOG image {filename!r} has {flat.shape[0]} pixels < declared "
+            f"count {count}"
+        )
+    return flat[:count]
 
 
 def read_sog(path: Union[str, Path]) -> ClassicalSplats:
@@ -712,8 +728,8 @@ def read_sog(path: Union[str, Path]) -> ClassicalSplats:
         raise ValueError(f"SOG meta declares a non-positive count: {count}")
 
     # Positions: 16-bit per axis → per-axis log-domain lerp → undo symmetric log.
-    lo = _sog_load_image(read, meta["means"]["files"][0], count).astype(np.uint16)
-    hi = _sog_load_image(read, meta["means"]["files"][1], count).astype(np.uint16)
+    lo = _sog_load_image(read, meta["means"]["files"][0], count, 3).astype(np.uint16)
+    hi = _sog_load_image(read, meta["means"]["files"][1], count, 3).astype(np.uint16)
     q = ((hi << 8) | lo)[:, :3].astype(np.float64) / 65535.0
     mins = np.asarray(meta["means"]["mins"], dtype=np.float64)
     maxs = np.asarray(meta["means"]["maxs"], dtype=np.float64)
@@ -721,13 +737,13 @@ def read_sog(path: Union[str, Path]) -> ClassicalSplats:
     positions = (np.sign(n) * np.expm1(np.abs(n))).astype(np.float32)
 
     # Scales: per-channel codebook index → exp(log-sigma).
-    sc = _sog_load_image(read, meta["scales"]["files"][0], count)[:, :3]
+    sc = _sog_load_image(read, meta["scales"]["files"][0], count, 3)[:, :3]
     sbook = np.asarray(meta["scales"]["codebook"], dtype=np.float64)
     scales = np.exp(sbook[sc]).astype(np.float32)
 
     # Quaternions: smallest-three (three stored comps in w,x,y,z order; alpha
     # byte 252..255 names the omitted largest component).
-    qz = _sog_load_image(read, meta["quats"]["files"][0], count)
+    qz = _sog_load_image(read, meta["quats"]["files"][0], count, 4)
     comp = (qz[:, :3].astype(np.float64) / 255.0 - 0.5) * (2.0 / np.sqrt(2.0))
     d = np.sqrt(np.maximum(0.0, 1.0 - np.square(comp).sum(axis=1)))
     mode = qz[:, 3].astype(np.int64) - 252
@@ -743,7 +759,7 @@ def read_sog(path: Union[str, Path]) -> ClassicalSplats:
     quaternions = _normalize_quat(quat).astype(np.float32)
 
     # Base color + opacity: RGB codebook indices (DC) + alpha opacity.
-    s0 = _sog_load_image(read, meta["sh0"]["files"][0], count)
+    s0 = _sog_load_image(read, meta["sh0"]["files"][0], count, 4)
     c0book = np.asarray(meta["sh0"]["codebook"], dtype=np.float64)
     dc = c0book[s0[:, :3]]
     colors = np.clip(0.5 + SH_C0 * dc, 0.0, 1.0).astype(np.float32)

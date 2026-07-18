@@ -1,8 +1,8 @@
 """`gsplat import` / `gsplat export` — classical (photogrammetric) splat interchange.
 
-``import`` reads the four common classical Gaussian-splat dialects (INRIA
+``import`` reads the common classical Gaussian-splat dialects (INRIA
 ``point_cloud.ply``, antimatter15 ``.splat``, Niantic/Scaniverse ``.spz``,
-SuperSplat compressed ``.ply``) into a
+SuperSplat compressed ``.ply``, and PlayCanvas ``SOG`` bundles) into a
 :class:`~luxar.gsplats.gsplat_data.GSplatData` and writes a current-format
 ``.gsplats.zarr``. ``export`` is the inverse: a ``.gsplats.zarr`` becomes an
 INRIA PLY that classical viewers load directly. The heavy lifting lives in
@@ -27,23 +27,27 @@ def import_command(
         ...,
         exists=True,
         help="Classical splat file: INRIA point_cloud.ply, antimatter15 .splat, "
-        "Niantic .spz, or SuperSplat compressed .ply.",
+        "Niantic .spz, SuperSplat compressed .ply, or a PlayCanvas SOG bundle "
+        "(directory with meta.json, that meta.json, or a .sog ZIP).",
     ),
     output_path: Path = typer.Argument(
         ..., help="Output .gsplats.zarr (current node-tree format)."
     ),
-    format: Literal["auto", "inria", "splat", "spz", "supersplat"] = typer.Option(
-        "auto",
-        "--format",
-        "-f",
-        help="Source dialect; 'auto' sniffs the extension and PLY header.",
+    format: Literal["auto", "inria", "splat", "spz", "supersplat", "sog"] = (
+        typer.Option(
+            "auto",
+            "--format",
+            "-f",
+            help="Source dialect; 'auto' sniffs the extension/PLY header, or a "
+            "directory/meta.json/.sog as SOG.",
+        )
     ),
     reorient: Optional[bool] = typer.Option(
         None,
         "--reorient/--no-reorient",
         help="Apply the canonical COLMAP → Y-up orientation fix (180° rotation "
         "about X). Default: per-dialect — on for the Y-down dialects "
-        "(INRIA PLY / .splat / SuperSplat), off for Y-up SPZ.",
+        "(INRIA PLY / .splat / SuperSplat / SOG), off for Y-up SPZ.",
     ),
     flip: str = typer.Option(
         "",
@@ -73,6 +77,7 @@ def import_command(
       luxar gsplat import garden.splat garden.gsplats.zarr
       luxar gsplat import point_cloud.ply scene.gsplats.zarr --no-reorient
       luxar gsplat import capture.spz capture.gsplats.zarr -e precision
+      luxar gsplat import sog_bundle/ city.gsplats.zarr   # PlayCanvas SOG dir
     """
     try:
         run_import(
