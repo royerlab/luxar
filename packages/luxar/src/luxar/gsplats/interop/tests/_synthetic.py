@@ -262,11 +262,102 @@ def write_supersplat_ply(
     path.write_bytes(header.encode("ascii") + chunk.tobytes() + vertex.tobytes())
 
 
+def _codebook_encode(values: np.ndarray, n_entries: int = 256):
+    """Build an ``n_entries`` linspace codebook over ``values`` and index into it.
+
+    Returns ``(codebook, indices)`` — the SOG scheme for scales/sh0. A linspace
+    codebook is not what the real (k-means) encoder produces, but it round-trips
+    within the 8-bit resolution the reader must tolerate.
+    """
+    lo, hi = float(values.min()), float(values.max())
+    if hi - lo < 1e-9:
+        hi = lo + 1e-9
+    codebook = np.linspace(lo, hi, n_entries)
+    idx = np.clip(np.round((values - lo) / (hi - lo) * (n_entries - 1)), 0, n_entries - 1)
+    return codebook.tolist(), idx.astype(np.uint8)
+
+
+def write_sog(directory: Path, gt: GroundTruth) -> None:
+    """Write a synthetic PlayCanvas SOG v2 bundle (meta.json + lossless WebPs).
+
+    Encodes exactly the four decoded groups (means/scales/quats/sh0); no shN.
+    Uses a square-ish row-major image layout with tail padding, matching the
+    reader's ``first-count-pixels`` contract.
+    """
+    import io
+    import json
+
+    from PIL import Image
+
+    directory = Path(directory)
+    directory.mkdir(parents=True, exist_ok=True)
+    n = gt.positions.shape[0]
+    w = int(np.ceil(np.sqrt(n)))
+    h = int(np.ceil(n / w))
+
+    def save(name: str, flat: np.ndarray) -> None:  # flat: (n, C) uint8
+        c = flat.shape[1]
+        full = np.zeros((w * h, c), dtype=np.uint8)
+        full[:n] = flat
+        img = full.reshape(h, w, c)
+        mode = {3: "RGB", 4: "RGBA"}[c]
+        buf = io.BytesIO()
+        Image.fromarray(img, mode=mode).save(buf, format="WEBP", lossless=True)
+        (directory / name).write_bytes(buf.getvalue())
+
+    # Means: symmetric log → per-axis [min,max] → 16-bit split low/high.
+    log = np.sign(gt.positions) * np.log1p(np.abs(gt.positions.astype(np.float64)))
+    mins = log.min(axis=0)
+    maxs = np.where(log.max(axis=0) - mins < 1e-9, mins + 1e-9, log.max(axis=0))
+    q16 = np.round((log - mins) / (maxs - mins) * 65535).astype(np.uint16)  # (n,3)
+    save("means_l.webp", (q16 & 0xFF).astype(np.uint8))
+    save("means_u.webp", (q16 >> 8).astype(np.uint8))
+
+    # Scales: log-domain codebook.
+    sbook, sidx = _codebook_encode(np.log(gt.scales.astype(np.float64)).ravel())
+    save("scales.webp", sidx.reshape(n, 3))
+
+    # Quats: smallest-three (store the three non-largest in w,x,y,z order).
+    qd = gt.quaternions.astype(np.float64)
+    quats_rgba = np.zeros((n, 4), dtype=np.uint8)
+    for i in range(n):
+        a = qd[i].copy()
+        largest = int(np.argmax(np.abs(a)))
+        if a[largest] < 0:
+            a = -a
+        others = [j for j in range(4) if j != largest]
+        for slot, j in enumerate(others):
+            c = (a[j] * (np.sqrt(2.0) / 2.0) + 0.5) * 255.0
+            quats_rgba[i, slot] = int(np.clip(round(c), 0, 255))
+        quats_rgba[i, 3] = 252 + largest
+    save("quats.webp", quats_rgba)
+
+    # sh0: DC codebook + opacity in alpha.
+    dc = (gt.colors.astype(np.float64) - 0.5) / SH_C0
+    cbook, cidx = _codebook_encode(dc.ravel())
+    sh0 = np.zeros((n, 4), dtype=np.uint8)
+    sh0[:, :3] = cidx.reshape(n, 3)
+    sh0[:, 3] = np.clip(np.round(gt.opacities.astype(np.float64) * 255), 0, 255)
+    save("sh0.webp", sh0)
+
+    meta = {
+        "version": 2,
+        "count": n,
+        "means": {"mins": mins.tolist(), "maxs": maxs.tolist(),
+                  "files": ["means_l.webp", "means_u.webp"]},
+        "scales": {"codebook": sbook, "files": ["scales.webp"]},
+        "quats": {"files": ["quats.webp"]},
+        "sh0": {"codebook": cbook, "files": ["sh0.webp"]},
+    }
+    (directory / "meta.json").write_text(json.dumps(meta))
+
+
 WRITERS = {
     "inria": write_inria_ply,
     "splat": write_antimatter_splat,
     "spz": write_spz,
     "supersplat": write_supersplat_ply,
+    "sog": write_sog,
 }
 
 SUFFIXES = {
@@ -274,4 +365,7 @@ SUFFIXES = {
     "splat": ".splat",
     "spz": ".spz",
     "supersplat": ".ply",
+    # SOG is a bundle DIRECTORY (meta.json + WebPs), not a single file — the
+    # empty suffix makes `_write_fixture` hand write_sog a directory path.
+    "sog": "",
 }

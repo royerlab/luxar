@@ -30,7 +30,7 @@ import gzip
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, Optional, Union
+from typing import TYPE_CHECKING, Callable, Optional, Union
 
 import numpy as np
 
@@ -43,6 +43,7 @@ __all__ = [
     "read_antimatter_splat",
     "read_spz",
     "read_supersplat_ply",
+    "read_sog",
     "detect_classical_format",
     "classical_to_gsplat_data",
     "import_gsplats",
@@ -52,7 +53,7 @@ __all__ = [
 ]
 
 #: Formats accepted by :func:`import_gsplats`'s ``format`` argument.
-CLASSICAL_FORMATS = ("inria", "splat", "spz", "supersplat")
+CLASSICAL_FORMATS = ("inria", "splat", "spz", "supersplat", "sog")
 
 #: The degree-0 real spherical-harmonics basis constant Y_0^0 = 1/(2*sqrt(pi)).
 SH_C0 = 0.28209479177387814
@@ -633,6 +634,133 @@ def read_supersplat_ply(path: Union[str, Path]) -> ClassicalSplats:
     )
 
 
+def _sog_accessor(path: Path) -> "Callable[[str], bytes]":
+    """Return a ``read(name) -> bytes`` accessor for a SOG bundle.
+
+    Accepts a directory of loose files (``meta.json`` + ``*.webp``, how
+    SuperSplat/PlayCanvas serve them), a path to that ``meta.json``, or a
+    single ``.sog`` ZIP archive bundling the same members.
+    """
+    if path.suffix.lower() == ".sog":
+        import zipfile
+
+        zf = zipfile.ZipFile(path)
+        names = {Path(n).name: n for n in zf.namelist()}
+        return lambda name: zf.read(names.get(name, name))
+    # A directory is the bundle; a meta.json (or any member) → its parent.
+    base = path if path.is_dir() else path.parent
+    return lambda name: (base / name).read_bytes()
+
+
+def _sog_load_image(
+    read: "Callable[[str], bytes]", filename: str, count: int
+) -> np.ndarray:
+    """Decode one SOG WebP to a ``(count, C)`` uint8 array (row-major, top-left).
+
+    All property images share the pixel→Gaussian layout: the same pixel across
+    images is the same Gaussian, so only the first ``count`` row-major pixels
+    are valid (the tail is padding up to W×H).
+    """
+    try:
+        from PIL import Image
+    except ImportError as e:  # pragma: no cover - exercised via the guard test
+        raise ImportError(
+            "Reading the SOG format needs Pillow with WebP support: "
+            "`pip install 'Pillow>=9.0.0'` (bundled in the `luxar[demos]` extra)."
+        ) from e
+
+    import io
+
+    arr = np.asarray(Image.open(io.BytesIO(read(filename))))
+    if arr.ndim == 2:
+        arr = arr[:, :, None]
+    return arr.reshape(-1, arr.shape[-1])[:count]
+
+
+def read_sog(path: Union[str, Path]) -> ClassicalSplats:
+    """Read a PlayCanvas SOG (Spatially Ordered Gaussians) bundle → ClassicalSplats.
+
+    SOG v2 is a ``meta.json`` referencing lossless WebP images; ``path`` may be
+    the bundle directory, its ``meta.json``, or a ``.sog`` ZIP. Per-Gaussian
+    attributes are co-located across images (same pixel = same Gaussian):
+
+      - ``means_l``/``means_u`` — 16-bit-per-axis position, dequantized into the
+        per-axis ``[mins, maxs]`` log domain, then the symmetric log is undone
+        (``sign(n)·(exp|n|−1)``).
+      - ``scales`` — RGB indices into a 256-entry log-domain codebook (``exp``).
+      - ``quats`` — smallest-three: three stored components in (w,x,y,z) order
+        mapped to ``[−√½, +√½]``, the omitted (largest) component recovered as
+        ``√(1−Σ)`` and its slot given by ``alpha − 252``.
+      - ``sh0`` — RGB indices into a DC codebook (``0.5 + c·SH_C0``) + opacity in
+        alpha.
+
+    Higher-order SH (``shN``) is intentionally dropped — the DC-only policy
+    shared with the other classical dialects.
+    """
+    import json
+
+    path = Path(path)
+    read = _sog_accessor(path)
+    meta = json.loads(read("meta.json"))
+    version = meta.get("version")
+    if version != 2:
+        raise ValueError(
+            f"Unsupported SOG version {version!r} (this reader implements v2)"
+        )
+    count = int(meta["count"])
+    if count <= 0:
+        raise ValueError(f"SOG meta declares a non-positive count: {count}")
+
+    # Positions: 16-bit per axis → per-axis log-domain lerp → undo symmetric log.
+    lo = _sog_load_image(read, meta["means"]["files"][0], count).astype(np.uint16)
+    hi = _sog_load_image(read, meta["means"]["files"][1], count).astype(np.uint16)
+    q = ((hi << 8) | lo)[:, :3].astype(np.float64) / 65535.0
+    mins = np.asarray(meta["means"]["mins"], dtype=np.float64)
+    maxs = np.asarray(meta["means"]["maxs"], dtype=np.float64)
+    n = mins + (maxs - mins) * q
+    positions = (np.sign(n) * np.expm1(np.abs(n))).astype(np.float32)
+
+    # Scales: per-channel codebook index → exp(log-sigma).
+    sc = _sog_load_image(read, meta["scales"]["files"][0], count)[:, :3]
+    sbook = np.asarray(meta["scales"]["codebook"], dtype=np.float64)
+    scales = np.exp(sbook[sc]).astype(np.float32)
+
+    # Quaternions: smallest-three (three stored comps in w,x,y,z order; alpha
+    # byte 252..255 names the omitted largest component).
+    qz = _sog_load_image(read, meta["quats"]["files"][0], count)
+    comp = (qz[:, :3].astype(np.float64) / 255.0 - 0.5) * (2.0 / np.sqrt(2.0))
+    d = np.sqrt(np.maximum(0.0, 1.0 - np.square(comp).sum(axis=1)))
+    mode = qz[:, 3].astype(np.int64) - 252
+    quat = np.zeros((count, 4), dtype=np.float64)  # (w, x, y, z)
+    for m in range(4):
+        sel = mode == m
+        if not np.any(sel):
+            continue
+        others = [i for i in range(4) if i != m]
+        for slot, tgt in enumerate(others):
+            quat[sel, tgt] = comp[sel, slot]
+        quat[sel, m] = d[sel]
+    quaternions = _normalize_quat(quat).astype(np.float32)
+
+    # Base color + opacity: RGB codebook indices (DC) + alpha opacity.
+    s0 = _sog_load_image(read, meta["sh0"]["files"][0], count)
+    c0book = np.asarray(meta["sh0"]["codebook"], dtype=np.float64)
+    dc = c0book[s0[:, :3]]
+    colors = np.clip(0.5 + SH_C0 * dc, 0.0, 1.0).astype(np.float32)
+    opacities = (s0[:, 3].astype(np.float32) / 255.0).copy()
+
+    sh_degree = int(meta.get("shN", {}).get("bands", 0))
+    return ClassicalSplats(
+        positions=positions,
+        scales=scales,
+        quaternions=quaternions,
+        opacities=opacities,
+        colors=colors,
+        sh_degree=sh_degree,
+        source_format="sog",
+    )
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Format detection + dispatch
 # ─────────────────────────────────────────────────────────────────────────────
@@ -648,6 +776,13 @@ def detect_classical_format(path: Union[str, Path]) -> str:
     """
     path = Path(path)
     suffix = path.suffix.lower()
+    # SOG: a bundle directory (has meta.json), a meta.json file, or a .sog zip.
+    if path.is_dir():
+        if (path / "meta.json").is_file():
+            return "sog"
+        raise ValueError(f"{path.name}: directory has no meta.json — not a SOG bundle")
+    if path.name == "meta.json" or suffix == ".sog":
+        return "sog"
     if suffix == ".splat":
         return "splat"
     if suffix == ".spz":
@@ -669,7 +804,7 @@ def detect_classical_format(path: Union[str, Path]) -> str:
         )
     raise ValueError(
         f"{path.name}: unrecognized extension {suffix!r} — expected "
-        ".ply, .splat, or .spz"
+        ".ply, .splat, .spz, .sog, or a SOG bundle directory"
     )
 
 
@@ -678,6 +813,7 @@ _READERS = {
     "splat": read_antimatter_splat,
     "spz": read_spz,
     "supersplat": read_supersplat_ply,
+    "sog": read_sog,
 }
 
 
@@ -811,7 +947,8 @@ def import_gsplats(
 
     Args:
         path: Source file (``.ply`` — INRIA or SuperSplat compressed,
-            ``.splat``, or ``.spz``).
+            ``.splat``, ``.spz``) or a PlayCanvas SOG bundle (a directory with
+            ``meta.json`` + WebPs, that ``meta.json``, or a ``.sog`` ZIP).
         format: One of ``auto`` (default, sniffed via
             :func:`detect_classical_format`) or an explicit dialect name from
             :data:`CLASSICAL_FORMATS`.
