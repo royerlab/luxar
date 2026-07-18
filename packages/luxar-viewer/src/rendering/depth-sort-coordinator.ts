@@ -263,6 +263,12 @@ export function noteGSplatsCommit(mesh: THREE.Mesh, centers3: Float32Array, coun
         .registerNode(transfer({ nodeId, generation, centers3, count }, [centers3.buffer]))
         .catch((error: unknown) => {
           log.error(Modules.WORKER_POOL, `SortWorker registerNode failed for ${nodeId}`, error);
+          // The worker never received this generation's centers — clear
+          // the flag (if still ours) so the per-frame scheduler doesn't
+          // keep dispatching guaranteed-null sorts against the missing
+          // registration until the next commit.
+          const failed = nodeStates.get(nodeId);
+          if (failed?.generation === generation) failed.registered = false;
         });
       scheduleSort(mesh, nodeId);
     })
@@ -623,9 +629,11 @@ export function evaluateDepthSortPerFrame(): void {
       groupKey: part ? part.wrapper : mesh,
       partRank: part && ranks ? (ranks.get(part.partIndex) ?? -1) : -1,
       // View-space z of the content centroid (negative in front of the
-      // camera; MORE negative = farther). Without bounds there is no
-      // depth reference — 0 keeps the mesh comparable without NaN.
-      viewZ: bs ? scratch.center.z : 0,
+      // camera; MORE negative = farther). Without bounds — or with a
+      // non-finite center (NaN input data propagates into the bbox) —
+      // there is no depth reference; 0 keeps the mesh comparable
+      // instead of poisoning the group-sort comparators with NaN.
+      viewZ: bs && Number.isFinite(scratch.center.z) ? scratch.center.z : 0,
     });
 
     // === Within-mesh re-sort trigger (Phase 3) ===
@@ -818,6 +826,13 @@ export function releaseAllDepthSortNodes(): void {
  */
 export function disposeDepthSort(): void {
   nodeStates.clear();
+  // Module-state reset completeness: both per-frame containers can hold
+  // THREE object references between calls (the rank memo until the next
+  // evaluate's clear; the slots only if an evaluate threw mid-collect) —
+  // an embedder that disposes and re-inits in one page must not have the
+  // old scene pinned by them.
+  partitionRankCache.clear();
+  orderSlots = [];
   worker?.terminate();
   worker = null;
   api = null;
