@@ -8,6 +8,7 @@
 import { describe, it, expect } from 'vitest';
 import * as THREE from 'three';
 import { PointPickingMaterial } from '../../../rendering/picking/point/material';
+import { PointPickingTSLMaterial } from '../../../rendering/picking/point/material-tsl';
 import { LinePickingMaterial } from '../../../rendering/picking/line/material';
 import { LinePickingTSLMaterial } from '../../../rendering/picking/line/material-tsl';
 import { GSplatPickingMaterial } from '../../../rendering/picking/gsplat/material';
@@ -63,6 +64,57 @@ describe('PointPickingMaterial', () => {
     expect(material.uniforms.pointSizeFactor.value).toBe(240); // 2 * 600 / (10 * 0.5)
     material.dispose();
   });
+
+  // Mirrors GSplatPickingMaterial's explicit clone (inherited
+  // Material.clone() calls the constructor with no config and throws;
+  // three-geometry symmetry rule).
+  it('clone preserves config and tuned uniforms (independent of source)', () => {
+    const material = new PointPickingMaterial({ nodeId: 5, radiusScale: 0.5 });
+    material.updateCameraParams(1.0, new THREE.Vector2(800, 600), true, 0.25);
+
+    const cloned = material.clone();
+    expect(cloned.uniforms.uNodeId.value).toBe(5);
+    expect(cloned.uniforms.radiusScale.value).toBe(0.5);
+    expect(cloned.uniforms.uIsOrtho.value).toBe(1);
+    expect(cloned.uniforms.uNearCull.value).toBe(0.25);
+    expect(cloned.uniforms.pointSizeFactor.value).toBe(material.uniforms.pointSizeFactor.value);
+    expect(cloned.uniforms.maxPointSize.value).toBe(material.uniforms.maxPointSize.value);
+    expect(cloned.uniforms.uResolution.value.x).toBe(800);
+    expect(cloned.uniforms.uResolution.value.y).toBe(600);
+
+    // Clone is independent — mutating the source must not leak.
+    material.updateRadiusScale(2.0);
+    expect(cloned.uniforms.radiusScale.value).toBe(0.5);
+
+    material.dispose();
+    cloned.dispose();
+  });
+});
+
+describe('PointPickingTSLMaterial', () => {
+  it('clone preserves config and tuned uniforms (independent of source)', () => {
+    // One-for-one mirror of the GLSL wrapper's clone test above
+    // (GLSL ↔ TSL symmetry, same rule as the gsplat pick wrappers).
+    const material = new PointPickingTSLMaterial({ nodeId: 5, radiusScale: 0.5 });
+    material.updateCameraParams(1.0, new THREE.Vector2(800, 600), true, 0.25);
+
+    const cloned = material.clone();
+    expect(cloned.uniforms.uNodeId.value).toBe(5);
+    expect(cloned.uniforms.radiusScale.value).toBe(0.5);
+    expect(cloned.uniforms.uIsOrtho.value).toBe(1);
+    expect(cloned.uniforms.uNearCull.value).toBe(0.25);
+    expect(cloned.uniforms.pointSizeFactor.value).toBe(material.uniforms.pointSizeFactor.value);
+    expect(cloned.uniforms.maxPointSize.value).toBe(material.uniforms.maxPointSize.value);
+    expect((cloned.uniforms.uResolution.value as THREE.Vector2).x).toBe(800);
+    expect((cloned.uniforms.uResolution.value as THREE.Vector2).y).toBe(600);
+
+    // Clone is independent — mutating the source must not leak.
+    material.updateRadiusScale(2.0);
+    expect(cloned.uniforms.radiusScale.value).toBe(0.5);
+
+    material.dispose();
+    cloned.dispose();
+  });
 });
 
 describe('LinePickingMaterial', () => {
@@ -103,6 +155,34 @@ describe('LinePickingMaterial', () => {
     expect(material.fragmentShader).not.toContain('LUXAR_SHARPNESS_TWO');
     expect('LUXAR_SHARPNESS_TWO' in (material.defines ?? {})).toBe(false);
     material.dispose();
+  });
+
+  // Mirrors GSplatPickingMaterial's explicit clone (inherited
+  // Material.clone() calls the constructor with no config and throws;
+  // three-geometry symmetry rule).
+  it('clone preserves config and tuned uniforms (independent of source)', () => {
+    const material = new LinePickingMaterial({ nodeId: 7 });
+    material.updateCameraParams(10, new THREE.Vector2(800, 600), true, 0.25);
+
+    const cloned = material.clone();
+    expect(cloned.uniforms.uNodeId.value).toBe(7);
+    expect(cloned.uniforms.uIsOrtho.value).toBe(1);
+    expect(cloned.uniforms.uNearCull.value).toBe(0.25);
+    expect(cloned.uniforms.uMaxLinePixelWidth.value).toBe(300); // 600 * 0.5
+    expect(cloned.uniforms.uOrthoLineScale.value).toBe(material.uniforms.uOrthoLineScale.value);
+    expect(cloned.uniforms.uPerspectiveLineScale.value).toBe(
+      material.uniforms.uPerspectiveLineScale.value
+    );
+    expect(cloned.uniforms.uResolution.value.x).toBe(800);
+    expect(cloned.uniforms.uResolution.value.y).toBe(600);
+
+    // Clone is independent — mutating the source must not leak.
+    material.updateCameraParams(10, new THREE.Vector2(1920, 1080), true, 0.9);
+    expect(cloned.uniforms.uNearCull.value).toBe(0.25);
+    expect(cloned.uniforms.uResolution.value.x).toBe(800);
+
+    material.dispose();
+    cloned.dispose();
   });
 });
 
@@ -332,6 +412,37 @@ describe('GSplatPickingTSLMaterial', () => {
     expect(glsl.uniforms.uSurfaceDepth.value).toBe(tsl.uniforms.uSurfaceDepth.value);
     glsl.dispose();
     tsl.dispose();
+  });
+});
+
+describe('LinePickingTSLMaterial', () => {
+  it('clone preserves config and tuned uniforms (independent of source)', () => {
+    // One-for-one mirror of the GLSL wrapper's clone test above
+    // (GLSL ↔ TSL symmetry, same rule as the gsplat pick wrappers).
+    // Ortho camera params also exercise the clone's graph rebuild on
+    // the copied projection mode (the pick graph is JS-specialized).
+    const material = new LinePickingTSLMaterial({ nodeId: 7 });
+    material.updateCameraParams(10, new THREE.Vector2(800, 600), true, 0.25);
+
+    const cloned = material.clone();
+    expect(cloned.uniforms.uNodeId.value).toBe(7);
+    expect(cloned.uniforms.uIsOrtho.value).toBe(1);
+    expect(cloned.uniforms.uNearCull.value).toBe(0.25);
+    expect(cloned.uniforms.uMaxLinePixelWidth.value).toBe(300); // 600 * 0.5
+    expect(cloned.uniforms.uOrthoLineScale.value).toBe(material.uniforms.uOrthoLineScale.value);
+    expect(cloned.uniforms.uPerspectiveLineScale.value).toBe(
+      material.uniforms.uPerspectiveLineScale.value
+    );
+    expect((cloned.uniforms.uResolution.value as THREE.Vector2).x).toBe(800);
+    expect((cloned.uniforms.uResolution.value as THREE.Vector2).y).toBe(600);
+
+    // Clone is independent — mutating the source must not leak.
+    material.updateCameraParams(10, new THREE.Vector2(1920, 1080), true, 0.9);
+    expect(cloned.uniforms.uNearCull.value).toBe(0.25);
+    expect((cloned.uniforms.uResolution.value as THREE.Vector2).x).toBe(800);
+
+    material.dispose();
+    cloned.dispose();
   });
 });
 
