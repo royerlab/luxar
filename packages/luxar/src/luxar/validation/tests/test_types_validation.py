@@ -277,6 +277,28 @@ class TestBlendingModeValidation:
         with pytest.raises(TypeError, match="Blending mode must be a string"):
             validate_blending_mode(123)
 
+    def test_error_message_lists_all_enum_modes(self) -> None:
+        """The error message enumerates every BlendingMode value.
+
+        Pins the enum derivation: adding a 6th mode to the enum must make
+        the validator accept it AND advertise it, with no second list to
+        keep in sync.
+        """
+        from luxar.typing_utils.enums import BlendingMode
+
+        with pytest.raises(ValueError) as exc_info:
+            validate_blending_mode("bogus")
+        message = str(exc_info.value)
+        for mode in BlendingMode:
+            assert mode.value in message
+
+    def test_validator_accepts_every_enum_mode(self) -> None:
+        """Every BlendingMode enum value passes validation (enum is the SSOT)."""
+        from luxar.typing_utils.enums import BlendingMode
+
+        for mode in BlendingMode:
+            assert validate_blending_mode(mode.value) == mode.value
+
         with pytest.raises(TypeError, match="Blending mode must be a string"):
             validate_blending_mode(None)
 

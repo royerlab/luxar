@@ -139,8 +139,9 @@ export class LineTSLMaterial
     // per line layer.
     this.forceSinglePass = true;
 
+    // depthTest is stamped after `rebuildGraph` below, from the
+    // mode-derived state the factory tail applies.
     this.userData.gamma = gammaValue;
-    this.userData.depthTest = materialConfig.depthTest ?? true;
     this.userData.scalarRange = materialConfig.scalarRange;
 
     // Stamp the requested mode on userData BEFORE rebuildGraph so the
@@ -153,6 +154,22 @@ export class LineTSLMaterial
     this.userData.blendingMode = materialConfig.blendingMode ?? 'additive';
 
     this.rebuildGraph();
+
+    // Stamp the mode-derived depthTest the factory tail just applied
+    // (GLSL twin: applyBlendingMode stamps userData.depthTest) so
+    // clone() round-trips the real state.
+    this.userData.depthTest = this.depthTest;
+
+    // Honor explicit overrides from config after the factory's
+    // mode-derived blending state (mirrors the GLSL twin's constructor
+    // tail).
+    if (materialConfig.transparent !== undefined) {
+      this.transparent = materialConfig.transparent;
+    }
+    if (materialConfig.depthTest !== undefined) {
+      this.depthTest = materialConfig.depthTest;
+      this.userData.depthTest = materialConfig.depthTest;
+    }
   }
 
   /**

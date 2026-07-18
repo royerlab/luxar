@@ -146,9 +146,9 @@ export class PointTSLMaterial
     this.toneMapped = false;
 
     // userData mirrors the GLSL wrapper so `clone()` / `applyBlendingMode`
-    // share the same fields.
+    // share the same fields. depthTest is stamped after `rebuildGraph`
+    // below, from the mode-derived state the factory tail applies.
     this.userData.gamma = gammaValue;
-    this.userData.depthTest = materialConfig.depthTest ?? true;
     this.userData.scalarRange = materialConfig.scalarRange;
 
     // Stamp the requested Luxar blending mode on userData BEFORE
@@ -174,6 +174,22 @@ export class PointTSLMaterial
     // `this.uniforms.X.value` (via the proxies) flows through to the
     // GPU without per-frame callbacks.
     this.rebuildGraph();
+
+    // Stamp the mode-derived depthTest the factory tail just applied
+    // (GLSL twin: applyBlendingMode stamps userData.depthTest) so
+    // clone() round-trips the real state.
+    this.userData.depthTest = this.depthTest;
+
+    // Honor explicit overrides from config after the factory's
+    // mode-derived blending state (mirrors the GLSL twin's constructor
+    // tail).
+    if (materialConfig.transparent !== undefined) {
+      this.transparent = materialConfig.transparent;
+    }
+    if (materialConfig.depthTest !== undefined) {
+      this.depthTest = materialConfig.depthTest;
+      this.userData.depthTest = materialConfig.depthTest;
+    }
   }
 
   /**
@@ -367,7 +383,6 @@ export class PointTSLMaterial
       intensity: this.uniforms.uIntensity.value,
       offset: this.uniforms.uOffset.value,
       blendingMode: (this.userData.blendingMode as BlendingMode | undefined) ?? 'additive',
-      depthWrite: this.depthWrite,
       depthTest: this.userData.depthTest ?? true,
       transparent: this.transparent,
       colormapTexture: this.uniforms.uColormapTex?.value ?? undefined,

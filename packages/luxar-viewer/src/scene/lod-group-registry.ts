@@ -72,6 +72,11 @@ import { coverageBlendPlan, energyCompensation } from './lod-blend';
 interface FadeableMaterial extends THREE.Material {
   updateOpacity(opacity: number): void;
   getOpacity(): number;
+  /**
+   * Present on every Luxar leaf material. Used after a fade opacity
+   * write to re-derive normal mode's opacity-gated depthWrite.
+   */
+  applyBlendingMode?(mode: string): void;
 }
 
 /** True when a material exposes the {@link FadeableMaterial} opacity surface. */
@@ -1034,7 +1039,13 @@ export class LODGroupRegistry {
         const partner = entry.children[partnerIdx];
         const partnerFresh = version == null || this.childFreshAndCount(partner, version).fresh;
         const aspBlendable = this.isBlendable(aspiration!);
-        if (partner && isReady(partner) && partnerFresh && aspBlendable && this.isBlendable(partner)) {
+        if (
+          partner &&
+          isReady(partner) &&
+          partnerFresh &&
+          aspBlendable &&
+          this.isBlendable(partner)
+        ) {
           blendPartnerIdx = partnerIdx;
           // primaryWeight is the OPACITY of the primary (displayIdx); the plan's
           // hiWeight is the FINER level's opacity, mapped to whichever is primary.
@@ -1329,12 +1340,18 @@ export class LODGroupRegistry {
    * branch) → each fadeable leaf is visited individually, so `energyFactor` is
    * genuinely per-leaf across a partition of independently-streaming leaves.
    */
-  private applyChildFade(
-    child: LODGroupChild,
-    weight: number | null,
-    energyComp: boolean
-  ): void {
+  private applyChildFade(child: LODGroupChild, weight: number | null, energyComp: boolean): void {
     const coverageWeight = weight ?? 1;
+    // Normal mode's depthWrite is opacity-gated (>= 0.99, see
+    // normalModeDepthWrite): after writing a fade opacity, re-derive the
+    // mode state so the gate tracks the live value. Unreachable today
+    // (BLENDABLE_MODES = additive/luminous, whose depth state is
+    // opacity-independent) but preserves the invariant if that set grows.
+    const refreshNormalDepthWrite = (m: FadeableMaterial): void => {
+      if ((m.userData?.blendingMode as string | undefined) === 'normal') {
+        m.applyBlendingMode?.('normal');
+      }
+    };
     const visit = (mesh: THREE.Object3D): void => {
       const current = (mesh as THREE.Mesh).material;
       if (!current || Array.isArray(current) || !isFadeable(current)) return;
@@ -1355,6 +1372,7 @@ export class LODGroupRegistry {
         // leave the shared material untouched (no clone).
         if (ud._lodFadeBase != null) {
           current.updateOpacity(ud._lodFadeBase);
+          refreshNormalDepthWrite(current);
           ud._lodFadeBase = undefined;
         }
         return;
@@ -1371,6 +1389,7 @@ export class LODGroupRegistry {
       // multiplier changes (per-frame as the ladder fills in), clear it on restore.
       if (ud._lodFadeBase == null) ud._lodFadeBase = mat.getOpacity();
       mat.updateOpacity(ud._lodFadeBase * product);
+      refreshNormalDepthWrite(mat);
     };
     const obj = child.object as THREE.Mesh;
     if (obj.material) visit(child.object);

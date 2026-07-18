@@ -5,7 +5,7 @@
  * mode (additive/normal/max/opaque/luminous), idempotency, max-mode
  * round-trip, and opacity boundary tests.
  */
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import * as THREE from 'three';
 import {
   isAdditiveMode,
@@ -13,6 +13,9 @@ import {
   isMaxMode,
   isNormalMode,
   isOpaqueMode,
+  usesPeakProjection,
+  BLENDING_MODES,
+  normalizeBlendingMode,
   getCompleteBlendingState,
   getGSplatNormalBlendingState,
 } from '../../../rendering/blending-state';
@@ -61,6 +64,59 @@ describe('BlendingMode predicates', () => {
         isLuminousMode(mode),
       ].filter(Boolean).length;
       expect(hits).toBe(1);
+    }
+  });
+
+  it('usesPeakProjection groups the surface modes (max/normal/opaque) against the emissive ones', () => {
+    // PR #561 taxonomy: surface modes project the 2D-Gaussian peak;
+    // emissive modes (additive/luminous) integrate the ray.
+    expect(usesPeakProjection('max')).toBe(true);
+    expect(usesPeakProjection('normal')).toBe(true);
+    expect(usesPeakProjection('opaque')).toBe(true);
+    expect(usesPeakProjection('additive')).toBe(false);
+    expect(usesPeakProjection('luminous')).toBe(false);
+  });
+});
+
+describe('normalizeBlendingMode', () => {
+  it('passes every canonical mode through unchanged', () => {
+    for (const mode of BLENDING_MODES) {
+      expect(normalizeBlendingMode(mode)).toBe(mode);
+    }
+  });
+
+  it("maps undefined to 'additive' (the composition identity)", () => {
+    expect(normalizeBlendingMode(undefined)).toBe('additive');
+  });
+
+  it("coerces unknown strings to 'normal' (depth-sortable fallthrough)", () => {
+    expect(normalizeBlendingMode('bogus-mode-a')).toBe('normal');
+    expect(normalizeBlendingMode('')).toBe('normal');
+    expect(normalizeBlendingMode('Additive')).toBe('normal'); // case-sensitive
+  });
+
+  it('warns exactly once per distinct unknown string', () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      // Unique strings — the once-only Set is module-level, so reuse
+      // across tests would make this pass vacuously.
+      normalizeBlendingMode('warn-once-x');
+      normalizeBlendingMode('warn-once-x');
+      normalizeBlendingMode('warn-once-x');
+      const forX = warnSpy.mock.calls.filter((c) => String(c).includes('warn-once-x'));
+      expect(forX.length).toBe(1);
+
+      normalizeBlendingMode('warn-once-y');
+      const forY = warnSpy.mock.calls.filter((c) => String(c).includes('warn-once-y'));
+      expect(forY.length).toBe(1);
+
+      // Valid + undefined inputs never warn.
+      warnSpy.mockClear();
+      for (const mode of BLENDING_MODES) normalizeBlendingMode(mode);
+      normalizeBlendingMode(undefined);
+      expect(warnSpy).not.toHaveBeenCalled();
+    } finally {
+      warnSpy.mockRestore();
     }
   });
 });

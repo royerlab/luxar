@@ -1192,11 +1192,7 @@ export class LayersPanel {
       // the next commit registers with the SortWorker) or stop (AWAY:
       // release) depth sorting.
       if (obj.userData?.nodeType === 'gsplats') {
-        noteGSplatsBlendingModeSwitch(
-          obj as THREE.Mesh,
-          eff.blending_mode as BlendingMode | undefined,
-          prevBlendingMode
-        );
+        noteGSplatsBlendingModeSwitch(obj as THREE.Mesh, eff.blending_mode, prevBlendingMode);
       }
     }
     this.requestRender();

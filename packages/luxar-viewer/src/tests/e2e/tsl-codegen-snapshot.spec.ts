@@ -140,6 +140,8 @@ const SHADERS = [
   // the LUT-lookup path (USE_COLORMAP). Both are distinct generated
   // code that the base `gsplat` snapshot never pins.
   'gsplat-normal-premult',
+  // Pins the opaque→peak projection mapping (same graph family as max).
+  'gsplat-opaque',
   'gsplat-colormap',
 ] as const;
 
