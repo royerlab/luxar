@@ -26,6 +26,10 @@
  *   scheduler `evaluateDepthSortPerFrame` (angle / view-axis-translation
  *   thresholds from `config.depthSort`; `?depthSort=0` disables the whole
  *   subsystem via {@link setDepthSortEnabled}).
+ * - Cross-node draw order: the same per-frame pass collects every visible
+ *   normal-mode gsplat mesh and assigns ONE global back-to-front
+ *   `renderOrder` scale (wrapper groups by mean view-z, exact BSP ranks
+ *   within a wrapper — see {@link assignGlobalRenderOrder}).
  *
  * Ordering only matters for order-dependent blending (`normal`); all
  * other modes are commutative. Commits of non-`normal` nodes still bump
