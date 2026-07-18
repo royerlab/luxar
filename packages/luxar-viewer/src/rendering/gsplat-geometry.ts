@@ -280,7 +280,8 @@ export function writeSplatTexels(
     arr[o + 9] = cholesky45[c2 + 1];
     arr[o + 10] = colors[c3];
     arr[o + 11] = colors[c3 + 1];
-    // texel 3: color.b (rest of the texel stays zero)
+    // texel 3: color.b (remaining components are unspecified — stale
+    // on reused pool textures; shaders read only .x)
     arr[o + 12] = colors[c3 + 2];
   }
   texture.needsUpdate = true;
@@ -454,7 +455,10 @@ export function createInstancedGSplatsMesh(
 /**
  * Update an existing gsplats mesh with new data.
  *
- * This efficiently updates the instanced attributes without recreating the geometry.
+ * Same splat count: rewrites the existing splat texture's backing
+ * store in place. Count change: swaps in a FRESH geometry+texture
+ * pair and disposes the old one (never rebinds new storage onto a
+ * rendered geometry — see the rebuild branch below).
  *
  * @param mesh - Existing gsplats mesh to update
  * @param meshConfig - New splat data
@@ -464,9 +468,10 @@ export function createInstancedGSplatsMesh(
  *   decides; see commit-gsplats-geometry.ts). Ignored on the rebuild
  *   branch: fresh geometries are zero-filled, not identity, so the
  *   identity write is structurally required there.
- * @returns `true` when the interleaved buffer was REBUILT (size change) —
- *   the caller must then evict Three's cached RenderObject (see
- *   `invalidate-render-object.ts`); `false` for the in-place write.
+ * @returns `true` when the geometry+texture pair was swapped for a
+ *   fresh one (splat-count change) — the caller must then evict
+ *   Three's cached RenderObject (see `invalidate-render-object.ts`);
+ *   `false` for the in-place texture rewrite.
  */
 export function updateInstancedGSplatsMesh(
   mesh: THREE.Mesh,

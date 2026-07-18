@@ -23,7 +23,6 @@ export class LinePickingMaterial extends THREE.ShaderMaterial implements CameraA
   constructor(config: LinePickingMaterialConfig) {
     super({
       uniforms: {
-        uFOV: { value: (60 * Math.PI) / 180 },
         uResolution: { value: new THREE.Vector2(1, 1) },
         uIsOrtho: { value: 0 },
         uNearCull: { value: 0.05 },
@@ -55,7 +54,6 @@ export class LinePickingMaterial extends THREE.ShaderMaterial implements CameraA
     isOrtho: boolean = false,
     nearCull?: number
   ): void {
-    this.uniforms.uFOV.value = fov;
     this.uniforms.uResolution.value.copy(resolution);
     this.uniforms.uIsOrtho.value = isOrtho ? 1 : 0;
     // Accept ANY defined value, including 0 — matching the point/gsplat

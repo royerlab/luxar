@@ -27,7 +27,6 @@ export class LinePickingTSLMaterial extends NodeMaterial implements CameraAwareM
   uniforms: Record<string, THREE.IUniform>;
 
   private tslNodes: {
-    uFOV: TSLNode;
     uResolution: TSLNode;
     uIsOrtho: TSLNode;
     uNearCull: TSLNode;
@@ -41,7 +40,6 @@ export class LinePickingTSLMaterial extends NodeMaterial implements CameraAwareM
     super();
 
     this.tslNodes = {
-      uFOV: uniform((60 * Math.PI) / 180),
       uResolution: uniform(new THREE.Vector2(1, 1)),
       uIsOrtho: uniform(0),
       uNearCull: uniform(0.05),
@@ -52,7 +50,6 @@ export class LinePickingTSLMaterial extends NodeMaterial implements CameraAwareM
     };
 
     this.uniforms = {
-      uFOV: proxyIUniform(this.tslNodes.uFOV),
       uResolution: proxyIUniform(this.tslNodes.uResolution),
       uIsOrtho: proxyIUniform(this.tslNodes.uIsOrtho),
       uNearCull: proxyIUniform(this.tslNodes.uNearCull),
@@ -88,7 +85,6 @@ export class LinePickingTSLMaterial extends NodeMaterial implements CameraAwareM
     nearCull?: number
   ): void {
     const prevIsOrtho = (this.tslNodes.uIsOrtho.value as number) === 1;
-    this.uniforms.uFOV.value = fov;
     (this.uniforms.uResolution.value as THREE.Vector2).copy(resolution);
     this.uniforms.uIsOrtho.value = isOrtho ? 1 : 0;
     // Accept ANY defined value, including 0 — matching the point/gsplat

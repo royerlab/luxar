@@ -88,7 +88,6 @@ describe('LinePickingMaterial', () => {
 
     material.updateCameraParams(1.0, resolution, false);
 
-    expect(material.uniforms.uFOV.value).toBe(1.0);
     expect(material.uniforms.uResolution.value.x).toBe(1920);
     expect(material.uniforms.uResolution.value.y).toBe(1080);
     material.dispose();

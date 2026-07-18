@@ -74,8 +74,6 @@ export interface LineMaterialConfig {
  * @internal — reserved extension shape; no current consumer.
  */
 export interface LineMaterialUniforms {
-  /** Field of view in radians */
-  uFOV: { value: number };
   /** Viewport resolution [width, height] */
   uResolution: { value: THREE.Vector2 };
   /** Opacity multiplier */
@@ -123,7 +121,6 @@ export class LineMaterial
 
     super({
       uniforms: {
-        uFOV: { value: (60 * Math.PI) / 180 }, // Default 60° FOV (or frustumHeight for ortho)
         uResolution: { value: new THREE.Vector2(1, 1) },
         uIsOrtho: { value: 0 }, // 0 = perspective, 1 = orthographic
         uOpacity: { value: materialConfig.opacity ?? 1.0 },
@@ -218,7 +215,6 @@ export class LineMaterial
     isOrtho: boolean = false,
     nearCull?: number
   ): void {
-    this.uniforms.uFOV.value = fov; // FOV in radians (perspective) or frustumHeight (ortho)
     this.uniforms.uResolution.value.copy(resolution);
     this.uniforms.uIsOrtho.value = isOrtho ? 1 : 0;
     // Apply the near-plane safety distance when provided.
@@ -364,7 +360,6 @@ export class LineMaterial
       cloned.blendDst = this.blendDst;
     }
 
-    cloned.uniforms.uFOV.value = this.uniforms.uFOV.value;
     cloned.uniforms.uResolution.value.copy(this.uniforms.uResolution.value);
     // Preserve orthographic state, near-plane / max-pixel-width clamp,
     // and the precomputed pixel-width scales.
