@@ -25,8 +25,12 @@ unchanged. Everything is NumPy + stdlib; **no new dependencies**.
   packed lower-triangular Cholesky (with an eigenvalue-clamp guard for
   degenerate splats in real files).
 - **Opacity → `amplitudes`** (both in [0, 1]).
-- **SH color is reduced to the DC band**: `rgb = 0.5 + C₀·f_dc`, baked to
-  per-splat SDR colors; view-dependent `f_rest` bands are dropped.
+- **SH color is reduced to the DC band**: `rgb = 0.5 + C₀·f_dc` (view-dependent
+  `f_rest` bands are dropped), then converted **sRGB → linear** (see `_color.py`)
+  because that DC value is display-referred but Luxar's viewer treats per-splat
+  color as linear light and applies the sRGB OETF once at output — importing it
+  as-is would double-encode and wash the scene white. The INRIA exporter inverts
+  this (linear → sRGB) so round-trips and reference-viewer colors match.
 - **Orientation**: COLMAP-convention dialects (INRIA/.splat/SuperSplat/SOG store
   +Y down) get a 180°-about-X fix by default so scenes are upright in Y-up
   viewers; SPZ declares Y-up (RUB) data and is left untouched. Override with

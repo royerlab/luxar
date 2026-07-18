@@ -223,7 +223,11 @@ class TestConversion:
         assert np.allclose(data.centers, ground_truth.positions, atol=1e-6)
         assert np.allclose(data.amplitudes, ground_truth.opacities, atol=1e-6)
         assert data.colors is not None
-        assert np.allclose(data.colors, ground_truth.colors, atol=1e-6)
+        # GSplatData stores LINEAR color; the source DC is display-referred
+        # (sRGB), so the conversion applies sRGB → linear.
+        from luxar.gsplats.interop._color import srgb_to_linear
+
+        assert np.allclose(data.colors, srgb_to_linear(ground_truth.colors), atol=1e-6)
 
     def test_default_reorientation_rotates_x180(
         self, ground_truth: GroundTruth
@@ -559,3 +563,57 @@ class TestSog:
         # Color: 0.5 + SH_C0*codebook[idx]; idx0→+1.0, idx1→-1.0.
         assert np.allclose(cs.colors[0], np.clip(0.5 + SH_C0 * 1.0, 0, 1), atol=1e-6)
         assert np.allclose(cs.colors[1], np.clip(0.5 + SH_C0 * -1.0, 0, 1), atol=1e-6)
+
+
+class TestColorSpace:
+    """The classical DC color is sRGB (display-referred); Luxar stores linear."""
+
+    def test_srgb_linear_are_inverse(self) -> None:
+        from luxar.gsplats.interop._color import linear_to_srgb, srgb_to_linear
+
+        c = np.linspace(0.0, 1.0, 257).reshape(-1, 1).repeat(3, axis=1)
+        assert np.allclose(linear_to_srgb(srgb_to_linear(c)), c, atol=1e-5)
+        assert np.allclose(srgb_to_linear(linear_to_srgb(c)), c, atol=1e-5)
+
+    def test_srgb_to_linear_darkens_midtones(self) -> None:
+        # The whole point: a mid sRGB 0.5 becomes ~0.214 linear, so after the
+        # viewer's output OETF it lands back near 0.5 instead of washing bright.
+        from luxar.gsplats.interop._color import srgb_to_linear
+
+        assert abs(float(srgb_to_linear(np.array([0.5]))[0]) - 0.214) < 0.005
+        # Endpoints are fixed points.
+        assert float(srgb_to_linear(np.array([0.0]))[0]) == 0.0
+        assert abs(float(srgb_to_linear(np.array([1.0]))[0]) - 1.0) < 1e-6
+
+    def test_import_stores_linear_color(self, ground_truth: GroundTruth) -> None:
+        # Every dialect: GSplatData.colors == srgb_to_linear(reader sRGB color).
+        from luxar.gsplats.interop._color import srgb_to_linear
+        from luxar.gsplats.interop.classical_splats import _READERS
+
+        for fmt in CLASSICAL_FORMATS:
+            with tempfile.TemporaryDirectory() as tmp:
+                path = _write_fixture(fmt, ground_truth, Path(tmp))
+                cs = _READERS[fmt](path)  # reader → sRGB display color
+                data = import_gsplats(path)  # → GSplatData (linear)
+            assert np.allclose(
+                data.colors, srgb_to_linear(cs.colors), atol=1e-5
+            ), f"{fmt}: GSplatData.colors must be linear(reader color)"
+
+    def test_import_export_color_round_trips_in_srgb(
+        self, ground_truth: GroundTruth
+    ) -> None:
+        # A source PLY's sRGB DC survives import(→linear)→export(→sRGB) exactly.
+        from luxar.gsplats.interop.inria_export import gsplat_data_to_inria_ply
+        from luxar.gsplats.interop.tests._synthetic import write_inria_ply
+
+        with tempfile.TemporaryDirectory() as tmp:
+            src = Path(tmp) / "src.ply"
+            write_inria_ply(src, ground_truth)
+            data = import_gsplats(src, rotate_x180=False)
+            payload = gsplat_data_to_inria_ply(data, opacity_policy="amplitude")
+            out = Path(tmp) / "out.ply"
+            out.write_bytes(payload)
+            from luxar.gsplats.interop.classical_splats import read_inria_ply
+
+            reround = read_inria_ply(out)  # sRGB DC again
+        assert np.allclose(reround.colors, ground_truth.colors, atol=2e-3)
