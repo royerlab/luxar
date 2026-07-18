@@ -67,6 +67,7 @@ from ._compiler.geometry_writers.gsplats import write_gsplats as _write_gsplats_
 from ._compiler.geometry_writers.lines import write_lines as _write_lines_impl
 from ._compiler.geometry_writers.points import write_points as _write_points_impl
 from ._compiler.gsplat_assembly import apply_gsplat_group_attrs
+from ._compiler.node_common import validate_render_attrs as _validate_render_attrs
 
 # Ordering functions will be imported locally where needed to avoid circular imports
 
@@ -541,6 +542,9 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
         if not levels:
             raise ValueError("levels must contain at least one LOD level")
 
+        # Fail fast on invalid render attrs BEFORE creating the parent group.
+        _validate_render_attrs(attrs)
+
         path = path.lstrip("/")
         group = self.store.require_group(path)
         n_levels = len(levels)
@@ -625,6 +629,9 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
 
         if not levels:
             raise ValueError("levels must contain at least one LOD level")
+
+        # Fail fast on invalid render attrs BEFORE creating the parent group.
+        _validate_render_attrs(attrs)
 
         path = path.lstrip("/")
         group = self.store.require_group(path)

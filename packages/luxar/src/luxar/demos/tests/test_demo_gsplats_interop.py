@@ -90,12 +90,14 @@ class TestInteropCommon:
     def test_tiled_scene_propagates_normal_blending_to_parts(
         self, splat_fixture: Path, tmp_path: Path
     ) -> None:
-        # A tiled import is a kind=partition: the leaf writer stamps a DEFAULT
-        # blending_mode="additive" on each part, which the viewer reads per-part
-        # and which shadows the wrapper's "normal". Without the graft propagating
-        # blending_mode to children, tiled photogrammetric imports would render
-        # as additive GLOW instead of the surface-like alpha-over they need.
-        # Assert every part carries the wrapper's "normal" (not "additive").
+        # A tiled import is a kind=partition. The graft propagates the
+        # wrapper's blending_mode to every child so each part carries the
+        # mode EXPLICITLY — parts stay self-consistent even when later
+        # flattened / re-exported outside the scene graph. (Historically this
+        # also countered a default "additive" stamped by the leaf writer,
+        # which shadowed the wrapper's "normal" and made tiled photogrammetric
+        # imports render as additive GLOW; that stamp is gone, the explicit
+        # propagation remains.) Assert every part carries "normal".
         cache = build_gsplats_cache(
             splat_fixture,
             tmp_path / "t.gsplats.zarr",

@@ -422,13 +422,16 @@ def apply_gsplat_group_attrs(
             dims = Dimensions.from_dict(store.attrs["scene_dimensions"])
         attrs["nd_transform"] = validate_nd_transform(attrs["nd_transform"], dims)
 
-    # Set rendering defaults
+    # Set rendering defaults. `blending_mode` is deliberately NOT stamped:
+    # it has no identity value, so a stamped default would OVERRIDE an
+    # ancestor-set mode under the viewer's nearest-setter-wins composition
+    # (see node_common.apply_default_render_attrs). Unset leaves inherit;
+    # the viewer defaults to "additive".
     for key, default in [
         ("opacity", 1.0),
         ("gamma", 1.0),
         ("intensity", 1.0),
         ("offset", 0.0),
-        ("blending_mode", "additive"),
         ("truncation_radius", 3.0),
     ]:
         if key not in attrs:

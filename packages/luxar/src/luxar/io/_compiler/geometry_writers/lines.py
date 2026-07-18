@@ -30,7 +30,11 @@ from ..dataset_writers.scalars import (
 )
 from ..labels.image_labels import write_image_labels_csr
 from ..labels.text_labels import write_labels_csr
-from ..node_common import apply_default_render_attrs, prepare_transform_attrs
+from ..node_common import (
+    apply_default_render_attrs,
+    prepare_transform_attrs,
+    validate_render_attrs,
+)
 from ..spatial_ordering.lines import build_lines_ordering, write_lines_ordering_to_zarr
 
 
@@ -57,6 +61,10 @@ def write_lines(
         validate_positions_for_writing,
         validate_widths_for_writing,
     )
+
+    # Fail fast on invalid render attrs BEFORE creating the group, so a bad
+    # value cannot leave a partial node on disk.
+    validate_render_attrs(attrs)
 
     # Setup and validation
     path = path.lstrip("/")

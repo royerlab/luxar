@@ -193,7 +193,9 @@ fitted.gsplats.zarr/
 │                    #   ordering, ordering_min/max/bits, chunk_size,
 │                    #   amplitude_range, center_bounds, position_bounds,
 │                    #   truncation_radius, opacity/gamma/intensity/offset,
-│                    #   blending_mode,
+│                    #   blending_mode (only when explicitly set; unset ⇒
+│                    #   inherited from nearest ancestor, viewer default
+│                    #   "additive"),
 │                    #   format_version: "3.2", format_type: "gsplats_zarr",
 │                    #   timestamp, luxar_gsplats_version, description?
 ├── .zmetadata       # Consolidated metadata

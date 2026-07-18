@@ -215,7 +215,9 @@ Group nodes organize the scene hierarchy and can contain child nodes.
   "gamma": 1.0,            // 0.1-10.0, per-node gamma correction
   "intensity": 1.0,        // 0.0-100.0, per-node linear color multiplier (gain)
   "offset": 0.0,           // -10.0-10.0, per-node additive brightness shift (black level)
-  "blending_mode": "additive",  // normal, additive, max (default: additive)
+  "blending_mode": "additive",  // normal, additive, max, opaque, luminous — written
+                           //   only when explicitly set; unset ⇒ inherited from the
+                           //   nearest ancestor that sets it (viewer default: additive)
   "layer": false,          // Optional: if true, node appears in the viewer's Layers panel
   "visible": true,         // Optional: initial visibility when the scene loads (default true)
   "child_index": 0         // Insertion order among siblings (stamped on add). The viewer
@@ -283,7 +285,7 @@ default (the finest level the `.centers` accessor returns).
   "gamma": 1.0,
   "intensity": 1.0,
   "offset": 0.0,
-  "blending_mode": "additive",
+  "blending_mode": "additive",  // Only when explicitly set (unset ⇒ inherited)
   "layer": false,             // Optional: expose in the Layers panel with
                               //   an "Active level" dropdown + "N LODs" badge
   "visible": true
@@ -356,7 +358,7 @@ directly (`?src=<file>.gsplats.zarr`) and frames on `position_bounds`. The
   "gamma": 1.0,
   "intensity": 1.0,
   "offset": 0.0,
-  "blending_mode": "additive",
+  "blending_mode": "additive",  // Only when explicitly set (unset ⇒ inherited)
   "layer": false,               // Optional: expose in the Layers panel with
                                 //   a "N parts" badge
   "visible": true
@@ -465,7 +467,8 @@ Points nodes contain the actual point data.
   "gamma": 1.0,
   "intensity": 1.0,
   "offset": 0.0,
-  "blending_mode": "additive",  // or "normal", "max"
+  "blending_mode": "additive",  // or "normal", "max", "opaque", "luminous" — written
+                           //   only when explicitly set (unset ⇒ inherited)
   "layer": false,          // Optional: if true, node appears in the viewer's Layers panel
   "visible": true,         // Optional: initial visibility when the scene loads (default true)
   "n_points": 10000,
