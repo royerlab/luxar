@@ -17,6 +17,7 @@ from luxar.gsplats.io.migrate import (
     detect_legacy_format,
     migrate_format,
 )
+from luxar.typing_utils._format_contract import GSPLATS_FORMAT_VERSION
 
 # ---------------------------------------------------------------------------
 # Helpers to build legacy-format fixtures
@@ -393,7 +394,7 @@ class TestMigrateFormat:
         assert detected == "v1.0"
         # Out is a current node-tree leaf with the split Cholesky layout.
         root = zarr.open_group(str(out), mode="r")
-        assert root.attrs["format_version"] == "3.2"
+        assert root.attrs["format_version"] == GSPLATS_FORMAT_VERSION
         assert "cholesky_factors_diag" in root
         assert "cholesky_factors" not in root
         data = load_gsplats(out)
@@ -451,7 +452,7 @@ class TestMigrateFormat:
         detected = migrate_format(legacy, out)
         assert detected == "v2.0"
         root = zarr.open_group(str(out), mode="r")
-        assert root.attrs["format_version"] == "3.2"
+        assert root.attrs["format_version"] == GSPLATS_FORMAT_VERSION
         data = load_gsplats(out)
         assert data.n_splats == 12
         assert data.n_substitutive == 1
@@ -814,7 +815,7 @@ class TestMigrateV3LegacyLodAttrs:
         assert detected == "v3.1-lod-pixel-size"
 
         root = zarr.open_group(str(out), mode="r")
-        assert root.attrs["format_version"] == "3.2"
+        assert root.attrs["format_version"] == GSPLATS_FORMAT_VERSION
         assert root.attrs["kind"] == "lod"
         assert root.attrs["selector"] == "coverage"
         fractions = []
@@ -876,7 +877,7 @@ class TestMigrateV3LegacyLodAttrs:
         out = tmp_path / "out.gsplats.zarr"
         assert migrate_format(legacy, out) == "v3.1-lod-pixel-size"
         out_root = zarr.open_group(str(out), mode="r")
-        assert out_root.attrs["format_version"] == "3.2"
+        assert out_root.attrs["format_version"] == GSPLATS_FORMAT_VERSION
         assert out_root["part_0"].attrs["selector"] == "coverage"
         assert "coverage_fraction" in out_root["part_0"]["child_0"].attrs
         assert "min_pixel_size" not in out_root["part_0"]["child_0"].attrs

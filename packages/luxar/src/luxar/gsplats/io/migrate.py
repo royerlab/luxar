@@ -105,10 +105,12 @@ def detect_legacy_format(input_path: Path) -> str:
                         f"Input {input_path} is already format v{fv} "
                         f"(a current node-tree format); no migration needed."
                     )
-                if fv == "3.2":
+                if fv in ("3.2", "3.3"):
+                    # v3.3 only adds the optional luxar_delta_v1 filter on
+                    # quantized arrays — nothing to migrate in either version.
                     raise ValueError(
                         f"Input {input_path} is already format v{fv} "
-                        f"(the current node-tree format); no migration needed."
+                        f"(a current node-tree format); no migration needed."
                     )
         finally:
             if cleanup_temp is not None and cleanup_temp.exists():
