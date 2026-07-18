@@ -270,8 +270,6 @@ export interface ZarrNodeAttrs {
   offset?: number;
   blending_mode?: string;
   point_size?: number;
-  depth_test?: boolean;
-  depth_write?: boolean;
 
   /** Points metadata */
   n_points?: number;

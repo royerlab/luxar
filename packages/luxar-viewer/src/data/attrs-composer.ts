@@ -19,12 +19,15 @@
 
 import type { SceneNode } from './data-loader-types';
 import { clamp } from '../utils/clamp';
+import { normalizeBlendingMode } from '../rendering/blending-state';
+import type { BlendingMode } from '../rendering/material-manager';
 
 export interface ComposableAttrs {
   opacity?: number;
   gamma?: number;
   intensity?: number;
   offset?: number;
+  /** Raw (unvalidated) mode string as authored; normalized at compose time. */
   blending_mode?: string;
 }
 
@@ -33,16 +36,9 @@ export interface EffectiveAttrs {
   gamma: number;
   intensity: number;
   offset: number;
-  blending_mode: string;
+  /** Always canonical — `composeAttrs` runs `normalizeBlendingMode`. */
+  blending_mode: BlendingMode;
 }
-
-const DEFAULT_EFFECTIVE: EffectiveAttrs = {
-  opacity: 1.0,
-  gamma: 1.0,
-  intensity: 1.0,
-  offset: 0.0,
-  blending_mode: 'additive',
-};
 
 /**
  * Compose a root-to-leaf chain of attribute records.
@@ -50,14 +46,17 @@ const DEFAULT_EFFECTIVE: EffectiveAttrs = {
  * The chain is ordered from the outermost ancestor (root) to the leaf node
  * whose effective attributes we want. Unset values are treated as identity:
  * opacity/gamma/intensity = 1, offset = 0. A set `blending_mode` at any
- * level overrides the cumulative choice.
+ * level overrides the cumulative choice; the winning string is validated
+ * through `normalizeBlendingMode` (unset chain → 'additive', unknown
+ * string → 'normal' + one-time warning), so every consumer of
+ * `EffectiveAttrs` sees a canonical mode.
  */
 export function composeAttrs(chainRootToLeaf: readonly ComposableAttrs[]): EffectiveAttrs {
   let opacity = 1.0;
   let gamma = 1.0;
   let intensity = 1.0;
   let offset = 0.0;
-  let blending_mode: string = DEFAULT_EFFECTIVE.blending_mode;
+  let blending_mode: string | undefined;
 
   for (const a of chainRootToLeaf) {
     if (a.opacity !== undefined) opacity *= a.opacity;
@@ -72,7 +71,7 @@ export function composeAttrs(chainRootToLeaf: readonly ComposableAttrs[]): Effec
   gamma = clamp(gamma, 0.1, 10);
   intensity = Math.max(0, intensity);
 
-  return { opacity, gamma, intensity, offset, blending_mode };
+  return { opacity, gamma, intensity, offset, blending_mode: normalizeBlendingMode(blending_mode) };
 }
 
 /**

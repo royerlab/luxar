@@ -9,6 +9,7 @@
 import { describe, it, expect } from 'vitest';
 import * as THREE from 'three';
 import { PointMaterial } from '../../../../../rendering/materials/point/material-glsl';
+import { PointTSLMaterial } from '../../../../../rendering/materials/point/material-tsl';
 
 describe('PointMaterial.applyBlendingMode', () => {
   it('max mode sets CustomBlending + MaxEquation + OneFactor/OneFactor', () => {
@@ -93,5 +94,21 @@ describe('PointMaterial.applyBlendingMode', () => {
     const mat = new PointMaterial();
     expect(mat.fragmentShader).toContain('#ifdef LUXAR_MAX_RGB_CONTRIBUTION');
     expect(mat.fragmentShader).toContain('finalColor * alpha');
+  });
+});
+
+// H — TSL constructor honors explicit transparent/depthTest overrides
+// AFTER the factory tail's mode-derived state, exactly like the GLSL
+// twin (additive state otherwise forces depthTest=false).
+describe('PointTSLMaterial constructor explicit overrides', () => {
+  it('depthTest: true survives additive construction', () => {
+    const mat = new PointTSLMaterial({ blendingMode: 'additive', depthTest: true });
+    expect(mat.depthTest).toBe(true);
+    expect(mat.userData.depthTest).toBe(true);
+  });
+
+  it('transparent: false survives additive construction', () => {
+    const mat = new PointTSLMaterial({ blendingMode: 'additive', transparent: false });
+    expect(mat.transparent).toBe(false);
   });
 });

@@ -6,6 +6,7 @@
  */
 
 import type { SceneNode } from '../../data/data-loader-types';
+import { getEffectiveAttrs } from '../../data/attrs-composer';
 import type { BlendingMode } from '../../rendering/material-manager';
 import type { NodeKind } from '../../types/format-contract';
 import { log, Modules } from '../../utils/log';
@@ -222,10 +223,10 @@ export class LayerStateManager {
     this.layerOrder = [];
     this.lastClickedPath = null;
 
-    this.walkSceneGraph(root);
+    this.walkSceneGraph(root, root);
   }
 
-  private walkSceneGraph(node: SceneNode): void {
+  private walkSceneGraph(node: SceneNode, root: SceneNode): void {
     // Skip the root scene node; collect anything else with layer=true.
     // Groups exposed as layers act as composites — their controls fan out
     // to every data descendant when applied in the scene.
@@ -370,7 +371,11 @@ export class LayerStateManager {
           dataMin,
           dataMax,
           gamma: (node.attrs.gamma as number) ?? 1.0,
-          blendingMode: ((node.attrs.blending_mode as string) ?? 'additive') as BlendingMode,
+          // Blending mode is COMPOSED along the ancestry (nearest set
+          // ancestor wins, normalized by composeAttrs) — the panel must
+          // show the mode the material actually renders with, not the
+          // node's own (possibly absent / malformed) raw attr.
+          blendingMode: getEffectiveAttrs(root, node.path).blending_mode,
           selected: false,
           colormap,
           supportsColormap,
@@ -386,7 +391,7 @@ export class LayerStateManager {
     // Recurse into children
     if (node.children) {
       for (const child of node.children) {
-        this.walkSceneGraph(child);
+        this.walkSceneGraph(child, root);
       }
     }
   }

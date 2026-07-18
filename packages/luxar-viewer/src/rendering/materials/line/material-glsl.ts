@@ -24,12 +24,12 @@ import {
   applyScalarRangeToMaterial,
 } from '../../material-colormap-helpers';
 import {
-  isAdditiveMode,
-  isLuminousMode,
-  isMaxMode,
-  isNormalMode,
-  isOpaqueMode,
+  applyBlendingStateToMaterial,
+  getCompleteBlendingState,
+  normalModeDepthWrite,
+  type CompleteBlendingState,
 } from '../../blending-state';
+import type { BlendingMode } from '../../material-manager';
 
 /**
  * Intensity == 1 && offset == 0 (with ±1e-4 epsilon) lets the
@@ -169,7 +169,8 @@ export class LineMaterial
 
       transparent: materialConfig.transparent ?? !isOpaque,
       depthWrite:
-        isOpaque || (blendingMode === 'normal' && (materialConfig.opacity ?? 1.0) >= 0.99),
+        isOpaque ||
+        (blendingMode === 'normal' && normalModeDepthWrite(materialConfig.opacity ?? 1.0)),
       // Additive ignores depth (renders on top), luminous respects depth occlusion
       depthTest: materialConfig.depthTest ?? !isAdditive,
       toneMapped: false, // HDR values pass through to post-processing
@@ -379,52 +380,32 @@ export class LineMaterial
   // this file needing to import the manager (which would create a cycle).
 
   /**
-   * Apply a blending mode to this material in-place.
+   * Apply a Luxar blending mode to this material in-place.
    *
-   * Lines use `THREE.AdditiveBlending` (SrcAlpha factors) for
-   * additive/luminous because the per-pixel intensity-squaring concern
-   * that GSplats face doesn't apply to thin line segments. Only `max`
-   * mode goes through CustomBlending. After this returns,
-   * `userData.blendingMode` reflects the live mode so subsequent
-   * `clone()` calls preserve it.
+   * Draws the complete THREE state from the shared
+   * `getCompleteBlendingState` — the same source of truth the Point
+   * and GSplat wrappers and the TSL twin use — so creation-time wiring,
+   * runtime UI transitions, and both backends can never disagree on
+   * blend factors, depth state, or transparency.
+   *
+   * Sets the `LUXAR_MAX_RGB_CONTRIBUTION` shader define for `max` mode
+   * so the fragment premultiplies RGB by intensity*opacity (required
+   * because MaxEquation+OneFactor doesn't multiply by alpha at
+   * composite time). After this returns, `userData.blendingMode`
+   * reflects the live mode so subsequent `clone()` calls preserve it.
    */
-  applyBlendingMode(mode: 'additive' | 'normal' | 'max' | 'opaque' | 'luminous'): void {
-    const previousMode = this.userData.blendingMode as
-      | 'additive'
-      | 'normal'
-      | 'max'
-      | 'opaque'
-      | 'luminous'
-      | undefined;
-    // Predicates keep BlendingMode dispatch centralized.
-    const isOpaque = isOpaqueMode(mode);
-    const isAdditive = isAdditiveMode(mode);
-    const isMax = isMaxMode(mode);
+  applyBlendingMode(mode: BlendingMode): void {
     const opacity = (this.uniforms.uOpacity?.value as number | undefined) ?? 1.0;
+    const state: CompleteBlendingState = getCompleteBlendingState(mode, opacity);
 
     // Defensive: THREE may leave defines undefined when none were
     // passed at construction.
     if (!this.defines) this.defines = {};
 
-    if (isOpaque || isNormalMode(mode)) {
-      this.blending = THREE.NormalBlending;
-    } else if (isAdditive || isLuminousMode(mode)) {
-      this.blending = THREE.AdditiveBlending;
-    } else if (isMax) {
-      this.blending = THREE.CustomBlending;
-    } else {
-      this.blending = THREE.NormalBlending;
-    }
-
-    this.transparent = !isOpaque;
-    this.depthWrite = isOpaque || (isNormalMode(mode) && opacity >= 0.99);
-    this.depthTest = !isAdditive;
-
-    // gate fragment LUXAR_MAX_RGB_CONTRIBUTION on max mode so the
-    // shader premultiplies RGB by intensity*opacity (necessary for
-    // OneFactor blend factors to capture contribution-weighted max).
-    const wantsContrib = isMax;
+    const previousMode = this.userData.blendingMode as BlendingMode | undefined;
+    const wantsContrib = state.shaderOutputMode === 'rgb-contribution';
     const hasContrib = 'LUXAR_MAX_RGB_CONTRIBUTION' in this.defines;
+    const stateChanged = applyBlendingStateToMaterial(this, state);
     let definesChanged = false;
     if (wantsContrib && !hasContrib) {
       this.defines.LUXAR_MAX_RGB_CONTRIBUTION = '';
@@ -433,25 +414,15 @@ export class LineMaterial
       delete this.defines.LUXAR_MAX_RGB_CONTRIBUTION;
       definesChanged = true;
     }
-
-    if (isMax) {
-      this.blendEquation = THREE.MaxEquation;
-      this.blendSrc = THREE.OneFactor;
-      this.blendDst = THREE.OneFactor;
-    } else {
-      // Reset CustomBlending state so a switch out of max doesn't strand
-      // MaxEquation. AdditiveBlending and NormalBlending ignore these.
-      this.blendEquation = THREE.AddEquation;
-      this.blendSrc = THREE.SrcAlphaFactor;
-      this.blendDst = THREE.OneMinusSrcAlphaFactor;
-    }
-
     this.userData.blendingMode = mode;
-    this.userData.depthTest = this.depthTest;
+    this.userData.depthTest = state.depthTest;
 
-    // Only mark needsUpdate when something changed that the GPU side
-    // actually cares about.
-    if (definesChanged || previousMode !== mode) {
+    if (definesChanged) {
+      // Defines changed → shader must recompile.
+      this.needsUpdate = true;
+    } else if (previousMode !== mode && stateChanged) {
+      // Mode changed but no shader recompile required.
+      // Mark needsUpdate to refresh blend state on the GPU.
       this.needsUpdate = true;
     }
   }
