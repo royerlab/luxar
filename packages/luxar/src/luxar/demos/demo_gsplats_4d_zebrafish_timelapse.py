@@ -99,7 +99,7 @@ CACHE_DIR = Path.home() / ".cache" / "luxar" / "gsplats_zebrafish"
 
 # Precomputed data configuration
 _PRECOMPUTED_DEMO_NAME = "gsplats_zebrafish"
-_PRECOMPUTED_BUNDLE_NAME = "zebrafish_gsplats.zip"
+_PRECOMPUTED_BUNDLE_NAME = "zebrafish.gsplats.zarr.zip"
 # Precomputed bundle contains 64 frames at step 2: 0, 2, 4, ..., 126
 _PRECOMPUTED_FRAME_INDICES = list(range(0, 128, 2))  # 64 frames
 _PRECOMPUTED_VOXEL_SIZE_ZYX = (3.99, 0.91, 0.91)  # µm

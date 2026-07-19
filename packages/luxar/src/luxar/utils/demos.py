@@ -537,7 +537,7 @@ def load_precomputed_gsplats(
 
     Args:
         demo_name: Subdirectory name under ``demos/data/`` (e.g. ``"tribolium"``).
-        file_names: File basenames to load (e.g. ``["tribolium_gsplats.gsplats.zarr.zip"]``).
+        file_names: File basenames to load (e.g. ``["tribolium.gsplats.zarr.zip"]``).
         recompute: If True, skip precomputed data entirely and return None.
 
     Returns:
@@ -595,7 +595,7 @@ def load_precomputed_bundle(
 
     Args:
         demo_name: Subdirectory name under ``demos/data/`` (e.g. ``"zebrafish"``).
-        bundle_name: Filename of the outer bundle zip (e.g. ``"zebrafish_gsplats.zip"``).
+        bundle_name: Filename of the outer bundle zip (e.g. ``"zebrafish.gsplats.zarr.zip"``).
         file_names: Basenames of per-frame files *inside* the bundle to load,
             in the desired order.
         recompute: If True, return None.

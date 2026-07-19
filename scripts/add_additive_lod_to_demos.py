@@ -91,11 +91,11 @@ class BundleDemo:
 
     name: str
     dir_name: str
-    bundle_name: str  # e.g. "celegans_s1_gsplats.zip"
+    bundle_name: str  # e.g. "celegans_s1.gsplats.zarr.zip"
 
 
 PLAIN_DEMOS: List[PlainDemo] = [
-    PlainDemo("organoid_dapi", "gsplats_dapi", ["dapi_gsplats.gsplats.zarr.zip"]),
+    PlainDemo("organoid_dapi", "gsplats_dapi", ["dapi.gsplats.zarr.zip"]),
     PlainDemo(
         "kidney",
         "gsplats_kidney",
@@ -118,8 +118,8 @@ PLAIN_DEMOS: List[PlainDemo] = [
         "organoid_multichannel",
         "gsplats_multichannel",
         [
-            "organoids_gsplats_ch0.gsplats.zarr.zip",
-            "organoids_gsplats_ch1.gsplats.zarr.zip",
+            "organoids_ch0.gsplats.zarr.zip",
+            "organoids_ch1.gsplats.zarr.zip",
         ],
     ),
     PlainDemo(
@@ -133,7 +133,7 @@ PLAIN_DEMOS: List[PlainDemo] = [
     PlainDemo(
         "tribolium",
         "gsplats_tribolium",
-        ["tribolium_gsplats.gsplats.zarr.zip"],
+        ["tribolium.gsplats.zarr.zip"],
     ),
     PlainDemo(
         "cmu1_pathology",
@@ -147,8 +147,8 @@ PLAIN_DEMOS: List[PlainDemo] = [
 ]
 
 BUNDLE_DEMOS: List[BundleDemo] = [
-    BundleDemo("celegans", "gsplats_celegans", "celegans_s1_gsplats.zip"),
-    BundleDemo("zebrafish", "gsplats_zebrafish", "zebrafish_gsplats.zip"),
+    BundleDemo("celegans", "gsplats_celegans", "celegans_s1.gsplats.zarr.zip"),
+    BundleDemo("zebrafish", "gsplats_zebrafish", "zebrafish.gsplats.zarr.zip"),
 ]
 
 
