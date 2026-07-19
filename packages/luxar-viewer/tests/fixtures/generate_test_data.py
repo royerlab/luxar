@@ -1400,7 +1400,11 @@ def generate_delta_filter_test() -> None:
         walk = np.cumsum(rng.normal(0.0, 1.0, size=(num_points, 3)), axis=0)
         lo, hi = walk.min(axis=0), walk.max(axis=0)
         positions = ((walk - lo) / (hi - lo) * [300.0, 500.0, 800.0]).astype(np.float32)
-        colors = rng.random((num_points, 3)).astype(np.float32)
+        # Smooth colors too, so the u8 rgb_uint8 delta path is exercised by
+        # the Node suite alongside the u16 positions path.
+        cwalk = np.cumsum(rng.normal(0.0, 0.01, size=(num_points, 3)), axis=0)
+        clo, chi = cwalk.min(axis=0), cwalk.max(axis=0)
+        colors = ((cwalk - clo) / (chi - clo)).astype(np.float32)
 
         dims = Dimensions(
             [
@@ -1419,18 +1423,21 @@ def generate_delta_filter_test() -> None:
             scene = compiler.create_scene(dimensions=dims)
             scene.add_points("points", positions, colors=colors)
 
-        # Fail fast if the filter did not engage (probe/wiring regression).
-        zarray = json.loads((output / "points" / "positions" / ".zarray").read_text())
-        filters = zarray.get("filters") or []
-        if not any(f.get("id") == "luxar_delta_v1" for f in filters):
-            raise RuntimeError(
-                "test_delta_filter fixture: positions array did not receive the "
-                f"luxar_delta_v1 filter (filters={filters}). The encode-time "
-                "probe or the encoder wiring regressed."
-            )
+        # Fail fast if the filter did not engage (probe/wiring regression) —
+        # on BOTH the u16 positions and the u8 colors arrays.
+        for arr_name in ("positions", "colors"):
+            zarray = json.loads((output / "points" / arr_name / ".zarray").read_text())
+            filters = zarray.get("filters") or []
+            if not any(f.get("id") == "luxar_delta_v1" for f in filters):
+                raise RuntimeError(
+                    f"test_delta_filter fixture: {arr_name} array did not receive "
+                    f"the luxar_delta_v1 filter (filters={filters}). The "
+                    "encode-time probe or the encoder wiring regressed."
+                )
 
         aprint(f"✓ Created {output}")
         aprint(f"  Positions: {positions.shape} (uint16 + luxar_delta_v1 + zlib)")
+        aprint(f"  Colors: {colors.shape} (uint8 + luxar_delta_v1 + zlib)")
 
 
 def generate_uint16_quantization_test() -> None:
@@ -1462,9 +1469,9 @@ def generate_uint16_quantization_test() -> None:
         # Using linspace ensures exact 1000:1 ratio for reliable uint16 triggering
         radii = np.linspace(0.001, 1.0, num_points).astype(np.float32)
         dynamic_range = radii.max() / radii.min()
-        assert dynamic_range > 256, (
-            f"Need >256:1 range for uint16, got {dynamic_range:.1f}:1"
-        )
+        assert (
+            dynamic_range > 256
+        ), f"Need >256:1 range for uint16, got {dynamic_range:.1f}:1"
 
         # Simple colors (use uint8 encoding as comparison)
         colors = np.random.rand(num_points, 3).astype(np.float32)

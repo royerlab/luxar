@@ -140,6 +140,14 @@ tracksdata = [
 [project.scripts]
 luxar = "luxar.cli:app"
 
+# numcodecs discovers codecs by entry point (group "numcodecs.codecs", name ==
+# codec_id): with luxar merely INSTALLED, vanilla `zarr.open(...)` resolves the
+# luxar_delta_v1 filter without any `import luxar` — third-party Python readers
+# of delta-filtered stores just work. (Importing luxar.encoding still registers
+# it eagerly; this is the no-import fallback numcodecs loads lazily.)
+[project.entry-points."numcodecs.codecs"]
+luxar_delta_v1 = "luxar.encoding._encoders.delta_codec:LuxarDelta"
+
 # ---------------------------------------------
 # Hatch Configuration
 # ---------------------------------------------
