@@ -324,14 +324,26 @@ export function splatTexelCapacity(texture: THREE.DataTexture): number {
  * Returns the written count, clamped to the texture's capacity
  * (capacity clamping warns once at acquire time; this clamp keeps the
  * write memory-safe if a caller slips past it).
+ *
+ * `opts.fromSplat` (depth-sorting Phase 4 Stage 2, the append fast path):
+ * skip writing texels `[0, fromSplat)` and register the dirty range for
+ * only the `[fromSplat, n)` suffix. The prefix texels are already correct
+ * on the texture's CPU mirror from the earlier commit that wrote them
+ * (the commit layer only sets `fromSplat > 0` when the projected prefix
+ * is provably byte-identical — same view state + prefix-identical input +
+ * intact GPU buffer), so re-writing and re-uploading them is redundant.
+ * Source arrays are still full-length `count`; only the loop lower bound
+ * and the dirty-range start move — the length guard below is unchanged.
  */
 export function writeSplatTexels(
   texture: THREE.DataTexture,
   src: SplatTexelSource,
-  count: number
+  count: number,
+  opts?: { fromSplat?: number }
 ): number {
   const arr = texture.image.data as Float32Array;
   const n = Math.min(count, Math.floor(arr.length / SPLAT_FLOATS_PER_SPLAT));
+  const from = Math.max(0, Math.min(opts?.fromSplat ?? 0, n));
   const { centers, cholesky01, cholesky23, cholesky45, amplitudes, colors } = src;
   // Fail loud on source/count mismatch (the interleaved-era writer
   // threw here too) — a silent short read would write NaN texels that
@@ -351,7 +363,7 @@ export function writeSplatTexels(
         `amplitudes=${amplitudes.length}, colors=${colors.length})`
     );
   }
-  for (let i = 0; i < n; i++) {
+  for (let i = from; i < n; i++) {
     const o = i * SPLAT_FLOATS_PER_SPLAT;
     const c3 = i * 3;
     const c2 = i * 2;
@@ -374,9 +386,10 @@ export function writeSplatTexels(
     // on reused pool textures; shaders read only .x)
     arr[o + 12] = colors[c3 + 2];
   }
-  // Ranged upload: only the [0, n) rows just written go to the GPU, not
-  // the full capacity-sized image (pool slack rows past n never re-upload).
-  registerSplatTexelDirtyRange(texture, 0, n);
+  // Ranged upload: only the [from, n) rows just written go to the GPU, not
+  // the full capacity-sized image (pool slack rows past n never re-upload;
+  // on an append, prefix rows [0, from) stay on the GPU untouched).
+  registerSplatTexelDirtyRange(texture, from, n);
   return n;
 }
 
@@ -396,6 +409,29 @@ export function writeSortedIndexIdentity(
   const arr = attr.array as Uint32Array;
   const n = Math.min(count, arr.length);
   for (let i = 0; i < n; i++) arr[i] = i;
+  collapseSortedIndexRanges(attr, n);
+}
+
+/**
+ * Extend `aSortedIndex` with identity ordering for the appended suffix
+ * `[from, count)`, preserving the existing `[0, from)` permutation
+ * (depth-sorting Phase 4 Stage 2, the append fast path). The new splats
+ * index themselves until the depth-sort coordinator re-sorts on a
+ * subsequent frame; identity is the correct pre-resort placeholder (the
+ * same value {@link writeSortedIndexIdentity} would write for them). The
+ * collapse still uploads `[0, count)` — `aSortedIndex` is a tiny
+ * 4-byte/instance buffer, so a full re-upload of the index is cheap; the
+ * expensive splat-texel upload is the one Stage 2 restricts to the suffix.
+ */
+export function writeSortedIndexIdentityRange(
+  geometry: THREE.InstancedBufferGeometry,
+  from: number,
+  count: number
+): void {
+  const attr = geometry.getAttribute('aSortedIndex') as THREE.InstancedBufferAttribute;
+  const arr = attr.array as Uint32Array;
+  const n = Math.min(count, arr.length);
+  for (let i = Math.max(0, from); i < n; i++) arr[i] = i;
   collapseSortedIndexRanges(attr, n);
 }
 
