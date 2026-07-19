@@ -61,6 +61,7 @@ FIXTURE_NAMES: list[str] = [
     "test_4d_scalar_lut.luxar.zarr",
     "test_array_ref_broadcasting.luxar.zarr",
     "test_array_refs.luxar.zarr",
+    "test_blending_inherited.luxar.zarr",
     "test_broadcasting.luxar.zarr",
     "test_delta_filter.luxar.zarr",
     "test_encoding_contract_matrix.luxar.zarr",
@@ -73,6 +74,7 @@ FIXTURE_NAMES: list[str] = [
     "test_integer_colors.luxar.zarr",
     "test_labelled_points.luxar.zarr",
     "test_lines.luxar.zarr",
+    "test_lines_blending_modes.luxar.zarr",
     "test_lines_categorical.luxar.zarr",
     "test_lod_group.luxar.zarr",
     "test_log_scalar.luxar.zarr",
@@ -81,6 +83,7 @@ FIXTURE_NAMES: list[str] = [
     "test_mixed.luxar.zarr",
     "test_nd_transforms.luxar.zarr",
     "test_overview.gsplats.zarr",
+    "test_points_blending_modes.luxar.zarr",
     "test_quantization.luxar.zarr",
     "test_sharpness_range.luxar.zarr",
     "test_standalone_gsplats.gsplats.zarr",
@@ -1459,9 +1462,9 @@ def generate_uint16_quantization_test() -> None:
         # Using linspace ensures exact 1000:1 ratio for reliable uint16 triggering
         radii = np.linspace(0.001, 1.0, num_points).astype(np.float32)
         dynamic_range = radii.max() / radii.min()
-        assert (
-            dynamic_range > 256
-        ), f"Need >256:1 range for uint16, got {dynamic_range:.1f}:1"
+        assert dynamic_range > 256, (
+            f"Need >256:1 range for uint16, got {dynamic_range:.1f}:1"
+        )
 
         # Simple colors (use uint8 encoding as comparison)
         colors = np.random.rand(num_points, 3).astype(np.float32)
@@ -1762,6 +1765,241 @@ def generate_lines_categorical_test() -> None:
             "  line_a/pts_a at sel=0, line_b/pts_b at sel=1 (399 segments / 400 points each)"
         )
         aprint("  Scrubbing `sel` must swap the pairs for Lines exactly as for Points")
+
+
+# ─── Blending-mode E2E fixtures ─────────────────────────────────────────
+#
+# Shared by blending-modes.spec.ts / lines-blending-modes.spec.ts. All
+# five canonical viewer blending modes, in fixture order.
+BLENDING_MODES = ["normal", "additive", "max", "opaque", "luminous"]
+
+# Pure-channel (or channel-union) saturated colors, one per mode. Chosen
+# so the E2E pixel discriminator is sound: `additive` (green) and
+# `luminous` (red) are single-channel, so a pixel with BOTH r and g high
+# and b low can only come from cross-layer additive accumulation — no
+# single layer's base color can fake it (cyan/blue/white all carry a
+# high blue channel and are excluded by the b < min(r,g)/2 term).
+BLENDING_MODE_COLORS = {
+    "normal": [0.0, 1.0, 1.0],  # cyan
+    "additive": [0.0, 1.0, 0.0],  # green
+    "max": [0.0, 0.0, 1.0],  # blue
+    "opaque": [1.0, 1.0, 1.0],  # white
+    "luminous": [1.0, 0.0, 0.0],  # red
+}
+
+# Cloud/line centers on a circle of radius 0.7 (Venn-style): adjacent
+# layers overlap near the view center; `additive` (18°) and `luminous`
+# (-54°) are ADJACENT so their overlap lens contains ONLY those two
+# layers — the E2E spec projects the two centers and samples between
+# them. Angles in degrees.
+BLENDING_MODE_ANGLES = {
+    "normal": 162.0,
+    "additive": 18.0,
+    "max": 90.0,
+    "opaque": -126.0,
+    "luminous": -54.0,
+}
+
+# Small per-layer depth stagger so depth-writing modes (opaque, opaque-
+# normal) are exercised without changing the XY overlap layout.
+BLENDING_MODE_Z = {
+    "normal": 0.0,
+    "additive": 0.1,
+    "max": 0.2,
+    "opaque": -0.2,
+    "luminous": -0.1,
+}
+
+
+def _sunflower_disk(n: int, radius: float) -> np.ndarray:
+    """Deterministic golden-angle (sunflower) disk of ``n`` 2D points."""
+    indices = np.arange(n, dtype=np.float64) + 0.5
+    r = radius * np.sqrt(indices / n)
+    theta = np.pi * (1 + 5**0.5) * indices
+    return np.column_stack([r * np.cos(theta), r * np.sin(theta)]).astype(np.float32)
+
+
+def generate_points_blending_modes_test() -> None:
+    """Five overlapping point-cloud layers, one per blending mode.
+
+    Node names are literally ``points_<mode>`` with ``blending_mode``
+    set accordingly and ``layer=True``, so the E2E spec can assert the
+    exact per-mode THREE material state by node name (see
+    ``getCompleteBlendingState`` in blending-state.ts). Layout and
+    colors are deterministic (sunflower disks on a Venn circle, no
+    RNG) — see the module-level constants above for the geometry that
+    the pixel discriminators rely on.
+    """
+    with asection("Generating Points Blending-Modes Test"):
+        output = FIXTURES_DIR / "test_points_blending_modes.luxar.zarr"
+
+        n = 600
+        disk = _sunflower_disk(n, radius=0.8)
+
+        dims = Dimensions(
+            [
+                Dimension("x", unit="units", display=True),
+                Dimension("y", unit="units", display=True),
+                Dimension("z", unit="units", display=True),
+            ]
+        )
+
+        with LuxarZarrCompiler(
+            output,
+            encoding_mode=EncodingMode.PRECISION,
+            compressor=None,
+            float16_allowed=False,
+        ) as compiler:
+            scene = compiler.create_scene(dimensions=dims)
+
+            for mode in BLENDING_MODES:
+                angle = np.deg2rad(BLENDING_MODE_ANGLES[mode])
+                center = np.array(
+                    [0.7 * np.cos(angle), 0.7 * np.sin(angle), BLENDING_MODE_Z[mode]],
+                    dtype=np.float32,
+                )
+                positions = np.column_stack(
+                    [disk[:, 0], disk[:, 1], np.zeros(n, dtype=np.float32)]
+                )
+                positions = (positions + center).astype(np.float32)
+                colors = np.tile(
+                    np.array([BLENDING_MODE_COLORS[mode]], dtype=np.float32), (n, 1)
+                )
+                scene.add_points(
+                    f"points_{mode}",
+                    positions,
+                    colors=colors,
+                    radii=0.035,
+                    layer=True,
+                    blending_mode=mode,
+                )
+
+        aprint(f"  Created {output}")
+        aprint(f"  5 layers × {n} points, one per mode: {', '.join(BLENDING_MODES)}")
+
+
+def generate_lines_blending_modes_test() -> None:
+    """Five crossing polyline layers, one per blending mode.
+
+    The lines twin of :func:`generate_points_blending_modes_test`
+    (three-geometry symmetry): node names ``lines_<mode>`` with
+    ``blending_mode`` set and ``layer=True``. Each layer is one straight
+    polyline through the origin at a distinct angle so all five cross in
+    the view center; widths are generous so the lines are visible.
+    """
+    with asection("Generating Lines Blending-Modes Test"):
+        output = FIXTURES_DIR / "test_lines_blending_modes.luxar.zarr"
+
+        n_vertices = 24
+        t = np.linspace(-1.2, 1.2, n_vertices).astype(np.float32)
+
+        dims = Dimensions(
+            [
+                Dimension("x", unit="units", display=True),
+                Dimension("y", unit="units", display=True),
+                Dimension("z", unit="units", display=True),
+            ]
+        )
+
+        with LuxarZarrCompiler(
+            output,
+            encoding_mode=EncodingMode.PRECISION,
+            compressor=None,
+            float16_allowed=False,
+        ) as compiler:
+            scene = compiler.create_scene(dimensions=dims)
+
+            for mode in BLENDING_MODES:
+                angle = np.deg2rad(BLENDING_MODE_ANGLES[mode])
+                vertices = np.column_stack(
+                    [
+                        t * np.cos(angle),
+                        t * np.sin(angle),
+                        np.full(n_vertices, BLENDING_MODE_Z[mode], dtype=np.float32),
+                    ]
+                ).astype(np.float32)
+                colors = np.tile(
+                    np.array([BLENDING_MODE_COLORS[mode]], dtype=np.float32),
+                    (n_vertices, 1),
+                )
+                scene.add_lines(
+                    f"lines_{mode}",
+                    vertices,
+                    widths=0.08,
+                    colors=colors,
+                    line_type="polyline",
+                    layer=True,
+                    blending_mode=mode,
+                )
+
+        aprint(f"  Created {output}")
+        aprint(
+            f"  5 polyline layers crossing at the origin: {', '.join(BLENDING_MODES)}"
+        )
+
+
+def generate_blending_inherited_test() -> None:
+    """Group with blending_mode='max' + a child leaf that does NOT set it.
+
+    Cross-stack regression fixture for blending-mode inheritance:
+    Python writers no longer stamp a default ``blending_mode`` on
+    leaves, so ``child_points``' .zattrs genuinely OMITS the attr on
+    disk, and the viewer must compose the effective mode from the
+    nearest ancestor (``surface_group``'s ``max``) — both on the
+    material (MaxEquation blend state) and in the Layers panel's
+    initial layer state.
+    """
+    with asection("Generating Blending-Inherited Test"):
+        output = FIXTURES_DIR / "test_blending_inherited.luxar.zarr"
+
+        n = 200
+        disk = _sunflower_disk(n, radius=0.8)
+        positions = np.column_stack(
+            [disk[:, 0], disk[:, 1], np.zeros(n, dtype=np.float32)]
+        ).astype(np.float32)
+        colors = np.tile(np.array([[1.0, 0.6, 0.1]], dtype=np.float32), (n, 1))
+
+        dims = Dimensions(
+            [
+                Dimension("x", unit="units", display=True),
+                Dimension("y", unit="units", display=True),
+                Dimension("z", unit="units", display=True),
+            ]
+        )
+
+        with LuxarZarrCompiler(
+            output,
+            encoding_mode=EncodingMode.PRECISION,
+            compressor=None,
+            float16_allowed=False,
+        ) as compiler:
+            scene = compiler.create_scene(dimensions=dims)
+            group = scene.add_group("surface_group", blending_mode="max", layer=True)
+            scene.add_points(
+                "child_points",
+                positions,
+                colors=colors,
+                radii=0.05,
+                parent=group,
+                layer=True,
+                # NO blending_mode — must inherit 'max' from surface_group.
+            )
+
+        # Pin the PR1 contract end-to-end: the child leaf's .zattrs must
+        # NOT carry a blending_mode key (unset ⇒ inherited in the viewer).
+        import json
+
+        zattrs_path = output / "surface_group" / "child_points" / ".zattrs"
+        child_attrs = json.loads(zattrs_path.read_text())
+        if "blending_mode" in child_attrs:
+            raise RuntimeError(
+                "test_blending_inherited: child_points/.zattrs unexpectedly "
+                "carries a blending_mode key — the writer stamped a default "
+                "again, breaking the inheritance regression fixture."
+            )
+
+        aprint(f"  Created {output}")
+        aprint("  surface_group(blending_mode=max) → child_points (attr omitted)")
 
 
 def generate_gsplats_test() -> None:
@@ -2269,6 +2507,11 @@ def main() -> None:
         aprint("")
 
         generate_lines_categorical_test()
+        aprint("")
+
+        generate_points_blending_modes_test()
+        generate_lines_blending_modes_test()
+        generate_blending_inherited_test()
         aprint("")
 
         generate_gsplats_test()

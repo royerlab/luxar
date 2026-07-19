@@ -785,6 +785,10 @@ Overlays are NOT part of the 3D scene graph — they use normalized screen coord
 ```
 The image file (PNG/JPEG/WebP) is stored directly in the overlay's zarr directory.
 
+Note: the overlay `blend_mode` is a screen-space-overlay compositing concept
+(how the 2D overlay image blends over the rendered frame) — distinct from the
+scene-node attribute `blending_mode` that controls 3D geometry blending.
+
 **HTML overlay** (`overlay_html`):
 ```json
 {
@@ -1382,7 +1386,6 @@ with LuxarZarrCompiler("output.luxar.zarr", enable_spatial_index=True) as compil
 
 ## Future Extensions (Planned)
 
-- Multiple blending modes per layer
 - Support for meshes, volumes
 - Material system with shading models
 - Temporal interpolation for smooth animations

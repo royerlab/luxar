@@ -300,6 +300,10 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
             **attrs: Attributes to attach to the group
         """
         self._check_not_finalized("write_group")
+        # Fail fast on invalid render attrs BEFORE creating the group (same
+        # contract as the geometry writers; the Node path validates earlier,
+        # this covers the raw compiler API).
+        _validate_render_attrs(attrs)
         # Handle root path
         if path == "/" or path == "":
             group = self.store

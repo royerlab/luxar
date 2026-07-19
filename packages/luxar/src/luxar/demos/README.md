@@ -695,7 +695,7 @@ Runs the unified `luxar gsplat lod --recipe` pipeline on the **one** precomputed
 
 #### Classical Gaussian-splat interop demos (import from the photogrammetric ecosystem)
 
-These six demos download **pre-captured** Gaussian-splat scenes from the classical/photogrammetric 3DGS ecosystem and import them into Luxar via `luxar gsplat import` — no fitting. Each prints a data-provenance/licence notice before downloading; Luxar redistributes none of the data. They render best with `blending_mode="normal"` and become fully correct once depth-sorted rendering lands.
+These six demos download **pre-captured** Gaussian-splat scenes from the classical/photogrammetric 3DGS ecosystem and import them into Luxar via `luxar gsplat import` — no fitting. Each prints a data-provenance/licence notice before downloading; Luxar redistributes none of the data. They render best with `blending_mode="normal"`: normal-mode gsplats are depth-sorted (with cross-mesh renderOrder) for correct alpha-over compositing.
 
 ##### demo_gsplats_interop_spz_scaniverse.py - Scaniverse SPZ captures (Niantic)
 Downloads the two official Niantic `spz` sample scans (a horned lizard, a raccoon-family sculpture — phone captures) and imports them with a streaming LOD ladder.

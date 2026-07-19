@@ -6,6 +6,34 @@ All notable changes to Luxar are documented in this file.
 
 ### July 2026
 
+#### Fixed — blending-modes correctness campaign (#601, #602, #603)
+
+- A full review of the five blending modes (`normal` / `additive` / `max` /
+  `opaque` / `luminous`) across Python → zarr → viewer → shaders fixed two
+  silent wrong-render bugs sharing one root cause — `blending_mode` has no
+  identity value, unlike opacity/gamma/intensity/offset: (1) the Python
+  writers stamped a default `"additive"` on every geometry leaf, which
+  shadowed any ancestor-set mode under the viewer's nearest-setter-wins
+  composition (leaves now omit the attr when unset and inherit); (2) the
+  layers panel initialized a layer's blending mode from the node's raw attr
+  while the material renders the composed effective mode, silently
+  overriding ancestor-authored modes at panel init (now initialized from
+  the same composed value the renderer uses).
+- Invalid blending modes now fail BEFORE any zarr group is created (no more
+  partial nodes on disk), and unknown mode strings from foreign scenes are
+  normalized once at composition (`→ 'normal'`, warn-once) so they render
+  AND depth-sort consistently instead of alpha-over-unsorted.
+- `opaque` gsplats moved from the emissive sum ray-integral to peak
+  projection, completing the #561 surface-vs-emissive taxonomy via a shared
+  `usesPeakProjection` predicate (also fixing a stale-TSL-graph trap on
+  `additive→opaque` switches). Opaque gsplat scenes render slightly
+  dimmer/tighter.
+- Coverage: per-mode E2E for all five modes × points and lines, an
+  inherited-mode cross-stack fixture, `point-max`/`line-max` TSL
+  parity + codegen variants, and panel blending unit tests; the mode set is
+  now a single runtime tuple from which the TypeScript union derives, and
+  the Python validator derives from the `BlendingMode` enum.
+
 #### Added — `luxar_delta_v1` delta pre-filter (format v3.3, 12-16% smaller stores)
 
 - Quantized code arrays (coordinates `linear_perchannel_u16`, Cholesky
