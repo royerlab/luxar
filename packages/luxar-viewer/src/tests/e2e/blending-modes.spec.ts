@@ -17,6 +17,7 @@ import {
   samplePixelsAt,
   openLayersPanel,
 } from './helpers';
+import { EXPECTED_BLEND_STATE as EXPECTED_STATE } from './blending-expected-state';
 
 const DATASET = 'http://localhost:9000/datasets/examples/rendering_modes_example.luxar.zarr';
 const MULTI_DATASET = 'http://localhost:9000/datasets/examples/multiple_objects_example.luxar.zarr';
@@ -28,76 +29,6 @@ const GSPLAT_OVERLAP_FIXTURE =
   'http://localhost:9000/packages/luxar-viewer/tests/fixtures/test_gsplats_normal_overlap.luxar.zarr';
 const GSPLAT_OVERLAP_REVERSED_FIXTURE =
   'http://localhost:9000/packages/luxar-viewer/tests/fixtures/test_gsplats_normal_overlap_reversed.luxar.zarr';
-
-/**
- * Expected THREE material state per Luxar blending mode for Points —
- * the numeric twins of `getCompleteBlendingState` (blending-state.ts).
- * THREE enum values (three/src/constants.js):
- *   blending:      NormalBlending=1, AdditiveBlending=2, CustomBlending=5
- *   blendEquation: AddEquation=100, MaxEquation=104
- *   blendSrc/Dst:  OneFactor=201, SrcAlphaFactor=204,
- *                  OneMinusSrcAlphaFactor=205
- * `normal.depthWrite` is opacity-dependent (`opacity >= 0.99` writes
- * depth) — callers with a non-default opacity must adjust it.
- */
-const EXPECTED_STATE: Record<
-  string,
-  {
-    blending: number;
-    blendEquation: number;
-    blendSrc: number;
-    blendDst: number;
-    depthTest: boolean;
-    depthWrite: boolean;
-    transparent: boolean;
-  }
-> = {
-  additive: {
-    blending: 2, // AdditiveBlending
-    blendEquation: 100, // AddEquation
-    blendSrc: 204, // SrcAlphaFactor
-    blendDst: 201, // OneFactor
-    depthTest: false,
-    depthWrite: false,
-    transparent: true,
-  },
-  luminous: {
-    blending: 2, // AdditiveBlending (like additive, but depth-tested)
-    blendEquation: 100, // AddEquation
-    blendSrc: 204, // SrcAlphaFactor
-    blendDst: 201, // OneFactor
-    depthTest: true,
-    depthWrite: false,
-    transparent: true,
-  },
-  max: {
-    blending: 5, // CustomBlending
-    blendEquation: 104, // MaxEquation
-    blendSrc: 201, // OneFactor
-    blendDst: 201, // OneFactor
-    depthTest: true,
-    depthWrite: false,
-    transparent: true,
-  },
-  opaque: {
-    blending: 1, // NormalBlending
-    blendEquation: 100, // AddEquation
-    blendSrc: 204, // SrcAlphaFactor
-    blendDst: 205, // OneMinusSrcAlphaFactor
-    depthTest: true,
-    depthWrite: true,
-    transparent: false,
-  },
-  normal: {
-    blending: 1, // NormalBlending
-    blendEquation: 100, // AddEquation
-    blendSrc: 204, // SrcAlphaFactor
-    blendDst: 205, // OneMinusSrcAlphaFactor
-    depthTest: true,
-    depthWrite: true, // at opacity >= 0.99 (normalModeDepthWrite)
-    transparent: true,
-  },
-};
 
 /** Read {name, mode, state, opacity} for every points mesh in the scene. */
 function readPointsMaterialStates(page: import('@playwright/test').Page) {
@@ -140,8 +71,8 @@ test.describe('Blending Modes', () => {
   // The blending-mode datasets contain multiple groups (5+ point clouds) and
   // render with software-accelerated WebGL on most CI/test machines, where
   // FPS sits at ~3–10. The default 60s budget is marginal once data loading
-  // plus several render passes are added; bump to 120s so we measure
-  // correctness, not the test runner's tolerance for slow blits.
+  // plus several render passes are added; test.slow() triples it to 180s so
+  // we measure correctness, not the test runner's tolerance for slow blits.
   test.slow();
 
   test('should load dataset with initial blending modes from zarr metadata', async ({ page }) => {
@@ -336,9 +267,14 @@ test.describe('Points blending modes (per-mode material state)', () => {
     // dense grid over the whole canvas. The fixture disks span a large
     // central fraction of the viewport, so the grid is guaranteed to hit
     // every cloud core AND the additive/luminous lens between them.
+    // Step 0.0125: the pure-green core is small (the green cloud's outer
+    // area is cyan-contaminated by additive overlap) — a measured probe
+    // found only ~2 qualifying samples at step 0.025, too tight a margin
+    // against framing/antialiasing drift across machines. 4× density
+    // keeps ~8 hits while the scan stays instant (~5.5k samples).
     const offsets: Array<[number, number]> = [];
-    for (let gx = 0.05; gx <= 0.951; gx += 0.025) {
-      for (let gy = 0.05; gy <= 0.951; gy += 0.025) {
+    for (let gx = 0.05; gx <= 0.951; gx += 0.0125) {
+      for (let gy = 0.05; gy <= 0.951; gy += 0.0125) {
         offsets.push([gx, gy]);
       }
     }
