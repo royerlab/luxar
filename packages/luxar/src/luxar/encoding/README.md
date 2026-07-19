@@ -659,9 +659,11 @@ policy, losslessly.
 
 The filter is **probe-gated** in the per-channel/scalar encoders
 (`probe_delta_filter`): one representative chunk is compressed both ways and
-the filter applies only where it wins — deterministic, never worse. Importing
-`luxar.encoding` registers the codec with numcodecs (needed on the read path
-too); the viewer twin lives at `luxar-viewer/src/data/codecs/luxar-delta.ts`
+the filter applies only where it wins — deterministic, never worse. The
+codec auto-registers via the numcodecs `numcodecs.codecs` entry point
+whenever luxar is installed (vanilla `zarr.open` just works; importing
+`luxar.encoding` also registers it eagerly); the viewer twin lives at
+`luxar-viewer/src/data/codecs/luxar-delta.ts`
 (keep the wire format in 1:1 sync — the unit tests on both sides lock the
 same hand-computed byte vectors).
 

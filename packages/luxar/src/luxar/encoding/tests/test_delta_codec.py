@@ -155,6 +155,15 @@ class TestValidation:
         with pytest.raises(ValueError):
             LuxarDelta(cols=0, bits=16)
 
+    def test_f_order_input_fails_loud(self):
+        # numcodecs flattens in memory order — an F-contiguous chunk would
+        # silently scramble the columnar transform. zarr always hands the
+        # filter C-contiguous chunks; direct misuse must raise, not corrupt.
+        codec = LuxarDelta(cols=3, bits=16)
+        f_order = np.asfortranarray(np.zeros((10, 3), dtype=np.uint16))
+        with pytest.raises(ValueError, match="C-contiguous"):
+            codec.encode(f_order)
+
     def test_size_not_multiple_of_cols(self):
         codec = LuxarDelta(cols=3, bits=16)
         with pytest.raises(ValueError, match="multiple of cols"):
@@ -200,12 +209,22 @@ class TestProbe:
             probe_delta_filter(codes1d, chunks, comp)  # must not raise
         # Bare int is the 1D idiom: treated as (int,).
         assert probe_delta_filter(codes1d, 512, comp) is not None
+        # chunks=True must behave like "unknown" (whole-array fallback for
+        # 1D), NOT like chunks=1 — bool subclasses int and must be excluded.
+        assert (probe_delta_filter(codes1d, True, comp) is None) == (
+            probe_delta_filter(codes1d, None, comp) is None
+        )
 
     def test_declines_big_endian_dtype(self):
         # zarrita's bytes codec byte-swaps BEFORE filters; Python zarr views
         # the dtype AFTER filters — a big-endian store would desync the two.
-        codes = _smooth_codes(1000, 3, np.uint16).astype(">u2")
-        assert probe_delta_filter(codes, (256, 3), self._comp(np.uint16)) is None
+        # Use LOW-RANGE smooth codes (< 256): their byte-swapped stream is
+        # ALSO smooth (v << 8), so delta would win even without the rail —
+        # this pins the RAIL itself, not an incidental compression decline.
+        codes = (_smooth_codes(20000, 3, np.uint16) >> 8).astype(np.uint16)
+        comp = self._comp(np.uint16)
+        assert probe_delta_filter(codes, (4096, 3), comp) is not None  # sanity
+        assert probe_delta_filter(codes.astype(">u2"), (4096, 3), comp) is None
 
     def test_declines_no_compressor_float_empty(self):
         codes = _smooth_codes(1000, 3, np.uint16)
@@ -223,6 +242,60 @@ class TestProbe:
         assert (a is None) == (b is None)
         if a is not None:
             assert a[0].get_config() == b[0].get_config()
+
+
+class TestCompressionRegressionGuard:
+    """The filter must actually SHRINK a canonical smooth store.
+
+    Guards the probe wiring end-to-end: if a future change silently stops
+    the filter from engaging (or makes it engage without winning), this
+    fails — not just the metadata checks."""
+
+    def test_smooth_store_is_smaller_with_delta(self):
+        from unittest import mock
+
+        import zarr
+
+        from luxar.encoding.encoder import ArrayEncoder
+        from luxar.encoding.modes import EncodingMode
+        from luxar.encoding.semantic_types import SemanticType
+
+        rng = np.random.default_rng(77)
+        walk = np.cumsum(rng.normal(0.0, 1.0, size=(50000, 3)), axis=0)
+        lo, hi = walk.min(axis=0), walk.max(axis=0)
+        pos = ((walk - lo) / (hi - lo) * 500).astype(np.float32)
+
+        def stored_bytes(delta_on: bool) -> int:
+            store: dict = {}
+            g = zarr.group(store=store)
+            ctx = (
+                mock.patch(
+                    "luxar.encoding._encoders.perchannel.probe_delta_filter",
+                    lambda *a, **k: None,
+                )
+                if not delta_on
+                else mock.patch("builtins.len", len)
+            )
+            with ctx:
+                ArrayEncoder().encode(
+                    data=pos,
+                    zarr_group=g,
+                    name="a",
+                    semantic_type=SemanticType.COORDINATE,
+                    mode=EncodingMode.AUTO,
+                    chunks=(8192, 3),
+                    compressor=WIDTH_AWARE_DEFAULT,
+                )
+            assert delta_on == bool(g["a"].filters), "probe gating regressed"
+            return sum(
+                len(v)
+                for k, v in store.items()
+                if not k.endswith((".zarray", ".zattrs", ".zgroup"))
+            )
+
+        on, off = stored_bytes(True), stored_bytes(False)
+        # Campaign-measured smooth-walk gain is ~1.2-1.3x; require >= 10%.
+        assert on < off * 0.90, f"delta store not smaller: {on} vs {off}"
 
 
 class TestEncoderIntegration:
