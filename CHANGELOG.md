@@ -6,6 +6,18 @@ All notable changes to Luxar are documented in this file.
 
 ### July 2026
 
+#### Performance — partial splat-texture uploads (depth-sorting Phase 4, Stage 1)
+
+- GSplat commits no longer re-upload the entire capacity-sized RGBA32F splat
+  texture on every frame. `writeSplatTexels` now registers per-row
+  `updateRanges` covering only the live `[0, count)` rows, so the GPU buffer
+  pool's 1.5× growth headroom and best-fit slack rows stop riding every commit
+  to the GPU. Measured 33–59% less upload per commit on
+  `gsplats_4d_neuromast_2ch` (classic WebGL); pixel-identical (texel content
+  unchanged, shaders only read `[0, count)`). Above 75% of rows dirty it falls
+  back to a single full-image upload. WebGPU backends re-upload the whole image
+  as before (Stage 3 follow-up). See `GSPLAT_DEPTH_SORTING_SPEC.md` §7.
+
 #### Fixed — blending-modes correctness campaign (#601, #602, #603)
 
 - A full review of the five blending modes (`normal` / `additive` / `max` /
