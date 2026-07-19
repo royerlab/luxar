@@ -77,8 +77,8 @@ GSPLATS_VERSION: str = _resolve_gsplats_version()
 
 #: On-disk format version for the node-tree ``.gsplats.zarr`` layout.
 #: v3.3 introduces the optional ``luxar_delta_v1`` zarr filter on quantized
-#: code arrays (coordinates / Cholesky halves / amplitudes): columnar per-chunk
-#: delta+zigzag, probe-gated at encode time (~12% smaller stores, lossless).
+#: code arrays (coordinates / Cholesky halves / amplitudes / colors): columnar per-chunk
+#: delta+zigzag, probe-gated at encode time (12-16% smaller stores, lossless).
 #: Readers need the codec registered with numcodecs (importing
 #: ``luxar.encoding`` does it); v3.3 stores without the filter are
 #: byte-identical to v3.2.
