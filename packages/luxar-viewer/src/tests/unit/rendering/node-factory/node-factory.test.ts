@@ -16,6 +16,7 @@ import * as THREE from 'three';
 import { NodeFactory } from '../../../../rendering/node-factory';
 import type { LoadedPointsData } from '../../../../data/data-loader-types';
 import { mulberry32 } from '../../../helpers/random';
+import { attachSplatStorage, getSplatTexture } from '../../../../rendering/gsplat-geometry';
 
 // Audit C3 fix: `Math.random()` replaced with a seedable PRNG so failures
 // can be reproduced. The seed is fixed per call site below; bump it if
@@ -485,6 +486,62 @@ describe('NodeFactory', () => {
       factory.validateColorMode(colors, metadata);
       expect(consoleSpy).toHaveBeenCalled();
       consoleSpy.mockRestore();
+    });
+  });
+
+  describe('rebuildAfterContextRestore — gsplat GPU full-dirty (Phase 4 Stage 2)', () => {
+    // After a WebGL context loss the GPU splat buffers are gone while the CPU
+    // mirror survives, so every splat texture + aSortedIndex must be marked
+    // full-dirty (empty ranges → full-image upload) and the append-fast-path
+    // flag cleared so the next commit does a full rewrite, not a suffix append.
+    const makeGSplatMesh = (): THREE.Mesh => {
+      const geom = new THREE.InstancedBufferGeometry();
+      attachSplatStorage(geom, 8);
+      const mesh = new THREE.Mesh(geom, new THREE.MeshBasicMaterial());
+      mesh.userData = { nodeType: 'gsplats', gpuPrefixIntact: true };
+      return mesh;
+    };
+
+    it('clears pending ranges + marks textures/aSortedIndex full-dirty and drops gpuPrefixIntact', () => {
+      const mesh = makeGSplatMesh();
+      const geom = mesh.geometry as THREE.InstancedBufferGeometry;
+      const tex = getSplatTexture(geom)!;
+      const idx = geom.getAttribute('aSortedIndex') as THREE.InstancedBufferAttribute;
+      // Seed a partial (append-style) pending range as if a suffix commit had
+      // registered one. `needsUpdate` is a write-only setter (reading returns
+      // undefined) that bumps `version`, so snapshot versions to prove the
+      // hook re-armed the upload.
+      tex.clearUpdateRanges();
+      tex.addUpdateRange(64, 32);
+      idx.clearUpdateRanges();
+      idx.addUpdateRange(4, 4);
+      const texVersion = tex.version;
+      const idxVersion = idx.version;
+
+      const root = new THREE.Group();
+      root.add(mesh);
+      factory.rebuildAfterContextRestore(root);
+
+      // Full-image upload path: ranges emptied, needsUpdate re-armed (version++).
+      expect(tex.updateRanges.length).toBe(0);
+      expect(tex.version).toBeGreaterThan(texVersion);
+      expect(idx.updateRanges.length).toBe(0);
+      expect(idx.version).toBeGreaterThan(idxVersion);
+      // Next commit must full-rewrite, not append.
+      expect((mesh.userData as { gpuPrefixIntact: boolean }).gpuPrefixIntact).toBe(false);
+    });
+
+    it('runs without a picking system and ignores non-gsplat nodes', () => {
+      const gsplat = makeGSplatMesh();
+      const points = new THREE.Mesh(new THREE.BufferGeometry(), new THREE.MeshBasicMaterial());
+      points.userData = { nodeType: 'points', gpuPrefixIntact: true };
+      const root = new THREE.Group();
+      root.add(gsplat, points);
+      // factory has no pickingSystem (constructed bare in beforeEach).
+      expect(() => factory.rebuildAfterContextRestore(root)).not.toThrow();
+      // The gsplat flag flipped; the points node's userData is untouched.
+      expect((gsplat.userData as { gpuPrefixIntact: boolean }).gpuPrefixIntact).toBe(false);
+      expect((points.userData as { gpuPrefixIntact: boolean }).gpuPrefixIntact).toBe(true);
     });
   });
 

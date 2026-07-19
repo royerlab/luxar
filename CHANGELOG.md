@@ -23,17 +23,30 @@ All notable changes to Luxar are documented in this file.
   3DGS opacity mapping) deferred to phase 2, and gsplats → points → lines
   phasing. Design only — no code change.
 
-#### Performance — partial splat-texture uploads (depth-sorting Phase 4, Stage 1)
+#### Performance — partial splat-texture uploads (depth-sorting Phase 4, Stages 1–2)
 
-- GSplat commits no longer re-upload the entire capacity-sized RGBA32F splat
-  texture on every frame. `writeSplatTexels` now registers per-row
-  `updateRanges` covering only the live `[0, count)` rows, so the GPU buffer
-  pool's 1.5× growth headroom and best-fit slack rows stop riding every commit
-  to the GPU. Measured 33–59% less upload per commit on
+- **Stage 1 (slack elimination):** GSplat commits no longer re-upload the entire
+  capacity-sized RGBA32F splat texture on every frame. `writeSplatTexels`
+  registers per-row `updateRanges` covering only the live `[0, count)` rows, so
+  the GPU buffer pool's 1.5× growth headroom and best-fit slack rows stop riding
+  every commit to the GPU. Measured 33–59% less upload per commit on
   `gsplats_4d_neuromast_2ch` (classic WebGL); pixel-identical (texel content
   unchanged, shaders only read `[0, count)`). Above 75% of rows dirty it falls
   back to a single full-image upload. WebGPU backends re-upload the whole image
-  as before (Stage 3 follow-up). See `GSPLAT_DEPTH_SORTING_SPEC.md` §7.
+  as before (Stage 3 follow-up).
+- **Stage 2 (append fast path):** a progressive-LOD commit that merely extends an
+  already-committed prefix (the common 4D-timelapse streaming case) now writes &
+  uploads only the new `[prevCount, count)` suffix. Because the nD→3D projection
+  is per-splat-independent and order-preserving and the loader appends LOD levels
+  in order, the projected prefix is byte-identical to what the GPU holds under an
+  unchanged view state — so no projection-kernel change was needed. A
+  forward-chained prefix-lineage `WeakMap` (`types/gsplats-lineage.ts`) proves the
+  extension by identity against the committed data; the append gate additionally
+  requires in-place pool reuse, an intact GPU prefix, a strict count increase, and
+  an unchanged `uTruncate`. A WebGL context-restore hook re-marks all splat
+  buffers full-dirty and disables the fast path for the next commit so a restore
+  never leaves a stale prefix. Points/Lines symmetry is a follow-up. See
+  `GSPLAT_DEPTH_SORTING_SPEC.md` §7.
 
 #### Fixed — blending-modes correctness campaign (#601, #602, #603, #604)
 

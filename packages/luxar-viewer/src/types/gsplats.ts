@@ -297,6 +297,26 @@ export interface GSplatsUserData {
    */
   loadedViewVersion?: number;
 
+  /**
+   * The ``uTruncate`` value baked into the splat texels currently on the GPU
+   * (depth-sorting Phase 4 Stage 2, the append fast path). ``truncate`` is a
+   * material uniform, NOT part of the loader's view state, so a change to it is
+   * invisible to the prefix-lineage / view-equality checks. The append gate
+   * requires ``committedTruncate === readTruncate(mesh)`` so an append never
+   * leaves a prefix rendered under the old truncate while the suffix uses the
+   * new one. ``undefined`` ⇒ never committed ⇒ append rejected.
+   */
+  committedTruncate?: number;
+
+  /**
+   * True when the GPU splat buffers hold the exact texels of the last commit
+   * — i.e. the append fast path may skip re-uploading the prefix. Cleared to
+   * ``false`` by ``NodeFactory.rebuildAfterContextRestore`` after a WebGL
+   * context loss (the CPU mirror survives but the GPU buffers are gone), which
+   * forces the next commit to a full rewrite. Re-enabled by every full commit.
+   */
+  gpuPrefixIntact?: boolean;
+
   /** Pick ID assigned by PickingSystem for GPU picking (undefined if picking disabled) */
   pickId?: number;
 }

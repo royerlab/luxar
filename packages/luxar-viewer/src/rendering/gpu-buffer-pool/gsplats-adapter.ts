@@ -17,6 +17,7 @@ import {
   getSplatTexture,
   writeSplatTexels,
   writeSortedIndexIdentity,
+  writeSortedIndexIdentityRange,
 } from '../gsplat-geometry';
 import { clampSplatCapacity } from '../splat-texture-layout';
 import type { PooledBuffer } from './pool-stats';
@@ -186,7 +187,7 @@ export class GSplatsBufferAdapter {
     data: PackedGSplatsData,
     count: number,
     truncationRadius: number = 3.0,
-    options?: { preserveOrdering?: boolean }
+    options?: { preserveOrdering?: boolean; fromSplat?: number }
   ): void {
     const texture = getSplatTexture(geometry);
     if (!texture) {
@@ -195,6 +196,11 @@ export class GSplatsBufferAdapter {
           'was it acquired from the pool?'
       );
     }
+    // Append fast path (Phase 4 Stage 2): the commit layer sets `fromSplat`
+    // to the prefix count already on the GPU when this commit only extends it,
+    // so the fused writer + ranged upload touch just the `[fromSplat, count)`
+    // suffix (see writeSplatTexels). 0 means a full write.
+    const fromSplat = options?.fromSplat ?? 0;
     // One fused pass over the staged arrays into the texel layout
     // (replaces the six per-attribute strided writes), then identity
     // ordering. The writer clamps to the texture capacity; mirror that
@@ -210,17 +216,24 @@ export class GSplatsBufferAdapter {
         amplitudes: data.amplitudes,
         colors: data.colors,
       },
-      count
+      count,
+      { fromSplat }
     );
-    // `preserveOrdering` (commit path decides — see
-    // commit-gsplats-geometry.ts): keep the node's existing depth-sort
-    // permutation instead of resetting to identity, so a same-count
-    // recommit doesn't flash storage order while the re-sort lands.
-    // Skipping the write also skips registering an update range — correct
-    // because the attribute content didn't change (the already-uploaded
-    // permutation stays valid; any still-pending ranges from earlier
-    // writes remain registered on the attribute and flush as usual).
-    if (!options?.preserveOrdering) {
+    if (fromSplat > 0) {
+      // Append: keep the prefix's existing permutation and give the appended
+      // splats identity ordering until the re-sort lands (append and
+      // preserveOrdering are mutually exclusive — append needs count > prev,
+      // preserveOrdering needs count === prev).
+      writeSortedIndexIdentityRange(geometry, fromSplat, count);
+    } else if (!options?.preserveOrdering) {
+      // `preserveOrdering` (commit path decides — see
+      // commit-gsplats-geometry.ts): keep the node's existing depth-sort
+      // permutation instead of resetting to identity, so a same-count
+      // recommit doesn't flash storage order while the re-sort lands.
+      // Skipping the write also skips registering an update range — correct
+      // because the attribute content didn't change (the already-uploaded
+      // permutation stays valid; any still-pending ranges from earlier
+      // writes remain registered on the attribute and flush as usual).
       writeSortedIndexIdentity(geometry, count);
     }
 
