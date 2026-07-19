@@ -167,6 +167,24 @@ scene.luxar.zarr/
         └── image.png       # Raw image file (image overlays only)
 ```
 
+### Compression & the `luxar_delta_v1` filter
+
+All arrays use Blosc zstd level 9 with a width-aware shuffle policy (byte
+shuffle for multi-byte integer codes, no shuffle for uint8/floats — see
+`luxar.encoding.compression`). Additionally, any quantized uint8/uint16 code
+array (positions/vertices/centers, Cholesky halves, radii/widths/amplitudes,
+sharpness, colors) MAY carry the Luxar-owned zarr v2 filter
+`{"id": "luxar_delta_v1", "cols": C, "bits": 8|16}` in its `.zarray`:
+columnar per-chunk delta+zigzag residuals, applied probe-gated at encode time
+(only where it measurably shrinks the store — 12-16% whole-store, lossless).
+It is a pure storage transform below the `encoding` attrs; zarr/zarrita undo
+it during whole-chunk reconstruction, so decode and random access are
+unchanged. Readers need the codec registered: Python registers it on
+`import luxar.encoding`; the viewer registers `numcodecs.luxar_delta_v1` in
+its zarr facade. Vanilla-zarr readers without the codec fail loudly (unknown
+codec), never silently. Full wire-format spec:
+`docs/specs/GSPLATS_ZARR_FORMAT.md` § "The `luxar_delta_v1` delta filter".
+
 ## Scene-Level Metadata (.zattrs)
 
 The root `.zattrs` file contains scene-wide configuration:

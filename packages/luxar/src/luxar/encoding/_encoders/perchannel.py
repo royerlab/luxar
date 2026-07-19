@@ -170,11 +170,17 @@ class PerChannelEncoderMixin(BaseEncoderMixin):
         else:
             raise ValueError("color_mode required for float COLOR arrays")
 
+        # Probe-gated delta: SDR rgb_uint8 and integer-passthrough color codes
+        # are Hilbert-ordered like every other per-element array, so spatially
+        # coherent colors compress better as columnar residuals. float32
+        # encodings decline automatically (probe accepts u8/u16 only).
+        comp = resolve_compressor(compressor, encoded_data.dtype)
         zarr_group.create_dataset(
             name,
             data=encoded_data,
             chunks=chunks,
-            compressor=resolve_compressor(compressor, encoded_data.dtype),
+            compressor=comp,
+            filters=probe_delta_filter(encoded_data, chunks, comp),
             overwrite=True,
         )
         zarr_group[name].attrs["encoding"] = {
@@ -647,11 +653,13 @@ class PerChannelEncoderMixin(BaseEncoderMixin):
         # code 0 by the quantizer), the 1.0 placeholder just avoids log(0).
         y = np.log(np.where(nonzero, x, 1.0))
         u = self._quantize_perchannel_zero_level(y, nonzero, bits, lo, hi)
+        comp = resolve_compressor(compressor, u.dtype)
         zarr_group.create_dataset(
             name,
             data=u,
             chunks=chunks,
-            compressor=resolve_compressor(compressor, u.dtype),
+            compressor=comp,
+            filters=probe_delta_filter(u, chunks, comp),
             overwrite=True,
         )
         zarr_group[name].attrs["encoding"] = {
