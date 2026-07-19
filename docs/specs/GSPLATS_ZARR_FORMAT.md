@@ -735,9 +735,10 @@ is purely a write-time budget. Pass an explicit `Blosc(...)` to override, or
 ### The `luxar_delta_v1` delta filter (v3.3, optional, probe-gated)
 
 Quantized code arrays (COORDINATE `linear_perchannel_u16`, the Cholesky
-`log_perchannel` / `signed_log_perchannel` halves, and the scalar
-`bounded_scalar` / `geolog_scalar` amplitudes) may carry a zarr v2 **filter**
-in `.zarray`:
+`log_perchannel` / `signed_log_perchannel` halves, the scalar
+`bounded_scalar` / `geolog_scalar` amplitudes, and COLOR `rgb_uint8` /
+`geolog_perchannel` / integer-passthrough codes) may carry a zarr v2
+**filter** in `.zarray`:
 
 ```json
 "filters": [{"id": "luxar_delta_v1", "cols": 3, "bits": 16}]
@@ -746,7 +747,7 @@ in `.zarray`:
 Hilbert ordering makes consecutive codes a smooth ramp; the filter stores
 per-axis **modular delta + zigzag** residuals, laid out **column-major within
 each chunk** (all column-0 residuals, then column-1, …), which the Blosc
-policy above then compresses ~12% smaller whole-store (lossless — a pure
+policy above then compresses 12-16% smaller whole-store (lossless — a pure
 storage transform below the `encoding` layer; `encoding` attrs, decode
 kernels, and the range-loader are untouched). Per chunk of `rows × cols`
 codes, per column, all arithmetic mod `2^bits` with an implicit `0` anchor at
@@ -765,6 +766,13 @@ compressed both ways and the filter is applied only where it wins
 (deterministic; never worse). Arrays where it cannot apply are excluded
 structurally: float32 fallbacks, LUT/broadcast/array_ref priority paths, and
 INDEX arrays never carry it.
+
+Corruption blast radius: Blosc/zstd carries no payload checksum (a
+pre-existing property of every Luxar array, with or without this filter), so
+a silently corrupted byte decodes to wrong values. Without delta the damage
+is one element; with delta a corrupted residual propagates through the rest
+of that chunk's column — still bounded to a single chunk (each chunk has its
+own implicit 0 anchor).
 
 Reader requirements: chunks are whole-chunk reconstructed inside the zarr
 codec pipeline, so sub-chunk range reads keep working unchanged. The Python
@@ -1093,7 +1101,7 @@ finest level instead). Both paths go through the shared
 | Node-tree LOD | v3.0 nestable primitives (leaf / kind=lod / kind=partition) | Substitutive, additive, and partition axes compose freely as a tree rather than a fixed matrix |
 | Image embedding | No | Keep format focused on splats |
 | Compression | Blosc zstd-9, width-aware shuffle | Byte shuffle for multi-byte int codes; no shuffle for uint8/floats (see §Blosc Settings) |
-| Delta encoding | Yes (v3.3, probe-gated) | `luxar_delta_v1` zarr filter on quantized codes; ~12% smaller whole-store (see §The `luxar_delta_v1` delta filter) |
+| Delta encoding | Yes (v3.3, probe-gated) | `luxar_delta_v1` zarr filter on quantized codes; 12-16% smaller whole-store (see §The `luxar_delta_v1` delta filter) |
 | Streaming write | No | Not needed |
 | `numpy-hilbert-curve` | Required dependency | Needed for Hilbert ordering |
 
@@ -1112,12 +1120,13 @@ finest level instead). Both paths go through the shared
 ## Changelog
 
 - **v3.3.0** (2026-07-18): optional `luxar_delta_v1` delta filter on quantized codes
-  - Quantized code arrays (coordinates, Cholesky halves, amplitudes) may carry
-    the zarr v2 filter `{"id": "luxar_delta_v1", "cols", "bits"}`: per-axis
+  - Quantized code arrays (coordinates, Cholesky halves, amplitudes, colors)
+    may carry the zarr v2 filter `{"id": "luxar_delta_v1", "cols", "bits"}`: per-axis
     modular delta + zigzag residuals, column-major within each chunk, under
     the unchanged Blosc policy. Lossless and probe-gated at encode time (one
     representative chunk compressed both ways; applied only where it wins) —
-    measured **~12% smaller whole-store** on real Hilbert-ordered fits
+    measured **12-16% smaller whole-store** on real Hilbert-ordered fits
+    (14.9-15.7% end-to-end on real h2afva light-sheet leaves)
     (centers 1.20–1.31×, cholesky_offdiag ~1.15×, diag ~1.07×).
   - A pure storage transform below the `encoding` layer: `encoding` attrs,
     decode kernels (WASM/TS), and the sub-chunk range-loader are untouched —

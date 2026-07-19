@@ -7,6 +7,7 @@
  * @module types/lines
  */
 
+import type { BlendingMode } from './blending';
 import type { ViewState } from '../data/data-loader-types';
 import type { ScalarArray } from './points';
 import type { LoaderMetrics, MonitorEventListener, QueryInfo } from './data-monitor-types';
@@ -139,7 +140,7 @@ export interface LinesMetadata {
   offset?: number;
 
   /** Blending mode */
-  blending_mode?: 'additive' | 'normal' | 'max' | 'opaque' | 'luminous';
+  blending_mode?: BlendingMode;
 
   /** Whether this node is exposed as a layer in the Layers panel */
   layer?: boolean;

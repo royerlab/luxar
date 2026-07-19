@@ -25,7 +25,8 @@
  */
 
 import * as THREE from 'three';
-import type { BlendingMode } from './material-manager';
+import { BLENDING_MODES } from '../types/blending';
+import type { BlendingMode } from '../types/blending';
 import { log, Modules } from '../utils/log';
 
 /**
@@ -94,11 +95,12 @@ export function usesPeakProjection(mode: BlendingMode): boolean {
 }
 
 /**
- * The five canonical Luxar blending modes. Runtime source of truth for
- * validating raw `blending_mode` strings (zarr attrs, URL params)
- * before they reach the string-typed `BlendingMode` world.
+ * The canonical mode tuple lives in `types/blending.ts` (dependency-free
+ * layer); re-exported here because this module is the runtime home of
+ * mode validation (`normalizeBlendingMode`) and its historical import
+ * site.
  */
-export const BLENDING_MODES = ['additive', 'normal', 'max', 'opaque', 'luminous'] as const;
+export { BLENDING_MODES };
 
 /** Unknown mode strings already warned about — one warning per distinct value. */
 const warnedUnknownModes = new Set<string>();

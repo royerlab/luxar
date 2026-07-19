@@ -34,7 +34,7 @@ import * as THREE from 'three';
 import type { PostProcessingManager } from '../post-processing/post-processing-manager';
 import { isCameraAwareMaterial } from '../materials/_shared/camera-aware-material';
 import { isSurfacePickAwareMaterial } from './gsplat/material';
-import { isNormalMode } from '../blending-state';
+import { isNormalMode, isOpaqueMode } from '../blending-state';
 import type { BlendingMode } from '../material-manager';
 import {
   disposePickMaterial,
@@ -620,13 +620,15 @@ export class PickingSystem {
         mat.updateCameraParams(fov, pickRes, isOrtho);
       }
 
-      // Pick-depth convention sync: under depth-sorted alpha-over
-      // ('normal') the user sees an occluding surface, so the pick
+      // Pick-depth convention sync: under the depth-ordered surface
+      // modes — 'normal' (sorted alpha-over) and 'opaque' (depth-
+      // written) — the user sees an occluding surface, so the pick
       // depth must be the real projected depth (front-most wins)
       // instead of brightness-as-depth (brightest wins — right for the
-      // commutative modes, but it could pick a brighter splat BEHIND
-      // the visible surface). Only gsplat pick materials implement
-      // SurfacePickAwareMaterial; points/lines are unaffected.
+      // commutative additive/luminous/max modes, but it could pick a
+      // brighter splat BEHIND the visible surface). Only gsplat pick
+      // materials implement SurfacePickAwareMaterial; points/lines are
+      // unaffected.
       if (isSurfacePickAwareMaterial(mat)) {
         // entry.main is typed Object3D — non-mesh mains have no material.
         const mainMat = (entry.main as THREE.Mesh).material as
@@ -635,7 +637,7 @@ export class PickingSystem {
           | undefined;
         const single = Array.isArray(mainMat) ? mainMat[0] : mainMat;
         const mode = (single?.userData.blendingMode ?? 'additive') as BlendingMode;
-        mat.setSurfacePickDepth(isNormalMode(mode));
+        mat.setSurfacePickDepth(isNormalMode(mode) || isOpaqueMode(mode));
       }
 
       this.pickScene.add(entry.pick);

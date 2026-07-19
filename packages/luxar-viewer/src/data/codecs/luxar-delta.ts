@@ -5,7 +5,7 @@
  * stores Hilbert-ordered uint8/uint16 quantization codes as per-axis modular
  * deltas, zigzag-mapped to unsigned and laid out COLUMN-major within each
  * chunk (all column-0 residuals, then column-1, ...). Spatial ordering makes
- * consecutive codes a smooth ramp; the residuals compress ~12% better
+ * consecutive codes a smooth ramp; the residuals compress 12-16% better
  * whole-store under the existing Blosc policy. Keep the two implementations
  * in 1:1 wire-format sync — the Python unit tests lock the bytes.
  *
@@ -47,6 +47,8 @@ interface LuxarDeltaConfig {
 interface ArrayMetadata {
   data_type?: string;
   dataType?: string;
+  /** Chunk shape (zarrita passes the chunk grid's chunk_shape here). */
+  shape?: number[];
 }
 
 export class LuxarDeltaCodec {
@@ -77,7 +79,21 @@ export class LuxarDeltaCodec {
         `luxar_delta_v1: config bits=${bits} does not match array dtype ${dataType}`
       );
     }
-    return new LuxarDeltaCodec(config.cols ?? 1, bits);
+    const cols = config.cols ?? 1;
+    // Fail-loud cols/shape cross-check: a corrupted `cols` that still divides
+    // the chunk size would otherwise decode silently to garbage. The Luxar
+    // writer only emits 1D (cols=1) and 2D (cols = trailing chunk dim) arrays.
+    const shape = meta.shape;
+    if (shape && (shape.length === 1 || shape.length === 2)) {
+      const expectedCols = shape.length === 1 ? 1 : shape[1];
+      if (cols !== expectedCols) {
+        throw new Error(
+          `luxar_delta_v1: config cols=${cols} does not match chunk shape ` +
+            `[${shape.join(', ')}] (expected ${expectedCols})`
+        );
+      }
+    }
+    return new LuxarDeltaCodec(cols, bits);
   }
 
   private rowsOf(data: CodeArray): number {

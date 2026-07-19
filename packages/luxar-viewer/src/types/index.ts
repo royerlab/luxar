@@ -6,6 +6,10 @@
  * @module types
  */
 
+// Blending modes (canonical mode set — SSOT)
+export type { BlendingMode } from './blending';
+export { BLENDING_MODES } from './blending';
+
 // Dimension types
 export type { DimensionMetadata, SimpleDims } from './dims';
 export { initializeDims, getDimensionRanges } from './dims';

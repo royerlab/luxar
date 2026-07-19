@@ -97,6 +97,21 @@ describe('LuxarDeltaCodec validation and registration', () => {
     ).toThrow(/unsupported data type/);
   });
 
+  it('fromConfig cross-checks cols against the chunk shape (fail-loud on corruption)', () => {
+    // Matching shapes pass.
+    LuxarDeltaCodec.fromConfig({ cols: 3, bits: 16 }, { dataType: 'uint16', shape: [4096, 3] });
+    LuxarDeltaCodec.fromConfig({ cols: 1, bits: 16 }, { dataType: 'uint16', shape: [16384] });
+    // A corrupted cols that still divides the chunk size must throw, not
+    // silently decode garbage.
+    expect(() =>
+      LuxarDeltaCodec.fromConfig({ cols: 2, bits: 16 }, { dataType: 'uint16', shape: [4096, 3] })
+    ).toThrow(/does not match chunk shape/);
+    // Missing cols (config loss) defaults to 1 and must also be caught.
+    expect(() =>
+      LuxarDeltaCodec.fromConfig({ bits: 16 }, { dataType: 'uint16', shape: [4096, 3] })
+    ).toThrow(/does not match chunk shape/);
+  });
+
   it('rejects chunks whose size is not a multiple of cols', () => {
     const codec = new LuxarDeltaCodec(3, 16);
     expect(() => codec.decode(chunk(new Uint16Array(10), [10]))).toThrow(/multiple of cols/);

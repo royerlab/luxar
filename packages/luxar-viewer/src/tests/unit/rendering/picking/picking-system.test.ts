@@ -829,11 +829,30 @@ describe('PickingSystem — surface-pick depth sync', () => {
     expect(spy).toHaveBeenCalledExactlyOnceWith(true);
   });
 
+  it("main material in 'opaque' mode → setSurfacePickDepth(true)", () => {
+    // Opaque is a depth-ordered surface mode (depthWrite): the user sees
+    // the FRONT-MOST splat, so picking must use real projected depth —
+    // brightness-as-depth could pick a brighter splat behind the surface.
+    const { system, renderPickBuffer } = buildSystem();
+    const spy = registerPair(system, 'opaque');
+    renderPickBuffer();
+    expect(spy).toHaveBeenCalledExactlyOnceWith(true);
+  });
+
   it("main material in 'additive' mode → setSurfacePickDepth(false)", () => {
     const { system, renderPickBuffer } = buildSystem();
     const spy = registerPair(system, 'additive');
     renderPickBuffer();
     expect(spy).toHaveBeenCalledExactlyOnceWith(false);
+  });
+
+  it("commutative 'max' and 'luminous' keep brightness-as-depth → setSurfacePickDepth(false)", () => {
+    const { system, renderPickBuffer } = buildSystem();
+    const maxSpy = registerPair(system, 'max');
+    const lumSpy = registerPair(system, 'luminous');
+    renderPickBuffer();
+    expect(maxSpy).toHaveBeenCalledExactlyOnceWith(false);
+    expect(lumSpy).toHaveBeenCalledExactlyOnceWith(false);
   });
 
   it('missing blendingMode defaults to additive → setSurfacePickDepth(false)', () => {
