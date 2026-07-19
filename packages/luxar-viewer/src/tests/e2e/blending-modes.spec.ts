@@ -15,14 +15,126 @@ import {
   getWebGLErrors,
   assertNoConsoleErrors,
   samplePixelsAt,
+  openLayersPanel,
 } from './helpers';
 
 const DATASET = 'http://localhost:9000/datasets/examples/rendering_modes_example.luxar.zarr';
 const MULTI_DATASET = 'http://localhost:9000/datasets/examples/multiple_objects_example.luxar.zarr';
+const POINTS_BLENDING_FIXTURE =
+  'http://localhost:9000/packages/luxar-viewer/tests/fixtures/test_points_blending_modes.luxar.zarr';
+const BLENDING_INHERITED_FIXTURE =
+  'http://localhost:9000/packages/luxar-viewer/tests/fixtures/test_blending_inherited.luxar.zarr';
 const GSPLAT_OVERLAP_FIXTURE =
   'http://localhost:9000/packages/luxar-viewer/tests/fixtures/test_gsplats_normal_overlap.luxar.zarr';
 const GSPLAT_OVERLAP_REVERSED_FIXTURE =
   'http://localhost:9000/packages/luxar-viewer/tests/fixtures/test_gsplats_normal_overlap_reversed.luxar.zarr';
+
+/**
+ * Expected THREE material state per Luxar blending mode for Points —
+ * the numeric twins of `getCompleteBlendingState` (blending-state.ts).
+ * THREE enum values (three/src/constants.js):
+ *   blending:      NormalBlending=1, AdditiveBlending=2, CustomBlending=5
+ *   blendEquation: AddEquation=100, MaxEquation=104
+ *   blendSrc/Dst:  OneFactor=201, SrcAlphaFactor=204,
+ *                  OneMinusSrcAlphaFactor=205
+ * `normal.depthWrite` is opacity-dependent (`opacity >= 0.99` writes
+ * depth) — callers with a non-default opacity must adjust it.
+ */
+const EXPECTED_STATE: Record<
+  string,
+  {
+    blending: number;
+    blendEquation: number;
+    blendSrc: number;
+    blendDst: number;
+    depthTest: boolean;
+    depthWrite: boolean;
+    transparent: boolean;
+  }
+> = {
+  additive: {
+    blending: 2, // AdditiveBlending
+    blendEquation: 100, // AddEquation
+    blendSrc: 204, // SrcAlphaFactor
+    blendDst: 201, // OneFactor
+    depthTest: false,
+    depthWrite: false,
+    transparent: true,
+  },
+  luminous: {
+    blending: 2, // AdditiveBlending (like additive, but depth-tested)
+    blendEquation: 100, // AddEquation
+    blendSrc: 204, // SrcAlphaFactor
+    blendDst: 201, // OneFactor
+    depthTest: true,
+    depthWrite: false,
+    transparent: true,
+  },
+  max: {
+    blending: 5, // CustomBlending
+    blendEquation: 104, // MaxEquation
+    blendSrc: 201, // OneFactor
+    blendDst: 201, // OneFactor
+    depthTest: true,
+    depthWrite: false,
+    transparent: true,
+  },
+  opaque: {
+    blending: 1, // NormalBlending
+    blendEquation: 100, // AddEquation
+    blendSrc: 204, // SrcAlphaFactor
+    blendDst: 205, // OneMinusSrcAlphaFactor
+    depthTest: true,
+    depthWrite: true,
+    transparent: false,
+  },
+  normal: {
+    blending: 1, // NormalBlending
+    blendEquation: 100, // AddEquation
+    blendSrc: 204, // SrcAlphaFactor
+    blendDst: 205, // OneMinusSrcAlphaFactor
+    depthTest: true,
+    depthWrite: true, // at opacity >= 0.99 (normalModeDepthWrite)
+    transparent: true,
+  },
+};
+
+/** Read {name, mode, state, opacity} for every points mesh in the scene. */
+function readPointsMaterialStates(page: import('@playwright/test').Page) {
+  return page.evaluate(() => {
+    const debug = (window as any).__luxarDebug;
+    const states: Array<{
+      name: string;
+      blendingMode: string | undefined;
+      blending: number;
+      blendEquation: number;
+      blendSrc: number;
+      blendDst: number;
+      depthTest: boolean;
+      depthWrite: boolean;
+      transparent: boolean;
+      opacity: number;
+    }> = [];
+    debug.scene.traverse((obj: any) => {
+      if (obj.userData?.nodeType === 'points' && obj.material) {
+        const m = obj.material;
+        states.push({
+          name: obj.name ?? '',
+          blendingMode: m.userData?.blendingMode,
+          blending: m.blending,
+          blendEquation: m.blendEquation,
+          blendSrc: m.blendSrc,
+          blendDst: m.blendDst,
+          depthTest: m.depthTest,
+          depthWrite: m.depthWrite,
+          transparent: m.transparent,
+          opacity: m.uniforms?.opacity?.value ?? m.uniforms?.uOpacity?.value ?? 1.0,
+        });
+      }
+    });
+    return states;
+  });
+}
 
 test.describe('Blending Modes', () => {
   // The blending-mode datasets contain multiple groups (5+ point clouds) and
@@ -37,85 +149,57 @@ test.describe('Blending Modes', () => {
     await waitForLuxarReady(page);
     await waitForPointsLoaded(page, 10);
 
-    // Get all materials' blending state from the scene
-    const blendingStates = await page.evaluate(() => {
-      const debug = (window as any).__luxarDebug;
-      const states: { name: string; blending: number; depthTest: boolean; depthWrite: boolean }[] =
-        [];
-
-      debug.scene.traverse((obj: any) => {
-        if ((obj.userData?.nodeType === 'points' || obj.type === 'Mesh') && obj.material) {
-          states.push({
-            name: obj.name || 'unnamed',
-            blending: obj.material.blending,
-            depthTest: obj.material.depthTest,
-            depthWrite: obj.material.depthWrite,
-          });
-        }
-      });
-
-      return states;
-    });
-
+    const blendingStates = await readPointsMaterialStates(page);
     expect(blendingStates.length).toBeGreaterThan(0);
 
-    // All materials should have a valid blending mode (THREE.js enum values)
-    // NormalBlending=1, AdditiveBlending=2, CustomBlending=5
+    // Every points material must carry the EXACT THREE state for its own
+    // `userData.blendingMode` (per getCompleteBlendingState) — not just
+    // membership in the set of plausible blending enums.
     for (const state of blendingStates) {
-      expect([1, 2, 5]).toContain(state.blending);
+      expect(
+        state.blendingMode,
+        `${state.name}: material carries no userData.blendingMode`
+      ).toBeTruthy();
+      const expected = EXPECTED_STATE[state.blendingMode!];
+      expect(expected, `${state.name}: unknown mode "${state.blendingMode}"`).toBeTruthy();
+      expect(state.blending, `${state.name}: blending`).toBe(expected.blending);
+      expect(state.blendEquation, `${state.name}: blendEquation`).toBe(expected.blendEquation);
+      expect(state.blendSrc, `${state.name}: blendSrc`).toBe(expected.blendSrc);
+      expect(state.blendDst, `${state.name}: blendDst`).toBe(expected.blendDst);
+      expect(state.depthTest, `${state.name}: depthTest`).toBe(expected.depthTest);
+      expect(state.transparent, `${state.name}: transparent`).toBe(expected.transparent);
+      // `normal` depthWrite is opacity-dependent: opacity >= 0.99 writes
+      // depth (normalModeDepthWrite). The rendering_modes dataset mixes
+      // opaque (1.0) and transparent (0.6) normal layers.
+      const expectedDepthWrite =
+        state.blendingMode === 'normal' ? state.opacity >= 0.99 : expected.depthWrite;
+      expect(state.depthWrite, `${state.name}: depthWrite (opacity ${state.opacity})`).toBe(
+        expectedDepthWrite
+      );
     }
   });
 
   test('should have different depth behavior for additive vs normal blending', async ({ page }) => {
-    await page.goto(`/?src=${DATASET}&debug`);
+    // Deterministic fixture: test_points_blending_modes carries one layer
+    // per mode, so BOTH additive and normal MUST exist (no silent
+    // if-guards — a fixture regression fails loudly here).
+    await page.goto(`/?src=${POINTS_BLENDING_FIXTURE}&debug`);
     await waitForLuxarReady(page);
     await waitForPointsLoaded(page, 10);
 
-    // Find additive and normal blended objects
-    const modeInfo = await page.evaluate(() => {
-      const debug = (window as any).__luxarDebug;
-      let additive: any = null;
-      let normal: any = null;
+    const states = await readPointsMaterialStates(page);
+    const additive = states.find((s) => s.name.includes('points_additive'));
+    const normal = states.find((s) => s.name.includes('points_normal'));
 
-      debug.scene.traverse((obj: any) => {
-        // Points render as `THREE.Mesh + userData.nodeType === 'points'`.
-        const isPoints = obj.userData?.nodeType === 'points';
-        if (!isPoints || !obj.material) return;
+    expect(additive, 'points_additive mesh must exist in the fixture').toBeTruthy();
+    expect(normal, 'points_normal mesh must exist in the fixture').toBeTruthy();
 
-        // THREE.AdditiveBlending = 2
-        if (obj.material.blending === 2 && !additive) {
-          additive = {
-            name: obj.name,
-            depthTest: obj.material.depthTest,
-            depthWrite: obj.material.depthWrite,
-            transparent: obj.material.transparent,
-          };
-        }
-        // THREE.NormalBlending = 1
-        if (obj.material.blending === 1 && !normal) {
-          normal = {
-            name: obj.name,
-            depthTest: obj.material.depthTest,
-            depthWrite: obj.material.depthWrite,
-            transparent: obj.material.transparent,
-          };
-        }
-      });
+    // Additive blending renders on top: no depth interaction at all.
+    expect(additive!.depthWrite).toBe(false);
+    expect(additive!.depthTest).toBe(false);
 
-      return { additive, normal };
-    });
-
-    // If both modes exist in this dataset, verify their depth behavior differs
-    if (modeInfo.additive && modeInfo.normal) {
-      // Additive blending typically has depthTest=false, depthWrite=false
-      expect(modeInfo.additive.depthWrite).toBe(false);
-
-      // Normal blending typically has depthTest=true
-      expect(modeInfo.normal.depthTest).toBe(true);
-    }
-
-    // At least one mode should exist
-    expect(modeInfo.additive || modeInfo.normal).toBeTruthy();
+    // Normal blending participates in the depth test.
+    expect(normal!.depthTest).toBe(true);
   });
 
   test('should render without WebGL errors for all blending modes', async ({ page }) => {
@@ -177,6 +261,174 @@ test.describe('Blending Modes', () => {
       maxDiffPixelRatio: 0.08,
       threshold: 0.25,
     });
+  });
+});
+
+test.describe('Points blending modes (per-mode material state)', () => {
+  // Fixture: five overlapping sunflower-disk point layers on a Venn
+  // circle, one per canonical mode, node names literally
+  // `points_<mode>`. See generate_points_blending_modes_test() in
+  // tests/fixtures/generate_test_data.py.
+  test.slow();
+
+  test.beforeAll(async () => {
+    const { existsSync } = await import('node:fs');
+    const path = await import('node:path');
+    const { fileURLToPath } = await import('node:url');
+    const specDir = path.dirname(fileURLToPath(import.meta.url));
+    const fixtureDir = path.resolve(
+      specDir,
+      '../../../tests/fixtures/test_points_blending_modes.luxar.zarr'
+    );
+    if (!existsSync(fixtureDir)) {
+      throw new Error(
+        `Missing fixture ${fixtureDir} — run \`pnpm test:generate-fixtures\` ` +
+          'from packages/luxar-viewer/ first.'
+      );
+    }
+  });
+
+  test('each points_<mode> layer carries the exact per-mode THREE blend state', async ({
+    page,
+  }) => {
+    await page.goto(`/?src=${POINTS_BLENDING_FIXTURE}&debug`);
+    await waitForLuxarReady(page);
+    await waitForPointsLoaded(page, 10);
+
+    const states = await readPointsMaterialStates(page);
+    expect(states.length).toBe(5);
+
+    for (const [mode, expected] of Object.entries(EXPECTED_STATE)) {
+      const state = states.find((s) => s.name.includes(`points_${mode}`));
+      expect(state, `points_${mode} mesh not found in scene`).toBeTruthy();
+      expect(state!.blendingMode, `points_${mode}: userData.blendingMode`).toBe(mode);
+      expect(state!.blending, `points_${mode}: blending`).toBe(expected.blending);
+      expect(state!.blendEquation, `points_${mode}: blendEquation`).toBe(expected.blendEquation);
+      expect(state!.blendSrc, `points_${mode}: blendSrc`).toBe(expected.blendSrc);
+      expect(state!.blendDst, `points_${mode}: blendDst`).toBe(expected.blendDst);
+      expect(state!.depthTest, `points_${mode}: depthTest`).toBe(expected.depthTest);
+      expect(state!.depthWrite, `points_${mode}: depthWrite`).toBe(expected.depthWrite);
+      expect(state!.transparent, `points_${mode}: transparent`).toBe(expected.transparent);
+    }
+  });
+
+  test('additive accumulation: the additive/luminous overlap is brighter than either base color', async ({
+    page,
+  }) => {
+    // Pixel discriminator. The fixture makes `points_additive` pure
+    // green and `points_luminous` pure red, ADJACENT on the Venn circle
+    // so their overlap lens contains only those two layers (blue/cyan/
+    // white layers are geometrically excluded). Both render through
+    // AdditiveBlending, so lens pixels accumulate red + green — a mixed
+    // r&g-high / b-low pixel that NO single layer's base color can
+    // produce (every other fixture color carries a high blue channel).
+    // No exact color pins: thresholds are loose ratios.
+    await page.addInitScript(() => {
+      localStorage.setItem('luxar-control-rail-hint-dismissed', '1');
+    });
+    // ?dpr=1 pins the pixel ratio for deterministic sampling.
+    await page.goto(`/?src=${POINTS_BLENDING_FIXTURE}&debug&dpr=1`);
+    await waitForLuxarReady(page);
+    await waitForPointsLoaded(page, 10);
+    await waitForNextRender(page, 5);
+
+    // Self-locating sampling (robust to the auto-framed camera pose): a
+    // dense grid over the whole canvas. The fixture disks span a large
+    // central fraction of the viewport, so the grid is guaranteed to hit
+    // every cloud core AND the additive/luminous lens between them.
+    const offsets: Array<[number, number]> = [];
+    for (let gx = 0.05; gx <= 0.951; gx += 0.025) {
+      for (let gy = 0.05; gy <= 0.951; gy += 0.025) {
+        offsets.push([gx, gy]);
+      }
+    }
+    const samples = await samplePixelsAt(page, 'canvas', offsets);
+
+    // Each of the two single-channel clouds renders its own PURE core
+    // somewhere (strict dominance ratios exclude the mixed regions, UI
+    // chrome grays, and the cyan/blue/white layers)…
+    const greenDominant = samples.filter((s) => s.g > 100 && s.g > 2 * s.r && s.g > 2 * s.b);
+    const redDominant = samples.filter((s) => s.r > 100 && s.r > 2 * s.g && s.r > 2 * s.b);
+    expect(greenDominant.length, 'no pure-green core (points_additive missing?)').toBeGreaterThan(
+      0
+    );
+    expect(redDominant.length, 'no pure-red core (points_luminous missing?)').toBeGreaterThan(0);
+
+    // …and the overlap lens accumulates BOTH channels: a pixel brighter
+    // in red than green's base color (red channel 0) and brighter in
+    // green than red's base color (green channel 0) can only come from
+    // cross-layer additive accumulation. The b < min(r,g)/2 term
+    // excludes every other fixture color (cyan/blue/white all carry a
+    // high blue channel) and neutral UI grays, so no single layer can
+    // satisfy this vacuously.
+    const mixed = samples.filter((s) => s.r > 80 && s.g > 80 && s.b < Math.min(s.r, s.g) / 2);
+    expect(
+      mixed.length,
+      'no additive red+green accumulation found in the additive/luminous overlap lens'
+    ).toBeGreaterThan(0);
+  });
+});
+
+test.describe('Blending-mode inheritance (group attr → leaf material + panel)', () => {
+  // Fixture: surface_group carries blending_mode='max'; its child leaf
+  // child_points OMITS the attr on disk (the Python writer no longer
+  // stamps a default), so the viewer must compose the effective mode
+  // from the nearest ancestor. See generate_blending_inherited_test().
+  test.slow();
+
+  test.beforeAll(async () => {
+    const { existsSync } = await import('node:fs');
+    const path = await import('node:path');
+    const { fileURLToPath } = await import('node:url');
+    const specDir = path.dirname(fileURLToPath(import.meta.url));
+    const fixtureDir = path.resolve(
+      specDir,
+      '../../../tests/fixtures/test_blending_inherited.luxar.zarr'
+    );
+    if (!existsSync(fixtureDir)) {
+      throw new Error(
+        `Missing fixture ${fixtureDir} — run \`pnpm test:generate-fixtures\` ` +
+          'from packages/luxar-viewer/ first.'
+      );
+    }
+  });
+
+  test("child_points material inherits the group's 'max' blend state", async ({ page }) => {
+    await page.goto(`/?src=${BLENDING_INHERITED_FIXTURE}&debug`);
+    await waitForLuxarReady(page);
+    await waitForPointsLoaded(page, 10);
+
+    const states = await readPointsMaterialStates(page);
+    const child = states.find((s) => s.name.includes('child_points'));
+    expect(child, 'child_points mesh not found in scene').toBeTruthy();
+
+    // The composed effective mode is 'max' (from surface_group) even
+    // though the leaf's .zattrs has no blending_mode key. THREE enums:
+    // CustomBlending=5, MaxEquation=104, OneFactor=201.
+    expect(child!.blendingMode).toBe('max');
+    expect(child!.blending).toBe(5);
+    expect(child!.blendEquation).toBe(104);
+    expect(child!.blendSrc).toBe(201);
+    expect(child!.blendDst).toBe(201);
+    expect(child!.depthTest).toBe(true);
+    expect(child!.depthWrite).toBe(false);
+    expect(child!.transparent).toBe(true);
+  });
+
+  test("layers panel reports the child layer's composed mode as 'max'", async ({ page }) => {
+    await page.goto(`/?src=${BLENDING_INHERITED_FIXTURE}&debug`);
+    await waitForLuxarReady(page);
+    await waitForPointsLoaded(page, 10);
+    await openLayersPanel(page);
+
+    const childMode = await page.evaluate(() => {
+      const debug = (window as any).__luxarDebug;
+      const layers = debug?.app?.layersPanel?.layerState?.getLayers() ?? [];
+      return layers.find((l: any) => l.name === 'child_points')?.blendingMode ?? null;
+    });
+    // Panel layer state initializes from the COMPOSED effective attrs,
+    // not the leaf's own (absent) attr.
+    expect(childMode).toBe('max');
   });
 });
 

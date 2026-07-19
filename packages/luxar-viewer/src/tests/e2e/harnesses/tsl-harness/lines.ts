@@ -1,8 +1,8 @@
 /**
  * Line shader family for the TSL ↔ GLSL parity harness: the visual
- * instanced-line variants (gamma / no-GOG fast paths, colormap LUT,
- * behind-camera + ortho-near culling) plus the line-pick counterparts.
- * 8 registry entries.
+ * instanced-line variants (gamma / no-GOG fast paths, max-mode
+ * premultiply, colormap LUT, behind-camera + ortho-near culling) plus
+ * the line-pick counterparts. 9 registry entries.
  *
  * @module tests/e2e/harnesses/tsl-harness/lines
  */
@@ -174,6 +174,39 @@ export const LINE_SHADERS: Record<string, RegistryEntry> = {
     buildTSLMaterial: (uniforms) => {
       const m = lineWebGPUFactory(buildLineTSLNodesFromUniforms(uniforms, {}), {
         noGOG: true,
+        isOrtho: true,
+      }) as unknown as THREE.Material;
+      m.transparent = false;
+      m.blending = THREE.NoBlending;
+      return m;
+    },
+    buildMesh: buildLineInstancedMesh,
+  },
+  // Max-mode premultiply parity: `blendingMode: 'max'` builds the TSL
+  // graph with the RGB-contribution output (fragment emits
+  // `gammaColor * a, a` with a = intensity·opacity, so MaxEquation +
+  // OneFactor/OneFactor compares contribution-weighted colour); the
+  // GLSL twin compiles with LUXAR_MAX_RGB_CONTRIBUTION. Framebuffer
+  // blending itself is NOT under test — NoBlending readback like every
+  // variant. Mirrors `point-max` (three-geometry symmetry).
+  'line-max': {
+    source: LINE_SOURCE,
+    buildUniforms: () => ({
+      uResolution: { value: new THREE.Vector2(64, 64) },
+      uIsOrtho: { value: 1 },
+      uNearCull: { value: 0.01 },
+      uMaxLinePixelWidth: { value: 32.0 },
+      uPerspectiveLineScale: { value: 1.0 },
+      uOrthoLineScale: { value: 64.0 },
+      uOpacity: { value: 1.0 },
+      uInvGamma: { value: 1.0 / 2.2 },
+      uIntensity: { value: 1.0 },
+      uOffset: { value: 0.0 },
+    }),
+    buildDefines: () => ({ LUXAR_MAX_RGB_CONTRIBUTION: '' }),
+    buildTSLMaterial: (uniforms) => {
+      const m = lineWebGPUFactory(buildLineTSLNodesFromUniforms(uniforms, {}), {
+        blendingMode: 'max',
         isOrtho: true,
       }) as unknown as THREE.Material;
       m.transparent = false;

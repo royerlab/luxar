@@ -336,6 +336,16 @@ describe('LayerStateManager', () => {
     expect(layer.displayMax).toBeCloseTo(0.8, 5);
   });
 
+  it('setBlendingMode updates the layer and fires the change listener', () => {
+    mgr.initFromSceneGraph(makeSceneGraph([{}]));
+    expect(mgr.getLayer('layer_0')!.blendingMode).toBe('additive'); // composed default
+    let called = 0;
+    mgr.onChange(() => called++);
+    mgr.setBlendingMode('layer_0', 'max');
+    expect(mgr.getLayer('layer_0')!.blendingMode).toBe('max');
+    expect(called).toBe(1);
+  });
+
   it('applyToSelected mutates all selected layers', () => {
     mgr.initFromSceneGraph(makeSceneGraph([{}, {}]));
     mgr.select('layer_0', 'single');

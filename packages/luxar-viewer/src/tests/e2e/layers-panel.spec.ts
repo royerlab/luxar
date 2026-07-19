@@ -146,49 +146,73 @@ test.describe('Layers Panel', () => {
     expect(firstSelected).toBe(false);
   });
 
-  test('should change blending mode via layer state API and verify material state', async ({
+  test('blend-select change updates layer state AND the THREE material blend state', async ({
     page,
   }) => {
     await openLayersPanel(page);
 
-    // Read all layers and their blending state via the debug API
-    const layerInfo = await page.evaluate(() => {
+    // Pick the first DATA-node layer (group layers fan out; a data leaf
+    // gives a single unambiguous material to assert on) and select it so
+    // the panel's blend select binds to it.
+    const targetLayer = await page.evaluate(() => {
       const debug = (window as any).__luxarDebug;
       const panel = debug?.app?.layersPanel;
       if (!panel?.layerState) return null;
-
       const layers = panel.layerState.getLayers();
-      return layers.map((l: any) => ({
-        path: l.path,
-        blendingMode: l.blendingMode,
-        visible: l.visible,
-      }));
+      const target = layers.find((l: any) => l.type !== 'group');
+      if (!target) return null;
+      panel.layerState.select(target.path, 'single');
+      return { path: target.path, blendingMode: target.blendingMode };
     });
+    expect(targetLayer).not.toBeNull();
 
-    expect(layerInfo).not.toBeNull();
-    expect(layerInfo!.length).toBeGreaterThan(0);
-
-    // Change blending mode via the layer state API
-    const targetLayer = layerInfo![0];
-    const newMode = targetLayer.blendingMode === 'additive' ? 'normal' : 'additive';
-
-    await page.evaluate(
-      ({ path, mode }) => {
-        const debug = (window as any).__luxarDebug;
-        debug.app.layersPanel.layerState.setBlendingMode(path, mode);
-      },
-      { path: targetLayer.path, mode: newMode }
+    // Drive the REAL panel control (the state-API alone never reaches
+    // the material): set the blend <select> and fire its change event.
+    // Pick a target mode with an unmistakable material signature.
+    const newMode = targetLayer!.blendingMode === 'max' ? 'additive' : 'max';
+    const blendSelect = page.locator(
+      '.luxar-layers-panel__control-group:has(.luxar-layers-panel__control-label:text-is("Blend")) select'
     );
+    await expect(blendSelect).toBeVisible();
+    await blendSelect.selectOption(newMode);
     await waitForNextRender(page);
 
-    // Read back the blending mode
+    // Layer state reflects the new mode…
     const updatedMode = await page.evaluate((path) => {
       const debug = (window as any).__luxarDebug;
-      const layer = debug.app.layersPanel.layerState.getLayer(path);
-      return layer?.blendingMode;
-    }, targetLayer.path);
-
+      return debug.app.layersPanel.layerState.getLayer(path)?.blendingMode;
+    }, targetLayer!.path);
     expect(updatedMode).toBe(newMode);
+
+    // …and so does the ACTUAL THREE material on the layer's mesh
+    // (mirrors blending-modes.spec.ts's material lookup). THREE enums:
+    // AdditiveBlending=2, CustomBlending=5; AddEquation=100,
+    // MaxEquation=104.
+    const materialState = await page.evaluate((path) => {
+      const debug = (window as any).__luxarDebug;
+      let found: any = null;
+      debug.scene.traverse((obj: any) => {
+        if (found || !obj.material) return;
+        if (obj.name === path || (obj.name && obj.name.endsWith(path))) {
+          found = {
+            blending: obj.material.blending,
+            blendEquation: obj.material.blendEquation,
+            blendingMode: obj.material.userData?.blendingMode,
+          };
+        }
+      });
+      return found;
+    }, targetLayer!.path);
+
+    expect(materialState).not.toBeNull();
+    expect(materialState.blendingMode).toBe(newMode);
+    if (newMode === 'max') {
+      expect(materialState.blending).toBe(5); // CustomBlending
+      expect(materialState.blendEquation).toBe(104); // MaxEquation
+    } else {
+      expect(materialState.blending).toBe(2); // AdditiveBlending
+      expect(materialState.blendEquation).toBe(100); // AddEquation
+    }
   });
 
   test('should update gamma via layer state API', async ({ page }) => {
