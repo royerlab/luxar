@@ -47,6 +47,9 @@ describe('composeAttrs', () => {
     // The composed mode is the material chokepoint — a malformed zarr
     // attr must come out canonical, not leak an arbitrary string.
     expect(composeAttrs([{ blending_mode: 'compose-bogus' }]).blending_mode).toBe('normal');
+    // Empty string is malformed-authored (the Python validator rejects it),
+    // NOT "unset" — it must take the unknown-mode path, not the default.
+    expect(composeAttrs([{ blending_mode: '' }]).blending_mode).toBe('normal');
     expect(
       composeAttrs([{ blending_mode: 'additive' }, { blending_mode: 'compose-bogus-2' }])
         .blending_mode
