@@ -72,4 +72,37 @@ export const EXPECTED_BLEND_STATE: Record<string, ExpectedBlendState> = {
     depthWrite: true, // at opacity >= 0.99 (normalModeDepthWrite)
     transparent: true,
   },
+  // PHASE-1 POINTS/LINES VALUE: point/line materials intercept
+  // 'volumetric' and apply the ADDITIVE state (the exact κ=0 limit —
+  // VOLUMETRIC_BLENDING_SPEC.md §5.1) until phases 3–4 implement the
+  // emission–absorption math for those geometries. The two consumers of
+  // this map iterate POINTS and LINES layers, so this row deliberately
+  // mirrors `additive` above. GSplats use
+  // EXPECTED_GSPLAT_VOLUMETRIC_STATE below. userData.blendingMode still
+  // reads 'volumetric' (the requested mode is preserved).
+  volumetric: {
+    blending: 2, // AdditiveBlending (phase-1 fallback)
+    blendEquation: 100, // AddEquation
+    blendSrc: 204, // SrcAlphaFactor
+    blendDst: 201, // OneFactor
+    depthTest: false,
+    depthWrite: false,
+    transparent: true,
+  },
+};
+
+/**
+ * The REAL volumetric state — gsplats only in phase 1: premultiplied
+ * emission–absorption over the One/OneMinusSrcAlpha framebuffer state
+ * (numerically identical to the gsplat `normal` state; the semantics
+ * live in the fragment shader). depthWrite is false UNCONDITIONALLY.
+ */
+export const EXPECTED_GSPLAT_VOLUMETRIC_STATE: ExpectedBlendState = {
+  blending: 5, // CustomBlending
+  blendEquation: 100, // AddEquation
+  blendSrc: 201, // OneFactor (shader premultiplies)
+  blendDst: 205, // OneMinusSrcAlphaFactor
+  depthTest: true,
+  depthWrite: false,
+  transparent: true,
 };

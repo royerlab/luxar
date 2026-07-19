@@ -357,10 +357,7 @@ describe('GSplatTSLMaterial.applyBlendingMode (TSL)', () => {
     // a valid proxy (the `needsUpdate` fallback for state-only changes
     // bumps version too, masking a missing rebuild).
     const mat = new GSplatTSLMaterial({ blendingMode: 'additive' });
-    const rebuildSpy = vi.spyOn(
-      mat as unknown as { rebuildGraph(): void },
-      'rebuildGraph'
-    );
+    const rebuildSpy = vi.spyOn(mat as unknown as { rebuildGraph(): void }, 'rebuildGraph');
 
     mat.applyBlendingMode('volumetric');
     expect(rebuildSpy).toHaveBeenCalledTimes(1);

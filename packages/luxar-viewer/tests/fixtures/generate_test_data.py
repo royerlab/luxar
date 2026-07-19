@@ -69,6 +69,8 @@ FIXTURE_NAMES: list[str] = [
     "test_gsplats.luxar.zarr",
     "test_gsplats_normal_overlap.luxar.zarr",
     "test_gsplats_normal_overlap_reversed.luxar.zarr",
+    "test_gsplats_volumetric.luxar.zarr",
+    "test_gsplats_volumetric_reversed.luxar.zarr",
     "test_hdr_colors.luxar.zarr",
     "test_hierarchical_transforms.luxar.zarr",
     "test_integer_colors.luxar.zarr",
@@ -1777,34 +1779,41 @@ def generate_lines_categorical_test() -> None:
 # ─── Blending-mode E2E fixtures ─────────────────────────────────────────
 #
 # Shared by blending-modes.spec.ts / lines-blending-modes.spec.ts. All
-# five canonical viewer blending modes, in fixture order.
-BLENDING_MODES = ["normal", "additive", "max", "opaque", "luminous"]
+# six canonical viewer blending modes, in fixture order. Points/lines
+# render `volumetric` through the phase-1 ADDITIVE fallback state
+# (VOLUMETRIC_BLENDING_SPEC.md §5.1) — the layer still exercises the
+# stored-mode round-trip and the fallback assertion.
+BLENDING_MODES = ["normal", "additive", "max", "opaque", "luminous", "volumetric"]
 
 # Pure-channel (or channel-union) saturated colors, one per mode. Chosen
 # so the E2E pixel discriminator is sound: `additive` (green) and
 # `luminous` (red) are single-channel, so a pixel with BOTH r and g high
 # and b low can only come from cross-layer additive accumulation — no
-# single layer's base color can fake it (cyan/blue/white all carry a
-# high blue channel and are excluded by the b < min(r,g)/2 term).
+# single layer's base color can fake it (cyan/blue/white/magenta all
+# carry a high blue channel and are excluded by the b < min(r,g)/2 term).
 BLENDING_MODE_COLORS = {
     "normal": [0.0, 1.0, 1.0],  # cyan
     "additive": [0.0, 1.0, 0.0],  # green
     "max": [0.0, 0.0, 1.0],  # blue
     "opaque": [1.0, 1.0, 1.0],  # white
     "luminous": [1.0, 0.0, 0.0],  # red
+    "volumetric": [1.0, 0.0, 1.0],  # magenta (high blue ⇒ discriminator-excluded)
 }
 
 # Cloud/line centers on a circle of radius 0.7 (Venn-style): adjacent
 # layers overlap near the view center; `additive` (18°) and `luminous`
 # (-54°) are ADJACENT so their overlap lens contains ONLY those two
 # layers — the E2E spec projects the two centers and samples between
-# them. Angles in degrees.
+# them. Angles in degrees. `volumetric` (126°) slots into the
+# normal↔max gap, far from the additive/luminous lens, so the
+# discriminator geometry is undisturbed.
 BLENDING_MODE_ANGLES = {
     "normal": 162.0,
     "additive": 18.0,
     "max": 90.0,
     "opaque": -126.0,
     "luminous": -54.0,
+    "volumetric": 126.0,
 }
 
 # Small per-layer depth stagger so depth-writing modes (opaque, opaque-
@@ -1815,6 +1824,7 @@ BLENDING_MODE_Z = {
     "max": 0.2,
     "opaque": -0.2,
     "luminous": -0.1,
+    "volumetric": 0.3,
 }
 
 
@@ -1882,7 +1892,10 @@ def generate_points_blending_modes_test() -> None:
                 )
 
         aprint(f"  Created {output}")
-        aprint(f"  5 layers × {n} points, one per mode: {', '.join(BLENDING_MODES)}")
+        aprint(
+            f"  {len(BLENDING_MODES)} layers × {n} points, one per mode: "
+            f"{', '.join(BLENDING_MODES)}"
+        )
 
 
 def generate_lines_blending_modes_test() -> None:
@@ -2222,6 +2235,145 @@ def generate_gsplats_normal_overlap_reversed_test() -> None:
         aprint(f"  Created {output}")
 
 
+def generate_gsplats_volumetric_test() -> None:
+    """The overlap scene in `volumetric` mode (emission-absorption).
+
+    Same geometry as :func:`generate_gsplats_normal_overlap_test` (back
+    red splat, front green splat overlapping in screen space, off-axis
+    blue reference) but ``blending_mode="volumetric"`` at full opacity
+    with the default absorption 1.0. The E2E suite drives kappa at
+    runtime through the real material path (``updateAbsorption``):
+
+    - I1 (additive limit): kappa=0 then a mode switch to `additive`
+      must render pixel-identical (same session, same camera).
+    - Absorption darkening: a high kappa must darken the back splat
+      seen through the front one relative to the kappa=0 frame.
+    """
+    with asection("Generating GSplats Volumetric Test"):
+        output = FIXTURES_DIR / "test_gsplats_volumetric.luxar.zarr"
+
+        centers = np.array(
+            [
+                [-0.25, 0.0, 0.0],  # back splat (red)
+                [0.25, 0.0, 1.0],  # front splat (green), overlaps in screen space
+                [3.0, 2.0, 0.0],  # small reference splat (blue), no overlap
+            ],
+            dtype=np.float32,
+        )
+        amplitudes = np.array([2.0, 2.0, 1.0], dtype=np.float32)
+
+        cholesky = np.zeros((3, 6), dtype=np.float32)
+        for i, sigma in enumerate((0.35, 0.35, 0.3)):
+            cholesky[i, 0] = sigma  # L11
+            cholesky[i, 2] = sigma  # L22
+            cholesky[i, 5] = sigma  # L33
+
+        colors = np.array(
+            [
+                [1.0, 0.1, 0.1],  # red
+                [0.1, 1.0, 0.1],  # green
+                [0.1, 0.1, 1.0],  # blue
+            ],
+            dtype=np.float32,
+        )
+
+        dims = Dimensions(
+            [
+                Dimension("x", unit="units", display=True),
+                Dimension("y", unit="units", display=True),
+                Dimension("z", unit="units", display=True),
+            ]
+        )
+
+        with LuxarZarrCompiler(
+            output,
+            encoding_mode=EncodingMode.PRECISION,
+            compressor=None,
+            float16_allowed=False,
+        ) as compiler:
+            scene = compiler.create_scene(dimensions=dims)
+
+            scene.add_gsplats(
+                "volumetric_splats",
+                centers,
+                amplitudes=amplitudes,
+                cholesky_factors=cholesky,
+                colors=colors,
+                blending_mode="volumetric",
+                absorption=1.0,
+                layer=True,
+            )
+
+        aprint(f"  Created {output}")
+
+
+def generate_gsplats_volumetric_reversed_test() -> None:
+    """The volumetric scene declared FRONT-TO-BACK (depth-sort gate).
+
+    The volumetric twin of
+    :func:`generate_gsplats_normal_overlap_reversed_test`: identical
+    geometry declared front-first, so the identity storage ordering is
+    not back-to-front. The E2E assertion (aSortedIndex non-identity +
+    view-z monotone) fails unless `needsDepthSort` routes volumetric
+    commits through the SortWorker exactly like `normal`.
+    """
+    with asection("Generating GSplats Volumetric-Reversed Test"):
+        output = FIXTURES_DIR / "test_gsplats_volumetric_reversed.luxar.zarr"
+
+        centers = np.array(
+            [
+                [0.25, 0.0, 1.0],  # front splat (green) stored first
+                [-0.25, 0.0, 0.0],  # back splat (red) stored second
+                [3.0, 2.0, 0.0],  # small reference splat (blue), no overlap
+            ],
+            dtype=np.float32,
+        )
+        amplitudes = np.array([2.0, 2.0, 1.0], dtype=np.float32)
+
+        cholesky = np.zeros((3, 6), dtype=np.float32)
+        for i, sigma in enumerate((0.35, 0.35, 0.3)):
+            cholesky[i, 0] = sigma  # L11
+            cholesky[i, 2] = sigma  # L22
+            cholesky[i, 5] = sigma  # L33
+
+        colors = np.array(
+            [
+                [0.1, 1.0, 0.1],  # green (front)
+                [1.0, 0.1, 0.1],  # red (back)
+                [0.1, 0.1, 1.0],  # blue
+            ],
+            dtype=np.float32,
+        )
+
+        dims = Dimensions(
+            [
+                Dimension("x", unit="units", display=True),
+                Dimension("y", unit="units", display=True),
+                Dimension("z", unit="units", display=True),
+            ]
+        )
+
+        with LuxarZarrCompiler(
+            output,
+            encoding_mode=EncodingMode.PRECISION,
+            compressor=None,
+            float16_allowed=False,
+        ) as compiler:
+            scene = compiler.create_scene(dimensions=dims)
+
+            scene.add_gsplats(
+                "volumetric_splats_reversed",
+                centers,
+                amplitudes=amplitudes,
+                cholesky_factors=cholesky,
+                colors=colors,
+                blending_mode="volumetric",
+                absorption=1.0,
+            )
+
+        aprint(f"  Created {output}")
+
+
 def generate_standalone_gsplats_test() -> None:
     """Standalone v3.1 ``.gsplats.zarr`` — a *detached* gsplats leaf node.
 
@@ -2524,6 +2676,8 @@ def main() -> None:
         generate_gsplats_test()
         generate_gsplats_normal_overlap_test()
         generate_gsplats_normal_overlap_reversed_test()
+        generate_gsplats_volumetric_test()
+        generate_gsplats_volumetric_reversed_test()
         aprint("")
 
         generate_standalone_gsplats_test()

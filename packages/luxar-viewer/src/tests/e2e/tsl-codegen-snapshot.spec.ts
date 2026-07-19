@@ -148,6 +148,10 @@ const SHADERS = [
   'gsplat-normal-premult',
   // Pins the opaque→peak projection mapping (same graph family as max).
   'gsplat-opaque',
+  // Emission–absorption output branch (sum projection, GLSL twin:
+  // LUXAR_VOLUMETRIC): τ/α/S(τ) math + the color-discard bypass are
+  // distinct generated code no other variant pins.
+  'gsplat-volumetric',
   'gsplat-colormap',
 ] as const;
 

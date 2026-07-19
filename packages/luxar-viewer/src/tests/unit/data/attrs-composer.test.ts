@@ -31,10 +31,7 @@ describe('composeAttrs', () => {
   it('multiplies absorption through the chain (identity 1, unclamped above, floored at 0)', () => {
     // Volumetric κ composes like opacity/intensity — ancestors scale it;
     // κ = 0 at ANY level zeroes the subtree (pure-additive look).
-    expect(composeAttrs([{ absorption: 2.0 }, { absorption: 0.5 }]).absorption).toBeCloseTo(
-      1.0,
-      6
-    );
+    expect(composeAttrs([{ absorption: 2.0 }, { absorption: 0.5 }]).absorption).toBeCloseTo(1.0, 6);
     expect(composeAttrs([{ opacity: 0.5 }]).absorption).toBe(1); // unset ⇒ identity
     expect(composeAttrs([{ absorption: 4 }, { absorption: 4 }]).absorption).toBe(16); // no upper clamp
     expect(composeAttrs([{ absorption: 3 }, { absorption: 0 }]).absorption).toBe(0);
@@ -221,10 +218,9 @@ const attrArb: fc.Arbitrary<{
   opacity: fc.option(fc.float({ min: f(0.01), max: f(1), noNaN: true, noDefaultInfinity: true }), {
     nil: undefined,
   }),
-  absorption: fc.option(
-    fc.float({ min: f(0), max: f(8), noNaN: true, noDefaultInfinity: true }),
-    { nil: undefined }
-  ),
+  absorption: fc.option(fc.float({ min: f(0), max: f(8), noNaN: true, noDefaultInfinity: true }), {
+    nil: undefined,
+  }),
   gamma: fc.option(fc.float({ min: f(0.5), max: f(2), noNaN: true, noDefaultInfinity: true }), {
     nil: undefined,
   }),
@@ -237,9 +233,12 @@ const attrArb: fc.Arbitrary<{
   // Only the five canonical modes: composeAttrs normalizes the winning
   // string (unknown → 'normal'), so probing invented modes would test
   // the normalizer, not the right-bias — covered separately below.
-  blending_mode: fc.option(fc.constantFrom('normal', 'additive', 'max', 'opaque', 'luminous', 'volumetric'), {
-    nil: undefined,
-  }),
+  blending_mode: fc.option(
+    fc.constantFrom('normal', 'additive', 'max', 'opaque', 'luminous', 'volumetric'),
+    {
+      nil: undefined,
+    }
+  ),
 });
 
 describe('composeAttrs — algebraic invariants (data.md H6)', () => {

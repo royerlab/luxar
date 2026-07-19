@@ -215,6 +215,59 @@ test.describe('Layers Panel', () => {
     }
   });
 
+  test('volumetric gsplat layer: 6-mode dropdown, κ slider visibility + live uAbsorption', async ({
+    page,
+  }) => {
+    // Self-contained: navigates to the volumetric gsplat fixture (the
+    // suite dataset has no gsplat layer, and the κ slider is gated to
+    // volumetric gsplat/group layers).
+    const FIXTURE =
+      'http://localhost:9000/packages/luxar-viewer/tests/fixtures/test_gsplats_volumetric.luxar.zarr';
+    await page.goto(`/?src=${FIXTURE}&debug`);
+    await waitForLuxarReady(page);
+    await openLayersPanel(page);
+
+    await page.evaluate(() => {
+      const debug = (window as any).__luxarDebug;
+      const panel = debug.app.layersPanel;
+      const target = panel.layerState.getLayers().find((l: any) => l.type !== 'group');
+      panel.layerState.select(target.path, 'single');
+    });
+
+    // The dropdown offers all six modes and reflects the authored one.
+    const blendSelect = page.locator(
+      '.luxar-layers-panel__control-group:has(.luxar-layers-panel__control-label:text-is("Blend")) select'
+    );
+    await expect(blendSelect).toBeVisible();
+    await expect(blendSelect).toHaveValue('volumetric');
+    expect(await blendSelect.locator('option').count()).toBe(6);
+
+    // The κ slider is visible for a volumetric gsplat layer…
+    const absorptionGroup = page.locator(
+      '.luxar-layers-panel__control-group:has(.luxar-layers-panel__control-label span:text-is("Absorption"))'
+    );
+    await expect(absorptionGroup).toBeVisible();
+
+    // …dragging it reaches the live uAbsorption uniform…
+    await absorptionGroup.locator('input[type="range"]').fill('4');
+    await waitForNextRender(page);
+    const kappa = await page.evaluate(() => {
+      const debug = (window as any).__luxarDebug;
+      let value: number | null = null;
+      debug.scene.traverse((obj: any) => {
+        if (obj.userData?.nodeType === 'gsplats' && obj.material?.uniforms?.uAbsorption) {
+          value = obj.material.uniforms.uAbsorption.value;
+        }
+      });
+      return value;
+    });
+    expect(kappa).toBe(4);
+
+    // …and switching the mode away hides the slider immediately.
+    await blendSelect.selectOption('additive');
+    await expect(absorptionGroup).toBeHidden();
+  });
+
   test('should update gamma via layer state API', async ({ page }) => {
     await openLayersPanel(page);
 
