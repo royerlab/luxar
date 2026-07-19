@@ -1,0 +1,94 @@
+/**
+ * LuxarMaterial — the layer-control surface shared by all Luxar leaf materials.
+ *
+ * The layers panel drives materials exclusively through this interface: the
+ * `update*` methods (intensity/offset/gamma/opacity + optional colormap
+ * texture/scalar-range) plus the optional `applyBlendingMode`. The two routing
+ * helpers ({@link isColormapActive}, {@link applyColorAdjustments}) encode how
+ * gamma + display range are pushed differently in colormap (LUT) vs
+ * direct-color mode. Extracted from `layers-panel.ts` (which re-exports the
+ * public names for existing importers) so the material contract is importable
+ * without pulling in the panel's DOM machinery.
+ */
+
+import * as THREE from 'three';
+import type { CameraAwareMaterial } from '../../rendering';
+import type { BlendingMode } from '../../rendering';
+import { computeDisplayRange } from './layer-state';
+
+// Type guard target: does this material have our update* methods?
+export interface LuxarMaterial extends THREE.Material, CameraAwareMaterial {
+  updateIntensity(v: number): void;
+  updateOffset(v: number): void;
+  updateGamma(v: number): void;
+  updateOpacity(v: number): void;
+  updateColormapTexture?(texture: THREE.DataTexture | null): void;
+  updateScalarRange?(min: number, max: number): void;
+  /**
+   * Apply a blending mode to this material in-place.
+   *
+   * Optional because PointMaterial doesn't need it — its blending is
+   * mode-agnostic at the material level (no `uProjectionMode`, no
+   * intensity-squaring concern). For materials that DO need it
+   * (GSplatMaterial, LineMaterial), call this instead of writing
+   * `mat.blending`/`mat.blendEquation` directly so type-specific
+   * factors and uniforms stay in sync.
+   */
+  applyBlendingMode?(mode: BlendingMode): void;
+}
+
+/**
+ * Whether a material is currently rendering in colormap (LUT) mode —
+ * the `USE_COLORMAP` shader define is the source of truth (set/cleared
+ * by `updateColormapTexture`). In this mode the display range drives the
+ * LUT value window and gamma warps the value pre-lookup, so neither
+ * should be applied to the output color (see the material shaders).
+ *
+ * @internal Exported for unit testing the colormap-vs-direct routing.
+ */
+export function isColormapActive(mat: LuxarMaterial): boolean {
+  const defines = (mat as unknown as { defines?: Record<string, unknown> | null }).defines;
+  return !!defines && 'USE_COLORMAP' in defines;
+}
+
+/**
+ * Push gamma + the display-range adjustment to a leaf material, routed by
+ * whether it renders through a colormap LUT:
+ *
+ * - **Colormap (LUT) mode**: the display range defines the value window
+ *   mapped into the LUT (`uScalarMin`/`uScalarScale`) and gamma warps that
+ *   value before the lookup — both operate on the scalar, not the color.
+ *   The composed display window is recovered from the gain/offset pair and
+ *   pushed via `updateScalarRange`; the color GOG is bypassed in-shader, so
+ *   `intensity`/`offset` are intentionally NOT pushed.
+ * - **Direct-color mode**: GOG operates on the color (`intensity`/`offset`).
+ *
+ * Gamma is pushed in both modes (the shader applies it pre-LUT in colormap
+ * mode, on the color otherwise). Opacity and blending are handled by the
+ * caller. See the material shaders' `USE_COLORMAP` path.
+ *
+ * @internal Exported for unit testing.
+ */
+export function applyColorAdjustments(
+  mat: LuxarMaterial,
+  gamma: number,
+  intensity: number,
+  offset: number
+): void {
+  mat.updateGamma(gamma);
+  if (isColormapActive(mat) && mat.updateScalarRange) {
+    const { min, max } = computeDisplayRange(intensity, offset);
+    mat.updateScalarRange(min, max);
+  } else {
+    mat.updateIntensity(intensity);
+    mat.updateOffset(offset);
+  }
+}
+
+/** True when a material exposes the {@link LuxarMaterial} update surface. */
+export function isLuxarMaterial(m: THREE.Material): m is LuxarMaterial {
+  return (
+    typeof (m as LuxarMaterial).updateIntensity === 'function' &&
+    typeof (m as LuxarMaterial).updateGamma === 'function'
+  );
+}

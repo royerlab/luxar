@@ -19,79 +19,10 @@ import {
   getWebGLErrors,
   assertNoConsoleErrors,
 } from './helpers';
+import { EXPECTED_BLEND_STATE as EXPECTED_STATE } from './blending-expected-state';
 
 const FIXTURE =
   'http://localhost:9000/packages/luxar-viewer/tests/fixtures/test_lines_blending_modes.luxar.zarr';
-
-/**
- * Expected THREE material state per Luxar blending mode — the numeric
- * twins of `getCompleteBlendingState` (blending-state.ts). THREE enum
- * values (three/src/constants.js):
- *   blending:      NormalBlending=1, AdditiveBlending=2, CustomBlending=5
- *   blendEquation: AddEquation=100, MaxEquation=104
- *   blendSrc/Dst:  OneFactor=201, SrcAlphaFactor=204,
- *                  OneMinusSrcAlphaFactor=205
- * `normal` expects depthWrite=true because the fixture layers render at
- * the default opacity 1.0 (>= the 0.99 normalModeDepthWrite threshold).
- */
-const EXPECTED_STATE: Record<
-  string,
-  {
-    blending: number;
-    blendEquation: number;
-    blendSrc: number;
-    blendDst: number;
-    depthTest: boolean;
-    depthWrite: boolean;
-    transparent: boolean;
-  }
-> = {
-  additive: {
-    blending: 2, // AdditiveBlending
-    blendEquation: 100, // AddEquation
-    blendSrc: 204, // SrcAlphaFactor
-    blendDst: 201, // OneFactor
-    depthTest: false,
-    depthWrite: false,
-    transparent: true,
-  },
-  luminous: {
-    blending: 2, // AdditiveBlending (like additive, but depth-tested)
-    blendEquation: 100, // AddEquation
-    blendSrc: 204, // SrcAlphaFactor
-    blendDst: 201, // OneFactor
-    depthTest: true,
-    depthWrite: false,
-    transparent: true,
-  },
-  max: {
-    blending: 5, // CustomBlending
-    blendEquation: 104, // MaxEquation
-    blendSrc: 201, // OneFactor
-    blendDst: 201, // OneFactor
-    depthTest: true,
-    depthWrite: false,
-    transparent: true,
-  },
-  opaque: {
-    blending: 1, // NormalBlending
-    blendEquation: 100, // AddEquation
-    blendSrc: 204, // SrcAlphaFactor
-    blendDst: 205, // OneMinusSrcAlphaFactor
-    depthTest: true,
-    depthWrite: true,
-    transparent: false,
-  },
-  normal: {
-    blending: 1, // NormalBlending
-    blendEquation: 100, // AddEquation
-    blendSrc: 204, // SrcAlphaFactor
-    blendDst: 205, // OneMinusSrcAlphaFactor
-    depthTest: true,
-    depthWrite: true, // opacity 1.0 >= 0.99 → normalModeDepthWrite
-    transparent: true,
-  },
-};
 
 test.describe('Lines blending modes (per-mode material state)', () => {
   test.slow();

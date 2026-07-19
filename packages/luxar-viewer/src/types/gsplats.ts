@@ -10,6 +10,7 @@
  * @module types/gsplats
  */
 
+import type { BlendingMode } from './blending';
 import type { ViewState } from '../data/data-loader-types';
 import type { LoaderMetrics, MonitorEventListener, QueryInfo } from './data-monitor-types';
 
@@ -103,7 +104,7 @@ export interface GSplatsMetadata {
   offset?: number;
 
   /** Blending mode */
-  blending_mode?: 'additive' | 'normal' | 'max' | 'opaque' | 'luminous';
+  blending_mode?: BlendingMode;
 
   /** Whether this node is exposed as a layer in the Layers panel */
   layer?: boolean;
@@ -385,7 +386,6 @@ export function choleskyOffdiagIndices(ndim: number): number[] {
   }
   return out;
 }
-
 
 /**
  * Standard packed Cholesky sizes for common dimensions.

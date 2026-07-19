@@ -13,6 +13,7 @@
  * @module types/points
  */
 
+import type { BlendingMode } from './blending';
 import * as THREE from 'three';
 import type { ViewState, DataLoader } from '../data/data-loader-types';
 
@@ -225,7 +226,7 @@ export interface PointsMetadata {
   offset?: number;
 
   /** Blending mode */
-  blending_mode?: 'additive' | 'normal' | 'max' | 'opaque' | 'luminous';
+  blending_mode?: BlendingMode;
 
   /** Whether this node is exposed as a layer in the Layers panel */
   layer?: boolean;
