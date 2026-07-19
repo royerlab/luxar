@@ -2,7 +2,8 @@
 """Rendering Modes Example - Demonstrates different blending modes and opacity effects.
 
 This educational example demonstrates:
-- Different blending modes (normal, additive, multiply)
+- Different blending modes (normal and additive; the viewer also supports
+  max, opaque, and luminous)
 - Opacity effects and transparency
 - Gamma correction for brightness control
 - Parent-child inheritance of rendering properties
@@ -54,7 +55,6 @@ def main():
     aprint("This example shows:")
     aprint("- Normal blending: Standard transparency")
     aprint("- Additive blending: Glowing/HDR effects")
-    aprint("- Multiply blending: Darkening effects")
     aprint("- Opacity control: Transparency levels")
     aprint("- Gamma correction: Brightness adjustment")
     aprint("- Property inheritance: Parent-child relationships")

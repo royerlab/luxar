@@ -378,6 +378,41 @@ test.describe('TSL ↔ GLSL shader parity', () => {
     ).toBeLessThan(2.0);
   });
 
+  // Max-mode premultiplied RGB-contribution output: the GLSL side
+  // compiles with LUXAR_MAX_RGB_CONTRIBUTION, the TSL side is built
+  // with `blendingMode: 'max'`. The fragment must emit rgb·alpha (the
+  // contribution MaxEquation compares) IDENTICALLY on both backends —
+  // a premultiply divergence here would make max-mode brightness differ
+  // between the GLSL and TSL renderers in production.
+  for (const variant of ['point-max', 'line-max'] as const) {
+    test(`${variant}: max-mode RGB-contribution premultiply parity`, async ({ page }) => {
+      await bootHarness(page);
+
+      const glslPixels = await runGLSL(page, variant);
+      const tslResult = await runTSL(page, variant);
+
+      assertBothRendered(glslPixels, tslResult.pixels, variant);
+      expect(
+        meanAbsDiffPerCoveredPixel(glslPixels, tslResult.pixels),
+        `${variant}: per-covered-pixel parity (footprint-invariant)`
+      ).toBeLessThan(2.0);
+
+      const diff = meanAbsDiff(glslPixels, tslResult.pixels);
+      const samplePx = (px: number[], x: number, y: number) =>
+        `${px[(y * 64 + x) * 4]},${px[(y * 64 + x) * 4 + 1]},${px[(y * 64 + x) * 4 + 2]},${px[(y * 64 + x) * 4 + 3]}`;
+      const samples = [32, 30, 28]
+        .map(
+          (xo) =>
+            `  (${xo},32) GLSL=${samplePx(glslPixels, xo, 32)} TSL=${samplePx(tslResult.pixels, xo, 32)}`
+        )
+        .join('\n');
+      expect(
+        diff,
+        `${variant} parity: mean abs diff ${diff.toFixed(2)} on 0-255 scale.\nSamples:\n${samples}`
+      ).toBeLessThan(2.0);
+    });
+  }
+
   test('line: instanced quad line with width / sharpness / GOG', async ({ page }) => {
     await bootHarness(page);
 

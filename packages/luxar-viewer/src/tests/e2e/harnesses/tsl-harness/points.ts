@@ -1,8 +1,9 @@
 /**
  * Point shader family for the TSL ↔ GLSL parity harness: the visual
- * point-sprite variants (falloff sweep, gamma fast path, colormap LUT,
- * perspective sizing, subpixel floor, near fade, behind-camera guard)
- * plus the point-pick counterparts. 12 registry entries.
+ * point-sprite variants (falloff sweep, gamma fast path, max-mode
+ * premultiply, colormap LUT, perspective sizing, subpixel floor, near
+ * fade, behind-camera guard) plus the point-pick counterparts.
+ * 13 registry entries.
  *
  * @module tests/e2e/harnesses/tsl-harness/points
  */
@@ -180,6 +181,37 @@ export const POINT_SHADERS: Record<string, RegistryEntry> = {
     buildTSLMaterial: (uniforms) => {
       const m = pointWebGPUFactory(buildPointTSLNodesFromUniforms(uniforms, {}), {
         gammaOne: true,
+      }) as unknown as THREE.Material;
+      m.transparent = false;
+      m.blending = THREE.NoBlending;
+      return m;
+    },
+    buildMesh: buildPointInstancedMesh,
+  },
+  // Max-mode premultiply parity: `blendingMode: 'max'` builds the TSL
+  // graph with the RGB-contribution output (fragment emits
+  // `finalColor * alpha, alpha` so MaxEquation + OneFactor/OneFactor
+  // compares contribution-weighted colour); the GLSL twin compiles with
+  // the LUXAR_MAX_RGB_CONTRIBUTION define. Framebuffer blending itself
+  // is NOT under test — like every variant, both sides read back with
+  // NoBlending so raw fragment output is compared.
+  'point-max': {
+    source: POINT_SOURCE,
+    buildUniforms: () => ({
+      pointSizeFactor: { value: 32.0 },
+      maxPointSize: { value: 32.0 },
+      radiusScale: { value: 1.0 },
+      uIsOrtho: { value: 1 },
+      uResolution: { value: new THREE.Vector2(64, 64) },
+      opacity: { value: 1.0 },
+      invGamma: { value: 1.0 / 2.2 },
+      uIntensity: { value: 1.0 },
+      uOffset: { value: 0.0 },
+    }),
+    buildDefines: () => ({ LUXAR_MAX_RGB_CONTRIBUTION: '' }),
+    buildTSLMaterial: (uniforms) => {
+      const m = pointWebGPUFactory(buildPointTSLNodesFromUniforms(uniforms, {}), {
+        blendingMode: 'max',
       }) as unknown as THREE.Material;
       m.transparent = false;
       m.blending = THREE.NoBlending;
