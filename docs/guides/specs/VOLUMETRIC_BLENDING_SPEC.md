@@ -1,9 +1,14 @@
 # Volumetric Blending Mode — Emission–Absorption Compositing
 
-> **Status**: Proposed — not implemented. Design settled 2026-07-19 (mode name,
-> κ semantics, opacity-scales-density rule, per-splat weights spec'd-but-deferred,
-> gsplats-first phasing). All file/line references verified against main
-> `38c6eb19`.
+> **Status**: Phase 1 IN PROGRESS (this PR). Design settled 2026-07-19 (mode
+> name, κ semantics, opacity-scales-density rule, per-splat weights
+> spec'd-but-deferred, gsplats-first phasing). All file/line references verified
+> against main `38c6eb19`. Pre-implementation review corrections (2026-07-19):
+> the TSL output branch is BUILD-TIME, so additive↔volumetric DOES require a
+> graph rebuild (§5.4, risk #6); layer-state κ inits from the RAW attr (§5.5);
+> phase-1 points/lines get an additive-state fallback (§5.1); the additive-ladder
+> energy compensation does NOT apply to volumetric in phase 1 (§6); E2E expected
+> blend state needs a per-geometry split (§8).
 > **Scope**: A 6th blending mode, `volumetric`, spanning Python (enum, validation,
 > node attr, default stamping), the viewer (mode SSOT, blend state, composition,
 > shaders GLSL+TSL, depth-sort gating, layers-panel UI), and — in later phases —
@@ -252,10 +257,21 @@ and `volumetric` preserves the tuning.
   generalize rather than duplicate, but note the semantic difference lives in
   the fragment shader, not the blend state.
 - `usesPeakProjection` (`blending-state.ts:93-95`) **unchanged** — volumetric is
-  sum-projected. The TSL rebuild boundary keyed off `usesPeakProjection`
-  therefore does not fire on additive ↔ volumetric switches (correct: same
-  projection graph; only the output branch and uniforms differ — see §5.5 for
-  what *does* have to change on a mode switch).
+  sum-projected. But the TSL rebuild boundary must NOT be keyed on
+  `usesPeakProjection` alone: the fragment **output branch is chosen at graph
+  build time** (a JS conditional on `config.blendingMode`,
+  `shader-tsl.ts:587-601`), so an additive ↔ volumetric switch changes the graph
+  even though the projection doesn't. The rebuild predicate
+  (`material-tsl.ts:417-425`) generalizes its `premultChanged` term to an
+  `outputBranchChanged` term covering BOTH `isNormalMode` and `isVolumetricMode`
+  crossings (§5.4).
+- **Points/lines in phase 1**: the shared mode tuple means the panel dropdown
+  offers `volumetric` for every geometry type, and Python accepts it on any
+  node. Point/line materials intercept it in `applyBlendingMode` and apply the
+  **additive** state instead (the exact κ = 0 limit of volumetric), keeping the
+  requested mode in `userData.blendingMode` so stored scenes upgrade
+  automatically when phases 3–4 implement the real math. Without this, an
+  unhandled mode falls through to normal-mode alpha-over state — silently wrong.
 
 ### 5.2 Depth-sort gating: `needsDepthSort(mode)`
 
@@ -323,11 +339,29 @@ Key constraints:
 - `finalColor` already contains `gammaColor · intensity · uOpacity`
   (`shader-glsl.ts:434`) — i.e. emission's density scaling by opacity is
   inherited; only τ needs the explicit `uOpacity` factor.
-- TSL twin: mirror as a runtime branch on `config.blendingMode` in
-  `shader-tsl.ts` (the normal-mode branch is L587-602; blending-state selection
-  L611), keeping 1:1 math with the GLSL via shared helpers in
-  `rendering/materials/gsplat/math.ts` where anything is precomputed. Parity is
+- TSL twin: mirror as a **build-time JS branch** on `config.blendingMode` in
+  `shader-tsl.ts` (the normal-mode branch at L587-601 is the template; TSL
+  `.select()` is deliberately avoided for structural branches because it
+  materializes both sides), keeping 1:1 math with the GLSL. Because the branch
+  is build-time, `material-tsl.ts`'s rebuild predicate (L417-425) must fire on
+  any `isVolumetricMode` crossing:
+
+  ```ts
+  const outputBranchChanged =
+    previousMode === undefined ||
+    isNormalMode(previousMode) !== isNormalMode(mode) ||
+    isVolumetricMode(previousMode) !== isVolumetricMode(mode);
+  ```
+
+  (replacing the old `premultChanged`; `projectionChanged` stays). Parity is
   enforced by `tsl-shader-parity.spec.ts` and the codegen snapshots (§8).
+- **Discard interactions**: the color discard (`max(adjusted.rgb) < 1e-4`,
+  `shader-glsl.ts:420`, TSL twin ~:581) must be bypassed when τ is significant —
+  a black splat still absorbs (a pure-ink occluder via gain → 0 must keep its
+  optical depth). Under `LUXAR_VOLUMETRIC`, discard only when the color AND τ
+  are both negligible. The earlier intensity discard (`:409`) stays: the τ it
+  can drop is bounded by κ·opacity·1e-4 per fragment — invisible at slider
+  κ ≤ 10 (risk #7).
 
 **Per-splat weights wᵢ (spec'd here, built in phase 2)**: optional
 `.gsplats.zarr` per-splat array `absorption_weights` (float32, shape (N,),
@@ -355,11 +389,12 @@ phase 2 is built.
   effective mode is `volumetric`** — κ is inert elsewhere and the UI should say
   so. Sync with the existing dropdown-change handler
   (`layer-controls.ts:214-224`).
-- Layer init reads the composed value (`getEffectiveAttrs(...).absorption`) —
-  same rule the campaign established for `blending_mode`; multiplicative attrs
-  init from raw like opacity does today is also acceptable, but κ has no
-  per-node slider-bounds logic, so composed is simpler and matches what
-  renders.
+- Layer init reads the **raw** node attr (`node.attrs.absorption ?? 1.0`),
+  exactly like opacity — NOT the composed value. The panel's
+  `composeEffective` substitutes each layer's live values per ancestry node, so
+  a composed init would multiply ancestor κ in twice. (The composed-init rule
+  applies only to nearest-setter-wins attrs like `blending_mode`;
+  multiplicative attrs must stay raw.)
 
 ---
 
@@ -367,11 +402,16 @@ phase 2 is built.
 
 - **LOD / streaming**: substitutive levels pin total mass per barrier group by
   default, and τ ∝ mass along the ray ⇒ absorption strength survives LOD
-  switches without popping. The additive-ladder energy compensation 1/e(k)
-  (PR #541) scales amplitudes — and hence τ — consistently while a ladder
-  streams. Chunks arrive in energy order, not depth order: fine, the sort
-  worker re-sorts on every commit (Phase-2 sorting contract), and I3 bounds the
-  transient error.
+  switches without popping. **Correction (phase 1)**: the additive-ladder
+  energy compensation 1/e(k) (PR #541) is gated by `BLENDABLE_MODES` =
+  {additive, luminous} (`scene/lod-fade.ts:49,142`), so a volumetric leaf
+  streaming a partial ladder gets NO compensation — the brightening pop the
+  mechanism removes returns for volumetric. Since opacity scales τ (§3.1),
+  applying it would be first-order correct, but `BLENDABLE_MODES` also gates
+  the cross-fade (deferred below), so enabling one without the other means
+  splitting that predicate — a **documented follow-up**, not phase 1. Chunks
+  arrive in energy order, not depth order: fine, the sort worker re-sorts on
+  every commit (Phase-2 sorting contract), and I3 bounds the transient error.
 - **LOD cross-fade** (`scene/lod-fade.ts`, `BLENDABLE_MODES` =
   additive/luminous today): volumetric is a *candidate* for inclusion since an
   opacity fade is ghost-free (opacity scales τ — §3.1), unlike `normal` where
@@ -395,8 +435,9 @@ phase 2 is built.
 
 **Phase 1 — gsplats, node-level κ** (the core; independently shippable)
 1. Python: enum member, `validate_absorption`, `Node.absorption`, default
-   stamps (§4), CLI help text (`cli/scene_commands.py` mode list), docs mode
-   lists (§8).
+   stamps (§4), CLI (`cli/gsplat_ops/scene_commands.py` — mode help +
+   `--absorption` threaded into both `add_gsplats_*` call sites), docs mode
+   lists (§8). Points/lines materials get the additive-state fallback (§5.1).
 2. Viewer: tuple entry, `isVolumetricMode`, `needsDepthSort`, blend-state
    branch, composer + uniform plumbing, GLSL + TSL fragment branches,
    `applyBlendingMode` cases, sort-gate replacements, renderOrder inclusion,
@@ -436,9 +477,12 @@ cross-section chord through the transverse super-Gaussian profile
 Every SSOT list that must grow for a 6th mode (inventory from the 2026-07
 blending campaign):
 
-- `src/tests/e2e/blending-expected-state.ts` — `EXPECTED_BLEND_STATE` gains
-  `volumetric` (CustomBlending 5, AddEquation 100, One 201,
-  OneMinusSrcAlpha 205, depthWrite false).
+- `src/tests/e2e/blending-expected-state.ts` — **per-geometry split**:
+  `EXPECTED_BLEND_STATE.volumetric` = the gsplat premultiplied state
+  (CustomBlending 5, AddEquation 100, One 201, OneMinusSrcAlpha 205,
+  depthWrite false), plus an explicit points/lines expectation = the ADDITIVE
+  row (the phase-1 fallback, §5.1) consumed by the two per-mode loops
+  (`blending-modes.spec.ts` points loop, `lines-blending-modes.spec.ts`).
 - Codegen SHADERS lists: `tsl-codegen-snapshot.spec.ts:118` + harness
   registries (`tests/e2e/harnesses/tsl-harness/gsplats.ts:191`; points/lines in
   phases 3–4) — new `gsplat-volumetric` variant, snapshot committed.
@@ -489,16 +533,31 @@ Invariant and behavior tests:
    importer/LOD/merge surface. Deferred by design; the absent-array fast path
    keeps phase 1 format-neutral.
 6. **Mode-switch state machine.** `applyBlendingMode` now manages three
-   define/projection/blend combinations (plain, NORMAL_PREMULT, VOLUMETRIC).
-   The campaign's mutation-tested branch tests must grow with it; the TSL
-   rebuild boundary (keyed on `usesPeakProjection`) is already correct for
-   additive↔volumetric (no rebuild needed) and normal↔volumetric (rebuild —
-   projection changes).
+   define/projection/blend combinations (plain, NORMAL_PREMULT, VOLUMETRIC),
+   and every non-volumetric branch must clear `LUXAR_VOLUMETRIC` (including
+   the normal branch — a volumetric→normal switch must not strand the define).
+   The campaign's mutation-tested branch tests must grow with it. The TSL
+   rebuild boundary is NOT already correct: additive↔volumetric crosses a
+   build-time output branch without crossing `usesPeakProjection` or
+   `isNormalMode`, so the predicate gains the `outputBranchChanged` term
+   (§5.4); a fail-first rebuild-boundary test pins it.
+7. **Discard-threshold τ loss.** The intensity early-discard drops fragments
+   whose τ ≤ κ·opacity·1e-4 — invisible at slider range (κ ≤ 10 ⇒ α ≲ 0.1%),
+   lossy only for extreme Python-set κ (~10⁴). Documented at the discard site;
+   the COLOR discard, by contrast, is bypassed in volumetric (§5.4) because a
+   black splat must still absorb.
 
 ---
 
 ## 10. Changelog
 
+- **2026-07-19 (later)** — Pre-implementation review corrections: TSL output
+  branch is build-time ⇒ additive↔volumetric requires a rebuild
+  (`outputBranchChanged` predicate, §5.4/risk #6); phase-1 points/lines
+  additive-state fallback (§5.1); layer-state κ inits raw, not composed
+  (§5.5); energy compensation does not fire for volumetric in phase 1 (§6);
+  per-geometry E2E expected-state split (§8); volumetric color-discard bypass
+  + intensity-discard τ-loss bound (§5.4, risk #7); CLI path erratum.
 - **2026-07-19** — Initial spec. Design decisions settled with the user:
   mode name `volumetric`; κ as node-level composable `absorption` attr
   (multiplicative, identity/default 1.0, default-stamped like opacity);
