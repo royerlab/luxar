@@ -74,6 +74,15 @@ class LuxarDelta(Codec):
 
     def _as_codes(self, buf: Any) -> np.ndarray:
         """Flat 1D view of ``buf`` as this codec's unsigned dtype."""
+        # numcodecs flattens in MEMORY order ('A'): an F-contiguous 2D input
+        # would silently flatten column-major and scramble the stride-`cols`
+        # transform. zarr v2 chunks are always C-contiguous (zarr normalizes
+        # input order before filters — verified empirically), so this only
+        # fires on direct misuse of the codec — fail loud, never corrupt.
+        if isinstance(buf, np.ndarray) and buf.ndim >= 2 and not buf.flags.c_contiguous:
+            raise ValueError(
+                "luxar_delta_v1: multi-dimensional chunk must be C-contiguous"
+            )
         arr = np.asarray(ensure_contiguous_ndarray(buf))
         if arr.dtype != self._dtype:
             arr = arr.view(self._dtype)

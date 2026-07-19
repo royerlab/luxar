@@ -179,10 +179,11 @@ columnar per-chunk delta+zigzag residuals, applied probe-gated at encode time
 (only where it measurably shrinks the store — 12-16% whole-store, lossless).
 It is a pure storage transform below the `encoding` attrs; zarr/zarrita undo
 it during whole-chunk reconstruction, so decode and random access are
-unchanged. Readers need the codec registered: Python registers it on
-`import luxar.encoding`; the viewer registers `numcodecs.luxar_delta_v1` in
-its zarr facade. Vanilla-zarr readers without the codec fail loudly (unknown
-codec), never silently. Full wire-format spec:
+unchanged. Readers need the codec available: in Python it auto-registers
+via the numcodecs `numcodecs.codecs` entry point whenever luxar is INSTALLED
+(no import needed; `import luxar.encoding` also registers it); the viewer
+registers `numcodecs.luxar_delta_v1` in its zarr facade. Readers without
+luxar installed fail loudly (unknown codec), never silently. Full wire-format spec:
 `docs/specs/GSPLATS_ZARR_FORMAT.md` § "The `luxar_delta_v1` delta filter".
 
 ## Scene-Level Metadata (.zattrs)

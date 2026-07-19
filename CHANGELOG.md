@@ -66,8 +66,9 @@ All notable changes to Luxar are documented in this file.
   SOG comparison — its size edge was WebP's spatial prediction): `encoding`
   attrs, the WASM/TS decode kernels, and the sub-chunk range-loader are all
   untouched; zarr/zarrita undoes the filter during whole-chunk reconstruction.
-  Python codec: `luxar/encoding/_encoders/delta_codec.py` (registered with
-  numcodecs on `import luxar.encoding`); viewer twin:
+  Python codec: `luxar/encoding/_encoders/delta_codec.py` (auto-registered
+  via the numcodecs `numcodecs.codecs` entry point whenever luxar is
+  installed — vanilla `zarr.open` needs no import); viewer twin:
   `luxar-viewer/src/data/codecs/luxar-delta.ts` (registered as
   `numcodecs.luxar_delta_v1` in the zarr facade, so main thread and workers
   both resolve it). Wire format locked by identical hand-computed byte

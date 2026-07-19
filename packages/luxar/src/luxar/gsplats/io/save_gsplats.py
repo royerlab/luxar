@@ -79,9 +79,10 @@ GSPLATS_VERSION: str = _resolve_gsplats_version()
 #: v3.3 introduces the optional ``luxar_delta_v1`` zarr filter on quantized
 #: code arrays (coordinates / Cholesky halves / amplitudes / colors): columnar per-chunk
 #: delta+zigzag, probe-gated at encode time (12-16% smaller stores, lossless).
-#: Readers need the codec registered with numcodecs (importing
-#: ``luxar.encoding`` does it); v3.3 stores without the filter are
-#: byte-identical to v3.2.
+#: The codec auto-registers via the numcodecs ``numcodecs.codecs`` entry
+#: point whenever luxar is installed (importing ``luxar.encoding`` also
+#: registers it eagerly); v3.3 stores without the filter are byte-identical
+#: to v3.2.
 #: v3.2 renames the ``kind=lod`` selector attrs: the group ``selector`` value
 #: ``pixel_size`` → ``coverage`` and the per-child ``min_pixel_size`` (absolute
 #: pixels) → ``coverage_fraction`` (viewport-relative ``sqrt(N_i/N_finest)`` in

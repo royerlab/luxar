@@ -775,13 +775,14 @@ of that chunk's column — still bounded to a single chunk (each chunk has its
 own implicit 0 anchor).
 
 Reader requirements: chunks are whole-chunk reconstructed inside the zarr
-codec pipeline, so sub-chunk range reads keep working unchanged. The Python
-reader registers the codec with numcodecs on `import luxar.encoding`
-(`_encoders/delta_codec.py`); the web viewer registers the TypeScript twin
-(`data/codecs/luxar-delta.ts`) as `numcodecs.luxar_delta_v1` in its zarr
-facade. Third-party vanilla-zarr readers need the codec registered to read
-affected arrays; unregistered readers fail loudly (unknown codec), never
-silently corrupt.
+codec pipeline, so sub-chunk range reads keep working unchanged. In Python
+the codec registers via the numcodecs `numcodecs.codecs` **entry point**
+(declared in luxar's `pyproject.toml`), so any vanilla `zarr.open(...)` on a
+machine with luxar *installed* resolves it with no import; `import
+luxar.encoding` also registers it eagerly. The web viewer registers the
+TypeScript twin (`data/codecs/luxar-delta.ts`) as `numcodecs.luxar_delta_v1`
+in its zarr facade. Readers without luxar installed fail loudly (unknown
+codec), never silently corrupt.
 
 ### Chunk Sizing
 
