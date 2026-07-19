@@ -293,7 +293,7 @@ export const GSPLAT_PICK_FRAGMENT_SHADER = /* glsl */ `
         //     occluding surface, so write the real projected depth (the
         //     vertex puts the splat-center NDC z in gl_Position.z, so
         //     gl_FragCoord.z is the true depth) — FRONT-MOST wins.
-        //   - commutative modes (additive/max/luminous/opaque):
+        //   - commutative modes (additive/max/luminous):
         //     brightness-as-depth — BRIGHTEST wins.
         gl_FragDepth = (uSurfaceDepth == 1) ? gl_FragCoord.z : 1.0 - brightness;
     }

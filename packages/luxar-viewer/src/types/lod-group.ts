@@ -1,3 +1,4 @@
+import type { BlendingMode } from './blending';
 /**
  * LOD-kind Group type definitions for luxar-viewer.
  *
@@ -52,7 +53,7 @@ export interface LODGroupMetadata {
   gamma?: number;
   intensity?: number;
   offset?: number;
-  blending_mode?: 'additive' | 'normal' | 'max' | 'opaque' | 'luminous';
+  blending_mode?: BlendingMode;
   layer?: boolean;
   visible?: boolean;
 
@@ -71,4 +72,3 @@ export interface LODGroupMetadata {
  *   coarsest→finest order); the auto selector is bypassed.
  */
 export type LODGroupSelectorMode = 'auto' | { lockLevel: number };
-

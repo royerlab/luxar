@@ -79,7 +79,10 @@ Press **L** to toggle the Layers panel (Escape closes when focus is inside the p
 
 ```
 layer-state.ts     Pure data model, min/max ↔ intensity/offset math, selection logic
-layers-panel.ts    DOM panel, event handling, attr composition, scene application
+layers-panel.ts    DOM panel (list + lifecycle), event handling; facade over the two below
+layer-controls.ts  LayerControls — the controls section (sliders, blend/colormap/LOD selects, LOD readout)
+layer-apply.ts     LayerApplyEngine — attr composition + scene/material application
+luxar-material.ts  LuxarMaterial contract + colormap-vs-direct routing helpers
 range-slider.ts    Dual-thumb [min, max] slider (click-to-edit + scroll-adjust bounds)
 labeled-slider.ts  Single-thumb labeled slider (gamma, opacity)
 attrs-utils.ts     Pure helpers: clampGamma, blending-state mapping, liveLayerAttrs
@@ -113,7 +116,10 @@ doesn't silently clamp the thumb on first render.
 | File                                       | Purpose                                                                            |
 | ------------------------------------------ | ---------------------------------------------------------------------------------- |
 | `layer-state.ts`                           | `LayerStateManager`, `computeUniforms` / `computeDisplayRange`, selection logic    |
-| `layers-panel.ts`                          | `LayersPanel` class — DOM, event handlers, attr composition, scene application     |
+| `layers-panel.ts`                          | `LayersPanel` class — panel/list DOM + lifecycle; facade over controls + apply     |
+| `layer-controls.ts`                        | `LayerControls` — controls-section DOM (sliders, selects, live LOD readout)        |
+| `layer-apply.ts`                           | `LayerApplyEngine` — attr composition + material application per data-leaf         |
+| `luxar-material.ts`                        | `LuxarMaterial` interface, `isColormapActive` / `applyColorAdjustments` routing    |
 | `range-slider.ts`                          | `RangeSlider` — dual-thumb input component with editable / scrollable bound labels |
 | `labeled-slider.ts`                        | `LabeledSlider` — single-thumb labeled input component (gamma, opacity)            |
 | `attrs-utils.ts`                           | `clampGamma`, `getBlendingState`, `liveLayerAttrs` — pure helpers (no DOM)         |

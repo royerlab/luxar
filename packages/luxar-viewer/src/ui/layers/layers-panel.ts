@@ -6,46 +6,31 @@
  *
  * Multi-select: click = single, Ctrl+click = toggle, Shift+click = range.
  * Controls apply to all selected layers simultaneously.
+ *
+ * The panel owns the container/list DOM and lifecycle; two collaborators own
+ * the rest (facade extraction, behavior-preserving):
+ *
+ * - {@link LayerControls} (`layer-controls.ts`) — the controls section
+ *   (sliders, blend/colormap/LOD-level selects, live LOD readout).
+ * - {@link LayerApplyEngine} (`layer-apply.ts`) — recomposes effective attrs
+ *   per data-leaf and pushes them into the scene materials.
+ *
+ * The material contract (`LuxarMaterial` + the colormap-routing helpers)
+ * lives in `luxar-material.ts` and is re-exported here for existing importers.
  */
 
 import * as THREE from 'three';
 import type { SceneNode } from '../../data/data-loader-types';
-import type { BlendingMode, CameraAwareMaterial } from '../../rendering';
-import {
-  LayerStateManager,
-  computeDisplayRange,
-  type LayerInfo,
-  type SelectionMode,
-} from './layer-state';
-import { RangeSlider } from './range-slider';
-import { LabeledSlider } from './labeled-slider';
+import { LayerStateManager, type LayerInfo, type SelectionMode } from './layer-state';
 import { config } from '../../config';
-import { materialManager } from '../../rendering';
 import { log, Modules } from '../../utils/log';
 import { EventGroup } from '../../utils/cross-layer/event-group';
 import { showToast } from '../toast';
 import type { AnimationController } from '../../scene/animation/animation-controller';
-import { getColormapTexture } from '../../rendering/colormap-textures';
-import { supportsScalarColormap } from '../../rendering/material-colormap-helpers';
-import { noteGSplatsBlendingModeSwitch } from '../../rendering/depth-sort-coordinator';
-import { BLENDING_MODES } from '../../rendering/blending-state';
-import { COLORMAP_CATEGORIES } from '../../rendering/colormap-data';
-import { SceneLoaderManager } from '../../data/scene-loader-manager';
-import type { LODGroupRegistry } from '../../scene/lod-group-registry';
-import { displayedQualityFraction } from '../../scene/lod-display-gate';
-import {
-  composeAttrs,
-  collectAncestorNodes,
-  collectDataDescendants,
-  type ComposableAttrs,
-  type EffectiveAttrs,
-} from '../../data/attrs-composer';
-import {
-  clampGamma,
-  getBlendingState,
-  liveLayerAttrs as deriveLiveLayerAttrs,
-} from './attrs-utils';
-import { clamp } from '../gui/format/value-formatting';
+import { LayerApplyEngine } from './layer-apply';
+import { LayerControls } from './layer-controls';
+
+export { applyColorAdjustments, isColormapActive, type LuxarMaterial } from './luxar-material';
 
 /**
  * Visibility-toggle glyphs — stroke SVG in the rail-icon style (currentColor,
@@ -56,83 +41,6 @@ const EYE_ICON =
   '<svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7z"/><circle cx="12" cy="12" r="3"/></svg>';
 const EYE_OFF_ICON =
   '<svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3l18 18"/><path d="M10.6 5.2A11.3 11.3 0 0 1 12 5c6.5 0 10 7 10 7a17.6 17.6 0 0 1-3 3.9M6.5 6.5C3.6 8.4 2 12 2 12s3.5 7 10 7c1.4 0 2.7-.3 3.9-.7"/><path d="M9.9 9.9a3 3 0 0 0 4.2 4.2"/></svg>';
-
-// Type guard: does this material have our update* methods?
-export interface LuxarMaterial extends THREE.Material, CameraAwareMaterial {
-  updateIntensity(v: number): void;
-  updateOffset(v: number): void;
-  updateGamma(v: number): void;
-  updateOpacity(v: number): void;
-  updateColormapTexture?(texture: THREE.DataTexture | null): void;
-  updateScalarRange?(min: number, max: number): void;
-  /**
-   * Apply a blending mode to this material in-place.
-   *
-   * Optional because PointMaterial doesn't need it — its blending is
-   * mode-agnostic at the material level (no `uProjectionMode`, no
-   * intensity-squaring concern). For materials that DO need it
-   * (GSplatMaterial, LineMaterial), call this instead of writing
-   * `mat.blending`/`mat.blendEquation` directly so type-specific
-   * factors and uniforms stay in sync.
-   */
-  applyBlendingMode?(mode: BlendingMode): void;
-}
-
-/**
- * Whether a material is currently rendering in colormap (LUT) mode —
- * the `USE_COLORMAP` shader define is the source of truth (set/cleared
- * by `updateColormapTexture`). In this mode the display range drives the
- * LUT value window and gamma warps the value pre-lookup, so neither
- * should be applied to the output color (see the material shaders).
- *
- * @internal Exported for unit testing the colormap-vs-direct routing.
- */
-export function isColormapActive(mat: LuxarMaterial): boolean {
-  const defines = (mat as unknown as { defines?: Record<string, unknown> | null }).defines;
-  return !!defines && 'USE_COLORMAP' in defines;
-}
-
-/**
- * Push gamma + the display-range adjustment to a leaf material, routed by
- * whether it renders through a colormap LUT:
- *
- * - **Colormap (LUT) mode**: the display range defines the value window
- *   mapped into the LUT (`uScalarMin`/`uScalarScale`) and gamma warps that
- *   value before the lookup — both operate on the scalar, not the color.
- *   The composed display window is recovered from the gain/offset pair and
- *   pushed via `updateScalarRange`; the color GOG is bypassed in-shader, so
- *   `intensity`/`offset` are intentionally NOT pushed.
- * - **Direct-color mode**: GOG operates on the color (`intensity`/`offset`).
- *
- * Gamma is pushed in both modes (the shader applies it pre-LUT in colormap
- * mode, on the color otherwise). Opacity and blending are handled by the
- * caller. See the material shaders' `USE_COLORMAP` path.
- *
- * @internal Exported for unit testing.
- */
-export function applyColorAdjustments(
-  mat: LuxarMaterial,
-  gamma: number,
-  intensity: number,
-  offset: number
-): void {
-  mat.updateGamma(gamma);
-  if (isColormapActive(mat) && mat.updateScalarRange) {
-    const { min, max } = computeDisplayRange(intensity, offset);
-    mat.updateScalarRange(min, max);
-  } else {
-    mat.updateIntensity(intensity);
-    mat.updateOffset(offset);
-  }
-}
-
-function isLuxarMaterial(m: THREE.Material): m is LuxarMaterial {
-  return (
-    typeof (m as LuxarMaterial).updateIntensity === 'function' &&
-    typeof (m as LuxarMaterial).updateGamma === 'function'
-  );
-}
-
 
 export class LayersPanel {
   private container: HTMLElement;
@@ -146,37 +54,29 @@ export class LayersPanel {
   get layerState(): LayerStateManager {
     return this.state;
   }
+
+  /**
+   * Scene-application engine: recomposes + pushes attrs to materials.
+   * Constructed with ACCESSORS for rootGroup/sceneGraph (both reassigned in
+   * initFromScene), never captured values — see the stale-capture pitfall.
+   */
+  private applyEngine = new LayerApplyEngine({
+    getRootGroup: () => this.rootGroup,
+    getSceneGraph: () => this.sceneGraph,
+    state: this.state,
+    requestRender: () => this.requestRender(),
+  });
+
+  /** The controls section (sliders/selects/LOD readout) below the list. */
+  private controls = new LayerControls({
+    state: this.state,
+    apply: this.applyEngine,
+    requestRender: () => this.requestRender(),
+    isPanelVisible: () => this.visible,
+  });
+
   private panelEl: HTMLElement | null = null;
   private listEl: HTMLElement | null = null;
-  private controlsEl: HTMLElement | null = null;
-  private rangeSlider: RangeSlider | null = null;
-  private gammaSlider: LabeledSlider | null = null;
-  private opacitySlider: LabeledSlider | null = null;
-  private blendSelect: HTMLSelectElement | null = null;
-  private colormapSelect: HTMLSelectElement | null = null;
-  /**
-   * "Active level" dropdown for ``lod_group`` layers. Shown only when
-   * the primary selected layer is an lod_group; hidden otherwise.
-   * Options: ``auto`` plus one ``lock to level <n>`` entry per child
-   * (1-based label; the option value stays 0-based for the registry's
-   * ``lockLevel`` API).
-   */
-  private lodLevelSelect: HTMLSelectElement | null = null;
-  /**
-   * Status span next to the dropdown showing the currently-rendering
-   * level (e.g. "L3/5", 1-based to match the data-monitor chip). Kept
-   * live by a per-frame callback (``layers-lod-status``) registered in
-   * buildPanel(), so it tracks auto-selection swaps driven by camera
-   * motion — not only ``renderControls()`` state changes.
-   */
-  private lodLevelStatus: HTMLSpanElement | null = null;
-  /**
-   * Last text written to {@link lodLevelStatus}. The per-frame callback
-   * compares against this and only touches the DOM when the readout
-   * actually changes, so a static scene costs a string compare per
-   * frame rather than a DOM write. Reset in clear().
-   */
-  private lastShownLodStatus: string | null = null;
   private visible = false;
   /**
    * Tracks every event listener attached during buildPanel/renderList
@@ -184,7 +84,8 @@ export class LayersPanel {
    * Without this, listeners attached to detached DOM nodes hold
    * closures referencing the panel until the GC reclaims the
    * subtree — fragile, hard to test, and inconsistent with the rest
-   * of the viewer's listener-tracking pattern.
+   * of the viewer's listener-tracking pattern. (The controls section's
+   * listeners are tracked by LayerControls' own group.)
    */
   private events = new EventGroup();
 
@@ -193,10 +94,6 @@ export class LayersPanel {
 
   // State change unsubscribe handle
   private unsubscribeState: (() => void) | null = null;
-
-  // Suppresses renderControls() during user-driven control interactions
-  // to prevent programmatic .value= from fighting with the user's drag
-  private controlsInteracting = false;
 
   // Tracks layers panel height to reposition the rendering controls (GUI) below
   private resizeObserver: ResizeObserver | null = null;
@@ -227,8 +124,8 @@ export class LayersPanel {
       // Only re-sync controls from state when the change came from selection,
       // NOT when it came from the controls themselves (which would fight with
       // the user's ongoing slider drag).
-      if (!this.controlsInteracting) {
-        this.renderControls();
+      if (!this.controls.interacting) {
+        this.controls.render();
       }
     });
 
@@ -250,9 +147,9 @@ export class LayersPanel {
     // visibility to the scene object.
     const layers = this.state.getLayers();
     for (const layer of layers) {
-      this.applyDisplayRange(layer);
+      this.applyEngine.applyDisplayRange(layer);
       if (!layer.visible) {
-        this.applyVisibility(layer.path, false);
+        this.applyEngine.applyVisibility(layer.path, false);
       }
     }
 
@@ -279,17 +176,17 @@ export class LayersPanel {
     for (const layer of layers) {
       // Visibility applies unconditionally: a currently-hidden layer whose
       // authored default is visible must come back.
-      this.applyVisibility(layer.path, layer.visible);
+      this.applyEngine.applyVisibility(layer.path, layer.visible);
       // applyColormap restores the authored colormap (or none) and then
       // recomposes opacity/gamma/intensity/offset/blending via applyComposed.
-      this.applyColormap(layer);
+      this.applyEngine.applyColormap(layer);
     }
 
     // Rebuild the row list + controls so the panel reflects the fresh state
     // (initFromSceneGraph replaced every LayerInfo the rows were bound to).
     if (this.panelEl) {
       this.renderList();
-      this.renderControls();
+      this.controls.render();
     }
     if (layers.length > 0) this.state.select(layers[0].path, 'single');
 
@@ -305,7 +202,7 @@ export class LayersPanel {
     // it does not track auto-LOD swaps. Refresh once on show so a level that
     // changed while hidden (or with the loop now idle) is reflected
     // immediately rather than only after the next swap.
-    this.refreshLodStatus();
+    this.controls.refreshLodStatus();
   }
 
   hide(): void {
@@ -348,14 +245,15 @@ export class LayersPanel {
     }
     // Tear down every listener attached during buildPanel/renderList.
     // Re-instantiate so a subsequent show() / initFromScene() starts
-    // with a fresh group rather than a disposed one.
+    // with a fresh group rather than a disposed one. The controls
+    // section tears down its own listeners + widgets symmetrically.
     this.events.dispose();
     this.events = new EventGroup();
     // Remove the live LOD-readout callback; buildPanel() re-registers it
-    // on the next scene load. Reset the cached text so the fresh panel
-    // writes its first readout unconditionally.
+    // on the next scene load. LayerControls.dispose() resets the cached
+    // readout text so the fresh panel writes its first readout
+    // unconditionally.
     this.animationController.removePerFrameCallback('layers-lod-status');
-    this.lastShownLodStatus = null;
     this.sceneGraph = null;
     this.resizeObserver?.disconnect();
     this.resizeObserver = null;
@@ -363,20 +261,11 @@ export class LayersPanel {
     const wasVisible = this.visible;
     this.visible = false;
     if (wasVisible) this.repositionGUI();
-    this.rangeSlider?.dispose();
-    this.rangeSlider = null;
-    this.gammaSlider?.dispose();
-    this.gammaSlider = null;
-    this.opacitySlider?.dispose();
-    this.opacitySlider = null;
-    this.blendSelect = null;
-    this.lodLevelSelect = null;
-    this.lodLevelStatus = null;
+    this.controls.dispose();
     this.rowElements.clear();
     this.panelEl?.remove();
     this.panelEl = null;
     this.listEl = null;
-    this.controlsEl = null;
   }
 
   // ─── DOM Construction ──────────────────────────────────
@@ -397,7 +286,7 @@ export class LayersPanel {
     title.textContent = 'Layers';
     const closeBtn = document.createElement('button');
     closeBtn.className = 'luxar-layers-panel__close';
-    closeBtn.textContent = '\u00d7';
+    closeBtn.textContent = '×';
     // Advertise Escape rather than L: the L key-binding early-returns
     // when focus is inside the panel, so it doesn't actually close
     // from keyboard while the panel has focus. Escape is handled by
@@ -424,7 +313,6 @@ export class LayersPanel {
     // Controls section
     const controls = document.createElement('div');
     controls.className = 'luxar-layers-panel__controls';
-    this.controlsEl = controls;
     panel.appendChild(controls);
 
     this.container.appendChild(panel);
@@ -438,12 +326,12 @@ export class LayersPanel {
 
     // Build the list rows and controls once
     this.renderList();
-    this.buildControls();
-    this.renderControls();
+    this.controls.build(controls);
+    this.controls.render();
 
     // Keep the "Active level" readout live. The auto-LOD selector swaps
     // the active child per-frame as the camera moves (lod-group-registry
-    // evaluatePerFrame), but renderControls() only runs on layer-state
+    // evaluatePerFrame), but the controls only re-render on layer-state
     // changes — so without this the readout went stale and disagreed
     // with the data-monitor chip. Non-continuous: it must not keep the
     // loop awake (no swaps happen while idle anyway), and the pipeline's
@@ -451,7 +339,7 @@ export class LayersPanel {
     // time this runs activeChildIndex is already updated for the frame.
     // Removed (and re-registered fresh) symmetrically in clear().
     this.animationController.addPerFrameCallback('layers-lod-status', () =>
-      this.refreshLodStatus()
+      this.controls.refreshLodStatus()
     );
   }
 
@@ -556,7 +444,7 @@ export class LayersPanel {
 
       // Update state and apply to scene
       this.state.setVisible(layer.path, newVisible);
-      this.applyVisibility(layer.path, newVisible);
+      this.applyEngine.applyVisibility(layer.path, newVisible);
     });
 
     // Layer name
@@ -645,642 +533,7 @@ export class LayersPanel {
     return row;
   }
 
-  // ─── Controls ──────────────────────────────────────────
-
-  private buildControls(): void {
-    if (!this.controlsEl) return;
-    this.controlsEl.innerHTML = '';
-
-    // Display range
-    const rangeContainer = document.createElement('div');
-    rangeContainer.className = 'luxar-layers-panel__control-group';
-    this.controlsEl.appendChild(rangeContainer);
-
-    this.rangeSlider = new RangeSlider({
-      container: rangeContainer,
-      min: 0,
-      max: 1,
-      valueLow: 0,
-      valueHigh: 1,
-      label: 'Display range',
-      onChange: (low, high) => {
-        this.controlsInteracting = true;
-        this.state.applyToSelected((l) => {
-          l.displayMin = low;
-          l.displayMax = high;
-        });
-        for (const sel of this.state.getSelected()) {
-          this.applyDisplayRange(sel);
-        }
-        this.controlsInteracting = false;
-      },
-      onBoundsChange: (min, max) => {
-        this.controlsInteracting = true;
-        this.state.applyToSelected((l) => {
-          l.dataMin = min;
-          l.dataMax = max;
-        });
-        this.controlsInteracting = false;
-      },
-    });
-
-    this.gammaSlider = new LabeledSlider({
-      container: this.controlsEl,
-      label: 'Gamma',
-      min: 0.2,
-      max: 5.0,
-      step: 0.01,
-      initialValue: 1.0,
-      constrain: clampGamma,
-      onChange: (val) => {
-        this.controlsInteracting = true;
-        this.state.applyToSelected((l) => {
-          l.gamma = val;
-        });
-        for (const sel of this.state.getSelected()) {
-          this.applyGamma(sel);
-        }
-        this.controlsInteracting = false;
-      },
-    });
-
-    this.opacitySlider = new LabeledSlider({
-      container: this.controlsEl,
-      label: 'Opacity',
-      min: 0,
-      max: 1,
-      step: 0.01,
-      initialValue: 1.0,
-      constrain: (v) => clamp(v, 0, 1),
-      onChange: (val) => {
-        this.controlsInteracting = true;
-        this.state.applyToSelected((l) => {
-          l.opacity = val;
-        });
-        for (const sel of this.state.getSelected()) {
-          this.applyOpacity(sel);
-        }
-        this.controlsInteracting = false;
-      },
-    });
-
-    // Blending mode
-    const blendGroup = document.createElement('div');
-    blendGroup.className = 'luxar-layers-panel__control-group';
-    const blendLabel = document.createElement('div');
-    blendLabel.className = 'luxar-layers-panel__control-label';
-    blendLabel.textContent = 'Blend';
-
-    this.blendSelect = document.createElement('select');
-    this.blendSelect.className = 'luxar-layers-panel__select';
-    for (const mode of BLENDING_MODES) {
-      const opt = document.createElement('option');
-      opt.value = mode;
-      opt.textContent = mode;
-      this.blendSelect.appendChild(opt);
-    }
-    this.events.on(this.blendSelect, 'change', () => {
-      this.controlsInteracting = true;
-      const mode = this.blendSelect!.value as BlendingMode;
-      this.state.applyToSelected((l) => {
-        l.blendingMode = mode;
-      });
-      for (const sel of this.state.getSelected()) {
-        this.applyBlendingMode(sel);
-      }
-      this.controlsInteracting = false;
-    });
-    blendGroup.appendChild(blendLabel);
-    blendGroup.appendChild(this.blendSelect);
-    this.controlsEl.appendChild(blendGroup);
-
-    // Colormap selector (only shown for layers that support colormap)
-    const cmGroup = document.createElement('div');
-    cmGroup.className = 'luxar-layers-panel__control-group';
-    const cmLabel = document.createElement('div');
-    cmLabel.className = 'luxar-layers-panel__control-label';
-    cmLabel.textContent = 'Colormap';
-
-    this.colormapSelect = document.createElement('select');
-    this.colormapSelect.className = 'luxar-layers-panel__select';
-    // "None" option for layers using direct RGB colors
-    const noneOpt = document.createElement('option');
-    noneOpt.value = '';
-    noneOpt.textContent = '(direct colors)';
-    this.colormapSelect.appendChild(noneOpt);
-
-    // Add categorized options
-    for (const [category, names] of Object.entries(COLORMAP_CATEGORIES)) {
-      const optgroup = document.createElement('optgroup');
-      optgroup.label = category;
-      for (const name of names) {
-        const opt = document.createElement('option');
-        opt.value = name;
-        opt.textContent = name;
-        optgroup.appendChild(opt);
-      }
-      this.colormapSelect.appendChild(optgroup);
-    }
-
-    this.events.on(this.colormapSelect, 'change', () => {
-      this.controlsInteracting = true;
-      const cmName = this.colormapSelect!.value || undefined;
-      this.state.applyToSelected((l) => {
-        l.colormap = cmName;
-      });
-      for (const sel of this.state.getSelected()) {
-        this.applyColormap(sel);
-      }
-      this.controlsInteracting = false;
-    });
-    cmGroup.appendChild(cmLabel);
-    cmGroup.appendChild(this.colormapSelect);
-    this.controlsEl.appendChild(cmGroup);
-
-    // Active-level selector — only meaningful for lod_group layers,
-    // hidden otherwise (see renderControls). The dropdown's option
-    // list is rebuilt per layer in renderControls() because child
-    // counts vary; here we just allocate the container + handler.
-    const lodGroup = document.createElement('div');
-    lodGroup.className = 'luxar-layers-panel__control-group';
-    const lodLabel = document.createElement('div');
-    lodLabel.className = 'luxar-layers-panel__control-label';
-    lodLabel.textContent = 'Active level';
-
-    this.lodLevelSelect = document.createElement('select');
-    this.lodLevelSelect.className = 'luxar-layers-panel__select';
-
-    this.lodLevelStatus = document.createElement('span');
-    this.lodLevelStatus.className = 'luxar-layers-panel__control-value';
-
-    this.events.on(this.lodLevelSelect, 'change', () => {
-      this.controlsInteracting = true;
-      const value = this.lodLevelSelect!.value;
-      const primary = this.state.getPrimarySelected();
-      if (primary) {
-        const registry = this.getLodGroupRegistry();
-        if (registry) {
-          const mode = value === 'auto' ? 'auto' : { lockLevel: Number(value) };
-          // Resolve the set of paths to update. A kind=lod layer updates
-          // itself; a kind=partition layer that wraps lod_groups broadcasts
-          // to every nested path (clamped per-group by setSelectorMode
-          // on ragged ladders — see lod-group-registry).
-          const paths: string[] =
-            primary.kind === 'lod'
-              ? [primary.path]
-              : primary.kind === 'partition' &&
-                  primary.nestedLodGroupPaths &&
-                  primary.nestedLodGroupPaths.length > 0
-                ? primary.nestedLodGroupPaths
-                : [];
-          let anyApplied = false;
-          for (const p of paths) {
-            try {
-              registry.setSelectorMode(p, mode);
-              anyApplied = true;
-            } catch (err) {
-              log.warning(Modules.UI, `Failed to set lod_group selector: ${err}`);
-            }
-          }
-          // The actual visibility swap happens in a per-frame callback;
-          // if the animation loop is idle (no camera/slice change),
-          // setSelectorMode alone is not enough. Wake the loop so the
-          // new active level is painted.
-          if (anyApplied) this.requestRender();
-        }
-      }
-      this.controlsInteracting = false;
-    });
-    lodGroup.appendChild(lodLabel);
-    lodGroup.appendChild(this.lodLevelSelect);
-    lodGroup.appendChild(this.lodLevelStatus);
-    this.controlsEl.appendChild(lodGroup);
-  }
-
-  /**
-   * Look up the LOD-group registry for the currently-loaded scene.
-   *
-   * Lazy lookup via the SceneLoaderManager (the layers panel can't
-   * import scene/ directly without violating the data → ui layer
-   * direction; the SceneLoaderManager hands us the loader's registry
-   * field). Returns ``null`` when no scene is loaded or the loader
-   * was created without a registry factory wired up.
-   */
-  private getLodGroupRegistry(): LODGroupRegistry | null {
-    const loader = SceneLoaderManager.getInstance().getDefaultLoader();
-    return loader?.lodGroupRegistry ?? null;
-  }
-
-  /** Populate the lod-level dropdown's options for the given child count. */
-  private renderLodLevelOptions(childCount: number): void {
-    if (!this.lodLevelSelect) return;
-    // Clear and rebuild — option counts vary per lod_group.
-    this.lodLevelSelect.innerHTML = '';
-    const autoOpt = document.createElement('option');
-    autoOpt.value = 'auto';
-    autoOpt.textContent = 'auto';
-    this.lodLevelSelect.appendChild(autoOpt);
-    for (let i = 0; i < childCount; i++) {
-      const opt = document.createElement('option');
-      // Value stays 0-based (the registry's lockLevel API), but the
-      // label is 1-based to match the readout ("L3/5") and the
-      // data-monitor chip — so all three LOD surfaces agree numerically.
-      opt.value = String(i);
-      opt.textContent = `lock to level ${i + 1}`;
-      this.lodLevelSelect.appendChild(opt);
-    }
-  }
-
-  /** Update controls to reflect the primary selected layer's values */
-  private renderControls(): void {
-    const primary = this.state.getPrimarySelected();
-    if (!primary) return;
-
-    if (this.rangeSlider) {
-      this.rangeSlider.setBounds(primary.dataMin, primary.dataMax);
-      this.rangeSlider.setValues(primary.displayMin, primary.displayMax);
-    }
-
-    this.gammaSlider?.setValue(primary.gamma);
-    this.opacitySlider?.setValue(primary.opacity);
-
-    if (this.blendSelect) {
-      this.blendSelect.value = primary.blendingMode;
-    }
-
-    if (this.colormapSelect) {
-      if (primary.supportsColormap) {
-        this.colormapSelect.parentElement!.style.display = '';
-        this.colormapSelect.value = primary.colormap ?? '';
-      } else {
-        // Hide colormap control for layers that don't support it
-        this.colormapSelect.parentElement!.style.display = 'none';
-      }
-    }
-
-    // Active-level dropdown — shown for kind=lod layers AND for kind=partition
-    // layers that wrap nested lod_groups (broadcast). The dropdown
-    // option list reflects either the layer's own child count
-    // (kind=lod) or the largest nested ladder (kind=partition).
-    if (this.lodLevelSelect && this.lodLevelStatus) {
-      const lodContainer = this.lodLevelSelect.parentElement!;
-      const registry = this.getLodGroupRegistry();
-      if (primary.kind === 'lod' && (primary.lodGroupChildCount ?? 0) > 0) {
-        lodContainer.style.display = '';
-        this.renderLodLevelOptions(primary.lodGroupChildCount!);
-        // Sync the dropdown to the registry's selector mode. No entry
-        // yet (scene still loading) → default to "auto".
-        const entry = registry?.get(primary.path);
-        this.lodLevelSelect.value =
-          entry && entry.selectorMode !== 'auto' ? String(entry.selectorMode.lockLevel) : 'auto';
-      } else if (this.isBroadcastPartition(primary)) {
-        lodContainer.style.display = '';
-        this.renderLodLevelOptions(primary.nestedLodMaxChildCount!);
-        // Sync widget state from the FIRST nested entry — they should
-        // be lock-stepped after a broadcast change, and pre-broadcast
-        // divergence (rare: legacy authored values) is acceptable
-        // ambiguity here.
-        const entry = registry?.get(primary.nestedLodGroupPaths![0]);
-        this.lodLevelSelect.value =
-          entry && entry.selectorMode !== 'auto' ? String(entry.selectorMode.lockLevel) : 'auto';
-      } else {
-        lodContainer.style.display = 'none';
-      }
-      // Single source of truth for the readout text, shared with the
-      // per-frame refreshLodStatus() so both always agree. null → no
-      // readout applies (non-LOD layer, or registry not yet populated).
-      this.setLodStatusText(this.computeLodStatusText(primary) ?? '');
-    }
-  }
-
-  /**
-   * True when ``primary`` is a kind=partition layer wrapping one or more
-   * nested lod_groups, so the "Active level" dropdown broadcasts to them.
-   */
-  private isBroadcastPartition(primary: LayerInfo): boolean {
-    return (
-      primary.kind === 'partition' &&
-      primary.nestedLodGroupPaths != null &&
-      primary.nestedLodGroupPaths.length > 0 &&
-      (primary.nestedLodMaxChildCount ?? 0) > 0
-    );
-  }
-
-  /**
-   * Compute the "Active level" readout text for the primary-selected
-   * layer, or ``null`` when no LOD readout applies (non-LOD layer, or the
-   * lod_group registry isn't populated yet). 1-based ("L3/5") to match
-   * the data-monitor chip (data-loading-monitor/templates.ts) and the
-   * dropdown labels. Reads the live active level straight from the
-   * registry, so it is correct on any frame — including auto-selection
-   * swaps driven by camera motion.
-   */
-  private computeLodStatusText(primary: LayerInfo): string | null {
-    const registry = this.getLodGroupRegistry();
-    if (!registry) return null;
-    if (primary.kind === 'lod' && (primary.lodGroupChildCount ?? 0) > 0) {
-      const entry = registry.get(primary.path);
-      if (!entry || entry.children.length === 0) return null;
-      // The off-screen gate holds the group at its coarsest level while it
-      // is outside the frustum; flag it so a coarse level isn't read as a
-      // selection bug.
-      const suffix = entry.offScreen ? ' (off-screen)' : '';
-      // Show the level on SCREEN (``displayedChildIndex``), not the selector's
-      // aspiration — during a slice scrub the displayed level is a coarser fresh
-      // one while ``activeChildIndex`` is the stale fine level reloading, and
-      // during a never-downgrade hold it is the better previously-shown level
-      // while the aspiration's additive ladder catches up.
-      const shown = entry.displayedChildIndex ?? entry.activeChildIndex;
-      // Displayed-quality estimate q = Q·e from the commit-time quality
-      // stamps (didactic: how close what is ON SCREEN is to the group's
-      // finest content — Q the level's measured complete quality, e the
-      // committed energy fraction of its streaming ladder). Absent on
-      // unstamped (legacy) datasets.
-      const q = displayedQualityFraction(entry.children[shown]?.object ?? {});
-      const qualityStr = q == null ? '' : ` · ~${Math.round(q * 100)}%`;
-      return `L${shown + 1}/${entry.children.length}${qualityStr}${suffix}`;
-    }
-    if (this.isBroadcastPartition(primary)) {
-      // Aggregate across EVERY nested lod_group, not just the first: under
-      // auto-selection each part picks its own level by its own on-screen
-      // size, so they legitimately diverge (the mosaic recipe is unbalanced
-      // by design). Show a range when they do, and use the dropdown's
-      // max-ladder depth (nestedLodMaxChildCount) as the denominator so the
-      // readout and the option list agree on {n}.
-      const paths = primary.nestedLodGroupPaths!;
-      let min = Infinity;
-      let max = -Infinity;
-      for (const p of paths) {
-        const e = registry.get(p);
-        if (!e || e.children.length === 0) continue;
-        const lvl = (e.displayedChildIndex ?? e.activeChildIndex) + 1;
-        if (lvl < min) min = lvl;
-        if (lvl > max) max = lvl;
-      }
-      if (max < 0) return null; // no populated nested group yet
-      const n = primary.nestedLodMaxChildCount!;
-      const levelStr = min === max ? `L${min}/${n}` : `L${min}–${max}/${n}`;
-      return `${levelStr} · ${paths.length} groups`;
-    }
-    return null;
-  }
-
-  /**
-   * Write the LOD readout, skipping the DOM touch when the text is
-   * unchanged. Lets the per-frame callback run every frame at the cost of
-   * a string compare on a static scene rather than a DOM write.
-   */
-  private setLodStatusText(text: string): void {
-    if (!this.lodLevelStatus || text === this.lastShownLodStatus) return;
-    this.lodLevelStatus.textContent = text;
-    this.lastShownLodStatus = text;
-  }
-
-  /**
-   * Per-frame: keep the LOD readout in sync with the live active level
-   * chosen by the auto-selector. Cheap — early-returns when the panel is
-   * hidden or the primary layer has no LOD readout, and setLodStatusText
-   * skips the DOM write unless the text actually changed. A ``null`` text
-   * (non-LOD layer / registry not ready) leaves whatever renderControls
-   * last set in place rather than clobbering it.
-   */
-  private refreshLodStatus(): void {
-    if (!this.visible || !this.lodLevelStatus) return;
-    const primary = this.state.getPrimarySelected();
-    if (!primary) return;
-    const text = this.computeLodStatusText(primary);
-    if (text !== null) this.setLodStatusText(text);
-  }
-
-  // ─── Scene Application ─────────────────────────────────
-  //
-  // Rendering attributes compose along the scene graph per the Luxar
-  // composition spec (opacity/gamma/intensity multiply, offset adds,
-  // blending_mode takes the nearest ancestor's choice). Every time a
-  // layer's slider moves, we recompose effective values for each affected
-  // data-leaf (the layer itself for a data-node layer, or every data
-  // descendant for a group layer) and push the result into the material.
-  // Authoring-time zarr values are used for non-layer nodes in the chain;
-  // live panel state overrides them for `layer=True` nodes.
-
-  private getMesh(path: string): THREE.Object3D | null {
-    if (!this.rootGroup) return null;
-    return this.rootGroup.getObjectByName(path) ?? null;
-  }
-
-  /**
-   * Clone-on-first-use for the material at a data-leaf, registering the
-   * clone with MaterialManager so camera-dependent uniforms stay current.
-   * Non-luxar materials return null.
-   */
-  private getLeafMaterial(obj: THREE.Object3D): LuxarMaterial | null {
-    const mesh = obj as THREE.Points | THREE.Mesh;
-    if (!mesh.material) return null;
-    const mat = mesh.material as THREE.Material;
-    if (!isLuxarMaterial(mat)) return null;
-
-    if (!mesh.userData._layerMaterialCloned) {
-      const cloned = mat.clone() as LuxarMaterial;
-      mesh.material = cloned;
-      mesh.userData._layerMaterialCloned = true;
-      materialManager.register(cloned);
-      return cloned;
-    }
-    return mat as LuxarMaterial;
-  }
-
-  /**
-   * Resolve every data-leaf affected by changes to a layer at `path`.
-   * Data-node layers map to themselves; group layers fan out to all
-   * descendant points/lines/gsplats.
-   */
-  private getAffectedDataLeaves(path: string): SceneNode[] {
-    if (!this.sceneGraph) return [];
-    const chain = collectAncestorNodes(this.sceneGraph, path);
-    const target = chain[chain.length - 1];
-    if (!target) return [];
-    if (target.type === 'group') return collectDataDescendants(target);
-    return [target];
-  }
-
-  /**
-   * Compute the layer's current live composable attributes. Thin wrapper
-   * around {@link liveLayerAttrs} so the four call sites in this file
-   * keep their compact `this.liveLayerAttrs(...)` shape.
-   */
-  private liveLayerAttrs(layer: LayerInfo): ComposableAttrs {
-    return deriveLiveLayerAttrs(layer);
-  }
-
-  /**
-   * Recompose the effective attrs for a single data-leaf by walking the
-   * scene-graph ancestry, substituting panel state for every `layer=true`
-   * node in the chain.
-   */
-  private composeEffective(leafPath: string): EffectiveAttrs | null {
-    if (!this.sceneGraph) return null;
-    const ancestors = collectAncestorNodes(this.sceneGraph, leafPath);
-    const chain: ComposableAttrs[] = ancestors.map((node) => {
-      const layerInfo = this.state.getLayer(node.path);
-      if (layerInfo) return this.liveLayerAttrs(layerInfo);
-      return {
-        opacity: node.attrs.opacity as number | undefined,
-        gamma: node.attrs.gamma as number | undefined,
-        intensity: node.attrs.intensity as number | undefined,
-        offset: node.attrs.offset as number | undefined,
-        blending_mode: node.attrs.blending_mode as string | undefined,
-      };
-    });
-    return composeAttrs(chain);
-  }
-
-  private applyBlendingStateToMaterial(mat: LuxarMaterial, mode: string): void {
-    // All Luxar materials (Points, Lines, GSplats) now implement
-    // `applyBlendingMode`. That single source of truth handles type-
-    // specific concerns (GSplat `uProjectionMode`, Point
-    // `LUXAR_MAX_RGB_CONTRIBUTION` define, max-mode `OneFactor` blend
-    // factors) and is used by both creation (in MaterialManager) and
-    // runtime UI transitions. The generic fallback below remains for
-    // defensiveness against external/future materials that lack the
-    // method, and now applies the *complete* state (including
-    // blend factors) so it matches the canonical mapping.
-    if (typeof mat.applyBlendingMode === 'function') {
-      mat.applyBlendingMode(mode as BlendingMode);
-      return;
-    }
-
-    const opacityUniform = (
-      mat as unknown as {
-        uniforms?: { opacity?: { value?: number }; uOpacity?: { value?: number } };
-      }
-    ).uniforms;
-    const liveOpacity = opacityUniform?.opacity?.value ?? opacityUniform?.uOpacity?.value ?? 1.0;
-    const state = getBlendingState(mode, liveOpacity);
-    mat.blending = state.blending;
-    mat.depthTest = state.depthTest;
-    mat.depthWrite = state.depthWrite;
-    mat.transparent = state.transparent;
-    mat.blendEquation = state.blendEquation;
-    if (state.blendSrc !== undefined) mat.blendSrc = state.blendSrc;
-    if (state.blendDst !== undefined) mat.blendDst = state.blendDst;
-    mat.needsUpdate = true;
-  }
-
-  /**
-   * Push each composed effective attribute (except colormap, which is
-   * per-leaf and doesn't chain through ancestors) to every affected leaf
-   * material. Colormap is handled separately because textures don't
-   * compose — the nearest ancestor's colormap wins.
-   */
-  private applyComposed(layer: LayerInfo): void {
-    const leaves = this.getAffectedDataLeaves(layer.path);
-    if (leaves.length === 0) return;
-
-    for (const leaf of leaves) {
-      const obj = this.getMesh(leaf.path);
-      if (!obj) continue;
-      const mat = this.getLeafMaterial(obj);
-      if (!mat) continue;
-      const eff = this.composeEffective(leaf.path);
-      if (!eff) continue;
-      mat.updateOpacity(eff.opacity);
-      applyColorAdjustments(mat, eff.gamma, eff.intensity, eff.offset);
-      const prevBlendingMode = mat.userData?.blendingMode as BlendingMode | undefined;
-      this.applyBlendingStateToMaterial(mat, eff.blending_mode);
-      // Depth-sorting Phase 2: a gsplat layer switching blending mode may
-      // need to start (TO `normal`: clear the noop stamp + reprocess so
-      // the next commit registers with the SortWorker) or stop (AWAY:
-      // release) depth sorting.
-      if (obj.userData?.nodeType === 'gsplats') {
-        noteGSplatsBlendingModeSwitch(obj as THREE.Mesh, eff.blending_mode, prevBlendingMode);
-      }
-    }
-    this.requestRender();
-  }
-
-  private applyVisibility(path: string, visible: boolean): void {
-    const obj = this.getMesh(path);
-    if (obj) {
-      obj.visible = visible;
-      this.requestRender();
-    }
-  }
-
-  private applyDisplayRange(layer: LayerInfo): void {
-    this.applyComposed(layer);
-  }
-
-  private applyGamma(layer: LayerInfo): void {
-    this.applyComposed(layer);
-  }
-
-  private applyOpacity(layer: LayerInfo): void {
-    this.applyComposed(layer);
-  }
-
-  private applyBlendingMode(layer: LayerInfo): void {
-    this.applyComposed(layer);
-  }
-
-  /**
-   * Colormap applies per-leaf (not composed). For a group-layer we push
-   * the selected colormap to every data descendant that accepts one.
-   */
-  private applyColormap(layer: LayerInfo): void {
-    const leaves = this.getAffectedDataLeaves(layer.path);
-    if (leaves.length === 0) return;
-
-    const tex = layer.colormap ? getColormapTexture(layer.colormap) : null;
-    for (const leaf of leaves) {
-      const obj = this.getMesh(leaf.path);
-      if (!obj) continue;
-      const mat = this.getLeafMaterial(obj);
-      if (!mat || !mat.updateColormapTexture) continue;
-      if (layer.colormap && tex) {
-        // C1 fail-closed guard: enabling USE_COLORMAP requires the right
-        // scalar attribute on geometry (`scalar` for points,
-        // `aStartScalar`/`aEndScalar` for lines, `aAmplitude` for gsplats).
-        const nodeType = leaf.type as 'points' | 'lines' | 'gsplats';
-        const geometry = (obj as THREE.Points | THREE.Mesh).geometry as THREE.BufferGeometry;
-        if (!supportsScalarColormap(nodeType, geometry)) {
-          log.warning(
-            Modules.UI,
-            `[LayersPanel][${leaf.path}] Scalar colormap suppressed: required attribute(s) not bound on geometry (pending C4 implementation).`
-          );
-          continue;
-        }
-        mat.updateColormapTexture(tex);
-        // The scalar window (value→LUT mapping) is driven by the display
-        // range, not a static attr — recover it from the composed
-        // gain/offset so it matches what `applyComposed` will push. Falls
-        // back to the authored scalar range when no composition exists.
-        if (mat.updateScalarRange) {
-          const eff = this.composeEffective(leaf.path);
-          if (eff) {
-            const { min, max } = computeDisplayRange(eff.intensity, eff.offset);
-            mat.updateScalarRange(min, max);
-          } else if (layer.scalarDataRange) {
-            mat.updateScalarRange(layer.scalarDataRange[0], layer.scalarDataRange[1]);
-          }
-        }
-      } else {
-        mat.updateColormapTexture(null);
-      }
-      // do NOT mark `mat.needsUpdate = true` here. Material methods
-      // (`updateColormapTexture`, `applyColormapTextureToMaterial`)
-      // already toggle `needsUpdate` when defines change. Setting it
-      // unconditionally for every per-leaf colormap apply caused
-      // shader recompilation on every UI tick during group-layer
-      // scalar-range drags, even when the colormap define hadn't
-      // toggled.
-    }
-    // Enabling/disabling a colormap flips how display-range + gamma must
-    // be routed (value window vs color GOG). Recompose so each affected
-    // leaf's intensity/offset/scalar-range match its new mode — in
-    // particular, restoring the color GOG when a colormap is turned off.
-    this.applyComposed(layer);
-    this.requestRender();
-  }
+  // ─── GUI Repositioning ─────────────────────────────────
 
   /**
    * Reposition the rendering controls (`.luxar-gui`) so it sits below the
