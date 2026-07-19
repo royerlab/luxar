@@ -190,6 +190,7 @@ export interface SceneNode {
 
     /** Rendering attributes */
     opacity?: number;
+    absorption?: number;
     gamma?: number;
     intensity?: number;
     offset?: number;

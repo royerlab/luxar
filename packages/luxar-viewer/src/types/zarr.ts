@@ -265,6 +265,7 @@ export interface ZarrNodeAttrs {
 
   /** Rendering attributes */
   opacity?: number;
+  absorption?: number;
   gamma?: number;
   intensity?: number;
   offset?: number;

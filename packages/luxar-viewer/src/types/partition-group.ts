@@ -77,6 +77,7 @@ export interface PartitionGroupMetadata {
 
   /** Optional compositing rendering attrs (inherited via scene-graph composition). */
   opacity?: number;
+  absorption?: number;
   gamma?: number;
   intensity?: number;
   offset?: number;

@@ -2,8 +2,8 @@
  * Shared blending-state helper used by all node-type materials.
  *
  * Centralises the per-mode mapping from the high-level Luxar blending
- * mode (`additive` | `normal` | `max` | `opaque` | `luminous`) to the
- * complete THREE.js material state. This is the single source of truth
+ * mode (`additive` | `normal` | `max` | `opaque` | `luminous` |
+ * `volumetric`) to the complete THREE.js material state. This is the single source of truth
  * for both creation-time wiring (in MaterialManager) and runtime
  * transitions (in {Point,Line,GSplat}Material.applyBlendingMode and
  * LayersPanel's runtime path).
@@ -74,6 +74,14 @@ export function isLuminousMode(mode: BlendingMode): boolean {
 export function isNormalMode(mode: BlendingMode): boolean {
   return mode === 'normal';
 }
+/**
+ * @param mode - the blending mode to test
+ * @returns `true` when `mode === 'volumetric'`
+ * @public
+ */
+export function isVolumetricMode(mode: BlendingMode): boolean {
+  return mode === 'volumetric';
+}
 
 /**
  * Projection-model taxonomy over the blending modes (PR #561): SURFACE
@@ -92,6 +100,26 @@ export function isNormalMode(mode: BlendingMode): boolean {
  */
 export function usesPeakProjection(mode: BlendingMode): boolean {
   return isMaxMode(mode) || isNormalMode(mode) || isOpaqueMode(mode);
+}
+
+/**
+ * Order-dependence taxonomy: the modes whose compositing is
+ * NON-commutative and therefore requires back-to-front depth sorting.
+ * `normal` alpha-overs a surface; `volumetric` (emission–absorption,
+ * VOLUMETRIC_BLENDING_SPEC.md) attenuates what is behind each splat.
+ *
+ * `volumetric` is the first SUM-projected sorted mode, deliberately
+ * breaking the old alignment "sum ⇒ commutative ⇒ unsorted" — so this
+ * predicate is distinct from {@link usesPeakProjection} and is the ONLY
+ * sanctioned order-dependence test (never infer sortedness from the
+ * projection taxonomy or vice versa).
+ *
+ * @param mode - the blending mode to test
+ * @returns `true` when `mode` requires back-to-front depth sorting
+ * @public
+ */
+export function needsDepthSort(mode: BlendingMode): boolean {
+  return isNormalMode(mode) || isVolumetricMode(mode);
 }
 
 /**
@@ -177,7 +205,8 @@ export interface CompleteBlendingState {
  * behind it). All other modes are opacity-independent.
  *
  * @param mode - One of `'normal'`, `'additive'`, `'max'`, `'opaque'`,
- *   `'luminous'`. See the file-level header for per-mode semantics.
+ *   `'luminous'`, `'volumetric'`. See the file-level header for
+ *   per-mode semantics.
  * @param opacity - Layer opacity in `[0, 1]`. Currently only consulted
  *   for `mode === 'normal'`, where `opacity >= 0.99` flips on
  *   `depthWrite`. Default `1.0`.
@@ -248,6 +277,30 @@ export function getCompleteBlendingState(
       depthWrite: true,
       transparent: false,
       shaderOutputMode: 'opaque',
+    };
+  }
+
+  if (mode === 'volumetric') {
+    // Volumetric (emission–absorption): the fragment emits
+    // vec4(self-screened emission, 1 − e^(−τ)) — premultiplied — so the
+    // framebuffer computes src + (1 − α_src)·dst back-to-front. Same
+    // state as gsplat `normal` (see getGSplatNormalBlendingState for the
+    // symmetric-alpha / never-depthWrite rationale); the semantic
+    // difference lives entirely in the fragment shader. depthWrite is
+    // false UNCONDITIONALLY — no normalModeDepthWrite coupling; the mode
+    // is smooth in opacity by design (VOLUMETRIC_BLENDING_SPEC.md §3.1).
+    // NOTE: only gsplats implement the volumetric fragment math in
+    // phase 1; point/line materials intercept this mode upstream and
+    // apply the additive state instead (the exact κ=0 limit).
+    return {
+      blending: THREE.CustomBlending,
+      blendEquation: THREE.AddEquation,
+      blendSrc: THREE.OneFactor,
+      blendDst: THREE.OneMinusSrcAlphaFactor,
+      depthTest: true,
+      depthWrite: false,
+      transparent: true,
+      shaderOutputMode: 'premultiplied-alpha',
     };
   }
 

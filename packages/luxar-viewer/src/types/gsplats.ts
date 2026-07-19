@@ -94,6 +94,9 @@ export interface GSplatsMetadata {
   /** Opacity multiplier */
   opacity?: number;
 
+  /** Absorption coefficient κ (volumetric blending mode; identity 1.0) */
+  absorption?: number;
+
   /** Gamma correction */
   gamma?: number;
 

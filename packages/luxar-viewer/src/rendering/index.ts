@@ -36,6 +36,8 @@ export {
   isOpaqueMode,
   isLuminousMode,
   isNormalMode,
+  isVolumetricMode,
+  needsDepthSort,
 } from './blending-state';
 export type { CompleteBlendingState } from './blending-state';
 

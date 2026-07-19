@@ -26,6 +26,7 @@ import {
 import {
   applyBlendingStateToMaterial,
   getCompleteBlendingState,
+  isVolumetricMode,
   normalModeDepthWrite,
   type CompleteBlendingState,
 } from '../../blending-state';
@@ -111,7 +112,11 @@ export class LineMaterial
     let blending: THREE.Blending;
     if (isOpaque || blendingMode === 'normal') {
       blending = THREE.NormalBlending;
-    } else if (blendingMode === 'additive' || blendingMode === 'luminous') {
+    } else if (
+      blendingMode === 'additive' ||
+      blendingMode === 'luminous' ||
+      blendingMode === 'volumetric' // lines render its additive (κ=0) fallback
+    ) {
       blending = THREE.AdditiveBlending; // Classic additive: SrcAlpha, One
     } else if (blendingMode === 'max') {
       blending = THREE.CustomBlending;
@@ -396,7 +401,13 @@ export class LineMaterial
    */
   applyBlendingMode(mode: BlendingMode): void {
     const opacity = (this.uniforms.uOpacity?.value as number | undefined) ?? 1.0;
-    const state: CompleteBlendingState = getCompleteBlendingState(mode, opacity);
+    // Phase-1 volumetric fallback: lines don't implement the
+    // emission–absorption fragment math yet (VOLUMETRIC_BLENDING_SPEC.md
+    // phases 3–4), so render the ADDITIVE state — the exact κ=0 limit of
+    // volumetric. userData keeps the REQUESTED mode so stored scenes
+    // upgrade automatically when the line implementation lands.
+    const effectiveMode: BlendingMode = isVolumetricMode(mode) ? 'additive' : mode;
+    const state: CompleteBlendingState = getCompleteBlendingState(effectiveMode, opacity);
 
     // Defensive: THREE may leave defines undefined when none were
     // passed at construction.
