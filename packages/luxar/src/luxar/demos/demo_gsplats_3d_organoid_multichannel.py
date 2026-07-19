@@ -306,7 +306,7 @@ def fit_all_channels(volumes):
 
         for i, (volume, ch_config) in enumerate(zip(volumes, CHANNELS)):
             ch_name = ch_config["name"]
-            cache_file = CACHE_DIR / f"organoids_gsplats_ch{i}.gsplats.zarr.zip"
+            cache_file = CACHE_DIR / f"organoids_ch{i}.gsplats.zarr.zip"
 
             with asection(f"Channel {i}: {ch_name}"):
                 gsplats = fit_channel(volume, ch_name, cache_file)
@@ -573,8 +573,8 @@ def main():
     precomputed = load_precomputed_gsplats(
         "gsplats_multichannel",
         [
-            "organoids_gsplats_ch0.gsplats.zarr.zip",
-            "organoids_gsplats_ch1.gsplats.zarr.zip",
+            "organoids_ch0.gsplats.zarr.zip",
+            "organoids_ch1.gsplats.zarr.zip",
         ],
         recompute=RECOMPUTE,
     )

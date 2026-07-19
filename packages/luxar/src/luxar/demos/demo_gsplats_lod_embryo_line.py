@@ -136,7 +136,7 @@ def load_base_splats() -> GSplatData:
     """Load the precomputed Tribolium fit (or re-fit on --recompute)."""
     precomputed = load_precomputed_gsplats(
         "gsplats_tribolium",
-        ["tribolium_gsplats.gsplats.zarr.zip"],
+        ["tribolium.gsplats.zarr.zip"],
         recompute=RECOMPUTE,
     )
     if precomputed is not None:

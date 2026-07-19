@@ -412,7 +412,7 @@ def main() -> None:
     # Load precomputed base splats (or re-fit on --recompute).
     precomputed = load_precomputed_gsplats(
         "gsplats_tribolium",
-        ["tribolium_gsplats.gsplats.zarr.zip"],
+        ["tribolium.gsplats.zarr.zip"],
         recompute=RECOMPUTE,
     )
 

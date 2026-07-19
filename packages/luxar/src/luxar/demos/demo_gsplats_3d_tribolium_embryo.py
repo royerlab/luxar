@@ -279,7 +279,7 @@ def fit_tribolium(volume: np.ndarray) -> GSplatData:
     Returns:
         Fitted GSplatData.
     """
-    cache_file = CACHE_DIR / "tribolium_gsplats.gsplats.zarr.zip"
+    cache_file = CACHE_DIR / "tribolium.gsplats.zarr.zip"
 
     # Auto-detect device
     global DEVICE
@@ -512,7 +512,7 @@ def main():
     # Try loading precomputed data (from Git LFS / local cache)
     precomputed = load_precomputed_gsplats(
         "gsplats_tribolium",
-        ["tribolium_gsplats.gsplats.zarr.zip"],
+        ["tribolium.gsplats.zarr.zip"],
         recompute=RECOMPUTE,
     )
 
