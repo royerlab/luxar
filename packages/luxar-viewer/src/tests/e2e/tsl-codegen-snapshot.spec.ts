@@ -120,6 +120,9 @@ const SHADERS = [
   'line-pick',
   'line-gamma-one',
   'line-no-gog',
+  // Max-mode premultiplied RGB-contribution fragment (lines; GLSL twin:
+  // LUXAR_MAX_RGB_CONTRIBUTION) — distinct generated code vs `line`.
+  'line-max',
   // Lines are the only geometry whose ortho/perspective split is a
   // BUILD-time TSL option (points/gsplats branch on the uIsOrtho
   // uniform at runtime), so the perspective line shaders are distinct
@@ -131,6 +134,9 @@ const SHADERS = [
   'point',
   'point-pick',
   'point-gamma-one',
+  // Max-mode premultiplied RGB-contribution fragment (points; GLSL twin:
+  // LUXAR_MAX_RGB_CONTRIBUTION) — distinct generated code vs `point`.
+  'point-max',
   'gsplat',
   'gsplat-pick',
   'gsplat-gamma-one',
