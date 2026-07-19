@@ -28,6 +28,7 @@ import type { AnimationController } from '../../scene/animation/animation-contro
 import { getColormapTexture } from '../../rendering/colormap-textures';
 import { supportsScalarColormap } from '../../rendering/material-colormap-helpers';
 import { noteGSplatsBlendingModeSwitch } from '../../rendering/depth-sort-coordinator';
+import { BLENDING_MODES } from '../../rendering/blending-state';
 import { COLORMAP_CATEGORIES } from '../../rendering/colormap-data';
 import { SceneLoaderManager } from '../../data/scene-loader-manager';
 import type { LODGroupRegistry } from '../../scene/lod-group-registry';
@@ -132,7 +133,6 @@ function isLuxarMaterial(m: THREE.Material): m is LuxarMaterial {
   );
 }
 
-const BLENDING_MODES: BlendingMode[] = ['additive', 'normal', 'max', 'opaque', 'luminous'];
 
 export class LayersPanel {
   private container: HTMLElement;

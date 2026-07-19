@@ -12,7 +12,7 @@
  * @module rendering/material-manager/factories
  */
 
-import { normalModeDepthWrite } from '../blending-state';
+import { BLENDING_MODES, normalModeDepthWrite } from '../blending-state';
 import { PointMaterial } from '../materials/point/material-glsl';
 import { LineMaterial } from '../materials/line/material-glsl';
 import { GSplatMaterial } from '../materials/gsplat/material-glsl';
@@ -44,14 +44,19 @@ import { clamp } from '../../utils/clamp';
  *   dim splats occlude proportionally little (emitter-with-occlusion,
  *   deliberate for HDR scientific data). GSplat normal mode never
  *   writes depth, so it does not occlude additive layers behind it.
- *   NOTE: compositing is order-dependent and splats are not yet
- *   depth-sorted — see GSPLAT_DEPTH_SORTING_SPEC.md Phases 1-3.
+ *   Normal-mode gsplat compositing is order-dependent; the viewer
+ *   depth-sorts them per frame (GSPLAT_DEPTH_SORTING_SPEC.md, shipped
+ *   Phases 0-3).
  * - 'additive': Classic additive blending, ignores depth (renders on top of everything)
  * - 'max': Maximum of source and destination (brightest wins)
  * - 'opaque': Solid rendering with depth write (closest object wins)
  * - 'luminous': Same as additive visually, but respects depth occlusion (occluded by closer objects)
+ *
+ * Derived from the runtime `BLENDING_MODES` tuple in blending-state.ts —
+ * the single source of truth for the mode set (adding a mode there updates
+ * this union, `normalizeBlendingMode`, and the panel dropdown together).
  */
-export type BlendingMode = 'normal' | 'additive' | 'max' | 'opaque' | 'luminous';
+export type BlendingMode = (typeof BLENDING_MODES)[number];
 
 /** Point material properties driving cache key + constructor config. */
 export interface PointMaterialProperties {
