@@ -654,7 +654,7 @@ Quantized code arrays (coordinates, Cholesky halves, amplitudes) may carry the
 the uint8/uint16 codes, applied below the encoding layer (the `encoding` attrs
 and all decode kernels are untouched — zarr/zarrita undoes the filter when
 reconstructing each chunk). Hilbert ordering makes consecutive codes a smooth
-ramp; the residuals compress ~12% smaller whole-store under the same Blosc
+ramp; the residuals compress 12-16% smaller whole-store under the same Blosc
 policy, losslessly.
 
 The filter is **probe-gated** in the per-channel/scalar encoders

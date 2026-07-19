@@ -746,7 +746,7 @@ in `.zarray`:
 Hilbert ordering makes consecutive codes a smooth ramp; the filter stores
 per-axis **modular delta + zigzag** residuals, laid out **column-major within
 each chunk** (all column-0 residuals, then column-1, …), which the Blosc
-policy above then compresses ~12% smaller whole-store (lossless — a pure
+policy above then compresses 12-16% smaller whole-store (lossless — a pure
 storage transform below the `encoding` layer; `encoding` attrs, decode
 kernels, and the range-loader are untouched). Per chunk of `rows × cols`
 codes, per column, all arithmetic mod `2^bits` with an implicit `0` anchor at
@@ -1093,7 +1093,7 @@ finest level instead). Both paths go through the shared
 | Node-tree LOD | v3.0 nestable primitives (leaf / kind=lod / kind=partition) | Substitutive, additive, and partition axes compose freely as a tree rather than a fixed matrix |
 | Image embedding | No | Keep format focused on splats |
 | Compression | Blosc zstd-9, width-aware shuffle | Byte shuffle for multi-byte int codes; no shuffle for uint8/floats (see §Blosc Settings) |
-| Delta encoding | Yes (v3.3, probe-gated) | `luxar_delta_v1` zarr filter on quantized codes; ~12% smaller whole-store (see §The `luxar_delta_v1` delta filter) |
+| Delta encoding | Yes (v3.3, probe-gated) | `luxar_delta_v1` zarr filter on quantized codes; 12-16% smaller whole-store (see §The `luxar_delta_v1` delta filter) |
 | Streaming write | No | Not needed |
 | `numpy-hilbert-curve` | Required dependency | Needed for Hilbert ordering |
 
@@ -1117,7 +1117,8 @@ finest level instead). Both paths go through the shared
     modular delta + zigzag residuals, column-major within each chunk, under
     the unchanged Blosc policy. Lossless and probe-gated at encode time (one
     representative chunk compressed both ways; applied only where it wins) —
-    measured **~12% smaller whole-store** on real Hilbert-ordered fits
+    measured **12-16% smaller whole-store** on real Hilbert-ordered fits
+    (14.9-15.7% end-to-end on real h2afva light-sheet leaves)
     (centers 1.20–1.31×, cholesky_offdiag ~1.15×, diag ~1.07×).
   - A pure storage transform below the `encoding` layer: `encoding` attrs,
     decode kernels (WASM/TS), and the sub-chunk range-loader are untouched —

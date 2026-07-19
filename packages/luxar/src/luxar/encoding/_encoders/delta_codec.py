@@ -5,7 +5,7 @@ uint8/uint16 quantization codes. Spatial ordering makes consecutive codes a
 smooth ramp, but Blosc's byte-shuffle cannot exploit that smoothness. This
 zarr v2 **filter** turns the ramp into small residuals — per-axis modular
 delta, zigzag-mapped to unsigned, laid out column-major within the chunk —
-which zstd then crushes (measured ~12% whole-store lossless on real fits;
+which zstd then crushes (measured 12-16% whole-store lossless on real fits;
 see the 2026-07 compression-transfer campaign / SOG comparison).
 
 Why a zarr *filter* and not an encoding transform: the viewer range-loader
@@ -120,6 +120,25 @@ class LuxarDelta(Codec):
 register_codec(LuxarDelta)
 
 
+def _normalize_chunks(chunks: Any) -> Optional[tuple]:
+    """``chunks`` as an int tuple, or ``None`` when its shape is unknowable.
+
+    zarr's ``create_dataset`` accepts many chunk specs (``None``, ``True``,
+    ``False``, a bare int, ``"auto"``, an int sequence). The probe can only
+    reason about an explicit int sequence (or a bare int for 1D); everything
+    else is treated as "unknown" — the caller then declines for 2D arrays and
+    falls back to whole-array rows for 1D. ``bool`` is excluded explicitly
+    (it subclasses ``int``).
+    """
+    if isinstance(chunks, (int, np.integer)) and not isinstance(chunks, bool):
+        return (int(chunks),)
+    if isinstance(chunks, (tuple, list)) and all(
+        isinstance(c, (int, np.integer)) and not isinstance(c, bool) for c in chunks
+    ):
+        return tuple(int(c) for c in chunks)
+    return None
+
+
 def probe_delta_filter(
     codes: np.ndarray,
     chunks: Optional[tuple],
@@ -139,21 +158,30 @@ def probe_delta_filter(
     ``cols`` transform requires whole rows per chunk).
     """
     codes = np.asarray(codes)
-    if codes.size == 0 or codes.dtype not in (np.uint8, np.uint16):
+    # Explicitly LITTLE-endian u8/u16 only (dtype.str, not dtype equality, so
+    # the rule is platform-independent): the viewer's zarrita pipeline runs
+    # its endian-converting bytes codec BEFORE array_to_array filters, while
+    # Python zarr views the dtype AFTER filters — for a big-endian store the
+    # two sides would disagree on the residual bytes. Luxar writers only emit
+    # native-LE arrays in practice; this rail keeps a hypothetical big-endian
+    # writer from producing stores the viewer mis-decodes.
+    if codes.size == 0 or codes.dtype.str not in ("|u1", "<u2"):
         return None
     if compressor is None:
         return None
+    chunk_tuple = _normalize_chunks(chunks)
     if codes.ndim == 1:
         cols = 1
-        rows_per_chunk = int(chunks[0]) if chunks else codes.shape[0]
+        rows_per_chunk = chunk_tuple[0] if chunk_tuple else codes.shape[0]
     elif codes.ndim == 2:
         cols = codes.shape[1]
         # 2D requires explicit chunks that keep columns whole; Luxar's
-        # intelligent chunking always does, but an auto-chunked (chunks=None)
-        # array offers no such guarantee — decline rather than risk it.
-        if not chunks or len(chunks) != 2 or int(chunks[1]) != cols:
+        # intelligent chunking always does, but an auto-chunked (chunks=None/
+        # True/"auto") array offers no such guarantee — decline rather than
+        # risk it.
+        if not chunk_tuple or len(chunk_tuple) != 2 or chunk_tuple[1] != cols:
             return None
-        rows_per_chunk = int(chunks[0])
+        rows_per_chunk = chunk_tuple[0]
     else:
         return None
     if rows_per_chunk <= 0:

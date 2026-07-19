@@ -162,6 +162,24 @@ class TestProbe:
         assert probe_delta_filter(codes, None, comp) is None
         assert probe_delta_filter(codes, (4096, 2), comp) is None
 
+    def test_never_raises_on_exotic_chunk_specs(self):
+        # zarr accepts chunks=None/True/False/int/"auto"/sequence — the probe
+        # must degrade gracefully (decline or fall back), never raise.
+        comp = self._comp(np.uint16)
+        codes2d = _smooth_codes(2000, 3, np.uint16)
+        codes1d = _smooth_codes(2000, 1, np.uint16).ravel()
+        for chunks in (None, True, False, 4096, "auto", (4096,), [4096, 3]):
+            probe_delta_filter(codes2d, chunks, comp)  # must not raise
+            probe_delta_filter(codes1d, chunks, comp)  # must not raise
+        # Bare int is the 1D idiom: treated as (int,).
+        assert probe_delta_filter(codes1d, 512, comp) is not None
+
+    def test_declines_big_endian_dtype(self):
+        # zarrita's bytes codec byte-swaps BEFORE filters; Python zarr views
+        # the dtype AFTER filters — a big-endian store would desync the two.
+        codes = _smooth_codes(1000, 3, np.uint16).astype(">u2")
+        assert probe_delta_filter(codes, (256, 3), self._comp(np.uint16)) is None
+
     def test_declines_no_compressor_float_empty(self):
         codes = _smooth_codes(1000, 3, np.uint16)
         assert probe_delta_filter(codes, (256, 3), None) is None
