@@ -9,7 +9,8 @@ All notable changes to Luxar are documented in this file.
 #### Added — `luxar_delta_v1` delta pre-filter (format v3.3, 12-16% smaller stores)
 
 - Quantized code arrays (coordinates `linear_perchannel_u16`, Cholesky
-  `log`/`signed_log_perchannel` halves, `bounded`/`geolog_scalar` amplitudes)
+  `log`/`signed_log_perchannel` halves, `bounded`/`geolog_scalar` amplitudes,
+  and colors — SDR `rgb_uint8`, HDR `geolog_perchannel`, integer passthrough)
   can now carry the Luxar-owned zarr v2 filter `luxar_delta_v1`: per-axis
   modular delta + zigzag residuals, column-major within each chunk, under the
   unchanged width-aware Blosc policy. Hilbert ordering makes consecutive codes

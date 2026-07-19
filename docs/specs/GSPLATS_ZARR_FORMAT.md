@@ -735,9 +735,10 @@ is purely a write-time budget. Pass an explicit `Blosc(...)` to override, or
 ### The `luxar_delta_v1` delta filter (v3.3, optional, probe-gated)
 
 Quantized code arrays (COORDINATE `linear_perchannel_u16`, the Cholesky
-`log_perchannel` / `signed_log_perchannel` halves, and the scalar
-`bounded_scalar` / `geolog_scalar` amplitudes) may carry a zarr v2 **filter**
-in `.zarray`:
+`log_perchannel` / `signed_log_perchannel` halves, the scalar
+`bounded_scalar` / `geolog_scalar` amplitudes, and COLOR `rgb_uint8` /
+`geolog_perchannel` / integer-passthrough codes) may carry a zarr v2
+**filter** in `.zarray`:
 
 ```json
 "filters": [{"id": "luxar_delta_v1", "cols": 3, "bits": 16}]
@@ -765,6 +766,13 @@ compressed both ways and the filter is applied only where it wins
 (deterministic; never worse). Arrays where it cannot apply are excluded
 structurally: float32 fallbacks, LUT/broadcast/array_ref priority paths, and
 INDEX arrays never carry it.
+
+Corruption blast radius: Blosc/zstd carries no payload checksum (a
+pre-existing property of every Luxar array, with or without this filter), so
+a silently corrupted byte decodes to wrong values. Without delta the damage
+is one element; with delta a corrupted residual propagates through the rest
+of that chunk's column — still bounded to a single chunk (each chunk has its
+own implicit 0 anchor).
 
 Reader requirements: chunks are whole-chunk reconstructed inside the zarr
 codec pipeline, so sub-chunk range reads keep working unchanged. The Python
@@ -1112,8 +1120,8 @@ finest level instead). Both paths go through the shared
 ## Changelog
 
 - **v3.3.0** (2026-07-18): optional `luxar_delta_v1` delta filter on quantized codes
-  - Quantized code arrays (coordinates, Cholesky halves, amplitudes) may carry
-    the zarr v2 filter `{"id": "luxar_delta_v1", "cols", "bits"}`: per-axis
+  - Quantized code arrays (coordinates, Cholesky halves, amplitudes, colors)
+    may carry the zarr v2 filter `{"id": "luxar_delta_v1", "cols", "bits"}`: per-axis
     modular delta + zigzag residuals, column-major within each chunk, under
     the unchanged Blosc policy. Lossless and probe-gated at encode time (one
     representative chunk compressed both ways; applied only where it wins) —

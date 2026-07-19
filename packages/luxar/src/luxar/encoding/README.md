@@ -649,7 +649,7 @@ value = encoded / 255.0
 
 ### 5. Delta Pre-Filter (`_encoders/delta_codec.py`)
 
-Quantized code arrays (coordinates, Cholesky halves, amplitudes) may carry the
+Quantized code arrays (coordinates, Cholesky halves, amplitudes, colors) may carry the
 `luxar_delta_v1` **zarr filter**: columnar per-chunk modular delta + zigzag on
 the uint8/uint16 codes, applied below the encoding layer (the `encoding` attrs
 and all decode kernels are untouched — zarr/zarrita undoes the filter when

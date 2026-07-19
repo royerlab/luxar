@@ -121,6 +121,33 @@ class TestRoundTrip:
         assert (codec.cols, codec.bits) == (4, 8)
 
 
+class TestPropertyRoundTrip:
+    """Hypothesis property: decode(encode(x)) == x for ALL valid inputs."""
+
+    @pytest.mark.parametrize("bits", [8, 16])
+    def test_round_trip_law(self, bits):
+        from hypothesis import given, settings
+        from hypothesis import strategies as st_
+
+        dt = np.uint8 if bits == 8 else np.uint16
+        levels = 1 << bits
+
+        @settings(max_examples=200, deadline=None)
+        @given(
+            cols=st_.integers(min_value=1, max_value=8),
+            rows=st_.integers(min_value=0, max_value=300),
+            seed=st_.integers(min_value=0, max_value=2**31),
+        )
+        def check(cols, rows, seed):
+            rng = np.random.default_rng(seed)
+            codes = rng.integers(0, levels, size=(rows, cols)).astype(dt)
+            codec = LuxarDelta(cols=cols, bits=bits)
+            round_tripped = np.asarray(codec.decode(codec.encode(codes)))
+            np.testing.assert_array_equal(round_tripped.reshape(codes.shape), codes)
+
+        check()
+
+
 class TestValidation:
     def test_bad_params(self):
         with pytest.raises(ValueError):
@@ -310,6 +337,40 @@ class TestEncoderIntegration:
         ] == "luxar_delta_v1"
         dec = ArrayDecoder().decode(arr, g)
         np.testing.assert_allclose(dec, amp, rtol=2e-3)
+
+    def test_sdr_colors_get_delta_and_decode_identically(self):
+        from luxar.encoding.decoder import ArrayDecoder
+        from luxar.encoding.semantic_types import SemanticType
+
+        rng = np.random.default_rng(21)
+        # Spatially coherent colors (smooth walk in [0, 1] per channel).
+        walk = np.cumsum(rng.normal(0.0, 0.01, size=(30000, 3)), axis=0)
+        lo, hi = walk.min(axis=0), walk.max(axis=0)
+        colors = ((walk - lo) / (hi - lo)).astype(np.float32)
+        g = self._encode(colors, SemanticType.COLOR, chunks=(8192, 3), color_mode="sdr")
+        arr = g["a"]
+        assert arr.attrs["encoding"]["name"] == "rgb_uint8"
+        assert (arr.filters or []) and arr.filters[0].get_config()[
+            "id"
+        ] == "luxar_delta_v1"
+        dec = ArrayDecoder().decode(arr, g)
+        np.testing.assert_allclose(dec, colors, atol=1.5 / 255)
+
+    def test_hdr_colors_get_delta_and_decode_identically(self):
+        from luxar.encoding.decoder import ArrayDecoder
+        from luxar.encoding.semantic_types import SemanticType
+
+        rng = np.random.default_rng(22)
+        walk = np.cumsum(rng.normal(0.0, 0.01, size=(30000, 3)), axis=0)
+        hdr = np.exp(walk - walk.min(axis=0) + 0.1).astype(np.float32) * 50
+        g = self._encode(hdr, SemanticType.COLOR, chunks=(8192, 3), color_mode="hdr")
+        arr = g["a"]
+        assert arr.attrs["encoding"]["name"] == "geolog_perchannel_u16"
+        assert (arr.filters or []) and arr.filters[0].get_config()[
+            "id"
+        ] == "luxar_delta_v1"
+        dec = ArrayDecoder().decode(arr, g)
+        np.testing.assert_allclose(dec, hdr, rtol=2e-3)
 
     def test_float32_fallback_never_delta(self):
         from luxar.encoding.semantic_types import SemanticType

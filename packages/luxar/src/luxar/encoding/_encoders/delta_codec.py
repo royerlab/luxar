@@ -1,6 +1,6 @@
 """Columnar per-chunk delta+zigzag pre-filter for quantized code arrays.
 
-Luxar stores coordinate / Cholesky / amplitude arrays as Hilbert-ordered
+Luxar stores coordinate / Cholesky / amplitude / color arrays as Hilbert-ordered
 uint8/uint16 quantization codes. Spatial ordering makes consecutive codes a
 smooth ramp, but Blosc's byte-shuffle cannot exploit that smoothness. This
 zarr v2 **filter** turns the ramp into small residuals — per-axis modular
