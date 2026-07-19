@@ -582,7 +582,7 @@ def main() -> None:
     # Load the precomputed base fit (or re-fit on --recompute).
     precomputed = load_precomputed_gsplats(
         "gsplats_tribolium",
-        ["tribolium_gsplats.gsplats.zarr.zip"],
+        ["tribolium.gsplats.zarr.zip"],
         recompute=RECOMPUTE,
     )
     if precomputed is not None:

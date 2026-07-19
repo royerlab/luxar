@@ -109,7 +109,7 @@ Use --recompute to re-fit from scratch (requires network + GPU).
 
 Output:
     - Scene saved to: demos/gsplats_3d_organoid_dapi_nuclei.luxar.zarr
-    - Cache saved to: ~/.cache/luxar/gsplats_dapi/dapi_gsplats.gsplats.zarr.zip
+    - Cache saved to: ~/.cache/luxar/gsplats_dapi/dapi.gsplats.zarr.zip
     - Automatically opens in browser at http://localhost:8000
 
 Controls:
@@ -162,7 +162,7 @@ DEVICE = None  # Auto-detect (cuda/mps/cpu)
 
 # Cache paths (use user cache directory for intermediate fit results)
 CACHE_DIR = Path.home() / ".cache" / "luxar" / "gsplats_dapi"
-CACHE_FILE = CACHE_DIR / "dapi_gsplats.gsplats.zarr.zip"
+CACHE_FILE = CACHE_DIR / "dapi.gsplats.zarr.zip"
 
 # Parse command line flags
 FLAGS = parse_demo_flags()
@@ -540,7 +540,7 @@ def main():
 
     precomputed = load_precomputed_gsplats(
         "gsplats_dapi",
-        ["dapi_gsplats.gsplats.zarr.zip"],
+        ["dapi.gsplats.zarr.zip"],
         recompute=RECOMPUTE,
     )
 

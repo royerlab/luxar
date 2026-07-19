@@ -126,7 +126,7 @@ with asection("C. elegans — Contribution-Based Culling Demo"):
 
     gsplats_list = load_precomputed_bundle(
         "gsplats_celegans",
-        "celegans_s1_gsplats.zip",
+        "celegans_s1.gsplats.zarr.zip",
         file_names,
     )
     if gsplats_list is None:
