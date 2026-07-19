@@ -313,9 +313,17 @@ class TestCompilerIntegration:
                 compiler.write_gsplats(
                     "bad_gs", positions, amplitudes, cholesky, blending_mode="bogus"
                 )
+            with pytest.raises(ValueError, match="Invalid blending mode"):
+                compiler.write_group("bad_grp", blending_mode="bogus")
+            with pytest.raises(ValueError, match="Invalid blending mode"):
+                compiler.write_points_multi_lod(
+                    "bad_ml",
+                    [{"positions": positions}],
+                    blending_mode="bogus",
+                )
 
         store = zarr.open_group(output_path, mode="r")
-        for leaf in ("bad_pts", "bad_lns", "bad_gs"):
+        for leaf in ("bad_pts", "bad_lns", "bad_gs", "bad_grp", "bad_ml"):
             assert leaf not in store, f"partial node {leaf} left on disk"
 
     def test_memory_efficiency(self, tmp_path) -> None:
