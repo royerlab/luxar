@@ -76,7 +76,7 @@ Cross-cutting keyword arguments shared by the leaf adders:
 - `extend_to_all` — visibility extension across non-displayed dimensions.
 - `partition` — spatial-decomposition control (see below).
 - `**attrs` — node attributes such as `layer`, `visible`, `opacity`,
-  `intensity`, `gamma`, `blending_mode`, `colormap`.
+  `absorption`, `intensity`, `gamma`, `blending_mode`, `colormap`.
 
 ```python
 # A group can add data directly
@@ -142,8 +142,8 @@ Pure data operations (no `Group`/`Node` references) shared by the partition and
 LOD wrapper builders:
 
 - `COMPOSITING_ATTRS` — frozenset of attribute names (`transform`, `opacity`,
-  `gamma`, `intensity`, `offset`, `blending_mode`, `layer`, `visible`,
-  `nd_transform`) that ride on the wrapper `Group` rather than being copied onto
+  `absorption`, `gamma`, `intensity`, `offset`, `blending_mode`, `layer`,
+  `visible`, `nd_transform`) that ride on the wrapper `Group` rather than being copied onto
   each child; compositing semantics flow down to children via Group inheritance
   at render time. `colormap` and `truncation_radius` are deliberately excluded —
   they are auto-defaulted per leaf and would otherwise shadow a parent under

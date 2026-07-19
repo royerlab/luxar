@@ -39,7 +39,7 @@ Simple type aliases for improved readability.
 Enumeration types and configuration classes.
 
 **Key Enums:**
-- `BlendingMode`: Rendering blend modes (normal, additive, max, opaque, luminous)
+- `BlendingMode`: Rendering blend modes (normal, additive, max, opaque, luminous, volumetric)
 - `NodeType`: Scene graph node types (scene, group, points, lines, gsplats)
 - `PhysicalUnit`: Supported physical units (nm, um, mm, etc.)
 
@@ -54,7 +54,7 @@ Constant values used throughout Luxar.
 
 **Categories:**
 - **Version**: `LUXAR_VERSION_CURRENT`, `DEFAULT_ZARR_VERSION`
-- **Rendering**: `OPACITY_MIN/MAX`, `GAMMA_MIN/MAX`, `DEFAULT_BLENDING_MODE`, `SHARPNESS_MIN/MAX`
+- **Rendering**: `OPACITY_MIN/MAX`, `ABSORPTION_MIN`/`DEFAULT_ABSORPTION`, `GAMMA_MIN/MAX`, `DEFAULT_BLENDING_MODE`, `SHARPNESS_MIN/MAX`
 - **Chunks**: `TARGET_CHUNK_BYTES`, `MIN_CHUNK_BYTES`, `MAX_CHUNK_BYTES` (byte-based single source of truth). Legacy element-count constants (`CHUNK_SIZE_*`, `DEFAULT_CHUNK_SIZE`) have been removed; use the byte-based names directly.
 - **Memory**: `KB_TO_BYTES`, `MB_TO_BYTES`, `GB_TO_BYTES`
 - **Limits**: `MAX_POINTS_RECOMMENDED`, `MAX_POINTS_WARNING`, `MIN_POINT_RADIUS`, `MAX_POINT_RADIUS`

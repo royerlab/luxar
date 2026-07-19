@@ -192,7 +192,7 @@ fitted.gsplats.zarr/
 ├── .zattrs          # type: "gsplats", n_splats, ndim, has_colors,
 │                    #   ordering, ordering_min/max/bits, chunk_size,
 │                    #   amplitude_range, center_bounds, position_bounds,
-│                    #   truncation_radius, opacity/gamma/intensity/offset,
+│                    #   truncation_radius, opacity/absorption/gamma/intensity/offset,
 │                    #   blending_mode (only when explicitly set; unset ⇒
 │                    #   inherited from nearest ancestor, viewer default
 │                    #   "additive"),

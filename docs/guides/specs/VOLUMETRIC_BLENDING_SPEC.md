@@ -1,14 +1,26 @@
 # Volumetric Blending Mode — Emission–Absorption Compositing
 
-> **Status**: Phase 1 IN PROGRESS (this PR). Design settled 2026-07-19 (mode
-> name, κ semantics, opacity-scales-density rule, per-splat weights
-> spec'd-but-deferred, gsplats-first phasing). All file/line references verified
-> against main `38c6eb19`. Pre-implementation review corrections (2026-07-19):
-> the TSL output branch is BUILD-TIME, so additive↔volumetric DOES require a
-> graph rebuild (§5.4, risk #6); layer-state κ inits from the RAW attr (§5.5);
-> phase-1 points/lines get an additive-state fallback (§5.1); the additive-ladder
-> energy compensation does NOT apply to volumetric in phase 1 (§6); E2E expected
-> blend state needs a per-geometry split (§8).
+> **Status**: **Phase 1 IMPLEMENTED** (this PR, 2026-07-19): gsplats +
+> node-level κ, exactly per §4/§5 with the pre-implementation corrections
+> below. Implementation deltas vs the text: (a) the layers-panel κ slider is
+> additionally gated to gsplat/group layers (not just the volumetric mode) so
+> points/lines never show a dead control; (b) `LabeledSlider` grew a
+> `setVisible()` for the mode-conditional control; (c) both material
+> `clone()`s round-trip `absorption` (the panel clones on ANY first
+> interaction — a clone that reset κ to 1.0 was caught in review); (d) the
+> S(τ) quotient divisor is guarded `max(τ, 1e-20)` on BOTH backends (GPU
+> selects evaluate both lanes); (e) E2E I1 compares sampled pixels within one
+> page session at per-sample tolerance ≤6/765 (TAA/dither headroom), not
+> bit-exact screenshots. Phases 2–4 (per-splat weights, points, lines) remain
+> open. Design settled 2026-07-19 (mode name, κ semantics,
+> opacity-scales-density rule, per-splat weights spec'd-but-deferred,
+> gsplats-first phasing). File/line references were verified against main
+> `38c6eb19` at design time. Pre-implementation review corrections
+> (2026-07-19): the TSL output branch is BUILD-TIME, so additive↔volumetric
+> DOES require a graph rebuild (§5.4, risk #6); layer-state κ inits from the
+> RAW attr (§5.5); phase-1 points/lines get an additive-state fallback (§5.1);
+> the additive-ladder energy compensation does NOT apply to volumetric in
+> phase 1 (§6); E2E expected blend state needs a per-geometry split (§8).
 > **Scope**: A 6th blending mode, `volumetric`, spanning Python (enum, validation,
 > node attr, default stamping), the viewer (mode SSOT, blend state, composition,
 > shaders GLSL+TSL, depth-sort gating, layers-panel UI), and — in later phases —

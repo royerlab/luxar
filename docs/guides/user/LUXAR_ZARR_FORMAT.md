@@ -231,10 +231,11 @@ Group nodes organize the scene hierarchy and can contain child nodes.
     "Channel": {"permutation": [2, 1, 0]}
   },
   "opacity": 1.0,           // 0.0-1.0, inherited by children
+  "absorption": 1.0,       // volumetric mode's kappa (>= 0, default 1.0; multiplicative)
   "gamma": 1.0,            // 0.1-10.0, per-node gamma correction
   "intensity": 1.0,        // 0.0-100.0, per-node linear color multiplier (gain)
   "offset": 0.0,           // -10.0-10.0, per-node additive brightness shift (black level)
-  "blending_mode": "additive",  // normal, additive, max, opaque, luminous — written
+  "blending_mode": "additive",  // normal, additive, max, opaque, luminous, volumetric — written
                            //   only when explicitly set; unset ⇒ inherited from the
                            //   nearest ancestor that sets it (viewer default: additive)
   "layer": false,          // Optional: if true, node appears in the viewer's Layers panel
@@ -301,6 +302,7 @@ default (the finest level the `.centers` accessor returns).
   "transform": [1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1],
   "nd_transform": { ... },    // Optional, same shape as on plain Group nodes
   "opacity": 1.0,             // Compositing — inherited by children
+  "absorption": 1.0,          // volumetric mode's kappa (>= 0, default 1.0; multiplicative)
   "gamma": 1.0,
   "intensity": 1.0,
   "offset": 0.0,
@@ -374,6 +376,7 @@ directly (`?src=<file>.gsplats.zarr`) and frames on `position_bounds`. The
   "transform": [1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1],
   "nd_transform": { ... },      // Optional, same shape as on plain Group nodes
   "opacity": 1.0,
+  "absorption": 1.0,            // volumetric mode's kappa (>= 0, default 1.0; multiplicative)
   "gamma": 1.0,
   "intensity": 1.0,
   "offset": 0.0,
@@ -483,11 +486,12 @@ Points nodes contain the actual point data.
     "Time": {"scale": 0.001, "offset": 50.0}              //   for non-displayed dimensions
   },
   "opacity": 1.0,
+  "absorption": 1.0,       // volumetric mode's kappa (>= 0, default 1.0; multiplicative)
   "gamma": 1.0,
   "intensity": 1.0,
   "offset": 0.0,
-  "blending_mode": "additive",  // or "normal", "max", "opaque", "luminous" — written
-                           //   only when explicitly set (unset ⇒ inherited)
+  "blending_mode": "additive",  // or "normal", "max", "opaque", "luminous", "volumetric" —
+                           //   written only when explicitly set (unset ⇒ inherited)
   "layer": false,          // Optional: if true, node appears in the viewer's Layers panel
   "visible": true,         // Optional: initial visibility when the scene loads (default true)
   "n_points": 10000,
@@ -593,7 +597,7 @@ choice is recorded in `original_line_type`.
   "ordering": "hilbert",             // or "morton" / "none"
   "vertex_ordering": { ... },        // Vertex spatial-index metadata (D-space)
   "segment_ordering": { ... },       // Segment spatial-index metadata (2×D-space)
-  /* transform, nd_transform, opacity, gamma, intensity, offset,
+  /* transform, nd_transform, opacity, absorption, gamma, intensity, offset,
      blending_mode, layer, visible — same as Points */
 }
 ```
@@ -697,8 +701,8 @@ uses the correct value.
 Any scene-graph node — `points`, `lines`, `gsplats`, or a container `group` —
 may be exposed as a layer in the viewer's Layers panel by setting
 `layer: true` in its zarr attrs. The panel (toggled with **L**) provides
-per-layer visibility, display-range, gamma, opacity, blending mode, and
-colormap controls.
+per-layer visibility, display-range, gamma, opacity, absorption (volumetric
+mode's κ), blending mode, and colormap controls.
 
 ```javascript
 {
@@ -728,7 +732,8 @@ eye icon in the panel and is **not** persisted back to zarr.
 
 Rendering attributes compose along the scene graph (root → leaf):
 
-- `opacity`, `gamma`, `intensity` — multiplied
+- `opacity`, `absorption`, `gamma`, `intensity` — multiplied (`absorption`
+  has identity 1.0, is floored at 0, and has no upper clamp)
 - `offset` — summed
 - `blending_mode` — the nearest ancestor that sets it wins
 

@@ -153,7 +153,7 @@ Base class for all scene graph nodes. `Node` lives in its own subpackage
 **Key Features:**
 - Hierarchical parent-child relationships
 - Transform support (4x4 matrices)
-- Rendering properties (opacity, gamma, intensity, offset, blending mode)
+- Rendering properties (opacity, absorption, gamma, intensity, offset, blending mode)
 - Progressive writing without keeping Zarr groups in memory
 
 **Usage Example:**
@@ -177,10 +177,11 @@ group.set_opacity(0.5).set_gamma(1.0).set_intensity(2.0).set_blending_mode('addi
 - `transform` - 4x4 transformation matrix
 - `nd_transform` - Per-dimension transforms on non-displayed dimensions (see below)
 - `opacity` - Rendering opacity (0.0-1.0)
+- `absorption` - Volumetric absorption κ (>= 0.0, default 1.0; read only by the 'volumetric' mode)
 - `gamma` - Gamma correction (0.1-10.0)
 - `intensity` - Per-node color multiplier (0.0-100.0, default 1.0)
 - `offset` - Per-node color offset (-10.0 to 10.0, default 0.0)
-- `blending_mode` - Blending mode ('normal', 'additive', 'max', 'opaque', 'luminous')
+- `blending_mode` - Blending mode ('normal', 'additive', 'max', 'opaque', 'luminous', 'volumetric')
 - `colormap` - Colormap name or LUT array (string names only via property setter)
 - `layer` - Whether this node appears in the viewer's Layers panel
 - `children` - List of child nodes
