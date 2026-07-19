@@ -27,6 +27,7 @@ import {
   writeSplatTexels,
   registerSplatTexelDirtyRange,
   writeSortedIndexIdentity,
+  writeSortedIndexIdentityRange,
   writeSortedIndexOrdering,
   type SplatTexelSource,
 } from '../../../rendering/gsplat-geometry';
@@ -217,13 +218,70 @@ describe('attachSplatStorage / writeSplatTexels — fused writer round-trip', ()
     const ranges = texture.updateRanges;
     for (const r of ranges) {
       expect(r.count).toBeLessThanOrEqual(rowFloats);
-      expect(Math.floor(r.start / rowFloats)).toBe(
-        Math.floor((r.start + r.count - 1) / rowFloats)
-      );
+      expect(Math.floor(r.start / rowFloats)).toBe(Math.floor((r.start + r.count - 1) / rowFloats));
     }
     // With the texture width (8) it's 2 rows; the buggy global-width (4096)
     // path would emit a single 64-float range straddling both rows.
     expect(ranges.length).toBe(2);
+  });
+
+  it('writeSplatTexels({fromSplat}) writes ONLY the suffix, leaving prefix texels untouched (Stage 2 append)', () => {
+    // Narrow width → multiple rows so the appended suffix lands on its own
+    // row rather than hitting the single-row full-upload fallback.
+    configureSplatTextureLayout(8); // rowFloats 32, 2 splats/row
+    const geometry = new THREE.InstancedBufferGeometry();
+    const texture = attachSplatStorage(geometry, 8); // 8 splats → 4 rows
+    const arr = texture.image.data as Float32Array;
+    // Full write establishes the prefix, then mark a sentinel on splat 2's
+    // center.x so we can prove the append pass never touches it.
+    writeSplatTexels(texture, makeSource(6), 6);
+    const sentinel = -12345;
+    arr[2 * SPLAT_FLOATS_PER_SPLAT] = sentinel;
+    texture.clearUpdateRanges();
+
+    // Append: source is FULL-LENGTH (6), write only splats [4, 6) = row 2.
+    const src = makeSource(6);
+    const written = writeSplatTexels(texture, src, 6, { fromSplat: 4 });
+    expect(written).toBe(6);
+    // Prefix sentinel survived — texels [0,4) were not rewritten.
+    expect(arr[2 * SPLAT_FLOATS_PER_SPLAT]).toBe(sentinel);
+    // Suffix texels [4,6) hold the new values.
+    for (let i = 4; i < 6; i++) {
+      expect(arr[i * SPLAT_FLOATS_PER_SPLAT]).toBe(src.centers[i * 3]);
+    }
+    // The dirty range starts at splat 4, not 0 — prefix rows never upload.
+    const union = texture.updateRanges;
+    expect(union.length).toBeGreaterThan(0);
+    const minStart = Math.min(...union.map((r) => r.start));
+    expect(minStart).toBe(4 * SPLAT_FLOATS_PER_SPLAT);
+  });
+
+  it('writeSplatTexels({fromSplat: 0}) and omitted opts are byte-identical (regression)', () => {
+    const g1 = new THREE.InstancedBufferGeometry();
+    const g2 = new THREE.InstancedBufferGeometry();
+    const t1 = attachSplatStorage(g1, 8);
+    const t2 = attachSplatStorage(g2, 8);
+    writeSplatTexels(t1, makeSource(6), 6);
+    writeSplatTexels(t2, makeSource(6), 6, { fromSplat: 0 });
+    expect(Array.from(t2.image.data as Float32Array)).toEqual(
+      Array.from(t1.image.data as Float32Array)
+    );
+  });
+
+  it('writeSortedIndexIdentityRange appends identity for the suffix, preserving the prefix permutation', () => {
+    const geometry = new THREE.InstancedBufferGeometry();
+    attachSplatStorage(geometry, 16);
+    // Prefix carries a real depth-sort permutation over [0,4).
+    writeSortedIndexOrdering(geometry, new Uint32Array([3, 2, 1, 0]), 4);
+    const attr = geometry.getAttribute('aSortedIndex') as THREE.InstancedBufferAttribute;
+    const arr = attr.array as Uint32Array;
+    // Append identity for [4, 8): prefix permutation stays, suffix = identity.
+    writeSortedIndexIdentityRange(geometry, 4, 8);
+    expect(Array.from(arr.subarray(0, 8))).toEqual([3, 2, 1, 0, 4, 5, 6, 7]);
+    // Collapsed to a single [0, count) range (index buffer is tiny).
+    expect(attr.updateRanges.length).toBe(1);
+    expect(attr.updateRanges[0].start).toBe(0);
+    expect(attr.updateRanges[0].count).toBe(8);
   });
 
   it('throws on source arrays shorter than the requested count (fail-loud contract)', () => {
@@ -459,6 +517,35 @@ describe('pool adapter — growth, dispose, byte accounting', () => {
     // Without the flag the identity reset is restored (default behavior).
     pool.updateGSplatsGeometry(geom, packed(src.amplitudes), 4);
     expect(Array.from(ordering.subarray(0, 4))).toEqual([0, 1, 2, 3]);
+  });
+
+  it('fromSplat append: writes only the suffix texels, extends aSortedIndex, keeps the prefix permutation', () => {
+    const geom = pool.acquireGSplatsGeometry('node', 16);
+    const src6 = makeSource(6);
+    const packed = (s: SplatTexelSource, count: number) => ({
+      centers3D: s.centers.subarray(0, count * 3),
+      amplitudes: s.amplitudes.subarray(0, count),
+      cholesky01: s.cholesky01.subarray(0, count * 2),
+      cholesky23: s.cholesky23.subarray(0, count * 2),
+      cholesky45: s.cholesky45.subarray(0, count * 2),
+      colors: s.colors.subarray(0, count * 3),
+    });
+    // Prefix commit of 4 splats, then a real permutation lands on it.
+    pool.updateGSplatsGeometry(geom, packed(src6, 4), 4);
+    writeSortedIndexOrdering(geom, new Uint32Array([3, 2, 1, 0]), 4);
+    const texels = getSplatTexture(geom)!.image.data as Float32Array;
+    const sentinel = -999;
+    texels[0] = sentinel; // splat 0 center.x — must survive the append
+
+    // Append to 6 splats: fromSplat = 4 → only [4,6) rewritten.
+    pool.updateGSplatsGeometry(geom, packed(src6, 6), 6, 3.0, { fromSplat: 4 });
+    expect(geom.instanceCount).toBe(6);
+    expect(texels[0]).toBe(sentinel); // prefix texels untouched
+    // Suffix splat 5 center.x written.
+    expect(texels[5 * SPLAT_FLOATS_PER_SPLAT]).toBe(src6.centers[15]);
+    // Prefix permutation preserved; suffix gets identity.
+    const ordering = geom.getAttribute('aSortedIndex').array as Uint32Array;
+    expect(Array.from(ordering.subarray(0, 6))).toEqual([3, 2, 1, 0, 4, 5]);
   });
 });
 
