@@ -15,6 +15,7 @@ class TestNodeRenderingAttributes:
             node = scene.add_group("test_node")
 
         assert node.opacity == 1.0
+        assert node.absorption == 1.0
         assert node.gamma == 1.0
         assert node.blending_mode == "additive"
 
@@ -58,6 +59,49 @@ class TestNodeRenderingAttributes:
 
         with pytest.raises(TypeError, match="Opacity must be convertible to float"):
             node.opacity = "invalid"
+
+    def test_absorption_getter_setter(self, tmp_path) -> None:
+        """Test absorption property getter and setter (mutations inside context)."""
+        with LuxarZarrCompiler(tmp_path / "test.luxar.zarr") as compiler:
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+            node = scene.add_group("test_node")
+
+            # CL-2: must run before finalize.
+            node.absorption = 0.5
+            assert node.absorption == 0.5
+            assert node.attrs["absorption"] == 0.5
+
+            # Edge cases: 0 (additive limit) and large (no upper bound)
+            node.absorption = 0.0
+            assert node.absorption == 0.0
+
+            node.absorption = 100.0
+            assert node.absorption == 100.0
+
+            # Type conversion
+            node.absorption = 2
+            assert node.absorption == 2.0
+
+            node.absorption = "0.3"
+            assert node.absorption == 0.3
+
+    def test_absorption_validation(self, tmp_path) -> None:
+        """Test absorption validation."""
+        with LuxarZarrCompiler(tmp_path / "test.luxar.zarr") as compiler:
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+            node = scene.add_group("test_node")
+
+        with pytest.raises(ValueError, match="Absorption must be >= 0"):
+            node.absorption = -0.1
+
+        with pytest.raises(ValueError, match="Absorption must be finite"):
+            node.absorption = float("nan")
+
+        with pytest.raises(ValueError, match="Absorption must be finite"):
+            node.absorption = float("inf")
+
+        with pytest.raises(TypeError, match="Absorption must be convertible to float"):
+            node.absorption = "invalid"
 
     def test_gamma_getter_setter(self, tmp_path) -> None:
         """Test gamma property getter and setter (mutations inside context)."""
@@ -107,7 +151,14 @@ class TestNodeRenderingAttributes:
             node = scene.add_group("test_node")
 
             # CL-2: must run before finalize.
-            for mode in ["normal", "additive", "max", "opaque", "luminous"]:
+            for mode in [
+                "normal",
+                "additive",
+                "max",
+                "opaque",
+                "luminous",
+                "volumetric",
+            ]:
                 node.blending_mode = mode
                 assert node.blending_mode == mode
                 assert node.attrs["blending_mode"] == mode
@@ -138,13 +189,18 @@ class TestNodeRenderingAttributes:
         with LuxarZarrCompiler(store_path) as compiler:
             scene = compiler.create_scene(dimensions=Dimensions.default_3d())
             scene.add_group(
-                "test_node", opacity=0.7, gamma=1.5, blending_mode="additive"
+                "test_node",
+                opacity=0.7,
+                absorption=2.0,
+                gamma=1.5,
+                blending_mode="additive",
             )
 
         # Check that attributes are written to zarr
         store = zarr.open_group(store_path, mode="r")
         test_node_attrs = store["test_node"].attrs
         assert test_node_attrs.get("opacity") == 0.7
+        assert test_node_attrs.get("absorption") == 2.0
         assert test_node_attrs.get("gamma") == 1.5
         assert test_node_attrs.get("blending_mode") == "additive"
 
@@ -160,13 +216,19 @@ class TestNodeRenderingAttributes:
 
             # Add points with custom rendering attributes
             compiler.write_points(
-                "test_points", positions, opacity=0.5, gamma=1.2, blending_mode="normal"
+                "test_points",
+                positions,
+                opacity=0.5,
+                absorption=0.25,
+                gamma=1.2,
+                blending_mode="normal",
             )
 
         # Check attributes were written to zarr
         store = zarr.open_group(store_path, mode="r")
         test_points_attrs = store["test_points"].attrs
         assert test_points_attrs.get("opacity") == 0.5
+        assert test_points_attrs.get("absorption") == 0.25
         assert test_points_attrs.get("gamma") == 1.2
         assert test_points_attrs.get("blending_mode") == "normal"
 

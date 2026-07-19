@@ -121,6 +121,11 @@ class Node:
 
                 attrs["offset"] = validate_offset(attrs["offset"])
 
+            if "absorption" in attrs:
+                from ...validation.types import validate_absorption
+
+                attrs["absorption"] = validate_absorption(attrs["absorption"])
+
             if "blending_mode" in attrs:
                 from ...validation.types import validate_blending_mode
 
@@ -575,6 +580,37 @@ class Node:
         self._persist_attr("opacity", validate_opacity(value))
 
     @property
+    def absorption(self) -> float:
+        """Get the absorption coefficient (volumetric kappa) for this node.
+
+        Only read by the ``volumetric`` blending mode: it scales how strongly
+        this node's content attenuates what is behind it (kappa = 0 renders
+        exactly like ``additive``). Composes multiplicatively down the scene
+        graph with identity 1.0, like opacity.
+
+        Returns:
+            Absorption coefficient (>= 0), defaults to 1.0 if not set
+        """
+        return float(self.attrs.get("absorption", 1.0))
+
+    @absorption.setter
+    def absorption(self, value: Any) -> None:
+        """Set the absorption coefficient (volumetric kappa) for this node.
+
+        Changes are persisted to zarr immediately if a writer is available.
+
+        Args:
+            value: Absorption coefficient (>= 0, finite)
+
+        Raises:
+            ValueError: If absorption is negative, NaN, or infinite
+            TypeError: If absorption cannot be converted to float
+        """
+        from ...validation.types import validate_absorption
+
+        self._persist_attr("absorption", validate_absorption(value))
+
+    @property
     def gamma(self) -> float:
         """Get the gamma value for this node.
 
@@ -658,7 +694,8 @@ class Node:
 
         Returns:
             Blending mode string, defaults to "additive" if not set.
-            Valid modes: "normal", "additive", "max", "opaque", "luminous"
+            Valid modes: "normal", "additive", "max", "opaque", "luminous",
+            "volumetric"
         """
         from ...typing_utils.constants import DEFAULT_BLENDING_MODE
 
@@ -677,6 +714,8 @@ class Node:
                 - "max": Maximum of source and destination (brightest wins)
                 - "opaque": Solid rendering with depth write (closest wins)
                 - "luminous": Same as additive visually, but respects depth occlusion
+                - "volumetric": Emission-absorption — adds light AND absorbs
+                  what's behind, scaled by the ``absorption`` (kappa) attr
 
         Raises:
             ValueError: If blending mode is not valid
@@ -696,6 +735,18 @@ class Node:
             Self for method chaining
         """
         self.opacity = value
+        return self
+
+    def set_absorption(self, value: Any) -> "Node":
+        """Set absorption (volumetric kappa) and return self for chaining.
+
+        Args:
+            value: Absorption coefficient (>= 0, finite)
+
+        Returns:
+            Self for method chaining
+        """
+        self.absorption = value
         return self
 
     def set_gamma(self, value: Any) -> "Node":
@@ -744,6 +795,8 @@ class Node:
                 - "max": Maximum of source and destination (brightest wins)
                 - "opaque": Solid rendering with depth write (closest wins)
                 - "luminous": Same as additive visually, but respects depth occlusion
+                - "volumetric": Emission-absorption — adds light AND absorbs
+                  what's behind, scaled by the ``absorption`` (kappa) attr
 
         Returns:
             Self for method chaining

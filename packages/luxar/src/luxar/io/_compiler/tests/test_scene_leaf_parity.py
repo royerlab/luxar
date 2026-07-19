@@ -45,6 +45,7 @@ _PARITY_ATTRS = (
     "position_bounds",
     "amplitude_range",
     "opacity",
+    "absorption",
     "gamma",
     "intensity",
     "offset",

@@ -232,6 +232,7 @@ def add_gsplats_from_volume_impl(
     fill: Optional[Dict[str, float]] = None,
     fill_sigma: Optional[Dict[str, float]] = None,
     opacity: Optional[float] = None,
+    absorption: Optional[float] = None,
     blending_mode: Optional[str] = None,
     **fit_kwargs: Any,
 ) -> Union["GSplats", "Group"]:
@@ -282,6 +283,10 @@ def add_gsplats_from_volume_impl(
     scene_attrs: Dict[str, Any] = {}
     if opacity is not None:
         scene_attrs["opacity"] = opacity
+    if absorption is not None:
+        # Multiplicative compositing attr (identity 1.0) — rides
+        # COMPOSITING_ATTRS; no child grafting needed (unlike blending_mode).
+        scene_attrs["absorption"] = absorption
     if blending_mode is not None:
         scene_attrs["blending_mode"] = blending_mode
 

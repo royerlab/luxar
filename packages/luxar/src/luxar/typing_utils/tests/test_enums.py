@@ -23,18 +23,20 @@ class TestBlendingMode:
     """Tests for BlendingMode enum."""
 
     def test_values(self) -> None:
-        """Test that BlendingMode has exactly the 5 expected values."""
+        """Test that BlendingMode has exactly the 6 expected values."""
         assert BlendingMode.NORMAL.value == "normal"
         assert BlendingMode.ADDITIVE.value == "additive"
         assert BlendingMode.MAX.value == "max"
         assert BlendingMode.OPAQUE.value == "opaque"
         assert BlendingMode.LUMINOUS.value == "luminous"
+        assert BlendingMode.VOLUMETRIC.value == "volumetric"
         assert {m.value for m in BlendingMode} == {
             "normal",
             "additive",
             "max",
             "opaque",
             "luminous",
+            "volumetric",
         }
 
     def test_string_construction_all_modes(self) -> None:

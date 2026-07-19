@@ -548,6 +548,7 @@ class Group(Node):
         fill: Optional[Dict[str, float]] = None,
         fill_sigma: Optional[Dict[str, float]] = None,
         opacity: Optional[float] = None,
+        absorption: Optional[float] = None,
         blending_mode: Optional[str] = None,
         **fit_kwargs: Any,
     ) -> Union[GSplats, "Group"]:
@@ -571,8 +572,10 @@ class Group(Node):
             fill: Fixed coordinate values for unmapped dimensions
             fill_sigma: Standard deviations for unmapped dims in Cholesky embedding
             opacity: Node opacity (0.0-1.0)
+            absorption: Absorption coefficient kappa (>= 0) read by the
+                "volumetric" blending mode; kappa=0 renders like additive
             blending_mode: Blending mode ("normal", "additive", "max",
-                "opaque", "luminous")
+                "opaque", "luminous", "volumetric")
             **fit_kwargs: Extra kwargs for fitting function
         """
         from .gsplats_pipeline.from_io import add_gsplats_from_volume_impl
@@ -594,6 +597,7 @@ class Group(Node):
             fill=fill,
             fill_sigma=fill_sigma,
             opacity=opacity,
+            absorption=absorption,
             blending_mode=blending_mode,
             **fit_kwargs,
         )

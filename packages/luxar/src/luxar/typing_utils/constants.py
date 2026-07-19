@@ -32,6 +32,12 @@ DEFAULT_OFFSET: Final[float] = 0.0
 # Blending modes
 DEFAULT_BLENDING_MODE: Final[str] = "additive"
 
+# Absorption (kappa) — the volumetric blending mode's per-node coefficient.
+# Multiplicative composition, identity 1.0; no upper bound (physical
+# coefficient); read only by the volumetric shader branch.
+ABSORPTION_MIN: Final[float] = 0.0
+DEFAULT_ABSORPTION: Final[float] = 1.0
+
 # Sharpness constants.
 # Sharpness is a normalised [0, 1] knob mapped in the viewer to the
 # super-Gaussian falloff exponent beta = 2^(6s - 2): s=0.5 -> beta=2 (a true

@@ -429,6 +429,7 @@ def apply_gsplat_group_attrs(
     # the viewer defaults to "additive".
     for key, default in [
         ("opacity", 1.0),
+        ("absorption", 1.0),
         ("gamma", 1.0),
         ("intensity", 1.0),
         ("offset", 0.0),

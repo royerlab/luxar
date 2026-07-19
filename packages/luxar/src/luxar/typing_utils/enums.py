@@ -17,6 +17,11 @@ class BlendingMode(str, Enum):
     - MAX: Maximum of source and destination (brightest wins)
     - OPAQUE: Solid rendering with depth write (closest object wins)
     - LUMINOUS: Same as additive visually, but respects depth occlusion
+    - VOLUMETRIC: Emission-absorption compositing (Max 1995): adds emitted
+      light AND exponentially attenuates what is behind, scaled by the
+      node's ``absorption`` (kappa) attr; kappa=0 renders exactly like
+      ADDITIVE. GSplats only in phase 1 (points/lines fall back to additive
+      until phases 3-4). See docs/guides/specs/VOLUMETRIC_BLENDING_SPEC.md.
 
     Depth behavior:
     - ADDITIVE: depthTest=false, depthWrite=false (ignores depth entirely)
@@ -27,6 +32,8 @@ class BlendingMode(str, Enum):
       coverage-alpha fragments would punch occlusion halos; see the viewer's
       ``blending-state.ts::getGSplatNormalBlendingState``)
     - MAX: depthTest=true, depthWrite=false
+    - VOLUMETRIC: depthTest=true, depthWrite=false ALWAYS (no opacity
+      threshold); requires back-to-front depth sorting in the viewer
 
     Validation of raw strings lives in
     :func:`luxar.validation.types.validate_blending_mode`, which derives its
@@ -38,6 +45,7 @@ class BlendingMode(str, Enum):
     MAX = "max"  # Maximum of source and destination (brightest wins)
     OPAQUE = "opaque"  # Solid rendering with depth write
     LUMINOUS = "luminous"  # Same visual as additive, but respects depth occlusion
+    VOLUMETRIC = "volumetric"  # Emission-absorption: adds light AND absorbs what's behind
 
 
 class NodeType(str, Enum):
@@ -144,6 +152,7 @@ class RenderingLimits:
 
     OPACITY_MIN = 0.0
     OPACITY_MAX = 1.0
+    ABSORPTION_MIN = 0.0  # No MAX: kappa is an unbounded physical coefficient
     GAMMA_MIN = 0.1  # Symmetric: gamma and 1/gamma have equal range
     GAMMA_MAX = 10.0  # Symmetric: gamma and 1/gamma have equal range
     SHARPNESS_MIN = 0.0  # Normalised [0, 1] knob (mirrors constants.SHARPNESS_MIN)
@@ -161,6 +170,7 @@ class Defaults:
 
     OPACITY = 1.0
     GAMMA = 1.0
+    ABSORPTION = 1.0  # kappa identity: volumetric mode's absorption coefficient
     SHARPNESS = 0.5  # Normalised knob -> super-Gaussian beta = 2 (Gaussian)
     # Blending default lives in typing_utils.constants.DEFAULT_BLENDING_MODE
     CHUNK_SIZE = 32768  # Default chunk size in elements
