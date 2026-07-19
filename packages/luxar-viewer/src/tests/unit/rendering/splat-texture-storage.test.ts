@@ -202,6 +202,30 @@ describe('attachSplatStorage / writeSplatTexels — fused writer round-trip', ()
     expect(ranges[0].count).toBe(32);
   });
 
+  it('splits by the TEXTURE width, not the reconfigured global width (renderer-swap safety)', () => {
+    // Allocate at width 8, then reconfigure the session width (as a
+    // backend/renderer swap does). The dirty-range split must follow the
+    // texture's OWN width (8 → rowFloats 32), or a range would straddle rows
+    // and the WebGL upload would fail with INVALID_VALUE.
+    configureSplatTextureLayout(8);
+    const geometry = new THREE.InstancedBufferGeometry();
+    const texture = attachSplatStorage(geometry, 16); // width 8, 8 rows
+    expect(texture.image.width).toBe(8);
+    configureSplatTextureLayout(4096); // global width now diverges from the texture
+    writeSplatTexels(texture, makeSource(4), 4); // 4 splats = floats [0, 64)
+    const rowFloats = texture.image.width * 4; // 32 — the TEXTURE's stride
+    const ranges = texture.updateRanges;
+    for (const r of ranges) {
+      expect(r.count).toBeLessThanOrEqual(rowFloats);
+      expect(Math.floor(r.start / rowFloats)).toBe(
+        Math.floor((r.start + r.count - 1) / rowFloats)
+      );
+    }
+    // With the texture width (8) it's 2 rows; the buggy global-width (4096)
+    // path would emit a single 64-float range straddling both rows.
+    expect(ranges.length).toBe(2);
+  });
+
   it('throws on source arrays shorter than the requested count (fail-loud contract)', () => {
     const geometry = new THREE.InstancedBufferGeometry();
     const texture = attachSplatStorage(geometry, 8);

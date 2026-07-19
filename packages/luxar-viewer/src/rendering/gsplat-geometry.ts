@@ -72,7 +72,12 @@ export function registerSplatTexelDirtyRange(
   firstSplat: number,
   endSplat: number
 ): void {
-  const rowFloats = getSplatTextureWidth() * 4;
+  // Derive row geometry from the texture's OWN dimensions (both a multiple
+  // of 4 texels by construction — see attachSplatStorage), never the global
+  // `getSplatTextureWidth()`: a renderer/backend swap can reconfigure the
+  // session width while an existing texture keeps its allocated width, and a
+  // mismatch here would split against the wrong row stride and straddle rows.
+  const rowFloats = texture.image.width * 4;
   const totalRows = Math.max(1, texture.image.height);
 
   // Collapse any pending ranges + the new span into one contiguous float
