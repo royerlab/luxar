@@ -124,7 +124,7 @@ export class GSplatPickingTSLMaterial
    * blending: write the real fragment depth so the FRONT-MOST splat
    * wins — matching the depth-sorted occluding surface the user sees.
    * `false` (default) = brightness-as-depth so the BRIGHTEST splat wins
-   * — correct for the commutative modes (additive/max/luminous/opaque).
+   * — correct for the commutative modes (additive/max/luminous).
    * Mirrors the GLSL wrapper's method one-for-one; synced per pick
    * render by `PickingSystem.renderPickBuffer()`.
    */

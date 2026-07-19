@@ -44,7 +44,7 @@
 
 import * as THREE from 'three';
 
-import { type BoundingBox, transformBoundingBox } from './scene-manager/clipping/bounds-math';
+import type { BoundingBox } from './scene-manager/clipping/bounds-math';
 import { log, Modules } from '../utils/log';
 import type { LODGroupSelectorMode } from '../types/lod-group';
 import {
@@ -60,39 +60,19 @@ import {
   subtreeDisplayProgress,
   type ProgressNode,
 } from './lod-display-gate';
-import { coverageBlendPlan, energyCompensation } from './lod-blend';
+import { coverageBlendPlan } from './lod-blend';
+import { applyLodFade, FADE_EPSILON, isBlendableSubtree } from './lod-fade';
+import {
+  computeEntryWorldBox,
+  pickChildWithHysteresis,
+  projectBoxDiagonalPx,
+} from './lod-selector-math';
+import { enforceResidentByteBudget } from './lod-eviction';
 
-/**
- * The subset of a leaf material's surface the LOD cross-fade drives: read the
- * authored opacity as a fade base, write `base × α`, and clone-on-first-use
- * (materials are cached by props, so an in-place write would fade every layer
- * sharing the instance). `getOpacity` is the symmetric companion to
- * `updateOpacity` added to the material classes for exactly this.
- */
-interface FadeableMaterial extends THREE.Material {
-  updateOpacity(opacity: number): void;
-  getOpacity(): number;
-  /**
-   * Present on every Luxar leaf material. Used after a fade opacity
-   * write to re-derive normal mode's opacity-gated depthWrite.
-   */
-  applyBlendingMode?(mode: string): void;
-}
-
-/** True when a material exposes the {@link FadeableMaterial} opacity surface. */
-function isFadeable(mat: THREE.Material): mat is FadeableMaterial {
-  const m = mat as Partial<FadeableMaterial>;
-  return typeof m.updateOpacity === 'function' && typeof m.getOpacity === 'function';
-}
-
-/**
- * Blend modes whose additive/order-independent compositing sums energy linearly
- * in opacity — so both LOD anti-popping mechanisms are brightness-exact there:
- * the coverage cross-fade (mass-conserved levels) and the streaming energy
- * compensation (`1/e(k)`). `max` (a max, not a sum) and `normal` (nonlinear
- * alpha-over) are excluded from both.
- */
-const BLENDABLE_MODES: ReadonlySet<string> = new Set(['additive', 'luminous']);
+// The selector math (box projection + hysteresis pick) lives in
+// `lod-selector-math.ts`; re-exported here so existing importers (the
+// selector unit tests) keep their import site.
+export { pickChildWithHysteresis, projectBoxDiagonalPx } from './lod-selector-math';
 
 /**
  * Cross-fade band half-width as a FRACTION of the local inter-level gap. The two
@@ -106,17 +86,6 @@ const BLENDABLE_MODES: ReadonlySet<string> = new Set(['additive', 'luminous']);
  */
 const CROSSFADE_BAND_FRACTION = 0.4;
 
-/** Below this the finer level's blend weight is treated as 0/1 (single level). */
-const FADE_EPSILON = 0.01;
-
-/**
- * Floor for the streaming brightness-compensation energy fraction `e(k)`: the
- * `1/e(k)` boost is capped at `1/ENERGY_FLOOR` so a tiny early prefix can't
- * over-brighten its (energy-descending, core-heavy) splats into tone-map
- * clipping. 0.1 ⇒ at most a 10× boost. See `energyCompensation`.
- */
-const ENERGY_FLOOR = 0.1;
-
 /**
  * Frames the view-update version must hold steady before the registry reloads a
  * stale fine level (the settle debounce — see `maybeKickReload`). While the
@@ -125,9 +94,6 @@ const ENERGY_FLOOR = 0.1;
  * frames. ~8 frames ≈ 130 ms at 60 fps.
  */
 const FINE_RELOAD_SETTLE_TICKS = 8;
-
-/** Asymmetric hysteresis on the "downgrade to coarser" direction. */
-const HYSTERESIS_RATIO = 0.1;
 
 /**
  * Anchor for the viewport-relative ``coverage_fraction`` thresholds: the finest
@@ -260,7 +226,7 @@ export interface LODGroupEntry {
    * during a never-downgrade hold it can also point at a FINER
    * previously-displayed level while a coarser streaming aspiration catches
    * up. A per-frame transient written by ``evaluateEntry`` and read by
-   * ``enforceResidentByteBudget`` (same synchronous ``evaluatePerFrame`` pass)
+   * ``enforceByteBudget`` (same synchronous ``evaluatePerFrame`` pass)
    * so eviction never releases the on-screen level. ``undefined`` before the
    * first evaluation ⇒ treated as ``activeChildIndex``. Tracks what is ACTUALLY
    * on screen every frame — including the coarse level shown while the group is
@@ -313,27 +279,18 @@ interface LODGroupEntryCache {
 }
 
 /**
- * Module-scope scratch for ``projectBoxDiagonalPx``'s projection × view
- * product. Single-threaded — ``evaluatePerFrame`` is the only per-frame entry
- * point, so reusing one matrix across all entries within a frame is safe.
- */
-const PROJ_VIEW_SCRATCH = new THREE.Matrix4();
-
-/**
- * Module-scope scratch for the per-frame frustum gate and eviction ranking.
+ * Module-scope scratch for the per-frame frustum gate.
  * ``evaluatePerFrame`` is the single per-frame entry point (no re-entrancy),
  * so these are safe to share across all entries within one frame:
  *   - ``FRUSTUM_SCRATCH`` — rebuilt once per frame from the camera.
  *   - ``FRUSTUM_MATRIX_SCRATCH`` — projection × view product feeding it.
  *   - ``WORLD_BOX3_SCRATCH`` — a ``THREE.Box3`` view of a group's world bbox
  *     for ``frustum.intersectsBox`` (our ``BoundingBox`` is a plain object).
- *   - ``BOX_CENTER_SCRATCH`` / ``CAMERA_POS_SCRATCH`` — eviction distance math.
+ * (The eviction pass keeps its own scratches in ``lod-eviction.ts``.)
  */
 const FRUSTUM_SCRATCH = new THREE.Frustum();
 const FRUSTUM_MATRIX_SCRATCH = new THREE.Matrix4();
 const WORLD_BOX3_SCRATCH = new THREE.Box3();
-const BOX_CENTER_SCRATCH = new THREE.Vector3();
-const CAMERA_POS_SCRATCH = new THREE.Vector3();
 
 /**
  * Injected view-state accessors. Lets the registry stay test-friendly
@@ -422,154 +379,6 @@ export interface LODGroupRegistryDeps {
    * omitted in unit tests (no camera loop).
    */
   registerMaterial?: (material: THREE.Material) => void;
-}
-
-/**
- * Saturation epsilon for ``projectBoxDiagonalPx``'s near-plane guard. When any
- * bbox corner's homogeneous ``w`` (clip-space, ≈ view-space depth in front of
- * the camera) falls to/below this, the perspective divide is already producing
- * exploding/flipped NDC, so the diagonal is meaningless. We trip *before* ``w``
- * crosses zero (hence 1e-6, not ``transformBoundingBox``'s singular-point
- * ``1e-12``) to eliminate the unstable near-plane regime, not just the literal
- * singularity. With identity matrices ``w == 1 ≫ 1e-6``, so this never fires in
- * the identity-camera unit tests.
- */
-const W_EPSILON = 1e-6;
-
-/**
- * Project a world-space :type:`BoundingBox` through the camera and
- * return the diagonal of the screen-space AABB in pixels.
- *
- * Treats the bbox's 8 corners independently (works for both
- * perspective and orthographic projection without a closed-form
- * radius). NDC → pixels assumes the viewport size matches the
- * renderer canvas.
- *
- * **Near-plane saturation.** Projects with an explicit homogeneous ``w`` (the
- * combined ``projectionMatrix * matrixWorldInverse``, not THREE's
- * ``Vector3.project`` which divides by ``w`` unguarded). If any corner has
- * ``w <= W_EPSILON`` — i.e. the camera is inside or straddling the box — the
- * group fills the screen, so we return ``+Infinity`` to saturate the selector
- * to its finest level (``pickChildWithHysteresis`` then picks the top index;
- * the value is never fed to finite arithmetic, so no NaN). This is the inverse
- * of the old behaviour, where a corner crossing behind the near plane
- * *collapsed* the diagonal and wrongly dropped to a coarse level on close
- * approach. Orthographic cameras keep ``w == 1`` and so never saturate.
- *
- * Exported for unit testing.
- */
-export function projectBoxDiagonalPx(
-  box: BoundingBox,
-  camera: THREE.Camera,
-  viewport: { width: number; height: number },
-  precomputedProjView?: THREE.Matrix4
-): number {
-  // Combined projection × view. ``evaluatePerFrame`` already builds this product
-  // once per frame (``FRUSTUM_MATRIX_SCRATCH``) and passes it in via
-  // ``precomputedProjView`` so we don't recompute the 4×4 per group. Standalone
-  // callers (unit tests) omit it and we fall back to a module-scope scratch (no
-  // per-call allocation). Unlike THREE's ``Vector3.project`` this exposes ``w``
-  // so we can guard the near plane. ``evaluatePerFrame`` is the single per-frame
-  // entry point, so sharing the scratch is safe.
-  const m =
-    precomputedProjView ??
-    PROJ_VIEW_SCRATCH.multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse);
-  const e = m.elements; // THREE.Matrix4 is column-major flat[16]
-  let minX = Infinity;
-  let maxX = -Infinity;
-  let minY = Infinity;
-  let maxY = -Infinity;
-  for (let i = 0; i < 8; i++) {
-    const x = i & 1 ? box.max.x : box.min.x;
-    const y = i & 2 ? box.max.y : box.min.y;
-    const z = i & 4 ? box.max.z : box.min.z;
-    // Same column-major indexing as ``transformBoundingBox`` (bounds-math.ts):
-    // w = m[3]*x + m[7]*y + m[11]*z + m[15].
-    const w = e[3] * x + e[7] * y + e[11] * z + e[15];
-    if (w <= W_EPSILON) {
-      // Camera inside / straddling the bbox near plane → group fills the
-      // screen → saturate so the finest child is selected.
-      return Number.POSITIVE_INFINITY;
-    }
-    const ndcX = (e[0] * x + e[4] * y + e[8] * z + e[12]) / w;
-    const ndcY = (e[1] * x + e[5] * y + e[9] * z + e[13]) / w;
-    if (ndcX < minX) minX = ndcX;
-    if (ndcX > maxX) maxX = ndcX;
-    if (ndcY < minY) minY = ndcY;
-    if (ndcY > maxY) maxY = ndcY;
-  }
-  const widthPx = (maxX - minX) * 0.5 * viewport.width;
-  const heightPx = (maxY - minY) * 0.5 * viewport.height;
-  return Math.hypot(widthPx, heightPx);
-}
-
-/**
- * Pick the desired child index given a scalar view ``metric`` and the
- * current active index. Applies 10% asymmetric hysteresis on the
- * downgrade direction.
- *
- * ``metric`` is the dimensionless coverage metric (projected bbox diagonal ÷
- * ``FILL_FACTOR × viewportDiagonal``) and ``thresholds`` are the per-child
- * ``coverage_fraction`` values; both are in the same [0,1]-ish space. The
- * "natural" pick is the finest child whose ``coverageFraction`` is less than or
- * equal to ``metric``. Hysteresis only resists dropping back to a coarser level:
- * when downgrading from index ``currentIdx``, the metric must fall below the
- * current threshold by a margin that is ``hysteresisRatio`` (default 10%) of the
- * GAP to the adjacent coarser threshold — i.e. below
- * ``thresholds[currentIdx] - hysteresisRatio * (thresholds[currentIdx] -
- * thresholds[currentIdx - 1])``; otherwise we stay on the current level
- * even though the natural pick is coarser. (At the bottom level
- * ``thresholds[currentIdx - 1]`` is effectively 0, reducing the margin to
- * ``hysteresisRatio * thresholds[currentIdx]`` — the old isolated-threshold
- * form.) Upgrades to a finer level are immediate (no hysteresis).
- *
- * Exported for unit testing.
- */
-export function pickChildWithHysteresis(
-  thresholds: readonly number[],
-  currentIdx: number,
-  metric: number,
-  hysteresisRatio: number = HYSTERESIS_RATIO
-): number {
-  if (thresholds.length === 0) return -1;
-
-  // Natural pick: finest child with threshold ≤ metric. Thresholds
-  // are monotonic increasing in coarsest→finest order, so scan upward
-  // until the threshold exceeds the metric.
-  let natural = 0;
-  for (let i = 0; i < thresholds.length; i++) {
-    if (thresholds[i] <= metric) natural = i;
-    else break;
-  }
-
-  if (natural === currentIdx) return currentIdx;
-  if (natural > currentIdx) return natural; // upgrade: literal threshold wins
-
-  // Downgrade: require the metric to drop below the current threshold by a
-  // hysteresis margin that is **spacing-aware** — a fraction
-  // (``hysteresisRatio``) of the GAP to the adjacent coarser threshold,
-  // rather than of the current threshold in isolation. For the bottom real
-  // level (coarser threshold 0) the gap equals the threshold, so this
-  // reduces to the original ``currentThreshold * (1 - ratio)`` behaviour.
-  // For tightly-spaced levels (e.g. separated only by the
-  // ``coverage_fractions`` ×1.1 monotonicity nudge) the band shrinks
-  // proportionally, so the deadband never straddles the neighbour — every level still
-  // renders on the way down and the selection can't flip-flop across a band
-  // wider than the inter-level spacing.
-  //
-  // The margin guards only the immediate ``currentIdx → currentIdx - 1``
-  // boundary, but ``natural`` may be several levels coarser. That is correct: a
-  // multi-level drop means the metric fell well past the adjacent band, so the
-  // hysteresis (sized to one inter-level gap) cannot suppress it and we snap
-  // straight to ``natural`` — no flip-flop, because the metric is nowhere near
-  // the band it would need to re-cross to come back up.
-  const currentThreshold = thresholds[currentIdx];
-  const prevThreshold = thresholds[currentIdx - 1]; // currentIdx >= 1 here
-  const margin = hysteresisRatio * (currentThreshold - prevThreshold);
-  if (metric < currentThreshold - margin) {
-    return natural;
-  }
-  return currentIdx;
 }
 
 /**
@@ -817,7 +626,7 @@ export class LODGroupRegistry {
     // re-shows are free; this LRU-evicts only hidden levels when over budget —
     // off-screen / furthest-from-camera first — so no per-swap release, hence
     // no reload churn.
-    this.enforceResidentByteBudget(camera, FRUSTUM_SCRATCH, displayDims);
+    this.enforceByteBudget(camera, FRUSTUM_SCRATCH, displayDims);
     return changed;
   }
 
@@ -1148,14 +957,13 @@ export class LODGroupRegistry {
 
   /**
    * Fold an entry's children nD ``positionBounds`` into a single world-space
-   * :type:`BoundingBox`, mapping nD axes onto X/Y/Z via the current
-   * ``displayDims`` and lifting through the group's ``matrixWorld``. Returns
-   * ``null`` when no child has usable bounds (mismatched/empty min-max). Shared
-   * by the auto selector (diagonal pick + frustum gate) and the eviction
-   * ranking so both reason over identical geometry. Children with bogus bounds
-   * are skipped. Uses the per-entry ``localBoxScratch`` and the registry's
-   * ``matrixScratch``; ``transformBoundingBox`` allocates the returned box, so
-   * it is independent of that scratch and safe to keep past the next call.
+   * :type:`BoundingBox` (see {@link computeEntryWorldBox} in
+   * ``lod-selector-math.ts`` for the math). Shared by the auto selector
+   * (diagonal pick + frustum gate) and the eviction ranking so both reason
+   * over identical geometry. This wrapper supplies the per-entry
+   * ``localBoxScratch`` and the registry's ``matrixScratch``;
+   * ``transformBoundingBox`` allocates the returned box, so it is independent
+   * of those scratches and safe to keep past the next call.
    */
   private computeWorldBox(
     entry: LODGroupEntry,
@@ -1163,70 +971,7 @@ export class LODGroupRegistry {
   ): BoundingBox | null {
     const cache = this.caches.get(entry.path);
     if (!cache) return null;
-
-    const local = cache.localBoxScratch;
-    let any = false;
-    for (let ci = 0; ci < entry.children.length; ci++) {
-      const pb = entry.children[ci].positionBounds;
-      if (pb.min.length === 0 || pb.max.length === 0 || pb.min.length !== pb.max.length) {
-        continue;
-      }
-      // Project to X/Y/Z. Unmapped axes default to 0 (matches
-      // ``projectBoundsToDisplayDims``'s defensive fallback).
-      let x0 = 0;
-      let x1 = 0;
-      let y0 = 0;
-      let y1 = 0;
-      let z0 = 0;
-      let z1 = 0;
-      if (displayDims.length > 0) {
-        const d0 = displayDims[0];
-        if (d0 < pb.min.length) {
-          x0 = pb.min[d0];
-          x1 = pb.max[d0];
-        }
-      }
-      if (displayDims.length > 1) {
-        const d1 = displayDims[1];
-        if (d1 < pb.min.length) {
-          y0 = pb.min[d1];
-          y1 = pb.max[d1];
-        }
-      }
-      if (displayDims.length > 2) {
-        const d2 = displayDims[2];
-        if (d2 < pb.min.length) {
-          z0 = pb.min[d2];
-          z1 = pb.max[d2];
-        }
-      }
-      if (!any) {
-        local.min.x = x0;
-        local.max.x = x1;
-        local.min.y = y0;
-        local.max.y = y1;
-        local.min.z = z0;
-        local.max.z = z1;
-        any = true;
-      } else {
-        if (x0 < local.min.x) local.min.x = x0;
-        if (x1 > local.max.x) local.max.x = x1;
-        if (y0 < local.min.y) local.min.y = y0;
-        if (y1 > local.max.y) local.max.y = y1;
-        if (z0 < local.min.z) local.min.z = z0;
-        if (z1 > local.max.z) local.max.z = z1;
-      }
-    }
-    if (!any) return null;
-
-    // Lift to world space. THREE updates matrix lazily; force a refresh before
-    // reading — cheap and idempotent. Copy ``matrixWorld.elements`` into a
-    // reusable array instead of allocating one via ``.toArray()`` every frame.
-    entry.groupObject.updateWorldMatrix(true, false);
-    const elements = entry.groupObject.matrixWorld.elements;
-    const m = this.matrixScratch;
-    for (let i = 0; i < 16; i++) m[i] = elements[i];
-    return transformBoundingBox(local, m);
+    return computeEntryWorldBox(entry, displayDims, cache.localBoxScratch, this.matrixScratch);
   }
 
   /**
@@ -1293,107 +1038,23 @@ export class LODGroupRegistry {
 
   /**
    * Whether every fadeable leaf material under ``child.object`` uses a blend
-   * mode that cross-fades correctly ({@link BLENDABLE_MODES} — additive /
-   * luminous, order-independent + mass-conserved ⇒ brightness-exact). A group
-   * child (overview partition branch) must be uniformly blendable. No fadeable
-   * material at all ⇒ not blendable (nothing to fade — e.g. a not-yet-loaded
-   * placeholder, or a `max`/`normal` layer which keeps the hard swap).
+   * mode that cross-fades correctly — see {@link isBlendableSubtree}
+   * (``lod-fade.ts``) for the criteria.
    */
   private isBlendable(child: LODGroupChild): boolean {
-    let sawFadeable = false;
-    let allBlendable = true;
-    const visit = (mesh: THREE.Object3D): void => {
-      const mat = (mesh as THREE.Mesh).material;
-      if (!mat || Array.isArray(mat) || !isFadeable(mat)) return;
-      sawFadeable = true;
-      const mode = (mat.userData?.blendingMode as string | undefined) ?? '';
-      if (!BLENDABLE_MODES.has(mode)) allBlendable = false;
-    };
-    const obj = child.object as THREE.Mesh;
-    if (obj.material) visit(child.object);
-    else child.object.traverse(visit);
-    return sawFadeable && allBlendable;
+    return isBlendableSubtree(child.object);
   }
 
   /**
-   * Apply the per-leaf LOD anti-popping opacity to a child's leaf materials, or
-   * restore the authored opacity. The effective multiplier is the product of two
-   * independent opacity terms:
-   *
-   * - `coverageWeight` = `weight ?? 1` — the cross-fade blend opacity of this
-   *   level (`null` ⇒ 1, no cross-fade in flight). Per-CHILD (the whole level).
-   * - `energyFactor` — the streaming brightness compensation `1/e(k)` read
-   *   PER-LEAF from `committedEnergyFraction`, applied only when `energyComp` is on
-   *   AND the leaf's blend mode sums energy ({@link BLENDABLE_MODES}). Complete /
-   *   unstamped / non-blendable leaves ⇒ 1.
-   *
-   * When the product is ≈ 1 the leaf needs no adjustment: restore the authored
-   * opacity if we had faded it (idempotent no-op otherwise) and, crucially, never
-   * clone a material we don't have to — so a steady-state / disabled /
-   * non-blendable / complete child stays byte-identical. Otherwise clone-on-
-   * first-use (materials are cached by props, so an in-place write would fade
-   * every layer sharing the instance; mirrors the layers panel's
-   * ``_layerMaterialCloned`` marker so the two never double-clone), snapshot the
-   * authored opacity as the fade base, and write `base × product`.
-   *
-   * ``child.object`` is a leaf mesh or a group subtree (overview/partition
-   * branch) → each fadeable leaf is visited individually, so `energyFactor` is
-   * genuinely per-leaf across a partition of independently-streaming leaves.
+   * Apply the per-leaf LOD anti-popping opacity (cross-fade weight ×
+   * streaming `1/e(k)` energy compensation) to a child's leaf materials, or
+   * restore the authored opacity — see {@link applyLodFade}
+   * (``lod-fade.ts``) for the full mechanics. This wrapper supplies the
+   * registry's ``registerMaterial`` dep so a clone-on-first-fade material
+   * keeps receiving per-frame camera-uniform updates.
    */
   private applyChildFade(child: LODGroupChild, weight: number | null, energyComp: boolean): void {
-    const coverageWeight = weight ?? 1;
-    // Normal mode's depthWrite is opacity-gated (>= 0.99, see
-    // normalModeDepthWrite): after writing a fade opacity, re-derive the
-    // mode state so the gate tracks the live value. Unreachable today
-    // (BLENDABLE_MODES = additive/luminous, whose depth state is
-    // opacity-independent) but preserves the invariant if that set grows.
-    const refreshNormalDepthWrite = (m: FadeableMaterial): void => {
-      if ((m.userData?.blendingMode as string | undefined) === 'normal') {
-        m.applyBlendingMode?.('normal');
-      }
-    };
-    const visit = (mesh: THREE.Object3D): void => {
-      const current = (mesh as THREE.Mesh).material;
-      if (!current || Array.isArray(current) || !isFadeable(current)) return;
-      const ud = mesh.userData as {
-        _lodFadeBase?: number;
-        _layerMaterialCloned?: boolean;
-        committedEnergyFraction?: number;
-      };
-      // The blend mode lives on the MATERIAL's userData; energy compensation
-      // only makes physical sense where compositing sums energy linearly.
-      let energyFactor = 1;
-      if (energyComp && BLENDABLE_MODES.has((current.userData?.blendingMode as string) ?? '')) {
-        energyFactor = energyCompensation(ud.committedEnergyFraction, ENERGY_FLOOR);
-      }
-      const product = coverageWeight * energyFactor;
-      if (Math.abs(product - 1) < FADE_EPSILON) {
-        // Nothing to adjust: restore the authored opacity if we faded it, else
-        // leave the shared material untouched (no clone).
-        if (ud._lodFadeBase != null) {
-          current.updateOpacity(ud._lodFadeBase);
-          refreshNormalDepthWrite(current);
-          ud._lodFadeBase = undefined;
-        }
-        return;
-      }
-      let mat = current;
-      if (!ud._layerMaterialCloned) {
-        const cloned = current.clone() as FadeableMaterial;
-        (mesh as THREE.Mesh).material = cloned;
-        ud._layerMaterialCloned = true;
-        this.deps.registerMaterial?.(cloned); // keep camera uniforms live
-        mat = cloned;
-      }
-      // Snapshot the composed authored opacity once; hold it steady while the
-      // multiplier changes (per-frame as the ladder fills in), clear it on restore.
-      if (ud._lodFadeBase == null) ud._lodFadeBase = mat.getOpacity();
-      mat.updateOpacity(ud._lodFadeBase * product);
-      refreshNormalDepthWrite(mat);
-    };
-    const obj = child.object as THREE.Mesh;
-    if (obj.material) visit(child.object);
-    else child.object.traverse(visit);
+    applyLodFade(child.object, weight, energyComp, this.deps.registerMaterial);
   }
 
   private coarsestFreshOrReadyIndex(entry: LODGroupEntry, version: number): number {
@@ -1496,90 +1157,24 @@ export class LODGroupRegistry {
   }
 
   /**
-   * Bound resident LOD geometry to the GPU-pool byte budget. Runs once per
-   * frame after all entries are evaluated. The registry is pure *policy*
-   * here: it does not track bytes itself — it asks the pool for the live
-   * resident total (``getResidentBytes``, the single accounting truth) and,
-   * while over the budget ceiling, demotes evictable levels (loaded, has a
-   * ``release`` thunk, not the visible child, shown at least once).
-   *
-   * Eviction order prioritises **what is furthest from the visible**: levels
-   * whose group is entirely outside the camera frustum first, then by
-   * descending camera distance, then coldest-last-visible-tick as the final
-   * tiebreak (preserving the previous time-LRU behaviour when spatial keys
-   * tie). This pairs with the off-screen selector gate: groups the camera
-   * turned away from drop to coarsest *and* are the first to give back VRAM,
-   * keeping the on-screen working set resident.
-   *
-   * Each ``release()`` moves that level's buffer active→pooled and
-   * synchronously triggers the pool's byte-eviction pass, which disposes
-   * pooled buffers (largest-first) until total resident is back under
-   * budget — so the loop typically demotes one level then exits. The
-   * visible level of each group and eager fallback levels (no ``release``)
-   * are never demoted. Eviction is rare (only under genuine VRAM pressure),
-   * preserving the no-churn retention property — the per-entry world-box /
-   * frustum / distance math here only runs on that rare over-budget frame.
+   * Bound resident LOD geometry to the GPU-pool byte budget — see
+   * {@link enforceResidentByteBudget} (``lod-eviction.ts``) for the full
+   * policy. This wrapper supplies the registry's entries, the pool-accounting
+   * deps, and the shared per-entry world-box fold (so eviction and the auto
+   * selector reason over identical geometry).
    */
-  private enforceResidentByteBudget(
+  private enforceByteBudget(
     camera: THREE.Camera,
     frustum: THREE.Frustum,
     displayDims: readonly number[]
   ): void {
-    const budget = this.deps.getResidentByteBudget?.();
-    const getResidentBytes = this.deps.getResidentBytes;
-    // No budget or no measurement wired ⇒ pure retention.
-    if (budget == null || budget <= 0 || !getResidentBytes) return;
-    if (getResidentBytes() <= budget) return;
-
-    camera.getWorldPosition(CAMERA_POS_SCRATCH);
-
-    // Collect evictable levels, tagging each with its group's off-screen flag
-    // and camera distance for spatial-priority ranking.
-    const evictable: { child: LODGroupChild; offscreen: boolean; distance: number }[] = [];
-    for (const entry of this.entries.values()) {
-      const worldBox = this.computeWorldBox(entry, displayDims);
-      let offscreen = false;
-      let distance = 0;
-      if (worldBox) {
-        WORLD_BOX3_SCRATCH.min.set(worldBox.min.x, worldBox.min.y, worldBox.min.z);
-        WORLD_BOX3_SCRATCH.max.set(worldBox.max.x, worldBox.max.y, worldBox.max.z);
-        offscreen = !frustum.intersectsBox(WORLD_BOX3_SCRATCH);
-        WORLD_BOX3_SCRATCH.getCenter(BOX_CENTER_SCRATCH);
-        distance = BOX_CENTER_SCRATCH.distanceTo(CAMERA_POS_SCRATCH);
-      }
-      const children = entry.children;
-      // Never evict the level currently DISPLAYED (which, during a re-slice, can
-      // be a coarser fresh level rather than the aspiration ``activeChildIndex``)
-      // — releasing it would blank the on-screen group. ``displayedChildIndex``
-      // is written by ``evaluateEntry`` earlier in this same per-frame pass.
-      const displayed = entry.displayedChildIndex ?? entry.activeChildIndex;
-      for (let i = 0; i < children.length; i++) {
-        const child = children[i];
-        if (!isReady(child)) continue;
-        // Skip a child mid-(re)load: ``release()`` resets ``loading=false`` and
-        // ``ready=false``, so evicting one whose deferred reload is in flight
-        // would let the registry kick a SECOND concurrent ``ensureLoaded`` for
-        // the same loader. The not-ready guard above misses it because a stale
-        // RELOAD keeps ``ready=true`` while ``loading=true``.
-        if (i !== displayed && !child.loading && child.release && child.lastVisibleTick != null) {
-          evictable.push({ child, offscreen, distance });
-        }
-      }
-    }
-    // Off-screen first, then furthest-first, then coldest-first.
-    evictable.sort((a, b) => {
-      if (a.offscreen !== b.offscreen) return a.offscreen ? -1 : 1;
-      if (a.distance !== b.distance) return b.distance - a.distance;
-      return (a.child.lastVisibleTick ?? 0) - (b.child.lastVisibleTick ?? 0);
+    enforceResidentByteBudget({
+      entries: this.entries.values(),
+      camera,
+      frustum,
+      getResidentByteBudget: this.deps.getResidentByteBudget,
+      getResidentBytes: this.deps.getResidentBytes,
+      computeWorldBox: (entry) => this.computeWorldBox(entry, displayDims),
     });
-
-    // Demote ranked levels until the pool reports we are back under budget.
-    // Bounded by the fixed `evictable` list (never re-collected), so it
-    // always terminates even if `release()`'s pool eviction were to stop
-    // freeing (defensive — today the byte pass is uncapped and frees fully).
-    for (const { child } of evictable) {
-      if (getResidentBytes() <= budget) break;
-      child.release!(); // active→pooled; release's evictUnused() disposes the excess
-    }
   }
 }

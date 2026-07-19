@@ -110,7 +110,7 @@ export class GSplatPickingMaterial
    * blending: write the real projected depth so the FRONT-MOST splat
    * wins — matching the depth-sorted occluding surface the user sees.
    * `false` (default) = brightness-as-depth so the BRIGHTEST splat wins
-   * — correct for the commutative modes (additive/max/luminous/opaque).
+   * — correct for the commutative modes (additive/max/luminous).
    * Synced per pick render by `PickingSystem.renderPickBuffer()`.
    */
   setSurfacePickDepth(on: boolean): void {

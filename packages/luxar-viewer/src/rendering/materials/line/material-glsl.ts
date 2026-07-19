@@ -57,7 +57,7 @@ export interface LineMaterialConfig {
   /** Offset (additive brightness shift / black level), default 0.0 */
   offset?: number;
   /** Blending mode */
-  blendingMode?: 'additive' | 'normal' | 'max' | 'opaque' | 'luminous';
+  blendingMode?: BlendingMode;
   /** Whether material is transparent (default true) */
   transparent?: boolean;
   /** Whether to test against depth buffer (default true; additive sets false) */
