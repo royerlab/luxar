@@ -3,12 +3,13 @@
  *
  * Rendering attributes compose from root to leaf rather than override:
  *
- *   effective_opacity   = clamp(∏ opacity_i,  0, 1)
- *   effective_gamma     = clamp(∏ gamma_i,    0.1, 10)
- *   effective_intensity = max(0, ∏ intensity_i)
- *   effective_offset    = Σ offset_i
- *   effective_blending  = nearest ancestor (root-to-leaf) that sets blending_mode,
- *                         else "additive"
+ *   effective_opacity    = clamp(∏ opacity_i,  0, 1)
+ *   effective_absorption = max(0, ∏ absorption_i)   (volumetric κ; identity 1)
+ *   effective_gamma      = clamp(∏ gamma_i,    0.1, 10)
+ *   effective_intensity  = max(0, ∏ intensity_i)
+ *   effective_offset     = Σ offset_i
+ *   effective_blending   = nearest ancestor (root-to-leaf) that sets blending_mode,
+ *                          else "additive"
  *
  * Note: the offset composition is additive per the spec. This is mathematically
  * different from chaining the shader's `color * I + O` model through successive
@@ -24,6 +25,8 @@ import type { BlendingMode } from '../rendering/material-manager';
 
 export interface ComposableAttrs {
   opacity?: number;
+  /** Absorption coefficient κ (volumetric mode); multiplicative, identity 1. */
+  absorption?: number;
   gamma?: number;
   intensity?: number;
   offset?: number;
@@ -33,6 +36,8 @@ export interface ComposableAttrs {
 
 export interface EffectiveAttrs {
   opacity: number;
+  /** Composed absorption coefficient κ (≥ 0; only read in volumetric mode). */
+  absorption: number;
   gamma: number;
   intensity: number;
   offset: number;
@@ -53,6 +58,7 @@ export interface EffectiveAttrs {
  */
 export function composeAttrs(chainRootToLeaf: readonly ComposableAttrs[]): EffectiveAttrs {
   let opacity = 1.0;
+  let absorption = 1.0;
   let gamma = 1.0;
   let intensity = 1.0;
   let offset = 0.0;
@@ -60,6 +66,7 @@ export function composeAttrs(chainRootToLeaf: readonly ComposableAttrs[]): Effec
 
   for (const a of chainRootToLeaf) {
     if (a.opacity !== undefined) opacity *= a.opacity;
+    if (a.absorption !== undefined) absorption *= a.absorption;
     if (a.gamma !== undefined) gamma *= a.gamma;
     if (a.intensity !== undefined) intensity *= a.intensity;
     if (a.offset !== undefined) offset += a.offset;
@@ -68,10 +75,18 @@ export function composeAttrs(chainRootToLeaf: readonly ComposableAttrs[]): Effec
 
   // Clamp per spec
   opacity = clamp(opacity, 0, 1);
+  absorption = Math.max(0, absorption); // κ is unbounded above
   gamma = clamp(gamma, 0.1, 10);
   intensity = Math.max(0, intensity);
 
-  return { opacity, gamma, intensity, offset, blending_mode: normalizeBlendingMode(blending_mode) };
+  return {
+    opacity,
+    absorption,
+    gamma,
+    intensity,
+    offset,
+    blending_mode: normalizeBlendingMode(blending_mode),
+  };
 }
 
 /**
@@ -149,6 +164,7 @@ export function collectDataDescendants(start: SceneNode): SceneNode[] {
 function toComposable(attrs: SceneNode['attrs']): ComposableAttrs {
   return {
     opacity: attrs.opacity as number | undefined,
+    absorption: attrs.absorption as number | undefined,
     gamma: attrs.gamma as number | undefined,
     intensity: attrs.intensity as number | undefined,
     offset: attrs.offset as number | undefined,

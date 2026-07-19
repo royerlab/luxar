@@ -2,8 +2,8 @@
  * Compose effective rendering attributes for a scene-graph node.
  *
  * Pure helper: given a scene graph and a node, return a copy of the
- * node's attrs with `opacity`, `gamma`, `intensity`, `offset`, and
- * `blending_mode` replaced by the values from
+ * node's attrs with `opacity`, `absorption`, `gamma`, `intensity`,
+ * `offset`, and `blending_mode` replaced by the values from
  * {@link getEffectiveAttrs}. Falls back to the raw attrs when the
  * scene graph is unavailable.
  *
@@ -31,6 +31,7 @@ export function applyEffectiveAttrs(
   return {
     ...node.attrs,
     opacity: eff.opacity,
+    absorption: eff.absorption,
     gamma: eff.gamma,
     intensity: eff.intensity,
     offset: eff.offset,

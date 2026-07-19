@@ -34,6 +34,7 @@ function makeLayer(overrides: Partial<LayerInfo> = {}): LayerInfo {
     type: 'points',
     visible: true,
     opacity: 1,
+    absorption: 1,
     displayMin: 0,
     displayMax: 1,
     dataMin: 0,

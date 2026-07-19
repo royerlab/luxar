@@ -136,8 +136,8 @@ function makeEmptySceneGraph(): SceneNode {
   } as unknown as SceneNode;
 }
 
-function makeLayeredSceneGraph(): SceneNode {
-  // Single layered points node — mirrors what the Python API emits
+function makeLayeredSceneGraph(leafType: 'points' | 'gsplats' = 'points'): SceneNode {
+  // Single layered data node — mirrors what the Python API emits
   // when `layer=True`.
   return {
     name: 'root',
@@ -148,8 +148,8 @@ function makeLayeredSceneGraph(): SceneNode {
       {
         name: 'cloud',
         path: '/cloud',
-        type: 'points',
-        attrs: { layer: true, type: 'points' },
+        type: leafType,
+        attrs: { layer: true, type: leafType },
         children: [],
       },
     ],
@@ -849,6 +849,71 @@ describe('LayersPanel — blend select drives the leaf material', () => {
     // must reach the material's own applyBlendingMode with the new mode.
     expect(applyBlendingMode).toHaveBeenCalledWith('max');
     expect(panel.layerState.getLayer('/cloud')!.blendingMode).toBe('max');
+  });
+
+  /**
+   * Find the Absorption slider control group by its label. LabeledSlider
+   * labels concatenate the name span with the value readout
+   * ("Absorption1.00"), so match the first span, not the whole label.
+   */
+  function findAbsorptionGroup(root: HTMLElement): HTMLElement | null {
+    const groups = Array.from(root.querySelectorAll('.luxar-layers-panel__control-group'));
+    for (const group of groups) {
+      const label = group.querySelector('.luxar-layers-panel__control-label span');
+      if (label?.textContent === 'Absorption') return group as HTMLElement;
+    }
+    return null;
+  }
+
+  it('absorption slider: hidden outside volumetric, revealed by the mode switch, drives updateAbsorption', () => {
+    const updateAbsorption = vi.fn();
+    const stubMat: Record<string, unknown> = {
+      userData: { blendingMode: 'additive' },
+      uniforms: { uOpacity: { value: 1.0 } },
+      defines: {},
+      updateIntensity: vi.fn(),
+      updateOffset: vi.fn(),
+      updateGamma: vi.fn(),
+      updateOpacity: vi.fn(),
+      updateAbsorption,
+      applyBlendingMode: vi.fn(),
+    };
+    stubMat.clone = vi.fn(() => stubMat);
+
+    const mesh = new THREE.Mesh(new THREE.BufferGeometry(), stubMat as unknown as THREE.Material);
+    mesh.name = '/cloud';
+    const rootGroup = new THREE.Group();
+    rootGroup.add(mesh);
+
+    const panel = new LayersPanel(container, animationController);
+    panel.initFromScene(rootGroup, makeLayeredSceneGraph('gsplats'));
+    panel.show();
+    panel.layerState.select('/cloud', 'single');
+
+    // Non-volumetric mode: the κ slider group is hidden.
+    const group = findAbsorptionGroup(container);
+    expect(group).not.toBeNull();
+    expect(group!.style.display).toBe('none');
+
+    // Switching the blend dropdown to volumetric reveals it immediately.
+    const select = findBlendSelect(container);
+    select!.value = 'volumetric';
+    select!.dispatchEvent(new Event('change', { bubbles: true }));
+    expect(group!.style.display).not.toBe('none');
+
+    // Dragging the slider reaches the material's updateAbsorption with
+    // the COMPOSED κ via the real applyComposed path.
+    updateAbsorption.mockClear();
+    const input = group!.querySelector('input[type="range"]') as HTMLInputElement;
+    input.value = '2.5';
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+    expect(updateAbsorption).toHaveBeenCalledWith(2.5);
+    expect(panel.layerState.getLayer('/cloud')!.absorption).toBe(2.5);
+
+    // Switching away hides it again.
+    select!.value = 'additive';
+    select!.dispatchEvent(new Event('change', { bubbles: true }));
+    expect(group!.style.display).toBe('none');
   });
 });
 
