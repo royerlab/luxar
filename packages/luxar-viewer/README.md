@@ -490,7 +490,7 @@ export const config: AppConfig = {
 The material manager in `src/rendering/material-manager.ts` provides optimized material handling. Per-geometry getters return cached materials keyed by property bucketing:
 
 ```typescript
-// Supported blending modes
+// Supported blending modes (canonical set: BLENDING_MODES in src/types/blending.ts)
 type BlendingMode = 'normal' | 'additive' | 'max' | 'opaque' | 'luminous';
 
 // Per-geometry getters — see src/rendering/material-manager.ts for

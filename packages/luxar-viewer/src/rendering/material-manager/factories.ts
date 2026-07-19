@@ -12,7 +12,8 @@
  * @module rendering/material-manager/factories
  */
 
-import { BLENDING_MODES, normalModeDepthWrite } from '../blending-state';
+import { normalModeDepthWrite } from '../blending-state';
+import type { BlendingMode } from '../../types/blending';
 import { PointMaterial } from '../materials/point/material-glsl';
 import { LineMaterial } from '../materials/line/material-glsl';
 import { GSplatMaterial } from '../materials/gsplat/material-glsl';
@@ -52,11 +53,11 @@ import { clamp } from '../../utils/clamp';
  * - 'opaque': Solid rendering with depth write (closest object wins)
  * - 'luminous': Same as additive visually, but respects depth occlusion (occluded by closer objects)
  *
- * Derived from the runtime `BLENDING_MODES` tuple in blending-state.ts —
- * the single source of truth for the mode set (adding a mode there updates
- * this union, `normalizeBlendingMode`, and the panel dropdown together).
+ * Re-exported from `types/blending.ts` — the single source of truth for
+ * the mode set (adding a mode there updates this union, the per-node attr
+ * types, `normalizeBlendingMode`, and the panel dropdown together).
  */
-export type BlendingMode = (typeof BLENDING_MODES)[number];
+export type { BlendingMode };
 
 /** Point material properties driving cache key + constructor config. */
 export interface PointMaterialProperties {

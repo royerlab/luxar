@@ -6,7 +6,7 @@ All notable changes to Luxar are documented in this file.
 
 ### July 2026
 
-#### Fixed — blending-modes correctness campaign (#601, #602, #603)
+#### Fixed — blending-modes correctness campaign (#601, #602, #603, #604)
 
 - A full review of the five blending modes (`normal` / `additive` / `max` /
   `opaque` / `luminous`) across Python → zarr → viewer → shaders fixed two
@@ -31,8 +31,10 @@ All notable changes to Luxar are documented in this file.
 - Coverage: per-mode E2E for all five modes × points and lines, an
   inherited-mode cross-stack fixture, `point-max`/`line-max` TSL
   parity + codegen variants, and panel blending unit tests; the mode set is
-  now a single runtime tuple from which the TypeScript union derives, and
-  the Python validator derives from the `BlendingMode` enum.
+  now a single runtime tuple (`types/blending.ts`) from which the TypeScript
+  union and per-node attr types derive, the Python validator derives from
+  the `BlendingMode` enum, and `opaque` gsplats surface-pick front-most
+  (matching what the user sees) instead of brightest-wins.
 
 #### Added — `luxar_delta_v1` delta pre-filter (format v3.3, 12-16% smaller stores)
 

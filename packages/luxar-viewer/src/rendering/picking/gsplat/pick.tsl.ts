@@ -383,11 +383,11 @@ export function gsplatPickWebGPUFactory(
   });
 
   // Pick depth convention — mirrors the GLSL fragment (shaders.ts):
-  // surface ('normal') mode writes the REAL fragment depth (`depth` =
-  // the builtin fragment depth; the vertex puts the splat-center NDC z
-  // in the clip position, so this is the true projected depth) — the
-  // front-most splat wins, matching the depth-sorted occluding surface
-  // the user sees. Commutative modes (additive/max/luminous/opaque)
+  // The surface modes ('normal'/'opaque') write the REAL fragment depth
+  // (`depth` = the builtin fragment depth; the vertex puts the
+  // splat-center NDC z in the clip position, so this is the true
+  // projected depth) — the front-most splat wins, matching the occluding
+  // surface the user sees. Commutative modes (additive/max/luminous)
   // keep brightness-as-depth — the brightest splat wins.
   const depthNode = Fn(() =>
     int(uSurfaceDepth)

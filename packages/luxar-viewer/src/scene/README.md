@@ -27,7 +27,11 @@ scene/
 │   └── viewport/                   # dpr-policy, resize-orchestrator
 ├── animation/                      # animation-controller, dimension-animation-manager
 ├── scene-dims-manager.ts           # nD dimension coordination
-├── lod-group-registry.ts           # Per-frame LOD-group selector + VRAM-budget LRU
+├── lod-group-registry.ts           # Per-frame LOD-group selector (policy/state machine)
+├── lod-selector-math.ts            # Selector math: world-box fold, box→pixel projection, hysteresis pick
+├── lod-blend.ts                    # Pure opacity math: coverage cross-fade + energy compensation
+├── lod-fade.ts                     # Material-level fade appliers (clone-on-first-fade)
+├── lod-eviction.ts                 # VRAM-budget LRU eviction policy for LOD levels
 ├── lod-display-gate.ts             # Never-downgrade display gate (energy-threshold release)
 ├── lod-freshness.ts                # Pure LOD freshness + settle helpers for the registry
 ├── synthetic-scene.ts              # Synthetic perf-bench scene generators (lines)
@@ -983,9 +987,21 @@ _For implementation details, see the source files in this directory._
   and lazy-Proxy singleton `sceneDimsManager`).
 - `lod-group-registry.ts` — `LODGroupRegistry`: per-frame `lod_group`
   child selector (screen-space-diagonal pick + frustum off-screen gate
-  - asymmetric hysteresis), lazy-load gating, and shared-VRAM-budget
-    LRU eviction. Exports pure helpers `projectBoxDiagonalPx` and
-    `pickChildWithHysteresis` for unit testing.
+  - asymmetric hysteresis), lazy-load gating, and the display/fade/
+    eviction orchestration. Re-exports `projectBoxDiagonalPx` and
+    `pickChildWithHysteresis` from `lod-selector-math.ts`.
+- `lod-selector-math.ts` — The selector's camera-geometry math:
+  `computeEntryWorldBox` (nD position-bounds → world box via
+  displayDims), `projectBoxDiagonalPx` (world box → screen-space pixel
+  diagonal with near-plane saturation), and `pickChildWithHysteresis`.
+- `lod-fade.ts` — Material-level appliers for the two LOD anti-popping
+  mechanisms: `applyLodFade` (write coverage-weight × `1/e(k)` opacity
+  per fadeable leaf, clone-on-first-fade) and `isBlendableSubtree`
+  (uniformly additive/luminous check). The material-touching
+  counterpart of `lod-blend.ts`'s pure math.
+- `lod-eviction.ts` — `enforceResidentByteBudget`: the VRAM-pressure
+  policy — while the GPU pool reports over-budget, demote hidden LOD
+  levels off-screen-first / furthest-first / coldest-first.
 - `lod-display-gate.ts` — The never-downgrade display gate for the
   registry: `shouldHoldPreviousDisplay` holds the previously-displayed
   level while a streaming upgrade is strictly worse than what is shown,
