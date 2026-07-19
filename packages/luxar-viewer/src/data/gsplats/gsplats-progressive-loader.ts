@@ -19,6 +19,7 @@
  */
 
 import type { GSplatsDataLoader, GSplatsViewState, LoadedGSplatsData } from '../../types/gsplats';
+import { setPrefixParent } from '../../types/gsplats-lineage';
 import type { GSplatsSpatialIndexLoader } from './gsplats-spatial-index-loader';
 import type { UpdateSession } from '../../profiling/update-profiler';
 import type {
@@ -471,6 +472,14 @@ export class GSplatsProgressiveLoader implements GSplatsDataLoader {
    * reference — safe because the result is never mutated downstream
    * (worker projection inputs are structured-cloned, not transferred) —
    * letting the commit pipeline skip no-op re-commits by identity.
+   *
+   * Each fresh result is also stamped with a PREFIX-LINEAGE parent (the
+   * previous same-generation memo) via {@link setPrefixParent}, so the
+   * commit layer can recognise a genuine prefix-extension and take the
+   * append fast path (depth-sorting Phase 4 Stage 2). The parent is null
+   * for the first level of a generation (a view change bumps the reset
+   * generation and empties `loadedLODs`), which is correct — the first
+   * commit extends nothing.
    */
   private concatenateMemoized(session?: UpdateSession): LoadedGSplatsData {
     const concatSession = session?.begin('Concatenate LODs');
@@ -482,7 +491,14 @@ export class GSplatsProgressiveLoader implements GSplatsDataLoader {
       ) {
         return this._concatCache.result;
       }
+      // Capture the previous SAME-GENERATION memo before overwriting the
+      // cache — that (and only that) is the result this one extends.
+      const prevMemo =
+        this._concatCache && this._concatCache.generation === this._resetGeneration
+          ? this._concatCache.result
+          : null;
       const result = concatenateGSplatsData(this.loadedLODs);
+      setPrefixParent(result, prevMemo);
       this._concatCache = {
         generation: this._resetGeneration,
         lodCount: this.loadedLODs.length,

@@ -14,7 +14,7 @@
 import * as THREE from 'three';
 import { materialManager, type LuxarPointMaterial } from './material-manager';
 import { type InstancedLinesMeshConfig } from './line-geometry';
-import { type InstancedGSplatsMeshConfig } from './gsplat-geometry';
+import { type InstancedGSplatsMeshConfig, getSplatTexture } from './gsplat-geometry';
 import type { LoadedPointsData, DataLoader } from '../data/data-loader-types';
 import type { PointsMetadata } from '../types/points';
 import type { LinesMetadata, LinesDataLoader } from '../types/lines';
@@ -127,8 +127,33 @@ export class NodeFactory {
    * Mirror of `MaterialManager.rebuildAfterContextRestore` — both are
    * called from `SceneManager.contextRestoredHandler` in the order
    * post-processing → materials → nodes.
+   *
+   * Also re-uploads gsplat GPU buffers. A context loss zeroes the GPU-side
+   * splat texture + `aSortedIndex` while the CPU mirror survives, so we mark
+   * both full-dirty (empty ranges → three's full-image upload) and clear the
+   * append-fast-path flag `gpuPrefixIntact` (depth-sorting Phase 4 Stage 2).
+   * The flag is load-bearing: without it the next commit could take the
+   * append path and DOWNGRADE the pending full upload to a suffix-only
+   * partial, leaving the prefix stale. This runs unconditionally (picking may
+   * be disabled).
    */
   rebuildAfterContextRestore(root: THREE.Object3D): void {
+    root.traverse((obj) => {
+      if (obj.userData?.nodeType !== 'gsplats' || !(obj instanceof THREE.Mesh)) return;
+      const geom = obj.geometry as THREE.InstancedBufferGeometry;
+      const tex = getSplatTexture(geom);
+      if (tex) {
+        tex.clearUpdateRanges();
+        tex.needsUpdate = true;
+      }
+      const idx = geom.getAttribute('aSortedIndex') as THREE.InstancedBufferAttribute | undefined;
+      if (idx) {
+        idx.clearUpdateRanges();
+        idx.needsUpdate = true;
+      }
+      obj.userData.gpuPrefixIntact = false;
+    });
+
     if (!this.pickingSystem) return;
     this.pickingSystem.clearRegistrationsForRebuild();
     // Reset every scene node's pickId so registerExistingSceneNodes

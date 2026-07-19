@@ -266,11 +266,16 @@ to ship after). Sequencing is at the bottom.
     plus structural cleanups (render-order submodule, committedData accessors,
     parity-harness split) — see `CHANGELOG.md` July 2026 and the spec's status
     block.
-  - 🔄 **Phase 4** (partial texture uploads): **Stage 1 (slack elimination)
-    LANDED** — `writeSplatTexels` registers per-row `updateRanges` so only live
-    rows upload (measured 33–59% less on `gsplats_4d_neuromast_2ch`, classic
-    WebGL, pixel-identical). Stage 2 (append-only ladder writes, three-geometry
-    symmetric) + Stage 3 (WebGPU range parity) stay **[POST]** — see the spec §7.
+  - 🔄 **Phase 4** (partial texture uploads): **Stages 1–2 LANDED for gsplats.**
+    Stage 1 (slack elimination) — `writeSplatTexels` registers per-row
+    `updateRanges` so only live rows upload (measured 33–59% less on
+    `gsplats_4d_neuromast_2ch`, classic WebGL, pixel-identical). Stage 2 (append
+    fast path) — a ladder-refinement commit that extends the committed prefix
+    writes/uploads only the new suffix; prefix trust via a forward-chained
+    lineage `WeakMap` + `viewStatesEqual`/generation, no projection-kernel change,
+    with a context-restore full-dirty hook. **[POST]:** Stage 2 Points/Lines
+    symmetry (`writeInterleavedAttribute(…, fromInstance)`, pending order-
+    preservation verification) + Stage 3 (WebGPU range parity) — see the spec §7.
   - ⏭️ **[POST] residue from the campaign reviews:** instance-based coordinator
     DI (only if multi-instance embedding lands), front-most picking in MIXED
     normal+additive scenes (single shared pick depth buffer — documented in

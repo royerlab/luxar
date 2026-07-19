@@ -23,7 +23,12 @@ import type { UpdateSession } from '../../../profiling/update-profiler';
 import type { GPUBufferPool } from '../../../rendering/gpu-buffer-pool';
 import { invalidateRenderObjectFor } from './invalidate-render-object';
 import { stampLadderComplete, stampLoadedViewVersion } from './stamp-view-version';
-import { hasCommittedData, setCommittedData } from '../../../types/committed-data';
+import {
+  getCommittedData,
+  hasCommittedData,
+  setCommittedData,
+} from '../../../types/committed-data';
+import { getPrefixParent } from '../../../types/gsplats-lineage';
 import type { StagedGSplatsCommit } from '../process/data-processor-gsplats';
 
 const DEFAULT_TRUNCATE = 3.0;
@@ -116,6 +121,37 @@ export function commitGSplatsGeometry(
         !attributesRebuilt &&
         geometry === prevGeometry &&
         prevCount === splatCount;
+      // Append fast path (depth-sorting Phase 4 Stage 2): when this commit
+      // merely EXTENDS the prefix already on the GPU, write & upload only the
+      // new `[prevCount, splatCount)` suffix. Correctness rests on the
+      // projected prefix being byte-identical to what the GPU holds, which
+      // every conjunct below establishes:
+      // - !attributesRebuilt && geometry === prevGeometry: the pool reused
+      //   THIS node's buffers in place (a grow/best-fit/fresh acquire sets
+      //   attributesRebuilt and may hand back another node's texels). This
+      //   also guarantees splatCount ≤ the existing capacity (the pool only
+      //   grows via release+reacquire, which rebuilds).
+      // - gpuPrefixIntact: a WebGL context restore zeroed the GPU buffers;
+      //   the restore hook clears this so the next commit does a full rewrite.
+      // - splatCount > prevCount: a genuine append (equal → preserveOrdering
+      //   path; shrink/first-commit → full write).
+      // - prefix lineage === committedData: the new concat result forward-
+      //   chains to the exact object last committed here — proving same
+      //   generation (view unchanged: a view change resets the generation, so
+      //   the post-reset concat has no parent), a genuine extension, and that
+      //   the GPU still holds that parent's projection.
+      // - committedTruncate === truncationRadius: `truncate` is a material
+      //   uniform outside the loader view state; a change would restyle the
+      //   prefix's frustum sizing, so a mismatch forces a full rewrite.
+      const canAppend =
+        hadCommittedData &&
+        !attributesRebuilt &&
+        geometry === prevGeometry &&
+        mesh.userData.gpuPrefixIntact === true &&
+        splatCount > (prevCount ?? 0) &&
+        getPrefixParent(staged.sourceData) !== undefined &&
+        getPrefixParent(staged.sourceData) === getCommittedData(mesh) &&
+        mesh.userData.committedTruncate === truncationRadius;
       try {
         gpuBufferPool.updateGSplatsGeometry(
           geometry,
@@ -129,7 +165,7 @@ export function commitGSplatsGeometry(
           },
           splatCount,
           truncationRadius,
-          { preserveOrdering }
+          { preserveOrdering, fromSplat: canAppend ? (prevCount ?? 0) : 0 }
         );
       } finally {
         // Ownership handoff must happen even if the update throws: the
@@ -183,6 +219,12 @@ export function commitGSplatsGeometry(
 
     if (isGSplatsUserData(mesh.userData)) {
       mesh.userData.visibleSplatCount = splatCount;
+      // Append-fast-path bookkeeping (depth-sorting Phase 4 Stage 2): record
+      // the truncate baked into the GPU texels and mark the GPU prefix intact.
+      // A full rewrite re-establishes both, so the next commit may append; a
+      // context restore clears gpuPrefixIntact to force a full rewrite.
+      mesh.userData.committedTruncate = readTruncate(mesh);
+      mesh.userData.gpuPrefixIntact = true;
       // Stamp the view-version this geometry was loaded for so the LOD registry
       // can distinguish "fresh for the current slice" from merely "ready" (a
       // re-slice overwrites the buffers in place above without flipping any
