@@ -25,6 +25,7 @@ import {
   getSplatTexture,
   splatTexelCapacity,
   writeSplatTexels,
+  registerSplatTexelDirtyRange,
   writeSortedIndexIdentity,
   writeSortedIndexOrdering,
   type SplatTexelSource,
@@ -137,6 +138,92 @@ describe('attachSplatStorage / writeSplatTexels — fused writer round-trip', ()
       expect(arr[o + 12]).toBe(src.colors[i * 3 + 2]);
       expect(arr[o + 13]).toBe(0);
     }
+  });
+
+  it('registers per-row dirty ranges over [0, n), leaving slack rows clean', () => {
+    // width 8 → 2 texels-per-splat-row math: rowFloats = 32, 2 splats/row.
+    configureSplatTextureLayout(8);
+    const geometry = new THREE.InstancedBufferGeometry();
+    const texture = attachSplatStorage(geometry, 16); // bound = 8×8/4 = 16 → 8 rows
+    expect(texture.image.height).toBe(8);
+    const rowFloats = getSplatTextureWidth() * 4;
+    expect(rowFloats).toBe(32);
+
+    writeSplatTexels(texture, makeSource(4), 4); // 4 splats = floats [0, 64) = rows 0,1
+    const ranges = texture.updateRanges;
+    // Only the 2 written rows are dirty — the 6 slack rows never upload.
+    expect(ranges.length).toBe(2);
+    const covered = ranges.reduce((s, r) => s + r.count, 0);
+    expect(covered).toBe(4 * SPLAT_FLOATS_PER_SPLAT); // 64 floats
+    // Every range stays within a single texture row (the WebGL path uploads
+    // each with height=1 and rejects a row straddle).
+    for (const r of ranges) {
+      expect(Math.floor(r.start / rowFloats)).toBe(Math.floor((r.start + r.count - 1) / rowFloats));
+    }
+    // Union spans exactly [0, 64).
+    expect(Math.min(...ranges.map((r) => r.start))).toBe(0);
+    expect(Math.max(...ranges.map((r) => r.start + r.count))).toBe(64);
+  });
+
+  it('falls back to a full-image upload (empty ranges) when most rows are dirty', () => {
+    configureSplatTextureLayout(8);
+    const geometry = new THREE.InstancedBufferGeometry();
+    const texture = attachSplatStorage(geometry, 16); // 8 rows
+    // 15 splats = floats [0, 240) = rows 0..7 = all 8 rows ≥ 0.75×8 → full upload.
+    writeSplatTexels(texture, makeSource(15), 15);
+    expect(texture.updateRanges.length).toBe(0);
+    expect(texture.version > 0 || texture.needsUpdate).toBe(true);
+  });
+
+  it('collapses pending ranges across hidden commits into one contiguous per-row set', () => {
+    // WebGPU backends replay texture ranges verbatim and never clear them,
+    // so successive writes while hidden must union, not accumulate.
+    configureSplatTextureLayout(8);
+    const geometry = new THREE.InstancedBufferGeometry();
+    const texture = attachSplatStorage(geometry, 16);
+    writeSplatTexels(texture, makeSource(2), 2); // floats [0, 32) = row 0
+    writeSplatTexels(texture, makeSource(4), 4); // floats [0, 64) = rows 0,1
+    const ranges = texture.updateRanges;
+    // One range per dirty row (2), never four accumulated fragments.
+    expect(ranges.length).toBe(2);
+    expect(Math.max(...ranges.map((r) => r.start + r.count))).toBe(64);
+  });
+
+  it('registers an append-only span [firstSplat, endSplat) (Stage-2 contract)', () => {
+    configureSplatTextureLayout(8);
+    const geometry = new THREE.InstancedBufferGeometry();
+    const texture = attachSplatStorage(geometry, 16);
+    texture.clearUpdateRanges();
+    // Splats [2, 4) = floats [32, 64) = row 1 only — no prefix re-upload.
+    registerSplatTexelDirtyRange(texture, 2, 4);
+    const ranges = texture.updateRanges;
+    expect(ranges.length).toBe(1);
+    expect(ranges[0].start).toBe(32);
+    expect(ranges[0].count).toBe(32);
+  });
+
+  it('splits by the TEXTURE width, not the reconfigured global width (renderer-swap safety)', () => {
+    // Allocate at width 8, then reconfigure the session width (as a
+    // backend/renderer swap does). The dirty-range split must follow the
+    // texture's OWN width (8 → rowFloats 32), or a range would straddle rows
+    // and the WebGL upload would fail with INVALID_VALUE.
+    configureSplatTextureLayout(8);
+    const geometry = new THREE.InstancedBufferGeometry();
+    const texture = attachSplatStorage(geometry, 16); // width 8, 8 rows
+    expect(texture.image.width).toBe(8);
+    configureSplatTextureLayout(4096); // global width now diverges from the texture
+    writeSplatTexels(texture, makeSource(4), 4); // 4 splats = floats [0, 64)
+    const rowFloats = texture.image.width * 4; // 32 — the TEXTURE's stride
+    const ranges = texture.updateRanges;
+    for (const r of ranges) {
+      expect(r.count).toBeLessThanOrEqual(rowFloats);
+      expect(Math.floor(r.start / rowFloats)).toBe(
+        Math.floor((r.start + r.count - 1) / rowFloats)
+      );
+    }
+    // With the texture width (8) it's 2 rows; the buggy global-width (4096)
+    // path would emit a single 64-float range straddling both rows.
+    expect(ranges.length).toBe(2);
   });
 
   it('throws on source arrays shorter than the requested count (fail-loud contract)', () => {

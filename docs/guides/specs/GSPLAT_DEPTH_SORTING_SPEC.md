@@ -202,17 +202,23 @@ The live feature: sorted order tracks the camera. Pure scheduling on top of Phas
 
 ---
 
-## 7. Phase 4 (optional, perf) — Partial texture appends for LOD refinement
+## 7. Phase 4 (optional, perf) — Partial texture uploads
 
-Not required for correctness — a measured-win phase banking the storage refactor's dividend.
+Not required for correctness — a measured-win phase banking the storage refactor's dividend. **Key implementation finding (2026-07):** three r184 already ships texture-side partial uploads — `Texture.updateRanges` / `addUpdateRange(startFloat, countFloat)`, honored by the classic `WebGLRenderer` (`webgl/WebGLTextures.js::updateTexture`: it takes the whole-image `texSubImage2D` path ONLY when `updateRanges` is empty, else uploads per-range). Since luxar's **default backend is classic WebGL**, no `copyTextureToTexture` staging path is needed for the win; the WebGPU backends ignore the ranges and re-upload the whole image (correct, just not yet partial). Three sub-stages:
 
-Progressive ladder refinement currently re-uploads the entire committed prefix on every level. With texture storage, an append-only commit (same `sourceData` lineage, count grew, prefix bytes identical — guaranteed by the memoized concat construction) can:
+### Stage 1 — slack elimination (LANDED 2026-07)
 
-1. Write only the **new rows** via `renderer.copyTextureToTexture` from a small staging `DataTexture` (both backends implement it), with full `needsUpdate` fallback when the boundary row is partially filled.
-2. Extend `aSortedIndex` with identity (or re-request a sort) for the appended range only.
-3. Skip the bbox/row-norm loops for the prefix by folding them incrementally (running max/box carried on the staged commit).
+Every non-noop commit re-uploaded the **entire capacity-sized** RGBA32F texture, including the pool's 1.5× growth headroom and best-fit slack rows. `writeSplatTexels` now registers per-row `updateRanges` over `[0, count)` via `registerSplatTexelDirtyRange` (`gsplat-geometry.ts`), so only the live rows upload. Row-split because the WebGL path uploads each range with `height = 1`; splat×4-texel alignment on a width-multiple-of-4 texture guarantees no row straddle; ranges self-collapse into one contiguous span per call (the WebGPU backends never clear them). Above `FULL_UPLOAD_ROW_FRACTION` (0.75) of rows dirty, it falls back to the single full-image upload (per-row call overhead outweighs the saving). **Measured** (`gsplats_4d_neuromast_2ch`, classic WebGL): initial-load upload 3.31 MB → 2.20 MB (33%, the fresh-alloc headroom); per-commit slack-scrub case 5.81 MB → 2.36 MB (59%). Pixel-identical (texel content unchanged; shaders only read `[0, count)`).
 
-Gate on the `Update Buffers` + `Load Arrays` profiler stages over the timelapse-nav benchmark (see the decode-bottlenecks findings) — ship only with numbers. Exit criterion: refinement passes upload O(new splats), not O(total).
+### Stage 2 — append-only writes for ladder streaming ([POST])
+
+Progressive ladder refinement re-uploads the whole committed prefix per level. An append-only commit (prefix bytes identical — the memoized concat construction) can write only the **new** splat span: `writeSplatTexels(…, { fromSplat })` registers just `[fromSplat, count)` (the `registerSplatTexelDirtyRange` general span already supports this). The contract that makes the prefix trustworthy runs loader→processor→commit: the concat stamps a `prefixOf` lineage, the nD→3D projection is an order-preserving filter so the prefix survives iff the view state is unchanged (reuse `viewStatesEqual`), and the commit gates `fromSplat` on the existing `preserveOrdering` predicate + `prevCount === prefixCount`. Extend `aSortedIndex` with identity for the appended range only; fold the bbox/row-norm loops incrementally. A `webglcontextrestored` full-dirty hook is required once prefix writes are skipped (the CPU mirror is complete but only suffix rows were range-registered). **Three-geometry symmetric**: the same append is `writeInterleavedAttribute(…, fromInstance)` for Points/Lines (whose ranged uploads already eliminate slack, so this is their remaining O(k·N)→O(N) win); Lines in segment units.
+
+### Stage 3 — WebGPU partial-upload parity ([POST])
+
+Either a staging `DataTexture` + `renderer.copyTextureToTexture` on the WebGPU backend, or an upstream three change teaching `common/Textures.js` to consume texture `updateRanges` (it already consumes attribute ranges). Deferred: WebGPU is opt-in and correctness there is automatic (full re-upload).
+
+Gate Stages 2/3 on the `Update Buffers` + `Load Arrays` profiler stages over the timelapse-nav benchmark (see the decode-bottlenecks findings) — ship only with numbers. Exit criterion: refinement passes upload O(new splats), not O(total).
 
 ---
 
@@ -234,7 +240,7 @@ Gate on the `Update Buffers` + `Load Arrays` profiler stages over the timelapse-
 | 1 — texture storage             | Yes (invisible; perf-neutral) | L (adapter, 4 shader stacks, materials, pool, budget, sync helper) | Pixel-identical E2E; commit-perf non-regression                                   |
 | 2 — SortWorker + sort-at-commit | Yes (correct at rest)         | M/L (WASM+TS kernel, SortWorker, commit wiring)                    | Kernel parity + benchmark floor + correct-after-settle E2E                        |
 | 3 — live re-sort                | Yes (the feature)             | M (scheduler, config, monitor)                                     | Orbit E2E + FPS/latency budget + `?depthSort=0` determinism                       |
-| 4 — partial appends             | Optional                      | M                                                                  | Measured refinement-upload win; no correctness change                             |
+| 4 — partial uploads             | Optional (Stage 1 landed)     | S (Stage 1) / M (Stage 2)                                          | Measured upload win; pixel-identical, no correctness change                        |
 
 One PR per phase, in order; each leaves `main` shippable. Phase 1 is the only high-blast-radius change and is deliberately behavior-preserving so its review is a pure refactor review. Full E2E suite before each merge per repo policy; `make test-wasm` + `benchmark-wasm` for Phase 2; README updates (`rendering/README.md` architecture notes, `materials/gsplat/README.md` contract, `workers/` README) ride each phase's PR.
 

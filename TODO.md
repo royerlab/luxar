@@ -266,7 +266,11 @@ to ship after). Sequencing is at the bottom.
     plus structural cleanups (render-order submodule, committedData accessors,
     parity-harness split) — see `CHANGELOG.md` July 2026 and the spec's status
     block.
-  - ⏭️ **Phase 4** (partial texture appends) — optional perf win, stays **[POST]**.
+  - 🔄 **Phase 4** (partial texture uploads): **Stage 1 (slack elimination)
+    LANDED** — `writeSplatTexels` registers per-row `updateRanges` so only live
+    rows upload (measured 33–59% less on `gsplats_4d_neuromast_2ch`, classic
+    WebGL, pixel-identical). Stage 2 (append-only ladder writes, three-geometry
+    symmetric) + Stage 3 (WebGPU range parity) stay **[POST]** — see the spec §7.
   - ⏭️ **[POST] residue from the campaign reviews:** instance-based coordinator
     DI (only if multi-instance embedding lands), front-most picking in MIXED
     normal+additive scenes (single shared pick depth buffer — documented in

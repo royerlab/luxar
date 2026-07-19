@@ -30,6 +30,96 @@ import {
 } from './splat-texture-layout';
 
 /**
+ * Above this fraction of a texture's rows being dirty, the per-row
+ * `texSubImage2D` call overhead outweighs the bytes a ranged upload
+ * saves, so we fall back to three's single full-image upload. Empirical
+ * knee: a full-row transfer (~64 KB at width 4096) costs ~4× a bare GL
+ * call, so ranges win comfortably up to ~¾ of the rows.
+ */
+const FULL_UPLOAD_ROW_FRACTION = 0.75;
+
+/**
+ * Register the dirty splat span `[firstSplat, endSplat)` on a splat
+ * texture as per-row `updateRanges`, so the classic WebGLRenderer uploads
+ * only those rows (its `updateTexture` takes the whole-image
+ * `texSubImage2D` path ONLY when `updateRanges` is empty). Pool
+ * growth-headroom + best-fit slack rows past the live count therefore stop
+ * riding every commit to the GPU (measured 5.81 MB → 2.36 MB per commit on
+ * a real timelapse whose pool was sized by a larger intro frame).
+ *
+ * Range discipline mirrors {@link collapseSortedIndexRanges}:
+ * - Units are FLOAT elements of `image.data` (three's texture-range API is
+ *   float-indexed with an implicit RGBA `componentStride` of 4).
+ * - Ranges accumulate across commits while a mesh is hidden, and BOTH
+ *   WebGPU backends (native + WebGL2-fallback) replay them verbatim and
+ *   never clear them — only the classic WebGLRenderer consumes+clears at
+ *   flush. So every call collapses the pending set into one contiguous
+ *   span and re-splits it (a superset upload is always correct, never
+ *   stale; our writers only ever register a `[0, n)` prefix or an append
+ *   suffix contiguous with it).
+ * - A splat is exactly `SPLAT_FLOATS_PER_SPLAT` floats and the texture
+ *   width is a multiple of 4 texels, so splats never straddle rows — each
+ *   emitted range stays within one row (the WebGL path uploads every range
+ *   with `height = 1` and would reject a row-straddling range with
+ *   INVALID_VALUE).
+ *
+ * On the WebGPU backends this still sets `needsUpdate`; they ignore the
+ * ranges and re-upload the whole image (correct, just not yet partial —
+ * see the Phase-4 spec's Stage 3).
+ */
+export function registerSplatTexelDirtyRange(
+  texture: THREE.DataTexture,
+  firstSplat: number,
+  endSplat: number
+): void {
+  // Derive row geometry from the texture's OWN dimensions (both a multiple
+  // of 4 texels by construction — see attachSplatStorage), never the global
+  // `getSplatTextureWidth()`: a renderer/backend swap can reconfigure the
+  // session width while an existing texture keeps its allocated width, and a
+  // mismatch here would split against the wrong row stride and straddle rows.
+  const rowFloats = texture.image.width * 4;
+  const totalRows = Math.max(1, texture.image.height);
+
+  // Collapse any pending ranges + the new span into one contiguous float
+  // span (min start, max end). Every writer registers a contiguous prefix
+  // or an append suffix, so the union is an exact or superset cover.
+  let startFloat = firstSplat * SPLAT_FLOATS_PER_SPLAT;
+  let endFloat = endSplat * SPLAT_FLOATS_PER_SPLAT;
+  for (const range of texture.updateRanges) {
+    if (range.start < startFloat) startFloat = range.start;
+    const end = range.start + range.count;
+    if (end > endFloat) endFloat = end;
+  }
+  texture.clearUpdateRanges();
+
+  if (endFloat <= startFloat) {
+    // Nothing dirty (count 0) — three's empty-range path is a full upload;
+    // harmless for a fresh/zeroed texture and never reached with n > 0.
+    texture.needsUpdate = true;
+    return;
+  }
+
+  const firstRow = Math.floor(startFloat / rowFloats);
+  const lastRow = Math.floor((endFloat - 1) / rowFloats);
+  const dirtyRows = lastRow - firstRow + 1;
+
+  if (dirtyRows >= FULL_UPLOAD_ROW_FRACTION * totalRows) {
+    // Too much dirty to bother splitting: leave updateRanges empty so
+    // three takes its single full-image texSubImage2D path.
+    texture.needsUpdate = true;
+    return;
+  }
+
+  for (let row = firstRow; row <= lastRow; row++) {
+    const rowStart = row * rowFloats;
+    const spanStart = Math.max(startFloat, rowStart);
+    const spanEnd = Math.min(endFloat, rowStart + rowFloats);
+    texture.addUpdateRange(spanStart, spanEnd - spanStart);
+  }
+  texture.needsUpdate = true;
+}
+
+/**
  * Create the base quad geometry for gsplat instances.
  *
  * Each gsplat is rendered as a quad with 4 vertices:
@@ -284,7 +374,9 @@ export function writeSplatTexels(
     // on reused pool textures; shaders read only .x)
     arr[o + 12] = colors[c3 + 2];
   }
-  texture.needsUpdate = true;
+  // Ranged upload: only the [0, n) rows just written go to the GPU, not
+  // the full capacity-sized image (pool slack rows past n never re-upload).
+  registerSplatTexelDirtyRange(texture, 0, n);
   return n;
 }
 
