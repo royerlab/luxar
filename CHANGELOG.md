@@ -6,6 +6,23 @@ All notable changes to Luxar are documented in this file.
 
 ### July 2026
 
+#### Docs — volumetric blending mode spec (proposed)
+
+- New `docs/guides/specs/VOLUMETRIC_BLENDING_SPEC.md`: design for a 6th
+  blending mode `volumetric` — the emission–absorption model of volume
+  rendering (Max 1995). Each element adds its ray-integrated emission AND
+  exponentially attenuates what's behind it (α = 1 − e^(−τ),
+  τ = κ·opacity·ray-mass), composited back-to-front on the existing
+  depth-sort infrastructure under the same One/OneMinusSrcAlpha state
+  gsplat-normal already uses. A node-level composable `absorption` (κ)
+  attr spans additive glow (κ = 0, pixel-identical to `additive`) through
+  attenuated projection to a dense self-occluding medium; opacity scales
+  density (emission and absorption together), so layer fades leave no
+  ghost occlusion. Spec includes the self-screening closed form and its
+  split-splat invariant, optional per-splat `absorption_weights` (with a
+  3DGS opacity mapping) deferred to phase 2, and gsplats → points → lines
+  phasing. Design only — no code change.
+
 #### Performance — partial splat-texture uploads (depth-sorting Phase 4, Stage 1)
 
 - GSplat commits no longer re-upload the entire capacity-sized RGBA32F splat
