@@ -57,6 +57,7 @@ import {
   getCompleteBlendingState,
   getGSplatNormalBlendingState,
   isNormalMode,
+  isVolumetricMode,
   usesPeakProjection,
   type CompleteBlendingState,
 } from '../../blending-state';
@@ -90,6 +91,7 @@ export class GSplatTSLMaterial
     uInvOneMinusC: TSLNode;
     uRayIntegralFactor: TSLNode;
     uOpacity: TSLNode;
+    uAbsorption: TSLNode;
     uProjectionMode: TSLNode;
     uInvGamma: TSLNode;
     uIntensity: TSLNode;
@@ -126,6 +128,7 @@ export class GSplatTSLMaterial
       uInvOneMinusC: uniform(invOneMinusC),
       uRayIntegralFactor: uniform(computeRayIntegralFactor(truncate)),
       uOpacity: uniform(materialConfig.opacity ?? 1.0),
+      uAbsorption: uniform(materialConfig.absorption ?? 1.0),
       // Decorative in TSL (the graph JS-branches on blendingMode); kept for
       // clone/telemetry parity. Peak (1) for surface modes (max/normal/opaque).
       uProjectionMode: uniform(
@@ -208,6 +211,7 @@ export class GSplatTSLMaterial
       uInvOneMinusC: proxyIUniform(this.tslNodes.uInvOneMinusC),
       uRayIntegralFactor: proxyIUniform(this.tslNodes.uRayIntegralFactor),
       uOpacity: proxyIUniform(this.tslNodes.uOpacity),
+      uAbsorption: proxyIUniform(this.tslNodes.uAbsorption),
       uProjectionMode: proxyIUniform(this.tslNodes.uProjectionMode),
       uInvGamma: proxyIUniform(this.tslNodes.uInvGamma),
       uIntensity: proxyIUniform(this.tslNodes.uIntensity),
@@ -290,6 +294,19 @@ export class GSplatTSLMaterial
   /** Current opacity multiplier (the LOD cross-fade snapshots this as its fade base). */
   getOpacity(): number {
     return this.uniforms.uOpacity.value as number;
+  }
+
+  /**
+   * Update the absorption coefficient κ (volumetric mode only — a plain
+   * uniform write, no rebuild; inert in every other mode).
+   */
+  updateAbsorption(absorption: number): void {
+    this.uniforms.uAbsorption.value = absorption;
+  }
+
+  /** Current absorption coefficient κ. */
+  getAbsorption(): number {
+    return this.uniforms.uAbsorption.value as number;
   }
 
   updateTruncationRadius(radius: number): void {
@@ -404,21 +421,28 @@ export class GSplatTSLMaterial
     // Two boundaries force a graph rebuild (the factory JS-conditions
     // fragments/vertex blocks on the mode):
     //   - projection sum↔peak: the cofactor / ray-integration block is
-    //     emitted only in SUM mode (additive/luminous); the SURFACE
-    //     modes (max/normal/opaque) use peak. Compared through
+    //     emitted only in SUM mode (additive/luminous/volumetric); the
+    //     SURFACE modes (max/normal/opaque) use peak. Compared through
     //     `usesPeakProjection` — the SAME predicate the factory's
     //     `surfaceMode` derivation uses — so any emissive↔surface
     //     switch (e.g. additive→opaque) rebuilds instead of keeping a
     //     stale graph.
-    //   - normal↔other: the fragment output flips between coverage
-    //     alpha and the alpha=1.0 contract (GLSL twin: the
-    //     LUXAR_NORMAL_PREMULT define toggle).
+    //   - output branch: the fragment output is a build-time JS branch
+    //     with THREE shapes — normal's coverage alpha, volumetric's
+    //     emission–absorption (GLSL twin: LUXAR_VOLUMETRIC), and the
+    //     alpha=1.0 contract. Crossing EITHER the isNormalMode or the
+    //     isVolumetricMode boundary changes the graph. Notably
+    //     additive↔volumetric crosses NEITHER usesPeakProjection nor
+    //     isNormalMode — without the isVolumetricMode term the switch
+    //     would keep a stale alpha=1 graph (fail-first-tested).
     // Same pattern bloom / vignette toggles use.
     const projectionChanged =
       previousMode === undefined || usesPeakProjection(previousMode) !== usesPeakProjection(mode);
-    const premultChanged =
-      previousMode === undefined || isNormalMode(previousMode) !== isNormalMode(mode);
-    if (projectionChanged || premultChanged) {
+    const outputBranchChanged =
+      previousMode === undefined ||
+      isNormalMode(previousMode) !== isNormalMode(mode) ||
+      isVolumetricMode(previousMode) !== isVolumetricMode(mode);
+    if (projectionChanged || outputBranchChanged) {
       this.rebuildGraph();
     } else if (previousMode !== mode && stateChanged) {
       this.needsUpdate = true;
@@ -428,6 +452,9 @@ export class GSplatTSLMaterial
   clone(): this {
     const cloned = new GSplatTSLMaterial({
       opacity: this.uniforms.uOpacity.value,
+      // Without this a clone silently reset a tuned κ to the 1.0 default —
+      // and the layers panel clones on ANY first panel interaction.
+      absorption: this.uniforms.uAbsorption.value,
       gamma: this.userData.gamma ?? 1.0,
       intensity: this.uniforms.uIntensity.value,
       offset: this.uniforms.uOffset.value,

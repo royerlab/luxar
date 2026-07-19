@@ -108,19 +108,24 @@ describe('Shader hot-path string regressions', () => {
     });
   });
 
-  describe('GSplat fragment alpha contract (LUXAR_NORMAL_PREMULT split)', () => {
+  describe('GSplat fragment alpha contract (NORMAL_PREMULT / VOLUMETRIC / alpha-1 split)', () => {
     // Split the fragment source on the preprocessor markers so each
     // regex asserts within its OWN branch text — matching against the
-    // whole source could hit the other branch and pass vacuously.
+    // whole source could hit another branch and pass vacuously. The
+    // output chain is #ifdef LUXAR_NORMAL_PREMULT / #elif
+    // defined(LUXAR_VOLUMETRIC) / #else / #endif.
     const ifdefStart = GSPLAT_FRAGMENT_SHADER.indexOf('#ifdef LUXAR_NORMAL_PREMULT');
-    const elseIdx = GSPLAT_FRAGMENT_SHADER.indexOf('#else', ifdefStart);
+    const elifIdx = GSPLAT_FRAGMENT_SHADER.indexOf('#elif defined(LUXAR_VOLUMETRIC)', ifdefStart);
+    const elseIdx = GSPLAT_FRAGMENT_SHADER.indexOf('#else', elifIdx);
     const endifIdx = GSPLAT_FRAGMENT_SHADER.indexOf('#endif', elseIdx);
-    const premultBranch = GSPLAT_FRAGMENT_SHADER.slice(ifdefStart, elseIdx);
-    const nonNormalBranch = GSPLAT_FRAGMENT_SHADER.slice(elseIdx, endifIdx);
+    const premultBranch = GSPLAT_FRAGMENT_SHADER.slice(ifdefStart, elifIdx);
+    const volumetricBranch = GSPLAT_FRAGMENT_SHADER.slice(elifIdx, elseIdx);
+    const alphaOneBranch = GSPLAT_FRAGMENT_SHADER.slice(elseIdx, endifIdx);
 
-    it('has exactly the #ifdef / #else / #endif structure the branch split relies on', () => {
+    it('has exactly the #ifdef / #elif / #else / #endif structure the branch split relies on', () => {
       expect(ifdefStart).toBeGreaterThanOrEqual(0);
-      expect(elseIdx).toBeGreaterThan(ifdefStart);
+      expect(elifIdx).toBeGreaterThan(ifdefStart);
+      expect(elseIdx).toBeGreaterThan(elifIdx);
       expect(endifIdx).toBeGreaterThan(elseIdx);
     });
 
@@ -135,12 +140,25 @@ describe('Shader hot-path string regressions', () => {
       expect(premultBranch).not.toMatch(/vec4\s*\(\s*finalColor\s*,\s*1\.0\s*\)/);
     });
 
-    it('every non-normal mode (#else branch) keeps the alpha=1.0 contract', () => {
+    it("'volumetric' (#elif branch) emits self-screened emission + absorption alpha", () => {
+      // Emission–absorption (VOLUMETRIC_BLENDING_SPEC.md §3.1): alpha is
+      // the physical 1 − e^(−τ), RGB is screened by S(τ) with the τ→0
+      // series — NOT the alpha=1 contract and NOT the coverage clamp.
+      expect(volumetricBranch).toMatch(/alpha\s*=\s*1\.0\s*-\s*exp\s*\(\s*-tau\s*\)/);
+      expect(volumetricBranch).toMatch(/tau\s*<\s*1e-3/); // series guard
+      expect(volumetricBranch).toMatch(
+        /fragColor\s*=\s*vec4\s*\(\s*finalColor\s*\*\s*screen\s*,\s*alpha\s*\)/
+      );
+      expect(volumetricBranch).not.toMatch(/coverage/);
+      expect(volumetricBranch).not.toMatch(/vec4\s*\(\s*finalColor\s*,\s*1\.0\s*\)/);
+    });
+
+    it('every remaining mode (#else branch) keeps the alpha=1.0 contract', () => {
       // additive/luminous rely on SrcAlpha being the identity factor
       // (what makes the shared AdditiveBlending state the linear
       // One + One sum); max compares premultiplied RGB directly.
-      expect(nonNormalBranch).toMatch(/fragColor\s*=\s*vec4\s*\(\s*finalColor\s*,\s*1\.0\s*\)/);
-      expect(nonNormalBranch).not.toMatch(/coverage/);
+      expect(alphaOneBranch).toMatch(/fragColor\s*=\s*vec4\s*\(\s*finalColor\s*,\s*1\.0\s*\)/);
+      expect(alphaOneBranch).not.toMatch(/coverage/);
     });
   });
 

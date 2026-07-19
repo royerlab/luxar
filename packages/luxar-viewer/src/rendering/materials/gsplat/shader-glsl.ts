@@ -376,6 +376,9 @@ export const GSPLAT_FRAGMENT_SHADER = /* glsl */ `
     flat in highp vec2 vCenterScreen;
 
     uniform mediump float uOpacity;
+    // Absorption coefficient κ — only read under LUXAR_VOLUMETRIC
+    // (τ = κ·opacity·intensity); highp: τ enters an exp().
+    uniform highp float uAbsorption;
     uniform mediump float uInvGamma; // Pre-computed 1/gamma for performance
     uniform mediump float uIntensity; // Per-node linear color multiplier (gain)
     uniform mediump float uOffset; // Per-node additive brightness shift (black level)
@@ -416,8 +419,24 @@ export const GSPLAT_FRAGMENT_SHADER = /* glsl */ `
         // Direct-color mode: full GOG on the raw color.
         vec3 adjusted = max(vColor * uIntensity + uOffset, vec3(0.0));
 
+        #ifdef LUXAR_VOLUMETRIC
+        // Volumetric optical depth: tau = kappa*opacity*intensity, where
+        // intensity is the PRE-GOG density scalar (sum-projected ray
+        // mass incl. rayIntegrationBoost + nearFade — a near-fading splat
+        // loses emission and absorption together) and opacity scales
+        // density (VOLUMETRIC_BLENDING_SPEC.md §3.1). GOG gain/offset/
+        // gamma shape emission COLOR only, never tau.
+        float tau = uAbsorption * uOpacity * intensity;
+        // τ is color-independent — a black splat still absorbs (a
+        // pure-ink occluder via gain→0 must keep its optical depth), so
+        // the zero-color discard only fires when τ is negligible too.
+        // (The earlier intensity<1e-4 discard bounds any lost τ at
+        // κ·opacity·1e-4 per fragment — invisible at slider range.)
+        if (max(adjusted.r, max(adjusted.g, adjusted.b)) < 1e-4 && tau < 1e-4) discard;
+        #else
         // Early discard for zero-contribution fragments after offset
         if (max(adjusted.r, max(adjusted.g, adjusted.b)) < 1e-4) discard;
+        #endif
 
         // LUXAR_GAMMA_ONE (gamma == 1.0) skips the per-fragment pow() —
         // pow(x, 1) == x — same fast path the colormap branch already takes.
@@ -443,6 +462,22 @@ export const GSPLAT_FRAGMENT_SHADER = /* glsl */ `
         // emitter-with-occlusion model, deliberate for HDR scientific data.
         float coverage = clamp(intensity * uOpacity, 0.0, 1.0);
         fragColor = vec4(finalColor, coverage);
+        #elif defined(LUXAR_VOLUMETRIC)
+        // 'volumetric' mode: emission–absorption (Max 1995). RGB carries
+        // the self-screened emission (the splat's front absorbs its own
+        // back: S(τ) = (1−e^(−τ))/τ, the exact closed form for emission ∝
+        // density — what makes split-splat compositing exact); alpha is
+        // the physical absorption 1 − e^(−τ) for the One /
+        // OneMinusSrcAlpha state. κ = 0 ⇒ α = 0, S = 1 — bit-identical
+        // framebuffer arithmetic to additive. Series for τ < 1e-3 keeps
+        // S well-conditioned through τ → 0 (rel. err < 1e-10 at cutoff).
+        float alpha = 1.0 - exp(-tau);
+        // Divisor guarded: GPU ternaries/selects evaluate both lanes, and
+        // the TSL twin's .select does too — max() keeps the unselected
+        // lane NaN-free at tau = 0 (identical in the selected regime).
+        float screen = (tau < 1e-3) ? 1.0 - 0.5 * tau + tau * tau / 6.0
+                                    : alpha / max(tau, 1e-20);
+        fragColor = vec4(finalColor * screen, alpha);
         #else
         // All other modes keep the alpha=1.0 contract: additive/luminous
         // rely on SrcAlpha being the identity factor (what makes the

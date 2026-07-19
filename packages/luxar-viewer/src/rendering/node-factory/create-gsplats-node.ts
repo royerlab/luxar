@@ -24,6 +24,7 @@ export function createGSplatsNode(
 ): THREE.Mesh {
   const material: LuxarGSplatMaterial = materialManager.getGSplatMaterial({
     opacity: (attrs.opacity as number | undefined) ?? 1.0,
+    absorption: (attrs.absorption as number | undefined) ?? 1.0,
     gamma: (attrs.gamma as number | undefined) ?? 1.0,
     intensity: (attrs.intensity as number | undefined) ?? 1.0,
     offset: (attrs.offset as number | undefined) ?? 0.0,

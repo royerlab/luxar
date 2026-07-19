@@ -73,6 +73,7 @@ import {
   getCompleteBlendingState,
   getGSplatNormalBlendingState,
   isNormalMode,
+  isVolumetricMode,
   usesPeakProjection,
 } from '../../blending-state';
 import type { BlendingMode } from '../../material-manager';
@@ -144,6 +145,8 @@ export interface GSplatTSLNodes {
   readonly uMaxExtentFactor: TSLNode;
   readonly uCov2DDilation: TSLNode;
   readonly uOpacity: TSLNode;
+  /** Absorption coefficient κ — only consumed by the volumetric output branch. */
+  readonly uAbsorption: TSLNode;
   readonly uInvGamma: TSLNode;
   readonly uIntensity: TSLNode;
   readonly uOffset: TSLNode;
@@ -195,6 +198,7 @@ export function gsplatWebGPUFactory(
   const uScalarMin = config.useColormap ? nodes.uScalarMin : null;
   const uScalarScale = config.useColormap ? nodes.uScalarScale : null;
   const uOpacity = nodes.uOpacity;
+  const uAbsorption = nodes.uAbsorption;
   const uInvGamma = nodes.uInvGamma;
   const uIntensity = nodes.uIntensity;
   const uOffset = nodes.uOffset;
@@ -578,7 +582,22 @@ export function gsplatWebGPUFactory(
     // intensity/offset controls work for a colormapped gsplat too (GLSL parity).
     // Colormap mode still skips the post-LUT gamma (already applied pre-LUT).
     const adjusted: TSLNode = max(vColor.mul(uIntensity).add(uOffset), vec3(0.0));
-    Discard(max(adjusted.r, max(adjusted.g, adjusted.b)).lessThan(1e-4));
+    const maxAdjusted: TSLNode = max(adjusted.r, max(adjusted.g, adjusted.b));
+    const volumetric = isVolumetricMode(config.blendingMode ?? 'additive');
+    // Volumetric optical depth τ = κ·opacity·intensity (pre-GOG density
+    // scalar × opacity-as-density; GLSL LUXAR_VOLUMETRIC twin). Built
+    // only on the volumetric graph — JS-conditional like the other
+    // structural branches.
+    const tau: TSLNode | null = volumetric
+      ? uAbsorption.mul(uOpacity).mul(intensity).toVar()
+      : null;
+    if (volumetric && tau) {
+      // τ is color-independent — a black splat still absorbs, so the
+      // zero-color discard only fires when τ is negligible too.
+      Discard(maxAdjusted.lessThan(1e-4).and(tau.lessThan(1e-4)));
+    } else {
+      Discard(maxAdjusted.lessThan(1e-4));
+    }
     // Colormap mode (gamma applied pre-LUT) OR gammaOne both skip the pow().
     const gammaColor: TSLNode =
       config.useColormap || config.gammaOne ? adjusted : adjusted.pow(vec3(uInvGamma));
@@ -592,6 +611,20 @@ export function gsplatWebGPUFactory(
       // would auto-inject a second RGB×alpha on this path.
       const coverage: TSLNode = clamp(intensity.mul(uOpacity), float(0.0), float(1.0));
       return vec4(finalColor, coverage);
+    }
+    if (volumetric && tau) {
+      // 'volumetric': emission–absorption (GLSL LUXAR_VOLUMETRIC twin).
+      // RGB carries the self-screened emission (S(τ) = (1−e^(−τ))/τ);
+      // alpha = 1 − e^(−τ) for the One/OneMinusSrcAlpha state. Series
+      // for τ < 1e-3 keeps S well-conditioned through τ → 0 (κ = 0 ⇒
+      // α = 0, S = 1 — bit-identical arithmetic to additive). `.select`
+      // materializes both sides — fine for this cheap scalar math
+      // (unlike the vertex projection branches, which stay
+      // JS-conditional).
+      const alpha: TSLNode = float(1.0).sub(exp(tau.negate()));
+      const series: TSLNode = float(1.0).sub(tau.mul(0.5)).add(tau.mul(tau).div(6.0));
+      const screen: TSLNode = tau.lessThan(1e-3).select(series, alpha.div(max(tau, 1e-20)));
+      return vec4(finalColor.mul(screen), alpha);
     }
     // All other modes keep the alpha=1.0 contract: additive/luminous
     // rely on SrcAlpha being the IDENTITY factor (what makes the shared
@@ -610,8 +643,10 @@ export function gsplatWebGPUFactory(
   const opacityValue = (nodes.uOpacity.value as number | undefined) ?? 1.0;
   // 'normal' takes the gsplat-specific premultiplied state (symmetric
   // alpha channel — separate alpha-equation state trips gl.getError()
-  // under the WebGPU→WebGL2 bridge); every other mode keeps the shared
-  // helper's state, equivalent here because the shader emits alpha=1.
+  // under the WebGPU→WebGL2 bridge); 'volumetric' gets the identical
+  // One/OneMinusSrcAlpha state via the shared helper's own branch (its
+  // fragment emits a real absorption alpha); every other mode keeps the
+  // shared state, equivalent because the shader emits alpha = 1 there.
   const blendingState = isNormalMode(blendingMode)
     ? getGSplatNormalBlendingState()
     : getCompleteBlendingState(blendingMode, opacityValue);
@@ -654,6 +689,7 @@ export function buildGSplatTSLNodesFromUniforms(
     // only (production materials set the 0.3 default in their own constructor).
     uCov2DDilation: uniform((uniforms.uCov2DDilation?.value as number) ?? 0),
     uOpacity: uniform((uniforms.uOpacity?.value as number) ?? 1.0),
+    uAbsorption: uniform((uniforms.uAbsorption?.value as number) ?? 1.0),
     uInvGamma: uniform((uniforms.uInvGamma?.value as number) ?? 1.0),
     uIntensity: uniform((uniforms.uIntensity?.value as number) ?? 1.0),
     uOffset: uniform((uniforms.uOffset?.value as number) ?? 0.0),
