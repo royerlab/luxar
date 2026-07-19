@@ -36,14 +36,16 @@ All notable changes to Luxar are documented in this file.
   the `BlendingMode` enum, and `opaque` gsplats surface-pick front-most
   (matching what the user sees) instead of brightest-wins.
 
-#### Added — `luxar_delta_v1` delta pre-filter (format v3.3, ~12% smaller stores)
+#### Added — `luxar_delta_v1` delta pre-filter (format v3.3, 12-16% smaller stores)
 
 - Quantized code arrays (coordinates `linear_perchannel_u16`, Cholesky
-  `log`/`signed_log_perchannel` halves, `bounded`/`geolog_scalar` amplitudes)
+  `log`/`signed_log_perchannel` halves, `bounded`/`geolog_scalar` amplitudes,
+  and colors — SDR `rgb_uint8`, HDR `geolog_perchannel`, integer passthrough)
   can now carry the Luxar-owned zarr v2 filter `luxar_delta_v1`: per-axis
   modular delta + zigzag residuals, column-major within each chunk, under the
   unchanged width-aware Blosc policy. Hilbert ordering makes consecutive codes
-  a smooth ramp; the residuals compress ~12% smaller whole-store on real fits
+  a smooth ramp; the residuals compress 12-16% smaller whole-store on real fits
+  (14.9-15.7% measured end-to-end on real h2afva light-sheet fits)
   — lossless, and **probe-gated** at encode time (one representative chunk
   compressed both ways; the filter applies only where it wins, so output is
   never larger than before). `.gsplats.zarr` format v3.2 → v3.3; stores where
