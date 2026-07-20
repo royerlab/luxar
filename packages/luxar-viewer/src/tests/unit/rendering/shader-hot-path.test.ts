@@ -94,6 +94,15 @@ describe('Shader hot-path string regressions', () => {
       expect(GSPLAT_VERTEX_SHADER).toMatch(/inversesqrt\s*\(\s*quad\s*\)/);
     });
 
+    it('reads the per-splat alpha from texel3.y and passes it through vAlpha', () => {
+      // Per-element opacity rides in texel3.y (splat-texture-layout.ts). A
+      // mutation that read the wrong channel or dropped the varying would
+      // silently ignore imported 3DGS opacity — pin both the read and the
+      // varying assignment. A pure-math test can't see either.
+      expect(GSPLAT_VERTEX_SHADER).toMatch(/float\s+aAlpha\s*=\s*splatT3\.y/);
+      expect(GSPLAT_VERTEX_SHADER).toMatch(/vAlpha\s*=\s*aAlpha/);
+    });
+
     it('computes the Mahalanobis quadratic form rᵀΣ⁻¹r before the inversesqrt', () => {
       // The shader assembles the per-axis pre-multiplied vector
       // (prx/pry/prz = Σ⁻¹·r) and then folds it with `rayDir` to form
@@ -159,6 +168,25 @@ describe('Shader hot-path string regressions', () => {
       // One + One sum); max compares premultiplied RGB directly.
       expect(alphaOneBranch).toMatch(/fragColor\s*=\s*vec4\s*\(\s*finalColor\s*,\s*1\.0\s*\)/);
       expect(alphaOneBranch).not.toMatch(/coverage/);
+    });
+
+    it('folds per-splat alpha into intensity — linear (non-volumetric) vs w-mapped (volumetric)', () => {
+      // Per-element opacity multiplies into `intensity` right after the
+      // shifted-Gaussian eval, in BOTH branch families. A dropped multiply
+      // would silently ignore imported 3DGS opacity — pin both forms. The
+      // volumetric form maps a → optical density w = −log(1−a), gated by
+      // uHasElementAlpha; the else form is the plain linear factor.
+      // (Mutation lesson: a pure-TS math test cannot see either.)
+      const intensityDecl = GSPLAT_FRAGMENT_SHADER.indexOf('float intensity =');
+      const foldStart = GSPLAT_FRAGMENT_SHADER.indexOf('#ifdef LUXAR_VOLUMETRIC', intensityDecl);
+      const foldElse = GSPLAT_FRAGMENT_SHADER.indexOf('#else', foldStart);
+      const foldEndif = GSPLAT_FRAGMENT_SHADER.indexOf('#endif', foldElse);
+      const volFold = GSPLAT_FRAGMENT_SHADER.slice(foldStart, foldElse);
+      const linFold = GSPLAT_FRAGMENT_SHADER.slice(foldElse, foldEndif);
+      expect(volFold).toMatch(/intensity\s*\*=\s*mix\s*\(\s*1\.0\s*,\s*-log\s*\(\s*1\.0\s*-\s*min\s*\(\s*vAlpha/);
+      expect(volFold).toMatch(/uHasElementAlpha/);
+      expect(linFold).toMatch(/intensity\s*\*=\s*vAlpha/);
+      expect(linFold).not.toMatch(/uHasElementAlpha/);
     });
 
     it('volumetric color-discard is τ-aware: a black splat still absorbs', () => {

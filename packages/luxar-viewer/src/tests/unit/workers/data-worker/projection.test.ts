@@ -388,11 +388,14 @@ describe('projectGSplatsTo3D — happy paths', () => {
     expect((a[3] as Float32Array).length).toBe(splatCount * 3);
     expect(a[4]).toBeInstanceOf(Uint8Array); // discreteVisibility
     expect((a[4] as Uint8Array).length).toBe(splatCount);
-    // worst-case output buffers sized to splatCount
-    expect((a[12] as Float32Array).length).toBe(splatCount * 3); // outCenters
-    expect((a[13] as Float32Array).length).toBe(splatCount * 6); // outCholesky
-    expect((a[14] as Float32Array).length).toBe(splatCount); // outAmplitudes
-    expect((a[15] as Float32Array).length).toBe(splatCount * 3); // outColors
+    // colorComponents (3 = RGB here; the null-colors path white-fills RGB)
+    expect(a[10]).toBe(3);
+    // worst-case output buffers sized to splatCount (indices shifted +1 by
+    // the colorComponents arg at index 10)
+    expect((a[13] as Float32Array).length).toBe(splatCount * 3); // outCenters
+    expect((a[14] as Float32Array).length).toBe(splatCount * 6); // outCholesky
+    expect((a[15] as Float32Array).length).toBe(splatCount); // outAmplitudes
+    expect((a[16] as Float32Array).length).toBe(splatCount * 3); // outColors
   });
 });
 
