@@ -44,7 +44,7 @@ import {
 import {
   applyBlendingStateToMaterial,
   getCompleteBlendingState,
-  isVolumetricMode,
+  effectiveGeometryMode,
   type CompleteBlendingState,
 } from '../../blending-state';
 import type { BlendingMode } from '../../material-manager';
@@ -341,12 +341,10 @@ export class PointTSLMaterial
 
   applyBlendingMode(mode: BlendingMode): void {
     const opacity = (this.uniforms.opacity?.value as number | undefined) ?? 1.0;
-    // Phase-1 volumetric fallback: points don't implement the
-    // emission–absorption fragment math yet (VOLUMETRIC_BLENDING_SPEC.md
-    // phases 3–4), so render the ADDITIVE state — the exact κ=0 limit of
-    // volumetric. userData keeps the REQUESTED mode so stored scenes
-    // upgrade automatically when the point implementation lands.
-    const effectiveMode: BlendingMode = isVolumetricMode(mode) ? 'additive' : mode;
+    // Phase-1 volumetric fallback — the policy lives in
+    // effectiveGeometryMode (blending-state.ts); userData keeps the
+    // REQUESTED mode so stored scenes upgrade automatically.
+    const effectiveMode: BlendingMode = effectiveGeometryMode(mode, 'point');
     const state: CompleteBlendingState = getCompleteBlendingState(effectiveMode, opacity);
 
     if (!this.defines) {

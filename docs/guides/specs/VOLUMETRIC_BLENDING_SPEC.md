@@ -192,7 +192,9 @@ S(τ) = (1 − e^(−τ))/τ is 0/0 at τ = 0. Required implementation:
 
 - **I1 — additive limit**: κ_eff = 0 ⇒ α = 0, S = 1, fragColor =
   vec4(emission, 0). Under `One/OneMinusSrcAlpha`, dst factor = 1 − 0 = 1 ⇒
-  identical framebuffer arithmetic to `additive`'s `One/One`. A `volumetric`
+  identical framebuffer RGB arithmetic to `additive`'s `One/One` (the
+  destination-ALPHA accumulation differs, invisible on the `alpha:false`
+  canvas). A `volumetric`
   node at absorption 0 renders **pixel-identical** to the same node in
   `additive` mode (E2E pixel-compare test, §8).
 - **I2 — split-splat multiplicativity**: one splat with ray mass m ≡ its two
@@ -272,9 +274,9 @@ and `volumetric` preserves the tuning.
   sum-projected. But the TSL rebuild boundary must NOT be keyed on
   `usesPeakProjection` alone: the fragment **output branch is chosen at graph
   build time** (a JS conditional on `config.blendingMode`,
-  `shader-tsl.ts:587-601`), so an additive ↔ volumetric switch changes the graph
+  `shader-tsl.ts` (the build-time normal-mode output branch)), so an additive ↔ volumetric switch changes the graph
   even though the projection doesn't. The rebuild predicate
-  (`material-tsl.ts:417-425`) generalizes its `premultChanged` term to an
+  (`material-tsl.ts` (the `applyBlendingMode` rebuild predicate)) generalizes its `premultChanged` term to an
   `outputBranchChanged` term covering BOTH `isNormalMode` and `isVolumetricMode`
   crossings (§5.4).
 - **Points/lines in phase 1**: the shared mode tuple means the panel dropdown
@@ -322,7 +324,10 @@ Front-most picking beyond a τ threshold is a possible follow-up, not phase 1.
 - New uniform `uAbsorption` following the `uOpacity` pattern end-to-end:
   GLSL `rendering/materials/gsplat/material-glsl.ts` (uniform type L111, init
   L172, setter L282), TSL `material-tsl.ts` (L92/128/287), material-manager
-  config pass-through (`rendering/material-manager.ts:238/285/337`).
+  config pass-through — the GSPLAT factory call only in phase 1
+  (`rendering/material-manager.ts`); the point/line factory configs
+  deliberately omit it (their materials have no `uAbsorption` until
+  phases 3–4).
 
 ### 5.4 Fragment shader (GLSL + TSL twins)
 
@@ -352,10 +357,10 @@ Key constraints:
   (`shader-glsl.ts:434`) — i.e. emission's density scaling by opacity is
   inherited; only τ needs the explicit `uOpacity` factor.
 - TSL twin: mirror as a **build-time JS branch** on `config.blendingMode` in
-  `shader-tsl.ts` (the normal-mode branch at L587-601 is the template; TSL
+  `shader-tsl.ts` (the normal-mode output branch is the template; TSL
   `.select()` is deliberately avoided for structural branches because it
   materializes both sides), keeping 1:1 math with the GLSL. Because the branch
-  is build-time, `material-tsl.ts`'s rebuild predicate (L417-425) must fire on
+  is build-time, `material-tsl.ts`'s rebuild predicate must fire on
   any `isVolumetricMode` crossing:
 
   ```ts
@@ -367,8 +372,8 @@ Key constraints:
 
   (replacing the old `premultChanged`; `projectionChanged` stays). Parity is
   enforced by `tsl-shader-parity.spec.ts` and the codegen snapshots (§8).
-- **Discard interactions**: the color discard (`max(adjusted.rgb) < 1e-4`,
-  `shader-glsl.ts:420`, TSL twin ~:581) must be bypassed when τ is significant —
+- **Discard interactions**: the color discard (`max(adjusted.rgb) < 1e-4` —
+  the zero-color discards in `shader-glsl.ts` and the TSL twin) must be bypassed when τ is significant —
   a black splat still absorbs (a pure-ink occluder via gain → 0 must keep its
   optical depth). Under `LUXAR_VOLUMETRIC`, discard only when the color AND τ
   are both negligible. The earlier intensity discard (`:409`) stays: the τ it

@@ -284,8 +284,11 @@ def add_gsplats_from_volume_impl(
     if opacity is not None:
         scene_attrs["opacity"] = opacity
     if absorption is not None:
-        # Multiplicative compositing attr (identity 1.0) — rides
-        # COMPOSITING_ATTRS; no child grafting needed (unlike blending_mode).
+        # Multiplicative compositing attr (identity 1.0): on a partitioned
+        # result COMPOSITING_ATTRS routes it to the wrapper only, and the
+        # children's stamped 1.0 defaults are no-ops under the product.
+        # (The child duplication that blending_mode gets in
+        # graft_gsplat_node applies to the from-FILE graft path, not here.)
         scene_attrs["absorption"] = absorption
     if blending_mode is not None:
         scene_attrs["blending_mode"] = blending_mode

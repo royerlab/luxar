@@ -97,7 +97,7 @@ describe('getBlendingState', () => {
   });
 
   it('opaque + fully-opaque normal write depth; transparent normal/additive/max/luminous do not', () => {
-    const modes = ['additive', 'normal', 'max', 'opaque', 'luminous'];
+    const modes = ['additive', 'normal', 'max', 'opaque', 'luminous', 'volumetric'];
     // Default opacity 1.0 → both opaque and normal write depth.
     const writersOpaque = modes.filter((m) => getBlendingState(m, 1.0).depthWrite);
     expect(writersOpaque.sort()).toEqual(['normal', 'opaque']);
@@ -107,20 +107,20 @@ describe('getBlendingState', () => {
   });
 
   it('opaque is the only mode with transparent=false', () => {
-    const modes = ['additive', 'normal', 'max', 'opaque', 'luminous'];
+    const modes = ['additive', 'normal', 'max', 'opaque', 'luminous', 'volumetric'];
     const opaque = modes.filter((m) => !getBlendingState(m).transparent);
     expect(opaque).toEqual(['opaque']);
   });
 
   it('every mode reports a defined blendEquation (total state)', () => {
-    const modes = ['additive', 'normal', 'max', 'opaque', 'luminous', 'unknown'];
+    const modes = ['additive', 'normal', 'max', 'opaque', 'luminous', 'volumetric', 'unknown'];
     for (const m of modes) {
       expect(getBlendingState(m).blendEquation).toBeDefined();
     }
   });
 
   it('max is the only mode with MaxEquation; everything else uses AddEquation', () => {
-    const modes = ['additive', 'normal', 'max', 'opaque', 'luminous'];
+    const modes = ['additive', 'normal', 'max', 'opaque', 'luminous', 'volumetric'];
     const equationByMode = Object.fromEntries(
       modes.map((m) => [m, getBlendingState(m).blendEquation])
     );
@@ -129,6 +129,7 @@ describe('getBlendingState', () => {
     expect(equationByMode.normal).toBe(THREE.AddEquation);
     expect(equationByMode.opaque).toBe(THREE.AddEquation);
     expect(equationByMode.luminous).toBe(THREE.AddEquation);
+    expect(equationByMode.volumetric).toBe(THREE.AddEquation);
   });
 });
 

@@ -146,7 +146,7 @@ The fragment shader runs in this order:
 ## Blending modes
 
 `PointMaterial`/`PointTSLMaterial` accept the canonical Luxar `BlendingMode`
-(`'additive' | 'normal' | 'opaque' | 'luminous' | 'max'`) and route everything
+(`'additive' | 'volumetric' | 'normal' | 'opaque' | 'luminous' | 'max'`; `volumetric` renders its additive κ=0 fallback until phase 3 — see `effectiveGeometryMode` in blending-state.ts) and route everything
 through `applyBlendingMode(mode)`, which is the **single source of truth** for
 both creation (called from the constructor) and runtime UI transitions (called
 from `LayersPanel`). The method:

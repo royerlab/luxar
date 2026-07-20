@@ -660,7 +660,7 @@ Napari-inspired per-layer control panel. See [`./layers/README.md`](./layers/REA
 - Visibility toggle per layer
 - Display range [min, max] with dual-thumb slider
 - Gamma correction
-- Blending mode (additive, normal, max, opaque, luminous)
+- Blending mode (additive, volumetric, normal, max, opaque, luminous)
 - Colormap selection
 - Multi-select: Click, Ctrl+Click, Shift+Click
 

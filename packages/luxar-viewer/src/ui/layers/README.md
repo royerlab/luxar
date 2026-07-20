@@ -10,11 +10,12 @@ The Layers panel exposes scene graph nodes marked with `layer=True` (set in the 
 - **Display range** [min, max] — maps to shader intensity/offset uniforms
 - **Gamma** correction
 - **Opacity**
-- **Blending mode** (additive, normal, max, opaque, luminous)
+- **Blending mode** (additive, volumetric, normal, max, opaque, luminous)
+- **Absorption** (κ, 0–10) — only shown for volumetric gsplat/group layers; κ = 0 looks additive
 - **Colormap** (for gsplats with scalars/amplitudes, scalar-backed points/lines, and groups that fan out to such descendants)
 - **Active level** (LOD groups, and partitions wrapping LOD groups) — `auto` or lock to a specific level
 
-Rendering attributes compose along the scene graph per the Luxar composition spec: `opacity`, `gamma`, and `intensity` multiply through ancestors; `offset` adds; `blending_mode` takes the nearest ancestor's choice. Every panel mutation recomposes the effective attributes for each affected data-leaf (the layer itself, or every data descendant of a group layer) using live panel state for `layer=true` nodes and authoring-time zarr attrs for the rest. Colormap is the one exception — it applies per-leaf rather than composing.
+Rendering attributes compose along the scene graph per the Luxar composition spec: `opacity`, `absorption`, `gamma`, and `intensity` multiply through ancestors; `offset` adds; `blending_mode` takes the nearest ancestor's choice. Every panel mutation recomposes the effective attributes for each affected data-leaf (the layer itself, or every data descendant of a group layer) using live panel state for `layer=true` nodes and authoring-time zarr attrs for the rest. Colormap is the one exception — it applies per-leaf rather than composing.
 
 Edits made in the panel are viewer-only and not persisted back to the zarr store; reload the page to return to the authored state.
 
@@ -73,7 +74,7 @@ Press **L** to toggle the Layers panel (Escape closes when focus is inside the p
 - **Arrow Up / Arrow Down** move the keyboard focus through rows (and select on simple navigation)
 - **Enter / Space** select the focused row (honouring Ctrl/Cmd/Shift modifiers)
 - The bound labels on either side of the display-range slider are click-to-edit and scroll-to-adjust (hold **Shift** for finer increments)
-- Controls below the list (display range, gamma, opacity, blend, colormap) apply to all selected layers; the colormap and **Active level** controls auto-hide when the primary selected layer doesn't support them
+- Controls below the list (display range, gamma, opacity, absorption, blend, colormap) apply to all selected layers; the absorption, colormap, and **Active level** controls auto-hide when the primary selected layer doesn't support them
 
 ## Architecture
 
@@ -84,7 +85,7 @@ layer-controls.ts  LayerControls — the controls section (sliders, blend/colorm
 layer-apply.ts     LayerApplyEngine — attr composition + scene/material application
 luxar-material.ts  LuxarMaterial contract + colormap-vs-direct routing helpers
 range-slider.ts    Dual-thumb [min, max] slider (click-to-edit + scroll-adjust bounds)
-labeled-slider.ts  Single-thumb labeled slider (gamma, opacity)
+labeled-slider.ts  Single-thumb labeled slider (gamma, opacity, absorption)
 attrs-utils.ts     Pure helpers: clampGamma, blending-state mapping, liveLayerAttrs
 ```
 
@@ -121,7 +122,7 @@ doesn't silently clamp the thumb on first render.
 | `layer-apply.ts`                           | `LayerApplyEngine` — attr composition + material application per data-leaf         |
 | `luxar-material.ts`                        | `LuxarMaterial` interface, `isColormapActive` / `applyColorAdjustments` routing    |
 | `range-slider.ts`                          | `RangeSlider` — dual-thumb input component with editable / scrollable bound labels |
-| `labeled-slider.ts`                        | `LabeledSlider` — single-thumb labeled input component (gamma, opacity)            |
+| `labeled-slider.ts`                        | `LabeledSlider` — single-thumb labeled input component (gamma, opacity, absorption)            |
 | `attrs-utils.ts`                           | `clampGamma`, `getBlendingState`, `liveLayerAttrs` — pure helpers (no DOM)         |
 | `../layers.ts`                             | Public entrypoint — re-exports the layers surface                                  |
 | `../../styles/components/layers-panel.css` | Themed CSS styles                                                                  |

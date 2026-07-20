@@ -26,7 +26,7 @@ import {
 import {
   applyBlendingStateToMaterial,
   getCompleteBlendingState,
-  isVolumetricMode,
+  effectiveGeometryMode,
   normalModeDepthWrite,
   type CompleteBlendingState,
 } from '../../blending-state';
@@ -109,16 +109,15 @@ export class LineMaterial
 
     // Determine THREE.js blending mode
     // 'additive' and 'luminous' both use AdditiveBlending - only depthTest differs
+    // Volumetric maps to its additive (κ=0) fallback for lines — the
+    // policy lives in effectiveGeometryMode (blending-state.ts).
+    const initialMode = effectiveGeometryMode(blendingMode, 'line');
     let blending: THREE.Blending;
-    if (isOpaque || blendingMode === 'normal') {
+    if (isOpaque || initialMode === 'normal') {
       blending = THREE.NormalBlending;
-    } else if (
-      blendingMode === 'additive' ||
-      blendingMode === 'luminous' ||
-      blendingMode === 'volumetric' // lines render its additive (κ=0) fallback
-    ) {
+    } else if (initialMode === 'additive' || initialMode === 'luminous') {
       blending = THREE.AdditiveBlending; // Classic additive: SrcAlpha, One
-    } else if (blendingMode === 'max') {
+    } else if (initialMode === 'max') {
       blending = THREE.CustomBlending;
     } else {
       blending = THREE.NormalBlending;
@@ -401,12 +400,10 @@ export class LineMaterial
    */
   applyBlendingMode(mode: BlendingMode): void {
     const opacity = (this.uniforms.uOpacity?.value as number | undefined) ?? 1.0;
-    // Phase-1 volumetric fallback: lines don't implement the
-    // emission–absorption fragment math yet (VOLUMETRIC_BLENDING_SPEC.md
-    // phases 3–4), so render the ADDITIVE state — the exact κ=0 limit of
-    // volumetric. userData keeps the REQUESTED mode so stored scenes
-    // upgrade automatically when the line implementation lands.
-    const effectiveMode: BlendingMode = isVolumetricMode(mode) ? 'additive' : mode;
+    // Phase-1 volumetric fallback — the policy lives in
+    // effectiveGeometryMode (blending-state.ts); userData keeps the
+    // REQUESTED mode so stored scenes upgrade automatically.
+    const effectiveMode: BlendingMode = effectiveGeometryMode(mode, 'line');
     const state: CompleteBlendingState = getCompleteBlendingState(effectiveMode, opacity);
 
     // Defensive: THREE may leave defines undefined when none were

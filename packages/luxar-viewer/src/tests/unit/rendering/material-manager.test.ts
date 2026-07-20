@@ -654,6 +654,29 @@ describe('MaterialManager', () => {
       expect(material.transparent).toBe(false); // Not transparent
     });
 
+    it('getGSplatMaterial threads absorption into the material (volumetric kappa seam)', () => {
+      const material = manager.getGSplatMaterial({
+        blendingMode: 'volumetric',
+        opacity: 1.0,
+        absorption: 2.5,
+        gamma: 1.0,
+        intensity: 1.0,
+        offset: 0.0,
+      });
+      // The factory seam must not drop kappa (props.absorption ?? 1.0).
+      expect(material.uniforms.uAbsorption.value).toBe(2.5);
+      expect(material.userData.blendingMode).toBe('volumetric');
+      // Omitted -> identity default.
+      const dflt = manager.getGSplatMaterial({
+        blendingMode: 'volumetric',
+        opacity: 1.0,
+        gamma: 1.0,
+        intensity: 1.0,
+        offset: 0.0,
+      });
+      expect(dflt.uniforms.uAbsorption.value).toBe(1.0);
+    });
+
     it('should configure luminous blending mode with AdditiveBlending and depthTest', () => {
       const material = manager.getPointMaterial({
         blendingMode: 'luminous',

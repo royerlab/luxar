@@ -3,6 +3,11 @@
  * twins of `getCompleteBlendingState` (src/rendering/blending-state.ts),
  * shared by blending-modes.spec.ts and lines-blending-modes.spec.ts.
  *
+ * Deliberately duplicated as NUMBERS, not imported: the Playwright spec
+ * bundle must not import viewer/THREE modules (an import would make the
+ * expectation derive from the very code under test — and drag the THREE
+ * dependency into the node-side test runner). Do not "DRY this up".
+ *
  * THREE enum values (three/src/constants.js, verified against three@r184):
  *   blending:      NormalBlending=1, AdditiveBlending=2, CustomBlending=5
  *   blendEquation: AddEquation=100, MaxEquation=104
