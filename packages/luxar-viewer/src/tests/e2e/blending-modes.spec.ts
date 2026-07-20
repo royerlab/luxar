@@ -36,6 +36,8 @@ const GSPLAT_VOLUMETRIC_FIXTURE =
   'http://localhost:9000/packages/luxar-viewer/tests/fixtures/test_gsplats_volumetric.luxar.zarr';
 const GSPLAT_VOLUMETRIC_REVERSED_FIXTURE =
   'http://localhost:9000/packages/luxar-viewer/tests/fixtures/test_gsplats_volumetric_reversed.luxar.zarr';
+const GSPLAT_RGBA_OCCLUSION_FIXTURE =
+  'http://localhost:9000/packages/luxar-viewer/tests/fixtures/test_gsplats_rgba_occlusion.luxar.zarr';
 
 /** Read {name, mode, state, opacity} for every points mesh in the scene. */
 function readPointsMaterialStates(page: import('@playwright/test').Page) {
@@ -1144,5 +1146,131 @@ test.describe('GSplat volumetric mode (emission–absorption)', () => {
 
     const webglErrors = await getWebGLErrors(page);
     expect(webglErrors.length).toBe(0);
+  });
+});
+
+test.describe('GSplat RGBA per-element opacity (occlusion)', () => {
+  // Fixture: a bright white back splat, a BLACK high-α (0.95) front splat
+  // overlapping it in screen space, and a white reference off-axis. The
+  // front splat emits no light — so it only matters through the alpha
+  // channel. See generate_gsplats_rgba_occlusion_test() and
+  // VOLUMETRIC_BLENDING_SPEC.md §5.4.1.
+  test.slow();
+
+  test.beforeAll(async () => {
+    const { existsSync } = await import('node:fs');
+    const path = await import('node:path');
+    const { fileURLToPath } = await import('node:url');
+    const specDir = path.dirname(fileURLToPath(import.meta.url));
+    const fixtureDir = path.resolve(
+      specDir,
+      '../../../tests/fixtures/test_gsplats_rgba_occlusion.luxar.zarr'
+    );
+    if (!existsSync(fixtureDir)) {
+      throw new Error(
+        `Missing fixture ${fixtureDir} — run \`pnpm test:generate-fixtures\` first.`
+      );
+    }
+  });
+
+  async function waitCommitted(page: import('@playwright/test').Page): Promise<void> {
+    await page.waitForFunction(
+      () => {
+        const debug = (window as unknown as { __luxarDebug?: { scene?: unknown } }).__luxarDebug;
+        if (!debug?.scene) return false;
+        let committed = false;
+        (debug.scene as { traverse: (cb: (obj: unknown) => void) => void }).traverse((obj) => {
+          const o = obj as {
+            userData?: { nodeType?: string };
+            geometry?: { instanceCount?: number };
+          };
+          if (o.userData?.nodeType === 'gsplats' && (o.geometry?.instanceCount ?? 0) > 0) {
+            committed = true;
+          }
+        });
+        return committed;
+      },
+      undefined,
+      { timeout: 30000 }
+    );
+  }
+
+  test('RGBA colors reach the material as a 4-component layout (uHasElementAlpha=1)', async ({
+    page,
+  }) => {
+    await page.goto(`/?src=${GSPLAT_RGBA_OCCLUSION_FIXTURE}&debug`);
+    await waitForLuxarReady(page);
+    await waitCommitted(page);
+
+    const hasAlpha = await page.evaluate(() => {
+      const debug = (window as any).__luxarDebug;
+      let v: number | undefined;
+      debug.scene.traverse((obj: any) => {
+        if (obj.userData?.nodeType === 'gsplats' && obj.material && v === undefined) {
+          v = obj.material.uniforms?.uHasElementAlpha?.value;
+        }
+      });
+      return v;
+    });
+    // The loader read (N, 4) from the zarr shape and declared it to the
+    // material — the gate that enables the volumetric α → optical-depth map.
+    expect(hasAlpha).toBe(1);
+  });
+
+  test('the black high-α occluder absorbs under κ (its darkening is alpha-driven)', async ({
+    page,
+  }) => {
+    // The front splat is BLACK, so it contributes no emission in either
+    // frame — its only effect on the picture is ABSORPTION, which in
+    // volumetric is driven by its optical depth τ = κ·opacity·w(α)·rayMass.
+    // Raising κ from 0 (τ=0, no occlusion — the additive limit) to 5 turns
+    // the black splat into a real occluder that removes the back splat's
+    // light where they overlap. Total sampled luminance must drop. A
+    // regression that ignored the alpha channel would still darken (rayMass
+    // alone), so this is paired with the uHasElementAlpha=1 test and the
+    // TSL↔GLSL parity of the w(α) fold to attribute the effect to alpha.
+    await page.addInitScript(() => {
+      localStorage.setItem('luxar-control-rail-hint-dismissed', '1');
+    });
+    await page.goto(`/?src=${GSPLAT_RGBA_OCCLUSION_FIXTURE}&debug&dpr=1`);
+    await waitForLuxarReady(page);
+    await waitCommitted(page);
+    await waitForNextRender(page, 5);
+
+    // Overlap band (screen center) where the black front splat sits over
+    // the bright back splat.
+    const offsets: Array<[number, number]> = [];
+    for (let gx = 0.3; gx <= 0.7; gx += 0.05) {
+      for (let gy = 0.35; gy <= 0.65; gy += 0.05) {
+        offsets.push([gx, gy]);
+      }
+    }
+
+    const setAbsorption = (k: number): Promise<void> =>
+      page.evaluate((kappa) => {
+        const debug = (window as any).__luxarDebug;
+        debug.scene.traverse((obj: any) => {
+          if (obj.userData?.nodeType === 'gsplats' && obj.material?.updateAbsorption) {
+            obj.material.updateAbsorption(kappa);
+          }
+        });
+        debug.renderOnce();
+      }, k);
+
+    const sum = (xs: Array<{ r: number; g: number; b: number }>) =>
+      xs.reduce((acc, s) => acc + s.r + s.g + s.b, 0);
+
+    await setAbsorption(0); // additive limit — the black splat can't occlude
+    await waitForNextRender(page, 5);
+    const bright = await samplePixelsAt(page, 'canvas', offsets);
+    const sumBright = sum(bright);
+
+    await setAbsorption(5); // the black splat becomes a real occluder
+    await waitForNextRender(page, 5);
+    const absorbed = await samplePixelsAt(page, 'canvas', offsets);
+    const sumAbsorbed = sum(absorbed);
+
+    expect(sumBright, 'κ=0 frame rendered black — fixture/camera broke').toBeGreaterThan(1000);
+    expect(sumAbsorbed).toBeLessThan(sumBright * 0.9);
   });
 });

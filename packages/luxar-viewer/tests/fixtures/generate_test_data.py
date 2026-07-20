@@ -71,6 +71,7 @@ FIXTURE_NAMES: list[str] = [
     "test_gsplats_normal_overlap_reversed.luxar.zarr",
     "test_gsplats_volumetric.luxar.zarr",
     "test_gsplats_volumetric_reversed.luxar.zarr",
+    "test_gsplats_rgba_occlusion.luxar.zarr",
     "test_hdr_colors.luxar.zarr",
     "test_hierarchical_transforms.luxar.zarr",
     "test_integer_colors.luxar.zarr",
@@ -2374,6 +2375,87 @@ def generate_gsplats_volumetric_reversed_test() -> None:
         aprint(f"  Created {output}")
 
 
+def generate_gsplats_rgba_occlusion_test() -> None:
+    """RGBA per-element opacity: a black high-α front splat occludes.
+
+    A bright back splat (white, α=1) with a BLACK front splat (RGB≈0)
+    that has high per-element opacity α=0.95, overlapping in screen
+    space, plus an off-axis white reference. The front splat emits no
+    light, so:
+
+    - In `volumetric`, its high α maps to a large optical depth
+      (w = −ln(1−0.95) ≈ 3.0): it ABSORBS the back splat's light — the
+      overlap darkens relative to the reference.
+    - In `additive` (κ=0 limit), a black splat contributes nothing and
+      does not occlude — the overlap is as bright as the back splat
+      alone (α is a linear contribution scale; black × α = black added).
+
+    This is the RGBA occlusion discriminator: the same fixture renders
+    visibly different between the two modes ONLY because the alpha
+    channel drives optical depth in volumetric. `layer=True` so the E2E
+    suite can flip the mode at runtime through the real material path.
+    """
+    with asection("Generating GSplats RGBA-Occlusion Test"):
+        output = FIXTURES_DIR / "test_gsplats_rgba_occlusion.luxar.zarr"
+
+        centers = np.array(
+            [
+                [-0.25, 0.0, 0.0],  # back splat (white, opaque)
+                [0.25, 0.0, 1.0],  # front splat (black, high α), overlaps
+                [3.0, 2.0, 0.0],  # white reference, no overlap
+            ],
+            dtype=np.float32,
+        )
+        amplitudes = np.array([2.0, 2.0, 2.0], dtype=np.float32)
+
+        cholesky = np.zeros((3, 6), dtype=np.float32)
+        for i, sigma in enumerate((0.35, 0.35, 0.3)):
+            cholesky[i, 0] = sigma  # L11
+            cholesky[i, 2] = sigma  # L22
+            cholesky[i, 5] = sigma  # L33
+
+        # RGBA: the 4th column is per-element opacity. The front splat is
+        # near-black (no emission) but nearly opaque (α=0.95) — a pure-ink
+        # occluder that only matters in volumetric.
+        colors = np.array(
+            [
+                [1.0, 1.0, 1.0, 1.0],  # back: white, opaque
+                [0.0, 0.0, 0.0, 0.95],  # front: black, high opacity
+                [1.0, 1.0, 1.0, 1.0],  # reference: white, opaque
+            ],
+            dtype=np.float32,
+        )
+
+        dims = Dimensions(
+            [
+                Dimension("x", unit="units", display=True),
+                Dimension("y", unit="units", display=True),
+                Dimension("z", unit="units", display=True),
+            ]
+        )
+
+        with LuxarZarrCompiler(
+            output,
+            encoding_mode=EncodingMode.PRECISION,
+            compressor=None,
+            float16_allowed=False,
+        ) as compiler:
+            scene = compiler.create_scene(dimensions=dims)
+
+            scene.add_gsplats(
+                "rgba_occlusion_splats",
+                centers,
+                amplitudes=amplitudes,
+                cholesky_factors=cholesky,
+                colors=colors,
+                blending_mode="volumetric",
+                absorption=1.0,
+                layer=True,
+            )
+
+        aprint(f"  Created {output}")
+
+
 def generate_standalone_gsplats_test() -> None:
     """Standalone v3.1 ``.gsplats.zarr`` — a *detached* gsplats leaf node.
 
@@ -2678,6 +2760,7 @@ def main() -> None:
         generate_gsplats_normal_overlap_reversed_test()
         generate_gsplats_volumetric_test()
         generate_gsplats_volumetric_reversed_test()
+        generate_gsplats_rgba_occlusion_test()
         aprint("")
 
         generate_standalone_gsplats_test()
