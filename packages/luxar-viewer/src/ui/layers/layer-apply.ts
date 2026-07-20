@@ -116,6 +116,7 @@ export class LayerApplyEngine {
       if (layerInfo) return this.liveLayerAttrs(layerInfo);
       return {
         opacity: node.attrs.opacity as number | undefined,
+        absorption: node.attrs.absorption as number | undefined,
         gamma: node.attrs.gamma as number | undefined,
         intensity: node.attrs.intensity as number | undefined,
         offset: node.attrs.offset as number | undefined,

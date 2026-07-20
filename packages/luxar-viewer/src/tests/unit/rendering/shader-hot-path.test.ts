@@ -160,6 +160,28 @@ describe('Shader hot-path string regressions', () => {
       expect(alphaOneBranch).toMatch(/fragColor\s*=\s*vec4\s*\(\s*finalColor\s*,\s*1\.0\s*\)/);
       expect(alphaOneBranch).not.toMatch(/coverage/);
     });
+
+    it('volumetric color-discard is τ-aware: a black splat still absorbs', () => {
+      // The zero-color early-discard must only fire when the optical
+      // depth is ALSO negligible — a black splat (e.g. gain→0 pure-ink
+      // occluder) keeps its absorption. Pin the conjunction inside the
+      // LUXAR_VOLUMETRIC discard guard (mutation `&& tau < 1e-4` →
+      // removed survived the suite before this test existed) and the
+      // plain discard in the non-volumetric branch.
+      const discardIfdef = GSPLAT_FRAGMENT_SHADER.indexOf('#ifdef LUXAR_VOLUMETRIC');
+      const discardElse = GSPLAT_FRAGMENT_SHADER.indexOf('#else', discardIfdef);
+      const discardEndif = GSPLAT_FRAGMENT_SHADER.indexOf('#endif', discardElse);
+      expect(discardIfdef).toBeGreaterThanOrEqual(0);
+      const volumetricDiscard = GSPLAT_FRAGMENT_SHADER.slice(discardIfdef, discardElse);
+      const plainDiscard = GSPLAT_FRAGMENT_SHADER.slice(discardElse, discardEndif);
+      expect(volumetricDiscard).toMatch(
+        /if\s*\(\s*max\s*\(adjusted\.r,\s*max\(adjusted\.g,\s*adjusted\.b\)\)\s*<\s*1e-4\s*&&\s*tau\s*<\s*1e-4\s*\)\s*discard;/
+      );
+      expect(plainDiscard).toMatch(
+        /if\s*\(\s*max\s*\(adjusted\.r,\s*max\(adjusted\.g,\s*adjusted\.b\)\)\s*<\s*1e-4\s*\)\s*discard;/
+      );
+      expect(plainDiscard).not.toMatch(/tau/);
+    });
   });
 
   describe('Line vertex', () => {

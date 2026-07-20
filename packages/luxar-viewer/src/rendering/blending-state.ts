@@ -123,6 +123,32 @@ export function needsDepthSort(mode: BlendingMode): boolean {
 }
 
 /**
+ * THE phase-1 volumetric fallback policy, in one place: points and
+ * lines don't implement the emission–absorption fragment math yet
+ * (VOLUMETRIC_BLENDING_SPEC.md phases 3–4), so every point/line
+ * state-writing path renders `volumetric` as `additive` — its exact
+ * κ = 0 limit — while `userData.blendingMode` keeps the REQUESTED mode
+ * so stored scenes upgrade automatically when those phases land.
+ *
+ * Call sites are deliberately many (GLSL ctor chains, wrapper
+ * `applyBlendingMode`s, TSL factory tails — each a genuinely distinct
+ * state writer), but the POLICY lives only here: phases 3–4 flip the
+ * `geometry !== 'gsplat'` condition (or delete the helper) and every
+ * site upgrades atomically.
+ *
+ * @param mode - the requested blending mode
+ * @param geometry - the geometry type applying it
+ * @returns The mode whose blend state the material should apply.
+ * @public
+ */
+export function effectiveGeometryMode(
+  mode: BlendingMode,
+  geometry: 'point' | 'line' | 'gsplat'
+): BlendingMode {
+  return isVolumetricMode(mode) && geometry !== 'gsplat' ? 'additive' : mode;
+}
+
+/**
  * The canonical mode tuple lives in `types/blending.ts` (dependency-free
  * layer); re-exported here because this module is the runtime home of
  * mode validation (`normalizeBlendingMode`) and its historical import
@@ -283,25 +309,18 @@ export function getCompleteBlendingState(
   if (mode === 'volumetric') {
     // Volumetric (emission–absorption): the fragment emits
     // vec4(self-screened emission, 1 − e^(−τ)) — premultiplied — so the
-    // framebuffer computes src + (1 − α_src)·dst back-to-front. Same
-    // state as gsplat `normal` (see getGSplatNormalBlendingState for the
-    // symmetric-alpha / never-depthWrite rationale); the semantic
-    // difference lives entirely in the fragment shader. depthWrite is
-    // false UNCONDITIONALLY — no normalModeDepthWrite coupling; the mode
-    // is smooth in opacity by design (VOLUMETRIC_BLENDING_SPEC.md §3.1).
+    // framebuffer computes src + (1 − α_src)·dst back-to-front. The
+    // framebuffer state is IDENTICAL to gsplat `normal` (see
+    // getGSplatNormalBlendingState for the symmetric-alpha /
+    // never-depthWrite rationale) — delegated so the two can never
+    // drift; the semantic difference lives entirely in the fragment
+    // shader. depthWrite is false UNCONDITIONALLY — no
+    // normalModeDepthWrite coupling; the mode is smooth in opacity by
+    // design (VOLUMETRIC_BLENDING_SPEC.md §3.1).
     // NOTE: only gsplats implement the volumetric fragment math in
     // phase 1; point/line materials intercept this mode upstream and
     // apply the additive state instead (the exact κ=0 limit).
-    return {
-      blending: THREE.CustomBlending,
-      blendEquation: THREE.AddEquation,
-      blendSrc: THREE.OneFactor,
-      blendDst: THREE.OneMinusSrcAlphaFactor,
-      depthTest: true,
-      depthWrite: false,
-      transparent: true,
-      shaderOutputMode: 'premultiplied-alpha',
-    };
+    return getGSplatNormalBlendingState();
   }
 
   // 'normal' (default) — opacity-aware depthWrite so a fully opaque

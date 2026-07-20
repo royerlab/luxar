@@ -52,6 +52,14 @@ import { clamp } from '../../utils/clamp';
  * - 'max': Maximum of source and destination (brightest wins)
  * - 'opaque': Solid rendering with depth write (closest object wins)
  * - 'luminous': Same as additive visually, but respects depth occlusion (occluded by closer objects)
+ * - 'volumetric': Emission–absorption (VOLUMETRIC_BLENDING_SPEC.md). For
+ *   **GSplats** the shader emits premultiplied self-screened emission with
+ *   the physical absorption alpha `1 − e^(−τ)`, τ = κ·opacity·rayMass
+ *   (`LUXAR_VOLUMETRIC` define, `uAbsorption` uniform), over the same
+ *   `One / OneMinusSrcAlpha` state as gsplat normal; order-dependent and
+ *   depth-sorted (`needsDepthSort`), never depth-writes; κ = 0 renders
+ *   exactly like 'additive'. **Points/Lines** render its additive (κ = 0)
+ *   fallback until phases 3–4 (`effectiveGeometryMode`).
  *
  * Re-exported from `types/blending.ts` — the single source of truth for
  * the mode set (adding a mode there updates this union, the per-node attr

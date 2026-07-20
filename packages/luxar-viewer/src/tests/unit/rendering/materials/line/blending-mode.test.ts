@@ -248,6 +248,30 @@ describe('LineMaterial ↔ LineTSLMaterial blending-state convergence', () => {
       expect(mat.userData.blendingMode).toBe('volumetric');
     }
   });
+
+  it('volumetric fallback survives TSL CONSTRUCTION and graph REBUILDS (factory-tail interception)', () => {
+    // Mirror of the point twin: the TSL factory tail is the only state
+    // writer at construction and re-runs on every rebuildGraph, so it
+    // must intercept volumetric itself (pre-fix it applied the raw
+    // premultiplied state under the alpha-weighted line shader).
+    const expected = getCompleteBlendingState('additive', 1.0);
+    const constructed = new LineTSLMaterial({ blendingMode: 'volumetric' });
+    for (const field of STATE_FIELDS) {
+      expect(constructed[field], `constructed ${field}`).toBe(expected[field]);
+    }
+    expect(constructed.userData.blendingMode).toBe('volumetric');
+
+    const switched = new LineTSLMaterial({ blendingMode: 'max' });
+    switched.applyBlendingMode('volumetric');
+    for (const field of STATE_FIELDS) {
+      expect(switched[field], `post-switch ${field}`).toBe(expected[field]);
+    }
+
+    switched.updateGamma(2.2); // gamma crossing 1.0 → rebuildGraph
+    for (const field of STATE_FIELDS) {
+      expect(switched[field], `post-rebuild ${field}`).toBe(expected[field]);
+    }
+  });
 });
 
 // H — TSL constructors honor explicit transparent/depthTest overrides

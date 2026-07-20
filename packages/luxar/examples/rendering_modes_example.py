@@ -3,7 +3,7 @@
 
 This educational example demonstrates:
 - Different blending modes (normal and additive; the viewer also supports
-  max, opaque, and luminous)
+  max, opaque, luminous, and volumetric)
 - Opacity effects and transparency
 - Gamma correction for brightness control
 - Parent-child inheritance of rendering properties

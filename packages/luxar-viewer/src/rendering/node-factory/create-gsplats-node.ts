@@ -22,13 +22,22 @@ export function createGSplatsNode(
   loader: GSplatsDataLoader,
   pickingSystem: PickingSystem | null
 ): THREE.Mesh {
+  // Rendering attrs come from `nodeAttrs` — the COMPOSED effective attrs
+  // the loader passes in (`ctx.applyEffectiveAttrs(node)`) — so an
+  // ancestor-authored opacity/absorption/blending_mode reaches the
+  // material even in scenes with no `layer=true` node (the layers-panel
+  // recompose path only exists for layers). Mirrors the points/lines
+  // placeholders; reading the RAW `attrs` here silently dropped ancestor
+  // values until the first panel interaction, if ever.
+  // `truncation_radius` stays on `attrs`: it is a per-leaf geometry
+  // property, deliberately NOT composited (see COMPOSITING_ATTRS).
   const material: LuxarGSplatMaterial = materialManager.getGSplatMaterial({
-    opacity: (attrs.opacity as number | undefined) ?? 1.0,
-    absorption: (attrs.absorption as number | undefined) ?? 1.0,
-    gamma: (attrs.gamma as number | undefined) ?? 1.0,
-    intensity: (attrs.intensity as number | undefined) ?? 1.0,
-    offset: (attrs.offset as number | undefined) ?? 0.0,
-    blendingMode: (attrs.blending_mode as string | undefined as BlendingMode) ?? 'additive',
+    opacity: (nodeAttrs.opacity as number | undefined) ?? 1.0,
+    absorption: (nodeAttrs.absorption as number | undefined) ?? 1.0,
+    gamma: (nodeAttrs.gamma as number | undefined) ?? 1.0,
+    intensity: (nodeAttrs.intensity as number | undefined) ?? 1.0,
+    offset: (nodeAttrs.offset as number | undefined) ?? 0.0,
+    blendingMode: (nodeAttrs.blending_mode as string | undefined as BlendingMode) ?? 'additive',
     truncationRadius: (attrs.truncation_radius as number | undefined) ?? 3.0,
   });
 
