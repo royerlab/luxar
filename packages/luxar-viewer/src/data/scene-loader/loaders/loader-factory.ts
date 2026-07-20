@@ -189,6 +189,7 @@ export async function createProgressiveGSplatsLoader(
       attrs: {
         ...lodAttrs,
         opacity: parentEffectiveAttrs.opacity,
+        absorption: parentEffectiveAttrs.absorption,
         gamma: parentEffectiveAttrs.gamma,
         intensity: parentEffectiveAttrs.intensity,
         offset: parentEffectiveAttrs.offset,
@@ -256,6 +257,7 @@ export async function createProgressivePointsLoader(
       attrs: {
         ...lodAttrs,
         opacity: parentEffectiveAttrs.opacity,
+        absorption: parentEffectiveAttrs.absorption,
         gamma: parentEffectiveAttrs.gamma,
         intensity: parentEffectiveAttrs.intensity,
         offset: parentEffectiveAttrs.offset,
@@ -319,6 +321,7 @@ export async function createProgressiveLinesLoader(
       attrs: {
         ...lodAttrs,
         opacity: parentEffectiveAttrs.opacity,
+        absorption: parentEffectiveAttrs.absorption,
         gamma: parentEffectiveAttrs.gamma,
         intensity: parentEffectiveAttrs.intensity,
         offset: parentEffectiveAttrs.offset,

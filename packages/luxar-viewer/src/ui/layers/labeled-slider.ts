@@ -82,6 +82,15 @@ export class LabeledSlider {
     this.valueEl.textContent = this.formatValue(value);
   }
 
+  /**
+   * Show/hide the whole control group (label + slider + readout) — for
+   * mode-conditional controls like the volumetric Absorption slider
+   * (same pattern as the colormap select's display toggle).
+   */
+  setVisible(visible: boolean): void {
+    this.wrapper.style.display = visible ? '' : 'none';
+  }
+
   /** Remove from DOM and detach listeners. */
   dispose(): void {
     this.input.removeEventListener('input', this.inputHandler);

@@ -230,6 +230,52 @@ describe('LayerStateManager', () => {
     });
   });
 
+  describe('absorption init is RAW (like opacity), not composed', () => {
+    it('a leaf inside a κ-scaled group initializes from its OWN attr only', () => {
+      // Multiplicative attrs must init raw: composeEffective substitutes
+      // each layer's live values per ancestry node, so a composed init
+      // (group 2.0 × leaf 0.5 = 1.0) would multiply the ancestor κ in
+      // TWICE at apply time. Contrast blendingMode above, which IS
+      // composed (nearest-setter-wins has no double-count).
+      const graph: SceneNode = {
+        path: '',
+        type: 'scene',
+        attrs: {},
+        hasSpatialIndex: false,
+        children: [
+          {
+            path: 'grp',
+            type: 'group',
+            attrs: { absorption: 2.0 },
+            hasSpatialIndex: false,
+            children: [
+              {
+                path: 'grp/pts',
+                type: 'gsplats',
+                attrs: { layer: true, absorption: 0.5 },
+                hasSpatialIndex: true,
+              },
+            ],
+          },
+        ],
+      };
+      mgr.initFromSceneGraph(graph);
+      expect(mgr.getLayer('grp/pts')!.absorption).toBe(0.5); // raw, NOT 1.0
+    });
+
+    it('defaults to the identity 1.0 when unset', () => {
+      mgr.initFromSceneGraph(makeSceneGraph([{}]));
+      expect(mgr.getLayers()[0].absorption).toBe(1.0);
+    });
+
+    it('setAbsorption mutates and notifies', () => {
+      mgr.initFromSceneGraph(makeSceneGraph([{}]));
+      const path = mgr.getLayers()[0].path;
+      mgr.setAbsorption(path, 4.5);
+      expect(mgr.getLayer(path)!.absorption).toBe(4.5);
+    });
+  });
+
   it('derives a composite group layer range from its finest descendant leaf', () => {
     // Regression: a kind=partition/lod group carries no range of its own; the
     // [0, 1] fallback makes a colormapped gsplat render near-black. Derive from

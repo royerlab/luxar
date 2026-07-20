@@ -158,6 +158,21 @@ class TestNodeMethodChaining:
             # Verify opacity was set
             assert group.attrs["opacity"] == 0.5
 
+    def test_set_absorption_returns_self(self, tmp_path: Path) -> None:
+        """Test that set_absorption() returns self for chaining."""
+        store_path = tmp_path / "test.zarr"
+
+        with LuxarZarrCompiler(store_path) as compiler:
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+            group = scene.add_group("group1")
+
+            # set_absorption should return the node itself
+            result = group.set_absorption(2.5)
+            assert result is group
+
+            # Verify absorption was set
+            assert group.attrs["absorption"] == 2.5
+
     def test_set_gamma_returns_self(self, tmp_path: Path) -> None:
         """Test that set_gamma() returns self for chaining."""
         store_path = tmp_path / "test.zarr"

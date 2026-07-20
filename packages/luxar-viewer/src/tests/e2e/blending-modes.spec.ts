@@ -17,7 +17,10 @@ import {
   samplePixelsAt,
   openLayersPanel,
 } from './helpers';
-import { EXPECTED_BLEND_STATE as EXPECTED_STATE } from './blending-expected-state';
+import {
+  EXPECTED_BLEND_STATE as EXPECTED_STATE,
+  EXPECTED_GSPLAT_VOLUMETRIC_STATE,
+} from './blending-expected-state';
 
 const DATASET = 'http://localhost:9000/datasets/examples/rendering_modes_example.luxar.zarr';
 const MULTI_DATASET = 'http://localhost:9000/datasets/examples/multiple_objects_example.luxar.zarr';
@@ -29,6 +32,10 @@ const GSPLAT_OVERLAP_FIXTURE =
   'http://localhost:9000/packages/luxar-viewer/tests/fixtures/test_gsplats_normal_overlap.luxar.zarr';
 const GSPLAT_OVERLAP_REVERSED_FIXTURE =
   'http://localhost:9000/packages/luxar-viewer/tests/fixtures/test_gsplats_normal_overlap_reversed.luxar.zarr';
+const GSPLAT_VOLUMETRIC_FIXTURE =
+  'http://localhost:9000/packages/luxar-viewer/tests/fixtures/test_gsplats_volumetric.luxar.zarr';
+const GSPLAT_VOLUMETRIC_REVERSED_FIXTURE =
+  'http://localhost:9000/packages/luxar-viewer/tests/fixtures/test_gsplats_volumetric_reversed.luxar.zarr';
 
 /** Read {name, mode, state, opacity} for every points mesh in the scene. */
 function readPointsMaterialStates(page: import('@playwright/test').Page) {
@@ -227,7 +234,7 @@ test.describe('Points blending modes (per-mode material state)', () => {
     await waitForPointsLoaded(page, 10);
 
     const states = await readPointsMaterialStates(page);
-    expect(states.length).toBe(5);
+    expect(states.length).toBe(6);
 
     for (const [mode, expected] of Object.entries(EXPECTED_STATE)) {
       const state = states.find((s) => s.name.includes(`points_${mode}`));
@@ -850,5 +857,292 @@ test.describe('GSplat normal mode (premultiplied coverage alpha)', () => {
     const afterOrbit = await readState();
     for (const node of afterOrbit.nodes) expect(node.identity).toBe(true);
     expect(afterOrbit.sorts).toBe(0);
+  });
+});
+
+test.describe('GSplat volumetric mode (emission–absorption)', () => {
+  // Fixture: the overlap geometry (red back splat, green front splat,
+  // blue off-axis reference) with blending_mode='volumetric' and
+  // absorption=1.0. κ is driven at runtime through the REAL material
+  // path (updateAbsorption / applyBlendingMode) so I1 and the
+  // darkening test compare frames within one page session (same
+  // camera, ?dpr=1). See generate_gsplats_volumetric_test() and
+  // VOLUMETRIC_BLENDING_SPEC.md §3.3/§8.
+  test.slow();
+
+  test.beforeAll(async () => {
+    const { existsSync } = await import('node:fs');
+    const path = await import('node:path');
+    const { fileURLToPath } = await import('node:url');
+    const specDir = path.dirname(fileURLToPath(import.meta.url));
+    for (const name of [
+      'test_gsplats_volumetric.luxar.zarr',
+      'test_gsplats_volumetric_reversed.luxar.zarr',
+    ]) {
+      const fixtureDir = path.resolve(specDir, `../../../tests/fixtures/${name}`);
+      if (!existsSync(fixtureDir)) {
+        throw new Error(
+          `Missing fixture ${fixtureDir} — run \`pnpm test:generate-fixtures\` ` +
+            'from packages/luxar-viewer/ first.'
+        );
+      }
+    }
+  });
+
+  /** Wait until a gsplats mesh has committed instances. */
+  async function waitCommitted(page: import('@playwright/test').Page): Promise<void> {
+    await page.waitForFunction(
+      () => {
+        const debug = (window as unknown as { __luxarDebug?: { scene?: unknown } }).__luxarDebug;
+        if (!debug?.scene) return false;
+        let committed = false;
+        (debug.scene as { traverse: (cb: (obj: unknown) => void) => void }).traverse((obj) => {
+          const o = obj as {
+            userData?: { nodeType?: string };
+            geometry?: { instanceCount?: number };
+          };
+          if (o.userData?.nodeType === 'gsplats' && (o.geometry?.instanceCount ?? 0) > 0) {
+            committed = true;
+          }
+        });
+        return committed;
+      },
+      undefined,
+      { timeout: 30000 }
+    );
+  }
+
+  /** Set κ on every gsplat material through the real update path and re-render. */
+  function setAbsorption(page: import('@playwright/test').Page, kappa: number): Promise<void> {
+    return page.evaluate((k) => {
+      const debug = (window as any).__luxarDebug;
+      debug.scene.traverse((obj: any) => {
+        if (obj.userData?.nodeType === 'gsplats' && obj.material?.updateAbsorption) {
+          obj.material.updateAbsorption(k);
+        }
+      });
+      debug.renderOnce();
+    }, kappa);
+  }
+
+  test('material carries the volumetric state, define, and uAbsorption from the zarr attr', async ({
+    page,
+  }) => {
+    await page.goto(`/?src=${GSPLAT_VOLUMETRIC_FIXTURE}&debug`);
+    await waitForLuxarReady(page);
+    await waitCommitted(page);
+
+    const state = await page.evaluate(() => {
+      const debug = (window as any).__luxarDebug;
+      let found: any = null;
+      debug.scene.traverse((obj: any) => {
+        if (obj.userData?.nodeType === 'gsplats' && obj.material && !found) {
+          const m = obj.material;
+          found = {
+            blending: m.blending,
+            blendEquation: m.blendEquation,
+            blendSrc: m.blendSrc,
+            blendDst: m.blendDst,
+            transparent: m.transparent,
+            depthTest: m.depthTest,
+            depthWrite: m.depthWrite,
+            blendingMode: m.userData?.blendingMode,
+            hasVolumetricDefine: !!m.defines && 'LUXAR_VOLUMETRIC' in m.defines,
+            absorption: m.uniforms?.uAbsorption?.value,
+            projectionMode: m.uniforms?.uProjectionMode?.value,
+          };
+        }
+      });
+      return found;
+    });
+
+    expect(state).not.toBeNull();
+    expect(state.blendingMode).toBe('volumetric');
+    expect(state.blending).toBe(EXPECTED_GSPLAT_VOLUMETRIC_STATE.blending);
+    expect(state.blendEquation).toBe(EXPECTED_GSPLAT_VOLUMETRIC_STATE.blendEquation);
+    expect(state.blendSrc).toBe(EXPECTED_GSPLAT_VOLUMETRIC_STATE.blendSrc);
+    expect(state.blendDst).toBe(EXPECTED_GSPLAT_VOLUMETRIC_STATE.blendDst);
+    expect(state.depthTest).toBe(EXPECTED_GSPLAT_VOLUMETRIC_STATE.depthTest);
+    expect(state.depthWrite).toBe(EXPECTED_GSPLAT_VOLUMETRIC_STATE.depthWrite);
+    expect(state.transparent).toBe(EXPECTED_GSPLAT_VOLUMETRIC_STATE.transparent);
+    expect(state.hasVolumetricDefine).toBe(true); // GLSL backend
+    expect(state.absorption).toBe(1.0); // authored zarr attr reached the uniform
+    expect(state.projectionMode).toBe(0); // SUM ray-integral, not peak
+  });
+
+  test('I1: κ=0 renders pixel-equal to additive (same session, same camera)', async ({ page }) => {
+    // The invariant: with absorption 0, τ=0 ⇒ α=0, S=1 — the
+    // One/OneMinusSrcAlpha framebuffer arithmetic degenerates to
+    // additive's One+One exactly. The comparison happens in ONE page
+    // session (same camera pose, same DPR), switching the material via
+    // the real applyBlendingMode path. Per-channel tolerance 2 absorbs
+    // TAA/dither noise between frames; the additive limit itself is
+    // exact in the blend math (canvas is alpha:false, so RGB readback
+    // is unaffected by the differing destination alpha).
+    await page.addInitScript(() => {
+      localStorage.setItem('luxar-control-rail-hint-dismissed', '1');
+    });
+    await page.goto(`/?src=${GSPLAT_VOLUMETRIC_FIXTURE}&debug&dpr=1`);
+    await waitForLuxarReady(page);
+    await waitCommitted(page);
+    await waitForNextRender(page, 5);
+
+    const offsets: Array<[number, number]> = [];
+    for (let gx = 0.15; gx <= 0.85; gx += 0.05) {
+      for (let gy = 0.25; gy <= 0.75; gy += 0.05) {
+        offsets.push([gx, gy]);
+      }
+    }
+
+    await setAbsorption(page, 0);
+    await waitForNextRender(page, 5);
+    const volumetricK0 = await samplePixelsAt(page, 'canvas', offsets);
+
+    await page.evaluate(() => {
+      const debug = (window as any).__luxarDebug;
+      debug.scene.traverse((obj: any) => {
+        if (obj.userData?.nodeType === 'gsplats' && obj.material?.applyBlendingMode) {
+          obj.material.applyBlendingMode('additive');
+        }
+      });
+      debug.renderOnce();
+    });
+    await waitForNextRender(page, 5);
+    const additive = await samplePixelsAt(page, 'canvas', offsets);
+
+    // Non-vacuous: the scene actually renders content.
+    const lit = additive.filter((s) => s.r + s.g + s.b > 30);
+    expect(lit.length, 'additive frame rendered black — fixture/camera broke').toBeGreaterThan(0);
+
+    for (let i = 0; i < offsets.length; i++) {
+      const a = volumetricK0[i];
+      const b = additive[i];
+      expect(
+        Math.abs(a.r - b.r) + Math.abs(a.g - b.g) + Math.abs(a.b - b.b),
+        `sample ${i} at (${offsets[i][0]},${offsets[i][1]}): κ=0 ${JSON.stringify(a)} vs additive ${JSON.stringify(b)}`
+      ).toBeLessThanOrEqual(6);
+    }
+  });
+
+  test('absorption darkens the scene: κ=5 accumulates strictly less light than κ=0', async ({
+    page,
+  }) => {
+    // Emission–absorption bounds accumulated radiance: raising κ both
+    // screens each splat's own emission (S(τ)<1) and attenuates what is
+    // behind (1−e^(−τ) destination factor). Total sampled luminance
+    // must drop measurably — a pure-additive (κ-ignoring) regression
+    // would keep the two frames equal.
+    await page.addInitScript(() => {
+      localStorage.setItem('luxar-control-rail-hint-dismissed', '1');
+    });
+    await page.goto(`/?src=${GSPLAT_VOLUMETRIC_FIXTURE}&debug&dpr=1`);
+    await waitForLuxarReady(page);
+    await waitCommitted(page);
+    await waitForNextRender(page, 5);
+
+    const offsets: Array<[number, number]> = [];
+    for (let gx = 0.15; gx <= 0.85; gx += 0.05) {
+      for (let gy = 0.25; gy <= 0.75; gy += 0.05) {
+        offsets.push([gx, gy]);
+      }
+    }
+
+    await setAbsorption(page, 0);
+    await waitForNextRender(page, 5);
+    const bright = await samplePixelsAt(page, 'canvas', offsets);
+
+    await setAbsorption(page, 5);
+    await waitForNextRender(page, 5);
+    const absorbed = await samplePixelsAt(page, 'canvas', offsets);
+
+    const sum = (xs: Array<{ r: number; g: number; b: number }>) =>
+      xs.reduce((acc, s) => acc + s.r + s.g + s.b, 0);
+    const sumBright = sum(bright);
+    const sumAbsorbed = sum(absorbed);
+    expect(sumBright, 'κ=0 frame rendered black — fixture/camera broke').toBeGreaterThan(1000);
+    expect(sumAbsorbed).toBeLessThan(sumBright * 0.9);
+  });
+
+  test('depth sort engages for volumetric: reversed fixture settles non-identity + back-to-front', async ({
+    page,
+  }) => {
+    // The volumetric twin of the Phase-2 gate (fail-first evidence at
+    // the unit level: depth-sort-coordinator.test.ts fails against an
+    // isNormalMode-gated coordinator). The reversed fixture's identity
+    // ordering is not back-to-front under the auto-framed camera, so
+    // this times out unless needsDepthSort routes volumetric commits
+    // through the SortWorker.
+    await page.addInitScript(() => {
+      localStorage.setItem('luxar-control-rail-hint-dismissed', '1');
+    });
+    await page.goto(`/?src=${GSPLAT_VOLUMETRIC_REVERSED_FIXTURE}&debug&dpr=1`);
+    await waitForLuxarReady(page);
+    await waitCommitted(page);
+
+    await page.waitForFunction(
+      () => {
+        const debug = (window as unknown as { __luxarDebug?: { scene?: unknown } }).__luxarDebug;
+        if (!debug?.scene) return false;
+        let sorted = false;
+        (debug.scene as { traverse: (cb: (obj: unknown) => void) => void }).traverse((obj) => {
+          const o = obj as {
+            userData?: { nodeType?: string; visibleSplatCount?: number };
+            geometry?: { attributes?: { aSortedIndex?: { array?: ArrayLike<number> } } };
+          };
+          if (o.userData?.nodeType !== 'gsplats') return;
+          const arr = o.geometry?.attributes?.aSortedIndex?.array;
+          const count = o.userData?.visibleSplatCount ?? 0;
+          if (!arr || count < 2) return;
+          for (let i = 0; i < count; i++) {
+            if (arr[i] !== i) {
+              sorted = true;
+              return;
+            }
+          }
+        });
+        return sorted;
+      },
+      undefined,
+      { timeout: 30000 }
+    );
+
+    const monotone = await page.evaluate(() => {
+      const debug = (window as any).__luxarDebug;
+      const results: Array<{ ordering: number[]; ok: boolean }> = [];
+      debug.scene.traverse((obj: any) => {
+        if (obj.userData?.nodeType !== 'gsplats') return;
+        const count = obj.userData?.visibleSplatCount ?? 0;
+        const arr = obj.geometry?.attributes?.aSortedIndex?.array;
+        const texData = obj.geometry?.userData?.splatTexture?.image?.data;
+        if (!arr || !texData || count < 2) return;
+        const mwi = debug.camera.matrixWorldInverse.elements;
+        const mw = obj.matrixWorld.elements;
+        const ordering: number[] = [];
+        let ok = true;
+        let prev = -Infinity;
+        for (let j = 0; j < count; j++) {
+          const idx = arr[j];
+          ordering.push(idx);
+          const x = texData[idx * 16];
+          const y = texData[idx * 16 + 1];
+          const z = texData[idx * 16 + 2];
+          const wx = mw[0] * x + mw[4] * y + mw[8] * z + mw[12];
+          const wy = mw[1] * x + mw[5] * y + mw[9] * z + mw[13];
+          const wz = mw[2] * x + mw[6] * y + mw[10] * z + mw[14];
+          const zv = mwi[2] * wx + mwi[6] * wy + mwi[10] * wz + mwi[14];
+          if (zv < prev - 1e-4) ok = false;
+          prev = Math.max(prev, zv);
+        }
+        results.push({ ordering, ok });
+      });
+      return results;
+    });
+    expect(monotone.length).toBeGreaterThan(0);
+    for (const r of monotone) {
+      expect(r.ok, `volumetric ordering ${r.ordering} not back-to-front`).toBe(true);
+    }
+
+    const webglErrors = await getWebGLErrors(page);
+    expect(webglErrors.length).toBe(0);
   });
 });

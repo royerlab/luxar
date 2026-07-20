@@ -698,6 +698,47 @@ test.describe('TSL ↔ GLSL shader parity', () => {
     ).toBeLessThan(3.0);
   });
 
+  test('gsplat-volumetric: LUXAR_VOLUMETRIC emission–absorption matches TSL volumetric branch', async ({
+    page,
+  }) => {
+    await bootHarness(page);
+
+    const glslPixels = await runGLSL(page, 'gsplat-volumetric');
+    const tslResult = await runTSL(page, 'gsplat-volumetric');
+
+    assertBothRendered(glslPixels, tslResult.pixels, 'gsplat-volumetric');
+    expect(
+      meanAbsDiffPerCoveredPixel(glslPixels, tslResult.pixels),
+      'gsplat-volumetric: per-covered-pixel parity (footprint-invariant)'
+    ).toBeLessThan(2.0);
+
+    // The alpha channel must carry the PHYSICAL absorption 1 − e^(−τ):
+    // with κ=1.5, opacity=0.7 the center τ is mid-range, so alpha is
+    // strictly sub-saturated and non-zero on both backends (guards a
+    // stale alpha=1 graph — exactly what the pre-fix TSL rebuild
+    // predicate produced on additive→volumetric switches).
+    const centerAlphaGLSL = glslPixels[(32 * 64 + 32) * 4 + 3];
+    const centerAlphaTSL = tslResult.pixels[(32 * 64 + 32) * 4 + 3];
+    for (const [backend, a] of [
+      ['GLSL', centerAlphaGLSL],
+      ['TSL', centerAlphaTSL],
+    ] as const) {
+      expect(
+        a,
+        `gsplat-volumetric ${backend}: expected sub-saturated absorption alpha at center, got ${a}`
+      ).toBeGreaterThan(0);
+      expect(a).toBeLessThan(255);
+    }
+
+    const diff = meanAbsDiff(glslPixels, tslResult.pixels);
+    // Same looser tolerance as gsplat-normal-premult — this variant also
+    // exercises the sum-projection ray-integral path.
+    expect(
+      diff,
+      `GSplat-volumetric parity: mean abs diff ${diff.toFixed(2)} on 0-255 scale.`
+    ).toBeLessThan(3.0);
+  });
+
   test('gsplat-pick: covariance projection with nodeId / elementId / brightness output', async ({
     page,
   }) => {

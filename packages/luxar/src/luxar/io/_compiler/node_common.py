@@ -40,8 +40,8 @@ def prepare_transform_attrs(attrs: Dict[str, Any], store: zarr.Group) -> None:
 
 
 def apply_default_render_attrs(attrs: Dict[str, Any]) -> None:
-    """Stamp the default compositing attrs (opacity/gamma/intensity/offset) in
-    place, only where the caller did not supply them.
+    """Stamp the default compositing attrs (opacity/absorption/gamma/intensity/
+    offset) in place, only where the caller did not supply them.
 
     ``blending_mode`` is deliberately NOT stamped: unlike these identity-valued
     attrs (multiplicative/additive no-ops under the viewer's hierarchical
@@ -55,6 +55,7 @@ def apply_default_render_attrs(attrs: Dict[str, Any]) -> None:
     """
     for key, default in (
         ("opacity", 1.0),
+        ("absorption", 1.0),
         ("gamma", 1.0),
         ("intensity", 1.0),
         ("offset", 0.0),
@@ -74,3 +75,8 @@ def validate_render_attrs(attrs: Dict[str, Any]) -> None:
         from ...validation.types import validate_blending_mode
 
         validate_blending_mode(attrs["blending_mode"])
+
+    if "absorption" in attrs:
+        from ...validation.types import validate_absorption
+
+        validate_absorption(attrs["absorption"])

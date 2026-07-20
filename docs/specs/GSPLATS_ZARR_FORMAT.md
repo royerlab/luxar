@@ -172,7 +172,7 @@ fitted.gsplats.zarr/
 │                     # ordering_min/max/bits, slice_dims, ordering_dims,
 │                     # chunk_size, amplitude_range, amplitude_data_range,
 │                     # center_bounds, position_bounds, truncation_radius,
-│                     # opacity, gamma, intensity, offset, blending_mode?,
+│                     # opacity, absorption, gamma, intensity, offset, blending_mode?,
 │                     # format_version: "3.2", format_type: "gsplats_zarr",
 │                     # timestamp, luxar_gsplats_version, description?
 ├── .zmetadata        # Consolidated metadata for fast loading
@@ -358,14 +358,15 @@ attrs are `type`, `kind`, `selector`, `default_level`, `display_type`,
     "max": [256.0, 256.0, 128.0]
   },
   "opacity": 1.0,
+  "absorption": 1.0,
   "gamma": 1.0,
   "intensity": 1.0,
   "offset": 0.0
 }
 ```
 
-`blending_mode` (`normal` / `additive` / `max` / `opaque` / `luminous`) is
-written only when explicitly set — unset nodes inherit from the nearest
+`blending_mode` (`normal` / `additive` / `max` / `opaque` / `luminous` /
+`volumetric`) is written only when explicitly set — unset nodes inherit from the nearest
 ancestor that sets it (viewer default: `additive`). No default is stamped:
 blending has no identity value, so a stamped default would shadow
 ancestor-set modes.

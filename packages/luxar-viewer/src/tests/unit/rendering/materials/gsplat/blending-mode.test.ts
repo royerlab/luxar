@@ -21,7 +21,7 @@
  *     TSL wrapper JS-branches the graph on the mode instead and never
  *     touches that define.
  */
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import * as THREE from 'three';
 import { GSplatMaterial } from '../../../../../rendering/materials/gsplat/material-glsl';
 import { GSplatTSLMaterial } from '../../../../../rendering/materials/gsplat/material-tsl';
@@ -157,6 +157,70 @@ describe('GSplatMaterial.applyBlendingMode (GLSL)', () => {
     const mat = new GSplatMaterial();
     expect(mat.fragmentShader).toContain('#ifdef LUXAR_NORMAL_PREMULT');
   });
+
+  it('volumetric mode: One/OneMinusSrcAlpha state, SUM projection, LUXAR_VOLUMETRIC define', () => {
+    const mat = new GSplatMaterial();
+    mat.applyBlendingMode('volumetric');
+    // Same framebuffer state as gsplat-normal — the semantics live in
+    // the fragment shader (emission–absorption vs coverage alpha).
+    expect(mat.blending).toBe(THREE.CustomBlending);
+    expect(mat.blendEquation).toBe(THREE.AddEquation);
+    expect(mat.blendSrc).toBe(THREE.OneFactor);
+    expect(mat.blendDst).toBe(THREE.OneMinusSrcAlphaFactor);
+    expect(mat.depthTest).toBe(true);
+    expect(mat.depthWrite).toBe(false);
+    expect(mat.transparent).toBe(true);
+    // …but SUM ray-integral projection (emissive taxonomy), NOT peak.
+    expect(mat.uniforms.uProjectionMode.value).toBe(0);
+    expect(mat.defines.LUXAR_VOLUMETRIC).toBe('');
+    expect(mat.defines.LUXAR_NORMAL_PREMULT).toBeUndefined();
+    expect(mat.userData.blendingMode).toBe('volumetric');
+  });
+
+  it('volumetric define lifecycle: every transition owns BOTH mode defines', () => {
+    const mat = new GSplatMaterial();
+    // volumetric → normal must not strand LUXAR_VOLUMETRIC…
+    mat.applyBlendingMode('volumetric');
+    mat.applyBlendingMode('normal');
+    expect(mat.defines.LUXAR_VOLUMETRIC).toBeUndefined();
+    expect(mat.defines.LUXAR_NORMAL_PREMULT).toBe('');
+    // …and normal → volumetric must not strand LUXAR_NORMAL_PREMULT.
+    mat.applyBlendingMode('volumetric');
+    expect(mat.defines.LUXAR_NORMAL_PREMULT).toBeUndefined();
+    expect(mat.defines.LUXAR_VOLUMETRIC).toBe('');
+    // volumetric → additive clears it and keeps sum projection.
+    mat.applyBlendingMode('additive');
+    expect(mat.defines.LUXAR_VOLUMETRIC).toBeUndefined();
+    expect(mat.uniforms.uProjectionMode.value).toBe(0);
+    // additive → volumetric bumps version (define toggle ⇒ recompile).
+    const versionAfterAdditive = mat.version;
+    mat.applyBlendingMode('volumetric');
+    expect(mat.version).toBeGreaterThan(versionAfterAdditive);
+  });
+
+  it('gsplat fragment shader contains the LUXAR_VOLUMETRIC emission–absorption branch', () => {
+    const mat = new GSplatMaterial();
+    expect(mat.fragmentShader).toContain('defined(LUXAR_VOLUMETRIC)');
+    expect(mat.fragmentShader).toContain('uAbsorption');
+    expect(mat.fragmentShader).toContain('exp(-tau)');
+  });
+
+  it('clone() round-trips absorption (the layers panel clones on any first interaction)', () => {
+    const mat = new GSplatMaterial({ absorption: 3.5, blendingMode: 'volumetric' });
+    expect(mat.getAbsorption()).toBe(3.5);
+    const cloned = mat.clone();
+    expect(cloned.getAbsorption()).toBe(3.5);
+    expect(cloned.userData.blendingMode).toBe('volumetric');
+    expect(cloned.defines.LUXAR_VOLUMETRIC).toBe('');
+  });
+
+  it('updateAbsorption writes the uniform without a recompile', () => {
+    const mat = new GSplatMaterial({ blendingMode: 'volumetric' });
+    const version = mat.version;
+    mat.updateAbsorption(0.25);
+    expect(mat.uniforms.uAbsorption.value).toBe(0.25);
+    expect(mat.version).toBe(version);
+  });
 });
 
 describe('GSplatTSLMaterial.applyBlendingMode (TSL)', () => {
@@ -278,6 +342,62 @@ describe('GSplatTSLMaterial.applyBlendingMode (TSL)', () => {
     expect(mat.version).toBeGreaterThan(versionAfterAdditive);
     expect(mat.uniforms.uProjectionMode.value).toBe(1); // peak
     expect(mat.userData.blendingMode).toBe('opaque');
+  });
+
+  it('additive→volumetric crosses the OUTPUT-BRANCH boundary and rebuilds the graph', () => {
+    // LOAD-BEARING (fail-first verified against the pre-fix predicate):
+    // additive and volumetric are BOTH sum-projected and BOTH non-normal,
+    // so neither usesPeakProjection nor isNormalMode crosses — the old
+    // `projectionChanged || premultChanged` predicate would keep the
+    // stale alpha=1 additive graph while the framebuffer switched to
+    // One/OneMinusSrcAlpha. The isVolumetricMode term in
+    // outputBranchChanged is what forces the rebuild.
+    //
+    // NOTE: must spy on rebuildGraph itself — `material.version` is NOT
+    // a valid proxy (the `needsUpdate` fallback for state-only changes
+    // bumps version too, masking a missing rebuild).
+    const mat = new GSplatTSLMaterial({ blendingMode: 'additive' });
+    const rebuildSpy = vi.spyOn(mat as unknown as { rebuildGraph(): void }, 'rebuildGraph');
+
+    mat.applyBlendingMode('volumetric');
+    expect(rebuildSpy).toHaveBeenCalledTimes(1);
+    expect(mat.uniforms.uProjectionMode.value).toBe(0); // still sum
+    expect(mat.userData.blendingMode).toBe('volumetric');
+
+    // And back: volumetric→additive rebuilds too.
+    mat.applyBlendingMode('additive');
+    expect(rebuildSpy).toHaveBeenCalledTimes(2);
+    rebuildSpy.mockRestore();
+  });
+
+  it('volumetric mode: One/OneMinusSrcAlpha state, SUM projection (TSL)', () => {
+    const mat = new GSplatTSLMaterial();
+    mat.applyBlendingMode('volumetric');
+    expect(mat.blending).toBe(THREE.CustomBlending);
+    expect(mat.blendEquation).toBe(THREE.AddEquation);
+    expect(mat.blendSrc).toBe(THREE.OneFactor);
+    expect(mat.blendDst).toBe(THREE.OneMinusSrcAlphaFactor);
+    expect(mat.depthTest).toBe(true);
+    expect(mat.depthWrite).toBe(false);
+    expect(mat.transparent).toBe(true);
+    expect(mat.uniforms.uProjectionMode.value).toBe(0); // sum
+    expect(mat.userData.blendingMode).toBe('volumetric');
+  });
+
+  it('clone() round-trips absorption (TSL)', () => {
+    const mat = new GSplatTSLMaterial({ absorption: 3.5, blendingMode: 'volumetric' });
+    expect(mat.getAbsorption()).toBe(3.5);
+    const cloned = mat.clone();
+    expect(cloned.getAbsorption()).toBe(3.5);
+    expect(cloned.userData.blendingMode).toBe('volumetric');
+  });
+
+  it('updateAbsorption writes the uniform without a graph rebuild (TSL)', () => {
+    const mat = new GSplatTSLMaterial({ blendingMode: 'volumetric' });
+    const version = mat.version;
+    mat.updateAbsorption(0.25);
+    expect(mat.uniforms.uAbsorption.value).toBe(0.25);
+    expect(mat.version).toBe(version);
   });
 });
 

@@ -11,6 +11,7 @@ describe('composeAttrs', () => {
   it('returns identity for empty chain', () => {
     const e = composeAttrs([]);
     expect(e.opacity).toBe(1);
+    expect(e.absorption).toBe(1);
     expect(e.gamma).toBe(1);
     expect(e.intensity).toBe(1);
     expect(e.offset).toBe(0);
@@ -25,6 +26,16 @@ describe('composeAttrs', () => {
     expect(e.opacity).toBeCloseTo(0.25, 5);
     expect(e.intensity).toBeCloseTo(6.0, 5);
     expect(e.gamma).toBeCloseTo(1.8, 5);
+  });
+
+  it('multiplies absorption through the chain (identity 1, unclamped above, floored at 0)', () => {
+    // Volumetric κ composes like opacity/intensity — ancestors scale it;
+    // κ = 0 at ANY level zeroes the subtree (pure-additive look).
+    expect(composeAttrs([{ absorption: 2.0 }, { absorption: 0.5 }]).absorption).toBeCloseTo(1.0, 6);
+    expect(composeAttrs([{ opacity: 0.5 }]).absorption).toBe(1); // unset ⇒ identity
+    expect(composeAttrs([{ absorption: 4 }, { absorption: 4 }]).absorption).toBe(16); // no upper clamp
+    expect(composeAttrs([{ absorption: 3 }, { absorption: 0 }]).absorption).toBe(0);
+    expect(composeAttrs([{ absorption: -2 }]).absorption).toBe(0); // floored, never negative
   });
 
   it('sums offsets through the chain', () => {
@@ -198,12 +209,16 @@ describe('collectAncestorAttrs / getEffectiveAttrs', () => {
 const f = (x: number) => Math.fround(x);
 const attrArb: fc.Arbitrary<{
   opacity?: number;
+  absorption?: number;
   gamma?: number;
   intensity?: number;
   offset?: number;
   blending_mode?: string;
 }> = fc.record({
   opacity: fc.option(fc.float({ min: f(0.01), max: f(1), noNaN: true, noDefaultInfinity: true }), {
+    nil: undefined,
+  }),
+  absorption: fc.option(fc.float({ min: f(0), max: f(8), noNaN: true, noDefaultInfinity: true }), {
     nil: undefined,
   }),
   gamma: fc.option(fc.float({ min: f(0.5), max: f(2), noNaN: true, noDefaultInfinity: true }), {
@@ -218,9 +233,12 @@ const attrArb: fc.Arbitrary<{
   // Only the five canonical modes: composeAttrs normalizes the winning
   // string (unknown → 'normal'), so probing invented modes would test
   // the normalizer, not the right-bias — covered separately below.
-  blending_mode: fc.option(fc.constantFrom('normal', 'additive', 'max', 'opaque', 'luminous'), {
-    nil: undefined,
-  }),
+  blending_mode: fc.option(
+    fc.constantFrom('normal', 'additive', 'max', 'opaque', 'luminous', 'volumetric'),
+    {
+      nil: undefined,
+    }
+  ),
 });
 
 describe('composeAttrs — algebraic invariants (data.md H6)', () => {
@@ -228,6 +246,7 @@ describe('composeAttrs — algebraic invariants (data.md H6)', () => {
     const e = composeAttrs([]);
     expect(e).toEqual({
       opacity: 1.0,
+      absorption: 1.0,
       gamma: 1.0,
       intensity: 1.0,
       offset: 0.0,
@@ -242,6 +261,7 @@ describe('composeAttrs — algebraic invariants (data.md H6)', () => {
         const after = composeAttrs([...chain, {}]);
         // All numeric fields equal; blending_mode unchanged.
         expect(after.opacity).toBeCloseTo(before.opacity, 6);
+        expect(after.absorption).toBeCloseTo(before.absorption, 6);
         expect(after.gamma).toBeCloseTo(before.gamma, 6);
         expect(after.intensity).toBeCloseTo(before.intensity, 6);
         expect(after.offset).toBeCloseTo(before.offset, 6);
@@ -284,7 +304,7 @@ describe('composeAttrs — algebraic invariants (data.md H6)', () => {
   test('blending_mode is right-biased (later wins)', () => {
     fc.assert(
       fc.property(
-        fc.array(fc.constantFrom('normal', 'additive', 'max', 'opaque', 'luminous'), {
+        fc.array(fc.constantFrom('normal', 'additive', 'max', 'opaque', 'luminous', 'volumetric'), {
           minLength: 1,
           maxLength: 6,
         }),
@@ -335,6 +355,36 @@ describe('composeAttrs — algebraic invariants (data.md H6)', () => {
         (xs) => {
           const e = composeAttrs(xs.map((x) => ({ intensity: x })));
           expect(e.intensity).toBeGreaterThanOrEqual(0);
+        }
+      )
+    );
+  });
+
+  test('absorption is floored at 0 under any input (like intensity)', () => {
+    fc.assert(
+      fc.property(
+        fc.array(fc.float({ min: f(-2), max: f(4), noNaN: true, noDefaultInfinity: true }), {
+          maxLength: 4,
+        }),
+        (xs) => {
+          const e = composeAttrs(xs.map((x) => ({ absorption: x })));
+          expect(e.absorption).toBeGreaterThanOrEqual(0);
+        }
+      )
+    );
+  });
+
+  test('absorption is the unclamped-above product of set values, floored at 0', () => {
+    fc.assert(
+      fc.property(
+        fc.array(fc.float({ min: f(0), max: f(8), noNaN: true, noDefaultInfinity: true }), {
+          maxLength: 6,
+        }),
+        (xs) => {
+          const e = composeAttrs(xs.map((x) => ({ absorption: x })));
+          const raw = xs.reduce((acc, x) => acc * x, 1);
+          expect(e.absorption).toBeCloseTo(raw, 3);
+          expect(e.absorption).toBeGreaterThanOrEqual(0);
         }
       )
     );

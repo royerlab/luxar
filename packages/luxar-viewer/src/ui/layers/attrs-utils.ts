@@ -92,6 +92,10 @@ export function liveLayerAttrs(layer: LayerInfo): ComposableAttrs {
   const { intensity, offset } = computeUniforms(layer.displayMin, layer.displayMax);
   return {
     opacity: layer.opacity,
+    // Identity-valued (multiplicative 1.0) ⇒ always-emitting is safe —
+    // unlike blending_mode, which has no identity value (the campaign's
+    // setter-valued-vs-identity-valued doctrine).
+    absorption: layer.absorption,
     gamma: clampGamma(layer.gamma),
     intensity,
     offset,

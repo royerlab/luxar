@@ -33,8 +33,8 @@ A node is constructed with a `name`, an optional `parent`, an optional `writer`
 - links itself into `parent.children`, rejecting duplicate sibling names,
 - computes its `path` (`parent_path/name`, or `""` for a root),
 - validates any recognized attributes (`transform`, `nd_transform`, `opacity`,
-  `gamma`, `intensity`, `offset`, `blending_mode`, `layer`, `visible`,
-  `colormap`) and, if a writer is present, writes the group attrs immediately
+  `absorption`, `gamma`, `intensity`, `offset`, `blending_mode`, `layer`,
+  `visible`, `colormap`) and, if a writer is present, writes the group attrs immediately
   and caches them.
 
 When no writer is supplied the node runs in **metadata-only mode**: attributes
@@ -98,10 +98,11 @@ matching `set_*` method that returns `self` for chaining.
 | Property | Default | Range / values |
 |----------|---------|----------------|
 | `opacity` | `1.0` | 0.0–1.0 |
+| `absorption` | `1.0` | ≥ 0.0 (volumetric mode's κ; multiplicative) |
 | `gamma` | `1.0` | 0.1–10.0 |
 | `intensity` | `1.0` | 0.0–100.0 |
 | `offset` | `0.0` | -10.0–10.0 |
-| `blending_mode` | `"additive"` | `normal`, `additive`, `max`, `opaque`, `luminous` |
+| `blending_mode` | `"additive"` | `normal`, `additive`, `max`, `opaque`, `luminous`, `volumetric` |
 | `colormap` | `None` | colormap name (string only via setter) |
 | `layer` | `False` | whether the node appears in the viewer's Layers panel |
 | `visible` | `True` | initial visibility when the scene loads |

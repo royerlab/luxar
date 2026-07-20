@@ -48,6 +48,7 @@ export class LayerControls {
   private rangeSlider: RangeSlider | null = null;
   private gammaSlider: LabeledSlider | null = null;
   private opacitySlider: LabeledSlider | null = null;
+  private absorptionSlider: LabeledSlider | null = null;
   private blendSelect: HTMLSelectElement | null = null;
   private colormapSelect: HTMLSelectElement | null = null;
   /**
@@ -111,6 +112,8 @@ export class LayerControls {
     this.gammaSlider = null;
     this.opacitySlider?.dispose();
     this.opacitySlider = null;
+    this.absorptionSlider?.dispose();
+    this.absorptionSlider = null;
     this.blendSelect = null;
     this.colormapSelect = null;
     this.lodLevelSelect = null;
@@ -196,6 +199,30 @@ export class LayerControls {
       },
     });
 
+    // Absorption κ — only meaningful in volumetric mode; hidden for every
+    // other mode (see syncAbsorptionVisibility). Range 0–10 covers the
+    // useful span (the attr itself is unbounded); κ=0 looks additive.
+    this.absorptionSlider = new LabeledSlider({
+      container: this.controlsEl,
+      label: 'Absorption',
+      min: 0,
+      max: 10,
+      step: 0.05,
+      initialValue: 1.0,
+      constrain: (v) => Math.max(0, v),
+      onChange: (val) => {
+        this.controlsInteracting = true;
+        this.deps.state.applyToSelected((l) => {
+          l.absorption = val;
+        });
+        for (const sel of this.deps.state.getSelected()) {
+          this.deps.apply.applyAbsorption(sel);
+        }
+        this.controlsInteracting = false;
+      },
+    });
+    this.absorptionSlider.setVisible(false);
+
     // Blending mode
     const blendGroup = document.createElement('div');
     blendGroup.className = 'luxar-layers-panel__control-group';
@@ -220,6 +247,9 @@ export class LayerControls {
       for (const sel of this.deps.state.getSelected()) {
         this.deps.apply.applyBlendingMode(sel);
       }
+      // Switching to/from volumetric must reveal/hide the κ slider
+      // immediately, not on the next selection refresh.
+      this.syncAbsorptionVisibility();
       this.controlsInteracting = false;
     });
     blendGroup.appendChild(blendLabel);
@@ -375,10 +405,12 @@ export class LayerControls {
 
     this.gammaSlider?.setValue(primary.gamma);
     this.opacitySlider?.setValue(primary.opacity);
+    this.absorptionSlider?.setValue(primary.absorption);
 
     if (this.blendSelect) {
       this.blendSelect.value = primary.blendingMode;
     }
+    this.syncAbsorptionVisibility();
 
     if (this.colormapSelect) {
       if (primary.supportsColormap) {
@@ -423,6 +455,24 @@ export class LayerControls {
       // readout applies (non-LOD layer, or registry not yet populated).
       this.setLodStatusText(this.computeLodStatusText(primary) ?? '');
     }
+  }
+
+  /**
+   * Show the Absorption (κ) slider only when it can do something: the
+   * primary selection's mode is `volumetric` AND the layer is (or can
+   * contain) gsplats — points/lines render volumetric's additive
+   * fallback in phase 1, where κ is inert, so showing a dead slider
+   * would mislead. Called from render() and the blend-dropdown change
+   * handler (mode switches must reveal/hide it immediately).
+   */
+  private syncAbsorptionVisibility(): void {
+    if (!this.absorptionSlider) return;
+    const primary = this.deps.state.getPrimarySelected();
+    const show =
+      !!primary &&
+      primary.blendingMode === 'volumetric' &&
+      (primary.type === 'gsplats' || primary.type === 'group');
+    this.absorptionSlider.setVisible(show);
   }
 
   /**

@@ -232,6 +232,22 @@ describe('LineMaterial ↔ LineTSLMaterial blending-state convergence', () => {
       expect(tsl.userData.blendingMode).toBe(mode);
     });
   }
+
+  it("'volumetric': phase-1 fallback applies the ADDITIVE state, userData keeps 'volumetric'", () => {
+    // Lines don't implement the emission–absorption fragment math yet
+    // (VOLUMETRIC_BLENDING_SPEC.md phases 3–4). The material intercepts
+    // the mode and applies additive — the exact κ=0 limit — while the
+    // REQUESTED mode stays in userData so stored scenes upgrade
+    // automatically when the line implementation lands.
+    const expected = getCompleteBlendingState('additive', 1.0);
+    for (const mat of [new LineMaterial(), new LineTSLMaterial()]) {
+      mat.applyBlendingMode('volumetric');
+      for (const field of STATE_FIELDS) {
+        expect(mat[field], `${mat.constructor.name} ${field}`).toBe(expected[field]);
+      }
+      expect(mat.userData.blendingMode).toBe('volumetric');
+    }
+  });
 });
 
 // H — TSL constructors honor explicit transparent/depthTest overrides

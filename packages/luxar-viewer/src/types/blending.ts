@@ -18,8 +18,15 @@
  * @module types/blending
  */
 
-/** The five canonical Luxar blending modes, in panel-dropdown order. */
-export const BLENDING_MODES = ['additive', 'normal', 'max', 'opaque', 'luminous'] as const;
+/** The six canonical Luxar blending modes, in panel-dropdown order. */
+export const BLENDING_MODES = [
+  'additive',
+  'volumetric',
+  'normal',
+  'max',
+  'opaque',
+  'luminous',
+] as const;
 
 /** Union of the canonical mode strings — derived from {@link BLENDING_MODES}. */
 export type BlendingMode = (typeof BLENDING_MODES)[number];

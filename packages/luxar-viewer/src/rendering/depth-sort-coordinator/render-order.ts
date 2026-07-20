@@ -11,11 +11,11 @@
  * in fixed creation order, NOT back-to-front. This module gives THREE a
  * real signal via `renderOrder` (compared before z, ascending → lowest
  * drawn first), on ONE global integer scale across every visible
- * normal-mode gsplat mesh.
+ * sorted-mode gsplat mesh (needsDepthSort: normal | volumetric).
  *
  * Per-frame protocol (driven by `evaluateDepthSortPerFrame`):
  * 1. {@link clearRenderOrderFrameState} at the top of the frame,
- * 2. {@link collectRenderOrderSlot} once per surviving normal-mode mesh,
+ * 2. {@link collectRenderOrderSlot} once per surviving sorted-mode mesh,
  * 3. {@link assignGlobalRenderOrder} after the loop.
  */
 
@@ -120,7 +120,7 @@ function wrapperPartRanks(
 }
 
 /**
- * One order-pass entry per visible normal-mode gsplat mesh, rebuilt every
+ * One order-pass entry per visible sorted-mode gsplat mesh, rebuilt every
  * frame (fresh array per frame — a grow-only pool would pin disposed
  * meshes across frames; counts are tens, matching the per-frame
  * allocations {@link wrapperPartRanks} already makes).
@@ -151,7 +151,7 @@ export function clearRenderOrderFrameState(): void {
 
 /**
  * COLLECT half of the cross-node ordering: record one order slot for a
- * visible normal-mode gsplat mesh. `mv` is the mesh's model-view matrix
+ * visible sorted-mode gsplat mesh. `mv` is the mesh's model-view matrix
  * and `camPos` the camera world position, both computed by the caller's
  * per-frame loop (shared with the re-sort trigger math).
  *
@@ -199,7 +199,7 @@ export function collectRenderOrderSlot(
 /**
  * ASSIGN half of the cross-node ordering (runs after the collect loop).
  *
- * Every visible normal-mode gsplat mesh lands on ONE global integer
+ * Every visible sorted-mode gsplat mesh lands on ONE global integer
  * renderOrder scale, farthest first:
  * 1. Slots group by partition wrapper (single leaves are groups of one).
  * 2. Groups order by the MEAN view-z of their members' content centroids —

@@ -64,8 +64,8 @@ Both functions produce a `GSplatData` and hand it to
 - `add_gsplats_from_volume_impl` — fits in one step. With
   `progressive=True` it calls `fit_progressive_gaussian_splats`
   (honoring `max_splats_per_pass`, `psnr_patience`, `max_passes`);
-  otherwise `fit_gaussian_splats`. `opacity` and `blending_mode`, when
-  set, are forwarded as scene attrs.
+  otherwise `fit_gaussian_splats`. `opacity`, `absorption`, and
+  `blending_mode`, when set, are forwarded as scene attrs.
 
 ### `lod_dispatch.py` — the two multi-level write paths
 
@@ -80,8 +80,8 @@ not supply explicit thresholds.
 
 Attribute routing splits on
 [`COMPOSITING_ATTRS`](../compositing.py): compositing attrs (opacity,
-gamma, intensity, offset, blending_mode, transform, layer, visible,
-nd_transform) land on the wrapper `Group`; everything else (including
+absorption, gamma, intensity, offset, blending_mode, transform, layer,
+visible, nd_transform) land on the wrapper `Group`; everything else (including
 `colormap`, deliberately) rides into each child so the user's intent is
 not shadowed by the writer's per-leaf `colormap="gray"` default. Each
 child is added through `lod_group_node.add_gsplats_from_data(...)` with

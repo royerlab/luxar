@@ -2,8 +2,8 @@
  * Unit tests for the blending-state module.
  *
  * Covers discriminator predicates, canonical state assertions for each
- * mode (additive/normal/max/opaque/luminous), idempotency, max-mode
- * round-trip, and opacity boundary tests.
+ * mode (additive/normal/max/opaque/luminous/volumetric), idempotency,
+ * max-mode round-trip, and opacity boundary tests.
  */
 import { describe, it, expect, vi } from 'vitest';
 import * as THREE from 'three';
@@ -13,7 +13,9 @@ import {
   isMaxMode,
   isNormalMode,
   isOpaqueMode,
+  isVolumetricMode,
   usesPeakProjection,
+  needsDepthSort,
   BLENDING_MODES,
   normalizeBlendingMode,
   getCompleteBlendingState,
@@ -22,7 +24,7 @@ import {
 import type { BlendingMode } from '../../../rendering/material-manager';
 
 describe('BlendingMode predicates', () => {
-  const all: BlendingMode[] = ['additive', 'normal', 'max', 'opaque', 'luminous'];
+  const all: BlendingMode[] = ['additive', 'normal', 'max', 'opaque', 'luminous', 'volumetric'];
 
   it('isAdditiveMode is true only for additive', () => {
     for (const mode of all) {
@@ -54,6 +56,12 @@ describe('BlendingMode predicates', () => {
     }
   });
 
+  it('isVolumetricMode is true only for volumetric', () => {
+    for (const mode of all) {
+      expect(isVolumetricMode(mode)).toBe(mode === 'volumetric');
+    }
+  });
+
   it('exactly one predicate fires per mode', () => {
     for (const mode of all) {
       const hits = [
@@ -62,6 +70,7 @@ describe('BlendingMode predicates', () => {
         isMaxMode(mode),
         isOpaqueMode(mode),
         isLuminousMode(mode),
+        isVolumetricMode(mode),
       ].filter(Boolean).length;
       expect(hits).toBe(1);
     }
@@ -69,12 +78,25 @@ describe('BlendingMode predicates', () => {
 
   it('usesPeakProjection groups the surface modes (max/normal/opaque) against the emissive ones', () => {
     // PR #561 taxonomy: surface modes project the 2D-Gaussian peak;
-    // emissive modes (additive/luminous) integrate the ray.
+    // emissive modes (additive/luminous/volumetric) integrate the ray.
     expect(usesPeakProjection('max')).toBe(true);
     expect(usesPeakProjection('normal')).toBe(true);
     expect(usesPeakProjection('opaque')).toBe(true);
     expect(usesPeakProjection('additive')).toBe(false);
     expect(usesPeakProjection('luminous')).toBe(false);
+    expect(usesPeakProjection('volumetric')).toBe(false);
+  });
+
+  it('needsDepthSort is true exactly for the order-dependent modes (normal, volumetric)', () => {
+    // Volumetric is the first SUM-projected SORTED mode — the two
+    // taxonomies (projection vs order-dependence) are deliberately
+    // independent predicates. Truth table pins both.
+    expect(needsDepthSort('normal')).toBe(true);
+    expect(needsDepthSort('volumetric')).toBe(true);
+    expect(needsDepthSort('additive')).toBe(false);
+    expect(needsDepthSort('luminous')).toBe(false);
+    expect(needsDepthSort('max')).toBe(false);
+    expect(needsDepthSort('opaque')).toBe(false);
   });
 });
 
@@ -170,6 +192,27 @@ describe('H.1 — getCompleteBlendingState canonical state per mode', () => {
 
     const half = getCompleteBlendingState('normal', 0.5);
     expect(half.depthWrite).toBe(false);
+  });
+
+  it('volumetric: One/OneMinusSrcAlpha premultiplied state, depthWrite unconditionally OFF', () => {
+    const state = getCompleteBlendingState('volumetric');
+    expect(state.blending).toBe(THREE.CustomBlending);
+    expect(state.blendEquation).toBe(THREE.AddEquation);
+    expect(state.blendSrc).toBe(THREE.OneFactor);
+    expect(state.blendDst).toBe(THREE.OneMinusSrcAlphaFactor);
+    expect(state.depthTest).toBe(true);
+    expect(state.depthWrite).toBe(false);
+    expect(state.transparent).toBe(true);
+    expect(state.shaderOutputMode).toBe('premultiplied-alpha');
+
+    // No normalModeDepthWrite coupling: opacity never flips depthWrite
+    // (unlike 'normal' — volumetric is smooth in opacity by design).
+    expect(getCompleteBlendingState('volumetric', 1.0).depthWrite).toBe(false);
+    expect(getCompleteBlendingState('volumetric', 0.99).depthWrite).toBe(false);
+
+    // Identical framebuffer state to the gsplat-normal helper — the
+    // semantic difference lives in the fragment shader, not the state.
+    expect(state).toEqual(getGSplatNormalBlendingState());
   });
 
   it('max-mode round-trip: max → additive → max returns identical state', () => {

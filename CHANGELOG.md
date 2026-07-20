@@ -6,6 +6,36 @@ All notable changes to Luxar are documented in this file.
 
 ### July 2026
 
+#### Added — `volumetric` blending mode, Phase 1 (gsplats + node-level κ)
+
+- **Sixth blending mode `volumetric`** — emission–absorption compositing
+  (Max 1995) per `VOLUMETRIC_BLENDING_SPEC.md`: each gsplat adds its
+  ray-integrated, self-screened emission (S(τ) = (1−e^(−τ))/τ) and
+  attenuates everything behind it by the physical absorption
+  α = 1 − e^(−τ), τ = κ·opacity·rayMass, composited back-to-front on the
+  depth-sort infrastructure (new `needsDepthSort` predicate = normal ∪
+  volumetric — the first sum-projected *sorted* mode). κ = 0 renders
+  pixel-identical to `additive`; opacity scales density (emission AND τ),
+  so layer fades leave no ghost occlusion; never depth-writes (no 0.99
+  opacity cliff).
+- **New node-level composable attr `absorption` (κ ≥ 0, default 1.0)** —
+  follows the opacity path everywhere: Python `Node.absorption` property /
+  `set_absorption` / `validate_absorption`, default-stamped by the writers,
+  in `COMPOSITING_ATTRS`; viewer multiplicative composition, `uAbsorption`
+  uniform (GLSL + TSL), material `updateAbsorption`/clone round-trip;
+  layers-panel "Absorption" slider shown only for volumetric gsplat layers;
+  `luxar gsplat convert --absorption`.
+- **Phase-1 scope**: gsplats implement the fragment math
+  (`LUXAR_VOLUMETRIC` GLSL define + TSL build-time branch, with the TSL
+  rebuild predicate generalized so additive↔volumetric switches rebuild
+  the graph); points/lines intercept the mode and render its exact κ = 0
+  additive fallback until phases 3–4; picking stays brightness-as-depth.
+  Black splats still absorb (the zero-color discard is bypassed when τ is
+  significant). Codegen snapshot `gsplat-volumetric` + GLSL/TSL pixel
+  parity, split-splat invariant (I2) and S(τ) series/seam unit tests,
+  κ=0≡additive and absorption-darkening E2E, volumetric depth-sort E2E on
+  a reversed-order fixture, 6-mode fixtures for points/lines.
+
 #### Docs — volumetric blending mode spec (proposed)
 
 - New `docs/guides/specs/VOLUMETRIC_BLENDING_SPEC.md`: design for a 6th
