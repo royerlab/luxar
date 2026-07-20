@@ -59,12 +59,13 @@ Provides basic validation functions used for type guards, property validation, a
 - `validate_node_type()`: Validate node type strings
 - `validate_physical_unit()`: Validate physical unit strings
 - `validate_opacity()`: Validate opacity values (0.0-1.0)
+- `validate_absorption()`: Validate absorption coefficients (volumetric kappa; >= 0, finite)
 - `validate_gamma()`: Validate gamma values (0.1-10.0)
 - `validate_intensity()`: Validate intensity values (INTENSITY_MIN-INTENSITY_MAX)
 - `validate_offset()`: Validate offset values (OFFSET_MIN-OFFSET_MAX)
 - `validate_layer()`: Coerce a layer flag to bool
 - `validate_visible()`: Coerce a visibility flag to bool
-- `validate_blending_mode()`: Validate blending mode strings (`normal`, `additive`, `max`, `opaque`, `luminous`)
+- `validate_blending_mode()`: Validate blending mode strings (`normal`, `additive`, `max`, `opaque`, `luminous`, `volumetric`)
 - `validate_colormap()`: Validate a colormap name (resolved via `colormaps.registry`) or LUT array (N, 3)
 - `validate_category_indices()`: Validate category index arrays
 

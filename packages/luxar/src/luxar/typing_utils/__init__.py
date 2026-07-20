@@ -57,7 +57,9 @@ from .aliases import (
     ZarrAttrs,
 )
 from .constants import (
+    ABSORPTION_MIN,
     CATEGORICAL_STEP,
+    DEFAULT_ABSORPTION,
     DEFAULT_BLENDING_MODE,
     DEFAULT_COMPRESSOR,
     DEFAULT_GAMMA,
@@ -149,7 +151,9 @@ __all__ = [
     "NodeType",
     "PhysicalUnit",
     # From constants
+    "ABSORPTION_MIN",
     "CATEGORICAL_STEP",
+    "DEFAULT_ABSORPTION",
     "DEFAULT_BLENDING_MODE",
     "DEFAULT_COMPRESSOR",
     "DEFAULT_GAMMA",

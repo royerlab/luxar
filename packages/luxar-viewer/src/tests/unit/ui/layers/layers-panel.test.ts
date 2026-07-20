@@ -915,6 +915,76 @@ describe('LayersPanel — blend select drives the leaf material', () => {
     select!.dispatchEvent(new Event('change', { bubbles: true }));
     expect(group!.style.display).toBe('none');
   });
+
+  it('composeEffective preserves an authored κ on a NON-layer leaf under a layer group', () => {
+    // Regression (fail-first vs the pre-fix composeEffective): the
+    // non-layer fallback branch omitted `absorption` from its
+    // ComposableAttrs, so a leaf-authored κ was silently recomposed to
+    // the 1.0 identity — and pushed to the material — by ANY panel
+    // interaction (including the applyDisplayRange fan-out at init).
+    const updateAbsorption = vi.fn();
+    const stubMat: Record<string, unknown> = {
+      userData: { blendingMode: 'volumetric' },
+      uniforms: { uOpacity: { value: 1.0 } },
+      defines: {},
+      updateIntensity: vi.fn(),
+      updateOffset: vi.fn(),
+      updateGamma: vi.fn(),
+      updateOpacity: vi.fn(),
+      updateAbsorption,
+      applyBlendingMode: vi.fn(),
+    };
+    stubMat.clone = vi.fn(() => stubMat);
+
+    const mesh = new THREE.Mesh(new THREE.BufferGeometry(), stubMat as unknown as THREE.Material);
+    mesh.name = '/grp/splats';
+    const rootGroup = new THREE.Group();
+    rootGroup.add(mesh);
+
+    // layer=true GROUP wrapping a non-layer gsplat leaf that authors κ —
+    // the standard kind=partition/lod layer shape.
+    const graph = {
+      name: 'root',
+      path: '/',
+      type: 'group',
+      attrs: {},
+      children: [
+        {
+          name: 'grp',
+          path: '/grp',
+          type: 'group',
+          attrs: { layer: true, blending_mode: 'volumetric' },
+          children: [
+            {
+              name: 'splats',
+              path: '/grp/splats',
+              type: 'gsplats',
+              attrs: { absorption: 0.5 },
+              children: [],
+            },
+          ],
+        },
+      ],
+    } as unknown as SceneNode;
+
+    const panel = new LayersPanel(container, animationController);
+    panel.initFromScene(rootGroup, graph);
+    panel.show();
+    panel.layerState.select('/grp', 'single');
+
+    // Drive a panel interaction through the group layer — the composed
+    // κ pushed to the leaf material must keep the leaf's authored 0.5
+    // (group layer identity 1.0 × leaf 0.5), not wipe it to 1.0.
+    updateAbsorption.mockClear();
+    panel.layerState.applyToSelected((l) => {
+      l.opacity = 0.9;
+    });
+    const grpLayer = panel.layerState.getLayer('/grp')!;
+    (
+      panel as unknown as { applyEngine: { applyOpacity(l: unknown): void } }
+    ).applyEngine.applyOpacity(grpLayer);
+    expect(updateAbsorption).toHaveBeenCalledWith(0.5);
+  });
 });
 
 // ---------------------------------------------------------------------------

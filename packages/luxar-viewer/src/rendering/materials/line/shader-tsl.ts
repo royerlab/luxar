@@ -61,7 +61,11 @@ import {
   sanitizeNonNegative,
   type TSLNode,
 } from '../_shared/tsl-helpers';
-import { applyBlendingStateToMaterial, getCompleteBlendingState } from '../../blending-state';
+import {
+  applyBlendingStateToMaterial,
+  getCompleteBlendingState,
+  effectiveGeometryMode,
+} from '../../blending-state';
 import type { BlendingMode } from '../../material-manager';
 
 export interface LineTSLConfig {
@@ -463,7 +467,15 @@ export function lineWebGPUFactory(
   material.colorNode = colorNode();
   material.toneMapped = false;
 
-  const blendingMode: BlendingMode = config.blendingMode ?? 'additive';
+  // Phase-1 volumetric fallback: this factory tail is the ONLY state
+  // writer at TSL construction (the ctor never calls applyBlendingMode,
+  // unlike the GLSL twin) AND re-runs on every rebuildGraph — so it must
+  // apply the same volumetric→additive interception as the wrapper, or a
+  // volumetric lines node would pair the premultiplied One/
+  // OneMinusSrcAlpha state with this alpha-weighted shader (full-strength
+  // RGB that DARKENS what's behind it — the opposite of the κ=0 limit).
+  const requestedMode: BlendingMode = config.blendingMode ?? 'additive';
+  const blendingMode: BlendingMode = effectiveGeometryMode(requestedMode, 'line');
   const opacityValue = (nodes.uOpacity.value as number | undefined) ?? 1.0;
   const blendingState = getCompleteBlendingState(blendingMode, opacityValue);
   applyBlendingStateToMaterial(material, blendingState);

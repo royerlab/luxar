@@ -356,9 +356,19 @@ class TestCompilerIntegration:
                 )
             with pytest.raises(ValueError, match="Absorption must be >= 0"):
                 compiler.write_group("bad_grp", absorption=-2)
+            with pytest.raises(ValueError, match="Absorption must be >= 0"):
+                compiler.write_points_multi_lod(
+                    "bad_ml", [{"positions": positions}], absorption=-1.0
+                )
+            with pytest.raises(ValueError, match="Absorption must be >= 0"):
+                compiler.write_lines_multi_lod(
+                    "bad_mll",
+                    [{"vertices": vertices, "widths": 0.1}],
+                    absorption=-1.0,
+                )
 
         store = zarr.open_group(output_path, mode="r")
-        for leaf in ("bad_pts", "bad_lns", "bad_gs", "bad_grp"):
+        for leaf in ("bad_pts", "bad_lns", "bad_gs", "bad_grp", "bad_ml", "bad_mll"):
             assert leaf not in store, f"partial node {leaf} left on disk"
 
     def test_memory_efficiency(self, tmp_path) -> None:
