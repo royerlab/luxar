@@ -24,7 +24,8 @@ ALPHA_CLAMP: float = 1.0 - 1.0 / 512.0
 def alpha_to_optical_depth(alpha: np.ndarray) -> np.ndarray:
     """Map opacity ``a`` to optical depth ``w = −ln(1 − a)`` (clamped)."""
     a = np.clip(alpha, 0.0, ALPHA_CLAMP)
-    return -np.log1p(-a)
+    depth: np.ndarray = -np.log1p(-a)
+    return depth
 
 
 def optical_depth_to_alpha(depth: np.ndarray) -> np.ndarray:
@@ -46,10 +47,11 @@ def effective_amplitudes(data: object) -> np.ndarray:
         data: Anything with ``amplitudes`` and optional ``colors`` arrays
             (``GSplatData`` / ``AdditiveSubLOD``).
     """
-    amps = np.asarray(data.amplitudes)  # type: ignore[attr-defined]
+    amps: np.ndarray = np.asarray(data.amplitudes)  # type: ignore[attr-defined]
     colors = getattr(data, "colors", None)
     if colors is not None:
         colors = np.asarray(colors)
         if colors.ndim == 2 and colors.shape[1] == 4:
-            return amps * colors[:, 3].astype(amps.dtype, copy=False)
+            weighted: np.ndarray = amps * colors[:, 3].astype(amps.dtype, copy=False)
+            return weighted
     return amps

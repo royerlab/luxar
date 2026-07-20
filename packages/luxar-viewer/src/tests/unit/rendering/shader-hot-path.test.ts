@@ -168,7 +168,12 @@ describe('Shader hot-path string regressions', () => {
       // LUXAR_VOLUMETRIC discard guard (mutation `&& tau < 1e-4` →
       // removed survived the suite before this test existed) and the
       // plain discard in the non-volumetric branch.
-      const discardIfdef = GSPLAT_FRAGMENT_SHADER.indexOf('#ifdef LUXAR_VOLUMETRIC');
+      // Anchor at the DISCARD guard specifically — the shader now has an
+      // earlier `#ifdef LUXAR_VOLUMETRIC` block (the per-splat alpha →
+      // optical-depth intensity mapping), so search from `vec3 adjusted`
+      // (declared just above the discard guard) rather than the first ifdef.
+      const adjustedDecl = GSPLAT_FRAGMENT_SHADER.indexOf('vec3 adjusted');
+      const discardIfdef = GSPLAT_FRAGMENT_SHADER.indexOf('#ifdef LUXAR_VOLUMETRIC', adjustedDecl);
       const discardElse = GSPLAT_FRAGMENT_SHADER.indexOf('#else', discardIfdef);
       const discardEndif = GSPLAT_FRAGMENT_SHADER.indexOf('#endif', discardElse);
       expect(discardIfdef).toBeGreaterThanOrEqual(0);

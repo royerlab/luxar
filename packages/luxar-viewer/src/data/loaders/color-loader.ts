@@ -47,10 +47,10 @@ const UINT16_DTYPES = new Set(['uint16', '|u2', '>u2', '<u2']);
  * 2-D shape reports 3 (the historical layout).
  */
 export function colorComponentsOf(array: zarr.Array<zarr.DataType, zarr.Readable>): 3 | 4 {
-  const attrs = array.attrs as unknown as ArrayMetadata;
+  const attrs = (array.attrs ?? {}) as unknown as ArrayMetadata;
   const original = attrs.encoding?.original_shape;
   const shape = Array.isArray(original) && original.length === 2 ? original : array.shape;
-  return shape.length === 2 && shape[1] === 4 ? 4 : 3;
+  return Array.isArray(shape) && shape.length === 2 && shape[1] === 4 ? 4 : 3;
 }
 
 /**
