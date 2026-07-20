@@ -143,6 +143,14 @@ export function commitGSplatsGeometry(
       // - committedTruncate === truncationRadius: `truncate` is a material
       //   uniform outside the loader view state; a change would restyle the
       //   prefix's frustum sizing, so a mismatch forces a full rewrite.
+      // Unlike the points/lines gates there is NO optional-field presence
+      // conjunct: gsplats' only optional field is `colors`, whose concat
+      // white-fills missing parts (never all-or-nothing drops), and whose
+      // projection is a pass-through coercion (no interpolation) — a
+      // null→colored ladder transition re-fills the prefix with values
+      // bit-identical to the colorless white default (fill × (1/fill) is
+      // exactly 1.0 in f32; pinned by the coerce-colors "append-gate
+      // invariant" test).
       const canAppend =
         hadCommittedData &&
         !attributesRebuilt &&
