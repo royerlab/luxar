@@ -14,6 +14,7 @@
 
 import type { LinesDataLoader, LinesViewState, LoadedLinesData } from '../../types/lines';
 import type { ScalarArray } from '../../types/points';
+import { setPrefixParent } from '../../types/prefix-lineage';
 import type { LinesSpatialIndexLoader } from './lines-spatial-index-loader';
 import type { UpdateSession } from '../../profiling/update-profiler';
 import type {
@@ -133,6 +134,16 @@ function concatenateLinesData(parts: LoadedLinesData[]): LoadedLinesData {
     }
     if (sharpness && part.sharpness) {
       sharpness.set(part.sharpness, vertexOffset);
+    } else if (sharpness && !part.sharpness) {
+      // Missing-sharpness parts get the DEFAULT knob (0.5 -> beta=2,
+      // Gaussian), exactly what the worker projection substitutes for a
+      // null sharpness array (projection/lines.ts) — not 0.0. Keeps a
+      // mixed-sharpness ladder's concat byte-identical to what each part
+      // renders standalone, which the append fast path's prefix-identity
+      // contract relies on (and fixes a full-rewrite inconsistency where
+      // sharpness-less parts turned razor-sharp when a sharpness-carrying
+      // level joined the ladder). Mirrors the white color fill above.
+      sharpness.fill(0.5, vertexOffset, vertexOffset + part.vertexCount);
     }
     // (scalars are fully concatenated above via concatOptionalField.)
     vertexOffset += part.vertexCount;
@@ -437,6 +448,14 @@ export class LinesProgressiveLoader implements LinesDataLoader {
    * reference — safe because the result is never mutated downstream
    * (worker projection inputs are structured-cloned, not transferred) —
    * letting the commit pipeline skip no-op re-commits by identity.
+   *
+   * Each fresh result is also stamped with a PREFIX-LINEAGE parent (the
+   * previous same-generation memo) via {@link setPrefixParent}, so the
+   * commit layer can recognise a genuine prefix-extension and take the
+   * append fast path (depth-sorting Phase 4 Stage 2). The parent is null
+   * for the first level of a generation (a view change bumps the reset
+   * generation and empties `loadedLODs`), which is correct — the first
+   * commit extends nothing. Mirrors GSplatsProgressiveLoader.
    */
   private concatenateMemoized(session?: UpdateSession): LoadedLinesData {
     const concatSession = session?.begin('Concatenate LODs');
@@ -448,7 +467,14 @@ export class LinesProgressiveLoader implements LinesDataLoader {
       ) {
         return this._concatCache.result;
       }
+      // Capture the previous SAME-GENERATION memo before overwriting the
+      // cache — that (and only that) is the result this one extends.
+      const prevMemo =
+        this._concatCache && this._concatCache.generation === this._resetGeneration
+          ? this._concatCache.result
+          : null;
       const result = concatenateLinesData(this.loadedLODs);
+      setPrefixParent(result, prevMemo);
       this._concatCache = {
         generation: this._resetGeneration,
         lodCount: this.loadedLODs.length,

@@ -25,12 +25,18 @@ import { writeInterleavedAttribute } from '../interleaved-attributes';
  * interleaved buffer at the right strided offset. Internal helper —
  * the pool uses this from updateXxxGeometry instead of poking
  * `attr.set(...)` per-attribute.
+ *
+ * `opts.fromInstance` passes straight through to
+ * {@link writeInterleavedAttribute} (append fast path): the source
+ * stays full-length, only the write + dirty range start at the
+ * given instance.
  */
 export function writePooledAttribute(
   geometry: THREE.InstancedBufferGeometry,
   name: string,
   src: Float32Array,
-  count: number
+  count: number,
+  opts?: { fromInstance?: number }
 ): void {
   const view = geometry.getAttribute(name) as THREE.InterleavedBufferAttribute;
   const buffer = view.data as THREE.InstancedInterleavedBuffer;
@@ -39,6 +45,7 @@ export function writePooledAttribute(
     view.offset,
     view.itemSize,
     src.subarray(0, count * view.itemSize) as Float32Array,
-    count
+    count,
+    opts
   );
 }

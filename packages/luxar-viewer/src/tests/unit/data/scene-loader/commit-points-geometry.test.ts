@@ -10,6 +10,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import * as THREE from 'three';
 import { commitPointsGeometry } from '../../../../data/scene-loader/commit/commit-points-geometry';
 import { createPointsGeometry } from '../../../../rendering/node-factory/create-points-node';
+import { getPrefixParent, setPrefixParent } from '../../../../types/prefix-lineage';
 import { SOFT_DISPOSE_FLAG } from '../../../../rendering/material-manager';
 import type { LoadedPointsData } from '../../../../data/data-loader-types';
 import type { NodeFactory } from '../../../../rendering/node-factory';
@@ -341,6 +342,127 @@ describe('commitPointsGeometry — no-op commit skip (committedData)', () => {
 
     expect(mockCreatePointsGeometry).toHaveBeenCalledTimes(1);
     expect((points.userData as { committedData?: unknown }).committedData).toBe(second);
+  });
+});
+
+describe('commitPointsGeometry — append fast path (Phase 4 Stage 2, fromInstance)', () => {
+  // The gate lives in the pool branch; these tests pin `fromInstance` in the
+  // options threaded to updatePointsGeometry. The suffix-write behavior
+  // itself is covered in interleaved-attributes.test.ts.
+  const makePool = (geometry: THREE.BufferGeometry) => ({
+    acquirePointsGeometry: vi.fn(() => geometry),
+    updatePointsGeometry: vi.fn(),
+    didLastAcquireRebuildAttributes: vi.fn(() => false),
+  });
+  const lastOpts = (pool: ReturnType<typeof makePool>) =>
+    (pool.updatePointsGeometry.mock.calls.at(-1) as unknown[])[3] as {
+      fromInstance: number;
+    };
+
+  // Arrange a committed prefix, then stage a genuine extension of it.
+  const primeAndExtend = (
+    root: THREE.Group,
+    pool: ReturnType<typeof makePool>,
+    prevCount: number,
+    newCount: number
+  ): LoadedPointsData => {
+    commitPointsGeometry(
+      '/p',
+      makeData(prevCount),
+      root,
+      pool as never,
+      mockNodeFactory,
+      undefined,
+      0
+    );
+    const committed = (root.children[0].userData as { committedData: object }).committedData;
+    const next = makeData(newCount);
+    setPrefixParent(next, committed); // forward-chain lineage
+    return next;
+  };
+
+  it('fires the append (fromInstance = prevCount) when the commit extends the committed prefix', () => {
+    const root = new THREE.Group();
+    root.add(makePoints('/p'));
+    const pool = makePool(new THREE.BufferGeometry());
+    const next = primeAndExtend(root, pool, 4, 6);
+    commitPointsGeometry('/p', next, root, pool as never, mockNodeFactory, undefined, 1);
+    expect(lastOpts(pool).fromInstance).toBe(4);
+    // Positive-path bookkeeping stamp re-enables the NEXT append.
+    expect((root.children[0].userData as { gpuPrefixIntact: boolean }).gpuPrefixIntact).toBe(true);
+    // Consume-and-clear: the gate consumed the lineage entry, unpinning the
+    // parent concat (prefix-lineage.ts retention contract).
+    expect(getPrefixParent(next)).toBeUndefined();
+  });
+
+  it('does NOT append (fromInstance 0) when there is no prefix lineage (unrelated reload)', () => {
+    const root = new THREE.Group();
+    root.add(makePoints('/p'));
+    const pool = makePool(new THREE.BufferGeometry());
+    commitPointsGeometry('/p', makeData(4), root, pool as never, mockNodeFactory, undefined, 0);
+    // A larger commit with NO lineage stamp: full rewrite.
+    commitPointsGeometry('/p', makeData(6), root, pool as never, mockNodeFactory, undefined, 1);
+    expect(lastOpts(pool).fromInstance).toBe(0);
+  });
+
+  it('does NOT append after a context restore cleared gpuPrefixIntact', () => {
+    const root = new THREE.Group();
+    root.add(makePoints('/p'));
+    const pool = makePool(new THREE.BufferGeometry());
+    const next = primeAndExtend(root, pool, 4, 6);
+    (root.children[0].userData as { gpuPrefixIntact: boolean }).gpuPrefixIntact = false;
+    commitPointsGeometry('/p', next, root, pool as never, mockNodeFactory, undefined, 1);
+    expect(lastOpts(pool).fromInstance).toBe(0);
+  });
+
+  it('does NOT append when the acquire rebuilt attributes (pool grow / best-fit swap)', () => {
+    const root = new THREE.Group();
+    root.add(makePoints('/p'));
+    const pool = makePool(new THREE.BufferGeometry());
+    const next = primeAndExtend(root, pool, 4, 6);
+    // Grow handed back a different geometry with rebuilt attributes.
+    pool.acquirePointsGeometry.mockReturnValue(new THREE.BufferGeometry());
+    pool.didLastAcquireRebuildAttributes.mockReturnValue(true);
+    commitPointsGeometry('/p', next, root, pool as never, mockNodeFactory, undefined, 1);
+    expect(lastOpts(pool).fromInstance).toBe(0);
+  });
+
+  it('does NOT append on an equal-count or shrinking recommit', () => {
+    const root = new THREE.Group();
+    root.add(makePoints('/p'));
+    const pool = makePool(new THREE.BufferGeometry());
+    const same = primeAndExtend(root, pool, 5, 5); // same count, lineage set
+    commitPointsGeometry('/p', same, root, pool as never, mockNodeFactory, undefined, 1);
+    expect(lastOpts(pool).fromInstance).toBe(0);
+    const shrunk = makeData(3);
+    setPrefixParent(shrunk, (root.children[0].userData as { committedData: object }).committedData);
+    commitPointsGeometry('/p', shrunk, root, pool as never, mockNodeFactory, undefined, 2);
+    expect(lastOpts(pool).fromInstance).toBe(0);
+  });
+
+  it('does NOT append when an optional field flips presence vs the committed parent', () => {
+    // concatOptionalField is all-or-nothing: a new level WITHOUT Float32
+    // radii drops the merged field entirely, and the adapter's 0.5 fill
+    // would differ from the prefix's committed radii. Presence-flip must
+    // force a full rewrite. (Float32↔absent is invisible to the pool's
+    // dtype matching, so the gate owns this case.)
+    const root = new THREE.Group();
+    root.add(makePoints('/p'));
+    const pool = makePool(new THREE.BufferGeometry());
+    commitPointsGeometry(
+      '/p',
+      makeData(4, /*withRadii=*/ true),
+      root,
+      pool as never,
+      mockNodeFactory,
+      undefined,
+      0
+    );
+    const committed = (root.children[0].userData as { committedData: object }).committedData;
+    const next = makeData(6, /*withRadii=*/ false); // radii dropped
+    setPrefixParent(next, committed);
+    commitPointsGeometry('/p', next, root, pool as never, mockNodeFactory, undefined, 1);
+    expect(lastOpts(pool).fromInstance).toBe(0);
   });
 });
 

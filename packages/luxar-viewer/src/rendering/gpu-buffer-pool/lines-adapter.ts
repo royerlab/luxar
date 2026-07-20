@@ -220,7 +220,8 @@ export class LinesBufferAdapter {
   updateGeometry(
     geometry: THREE.InstancedBufferGeometry,
     data: ProcessedLinesData,
-    count: number
+    count: number,
+    options?: { fromInstance?: number }
   ): void {
     const hasScalarsInData = !!(data.startScalars && data.endScalars);
     if (hasScalarsInData && !linesGeometryHasScalars(geometry)) {
@@ -233,6 +234,12 @@ export class LinesBufferAdapter {
           'carries scalars — acquireLinesGeometry must be called with hasScalars=true.'
       );
     }
+
+    // Append fast path (depth-sorting Phase 4 Stage 2): the commit layer
+    // proved the buffer's first `fromInstance` segments already hold this
+    // data's prefix, so every attribute write below skips them — only the
+    // `[fromInstance, count)` suffix is copied and dirtied for upload.
+    const opts = { fromInstance: options?.fromInstance ?? 0 };
 
     const startClippedF32 = widenToFloat32(data.startClipped);
     const endClippedF32 = widenToFloat32(data.endClipped);
@@ -251,12 +258,18 @@ export class LinesBufferAdapter {
       ['aEndClipped', endClippedF32],
     ];
     for (const [name, source] of baseUpdates) {
-      writePooledAttribute(geometry, name, source, count);
+      writePooledAttribute(geometry, name, source, count, opts);
     }
 
     if (hasScalarsInData) {
-      writePooledAttribute(geometry, 'aStartScalar', data.startScalars as Float32Array, count);
-      writePooledAttribute(geometry, 'aEndScalar', data.endScalars as Float32Array, count);
+      writePooledAttribute(
+        geometry,
+        'aStartScalar',
+        data.startScalars as Float32Array,
+        count,
+        opts
+      );
+      writePooledAttribute(geometry, 'aEndScalar', data.endScalars as Float32Array, count, opts);
     }
 
     geometry.instanceCount = count;

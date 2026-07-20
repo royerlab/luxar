@@ -489,16 +489,33 @@ describe('NodeFactory', () => {
     });
   });
 
-  describe('rebuildAfterContextRestore — gsplat GPU full-dirty (Phase 4 Stage 2)', () => {
-    // After a WebGL context loss the GPU splat buffers are gone while the CPU
-    // mirror survives, so every splat texture + aSortedIndex must be marked
-    // full-dirty (empty ranges → full-image upload) and the append-fast-path
+  describe('rebuildAfterContextRestore — GPU full-dirty (Phase 4 Stage 2)', () => {
+    // After a WebGL context loss the GPU buffers are gone while the CPU
+    // mirror survives, so every splat texture + aSortedIndex (gsplats) and
+    // every interleaved instance buffer (points/lines) must be marked
+    // full-dirty (empty ranges → full upload) and the append-fast-path
     // flag cleared so the next commit does a full rewrite, not a suffix append.
     const makeGSplatMesh = (): THREE.Mesh => {
       const geom = new THREE.InstancedBufferGeometry();
       attachSplatStorage(geom, 8);
       const mesh = new THREE.Mesh(geom, new THREE.MeshBasicMaterial());
       mesh.userData = { nodeType: 'gsplats', gpuPrefixIntact: true };
+      return mesh;
+    };
+
+    // Pool-style interleaved mesh for points/lines: two attribute views over
+    // one shared InstancedInterleavedBuffer, mirroring the adapters' layout.
+    const makeInterleavedMesh = (nodeType: 'points' | 'lines'): THREE.Mesh => {
+      const geom = new THREE.InstancedBufferGeometry();
+      const buffer = new THREE.InstancedInterleavedBuffer(new Float32Array(8 * 4), 4, 1);
+      geom.setAttribute('aCenter', new THREE.InterleavedBufferAttribute(buffer, 3, 0));
+      geom.setAttribute('aRadius', new THREE.InterleavedBufferAttribute(buffer, 1, 3));
+      // Plain (non-interleaved) attribute alongside — the non-pool points
+      // layout binds plain InstancedBufferAttributes, which the restore hook
+      // must mark full-dirty via the else-branch.
+      geom.setAttribute('aPlain', new THREE.InstancedBufferAttribute(new Float32Array(8), 1));
+      const mesh = new THREE.Mesh(geom, new THREE.MeshBasicMaterial());
+      mesh.userData = { nodeType, gpuPrefixIntact: true };
       return mesh;
     };
 
@@ -531,17 +548,51 @@ describe('NodeFactory', () => {
       expect((mesh.userData as { gpuPrefixIntact: boolean }).gpuPrefixIntact).toBe(false);
     });
 
-    it('runs without a picking system and ignores non-gsplat nodes', () => {
+    it('marks points/lines interleaved buffers full-dirty and drops gpuPrefixIntact', () => {
+      for (const nodeType of ['points', 'lines'] as const) {
+        const mesh = makeInterleavedMesh(nodeType);
+        const geom = mesh.geometry as THREE.InstancedBufferGeometry;
+        const buffer = (geom.getAttribute('aCenter') as THREE.InterleavedBufferAttribute)
+          .data as THREE.InstancedInterleavedBuffer;
+        const plain = geom.getAttribute('aPlain') as THREE.InstancedBufferAttribute;
+        // Seed a partial (append-style) pending range as if a suffix commit
+        // had registered one; snapshot the version to prove the hook re-armed
+        // the upload (needsUpdate is a write-only setter).
+        buffer.clearUpdateRanges();
+        buffer.addUpdateRange(12, 8);
+        const version = buffer.version;
+        plain.clearUpdateRanges();
+        plain.addUpdateRange(2, 2);
+        const plainVersion = plain.version;
+
+        const root = new THREE.Group();
+        root.add(mesh);
+        factory.rebuildAfterContextRestore(root);
+
+        // Full-upload path: ranges emptied, needsUpdate re-armed (version++).
+        expect(buffer.updateRanges.length).toBe(0);
+        expect(buffer.version).toBeGreaterThan(version);
+        // Plain attributes (non-pool points layout) are covered too.
+        expect(plain.updateRanges.length).toBe(0);
+        expect(plain.version).toBeGreaterThan(plainVersion);
+        // Next commit must full-rewrite, not append.
+        expect((mesh.userData as { gpuPrefixIntact: boolean }).gpuPrefixIntact).toBe(false);
+      }
+    });
+
+    it('runs without a picking system and ignores unrelated nodes', () => {
       const gsplat = makeGSplatMesh();
-      const points = new THREE.Mesh(new THREE.BufferGeometry(), new THREE.MeshBasicMaterial());
-      points.userData = { nodeType: 'points', gpuPrefixIntact: true };
+      const points = makeInterleavedMesh('points');
+      const other = new THREE.Mesh(new THREE.BufferGeometry(), new THREE.MeshBasicMaterial());
+      other.userData = { nodeType: 'axes-helper', gpuPrefixIntact: true };
       const root = new THREE.Group();
-      root.add(gsplat, points);
+      root.add(gsplat, points, other);
       // factory has no pickingSystem (constructed bare in beforeEach).
       expect(() => factory.rebuildAfterContextRestore(root)).not.toThrow();
-      // The gsplat flag flipped; the points node's userData is untouched.
+      // Both geometry nodes flipped; the unrelated node's userData is untouched.
       expect((gsplat.userData as { gpuPrefixIntact: boolean }).gpuPrefixIntact).toBe(false);
-      expect((points.userData as { gpuPrefixIntact: boolean }).gpuPrefixIntact).toBe(true);
+      expect((points.userData as { gpuPrefixIntact: boolean }).gpuPrefixIntact).toBe(false);
+      expect((other.userData as { gpuPrefixIntact: boolean }).gpuPrefixIntact).toBe(true);
     });
   });
 

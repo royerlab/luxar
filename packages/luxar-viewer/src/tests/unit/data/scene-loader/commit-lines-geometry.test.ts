@@ -22,6 +22,7 @@ vi.mock('../../../../rendering/line-geometry', () => ({
 }));
 
 import { commitLinesGeometry } from '../../../../data/scene-loader/commit/commit-lines-geometry';
+import { getPrefixParent, setPrefixParent } from '../../../../types/prefix-lineage';
 import { SOFT_DISPOSE_FLAG } from '../../../../rendering/material-manager';
 import type { StagedLinesCommit } from '../../../../data/scene-loader/process/data-processor-lines';
 import type { ProcessedLinesData } from '../../../../types/lines';
@@ -211,6 +212,116 @@ describe('commitLinesGeometry', () => {
     expect(mesh.geometry).not.toBe(beforeGeom);
     expect(pool.acquireLinesGeometry).toHaveBeenCalledTimes(1);
     expect(pool.updateLinesGeometry).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('commitLinesGeometry — append fast path (Phase 4 Stage 2, fromInstance)', () => {
+  // The gate lives in the pool branch; these tests pin `fromInstance` in the
+  // options threaded to updateLinesGeometry. The suffix-write behavior
+  // itself is covered in interleaved-attributes.test.ts.
+  const makePool = (geometry: THREE.BufferGeometry) => ({
+    acquireLinesGeometry: vi.fn(() => geometry),
+    updateLinesGeometry: vi.fn(),
+    releaseLinesGeometry: vi.fn(),
+    didLastAcquireRebuildAttributes: vi.fn(() => false),
+  });
+  const lastOpts = (pool: ReturnType<typeof makePool>) =>
+    (pool.updateLinesGeometry.mock.calls.at(-1) as unknown[])[3] as {
+      fromInstance: number;
+    };
+  const makeStaged = (segmentCount: number): StagedLinesCommit => ({
+    path: '/lines',
+    sourceData: makeSourceData(segmentCount),
+    processed: makeProcessed(segmentCount),
+  });
+
+  // Arrange a committed prefix, then stage a genuine extension of it.
+  const primeAndExtend = (
+    root: THREE.Group,
+    pool: ReturnType<typeof makePool>,
+    prevCount: number,
+    newCount: number
+  ): StagedLinesCommit => {
+    commitLinesGeometry(makeStaged(prevCount), root, pool as never, undefined, 0);
+    const committed = (root.children[0].userData as { committedData: object }).committedData;
+    const next = makeStaged(newCount);
+    setPrefixParent(next.sourceData, committed); // forward-chain lineage
+    return next;
+  };
+
+  it('fires the append (fromInstance = prevCount) when the commit extends the committed prefix', () => {
+    const root = new THREE.Group();
+    root.add(makeMesh('/lines'));
+    const pool = makePool(new THREE.BufferGeometry());
+    const next = primeAndExtend(root, pool, 4, 6);
+    commitLinesGeometry(next, root, pool as never, undefined, 1);
+    expect(lastOpts(pool).fromInstance).toBe(4);
+    // Positive-path bookkeeping stamp re-enables the NEXT append.
+    expect((root.children[0].userData as { gpuPrefixIntact: boolean }).gpuPrefixIntact).toBe(true);
+    // Consume-and-clear: the gate consumed the lineage entry, unpinning the
+    // parent concat (prefix-lineage.ts retention contract).
+    expect(getPrefixParent(next.sourceData)).toBeUndefined();
+  });
+
+  it('does NOT append (fromInstance 0) when there is no prefix lineage (unrelated reload)', () => {
+    const root = new THREE.Group();
+    root.add(makeMesh('/lines'));
+    const pool = makePool(new THREE.BufferGeometry());
+    commitLinesGeometry(makeStaged(4), root, pool as never, undefined, 0);
+    // A larger commit with NO lineage stamp: full rewrite.
+    commitLinesGeometry(makeStaged(6), root, pool as never, undefined, 1);
+    expect(lastOpts(pool).fromInstance).toBe(0);
+  });
+
+  it('does NOT append after a context restore cleared gpuPrefixIntact', () => {
+    const root = new THREE.Group();
+    root.add(makeMesh('/lines'));
+    const pool = makePool(new THREE.BufferGeometry());
+    const next = primeAndExtend(root, pool, 4, 6);
+    (root.children[0].userData as { gpuPrefixIntact: boolean }).gpuPrefixIntact = false;
+    commitLinesGeometry(next, root, pool as never, undefined, 1);
+    expect(lastOpts(pool).fromInstance).toBe(0);
+  });
+
+  it('does NOT append when the acquire rebuilt attributes (pool grow / spec-set change)', () => {
+    const root = new THREE.Group();
+    root.add(makeMesh('/lines'));
+    const pool = makePool(new THREE.BufferGeometry());
+    const next = primeAndExtend(root, pool, 4, 6);
+    // Grow handed back a different geometry with rebuilt attributes.
+    pool.acquireLinesGeometry.mockReturnValue(new THREE.BufferGeometry());
+    pool.didLastAcquireRebuildAttributes.mockReturnValue(true);
+    commitLinesGeometry(next, root, pool as never, undefined, 1);
+    expect(lastOpts(pool).fromInstance).toBe(0);
+  });
+
+  it('does NOT append on an equal-count or shrinking recommit', () => {
+    const root = new THREE.Group();
+    root.add(makeMesh('/lines'));
+    const pool = makePool(new THREE.BufferGeometry());
+    const same = primeAndExtend(root, pool, 5, 5); // same count, lineage set
+    commitLinesGeometry(same, root, pool as never, undefined, 1);
+    expect(lastOpts(pool).fromInstance).toBe(0);
+    const shrunk = makeStaged(3);
+    setPrefixParent(
+      shrunk.sourceData,
+      (root.children[0].userData as { committedData: object }).committedData
+    );
+    commitLinesGeometry(shrunk, root, pool as never, undefined, 2);
+    expect(lastOpts(pool).fromInstance).toBe(0);
+  });
+
+  it('does NOT append when an optional field flips presence vs the committed parent', () => {
+    // A presence flip (here: the new level introduces colors) re-fills the
+    // prefix through the interpolation kernel, which need not be bit-exact
+    // with the constant white the prefix was committed with — full rewrite.
+    const root = new THREE.Group();
+    root.add(makeMesh('/lines'));
+    const pool = makePool(new THREE.BufferGeometry());
+    const next = primeAndExtend(root, pool, 4, 6); // committed sourceData.colors = null
+    (next.sourceData as { colors: Float32Array | null }).colors = new Float32Array(6 * 2 * 3);
+    commitLinesGeometry(next, root, pool as never, undefined, 1);
+    expect(lastOpts(pool).fromInstance).toBe(0);
   });
 });
 

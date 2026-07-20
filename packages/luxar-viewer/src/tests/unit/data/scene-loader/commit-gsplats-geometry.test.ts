@@ -36,7 +36,7 @@ vi.mock('../../../../rendering/gsplat-geometry', () => ({
 import { commitGSplatsGeometry } from '../../../../data/scene-loader/commit/commit-gsplats-geometry';
 import { SOFT_DISPOSE_FLAG } from '../../../../rendering/material-manager';
 import type { StagedGSplatsCommit } from '../../../../data/scene-loader/process/data-processor-gsplats';
-import { setPrefixParent } from '../../../../types/gsplats-lineage';
+import { getPrefixParent, setPrefixParent } from '../../../../types/prefix-lineage';
 
 function makeProcessed(splatCount = 2) {
   return {
@@ -530,6 +530,9 @@ describe('commitGSplatsGeometry — append fast path (Phase 4 Stage 2, fromSplat
     const ud = root.children[0].userData as { gpuPrefixIntact: boolean; committedTruncate: number };
     expect(ud.gpuPrefixIntact).toBe(true);
     expect(ud.committedTruncate).toBe(3.0);
+    // Consume-and-clear: the gate consumed the lineage entry, unpinning the
+    // parent concat (prefix-lineage.ts retention contract).
+    expect(getPrefixParent(next.sourceData)).toBeUndefined();
   });
 
   it('does NOT append (fromSplat 0) when there is no prefix lineage (unrelated reload)', () => {

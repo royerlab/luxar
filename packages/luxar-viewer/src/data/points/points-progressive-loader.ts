@@ -32,6 +32,7 @@ import type {
   PointsViewState,
   ScalarArray,
 } from '../../types/points';
+import { setPrefixParent } from '../../types/prefix-lineage';
 import type { PointsSpatialIndexLoader } from './points-spatial-index-loader';
 import type { UpdateSession } from '../../profiling/update-profiler';
 import type {
@@ -442,6 +443,14 @@ export class PointsProgressiveLoader implements PointsDataLoader {
    * reference — safe because the result is never mutated downstream
    * (worker projection inputs are structured-cloned, not transferred) —
    * letting the commit pipeline skip no-op re-commits by identity.
+   *
+   * Each fresh result is also stamped with a PREFIX-LINEAGE parent (the
+   * previous same-generation memo) via {@link setPrefixParent}, so the
+   * commit layer can recognise a genuine prefix-extension and take the
+   * append fast path (depth-sorting Phase 4 Stage 2). The parent is null
+   * for the first level of a generation (a view change bumps the reset
+   * generation and empties `loadedLODs`), which is correct — the first
+   * commit extends nothing. Mirrors GSplatsProgressiveLoader.
    */
   private concatenateMemoized(session?: UpdateSession): LoadedPointsData {
     const concatSession = session?.begin('Concatenate LODs');
@@ -453,7 +462,14 @@ export class PointsProgressiveLoader implements PointsDataLoader {
       ) {
         return this._concatCache.result;
       }
+      // Capture the previous SAME-GENERATION memo before overwriting the
+      // cache — that (and only that) is the result this one extends.
+      const prevMemo =
+        this._concatCache && this._concatCache.generation === this._resetGeneration
+          ? this._concatCache.result
+          : null;
       const result = concatenatePointsData(this.loadedLODs);
+      setPrefixParent(result, prevMemo);
       this._concatCache = {
         generation: this._resetGeneration,
         lodCount: this.loadedLODs.length,

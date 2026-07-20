@@ -221,13 +221,18 @@ export class GPUBufferPool {
 
   /**
    * Update Points geometry attributes in-place (zero GPU allocations).
+   * @param options - `fromInstance`: append fast path (Phase 4 Stage 2) —
+   *   write & upload only the `[fromInstance, count)` suffix, preserving
+   *   the prefix already on the GPU (the commit path decides; see
+   *   commit-points-geometry.ts).
    */
   updatePointsGeometry(
     geometry: THREE.BufferGeometry,
     data: LoadedPointsData,
-    count: number
+    count: number,
+    options?: { fromInstance?: number }
   ): void {
-    this.points.updateGeometry(geometry, data, count);
+    this.points.updateGeometry(geometry, data, count, options);
   }
 
   // =========================================================================
@@ -254,13 +259,20 @@ export class GPUBufferPool {
     this.lines.releaseGeometry(nodeId);
   }
 
-  /** Update Lines geometry in place. */
+  /**
+   * Update Lines geometry in place.
+   * @param options - `fromInstance`: append fast path (Phase 4 Stage 2) —
+   *   write & upload only the `[fromInstance, count)` segment suffix,
+   *   preserving the prefix already on the GPU (the commit path decides;
+   *   see commit-lines-geometry.ts).
+   */
   updateLinesGeometry(
     geometry: THREE.InstancedBufferGeometry,
     data: ProcessedLinesData,
-    count: number
+    count: number,
+    options?: { fromInstance?: number }
   ): void {
-    this.lines.updateGeometry(geometry, data, count);
+    this.lines.updateGeometry(geometry, data, count, options);
   }
 
   // =========================================================================

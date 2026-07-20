@@ -28,7 +28,7 @@ import {
   hasCommittedData,
   setCommittedData,
 } from '../../../types/committed-data';
-import { getPrefixParent } from '../../../types/gsplats-lineage';
+import { getPrefixParent, setPrefixParent } from '../../../types/prefix-lineage';
 import type { StagedGSplatsCommit } from '../process/data-processor-gsplats';
 
 const DEFAULT_TRUNCATE = 3.0;
@@ -143,6 +143,14 @@ export function commitGSplatsGeometry(
       // - committedTruncate === truncationRadius: `truncate` is a material
       //   uniform outside the loader view state; a change would restyle the
       //   prefix's frustum sizing, so a mismatch forces a full rewrite.
+      // Unlike the points/lines gates there is NO optional-field presence
+      // conjunct: gsplats' only optional field is `colors`, whose concat
+      // white-fills missing parts (never all-or-nothing drops), and whose
+      // projection is a pass-through coercion (no interpolation) — a
+      // null→colored ladder transition re-fills the prefix with values
+      // bit-identical to the colorless white default (fill × (1/fill) is
+      // exactly 1.0 in f32; pinned by the coerce-colors "append-gate
+      // invariant" test).
       const canAppend =
         hadCommittedData &&
         !attributesRebuilt &&
@@ -152,6 +160,11 @@ export function commitGSplatsGeometry(
         getPrefixParent(staged.sourceData) !== undefined &&
         getPrefixParent(staged.sourceData) === getCommittedData(mesh) &&
         mesh.userData.committedTruncate === truncationRadius;
+      // Consume-and-clear (see prefix-lineage.ts retention contract): the
+      // lineage entry existed solely for the gate check above — clearing it
+      // unpins the parent concat's CPU arrays. A retry after a throwing
+      // write below reads `undefined` and full-rewrites, the safe direction.
+      setPrefixParent(staged.sourceData, null);
       try {
         gpuBufferPool.updateGSplatsGeometry(
           geometry,
