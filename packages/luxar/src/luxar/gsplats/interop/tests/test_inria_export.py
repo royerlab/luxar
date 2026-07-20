@@ -71,9 +71,16 @@ class TestClosedLoop:
         assert back.n_splats == data.n_splats
         assert np.allclose(back.centers, data.centers, atol=1e-4)
         assert _cov_relF_p95(data.cholesky_factors, back.cholesky_factors) < 1e-4
-        assert np.allclose(back.amplitudes, data.amplitudes, atol=1e-4)
+        # Re-import lands the (0, 1) amplitudes in the color alpha channel
+        # (amplitudes = 1): the round-trip invariant is EFFECTIVE mass A·a.
+        from luxar.gsplats.utils.alpha import effective_amplitudes
+
+        assert np.allclose(back.amplitudes, 1.0)
+        assert np.allclose(
+            effective_amplitudes(back), data.amplitudes, atol=1e-4
+        )
         assert back.colors is not None
-        assert np.allclose(back.colors, data.colors, atol=1e-3)
+        assert np.allclose(back.colors[:, :3], data.colors, atol=1e-3)
 
     def test_import_export_import_identity(self) -> None:
         gt = make_ground_truth(n=16, seed=9)

@@ -71,8 +71,9 @@ layout( std140 ) uniform object {
 // varyings
 in vec3 nodeVarying0;
 in float nodeVarying1;
-in vec3 nodeVarying2;
-in vec2 nodeVarying3;
+in float nodeVarying2;
+in vec3 nodeVarying3;
+in vec2 nodeVarying4;
 
 
 // vars
@@ -93,8 +94,8 @@ void main() {
 	// flow
 	// code
 
-	nodeVar2 = ( ( vec2( vec2( gl_FragCoord.xy.x, nodeUniform2.y - gl_FragCoord.xy.y ).x, ( nodeUniform2.y - vec2( gl_FragCoord.xy.x, nodeUniform2.y - gl_FragCoord.xy.y ).y ) ) - nodeVarying3 ).x * nodeVarying2.x );
-	nodeVar3 = ( ( ( vec2( vec2( gl_FragCoord.xy.x, nodeUniform2.y - gl_FragCoord.xy.y ).x, ( nodeUniform2.y - vec2( gl_FragCoord.xy.x, nodeUniform2.y - gl_FragCoord.xy.y ).y ) ) - nodeVarying3 ).y - ( nodeVarying2.y * nodeVar2 ) ) * nodeVarying2.z );
+	nodeVar2 = ( ( vec2( vec2( gl_FragCoord.xy.x, nodeUniform2.y - gl_FragCoord.xy.y ).x, ( nodeUniform2.y - vec2( gl_FragCoord.xy.x, nodeUniform2.y - gl_FragCoord.xy.y ).y ) ) - nodeVarying4 ).x * nodeVarying3.x );
+	nodeVar3 = ( ( ( vec2( vec2( gl_FragCoord.xy.x, nodeUniform2.y - gl_FragCoord.xy.y ).x, ( nodeUniform2.y - vec2( gl_FragCoord.xy.x, nodeUniform2.y - gl_FragCoord.xy.y ).y ) ) - nodeVarying4 ).y - ( nodeVarying3.y * nodeVar2 ) ) * nodeVarying3.z );
 	nodeVar4 = ( ( nodeVar2 * nodeVar2 ) + ( nodeVar3 * nodeVar3 ) );
 
 	if ( ( nodeVar4 > nodeUniform3 ) ) {
@@ -104,7 +105,7 @@ void main() {
 
 	}
 
-	nodeVar5 = ( ( nodeVarying1 * nodeUniform4 ) * max( ( exp( ( nodeVar4 * -0.5 ) ) - nodeUniform5 ), 0.0 ) );
+	nodeVar5 = ( ( ( nodeVarying2 * nodeUniform4 ) * max( ( exp( ( nodeVar4 * -0.5 ) ) - nodeUniform5 ), 0.0 ) ) * nodeVarying1 );
 
 	if ( ( nodeVar5 < 0.0001 ) ) {
 

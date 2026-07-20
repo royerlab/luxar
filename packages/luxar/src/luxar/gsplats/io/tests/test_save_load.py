@@ -125,6 +125,50 @@ class TestSaveGsplats:
             assert "colors" in root
             assert root.attrs["has_colors"] is True
 
+    @pytest.mark.parametrize("mode", [EncodingMode.PRECISION, EncodingMode.AUTO])
+    def test_rgba_colors_round_trip(self, mode: EncodingMode) -> None:
+        # RGBA colors (per-splat opacity in the 4th column) survive
+        # write→read through both the SDR (rgb_uint8/AUTO) and lossless
+        # (PRECISION/float32) encoders. Alpha ∈ [0, 1] must never trip HDR.
+        rng = np.random.default_rng(3)
+        colors = rng.random((50, 4)).astype(np.float32)
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "rgba.gsplats.zarr"
+            save_gsplats(
+                path=path,
+                **create_test_splats_3d(50),
+                colors=colors,
+                encoding_mode=mode,
+                ordering="none",
+            )
+            root = zarr.open_group(str(path), mode="r")
+            assert root.attrs["has_colors"] is True
+            loaded = load_gsplats(path)
+            assert loaded.colors is not None
+            assert loaded.colors.shape == (50, 4)
+            atol = 1e-6 if mode == EncodingMode.PRECISION else 2.0 / 255.0
+            assert np.allclose(loaded.colors, colors, atol=atol)
+
+    def test_rgba_hdr_rgb_keeps_alpha_bounded(self) -> None:
+        # HDR RGB (values > 1) routes through geolog per-channel; the alpha
+        # column rides along and must round-trip within [0, 1].
+        rng = np.random.default_rng(4)
+        colors = np.empty((40, 4), dtype=np.float32)
+        colors[:, :3] = rng.random((40, 3)).astype(np.float32) * 8.0  # HDR RGB
+        colors[:, 3] = rng.random(40).astype(np.float32)  # opacity in [0, 1]
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "rgba_hdr.gsplats.zarr"
+            save_gsplats(
+                path=path,
+                **create_test_splats_3d(40),
+                colors=colors,
+                encoding_mode=EncodingMode.PRECISION,
+                ordering="none",
+            )
+            loaded = load_gsplats(path)
+            assert loaded.colors is not None and loaded.colors.shape == (40, 4)
+            assert np.allclose(loaded.colors, colors, atol=1e-5)
+
     def test_save_with_morton_ordering(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             path = Path(tmpdir) / "test.gsplats.zarr"

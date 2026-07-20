@@ -38,11 +38,14 @@ def write_colors(
         ctx: Encoder configuration (encoder, mode, compressor).
     """
     n_points = n_elements  # local alias keeps the rest of the body unchanged
+    # RGBA colors: the alpha column is per-element opacity in [0, 1], not
+    # emission — HDR detection and the display data range look at RGB only
+    # (alpha <= 1 can never trip HDR, but it must not skew the range either).
     # Handle scalar vs array
     color_mode: Optional[Literal["sdr", "hdr"]] = None
     if isinstance(colors, (tuple, list)):
-        # Detect HDR vs SDR from values
-        max_val = max(colors)
+        # Detect HDR vs SDR from values (RGB components only)
+        max_val = max(colors[:3])
         color_mode = "hdr" if max_val > 1.0 else "sdr"
         if color_mode == "hdr":
             aprint("  ✓ Detected HDR colors (values > 1.0)")
@@ -63,7 +66,7 @@ def write_colors(
         # Detect color_mode for float arrays
         if np.issubdtype(colors.dtype, np.floating):
             # Float colors require explicit color_mode
-            if np.any(colors > 1.0):
+            if np.any(colors[:, :3] > 1.0):
                 color_mode = "hdr"
                 aprint("  ✓ Detected HDR colors (values > 1.0)")
             else:
@@ -100,14 +103,15 @@ def write_colors(
     else:
         aprint(f"  ✓ Wrote colors ({enc_name})")
 
-    # Store color data range for layer controls (min/max of original data)
+    # Store color data range for layer controls (min/max of original data,
+    # RGB only — alpha is opacity, not a display value)
     if isinstance(colors, np.ndarray) and colors.size > 0:
         group.attrs["color_data_range"] = [
-            float(colors.min()),
-            float(colors.max()),
+            float(colors[:, :3].min()),
+            float(colors[:, :3].max()),
         ]
     elif isinstance(colors, (tuple, list)):
         group.attrs["color_data_range"] = [
-            float(min(colors)),
-            float(max(colors)),
+            float(min(colors[:3])),
+            float(max(colors[:3])),
         ]

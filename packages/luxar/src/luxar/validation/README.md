@@ -405,8 +405,10 @@ Got 1D array - perhaps you meant to reshape it?"
 
 ### Actionable Suggestions
 ```python
-ValidationError: "Colors shape (100, 4) doesn't match expected (100, 3).
-Luxar expects RGB colors. If you have RGBA, use colors[:, :3] to extract RGB."
+# GSplats accept RGB (N, 3) or RGBA (N, 4) — the alpha channel is per-splat
+# opacity in [0, 1]. Points/lines are RGB-only until their volumetric phases.
+ValidationError: "colors: Colors must have 3 (RGB) channels, got 5 channels.
+Ensure colors have shape (n_points, c) or (1, c) with c in (3,)"
 ```
 
 ### Sharpness range enforcement

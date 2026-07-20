@@ -59,6 +59,7 @@ import {
   clamp,
   smoothstep,
   normalize,
+  mix,
   Discard,
   modelViewMatrix,
   cameraProjectionMatrix,
@@ -148,6 +149,8 @@ export interface GSplatTSLNodes {
   readonly uOpacity: TSLNode;
   /** Absorption coefficient κ — only consumed by the volumetric output branch. */
   readonly uAbsorption: TSLNode;
+  /** 1 when colors are RGBA (per-splat opacity present), else 0 — gates the volumetric alpha → optical-depth mapping. */
+  readonly uHasElementAlpha: TSLNode;
   readonly uInvGamma: TSLNode;
   readonly uIntensity: TSLNode;
   readonly uOffset: TSLNode;
@@ -200,6 +203,7 @@ export function gsplatWebGPUFactory(
   const uScalarScale = config.useColormap ? nodes.uScalarScale : null;
   const uOpacity = nodes.uOpacity;
   const uAbsorption = nodes.uAbsorption;
+  const uHasElementAlpha = nodes.uHasElementAlpha;
   const uInvGamma = nodes.uInvGamma;
   const uIntensity = nodes.uIntensity;
   const uOffset = nodes.uOffset;
@@ -227,6 +231,7 @@ export function gsplatWebGPUFactory(
   // body (the TSL pattern for Fn-traced vertex stages).
   const vColor: TSLNode = varying(vec3(float(0.0), float(0.0), float(0.0)));
   const vAmplitude2D: TSLNode = varying(float(0.0));
+  const vAlpha: TSLNode = varying(float(1.0));
   const vL2D: TSLNode = varying(vec3(float(0.0), float(0.0), float(0.0)));
   const vCenterScreen: TSLNode = varying(vec2(float(0.0), float(0.0)));
 
@@ -259,6 +264,8 @@ export function gsplatWebGPUFactory(
     const aCholesky23: TSLNode = splatT1.zw.toVar(); // [L11, L20]
     const aCholesky45: TSLNode = splatT2.xy.toVar(); // [L21, L22]
     const aColor: TSLNode = vec3(splatT2.z, splatT2.w, splatT3.x).toVar();
+    // Per-splat opacity (texel3.y; the writer stamps 1.0 for RGB data).
+    const aAlpha: TSLNode = splatT3.y.toVar();
 
     // Centre in camera space.
     const centerCam4: TSLNode = modelViewMatrix.mul(vec4(aCenter, 1.0)).toVar();
@@ -531,6 +538,7 @@ export function gsplatWebGPUFactory(
 
     // Assign varyings (declared outside the Fn; see above).
     vColor.assign(perInstanceColor);
+    vAlpha.assign(aAlpha);
     vAmplitude2D.assign(vAmplitude2DVal);
     vL2D.assign(vL2DVal);
     vCenterScreen.assign(vCenterScreenVal);
@@ -572,9 +580,20 @@ export function gsplatWebGPUFactory(
     Discard(mahalSq.greaterThan(uTruncateSq));
 
     // Shifted Gaussian intensity.
-    const intensity: TSLNode = vAmplitude2D
+    const rawIntensity: TSLNode = vAmplitude2D
       .mul(uInvOneMinusC)
       .mul(max(exp(mahalSq.mul(-0.5)).sub(uShiftC), float(0.0)));
+    // Per-splat opacity (color alpha; 1.0 for RGB data): linear factor in
+    // every mode, mapped into optical DENSITY w = −ln(1−a) in volumetric
+    // (GLSL twin; clamp mirrors Python's ALPHA_CLAMP = 1 − 1/512 and sits
+    // INSIDE the expression — mix evaluates both lanes, so the log argument
+    // must be NaN-free even when the gate is 0).
+    const volumetricGraph = isVolumetricMode(config.blendingMode ?? 'additive');
+    const alphaFactor: TSLNode = volumetricGraph
+      ? mix(float(1.0), min(vAlpha, float(0.998046875)).oneMinus().log().negate(), uHasElementAlpha)
+      : vAlpha;
+    const intensity: TSLNode = rawIntensity.mul(alphaFactor).toVar();
+    // Alpha is folded in, so a ~zero-alpha splat discards in every mode.
     Discard(intensity.lessThan(1e-4));
 
     // GOG. Colormap mode bypasses color GOG — gamma + display-range
@@ -584,7 +603,7 @@ export function gsplatWebGPUFactory(
     // Colormap mode still skips the post-LUT gamma (already applied pre-LUT).
     const adjusted: TSLNode = max(vColor.mul(uIntensity).add(uOffset), vec3(0.0));
     const maxAdjusted: TSLNode = max(adjusted.r, max(adjusted.g, adjusted.b));
-    const volumetric = isVolumetricMode(config.blendingMode ?? 'additive');
+    const volumetric = volumetricGraph;
     // Volumetric optical depth τ = κ·opacity·intensity (pre-GOG density
     // scalar × opacity-as-density; GLSL LUXAR_VOLUMETRIC twin). Built
     // only on the volumetric graph — JS-conditional like the other
@@ -692,6 +711,7 @@ export function buildGSplatTSLNodesFromUniforms(
     uCov2DDilation: uniform((uniforms.uCov2DDilation?.value as number) ?? 0),
     uOpacity: uniform((uniforms.uOpacity?.value as number) ?? 1.0),
     uAbsorption: uniform((uniforms.uAbsorption?.value as number) ?? 1.0),
+    uHasElementAlpha: uniform((uniforms.uHasElementAlpha?.value as number) ?? 0),
     uInvGamma: uniform((uniforms.uInvGamma?.value as number) ?? 1.0),
     uIntensity: uniform((uniforms.uIntensity?.value as number) ?? 1.0),
     uOffset: uniform((uniforms.uOffset?.value as number) ?? 0.0),

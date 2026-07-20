@@ -39,16 +39,16 @@ export function coerceColorsToFloat32(
 }
 
 /**
- * Fill an RGB-triplet color array with white (1.0, 1.0, 1.0) for the
- * first `count` triplets. Used as the no-color default by Lines and
- * GSplats projections — the per-vertex color attribute defaults to
- * white when the node has no `colors` array.
+ * Fill a color array with opaque white for the first `count` items.
+ * Used as the no-color default by Lines and GSplats projections — the
+ * per-vertex color attribute defaults to white when the node has no
+ * `colors` array. `components` is 3 (RGB) or 4 (RGBA); the alpha fill
+ * of 1.0 is "fully opaque", the per-element-opacity identity.
  */
-export function fillColorsWhite(out: Float32Array, count: number): void {
-  for (let i = 0; i < count; i++) {
-    out[i * 3] = 1.0;
-    out[i * 3 + 1] = 1.0;
-    out[i * 3 + 2] = 1.0;
+export function fillColorsWhite(out: Float32Array, count: number, components = 3): void {
+  const n = count * components;
+  for (let i = 0; i < n; i++) {
+    out[i] = 1.0;
   }
 }
 

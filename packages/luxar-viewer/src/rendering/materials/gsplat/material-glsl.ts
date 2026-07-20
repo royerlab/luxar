@@ -64,6 +64,13 @@ export interface GSplatMaterialConfig {
    * inert in every other mode. κ = 0 renders exactly like `additive`.
    */
   absorption?: number;
+  /**
+   * True when the dataset's colors carry a per-splat alpha channel (RGBA).
+   * Gates the volumetric branch's alpha → optical-depth mapping
+   * (w = −ln(1−a)); the linear per-mode alpha factor needs no gate (RGB
+   * data carries the identity alpha 1.0 in the splat texture).
+   */
+  hasElementAlpha?: boolean;
   /** Gamma correction (0.1 to 10.0, default 1.0) */
   gamma?: number;
   /** Intensity (linear color multiplier / gain), default 1.0 */
@@ -118,6 +125,8 @@ export interface GSplatMaterialUniforms {
   uOpacity: { value: number };
   /** Absorption coefficient κ (volumetric mode: τ = κ·opacity·rayMass) */
   uAbsorption: { value: number };
+  /** 1 when colors are RGBA (per-splat opacity present), else 0 */
+  uHasElementAlpha: { value: number };
   /** Projection mode: 0=sum ray-integral (additive/luminous/volumetric), 1=peak 2D-projected (surface modes max/normal/opaque) */
   uProjectionMode: { value: number };
   /** Pre-computed 1/gamma for performance */
@@ -180,6 +189,7 @@ export class GSplatMaterial
         },
         uOpacity: { value: materialConfig.opacity ?? 1.0 },
         uAbsorption: { value: materialConfig.absorption ?? 1.0 },
+        uHasElementAlpha: { value: materialConfig.hasElementAlpha ? 1 : 0 },
         // Placeholder — applyBlendingMode() below is the source of truth. Peak (1)
         // for surface modes (max/normal/opaque), sum (0) for emissive.
         uProjectionMode: {
@@ -311,6 +321,15 @@ export class GSplatMaterial
   }
 
   /**
+   * Declare whether the committed dataset's colors carry a per-splat
+   * alpha channel (RGBA). Plain uniform write — set by the commit layer
+   * once the color layout is known.
+   */
+  updateHasElementAlpha(hasAlpha: boolean): void {
+    this.uniforms.uHasElementAlpha.value = hasAlpha ? 1 : 0;
+  }
+
+  /**
    * Update truncation radius and recompute shifted Gaussian parameters.
    */
   updateTruncationRadius(radius: number): void {
@@ -411,6 +430,7 @@ export class GSplatMaterial
       // Without this a clone silently reset a tuned κ to the 1.0 default —
       // and the layers panel clones on ANY first panel interaction.
       absorption: this.uniforms.uAbsorption.value,
+      hasElementAlpha: this.uniforms.uHasElementAlpha.value === 1,
       gamma: this.userData.gamma ?? 1.0,
       intensity: this.uniforms.uIntensity.value,
       offset: this.uniforms.uOffset.value,

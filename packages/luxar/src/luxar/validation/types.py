@@ -66,13 +66,22 @@ def validate_positions(positions: Any, ndim: Optional[int] = None) -> PositionAr
 
 
 def validate_colors(
-    colors: Any, n_points: int
+    colors: Any, n_points: int, channels: tuple[int, ...] = (3, 4)
 ) -> np.ndarray[Any, np.dtype[np.float32]]:
     """Validate and convert colors array to HDR float32 format.
+
+    Colors are RGB ``(n, 3)`` or RGBA ``(n, 4)``. The optional alpha column is
+    a per-element opacity in [0, 1] (NOT an HDR emission channel): each
+    blending mode consumes it the way it consumes node-level opacity, and the
+    volumetric mode maps it into optical depth (see
+    VOLUMETRIC_BLENDING_SPEC.md).
 
     Args:
         colors: Input array to validate
         n_points: Expected number of points
+        channels: Accepted channel counts. Geometry types opt into RGBA
+            per phase (gsplats today; points/lines keep ``(3,)`` until their
+            volumetric phases land).
 
     Returns:
         Validated colors array in HDR float32 format
@@ -83,11 +92,20 @@ def validate_colors(
     if not isinstance(colors, np.ndarray):
         raise ValueError("Colors must be a numpy array")
 
-    if colors.shape != (n_points, 3):
-        raise ValueError(f"Colors must have shape ({n_points}, 3)")
+    if colors.ndim != 2 or colors.shape[0] != n_points or colors.shape[1] not in channels:
+        expected = " or ".join(f"({n_points}, {c})" for c in channels)
+        raise ValueError(f"Colors must have shape {expected}")
+
+    if colors.shape[1] == 4:
+        alpha = colors[:, 3]
+        # Alpha is opacity, not emission: finite and within [0, 1].
+        if alpha.size and (
+            not np.all(np.isfinite(alpha)) or np.any(alpha < 0) or np.any(alpha > 1)
+        ):
+            raise ValueError("Color alpha channel must be finite and within [0, 1]")
 
     # Support HDR colors - use float32 for full HDR range
-    # Colors can be any positive value (0.0 to infinity) for HDR emission
+    # RGB can be any positive value (0.0 to infinity) for HDR emission
     return colors.astype(np.float32, copy=False)
 
 

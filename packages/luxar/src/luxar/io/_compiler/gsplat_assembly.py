@@ -353,7 +353,10 @@ def write_gsplat_arrays(
     # `color_data_range` attrs identically across geometries.
     if colors is not None:
         if isinstance(colors, np.ndarray):
-            validate_colors_for_writing(colors, n_splats)
+            # GSplats accept RGBA: the alpha column is per-splat opacity
+            # (consumed by every blending mode; mapped into optical depth in
+            # volumetric — see VOLUMETRIC_BLENDING_SPEC.md).
+            validate_colors_for_writing(colors, n_splats, channels=(3, 4))
         write_colors(
             group=group,
             colors=colors,

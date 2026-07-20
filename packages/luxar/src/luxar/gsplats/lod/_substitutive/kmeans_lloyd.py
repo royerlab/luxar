@@ -24,6 +24,7 @@ from luxar.gsplats.lod._kernels import (
 )
 from luxar.gsplats.lod._substitutive import _TINY
 from luxar.gsplats.lod._substitutive.warm_start import _morton_order
+from luxar.gsplats.utils.alpha import ALPHA_CLAMP
 
 
 def _segment_templates(
@@ -201,10 +202,23 @@ def _build_representatives_vectorized(
     if colors is not None:
         cdt = colors.dtype
         col = colors.to(dtype=dt)
+        has_alpha = col.ndim == 2 and col.shape[1] == 4
+        if has_alpha:
+            # The alpha column is per-splat opacity; a bin's merged splat must
+            # preserve the members' total optical depth, and optical depth —
+            # not opacity — is what composes linearly (τ = −ln(1−a)). So alpha
+            # aggregates as the mass-weighted mean in w-space and maps back:
+            # a naive o-space mean would over-report transmittance whenever a
+            # bin mixes opaque and translucent members. Clamp matches the
+            # shader's a <= 1 − 1/512 (a = 1 would be infinite depth).
+            col = col.clone()
+            col[:, 3] = -torch.log1p(-col[:, 3].clamp(min=0.0, max=ALPHA_CLAMP))
         extra = tuple(col.shape[1:])
         new_colors = torch.zeros((M,) + extra, dtype=dt, device=device)
         wshape = (N,) + (1,) * len(extra)
         new_colors.index_add_(0, assignments, w.view(wshape) * col)
+        if has_alpha:
+            new_colors[:, 3] = -torch.expm1(-new_colors[:, 3])
         new_colors = new_colors.to(dtype=cdt)
     else:
         new_colors = None
