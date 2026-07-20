@@ -10,7 +10,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import * as THREE from 'three';
 import { commitPointsGeometry } from '../../../../data/scene-loader/commit/commit-points-geometry';
 import { createPointsGeometry } from '../../../../rendering/node-factory/create-points-node';
-import { setPrefixParent } from '../../../../types/prefix-lineage';
+import { getPrefixParent, setPrefixParent } from '../../../../types/prefix-lineage';
 import { SOFT_DISPOSE_FLAG } from '../../../../rendering/material-manager';
 import type { LoadedPointsData } from '../../../../data/data-loader-types';
 import type { NodeFactory } from '../../../../rendering/node-factory';
@@ -390,6 +390,9 @@ describe('commitPointsGeometry — append fast path (Phase 4 Stage 2, fromInstan
     expect(lastOpts(pool).fromInstance).toBe(4);
     // Positive-path bookkeeping stamp re-enables the NEXT append.
     expect((root.children[0].userData as { gpuPrefixIntact: boolean }).gpuPrefixIntact).toBe(true);
+    // Consume-and-clear: the gate consumed the lineage entry, unpinning the
+    // parent concat (prefix-lineage.ts retention contract).
+    expect(getPrefixParent(next)).toBeUndefined();
   });
 
   it('does NOT append (fromInstance 0) when there is no prefix lineage (unrelated reload)', () => {

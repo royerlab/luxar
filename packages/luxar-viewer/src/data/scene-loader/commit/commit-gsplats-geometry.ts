@@ -28,7 +28,7 @@ import {
   hasCommittedData,
   setCommittedData,
 } from '../../../types/committed-data';
-import { getPrefixParent } from '../../../types/prefix-lineage';
+import { getPrefixParent, setPrefixParent } from '../../../types/prefix-lineage';
 import type { StagedGSplatsCommit } from '../process/data-processor-gsplats';
 
 const DEFAULT_TRUNCATE = 3.0;
@@ -152,6 +152,11 @@ export function commitGSplatsGeometry(
         getPrefixParent(staged.sourceData) !== undefined &&
         getPrefixParent(staged.sourceData) === getCommittedData(mesh) &&
         mesh.userData.committedTruncate === truncationRadius;
+      // Consume-and-clear (see prefix-lineage.ts retention contract): the
+      // lineage entry existed solely for the gate check above — clearing it
+      // unpins the parent concat's CPU arrays. A retry after a throwing
+      // write below reads `undefined` and full-rewrites, the safe direction.
+      setPrefixParent(staged.sourceData, null);
       try {
         gpuBufferPool.updateGSplatsGeometry(
           geometry,

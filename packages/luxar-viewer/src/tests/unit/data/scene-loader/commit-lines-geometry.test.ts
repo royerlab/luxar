@@ -22,7 +22,7 @@ vi.mock('../../../../rendering/line-geometry', () => ({
 }));
 
 import { commitLinesGeometry } from '../../../../data/scene-loader/commit/commit-lines-geometry';
-import { setPrefixParent } from '../../../../types/prefix-lineage';
+import { getPrefixParent, setPrefixParent } from '../../../../types/prefix-lineage';
 import { SOFT_DISPOSE_FLAG } from '../../../../rendering/material-manager';
 import type { StagedLinesCommit } from '../../../../data/scene-loader/process/data-processor-lines';
 import type { ProcessedLinesData } from '../../../../types/lines';
@@ -258,6 +258,9 @@ describe('commitLinesGeometry — append fast path (Phase 4 Stage 2, fromInstanc
     expect(lastOpts(pool).fromInstance).toBe(4);
     // Positive-path bookkeeping stamp re-enables the NEXT append.
     expect((root.children[0].userData as { gpuPrefixIntact: boolean }).gpuPrefixIntact).toBe(true);
+    // Consume-and-clear: the gate consumed the lineage entry, unpinning the
+    // parent concat (prefix-lineage.ts retention contract).
+    expect(getPrefixParent(next.sourceData)).toBeUndefined();
   });
 
   it('does NOT append (fromInstance 0) when there is no prefix lineage (unrelated reload)', () => {

@@ -57,6 +57,13 @@ export function concatRequiredField<A extends ConcatTypedArray, P>(
  * `undefined` is returned (the attribute is dropped for the merged result).
  *
  * Preserves the source dtype by constructing from the first part's array.
+ *
+ * COUPLED CONTRACT: the append fast path's commit gates
+ * (`commit-points-geometry.ts` / `commit-lines-geometry.ts`) compare each
+ * optional field's PRESENCE against the committed parent precisely because of
+ * this all-or-nothing drop — a new level without the field flips the merged
+ * result from real values to the adapter's constant fill. If this policy ever
+ * changes (e.g. fill-with-default), revisit those presence conjuncts.
  */
 export function concatOptionalField<A extends ConcatTypedArray, P>(
   parts: P[],

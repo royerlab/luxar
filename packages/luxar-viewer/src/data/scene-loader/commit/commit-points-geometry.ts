@@ -41,7 +41,7 @@ import {
   hasCommittedData,
   setCommittedData,
 } from '../../../types/committed-data';
-import { getPrefixParent } from '../../../types/prefix-lineage';
+import { getPrefixParent, setPrefixParent } from '../../../types/prefix-lineage';
 import { log, Modules } from '../../../utils/log';
 import type { UpdateSession } from '../../../profiling/update-profiler';
 import type { GPUBufferPool } from '../../../rendering/gpu-buffer-pool';
@@ -172,6 +172,11 @@ export function commitPointsGeometry(
         !!data.radii === !!committed.radii &&
         !!data.sharpness === !!committed.sharpness &&
         !!data.scalars === !!committed.scalars;
+      // Consume-and-clear (see prefix-lineage.ts retention contract): the
+      // lineage entry existed solely for the gate check above — clearing it
+      // unpins the parent concat's CPU arrays. A retry after a throwing
+      // write below reads `undefined` and full-rewrites, the safe direction.
+      setPrefixParent(data, null);
       try {
         gpuBufferPool.updatePointsGeometry(geometry, data, data.pointCount, {
           fromInstance: canAppend ? (prevCount ?? 0) : 0,

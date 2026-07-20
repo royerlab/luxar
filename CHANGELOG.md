@@ -23,6 +23,16 @@ All notable changes to Luxar are documented in this file.
   `concatOptionalField` means a Float32↔absent flip re-fills a column with a
   constant fill the committed prefix need not match). The context-restore
   full-dirty hook now covers points/lines interleaved instance buffers as well.
+- **Fixed (pre-existing, shipped with gsplats in #613): the prefix-lineage
+  WeakMap retained every intermediate concat of a generation.** A WeakMap
+  holds its value strongly while the key is reachable, so the forward chain
+  (newest → … → first) pinned ~(n−1)/2 × the final CPU arrays on an n-level
+  ladder for as long as the newest concat stayed committed — indefinitely on
+  a static view (hundreds of MB on 10M-element datasets). `setPrefixParent`
+  now caps the chain at depth 1 (linking a child deletes the superseded
+  parent's own entry) and all three commits consume-and-clear the entry
+  right after the gate check; an in-flight or retried commit degrades to a
+  full rewrite, the safe direction.
 - **Fixed (pre-existing): mixed-sharpness Lines ladders popped razor-sharp.**
   `concatenateLinesData` zero-filled sharpness for parts that lack it, while the
   worker projection substitutes the 0.5 default (β=2, Gaussian) for a null

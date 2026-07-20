@@ -25,7 +25,7 @@ import {
   hasCommittedData,
   setCommittedData,
 } from '../../../types/committed-data';
-import { getPrefixParent } from '../../../types/prefix-lineage';
+import { getPrefixParent, setPrefixParent } from '../../../types/prefix-lineage';
 import type { LoadedLinesData } from '../../../types/lines';
 import type { StagedLinesCommit } from '../process/data-processor-lines';
 
@@ -109,6 +109,11 @@ export function commitLinesGeometry(
         !!staged.sourceData.colors === !!committed.colors &&
         !!staged.sourceData.sharpness === !!committed.sharpness &&
         !!staged.sourceData.scalars === !!committed.scalars;
+      // Consume-and-clear (see prefix-lineage.ts retention contract): the
+      // lineage entry existed solely for the gate check above — clearing it
+      // unpins the parent concat's CPU arrays. A retry after a throwing
+      // write below reads `undefined` and full-rewrites, the safe direction.
+      setPrefixParent(staged.sourceData, null);
       try {
         gpuBufferPool.updateLinesGeometry(geometry, processed, processed.segmentCount, {
           fromInstance: canAppend ? (prevCount ?? 0) : 0,
