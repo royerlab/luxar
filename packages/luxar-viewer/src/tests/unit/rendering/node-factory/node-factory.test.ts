@@ -510,6 +510,10 @@ describe('NodeFactory', () => {
       const buffer = new THREE.InstancedInterleavedBuffer(new Float32Array(8 * 4), 4, 1);
       geom.setAttribute('aCenter', new THREE.InterleavedBufferAttribute(buffer, 3, 0));
       geom.setAttribute('aRadius', new THREE.InterleavedBufferAttribute(buffer, 1, 3));
+      // Plain (non-interleaved) attribute alongside — the non-pool points
+      // layout binds plain InstancedBufferAttributes, which the restore hook
+      // must mark full-dirty via the else-branch.
+      geom.setAttribute('aPlain', new THREE.InstancedBufferAttribute(new Float32Array(8), 1));
       const mesh = new THREE.Mesh(geom, new THREE.MeshBasicMaterial());
       mesh.userData = { nodeType, gpuPrefixIntact: true };
       return mesh;
@@ -550,12 +554,16 @@ describe('NodeFactory', () => {
         const geom = mesh.geometry as THREE.InstancedBufferGeometry;
         const buffer = (geom.getAttribute('aCenter') as THREE.InterleavedBufferAttribute)
           .data as THREE.InstancedInterleavedBuffer;
+        const plain = geom.getAttribute('aPlain') as THREE.InstancedBufferAttribute;
         // Seed a partial (append-style) pending range as if a suffix commit
         // had registered one; snapshot the version to prove the hook re-armed
         // the upload (needsUpdate is a write-only setter).
         buffer.clearUpdateRanges();
         buffer.addUpdateRange(12, 8);
         const version = buffer.version;
+        plain.clearUpdateRanges();
+        plain.addUpdateRange(2, 2);
+        const plainVersion = plain.version;
 
         const root = new THREE.Group();
         root.add(mesh);
@@ -564,6 +572,9 @@ describe('NodeFactory', () => {
         // Full-upload path: ranges emptied, needsUpdate re-armed (version++).
         expect(buffer.updateRanges.length).toBe(0);
         expect(buffer.version).toBeGreaterThan(version);
+        // Plain attributes (non-pool points layout) are covered too.
+        expect(plain.updateRanges.length).toBe(0);
+        expect(plain.version).toBeGreaterThan(plainVersion);
         // Next commit must full-rewrite, not append.
         expect((mesh.userData as { gpuPrefixIntact: boolean }).gpuPrefixIntact).toBe(false);
       }
