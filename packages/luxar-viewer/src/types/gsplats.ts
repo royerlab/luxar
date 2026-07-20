@@ -177,9 +177,16 @@ export interface LoadedGSplatsData {
    */
   choleskyFactors: Float32Array;
 
-  /** Splat colors (N * 3) RGB, null if not present
+  /** Splat colors (N * colorComponents) RGB or RGBA, null if not present
    * Supports Float32Array (HDR), Uint8Array (SDR), or Uint16Array */
   colors: Float32Array | Uint8Array | Uint16Array | null;
+
+  /**
+   * Components per color item: 3 (RGB) or 4 (RGBA). Absent means 3.
+   * The alpha channel is per-splat opacity (consumed by every blending
+   * mode; mapped into optical depth in volumetric).
+   */
+  colorComponents?: 3 | 4;
 
   /** Number of splats loaded */
   splatCount: number;
@@ -210,8 +217,11 @@ export interface ProcessedGSplatsData {
    */
   choleskyFactors3D: Float32Array;
 
-  /** Splat colors RGB (M * 3) */
+  /** Splat colors RGB or RGBA (M * colorComponents) */
   colors: Float32Array;
+
+  /** Components per color item: 3 (RGB) or 4 (RGBA). Absent means 3. */
+  colorComponents?: 3 | 4;
 
   /** Number of visible splats after nD clipping */
   splatCount: number;

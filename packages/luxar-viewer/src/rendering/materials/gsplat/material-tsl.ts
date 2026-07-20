@@ -92,6 +92,7 @@ export class GSplatTSLMaterial
     uRayIntegralFactor: TSLNode;
     uOpacity: TSLNode;
     uAbsorption: TSLNode;
+    uHasElementAlpha: TSLNode;
     uProjectionMode: TSLNode;
     uInvGamma: TSLNode;
     uIntensity: TSLNode;
@@ -129,6 +130,7 @@ export class GSplatTSLMaterial
       uRayIntegralFactor: uniform(computeRayIntegralFactor(truncate)),
       uOpacity: uniform(materialConfig.opacity ?? 1.0),
       uAbsorption: uniform(materialConfig.absorption ?? 1.0),
+      uHasElementAlpha: uniform(materialConfig.hasElementAlpha ? 1 : 0),
       // Decorative in TSL (the graph JS-branches on blendingMode); kept for
       // clone/telemetry parity. Peak (1) for surface modes (max/normal/opaque).
       uProjectionMode: uniform(
@@ -212,6 +214,7 @@ export class GSplatTSLMaterial
       uRayIntegralFactor: proxyIUniform(this.tslNodes.uRayIntegralFactor),
       uOpacity: proxyIUniform(this.tslNodes.uOpacity),
       uAbsorption: proxyIUniform(this.tslNodes.uAbsorption),
+      uHasElementAlpha: proxyIUniform(this.tslNodes.uHasElementAlpha),
       uProjectionMode: proxyIUniform(this.tslNodes.uProjectionMode),
       uInvGamma: proxyIUniform(this.tslNodes.uInvGamma),
       uIntensity: proxyIUniform(this.tslNodes.uIntensity),
@@ -307,6 +310,16 @@ export class GSplatTSLMaterial
   /** Current absorption coefficient κ. */
   getAbsorption(): number {
     return this.uniforms.uAbsorption.value as number;
+  }
+
+  /**
+   * Declare whether the committed dataset's colors carry a per-splat
+   * alpha channel (RGBA). Plain uniform write — no graph rebuild (the
+   * volumetric branch gates the alpha → optical-depth mapping with a
+   * runtime mix on this uniform).
+   */
+  updateHasElementAlpha(hasAlpha: boolean): void {
+    this.uniforms.uHasElementAlpha.value = hasAlpha ? 1 : 0;
   }
 
   updateTruncationRadius(radius: number): void {
@@ -455,6 +468,7 @@ export class GSplatTSLMaterial
       // Without this a clone silently reset a tuned κ to the 1.0 default —
       // and the layers panel clones on ANY first panel interaction.
       absorption: this.uniforms.uAbsorption.value,
+      hasElementAlpha: (this.uniforms.uHasElementAlpha.value as number) === 1,
       gamma: this.userData.gamma ?? 1.0,
       intensity: this.uniforms.uIntensity.value,
       offset: this.uniforms.uOffset.value,

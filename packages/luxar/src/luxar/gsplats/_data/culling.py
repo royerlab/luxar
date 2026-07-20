@@ -298,9 +298,16 @@ class CullingMixin(_GSplatDataOps):
 
         mask = np.ones(N_original, dtype=bool)
 
+        # Alpha-effective amplitudes (A·a when RGBA colors carry per-splat
+        # opacity): every blending mode scales contribution by alpha, so
+        # culling by raw A would misrank imported classical splats.
+        from luxar.gsplats.utils.alpha import effective_amplitudes
+
+        eff_amps = effective_amplitudes(self)
+
         if method == "cumulative":
-            sorted_indices = np.argsort(self.amplitudes)[::-1]
-            sorted_amps = self.amplitudes[sorted_indices]
+            sorted_indices = np.argsort(eff_amps)[::-1]
+            sorted_amps = eff_amps[sorted_indices]
             cumsum_amps = np.cumsum(sorted_amps)
             total_amp = cumsum_amps[-1]
             if total_amp == 0:
@@ -318,21 +325,21 @@ class CullingMixin(_GSplatDataOps):
                 mask[keep_indices] = True
 
         elif method == "amplitude_percentile":
-            threshold = np.percentile(self.amplitudes, amplitude_percentile)
-            mask = self.amplitudes >= threshold
+            threshold = np.percentile(eff_amps, amplitude_percentile)
+            mask = eff_amps >= threshold
 
         elif method == "combined":
             vols = self.volumes()
-            amp_threshold = np.percentile(self.amplitudes, amplitude_percentile)
+            amp_threshold = np.percentile(eff_amps, amplitude_percentile)
             vol_threshold = np.percentile(vols, volume_percentile)
-            mask = (self.amplitudes >= amp_threshold) & (vols <= vol_threshold)
+            mask = (eff_amps >= amp_threshold) & (vols <= vol_threshold)
 
         else:
             raise ValueError(f"Unknown heuristic method: {method!r}")
 
         result = self.filter(mask)
 
-        total_amp = np.sum(self.amplitudes)
+        total_amp = np.sum(eff_amps)
         result.stats.update(
             {
                 "culled": True,
@@ -340,7 +347,7 @@ class CullingMixin(_GSplatDataOps):
                 "n_original": N_original,
                 "n_culled": N_original - result.n_splats,
                 "amplitude_retention": (
-                    float(np.sum(result.amplitudes) / total_amp)
+                    float(np.sum(effective_amplitudes(result)) / total_amp)
                     if total_amp > 0
                     else 1.0
                 ),

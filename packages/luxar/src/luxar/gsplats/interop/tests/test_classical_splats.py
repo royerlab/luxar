@@ -221,13 +221,20 @@ class TestConversion:
         expected = (R * s2[:, None, :]) @ R.transpose(0, 2, 1)
         assert np.allclose(sigma, expected, rtol=1e-5, atol=1e-9)
         assert np.allclose(data.centers, ground_truth.positions, atol=1e-6)
-        assert np.allclose(data.amplitudes, ground_truth.opacities, atol=1e-6)
+        # Learned opacity rides in the color ALPHA channel (per-splat opacity);
+        # amplitudes are constant 1 so the alpha factor is not double-counted.
+        assert np.allclose(data.amplitudes, 1.0)
         assert data.colors is not None
+        assert data.colors.shape[1] == 4
+        assert np.allclose(data.colors[:, 3], ground_truth.opacities, atol=1e-6)
         # GSplatData stores LINEAR color; the source DC is display-referred
-        # (sRGB), so the conversion applies sRGB → linear.
+        # (sRGB), so the conversion applies sRGB → linear. Alpha is coverage,
+        # not light — it gets no sRGB transfer.
         from luxar.gsplats.interop._color import srgb_to_linear
 
-        assert np.allclose(data.colors, srgb_to_linear(ground_truth.colors), atol=1e-6)
+        assert np.allclose(
+            data.colors[:, :3], srgb_to_linear(ground_truth.colors), atol=1e-6
+        )
 
     def test_default_reorientation_rotates_x180(
         self, ground_truth: GroundTruth
@@ -596,8 +603,12 @@ class TestColorSpace:
                 cs = _READERS[fmt](path)  # reader → sRGB display color
                 data = import_gsplats(path)  # → GSplatData (linear)
             assert np.allclose(
-                data.colors, srgb_to_linear(cs.colors), atol=1e-5
+                data.colors[:, :3], srgb_to_linear(cs.colors), atol=1e-5
             ), f"{fmt}: GSplatData.colors must be linear(reader color)"
+            # Alpha = the reader's opacity, untouched by the sRGB transfer.
+            assert np.allclose(
+                data.colors[:, 3], np.clip(cs.opacities, 0.0, 1.0), atol=1e-6
+            ), f"{fmt}: color alpha must carry the reader opacity verbatim"
 
     def test_import_export_color_round_trips_in_srgb(
         self, ground_truth: GroundTruth

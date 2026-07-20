@@ -38,7 +38,20 @@ export type ColorBuffer = Float32Array | Uint8Array | Uint16Array;
 export type ColorBufferKind = 'Float32Array' | 'Uint8Array' | 'Uint16Array';
 
 const UINT8_DTYPES = new Set(['uint8', '|u1', '<u1', '>u1']);
-const UINT16_DTYPES = new Set(['uint16', '|u2', '<u2', '>u2']);
+const UINT16_DTYPES = new Set(['uint16', '|u2', '>u2', '<u2']);
+
+/**
+ * Components per color item: 3 (RGB) or 4 (RGBA). Read from the LOGICAL
+ * shape — for encoded arrays the stored shape can differ (e.g. a LUT holds
+ * codes), so `encoding.original_shape` wins when present. Anything without a
+ * 2-D shape reports 3 (the historical layout).
+ */
+export function colorComponentsOf(array: zarr.Array<zarr.DataType, zarr.Readable>): 3 | 4 {
+  const attrs = array.attrs as unknown as ArrayMetadata;
+  const original = attrs.encoding?.original_shape;
+  const shape = Array.isArray(original) && original.length === 2 ? original : array.shape;
+  return shape.length === 2 && shape[1] === 4 ? 4 : 3;
+}
 
 /**
  * Allocate a color buffer matching `dtype`. Encoded sources always go
@@ -127,7 +140,10 @@ export function restoreOriginalDtype(
  *    Float32, optionally resolve array_ref against `zarrStore`, then cast
  *    back to `original_dtype` if the encoding records one.
  *
- * RGB layout (3 channels) is hard-coded to match the existing loaders.
+ * Channel count (3 = RGB, 4 = RGBA) is read from the array shape — the
+ * optional alpha column is per-element opacity (see
+ * VOLUMETRIC_BLENDING_SPEC.md). Use {@link colorComponentsOf} to learn which
+ * layout a loaded buffer uses.
  *
  * @param array - The colors zarr array.
  * @param ranges - Item ranges to load (splats / vertices etc).
@@ -145,7 +161,7 @@ export async function loadColorRanges(
   targetBuffer?: ColorBuffer
 ): Promise<ColorBuffer> {
   const totalItems = ranges.reduce((sum, r) => sum + (r.end - r.start), 0);
-  const totalElements = totalItems * 3; // RGB
+  const totalElements = totalItems * colorComponentsOf(array);
 
   const attrs = array.attrs as unknown as ArrayMetadata;
   // Canonical encoded-ness check (covers quantized, LUT, broadcasted,

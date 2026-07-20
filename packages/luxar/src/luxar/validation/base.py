@@ -130,14 +130,24 @@ def validate_positions_for_writing(
 
 
 def validate_colors_for_writing(
-    colors: NDArray[Any], n_points: int, context: str = "colors"
+    colors: NDArray[Any],
+    n_points: int,
+    context: str = "colors",
+    channels: tuple[int, ...] = (3,),
 ) -> None:
     """Validate colors array for writing.
+
+    Colors are RGB ``(n, 3)`` — or RGBA ``(n, 4)`` for geometry types that
+    have opted into per-element alpha (``channels=(3, 4)``; gsplats today,
+    points/lines in their volumetric phases). The alpha column is a
+    per-element opacity in [0, 1], not an HDR emission channel.
 
     Args:
         colors: Colors array to validate
         n_points: Expected number of points
         context: Context for error messages
+        channels: Accepted channel counts (broadcast rows ``(1, c)`` allowed
+            for each accepted ``c``)
 
     Raises:
         ValidationError: If colors are invalid
@@ -148,37 +158,40 @@ def validate_colors_for_writing(
             "Convert colors to numpy array: np.array(colors)",
         )
 
-    # Allow broadcast shape (1, 3) or full shape (n_points, 3)
-    broadcast_shape = (1, 3)
-    expected_shape = (n_points, 3)
+    # Allow broadcast shape (1, c) or full shape (n_points, c) per accepted c
+    expected_shape = (n_points, channels[0])
+    accepted = tuple((n, c) for c in channels for n in (n_points, 1))
 
-    if colors.shape != expected_shape and colors.shape != broadcast_shape:
-        if colors.ndim == 1 and len(colors) == 3:
+    if colors.shape not in accepted:
+        if colors.ndim == 1 and len(colors) in channels:
             raise ValidationError(
-                f"{context}: Got single RGB color {colors.shape}. "
-                f"Expected shape {expected_shape} for {n_points} points or {broadcast_shape} for broadcasting.",
-                "For a single color, use shape (1, 3) for broadcasting",
+                f"{context}: Got single color {colors.shape}. "
+                f"Expected shape {expected_shape} for {n_points} points or (1, {colors.shape[0]}) for broadcasting.",
+                f"For a single color, use shape (1, {colors.shape[0]}) for broadcasting",
             )
-        elif colors.ndim == 2 and colors.shape[1] != 3:
+        elif colors.ndim == 2 and colors.shape[1] not in channels:
+            channel_desc = " or ".join(
+                {3: "3 (RGB)", 4: "4 (RGBA)"}.get(c, str(c)) for c in channels
+            )
             raise ValidationError(
-                f"{context}: Colors must have 3 channels (RGB), got {colors.shape[1]} channels",
-                "Ensure colors have shape (n_points, 3) or (1, 3) for broadcasting",
+                f"{context}: Colors must have {channel_desc} channels, got {colors.shape[1]} channels",
+                f"Ensure colors have shape (n_points, c) or (1, c) with c in {channels}",
             )
         elif colors.shape[0] != n_points and colors.shape[0] != 1:
             raise ValidationError(
                 f"{context}: Number of colors ({colors.shape[0]}) doesn't match "
                 f"number of points ({n_points}) and is not 1 (broadcast)",
-                f"Provide exactly {n_points} colors or (1, 3) for broadcasting",
+                f"Provide exactly {n_points} colors or a (1, c) broadcast row",
             )
         else:
             raise ValidationError(
-                f"{context}: Expected shape {expected_shape} or {broadcast_shape}, got {colors.shape}"
+                f"{context}: Expected shape {expected_shape} or (1, {channels[0]}), got {colors.shape}"
             )
 
     _validate_numeric_finite_values(colors, context)
 
     if colors.size == 0:
-        if n_points == 0 and colors.shape == expected_shape:
+        if n_points == 0 and colors.ndim == 2 and colors.shape[1] in channels:
             return
         raise ValidationError(
             f"{context}: Empty colors array is only valid when n_points=0 "
@@ -193,6 +206,18 @@ def validate_colors_for_writing(
             f"{context}: Colors cannot be negative. Found minimum value: {min_val:.3f}",
             "Ensure all color values are >= 0. Use np.clip(colors, 0, None) to fix",
         )
+
+    if colors.ndim == 2 and colors.shape[1] == 4:
+        # Alpha is opacity, not emission: bounded to [0, 1] regardless of the
+        # RGB columns' HDR range (finite-ness already checked above). Integer
+        # storage is SDR in its native range, so the bound applies to floats.
+        alpha = colors[:, 3]
+        if np.issubdtype(colors.dtype, np.floating) and np.any(alpha > 1.0):
+            raise ValidationError(
+                f"{context}: Color alpha channel must be within [0, 1]. "
+                f"Found maximum value: {float(np.max(alpha)):.3f}",
+                "Alpha is per-element opacity; clip with np.clip(colors[:, 3], 0, 1)",
+            )
 
     # Warn about extreme HDR values for floating-point HDR/SDR colors.
     # Integer color arrays are SDR storage in their native integer range.

@@ -51,6 +51,7 @@ export const GSPLAT_VERTEX_SHADER = /* glsl */ `
     // OPTIMIZATION: flat qualifier skips GPU interpolation hardware for constant values
     flat out mediump vec3 vColor;
     flat out mediump float vAmplitude2D;
+    flat out mediump float vAlpha;           // per-splat opacity (texel3.y; 1.0 for RGB data)
     // These need highp for screen-space calculations
     // OPTIMIZATION: vL2D stores [1/L00, L10, 1/L11] to replace fragment divisions with multiplications
     flat out highp vec3 vL2D;                // 2D Cholesky packed as [invL00, L10, invL11]
@@ -110,6 +111,7 @@ export const GSPLAT_VERTEX_SHADER = /* glsl */ `
         vec2 aCholesky23 = splatT1.zw;     // [L11, L20]
         vec2 aCholesky45 = splatT2.xy;     // [L21, L22]
         vec3 aColor = vec3(splatT2.zw, splatT3.x);
+        float aAlpha = splatT3.y;          // per-splat opacity (1.0 when the dataset is RGB)
 
         // Transform center to camera space
         vec4 centerCam4 = modelViewMatrix * vec4(aCenter, 1.0);
@@ -345,6 +347,9 @@ export const GSPLAT_VERTEX_SHADER = /* glsl */ `
         #else
         vColor = aColor;
         #endif
+        // Per-splat opacity rides regardless of color source (in colormap
+        // mode an RGBA dataset keeps its alpha; RGB data carries 1.0).
+        vAlpha = aAlpha;
 
         // Compute proper clip-space depth using projection matrix
         // This ensures correct depth buffer behavior for overlapping splats
@@ -370,6 +375,7 @@ export const GSPLAT_FRAGMENT_SHADER = /* glsl */ `
     // OPTIMIZATION: flat qualifier skips GPU interpolation hardware
     flat in mediump vec3 vColor;
     flat in mediump float vAmplitude2D;
+    flat in mediump float vAlpha;
     // These need highp for screen-space calculations
     // OPTIMIZATION: vL2D stores [1/L00, L10, 1/L11] for MUL instead of DIV
     flat in highp vec3 vL2D;          // 2D Cholesky packed as [invL00, L10, invL11]
@@ -379,6 +385,11 @@ export const GSPLAT_FRAGMENT_SHADER = /* glsl */ `
     // Absorption coefficient κ — only read under LUXAR_VOLUMETRIC
     // (τ = κ·opacity·intensity); highp: τ enters an exp().
     uniform highp float uAbsorption;
+    // 1.0 when the dataset's colors carry a per-splat alpha (RGBA), else
+    // 0.0. Only the volumetric branch needs the gate: it maps alpha into
+    // optical depth (w = −ln(1−a)), and the RGB default alpha of 1.0
+    // would otherwise map to w ≈ 6.24 instead of the identity.
+    uniform lowp float uHasElementAlpha;
     uniform mediump float uInvGamma; // Pre-computed 1/gamma for performance
     uniform mediump float uIntensity; // Per-node linear color multiplier (gain)
     uniform mediump float uOffset; // Per-node additive brightness shift (black level)
@@ -408,7 +419,22 @@ export const GSPLAT_FRAGMENT_SHADER = /* glsl */ `
         // Ensures C⁰ continuity at truncation boundary (no discontinuity)
         float intensity = vAmplitude2D * uInvOneMinusC * max(exp(-0.5 * mahalSq) - uShiftC, 0.0);
 
-        // Early discard for negligible contribution (raised threshold for performance)
+        // Per-splat opacity (color alpha channel; 1.0 for RGB datasets).
+        // Every mode scales its contribution linearly by a; volumetric
+        // instead maps a into optical DENSITY, w = −ln(1 − a), so a
+        // splat's peak rendered alpha reproduces a exactly (3DGS-faithful;
+        // clamp mirrors Python's ALPHA_CLAMP = 1 − 1/512). Dilute limit:
+        // w ≈ a, so the modes agree as a → 0; at large a volumetric is
+        // intentionally denser (optical-depth semantics — see spec §5.4).
+        #ifdef LUXAR_VOLUMETRIC
+        intensity *= mix(1.0, -log(1.0 - min(vAlpha, 0.998046875)), uHasElementAlpha);
+        #else
+        intensity *= vAlpha;
+        #endif
+
+        // Early discard for negligible contribution (raised threshold for
+        // performance). Alpha is already folded in, so a ~zero-alpha splat
+        // discards here in every mode (it neither emits nor absorbs).
         if (intensity < 1e-4) discard;
 
         // Per-node GOG (Gain-Offset-Gamma) color adjustment. uIntensity (gain)

@@ -45,6 +45,7 @@ from luxar.gsplats.lod._kernels import (
     gaussian_self_energy_numpy,
     truncation_radii_numpy,
 )
+from luxar.gsplats.utils.alpha import effective_amplitudes
 from luxar.gsplats.utils.trils import unpack_tril
 from luxar.utils.spatial_hash import BatchedSpatialHashGrid
 
@@ -246,9 +247,13 @@ def _self_energy_score(data: GSplatData) -> np.ndarray:
     """Self-energy ranking score: $a_i^2 \\, |\\Sigma_i|^{1/2}$.
 
     The $\\pi^{D/2}$ constant is shared across all splats and drops out
-    of the ordering.
+    of the ordering. Amplitudes are alpha-effective ($A_i·a_i$): every
+    blending mode scales a splat's contribution by its color alpha, so
+    ordering by raw $A$ would misrank imported classical splats (amplitude 1,
+    weight in alpha).
     """
-    out: np.ndarray = np.asarray(data.amplitudes, dtype=np.float64) ** 2 * _det_L(data)
+    amps = np.asarray(effective_amplitudes(data), dtype=np.float64)
+    out: np.ndarray = amps**2 * _det_L(data)
     return out
 
 
@@ -256,9 +261,11 @@ def _mass_score(data: GSplatData) -> np.ndarray:
     """Integral-mass ranking score: $a_i \\, |\\Sigma_i|^{1/2}$.
 
     The $(2\\pi)^{D/2}$ constant is shared across all splats and drops
-    out of the ordering.
+    out of the ordering. Amplitudes are alpha-effective (see
+    ``_self_energy_score``).
     """
-    out: np.ndarray = np.asarray(data.amplitudes, dtype=np.float64) * _det_L(data)
+    amps = np.asarray(effective_amplitudes(data), dtype=np.float64)
+    out: np.ndarray = amps * _det_L(data)
     return out
 
 
@@ -290,7 +297,9 @@ def _build_sparse_gram(data: GSplatData, sigmas: float = 3.0) -> sparse.csr_matr
         return sparse.csr_matrix((0, 0), dtype=np.float64)
 
     centers = np.asarray(data.centers, dtype=np.float64)
-    amps = np.asarray(data.amplitudes, dtype=np.float64)
+    # Alpha-effective amplitudes: greedy ranks by RENDERED energy, and every
+    # blending mode scales contribution by the color alpha.
+    amps = np.asarray(effective_amplitudes(data), dtype=np.float64)
     L = unpack_tril(np.asarray(data.cholesky_factors, dtype=np.float64), D)
     Sigma = L @ L.transpose(0, 2, 1)
     sqrt_det_Sigma = _det_L(data)  # |Σ_i|^{1/2}
@@ -533,7 +542,7 @@ def compute_additive_order(
         return rng.permutation(N).astype(np.int64)
 
     if method == "amplitude":
-        score = np.asarray(data.amplitudes, dtype=np.float64)
+        score = np.asarray(effective_amplitudes(data), dtype=np.float64)
         return np.argsort(-score, kind="stable").astype(np.int64)
 
     if method == "mass":

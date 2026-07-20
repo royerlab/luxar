@@ -86,7 +86,8 @@ def classical_to_gsplat_data(
     The covariance is rebuilt as ``Σ = (M·R) · diag(scales²) · (M·R)ᵀ`` where
     ``R`` comes from the quaternion and ``M`` is the orientation matrix
     (:func:`_orientation_matrix`), then factorized to Luxar's packed
-    lower-triangular Cholesky form. Opacities become ``amplitudes``; the DC
+    lower-triangular Cholesky form. Opacities ride in the RGBA color alpha
+    channel (amplitudes are constant 1 — see the inline note); the DC
     color (display-referred sRGB) is converted to Luxar's linear-light store via
     :func:`~luxar.gsplats.interop._color.srgb_to_linear`. Columns stay in world
     (x, y, z) order — that is what downstream dimension inference labels x/y/z.
@@ -115,18 +116,36 @@ def classical_to_gsplat_data(
     L = _robust_cholesky(sigma)
     cholesky_factors = pack_tril(L).astype(np.float32)
 
-    amplitudes = np.ascontiguousarray(cs.opacities, dtype=np.float32)
+    # Learned 3DGS opacity is a genuine PER-SPLAT property — it rides in the
+    # color alpha channel (per-splat opacity: every blending mode multiplies a
+    # splat's contribution by it, and volumetric maps it into optical depth,
+    # so dark solid surfaces really occlude — see VOLUMETRIC_BLENDING_SPEC.md).
+    # Amplitude is therefore constant 1: the alpha factor already carries the
+    # per-splat weight, and folding opacity into amplitude too would render
+    # o² in every mode. Mass-ranked ops (LOD ladders, culling) stay meaningful
+    # through the alpha-aware `effective_amplitudes` helper.
+    amplitudes = np.ones(cs.n_splats, dtype=np.float32)
     # Classical DC color is display-referred (sRGB); Luxar's viewer treats
     # per-splat color as linear light and applies the sRGB OETF once at output.
     # Convert sRGB → linear here so imports render with the same colors a
     # reference viewer (SuperSplat/PlayCanvas) shows instead of washing white.
-    colors = srgb_to_linear(cs.colors)
+    # Alpha is coverage, not light — it stays linear (no sRGB transfer).
+    colors = np.concatenate(
+        [
+            srgb_to_linear(cs.colors),
+            np.clip(cs.opacities, 0.0, 1.0)[:, None].astype(np.float32),
+        ],
+        axis=1,
+    )
 
     stats = {
         "interop": {
             "source_format": cs.source_format,
             "source_sh_degree": int(cs.sh_degree),
             "orientation_matrix": M.tolist(),
+            # Provenance marker: opacity lives in the color alpha channel
+            # (amplitudes are constant 1). Export reads this back verbatim.
+            "opacity_in_alpha": True,
         }
     }
     return GSplatData(

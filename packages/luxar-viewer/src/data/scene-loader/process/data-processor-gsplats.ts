@@ -100,6 +100,7 @@ function buildGSplatsParams(
     },
     ndim: data.ndim,
     splatCount: data.splatCount,
+    colorComponents: data.colorComponents ?? 3,
     discreteDims,
     discreteSteps,
     extendToAllDims,
@@ -109,13 +110,15 @@ function buildGSplatsParams(
 
 /** Map a dispatcher result (worker or in-process) to `ProcessedGSplatsData`. */
 function toProcessed(
-  result: Awaited<ReturnType<typeof projectGSplatsInProcess>>
+  result: Awaited<ReturnType<typeof projectGSplatsInProcess>>,
+  colorComponents: 3 | 4
 ): ProcessedGSplatsData {
   return {
     centers3D: result.centers3D,
     choleskyFactors3D: result.choleskyFactors3D,
     amplitudes: result.amplitudes,
     colors: result.colors,
+    colorComponents,
     splatCount: result.visibleCount,
   };
 }
@@ -174,7 +177,7 @@ export async function projectGSplatsTo3DUsingWorker(
       );
     }
 
-    return toProcessed(workerResult);
+    return toProcessed(workerResult, data.colorComponents ?? 3);
   } catch (error) {
     // Dataset-switch abort: don't burn CPU on stale in-process work.
     if (error instanceof Error && error.name === 'WorkerAbortError') {
@@ -185,7 +188,7 @@ export async function projectGSplatsTo3DUsingWorker(
       'Worker GSplats projection failed, falling back to in-process dispatcher:',
       error
     );
-    return toProcessed(await projectGSplatsInProcess(params));
+    return toProcessed(await projectGSplatsInProcess(params), data.colorComponents ?? 3);
   }
 }
 
@@ -235,7 +238,8 @@ export async function processGSplatsData(
     // the same dispatcher in-process. The standard-3D fast path inside
     // the dispatcher handles the ndim===3 case efficiently.
     return toProcessed(
-      await projectGSplatsInProcess(buildGSplatsParams(data, viewState, truncate))
+      await projectGSplatsInProcess(buildGSplatsParams(data, viewState, truncate)),
+      data.colorComponents ?? 3
     );
   };
 

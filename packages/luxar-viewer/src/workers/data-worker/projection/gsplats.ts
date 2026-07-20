@@ -20,19 +20,21 @@ import { MIN_AMPLITUDE, SHIFTED_GAUSSIAN_DEFAULT_TRUNCATE } from './constants';
 import type { ProjectionViewState } from '../types';
 
 /**
- * Coerce input colors to a normalized RGB Float32Array of length
- * `splatCount * 3`, white-filling when no colors were provided. Shared
+ * Coerce input colors to a normalized RGB(A) Float32Array of length
+ * `splatCount * components`, white-filling when no colors were provided
+ * (opaque white — alpha 1 is the per-element-opacity identity). Shared
  * by the standard-3D fast path and the general fused path so the
  * `/255`, `/65535` normalization contract stays in one place
  * (`color-utils.coerceColorsToFloat32`).
  */
 function coerceColorsOrWhite(
   colors: Float32Array | Uint8Array | Uint16Array | null,
-  splatCount: number
+  splatCount: number,
+  components: number
 ): Float32Array {
   if (colors) return coerceColorsToFloat32(colors);
-  const out = new Float32Array(splatCount * 3);
-  fillColorsWhite(out, splatCount);
+  const out = new Float32Array(splatCount * components);
+  fillColorsWhite(out, splatCount, components);
   return out;
 }
 
@@ -62,6 +64,8 @@ export async function projectGSplatsTo3D(
     extendToAllDims?: readonly number[];
     /** Truncation radius in sigmas for shifted Gaussian attenuation (default 3.0) */
     truncate?: number;
+    /** Components per color item: 3 (RGB, default) or 4 (RGBA — alpha = per-splat opacity) */
+    colorComponents?: 3 | 4;
   }
 ): Promise<{
   centers3D: Float32Array;
@@ -75,6 +79,7 @@ export async function projectGSplatsTo3D(
   const { positions, choleskyFactors, amplitudes, colors, sharpness, viewState, ndim, splatCount } =
     params;
   const { displayDims, slicePosition } = viewState;
+  const colorComponents = params.colorComponents ?? 3;
 
   validateProjectionInputs(
     'projectGSplatsTo3D',
@@ -97,11 +102,11 @@ export async function projectGSplatsTo3D(
       `projectGSplatsTo3D: amplitudes too short (got ${amplitudes.length}, expected ≥ ${splatCount})`
     );
   }
-  // RGB triplet per splat — short colors reach WASM compact_by_mask
+  // RGB(A) tuple per splat — short colors reach the WASM kernel
   // unchecked and read past the buffer end.
-  if (colors && colors.length < splatCount * 3) {
+  if (colors && colors.length < splatCount * colorComponents) {
     throw new Error(
-      `projectGSplatsTo3D: colors too short (got ${colors.length}, expected ≥ ${splatCount * 3})`
+      `projectGSplatsTo3D: colors too short (got ${colors.length}, expected ≥ ${splatCount * colorComponents})`
     );
   }
   // [workers OOS] Three-geometry symmetry: Points and Lines both validate
@@ -148,7 +153,7 @@ export async function projectGSplatsTo3D(
     const centers3D = positions.slice(0, splatCount * 3);
     const choleskyFactors3D = choleskyFactors.slice(0, splatCount * 6);
     const outAmplitudes = amplitudes.slice(0, splatCount);
-    const outColors = coerceColorsOrWhite(colors, splatCount);
+    const outColors = coerceColorsOrWhite(colors, splatCount, colorComponents);
     return transfer(
       {
         centers3D,
@@ -213,7 +218,7 @@ export async function projectGSplatsTo3D(
   // typed-array union), keeping the /255,/65535 contract centralized in
   // color-utils. White-fill covers the whole splatCount so the kernel can read
   // colors[i*3] for any visible splat.
-  const coercedColors = coerceColorsOrWhite(colors, splatCount);
+  const coercedColors = coerceColorsOrWhite(colors, splatCount, colorComponents);
 
   const truncate = params.truncate ?? SHIFTED_GAUSSIAN_DEFAULT_TRUNCATE;
 
@@ -227,7 +232,7 @@ export async function projectGSplatsTo3D(
   const outCentersBuf = new Float32Array(splatCount * 3);
   const outCholBuf = new Float32Array(splatCount * 6);
   const outAmpsBuf = new Float32Array(splatCount);
-  const outColorsBuf = new Float32Array(splatCount * 3);
+  const outColorsBuf = new Float32Array(splatCount * colorComponents);
 
   const visibleCount = wasmModule.project_gsplats_nd_to_3d(
     positions,
@@ -240,6 +245,7 @@ export async function projectGSplatsTo3D(
     displayDimsU32,
     ndim,
     splatCount,
+    colorComponents,
     minAmplitude,
     truncate,
     outCentersBuf,
@@ -269,7 +275,7 @@ export async function projectGSplatsTo3D(
   const centers3D = outCentersBuf.subarray(0, visibleCount * 3);
   const choleskyFactors3D = outCholBuf.subarray(0, visibleCount * 6);
   const outAmplitudes = outAmpsBuf.subarray(0, visibleCount);
-  const outColors = outColorsBuf.subarray(0, visibleCount * 3);
+  const outColors = outColorsBuf.subarray(0, visibleCount * colorComponents);
 
   return transfer(
     {

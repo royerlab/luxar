@@ -177,8 +177,10 @@ export interface InstancedGSplatsMeshConfig {
   cholesky45: Float32Array;
   /** Amplitudes (splatCount) */
   amplitudes: Float32Array;
-  /** Colors RGB (splatCount * 3) */
+  /** Colors RGB (splatCount * 3) or RGBA (splatCount * 4) */
   colors: Float32Array;
+  /** Components per color item: 3 (RGB) or 4 (RGBA). Absent means 3. */
+  colorComponents?: 3 | 4;
   /** Number of splats */
   splatCount: number;
 }
@@ -240,8 +242,14 @@ export interface SplatTexelSource {
   cholesky45: Float32Array;
   /** Amplitudes (count). */
   amplitudes: Float32Array;
-  /** Colors RGB (count × 3). */
+  /** Colors RGB (count × 3) or RGBA (count × 4). */
   colors: Float32Array;
+  /**
+   * Components per color item: 3 (RGB) or 4 (RGBA). Absent means 3.
+   * The alpha channel (per-splat opacity) is packed into texel3.y and
+   * defaults to 1.0 (opaque — the per-element-opacity identity).
+   */
+  colorComponents?: 3 | 4;
 }
 
 /** `geometry.userData` slot carrying the splat texture. */
@@ -345,6 +353,7 @@ export function writeSplatTexels(
   const n = Math.min(count, Math.floor(arr.length / SPLAT_FLOATS_PER_SPLAT));
   const from = Math.max(0, Math.min(opts?.fromSplat ?? 0, n));
   const { centers, cholesky01, cholesky23, cholesky45, amplitudes, colors } = src;
+  const colorK = src.colorComponents ?? 3;
   // Fail loud on source/count mismatch (the interleaved-era writer
   // threw here too) — a silent short read would write NaN texels that
   // the shaders' NaN guards then drop invisibly.
@@ -354,7 +363,7 @@ export function writeSplatTexels(
     cholesky23.length < n * 2 ||
     cholesky45.length < n * 2 ||
     amplitudes.length < n ||
-    colors.length < n * 3
+    colors.length < n * colorK
   ) {
     throw new Error(
       `writeSplatTexels: source arrays shorter than count=${n} ` +
@@ -365,12 +374,13 @@ export function writeSplatTexels(
   }
   for (let i = from; i < n; i++) {
     const o = i * SPLAT_FLOATS_PER_SPLAT;
-    const c3 = i * 3;
+    const p3 = i * 3;
+    const ck = i * colorK;
     const c2 = i * 2;
     // texel 0: center.xyz, amplitude
-    arr[o] = centers[c3];
-    arr[o + 1] = centers[c3 + 1];
-    arr[o + 2] = centers[c3 + 2];
+    arr[o] = centers[p3];
+    arr[o + 1] = centers[p3 + 1];
+    arr[o + 2] = centers[p3 + 2];
     arr[o + 3] = amplitudes[i];
     // texel 1: cholesky01.xy, cholesky23.xy
     arr[o + 4] = cholesky01[c2];
@@ -380,11 +390,15 @@ export function writeSplatTexels(
     // texel 2: cholesky45.xy, color.rg
     arr[o + 8] = cholesky45[c2];
     arr[o + 9] = cholesky45[c2 + 1];
-    arr[o + 10] = colors[c3];
-    arr[o + 11] = colors[c3 + 1];
-    // texel 3: color.b (remaining components are unspecified — stale
-    // on reused pool textures; shaders read only .x)
-    arr[o + 12] = colors[c3 + 2];
+    arr[o + 10] = colors[ck];
+    arr[o + 11] = colors[ck + 1];
+    // texel 3: color.b, alpha (per-splat opacity). Alpha is written
+    // UNCONDITIONALLY — pool textures are reused, so leaving it
+    // unspecified would let a previous tenant's alpha leak through.
+    // 1.0 (opaque) is the per-element-opacity identity. .zw stay
+    // unspecified (stale on reused pool textures; never read).
+    arr[o + 12] = colors[ck + 2];
+    arr[o + 13] = colorK === 4 ? colors[ck + 3] : 1.0;
   }
   // Ranged upload: only the [from, n) rows just written go to the GPU, not
   // the full capacity-sized image (pool slack rows past n never re-upload;

@@ -420,6 +420,7 @@ export interface WasmModule {
     displayDims: Uint32Array,
     ndim: number,
     splatCount: number,
+    colorComponents: number,
     minAmplitude: number,
     truncate: number,
     outCenters3d: Float32Array,

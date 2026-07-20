@@ -474,13 +474,34 @@ class TestColorsValidation:
         n_points = 5
         # Wrong number of points
         colors_wrong_n = np.random.rand(10, 3).astype(np.float32)
-        with pytest.raises(ValueError, match="Colors must have shape \\(5, 3\\)"):
+        with pytest.raises(
+            ValueError, match="Colors must have shape \\(5, 3\\) or \\(5, 4\\)"
+        ):
             validate_colors(colors_wrong_n, n_points)
 
-        # Wrong number of channels (4 channels instead of 3)
+        # RGBA is accepted by default (alpha = per-element opacity)
         colors_rgba = np.random.rand(n_points, 4).astype(np.float32)
+        assert validate_colors(colors_rgba, n_points).shape == (n_points, 4)
+
+        # …but rejected when the caller restricts channels (points/lines
+        # until their volumetric phases land)
         with pytest.raises(ValueError, match="Colors must have shape \\(5, 3\\)"):
-            validate_colors(colors_rgba, n_points)
+            validate_colors(colors_rgba, n_points, channels=(3,))
+
+        # Wrong number of channels (5 is never valid)
+        colors_wide = np.random.rand(n_points, 5).astype(np.float32)
+        with pytest.raises(ValueError, match="Colors must have shape"):
+            validate_colors(colors_wide, n_points)
+
+        # Alpha bounds: opacity must be finite and within [0, 1]
+        bad_alpha = np.random.rand(n_points, 4).astype(np.float32)
+        bad_alpha[2, 3] = 1.5
+        with pytest.raises(ValueError, match="alpha channel"):
+            validate_colors(bad_alpha, n_points)
+        nan_alpha = np.random.rand(n_points, 4).astype(np.float32)
+        nan_alpha[1, 3] = np.nan
+        with pytest.raises(ValueError, match="alpha channel"):
+            validate_colors(nan_alpha, n_points)
 
         # 1D array
         colors_1d = np.array([1.0, 0.0, 0.0])
@@ -720,9 +741,13 @@ class TestTypeGuards:
         colors_wrong_shape = np.random.rand(10, 3).astype(np.float32)
         assert is_color_array(colors_wrong_shape, n_points) is False
 
-        # Wrong number of channels
+        # RGBA is a valid color array (alpha = per-element opacity)
         colors_rgba = np.random.rand(n_points, 4).astype(np.float32)
-        assert is_color_array(colors_rgba, n_points) is False
+        assert is_color_array(colors_rgba, n_points) is True
+
+        # Wrong number of channels
+        colors_wide = np.random.rand(n_points, 5).astype(np.float32)
+        assert is_color_array(colors_wide, n_points) is False
 
     def test_is_transform_matrix_valid(self) -> None:
         """Test that valid transform matrices return True."""
