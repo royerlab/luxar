@@ -228,6 +228,14 @@ export function packInterleavedAttributes(
  * without the colors changing); this helper writes them into
  * the strided slot inside the shared buffer.
  *
+ * `opts.fromInstance` (append fast path, depth-sorting Phase 4
+ * Stage 2): skip the first `fromInstance` instances — the caller
+ * vouches the buffer already holds byte-identical data there — and
+ * write + dirty only the `[fromInstance, instanceCount)` suffix.
+ * `src` stays FULL-LENGTH (the projection always produces the whole
+ * array; slicing it would just copy). Mirrors the gsplat sibling
+ * `writeSplatTexels(..., { fromSplat })`.
+ *
  * @throws if `src.length !== instanceCount * itemSize` or if the
  *   target range overflows the buffer.
  */
@@ -236,7 +244,8 @@ export function writeInterleavedAttribute(
   offset: number,
   itemSize: number,
   src: Float32Array,
-  instanceCount: number
+  instanceCount: number,
+  opts?: { fromInstance?: number }
 ): void {
   if (src.length !== instanceCount * itemSize) {
     throw new Error(
@@ -258,12 +267,16 @@ export function writeInterleavedAttribute(
     );
   }
 
+  // Clamp so a stale/overshooting caller degrades to a no-op write
+  // rather than a negative loop bound or out-of-range dirty start.
+  const from = Math.max(0, Math.min(opts?.fromInstance ?? 0, instanceCount));
+
   // The underlying array is a Float32Array (we always allocate one
   // in `packInterleavedAttributes`). InstancedInterleavedBuffer
   // types `.array` as the broader BufferAttribute's TypedArray
   // union; narrow here for the indexed write.
   const dst = buffer.array as Float32Array;
-  for (let i = 0; i < instanceCount; i++) {
+  for (let i = from; i < instanceCount; i++) {
     const srcStart = i * itemSize;
     const dstStart = i * stride + offset;
     switch (itemSize) {
@@ -292,27 +305,32 @@ export function writeInterleavedAttribute(
         break;
     }
   }
-  // Ranged upload: only the written prefix ([0, instanceCount × stride))
-  // goes to the GPU. Without a range, THREE's `bufferSubData(…, 0, array)`
-  // uploads the ENTIRE backing array — including the pool's 1.5×-growth /
-  // bucket-capacity tail — on every commit. All backends honor ranges on
-  // interleaved buffers, but ONLY the classic WebGLRenderer merges
-  // duplicates at flush time — both WebGPU backends (native and
-  // WebGL2-fallback) replay `updateRanges` verbatim, and ranges also
-  // accumulate across commits while the mesh is not drawn (nothing
-  // clears them until a flush). Multiple per-attribute writes per
-  // commit — or thousands while a hidden layer scrubs k timepoints —
-  // must therefore collapse to ONE range here, not at flush time.
-  // (The gsplat commit that motivated this now writes a texture, but
-  // points/lines commits still take this path per attribute.)
-  // Every write is a [0, end) prefix, so the union is the max end.
+  // Ranged upload: only the written span ([from × stride,
+  // instanceCount × stride)) goes to the GPU. Without a range, THREE's
+  // `bufferSubData(…, 0, array)` uploads the ENTIRE backing array —
+  // including the pool's 1.5×-growth / bucket-capacity tail — on every
+  // commit. All backends honor ranges on interleaved buffers, but ONLY
+  // the classic WebGLRenderer merges duplicates at flush time — both
+  // WebGPU backends (native and WebGL2-fallback) replay `updateRanges`
+  // verbatim, and ranges also accumulate across commits while the mesh
+  // is not drawn (nothing clears them until a flush). Multiple
+  // per-attribute writes per commit — or thousands while a hidden layer
+  // scrubs k timepoints — must therefore collapse to ONE range here,
+  // not at flush time. (The gsplat commit that motivated this now
+  // writes a texture, but points/lines commits still take this path
+  // per attribute.)
+  // Union as a single covering interval (min start / max end): the
+  // per-attribute writes of one commit all share the same span, and a
+  // full write is a [0, end) prefix, so the cover is exact in practice.
+  let rangeStart = from * stride;
   let rangeEnd = instanceCount * stride;
   for (const range of buffer.updateRanges) {
+    if (range.start < rangeStart) rangeStart = range.start;
     const end = range.start + range.count;
     if (end > rangeEnd) rangeEnd = end;
   }
   buffer.clearUpdateRanges();
-  buffer.addUpdateRange(0, rangeEnd);
+  buffer.addUpdateRange(rangeStart, rangeEnd - rangeStart);
   buffer.needsUpdate = true;
 }
 

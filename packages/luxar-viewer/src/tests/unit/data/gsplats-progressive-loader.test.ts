@@ -14,7 +14,7 @@ import type { GSplatsViewState, LoadedGSplatsData } from '../../../types/gsplats
 import { CACHE_HIT_THRESHOLD_MS } from '../../../data/loaders/progressive/constants';
 import { SliceCache } from '../../../cache/slice-cache';
 import { buildSliceViewSig } from '../../../data/loaders/progressive/slice-cache-helper';
-import { getPrefixParent } from '../../../types/gsplats-lineage';
+import { getPrefixParent } from '../../../types/prefix-lineage';
 
 interface SubLoaderStub {
   updateView: ReturnType<typeof vi.fn>;

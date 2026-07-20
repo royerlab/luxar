@@ -386,6 +386,16 @@ export interface LinesUserData {
   visibleSegmentCount?: number;
 
   /**
+   * True when the GPU interleaved buffer holds the exact data of the last
+   * commit — i.e. the append fast path may skip re-uploading the prefix.
+   * Cleared to ``false`` by ``NodeFactory.rebuildAfterContextRestore`` after
+   * a WebGL context loss (the CPU mirror survives but the GPU buffers are
+   * gone), which forces the next commit to a full rewrite. Re-enabled by
+   * every full commit. Mirrors ``GSplatsUserData.gpuPrefixIntact``.
+   */
+  gpuPrefixIntact?: boolean;
+
+  /**
    * The ``SceneLoader`` view-update version this mesh's committed geometry was
    * loaded for. Written at commit (``commit-lines-geometry.ts`` via
    * ``stampLoadedViewVersion``) and read by the LOD registry to tell whether a

@@ -19,7 +19,7 @@
  */
 
 import type { GSplatsDataLoader, GSplatsViewState, LoadedGSplatsData } from '../../types/gsplats';
-import { setPrefixParent } from '../../types/gsplats-lineage';
+import { setPrefixParent } from '../../types/prefix-lineage';
 import type { GSplatsSpatialIndexLoader } from './gsplats-spatial-index-loader';
 import type { UpdateSession } from '../../profiling/update-profiler';
 import type {

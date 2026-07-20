@@ -6,6 +6,41 @@ All notable changes to Luxar are documented in this file.
 
 ### July 2026
 
+#### Performance — Points & Lines append fast path (depth-sorting Phase 4 Stage 2, three-geometry symmetry)
+
+- **Stage 2 extended to Points and Lines:** a progressive-LOD commit that merely
+  extends an already-committed prefix now writes & uploads only the new
+  `[prevCount, count)` instance suffix for Points and Lines too, via
+  `writeInterleavedAttribute(…, { fromInstance })` threaded through
+  `writePooledAttribute` and both pool adapters (Lines in segment units). The
+  prefix-lineage helper is now geometry-agnostic (`types/gsplats-lineage.ts` →
+  `types/prefix-lineage.ts`, shared by all three loaders/commits).
+  Order-preservation was verified for both projections (Points' zero-radius drop
+  is a pre-concat forward scan; Lines clipping drops/clips in place, never
+  splits or reorders). The gates mirror the gsplat one minus
+  `preserveOrdering`/`committedTruncate`, plus a new conjunct: optional-field
+  presence must match the committed parent (the all-or-nothing
+  `concatOptionalField` means a Float32↔absent flip re-fills a column with a
+  constant fill the committed prefix need not match). The context-restore
+  full-dirty hook now covers points/lines interleaved instance buffers as well.
+- **Fixed (pre-existing, shipped with gsplats in #613): the prefix-lineage
+  WeakMap retained every intermediate concat of a generation.** A WeakMap
+  holds its value strongly while the key is reachable, so the forward chain
+  (newest → … → first) pinned ~(n−1)/2 × the final CPU arrays on an n-level
+  ladder for as long as the newest concat stayed committed — indefinitely on
+  a static view (hundreds of MB on 10M-element datasets). `setPrefixParent`
+  now caps the chain at depth 1 (linking a child deletes the superseded
+  parent's own entry) and all three commits consume-and-clear the entry
+  right after the gate check; an in-flight or retried commit degrades to a
+  full rewrite, the safe direction.
+- **Fixed (pre-existing): mixed-sharpness Lines ladders popped razor-sharp.**
+  `concatenateLinesData` zero-filled sharpness for parts that lack it, while the
+  worker projection substitutes the 0.5 default (β=2, Gaussian) for a null
+  sharpness array — so the moment a sharpness-carrying level joined the ladder,
+  every sharpness-less part flipped from soft default to razor-sharp 0.0. The
+  concat now fills 0.5 (mirroring the white color fill), which is also what
+  makes the append fast path's prefix-identity contract hold for Lines.
+
 #### Added — `volumetric` blending mode, Phase 1 (gsplats + node-level κ)
 
 - **Sixth blending mode `volumetric`** — emission–absorption compositing
@@ -70,13 +105,13 @@ All notable changes to Luxar are documented in this file.
   is per-splat-independent and order-preserving and the loader appends LOD levels
   in order, the projected prefix is byte-identical to what the GPU holds under an
   unchanged view state — so no projection-kernel change was needed. A
-  forward-chained prefix-lineage `WeakMap` (`types/gsplats-lineage.ts`) proves the
-  extension by identity against the committed data; the append gate additionally
-  requires in-place pool reuse, an intact GPU prefix, a strict count increase, and
-  an unchanged `uTruncate`. A WebGL context-restore hook re-marks all splat
-  buffers full-dirty and disables the fast path for the next commit so a restore
-  never leaves a stale prefix. Points/Lines symmetry is a follow-up. See
-  `GSPLAT_DEPTH_SORTING_SPEC.md` §7.
+  forward-chained prefix-lineage `WeakMap` (now `types/prefix-lineage.ts`) proves
+  the extension by identity against the committed data; the append gate
+  additionally requires in-place pool reuse, an intact GPU prefix, a strict count
+  increase, and an unchanged `uTruncate`. A WebGL context-restore hook re-marks
+  all splat buffers full-dirty and disables the fast path for the next commit so
+  a restore never leaves a stale prefix. Points/Lines symmetry landed in the
+  follow-up above. See `GSPLAT_DEPTH_SORTING_SPEC.md` §7.
 
 #### Fixed — blending-modes correctness campaign (#601, #602, #603, #604)
 

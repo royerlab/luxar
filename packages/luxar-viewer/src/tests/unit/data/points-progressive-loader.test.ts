@@ -15,6 +15,7 @@ import type { LoadedPointsData, PointsViewState } from '../../../types/points';
 import { CACHE_HIT_THRESHOLD_MS } from '../../../data/loaders/progressive/constants';
 import { SliceCache } from '../../../cache/slice-cache';
 import { buildSliceViewSig } from '../../../data/loaders/progressive/slice-cache-helper';
+import { getPrefixParent } from '../../../types/prefix-lineage';
 
 interface SubLoaderStub {
   updateView: ReturnType<typeof vi.fn>;
@@ -721,6 +722,42 @@ describe('PointsProgressiveLoader', () => {
 
       expect(lodC.prefetchChunks).toHaveBeenCalled();
       spy.mockRestore();
+    });
+  });
+
+  describe('prefix lineage (Phase 4 Stage 2 append)', () => {
+    it('forward-chains each concat result to the previous same-generation result', async () => {
+      // Call 1: LOD 1 not resident → the loop stops after LOD 0 (partial ladder).
+      lodB.updateViewWithResidency.mockResolvedValueOnce({
+        data: makeLodData(50, 3, { color: 'uint8' }),
+        allResident: false,
+      });
+      const r1 = await loader.loadPoints(baseViewState);
+      // First concat of the generation extends nothing.
+      expect(getPrefixParent(r1)).toBeUndefined();
+      expect(loader.hasMoreLODs).toBe(true);
+
+      // Call 2 (SAME view): refinement loads the remaining levels → a new,
+      // longer concat that forward-chains to r1.
+      const r2 = await loader.loadPoints(baseViewState);
+      expect(r2).not.toBe(r1);
+      expect(r2.pointCount).toBeGreaterThan(r1.pointCount);
+      expect(getPrefixParent(r2)).toBe(r1);
+    });
+
+    it('drops lineage across a view change (new generation → full rewrite)', async () => {
+      await loader.loadPoints(baseViewState);
+      // A slicePosition change resets the ladder + bumps the generation, so the
+      // first concat of the new generation has no parent → append gate rejects.
+      const r2 = await loader.loadPoints({ ...baseViewState, slicePosition: [0, 0, 0, 1] });
+      expect(getPrefixParent(r2)).toBeUndefined();
+    });
+
+    it('a memoized no-op re-commit keeps the SAME reference (its lineage is unchanged)', async () => {
+      const r1 = await loader.loadPoints(baseViewState); // full ladder in one call
+      expect(loader.hasMoreLODs).toBe(false);
+      const r2 = await loader.loadPoints(baseViewState); // no new LODs → memoized
+      expect(r2).toBe(r1); // same reference → commit takes the stamp-only no-op
     });
   });
 

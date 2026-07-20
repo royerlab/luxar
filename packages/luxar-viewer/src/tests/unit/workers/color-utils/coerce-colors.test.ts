@@ -36,6 +36,20 @@ describe('coerceColorsToFloat32', () => {
     expect(coerceColorsToFloat32(new Float32Array(0)).length).toBe(0);
   });
 
+  it('white fills coerce to EXACTLY 1.0 (gsplat append-gate invariant)', () => {
+    // LOAD-BEARING EXACTNESS, not a rounding nicety: the gsplat progressive
+    // concat white-fills missing-color parts with 255 / 65535 / 1.0, while a
+    // colorless projection uses fillColorsWhite (exact 1.0). The gsplat
+    // append fast path (commit-gsplats-geometry.ts) has NO optional-field
+    // presence conjunct — a null→colored ladder transition is prefix-safe
+    // ONLY because coerce(fill) is bit-identical to 1.0. If this ever fails
+    // (a normalization change), the gsplat gate needs a presence conjunct
+    // like the points/lines gates.
+    expect(coerceColorsToFloat32(new Uint8Array(3).fill(255))[0]).toBe(1.0);
+    expect(coerceColorsToFloat32(new Uint16Array(3).fill(65535))[0]).toBe(1.0);
+    expect(coerceColorsToFloat32(new Float32Array(3).fill(1.0))[0]).toBe(1.0);
+  });
+
   it('worker output matches main-thread reference for Uint8 RGB', () => {
     // Mirrors the reference normalization in
     // data/gsplats/projection.ts:projectGSplats3DOnly and
