@@ -38,7 +38,7 @@ export type ColorBuffer = Float32Array | Uint8Array | Uint16Array;
 export type ColorBufferKind = 'Float32Array' | 'Uint8Array' | 'Uint16Array';
 
 const UINT8_DTYPES = new Set(['uint8', '|u1', '<u1', '>u1']);
-const UINT16_DTYPES = new Set(['uint16', '|u2', '>u2', '<u2']);
+const UINT16_DTYPES = new Set(['uint16', '|u2', '<u2', '>u2']);
 
 /**
  * Components per color item: 3 (RGB) or 4 (RGBA). Read from the LOGICAL
