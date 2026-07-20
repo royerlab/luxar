@@ -36,7 +36,12 @@ import type { LoadedPointsData } from '../../data-loader-types';
 import { isPointsUserData } from '../../../types/points';
 import { stampLadderComplete, stampLoadedViewVersion } from './stamp-view-version';
 import { isAlreadyCommitted } from './noop-commit';
-import { setCommittedData } from '../../../types/committed-data';
+import {
+  getCommittedData,
+  hasCommittedData,
+  setCommittedData,
+} from '../../../types/committed-data';
+import { getPrefixParent } from '../../../types/prefix-lineage';
 import { log, Modules } from '../../../utils/log';
 import type { UpdateSession } from '../../../profiling/update-profiler';
 import type { GPUBufferPool } from '../../../rendering/gpu-buffer-pool';
@@ -94,6 +99,13 @@ export function commitPointsGeometry(
     );
   }
 
+  // Pre-commit state for the append predicate below. Captured BEFORE the
+  // stamps overwrite them: the pool branch reassigns `points.geometry`, and
+  // `visiblePointCount` is overwritten on the next line.
+  const prevGeometry = points.geometry;
+  const hadCommittedData = hasCommittedData(points);
+  const prevCount = points.userData.visiblePointCount;
+
   // Type guard already passed in the early-return above.
   points.userData.visiblePointCount = data.pointCount;
   // Slice-aware LOD freshness stamp (see commit-gsplats-geometry.ts).
@@ -121,8 +133,49 @@ export function commitPointsGeometry(
       // helper dispatches a `dispose` event on the material to evict
       // that cache. No-op under WebGL2 / pre-init / no cached entry.
       const attributesRebuilt = gpuBufferPool.didLastAcquireRebuildAttributes();
+      // Append fast path (depth-sorting Phase 4 Stage 2): when this commit
+      // merely EXTENDS the prefix already on the GPU, write & upload only the
+      // new `[prevCount, pointCount)` suffix. Correctness rests on the
+      // buffer's prefix being byte-identical to what a full write would
+      // produce, which every conjunct establishes (see the gsplats twin in
+      // commit-gsplats-geometry.ts for the full rationale):
+      // - !attributesRebuilt && geometry === prevGeometry: the pool reused
+      //   THIS node's buffer in place (grow/best-fit/fresh acquire sets
+      //   attributesRebuilt and may hand back another node's data). Also
+      //   bounds pointCount ≤ the existing capacity.
+      // - gpuPrefixIntact: a WebGL context restore zeroed the GPU buffers;
+      //   the restore hook clears this so the next commit does a full rewrite.
+      // - pointCount > prevCount: a genuine append (equal → the no-op
+      //   identity path above; shrink/first-commit → full write).
+      // - prefix lineage === committedData: the new concat result forward-
+      //   chains to the exact object last committed here — proving same
+      //   generation (view unchanged), a genuine extension, and that the GPU
+      //   still holds that parent's projection.
+      // - optional-field presence must MATCH the committed parent: the concat
+      //   is all-or-nothing per field (concatOptionalField), so a new level
+      //   WITHOUT e.g. Float32 colors drops the merged field entirely and the
+      //   adapter's constant fill would differ from the prefix's committed
+      //   values. (Uint8/Uint16 flips and aScalar presence already force
+      //   attributesRebuilt via the pool's type matching; Float32↔absent is
+      //   invisible to it, hence this explicit conjunct.)
+      const committed = getCommittedData(points) as LoadedPointsData | undefined;
+      const canAppend =
+        hadCommittedData &&
+        !attributesRebuilt &&
+        geometry === prevGeometry &&
+        points.userData.gpuPrefixIntact === true &&
+        data.pointCount > (prevCount ?? 0) &&
+        committed !== undefined &&
+        getPrefixParent(data) !== undefined &&
+        getPrefixParent(data) === committed &&
+        !!data.colors === !!committed.colors &&
+        !!data.radii === !!committed.radii &&
+        !!data.sharpness === !!committed.sharpness &&
+        !!data.scalars === !!committed.scalars;
       try {
-        gpuBufferPool.updatePointsGeometry(geometry, data, data.pointCount);
+        gpuBufferPool.updatePointsGeometry(geometry, data, data.pointCount, {
+          fromInstance: canAppend ? (prevCount ?? 0) : 0,
+        });
 
         if (data.metadata.bounds) {
           geometry.boundingBox = data.metadata.bounds.clone();
@@ -156,6 +209,10 @@ export function commitPointsGeometry(
       // SAME reference (memoized progressive concat) takes the stamp-only
       // no-op path above instead of re-uploading.
       setCommittedData(points, data);
+      // Append-fast-path bookkeeping: the buffer now holds this commit's
+      // data in full (whether written fully or by suffix-extension), so the
+      // next commit may append. A context restore clears this flag.
+      points.userData.gpuPrefixIntact = true;
       return;
     }
 
@@ -184,6 +241,10 @@ export function commitPointsGeometry(
     invalidateRenderObjectFor(points);
     // Record the committed data reference (see the pool path above).
     setCommittedData(points, data);
+    // The freshly built geometry holds this commit's data in full. The flag
+    // is only consulted on the pool path, but keeping the stamp uniform
+    // across paths mirrors the gsplats commit.
+    points.userData.gpuPrefixIntact = true;
   } finally {
     bufferSession?.end();
   }

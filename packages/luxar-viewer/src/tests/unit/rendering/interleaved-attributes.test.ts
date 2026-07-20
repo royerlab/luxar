@@ -156,6 +156,105 @@ describe('writeInterleavedAttribute', () => {
     expect(buffer.updateRanges).toEqual([{ start: 0, count: 12 }]);
   });
 
+  describe('fromInstance (append fast path, Phase 4 Stage 2)', () => {
+    it('writes only the suffix and leaves the prefix untouched', () => {
+      const { buffer, offsets } = packInterleavedAttributes(
+        [
+          { name: 'a', data: new Float32Array([1, 2, 3, 4, 5, 6, 7, 8, 9]), itemSize: 3 },
+          { name: 'b', data: new Float32Array([10, 20, 30]), itemSize: 1 },
+        ],
+        3 // stride 4
+      );
+      // Full-length source with a DIFFERENT prefix — the prefix values must
+      // NOT reach the buffer (the caller vouches the buffer prefix already
+      // matches; the test uses divergent values to prove the skip).
+      const src = new Float32Array([-1, -1, -1, -2, -2, -2, 100, 200, 300]);
+      writeInterleavedAttribute(buffer, offsets.a, 3, src, 3, { fromInstance: 2 });
+      expect(Array.from(buffer.array as Float32Array)).toEqual([
+        1, 2, 3, 10, 4, 5, 6, 20, 100, 200, 300, 30,
+      ]);
+    });
+
+    it('registers a dirty range starting at fromInstance × stride', () => {
+      const { buffer, offsets } = packInterleavedAttributes(
+        [
+          { name: 'a', data: new Float32Array(9), itemSize: 3 },
+          { name: 'b', data: new Float32Array(3), itemSize: 1 },
+        ],
+        3 // stride 4
+      );
+      buffer.clearUpdateRanges();
+      // Same-commit pattern: every attribute of an append commit writes the
+      // same [from, count) span — the union must stay that single suffix.
+      writeInterleavedAttribute(buffer, offsets.a, 3, new Float32Array(9), 3, {
+        fromInstance: 1,
+      });
+      writeInterleavedAttribute(buffer, offsets.b, 1, new Float32Array(3), 3, {
+        fromInstance: 1,
+      });
+      expect(buffer.updateRanges).toEqual([{ start: 4, count: 8 }]);
+    });
+
+    it('unions an append range with a pending full-prefix range (min-start/max-end)', () => {
+      const { buffer, offsets } = packInterleavedAttributes(
+        [{ name: 'a', data: new Float32Array(9), itemSize: 3 }],
+        3 // stride 3
+      );
+      buffer.clearUpdateRanges();
+      // Unflushed full write (hidden mesh), then an append: the union must
+      // keep covering the full prefix — an append must never shrink it.
+      writeInterleavedAttribute(buffer, offsets.a, 3, new Float32Array(6), 2);
+      writeInterleavedAttribute(buffer, offsets.a, 3, new Float32Array(9), 3, {
+        fromInstance: 2,
+      });
+      expect(buffer.updateRanges).toEqual([{ start: 0, count: 9 }]);
+    });
+
+    it('fromInstance: 0 and omitted opts are byte-identical (regression)', () => {
+      const make = () =>
+        packInterleavedAttributes(
+          [{ name: 'a', data: new Float32Array([1, 2, 3, 4]), itemSize: 2 }],
+          2
+        );
+      const plain = make();
+      const explicit = make();
+      plain.buffer.clearUpdateRanges();
+      explicit.buffer.clearUpdateRanges();
+      const src = new Float32Array([9, 8, 7, 6]);
+      writeInterleavedAttribute(plain.buffer, plain.offsets.a, 2, src, 2);
+      writeInterleavedAttribute(explicit.buffer, explicit.offsets.a, 2, src, 2, {
+        fromInstance: 0,
+      });
+      expect(Array.from(explicit.buffer.array as Float32Array)).toEqual(
+        Array.from(plain.buffer.array as Float32Array)
+      );
+      expect(explicit.buffer.updateRanges).toEqual(plain.buffer.updateRanges);
+    });
+
+    it('clamps an overshooting fromInstance to a no-op write', () => {
+      const { buffer, offsets } = packInterleavedAttributes(
+        [{ name: 'a', data: new Float32Array([1, 2]), itemSize: 1 }],
+        2
+      );
+      writeInterleavedAttribute(buffer, offsets.a, 1, new Float32Array([9, 9]), 2, {
+        fromInstance: 5,
+      });
+      expect(Array.from(buffer.array as Float32Array)).toEqual([1, 2]);
+    });
+
+    it('still rejects a short source under fromInstance (full-length contract)', () => {
+      const { buffer, offsets } = packInterleavedAttributes(
+        [{ name: 'a', data: new Float32Array(3), itemSize: 1 }],
+        3
+      );
+      expect(() =>
+        writeInterleavedAttribute(buffer, offsets.a, 1, new Float32Array(1), 3, {
+          fromInstance: 2,
+        })
+      ).toThrow(/src.length=1/);
+    });
+  });
+
   it('rejects an over-sized source', () => {
     const { buffer, offsets } = packInterleavedAttributes(
       [{ name: 's', data: new Float32Array([0, 0]), itemSize: 1 }],

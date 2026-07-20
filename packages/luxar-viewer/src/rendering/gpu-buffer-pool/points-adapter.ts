@@ -291,14 +291,24 @@ export class PointsBufferAdapter {
     host.evictUnused();
   }
 
-  updateGeometry(geometry: THREE.BufferGeometry, data: LoadedPointsData, count: number): void {
+  updateGeometry(
+    geometry: THREE.BufferGeometry,
+    data: LoadedPointsData,
+    count: number,
+    options?: { fromInstance?: number }
+  ): void {
     const instanced = geometry as THREE.InstancedBufferGeometry;
+    // Append fast path (depth-sorting Phase 4 Stage 2): the commit layer
+    // proved the buffer's first `fromInstance` instances already hold this
+    // data's prefix, so every attribute write below skips them — only the
+    // `[fromInstance, count)` suffix is copied and dirtied for upload.
+    const opts = { fromInstance: options?.fromInstance ?? 0 };
 
     const positionsF32 =
       data.positions instanceof Float32Array
         ? data.positions
         : widenToFloat32(data.positions as ArrayLike<number>);
-    writePooledAttribute(instanced, 'aCenter', positionsF32, count);
+    writePooledAttribute(instanced, 'aCenter', positionsF32, count, opts);
 
     const colorView = instanced.getAttribute('aColor') as THREE.InterleavedBufferAttribute;
     const colorBuffer = colorView.data as THREE.InstancedInterleavedBuffer;
@@ -307,11 +317,11 @@ export class PointsBufferAdapter {
         data.colors.subarray(0, count * 3) as ArrayLike<number>,
         pointsNormalizationDivisor(data.colors, /*normalized=*/ true)
       );
-      writeInterleavedAttribute(colorBuffer, colorView.offset, 3, widened, count);
+      writeInterleavedAttribute(colorBuffer, colorView.offset, 3, widened, count, opts);
     } else {
       const fill = new Float32Array(count * 3);
       fill.fill(1.0);
-      writeInterleavedAttribute(colorBuffer, colorView.offset, 3, fill, count);
+      writeInterleavedAttribute(colorBuffer, colorView.offset, 3, fill, count, opts);
     }
 
     const radView = instanced.getAttribute('aRadius') as THREE.InterleavedBufferAttribute;
@@ -321,11 +331,11 @@ export class PointsBufferAdapter {
         data.radii.subarray(0, count) as ArrayLike<number>,
         pointsNormalizationDivisor(data.radii, /*normalized=*/ true)
       );
-      writeInterleavedAttribute(radBuffer, radView.offset, 1, widened, count);
+      writeInterleavedAttribute(radBuffer, radView.offset, 1, widened, count, opts);
     } else {
       const fill = new Float32Array(count);
       fill.fill(0.5);
-      writeInterleavedAttribute(radBuffer, radView.offset, 1, fill, count);
+      writeInterleavedAttribute(radBuffer, radView.offset, 1, fill, count, opts);
     }
 
     const sharpView = instanced.getAttribute('aSharpness') as THREE.InterleavedBufferAttribute;
@@ -335,11 +345,11 @@ export class PointsBufferAdapter {
         data.sharpness.subarray(0, count) as ArrayLike<number>,
         pointsNormalizationDivisor(data.sharpness, /*normalized=*/ true)
       );
-      writeInterleavedAttribute(sharpBuffer, sharpView.offset, 1, widened, count);
+      writeInterleavedAttribute(sharpBuffer, sharpView.offset, 1, widened, count, opts);
     } else {
       const fill = new Float32Array(count);
       fill.fill(0.5); // default sharpness knob -> beta=2 (Gaussian)
-      writeInterleavedAttribute(sharpBuffer, sharpView.offset, 1, fill, count);
+      writeInterleavedAttribute(sharpBuffer, sharpView.offset, 1, fill, count, opts);
     }
 
     const scalarView = instanced.getAttribute('aScalar') as
@@ -352,10 +362,10 @@ export class PointsBufferAdapter {
           data.scalars.subarray(0, count) as ArrayLike<number>,
           pointsNormalizationDivisor(data.scalars, /*normalized=*/ true)
         );
-        writeInterleavedAttribute(scalarBuffer, scalarView.offset, 1, widened, count);
+        writeInterleavedAttribute(scalarBuffer, scalarView.offset, 1, widened, count, opts);
       } else {
         const fill = new Float32Array(count);
-        writeInterleavedAttribute(scalarBuffer, scalarView.offset, 1, fill, count);
+        writeInterleavedAttribute(scalarBuffer, scalarView.offset, 1, fill, count, opts);
       }
     }
 

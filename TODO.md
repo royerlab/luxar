@@ -266,16 +266,19 @@ to ship after). Sequencing is at the bottom.
     plus structural cleanups (render-order submodule, committedData accessors,
     parity-harness split) — see `CHANGELOG.md` July 2026 and the spec's status
     block.
-  - 🔄 **Phase 4** (partial texture uploads): **Stages 1–2 LANDED for gsplats.**
-    Stage 1 (slack elimination) — `writeSplatTexels` registers per-row
-    `updateRanges` so only live rows upload (measured 33–59% less on
+  - 🔄 **Phase 4** (partial texture uploads): **Stages 1–2 LANDED for all three
+    geometries.** Stage 1 (slack elimination) — `writeSplatTexels` registers
+    per-row `updateRanges` so only live rows upload (measured 33–59% less on
     `gsplats_4d_neuromast_2ch`, classic WebGL, pixel-identical). Stage 2 (append
     fast path) — a ladder-refinement commit that extends the committed prefix
     writes/uploads only the new suffix; prefix trust via a forward-chained
-    lineage `WeakMap` + `viewStatesEqual`/generation, no projection-kernel change,
-    with a context-restore full-dirty hook. **[POST]:** Stage 2 Points/Lines
-    symmetry (`writeInterleavedAttribute(…, fromInstance)`, pending order-
-    preservation verification) + Stage 3 (WebGPU range parity) — see the spec §7.
+    lineage `WeakMap` (shared `types/prefix-lineage.ts`) + `viewStatesEqual`/
+    generation, no projection-kernel change, with a context-restore full-dirty
+    hook. Points/Lines ride the same gate through
+    `writeInterleavedAttribute(…, { fromInstance })` (order-preservation
+    verified; plus an optional-field presence conjunct and the Lines
+    missing-sharpness 0.5-fill fix). **[POST]:** Stage 3 (WebGPU range parity)
+    — see the spec §7.
   - ⏭️ **[POST] residue from the campaign reviews:** instance-based coordinator
     DI (only if multi-instance embedding lands), front-most picking in MIXED
     normal+additive scenes (single shared pick depth buffer — documented in

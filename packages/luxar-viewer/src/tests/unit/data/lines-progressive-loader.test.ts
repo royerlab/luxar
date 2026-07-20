@@ -20,6 +20,7 @@ import type { LinesViewState, LoadedLinesData } from '../../../types/lines';
 import { CACHE_HIT_THRESHOLD_MS } from '../../../data/loaders/progressive/constants';
 import { SliceCache } from '../../../cache/slice-cache';
 import { buildSliceViewSig } from '../../../data/loaders/progressive/slice-cache-helper';
+import { getPrefixParent } from '../../../types/prefix-lineage';
 
 interface SubLoaderStub {
   updateView: ReturnType<typeof vi.fn>;
@@ -796,6 +797,69 @@ describe('LinesProgressiveLoader', () => {
       const result = await loader.loadLines(baseViewState);
       expect(result.sharpness).toBeInstanceOf(Float32Array);
       expect(result.sharpness?.length).toBe(34);
+    });
+
+    it('fills missing-part sharpness with the 0.5 default (mixed-sharpness ladder)', async () => {
+      // The worker projection substitutes 0.5 (beta=2, Gaussian) for a NULL
+      // sharpness array — the concat must fill the same value for parts
+      // lacking sharpness, not 0.0 (razor-sharp). This keeps the merged
+      // prefix byte-identical to what each part renders standalone (the
+      // append fast path's prefix-identity contract) and stops
+      // sharpness-less parts from popping sharp when a sharpness-carrying
+      // level joins the ladder. Mirrors the white color fill.
+      lodA = makeSubLoader(makeLodData(20, 10, 3)); // no sharpness
+      lodB = makeSubLoader(makeLodData(10, 5, 3, { sharpness: true })); // fill(1)
+      lodC = makeSubLoader(makeLodData(4, 2, 3)); // no sharpness
+      loader = new LinesProgressiveLoader(
+        [lodA, lodB, lodC] as unknown as LinesSpatialIndexLoader[],
+        3,
+        '/lines'
+      );
+      const result = await loader.loadLines(baseViewState);
+      expect(result.sharpness).toBeInstanceOf(Float32Array);
+      // LOD A verts 0..19 → default fill; LOD B verts 20..29 → its own 1.0;
+      // LOD C verts 30..33 → default fill.
+      expect(result.sharpness?.[0]).toBeCloseTo(0.5, 6);
+      expect(result.sharpness?.[19]).toBeCloseTo(0.5, 6);
+      expect(result.sharpness?.[20]).toBeCloseTo(1.0, 6);
+      expect(result.sharpness?.[30]).toBeCloseTo(0.5, 6);
+      expect(result.sharpness?.[33]).toBeCloseTo(0.5, 6);
+    });
+  });
+
+  describe('prefix lineage (Phase 4 Stage 2 append)', () => {
+    it('forward-chains each concat result to the previous same-generation result', async () => {
+      // Call 1: LOD 1 not resident → the loop stops after LOD 0 (partial ladder).
+      lodB.updateViewWithResidency.mockResolvedValueOnce({
+        data: makeLodData(10, 5, 3, { color: 'uint8' }),
+        allResident: false,
+      });
+      const r1 = await loader.loadLines(baseViewState);
+      // First concat of the generation extends nothing.
+      expect(getPrefixParent(r1)).toBeUndefined();
+      expect(loader.hasMoreLODs).toBe(true);
+
+      // Call 2 (SAME view): refinement loads the remaining levels → a new,
+      // longer concat that forward-chains to r1.
+      const r2 = await loader.loadLines(baseViewState);
+      expect(r2).not.toBe(r1);
+      expect(r2.segmentCount).toBeGreaterThan(r1.segmentCount);
+      expect(getPrefixParent(r2)).toBe(r1);
+    });
+
+    it('drops lineage across a view change (new generation → full rewrite)', async () => {
+      await loader.loadLines(baseViewState);
+      // A slicePosition change resets the ladder + bumps the generation, so the
+      // first concat of the new generation has no parent → append gate rejects.
+      const r2 = await loader.loadLines({ ...baseViewState, slicePosition: [0, 0, 0, 1] });
+      expect(getPrefixParent(r2)).toBeUndefined();
+    });
+
+    it('a memoized no-op re-commit keeps the SAME reference (its lineage is unchanged)', async () => {
+      const r1 = await loader.loadLines(baseViewState); // full ladder in one call
+      expect(loader.hasMoreLODs).toBe(false);
+      const r2 = await loader.loadLines(baseViewState); // no new LODs → memoized
+      expect(r2).toBe(r1); // same reference → commit takes the stamp-only no-op
     });
   });
 
