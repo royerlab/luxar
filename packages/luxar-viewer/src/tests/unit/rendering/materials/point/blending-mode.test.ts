@@ -95,6 +95,25 @@ describe('PointMaterial.applyBlendingMode', () => {
     expect(mat.fragmentShader).toContain('#ifdef LUXAR_MAX_RGB_CONTRIBUTION');
     expect(mat.fragmentShader).toContain('finalColor * alpha');
   });
+
+  it("'volumetric': phase-1 fallback applies the ADDITIVE state, userData keeps 'volumetric'", () => {
+    // Points don't implement the emission–absorption fragment math yet
+    // (VOLUMETRIC_BLENDING_SPEC.md phases 3–4). The material intercepts
+    // the mode and applies additive — the exact κ=0 limit — while the
+    // REQUESTED mode stays in userData so stored scenes upgrade
+    // automatically when the point implementation lands.
+    for (const mat of [new PointMaterial(), new PointTSLMaterial()]) {
+      mat.applyBlendingMode('volumetric');
+      expect(mat.blending).toBe(THREE.AdditiveBlending);
+      expect(mat.blendEquation).toBe(THREE.AddEquation);
+      expect(mat.blendSrc).toBe(THREE.SrcAlphaFactor);
+      expect(mat.blendDst).toBe(THREE.OneFactor);
+      expect(mat.depthTest).toBe(false);
+      expect(mat.depthWrite).toBe(false);
+      expect(mat.transparent).toBe(true);
+      expect(mat.userData.blendingMode).toBe('volumetric');
+    }
+  });
 });
 
 // H — TSL constructor honors explicit transparent/depthTest overrides

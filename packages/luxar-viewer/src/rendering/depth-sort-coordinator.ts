@@ -47,7 +47,7 @@ import { wrap, transfer, type Remote } from 'comlink';
 import SortWorker from '../workers/sort-worker?worker';
 import type { SortWorkerAPI } from '../workers/sort-worker';
 import { writeSortedIndexOrdering } from './gsplat-geometry';
-import { isNormalMode } from './blending-state';
+import { needsDepthSort } from './blending-state';
 import { clearCommittedData, hasCommittedData } from '../types/committed-data';
 import type { BlendingMode } from './material-manager';
 import {
@@ -239,7 +239,7 @@ export function noteGSplatsCommit(mesh: THREE.Mesh, centers3: Float32Array, coun
   state.generation++;
 
   const mode = liveBlendingMode(mesh);
-  if (!depthSortEnabled || !mode || !isNormalMode(mode) || count === 0) {
+  if (!depthSortEnabled || !mode || !needsDepthSort(mode) || count === 0) {
     // Depth sorting disabled (identity ordering pinned), commutative
     // blending, or an empty frame: no ordering needed. Drop any
     // worker-side registration so the worker doesn't hold stale
@@ -516,7 +516,7 @@ export function evaluateDepthSortPerFrame(): void {
     // resolve path checks; a sort dispatched now would be dropped there.
     if (!hasCommittedData(mesh)) continue;
     const mode = liveBlendingMode(mesh);
-    if (!mode || !isNormalMode(mode)) {
+    if (!mode || !needsDepthSort(mode)) {
       // No longer order-dependent (e.g. switched to additive) — clear any
       // cross-part renderOrder bias so it doesn't strand a stale ordering.
       if (mesh.renderOrder !== 0) mesh.renderOrder = 0;
@@ -607,11 +607,15 @@ export function noteGSplatsBlendingModeSwitch(
   // also no worker-side state to release on a switch away.
   if (!depthSortEnabled) return;
   if (!newMode || newMode === prevMode) return;
-  const wasNormal = prevMode !== undefined && isNormalMode(prevMode);
-  if (isNormalMode(newMode) && !wasNormal) {
+  // Sorted modes = normal ∪ volumetric (needsDepthSort). A switch
+  // BETWEEN two sorted modes (normal↔volumetric) is deliberately a
+  // no-op here: the ordering stays valid; the projection/output change
+  // is the material's problem (TSL rebuild / GLSL define recompile).
+  const wasSorted = prevMode !== undefined && needsDepthSort(prevMode);
+  if (needsDepthSort(newMode) && !wasSorted) {
     clearCommittedData(mesh);
     requestReprocess?.();
-  } else if (!isNormalMode(newMode) && wasNormal) {
+  } else if (!needsDepthSort(newMode) && wasSorted) {
     const state = nodeStates.get(mesh.uuid);
     if (state) {
       // Invalidate any in-flight sort's result; keep the counter

@@ -10,6 +10,7 @@ from luxar.validation.types import (
     is_color_array,
     is_position_array,
     is_transform_matrix,
+    validate_absorption,
     validate_blending_mode,
     validate_category_indices,
     validate_colors,
@@ -247,6 +248,36 @@ class TestGammaValidation:
             validate_gamma("not_a_number")
 
 
+class TestAbsorptionValidation:
+    """Test validate_absorption function (volumetric kappa)."""
+
+    def test_valid_absorption(self) -> None:
+        """Valid absorption values: 0 (additive limit), identity, large."""
+        assert validate_absorption(0.0) == 0.0
+        assert validate_absorption(1.0) == 1.0
+        assert validate_absorption(10) == 10.0
+        assert validate_absorption("2.5") == 2.5
+        assert validate_absorption(1e6) == 1e6  # no upper bound
+        assert validate_absorption(np.float32(0.5)) == pytest.approx(0.5)
+
+    def test_invalid_absorption(self) -> None:
+        """Negative, NaN, and infinite absorption are rejected."""
+        with pytest.raises(ValueError, match="Absorption must be >= 0"):
+            validate_absorption(-0.1)
+
+        with pytest.raises(ValueError, match="Absorption must be finite"):
+            validate_absorption(float("nan"))
+
+        with pytest.raises(ValueError, match="Absorption must be finite"):
+            validate_absorption(float("inf"))
+
+        with pytest.raises(TypeError, match="Absorption must be convertible to float"):
+            validate_absorption("not_a_number")
+
+        with pytest.raises(TypeError, match="Absorption must be convertible to float"):
+            validate_absorption(None)
+
+
 class TestBlendingModeValidation:
     """Test validate_blending_mode function."""
 
@@ -257,6 +288,7 @@ class TestBlendingModeValidation:
         assert validate_blending_mode("max") == "max"
         assert validate_blending_mode("opaque") == "opaque"
         assert validate_blending_mode("luminous") == "luminous"
+        assert validate_blending_mode("volumetric") == "volumetric"
 
     def test_invalid_blending_mode(self) -> None:
         """Test that invalid blending modes raise ValueError."""

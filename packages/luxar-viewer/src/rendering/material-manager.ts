@@ -335,6 +335,7 @@ export class MaterialManager {
     const createStart = performance.now();
     const material = new VISUAL_FACTORIES.gsplat[backend]({
       opacity: props.opacity,
+      absorption: props.absorption ?? 1.0,
       gamma: props.gamma,
       intensity: props.intensity,
       offset: props.offset,

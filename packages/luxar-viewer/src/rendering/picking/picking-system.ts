@@ -626,9 +626,14 @@ export class PickingSystem {
       // depth must be the real projected depth (front-most wins)
       // instead of brightness-as-depth (brightest wins — right for the
       // commutative additive/luminous/max modes, but it could pick a
-      // brighter splat BEHIND the visible surface). Only gsplat pick
-      // materials implement SurfacePickAwareMaterial; points/lines are
-      // unaffected.
+      // brighter splat BEHIND the visible surface). 'volumetric' is
+      // DELIBERATELY excluded (this is isNormalMode||isOpaqueMode, NOT
+      // needsDepthSort): it is emissive, so phase 1 keeps additive-style
+      // brightness picking — a heavily-absorbed back splat can still win
+      // the pick if brightest; front-most-beyond-a-τ-threshold is a
+      // spec'd follow-up (VOLUMETRIC_BLENDING_SPEC.md §5.2). Only gsplat
+      // pick materials implement SurfacePickAwareMaterial; points/lines
+      // are unaffected.
       if (isSurfacePickAwareMaterial(mat)) {
         // entry.main is typed Object3D — non-mesh mains have no material.
         const mainMat = (entry.main as THREE.Mesh).material as

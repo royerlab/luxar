@@ -235,6 +235,7 @@ class TestCompilerIntegration:
 
         # Verify defaults are set (matching write_points/write_gsplats behavior)
         assert attrs["opacity"] == 1.0
+        assert attrs["absorption"] == 1.0
         assert attrs["gamma"] == 1.0
         assert "blending_mode" not in attrs
 
@@ -324,6 +325,40 @@ class TestCompilerIntegration:
 
         store = zarr.open_group(output_path, mode="r")
         for leaf in ("bad_pts", "bad_lns", "bad_gs", "bad_grp", "bad_ml"):
+            assert leaf not in store, f"partial node {leaf} left on disk"
+
+    def test_invalid_absorption_rejected_before_write(self, tmp_path) -> None:
+        """An invalid absorption fails BEFORE any group lands on disk.
+
+        Mirrors the blending_mode fail-fast contract (validate_render_attrs
+        runs before require_group in every geometry writer).
+        """
+        output_path = tmp_path / "test.luxar.zarr"
+
+        rng = np.random.default_rng(0)
+        positions = rng.standard_normal((10, 3)).astype(np.float32)
+        vertices = np.array([[0, 0, 0], [1, 1, 1]], dtype=np.float32)
+        amplitudes = np.abs(rng.standard_normal(10)).astype(np.float32)
+        cholesky = np.tile(np.array([1, 0, 0, 1, 0, 1], dtype=np.float32), (10, 1))
+
+        with LuxarZarrCompiler(output_path) as compiler:
+            compiler.create_scene(dimensions=Dimensions.default_3d())
+
+            with pytest.raises(ValueError, match="Absorption must be >= 0"):
+                compiler.write_points("bad_pts", positions, absorption=-1.0)
+            with pytest.raises(ValueError, match="Absorption must be finite"):
+                compiler.write_lines(
+                    "bad_lns", vertices, widths=0.1, absorption=float("nan")
+                )
+            with pytest.raises(ValueError, match="Absorption must be >= 0"):
+                compiler.write_gsplats(
+                    "bad_gs", positions, amplitudes, cholesky, absorption=-0.5
+                )
+            with pytest.raises(ValueError, match="Absorption must be >= 0"):
+                compiler.write_group("bad_grp", absorption=-2)
+
+        store = zarr.open_group(output_path, mode="r")
+        for leaf in ("bad_pts", "bad_lns", "bad_gs", "bad_grp"):
             assert leaf not in store, f"partial node {leaf} left on disk"
 
     def test_memory_efficiency(self, tmp_path) -> None:

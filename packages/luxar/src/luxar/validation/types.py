@@ -11,12 +11,14 @@ users writing data.
 
 from __future__ import annotations
 
+import math
 from typing import Any, List, Optional, Union, cast
 
 import numpy as np
 
 from ..typing_utils.aliases import PositionArray, TransformMatrix
 from ..typing_utils.constants import (
+    ABSORPTION_MIN,
     GAMMA_MAX,
     GAMMA_MIN,
     INTENSITY_MAX,
@@ -282,6 +284,41 @@ def validate_opacity(opacity: Any) -> float:
     return opacity_float
 
 
+def validate_absorption(absorption: Any) -> float:
+    """Validate and convert an absorption coefficient (volumetric kappa).
+
+    Absorption is the volumetric blending mode's per-node coefficient:
+    multiplicative composition with identity 1.0, no upper bound (it is a
+    physical coefficient), and kappa=0 reproduces additive blending exactly.
+
+    Args:
+        absorption: Value to validate as absorption (>= 0, finite)
+
+    Returns:
+        Valid absorption as float
+
+    Raises:
+        ValueError: If absorption is negative, NaN, or infinite
+        TypeError: If absorption cannot be converted to float
+    """
+    try:
+        absorption_float = float(absorption)
+    except (ValueError, TypeError) as e:
+        raise TypeError(
+            f"Absorption must be convertible to float, got {type(absorption).__name__}"
+        ) from e
+
+    if math.isnan(absorption_float) or math.isinf(absorption_float):
+        raise ValueError(f"Absorption must be finite, got {absorption_float}")
+
+    if absorption_float < ABSORPTION_MIN:
+        raise ValueError(
+            f"Absorption must be >= {ABSORPTION_MIN}, got {absorption_float}"
+        )
+
+    return absorption_float
+
+
 def validate_gamma(gamma: Any) -> float:
     """Validate and convert gamma value.
 
@@ -415,6 +452,8 @@ def validate_blending_mode(mode: Any) -> BlendingMode:
             - "max": Maximum of source and destination (brightest wins)
             - "opaque": Solid rendering with depth write (closest wins)
             - "luminous": Same as additive visually, but respects depth occlusion
+            - "volumetric": Emission-absorption — adds light AND absorbs what's
+              behind, scaled by the node's ``absorption`` (kappa) attr
 
     Returns:
         Valid blending mode

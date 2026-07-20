@@ -36,6 +36,7 @@ import {
 import {
   applyBlendingStateToMaterial,
   getCompleteBlendingState,
+  isVolumetricMode,
   type CompleteBlendingState,
 } from '../../blending-state';
 import type { BlendingMode } from '../../material-manager';
@@ -336,7 +337,13 @@ export class LineTSLMaterial
 
   applyBlendingMode(mode: BlendingMode): void {
     const opacity = (this.uniforms.uOpacity?.value as number | undefined) ?? 1.0;
-    const state: CompleteBlendingState = getCompleteBlendingState(mode, opacity);
+    // Phase-1 volumetric fallback: lines don't implement the
+    // emission–absorption fragment math yet (VOLUMETRIC_BLENDING_SPEC.md
+    // phases 3–4), so render the ADDITIVE state — the exact κ=0 limit of
+    // volumetric. userData keeps the REQUESTED mode so stored scenes
+    // upgrade automatically when the line implementation lands.
+    const effectiveMode: BlendingMode = isVolumetricMode(mode) ? 'additive' : mode;
+    const state: CompleteBlendingState = getCompleteBlendingState(effectiveMode, opacity);
 
     if (!this.defines) {
       this.defines = {};

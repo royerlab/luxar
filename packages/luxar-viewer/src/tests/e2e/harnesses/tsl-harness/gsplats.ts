@@ -382,6 +382,49 @@ export const GSPLAT_SHADERS: Record<string, RegistryEntry> = {
   // GSplat 'normal' premultiplied coverage alpha (LUXAR_NORMAL_PREMULT ↔
   // TSL blendingMode:'normal'). The interesting channel is ALPHA: the
   // fragment writes clamp(intensity·uOpacity, 0, 1) instead of 1.0, and
+  // GSplat 'volumetric' — emission–absorption (VOLUMETRIC_BLENDING_SPEC.md).
+  // SUM projection (uProjectionMode=0 pairs with the TSL sum graph, which
+  // emits the Σ⁻¹ ray-integral block) + the LUXAR_VOLUMETRIC fragment
+  // branch: RGB = self-screened emission (S(τ) series/quotient), alpha =
+  // 1 − e^(−τ) with τ = κ·opacity·intensity. κ=1.5 and opacity=0.7 keep
+  // τ mid-range across the footprint so BOTH channels (screened RGB and
+  // absorption alpha) vary — a parity mismatch in either the series
+  // branch, the exp, or the discard bypass shows up in meanAbsDiff.
+  'gsplat-volumetric': {
+    source: GSPLAT_SOURCE,
+    buildUniforms: () => ({
+      uSplatTex: { value: buildGSplatSplatDataTexture() },
+      uResolution: { value: new THREE.Vector2(64, 64) },
+      uFx: { value: 32.0 },
+      uFy: { value: 32.0 },
+      uTruncate: { value: 3.0 },
+      uTruncateSq: { value: 9.0 },
+      uRayIntegralFactor: { value: 2.433 },
+      uProjectionMode: { value: 0 }, // SUM ray-integral (volumetric = emissive)
+      uIsOrtho: { value: 1 },
+      uNearCull: { value: 0.01 },
+      uMaxExtentFactor: { value: 1.0 },
+      uOpacity: { value: 0.7 },
+      uAbsorption: { value: 1.5 },
+      uInvGamma: { value: 1.0 / 2.2 },
+      uIntensity: { value: 1.0 },
+      uOffset: { value: 0.0 },
+      uShiftC: { value: Math.exp(-0.5 * 9) },
+      uInvOneMinusC: { value: 1.0 / (1.0 - Math.exp(-0.5 * 9)) },
+    }),
+    buildDefines: () => ({ LUXAR_VOLUMETRIC: '' }),
+    buildTSLMaterial: (uniforms) => {
+      const m = gsplatWebGPUFactory(buildGSplatTSLNodesFromUniforms(uniforms), {
+        blendingMode: 'volumetric',
+      }) as unknown as THREE.Material;
+      // The harness compares raw fragment output — override the
+      // factory-applied blend state exactly like the other variants.
+      m.transparent = false;
+      m.blending = THREE.NoBlending;
+      return m;
+    },
+    buildMesh: buildGSplatInstancedMesh,
+  },
   // meanAbsDiff compares full RGBA. uOpacity=0.6 keeps the coverage
   // sub-saturated so alpha varies across the splat. uProjectionMode=1
   // (PEAK) matches the TSL factory's normal-mode graph: alpha-over is the

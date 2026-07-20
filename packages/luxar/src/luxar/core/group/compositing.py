@@ -35,6 +35,7 @@ COMPOSITING_ATTRS = frozenset(
     {
         "transform",
         "opacity",
+        "absorption",
         "gamma",
         "intensity",
         "offset",

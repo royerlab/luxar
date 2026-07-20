@@ -48,6 +48,7 @@ import {
   getCompleteBlendingState,
   getGSplatNormalBlendingState,
   isNormalMode,
+  isVolumetricMode,
   usesPeakProjection,
 } from '../../blending-state';
 
@@ -57,6 +58,12 @@ import {
 export interface GSplatMaterialConfig {
   /** Opacity multiplier (0.0 to 1.0) */
   opacity?: number;
+  /**
+   * Absorption coefficient κ (>= 0, default 1.0) — read only by the
+   * `volumetric` blending mode's fragment branch (τ = κ·opacity·rayMass);
+   * inert in every other mode. κ = 0 renders exactly like `additive`.
+   */
+  absorption?: number;
   /** Gamma correction (0.1 to 10.0, default 1.0) */
   gamma?: number;
   /** Intensity (linear color multiplier / gain), default 1.0 */
@@ -109,7 +116,9 @@ export interface GSplatMaterialUniforms {
   uTruncate: { value: number };
   /** Opacity multiplier */
   uOpacity: { value: number };
-  /** Projection mode: 0=sum ray-integral (additive/luminous), 1=peak 2D-projected (surface modes max/normal/opaque) */
+  /** Absorption coefficient κ (volumetric mode: τ = κ·opacity·rayMass) */
+  uAbsorption: { value: number };
+  /** Projection mode: 0=sum ray-integral (additive/luminous/volumetric), 1=peak 2D-projected (surface modes max/normal/opaque) */
   uProjectionMode: { value: number };
   /** Pre-computed 1/gamma for performance */
   uInvGamma: { value: number };
@@ -170,6 +179,7 @@ export class GSplatMaterial
           value: computeRayIntegralFactor(truncate),
         },
         uOpacity: { value: materialConfig.opacity ?? 1.0 },
+        uAbsorption: { value: materialConfig.absorption ?? 1.0 },
         // Placeholder — applyBlendingMode() below is the source of truth. Peak (1)
         // for surface modes (max/normal/opaque), sum (0) for emissive.
         uProjectionMode: {
@@ -288,6 +298,19 @@ export class GSplatMaterial
   }
 
   /**
+   * Update the absorption coefficient κ (volumetric mode only — a plain
+   * uniform write, no recompile; inert in every other mode).
+   */
+  updateAbsorption(absorption: number): void {
+    this.uniforms.uAbsorption.value = absorption;
+  }
+
+  /** Current absorption coefficient κ. */
+  getAbsorption(): number {
+    return this.uniforms.uAbsorption.value as number;
+  }
+
+  /**
    * Update truncation radius and recompute shifted Gaussian parameters.
    */
   updateTruncationRadius(radius: number): void {
@@ -385,6 +408,9 @@ export class GSplatMaterial
   clone(): this {
     const cloned = new GSplatMaterial({
       opacity: this.uniforms.uOpacity.value,
+      // Without this a clone silently reset a tuned κ to the 1.0 default —
+      // and the layers panel clones on ANY first panel interaction.
+      absorption: this.uniforms.uAbsorption.value,
       gamma: this.userData.gamma ?? 1.0,
       intensity: this.uniforms.uIntensity.value,
       offset: this.uniforms.uOffset.value,
@@ -475,6 +501,9 @@ export class GSplatMaterial
       this.depthTest = state.depthTest;
       this.depthWrite = state.depthWrite;
       this.defines.LUXAR_NORMAL_PREMULT = '';
+      // Every branch owns BOTH mode defines — a volumetric→normal switch
+      // must not strand LUXAR_VOLUMETRIC.
+      delete this.defines.LUXAR_VOLUMETRIC;
       if (this.uniforms.uProjectionMode) {
         // Peak (2D-projected) projection, NOT the sum ray-integral: alpha-over
         // is the SURFACE compositing model, so a splat's contribution is its
@@ -495,8 +524,16 @@ export class GSplatMaterial
       return;
     }
 
-    // Every non-normal mode renders with the alpha=1.0 fragment contract.
+    // Every non-normal mode drops the coverage-alpha define; volumetric
+    // gets its own fragment branch (emission–absorption: RGB carries the
+    // self-screened emission, alpha = 1 − e^(−τ)) — every OTHER mode
+    // keeps the alpha=1.0 contract.
     delete this.defines.LUXAR_NORMAL_PREMULT;
+    if (isVolumetricMode(mode)) {
+      this.defines.LUXAR_VOLUMETRIC = '';
+    } else {
+      delete this.defines.LUXAR_VOLUMETRIC;
+    }
 
     // Non-normal modes take the SHARED blending state — the same source
     // of truth the TSL wrapper uses, so both backends are identical:

@@ -175,6 +175,10 @@ export class LayerApplyEngine {
       const eff = this.composeEffective(leaf.path);
       if (!eff) continue;
       mat.updateOpacity(eff.opacity);
+      // Optional-chained: only gsplat materials implement it in phase 1
+      // (points/lines render volumetric's additive fallback, where κ is
+      // inert anyway).
+      mat.updateAbsorption?.(eff.absorption);
       applyColorAdjustments(mat, eff.gamma, eff.intensity, eff.offset);
       const prevBlendingMode = mat.userData?.blendingMode as BlendingMode | undefined;
       this.applyBlendingStateToMaterial(mat, eff.blending_mode);
@@ -206,6 +210,10 @@ export class LayerApplyEngine {
   }
 
   applyOpacity(layer: LayerInfo): void {
+    this.applyComposed(layer);
+  }
+
+  applyAbsorption(layer: LayerInfo): void {
     this.applyComposed(layer);
   }
 

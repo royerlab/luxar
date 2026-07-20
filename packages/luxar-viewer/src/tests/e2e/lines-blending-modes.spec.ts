@@ -111,8 +111,12 @@ test.describe('Lines blending modes (per-mode material state)', () => {
     await waitForLinesCommitted(page);
 
     const states = await readLinesMaterialStates(page);
-    expect(states.length).toBe(5);
+    expect(states.length).toBe(6);
 
+    // NOTE: `volumetric` asserts the phase-1 ADDITIVE fallback state
+    // (EXPECTED_STATE.volumetric mirrors the additive row) while
+    // userData.blendingMode keeps 'volumetric' — lines implement the
+    // emission–absorption math in phase 4 (VOLUMETRIC_BLENDING_SPEC.md).
     for (const [mode, expected] of Object.entries(EXPECTED_STATE)) {
       const state = states.find((s) => s.name.includes(`lines_${mode}`));
       expect(state, `lines_${mode} mesh not found in scene`).toBeTruthy();
@@ -127,7 +131,7 @@ test.describe('Lines blending modes (per-mode material state)', () => {
     }
   });
 
-  test('renders all five line blending modes without WebGL/console errors', async ({ page }) => {
+  test('renders all six line blending modes without WebGL/console errors', async ({ page }) => {
     await page.goto(`/?src=${FIXTURE}&debug`);
     await waitForLuxarReady(page);
     await waitForLinesCommitted(page);

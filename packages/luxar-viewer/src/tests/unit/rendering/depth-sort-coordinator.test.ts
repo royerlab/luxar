@@ -180,6 +180,60 @@ describe('depth-sort coordinator', () => {
     expect(mockApi.sort).not.toHaveBeenCalled();
   });
 
+  it('registers + sorts a volumetric commit (the second order-dependent mode)', async () => {
+    // needsDepthSort = normal ∪ volumetric: volumetric compositing is
+    // non-commutative (emission–absorption attenuates what is behind),
+    // so it takes the exact same sort path as 'normal'. Fails against
+    // an isNormalMode-gated coordinator.
+    const coord = await loadCoordinator();
+    const requestRender = vi.fn();
+    coord.configureDepthSort({ getCamera: () => makeCamera(), requestRender });
+
+    const mesh = makeGSplatsMesh(3, 'volumetric');
+    const centers = new Float32Array([0, 0, -10, 1, 0, -1, 2, 0, -5]);
+    coord.noteGSplatsCommit(mesh, centers, 3);
+    await flush();
+
+    expect(mockApi.registerNode).toHaveBeenCalledTimes(1);
+    expect(mockApi.sort).toHaveBeenCalledTimes(1);
+
+    sortResolvers[0]({ generation: 1, ordering: new Uint32Array([0, 2, 1]) });
+    await flush();
+
+    const attr = (mesh.geometry as THREE.InstancedBufferGeometry).getAttribute('aSortedIndex');
+    expect(Array.from(attr.array as Uint32Array)).toEqual([0, 2, 1]);
+    expect(requestRender).toHaveBeenCalled();
+  });
+
+  it('normal↔volumetric mode switch is a sorted→sorted no-op (no reprocess, no release)', async () => {
+    const coord = await loadCoordinator();
+    const requestReprocess = vi.fn();
+    coord.configureDepthSort({
+      getCamera: () => makeCamera(),
+      requestRender: vi.fn(),
+      requestReprocess,
+    });
+
+    const mesh = makeGSplatsMesh(3, 'normal');
+    coord.noteGSplatsCommit(mesh, new Float32Array([0, 0, -10, 1, 0, -1, 2, 0, -5]), 3);
+    await flush();
+    expect(mockApi.registerNode).toHaveBeenCalledTimes(1);
+
+    // Both modes are sorted — the ordering stays valid; the projection/
+    // output change is the material's problem, not the coordinator's.
+    coord.noteGSplatsBlendingModeSwitch(mesh, 'volumetric', 'normal');
+    expect(requestReprocess).not.toHaveBeenCalled();
+    expect(mockApi.releaseNode).not.toHaveBeenCalled();
+
+    // Switching to a commutative mode DOES release worker-side state.
+    coord.noteGSplatsBlendingModeSwitch(mesh, 'additive', 'volumetric');
+    expect(mockApi.releaseNode).toHaveBeenCalledTimes(1);
+
+    // And switching back to a sorted mode forces the reprocess.
+    coord.noteGSplatsBlendingModeSwitch(mesh, 'volumetric', 'additive');
+    expect(requestReprocess).toHaveBeenCalledTimes(1);
+  });
+
   it('generation guard: a stale ordering resolving after a newer commit is dropped', async () => {
     const coord = await loadCoordinator();
     const requestRender = vi.fn();

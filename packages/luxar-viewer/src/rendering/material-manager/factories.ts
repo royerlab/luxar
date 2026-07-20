@@ -83,6 +83,8 @@ export interface LineMaterialProperties {
 export interface GSplatMaterialProperties {
   blendingMode: BlendingMode;
   opacity: number;
+  /** Absorption coefficient κ (volumetric mode; identity/default 1.0). */
+  absorption?: number;
   gamma: number;
   intensity: number;
   offset: number;

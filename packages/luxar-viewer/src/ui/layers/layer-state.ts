@@ -94,6 +94,8 @@ export interface LayerInfo {
   visible: boolean;
   /** Opacity (0–1) */
   opacity: number;
+  /** Absorption coefficient κ (≥ 0; only meaningful in volumetric mode) */
+  absorption: number;
   /** Current display-range minimum (maps to intensity+offset in shader) */
   displayMin: number;
   /** Current display-range maximum */
@@ -366,6 +368,10 @@ export class LayerStateManager {
           kind,
           visible: initialVisible,
           opacity: (node.attrs.opacity as number) ?? 1.0,
+          // RAW like opacity, NOT composed: composeEffective substitutes
+          // each layer's live values per ancestry node, so a composed
+          // init would multiply ancestor κ in twice.
+          absorption: (node.attrs.absorption as number) ?? 1.0,
           displayMin,
           displayMax,
           dataMin,
@@ -525,6 +531,14 @@ export class LayerStateManager {
     const layer = this.layers.get(path);
     if (!layer) return;
     layer.blendingMode = mode;
+    this.notify();
+  }
+
+  /** Set absorption (volumetric κ) for a layer */
+  setAbsorption(path: string, absorption: number): void {
+    const layer = this.layers.get(path);
+    if (!layer) return;
+    layer.absorption = absorption;
     this.notify();
   }
 

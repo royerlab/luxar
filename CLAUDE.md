@@ -340,7 +340,7 @@ luxar gsplat benchmark --list                         # Show profiled GPUs
 luxar gsplat convert splats.gsplats.zarr scene.luxar.zarr --center
 # Appearance is baked at convert time: --colormap (builtin/matplotlib/colorcet,
 # default gray), --tone-mapping (None/Linear/Reinhard/Cineon/ACES/AgX/Neutral;
-# default = viewer default ACES), --gamma, --intensity, --layer/--no-layer.
+# default = viewer default ACES), --gamma, --intensity, --absorption (volumetric kappa), --layer/--no-layer.
 # For faithful scientific colors pair a colormap with Neutral (ACES shifts hues):
 luxar gsplat convert splats.gsplats.zarr scene.luxar.zarr --colormap plasma --tone-mapping Neutral
 

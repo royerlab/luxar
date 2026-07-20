@@ -34,10 +34,15 @@ def convert_to_scene(
         None, "--scale-intensity", help="Scale amplitudes by factor (e.g., 0.1)"
     ),
     opacity: float = typer.Option(1.0, "--opacity", help="Opacity (0.0-1.0)"),
+    absorption: float = typer.Option(
+        1.0,
+        "--absorption",
+        help="Absorption kappa (>=0) for --blending-mode volumetric; 0 = additive",
+    ),
     blending_mode: str = typer.Option(
         DEFAULT_BLENDING_MODE,
         "--blending-mode",
-        help="Blending: additive/normal/max/opaque/luminous",
+        help="Blending: additive/normal/max/opaque/luminous/volumetric",
     ),
     colormap: Optional[str] = typer.Option(
         None,
@@ -94,10 +99,11 @@ def convert_to_scene(
         from luxar.gsplats.tree import center_bounds, is_matrix_shaped
 
         # Validate + assemble appearance attrs (only forward what was set).
-        from luxar.validation.types import validate_blending_mode
+        from luxar.validation.types import validate_absorption, validate_blending_mode
 
         try:
             validate_blending_mode(blending_mode)
+            validate_absorption(absorption)
         except (ValueError, TypeError) as e:
             raise typer.BadParameter(str(e)) from e
 
@@ -161,6 +167,7 @@ def convert_to_scene(
                             name="gsplats",
                             result=data,
                             opacity=opacity,
+                            absorption=absorption,
                             blending_mode=blending_mode,
                             **appearance,
                         )
@@ -201,6 +208,7 @@ def convert_to_scene(
                             name="gsplats",
                             path=input_path,
                             opacity=opacity,
+                            absorption=absorption,
                             blending_mode=blending_mode,
                             **appearance,
                         )

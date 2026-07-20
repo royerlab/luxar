@@ -22,6 +22,13 @@ export interface LuxarMaterial extends THREE.Material, CameraAwareMaterial {
   updateOffset(v: number): void;
   updateGamma(v: number): void;
   updateOpacity(v: number): void;
+  /**
+   * Update the absorption coefficient κ (volumetric blending mode).
+   * Optional: only gsplat materials implement it in phase 1 —
+   * points/lines render volumetric's additive (κ = 0) fallback, where κ
+   * is inert (VOLUMETRIC_BLENDING_SPEC.md §5.1).
+   */
+  updateAbsorption?(v: number): void;
   updateColormapTexture?(texture: THREE.DataTexture | null): void;
   updateScalarRange?(min: number, max: number): void;
   /**
