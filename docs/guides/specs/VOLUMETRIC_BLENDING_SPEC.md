@@ -1,6 +1,14 @@
 # Volumetric Blending Mode — Emission–Absorption Compositing
 
-> **Status**: **Phase 1 IMPLEMENTED** (this PR, 2026-07-19): gsplats +
+> **Status**: **Phase 2 IMPLEMENTED** (2026-07-20): per-element opacity via
+> the color ALPHA channel (RGBA colors) for gsplats — see §5.4.1. Alpha is
+> active in EVERY blending mode (linear contribution scale; volumetric maps
+> it into optical depth w = −ln(1−a)); the classical importer now stores
+> learned 3DGS opacity in alpha (amplitudes := 1) so imported scenes occlude
+> correctly. The original per-splat `absorption_weights` array plan is
+> SUPERSEDED by this. Points/lines RGBA + volumetric remain phases 3–4.
+>
+> **Status**: **Phase 1 IMPLEMENTED** (2026-07-19): gsplats +
 > node-level κ, exactly per §4/§5 with the pre-implementation corrections
 > below. Implementation deltas vs the text: (a) the layers-panel κ slider is
 > additionally gated to gsplat/group layers (not just the volumetric mode) so
@@ -380,18 +388,71 @@ Key constraints:
   can drop is bounded by κ·opacity·1e-4 per fragment — invisible at slider
   κ ≤ 10 (risk #7).
 
-**Per-splat weights wᵢ (spec'd here, built in phase 2)**: optional
-`.gsplats.zarr` per-splat array `absorption_weights` (float32, shape (N,),
-values ≥ 0, **absent ⇒ wᵢ = 1 and no viewer buffer is allocated** — the common
-fitted-microscopy case pays nothing). When present: one extra interleaved
-attribute (52 → 56 B/splat) threaded like `aAmplitude`, τ gains the `wᵢ`
-factor, and the classical-splat importer maps learned 3DGS opacity `o` to
-`wᵢ ∝ −ln(1 − o)` (solving 1 − e^(−τ_peak) = o at the splat center) so imported
-scenes get genuinely per-splat occlusion. LOD merging must aggregate wᵢ
-mass-weighted (τ is linear in wᵢ·Aᵢ, so the merged weight is the
-amplitude-weighted mean of the children's — preserves total optical depth to
-first order). Format details land in `docs/specs/GSPLATS_ZARR_FORMAT.md` when
-phase 2 is built.
+### 5.4.1 Per-element opacity via the color ALPHA channel (Phase 2 — IMPLEMENTED)
+
+Phase 2 does NOT add a parallel `absorption_weights` array (the original plan,
+superseded 2026-07-20). Instead the `colors` attribute widens from strictly
+`(N, 3)` RGB to optionally `(N, 4)` RGBA, and the **alpha column is per-element
+opacity aᵢ ∈ [0, 1]** — one new concept, no new parameter, and it rides inside
+`colors` so almost every gsplat op carries it for free (mask/permute/concat).
+
+**Per-mode consumption** — alpha is active in EVERY blending mode, each
+consuming it the way it consumes node opacity (a splat's rendered mass is A·aᵢ,
+so the two decouple emission from opacity):
+
+| mode | how aᵢ enters |
+|------|---------------|
+| additive / luminous / max / opaque | `intensity *= aᵢ` (linear contribution scale) |
+| normal | coverage-alpha × aᵢ (true per-element alpha compositing) |
+| volumetric | `intensity *= w(aᵢ)` **before** τ, where `w(aᵢ) = −ln(1 − min(aᵢ, 1−1/512))` |
+
+The volumetric mapping makes a splat's peak rendered alpha reproduce aᵢ exactly
+(3DGS-faithful) and self-screens emission to ≈ c·aᵢ. Dilute limit: `w ≈ a` as
+a → 0, so volumetric and additive agree there (the same κ→0 coherence carried to
+per-splat alpha); at large a volumetric is intentionally denser
+(optical-depth semantics). Mid-alpha renders therefore differ between modes —
+documented, not a bug.
+
+**Storage / encoding**: `colors` shape `(N, 4)`; alpha in `[0, 1]`, validated
+(finite, bounded) and never HDR (the SDR/HDR autodetect and display-range scan
+look at RGB only, `dataset_writers/colors.py`). Codecs are channel-agnostic
+(`rgb_uint8` element-wise; `geolog_perchannel` derives column count from data),
+so **no format-version bump** — old readers that hardcode 3 are the only ones
+affected, and Luxar's own readers key off the array shape. `absent ⇒ aᵢ = 1`
+(the writer stamps 1.0 into texel3.y unconditionally — pool textures are reused;
+a full RGB dataset allocates no wider buffer).
+
+**Gate**: a uniform `uHasElementAlpha` (0/1, from the loaded color layout, set
+per-commit) gates ONLY the volumetric w-mapping — RGB data carries the identity
+alpha 1.0, which must NOT map to w ≈ 6.24. The linear per-mode factor needs no
+gate. `uHasElementAlpha` is a plain uniform, deliberately NOT a shader define,
+so toggling it never triggers a TSL graph rebuild.
+
+**Restriction**: only direct-color splats get per-element opacity. Intensity/
+colormap (CLUT) splats have no stored color, so alpha falls back to the node
+dials — correct for fitted microscopy, where τ ∝ amplitude is already the right
+model. (LUT-alpha ramps for CLUT mode: a coherent future extension, out of
+scope.)
+
+**Import / export**: the classical importer stops folding opacity into
+amplitude — `alpha := o`, `amplitudes := 1`, and `stats["interop"].
+opacity_in_alpha = True` marks the provenance. Additive renders stay visually
+identical (c·a vs the old baked c·o); normal and volumetric become *correct*
+(dark solid surfaces occlude). INRIA PLY export reads alpha verbatim into both
+data-driven opacity policies, so the round-trip is lossless. Mass-ranked ops
+(LOD-ladder scorers, culling, `gsplat info`) switch to the alpha-effective
+amplitude A·aᵢ (`gsplats/utils/alpha.py::effective_amplitudes`) so imported
+scenes keep a meaningful energy order.
+
+**LOD merge**: a substitutive reduction aggregates the alpha column in
+**w-space** — the mass-weighted mean of −ln(1−aᵢ), mapped back through 1−e^(−w)
+(`_substitutive/kmeans_lloyd.py`). Optical depth composes linearly; opacity does
+not, so an o-space mean would over-report transmittance when a bin mixes opaque
+and translucent members. A uniform-alpha bin is a fixed point.
+
+The `ALPHA_CLAMP = 1 − 1/512` literal is shared between Python
+(`gsplats/utils/alpha.py`) and both viewer shaders (GLSL + TSL) so aggregation
+and rendering agree.
 
 ### 5.5 Layers-panel UI
 

@@ -6,6 +6,27 @@ All notable changes to Luxar are documented in this file.
 
 ### July 2026
 
+#### Added — per-element opacity via RGBA colors, volumetric Phase 2 (gsplats)
+
+- **`colors` widens from `(N, 3)` RGB to optionally `(N, 4)` RGBA** for
+  GSplats. The alpha column is **per-element opacity α ∈ [0, 1]** — one new
+  concept, no new parameter. Every blending mode consumes it the way it
+  consumes node opacity: additive/luminous/max/opaque scale contribution by α,
+  `normal` gets true per-element alpha compositing, and `volumetric` maps it
+  into optical depth `w = −ln(1 − α)` so a splat's peak alpha reproduces α
+  (3DGS-faithful). Absent ⇒ α = 1; RGB datasets are unchanged and pay nothing.
+- **Classical import now stores learned 3DGS opacity in the alpha channel**
+  (amplitudes := 1), so imported photogrammetric scenes render with correct
+  per-splat occlusion in `normal`/`volumetric` (dark solid surfaces hide the
+  background) while additive stays visually identical. INRIA PLY export reads
+  alpha back verbatim — lossless round-trip. Mass-ranked ops (LOD ladders,
+  culling, `gsplat info`) use the alpha-effective amplitude `A·α`.
+- No `.gsplats.zarr` format-version bump (codecs are channel-agnostic; readers
+  key off the array shape). LOD substitutive merges aggregate α in optical-depth
+  (`w`) space. Only direct-color splats get per-element opacity; intensity/
+  colormap splats fall back to the node dials. Points/lines RGBA + volumetric
+  are phases 3–4. See `docs/guides/specs/VOLUMETRIC_BLENDING_SPEC.md` §5.4.1.
+
 #### Performance — Points & Lines append fast path (depth-sorting Phase 4 Stage 2, three-geometry symmetry)
 
 - **Stage 2 extended to Points and Lines:** a progressive-LOD commit that merely
