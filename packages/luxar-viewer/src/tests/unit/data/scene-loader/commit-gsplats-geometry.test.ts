@@ -36,7 +36,7 @@ vi.mock('../../../../rendering/gsplat-geometry', () => ({
 import { commitGSplatsGeometry } from '../../../../data/scene-loader/commit/commit-gsplats-geometry';
 import { SOFT_DISPOSE_FLAG } from '../../../../rendering/material-manager';
 import type { StagedGSplatsCommit } from '../../../../data/scene-loader/process/data-processor-gsplats';
-import { setPrefixParent } from '../../../../types/gsplats-lineage';
+import { setPrefixParent } from '../../../../types/prefix-lineage';
 
 function makeProcessed(splatCount = 2) {
   return {

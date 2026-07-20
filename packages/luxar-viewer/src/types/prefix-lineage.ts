@@ -1,15 +1,15 @@
 /**
- * Prefix-lineage tracking for the gsplat append fast path (depth-sorting
- * Phase 4 Stage 2).
+ * Prefix-lineage tracking for the append fast path (depth-sorting Phase 4
+ * Stage 2), shared by all three geometries (Points, Lines, GSplats).
  *
  * A progressive-LOD commit that adds detail EXTENDS the previous commit: the
  * loader appends LOD levels in order, so the concatenated input of a k-level
  * commit is a byte-identical PREFIX of the (k+1)-level concatenation. Because
- * the nD→3D projection is per-splat-independent and order-preserving, under an
- * unchanged view state the (k+1)-level projection's first `prevCount` visible
- * outputs are byte-identical to the previous commit's entire output. The commit
- * layer can then write & upload only the appended suffix instead of the whole
- * buffer.
+ * every geometry's nD→3D projection is per-element-independent and
+ * order-preserving, under an unchanged view state the (k+1)-level projection's
+ * first `prevCount` visible outputs are byte-identical to the previous
+ * commit's entire output. The commit layer can then write & upload only the
+ * appended suffix instead of the whole buffer.
  *
  * To take that fast path the commit layer must know that the new concat result
  * genuinely extends the object currently on the GPU. We record it as a
@@ -32,11 +32,12 @@
  * - Keeps lineage out of the cached payload and lets entries be garbage
  *   collected with their result objects.
  *
- * Lives in `types/` (the bottom layer) so both the loader (`data/gsplats/`) and
- * the commit pipeline (`data/scene-loader/`) share one definition. Companion of
+ * Lives in `types/` (the bottom layer) so the loaders (`data/points/`,
+ * `data/lines/`, `data/gsplats/`) and the commit pipeline
+ * (`data/scene-loader/`) share one definition. Companion of
  * {@link module:types/committed-data}.
  *
- * @module types/gsplats-lineage
+ * @module types/prefix-lineage
  */
 
 /** result object → the same-generation concat result it extends. */

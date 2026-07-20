@@ -28,7 +28,7 @@ import {
   hasCommittedData,
   setCommittedData,
 } from '../../../types/committed-data';
-import { getPrefixParent } from '../../../types/gsplats-lineage';
+import { getPrefixParent } from '../../../types/prefix-lineage';
 import type { StagedGSplatsCommit } from '../process/data-processor-gsplats';
 
 const DEFAULT_TRUNCATE = 3.0;
