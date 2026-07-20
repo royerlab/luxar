@@ -370,6 +370,18 @@ describe('GSplatTSLMaterial.applyBlendingMode (TSL)', () => {
     rebuildSpy.mockRestore();
   });
 
+  it('normal→volumetric rebuilds the TSL graph (both output flags + projection cross)', () => {
+    // The remaining compound transition class: BOTH isNormalMode and
+    // isVolumetricMode flip AND usesPeakProjection crosses — any OR term
+    // suffices, but pin the class directly.
+    const mat = new GSplatTSLMaterial({ blendingMode: 'normal' });
+    const rebuildSpy = vi.spyOn(mat as unknown as { rebuildGraph(): void }, 'rebuildGraph');
+    mat.applyBlendingMode('volumetric');
+    expect(rebuildSpy).toHaveBeenCalledTimes(1);
+    expect(mat.uniforms.uProjectionMode.value).toBe(0); // peak -> sum
+    rebuildSpy.mockRestore();
+  });
+
   it('volumetric mode: One/OneMinusSrcAlpha state, SUM projection (TSL)', () => {
     const mat = new GSplatTSLMaterial();
     mat.applyBlendingMode('volumetric');

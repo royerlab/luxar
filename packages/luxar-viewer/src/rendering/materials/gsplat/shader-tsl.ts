@@ -103,12 +103,13 @@ export interface GSplatTSLConfig {
    * Luxar blending mode. GSplats premultiply intensity into RGB in
    * every mode; `normal` ADDITIONALLY emits a clamped coverage alpha
    * (premultiplied alpha-over — mirrors the GLSL
-   * `LUXAR_NORMAL_PREMULT` define) and pairs it with
-   * `getGSplatNormalBlendingState()`'s One / OneMinusSrcAlpha state.
-   * All other modes keep the alpha = 1.0 output contract. The factory
-   * derives both the fragment-output style and the THREE blending
-   * state from this one field. Defaults to `'additive'` to match the
-   * GLSL wrapper class.
+   * `LUXAR_NORMAL_PREMULT` define) and `volumetric` emits the
+   * emission–absorption pair `vec4(finalColor·S(τ), 1 − e^(−τ))`
+   * (mirrors `LUXAR_VOLUMETRIC`) — both pair with the One /
+   * OneMinusSrcAlpha state. All other modes keep the alpha = 1.0
+   * output contract. The factory derives both the fragment-output
+   * style and the THREE blending state from this one field. Defaults
+   * to `'additive'` to match the GLSL wrapper class.
    */
   readonly blendingMode?: BlendingMode;
 }
@@ -617,7 +618,8 @@ export function gsplatWebGPUFactory(
       // RGB carries the self-screened emission (S(τ) = (1−e^(−τ))/τ);
       // alpha = 1 − e^(−τ) for the One/OneMinusSrcAlpha state. Series
       // for τ < 1e-3 keeps S well-conditioned through τ → 0 (κ = 0 ⇒
-      // α = 0, S = 1 — bit-identical arithmetic to additive). `.select`
+      // α = 0, S = 1 — bit-identical RGB arithmetic to additive; dst-alpha
+      // differs, invisible on the alpha:false canvas). `.select`
       // materializes both sides — fine for this cheap scalar math
       // (unlike the vertex projection branches, which stay
       // JS-conditional).

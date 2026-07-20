@@ -34,12 +34,14 @@ export interface LuxarMaterial extends THREE.Material, CameraAwareMaterial {
   /**
    * Apply a blending mode to this material in-place.
    *
-   * Optional because PointMaterial doesn't need it — its blending is
-   * mode-agnostic at the material level (no `uProjectionMode`, no
-   * intensity-squaring concern). For materials that DO need it
-   * (GSplatMaterial, LineMaterial), call this instead of writing
-   * `mat.blending`/`mat.blendEquation` directly so type-specific
-   * factors and uniforms stay in sync.
+   * All three geometry materials implement it today (the optionality is
+   * kept for exotic/legacy materials the generic fallback still covers).
+   * It is LOAD-BEARING for points/lines: their implementations intercept
+   * `volumetric` and apply the additive fallback state — the generic
+   * fallback would pair the premultiplied volumetric blend state with a
+   * shader that never emits that alpha. Call this instead of writing
+   * `mat.blending`/`mat.blendEquation` directly so type-specific factors,
+   * defines, and uniforms stay in sync.
    */
   applyBlendingMode?(mode: BlendingMode): void;
 }

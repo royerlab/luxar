@@ -458,15 +458,16 @@ export class GSplatMaterial
    * GSplat-specific because the method sets the `uProjectionMode`
    * uniform — PEAK (1) for the surface modes (`max` / `normal` /
    * `opaque`, see `usesPeakProjection`), SUM ray-integral (0) for
-   * emissive (`additive`/`luminous`) — and owns the
-   * `LUXAR_NORMAL_PREMULT` define lifecycle. Without a type-specific method,
+   * emissive (`additive`/`luminous`/`volumetric`) — and owns the
+   * `LUXAR_NORMAL_PREMULT` + `LUXAR_VOLUMETRIC` define lifecycles. Without a type-specific method,
    * the layers panel's generic `mat.blending = state.blending` would leave a
    * stale `uProjectionMode` while the framebuffer blend state changed —
    * physically wrong projection.
    *
    * `normal` is gsplat-specific too: the shader emits premultiplied
    * coverage alpha under the `LUXAR_NORMAL_PREMULT` define (toggled
-   * here — the only mode-driven define this material has), paired with
+   * here, alongside the `LUXAR_VOLUMETRIC` define for the
+   * emission–absorption branch), paired with
    * `getGSplatNormalBlendingState()`'s One / OneMinusSrcAlpha state.
    *
    * Used by both the constructor and runtime mode changes from the
@@ -481,6 +482,15 @@ export class GSplatMaterial
     // opacity-independent getGSplatNormalBlendingState above. Passed
     // only to satisfy the shared helper's signature.
     const opacity = (this.uniforms.uOpacity?.value as number | undefined) ?? 1.0;
+
+    // Defensive: THREE may leave `defines` undefined when none were
+    // passed at construction (and mocked-THREE test environments do).
+    // Both branches below own the LUXAR_NORMAL_PREMULT /
+    // LUXAR_VOLUMETRIC define lifecycles — same guard as the point/line
+    // wrappers (three-geometry symmetry).
+    if (!this.defines) {
+      this.defines = {};
+    }
 
     if (isNormalMode(mode)) {
       // Premultiplied alpha-over — the one mode where the fragment
@@ -564,7 +574,7 @@ export class GSplatMaterial
     this.depthTest = state.depthTest;
     this.depthWrite = state.depthWrite;
 
-    // Projection mode uniform: 0=sum (additive/luminous), 1=peak
+    // Projection mode uniform: 0=sum (additive/luminous/volumetric), 1=peak
     // (max/normal/opaque). The shader has separate sum vs peak
     // branches; the surface modes all project the 2D-Gaussian peak
     // (see usesPeakProjection's taxonomy note).

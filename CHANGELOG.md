@@ -58,7 +58,7 @@ All notable changes to Luxar are documented in this file.
   `set_absorption` / `validate_absorption`, default-stamped by the writers,
   in `COMPOSITING_ATTRS`; viewer multiplicative composition, `uAbsorption`
   uniform (GLSL + TSL), material `updateAbsorption`/clone round-trip;
-  layers-panel "Absorption" slider shown only for volumetric gsplat layers;
+  layers-panel "Absorption" slider shown only for volumetric gsplat/group layers;
   `luxar gsplat convert --absorption`.
 - **Phase-1 scope**: gsplats implement the fragment math
   (`LUXAR_VOLUMETRIC` GLSL define + TSL build-time branch, with the TSL

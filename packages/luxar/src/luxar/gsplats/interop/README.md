@@ -64,6 +64,23 @@ Tests generate miniature files of every dialect on the fly
 (`tests/_synthetic.py`) and assert reader parity plus covariance fidelity
 through the full read → convert → save → load pipeline.
 
+### Example demos
+
+Six self-contained demos in `luxar/demos/` exercise the importer end to end —
+one per reader dialect — each fetching a real capture, importing it, and opening
+it in the viewer. Run any of them with
+`hatch run python packages/luxar/src/luxar/demos/<name>.py` (`--recompute` to
+re-fetch/re-import, `--no-serve` to build the scene without opening the viewer).
+
+| Demo | Dialect | Capture | Source / license |
+|------|---------|---------|------------------|
+| `demo_gsplats_interop_inria_garden` | `inria` PLY | Full-quality INRIA-trained *garden* (~1.45 GB PLY, range-extracted), tiled BSP partition | INRIA 3DGS license (research / non-commercial) |
+| `demo_gsplats_interop_mipnerf_garden` | `splat` (antimatter15) | Mip-NeRF 360 *garden* (~5 M splats), tiled BSP partition | Mip-NeRF 360 dataset |
+| `demo_gsplats_interop_spz_scaniverse` | `spz` (Niantic) | Two Scaniverse phone captures (~18 + 24 MB); the only Y-up dialect | Niantic `spz` reference samples (MIT) |
+| `demo_gsplats_interop_observatory` | `supersplat` compressed PLY | Vera C. Rubin Observatory (or `--scene gemini-south`) | khyron, CC BY 4.0 |
+| `demo_gsplats_interop_sog_matrixcity` | `sog` (PlayCanvas) | MatrixCity aerial city (~13.6 M splats) → overview LOD | SuperSplat scene (see its page for terms) |
+| `demo_gsplats_interop_macro_clusterfly` | `inria` PLY | Dany Bittel macro-photogrammetry cluster fly | Dany Bittel, CC BY 4.0 |
+
 ## Classical splat export (INRIA PLY)
 
 `inria_export.py` is the inverse: a `.gsplats.zarr` becomes a

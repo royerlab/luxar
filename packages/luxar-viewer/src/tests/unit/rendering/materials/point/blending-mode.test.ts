@@ -114,6 +114,35 @@ describe('PointMaterial.applyBlendingMode', () => {
       expect(mat.userData.blendingMode).toBe('volumetric');
     }
   });
+
+  it('volumetric fallback survives TSL CONSTRUCTION and graph REBUILDS (factory-tail interception)', () => {
+    // The TSL factory tail is the ONLY state writer at construction
+    // (the ctor never calls applyBlendingMode, unlike GLSL) and re-runs
+    // on every rebuildGraph — so it must intercept volumetric itself.
+    // Pre-fix, a volumetric points node on the WebGPU backend got the
+    // premultiplied One/OneMinusSrcAlpha state under an alpha-weighted
+    // shader: full-strength RGB that DARKENS what's behind it.
+    const constructed = new PointTSLMaterial({ blendingMode: 'volumetric' });
+    expect(constructed.blending).toBe(THREE.AdditiveBlending);
+    expect(constructed.blendSrc).toBe(THREE.SrcAlphaFactor);
+    expect(constructed.blendDst).toBe(THREE.OneFactor);
+    expect(constructed.userData.blendingMode).toBe('volumetric');
+
+    // max→volumetric drops LUXAR_MAX_RGB_CONTRIBUTION → definesChanged →
+    // rebuildGraph — pre-fix the tail clobbered the additive state the
+    // wrapper had just applied.
+    const switched = new PointTSLMaterial({ blendingMode: 'max' });
+    switched.applyBlendingMode('volumetric');
+    expect(switched.blending).toBe(THREE.AdditiveBlending);
+    expect(switched.blendSrc).toBe(THREE.SrcAlphaFactor);
+    expect(switched.blendDst).toBe(THREE.OneFactor);
+
+    // Any later rebuild while in the fallback (e.g. gamma crossing 1.0)
+    // must not clobber it either.
+    switched.updateGamma(2.2);
+    expect(switched.blending).toBe(THREE.AdditiveBlending);
+    expect(switched.blendDst).toBe(THREE.OneFactor);
+  });
 });
 
 // H — TSL constructor honors explicit transparent/depthTest overrides

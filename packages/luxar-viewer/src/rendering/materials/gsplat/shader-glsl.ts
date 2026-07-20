@@ -469,7 +469,8 @@ export const GSPLAT_FRAGMENT_SHADER = /* glsl */ `
         // density — what makes split-splat compositing exact); alpha is
         // the physical absorption 1 − e^(−τ) for the One /
         // OneMinusSrcAlpha state. κ = 0 ⇒ α = 0, S = 1 — bit-identical
-        // framebuffer arithmetic to additive. Series for τ < 1e-3 keeps
+        // framebuffer RGB arithmetic to additive (dst-alpha differs;
+        // invisible on the alpha:false canvas). Series for τ < 1e-3 keeps
         // S well-conditioned through τ → 0 (rel. err < 1e-10 at cutoff).
         float alpha = 1.0 - exp(-tau);
         // Divisor guarded: GPU ternaries/selects evaluate both lanes, and
