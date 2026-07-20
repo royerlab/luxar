@@ -334,6 +334,69 @@ class TestHierarchy:
         assert level_1.colors.shape == (level_1.n_splats, 3)
         assert np.all(np.isfinite(level_1.colors))
 
+    def test_rgba_alpha_preserved_and_bounded(self):
+        """RGBA colors survive a substitutive reduction: the merged level
+        keeps 4 channels and every merged alpha stays a valid opacity in
+        [0, 1] (the w-space aggregation maps back through 1 − e^(−w))."""
+        rng = np.random.RandomState(1)
+        n = 48
+        colors = rng.rand(n, 4).astype(np.float32)  # RGB + opacity, all in [0,1]
+        data = GSplatData(
+            centers=rng.randn(n, 3).astype(np.float32),
+            amplitudes=(rng.rand(n) + 0.5).astype(np.float32),
+            cholesky_factors=np.tile(
+                np.array([1, 0, 1, 0, 0, 1], dtype=np.float32), (n, 1)
+            ),
+            colors=colors,
+        )
+        out = make_substitutive_lod(
+            data,
+            compression_factor=4,
+            levels=1,
+            method="kmeans_lloyd",
+            lloyd_iterations=1,
+            candidate_bins_k=2,
+            device="cpu",
+            seed=0,
+        )
+        level_1 = out.at_substitutive(1)
+        assert level_1.colors is not None
+        assert level_1.colors.shape == (level_1.n_splats, 4)
+        alpha = level_1.colors[:, 3]
+        assert np.all(np.isfinite(alpha))
+        assert np.all(alpha >= 0.0) and np.all(alpha <= 1.0)
+
+    def test_uniform_alpha_is_a_fixed_point_of_the_merge(self):
+        """When every splat shares one opacity a₀, w = −ln(1−a₀) is constant,
+        so the mass-weighted w-mean is w and the merged alpha maps back to
+        exactly a₀ — no drift from the optical-depth round-trip."""
+        rng = np.random.RandomState(2)
+        n = 40
+        a0 = 0.6
+        colors = np.empty((n, 4), dtype=np.float32)
+        colors[:, :3] = rng.rand(n, 3).astype(np.float32)
+        colors[:, 3] = a0
+        data = GSplatData(
+            centers=rng.randn(n, 3).astype(np.float32),
+            amplitudes=(rng.rand(n) + 0.5).astype(np.float32),
+            cholesky_factors=np.tile(
+                np.array([1, 0, 1, 0, 0, 1], dtype=np.float32), (n, 1)
+            ),
+            colors=colors,
+        )
+        out = make_substitutive_lod(
+            data,
+            compression_factor=4,
+            levels=1,
+            method="kmeans_lloyd",
+            lloyd_iterations=1,
+            candidate_bins_k=2,
+            device="cpu",
+            seed=0,
+        )
+        merged_alpha = out.at_substitutive(1).colors[:, 3]
+        assert np.allclose(merged_alpha, a0, atol=1e-4)
+
 
 # ─────────────────────────────────────────────────────────────────────
 # Lloyd refinement: monotonicity + cost-aware advantage

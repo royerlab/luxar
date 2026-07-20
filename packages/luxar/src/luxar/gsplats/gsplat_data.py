@@ -21,6 +21,23 @@ if TYPE_CHECKING:
     from luxar.gsplats.tree import GSplatLeaf, GSplatNode, GSplatPartition
 
 
+def widen_colors_to_rgba(colors: np.ndarray) -> np.ndarray:
+    """Widen an (N, 3) RGB colors array to (N, 4) RGBA with opaque alpha.
+
+    No-op (returns the input) when the array already has 4 channels. Integer
+    arrays get their dtype's max as "opaque"; floats get 1.0.
+    """
+    if colors.shape[1] == 4:
+        return colors
+    opaque = (
+        np.iinfo(colors.dtype).max
+        if np.issubdtype(colors.dtype, np.integer)
+        else 1.0
+    )
+    alpha = np.full((colors.shape[0], 1), opaque, dtype=colors.dtype)
+    return np.concatenate([colors, alpha], axis=1)
+
+
 def _merge_lod_colors(
     lods: "list[AdditiveSubLOD]",
 ) -> "Optional[np.ndarray]":
@@ -29,24 +46,25 @@ def _merge_lod_colors(
     - All have colors → concatenate.
     - All None → return None.
     - Mixed → fill missing with white (1,1,1).
+    - Mixed RGB/RGBA channel counts → RGB parts widen to RGBA with alpha=1
+      (opaque, the per-element-opacity identity).
     """
     if not lods:
         return None
     has_colors = [lod.colors is not None for lod in lods]
-    if all(has_colors):
-        result: np.ndarray = np.concatenate([lod.colors for lod in lods], axis=0)
-        return result
-    elif not any(has_colors):
+    if not any(has_colors):
         return None
-    else:
-        parts: list[np.ndarray] = []
-        for lod in lods:
-            if lod.colors is not None:
-                parts.append(lod.colors)
-            else:
-                parts.append(np.ones((lod.n_splats, 3), dtype=np.float32))
-        merged: np.ndarray = np.concatenate(parts, axis=0)
-        return merged
+    channels = max(lod.colors.shape[1] for lod in lods if lod.colors is not None)
+    parts: list[np.ndarray] = []
+    for lod in lods:
+        colors = lod.colors
+        if colors is None:
+            colors = np.ones((lod.n_splats, channels), dtype=np.float32)
+        elif channels == 4:
+            colors = widen_colors_to_rgba(colors)
+        parts.append(colors)
+    merged: np.ndarray = np.concatenate(parts, axis=0)
+    return merged
 
 
 def _readonly(arr: np.ndarray) -> np.ndarray:
@@ -131,8 +149,10 @@ class AdditiveSubLOD(_SplatArrayMixin):
         Non-negative splat amplitudes.
     cholesky_factors : np.ndarray, shape (N, d*(d+1)//2)
         Packed lower-triangular Cholesky factors.
-    colors : Optional[np.ndarray], shape (N, 3)
-        Optional RGB colors per splat.
+    colors : Optional[np.ndarray], shape (N, 3) or (N, 4)
+        Optional RGB(A) colors per splat. The optional alpha channel is
+        per-splat opacity in [0, 1] (consumed by every blending mode; mapped
+        into optical depth in volumetric — see VOLUMETRIC_BLENDING_SPEC.md).
     stats : Dict[str, Any]
         Per-LOD statistics (e.g., psnr_db, time_seconds, pass_index).
     truncation_radius : float
@@ -269,8 +289,9 @@ class GSplatData(RenderMixin, IOAdapterMixin, FilteringMixin, CullingMixin):
         Cached concatenation of all LOD amplitudes.
     cholesky_factors : np.ndarray, shape (N_total, tril)
         Cached concatenation of all LOD Cholesky factors.
-    colors : Optional[np.ndarray], shape (N_total, 3)
+    colors : Optional[np.ndarray], shape (N_total, 3) or (N_total, 4)
         Cached concatenation of all LOD colors (None if no LOD has colors).
+        The optional 4th column is per-splat opacity alpha in [0, 1].
     stats : Dict[str, Any]
         Top-level statistics (overall quality, timing, etc.).
     """
@@ -1293,13 +1314,15 @@ class GSplatData(RenderMixin, IOAdapterMixin, FilteringMixin, CullingMixin):
         )
 
     def with_colors(
-        self, colors: "np.ndarray | tuple[float, float, float]"
+        self, colors: "np.ndarray | tuple[float, ...]"
     ) -> "GSplatData":
         """Return a new GSplatData with replaced colors, preserving LODs.
 
         Args:
-            colors: Either an (N, 3) array of per-splat colors, or a single
-                (r, g, b) tuple/array to broadcast to all splats.
+            colors: Either an (N, 3) RGB / (N, 4) RGBA array of per-splat
+                colors, or a single (r, g, b) / (r, g, b, a) tuple/array to
+                broadcast to all splats. The alpha channel is per-splat
+                opacity in [0, 1].
 
         Returns:
             New GSplatData with the specified colors.
@@ -1309,7 +1332,7 @@ class GSplatData(RenderMixin, IOAdapterMixin, FilteringMixin, CullingMixin):
             if isinstance(colors, np.ndarray)
             else np.asarray(colors, dtype=np.float32)
         )
-        is_broadcast = arr.ndim == 1 and arr.shape == (3,)
+        is_broadcast = arr.ndim == 1 and arr.shape in ((3,), (4,))
 
         # Multi-substitutive: rebuild the pyramid. A single (r, g, b) broadcasts
         # cleanly to every level; an explicit per-splat array cannot (each level
@@ -1331,9 +1354,10 @@ class GSplatData(RenderMixin, IOAdapterMixin, FilteringMixin, CullingMixin):
             colors = np.tile(arr.astype(np.float32), (self.n_splats, 1))
         else:
             colors = arr
-        if colors.shape != (self.n_splats, 3):
+        if colors.shape not in ((self.n_splats, 3), (self.n_splats, 4)):
             raise ValueError(
-                f"colors shape {colors.shape} doesn't match ({self.n_splats}, 3)"
+                f"colors shape {colors.shape} doesn't match "
+                f"({self.n_splats}, 3) or ({self.n_splats}, 4)"
             )
         if self.n_additive_sublods > 1:
             return self._map_additive(

@@ -101,6 +101,7 @@ export {
   colorBufferTypeMatches,
   restoreOriginalDtype,
   loadColorRanges,
+  colorComponentsOf,
   type ColorRange,
   type ColorBuffer,
   type ColorBufferKind,

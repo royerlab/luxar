@@ -68,7 +68,7 @@ Each Gaussian splat is parameterized by:
 | `amplitudes` | (N,) or (1,) | uint8/uint16/float32 | POSITIVE_SCALAR | Non-negative intensity |
 | `cholesky_factors_diag` | (N, d) or (1, d) | uint8/uint16/float32 | CHOLESKY_DIAG | Diagonal of L (positive, scale-like) |
 | `cholesky_factors_offdiag` | (N, d*(d-1)/2) or (1, …) | uint8/uint16/float32 | CHOLESKY_OFFDIAG | Strictly-lower elements of L (signed); absent when d=1 |
-| `colors` | (N, 3) or (1, 3) | uint8/uint16/float32 | COLOR | RGB colors (optional); SDR → `rgb_uint8`; HDR → `geolog_perchannel_u16` (AUTO; u8 under MEMORY, float32 under PRECISION); absent if not present |
+| `colors` | (N, 3\|4) or (1, 3\|4) | uint8/uint16/float32 | COLOR | RGB or RGBA colors (optional); SDR → `rgb_uint8`; HDR → `geolog_perchannel_u16` (AUTO; u8 under MEMORY, float32 under PRECISION); absent if not present. The optional 4th channel is per-splat opacity α ∈ [0, 1] (per-element opacity: every blending mode scales a splat's contribution by α; volumetric maps it into optical depth w = −ln(1−α) — see VOLUMETRIC_BLENDING_SPEC.md §5.4.1). α is never HDR. No format-version bump: readers key off the array shape, and codecs are channel-agnostic. |
 
 **Note**: Since **v3.1** the packed lower-triangular factor L (where Σ = LLᵀ) is
 stored as **two arrays** — the diagonal (`cholesky_factors_diag`) and the

@@ -10,7 +10,11 @@
  * | 0     | center.xyz, amplitude                       |
  * | 1     | cholesky01.xy, cholesky23.xy                |
  * | 2     | cholesky45.xy, color.rg                     |
- * | 3     | color.b, 0, 0, 0                            |
+ * | 3     | color.b, alpha, 0, 0                        |
+ *
+ * texel3.y is the per-splat opacity alpha (RGBA colors; written 1.0 =
+ * opaque when the dataset is RGB — pool textures are reused, so the
+ * writer never leaves it unspecified).
  *
  * The texture width is a **session constant**: `min(4096,
  * maxTextureSize)`, configured once at renderer init from

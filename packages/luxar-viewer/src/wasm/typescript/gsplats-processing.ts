@@ -376,9 +376,10 @@ const _fusedHiddenCholesky = new Float32Array(MAX_PACKED_CHOLESKY_SIZE);
  * `computeMarginalCholesky` / `mahalanobisDistanceInternal` helpers in the same
  * order). Replaces ~5 full passes and the repeated large-array copies.
  *
- * Colors are pre-normalized to f32 by the caller (white-filled when absent).
- * Outputs are sized for the `splatCount` worst case; the caller slices each to
- * the returned visible count.
+ * Colors are pre-normalized to f32 by the caller (white-filled when absent);
+ * `colorComponents` is 3 (RGB) or 4 (RGBA — alpha is per-splat opacity and
+ * compacts with its splat). Outputs are sized for the `splatCount` worst case;
+ * the caller slices each to the returned visible count.
  *
  * @returns Number of visible splats written.
  */
@@ -393,6 +394,7 @@ export function project_gsplats_nd_to_3d(
   displayDims: Uint32Array,
   ndim: number,
   splatCount: number,
+  colorComponents: number,
   minAmplitude: number,
   truncate: number,
   outCenters3d: Float32Array,
@@ -400,6 +402,9 @@ export function project_gsplats_nd_to_3d(
   outAmplitudes: Float32Array,
   outColors: Float32Array
 ): number {
+  if (colorComponents !== 3 && colorComponents !== 4) {
+    throw new Error('project_gsplats_nd_to_3d: colorComponents must be 3 (RGB) or 4 (RGBA)');
+  }
   const numContinuous = continuousHiddenDims.length;
   const numDisplay = Math.min(displayDims.length, 3);
   const fullPackedSize = (ndim * (ndim + 1)) / 2;
@@ -463,10 +468,11 @@ export function project_gsplats_nd_to_3d(
 
     outAmplitudes[out] = attenuatedAmplitude;
 
-    const colOff = out * 3;
-    outColors[colOff] = colors[i * 3];
-    outColors[colOff + 1] = colors[i * 3 + 1];
-    outColors[colOff + 2] = colors[i * 3 + 2];
+    const colOff = out * colorComponents;
+    const colSrc = i * colorComponents;
+    for (let c = 0; c < colorComponents; c++) {
+      outColors[colOff + c] = colors[colSrc + c];
+    }
 
     out++;
   }

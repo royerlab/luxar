@@ -135,9 +135,34 @@ describe('attachSplatStorage / writeSplatTexels — fused writer round-trip', ()
       expect(arr[o + 9]).toBe(src.cholesky45[i * 2 + 1]);
       expect(arr[o + 10]).toBe(src.colors[i * 3]);
       expect(arr[o + 11]).toBe(src.colors[i * 3 + 1]);
-      // texel 3: color.b, padding zeros
+      // texel 3: color.b, alpha (per-splat opacity). RGB source ⇒ alpha
+      // defaults to 1.0 (opaque), written UNCONDITIONALLY so a reused pool
+      // texel never leaks a previous tenant's alpha.
       expect(arr[o + 12]).toBe(src.colors[i * 3 + 2]);
-      expect(arr[o + 13]).toBe(0);
+      expect(arr[o + 13]).toBe(1.0);
+    }
+  });
+
+  it('packs RGBA colors: alpha (per-splat opacity) lands in texel3.y', () => {
+    const geometry = new THREE.InstancedBufferGeometry();
+    const texture = attachSplatStorage(geometry, 8);
+    const base = makeSource(8);
+    // Widen colors to RGBA with a distinct per-splat alpha ramp.
+    const rgba = new Float32Array(8 * 4);
+    for (let i = 0; i < 8; i++) {
+      rgba.set([base.colors[i * 3], base.colors[i * 3 + 1], base.colors[i * 3 + 2], i * 0.1], i * 4);
+    }
+    const src: SplatTexelSource = { ...base, colors: rgba, colorComponents: 4 };
+    const written = writeSplatTexels(texture, src, 8);
+    expect(written).toBe(8);
+
+    const arr = texture.image.data as Float32Array;
+    for (let i = 0; i < 8; i++) {
+      const o = i * SPLAT_FLOATS_PER_SPLAT;
+      expect(arr[o + 10]).toBe(rgba[i * 4]); // color.r
+      expect(arr[o + 11]).toBe(rgba[i * 4 + 1]); // color.g
+      expect(arr[o + 12]).toBe(rgba[i * 4 + 2]); // color.b
+      expect(arr[o + 13]).toBeCloseTo(i * 0.1, 6); // alpha
     }
   });
 

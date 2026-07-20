@@ -28,6 +28,7 @@ import {
   type LoadRange,
   getExpectedColorType,
   loadColorRanges,
+  colorComponentsOf,
   prefetchRangesIntoCache,
   makeInitialLoaderMetrics,
   buildSpatialIndexMetrics,
@@ -81,6 +82,8 @@ export class GSplatsSpatialIndexLoader implements GSplatsDataLoader {
 
   // Data accumulator for object pooling.
   private _accumulator: GSplatsDataAccumulator | null = null;
+  /** Color layout of this dataset: 3 (RGB) or 4 (RGBA, alpha = per-splat opacity). */
+  private colorComponents: 3 | 4 = 3;
 
   // L0 decompressed chunk cache (optional, avoids Blosc decompression on repeat access)
   private l0Cache: DecompressedChunkCache | null = null;
@@ -260,6 +263,10 @@ export class GSplatsSpatialIndexLoader implements GSplatsDataLoader {
           );
         }
         this.arrays.colors = colorsArray;
+        // Layout (3 = RGB, 4 = RGBA) is a property of the dataset, read once
+        // from the array shape. Downstream (accumulator sizing, texel
+        // packing, uHasElementAlpha) keys off this.
+        this.colorComponents = colorComponentsOf(colorsArray);
       } catch {
         log.info(
           Modules.GSPLATS_SPATIAL_INDEX_LOADER,
@@ -282,6 +289,7 @@ export class GSplatsSpatialIndexLoader implements GSplatsDataLoader {
       );
 
       this._accumulator = new GSplatsDataAccumulator(initialCapacity, ndim);
+      this._accumulator.configureColorComponents(this.colorComponents);
 
       if (appConfig.dataLoading.performance.enablePerformanceMonitoring) {
         const stats = this._accumulator.getStats();
@@ -503,6 +511,7 @@ export class GSplatsSpatialIndexLoader implements GSplatsDataLoader {
       amplitudes,
       choleskyFactors,
       colors,
+      colorComponents: this.colorComponents,
       splatCount: totalSplats,
       ndim: attrs.ndim,
     };

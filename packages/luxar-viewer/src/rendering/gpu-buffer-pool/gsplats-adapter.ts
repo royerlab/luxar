@@ -37,7 +37,9 @@ export interface PackedGSplatsData {
   cholesky01: Float32Array; // M * 2 [L00, L10]
   cholesky23: Float32Array; // M * 2 [L11, L20]
   cholesky45: Float32Array; // M * 2 [L21, L22]
-  colors: Float32Array; // M * 3 (RGB)
+  colors: Float32Array; // M * 3 (RGB) or M * 4 (RGBA — alpha = per-splat opacity)
+  /** Components per color item: 3 (RGB) or 4 (RGBA). Absent means 3. */
+  colorComponents?: 3 | 4;
 }
 
 function createGSplatsGeometry(splatCapacity: number): THREE.InstancedBufferGeometry {
@@ -215,6 +217,7 @@ export class GSplatsBufferAdapter {
         cholesky45: data.cholesky45,
         amplitudes: data.amplitudes,
         colors: data.colors,
+        colorComponents: data.colorComponents,
       },
       count,
       { fromSplat }

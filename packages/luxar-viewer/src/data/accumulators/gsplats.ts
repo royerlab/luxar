@@ -58,6 +58,8 @@ export class GSplatsDataAccumulator implements DataAccumulator<
   private capacity: number;
   private ndim: number;
   private choleskySize: number; // Elements per splat
+  /** Components per color item: 3 (RGB) or 4 (RGBA — alpha = per-splat opacity). */
+  private colorComponents: 3 | 4 = 3;
 
   private allocations = 0;
   private totalGrowths = 0;
@@ -84,8 +86,36 @@ export class GSplatsDataAccumulator implements DataAccumulator<
     this.centerBuffer = new Float32Array(initialCapacity * ndim);
     this.amplitudeBuffer = new Float32Array(initialCapacity);
     this.choleskyBuffer = new Float32Array(initialCapacity * this.choleskySize);
-    this.colorBuffer = new Float32Array(initialCapacity * 3); // RGB
+    this.colorBuffer = new Float32Array(initialCapacity * 3); // RGB(A) — see configureColorComponents
 
+    this.allocations++;
+  }
+
+  /**
+   * Declare the color layout (3 = RGB, 4 = RGBA) BEFORE the first color
+   * fill. The loader knows the layout from the zarr array shape at open
+   * time; the accumulator needs it to size every color buffer. Throws if
+   * colors were already written with a different layout — the layout is a
+   * property of the dataset, not of an individual load.
+   */
+  configureColorComponents(components: 3 | 4): void {
+    this.assertNotDisposed('configureColorComponents');
+    if (components === this.colorComponents) return;
+    if (this.hasColors) {
+      throw new Error(
+        `GSplatsDataAccumulator: color layout changed to ${components} components after ` +
+          `colors were already written with ${this.colorComponents}`
+      );
+    }
+    this.colorComponents = components;
+    // Re-size the (still empty) color buffer, preserving its element type.
+    const n = this.capacity * components;
+    this.colorBuffer =
+      this.colorBuffer instanceof Uint8Array
+        ? new Uint8Array(n)
+        : this.colorBuffer instanceof Uint16Array
+          ? new Uint16Array(n)
+          : new Float32Array(n);
     this.allocations++;
   }
 
@@ -111,9 +141,9 @@ export class GSplatsDataAccumulator implements DataAccumulator<
 
     // Recreate color buffer with correct type (only if types differ from initial Float32)
     if (types.color === 'Uint8Array') {
-      this.colorBuffer = new Uint8Array(this.capacity * 3);
+      this.colorBuffer = new Uint8Array(this.capacity * this.colorComponents);
     } else if (types.color === 'Uint16Array') {
-      this.colorBuffer = new Uint16Array(this.capacity * 3);
+      this.colorBuffer = new Uint16Array(this.capacity * this.colorComponents);
     }
   }
 
@@ -134,7 +164,7 @@ export class GSplatsDataAccumulator implements DataAccumulator<
     // Copy only the live prefix.
     const live = Math.min(this.usedCount, this.capacity);
     const liveCenterFloats = live * this.ndim;
-    const liveColorFloats = live * 3;
+    const liveColorFloats = live * this.colorComponents;
     const liveCholeskyFloats = live * this.choleskySize;
 
     const newCenters = new Float32Array(newCapacity * this.ndim);
@@ -151,15 +181,15 @@ export class GSplatsDataAccumulator implements DataAccumulator<
 
     // Color: Type-preserving growth (like Points accumulator)
     if (this.colorBuffer instanceof Uint8Array) {
-      const newColors = new Uint8Array(newCapacity * 3);
+      const newColors = new Uint8Array(newCapacity * this.colorComponents);
       newColors.set(this.colorBuffer.subarray(0, liveColorFloats));
       this.colorBuffer = newColors;
     } else if (this.colorBuffer instanceof Uint16Array) {
-      const newColors = new Uint16Array(newCapacity * 3);
+      const newColors = new Uint16Array(newCapacity * this.colorComponents);
       newColors.set(this.colorBuffer.subarray(0, liveColorFloats));
       this.colorBuffer = newColors;
     } else {
-      const newColors = new Float32Array(newCapacity * 3);
+      const newColors = new Float32Array(newCapacity * this.colorComponents);
       newColors.set(this.colorBuffer.subarray(0, liveColorFloats));
       this.colorBuffer = newColors;
     }
@@ -179,7 +209,10 @@ export class GSplatsDataAccumulator implements DataAccumulator<
       positions: this.centerBuffer.subarray(0, count * this.ndim),
       amplitudes: this.amplitudeBuffer.subarray(0, count),
       choleskyFactors: this.choleskyBuffer.subarray(0, count * this.choleskySize), // CORRECT: camelCase!
-      colors: this.hasColors ? this.colorBuffer.subarray(0, count * 3) : null, // Nullable based on data presence
+      colors: this.hasColors
+        ? this.colorBuffer.subarray(0, count * this.colorComponents)
+        : null, // Nullable based on data presence
+      colorComponents: this.colorComponents,
       splatCount: count,
       ndim: this.ndim,
     };
@@ -220,11 +253,11 @@ export class GSplatsDataAccumulator implements DataAccumulator<
       this.hasColors = true; // Mark as present
       // Multi-type support: set with correct type (no conversion!)
       if (data.colors instanceof Uint8Array) {
-        (this.colorBuffer as Uint8Array).set(data.colors, offset * 3);
+        (this.colorBuffer as Uint8Array).set(data.colors, offset * this.colorComponents);
       } else if (data.colors instanceof Uint16Array) {
-        (this.colorBuffer as Uint16Array).set(data.colors, offset * 3);
+        (this.colorBuffer as Uint16Array).set(data.colors, offset * this.colorComponents);
       } else {
-        (this.colorBuffer as Float32Array).set(data.colors, offset * 3);
+        (this.colorBuffer as Float32Array).set(data.colors, offset * this.colorComponents);
       }
     }
   }
@@ -234,7 +267,7 @@ export class GSplatsDataAccumulator implements DataAccumulator<
       this.ndim * 4 + // centers
       4 + // amplitude
       this.choleskySize * 4 + // cholesky
-      3 * 4; // color (RGB)
+      this.colorComponents * 4; // color (RGB or RGBA)
 
     return {
       capacity: this.capacity,

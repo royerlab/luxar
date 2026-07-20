@@ -160,7 +160,7 @@ reconstruction = render_gaussians_numpy(image.shape, result, truncate=3.0)
 - `centers`: np.ndarray, shape (N, d) - Splat center positions
 - `amplitudes`: np.ndarray, shape (N,) - Non-negative amplitudes
 - `cholesky_factors`: np.ndarray, shape (N, d*(d+1)//2) - Packed Cholesky factors
-- `colors`: Optional[np.ndarray], shape (N, 3) - RGB colors (uint8 or float32 for HDR)
+- `colors`: Optional[np.ndarray], shape (N, 3) RGB or (N, 4) RGBA (uint8 or float32 for HDR) — the optional alpha channel is per-splat opacity in [0, 1] (consumed by every blending mode; mapped to optical depth in `volumetric`)
 - `stats`: Dict[str, Any] - Optimization statistics
 
 The result can be directly passed to `render_gaussians_numpy()` or `render_gaussians_pytorch()` for rendering, or added to a Scene (see below).
@@ -955,7 +955,7 @@ Main fitting function with automatic optimizations.
 - `centers`: np.ndarray, shape (N, d) - Splat center positions
 - `amplitudes`: np.ndarray, shape (N,) - Non-negative amplitudes
 - `cholesky_factors`: np.ndarray, shape (N, d*(d+1)//2) - Packed Cholesky factors
-- `colors`: Optional[np.ndarray], shape (N, 3) - RGB colors
+- `colors`: Optional[np.ndarray], shape (N, 3) RGB or (N, 4) RGBA — the optional alpha channel is per-splat opacity in [0, 1]
 - `stats`: Dict[str, Any] - Optimization statistics
 
 #### `fit_tiled(volume, tile_size=256, overlap=32, **fit_kwargs)`

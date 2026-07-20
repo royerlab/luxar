@@ -10,8 +10,10 @@ Semantics notes
 ---------------
 - Luxar ``amplitudes`` are unbounded emission weights while classical opacity
   lives in (0, 1): the default ``normalized`` policy rescales robustly (99.5th
-  percentile → 1). Data that came from :func:`~.classical_splats.import_gsplats`
-  already holds opacities, so ``amplitude`` round-trips it losslessly.
+  percentile → 1). A per-splat color ALPHA channel (RGBA colors) is classical
+  opacity itself and multiplies into both data-driven policies verbatim — data
+  that came from :func:`~.classical_splats.import_gsplats` (amplitudes = 1,
+  opacity in alpha) round-trips losslessly under the default policy.
 - If the data was imported, the orientation applied at import time (recorded
   in ``stats["interop"]``) is inverted by default so import → export is an
   identity in the source frame.
@@ -60,13 +62,24 @@ def _normalized_amplitudes(amplitudes: np.ndarray) -> np.ndarray:
 
 def _opacity_logits(
     amplitudes: np.ndarray,
+    alpha: Optional[np.ndarray],
     policy: OpacityPolicy,
     constant_opacity: float,
 ) -> np.ndarray:
+    """Opacity logits from amplitudes and the optional color alpha channel.
+
+    A per-splat alpha (RGBA colors) IS classical opacity, so it multiplies
+    into both data-driven policies verbatim — never rescaled. Data imported
+    from a classical file (amplitudes = 1, opacity in alpha) round-trips
+    bit-faithfully under both ``normalized`` (ones normalize to ones) and
+    ``amplitude``.
+    """
+    if alpha is None:
+        alpha = np.ones_like(np.asarray(amplitudes, dtype=np.float64))
     if policy == "normalized":
-        return _logit(_normalized_amplitudes(amplitudes))
+        return _logit(_normalized_amplitudes(amplitudes) * alpha)
     if policy == "amplitude":
-        return _logit(amplitudes)
+        return _logit(amplitudes * alpha)
     if policy == "constant":
         return np.full(
             amplitudes.shape, _logit(np.asarray(constant_opacity)), dtype=np.float64
@@ -237,8 +250,10 @@ def gsplat_data_to_inria_ply(
         data: Source splats (any matrix shape; the finest content is exported).
         opacity_policy: ``normalized`` (robust rescale of amplitudes into
             (0, 1), the honest default for unbounded emission weights),
-            ``amplitude`` (clip raw values — lossless for imported data), or
-            ``constant`` (fixed ``constant_opacity``).
+            ``amplitude`` (clip raw values), or ``constant`` (fixed
+            ``constant_opacity``). A color alpha channel multiplies into both
+            data-driven policies verbatim, so imported data (amplitudes = 1,
+            opacity in alpha) round-trips losslessly under the default.
         color_source: ``auto`` = per-splat colors if present, else colormap if
             given, else white; or force ``colors`` / ``colormap`` / ``white``.
         colormap: Colormap name for baking scalar amplitudes to RGB.
@@ -264,8 +279,15 @@ def gsplat_data_to_inria_ply(
     if undo_orientation:
         centers, sigma = _undo_import_orientation(centers, sigma, data)
 
+    # RGBA colors: the alpha channel is per-splat opacity — it feeds the PLY
+    # opacity field (via _opacity_logits), never the DC color bands.
+    alpha: Optional[np.ndarray] = None
+    if per_splat_colors is not None and per_splat_colors.shape[1] == 4:
+        alpha = per_splat_colors[:, 3]
+        per_splat_colors = per_splat_colors[:, :3]
+
     log_scales, quats = _scales_and_quats(sigma)
-    opacity = _opacity_logits(amplitudes, opacity_policy, constant_opacity)
+    opacity = _opacity_logits(amplitudes, alpha, opacity_policy, constant_opacity)
 
     rgb = _resolve_colors(amplitudes, per_splat_colors, color_source, colormap)
     f_dc = (rgb - 0.5) / SH_C0

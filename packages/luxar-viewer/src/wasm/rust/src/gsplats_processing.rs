@@ -439,8 +439,9 @@ pub fn compact_attenuated_amplitudes(
 /// test `test_fused_matches_multicall`.
 ///
 /// Colors are coerced to normalized f32 on the TS side (wasm-bindgen can't take
-/// a typed-array union), so `colors` is `[splat_count * 3]` f32 (white-filled
-/// when the dataset has no colors).
+/// a typed-array union), so `colors` is `[splat_count * color_components]` f32
+/// (white-filled when the dataset has no colors). `color_components` is 3 (RGB)
+/// or 4 (RGBA — alpha is per-splat opacity and compacts with its splat).
 ///
 /// Outputs must be sized for the `splat_count` worst case; the caller slices
 /// each to the returned visible count.
@@ -449,14 +450,15 @@ pub fn compact_attenuated_amplitudes(
 /// * `positions` - Splat centers [splat_count * ndim]
 /// * `cholesky` - Packed Cholesky factors [splat_count * packedSize]
 /// * `amplitudes` - Splat amplitudes [splat_count]
-/// * `colors` - Pre-normalized RGB [splat_count * 3]
+/// * `colors` - Pre-normalized RGB(A) [splat_count * color_components]
+/// * `color_components` - 3 (RGB) or 4 (RGBA)
 /// * `discrete_visibility` - Precomputed discrete-dim gate [splat_count] (all 1 if none)
 /// * `slice_position` - Current slice [ndim]
 /// * `continuous_hidden_dims` - Sorted continuous hidden dims [num_continuous]
 /// * `display_dims` - Display dims in requested order [2 or 3]
 /// * `ndim`, `splat_count`, `min_amplitude`, `truncate`
 /// * `out_centers3d` [splat_count * 3], `out_cholesky3d` [splat_count * 6],
-///   `out_amplitudes` [splat_count], `out_colors` [splat_count * 3]
+///   `out_amplitudes` [splat_count], `out_colors` [splat_count * color_components]
 ///
 /// # Returns
 /// Number of visible splats written (dense prefix length / stride).
@@ -476,6 +478,7 @@ pub fn project_gsplats_nd_to_3d(
     display_dims: &[u32],
     ndim: usize,
     splat_count: usize,
+    color_components: usize,
     min_amplitude: f32,
     truncate: f32,
     out_centers3d: &mut [f32],
@@ -484,6 +487,10 @@ pub fn project_gsplats_nd_to_3d(
     out_colors: &mut [f32],
 ) -> u32 {
     validate_ndim(ndim, "project_gsplats_nd_to_3d");
+    assert!(
+        color_components == 3 || color_components == 4,
+        "color_components must be 3 (RGB) or 4 (RGBA)"
+    );
 
     debug_assert!(
         out_centers3d.len() >= splat_count * 3,
@@ -497,7 +504,10 @@ pub fn project_gsplats_nd_to_3d(
         out_amplitudes.len() >= splat_count,
         "out_amplitudes too small"
     );
-    debug_assert!(out_colors.len() >= splat_count * 3, "out_colors too small");
+    debug_assert!(
+        out_colors.len() >= splat_count * color_components,
+        "out_colors too small"
+    );
 
     let num_continuous = continuous_hidden_dims.len();
     let num_display = display_dims.len().min(3);
@@ -573,10 +583,10 @@ pub fn project_gsplats_nd_to_3d(
 
         out_amplitudes[out] = attenuated_amplitude;
 
-        let col_off = out * 3;
-        out_colors[col_off] = colors[i * 3];
-        out_colors[col_off + 1] = colors[i * 3 + 1];
-        out_colors[col_off + 2] = colors[i * 3 + 2];
+        let col_off = out * color_components;
+        let col_src = i * color_components;
+        out_colors[col_off..col_off + color_components]
+            .copy_from_slice(&colors[col_src..col_src + color_components]);
 
         out += 1;
     }
@@ -977,6 +987,7 @@ mod tests {
             &display,
             ndim,
             n,
+            3,
             min_amp,
             truncate,
             &mut f_centers,

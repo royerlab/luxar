@@ -202,7 +202,11 @@ class TestHDRColorSupport:
                 compiler.write_points("negative_colors", positions, colors=colors)
 
     def test_color_channel_count(self, tmp_path) -> None:
-        """Test that only RGB (3 channels) is accepted."""
+        """Points accept only RGB (3 channels).
+
+        GSplats accept RGBA (the 4th channel is per-splat opacity); points
+        and lines stay RGB-only until their volumetric phases (3–4).
+        """
         with LuxarZarrCompiler(tmp_path / "channels.luxar.zarr") as compiler:
             compiler.create_scene(dimensions=Dimensions.default_3d())
 
@@ -212,12 +216,12 @@ class TestHDRColorSupport:
             rgba_colors = np.random.rand(100, 4).astype(np.float32)
             from luxar.validation import ValidationError
 
-            with pytest.raises(ValidationError, match="must have 3 channels"):
+            with pytest.raises(ValidationError, match="must have 3 .RGB. channels"):
                 compiler.write_points("rgba", positions, colors=rgba_colors)
 
             # Test grayscale (1 channel) - should fail
             gray_colors = np.random.rand(100, 1).astype(np.float32)
-            with pytest.raises(ValidationError, match="must have 3 channels"):
+            with pytest.raises(ValidationError, match="must have 3 .RGB. channels"):
                 compiler.write_points("gray", positions, colors=gray_colors)
 
     def test_no_colors_allowed(self, tmp_path) -> None:

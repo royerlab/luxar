@@ -946,6 +946,7 @@ describe('WASM vs TypeScript Comparison', () => {
         args.displayDims,
         args.ndim,
         n,
+        3,
         1e-6,
         3.0,
         centers,

@@ -125,17 +125,53 @@ class TestColorValidation:
         with pytest.raises(ValidationError) as exc_info:
             validate_colors_for_writing(colors, 100)
 
-        assert "Got single RGB color" in str(exc_info.value)
+        assert "Got single color" in str(exc_info.value)
         assert "(1, 3) for broadcasting" in str(exc_info.value)
 
     def test_wrong_channel_count(self) -> None:
-        """Test error for wrong number of color channels."""
+        """RGBA is rejected by default: geometry types opt in via channels."""
         colors = np.random.rand(100, 4).astype(np.float32)  # RGBA instead of RGB
         with pytest.raises(ValidationError) as exc_info:
             validate_colors_for_writing(colors, 100)
 
-        assert "must have 3 channels" in str(exc_info.value)
+        assert "must have 3 (RGB) channels" in str(exc_info.value)
         assert "got 4 channels" in str(exc_info.value)
+
+    def test_rgba_accepted_when_opted_in(self) -> None:
+        """channels=(3, 4) accepts RGBA (full and broadcast shapes)."""
+        colors = np.random.rand(100, 4).astype(np.float32)
+        validate_colors_for_writing(colors, 100, channels=(3, 4))  # no raise
+        validate_colors_for_writing(
+            np.array([[0.2, 0.4, 0.6, 0.5]], dtype=np.float32), 100, channels=(3, 4)
+        )
+        # RGB stays accepted alongside
+        validate_colors_for_writing(
+            np.random.rand(100, 3).astype(np.float32), 100, channels=(3, 4)
+        )
+
+    def test_rgba_alpha_out_of_range_rejected(self) -> None:
+        """Alpha is per-element opacity: values > 1 are rejected even when
+        the RGB columns are legitimately HDR (> 1)."""
+        colors = np.random.rand(100, 4).astype(np.float32)
+        colors[:, :3] *= 5.0  # HDR RGB is fine
+        colors[7, 3] = 1.5  # alpha > 1 is not
+        with pytest.raises(ValidationError) as exc_info:
+            validate_colors_for_writing(colors, 100, channels=(3, 4))
+
+        assert "alpha channel must be within [0, 1]" in str(exc_info.value)
+
+    def test_rgba_alpha_nan_rejected(self) -> None:
+        """A NaN alpha would poison downstream multiplicative composition."""
+        colors = np.random.rand(100, 4).astype(np.float32)
+        colors[3, 3] = np.nan
+        with pytest.raises(ValidationError):
+            validate_colors_for_writing(colors, 100, channels=(3, 4))
+
+    def test_rgba_five_channels_rejected_even_opted_in(self) -> None:
+        """channels=(3, 4) still rejects other widths."""
+        colors = np.random.rand(100, 5).astype(np.float32)
+        with pytest.raises(ValidationError):
+            validate_colors_for_writing(colors, 100, channels=(3, 4))
 
     def test_mismatched_count(self) -> None:
         """Test error for mismatched color count."""
