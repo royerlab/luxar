@@ -35,45 +35,9 @@ import {
   shouldStopAfterLevel,
 } from '../loaders/progressive/streaming-policy';
 import { restoreLadder, storeLadder } from '../loaders/progressive/slice-cache-helper';
+import { viewStatesEqual } from '../loaders/progressive/view-state-equal';
 import type { SliceCache } from '../../cache/slice-cache';
 import { log, Modules, LogEmoji } from '../../utils/log';
-
-/**
- * Compare two GSplatsViewState objects for query-affecting equality.
- * Compares displayDims, slicePosition, and tolerance element-wise.
- *
- * INVARIANT: this equality is the linchpin of the no-op commit skip.
- * When it reports equal AND no new LODs loaded, `updateView` returns the
- * MEMOIZED concatenation — same object reference — and the commit pipeline
- * treats reference equality as content equality
- * (`mesh.userData.committedData === data`). Any new query-affecting field
- * added to the view state MUST be compared here, or the skip will serve
- * stale data.
- */
-function viewStatesEqual(a: GSplatsViewState, b: GSplatsViewState): boolean {
-  if (a.displayDims.length !== b.displayDims.length) return false;
-  for (let i = 0; i < a.displayDims.length; i++) {
-    if (a.displayDims[i] !== b.displayDims[i]) return false;
-  }
-
-  if (a.slicePosition.length !== b.slicePosition.length) return false;
-  for (let i = 0; i < a.slicePosition.length; i++) {
-    if (a.slicePosition[i] !== b.slicePosition[i]) return false;
-  }
-
-  if (a.tolerance.length !== b.tolerance.length) return false;
-  for (let i = 0; i < a.tolerance.length; i++) {
-    if (a.tolerance[i] !== b.tolerance[i]) return false;
-  }
-
-  // Compare dimensions (reference equality or JSON for rare metadata changes)
-  if (a.dimensions !== b.dimensions) {
-    if (!a.dimensions || !b.dimensions) return false;
-    if (JSON.stringify(a.dimensions) !== JSON.stringify(b.dimensions)) return false;
-  }
-
-  return true;
-}
 
 /**
  * Concatenate multiple LoadedGSplatsData into one.
