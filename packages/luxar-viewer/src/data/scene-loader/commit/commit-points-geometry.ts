@@ -42,6 +42,7 @@ import {
   setCommittedData,
 } from '../../../types/committed-data';
 import { getPrefixParent, setPrefixParent } from '../../../types/prefix-lineage';
+import { clampPointCapacity } from '../../../rendering/element-texture-layout';
 import { log, Modules } from '../../../utils/log';
 import type { UpdateSession } from '../../../profiling/update-profiler';
 import type { GPUBufferPool } from '../../../rendering/gpu-buffer-pool';
@@ -99,6 +100,16 @@ export function commitPointsGeometry(
     );
   }
 
+  // SEMANTIC clamp at the commit choke point (mirrors
+  // commit-gsplats-geometry.ts): the GPU writers below clamp the WRITTEN
+  // points to the per-node texture bound (element-texture-layout), so
+  // every count this commit records — visiblePointCount, the append-gate
+  // comparisons — must be the clamped one. Otherwise a later sorted
+  // ordering over the recorded count would carry aSortedIndex slot values
+  // ≥ the texture capacity, and those entries would fetch out-of-bounds
+  // texels.
+  const pointCount = clampPointCapacity(data.pointCount);
+
   // Pre-commit state for the append predicate below. Captured BEFORE the
   // stamps overwrite them: the pool branch reassigns `points.geometry`, and
   // `visiblePointCount` is overwritten on the next line.
@@ -107,7 +118,7 @@ export function commitPointsGeometry(
   const prevCount = points.userData.visiblePointCount;
 
   // Type guard already passed in the early-return above.
-  points.userData.visiblePointCount = data.pointCount;
+  points.userData.visiblePointCount = pointCount;
   // Slice-aware LOD freshness stamp (see commit-gsplats-geometry.ts).
   stampLoadedViewVersion(points.userData, loadedViewVersion);
   // Ladder-completeness stamp for the never-downgrade display gate.
@@ -125,13 +136,14 @@ export function commitPointsGeometry(
   const bufferSession = session?.begin('Update Buffers');
   try {
     if (gpuBufferPool) {
-      // Acquire geometry from pool (type-aware: matches capacity AND attribute types).
-      const geometry = gpuBufferPool.acquirePointsGeometry(path, data, data.pointCount);
-      // Pool rebuilt the geometry's InstancedInterleavedBuffer (grow,
-      // pool swap, or fresh allocation). The mesh's cached RenderObject
-      // in Three's WebGPURenderer still references the old buffer; the
-      // helper dispatches a `dispose` event on the material to evict
-      // that cache. No-op under WebGL2 / pre-init / no cached entry.
+      // Acquire geometry from pool (capacity-aware: the fixed 3-texel
+      // layout means any pooled points geometry fits any points node).
+      const geometry = gpuBufferPool.acquirePointsGeometry(path, pointCount);
+      // Pool rebuilt the geometry's storage (grow, pool swap, or fresh
+      // allocation). The mesh's cached RenderObject in Three's
+      // WebGPURenderer still references the old buffers; the helper
+      // dispatches a `dispose` event on the material to evict that
+      // cache. No-op under WebGL2 / pre-init / no cached entry.
       const attributesRebuilt = gpuBufferPool.didLastAcquireRebuildAttributes();
       // Append fast path (depth-sorting Phase 4 Stage 2): when this commit
       // merely EXTENDS the prefix already on the GPU, write & upload only the
@@ -150,21 +162,23 @@ export function commitPointsGeometry(
       // - prefix lineage === committedData: the new concat result forward-
       //   chains to the exact object last committed here — proving same
       //   generation (view unchanged), a genuine extension, and that the GPU
-      //   still holds that parent's projection.
+      //   still holds that parent's projection. This conjunct also covers
+      //   dtype: the concat's arrays carry one dtype per field, so the
+      //   prefix widens to bit-identical floats on both commits.
       // - optional-field presence must MATCH the committed parent: the concat
       //   is all-or-nothing per field (concatOptionalField), so a new level
       //   WITHOUT e.g. Float32 colors drops the merged field entirely and the
       //   adapter's constant fill would differ from the prefix's committed
-      //   values. (Uint8/Uint16 flips and aScalar presence already force
-      //   attributesRebuilt via the pool's type matching; Float32↔absent is
-      //   invisible to it, hence this explicit conjunct.)
+      //   values. (The fixed texel layout means the pool no longer rebuilds
+      //   on dtype/scalar-presence changes — these presence conjuncts are
+      //   now the SOLE guard for every optional field, scalars included.)
       const committed = getCommittedData(points) as LoadedPointsData | undefined;
       const canAppend =
         hadCommittedData &&
         !attributesRebuilt &&
         geometry === prevGeometry &&
         points.userData.gpuPrefixIntact === true &&
-        data.pointCount > (prevCount ?? 0) &&
+        pointCount > (prevCount ?? 0) &&
         committed !== undefined &&
         getPrefixParent(data) !== undefined &&
         getPrefixParent(data) === committed &&
@@ -178,7 +192,7 @@ export function commitPointsGeometry(
       // write below reads `undefined` and full-rewrites, the safe direction.
       setPrefixParent(data, null);
       try {
-        gpuBufferPool.updatePointsGeometry(geometry, data, data.pointCount, {
+        gpuBufferPool.updatePointsGeometry(geometry, data, pointCount, {
           fromInstance: canAppend ? (prevCount ?? 0) : 0,
         });
 

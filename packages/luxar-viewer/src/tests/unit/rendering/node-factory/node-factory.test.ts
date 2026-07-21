@@ -17,6 +17,8 @@ import { NodeFactory } from '../../../../rendering/node-factory';
 import type { LoadedPointsData } from '../../../../data/data-loader-types';
 import { mulberry32 } from '../../../helpers/random';
 import { attachSplatStorage, getSplatTexture } from '../../../../rendering/gsplat-geometry';
+import { attachPointStorage, getPointTexture } from '../../../../rendering/point-geometry';
+import { POINT_FLOATS_PER_POINT } from '../../../../rendering/element-texture-layout';
 
 // Audit C3 fix: `Math.random()` replaced with a seedable PRNG so failures
 // can be reproduced. The seed is fixed per call site below; bump it if
@@ -107,64 +109,86 @@ describe('NodeFactory', () => {
   });
 
   describe('createPointsGeometry', () => {
-    it('should create geometry with positions only', () => {
+    // Read one float of point i's texel block (layout in point-geometry.ts:
+    // [0..2] center, [3] radius, [4..6] color, [7] sharpness, [8] scalar,
+    // [9] alpha).
+    const texel = (geometry: THREE.BufferGeometry, i: number, offset: number): number =>
+      (getPointTexture(geometry)!.image.data as Float32Array)[i * POINT_FLOATS_PER_POINT + offset];
+
+    it('should create geometry with positions only (texture storage pair)', () => {
       const data = createMockPointsData({ pointCount: 50 });
       const geometry = factory.createPointsGeometry(data);
 
       expect(geometry).toBeInstanceOf(THREE.InstancedBufferGeometry);
-      expect(geometry.getAttribute('aCenter')).toBeDefined();
-      expect(geometry.getAttribute('aCenter').count).toBe(50);
+      // Exact-size point texture + identity aSortedIndex replace the old
+      // per-instance attributes.
+      const texture = getPointTexture(geometry);
+      expect(texture).not.toBeNull();
+      expect((texture!.image.data as Float32Array).length).toBeGreaterThanOrEqual(
+        50 * POINT_FLOATS_PER_POINT
+      );
+      const sortedIndex = geometry.getAttribute('aSortedIndex');
+      expect(sortedIndex.array).toBeInstanceOf(Uint32Array);
+      expect((sortedIndex.array as Uint32Array)[49]).toBe(49); // identity ordering
       expect((geometry as THREE.InstancedBufferGeometry).instanceCount).toBe(50);
       expect(geometry.drawRange.count).toBe(6);
+      // Positions land in texel 0.
+      expect(texel(geometry, 0, 0)).toBe(data.positions[0]);
+      expect(texel(geometry, 49, 2)).toBe(data.positions[49 * 3 + 2]);
     });
 
-    it('should create geometry with colors', () => {
+    it('should write colors into texel 1', () => {
       const data = createMockPointsData({ pointCount: 50, hasColors: true });
       const geometry = factory.createPointsGeometry(data);
 
-      expect(geometry.getAttribute('aColor')).toBeDefined();
-      expect(geometry.getAttribute('aColor').count).toBe(50);
+      expect(texel(geometry, 0, 4)).toBeCloseTo((data.colors as Float32Array)[0], 6);
+      expect(texel(geometry, 49, 6)).toBeCloseTo((data.colors as Float32Array)[49 * 3 + 2], 6);
     });
 
-    it('should create geometry with radii', () => {
+    it('should write radii into texel 0 alpha', () => {
       const data = createMockPointsData({ pointCount: 50, hasRadii: true });
       const geometry = factory.createPointsGeometry(data);
 
-      expect(geometry.getAttribute('aRadius')).toBeDefined();
-      expect(geometry.getAttribute('aRadius').count).toBe(50);
+      expect(texel(geometry, 0, 3)).toBeCloseTo((data.radii as Float32Array)[0], 6);
+      expect(texel(geometry, 49, 3)).toBeCloseTo((data.radii as Float32Array)[49], 6);
     });
 
-    it('should create geometry with sharpness', () => {
+    it('should write sharpness into texel 1 alpha', () => {
       const data = createMockPointsData({ pointCount: 50, hasSharpness: true });
       const geometry = factory.createPointsGeometry(data);
 
-      expect(geometry.getAttribute('aSharpness')).toBeDefined();
-      expect(geometry.getAttribute('aSharpness').count).toBe(50);
+      expect(texel(geometry, 0, 7)).toBeCloseTo((data.sharpness as Float32Array)[0], 6);
+      expect(texel(geometry, 49, 7)).toBeCloseTo((data.sharpness as Float32Array)[49], 6);
     });
 
     it('should set default radius when not provided', () => {
       const data = createMockPointsData({ pointCount: 50 });
       const geometry = factory.createPointsGeometry(data);
 
-      const radiusAttr = geometry.getAttribute('aRadius');
-      expect(radiusAttr).toBeDefined();
-      expect(radiusAttr.count).toBe(50);
       // Default radius is 0.5
-      expect(radiusAttr.array[0]).toBe(0.5);
+      expect(texel(geometry, 0, 3)).toBe(0.5);
+      expect(texel(geometry, 49, 3)).toBe(0.5);
     });
 
     it('should set default sharpness when not provided', () => {
       const data = createMockPointsData({ pointCount: 50 });
       const geometry = factory.createPointsGeometry(data);
 
-      const sharpnessAttr = geometry.getAttribute('aSharpness');
-      expect(sharpnessAttr).toBeDefined();
-      expect(sharpnessAttr.count).toBe(50);
       // Default sharpness is 0.5 (-> beta=2, a true Gaussian).
-      expect(sharpnessAttr.array[0]).toBe(0.5);
+      expect(texel(geometry, 0, 7)).toBe(0.5);
+      expect(texel(geometry, 49, 7)).toBe(0.5);
     });
 
-    it('should handle uint8 colors with normalization', () => {
+    it('writes the scalar identity 0.0 and alpha identity 1.0 unconditionally', () => {
+      const data = createMockPointsData({ pointCount: 4 });
+      const geometry = factory.createPointsGeometry(data);
+      for (let i = 0; i < 4; i++) {
+        expect(texel(geometry, i, 8)).toBe(0.0); // no scalars in this dataset
+        expect(texel(geometry, i, 9)).toBe(1.0); // opaque per-point alpha
+      }
+    });
+
+    it('should handle uint8 colors with normalization (÷255 at upload)', () => {
       const data = createMockPointsData({
         pointCount: 50,
         hasColors: true,
@@ -172,9 +196,10 @@ describe('NodeFactory', () => {
       });
       const geometry = factory.createPointsGeometry(data);
 
-      const colorAttr = geometry.getAttribute('aColor');
-      expect(colorAttr).toBeDefined();
-      expect(colorAttr.normalized).toBe(true);
+      // The texel holds the widened [0, 1] value the old
+      // `normalized: true` binding produced in the shader.
+      expect(texel(geometry, 0, 4)).toBeCloseTo((data.colors as Uint8Array)[0] / 255, 6);
+      expect(texel(geometry, 49, 5)).toBeCloseTo((data.colors as Uint8Array)[49 * 3 + 1] / 255, 6);
     });
 
     it('should handle uint8 radii with proper scaling', () => {
@@ -185,9 +210,10 @@ describe('NodeFactory', () => {
       });
       const geometry = factory.createPointsGeometry(data, 2.0);
 
-      const radiusAttr = geometry.getAttribute('aRadius');
-      expect(radiusAttr).toBeDefined();
-      expect(radiusAttr.normalized).toBe(true);
+      // Uint8 radii widen to [0, 1] in the texel; the shader multiplies
+      // by radiusScale (= maxRadius) exactly as the normalized binding
+      // did.
+      expect(texel(geometry, 0, 3)).toBeCloseTo((data.radii as Uint8Array)[0] / 255, 6);
       expect(geometry.userData.radiusScale).toBe(2.0);
       // Uint8 normalized radii map to [0, maxRadius], so the footprint
       // baked into boundingBox is maxRadius (2.0): centers [0,10] → [-2,12].
@@ -207,7 +233,6 @@ describe('NodeFactory', () => {
       });
       const geometry = factory.createPointsGeometry(data, 50.0);
 
-      expect(geometry.getAttribute('aRadius').normalized).toBe(false);
       expect(geometry.userData.radiusScale).toBe(1.0); // shader contract unchanged
       // Footprint 50 baked into boundingBox: centers [0,10] → [-50,60].
       expect(geometry.boundingBox?.min.x).toBeCloseTo(-50, 5);
@@ -218,7 +243,7 @@ describe('NodeFactory', () => {
       const data = createMockPointsData({ pointCount: 50 });
       const geometry = factory.createPointsGeometry(data);
 
-      // No radii → aRadius filled with 0.5; boundingBox grows by 0.5.
+      // No radii → radius texels filled with 0.5; boundingBox grows by 0.5.
       expect(geometry.boundingBox?.min.x).toBeCloseTo(-0.5, 5);
       expect(geometry.boundingBox?.max.x).toBeCloseTo(10.5, 5);
     });
@@ -491,10 +516,11 @@ describe('NodeFactory', () => {
 
   describe('rebuildAfterContextRestore — GPU full-dirty (Phase 4 Stage 2)', () => {
     // After a WebGL context loss the GPU buffers are gone while the CPU
-    // mirror survives, so every splat texture + aSortedIndex (gsplats) and
-    // every interleaved instance buffer (points/lines) must be marked
-    // full-dirty (empty ranges → full upload) and the append-fast-path
-    // flag cleared so the next commit does a full rewrite, not a suffix append.
+    // mirror survives, so every element texture + aSortedIndex
+    // (gsplats AND points) and every interleaved instance buffer (lines)
+    // must be marked full-dirty (empty ranges → full upload) and the
+    // append-fast-path flag cleared so the next commit does a full
+    // rewrite, not a suffix append.
     const makeGSplatMesh = (): THREE.Mesh => {
       const geom = new THREE.InstancedBufferGeometry();
       attachSplatStorage(geom, 8);
@@ -503,14 +529,24 @@ describe('NodeFactory', () => {
       return mesh;
     };
 
-    // Pool-style interleaved mesh for points/lines: two attribute views over
-    // one shared InstancedInterleavedBuffer, mirroring the adapters' layout.
-    const makeInterleavedMesh = (nodeType: 'points' | 'lines'): THREE.Mesh => {
+    // Texture-backed points mesh: point texture + aSortedIndex, same
+    // storage shape on the pool AND non-pool paths.
+    const makePointsTextureMesh = (): THREE.Mesh => {
+      const geom = new THREE.InstancedBufferGeometry();
+      attachPointStorage(geom, 8);
+      const mesh = new THREE.Mesh(geom, new THREE.MeshBasicMaterial());
+      mesh.userData = { nodeType: 'points', gpuPrefixIntact: true };
+      return mesh;
+    };
+
+    // Pool-style interleaved mesh for lines: two attribute views over
+    // one shared InstancedInterleavedBuffer, mirroring the adapter's layout.
+    const makeInterleavedMesh = (nodeType: 'lines'): THREE.Mesh => {
       const geom = new THREE.InstancedBufferGeometry();
       const buffer = new THREE.InstancedInterleavedBuffer(new Float32Array(8 * 4), 4, 1);
       geom.setAttribute('aCenter', new THREE.InterleavedBufferAttribute(buffer, 3, 0));
       geom.setAttribute('aRadius', new THREE.InterleavedBufferAttribute(buffer, 1, 3));
-      // Plain (non-interleaved) attribute alongside — the non-pool points
+      // Plain (non-interleaved) attribute alongside — the non-pool lines
       // layout binds plain InstancedBufferAttributes, which the restore hook
       // must mark full-dirty via the else-branch.
       geom.setAttribute('aPlain', new THREE.InstancedBufferAttribute(new Float32Array(8), 1));
@@ -548,8 +584,36 @@ describe('NodeFactory', () => {
       expect((mesh.userData as { gpuPrefixIntact: boolean }).gpuPrefixIntact).toBe(false);
     });
 
-    it('marks points/lines interleaved buffers full-dirty and drops gpuPrefixIntact', () => {
-      for (const nodeType of ['points', 'lines'] as const) {
+    it('marks the points texture + aSortedIndex full-dirty and drops gpuPrefixIntact', () => {
+      // Points get the same texture treatment as gsplats since the
+      // texture-storage migration (Stage 2).
+      const mesh = makePointsTextureMesh();
+      const geom = mesh.geometry as THREE.InstancedBufferGeometry;
+      const tex = getPointTexture(geom)!;
+      const idx = geom.getAttribute('aSortedIndex') as THREE.InstancedBufferAttribute;
+      // Seed a partial (append-style) pending range as if a suffix commit
+      // had registered one; snapshot versions to prove the hook re-armed
+      // the upload (needsUpdate is a write-only setter).
+      tex.clearUpdateRanges();
+      tex.addUpdateRange(48, 24);
+      idx.clearUpdateRanges();
+      idx.addUpdateRange(4, 4);
+      const texVersion = tex.version;
+      const idxVersion = idx.version;
+
+      const root = new THREE.Group();
+      root.add(mesh);
+      factory.rebuildAfterContextRestore(root);
+
+      expect(tex.updateRanges.length).toBe(0);
+      expect(tex.version).toBeGreaterThan(texVersion);
+      expect(idx.updateRanges.length).toBe(0);
+      expect(idx.version).toBeGreaterThan(idxVersion);
+      expect((mesh.userData as { gpuPrefixIntact: boolean }).gpuPrefixIntact).toBe(false);
+    });
+
+    it('marks lines interleaved buffers full-dirty and drops gpuPrefixIntact', () => {
+      for (const nodeType of ['lines'] as const) {
         const mesh = makeInterleavedMesh(nodeType);
         const geom = mesh.geometry as THREE.InstancedBufferGeometry;
         const buffer = (geom.getAttribute('aCenter') as THREE.InterleavedBufferAttribute)
@@ -572,7 +636,7 @@ describe('NodeFactory', () => {
         // Full-upload path: ranges emptied, needsUpdate re-armed (version++).
         expect(buffer.updateRanges.length).toBe(0);
         expect(buffer.version).toBeGreaterThan(version);
-        // Plain attributes (non-pool points layout) are covered too.
+        // Plain attributes (non-pool lines layout) are covered too.
         expect(plain.updateRanges.length).toBe(0);
         expect(plain.version).toBeGreaterThan(plainVersion);
         // Next commit must full-rewrite, not append.
@@ -582,7 +646,7 @@ describe('NodeFactory', () => {
 
     it('runs without a picking system and ignores unrelated nodes', () => {
       const gsplat = makeGSplatMesh();
-      const points = makeInterleavedMesh('points');
+      const points = makePointsTextureMesh();
       const other = new THREE.Mesh(new THREE.BufferGeometry(), new THREE.MeshBasicMaterial());
       other.userData = { nodeType: 'axes-helper', gpuPrefixIntact: true };
       const root = new THREE.Group();

@@ -57,10 +57,14 @@ export function estimateGeometryBytes(geometry: THREE.BufferGeometry): number {
       total += idxArr.byteLength;
     }
   }
-  // GSplat geometries carry their splat data in an RGBA32F texture
-  // (64 B/splat) riding `userData.elementTexture` (see
+  // GSplat and Points geometries carry their element data in an RGBA32F
+  // texture (gsplats: 64 B/splat, 4 texels; points: 48 B/point, 3
+  // texels) riding `userData.elementTexture` (see
   // `element-storage.ts::attachElementStorage`); it shares the
-  // geometry's lifetime, so its footprint belongs to the geometry.
+  // geometry's lifetime, so its footprint belongs to the geometry. The
+  // capacity-padded texture rows plus the `aSortedIndex` attribute
+  // (4 B/element, counted in the attribute loop above) and the static
+  // quad make up the whole estimate for texture-backed geometries.
   const elementTexture = (geometry.userData as { elementTexture?: THREE.DataTexture })
     .elementTexture;
   if (elementTexture) {

@@ -2,11 +2,13 @@
  * Points-node creation helpers for NodeFactory.
  *
  * `createPointsGeometry` builds the InstancedBufferGeometry (one
- * shared unit-quad base + per-instance attributes for center / color
- * / radius / sharpness / scalar); `createPointsMaterial` resolves the
- * material backend through materialManager and applies the colormap
- * clone path when scalars are requested; `createPointsNode` assembles
- * both into the mesh + optional picking shadow node.
+ * shared unit-quad base + the RGBA32F point texture / `aSortedIndex`
+ * storage pair — the per-point data lives in the texture, 3
+ * texels/point; layout documented in `../point-geometry.ts`);
+ * `createPointsMaterial` resolves the material backend through
+ * materialManager and applies the colormap clone path when scalars are
+ * requested; `createPointsNode` assembles both into the mesh + optional
+ * picking shadow node.
  *
  * @module rendering/node-factory/create-points-node
  */
@@ -15,7 +17,16 @@ import * as THREE from 'three';
 import { materialManager, type BlendingMode, type LuxarPointMaterial } from '../material-manager';
 import { getColormapTexture } from '../colormap-textures';
 import { supportsScalarColormap } from '../material-colormap-helpers';
-import { createPointQuadGeometry } from '../point-geometry';
+import {
+  createPointQuadGeometry,
+  attachPointStorage,
+  pointsNormalizationDivisor,
+  writePointTexels,
+  type PointTexelSource,
+} from '../point-geometry';
+import { writeSortedIndexIdentity } from '../element-storage';
+import { clampPointCapacity } from '../element-texture-layout';
+import { widenToFloat32 } from '../interleaved-attributes';
 import type { LoadedPointsData, DataLoader } from '../../data/data-loader-types';
 import type { PointsMetadata, PointsUserData } from '../../types/points';
 import { log, Modules } from '../../utils/log';
@@ -23,7 +34,16 @@ import type { PickingSystem } from '../picking/picking-system';
 import { applyTransform } from './transforms';
 import { validateLoadedPointsData, validateColorMode } from './validation';
 
-/** Build a Points InstancedBufferGeometry from loaded data. */
+/**
+ * Build a Points InstancedBufferGeometry from loaded data.
+ *
+ * Non-pool path (mirrors `createInstancedGSplatsMesh`'s geometry
+ * portion): quad base + EXACT-SIZE point texture / `aSortedIndex`
+ * storage pair, one fused texel write, identity ordering. The commit
+ * fallback (commit-points-geometry.ts) disposes and re-creates the
+ * geometry on every commit; `attachPointStorage`'s dispose listener
+ * frees the texture with it.
+ */
 export function createPointsGeometry(
   data: LoadedPointsData,
   maxRadius: number = 1.0,
@@ -33,122 +53,91 @@ export function createPointsGeometry(
 
   validateLoadedPointsData(data, isPlaceholder);
 
-  const pointCount = data.positions.length / 3;
+  // SEMANTIC clamp (mirrors createInstancedGSplatsMesh): every consumer
+  // below (storage size, texel/ordering writes, instanceCount, userData
+  // stamp) uses the same clamped count, so a request above the per-node
+  // texture bound stays self-consistent instead of drawing instances
+  // without texels.
+  const pointCount = clampPointCapacity(data.positions.length / 3);
 
-  // Per-instance centre positions. Float16 widens to Float32 because
-  // InstancedBufferAttribute doesn't accept Float16 directly.
-  let centersTyped: Float32Array;
-  if (
-    typeof globalThis.Float16Array !== 'undefined' &&
-    data.positions instanceof globalThis.Float16Array
-  ) {
-    centersTyped = new Float32Array(data.positions);
-  } else {
-    centersTyped = data.positions as Float32Array;
-  }
-  geometry.setAttribute('aCenter', new THREE.InstancedBufferAttribute(centersTyped, 3));
+  // Geometry-owned point texture + identity ordering (exact-size — the
+  // non-pool fallback carries no capacity headroom).
+  const texture = attachPointStorage(geometry, pointCount);
 
-  // Per-instance colors. If absent, fill with white.
+  // Widen every field EXACTLY as the pool adapter does (same
+  // widenToFloat32 calls, same normalization divisors, same fallback
+  // fills) so texel values are identical on both commit paths.
+  const positionsF32 =
+    data.positions instanceof Float32Array
+      ? data.positions
+      : widenToFloat32(data.positions as ArrayLike<number>);
+
+  let colorsF32: Float32Array;
   if (data.colors) {
     validateColorMode(data.colors, data.metadata);
-    const needsNormalization =
-      data.colors instanceof Uint8Array || data.colors instanceof Uint16Array;
-    geometry.setAttribute(
-      'aColor',
-      new THREE.InstancedBufferAttribute(data.colors, 3, needsNormalization)
+    colorsF32 = widenToFloat32(
+      data.colors.subarray(0, pointCount * 3) as ArrayLike<number>,
+      pointsNormalizationDivisor(data.colors, /*normalized=*/ true)
     );
   } else {
-    const defaultColors = new Float32Array(pointCount * 3).fill(1.0);
-    geometry.setAttribute('aColor', new THREE.InstancedBufferAttribute(defaultColors, 3));
+    colorsF32 = new Float32Array(pointCount * 3);
+    colorsF32.fill(1.0); // white default
   }
 
-  // Per-instance radii (with dtype-aware normalization).
+  // Radii (dtype-aware normalization).
   let radiusScale = 1.0;
   // World-space maximum radius, used below to expand boundingBox to the
   // rendered footprint (the shared three-geometry invariant — see the
   // boundingBox block). Distinct from radiusScale, which is only a shader
   // normalization factor (1.0 for Float32/Float16 world-unit radii,
-  // maxRadius for Uint8 normalized radii); footprintRadius is always the
-  // real max radius in world units regardless of dtype.
+  // maxRadius for Uint8 normalized radii — the texel holds the [0, 1]
+  // widened value in that case); footprintRadius is always the real max
+  // radius in world units regardless of dtype.
   let footprintRadius = 0.5; // matches the no-radii fill default below
+  let radiiF32: Float32Array;
   if (data.radii) {
     footprintRadius = maxRadius;
-    if (
-      typeof globalThis.Float16Array !== 'undefined' &&
-      data.radii instanceof globalThis.Float16Array
-    ) {
-      geometry.setAttribute(
-        'aRadius',
-        new THREE.InstancedBufferAttribute(new Float32Array(data.radii), 1)
-      );
-      radiusScale = 1.0;
-    } else if (data.radii instanceof Uint8Array) {
-      geometry.setAttribute('aRadius', new THREE.InstancedBufferAttribute(data.radii, 1, true));
-      radiusScale = maxRadius;
-    } else {
-      geometry.setAttribute(
-        'aRadius',
-        new THREE.InstancedBufferAttribute(data.radii as Float32Array, 1, false)
-      );
-      radiusScale = 1.0;
-    }
-  } else {
-    geometry.setAttribute(
-      'aRadius',
-      new THREE.InstancedBufferAttribute(new Float32Array(pointCount).fill(0.5), 1)
+    radiiF32 = widenToFloat32(
+      data.radii.subarray(0, pointCount) as ArrayLike<number>,
+      pointsNormalizationDivisor(data.radii, /*normalized=*/ true)
     );
+    radiusScale = data.radii instanceof Uint8Array ? maxRadius : 1.0;
+  } else {
+    radiiF32 = new Float32Array(pointCount);
+    radiiF32.fill(0.5);
   }
 
-  // Per-instance sharpness (same dtype rules). Sharpness is authored in
-  // [0, 1]: Float16/Float32 are stored directly, Uint8 normalizes via the
-  // buffer's `normalized:true` flag (uint8/255 → [0, 1]). No scale needed.
+  // Sharpness (same dtype rules). Sharpness is authored in [0, 1]:
+  // Float16/Float32 widen as-is, Uint8 normalizes ÷255. No scale needed.
+  let sharpnessF32: Float32Array;
   if (data.sharpness) {
-    if (
-      typeof globalThis.Float16Array !== 'undefined' &&
-      data.sharpness instanceof globalThis.Float16Array
-    ) {
-      geometry.setAttribute(
-        'aSharpness',
-        new THREE.InstancedBufferAttribute(new Float32Array(data.sharpness), 1)
-      );
-    } else if (data.sharpness instanceof Uint8Array) {
-      geometry.setAttribute(
-        'aSharpness',
-        new THREE.InstancedBufferAttribute(data.sharpness, 1, true)
-      );
-    } else {
-      geometry.setAttribute(
-        'aSharpness',
-        new THREE.InstancedBufferAttribute(data.sharpness as Float32Array, 1, false)
-      );
-    }
-  } else {
-    geometry.setAttribute(
-      'aSharpness',
-      new THREE.InstancedBufferAttribute(new Float32Array(pointCount).fill(0.5), 1)
+    sharpnessF32 = widenToFloat32(
+      data.sharpness.subarray(0, pointCount) as ArrayLike<number>,
+      pointsNormalizationDivisor(data.sharpness, /*normalized=*/ true)
     );
+  } else {
+    sharpnessF32 = new Float32Array(pointCount);
+    sharpnessF32.fill(0.5); // default sharpness knob -> beta=2 (Gaussian)
   }
 
-  // Per-instance scalar (USE_COLORMAP only).
-  if (data.scalars) {
-    const scalarsTyped = data.scalars;
-    if (
-      typeof globalThis.Float16Array !== 'undefined' &&
-      scalarsTyped instanceof globalThis.Float16Array
-    ) {
-      geometry.setAttribute(
-        'aScalar',
-        new THREE.InstancedBufferAttribute(new Float32Array(scalarsTyped), 1)
-      );
-    } else if (scalarsTyped instanceof Uint8Array) {
-      geometry.setAttribute('aScalar', new THREE.InstancedBufferAttribute(scalarsTyped, 1, true));
-    } else {
-      geometry.setAttribute(
-        'aScalar',
-        new THREE.InstancedBufferAttribute(scalarsTyped as Float32Array, 1, false)
-      );
-    }
-  }
+  // Scalars (USE_COLORMAP only). Absent ⇒ omitted from the source; the
+  // writer stamps the 0.0 identity into texel2.x unconditionally.
+  const scalarsF32 = data.scalars
+    ? widenToFloat32(
+        data.scalars.subarray(0, pointCount) as ArrayLike<number>,
+        pointsNormalizationDivisor(data.scalars, /*normalized=*/ true)
+      )
+    : undefined;
+
+  const texelSrc: PointTexelSource = {
+    positions: positionsF32,
+    colors: colorsF32,
+    radii: radiiF32,
+    sharpness: sharpnessF32,
+    scalars: scalarsF32,
+  };
+  writePointTexels(texture, texelSrc, pointCount);
+  writeSortedIndexIdentity(geometry, pointCount);
 
   // WebGLRenderer only issues an instanced draw when instanceCount is set.
   geometry.instanceCount = pointCount;
@@ -230,9 +219,8 @@ export function createPointsMaterial(
  *
  * Each point is rendered as an instanced quad sprite, matching the
  * line + gsplat geometry pattern. The mesh's geometry is built by
- * `createPointsGeometry`, which attaches per-instance attributes
- * (aCenter, aRadius, aSharpness, aColor, optional aScalar) to a
- * shared unit-quad base.
+ * `createPointsGeometry`, which attaches the point-texture storage
+ * pair (RGBA32F texture + `aSortedIndex`) to a shared unit-quad base.
  *
  * Handles geometry creation, material selection, userData, and
  * transforms.
@@ -318,16 +306,15 @@ export function createEmptyPointsNode(
       dtypes: {},
     },
   };
-  // When the node carries a scalar field + colormap, bind an empty
-  // `aScalar` on the placeholder geometry so the fail-closed colormap
-  // guard in `createPointsMaterial` (`supportsScalarColormap`) passes at
-  // material-creation time. Without it the guard sees no `aScalar`,
-  // suppresses USE_COLORMAP on the placeholder material, and nothing
-  // ever re-enables it once the real scalars stream in — leaving the
-  // points white. This mirrors the placeholder-first handling of
-  // radii/sharpness (see `syncPointMaterialWithGeometry`); the buffer
-  // pool's attribute types then match between placeholder and real
-  // data (both carry a scalar), avoiding an extra geometry rebuild.
+  // When the node carries a scalar field + colormap, stamp an empty
+  // scalars field on the placeholder data. In the interleaved era this
+  // bound an empty `aScalar` attribute so the fail-closed colormap
+  // guard (`supportsScalarColormap`) passed at material-creation time;
+  // with texture storage the scalar always rides texel2.x and there is
+  // no `aScalar` attribute, so the geometry-attribute-based guard fails
+  // closed regardless — the points-material Stage 3 migration re-points
+  // the guard to the new storage. Kept so the placeholder and real data
+  // declare the same field presence.
   if (attrs.has_scalars && attrs.colormap) {
     emptyData.scalars = new Float32Array(0) as LoadedPointsData['scalars'];
   }

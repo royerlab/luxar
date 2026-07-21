@@ -7,6 +7,8 @@
 
 import { describe, it, expect, beforeEach } from 'vitest';
 import { GPUBufferPool } from '../../../rendering/gpu-buffer-pool';
+import { getPointTexture } from '../../../rendering/point-geometry';
+import { POINT_FLOATS_PER_POINT } from '../../../rendering/element-texture-layout';
 import type { LoadedPointsData } from '../../../data/data-loader-types';
 import * as THREE from 'three';
 
@@ -41,13 +43,9 @@ describe('GPU Buffer Pool Performance Regression Tests', () => {
 
   describe('Geometry Reuse Rates', () => {
     it('should achieve 100% reuse for same node with similar counts', () => {
-      const data1 = createMockData(1000);
-      const data2 = createMockData(900); // Smaller, fits in same geometry
-      const data3 = createMockData(950);
-
-      pool.acquirePointsGeometry('node1', data1, 1000);
-      pool.acquirePointsGeometry('node1', data2, 900);
-      pool.acquirePointsGeometry('node1', data3, 950);
+      pool.acquirePointsGeometry('node1', 1000);
+      pool.acquirePointsGeometry('node1', 900);
+      pool.acquirePointsGeometry('node1', 950);
 
       const stats = pool.getStats();
 
@@ -59,48 +57,45 @@ describe('GPU Buffer Pool Performance Regression Tests', () => {
       expect(reuseRate).toBeCloseTo(0.666, 2);
     });
 
-    it('should reuse across different nodes with same types', () => {
-      const data1 = createMockData(1000);
-
-      pool.acquirePointsGeometry('node1', data1, 1000);
+    it('should reuse across different nodes with similar counts', () => {
+      pool.acquirePointsGeometry('node1', 1000);
       pool.releasePointsGeometry('node1');
 
-      // Different node, same size/type - should reuse
-      pool.acquirePointsGeometry('node2', createMockData(900), 900);
+      // Different node, same size - should reuse
+      pool.acquirePointsGeometry('node2', 900);
 
       const stats = pool.getStats();
       expect(stats.allocations).toBe(1); // Only 1 allocation total
       expect(stats.reuses).toBe(1); // Reused for node2
     });
 
-    it('should NOT reuse when types differ (correct behavior)', () => {
-      const dataFloat = createMockData(1000, 'Float32Array');
-      const dataUint8 = createMockData(1000, 'Uint8Array');
-
-      pool.acquirePointsGeometry('node1', dataFloat, 1000);
+    it('reuses across source dtypes too (fixed texel layout)', () => {
+      // The interleaved era refused to reuse across attribute dtypes;
+      // texture-backed storage widens every dtype to Float32 at upload,
+      // so ANY pooled points geometry fits ANY points node.
+      pool.acquirePointsGeometry('node1', 1000); // Float32 tenant
       pool.releasePointsGeometry('node1');
 
-      pool.acquirePointsGeometry('node2', dataUint8, 1000); // Different type!
+      const geom = pool.acquirePointsGeometry('node2', 1000); // Uint8 next tenant
+      pool.updatePointsGeometry(geom, createMockData(1000, 'Uint8Array'), 1000);
 
       const stats = pool.getStats();
-      expect(stats.allocations).toBe(2); // Can't reuse (types differ)
-      expect(stats.reuses).toBe(0);
+      expect(stats.allocations).toBe(1); // reuse, not a fresh allocation
+      expect(stats.reuses).toBe(1);
     });
   });
 
   describe('Allocation Elimination', () => {
     it('should have zero GPU allocations on geometry reuse', () => {
-      const data = createMockData(1000);
-
       // First acquisition: allocation
-      const geom1 = pool.acquirePointsGeometry('node1', data, 1000);
+      const geom1 = pool.acquirePointsGeometry('node1', 1000);
       const allocsBefore = pool.getStats().allocations;
 
       // Update geometry (reuse)
       pool.updatePointsGeometry(geom1, createMockData(900), 900);
 
       // Acquire again (should reuse same geometry)
-      const geom2 = pool.acquirePointsGeometry('node1', createMockData(850), 850);
+      const geom2 = pool.acquirePointsGeometry('node1', 850);
 
       const allocsAfter = pool.getStats().allocations;
 
@@ -116,7 +111,7 @@ describe('GPU Buffer Pool Performance Regression Tests', () => {
         const nodeId = `node${i % 10}`; // 10 different nodes
         const count = 800 + (i % 5) * 100; // Varying counts
 
-        pool.acquirePointsGeometry(nodeId, createMockData(count), count);
+        pool.acquirePointsGeometry(nodeId, count);
 
         if (i % 3 === 0) {
           pool.releasePointsGeometry(nodeId);
@@ -148,7 +143,7 @@ describe('GPU Buffer Pool Performance Regression Tests', () => {
     it('should use memory proportional to active geometries, not all acquisitions', () => {
       // Acquire 100 different nodes
       for (let i = 0; i < 100; i++) {
-        pool.acquirePointsGeometry(`node${i}`, createMockData(1000), 1000);
+        pool.acquirePointsGeometry(`node${i}`, 1000);
       }
 
       const stats1 = pool.getStats();
@@ -175,14 +170,14 @@ describe('GPU Buffer Pool Performance Regression Tests', () => {
       // Acquire and release many geometries with different sizes
       for (let i = 0; i < 30; i++) {
         const count = 1000 + i * 100; // Different sizes
-        shortEvictionPool.acquirePointsGeometry(`node${i}`, createMockData(count), count);
+        shortEvictionPool.acquirePointsGeometry(`node${i}`, count);
         shortEvictionPool.releasePointsGeometry(`node${i}`);
       }
 
       // Advance frames by acquiring active geometries
       for (let i = 0; i < 10; i++) {
         shortEvictionPool.beginFrame();
-        shortEvictionPool.acquirePointsGeometry(`active${i}`, createMockData(5000), 5000);
+        shortEvictionPool.acquirePointsGeometry(`active${i}`, 5000);
       }
 
       // Trigger a final sweep. Acquire paths now sweep idle buffers
@@ -196,59 +191,47 @@ describe('GPU Buffer Pool Performance Regression Tests', () => {
   });
 
   describe('Type-Aware Performance', () => {
-    it('handles Float32 and Uint8 source dtypes uniformly via Float32 interleaved storage', () => {
-      // Post-interleaving, pooled storage is uniformly Float32 in one
-      // shared `InstancedInterleavedBuffer` (so multiple attributes
-      // collapse to one vertex-buffer slot under WebGPU). Uint8 source
-      // data is widened (÷255) at upload time to preserve the shader-
-      // visible [0, 1] range.
-      const dataFloat = createMockData(1000, 'Float32Array');
-      const dataUint8 = createMockData(1000, 'Uint8Array');
+    it('handles Float32 and Uint8 source dtypes uniformly via Float32 texel storage', () => {
+      // Texture-backed storage is uniformly Float32 in the RGBA32F point
+      // texture. Uint8 source data is widened (÷255) at upload time to
+      // preserve the shader-visible [0, 1] range.
+      const geom1 = pool.acquirePointsGeometry('node1', 1000);
+      const geom2 = pool.acquirePointsGeometry('node2', 1000);
+      pool.updatePointsGeometry(geom1, createMockData(1000, 'Float32Array'), 1000);
+      pool.updatePointsGeometry(geom2, createMockData(1000, 'Uint8Array'), 1000);
 
-      const geom1 = pool.acquirePointsGeometry('node1', dataFloat, 1000);
-      const geom2 = pool.acquirePointsGeometry('node2', dataUint8, 1000);
+      const tex1 = getPointTexture(geom1)!.image.data as Float32Array;
+      const tex2 = getPointTexture(geom2)!.image.data as Float32Array;
 
-      const col1 = geom1.getAttribute('aColor') as THREE.InterleavedBufferAttribute;
-      const col2 = geom2.getAttribute('aColor') as THREE.InterleavedBufferAttribute;
-
-      // Both back ends to the same Float32 interleaved layout.
-      expect(col1.data.array).toBeInstanceOf(Float32Array);
-      expect(col2.data.array).toBeInstanceOf(Float32Array);
+      // Both back onto the same Float32 texel layout, with dtype
+      // normalization applied at upload: color.r sits at float offset 4.
+      expect(tex1[4]).toBeCloseTo(0.5, 5); // Float32 source, as-is
+      expect(tex2[4]).toBeCloseTo(128 / 255, 5); // Uint8 source, ÷255
     });
 
-    it('memory accounting reflects the widen-to-Float32 trade-off', () => {
-      // Post-interleaving cost: Uint8 source widens to Float32 in
-      // the pooled buffer (4× the per-instance bytes for that
-      // attribute), bought against the WebGPU buffer-count win
-      // (one vertex-buffer slot instead of N). The shader sees the
-      // same [0, 1] range as before.
-      const geomUint8 = pool.acquirePointsGeometry(
-        'node1',
-        createMockData(1000, 'Uint8Array'),
-        1000
-      );
-      const geomFloat = pool.acquirePointsGeometry(
-        'node2',
-        createMockData(1000, 'Float32Array'),
-        1000
-      );
+    it('memory accounting is dtype-independent (capacity × texel stride)', () => {
+      // The texture footprint depends only on capacity × 3 texels ×
+      // 16 B (plus row padding), never on the source dtype — the
+      // widen-to-Float32 trade-off is baked into the layout.
+      const geomUint8 = pool.acquirePointsGeometry('node1', 1000);
+      const geomFloat = pool.acquirePointsGeometry('node2', 1000);
+      pool.updatePointsGeometry(geomUint8, createMockData(1000, 'Uint8Array'), 1000);
+      pool.updatePointsGeometry(geomFloat, createMockData(1000, 'Float32Array'), 1000);
 
-      const colUint8 = geomUint8.getAttribute('aColor') as THREE.InterleavedBufferAttribute;
-      const colFloat = geomFloat.getAttribute('aColor') as THREE.InterleavedBufferAttribute;
-
-      // Both share the same Float32 stride layout (per-buffer storage
-      // size depends only on `capacity × stride`, not on source dtype).
-      expect(colUint8.data.array.byteLength).toBe(colFloat.data.array.byteLength);
+      const bytesUint8 = (getPointTexture(geomUint8)!.image.data as Float32Array).byteLength;
+      const bytesFloat = (getPointTexture(geomFloat)!.image.data as Float32Array).byteLength;
+      expect(bytesUint8).toBe(bytesFloat);
+      // Sanity: the store actually holds >= capacity × 12 floats.
+      expect(bytesFloat).toBeGreaterThanOrEqual(1500 * POINT_FLOATS_PER_POINT * 4);
     });
   });
 
   describe('Capacity Growth Performance', () => {
     it('should minimize reallocations with 1.5x strategy', () => {
-      const data1 = createMockData(1000);
-      pool.acquirePointsGeometry('node1', data1, 1000);
+      pool.acquirePointsGeometry('node1', 1000);
 
       // Grow to 2000 (exceeds initial 1500 capacity)
-      pool.acquirePointsGeometry('node1', createMockData(2000), 2000);
+      pool.acquirePointsGeometry('node1', 2000);
 
       const stats = pool.getStats();
 
@@ -256,7 +239,7 @@ describe('GPU Buffer Pool Performance Regression Tests', () => {
       expect(stats.capacityGrowths).toBe(1);
 
       // Now grow to 2500 (within new capacity ~3000)
-      pool.acquirePointsGeometry('node1', createMockData(2500), 2500);
+      pool.acquirePointsGeometry('node1', 2500);
 
       // No additional growth
       expect(pool.getStats().capacityGrowths).toBe(1);

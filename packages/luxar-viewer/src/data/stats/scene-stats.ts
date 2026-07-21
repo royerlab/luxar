@@ -58,13 +58,13 @@ export function computeSceneStats(scene: THREE.Object3D | null | undefined): Sce
     if (nodeType === 'points') {
       pointsObjects++;
       const geometry = obj.geometry as THREE.InstancedBufferGeometry | undefined;
-      const centers = geometry?.getAttribute?.('aCenter');
+      // Per-point data lives in the point texture (no per-instance
+      // `aCenter` attribute to fall back on); instanceCount is the
+      // source of truth, visiblePointCount the commit-stamped fallback.
       if (geometry?.isInstancedBufferGeometry && Number.isFinite(geometry.instanceCount)) {
         totalPoints += geometry.instanceCount;
       } else if (obj.userData.visiblePointCount != null) {
         totalPoints += obj.userData.visiblePointCount;
-      } else if (centers) {
-        totalPoints += centers.count;
       }
       if (obj.userData.attrs?.has_spatial_index) {
         spatialIndexed++;
