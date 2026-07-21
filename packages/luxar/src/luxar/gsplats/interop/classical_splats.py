@@ -19,8 +19,11 @@ Supported dialects
 - ``sog``        — PlayCanvas SOG bundle (``meta.json`` + WebP images)
 
 Spherical harmonics are reduced to the DC band: view-dependent ``f_rest``
-coefficients are dropped and the DC term is baked to per-splat RGB. Opacity
-maps to Luxar ``amplitudes`` (both live in ``[0, 1]`` after the sigmoid).
+coefficients are dropped and the DC term is baked to per-splat RGB. Learned
+opacity (post-sigmoid, ``[0, 1]``) is stored in the RGBA color ALPHA channel
+as per-splat opacity (amplitudes are constant 1), so imported scenes occlude
+correctly in ``normal``/``volumetric`` — see ``_convert.py`` and
+VOLUMETRIC_BLENDING_SPEC.md §5.4.1.
 
 This file owns the ``ClassicalSplats`` intermediate, the per-dialect readers,
 format detection, and the ``import_gsplats`` dispatcher; the cohesive helpers

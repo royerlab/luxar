@@ -24,7 +24,9 @@ unchanged. Everything is NumPy + stdlib; **no new dependencies**.
 - Covariance is rebuilt as `Σ = R·diag(scales²)·Rᵀ` and factorized to Luxar's
   packed lower-triangular Cholesky (with an eigenvalue-clamp guard for
   degenerate splats in real files).
-- **Opacity → `amplitudes`** (both in [0, 1]).
+- **Learned opacity → RGBA color alpha** (per-splat opacity in [0, 1];
+  `amplitudes` are constant 1), so imported scenes occlude correctly in
+  `normal`/`volumetric` (see `VOLUMETRIC_BLENDING_SPEC.md` §5.4.1).
 - **SH color is reduced to the DC band**: `rgb = 0.5 + C₀·f_dc` (view-dependent
   `f_rest` bands are dropped), then converted **sRGB → linear** (see `_color.py`)
   because that DC value is display-referred but Luxar's viewer treats per-splat

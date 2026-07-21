@@ -8,7 +8,10 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { GSplatsProgressiveLoader } from '../../../data/gsplats/gsplats-progressive-loader';
+import {
+  GSplatsProgressiveLoader,
+  concatenateGSplatsData,
+} from '../../../data/gsplats/gsplats-progressive-loader';
 import type { GSplatsSpatialIndexLoader } from '../../../data/gsplats/gsplats-spatial-index-loader';
 import type { GSplatsViewState, LoadedGSplatsData } from '../../../types/gsplats';
 import { CACHE_HIT_THRESHOLD_MS } from '../../../data/loaders/progressive/constants';
@@ -1023,5 +1026,64 @@ describe('GSplatsProgressiveLoader — committedEnergyFraction (quality stamps)'
     expect(make().committedEnergyFraction).toBeNull();
     expect(make([0.7]).committedEnergyFraction).toBeNull();
     expect(make([0.7, null]).committedEnergyFraction).toBeNull();
+  });
+});
+
+describe('concatenateGSplatsData — RGBA color layout (per-element opacity)', () => {
+  // Regression for a bug found in double-check: the additive-ladder color
+  // concat hardcoded a stride of 3, so an RGBA ladder (what imported 3DGS
+  // scenes become after `gsplat lod`) was truncated + misaligned and its
+  // colorComponents defaulted to 3 downstream. Fail-first: against the
+  // pre-fix stride the alpha column is dropped and the buffer is 3-strided.
+  function makeRgbaLod(splatCount: number, alpha: number): LoadedGSplatsData {
+    const colors = new Float32Array(splatCount * 4);
+    for (let i = 0; i < splatCount; i++) {
+      colors[i * 4] = 0.2;
+      colors[i * 4 + 1] = 0.4;
+      colors[i * 4 + 2] = 0.6;
+      colors[i * 4 + 3] = alpha;
+    }
+    return {
+      positions: new Float32Array(splatCount * 3).fill(0.5),
+      amplitudes: new Float32Array(splatCount).fill(1),
+      choleskyFactors: new Float32Array(splatCount * 6).fill(0.1),
+      colors,
+      colorComponents: 4,
+      splatCount,
+      ndim: 3,
+    };
+  }
+
+  it('preserves the 4th channel and reports colorComponents=4 (RGBA ladder)', () => {
+    const merged = concatenateGSplatsData([makeRgbaLod(3, 0.9), makeRgbaLod(2, 0.3)]);
+    expect(merged.colorComponents).toBe(4);
+    expect(merged.colors).not.toBeNull();
+    expect(merged.colors!.length).toBe(5 * 4); // NOT 5 * 3 (the pre-fix bug)
+    // Alpha of each splat lands intact and stride-aligned.
+    for (let i = 0; i < 3; i++) expect(merged.colors![i * 4 + 3]).toBeCloseTo(0.9, 6);
+    for (let i = 3; i < 5; i++) expect(merged.colors![i * 4 + 3]).toBeCloseTo(0.3, 6);
+    // RGB survives (stride-aligned, not smeared by a wrong stride).
+    expect(merged.colors![4 * 4]).toBeCloseTo(0.2, 6);
+    expect(merged.colors![4 * 4 + 2]).toBeCloseTo(0.6, 6);
+  });
+
+  it('RGB ladder stays colorComponents=3', () => {
+    const merged = concatenateGSplatsData([
+      makeLodData(3, 3, { color: 'float32' }),
+      makeLodData(2, 3, { color: 'float32' }),
+    ]);
+    expect(merged.colorComponents).toBe(3);
+    expect(merged.colors!.length).toBe(5 * 3);
+  });
+
+  it('opaque white-fills a colorless LOD at the RGBA stride (alpha=1)', () => {
+    const merged = concatenateGSplatsData([makeRgbaLod(2, 0.5), makeLodData(2, 3, { color: 'none' })]);
+    expect(merged.colorComponents).toBe(4);
+    expect(merged.colors!.length).toBe(4 * 4);
+    // The colorless part fills opaque white (1,1,1,1) at stride 4.
+    for (let i = 2; i < 4; i++) {
+      expect(merged.colors![i * 4]).toBeCloseTo(1, 6);
+      expect(merged.colors![i * 4 + 3]).toBeCloseTo(1, 6);
+    }
   });
 });
