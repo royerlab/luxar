@@ -13,7 +13,9 @@ Semantics notes
   percentile → 1). A per-splat color ALPHA channel (RGBA colors) is classical
   opacity itself and multiplies into both data-driven policies verbatim — data
   that came from :func:`~.classical_splats.import_gsplats` (amplitudes = 1,
-  opacity in alpha) round-trips losslessly under the default policy.
+  opacity in alpha) round-trips verbatim (no rescale; float-precise in the
+  opacity domain — INRIA stores logits, so it is not bit-exact) under the
+  default policy.
 - If the data was imported, the orientation applied at import time (recorded
   in ``stats["interop"]``) is inverted by default so import → export is an
   identity in the source frame.
@@ -71,8 +73,9 @@ def _opacity_logits(
     A per-splat alpha (RGBA colors) IS classical opacity, so it multiplies
     into both data-driven policies verbatim — never rescaled. Data imported
     from a classical file (amplitudes = 1, opacity in alpha) round-trips
-    bit-faithfully under both ``normalized`` (ones normalize to ones) and
-    ``amplitude``.
+    verbatim (no rescale; float-precise in the opacity domain — the PLY stores
+    logits, and α=0/1 clamp to finite logits, so it is not bit-exact) under
+    both ``normalized`` (ones normalize to ones) and ``amplitude``.
     """
     if alpha is None:
         alpha = np.ones_like(np.asarray(amplitudes, dtype=np.float64))
@@ -253,7 +256,8 @@ def gsplat_data_to_inria_ply(
             ``amplitude`` (clip raw values), or ``constant`` (fixed
             ``constant_opacity``). A color alpha channel multiplies into both
             data-driven policies verbatim, so imported data (amplitudes = 1,
-            opacity in alpha) round-trips losslessly under the default.
+            opacity in alpha) round-trips verbatim (no rescale; float-precise
+            in opacity, not bit-exact) under the default.
         color_source: ``auto`` = per-splat colors if present, else colormap if
             given, else white; or force ``colors`` / ``colormap`` / ``white``.
         colormap: Colormap name for baking scalar amplitudes to RGB.

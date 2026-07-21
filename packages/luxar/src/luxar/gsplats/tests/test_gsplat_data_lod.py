@@ -1052,3 +1052,53 @@ class TestImmutableViews:
         # The stored level arrays are normal writable arrays (additive_sublod()
         # returns the backing AdditiveSubLOD, not a read-only view).
         assert out.additive_sublod(0).centers.flags.writeable
+
+
+class TestMergeLodColors:
+    """`_merge_lod_colors` — float32 pinning + integer-alpha [0,1] guard."""
+
+    @staticmethod
+    def _lod(colors, n):
+        return AdditiveSubLOD(
+            centers=np.zeros((n, 3), dtype=np.float32),
+            amplitudes=np.ones(n, dtype=np.float32),
+            cholesky_factors=np.tile(
+                np.array([1, 0, 1, 0, 0, 1], dtype=np.float32), (n, 1)
+            ),
+            colors=colors,
+        )
+
+    def test_mixed_int_rgb_and_float_rgba_keeps_alpha_in_unit_range(self) -> None:
+        # A uint8 RGB LOD (opaque = full-scale) merged with a float RGBA LOD:
+        # widening the uint8 part must NOT inject a 255-valued alpha into the
+        # promoted float result. Pre-fix, widen filled iinfo.max (255) and the
+        # concat promoted it to 255.0 — out of the [0, 1] opacity contract.
+        from luxar.gsplats.gsplat_data import _merge_lod_colors
+
+        rgb_u8 = self._lod(np.array([[255, 0, 0]], dtype=np.uint8), 1)
+        rgba_f = self._lod(np.array([[0.2, 0.4, 0.6, 0.5]], dtype=np.float32), 1)
+        merged = _merge_lod_colors([rgb_u8, rgba_f])
+        assert merged is not None
+        assert merged.dtype == np.float32  # pinned like the sibling arrays
+        assert merged.shape == (2, 4)
+        assert merged[:, 3].max() <= 1.0 and merged[:, 3].min() >= 0.0
+        # uint8 RGB normalized to [0,1]; its widened alpha is opaque 1.0.
+        np.testing.assert_allclose(merged[0], [1.0, 0.0, 0.0, 1.0])
+        np.testing.assert_allclose(merged[1], [0.2, 0.4, 0.6, 0.5])
+
+    def test_all_float_rgba_is_unchanged(self) -> None:
+        # The live (all-float32) path must be byte-identical to the input.
+        from luxar.gsplats.gsplat_data import _merge_lod_colors
+
+        a = np.array([[0.1, 0.2, 0.3, 0.9]], dtype=np.float32)
+        b = np.array([[0.4, 0.5, 0.6, 0.2]], dtype=np.float32)
+        merged = _merge_lod_colors([self._lod(a, 1), self._lod(b, 1)])
+        assert merged is not None and merged.dtype == np.float32
+        np.testing.assert_array_equal(merged, np.concatenate([a, b], axis=0))
+
+    def test_float64_colors_are_pinned_to_float32(self) -> None:
+        from luxar.gsplats.gsplat_data import _merge_lod_colors
+
+        a = np.array([[0.1, 0.2, 0.3]], dtype=np.float64)
+        merged = _merge_lod_colors([self._lod(a, 1), self._lod(a, 1)])
+        assert merged is not None and merged.dtype == np.float32
