@@ -19,8 +19,15 @@ All notable changes to Luxar are documented in this file.
   now works in float32 and normalizes any integer part by its full-scale before
   concatenating, so a mixed uint8-RGB + float-RGBA merge can no longer promote a
   widened `alpha = 255` into an out-of-`[0, 1]` opacity (latent; no live
-  producer feeds integer RGBA today). Colors are also pinned to float32 like the
-  sibling centers/amplitudes/cholesky arrays.
+  producer feeds integer RGBA today).
+- **`_merge_lod_colors` no longer force-normalizes a uniform integer merge**
+  (regression fix for the over-reaching float32 pin in the bullet above). A
+  uniform-dtype integer merge now PRESERVES its native dtype (full-scale =
+  opaque) — only a white-fill, a dtype mismatch, or a float part promotes the
+  result to float32 `[0, 1]`. The float32 pin had diverged a multi-sub-LOD
+  uint8 dataset (which normalized to float `[0, 1]`) from the single-sub-LOD
+  path (`self.colors = lod0.colors`, which keeps uint8), silently changing the
+  stored color encoding; both now agree.
 - **Validator contract alignment.** `validation/types.py::validate_colors` now
   applies the alpha `[0, 1]` bound to floating dtypes only (integer storage is
   SDR in its native range), matching `validate_colors_for_writing` — the two
