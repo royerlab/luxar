@@ -155,6 +155,45 @@ describe('viewStatesEqual', () => {
     expect(viewStatesEqual(base(), { ...base(), dimensions: dims })).toBe(false);
   });
 
+  it('ignores the ride-along tolerance on non-displayed discrete non-spatial dims', () => {
+    // Mirrors buildSliceViewSig: the executed query derives its reach from
+    // `step` for such dims, NOT from the ride-along tolerance — and the two
+    // view-state builders disagree on it (0 at init vs 0.5 from navigation),
+    // which reset every progressive loader once per 4D dataset load.
+    const a = { ...base(), tolerance: [0, 0, 0, 0], dimensions: dims4() };
+    const b = { ...base(), tolerance: [0, 0, 0, 0.5], dimensions: dims4() };
+    expect(viewStatesEqual(a, b)).toBe(true);
+    expect(viewStatesEqual(b, a)).toBe(true); // symmetric
+
+    // A step change on that dim (the REAL reach knob) still resets.
+    const stepped = dims4();
+    Object.assign((stepped as unknown as object[])[3], { step: 2 });
+    expect(viewStatesEqual(a, { ...b, dimensions: stepped })).toBe(false);
+  });
+
+  it('still compares tolerance raw on spatial, continuous, displayed, or metadata-less dims', () => {
+    // Discrete SPATIAL dim: tolerance genuinely selects the decoded set.
+    const spatialDims = dims4();
+    Object.assign((spatialDims as unknown as object[])[3], { spatial: true });
+    expect(
+      viewStatesEqual(
+        { ...base(), tolerance: [0, 0, 0, 0], dimensions: spatialDims },
+        { ...base(), tolerance: [0, 0, 0, 0.5], dimensions: spatialDims }
+      )
+    ).toBe(false);
+    // Continuous non-displayed dim: raw compare.
+    const contDims = dims4();
+    Object.assign((contDims as unknown as object[])[3], { discrete: false });
+    expect(
+      viewStatesEqual(
+        { ...base(), tolerance: [0, 0, 0, 1], dimensions: contDims },
+        { ...base(), tolerance: [0, 0, 0, 2], dimensions: contDims }
+      )
+    ).toBe(false);
+    // No dimensions metadata at all: raw compare (current conservative behavior).
+    expect(viewStatesEqual({ ...base(), tolerance: [0, 0, 0, 0] }, base())).toBe(false);
+  });
+
   it('ignores per-pass directives (frameBudgetMs / prefetch are not query fields)', () => {
     // These must NOT defeat the memoization — a pause re-trigger arrives
     // with the same query but different directives.
