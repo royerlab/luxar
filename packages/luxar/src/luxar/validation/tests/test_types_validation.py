@@ -503,6 +503,14 @@ class TestColorsValidation:
         with pytest.raises(ValueError, match="alpha channel"):
             validate_colors(nan_alpha, n_points)
 
+        # Integer RGBA: alpha in the dtype's NATIVE range is SDR-opaque, NOT an
+        # out-of-[0,1] error. The [0,1] bound applies to floats only, matching
+        # the write validator (validation/base.py) — the two used to contradict
+        # each other on a uint8 alpha=255 array (this type-guard rejected it
+        # while the writer accepted it). Must NOT raise.
+        int_rgba = np.array([[255, 128, 0, 255], [0, 255, 128, 200]], dtype=np.uint8)
+        assert validate_colors(int_rgba, 2).shape == (2, 4)
+
         # 1D array
         colors_1d = np.array([1.0, 0.0, 0.0])
         with pytest.raises(ValueError, match="Colors must have shape \\(1, 3\\)"):

@@ -6,6 +6,31 @@ All notable changes to Luxar are documented in this file.
 
 ### July 2026
 
+#### Fixed — RGBA per-element opacity: double-check follow-up (post-#618/#620)
+
+- **Rust↔TypeScript parity test for `color_components = 4`.** The gsplat
+  projection's RGBA color compaction (`copy_from_slice` in Rust, the channel
+  loop in the TS twin) had no cross-language parity test — the RGB-only golden
+  cases never exercised the 4th (alpha) channel, the exact drift the 1:1-parity
+  rule guards. Added an RGBA case to both the Rust `test_fused_matches_multicall`
+  sibling and the `wasm-vs-typescript` harness (alpha set distinct from RGB so a
+  stride/drop bug misaligns the output); both pass against the shipped kernel.
+- **Integer-dtype guard in `_merge_lod_colors`.** The additive-LOD color merge
+  now works in float32 and normalizes any integer part by its full-scale before
+  concatenating, so a mixed uint8-RGB + float-RGBA merge can no longer promote a
+  widened `alpha = 255` into an out-of-`[0, 1]` opacity (latent; no live
+  producer feeds integer RGBA today). Colors are also pinned to float32 like the
+  sibling centers/amplitudes/cholesky arrays.
+- **Validator contract alignment.** `validation/types.py::validate_colors` now
+  applies the alpha `[0, 1]` bound to floating dtypes only (integer storage is
+  SDR in its native range), matching `validate_colors_for_writing` — the two
+  previously contradicted each other on a uint8 `alpha = 255` array.
+- **Docs.** Softened the INRIA-export "losslessly / bit-faithfully" wording to
+  "verbatim (no rescale; float-precise in opacity, not bit-exact)" — the PLY
+  stores logits; fixed the `wasm/types.ts` fused-kernel JSDoc (`* 3` → `*
+  colorComponents`, added the missing `@param`) and a stale `colors[i*3]`
+  comment.
+
 #### Changed — one shared `viewStatesEqual` for the progressive loaders
 
 - The points/lines/gsplats progressive loaders' three byte-identical local

@@ -1008,4 +1008,104 @@ mod tests {
         assert_eq!(&f_amps[..f_count], &exp_amps[..], "amplitudes mismatch");
         assert_eq!(&f_colors[..f_count * 3], &exp_colors[..], "colors mismatch");
     }
+
+    /// RGBA parity: the fused kernel must compact a 4-channel (RGBA) color
+    /// array bit-identically to the reference `compact_by_mask(.., 4, ..)`,
+    /// including the alpha column. This is the one path the RGB-only golden
+    /// test above cannot exercise; without it the Rust ↔ TypeScript twins
+    /// could silently diverge in the 4th channel (CLAUDE.md's 1:1 parity rule).
+    #[test]
+    fn test_fused_matches_multicall_rgba() {
+        use crate::projection::{compact_by_mask, extract_3d_positions};
+
+        // Same geometry / visibility as `test_fused_matches_multicall`.
+        let ndim = 4usize;
+        let n = 4usize;
+        let continuous_hidden = [3u32];
+        let display = [0u32, 1, 2];
+        let min_amp = 0.001f32;
+        let truncate = 3.0f32;
+        let positions: Vec<f32> = vec![
+            0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 1.0, 50.0, 2.0, 2.0, 2.0, 0.0, 3.0, 1.0, 2.0, 0.3,
+        ];
+        let one: Vec<f32> = vec![2.0, 1.0, 3.0, 0.0, 0.0, 2.0, 0.5, 0.5, 0.0, 4.0];
+        let cholesky: Vec<f32> = (0..n).flat_map(|_| one.clone()).collect();
+        let amplitudes: Vec<f32> = vec![1.0, 0.5, 1.0, 0.8];
+        // 4×4 RGBA; alpha deliberately DISTINCT from RGB (alpha = 1 - r) so a
+        // stride bug that copied RGB into alpha (or dropped it) would be caught.
+        let colors: Vec<f32> = vec![
+            0.1, 0.2, 0.3, 0.9, // splat0 (alpha 0.9 ≠ r 0.1)
+            0.4, 0.5, 0.6, 0.6, // splat1
+            0.7, 0.8, 0.9, 0.3, // splat2
+            0.15, 0.25, 0.35, 0.85, // splat3
+        ];
+        let slice = vec![0.0f32, 0.0, 0.0, 0.0];
+        let discrete_visibility = [1u8, 1, 0, 1];
+
+        // Reference visible set (same pipeline as the RGB golden test).
+        let mut vis = vec![0u8; n];
+        let mut atten = vec![0.0f32; n];
+        compute_gsplats_attenuation(
+            &positions,
+            &cholesky,
+            &amplitudes,
+            &slice,
+            &continuous_hidden,
+            ndim,
+            n,
+            min_amp,
+            truncate,
+            &mut vis,
+            &mut atten,
+        );
+        for i in 0..n {
+            if discrete_visibility[i] == 0 {
+                vis[i] = 0;
+            }
+        }
+        let visible_count = vis.iter().filter(|&&v| v != 0).count();
+        assert!(visible_count >= 2, "test should keep ≥2 visible splats");
+
+        let mut all_centers = vec![0.0f32; n * 3];
+        extract_3d_positions(&positions, &display, ndim, n, &mut all_centers);
+        let mut exp_colors = vec![0.0f32; visible_count * 4];
+        compact_by_mask(&colors, &vis, n, 4, &mut exp_colors);
+
+        let mut f_centers = vec![0.0f32; n * 3];
+        let mut f_chol = vec![0.0f32; n * 6];
+        let mut f_amps = vec![0.0f32; n];
+        let mut f_colors = vec![0.0f32; n * 4]; // sized for color_components = 4
+        let f_count = project_gsplats_nd_to_3d(
+            &positions,
+            &cholesky,
+            &amplitudes,
+            &colors,
+            &discrete_visibility,
+            &slice,
+            &continuous_hidden,
+            &display,
+            ndim,
+            n,
+            4, // color_components = RGBA
+            min_amp,
+            truncate,
+            &mut f_centers,
+            &mut f_chol,
+            &mut f_amps,
+            &mut f_colors,
+        ) as usize;
+
+        assert_eq!(f_count, visible_count, "visible count mismatch");
+        assert_eq!(
+            &f_colors[..f_count * 4],
+            &exp_colors[..],
+            "RGBA colors (incl. alpha) mismatch"
+        );
+        // Alpha of the first visible splat must be its own alpha (0.9), not a
+        // shifted/dropped channel.
+        assert_eq!(
+            f_colors[3], 0.9,
+            "alpha of first visible splat not preserved"
+        );
+    }
 }

@@ -30,9 +30,7 @@ def widen_colors_to_rgba(colors: np.ndarray) -> np.ndarray:
     if colors.shape[1] == 4:
         return colors
     opaque = (
-        np.iinfo(colors.dtype).max
-        if np.issubdtype(colors.dtype, np.integer)
-        else 1.0
+        np.iinfo(colors.dtype).max if np.issubdtype(colors.dtype, np.integer) else 1.0
     )
     alpha = np.full((colors.shape[0], 1), opaque, dtype=colors.dtype)
     return np.concatenate([colors, alpha], axis=1)
@@ -48,6 +46,15 @@ def _merge_lod_colors(
     - Mixed → fill missing with white (1,1,1).
     - Mixed RGB/RGBA channel counts → RGB parts widen to RGBA with alpha=1
       (opaque, the per-element-opacity identity).
+
+    The merge works in **float32**: every part is coerced to float32 and any
+    integer part is normalized by its full-scale (÷max) first, so the alpha
+    column can never inject an out-of-``[0, 1]`` value (a uint8 opaque widened
+    to alpha=255 concatenated with a float [0,1] part would otherwise promote
+    to a float ``255.0`` alpha) and colors match the float32 dtype the sibling
+    arrays (centers/amplitudes/cholesky) are pinned to in
+    :func:`_concat_additive_levels`. Live producers are all float32 already, so
+    this is a no-op on every current path and a guard for future integer ones.
     """
     if not lods:
         return None
@@ -60,8 +67,13 @@ def _merge_lod_colors(
         colors = lod.colors
         if colors is None:
             colors = np.ones((lod.n_splats, channels), dtype=np.float32)
-        elif channels == 4:
-            colors = widen_colors_to_rgba(colors)
+        else:
+            if np.issubdtype(colors.dtype, np.integer):
+                colors = colors.astype(np.float32) / np.iinfo(colors.dtype).max
+            else:
+                colors = colors.astype(np.float32, copy=False)
+            if channels == 4:
+                colors = widen_colors_to_rgba(colors)  # float → opaque alpha 1.0
         parts.append(colors)
     merged: np.ndarray = np.concatenate(parts, axis=0)
     return merged
@@ -1313,9 +1325,7 @@ class GSplatData(RenderMixin, IOAdapterMixin, FilteringMixin, CullingMixin):
             truncation_radius=self.truncation_radius,
         )
 
-    def with_colors(
-        self, colors: "np.ndarray | tuple[float, ...]"
-    ) -> "GSplatData":
+    def with_colors(self, colors: "np.ndarray | tuple[float, ...]") -> "GSplatData":
         """Return a new GSplatData with replaced colors, preserving LODs.
 
         Args:
