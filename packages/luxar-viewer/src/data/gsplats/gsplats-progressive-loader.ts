@@ -43,7 +43,7 @@ import { log, Modules, LogEmoji } from '../../utils/log';
  * Concatenate multiple LoadedGSplatsData into one.
  * Allocates new arrays sized for the total splat count and copies data.
  */
-function concatenateGSplatsData(parts: LoadedGSplatsData[]): LoadedGSplatsData {
+export function concatenateGSplatsData(parts: LoadedGSplatsData[]): LoadedGSplatsData {
   if (parts.length === 0) {
     return {
       positions: new Float32Array(0),
@@ -70,28 +70,36 @@ function concatenateGSplatsData(parts: LoadedGSplatsData[]): LoadedGSplatsData {
   const choleskyFactors = concatRequiredField(parts, (p) => p.choleskyFactors, count, cholSize);
 
   // Bespoke: colors fill missing LODs with white (per-dtype fill value).
+  // Color layout (3 = RGB, 4 = RGBA — the 4th channel is per-splat opacity)
+  // is a property of the dataset, uniform across its LODs; take it from the
+  // first LOD that carries colors and stride every copy/fill by it (a
+  // hardcoded 3 would truncate + misalign an RGBA additive ladder — exactly
+  // what imported 3DGS scenes become after `gsplat lod`).
   const firstWithColors = parts.find((p) => p.colors !== null);
+  const colorK: 3 | 4 = firstWithColors?.colorComponents ?? 3;
   let colors: Float32Array | Uint8Array | Uint16Array | null = null;
   if (firstWithColors?.colors) {
     if (firstWithColors.colors instanceof Uint8Array) {
-      colors = new Uint8Array(totalSplats * 3);
+      colors = new Uint8Array(totalSplats * colorK);
     } else if (firstWithColors.colors instanceof Uint16Array) {
-      colors = new Uint16Array(totalSplats * 3);
+      colors = new Uint16Array(totalSplats * colorK);
     } else {
-      colors = new Float32Array(totalSplats * 3);
+      colors = new Float32Array(totalSplats * colorK);
     }
   }
 
   let offset = 0;
   for (const part of parts) {
     if (colors && part.colors) {
-      colors.set(part.colors, offset * 3);
+      colors.set(part.colors, offset * colorK);
     } else if (colors && !part.colors) {
-      // Fill with white (1.0 for Float32, 255 for Uint8, 65535 for Uint16)
+      // Fill with white (1.0 for Float32, 255 for Uint8, 65535 for Uint16).
+      // Alpha fills opaque (the per-element-opacity identity) via the same
+      // full-scale fill value.
       const fillValue =
         colors instanceof Uint8Array ? 255 : colors instanceof Uint16Array ? 65535 : 1.0;
-      for (let i = 0; i < part.splatCount * 3; i++) {
-        colors[offset * 3 + i] = fillValue;
+      for (let i = 0; i < part.splatCount * colorK; i++) {
+        colors[offset * colorK + i] = fillValue;
       }
     }
 
@@ -103,6 +111,7 @@ function concatenateGSplatsData(parts: LoadedGSplatsData[]): LoadedGSplatsData {
     amplitudes,
     choleskyFactors,
     colors,
+    colorComponents: colorK,
     splatCount: totalSplats,
     ndim,
   };

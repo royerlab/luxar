@@ -1,6 +1,7 @@
 """Convert decoded classical splats (:class:`ClassicalSplats`) to a
 :class:`~luxar.gsplats.gsplat_data.GSplatData`: orientation fix, covariance
-rebuild + robust Cholesky, opacity→amplitude, DC→RGB. Extracted from
+rebuild + robust Cholesky, opacity→color alpha (amplitudes := 1), DC→RGB.
+Extracted from
 ``classical_splats.py`` in the per-concern split; re-exported there so
 ``classical_to_gsplat_data`` keeps its public import path.
 """
