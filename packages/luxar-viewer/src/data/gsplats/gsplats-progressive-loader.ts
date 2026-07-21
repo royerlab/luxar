@@ -108,6 +108,18 @@ export function concatenateGSplatsData(parts: LoadedGSplatsData[]): LoadedGSplat
             "ladder levels must share each field's dtype."
         );
       }
+      // Same contract for the color LAYOUT: `colorK` strides every copy, so
+      // an RGBA level inside an RGB ladder (same ctor — invisible to the
+      // dtype check above) would land at the wrong stride and silently
+      // corrupt every splat after it. Layout is per-dataset, uniform across
+      // its LODs; a mismatch is malformed data.
+      if ((part.colorComponents ?? 3) !== colorK) {
+        throw new Error(
+          'concatenateGSplatsData: mixed color layouts across LOD levels ' +
+            `(${part.colorComponents ?? 3} vs ${colorK} components) — ` +
+            'ladder levels must share the color layout (RGB vs RGBA).'
+        );
+      }
       colors.set(part.colors, offset * colorK);
     } else if (colors && !part.colors) {
       // Fill with white (1.0 for Float32, 255 for Uint8, 65535 for Uint16).
