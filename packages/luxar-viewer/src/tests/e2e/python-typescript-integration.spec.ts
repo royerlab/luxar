@@ -46,8 +46,8 @@ test.describe('Python→TypeScript Integration', () => {
           points.push({
             name: obj.name,
             count: geom.instanceCount,
-            hasColors: !!obj.userData?.attrs?.has_colors,
-            hasRadii: !!obj.userData?.attrs?.has_radii,
+            hasColors: !!obj.geometry?.userData?.hasColors,
+            hasRadii: !!obj.geometry?.userData?.hasRadii,
           });
         }
       });

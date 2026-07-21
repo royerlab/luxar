@@ -32,25 +32,26 @@ function makePointCloud(
   // only `aSortedIndex` remains a per-instance attribute).
   // `computeDebugState` selects on `userData.nodeType === 'points'`,
   // counts via `instanceCount`, and reports field presence from the
-  // node's declared metadata (`userData.attrs.has_*`) — attribute
-  // probing is impossible under the fixed texel layout.
+  // texel writers' `geometry.userData.has*` stamps — attribute probing
+  // is impossible under the fixed texel layout, and the zarr node attrs
+  // carry no has_colors/has_radii/has_sharpness.
   const geometry = new THREE.InstancedBufferGeometry();
   geometry.instanceCount = options.instanceCount ?? count;
   geometry.setAttribute(
     'aSortedIndex',
     new THREE.InstancedBufferAttribute(new Uint32Array(count), 1)
   );
+  geometry.userData = {
+    hasColors: !!options.hasColors,
+    hasRadii: !!options.hasRadii,
+    hasSharpness: !!options.hasSharpness,
+  };
   if (options.drawRange !== undefined) {
     geometry.setDrawRange(0, options.drawRange);
   }
   const points = new THREE.Mesh(geometry);
   points.userData = {
     nodeType: 'points',
-    attrs: {
-      has_colors: !!options.hasColors,
-      has_radii: !!options.hasRadii,
-      has_sharpness: !!options.hasSharpness,
-    },
   };
   if (options.name !== undefined) points.name = options.name;
   if (options.visible !== undefined) points.visible = options.visible;

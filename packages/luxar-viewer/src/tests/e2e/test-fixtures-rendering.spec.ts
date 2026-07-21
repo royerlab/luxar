@@ -58,7 +58,7 @@ test.describe('Test Fixture Rendering', () => {
       });
 
       const texData = points?.geometry?.userData?.elementTexture?.image?.data;
-      if (!points || !texData || !points.userData?.attrs?.has_sharpness) {
+      if (!points || !texData || !points.geometry?.userData?.hasSharpness) {
         return null;
       }
 
@@ -131,7 +131,7 @@ test.describe('Test Fixture Rendering', () => {
       });
 
       const texData = points?.geometry?.userData?.elementTexture?.image?.data;
-      if (!points || !texData || !points.userData?.attrs?.has_colors) {
+      if (!points || !texData || !points.geometry?.userData?.hasColors) {
         return null;
       }
 
@@ -335,7 +335,7 @@ test.describe('Test Fixture Rendering', () => {
       });
 
       const texData = points?.geometry?.userData?.elementTexture?.image?.data;
-      if (!points || !texData || !points.userData?.attrs?.has_colors) {
+      if (!points || !texData || !points.geometry?.userData?.hasColors) {
         return null;
       }
 
@@ -405,7 +405,7 @@ test.describe('Test Fixture Rendering', () => {
         }
       });
       const texData = points?.geometry?.userData?.elementTexture?.image?.data;
-      if (!points || !texData || !points.userData?.attrs?.has_colors) return null;
+      if (!points || !texData || !points.geometry?.userData?.hasColors) return null;
       const geometry = points.geometry;
       // Colors live at texel slots [i*12+4 .. i*12+6] of the RGBA32F
       // element texture; instanceCount is the visible point count.
@@ -460,7 +460,7 @@ test.describe('Test Fixture Rendering', () => {
       });
 
       const texData = points?.geometry?.userData?.elementTexture?.image?.data;
-      if (!points || !texData || !points.userData?.attrs?.has_colors) {
+      if (!points || !texData || !points.geometry?.userData?.hasColors) {
         return null;
       }
 

@@ -68,14 +68,14 @@ test.describe('Viewer Initialization', () => {
           // the geometry's instanceCount, positions live in the RGBA32F
           // element texture, and field presence comes from the node's
           // declared metadata (userData.attrs).
-          const attrs = obj.userData?.attrs;
+          const presence = obj.geometry?.userData;
           clouds.push({
             name: obj.name,
             pointCount: geom.instanceCount || 0,
             hasPosition: !!geom.userData?.elementTexture?.image?.data,
-            hasColor: !!attrs?.has_colors,
-            hasRadius: !!attrs?.has_radii,
-            hasSharpness: !!attrs?.has_sharpness,
+            hasColor: !!presence?.hasColors,
+            hasRadius: !!presence?.hasRadii,
+            hasSharpness: !!presence?.hasSharpness,
             visible: obj.visible,
             material: obj.material?.type,
           });

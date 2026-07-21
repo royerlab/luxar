@@ -1158,15 +1158,16 @@ export async function validateSceneAttributes(page: Page): Promise<
       const texelCapacity = Math.floor(texData.length / STRIDE);
       const sortedIndex = obj.geometry.attributes?.aSortedIndex;
       const dr = obj.geometry.drawRange;
-      const attrs = obj.userData?.attrs;
+      const presence = obj.geometry?.userData;
 
-      // Field presence comes from the node's declared metadata; the texel
-      // buffer allocates every slot, so all present fields share the same
-      // per-point capacity.
+      // Field presence comes from the texel writers' userData stamps (the
+      // zarr node attrs carry no has_colors/has_radii/has_sharpness); the
+      // texel buffer allocates every slot, so all present fields share the
+      // same per-point capacity.
       const posCount = texelCapacity;
-      const colCount = attrs?.has_colors ? texelCapacity : -1;
-      const radCount = attrs?.has_radii ? texelCapacity : -1;
-      const shpCount = attrs?.has_sharpness ? texelCapacity : -1;
+      const colCount = presence?.hasColors ? texelCapacity : -1;
+      const radCount = presence?.hasRadii ? texelCapacity : -1;
+      const shpCount = presence?.hasSharpness ? texelCapacity : -1;
       const drawCount = dr.count < Infinity ? Math.min(dr.count, posCount) : posCount;
       // instanceCount is the visible point count; the texel buffer (and
       // aSortedIndex) may be over-allocated for pooled geometries.

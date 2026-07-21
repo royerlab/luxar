@@ -74,18 +74,18 @@ test.describe('Real Dataset Loading', () => {
           // the geometry's instanceCount.
           const texData = geom.userData?.elementTexture?.image?.data;
           const texelCapacity = texData ? Math.floor(texData.length / 12) : 0;
-          const attrs = obj.userData?.attrs;
+          const presence = obj.geometry?.userData;
           pointClouds.push({
             name: obj.name,
             pointCount: geom.instanceCount || 0,
             hasPosition: !!texData,
-            hasColor: !!attrs?.has_colors,
-            hasRadius: !!attrs?.has_radii,
-            hasSharpness: !!attrs?.has_sharpness,
+            hasColor: !!presence?.hasColors,
+            hasRadius: !!presence?.hasRadii,
+            hasSharpness: !!presence?.hasSharpness,
             positionCount: texelCapacity,
-            colorCount: attrs?.has_colors ? texelCapacity : 0,
-            radiusCount: attrs?.has_radii ? texelCapacity : 0,
-            sharpnessCount: attrs?.has_sharpness ? texelCapacity : 0,
+            colorCount: presence?.hasColors ? texelCapacity : 0,
+            radiusCount: presence?.hasRadii ? texelCapacity : 0,
+            sharpnessCount: presence?.hasSharpness ? texelCapacity : 0,
           });
         }
       });

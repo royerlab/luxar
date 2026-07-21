@@ -168,6 +168,12 @@ export function createPointsGeometry(
   // field) counts as present — matching the interleaved era's empty
   // `aScalar` pre-bind that let the fail-closed guard pass.
   geometry.userData.hasScalars = data.scalars !== undefined;
+  // Sibling presence stamps for debug/E2E introspection (the node's zarr
+  // attrs carry no has_colors/has_radii/has_sharpness — see the pool
+  // adapter's stamp comment).
+  geometry.userData.hasColors = !!data.colors;
+  geometry.userData.hasRadii = !!data.radii;
+  geometry.userData.hasSharpness = !!data.sharpness;
 
   return geometry;
 }

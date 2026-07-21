@@ -70,7 +70,7 @@ test.describe('Data Integrity - Attribute Alignment', () => {
       const issues: string[] = [];
 
       debug.scene.traverse((obj: any) => {
-        if (obj.userData?.nodeType !== 'points' || !obj.userData?.attrs?.has_colors) return;
+        if (obj.userData?.nodeType !== 'points' || !obj.geometry?.userData?.hasColors) return;
         const texData = obj.geometry?.userData?.elementTexture?.image?.data;
         if (!texData) return;
         // Per-point data is texture-backed: the RGBA32F element texture
@@ -110,7 +110,7 @@ test.describe('Data Integrity - Attribute Alignment', () => {
       const issues: string[] = [];
 
       debug.scene.traverse((obj: any) => {
-        if (obj.userData?.nodeType !== 'points' || !obj.userData?.attrs?.has_radii) return;
+        if (obj.userData?.nodeType !== 'points' || !obj.geometry?.userData?.hasRadii) return;
         const texData = obj.geometry?.userData?.elementTexture?.image?.data;
         if (!texData) return;
         // Per-point data is texture-backed: the radius lives at texel slot

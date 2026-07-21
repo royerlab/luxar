@@ -179,16 +179,19 @@ export function computeDebugState(ctx: DebugStateContext): DebugState {
       totalPoints += pointCount;
       // Per-point data lives in the point texture (fixed 3-texel layout;
       // absent fields get identity fills), so field presence can no
-      // longer be read off geometry attributes — report the node's
-      // declared metadata instead.
-      const attrs = (object.userData as { attrs?: Record<string, unknown> })?.attrs;
+      // longer be read off geometry attributes — the texel writers stamp
+      // source presence on geometry.userData instead (the zarr node attrs
+      // carry no has_colors/has_radii/has_sharpness).
+      const presence = geometry?.userData as
+        | { hasColors?: boolean; hasRadii?: boolean; hasSharpness?: boolean }
+        | undefined;
       pointClouds.push({
         name: object.name || 'unnamed',
         pointCount,
         visible: object.visible,
-        hasColors: !!attrs?.has_colors,
-        hasRadii: !!attrs?.has_radii,
-        hasSharpness: !!attrs?.has_sharpness,
+        hasColors: !!presence?.hasColors,
+        hasRadii: !!presence?.hasRadii,
+        hasSharpness: !!presence?.hasSharpness,
       });
     }
 
