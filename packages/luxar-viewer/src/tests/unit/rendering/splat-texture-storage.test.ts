@@ -18,7 +18,7 @@ import {
   getMaxSplatCapacityPerNode,
   clampSplatCapacity,
   splatTextureHeightForCapacity,
-  getPlaceholderSplatTexture,
+  getPlaceholderElementTexture,
 } from '../../../rendering/element-texture-layout';
 import {
   elementTexelCapacity,
@@ -106,7 +106,7 @@ describe('element-texture-layout — texel address math', () => {
   });
 
   it('exposes a single shared placeholder texture', () => {
-    expect(getPlaceholderSplatTexture()).toBe(getPlaceholderSplatTexture());
+    expect(getPlaceholderElementTexture()).toBe(getPlaceholderElementTexture());
   });
 });
 
@@ -568,7 +568,7 @@ describe('pool adapter — growth, dispose, byte accounting', () => {
     expect(Array.from(ordering.subarray(0, 4))).toEqual([0, 1, 2, 3]);
   });
 
-  it('fromSplat append: writes only the suffix texels, extends aSortedIndex, keeps the prefix permutation', () => {
+  it('fromInstance append: writes only the suffix texels, extends aSortedIndex, keeps the prefix permutation', () => {
     const geom = pool.acquireGSplatsGeometry('node', 16);
     const src6 = makeSource(6);
     const packed = (s: SplatTexelSource, count: number) => ({
@@ -586,8 +586,8 @@ describe('pool adapter — growth, dispose, byte accounting', () => {
     const sentinel = -999;
     texels[0] = sentinel; // splat 0 center.x — must survive the append
 
-    // Append to 6 splats: fromSplat = 4 → only [4,6) rewritten.
-    pool.updateGSplatsGeometry(geom, packed(src6, 6), 6, 3.0, { fromSplat: 4 });
+    // Append to 6 splats: fromInstance = 4 → only [4,6) rewritten.
+    pool.updateGSplatsGeometry(geom, packed(src6, 6), 6, 3.0, { fromInstance: 4 });
     expect(geom.instanceCount).toBe(6);
     expect(texels[0]).toBe(sentinel); // prefix texels untouched
     // Suffix splat 5 center.x written.

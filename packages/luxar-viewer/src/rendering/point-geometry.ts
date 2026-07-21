@@ -57,6 +57,7 @@ import {
   attachElementStorage,
   getElementTexture,
   registerElementTexelDirtyRange,
+  elementTexelCapacity,
 } from './element-storage';
 
 /**
@@ -188,7 +189,7 @@ export function writePointTexels(
   opts?: { fromPoint?: number }
 ): number {
   const arr = texture.image.data as Float32Array;
-  const n = Math.min(count, Math.floor(arr.length / POINT_FLOATS_PER_POINT));
+  const n = Math.min(count, elementTexelCapacity(texture, POINT_FLOATS_PER_POINT));
   const from = Math.max(0, Math.min(opts?.fromPoint ?? 0, n));
   const { positions, colors, radii, sharpness, scalars } = src;
   // Fail loud on source/count mismatch (the interleaved-era writer

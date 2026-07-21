@@ -306,7 +306,7 @@ materialManager.updateCameraParams(fov, resolution);
 ```typescript
 // Materials are cached and reused automatically
 const material1 = materialManager.getPointMaterial({ opacity: 1.0 });
-const material2 = materialManager.getPointMaterial({ opacity: 1.0 }); // Returns same instance
+const material2 = materialManager.getPointMaterial({ opacity: 1.0 }); // Distinct instance (per-node)
 
 // When disposing geometry/points, material is automatically handled
 points.geometry.dispose(); // Frees GPU buffers
@@ -324,7 +324,7 @@ materialManager.updateCameraParams(newFov, newResolution);
 
 **Key Points**:
 
-- Materials are cached by properties (opacity, gamma, intensity, offset, blending mode)
+- Line materials are cached by properties (opacity, gamma, intensity, offset, blending mode); point and gsplat materials are per node (each carries its node's element texture)
 - Global uniform updates affect all materials simultaneously
 - Disposal is automatic - no manual material cleanup needed
 - Thread-safe caching prevents duplicate material creation

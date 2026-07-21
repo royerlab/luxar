@@ -222,7 +222,7 @@ export class GPUBufferPool {
    *   commit-points-geometry.ts).
    */
   updatePointsGeometry(
-    geometry: THREE.BufferGeometry,
+    geometry: THREE.InstancedBufferGeometry,
     data: LoadedPointsData,
     count: number,
     options?: { fromInstance?: number }
@@ -291,8 +291,8 @@ export class GPUBufferPool {
    * @param options - `preserveOrdering`: keep the geometry's existing
    *   `aSortedIndex` permutation instead of resetting it to identity
    *   (same-node same-count recommit — the commit path decides; see
-   *   commit-gsplats-geometry.ts). `fromSplat`: append fast path (Phase 4
-   *   Stage 2) — write & upload only the `[fromSplat, count)` suffix,
+   *   commit-gsplats-geometry.ts). `fromInstance`: append fast path (Phase 4
+   *   Stage 2) — write & upload only the `[fromInstance, count)` suffix,
    *   preserving the prefix texels + permutation already on the GPU.
    */
   updateGSplatsGeometry(
@@ -300,7 +300,7 @@ export class GPUBufferPool {
     data: PackedGSplatsData,
     count: number,
     truncationRadius: number = 3.0,
-    options?: { preserveOrdering?: boolean; fromSplat?: number }
+    options?: { preserveOrdering?: boolean; fromInstance?: number }
   ): void {
     this.gsplats.updateGeometry(geometry, data, count, truncationRadius, options);
   }

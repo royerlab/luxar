@@ -179,7 +179,7 @@ export function commitGSplatsGeometry(
           },
           splatCount,
           truncationRadius,
-          { preserveOrdering, fromSplat: canAppend ? (prevCount ?? 0) : 0 }
+          { preserveOrdering, fromInstance: canAppend ? (prevCount ?? 0) : 0 }
         );
       } finally {
         // Ownership handoff must happen even if the update throws: the

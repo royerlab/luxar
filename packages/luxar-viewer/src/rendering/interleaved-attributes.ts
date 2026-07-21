@@ -13,12 +13,12 @@
  * better vertex-throughput (one cache line per instance vs N
  * parallel fetches) and fewer driver calls per `setVertexBuffer`.
  *
- * Symmetry: Points / Lines flow through this helper so their
- * geometry construction stays parallel. GSplats left this path in
- * depth-sorting Phase 1 — their per-splat data lives in an RGBA32F
- * splat texture (`element-storage.ts::attachElementStorage`), with a
- * single `aSortedIndex` instanced attribute (symmetry restored
- * when/if Points/Lines migrate — spec §8).
+ * Consumers: LINES are the one remaining interleaved geometry type.
+ * GSplats (depth-sorting Phase 1) and Points (spec §8, PR #630) moved
+ * to RGBA32F element textures (`element-storage.ts::attachElementStorage`)
+ * with a single `aSortedIndex` instanced attribute; Points still import
+ * `widenToFloat32` from here (a neutral dtype utility — relocate it when
+ * Lines migrate and this module becomes deletable).
  *
  * **Single-dtype today.** Every attribute is packed as Float32 into
  * one shared buffer. The first attempt at narrowing
@@ -335,9 +335,10 @@ export function writeInterleavedAttribute(
 }
 
 /**
- * Widen a `Uint8Array` or `Uint16Array` source to a `Float32Array`
- * for interleaving. Useful for Points color / radius / sharpness
- * attributes that arrive as compact integer arrays.
+ * Widen a `Uint8Array` or `Uint16Array` source to a `Float32Array`.
+ * Used by the Lines interleaved writes AND the Points texel writer for
+ * color / radius / sharpness fields that arrive as compact integer
+ * arrays.
  *
  * When `divisor` is supplied (e.g. `255` for normalized uint8), the
  * widened floats are divided by that divisor — preserves the

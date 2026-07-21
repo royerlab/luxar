@@ -37,6 +37,7 @@ import {
   getElementTexture,
   registerElementTexelDirtyRange,
   writeSortedIndexIdentity,
+  elementTexelCapacity,
 } from './element-storage';
 
 /**
@@ -220,7 +221,7 @@ export function writeSplatTexels(
   opts?: { fromSplat?: number }
 ): number {
   const arr = texture.image.data as Float32Array;
-  const n = Math.min(count, Math.floor(arr.length / SPLAT_FLOATS_PER_SPLAT));
+  const n = Math.min(count, elementTexelCapacity(texture, SPLAT_FLOATS_PER_SPLAT));
   const from = Math.max(0, Math.min(opts?.fromSplat ?? 0, n));
   const { centers, cholesky01, cholesky23, cholesky45, amplitudes, colors } = src;
   const colorK = src.colorComponents ?? 3;

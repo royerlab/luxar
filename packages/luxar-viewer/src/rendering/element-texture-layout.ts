@@ -149,7 +149,7 @@ export function elementTextureHeightForCapacity(
 let placeholderElementTexture: THREE.DataTexture | null = null;
 
 /**
- * Shared 4×1 RGBA32F placeholder bound to element-texture materials
+ * Shared 12×1 RGBA32F placeholder bound to element-texture materials
  * before their first commit rebinds the real pool texture. One
  * instance for the whole session — materials never own or dispose it.
  */
@@ -213,9 +213,6 @@ export function clampSplatCapacity(requested: number): number {
 export function splatTextureHeightForCapacity(capacity: number): number {
   return elementTextureHeightForCapacity(capacity, SPLAT_TEXTURE_LAYOUT);
 }
-
-/** Alias of {@link getPlaceholderElementTexture} for gsplat call sites. */
-export const getPlaceholderSplatTexture = getPlaceholderElementTexture;
 
 // ---------------------------------------------------------------------------
 // Point-bound bindings (3 texels/point — per-texel layout and the texel

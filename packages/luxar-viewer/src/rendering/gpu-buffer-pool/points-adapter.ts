@@ -217,12 +217,12 @@ export class PointsBufferAdapter {
   }
 
   updateGeometry(
-    geometry: THREE.BufferGeometry,
+    geometry: THREE.InstancedBufferGeometry,
     data: LoadedPointsData,
     count: number,
     options?: { fromInstance?: number }
   ): void {
-    const instanced = geometry as THREE.InstancedBufferGeometry;
+    const instanced = geometry;
     const texture = getPointTexture(instanced);
     if (!texture) {
       throw new Error(

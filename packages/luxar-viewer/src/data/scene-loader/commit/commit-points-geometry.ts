@@ -208,6 +208,15 @@ export function commitPointsGeometry(
           if (footprintRadius > 0) geometry.boundingBox.expandByScalar(footprintRadius);
           geometry.boundingSphere = new THREE.Sphere();
           geometry.boundingBox.getBoundingSphere(geometry.boundingSphere);
+        } else if (geometry.boundingBox && footprintRadius > 0) {
+          // metadata.bounds is typed required, so this fallback is
+          // near-dead — but if it ever fires, the adapter's position-scan
+          // box still needs the disc-footprint expansion or edge sprites
+          // frustum-clip while visible (the gsplats adapter always
+          // footprint-expands; keep points equivalent).
+          geometry.boundingBox.expandByScalar(footprintRadius);
+          geometry.boundingSphere = new THREE.Sphere();
+          geometry.boundingBox.getBoundingSphere(geometry.boundingSphere);
         }
       } finally {
         // Ownership handoff must happen even if the update throws: the
