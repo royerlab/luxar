@@ -1096,4 +1096,17 @@ describe('concatenateGSplatsData — RGBA color layout (per-element opacity)', (
       expect(merged.colors![i * 4 + 3]).toBeCloseTo(1, 6);
     }
   });
+
+  it('rejects mixed color LAYOUTS across LOD levels (RGB level inside an RGBA ladder)', () => {
+    // The dtype check cannot catch this — an RGB and an RGBA level can share
+    // Float32Array — but `colorK` strides every copy, so the RGB level would
+    // land at the wrong stride and silently corrupt every splat after it.
+    expect(() =>
+      concatenateGSplatsData([makeRgbaLod(3, 0.9), makeLodData(2, 3, { color: 'float32' })])
+    ).toThrow(/mixed color layouts .*3 vs 4 components/);
+    // And the reverse: an RGBA level inside an RGB ladder.
+    expect(() =>
+      concatenateGSplatsData([makeLodData(3, 3, { color: 'float32' }), makeRgbaLod(2, 0.9)])
+    ).toThrow(/mixed color layouts .*4 vs 3 components/);
+  });
 });
