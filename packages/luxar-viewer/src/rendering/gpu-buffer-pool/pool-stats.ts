@@ -8,26 +8,13 @@
 import * as THREE from 'three';
 
 /**
- * Attribute type information for Points geometry.
- * Tracks the TypedArray type for each attribute so the pool only reuses
- * geometries whose attribute dtypes match the requested upload.
- */
-export interface PointsAttributeTypes {
-  position: 'Float32Array';
-  color: 'Float32Array' | 'Uint8Array' | 'Uint16Array';
-  radius: 'Float32Array' | 'Uint8Array';
-  sharpness: 'Float32Array' | 'Uint8Array';
-  /**
-   * scalar attribute dtype. Omitted (undefined) when the dataset has
-   * no scalars — `===` comparison handles undefined === undefined, so
-   * `attributeTypesMatch` works without a sentinel.
-   */
-  scalar?: 'Float32Array' | 'Float16Array' | 'Uint8Array';
-}
-
-/**
  * A pooled THREE geometry, plus the metadata the pool needs to decide
  * reuse, eviction, and frame accounting.
+ *
+ * (The former `attributeTypes?: PointsAttributeTypes` dtype snapshot is
+ * gone: points moved to the fixed 3-texel texture layout, so any pooled
+ * points geometry fits any points node — dtype normalization happens at
+ * upload time, not in the buffer layout.)
  */
 export interface PooledBuffer {
   geometry: THREE.BufferGeometry | THREE.InstancedBufferGeometry;
@@ -35,7 +22,6 @@ export interface PooledBuffer {
   type: 'points' | 'lines' | 'gsplats';
   inUse: boolean;
   lastUsedFrame: number;
-  attributeTypes?: PointsAttributeTypes;
 }
 
 /** Per-type buffer pool statistics. */

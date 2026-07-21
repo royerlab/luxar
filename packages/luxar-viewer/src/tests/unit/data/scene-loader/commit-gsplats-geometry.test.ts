@@ -10,9 +10,9 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import * as THREE from 'three';
 import {
-  configureSplatTextureLayout,
-  resetSplatTextureLayoutForTests,
-} from '../../../../rendering/splat-texture-layout';
+  configureElementTextureLayout,
+  resetElementTextureLayoutForTests,
+} from '../../../../rendering/element-texture-layout';
 
 const mockUpdateInstancedMesh = vi.fn();
 const mockGetSplatTexture = vi.fn((..._args: unknown[]) => null);
@@ -355,17 +355,17 @@ describe('commitGSplatsGeometry — committedEnergyFraction stamp', () => {
 
 describe('commitGSplatsGeometry — capacity-clamp consistency', () => {
   afterEach(() => {
-    resetSplatTextureLayoutForTests();
+    resetElementTextureLayoutForTests();
   });
 
   // The GPU writers clamp the WRITTEN splats to the per-node texture bound
-  // (splat-texture-layout), so every count the commit records or hands out
+  // (element-texture-layout), so every count the commit records or hands out
   // must be the clamped one — an unclamped count fed to the sort
   // coordinator makes the SortWorker return permutation values ≥ the
   // texture capacity (OOB texel fetches → splats vanish).
   it('notifies the sort coordinator and stamps visibleSplatCount with the CLAMPED count', () => {
     // maxTextureSize 8 → width 8, per-node bound = 8×8/4 = 16 splats.
-    configureSplatTextureLayout(8);
+    configureElementTextureLayout(8);
     mockUpdateInstancedMesh.mockReset();
     mockNoteGSplatsCommit.mockReset();
     const root = new THREE.Group();

@@ -8,17 +8,22 @@
  *   - per-node Gain/Offset/Gamma colour adjustment
  *   - zero-radius nD-slicing discard
  *
- * The mesh layout is a 4-vertex unit-quad base plus
- * InstancedBufferAttribute per-instance data
- * (aCenter, aRadius, aSharpness, aColor, aScalar). The vertex stage
- * projects aCenter to clip space and expands the unit quad by the
- * per-instance pointSize; the fragment stage discards outside the
- * inscribed circle and computes the shifted-truncated super-Gaussian falloff.
+ * The mesh layout is a 4-vertex unit-quad base plus one per-instance
+ * attribute:
+ *   - aSortedIndex (uint) — draw-slot → storage-slot mapping
+ *     (identity in Phase 1; the sort worker permutes it in Phase 2+)
+ * Per-point data comes from the RGBA32F point texture (`uPointTex`,
+ * 3 texels/point — layout in `rendering/element-texture-layout.ts`),
+ * fetched in the vertex stage via `textureLoad`. The vertex stage
+ * projects the fetched centre to clip space and expands the unit quad
+ * by the per-instance pointSize; the fragment stage discards outside
+ * the inscribed circle and computes the shifted-truncated
+ * super-Gaussian falloff.
  *
  * Feature toggles map to {@link PointTSLConfig}, mirroring the GLSL3
  * `#define` semantics where flipping a flag triggers a recompile:
- *   - `useColormap` → reads `aScalar` + samples `uColormapTex`
- *     instead of `aColor`.
+ *   - `useColormap` → fetches the texel2.x scalar + samples
+ *     `uColormapTex` instead of the texel1 color.
  *   - `useMaxRGBContribution` → premultiplies output RGB by alpha
  *     for the CustomBlending + MaxEquation rendering mode.
  *
@@ -31,11 +36,13 @@ import {
   uniform,
   attribute,
   varying,
-  vec2,
-  vec3,
-  vec4,
+  vec2 as _vec2,
+  vec3 as _vec3,
+  vec4 as _vec4,
+  ivec2 as _ivec2,
   float,
   int,
+  textureSize,
   max,
   min,
   clamp,
@@ -48,12 +55,23 @@ import {
 } from 'three/tsl';
 import { NodeMaterial } from 'three/webgpu';
 import { sanitizeNonNegative, perspectiveNearFadeTSL, type TSLNode } from '../_shared/tsl-helpers';
+import { getPlaceholderElementTexture } from '../../element-texture-layout';
 import {
   applyBlendingStateToMaterial,
   getCompleteBlendingState,
   effectiveGeometryMode,
 } from '../../blending-state';
 import type { BlendingMode } from '../../material-manager';
+
+// Type-erased constructor aliases — same rationale as the gsplat TSL
+// factory (shader-tsl.ts there): TSL's typed `vec*` overloads reject
+// many valid combinations of intermediate `Node<…>` results. Re-export
+// each as TSLNode-typed to sidestep overload-mismatch errors without
+// affecting the generated GLSL/WGSL.
+const vec2: (a?: TSLNode, b?: TSLNode) => TSLNode = _vec2 as TSLNode;
+const vec3: (a?: TSLNode, b?: TSLNode, c?: TSLNode) => TSLNode = _vec3 as TSLNode;
+const vec4: (a?: TSLNode, b?: TSLNode, c?: TSLNode, d?: TSLNode) => TSLNode = _vec4 as TSLNode;
+const ivec2: (a?: TSLNode, b?: TSLNode) => TSLNode = _ivec2 as TSLNode;
 
 export interface PointTSLConfig {
   readonly useColormap?: boolean;
@@ -95,8 +113,19 @@ export interface PointTSLConfig {
  * Colormap nodes are optional and bound only when the consumer is
  * built with `config.useColormap === true`. The factory throws if
  * the config says yes but the colormap nodes are missing.
+ *
+ * The colormap AND point texture nodes are factory-time bound (TSL
+ * `texture(...)` captures the THREE.Texture at call time); the
+ * wrapper rebuilds the graph when either texture's identity changes
+ * (see `setColormapTexture` / `updatePointTexture` in the wrapper).
  */
 export interface PointTSLNodes {
+  /**
+   * Point data texture node (RGBA32F, 3 texels/point). Every point
+   * material has one; the pool commit rebinds it per node via
+   * `updatePointTexture`.
+   */
+  readonly uPointTex: TSLNode;
   readonly pointSizeFactor: TSLNode;
   readonly maxPointSize: TSLNode;
   readonly radiusScale: TSLNode;
@@ -137,12 +166,10 @@ export function pointWebGPUFactory(
 ): NodeMaterial {
   // Per-vertex (4 corners, ±1).
   const aQuadCorner: TSLNode = attribute<'vec2'>('aQuadCorner', 'vec2');
-  // Per-instance.
-  const aCenter: TSLNode = attribute<'vec3'>('aCenter', 'vec3');
-  const aRadius: TSLNode = attribute<'float'>('aRadius', 'float');
-  const aSharpness: TSLNode = attribute<'float'>('aSharpness', 'float');
-  const aColor: TSLNode = attribute<'vec3'>('aColor', 'vec3');
-  const aScalar: TSLNode = config.useColormap ? attribute<'float'>('aScalar', 'float') : null;
+  // The only per-instance attribute: point data itself lives in the
+  // point texture; `aSortedIndex` maps the draw slot to a storage slot
+  // (identity in Phase 1, permuted by the sort worker in Phase 2+).
+  const aSortedIndex: TSLNode = attribute<'uint'>('aSortedIndex', 'uint');
 
   // Bind directly to the persistent `UniformNode`s owned by the
   // wrapper class (or by `buildPointTSLNodesFromUniforms` for the
@@ -151,6 +178,7 @@ export function pointWebGPUFactory(
   // `.onUpdate` callbacks needed. Unlike lines, `uIsOrtho` stays a
   // RUNTIME uniform here (the graph selects the ortho branch per
   // vertex), so no rebuild is needed on camera-mode flips.
+  const uPointTex = nodes.uPointTex;
   const uPointSizeFactor = nodes.pointSizeFactor;
   const uMaxPointSize = nodes.maxPointSize;
   const uRadiusScale = nodes.radiusScale;
@@ -183,80 +211,135 @@ export function pointWebGPUFactory(
       : config.blendingMode === 'max';
 
   // ---- Vertex computation ----
+  //
+  // The ENTIRE vertex stage is traced inside a single Fn() body with
+  // explicit `.toVar()` statements — the same load-bearing structure
+  // as the gsplat factory (materials/gsplat/shader-tsl.ts): as a free
+  // expression tree, TSL materializes a shared subexpression at its
+  // FIRST traversal use, which can land inside a `.select()` branch
+  // and read uninitialized on the other path. Inside Fn(), statements
+  // emit in trace order, unconditionally.
 
-  // Sanitise per-instance attributes (NaN/Inf-safe).
-  // Sharpness is authored in [0, 1] -> super-Gaussian exponent
-  // beta = 2^(6s - 2) (s=0.5 -> beta=2, a true Gaussian). sanitizeNonNegative
-  // keeps a valid s=0 (-> beta=0.25) and routes NaN/Inf/negative to the 0.5
-  // default; clamp bounds the [0, 1] range. Mirrors the GLSL3 path exactly.
-  const sClamped: TSLNode = clamp(sanitizeNonNegative(aSharpness, float(0.5)), 0.0, 1.0);
-  const beta: TSLNode = float(2.0).pow(sClamped.mul(6.0).sub(2.0));
-  const normalizedRadius: TSLNode = sanitizeNonNegative(aRadius.mul(uRadiusScale), float(0.0));
+  // Varyings are declared up front and `.assign()`ed inside the vertex
+  // body (the TSL pattern for Fn-traced vertex stages). Per-instance
+  // varyings are constant within a quad (4 verts share the instance)
+  // so interpolation is a no-op, but the wrapper is what gets TSL to
+  // pass them to the fragment stage.
+  const vSpriteCoord: TSLNode = varying(vec2(float(0.0), float(0.0)));
+  const vRadius: TSLNode = varying(float(0.0));
+  const vBeta: TSLNode = varying(float(0.0));
+  const vColor: TSLNode = varying(vec3(float(0.0), float(0.0), float(0.0)));
+  const vPointSize: TSLNode = varying(float(0.0));
+  const vNearFade: TSLNode = varying(float(1.0));
 
-  // Per-instance colour from LUT or attribute. In colormap mode the
-  // display range (uScalarMin/uScalarScale) and gamma shape the scalar
-  // VALUE before the LUT lookup, not the resulting color; intensity/
-  // offset apply POST-LUT in the fragment stage (matching the gsplat
-  // shader) — mirrors the GLSL3 USE_COLORMAP path.
-  let perPointColor: TSLNode;
-  if (config.useColormap && aScalar && uColormapTex && uScalarMin && uScalarScale) {
-    const t0 = clamp(aScalar.sub(uScalarMin).mul(uScalarScale), 0.0, 1.0);
-    // gammaOne skips the pre-LUT pow() when gamma == 1.0.
-    const t = config.gammaOne ? t0 : t0.pow(uInvGamma); // gamma on the value, pre-LUT
-    perPointColor = uColormapTex.sample(vec2(t, 0.5)).rgb;
-  } else {
-    perPointColor = aColor;
-  }
+  const vertexBody = Fn(() => {
+    // === Point-texture fetch prologue ===
+    // textureLoad reads reconstruct the per-point values into the exact
+    // local names the math below has always used — zero changes
+    // downstream of this block. Every value is a `.toVar()` STATEMENT
+    // (the Fn house rule; see the block comment above). The texture
+    // width is a multiple of 3 (element-texture-layout.ts), so a
+    // point's 3 texels share one row and only x advances. texel2 is
+    // fetched only in colormap mode (the scalar slot) — mirrors the
+    // GLSL twin's USE_COLORMAP-gated fetch.
+    const pointBase: TSLNode = int(aSortedIndex).mul(int(3)).toVar();
+    // int() wrap is LOAD-BEARING: TSL types textureSize() as uint (the
+    // WGSL textureDimensions convention), but the WebGL2 fallback emits
+    // GLSL textureSize() which returns int -- without the explicit
+    // conversion the generated `uint nodeVar = textureSize(...).x;`
+    // fails to compile on the forceWebGL backend.
+    const pointTexW: TSLNode = int(
+      (textureSize(uPointTex, int(0)) as unknown as TSLNode).x
+    ).toVar();
+    const texelX: TSLNode = pointBase.mod(pointTexW).toVar();
+    const texelY: TSLNode = pointBase.div(pointTexW).toVar();
+    const pointT0: TSLNode = uPointTex.load(ivec2(texelX, texelY)).toVar();
+    const pointT1: TSLNode = uPointTex.load(ivec2(texelX.add(int(1)), texelY)).toVar();
+    const aCenter: TSLNode = vec3(pointT0).toVar(); // world-space centre
+    const aRadius: TSLNode = pointT0.w.toVar();
+    const aColor: TSLNode = vec3(pointT1).toVar();
+    const aSharpness: TSLNode = pointT1.w.toVar();
+    const aScalar: TSLNode | null = config.useColormap
+      ? uPointTex.load(ivec2(texelX.add(int(2)), texelY)).x.toVar()
+      : null;
 
-  // Project per-instance centre to view + clip space.
-  const mvPos: TSLNode = modelViewMatrix.mul(vec4(aCenter, 1.0));
-  const projCenter: TSLNode = cameraProjectionMatrix.mul(mvPos);
+    // Sanitise per-point values (NaN/Inf-safe).
+    // Sharpness is authored in [0, 1] -> super-Gaussian exponent
+    // beta = 2^(6s - 2) (s=0.5 -> beta=2, a true Gaussian). sanitizeNonNegative
+    // keeps a valid s=0 (-> beta=0.25) and routes NaN/Inf/negative to the 0.5
+    // default; clamp bounds the [0, 1] range. Mirrors the GLSL3 path exactly.
+    const sClamped: TSLNode = clamp(sanitizeNonNegative(aSharpness, float(0.5)), 0.0, 1.0);
+    const beta: TSLNode = float(2.0).pow(sClamped.mul(6.0).sub(2.0)).toVar();
+    const normalizedRadius: TSLNode = sanitizeNonNegative(
+      aRadius.mul(uRadiusScale),
+      float(0.0)
+    ).toVar();
 
-  // World-space size from VIEW-SPACE DEPTH (-mvPos.z), matching the
-  // line + gsplat shaders (Euclidean distance shrank edge-of-screen
-  // points by cos(theta)); ortho stays constant. 1e-4 floor mirrors
-  // the line shader's nearCull floor.
-  const invDistance: TSLNode = int(uIsOrtho)
-    .equal(int(1))
-    .select(float(1.0), mvPos.z.negate().max(float(1e-4)).reciprocal());
-  const basePointSize: TSLNode = normalizedRadius.mul(uPointSizeFactor).mul(invDistance);
+    // Per-point colour from LUT or the texel1 color. In colormap mode
+    // the display range (uScalarMin/uScalarScale) and gamma shape the
+    // scalar VALUE before the LUT lookup, not the resulting color;
+    // intensity/offset apply POST-LUT in the fragment stage (matching
+    // the gsplat shader) — mirrors the GLSL3 USE_COLORMAP path.
+    let perPointColor: TSLNode;
+    if (config.useColormap && aScalar && uColormapTex && uScalarMin && uScalarScale) {
+      const t0 = clamp(aScalar.sub(uScalarMin).mul(uScalarScale), 0.0, 1.0);
+      // gammaOne skips the pre-LUT pow() when gamma == 1.0.
+      const t = config.gammaOne ? t0 : t0.pow(uInvGamma); // gamma on the value, pre-LUT
+      perPointColor = uColormapTex.sample(vec2(t, 0.5)).rgb;
+    } else {
+      perPointColor = aColor;
+    }
 
-  // No size compensation: the shifted-truncated super-Gaussian truncates at
-  // the sprite edge (rho = 1), so basePointSize already IS the visible extent.
-  // Minimum sprite size 1.5px (matches the LINE shader — thinner quads
-  // cause rasterization gaps); sub-pixel energy is preserved by the
-  // fragment's sizeScale^2 compensation via vPointSize.
-  const pointSize: TSLNode = clamp(basePointSize, float(1.5), uMaxPointSize);
+    // Project per-point centre to view + clip space.
+    const mvPos: TSLNode = modelViewMatrix.mul(vec4(aCenter, 1.0)).toVar();
+    const projCenter: TSLNode = cameraProjectionMatrix.mul(mvPos).toVar();
 
-  // Expand the unit quad to a sprite in clip space.
-  const offsetClip: TSLNode = aQuadCorner.mul(pointSize.div(uResolution)).mul(projCenter.w);
-  // Unified near handling (matches line + gsplat shaders and the GLSL
-  // twin): behind-camera fades to 0 (projCenter.w <= 0 there would flip
-  // the sprite), the near-plane approach fades across
-  // [nearCull, 2*nearCull], ortho passes through (NDC clipping is the
-  // authority). Reject below 0.01, multiply the survivor into alpha.
-  const depthFade: TSLNode = perspectiveNearFadeTSL(
-    uIsOrtho,
-    mvPos.z,
-    max(uNearCull, float(1e-4))
-  ).toVar();
-  const clipPos: TSLNode = depthFade
-    .lessThan(0.01)
-    .select(vec4(0.0, 0.0, -2.0, 1.0), projCenter.add(vec4(offsetClip, 0.0, 0.0)));
+    // World-space size from VIEW-SPACE DEPTH (-mvPos.z), matching the
+    // line + gsplat shaders (Euclidean distance shrank edge-of-screen
+    // points by cos(theta)); ortho stays constant. 1e-4 floor mirrors
+    // the line shader's nearCull floor.
+    const invDistance: TSLNode = int(uIsOrtho)
+      .equal(int(1))
+      .select(float(1.0), mvPos.z.negate().max(float(1e-4)).reciprocal());
+    const basePointSize: TSLNode = normalizedRadius.mul(uPointSizeFactor).mul(invDistance).toVar();
 
-  // Sprite UV (replaces gl_PointCoord). Computed per-vertex,
-  // interpolated to the fragment via the `varying()` wrapper —
-  // matches `vSpriteCoord = (aQuadCorner + 1.0) * 0.5` from GLSL.
-  const vSpriteCoord: TSLNode = varying(aQuadCorner.add(1.0).mul(0.5));
-  // Per-instance vRadius and vBeta are constant within a quad
-  // (4 verts share the same instance) so `varying()` interpolation
-  // is a no-op but the wrapper is what gets TSL to pass them to the
-  // fragment stage.
-  const vRadius: TSLNode = varying(normalizedRadius);
-  const vBeta: TSLNode = varying(beta);
-  const vColor: TSLNode = varying(perPointColor);
-  const vPointSize: TSLNode = varying(basePointSize);
-  const vNearFade: TSLNode = varying(depthFade);
+    // No size compensation: the shifted-truncated super-Gaussian truncates at
+    // the sprite edge (rho = 1), so basePointSize already IS the visible extent.
+    // Minimum sprite size 1.5px (matches the LINE shader — thinner quads
+    // cause rasterization gaps); sub-pixel energy is preserved by the
+    // fragment's sizeScale^2 compensation via vPointSize.
+    const pointSize: TSLNode = clamp(basePointSize, float(1.5), uMaxPointSize);
+
+    // Expand the unit quad to a sprite in clip space.
+    const offsetClip: TSLNode = aQuadCorner.mul(pointSize.div(uResolution)).mul(projCenter.w);
+    // Unified near handling (matches line + gsplat shaders and the GLSL
+    // twin): behind-camera fades to 0 (projCenter.w <= 0 there would flip
+    // the sprite), the near-plane approach fades across
+    // [nearCull, 2*nearCull], ortho passes through (NDC clipping is the
+    // authority). Reject below 0.01, multiply the survivor into alpha.
+    const depthFade: TSLNode = perspectiveNearFadeTSL(
+      uIsOrtho,
+      mvPos.z,
+      max(uNearCull, float(1e-4))
+    ).toVar();
+    const clipPos: TSLNode = depthFade
+      .lessThan(0.01)
+      .select(vec4(0.0, 0.0, -2.0, 1.0), projCenter.add(vec4(offsetClip, 0.0, 0.0)));
+
+    // Assign varyings (declared outside the Fn; see above). Sprite UV
+    // replaces gl_PointCoord — matches `vSpriteCoord =
+    // (aQuadCorner + 1.0) * 0.5` from GLSL.
+    vSpriteCoord.assign(aQuadCorner.add(1.0).mul(0.5));
+    vRadius.assign(normalizedRadius);
+    vBeta.assign(beta);
+    vColor.assign(perPointColor);
+    vPointSize.assign(basePointSize);
+    vNearFade.assign(depthFade);
+
+    return clipPos;
+  });
+
+  const clipPos: TSLNode = vertexBody();
 
   // ---- Fragment computation ----
 
@@ -347,6 +430,12 @@ export function buildPointTSLNodesFromUniforms(
   config: PointTSLConfig = {}
 ): PointTSLNodes {
   const base: PointTSLNodes = {
+    // Point data texture — bound from the caller's uniform when
+    // present (harness / material paths), else the shared placeholder
+    // so codegen-only consumers still build a valid graph.
+    uPointTex: texture(
+      (uniforms.uPointTex?.value as THREE.Texture | null) ?? getPlaceholderElementTexture()
+    ),
     pointSizeFactor: uniform((uniforms.pointSizeFactor?.value as number) ?? 1.0),
     maxPointSize: uniform((uniforms.maxPointSize?.value as number) ?? 1.0),
     radiusScale: uniform((uniforms.radiusScale?.value as number) ?? 1.0),

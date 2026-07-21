@@ -7,6 +7,8 @@
 
 import { describe, it, expect, vi } from 'vitest';
 import { GPUBufferPool } from '../../../rendering/gpu-buffer-pool';
+import { getPointTexture } from '../../../rendering/point-geometry';
+import { POINT_FLOATS_PER_POINT } from '../../../rendering/element-texture-layout';
 import type { LoadedPointsData } from '../../../data/data-loader-types';
 import * as THREE from 'three';
 
@@ -15,7 +17,7 @@ import * as THREE from 'three';
 // LoadedPointsData with caller-controllable count, ndim, and color type
 // — so tests can express "the data I need" rather than re-typing 13 lines
 // of boilerplate per case. Float32 colors by default; pass `colorCtor`
-// for the Uint8 / type-mismatch paths.
+// for the Uint8 path.
 function makePointsData(
   count: number,
   opts: {
@@ -48,66 +50,39 @@ function makePointsData(
 
 describe('GPU Buffer Pool Integration Tests', () => {
   describe('Geometry Acquisition Verification', () => {
-    // integration.md O4 / Phase E17: previously one `it` bundled the
-    // spy-was-called check, the BufferGeometry instance check, and 3
-    // attribute pins (aQuadCorner/aCenter/aColor with their item sizes)
-    // into 8 assertions. A regression dropping ONLY aColor would
-    // surface as a generic "should call acquirePointsGeometry..."
-    // failure rather than naming the missing attribute. Split into:
-    //   (a) one `it` that pins the acquire call + BufferGeometry shape
-    //       (the orchestration contract)
-    //   (b) one `it.each` over the canonical attribute set that pins
-    //       each attribute's name + itemSize independently
-    // Failures now name the broken attribute or contract.
-    function makePointsMockData(): LoadedPointsData {
-      return {
-        positions: new Float32Array([1, 2, 3, 4, 5, 6]),
-        colors: new Uint8Array([255, 128, 0, 128, 255, 0]),
-        radii: new Float32Array([0.5, 0.6]),
-        sharpness: new Float32Array([2.0, 2.5]),
-        pointCount: 2,
-        ndim: 3,
-        metadata: {
-          totalPoints: 2,
-          loadedPoints: 2,
-          bounds: new THREE.Box3(),
-          usedSpatialIndex: true,
-        },
-      };
-    }
-
-    it('acquirePointsGeometry returns a BufferGeometry and forwards (path, data, count) to the pool', () => {
+    it('acquirePointsGeometry returns an InstancedBufferGeometry and forwards (path, count) to the pool', () => {
       const pool = new GPUBufferPool(20, 300);
       const acquireSpy = vi.spyOn(pool, 'acquirePointsGeometry');
-      const mockData = makePointsMockData();
 
-      const geometry = pool.acquirePointsGeometry('/test_points', mockData, 2);
+      const geometry = pool.acquirePointsGeometry('/test_points', 2);
 
-      expect(acquireSpy).toHaveBeenCalledWith('/test_points', mockData, 2);
-      expect(geometry).toBeInstanceOf(THREE.BufferGeometry);
+      expect(acquireSpy).toHaveBeenCalledWith('/test_points', 2);
+      expect(geometry).toBeInstanceOf(THREE.InstancedBufferGeometry);
     });
 
-    // [integration.md/W7][P3] Pin the canonical attribute set the points
-    // pool emits. aQuadCorner (per-vertex quad-corner shared across
-    // instances) is itemSize=2; per-instance aCenter and aColor are
-    // both itemSize=3. A regression that dropped any one attribute or
-    // shifted an itemSize surfaces a per-row named failure.
-    it.each<{ attribute: string; itemSize: number }>([
-      { attribute: 'aQuadCorner', itemSize: 2 },
-      { attribute: 'aCenter', itemSize: 3 },
-      { attribute: 'aColor', itemSize: 3 },
-    ])(
-      'acquirePointsGeometry emits attribute $attribute with itemSize=$itemSize',
-      ({ attribute, itemSize }) => {
-        const pool = new GPUBufferPool(20, 300);
-        const geometry = pool.acquirePointsGeometry('/test_points', makePointsMockData(), 2);
-        const attr = geometry.getAttribute(attribute);
-        expect(attr, `attribute "${attribute}" missing from geometry`).toBeDefined();
-        expect(attr.itemSize).toBe(itemSize);
-      }
-    );
+    // Pin the canonical storage the points pool emits: aQuadCorner
+    // (per-vertex quad-corner shared across instances, itemSize=2), the
+    // per-instance `aSortedIndex` (Uint32), and the RGBA32F point
+    // texture (3 texels/point). A regression that dropped any one of
+    // them surfaces a named failure.
+    it('acquirePointsGeometry emits the quad + texture storage pair', () => {
+      const pool = new GPUBufferPool(20, 300);
+      const geometry = pool.acquirePointsGeometry('/test_points', 2);
 
-    it('updatePointsGeometry writes the supplied positions into the geometry attribute', () => {
+      const quad = geometry.getAttribute('aQuadCorner');
+      expect(quad, 'attribute "aQuadCorner" missing from geometry').toBeDefined();
+      expect(quad.itemSize).toBe(2);
+
+      const sortedIndex = geometry.getAttribute('aSortedIndex');
+      expect(sortedIndex, 'attribute "aSortedIndex" missing from geometry').toBeDefined();
+      expect(sortedIndex.itemSize).toBe(1);
+      expect(sortedIndex.array).toBeInstanceOf(Uint32Array);
+
+      const texture = getPointTexture(geometry);
+      expect(texture, 'point texture missing from geometry').not.toBeNull();
+    });
+
+    it('updatePointsGeometry writes the supplied positions into the point texture', () => {
       const pool = new GPUBufferPool(20, 300);
 
       const mockData1: LoadedPointsData = {
@@ -125,27 +100,25 @@ describe('GPU Buffer Pool Integration Tests', () => {
         },
       };
 
-      // Simulate what scene-loader does (lines 1415-1421)
-      const geometry = pool.acquirePointsGeometry('/node', mockData1, 1);
+      // Simulate what scene-loader does
+      const geometry = pool.acquirePointsGeometry('/node', 1);
 
       // Re-update with DISTINCT data so we can observe a real mutation
-      // on the attribute buffer (not a tautology of "spy recorded its
-      // own call"). Pinning observable post-state catches a regression
-      // that no-ops updatePointsGeometry; a spy on the method does not.
+      // on the texture's backing store (not a tautology of "spy recorded
+      // its own call"). Pinning observable post-state catches a
+      // regression that no-ops updatePointsGeometry; a spy on the method
+      // does not.
       const mockData2: LoadedPointsData = {
         ...mockData1,
         positions: new Float32Array([7, 8, 9]),
       };
       pool.updatePointsGeometry(geometry, mockData2, 1);
 
-      const centerAttr = geometry.getAttribute('aCenter') as THREE.BufferAttribute;
-      const buf = centerAttr.array as Float32Array;
-      // Observable post-state: positions actually written to the buffer.
-      // (needsUpdate is a write-only setter in THREE.BufferAttribute so
-      // we cannot read it back; the buffer mutation is the contract.)
-      expect(buf[0]).toBe(7);
-      expect(buf[1]).toBe(8);
-      expect(buf[2]).toBe(9);
+      const texels = getPointTexture(geometry)!.image.data as Float32Array;
+      // Observable post-state: positions actually written to texel 0.
+      expect(texels[0]).toBe(7);
+      expect(texels[1]).toBe(8);
+      expect(texels[2]).toBe(9);
     });
 
     // integration.md O3 / Phase E24: P9 rename — name describes input
@@ -155,32 +128,11 @@ describe('GPU Buffer Pool Integration Tests', () => {
     it('acquiring with the same nodeId returns the same geometry instance (geometry reuse, no dispose)', () => {
       const pool = new GPUBufferPool(20, 300);
 
-      const mockData1: LoadedPointsData = {
-        positions: new Float32Array([1, 2, 3, 4, 5, 6]),
-        colors: new Float32Array([1, 0, 0, 0, 1, 0]),
-        radii: new Float32Array([0.5, 0.6]),
-        sharpness: new Float32Array([2.0, 2.5]),
-        pointCount: 2,
-        ndim: 3,
-        metadata: {
-          totalPoints: 2,
-          loadedPoints: 2,
-          bounds: new THREE.Box3(),
-          usedSpatialIndex: true,
-        },
-      };
-
-      const mockData2: LoadedPointsData = {
-        ...mockData1,
-        pointCount: 1,
-        metadata: { ...mockData1.metadata, loadedPoints: 1 },
-      };
-
       // First acquisition
-      const geom1 = pool.acquirePointsGeometry('/node1', mockData1, 2);
+      const geom1 = pool.acquirePointsGeometry('/node1', 2);
 
       // Second acquisition (same node, smaller count - should reuse)
-      const geom2 = pool.acquirePointsGeometry('/node1', mockData2, 1);
+      const geom2 = pool.acquirePointsGeometry('/node1', 1);
 
       // CRITICAL: Verify same geometry instance (REUSE, not new allocation)
       expect(geom2).toBe(geom1);
@@ -192,42 +144,40 @@ describe('GPU Buffer Pool Integration Tests', () => {
     });
   });
 
-  describe('Type-Aware Reuse Verification', () => {
-    // integration.md O3 / Phase E24: P9 rename.
-    it('reuses geometry when subsequent acquires share the same dtypes (e.g. Uint8 → Uint8)', () => {
+  describe('Dtype-Blind Reuse Verification', () => {
+    it('reuses geometry across acquires on the same node', () => {
       const pool = new GPUBufferPool(20, 300);
 
-      // [integration.md/O3][P10] Factory-built fixtures replace duplicated literals.
-      const data1 = makePointsData(1000, { colorCtor: Uint8Array });
-      const data2 = makePointsData(800, { colorCtor: Uint8Array });
+      const geom1 = pool.acquirePointsGeometry('/node1', 1000);
+      const geom2 = pool.acquirePointsGeometry('/node1', 800);
 
-      const geom1 = pool.acquirePointsGeometry('/node1', data1, 1000);
-      const geom2 = pool.acquirePointsGeometry('/node1', data2, 800);
-
-      // Should reuse (types match)
+      // Should reuse — capacity is the only criterion.
       expect(geom2).toBe(geom1);
       expect(pool.getStats().reuses).toBe(1);
     });
 
-    // integration.md O3 / Phase E24: P9 rename — name pins the
-    // dtype-divergence contract (Uint8 colors followed by Float32 colors
-    // forces a fresh geometry).
-    it('allocates a fresh geometry when the second acquire has different color dtype (Uint8 → Float32)', () => {
+    it('reuses a released geometry for a node with a DIFFERENT color dtype (Uint8 → Float32)', () => {
+      // The interleaved era forced a fresh allocation on a dtype flip;
+      // the fixed texel layout widens every dtype to Float32 at upload,
+      // so the pooled geometry is reused and the values still normalize.
       const pool = new GPUBufferPool(20, 300);
 
-      // [integration.md/O3][P10] Factory-built fixtures.
-      const dataUint8 = makePointsData(1000, { colorCtor: Uint8Array });
-      const dataFloat = makePointsData(1000, { colorCtor: Float32Array });
+      const geom1 = pool.acquirePointsGeometry('/node1', 1000);
+      pool.updatePointsGeometry(geom1, makePointsData(1000, { colorCtor: Uint8Array }), 1000);
 
-      const geom1 = pool.acquirePointsGeometry('/node1', dataUint8, 1000);
-
-      // Release and acquire with different type
+      // Release and acquire with different dtype
       pool.releasePointsGeometry('/node1');
-      const geom2 = pool.acquirePointsGeometry('/node2', dataFloat, 1000);
+      const geom2 = pool.acquirePointsGeometry('/node2', 1000);
 
-      // Should NOT reuse (types differ)
-      expect(geom2).not.toBe(geom1);
-      expect(pool.getStats().allocations).toBe(2); // Two allocations
+      expect(geom2).toBe(geom1); // reused
+      expect(pool.getStats().allocations).toBe(1); // one allocation total
+
+      const dataFloat = makePointsData(1000, { colorCtor: Float32Array });
+      (dataFloat.colors as Float32Array).fill(0.25);
+      pool.updatePointsGeometry(geom2, dataFloat, 1000);
+      const texels = getPointTexture(geom2)!.image.data as Float32Array;
+      expect(texels[4]).toBeCloseTo(0.25, 5); // color.r, Float32 as-is
+      expect(texels[POINT_FLOATS_PER_POINT + 4]).toBeCloseTo(0.25, 5);
     });
   });
 
@@ -235,36 +185,11 @@ describe('GPU Buffer Pool Integration Tests', () => {
     it('should handle capacity growth during active use', () => {
       const pool = new GPUBufferPool(20, 300);
 
-      const smallData: LoadedPointsData = {
-        positions: new Float32Array(3000),
-        colors: new Float32Array(3000),
-        radii: new Float32Array(1000),
-        sharpness: new Float32Array(1000),
-        pointCount: 1000,
-        ndim: 3,
-        metadata: {
-          totalPoints: 1000,
-          loadedPoints: 1000,
-          bounds: new THREE.Box3(),
-          usedSpatialIndex: true,
-        },
-      };
+      // Acquire with small count
+      const geom1 = pool.acquirePointsGeometry('/node1', 1000);
 
-      const largeData: LoadedPointsData = {
-        ...smallData,
-        positions: new Float32Array(6000),
-        colors: new Float32Array(6000),
-        radii: new Float32Array(2000),
-        sharpness: new Float32Array(2000),
-        pointCount: 2000,
-        metadata: { ...smallData.metadata, loadedPoints: 2000 },
-      };
-
-      // Acquire with small data
-      const geom1 = pool.acquirePointsGeometry('/node1', smallData, 1000);
-
-      // Acquire with large data (exceeds capacity → grow-swap)
-      const geom2 = pool.acquirePointsGeometry('/node1', largeData, 2000);
+      // Acquire with large count (exceeds capacity → grow-swap)
+      const geom2 = pool.acquirePointsGeometry('/node1', 2000);
 
       // Growth is release + reacquire, never an in-place rebuild (that
       // strands the old GPU buffer in the renderer caches): a FRESH
@@ -282,41 +207,14 @@ describe('GPU Buffer Pool Integration Tests', () => {
 
       // Acquire and release many geometries
       for (let i = 0; i < 10; i++) {
-        const data: LoadedPointsData = {
-          positions: new Float32Array((1000 + i * 100) * 3),
-          colors: new Float32Array((1000 + i * 100) * 3),
-          pointCount: 1000 + i * 100,
-          ndim: 3,
-          metadata: {
-            totalPoints: 1000 + i * 100,
-            loadedPoints: 1000 + i * 100,
-            bounds: new THREE.Box3(),
-            usedSpatialIndex: true,
-          },
-        };
-
-        pool.acquirePointsGeometry(`/node${i}`, data, 1000 + i * 100);
+        pool.acquirePointsGeometry(`/node${i}`, 1000 + i * 100);
         pool.releasePointsGeometry(`/node${i}`);
       }
 
       // Advance frames
       for (let i = 0; i < 5; i++) {
         pool.beginFrame();
-        pool.acquirePointsGeometry(
-          `/active${i}`,
-          {
-            positions: new Float32Array(30000),
-            pointCount: 10000,
-            ndim: 3,
-            metadata: {
-              totalPoints: 10000,
-              loadedPoints: 10000,
-              bounds: new THREE.Box3(),
-              usedSpatialIndex: true,
-            },
-          },
-          10000
-        );
+        pool.acquirePointsGeometry(`/active${i}`, 10000);
       }
 
       // Evict. Acquire paths now sweep idle buffers themselves

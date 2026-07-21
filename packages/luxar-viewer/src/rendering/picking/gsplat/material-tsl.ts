@@ -23,7 +23,7 @@ import { gsplatPickWebGPUFactory, type GSplatPickTSLNodes } from './pick.tsl';
 import type { CameraAwareMaterial } from '../../materials/_shared/camera-aware-material';
 import { computeFocalLength } from '../../materials/_shared/camera-uniforms';
 import { proxyIUniform, type TSLNode } from '../../materials/_shared/tsl-helpers';
-import { getPlaceholderSplatTexture } from '../../splat-texture-layout';
+import { getPlaceholderSplatTexture } from '../../element-texture-layout';
 import type { GSplatPickingMaterialConfig, SurfacePickAwareMaterial } from './material';
 import { GSPLAT_COV2D_DILATION_DEFAULT } from '../../materials/gsplat/math';
 

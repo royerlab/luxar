@@ -6,6 +6,29 @@ All notable changes to Luxar are documented in this file.
 
 ### July 2026
 
+#### Changed — Points migrate to texture-backed storage + `aSortedIndex` (depth-sorting §8, PR-A of the points/lines→volumetric arc)
+
+- **Points now render like gsplats**: per-point data lives in an RGBA32F
+  element texture (fixed 3 texels/point — center+radius / rgb+sharpness /
+  scalar+alpha-reserved) fetched in the vertex stage through the
+  `aSortedIndex` indirection, decoupling draw order from storage order so
+  points can be depth-sorted (next PR) without rewriting point data.
+  Behavior-preserving: identity ordering, pixel-identical visual baselines,
+  full parity suite green on both backends.
+- The storage layer generalized into `element-texture-layout.ts`
+  (parameterized layouts; gsplat width math unchanged) and
+  `element-storage.ts` (attach, ranged texel uploads, sorted-index
+  writers) shared by gsplats and points (lines follow).
+- Point materials are now **per-node** (each carries its node's
+  `uPointTex`); the colormap clone-on-divergence dance is gone; pick
+  element ids read `aSortedIndex` (storage indices — permutation-stable).
+- Pool simplification: dtype/scalar bucketing deleted — capacity is the
+  only points pool match criterion; the append fast path (suffix-only
+  texel writes) and context-restore full-dirty recovery carry over.
+- Cost note: ~52 B/point GPU (48 texture + 4 ordering) vs 32–36 B
+  interleaved; the reserved alpha slot pre-positions volumetric Phase 3's
+  per-point RGBA opacity.
+
 #### Fixed — RGBA per-element opacity: double-check follow-up (post-#618/#620)
 
 - **Rust↔TypeScript parity test for `color_components = 4`.** The gsplat
@@ -35,7 +58,7 @@ All notable changes to Luxar are documented in this file.
 - **Docs.** Softened the INRIA-export "losslessly / bit-faithfully" wording to
   "verbatim (no rescale; float-precise in opacity, not bit-exact)" — the PLY
   stores logits; fixed the `wasm/types.ts` fused-kernel JSDoc (`* 3` → `*
-  colorComponents`, added the missing `@param`) and a stale `colors[i*3]`
+colorComponents`, added the missing `@param`) and a stale `colors[i*3]`
   comment.
 - **Non-finite opacity hardening (interop).** A corrupt classical source (e.g.
   a malformed INRIA float opacity field → `sigmoid(NaN)=NaN`) could ride a
@@ -143,7 +166,7 @@ All notable changes to Luxar are documented in this file.
   attenuates everything behind it by the physical absorption
   α = 1 − e^(−τ), τ = κ·opacity·rayMass, composited back-to-front on the
   depth-sort infrastructure (new `needsDepthSort` predicate = normal ∪
-  volumetric — the first sum-projected *sorted* mode). κ = 0 renders
+  volumetric — the first sum-projected _sorted_ mode). κ = 0 renders
   pixel-identical to `additive`; opacity scales density (emission AND τ),
   so layer fades leave no ghost occlusion; never depth-writes (no 0.99
   opacity cliff).
@@ -498,7 +521,7 @@ confirmed bugs; each fix shipped with a failing-first regression test.
 - **Non-pool geometry commit was broken (all three geometry types)**. With
   `useGPUBufferPool: false`, the points same-count commit cast a plain
   `InstancedBufferAttribute` to an interleaved view and threw
-  `Cannot read properties of undefined (reading 'stride')` on the *second*
+  `Cannot read properties of undefined (reading 'stride')` on the _second_
   same-count commit (routine while scrubbing a constant-count dimension); the
   same branch also normalized `Uint16` colors with ÷255 instead of ÷65535
   (~257× too bright). Points now dispose+recreate via `createPointsGeometry`
@@ -531,7 +554,7 @@ confirmed bugs; each fix shipped with a failing-first regression test.
   uniform scale on both axes, preserving aspect.
 - **Progressive-refinement / retry commits never woke the render loop**.
   Refinement passes, failed-load retries, and the online auto-retry commit
-  geometry *after* the sweep that started them; with the rAF loop idle-paused
+  geometry _after_ the sweep that started them; with the rAF loop idle-paused
   (2 s), LOD chunks were fetched, decoded, and uploaded invisibly until the
   next input. A `requestRender` callback now funnels through the three
   SceneLoader commit methods (`SceneLoaderManager.setRequestRender` →
@@ -545,7 +568,7 @@ confirmed bugs; each fix shipped with a failing-first regression test.
   init pipeline now wires `change → startAnimation`.
 - **Every window resize reallocated the HDR render target twice, unconditionally**.
   `reallocateForSize()` disposed + recreated the full-screen half-float HDR
-  target on every call, and every resize reaches it through *two* paths (the
+  target on every call, and every resize reaches it through _two_ paths (the
   window `resize` listener via `ResizeOrchestrator` **and** the canvas-parent
   `ResizeObserver`). The allocation is now memoized on display size, effective
   logical size (SSAA), physical size (DPR), and MSAA sample count — an
@@ -579,12 +602,12 @@ confirmed bugs; each fix shipped with a failing-first regression test.
 #### Fixed — Lines are re-culled when scrubbing a non-displayed dimension
 
 - **Symptom**: scrubbing a non-displayed dimension (categorical toggle, time
-  slider) only ever *added* Lines geometry — every visited slot stayed
+  slider) only ever _added_ Lines geometry — every visited slot stayed
   rendered (A ∪ B) while Points/GSplats correctly swapped (A xor B). A
   categorical or time dimension was therefore unusable for slicing Lines.
 - **Root cause**: the Lines projection dispatcher
   (`workers/data-worker/projection/lines.ts`) hardcoded `numItems = 1` in its
-  input validation, rejecting the canonical *empty* payload the loader
+  input validation, rejecting the canonical _empty_ payload the loader
   returns when a node has no data at the current slice
   (`positions array too short (got 0, expected ≥ ndim)`). The throw was
   swallowed as a failed loader update (`staged: null`), so the empty commit
@@ -607,7 +630,7 @@ confirmed bugs; each fix shipped with a failing-first regression test.
   **every** dimension, including a non-spatial categorical axis (a per-timepoint
   time axis, a channel axis). On an nD timelapse that pushed the integer
   timepoints (0..T-1) to fractional offsets, so the viewer's slice navigator —
-  which steps in integer voxels — landed *between* timepoints and showed a
+  which steps in integer voxels — landed _between_ timepoints and showed a
   partial/sparse splat set (looked like corruption). `gsplat convert` centers by
   default, so every converted timelapse scene was affected.
 - **Fix**: `center_at_centroid()` now shifts only the **non-degenerate (spatial)**
@@ -671,24 +694,24 @@ confirmed bugs; each fix shipped with a failing-first regression test.
   viewer default, ACES, shifts hues). NOTE: `--layer` now defaults on (the
   gsplats node is listed in the viewer Layers panel).
 - **`gsplat filter` (GSIP)**:
-  - Percentile value-syntax on any threshold: `pNN` / `NN%` (e.g.
-    `--scale-max p90`), robust on heavy-tailed attributes.
-  - `--scale-min/max`: characteristic size = geometric-mean **spatial** sigma;
-    auto-ignores zero-variance axes (timelapse-safe). `--eccentricity` is now
-    spatial-by-default too. `--spatial-dims` overrides the axis auto-detection.
-  - `--isolation-max` (nearest-neighbour distance) and
-    `--min-neighbors`+`--neighbor-radius` remove spatially-isolated noise
-    splats, grouped by the non-spatial axis (timepoints never count as
-    neighbours; reuses `BatchedSpatialHashGrid`).
-  - `--soft-highpass`/`--soft-lowpass`+`--soft-width`: soft reweighting that
-    attenuates amplitude by a smooth function of scale instead of deleting (no
-    popping; splat count unchanged).
-  - `--dry-run`: report impact (splats / mass / amplitude removed) without
-    writing.
-  - New `GSplatData` API: `scale()`, axes-aware `eccentricities()`,
-    `nearest_neighbor_distances()`, `neighbor_counts()`, `reweight_amplitude()`,
-    `soft_scale_filter()`, percentile mode on `_resolve_threshold`, and the new
-    `filter_by` criteria (all forwarded per-level for substitutive pyramids).
+    - Percentile value-syntax on any threshold: `pNN` / `NN%` (e.g.
+      `--scale-max p90`), robust on heavy-tailed attributes.
+    - `--scale-min/max`: characteristic size = geometric-mean **spatial** sigma;
+      auto-ignores zero-variance axes (timelapse-safe). `--eccentricity` is now
+      spatial-by-default too. `--spatial-dims` overrides the axis auto-detection.
+    - `--isolation-max` (nearest-neighbour distance) and
+      `--min-neighbors`+`--neighbor-radius` remove spatially-isolated noise
+      splats, grouped by the non-spatial axis (timepoints never count as
+      neighbours; reuses `BatchedSpatialHashGrid`).
+    - `--soft-highpass`/`--soft-lowpass`+`--soft-width`: soft reweighting that
+      attenuates amplitude by a smooth function of scale instead of deleting (no
+      popping; splat count unchanged).
+    - `--dry-run`: report impact (splats / mass / amplitude removed) without
+      writing.
+    - New `GSplatData` API: `scale()`, axes-aware `eccentricities()`,
+      `nearest_neighbor_distances()`, `neighbor_counts()`, `reweight_amplitude()`,
+      `soft_scale_filter()`, percentile mode on `_resolve_threshold`, and the new
+      `filter_by` criteria (all forwarded per-level for substitutive pyramids).
 
 #### Fixed — L2 OPFS cache: write-probe at init (WKWebView/Safari error storm)
 
@@ -725,7 +748,7 @@ confirmed bugs; each fix shipped with a failing-first regression test.
   deliberately keeps `visiblePoints` / `visibleSegments` / `visibleSplats`),
   `GlobalStats.totalPoints → totalElementsLoaded` (it always summed all
   three geometries), `MonitorEvent.data.points` / `QueryInfo.points →
-  elements`, `PointSpatialIndexMetrics → SpatialIndexMetrics`
+elements`, `PointSpatialIndexMetrics → SpatialIndexMetrics`
   (+ `avgElementsPerCell`), and a shared `ElementRange` replaces the
   `as unknown as PointRange[]` casts. Python scene-node alias properties
   `n_points` / `n_vertices` / `n_splats` removed (`n_elements` is the one
@@ -761,7 +784,7 @@ confirmed bugs; each fix shipped with a failing-first regression test.
   so the pedestal clips to 0; output amplitudes are background-relative (the
   subtracted level is recorded in fit stats / `gsplat info`, not added back).
 - **`cal`** subtracts the floor ONCE up front (not per-fit) so the fit target,
-  render, and held-out reference stay on one scale; K* is thus measured the same
+  render, and held-out reference stay on one scale; K\* is thus measured the same
   way you will fit. `--floor none` reproduces the legacy hard-min numbers.
 - **Progressive fits** subtract the floor once up front and run every pass with
   floor `none` (the residual chain is built against the subtracted volume, so
@@ -829,7 +852,6 @@ confirmed bugs; each fix shipped with a failing-first regression test.
   went from a chaotic 0.01–7 % to a uniform ~1.96 % (= ideal 1/51) at every
   timepoint. Viewer needs no change (dimension-agnostic AABB chunk selection);
   re-order an existing dataset with `luxar gsplat reencode`.
-
 
 #### Added — uint16 LUT encoding tier (exact few-color storage up to 65,536 uniques)
 
@@ -968,6 +990,7 @@ confirmed bugs; each fix shipped with a failing-first regression test.
 - `?dpr=<value>` pins a fixed pixel ratio and locks adaptive resolution off
   for the session (clamped to [0.25, native]) — used by the visual-regression
   suites for deterministic baselines and handy for bug repros.
+
 #### Changed — geolog amplitude quantization (rescale-first, zero-safe) + per-dtype compressors
 
 - New `geolog_scalar_u8/u16` encoding: wide-dynamic-range positive scalars
@@ -992,7 +1015,7 @@ confirmed bugs; each fix shipped with a failing-first regression test.
 - Viewer: the per-channel decode family (`linear_perchannel_*` centers,
   `log_perchannel_*` / `signed_log_perchannel_*` Cholesky factors) now decodes
   in the worker on new Rust/WASM kernels (`decode_{linear,log,signed_log}_
-  perchannel_{u8,u16}`) above the same threshold as the other encodings —
+perchannel_{u8,u16}`) above the same threshold as the other encodings —
   previously the only hot decode path still running per-element on the main
   thread (an `expm1` per element for the Cholesky pair). f64 scales cross the
   boundary as Float64Array, so worker, TS-fallback, and main-thread decodes
@@ -1015,7 +1038,7 @@ confirmed bugs; each fix shipped with a failing-first regression test.
   encodings (formerly the MEMORY tier) instead of uint16 — measured on a real
   light-sheet fit at 94.5 dB vs the float32 render (~46 dB below the fit-error
   floor, end-to-end invisible) and 2.48 B/splat compressed vs 8.25 (~3.3×).
-- AUTO keeps a *measured* reason to go richer: the new
+- AUTO keeps a _measured_ reason to go richer: the new
   `ArrayEncoder.encode_cholesky_split` joint entry point round-trips both
   halves through the exact quantization transform, rebuilds Σ = L·Lᵀ, and
   escalates to uint16 (then float32, practically unreachable) when the p95
@@ -1101,7 +1124,7 @@ confirmed bugs; each fix shipped with a failing-first regression test.
 
 - **`refine="volume"`** on `make_substitutive_lod` / `make_lod_pyramid` /
   `RecipeParams` (CLI: `luxar gsplat lod --recipe levels --target <volume>
-  --refine volume [--refine-iters N]`): each merged level is warm-start
+--refine volume [--refine-iters N]`): each merged level is warm-start
   re-fitted against the source volume itself (`fit_gaussian_splats` seeded by
   the merge; identity-preserving — no cull/dynamic-ops, colors carried over).
   Benchmarked on real microscopy: +5–6 dB full-res / +10–12 dB at viewing
@@ -1171,7 +1194,7 @@ confirmed bugs; each fix shipped with a failing-first regression test.
 - Substitutive/LOD switch thresholds are now a single **viewport-relative**
   `coverage_fraction` per child: `sqrt(N_i / N_finest)` (`N_i` = level i's
   total splat count), strictly ascending coarsest→finest (coarsest `0.0`,
-  finest `1.0`). Being a count *ratio*, it is immune to non-displayed-dimension
+  finest `1.0`). Being a count _ratio_, it is immune to non-displayed-dimension
   multiplicity (e.g. a stacked time axis inflates every level equally and
   cancels). The viewer multiplies each `coverage_fraction` by the live
   viewport diagonal to get the pixel comparison, so the finest level shows
@@ -1199,7 +1222,7 @@ confirmed bugs; each fix shipped with a failing-first regression test.
   resolved against each call's own N so ONE spec adapts per part / per
   substitutive level (silently clamped for small parts, capped at 16 levels,
   sliver tails folded). Works everywhere additive ladders are built: `gsplat
-  lod`, `gsplat additive`, `fit --recipe additive`, `batch-fit merge/submit/run`.
+lod`, `gsplat additive`, `fit --recipe additive`, `batch-fit merge/submit/run`.
 - **`--target-ms` / `--bandwidth-mbps` / `--bytes-per-splat`** on all those
   surfaces: derive `stream:<c>` from a download budget — e.g. `--target-ms 200`
   at the default 25 Mbps sizes the first chunk to ~200 ms of download (fast
@@ -1225,7 +1248,7 @@ confirmed bugs; each fix shipped with a failing-first regression test.
   ×`coverage_inflation` (mass-preserving) so neighbouring coarse splats sum
   flat — suppressing the axis-aligned grid ripple pure moment matching shows
   at coarse levels. CLI: `--coverage-inflation` on `gsplat lod`, `fit
-  --recipe substitutive`, and `batch-fit --merge-recipe`/`merge --recipe`;
+--recipe substitutive`, and `batch-fit --merge-recipe`/`merge --recipe`;
   pass `1.0` for the historical pure moment match.
 
 #### Added — data-loading monitor: streaming-LOD visibility (viewer)
@@ -1319,7 +1342,7 @@ Four gsplat additions, each deep-double-checked:
   Slurm array (`--plan-timepoint`, density knobs), merged into a `kind=partition`.
   The shared plan is now built from a **temporal max-projection** over up to
   `--plan-samples` (default 16) evenly-spaced timepoints, so boxes cover any
-  region with signal at *any* timepoint — fixing silent spatial holes where
+  region with signal at _any_ timepoint — fixing silent spatial holes where
   content moved over time and a single representative timepoint missed it.
   `--plan-timepoint` still pins a single timepoint when desired and is now
   range-checked at submit.
@@ -1347,7 +1370,7 @@ data-fetch paths — the multi-level caching store's network tier
 (`cache/multi-level-caching-store/fetch-retry.ts`, the default) and the
 no-cache `FetchStore` (`data/zarr.ts`). HTTP/2 multiplexes happily at this
 width, so throughput is unchanged while the browser's socket/memory budget is
-respected. The retry path starts its per-attempt timeout *inside* the gate (once
+respected. The retry path starts its per-attempt timeout _inside_ the gate (once
 a slot is acquired), so time spent waiting in the concurrency queue is not
 charged against the fetch budget — otherwise the tail of a large queued
 selection would spuriously time out and, at scale, burn the retry budget into
@@ -1364,12 +1387,12 @@ engine partitions splats by their barrier-dim value and runs the **unchanged**
 per-group reduction, so the merge stays barrier-pure.
 
 - Engine: `make_substitutive_lod(..., coarsen_dims=)` and `make_lod_pyramid(...,
-  coarsen_dims=)` (`gsplats/lod/substitutive.py`, `pyramid.py`). `None` = coarsen
+coarsen_dims=)` (`gsplats/lod/substitutive.py`, `pyramid.py`). `None` = coarsen
   all dims (historical behavior); passing every dim normalises to `None`.
 - Scene API: `add_points`/`add_lines`/`add_gsplats_from_data(substitutive_lod=
-  dict(coarsen_dims=...))` accepts dim **names** or column indices, the sentinel
-  `"display"`, or `"all"`. **Default is Auto** — coarsen the scene's *displayed*
-  dims, group by the *non-displayed* dims — so nD scenes are correct automatically
+dict(coarsen_dims=...))` accepts dim **names** or column indices, the sentinel
+  `"display"`, or `"all"`. **Default is Auto** — coarsen the scene's _displayed_
+  dims, group by the _non-displayed_ dims — so nD scenes are correct automatically
   (pure-3D scenes are unchanged: no barrier → identical output).
 - CLI: `luxar gsplat lod ... --coarsen-dims i,j,k` (indices; standalone gsplats
   carry no display metadata, so the CLI takes explicit indices and warns on >3D
@@ -1400,13 +1423,13 @@ pixel-diagonal of the group's bounding box (`projectBoxDiagonalPx` in
 `scene/lod-group-registry.ts`). It projected the 8 corners with an unguarded
 perspective divide, so when the camera was inside or straddling the box (any
 corner at/behind the near plane, clip `w ≤ 0`) the NDC flipped/exploded and the
-diagonal **collapsed** — dropping to a *coarse* level exactly on close approach,
+diagonal **collapsed** — dropping to a _coarse_ level exactly on close approach,
 the inverse of the intended behaviour. The projection is now `w`-aware and
 **saturates to `+Infinity`** (→ finest level) when any corner has `w ≤ 1e-6`,
 reusing the per-frame `projectionMatrix × matrixWorldInverse` product. Also:
 
 - Added a behind-camera reject (`uIsOrtho == 0 && view-z ≥ 0` → off-screen) to
-  the **Points** vertex shaders — visual *and* picking, GLSL *and* TSL — matching
+  the **Points** vertex shaders — visual _and_ picking, GLSL _and_ TSL — matching
   the existing gsplat guard; the sprite-quad expansion multiplies by
   `projCenter.w` (`≤ 0` behind the camera) and could otherwise emit a
   degenerate/flipped sprite (and spurious pick hits). The generated-TSL codegen
@@ -1422,15 +1445,15 @@ a cryptic crash:
 
 - `_apply_monotonicity_guard` now falls back to a small absolute floor when the
   previous threshold is `0` (the relative ×1.1 bump is a no-op at `0`). A
-  zero-count *intermediate* level — or a zero-extent level whose neighbour
+  zero-count _intermediate_ level — or a zero-extent level whose neighbour
   derives to `0` — previously tripped the strict-ascending assertion and aborted
-  the build; the guard is now *total* (never raises).
+  the build; the guard is now _total_ (never raises).
 - `derive_min_pixel_sizes`' empty-coarsest error is now actionable (names the
   likely cause: a substitutive reduction that culled every representative, e.g.
   all-non-positive input amplitudes) instead of "coarsest child must have at
   least 1 element".
 - The viewer's LOD child-order check is now strict (`<`, was `<=`), matching the
-  Python writer's `_assert_strict_ascending`: *equal* adjacent `min_pixel_size`
+  Python writer's `_assert_strict_ascending`: _equal_ adjacent `min_pixel_size`
   thresholds (a zero-width hysteresis band) now surface the same producer-bug
   warning rather than passing silently.
 
@@ -1468,9 +1491,9 @@ finest for ≥10-level ladders).
 #### Changed — LOD switching thresholds are now extent-based (physically anchored)
 
 The substitutive-LOD `min_pixel_size` selector thresholds — the on-screen sizes
-at which the viewer swaps levels — were derived purely from element *counts*
+at which the viewer swaps levels — were derived purely from element _counts_
 (`base_pixel_size · √(nᵢ/n₀)`). That scene-relative proxy is biased for
-substitutive levels (a coarse level has *fewer but larger* elements), so it
+substitutive levels (a coarse level has _fewer but larger_ elements), so it
 switched at the wrong zoom and needed per-dataset `base_pixel_size` tuning.
 
 The derivation is now **selectable** with a new default. `lod_method="extent"`
@@ -1498,13 +1521,13 @@ instead of three subcommands. Recipes are scale-ordered: **flat**, **additive**,
 subcommands; `lod additive` becomes `--recipe additive`). Three topologies are new
 and were previously unbuildable from the CLI:
 
-- **partitioned** — a spatial BSP `kind=partition` where *each part carries its
-  own additive ladder* (the old `partition` collapsed parts to a single level).
+- **partitioned** — a spatial BSP `kind=partition` where _each part carries its
+  own additive ladder_ (the old `partition` collapsed parts to a single level).
 - **multiscale** — an unbalanced-by-design `kind=lod`: a single coarse
   substitutive cap for the far view above a `partitioned` fine branch, so detail
   structure exists only where you look closely.
-- **mosaic** — a spatial BSP `kind=partition` where *each part is its own
-  substitutive lod group* (per-part coarse↔fine replacement): every cell
+- **mosaic** — a spatial BSP `kind=partition` where _each part is its own
+  substitutive lod group_ (per-part coarse↔fine replacement): every cell
   frustum-culls AND picks its own level by its own on-screen size — locally
   adaptive detail, the per-part-substitutive sibling of `partitioned`.
 
@@ -1557,12 +1580,12 @@ now validates that a group's child `min_pixel_size` thresholds are ascending
 re-sorts + warns if a malformed / hand-authored scene violates it, rather than
 silently mis-selecting levels.
 
-Two follow-ups make the switch actually *visible*: grafted `kind=partition`
+Two follow-ups make the switch actually _visible_: grafted `kind=partition`
 wrappers are now back-filled with `position_bounds` at scene finalization (the
 graft, unlike the standalone writer, didn't compute the children union — needed
 for partition-unit frustum culling), and `multiscale` gained a `base_pixel_size`
 anchor (`RecipeParams.base_pixel_size` / the new `gsplat lod --base-pixel-size`
-flag). The coarse cap is a *substitutive* level — fewer but larger splats — so the
+flag). The coarse cap is a _substitutive_ level — fewer but larger splats — so the
 count-derived threshold (~10 px) switched too early and left the fine branch
 eligible at every practical zoom; raising the anchor (e.g. `200`) pushes the
 coarse cap across a wider/farther zoom range so it is actually seen.
@@ -1599,6 +1622,7 @@ migrate tool.
 
 **On-disk grammar (the node tree).** The file root **is** the node. Three
 nestable primitives:
+
 - **leaf** (`type=gsplats`) — a single splat set writes `centers` / `amplitudes`
   / `cholesky_factors` / `colors` directly; an additive ladder writes
   `additive_<i>/` subgroups + `n_additive_sublods`.
@@ -1873,7 +1897,7 @@ cache metrics cleanup, and additional edge-case coverage.
   per-node `derived.viewState` computed by `deriveNodeViewState`.
   `extend_to_all`-skipped nodes no longer receive prefetch hints
   they would have skipped on demand. A per-loader `Map<path,
-  ViewState>` tracks prev state; cleared on `loadScene` / `dispose`
+ViewState>` tracks prev state; cleared on `loadScene` / `dispose`
   and on skip transitions.
 - **S7 — `evictionsPerMin` API break recorded.** As part of the R1–R7
   batch (commit `2f7feaaf`), the deprecated `CacheMetrics.evictionsPerMin`
@@ -1926,18 +1950,18 @@ UI/observability gaps, and edge-case test coverage.
   forward with amortized O(n) compaction when the dead prefix
   exceeds half the array. Numeric output unchanged.
 - **R6 — Test gap closure.**
-  - **R6a**: Unicode OPFS key roundtrip (µ, 通, é, base64-special
-    characters, slash-traversing keys).
-  - **R6b**: Demand-while-prefetch-in-flight — one underlying fetch
-    shared via `pendingGets`; demand counter increments exactly once;
-    L1-warm path lets demand hit L1.
-  - **R6c**: 4D node-type cache parity — cache stats populated, slice
-    navigation produces fresh L1 activity.
-  - **R6d**: OPFS quota-clears-then-write-succeeds + concurrent
-    quota-skipped writes don't corrupt the index.
-  - **R6e**: Negative `totalSize` in persisted metadata is clamped /
-    recomputed from `entries[]` (defensive hardening in
-    `OPFSStore.loadMetadata`).
+    - **R6a**: Unicode OPFS key roundtrip (µ, 通, é, base64-special
+      characters, slash-traversing keys).
+    - **R6b**: Demand-while-prefetch-in-flight — one underlying fetch
+      shared via `pendingGets`; demand counter increments exactly once;
+      L1-warm path lets demand hit L1.
+    - **R6c**: 4D node-type cache parity — cache stats populated, slice
+      navigation produces fresh L1 activity.
+    - **R6d**: OPFS quota-clears-then-write-succeeds + concurrent
+      quota-skipped writes don't corrupt the index.
+    - **R6e**: Negative `totalSize` in persisted metadata is clamped /
+      recomputed from `entries[]` (defensive hardening in
+      `OPFSStore.loadMetadata`).
 - **R7 — Real-browser L2 persistence E2E.**
   New `cache-persistence.spec.ts` asserts L2 entries survive a full
   page reload in Chromium and that `?clear-cache` wipes L2 across a
@@ -1979,7 +2003,7 @@ code review:
 - **Shared clamp util**: `clampDPRScale` in
   `rendering/post-processing/visual-effects-handler.ts` calls the
   general `utils/clamp` helper instead of an inline `Math.min(max,
-  Math.max(min, x))`.
+Math.max(min, x))`.
 - **Lines TS fallback note**: `data/lines/projection.ts` documents the
   TS fallback path's allocation profile as an accepted trade-off.
 - **Docs**: data-loader docs rewritten to show the
@@ -1995,6 +2019,7 @@ Hardening of the scalar-colormap + GPU pool + blending-state feature
 work, addressing actionable findings from a six-agent code review rerun.
 
 **Type-safety:**
+
 - `PointsAttributeTypes.scalar` is now optional (`undefined` when absent)
   instead of a `'none'` sentinel; Float16Array gets a first-class dtype tag.
 - `LoadedLinesData.scalars` aligned with `ScalarArray` (Float32/Float16/
@@ -2005,6 +2030,7 @@ work, addressing actionable findings from a six-agent code review rerun.
   attributes on resize.
 
 **Lifecycle:**
+
 - Material clone-vs-pool registration bug: pooled materials are
   detached from global updates before NodeFactory clone sites; clones
   take the global slot, pooled stays in the LRU cache.
@@ -2019,6 +2045,7 @@ work, addressing actionable findings from a six-agent code review rerun.
   throw with a descriptive error post-dispose.
 
 **Performance:**
+
 - Lines worker scalar fallback now emits a one-shot warning so users
   notice the main-thread cliff.
 - Accumulator growth copies only the live prefix
@@ -2034,6 +2061,7 @@ work, addressing actionable findings from a six-agent code review rerun.
   invalidated on grow.
 
 **Shaders:**
+
 - Line shader: pathological near-camera wide-quad segments now early-
   discard instead of rasterizing a half-viewport quad at reduced
   intensity.
@@ -2044,6 +2072,7 @@ work, addressing actionable findings from a six-agent code review rerun.
   in the line shader header.
 
 **API surface:**
+
 - Public exports for `getCompleteBlendingState`,
   `applyBlendingStateToMaterial`, `supportsScalarColormap`,
   `applyColormapTextureToMaterial`, `applyScalarRangeToMaterial`,
@@ -2053,6 +2082,7 @@ work, addressing actionable findings from a six-agent code review rerun.
 - `syncPointMaterialWithGeometry` moved to `rendering/material-sync-helpers.ts`.
 
 **Diagnostics:**
+
 - Array decoder broadcast-encoding error includes zarr path + encoding shape.
 - `captureHDRPixels` validates the mode at runtime, falls back with a warning.
 - `updateView` log differentiates supersede vs first-queue.
@@ -2060,6 +2090,7 @@ work, addressing actionable findings from a six-agent code review rerun.
   against DJB2 collisions).
 
 **Tests + Docs:**
+
 - New `blending-state.test.ts` with predicate + canonical-state tests
   including max-mode round-trip lock-in.
 - Accumulator dispose/usedCount tests, scalar buffer lazy-alloc tests,
@@ -2123,7 +2154,7 @@ User-visible behavior changes in the Luxar viewer:
 
 - **Point/Line scalar colormaps fail-closed when scalar attributes aren't bound.** Previously, metadata-authored `colormap`+`has_scalars` would activate `USE_COLORMAP` even though the geometry had no `scalar`/`aStartScalar`/`aEndScalar` attribute. Now the viewer logs a warning and falls back to vertex-color rendering.
 - **Positions-only Points render visibly.** The GPU buffer pool now fills white/0.5/2.0 defaults for absent color/radius/sharpness arrays instead of leaving zeros (which the fragment shader discards as zero-contribution).
-- **Point material parity for max blending.** `PointMaterial.applyBlendingMode` is the new single source of truth; runtime UI mode changes now produce the same `OneFactor/OneFactor` blend factors as creation-time max. The fragment shader gains a `LUXAR_MAX_RGB_CONTRIBUTION` define so `max` mode premultiplies RGB by intensity*opacity.
+- **Point material parity for max blending.** `PointMaterial.applyBlendingMode` is the new single source of truth; runtime UI mode changes now produce the same `OneFactor/OneFactor` blend factors as creation-time max. The fragment shader gains a `LUXAR_MAX_RGB_CONTRIBUTION` define so `max` mode premultiplies RGB by intensity\*opacity.
 - **Normal-mode depth writes.** Fully-opaque (opacity ≥ 0.99) `normal` layers now write depth so additive layers behind them are correctly occluded.
 - **Line body intensity reaches 1.0 as documented.** Cap factor moved from vertex to fragment shader.
 - **Line near-plane safety.** Lines whose endpoints cross or sit very close to the camera no longer produce screen-filling artifacts.
@@ -2141,18 +2172,19 @@ User-visible behavior changes in the Luxar viewer:
 - **Lines counted in `__luxarDebug.getState()`** (`totalLines` + `lineMeshes`).
 
 Documentation: `E2E_TESTING_GUIDE.md` now references `getBufferedMessages()` (was stale `getMessages()`); `HDR_GUIDE.md` reads tone-mapping/exposure from `renderingControls.settings` rather than the nonexistent `state.rendering`.
+
 #### Added — `luxar gsplat lod substitutive` (PR #109)
 
 - New CLI subcommand `luxar gsplat lod substitutive <in.gsplats.zarr> <out_dir/>`
-  that builds a coarse-to-fine *substitutive* LOD hierarchy: each level
-  *replaces* the previous one with ``M = N / K^ℓ`` synthesised representative
-  splats. Output is a directory of per-level ``.gsplats.zarr`` files plus a
-  ``manifest.json``.
+  that builds a coarse-to-fine _substitutive_ LOD hierarchy: each level
+  _replaces_ the previous one with `M = N / K^ℓ` synthesised representative
+  splats. Output is a directory of per-level `.gsplats.zarr` files plus a
+  `manifest.json`.
 - New module `luxar.gsplats.lod.substitutive` with `make_substitutive_lod(data,
-  *, compression_factor=4, levels=3, method="kmeans_lloyd", ...)`. Three
-  partition algorithms supported: ``kmeans_lloyd`` (k-means warm-start +
-  cost-increment Lloyd refinement, the recommended workhorse), ``greedy``
-  (hierarchical pairwise greedy), and ``kmeans`` (spatial-only).
+*, compression_factor=4, levels=3, method="kmeans_lloyd", ...)`. Three
+  partition algorithms supported: `kmeans_lloyd` (k-means warm-start +
+  cost-increment Lloyd refinement, the recommended workhorse), `greedy`
+  (hierarchical pairwise greedy), and `kmeans` (spatial-only).
 - Per-bin merge is a moment-matched single Gaussian with L²-optimal
   amplitude (closed-form per `manuscript/supp_doc/substitutive_lod`).
 - New module `luxar.utils.spatial_hash` with `SpatialHashGrid` (online,
@@ -2167,7 +2199,7 @@ Documentation: `E2E_TESTING_GUIDE.md` now references `getBufferedMessages()` (wa
   Behaviour preserved by the equivalence test; cal smoke test passes
   end-to-end.
 - 27 new tests in `packages/luxar/src/luxar/utils/tests/test_spatial_hash.py`
-  + ~440 lines in `gsplats/tests/test_substitutive_lod.py`.
+    - ~440 lines in `gsplats/tests/test_substitutive_lod.py`.
 
 #### Changed — Type-ignore tightening + ruff format propagation (PR #108)
 
@@ -2198,22 +2230,22 @@ Documentation: `E2E_TESTING_GUIDE.md` now references `getBufferedMessages()` (wa
 #### Added — `luxar gsplat lod additive` and progressive-fitting decoupling (PR #106)
 
 - New CLI subcommand `luxar gsplat lod additive <in.gsplats.zarr>
-  <out.gsplats.zarr>` that *reorders* the splats of a fitted dataset into
-  a multi-LOD `GSplatData` whose prefix sum at any ``k`` splats is the
+<out.gsplats.zarr>` that _reorders_ the splats of a fitted dataset into
+  a multi-LOD `GSplatData` whose prefix sum at any `k` splats is the
   best L² approximation of the full scene. Output is a single multi-LOD
-  ``.gsplats.zarr`` (each level *extends* the previous one).
+  `.gsplats.zarr` (each level _extends_ the previous one).
 - New module `luxar.gsplats.lod.additive` with `make_additive_lod(data,
-  n_lods=4, method=..., breakpoints=..., ...)` and
+n_lods=4, method=..., breakpoints=..., ...)` and
   `compute_additive_order(...)`. Four ordering methods supported:
-  ``greedy`` (residual-correlation matching pursuit; default),
-  ``self_energy`` (cheap O(N log N) baseline within 2-10% AUC of greedy
-  on real datasets), ``mass`` (peak-amplitude × covariance volume), and
-  ``amplitude`` (peak height alone). Algorithms documented in
+  `greedy` (residual-correlation matching pursuit; default),
+  `self_energy` (cheap O(N log N) baseline within 2-10% AUC of greedy
+  on real datasets), `mass` (peak-amplitude × covariance volume), and
+  `amplitude` (peak height alone). Algorithms documented in
   `manuscript/supp_doc/additive_lod`.
 - **Progressive fitting decoupled from LOD construction.**
   `fit_progressive_gaussian_splats` (and the `luxar gsplat fit
-  --progressive` CLI flag) now returns a single flattened
-  ``GSplatData`` rather than a multi-LOD container. To build an LOD
+--progressive` CLI flag) now returns a single flattened
+  `GSplatData` rather than a multi-LOD container. To build an LOD
   ladder, run `luxar gsplat lod additive` on the flat output. Progressive
   multi-pass fitting remains a valid alternative fitting flow — it just
   no longer overloads the LOD concept.
@@ -2225,7 +2257,7 @@ Documentation: `E2E_TESTING_GUIDE.md` now references `getBufferedMessages()` (wa
   count `K` and reports the recommended `K*` via blind-spot
   cross-validation: 5%-donut-median masking (Noise2Self protocol from
   Batson & Royer 2019), fit at each `K` against the masked volume, evaluate
-  PSNR at the held-out positions against the *original* values. Hybrid
+  PSNR at the held-out positions against the _original_ values. Hybrid
   peak/plateau/signal-limited detection rule from the manuscript's
   `splat_count_vs_quality §4.2`.
 - Free byproduct: per-dataset noise-floor estimate via a three-estimator
@@ -2246,8 +2278,8 @@ Documentation: `E2E_TESTING_GUIDE.md` now references `getBufferedMessages()` (wa
   PDF.
 - Purely additive: no changes to `fit_gaussian_splats`, the optimisation
   loop, the loss module, the metrics module, or `GSplatData`. Held-out
-  PSNR is fundamentally a *capacity*-selection criterion (across `K`),
-  not an *iteration*-selection one — the existing patience-based early
+  PSNR is fundamentally a _capacity_-selection criterion (across `K`),
+  not an _iteration_-selection one — the existing patience-based early
   stop already covers the within-fit regime.
 - Tests: 37 unit tests in `gsplats/tests/test_calibration.py` covering
   mask determinism, donut fill (2D/3D/4D), held-out PSNR, K-grid
@@ -2298,23 +2330,27 @@ Documentation: `E2E_TESTING_GUIDE.md` now references `getBufferedMessages()` (wa
 #### Added — Native bundles for distributable scenes
 
 **`luxar export --native macos|linux-amd64|linux-arm64`**
+
 - New flag on `luxar export` that wraps the viewer + zarr around a Go-compiled launcher binary instead of emitting the Python `serve.py` folder. End users double-click and get a real native window — no Python or browser-tab involvement on their machine.
 - macOS produces a standard `.app` bundle (`Contents/Info.plist`, `MacOS/launcher`, `Resources/{viewer, data, AppIcon.icns}`) with Cmd+Q / Dock close-button → graceful HTTP server shutdown via `webview.Terminate`. No `LSUIElement`, so the app is fully Dock- and Cmd+Tab-visible.
 - Linux produces a portable folder (`<App>-linux-<arch>/{luxar-launcher, viewer/, data/, <App>.png, README.txt}`); the `<App>.png` follows the FreeDesktop icon convention.
 - `--name NAME` overrides the default bundle name (which defaults to the zarr stem).
 
 **Embedded launcher**
+
 - New `packages/luxar-launcher/` Go module (~150 lines, `github.com/webview/webview_go` + Go stdlib). Single source compiled to per-OS native binaries.
 - Native window via system WebView (WKWebView on macOS, WebKitGTK on Linux). Static HTTP server on a free localhost port, CORS-enabled to mirror `luxar serve`.
 - Runtime fallback: `LUXAR_LAUNCHER_NO_WEBVIEW=1` opens the user's default browser instead — useful for headless smoke tests and minimal Linux installs without `libwebkit2gtk`.
 - 🌌 emoji icon (matching the viewer's favicon) rendered to PNG via Apple Color Emoji + Pillow, packed to `.icns` via `iconutil`. Source assets committed under `packages/luxar/src/luxar/cli/_launcher_assets/` so wheel installs ship a working icon.
 
 **Build pipeline**
+
 - New Make targets: `make install-go` (Homebrew on macOS, official tarball into `~/.local/go` on Linux — no sudo), `make build-launchers` (CGO=1 host-only build; emits `darwin-universal` via `lipo` on macOS, `linux-<arch>` on Linux), `make clean-launchers`.
 - Wired into `check-deps`, `clean-all`, `clean-setup`, `help`, and the `setup-dev` "optional accelerators" footer — same treatment as `make install-rust` and `make setup-cuda`.
 - Wheel packaging: launcher binaries (`cli/_launchers/`) and icon assets (`cli/_launcher_assets/`) live inside the Python package and ride along into wheel builds automatically when present at build time.
 
 **Docs**
+
 - New `docs/tutorials/distributing_scenes.rst` covering folder export, native bundles, multi-platform sharing, Gatekeeper / `xattr -cr` recovery, and lifecycle; the tutorial is linked from the main Sphinx docs index.
 - New `Native Launcher Setup Details` section in `docs/guides/developer/BUILD_SYSTEM_SPEC.md`.
 - New module entry `luxar.cli.native_app` in `docs/api/cli.rst`.
@@ -2325,12 +2361,14 @@ Documentation: `E2E_TESTING_GUIDE.md` now references `getBufferedMessages()` (wa
 #### Changed — Layer Semantics
 
 **Rendering attribute composition (was: override)**
+
 - Rendering attributes (`opacity`, `gamma`, `intensity`, `offset`, `blending_mode`) now compose along the scene graph root-to-leaf per the Luxar spec, rather than the previous override-only behavior
 - `opacity`/`gamma`/`intensity` multiply through the chain; `offset` adds; `blending_mode` uses the nearest ancestor that sets it
 - Wired via new `packages/luxar-viewer/src/data/attrs-composer.ts` and `SceneLoader.applyEffectiveAttrs()`; also applied in the progressive GSplats LOD pass-through
 - The Layers panel recomposes per-leaf on every slider change so edits to group/ancestor layers flow into every descendant
 
 **Group layers**
+
 - A `group` node with `layer=True` is now exposed in the Layers panel as a composite layer whose controls fan out to every data descendant (points/lines/gsplats)
 - Viewer's `LayerStateManager` was previously silently ignoring groups — fixed
 
@@ -2358,6 +2396,7 @@ updated to assert `"l1"`.
 #### Major Features
 
 **Screen-Space Overlay System**
+
 - New `scene.add_text()`, `scene.add_image()`, `scene.add_html()` Python API for screen-space annotations
 - Overlays rendered as HTML elements over the 3D canvas (below controls)
 - Normalized screen coordinates `[0, 1]` with top-left origin, 9-point anchoring
@@ -2376,6 +2415,7 @@ updated to assert `"l1"`.
 #### Breaking Changes
 
 **Removed sharpness from GSplats**
+
 - Removed `sharpness` attribute from Gaussian Splats (GSplats) geometry type
 - Points and Lines retain their sharpness attribute
 - GSplats now use the standard Gaussian falloff (equivalent to sharpness=2.0) without per-splat configurability
@@ -2385,6 +2425,7 @@ updated to assert `"l1"`.
 #### Major Features
 
 **Per-Node GOG Color Model & Global EOG Controls**
+
 - **Per-node Gain-Offset-Gamma (GOG)**: Added `intensity` (linear gain), `offset` (black level subtraction), and `gamma` (tonal curve) to all node types (Points, Lines, GSplats)
 - **Use case**: Microscopy background subtraction — negative offset suppresses fluorescence floor per channel
 - **Shader model**: `adjusted = color * intensity + offset; clip; pow(adjusted, 1/gamma)` with early discard for zero-contribution fragments
@@ -2394,36 +2435,42 @@ updated to assert `"l1"`.
 - **UI**: HDR folder now has Exposure (-5 to +5 stops), Offset (-1 to +1), Gamma (0.1 to 10.0), and Tone Mapping selector
 
 **nD Transforms on Non-Displayed Dimensions**
+
 - Per-dimension affine (`scale`, `offset`) and categorical (`permutation`) transforms for non-displayed dimensions
 - Python validation in `nd_transform` property with full round-trip zarr serialization
 - Viewer uses inverse-query approach: transforms the query (slicePosition + tolerance) from world to local space O(1), rather than transforming all point coordinates O(N)
 - No loader internals changed; works transparently with existing spatial indexing
 
 **Recording Panel with Screenshot and Video Export**
+
 - New recording panel UI (`src/ui/recording-panel.ts`) for capturing viewer output
 - Screenshot export: single-frame capture (PNG, WebP, JPEG) with configurable resolution
 - Video export: record viewport as video for supplementary materials and demos
 - Accessible from viewer UI controls
 
 **Scale Bar Overlay with Physical Units**
+
 - Scale bar component (`src/ui/components/scale-bar.ts`) rendered as an overlay on the viewport
 - Supports all Luxar physical units (nm, um, mm, cm, m, km, inch, foot, px, au)
 - Automatically adapts to current zoom level and camera projection
 - Essential for microscopy figure generation
 
 **Tiled Fitting for Large Volumes**
+
 - Cosine-apodized (Hann window) overlapping tiles for fitting arbitrarily large volumes
 - Removes GPU memory ceiling: each tile is fit independently, then splats are concatenated
 - Enables parallel fitting across tiles (and potentially across GPUs)
 - Implementation in `gsplats/fit_tiled_gsplats.py` with tiling utilities in `gsplats/tiling.py`
 
 **GSplat CLI: filter, split, slice, compare Commands**
+
 - `luxar gsplat filter`: Filter splats by amplitude, eccentricity, bounding box, volume, and more
 - `luxar gsplat split`: Split gsplat datasets into parts by count or explicit indices
 - `luxar gsplat slice`: Slice by coordinate ranges using numpy-style syntax (e.g., `"0:50, :, 10:90"`)
 - `luxar gsplat compare`: PSNR/SSIM quality metrics comparing gsplat reconstruction to original volume
 
 **Camera Utilities**
+
 - New `camera-utils.ts` module with `PerspectiveCamera | OrthographicCamera` union type
 - Shared utilities for camera setup across perspective and orthographic projections
 
@@ -2438,24 +2485,25 @@ updated to assert `"l1"`.
 #### Major Features
 
 **Modular Theming System** 🎨
+
 - **What**: Complete theming system with runtime theme switching, CSS-based architecture, and modern aesthetics
 - **Themes**: 3 production-ready themes (Dark, Light, Frosted Glass)
 - **Components**: All 8 UI components fully themed (error dialogs, help overlay, dimension sliders, debug console, dataset browser, data loading monitor, rendering controls)
 - **Architecture**: Three-layer system (Theme definitions -> CSS files -> Component logic)
 - **Features**:
-  - Instant theme switching via UI dropdown (R key -> 🎨 Theme)
-  - URL parameter support (`?theme=light`)
-  - Automatic persistence via localStorage
-  - 130+ CSS utility classes with BEM naming
-  - 80+ CSS custom properties (`--luxar-*`)
-  - Zero hardcoded colors in components
-  - Consistent 0.15s fade-in animation across all UI panels
+    - Instant theme switching via UI dropdown (R key -> 🎨 Theme)
+    - URL parameter support (`?theme=light`)
+    - Automatic persistence via localStorage
+    - 130+ CSS utility classes with BEM naming
+    - 80+ CSS custom properties (`--luxar-*`)
+    - Zero hardcoded colors in components
+    - Consistent 0.15s fade-in animation across all UI panels
 - **Benefits**:
-  - 400+ inline styles removed (-90% inline styling)
-  - CSS bundle: 48KB (6.77KB gzipped) - cacheable separately
-  - JS bundle: -13KB reduction
-  - Better accessibility (WCAG AAA high-contrast theme)
-  - Easier maintenance (single source of truth for colors)
+    - 400+ inline styles removed (-90% inline styling)
+    - CSS bundle: 48KB (6.77KB gzipped) - cacheable separately
+    - JS bundle: -13KB reduction
+    - Better accessibility (WCAG AAA high-contrast theme)
+    - Easier maintenance (single source of truth for colors)
 - **Testing**: 1074 unit tests + 21 E2E visual regression tests
 - **Polish**: Frosted Glass theme with Apple-inspired frosted glass design, HDR default 1.0
 - **Implementation**: 22 commits, 4,200+ lines added, 100% complete with final polish
@@ -2467,6 +2515,7 @@ updated to assert `"l1"`.
 #### Critical Bug Fixes
 
 **Transform Composition Bug**
+
 - **Issue**: Matrix multiplication order was reversed in `compose()` function (left-multiply instead of right-multiply)
 - **Impact**: `compose(T1, T2, T3)` was applying T3 first instead of T1 first
 - **Fix**: Changed `result = transform @ result` to `result = result @ transform`
@@ -2474,6 +2523,7 @@ updated to assert `"l1"`.
 - **Lesson**: Order matters for non-commutative transforms (rotate+translate). Always test with order-sensitive operations.
 
 **Points Metadata Loss Bug**
+
 - **Issue**: `Points.__init__()` set `self._metadata` before calling `super().__init__()`, then `Node.__init__()` overwrote it with empty dict
 - **Impact**: ALL Points objects lost their metadata (has_colors, has_radii, max_radius, etc.)
 - **Fix**: Call `super().__init__()` BEFORE setting `self._metadata` in Points class
@@ -2481,6 +2531,7 @@ updated to assert `"l1"`.
 - **Lesson**: When subclass and parent both initialize the same attribute, parent must initialize first
 
 **Fullscreen Resize Bug**
+
 - **Issue**: Point sizes changed incorrectly on first fullscreen toggle or window resize
 - **Root Cause**: Scene initialization didn't call `updateSize()`, causing different behavior on first resize
 - **Solution**: Make initialization call `this.updateSize()` in `scene-manager.ts` init() method
@@ -2489,11 +2540,13 @@ updated to assert `"l1"`.
 #### Code Cleanup
 
 **Dead Code Removed**
+
 - Eliminated unused mode handling from Node class (~40 lines dead code)
 - Removed `group` parameter and all `if self._group is not None:` branches
 - Node now only supports progressive writing mode (simpler, clearer)
 
 **Deprecated Parameters Removed**
+
 - Removed `units` parameter from `LuxarZarrCompiler` (use Dimensions instead)
 - Removed `DimensionMetadata` class (use full-featured `Dimension` instead)
 - Removed unused version constants (LEGACY, PREVIOUS, FUTURE)
@@ -2502,32 +2555,39 @@ updated to assert `"l1"`.
 #### Quality Improvements
 
 **Compiler Cleanup**
+
 - Reduced `write_points()` from 432 to 117 lines (73% reduction)
 - Extracted 8 focused helper methods with single responsibilities
 
 **Validation Consolidation**
+
 - Created `validation/types.py` centralizing all validation
 - Eliminated ~350 lines of duplication between `protocols.py` and `validation/base.py`
 - Clear organization: types.py (basic), base.py (detailed for writing), nd.py (dimensional)
 
 **Transform Handling Centralized**
+
 - Added `read_transform_from_zarr()` companion function
 - Single source of truth for NumPy to THREE.js transform conversion
 - Eliminated ~50 lines of duplicate transpose logic
 
 **Magic Numbers Extracted**
+
 - Created 18 named constants for spatial index tuning
 - All grid sizing heuristics now configurable via constants
 
 **Performance**
+
 - Vectorized HSV to RGB conversion in demos (30-100x faster)
 
 **Documentation**
+
 - Added 80+ inline comments explaining complex algorithms
 
 #### New Features
 
 **Debug Console & Console Logging**
+
 - In-App Debug Console: Press Ctrl+L to toggle debug console
 - Ring Buffer Implementation: Console interceptor uses 10,000 message ring buffer
 - Early Message Capture: Console messages captured from app initialization
@@ -2535,24 +2595,28 @@ updated to assert `"l1"`.
 - Debug Interface: Debug tools available at `window.__luxarDebug` when `?debug` URL param is present
 
 **HDR Color Pipeline**
+
 - Float32 Colors: Changed from Uint8Array to Float32Array for HDR support
 - nD Slicing Fix: Updated slicing algorithms to use `sliceColorsFloat32()` for proper HDR colors
 - HDR Detection: Added comprehensive HDR capability detection in `utils/hdr-detection.ts`
 - Note: WebGL canvas doesn't support true HDR output (limited to 8-bit)
 
 **World-Space Point Sizing**
+
 - Physical Accuracy: Points now use world-space sizing instead of screen-space
 - Key Property: Two points with radius r at distance 2r will just touch
 - FOV Independence: Points maintain physical size regardless of field of view changes
 - Formula: `angularSize = 2 * atan(radius/distance)`, then converted to pixels
 
 **nD Visualization**
+
 - Slicing Tolerance: Use point radius for visibility, not fixed tolerance
 - Scene Dimensions: Always define at scene level for consistency
 - Keyboard Navigation: Simple 2-step: select dimension (1-9), navigate ([/])
 - TypeScript Integration: Scene dimensions loaded from zarr attrs, used for step sizes
 
 **Data Loading Architecture Cleanup**
+
 - Removed Lazy Loading: Eliminated LazyDataManager in favor of spatial index-based loading
 - Spatial Index Required: All datasets now require spatial indices for efficient loading
 - Range-Based Caching: New RangeCache system for intelligent memory management

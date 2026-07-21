@@ -12,14 +12,9 @@
  */
 
 import * as THREE from 'three';
-import {
-  attachSplatStorage,
-  getSplatTexture,
-  writeSplatTexels,
-  writeSortedIndexIdentity,
-  writeSortedIndexIdentityRange,
-} from '../gsplat-geometry';
-import { clampSplatCapacity } from '../splat-texture-layout';
+import { attachSplatStorage, getSplatTexture, writeSplatTexels } from '../gsplat-geometry';
+import { writeSortedIndexIdentity, writeSortedIndexIdentityRange } from '../element-storage';
+import { clampSplatCapacity } from '../element-texture-layout';
 import type { PooledBuffer } from './pool-stats';
 import { chooseCapacity } from './capacity';
 
@@ -53,6 +48,8 @@ function createGSplatsGeometry(splatCapacity: number): THREE.InstancedBufferGeom
   // the geometry's dispose event, so every pool dispose site frees it);
   // `aSortedIndex` is the only per-instance attribute.
   attachSplatStorage(geometry, splatCapacity);
+  // Ownership marker — see the points adapter's twin comment.
+  geometry.userData.luxarPooled = true;
   return geometry;
 }
 

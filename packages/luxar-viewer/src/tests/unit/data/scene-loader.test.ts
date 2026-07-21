@@ -24,6 +24,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { SceneLoader, type LoaderConfig, type ViewState } from '../../../data';
 import { releaseDepthSortNode } from '../../../rendering/depth-sort-coordinator';
 import * as THREE from 'three';
+import { getPointTexture } from '../../../rendering/point-geometry';
 import * as zarr from 'zarrita';
 
 // THREE is NOT mocked here. The classes SceneLoader touches —
@@ -72,8 +73,7 @@ vi.mock('../../../rendering/material-manager', () => ({
 // intercepted — SceneLoader's commit path imports noteGSplatsCommit from the
 // same module and must keep the real implementation.
 vi.mock('../../../rendering/depth-sort-coordinator', async (importOriginal) => {
-  const actual =
-    await importOriginal<typeof import('../../../rendering/depth-sort-coordinator')>();
+  const actual = await importOriginal<typeof import('../../../rendering/depth-sort-coordinator')>();
   return {
     ...actual,
     releaseDepthSortNode: vi.fn(),
@@ -1512,8 +1512,9 @@ describe('SceneLoader', () => {
     /**
      * Drop a real point mesh into the loader's rootGroup so the
      * `getObjectByName(path)` lookup inside `commitPointsGeometry`
-     * returns it. Per-instance attributes are `InstancedBufferAttribute`s
-     * named `aCenter`, `aColor`, `aRadius`, `aSharpness`.
+     * returns it. The placeholder carries interleaved-era attributes;
+     * the commit path replaces the geometry with the texture-backed
+     * layout (point texture + `aSortedIndex`) either way.
      */
     function attachPointsChild(name: string, oldCount: number): THREE.Mesh {
       const root = (sceneLoader as any).rootGroup as THREE.Group;
@@ -1589,13 +1590,13 @@ describe('SceneLoader', () => {
 
       (sceneLoader as any).updatePointsGeometry('/test_points', sameSizeData);
 
-      // Whether commit takes the buffer-pool path or the in-place path
+      // Whether commit takes the buffer-pool path or the recreate path
       // (depends on whether _gpuBufferPool is wired up in this fixture),
-      // the live position attribute must reflect the new payload.
-      const afterPositions = points.geometry.getAttribute(
-        'aCenter'
-      ) as THREE.InstancedBufferAttribute;
-      expect(Array.from(afterPositions.array as Float32Array).slice(0, 3)).toEqual([1, 2, 3]);
+      // the live point texture must reflect the new payload: center.xyz
+      // is texel 0 of point 0 (see point-geometry.ts).
+      const texture = getPointTexture(points.geometry);
+      expect(texture).not.toBeNull();
+      expect(Array.from((texture!.image.data as Float32Array).slice(0, 3))).toEqual([1, 2, 3]);
       expect(points.userData.visiblePointCount).toBe(1);
     });
 

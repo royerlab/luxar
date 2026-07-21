@@ -19,50 +19,90 @@ import {
   pointPickWebGPUFactory,
   buildPointPickTSLNodesFromUniforms,
 } from '../../../../rendering/picking/point/pick.tsl';
-import { createPointQuadGeometry } from '../../../../rendering/point-geometry';
+import {
+  createPointQuadGeometry,
+  attachPointStorage,
+  writePointTexels,
+  type PointTexelSource,
+} from '../../../../rendering/point-geometry';
+import { writeSortedIndexIdentity } from '../../../../rendering/element-storage';
 import type { RegistryEntry } from './types';
 import { buildBehindCamera, buildColormapTexture } from './shared';
 
-/** Point mesh + a per-instance `aScalar` for the colormap-parity case. */
+/**
+ * Single-point texel source shared by the texture and mesh builders —
+ * they must carry identical data (the shaders sample the UNIFORM's
+ * texture; the mesh's geometry-attached texture holds the same values).
+ * Realistic attributes: radius 0.5, color (1.0, 0.5, 0.25); `sharpness`
+ * is the normalised [0, 1] knob -> super-Gaussian exponent
+ * beta = 2^(6s - 2) (default 0.5 -> beta=2, a true Gaussian); `center`
+ * is the world-space point position (a behind-camera center exercises
+ * the perspective behind-camera guard); `scalar` feeds texel2.x for the
+ * colormap-parity case.
+ */
+function pointTexelSource(
+  center: readonly [number, number, number] = [0, 0, 0],
+  sharpness: number = 0.5,
+  scalar?: number
+): PointTexelSource {
+  return {
+    positions: new Float32Array([center[0], center[1], center[2]]),
+    colors: new Float32Array([1.0, 0.5, 0.25]),
+    radii: new Float32Array([0.5]),
+    sharpness: new Float32Array([sharpness]),
+    scalars: scalar !== undefined ? new Float32Array([scalar]) : undefined,
+  };
+}
+
+/**
+ * Pre-built point data texture for a point parity variant. Since the
+ * texture-storage migration the shaders read point data via
+ * `texelFetch(uPointTex, ...)`; the TSL texture node is FACTORY-time
+ * bound, so the texture must exist in the uniforms record BEFORE the
+ * material is built (the same reason the production wrapper rebuilds
+ * its graph on a texture identity change). Every point registry entry's
+ * `buildUniforms` supplies one of these with the SAME (center,
+ * sharpness) its `buildMesh` passes to `buildPointInstancedMesh`, and
+ * the production `writePointTexels` writes the layout so the harness
+ * can never drift from the real texel packing (3 texels/point).
+ */
+function buildPointDataTexture(
+  center: readonly [number, number, number] = [0, 0, 0],
+  sharpness: number = 0.5,
+  scalar?: number
+): THREE.DataTexture {
+  const tex = new THREE.DataTexture(new Float32Array(12), 3, 1, THREE.RGBAFormat, THREE.FloatType);
+  tex.magFilter = THREE.NearestFilter;
+  tex.minFilter = THREE.NearestFilter;
+  tex.generateMipmaps = false;
+  tex.flipY = false;
+  writePointTexels(tex, pointTexelSource(center, sharpness, scalar), 1);
+  return tex;
+}
+
+/** Point mesh with the texel2.x scalar written for the colormap-parity case. */
 function buildPointColormapMesh(material: THREE.Material): THREE.Object3D {
-  const mesh = buildPointInstancedMesh(material) as THREE.Mesh;
   // Mid-range scalar so gamma (pow(t, invGamma)) actually moves the
   // lookup off the t=0/1 fixed points where pow is the identity.
-  mesh.geometry.setAttribute(
-    'aScalar',
-    new THREE.InstancedBufferAttribute(new Float32Array([0.5]), 1)
-  );
-  return mesh;
+  return buildPointInstancedMesh(material, 0.5, [0, 0, 0], 0.5);
 }
 
 /**
  * Build a real instanced-points mesh for the point parity test.
  * One point at world origin with realistic attributes; 4-vertex quad
- * base + InstancedBufferAttribute per-instance data (aCenter etc.).
+ * base + the production point texture / `aSortedIndex` storage pair
+ * (texture-backed geometry — mirrors the gsplat harness assembly).
  */
 function buildPointInstancedMesh(
   material: THREE.Material,
   sharpness: number = 0.5,
-  center: readonly [number, number, number] = [0, 0, 0]
+  center: readonly [number, number, number] = [0, 0, 0],
+  scalar?: number
 ): THREE.Object3D {
-  // sharpness is the normalised [0, 1] knob -> super-Gaussian exponent
-  // beta = 2^(6s - 2). Default 0.5 -> beta=2 (a true Gaussian). `center` is the
-  // world-space point position (default origin); a behind-camera center is used
-  // to exercise the perspective behind-camera guard.
   const geom = createPointQuadGeometry();
-  geom.setAttribute(
-    'aCenter',
-    new THREE.InstancedBufferAttribute(new Float32Array([center[0], center[1], center[2]]), 3)
-  );
-  geom.setAttribute('aRadius', new THREE.InstancedBufferAttribute(new Float32Array([0.5]), 1));
-  geom.setAttribute(
-    'aSharpness',
-    new THREE.InstancedBufferAttribute(new Float32Array([sharpness]), 1)
-  );
-  geom.setAttribute(
-    'aColor',
-    new THREE.InstancedBufferAttribute(new Float32Array([1.0, 0.5, 0.25]), 3)
-  );
+  const texture = attachPointStorage(geom, 1);
+  writePointTexels(texture, pointTexelSource(center, sharpness, scalar), 1);
+  writeSortedIndexIdentity(geom, 1);
   // Match the production points-mesh contract (the gpu-buffer-pool points
   // adapter): the WebGLRenderer only issues an instanced draw when `instanceCount`
   // is finite, and the drawRange must cap at the 6 indices that
@@ -83,6 +123,7 @@ export const POINT_SHADERS: Record<string, RegistryEntry> = {
   point: {
     source: POINT_SOURCE,
     buildUniforms: () => ({
+      uPointTex: { value: buildPointDataTexture() },
       pointSizeFactor: { value: 32.0 },
       maxPointSize: { value: 32.0 },
       radiusScale: { value: 1.0 },
@@ -115,6 +156,7 @@ export const POINT_SHADERS: Record<string, RegistryEntry> = {
   'point-soft': {
     source: POINT_SOURCE,
     buildUniforms: () => ({
+      uPointTex: { value: buildPointDataTexture([0, 0, 0], 0.1) },
       pointSizeFactor: { value: 32.0 },
       maxPointSize: { value: 32.0 },
       radiusScale: { value: 1.0 },
@@ -139,6 +181,7 @@ export const POINT_SHADERS: Record<string, RegistryEntry> = {
   'point-hard': {
     source: POINT_SOURCE,
     buildUniforms: () => ({
+      uPointTex: { value: buildPointDataTexture([0, 0, 0], 0.9) },
       pointSizeFactor: { value: 32.0 },
       maxPointSize: { value: 32.0 },
       radiusScale: { value: 1.0 },
@@ -167,6 +210,7 @@ export const POINT_SHADERS: Record<string, RegistryEntry> = {
   'point-gamma-one': {
     source: POINT_SOURCE,
     buildUniforms: () => ({
+      uPointTex: { value: buildPointDataTexture() },
       pointSizeFactor: { value: 32.0 },
       maxPointSize: { value: 32.0 },
       radiusScale: { value: 1.0 },
@@ -198,6 +242,7 @@ export const POINT_SHADERS: Record<string, RegistryEntry> = {
   'point-max': {
     source: POINT_SOURCE,
     buildUniforms: () => ({
+      uPointTex: { value: buildPointDataTexture() },
       pointSizeFactor: { value: 32.0 },
       maxPointSize: { value: 32.0 },
       radiusScale: { value: 1.0 },
@@ -222,12 +267,13 @@ export const POINT_SHADERS: Record<string, RegistryEntry> = {
   // Point colormap parity: USE_COLORMAP LUT path. Gamma is applied to the
   // scalar VALUE before the LUT lookup (vertex stage); intensity/offset
   // apply POST-LUT to the mapped color (matching the gsplat shader).
-  // invGamma != 1 with aScalar = 0.5 so the gamma warp is observable,
-  // and non-default uIntensity/uOffset so the post-LUT gain/offset path
-  // is exercised and must match across backends.
+  // invGamma != 1 with a texel2.x scalar of 0.5 so the gamma warp is
+  // observable, and non-default uIntensity/uOffset so the post-LUT
+  // gain/offset path is exercised and must match across backends.
   'point-colormap': {
     source: POINT_SOURCE,
     buildUniforms: () => ({
+      uPointTex: { value: buildPointDataTexture([0, 0, 0], 0.5, 0.5) },
       pointSizeFactor: { value: 32.0 },
       maxPointSize: { value: 32.0 },
       radiusScale: { value: 1.0 },
@@ -259,6 +305,7 @@ export const POINT_SHADERS: Record<string, RegistryEntry> = {
   'point-pick': {
     source: POINT_PICK_SOURCE,
     buildUniforms: () => ({
+      uPointTex: { value: buildPointDataTexture() },
       pointSizeFactor: { value: 32.0 },
       maxPointSize: { value: 32.0 },
       radiusScale: { value: 1.0 },
@@ -281,6 +328,7 @@ export const POINT_SHADERS: Record<string, RegistryEntry> = {
   'point-behind': {
     source: POINT_SOURCE,
     buildUniforms: () => ({
+      uPointTex: { value: buildPointDataTexture([0, 0, 3]) },
       pointSizeFactor: { value: 32.0 },
       maxPointSize: { value: 32.0 },
       radiusScale: { value: 1.0 },
@@ -309,6 +357,7 @@ export const POINT_SHADERS: Record<string, RegistryEntry> = {
   'point-pick-behind': {
     source: POINT_PICK_SOURCE,
     buildUniforms: () => ({
+      uPointTex: { value: buildPointDataTexture([0, 0, 3]) },
       pointSizeFactor: { value: 32.0 },
       maxPointSize: { value: 32.0 },
       radiusScale: { value: 1.0 },
@@ -333,6 +382,7 @@ export const POINT_SHADERS: Record<string, RegistryEntry> = {
   'point-persp-center': {
     source: POINT_SOURCE,
     buildUniforms: () => ({
+      uPointTex: { value: buildPointDataTexture([0, 0, 0]) },
       pointSizeFactor: { value: 221.7 }, // 2*64/tan(30°) — fov 60 at 64px
       maxPointSize: { value: 32.0 },
       radiusScale: { value: 0.1 }, // ~11px sprite at view depth 1
@@ -359,6 +409,7 @@ export const POINT_SHADERS: Record<string, RegistryEntry> = {
   'point-persp-offaxis': {
     source: POINT_SOURCE,
     buildUniforms: () => ({
+      uPointTex: { value: buildPointDataTexture([0.5, 0, 0]) },
       pointSizeFactor: { value: 221.7 }, // 2*64/tan(30°) — fov 60 at 64px
       maxPointSize: { value: 32.0 },
       radiusScale: { value: 0.1 }, // ~11px sprite at view depth 1
@@ -395,6 +446,7 @@ export const POINT_SHADERS: Record<string, RegistryEntry> = {
   'point-subpixel': {
     source: POINT_SOURCE,
     buildUniforms: () => ({
+      uPointTex: { value: buildPointDataTexture([0.015625, 0.015625, 0]) },
       pointSizeFactor: { value: 32.0 },
       maxPointSize: { value: 32.0 },
       radiusScale: { value: 0.06 },
@@ -423,6 +475,7 @@ export const POINT_SHADERS: Record<string, RegistryEntry> = {
   'point-near-fade': {
     source: POINT_SOURCE,
     buildUniforms: () => ({
+      uPointTex: { value: buildPointDataTexture() },
       pointSizeFactor: { value: 221.7 },
       maxPointSize: { value: 32.0 },
       radiusScale: { value: 0.1 },

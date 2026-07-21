@@ -40,12 +40,16 @@ test.describe('Data Loading Monitor Metrics', () => {
       const debug = (window as any).__luxarDebug;
       let count = 0;
       debug.scene?.traverse((obj: any) => {
-        if (obj.userData?.nodeType === 'points' && obj.geometry?.attributes?.aCenter) {
-          const attrCount = obj.geometry.attributes.aCenter.count;
+        // Per-point data is texture-backed: the RGBA32F element texture
+        // holds 12 floats per point and instanceCount is the visible point
+        // count (the texel buffer may be over-allocated by the GPU pool).
+        const texData = obj.geometry?.userData?.elementTexture?.image?.data;
+        if (obj.userData?.nodeType === 'points' && texData) {
+          const texelCapacity = Math.floor(texData.length / 12);
           const instanceCount = obj.geometry.isInstancedBufferGeometry
             ? obj.geometry.instanceCount
-            : attrCount;
-          count += Math.min(instanceCount, attrCount);
+            : texelCapacity;
+          count += Math.min(instanceCount, texelCapacity);
         }
       });
       return count;
@@ -130,12 +134,16 @@ test.describe('Data Loading Monitor Metrics', () => {
       const debug = (window as any).__luxarDebug;
       let count = 0;
       debug.scene?.traverse((obj: any) => {
-        if (obj.userData?.nodeType === 'points' && obj.geometry?.attributes?.aCenter) {
-          const attrCount = obj.geometry.attributes.aCenter.count;
+        // Per-point data is texture-backed: the RGBA32F element texture
+        // holds 12 floats per point and instanceCount is the visible point
+        // count (the texel buffer may be over-allocated by the GPU pool).
+        const texData = obj.geometry?.userData?.elementTexture?.image?.data;
+        if (obj.userData?.nodeType === 'points' && texData) {
+          const texelCapacity = Math.floor(texData.length / 12);
           const instanceCount = obj.geometry.isInstancedBufferGeometry
             ? obj.geometry.instanceCount
-            : attrCount;
-          count += Math.min(instanceCount, attrCount);
+            : texelCapacity;
+          count += Math.min(instanceCount, texelCapacity);
         }
       });
       return count;

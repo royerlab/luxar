@@ -67,17 +67,25 @@ test.describe('Real Dataset Loading', () => {
       debug.scene.traverse((obj: any) => {
         if (obj.userData?.nodeType === 'points') {
           const geom = obj.geometry;
+          // Per-point data is texture-backed: the RGBA32F element texture
+          // holds 12 floats per point, so every present field shares the
+          // same per-point capacity. Field presence comes from the node's
+          // declared metadata (userData.attrs); the visible point count is
+          // the geometry's instanceCount.
+          const texData = geom.userData?.elementTexture?.image?.data;
+          const texelCapacity = texData ? Math.floor(texData.length / 12) : 0;
+          const presence = obj.geometry?.userData;
           pointClouds.push({
             name: obj.name,
-            pointCount: geom.attributes.aCenter?.count || 0,
-            hasPosition: !!geom.attributes.aCenter,
-            hasColor: !!geom.attributes.aColor,
-            hasRadius: !!geom.attributes.aRadius,
-            hasSharpness: !!geom.attributes.aSharpness,
-            positionCount: geom.attributes.aCenter?.count || 0,
-            colorCount: geom.attributes.aColor?.count || 0,
-            radiusCount: geom.attributes.aRadius?.count || 0,
-            sharpnessCount: geom.attributes.aSharpness?.count || 0,
+            pointCount: geom.instanceCount || 0,
+            hasPosition: !!texData,
+            hasColor: !!presence?.hasColors,
+            hasRadius: !!presence?.hasRadii,
+            hasSharpness: !!presence?.hasSharpness,
+            positionCount: texelCapacity,
+            colorCount: presence?.hasColors ? texelCapacity : 0,
+            radiusCount: presence?.hasRadii ? texelCapacity : 0,
+            sharpnessCount: presence?.hasSharpness ? texelCapacity : 0,
           });
         }
       });

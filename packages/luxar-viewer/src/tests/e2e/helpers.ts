@@ -1122,7 +1122,7 @@ export async function shiftScroll(page: Page, deltaY: number): Promise<void> {
 }
 
 /**
- * Validate attribute alignment for all Points geometry in the scene.
+ * Validate texture-backed point storage for all Points geometry in the scene.
  * Returns per-cloud validation results.
  */
 export async function validateSceneAttributes(page: Page): Promise<
@@ -1145,37 +1145,46 @@ export async function validateSceneAttributes(page: Page): Promise<
 
     const results: any[] = [];
     debug.scene.traverse((obj: any) => {
-      // Points are THREE.Mesh with instanced quad geometry.
-      // Per-instance attributes are prefixed with `a` (aCenter, aColor,
-      // etc.).
-      if (obj.userData?.nodeType !== 'points' || !obj.geometry?.attributes?.aCenter) return;
+      // Points are THREE.Mesh with instanced quad geometry. Per-point data
+      // is texture-backed: an RGBA32F element texture holds 12 floats
+      // (3 texels) per point — center xyz [0..2], radius [3], color rgb
+      // [4..6], sharpness [7], scalar [8], alpha [9]. The only
+      // per-instance attribute is aSortedIndex (identity ordering).
+      if (obj.userData?.nodeType !== 'points') return;
+      const texData = obj.geometry?.userData?.elementTexture?.image?.data;
+      if (!texData) return;
 
-      const pos = obj.geometry.attributes.aCenter;
-      const col = obj.geometry.attributes.aColor;
-      const rad = obj.geometry.attributes.aRadius;
-      const shp = obj.geometry.attributes.aSharpness;
+      const STRIDE = 12;
+      const texelCapacity = Math.floor(texData.length / STRIDE);
+      const sortedIndex = obj.geometry.attributes?.aSortedIndex;
       const dr = obj.geometry.drawRange;
+      const presence = obj.geometry?.userData;
 
-      const posCount = pos.count;
-      const colCount = col ? col.count : -1;
-      const radCount = rad ? rad.count : -1;
-      const shpCount = shp ? shp.count : -1;
+      // Field presence comes from the texel writers' userData stamps (the
+      // zarr node attrs carry no has_colors/has_radii/has_sharpness); the
+      // texel buffer allocates every slot, so all present fields share the
+      // same per-point capacity.
+      const posCount = texelCapacity;
+      const colCount = presence?.hasColors ? texelCapacity : -1;
+      const radCount = presence?.hasRadii ? texelCapacity : -1;
+      const shpCount = presence?.hasSharpness ? texelCapacity : -1;
       const drawCount = dr.count < Infinity ? Math.min(dr.count, posCount) : posCount;
-      const visibleInstanceCount = obj.geometry.isInstancedBufferGeometry
-        ? Math.min(obj.geometry.instanceCount, posCount)
-        : drawCount;
+      // instanceCount is the visible point count; the texel buffer (and
+      // aSortedIndex) may be over-allocated for pooled geometries.
+      const visibleCount = obj.geometry.isInstancedBufferGeometry
+        ? obj.geometry.instanceCount
+        : texelCapacity;
+      const visibleInstanceCount = Math.min(visibleCount, texelCapacity);
 
-      // Check for NaN/Infinity in positions (sample first 1000 instances).
-      // aCenter is an InterleavedBufferAttribute, so .array is the shared
-      // interleaved backing buffer (not a dense position-only array).
-      // Use getX/getY/getZ to read per-instance components correctly.
+      // Check for NaN/Infinity in positions (sample first 1000 visible
+      // instances). Centers live at texel slots [i*12 .. i*12+2].
       let hasNaN = false;
       let hasInfinity = false;
-      const sampleCount = Math.min(posCount, 1000);
+      const sampleCount = Math.min(visibleInstanceCount, 1000);
       for (let i = 0; i < sampleCount; i++) {
-        const x = pos.getX(i);
-        const y = pos.getY(i);
-        const z = pos.getZ(i);
+        const x = texData[i * STRIDE];
+        const y = texData[i * STRIDE + 1];
+        const z = texData[i * STRIDE + 2];
         if (Number.isNaN(x) || Number.isNaN(y) || Number.isNaN(z)) hasNaN = true;
         if (
           (!Number.isNaN(x) && !Number.isFinite(x)) ||
@@ -1185,12 +1194,10 @@ export async function validateSceneAttributes(page: Page): Promise<
           hasInfinity = true;
       }
 
-      // Check alignment: all present attributes should have same count
-      const counts = [posCount];
-      if (colCount >= 0) counts.push(colCount);
-      if (radCount >= 0) counts.push(radCount);
-      if (shpCount >= 0) counts.push(shpCount);
-      const aligned = counts.every((c) => c === counts[0]);
+      // Check alignment: the texel buffer and the aSortedIndex attribute
+      // must both cover every visible instance.
+      const aligned =
+        texelCapacity >= visibleCount && !!sortedIndex && sortedIndex.count >= visibleCount;
 
       results.push({
         name: obj.name || 'unnamed',

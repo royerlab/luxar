@@ -622,7 +622,7 @@ test.describe('GSplat normal mode (premultiplied coverage alpha)', () => {
         if (obj.userData?.nodeType !== 'gsplats') return;
         const count = obj.userData?.visibleSplatCount ?? 0;
         const arr = obj.geometry?.attributes?.aSortedIndex?.array;
-        const texData = obj.geometry?.userData?.splatTexture?.image?.data;
+        const texData = obj.geometry?.userData?.elementTexture?.image?.data;
         if (!arr || !texData || count < 2) return;
         const mwi = debug.camera.matrixWorldInverse.elements;
         const mw = obj.matrixWorld.elements;
@@ -669,7 +669,7 @@ test.describe('GSplat normal mode (premultiplied coverage alpha)', () => {
       let offsets: Array<[number, number]> | null = null;
       debug.scene.traverse((obj: any) => {
         if (obj.userData?.nodeType !== 'gsplats' || offsets) return;
-        const texData = obj.geometry?.userData?.splatTexture?.image?.data;
+        const texData = obj.geometry?.userData?.elementTexture?.image?.data;
         if (!texData) return;
         const mwi = debug.camera.matrixWorldInverse.elements;
         const pm = debug.camera.projectionMatrix.elements;
@@ -726,7 +726,7 @@ test.describe('GSplat normal mode (premultiplied coverage alpha)', () => {
       if (obj.userData?.nodeType !== 'gsplats') return;
       const count = obj.userData?.visibleSplatCount ?? 0;
       const arr = obj.geometry?.attributes?.aSortedIndex?.array;
-      const texData = obj.geometry?.userData?.splatTexture?.image?.data;
+      const texData = obj.geometry?.userData?.elementTexture?.image?.data;
       if (!arr || !texData || count < 2) return;
       checked++;
       const mwi = debug.camera.matrixWorldInverse.elements;
@@ -1115,7 +1115,7 @@ test.describe('GSplat volumetric mode (emission–absorption)', () => {
         if (obj.userData?.nodeType !== 'gsplats') return;
         const count = obj.userData?.visibleSplatCount ?? 0;
         const arr = obj.geometry?.attributes?.aSortedIndex?.array;
-        const texData = obj.geometry?.userData?.splatTexture?.image?.data;
+        const texData = obj.geometry?.userData?.elementTexture?.image?.data;
         if (!arr || !texData || count < 2) return;
         const mwi = debug.camera.matrixWorldInverse.elements;
         const mw = obj.matrixWorld.elements;
@@ -1167,9 +1167,7 @@ test.describe('GSplat RGBA per-element opacity (occlusion)', () => {
       '../../../tests/fixtures/test_gsplats_rgba_occlusion.luxar.zarr'
     );
     if (!existsSync(fixtureDir)) {
-      throw new Error(
-        `Missing fixture ${fixtureDir} — run \`pnpm test:generate-fixtures\` first.`
-      );
+      throw new Error(`Missing fixture ${fixtureDir} — run \`pnpm test:generate-fixtures\` first.`);
     }
   });
 

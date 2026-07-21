@@ -12,21 +12,7 @@ describe('GPUBufferPool.dispose', () => {
   it('clears active buffers + pooled buckets', () => {
     const pool = new GPUBufferPool(20, 300);
     // Allocate one points geometry so there's something to dispose.
-    pool.acquirePointsGeometry(
-      'p1',
-      {
-        positions: new Float32Array([0, 0, 0, 1, 0, 0]),
-        pointCount: 2,
-        ndim: 3,
-        metadata: {
-          totalPoints: 2,
-          loadedPoints: 2,
-          bounds: { min: { x: 0, y: 0, z: 0 }, max: { x: 1, y: 0, z: 0 } } as never,
-          usedSpatialIndex: false,
-        },
-      },
-      2
-    );
+    pool.acquirePointsGeometry('p1', 2);
 
     expect(pool.getStats().activeBuffers).toBeGreaterThan(0);
     pool.dispose();

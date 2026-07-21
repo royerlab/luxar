@@ -105,10 +105,12 @@ describe('MaterialManager', () => {
       // caps is unset in this test, so the dispatch picks GLSL).
       expect(material).toBeInstanceOf(PointMaterial);
 
-      // Test REAL vertex shader content: per-instance attributes
-      // prefixed `a*`, plus the per-vertex `aQuadCorner`.
-      expect(material.vertexShader).toContain('in float aRadius');
-      expect(material.vertexShader).toContain('in float aSharpness');
+      // Test REAL vertex shader content: the single per-instance
+      // `aSortedIndex` attribute + the point data texture sampler
+      // (per-point data lives in texels since the storage migration),
+      // plus the per-vertex `aQuadCorner`.
+      expect(material.vertexShader).toContain('in uint aSortedIndex');
+      expect(material.vertexShader).toContain('uniform highp sampler2D uPointTex');
       expect(material.vertexShader).toContain('in vec2 aQuadCorner');
       expect(material.vertexShader).toContain('uniform float pointSizeFactor');
       expect(material.vertexShader).toContain('uniform float maxPointSize');
@@ -197,11 +199,14 @@ describe('MaterialManager', () => {
   });
 
   // =========================================================================
-  // CACHING
+  // PER-NODE IDENTITY (points are never cached)
   // =========================================================================
 
-  describe('Material Caching', () => {
-    it('should cache materials with same properties', () => {
+  describe('Per-node point materials', () => {
+    it('returns a DISTINCT instance per call, even for identical props (per-node, LRU bypassed)', () => {
+      // Point data lives in a per-node texture (uPointTex): two nodes can
+      // never share a point material, or one node's commit would rebind
+      // its texture onto the other's mesh. Mirrors getGSplatMaterial.
       const props: PointMaterialProperties = {
         blendingMode: 'additive',
         opacity: 1.0,
@@ -213,12 +218,27 @@ describe('MaterialManager', () => {
       const material1 = manager.getPointMaterial(props);
       const material2 = manager.getPointMaterial(props);
 
-      // Should return same instance (cached)
-      expect(material1).toBe(material2);
+      expect(material1).not.toBe(material2);
 
-      // Verify cache statistics
+      // The point cache map stays permanently empty.
       const stats = manager.getCacheStats();
-      expect(stats.pointMaterials).toBe(1); // Only 1 unique material
+      expect(stats.pointMaterials).toBe(0);
+      // Both per-node materials are registered for camera broadcast.
+      expect(stats.totalRegistered).toBe(2);
+    });
+
+    it('per-node materials receive the current camera params immediately at creation', () => {
+      const fov = Math.PI / 4;
+      manager.updateCameraParams(fov, new THREE.Vector2(2560, 1440));
+      const material = manager.getPointMaterial({
+        blendingMode: 'additive',
+        opacity: 1.0,
+        gamma: 1.0,
+        intensity: 1.0,
+        offset: 0.0,
+      });
+      const expectedPointSizeFactor = (2.0 * 1440) / Math.tan(fov / 2);
+      expect(material.uniforms.pointSizeFactor.value).toBeCloseTo(expectedPointSizeFactor, 5);
     });
 
     it('should create different materials for different opacity', () => {
@@ -239,9 +259,6 @@ describe('MaterialManager', () => {
       });
 
       expect(material1).not.toBe(material2);
-
-      const stats = manager.getCacheStats();
-      expect(stats.pointMaterials).toBe(2); // 2 different materials
     });
 
     it('should create different materials for different gamma', () => {
@@ -405,7 +422,7 @@ describe('MaterialManager', () => {
       expect(stats.totalRegistered).toBe(0);
     });
 
-    it('should clear cache on dispose', () => {
+    it('should clear the registry on dispose (per-node point materials leave no cache)', () => {
       manager.getPointMaterial({
         blendingMode: 'additive',
         opacity: 1.0,
@@ -414,15 +431,18 @@ describe('MaterialManager', () => {
         offset: 0.0,
       });
 
-      expect(manager.getCacheStats().pointMaterials).toBe(1);
+      // Per-node: never cached, but registered for camera broadcast.
+      expect(manager.getCacheStats().pointMaterials).toBe(0);
+      expect(manager.getCacheStats().totalRegistered).toBe(1);
 
       manager.dispose();
 
       expect(manager.getCacheStats().pointMaterials).toBe(0);
+      expect(manager.getCacheStats().totalRegistered).toBe(0);
     });
 
     it('should track and dispose registered non-cached material clones', () => {
-      const cached = manager.getPointMaterial({
+      const perNode = manager.getPointMaterial({
         blendingMode: 'additive',
         opacity: 1.0,
         gamma: 1.0,
@@ -434,21 +454,21 @@ describe('MaterialManager', () => {
       manager.register(clone);
 
       let stats = manager.getCacheStats();
-      expect(stats.pointMaterials).toBe(1);
-      expect(stats.cachedMaterials).toBe(1);
+      expect(stats.pointMaterials).toBe(0); // per-node — no cache entry
+      expect(stats.cachedMaterials).toBe(0);
       expect(stats.ownedMaterials).toBe(1);
       expect(stats.totalRegistered).toBe(2);
 
       manager.dispose();
 
-      expect(cached.dispose).toHaveBeenCalled();
+      expect(perNode.dispose).toHaveBeenCalled();
       expect(clone.dispose).toHaveBeenCalled();
       stats = manager.getCacheStats();
       expect(stats.ownedMaterials).toBe(0);
       expect(stats.totalRegistered).toBe(0);
     });
 
-    it('should unregister non-cached material clones without touching cache entries', () => {
+    it('should unregister non-cached material clones without touching other registrations', () => {
       manager.getPointMaterial({
         blendingMode: 'additive',
         opacity: 1.0,
@@ -462,9 +482,9 @@ describe('MaterialManager', () => {
       manager.unregister(clone);
 
       const stats = manager.getCacheStats();
-      expect(stats.pointMaterials).toBe(1);
+      expect(stats.pointMaterials).toBe(0); // per-node — no cache entry
       expect(stats.ownedMaterials).toBe(0);
-      expect(stats.totalRegistered).toBe(1);
+      expect(stats.totalRegistered).toBe(1); // the per-node material stays registered
     });
 
     it('should drop a clone from the registry when the clone is disposed', () => {
@@ -516,7 +536,7 @@ describe('MaterialManager', () => {
   // =========================================================================
 
   describe('getCacheStats', () => {
-    it('should return accurate cache statistics', () => {
+    it('should return accurate statistics (per-node points registered, never cached)', () => {
       const stats1 = manager.getCacheStats();
       expect(stats1.pointMaterials).toBe(0);
       expect(stats1.totalRegistered).toBe(0);
@@ -540,13 +560,13 @@ describe('MaterialManager', () => {
       });
 
       const stats2 = manager.getCacheStats();
-      expect(stats2.pointMaterials).toBe(2);
-      expect(stats2.totalRegistered).toBe(2);
-      expect(stats2.keys.length).toBe(2);
+      expect(stats2.pointMaterials).toBe(0); // per-node — no cache entries
+      expect(stats2.totalRegistered).toBe(2); // but both are registered
+      expect(stats2.keys.length).toBe(0); // no keys — nothing cached
     });
 
-    it('should include cache keys in statistics', () => {
-      manager.getPointMaterial({
+    it('should include cache keys in statistics (line cache — the cached kind)', () => {
+      manager.getLineMaterial({
         blendingMode: 'additive',
         opacity: 1.0,
         gamma: 1.0,
@@ -556,7 +576,7 @@ describe('MaterialManager', () => {
 
       const stats = manager.getCacheStats();
       expect(stats.keys.length).toBeGreaterThan(0);
-      expect(stats.keys[0]).toContain('point_');
+      expect(stats.keys[0]).toContain('line_');
       expect(stats.keys[0]).toContain('additive');
     });
   });
@@ -886,23 +906,26 @@ describe('MaterialManager', () => {
   // =========================================================================
 
   describe('detachFromGlobalUpdates', () => {
-    const props: PointMaterialProperties = {
+    // Lines are the remaining pooled/cached kind — the detach-then-clone
+    // pattern only exists for cached materials (per-node point/gsplat
+    // materials are owned by their node and never detached).
+    const props = {
       blendingMode: 'additive',
       opacity: 1.0,
       gamma: 1.0,
       intensity: 1.0,
       offset: 0.0,
-    };
+    } as Parameters<MaterialManager['getLineMaterial']>[0];
 
     it('leaves the pooled material in the LRU cache (reusable on next get)', () => {
-      const pooled = manager.getPointMaterial(props);
+      const pooled = manager.getLineMaterial(props);
       manager.detachFromGlobalUpdates(pooled);
-      const reused = manager.getPointMaterial(props);
+      const reused = manager.getLineMaterial(props);
       expect(reused).toBe(pooled);
     });
 
     it('after manager dispose(), detached pooled material is NOT disposed', () => {
-      const pooled = manager.getPointMaterial(props);
+      const pooled = manager.getLineMaterial(props);
       const pooledDispose = vi.spyOn(pooled, 'dispose');
       // Simulate the NodeFactory clone-site pattern: detach pooled then
       // register a clone. The clone takes pooled's global-update slot.
@@ -910,7 +933,7 @@ describe('MaterialManager', () => {
         ...pooled,
         dispose: vi.fn(),
         updateCameraParams: vi.fn(),
-      } as unknown as PointMaterial;
+      } as unknown as typeof pooled;
       manager.detachFromGlobalUpdates(pooled);
       manager.register(cloneLike);
 

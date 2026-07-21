@@ -9,14 +9,12 @@
  *   - aQuadCorner (vec2, ±1)  — unit-quad corner, vertex shader
  *     expands to a sprite of size `pointSize` pixels in screen space.
  *
- * Per-instance attributes (one entry per point, supplied by the
- * gpu-buffer-pool points adapter):
- *   - aCenter    (vec3) — world-space centre position
- *   - aRadius    (float)
- *   - aSharpness (float)
- *   - aColor     (vec3) — always present (instead of Three.js'
- *     vertexColors=true auto-injected `color` attribute)
- *   - aScalar    (float, USE_COLORMAP only)
+ * Per-point data comes from the RGBA32F point texture (`uPointTex`,
+ * 3 texels/point — layout in `rendering/point-geometry.ts` /
+ * `rendering/element-texture-layout.ts`), fetched in the vertex stage
+ * via `texelFetch` and indexed by the only per-instance attribute:
+ *   - aSortedIndex (uint) — draw-slot → storage-slot mapping
+ *     (identity in Phase 1; the sort worker permutes it in Phase 2+)
  */
 import { GLSL_SANITIZE_FUNCTIONS, GLSL_NEAR_FADE_FUNCTIONS } from '../_shared/glsl-lib';
 import type { ShaderSource } from '../_shared/shader-source';
@@ -31,14 +29,17 @@ export const POINT_VERTEX_SHADER = /* glsl */ `
     // Per-vertex (4 corners): -1..1 normalised quad coordinates.
     in vec2 aQuadCorner;
 
-    // Per-instance (one per point) — all read once per instance, cached
-    // by the GPU across the 4 quad corners of the same instance.
-    in vec3 aCenter;
-    in float aRadius;
-    in float aSharpness;
-    in vec3 aColor;
+    // Draw-slot → storage-slot mapping. Identity in Phase 1; the sort
+    // worker permutes it (Phase 2+) so draw order tracks view depth
+    // without rewriting point data. Uint32Array attribute → bound via
+    // vertexAttribIPointer, matching this uint declaration.
+    in uint aSortedIndex;
+
+    // Point data texture: RGBA32F, 3 texels/point (see
+    // rendering/element-texture-layout.ts for the texel layout).
+    uniform highp sampler2D uPointTex;
+
     #ifdef USE_COLORMAP
-    in float aScalar;                  // Per-point scalar for colormap lookup
     uniform sampler2D uColormapTex;    // 256x1 LUT texture
     uniform float uScalarMin;          // Scalar range minimum (display-range window)
     uniform float uScalarScale;        // 1.0 / (max - min)
@@ -60,6 +61,28 @@ export const POINT_VERTEX_SHADER = /* glsl */ `
     out mediump float vNearFade;   // Perspective near fade (1.0 under ortho)
 
     void main() {
+      // === Point-texture fetch prologue ===
+      // texelFetch reads reconstruct the per-point values into the exact
+      // local names the math below has always used — zero changes
+      // downstream of this block. The width is a multiple of 3
+      // (element-texture-layout.ts), so a point's 3 texels share one row
+      // and only x advances. texel2 is fetched only under USE_COLORMAP
+      // (the scalar slot); texel2.y (per-point alpha) is reserved for
+      // volumetric Phase 3 and not read here.
+      int pointBase = int(aSortedIndex) * 3;
+      int pointTexW = textureSize(uPointTex, 0).x;
+      ivec2 texel0 = ivec2(pointBase % pointTexW, pointBase / pointTexW);
+      vec4 pointT0 = texelFetch(uPointTex, texel0, 0);
+      vec4 pointT1 = texelFetch(uPointTex, ivec2(texel0.x + 1, texel0.y), 0);
+      vec3 aCenter = pointT0.xyz;      // world-space centre
+      float aRadius = pointT0.w;
+      vec3 aColor = pointT1.rgb;
+      float aSharpness = pointT1.w;
+      #ifdef USE_COLORMAP
+      vec4 pointT2 = texelFetch(uPointTex, ivec2(texel0.x + 2, texel0.y), 0);
+      float aScalar = pointT2.x;       // per-point scalar for colormap lookup
+      #endif
+
       // Pass vertex color — either from attribute or colormap LUT.
       // In colormap mode the display range (uScalarMin/uScalarScale) and
       // gamma shape the scalar VALUE before the LUT lookup, not the

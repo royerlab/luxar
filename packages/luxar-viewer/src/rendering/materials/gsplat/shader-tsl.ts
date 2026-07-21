@@ -8,7 +8,7 @@
  * truncation extent.
  *
  * Per-splat data comes from the RGBA32F splat texture (`uSplatTex`,
- * 4 texels/splat — layout in `rendering/splat-texture-layout.ts`),
+ * 4 texels/splat — layout in `rendering/element-texture-layout.ts`),
  * fetched in the vertex stage via `textureLoad` and indexed by the
  * only per-instance attribute:
  *   - aSortedIndex (uint) — draw-slot → storage-slot mapping
@@ -242,7 +242,7 @@ export function gsplatWebGPUFactory(
     // exact local names the math below has always used — zero changes
     // downstream of this block. Every value is a `.toVar()` STATEMENT
     // (the Fn house rule; see the block comment above). The texture
-    // width is a multiple of 4 (splat-texture-layout.ts), so a splat's
+    // width is a multiple of 4 (element-texture-layout.ts), so a splat's
     // 4 texels share one row and only x advances.
     const splatBase: TSLNode = int(aSortedIndex).mul(int(4)).toVar();
     // int() wrap is LOAD-BEARING: TSL types textureSize() as uint (the

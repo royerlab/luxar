@@ -77,6 +77,9 @@ function createLinesGeometry(
   for (const spec of specs) {
     geometry.setAttribute(spec.name, views[spec.name]);
   }
+  // Ownership marker — see the points adapter's twin comment.
+  if (!geometry.userData) geometry.userData = {};
+  geometry.userData.luxarPooled = true;
   return geometry;
 }
 

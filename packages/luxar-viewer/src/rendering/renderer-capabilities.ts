@@ -117,7 +117,7 @@ export interface RendererCapabilities {
   /**
    * Maximum 2D texture dimension (`MAX_TEXTURE_SIZE` /
    * `maxTextureDimension2D`). Sizes the gsplat splat-data texture
-   * (see `rendering/splat-texture-layout.ts`): width is capped at
+   * (see `rendering/element-texture-layout.ts`): width is capped at
    * `min(4096, maxTextureSize)` and height bounds per-node splat
    * capacity.
    */
