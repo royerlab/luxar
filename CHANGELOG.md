@@ -30,6 +30,19 @@ All notable changes to Luxar are documented in this file.
   stores logits; fixed the `wasm/types.ts` fused-kernel JSDoc (`* 3` → `*
   colorComponents`, added the missing `@param`) and a stale `colors[i*3]`
   comment.
+- **Non-finite opacity hardening (interop).** A corrupt classical source (e.g.
+  a malformed INRIA float opacity field → `sigmoid(NaN)=NaN`) could ride a
+  non-finite value into the color alpha channel and poison the alpha-aware
+  `effective_amplitudes` ranking (LOD/cull) and the INRIA re-export logit —
+  neither of which passes the write-time finiteness validator. All five import
+  dialects funnel through `classical_to_gsplat_data`, which now maps non-finite
+  opacity to a finite alpha (NaN/+inf → opaque 1.0, −inf → 0.0) before the
+  `[0, 1]` clip.
+- **RGB-column finiteness in `validate_colors` (types.py).** The lightweight
+  type-guard checked finiteness only on the alpha column, letting NaN/Inf RGB
+  slip through (the write validator already rejected them). It now rejects
+  NaN/Inf in any channel while still accepting arbitrarily large finite HDR
+  emission.
 
 #### Changed — one shared `viewStatesEqual` for the progressive loaders
 

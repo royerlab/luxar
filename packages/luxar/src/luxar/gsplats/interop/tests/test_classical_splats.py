@@ -104,6 +104,39 @@ class TestQuaternionHelpers:
         assert np.allclose(np.linalg.det(R), 1.0, atol=1e-12)
 
 
+class TestOpacitySanitization:
+    """Non-finite opacity must never ride into the color alpha channel."""
+
+    @staticmethod
+    def _splats(opacities: np.ndarray) -> ClassicalSplats:
+        n = opacities.shape[0]
+        return ClassicalSplats(
+            positions=np.zeros((n, 3), dtype=np.float32),
+            scales=np.ones((n, 3), dtype=np.float32),
+            quaternions=np.tile(
+                np.array([1.0, 0.0, 0.0, 0.0], dtype=np.float32), (n, 1)
+            ),
+            opacities=opacities.astype(np.float32),
+            colors=np.full((n, 3), 0.5, dtype=np.float32),
+        )
+
+    def test_nonfinite_opacity_becomes_finite_alpha(self) -> None:
+        # A corrupt source (e.g. a malformed INRIA float opacity → sigmoid(NaN))
+        # yields NaN/±inf opacity; classical_to_gsplat_data must map it to a
+        # finite alpha (NaN/+inf → opaque 1.0, −inf → 0.0) so it can't poison
+        # effective_amplitudes ranking or the INRIA re-export logit.
+        cs = self._splats(np.array([np.nan, np.inf, -np.inf, 0.4]))
+        data = classical_to_gsplat_data(cs)
+        assert data.colors is not None and data.colors.shape[1] == 4
+        alpha = data.colors[:, 3]
+        assert np.all(np.isfinite(alpha))
+        np.testing.assert_allclose(alpha, [1.0, 1.0, 0.0, 0.4], atol=1e-6)
+        # Downstream ranking stays finite (was NaN pre-fix).
+        from luxar.gsplats.utils.alpha import effective_amplitudes
+
+        assert np.all(np.isfinite(effective_amplitudes(data)))
+
+
 class TestReaders:
     @pytest.mark.parametrize("fmt", CLASSICAL_FORMATS)
     def test_reader_parity(self, fmt: str, ground_truth: GroundTruth) -> None:

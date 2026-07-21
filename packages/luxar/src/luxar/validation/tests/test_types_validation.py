@@ -503,6 +503,21 @@ class TestColorsValidation:
         with pytest.raises(ValueError, match="alpha channel"):
             validate_colors(nan_alpha, n_points)
 
+        # RGB channels must be finite too — NaN/Inf in an RGB column is
+        # rejected (previously only the alpha column was finiteness-checked,
+        # so NaN/Inf RGB slipped through this type-guard).
+        nan_rgb = np.random.rand(n_points, 3).astype(np.float32)
+        nan_rgb[0, 1] = np.nan
+        with pytest.raises(ValueError, match="finite"):
+            validate_colors(nan_rgb, n_points)
+        inf_rgb = np.random.rand(n_points, 4).astype(np.float32)
+        inf_rgb[2, 0] = np.inf
+        with pytest.raises(ValueError, match="finite"):
+            validate_colors(inf_rgb, n_points)
+        # Large-but-finite HDR RGB stays accepted (only NaN/Inf rejected).
+        hdr_ok = np.full((n_points, 3), 1e6, dtype=np.float32)
+        assert validate_colors(hdr_ok, n_points).shape == (n_points, 3)
+
         # Integer RGBA: alpha in the dtype's NATIVE range is SDR-opaque, NOT an
         # out-of-[0,1] error. The [0,1] bound applies to floats only, matching
         # the write validator (validation/base.py) — the two used to contradict

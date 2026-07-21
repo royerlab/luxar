@@ -131,10 +131,18 @@ def classical_to_gsplat_data(
     # Convert sRGB → linear here so imports render with the same colors a
     # reference viewer (SuperSplat/PlayCanvas) shows instead of washing white.
     # Alpha is coverage, not light — it stays linear (no sRGB transfer).
+    # Opacity from a corrupt source (e.g. a malformed INRIA float opacity
+    # field → sigmoid(NaN)=NaN) must not ride into the color alpha as a
+    # non-finite value: it would poison the alpha-aware `effective_amplitudes`
+    # ranking (LOD ladders / culling) and the INRIA re-export logit, none of
+    # which pass through the write-time finiteness validator. Map non-finite
+    # → opaque (NaN/+inf → 1.0, −inf → 0.0) before the [0, 1] clip, so every
+    # dialect's alpha is guaranteed finite (all 5 readers funnel through here).
+    alpha = np.nan_to_num(cs.opacities, nan=1.0, posinf=1.0, neginf=0.0)
     colors = np.concatenate(
         [
             srgb_to_linear(cs.colors),
-            np.clip(cs.opacities, 0.0, 1.0)[:, None].astype(np.float32),
+            np.clip(alpha, 0.0, 1.0)[:, None].astype(np.float32),
         ],
         axis=1,
     )
