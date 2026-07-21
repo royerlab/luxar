@@ -29,19 +29,40 @@ export interface ConcatTypedArray {
  * the first part's constructor, so the dtype is preserved) and copies each
  * part in order.
  *
+ * LADDER-DTYPE CONTRACT: every part must carry the field with the SAME
+ * typed-array dtype. `TypedArray.set` converts by VALUE, not by semantics —
+ * copying a later Uint8Array level (0..255 normalized) into a Float32Array
+ * output (0..1) would silently write 255× values, and Float32 into Uint8
+ * truncates to garbage. The Python writer always emits one dtype per field
+ * across a ladder, so a mismatch means malformed data; fail fast with a
+ * descriptive error instead of rendering corruption.
+ *
  * @param parts - Per-LOD data parts (assumed length ≥ 1).
  * @param get - Extract the field from a part.
  * @param countOf - Element count of a part (rows; multiplied by `perItem`).
  * @param perItem - Components per element (e.g. 3 for positions, 1 for widths).
+ * @param label - Field name for the dtype-mismatch error message.
  */
 export function concatRequiredField<A extends ConcatTypedArray, P>(
   parts: P[],
   get: (p: P) => A,
   countOf: (p: P) => number,
-  perItem = 1
+  perItem = 1,
+  label = 'field'
 ): A {
   const total = parts.reduce((s, p) => s + countOf(p), 0);
   const ctor = (get(parts[0]) as unknown as { constructor: new (n: number) => A }).constructor;
+  for (let i = 1; i < parts.length; i++) {
+    const other = (get(parts[i]) as unknown as { constructor: unknown }).constructor;
+    if (other !== ctor) {
+      throw new Error(
+        `concatRequiredField: LOD level ${i} carries '${label}' as ` +
+          `${(other as { name?: string }).name} but level 0 uses ` +
+          `${(ctor as { name?: string }).name} — ladder levels must share each ` +
+          'field\'s dtype (TypedArray.set converts by value, not semantics).'
+      );
+    }
+  }
   const out = new ctor(total * perItem);
   let offset = 0;
   for (const p of parts) {
@@ -69,8 +90,9 @@ export function concatOptionalField<A extends ConcatTypedArray, P>(
   parts: P[],
   get: (p: P) => A | null | undefined,
   countOf: (p: P) => number,
-  perItem = 1
+  perItem = 1,
+  label = 'field'
 ): A | undefined {
   if (!parts.every((p) => get(p) != null)) return undefined;
-  return concatRequiredField(parts, (p) => get(p) as A, countOf, perItem);
+  return concatRequiredField(parts, (p) => get(p) as A, countOf, perItem, label);
 }

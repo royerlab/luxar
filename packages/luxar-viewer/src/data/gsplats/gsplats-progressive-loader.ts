@@ -65,9 +65,15 @@ export function concatenateGSplatsData(parts: LoadedGSplatsData[]): LoadedGSplat
   const count = (p: LoadedGSplatsData) => p.splatCount;
 
   // Required per-splat fields via the shared helpers (dtype preserved).
-  const positions = concatRequiredField(parts, (p) => p.positions, count, ndim);
-  const amplitudes = concatRequiredField(parts, (p) => p.amplitudes, count);
-  const choleskyFactors = concatRequiredField(parts, (p) => p.choleskyFactors, count, cholSize);
+  const positions = concatRequiredField(parts, (p) => p.positions, count, ndim, 'positions');
+  const amplitudes = concatRequiredField(parts, (p) => p.amplitudes, count, 1, 'amplitudes');
+  const choleskyFactors = concatRequiredField(
+    parts,
+    (p) => p.choleskyFactors,
+    count,
+    cholSize,
+    'choleskyFactors'
+  );
 
   // Bespoke: colors fill missing LODs with white (per-dtype fill value).
   // Color layout (3 = RGB, 4 = RGBA — the 4th channel is per-splat opacity)
@@ -91,6 +97,17 @@ export function concatenateGSplatsData(parts: LoadedGSplatsData[]): LoadedGSplat
   let offset = 0;
   for (const part of parts) {
     if (colors && part.colors) {
+      // LADDER-DTYPE CONTRACT (see concat-helpers.ts): `set` converts by
+      // VALUE, not semantics — a Float32 (0..1) level written into a Uint8
+      // (0..255) merge truncates to garbage, and the reverse writes 255×
+      // values. The writer emits one color dtype per ladder; fail fast.
+      if (part.colors.constructor !== colors.constructor) {
+        throw new Error(
+          'concatenateGSplatsData: mixed color dtypes across LOD levels ' +
+            `(${part.colors.constructor.name} vs ${colors.constructor.name}) — ` +
+            "ladder levels must share each field's dtype."
+        );
+      }
       colors.set(part.colors, offset * colorK);
     } else if (colors && !part.colors) {
       // Fill with white (1.0 for Float32, 255 for Uint8, 65535 for Uint16).

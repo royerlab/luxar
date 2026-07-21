@@ -761,6 +761,21 @@ describe('LinesProgressiveLoader', () => {
       expect(result.colors?.[60]).toBeCloseTo(1.0, 5);
     });
 
+    it('rejects mixed color dtypes across LOD levels (ladder-dtype contract)', async () => {
+      // TypedArray.set converts by VALUE, not semantics — a Float32 level
+      // (0..1) merged into a Uint8 (0..255) output truncates to garbage.
+      // Malformed ladders fail fast instead of rendering corruption.
+      lodA = makeSubLoader(makeLodData(20, 10, 3, { color: 'uint8' }));
+      lodB = makeSubLoader(makeLodData(10, 5, 3, { color: 'float32' }));
+      lodC = makeSubLoader(makeLodData(4, 2, 3, { color: 'uint8' }));
+      loader = new LinesProgressiveLoader(
+        [lodA, lodB, lodC] as unknown as LinesSpatialIndexLoader[],
+        3,
+        '/lines'
+      );
+      await expect(loader.loadLines(baseViewState)).rejects.toThrow(/mixed color dtypes/);
+    });
+
     it('uses Uint8 fill (255) when first LOD colors are uint8 but a level lacks them', async () => {
       lodB = makeSubLoader(makeLodData(10, 5, 3)); // no colors
       loader = new LinesProgressiveLoader(
