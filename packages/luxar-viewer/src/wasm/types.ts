@@ -394,19 +394,20 @@ export interface WasmModule {
    * @param positions - Splat centers [splatCount * ndim]
    * @param cholesky - Packed Cholesky factors [splatCount * packedSize]
    * @param amplitudes - Splat amplitudes [splatCount]
-   * @param colors - Pre-normalized RGB [splatCount * 3]
+   * @param colors - Pre-normalized RGB or RGBA [splatCount * colorComponents]
    * @param discreteVisibility - Precomputed discrete-dim gate [splatCount]
    * @param slicePosition - Current slice [ndim]
    * @param continuousHiddenDims - Sorted continuous hidden dims [numContinuous]
    * @param displayDims - Display dims in requested order [2 or 3]
    * @param ndim - Total dimensionality
    * @param splatCount - Number of splats
+   * @param colorComponents - Color channel count (3 = RGB, 4 = RGBA); strides every color read/write
    * @param minAmplitude - Visibility threshold
    * @param truncate - Truncation radius in sigmas (typically 3.0)
    * @param outCenters3d - Output visible centers [splatCount * 3] worst-case
    * @param outCholesky3d - Output visible 3D Cholesky [splatCount * 6] worst-case
    * @param outAmplitudes - Output visible attenuated amplitudes [splatCount] worst-case
-   * @param outColors - Output visible colors [splatCount * 3] worst-case
+   * @param outColors - Output visible colors [splatCount * colorComponents] worst-case
    * @returns Number of visible splats written
    */
   project_gsplats_nd_to_3d(

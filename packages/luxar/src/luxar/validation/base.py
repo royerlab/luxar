@@ -196,7 +196,8 @@ def validate_colors_for_writing(
         raise ValidationError(
             f"{context}: Empty colors array is only valid when n_points=0 "
             f"and shape is {expected_shape}. Got shape {colors.shape}.",
-            "Provide one broadcast color with shape (1, 3) or a full colors array",
+            f"Provide one broadcast color with shape (1, c), c in {channels}, "
+            "or a full colors array",
         )
 
     # Check for invalid values

@@ -922,6 +922,7 @@ describe('WASM vs TypeScript Comparison', () => {
         displayDims: Uint32Array;
         ndim: number;
         splatCount: number;
+        colorComponents?: number;
       }
     ): {
       count: number;
@@ -931,10 +932,11 @@ describe('WASM vs TypeScript Comparison', () => {
       cols: Float32Array;
     } => {
       const n = args.splatCount;
+      const k = args.colorComponents ?? 3;
       const centers = new Float32Array(n * 3);
       const chol = new Float32Array(n * 6);
       const amps = new Float32Array(n);
-      const cols = new Float32Array(n * 3);
+      const cols = new Float32Array(n * k);
       const count = mod.project_gsplats_nd_to_3d(
         args.positions,
         args.cholesky,
@@ -946,7 +948,7 @@ describe('WASM vs TypeScript Comparison', () => {
         args.displayDims,
         args.ndim,
         n,
-        3,
+        k,
         1e-6,
         3.0,
         centers,
@@ -994,6 +996,40 @@ describe('WASM vs TypeScript Comparison', () => {
         ).toBe(true);
         expect(
           arraysEqual(w.cols.subarray(0, w.count * 3), ts.cols.subarray(0, ts.count * 3))
+        ).toBe(true);
+      }
+    );
+
+    it.skipIf(!wasmFilesExist)(
+      'project_gsplats_nd_to_3d matches TS (RGBA colors — 4-channel stride)',
+      () => {
+        // The RGB cases above never exercise the 4th (alpha) channel of the
+        // color compaction — the one path where the Rust copy_from_slice and
+        // the TS c-loop could silently drift. Alpha is set DISTINCT from RGB
+        // (alpha = 1 - r) so a stride/drop bug misaligns the compacted output.
+        const ndim = 4;
+        const splatCount = 3;
+        const one = [2.0, 1.0, 3.0, 0.0, 0.0, 2.0, 0.5, 0.5, 0.0, 4.0];
+        const args = {
+          positions: new Float32Array([0, 0, 0, 0, 1, 1, 1, 0.3, 2, 2, 2, 50]),
+          cholesky: new Float32Array([...one, ...one, ...one]),
+          amplitudes: new Float32Array([1.0, 0.8, 0.5]),
+          // (N, 4) RGBA — alpha column last, distinct from RGB.
+          colors: new Float32Array([0.1, 0.2, 0.3, 0.9, 0.4, 0.5, 0.6, 0.6, 0.7, 0.8, 0.9, 0.3]),
+          discreteVisibility: new Uint8Array([1, 1, 1]),
+          slicePosition: new Float32Array([0, 0, 0, 0]),
+          continuousHiddenDims: new Uint32Array([3]),
+          displayDims: new Uint32Array([0, 1, 2]),
+          ndim,
+          splatCount,
+          colorComponents: 4,
+        };
+        const ts = runFused(tsModule, args);
+        const w = runFused(wasmModule!, args);
+        expect(w.count).toBe(ts.count);
+        // Bit-exact 4-channel color agreement, alpha included.
+        expect(
+          arraysEqual(w.cols.subarray(0, w.count * 4), ts.cols.subarray(0, ts.count * 4))
         ).toBe(true);
       }
     );

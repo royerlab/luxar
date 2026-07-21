@@ -92,13 +92,21 @@ def validate_colors(
     if not isinstance(colors, np.ndarray):
         raise ValueError("Colors must be a numpy array")
 
-    if colors.ndim != 2 or colors.shape[0] != n_points or colors.shape[1] not in channels:
+    if (
+        colors.ndim != 2
+        or colors.shape[0] != n_points
+        or colors.shape[1] not in channels
+    ):
         expected = " or ".join(f"({n_points}, {c})" for c in channels)
         raise ValueError(f"Colors must have shape {expected}")
 
-    if colors.shape[1] == 4:
+    if colors.shape[1] == 4 and np.issubdtype(colors.dtype, np.floating):
+        # Alpha is opacity, not emission: finite and within [0, 1]. Integer
+        # storage is SDR in its native range (full-scale = opaque), so the
+        # bound applies to floats only — matching the write validator
+        # (validation/base.py::validate_colors_for_writing), which the two
+        # functions otherwise contradicted on a uint8 alpha=255 array.
         alpha = colors[:, 3]
-        # Alpha is opacity, not emission: finite and within [0, 1].
         if alpha.size and (
             not np.all(np.isfinite(alpha)) or np.any(alpha < 0) or np.any(alpha > 1)
         ):

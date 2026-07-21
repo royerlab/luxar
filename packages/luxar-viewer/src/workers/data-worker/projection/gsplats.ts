@@ -217,7 +217,7 @@ export async function projectGSplatsTo3D(
   // the fused kernel takes a single Float32Array (wasm-bindgen can't accept a
   // typed-array union), keeping the /255,/65535 contract centralized in
   // color-utils. White-fill covers the whole splatCount so the kernel can read
-  // colors[i*3] for any visible splat.
+  // colors[i*colorComponents] for any visible splat.
   const coercedColors = coerceColorsOrWhite(colors, splatCount, colorComponents);
 
   const truncate = params.truncate ?? SHIFTED_GAUSSIAN_DEFAULT_TRUNCATE;
