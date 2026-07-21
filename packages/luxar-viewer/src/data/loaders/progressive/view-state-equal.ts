@@ -13,6 +13,48 @@
  */
 
 import type { ViewState } from '../../data-loader-types';
+import type { DimensionMetadata } from '../../../types/dims';
+
+/**
+ * Canonical QUERY-DETERMINANT projection of the dimensions metadata,
+ * mirroring the slice-cache key (`buildSliceViewSig`): per dimension,
+ * only the fields that can change which elements a fixed
+ * `displayDims`/`slicePosition`/`tolerance` query loads or how they
+ * project —
+ * - every dim: `name` (drives `extend_to_all` tolerance matching);
+ * - non-displayed dims additionally: `discrete`/`spatial` (tolerance
+ *   membership role), `step` (discrete half-cell gate), `cyclic`
+ *   (wrap behavior). Displayed dims are driven entirely by the
+ *   separately-compared position/tolerance arrays; their `step` etc.
+ *   feed keyboard navigation, not the query.
+ *
+ * Deliberately EXCLUDED: `range`, `display`, `unit`, `scale`,
+ * `description` — display/navigation metadata the cache determinant
+ * also ignores. This projection (fixed array shape, not raw
+ * `JSON.stringify` of the objects) exists because the scene REBUILDS
+ * the dimensions metadata right after the first data load —
+ * dropping the `range: null` key, deriving `step: null → 1` on
+ * displayed dims, and reordering object keys. Comparing the raw JSON
+ * made every progressive loader reset its generation once per
+ * dataset load, discarding the ladder prefix (re-streamed from warm
+ * cache) and the append-fast-path lineage for a query-identical view.
+ */
+function dimsQuerySig(view: ViewState): string {
+  const displayed = new Set(view.displayDims);
+  return JSON.stringify(
+    (view.dimensions ?? []).map((m: DimensionMetadata | undefined, i: number) =>
+      displayed.has(i)
+        ? [m?.name ?? null]
+        : [
+            m?.name ?? null,
+            m?.discrete === true,
+            m?.spatial === true,
+            m?.step ?? null,
+            m?.cyclic === true,
+          ]
+    )
+  );
+}
 
 /**
  * Element-wise view-state equality (query-affecting fields only).
@@ -46,11 +88,13 @@ export function viewStatesEqual(a: ViewState, b: ViewState): boolean {
   for (let i = 0; i < a.tolerance.length; i++) {
     if (a.tolerance[i] !== b.tolerance[i]) return false;
   }
-  // Dimensions metadata: reference equality first, JSON compare for the
-  // rare content change (e.g. ranges populated after the first load).
+  // Dimensions metadata: reference equality first, then a compare of the
+  // canonical QUERY-DETERMINANT projection (see dimsQuerySig — display/
+  // navigation fields and object key order deliberately don't matter).
   if (a.dimensions !== b.dimensions) {
     if (!a.dimensions || !b.dimensions) return false;
-    if (JSON.stringify(a.dimensions) !== JSON.stringify(b.dimensions)) return false;
+    if (a.dimensions.length !== b.dimensions.length) return false;
+    if (dimsQuerySig(a) !== dimsQuerySig(b)) return false;
   }
   return true;
 }
