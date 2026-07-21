@@ -24,9 +24,11 @@ progressive/
 ├── concat-helpers.ts      # Generic typed-array field concatenation across LOD parts
 ├── constants.ts           # CACHE_HIT_THRESHOLD_MS — the shared streaming threshold
 ├── streaming-policy.ts    # Per-pass LOD streaming decisions (playback / prefetch / refine)
-└── slice-cache-helper.ts  # Shared SliceCache key/clone/restore/store logic (3-loader symmetry;
-                           # also used by the plain spatial-index loaders — a plain leaf caches
-                           # its decoded slice as a 1-element ladder under the same key contract)
+├── slice-cache-helper.ts  # Shared SliceCache key/clone/restore/store logic (3-loader symmetry;
+│                          # also used by the plain spatial-index loaders — a plain leaf caches
+│                          # its decoded slice as a 1-element ladder under the same key contract)
+└── view-state-equal.ts    # viewStatesEqual — the memoized-noop / generation-reset linchpin
+                           # (formerly three byte-identical copies, one per geometry loader)
 ```
 
 ## Components

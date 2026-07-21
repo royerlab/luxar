@@ -6,6 +6,19 @@ All notable changes to Luxar are documented in this file.
 
 ### July 2026
 
+#### Changed — one shared `viewStatesEqual` for the progressive loaders
+
+- The points/lines/gsplats progressive loaders' three byte-identical local
+  `viewStatesEqual` copies (their `*ViewState` types are all aliases of the
+  same `ViewState`) are consolidated into
+  `data/loaders/progressive/view-state-equal.ts`. The equality is the
+  linchpin of the memoized-noop commit skip AND the append fast path's
+  generation reset, so the triplication was a drift hazard: a new
+  query-affecting field added to only two copies would silently serve stale
+  data for the third geometry. Behavior unchanged (200k-trial old-vs-new
+  fuzz equivalence, zero mismatches); direct unit tests added for the
+  comparison semantics.
+
 #### Added — per-element opacity via RGBA colors, volumetric Phase 2 (gsplats)
 
 - **`colors` widens from `(N, 3)` RGB to optionally `(N, 4)` RGBA** for
