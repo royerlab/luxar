@@ -1055,7 +1055,7 @@ class TestImmutableViews:
 
 
 class TestMergeLodColors:
-    """`_merge_lod_colors` — float32 pinning + integer-alpha [0,1] guard."""
+    """`_merge_lod_colors` — dtype preservation + integer-alpha [0,1] guard."""
 
     @staticmethod
     def _lod(colors, n):
@@ -1079,7 +1079,7 @@ class TestMergeLodColors:
         rgba_f = self._lod(np.array([[0.2, 0.4, 0.6, 0.5]], dtype=np.float32), 1)
         merged = _merge_lod_colors([rgb_u8, rgba_f])
         assert merged is not None
-        assert merged.dtype == np.float32  # pinned like the sibling arrays
+        assert merged.dtype == np.float32  # mixed int+float → float32 [0,1]
         assert merged.shape == (2, 4)
         assert merged[:, 3].max() <= 1.0 and merged[:, 3].min() >= 0.0
         # uint8 RGB normalized to [0,1]; its widened alpha is opaque 1.0.
@@ -1102,3 +1102,61 @@ class TestMergeLodColors:
         a = np.array([[0.1, 0.2, 0.3]], dtype=np.float64)
         merged = _merge_lod_colors([self._lod(a, 1), self._lod(a, 1)])
         assert merged is not None and merged.dtype == np.float32
+
+    def test_uniform_uint8_preserves_dtype(self) -> None:
+        # A uniform-dtype integer merge must PRESERVE that dtype (full-scale =
+        # opaque) — NOT normalize to float. uint8 colors are a valid SDR storage
+        # form; forcing float32 here diverged multi-LOD from the single-LOD path
+        # (self.colors = lod0.colors, which keeps uint8) and silently changed the
+        # stored encoding. Regression guard for that divergence.
+        from luxar.gsplats.gsplat_data import _merge_lod_colors
+
+        a = np.array([[255, 0, 128]], dtype=np.uint8)
+        b = np.array([[0, 64, 255]], dtype=np.uint8)
+        merged = _merge_lod_colors([self._lod(a, 1), self._lod(b, 1)])
+        assert merged is not None and merged.dtype == np.uint8
+        np.testing.assert_array_equal(merged, np.concatenate([a, b], axis=0))
+
+    def test_multi_lod_uint8_matches_single_lod(self) -> None:
+        # End-to-end: a uint8-color dataset must expose the SAME .colors dtype
+        # whether it has one sub-LOD or several (the divergence this fixes).
+        from luxar.gsplats.gsplat_data import GSplatData
+
+        c0 = np.array([[255, 0, 128], [0, 255, 64]], dtype=np.uint8)
+        single = GSplatData(
+            centers=np.zeros((2, 3), dtype=np.float32),
+            amplitudes=np.ones(2, dtype=np.float32),
+            cholesky_factors=np.tile(
+                np.array([1, 0, 1, 0, 0, 1], dtype=np.float32), (2, 1)
+            ),
+            colors=c0,
+        )
+        multi = GSplatData.from_additive_sublods(
+            [self._lod(c0, 2), self._lod(c0, 2)]
+        )
+        assert single.colors is not None and multi.colors is not None
+        assert multi.colors.dtype == single.colors.dtype == np.uint8
+
+    def test_mixed_integer_dtypes_normalize_to_float(self) -> None:
+        # uint8 + uint16 (mismatched integer dtypes) can't share a native dtype
+        # → normalize each by its own full-scale into float32 [0, 1].
+        from luxar.gsplats.gsplat_data import _merge_lod_colors
+
+        u8 = np.array([[255, 0, 128]], dtype=np.uint8)  # → [1, 0, 0.502]
+        u16 = np.array([[65535, 0, 32768]], dtype=np.uint16)  # → [1, 0, 0.5]
+        merged = _merge_lod_colors([self._lod(u8, 1), self._lod(u16, 1)])
+        assert merged is not None and merged.dtype == np.float32
+        assert merged.max() <= 1.0 and merged.min() >= 0.0
+        np.testing.assert_allclose(merged[0], [1.0, 0.0, 128 / 255], atol=1e-6)
+        np.testing.assert_allclose(merged[1], [1.0, 0.0, 32768 / 65535], atol=1e-6)
+
+    def test_uint8_with_white_fill_promotes_to_float(self) -> None:
+        # A None (white-filled) part forces the float path even for uniform uint8
+        # inputs — the fill is float ones, so the concat must be float [0,1].
+        from luxar.gsplats.gsplat_data import _merge_lod_colors
+
+        u8 = np.array([[255, 0, 128]], dtype=np.uint8)
+        merged = _merge_lod_colors([self._lod(u8, 1), self._lod(None, 1)])
+        assert merged is not None and merged.dtype == np.float32
+        np.testing.assert_allclose(merged[0], [1.0, 0.0, 128 / 255], atol=1e-6)
+        np.testing.assert_allclose(merged[1], [1.0, 1.0, 1.0])  # white fill

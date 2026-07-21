@@ -100,6 +100,16 @@ def validate_colors(
         expected = " or ".join(f"({n_points}, {c})" for c in channels)
         raise ValueError(f"Colors must have shape {expected}")
 
+    # RGB channels must be finite too (HDR allows arbitrarily LARGE emission,
+    # but never NaN/Inf). This used to be checked only on the alpha column,
+    # letting NaN/Inf RGB slip through this lightweight type-guard while the
+    # write validator (base.py::_validate_numeric_finite_values) rejected them
+    # — a NaN could then poison downstream ranking (effective_amplitudes) and
+    # export before any save. Aligns the two validators.
+    rgb = colors[:, :3]
+    if rgb.size and not np.all(np.isfinite(rgb)):
+        raise ValueError("Colors must be finite (no NaN or Inf)")
+
     if colors.shape[1] == 4 and np.issubdtype(colors.dtype, np.floating):
         # Alpha is opacity, not emission: finite and within [0, 1]. Integer
         # storage is SDR in its native range (full-scale = opaque), so the
