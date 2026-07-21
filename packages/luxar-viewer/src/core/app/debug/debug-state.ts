@@ -170,23 +170,28 @@ export function computeDebugState(ctx: DebugStateContext): DebugState {
       (object.userData as { nodeType?: string })?.nodeType === 'points'
     ) {
       const geometry = object.geometry as THREE.InstancedBufferGeometry;
-      const bufferCount = geometry?.attributes?.aCenter?.count || 0;
       const visiblePointCount = (object.userData as { visiblePointCount?: number })
         ?.visiblePointCount;
       const pointCount =
         geometry?.isInstancedBufferGeometry && Number.isFinite(geometry.instanceCount)
           ? geometry.instanceCount
-          : visiblePointCount != null
-            ? visiblePointCount
-            : bufferCount;
+          : (visiblePointCount ?? 0);
       totalPoints += pointCount;
+      // Per-point data lives in the point texture (fixed 3-texel layout;
+      // absent fields get identity fills), so field presence can no
+      // longer be read off geometry attributes — the texel writers stamp
+      // source presence on geometry.userData instead (the zarr node attrs
+      // carry no has_colors/has_radii/has_sharpness).
+      const presence = geometry?.userData as
+        | { hasColors?: boolean; hasRadii?: boolean; hasSharpness?: boolean }
+        | undefined;
       pointClouds.push({
         name: object.name || 'unnamed',
         pointCount,
         visible: object.visible,
-        hasColors: !!geometry?.attributes?.aColor,
-        hasRadii: !!geometry?.attributes?.aRadius,
-        hasSharpness: !!geometry?.attributes?.aSharpness,
+        hasColors: !!presence?.hasColors,
+        hasRadii: !!presence?.hasRadii,
+        hasSharpness: !!presence?.hasSharpness,
       });
     }
 

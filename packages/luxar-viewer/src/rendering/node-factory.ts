@@ -14,7 +14,8 @@
 import * as THREE from 'three';
 import { materialManager, type LuxarPointMaterial } from './material-manager';
 import { type InstancedLinesMeshConfig } from './line-geometry';
-import { type InstancedGSplatsMeshConfig, getSplatTexture } from './gsplat-geometry';
+import { type InstancedGSplatsMeshConfig } from './gsplat-geometry';
+import { getElementTexture } from './element-storage';
 import type { LoadedPointsData, DataLoader } from '../data/data-loader-types';
 import type { PointsMetadata } from '../types/points';
 import type { LinesMetadata, LinesDataLoader } from '../types/lines';
@@ -129,22 +130,25 @@ export class NodeFactory {
    * post-processing → materials → nodes.
    *
    * Also re-uploads geometry GPU buffers for all three geometry types. A
-   * context loss zeroes the GPU-side storage — the gsplat splat texture +
-   * `aSortedIndex`, and the points/lines interleaved instance buffers —
-   * while the CPU mirror survives, so we mark everything full-dirty (empty
-   * ranges → three's full upload) and clear the append-fast-path flag
-   * `gpuPrefixIntact` (depth-sorting Phase 4 Stage 2). The flag is
-   * load-bearing: without it the next commit could take the append path and
-   * DOWNGRADE the pending full upload to a suffix-only partial, leaving the
-   * prefix stale. This runs unconditionally (picking may be disabled).
+   * context loss zeroes the GPU-side storage — the gsplat/point element
+   * textures + `aSortedIndex`, and the lines interleaved instance
+   * buffers — while the CPU mirror survives, so we mark everything
+   * full-dirty (empty ranges → three's full upload) and clear the
+   * append-fast-path flag `gpuPrefixIntact` (depth-sorting Phase 4
+   * Stage 2). The flag is load-bearing: without it the next commit could
+   * take the append path and DOWNGRADE the pending full upload to a
+   * suffix-only partial, leaving the prefix stale. This runs
+   * unconditionally (picking may be disabled).
    */
   rebuildAfterContextRestore(root: THREE.Object3D): void {
     root.traverse((obj) => {
       if (!(obj instanceof THREE.Mesh)) return;
       const nodeType = obj.userData?.nodeType;
-      if (nodeType === 'gsplats') {
+      if (nodeType === 'gsplats' || nodeType === 'points') {
+        // Texture-backed storage (pool AND non-pool geometries alike):
+        // mark the element texture + aSortedIndex full-dirty.
         const geom = obj.geometry as THREE.InstancedBufferGeometry;
-        const tex = getSplatTexture(geom);
+        const tex = getElementTexture(geom);
         if (tex) {
           tex.clearUpdateRanges();
           tex.needsUpdate = true;
@@ -155,11 +159,11 @@ export class NodeFactory {
           idx.needsUpdate = true;
         }
         obj.userData.gpuPrefixIntact = false;
-      } else if (nodeType === 'points' || nodeType === 'lines') {
+      } else if (nodeType === 'lines') {
         // Collect the geometry's unique InstancedInterleavedBuffer(s) —
         // every pooled per-instance attribute is a view over one shared
         // buffer today, but dedupe by identity so a future multi-buffer
-        // layout (dtype groups) stays covered. Non-pool points geometries
+        // layout (dtype groups) stays covered. Non-pool lines geometries
         // use plain per-attribute storage instead — mark those directly.
         const geom = obj.geometry as THREE.InstancedBufferGeometry;
         const buffers = new Set<THREE.InstancedInterleavedBuffer>();

@@ -88,12 +88,20 @@ export function applyScalarRangeToMaterial(
 
 /**
  * Whether scalar-colormap support for a node type is end-to-end wired
- * (loader → projection → geometry → shader attribute → material define).
+ * (loader → projection → geometry storage → shader scalar source →
+ * material define).
  *
- * - GSplats use the always-present `aAmplitude` attribute as the scalar
- *   source, so colormap mode is supported unconditionally.
- * - Points need a `scalar` attribute on the geometry; this returns
- *   `false` whenever `geometry` lacks `scalar`.
+ * - GSplats use the always-present amplitude (texel0.w of the splat
+ *   texture) as the scalar source, so colormap mode is supported
+ *   unconditionally.
+ * - Points carry their scalar in texel2.x of the point texture, which
+ *   exists in the FIXED 3-texel layout whether or not the dataset has
+ *   scalars (0.0 identity fill) — so presence is knowable only from the
+ *   `userData.hasScalars` stamp the texel writers set from
+ *   `data.scalars !== undefined` (`createPointsGeometry` and the
+ *   gpu-buffer-pool points adapter). This is the texture-storage analog
+ *   of the old `hasAttribute('aScalar')` probe, driven by the same
+ *   signal that used to bind the attribute.
  * - Lines need both `aStartScalar` and `aEndScalar` instanced attributes.
  *
  * Use this to fail-closed: if `false`, the caller should NOT enable
@@ -103,8 +111,8 @@ export function applyScalarRangeToMaterial(
  * @param nodeType - `'points' | 'lines' | 'gsplats'`.
  * @param geometry - Optional buffer geometry; required for `points` and
  *   `lines`. When `undefined` for those types, returns `false` (fail-closed).
- * @returns `true` only when the geometry has the per-node-type scalar
- *   attributes wired up.
+ * @returns `true` only when the geometry carries the per-node-type
+ *   scalar data.
  * @public
  */
 export function supportsScalarColormap(
@@ -113,9 +121,8 @@ export function supportsScalarColormap(
 ): boolean {
   if (nodeType === 'gsplats') return true;
   if (nodeType === 'points') {
-    // Per-instance scalar lives on the InstancedBufferAttribute.
-    // named `aScalar` (was per-vertex `scalar` under THREE.Points).
-    return geometry ? geometry.hasAttribute('aScalar') : false;
+    // Scalar presence stamp — see the doc block above.
+    return geometry ? geometry.userData?.hasScalars === true : false;
   }
   if (nodeType === 'lines') {
     if (!geometry) return false;

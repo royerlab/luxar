@@ -354,11 +354,23 @@ test.describe('Error Recovery - Data Validation', () => {
 
       debug.scene.traverse((obj: any) => {
         if (obj.userData?.nodeType === 'points') {
-          const positions = obj.geometry.attributes.aCenter;
-          if (positions) {
-            const array = positions.array;
-            for (let i = 0; i < Math.min(100, array.length); i++) {
-              if (!isFinite(array[i])) {
+          // Per-point data is texture-backed: centers live at texel slots
+          // [i*12 .. i*12+2] of the RGBA32F element texture; instanceCount
+          // is the visible point count.
+          const texData = obj.geometry?.userData?.elementTexture?.image?.data;
+          if (texData) {
+            const STRIDE = 12;
+            const count = Math.min(
+              obj.geometry.instanceCount ?? 0,
+              Math.floor(texData.length / STRIDE),
+              100
+            );
+            for (let i = 0; i < count; i++) {
+              if (
+                !isFinite(texData[i * STRIDE]) ||
+                !isFinite(texData[i * STRIDE + 1]) ||
+                !isFinite(texData[i * STRIDE + 2])
+              ) {
                 allValid = false;
                 break;
               }

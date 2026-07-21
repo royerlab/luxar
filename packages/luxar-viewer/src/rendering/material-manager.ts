@@ -34,7 +34,6 @@ import {
   PICKING_FACTORIES,
   MEGA_SHADER_FACTORIES,
   resolveMaterialBackend,
-  pointCacheKey,
   lineCacheKey,
   type BlendingMode,
   type PointMaterialProperties,
@@ -98,12 +97,14 @@ export type LuxarMegaShaderMaterial = MegaShaderMaterial | MegaShaderTSLMaterial
  * Manages all materials in the scene with caching and global updates.
  * Supports points, lines, and future material types.
  *
- * The three caches are bounded LRU maps: each `getXMaterial()` call
+ * The LINE cache is a bounded LRU map: each `getLineMaterial()` call
  * promotes the entry to most-recently-used by re-inserting it; on
  * insert past `cacheMaxSize`, the least-recently-used entry is
  * disposed and dropped. Without this bound the cache would grow
  * unbounded as users animate attribute sliders, leaking GPU shader
- * programs.
+ * programs. Point and gsplat materials are PER NODE (each carries the
+ * node's own element texture) and are never cached — their maps stay
+ * permanently empty (kept for the lifecycle/stats context shapes).
  *
  * The bound is configured from
  * `config.dataLoading.performance.materialCacheMaxSize` (default 200).
@@ -218,7 +219,17 @@ export class MaterialManager {
   }
 
   /**
-   * Get or create a point material with caching.
+   * Create a point material — PER NODE, no LRU cache.
+   *
+   * Point data lives in a per-node texture (`uPointTex`), so two nodes
+   * can never share a point material: sharing would rebind one node's
+   * texture onto another's mesh at every commit. Every call creates a
+   * fresh material that the node owns for its lifetime (the node
+   * factory stamps `_layerMaterialCloned: true`, so LayersPanel /
+   * LOD-cross-fade mutate it directly instead of clone-on-first-use).
+   * `pointMaterialCache` stays permanently empty — it remains in the
+   * lifecycle/stats context shapes shared with lines, where an empty
+   * map is a truthful no-op. Mirrors {@link getGSplatMaterial}.
    *
    * Dispatches to `PointTSLMaterial` (NodeMaterial / TSL) when the
    * active renderer reports `caps.apiSurface === 'webgpu'`, otherwise to the
@@ -228,13 +239,9 @@ export class MaterialManager {
    */
   getPointMaterial(props: PointMaterialProperties): LuxarPointMaterial {
     const backend = resolveMaterialBackend(this.caps);
-    const key = pointCacheKey(props, backend);
-
-    let material = lruGet(this.pointMaterialCache, key);
-    if (material) return material;
 
     const createStart = performance.now();
-    material = new VISUAL_FACTORIES.point[backend]({
+    const material = new VISUAL_FACTORIES.point[backend]({
       opacity: props.opacity,
       gamma: props.gamma,
       intensity: props.intensity,
@@ -253,15 +260,8 @@ export class MaterialManager {
       this.currentIsOrtho,
       this.currentNearCull
     );
-    lruSet(
-      this.pointMaterialCache,
-      key,
-      material,
-      config.dataLoading.performance.materialCacheMaxSize,
-      this.handleEviction
-    );
 
-    log.info(Modules.RENDERER, `Created point material: ${key}`);
+    log.info(Modules.RENDERER, `Created per-node point material (${backend})`);
     return material;
   }
 

@@ -13,12 +13,12 @@ the [shared infrastructure README](../_shared/README.md).
 
 ## Module map
 
-| File               | Role                                                                                                                                                                                                              |
-| ------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `shader-glsl.ts`   | `POINT_VERTEX_SHADER` + `POINT_FRAGMENT_SHADER` GLSL3 strings, plus the `POINT_SOURCE: ShaderSource` that pairs them with the TSL factory.                                                                        |
+| File               | Role                                                                                                                                                                                                                                                                                                                             |
+| ------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `shader-glsl.ts`   | `POINT_VERTEX_SHADER` + `POINT_FRAGMENT_SHADER` GLSL3 strings, plus the `POINT_SOURCE: ShaderSource` that pairs them with the TSL factory.                                                                                                                                                                                       |
 | `shader-tsl.ts`    | `pointWebGPUFactory(nodes, config, outMaterial?)` — TSL counterpart to the GLSL shaders. Consumes wrapper-owned `PointTSLNodes` (see `buildPointTSLNodesFromUniforms` for the harness/ShaderSource path), builds `vertexNode` + `colorNode`, and wires blending via `getCompleteBlendingState` + `applyBlendingStateToMaterial`. |
-| `material-glsl.ts` | `PointMaterial extends THREE.ShaderMaterial` — the default WebGL2 wrapper. Owns the IUniform table, the `applyBlendingMode` state machine, `clone()`, and the `ColormapAwareMaterial` setters.                    |
-| `material-tsl.ts`  | `PointTSLMaterial extends NodeMaterial` — the WebGPU counterpart. Same public surface as `PointMaterial`; owns persistent `UniformNode`s exposed as `proxyIUniform` bridges and calls `pointWebGPUFactory(..., this)` to attach the TSL graph in place.                 |
+| `material-glsl.ts` | `PointMaterial extends THREE.ShaderMaterial` — the default WebGL2 wrapper. Owns the IUniform table, the `applyBlendingMode` state machine, `clone()`, and the `ColormapAwareMaterial` setters.                                                                                                                                   |
+| `material-tsl.ts`  | `PointTSLMaterial extends NodeMaterial` — the WebGPU counterpart. Same public surface as `PointMaterial`; owns persistent `UniformNode`s exposed as `proxyIUniform` bridges and calls `pointWebGPUFactory(..., this)` to attach the TSL graph in place.                                                                          |
 
 `MaterialManager.getPointMaterial` dispatches on `caps.apiSurface` so callers
 (`NodeFactory.createPointsMaterial`, `LayersPanel`, …) never see the
@@ -27,16 +27,49 @@ divergence.
 ## The point sprite
 
 Each point is one instance of a 4-vertex unit-quad (`aQuadCorner ∈ [-1, 1]²`,
-the base geometry from `../../point-geometry.ts`). Per-instance attributes —
-supplied by the gpu-buffer-pool points adapter — drive the vertex stage:
+the base geometry from `../../point-geometry.ts`).
 
-| Attribute    | Type  | Meaning                                                                                                                                                         |
-| ------------ | ----- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `aCenter`    | vec3  | World-space centre position                                                                                                                                     |
-| `aRadius`    | float | Per-point radius (multiplied by `radiusScale` for dtype normalisation; e.g. `1/255` for `uint8` storage)                                                        |
-| `aSharpness` | float | Per-point sharpness — a normalised `[0, 1]` knob (no scale; `uint8/255` already lands in range). Maps in-shader to the super-Gaussian exponent `β = 2^(6s − 2)` |
-| `aColor`     | vec3  | Per-point colour (HDR). Always present — the instanced layout bypasses Three's `vertexColors=true` auto-injection of a `color` attribute                        |
-| `aScalar`    | float | `USE_COLORMAP` only — replaces `aColor` via LUT lookup                                                                                                          |
+Per-point data (`center`, `radius`, `color`, `sharpness`, `scalar`) does
+**not** live in vertex attributes. It lives in an RGBA32F **point texture**
+(`uPointTex`, 3 texels/point — layout authority in
+`../../element-texture-layout.ts`; per-texel map in
+`../../point-geometry.ts`), fetched in the vertex stage via `texelFetch`
+(GLSL) / `textureLoad` (TSL). The only per-instance attribute is
+`aSortedIndex` (Uint32): the draw-slot → storage-slot map, written as
+identity by every commit today and permuted by the sort worker from
+depth-sorting Phase 2 on. Consequences (mirroring the gsplat stack):
+
+- **Materials are per node.** Each point material binds its node's texture,
+  so the material-manager LRU is bypassed for points (`getPointMaterial`
+  always creates). The commit rebinds `uPointTex` on render + pick materials
+  via `syncPointMaterialWithGeometry` (pool acquire may hand the node a
+  different geometry+texture pair on growth/reuse).
+- **Texture lifetime = geometry lifetime.** `attachPointStorage` registers a
+  geometry-`dispose` listener; every pool/fallback dispose site frees the
+  texture with its geometry.
+- **TSL texture-node lifecycle.** The TSL `texture()` node is factory-time
+  bound, so `updatePointTexture` rebuilds the graph on an identity change
+  (exact mirror of the colormap-texture lifecycle) and no-ops otherwise.
+- **GLSL fallback trap (load-bearing `int()`).** TSL types `textureSize()`
+  as `uint` (WGSL convention) but GLSL's `textureSize` returns `int` — the
+  width read is wrapped in `int(...)` or the generated GLSL fails to compile
+  on the `forceWebGL` backend.
+
+The texel fetch prologue reconstructs the historical local names, so the
+math below it is unchanged:
+
+| Texel slot | Local        | Meaning                                                                                                                                                         |
+| ---------- | ------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| texel0.xyz | `aCenter`    | World-space centre position                                                                                                                                     |
+| texel0.w   | `aRadius`    | Per-point radius (multiplied by `radiusScale` for dtype normalisation; e.g. `1/255` for `uint8` storage)                                                        |
+| texel1.rgb | `aColor`     | Per-point colour (HDR); the writer fills white when the dataset has none                                                                                        |
+| texel1.w   | `aSharpness` | Per-point sharpness — a normalised `[0, 1]` knob (no scale; `uint8/255` already lands in range). Maps in-shader to the super-Gaussian exponent `β = 2^(6s − 2)` |
+| texel2.x   | `aScalar`    | `USE_COLORMAP` only — replaces `aColor` via LUT lookup (fetched only in colormap builds; 0.0 identity fill when the dataset has no scalars)                     |
+| texel2.y   | —            | Per-point opacity alpha (1.0 identity fill) — reserved for volumetric Phase 3, not read by the current shaders                                                  |
+
+Scalar PRESENCE is not knowable from the fixed layout, so the texel writers
+stamp `geometry.userData.hasScalars` and the fail-closed colormap guard
+(`supportsScalarColormap('points', …)`) reads that stamp.
 
 The vertex shader projects `aCenter` to clip space, computes a world-space
 `pointSize` in pixels, then expands the unit quad by

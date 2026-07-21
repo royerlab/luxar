@@ -20,9 +20,10 @@
  */
 
 import * as THREE from 'three';
-import { uniform } from 'three/tsl';
+import { texture, uniform } from 'three/tsl';
 import { NodeMaterial } from 'three/webgpu';
 import { pointPickWebGPUFactory, type PointPickTSLNodes } from './pick.tsl';
+import { getPlaceholderElementTexture } from '../../element-texture-layout';
 import type { CameraAwareMaterial } from '../../materials/_shared/camera-aware-material';
 import {
   computePointSizeFactor,
@@ -35,6 +36,7 @@ export class PointPickingTSLMaterial extends NodeMaterial implements CameraAware
   uniforms: Record<string, THREE.IUniform>;
 
   private tslNodes: {
+    uPointTex: TSLNode;
     pointSizeFactor: TSLNode;
     maxPointSize: TSLNode;
     radiusScale: TSLNode;
@@ -52,6 +54,9 @@ export class PointPickingTSLMaterial extends NodeMaterial implements CameraAware
     const defaultTanHalfFov = Math.tan(defaultFov / 2);
 
     this.tslNodes = {
+      // Point data texture node (placeholder until the commit sync
+      // rebinds the pool texture; identity change -> factory re-run).
+      uPointTex: texture(getPlaceholderElementTexture()),
       pointSizeFactor: uniform((2.0 * defaultResolutionY) / defaultTanHalfFov),
       maxPointSize: uniform(defaultResolutionY * 0.5),
       radiusScale: uniform(config.radiusScale ?? 1.0),
@@ -62,6 +67,7 @@ export class PointPickingTSLMaterial extends NodeMaterial implements CameraAware
     };
 
     this.uniforms = {
+      uPointTex: proxyIUniform(this.tslNodes.uPointTex),
       pointSizeFactor: proxyIUniform(this.tslNodes.pointSizeFactor),
       maxPointSize: proxyIUniform(this.tslNodes.maxPointSize),
       radiusScale: proxyIUniform(this.tslNodes.radiusScale),
@@ -77,6 +83,22 @@ export class PointPickingTSLMaterial extends NodeMaterial implements CameraAware
   }
 
   /**
+   * Rebind the point data texture. Same node-identity lifecycle as
+   * the visual TSL wrapper: fresh texture node + factory re-run on an
+   * identity change, no-op otherwise. Mirrors
+   * `GSplatPickingTSLMaterial.updateSplatTexture`.
+   */
+  updatePointTexture(tex: THREE.DataTexture | null): void {
+    const current = (this.uniforms.uPointTex?.value as THREE.Texture | null | undefined) ?? null;
+    const next = tex ?? getPlaceholderElementTexture();
+    if (current === next) return;
+    this.tslNodes.uPointTex = texture(next);
+    this.uniforms.uPointTex = proxyIUniform(this.tslNodes.uPointTex);
+    pointPickWebGPUFactory(this.tslNodes as PointPickTSLNodes, this);
+    this.needsUpdate = true;
+  }
+
+  /**
    * Clone this picking material. Mirrors the GLSL wrapper's explicit
    * clone (the inherited `Material.clone()` calls the constructor with
    * no config and would throw; `NodeMaterial.copy` would alias the
@@ -87,6 +109,8 @@ export class PointPickingTSLMaterial extends NodeMaterial implements CameraAware
       nodeId: this.uniforms.uNodeId.value as number,
       radiusScale: this.uniforms.radiusScale.value as number,
     });
+    const pointTex = this.uniforms.uPointTex?.value as THREE.DataTexture | null | undefined;
+    if (pointTex) cloned.updatePointTexture(pointTex);
     cloned.uniforms.pointSizeFactor.value = this.uniforms.pointSizeFactor.value;
     cloned.uniforms.maxPointSize.value = this.uniforms.maxPointSize.value;
     cloned.uniforms.uIsOrtho.value = this.uniforms.uIsOrtho.value;

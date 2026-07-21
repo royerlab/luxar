@@ -40,11 +40,14 @@ test.describe('Python→TypeScript Integration', () => {
       debug.scene.traverse((obj: any) => {
         if (obj.userData?.nodeType === 'points') {
           const geom = obj.geometry;
+          // Per-point data is texture-backed: the visible point count is
+          // the geometry's instanceCount and field presence comes from the
+          // node's declared metadata (userData.attrs).
           points.push({
             name: obj.name,
-            count: geom.attributes.aCenter.count,
-            hasColors: !!geom.attributes.aColor,
-            hasRadii: !!geom.attributes.aRadius,
+            count: geom.instanceCount,
+            hasColors: !!obj.geometry?.userData?.hasColors,
+            hasRadii: !!obj.geometry?.userData?.hasRadii,
           });
         }
       });

@@ -21,13 +21,13 @@ import {
   createInstancedGSplatsMesh,
   updateInstancedGSplatsMesh,
   packCholeskyForShader,
-  writeSortedIndexOrdering,
   type InstancedGSplatsMeshConfig,
 } from '../../../rendering/gsplat-geometry';
+import { writeSortedIndexOrdering } from '../../../rendering/element-storage';
 import {
-  configureSplatTextureLayout,
-  resetSplatTextureLayoutForTests,
-} from '../../../rendering/splat-texture-layout';
+  configureElementTextureLayout,
+  resetElementTextureLayoutForTests,
+} from '../../../rendering/element-texture-layout';
 
 /**
  * One splat at the origin with a diagonal Cholesky factor
@@ -100,12 +100,12 @@ function makeConfig(count: number): InstancedGSplatsMeshConfig {
 
 describe('non-pool writers — capacity clamp self-consistency', () => {
   afterEach(() => {
-    resetSplatTextureLayoutForTests();
+    resetElementTextureLayoutForTests();
   });
 
   it('createInstancedGSplatsMesh clamps instanceCount to the texture bound', () => {
     // maxTextureSize 8 → width 8, per-node bound = 8×8/4 = 16 splats.
-    configureSplatTextureLayout(8);
+    configureElementTextureLayout(8);
     const mesh = createInstancedGSplatsMesh(makeConfig(100), materialWithTruncate(3.0));
     const geometry = mesh.geometry as THREE.InstancedBufferGeometry;
     // Instances, ordering, and texels all sized to the clamped count —
@@ -116,7 +116,7 @@ describe('non-pool writers — capacity clamp self-consistency', () => {
   });
 
   it('updateInstancedGSplatsMesh does NOT rebuild on a same-count-over-bound recommit', () => {
-    configureSplatTextureLayout(8); // bound = 16 splats
+    configureElementTextureLayout(8); // bound = 16 splats
     const mesh = createInstancedGSplatsMesh(makeConfig(100), materialWithTruncate(3.0));
     const geometryBefore = mesh.geometry;
     // Same over-bound request again: both sides of the rebuild check are

@@ -3,7 +3,7 @@
  * (depth-sorting Phases 2-3,
  * `docs/guides/specs/GSPLAT_DEPTH_SORTING_SPEC.md` §5-§6).
  *
- * Module-scoped live authority (the `splat-texture-layout.ts` pattern):
+ * Module-scoped live authority (the `element-texture-layout.ts` pattern):
  * the commit path (`commit-gsplats-geometry.ts`) and the app lifecycle
  * are far apart, so both talk to this module instead of threading a
  * coordinator object through constructors.
@@ -46,7 +46,7 @@ import { wrap, transfer, type Remote } from 'comlink';
 // worker-pool.ts for why `new Worker(new URL(...))` is not used).
 import SortWorker from '../workers/sort-worker?worker';
 import type { SortWorkerAPI } from '../workers/sort-worker';
-import { writeSortedIndexOrdering } from './gsplat-geometry';
+import { writeSortedIndexOrdering } from './element-storage';
 import { needsDepthSort } from './blending-state';
 import { clearCommittedData, hasCommittedData } from '../types/committed-data';
 import type { BlendingMode } from './material-manager';

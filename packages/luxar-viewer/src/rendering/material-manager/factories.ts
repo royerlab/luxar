@@ -153,11 +153,9 @@ export const MEGA_SHADER_FACTORIES = {
 } as const;
 
 /**
- * Compute the integer-bucketed cache-key components shared by the
- * cached material kinds (Points / Lines — gsplat materials are per
- * node and uncached). All four properties have the same valid ranges
- * and bucketing rules across material types, so having one helper
- * avoids drift the next time the rules change.
+ * Compute the integer-bucketed cache-key components for the cached
+ * material kind (Lines — point and gsplat materials are per node and
+ * uncached, so they have no cache key).
  */
 function getCommonMaterialBuckets(props: {
   opacity: number;
@@ -171,20 +169,6 @@ function getCommonMaterialBuckets(props: {
     intensityBucket: Math.round(clamp(props.intensity, 0, 100) * 100),
     offsetBucket: Math.round((clamp(props.offset, -10, 10) + 10) * 10),
   };
-}
-
-/** Cache key for a Points material variant. */
-export function pointCacheKey(props: PointMaterialProperties, backend: MaterialBackend): string {
-  const { opacityBucket, gammaBucket, intensityBucket, offsetBucket } =
-    getCommonMaterialBuckets(props);
-  const radiusBucket = props.radiusScale ? Math.round(Math.max(0, props.radiusScale) * 1000) : 1000;
-  const transparent = props.blendingMode !== 'opaque';
-  // depthWrite discriminator: generic normal mode flips depthWrite at
-  // exactly 0.99, which sits INSIDE opacity bucket 99 (0.985-0.9949) —
-  // without this bit, whichever side of the flip is requested first
-  // wins the bucket for both.
-  const dw = props.blendingMode === 'normal' && normalModeDepthWrite(props.opacity) ? 1 : 0;
-  return `point_${backend}_${props.blendingMode}_o${opacityBucket}_g${gammaBucket}_i${intensityBucket}_f${offsetBucket}_r${radiusBucket}_t${transparent ? 1 : 0}_dw${dw}`;
 }
 
 /** Cache key for a Lines material variant. */

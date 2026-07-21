@@ -10,6 +10,8 @@ import {
 import type { LoadedPointsData } from '../../../data/data-loader-types';
 import * as THREE from 'three';
 import { getSplatTexture } from '../../../rendering/gsplat-geometry';
+import { getPointTexture } from '../../../rendering/point-geometry';
+import { POINT_FLOATS_PER_POINT } from '../../../rendering/element-texture-layout';
 
 describe('GPUBufferPool', () => {
   let pool: GPUBufferPool;
@@ -42,35 +44,37 @@ describe('GPUBufferPool', () => {
     };
   };
 
+  // Read one float of point i's texel block from the geometry's point
+  // texture (layout documented in point-geometry.ts: texel 0 =
+  // center.xyz + radius, texel 1 = color.rgb + sharpness, texel 2 =
+  // scalar + alpha).
+  const texel = (geom: THREE.BufferGeometry, i: number, offset: number): number => {
+    const arr = getPointTexture(geom)!.image.data as Float32Array;
+    return arr[i * POINT_FLOATS_PER_POINT + offset];
+  };
+
   beforeEach(() => {
     pool = new GPUBufferPool(20, 300); // maxPoolSize=20, evictionFrames=300
   });
 
   describe('Points Geometry', () => {
     it('should allocate new geometry on first request', () => {
-      const data = createMockLoadedPointsData(1000);
-      const geom = pool.acquirePointsGeometry('node1', data, 1000);
+      const geom = pool.acquirePointsGeometry('node1', 1000);
       expect(geom).toBeInstanceOf(THREE.InstancedBufferGeometry);
-      expect((geom as THREE.InstancedBufferGeometry).instanceCount).toBe(1000);
+      expect(geom.instanceCount).toBe(1000);
       expect(geom.drawRange.count).toBe(6);
-      // [rendering.md/W][P2] strengthened from toBeDefined() to specific
-      // itemSize / type assertions matching the points-adapter contract
-      // (POINTS_ATTRIBUTE_LAYOUT in gpu-buffer-pool/points-adapter.ts).
-      // A mutant that returned the wrong attribute (e.g. swapping Center
-      // and Color, or dropping itemSize=3 → 1) would previously pass the
-      // toBeDefined() check.
-      const aCenter = geom.getAttribute('aCenter') as THREE.InterleavedBufferAttribute;
-      expect(aCenter).toBeInstanceOf(THREE.InterleavedBufferAttribute);
-      expect(aCenter.itemSize).toBe(3); // x, y, z
-      const aColor = geom.getAttribute('aColor') as THREE.InterleavedBufferAttribute;
-      expect(aColor).toBeInstanceOf(THREE.InterleavedBufferAttribute);
-      expect(aColor.itemSize).toBe(3); // r, g, b
-      const aRadius = geom.getAttribute('aRadius') as THREE.InterleavedBufferAttribute;
-      expect(aRadius).toBeInstanceOf(THREE.InterleavedBufferAttribute);
-      expect(aRadius.itemSize).toBe(1);
-      const aSharpness = geom.getAttribute('aSharpness') as THREE.InterleavedBufferAttribute;
-      expect(aSharpness).toBeInstanceOf(THREE.InterleavedBufferAttribute);
-      expect(aSharpness.itemSize).toBe(1);
+      // Texture-backed storage: per-point data lives in the pooled
+      // RGBA32F point texture (3 texels/point); aSortedIndex is the only
+      // per-instance attribute. Capacity = ceil(1000 * 1.5) = 1500
+      // points -> >= 1500 * 12 floats in the backing store.
+      const texture = getPointTexture(geom);
+      expect(texture).not.toBeNull();
+      expect((texture!.image.data as Float32Array).length).toBeGreaterThanOrEqual(
+        1500 * POINT_FLOATS_PER_POINT
+      );
+      const sortedIndex = geom.getAttribute('aSortedIndex');
+      expect(sortedIndex).toBeDefined();
+      expect(sortedIndex.array).toBeInstanceOf(Uint32Array);
 
       const stats = pool.getStats();
       expect(stats.allocations).toBe(1);
@@ -78,10 +82,8 @@ describe('GPUBufferPool', () => {
     });
 
     it('should reuse geometry when requesting same node again', () => {
-      const data1 = createMockLoadedPointsData(1000);
-      const data2 = createMockLoadedPointsData(900);
-      const geom1 = pool.acquirePointsGeometry('node1', data1, 1000);
-      const geom2 = pool.acquirePointsGeometry('node1', data2, 900); // Same node, smaller count
+      const geom1 = pool.acquirePointsGeometry('node1', 1000);
+      const geom2 = pool.acquirePointsGeometry('node1', 900); // Same node, smaller count
 
       expect(geom2).toBe(geom1); // Same geometry instance
       const stats = pool.getStats();
@@ -90,10 +92,8 @@ describe('GPUBufferPool', () => {
     });
 
     it('should grow-swap to a FRESH geometry when count exceeds capacity', () => {
-      const data1 = createMockLoadedPointsData(1000);
-      const data2 = createMockLoadedPointsData(2000);
-      const geom1 = pool.acquirePointsGeometry('node1', data1, 1000); // Capacity ~1500
-      const geom2 = pool.acquirePointsGeometry('node1', data2, 2000); // Needs >1500
+      const geom1 = pool.acquirePointsGeometry('node1', 1000); // Capacity ~1500
+      const geom2 = pool.acquirePointsGeometry('node1', 2000); // Needs >1500
 
       // Growth is release + reacquire, never an in-place rebuild (that
       // strands the old GPU buffer in the renderer caches — a permanent
@@ -106,24 +106,20 @@ describe('GPUBufferPool', () => {
     });
 
     it('grow path bumps byType.points.allocations (MED-11 regression)', () => {
-      // Regression for MED-11: the grow branch reallocates the interleaved
-      // buffer (real GPU buffer creation) but previously only bumped
+      // Regression for MED-11: the grow branch allocates fresh storage
+      // (real GPU buffer creation) but previously only bumped
       // `stats.capacityGrowths`, leaving `typeStats.points.allocations`
       // stale. The data-loading-monitor uses byType.points.allocations to
       // compute reuse rates; without this fix, a workload of repeated
       // grows reports an inflated reuse rate.
-      const data1 = createMockLoadedPointsData(1000);
-      const data2 = createMockLoadedPointsData(2000);
-      const data3 = createMockLoadedPointsData(4000);
-
-      pool.acquirePointsGeometry('node1', data1, 1000); // fresh allocation
+      pool.acquirePointsGeometry('node1', 1000); // fresh allocation
       const allocsAfterFirst = pool.getStats().byType.points.allocations;
       expect(allocsAfterFirst).toBe(1);
 
-      pool.acquirePointsGeometry('node1', data2, 2000); // grow #1
+      pool.acquirePointsGeometry('node1', 2000); // grow #1
       expect(pool.getStats().byType.points.allocations).toBe(allocsAfterFirst + 1);
 
-      pool.acquirePointsGeometry('node1', data3, 4000); // grow #2
+      pool.acquirePointsGeometry('node1', 4000); // grow #2
       expect(pool.getStats().byType.points.allocations).toBe(allocsAfterFirst + 2);
 
       // capacityGrowths should rise in lockstep on the grow branch.
@@ -131,32 +127,27 @@ describe('GPUBufferPool', () => {
     });
 
     it('didLastAcquireRebuildAttributes is false on in-place reuse, true on grow', () => {
-      const data1 = createMockLoadedPointsData(1000);
-      pool.acquirePointsGeometry('node1', data1, 1000);
+      pool.acquirePointsGeometry('node1', 1000);
       expect(pool.didLastAcquireRebuildAttributes()).toBe(true); // First allocation
 
-      const data2 = createMockLoadedPointsData(900);
-      pool.acquirePointsGeometry('node1', data2, 900); // reuse, no grow
+      pool.acquirePointsGeometry('node1', 900); // reuse, no grow
       expect(pool.didLastAcquireRebuildAttributes()).toBe(false);
 
-      const data3 = createMockLoadedPointsData(2000);
-      pool.acquirePointsGeometry('node1', data3, 2000); // grow
+      pool.acquirePointsGeometry('node1', 2000); // grow
       expect(pool.didLastAcquireRebuildAttributes()).toBe(true);
     });
 
     it('didLastAcquireRebuildAttributes is true when pooled candidate is reclaimed for a new node', () => {
-      const data1 = createMockLoadedPointsData(1000);
-      pool.acquirePointsGeometry('node1', data1, 1000);
+      pool.acquirePointsGeometry('node1', 1000);
       pool.releasePointsGeometry('node1'); // back into the pool
 
-      // Same data shape → matching attribute types; pool reclaims.
-      pool.acquirePointsGeometry('node2', data1, 1000);
+      // Fixed texel layout: any pooled points geometry fits any node.
+      pool.acquirePointsGeometry('node2', 1000);
       expect(pool.didLastAcquireRebuildAttributes()).toBe(true);
     });
 
     it('should release geometry back to pool', () => {
-      const data = createMockLoadedPointsData(1000);
-      pool.acquirePointsGeometry('node1', data, 1000);
+      pool.acquirePointsGeometry('node1', 1000);
       pool.releasePointsGeometry('node1');
 
       const stats = pool.getStats();
@@ -165,18 +156,16 @@ describe('GPUBufferPool', () => {
     });
 
     it('should reuse released geometry for new node', () => {
-      const data1 = createMockLoadedPointsData(1000);
-      const data2 = createMockLoadedPointsData(800);
-      pool.acquirePointsGeometry('node1', data1, 1000);
+      pool.acquirePointsGeometry('node1', 1000);
       pool.releasePointsGeometry('node1');
 
-      pool.acquirePointsGeometry('node2', data2, 800); // Different node, similar size, same types
+      pool.acquirePointsGeometry('node2', 800); // Different node, similar size
       const stats = pool.getStats();
       expect(stats.allocations).toBe(1); // Only one allocation
       expect(stats.reuses).toBe(1); // Reused for node2
     });
 
-    it('positions-only Points get default radius=0.5 and sharpness=0.5', () => {
+    it('positions-only Points get default radius=0.5, sharpness=0.5, white color, scalar=0, alpha=1', () => {
       const positionsOnly: LoadedPointsData = {
         positions: new Float32Array([0, 0, 0, 1, 0, 0, 2, 0, 0]),
         pointCount: 3,
@@ -188,35 +177,33 @@ describe('GPUBufferPool', () => {
           usedSpatialIndex: true,
         },
       };
-      const geom = pool.acquirePointsGeometry('p1', positionsOnly, 3);
+      const geom = pool.acquirePointsGeometry('p1', 3);
       pool.updatePointsGeometry(geom, positionsOnly, 3);
 
-      const radAttr = geom.getAttribute('aRadius');
-      const sharpAttr = geom.getAttribute('aSharpness');
-      const colAttr = geom.getAttribute('aColor');
-
-      // Active range filled with defaults — not zeros. Use the
-      // semantic per-instance accessors so the test works regardless
-      // of whether the underlying storage is standalone or interleaved.
+      // Active range filled with defaults — not zeros. Texel layout:
+      // [0..2] center, [3] radius, [4..6] color, [7] sharpness,
+      // [8] scalar, [9] alpha.
       for (let i = 0; i < 3; i++) {
-        expect(radAttr.getX(i)).toBeCloseTo(0.5, 5);
-        expect(sharpAttr.getX(i)).toBeCloseTo(0.5, 5); // [0,1] knob default -> beta=2
-        // White default color (R, G, B = 1.0).
-        expect(colAttr.getX(i)).toBeCloseTo(1.0, 5);
-        expect(colAttr.getY(i)).toBeCloseTo(1.0, 5);
-        expect(colAttr.getZ(i)).toBeCloseTo(1.0, 5);
+        expect(texel(geom, i, 0)).toBeCloseTo(i, 5); // center.x
+        expect(texel(geom, i, 3)).toBeCloseTo(0.5, 5); // radius default
+        expect(texel(geom, i, 4)).toBeCloseTo(1.0, 5); // white R
+        expect(texel(geom, i, 5)).toBeCloseTo(1.0, 5); // white G
+        expect(texel(geom, i, 6)).toBeCloseTo(1.0, 5); // white B
+        expect(texel(geom, i, 7)).toBeCloseTo(0.5, 5); // [0,1] knob default -> beta=2
+        expect(texel(geom, i, 8)).toBe(0.0); // no-scalar identity
+        expect(texel(geom, i, 9)).toBe(1.0); // opaque alpha identity
       }
     });
 
     it('pool reuse fills defaults when subsequent commit lacks colors/radii', () => {
       // First commit: full data including colors/radii/sharpness
       const full = createMockLoadedPointsData(4);
-      const geom = pool.acquirePointsGeometry('p2', full, 4);
+      const geom = pool.acquirePointsGeometry('p2', 4);
       pool.updatePointsGeometry(geom, full, 4);
 
       // Second commit: same node, but data has no colors/radii/sharpness
       // (e.g. nD slice change reveals points without those optional attrs).
-      // Pool reuses the same geometry since types match (Float32 default).
+      // The fixed texel layout reuses the same geometry unconditionally.
       const sparse: LoadedPointsData = {
         positions: new Float32Array(12), // 4 points × 3
         pointCount: 4,
@@ -230,15 +217,12 @@ describe('GPUBufferPool', () => {
       };
       pool.updatePointsGeometry(geom, sparse, 4);
 
-      const radAttr = geom.getAttribute('aRadius');
-      const colAttr = geom.getAttribute('aColor');
-      // Defaults overwrite values left in the reused buffer from `full`.
-      // Semantic accessors handle the interleaved storage transparently.
+      // Defaults overwrite values left in the reused texture from `full`.
       for (let i = 0; i < 4; i++) {
-        expect(radAttr.getX(i)).toBeCloseTo(0.5, 5);
-        expect(colAttr.getX(i)).toBeCloseTo(1.0, 5);
-        expect(colAttr.getY(i)).toBeCloseTo(1.0, 5);
-        expect(colAttr.getZ(i)).toBeCloseTo(1.0, 5);
+        expect(texel(geom, i, 3)).toBeCloseTo(0.5, 5); // radius default
+        expect(texel(geom, i, 4)).toBeCloseTo(1.0, 5);
+        expect(texel(geom, i, 5)).toBeCloseTo(1.0, 5);
+        expect(texel(geom, i, 6)).toBeCloseTo(1.0, 5);
       }
     });
   });
@@ -305,16 +289,16 @@ describe('GPUBufferPool', () => {
 
       // Acquire and release several different-sized geometries
       // This ensures they go to different buckets and won't be reused
-      testPool.acquirePointsGeometry('node1', createMockLoadedPointsData(1000), 1000);
+      testPool.acquirePointsGeometry('node1', 1000);
       testPool.releasePointsGeometry('node1');
 
-      testPool.acquirePointsGeometry('node2', createMockLoadedPointsData(10000), 10000);
+      testPool.acquirePointsGeometry('node2', 10000);
       testPool.releasePointsGeometry('node2');
 
       // Advance frameCount by 3 frames without touching the pooled geometries
       for (let i = 0; i < 3; i++) {
         testPool.beginFrame();
-        testPool.acquirePointsGeometry(`active${i}`, createMockLoadedPointsData(100000), 100000); // Different size bucket
+        testPool.acquirePointsGeometry(`active${i}`, 100000); // Different size bucket
         // Don't release - keep active
       }
 
@@ -328,7 +312,7 @@ describe('GPUBufferPool', () => {
     });
 
     it('should dispose all geometries on pool disposal', () => {
-      pool.acquirePointsGeometry('node1', createMockLoadedPointsData(1000), 1000);
+      pool.acquirePointsGeometry('node1', 1000);
       pool.acquireLinesGeometry('line1', 500, false);
       pool.acquireGSplatsGeometry('splat1', 300);
 
@@ -347,24 +331,21 @@ describe('GPUBufferPool', () => {
       // releases to trigger eviction, then asserts the next acquire
       // returns a valid, undisposed geometry. A dispose-during-pool-
       // churn bug would surface as either a thrown error inside
-      // acquire or as an already-disposed `attributes.aCenter`.
+      // acquire or as an already-disposed point texture.
       const tinyPool = new GPUBufferPool(2, 0); // maxPoolSize=2, evictionFrames=0
-      const dataA = createMockLoadedPointsData(1000);
-      const dataB = createMockLoadedPointsData(2000);
 
-      tinyPool.acquirePointsGeometry('nodeA', dataA, 1000);
+      tinyPool.acquirePointsGeometry('nodeA', 1000);
       tinyPool.releasePointsGeometry('nodeA');
-      tinyPool.acquirePointsGeometry('nodeB', dataB, 2000);
+      tinyPool.acquirePointsGeometry('nodeB', 2000);
       tinyPool.releasePointsGeometry('nodeB');
 
       tinyPool.beginFrame();
       tinyPool.beginFrame();
 
-      const dataC = createMockLoadedPointsData(100000);
-      const geomC = tinyPool.acquirePointsGeometry('nodeC', dataC, 100000);
+      const geomC = tinyPool.acquirePointsGeometry('nodeC', 100000);
 
       expect(geomC).toBeDefined();
-      expect(geomC.attributes.aCenter).toBeDefined();
+      expect(getPointTexture(geomC)).not.toBeNull();
       expect(() => tinyPool.releasePointsGeometry('nodeC')).not.toThrow();
     });
   });
@@ -372,9 +353,9 @@ describe('GPUBufferPool', () => {
   describe('Size Bucketing', () => {
     it('should use appropriate size buckets', () => {
       // Acquire geometries of different sizes
-      pool.acquirePointsGeometry('small', createMockLoadedPointsData(500), 500); // → 1K bucket
-      pool.acquirePointsGeometry('medium', createMockLoadedPointsData(3000), 3000); // → 5K bucket
-      pool.acquirePointsGeometry('large', createMockLoadedPointsData(20000), 20000); // → 50K bucket
+      pool.acquirePointsGeometry('small', 500); // → 1K bucket
+      pool.acquirePointsGeometry('medium', 3000); // → 5K bucket
+      pool.acquirePointsGeometry('large', 20000); // → 50K bucket
 
       // Release them
       pool.releasePointsGeometry('small');
@@ -382,8 +363,8 @@ describe('GPUBufferPool', () => {
       pool.releasePointsGeometry('large');
 
       // Acquire similar sizes - should reuse from correct buckets
-      pool.acquirePointsGeometry('small2', createMockLoadedPointsData(600), 600); // Should reuse from 1K bucket
-      pool.acquirePointsGeometry('medium2', createMockLoadedPointsData(4000), 4000); // Should reuse from 5K bucket
+      pool.acquirePointsGeometry('small2', 600); // Should reuse from 1K bucket
+      pool.acquirePointsGeometry('medium2', 4000); // Should reuse from 5K bucket
 
       const stats = pool.getStats();
       expect(stats.reuses).toBeGreaterThanOrEqual(2);
@@ -393,22 +374,22 @@ describe('GPUBufferPool', () => {
   describe('Statistics Tracking', () => {
     it('should track allocations, reuses, and evictions', () => {
       // Allocate
-      pool.acquirePointsGeometry('node1', createMockLoadedPointsData(1000), 1000);
+      pool.acquirePointsGeometry('node1', 1000);
       expect(pool.getStats().allocations).toBe(1);
 
       // Reuse
-      pool.acquirePointsGeometry('node1', createMockLoadedPointsData(900), 900);
+      pool.acquirePointsGeometry('node1', 900);
       expect(pool.getStats().reuses).toBe(1);
 
       // Growth
-      pool.acquirePointsGeometry('node1', createMockLoadedPointsData(3000), 3000);
+      pool.acquirePointsGeometry('node1', 3000);
       expect(pool.getStats().capacityGrowths).toBe(1);
 
       // Eviction (tested separately due to frame requirements)
     });
 
     it('should track active vs pooled buffers', () => {
-      pool.acquirePointsGeometry('node1', createMockLoadedPointsData(1000), 1000);
+      pool.acquirePointsGeometry('node1', 1000);
       pool.acquireLinesGeometry('line1', 500, false);
 
       let stats = pool.getStats();
@@ -424,71 +405,53 @@ describe('GPUBufferPool', () => {
   });
 
   describe('Multi-Type Support', () => {
-    it('widens Uint8Array color source to Float32 [0,1] in interleaved storage', () => {
-      // Post-interleaving, the pool stores ALL per-instance attributes
-      // as Float32 in a shared `InstancedInterleavedBuffer` so multiple
-      // attributes collapse to one vertex-buffer slot under WebGPU.
-      // Uint8 source data (range [0, 255]) is widened with the
-      // `normalized: true` divisor (255) at upload time so the shader
-      // sees the same [0, 1] range as before. Memory cost: 4× the
-      // color buffer; trivially small in absolute terms.
+    it('widens Uint8Array color source to Float32 [0,1] in the point texture', () => {
+      // Per-point data lives in the RGBA32F point texture, so ALL source
+      // dtypes are widened to Float32 at upload. Uint8 source data
+      // (range [0, 255]) is widened with the `normalized: true` divisor
+      // (255) so the shader sees the same [0, 1] range as before.
       const data = createMockLoadedPointsData(1000, 'Uint8Array');
-      const geom = pool.acquirePointsGeometry('node1', data, 1000);
+      const geom = pool.acquirePointsGeometry('node1', 1000);
       pool.updatePointsGeometry(geom, data, 1000);
 
-      const colorAttr = geom.getAttribute('aColor') as THREE.InterleavedBufferAttribute;
-      // Underlying storage is the shared Float32 interleaved buffer.
-      expect(colorAttr.data.array).toBeInstanceOf(Float32Array);
-      // First instance's R/G/B should be in [0, 1].
-      expect(colorAttr.getX(0)).toBeGreaterThanOrEqual(0);
-      expect(colorAttr.getX(0)).toBeLessThanOrEqual(1);
+      // 128 / 255 lands in texel 1's color slots.
+      expect(texel(geom, 0, 4)).toBeCloseTo(128 / 255, 5);
+      expect(texel(geom, 0, 5)).toBeCloseTo(128 / 255, 5);
+      expect(texel(geom, 0, 6)).toBeCloseTo(128 / 255, 5);
     });
 
-    it('widens Uint16Array color source to Float32 [0,1] in interleaved storage', () => {
+    it('widens Uint16Array color source to Float32 [0,1] in the point texture', () => {
       const data = createMockLoadedPointsData(1000, 'Uint16Array');
-      const geom = pool.acquirePointsGeometry('node1', data, 1000);
+      const geom = pool.acquirePointsGeometry('node1', 1000);
       pool.updatePointsGeometry(geom, data, 1000);
 
-      const colorAttr = geom.getAttribute('aColor') as THREE.InterleavedBufferAttribute;
-      expect(colorAttr.data.array).toBeInstanceOf(Float32Array);
-      // Verify in-range — divisor is 65535 for Uint16 normalized.
-      expect(colorAttr.getX(0)).toBeGreaterThanOrEqual(0);
-      expect(colorAttr.getX(0)).toBeLessThanOrEqual(1);
+      // Divisor is 65535 for Uint16 normalized: 32768 / 65535 ≈ 0.5.
+      expect(texel(geom, 0, 4)).toBeCloseTo(32768 / 65535, 5);
     });
 
-    it('should NOT reuse geometry when types differ', () => {
-      const dataFloat = createMockLoadedPointsData(1000, 'Float32Array');
+    it('REUSES pooled geometry across source dtypes (fixed texel layout)', () => {
+      // The interleaved era bucketed pooled geometries by attribute
+      // dtype snapshot and re-allocated on a mismatch. The fixed 3-texel
+      // layout removes that: dtype normalization happens at upload, so
+      // ANY pooled points geometry fits ANY points node.
       const dataUint8 = createMockLoadedPointsData(900, 'Uint8Array');
 
-      pool.acquirePointsGeometry('node1', dataFloat, 1000);
+      pool.acquirePointsGeometry('node1', 1000); // Float32-era tenant
       pool.releasePointsGeometry('node1');
 
-      pool.acquirePointsGeometry('node2', dataUint8, 900); // Different type!
-
+      const geom = pool.acquirePointsGeometry('node2', 900); // reuse, dtype-blind
       const stats = pool.getStats();
-      // Should create NEW geometry (different types, can't reuse)
-      expect(stats.allocations).toBe(2);
-      expect(stats.reuses).toBe(0);
-    });
-
-    it('should reuse geometry when types match', () => {
-      const data1 = createMockLoadedPointsData(1000, 'Uint8Array');
-      const data2 = createMockLoadedPointsData(900, 'Uint8Array'); // Same type
-
-      pool.acquirePointsGeometry('node1', data1, 1000);
-      pool.releasePointsGeometry('node1');
-
-      pool.acquirePointsGeometry('node2', data2, 900); // Same type, smaller size
-
-      const stats = pool.getStats();
-      // Should REUSE geometry (same types)
       expect(stats.allocations).toBe(1);
       expect(stats.reuses).toBe(1);
+
+      // And the Uint8 upload into the reused texture still normalizes.
+      pool.updatePointsGeometry(geom, dataUint8, 900);
+      expect(texel(geom, 0, 4)).toBeCloseTo(128 / 255, 5);
     });
   });
 
   describe('Zero-count safety', () => {
-    it('never produces a zero-capacity interleaved buffer when count is 0', () => {
+    it('never produces zero-capacity storage when count is 0', () => {
       // Regression guard for the WebGPU "blank scene" issue. When a scene
       // starts at a slice where no instances are visible, the pool used to
       // allocate a buffer sized at `ceil(0 * 1.5) = 0` floats — a
@@ -510,27 +473,12 @@ describe('GPUBufferPool', () => {
           .data;
         expect((lineBuf.array as Float32Array).length).toBeGreaterThan(0);
 
-        const pointGeom = empty.acquirePointsGeometry(
-          'zero-points',
-          {
-            positions: new Float32Array(0),
-            colors: new Float32Array(0),
-            radii: undefined,
-            sharpness: undefined,
-            pointCount: 0,
-            ndim: 3,
-            metadata: {
-              totalPoints: 0,
-              loadedPoints: 0,
-              bounds: new THREE.Box3(),
-              usedSpatialIndex: false,
-            },
-          } as unknown as Parameters<typeof empty.acquirePointsGeometry>[1],
-          0
-        );
-        const pointBuf = (pointGeom.getAttribute('aCenter') as THREE.InterleavedBufferAttribute)
-          .data;
-        expect((pointBuf.array as Float32Array).length).toBeGreaterThan(0);
+        // Texture-backed points: the zero-capacity hazard is the ordering
+        // attribute (the texture always has >= 1 row) — mirror gsplats.
+        const pointGeom = empty.acquirePointsGeometry('zero-points', 0);
+        const pointIdx = pointGeom.getAttribute('aSortedIndex');
+        expect((pointIdx.array as Uint32Array).length).toBeGreaterThan(0);
+        expect((getPointTexture(pointGeom)!.image.data as Float32Array).length).toBeGreaterThan(0);
 
         const gsplatGeom = empty.acquireGSplatsGeometry('zero-gsplats', 0);
         // Texture-backed storage: the zero-capacity hazard for gsplats is

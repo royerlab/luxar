@@ -95,7 +95,7 @@ describe('Shader hot-path string regressions', () => {
     });
 
     it('reads the per-splat alpha from texel3.y and passes it through vAlpha', () => {
-      // Per-element opacity rides in texel3.y (splat-texture-layout.ts). A
+      // Per-element opacity rides in texel3.y (element-texture-layout.ts). A
       // mutation that read the wrong channel or dropped the varying would
       // silently ignore imported 3DGS opacity — pin both the read and the
       // varying assignment. A pure-math test can't see either.
@@ -183,7 +183,9 @@ describe('Shader hot-path string regressions', () => {
       const foldEndif = GSPLAT_FRAGMENT_SHADER.indexOf('#endif', foldElse);
       const volFold = GSPLAT_FRAGMENT_SHADER.slice(foldStart, foldElse);
       const linFold = GSPLAT_FRAGMENT_SHADER.slice(foldElse, foldEndif);
-      expect(volFold).toMatch(/intensity\s*\*=\s*mix\s*\(\s*1\.0\s*,\s*-log\s*\(\s*1\.0\s*-\s*min\s*\(\s*vAlpha/);
+      expect(volFold).toMatch(
+        /intensity\s*\*=\s*mix\s*\(\s*1\.0\s*,\s*-log\s*\(\s*1\.0\s*-\s*min\s*\(\s*vAlpha/
+      );
       expect(volFold).toMatch(/uHasElementAlpha/);
       expect(linFold).toMatch(/intensity\s*\*=\s*vAlpha/);
       expect(linFold).not.toMatch(/uHasElementAlpha/);

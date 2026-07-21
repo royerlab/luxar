@@ -15,7 +15,7 @@
 import * as THREE from 'three';
 import { updateInstancedGSplatsMesh } from '../../../rendering/gsplat-geometry';
 import { noteGSplatsCommit } from '../../../rendering/depth-sort-coordinator';
-import { clampSplatCapacity } from '../../../rendering/splat-texture-layout';
+import { clampSplatCapacity } from '../../../rendering/element-texture-layout';
 import { syncGSplatMaterialWithGeometry } from '../../../rendering/material-sync-helpers';
 import { isGSplatsUserData } from '../../../types/gsplats';
 import { log, Modules } from '../../../utils/log';
@@ -78,7 +78,7 @@ export function commitGSplatsGeometry(
   const { processed, cholesky01, cholesky23, cholesky45 } = staged;
 
   // SEMANTIC clamp at the commit choke point: the GPU writers below clamp
-  // the WRITTEN splats to the per-node texture bound (splat-texture-layout),
+  // the WRITTEN splats to the per-node texture bound (element-texture-layout),
   // so every count this commit records or hands out — visibleSplatCount,
   // the sort coordinator's `count` — must be the clamped one. Otherwise the
   // SortWorker returns a permutation with slot values ≥ the texture
@@ -199,6 +199,13 @@ export function commitGSplatsGeometry(
         // cached RenderObject so its `vertexBuffers` set is rebuilt
         // against the new buffers next draw.
         if (attributesRebuilt) invalidateRenderObjectFor(mesh);
+        // Dispose a replaced NON-pool geometry (the creation-time
+        // placeholder) — see the commit-points-geometry.ts twin. Its
+        // splat texture (minimum-row alloc) would otherwise leak per
+        // node per dataset switch.
+        if (prevGeometry !== geometry && !prevGeometry.userData?.luxarPooled) {
+          prevGeometry.dispose();
+        }
       }
     } else {
       // Non-pool path: a size change swaps in a fresh geometry+texture
