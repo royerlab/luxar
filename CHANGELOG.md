@@ -19,8 +19,15 @@ All notable changes to Luxar are documented in this file.
   now works in float32 and normalizes any integer part by its full-scale before
   concatenating, so a mixed uint8-RGB + float-RGBA merge can no longer promote a
   widened `alpha = 255` into an out-of-`[0, 1]` opacity (latent; no live
-  producer feeds integer RGBA today). Colors are also pinned to float32 like the
-  sibling centers/amplitudes/cholesky arrays.
+  producer feeds integer RGBA today).
+- **`_merge_lod_colors` no longer force-normalizes a uniform integer merge**
+  (regression fix for the over-reaching float32 pin in the bullet above). A
+  uniform-dtype integer merge now PRESERVES its native dtype (full-scale =
+  opaque) — only a white-fill, a dtype mismatch, or a float part promotes the
+  result to float32 `[0, 1]`. The float32 pin had diverged a multi-sub-LOD
+  uint8 dataset (which normalized to float `[0, 1]`) from the single-sub-LOD
+  path (`self.colors = lod0.colors`, which keeps uint8), silently changing the
+  stored color encoding; both now agree.
 - **Validator contract alignment.** `validation/types.py::validate_colors` now
   applies the alpha `[0, 1]` bound to floating dtypes only (integer storage is
   SDR in its native range), matching `validate_colors_for_writing` — the two
@@ -30,6 +37,19 @@ All notable changes to Luxar are documented in this file.
   stores logits; fixed the `wasm/types.ts` fused-kernel JSDoc (`* 3` → `*
   colorComponents`, added the missing `@param`) and a stale `colors[i*3]`
   comment.
+- **Non-finite opacity hardening (interop).** A corrupt classical source (e.g.
+  a malformed INRIA float opacity field → `sigmoid(NaN)=NaN`) could ride a
+  non-finite value into the color alpha channel and poison the alpha-aware
+  `effective_amplitudes` ranking (LOD/cull) and the INRIA re-export logit —
+  neither of which passes the write-time finiteness validator. All five import
+  dialects funnel through `classical_to_gsplat_data`, which now maps non-finite
+  opacity to a finite alpha (NaN/+inf → opaque 1.0, −inf → 0.0) before the
+  `[0, 1]` clip.
+- **RGB-column finiteness in `validate_colors` (types.py).** The lightweight
+  type-guard checked finiteness only on the alpha column, letting NaN/Inf RGB
+  slip through (the write validator already rejected them). It now rejects
+  NaN/Inf in any channel while still accepting arbitrarily large finite HDR
+  emission.
 
 #### Changed — one shared `viewStatesEqual` for the progressive loaders
 

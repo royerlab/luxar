@@ -47,22 +47,39 @@ def _merge_lod_colors(
     - Mixed RGB/RGBA channel counts → RGB parts widen to RGBA with alpha=1
       (opaque, the per-element-opacity identity).
 
-    The merge works in **float32**: every part is coerced to float32 and any
-    integer part is normalized by its full-scale (÷max) first, so the alpha
-    column can never inject an out-of-``[0, 1]`` value (a uint8 opaque widened
-    to alpha=255 concatenated with a float [0,1] part would otherwise promote
-    to a float ``255.0`` alpha) and colors match the float32 dtype the sibling
-    arrays (centers/amplitudes/cholesky) are pinned to in
-    :func:`_concat_additive_levels`. Live producers are all float32 already, so
-    this is a no-op on every current path and a guard for future integer ones.
+    Dtype: when every present part shares ONE integer dtype and no white-fill
+    is needed, the native integer dtype is **preserved** (full-scale = opaque),
+    matching the single-LOD path (``self.colors = lod0.colors``) — uint8 colors
+    are a valid SDR storage form, unlike the always-float centers/amps/cholesky.
+    Otherwise the merge is float32 in ``[0, 1]``: integer parts are normalized
+    by their full-scale (÷max) first, so a widened integer opaque (``iinfo.max``)
+    can never ride into a promoted float array as an out-of-``[0, 1]`` value
+    (a uint8 alpha=255 beside a float ``[0, 1]`` part would otherwise become a
+    float ``255.0`` alpha). Live producers are all float32, so this is a no-op
+    on every current path.
     """
     if not lods:
         return None
-    has_colors = [lod.colors is not None for lod in lods]
-    if not any(has_colors):
+    present = [lod.colors for lod in lods if lod.colors is not None]
+    if not present:
         return None
-    channels = max(lod.colors.shape[1] for lod in lods if lod.colors is not None)
-    parts: list[np.ndarray] = []
+    channels = max(c.shape[1] for c in present)
+
+    # Preserve a uniform integer dtype (matches the single-LOD path); promote to
+    # float32 only when a white-fill or a dtype mismatch would otherwise force a
+    # lossy/scale-inconsistent concat.
+    any_fill = any(lod.colors is None for lod in lods)
+    dtypes = {c.dtype for c in present}
+    all_same_integer = (
+        not any_fill
+        and len(dtypes) == 1
+        and np.issubdtype(present[0].dtype, np.integer)
+    )
+    if all_same_integer:
+        parts = [widen_colors_to_rgba(c) if channels == 4 else c for c in present]
+        return np.concatenate(parts, axis=0)
+
+    parts = []
     for lod in lods:
         colors = lod.colors
         if colors is None:
