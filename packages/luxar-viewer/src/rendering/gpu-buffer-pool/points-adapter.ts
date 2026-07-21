@@ -66,6 +66,10 @@ function createPointsGeometry(pointCapacity: number): THREE.InstancedBufferGeome
   // the geometry's dispose event, so every pool dispose site frees it);
   // `aSortedIndex` is the only per-instance attribute.
   attachPointStorage(geometry, pointCapacity);
+  // Ownership marker: the commit handoff disposes a replaced geometry
+  // ONLY when it is not pool-owned (pool geometries are released back to
+  // the free list by acquire, never disposed by the commit layer).
+  geometry.userData.luxarPooled = true;
   return geometry;
 }
 

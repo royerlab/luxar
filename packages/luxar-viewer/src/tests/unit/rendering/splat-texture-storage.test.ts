@@ -233,6 +233,25 @@ describe('attachSplatStorage / writeSplatTexels — fused writer round-trip', ()
     expect(ranges[0].count).toBe(32);
   });
 
+  it('an EMPTY span with no pending ranges triggers NO upload (reused-pool zero-count commit)', () => {
+    // Empty updateRanges + needsUpdate would take three's FULL-image
+    // texSubImage2D path — re-uploading a reused pool texture's whole
+    // capacity-sized backing store on every empty commit (e.g. nD
+    // navigation into an empty slice). Nothing was written, so nothing
+    // may upload; fresh textures are covered by attachElementStorage's
+    // own needsUpdate.
+    configureElementTextureLayout(8);
+    const geometry = new THREE.InstancedBufferGeometry();
+    const texture = attachSplatStorage(geometry, 16);
+    texture.clearUpdateRanges();
+    texture.needsUpdate = false; // simulate an already-uploaded pool texture
+    registerElementTexelDirtyRange(texture, SPLAT_FLOATS_PER_SPLAT, 0, 0);
+    expect(texture.updateRanges.length).toBe(0);
+    // needsUpdate is a setter incrementing texture.version; an untouched
+    // version means no upload was scheduled.
+    expect(texture.version).toBe(1); // 1 = the attach-time needsUpdate only
+  });
+
   it('splits by the TEXTURE width, not the reconfigured global width (renderer-swap safety)', () => {
     // Allocate at width 8, then reconfigure the session width (as a
     // backend/renderer swap does). The dirty-range split must follow the

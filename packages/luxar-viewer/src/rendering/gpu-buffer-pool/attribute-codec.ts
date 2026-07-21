@@ -2,19 +2,18 @@
  * Geometry-agnostic helpers for the GPU buffer pool's interleaved
  * attribute layout.
  *
- * Shared by the per-type adapters (Points, Lines, GSplats) so the
- * attribute write logic stays in one implementation rather than
+ * Consumed by the Lines adapter (the one remaining interleaved type)
+ * so the attribute write logic stays in one implementation rather than
  * duplicating strided-copy bookkeeping. There is deliberately NO
  * in-place buffer rebuild here: growth and spec-set changes go through
  * release + reacquire (a rebuild on a rendered geometry strands the
  * old GPU buffer in the renderer caches — a permanent leak under the
  * WebGPU renderer).
  *
- * Per-type spec arrays (POINTS_BASE_ATTRIBUTE_SPECS,
- * LINES_BASE_ATTRIBUTE_SPECS, etc.) stay with their adapters — only
- * the generic codec functions live here. (GSplats no longer use this
- * path: their data lives in the splat texture — see
- * `../gsplat-geometry.ts`.)
+ * The spec arrays (LINES_BASE_ATTRIBUTE_SPECS etc.) stay with the
+ * adapter — only the generic codec functions live here. (Points and
+ * GSplats no longer use this path: their data lives in RGBA32F element
+ * textures — see `../point-geometry.ts` / `../gsplat-geometry.ts`.)
  */
 
 import * as THREE from 'three';

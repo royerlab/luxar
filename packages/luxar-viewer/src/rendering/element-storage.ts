@@ -92,9 +92,14 @@ export function registerElementTexelDirtyRange(
   texture.clearUpdateRanges();
 
   if (endFloat <= startFloat) {
-    // Nothing dirty (count 0) — three's empty-range path is a full upload;
-    // harmless for a fresh/zeroed texture and never reached with n > 0.
-    texture.needsUpdate = true;
+    // Nothing dirty (count 0, and any pending ranges were already folded
+    // into [startFloat, endFloat) above, so there were none). Do NOT set
+    // needsUpdate: with empty updateRanges three takes its FULL-image
+    // texSubImage2D path, which re-uploads the entire capacity-sized
+    // backing store of a reused pool texture (tens of MB at multi-million
+    // element capacity) on every empty commit — e.g. nD navigation into an
+    // empty slice. Fresh textures are covered by attachElementStorage's
+    // own needsUpdate = true.
     return;
   }
 

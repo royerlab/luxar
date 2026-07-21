@@ -48,6 +48,8 @@ function createGSplatsGeometry(splatCapacity: number): THREE.InstancedBufferGeom
   // the geometry's dispose event, so every pool dispose site frees it);
   // `aSortedIndex` is the only per-instance attribute.
   attachSplatStorage(geometry, splatCapacity);
+  // Ownership marker — see the points adapter's twin comment.
+  geometry.userData.luxarPooled = true;
   return geometry;
 }
 

@@ -131,6 +131,64 @@ describe('commitPointsGeometry', () => {
     expect(mockCreatePointsGeometry).not.toHaveBeenCalled();
   });
 
+  it('disposes a replaced non-pool creation geometry at the pool handoff (placeholder leak)', () => {
+    // The creation-time placeholder geometry (createPointsNode) carries a
+    // minimum-row element texture; nobody else owns it once the pool hands
+    // the node its first real geometry, so the handoff must dispose it.
+    const root = new THREE.Group();
+    const points = makePoints('/p');
+    root.add(points);
+    const prevGeometry = points.geometry;
+    const disposeSpy = vi.spyOn(prevGeometry, 'dispose');
+
+    const newGeometry = new THREE.BufferGeometry();
+    newGeometry.userData = { luxarPooled: true };
+    const gpuBufferPool = {
+      acquirePointsGeometry: vi.fn(() => newGeometry),
+      updatePointsGeometry: vi.fn(),
+      didLastAcquireRebuildAttributes: vi.fn(() => true),
+    };
+    commitPointsGeometry(
+      '/p',
+      makeData(3),
+      root,
+      gpuBufferPool as never,
+      mockNodeFactory,
+      undefined,
+      0
+    );
+    expect(points.geometry).toBe(newGeometry);
+    expect(disposeSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it('never disposes a replaced POOL-owned geometry (luxarPooled marker — acquire released it)', () => {
+    const root = new THREE.Group();
+    const points = makePoints('/p');
+    root.add(points);
+    const prevGeometry = points.geometry;
+    prevGeometry.userData = { ...prevGeometry.userData, luxarPooled: true };
+    const disposeSpy = vi.spyOn(prevGeometry, 'dispose');
+
+    const newGeometry = new THREE.BufferGeometry();
+    newGeometry.userData = { luxarPooled: true };
+    const gpuBufferPool = {
+      acquirePointsGeometry: vi.fn(() => newGeometry),
+      updatePointsGeometry: vi.fn(),
+      didLastAcquireRebuildAttributes: vi.fn(() => true),
+    };
+    commitPointsGeometry(
+      '/p',
+      makeData(3),
+      root,
+      gpuBufferPool as never,
+      mockNodeFactory,
+      undefined,
+      0
+    );
+    expect(points.geometry).toBe(newGeometry);
+    expect(disposeSpy).not.toHaveBeenCalled();
+  });
+
   it('stamps loadedViewVersion onto the mesh user-data (three-geometry symmetry)', () => {
     const root = new THREE.Group();
     const points = makePoints('/p');

@@ -23,9 +23,8 @@
  *   writer never leaves it unspecified).
  *
  * - **Points** ({@link POINT_TEXTURE_LAYOUT}): 3 texels/point. The
- *   per-texel layout is documented in `point-geometry.ts` (the points
- *   data path lands with the points migration; only the layout
- *   constant ships here).
+ *   per-texel layout is documented in `point-geometry.ts` (the texel
+ *   writer lives there too).
  *
  * The texture width is a **session constant**: `min(4096,
  * maxTextureSize)` rounded down to a multiple of the layout's
@@ -215,8 +214,8 @@ export function splatTextureHeightForCapacity(capacity: number): number {
 export const getPlaceholderSplatTexture = getPlaceholderElementTexture;
 
 // ---------------------------------------------------------------------------
-// Point-bound bindings (3 texels/point — the points data path lands with
-// the points migration; per-texel layout documented in point-geometry.ts)
+// Point-bound bindings (3 texels/point — per-texel layout and the texel
+// writer live in point-geometry.ts)
 // ---------------------------------------------------------------------------
 
 /** The point layout: 3 texels/point (12 floats = 48 B in RGBA32F). */

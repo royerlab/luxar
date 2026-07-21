@@ -199,6 +199,13 @@ export function commitGSplatsGeometry(
         // cached RenderObject so its `vertexBuffers` set is rebuilt
         // against the new buffers next draw.
         if (attributesRebuilt) invalidateRenderObjectFor(mesh);
+        // Dispose a replaced NON-pool geometry (the creation-time
+        // placeholder) — see the commit-points-geometry.ts twin. Its
+        // splat texture (minimum-row alloc) would otherwise leak per
+        // node per dataset switch.
+        if (prevGeometry !== geometry && !prevGeometry.userData?.luxarPooled) {
+          prevGeometry.dispose();
+        }
       }
     } else {
       // Non-pool path: a size change swaps in a fresh geometry+texture

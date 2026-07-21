@@ -223,6 +223,17 @@ export function commitPointsGeometry(
         points.geometry = geometry;
         syncPointMaterialWithGeometry(points);
         if (attributesRebuilt) invalidateRenderObjectFor(points);
+        // Dispose a replaced NON-pool geometry (the creation-time
+        // placeholder from createPointsNode). Pool-owned geometries are
+        // released to the free list by acquire and must never be disposed
+        // here (`luxarPooled` marker); the placeholder has no other owner,
+        // and its element texture (~65 KB minimum-row alloc) would
+        // otherwise leak per node per dataset switch. Runs AFTER
+        // invalidateRenderObjectFor so the pick node no longer references
+        // it.
+        if (prevGeometry !== geometry && !prevGeometry.userData?.luxarPooled) {
+          prevGeometry.dispose();
+        }
       }
       // Record the committed data reference — a later update returning the
       // SAME reference (memoized progressive concat) takes the stamp-only
