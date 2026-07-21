@@ -27,7 +27,11 @@ import type { ViewState } from '../../data-loader-types';
  * query-affecting field added to {@link ViewState} MUST be compared
  * here, or the skip serves stale data. Per-pass directives that are NOT
  * part of the query (e.g. `frameBudgetMs`, `prefetch`) must NOT be
- * compared — they would defeat the memoization.
+ * compared — they would defeat the memoization. If a geometry ever
+ * specializes its `*ViewState` alias (today all three are plain
+ * aliases of {@link ViewState}) with its own query-affecting field,
+ * that loader must fork this comparison — the shared version would
+ * silently ignore the new field.
  */
 export function viewStatesEqual(a: ViewState, b: ViewState): boolean {
   if (a.displayDims.length !== b.displayDims.length) return false;

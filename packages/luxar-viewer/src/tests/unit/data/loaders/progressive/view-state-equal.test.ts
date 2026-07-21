@@ -29,8 +29,17 @@ describe('viewStatesEqual', () => {
     expect(viewStatesEqual(base(), { ...base(), tolerance: [0, 0, 0, 3] })).toBe(false);
   });
 
-  it('detects length changes (dimensionality switch)', () => {
+  it('detects length changes in every array (dimensionality switch)', () => {
+    // Each array's length guard is load-bearing, and only the SHORTER-a
+    // direction can expose its removal: the element loop iterates a.length,
+    // so an equal-prefix shorter `a` would compare equal to a longer `b`.
+    // Assert both directions per array.
+    expect(viewStatesEqual(base(), { ...base(), displayDims: [0, 1] })).toBe(false);
+    expect(viewStatesEqual({ ...base(), displayDims: [0, 1] }, base())).toBe(false);
     expect(viewStatesEqual(base(), { ...base(), slicePosition: [0, 0, 0] })).toBe(false);
+    expect(viewStatesEqual({ ...base(), slicePosition: [0, 0, 0] }, base())).toBe(false);
+    expect(viewStatesEqual(base(), { ...base(), tolerance: [0, 0, 0] })).toBe(false);
+    expect(viewStatesEqual({ ...base(), tolerance: [0, 0, 0] }, base())).toBe(false);
   });
 
   it('dimensions: reference-equal short-circuits; content-equal via JSON; content change detected', () => {
