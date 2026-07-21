@@ -862,6 +862,16 @@ describe('GSplatsProgressiveLoader', () => {
       const result = await loader.loadGSplats(baseViewState);
       expect(result.colors).toBeNull();
     });
+
+    it('rejects mixed color dtypes across LOD levels (ladder-dtype contract)', async () => {
+      // TypedArray.set converts by VALUE, not semantics — a Float32 level
+      // (0..1) merged into a Uint8 (0..255) output truncates to garbage.
+      // Malformed ladders fail fast instead of rendering corruption.
+      lodA.updateView.mockResolvedValue(makeLodData(100, 3, { color: 'uint8' }));
+      lodB.updateView.mockResolvedValue(makeLodData(50, 3, { color: 'float32' }));
+      lodC.updateView.mockResolvedValue(makeLodData(25, 3, { color: 'uint8' }));
+      await expect(loader.loadGSplats(baseViewState)).rejects.toThrow(/mixed color dtypes/);
+    });
   });
 
   describe('dispose', () => {

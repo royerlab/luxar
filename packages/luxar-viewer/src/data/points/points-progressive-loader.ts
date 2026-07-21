@@ -91,7 +91,7 @@ function concatenatePointsData(parts: LoadedPointsData[]): LoadedPointsData {
   // offsets for >3D data. GSplats/Lines correctly concat their positions at
   // `ndim` because their loaders return raw nD data (projection runs later in
   // the process step).
-  const positions = concatRequiredField(parts, (p) => p.positions, count, 3);
+  const positions = concatRequiredField(parts, (p) => p.positions, count, 3, 'positions');
 
   // Aggregate bounds across all loaded levels.
   const aggBounds = new THREE.Box3();
@@ -112,13 +112,19 @@ function concatenatePointsData(parts: LoadedPointsData[]): LoadedPointsData {
   };
 
   // Optional per-point fields: all-or-nothing across LODs (dtype preserved).
-  const colors = concatOptionalField(parts, (p) => p.colors as ColorArray, count, 3);
+  const colors = concatOptionalField(parts, (p) => p.colors as ColorArray, count, 3, 'colors');
   if (colors) result.colors = colors;
-  const radii = concatOptionalField(parts, (p) => p.radii as ScalarArray, count);
+  const radii = concatOptionalField(parts, (p) => p.radii as ScalarArray, count, 1, 'radii');
   if (radii) result.radii = radii;
-  const sharpness = concatOptionalField(parts, (p) => p.sharpness as ScalarArray, count);
+  const sharpness = concatOptionalField(
+    parts,
+    (p) => p.sharpness as ScalarArray,
+    count,
+    1,
+    'sharpness'
+  );
   if (sharpness) result.sharpness = sharpness;
-  const scalars = concatOptionalField(parts, (p) => p.scalars as ScalarArray, count);
+  const scalars = concatOptionalField(parts, (p) => p.scalars as ScalarArray, count, 1, 'scalars');
   if (scalars) result.scalars = scalars;
 
   return result;
