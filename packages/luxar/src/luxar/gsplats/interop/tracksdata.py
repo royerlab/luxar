@@ -149,8 +149,11 @@ def gsplats_to_tracksdata_graph(
     graph : tracksdata.graph.BaseGraph | None
         Graph to add to; a new in-memory (RustWorkX) graph is created if ``None``.
     sort_by_amplitude : bool
-        Add nodes in ascending amplitude order so brighter splats paint last in
-        a :class:`tracksdata.array.GraphArrayView` (matches the original POC).
+        Add nodes in ascending alpha-effective amplitude (A·α) order so brighter
+        splats paint last in a :class:`tracksdata.array.GraphArrayView` (matches
+        the original POC). The ``amplitude`` node attribute is likewise A·α, so
+        the ranking is meaningful for imported classical splats (whose raw
+        amplitude is a constant 1, with opacity in the color alpha channel).
 
     Returns
     -------
@@ -180,9 +183,18 @@ def gsplats_to_tracksdata_graph(
     keys = td.DEFAULT_ATTR_KEYS
     pos_keys = ["z", "y", "x"][-d:] if d <= 3 else [f"d{i}" for i in range(d)]
 
+    from luxar.gsplats.utils.alpha import effective_amplitudes
+
     cholesky = _unpack_tril(np.asarray(gsplats.cholesky_factors, dtype=np.float64), d)
     centers = np.asarray(gsplats.centers, dtype=np.float64)
-    amplitudes = np.asarray(gsplats.amplitudes, dtype=np.float64)
+    # Alpha-effective amplitude (A·α when RGBA colors carry per-splat opacity):
+    # every blending mode scales a splat's rendered contribution by α, so the
+    # paint-order sort and the exported ``amplitude`` attribute must rank by
+    # rendered energy. Raw amplitude is constant 1 for imported classical
+    # splats (opacity rides in the color alpha channel — see
+    # VOLUMETRIC_BLENDING_SPEC.md §5.4.1), which would make the sort a no-op;
+    # identical to raw amplitude for fitted data (α = 1).
+    amplitudes = np.asarray(effective_amplitudes(gsplats), dtype=np.float64)
 
     nodes: list[dict[str, Any]] = []
     for i in range(gsplats.n_splats):

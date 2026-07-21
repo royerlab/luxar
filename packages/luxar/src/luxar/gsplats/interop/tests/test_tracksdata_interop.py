@@ -114,6 +114,32 @@ def test_gsplats_to_tracksdata_graph_dim_mismatch() -> None:
         gsplats_to_tracksdata_graph(gsplats, frame_shape=(64, 64, 64))
 
 
+def test_gsplats_to_tracksdata_uses_effective_amplitude_for_rgba() -> None:
+    # Imported classical splats carry amplitude = 1 with per-splat opacity in
+    # the color alpha channel. The exported `amplitude` attribute (and the
+    # paint-order sort) must rank by rendered energy A·α, not the constant
+    # raw amplitude — otherwise the sort is a no-op for imported data.
+    pytest.importorskip("tracksdata")
+    n = 5
+    alpha = np.array([0.9, 0.1, 0.5, 0.99, 0.2], dtype=np.float32)
+    gsplats = GSplatData(
+        centers=(np.random.RandomState(3).rand(n, 2) * 100).astype(np.float32),
+        amplitudes=np.ones(n, dtype=np.float32),  # imported-style
+        cholesky_factors=np.tile(np.array([3, 0, 3], dtype=np.float32), (n, 1)),
+        colors=np.concatenate(
+            [np.full((n, 3), 0.5, dtype=np.float32), alpha[:, None]], axis=1
+        ),
+    )
+    graph = gsplats_to_tracksdata_graph(gsplats, frame_shape=(128, 128), t=0)
+    amps = sorted(
+        graph.node_attrs(attr_keys=["amplitude"])["amplitude"].to_list()
+    )
+    # The exported amplitudes are A·α = α here (A = 1): the full alpha spread,
+    # NOT a constant 1 (which the pre-fix raw-amplitude export would give).
+    assert amps == pytest.approx(sorted(alpha.tolist()), abs=1e-6)
+    assert max(amps) < 1.0  # not the constant raw amplitude
+
+
 def test_gsplats_to_tracksdata_graph_accumulates_timepoints() -> None:
     pytest.importorskip("tracksdata")
     g = gsplats_to_tracksdata_graph(_make_2d_gsplats(3, seed=1), (128, 128), t=0)
