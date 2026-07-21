@@ -86,8 +86,24 @@ export function viewStatesEqual(a: ViewState, b: ViewState): boolean {
     if (a.slicePosition[i] !== b.slicePosition[i]) return false;
   }
   if (a.tolerance.length !== b.tolerance.length) return false;
+  // Ride-along rule (mirrors `buildSliceViewSig`): for a NON-DISPLAYED
+  // discrete non-spatial dim, the executed query derives its reach from
+  // `step` (tolerance-computer.ts), NOT from the ride-along tolerance
+  // value — and the two view-state builders famously disagree on that
+  // ride-along (0 at init vs 0.5 from navigation), which reset every
+  // progressive loader once per 4D dataset load. Skip the raw compare
+  // there; `step` (and `discrete`/`spatial` themselves) are compared in
+  // the dims projection below, so a REAL reach change still resets.
+  // Classified from `a`'s metadata: if `b` classifies differently, the
+  // dims projection compare below fails anyway.
+  const displayed = new Set(a.displayDims);
+  const dimsForTol = a.dimensions && b.dimensions ? a.dimensions : undefined;
   for (let i = 0; i < a.tolerance.length; i++) {
-    if (a.tolerance[i] !== b.tolerance[i]) return false;
+    if (a.tolerance[i] !== b.tolerance[i]) {
+      const m = dimsForTol?.[i];
+      const rideAlong = m?.discrete === true && m?.spatial !== true && !displayed.has(i);
+      if (!rideAlong) return false;
+    }
   }
   // Dimensions metadata: reference equality first, then a compare of the
   // canonical QUERY-DETERMINANT projection (see dimsQuerySig — display/
