@@ -24,11 +24,15 @@ describe('computeUniforms', () => {
     expect(offset).toBeCloseTo(-0.2 / 0.6, 5);
   });
 
-  it('handles degenerate range (min ≈ max)', () => {
-    const { intensity, offset } = computeUniforms(0.5, 0.5);
-    // Should clamp to large value
-    expect(intensity).toBe(1000);
-    expect(offset).toBe(-0.5 * 1000);
+  it('handles degenerate range (min == max) as identity pass-through', () => {
+    // A constant data range has nothing to window, so gain/offset must be the
+    // identity (color unchanged). The old "high contrast" mapping (gain 1000,
+    // offset -1000·min) turned `color·1000 − 1000` into 0 for every non-white
+    // color — rendering classical-splat imports (constant amplitude_data_range
+    // [1, 1] from per-element-opacity-in-alpha) entirely black.
+    expect(computeUniforms(0.5, 0.5)).toEqual({ intensity: 1.0, offset: 0.0 });
+    expect(computeUniforms(1.0, 1.0)).toEqual({ intensity: 1.0, offset: 0.0 });
+    expect(computeUniforms(0.0, 0.0)).toEqual({ intensity: 1.0, offset: 0.0 });
   });
 
   it('handles HDR range [0, 5]', () => {
