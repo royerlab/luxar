@@ -17,7 +17,8 @@ import numpy as np
 
 # a = 1 means "fully opaque" but maps to w = ∞; clamp one uint9-ish step
 # below 1 (w ≈ 6.24, transmittance ≈ 0.2%). Keep in sync with the viewer's
-# gsplat shaders (GLSL + TSL), which use the same literal.
+# ALPHA_CLAMP (rendering/materials/gsplat/math.ts), the single TS source
+# the GLSL + TSL gsplat shaders both interpolate.
 ALPHA_CLAMP: float = 1.0 - 1.0 / 512.0
 
 

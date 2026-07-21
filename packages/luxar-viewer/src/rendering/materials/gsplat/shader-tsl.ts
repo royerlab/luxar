@@ -78,6 +78,7 @@ import {
   usesPeakProjection,
 } from '../../blending-state';
 import type { BlendingMode } from '../../material-manager';
+import { ALPHA_CLAMP } from './math';
 
 // Type-erased constructor aliases. TSL's typed `vec2`/`vec3`/`vec4`/`mat3`
 // overloads reject many valid combinations of intermediate `Node<…>`
@@ -585,12 +586,12 @@ export function gsplatWebGPUFactory(
       .mul(max(exp(mahalSq.mul(-0.5)).sub(uShiftC), float(0.0)));
     // Per-splat opacity (color alpha; 1.0 for RGB data): linear factor in
     // every mode, mapped into optical DENSITY w = −ln(1−a) in volumetric
-    // (GLSL twin; clamp mirrors Python's ALPHA_CLAMP = 1 − 1/512 and sits
-    // INSIDE the expression — mix evaluates both lanes, so the log argument
-    // must be NaN-free even when the gate is 0).
+    // (GLSL twin; clamp = ALPHA_CLAMP from ./math and sits INSIDE the
+    // expression — mix evaluates both lanes, so the log argument must be
+    // NaN-free even when the gate is 0).
     const volumetricGraph = isVolumetricMode(config.blendingMode ?? 'additive');
     const alphaFactor: TSLNode = volumetricGraph
-      ? mix(float(1.0), min(vAlpha, float(0.998046875)).oneMinus().log().negate(), uHasElementAlpha)
+      ? mix(float(1.0), min(vAlpha, float(ALPHA_CLAMP)).oneMinus().log().negate(), uHasElementAlpha)
       : vAlpha;
     const intensity: TSLNode = rawIntensity.mul(alphaFactor).toVar();
     // Alpha is folded in, so a ~zero-alpha splat discards in every mode.

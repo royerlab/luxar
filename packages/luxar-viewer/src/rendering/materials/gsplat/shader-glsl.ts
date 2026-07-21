@@ -8,6 +8,7 @@
 import { GLSL_SANITIZE_FUNCTIONS, GLSL_NEAR_FADE_FUNCTIONS } from '../_shared/glsl-lib';
 import type { ShaderSource } from '../_shared/shader-source';
 import { gsplatWebGPUFactory, buildGSplatTSLNodesFromUniforms } from './shader-tsl';
+import { ALPHA_CLAMP } from './math';
 
 export const GSPLAT_VERTEX_SHADER = /* glsl */ `
     precision highp float;
@@ -423,11 +424,12 @@ export const GSPLAT_FRAGMENT_SHADER = /* glsl */ `
         // Every mode scales its contribution linearly by a; volumetric
         // instead maps a into optical DENSITY, w = −ln(1 − a), so a
         // splat's peak rendered alpha reproduces a exactly (3DGS-faithful;
-        // clamp mirrors Python's ALPHA_CLAMP = 1 − 1/512). Dilute limit:
-        // w ≈ a, so the modes agree as a → 0; at large a volumetric is
-        // intentionally denser (optical-depth semantics — see spec §5.4).
+        // clamp = ALPHA_CLAMP from ./math, mirrors Python's 1 − 1/512).
+        // Dilute limit: w ≈ a, so the modes agree as a → 0; at large a
+        // volumetric is intentionally denser (optical-depth semantics —
+        // see spec §5.4).
         #ifdef LUXAR_VOLUMETRIC
-        intensity *= mix(1.0, -log(1.0 - min(vAlpha, 0.998046875)), uHasElementAlpha);
+        intensity *= mix(1.0, -log(1.0 - min(vAlpha, ${ALPHA_CLAMP})), uHasElementAlpha);
         #else
         intensity *= vAlpha;
         #endif
