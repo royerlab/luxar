@@ -62,6 +62,12 @@ export interface SliceViewLike {
  * the key: projection re-runs on every hit, and a dataset content-hash change
  * clears the whole cache. `dimensions` may be undefined (each dim then keys on
  * position/tolerance alone — deterministic).
+ *
+ * `name` is deliberately absent even though `viewStatesEqual` compares it:
+ * the one query consumer of dimension names — `extend_to_all` tolerance
+ * matching — is applied UPSTREAM by `deriveNodeViewState`, so a name-driven
+ * reach change materializes in the per-node `tolerance` this key already
+ * covers. (The equality's name comparison is belt-and-braces on top.)
  */
 export function buildSliceViewSig(view: SliceViewLike): string {
   const dims = view.dimensions;

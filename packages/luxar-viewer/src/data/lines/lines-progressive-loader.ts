@@ -103,7 +103,7 @@ function concatenateLinesData(parts: LoadedLinesData[]): LoadedLinesData {
         throw new Error(
           'concatenateLinesData: mixed color dtypes across LOD levels ' +
             `(${part.colors.constructor.name} vs ${colors.constructor.name}) — ` +
-            'ladder levels must share each field\'s dtype.'
+            "ladder levels must share each field's dtype."
         );
       }
       colors.set(part.colors, vertexOffset * 3);
@@ -329,6 +329,15 @@ export class LinesProgressiveLoader implements LinesDataLoader {
           return finish();
         }
       }
+    } else if (this.lastViewState.dimensions !== viewState.dimensions) {
+      // Metadata refresh with an UNCHANGED query determinant (the scene
+      // rebuilds the dimensions objects right after the first data load —
+      // see view-state-equal.ts): adopt the fresh reference so subsequent
+      // compares take the reference-equality fast path instead of
+      // re-deriving the dims projection sig on every pass. Content is
+      // determinant-equal per the check above, so cache keys (which build
+      // from the same determinant) are unaffected.
+      this.lastViewState.dimensions = viewState.dimensions;
     }
 
     // Known-empty slice: LOD 0 committed 0 segments on a prior pass for this
