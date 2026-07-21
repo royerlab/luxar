@@ -63,9 +63,9 @@ function concatenateLinesData(parts: LoadedLinesData[]): LoadedLinesData {
   const count = (p: LoadedLinesData) => p.vertexCount;
 
   // Straightforward per-vertex fields via the shared helpers (dtype preserved).
-  const positions = concatRequiredField(parts, (p) => p.positions, count, ndim);
-  const widths = concatRequiredField(parts, (p) => p.widths, count);
-  const scalars = concatOptionalField(parts, (p) => p.scalars as ScalarArray, count);
+  const positions = concatRequiredField(parts, (p) => p.positions, count, ndim, 'positions');
+  const widths = concatRequiredField(parts, (p) => p.widths, count, 1, 'widths');
+  const scalars = concatOptionalField(parts, (p) => p.scalars as ScalarArray, count, 1, 'scalars');
 
   // Bespoke fields: segments need vertex-offset remapping; colors fill missing
   // LODs with white; sharpness is partial (nullable, not all-or-nothing).
@@ -95,6 +95,17 @@ function concatenateLinesData(parts: LoadedLinesData[]): LoadedLinesData {
       segments[segmentOffset * 2 + i] = part.segments[i] + vertexOffset;
     }
     if (colors && part.colors) {
+      // LADDER-DTYPE CONTRACT (see concat-helpers.ts): `set` converts by
+      // VALUE, not semantics — a Float32 (0..1) level written into a Uint8
+      // (0..255) merge truncates to garbage, and the reverse writes 255×
+      // values. The writer emits one color dtype per ladder; fail fast.
+      if (part.colors.constructor !== colors.constructor) {
+        throw new Error(
+          'concatenateLinesData: mixed color dtypes across LOD levels ' +
+            `(${part.colors.constructor.name} vs ${colors.constructor.name}) — ` +
+            'ladder levels must share each field\'s dtype.'
+        );
+      }
       colors.set(part.colors, vertexOffset * 3);
     } else if (colors && !part.colors) {
       const fill = colors instanceof Uint8Array ? 255 : colors instanceof Uint16Array ? 65535 : 1.0;

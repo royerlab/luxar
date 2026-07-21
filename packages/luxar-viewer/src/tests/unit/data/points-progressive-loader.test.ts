@@ -825,6 +825,17 @@ describe('PointsProgressiveLoader', () => {
       expect(result.colors?.length).toBe(175 * 3);
     });
 
+    it('rejects mixed color dtypes across LOD levels (ladder-dtype contract)', async () => {
+      // TypedArray.set converts by VALUE, not semantics — a Uint8 level
+      // (0..255) merged into a Float32 (0..1) output would silently write
+      // 255× values. Malformed ladders fail fast instead of rendering
+      // corruption (see concat-helpers.ts).
+      lodA.updateView.mockResolvedValue(makeLodData(100, 3, { color: 'float32' }));
+      lodB.updateView.mockResolvedValue(makeLodData(50, 3, { color: 'uint8' }));
+      lodC.updateView.mockResolvedValue(makeLodData(25, 3, { color: 'float32' }));
+      await expect(loader.loadPoints(baseViewState)).rejects.toThrow(/'colors' as Uint8Array/);
+    });
+
     it('drops colors entirely when at least one LOD lacks them (all-or-nothing policy)', async () => {
       // PointsProgressiveLoader's all-or-nothing per-attr concatenation
       // policy: any LOD missing an optional attribute → the merged result
