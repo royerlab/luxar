@@ -29,8 +29,9 @@ import type { DimensionMetadata } from '../../../types/dims';
  *   feed keyboard navigation, not the query.
  *
  * Deliberately EXCLUDED: `range`, `display`, `unit`, `scale`,
- * `description` — display/navigation metadata the cache determinant
- * also ignores. This projection (fixed array shape, not raw
+ * `description`, `categories` — display/navigation metadata the cache
+ * determinant also ignores (categorical relabeling lives in the
+ * node-level nd_transform permutation, not here). This projection (fixed array shape, not raw
  * `JSON.stringify` of the objects) exists because the scene REBUILDS
  * the dimensions metadata right after the first data load —
  * dropping the `range: null` key, deriving `step: null → 1` on
