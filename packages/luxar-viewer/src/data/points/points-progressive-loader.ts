@@ -316,6 +316,15 @@ export class PointsProgressiveLoader implements PointsDataLoader {
           return finish();
         }
       }
+    } else if (this.lastViewState.dimensions !== viewState.dimensions) {
+      // Metadata refresh with an UNCHANGED query determinant (the scene
+      // rebuilds the dimensions objects right after the first data load —
+      // see view-state-equal.ts): adopt the fresh reference so subsequent
+      // compares take the reference-equality fast path instead of
+      // re-deriving the dims projection sig on every pass. Content is
+      // determinant-equal per the check above, so cache keys (which build
+      // from the same determinant) are unaffected.
+      this.lastViewState.dimensions = viewState.dimensions;
     }
 
     // Known-empty slice: LOD 0 committed 0 points on a prior pass for this SAME

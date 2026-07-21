@@ -291,6 +291,42 @@ describe('PointsProgressiveLoader', () => {
       expect(lodC.updateView).not.toHaveBeenCalled();
     });
 
+    it('does NOT reload on a determinant-equal dimensions refresh, then adopts the new reference', async () => {
+      // The scene rebuilds the dimensions objects right after the first data
+      // load (range fill, displayed-dim step derivation, key reorder). The
+      // loader must neither reset on it (view-state-equal's determinant
+      // projection) nor keep sig-comparing forever afterwards — it adopts
+      // the fresh reference so later passes ref-short-circuit. A REAL query
+      // change after the refresh must still reset.
+      const dimsV1 = [
+        { name: 'x', unit: 'units', scale: 1, range: null, display: true, step: null },
+        { name: 'y', unit: 'units', scale: 1, range: null, display: true, step: null },
+        { name: 'z', unit: 'units', scale: 1, range: null, display: true, step: null },
+      ] as unknown as PointsViewState['dimensions'];
+      const dimsV2 = [
+        { name: 'x', unit: 'units', scale: 1, display: true, step: 1, range: [0, 9] },
+        { name: 'y', unit: 'units', scale: 1, display: true, step: 1, range: [0, 9] },
+        { name: 'z', unit: 'units', scale: 1, display: true, step: 1, range: [0, 9] },
+      ] as unknown as PointsViewState['dimensions'];
+      await loader.loadPoints({ ...baseViewState, dimensions: dimsV1 });
+      lodA.updateView.mockClear();
+
+      // Refresh: determinant-equal, different reference → no reload.
+      await loader.loadPoints({ ...baseViewState, dimensions: dimsV2 });
+      expect(lodA.updateView).not.toHaveBeenCalled();
+      // Same refreshed reference again → still no reload (ref fast path).
+      await loader.loadPoints({ ...baseViewState, dimensions: dimsV2 });
+      expect(lodA.updateView).not.toHaveBeenCalled();
+
+      // A genuine query change still resets.
+      await loader.loadPoints({
+        ...baseViewState,
+        slicePosition: [1, 1, 1, 0],
+        dimensions: dimsV2,
+      });
+      expect(lodA.updateView).toHaveBeenCalled();
+    });
+
     it('treats different dimensions metadata as a state change', async () => {
       const stateA: PointsViewState = {
         ...baseViewState,
