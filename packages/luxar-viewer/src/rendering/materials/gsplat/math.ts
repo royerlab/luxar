@@ -24,6 +24,18 @@ import { log, Modules } from '../../../utils/log';
 export const GSPLAT_COV2D_DILATION_DEFAULT = 0.3;
 
 /**
+ * Per-splat opacity clamp for the volumetric optical-depth map. Opacity
+ * a = 1 means "fully opaque" but maps to w = −ln(1 − a) = ∞; clamp one
+ * uint9-ish step below 1 (w ≈ 6.24, transmittance ≈ 0.2%). Kept here as
+ * the single TS source of truth so the GLSL and TSL gsplat shaders emit
+ * an identical literal (the `tsl-shader-parity` harness depends on it).
+ *
+ * Mirrors Python's `luxar.gsplats.utils.alpha.ALPHA_CLAMP` (the two
+ * languages can't share a symbol — keep the value in sync across both).
+ */
+export const ALPHA_CLAMP = 1.0 - 1.0 / 512.0;
+
+/**
  * Ray-integral factor for the shifted Gaussian:
  *   sqrt(2π) · erf(T/√2) − 2·T·exp(−½·T²)
  *
