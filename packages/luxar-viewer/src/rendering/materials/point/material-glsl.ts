@@ -152,10 +152,10 @@ export class PointMaterial
       glslVersion: THREE.GLSL3,
 
       // Material properties.
-      // vertexColors=false because points read `aColor` directly as an
-      // InstancedBufferAttribute. Three's auto-injected `color` attribute
-      // is for the per-vertex `position` attribute it assumes, which this
-      // instanced mesh layout does not use.
+      // vertexColors=false because point colors come from the point
+      // texture (texel1.rgb), not a vertex attribute. Three's
+      // auto-injected `color` attribute is for the per-vertex `position`
+      // attribute it assumes, which this instanced mesh layout does not use.
       vertexColors: false,
       transparent: materialConfig.transparent ?? !isOpaque,
       depthWrite: false, // applyBlendingMode below overwrites immediately
@@ -285,9 +285,9 @@ export class PointMaterial
    * Update the colormap texture and enable/disable colormap mode.
    *
    * Under the instanced-quad rendering path, vertexColors is always
-   * false — the shader reads `aColor` (USE_COLORMAP off) or `aScalar`
-   * (USE_COLORMAP on) explicitly as InstancedBufferAttributes. Only
-   * the USE_COLORMAP define flips here, triggering a recompile.
+   * false — the shader reads the color (USE_COLORMAP off) or the scalar
+   * (USE_COLORMAP on) from the point texture's texels. Only the
+   * USE_COLORMAP define flips here, triggering a recompile.
    */
   updateColormapTexture(texture: THREE.DataTexture | null): void {
     const { wasEnabled, nowEnabled } = applyColormapTextureToMaterial(this, texture);

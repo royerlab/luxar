@@ -42,6 +42,12 @@ import { chooseCapacity } from './capacity';
  * Points render as instanced unit quads, so the indexed draw range is
  * always the 2-triangle base quad (6 indices) while `instanceCount`
  * carries the number of point sprites.
+ *
+ * Called ONLY from `updateGeometry`, AFTER the texel write succeeds —
+ * never at acquire time. Bumping `instanceCount` before the write would
+ * let a throwing write draw the new count over stale/zero texels (a
+ * grown reuse would render ~N duplicate sprites of point 0 until the
+ * next update); the gsplats adapter has the same ordering.
  */
 function preparePointsGeometryForDraw(
   geometry: THREE.BufferGeometry,
@@ -119,7 +125,7 @@ export class PointsBufferAdapter {
         active.lastUsedFrame = host.frameCount;
         host.stats.reuses++;
         host.typeStats.points.reuses++;
-        return preparePointsGeometryForDraw(active.geometry, pointCount);
+        return active.geometry as THREE.InstancedBufferGeometry;
       } else {
         // Grow = RELEASE + REACQUIRE — an in-place rebuild strands the
         // old GL/GPU buffer in the renderer caches (hard leak under the
@@ -160,7 +166,7 @@ export class PointsBufferAdapter {
       host.stats.reuses++;
       host.typeStats.points.reuses++;
       host._lastAcquireRebuilt = true;
-      return preparePointsGeometryForDraw(candidate.geometry, pointCount);
+      return candidate.geometry as THREE.InstancedBufferGeometry;
     }
 
     host._lastAcquireRebuilt = true;
@@ -184,7 +190,7 @@ export class PointsBufferAdapter {
     host.evictUnused(true);
     host.typeStats.points.allocations++;
 
-    return preparePointsGeometryForDraw(geometry, pointCount);
+    return geometry;
   }
 
   releaseGeometry(nodeId: string): void {

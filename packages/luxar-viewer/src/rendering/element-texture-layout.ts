@@ -155,9 +155,13 @@ let placeholderElementTexture: THREE.DataTexture | null = null;
  */
 export function getPlaceholderElementTexture(): THREE.DataTexture {
   if (!placeholderElementTexture) {
+    // 12×1: the LCM of the layouts' texels-per-element (4 and 3), so the
+    // "an element's texels never straddle a row" invariant the shader
+    // prologues state holds for the placeholder too (an OOB texelFetch is
+    // defined-safe in WebGL2, but keeping the invariant true costs nothing).
     placeholderElementTexture = new THREE.DataTexture(
-      new Float32Array(16),
-      4,
+      new Float32Array(12 * 4),
+      12,
       1,
       THREE.RGBAFormat,
       THREE.FloatType

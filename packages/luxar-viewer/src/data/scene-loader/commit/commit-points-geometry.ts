@@ -111,18 +111,16 @@ export function commitPointsGeometry(
   const pointCount = clampPointCapacity(data.pointCount);
 
   // Pre-commit state for the append predicate below. Captured BEFORE the
-  // stamps overwrite them: the pool branch reassigns `points.geometry`, and
-  // `visiblePointCount` is overwritten on the next line.
+  // pool branch reassigns `points.geometry` and the success-only stamps
+  // below overwrite `visiblePointCount`. (The freshness stamps —
+  // visiblePointCount / loadedViewVersion / ladderComplete — are written
+  // ONLY after a successful GPU write, mirroring the gsplats twin: a
+  // throwing write must not leave the mesh stamped fresh-for-this-view
+  // with a count that never landed, or the LOD freshness registry would
+  // trust it until the next user interaction.)
   const prevGeometry = points.geometry;
   const hadCommittedData = hasCommittedData(points);
   const prevCount = points.userData.visiblePointCount;
-
-  // Type guard already passed in the early-return above.
-  points.userData.visiblePointCount = pointCount;
-  // Slice-aware LOD freshness stamp (see commit-gsplats-geometry.ts).
-  stampLoadedViewVersion(points.userData, loadedViewVersion);
-  // Ladder-completeness stamp for the never-downgrade display gate.
-  stampLadderComplete(points.userData);
 
   // World-space radius footprint, shared by every commit path so the
   // boundingBox carries the rendered disc extent (the three-geometry
@@ -191,6 +189,15 @@ export function commitPointsGeometry(
       // unpins the parent concat's CPU arrays. A retry after a throwing
       // write below reads `undefined` and full-rewrites, the safe direction.
       setPrefixParent(data, null);
+      // Propagate the dtype-aware radius scale onto geometry userData
+      // BEFORE the write: the finally's material sync runs even on a
+      // throwing write (the geometry was handed off regardless), and it
+      // must push THIS commit's scale — not a best-fit-adopted previous
+      // tenant's (Uint8 maxRadius vs Float32 1.0 is a 50× radius skew).
+      if (!geometry.userData) {
+        geometry.userData = {};
+      }
+      geometry.userData.radiusScale = data.radii instanceof Uint8Array ? maxRadius : 1.0;
       try {
         gpuBufferPool.updatePointsGeometry(geometry, data, pointCount, {
           fromInstance: canAppend ? (prevCount ?? 0) : 0,
@@ -202,15 +209,6 @@ export function commitPointsGeometry(
           geometry.boundingSphere = new THREE.Sphere();
           geometry.boundingBox.getBoundingSphere(geometry.boundingSphere);
         }
-
-        // propagate dtype-aware radius scale onto geometry userData and
-        // immediately sync render + pick material uniforms. Without this,
-        // a placeholder→real-data transition would leave radiusScale=1
-        // even though Uint8 normalized radii should map to [0, max_radius].
-        if (!geometry.userData) {
-          geometry.userData = {};
-        }
-        geometry.userData.radiusScale = data.radii instanceof Uint8Array ? maxRadius : 1.0;
       } finally {
         // Ownership handoff must happen even if the update throws: the
         // acquire may have RELEASED the mesh's current geometry into the
@@ -235,6 +233,13 @@ export function commitPointsGeometry(
           prevGeometry.dispose();
         }
       }
+      // SUCCESS-ONLY stamps (a throw above propagates past this point,
+      // mirroring the gsplats twin's ordering): freshness first —
+      points.userData.visiblePointCount = pointCount;
+      // Slice-aware LOD freshness stamp (see commit-gsplats-geometry.ts).
+      stampLoadedViewVersion(points.userData, loadedViewVersion);
+      // Ladder-completeness stamp for the never-downgrade display gate.
+      stampLadderComplete(points.userData);
       // Record the committed data reference — a later update returning the
       // SAME reference (memoized progressive concat) takes the stamp-only
       // no-op path above instead of re-uploading.
@@ -254,14 +259,18 @@ export function commitPointsGeometry(
     // the pool. (A historical same-count in-place branch assumed the
     // pool's interleaved layout and threw against factory-built
     // geometry; correctness over reuse on this non-default fallback.)
+    // Create-then-swap-then-dispose: building first keeps the mesh on its
+    // old (valid) geometry if the factory throws on malformed data —
+    // dispose-first would strand the mesh on a disposed geometry whose
+    // element texture is already freed.
     const oldGeometry = points.geometry;
-    if (oldGeometry) {
-      oldGeometry.dispose();
-    }
     // Pass max_radius so the rebuilt geometry bakes the correct
     // footprint into boundingBox (and the right dtype scale); omitting
     // it would default maxRadius=1.0 and clip large radii.
     points.geometry = nodeFactory.createPointsGeometry(data, maxRadius);
+    if (oldGeometry) {
+      oldGeometry.dispose();
+    }
     // dispose+recreate path picks up new dtype-aware scales from
     // the freshly built geometry's userData.
     syncPointMaterialWithGeometry(points);
@@ -269,6 +278,10 @@ export function commitPointsGeometry(
     // RenderObject (stale `vertexBuffers` on the WebGPU backend) —
     // same contract as the pool path's attributesRebuilt branch.
     invalidateRenderObjectFor(points);
+    // SUCCESS-ONLY stamps (see the pool path).
+    points.userData.visiblePointCount = pointCount;
+    stampLoadedViewVersion(points.userData, loadedViewVersion);
+    stampLadderComplete(points.userData);
     // Record the committed data reference (see the pool path above).
     setCommittedData(points, data);
     // The freshly built geometry holds this commit's data in full. The flag

@@ -61,7 +61,10 @@ describe('GPUBufferPool', () => {
     it('should allocate new geometry on first request', () => {
       const geom = pool.acquirePointsGeometry('node1', 1000);
       expect(geom).toBeInstanceOf(THREE.InstancedBufferGeometry);
-      expect(geom.instanceCount).toBe(1000);
+      // Acquire must NOT bump instanceCount — only a successful texel
+      // write does (updateGeometry's post-write prepare). A throwing
+      // write would otherwise draw the new count over stale/zero texels.
+      expect(geom.instanceCount).toBe(0);
       expect(geom.drawRange.count).toBe(6);
       // Texture-backed storage: per-point data lives in the pooled
       // RGBA32F point texture (3 texels/point); aSortedIndex is the only

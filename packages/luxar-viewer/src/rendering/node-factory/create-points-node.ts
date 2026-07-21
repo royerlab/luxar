@@ -270,7 +270,10 @@ export function createPointsNode(
     loader,
     attrs,
     maxRadius: attrs.max_radius ?? 1.0,
-    visiblePointCount: data.pointCount,
+    // Clamped like the commit path's stamp — the geometry above wrote at
+    // most the per-node texture bound, and debug/UI counts must agree
+    // with drawn instances.
+    visiblePointCount: clampPointCapacity(data.pointCount),
     // Per-node material from creation: LayersPanel and the LOD
     // cross-fade honor this marker and mutate the material directly
     // instead of clone-on-first-use (mirrors createGSplatsNode).

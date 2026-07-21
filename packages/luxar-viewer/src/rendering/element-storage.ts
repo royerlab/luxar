@@ -81,9 +81,17 @@ export function registerElementTexelDirtyRange(
 
   // Collapse any pending ranges + the new span into one contiguous float
   // span (min start, max end). Every writer registers a contiguous prefix
-  // or an append suffix, so the union is an exact or superset cover.
-  let startFloat = firstElement * floatsPerElement;
-  let endFloat = endElement * floatsPerElement;
+  // or an append suffix, so the union is an exact or superset cover. An
+  // EMPTY new span contributes nothing — seeding the fold with its
+  // position would inflate pending ranges up to it (e.g. a pending
+  // [100, 300) + an at-capacity no-op append at float 60000 would upload
+  // [100, 60000) of clean data).
+  let startFloat = Infinity;
+  let endFloat = -Infinity;
+  if (endElement > firstElement) {
+    startFloat = firstElement * floatsPerElement;
+    endFloat = endElement * floatsPerElement;
+  }
   for (const range of texture.updateRanges) {
     if (range.start < startFloat) startFloat = range.start;
     const end = range.start + range.count;
@@ -92,8 +100,7 @@ export function registerElementTexelDirtyRange(
   texture.clearUpdateRanges();
 
   if (endFloat <= startFloat) {
-    // Nothing dirty (count 0, and any pending ranges were already folded
-    // into [startFloat, endFloat) above, so there were none). Do NOT set
+    // Nothing dirty anywhere (empty span, no pending ranges). Do NOT set
     // needsUpdate: with empty updateRanges three takes its FULL-image
     // texSubImage2D path, which re-uploads the entire capacity-sized
     // backing store of a reused pool texture (tens of MB at multi-million
