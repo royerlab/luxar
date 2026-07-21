@@ -1,10 +1,10 @@
 /**
  * Phase 1 texture-backed splat storage — unit coverage for the layout
- * authority (`splat-texture-layout.ts`), the storage helpers
- * (`gsplat-geometry.ts::attachSplatStorage` and friends), the pool
- * adapter's growth/dispose behavior, byte accounting, and the commit
- * material sync. See `docs/guides/specs/GSPLAT_DEPTH_SORTING_SPEC.md`
- * §4 for the design.
+ * authority (`element-texture-layout.ts`), the storage helpers
+ * (`element-storage.ts` + the gsplat-bound wrappers in
+ * `gsplat-geometry.ts`), the pool adapter's growth/dispose behavior,
+ * byte accounting, and the commit material sync. See
+ * `docs/guides/specs/GSPLAT_DEPTH_SORTING_SPEC.md` §4 for the design.
  */
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
@@ -12,23 +12,25 @@ import * as THREE from 'three';
 import {
   SPLAT_FLOATS_PER_SPLAT,
   SPLAT_TEXELS_PER_SPLAT,
-  configureSplatTextureLayout,
-  resetSplatTextureLayoutForTests,
+  configureElementTextureLayout,
+  resetElementTextureLayoutForTests,
   getSplatTextureWidth,
   getMaxSplatCapacityPerNode,
   clampSplatCapacity,
   splatTextureHeightForCapacity,
   getPlaceholderSplatTexture,
-} from '../../../rendering/splat-texture-layout';
+} from '../../../rendering/element-texture-layout';
 import {
-  attachSplatStorage,
-  getSplatTexture,
-  splatTexelCapacity,
-  writeSplatTexels,
-  registerSplatTexelDirtyRange,
+  elementTexelCapacity,
+  registerElementTexelDirtyRange,
   writeSortedIndexIdentity,
   writeSortedIndexIdentityRange,
   writeSortedIndexOrdering,
+} from '../../../rendering/element-storage';
+import {
+  attachSplatStorage,
+  getSplatTexture,
+  writeSplatTexels,
   type SplatTexelSource,
 } from '../../../rendering/gsplat-geometry';
 import { GPUBufferPool } from '../../../rendering/gpu-buffer-pool';
@@ -57,37 +59,37 @@ function makeSource(count: number): SplatTexelSource {
 }
 
 afterEach(() => {
-  resetSplatTextureLayoutForTests();
+  resetElementTextureLayoutForTests();
 });
 
-describe('splat-texture-layout — texel address math', () => {
+describe('element-texture-layout — texel address math', () => {
   it('defaults to a 4096-wide texture with a 4096² capacity bound', () => {
     expect(getSplatTextureWidth()).toBe(4096);
     expect(getMaxSplatCapacityPerNode()).toBe((4096 * 4096) / SPLAT_TEXELS_PER_SPLAT);
   });
 
   it('caps the width at min(4096, maxTextureSize) and forces a multiple of 4', () => {
-    configureSplatTextureLayout(16384);
+    configureElementTextureLayout(16384);
     expect(getSplatTextureWidth()).toBe(4096); // never wider than 4096
 
     // Non-4096 width: a 2048-class device.
-    configureSplatTextureLayout(2048);
+    configureElementTextureLayout(2048);
     expect(getSplatTextureWidth()).toBe(2048);
     expect(getMaxSplatCapacityPerNode()).toBe((2048 * 2048) / SPLAT_TEXELS_PER_SPLAT);
 
     // A pathological non-multiple-of-4 limit is rounded DOWN so a
     // splat's 4 texels can never straddle a row boundary.
-    configureSplatTextureLayout(2050);
+    configureElementTextureLayout(2050);
     expect(getSplatTextureWidth()).toBe(2048);
 
     // Sub-4 limits floor at 4 (would otherwise round to width 0 and
     // divide-by-zero the height math).
-    configureSplatTextureLayout(3);
+    configureElementTextureLayout(3);
     expect(getSplatTextureWidth()).toBe(4);
   });
 
   it('computes row-padded texture heights', () => {
-    configureSplatTextureLayout(4096);
+    configureElementTextureLayout(4096);
     // 1024 splats/row at width 4096.
     expect(splatTextureHeightForCapacity(0)).toBe(1);
     expect(splatTextureHeightForCapacity(1)).toBe(1);
@@ -96,7 +98,7 @@ describe('splat-texture-layout — texel address math', () => {
   });
 
   it('clamps requested capacities to the per-node texture bound', () => {
-    configureSplatTextureLayout(2048);
+    configureElementTextureLayout(2048);
     const max = getMaxSplatCapacityPerNode();
     expect(clampSplatCapacity(max - 1)).toBe(max - 1);
     expect(clampSplatCapacity(max)).toBe(max);
@@ -150,7 +152,10 @@ describe('attachSplatStorage / writeSplatTexels — fused writer round-trip', ()
     // Widen colors to RGBA with a distinct per-splat alpha ramp.
     const rgba = new Float32Array(8 * 4);
     for (let i = 0; i < 8; i++) {
-      rgba.set([base.colors[i * 3], base.colors[i * 3 + 1], base.colors[i * 3 + 2], i * 0.1], i * 4);
+      rgba.set(
+        [base.colors[i * 3], base.colors[i * 3 + 1], base.colors[i * 3 + 2], i * 0.1],
+        i * 4
+      );
     }
     const src: SplatTexelSource = { ...base, colors: rgba, colorComponents: 4 };
     const written = writeSplatTexels(texture, src, 8);
@@ -168,7 +173,7 @@ describe('attachSplatStorage / writeSplatTexels — fused writer round-trip', ()
 
   it('registers per-row dirty ranges over [0, n), leaving slack rows clean', () => {
     // width 8 → 2 texels-per-splat-row math: rowFloats = 32, 2 splats/row.
-    configureSplatTextureLayout(8);
+    configureElementTextureLayout(8);
     const geometry = new THREE.InstancedBufferGeometry();
     const texture = attachSplatStorage(geometry, 16); // bound = 8×8/4 = 16 → 8 rows
     expect(texture.image.height).toBe(8);
@@ -192,7 +197,7 @@ describe('attachSplatStorage / writeSplatTexels — fused writer round-trip', ()
   });
 
   it('falls back to a full-image upload (empty ranges) when most rows are dirty', () => {
-    configureSplatTextureLayout(8);
+    configureElementTextureLayout(8);
     const geometry = new THREE.InstancedBufferGeometry();
     const texture = attachSplatStorage(geometry, 16); // 8 rows
     // 15 splats = floats [0, 240) = rows 0..7 = all 8 rows ≥ 0.75×8 → full upload.
@@ -204,7 +209,7 @@ describe('attachSplatStorage / writeSplatTexels — fused writer round-trip', ()
   it('collapses pending ranges across hidden commits into one contiguous per-row set', () => {
     // WebGPU backends replay texture ranges verbatim and never clear them,
     // so successive writes while hidden must union, not accumulate.
-    configureSplatTextureLayout(8);
+    configureElementTextureLayout(8);
     const geometry = new THREE.InstancedBufferGeometry();
     const texture = attachSplatStorage(geometry, 16);
     writeSplatTexels(texture, makeSource(2), 2); // floats [0, 32) = row 0
@@ -216,12 +221,12 @@ describe('attachSplatStorage / writeSplatTexels — fused writer round-trip', ()
   });
 
   it('registers an append-only span [firstSplat, endSplat) (Stage-2 contract)', () => {
-    configureSplatTextureLayout(8);
+    configureElementTextureLayout(8);
     const geometry = new THREE.InstancedBufferGeometry();
     const texture = attachSplatStorage(geometry, 16);
     texture.clearUpdateRanges();
     // Splats [2, 4) = floats [32, 64) = row 1 only — no prefix re-upload.
-    registerSplatTexelDirtyRange(texture, 2, 4);
+    registerElementTexelDirtyRange(texture, SPLAT_FLOATS_PER_SPLAT, 2, 4);
     const ranges = texture.updateRanges;
     expect(ranges.length).toBe(1);
     expect(ranges[0].start).toBe(32);
@@ -233,11 +238,11 @@ describe('attachSplatStorage / writeSplatTexels — fused writer round-trip', ()
     // backend/renderer swap does). The dirty-range split must follow the
     // texture's OWN width (8 → rowFloats 32), or a range would straddle rows
     // and the WebGL upload would fail with INVALID_VALUE.
-    configureSplatTextureLayout(8);
+    configureElementTextureLayout(8);
     const geometry = new THREE.InstancedBufferGeometry();
     const texture = attachSplatStorage(geometry, 16); // width 8, 8 rows
     expect(texture.image.width).toBe(8);
-    configureSplatTextureLayout(4096); // global width now diverges from the texture
+    configureElementTextureLayout(4096); // global width now diverges from the texture
     writeSplatTexels(texture, makeSource(4), 4); // 4 splats = floats [0, 64)
     const rowFloats = texture.image.width * 4; // 32 — the TEXTURE's stride
     const ranges = texture.updateRanges;
@@ -253,7 +258,7 @@ describe('attachSplatStorage / writeSplatTexels — fused writer round-trip', ()
   it('writeSplatTexels({fromSplat}) writes ONLY the suffix, leaving prefix texels untouched (Stage 2 append)', () => {
     // Narrow width → multiple rows so the appended suffix lands on its own
     // row rather than hitting the single-row full-upload fallback.
-    configureSplatTextureLayout(8); // rowFloats 32, 2 splats/row
+    configureElementTextureLayout(8); // rowFloats 32, 2 splats/row
     const geometry = new THREE.InstancedBufferGeometry();
     const texture = attachSplatStorage(geometry, 8); // 8 splats → 4 rows
     const arr = texture.image.data as Float32Array;
@@ -319,7 +324,7 @@ describe('attachSplatStorage / writeSplatTexels — fused writer round-trip', ()
   it('clamps the written count to the texture capacity (memory safety)', () => {
     const geometry = new THREE.InstancedBufferGeometry();
     const texture = attachSplatStorage(geometry, 4);
-    const cap = splatTexelCapacity(texture);
+    const cap = elementTexelCapacity(texture, SPLAT_FLOATS_PER_SPLAT);
     const src = makeSource(cap + 5);
     expect(writeSplatTexels(texture, src, cap + 5)).toBe(cap);
   });
@@ -364,12 +369,12 @@ describe('attachSplatStorage / writeSplatTexels — fused writer round-trip', ()
     // over-bound request must yield a texture no taller than 8 rows
     // (height ≤ maxTextureSize by construction) and a matching
     // aSortedIndex length, whatever the caller asked for.
-    configureSplatTextureLayout(8);
+    configureElementTextureLayout(8);
     const geometry = new THREE.InstancedBufferGeometry();
     const texture = attachSplatStorage(geometry, 100);
     expect(texture.image.height).toBeLessThanOrEqual(8);
     expect((geometry.getAttribute('aSortedIndex').array as Uint32Array).length).toBe(16);
-    expect(splatTexelCapacity(texture)).toBe(16);
+    expect(elementTexelCapacity(texture, SPLAT_FLOATS_PER_SPLAT)).toBe(16);
   });
 
   it('disposes the texture WITH the geometry (structural lifetime pin)', () => {
@@ -466,12 +471,12 @@ describe('pool adapter — growth, dispose, byte accounting', () => {
   it('clamps acquire capacity AND written count to the per-node texture bound', () => {
     // Shrink the bound so the clamp is testable at unit scale:
     // maxTextureSize 16 -> width 16, bound = 16*16/4 = 64 splats.
-    configureSplatTextureLayout(16);
+    configureElementTextureLayout(16);
     const small = new GPUBufferPool(20, 300, 5, () => Infinity);
     try {
       const geom = small.acquireGSplatsGeometry('big', 1000);
       const texture = getSplatTexture(geom)!;
-      expect(splatTexelCapacity(texture)).toBe(64);
+      expect(elementTexelCapacity(texture, SPLAT_FLOATS_PER_SPLAT)).toBe(64);
       const src = makeSource(64); // writer clamps count to capacity first
       small.updateGSplatsGeometry(
         geom,

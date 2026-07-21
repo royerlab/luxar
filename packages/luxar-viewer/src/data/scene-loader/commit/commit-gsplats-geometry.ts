@@ -15,7 +15,7 @@
 import * as THREE from 'three';
 import { updateInstancedGSplatsMesh } from '../../../rendering/gsplat-geometry';
 import { noteGSplatsCommit } from '../../../rendering/depth-sort-coordinator';
-import { clampSplatCapacity } from '../../../rendering/splat-texture-layout';
+import { clampSplatCapacity } from '../../../rendering/element-texture-layout';
 import { syncGSplatMaterialWithGeometry } from '../../../rendering/material-sync-helpers';
 import { isGSplatsUserData } from '../../../types/gsplats';
 import { log, Modules } from '../../../utils/log';
@@ -78,7 +78,7 @@ export function commitGSplatsGeometry(
   const { processed, cholesky01, cholesky23, cholesky45 } = staged;
 
   // SEMANTIC clamp at the commit choke point: the GPU writers below clamp
-  // the WRITTEN splats to the per-node texture bound (splat-texture-layout),
+  // the WRITTEN splats to the per-node texture bound (element-texture-layout),
   // so every count this commit records or hands out — visibleSplatCount,
   // the sort coordinator's `count` — must be the clamped one. Otherwise the
   // SortWorker returns a permutation with slot values ≥ the texture

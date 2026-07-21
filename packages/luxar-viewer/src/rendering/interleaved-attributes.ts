@@ -16,7 +16,7 @@
  * Symmetry: Points / Lines flow through this helper so their
  * geometry construction stays parallel. GSplats left this path in
  * depth-sorting Phase 1 — their per-splat data lives in an RGBA32F
- * splat texture (`gsplat-geometry.ts::attachSplatStorage`), with a
+ * splat texture (`element-storage.ts::attachElementStorage`), with a
  * single `aSortedIndex` instanced attribute (symmetry restored
  * when/if Points/Lines migrate — spec §8).
  *
