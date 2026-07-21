@@ -27,38 +27,31 @@ function makePointCloud(
     hasSharpness?: boolean;
   } = {}
 ): THREE.Mesh {
-  // Point clouds are THREE.Mesh with instanced quad geometry and
-  // per-instance attributes prefixed `a*`. `computeDebugState` selects
-  // on `userData.nodeType === 'points'`.
+  // Point clouds are THREE.Mesh with instanced quad geometry whose
+  // per-point data lives in the point texture (fixed 3-texel layout;
+  // only `aSortedIndex` remains a per-instance attribute).
+  // `computeDebugState` selects on `userData.nodeType === 'points'`,
+  // counts via `instanceCount`, and reports field presence from the
+  // node's declared metadata (`userData.attrs.has_*`) — attribute
+  // probing is impossible under the fixed texel layout.
   const geometry = new THREE.InstancedBufferGeometry();
   geometry.instanceCount = options.instanceCount ?? count;
   geometry.setAttribute(
-    'aCenter',
-    new THREE.InstancedBufferAttribute(new Float32Array(count * 3), 3)
+    'aSortedIndex',
+    new THREE.InstancedBufferAttribute(new Uint32Array(count), 1)
   );
-  if (options.hasColors) {
-    geometry.setAttribute(
-      'aColor',
-      new THREE.InstancedBufferAttribute(new Float32Array(count * 3), 3)
-    );
-  }
-  if (options.hasRadii) {
-    geometry.setAttribute(
-      'aRadius',
-      new THREE.InstancedBufferAttribute(new Float32Array(count), 1)
-    );
-  }
-  if (options.hasSharpness) {
-    geometry.setAttribute(
-      'aSharpness',
-      new THREE.InstancedBufferAttribute(new Float32Array(count), 1)
-    );
-  }
   if (options.drawRange !== undefined) {
     geometry.setDrawRange(0, options.drawRange);
   }
   const points = new THREE.Mesh(geometry);
-  points.userData = { nodeType: 'points' };
+  points.userData = {
+    nodeType: 'points',
+    attrs: {
+      has_colors: !!options.hasColors,
+      has_radii: !!options.hasRadii,
+      has_sharpness: !!options.hasSharpness,
+    },
+  };
   if (options.name !== undefined) points.name = options.name;
   if (options.visible !== undefined) points.visible = options.visible;
   return points;
@@ -170,7 +163,7 @@ describe('computeDebugState', () => {
       expect(state.totalPoints).toBe(100);
     });
 
-    it('reports has* flags from geometry attributes', () => {
+    it('reports has* flags from the node metadata (userData.attrs)', () => {
       const scene = new THREE.Scene();
       scene.add(
         makePointCloud(10, {

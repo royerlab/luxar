@@ -57,31 +57,31 @@ test.describe('Test Fixture Rendering', () => {
         }
       });
 
-      if (!points || !points.geometry.attributes.aSharpness) {
+      const texData = points?.geometry?.userData?.elementTexture?.image?.data;
+      if (!points || !texData || !points.userData?.attrs?.has_sharpness) {
         return null;
       }
 
       const geometry = points.geometry;
-      const sharpnessAttr = geometry.attributes.aSharpness;
-      // Points render as instanced quads: drawRange is the 6-index base
-      // quad, while instanceCount is the visible point count. Attribute
-      // buffers may be over-allocated by the GPU pool.
+      // Per-point data is texture-backed: the RGBA32F element texture holds
+      // 12 floats per point, with sharpness at slot [i*12+7]. Points render
+      // as instanced quads: drawRange is the 6-index base quad, while
+      // instanceCount is the visible point count. The texel buffer may be
+      // over-allocated by the GPU pool.
+      const STRIDE = 12;
+      const texelCapacity = Math.floor(texData.length / STRIDE);
       const instanceCount = geometry.isInstancedBufferGeometry
         ? geometry.instanceCount
-        : sharpnessAttr.count;
-      const actualCount = Math.min(instanceCount, sharpnessAttr.count);
-      // aSharpness is an InterleavedBufferAttribute; .array would return
-      // the shared interleaved buffer. Use getX(i) to read the actual
-      // per-instance sharpness values.
+        : texelCapacity;
+      const actualCount = Math.min(instanceCount, texelCapacity);
       const array: number[] = [];
       for (let i = 0; i < actualCount; i++) {
-        array.push(sharpnessAttr.getX(i));
+        array.push(texData[i * STRIDE + 7]);
       }
       return {
         count: actualCount,
         min: Math.min(...array),
         max: Math.max(...array),
-        isNormalized: sharpnessAttr.normalized,
       };
     });
 
@@ -120,7 +120,7 @@ test.describe('Test Fixture Rendering', () => {
     // Verify points loaded
     expect(state.totalPoints).toBe(20); // 20 points with HDR colors
 
-    // Verify colors are Float32Array (HDR)
+    // Verify HDR color values survive into the float texel storage
     const colorData = await page.evaluate(() => {
       const debug = (window as any).__luxarDebug;
       let points: any = null;
@@ -130,35 +130,36 @@ test.describe('Test Fixture Rendering', () => {
         }
       });
 
-      if (!points || !points.geometry.attributes.aColor) {
+      const texData = points?.geometry?.userData?.elementTexture?.image?.data;
+      if (!points || !texData || !points.userData?.attrs?.has_colors) {
         return null;
       }
 
       const geometry = points.geometry;
-      const colorAttr = geometry.attributes.aColor;
-      const posAttr = geometry.attributes.aCenter;
-      // Points render as instanced quads: drawRange is the 6-index base
-      // quad, while instanceCount is the visible point count. Attribute
-      // buffers may be over-allocated by the GPU pool.
+      // Per-point data is texture-backed: the RGBA32F element texture holds
+      // 12 floats per point — centers at [i*12 .. i*12+2], colors at
+      // [i*12+4 .. i*12+6]. Points render as instanced quads: drawRange is
+      // the 6-index base quad, while instanceCount is the visible point
+      // count. The texel buffer may be over-allocated by the GPU pool.
+      const STRIDE = 12;
+      const texelCapacity = Math.floor(texData.length / STRIDE);
       const instanceCount = geometry.isInstancedBufferGeometry
         ? geometry.instanceCount
-        : colorAttr.count;
-      const actualCount = Math.min(instanceCount, colorAttr.count);
-      // aColor/aCenter are InterleavedBufferAttribute views over a shared
-      // buffer; read per-instance components via getX/getY/getZ.
+        : texelCapacity;
+      const actualCount = Math.min(instanceCount, texelCapacity);
       // The fixture stores points along the X axis with index == x-position,
       // so sort by x to recover the input ordering (the loader/spatial
       // index does not preserve insertion order).
       const positions: { index: number; x: number }[] = [];
       for (let i = 0; i < actualCount; i++) {
-        positions.push({ index: i, x: posAttr.getX(i) });
+        positions.push({ index: i, x: texData[i * STRIDE] });
       }
       positions.sort((a, b) => a.x - b.x);
-      const redChannels = positions.map((p) => colorAttr.getX(p.index));
+      const redChannels = positions.map((p) => texData[p.index * STRIDE + 4]);
 
       return {
         count: actualCount,
-        arrayType: colorAttr.array.constructor.name,
+        arrayType: texData.constructor.name,
         redMin: Math.min(...redChannels),
         redMax: Math.max(...redChannels),
         redChannels,
@@ -168,7 +169,8 @@ test.describe('Test Fixture Rendering', () => {
     expect(colorData).not.toBeNull();
     expect(colorData?.count).toBe(20);
 
-    // CRITICAL: Verify Float32Array (not Uint8Array)
+    // The RGBA32F element texture stores colors as Float32 (no Uint8
+    // quantization on the way to the GPU)
     expect(colorData?.arrayType).toBe('Float32Array');
 
     // CRITICAL: Verify HDR values preserved (max should be ~10.0, not clamped to 1.0)
@@ -332,31 +334,31 @@ test.describe('Test Fixture Rendering', () => {
         }
       });
 
-      if (!points || !points.geometry.attributes.aColor) {
+      const texData = points?.geometry?.userData?.elementTexture?.image?.data;
+      if (!points || !texData || !points.userData?.attrs?.has_colors) {
         return null;
       }
 
       const geometry = points.geometry;
-      const colorAttr = geometry.attributes.aColor;
-      // Points render as instanced quads: drawRange is the 6-index base
-      // quad, while instanceCount is the visible point count. Attribute
-      // buffers may be over-allocated by the GPU pool.
+      // Per-point data is texture-backed: the RGBA32F element texture holds
+      // 12 floats per point, with color rgb at slots [i*12+4 .. i*12+6].
+      // Points render as instanced quads: instanceCount is the visible
+      // point count; the texel buffer may be over-allocated by the GPU pool.
+      const STRIDE = 12;
+      const texelCapacity = Math.floor(texData.length / STRIDE);
       const instanceCount = geometry.isInstancedBufferGeometry
         ? geometry.instanceCount
-        : colorAttr.count;
-      const actualCount = Math.min(instanceCount, colorAttr.count);
-      // aColor is an InterleavedBufferAttribute view; .array would return
-      // the shared interleaved buffer mixing positions/radii/colors/etc.
-      // Use getX/getY/getZ to read the actual per-instance RGB triplet.
-      const firstColor = [colorAttr.getX(0), colorAttr.getY(0), colorAttr.getZ(0)];
+        : texelCapacity;
+      const actualCount = Math.min(instanceCount, texelCapacity);
+      const firstColor = [texData[4], texData[5], texData[6]];
 
       // Check if all colors match the first color
       let allSame = true;
       for (let i = 0; i < actualCount; i++) {
         if (
-          Math.abs(colorAttr.getX(i) - firstColor[0]) > 0.01 ||
-          Math.abs(colorAttr.getY(i) - firstColor[1]) > 0.01 ||
-          Math.abs(colorAttr.getZ(i) - firstColor[2]) > 0.01
+          Math.abs(texData[i * STRIDE + 4] - firstColor[0]) > 0.01 ||
+          Math.abs(texData[i * STRIDE + 5] - firstColor[1]) > 0.01 ||
+          Math.abs(texData[i * STRIDE + 6] - firstColor[2]) > 0.01
         ) {
           allSame = false;
           break;
@@ -402,19 +404,23 @@ test.describe('Test Fixture Rendering', () => {
           points = obj;
         }
       });
-      if (!points || !points.geometry.attributes.aColor) return null;
+      const texData = points?.geometry?.userData?.elementTexture?.image?.data;
+      if (!points || !texData || !points.userData?.attrs?.has_colors) return null;
       const geometry = points.geometry;
-      const colorAttr = geometry.attributes.aColor;
+      // Colors live at texel slots [i*12+4 .. i*12+6] of the RGBA32F
+      // element texture; instanceCount is the visible point count.
+      const STRIDE = 12;
+      const texelCapacity = Math.floor(texData.length / STRIDE);
       const instanceCount = geometry.isInstancedBufferGeometry
         ? geometry.instanceCount
-        : colorAttr.count;
-      const actualCount = Math.min(instanceCount, colorAttr.count);
+        : texelCapacity;
+      const actualCount = Math.min(instanceCount, texelCapacity);
       const uniqueColors = new Set<string>();
       let maxChannel = 0;
       for (let i = 0; i < actualCount; i++) {
-        const r = colorAttr.getX(i);
-        const g = colorAttr.getY(i);
-        const b = colorAttr.getZ(i);
+        const r = texData[i * STRIDE + 4];
+        const g = texData[i * STRIDE + 5];
+        const b = texData[i * STRIDE + 6];
         maxChannel = Math.max(maxChannel, r, g, b);
         uniqueColors.add(`${r.toFixed(3)},${g.toFixed(3)},${b.toFixed(3)}`);
       }
@@ -453,28 +459,28 @@ test.describe('Test Fixture Rendering', () => {
         }
       });
 
-      if (!points || !points.geometry.attributes.aColor) {
+      const texData = points?.geometry?.userData?.elementTexture?.image?.data;
+      if (!points || !texData || !points.userData?.attrs?.has_colors) {
         return null;
       }
 
       const geometry = points.geometry;
-      const colorAttr = geometry.attributes.aColor;
-      // Points render as instanced quads: drawRange is the 6-index base
-      // quad, while instanceCount is the visible point count. Attribute
-      // buffers may be over-allocated by the GPU pool.
+      // Per-point data is texture-backed: decoded LUT colors live at texel
+      // slots [i*12+4 .. i*12+6] of the RGBA32F element texture. Points
+      // render as instanced quads: instanceCount is the visible point
+      // count; the texel buffer may be over-allocated by the GPU pool.
+      const STRIDE = 12;
+      const texelCapacity = Math.floor(texData.length / STRIDE);
       const instanceCount = geometry.isInstancedBufferGeometry
         ? geometry.instanceCount
-        : colorAttr.count;
-      const actualCount = Math.min(instanceCount, colorAttr.count);
-      // aColor is an InterleavedBufferAttribute view; iterate per instance
-      // via getX/getY/getZ to read the actual decoded LUT colors instead
-      // of mixed stride-misaligned values from the shared buffer.
+        : texelCapacity;
+      const actualCount = Math.min(instanceCount, texelCapacity);
       const uniqueColors = new Set<string>();
 
       for (let i = 0; i < actualCount; i++) {
-        const r = colorAttr.getX(i).toFixed(2);
-        const g = colorAttr.getY(i).toFixed(2);
-        const b = colorAttr.getZ(i).toFixed(2);
+        const r = texData[i * STRIDE + 4].toFixed(2);
+        const g = texData[i * STRIDE + 5].toFixed(2);
+        const b = texData[i * STRIDE + 6].toFixed(2);
         uniqueColors.add(`${r},${g},${b}`);
       }
 

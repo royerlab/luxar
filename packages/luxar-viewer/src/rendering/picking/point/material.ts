@@ -2,7 +2,8 @@
  * Point Picking Material for GPU object picking.
  *
  * Renders points to an RGBA32F pick buffer encoding:
- *   R = nodeId, G = elementId (gl_VertexID), B = brightness, A = 1.0
+ *   R = nodeId, G = elementId (aSortedIndex — the storage slot),
+ *   B = brightness, A = 1.0
  *
  * Shader source-of-truth lives in `./shaders.ts`.
  */
@@ -33,6 +34,9 @@ export class PointPickingMaterial extends THREE.ShaderMaterial implements Camera
 
     super({
       uniforms: {
+        // Point data texture — rebound by the commit's material sync
+        // (shared with the visual material's pool-owned storage).
+        uPointTex: { value: null },
         pointSizeFactor: { value: (2.0 * defaultResolutionY) / defaultTanHalfFov },
         maxPointSize: { value: defaultResolutionY * 0.5 },
         radiusScale: { value: config.radiusScale ?? 1.0 },
@@ -67,6 +71,7 @@ export class PointPickingMaterial extends THREE.ShaderMaterial implements Camera
       nodeId: this.uniforms.uNodeId.value,
       radiusScale: this.uniforms.radiusScale.value,
     });
+    cloned.uniforms.uPointTex.value = this.uniforms.uPointTex.value;
     cloned.uniforms.pointSizeFactor.value = this.uniforms.pointSizeFactor.value;
     cloned.uniforms.maxPointSize.value = this.uniforms.maxPointSize.value;
     cloned.uniforms.uIsOrtho.value = this.uniforms.uIsOrtho.value;
@@ -96,5 +101,13 @@ export class PointPickingMaterial extends THREE.ShaderMaterial implements Camera
    */
   updateRadiusScale(scale: number): void {
     this.uniforms.radiusScale.value = scale;
+  }
+
+  /**
+   * Rebind the point data texture (plain uniform update). Mirrors
+   * `GSplatPickingMaterial.updateSplatTexture`.
+   */
+  updatePointTexture(texture: THREE.DataTexture | null): void {
+    this.uniforms.uPointTex.value = texture;
   }
 }

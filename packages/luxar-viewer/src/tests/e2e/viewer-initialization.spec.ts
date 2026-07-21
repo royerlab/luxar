@@ -64,13 +64,18 @@ test.describe('Viewer Initialization', () => {
       debug.scene.traverse((obj: any) => {
         if (obj.userData?.nodeType === 'points') {
           const geom = obj.geometry;
+          // Per-point data is texture-backed: the visible point count is
+          // the geometry's instanceCount, positions live in the RGBA32F
+          // element texture, and field presence comes from the node's
+          // declared metadata (userData.attrs).
+          const attrs = obj.userData?.attrs;
           clouds.push({
             name: obj.name,
-            pointCount: geom.attributes.aCenter?.count || 0,
-            hasPosition: !!geom.attributes.aCenter,
-            hasColor: !!geom.attributes.aColor,
-            hasRadius: !!geom.attributes.aRadius,
-            hasSharpness: !!geom.attributes.aSharpness,
+            pointCount: geom.instanceCount || 0,
+            hasPosition: !!geom.userData?.elementTexture?.image?.data,
+            hasColor: !!attrs?.has_colors,
+            hasRadius: !!attrs?.has_radii,
+            hasSharpness: !!attrs?.has_sharpness,
             visible: obj.visible,
             material: obj.material?.type,
           });

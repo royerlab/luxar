@@ -1,15 +1,19 @@
 /**
- * tests that scalar attributes are bound on geometries when
+ * tests that scalar data is bound on geometries when
  * `data.scalars` / `processed.startScalars`/`endScalars` are supplied.
  *
- * The C1 fail-closed guard checks `geometry.hasAttribute('aScalar')` for
- * Points and `aStartScalar`/`aEndScalar` for Lines — without C4's
- * binding, that guard would always trip. These tests demonstrate the
- * unblocking path.
+ * The C1 fail-closed guard checks the `userData.hasScalars` stamp for
+ * Points (scalar data rides texel2.x of the fixed-layout point texture,
+ * so presence is no longer readable off a geometry attribute) and
+ * `aStartScalar`/`aEndScalar` attributes for Lines — without the
+ * binding/stamp, that guard would always trip. These tests demonstrate
+ * the unblocking path.
  */
 import { describe, it, expect, vi } from 'vitest';
 import * as THREE from 'three';
 import { NodeFactory } from '../../../rendering/node-factory';
+import { getPointTexture } from '../../../rendering/point-geometry';
+import { POINT_FLOATS_PER_POINT } from '../../../rendering/element-texture-layout';
 import { createInstancedLinesMesh } from '../../../rendering/line-geometry';
 import { LineMaterial } from '../../../rendering/materials/line/material-glsl';
 import { supportsScalarColormap } from '../../../rendering/material-colormap-helpers';
@@ -19,7 +23,7 @@ import type { LinesMetadata, LinesDataLoader } from '../../../types/lines';
 
 describe('scalar attribute binding', () => {
   describe('Points', () => {
-    it('binds `scalar` attribute when data.scalars is supplied', () => {
+    it('stamps userData.hasScalars + writes texel2.x when data.scalars is supplied', () => {
       const factory = new NodeFactory();
       const data: LoadedPointsData = {
         positions: new Float32Array([0, 0, 0, 1, 0, 0, 2, 0, 0]),
@@ -34,15 +38,20 @@ describe('scalar attribute binding', () => {
         },
       };
       const geometry = factory.createPointsGeometry(data);
-      expect(geometry.hasAttribute('aScalar')).toBe(true);
-      const scalarAttr = geometry.getAttribute('aScalar') as THREE.BufferAttribute;
-      expect(scalarAttr.itemSize).toBe(1);
-      expect(scalarAttr.count).toBe(3);
+      // Scalar presence is the userData stamp (the fixed texel layout
+      // always has a scalar slot, so no attribute probe exists anymore).
+      expect(geometry.userData.hasScalars).toBe(true);
+      // The scalar VALUES land in texel2.x (offset 8 of the 12-float
+      // per-point stride) of the geometry-attached point texture.
+      const texData = getPointTexture(geometry)!.image.data as Float32Array;
+      expect(texData[0 * POINT_FLOATS_PER_POINT + 8]).toBeCloseTo(0.1, 5);
+      expect(texData[1 * POINT_FLOATS_PER_POINT + 8]).toBeCloseTo(0.5, 5);
+      expect(texData[2 * POINT_FLOATS_PER_POINT + 8]).toBeCloseTo(0.9, 5);
       // Colormap guard passes when scalar data is bound.
       expect(supportsScalarColormap('points', geometry)).toBe(true);
     });
 
-    it('does NOT bind `scalar` when data.scalars is absent', () => {
+    it('does NOT stamp hasScalars when data.scalars is absent', () => {
       const factory = new NodeFactory();
       const data: LoadedPointsData = {
         positions: new Float32Array([0, 0, 0]),
@@ -56,7 +65,7 @@ describe('scalar attribute binding', () => {
         },
       };
       const geometry = factory.createPointsGeometry(data);
-      expect(geometry.hasAttribute('aScalar')).toBe(false);
+      expect(geometry.userData.hasScalars).toBe(false);
       // Colormap guard fails closed when scalar data is absent.
       expect(supportsScalarColormap('points', geometry)).toBe(false);
     });
@@ -66,9 +75,10 @@ describe('scalar attribute binding', () => {
     // on the empty placeholder geometry, USE_COLORMAP was suppressed, and
     // the colormap was never re-enabled once the real scalars arrived —
     // leaving scalar+colormap points rendering white. createEmptyPointsNode
-    // now pre-binds an empty `aScalar` when the node declares
-    // has_scalars + colormap, so the guard passes and the material is built
-    // colormap-enabled up front.
+    // declares an empty `scalars` field when the node has
+    // has_scalars + colormap, which createPointsGeometry turns into the
+    // userData.hasScalars stamp, so the guard passes and the material is
+    // built colormap-enabled up front.
     it('placeholder enables colormap when attrs declare has_scalars + colormap', () => {
       const factory = new NodeFactory();
       const attrs = {
@@ -81,9 +91,9 @@ describe('scalar attribute binding', () => {
 
       const placeholder = factory.createEmptyPointsNode('/spiral', attrs, loader);
 
-      // Empty `aScalar` is bound so the fail-closed guard passes even
+      // hasScalars is stamped so the fail-closed guard passes even
       // though the placeholder carries zero points.
-      expect(placeholder.geometry.hasAttribute('aScalar')).toBe(true);
+      expect(placeholder.geometry.userData.hasScalars).toBe(true);
       expect(supportsScalarColormap('points', placeholder.geometry)).toBe(true);
 
       // The material is colormap-enabled from the start (no suppression).
@@ -91,7 +101,7 @@ describe('scalar attribute binding', () => {
       expect(material.defines && 'USE_COLORMAP' in material.defines).toBe(true);
     });
 
-    it('placeholder does NOT bind aScalar when no colormap is declared', () => {
+    it('placeholder does NOT stamp hasScalars when no colormap is declared', () => {
       const factory = new NodeFactory();
       const attrs = {
         n_points: 3,
@@ -101,7 +111,8 @@ describe('scalar attribute binding', () => {
       const loader = { dispose: vi.fn() } as unknown as DataLoader;
 
       const placeholder = factory.createEmptyPointsNode('/spiral', attrs, loader);
-      expect(placeholder.geometry.hasAttribute('aScalar')).toBe(false);
+      expect(placeholder.geometry.userData.hasScalars).toBe(false);
+      expect(supportsScalarColormap('points', placeholder.geometry)).toBe(false);
     });
   });
 

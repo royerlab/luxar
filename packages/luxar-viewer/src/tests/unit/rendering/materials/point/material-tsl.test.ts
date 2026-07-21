@@ -252,3 +252,43 @@ describe('PointTSLMaterial clone', () => {
     expect(original.uniforms.radiusScale.value).not.toBe(99);
   });
 });
+
+describe('PointTSLMaterial updatePointTexture', () => {
+  const makePointTex = (): THREE.DataTexture =>
+    new THREE.DataTexture(new Float32Array(12), 3, 1, THREE.RGBAFormat, THREE.FloatType);
+
+  it('rebinds to a new texture (graph rebuild) and no-ops on identical identity', () => {
+    // Mirrors GSplatTSLMaterial.updateSplatTexture: TSL texture() nodes
+    // are factory-time bound, so an identity CHANGE builds a fresh node
+    // + reruns the factory (vertexNode identity changes), while the
+    // identity-unchanged rebind — the per-commit hot path — must be a
+    // complete no-op (no node churn, no graph rebuild).
+    const mat = new PointTSLMaterial({});
+    const tex = makePointTex();
+
+    mat.updatePointTexture(tex);
+    expect(mat.uniforms.uPointTex.value).toBe(tex);
+    expect(mat.getPointTexture()).toBe(tex);
+
+    // Identity-unchanged rebind: proxy AND graph stay untouched.
+    const proxyAfterBind = mat.uniforms.uPointTex;
+    const vertexNodeAfterBind = mat.vertexNode;
+    mat.updatePointTexture(tex);
+    expect(mat.uniforms.uPointTex).toBe(proxyAfterBind);
+    expect(mat.vertexNode).toBe(vertexNodeAfterBind);
+
+    // Identity change: rebinds (and the factory re-ran → new vertexNode).
+    const tex2 = makePointTex();
+    mat.updatePointTexture(tex2);
+    expect(mat.uniforms.uPointTex.value).toBe(tex2);
+    expect(mat.vertexNode).not.toBe(vertexNodeAfterBind);
+  });
+
+  it('clone carries the bound point texture', () => {
+    const mat = new PointTSLMaterial({});
+    const tex = makePointTex();
+    mat.updatePointTexture(tex);
+    const cloned = mat.clone();
+    expect(cloned.uniforms.uPointTex.value).toBe(tex);
+  });
+});

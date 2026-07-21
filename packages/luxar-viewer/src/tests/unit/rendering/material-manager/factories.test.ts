@@ -6,17 +6,19 @@
  * indirectly through `getXMaterial` cache hits/misses; this file pins
  * the keying contract so a future "tighten the bucketing" change
  * trips a deliberate test update.
+ *
+ * Lines are the ONLY cached material kind: point and gsplat materials
+ * are per node (each carries its own element texture) and have no
+ * cache key, so `lineCacheKey` is the sole keying surface under test.
  */
 
 import { describe, it, expect } from 'vitest';
 import {
   resolveMaterialBackend,
-  pointCacheKey,
   lineCacheKey,
   VISUAL_FACTORIES,
   PICKING_FACTORIES,
   MEGA_SHADER_FACTORIES,
-  type PointMaterialProperties,
   type LineMaterialProperties,
 } from '../../../../rendering/material-manager/factories';
 import type { RendererCapabilities } from '../../../../rendering/renderer-capabilities';
@@ -25,14 +27,6 @@ import type { RendererCapabilities } from '../../../../rendering/renderer-capabi
 // only `apiSurface` is read.
 const caps = (apiSurface: 'webgl2' | 'webgpu'): RendererCapabilities =>
   ({ apiSurface }) as RendererCapabilities;
-
-const basePoint: PointMaterialProperties = {
-  blendingMode: 'additive',
-  opacity: 1.0,
-  gamma: 1.0,
-  intensity: 1.0,
-  offset: 0.0,
-};
 
 const baseLine: LineMaterialProperties = {
   blendingMode: 'additive',
@@ -81,38 +75,38 @@ describe('VISUAL_FACTORIES / PICKING_FACTORIES / MEGA_SHADER_FACTORIES shape', (
   });
 });
 
-describe('pointCacheKey', () => {
+describe('lineCacheKey', () => {
   it('produces the same key for identical props + backend (deterministic)', () => {
-    expect(pointCacheKey(basePoint, 'glsl')).toBe(pointCacheKey(basePoint, 'glsl'));
+    expect(lineCacheKey(baseLine, 'glsl')).toBe(lineCacheKey(baseLine, 'glsl'));
   });
 
-  it('starts with `point_<backend>_<blendingMode>_…` for routing', () => {
-    expect(pointCacheKey(basePoint, 'glsl')).toMatch(/^point_glsl_additive_/);
-    expect(pointCacheKey(basePoint, 'tsl')).toMatch(/^point_tsl_additive_/);
+  it('starts with `line_<backend>_<blendingMode>_…` for routing', () => {
+    expect(lineCacheKey(baseLine, 'glsl')).toMatch(/^line_glsl_additive_/);
+    expect(lineCacheKey(baseLine, 'tsl')).toMatch(/^line_tsl_additive_/);
   });
 
   it('encodes opacity into a 0–100 bucket (clamp [0,1] × 100, round)', () => {
-    const half = pointCacheKey({ ...basePoint, opacity: 0.5 }, 'glsl');
-    const halfPlus = pointCacheKey({ ...basePoint, opacity: 0.504 }, 'glsl');
-    const halfMinus = pointCacheKey({ ...basePoint, opacity: 0.496 }, 'glsl');
+    const half = lineCacheKey({ ...baseLine, opacity: 0.5 }, 'glsl');
+    const halfPlus = lineCacheKey({ ...baseLine, opacity: 0.504 }, 'glsl');
+    const halfMinus = lineCacheKey({ ...baseLine, opacity: 0.496 }, 'glsl');
     // All three round to the same 50 bucket
     expect(half).toBe(halfPlus);
     expect(half).toBe(halfMinus);
     // But 0.55 is a different bucket
-    expect(half).not.toBe(pointCacheKey({ ...basePoint, opacity: 0.55 }, 'glsl'));
+    expect(half).not.toBe(lineCacheKey({ ...baseLine, opacity: 0.55 }, 'glsl'));
   });
 
   it('encodes the transparent flag t=1 for non-opaque, t=0 for opaque blending mode', () => {
-    expect(pointCacheKey({ ...basePoint, blendingMode: 'additive' }, 'glsl')).toMatch(/_t1_dw0$/);
-    expect(pointCacheKey({ ...basePoint, blendingMode: 'opaque' }, 'glsl')).toMatch(/_t0_dw0$/);
+    expect(lineCacheKey({ ...baseLine, blendingMode: 'additive' }, 'glsl')).toMatch(/_t1_dw0$/);
+    expect(lineCacheKey({ ...baseLine, blendingMode: 'opaque' }, 'glsl')).toMatch(/_t0_dw0$/);
   });
 
   it('normal-mode depthWrite flip (0.99) never shares a key across the flip, even inside one 1% bucket', () => {
     // 0.985 and 0.994 both round to opacity bucket 99, but sit on
     // opposite sides of the depthWrite predicate — first-requester-wins
     // would hand one of them the wrong depth state.
-    const below = pointCacheKey({ ...basePoint, blendingMode: 'normal', opacity: 0.985 }, 'glsl');
-    const above = pointCacheKey({ ...basePoint, blendingMode: 'normal', opacity: 0.994 }, 'glsl');
+    const below = lineCacheKey({ ...baseLine, blendingMode: 'normal', opacity: 0.985 }, 'glsl');
+    const above = lineCacheKey({ ...baseLine, blendingMode: 'normal', opacity: 0.994 }, 'glsl');
     expect(below).toMatch(/_o99_/);
     expect(above).toMatch(/_o99_/);
     expect(below).toMatch(/_dw0$/);
@@ -121,32 +115,9 @@ describe('pointCacheKey', () => {
 
     // Non-normal modes have no opacity-derived depthWrite: same bucket
     // → same key on both sides of 0.99.
-    const addBelow = pointCacheKey({ ...basePoint, opacity: 0.985 }, 'glsl');
-    const addAbove = pointCacheKey({ ...basePoint, opacity: 0.994 }, 'glsl');
+    const addBelow = lineCacheKey({ ...baseLine, opacity: 0.985 }, 'glsl');
+    const addAbove = lineCacheKey({ ...baseLine, opacity: 0.994 }, 'glsl');
     expect(addBelow).toBe(addAbove);
-
-    // Lines share the discriminator.
-    const lBelow = lineCacheKey({ ...baseLine, blendingMode: 'normal', opacity: 0.985 }, 'glsl');
-    const lAbove = lineCacheKey({ ...baseLine, blendingMode: 'normal', opacity: 0.994 }, 'glsl');
-    expect(lBelow).not.toBe(lAbove);
-  });
-
-  it('encodes radiusScale into a bucket suffix (default = 1000)', () => {
-    const def = pointCacheKey(basePoint, 'glsl');
-    expect(def).toMatch(/_r1000_/);
-    const scaled = pointCacheKey({ ...basePoint, radiusScale: 0.5 }, 'glsl');
-    expect(scaled).toMatch(/_r500_/);
-  });
-
-  it('clamps negative radiusScale to zero (Math.max(0, ...))', () => {
-    const negative = pointCacheKey({ ...basePoint, radiusScale: -2.5 }, 'glsl');
-    expect(negative).toMatch(/_r0_/);
-  });
-});
-
-describe('lineCacheKey', () => {
-  it('starts with `line_<backend>_<blendingMode>_…` (different prefix from points)', () => {
-    expect(lineCacheKey(baseLine, 'glsl')).toMatch(/^line_glsl_additive_/);
   });
 
   it('omits radius/sharpness/truncation buckets (lines have no such props)', () => {
@@ -156,20 +127,7 @@ describe('lineCacheKey', () => {
     expect(key).not.toMatch(/_tr\d+/);
   });
 
-  it('encodes the transparent flag the same as pointCacheKey', () => {
-    expect(lineCacheKey({ ...baseLine, blendingMode: 'opaque' }, 'glsl')).toMatch(/_t0_dw0$/);
-    expect(lineCacheKey({ ...baseLine, blendingMode: 'additive' }, 'glsl')).toMatch(/_t1_dw0$/);
-  });
-});
-
-describe('cross-kind isolation', () => {
-  it('point / line keys never collide even with identical numeric buckets', () => {
-    const p = pointCacheKey(basePoint, 'glsl');
-    const l = lineCacheKey(baseLine, 'glsl');
-    expect(p).not.toBe(l);
-  });
-
-  it('glsl vs tsl keys differ for the same geometry kind + props', () => {
-    expect(pointCacheKey(basePoint, 'glsl')).not.toBe(pointCacheKey(basePoint, 'tsl'));
+  it('glsl vs tsl keys differ for the same props', () => {
+    expect(lineCacheKey(baseLine, 'glsl')).not.toBe(lineCacheKey(baseLine, 'tsl'));
   });
 });

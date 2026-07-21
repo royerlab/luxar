@@ -17,6 +17,7 @@ import * as THREE from 'three';
 import { materialManager, type BlendingMode, type LuxarPointMaterial } from '../material-manager';
 import { getColormapTexture } from '../colormap-textures';
 import { supportsScalarColormap } from '../material-colormap-helpers';
+import { syncPointMaterialWithGeometry } from '../material-sync-helpers';
 import {
   createPointQuadGeometry,
   attachPointStorage,
@@ -159,13 +160,26 @@ export function createPointsGeometry(
   if (!geometry.userData) geometry.userData = {};
   geometry.userData.radiusScale = radiusScale;
   geometry.userData.pointCount = pointCount;
+  // Scalar presence stamp: the fixed 3-texel layout always carries a
+  // texel2.x slot (0.0 identity when absent), so "does this node have
+  // real colormap scalars?" is no longer readable off a geometry
+  // attribute. `supportsScalarColormap('points', …)` reads this stamp
+  // instead. A zero-length scalars array (the placeholder's declared
+  // field) counts as present — matching the interleaved era's empty
+  // `aScalar` pre-bind that let the fail-closed guard pass.
+  geometry.userData.hasScalars = data.scalars !== undefined;
 
   return geometry;
 }
 
 /**
- * Resolve a Points material from `materialManager`, then apply the
- * colormap clone path when scalars + a non-null colormap are requested.
+ * Resolve a per-node Points material from `materialManager`, then apply
+ * the colormap directly when scalars + a non-null colormap are requested.
+ *
+ * Point materials are PER NODE (each carries the node's own
+ * `uPointTex`), so the colormap applies directly to the node-owned
+ * material — the historical clone-on-divergence dance is gone (mirrors
+ * `createGSplatsNode`).
  */
 export function createPointsMaterial(
   attrs: Partial<PointsMetadata>,
@@ -173,7 +187,7 @@ export function createPointsMaterial(
   geometry?: THREE.BufferGeometry,
   path?: string
 ): LuxarPointMaterial {
-  let material = materialManager.getPointMaterial({
+  const material = materialManager.getPointMaterial({
     opacity: attrs.opacity ?? 1.0,
     gamma: attrs.gamma ?? 1.0,
     intensity: attrs.intensity ?? 1.0,
@@ -185,25 +199,20 @@ export function createPointsMaterial(
   const ptColormapName = attrs.colormap;
   const ptHasScalars = !!attrs.has_scalars;
   if (ptColormapName && ptHasScalars) {
-    // USE_COLORMAP requires a `scalar` attribute. When `geometry` is
-    // provided check the actual binding; when absent (tests calling
-    // createPointsMaterial directly), trust the caller.
+    // USE_COLORMAP requires real scalar data in the point texture
+    // (userData.hasScalars stamp). When `geometry` is provided check
+    // the actual stamp; when absent (tests calling createPointsMaterial
+    // directly), trust the caller.
     const guardOK = !geometry || supportsScalarColormap('points', geometry);
     if (!guardOK) {
       log.warning(
         Modules.SCENE_LOADER,
-        `[${path ?? '<points>'}] Scalar colormap requested but 'scalar' attribute is not bound on geometry. Colormap suppressed; rendering with vertex colors.`
+        `[${path ?? '<points>'}] Scalar colormap requested but no scalar data is bound in the point texture. Colormap suppressed; rendering with vertex colors.`
       );
     } else {
       const ptLutBytes = (attrs as { customLutBytes?: Uint8Array }).customLutBytes;
       const ptColormapTex = getColormapTexture(ptColormapName, ptLutBytes);
       if (ptColormapTex) {
-        // Detach pooled material from global updates before cloning so
-        // disposeAll doesn't dispose the cache entry serving other
-        // callers. The clone takes the global-update slot.
-        materialManager.detachFromGlobalUpdates(material);
-        material = material.clone() as typeof material;
-        materialManager.register(material);
         material.updateColormapTexture(ptColormapTex);
         const ptScalarRange = attrs.scalar_data_range ?? [0, 1];
         material.updateScalarRange(ptScalarRange[0], ptScalarRange[1]);
@@ -256,7 +265,17 @@ export function createPointsNode(
     attrs,
     maxRadius: attrs.max_radius ?? 1.0,
     visiblePointCount: data.pointCount,
+    // Per-node material from creation: LayersPanel and the LOD
+    // cross-fade honor this marker and mutate the material directly
+    // instead of clone-on-first-use (mirrors createGSplatsNode).
+    _layerMaterialCloned: true,
   } as PointsUserData;
+
+  // Bind the geometry-owned point texture on the render material right
+  // away so a mesh created WITH data renders before any commit (node
+  // factory initial data, tests) — the points analog of
+  // createInstancedGSplatsMesh's creation-time updateSplatTexture bind.
+  syncPointMaterialWithGeometry(points);
 
   if (attrs.transform) applyTransform(points, attrs.transform);
 
@@ -274,6 +293,11 @@ export function createPointsNode(
     const pickNode = new THREE.Mesh(geometry, pickMaterial);
     pickNode.matrixWorld.copy(points.matrixWorld);
     pickingSystem.registerNode(points, pickNode, pickId);
+    // Bind the geometry-owned point texture on BOTH materials (the
+    // render material was bound above; this covers the just-created
+    // pick material so picking works before the first commit's sync).
+    // Mirrors createGSplatsNode.
+    syncPointMaterialWithGeometry(points);
   }
 
   return points;
@@ -307,14 +331,12 @@ export function createEmptyPointsNode(
     },
   };
   // When the node carries a scalar field + colormap, stamp an empty
-  // scalars field on the placeholder data. In the interleaved era this
-  // bound an empty `aScalar` attribute so the fail-closed colormap
-  // guard (`supportsScalarColormap`) passed at material-creation time;
-  // with texture storage the scalar always rides texel2.x and there is
-  // no `aScalar` attribute, so the geometry-attribute-based guard fails
-  // closed regardless — the points-material Stage 3 migration re-points
-  // the guard to the new storage. Kept so the placeholder and real data
-  // declare the same field presence.
+  // scalars field on the placeholder data. `createPointsGeometry` turns
+  // field presence into the `userData.hasScalars` stamp that the
+  // fail-closed colormap guard (`supportsScalarColormap`) reads at
+  // material-creation time — the texture-storage analog of the
+  // interleaved era's empty `aScalar` pre-bind, so scalar+colormap
+  // nodes are built colormap-enabled before real data streams in.
   if (attrs.has_scalars && attrs.colormap) {
     emptyData.scalars = new Float32Array(0) as LoadedPointsData['scalars'];
   }

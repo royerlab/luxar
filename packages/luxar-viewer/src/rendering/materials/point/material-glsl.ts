@@ -7,6 +7,7 @@
 
 import * as THREE from 'three';
 import { POINT_VERTEX_SHADER, POINT_FRAGMENT_SHADER } from './shader-glsl';
+import { getPlaceholderElementTexture } from '../../element-texture-layout';
 import type { CameraAwareMaterial } from '../_shared/camera-aware-material';
 import type { ColormapAwareMaterial } from '../_shared/colormap-aware-material';
 import { clampGamma, isGammaOne } from '../_shared/uniform-helpers';
@@ -91,6 +92,11 @@ export class PointMaterial
 
     super({
       uniforms: {
+        // Point data texture (RGBA32F, 3 texels/point) — starts on the
+        // shared placeholder; the commit's material sync rebinds the
+        // acquired pool entry's texture via `updatePointTexture`.
+        uPointTex: { value: getPlaceholderElementTexture() },
+
         // Color uniforms
         opacity: { value: materialConfig.opacity ?? 1.0 },
         invGamma: { value: 1.0 / gammaValue }, // Pre-computed inverse for performance
@@ -260,6 +266,22 @@ export class PointMaterial
   }
 
   /**
+   * Rebind the point data texture (pool acquire may hand the node a
+   * different geometry+texture pair on growth or best-fit reuse).
+   * Plain uniform update — no shader recompilation involved. Mirrors
+   * `GSplatMaterial.updateSplatTexture`; `null` falls back to the
+   * shared placeholder so the sampler is never unbound.
+   */
+  updatePointTexture(texture: THREE.DataTexture | null): void {
+    this.uniforms.uPointTex.value = texture ?? getPlaceholderElementTexture();
+  }
+
+  /** The currently bound point data texture. */
+  getPointTexture(): THREE.DataTexture | null {
+    return (this.uniforms.uPointTex.value as THREE.DataTexture | null) ?? null;
+  }
+
+  /**
    * Update the colormap texture and enable/disable colormap mode.
    *
    * Under the instanced-quad rendering path, vertexColors is always
@@ -365,7 +387,11 @@ export class PointMaterial
       cloned.blendDst = this.blendDst;
     }
 
-    // Copy current uniform values
+    // Copy current uniform values. The point-texture binding must ride
+    // along (mirrors GSplatMaterial.clone copying uSplatTex): the layers
+    // panel clones on first interaction, and a clone left on the
+    // placeholder would render nothing.
+    cloned.uniforms.uPointTex.value = this.uniforms.uPointTex.value;
     cloned.uniforms.pointSizeFactor.value = this.uniforms.pointSizeFactor.value;
     cloned.uniforms.maxPointSize.value = this.uniforms.maxPointSize.value;
     cloned.uniforms.invGamma.value = this.uniforms.invGamma.value;

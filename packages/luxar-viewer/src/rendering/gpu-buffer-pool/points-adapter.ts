@@ -305,6 +305,15 @@ export class PointsBufferAdapter {
 
     preparePointsGeometryForDraw(geometry, count);
 
+    // Scalar presence stamp for `supportsScalarColormap('points', …)`:
+    // the fixed texel layout always carries the texel2.x slot, so real
+    // scalar presence rides userData. Refreshed on EVERY update — pool
+    // geometries are reused across tenants, and a presence flip must
+    // not leak the previous tenant's stamp (the texel writer already
+    // restores the 0.0 identity).
+    if (!instanced.userData) instanced.userData = {};
+    instanced.userData.hasScalars = data.scalars !== undefined;
+
     // CRITICAL: Force THREE.js to recalculate _maxInstanceCount.
     delete (geometry as unknown as { _maxInstanceCount?: number })._maxInstanceCount;
 

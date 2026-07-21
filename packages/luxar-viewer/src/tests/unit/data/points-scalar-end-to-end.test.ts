@@ -330,7 +330,7 @@ describe('GPUBufferPool scalar texel slot', () => {
 });
 
 describe('end-to-end: NodeFactory + LayersPanel guard', () => {
-  it('createPointsGeometry binds scalar attribute when data.scalars supplied', () => {
+  it('createPointsGeometry stamps hasScalars + writes texel2.x when data.scalars supplied', () => {
     const factory = new NodeFactory();
     const data: LoadedPointsData = {
       positions: new Float32Array([0, 0, 0, 1, 0, 0, 2, 0, 0]),
@@ -345,7 +345,12 @@ describe('end-to-end: NodeFactory + LayersPanel guard', () => {
       },
     };
     const g = factory.createPointsGeometry(data);
-    expect(g.hasAttribute('aScalar')).toBe(true);
+    // Scalar presence is the userData stamp (the fixed 3-texel layout
+    // always has a texel2.x slot, so there is no attribute to probe);
+    // the guard consumes the stamp.
+    expect(g.userData.hasScalars).toBe(true);
+    const texData = getPointTexture(g)!.image.data as Float32Array;
+    expect(texData[1 * POINT_FLOATS_PER_POINT + 8]).toBeCloseTo(0.5, 5);
     expect(supportsScalarColormap('points', g)).toBe(true);
   });
 
