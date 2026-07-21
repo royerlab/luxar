@@ -260,14 +260,14 @@ export function commitPointsGeometry(
       return;
     }
 
-    // Pool disabled: dispose and recreate unconditionally. Recreation
-    // handles all the dtype logic (Uint8/Uint16 `normalized:true`,
+    // Pool disabled: recreate unconditionally. Recreation handles all
+    // the dtype logic (divisor-based widenToFloat32 for Uint8/Uint16,
     // Float16 widening, bounds/footprint, radiusScale userData) via
-    // NodeFactory — the single owner of the plain
-    // InstancedBufferAttribute layout points geometries use outside
-    // the pool. (A historical same-count in-place branch assumed the
-    // pool's interleaved layout and threw against factory-built
-    // geometry; correctness over reuse on this non-default fallback.)
+    // NodeFactory, which builds the same texture-backed storage as the
+    // pool (attachPointStorage + writePointTexels) sized exactly.
+    // (A historical same-count in-place branch assumed a different
+    // layout and threw against factory-built geometry; correctness over
+    // reuse on this non-default fallback.)
     // Create-then-swap-then-dispose: building first keeps the mesh on its
     // old (valid) geometry if the factory throws on malformed data —
     // dispose-first would strand the mesh on a disposed geometry whose

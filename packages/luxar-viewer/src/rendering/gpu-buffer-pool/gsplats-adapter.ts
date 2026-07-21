@@ -131,6 +131,9 @@ export class GSplatsBufferAdapter {
     if (bestList) {
       const candidate = bestList[bestIndex];
       bestList.splice(bestIndex, 1);
+      // See the points adapter's twin comment: no previous-tenant
+      // content may draw through a throwing write.
+      (candidate.geometry as THREE.InstancedBufferGeometry).instanceCount = 0;
       candidate.inUse = true;
       candidate.lastUsedFrame = host.frameCount;
       host.activeBuffers.set(nodeId, candidate);

@@ -38,7 +38,7 @@ rendering/
 ├── element-texture-layout.ts           # RGBA32F element-texture layout authority (gsplat + point bindings)
 ├── element-storage.ts                  # Shared texture-backed element storage + aSortedIndex writers
 ├── depth-sort-coordinator.ts           # Main-thread side of the depth-sort worker + camera re-sort scheduler (Phases 2-3)
-├── point-geometry.ts                   # Point unit-quad base geometry
+├── point-geometry.ts                   # Point quad base + 3-texel layout/texel writer
 ├── interleaved-attributes.ts           # InterleavedBufferAttribute helpers
 │
 ├── materials/                          # Per-geometry material and shader stacks
@@ -280,7 +280,7 @@ Both run independent of the within-mesh re-sort hysteresis (cheap). The global s
 Singleton manager for material creation across Points, Lines, and GSplats (LRU caching for Lines; Points/GSplats are per node — each binds its node's element texture). Runtime blending changes use `blending-state.ts` so UI updates apply the same complete THREE.js state as material creation.
 
 ```typescript
-// Get cached point material
+// Get the per-node point material
 const pointMaterial = materialManager.getPointMaterial({
   blendingMode: 'additive',
   opacity: 1.0,
@@ -336,9 +336,9 @@ The `GPUBufferPool` manages geometry reuse for Points, Lines, and GSplats, elimi
 **Key Features:**
 
 - Size-based bucketing: reuses geometries when size and type match (0ms GPU allocation)
-- In-place attribute updates via `TypedArray.set()`
+- In-place data updates (lines: strided attribute writes; points/gsplats: fused texel writes)
 - Count-based and byte-budget eviction (`gpuPoolMaxBytes`, `gpuPoolEvictBatchSize`)
-- Multi-type support: Points, Lines, and GSplats, including optional scalar attributes for colormaps
+- Multi-type support: Points, Lines, and GSplats (lines carry optional scalar attributes for colormaps; points/gsplats always carry a scalar/alpha texel slot)
 
 ### 7. Adaptive DPR Manager
 

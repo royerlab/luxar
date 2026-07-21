@@ -160,6 +160,11 @@ export class PointsBufferAdapter {
     if (bestList) {
       const candidate = bestList[bestIndex];
       bestList.splice(bestIndex, 1);
+      // Adopted geometry may still carry the previous tenant's
+      // instanceCount + texels; draw nothing until this node's write
+      // sets the real count (a throwing write must not render the
+      // previous tenant's content under this node's transform).
+      (candidate.geometry as THREE.InstancedBufferGeometry).instanceCount = 0;
       candidate.inUse = true;
       candidate.lastUsedFrame = host.frameCount;
       host.activeBuffers.set(nodeId, candidate);
