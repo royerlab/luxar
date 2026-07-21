@@ -167,8 +167,14 @@ export interface DisplayUniforms {
 export function computeUniforms(displayMin: number, displayMax: number): DisplayUniforms {
   const range = displayMax - displayMin;
   if (Math.abs(range) < 1e-10) {
-    // Degenerate range: clamp to a very high contrast
-    return { intensity: 1000, offset: -displayMin * 1000 };
+    // Degenerate range (min == max): there is nothing to window, so pass the
+    // color through unchanged (identity gain/offset). A constant data range is
+    // legitimate — e.g. classical-splat imports where per-splat opacity rides
+    // in the color alpha and `amplitude_data_range` is [1, 1] (constant). The
+    // old "very high contrast" mapping (gain 1000, offset -1000·min) turned
+    // `color·1000 − 1000` into 0 for every non-white color, rendering the
+    // whole scene black.
+    return { intensity: 1.0, offset: 0.0 };
   }
   return {
     intensity: 1.0 / range,
