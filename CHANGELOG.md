@@ -15,9 +15,24 @@ All notable changes to Luxar are documented in this file.
   linchpin of the memoized-noop commit skip AND the append fast path's
   generation reset, so the triplication was a drift hazard: a new
   query-affecting field added to only two copies would silently serve stale
-  data for the third geometry. Behavior unchanged (200k-trial old-vs-new
-  fuzz equivalence, zero mismatches); direct unit tests added for the
-  comparison semantics.
+  data for the third geometry. The consolidation itself is behavior-
+  preserving (200k-trial old-vs-new fuzz equivalence, zero mismatches);
+  direct unit tests added for the comparison semantics.
+- **Fixed (pre-existing): the startup dimensions-metadata refresh reset every
+  progressive loader once per dataset load.** The scene rebuilds the
+  dimensions metadata right after the first data load (drops the
+  `range: null` key, derives `step: null → 1` on displayed dims, reorders
+  object keys); the old raw-JSON dimensions compare flagged that as a view
+  change, bumping every loader's reset generation — discarding the ladder
+  prefix (re-streamed from warm cache) and the append-fast-path lineage for
+  a query-identical view. The dimensions compare is now a canonical
+  QUERY-DETERMINANT projection mirroring the slice-cache key
+  (`buildSliceViewSig`): name everywhere (extend_to_all matching) plus
+  discrete/spatial/step/cyclic on non-displayed dims; display/navigation
+  metadata (`range`, displayed-dim `step`, `unit`, `display`,
+  `description`) and object key order no longer matter. Verified in-browser:
+  the mid-load churn reset is gone on 3D and 4D datasets (the one remaining
+  4D reset is a genuine tolerance change and must reset).
 
 #### Added — per-element opacity via RGBA colors, volumetric Phase 2 (gsplats)
 
