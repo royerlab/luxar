@@ -10,6 +10,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import * as THREE from 'three';
 import { commitPointsGeometry } from '../../../../data/scene-loader/commit/commit-points-geometry';
 import { createPointsGeometry } from '../../../../rendering/node-factory/create-points-node';
+import { getPointTexture } from '../../../../rendering/point-geometry';
 import { getPrefixParent, setPrefixParent } from '../../../../types/prefix-lineage';
 import { SOFT_DISPOSE_FLAG } from '../../../../rendering/material-manager';
 import type { LoadedPointsData } from '../../../../data/data-loader-types';
@@ -130,6 +131,64 @@ describe('commitPointsGeometry', () => {
     expect(mockCreatePointsGeometry).not.toHaveBeenCalled();
   });
 
+  it('disposes a replaced non-pool creation geometry at the pool handoff (placeholder leak)', () => {
+    // The creation-time placeholder geometry (createPointsNode) carries a
+    // minimum-row element texture; nobody else owns it once the pool hands
+    // the node its first real geometry, so the handoff must dispose it.
+    const root = new THREE.Group();
+    const points = makePoints('/p');
+    root.add(points);
+    const prevGeometry = points.geometry;
+    const disposeSpy = vi.spyOn(prevGeometry, 'dispose');
+
+    const newGeometry = new THREE.BufferGeometry();
+    newGeometry.userData = { luxarPooled: true };
+    const gpuBufferPool = {
+      acquirePointsGeometry: vi.fn(() => newGeometry),
+      updatePointsGeometry: vi.fn(),
+      didLastAcquireRebuildAttributes: vi.fn(() => true),
+    };
+    commitPointsGeometry(
+      '/p',
+      makeData(3),
+      root,
+      gpuBufferPool as never,
+      mockNodeFactory,
+      undefined,
+      0
+    );
+    expect(points.geometry).toBe(newGeometry);
+    expect(disposeSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it('never disposes a replaced POOL-owned geometry (luxarPooled marker — acquire released it)', () => {
+    const root = new THREE.Group();
+    const points = makePoints('/p');
+    root.add(points);
+    const prevGeometry = points.geometry;
+    prevGeometry.userData = { ...prevGeometry.userData, luxarPooled: true };
+    const disposeSpy = vi.spyOn(prevGeometry, 'dispose');
+
+    const newGeometry = new THREE.BufferGeometry();
+    newGeometry.userData = { luxarPooled: true };
+    const gpuBufferPool = {
+      acquirePointsGeometry: vi.fn(() => newGeometry),
+      updatePointsGeometry: vi.fn(),
+      didLastAcquireRebuildAttributes: vi.fn(() => true),
+    };
+    commitPointsGeometry(
+      '/p',
+      makeData(3),
+      root,
+      gpuBufferPool as never,
+      mockNodeFactory,
+      undefined,
+      0
+    );
+    expect(points.geometry).toBe(newGeometry);
+    expect(disposeSpy).not.toHaveBeenCalled();
+  });
+
   it('stamps loadedViewVersion onto the mesh user-data (three-geometry symmetry)', () => {
     const root = new THREE.Group();
     const points = makePoints('/p');
@@ -222,8 +281,10 @@ describe('commitPointsGeometry — non-pool path against REAL factory geometry',
       commitPointsGeometry('/p', second, root, null, realNodeFactory, undefined, 1)
     ).not.toThrow();
 
-    const center = points.geometry.getAttribute('aCenter');
-    expect(center.array[0]).toBe(7);
+    // Per-point data lives in the point texture: center.x is float 0 of
+    // texel 0 (see point-geometry.ts).
+    const texels = getPointTexture(points.geometry)!.image.data as Float32Array;
+    expect(texels[0]).toBe(7);
     expect((points.userData as { visiblePointCount: number }).visiblePointCount).toBe(3);
   });
 
@@ -241,12 +302,13 @@ describe('commitPointsGeometry — non-pool path against REAL factory geometry',
     second.positions[0] = 1;
     commitPointsGeometry('/p', second, root, null, realNodeFactory, undefined, 1);
 
-    // The raw Uint16Array must be bound with `normalized: true` (÷65535 in
-    // the shader). The broken branch widened with ÷255 → colors 257× too
-    // bright (when it didn't crash on aCenter first).
-    const color = points.geometry.getAttribute('aColor');
-    expect(color.array).toBeInstanceOf(Uint16Array);
-    expect(color.normalized).toBe(true);
+    // Uint16 sources widen into the texture with the ÷65535 divisor, so
+    // 65535 lands as exactly 1.0 in texel 1's color slots. A ÷255
+    // regression would land 257.0 instead (colors 257× too bright).
+    const texels = getPointTexture(points.geometry)!.image.data as Float32Array;
+    expect(texels[4]).toBeCloseTo(1.0, 6); // color.r of point 0
+    expect(texels[5]).toBeCloseTo(1.0, 6);
+    expect(texels[6]).toBeCloseTo(1.0, 6);
   });
 
   it('evicts Three’s cached RenderObject via a soft material dispose on every non-pool commit', () => {

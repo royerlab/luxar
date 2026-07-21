@@ -26,7 +26,7 @@ export const GSPLAT_VERTEX_SHADER = /* glsl */ `
     in uint aSortedIndex;
 
     // Splat data texture: RGBA32F, 4 texels/splat (see
-    // rendering/splat-texture-layout.ts for the texel layout).
+    // rendering/element-texture-layout.ts for the texel layout).
     uniform highp sampler2D uSplatTex;
 
     // Uniforms (modelViewMatrix and projectionMatrix are built-in THREE.js uniforms)
@@ -97,7 +97,7 @@ export const GSPLAT_VERTEX_SHADER = /* glsl */ `
         // Four texelFetch reads reconstruct the per-splat values into
         // the exact local names the math below has always used — zero
         // changes downstream of this block. The width is a multiple of
-        // 4 (splat-texture-layout.ts), so a splat's 4 texels share one
+        // 4 (element-texture-layout.ts), so a splat's 4 texels share one
         // row and only x advances.
         int splatBase = int(aSortedIndex) * 4;
         int splatTexW = textureSize(uSplatTex, 0).x;

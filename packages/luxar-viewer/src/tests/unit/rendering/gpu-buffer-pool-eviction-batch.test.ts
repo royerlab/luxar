@@ -14,25 +14,6 @@
 
 import { describe, it, expect } from 'vitest';
 import { GPUBufferPool } from '../../../rendering/gpu-buffer-pool';
-import type { LoadedPointsData } from '../../../data/data-loader-types';
-import * as THREE from 'three';
-
-function makeData(count: number): LoadedPointsData {
-  return {
-    positions: new Float32Array(count * 3),
-    colors: new Float32Array(count * 3).fill(0.5),
-    radii: new Float32Array(count).fill(1.0),
-    sharpness: new Float32Array(count).fill(2.0),
-    pointCount: count,
-    ndim: 3,
-    metadata: {
-      totalPoints: count,
-      loadedPoints: count,
-      bounds: new THREE.Box3(),
-      usedSpatialIndex: true,
-    },
-  };
-}
 
 /**
  * Push N distinct buffers into the pool's free list.
@@ -49,7 +30,7 @@ function makeData(count: number): LoadedPointsData {
  */
 function fillPool(pool: GPUBufferPool, count: number): void {
   for (let i = 0; i < count; i++) {
-    pool.acquirePointsGeometry(`/n${i}`, makeData(100 + i * 10), 100 + i * 10);
+    pool.acquirePointsGeometry(`/n${i}`, 100 + i * 10);
   }
   for (let i = 0; i < count; i++) {
     pool.releasePointsGeometry(`/n${i}`);

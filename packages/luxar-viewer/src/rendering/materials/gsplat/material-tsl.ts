@@ -41,7 +41,7 @@ import type { GSplatMaterialConfig } from './material-glsl';
 import type { CameraAwareMaterial } from '../_shared/camera-aware-material';
 import type { ColormapAwareMaterial } from '../_shared/colormap-aware-material';
 import { clampGamma, isGammaOne } from '../_shared/uniform-helpers';
-import { getPlaceholderSplatTexture } from '../../splat-texture-layout';
+import { getPlaceholderSplatTexture } from '../../element-texture-layout';
 import { computeFocalLength } from '../_shared/camera-uniforms';
 import {
   computeRayIntegralFactor,

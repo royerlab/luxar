@@ -1,16 +1,19 @@
 /**
  * Data Integrity E2E Tests
  *
- * Validates that loaded geometry data is internally consistent:
- * - Position, color, radius, sharpness attribute arrays are aligned (same count)
+ * Validates that loaded geometry data is internally consistent. Points
+ * store per-point data in an RGBA32F element texture (12 floats per point:
+ * center xyz, radius, color rgb, sharpness, scalar, alpha) with a single
+ * aSortedIndex per-instance attribute:
+ * - The texel buffer and aSortedIndex cover every visible instance
  * - Position values contain no NaN or Infinity
  * - Color values are finite and non-negative
  * - Radius values are non-negative
  * - DrawRange never exceeds buffer size
  * - Integrity is maintained after nD navigation
  *
- * These tests catch the most dangerous class of silent bug: misaligned
- * attribute arrays that cause users to see garbage data with no error message.
+ * These tests catch the most dangerous class of silent bug: under-allocated
+ * or misaligned point storage that shows garbage data with no error message.
  */
 
 import { test, expect } from './fixtures';
@@ -38,7 +41,7 @@ test.describe('Data Integrity - Attribute Alignment', () => {
     expect(results.length).toBeGreaterThan(0);
 
     for (const cloud of results) {
-      // All present attributes must have the same count
+      // The texel buffer and aSortedIndex must cover every visible instance
       expect(cloud.aligned).toBe(true);
     }
   });
@@ -67,17 +70,23 @@ test.describe('Data Integrity - Attribute Alignment', () => {
       const issues: string[] = [];
 
       debug.scene.traverse((obj: any) => {
-        if (obj.userData?.nodeType !== 'points' || !obj.geometry?.attributes?.aColor) return;
-        const col = obj.geometry.attributes.aColor;
-        // aColor is an InterleavedBufferAttribute; .array is the shared
-        // interleaved buffer (positions/radii/colors/sharpness all live in
-        // it). Read per-instance components with getX/getY/getZ so we
-        // validate actual colors instead of a stride-misaligned mix.
-        const sampleCount = Math.min(col.count, 1000);
+        if (obj.userData?.nodeType !== 'points' || !obj.geometry?.userData?.hasColors) return;
+        const texData = obj.geometry?.userData?.elementTexture?.image?.data;
+        if (!texData) return;
+        // Per-point data is texture-backed: the RGBA32F element texture
+        // holds 12 floats per point, with color rgb at slots
+        // [i*12+4 .. i*12+6] (already normalized floats). Validate the
+        // committed (visible) instances.
+        const STRIDE = 12;
+        const count = Math.min(
+          obj.geometry.instanceCount ?? 0,
+          Math.floor(texData.length / STRIDE)
+        );
+        const sampleCount = Math.min(count, 1000);
         for (let i = 0; i < sampleCount; i++) {
-          const r = col.getX(i);
-          const g = col.getY(i);
-          const b = col.getZ(i);
+          const r = texData[i * STRIDE + 4];
+          const g = texData[i * STRIDE + 5];
+          const b = texData[i * STRIDE + 6];
           if (!Number.isFinite(r) || !Number.isFinite(g) || !Number.isFinite(b))
             issues.push(`${obj.name}: color[${i}] = [${r}, ${g}, ${b}] (not finite)`);
           if (r < 0 || g < 0 || b < 0)
@@ -101,14 +110,19 @@ test.describe('Data Integrity - Attribute Alignment', () => {
       const issues: string[] = [];
 
       debug.scene.traverse((obj: any) => {
-        if (obj.userData?.nodeType !== 'points' || !obj.geometry?.attributes?.aRadius) return;
-        const rad = obj.geometry.attributes.aRadius;
-        // aRadius is an InterleavedBufferAttribute view; reading .array[i]
-        // would hit unrelated attributes (positions, colors, sharpness).
-        // Use getX(i) so we validate the actual per-instance radius.
-        const instanceCount = rad.count;
+        if (obj.userData?.nodeType !== 'points' || !obj.geometry?.userData?.hasRadii) return;
+        const texData = obj.geometry?.userData?.elementTexture?.image?.data;
+        if (!texData) return;
+        // Per-point data is texture-backed: the radius lives at texel slot
+        // [i*12+3] of the RGBA32F element texture (a dtype-normalized
+        // float). Validate the committed (visible) instances.
+        const STRIDE = 12;
+        const instanceCount = Math.min(
+          obj.geometry.instanceCount ?? 0,
+          Math.floor(texData.length / STRIDE)
+        );
         for (let i = 0; i < instanceCount; i++) {
-          const v = rad.getX(i);
+          const v = texData[i * STRIDE + 3];
           if (v < 0) issues.push(`${obj.name}: radius[${i}] = ${v} (negative)`);
           if (!Number.isFinite(v)) issues.push(`${obj.name}: radius[${i}] = ${v} (not finite)`);
         }

@@ -41,6 +41,7 @@ import {
   applyColormapTextureToMaterial,
   applyScalarRangeToMaterial,
 } from '../../material-colormap-helpers';
+import { getPlaceholderElementTexture } from '../../element-texture-layout';
 import {
   applyBlendingStateToMaterial,
   getCompleteBlendingState,
@@ -58,6 +59,7 @@ import { proxyIUniform, type TSLNode } from '../_shared/tsl-helpers';
  * names mirror the GLSL `PointMaterial`).
  */
 interface PointMaterialTSLNodeTable {
+  uPointTex: TSLNode;
   pointSizeFactor: TSLNode;
   maxPointSize: TSLNode;
   radiusScale: TSLNode;
@@ -99,6 +101,11 @@ export class PointTSLMaterial
     const defaultTanHalfFov = Math.tan(defaultFov / 2);
 
     this.tslNodes = {
+      // Point data texture node. Starts on the shared placeholder; the
+      // commit's material sync rebinds the acquired pool entry's
+      // texture via `updatePointTexture` (node identity change ->
+      // graph rebuild, same lifecycle as the colormap texture).
+      uPointTex: texture(getPlaceholderElementTexture()),
       opacity: uniform(materialConfig.opacity ?? 1.0),
       invGamma: uniform(1.0 / gammaValue),
       uIntensity: uniform(materialConfig.intensity ?? 1.0),
@@ -116,6 +123,7 @@ export class PointTSLMaterial
     // value via `proxyIUniform`, so the GPU sees the new value on the
     // next frame without any `.onUpdate('render')` callback.
     this.uniforms = {
+      uPointTex: proxyIUniform(this.tslNodes.uPointTex),
       opacity: proxyIUniform(this.tslNodes.opacity),
       invGamma: proxyIUniform(this.tslNodes.invGamma),
       uIntensity: proxyIUniform(this.tslNodes.uIntensity),
@@ -316,6 +324,28 @@ export class PointTSLMaterial
   }
 
   /**
+   * Rebind the point data texture. TSL `texture()` captures the
+   * THREE.Texture at factory time, so an identity change needs a
+   * fresh node + graph rebuild (exact mirror of
+   * `GSplatTSLMaterial.updateSplatTexture` and the colormap texture
+   * lifecycle). No-op when the texture is unchanged — the common
+   * per-commit case.
+   */
+  updatePointTexture(tex: THREE.DataTexture | null): void {
+    const current = (this.uniforms.uPointTex?.value as THREE.Texture | null | undefined) ?? null;
+    const next = tex ?? getPlaceholderElementTexture();
+    if (current === next) return;
+    this.tslNodes.uPointTex = texture(next);
+    this.uniforms.uPointTex = proxyIUniform(this.tslNodes.uPointTex);
+    this.rebuildGraph();
+  }
+
+  /** The currently bound point data texture. */
+  getPointTexture(): THREE.DataTexture | null {
+    return (this.uniforms.uPointTex?.value as THREE.DataTexture | null | undefined) ?? null;
+  }
+
+  /**
    * Toggle the colormap branch. Rebuild the graph whenever the
    * colormap state actually changes — either an on/off flip OR a
    * texture-identity swap.
@@ -404,6 +434,13 @@ export class PointTSLMaterial
       cloned.blendSrc = this.blendSrc;
       cloned.blendDst = this.blendDst;
     }
+
+    // Carry the point-texture binding across (mirrors
+    // GSplatTSLMaterial.clone): the layers panel clones on first
+    // interaction, and a clone left on the placeholder would render
+    // nothing.
+    const pointTex = this.uniforms.uPointTex?.value as THREE.DataTexture | null | undefined;
+    if (pointTex) cloned.updatePointTexture(pointTex);
 
     // Copy current uniform values
     cloned.uniforms.pointSizeFactor.value = this.uniforms.pointSizeFactor.value;

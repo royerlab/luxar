@@ -36,10 +36,17 @@ export const POINT_PICK_VERTEX_SHADER = /* glsl */ `
     // Per-vertex (4 corners shared across all instances)
     in vec2 aQuadCorner;
 
-    // Per-instance (one per point)
-    in vec3 aCenter;
-    in float aRadius;
-    in float aSharpness;
+    // Draw-slot -> storage-slot mapping (identity in Phase 1; permuted
+    // by the sort worker in Phase 2+). Also the pick ELEMENT id: the
+    // pick buffer must report the storage slot -- the id the rest of
+    // the pipeline (loaders, selection) addresses points by -- not the
+    // transient draw slot.
+    in uint aSortedIndex;
+
+    // Point data texture: RGBA32F, 3 texels/point (see
+    // rendering/element-texture-layout.ts). Picking needs texels 0-1
+    // only (center/radius/sharpness) -- color and scalar are not fetched.
+    uniform highp sampler2D uPointTex;
 
     uniform float pointSizeFactor;
     uniform float maxPointSize;
@@ -58,6 +65,17 @@ export const POINT_PICK_VERTEX_SHADER = /* glsl */ `
     flat out highp float vElementId;
 
     void main() {
+      // === Point-texture fetch prologue (visual-shader parity) ===
+      // Width is a multiple of 3, so a point's texels share one row.
+      int pointBase = int(aSortedIndex) * 3;
+      int pointTexW = textureSize(uPointTex, 0).x;
+      ivec2 texel0 = ivec2(pointBase % pointTexW, pointBase / pointTexW);
+      vec4 pointT0 = texelFetch(uPointTex, texel0, 0);
+      vec4 pointT1 = texelFetch(uPointTex, ivec2(texel0.x + 1, texel0.y), 0);
+      vec3 aCenter = pointT0.xyz;
+      float aRadius = pointT0.w;
+      float aSharpness = pointT1.w;
+
       // Mirror visual point shader sanitization (shader-glsl.ts) so the
       // pick footprint can't diverge from the visible footprint: sharpness
       // in [0, 1] -> super-Gaussian exponent beta = 2^(6s - 2).
@@ -106,9 +124,10 @@ export const POINT_PICK_VERTEX_SHADER = /* glsl */ `
       vSpriteCoord = (aQuadCorner + 1.0) * 0.5;
 
       vNodeId = uNodeId;
-      // Under instanced rendering, gl_InstanceID is the per-point index
-      // (the old THREE.Points path used gl_VertexID which was equivalent).
-      vElementId = float(gl_InstanceID);
+      // Storage slot, NOT gl_InstanceID (the draw slot): identical
+      // under Phase-1 identity ordering, and stays correct once the
+      // sort worker permutes draw order (Phase 2+).
+      vElementId = float(aSortedIndex);
     }
 `;
 

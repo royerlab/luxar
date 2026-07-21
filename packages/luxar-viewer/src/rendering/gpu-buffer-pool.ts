@@ -12,16 +12,15 @@
  * - Multi-type support for all TypedArray formats
  *
  * TYPE SUPPORT (COMPLETE):
- * - Points: FULL multi-type support!
- *   - Positions: Float32Array
- *   - Colors: Float32Array | Uint8Array | Uint16Array (with normalization)
- *   - Radii: Float32Array | Uint8Array (with normalization)
- *   - Sharpness: Float32Array | Uint8Array (with normalization)
- * - Lines: Float32Array (per ProcessedLinesData interface)
- * - GSplats: Float32Array (per PackedGSplatsData interface)
- *
- * The pool tracks attribute types per geometry and only reuses geometries
- * with matching types, ensuring type safety and optimal memory efficiency.
+ * - Points: FULL multi-type support — Uint8/Uint16/Float16 sources are
+ *   widened to Float32 at upload time (normalization divisors preserved)
+ *   and written into the fixed 3-texel RGBA32F point texture, so any
+ *   pooled points geometry fits any points node (capacity is the only
+ *   matching criterion — see points-adapter.ts).
+ * - Lines: Float32Array (per ProcessedLinesData interface); geometries
+ *   are bucketed by their scalar spec set (`hasScalars`).
+ * - GSplats: Float32Array (per PackedGSplatsData interface), stored in
+ *   the 4-texel RGBA32F splat texture.
  *
  * Based on Performance Optimization Specification v3.6.0
  */
@@ -51,7 +50,6 @@ export { estimateGeometryBytes, invalidateCachedByteSize };
 // stub (and existing consumers) keep working unchanged.
 export type { PackedGSplatsData } from './gpu-buffer-pool/gsplats-adapter';
 export type {
-  PointsAttributeTypes,
   PooledBuffer,
   TypePoolStats,
   PoolStats,
@@ -203,15 +201,12 @@ export class GPUBufferPool {
   // =========================================================================
 
   /**
-   * Acquire Points geometry from pool (type-aware, capacity-aware).
+   * Acquire Points geometry from pool (capacity-aware; the fixed texel
+   * layout means any pooled points geometry fits any points node).
    * See `PointsBufferAdapter.acquireGeometry` for implementation.
    */
-  acquirePointsGeometry(
-    nodeId: string,
-    data: LoadedPointsData,
-    pointCount: number
-  ): THREE.BufferGeometry {
-    return this.points.acquireGeometry(nodeId, data, pointCount);
+  acquirePointsGeometry(nodeId: string, pointCount: number): THREE.InstancedBufferGeometry {
+    return this.points.acquireGeometry(nodeId, pointCount);
   }
 
   /** Release Points geometry back to pool. */

@@ -149,7 +149,7 @@ test.describe('Spatial Index Query Accuracy', () => {
     await page.keyboard.press(']');
     await waitForSpatialQueryOrThrow(page);
 
-    // Query the actual radius attribute values from the geometry
+    // Query the actual radius values from the geometry's element texture
     const radiusInfo = await page.evaluate(() => {
       const debug = (window as any).__luxarDebug;
       if (!debug || !debug.scene) return null;
@@ -163,22 +163,25 @@ test.describe('Spatial Index Query Accuracy', () => {
       }[] = [];
 
       debug.scene.traverse((object: any) => {
-        if (object.userData?.nodeType === 'points' && object.geometry?.attributes?.aRadius) {
-          const radiusAttr = object.geometry.attributes.aRadius;
-          // aRadius is an InterleavedBufferAttribute. .array would return
-          // the shared interleaved buffer; use getX(i) for the per-instance
-          // scalar radius.
+        const texData = object.geometry?.userData?.elementTexture?.image?.data;
+        if (object.userData?.nodeType === 'points' && texData) {
+          // Per-point data is texture-backed: the (effective) radius lives
+          // at texel slot [i*12+3] of the RGBA32F element texture.
+          // instanceCount is the visible point count; the texel buffer may
+          // be over-allocated by the GPU pool.
+          const STRIDE = 12;
+          const texelCapacity = Math.floor(texData.length / STRIDE);
           const instanceCount = object.geometry.isInstancedBufferGeometry
             ? object.geometry.instanceCount
-            : radiusAttr.count;
-          const count = Math.min(instanceCount, radiusAttr.count);
+            : texelCapacity;
+          const count = Math.min(instanceCount, texelCapacity);
           if (count === 0) return;
 
           let min = Infinity;
           let max = -Infinity;
           let allFinite = true;
           for (let i = 0; i < count; i++) {
-            const v = radiusAttr.getX(i);
+            const v = texData[i * STRIDE + 3];
             if (!isFinite(v)) allFinite = false;
             if (v < min) min = v;
             if (v > max) max = v;

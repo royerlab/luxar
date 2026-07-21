@@ -22,13 +22,16 @@
  * ``SceneLoader`` / ``SceneManager``) and threading it through the budget
  * getters wired in ``init/pipeline.ts`` and ``scene-loader.ts``.
  *
- * **Per-splat cost note (Phase 1 texture storage).** A pooled gsplat
+ * **Per-element cost note (texture storage).** A pooled gsplat
  * allocation costs ≈68 B/splat: 64 B in the RGBA32F splat texture
  * (4 texels × 16 B) + 4 B for the `aSortedIndex` ordering attribute —
  * vs 52 B/splat in the pre-texture interleaved era (≈ +31% VRAM).
- * `estimateGeometryBytes` counts both, so eviction pressure reflects
- * the true footprint. The planned RGBA16F narrowing (spec §8) brings
- * it to 36 B/splat (−31% vs the interleaved era).
+ * A pooled points allocation costs ≈52 B/point: 48 B in the RGBA32F
+ * point texture (3 texels × 16 B) + 4 B `aSortedIndex` — vs 32 B/point
+ * (36 with scalars) in the interleaved era. `estimateGeometryBytes`
+ * counts both texture and attribute, so eviction pressure reflects the
+ * true footprint. The planned RGBA16F narrowing (spec §8) roughly
+ * halves the texture share.
  *
  * @module rendering/gpu-byte-budget
  */

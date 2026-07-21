@@ -19,24 +19,6 @@ import {
   estimateGeometryBytes,
   invalidateCachedByteSize,
 } from '../../../rendering/gpu-buffer-pool';
-import type { LoadedPointsData } from '../../../data/data-loader-types';
-
-function pointsData(count: number): LoadedPointsData {
-  return {
-    positions: new Float32Array(count * 3),
-    colors: new Float32Array(count * 3),
-    radii: new Float32Array(count),
-    sharpness: new Float32Array(count),
-    pointCount: count,
-    ndim: 3,
-    metadata: {
-      totalPoints: count,
-      loadedPoints: count,
-      bounds: new THREE.Box3(),
-      usedSpatialIndex: false,
-    },
-  };
-}
 
 // selectBuffersToEvict (pure function) tests live in
 // tests/unit/rendering/gpu-buffer-pool/eviction-policy.test.ts —
@@ -98,7 +80,7 @@ describe('estimateGeometryBytes', () => {
 describe('GPU pool getStats() byte counters', () => {
   it('reports activeBytes for an acquired buffer', () => {
     const pool = new GPUBufferPool(20, 300, 5, () => 0); // byte budget disabled
-    pool.acquirePointsGeometry('p1', pointsData(100), 100);
+    pool.acquirePointsGeometry('p1', 100);
     const stats = pool.getStats();
     expect(stats.activeBytes).toBeGreaterThan(0);
     expect(stats.pooledBytes).toBe(0);
@@ -108,7 +90,7 @@ describe('GPU pool getStats() byte counters', () => {
 
   it('moves bytes from active to pooled on release', () => {
     const pool = new GPUBufferPool(20, 300, 5, () => 0);
-    pool.acquirePointsGeometry('p1', pointsData(100), 100);
+    pool.acquirePointsGeometry('p1', 100);
     const before = pool.getStats();
     pool.releasePointsGeometry('p1');
     const after = pool.getStats();
@@ -119,8 +101,8 @@ describe('GPU pool getStats() byte counters', () => {
 
   it('tracks largestPooledBytes across all type pools', () => {
     const pool = new GPUBufferPool(20, 300, 5, () => 0);
-    pool.acquirePointsGeometry('p1', pointsData(100), 100);
-    pool.acquirePointsGeometry('p2', pointsData(1000), 1000);
+    pool.acquirePointsGeometry('p1', 100);
+    pool.acquirePointsGeometry('p2', 1000);
     pool.releasePointsGeometry('p1');
     pool.releasePointsGeometry('p2');
     const stats = pool.getStats();
@@ -140,8 +122,8 @@ describe('byte-budget eviction', () => {
   });
 
   it('evicts pooled buffers when over byte budget (count well under maxPoolSize)', () => {
-    pool.acquirePointsGeometry('p1', pointsData(50), 50);
-    pool.acquirePointsGeometry('p2', pointsData(50), 50);
+    pool.acquirePointsGeometry('p1', 50);
+    pool.acquirePointsGeometry('p2', 50);
     pool.releasePointsGeometry('p1');
     pool.releasePointsGeometry('p2');
     // Each pointsData(50) buffer ≈ 50*(12+12+4+4) = 1600 bytes (allocated to
@@ -163,9 +145,9 @@ describe('byte-budget eviction', () => {
     // time would otherwise force all pooled buffers out.)
     let budget = 0; // disabled during setup
     const orderedPool = new GPUBufferPool(20, 300, 5, () => budget);
-    orderedPool.acquirePointsGeometry('small', pointsData(50), 50);
+    orderedPool.acquirePointsGeometry('small', 50);
     const small = orderedPool.getStats().activeBytes;
-    orderedPool.acquirePointsGeometry('large', pointsData(500), 500);
+    orderedPool.acquirePointsGeometry('large', 500);
     const large = orderedPool.getStats().activeBytes - small;
     expect(large).toBeGreaterThan(small);
 
@@ -189,7 +171,7 @@ describe('byte-budget eviction', () => {
   it('byte budget = 0 disables the byte-budget pass (count only)', () => {
     const countOnly = new GPUBufferPool(20, 300, 5, () => 0);
     for (let i = 0; i < 5; i++) {
-      countOnly.acquirePointsGeometry(`p${i}`, pointsData(50), 50);
+      countOnly.acquirePointsGeometry(`p${i}`, 50);
       countOnly.releasePointsGeometry(`p${i}`);
     }
     countOnly.evictUnused();
@@ -200,8 +182,8 @@ describe('byte-budget eviction', () => {
   });
 
   it('does not evict ACTIVE buffers (only pooled)', () => {
-    pool.acquirePointsGeometry('active', pointsData(500), 500);
-    pool.acquirePointsGeometry('pooled', pointsData(500), 500);
+    pool.acquirePointsGeometry('active', 500);
+    pool.acquirePointsGeometry('pooled', 500);
     pool.releasePointsGeometry('pooled');
     pool.evictUnused();
     const stats = pool.getStats();
@@ -212,7 +194,7 @@ describe('byte-budget eviction', () => {
 
   it('idempotent when pool already under byte budget', () => {
     const big = new GPUBufferPool(20, 300, 5, () => 1_000_000_000); // 1 GB budget
-    big.acquirePointsGeometry('p1', pointsData(10), 10);
+    big.acquirePointsGeometry('p1', 10);
     big.releasePointsGeometry('p1');
     const before = big.getStats();
     big.evictUnused();
@@ -229,7 +211,7 @@ describe('byte-budget eviction', () => {
     // disposes the very buffer the grace exists to preserve.
     let budget = 1_000_000_000;
     const gracePool = new GPUBufferPool(20, 300, 5, () => budget);
-    gracePool.acquirePointsGeometry('old', pointsData(500), 500); // stamped frame 0
+    gracePool.acquirePointsGeometry('old', 500); // stamped frame 0
     gracePool.beginFrame();
     gracePool.beginFrame();
     gracePool.beginFrame(); // frame 3
@@ -240,7 +222,7 @@ describe('byte-budget eviction', () => {
     // request more than 'old''s capacity so best-fit reuse cannot
     // short-circuit the fresh allocation (+ its acquire-triggered sweep).
     budget = 1;
-    gracePool.acquirePointsGeometry('fresh', pointsData(5000), 5000);
+    gracePool.acquirePointsGeometry('fresh', 5000);
     expect(gracePool.getStats().pooledBuffers).toBe(1); // 'old' spared by the grace
 
     // A release-triggered sweep (graceFrame -1) still enforces the budget.
@@ -250,7 +232,7 @@ describe('byte-budget eviction', () => {
 
   it('byte-budget eviction triggers in the auto-eviction path (release → evict)', () => {
     // Acquire+release a buffer that's much larger than the 200-byte budget.
-    pool.acquirePointsGeometry('p1', pointsData(500), 500);
+    pool.acquirePointsGeometry('p1', 500);
     pool.releasePointsGeometry('p1');
     // releasePointsGeometry calls evictUnused() internally.
     const stats = pool.getStats();
@@ -258,8 +240,8 @@ describe('byte-budget eviction', () => {
   });
 
   it('dispose() clears all bytes (active + pooled)', () => {
-    pool.acquirePointsGeometry('a', pointsData(100), 100);
-    pool.acquirePointsGeometry('b', pointsData(100), 100);
+    pool.acquirePointsGeometry('a', 100);
+    pool.acquirePointsGeometry('b', 100);
     pool.releasePointsGeometry('b');
     pool.dispose();
     const stats = pool.getStats();
@@ -274,7 +256,7 @@ describe('byte-budget eviction', () => {
     // Acquire 20 buffers of varying sizes and release them into the pool.
     const sizes = [100, 200, 50, 400, 80, 300, 60, 250, 150, 90];
     for (let i = 0; i < sizes.length; i++) {
-      evictPool.acquirePointsGeometry(`p${i}`, pointsData(sizes[i]), sizes[i]);
+      evictPool.acquirePointsGeometry(`p${i}`, sizes[i]);
       evictPool.releasePointsGeometry(`p${i}`);
     }
     const stats = evictPool.getStats();
@@ -287,14 +269,14 @@ describe('byte-budget eviction', () => {
     // geometry's dispose to be a no-op. Eviction removes the pooled
     // entry from bookkeeping and must complete in finite time.
     const evictPool = new GPUBufferPool(5, 300, 5, () => 100);
-    evictPool.acquirePointsGeometry('p1', pointsData(500), 500);
+    evictPool.acquirePointsGeometry('p1', 500);
     evictPool.releasePointsGeometry('p1');
     // Find the pooled buffer and neuter its dispose.
     const stats0 = evictPool.getStats();
     expect(stats0.pooledBuffers).toBeGreaterThanOrEqual(0);
 
     // Force re-eviction by acquiring + releasing another over-budget buffer.
-    evictPool.acquirePointsGeometry('p2', pointsData(500), 500);
+    evictPool.acquirePointsGeometry('p2', 500);
     evictPool.releasePointsGeometry('p2');
     // The byte budget is 100 bytes; even one pointsData(500) is huge
     // (~24 KB). The eviction should have run despite the no-op dispose.
@@ -312,15 +294,15 @@ describe('byte-budget eviction', () => {
     // buffer exceeds it. The pooled buffer (not in use) must be disposed;
     // the active one (in use) must survive, leaving total resident ≤ budget.
     const probe = new GPUBufferPool(20, 300, 5, () => 0);
-    probe.acquirePointsGeometry('active', pointsData(500), 500);
+    probe.acquirePointsGeometry('active', 500);
     const oneBuffer = probe.getStats().activeBytes;
     probe.dispose();
     expect(oneBuffer).toBeGreaterThan(0);
 
     const budget = Math.floor(oneBuffer * 1.5);
     const pool2 = new GPUBufferPool(20, 300, 5, () => budget);
-    pool2.acquirePointsGeometry('active', pointsData(500), 500);
-    pool2.acquirePointsGeometry('pooled', pointsData(500), 500);
+    pool2.acquirePointsGeometry('active', 500);
+    pool2.acquirePointsGeometry('pooled', 500);
     pool2.releasePointsGeometry('pooled'); // active(1) + pooled(1) > budget
     pool2.evictUnused();
 
@@ -335,7 +317,7 @@ describe('byte-budget eviction', () => {
     let budget = 100_000_000; // generous: pooled buffers retained for reuse
     const pool2 = new GPUBufferPool(20, 300, 5, () => budget);
     for (let i = 0; i < 4; i++) {
-      pool2.acquirePointsGeometry(`p${i}`, pointsData(200), 200);
+      pool2.acquirePointsGeometry(`p${i}`, 200);
       pool2.releasePointsGeometry(`p${i}`);
     }
     const before = pool2.getStats();
@@ -351,8 +333,8 @@ describe('byte-budget eviction', () => {
 
   it('getResidentBytes() equals getStats().totalBytes (active + pooled)', () => {
     const pool2 = new GPUBufferPool(20, 300, 5, () => 0);
-    pool2.acquirePointsGeometry('a', pointsData(100), 100);
-    pool2.acquirePointsGeometry('b', pointsData(200), 200);
+    pool2.acquirePointsGeometry('a', 100);
+    pool2.acquirePointsGeometry('b', 200);
     pool2.releasePointsGeometry('b');
     expect(pool2.getResidentBytes()).toBe(pool2.getStats().totalBytes);
     pool2.dispose();
@@ -364,8 +346,8 @@ describe('byte-budget eviction', () => {
     // eviction must NOT dispose any pooled buffer (and the eviction
     // counter must not advance from the byte-budget path).
     const generousPool = new GPUBufferPool(20, 300, 5, () => 100_000_000);
-    generousPool.acquirePointsGeometry('p1', pointsData(50), 50);
-    generousPool.acquirePointsGeometry('p2', pointsData(50), 50);
+    generousPool.acquirePointsGeometry('p1', 50);
+    generousPool.acquirePointsGeometry('p2', 50);
     generousPool.releasePointsGeometry('p1');
     generousPool.releasePointsGeometry('p2');
 

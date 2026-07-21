@@ -27,6 +27,16 @@ const POINT_PROPS = {
   customColorMode: false,
 } as const;
 
+// Lines are the cached kind (points/gsplats are per node and uncached),
+// so the cache-drop assertions drive the LINE cache.
+const LINE_PROPS = {
+  opacity: 0.7,
+  gamma: 1.5,
+  intensity: 1.0,
+  offset: 0.0,
+  blendingMode: 'additive',
+} as const;
+
 describe('MaterialManager.rebuildAfterContextRestore', () => {
   beforeEach(() => {
     __resetMaterialManagerForTests();
@@ -39,7 +49,8 @@ describe('MaterialManager.rebuildAfterContextRestore', () => {
     // / ownedMaterials so existing visible scene materials keep
     // receiving updateCameraParams() across the restore.
     const mm = new MaterialManager();
-    mm.getPointMaterial(POINT_PROPS);
+    mm.getLineMaterial(LINE_PROPS); // populates the line cache
+    mm.getPointMaterial(POINT_PROPS); // per-node — registered only
 
     const before = mm.getCacheStats();
     expect(before.cachedMaterials).toBeGreaterThan(0);
@@ -55,9 +66,9 @@ describe('MaterialManager.rebuildAfterContextRestore', () => {
 
   it('produces a fresh material on next access (not a stale cached one)', () => {
     const mm = new MaterialManager();
-    const before = mm.getPointMaterial(POINT_PROPS);
+    const before = mm.getLineMaterial(LINE_PROPS);
     mm.rebuildAfterContextRestore();
-    const after = mm.getPointMaterial(POINT_PROPS);
+    const after = mm.getLineMaterial(LINE_PROPS);
     expect(after).not.toBe(before);
   });
 
@@ -78,7 +89,7 @@ describe('MaterialManager.rebuildAfterContextRestore', () => {
     // succeeds even on a brand-new manager whose materials were never
     // disposed (no explicit disposal of pre-existing cache happens).
     const mm = new MaterialManager();
-    const m = mm.getPointMaterial(POINT_PROPS);
+    const m = mm.getLineMaterial(LINE_PROPS);
     let disposeCalls = 0;
     const origDispose = m.dispose.bind(m);
     m.dispose = () => {

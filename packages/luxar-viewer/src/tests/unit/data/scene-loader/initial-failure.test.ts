@@ -22,6 +22,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import * as THREE from 'three';
 import { NodeFactory } from '../../../../rendering/node-factory';
+import { getPointTexture } from '../../../../rendering/point-geometry';
 import { SceneLoader } from '../../../../data/scene-loader';
 import type { PointsMetadata } from '../../../../types/points';
 import type { LinesMetadata } from '../../../../types/lines';
@@ -83,8 +84,9 @@ describe('NodeFactory.createEmptyPointsNode', () => {
 
     const placeholder = factory.createEmptyPointsNode('/empty-points', attrs, loader);
 
-    // Points are THREE.Mesh with instanced quad geometry; aCenter is
-    // the per-instance position.
+    // Points are THREE.Mesh with instanced quad geometry; per-point
+    // data lives in the point texture and `aSortedIndex` is the only
+    // per-instance attribute (texture-storage migration, Stage 2).
     expect(placeholder).toBeInstanceOf(THREE.Mesh);
     expect(placeholder.name).toBe('/empty-points');
     expect(placeholder.userData.nodeType).toBe('points');
@@ -92,13 +94,17 @@ describe('NodeFactory.createEmptyPointsNode', () => {
     expect(placeholder.userData.loader).toBe(loader);
     expect(placeholder.userData.visiblePointCount).toBe(0);
 
-    // Geometry exists but has zero per-instance positions.
+    // Geometry exists but draws zero instances; the storage pair is
+    // attached (exact-size texture — zero points still allocate the
+    // minimum 1-row texture) and the ordering attribute is empty.
     expect(placeholder.geometry).toBeDefined();
-    const centerAttr = placeholder.geometry.getAttribute(
-      'aCenter'
+    expect(getPointTexture(placeholder.geometry)).not.toBeNull();
+    const sortedIndex = placeholder.geometry.getAttribute(
+      'aSortedIndex'
     ) as THREE.InstancedBufferAttribute;
-    expect(centerAttr).toBeDefined();
-    expect(centerAttr.count).toBe(0);
+    expect(sortedIndex).toBeDefined();
+    expect(sortedIndex.count).toBe(0);
+    expect((placeholder.geometry as THREE.InstancedBufferGeometry).instanceCount).toBe(0);
   });
 });
 

@@ -47,7 +47,7 @@ export const GSPLAT_PICK_VERTEX_SHADER = /* glsl */ `
     in uint aSortedIndex;
 
     // Splat data texture: RGBA32F, 4 texels/splat (see
-    // rendering/splat-texture-layout.ts). Picking needs texels 0-2
+    // rendering/element-texture-layout.ts). Picking needs texels 0-2
     // only (center/amplitude/cholesky) -- color is not fetched.
     uniform highp sampler2D uSplatTex;
 

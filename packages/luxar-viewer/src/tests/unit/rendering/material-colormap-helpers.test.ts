@@ -59,18 +59,23 @@ describe('supportsScalarColormap', () => {
     expect(supportsScalarColormap('gsplats', new THREE.BufferGeometry())).toBe(true);
   });
 
-  it('returns false for points without a `scalar` attribute', () => {
+  it('returns false for points without the hasScalars stamp', () => {
+    // The fixed 3-texel point layout always has a scalar slot, so scalar
+    // presence is the `userData.hasScalars` stamp set by the texel
+    // writers — an unstamped (or false-stamped) geometry fails closed.
     const g = new THREE.BufferGeometry();
     g.setAttribute('position', new THREE.Float32BufferAttribute(3, 3));
     expect(supportsScalarColormap('points', g)).toBe(false);
+    g.userData.hasScalars = false;
+    expect(supportsScalarColormap('points', g)).toBe(false);
   });
 
-  it('returns true for points with an `aScalar` attribute', () => {
-    // Per-instance scalar attribute is named `aScalar` and lives on an
-    // InstancedBufferAttribute.
+  it('returns true for points with the `userData.hasScalars` stamp', () => {
+    // Stamped by createPointsGeometry / the pool points adapter when
+    // `data.scalars !== undefined` (the same signal that used to bind
+    // the aScalar attribute).
     const g = new THREE.BufferGeometry();
-    g.setAttribute('aCenter', new THREE.InstancedBufferAttribute(new Float32Array(3), 3));
-    g.setAttribute('aScalar', new THREE.InstancedBufferAttribute(new Float32Array(1), 1));
+    g.userData.hasScalars = true;
     expect(supportsScalarColormap('points', g)).toBe(true);
   });
 

@@ -131,12 +131,17 @@ describe('PointMaterial', () => {
       expect(material.vertexShader).not.toContain('sharpnessCompensation');
       expect(material.vertexShader).toContain('vPointSize = basePointSize');
 
-      // Per-instance attributes. aQuadCorner is per-vertex.
+      // The single per-instance attribute (aSortedIndex) + the point
+      // data texture. aQuadCorner is per-vertex. Per-point values are
+      // texelFetch'd into locals with the historical names (aCenter,
+      // aRadius, aColor, aSharpness) so the downstream math is unchanged.
       expect(material.vertexShader).toContain('in vec2 aQuadCorner');
-      expect(material.vertexShader).toContain('in vec3 aCenter');
-      expect(material.vertexShader).toContain('in float aRadius');
-      expect(material.vertexShader).toContain('in float aSharpness');
-      expect(material.vertexShader).toContain('in vec3 aColor');
+      expect(material.vertexShader).toContain('in uint aSortedIndex');
+      expect(material.vertexShader).toContain('uniform highp sampler2D uPointTex');
+      expect(material.vertexShader).toContain('vec3 aCenter = pointT0.xyz');
+      expect(material.vertexShader).toContain('float aRadius = pointT0.w');
+      expect(material.vertexShader).toContain('vec3 aColor = pointT1.rgb');
+      expect(material.vertexShader).toContain('float aSharpness = pointT1.w');
 
       // Check for optimized uniforms (sharpnessScale is removed — sharpness
       // is now authored natively in [0, 1], no dtype scale needed).

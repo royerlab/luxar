@@ -202,57 +202,48 @@ test.describe('WebGL Error Detection - Critical', () => {
       debug.scene.traverse((obj: any) => {
         if (obj.userData?.nodeType === 'points') {
           const geom = obj.geometry;
-          const posCount = geom.attributes.aCenter?.count || 0;
+          // Per-point data is texture-backed: an RGBA32F element texture
+          // holds 12 floats (3 texels) per point, and the only per-instance
+          // attribute is aSortedIndex. Malformed geometry means a missing
+          // element texture, a texel buffer too small for the visible
+          // instance count, or a missing/under-sized aSortedIndex.
+          const texData = geom.userData?.elementTexture?.image?.data;
+          const instanceCount = geom.instanceCount || 0;
 
-          // Check all attributes have same count
-          if (geom.attributes.aColor && geom.attributes.aColor.count !== posCount) {
-            issues.push({
-              name: obj.name,
-              issue: `Color count (${geom.attributes.aColor.count}) != position count (${posCount})`,
-            });
+          if (!texData) {
+            issues.push({ name: obj.name, issue: 'Missing element texture' });
+          } else {
+            const texelCapacity = Math.floor(texData.length / 12);
+            if (texelCapacity < instanceCount) {
+              issues.push({
+                name: obj.name,
+                issue: `Texel capacity (${texelCapacity}) < instance count (${instanceCount})`,
+              });
+            }
+            if (texData.length % 4 !== 0) {
+              issues.push({
+                name: obj.name,
+                issue: `Element texture length (${texData.length}) is not a whole number of RGBA texels`,
+              });
+            }
           }
 
-          if (geom.attributes.aRadius && geom.attributes.aRadius.count !== posCount) {
-            issues.push({
-              name: obj.name,
-              issue: `Radius count (${geom.attributes.aRadius.count}) != position count (${posCount})`,
-            });
-          }
-
-          if (geom.attributes.aSharpness && geom.attributes.aSharpness.count !== posCount) {
-            issues.push({
-              name: obj.name,
-              issue: `Sharpness count (${geom.attributes.aSharpness.count}) != position count (${posCount})`,
-            });
-          }
-
-          // Check itemSize is correct
-          if (geom.attributes.aCenter?.itemSize !== 3) {
-            issues.push({
-              name: obj.name,
-              issue: `Position itemSize is ${geom.attributes.aCenter.itemSize}, expected 3`,
-            });
-          }
-
-          if (geom.attributes.aColor && geom.attributes.aColor.itemSize !== 3) {
-            issues.push({
-              name: obj.name,
-              issue: `Color itemSize is ${geom.attributes.aColor.itemSize}, expected 3`,
-            });
-          }
-
-          if (geom.attributes.aRadius && geom.attributes.aRadius.itemSize !== 1) {
-            issues.push({
-              name: obj.name,
-              issue: `Radius itemSize is ${geom.attributes.aRadius.itemSize}, expected 1`,
-            });
-          }
-
-          if (geom.attributes.aSharpness && geom.attributes.aSharpness.itemSize !== 1) {
-            issues.push({
-              name: obj.name,
-              issue: `Sharpness itemSize is ${geom.attributes.aSharpness.itemSize}, expected 1`,
-            });
+          const sortedIndex = geom.attributes.aSortedIndex;
+          if (!sortedIndex) {
+            issues.push({ name: obj.name, issue: 'Missing aSortedIndex attribute' });
+          } else {
+            if (sortedIndex.count < instanceCount) {
+              issues.push({
+                name: obj.name,
+                issue: `aSortedIndex count (${sortedIndex.count}) < instance count (${instanceCount})`,
+              });
+            }
+            if (sortedIndex.itemSize !== 1) {
+              issues.push({
+                name: obj.name,
+                issue: `aSortedIndex itemSize is ${sortedIndex.itemSize}, expected 1`,
+              });
+            }
           }
         }
       });

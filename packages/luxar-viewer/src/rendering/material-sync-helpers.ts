@@ -24,10 +24,12 @@ import { GSplatTSLMaterial } from './materials/gsplat/material-tsl';
 import { GSplatPickingMaterial } from './picking/gsplat/material';
 import { GSplatPickingTSLMaterial } from './picking/gsplat/material-tsl';
 import { getSplatTexture } from './gsplat-geometry';
+import { getPointTexture } from './point-geometry';
 
 /**
- * Synchronize a Points material's dtype-scale uniforms after a geometry
- * commit.
+ * Synchronize a Points material's geometry-derived state after a
+ * geometry commit: the dtype-scale uniform AND the point-texture
+ * binding.
  *
  * The placeholder-first loading pattern creates a `PointMaterial` /
  * `PointTSLMaterial` from an empty geometry (radiusScale=1) before
@@ -35,18 +37,26 @@ import { getSplatTexture } from './gsplat-geometry';
  * real normalized Uint8 radii, the material uniforms must be updated
  * or the points render at `[0,1]` scale instead of `[0,max_radius]`.
  *
- * Reads `geometry.userData.radiusScale` and propagates the value to
- * both the render and pick materials (GLSL and TSL wrappers — both
- * expose identical `updateRadiusScale` surfaces). Idempotent.
+ * Point data lives in an RGBA32F texture that shares the geometry's
+ * lifetime (`point-geometry.ts::attachPointStorage`). A pool acquire
+ * may hand the node a DIFFERENT geometry+texture pair (growth,
+ * best-fit reuse, first commit after the placeholder mesh), so the
+ * commit rebinds `uPointTex` on the render material and — via
+ * `userData.pickNode` — the pick material. Idempotent: both wrapper
+ * classes no-op or cheaply re-write on an unchanged identity (the
+ * common same-geometry commit), so this is safe to call on every
+ * commit. Mirrors {@link syncGSplatMaterialWithGeometry}.
  */
 export function syncPointMaterialWithGeometry(points: THREE.Mesh): void {
   const geometry = points.geometry;
   if (!geometry) return;
   const radiusScale = (geometry.userData?.radiusScale as number | undefined) ?? 1.0;
+  const pointTexture = getPointTexture(geometry);
 
   const renderMat = points.material as THREE.Material | null;
   if (renderMat instanceof PointMaterial || renderMat instanceof PointTSLMaterial) {
     renderMat.updateRadiusScale(radiusScale);
+    if (pointTexture) renderMat.updatePointTexture(pointTexture);
   }
 
   // Picking shadow node was wired into userData by
@@ -57,6 +67,7 @@ export function syncPointMaterialWithGeometry(points: THREE.Mesh): void {
     const pickMat = (pickNode as THREE.Mesh | THREE.Points).material as THREE.Material | undefined;
     if (pickMat instanceof PointPickingMaterial || pickMat instanceof PointPickingTSLMaterial) {
       pickMat.updateRadiusScale(radiusScale);
+      if (pointTexture) pickMat.updatePointTexture(pointTexture);
     }
   }
 }

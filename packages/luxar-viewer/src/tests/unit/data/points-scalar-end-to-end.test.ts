@@ -6,10 +6,9 @@
  *  - projectPointsTo3D: scalar pass-through (no filter), scalar
  *    compaction under effective-radius filter (target-buffer + fallback
  *    paths), scalars: undefined when input absent.
- *  - GPUBufferPool: detectAttributeTypes carries scalar type;
- *    createPointsGeometry binds `scalar` attribute when types.scalar is set;
- *    no `scalar` attribute on positions-only data; growPointsGeometry
- *    type-preserves scalar; updatePointsGeometry copies/zero-fills.
+ *  - GPUBufferPool: scalars ride texel2.x of the fixed 3-texel point
+ *    texture (0.0 identity when absent, written unconditionally);
+ *    dtype widening at upload; growth re-writes the full count.
  *  - End-to-end: data with `scalars` → geometry has `scalar` attribute →
  *    `supportsScalarColormap('points', geometry)` returns true →
  *    NodeFactory enables colormap mode without falling back.
@@ -24,6 +23,8 @@ import {
 } from '../../../data/points/projection';
 import { TypeScriptFallback } from '../../../wasm/typescript';
 import { GPUBufferPool } from '../../../rendering/gpu-buffer-pool';
+import { getPointTexture } from '../../../rendering/point-geometry';
+import { POINT_FLOATS_PER_POINT } from '../../../rendering/element-texture-layout';
 import { NodeFactory } from '../../../rendering/node-factory';
 import { supportsScalarColormap } from '../../../rendering/material-colormap-helpers';
 import type { LoadedPointsData, ViewState } from '../../../data/data-loader-types';
@@ -213,25 +214,37 @@ describe('projectPointsTo3D scalar pass-through', () => {
   });
 });
 
-describe('GPUBufferPool scalar attribute', () => {
-  it('detectAttributeTypes omits scalar field when data.scalars is undefined', () => {
-    const pool = new GPUBufferPool(20, 300, 5, () => 0);
-    const data: LoadedPointsData = {
-      positions: new Float32Array([0, 0, 0]),
-      pointCount: 1,
+describe('GPUBufferPool scalar texel slot', () => {
+  // Per-point data lives in the fixed 3-texel RGBA32F point texture
+  // (point-geometry.ts): texel2.x is the scalar slot, written
+  // UNCONDITIONALLY (0.0 identity when the dataset has no scalars) so a
+  // reused pool texture never leaks a previous tenant's scalars.
+  const scalarTexel = (g: THREE.BufferGeometry, i: number): number =>
+    (getPointTexture(g)!.image.data as Float32Array)[i * POINT_FLOATS_PER_POINT + 8];
+
+  function scalarData(scalars: LoadedPointsData['scalars'], count: number): LoadedPointsData {
+    return {
+      positions: new Float32Array(count * 3),
+      scalars,
+      pointCount: count,
       ndim: 3,
       metadata: {
-        totalPoints: 1,
-        loadedPoints: 1,
+        totalPoints: count,
+        loadedPoints: count,
         bounds: new THREE.Box3(),
         usedSpatialIndex: false,
       },
     };
-    const g = pool.acquirePointsGeometry('p1', data, 1);
-    expect(g.hasAttribute('aScalar')).toBe(false);
+  }
+
+  it('writes the 0.0 scalar identity when data.scalars is undefined', () => {
+    const pool = new GPUBufferPool(20, 300, 5, () => 0);
+    const g = pool.acquirePointsGeometry('p1', 1);
+    pool.updatePointsGeometry(g, scalarData(undefined, 1), 1);
+    expect(scalarTexel(g, 0)).toBe(0.0);
   });
 
-  it('detectAttributeTypes emits Float16Array tag for Float16 input', () => {
+  it('widens Float16 scalar input at upload (and reuses across dtypes)', () => {
     if (typeof globalThis.Float16Array === 'undefined') {
       return; // Skip on engines without Float16Array (older Node/JSDOM)
     }
@@ -239,178 +252,85 @@ describe('GPUBufferPool scalar attribute', () => {
     const f16 = new globalThis.Float16Array(2);
     f16[0] = 0.25;
     f16[1] = 0.75;
-    const data16: LoadedPointsData = {
-      positions: new Float32Array([0, 0, 0, 1, 0, 0]),
-      scalars: f16 as unknown as Float32Array,
-      pointCount: 2,
-      ndim: 3,
-      metadata: {
-        totalPoints: 2,
-        loadedPoints: 2,
-        bounds: new THREE.Box3(),
-        usedSpatialIndex: false,
-      },
-    };
-    const g1 = pool.acquirePointsGeometry('p1-f16', data16, 2);
-    // Geometry storage is Float32 (THREE.js doesn't accept Float16) and
-    // values get widened at upload — but the dtype tag is what governs
-    // pool reuse vs re-allocation.
-    expect(g1.hasAttribute('aScalar')).toBe(true);
+    const data16 = scalarData(f16 as unknown as Float32Array, 2);
+    const g1 = pool.acquirePointsGeometry('p1-f16', 2);
     pool.updatePointsGeometry(g1, data16, 2);
-    const attr = g1.getAttribute('aScalar');
-    // Pooled attributes are `InterleavedBufferAttribute` views over a
-    // shared Float32 buffer — read via the semantic getX(i) API (raw
-    // .array[i] indexes the interleaved buffer, i.e. position x, not the
-    // scalar). This body only executes on engines with Float16Array
-    // (Node >= 25), so it was missed when the sibling tests migrated.
-    expect(attr.getX(0)).toBeCloseTo(0.25, 2);
-    expect(attr.getX(1)).toBeCloseTo(0.75, 2);
+    // Texel storage is Float32; values are widened at upload.
+    expect(scalarTexel(g1, 0)).toBeCloseTo(0.25, 2);
+    expect(scalarTexel(g1, 1)).toBeCloseTo(0.75, 2);
 
-    // Reusing with a Float32 input must NOT match the Float16 geometry
-    // — the dtype tag distinguishes them.
-    const data32: LoadedPointsData = { ...data16, scalars: new Float32Array([0.1, 0.2]) };
+    // Fixed texel layout: reusing with a Float32 input MATCHES the
+    // pooled geometry (the interleaved era's dtype bucketing is gone) —
+    // the upload just overwrites the texels.
+    const data32 = scalarData(new Float32Array([0.1, 0.2]), 2);
     pool.releasePointsGeometry('p1-f16');
-    const g2 = pool.acquirePointsGeometry('p1-f32', data32, 2);
-    expect(g2).not.toBe(g1);
+    const g2 = pool.acquirePointsGeometry('p1-f32', 2);
+    expect(g2).toBe(g1);
+    pool.updatePointsGeometry(g2, data32, 2);
+    expect(scalarTexel(g2, 0)).toBeCloseTo(0.1, 5);
+    expect(scalarTexel(g2, 1)).toBeCloseTo(0.2, 5);
   });
 
-  it('binds Float32 `scalar` attribute when scalars present', () => {
+  it('writes Float32 scalars into texel2.x when scalars present', () => {
     const pool = new GPUBufferPool(20, 300, 5, () => 0);
-    const data: LoadedPointsData = {
-      positions: new Float32Array([0, 0, 0, 1, 0, 0]),
-      scalars: new Float32Array([0.3, 0.7]),
-      pointCount: 2,
-      ndim: 3,
-      metadata: {
-        totalPoints: 2,
-        loadedPoints: 2,
-        bounds: new THREE.Box3(),
-        usedSpatialIndex: false,
-      },
-    };
-    const g = pool.acquirePointsGeometry('p2', data, 2);
+    const data = scalarData(new Float32Array([0.3, 0.7]), 2);
+    const g = pool.acquirePointsGeometry('p2', 2);
     pool.updatePointsGeometry(g, data, 2);
-    expect(g.hasAttribute('aScalar')).toBe(true);
-    const attr = g.getAttribute('aScalar');
-    expect(attr.itemSize).toBe(1);
-    // Pooled attributes are now `InterleavedBufferAttribute` views
-    // over a shared Float32 buffer — use the semantic `getX(i)` API.
-    expect(attr.getX(0)).toBeCloseTo(0.3, 5);
-    expect(attr.getX(1)).toBeCloseTo(0.7, 5);
+    expect(scalarTexel(g, 0)).toBeCloseTo(0.3, 5);
+    expect(scalarTexel(g, 1)).toBeCloseTo(0.7, 5);
   });
 
-  it('widens Uint8 normalized scalar source to Float32 [0,1] when scalars are Uint8', () => {
-    // Pooled storage is uniformly Float32. Uint8 source data with
+  it('widens Uint8 normalized scalar source to Float32 [0,1]', () => {
+    // Texel storage is uniformly Float32. Uint8 source data with
     // `normalized: true` semantics is widened by /255 at upload time so
-    // the shader sees the same
-    // [0, 1] range — see `pointsNormalizationDivisor` in
-    // `gpu-buffer-pool.ts`.
+    // the shader sees the same [0, 1] range — see
+    // `pointsNormalizationDivisor` in `point-geometry.ts`.
     const pool = new GPUBufferPool(20, 300, 5, () => 0);
-    const data: LoadedPointsData = {
-      positions: new Float32Array([0, 0, 0]),
-      scalars: new Uint8Array([128]),
-      pointCount: 1,
-      ndim: 3,
-      metadata: {
-        totalPoints: 1,
-        loadedPoints: 1,
-        bounds: new THREE.Box3(),
-        usedSpatialIndex: false,
-      },
-    };
-    const g = pool.acquirePointsGeometry('p3', data, 1);
+    const data = scalarData(new Uint8Array([128]), 1);
+    const g = pool.acquirePointsGeometry('p3', 1);
     pool.updatePointsGeometry(g, data, 1);
-    const attr = g.getAttribute('aScalar');
-    // Stored as Float32 after the widen; semantic value at instance 0
-    // is 128 / 255 ≈ 0.502.
-    expect(attr.getX(0)).toBeCloseTo(128 / 255, 5);
+    expect(scalarTexel(g, 0)).toBeCloseTo(128 / 255, 5);
   });
 
-  it('reuses the same geometry on subsequent acquire when scalar type matches', () => {
+  it('reuses the same geometry on subsequent acquire for the same node', () => {
     const pool = new GPUBufferPool(20, 300, 5, () => 0);
-    const dataA: LoadedPointsData = {
-      positions: new Float32Array([0, 0, 0]),
-      scalars: new Float32Array([0.5]),
-      pointCount: 1,
-      ndim: 3,
-      metadata: {
-        totalPoints: 1,
-        loadedPoints: 1,
-        bounds: new THREE.Box3(),
-        usedSpatialIndex: false,
-      },
-    };
-    const dataB: LoadedPointsData = {
-      ...dataA,
-      scalars: new Float32Array([0.9]),
-    };
-    const g1 = pool.acquirePointsGeometry('p4', dataA, 1);
-    const g2 = pool.acquirePointsGeometry('p4', dataB, 1);
+    const g1 = pool.acquirePointsGeometry('p4', 1);
+    const g2 = pool.acquirePointsGeometry('p4', 1);
     expect(g2).toBe(g1);
   });
 
-  it('grows scalar buffer type-preservingly', () => {
+  it('growth hands back a fresh geometry whose scalar slots are written for the full count', () => {
     const pool = new GPUBufferPool(20, 300, 5, () => 0);
-    const initial: LoadedPointsData = {
-      positions: new Float32Array(3 * 10),
-      scalars: new Float32Array(10).fill(0.5),
-      pointCount: 10,
-      ndim: 3,
-      metadata: {
-        totalPoints: 10,
-        loadedPoints: 10,
-        bounds: new THREE.Box3(),
-        usedSpatialIndex: false,
-      },
-    };
-    const big: LoadedPointsData = {
-      positions: new Float32Array(3 * 100),
-      scalars: new Float32Array(100).fill(0.7),
-      pointCount: 100,
-      ndim: 3,
-      metadata: {
-        totalPoints: 100,
-        loadedPoints: 100,
-        bounds: new THREE.Box3(),
-        usedSpatialIndex: false,
-      },
-    };
-    const g = pool.acquirePointsGeometry('p5', initial, 10);
-    pool.acquirePointsGeometry('p5', big, 100); // forces growth
-    expect(g.hasAttribute('aScalar')).toBe(true);
-    const attr = g.getAttribute('aScalar') as THREE.BufferAttribute;
-    expect(attr.array.length).toBeGreaterThanOrEqual(100);
+    const g = pool.acquirePointsGeometry('p5', 10);
+    pool.updatePointsGeometry(g, scalarData(new Float32Array(10).fill(0.5), 10), 10);
+    const g2 = pool.acquirePointsGeometry('p5', 100); // forces growth
+    expect(g2).not.toBe(g);
+    pool.updatePointsGeometry(g2, scalarData(new Float32Array(100).fill(0.7), 100), 100);
+    expect(scalarTexel(g2, 0)).toBeCloseTo(0.7, 5);
+    expect(scalarTexel(g2, 99)).toBeCloseTo(0.7, 5);
   });
 
-  it('updatePointsGeometry zero-fills scalar buffer when data.scalars is absent on a reuse', () => {
+  it('updatePointsGeometry resets the scalar slot to 0.0 when data.scalars is absent on a reuse', () => {
+    // The interleaved era released + re-acquired on a scalar-presence
+    // flip (dtype bucketing); the fixed layout keeps the SAME geometry
+    // and the unconditional texel write restores the 0.0 identity — no
+    // previous tenant's scalars can leak.
     const pool = new GPUBufferPool(20, 300, 5, () => 0);
-    const withScalars: LoadedPointsData = {
-      positions: new Float32Array([0, 0, 0]),
-      scalars: new Float32Array([0.7]),
-      pointCount: 1,
-      ndim: 3,
-      metadata: {
-        totalPoints: 1,
-        loadedPoints: 1,
-        bounds: new THREE.Box3(),
-        usedSpatialIndex: false,
-      },
-    };
-    const g = pool.acquirePointsGeometry('p6', withScalars, 1);
+    const withScalars = scalarData(new Float32Array([0.7]), 1);
+    const g = pool.acquirePointsGeometry('p6', 1);
     pool.updatePointsGeometry(g, withScalars, 1);
-    // Now reuse with same type (scalar still present in detect) but a
-    // fresh source where data.scalars is undefined — the pool keeps the
-    // same buffer because types detect scalar=undefined for the new data,
-    // which is a TYPE MISMATCH. The pool releases + re-acquires.
-    const noScalars: LoadedPointsData = { ...withScalars, scalars: undefined };
-    const g2 = pool.acquirePointsGeometry('p6', noScalars, 1);
-    // Type changed: no scalar attribute on the new geometry.
-    expect(g2.hasAttribute('aScalar')).toBe(false);
+    expect(scalarTexel(g, 0)).toBeCloseTo(0.7, 5);
+
+    const noScalars = scalarData(undefined, 1);
+    const g2 = pool.acquirePointsGeometry('p6', 1);
+    expect(g2).toBe(g); // same geometry — no rebuild on presence flip
+    pool.updatePointsGeometry(g2, noScalars, 1);
+    expect(scalarTexel(g2, 0)).toBe(0.0);
   });
 });
 
 describe('end-to-end: NodeFactory + LayersPanel guard', () => {
-  it('createPointsGeometry binds scalar attribute when data.scalars supplied', () => {
+  it('createPointsGeometry stamps hasScalars + writes texel2.x when data.scalars supplied', () => {
     const factory = new NodeFactory();
     const data: LoadedPointsData = {
       positions: new Float32Array([0, 0, 0, 1, 0, 0, 2, 0, 0]),
@@ -425,7 +345,12 @@ describe('end-to-end: NodeFactory + LayersPanel guard', () => {
       },
     };
     const g = factory.createPointsGeometry(data);
-    expect(g.hasAttribute('aScalar')).toBe(true);
+    // Scalar presence is the userData stamp (the fixed 3-texel layout
+    // always has a texel2.x slot, so there is no attribute to probe);
+    // the guard consumes the stamp.
+    expect(g.userData.hasScalars).toBe(true);
+    const texData = getPointTexture(g)!.image.data as Float32Array;
+    expect(texData[1 * POINT_FLOATS_PER_POINT + 8]).toBeCloseTo(0.5, 5);
     expect(supportsScalarColormap('points', g)).toBe(true);
   });
 

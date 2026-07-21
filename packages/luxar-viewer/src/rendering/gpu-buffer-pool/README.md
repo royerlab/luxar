@@ -9,7 +9,7 @@ The parent `GPUBufferPool` (`../gpu-buffer-pool.ts`) owns the shared coordinatio
 ```
 gpu-buffer-pool/
 ├── pool-stats.ts            # Shared types — PooledBuffer, PoolStats, TypePoolStats,
-│                              PooledBufferRef, PointsAttributeTypes
+│                              PooledBufferRef
 ├── eviction-policy.ts       # Pure largest-first selector — selectBuffersToEvict()
 ├── byte-budget-evictor.ts   # Cross-type eviction loop — evictUntilUnderByteBudget()
 ├── attribute-codec.ts       # Geometry-agnostic interleaved-buffer helper
@@ -31,20 +31,20 @@ gpu-buffer-pool/
 Each adapter (`PointsBufferAdapter`, `LinesBufferAdapter`, `GSplatsBufferAdapter`) owns:
 
 - A bucketed `Map<number, PooledBuffer[]>` of released-but-reusable geometries, keyed by capacity bucket.
-- Points/Lines: a canonical per-instance attribute spec list (`POINTS_BASE_ATTRIBUTE_SPECS`, `LINES_BASE_ATTRIBUTE_SPECS`) used to allocate the geometry's single `InstancedInterleavedBuffer`. GSplats instead attach an RGBA32F **splat texture** + a `aSortedIndex` (Uint32) ordering attribute via `gsplat-geometry.ts::attachSplatStorage` (depth-sorting Phase 1); the texture is disposed by the geometry's own `dispose` event at every dispose site.
-- `acquireGeometry(nodeId, …)` — first checks `host.activeBuffers` for in-place reuse (matching capacity and, for points, matching attribute dtypes; for lines, a matching scalar spec set via the `hasScalars` parameter), then scans bucketed pools best-fit, then falls back to allocation. **Growth is release + reacquire, never an in-place rebuild**: an undersized active buffer is released to the pool intact and the acquire falls through to best-fit/fresh allocation. Replacing a rendered geometry's attributes would strand the old GPU buffer in the renderer caches (freed only at GC mercy on classic WebGL; pinned permanently by the WebGPU renderer's strong `Info.memoryMap`). Content carry-forward is unnecessary — every commit rewrites all attributes for the full count right after acquire.
+- Lines: a canonical per-instance attribute spec list (`LINES_BASE_ATTRIBUTE_SPECS`) used to allocate the geometry's single `InstancedInterleavedBuffer`. Points and GSplats instead attach an RGBA32F **element texture** (3 texels/point via `point-geometry.ts::attachPointStorage`; 4 texels/splat via `gsplat-geometry.ts::attachSplatStorage`) + an `aSortedIndex` (Uint32) ordering attribute (depth-sorting Phase 1 / §8); the texture is disposed by the geometry's own `dispose` event at every dispose site.
+- `acquireGeometry(nodeId, …)` — first checks `host.activeBuffers` for in-place reuse (matching capacity; for lines, also a matching scalar spec set via the `hasScalars` parameter — points and gsplats use fixed texel layouts, so capacity is their only criterion), then scans bucketed pools best-fit, then falls back to allocation. **Growth is release + reacquire, never an in-place rebuild**: an undersized active buffer is released to the pool intact and the acquire falls through to best-fit/fresh allocation. Replacing a rendered geometry's attributes would strand the old GPU buffer in the renderer caches (freed only at GC mercy on classic WebGL; pinned permanently by the WebGPU renderer's strong `Info.memoryMap`). Content carry-forward is unnecessary — every commit rewrites all attributes for the full count right after acquire.
 - `releaseGeometry(nodeId)` — moves the buffer into a per-capacity bucket and calls `host.evictUnused()`.
 - `updateGeometry(geometry, data, count, …)` — Points/Lines write per-instance attributes via `writePooledAttribute`; GSplats run one fused texel pass (`writeSplatTexels`) plus an identity `aSortedIndex` fill. All recompute `boundingBox` / `boundingSphere`; the lines adapter expands the box by max line width, the gsplats adapter by max Cholesky row-norm × truncation radius.
 
 Adapters interact with the parent pool only through the narrow `*AdapterHost` interfaces — they read `activeBuffers`, `frameCount`, `stats`, `typeStats`, call `host.getBucket(count)` and `host.evictUnused()`, and set `host._lastAcquireRebuilt` so the parent knows whether the returned geometry still has its previous attribute bindings.
 
-### Points-specific dtype tracking
+### Dtype-blind pooling (points and gsplats)
 
-Points geometries are pooled with full dtype awareness (`PointsAttributeTypes` in `pool-stats.ts`). A pooled point buffer is only reused when `attributeTypesMatch` confirms the new upload has the same color/radius/sharpness/scalar dtypes. This avoids hard-to-debug reuse bugs where, e.g., a Uint8 color view is reinterpreted as Float32. Lines and gsplats pool by capacity alone — lines' attribute layout is uniformly Float32, and gsplat splat textures are always RGBA32F.
+All three types pool by capacity alone. Points lost their dtype bucketing with the texture migration: the fixed 3-texel RGBA32F layout means any pooled points geometry fits any points node — dtype normalization happens at upload time (`widenToFloat32` in the adapter), so a Uint8 color view can never be reinterpreted as Float32. Lines' interleaved layout is uniformly Float32; gsplat splat textures are always RGBA32F.
 
 ### Optional scalar attributes (colormaps)
 
-Points carry their scalar dtype in `PointsAttributeTypes` (a dtype mismatch releases and reacquires). Lines declare scalar presence at ACQUIRE time — `acquireLinesGeometry(nodeId, count, hasScalars)` includes `aStartScalar`/`aEndScalar` in the creation spec set when the commit carries colormap data, and a spec-set mismatch on a pooled/active candidate releases and reacquires. `updateGeometry` never rebuilds in place (it throws if scalar data arrives on a base-only geometry — an acquire-contract violation).
+Points always carry a scalar texel slot (0.0 identity when the dataset has no scalars; real presence rides the `geometry.userData.hasScalars` stamp). Lines declare scalar presence at ACQUIRE time — `acquireLinesGeometry(nodeId, count, hasScalars)` includes `aStartScalar`/`aEndScalar` in the creation spec set when the commit carries colormap data, and a spec-set mismatch on a pooled/active candidate releases and reacquires. `updateGeometry` never rebuilds in place (it throws if scalar data arrives on a base-only geometry — an acquire-contract violation).
 
 ### Interleaved-attribute codec
 
@@ -75,8 +75,7 @@ The evictor sees pooled-only buffers — active (in-use) buffers are never candi
 
 ## Shared types — `pool-stats.ts`
 
-- `PooledBuffer` — one pooled geometry plus the metadata the pool needs: `capacity`, `type` (`'points' | 'lines' | 'gsplats'`), `inUse`, `lastUsedFrame`, optional `attributeTypes` (points only).
-- `PointsAttributeTypes` — per-attribute TypedArray dtype snapshot; the `scalar` field is optional and `undefined === undefined` makes `attributeTypesMatch` work without a sentinel.
+- `PooledBuffer` — one pooled geometry plus the metadata the pool needs: `capacity`, `type` (`'points' | 'lines' | 'gsplats'`), `inUse`, `lastUsedFrame`.
 - `TypePoolStats` / `PoolStats` — per-type counters plus aggregate totals. `PoolStats.deferredEvictions` is incremented when the per-call batch cap (`evictBatchSize`) trips, so a long pause + resume that stretches the eviction queue across multiple frames is observable.
 - `PooledBufferRef` — minimal `{ bytes, payload? }` shape consumed by the pure `selectBuffersToEvict` selector.
 

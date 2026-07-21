@@ -127,6 +127,11 @@ export function commitLinesGeometry(
         // node adopt — mid-render. See commit-points-geometry.ts.
         mesh.geometry = geometry;
         if (acquireRebuilt) invalidateRenderObjectFor(mesh);
+        // Dispose a replaced NON-pool geometry (the creation-time
+        // placeholder) — see the commit-points-geometry.ts twin.
+        if (prevGeometry !== geometry && !prevGeometry.userData?.luxarPooled) {
+          prevGeometry.dispose();
+        }
       }
     } else {
       // Non-pool path: a size/spec-set change rebinds a fresh
