@@ -250,7 +250,7 @@ void main() {
 
 		} else {
 
-			nodeVar40 = max( nodeUniform18, 0.0001 );
+			nodeVar40 = max( nodeUniform18, 1e-20 );
 			nodeVar39 = smoothstep( nodeVar40, ( nodeVar40 * 2.0 ), ( - nodeVar34.z ) );
 
 		}
@@ -270,13 +270,13 @@ void main() {
 
 	} else {
 
-		nodeVar45 = max( nodeVar35, 1e-8 );
+		nodeVar45 = max( nodeVar35, 1e-20 );
 
 	}
 
-	nodeVar46 = ( 1.0 - smoothstep( ( nodeVar44 * 0.5 ), nodeVar44, ( ( ( nodeUniform21 * sqrt( max( nodeVar42, 1e-8 ) ) ) * nodeUniform22 ) / nodeVar45 ) ) );
+	nodeVar46 = ( 1.0 - smoothstep( ( nodeVar44 * 0.5 ), nodeVar44, ( ( ( nodeUniform21 * sqrt( max( nodeVar42, 1e-20 ) ) ) * nodeUniform22 ) / nodeVar45 ) ) );
 	nodeVar47 = min( nodeVar41, nodeVar46 );
-	nodeVar48 = ( 1.0 / max( nodeVar35, 1e-8 ) );
+	nodeVar48 = ( 1.0 / max( nodeVar35, 1e-20 ) );
 
 	if ( nodeVar43 ) {
 

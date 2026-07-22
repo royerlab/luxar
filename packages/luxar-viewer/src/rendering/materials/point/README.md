@@ -94,7 +94,7 @@ camera changes update **only** the precomputed scalar uniforms, not the shader.
   GSplat materials and their picking counterparts pull from.
 - `maxPointSize = resolution.y · 0.5` — `computeMaxPointSize`, same module.
 - `uIsOrtho` (`int`) branches the inverse-distance term: `1.0` for ortho,
-  `1.0 / max(-mvPosition.z, 1e-4)` for perspective — VIEW-SPACE DEPTH, matching
+  `1.0 / max(-mvPosition.z, 1e-20)` for perspective (the floor is a pure INF guard, not a scale floor) — VIEW-SPACE DEPTH, matching
   the line + gsplat shaders. (Euclidean camera distance shrank edge-of-screen
   points by `cos θ` relative to identical centered points.)
 - `pointSize = clamp(basePointSize, 1.5, maxPointSize)`. There is **no
@@ -144,7 +144,7 @@ It comes from `../_shared/glsl-lib.ts` (GLSL) / `../_shared/tsl-helpers.ts`
 The fragment shader runs in this order:
 
 1. **Zero-radius discard** — points clipped by nD slicing arrive with
-   `vRadius ≈ 0` from the loader; `discard` on `vRadius < 0.0001` short-circuits
+   `vRadius ≈ 0` from the loader; `discard` on `vRadius <= 0.0` (exact zero — scale-free) short-circuits
    the rest. (`vRadius` uses `highp` precision specifically for this check.)
 2. **Inscribed-circle discard** — `centered = vSpriteCoord - 0.5`,
    `r2 = dot(centered, centered)`, `discard` if `r2 > 0.25`. Comparing squared
@@ -238,28 +238,28 @@ their only external writer — nothing outside reaches into
 Points with zero effective radius arrive from `data/points/projection.ts`
 when their nD position doesn't intersect the current display hyperplane.
 Rather than culling on the CPU side, the encoder ships `aRadius = 0` and the
-fragment shader's `if (vRadius < 0.0001) discard` short-circuits them.
+fragment shader's `if (vRadius <= 0.0) discard` (exact zero — scale-free) short-circuits them.
 Performance-wise this is acceptable because the vertex stage still runs, but
 the more expensive falloff/GOG/colormap fragment work is skipped.
 
 ## Uniforms (reference)
 
-| Name              | Type      | Source                                        | Notes                                                                     |
-| ----------------- | --------- | --------------------------------------------- | ------------------------------------------------------------------------- |
-| `opacity`         | float     | `updateOpacity`                               | Multiplied into final alpha                                               |
-| `invGamma`        | float     | `updateGamma` (pre-computed `1/γ`)            | Per-node gamma; `userData.gamma` carries the original value for `clone()` |
-| `uIntensity`      | float     | `updateIntensity`                             | Per-node GOG gain                                                         |
-| `uOffset`         | float     | `updateOffset`                                | Per-node GOG offset                                                       |
-| `pointSizeFactor` | float     | `updateCameraParams` (camera math)            | Pre-computed `2·resY/tan(fov/2)` (or ortho form)                          |
-| `maxPointSize`    | float     | `updateCameraParams`                          | Pre-computed `resY · 0.5`                                                 |
-| `uIsOrtho`        | int       | `updateCameraParams`                          | `0` = perspective, `1` = ortho                                            |
-| `uNearCull`       | float     | `updateCameraParams`                          | Near-fade start (world units, scene-bounds-scaled); shader floors at 1e-4 |
-| `uResolution`     | vec2      | `updateCameraParams` (mutates same Vector2)   | Physical framebuffer pixels; vertex uses for `pixel → NDC` conversion     |
-| `radiusScale`     | float     | `updateRadiusScale`                           | Dtype normalisation (e.g. `1/255` for uint8 radii)                        |
-| `uPointTex`       | sampler2D | `updatePointTexture` (commit sync)            | RGBA32F point texture, 3 texels/point — the per-node data store           |
-| `uColormapTex`    | sampler2D | `setColormapTexture`                          | 256×1 LUT; `USE_COLORMAP` only                                            |
-| `uScalarMin`      | float     | `setScalarRange`                              | LUT normalisation min                                                     |
-| `uScalarScale`    | float     | `setScalarRange` (pre-computed `1/(max-min)`) | LUT normalisation scale                                                   |
+| Name              | Type      | Source                                        | Notes                                                                                        |
+| ----------------- | --------- | --------------------------------------------- | -------------------------------------------------------------------------------------------- |
+| `opacity`         | float     | `updateOpacity`                               | Multiplied into final alpha                                                                  |
+| `invGamma`        | float     | `updateGamma` (pre-computed `1/γ`)            | Per-node gamma; `userData.gamma` carries the original value for `clone()`                    |
+| `uIntensity`      | float     | `updateIntensity`                             | Per-node GOG gain                                                                            |
+| `uOffset`         | float     | `updateOffset`                                | Per-node GOG offset                                                                          |
+| `pointSizeFactor` | float     | `updateCameraParams` (camera math)            | Pre-computed `2·resY/tan(fov/2)` (or ortho form)                                             |
+| `maxPointSize`    | float     | `updateCameraParams`                          | Pre-computed `resY · 0.5`                                                                    |
+| `uIsOrtho`        | int       | `updateCameraParams`                          | `0` = perspective, `1` = ortho                                                               |
+| `uNearCull`       | float     | `updateCameraParams`                          | Near-fade start (world units, scene-bounds-scaled); shader floors at 1e-20 (zero-guard only) |
+| `uResolution`     | vec2      | `updateCameraParams` (mutates same Vector2)   | Physical framebuffer pixels; vertex uses for `pixel → NDC` conversion                        |
+| `radiusScale`     | float     | `updateRadiusScale`                           | Dtype normalisation (e.g. `1/255` for uint8 radii)                                           |
+| `uPointTex`       | sampler2D | `updatePointTexture` (commit sync)            | RGBA32F point texture, 3 texels/point — the per-node data store                              |
+| `uColormapTex`    | sampler2D | `setColormapTexture`                          | 256×1 LUT; `USE_COLORMAP` only                                                               |
+| `uScalarMin`      | float     | `setScalarRange`                              | LUT normalisation min                                                                        |
+| `uScalarScale`    | float     | `setScalarRange` (pre-computed `1/(max-min)`) | LUT normalisation scale                                                                      |
 
 `clampGamma` (`../_shared/uniform-helpers.ts`) is the single source of truth
 for the `Math.max(0.001, γ ?? 1.0)` clamp — the GLSL `pow(color, 1/γ)` divides

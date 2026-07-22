@@ -110,8 +110,10 @@ describe('PointMaterial', () => {
         'float normalizedRadius = sanitizeNonNegative(aRadius * radiusScale'
       );
 
-      // View-space depth sizing (matches lines/gsplats), ortho branch = 1.0
-      expect(material.vertexShader).toContain('1.0 / max(-mvPosition.z, 1e-4)');
+      // View-space depth sizing (matches lines/gsplats), ortho branch = 1.0.
+      // 1e-20 = pure INF guard (scale-free, tiny-unit scenes keep
+      // correct perspective sizing).
+      expect(material.vertexShader).toContain('1.0 / max(-mvPosition.z, 1e-20)');
 
       // OPTIMIZATION: Check for pre-computed pointSizeFactor uniform
       expect(material.vertexShader).toContain('uniform float pointSizeFactor');
@@ -336,7 +338,7 @@ describe('PointMaterial', () => {
 
       // View-z (matches lines/gsplats): edge-of-screen points render
       // the same size as centered ones.
-      expect(material.vertexShader).toContain('max(-mvPosition.z, 1e-4)');
+      expect(material.vertexShader).toContain('max(-mvPosition.z, 1e-20)');
 
       // Should NOT use Euclidean distance for sizing
       expect(material.vertexShader).not.toContain('length(mvPosition');

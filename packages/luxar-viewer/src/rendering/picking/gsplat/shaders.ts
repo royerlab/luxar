@@ -112,7 +112,10 @@ export const GSPLAT_PICK_VERTEX_SHADER = /* glsl */ `
         // Unified near handling — see the visual gsplat shader: the
         // shared perspectiveNearFade subsumes the old standalone
         // behind-camera reject; ortho falls through to NDC clipping.
-        float depthFade = perspectiveNearFade(uIsOrtho, centerCam.z, max(uNearCull, 1e-4));
+        // 1e-20 floor = degenerate-smoothstep guard only; uNearCull is
+        // scene-bounds-scaled (an absolute 1e-4 faded out tiny-unit
+        // scenes entirely).
+        float depthFade = perspectiveNearFade(uIsOrtho, centerCam.z, max(uNearCull, 1e-20));
         if (depthFade < 0.01) {
             gl_Position = vec4(0.0, 0.0, -2.0, 1.0);
             return;
@@ -134,9 +137,13 @@ export const GSPLAT_PICK_VERTEX_SHADER = /* glsl */ `
         // skipped the fade for sigma < 0.1 world-unit splats.
         float coverageFade;
         {
+            // 1e-20 floors = pure div-by-zero/sqrt guards, matching the
+            // visual shader: maxLateralVar is world-unit² (an absolute
+            // 1e-8 floor coverage-culled every splat of a tiny-unit
+            // scene); zDepth is bounded by the scene-relative near fade.
             float maxLateralVar = max(Sigma_cam[0][0], max(Sigma_cam[1][1], Sigma_cam[2][2]));
-            float extentDivisor = (uIsOrtho == 1) ? 1.0 : max(zDepth, 1e-8);
-            float projectedExtent = uFx * sqrt(max(maxLateralVar, 1e-8)) * uTruncate / extentDivisor;
+            float extentDivisor = (uIsOrtho == 1) ? 1.0 : max(zDepth, 1e-20);
+            float projectedExtent = uFx * sqrt(max(maxLateralVar, 1e-20)) * uTruncate / extentDivisor;
             float maxExtent = max(uResolution.x, uResolution.y) * uMaxExtentFactor;
             coverageFade = 1.0 - smoothstep(maxExtent * 0.5, maxExtent, projectedExtent);
             if (coverageFade < 0.01) {

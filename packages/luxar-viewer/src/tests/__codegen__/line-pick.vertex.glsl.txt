@@ -108,8 +108,8 @@ void main() {
 	modelViewMatrix = ( cameraViewMatrix * nodeUniform2 );
 	nodeVar0 = ( cameraProjectionMatrix * ( modelViewMatrix * vec4( aEndPos, 1.0 ) ) );
 	nodeVar1 = ( cameraProjectionMatrix * ( modelViewMatrix * vec4( aStartPos, 1.0 ) ) );
-	nodeVar2 = length( ( ( ( nodeVar0.xy / vec2( max( nodeVar0.w, 0.0001 ) ) ) - ( nodeVar1.xy / vec2( max( nodeVar1.w, 0.0001 ) ) ) ) * ( nodeUniform3 * vec2( 0.5 ) ) ) );
-	nodeVar3 = ( ( ( ( nodeVar0.xy / vec2( max( nodeVar0.w, 0.0001 ) ) ) - ( nodeVar1.xy / vec2( max( nodeVar1.w, 0.0001 ) ) ) ) * ( nodeUniform3 * vec2( 0.5 ) ) ) / vec2( nodeVar2 ) );
+	nodeVar2 = length( ( ( ( nodeVar0.xy / vec2( max( nodeVar0.w, 1.0 ) ) ) - ( nodeVar1.xy / vec2( max( nodeVar1.w, 1.0 ) ) ) ) * ( nodeUniform3 * vec2( 0.5 ) ) ) );
+	nodeVar3 = ( ( ( ( nodeVar0.xy / vec2( max( nodeVar0.w, 1.0 ) ) ) - ( nodeVar1.xy / vec2( max( nodeVar1.w, 1.0 ) ) ) ) * ( nodeUniform3 * vec2( 0.5 ) ) ) / vec2( nodeVar2 ) );
 	nodeVarying0 = aQuadCorner.y;
 	nodeVar4 = ( ( aQuadCorner.x * 0.5 ) + 0.5 );
 	nodeVarying1 = nodeVar4;

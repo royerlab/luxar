@@ -258,7 +258,14 @@ export class LuxarOrbitControls extends THREE.EventDispatcher<{
   public reset(): void {
     this.target.copy(this.target0);
     this.orientation.copy(this.orientation0);
-    this.distance = Math.max(this.position0.distanceTo(this.target0), 0.001);
+    // Scale-relative degenerate-distance floor (matches
+    // initializeFromCamera): the class's own minDistance zoom bound is
+    // scene-relative once scale limits are known; an absolute 0.001
+    // floor flung the camera out of tiny-unit scenes on reset().
+    this.distance = Math.max(
+      this.position0.distanceTo(this.target0),
+      this.minDistance > 0 ? this.minDistance : 0.001
+    );
     this.camera.zoom = this.zoom0;
     this.camera.updateProjectionMatrix();
     this.rotationDelta.identity();
@@ -386,9 +393,19 @@ export class LuxarOrbitControls extends THREE.EventDispatcher<{
     applyToCamera(this.camera, this.target, this.orientation, this.distance);
   }
 
-  /** Extract orientation and distance from current camera state. */
+  /**
+   * Extract orientation and distance from current camera state.
+   * `minDistance` (scene diagonal × minDistanceFactor once scale limits
+   * are known) supplies the scale-relative degenerate-distance floor —
+   * see camera-application.ts.
+   */
   private initializeFromCamera(): void {
-    this.distance = initializeFromCamera(this.camera, this.target, this.orientation);
+    this.distance = initializeFromCamera(
+      this.camera,
+      this.target,
+      this.orientation,
+      this.minDistance
+    );
   }
 
   // ---------------------------------------------------------------------------

@@ -179,10 +179,12 @@ export function pointPickWebGPUFactory(
     const projCenter: TSLNode = cameraProjectionMatrix.mul(mvPos).toVar();
 
     // View-space depth, matching the visual point shader (B9a) so the
-    // pick footprint stays congruent with the visible sprite.
+    // pick footprint stays congruent with the visible sprite. 1e-20 =
+    // pure INF guard (near-fade reject bounds surviving depths at the
+    // scene-relative ~uNearCull; the size clamp bounds the output).
     const invDistance: TSLNode = int(uIsOrtho)
       .equal(int(1))
-      .select(float(1.0), mvPos.z.negate().max(float(1e-4)).reciprocal());
+      .select(float(1.0), mvPos.z.negate().max(float(1e-20)).reciprocal());
     const basePointSize: TSLNode = normalizedRadius.mul(uPointSizeFactor).mul(invDistance).toVar();
 
     // Picking footprint: × 0.8 vs the visual material (keep the 0.8 in sync
@@ -200,11 +202,12 @@ export function pointPickWebGPUFactory(
     // and the line/gsplat pick guards: pickability tracks visibility
     // (behind-camera fade 0 — projCenter.w <= 0 there would flip the
     // sprite; smooth [nearCull, 2*nearCull] fade; ortho = 1, NDC clip
-    // authority).
+    // authority). 1e-20 floor = degenerate-smoothstep guard only;
+    // uNearCull is scene-bounds-scaled (see the visual point shader).
     const depthFade: TSLNode = perspectiveNearFadeTSL(
       uIsOrtho,
       mvPos.z,
-      max(uNearCull, float(1e-4))
+      max(uNearCull, float(1e-20))
     ).toVar();
     const clipPos: TSLNode = depthFade
       .lessThan(0.01)

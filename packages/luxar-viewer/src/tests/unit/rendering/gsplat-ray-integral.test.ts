@@ -95,3 +95,70 @@ describe('ray integral sigma', () => {
     expect(Math.abs(precSigma - covSqrt)).toBeGreaterThan(0.5);
   });
 });
+
+/**
+ * Float32 GPU emulation: fround every op and flush denormals to zero
+ * (GPUs run FTZ). Mirrors the shader's TRACE-NORMALIZED inversion —
+ * `Σn = Σ / (trace/3)`, floors on the O(1) normalized det/quadratic,
+ * `sigmaRay = sqrt(s / quadN)` — and proves it is scale-free where the
+ * old direct inversion (det in world-units⁶ with an absolute 1e-12
+ * clamp) collapsed on tiny-unit scenes.
+ */
+const FLT_MIN_NORMAL = 1.17549435e-38;
+function f32(x: number): number {
+  const r = Math.fround(x);
+  return Math.abs(r) < FLT_MIN_NORMAL ? 0 : r;
+}
+
+/** Mirrors the shader's normalized sum-mode block (shader-glsl.ts). */
+function rayIntegralSigmaNormalizedF32(rayDir: [number, number, number], sigma: number[]): number {
+  const [A, B, C, D, E, F] = sigma.map(f32);
+  const sTrace = Math.max(f32(f32(A + f32(D + F)) * (1.0 / 3.0)), 1e-30);
+  const invS = f32(1 / sTrace);
+  const a = f32(A * invS);
+  const b = f32(B * invS);
+  const c = f32(C * invS);
+  const d = f32(D * invS);
+  const e = f32(E * invS);
+  const f = f32(F * invS);
+  const det = f32(a * f32(d * f - e * e) - b * f32(b * f - c * e) + c * f32(b * e - c * d));
+  const invDet = f32(1 / Math.max(det, 1e-12));
+  const i00 = f32(f32(d * f - e * e) * invDet);
+  const i11 = f32(f32(a * f - c * c) * invDet);
+  const i22 = f32(f32(a * d - b * b) * invDet);
+  const i01 = f32(-f32(b * f - c * e) * invDet);
+  const i02 = f32(f32(b * e - c * d) * invDet);
+  const i12 = f32(-f32(a * e - b * c) * invDet);
+  const [rx, ry, rz] = rayDir;
+  const prx = f32(i00 * rx + i01 * ry + i02 * rz);
+  const pry = f32(i01 * rx + i11 * ry + i12 * rz);
+  const prz = f32(i02 * rx + i12 * ry + i22 * rz);
+  const quad = Math.max(f32(rx * prx + ry * pry + rz * prz), 1e-8);
+  return f32(f32(1 / Math.sqrt(quad)) * Math.sqrt(sTrace));
+}
+
+describe('ray integral sigma — trace-normalized inversion is scale-free (float32/FTZ)', () => {
+  const sigmaBase = [5, 4, 0, 5, 0, 1]; // rotated anisotropic Σ from above
+  const ray: [number, number, number] = [1, 0, 0];
+  const expected = 1 / Math.sqrt(0.5 + 0.5 / 9); // exact result at scale 1
+
+  it.each([1, 1e-6, 1e6])('scale factor %s: sigmaRay scales linearly with the scene', (s) => {
+    // Scaling the scene by s scales Σ by s² and sigma_line by s.
+    const sigmaScaled = sigmaBase.map((v) => v * s * s);
+    const got = rayIntegralSigmaNormalizedF32(ray, sigmaScaled);
+    expect(got / s).toBeCloseTo(expected, 3);
+  });
+
+  it('the un-normalized inversion collapses at scale 1e-6 under FTZ (why the shader normalizes)', () => {
+    // det(Σ · 1e-12) ~ 1e-36 · det(Σ) ~ 1e-35 — still above FTZ here, but
+    // realistic microscopy sigmas (~1e-7 units ⇒ variances ~1e-14) give
+    // det ~ 1e-42, which flushes to zero: max(0, 1e-12) then produces a
+    // garbage Σ⁻¹. Reproduce with a tiny-variance isotropic splat.
+    const s = 1e-7;
+    const sigmaTiny = [s * s, 0, 0, s * s, 0, s * s]; // det = s^6 = 1e-42 → FTZ 0
+    const det = f32(f32(sigmaTiny[0] * sigmaTiny[3]) * sigmaTiny[5]);
+    expect(det).toBe(0); // the underflow the normalization avoids
+    // The normalized path still recovers sigma_line = s exactly.
+    expect(rayIntegralSigmaNormalizedF32([0, 0, 1], sigmaTiny)).toBeCloseTo(s, 10);
+  });
+});

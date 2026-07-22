@@ -192,10 +192,13 @@ export function gsplatPickWebGPUFactory(
 
     // Unified near handling (shared helper; subsumes the old
     // standalone behind-camera reject — see shader-tsl.ts).
+    // 1e-20 floor = degenerate-smoothstep guard only; uNearCull is
+    // scene-bounds-scaled (an absolute 1e-4 faded out tiny-unit scenes
+    // entirely).
     const depthFade: TSLNode = perspectiveNearFadeTSL(
       uIsOrtho,
       centerCam.z,
-      max(uNearCull, float(1e-4))
+      max(uNearCull, float(1e-20))
     ).toVar();
     const depthFadeReject: TSLNode = depthFade.lessThan(0.01);
 
@@ -208,10 +211,14 @@ export function gsplatPickWebGPUFactory(
       max(SigmaCam.element(int(1)).element(int(1)), SigmaCam.element(int(2)).element(int(2)))
     ).toVar();
     const isOrtho: TSLNode = int(uIsOrtho).equal(int(1)).toVar();
+    // 1e-20 floors = pure div-by-zero/sqrt guards, matching the visual
+    // shader: maxLateralVar is world-unit² (an absolute 1e-8 floor
+    // coverage-culled every splat of a tiny-unit scene); zDepth is
+    // bounded by the scene-relative near fade.
     const projectedExtent: TSLNode = uFx
-      .mul(sqrt(max(maxLateralVar, float(1e-8))))
+      .mul(sqrt(max(maxLateralVar, float(1e-20))))
       .mul(uTruncate)
-      .div(isOrtho.select(float(1.0), max(zDepth, float(1e-8))));
+      .div(isOrtho.select(float(1.0), max(zDepth, float(1e-20))));
     const maxExtent: TSLNode = max(uResolution.x, uResolution.y).mul(uMaxExtentFactor);
     const coverageFade: TSLNode = float(1.0)
       .sub(smoothstep(maxExtent.mul(0.5), maxExtent, projectedExtent))
@@ -224,9 +231,11 @@ export function gsplatPickWebGPUFactory(
     // limits harder to pick than they appear.
     const nearFade: TSLNode = min(depthFade, coverageFade).toVar();
 
-    // Projection Jacobian.
+    // Projection Jacobian. 1e-20 = exact-zero guard only (GLSL twin
+    // divides unguarded; the near-fade reject bounds zDepth at the
+    // scene-relative ~uNearCull).
     const invZ: TSLNode = float(1.0)
-      .div(max(zDepth, float(1e-8)))
+      .div(max(zDepth, float(1e-20)))
       .toVar();
     const invZ2: TSLNode = invZ.mul(invZ);
     const J0: TSLNode = isOrtho

@@ -220,11 +220,13 @@ export class LinesBufferAdapter {
     };
 
     host.activeBuffers.set(nodeId, newBuffer);
+    // Both allocation counters bump together, BEFORE the sweep — a
+    // throwing sweep must not desync them (see the points adapter twin).
     host.stats.allocations++;
+    host.typeStats.lines.allocations++;
     // Fresh allocations count against the byte budget too — sweep idle
     // pooled buffers (see growth-path note above).
     host.evictUnused(true);
-    host.typeStats.lines.allocations++;
     return geometry;
   }
 

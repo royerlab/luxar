@@ -235,8 +235,9 @@ describe('LineMaterial', () => {
       // The old `nearCull > 0` gate silently KEPT the previous value —
       // with LRU-cached materials that could be the previous DATASET's
       // scene-scaled nearCull, re-creating the cross-geometry near-fade
-      // divergence B9c fixed. The shader floors at 1e-4, so writing 0
-      // is safe and symmetric with the point/gsplat wrappers.
+      // divergence B9c fixed. The shader floors at 1e-20 (zero-guard
+      // only), so writing 0 is safe and symmetric with the point/gsplat
+      // wrappers.
       const material = new LineMaterial();
       material.updateCameraParams(1.0, new THREE.Vector2(100, 100), false, 5.0);
       expect(material.uniforms.uNearCull.value).toBe(5.0);

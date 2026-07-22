@@ -775,7 +775,7 @@ describe('MaterialManager', () => {
       // Verify world-space sizing from VIEW-SPACE DEPTH (matches the
       // line + gsplat shaders) and the pre-computed pointSizeFactor.
       expect(material.vertexShader).toContain('normalizedRadius * pointSizeFactor * invDistance');
-      expect(material.vertexShader).toContain('1.0 / max(-mvPosition.z, 1e-4)');
+      expect(material.vertexShader).toContain('1.0 / max(-mvPosition.z, 1e-20)');
     });
 
     it('should generate shaders with the sharpness -> beta mapping (no size compensation)', () => {
@@ -900,7 +900,6 @@ describe('MaterialManager', () => {
       expect(material.uniforms.radiusScale.value).toBeCloseTo(0.00001, 5);
     });
   });
-
 });
 
 describe('resolveMaterialBackend', () => {

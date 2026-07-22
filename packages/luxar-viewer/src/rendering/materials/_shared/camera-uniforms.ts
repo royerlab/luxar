@@ -18,7 +18,8 @@
  * Point-size factor for Point/PointPicking materials.
  *
  * The shader multiplies this by the inverse view-space DEPTH
- * (`1 / max(-mvPosition.z, 1e-4)`, matching the line + gsplat shaders)
+ * (`1 / max(-mvPosition.z, 1e-20)`, matching the line + gsplat shaders;
+ * the floor is a pure INF guard, not a scale floor)
  * to size a point by its world-space radius (perspective) or by 1
  * (ortho, where the full distance scaling is baked into the factor
  * below).

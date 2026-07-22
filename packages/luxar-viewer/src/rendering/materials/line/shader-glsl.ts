@@ -134,7 +134,12 @@ export const LINE_VERTEX_SHADER = /* glsl */ `
       // lines in the near slab (< uNearCull from the camera plane)
       // where points/gsplats still drew. Matches the unified
       // perspectiveNearFade semantics (point + gsplat shaders).
-      float nearCull = max(uNearCull, 1e-4);
+      // uNearCull is scene-bounds-scaled (diagonal * 0.001); the 1e-20
+      // floor only guards uNearCull == 0 (degenerate smoothstep /
+      // division). An absolute 1e-4 floor overrode the scene-relative
+      // value on tiny-unit scenes — every segment sat inside the
+      // "both behind" margin and was culled.
+      float nearCull = max(uNearCull, 1e-20);
       float startDepth = -mvStart.z;
       float endDepth = -mvEnd.z;
       bool bothBehind =
@@ -209,9 +214,18 @@ export const LINE_VERTEX_SHADER = /* glsl */ `
       vec4 clipPos = mix(clipStart, clipEnd, t);
 
       // Convert clip-space endpoints to pixel coordinates for correct aspect ratio handling
-      // Guard against tiny clipStart.w / clipEnd.w (near-plane crossing) so 1/w doesn't blow up
-      float wStart = max(clipStart.w, 1e-4);
-      float wEnd = max(clipEnd.w, 1e-4);
+      // Guard against tiny clipStart.w / clipEnd.w (near-plane crossing) so 1/w
+      // doesn't blow up. The guard is the SCENE-RELATIVE nearCull (w == -viewZ
+      // under perspective), not an absolute epsilon: the old 1e-4 clamped VALID
+      // w on tiny-unit scenes (w ~ 1e-6), collapsing every endpoint's NDC and
+      // scrambling quad directions. nearCull scales with the scene, so in-front
+      // endpoints are never clamped at any scale while behind/crossing endpoints
+      // still get a bounded NDC (clip.xy scales with the scene too, keeping the
+      // ratio finite — a raw 1e-20 floor could overflow float32 in the
+      // pixel-length math below). Ortho: w == 1 exactly, guard 1.0 is inert.
+      float wGuard = (uIsOrtho == 1) ? 1.0 : nearCull;
+      float wStart = max(clipStart.w, wGuard);
+      float wEnd = max(clipEnd.w, wGuard);
       vec2 ndcStart = clipStart.xy / wStart;
       vec2 ndcEnd = clipEnd.xy / wEnd;
 
@@ -376,7 +390,11 @@ export const LINE_FRAGMENT_SHADER = /* glsl */ `
       float distFromStart = vT * vSegmentLength;
       float distFromEnd = (1.0 - vT) * vSegmentLength;
       float distToNearest = min(distFromStart, distFromEnd);
-      float capRamp = vWidthAtT > 1e-4
+      // distToNearest / vWidthAtT is a scale-free ratio (both world
+      // units), so the guard is a pure div-by-zero threshold at 1e-20 —
+      // an absolute 1e-4 skipped the cap ramp for valid sub-1e-4-unit
+      // widths (tiny-unit scenes). clamp() bounds the quotient.
+      float capRamp = vWidthAtT > 1e-20
         ? clamp(distToNearest / vWidthAtT, 0.0, 1.0)
         : 1.0;
       float baseCap = 0.5 + 0.5 * capRamp;
@@ -393,7 +411,9 @@ export const LINE_FRAGMENT_SHADER = /* glsl */ `
       // Per-fragment near fade from the interpolated view depth (see
       // the vertex stage note on why the fade itself must not be the
       // varying).
-      float nearFade = perspectiveNearFade(uIsOrtho, vViewZ, max(uNearCull, 1e-4));
+      // 1e-20 floor = degenerate-smoothstep guard only; uNearCull is
+      // scene-relative (see the vertex-stage nearCull note).
+      float nearFade = perspectiveNearFade(uIsOrtho, vViewZ, max(uNearCull, 1e-20));
       float intensity = capFactor * perpFalloff * edgeAA * widthScale * vWidthFade * nearFade;
 
       // Per-node GOG (Gain-Offset-Gamma) color adjustment. uIntensity (gain)

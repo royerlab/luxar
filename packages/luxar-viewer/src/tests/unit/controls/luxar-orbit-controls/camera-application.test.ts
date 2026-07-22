@@ -89,6 +89,26 @@ describe('initializeFromCamera', () => {
     expect(d).toBe(0.001);
   });
 
+  it('uses the scene-relative minDistance as the degenerate floor when supplied', () => {
+    // Tiny-unit scene: minDistance = diagonal * factor ~ 1e-9. The old
+    // absolute 0.001 floor flung the camera 1000x out of the scene.
+    const cam = new THREE.PerspectiveCamera(60, 1, 1e-9, 1e-3);
+    cam.position.set(0, 0, 0);
+    const target = new THREE.Vector3(0, 0, 0);
+    const orientation = new THREE.Quaternion();
+    expect(initializeFromCamera(cam, target, orientation, 1e-9)).toBe(1e-9);
+  });
+
+  it('does NOT clamp a valid tiny-unit orbit distance to the absolute fallback', () => {
+    // Camera framed 3e-6 from the target (scale x1e-6 scene) with a
+    // scene-relative floor: the distance must survive re-initialization.
+    const cam = new THREE.PerspectiveCamera(60, 1, 1e-9, 1e-3);
+    cam.position.set(0, 0, 3e-6);
+    const target = new THREE.Vector3(0, 0, 0);
+    const orientation = new THREE.Quaternion();
+    expect(initializeFromCamera(cam, target, orientation, 1e-9)).toBeCloseTo(3e-6, 12);
+  });
+
   it('uses fallback up-vector when view direction is nearly parallel to up (gimbal-lock fix)', () => {
     // P5 boundary: looking straight down (-Y), camera.up = (0,1,0) is parallel
     // to view direction. The helper must detect this (upDot > 0.999) and pick

@@ -196,7 +196,7 @@ void main() {
 
 	} else {
 
-		nodeVar28 = ( 1.0 / max( ( - nodeVar26.z ), 0.0001 ) );
+		nodeVar28 = ( 1.0 / max( ( - nodeVar26.z ), 1e-20 ) );
 
 	}
 
@@ -216,7 +216,7 @@ void main() {
 
 		} else {
 
-			nodeVar33 = max( nodeUniform13, 0.0001 );
+			nodeVar33 = max( nodeUniform13, 1e-20 );
 			nodeVar32 = smoothstep( nodeVar33, ( nodeVar33 * 2.0 ), ( - nodeVar26.z ) );
 
 		}
