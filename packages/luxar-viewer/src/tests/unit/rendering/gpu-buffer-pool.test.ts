@@ -61,7 +61,10 @@ describe('GPUBufferPool', () => {
     it('should allocate new geometry on first request', () => {
       const geom = pool.acquirePointsGeometry('node1', 1000);
       expect(geom).toBeInstanceOf(THREE.InstancedBufferGeometry);
-      expect(geom.instanceCount).toBe(1000);
+      // Acquire must NOT bump instanceCount — only a successful texel
+      // write does (updateGeometry's post-write prepare). A throwing
+      // write would otherwise draw the new count over stale/zero texels.
+      expect(geom.instanceCount).toBe(0);
       expect(geom.drawRange.count).toBe(6);
       // Texture-backed storage: per-point data lives in the pooled
       // RGBA32F point texture (3 texels/point); aSortedIndex is the only
@@ -75,10 +78,29 @@ describe('GPUBufferPool', () => {
       const sortedIndex = geom.getAttribute('aSortedIndex');
       expect(sortedIndex).toBeDefined();
       expect(sortedIndex.array).toBeInstanceOf(Uint32Array);
+      // Ownership marker consumed by the commit handoff's dispose gate:
+      // pool geometries are released back to the free list, never disposed.
+      expect(geom.userData.luxarPooled).toBe(true);
 
       const stats = pool.getStats();
       expect(stats.allocations).toBe(1);
       expect(stats.reuses).toBe(0);
+    });
+
+    it('updatePointsGeometry fills identity ordering with ONE collapsed prefix range', () => {
+      // The adapter's post-write ordering pass: identity into
+      // aSortedIndex[0, count) plus a single collapsed [0, ≥count) update
+      // range (fragmented ranges would accumulate on the WebGPU backends,
+      // which replay them verbatim).
+      const data = createMockLoadedPointsData(4);
+      const geom = pool.acquirePointsGeometry('node1', 4);
+      pool.updatePointsGeometry(geom, data, 4);
+
+      const attr = geom.getAttribute('aSortedIndex') as THREE.InstancedBufferAttribute;
+      expect(Array.from((attr.array as Uint32Array).subarray(0, 4))).toEqual([0, 1, 2, 3]);
+      expect(attr.updateRanges.length).toBe(1);
+      expect(attr.updateRanges[0].start).toBe(0);
+      expect(attr.updateRanges[0].count).toBeGreaterThanOrEqual(4);
     });
 
     it('should reuse geometry when requesting same node again', () => {
@@ -237,6 +259,8 @@ describe('GPUBufferPool', () => {
       expect(geom.getAttribute('aEndPos')).toBeDefined();
       expect(geom.getAttribute('aStartColor')).toBeDefined();
       expect(geom.getAttribute('aSegmentLength')).toBeDefined();
+      // Ownership marker consumed by the commit handoff's dispose gate.
+      expect(geom.userData.luxarPooled).toBe(true);
     });
 
     it('should reuse lines geometry', () => {
@@ -271,6 +295,8 @@ describe('GPUBufferPool', () => {
       const sortedIndex = geom.getAttribute('aSortedIndex');
       expect(sortedIndex).toBeDefined();
       expect(sortedIndex.array).toBeInstanceOf(Uint32Array);
+      // Ownership marker consumed by the commit handoff's dispose gate.
+      expect(geom.userData.luxarPooled).toBe(true);
     });
 
     it('should reuse gsplats geometry', () => {

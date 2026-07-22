@@ -30,6 +30,7 @@
 
 import * as THREE from 'three';
 import { GSPLAT_VERTEX_SHADER, GSPLAT_FRAGMENT_SHADER } from './shader-glsl';
+import { getPlaceholderElementTexture } from '../../element-texture-layout';
 import type { CameraAwareMaterial } from '../_shared/camera-aware-material';
 import type { BlendingMode } from '../../material-manager';
 import type { ColormapAwareMaterial } from '../_shared/colormap-aware-material';
@@ -175,8 +176,10 @@ export class GSplatMaterial
       uniforms: {
         // Splat data texture (RGBA32F, 4 texels/splat) — bound by the
         // commit's material sync from the acquired pool entry (or the
-        // fallback mesh's own texture). Null until the first commit.
-        uSplatTex: { value: null },
+        // fallback mesh's own texture). The shared placeholder until the
+        // first commit (mirrors PointMaterial — the sampler is never
+        // unbound).
+        uSplatTex: { value: getPlaceholderElementTexture() },
         uResolution: { value: new THREE.Vector2(1, 1) },
         uFx: { value: 500 }, // Default focal length in pixels
         uFy: { value: 500 },
@@ -396,7 +399,9 @@ export class GSplatMaterial
    * Plain uniform update — no shader recompilation involved.
    */
   updateSplatTexture(texture: THREE.DataTexture | null): void {
-    this.uniforms.uSplatTex.value = texture;
+    // `null` falls back to the shared placeholder (never unbind the
+    // sampler) — mirrors PointMaterial.updatePointTexture.
+    this.uniforms.uSplatTex.value = texture ?? getPlaceholderElementTexture();
   }
 
   /**

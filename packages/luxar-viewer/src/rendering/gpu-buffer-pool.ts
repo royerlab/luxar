@@ -6,7 +6,8 @@
  *
  * Key optimizations:
  * - Reuses geometries when size AND type match (0ms GPU allocation)
- * - In-place attribute updates via TypedArray.set()
+ * - In-place data updates (lines: strided attribute writes; points/gsplats:
+ *   fused texel writes into the pooled element texture)
  * - Size-based bucketing for efficient matching
  * - LRU eviction after 300 frames of non-use
  * - Multi-type support for all TypedArray formats
@@ -120,10 +121,10 @@ export class GPUBufferPool {
   };
 
   /**
-   * Set by acquire methods when the returned geometry's underlying
-   * `InstancedInterleavedBuffer` was re-allocated (grow path) or when
-   * the returned geometry is a fresh allocation / different pool
-   * candidate from the previous active one. Callers query this via
+   * Set by acquire methods when the returned geometry is a fresh
+   * allocation or a different pool candidate from the previous active
+   * one (growth is always release + reacquire — never an in-place
+   * rebuild — for all three types). Callers query this via
    * {@link didLastAcquireRebuildAttributes} immediately after acquire
    * and dispatch `invalidateRenderObjectFor(mesh)` when true so Three's
    * WebGPURenderer drops its stale `RenderObject.vertexBuffers` cache.
@@ -174,11 +175,11 @@ export class GPUBufferPool {
 
   /**
    * Whether the most recent `acquire*Geometry` call returned a
-   * geometry whose underlying `InstancedInterleavedBuffer` references
-   * differ from what was previously in use for that node — either
-   * because the buffer pool grew the existing geometry's capacity, or
-   * because the returned geometry is a fresh allocation / different
-   * pool candidate.
+   * geometry whose GPU-visible buffers (lines' interleaved buffer, the
+   * points/gsplat element texture + `aSortedIndex`) differ from what was
+   * previously in use for that node — the returned geometry is a fresh
+   * allocation or a different pool candidate (growth is release +
+   * reacquire for all three types).
    *
    * Callers that hold a `THREE.Mesh` pointing at the previously-active
    * geometry should call `invalidateRenderObjectFor(mesh)` (in
@@ -222,7 +223,7 @@ export class GPUBufferPool {
    *   commit-points-geometry.ts).
    */
   updatePointsGeometry(
-    geometry: THREE.BufferGeometry,
+    geometry: THREE.InstancedBufferGeometry,
     data: LoadedPointsData,
     count: number,
     options?: { fromInstance?: number }
@@ -274,7 +275,7 @@ export class GPUBufferPool {
   // GSplats Geometry Management
   // =========================================================================
 
-  /** Acquire geometry for GSplats (instanced per-splat attributes). */
+  /** Acquire geometry for GSplats (splat texture + `aSortedIndex`). */
   acquireGSplatsGeometry(nodeId: string, splatCount: number): THREE.InstancedBufferGeometry {
     return this.gsplats.acquireGeometry(nodeId, splatCount);
   }
@@ -291,8 +292,8 @@ export class GPUBufferPool {
    * @param options - `preserveOrdering`: keep the geometry's existing
    *   `aSortedIndex` permutation instead of resetting it to identity
    *   (same-node same-count recommit — the commit path decides; see
-   *   commit-gsplats-geometry.ts). `fromSplat`: append fast path (Phase 4
-   *   Stage 2) — write & upload only the `[fromSplat, count)` suffix,
+   *   commit-gsplats-geometry.ts). `fromInstance`: append fast path (Phase 4
+   *   Stage 2) — write & upload only the `[fromInstance, count)` suffix,
    *   preserving the prefix texels + permutation already on the GPU.
    */
   updateGSplatsGeometry(
@@ -300,7 +301,7 @@ export class GPUBufferPool {
     data: PackedGSplatsData,
     count: number,
     truncationRadius: number = 3.0,
-    options?: { preserveOrdering?: boolean; fromSplat?: number }
+    options?: { preserveOrdering?: boolean; fromInstance?: number }
   ): void {
     this.gsplats.updateGeometry(geometry, data, count, truncationRadius, options);
   }

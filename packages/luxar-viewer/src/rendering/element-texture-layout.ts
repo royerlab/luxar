@@ -149,15 +149,19 @@ export function elementTextureHeightForCapacity(
 let placeholderElementTexture: THREE.DataTexture | null = null;
 
 /**
- * Shared 4×1 RGBA32F placeholder bound to element-texture materials
+ * Shared 12×1 RGBA32F placeholder bound to element-texture materials
  * before their first commit rebinds the real pool texture. One
  * instance for the whole session — materials never own or dispose it.
  */
 export function getPlaceholderElementTexture(): THREE.DataTexture {
   if (!placeholderElementTexture) {
+    // 12×1: the LCM of the layouts' texels-per-element (4 and 3), so the
+    // "an element's texels never straddle a row" invariant the shader
+    // prologues state holds for the placeholder too (an OOB texelFetch is
+    // defined-safe in WebGL2, but keeping the invariant true costs nothing).
     placeholderElementTexture = new THREE.DataTexture(
-      new Float32Array(16),
-      4,
+      new Float32Array(12 * 4),
+      12,
       1,
       THREE.RGBAFormat,
       THREE.FloatType
@@ -209,9 +213,6 @@ export function clampSplatCapacity(requested: number): number {
 export function splatTextureHeightForCapacity(capacity: number): number {
   return elementTextureHeightForCapacity(capacity, SPLAT_TEXTURE_LAYOUT);
 }
-
-/** Alias of {@link getPlaceholderElementTexture} for gsplat call sites. */
-export const getPlaceholderSplatTexture = getPlaceholderElementTexture;
 
 // ---------------------------------------------------------------------------
 // Point-bound bindings (3 texels/point — per-texel layout and the texel

@@ -33,7 +33,7 @@ export function getCacheStats(ctx: StatsCtx) {
     cachedMaterials:
       ctx.pointMaterialCache.size + ctx.lineMaterialCache.size + ctx.gsplatMaterialCache.size,
     totalRegistered: ctx.registeredMaterials.size,
-    /** Cumulative LRU evictions across all three caches since creation. */
+    /** Cumulative LRU evictions since creation (only the line cache evicts). */
     evictions: ctx.evictionCount,
     /** Configured cache bound (`0` = disabled). */
     maxSize: config.dataLoading.performance.materialCacheMaxSize,

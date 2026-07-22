@@ -204,8 +204,9 @@ an `additive → max` switch.
 
 ## Colormap branch (`USE_COLORMAP`)
 
-Optional per-point scalar colouring. When enabled, the **vertex** shader reads
-`aScalar` (per-instance float) and samples a 256×1 LUT texture
+Optional per-point scalar colouring. When enabled, the **vertex** shader
+reconstructs `aScalar` from texel2.x of the point texture and samples a
+256×1 LUT texture
 (`uColormapTex`) at `t = clamp((aScalar - uScalarMin) * uScalarScale, 0, 1)`
 instead of reading `aColor`. The LUT lookup runs in the vertex stage and the
 mapped colour is carried to the fragment as `vColor`.
@@ -255,6 +256,7 @@ the more expensive falloff/GOG/colormap fragment work is skipped.
 | `uNearCull`       | float     | `updateCameraParams`                          | Near-fade start (world units, scene-bounds-scaled); shader floors at 1e-4 |
 | `uResolution`     | vec2      | `updateCameraParams` (mutates same Vector2)   | Physical framebuffer pixels; vertex uses for `pixel → NDC` conversion     |
 | `radiusScale`     | float     | `updateRadiusScale`                           | Dtype normalisation (e.g. `1/255` for uint8 radii)                        |
+| `uPointTex`       | sampler2D | `updatePointTexture` (commit sync)            | RGBA32F point texture, 3 texels/point — the per-node data store           |
 | `uColormapTex`    | sampler2D | `setColormapTexture`                          | 256×1 LUT; `USE_COLORMAP` only                                            |
 | `uScalarMin`      | float     | `setScalarRange`                              | LUT normalisation min                                                     |
 | `uScalarScale`    | float     | `setScalarRange` (pre-computed `1/(max-min)`) | LUT normalisation scale                                                   |
