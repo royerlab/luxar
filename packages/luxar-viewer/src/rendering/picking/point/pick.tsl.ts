@@ -248,7 +248,8 @@ export function pointPickWebGPUFactory(
     .toVar();
 
   const colorNode = Fn(() => {
-    Discard(vRadius.lessThan(0.0001));
+    // Exact-zero only — see the GLSL twin's comment.
+    Discard(vRadius.lessThanEqual(0.0));
     Discard(r2.greaterThan(0.25));
     Discard(brightness.lessThan(1e-4));
 

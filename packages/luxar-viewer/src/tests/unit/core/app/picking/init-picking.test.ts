@@ -8,7 +8,11 @@
 
 import * as THREE from 'three';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { initPicking, type InitPickingResult } from '../../../../../core/app/picking/init-picking';
+import {
+  initPicking,
+  disposePickingSession,
+  type InitPickingResult,
+} from '../../../../../core/app/picking/init-picking';
 import { EventGroup } from '../../../../../utils/cross-layer/event-group';
 
 // All heavy collaborators are module-mocked so the test never touches
@@ -145,6 +149,41 @@ describe('initPicking', () => {
           getOverlayManager: () => undefined,
         })
       ).resolves.toBeDefined();
+    });
+
+    // disposePickingSession is the extracted teardown that loadDataset
+    // calls UP-FRONT (alongside disposeOverlays) so a failing mid-load
+    // never leaves a stale session firing picks against geometries
+    // clearSceneContent() disposed. initPicking re-runs it defensively.
+    it('disposePickingSession disposes events + system + loaders standalone', () => {
+      const order: string[] = [];
+      const prevPicking = { dispose: vi.fn(() => order.push('picking')) };
+      const prevLabel = { dispose: vi.fn(() => order.push('label')) };
+      const prevImage = { dispose: vi.fn(() => order.push('image')) };
+      const events = new EventGroup();
+      const eventsSpy = vi.spyOn(events, 'dispose').mockImplementation(() => order.push('events'));
+
+      disposePickingSession({
+        pickingEvents: events,
+        previous: {
+          pickingSystem: prevPicking as never,
+          labelLoader: prevLabel as never,
+          imageLabelLoader: prevImage as never,
+        },
+      });
+
+      expect(order).toEqual(['events', 'picking', 'label', 'image']);
+      eventsSpy.mockRestore();
+    });
+
+    it('disposePickingSession tolerates an all-undefined previous (idempotent re-run)', () => {
+      expect(() =>
+        disposePickingSession({ pickingEvents, previous: makePreviousEmpty() })
+      ).not.toThrow();
+      // Second call (the defensive re-run inside initPicking) is a no-op.
+      expect(() =>
+        disposePickingSession({ pickingEvents, previous: makePreviousEmpty() })
+      ).not.toThrow();
     });
   });
 

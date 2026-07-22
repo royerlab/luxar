@@ -64,12 +64,44 @@ const FULL_UPLOAD_ROW_FRACTION = 0.75;
  * ranges and re-upload the whole image (correct, just not yet partial —
  * see the Phase-4 spec's Stage 3).
  */
+/**
+ * Textures with a FULL-image upload pending (encoded to three as
+ * `needsUpdate` + EMPTY `updateRanges`). The empty-ranges encoding is
+ * invisible to the range fold below — without this set, a later append
+ * would register only its own span and silently DOWNGRADE the pending
+ * full upload to a partial one, leaving the prefix rendering the
+ * previous commit's texels on the classic WebGL backend (found by
+ * model-based fuzzing; deterministic repro: full write ≥75% of rows →
+ * append before any flush). Cleared by `texture.onUpdate`, which the
+ * classic renderer invokes after it actually consumes the upload (the
+ * WebGPU backends may never call it — harmless, they full-upload on
+ * every needsUpdate anyway).
+ */
+const pendingFullUpload = new WeakSet<THREE.DataTexture>();
+
+/**
+ * Mark an element texture as needing a FULL image upload (context
+ * restore, external invalidation). Registers the pending-full state so
+ * later ranged writes cannot downgrade it.
+ */
+export function markElementTextureFullDirty(texture: THREE.DataTexture): void {
+  texture.clearUpdateRanges();
+  pendingFullUpload.add(texture);
+  texture.needsUpdate = true;
+}
+
 export function registerElementTexelDirtyRange(
   texture: THREE.DataTexture,
   floatsPerElement: number,
   firstElement: number,
   endElement: number
 ): void {
+  // A pending full upload covers ANY span — keep full mode (registering
+  // a partial range here would downgrade it; see pendingFullUpload).
+  if (pendingFullUpload.has(texture)) {
+    texture.needsUpdate = true;
+    return;
+  }
   // Derive row geometry from the texture's OWN dimensions (a multiple of
   // the layout's texels-per-element by construction — see
   // attachElementStorage), never the global `getElementTextureWidth()`: a
@@ -116,7 +148,10 @@ export function registerElementTexelDirtyRange(
 
   if (dirtyRows >= FULL_UPLOAD_ROW_FRACTION * totalRows) {
     // Too much dirty to bother splitting: leave updateRanges empty so
-    // three takes its single full-image texSubImage2D path.
+    // three takes its single full-image texSubImage2D path — and record
+    // the pending-full state so a later ranged write can't downgrade it
+    // before the renderer flushes (see pendingFullUpload).
+    pendingFullUpload.add(texture);
     texture.needsUpdate = true;
     return;
   }
@@ -182,6 +217,13 @@ export function attachElementStorage(
   texture.minFilter = THREE.NearestFilter;
   texture.generateMipmaps = false;
   texture.flipY = false;
+  // The classic renderer invokes onUpdate after consuming an upload —
+  // the observable "flush happened" signal that ends a pending FULL
+  // upload (see pendingFullUpload). Wired once here; nothing else sets
+  // onUpdate on element textures. (No pending-full mark at attach: a
+  // fresh texture's GPU storage is zero-initialized and only written
+  // texels are ever read, so a ranged first upload is sufficient.)
+  texture.onUpdate = () => pendingFullUpload.delete(texture);
   texture.needsUpdate = true;
 
   (geometry.userData as ElementStorageUserData).elementTexture = texture;

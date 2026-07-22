@@ -439,25 +439,11 @@ export class MaterialManager {
     removeFromRegistries(material, this.lifecycleCtx);
   }
 
-  /**
-   * Detach a pooled material from the global camera-update set without
-   * evicting it from the LRU material cache. Used at clone sites in
-   * `NodeFactory`: the per-node clone takes over the role of "this
-   * geometry's material" while the pooled original stays in the cache
-   * for the next caller.
-   */
-  detachFromGlobalUpdates(material: THREE.Material & CameraAwareMaterial): void {
-    this.registeredMaterials.delete(material);
-    this.ownedMaterials.delete(material);
-  }
-
   /** Dispose all cached materials. */
   dispose(): void {
-    // Union of both registries: a colormap-clone ORIGINAL is detached
-    // from registeredMaterials (detachFromGlobalUpdates) while staying
-    // in the LRU cache; if it later gets evicted, handleEviction parks
-    // it in ownedMaterials only — registeredMaterials alone would miss
-    // it and leak its GPU program at teardown.
+    // Union of both registries: an LRU-evicted line material is parked
+    // in ownedMaterials only (handleEviction) — registeredMaterials
+    // alone would miss it and leak its GPU program at teardown.
     const materials = new Set([...this.registeredMaterials, ...this.ownedMaterials]);
     this.registeredMaterials.clear();
     this.ownedMaterials.clear();

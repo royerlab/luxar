@@ -15,13 +15,13 @@ a real scene, renderer, or picking system.
 
 ## Module map
 
-| File                     | Role                                                                                                                                                                                                                                                                      |
-| ------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `validation.ts`          | `validateLoadedPointsData` (length/divisibility checks + structured log), `validateColorMode` (HDR Float32 vs SDR normalized-integer sanity), `validateTransformFormat` (row-major NumPy → throws)                                                                        |
-| `transforms.ts`          | `applyTransform` — length-16 guard + row-major guard, then `Matrix4.fromArray().decompose()` onto `object.position / quaternion / scale`                                                                                                                                  |
+| File                     | Role                                                                                                                                                                                                                                                                                                                                                                                           |
+| ------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `validation.ts`          | `validateLoadedPointsData` (length/divisibility checks + structured log), `validateColorMode` (HDR Float32 vs SDR normalized-integer sanity), `validateTransformFormat` (row-major NumPy → throws)                                                                                                                                                                                             |
+| `transforms.ts`          | `applyTransform` — length-16 guard + row-major guard, then `Matrix4.fromArray().decompose()` onto `object.position / quaternion / scale`                                                                                                                                                                                                                                                       |
 | `create-points-node.ts`  | `createPointsGeometry` (one shared unit quad + per-instance `aCenter/aColor/aRadius/aSharpness/aScalar`, dtype-aware normalization, `instanceCount` + `drawRange(0,6)`, metadata bounds), `createPointsMaterial` (materialManager lookup + scalar-colormap clone path), `createPointsNode` (geometry + material + userData + optional picking shadow), and `createEmptyPointsNode` placeholder |
-| `create-lines-node.ts`   | `createLinesNode` (line material + colormap clone + `createInstancedLinesMesh` + optional picking shadow) and `createEmptyLinesNode` placeholder                                                                                                                          |
-| `create-gsplats-node.ts` | `createGSplatsNode` (gsplat material + colormap clone + `createInstancedGSplatsMesh` + optional picking shadow) and `createEmptyGSplatsNode` placeholder                                                                                                                  |
+| `create-lines-node.ts`   | `createLinesNode` (line material + colormap clone + `createInstancedLinesMesh` + optional picking shadow) and `createEmptyLinesNode` placeholder                                                                                                                                                                                                                                               |
+| `create-gsplats-node.ts` | `createGSplatsNode` (gsplat material + colormap clone + `createInstancedGSplatsMesh` + optional picking shadow) and `createEmptyGSplatsNode` placeholder                                                                                                                                                                                                                                       |
 
 ## How the orchestrator composes them
 
@@ -57,15 +57,14 @@ NodeFactory (class in rendering/node-factory.ts)
   storing: `matrix.T.ravel().tolist()`. This is the load-time refusal
   the project-root `CLAUDE.md` ("Critical Gotchas / Matrix Storage")
   references.
-- **Colormap clone path.** `createPointsMaterial`, `createLinesNode`,
-  and `createGSplatsNode` all share the same shape: when
-  `nodeAttrs.colormap` is set (and, for points / lines, a scalar
-  attribute is actually bound), the helper calls
-  `materialManager.detachFromGlobalUpdates(material)`, clones the
-  pooled material, re-registers the clone, and applies the colormap
-  texture + scalar range. Without the detach step,
-  `materialManager.disposeAll()` would dispose the pooled cache entry
-  still serving other callers.
+- **Colormap paths.** Points and GSplats materials are PER NODE, so
+  `createPointsMaterial` / `createGSplatsNode` apply the colormap
+  texture + scalar range directly to the node-owned material (no clone
+  dance). Lines materials are LRU-cached and shared, so `createLinesNode`
+  clones the cached material for the colormap variant and registers the
+  clone — the cached original stays registered and cached (the historical
+  detach-before-clone step was removed: its disposeAll-vs-cache rationale
+  never held, and detaching starved later cache hits of camera updates).
 - **Scalar-attribute guard (points / lines).** Points consults
   `supportsScalarColormap('points', geometry)` when a geometry is
   supplied; lines checks for `startScalars`/`endScalars` on the
