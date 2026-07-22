@@ -102,11 +102,15 @@ class TestViewerCommand:
         assert result.exit_code == 0, result.output
         # The viewer server is started synchronously; the data server runs in a
         # background thread (so mock_data is racy). Assert the viewer was served
-        # once AND received a non-None data_url pointing at the dataset — that
-        # proves --data was wired through without depending on thread timing.
+        # once AND received a data_url at the data-server root — the store is
+        # mounted AT the root (no store-name suffix, so sibling files are never
+        # exposed) and the URL must carry no trailing slash.
         mock_viewer.assert_called_once()
         data_url = mock_viewer.call_args.args[2]
-        assert data_url is not None and sample_scene.name in data_url
+        assert data_url is not None
+        assert sample_scene.name not in data_url
+        assert not data_url.endswith("/")
+        assert data_url.startswith("http://127.0.0.1:")
 
 
 class TestDemoCommand:
@@ -249,9 +253,7 @@ class TestEnhancedServeCommand:
         """`serve --viewer --open` (viewer built) opens the browser exactly once
         — the positive twin of test_serve_with_viewer_not_built_skips_open."""
         mock_check.return_value = True
-        result = runner.invoke(
-            app, ["serve", str(sample_scene), "--viewer", "--open"]
-        )
+        result = runner.invoke(app, ["serve", str(sample_scene), "--viewer", "--open"])
         assert result.exit_code == 0, result.output
         mock_browser.assert_called_once()
 

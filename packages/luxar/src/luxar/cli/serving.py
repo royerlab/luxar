@@ -323,6 +323,16 @@ def _serve_viewer(
     uvicorn.run(api, host=host, port=port, reload=False, log_level="warning")
 
 
+def _resolve_mount_root(path: Path) -> Path:
+    """Root directory actually mounted by the data server for ``path``.
+
+    A directory (zarr store or plain folder) is mounted itself; a single file
+    is served from its parent directory. Validation must run against this
+    root, not the argument, so the guard covers what is actually exposed.
+    """
+    return path if path.is_dir() else path.parent
+
+
 def _serve_data(
     path: Path,
     host: str,
@@ -336,6 +346,11 @@ def _serve_data(
 ) -> None:
     """Internal function to serve data in background.
 
+    The mount root is the dataset itself (a ``.zarr`` store is served AT the
+    server root, so the data URL is ``http://host:port`` with no store-name
+    suffix). Serving the parent directory would expose every sibling file of
+    the dataset over HTTP.
+
     Args:
         path: Path to data directory or zarr file
         host: Host address
@@ -347,20 +362,43 @@ def _serve_data(
         allow_sensitive_path: Permit serving system paths.
         cors_origin: Allowed CORS origin (see :func:`_add_cors`).
     """
-    _validate_serve_path(path, allow_sensitive_path=allow_sensitive_path)
+    asgi_app = _build_data_app(
+        path,
+        bandwidth_mbps=bandwidth_mbps,
+        latency_ms=latency_ms,
+        jitter_percent=jitter_percent,
+        packet_loss_rate=packet_loss_rate,
+        allow_sensitive_path=allow_sensitive_path,
+        cors_origin=cors_origin,
+    )
+
+    aprint(f"💾 Data server running at http://{host}:{port}")
+
+    uvicorn.run(asgi_app, host=host, port=port, reload=False, log_level="warning")
+
+
+def _build_data_app(
+    path: Path,
+    *,
+    bandwidth_mbps: Optional[float] = None,
+    latency_ms: Optional[float] = None,
+    jitter_percent: float = 0.0,
+    packet_loss_rate: float = 0.0,
+    allow_sensitive_path: bool = False,
+    cors_origin: str = _DEFAULT_CORS_ORIGIN,
+) -> ASGIApp:
+    """Build the data-server ASGI app for ``path`` (see :func:`_serve_data`).
+
+    Split out so tests can exercise the real mount/validation logic with a
+    ``TestClient`` instead of a live uvicorn server.
+    """
+    serve_path = _resolve_mount_root(path)
+    _validate_serve_path(serve_path, allow_sensitive_path=allow_sensitive_path)
 
     api = FastAPI(title="Luxar Data Server", docs_url=None, redoc_url=None)
     _add_cors(api, cors_origin)
 
-    # Determine serve path
-    if path.is_dir():
-        serve_path = path.parent if path.name.endswith(".zarr") else path
-    else:
-        serve_path = path.parent
-
     api.mount("/", DirectoryListingStaticFiles(directory=serve_path, html=True))
-
-    aprint(f"💾 Data server running at http://{host}:{port}")
 
     # Wrap with network simulation if enabled
     asgi_app: ASGIApp = api
@@ -378,4 +416,4 @@ def _serve_data(
             ),
         )
 
-    uvicorn.run(asgi_app, host=host, port=port, reload=False, log_level="warning")
+    return asgi_app
