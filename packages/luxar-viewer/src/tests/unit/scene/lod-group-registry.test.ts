@@ -1118,6 +1118,31 @@ describe('LODGroupRegistry — fresh-but-empty display guard', () => {
     expect(relCoarse).not.toHaveBeenCalled(); // displayed level never freed
     expect(relFine).toHaveBeenCalledTimes(1); // hidden empty level is evictable
   });
+
+  it('never redirects to a NOT-READY deferred-group placeholder (keeps the fresh-but-empty level)', () => {
+    // Property-harness repro (campaign-4 iter-7, bug A): the fresh level
+    // committed 0 elements (poisoned cache) and the ONLY other level is a
+    // deferred kind=partition placeholder — a bare group, ready:false, nothing
+    // committed. Pre-fix ``childFreshAndCount`` reported that placeholder
+    // fresh-with-unknown-count (its ``!aggregate`` branch never checked
+    // ``isReady``), the guard redirected display onto it, and the ready-gated
+    // visibility pass then showed NOTHING — a permanently blank group. The
+    // guard must only redirect to a level that can actually draw; with no such
+    // level, an empty-but-real level beats a blank placeholder.
+    const reg = makeRegistry([0, 1, 2], undefined, undefined, () => 2);
+    const empty = makeCountedChild(0, 2, 0); // fresh@2, committed 0 splats
+    const placeholder: LODGroupChild = {
+      object: new THREE.Group(), // no leaf nodeType, no stamped leaves
+      coverageFraction: 1,
+      positionBounds: { min: [0, 0, 0], max: [10, 10, 10] },
+      ready: false,
+      ensureLoaded: vi.fn(),
+    };
+    reg.register(makeEntry([empty, placeholder], 0, '/g'));
+    for (let i = 0; i < 5; i++) reg.evaluatePerFrame();
+    expect(empty.object.visible).toBe(true); // fresh-but-empty level kept on screen
+    expect(placeholder.object.visible).toBe(false); // never the blank placeholder
+  });
 });
 
 describe('LODGroupRegistry — slice-aware freshness fallback', () => {
@@ -1348,6 +1373,35 @@ describe('LODGroupRegistry — group-typed LOD child freshness', () => {
     expect(nonEmptyLeaf.object.visible).toBe(true); // group-aware fallback landed here
     expect(emptyGroup.object.visible).toBe(false); // NOT redirected onto the empty group
     expect(emptyFineLeaf.object.visible).toBe(false);
+  });
+
+  it('slice-aware fallback skips a READY group child with a STALE subtree (shows the fresh level)', () => {
+    // Property-harness repro (campaign-4 iter-7, bug D): after a re-slice the
+    // fallback picker ``coarsestFreshOrReadyIndex`` still used the leaf-only
+    // ``coarsestFreshIndex``/``isFresh`` (non-leaf ⇒ unconditionally fresh)
+    // while its sibling paths were converted to the group-aware
+    // ``childFreshAndCount`` — so it displayed the OLD slice from a stale
+    // partition branch even though a genuinely fresh level was resident.
+    const TINY = { min: [0, 0, 0], max: [1e-4, 1e-4, 1e-4] }; // → aspiration = level 0
+    let version = 0;
+    const reg = makeRegistry([0, 1, 2], undefined, undefined, () => version);
+    const coarseLeaf = makeLeafAt(0, 50, 0); // stamped v0
+    coarseLeaf.positionBounds = TINY;
+    const { child: staleGroup } = makeGroupChildWithLeaf(0.5, 0, 200); // leaves stamped v0
+    staleGroup.positionBounds = TINY;
+    const fineLeaf = makeLeafAt(1.0, 1600, 0);
+    fineLeaf.positionBounds = TINY;
+    reg.register(makeEntry([coarseLeaf, staleGroup, fineLeaf], 0, '/ov'));
+    reg.evaluatePerFrame(); // v0 steady state: coarse aspiration displayed
+
+    // Re-slice: bump the view version; ONLY the finest leaf recommits fresh
+    // (the eager coarse sweep + the deferred group reload have not landed yet).
+    version = 1;
+    (fineLeaf.object.userData as { loadedViewVersion: number }).loadedViewVersion = 1;
+    for (let f = 0; f < 3; f++) reg.evaluatePerFrame();
+    expect(fineLeaf.object.visible).toBe(true); // the only level fresh for v1
+    expect(staleGroup.object.visible).toBe(false); // stale subtree = old slice, skipped
+    expect(coarseLeaf.object.visible).toBe(false);
   });
 });
 
@@ -1830,7 +1884,10 @@ describe('LODGroupRegistry — coverage-band cross-fade', () => {
   }
   // A gsplats leaf whose object is a real Mesh (so .material / .traverse work),
   // with a UNIT-CUBE position bounds → projects to coverage metric 0.5.
-  function fadeChild(coverageFraction: number, opts: { mode?: string; ready?: boolean } = {}): LODGroupChild {
+  function fadeChild(
+    coverageFraction: number,
+    opts: { mode?: string; ready?: boolean } = {}
+  ): LODGroupChild {
     const mesh = new THREE.Mesh();
     mesh.material = fadeMat(opts.mode ?? 'additive') as unknown as THREE.Material;
     mesh.userData = {
@@ -1957,6 +2014,84 @@ describe('LODGroupRegistry — coverage-band cross-fade', () => {
     // is kicked so a subsequent crossing can fade against it.
     expect(loaded).toBe(true);
     expect(fine.object.visible).toBe(false);
+  });
+
+  it('byte-budget eviction never releases the ON-SCREEN cross-fade blend partner', () => {
+    // Property-harness repro (campaign-4 iter-7, bug B): levels 1↔2 blend at
+    // ~50/50 when VRAM pressure hits. The eviction pass protected only
+    // ``displayedChildIndex`` (level 2); the blend partner (level 1) was an
+    // ordinary candidate and got released MID-FADE — half the dissolve
+    // vanished and a visible-but-not-ready level was left behind. The evictor
+    // must never release anything on screen (``object.visible === true``).
+    const camera = new THREE.Camera();
+    camera.matrixWorldInverse.identity();
+    camera.projectionMatrix.identity();
+    let budget = 1e15;
+    const relMid = vi.fn(() => {
+      mid.ready = false;
+    });
+    const relFine = vi.fn(() => {
+      fine.ready = false;
+    });
+    // Unit-cube bounds → coverage metric 0.5 = the 1↔2 boundary of thresholds
+    // [0, 0.25, 0.5] (gap 0.25 → band [0.4, 0.6]) → exact 50/50 blend.
+    const coarse = fadeChild(0); // eager fallback: no release, never evictable
+    const mid = fadeChild(0.25);
+    mid.release = relMid as () => void;
+    const fine = fadeChild(0.5);
+    fine.release = relFine as () => void;
+    const children = [coarse, mid, fine];
+    const reg = new LODGroupRegistry({
+      getCamera: () => camera,
+      getViewportSize: () => ({ width: 800, height: 600 }),
+      getDisplayDims: () => [0, 1, 2],
+      getViewVersion: () => 2,
+      getCrossFadeEnabled: () => true,
+      getResidentByteBudget: () => budget,
+      getResidentBytes: () => children.reduce((s, c) => s + (c.ready !== false ? 100 : 0), 0),
+    });
+    reg.register(makeEntry(children, 0, '/g'));
+    reg.evaluatePerFrame(); // steady blend: [mid, fine] visible at 50/50
+    expect(mid.object.visible).toBe(true);
+    expect(fine.object.visible).toBe(true);
+
+    budget = 250; // 300 resident > 250 → eviction pass fires
+    reg.evaluatePerFrame();
+    expect(relMid).not.toHaveBeenCalled(); // the on-screen partner is protected
+    expect(relFine).not.toHaveBeenCalled(); // the displayed level is protected
+    expect(mid.object.visible).toBe(true); // the dissolve survives the pressure
+    expect(fine.object.visible).toBe(true);
+  });
+
+  it('restores authored opacity once when fade management toggles OFF mid-fade', () => {
+    // Property-harness repro (campaign-4 iter-7, observation E): with a 50/50
+    // cross-fade in flight, turning BOTH anti-popping flags off skipped the
+    // restore branch (``manageFade === false``) and stranded opacity 0.5
+    // forever. The falling-edge restore must return every faded leaf to its
+    // authored opacity on the next frame.
+    const camera = new THREE.Camera();
+    camera.matrixWorldInverse.identity();
+    camera.projectionMatrix.identity();
+    let crossFade = true;
+    const reg = new LODGroupRegistry({
+      getCamera: () => camera,
+      getViewportSize: () => ({ width: 800, height: 600 }),
+      getDisplayDims: () => [0, 1, 2],
+      getViewVersion: () => 2,
+      getCrossFadeEnabled: () => crossFade,
+    });
+    const coarse = fadeChild(0);
+    const fine = fadeChild(0.5); // boundary at the unit-cube metric 0.5 → 50/50
+    reg.register(makeEntry([coarse, fine], 0, '/g'));
+    reg.evaluatePerFrame();
+    expect(liveOpacity(fine)).toBeCloseTo(0.5, 6); // mid-fade
+
+    crossFade = false; // both anti-popping flags now off
+    for (let f = 0; f < 3; f++) reg.evaluatePerFrame();
+    expect(liveOpacity(fine)).toBe(1); // authored opacity restored, not stranded
+    expect(liveOpacity(coarse)).toBe(1);
+    expect(fine.object.visible).toBe(true); // hard swap to the finest level
+    expect(coarse.object.visible).toBe(false);
   });
 });
 

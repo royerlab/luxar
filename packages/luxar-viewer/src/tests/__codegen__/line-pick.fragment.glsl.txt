@@ -92,7 +92,7 @@ void main() {
 	nodeVar6 = ( ( 1.0 - nodeVarying1 ) * nodeVarying2 );
 	nodeVar10 = clamp( ( min( nodeVar5, nodeVar6 ) / nodeVarying3 ), 0.0, 1.0 );
 
-	if ( ( nodeVarying3 > 0.0001 ) ) {
+	if ( ( nodeVarying3 > 1e-20 ) ) {
 
 		nodeVar11 = nodeVar10;
 

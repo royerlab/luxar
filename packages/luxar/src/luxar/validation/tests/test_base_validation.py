@@ -471,3 +471,119 @@ class TestValidateZarrAttributes:
 
         with pytest.raises(ValidationError, match="type"):
             validate_zarr_attributes(attrs_missing_type, is_root=False)
+
+
+class TestNodeNameValidation:
+    """validate_node_name — the single node-naming chokepoint (fuzz F1/F5)."""
+
+    def test_valid_names_pass(self) -> None:
+        from luxar.validation.base import validate_node_name
+
+        for name in ("points", "näme_ümlaut", "🦄🌈", "name with spaces", "a" * 255):
+            assert validate_node_name(name) == name
+
+    def test_empty_name_rejected(self) -> None:
+        """F1: an empty name resolves to the zarr ROOT group (scene clobber)."""
+        from luxar.validation.base import validate_node_name
+
+        with pytest.raises(ValidationError, match="empty"):
+            validate_node_name("")
+
+    def test_whitespace_only_name_rejected(self) -> None:
+        from luxar.validation.base import validate_node_name
+
+        with pytest.raises(ValidationError, match="empty or whitespace"):
+            validate_node_name("   ")
+
+    def test_slash_rejected(self) -> None:
+        from luxar.validation.base import validate_node_name
+
+        with pytest.raises(ValidationError, match="cannot contain '/'"):
+            validate_node_name("a/b")
+
+    def test_zarr_reserved_dot_names_rejected(self) -> None:
+        """F5: .zgroup/.zattrs/.zarray/.zmetadata (and any dot-prefix)."""
+        from luxar.validation.base import validate_node_name
+
+        for name in (".zgroup", ".zattrs", ".zarray", ".zmetadata", ".", "..", ".x"):
+            with pytest.raises(ValidationError, match="cannot start with '.'"):
+                validate_node_name(name)
+
+    def test_control_characters_rejected(self) -> None:
+        from luxar.validation.base import validate_node_name
+
+        for name in ("new\nline", "tab\tname", "\x00null"):
+            with pytest.raises(ValidationError, match="control characters"):
+                validate_node_name(name)
+
+    def test_non_string_rejected(self) -> None:
+        from luxar.validation.base import validate_node_name
+
+        with pytest.raises(ValidationError, match="Expected a string"):
+            validate_node_name(42)
+
+
+class TestLabelsValidation:
+    """validate_labels_for_writing — fail-fast labels pre-flight (fuzz F4)."""
+
+    def test_valid_labels_pass(self) -> None:
+        from luxar.validation.base import validate_labels_for_writing
+
+        validate_labels_for_writing(["a", "b", None, ""], 4)
+
+    def test_non_str_entry_rejected(self) -> None:
+        """F4: labels=[42] used to AttributeError deep in the CSR encoder."""
+        from luxar.validation.base import validate_labels_for_writing
+
+        with pytest.raises(ValidationError, match="expected str or None"):
+            validate_labels_for_writing([42, 43], 2)
+
+    def test_wrong_length_rejected(self) -> None:
+        from luxar.validation.base import validate_labels_for_writing
+
+        with pytest.raises(ValidationError, match="must match element count"):
+            validate_labels_for_writing(["a", "b"], 3)
+
+    def test_bare_string_rejected(self) -> None:
+        from luxar.validation.base import validate_labels_for_writing
+
+        with pytest.raises(ValidationError, match="sequence of strings"):
+            validate_labels_for_writing("abc", 3)
+
+
+class TestScalarBroadcastValidation:
+    """Scalar (broadcast) inputs must validate like their array siblings."""
+
+    def test_scalar_sharpness_out_of_range_rejected(self) -> None:
+        """Fuzz surprising-accept: sharpness=5.0 scalar passed while the
+        equivalent array was rejected."""
+        from luxar.validation.base import validate_sharpness_for_writing
+
+        with pytest.raises(ValidationError, match="within"):
+            validate_sharpness_for_writing(5.0, 10)
+        with pytest.raises(ValidationError, match="within"):
+            validate_sharpness_for_writing(-0.5, 10)
+        with pytest.raises(ValidationError, match="finite"):
+            validate_sharpness_for_writing(float("nan"), 10)
+        validate_sharpness_for_writing(0.5, 10)  # in-range scalar OK
+
+    def test_scalar_radii_negative_or_nonfinite_rejected(self) -> None:
+        from luxar.validation.base import validate_radii_for_writing
+
+        with pytest.raises(ValidationError, match="negative"):
+            validate_radii_for_writing(-1.0, 10)
+        with pytest.raises(ValidationError, match="finite"):
+            validate_radii_for_writing(float("nan"), 10)
+        # Deliberate asymmetry: scalar 0.0 stays accepted (degenerate-points
+        # contract pinned by test_all_zero_radius_falls_through_to_flat_points).
+        validate_radii_for_writing(0.0, 10)
+
+    def test_widths_wrong_type_rejected(self) -> None:
+        """A str/None widths used to fall through silently and die in the
+        encoder after the vertices were written."""
+        from luxar.validation.base import validate_widths_for_writing
+
+        with pytest.raises(ValidationError, match="Expected numpy array or scalar"):
+            validate_widths_for_writing("wide", 10)
+        with pytest.raises(ValidationError, match="Expected numpy array or scalar"):
+            validate_widths_for_writing(None, 10)

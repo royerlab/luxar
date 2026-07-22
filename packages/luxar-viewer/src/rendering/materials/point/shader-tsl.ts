@@ -296,11 +296,16 @@ export function pointWebGPUFactory(
 
     // World-space size from VIEW-SPACE DEPTH (-mvPos.z), matching the
     // line + gsplat shaders (Euclidean distance shrank edge-of-screen
-    // points by cos(theta)); ortho stays constant. 1e-4 floor mirrors
-    // the line shader's nearCull floor.
+    // points by cos(theta)); ortho stays constant. The 1e-20 floor is a
+    // pure divide-by-zero guard, NOT a scale floor: the near-fade
+    // reject below already bounds surviving depths at ~uNearCull
+    // (scene-relative) and the size clamp bounds the output. The old
+    // absolute 1e-4 clamped VALID depths on tiny-unit scenes
+    // (-z ~ 1e-6), shrinking every sprite ~100×. GLSL twin:
+    // shader-glsl.ts.
     const invDistance: TSLNode = int(uIsOrtho)
       .equal(int(1))
-      .select(float(1.0), mvPos.z.negate().max(float(1e-4)).reciprocal());
+      .select(float(1.0), mvPos.z.negate().max(float(1e-20)).reciprocal());
     const basePointSize: TSLNode = normalizedRadius.mul(uPointSizeFactor).mul(invDistance).toVar();
 
     // No size compensation: the shifted-truncated super-Gaussian truncates at
@@ -317,10 +322,14 @@ export function pointWebGPUFactory(
     // the sprite), the near-plane approach fades across
     // [nearCull, 2*nearCull], ortho passes through (NDC clipping is the
     // authority). Reject below 0.01, multiply the survivor into alpha.
+    // uNearCull is scene-bounds-scaled; the 1e-20 floor only guards the
+    // degenerate smoothstep when uNearCull == 0 — an absolute 1e-4
+    // floor overrode the scene-relative value on tiny-unit scenes and
+    // faded out the whole scene. GLSL twin: shader-glsl.ts.
     const depthFade: TSLNode = perspectiveNearFadeTSL(
       uIsOrtho,
       mvPos.z,
-      max(uNearCull, float(1e-4))
+      max(uNearCull, float(1e-20))
     ).toVar();
     const clipPos: TSLNode = depthFade
       .lessThan(0.01)

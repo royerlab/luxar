@@ -228,11 +228,15 @@ export class PointsBufferAdapter {
     };
 
     host.activeBuffers.set(nodeId, newBuffer);
+    // Both allocation counters bump together, BEFORE the sweep: the
+    // sweep runs dispose listeners that may throw, and a bump split
+    // across it would permanently desync stats.allocations from
+    // typeStats.points.allocations on a throwing sweep.
     host.stats.allocations++;
+    host.typeStats.points.allocations++;
     // Fresh allocations count against the byte budget too — sweep idle
     // pooled buffers (see growth-path note above).
     host.evictUnused(true);
-    host.typeStats.points.allocations++;
 
     return geometry;
   }

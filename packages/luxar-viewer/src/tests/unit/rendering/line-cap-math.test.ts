@@ -32,7 +32,9 @@ function capFactor(
   const distFromStart = t * segmentLength;
   const distFromEnd = (1 - t) * segmentLength;
   const distToNearest = Math.min(distFromStart, distFromEnd);
-  const capRamp = width > 1e-4 ? Math.min(Math.max(distToNearest / width, 0), 1) : 1;
+  // 1e-20 mirrors the shader's pure div-by-zero guard (the ratio is
+  // scale-free, so sub-1e-4-unit widths keep the cap ramp).
+  const capRamp = width > 1e-20 ? Math.min(Math.max(distToNearest / width, 0), 1) : 1;
   const baseCap = 0.5 + 0.5 * capRamp;
   // Mirrors the shader's `step(distFromStart, distFromEnd)`: 1 when start is nearer.
   const nearestIsStart = distFromEnd >= distFromStart ? 1 : 0;

@@ -106,7 +106,10 @@ export const LINE_PICK_VERTEX_SHADER = /* glsl */ `
       // PERSPECTIVE ONLY — see the visual line shader: under ortho NDC
       // clipping is the sole cull authority (the ungated cull wrongly
       // made near-slab lines unpickable while points/gsplats picked).
-      float nearCull = max(uNearCull, 1e-4);
+      // 1e-20 floor = uNearCull == 0 guard only; uNearCull is
+      // scene-bounds-scaled (see the visual line shader — an absolute
+      // 1e-4 floor culled every segment of a tiny-unit scene).
+      float nearCull = max(uNearCull, 1e-20);
       float startDepth = -mvStart.z;
       float endDepth = -mvEnd.z;
       bool bothBehind =
@@ -127,8 +130,13 @@ export const LINE_PICK_VERTEX_SHADER = /* glsl */ `
       // projection is linear, so proj * mix(a,b,t) == mix(proj*a, proj*b, t).
       vec4 clipPos = mix(clipStart, clipEnd, t);
 
-      float wStart = max(clipStart.w, 1e-4);
-      float wEnd = max(clipEnd.w, 1e-4);
+      // Scene-relative w guard (w == -viewZ under perspective; ortho
+      // w == 1, guard inert) — see the visual line shader for why an
+      // absolute 1e-4 scrambled tiny-unit scenes and a raw 1e-20 could
+      // overflow the pixel-length math.
+      float wGuard = (uIsOrtho == 1) ? 1.0 : nearCull;
+      float wStart = max(clipStart.w, wGuard);
+      float wEnd = max(clipEnd.w, wGuard);
       vec2 ndcStart = clipStart.xy / wStart;
       vec2 ndcEnd = clipEnd.xy / wEnd;
 
@@ -240,7 +248,8 @@ export const LINE_PICK_FRAGMENT_SHADER = /* glsl */ `
       float distFromStart = vT * vSegmentLength;
       float distFromEnd = (1.0 - vT) * vSegmentLength;
       float distToNearest = min(distFromStart, distFromEnd);
-      float capRamp = vWidthAtT > 1e-4
+      // Scale-free ratio; 1e-20 = pure div-by-zero guard (visual twin).
+      float capRamp = vWidthAtT > 1e-20
         ? clamp(distToNearest / vWidthAtT, 0.0, 1.0)
         : 1.0;
       float baseCap = 0.5 + 0.5 * capRamp;
@@ -249,7 +258,9 @@ export const LINE_PICK_FRAGMENT_SHADER = /* glsl */ `
       float nearestClipped = mix(vClippedEnd, vClippedStart, nearestIsStart);
       float capFactor = mix(baseCap, 1.0, nearestClipped);
 
-      float nearFade = perspectiveNearFade(uIsOrtho, vViewZ, max(uNearCull, 1e-4));
+      // 1e-20 floor = degenerate-smoothstep guard only (scene-relative
+      // uNearCull; see the vertex-stage nearCull note).
+      float nearFade = perspectiveNearFade(uIsOrtho, vViewZ, max(uNearCull, 1e-20));
       float brightness = capFactor * perpFalloff * widthScale * vWidthFade * nearFade;
       if (brightness < 1e-4) discard;
 

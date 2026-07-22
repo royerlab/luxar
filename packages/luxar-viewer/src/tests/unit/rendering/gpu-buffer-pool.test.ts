@@ -540,6 +540,40 @@ describe('GPUBufferPool', () => {
       expect(stats.pooledBuffers).toBe(0);
     });
 
+    it('a throwing dispose listener aborts the sweep without leaving disposed buffers adoptable', () => {
+      // Contract pinned here: evictUnused has NO catch around
+      // geometry.dispose() — a throwing dispose listener aborts the
+      // pass and the error propagates. But each bucket is committed
+      // (evicted buffers removed) BEFORE any dispose runs, so the
+      // throw can only leak not-yet-disposed buffers (already
+      // unreachable from the pool) — never leave a
+      // disposed-but-adoptable zombie that a later acquire (or the
+      // grow-reclaim path) could reinstate.
+      const testPool = new GPUBufferPool(20, 2); // evict after 2 frames
+      const geomA = testPool.acquirePointsGeometry('a', 1000);
+      const geomB = testPool.acquirePointsGeometry('b', 900); // same bucket as 'a'
+      testPool.releasePointsGeometry('a');
+      testPool.releasePointsGeometry('b');
+      for (let i = 0; i < 4; i++) testPool.beginFrame(); // both now stale
+
+      geomA.addEventListener('dispose', () => {
+        throw new Error('listener boom');
+      });
+      const disposeB = vi.spyOn(geomB, 'dispose');
+
+      expect(() => testPool.evictUnused()).toThrow('listener boom');
+
+      // The bucket was committed before disposal: neither buffer is
+      // adoptable any more…
+      expect(testPool.getStats().pooledBuffers).toBe(0);
+      const fresh = testPool.acquirePointsGeometry('c', 900);
+      expect(fresh).not.toBe(geomA);
+      expect(fresh).not.toBe(geomB);
+      // …and the abort left geomB leaked-undisposed (the safe
+      // direction), not disposed-in-pool.
+      expect(disposeB).not.toHaveBeenCalled();
+    });
+
     it('acquire under pool pressure returns a usable geometry', () => {
       // Stress the pool's release → evict → acquire sequence.
       // Eviction in this codebase is triggered by `releasePointsGeometry`
@@ -603,6 +637,26 @@ describe('GPUBufferPool', () => {
       expect(pool.getStats().capacityGrowths).toBe(1);
 
       // Eviction (tested separately due to frame requirements)
+    });
+
+    it('keeps stats.allocations and typeStats.points.allocations in sync when the post-allocation sweep throws', () => {
+      // Both counters must bump together BEFORE the fresh-allocation
+      // eviction sweep: a throwing sweep (dispose listeners can throw)
+      // used to land between them and permanently desync the pair.
+      const testPool = new GPUBufferPool(20, 300);
+      const evictSpy = vi.spyOn(testPool, 'evictUnused');
+      evictSpy.mockImplementationOnce(() => 0); // first fresh-alloc sweep: fine
+      evictSpy.mockImplementationOnce(() => {
+        throw new Error('sweep boom');
+      });
+
+      testPool.acquirePointsGeometry('a', 1000);
+      expect(() => testPool.acquirePointsGeometry('b', 1000)).toThrow('sweep boom');
+
+      const stats = testPool.getStats();
+      expect(stats.allocations).toBe(2);
+      expect(stats.byType.points.allocations).toBe(2);
+      expect(stats.allocations).toBe(stats.byType.points.allocations);
     });
 
     it('should track active vs pooled buffers', () => {

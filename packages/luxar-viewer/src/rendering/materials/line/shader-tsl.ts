@@ -267,7 +267,12 @@ export function lineWebGPUFactory(
   // ortho NDC clipping is the sole authority and the previous ungated
   // cull wrongly hid in-frustum lines in the near slab). View-space
   // depth = -z.
-  const nearCull: TSLNode = max(uNearCull, float(1e-4));
+  // uNearCull is scene-bounds-scaled; the 1e-20 floor only guards
+  // uNearCull == 0 (degenerate smoothstep / division). An absolute
+  // 1e-4 floor overrode the scene-relative value on tiny-unit scenes —
+  // every segment sat inside the "both behind" margin and was culled.
+  // GLSL twin: shader-glsl.ts.
+  const nearCull: TSLNode = max(uNearCull, float(1e-20));
   const startDepth: TSLNode = mvStart.z.negate();
   const endDepth: TSLNode = mvEnd.z.negate();
   const bothBehind: TSLNode | null = config.isOrtho
@@ -280,9 +285,16 @@ export function lineWebGPUFactory(
   const clipPosBase: TSLNode = mix(clipStart, clipEnd, t);
 
   // Convert clip endpoints to pixel space for aspect-correct
-  // perpendicular expansion. Guard tiny .w (near-plane crossings).
-  const wStart: TSLNode = max(clipStart.w, float(1e-4));
-  const wEnd: TSLNode = max(clipEnd.w, float(1e-4));
+  // perpendicular expansion. Guard tiny .w (near-plane crossings) with
+  // the SCENE-RELATIVE nearCull (w == -viewZ under perspective), not an
+  // absolute epsilon: 1e-4 clamped VALID w on tiny-unit scenes and
+  // scrambled quad directions, while a raw 1e-20 floor could overflow
+  // float32 in the pixel-length math for behind-camera endpoints.
+  // Ortho graphs: w == 1 exactly, guard 1.0 is inert (compile-time
+  // variant). GLSL twin: shader-glsl.ts.
+  const wGuard: TSLNode = config.isOrtho ? float(1.0) : nearCull;
+  const wStart: TSLNode = max(clipStart.w, wGuard);
+  const wEnd: TSLNode = max(clipEnd.w, wGuard);
   const ndcStart: TSLNode = vec2(clipStart.xy.div(wStart));
   const ndcEnd: TSLNode = vec2(clipEnd.xy.div(wEnd));
 
@@ -418,8 +430,11 @@ export function lineWebGPUFactory(
     const distFromStart: TSLNode = vT.mul(vSegmentLength);
     const distFromEnd: TSLNode = float(1.0).sub(vT).mul(vSegmentLength);
     const distToNearest: TSLNode = min(distFromStart, distFromEnd);
+    // distToNearest / vWidthAtT is a scale-free ratio (both world
+    // units) — the guard is a pure div-by-zero threshold at 1e-20 (an
+    // absolute 1e-4 skipped the ramp for valid sub-1e-4-unit widths).
     const capRamp: TSLNode = vWidthAtT
-      .greaterThan(float(1e-4))
+      .greaterThan(float(1e-20))
       // `.toVar()` on the chained branch — see the vertex-stage
       // rawPixelWidth select for why this is needed.
       .select(clamp(distToNearest.div(vWidthAtT), 0.0, 1.0).toVar(), float(1.0));

@@ -31,9 +31,13 @@ from ..dataset_writers.scalars import (
 from ..labels.image_labels import write_image_labels_csr
 from ..labels.text_labels import write_labels_csr
 from ..node_common import (
+    LINES_RESERVED_ATTRS,
     apply_default_render_attrs,
     prepare_transform_attrs,
+    validate_broadcast_color,
+    validate_node_path,
     validate_render_attrs,
+    validate_scalars_preflight,
 )
 from ..spatial_ordering.lines import build_lines_ordering, write_lines_ordering_to_zarr
 
@@ -58,31 +62,29 @@ def write_lines(
     """
     from ....validation.base import (
         validate_colors_for_writing,
+        validate_labels_for_writing,
         validate_positions_for_writing,
+        validate_sharpness_for_writing,
         validate_widths_for_writing,
     )
 
-    # Fail fast on invalid render attrs BEFORE creating the group, so a bad
-    # value cannot leave a partial node on disk.
-    validate_render_attrs(attrs)
-
-    # Setup and validation
-    path = path.lstrip("/")
-    group = ctx.store.require_group(path)
+    # 0. Fail-fast pre-write gate: everything here runs BEFORE the zarr group
+    # is created and before any array lands on disk, so an invalid input
+    # cannot leave a partial node behind. NOTE this gate is best-effort, not
+    # transactional: validators that need the store (image_labels, custom
+    # colormap LUT resolution) still run post-write and can leak a partial
+    # node on failure (F7 residual — transactional/temp-dir writes are a
+    # separate project).
+    #
+    # 0a. Pure attr validators + reserved writer-stamp collisions.
+    validate_render_attrs(attrs, reserved_attrs=LINES_RESERVED_ATTRS)
+    # 0b. Node path: every segment must be a valid node name — an empty path
+    # would resolve require_group("") to the scene ROOT and clobber it.
+    path = validate_node_path(path)
+    # 0c. Vertices shape/finiteness.
     n_vertices, n_dims = validate_positions_for_writing(vertices)
 
-    aprint(f"📝 Writing {n_vertices:,} line vertices ({n_dims}D) to {path}")
-
-    # Scalars are now passed directly to encoder - no expansion needed
-    # Just log what we're receiving
-    if isinstance(widths, (int, float)):
-        aprint(f"  → Uniform width {widths:.3f} for all vertices")
-    if sharpness is not None and isinstance(sharpness, (int, float)):
-        aprint(f"  → Uniform sharpness {sharpness:.1f} for all vertices")
-    if colors is not None and isinstance(colors, (list, tuple)):
-        aprint(f"  → Uniform color RGB{list(colors)} for all vertices")
-
-    # Validate line type
+    # 0d. Validate line type
     valid_line_types = ("segments", "polyline", "loop", "indexed")
     if line_type not in valid_line_types:
         raise ValueError(
@@ -103,11 +105,55 @@ def write_lines(
             raise ValueError("Indexed requires at least 2 indices")
         if len(indices) % 2 != 0:
             raise ValueError("Indices must have even length (pairs)")
+        # Bounds check BOTH ends before convert_to_indexed casts to uint32:
+        # a negative index would silently wrap to ~4 billion and blow up
+        # with a raw IndexError deep inside the spatial ordering.
+        if np.min(indices) < 0:
+            raise ValueError(f"Index {np.min(indices)} < 0 (indices must be >= 0)")
         if np.max(indices) >= n_vertices:
             raise ValueError(f"Index {np.max(indices)} >= n_vertices {n_vertices}")
 
-    # Shared validator (the Lines sibling of validate_radii_for_writing)
+    # 0e. Shared validator (the Lines sibling of validate_radii_for_writing)
     validate_widths_for_writing(widths, n_vertices)
+
+    # 0f. Pre-flight length sweep over ALL provided per-vertex arrays. The
+    # spatial-ordering fancy-indexing below silently TRUNCATES a too-long
+    # array and raises a raw IndexError on a too-short one, so lengths must
+    # be checked before build_lines_ordering runs. The per-dataset validators
+    # further down remain in place (belt and braces).
+    if colors is not None:
+        if isinstance(colors, np.ndarray):
+            validate_colors_for_writing(colors, n_vertices)
+        elif isinstance(colors, (list, tuple)):
+            validate_broadcast_color(colors, "colors")
+    if sharpness is not None:
+        # Validates arrays AND broadcast scalars (same [0, 1] bounds).
+        validate_sharpness_for_writing(sharpness, n_vertices)
+    if scalars is not None:
+        validate_scalars_preflight(scalars, n_vertices)
+    # 0g. Labels: sequence-of-str type + length check (the CSR serializer
+    # would otherwise AttributeError on a non-str entry AFTER the arrays
+    # were written).
+    if labels is not None:
+        validate_labels_for_writing(labels, n_vertices)
+    # 0h. Transform / nd_transform normalization is pure attr processing
+    # (reads only the scene dimensions), so run it in the gate too — a bad
+    # transform must not leave a partial node behind.
+    prepare_transform_attrs(attrs, ctx.store)
+
+    # 1. Setup: Create group
+    group = ctx.store.require_group(path)
+
+    aprint(f"📝 Writing {n_vertices:,} line vertices ({n_dims}D) to {path}")
+
+    # Scalars are now passed directly to encoder - no expansion needed
+    # Just log what we're receiving
+    if isinstance(widths, (int, float)):
+        aprint(f"  → Uniform width {widths:.3f} for all vertices")
+    if sharpness is not None and isinstance(sharpness, (int, float)):
+        aprint(f"  → Uniform sharpness {sharpness:.1f} for all vertices")
+    if colors is not None and isinstance(colors, (list, tuple)):
+        aprint(f"  → Uniform color RGB{list(colors)} for all vertices")
 
     # Convert line type to indexed representation (unified internal format)
     segments = convert_to_indexed(n_vertices, line_type, indices)
@@ -282,8 +328,9 @@ def write_lines(
     else:
         metadata["ordering"] = "none"
 
-    # Process transform + nd_transform attrs (shared with write_points)
-    prepare_transform_attrs(attrs, ctx.store)
+    # Transform + nd_transform attrs were already normalized in the fail-fast
+    # gate (step 0h) — prepare_transform_attrs is NOT idempotent (it
+    # transposes the matrix), so it must run exactly once.
 
     # Set default rendering attributes if not provided
     # (must match write_points/write_gsplats)

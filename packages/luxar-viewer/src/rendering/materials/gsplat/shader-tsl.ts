@@ -301,10 +301,14 @@ export function gsplatWebGPUFactory(
     // (subsumes the old standalone behindCamera reject), the near-plane
     // approach fades across [uNearCull, 2*uNearCull], ortho passes
     // through to NDC clipping.
+    // uNearCull is scene-bounds-scaled; the 1e-20 floor only guards
+    // uNearCull == 0 (degenerate smoothstep) — an absolute 1e-4 floor
+    // overrode the scene-relative value on tiny-unit scenes and faded
+    // out the whole scene. GLSL twin: shader-glsl.ts.
     const depthFade: TSLNode = perspectiveNearFadeTSL(
       uIsOrtho,
       centerCam.z,
-      max(uNearCull, float(1e-4))
+      max(uNearCull, float(1e-20))
     ).toVar();
     const depthFadeReject: TSLNode = depthFade.lessThan(0.01);
 
@@ -321,10 +325,16 @@ export function gsplatWebGPUFactory(
       max(SigmaCam.element(int(1)).element(int(1)), SigmaCam.element(int(2)).element(int(2)))
     ).toVar();
     const isOrtho: TSLNode = int(uIsOrtho).equal(int(1)).toVar();
+    // 1e-20 floors are pure div-by-zero/sqrt guards, NOT scale floors:
+    // maxLateralVar is a WORLD-unit² variance and the old absolute 1e-8
+    // floor inflated valid tiny-unit variances up to 1e-4 world units,
+    // exploding projectedExtent and coverage-culling every splat;
+    // zDepth is bounded below by the scene-relative near fade. GLSL
+    // twin: shader-glsl.ts (expressions match exactly).
     const projectedExtent: TSLNode = uFx
-      .mul(sqrt(max(maxLateralVar, float(1e-8))))
+      .mul(sqrt(max(maxLateralVar, float(1e-20))))
       .mul(uTruncate)
-      .div(isOrtho.select(float(1.0), max(zDepth, float(1e-8))));
+      .div(isOrtho.select(float(1.0), max(zDepth, float(1e-20))));
     const maxExtent: TSLNode = max(uResolution.x, uResolution.y).mul(uMaxExtentFactor);
     const coverageFade: TSLNode = float(1.0)
       .sub(smoothstep(maxExtent.mul(0.5), maxExtent, projectedExtent))
@@ -336,8 +346,12 @@ export function gsplatWebGPUFactory(
     // Projection Jacobian. mat3x2 in GLSL = three vec2 columns; we
     // represent it as three independent vec2 nodes to sidestep TSL's
     // missing mat3x2 type. JS0/JS1/JS2 form the matrix M = J·Σ_cam.
+    // 1e-20 = exact-zero guard only (GLSL twin divides unguarded); the
+    // near-fade reject already bounds zDepth at ~uNearCull
+    // (scene-relative) — an absolute 1e-8 floor would distort the
+    // Jacobian on sub-1e-8-unit scenes.
     const invZ: TSLNode = float(1.0)
-      .div(max(zDepth, float(1e-8)))
+      .div(max(zDepth, float(1e-20)))
       .toVar();
     const invZ2: TSLNode = invZ.mul(invZ);
     // Perspective Jacobian columns.
@@ -413,12 +427,29 @@ export function gsplatWebGPUFactory(
     const useSumProjection = !surfaceMode;
     let vAmplitude2DVal: TSLNode;
     if (useSumProjection) {
-      const a = S00;
-      const b = S01;
-      const c = S02;
-      const d = S11;
-      const e = S12;
-      const f = S22;
+      // SCALE-FREE inversion (GLSL twin: shader-glsl.ts): normalize
+      // Σ_cam by its mean diagonal variance s = trace/3 before the
+      // cofactor inverse. det(Σ) is world-units⁶ and under/overflows
+      // float32 on tiny/huge-unit scenes (GPUs flush denormals to
+      // zero), which turned the absolute 1e-12 clamp into garbage
+      // Σ⁻¹. With Σn = Σ/s the determinant and ray quadratic are O(1)
+      // at any scale, so the 1e-12 / 1e-8 floors act as scale-free
+      // condition-number guards; sigmaRay = sqrt(s / quadN) restores
+      // the world-unit result exactly. 1e-30 on s guards an all-zero
+      // covariance only.
+      const sTrace: TSLNode = max(
+        S00.add(S11)
+          .add(S22)
+          .mul(1.0 / 3.0),
+        float(1e-30)
+      ).toVar();
+      const invS: TSLNode = float(1.0).div(sTrace).toVar();
+      const a = S00.mul(invS).toVar();
+      const b = S01.mul(invS).toVar();
+      const c = S02.mul(invS).toVar();
+      const d = S11.mul(invS).toVar();
+      const e = S12.mul(invS).toVar();
+      const f = S22.mul(invS).toVar();
       const detSigma: TSLNode = a
         .mul(d.mul(f).sub(e.mul(e)))
         .sub(b.mul(b.mul(f).sub(c.mul(e))))
@@ -440,11 +471,13 @@ export function gsplatWebGPUFactory(
       const prx: TSLNode = i00.mul(rayDir.x).add(i01.mul(rayDir.y)).add(i02.mul(rayDir.z));
       const pry: TSLNode = i01.mul(rayDir.x).add(i11.mul(rayDir.y)).add(i12.mul(rayDir.z));
       const prz: TSLNode = i02.mul(rayDir.x).add(i12.mul(rayDir.y)).add(i22.mul(rayDir.z));
+      // quad is rᵀ Σn⁻¹ r (normalized space); un-normalize via
+      // sqrt(sTrace) — see the scale-free inversion note above.
       const quad: TSLNode = max(
         rayDir.x.mul(prx).add(rayDir.y.mul(pry)).add(rayDir.z.mul(prz)),
         float(1e-8)
       );
-      const sigmaRay: TSLNode = float(1.0).div(sqrt(quad));
+      const sigmaRay: TSLNode = sqrt(sTrace).div(sqrt(quad));
       const rayIntegrationBoost: TSLNode = sigmaRay.mul(uRayIntegralFactor);
       vAmplitude2DVal = aAmplitude.mul(rayIntegrationBoost).mul(nearFade);
     } else {

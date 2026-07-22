@@ -40,8 +40,8 @@ layout( location = 0 ) out vec4 fragColor;
 
 layout( std140 ) uniform object {
 	mat4 nodeUniform2;
-	vec2 nodeUniform3;
-	float nodeUniform4;
+	float nodeUniform3;
+	vec2 nodeUniform4;
 	float nodeUniform5;
 	float nodeUniform6;
 	float nodeUniform7;
@@ -67,10 +67,10 @@ flat  in float nodeVarying11;
 
 // vars
 vec4 DiffuseColor;
-float nodeVar6;
 float nodeVar7;
-float nodeVar11;
+float nodeVar8;
 float nodeVar12;
+float nodeVar13;
 float nodeVar20;
 float nodeVar21;
 float lineBrightness;
@@ -93,17 +93,17 @@ void main() {
 
 	}
 
-	nodeVar6 = ( nodeVarying1 * nodeVarying2 );
-	nodeVar7 = ( ( 1.0 - nodeVarying1 ) * nodeVarying2 );
-	nodeVar11 = clamp( ( min( nodeVar6, nodeVar7 ) / nodeVarying3 ), 0.0, 1.0 );
+	nodeVar7 = ( nodeVarying1 * nodeVarying2 );
+	nodeVar8 = ( ( 1.0 - nodeVarying1 ) * nodeVarying2 );
+	nodeVar12 = clamp( ( min( nodeVar7, nodeVar8 ) / nodeVarying3 ), 0.0, 1.0 );
 
-	if ( ( nodeVarying3 > 0.0001 ) ) {
+	if ( ( nodeVarying3 > 1e-20 ) ) {
 
-		nodeVar12 = nodeVar11;
+		nodeVar13 = nodeVar12;
 
 	} else {
 
-		nodeVar12 = 1.0;
+		nodeVar13 = 1.0;
 
 	}
 
@@ -114,12 +114,12 @@ void main() {
 
 	} else {
 
-		nodeVar21 = max( nodeUniform7, 0.0001 );
+		nodeVar21 = max( nodeUniform7, 1e-20 );
 		nodeVar20 = smoothstep( nodeVar21, ( nodeVar21 * 2.0 ), ( - nodeVarying4 ) );
 
 	}
 
-	lineBrightness = ( ( ( ( mix( ( 0.5 + ( nodeVar12 * 0.5 ) ), 1.0, mix( nodeVarying5, nodeVarying6, step( nodeVar6, nodeVar7 ) ) ) * ( max( ( exp( ( pow( abs( nodeVarying0 ), pow( 2.0, ( ( nodeVarying7 * 6.0 ) - 2.0 ) ) ) * -4.6051702 ) ) - 0.01 ), 0.0 ) * 1.0101010101010102 ) ) * min( ( nodeVarying8 / 1.5 ), 1.0 ) ) * nodeVarying9 ) * nodeVar20 );
+	lineBrightness = ( ( ( ( mix( ( 0.5 + ( nodeVar13 * 0.5 ) ), 1.0, mix( nodeVarying5, nodeVarying6, step( nodeVar7, nodeVar8 ) ) ) * ( max( ( exp( ( pow( abs( nodeVarying0 ), pow( 2.0, ( ( nodeVarying7 * 6.0 ) - 2.0 ) ) ) * -4.6051702 ) ) - 0.01 ), 0.0 ) * 1.0101010101010102 ) ) * min( ( nodeVarying8 / 1.5 ), 1.0 ) ) * nodeVarying9 ) * nodeVar20 );
 
 	if ( ( lineBrightness < 0.0001 ) ) {
 

@@ -134,7 +134,10 @@ export function linePickWebGPUFactory(
   // PERSPECTIVE ONLY (compile-time graph variant; see the visual line
   // TSL): ortho graphs carry no cull/fade code — NDC clipping is the
   // sole cull authority there.
-  const nearCull: TSLNode = max(uNearCull, float(1e-4));
+  // 1e-20 floor = uNearCull == 0 guard only; uNearCull is
+  // scene-bounds-scaled (see the visual line shader — an absolute 1e-4
+  // floor culled every segment of a tiny-unit scene).
+  const nearCull: TSLNode = max(uNearCull, float(1e-20));
   const startDepth: TSLNode = mvStart.z.negate();
   const endDepth: TSLNode = mvEnd.z.negate();
   const bothBehind: TSLNode | null = config.isOrtho
@@ -146,8 +149,12 @@ export function linePickWebGPUFactory(
   // projection is linear, so proj * mix(a,b,t) == mix(proj*a, proj*b, t).
   const clipPosBase: TSLNode = mix(clipStart, clipEnd, t);
 
-  const wStart: TSLNode = max(clipStart.w, float(1e-4));
-  const wEnd: TSLNode = max(clipEnd.w, float(1e-4));
+  // Scene-relative w guard (w == -viewZ under perspective; ortho
+  // graphs use the inert 1.0 — compile-time variant). See the visual
+  // line shader for the scale-free rationale.
+  const wGuard: TSLNode = config.isOrtho ? float(1.0) : nearCull;
+  const wStart: TSLNode = max(clipStart.w, wGuard);
+  const wEnd: TSLNode = max(clipEnd.w, wGuard);
   const ndcStart: TSLNode = vec2(clipStart.xy.div(wStart));
   const ndcEnd: TSLNode = vec2(clipEnd.xy.div(wEnd));
 
@@ -254,8 +261,9 @@ export function linePickWebGPUFactory(
     const distFromStart: TSLNode = vT.mul(vSegmentLength);
     const distFromEnd: TSLNode = float(1.0).sub(vT).mul(vSegmentLength);
     const distToNearest: TSLNode = min(distFromStart, distFromEnd);
+    // Scale-free ratio; 1e-20 = pure div-by-zero guard (visual twin).
     const capRamp: TSLNode = vWidthAtT
-      .greaterThan(float(1e-4))
+      .greaterThan(float(1e-20))
       .select(clamp(distToNearest.div(vWidthAtT), 0.0, 1.0).toVar(), float(1.0));
     const baseCap: TSLNode = float(0.5).add(capRamp.mul(0.5));
     const nearestIsStart: TSLNode = step(distFromStart, distFromEnd);
