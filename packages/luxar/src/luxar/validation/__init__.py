@@ -9,6 +9,8 @@ This package contains:
 from .base import (
     ValidationError,
     validate_colors_for_writing,
+    validate_labels_for_writing,
+    validate_node_name,
     validate_positions_for_writing,
     validate_radii_for_writing,
     validate_sharpness_for_writing,
@@ -45,6 +47,8 @@ __all__ = [
     "DimensionalCoverageError",
     # From base (detailed validation for writing)
     "validate_colors_for_writing",
+    "validate_labels_for_writing",
+    "validate_node_name",
     "validate_positions_for_writing",
     "validate_radii_for_writing",
     "validate_sharpness_for_writing",

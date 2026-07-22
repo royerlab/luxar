@@ -982,3 +982,177 @@ class TestFinalizeGuards:
                 scene.add_points("a", np.random.randn(5, 3).astype(np.float32))
                 # No exception expected here.
                 scene.add_points("b", np.random.randn(5, 3).astype(np.float32))
+
+
+class TestWriterFuzzRegressions:
+    """Regressions for the compiler-fuzz findings (campaign-4 iter 12).
+
+    Every test here failed before the fail-fast pre-write gate landed:
+    F1 empty name clobbered the scene root; F2 optional-array lengths were
+    validated only AFTER the spatial reorder (silent truncation / raw
+    IndexError); F3 negative line indices wrapped to uint32; F4 non-str
+    labels AttributeError'd after the node was written; F5 zarr-reserved
+    names died deep in zarr storage; F6 cheap-attr validation ran after the
+    node's arrays were on disk.
+    """
+
+    @staticmethod
+    def _scene(tmpdir: str):
+        zarr_path = Path(tmpdir) / "test.luxar.zarr"
+        compiler = LuxarZarrCompiler(zarr_path)
+        scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+        return zarr_path, compiler, scene
+
+    POS = np.random.RandomState(0).rand(50, 3).astype(np.float32) * 10
+
+    # ---- F1: empty node name must not clobber the scene root -----------
+
+    def test_empty_node_name_rejected_and_root_intact(self) -> None:
+        from luxar.io.reader import LuxarScene
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            zarr_path, compiler, scene = self._scene(tmpdir)
+            with pytest.raises(ValueError, match="empty"):
+                scene.add_points("", self.POS)
+            with pytest.raises(ValueError, match="empty"):
+                scene.add_lines("", self.POS, 0.5)
+            with pytest.raises(ValueError, match="empty"):
+                scene.add_group("")
+            compiler.finalize()
+
+            root = zarr.open_group(str(zarr_path), mode="r")
+            assert root.attrs["type"] == "scene"  # NOT clobbered to 'points'
+            LuxarScene.load(zarr_path)  # store still loadable
+
+    def test_empty_path_rejected_at_writer_level(self) -> None:
+        """The raw compiler API is covered too (require_group('') == root)."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            zarr_path, compiler, _scene = self._scene(tmpdir)
+            with pytest.raises(ValueError, match="empty|ROOT"):
+                compiler.write_points("", self.POS)
+            with pytest.raises(ValueError, match="empty|ROOT"):
+                compiler.write_points("/", self.POS)
+            compiler.finalize()
+
+    # ---- F5: zarr-reserved (dot-prefixed) names -------------------------
+
+    def test_zarr_reserved_names_rejected(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            zarr_path, compiler, scene = self._scene(tmpdir)
+            for bad in (".zgroup", ".zattrs", ".zmetadata", ".zarray"):
+                with pytest.raises(ValueError, match="cannot start with"):
+                    scene.add_points(bad, self.POS)
+            compiler.finalize()
+            root = zarr.open_group(str(zarr_path), mode="r")
+            assert list(root.group_keys()) == []
+
+    # ---- F2: optional-array lengths validated BEFORE spatial reorder ----
+
+    def test_too_long_optional_array_rejected_not_truncated(self) -> None:
+        """A radii array of n+5 used to be silently TRUNCATED by the
+        spatial-ordering fancy-indexing and accepted."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            _zarr_path, compiler, scene = self._scene(tmpdir)
+            radii = np.full(55, 2.0, np.float32)  # 55 != 50
+            with pytest.raises(ValueError, match="radii"):
+                scene.add_points("pts", self.POS, radii=radii)
+            compiler.finalize()
+
+    def test_too_short_optional_array_rejected_cleanly(self) -> None:
+        """A sharpness array of n-1 used to raise a raw IndexError inside
+        build_points_ordering (before any validator ran)."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            _zarr_path, compiler, scene = self._scene(tmpdir)
+            sharpness = np.full(49, 0.5, np.float32)
+            with pytest.raises(ValueError, match="sharpness"):
+                scene.add_points("pts", self.POS, sharpness=sharpness)
+            compiler.finalize()
+
+    def test_lines_wrong_length_colors_rejected_cleanly(self) -> None:
+        """Lines colors of the wrong length used to IndexError during the
+        vertex reorder."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            _zarr_path, compiler, scene = self._scene(tmpdir)
+            colors = np.random.RandomState(1).rand(51, 3).astype(np.float32)
+            with pytest.raises(ValueError, match="colors"):
+                scene.add_lines("lns", self.POS, 0.5, colors=colors)
+            compiler.finalize()
+
+    # ---- F3: negative line indices must not wrap to uint32 --------------
+
+    def test_negative_line_indices_rejected(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            _zarr_path, compiler, scene = self._scene(tmpdir)
+            idx = np.array([[-1, 0], [1, 2]], dtype=np.int64)
+            with pytest.raises(ValueError, match="< 0"):
+                scene.add_lines("lns", self.POS, 0.5, indices=idx, line_type="indexed")
+            compiler.finalize()
+
+    # ---- F4: non-str labels fail fast, BEFORE any zarr write ------------
+
+    def test_non_str_labels_rejected_without_partial_node(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            zarr_path, compiler, scene = self._scene(tmpdir)
+            with pytest.raises(ValueError, match="expected str or None"):
+                scene.add_points("pts", self.POS, labels=[42] * 50)
+            compiler.finalize()
+            root = zarr.open_group(str(zarr_path), mode="r")
+            assert "pts" not in root  # nothing leaked
+
+    # ---- F6 (cheap half): validate BEFORE any array lands on disk -------
+
+    def test_invalid_gamma_leaves_no_node_behind(self) -> None:
+        """gamma=-1 used to be rejected only AFTER the node was fully
+        written (node persisted with the invalid attr)."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            zarr_path, compiler, scene = self._scene(tmpdir)
+            with pytest.raises(ValueError, match="Gamma"):
+                scene.add_points("pts", self.POS, gamma=-1.0)
+            compiler.finalize()
+            root = zarr.open_group(str(zarr_path), mode="r")
+            assert "pts" not in root
+
+    def test_reserved_attr_collision_rejected_pre_write(self) -> None:
+        """type=/n_points= junk attrs used to raise an accidental TypeError
+        in the Node constructor AFTER the node was written."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            zarr_path, compiler, scene = self._scene(tmpdir)
+            with pytest.raises(ValueError, match="reserved"):
+                scene.add_points("pts", self.POS, type="banana", n_points=-1)
+            compiler.finalize()
+            root = zarr.open_group(str(zarr_path), mode="r")
+            assert "pts" not in root
+
+    def test_duplicate_name_rejected_before_overwriting_first_node(self) -> None:
+        """A duplicate add used to overwrite the first node's arrays on disk
+        before the (post-write) duplicate check raised."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            zarr_path, compiler, scene = self._scene(tmpdir)
+            scene.add_points("pts", self.POS, radii=np.full(50, 1.5, np.float32))
+            other = np.random.RandomState(7).rand(20, 3).astype(np.float32)
+            with pytest.raises(ValueError, match="Duplicate"):
+                scene.add_points("pts", other)
+            compiler.finalize()
+            root = zarr.open_group(str(zarr_path), mode="r")
+            # First node intact: still 50 points, radii untouched.
+            assert root["pts"].attrs["n_points"] == 50
+
+    def test_invalid_transform_leaves_no_node_behind(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            zarr_path, compiler, scene = self._scene(tmpdir)
+            with pytest.raises(ValueError):
+                scene.add_points("pts", self.POS, transform="banana")
+            compiler.finalize()
+            root = zarr.open_group(str(zarr_path), mode="r")
+            assert "pts" not in root
+
+    def test_scalar_sharpness_out_of_range_rejected_by_writer(self) -> None:
+        """Scalar sharpness > 1.0 was accepted while the equivalent array
+        was rejected (scalar/array asymmetry)."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            _zarr_path, compiler, scene = self._scene(tmpdir)
+            with pytest.raises(ValueError, match="[Ss]harpness"):
+                scene.add_points("pts", self.POS, sharpness=5.0)
+            with pytest.raises(ValueError, match="[Ss]harpness"):
+                scene.add_lines("lns", self.POS, 0.5, sharpness=5.0)
+            compiler.finalize()

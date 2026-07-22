@@ -397,7 +397,9 @@ def generate_array_ref_broadcasting_test() -> None:
                 positions,
                 colors=(0.25, 0.5, 0.75),
                 radii=0.5,
-                sharpness=2.0,
+                # Sharpness is a normalized [0, 1] knob; 2.0 exploited the
+                # (now closed) scalar-broadcast validation hole.
+                sharpness=0.8,
             )
             scene.add_points(
                 "ref_points_with_scalars",

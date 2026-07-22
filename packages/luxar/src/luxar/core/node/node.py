@@ -43,11 +43,13 @@ class Node:
             writer: Writer interface for progressive data writing
             **attrs: Additional attributes to set on the node
         """
-        if name and "/" in name:
-            raise ValueError(
-                f"Node name cannot contain '/': got '{name}'. "
-                f"Use add_group() to create hierarchical structure instead."
-            )
+        # Single chokepoint for node naming (rejects empty/whitespace-only,
+        # '/', dot-prefixed zarr-reserved, and control-char names). An empty
+        # name is the worst case: it resolves to the zarr ROOT group and
+        # would clobber the scene root. ValidationError is a ValueError.
+        from ...validation.base import validate_node_name
+
+        validate_node_name(name)
         self.name: str = name
         self._writer = writer
         self.parent: Optional[Node] = parent
@@ -57,11 +59,7 @@ class Node:
 
         # Determine path in hierarchy
         if parent is not None:
-            for existing_child in parent.children:
-                if existing_child.name == name:
-                    raise ValueError(
-                        f"Duplicate child name '{name}' under parent '{parent.name}'."
-                    )
+            parent._ensure_no_duplicate_child(name)
             # Insertion order among siblings. The viewer rebuilds the scene
             # graph from zarr consolidated metadata, whose enumeration is
             # alphabetical — so we record the add order explicitly here and
@@ -205,6 +203,23 @@ class Node:
         self._writer.write_group(self.path, **{key: value})
 
     # --------------------------------------------------------------- hierarchy
+    def _ensure_no_duplicate_child(self, name: str) -> None:
+        """Raise if a child with ``name`` already exists under this node.
+
+        Used by ``Node.__init__`` (post-write belt and braces) AND by the
+        geometry adders as a fail-fast PRE-write gate: without the pre-check,
+        a duplicate ``add_points('a', ...)`` would first overwrite the
+        existing node's arrays on disk and only then raise here.
+
+        Raises:
+            ValueError: If a child with the same name exists.
+        """
+        for existing_child in self.children:
+            if existing_child.name == name:
+                raise ValueError(
+                    f"Duplicate child name '{name}' under parent '{self.name}'."
+                )
+
     def add_group(self, name: str, **attrs: Any) -> "Group":
         """Create and add a child group node.
 

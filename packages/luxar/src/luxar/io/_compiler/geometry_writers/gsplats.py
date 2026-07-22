@@ -25,7 +25,11 @@ from ..gsplat_assembly import (
 )
 from ..labels.image_labels import write_image_labels_csr
 from ..labels.text_labels import write_labels_csr
-from ..node_common import validate_render_attrs
+from ..node_common import (
+    GSPLATS_RESERVED_ATTRS,
+    validate_node_path,
+    validate_render_attrs,
+)
 
 
 def scene_barrier_dims(store: zarr.Group, n_dims: int) -> Optional[List[int]]:
@@ -60,14 +64,21 @@ def write_gsplats(
 
     Returns the node metadata; the caller records it in the metadata cache.
     """
-    # Fail fast on invalid render attrs BEFORE creating the group, so a bad
-    # value cannot leave a partial node on disk.
-    validate_render_attrs(attrs)
+    # 0. Fail-fast pre-write gate: everything here runs BEFORE the zarr group
+    # is created, so an invalid input cannot leave a partial node on disk.
+    # NOTE this gate is best-effort, not transactional: validators that need
+    # the store (image_labels, transform/nd_transform + custom colormap LUT
+    # resolution inside apply_gsplat_group_attrs) still run post-write and can
+    # leak a partial node on failure (F7 residual — transactional/temp-dir
+    # writes are a separate project).
+    #
+    # 0a. Pure attr validators + reserved writer-stamp collisions.
+    validate_render_attrs(attrs, reserved_attrs=GSPLATS_RESERVED_ATTRS)
+    # 0b. Node path: every segment must be a valid node name — an empty path
+    # would resolve require_group("") to the scene ROOT and clobber it.
+    path = validate_node_path(path)
 
-    path = path.lstrip("/")
-    group = ctx.store.require_group(path)
-
-    # Validate
+    # 0c. Validate splat arrays (shapes, lengths, finiteness).
     (
         centers,
         amplitudes,
@@ -77,6 +88,17 @@ def write_gsplats(
         n_dims,
         cholesky_is_uniform,
     ) = validate_gsplat_inputs(centers, amplitudes, cholesky_factors, colors)
+
+    # 0d. Labels: sequence-of-str type + length check (the CSR serializer
+    # would otherwise AttributeError on a non-str entry AFTER the arrays
+    # were written).
+    if labels is not None:
+        from ....validation.base import validate_labels_for_writing
+
+        validate_labels_for_writing(labels, n_splats)
+
+    # 1. Setup: Create group
+    group = ctx.store.require_group(path)
 
     # Extract truncation_radius for spatial ordering (default 3.0)
     truncation_radius = float(attrs.get("truncation_radius", 3.0))
@@ -172,9 +194,10 @@ def write_gsplat_leaf_subtree(
     """
     from ..gsplat_tree import write_gsplat_leaf
 
-    # Fail fast on invalid render attrs BEFORE creating the group, so a bad
-    # value cannot leave a partial node on disk.
-    validate_render_attrs(attrs)
+    # Fail fast on invalid render attrs (+ reserved writer-stamp collisions)
+    # BEFORE creating the group, so a bad value cannot leave a partial node
+    # on disk. (The compiler entry already validated the path segments.)
+    validate_render_attrs(attrs, reserved_attrs=GSPLATS_RESERVED_ATTRS)
 
     path = path.lstrip("/")
     group = ctx.store.require_group(path)
