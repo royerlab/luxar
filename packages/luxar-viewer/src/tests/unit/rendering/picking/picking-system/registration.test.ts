@@ -13,6 +13,7 @@ import { describe, it, expect, vi } from 'vitest';
 import * as THREE from 'three';
 import {
   disposePickMaterial,
+  isEffectivelyVisible,
   unregisterAllPickMaterials,
   type PickNodeEntry,
 } from '../../../../../rendering/picking/picking-system/registration';
@@ -127,5 +128,38 @@ describe('unregisterAllPickMaterials', () => {
     const baseline = materialManager.getCacheStats().totalRegistered;
     unregisterAllPickMaterials(new Map());
     expect(materialManager.getCacheStats().totalRegistered).toBe(baseline);
+  });
+});
+
+describe('isEffectivelyVisible', () => {
+  it('returns true for a parentless visible node', () => {
+    expect(isEffectivelyVisible(new THREE.Object3D())).toBe(true);
+  });
+
+  it('returns false when the node itself is hidden', () => {
+    const node = new THREE.Object3D();
+    node.visible = false;
+    expect(isEffectivelyVisible(node)).toBe(false);
+  });
+
+  it('returns false when ANY ancestor is hidden (own flag stays true)', () => {
+    // The LOD registry hides the LEVEL object, which can be a group
+    // (partition tiles) — the member mesh keeps visible=true.
+    const grandparent = new THREE.Group();
+    const parent = new THREE.Group();
+    const node = new THREE.Object3D();
+    grandparent.add(parent);
+    parent.add(node);
+    grandparent.visible = false;
+
+    expect(node.visible).toBe(true);
+    expect(isEffectivelyVisible(node)).toBe(false);
+  });
+
+  it('returns true when the whole ancestor chain is visible', () => {
+    const parent = new THREE.Group();
+    const node = new THREE.Object3D();
+    parent.add(node);
+    expect(isEffectivelyVisible(node)).toBe(true);
   });
 });

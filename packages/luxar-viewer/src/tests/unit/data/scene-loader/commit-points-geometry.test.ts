@@ -403,6 +403,54 @@ describe('commitPointsGeometry — exception-window ownership handoff', () => {
     expect((points.userData as { committedData?: unknown }).committedData).toBe(first);
   });
 
+  it('clears gpuPrefixIntact when the pool update throws (append-safety defense-in-depth)', () => {
+    // Prime a SUCCESSFUL commit (stamps the flag true), then make a
+    // bigger commit throw: the write left the buffer content unproven,
+    // so the catch must clear the append-safety flag — the next commit
+    // full-rewrites even if a future loader/cache change re-stamps
+    // prefix lineage. Pins the commit's `catch { gpuPrefixIntact =
+    // false; throw }` block (the lineage consume-and-clear masks it
+    // behaviorally today, so nothing else fails when it's removed).
+    // Twin of the gsplats/lines tests of the same name.
+    const root = new THREE.Group();
+    const points = makePoints('/p');
+    root.add(points);
+
+    const geometry = new THREE.BufferGeometry();
+    const gpuBufferPool = {
+      acquirePointsGeometry: vi.fn(() => geometry),
+      updatePointsGeometry: vi.fn(),
+      didLastAcquireRebuildAttributes: vi.fn(() => false),
+    };
+    commitPointsGeometry(
+      '/p',
+      makeData(2),
+      root,
+      gpuBufferPool as never,
+      mockNodeFactory,
+      undefined,
+      1
+    );
+    expect((points.userData as { gpuPrefixIntact?: boolean }).gpuPrefixIntact).toBe(true);
+
+    gpuBufferPool.updatePointsGeometry.mockImplementation(() => {
+      throw new Error('upload failed');
+    });
+    expect(() =>
+      commitPointsGeometry(
+        '/p',
+        makeData(5),
+        root,
+        gpuBufferPool as never,
+        mockNodeFactory,
+        undefined,
+        2
+      )
+    ).toThrow('upload failed');
+
+    expect((points.userData as { gpuPrefixIntact?: boolean }).gpuPrefixIntact).toBe(false);
+  });
+
   it('non-pool path: keeps the previous geometry undisposed when the factory throws (create-then-swap-then-dispose)', () => {
     // The non-pool fallback builds the replacement geometry BEFORE touching
     // the mesh: a throwing factory (malformed data) must leave the mesh on

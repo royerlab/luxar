@@ -192,7 +192,11 @@ export const POINT_FRAGMENT_SHADER = /* glsl */ `
 
     void main() {
       // Discard zero-radius points (from nD slicing where points don't intersect hyperplane)
-      if (vRadius < 0.0001) {
+      // Exact-zero only — an absolute epsilon here discarded valid
+      // sub-1e-4-unit radii (tiny-unit scenes rendered black). Boundary
+      // dust from nD slicing is filtered scale-relatively upstream
+      // (data/points/projection.ts).
+      if (vRadius <= 0.0) {
         discard;
       }
 

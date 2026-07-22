@@ -27,12 +27,22 @@ export function createLinesNode(
   loader: LinesDataLoader,
   pickingSystem: PickingSystem | null
 ): THREE.Mesh {
+  // Rendering attrs come from `nodeAttrs` — the COMPOSED effective attrs
+  // the loader passes in (`ctx.applyEffectiveAttrs(node)`) — so an
+  // ancestor-authored opacity/intensity/blending_mode reaches the
+  // material even in scenes with no `layer=true` node (the layers-panel
+  // recompose path only exists for layers). Mirrors `createGSplatsNode`
+  // and `createPointsMaterial` (points passes the composed attrs as its
+  // sole attrs param); reading the RAW `attrs` here silently dropped
+  // ancestor values until the first panel interaction, if ever.
+  // Per-leaf geometry properties (`max_width`, `transform`) stay on
+  // `attrs`: they are deliberately NOT composited (see COMPOSITING_ATTRS).
   let material: LuxarLineMaterial = materialManager.getLineMaterial({
-    opacity: (attrs.opacity as number | undefined) ?? 1.0,
-    gamma: (attrs.gamma as number | undefined) ?? 1.0,
-    intensity: (attrs.intensity as number | undefined) ?? 1.0,
-    offset: (attrs.offset as number | undefined) ?? 0.0,
-    blendingMode: (attrs.blending_mode as string | undefined as BlendingMode) ?? 'additive',
+    opacity: (nodeAttrs.opacity as number | undefined) ?? 1.0,
+    gamma: (nodeAttrs.gamma as number | undefined) ?? 1.0,
+    intensity: (nodeAttrs.intensity as number | undefined) ?? 1.0,
+    offset: (nodeAttrs.offset as number | undefined) ?? 0.0,
+    blendingMode: (nodeAttrs.blending_mode as string | undefined as BlendingMode) ?? 'additive',
   });
 
   // Apply colormap if specified and scalar data exists.
@@ -49,9 +59,18 @@ export function createLinesNode(
       const lnLutBytes = nodeAttrs.customLutBytes as Uint8Array | undefined;
       const lnColormapTex = getColormapTexture(lnColormapName, lnLutBytes);
       if (lnColormapTex) {
-        // Detach pooled material from global updates before cloning so
-        // disposeAll doesn't dispose the cache entry serving other callers.
-        materialManager.detachFromGlobalUpdates(material);
+        // Clone WITHOUT detaching the pooled original from global
+        // updates: the original stays in the LRU cache serving future
+        // cache hits, so it must (1) keep receiving updateCameraParams —
+        // a detached-but-cached entry renders with stale resolution/FOV
+        // line widths after the next resize — and (2) stay in
+        // registeredMaterials so manager dispose() reaches it (a
+        // detached-while-cached original was in neither registry and
+        // leaked its GPU program on embedder re-init). The historical
+        // detachFromGlobalUpdates call here guarded a disposeAll-vs-cache
+        // mismatch that has never existed: dispose() clears the line
+        // cache whenever it disposes registered materials, so a disposed
+        // material can never be served from the cache.
         material = material.clone() as typeof material;
         materialManager.register(material);
         material.updateColormapTexture(lnColormapTex);

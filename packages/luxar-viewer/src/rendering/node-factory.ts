@@ -15,7 +15,7 @@ import * as THREE from 'three';
 import { materialManager, type LuxarPointMaterial } from './material-manager';
 import { type InstancedLinesMeshConfig } from './line-geometry';
 import { type InstancedGSplatsMeshConfig } from './gsplat-geometry';
-import { getElementTexture } from './element-storage';
+import { getElementTexture, markElementTextureFullDirty } from './element-storage';
 import type { LoadedPointsData, DataLoader } from '../data/data-loader-types';
 import type { PointsMetadata } from '../types/points';
 import type { LinesMetadata, LinesDataLoader } from '../types/lines';
@@ -150,8 +150,9 @@ export class NodeFactory {
         const geom = obj.geometry as THREE.InstancedBufferGeometry;
         const tex = getElementTexture(geom);
         if (tex) {
-          tex.clearUpdateRanges();
-          tex.needsUpdate = true;
+          // Registers the pending-full state too, so a pre-flush ranged
+          // write can't downgrade the restore's full re-upload.
+          markElementTextureFullDirty(tex);
         }
         const idx = geom.getAttribute('aSortedIndex') as THREE.InstancedBufferAttribute | undefined;
         if (idx) {

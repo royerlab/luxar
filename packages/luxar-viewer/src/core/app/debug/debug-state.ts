@@ -181,7 +181,7 @@ export function computeDebugState(ctx: DebugStateContext): DebugState {
       // absent fields get identity fills), so field presence can no
       // longer be read off geometry attributes — the texel writers stamp
       // source presence on geometry.userData instead (the zarr node attrs
-      // carry no has_colors/has_radii/has_sharpness).
+      // lack has_colors/has_radii/has_sharpness on pre-stamp datasets).
       const presence = geometry?.userData as
         | { hasColors?: boolean; hasRadii?: boolean; hasSharpness?: boolean }
         | undefined;

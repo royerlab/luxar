@@ -37,6 +37,33 @@ export interface InitPickingPorts {
 }
 
 /**
+ * Tear down a picking session: event listeners (DOM + Three
+ * EventDispatcher, all funneled through the session's EventGroup), the
+ * PickingSystem, and the label loaders. Idempotent — every step
+ * tolerates an already-disposed / absent collaborator.
+ *
+ * Called from two places:
+ * - `loadDataset` disposes the previous session UP-FRONT (alongside
+ *   `disposeOverlays`), in lockstep with `clearSceneContent()`: the old
+ *   session's nodeMap references geometries the scene clear disposes,
+ *   so if the load fails mid-way the stale session (with a live
+ *   embedder-selection consumer) would otherwise keep firing picks
+ *   against disposed geometries until the next successful load.
+ * - `initPicking` below re-runs it defensively before (re)creating the
+ *   session, covering callers that reach init without the up-front
+ *   dispose (a second call is a cheap no-op).
+ */
+export function disposePickingSession(ports: {
+  pickingEvents: EventGroup;
+  previous: InitPickingResult;
+}): void {
+  ports.pickingEvents.dispose();
+  ports.previous.pickingSystem?.dispose();
+  ports.previous.labelLoader?.dispose();
+  ports.previous.imageLabelLoader?.dispose();
+}
+
+/**
  * (Re-)build the GPU picking pipeline for the current scene.
  *
  * 1. Tear down any previous picking session (event listeners, system,
@@ -61,16 +88,15 @@ export interface InitPickingPorts {
  */
 export async function initPicking(ports: InitPickingPorts): Promise<InitPickingResult> {
   // Re-init: tear down listeners from any previous picking session.
-  // We dispose pickingEvents here (before the no-labels early-return) so
-  // we don't leak listeners from the previous session if this re-init
-  // ends up with no labels in the new scene. Subsequent listener
-  // registrations below all funnel through the same `pickingEvents`
-  // EventGroup, so a future `dispose()` (or the next initPicking call)
-  // removes them in one shot.
-  ports.pickingEvents.dispose();
-  ports.previous.pickingSystem?.dispose();
-  ports.previous.labelLoader?.dispose();
-  ports.previous.imageLabelLoader?.dispose();
+  // Usually already done up-front by `loadDataset` (see
+  // disposePickingSession) — this defensive re-run (idempotent) covers
+  // callers that reach init directly, and runs before the no-labels
+  // early-return so we don't leak listeners from the previous session
+  // if this re-init ends up with no labels in the new scene. Subsequent
+  // listener registrations below all funnel through the same
+  // `pickingEvents` EventGroup, so a future `dispose()` (or the next
+  // initPicking call) removes them in one shot.
+  disposePickingSession(ports);
 
   // Check if any node has labels or image labels
   const root = ports.sceneManager.scene?.children?.find((c) => c.name === 'LuxarScene') as

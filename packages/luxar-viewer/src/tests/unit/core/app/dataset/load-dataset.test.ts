@@ -53,6 +53,7 @@ function makePorts(trace: Trace, overrides: Partial<LoadDatasetPorts> = {}): Loa
     loaderConfig: undefined,
     openCacheStats: false,
     disposeOverlays: vi.fn(() => trace.order.push('disposeOverlays')),
+    disposePicking: vi.fn(() => trace.order.push('disposePicking')),
     initScaleBar: vi.fn(() => trace.order.push('initScaleBar')),
     initColormapLegend: vi.fn(() => trace.order.push('initColormapLegend')),
     initOverlays: vi.fn(async () => {
@@ -87,6 +88,38 @@ describe('loadDataset', () => {
     expect(disposeIdx).toBeGreaterThanOrEqual(0);
     expect(clearIdx).toBeLessThan(loadIdx);
     expect(disposeIdx).toBeLessThan(loadIdx);
+  });
+
+  it('disposePicking runs BEFORE loadSceneData (stale-session-vs-disposed-geometry guard)', async () => {
+    // The previous picking session's nodeMap references geometries that
+    // loadSceneData's clearSceneContent() disposes. Disposing the session
+    // up-front (alongside disposeOverlays) means a mid-load failure can
+    // never leave a stale session firing picks against disposed
+    // geometries; the end-of-load initPicking is the (re)creation point.
+    const trace: Trace = { order: [], recordedViewerConfig: undefined };
+    await loadDataset('scene.zarr', makePorts(trace));
+
+    const disposeIdx = trace.order.indexOf('disposePicking');
+    const loadIdx = trace.order.indexOf('loadSceneData');
+    expect(disposeIdx).toBeGreaterThanOrEqual(0);
+    expect(loadIdx).toBeGreaterThanOrEqual(0);
+    expect(disposeIdx).toBeLessThan(loadIdx);
+  });
+
+  it('a failing loadSceneData still leaves the old picking session disposed', async () => {
+    // The error-recovery contract: even when the load throws mid-way,
+    // disposePicking already ran (so no stale picks) and initPicking
+    // never ran (no half-built new session).
+    const trace: Trace = { order: [], recordedViewerConfig: undefined };
+    const ports = makePorts(trace);
+    (ports.sceneManager.loadSceneData as ReturnType<typeof vi.fn>).mockRejectedValue(
+      new Error('network down')
+    );
+
+    await expect(loadDataset('scene.zarr', ports)).rejects.toThrow('network down');
+
+    expect(ports.disposePicking).toHaveBeenCalledOnce();
+    expect(ports.initPicking).not.toHaveBeenCalled();
   });
 
   it('setSceneId must run BEFORE loadSceneData (so persisted settings reach materials)', async () => {
