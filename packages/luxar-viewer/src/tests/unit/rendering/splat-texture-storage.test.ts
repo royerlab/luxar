@@ -264,7 +264,7 @@ describe('attachSplatStorage / writeSplatTexels — fused writer round-trip', ()
     const geometry = new THREE.InstancedBufferGeometry();
     const texture = attachSplatStorage(geometry, 4); // 2 splats/row → 2 rows
     texture.clearUpdateRanges();
-    texture.onUpdate?.(); // simulate the attach upload flush
+    texture.onUpdate?.(texture); // simulate the attach upload flush
     const v0 = texture.version;
 
     // Full write of all 4 splats → 2/2 rows dirty → full-upload mode.
@@ -280,7 +280,7 @@ describe('attachSplatStorage / writeSplatTexels — fused writer round-trip', ()
 
     // Simulated flush (three calls onUpdate after consuming the upload)
     // ends the pending-full state; ranged uploads resume.
-    texture.onUpdate?.();
+    texture.onUpdate?.(texture);
     registerElementTexelDirtyRange(texture, SPLAT_FLOATS_PER_SPLAT, 3, 4);
     expect(texture.updateRanges.length).toBeGreaterThan(0);
   });
@@ -290,12 +290,12 @@ describe('attachSplatStorage / writeSplatTexels — fused writer round-trip', ()
     const geometry = new THREE.InstancedBufferGeometry();
     const texture = attachSplatStorage(geometry, 16);
     texture.clearUpdateRanges();
-    texture.onUpdate?.();
+    texture.onUpdate?.(texture);
 
     markElementTextureFullDirty(texture);
     registerElementTexelDirtyRange(texture, SPLAT_FLOATS_PER_SPLAT, 0, 2);
     expect(texture.updateRanges.length).toBe(0); // full upload still pending
-    texture.onUpdate?.();
+    texture.onUpdate?.(texture);
     registerElementTexelDirtyRange(texture, SPLAT_FLOATS_PER_SPLAT, 0, 2);
     expect(texture.updateRanges.length).toBeGreaterThan(0);
   });
@@ -358,7 +358,7 @@ describe('attachSplatStorage / writeSplatTexels — fused writer round-trip', ()
     // full-upload mode, and a pre-flush append correctly STAYS full
     // (pinned by the pending-full test); this test exercises the ranged
     // append path that runs once the upload has flushed.
-    texture.onUpdate?.();
+    texture.onUpdate?.(texture);
 
     // Append: source is FULL-LENGTH (6), write only splats [4, 6) = row 2.
     const src = makeSource(6);

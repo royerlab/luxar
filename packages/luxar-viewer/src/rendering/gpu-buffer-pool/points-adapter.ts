@@ -154,7 +154,10 @@ export class PointsBufferAdapter {
       // released buffer's capacity < pointCount, so the scan below can
       // never have picked it. If the release-time sweep already disposed
       // the buffer, re-claim finds nothing and we just re-throw — the
-      // mesh shows nothing until the next successful commit, but no
+      // mesh keeps rendering its OLD content until the next successful
+      // commit (the classic backend lazily re-creates GL resources from
+      // the surviving CPU arrays — re-consuming memory under the very
+      // OOM being handled, briefly), but no
       // pooled entry aliases it (documented residual).
       const released = active;
       try {
@@ -251,10 +254,14 @@ export class PointsBufferAdapter {
   private reclaimAfterFailedGrow(nodeId: string, released: PooledBuffer): void {
     const host = this.host;
 
+    // Reinstate FIRST, dispose the replacement LAST: the throw class this
+    // catch defends against plausibly came from a dispose listener, so
+    // disposing before re-claiming could itself throw — replacing the
+    // original error and leaving `released` free-pooled (the exact
+    // aliasing this method exists to prevent).
     const current = host.activeBuffers.get(nodeId);
     if (current && current !== released) {
       host.activeBuffers.delete(nodeId);
-      current.geometry.dispose();
     }
 
     for (const pooled of this.pointBuffers.values()) {
@@ -264,11 +271,27 @@ export class PointsBufferAdapter {
         released.inUse = true;
         released.lastUsedFrame = host.frameCount;
         host.activeBuffers.set(nodeId, released);
+        this.disposeReplacementAfterReclaim(current);
         return;
       }
     }
     // Not found: already disposed by the release-time sweep — see the
     // "documented residual" note in acquireGeometry.
+    this.disposeReplacementAfterReclaim(current);
+  }
+
+  /**
+   * Dispose a replacement buffer installed before a late throw (never
+   * handed to the caller). Guarded: a throwing dispose listener must not
+   * mask the original acquire error nor undo the reinstatement above.
+   */
+  private disposeReplacementAfterReclaim(current: PooledBuffer | undefined): void {
+    if (!current) return;
+    try {
+      current.geometry.dispose();
+    } catch {
+      // Swallow: the original acquire error is already propagating.
+    }
   }
 
   releaseGeometry(nodeId: string): void {

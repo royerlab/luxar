@@ -167,7 +167,6 @@ def write_points(
     if scalars is not None:
         write_scalars(group, scalars, ordering_data, n_points, ctx.dataset_ctx)
         metadata["has_scalars"] = True
-        group.attrs["has_scalars"] = True
 
     # 5b. Write colormap LUT if colormap is a custom array
     ctx.write_colormap_lut(group, attrs)
@@ -187,6 +186,9 @@ def write_points(
     group.attrs["has_colors"] = metadata["has_colors"]
     group.attrs["has_radii"] = metadata["has_radii"]
     group.attrs["has_sharpness"] = metadata["has_sharpness"]
+    # Below attrs.update like the other flags: a user-supplied attrs dict
+    # must never clobber the writer's presence truth.
+    group.attrs["has_scalars"] = metadata.get("has_scalars", False)
 
     # 9. Compute and store position bounds (nD bounding box)
     # This is computed from the final positions (potentially reordered)

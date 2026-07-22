@@ -193,10 +193,11 @@ export class GSplatsBufferAdapter {
   private reclaimAfterFailedGrow(nodeId: string, released: PooledBuffer): void {
     const host = this.host;
 
+    // Reinstate FIRST, dispose the replacement LAST — see the points
+    // adapter's twin comment.
     const current = host.activeBuffers.get(nodeId);
     if (current && current !== released) {
       host.activeBuffers.delete(nodeId);
-      current.geometry.dispose();
     }
 
     for (const pooled of this.gsplatBuffers.values()) {
@@ -206,8 +207,20 @@ export class GSplatsBufferAdapter {
         released.inUse = true;
         released.lastUsedFrame = host.frameCount;
         host.activeBuffers.set(nodeId, released);
+        this.disposeReplacementAfterReclaim(current);
         return;
       }
+    }
+    this.disposeReplacementAfterReclaim(current);
+  }
+
+  /** See the points adapter's twin comment. */
+  private disposeReplacementAfterReclaim(current: PooledBuffer | undefined): void {
+    if (!current) return;
+    try {
+      current.geometry.dispose();
+    } catch {
+      // Swallow: the original acquire error is already propagating.
     }
   }
 

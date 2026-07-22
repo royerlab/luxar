@@ -436,6 +436,67 @@ describe('GPUBufferPool', () => {
       expect(pool.acquireGSplatsGeometry('grow-oom-g', 300)).toBe(geom1);
       expect(pool.getStats().reuses).toBe(reusesBefore + 1);
     });
+
+    it('points: a throw AFTER a successful replacement allocation reinstates the original and disposes the replacement', () => {
+      // The reclaim's `current !== released` branch: the fresh allocation
+      // SUCCEEDS and installs a replacement active entry, then the
+      // post-allocation byte sweep throws (evictUnused is called twice on
+      // this path — first inside releaseGeometry, then inside the fresh-
+      // alloc tail AFTER activeBuffers.set). The reclaim must reinstate
+      // the ORIGINAL released buffer as the active entry FIRST and
+      // dispose the never-handed-out replacement LAST (via the guarded
+      // disposeReplacementAfterReclaim helper).
+      const geom1 = pool.acquirePointsGeometry('grow-oom-p2', 1000); // capacity 1500
+
+      let replacement: THREE.InstancedBufferGeometry | undefined;
+      const onReplacementDispose = vi.fn();
+      let evictCalls = 0;
+      const spy = vi.spyOn(pool, 'evictUnused').mockImplementation(() => {
+        evictCalls++;
+        if (evictCalls === 1) return 0; // releaseGeometry's sweep — succeed (0 evicted)
+        // Second call site: fresh-alloc tail, replacement already
+        // installed as the node's active entry — capture it BEFORE
+        // throwing so its later disposal is observable.
+        const entry = pool.activeBuffers.get('grow-oom-p2');
+        replacement = entry?.geometry as THREE.InstancedBufferGeometry;
+        replacement?.addEventListener('dispose', onReplacementDispose);
+        throw new Error('synthetic OOM after alloc');
+      });
+      try {
+        expect(() => pool.acquirePointsGeometry('grow-oom-p2', 2000)).toThrow(
+          'synthetic OOM after alloc'
+        );
+      } finally {
+        spy.mockRestore();
+      }
+
+      // The throw fired at the SECOND call site, after the replacement
+      // entry was installed (this is what distinguishes the branch from
+      // the plain release-time-throw tests above).
+      expect(evictCalls).toBe(2);
+      expect(replacement).toBeDefined();
+      expect(replacement).not.toBe(geom1);
+
+      // Original reinstated as the node's active entry.
+      const active = pool.activeBuffers.get('grow-oom-p2');
+      expect(active).toBeDefined();
+      expect(active!.geometry).toBe(geom1);
+      expect(active!.inUse).toBe(true);
+
+      // Replacement disposed (it was never handed to the caller) and
+      // absent from every free bucket.
+      expect(onReplacementDispose).toHaveBeenCalledTimes(1);
+      for (const buffers of pool.points.pointBuffers.values()) {
+        for (const b of buffers) {
+          expect(b.geometry).not.toBe(replacement);
+        }
+      }
+
+      // A follow-up acquire at the original count reuses the original.
+      const reusesBefore = pool.getStats().reuses;
+      expect(pool.acquirePointsGeometry('grow-oom-p2', 1000)).toBe(geom1);
+      expect(pool.getStats().reuses).toBe(reusesBefore + 1);
+    });
   });
 
   describe('LRU Eviction', () => {

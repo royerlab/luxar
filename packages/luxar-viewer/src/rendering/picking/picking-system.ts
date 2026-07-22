@@ -521,8 +521,11 @@ export class PickingSystem {
       this._dirty = true;
     }
 
-    // Re-render pick buffer if dirty (camera moved, geometry changed, resized)
-    if (this._dirty) {
+    // Re-render pick buffer if dirty (camera moved, geometry changed,
+    // resized) OR if the effectively-visible set changed without a dirty
+    // event (layers-panel / embedder visibility toggles — see
+    // _lastVisibleSig).
+    if (this._dirty || this.computeVisibleSig() !== this._lastVisibleSig) {
       this.renderPickBuffer();
       this._dirty = false;
     }
@@ -590,6 +593,26 @@ export class PickingSystem {
    * Called only when the buffer is dirty (camera/geometry/resize changed).
    * Renders at half resolution for performance — pick IDs don't need full res.
    */
+  /**
+   * Order-stable signature of the effectively-visible registered set at
+   * the last pick-buffer render. Visibility can flip WITHOUT any of the
+   * dirty-marking events firing (layers-panel toggles, embedder API) —
+   * the visibility gate would then serve a stale cached buffer (a
+   * re-shown layer would be unpickable until the next camera move or
+   * commit). `performPick` recomputes and compares before trusting the
+   * cache.
+   */
+  private _lastVisibleSig = -1;
+
+  /** See {@link _lastVisibleSig}. Map iteration order is insertion-stable. */
+  private computeVisibleSig(): number {
+    let sig = 0;
+    for (const [pickId, entry] of this.nodeMap) {
+      sig = (sig * 31 + (isEffectivelyVisible(entry.main) ? pickId + 1 : 0)) | 0;
+    }
+    return sig;
+  }
+
   private renderPickBuffer(): void {
     const renderer = this.renderer;
 
@@ -611,6 +634,8 @@ export class PickingSystem {
     const cam = this.camera as LuxarCamera;
     const isOrtho = isOrthographicCamera(cam);
     const fov = isOrtho ? getOrthoFrustumHeight(cam) : getCameraFovRadians(cam);
+
+    this._lastVisibleSig = this.computeVisibleSig();
 
     // Sync and add all EFFECTIVELY VISIBLE registered nodes to pick scene
     for (const entry of this.nodeMap.values()) {

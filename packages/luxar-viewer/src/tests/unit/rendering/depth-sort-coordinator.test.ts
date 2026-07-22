@@ -158,9 +158,15 @@ describe('depth-sort coordinator', () => {
     const registered = transferCalls[0];
     expect(registered.transferables).toContain(centers.buffer);
     expect(mockApi.sort).toHaveBeenCalledTimes(1);
-    expect(mockApi.sort.mock.calls[0][0]).toMatchObject({ nodeId: mesh.uuid, generation: 1 });
+    expect(mockApi.sort.mock.calls[0][0]).toMatchObject({ nodeId: mesh.uuid });
+    // Generations are a module-scoped monotonic counter (lifetime-unique),
+    // so absolute values are execution-order-dependent — assert RELATIVE
+    // facts: the sort carries the same generation the registration did.
+    const sentGeneration = mockApi.sort.mock.calls[0][0].generation as number;
+    expect(sentGeneration).toBe(mockApi.registerNode.mock.calls[0][0].generation);
+    expect(sentGeneration).toBeGreaterThan(0);
 
-    sortResolvers[0]({ generation: 1, ordering: new Uint32Array([0, 2, 1]) });
+    sortResolvers[0]({ generation: sentGeneration, ordering: new Uint32Array([0, 2, 1]) });
     await flush();
 
     const attr = (mesh.geometry as THREE.InstancedBufferGeometry).getAttribute('aSortedIndex');
@@ -197,7 +203,10 @@ describe('depth-sort coordinator', () => {
     expect(mockApi.registerNode).toHaveBeenCalledTimes(1);
     expect(mockApi.sort).toHaveBeenCalledTimes(1);
 
-    sortResolvers[0]({ generation: 1, ordering: new Uint32Array([0, 2, 1]) });
+    sortResolvers[0]({
+      generation: mockApi.sort.mock.calls[0][0].generation as number,
+      ordering: new Uint32Array([0, 2, 1]),
+    });
     await flush();
 
     const attr = (mesh.geometry as THREE.InstancedBufferGeometry).getAttribute('aSortedIndex');
@@ -243,25 +252,68 @@ describe('depth-sort coordinator', () => {
     coord.noteGSplatsCommit(mesh, new Float32Array([0, 0, -10, 1, 0, -1, 2, 0, -5]), 3);
     await flush();
     expect(mockApi.sort).toHaveBeenCalledTimes(1);
+    const staleGeneration = mockApi.sort.mock.calls[0][0].generation as number;
 
-    // A newer commit lands while the sort is in flight (generation -> 2).
+    // A newer commit lands while the sort is in flight (generation bumps).
     coord.noteGSplatsCommit(mesh, new Float32Array([0, 0, -1, 1, 0, -10, 2, 0, -5]), 3);
     await flush();
 
-    // The stale generation-1 ordering resolves — must NOT be applied.
-    sortResolvers[0]({ generation: 1, ordering: new Uint32Array([2, 1, 0]) });
+    // The FIRST dispatch's (now-stale) ordering resolves — must NOT be applied.
+    sortResolvers[0]({ generation: staleGeneration, ordering: new Uint32Array([2, 1, 0]) });
     await flush();
     const attr = (mesh.geometry as THREE.InstancedBufferGeometry).getAttribute('aSortedIndex');
     expect(Array.from(attr.array as Uint32Array)).toEqual([0, 0, 0]); // untouched
 
-    // The queued re-sort was issued for the current generation.
+    // The queued re-sort was issued for the current (newer) generation.
     expect(mockApi.sort).toHaveBeenCalledTimes(2);
-    expect(mockApi.sort.mock.calls[1][0]).toMatchObject({ generation: 2 });
+    const freshGeneration = mockApi.sort.mock.calls[1][0].generation as number;
+    expect(freshGeneration).not.toBe(staleGeneration);
 
     // The fresh ordering applies.
-    sortResolvers[1]({ generation: 2, ordering: new Uint32Array([1, 2, 0]) });
+    sortResolvers[1]({ generation: freshGeneration, ordering: new Uint32Array([1, 2, 0]) });
     await flush();
     expect(Array.from(attr.array as Uint32Array)).toEqual([1, 2, 0]);
+  });
+
+  it("stale sort from a released node's previous LIFETIME is dropped (demote → re-promote)", async () => {
+    // Fuzz-found bug: releaseDepthSortNode deletes the node state, and a
+    // per-node counter restarting at 1 on re-promotion let a stale
+    // in-flight sort from the PREVIOUS lifetime pass the generation guard
+    // — applying a wrong-length permutation over the new commit. The
+    // module-scoped monotonic counter makes generations lifetime-unique.
+    const coord = await loadCoordinator();
+    const requestRender = vi.fn();
+    coord.configureDepthSort({ getCamera: () => makeCamera(), requestRender });
+
+    // First lifetime: 3 splats committed, sort dispatched with generation A.
+    const mesh = makeGSplatsMesh(3, 'normal');
+    coord.noteGSplatsCommit(mesh, new Float32Array([0, 0, -10, 1, 0, -1, 2, 0, -5]), 3);
+    await flush();
+    expect(mockApi.sort).toHaveBeenCalledTimes(1);
+    const generationA = mockApi.sort.mock.calls[0][0].generation as number;
+
+    // Demote (LOD): the node's state + worker registration are released
+    // while lifetime A's sort is still in flight.
+    coord.releaseDepthSortNode(mesh);
+
+    // Re-promote: the SAME mesh recommits with a DIFFERENT count (2).
+    coord.noteGSplatsCommit(mesh, new Float32Array([0, 0, -1, 1, 0, -2]), 2);
+    await flush();
+    expect(mockApi.sort).toHaveBeenCalledTimes(2);
+    const generationB = mockApi.sort.mock.calls[1][0].generation as number;
+    expect(generationB).not.toBe(generationA); // lifetime-unique
+
+    // Lifetime A's sort resolves with its length-3 ordering — must be
+    // dropped: applied over the 2-splat commit it would be corrupt.
+    sortResolvers[0]({ generation: generationA, ordering: new Uint32Array([2, 0, 1]) });
+    await flush();
+    const attr = (mesh.geometry as THREE.InstancedBufferGeometry).getAttribute('aSortedIndex');
+    expect(Array.from(attr.array as Uint32Array)).toEqual([0, 0, 0]); // untouched
+
+    // Lifetime B's own ordering applies normally.
+    sortResolvers[1]({ generation: generationB, ordering: new Uint32Array([1, 0]) });
+    await flush();
+    expect(Array.from(attr.array as Uint32Array)).toEqual([1, 0, 0]);
   });
 
   it('enforces at most one in-flight sort per node', async () => {
@@ -281,10 +333,17 @@ describe('depth-sort coordinator', () => {
     expect(mockApi.initialize).toHaveBeenCalledTimes(1);
 
     // Resolving it triggers exactly one queued re-sort (for the latest generation).
-    sortResolvers[0]({ generation: 1, ordering: new Uint32Array([0, 1]) });
+    const firstGeneration = mockApi.sort.mock.calls[0][0].generation as number;
+    sortResolvers[0]({ generation: firstGeneration, ordering: new Uint32Array([0, 1]) });
     await flush();
     expect(mockApi.sort).toHaveBeenCalledTimes(2);
-    expect(mockApi.sort.mock.calls[1][0]).toMatchObject({ generation: 3 });
+    // The re-sort carries the LATEST commit's generation — the one the
+    // most recent registration sent — not the first dispatch's.
+    const latestRegistered = mockApi.registerNode.mock.calls[
+      mockApi.registerNode.mock.calls.length - 1
+    ][0].generation as number;
+    expect(mockApi.sort.mock.calls[1][0].generation).toBe(latestRegistered);
+    expect(mockApi.sort.mock.calls[1][0].generation).not.toBe(firstGeneration);
   });
 
   it('derives the model-view from fresh matrices, not renderer-maintained caches', async () => {
@@ -330,8 +389,9 @@ describe('depth-sort coordinator', () => {
 
     // A FRESH worker was spawned and initialized; sorts flow again.
     expect(mockApi.initialize).toHaveBeenCalledTimes(2);
+    const lastSortCall = mockApi.sort.mock.calls[mockApi.sort.mock.calls.length - 1][0];
     sortResolvers[sortResolvers.length - 1]({
-      generation: 1,
+      generation: lastSortCall.generation as number,
       ordering: new Uint32Array([1, 0]),
     });
     await flush();
@@ -402,10 +462,17 @@ describe('depth-sort coordinator', () => {
     expect(mockApi.sort).toHaveBeenCalledTimes(2);
     expect(mockApi.initialize).toHaveBeenCalledTimes(1); // still one worker
 
-    // Release A mid-flight, then resolve BOTH (A's first).
+    // Release A mid-flight, then resolve BOTH (A's first) — each with the
+    // generation its OWN dispatch carried (they differ: one shared counter).
     coord.releaseDepthSortNode(meshA);
-    sortResolvers[0]({ generation: 1, ordering: new Uint32Array([1, 0]) });
-    sortResolvers[1]({ generation: 1, ordering: new Uint32Array([1, 0]) });
+    sortResolvers[0]({
+      generation: mockApi.sort.mock.calls[0][0].generation as number,
+      ordering: new Uint32Array([1, 0]),
+    });
+    sortResolvers[1]({
+      generation: mockApi.sort.mock.calls[1][0].generation as number,
+      ordering: new Uint32Array([1, 0]),
+    });
     await flush();
 
     const attrA = (meshA.geometry as THREE.InstancedBufferGeometry).getAttribute('aSortedIndex');
@@ -703,11 +770,17 @@ describe('depth-sort coordinator', () => {
     expect(mockApi.sort).toHaveBeenCalledTimes(1);
 
     // The in-flight sort FAILS — the queued request must still run
-    // (dropping it would leave the node stale until the next commit).
+    // (dropping it would leave the node stale until the next commit),
+    // carrying the SECOND commit's (newer) generation.
     sortRejectors[0](new Error('worker transport error'));
     await flush();
     expect(mockApi.sort).toHaveBeenCalledTimes(2);
-    expect(mockApi.sort.mock.calls[1][0]).toMatchObject({ generation: 2 });
+    expect(mockApi.sort.mock.calls[1][0].generation).not.toBe(
+      mockApi.sort.mock.calls[0][0].generation
+    );
+    expect(mockApi.sort.mock.calls[1][0].generation).toBe(
+      mockApi.registerNode.mock.calls[1][0].generation
+    );
   });
 
   it('releaseDepthSortNode drops state and discards an in-flight result', async () => {
@@ -722,7 +795,12 @@ describe('depth-sort coordinator', () => {
     coord.releaseDepthSortNode(mesh);
     expect(mockApi.releaseNode).toHaveBeenCalledWith(mesh.uuid);
 
-    sortResolvers[0]({ generation: 1, ordering: new Uint32Array([1, 0]) });
+    // Echo the dispatched generation — the drop comes from the DELETED
+    // state, not a generation mismatch.
+    sortResolvers[0]({
+      generation: mockApi.sort.mock.calls[0][0].generation as number,
+      ordering: new Uint32Array([1, 0]),
+    });
     await flush();
     const attr = (mesh.geometry as THREE.InstancedBufferGeometry).getAttribute('aSortedIndex');
     expect(Array.from(attr.array as Uint32Array)).toEqual([0, 0]); // untouched
@@ -738,7 +816,12 @@ describe('depth-sort coordinator', () => {
     await flush();
 
     delete mesh.userData.committedData; // demotion released the geometry
-    sortResolvers[0]({ generation: 1, ordering: new Uint32Array([1, 0]) });
+    // Echo the dispatched generation — the block must come from the
+    // cleared stamp alone, not a generation mismatch.
+    sortResolvers[0]({
+      generation: mockApi.sort.mock.calls[0][0].generation as number,
+      ordering: new Uint32Array([1, 0]),
+    });
     await flush();
     const attr = (mesh.geometry as THREE.InstancedBufferGeometry).getAttribute('aSortedIndex');
     expect(Array.from(attr.array as Uint32Array)).toEqual([0, 0]); // untouched
@@ -772,8 +855,12 @@ describe('depth-sort coordinator', () => {
     // The stamp is NOT cleared on the way out (no reprocess needed).
     expect(mesh.userData.committedData).toBeDefined();
 
-    // The in-flight generation-1 sort resolves — dropped (generation bumped).
-    sortResolvers[0]({ generation: 1, ordering: new Uint32Array([1, 0]) });
+    // The in-flight sort resolves with the generation it was dispatched
+    // with — dropped (the mode switch bumped the node's generation).
+    sortResolvers[0]({
+      generation: mockApi.sort.mock.calls[0][0].generation as number,
+      ordering: new Uint32Array([1, 0]),
+    });
     await flush();
     const attr = (mesh.geometry as THREE.InstancedBufferGeometry).getAttribute('aSortedIndex');
     expect(Array.from(attr.array as Uint32Array)).toEqual([0, 0]);
@@ -838,7 +925,10 @@ describe('depth-sort scheduler (Phase 3)', () => {
     coord.noteGSplatsCommit(mesh, new Float32Array([0, 0, -1, 1, 0, -2]), 2);
     await flush();
     expect(mockApi.sort).toHaveBeenCalledTimes(1);
-    sortResolvers[0]({ generation: 1, ordering: new Uint32Array([0, 1]) });
+    sortResolvers[0]({
+      generation: mockApi.sort.mock.calls[0][0].generation as number,
+      ordering: new Uint32Array([0, 1]),
+    });
     await flush();
     return mesh;
   }
@@ -867,7 +957,10 @@ describe('depth-sort scheduler (Phase 3)', () => {
     // pose never re-dispatches (the dispatch re-recorded the reference).
     coord.evaluateDepthSortPerFrame();
     expect(mockApi.sort).toHaveBeenCalledTimes(2);
-    sortResolvers[1]({ generation: 1, ordering: new Uint32Array([1, 0]) });
+    sortResolvers[1]({
+      generation: mockApi.sort.mock.calls[1][0].generation as number,
+      ordering: new Uint32Array([1, 0]),
+    });
     await flush();
     coord.evaluateDepthSortPerFrame();
     expect(mockApi.sort).toHaveBeenCalledTimes(2);
@@ -929,7 +1022,10 @@ describe('depth-sort scheduler (Phase 3)', () => {
     mesh.scale.set(10, 10, 10);
     coord.noteGSplatsCommit(mesh, new Float32Array([0, 0, -1, 1, 0, -2]), 2);
     await flush();
-    sortResolvers[0]({ generation: 1, ordering: new Uint32Array([0, 1]) });
+    sortResolvers[0]({
+      generation: mockApi.sort.mock.calls[0][0].generation as number,
+      ordering: new Uint32Array([0, 1]),
+    });
     await flush();
 
     camera.position.z += 3; // 0.3 local units — under the 0.5 threshold
@@ -1076,7 +1172,10 @@ describe('depth-sort scheduler (Phase 3)', () => {
     expect(mockApi.sort).toHaveBeenCalledTimes(1);
 
     // The recovered sort applies like any other.
-    sortResolvers[0]({ generation: 1, ordering: new Uint32Array([1, 0]) });
+    sortResolvers[0]({
+      generation: mockApi.sort.mock.calls[0][0].generation as number,
+      ordering: new Uint32Array([1, 0]),
+    });
     await flush();
     const attr = (mesh.geometry as THREE.InstancedBufferGeometry).getAttribute('aSortedIndex');
     expect(Array.from(attr.array as Uint32Array)).toEqual([1, 0]);

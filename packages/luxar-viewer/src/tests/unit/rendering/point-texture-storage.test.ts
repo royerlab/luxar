@@ -156,7 +156,7 @@ describe('attachPointStorage / writePointTexels — fused writer round-trip', ()
     // full-upload mode, and a pre-flush append correctly STAYS full
     // (pinned by the pending-full test); this test exercises the ranged
     // append path that runs once the upload has flushed.
-    texture.onUpdate?.();
+    texture.onUpdate?.(texture);
 
     // Append: source is FULL-LENGTH (6), write only points [4, 6) = row 2.
     const src = makeSource(6);
