@@ -2,12 +2,13 @@
  * Unit tests for GPU Buffer Pool
  */
 
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
 import {
   GPUBufferPool,
   __setMinInstanceCapacityForTesting,
 } from '../../../rendering/gpu-buffer-pool';
 import type { LoadedPointsData } from '../../../data/data-loader-types';
+import type { ProcessedLinesData } from '../../../types/lines';
 import * as THREE from 'three';
 import { getSplatTexture } from '../../../rendering/gsplat-geometry';
 import { getPointTexture } from '../../../rendering/point-geometry';
@@ -279,6 +280,56 @@ describe('GPUBufferPool', () => {
       expect(pool.getStats().allocations).toBe(1);
       expect(pool.getStats().reuses).toBe(1);
     });
+
+    it('updateLinesGeometry rejects a torn multi-attribute write atomically', () => {
+      // Lines write 11–13 sequential per-attribute columns; a short
+      // array in the MIDDLE (endColors here) used to throw after the
+      // positions were already stored and range-registered — a torn mix
+      // of new positions + old colors. The pre-flight sweep must throw
+      // ONE aggregate error BEFORE any store.
+      const makeLinesData = (count: number): ProcessedLinesData => ({
+        startPositions: new Float32Array(count * 3),
+        endPositions: new Float32Array(count * 3),
+        startColors: new Float32Array(count * 3),
+        endColors: new Float32Array(count * 3),
+        startWidths: new Float32Array(count),
+        endWidths: new Float32Array(count),
+        startSharpness: new Float32Array(count),
+        endSharpness: new Float32Array(count),
+        segmentLengths: new Float32Array(count),
+        startClipped: new Uint8Array(count),
+        endClipped: new Uint8Array(count),
+        segmentCount: count,
+      });
+
+      const geom = pool.acquireLinesGeometry('torn-lines', 2, false);
+
+      // Sentinel commit: a fully valid update.
+      const sentinel = makeLinesData(2);
+      sentinel.startPositions.set([1, 2, 3, 4, 5, 6]);
+      pool.updateLinesGeometry(geom, sentinel, 2);
+
+      const posView = geom.getAttribute('aStartPos') as THREE.InterleavedBufferAttribute;
+      const buffer = posView.data as THREE.InstancedInterleavedBuffer;
+      const rangesAfterSentinel = buffer.updateRanges.length;
+      expect(posView.getX(0)).toBe(1);
+
+      // Torn attempt: valid (new) positions but a SHORT endColors.
+      const torn = makeLinesData(2);
+      torn.startPositions.set([9, 9, 9, 9, 9, 9]);
+      torn.endColors = new Float32Array(3); // needs 2 * 3 = 6
+      expect(() => pool.updateLinesGeometry(geom, torn, 2)).toThrow(
+        /endColors \(length 3, need 6\)/
+      );
+
+      // Atomic: the position region is UNTOUCHED (sentinel survives)…
+      expect(posView.getX(0)).toBe(1);
+      expect(posView.getY(0)).toBe(2);
+      expect(posView.getZ(0)).toBe(3);
+      expect(posView.getX(1)).toBe(4);
+      // …and no NEW update ranges were registered beyond the sentinel's.
+      expect(buffer.updateRanges.length).toBe(rangesAfterSentinel);
+    });
   });
 
   describe('GSplats Geometry', () => {
@@ -305,6 +356,146 @@ describe('GPUBufferPool', () => {
 
       expect(geom2).toBe(geom1);
       expect(pool.getStats().reuses).toBe(1);
+    });
+  });
+
+  describe('Grow-path OOM re-claim window', () => {
+    // The grow path releases the node's active buffer FIRST, then
+    // allocates the replacement — the big typed-array allocation is the
+    // realistic OOM throw site, and a grow is exactly when memory is
+    // tightest. A throw anywhere after the release used to leave the
+    // mesh's still-rendered geometry sitting in the free pool (adoptable
+    // by another node → foreign data). The adapters now wrap everything
+    // from the release onward and RE-CLAIM the released buffer on a
+    // throw. The tests inject the throw by stubbing `evictUnused` (the
+    // release path calls it after pushing the buffer into its free
+    // bucket, so the re-claim must find and restore it).
+
+    /** Stub evictUnused to throw, assert fn propagates it, restore. */
+    const withThrowingEvict = (fn: () => void): void => {
+      const spy = vi.spyOn(pool, 'evictUnused').mockImplementation(() => {
+        throw new Error('synthetic OOM');
+      });
+      try {
+        expect(fn).toThrow('synthetic OOM');
+      } finally {
+        spy.mockRestore();
+      }
+    };
+
+    it('points: a throw during grow re-claims the released buffer', () => {
+      const geom1 = pool.acquirePointsGeometry('grow-oom-p', 1000); // capacity 1500
+
+      withThrowingEvict(() => pool.acquirePointsGeometry('grow-oom-p', 2000));
+
+      // The node's active entry is the ORIGINAL geometry, re-claimed.
+      const active = pool.activeBuffers.get('grow-oom-p');
+      expect(active).toBeDefined();
+      expect(active!.geometry).toBe(geom1);
+      expect(active!.inUse).toBe(true);
+      // No free-bucket entry aliases it.
+      for (const buffers of pool.points.pointBuffers.values()) {
+        expect(buffers).not.toContain(active);
+      }
+      // A follow-up acquire at the original count reuses it in place.
+      const reusesBefore = pool.getStats().reuses;
+      expect(pool.acquirePointsGeometry('grow-oom-p', 1000)).toBe(geom1);
+      expect(pool.getStats().reuses).toBe(reusesBefore + 1);
+    });
+
+    it('lines: a throw during grow re-claims the released buffer', () => {
+      const geom1 = pool.acquireLinesGeometry('grow-oom-l', 500, false); // capacity 750
+
+      withThrowingEvict(() => pool.acquireLinesGeometry('grow-oom-l', 2000, false));
+
+      const active = pool.activeBuffers.get('grow-oom-l');
+      expect(active).toBeDefined();
+      expect(active!.geometry).toBe(geom1);
+      expect(active!.inUse).toBe(true);
+      for (const buffers of pool.lines.lineBuffers.values()) {
+        expect(buffers).not.toContain(active);
+      }
+      const reusesBefore = pool.getStats().reuses;
+      expect(pool.acquireLinesGeometry('grow-oom-l', 500, false)).toBe(geom1);
+      expect(pool.getStats().reuses).toBe(reusesBefore + 1);
+    });
+
+    it('gsplats: a throw during grow re-claims the released buffer', () => {
+      const geom1 = pool.acquireGSplatsGeometry('grow-oom-g', 300); // capacity 450
+
+      withThrowingEvict(() => pool.acquireGSplatsGeometry('grow-oom-g', 1000));
+
+      const active = pool.activeBuffers.get('grow-oom-g');
+      expect(active).toBeDefined();
+      expect(active!.geometry).toBe(geom1);
+      expect(active!.inUse).toBe(true);
+      for (const buffers of pool.gsplats.gsplatBuffers.values()) {
+        expect(buffers).not.toContain(active);
+      }
+      const reusesBefore = pool.getStats().reuses;
+      expect(pool.acquireGSplatsGeometry('grow-oom-g', 300)).toBe(geom1);
+      expect(pool.getStats().reuses).toBe(reusesBefore + 1);
+    });
+
+    it('points: a throw AFTER a successful replacement allocation reinstates the original and disposes the replacement', () => {
+      // The reclaim's `current !== released` branch: the fresh allocation
+      // SUCCEEDS and installs a replacement active entry, then the
+      // post-allocation byte sweep throws (evictUnused is called twice on
+      // this path — first inside releaseGeometry, then inside the fresh-
+      // alloc tail AFTER activeBuffers.set). The reclaim must reinstate
+      // the ORIGINAL released buffer as the active entry FIRST and
+      // dispose the never-handed-out replacement LAST (via the guarded
+      // disposeReplacementAfterReclaim helper).
+      const geom1 = pool.acquirePointsGeometry('grow-oom-p2', 1000); // capacity 1500
+
+      let replacement: THREE.InstancedBufferGeometry | undefined;
+      const onReplacementDispose = vi.fn();
+      let evictCalls = 0;
+      const spy = vi.spyOn(pool, 'evictUnused').mockImplementation(() => {
+        evictCalls++;
+        if (evictCalls === 1) return 0; // releaseGeometry's sweep — succeed (0 evicted)
+        // Second call site: fresh-alloc tail, replacement already
+        // installed as the node's active entry — capture it BEFORE
+        // throwing so its later disposal is observable.
+        const entry = pool.activeBuffers.get('grow-oom-p2');
+        replacement = entry?.geometry as THREE.InstancedBufferGeometry;
+        replacement?.addEventListener('dispose', onReplacementDispose);
+        throw new Error('synthetic OOM after alloc');
+      });
+      try {
+        expect(() => pool.acquirePointsGeometry('grow-oom-p2', 2000)).toThrow(
+          'synthetic OOM after alloc'
+        );
+      } finally {
+        spy.mockRestore();
+      }
+
+      // The throw fired at the SECOND call site, after the replacement
+      // entry was installed (this is what distinguishes the branch from
+      // the plain release-time-throw tests above).
+      expect(evictCalls).toBe(2);
+      expect(replacement).toBeDefined();
+      expect(replacement).not.toBe(geom1);
+
+      // Original reinstated as the node's active entry.
+      const active = pool.activeBuffers.get('grow-oom-p2');
+      expect(active).toBeDefined();
+      expect(active!.geometry).toBe(geom1);
+      expect(active!.inUse).toBe(true);
+
+      // Replacement disposed (it was never handed to the caller) and
+      // absent from every free bucket.
+      expect(onReplacementDispose).toHaveBeenCalledTimes(1);
+      for (const buffers of pool.points.pointBuffers.values()) {
+        for (const b of buffers) {
+          expect(b.geometry).not.toBe(replacement);
+        }
+      }
+
+      // A follow-up acquire at the original count reuses the original.
+      const reusesBefore = pool.getStats().reuses;
+      expect(pool.acquirePointsGeometry('grow-oom-p2', 1000)).toBe(geom1);
+      expect(pool.getStats().reuses).toBe(reusesBefore + 1);
     });
   });
 

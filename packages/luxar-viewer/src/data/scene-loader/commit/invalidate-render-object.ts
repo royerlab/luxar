@@ -78,14 +78,26 @@ export function invalidateRenderObjectFor(mesh: THREE.Mesh): void {
   const pickNode = (mesh.userData as { pickNode?: THREE.Mesh } | undefined)?.pickNode;
   if (pickNode?.isMesh) {
     pickNode.geometry = mesh.geometry;
+    // The pick mesh has its OWN cached RenderObject (chainMap keyed by
+    // [pickMesh, pickMaterial, …]) with the same stale `vertexBuffers`
+    // problem: the pick pass binds whatever that cache holds, so after a
+    // pool grow/swap a pick render on the WebGPU backend would bind the
+    // old (smaller/disposed) GPU buffer — "Instance range requires a
+    // larger buffer" validation errors or silent mis-picks. Evict it via
+    // the same soft-dispose mechanism as the main material below.
+    softDisposeAll(pickNode.material);
   }
 
-  const material = mesh.material;
+  softDisposeAll(mesh.material);
+}
+
+/** Soft-dispose a mesh's material, handling the `Material[]` case. */
+function softDisposeAll(material: THREE.Material | THREE.Material[]): void {
   if (Array.isArray(material)) {
     for (const m of material) {
       dispatchSoftDispose(m);
     }
-  } else {
+  } else if (material) {
     dispatchSoftDispose(material);
   }
 }

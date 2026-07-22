@@ -45,7 +45,10 @@ import { shouldShowBrowser as shouldShowBrowserImpl } from './app/dataset/should
 import { showDatasetBrowser as showDatasetBrowserImpl } from './app/dataset/show-browser';
 import { loadDataset as loadDatasetImpl } from './app/dataset/load-dataset';
 import { installDebugInterface } from './app/debug/debug-interface';
-import { initPicking as initPickingImpl } from './app/picking/init-picking';
+import {
+  initPicking as initPickingImpl,
+  disposePickingSession as disposePickingSessionImpl,
+} from './app/picking/init-picking';
 import { applyViewerConfigState as applyViewerConfigStateHelper } from './app/viewer-config/apply-state';
 import {
   getPanelVisibilityStates as getPanelVisibilityStatesHelper,
@@ -310,6 +313,7 @@ export class LuxarApp {
         loaderConfig: this.options.loaderConfig,
         openCacheStats: !!this.options.openCacheStats,
         disposeOverlays: () => this.disposeOverlays(),
+        disposePicking: () => this.disposePicking(),
         initScaleBar: () => this.initScaleBar(),
         initColormapLegend: () => this.initColormapLegend(),
         initOverlays: () => this.initOverlays(),
@@ -475,6 +479,28 @@ export class LuxarApp {
     this.pickingSystem = result.pickingSystem;
     this.labelLoader = result.labelLoader;
     this.imageLabelLoader = result.imageLabelLoader;
+  }
+
+  /**
+   * Tear down the current picking session (listeners, system, loaders).
+   * Called by `loadDataset` UP-FRONT — alongside `disposeOverlays`, in
+   * lockstep with `clearSceneContent()` — so a failing mid-load never
+   * leaves a stale session firing picks against disposed geometries.
+   * `initPicking` at the end of the load is the (re)creation point;
+   * between the two no pick can fire (all listeners are removed here).
+   */
+  private disposePicking(): void {
+    disposePickingSessionImpl({
+      pickingEvents: this.pickingEvents,
+      previous: {
+        pickingSystem: this.pickingSystem,
+        labelLoader: this.labelLoader,
+        imageLabelLoader: this.imageLabelLoader,
+      },
+    });
+    this.pickingSystem = undefined;
+    this.labelLoader = undefined;
+    this.imageLabelLoader = undefined;
   }
 
   /**

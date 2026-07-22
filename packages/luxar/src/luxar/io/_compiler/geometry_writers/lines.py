@@ -268,7 +268,6 @@ def write_lines(
     if scalars is not None:
         write_scalars(group, scalars, ordering_data, n_vertices, ctx.dataset_ctx)
         metadata["has_scalars"] = True
-        group.attrs["has_scalars"] = True
 
     # Write colormap LUT if colormap is a custom array
     ctx.write_colormap_lut(group, attrs)
@@ -299,6 +298,9 @@ def write_lines(
     group.attrs["original_line_type"] = line_type
     group.attrs["has_colors"] = metadata["has_colors"]
     group.attrs["has_sharpness"] = metadata["has_sharpness"]
+    # Below attrs.update like the other flags: a user-supplied attrs dict
+    # must never clobber the writer's presence truth.
+    group.attrs["has_scalars"] = metadata.get("has_scalars", False)
     group.attrs["max_width"] = max_width
 
     # Add ordering metadata to attrs if present

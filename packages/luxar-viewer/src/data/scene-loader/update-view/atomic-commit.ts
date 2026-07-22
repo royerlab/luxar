@@ -77,6 +77,15 @@ export function runAtomicCommit(
   // skip all-or-nothing across the three geometry types.
   const aborted = ctx.signal?.aborted ?? false;
 
+  // Per-node fault isolation: ONE malformed node's throwing commit must
+  // not starve every sibling of this pass (the siblings' data is staged
+  // and valid — skipping them leaves the whole frame stale, and the
+  // gsplat commits also feed the depth-sort coordinator). Each commit
+  // gets its own catch; errors re-surface AFTER the sweep as a single
+  // AggregateError so the failure stays exactly as loud as before at the
+  // same call site — fail-loud is preserved, sibling starvation is not.
+  const commitErrors: unknown[] = [];
+
   try {
     // Advance GPU buffer pool frame counter once per update cycle
     // (not per-acquire) so eviction timing reflects actual frames.
@@ -87,6 +96,8 @@ export function runAtomicCommit(
     for (const { staged, session } of pointsStaged) {
       try {
         if (staged && !aborted) ctx.updatePointsGeometry(staged.path, staged.data, session);
+      } catch (err) {
+        commitErrors.push(err);
       } finally {
         session.end();
       }
@@ -94,6 +105,8 @@ export function runAtomicCommit(
     for (const { staged, session } of linesStaged) {
       try {
         if (staged && !aborted) ctx.commitLinesGeometry(staged, session);
+      } catch (err) {
+        commitErrors.push(err);
       } finally {
         session.end();
       }
@@ -101,6 +114,8 @@ export function runAtomicCommit(
     for (const { staged, session } of gsplatsStaged) {
       try {
         if (staged && !aborted) ctx.commitGSplatsGeometry(staged, session);
+      } catch (err) {
+        commitErrors.push(err);
       } finally {
         session.end();
       }
@@ -112,8 +127,18 @@ export function runAtomicCommit(
   }
 
   // Invalidate cached pick buffer after geometry changes (skip when aborted —
-  // nothing was committed, so the pick buffer is still valid for the prior frame).
+  // nothing was committed, so the pick buffer is still valid for the prior
+  // frame). Runs BEFORE the error re-throw: the sibling commits that
+  // succeeded did change geometry, so the pick cache must go stale even on
+  // a partially-failing pass.
   if (!aborted && (pointsStaged.length > 0 || linesStaged.length > 0 || gsplatsStaged.length > 0)) {
     ctx.nodeFactory.markPickingDirty();
+  }
+
+  if (commitErrors.length > 0) {
+    throw new AggregateError(
+      commitErrors,
+      `${commitErrors.length} geometry commit(s) failed this pass (siblings still committed)`
+    );
   }
 }

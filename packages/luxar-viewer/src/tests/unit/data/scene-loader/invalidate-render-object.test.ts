@@ -117,6 +117,74 @@ describe('pick-mesh geometry resync', () => {
     const mesh = new THREE.Mesh(new THREE.BufferGeometry(), new THREE.MeshBasicMaterial());
     expect(() => invalidateRenderObjectFor(mesh)).not.toThrow();
   });
+
+  it('soft-disposes the PICK mesh material too (WebGPU stale-vertexBuffers guard)', () => {
+    // The pick mesh has its own cached RenderObject (chainMap keyed by
+    // [pickMesh, pickMaterial, ...]) whose `vertexBuffers` go stale on a
+    // pool grow/swap exactly like the main mesh's. Without evicting it,
+    // the WebGPU pick pass binds the old buffer ("Instance range
+    // requires a larger buffer" / mis-picks).
+    const pickMaterial = new THREE.MeshBasicMaterial();
+    const mesh = new THREE.Mesh(new THREE.BufferGeometry(), new THREE.MeshBasicMaterial());
+    const pick = new THREE.Mesh(new THREE.BufferGeometry(), pickMaterial);
+    mesh.userData.pickNode = pick;
+
+    let flagDuringDispatch: boolean | undefined;
+    const listener = vi.fn(() => {
+      flagDuringDispatch = (pickMaterial as unknown as Record<symbol, boolean | undefined>)[
+        SOFT_DISPOSE_FLAG
+      ];
+    });
+    pickMaterial.addEventListener('dispose', listener);
+
+    invalidateRenderObjectFor(mesh);
+
+    // Same soft-dispose mechanism as the main material: 'dispose' event
+    // dispatched with the flag set (so MaterialManager treats it as a
+    // cache flush, not a real teardown), flag cleared afterward.
+    expect(listener).toHaveBeenCalledTimes(1);
+    expect(flagDuringDispatch).toBe(true);
+    expect(
+      (pickMaterial as unknown as Record<symbol, boolean | undefined>)[SOFT_DISPOSE_FLAG]
+    ).toBeUndefined();
+  });
+
+  it('soft-disposes every entry when the pick mesh uses a material array', () => {
+    const p1 = new THREE.MeshBasicMaterial();
+    const p2 = new THREE.MeshBasicMaterial();
+    const mesh = new THREE.Mesh(new THREE.BufferGeometry(), new THREE.MeshBasicMaterial());
+    const pick = new THREE.Mesh(new THREE.BufferGeometry());
+    pick.material = [p1, p2];
+    mesh.userData.pickNode = pick;
+
+    const l1 = vi.fn();
+    const l2 = vi.fn();
+    p1.addEventListener('dispose', l1);
+    p2.addEventListener('dispose', l2);
+
+    invalidateRenderObjectFor(mesh);
+
+    expect(l1).toHaveBeenCalledTimes(1);
+    expect(l2).toHaveBeenCalledTimes(1);
+  });
+
+  it('still soft-disposes the MAIN material when a pick node is present', () => {
+    // Regression guard: extending the helper to the pick material must
+    // not short-circuit the original main-material eviction.
+    const mainMaterial = new THREE.MeshBasicMaterial();
+    const mesh = new THREE.Mesh(new THREE.BufferGeometry(), mainMaterial);
+    mesh.userData.pickNode = new THREE.Mesh(
+      new THREE.BufferGeometry(),
+      new THREE.MeshBasicMaterial()
+    );
+
+    const listener = vi.fn();
+    mainMaterial.addEventListener('dispose', listener);
+
+    invalidateRenderObjectFor(mesh);
+
+    expect(listener).toHaveBeenCalledTimes(1);
+  });
 });
 
 describe('SOFT_DISPOSE_FLAG <-> MaterialManager contract', () => {

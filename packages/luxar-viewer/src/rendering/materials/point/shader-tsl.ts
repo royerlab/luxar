@@ -345,7 +345,8 @@ export function pointWebGPUFactory(
 
   const colorNode = Fn(() => {
     // Zero-radius nD-slicing discard.
-    Discard(vRadius.lessThan(0.0001));
+    // Exact-zero only — see the GLSL twin's comment.
+    Discard(vRadius.lessThanEqual(0.0));
 
     const centered: TSLNode = vec2(vSpriteCoord.sub(0.5));
     const r2: TSLNode = dot(centered, centered);

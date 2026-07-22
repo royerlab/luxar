@@ -312,8 +312,10 @@ describe('PointMaterial', () => {
     it('should discard zero-radius points in fragment shader', () => {
       const material = new PointMaterial();
 
-      // Check for zero-radius discard
-      expect(material.fragmentShader).toContain('if (vRadius < 0.0001)');
+      // Exact-zero discard only: an absolute epsilon discarded valid
+      // sub-1e-4-unit radii (tiny-unit scenes rendered black).
+      expect(material.fragmentShader).toContain('if (vRadius <= 0.0)');
+      expect(material.fragmentShader).not.toContain('vRadius < 0.0001');
       expect(material.fragmentShader).toContain('discard');
 
       // Check that vRadius is passed from vertex shader (highp for precision)

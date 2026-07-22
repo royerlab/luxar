@@ -216,6 +216,38 @@ describe('commitGSplatsGeometry', () => {
     expect((mesh.userData as { committedData?: unknown }).committedData).toBe(first.sourceData);
   });
 
+  it('clears gpuPrefixIntact when the pool update throws (append-safety defense-in-depth)', () => {
+    // Prime a SUCCESSFUL commit (stamps the flag true), then make a
+    // bigger commit throw: the write left the buffer content unproven,
+    // so the catch must clear the append-safety flag — the next commit
+    // full-rewrites even if a future loader/cache change re-stamps
+    // prefix lineage. Pins the commit's `catch { gpuPrefixIntact =
+    // false; throw }` block (the lineage consume-and-clear masks it
+    // behaviorally today, so nothing else fails when it's removed).
+    const root = new THREE.Group();
+    const mesh = makeMesh('/g');
+    root.add(mesh);
+
+    const geometry = new THREE.BufferGeometry();
+    const pool = {
+      acquireGSplatsGeometry: vi.fn(() => geometry),
+      updateGSplatsGeometry: vi.fn(),
+      releaseGSplatsGeometry: vi.fn(),
+      didLastAcquireRebuildAttributes: vi.fn(() => false),
+    };
+    commitGSplatsGeometry(makeStaged(2), root, pool as never, undefined, 1);
+    expect((mesh.userData as { gpuPrefixIntact?: boolean }).gpuPrefixIntact).toBe(true);
+
+    pool.updateGSplatsGeometry.mockImplementation(() => {
+      throw new Error('upload failed');
+    });
+    expect(() => commitGSplatsGeometry(makeStaged(5), root, pool as never, undefined, 2)).toThrow(
+      'upload failed'
+    );
+
+    expect((mesh.userData as { gpuPrefixIntact?: boolean }).gpuPrefixIntact).toBe(false);
+  });
+
   it('disposes a replaced non-pool creation geometry at the pool handoff (placeholder leak)', () => {
     // The creation-time placeholder geometry carries a minimum-row splat
     // texture; nobody else owns it once the pool hands the node its first

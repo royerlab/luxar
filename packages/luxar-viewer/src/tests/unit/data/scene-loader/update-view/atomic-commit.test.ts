@@ -4,13 +4,15 @@
  * The atomic-commit stage's three load-bearing invariants:
  *   1. Every opened profiler session is end()ed EXACTLY ONCE on the
  *      happy path (via the per-iteration `finally`) and AT LEAST ONCE
- *      on the synchronous-throw path (via the outer `finally` sweep) —
+ *      on every path (per-node catches isolate commit faults; the
+ *      outer `finally` sweep covers beginFrame throws) —
  *      idempotent end() lets these overlap safely. This is the "belt-
  *      and-braces" guard the inline comment names.
  *   2. `markPickingDirty()` runs ONLY if at least one of the three
  *      staged arrays is non-empty — the pick-cache invalidation is
- *      otherwise a no-op cost (and on a synchronous-throw path it
- *      must NOT run because the outer error propagates).
+ *      otherwise a no-op cost. It ALSO runs on a partially-failing
+ *      pass (successful sibling commits changed geometry) before the
+ *      AggregateError re-surfaces.
  *   3. `gpuBufferPool.beginFrame()` runs once per cycle (not per
  *      acquire) so eviction timing reflects actual rendered frames.
  *      Skipped when the pool is null.
@@ -193,45 +195,51 @@ describe('runAtomicCommit — null staged entries', () => {
 });
 
 describe('runAtomicCommit — synchronous throw mid-commit', () => {
-  it('belt-and-braces session sweep: every session ends despite throw in points loop', () => {
+  it('fault isolation: a throwing points commit does NOT starve lines/gsplats siblings; errors surface as ONE AggregateError', () => {
     const points = makePointsStaged(3);
     const lines = makeLinesStaged(2);
     const gsplats = makeGSplatsStaged(1);
     const ctx = makeCtx();
-    // Commits 0 and 1 succeed; commit 2 throws — but it's the third points
-    // commit, so the entire lines + gsplats loops are skipped by the inner
-    // try/finally rethrow.
+    // Commit /p2 throws — the remaining points and the ENTIRE lines +
+    // gsplats loops must still run (their staged data is valid; skipping
+    // them would leave the whole frame stale), and the error re-surfaces
+    // as an AggregateError AFTER the pass completes.
     ctx.spies.updatePointsGeometry.mockImplementation((path: string) => {
       if (path === '/p2') throw new Error('GPU upload failed');
     });
 
-    expect(() => runAtomicCommit(points, lines, gsplats, ctx)).toThrow('GPU upload failed');
+    let thrown: unknown;
+    try {
+      runAtomicCommit(points, lines, gsplats, ctx);
+    } catch (err) {
+      thrown = err;
+    }
+    expect(thrown).toBeInstanceOf(AggregateError);
+    expect((thrown as AggregateError).errors).toHaveLength(1);
+    expect(((thrown as AggregateError).errors[0] as Error).message).toBe('GPU upload failed');
 
-    // Points 0..2 sessions: per-iteration finally ran AND outer finally ran → 2 ends each.
-    for (const p of points) {
-      expect((p.session.end as ReturnType<typeof vi.fn>).mock.calls.length).toBe(2);
-    }
-    // Lines + gsplats: per-iteration finally did NOT run (loops were skipped),
-    // so only the outer finally fires → 1 end each.
-    for (const l of lines) {
-      expect((l.session.end as ReturnType<typeof vi.fn>).mock.calls.length).toBe(1);
-    }
-    for (const g of gsplats) {
-      expect((g.session.end as ReturnType<typeof vi.fn>).mock.calls.length).toBe(1);
+    // Siblings committed despite the failure.
+    expect(ctx.spies.updatePointsGeometry).toHaveBeenCalledTimes(3);
+    expect(ctx.spies.commitLinesGeometry).toHaveBeenCalledTimes(2);
+    expect(ctx.spies.commitGSplatsGeometry).toHaveBeenCalledTimes(1);
+
+    // Every session ends: per-iteration finally AND the outer sweep → 2 each.
+    for (const s of [...points, ...lines, ...gsplats]) {
+      expect((s.session.end as ReturnType<typeof vi.fn>).mock.calls.length).toBe(2);
     }
   });
 
-  it('throws BEFORE markPickingDirty (pick invalidation comes after the try/finally)', () => {
-    const points = makePointsStaged(1);
+  it('markPickingDirty STILL runs on a partially-failing pass (successful siblings changed geometry)', () => {
+    const points = makePointsStaged(2);
     const ctx = makeCtx();
-    ctx.spies.updatePointsGeometry.mockImplementation(() => {
-      throw new Error('boom');
+    ctx.spies.updatePointsGeometry.mockImplementation((path: string) => {
+      if (path === '/p0') throw new Error('boom');
     });
 
-    expect(() => runAtomicCommit(points, [], [], ctx)).toThrow('boom');
-    // markPickingDirty is guarded by `if (any staged)` AFTER the try/finally,
-    // so a throw in the inner block propagates and skips it.
-    expect(ctx.spies.markPickingDirty).not.toHaveBeenCalled();
+    expect(() => runAtomicCommit(points, [], [], ctx)).toThrow(AggregateError);
+    // /p1 committed, so the cached pick buffer is stale — the invalidation
+    // must run BEFORE the aggregate error re-surfaces.
+    expect(ctx.spies.markPickingDirty).toHaveBeenCalledTimes(1);
   });
 });
 

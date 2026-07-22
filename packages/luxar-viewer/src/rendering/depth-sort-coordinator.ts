@@ -86,7 +86,7 @@ export function setSortWorkerWasmPath(url: string): void {
 interface NodeSortState {
   /** The node's render mesh (the pick node shares its geometry). */
   mesh: THREE.Mesh;
-  /** Per-node monotonic non-noop commit counter (the generation contract). */
+  /** Lifetime-unique non-noop commit stamp (see nextGeneration). */
   generation: number;
   /** True while a sort RPC is outstanding for this node. */
   inFlight: boolean;
@@ -221,6 +221,19 @@ function liveBlendingMode(mesh: THREE.Mesh): BlendingMode | undefined {
  * commit's texture-write loops are the last main-thread readers, and the
  * memoized-concat noop identity keys on `sourceData`, never `processed.*`.
  */
+/**
+ * Module-scoped monotonic generation source. Generations must be unique
+ * across a node's LIFETIMES, not just within one: `releaseDepthSortNode`
+ * (LOD demotion) deletes the node state, and a re-promotion recommit
+ * would otherwise restart the counter — letting a stale in-flight sort
+ * from the previous life pass the `result.generation === current.generation`
+ * guard and apply a CORRUPT permutation over the new (differently-sized)
+ * commit (found by randomized interleaving fuzz; deterministic repro:
+ * demote → re-promote within one sort round-trip). The worker echoes the
+ * value opaquely, so uniqueness costs nothing.
+ */
+let nextGeneration = 0;
+
 export function noteGSplatsCommit(mesh: THREE.Mesh, centers3: Float32Array, count: number): void {
   const nodeId = mesh.uuid;
   let state = nodeStates.get(nodeId);
@@ -236,7 +249,7 @@ export function noteGSplatsCommit(mesh: THREE.Mesh, centers3: Float32Array, coun
     };
     nodeStates.set(nodeId, state);
   }
-  state.generation++;
+  state.generation = ++nextGeneration;
 
   const mode = liveBlendingMode(mesh);
   if (!depthSortEnabled || !mode || !needsDepthSort(mode) || count === 0) {
@@ -621,7 +634,7 @@ export function noteGSplatsBlendingModeSwitch(
       // Invalidate any in-flight sort's result; keep the counter
       // monotonic for the node's next order-dependent commit. The pose
       // clear is the same hygiene as the commit path's release branch.
-      state.generation++;
+      state.generation = ++nextGeneration;
       clearSortPose(state);
     }
     releaseWorkerNode(mesh.uuid);

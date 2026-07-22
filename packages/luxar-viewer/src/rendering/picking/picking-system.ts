@@ -10,8 +10,10 @@
  *    appear when the world is quiet and hide whenever anything is
  *    moving. Moving the cursor over a static scene costs nothing; a
  *    stationary cursor during animation gets no stale tooltip.
- * 3. If the buffer is dirty when the pick fires, ALL registered pick
- *    nodes are rendered to a cached RGBA32F target at half-res.
+ * 3. If the buffer is dirty when the pick fires, all EFFECTIVELY
+ *    VISIBLE registered pick nodes (own flag AND ancestors — hidden/
+ *    demoted LOD levels are skipped) are rendered to a cached RGBA32F
+ *    target at half-res.
  * 4. Ray-AABB culling (using a per-node cached world AABB) skips the
  *    readback when the cursor is over empty space.
  * 5. Readback of a 5×5 region followed by brightness-weighted
@@ -38,6 +40,7 @@ import { isNormalMode, isOpaqueMode } from '../blending-state';
 import type { BlendingMode } from '../material-manager';
 import {
   disposePickMaterial,
+  isEffectivelyVisible,
   unregisterAllPickMaterials,
   type PickNodeEntry,
 } from './picking-system/registration';
@@ -445,6 +448,10 @@ export class PickingSystem {
 
   /** Clean up all resources — render target, pick materials, scene. */
   dispose(): void {
+    // Stale-mark any in-flight async readback: a pick resolving AFTER
+    // dispose must not emit a result to the (now torn-down) session's
+    // handlers — same generation guard the mutation paths use.
+    this._pickSeq++;
     this.scheduler.dispose();
 
     // Dispose all pick materials (unregisters from materialManager automatically)
@@ -473,7 +480,7 @@ export class PickingSystem {
    * Perform a pick at the given screen coordinates.
    *
    * If the pick buffer is dirty (camera/geometry/resize changed), re-renders
-   * ALL registered nodes to the cached buffer first. Otherwise just reads
+   * all effectively visible registered nodes to the cached buffer first. Otherwise just reads
    * from the cached buffer — zero GPU cost on hover.
    */
   private async performPick(screenX: number, screenY: number): Promise<void> {
@@ -514,8 +521,11 @@ export class PickingSystem {
       this._dirty = true;
     }
 
-    // Re-render pick buffer if dirty (camera moved, geometry changed, resized)
-    if (this._dirty) {
+    // Re-render pick buffer if dirty (camera moved, geometry changed,
+    // resized) OR if the effectively-visible set changed without a dirty
+    // event (layers-panel / embedder visibility toggles — see
+    // _lastVisibleSig).
+    if (this._dirty || this.computeVisibleSig() !== this._lastVisibleSig) {
       this.renderPickBuffer();
       this._dirty = false;
     }
@@ -578,10 +588,31 @@ export class PickingSystem {
   }
 
   /**
-   * Render ALL registered pick nodes to the cached pick buffer.
+   * Render all EFFECTIVELY VISIBLE registered pick nodes to the cached
+   * pick buffer (hidden/demoted LOD levels are skipped — see the loop).
    * Called only when the buffer is dirty (camera/geometry/resize changed).
    * Renders at half resolution for performance — pick IDs don't need full res.
    */
+  /**
+   * Order-stable signature of the effectively-visible registered set at
+   * the last pick-buffer render. Visibility can flip WITHOUT any of the
+   * dirty-marking events firing (layers-panel toggles, embedder API) —
+   * the visibility gate would then serve a stale cached buffer (a
+   * re-shown layer would be unpickable until the next camera move or
+   * commit). `performPick` recomputes and compares before trusting the
+   * cache.
+   */
+  private _lastVisibleSig = -1;
+
+  /** See {@link _lastVisibleSig}. Map iteration order is insertion-stable. */
+  private computeVisibleSig(): number {
+    let sig = 0;
+    for (const [pickId, entry] of this.nodeMap) {
+      sig = (sig * 31 + (isEffectivelyVisible(entry.main) ? pickId + 1 : 0)) | 0;
+    }
+    return sig;
+  }
+
   private renderPickBuffer(): void {
     const renderer = this.renderer;
 
@@ -604,8 +635,20 @@ export class PickingSystem {
     const isOrtho = isOrthographicCamera(cam);
     const fov = isOrtho ? getOrthoFrustumHeight(cam) : getCameraFovRadians(cam);
 
-    // Sync and add ALL registered nodes to pick scene
+    this._lastVisibleSig = this.computeVisibleSig();
+
+    // Sync and add all EFFECTIVELY VISIBLE registered nodes to pick scene
     for (const entry of this.nodeMap.values()) {
+      // Skip nodes hidden on screen (own flag OR any ancestor — the LOD
+      // registry hides the LEVEL object, which can be a group). Picking
+      // targets what the user sees, so hidden levels must not reach the
+      // pick buffer: rendering one would yield phantom picks, and for a
+      // DEMOTED level (geometry released back to the buffer pool while
+      // hidden) the geometry sync below would resurrect disposed /
+      // adopted pool data under this entry's pickId (GPU re-upload with
+      // no owner). See `isEffectivelyVisible` in
+      // picking-system/registration.ts for the full rationale.
+      if (!isEffectivelyVisible(entry.main)) continue;
       // Sync geometry (main node's geometry may have been replaced by view updates)
       const mainGeom = (entry.main as THREE.Mesh).geometry;
       if (mainGeom) {

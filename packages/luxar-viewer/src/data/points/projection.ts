@@ -287,6 +287,10 @@ export function projectPointsTo3D(
   // Calculate effective radii if configuration exists and radii are provided
   let finalRadii: Float32Array | Uint8Array | undefined;
   let usedEffectiveRadius = false;
+  // Scale anchor for the boundary-dust filter below, captured in the SAME
+  // units as the computed effective radii (the local config's maxRadius is
+  // dtype-normalized alongside finalRadii).
+  let radiusThresholdAnchor = 1.0;
 
   if (radii) {
     // Use target buffer or allocate (zero-allocation when targetBuffers provided)
@@ -378,6 +382,7 @@ export function projectPointsTo3D(
           finalRadii = effectiveRadii;
         }
         usedEffectiveRadius = true;
+        radiusThresholdAnchor = effectiveRadiusConfig.maxRadius;
       }
     }
   }
@@ -386,7 +391,13 @@ export function projectPointsTo3D(
   // This significantly improves performance for nD slicing
   // IMPORTANT: Only filter when we actually calculated effective radii
   if (usedEffectiveRadius && finalRadii) {
-    const threshold = 0.0001; // Small threshold for floating point precision
+    // SCALE-FREE boundary-dust threshold: relative to the dataset's own
+    // max radius, never an absolute world-unit constant — an absolute
+    // 1e-4 discarded EVERY point of scenes authored in units where radii
+    // are sub-1e-4 (e.g. meter-unit data with micron-scale points; found
+    // by a real-GPU unit-extremes probe). 1e-6 of maxRadius keeps
+    // everything except the true slice-boundary sliver.
+    const threshold = radiusThresholdAnchor * 1e-6;
     const validIndices: number[] = [];
 
     // Find indices of points with non-zero radius

@@ -100,16 +100,35 @@ export class GSplatsBufferAdapter {
         host.stats.reuses++;
         host.typeStats.gsplats.reuses++;
         return active.geometry as THREE.InstancedBufferGeometry;
-      } else {
-        // Grow = RELEASE + REACQUIRE — an in-place rebuild strands the
-        // old GL/GPU buffer in the renderer caches (hard leak under the
-        // WebGPU renderer via the strong Info.memoryMap). See the
-        // points adapter for the full rationale. Fall-through best-fit/
-        // fresh-alloc sets _lastAcquireRebuilt + allocation counters.
-        host.stats.capacityGrowths++;
+      }
+      // Grow = RELEASE + REACQUIRE — an in-place rebuild strands the
+      // old GL/GPU buffer in the renderer caches (hard leak under the
+      // WebGPU renderer via the strong Info.memoryMap). See the
+      // points adapter for the full rationale. Fall-through best-fit/
+      // fresh-alloc sets _lastAcquireRebuilt + allocation counters.
+      host.stats.capacityGrowths++;
+      // OOM RE-CLAIM WINDOW — see the points adapter's twin comment.
+      // The released buffer can never be picked by the best-fit scan
+      // for this call (capacity < splatCount).
+      const released = active;
+      try {
         this.releaseGeometry(nodeId);
+        return this.adoptOrAllocate(nodeId, splatCount);
+      } catch (error) {
+        this.reclaimAfterFailedGrow(nodeId, released);
+        throw error;
       }
     }
+
+    return this.adoptOrAllocate(nodeId, splatCount);
+  }
+
+  /**
+   * Best-fit adoption from the free buckets, else a fresh allocation —
+   * see the points adapter's twin comment.
+   */
+  private adoptOrAllocate(nodeId: string, splatCount: number): THREE.InstancedBufferGeometry {
+    const host = this.host;
 
     // BEST-fit, not first-fit: scan every pooled candidate and claim the
     // smallest adequate one. Map iteration order is bucket-insertion
@@ -164,6 +183,45 @@ export class GSplatsBufferAdapter {
     host.evictUnused(true);
     host.typeStats.gsplats.allocations++;
     return geometry;
+  }
+
+  /**
+   * Undo a failed grow — see the points adapter's twin comment for the
+   * full sub-case breakdown (replacement-entry disposal + free-bucket
+   * re-claim; a buffer the release-time sweep disposed stays gone).
+   */
+  private reclaimAfterFailedGrow(nodeId: string, released: PooledBuffer): void {
+    const host = this.host;
+
+    // Reinstate FIRST, dispose the replacement LAST — see the points
+    // adapter's twin comment.
+    const current = host.activeBuffers.get(nodeId);
+    if (current && current !== released) {
+      host.activeBuffers.delete(nodeId);
+    }
+
+    for (const pooled of this.gsplatBuffers.values()) {
+      const index = pooled.indexOf(released);
+      if (index !== -1) {
+        pooled.splice(index, 1);
+        released.inUse = true;
+        released.lastUsedFrame = host.frameCount;
+        host.activeBuffers.set(nodeId, released);
+        this.disposeReplacementAfterReclaim(current);
+        return;
+      }
+    }
+    this.disposeReplacementAfterReclaim(current);
+  }
+
+  /** See the points adapter's twin comment. */
+  private disposeReplacementAfterReclaim(current: PooledBuffer | undefined): void {
+    if (!current) return;
+    try {
+      current.geometry.dispose();
+    } catch {
+      // Swallow: the original acquire error is already propagating.
+    }
   }
 
   releaseGeometry(nodeId: string): void {

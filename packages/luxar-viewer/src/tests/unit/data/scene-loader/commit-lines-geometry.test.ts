@@ -188,6 +188,49 @@ describe('commitLinesGeometry', () => {
     expect((mesh.userData as { committedData?: unknown }).committedData).toBeUndefined();
   });
 
+  it('clears gpuPrefixIntact when the pool update throws (append-safety defense-in-depth)', () => {
+    // Prime a SUCCESSFUL commit (stamps the flag true), then make a
+    // bigger commit throw: the write left the buffer content unproven,
+    // so the catch must clear the append-safety flag — the next commit
+    // full-rewrites even if a future loader/cache change re-stamps
+    // prefix lineage. Pins the commit's `catch { gpuPrefixIntact =
+    // false; throw }` block (the lineage consume-and-clear masks it
+    // behaviorally today, so nothing else fails when it's removed).
+    // Twin of the points/gsplats tests of the same name.
+    const root = new THREE.Group();
+    const mesh = makeMesh('/lines');
+    root.add(mesh);
+
+    const geometry = new THREE.BufferGeometry();
+    const pool = {
+      acquireLinesGeometry: vi.fn(() => geometry),
+      updateLinesGeometry: vi.fn(),
+      releaseLinesGeometry: vi.fn(),
+      didLastAcquireRebuildAttributes: vi.fn(() => false),
+    };
+    const first: StagedLinesCommit = {
+      path: '/lines',
+      sourceData: makeSourceData(2),
+      processed: makeProcessed(2),
+    };
+    commitLinesGeometry(first, root, pool as never, undefined, 1);
+    expect((mesh.userData as { gpuPrefixIntact?: boolean }).gpuPrefixIntact).toBe(true);
+
+    pool.updateLinesGeometry.mockImplementation(() => {
+      throw new Error('upload failed');
+    });
+    const second: StagedLinesCommit = {
+      path: '/lines',
+      sourceData: makeSourceData(5),
+      processed: makeProcessed(5),
+    };
+    expect(() => commitLinesGeometry(second, root, pool as never, undefined, 2)).toThrow(
+      'upload failed'
+    );
+
+    expect((mesh.userData as { gpuPrefixIntact?: boolean }).gpuPrefixIntact).toBe(false);
+  });
+
   it('[C6] pool path: replaces mesh.geometry and calls acquire/update exactly once', () => {
     const root = new THREE.Group();
     const mesh = makeMesh('/lines');

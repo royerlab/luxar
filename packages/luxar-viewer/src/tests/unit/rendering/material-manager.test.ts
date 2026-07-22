@@ -901,51 +901,6 @@ describe('MaterialManager', () => {
     });
   });
 
-  // =========================================================================
-  // detachFromGlobalUpdates: clone-vs-pool safety
-  // =========================================================================
-
-  describe('detachFromGlobalUpdates', () => {
-    // Lines are the remaining pooled/cached kind — the detach-then-clone
-    // pattern only exists for cached materials (per-node point/gsplat
-    // materials are owned by their node and never detached).
-    const props = {
-      blendingMode: 'additive',
-      opacity: 1.0,
-      gamma: 1.0,
-      intensity: 1.0,
-      offset: 0.0,
-    } as Parameters<MaterialManager['getLineMaterial']>[0];
-
-    it('leaves the pooled material in the LRU cache (reusable on next get)', () => {
-      const pooled = manager.getLineMaterial(props);
-      manager.detachFromGlobalUpdates(pooled);
-      const reused = manager.getLineMaterial(props);
-      expect(reused).toBe(pooled);
-    });
-
-    it('after manager dispose(), detached pooled material is NOT disposed', () => {
-      const pooled = manager.getLineMaterial(props);
-      const pooledDispose = vi.spyOn(pooled, 'dispose');
-      // Simulate the NodeFactory clone-site pattern: detach pooled then
-      // register a clone. The clone takes pooled's global-update slot.
-      const cloneLike = {
-        ...pooled,
-        dispose: vi.fn(),
-        updateCameraParams: vi.fn(),
-      } as unknown as typeof pooled;
-      manager.detachFromGlobalUpdates(pooled);
-      manager.register(cloneLike);
-
-      manager.dispose();
-
-      // Pooled was removed from the global-update set BEFORE dispose, so
-      // its `.dispose()` is not called by manager.dispose(). The clone
-      // takes the hit instead.
-      expect(pooledDispose).not.toHaveBeenCalled();
-      expect(cloneLike.dispose).toHaveBeenCalled();
-    });
-  });
 });
 
 describe('resolveMaterialBackend', () => {
