@@ -82,7 +82,7 @@
     {
       "id": "asteroids_solar_system",
       "title": "Solar System — 1.5M Asteroids",
-      "geometry": "points",
+      "geometry": "points+lines",
       "category": "astronomy",
       "script": "demo_asteroids_solar_system.py",
       "dataset": "datasets/demos/asteroids_solar_system.luxar.zarr"
@@ -202,7 +202,7 @@
     {
       "id": "cosmicflows_laniakea",
       "title": "Cosmicflows — Laniakea Supercluster",
-      "geometry": "points",
+      "geometry": "points+lines",
       "category": "astronomy",
       "script": "demo_cosmicflows_laniakea.py",
       "dataset": "datasets/demos/cosmicflows_laniakea_full.luxar.zarr"
@@ -210,7 +210,7 @@
     {
       "id": "flywire_connectome",
       "title": "FlyWire Connectome",
-      "geometry": "points",
+      "geometry": "points+lines",
       "category": "connectome",
       "script": "demo_flywire_connectome.py",
       "dataset": "datasets/demos/flywire_connectome.luxar.zarr",
@@ -243,7 +243,7 @@
     {
       "id": "earthquakes",
       "title": "Global Earthquakes (3D)",
-      "geometry": "points",
+      "geometry": "points+lines",
       "category": "geoscience",
       "script": "demo_earthquakes_3d.py",
       "dataset": "datasets/demos/earthquakes.luxar.zarr",
@@ -280,7 +280,7 @@
       "id": "spiral_galaxy_5d",
       "title": "Spiral Galaxy 5D",
       "geometry": "points",
-      "category": "astronomy",
+      "category": "synthetic",
       "script": "demo_5d_spiral_galaxy.py",
       "dataset": "datasets/demos/spiral_galaxy_5d.luxar.zarr"
     },
@@ -296,7 +296,7 @@
       "id": "atp_synthase",
       "title": "Atp Synthase",
       "geometry": "points",
-      "category": "synthetic",
+      "category": "structural",
       "script": "demo_atp_synthase.py",
       "dataset": "datasets/demos/atp_synthase.luxar.zarr",
       "distance": 27,
@@ -313,7 +313,7 @@
     {
       "id": "caida_as_topology",
       "title": "Caida As Topology",
-      "geometry": "lines",
+      "geometry": "points+lines",
       "category": "networks",
       "script": "demo_caida_as_topology.py",
       "dataset": "datasets/demos/caida_as_topology.luxar.zarr"
@@ -403,7 +403,7 @@
     {
       "id": "hilbert_curve_3d",
       "title": "Hilbert Curve 3D",
-      "geometry": "points",
+      "geometry": "lines",
       "category": "synthetic",
       "script": "demo_hilbert_curve_3d.py",
       "dataset": "datasets/demos/hilbert_curve_3d.luxar.zarr",
@@ -428,7 +428,7 @@
     {
       "id": "huri_interactome",
       "title": "Huri Interactome",
-      "geometry": "lines",
+      "geometry": "points+lines",
       "category": "networks",
       "script": "demo_huri_interactome.py",
       "dataset": "datasets/demos/huri_interactome.luxar.zarr"
@@ -436,7 +436,7 @@
     {
       "id": "forest",
       "title": "Forest",
-      "geometry": "points",
+      "geometry": "points+lines",
       "category": "synthetic",
       "script": "demo_lsystem_forest.py",
       "dataset": "datasets/demos/forest.luxar.zarr"
@@ -489,8 +489,8 @@
     {
       "id": "storm_3d_microtubules",
       "title": "Storm 3D Microtubules",
-      "geometry": "points",
-      "category": "synthetic",
+      "geometry": "gsplats",
+      "category": "microscopy",
       "script": "demo_storm_3d_microtubules.py",
       "dataset": "datasets/demos/storm_3d_microtubules.luxar.zarr"
     },

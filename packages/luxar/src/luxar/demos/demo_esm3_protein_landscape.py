@@ -27,6 +27,22 @@ Dependencies:
     pip install luxar[demos] esm
 """
 
+DEMO_META = {
+    "key": "esm3_protein_landscape",
+    "title": "ESM3 Protein Landscape",
+    "description": "~572K Swiss-Prot protein embeddings from ESM-3 as a 3D UMAP, colored by taxonomic kingdom.",
+    "category": "embeddings",
+    "geometry": "points",
+    "requirements": {
+        "download_mb": 90,  # approx (Swiss-Prot FASTA)
+        "compute": "heavy",
+        "gpu": "optional",
+        "local_data": None,
+    },
+    "caches": ["esm3_swissprot"],
+    "outputs": ["esm3_protein_landscape"],
+}
+
 import gzip
 import re
 import sys
@@ -658,8 +674,7 @@ def generate_esm3_landscape(
             for i in range(n)
         ]
         domain_labels = [
-            f"{protein_names[i]} — {organism_names[i]} ({domains[i]})"
-            for i in range(n)
+            f"{protein_names[i]} — {organism_names[i]} ({domains[i]})" for i in range(n)
         ]
         stacked = stack_colorings(
             positions,
@@ -752,7 +767,10 @@ def generate_esm3_landscape(
             scene.add_html(
                 _legend_html(
                     "Taxon",
-                    [(k, TAXON_COLORS.get(k, TAXON_COLORS["Other"])) for k in taxa_present],
+                    [
+                        (k, TAXON_COLORS.get(k, TAXON_COLORS["Other"]))
+                        for k in taxa_present
+                    ],
                 ),
                 position=(0.02, 0.97),
                 anchor="bottom-left",

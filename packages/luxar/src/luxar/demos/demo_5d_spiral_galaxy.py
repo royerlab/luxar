@@ -28,6 +28,22 @@ Controls:
     - Browser opens automatically
 """
 
+DEMO_META = {
+    "key": "spiral_galaxy_5d",
+    "title": "Spiral Galaxy 5D",
+    "description": "Procedurally generated 5D spiral galaxy: logarithmic arms evolving over time and channels.",
+    "category": "synthetic",
+    "geometry": "points",
+    "requirements": {
+        "download_mb": 0,
+        "compute": "medium",
+        "gpu": "none",
+        "local_data": None,
+    },
+    "caches": [],
+    "outputs": ["spiral_galaxy_5d"],
+}
+
 import sys
 import tempfile
 from pathlib import Path

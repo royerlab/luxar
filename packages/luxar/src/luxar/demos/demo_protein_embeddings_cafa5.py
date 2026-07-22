@@ -82,6 +82,22 @@ Controls:
     - Ctrl+C to stop
 """
 
+DEMO_META = {
+    "key": "protein_landscape",
+    "title": "Protein Landscape",
+    "description": "142k CAFA5 proteins as a 3D UMAP of ProtT5 embeddings — functionally similar proteins cluster.",
+    "category": "embeddings",
+    "geometry": "points",
+    "requirements": {
+        "download_mb": 540,
+        "compute": "heavy",
+        "gpu": "none",
+        "local_data": "kaggle-auth",
+    },
+    "caches": ["protein_embeddings"],
+    "outputs": ["protein_landscape"],
+}
+
 import sys
 import tempfile
 from pathlib import Path
@@ -569,13 +585,23 @@ def generate_protein_landscape(
         ).astype(np.float32)
 
         function_labels = [str(functions[i]) for i in range(n_proteins)]
-        cluster_view_labels = [f"Cluster {int(cluster_ids[i])}" for i in range(n_proteins)]
+        cluster_view_labels = [
+            f"Cluster {int(cluster_ids[i])}" for i in range(n_proteins)
+        ]
 
         stacked = stack_colorings(
             positions,
             [
-                {"label": "Function", "colors": function_colors, "labels": function_labels},
-                {"label": "Cluster", "colors": cluster_colors, "labels": cluster_view_labels},
+                {
+                    "label": "Function",
+                    "colors": function_colors,
+                    "labels": function_labels,
+                },
+                {
+                    "label": "Cluster",
+                    "colors": cluster_colors,
+                    "labels": cluster_view_labels,
+                },
             ],
         )
         radii = np.tile(radii_pp, len(stacked.categories)).astype(np.float32)
@@ -645,9 +671,7 @@ def generate_protein_landscape(
             )
             for cat in legend_cats:
                 color = _rgb_to_hex(FUNCTION_COLORS.get(cat, FUNCTION_COLORS["other"]))
-                legend_html += (
-                    f'<div><span style="color:{color}">\u2588</span> {_pretty(cat)}</div>'
-                )
+                legend_html += f'<div><span style="color:{color}">\u2588</span> {_pretty(cat)}</div>'
             legend_html += "</div>"
 
             scene.add_html(

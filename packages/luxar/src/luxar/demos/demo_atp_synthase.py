@@ -111,6 +111,22 @@ Controls:
     - Ctrl+C to stop and cleanup
 """
 
+DEMO_META = {
+    "key": "atp_synthase",
+    "title": "ATP Synthase",
+    "description": "Real ATP synthase structure (PDB 5DN6) as colored atoms — nature's rotary molecular motor.",
+    "category": "structural",
+    "geometry": "points",
+    "requirements": {
+        "download_mb": 5,  # approx
+        "compute": "light",
+        "gpu": "none",
+        "local_data": None,
+    },
+    "caches": ["atp_synthase"],
+    "outputs": ["atp_synthase"],
+}
+
 import shutil
 import sys
 import tempfile

@@ -65,6 +65,22 @@ Controls:
 
 from __future__ import annotations
 
+DEMO_META = {
+    "key": "asteroids_solar_system",
+    "title": "Solar System — 1.5M Asteroids",
+    "description": "~1.5M real minor planets from NASA/JPL SBDB, placed by propagating their Keplerian orbits.",
+    "category": "astronomy",
+    "geometry": "points+lines",
+    "requirements": {
+        "download_mb": 300,  # approx
+        "compute": "heavy",
+        "gpu": "none",
+        "local_data": None,
+    },
+    "caches": ["asteroids"],
+    "outputs": ["asteroids_solar_system"],
+}
+
 import json
 import sys
 import tempfile

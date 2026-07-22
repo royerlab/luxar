@@ -45,6 +45,22 @@ Controls:
     - Mouse drag: rotate,  Scroll: zoom,  Right-drag: pan
 """
 
+DEMO_META = {
+    "key": "gsplats_interop_inria_garden",
+    "title": 'full-quality INRIA "garden" PLY (range-extracted) → Luxar',
+    "description": "Full-quality INRIA 'garden' 3DGS checkpoint (range-extracted PLY) imported into Luxar.",
+    "category": "photogrammetry",
+    "geometry": "gsplats",
+    "requirements": {
+        "download_mb": 1450,
+        "compute": "heavy",
+        "gpu": "none",
+        "local_data": None,
+    },
+    "caches": [],
+    "outputs": ["gsplats_interop_inria_garden"],
+}
+
 from pathlib import Path
 
 from arbol import Arbol, aprint, asection

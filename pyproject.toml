@@ -586,6 +586,9 @@ ignore = [
 # Per-file ignores
 [tool.ruff.lint.per-file-ignores]
 "__init__.py" = ["F401"]  # imported but unused
+# Each demo declares a DEMO_META literal right after its docstring (read via
+# AST by luxar.demos.registry, never imported), so imports follow it.
+"**/demos/demo_*.py" = ["E402"]  # module-level import after DEMO_META block
 
 [tool.ruff.lint.isort]
 known-first-party = ["luxar"]

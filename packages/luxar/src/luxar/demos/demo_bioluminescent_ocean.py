@@ -66,6 +66,22 @@ Controls:
 
 from __future__ import annotations
 
+DEMO_META = {
+    "key": "ocean",
+    "title": "Ocean",
+    "description": "An animated underwater scene of bioluminescent jellyfish, plankton, and deep-sea glow.",
+    "category": "synthetic",
+    "geometry": "points",
+    "requirements": {
+        "download_mb": 0,
+        "compute": "light",
+        "gpu": "none",
+        "local_data": None,
+    },
+    "caches": [],
+    "outputs": ["ocean"],
+}
+
 import sys
 import tempfile
 from dataclasses import dataclass

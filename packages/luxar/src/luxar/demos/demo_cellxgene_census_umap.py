@@ -37,6 +37,22 @@ MAX_CELLS`` / ``CENSUS_UMAP_DEVICE`` to build larger.
 
 from __future__ import annotations
 
+DEMO_META = {
+    "key": "cellxgene_census_umap",
+    "title": "CELLxGENE Census UMAP",
+    "description": "3D scVI UMAP of ~1M human cells from the CZ CELLxGENE Census (Points LOD stress test).",
+    "category": "embeddings",
+    "geometry": "points",
+    "requirements": {
+        "download_mb": 12,
+        "compute": "medium",
+        "gpu": "none",
+        "local_data": "git-lfs",
+    },
+    "caches": [],
+    "outputs": ["cellxgene_census_umap"],
+}
+
 import colorsys
 import json
 import os

@@ -77,6 +77,22 @@ https://api.semanticscholar.org/datasets/v1/release/
 Download pre-computed embeddings and metadata directly!
 """
 
+DEMO_META = {
+    "key": "arxiv_papers",
+    "title": "arXiv Papers",
+    "description": "arXiv papers in 3D embedding space (Sentence-BERT + UMAP), clustered by field.",
+    "category": "embeddings",
+    "geometry": "points",
+    "requirements": {
+        "download_mb": 20,  # approx
+        "compute": "heavy",
+        "gpu": "none",
+        "local_data": None,
+    },
+    "caches": ["arxiv_paper"],
+    "outputs": ["arxiv_papers"],
+}
+
 import sys
 import tempfile
 import time
@@ -451,7 +467,9 @@ def generate_paper_landscape(
         log_citations = np.log1p(citation_array)  # log(1 + x) to handle 0 citations
         years = np.array(
             [
-                int(papers_clean[i].get("year", 2015)) if i < len(papers_clean) else 2015
+                int(papers_clean[i].get("year", 2015))
+                if i < len(papers_clean)
+                else 2015
                 for i in range(n_papers)
             ],
             dtype=np.float32,
@@ -464,7 +482,10 @@ def generate_paper_landscape(
         # Three switchable coloring views: research field (categorical), plus
         # cool→warm sequential ramps over publication year and citation count.
         field_colors = np.array(
-            [FIELD_COLORS.get(primary_fields[i], FIELD_COLORS["Other"]) for i in range(n_papers)],
+            [
+                FIELD_COLORS.get(primary_fields[i], FIELD_COLORS["Other"])
+                for i in range(n_papers)
+            ],
             dtype=np.float32,
         )
         year_colors = hsv_to_rgb(0.66 * (1.0 - _norm(years)))  # old=blue → new=red
@@ -478,9 +499,9 @@ def generate_paper_landscape(
             aprint(f"  {field}: {count} papers")
 
         # Per-point radii by citation count (log scale); tiled across views below.
-        radii_pp = (0.02 + 0.08 * (log_citations / max(log_citations.max(), 1e-9))).astype(
-            np.float32
-        )
+        radii_pp = (
+            0.02 + 0.08 * (log_citations / max(log_citations.max(), 1e-9))
+        ).astype(np.float32)
 
         def _title(i: int) -> str:
             t = (
@@ -504,7 +525,11 @@ def generate_paper_landscape(
             [
                 {"label": "Field", "colors": field_colors, "labels": field_labels},
                 {"label": "Year", "colors": year_colors, "labels": year_labels},
-                {"label": "Citations", "colors": citation_colors, "labels": citation_labels},
+                {
+                    "label": "Citations",
+                    "colors": citation_colors,
+                    "labels": citation_labels,
+                },
             ],
         )
         radii = np.tile(radii_pp, len(stacked.categories)).astype(np.float32)

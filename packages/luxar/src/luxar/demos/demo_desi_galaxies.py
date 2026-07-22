@@ -57,6 +57,22 @@ Controls:
     - Mouse drag: rotate,  Scroll: zoom,  Right-drag: pan,  'C': fly controls
 """
 
+DEMO_META = {
+    "key": "desi_galaxies",
+    "title": "DESI DR1 — The Cosmic Web in 3D (~9.75M galaxies & quasars)",
+    "description": "~9.75M real DESI DR1 galaxies and quasars placed in 3D by redshift to comoving Mpc.",
+    "category": "astronomy",
+    "geometry": "points",
+    "requirements": {
+        "download_mb": 72,
+        "compute": "heavy",
+        "gpu": "none",
+        "local_data": "git-lfs",
+    },
+    "caches": ["desi_galaxies"],
+    "outputs": ["desi_galaxies"],
+}
+
 from pathlib import Path
 
 import numpy as np

@@ -38,6 +38,22 @@ Controls:
     - Mouse drag: rotate,  Scroll: zoom,  Right-drag: pan
 """
 
+DEMO_META = {
+    "key": "gsplats_interop_spz_scaniverse",
+    "title": "Scaniverse SPZ captures (Niantic) → Luxar",
+    "description": "Two Niantic Scaniverse SPZ phone captures (horned lizard + raccoon sculpture) imported into Luxar.",
+    "category": "photogrammetry",
+    "geometry": "gsplats",
+    "requirements": {
+        "download_mb": 42,
+        "compute": "medium",
+        "gpu": "none",
+        "local_data": None,
+    },
+    "caches": ["gsplats_interop_spz"],
+    "outputs": ["gsplats_interop_spz_hornedlizard", "gsplats_interop_spz_racoonfamily"],
+}
+
 from pathlib import Path
 
 from arbol import Arbol, aprint

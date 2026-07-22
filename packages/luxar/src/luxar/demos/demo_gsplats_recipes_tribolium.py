@@ -88,6 +88,22 @@ Output:
     - Automatically opens in browser
 """
 
+DEMO_META = {
+    "key": "gsplats_recipes_tribolium",
+    "title": "LOD **recipe gallery** on a real Tribolium embryo (Light-Sheet)",
+    "description": "Six LOD recipes side by side on a real Tribolium embryo light-sheet gsplat fit.",
+    "category": "microscopy",
+    "geometry": "gsplats",
+    "requirements": {
+        "download_mb": 3,
+        "compute": "medium",
+        "gpu": "optional",
+        "local_data": "git-lfs",
+    },
+    "caches": ["gsplats_tribolium"],
+    "outputs": ["gsplats_recipes_tribolium"],
+}
+
 import colorsys
 import sys
 import tempfile

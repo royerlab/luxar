@@ -62,6 +62,22 @@ Usage:
 
 from __future__ import annotations
 
+DEMO_META = {
+    "key": "hilbert_curve_3d",
+    "title": "Hilbert Curve 3D",
+    "description": "The 3D Hilbert space-filling curve as a single polyline, steppable through recursion orders.",
+    "category": "synthetic",
+    "geometry": "lines",
+    "requirements": {
+        "download_mb": 0,
+        "compute": "light",
+        "gpu": "none",
+        "local_data": None,
+    },
+    "caches": [],
+    "outputs": ["hilbert_curve_3d"],
+}
+
 import sys
 import tempfile
 from pathlib import Path

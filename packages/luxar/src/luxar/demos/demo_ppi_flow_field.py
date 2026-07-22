@@ -38,6 +38,22 @@ Notes:
 
 from __future__ import annotations
 
+DEMO_META = {
+    "key": "ppi_flow_field",
+    "title": "HuRI Protein-Protein Interaction Flow Field",
+    "description": "The HuRI human interactome as a PageRank-oriented 3D flow field with UMAP layout and streamlines.",
+    "category": "networks",
+    "geometry": "points+lines",
+    "requirements": {
+        "download_mb": 30,  # approx
+        "compute": "heavy",
+        "gpu": "none",
+        "local_data": None,
+    },
+    "caches": ["huri"],
+    "outputs": ["ppi_flow_field_full"],
+}
+
 import argparse
 import hashlib
 import sys

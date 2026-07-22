@@ -58,6 +58,22 @@ Controls:
 
 from __future__ import annotations
 
+DEMO_META = {
+    "key": "dipc_3d_genome",
+    "title": "Single-Cell 3D Genome (Dip-C)",
+    "description": "A single cell's folded 3D genome from Dip-C: chromosomes as haplotype-resolved lines.",
+    "category": "genomics",
+    "geometry": "lines",
+    "requirements": {
+        "download_mb": 4,
+        "compute": "light",
+        "gpu": "none",
+        "local_data": "git-lfs",
+    },
+    "caches": [],
+    "outputs": ["dipc_3d_genome"],
+}
+
 import tempfile
 from pathlib import Path
 

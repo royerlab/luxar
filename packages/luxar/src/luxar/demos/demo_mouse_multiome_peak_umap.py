@@ -26,6 +26,22 @@ Controls:
     - Ctrl+C to stop
 """
 
+DEMO_META = {
+    "key": "mouse_multiome_peak_umap",
+    "title": "Mouse Multiome Peak UMAP",
+    "description": "A 3D UMAP of ~192k mouse single-cell ATAC-seq peaks, colored by cell type and lineage.",
+    "category": "embeddings",
+    "geometry": "points",
+    "requirements": {
+        "download_mb": 0,
+        "compute": "light",
+        "gpu": "none",
+        "local_data": "manual-file",
+    },
+    "caches": [],
+    "outputs": ["mouse_multiome_peak_umap", "mouse_umap"],
+}
+
 import sys
 import tempfile
 from pathlib import Path

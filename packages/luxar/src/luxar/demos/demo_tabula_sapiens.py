@@ -21,6 +21,22 @@ Dependencies:
     pip install luxar[demos]   # includes pandas, umap-learn, scipy
 """
 
+DEMO_META = {
+    "key": "tabula_sapiens",
+    "title": "Tabula Sapiens (human cell atlas)",
+    "description": "Tabula Sapiens human cell atlas (~500k cells, 24 tissues) as a 3D UMAP colored by organ.",
+    "category": "embeddings",
+    "geometry": "points",
+    "requirements": {
+        "download_mb": 1500,  # approx
+        "compute": "heavy",
+        "gpu": "none",
+        "local_data": None,
+    },
+    "caches": ["tabula_sapiens"],
+    "outputs": ["tabula_sapiens"],
+}
+
 import sys
 import tempfile
 from pathlib import Path
@@ -714,9 +730,7 @@ def generate_tabula_sapiens(
             )
             for t in legend_tissues:
                 r, g, b = (int(round(v * 255)) for v in _tissue_color(t))
-                legend_html += (
-                    f'<div><span style="color:#{r:02x}{g:02x}{b:02x}">█</span> {t}</div>'
-                )
+                legend_html += f'<div><span style="color:#{r:02x}{g:02x}{b:02x}">█</span> {t}</div>'
             legend_html += "</div>"
             scene.add_html(legend_html, position=(0.02, 0.97), anchor="bottom-left")
 
