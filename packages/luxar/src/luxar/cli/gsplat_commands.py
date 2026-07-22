@@ -27,7 +27,7 @@ app_gsplat = typer.Typer(
         "Gaussian splat tools — fit nD images/volumes (.tiff/.npy/.npz/.zarr) to "
         "oriented Gaussians and view them.\n\n"
         "Getting started:\n"
-        "  luxar demo                                   # quick end-to-end demo\n"
+        "  luxar demo                                   # browse the demo gallery\n"
         "  luxar gsplat fit stack.tiff out.gsplats.zarr # fit a volume (auto settings)\n"
         "  luxar gsplat view out.gsplats.zarr           # open it in the web viewer\n\n"
         "Non-canonical axis order? pass --axes (e.g. 'z,c,y,x') to fit/cal. "

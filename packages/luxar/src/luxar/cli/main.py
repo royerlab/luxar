@@ -9,7 +9,6 @@ IMPORTANT: URL Construction
 
 from __future__ import annotations
 
-import tempfile
 import threading
 from pathlib import Path
 from typing import Optional, cast
@@ -109,6 +108,11 @@ def main_callback(
 from .gsplat_commands import app_gsplat  # noqa: E402
 
 app.add_typer(app_gsplat, name="gsplat")
+
+# Add demo subcommands (list / info / run / run-all / cache)
+from .demo_commands import app_demo  # noqa: E402
+
+app.add_typer(app_demo, name="demo")
 
 # Register the `info` inspection command (defined in info_command.py).
 register_info_command(app)
@@ -453,157 +457,6 @@ def viewer(
         raise typer.Exit(1)
 
 
-# ────────────────────────────── demo ─────────────────────────────────────────
-@app.command()
-def demo(
-    output: Optional[Path] = typer.Option(None, "--output", "-o", help="Output path"),
-    n_points: int = typer.Option(10000, "--points", "-n", help="Number of points"),
-    demo_type: str = typer.Option(
-        "lorenz",
-        "--type",
-        "-t",
-        help="Demo type (currently only 'lorenz' supported)",
-    ),
-    seed: Optional[int] = typer.Option(None, "--seed", "-s", help="Random seed"),
-    serve: bool = typer.Option(True, "--serve/--no-serve", help="Serve with viewer"),
-    open_browser: bool = typer.Option(True, "--open/--no-open", help="Open browser"),
-    port: int = typer.Option(8000, "--port", "-p", help="Data server port"),
-    viewer_port: int = typer.Option(5173, "--viewer-port", help="Viewer port"),
-    # Network simulation parameters (shared declarations: common_options.py)
-    profile: ProfileOption = None,
-    bandwidth: BandwidthOption = None,
-    latency: LatencyOption = None,
-    jitter: JitterOption = None,
-    packet_loss: PacketLossOption = None,
-    cors_origin: CorsOriginOption = _DEFAULT_CORS_ORIGIN,
-) -> None:
-    """Generate a demo dataset and optionally serve with viewer.
-
-    Network Simulation:
-        Test viewer performance under various network conditions using
-        --profile or individual simulation parameters.
-
-    Examples:
-        # Generate and serve (default behavior)
-        luxar demo
-
-        # Test with 3G network conditions
-        luxar demo --profile 3g
-
-        # Just generate without serving
-        luxar demo --no-serve --output my_demo.luxar.zarr
-
-        # Generate with specific parameters and simulate slow network
-        luxar demo --points 100000 --bandwidth 500kbps --latency 200ms
-    """
-    # Validate inputs early
-    if n_points <= 0:
-        aprint(f"❌ --points must be positive, got {n_points}")
-        raise typer.Exit(1)
-
-    if not serve and output is None:
-        aprint("❌ --output is required when using --no-serve")
-        raise typer.Exit(1)
-
-    _temp_dir_ctx = None
-    try:
-        with asection("Demo Configuration and Generation"):
-            # Determine output path
-            if output is None:
-                # serve=True and output=None: use a temp directory
-                _temp_dir_ctx = tempfile.TemporaryDirectory(prefix="luxar_demo_")
-                temp_dir = Path(_temp_dir_ctx.__enter__())
-                output = temp_dir / f"{demo_type}_demo.luxar.zarr"
-                aprint(f"📂 Using temporary directory: {temp_dir}")
-            else:
-                # Enforce the canonical scene extension so the served/reported
-                # path matches what the compiler actually writes.
-                from luxar.utils.paths import normalize_zarr_path
-
-                output = normalize_zarr_path(output, ".luxar.zarr")
-
-            # Generate demo
-            aprint(f"🎲 Generating {demo_type} demo with {n_points:,} points...")
-
-            if demo_type == "lorenz":
-                from luxar.utils.demos import create_lorenz_attractor
-
-                create_lorenz_attractor(output, n_points=n_points, seed=seed)
-            else:
-                aprint(f"❌ Unknown demo type: {demo_type}")
-                aprint("💡 Available types: lorenz")
-                raise typer.Exit(1)
-
-            aprint(f"✅ Generated {n_points:,} points → {output}")
-
-        if not serve:
-            return
-
-        # Parse network simulation parameters (if serving)
-        bandwidth_mbps, latency_ms, jitter_percent, packet_loss_rate = (
-            parse_network_options_or_exit(
-                profile, bandwidth, latency, jitter, packet_loss
-            )
-        )
-
-        if has_network_simulation(
-            bandwidth_mbps, latency_ms, jitter_percent, packet_loss_rate
-        ):
-            print_network_params(
-                bandwidth_mbps, latency_ms, jitter_percent, packet_loss_rate
-            )
-
-        with asection("Viewer Setup and Port Management"):
-            if not ensure_viewer_built():
-                raise typer.Exit(1)
-
-            # Find available ports
-            actual_port = pick_port(port, label="data")
-            actual_viewer_port = pick_port(viewer_port, label="viewer")
-
-            if actual_port is None or actual_viewer_port is None:
-                raise typer.Exit(1)
-
-        with asection("Server Startup"):
-            # Start data server in background
-            _start_data_server_thread(
-                output,
-                "127.0.0.1",
-                actual_port,
-                bandwidth_mbps,
-                latency_ms,
-                jitter_percent,
-                packet_loss_rate,
-                False,  # allow_sensitive_path
-                cors_origin,
-            )
-
-            # Construct data URL — the store is mounted at the server root,
-            # so no store-name suffix (and no trailing slash).
-            data_url = f"http://127.0.0.1:{actual_port}"
-
-            # Serve viewer (this blocks)
-            aprint("\n🎉 Demo ready! Starting viewer...")
-            _serve_viewer(
-                "127.0.0.1",
-                actual_viewer_port,
-                data_url,
-                open_browser,
-                cors_origin,
-            )
-
-    except typer.Exit:
-        raise
-    except KeyboardInterrupt:
-        aprint("\n🛑 Shutting down demo...")
-    except Exception as e:
-        aprint(f"❌ Error: {e}")
-        raise typer.Exit(1)
-    finally:
-        if _temp_dir_ctx is not None:
-            _temp_dir_ctx.__exit__(None, None, None)
-
-
 # ─────────────────────────────── export ──────────────────────────────────────
 @app.command()
 def export(
@@ -836,7 +689,6 @@ def profiles() -> None:
         aprint("")
 
     aprint("Usage: luxar serve data.luxar.zarr --profile <profile-name>")
-    aprint("       luxar demo --profile 3g")
     aprint("       luxar viewer --data data.luxar.zarr --profile satellite")
 
 

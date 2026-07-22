@@ -49,13 +49,17 @@ luxar info my_data.luxar.zarr --stats
 ## Available Commands
 
 ### `luxar demo`
-Quick demo generation with automatic viewer launch.
+Browse, run, and manage Luxar's bundled demos. Bare `luxar demo` prints the
+demo table; run one by key or index (extra args are forwarded to the demo).
 ```bash
-luxar demo                    # Generate demo and open in browser
-luxar demo --points 50000     # Custom point count (default is 10000)
-luxar demo --no-open          # Don't open browser
-luxar demo --no-serve --output demo.luxar.zarr  # Generate demo without serving
-luxar demo --no-serve --output demo.luxar.zarr --points 100000  # Custom point count, no serve
+luxar demo                        # List all demos (key, needs, status)
+luxar demo list --category astronomy   # Filter the table
+luxar demo info lorenz            # Full details for one demo
+luxar demo run lorenz             # Generate + open the viewer
+luxar demo run 3                  # Run by table index
+luxar demo run lorenz -- --no-serve --points=100000  # Forward args to the demo
+luxar demo cache list             # Inventory ~/.cache/luxar demo caches
+luxar demo cache clear lorenz --dry-run   # Preview a cache clear
 ```
 
 ### `luxar serve`

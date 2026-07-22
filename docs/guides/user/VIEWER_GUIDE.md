@@ -14,8 +14,9 @@ There are three common ways to open the viewer:
 # Serve a dataset and open the viewer in one step
 luxar serve scene.luxar.zarr --viewer
 
-# Run the built-in demo
+# Browse the bundled demos, then run one
 luxar demo
+luxar demo run lorenz
 
 # Export a self-contained offline viewer
 luxar export scene.luxar.zarr -o my_export/ --open

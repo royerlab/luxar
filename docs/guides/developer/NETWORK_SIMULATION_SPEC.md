@@ -1212,7 +1212,10 @@ luxar serve examples/lorenz_attractor.luxar.zarr --profile 3g --viewer --open
 
 ### Example 2: Test Satellite Connection
 ```bash
-luxar demo --profile satellite --open
+# Network simulation lives on `serve`/`viewer` (not `demo run`); generate a
+# demo scene first, then serve it under the satellite profile.
+luxar demo run lorenz -- --no-serve
+luxar serve datasets/demos/lorenz.luxar.zarr --viewer --open --profile satellite
 ```
 
 **Expected Behavior**:
