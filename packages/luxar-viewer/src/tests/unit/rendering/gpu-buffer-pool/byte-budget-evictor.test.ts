@@ -174,6 +174,41 @@ describe('evictUntilUnderByteBudget', () => {
   });
 });
 
+describe('throwing dispose listener (splice-before-dispose contract)', () => {
+  it('aborts the pass but never leaves the disposed buffer adoptable in its bucket', () => {
+    // Contract pinned here: there is NO catch inside the pass — a
+    // throwing dispose listener aborts it and the error propagates.
+    // But each buffer is spliced out of its bucket (and its eviction
+    // counted) BEFORE geometry.dispose() runs, so the throw can only
+    // leak the buffer (already unreachable from the pool) — never
+    // leave a disposed-but-adoptable zombie behind.
+    const ctx = makeCtx({ maxPoolBytes: 100 });
+    const small = makePooled(2000, 'points');
+    const big = makePooled(5000, 'points');
+    big.geometry.addEventListener('dispose', () => {
+      throw new Error('listener boom');
+    });
+    ctx.pointBuffers.set(1, [small, big]);
+    const smallDispose = vi.spyOn(small.geometry, 'dispose');
+
+    // Both buffers are selected (budget 100 needs everything gone);
+    // `big` is processed first (index-descending within the bucket) and
+    // its dispose throws.
+    expect(() => evictUntilUnderByteBudget(ctx, { emitted: true })).toThrow('listener boom');
+
+    // The thrown-on buffer left the bucket before its dispose ran…
+    const remaining = ctx.pointBuffers.get(1) ?? [];
+    expect(remaining).not.toContain(big);
+    // …its eviction was counted with the removal (counter reflects pool
+    // state, not dispose success)…
+    expect(ctx.typeEvictionCounters.points.evictions).toBe(1);
+    // …and the abort left the not-yet-processed buffer pooled and
+    // undisposed (it can be retried by the next pass).
+    expect(remaining).toContain(small);
+    expect(smallDispose).not.toHaveBeenCalled();
+  });
+});
+
 describe('same-frame grace (acquire-triggered sweeps)', () => {
   it('exempts buffers released this frame when graceFrame matches; evicts them otherwise', () => {
     const buf = makePooled(500_000, 'points'); // over a 100k budget on its own
@@ -181,14 +216,21 @@ describe('same-frame grace (acquire-triggered sweeps)', () => {
     const pools = new Map([[0, [buf]]]);
 
     // graceFrame === lastUsedFrame → exempt (dataset-switch churn guard).
-    const graced: EvictorCtx = { ...makeCtx({ maxPoolBytes: 100_000 }), pointBuffers: pools, graceFrame: 7 };
+    const graced: EvictorCtx = {
+      ...makeCtx({ maxPoolBytes: 100_000 }),
+      pointBuffers: pools,
+      graceFrame: 7,
+    };
     expect(evictUntilUnderByteBudget(graced, { emitted: true })).toBe(0);
     expect(pools.get(0)!.length).toBe(1);
 
     // Release-style sweep (graceFrame -1) → evicted as before.
-    const strict: EvictorCtx = { ...makeCtx({ maxPoolBytes: 100_000 }), pointBuffers: pools, graceFrame: -1 };
+    const strict: EvictorCtx = {
+      ...makeCtx({ maxPoolBytes: 100_000 }),
+      pointBuffers: pools,
+      graceFrame: -1,
+    };
     expect(evictUntilUnderByteBudget(strict, { emitted: true })).toBe(1);
     expect(pools.get(0)?.length ?? 0).toBe(0); // empty buckets may be pruned
   });
 });
-

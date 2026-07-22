@@ -224,7 +224,7 @@ export class LineMaterial
     this.uniforms.uIsOrtho.value = isOrtho ? 1 : 0;
     // Apply the near-plane safety distance when provided.
     // Accept ANY defined value, including 0 — matching the point/gsplat
-    // wrappers (the shader floors at 1e-4). The old `> 0` gate silently
+    // wrappers (the shader floors at 1e-20). The old `> 0` gate silently
     // KEPT a stale value on zero-diagonal scenes (or, with LRU-cached
     // materials, the previous dataset's nearCull), re-creating the
     // cross-geometry near-fade divergence B9c fixed.

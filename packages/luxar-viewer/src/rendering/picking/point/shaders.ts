@@ -91,7 +91,9 @@ export const POINT_PICK_VERTEX_SHADER = /* glsl */ `
       // shader and the line/gsplat pick guards: pickability must track
       // what is actually visible (behind-camera fade 0; smooth
       // [nearCull, 2*nearCull] fade; ortho = 1, NDC clip authority).
-      vNearFade = perspectiveNearFade(uIsOrtho, mvPosition.z, max(uNearCull, 1e-4));
+      // 1e-20 floor = degenerate-smoothstep guard only; uNearCull is
+      // scene-bounds-scaled (see the visual point shader).
+      vNearFade = perspectiveNearFade(uIsOrtho, mvPosition.z, max(uNearCull, 1e-20));
       if (vNearFade < 0.01) {
         gl_Position = vec4(0.0, 0.0, -2.0, 1.0); // off-screen → no fragments
         return;
@@ -100,8 +102,10 @@ export const POINT_PICK_VERTEX_SHADER = /* glsl */ `
       vec4 projCenter = projectionMatrix * mvPosition;
 
       // View-space depth, matching the visual point shader (B9a) so the
-      // pick footprint stays congruent with the visible sprite.
-      float invDistance = (uIsOrtho == 1) ? 1.0 : 1.0 / max(-mvPosition.z, 1e-4);
+      // pick footprint stays congruent with the visible sprite. 1e-20 =
+      // pure INF guard (near-fade reject bounds surviving depths at the
+      // scene-relative ~uNearCull; the size clamp bounds the output).
+      float invDistance = (uIsOrtho == 1) ? 1.0 : 1.0 / max(-mvPosition.z, 1e-20);
       float basePointSize = normalizedRadius * pointSizeFactor * invDistance;
 
       // Picking footprint: 80% of the visual radius (the 0.8 factor below).

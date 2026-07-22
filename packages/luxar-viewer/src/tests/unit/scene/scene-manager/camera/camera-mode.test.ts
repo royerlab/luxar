@@ -80,6 +80,27 @@ function makeCtx(initialCamera: THREE.PerspectiveCamera | THREE.OrthographicCame
 }
 
 describe('swapToOrthographic', () => {
+  it('floors the frustum distance at the controls SCENE-RELATIVE minDistance (tiny-unit scenes)', () => {
+    // Camera sits 1e-7 from the target (a 1e-6-unit scene). The old
+    // absolute 0.001 floor inflated the ortho frustum 10,000x on the
+    // perspective->ortho swap; the floor must come from the controls'
+    // scene-derived minDistance.
+    const persp = new THREE.PerspectiveCamera(60, 16 / 9, 1e-9, 1);
+    persp.position.set(0, 0, 1e-7);
+    const harness = makeCtx(persp);
+    (harness.ctx.controls as unknown as { getControls: () => unknown }).getControls = () => ({
+      minDistance: 1e-8,
+    });
+
+    swapToOrthographic(harness.ctx);
+
+    const ortho = harness.getCurrentCamera() as THREE.OrthographicCamera;
+    const frustumHeight = ortho.top - ortho.bottom;
+    // 2 * 1e-7 * tan(30 deg) — NOT 2 * 0.001 * tan(30 deg) ≈ 1.15e-3.
+    expect(frustumHeight).toBeLessThan(1e-5);
+    expect(frustumHeight).toBeGreaterThan(0);
+  });
+
   it('replaces perspective camera with an orthographic instance', () => {
     const persp = new THREE.PerspectiveCamera(60, 16 / 9, 0.1, 1000);
     persp.position.set(0, 0, 50);

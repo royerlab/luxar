@@ -102,8 +102,17 @@ Provides detailed validation functions specifically for write-time validation, w
 **Key Functions:**
 - `validate_positions_for_writing()`: Validate positions before Zarr writing
 - `validate_colors_for_writing()`: Validate colors with HDR support
-- `validate_radii_for_writing()`: Validate point radii arrays
-- `validate_sharpness_for_writing()`: Validate sharpness values
+- `validate_radii_for_writing()`: Validate point radii (arrays AND broadcast scalars)
+- `validate_sharpness_for_writing()`: Validate sharpness (arrays AND broadcast scalars)
+- `validate_widths_for_writing()`: Validate line widths (arrays AND broadcast scalars)
+- `validate_node_name()`: The single node-naming chokepoint — rejects empty/
+  whitespace-only names (an empty name resolves to the zarr ROOT group and
+  would clobber the scene root), `/`, dot-prefixed names (zarr reserves
+  `.zgroup`/`.zattrs`/`.zarray`/`.zmetadata`), and control characters. Shared
+  by `Node.__init__`, the `add_points`/`add_lines`/`add_gsplats` adders, and
+  the compiler writers.
+- `validate_labels_for_writing()`: Fail-fast labels pre-flight (sequence of
+  str/None, one per element) — runs before any zarr write
 - `validate_zarr_attributes()`: Validate zarr group attributes dictionary
 
 **Classes:**

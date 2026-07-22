@@ -120,7 +120,14 @@ export const POINT_VERTEX_SHADER = /* glsl */ `
       // near-plane approach fades smoothly across [nearCull, 2*nearCull]
       // instead of drawing a full-brightness maxPointSize sprite until
       // z crosses 0. Ortho: fade = 1, NDC clipping is the authority.
-      vNearFade = perspectiveNearFade(uIsOrtho, mvPosition.z, max(uNearCull, 1e-4));
+      // uNearCull is scene-bounds-scaled (diagonal * 0.001, see
+      // scene-bounds-cache.ts) so the fade band tracks the scene scale;
+      // the 1e-20 floor only guards the degenerate smoothstep
+      // (edge0 == edge1) when uNearCull is exactly 0. An absolute 1e-4
+      // floor here overrode the scene-relative value on tiny-unit
+      // scenes (diagonal ~1e-6 put the WHOLE scene inside the fade
+      // band and every vertex was rejected).
+      vNearFade = perspectiveNearFade(uIsOrtho, mvPosition.z, max(uNearCull, 1e-20));
       if (vNearFade < 0.01) {
         gl_Position = vec4(0.0, 0.0, -2.0, 1.0); // off-screen → no fragments
         return;
@@ -133,10 +140,13 @@ export const POINT_VERTEX_SHADER = /* glsl */ `
       // with view-z, not Euclidean distance from the camera position,
       // so identical points render the same size across the field of
       // view (Euclidean shrank edge-of-screen points by cos(theta)).
-      // The 1e-4 floor mirrors the line shader's nearCull floor — the
-      // behind-camera reject above only guarantees z < 0, not z << 0.
-      // pointSizeFactor pre-computed in JS: 2.0 * resolution.y / tanHalfFov
-      float invDistance = (uIsOrtho == 1) ? 1.0 : 1.0 / max(-mvPosition.z, 1e-4);
+      // The 1e-20 floor is a pure divide-by-zero guard, NOT a scale
+      // floor: the near-fade reject above already guarantees surviving
+      // vertices have -z ≳ uNearCull (scene-relative), and the
+      // clamp(basePointSize, 1.5, maxPointSize) below bounds the
+      // output either way. The old absolute 1e-4 clamped VALID depths
+      // on tiny-unit scenes (-z ~ 1e-6), shrinking every sprite ~100×.
+      float invDistance = (uIsOrtho == 1) ? 1.0 : 1.0 / max(-mvPosition.z, 1e-20);
       float basePointSize = normalizedRadius * pointSizeFactor * invDistance;
 
       // The shifted-truncated super-Gaussian falloff (fragment shader)

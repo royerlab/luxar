@@ -280,6 +280,12 @@ describe('GSplatMaterial', () => {
 
       // Shifted Gaussian ray integral factor passed as uniform (precomputed in TypeScript)
       expect(material.vertexShader).toContain('sigmaRay * uRayIntegralFactor');
+      // String-pin the trace-normalized inversion's RESTORE factor: the
+      // ray sigma of the normalized covariance must be rescaled by
+      // sqrt(sTrace) (sigma_ray = sqrt(s/quadN)) — a wrong or dropped
+      // exponent here is invisible to the TS-mirror unit test and to the
+      // peak-mode codegen snapshot.
+      expect(material.vertexShader).toContain('inversesqrt(quad) * sqrt(sTrace)');
     });
 
     it('should have near-plane guard with smooth fade and screen-coverage cull', () => {
@@ -287,8 +293,10 @@ describe('GSplatMaterial', () => {
 
       // Near-cull uses the shared perspectiveNearFade helper (smooth
       // fade, not hard discard) with the uNearCull uniform
+      // 1e-20 floor = degenerate-smoothstep guard only (scene-relative
+      // uNearCull is never overridden on tiny-unit scenes).
       expect(material.vertexShader).toContain(
-        'perspectiveNearFade(uIsOrtho, centerCam.z, max(uNearCull, 1e-4))'
+        'perspectiveNearFade(uIsOrtho, centerCam.z, max(uNearCull, 1e-20))'
       );
       // Screen-coverage fade uses projected extent and uMaxExtentFactor
       expect(material.vertexShader).toContain('uMaxExtentFactor');

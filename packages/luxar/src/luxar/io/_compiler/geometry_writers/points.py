@@ -29,9 +29,13 @@ from ..dataset_writers.scalars import (
 from ..labels.image_labels import write_image_labels_csr
 from ..labels.text_labels import write_labels_csr
 from ..node_common import (
+    POINTS_RESERVED_ATTRS,
     apply_default_render_attrs,
     prepare_transform_attrs,
+    validate_broadcast_color,
+    validate_node_path,
     validate_render_attrs,
+    validate_scalars_preflight,
 )
 from ..spatial_ordering.points import (
     build_points_ordering,
@@ -58,19 +62,57 @@ def write_points(
     # Import validation functions locally to avoid circular imports
     from ....validation.base import (
         validate_colors_for_writing,
+        validate_labels_for_writing,
         validate_positions_for_writing,
         validate_radii_for_writing,
         validate_sharpness_for_writing,
     )
 
-    # 0. Fail fast on invalid render attrs BEFORE creating the group, so a
-    # bad value cannot leave a partial node on disk.
-    validate_render_attrs(attrs)
-
-    # 1. Setup: Create group and validate positions
-    path = path.lstrip("/")
-    group = ctx.store.require_group(path)
+    # 0. Fail-fast pre-write gate: everything here runs BEFORE the zarr group
+    # is created and before any array lands on disk, so an invalid input
+    # cannot leave a partial node behind. NOTE this gate is best-effort, not
+    # transactional: validators that need the store (image_labels, custom
+    # colormap LUT resolution) still run post-write and can leak a partial
+    # node on failure (F7 residual — transactional/temp-dir writes are a
+    # separate project).
+    #
+    # 0a. Pure attr validators + reserved writer-stamp collisions.
+    validate_render_attrs(attrs, reserved_attrs=POINTS_RESERVED_ATTRS)
+    # 0b. Node path: every segment must be a valid node name — an empty path
+    # would resolve require_group("") to the scene ROOT and clobber it.
+    path = validate_node_path(path)
+    # 0c. Positions shape/finiteness.
     n_points, n_dims = validate_positions_for_writing(positions)
+    # 0d. Pre-flight length sweep over ALL provided per-point arrays. The
+    # spatial-ordering fancy-indexing below silently TRUNCATES a too-long
+    # array and raises a raw IndexError on a too-short one, so lengths must
+    # be checked before build_points_ordering runs. The per-dataset
+    # validators further down remain in place (belt and braces).
+    if colors is not None:
+        if isinstance(colors, np.ndarray):
+            validate_colors_for_writing(colors, n_points)
+        elif isinstance(colors, (list, tuple)):
+            validate_broadcast_color(colors, "colors")
+    if radii is not None:
+        # Validates arrays AND broadcast scalars (same finite/positive rules).
+        validate_radii_for_writing(radii, n_points)
+    if sharpness is not None:
+        # Validates arrays AND broadcast scalars (same [0, 1] bounds).
+        validate_sharpness_for_writing(sharpness, n_points)
+    if scalars is not None:
+        validate_scalars_preflight(scalars, n_points)
+    # 0e. Labels: sequence-of-str type + length check (the CSR serializer
+    # would otherwise AttributeError on a non-str entry AFTER the arrays
+    # were written).
+    if labels is not None:
+        validate_labels_for_writing(labels, n_points)
+    # 0f. Transform / nd_transform normalization is pure attr processing
+    # (reads only the scene dimensions), so run it in the gate too — a bad
+    # transform must not leave a partial node behind.
+    prepare_transform_attrs(attrs, ctx.store)
+
+    # 1. Setup: Create group
+    group = ctx.store.require_group(path)
 
     aprint(f"📝 Writing {n_points:,} points ({n_dims}D) to {path}")
 
@@ -128,14 +170,14 @@ def write_points(
 
     # 5. Write optional datasets
     if colors is not None:
-        # Validate arrays only (scalars validated by encoder)
+        # Belt and braces — the fail-fast gate (step 0d) already validated
         if isinstance(colors, np.ndarray):
             validate_colors_for_writing(colors, n_points)
         write_colors(group, colors, ordering_data, n_points, ctx.dataset_ctx)
         metadata["has_colors"] = True
 
     if radii is not None:
-        # Validate arrays only (scalars validated by encoder)
+        # Belt and braces — the fail-fast gate (step 0d) already validated
         if isinstance(radii, np.ndarray):
             validate_radii_for_writing(radii, n_points)
         max_radius = write_radii(group, radii, ordering_data, n_points, ctx.dataset_ctx)
@@ -144,7 +186,7 @@ def write_points(
         group.attrs["max_radius"] = max_radius
 
     if sharpness is not None:
-        # Validate arrays only (scalars validated by encoder)
+        # Belt and braces — the fail-fast gate (step 0d) already validated
         if isinstance(sharpness, np.ndarray):
             validate_sharpness_for_writing(sharpness, n_points)
         # Canonical BOUNDED_SCALAR helper (shared with Lines
@@ -171,8 +213,9 @@ def write_points(
     # 5b. Write colormap LUT if colormap is a custom array
     ctx.write_colormap_lut(group, attrs)
 
-    # 6. Process transform + nd_transform attrs (shared with write_lines)
-    prepare_transform_attrs(attrs, ctx.store)
+    # 6. Transform + nd_transform attrs were already normalized in the
+    # fail-fast gate (step 0f) — prepare_transform_attrs is NOT idempotent
+    # (it transposes the matrix), so it must run exactly once.
 
     # 7. Set default rendering attributes if not provided
     apply_default_render_attrs(attrs)

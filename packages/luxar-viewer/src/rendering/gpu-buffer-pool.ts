@@ -365,6 +365,7 @@ export class GPUBufferPool {
       if (budget <= 0) return 0;
       for (const [bucket, buffers] of pool.entries()) {
         const kept: PooledBuffer[] = [];
+        const toDispose: PooledBuffer[] = [];
 
         for (const buffer of buffers) {
           const framesSinceUse = currentFrame - buffer.lastUsedFrame;
@@ -374,7 +375,7 @@ export class GPUBufferPool {
           // Evict if: unused for >evictionFrames OR pool over limit,
           // AND we're under the per-call batch cap.
           if (evictable && poolEvicted < budget) {
-            buffer.geometry.dispose();
+            toDispose.push(buffer);
             poolEvicted++;
           } else {
             if (evictable) this.stats.deferredEvictions++;
@@ -382,10 +383,21 @@ export class GPUBufferPool {
           }
         }
 
+        // Commit the bucket BEFORE disposing: `geometry.dispose()` fires
+        // user-registered dispose listeners synchronously, and a throwing
+        // listener aborts this pass (no catch here, by contract — see the
+        // pool test suite). Dispose-first would leave disposed zombies
+        // adoptable in the free bucket (and the grow-reclaim path could
+        // reinstate one); commit-first means a throw merely leaks the
+        // not-yet-disposed buffers, which are already unreachable from
+        // the pool — the safe direction.
         if (kept.length > 0) {
           pool.set(bucket, kept);
         } else {
           pool.delete(bucket);
+        }
+        for (const buffer of toDispose) {
+          buffer.geometry.dispose();
         }
 
         if (poolEvicted >= budget) break;

@@ -86,7 +86,17 @@ export function swapToOrthographic(ctx: CameraModeCtx): void {
   if (!isPerspectiveCamera(camera)) return;
 
   const focusTarget = ctx.controls.getFocusTarget();
-  const distance = Math.max(camera.position.distanceTo(focusTarget), 0.001);
+  // SCENE-RELATIVE floor (mirrors the orbit-controls re-init/reset fix):
+  // an absolute 0.001 would mis-frame sub-milli-unit scenes on a
+  // perspective->ortho switch. The active controls' minDistance is
+  // scene-diagonal-derived (deriveScaleLimits / auto-frame); 0.001 stays
+  // only as the last resort when no positive floor is known.
+  const activeControls = ctx.controls.getControls?.();
+  const minDist =
+    activeControls && 'minDistance' in activeControls && activeControls.minDistance > 0
+      ? activeControls.minDistance
+      : 0.001;
+  const distance = Math.max(camera.position.distanceTo(focusTarget), minDist);
   const fovRad = (camera.fov * Math.PI) / 180;
   const frustumHeight = 2 * distance * Math.tan(fovRad / 2);
   const aspect = camera.aspect || 1;

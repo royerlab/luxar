@@ -92,6 +92,24 @@ export class PointTSLMaterial
 
   private tslNodes: PointMaterialTSLNodeTable;
 
+  /**
+   * Explicit `depthTest` / `transparent` overrides from the constructor
+   * config. Every `rebuildGraph()` re-applies the factory tail's
+   * MODE-DERIVED blending state (depthTest/transparent included), so an
+   * override honored only once in the constructor tail would silently
+   * revert on the first later rebuild (e.g. the guaranteed
+   * placeholder→real `updatePointTexture` rebuild at first commit). The
+   * GLSL twin never rebuilds, so its constructor-tail overrides stick;
+   * persisting them here and re-applying at the end of `rebuildGraph`
+   * keeps the two backends contract-identical. An explicit later
+   * `applyBlendingMode()` call CLEARS both (a runtime mode switch takes
+   * full ownership of the blending state — matching the GLSL twin,
+   * where `applyBlendingStateToMaterial` overwrites both fields
+   * unconditionally).
+   */
+  private _explicitDepthTest?: boolean;
+  private _explicitTransparent?: boolean;
+
   constructor(materialConfig: PointMaterialConfig = {}) {
     super();
 
@@ -123,6 +141,10 @@ export class PointTSLMaterial
     // value via `proxyIUniform`, so the GPU sees the new value on the
     // next frame without any `.onUpdate('render')` callback.
     this.uniforms = {
+      // WARNING: a direct `uniforms.uPointTex.value = tex` write does
+      // NOT rebind the sampled texture — TSL `texture()` nodes capture
+      // the Texture at build time. `updatePointTexture()` is the only
+      // rebind chokepoint (fresh node + graph rebuild).
       uPointTex: proxyIUniform(this.tslNodes.uPointTex),
       opacity: proxyIUniform(this.tslNodes.opacity),
       invGamma: proxyIUniform(this.tslNodes.invGamma),
@@ -178,27 +200,25 @@ export class PointTSLMaterial
       this.defines.LUXAR_MAX_RGB_CONTRIBUTION = '';
     }
 
+    // Capture explicit overrides BEFORE the first rebuild —
+    // `rebuildGraph`'s tail re-applies them over the factory's
+    // mode-derived blending state on EVERY rebuild (see the
+    // `_explicitDepthTest` field doc; the GLSL twin applies them once
+    // in its constructor tail and never rebuilds).
+    this._explicitTransparent = materialConfig.transparent;
+    this._explicitDepthTest = materialConfig.depthTest;
+
     // Build the TSL graph and attach to ourselves. The factory binds
     // directly to the wrapper-owned `tslNodes`, so mutating
     // `this.uniforms.X.value` (via the proxies) flows through to the
     // GPU without per-frame callbacks.
     this.rebuildGraph();
 
-    // Stamp the mode-derived depthTest the factory tail just applied
-    // (GLSL twin: applyBlendingMode stamps userData.depthTest) so
+    // Stamp the depthTest the rebuild just settled on — mode-derived
+    // from the factory tail, or the explicit override re-applied over
+    // it (GLSL twin: applyBlendingMode stamps userData.depthTest) — so
     // clone() round-trips the real state.
     this.userData.depthTest = this.depthTest;
-
-    // Honor explicit overrides from config after the factory's
-    // mode-derived blending state (mirrors the GLSL twin's constructor
-    // tail).
-    if (materialConfig.transparent !== undefined) {
-      this.transparent = materialConfig.transparent;
-    }
-    if (materialConfig.depthTest !== undefined) {
-      this.depthTest = materialConfig.depthTest;
-      this.userData.depthTest = materialConfig.depthTest;
-    }
   }
 
   /**
@@ -259,6 +279,17 @@ export class PointTSLMaterial
       },
       this
     );
+    // Re-apply the explicit constructor overrides over the factory
+    // tail's mode-derived blending state — on EVERY rebuild, not just
+    // the constructor's, so a texture/gamma/colormap rebuild can't
+    // silently revert them (see the `_explicitDepthTest` field doc).
+    if (this._explicitTransparent !== undefined) {
+      this.transparent = this._explicitTransparent;
+    }
+    if (this._explicitDepthTest !== undefined) {
+      this.depthTest = this._explicitDepthTest;
+      this.userData.depthTest = this._explicitDepthTest;
+    }
     this.needsUpdate = true;
   }
 
@@ -370,6 +401,14 @@ export class PointTSLMaterial
   }
 
   applyBlendingMode(mode: BlendingMode): void {
+    // A runtime mode switch takes FULL ownership of the blending state:
+    // clear the constructor's explicit depthTest/transparent overrides
+    // so the mode-derived state below (and every later rebuild) wins.
+    // Matches the GLSL twin, where applyBlendingStateToMaterial
+    // overwrites both fields unconditionally on every call.
+    this._explicitDepthTest = undefined;
+    this._explicitTransparent = undefined;
+
     const opacity = (this.uniforms.opacity?.value as number | undefined) ?? 1.0;
     // Phase-1 volumetric fallback — the policy lives in
     // effectiveGeometryMode (blending-state.ts); userData keeps the

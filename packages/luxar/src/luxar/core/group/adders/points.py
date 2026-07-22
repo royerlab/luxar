@@ -75,6 +75,15 @@ def add_points_impl(
             "LOD ladders — is not implemented). Use one or the other."
         )
     try:
+        # Fail-fast pre-write gate: reject invalid names (empty/'/'/dot-
+        # prefixed — an empty name resolves to the zarr ROOT group and would
+        # clobber the scene root) and duplicate siblings BEFORE any zarr
+        # write. Node.__init__ re-checks both post-write (belt and braces).
+        from ....validation.base import validate_node_name
+
+        validate_node_name(name)
+        (parent or group)._ensure_no_duplicate_child(name)
+
         scene = group._find_scene()
 
         pos_arr: np.ndarray = (

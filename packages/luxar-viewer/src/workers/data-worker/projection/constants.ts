@@ -17,13 +17,6 @@
 export const MIN_AMPLITUDE = 1e-6;
 
 /**
- * Effective-radius threshold below which a Point is culled (its nD
- * hypersphere does not intersect the current slice). Mirrors the value
- * the Points worker dispatcher feeds to `radii_to_visibility_mask`.
- */
-export const ZERO_RADIUS_THRESHOLD = 0.0001;
-
-/**
  * Detection sentinel for an `extend_to_all` dimension. A per-dimension
  * tolerance at or above this value means "visible across every value of
  * this dimension" — the dimension is skipped entirely during slicing.

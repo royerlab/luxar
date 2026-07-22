@@ -48,7 +48,6 @@ import type { BoundingBox } from './scene-manager/clipping/bounds-math';
 import { log, Modules } from '../utils/log';
 import type { LODGroupSelectorMode } from '../types/lod-group';
 import {
-  coarsestFreshIndex,
   isFresh,
   isReady,
   isTrackedLeaf,
@@ -426,6 +425,18 @@ export class LODGroupRegistry {
    */
   private settleTracker = new SettleTracker();
 
+  /**
+   * Whether fade management (cross-fade and/or energy compensation) was ON
+   * during the previous ``evaluatePerFrame``. Falling-edge detector for the
+   * one-shot residual-opacity restore in ``evaluateEntry``: toggling BOTH
+   * anti-popping flags off MID-fade would otherwise strand a half-faded
+   * level's opacity forever (``manageFade === false`` skips the per-frame
+   * restore branch). Updated once per frame after all entries are evaluated;
+   * one restore pass on the edge keeps the both-flags-off steady state
+   * byte-identical (no material writes, no subtree traversal).
+   */
+  private fadeWasManaged = false;
+
   constructor(private deps: LODGroupRegistryDeps) {}
 
   /** Register a newly-loaded lod_group (called by the scene loader). */
@@ -474,6 +485,7 @@ export class LODGroupRegistry {
     this.tick = 0;
     this.warnedNoReadyChild.clear();
     this.warnedEmptyLevel.clear();
+    this.fadeWasManaged = false;
   }
 
   /** Number of registered lod_groups (mainly for tests / diagnostics). */
@@ -621,6 +633,12 @@ export class LODGroupRegistry {
       }
     }
     if (anyLoading) this.deps.requestRender?.();
+    // Record whether fade management was ON this frame — the falling-edge
+    // detector behind ``evaluateEntry``'s one-shot residual-opacity restore
+    // (see ``fadeWasManaged``). Written AFTER the entry loop so every entry in
+    // one frame sees the same previous-frame value.
+    this.fadeWasManaged =
+      this.deps.getCrossFadeEnabled?.() === true || this.deps.getEnergyCompEnabled?.() === true;
     // Bound resident LOD geometry against the shared GPU-pool byte budget
     // (one VRAM authority). Retention keeps loaded levels resident so
     // re-shows are free; this LRU-evicts only hidden levels when over budget —
@@ -903,6 +921,13 @@ export class LODGroupRegistry {
     // byte-identical to before.
     const energyComp = this.deps.getEnergyCompEnabled?.() === true;
     const manageFade = this.deps.getCrossFadeEnabled?.() === true || energyComp;
+    // Falling edge of fade management (both flags just toggled OFF, possibly
+    // MID-fade): restore every child's authored opacity ONCE so a half-faded
+    // level (e.g. opacity 0.5 from an in-flight cross-fade) doesn't stay dim
+    // forever. ``fadeWasManaged`` is updated per-frame in ``evaluatePerFrame``
+    // after all entries run, so the edge fires exactly one frame for each
+    // entry; afterwards the both-flags-off path is byte-identical again.
+    const restoreResidualFade = !manageFade && this.fadeWasManaged;
     for (let i = 0; i < entry.children.length; i++) {
       const child = entry.children[i];
       const isPrimary = i === displayIdx;
@@ -925,6 +950,11 @@ export class LODGroupRegistry {
           // (idempotent — a no-op on any never-faded child).
           this.applyChildFade(child, null, false);
         }
+      } else if (restoreResidualFade) {
+        // One-shot restore on the fade-management falling edge (see above):
+        // idempotent no-op on never-faded children, so the pass writes only
+        // where a residual fade opacity actually lingers.
+        this.applyChildFade(child, null, false);
       }
     }
     // Mark the on-screen level most-recently-used and record it for the eviction
@@ -975,13 +1005,6 @@ export class LODGroupRegistry {
   }
 
   /**
-   * Coarsest child that is ready AND fresh for ``version``, falling back to the
-   * coarsest READY level when none is fresh yet (the ≤1-frame window right after
-   * a re-slice) so the group shows stale-but-ready geometry rather than going
-   * blank. Thin wrapper over the pure ``coarsestFreshIndex`` (lod-freshness.ts)
-   * + ``coarsestReadyIndex``.
-   */
-  /**
    * Freshness + committed element count of a child, resolving a GROUP-typed LOD
    * child (a deferred ``kind=partition`` / nested ``lod`` subtree — the
    * ``overview`` recipe) through {@link subtreeDisplayProgress} rather than the
@@ -990,9 +1013,16 @@ export class LODGroupRegistry {
    * would return ``null`` — hiding a stale re-slice and defeating the empty
    * guard. Mirrors the never-downgrade gate's ``sideProgress`` so both paths
    * agree on what "fresh" means for a group. Leaf children (a direct count
-   * stamp) keep the exact pre-existing behaviour. A group with no stamped leaf
-   * committed yet reports ``fresh: false`` so the slice-aware fallback shows the
-   * coarse level meanwhile.
+   * stamp) keep the exact pre-existing behaviour.
+   *
+   * **``fresh`` implies ``ready``** for every child shape: the leaf branch's
+   * ``isFresh`` is ready-gated, and a NOT-ready group child (a deferred
+   * placeholder whose subtree never committed, or a released level awaiting
+   * reload) reports ``fresh: false`` regardless of any stamps its subtree may
+   * retain — it cannot draw, so no display path (slice-aware fallback,
+   * empty-guard redirect, blend pairing) may ever elect it. A READY group with
+   * no stamped leaf (nested group with no slice-dependent geometry) carries no
+   * per-slice staleness signal and reports ``fresh: true, count: null``.
    */
   private childFreshAndCount(
     child: LODGroupChild,
@@ -1004,10 +1034,16 @@ export class LODGroupRegistry {
     if (isTrackedLeaf(child)) {
       return { fresh: isFresh(child, version), count: visibleElementCount(child) };
     }
+    // Ready gate for group children (the leaf branch gets it from ``isFresh``).
+    // Without it, a not-ready deferred-group placeholder (no stamped leaves →
+    // ``!aggregate`` below) would read fresh-with-unknown-count and the
+    // empty-level guard could redirect display onto a level that CANNOT draw,
+    // blanking the group permanently.
+    if (!isReady(child)) return { fresh: false, count: null };
     const aggregate = subtreeDisplayProgress(child.object as unknown as ProgressNode, version);
-    // No stamped leaf under the subtree (nested group with no slice-dependent
-    // geometry, or nothing committed yet): no per-slice staleness signal, so
-    // treat as fresh — exactly the pre-existing ``isFresh`` behaviour for a
+    // Ready, but no stamped leaf under the subtree (nested group with no
+    // slice-dependent geometry): no per-slice staleness signal, so treat as
+    // fresh — exactly the pre-existing ``isFresh`` behaviour for a ready
     // non-leaf. Only a subtree that DOES carry stamped-but-stale leaves (a
     // non-null aggregate with ``fresh === false``) triggers the coarse fallback.
     if (!aggregate) return { fresh: true, count: null };
@@ -1021,10 +1057,14 @@ export class LODGroupRegistry {
    * resolves each child through {@link childFreshAndCount}, so a fresh-but-empty
    * GROUP child (a deferred ``kind=partition`` subtree whose visible leaves all
    * committed 0) is correctly skipped rather than treated as non-empty (a bare
-   * ``THREE.Group`` has no leaf count stamp). A child with an UNTRACKED count
-   * (``null`` — never-committed leaf / group with no stamped leaf) is accepted,
-   * matching the leaf-only helper it replaced: the guard only redirects away
-   * from KNOWN-empty levels.
+   * ``THREE.Group`` has no leaf count stamp). A READY child with an UNTRACKED
+   * count (``null`` — group with no stamped leaf) is accepted, matching the
+   * leaf-only helper it replaced: the guard only redirects away from KNOWN-empty
+   * levels. Because ``childFreshAndCount``'s ``fresh`` implies ``ready``, a
+   * NOT-ready placeholder can never be returned — the guard must only redirect
+   * to a level that can actually draw. When nothing qualifies (``-1``) the
+   * caller keeps the fresh-but-empty current level: an empty-but-real level
+   * beats a blank placeholder.
    */
   private coarsestFreshNonEmptyIndex(entry: LODGroupEntry, version: number): number {
     for (let i = 0; i < entry.children.length; i++) {
@@ -1057,9 +1097,23 @@ export class LODGroupRegistry {
     applyLodFade(child.object, weight, energyComp, this.deps.registerMaterial);
   }
 
+  /**
+   * Coarsest child that is ready AND fresh for ``version``, falling back to the
+   * coarsest READY level when none is fresh yet (the ≤1-frame window right after
+   * a re-slice) so the group shows stale-but-ready geometry rather than going
+   * blank. GROUP-AWARE: each child resolves through ``childFreshAndCount``, the
+   * same freshness the sibling display paths (aspiration check, empty guard,
+   * blend pairing) use — so a ready GROUP child whose subtree leaves are stamped
+   * for an older slice is correctly skipped. The leaf-only
+   * ``coarsestFreshIndex`` it replaced treated any non-leaf as unconditionally
+   * fresh, which displayed the OLD slice from a stale partition/overview branch
+   * after a re-slice even while a genuinely fresh level was resident.
+   */
   private coarsestFreshOrReadyIndex(entry: LODGroupEntry, version: number): number {
-    const fresh = coarsestFreshIndex(entry.children, version);
-    return fresh >= 0 ? fresh : this.coarsestReadyIndex(entry);
+    for (let i = 0; i < entry.children.length; i++) {
+      if (this.childFreshAndCount(entry.children[i], version).fresh) return i;
+    }
+    return this.coarsestReadyIndex(entry);
   }
 
   /**

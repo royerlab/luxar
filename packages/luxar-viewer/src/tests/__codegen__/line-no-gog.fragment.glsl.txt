@@ -101,7 +101,7 @@ void main() {
 	}
 
 
-	if ( ( nodeVarying3 > 0.0001 ) ) {
+	if ( ( nodeVarying3 > 1e-20 ) ) {
 
 		nodeVar13 = nodeVar11;
 

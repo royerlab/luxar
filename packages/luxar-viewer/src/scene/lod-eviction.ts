@@ -32,6 +32,17 @@ export interface EvictableChild {
   release?: () => void;
   /** LRU key; ``undefined`` ⇒ never shown ⇒ not an eviction candidate. */
   lastVisibleTick?: number;
+  /**
+   * The child's THREE node (structural — only ``visible`` is read).
+   * ``visible === true`` ⇒ the level renders THIS frame: the displayed level
+   * or the cross-fade blend partner mid-dissolve. Never an eviction
+   * candidate — releasing an on-screen level blanks (or half-blanks) the
+   * group mid-frame. The ``displayedChildIndex`` guard alone misses the
+   * blend partner, which is on screen but not the entry's displayed index.
+   * The registry's visibility pass runs earlier in the same synchronous
+   * per-frame call, so the flag is current here.
+   */
+  object?: { visible?: boolean };
 }
 
 /** Minimal structural shape of a registry entry the eviction pass reads. */
@@ -120,6 +131,14 @@ export function enforceResidentByteBudget<E extends EvictableEntry>(opts: {
     for (let i = 0; i < children.length; i++) {
       const child = children[i];
       if (!isReady(child)) continue;
+      // Never evict a level that is ON SCREEN this frame (``object.visible``):
+      // during a coverage-band cross-fade TWO levels render — the displayed
+      // primary and its blend partner — and only the primary is
+      // ``displayedChildIndex``. Releasing the visible partner would drop half
+      // the dissolve mid-fade (and leave a visible-but-not-ready level behind).
+      // "Eviction must never release the level currently displayed" covers
+      // everything actually rendering, not just the entry's displayed index.
+      if (child.object?.visible === true) continue;
       // Skip a child mid-(re)load: ``release()`` resets ``loading=false`` and
       // ``ready=false``, so evicting one whose deferred reload is in flight
       // would let the registry kick a SECOND concurrent ``ensureLoaded`` for

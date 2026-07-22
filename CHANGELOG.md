@@ -6,6 +6,33 @@ All notable changes to Luxar are documented in this file.
 
 ### July 2026
 
+#### Fixed — scale-correctness + LOD display + compiler validation campaign
+
+- **Tiny/huge-unit scenes now render correctly in every geometry**: all
+  absolute view/world-space epsilon floors (nearCull/invDistance/clip-w/
+  cap-ramp/gsplat coverage-fade + determinant) replaced with scale-free
+  guards; the gsplat sum-mode ray integral inverts a trace-normalized
+  covariance (float32 determinant underflow at tiny scales); orbit
+  re-init/reset distances are scene-relative. Verified on real GPU at
+  ×1e-6 and ×1e6 with exact coverage parity for points/lines/gsplats.
+- **LOD display bugs** (1.15M-frame property harness): a fresh-but-empty
+  level can no longer blank a group by redirecting to a not-ready
+  placeholder; the slice-aware fallback no longer shows a stale slice
+  from a ready-but-stale branch; byte-budget eviction never releases the
+  on-screen cross-fade partner; disabling fade flags mid-fade restores
+  authored opacity.
+- **Python writer validation** (440-case fuzz, 7 root causes): empty and
+  zarr-reserved node names rejected everywhere (an empty name previously
+  made the store unloadable by stamping the root); array lengths
+  validated before spatial reorder (no silent truncation / raw
+  IndexError); negative line indices and non-string labels rejected
+  cleanly; render attrs, attr collisions, duplicate names, and transform
+  prep validate BEFORE any zarr writes; scalar-broadcast validation
+  matches array validation.
+- Pool/TSL hardening: evictors splice-before-dispose; allocation
+  counters can no longer desync on a throwing sweep; TSL materials
+  persist explicit depthTest/transparent overrides across graph rebuilds.
+
 #### Fixed — robustness campaign: pool throw-paths, picking lifecycle, lines catch-up (post-#630/#632)
 
 - **Pool adapters**: a throwing allocation during a grow no longer strands a

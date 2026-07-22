@@ -33,14 +33,24 @@ export function applyToCamera(
  * Extract orientation and distance from current camera state and write
  * them into the supplied accumulators. Returns the new distance value
  * since `number` isn't passed by reference.
+ *
+ * `minDistance` is the caller's SCENE-RELATIVE orbit floor (the class's
+ * own zoom lower bound — scene diagonal × minDistanceFactor once scale
+ * limits are known). It guards the degenerate camera == target case
+ * without imposing an absolute world-unit scale: the old fixed 0.001
+ * floor flung the camera 1000× out of a tiny-unit scene (diagonal
+ * ~1e-6) on every controls re-init / mode switch. 0.001 remains only as
+ * the last-resort fallback when no positive floor is supplied (no scene
+ * bounds known yet).
  */
 export function initializeFromCamera(
   camera: LuxarCamera,
   target: THREE.Vector3,
-  outOrientation: THREE.Quaternion
+  outOrientation: THREE.Quaternion,
+  minDistance: number = 0
 ): number {
   const offset = new THREE.Vector3().subVectors(camera.position, target);
-  const distance = Math.max(offset.length(), 0.001);
+  const distance = Math.max(offset.length(), minDistance > 0 ? minDistance : 0.001);
 
   // Derive up from camera quaternion rather than camera.up — the quaternion
   // is always authoritative, whereas camera.up may be stale (fly controls

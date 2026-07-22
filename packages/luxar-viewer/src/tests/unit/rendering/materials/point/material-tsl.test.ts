@@ -253,6 +253,53 @@ describe('PointTSLMaterial clone', () => {
   });
 });
 
+describe('PointTSLMaterial explicit depthTest/transparent overrides', () => {
+  const makePointTex = (): THREE.DataTexture =>
+    new THREE.DataTexture(new Float32Array(12), 3, 1, THREE.RGBAFormat, THREE.FloatType);
+
+  it('survive the texture-swap graph rebuild (placeholder → real at first commit)', () => {
+    // additive derives depthTest=false / transparent=true; the explicit
+    // config says the opposite — a real divergence the rebuild's
+    // factory tail (which re-applies mode-derived state) must not
+    // silently revert. (An explicit depthTest:false on additive would
+    // be vacuous — it EQUALS the mode-derived value.)
+    const mat = new PointTSLMaterial({
+      blendingMode: 'additive',
+      depthTest: true,
+      transparent: false,
+    });
+    expect(mat.depthTest).toBe(true);
+    expect(mat.transparent).toBe(false);
+
+    // Guaranteed rebuild: every node's first commit swaps the
+    // placeholder point texture for the pool entry's real one.
+    mat.updatePointTexture(makePointTex());
+    expect(mat.depthTest).toBe(true);
+    expect(mat.transparent).toBe(false);
+    expect(mat.userData.depthTest).toBe(true);
+  });
+
+  it('an explicit applyBlendingMode call takes full ownership (overrides cleared)', () => {
+    // Matches the GLSL twin: applyBlendingStateToMaterial re-derives
+    // depthTest/transparent from the mode on every call, overwriting
+    // any constructor override.
+    const mat = new PointTSLMaterial({
+      blendingMode: 'additive',
+      depthTest: true,
+      transparent: false,
+    });
+    mat.applyBlendingMode('additive'); // user-driven mode application
+
+    expect(mat.depthTest).toBe(false); // mode-derived again
+    expect(mat.transparent).toBe(true);
+
+    // …and stays mode-derived across later rebuilds (overrides gone).
+    mat.updatePointTexture(makePointTex());
+    expect(mat.depthTest).toBe(false);
+    expect(mat.transparent).toBe(true);
+  });
+});
+
 describe('PointTSLMaterial updatePointTexture', () => {
   const makePointTex = (): THREE.DataTexture =>
     new THREE.DataTexture(new Float32Array(12), 3, 1, THREE.RGBAFormat, THREE.FloatType);

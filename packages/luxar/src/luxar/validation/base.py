@@ -4,7 +4,7 @@ This module provides validation functions with detailed, user-friendly error
 messages that help users understand and fix issues quickly.
 """
 
-from typing import Any, Optional, Tuple
+from typing import Any, Optional, Sequence, Tuple, Union
 
 import numpy as np
 from numpy.typing import NDArray
@@ -29,6 +29,121 @@ class ValidationError(ValueError):
         if suggestion:
             full_message += f"\n💡 Suggestion: {suggestion}"
         super().__init__(full_message)
+
+
+def validate_node_name(name: Any, context: str = "node name") -> str:
+    """Validate a scene-graph node name (a single zarr path segment).
+
+    This is the single chokepoint for node naming, shared by ``Node.__init__``
+    (groups + all node objects), the ``add_points``/``add_lines``/``add_gsplats``
+    adders, and the compiler writers (via ``validate_node_path``). Rules:
+
+    - Must be a non-empty, non-whitespace-only string. An empty segment is the
+      worst case: ``zarr.require_group("")`` resolves to the store ROOT group,
+      so a node named ``""`` would stamp ``type='points'`` onto the scene root
+      and make the whole store unloadable.
+    - Must not contain ``/`` — that is the zarr path separator; use
+      ``add_group()`` for hierarchy.
+    - Must not start with ``.``. Zarr v2 reserves the dot-prefixed keys
+      ``.zgroup`` / ``.zattrs`` / ``.zarray`` / ``.zmetadata`` for its own
+      metadata objects; a node named ``.zgroup`` dies with a deep ``KeyError``
+      inside zarr and ``.zmetadata`` silently collides with consolidated
+      metadata. We reject the entire dot-prefixed namespace (stricter than the
+      exact reserved set, but safe: it also covers future zarr metadata keys
+      and hidden dot-files that most tooling cannot see).
+    - Must not contain control characters (``\\x00``–``\\x1f``, ``\\x7f``) —
+      filesystem and JSON hazards for DirectoryStore-backed scenes.
+
+    Args:
+        name: Candidate node name.
+        context: Context for error messages.
+
+    Returns:
+        The validated name (unchanged).
+
+    Raises:
+        ValidationError: If the name is invalid.
+    """
+    if not isinstance(name, str):
+        raise ValidationError(
+            f"{context}: Expected a string, got {type(name).__name__}",
+            "Node names must be strings, e.g. scene.add_points('my_points', ...)",
+        )
+
+    if not name.strip():
+        raise ValidationError(
+            f"{context}: Name must not be empty or whitespace-only (got {name!r}). "
+            "An empty name resolves to the zarr ROOT group and would overwrite "
+            "the scene root, corrupting the store.",
+            "Provide a non-empty node name, e.g. 'points'",
+        )
+
+    if "/" in name:
+        raise ValidationError(
+            f"{context}: Name cannot contain '/': got {name!r}",
+            "Use add_group() to create hierarchical structure instead",
+        )
+
+    if name.startswith("."):
+        raise ValidationError(
+            f"{context}: Name cannot start with '.': got {name!r}. "
+            "Zarr reserves dot-prefixed keys (.zgroup/.zattrs/.zarray/.zmetadata) "
+            "for its own metadata.",
+            "Rename the node without the leading dot",
+        )
+
+    if any(ord(ch) < 0x20 or ord(ch) == 0x7F for ch in name):
+        raise ValidationError(
+            f"{context}: Name contains control characters: got {name!r}",
+            "Remove control characters (newlines, tabs, NUL, ...) from the name",
+        )
+
+    return name
+
+
+def validate_labels_for_writing(
+    labels: Any, n_elements: int, context: str = "labels"
+) -> None:
+    """Validate per-element string labels BEFORE any zarr write.
+
+    The CSR label serializer UTF-8-encodes each entry; a non-string entry used
+    to die with a deep ``AttributeError`` after the node's arrays were already
+    on disk. This pre-flight validator runs in the writers' fail-fast gate.
+
+    Args:
+        labels: Candidate labels. Must be a sequence (not a bare string) of
+            ``str`` entries; ``None`` entries are allowed (null label).
+        n_elements: Expected number of elements.
+        context: Context for error messages.
+
+    Raises:
+        ValidationError: If labels are not a sequence of str/None with one
+            entry per element.
+    """
+    # A bare string is a Sequence[str] of characters — always a bug. Numpy
+    # string arrays are accepted (their elements are np.str_, a str subclass).
+    if isinstance(labels, (str, bytes)) or not isinstance(
+        labels, (Sequence, np.ndarray)
+    ):
+        raise ValidationError(
+            f"{context}: Expected a sequence of strings, got {type(labels).__name__}",
+            "Pass one label string per element, e.g. labels=['a', 'b', ...]",
+        )
+
+    if len(labels) != n_elements:
+        raise ValidationError(
+            f"{context}: Labels length ({len(labels)}) must match element "
+            f"count ({n_elements})",
+            f"Provide exactly {n_elements} labels (use '' or None for no label)",
+        )
+
+    for i, label in enumerate(labels):
+        if label is not None and not isinstance(label, str):
+            raise ValidationError(
+                f"{context}: Label at index {i} is {type(label).__name__}, "
+                f"expected str or None (got {label!r})",
+                "Convert labels to strings, e.g. labels=[str(x) for x in values]",
+            )
 
 
 def _validate_numeric_finite_values(array: NDArray[Any], context: str) -> None:
@@ -234,18 +349,41 @@ def validate_colors_for_writing(
 
 
 def validate_radii_for_writing(
-    radii: NDArray[Any], n_points: int, context: str = "radii"
+    radii: Union[NDArray[Any], float, int], n_points: int, context: str = "radii"
 ) -> None:
-    """Validate radii array for writing.
+    """Validate radii (array or broadcast scalar) for writing.
+
+    Scalars are validated against the same finite/positive rules as arrays
+    (mirroring :func:`validate_widths_for_writing`); a scalar ``radii=-1.0``
+    or ``radii=float('nan')`` used to slip through to the encoder after the
+    positions were already written.
 
     Args:
-        radii: Radii array to validate
+        radii: Radii array or a scalar broadcast to all points
         n_points: Expected number of points
         context: Context for error messages
 
     Raises:
         ValidationError: If radii are invalid
     """
+    if isinstance(radii, (int, float)):
+        value = float(radii)
+        if not np.isfinite(value):
+            raise ValidationError(
+                f"{context}: Radius must be finite. Got {value}",
+                "Provide a finite positive radius value",
+            )
+        # NOTE deliberate scalar/array asymmetry: a broadcast scalar radius of
+        # exactly 0.0 is an accepted degenerate-points contract (see
+        # test_all_zero_radius_falls_through_to_flat_points), so only NEGATIVE
+        # scalars are rejected here while the array path enforces > 0.
+        if value < 0:
+            raise ValidationError(
+                f"{context}: Radius must not be negative. Got {value}",
+                "Provide a non-negative radius value",
+            )
+        return
+
     if not isinstance(radii, np.ndarray):
         raise ValidationError(
             f"{context}: Expected numpy array, got {type(radii).__name__}",
@@ -339,21 +477,51 @@ def validate_widths_for_writing(
                 f"{context}: Width must be positive (> 0). Got {widths}",
                 "Provide a positive width value",
             )
+    else:
+        # Anything else (str, None, ...) used to fall through silently and
+        # die deep in the encoder AFTER the vertices were already written.
+        raise ValidationError(
+            f"{context}: Expected numpy array or scalar, got {type(widths).__name__}",
+            "Provide a per-vertex widths array or a single positive width",
+        )
 
 
 def validate_sharpness_for_writing(
-    sharpness: NDArray[Any], n_points: int, context: str = "sharpness"
+    sharpness: Union[NDArray[Any], float, int],
+    n_points: int,
+    context: str = "sharpness",
 ) -> None:
-    """Validate sharpness array for writing.
+    """Validate sharpness (array or broadcast scalar) for writing.
+
+    Scalars are validated against the same [SHARPNESS_MIN, SHARPNESS_MAX]
+    bounds as arrays (mirroring :func:`validate_widths_for_writing`); a scalar
+    ``sharpness=5.0`` used to be accepted while the equivalent array was
+    rejected.
 
     Args:
-        sharpness: Sharpness array to validate
+        sharpness: Sharpness array or a scalar broadcast to all points
         n_points: Expected number of points
         context: Context for error messages
 
     Raises:
         ValidationError: If sharpness values are invalid
     """
+    if isinstance(sharpness, (int, float)):
+        value = float(sharpness)
+        if not np.isfinite(value):
+            raise ValidationError(
+                f"{context}: Sharpness must be finite. Got {value}",
+                f"Provide a value between {SHARPNESS_MIN} and {SHARPNESS_MAX}",
+            )
+        if value < SHARPNESS_MIN or value > SHARPNESS_MAX:
+            raise ValidationError(
+                f"{context}: Sharpness must be within "
+                f"[{SHARPNESS_MIN}, {SHARPNESS_MAX}]. Got {value}",
+                f"Use values between {SHARPNESS_MIN} and {SHARPNESS_MAX} "
+                f"(0.5 = true Gaussian)",
+            )
+        return
+
     if not isinstance(sharpness, np.ndarray):
         raise ValidationError(
             f"{context}: Expected numpy array, got {type(sharpness).__name__}",

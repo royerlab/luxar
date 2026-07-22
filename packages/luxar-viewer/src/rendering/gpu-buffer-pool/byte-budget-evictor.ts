@@ -147,9 +147,19 @@ export function evictUntilUnderByteBudget(
       const arr = pool.get(bucket);
       if (!arr) continue;
       for (const ref of bucketRefs) {
-        ref.buffer.geometry.dispose();
+        // Remove from the bucket BEFORE disposing (and count the
+        // eviction with the removal): the pool must never hold a
+        // disposed-but-adoptable buffer. `geometry.dispose()` fires
+        // user-registered dispose listeners synchronously — if one
+        // throws, the pass aborts (no catch here, by contract; see the
+        // evictor test suite), and dispose-first would leave the zombie
+        // in the free bucket where a later adopt/grow-reclaim could
+        // reinstate it. Splice-first means a throwing dispose merely
+        // leaks this one already-unreachable buffer — the safe
+        // direction.
         arr.splice(ref.index, 1);
         ctx.typeEvictionCounters[ref.buffer.type].evictions++;
+        ref.buffer.geometry.dispose();
       }
       if (arr.length === 0) pool.delete(bucket);
     }

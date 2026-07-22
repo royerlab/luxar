@@ -51,7 +51,9 @@ import { LINE_VERTEX_SHADER } from '../../../rendering/materials/line/shader-gls
 describe('Shader hot-path string regressions', () => {
   describe('Point vertex', () => {
     it('sizes from view-space depth, not Euclidean distance', () => {
-      expect(POINT_VERTEX_SHADER).toMatch(/max\s*\(\s*-mvPosition\.z\s*,\s*1e-4\s*\)/);
+      // 1e-20 = pure INF guard (scale-free); an absolute 1e-4 shrank
+      // sprites ~100x on tiny-unit scenes.
+      expect(POINT_VERTEX_SHADER).toMatch(/max\s*\(\s*-mvPosition\.z\s*,\s*1e-20\s*\)/);
       // Reverting to Euclidean distance would shrink edge-of-screen
       // points by cos(theta) relative to lines/gsplats.
       expect(POINT_VERTEX_SHADER).not.toMatch(/inversesqrt\s*\(\s*dot\s*\(/);
@@ -69,8 +71,10 @@ describe('Shader hot-path string regressions', () => {
 
   describe('GSplat vertex', () => {
     it('applies the unified perspectiveNearFade around uNearCull', () => {
+      // The floor is 1e-20 — a degenerate-smoothstep guard only, so the
+      // scene-relative uNearCull is never overridden (tiny-unit scenes).
       expect(GSPLAT_VERTEX_SHADER).toMatch(
-        /perspectiveNearFade\s*\(\s*uIsOrtho\s*,\s*centerCam\.z\s*,\s*max\(uNearCull, 1e-4\)\s*\)/
+        /perspectiveNearFade\s*\(\s*uIsOrtho\s*,\s*centerCam\.z\s*,\s*max\(uNearCull, 1e-20\)\s*\)/
       );
       // The shared helper carries the smoothstep.
       expect(GSPLAT_VERTEX_SHADER).toMatch(

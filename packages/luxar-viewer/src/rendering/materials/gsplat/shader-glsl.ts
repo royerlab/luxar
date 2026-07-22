@@ -127,7 +127,15 @@ export const GSPLAT_VERTEX_SHADER = /* glsl */ `
         // splat falls through to NDC clipping, which drops it (ortho
         // near > 0 in this viewer), and no 1/z is consumed on the
         // ortho path.
-        float depthFade = perspectiveNearFade(uIsOrtho, centerCam.z, max(uNearCull, 1e-4));
+        // uNearCull is scene-bounds-scaled (diagonal * 0.001); the
+        // 1e-20 floor only guards uNearCull == 0 (degenerate
+        // smoothstep). An absolute 1e-4 floor overrode the
+        // scene-relative value on tiny-unit scenes and faded out the
+        // whole scene. (Consequence: surviving zDepth is only bounded
+        // by ~uNearCull, so the unguarded 1/zDepth below can get large
+        // on a sub-camera-plane splat — J/Sigma2D then go non-finite
+        // and the invalidCov2D reject drops the splat safely.)
+        float depthFade = perspectiveNearFade(uIsOrtho, centerCam.z, max(uNearCull, 1e-20));
         if (depthFade < 0.01) {
             gl_Position = vec4(0.0, 0.0, -2.0, 1.0);
             return;
@@ -154,13 +162,19 @@ export const GSPLAT_VERTEX_SHADER = /* glsl */ `
         // pre-#51 two-stage near cull — skipped the fade for splats with
         // spatial sigma < 0.1 world units while the extent clamp still
         // applied, leaving hard-edged clamped rectangles on deep-zoomed
-        // tiny-sigma / nm-unit-scale scenes.) The 1e-8 floors match the
-        // TSL twin's expressions exactly.
+        // tiny-sigma / nm-unit-scale scenes.) The 1e-20 floors match
+        // the TSL twin's expressions exactly and are pure
+        // div-by-zero/sqrt guards, NOT scale floors: maxLateralVar is a
+        // WORLD-unit² variance, so the old absolute 1e-8 floor inflated
+        // valid tiny-unit variances (sigma ~ 1e-7 => var ~ 1e-14) up to
+        // sqrt(1e-8) = 1e-4 world units — projectedExtent exploded and
+        // coverageFade culled EVERY splat in the scene. zDepth is
+        // likewise bounded below by the scene-relative near fade.
         float coverageFade;
         {
             float maxLateralVar = max(Sigma_cam[0][0], max(Sigma_cam[1][1], Sigma_cam[2][2]));
-            float extentDivisor = (uIsOrtho == 1) ? 1.0 : max(zDepth, 1e-8);
-            float projectedExtent = uFx * sqrt(max(maxLateralVar, 1e-8)) * uTruncate / extentDivisor;
+            float extentDivisor = (uIsOrtho == 1) ? 1.0 : max(zDepth, 1e-20);
+            float projectedExtent = uFx * sqrt(max(maxLateralVar, 1e-20)) * uTruncate / extentDivisor;
             float maxExtent = max(uResolution.x, uResolution.y) * uMaxExtentFactor;
             coverageFade = 1.0 - smoothstep(maxExtent * 0.5, maxExtent, projectedExtent);
             if (coverageFade < 0.01) {
@@ -244,13 +258,28 @@ export const GSPLAT_VERTEX_SHADER = /* glsl */ `
             vec3 rayDir = (uIsOrtho == 1) ? vec3(0.0, 0.0, -1.0) : normalize(centerCam);
             // Cofactor expansion for 3x3 inverse. Σ_cam is symmetric SPD,
             // so the inverse is symmetric SPD too.
-            float a = Sigma_cam[0][0];
-            float b = Sigma_cam[0][1];
-            float c = Sigma_cam[0][2];
-            float d = Sigma_cam[1][1];
-            float e = Sigma_cam[1][2];
-            float f = Sigma_cam[2][2];
-            // det(Σ) for 3x3 symmetric — clamped against numerical singularity.
+            // SCALE-FREE inversion: normalize Σ_cam by its mean diagonal
+            // variance s = trace/3 first. det(Σ) is world-units⁶ — on a
+            // tiny-unit scene (sigma ~ 1e-7 => det ~ 1e-42) it
+            // underflows float32 (GPUs flush denormals to zero) and the
+            // absolute 1e-12 clamp turned Σ⁻¹ into garbage (sum-mode
+            // brightness off by many orders of magnitude); huge-unit
+            // scenes overflow the same way. With Σn = Σ/s the
+            // determinant and ray quadratic are O(1) at ANY scene
+            // scale, so the 1e-12 / 1e-8 floors below act as pure
+            // scale-free CONDITION-NUMBER guards. Σ⁻¹ = Σn⁻¹ / s, so
+            // sigmaRay = sqrt(s / quadN) restores the world-unit
+            // result exactly. The 1e-30 floor on s only guards an
+            // all-zero (degenerate) covariance.
+            float sTrace = max((Sigma_cam[0][0] + Sigma_cam[1][1] + Sigma_cam[2][2]) * (1.0 / 3.0), 1e-30);
+            float invS = 1.0 / sTrace;
+            float a = Sigma_cam[0][0] * invS;
+            float b = Sigma_cam[0][1] * invS;
+            float c = Sigma_cam[0][2] * invS;
+            float d = Sigma_cam[1][1] * invS;
+            float e = Sigma_cam[1][2] * invS;
+            float f = Sigma_cam[2][2] * invS;
+            // det(Σn) for 3x3 symmetric — clamped against numerical singularity.
             float detSigma = a * (d * f - e * e) - b * (b * f - c * e) + c * (b * e - c * d);
             float invDet = 1.0 / max(detSigma, 1e-12);
             // Cofactors of the inverse (symmetric).
@@ -264,8 +293,11 @@ export const GSPLAT_VERTEX_SHADER = /* glsl */ `
             float prx = i00 * rayDir.x + i01 * rayDir.y + i02 * rayDir.z;
             float pry = i01 * rayDir.x + i11 * rayDir.y + i12 * rayDir.z;
             float prz = i02 * rayDir.x + i12 * rayDir.y + i22 * rayDir.z;
+            // quad is rᵀ Σn⁻¹ r (normalized space, O(1) for a
+            // well-conditioned splat at any scale); un-normalize via
+            // sqrt(sTrace): sigmaRay = 1/sqrt(rᵀ Σ⁻¹ r) = sqrt(s/quadN).
             float quad = max(rayDir.x * prx + rayDir.y * pry + rayDir.z * prz, 1e-8);
-            sigmaRay = inversesqrt(quad);
+            sigmaRay = inversesqrt(quad) * sqrt(sTrace);
             // Shifted Gaussian ray integral: sqrt(2π)·erf(T/√2) - 2·T·exp(-0.5·T²)
             // Precomputed in TypeScript as uRayIntegralFactor (≈2.433 for T=3)
             float rayIntegrationBoost = sigmaRay * uRayIntegralFactor;  // voxelSpacing = 1.0
