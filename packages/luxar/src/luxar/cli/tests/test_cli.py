@@ -28,92 +28,6 @@ def sample_scene(tmp_path):
     return store_path
 
 
-def test_demo_command_no_serve_success(runner, tmp_path) -> None:
-    """Test successful demo generation without serving."""
-    output_path = tmp_path / "demo_test.luxar.zarr"
-
-    result = runner.invoke(
-        app,
-        [
-            "demo",
-            "--no-serve",
-            "--output",
-            str(output_path),
-            "--points",
-            "50",
-            "--seed",
-            "123",
-        ],
-    )
-
-    assert result.exit_code == 0
-    assert output_path.exists()
-    assert "Generated 50 points" in result.stdout
-
-    # Verify the generated scene
-    root = zarr.open_group(output_path, mode="r")
-    assert "LorenzAttractor" in root
-    assert root["LorenzAttractor"]["positions"].shape == (50, 3)
-    assert root["LorenzAttractor"]["colors"].shape == (50, 3)
-
-
-def test_demo_command_no_serve_with_defaults(runner, tmp_path) -> None:
-    """Test demo command without serving with default parameters."""
-    output_path = tmp_path / "default_demo.luxar.zarr"
-
-    result = runner.invoke(app, ["demo", "--no-serve", "--output", str(output_path)])
-
-    assert result.exit_code == 0
-    assert output_path.exists()
-    assert "Generated 10,000 points" in result.stdout
-    # [Python-R1/A-C2] Validate the zarr is actually readable and carries
-    # the expected default-count shape — a mutation that produced an empty
-    # store, wrote to the wrong key, or skipped the colors attribute
-    # would slip past a path-only `exists()` check.
-    root = zarr.open_group(output_path, mode="r")
-    assert "LorenzAttractor" in root
-    assert root["LorenzAttractor"]["positions"].shape == (10_000, 3)
-    assert root["LorenzAttractor"]["colors"].shape == (10_000, 3)
-
-
-def test_demo_command_no_serve_short_options(runner, tmp_path) -> None:
-    """Test demo command without serving using short option flags."""
-    output_path = tmp_path / "short_opts.luxar.zarr"
-
-    result = runner.invoke(
-        app, ["demo", "--no-serve", "-o", str(output_path), "-n", "25"]
-    )
-
-    assert result.exit_code == 0
-    assert output_path.exists()
-    assert "Generated 25 points" in result.stdout
-    # [Python-R1/A-C2] Short-option flags must produce the same zarr
-    # shape as long-option flags; pin the count round-trip.
-    root = zarr.open_group(output_path, mode="r")
-    assert "LorenzAttractor" in root
-    assert root["LorenzAttractor"]["positions"].shape == (25, 3)
-
-
-def test_demo_command_no_serve_failure(runner, tmp_path) -> None:
-    """Test demo command when scene creation fails."""
-    # Use invalid path to trigger failure
-    invalid_path = "/invalid/path/that/does/not/exist.luxar.zarr"
-
-    result = runner.invoke(
-        app, ["demo", "--no-serve", "--output", invalid_path, "--points", "10"]
-    )
-
-    assert result.exit_code == 1
-    # [Python-R1/A-C1] The bare `"Error:" in stdout` check passed any
-    # error message — a regression that swallowed an unrelated error
-    # (TypeError, KeyboardInterrupt) and printed "Error: foo" would
-    # have silently slipped through. Verify both the marker AND that
-    # the message names the offending path so we know the failure
-    # came from the path-resolution code.
-    assert "Error:" in result.stdout
-    assert "/invalid/path" in result.stdout or "invalid" in result.stdout.lower()
-
-
 def test_info_command_success(runner, sample_scene) -> None:
     """Test successful info command on valid scene."""
     result = runner.invoke(app, ["info", str(sample_scene)])
@@ -298,36 +212,6 @@ def test_dfs_nested_groups(tmp_path) -> None:
     assert "SubGroup" in names
 
 
-def test_demo_then_info_workflow(runner, tmp_path) -> None:
-    """Test complete workflow: generate demo scene then get info."""
-    store_path = tmp_path / "workflow.luxar.zarr"
-
-    # Step 1: Generate demo scene without serving
-    result1 = runner.invoke(
-        app,
-        [
-            "demo",
-            "--no-serve",
-            "--output",
-            str(store_path),
-            "--points",
-            "75",
-            "--seed",
-            "999",
-        ],
-    )
-    assert result1.exit_code == 0
-    assert store_path.exists()
-
-    # Step 2: Get info about the scene
-    result2 = runner.invoke(app, ["info", str(store_path)])
-    assert result2.exit_code == 0
-    assert (
-        "Total points: 75" in result2.stdout or "✨ Total points: 75" in result2.stdout
-    )
-    assert "LorenzAttractor" in result2.stdout
-
-
 def test_cli_help_commands(runner) -> None:
     """Test help commands for all CLI functions."""
     # Test main help
@@ -338,23 +222,27 @@ def test_cli_help_commands(runner) -> None:
     # [Python-R3/A-W1] The per-command help test previously only checked
     # that the command name appeared somewhere in stdout — a regression
     # that produced empty help (or just printed the binary name) would
-    # silently pass. Strengthen by requiring BOTH the "Usage:" header
-    # AND the "Options" section header — both are universal in
-    # Click/Typer help output regardless of terminal width or rendering
-    # mode (the `--help` flag string itself can wrap on narrow CI
-    # terminals, so we can't anchor to it directly).
-    for command in ["demo", "serve", "info", "viewer"]:
+    # silently pass. Strengthen by requiring the "Usage:" header (universal
+    # in Click/Typer help regardless of terminal width or rendering mode)
+    # plus a structural section header: leaf commands show "Options",
+    # command groups (like `demo`) show "Commands".
+    for command in ["serve", "info", "viewer"]:
         result = runner.invoke(app, [command, "--help"])
         assert result.exit_code == 0
         assert command in result.stdout.lower()
-        # Anchor on the two structural headers Click/Typer always emit.
         assert "Usage:" in result.stdout, (
             f"{command} --help has no Usage: header; output was: {result.stdout!r}"
         )
-        # "Options" section is universal — Click renders it as "Options:"
-        # (Click) or "╭─ Options" (Typer's rich-rendered mode); the
-        # substring "Options" matches both.
+        # "Options" — Click renders "Options:", Typer's rich mode "╭─ Options".
         assert "Options" in result.stdout, f"{command} --help missing Options section"
+
+    # `demo` is a command group: its help lists Commands (list/info/run/...).
+    demo_help = runner.invoke(app, ["demo", "--help"])
+    assert demo_help.exit_code == 0
+    assert "Usage:" in demo_help.stdout
+    assert "Commands" in demo_help.stdout, (
+        f"demo --help should list subcommands; got: {demo_help.stdout!r}"
+    )
 
 
 def test_invalid_command(runner) -> None:
@@ -455,67 +343,10 @@ def test_info_detects_gsplats_objects(runner, tmp_path) -> None:
     assert data["n_gsplats_total"] == 50
 
 
-def test_demo_no_serve_requires_output(runner) -> None:
-    """Test that demo --no-serve without --output errors (#11)."""
-    result = runner.invoke(app, ["demo", "--no-serve"])
-    assert result.exit_code == 1
-    assert "--output is required" in result.stdout
-
-
-def test_demo_rejects_zero_points(runner, tmp_path) -> None:
-    """Test that demo rejects --points 0 with clear message (#3)."""
-    result = runner.invoke(
-        app,
-        ["demo", "--no-serve", "-o", str(tmp_path / "x.luxar.zarr"), "--points", "0"],
-    )
-    assert result.exit_code == 1
-    assert "must be positive" in result.stdout
-
-
-def test_demo_rejects_negative_points(runner, tmp_path) -> None:
-    """Test that demo rejects --points -1 with clear message (#4)."""
-    result = runner.invoke(
-        app,
-        ["demo", "--no-serve", "-o", str(tmp_path / "x.luxar.zarr"), "--points", "-1"],
-    )
-    assert result.exit_code == 1
-    assert "must be positive" in result.stdout
-
-
 # [Python-R6 / A-G1] Type-validation boundary cases for --points.
 # Typer/Click should reject float and non-numeric inputs at the
 # argument-parsing layer with a Click-style "Invalid value" exit_code
 # (typically 2, not 1). Pin both type-rejection paths.
-def test_demo_rejects_float_points(runner, tmp_path) -> None:
-    """`--points 1.5` is a float; Typer's int annotation rejects it
-    with exit_code 2 (Click's "Invalid value" code) BEFORE our
-    `n_points <= 0` runtime guard fires."""
-    result = runner.invoke(
-        app,
-        ["demo", "--no-serve", "-o", str(tmp_path / "x.luxar.zarr"), "--points", "1.5"],
-    )
-    assert result.exit_code != 0
-    # Click error path: combined output contains either "Invalid value"
-    # or our runtime guard message. EITHER is correct so long as the
-    # demo command DOES NOT proceed (a regression that silently
-    # accepted 1.5 and floored to 1 would slip both checks).
-    combined = (result.stdout or "") + (result.stderr or "")
-    assert (
-        "Invalid" in combined or "must be" in combined or "is not a valid" in combined
-    )
-
-
-def test_demo_rejects_non_numeric_points(runner, tmp_path) -> None:
-    """`--points abc` is not numeric; Typer rejects at parse time."""
-    result = runner.invoke(
-        app,
-        ["demo", "--no-serve", "-o", str(tmp_path / "x.luxar.zarr"), "--points", "abc"],
-    )
-    assert result.exit_code != 0
-    combined = (result.stdout or "") + (result.stderr or "")
-    assert "Invalid" in combined or "is not a valid" in combined
-
-
 def test_info_tree_shows_lines_icon(runner, tmp_path) -> None:
     """Test that tree view shows correct icon for Lines (#9)."""
     store_path = tmp_path / "lines_scene.luxar.zarr"

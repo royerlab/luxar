@@ -62,7 +62,7 @@ Scientific visualization is often software-limited. Luxar changes this by separa
 git clone https://github.com/royerlab/luxar.git
 cd luxar
 make setup-dev  # Auto-installs Node.js, pnpm, Hatch (no sudo)
-luxar demo      # Generates demo + opens browser with visualization
+luxar demo run lorenz   # Generates a demo + opens browser (or `luxar demo` to browse all)
 ```
 
 This generates a Lorenz attractor and opens the viewer:
@@ -99,8 +99,9 @@ with LuxarZarrCompiler("my_data.luxar.zarr") as compiler:
 ### Using the CLI
 
 ```bash
-# Quick demo with viewer
+# Browse the bundled demos, then run one with its viewer
 luxar demo
+luxar demo run lorenz
 
 # Serve your own data
 luxar serve my_data.luxar.zarr --viewer --open
@@ -478,7 +479,8 @@ with LuxarZarrCompiler("output.luxar.zarr") as compiler:
 ### CLI Reference
 
 ```bash
-luxar demo [OPTIONS]                    # Create demo visualization
+luxar demo                             # List / run / manage bundled demos
+luxar demo run <key|#> [-- ARGS]       # Run a demo (forwards ARGS to it)
 luxar serve PATH [OPTIONS]              # Serve Zarr dataset
 luxar viewer [--data PATH] [OPTIONS]    # Serve viewer only or viewer + data
 luxar info PATH [--stats]               # Dataset information
