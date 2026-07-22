@@ -193,6 +193,19 @@ export function setDepthSortEnabled(enabled: boolean): void {
   depthSortEnabled = enabled;
 }
 
+/**
+ * Init settle guard: a worker whose script dies during ASYNC module
+ * evaluation (before `expose()` runs) emits an `error` event but never
+ * settles the Comlink `initialize` RPC — and every order-dependent
+ * commit attaches a continuation (closing over its centers provider,
+ * which for points pins the full `LoadedPointsData`) to the cached
+ * `initPromise`. Left pending forever, those closures accumulate one
+ * per commit, unbounded. The timeout + onerror below guarantee the
+ * promise SETTLES, draining all queued continuations into the
+ * documented warn-once degrade path.
+ */
+const SORT_WORKER_INIT_TIMEOUT_MS = 30_000;
+
 /** Lazily spawn + initialize the persistent sort worker. */
 function ensureWorker(): Promise<void> {
   if (initPromise) return initPromise;
@@ -202,11 +215,48 @@ function ensureWorker(): Promise<void> {
       : new SortWorker();
     worker = w;
     api = wrap<SortWorkerAPI>(w);
-    const result = await api.initialize(sortWorkerWasmPathOverride);
-    log.info(
-      Modules.WORKER_POOL,
-      `SortWorker ready (${result.wasmFallback ? 'TypeScript fallback' : 'WASM'})`
-    );
+    try {
+      const result = await new Promise<Awaited<ReturnType<SortWorkerAPI['initialize']>>>(
+        (resolve, reject) => {
+          const timer = setTimeout(
+            () =>
+              reject(
+                new Error(`SortWorker initialize timed out after ${SORT_WORKER_INIT_TIMEOUT_MS}ms`)
+              ),
+            SORT_WORKER_INIT_TIMEOUT_MS
+          );
+          w.onerror = (event: ErrorEvent) => {
+            clearTimeout(timer);
+            reject(new Error(`SortWorker failed during startup: ${event.message ?? 'unknown'}`));
+          };
+          api!.initialize(sortWorkerWasmPathOverride).then(
+            (r) => {
+              clearTimeout(timer);
+              resolve(r);
+            },
+            (err: unknown) => {
+              clearTimeout(timer);
+              reject(err instanceof Error ? err : new Error(String(err)));
+            }
+          );
+        }
+      );
+      w.onerror = null;
+      log.info(
+        Modules.WORKER_POOL,
+        `SortWorker ready (${result.wasmFallback ? 'TypeScript fallback' : 'WASM'})`
+      );
+    } catch (error) {
+      // Terminate the wedged/failed worker so it can't hold resources.
+      // `initPromise` stays rejected — the documented stays-failed
+      // degrade (every later commit lands in the warn-once catch).
+      w.terminate();
+      if (worker === w) {
+        worker = null;
+        api = null;
+      }
+      throw error;
+    }
   })();
   initPromise.catch((error) => {
     log.error(Modules.WORKER_POOL, 'SortWorker failed to initialize', error);
@@ -689,6 +739,16 @@ export function noteDepthSortBlendingModeSwitch(
   const isSorted = needsDepthSort(effectiveGeometryMode(newMode, kind));
   if (isSorted && !wasSorted) {
     clearCommittedData(mesh);
+    // Clear the per-slice freshness stamp TOO: the reprocess sweep below
+    // re-commits only sweep-registered (eager) loaders — a hidden resident
+    // LAZY LOD level is structurally outside the sweep, and with only the
+    // noop stamp cleared it stayed "ready + fresh" in the LOD registry,
+    // so nothing ever re-committed it: on re-show it rendered the sorted
+    // mode UNSORTED until an unrelated slice change. Marking it stale
+    // makes the registry's settle-gated reload (`maybeKickReload`:
+    // ready-but-stale aspiration → ensureLoaded) re-commit + register it.
+    // Eager nodes are unaffected (the sweep re-commit re-stamps anyway).
+    delete (mesh.userData as { loadedViewVersion?: number }).loadedViewVersion;
     requestReprocess?.();
   } else if (!isSorted && wasSorted) {
     const state = nodeStates.get(mesh.uuid);

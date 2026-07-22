@@ -131,13 +131,19 @@ export function commitPointsGeometry(
   // common additive path never pays the copy). MUST allocate fresh:
   // the coordinator TRANSFERS the returned buffer to the SortWorker,
   // and `data.positions` is the committed/lineage reference the noop
-  // and append gates key on — a `subarray` view would detach it. The
-  // elementwise copy also widens Float16 positions to the Float32 the
-  // sort kernel expects.
+  // and append gates key on — passing a `subarray` VIEW to the transfer
+  // would detach it. Reading through a subarray into `out.set` is safe
+  // (set copies; only `out.buffer` is later transferred).
   const sortCenters3 = (): Float32Array => {
     const src = data.positions;
     const out = new Float32Array(pointCount * 3);
-    for (let i = 0; i < out.length; i++) out[i] = src[i];
+    if (src instanceof Float32Array) {
+      out.set(src.subarray(0, out.length)); // memcpy fast path
+    } else {
+      // Float16 positions: elementwise widen to the Float32 the sort
+      // kernel expects.
+      for (let i = 0; i < out.length; i++) out[i] = src[i];
+    }
     return out;
   };
 

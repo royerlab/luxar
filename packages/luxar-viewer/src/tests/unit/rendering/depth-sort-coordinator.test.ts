@@ -74,8 +74,12 @@ async function loadCoordinator() {
   }));
   vi.doMock('../../../workers/sort-worker?worker', () => ({
     default: class MockSortWorker {
+      onerror: ((e: unknown) => void) | null = null;
       constructor() {
         if (workerConstructThrows) throw new Error('worker construction blocked');
+        // Expose the live instance so tests can fire worker events
+        // (the init settle-guard test drives `onerror`).
+        (globalThis as unknown as { __lastMockWorker?: unknown }).__lastMockWorker = this;
       }
       terminate = vi.fn(() => terminatedWorkers.push(this));
     },
@@ -1467,5 +1471,83 @@ describe('depth-sort coordinator — provider failure semantics', () => {
     await flush();
     expect(mockApi.registerNode).toHaveBeenCalledTimes(1);
     expect(mockApi.sort).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('depth-sort coordinator — lazy-LOD mode-switch recovery + init settle guard', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('switch TO a sorted mode clears the freshness stamp too (lazy-LOD recovery path)', async () => {
+    // A hidden RESIDENT lazy LOD level is structurally outside the
+    // reprocess sweep — clearing only committedData left it "ready +
+    // fresh" in the LOD registry with nothing ever re-committing it, so
+    // on re-show it rendered normal-mode UNSORTED until an unrelated
+    // slice change. Marking it stale routes it through the registry's
+    // settle-gated ready-but-stale reload (maybeKickReload), whose
+    // re-commit registers it with the SortWorker.
+    const coord = await loadCoordinator();
+    const requestReprocess = vi.fn();
+    coord.configureDepthSort({
+      getCamera: () => makeCamera(),
+      requestRender: vi.fn(),
+      requestReprocess,
+    });
+
+    const mesh = makeGSplatsMesh(2, 'additive');
+    mesh.userData.nodeType = 'points';
+    mesh.userData.loadedViewVersion = 7; // committed fresh for view 7
+    coord.noteDepthSortBlendingModeSwitch(mesh, 'normal', 'additive');
+    expect(mesh.userData.committedData).toBeUndefined();
+    expect(mesh.userData.loadedViewVersion).toBeUndefined();
+    expect(requestReprocess).toHaveBeenCalledTimes(1);
+
+    // Switching AWAY does NOT touch either stamp (no reprocess needed).
+    const away = makeGSplatsMesh(2, 'normal');
+    away.userData.loadedViewVersion = 9;
+    coord.noteDepthSortBlendingModeSwitch(away, 'additive', 'normal');
+    expect(away.userData.committedData).toBeDefined();
+    expect(away.userData.loadedViewVersion).toBe(9);
+  });
+
+  it('a worker error during startup settles the init promise (no unbounded closure pile-up)', async () => {
+    // A worker that dies during ASYNC module evaluation emits 'error'
+    // but never settles the Comlink initialize RPC. Every commit's
+    // continuation (closing over its centers provider — the full
+    // LoadedPointsData for points) would otherwise accumulate on the
+    // forever-pending initPromise. The onerror guard must settle it and
+    // drain the continuations into the warn-once degrade path.
+    const coord = await loadCoordinator();
+    // initialize never settles — simulates the wedged RPC.
+    mockApi.initialize.mockImplementation(() => new Promise(() => {}));
+    coord.configureDepthSort({ getCamera: () => makeCamera(), requestRender: vi.fn() });
+
+    const mesh = makeGSplatsMesh(2, 'normal');
+    mesh.userData.nodeType = 'points';
+    const provider = vi.fn(() => new Float32Array([0, 0, -1, 1, 0, -2]));
+    coord.noteDepthSortCommit(mesh, provider, 2);
+    await flush();
+    // Pending init: nothing registered yet, provider unpaid.
+    expect(mockApi.registerNode).not.toHaveBeenCalled();
+    expect(provider).not.toHaveBeenCalled();
+
+    // The worker emits an error event (async startup death).
+    const w = terminatedWorkers.length === 0 ? null : null; // (worker not terminated yet)
+    expect(w).toBeNull();
+    const liveWorker = (
+      globalThis as unknown as { __lastMockWorker?: { onerror?: (e: unknown) => void } }
+    ).__lastMockWorker;
+    expect(liveWorker?.onerror).toBeTypeOf('function');
+    liveWorker!.onerror!({ message: 'module evaluation failed' });
+    await flush();
+
+    // The init settled: the wedged worker was terminated, and later
+    // commits degrade gracefully (no throw, no registration).
+    expect(terminatedWorkers.length).toBe(1);
+    coord.noteDepthSortCommit(mesh, provider, 2);
+    await flush();
+    expect(mockApi.registerNode).not.toHaveBeenCalled();
+    expect(provider).not.toHaveBeenCalled();
   });
 });
