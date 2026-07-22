@@ -149,7 +149,8 @@ export const POINT_PICK_FRAGMENT_SHADER = /* glsl */ `
     out vec4 fragColor;
 
     void main() {
-      if (vRadius < 0.0001) discard;
+      // Exact-zero only — see the visual shader's twin comment.
+      if (vRadius <= 0.0) discard;
 
       vec2 centered = vSpriteCoord - 0.5;
       float r2 = dot(centered, centered);

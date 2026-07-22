@@ -81,7 +81,7 @@ void main() {
 	// code
 
 
-	if ( ( nodeVarying1 < 0.0001 ) ) {
+	if ( ( nodeVarying1 <= 0.0 ) ) {
 
 		discard;
 		
