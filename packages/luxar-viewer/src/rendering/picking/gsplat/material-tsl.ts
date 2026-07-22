@@ -23,7 +23,7 @@ import { gsplatPickWebGPUFactory, type GSplatPickTSLNodes } from './pick.tsl';
 import type { CameraAwareMaterial } from '../../materials/_shared/camera-aware-material';
 import { computeFocalLength } from '../../materials/_shared/camera-uniforms';
 import { proxyIUniform, type TSLNode } from '../../materials/_shared/tsl-helpers';
-import { getPlaceholderSplatTexture } from '../../element-texture-layout';
+import { getPlaceholderElementTexture } from '../../element-texture-layout';
 import type { GSplatPickingMaterialConfig, SurfacePickAwareMaterial } from './material';
 import { GSPLAT_COV2D_DILATION_DEFAULT } from '../../materials/gsplat/math';
 
@@ -61,7 +61,7 @@ export class GSplatPickingTSLMaterial
     this.tslNodes = {
       // Splat data texture node (placeholder until the commit sync
       // rebinds the pool texture; identity change -> factory re-run).
-      uSplatTex: texture(getPlaceholderSplatTexture()),
+      uSplatTex: texture(getPlaceholderElementTexture()),
       uResolution: uniform(new THREE.Vector2(1, 1)),
       uFx: uniform(500),
       uFy: uniform(500),
@@ -111,7 +111,7 @@ export class GSplatPickingTSLMaterial
    */
   updateSplatTexture(tex: THREE.DataTexture | null): void {
     const current = (this.uniforms.uSplatTex?.value as THREE.Texture | null | undefined) ?? null;
-    const next = tex ?? getPlaceholderSplatTexture();
+    const next = tex ?? getPlaceholderElementTexture();
     if (current === next) return;
     this.tslNodes.uSplatTex = texture(next);
     this.uniforms.uSplatTex = proxyIUniform(this.tslNodes.uSplatTex);

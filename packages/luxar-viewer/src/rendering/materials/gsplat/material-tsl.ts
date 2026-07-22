@@ -41,7 +41,7 @@ import type { GSplatMaterialConfig } from './material-glsl';
 import type { CameraAwareMaterial } from '../_shared/camera-aware-material';
 import type { ColormapAwareMaterial } from '../_shared/colormap-aware-material';
 import { clampGamma, isGammaOne } from '../_shared/uniform-helpers';
-import { getPlaceholderSplatTexture } from '../../element-texture-layout';
+import { getPlaceholderElementTexture } from '../../element-texture-layout';
 import { computeFocalLength } from '../_shared/camera-uniforms';
 import {
   computeRayIntegralFactor,
@@ -119,7 +119,7 @@ export class GSplatTSLMaterial
       // commit's material sync rebinds the acquired pool entry's
       // texture via `updateSplatTexture` (node identity change ->
       // graph rebuild, same lifecycle as the colormap texture).
-      uSplatTex: texture(getPlaceholderSplatTexture()),
+      uSplatTex: texture(getPlaceholderElementTexture()),
       uResolution: uniform(new THREE.Vector2(1, 1)),
       uFx: uniform(500),
       uFy: uniform(500),
@@ -373,7 +373,7 @@ export class GSplatTSLMaterial
    */
   updateSplatTexture(tex: THREE.DataTexture | null): void {
     const current = (this.uniforms.uSplatTex?.value as THREE.Texture | null | undefined) ?? null;
-    const next = tex ?? getPlaceholderSplatTexture();
+    const next = tex ?? getPlaceholderElementTexture();
     if (current === next) return;
     this.tslNodes.uSplatTex = texture(next);
     this.uniforms = this.buildUniformProxies();

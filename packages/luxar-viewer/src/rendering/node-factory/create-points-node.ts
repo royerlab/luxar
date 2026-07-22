@@ -6,7 +6,8 @@
  * storage pair — the per-point data lives in the texture, 3
  * texels/point; layout documented in `../point-geometry.ts`);
  * `createPointsMaterial` resolves the material backend through
- * materialManager and applies the colormap clone path when scalars are
+ * materialManager and applies the colormap directly to the per-node
+ * material when scalars are
  * requested; `createPointsNode` assembles both into the mesh + optional
  * picking shadow node.
  *
@@ -137,8 +138,17 @@ export function createPointsGeometry(
     sharpness: sharpnessF32,
     scalars: scalarsF32,
   };
-  writePointTexels(texture, texelSrc, pointCount);
-  writeSortedIndexIdentity(geometry, pointCount);
+  try {
+    writePointTexels(texture, texelSrc, pointCount);
+    writeSortedIndexIdentity(geometry, pointCount);
+  } catch (err) {
+    // The texture was attached above; a guard-throwing write would
+    // otherwise leak the fresh geometry+texture pair (nobody owns it
+    // yet — the commit's create-then-swap keeps the mesh on its OLD
+    // geometry when this throws).
+    geometry.dispose();
+    throw err;
+  }
 
   // WebGLRenderer only issues an instanced draw when instanceCount is set.
   geometry.instanceCount = pointCount;
@@ -270,7 +280,10 @@ export function createPointsNode(
     loader,
     attrs,
     maxRadius: attrs.max_radius ?? 1.0,
-    visiblePointCount: data.pointCount,
+    // Clamped like the commit path's stamp — the geometry above wrote at
+    // most the per-node texture bound, and debug/UI counts must agree
+    // with drawn instances.
+    visiblePointCount: clampPointCapacity(data.pointCount),
     // Per-node material from creation: LayersPanel and the LOD
     // cross-fade honor this marker and mutate the material directly
     // instead of clone-on-first-use (mirrors createGSplatsNode).

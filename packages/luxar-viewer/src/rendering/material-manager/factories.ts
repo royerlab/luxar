@@ -176,7 +176,9 @@ export function lineCacheKey(props: LineMaterialProperties, backend: MaterialBac
   const { opacityBucket, gammaBucket, intensityBucket, offsetBucket } =
     getCommonMaterialBuckets(props);
   const transparent = props.blendingMode !== 'opaque';
-  // depthWrite discriminator — see pointCacheKey.
+  // depthWrite discriminator: 'normal' mode flips depthWrite at the
+  // opacity >= 0.99 threshold, so two opacity buckets on the same side of
+  // the flip must not share a cached material with different depth state.
   const dw = props.blendingMode === 'normal' && normalModeDepthWrite(props.opacity) ? 1 : 0;
   return `line_${backend}_${props.blendingMode}_o${opacityBucket}_g${gammaBucket}_i${intensityBucket}_f${offsetBucket}_t${transparent ? 1 : 0}_dw${dw}`;
 }

@@ -132,7 +132,7 @@ export class MaterialManager {
    * THREE's EventDispatcher.
    */
   private subscribedMaterials = new WeakSet<THREE.Material & CameraAwareMaterial>();
-  /** Total evictions across ALL three caches (shared counter, not per-cache). */
+  /** Total LRU evictions (only the line cache can evict — point/gsplat materials are per node). */
   private evictionCount = 0;
 
   /**
@@ -145,9 +145,12 @@ export class MaterialManager {
   private totalCreateMs = 0;
   private createCount = 0;
   /**
-   * Materials registered for camera updates but not owned by a cache entry.
+   * Materials that entered through `register()` or LRU eviction rather than
+   * a manager factory (per-node point/gsplat materials live in
+   * `registeredMaterials` only).
    *
-   * Examples: per-node colormap material clones and GPU-picking materials. These
+   * Examples: GPU-picking materials and evicted line materials awaiting
+   * defer-dispose. These
    * still need global camera uniforms and manager-level disposal, but they must
    * be tracked separately from cached shared materials for leak diagnostics.
    */

@@ -182,6 +182,85 @@ describe('commitGSplatsGeometry', () => {
     expect(mockSyncGSplatMaterial).toHaveBeenCalledWith(mesh);
   });
 
+  it('leaves the freshness stamps untouched when the pool update throws (success-only stamps)', () => {
+    // Prime a SUCCESSFUL commit first so the stamps hold real values, then
+    // make a bigger commit throw: visibleSplatCount / loadedViewVersion /
+    // committedData must all still describe the last SUCCESSFUL commit —
+    // a throwing write must not stamp the mesh fresh-for-the-new-view with
+    // a count that never landed (the LOD freshness registry would trust it).
+    const root = new THREE.Group();
+    const mesh = makeMesh('/g');
+    root.add(mesh);
+
+    const geometry = new THREE.BufferGeometry();
+    const pool = {
+      acquireGSplatsGeometry: vi.fn(() => geometry),
+      updateGSplatsGeometry: vi.fn(),
+      releaseGSplatsGeometry: vi.fn(),
+      didLastAcquireRebuildAttributes: vi.fn(() => false),
+    };
+    const first = makeStaged(2);
+    commitGSplatsGeometry(first, root, pool as never, undefined, 1);
+    if (first.noop) throw new Error('expected geometry staged commit');
+    expect((mesh.userData as { visibleSplatCount: number }).visibleSplatCount).toBe(2);
+
+    pool.updateGSplatsGeometry.mockImplementation(() => {
+      throw new Error('upload failed');
+    });
+    expect(() => commitGSplatsGeometry(makeStaged(5), root, pool as never, undefined, 2)).toThrow(
+      'upload failed'
+    );
+
+    expect((mesh.userData as { visibleSplatCount: number }).visibleSplatCount).toBe(2);
+    expect((mesh.userData as { loadedViewVersion?: number }).loadedViewVersion).toBe(1);
+    expect((mesh.userData as { committedData?: unknown }).committedData).toBe(first.sourceData);
+  });
+
+  it('disposes a replaced non-pool creation geometry at the pool handoff (placeholder leak)', () => {
+    // The creation-time placeholder geometry carries a minimum-row splat
+    // texture; nobody else owns it once the pool hands the node its first
+    // real geometry, so the handoff must dispose it — see the
+    // commit-points-geometry.test.ts twin.
+    const root = new THREE.Group();
+    const mesh = makeMesh('/g');
+    root.add(mesh);
+    const prevGeometry = mesh.geometry;
+    const disposeSpy = vi.spyOn(prevGeometry, 'dispose');
+
+    const newGeometry = new THREE.BufferGeometry();
+    newGeometry.userData = { luxarPooled: true };
+    const pool = {
+      acquireGSplatsGeometry: vi.fn(() => newGeometry),
+      updateGSplatsGeometry: vi.fn(),
+      releaseGSplatsGeometry: vi.fn(),
+      didLastAcquireRebuildAttributes: vi.fn(() => true),
+    };
+    commitGSplatsGeometry(makeStaged(3), root, pool as never, undefined, V);
+    expect(mesh.geometry).toBe(newGeometry);
+    expect(disposeSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it('never disposes a replaced POOL-owned geometry (luxarPooled marker — acquire released it)', () => {
+    const root = new THREE.Group();
+    const mesh = makeMesh('/g');
+    root.add(mesh);
+    const prevGeometry = mesh.geometry;
+    prevGeometry.userData = { ...prevGeometry.userData, luxarPooled: true };
+    const disposeSpy = vi.spyOn(prevGeometry, 'dispose');
+
+    const newGeometry = new THREE.BufferGeometry();
+    newGeometry.userData = { luxarPooled: true };
+    const pool = {
+      acquireGSplatsGeometry: vi.fn(() => newGeometry),
+      updateGSplatsGeometry: vi.fn(),
+      releaseGSplatsGeometry: vi.fn(),
+      didLastAcquireRebuildAttributes: vi.fn(() => true),
+    };
+    commitGSplatsGeometry(makeStaged(3), root, pool as never, undefined, V);
+    expect(mesh.geometry).toBe(newGeometry);
+    expect(disposeSpy).not.toHaveBeenCalled();
+  });
+
   it('[C7] pool path: calls acquire/update exactly once, replaces mesh.geometry, SKIPS updateInstancedGSplatsMesh', () => {
     mockUpdateInstancedMesh.mockReset();
     const root = new THREE.Group();
@@ -409,12 +488,12 @@ describe('commitGSplatsGeometry — preserve-ordering on same-node same-count re
     // First commit: no committedData stamp yet → the geometry's ordering
     // is unvouched-for, identity must be written.
     commitGSplatsGeometry(makeStaged(7), root, pool as never, undefined, V);
-    expect(lastPoolPreserve(pool)).toEqual({ preserveOrdering: false, fromSplat: 0 });
+    expect(lastPoolPreserve(pool)).toEqual({ preserveOrdering: false, fromInstance: 0 });
     // Same-node same-count recommit on the SAME pooled geometry: the
     // previous permutation of [0,7) is still valid — keep it. Equal count is
-    // NOT an append (that needs a strict extension), so fromSplat stays 0.
+    // NOT an append (that needs a strict extension), so fromInstance stays 0.
     commitGSplatsGeometry(makeStaged(7), root, pool as never, undefined, V);
-    expect(lastPoolPreserve(pool)).toEqual({ preserveOrdering: true, fromSplat: 0 });
+    expect(lastPoolPreserve(pool)).toEqual({ preserveOrdering: true, fromInstance: 0 });
   });
 
   it('pool path: count-change recommit → preserveOrdering false', () => {
@@ -424,9 +503,9 @@ describe('commitGSplatsGeometry — preserve-ordering on same-node same-count re
     const pool = makePool(new THREE.BufferGeometry());
     commitGSplatsGeometry(makeStaged(7), root, pool as never, undefined, V);
     // A permutation of [0,7) is not a permutation of [0,9). No lineage was
-    // stamped here, so this is a full rewrite (not an append) → fromSplat 0.
+    // stamped here, so this is a full rewrite (not an append) → fromInstance 0.
     commitGSplatsGeometry(makeStaged(9), root, pool as never, undefined, V);
-    expect(lastPoolPreserve(pool)).toEqual({ preserveOrdering: false, fromSplat: 0 });
+    expect(lastPoolPreserve(pool)).toEqual({ preserveOrdering: false, fromInstance: 0 });
   });
 
   it('pool path: recommit after committedData was cleared (LOD demotion) → false', () => {
@@ -437,7 +516,7 @@ describe('commitGSplatsGeometry — preserve-ordering on same-node same-count re
     commitGSplatsGeometry(makeStaged(7), root, pool as never, undefined, V);
     delete (mesh.userData as { committedData?: unknown }).committedData;
     commitGSplatsGeometry(makeStaged(7), root, pool as never, undefined, V);
-    expect(lastPoolPreserve(pool)).toEqual({ preserveOrdering: false, fromSplat: 0 });
+    expect(lastPoolPreserve(pool)).toEqual({ preserveOrdering: false, fromInstance: 0 });
   });
 
   it('pool path: geometry swap / attribute rebuild defeats the flag', () => {
@@ -452,7 +531,7 @@ describe('commitGSplatsGeometry — preserve-ordering on same-node same-count re
     pool.acquireGSplatsGeometry.mockReturnValue(new THREE.BufferGeometry());
     pool.didLastAcquireRebuildAttributes.mockReturnValue(true);
     commitGSplatsGeometry(makeStaged(7), root, pool as never, undefined, V);
-    expect(lastPoolPreserve(pool)).toEqual({ preserveOrdering: false, fromSplat: 0 });
+    expect(lastPoolPreserve(pool)).toEqual({ preserveOrdering: false, fromInstance: 0 });
   });
 
   it('non-pool path: same-count recommit → preserveOrdering true (first commit → false)', () => {
@@ -489,8 +568,8 @@ describe('commitGSplatsGeometry — preserve-ordering on same-node same-count re
   });
 });
 
-describe('commitGSplatsGeometry — append fast path (Phase 4 Stage 2, fromSplat)', () => {
-  // The gate lives in the pool branch; these tests pin `fromSplat` in the
+describe('commitGSplatsGeometry — append fast path (Phase 4 Stage 2, fromInstance)', () => {
+  // The gate lives in the pool branch; these tests pin `fromInstance` in the
   // options threaded to updateGSplatsGeometry. The suffix-write behavior
   // itself is covered in splat-texture-storage.test.ts.
   const makePool = (geometry: THREE.BufferGeometry) => ({
@@ -502,7 +581,7 @@ describe('commitGSplatsGeometry — append fast path (Phase 4 Stage 2, fromSplat
   const lastOpts = (pool: ReturnType<typeof makePool>) =>
     (pool.updateGSplatsGeometry.mock.calls.at(-1) as unknown[])[4] as {
       preserveOrdering: boolean;
-      fromSplat: number;
+      fromInstance: number;
     };
 
   // Arrange a committed prefix, then stage a genuine extension of it.
@@ -519,13 +598,13 @@ describe('commitGSplatsGeometry — append fast path (Phase 4 Stage 2, fromSplat
     return next;
   };
 
-  it('fires the append (fromSplat = prevCount) when the commit extends the committed prefix', () => {
+  it('fires the append (fromInstance = prevCount) when the commit extends the committed prefix', () => {
     const root = new THREE.Group();
     root.add(makeMesh('/g'));
     const pool = makePool(new THREE.BufferGeometry());
     const next = primeAndExtend(root, pool, 4, 6);
     commitGSplatsGeometry(next, root, pool as never, undefined, V);
-    expect(lastOpts(pool).fromSplat).toBe(4);
+    expect(lastOpts(pool).fromInstance).toBe(4);
     // Positive-path bookkeeping stamps re-enable the NEXT append.
     const ud = root.children[0].userData as { gpuPrefixIntact: boolean; committedTruncate: number };
     expect(ud.gpuPrefixIntact).toBe(true);
@@ -535,14 +614,14 @@ describe('commitGSplatsGeometry — append fast path (Phase 4 Stage 2, fromSplat
     expect(getPrefixParent(next.sourceData)).toBeUndefined();
   });
 
-  it('does NOT append (fromSplat 0) when there is no prefix lineage (unrelated reload)', () => {
+  it('does NOT append (fromInstance 0) when there is no prefix lineage (unrelated reload)', () => {
     const root = new THREE.Group();
     root.add(makeMesh('/g'));
     const pool = makePool(new THREE.BufferGeometry());
     commitGSplatsGeometry(makeStaged(4), root, pool as never, undefined, V);
     // A larger commit with NO lineage stamp: full rewrite.
     commitGSplatsGeometry(makeStaged(6), root, pool as never, undefined, V);
-    expect(lastOpts(pool).fromSplat).toBe(0);
+    expect(lastOpts(pool).fromInstance).toBe(0);
   });
 
   it('does NOT append after a context restore cleared gpuPrefixIntact', () => {
@@ -552,7 +631,7 @@ describe('commitGSplatsGeometry — append fast path (Phase 4 Stage 2, fromSplat
     const next = primeAndExtend(root, pool, 4, 6);
     (root.children[0].userData as { gpuPrefixIntact: boolean }).gpuPrefixIntact = false;
     commitGSplatsGeometry(next, root, pool as never, undefined, V);
-    expect(lastOpts(pool).fromSplat).toBe(0);
+    expect(lastOpts(pool).fromInstance).toBe(0);
   });
 
   it('does NOT append when the acquire rebuilt attributes (pool grow / best-fit swap)', () => {
@@ -564,7 +643,7 @@ describe('commitGSplatsGeometry — append fast path (Phase 4 Stage 2, fromSplat
     pool.acquireGSplatsGeometry.mockReturnValue(new THREE.BufferGeometry());
     pool.didLastAcquireRebuildAttributes.mockReturnValue(true);
     commitGSplatsGeometry(next, root, pool as never, undefined, V);
-    expect(lastOpts(pool).fromSplat).toBe(0);
+    expect(lastOpts(pool).fromInstance).toBe(0);
   });
 
   it('does NOT append on an equal-count recommit (that is the preserveOrdering path)', () => {
@@ -574,7 +653,7 @@ describe('commitGSplatsGeometry — append fast path (Phase 4 Stage 2, fromSplat
     const next = primeAndExtend(root, pool, 5, 5); // same count, lineage set
     commitGSplatsGeometry(next, root, pool as never, undefined, V);
     const opts = lastOpts(pool);
-    expect(opts.fromSplat).toBe(0);
+    expect(opts.fromInstance).toBe(0);
     expect(opts.preserveOrdering).toBe(true);
   });
 
@@ -589,7 +668,7 @@ describe('commitGSplatsGeometry — append fast path (Phase 4 Stage 2, fromSplat
       uniforms: { uTruncate: { value: 5.0 } },
     } as never;
     commitGSplatsGeometry(next, root, pool as never, undefined, V);
-    expect(lastOpts(pool).fromSplat).toBe(0);
+    expect(lastOpts(pool).fromInstance).toBe(0);
   });
 });
 

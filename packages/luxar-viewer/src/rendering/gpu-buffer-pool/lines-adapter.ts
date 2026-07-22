@@ -77,6 +77,10 @@ function createLinesGeometry(
   for (const spec of specs) {
     geometry.setAttribute(spec.name, views[spec.name]);
   }
+  // Draw nothing until the first successful write sets the real count
+  // (mirrors the points/gsplats adapters — THREE's default is Infinity).
+  geometry.instanceCount = 0;
+  geometry.setDrawRange(0, 6);
   // Ownership marker — see the points adapter's twin comment.
   if (!geometry.userData) geometry.userData = {};
   geometry.userData.luxarPooled = true;
@@ -167,6 +171,8 @@ export class LinesBufferAdapter {
     if (bestList) {
       const candidate = bestList[bestIndex];
       bestList.splice(bestIndex, 1);
+      // See the points adapter's twin comment.
+      (candidate.geometry as THREE.InstancedBufferGeometry).instanceCount = 0;
       candidate.inUse = true;
       candidate.lastUsedFrame = host.frameCount;
       host.activeBuffers.set(nodeId, candidate);

@@ -42,6 +42,12 @@ import { chooseCapacity } from './capacity';
  * Points render as instanced unit quads, so the indexed draw range is
  * always the 2-triangle base quad (6 indices) while `instanceCount`
  * carries the number of point sprites.
+ *
+ * Called ONLY from `updateGeometry`, AFTER the texel write succeeds —
+ * never at acquire time. Bumping `instanceCount` before the write would
+ * let a throwing write draw the new count over stale/zero texels (a
+ * grown reuse would render ~N duplicate sprites of point 0 until the
+ * next update); the gsplats adapter has the same ordering.
  */
 function preparePointsGeometryForDraw(
   geometry: THREE.BufferGeometry,
@@ -119,7 +125,7 @@ export class PointsBufferAdapter {
         active.lastUsedFrame = host.frameCount;
         host.stats.reuses++;
         host.typeStats.points.reuses++;
-        return preparePointsGeometryForDraw(active.geometry, pointCount);
+        return active.geometry as THREE.InstancedBufferGeometry;
       } else {
         // Grow = RELEASE + REACQUIRE — an in-place rebuild strands the
         // old GL/GPU buffer in the renderer caches (hard leak under the
@@ -154,13 +160,18 @@ export class PointsBufferAdapter {
     if (bestList) {
       const candidate = bestList[bestIndex];
       bestList.splice(bestIndex, 1);
+      // Adopted geometry may still carry the previous tenant's
+      // instanceCount + texels; draw nothing until this node's write
+      // sets the real count (a throwing write must not render the
+      // previous tenant's content under this node's transform).
+      (candidate.geometry as THREE.InstancedBufferGeometry).instanceCount = 0;
       candidate.inUse = true;
       candidate.lastUsedFrame = host.frameCount;
       host.activeBuffers.set(nodeId, candidate);
       host.stats.reuses++;
       host.typeStats.points.reuses++;
       host._lastAcquireRebuilt = true;
-      return preparePointsGeometryForDraw(candidate.geometry, pointCount);
+      return candidate.geometry as THREE.InstancedBufferGeometry;
     }
 
     host._lastAcquireRebuilt = true;
@@ -184,7 +195,7 @@ export class PointsBufferAdapter {
     host.evictUnused(true);
     host.typeStats.points.allocations++;
 
-    return preparePointsGeometryForDraw(geometry, pointCount);
+    return geometry;
   }
 
   releaseGeometry(nodeId: string): void {
@@ -211,12 +222,12 @@ export class PointsBufferAdapter {
   }
 
   updateGeometry(
-    geometry: THREE.BufferGeometry,
+    geometry: THREE.InstancedBufferGeometry,
     data: LoadedPointsData,
     count: number,
     options?: { fromInstance?: number }
   ): void {
-    const instanced = geometry as THREE.InstancedBufferGeometry;
+    const instanced = geometry;
     const texture = getPointTexture(instanced);
     if (!texture) {
       throw new Error(

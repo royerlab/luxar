@@ -43,6 +43,11 @@ function createGSplatsGeometry(splatCapacity: number): THREE.InstancedBufferGeom
   const quadPositions = new Float32Array([-1, -1, 1, -1, -1, 1, 1, 1]);
   geometry.setAttribute('aQuadCorner', new THREE.Float32BufferAttribute(quadPositions, 2));
   geometry.setIndex([0, 1, 2, 2, 1, 3]);
+  // Draw nothing until the first successful texel write sets the real
+  // count (mirrors the points adapter): a throwing first write must not
+  // let the handoff draw capacity-many unwritten texels.
+  geometry.instanceCount = 0;
+  geometry.setDrawRange(0, 6);
 
   // Splat data lives in the RGBA32F texture attached here (disposed BY
   // the geometry's dispose event, so every pool dispose site frees it);
@@ -126,6 +131,9 @@ export class GSplatsBufferAdapter {
     if (bestList) {
       const candidate = bestList[bestIndex];
       bestList.splice(bestIndex, 1);
+      // See the points adapter's twin comment: no previous-tenant
+      // content may draw through a throwing write.
+      (candidate.geometry as THREE.InstancedBufferGeometry).instanceCount = 0;
       candidate.inUse = true;
       candidate.lastUsedFrame = host.frameCount;
       host.activeBuffers.set(nodeId, candidate);
@@ -186,7 +194,7 @@ export class GSplatsBufferAdapter {
     data: PackedGSplatsData,
     count: number,
     truncationRadius: number = 3.0,
-    options?: { preserveOrdering?: boolean; fromSplat?: number }
+    options?: { preserveOrdering?: boolean; fromInstance?: number }
   ): void {
     const texture = getSplatTexture(geometry);
     if (!texture) {
@@ -195,11 +203,11 @@ export class GSplatsBufferAdapter {
           'was it acquired from the pool?'
       );
     }
-    // Append fast path (Phase 4 Stage 2): the commit layer sets `fromSplat`
+    // Append fast path (Phase 4 Stage 2): the commit layer sets `fromInstance`
     // to the prefix count already on the GPU when this commit only extends it,
     // so the fused writer + ranged upload touch just the `[fromSplat, count)`
     // suffix (see writeSplatTexels). 0 means a full write.
-    const fromSplat = options?.fromSplat ?? 0;
+    const fromSplat = options?.fromInstance ?? 0;
     // One fused pass over the staged arrays into the texel layout
     // (replaces the six per-attribute strided writes), then identity
     // ordering. The writer clamps to the texture capacity; mirror that

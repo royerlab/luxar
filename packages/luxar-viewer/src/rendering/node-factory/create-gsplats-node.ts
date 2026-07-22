@@ -8,6 +8,7 @@ import * as THREE from 'three';
 import { materialManager, type BlendingMode, type LuxarGSplatMaterial } from '../material-manager';
 import { getColormapTexture } from '../colormap-textures';
 import { createInstancedGSplatsMesh, type InstancedGSplatsMeshConfig } from '../gsplat-geometry';
+import { clampSplatCapacity } from '../element-texture-layout';
 import { syncGSplatMaterialWithGeometry } from '../material-sync-helpers';
 import type { GSplatsMetadata, GSplatsUserData, GSplatsDataLoader } from '../../types/gsplats';
 import type { PickingSystem } from '../picking/picking-system';
@@ -65,7 +66,10 @@ export function createGSplatsNode(
     nodeType: 'gsplats',
     loader,
     attrs,
-    visibleSplatCount: meshConfig.splatCount,
+    // Clamped like the commit path's stamp — the mesh draws at most the
+    // per-node texture bound, and debug/UI counts must agree (mirrors
+    // create-points-node).
+    visibleSplatCount: clampSplatCapacity(meshConfig.splatCount),
     // Per-node material from creation: LayersPanel and the LOD
     // cross-fade honor this marker and mutate the material directly
     // instead of clone-on-first-use.
