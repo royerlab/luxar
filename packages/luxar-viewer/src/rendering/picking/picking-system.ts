@@ -448,6 +448,10 @@ export class PickingSystem {
 
   /** Clean up all resources — render target, pick materials, scene. */
   dispose(): void {
+    // Stale-mark any in-flight async readback: a pick resolving AFTER
+    // dispose must not emit a result to the (now torn-down) session's
+    // handlers — same generation guard the mutation paths use.
+    this._pickSeq++;
     this.scheduler.dispose();
 
     // Dispose all pick materials (unregisters from materialManager automatically)

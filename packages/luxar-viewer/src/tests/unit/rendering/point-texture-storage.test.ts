@@ -151,6 +151,12 @@ describe('attachPointStorage / writePointTexels — fused writer round-trip', ()
     const sentinel = -12345;
     arr[2 * POINT_FLOATS_PER_POINT] = sentinel;
     texture.clearUpdateRanges();
+    // Simulate the renderer flush (three invokes onUpdate after consuming
+    // the upload) — the initial full write crossed the >=75% knee into
+    // full-upload mode, and a pre-flush append correctly STAYS full
+    // (pinned by the pending-full test); this test exercises the ranged
+    // append path that runs once the upload has flushed.
+    texture.onUpdate?.();
 
     // Append: source is FULL-LENGTH (6), write only points [4, 6) = row 2.
     const src = makeSource(6);

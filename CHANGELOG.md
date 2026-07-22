@@ -6,6 +6,30 @@ All notable changes to Luxar are documented in this file.
 
 ### July 2026
 
+#### Fixed — robustness campaign: pool throw-paths, picking lifecycle, lines catch-up (post-#630/#632)
+
+- **Pool adapters**: a throwing allocation during a grow no longer strands a
+  mesh on a free-pooled/disposed geometry — the released buffer is re-claimed
+  on failure (all three geometry types); lines multi-attribute writes are now
+  all-or-nothing (pre-flight length sweep).
+- **Picking**: hidden/demoted LOD levels no longer render into the pick
+  buffer (or resurrect released pool geometries); the pick material gets the
+  RenderObject soft-dispose after pool swaps (WebGPU stale-buffer class); a
+  failed dataset switch disposes the previous picking session up-front; an
+  in-flight pick readback that resolves after dispose is dropped.
+- **Lines**: materials now build from COMPOSED effective attrs (ancestor
+  opacity/intensity contributions were silently dropped until a panel
+  interaction); the colormap clone no longer detaches the cached original
+  from camera updates (`detachFromGlobalUpdates` deleted — its founding
+  rationale never held).
+- **Commit pipeline**: one throwing geometry commit no longer starves the
+  pass's sibling commits; errors aggregate and re-surface at the same call
+  site.
+- **Python**: the points writer stamps `has_colors`/`has_radii`/
+  `has_sharpness` into node attrs like the lines/gsplat writers.
+- Verified by fuzz/property/state-machine passes, a production build, the
+  WebGPU-path E2E battery, and GPU-resource stability probes.
+
 #### Changed — Points migrate to texture-backed storage + `aSortedIndex` (depth-sorting §8, PR-A of the points/lines→volumetric arc)
 
 - **Points now render like gsplats**: per-point data lives in an RGBA32F

@@ -26,6 +26,7 @@ import {
   writeSortedIndexIdentity,
   writeSortedIndexIdentityRange,
   writeSortedIndexOrdering,
+  markElementTextureFullDirty,
 } from '../../../rendering/element-storage';
 import {
   attachSplatStorage,
@@ -252,6 +253,53 @@ describe('attachSplatStorage / writeSplatTexels — fused writer round-trip', ()
     expect(texture.version).toBe(1); // 1 = the attach-time needsUpdate only
   });
 
+  it('a pending FULL upload is NOT downgraded by a later append (fuzz-found stale-prefix bug)', () => {
+    // Full-upload mode is encoded as needsUpdate + EMPTY updateRanges —
+    // invisible to the range fold. Sequence: full write dirtying >= 75%
+    // of rows (full mode), then an append BEFORE any flush. The append
+    // must NOT register partial ranges (that would downgrade the full
+    // upload and leave the prefix rendering the previous commit's texels
+    // on classic WebGL).
+    configureElementTextureLayout(8);
+    const geometry = new THREE.InstancedBufferGeometry();
+    const texture = attachSplatStorage(geometry, 4); // 2 splats/row → 2 rows
+    texture.clearUpdateRanges();
+    texture.onUpdate?.(); // simulate the attach upload flush
+    const v0 = texture.version;
+
+    // Full write of all 4 splats → 2/2 rows dirty → full-upload mode.
+    writeSplatTexels(texture, makeSource(4), 4);
+    expect(texture.updateRanges.length).toBe(0);
+    expect(texture.version).toBeGreaterThan(v0);
+
+    // Append splat [4..4) — capacity-clamped no-op is separate; use a
+    // REAL suffix register instead (splats 3→4 shape via the helper).
+    registerElementTexelDirtyRange(texture, SPLAT_FLOATS_PER_SPLAT, 3, 4);
+    // Full mode retained: still no partial ranges.
+    expect(texture.updateRanges.length).toBe(0);
+
+    // Simulated flush (three calls onUpdate after consuming the upload)
+    // ends the pending-full state; ranged uploads resume.
+    texture.onUpdate?.();
+    registerElementTexelDirtyRange(texture, SPLAT_FLOATS_PER_SPLAT, 3, 4);
+    expect(texture.updateRanges.length).toBeGreaterThan(0);
+  });
+
+  it('markElementTextureFullDirty keeps full mode across later ranged writes (context restore)', () => {
+    configureElementTextureLayout(8);
+    const geometry = new THREE.InstancedBufferGeometry();
+    const texture = attachSplatStorage(geometry, 16);
+    texture.clearUpdateRanges();
+    texture.onUpdate?.();
+
+    markElementTextureFullDirty(texture);
+    registerElementTexelDirtyRange(texture, SPLAT_FLOATS_PER_SPLAT, 0, 2);
+    expect(texture.updateRanges.length).toBe(0); // full upload still pending
+    texture.onUpdate?.();
+    registerElementTexelDirtyRange(texture, SPLAT_FLOATS_PER_SPLAT, 0, 2);
+    expect(texture.updateRanges.length).toBeGreaterThan(0);
+  });
+
   it('an EMPTY span does NOT inflate pending ranges up to its position (fold non-inflation)', () => {
     // Seeding the collapse fold with an empty span's position would stretch
     // a pending [100, 300) up to the span's floats — uploading a huge run of
@@ -305,6 +353,12 @@ describe('attachSplatStorage / writeSplatTexels — fused writer round-trip', ()
     const sentinel = -12345;
     arr[2 * SPLAT_FLOATS_PER_SPLAT] = sentinel;
     texture.clearUpdateRanges();
+    // Simulate the renderer flush (three invokes onUpdate after consuming
+    // the upload) — the initial full write crossed the >=75% knee into
+    // full-upload mode, and a pre-flush append correctly STAYS full
+    // (pinned by the pending-full test); this test exercises the ranged
+    // append path that runs once the upload has flushed.
+    texture.onUpdate?.();
 
     // Append: source is FULL-LENGTH (6), write only splats [4, 6) = row 2.
     const src = makeSource(6);

@@ -396,8 +396,9 @@ export class PointsBufferAdapter {
     // Presence stamps: the fixed texel layout always carries every slot
     // (identity fills when a field is absent), so real source presence
     // rides userData — `hasScalars` drives `supportsScalarColormap`, the
-    // rest serve debug/E2E introspection (the zarr node attrs carry no
-    // `has_colors/has_radii/has_sharpness`; the writer's flags live in a
+    // rest serve debug/E2E introspection (datasets written before the
+    // Python writer stamped `has_colors/has_radii/has_sharpness` into
+    // attrs carry no such keys; the flags otherwise live in a
     // metadata dict that never reaches attrs). Refreshed on EVERY update —
     // pool geometries are reused across tenants, and a presence flip must
     // not leak the previous tenant's stamp (the texel writer already

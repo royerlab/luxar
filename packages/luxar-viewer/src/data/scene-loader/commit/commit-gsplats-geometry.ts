@@ -181,6 +181,14 @@ export function commitGSplatsGeometry(
           truncationRadius,
           { preserveOrdering, fromInstance: canAppend ? (prevCount ?? 0) : 0 }
         );
+      } catch (err) {
+        // Defense-in-depth: a throwing write leaves the buffer content
+        // unproven — clear the append-safety flag so the next commit
+        // full-rewrites regardless of lineage (the lineage consume-and-
+        // clear already forces this today; the flag makes the gate robust
+        // against future loader/cache changes that re-stamp lineage).
+        mesh.userData.gpuPrefixIntact = false;
+        throw err;
       } finally {
         // Ownership handoff must happen even if the update throws: the
         // acquire may have RELEASED the mesh's current geometry into the
