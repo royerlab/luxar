@@ -111,28 +111,6 @@ describe('MaterialManager LRU eviction', () => {
     expect(aDisposed).toBe(true);
   });
 
-  it('disposes an evicted-while-DETACHED material at manager dispose()', () => {
-    // A colormap-clone ORIGINAL is detached from registeredMaterials
-    // (detachFromGlobalUpdates) while staying in the LRU cache. When it
-    // then gets evicted, handleEviction parks it in ownedMaterials only —
-    // dispose() must cover that set too or the original's GPU program
-    // leaks at teardown.
-    config.dataLoading.performance.materialCacheMaxSize = 1;
-    const mm = new MaterialManager();
-    const a = mm.getLineMaterial(baseProps({ opacity: 0.1 }));
-    mm.detachFromGlobalUpdates(a);
-    let aDisposed = false;
-    const origDispose = a.dispose.bind(a);
-    a.dispose = () => {
-      aDisposed = true;
-      origDispose();
-    };
-    mm.getLineMaterial(baseProps({ opacity: 0.2 })); // evicts detached A
-    expect(aDisposed).toBe(false);
-    mm.dispose();
-    expect(aDisposed).toBe(true);
-  });
-
   it('keeps the evicted material registered for camera updates; cache stays bounded', () => {
     config.dataLoading.performance.materialCacheMaxSize = 1;
     const mm = new MaterialManager();

@@ -884,6 +884,133 @@ describe('PickingSystem — surface-pick depth sync', () => {
 });
 
 // =============================================================================
+// renderPickBuffer — effective-visibility gate (hidden/demoted LOD levels
+// must never reach the pick buffer)
+// =============================================================================
+
+describe('PickingSystem — renderPickBuffer visibility gate', () => {
+  // Hidden nodes must be skipped by the pick pass: (a) picking targets
+  // what the user SEES, so a hidden LOD level in the pick buffer yields
+  // phantom picks; (b) a DEMOTED level's geometry was released back to
+  // the buffer pool while hidden — the loop's `pick.geometry =
+  // main.geometry` sync would resurrect disposed/adopted pool data under
+  // the old pickId. The gate is EFFECTIVE visibility: own flag AND all
+  // ancestors (the LOD registry hides the LEVEL object, which can be a
+  // group whose member meshes keep visible=true).
+  function makeCapturingRenderer(rendered: THREE.Object3D[][]): THREE.WebGLRenderer {
+    return {
+      domElement: document.createElement('canvas'),
+      getDrawingBufferSize: vi.fn(),
+      readRenderTargetPixels: vi.fn(),
+      getRenderTarget: vi.fn(() => null),
+      getScissorTest: vi.fn(() => false),
+      getClearColor: vi.fn(),
+      getClearAlpha: vi.fn(() => 0),
+      setRenderTarget: vi.fn(),
+      setScissorTest: vi.fn(),
+      setClearColor: vi.fn(),
+      clear: vi.fn(),
+      // Capture the pick scene's children AT RENDER TIME (they are
+      // removed again right after the render call returns).
+      render: vi.fn((scene: THREE.Scene) => rendered.push([...scene.children])),
+    } as unknown as THREE.WebGLRenderer;
+  }
+
+  function buildSystem() {
+    const rendered: THREE.Object3D[][] = [];
+    const system = new PickingSystem(
+      makeCapturingRenderer(rendered),
+      makeStubCapabilities(),
+      makeCamera(),
+      vi.fn()
+    );
+    const renderPickBuffer = (
+      system as unknown as { renderPickBuffer: () => void }
+    ).renderPickBuffer.bind(system);
+    return { system, renderPickBuffer, rendered };
+  }
+
+  /** Register a main/pick mesh pair; returns both meshes. */
+  function registerPair(system: PickingSystem) {
+    const geom = new THREE.BufferGeometry();
+    const mainNode = new THREE.Mesh(geom, new THREE.MeshBasicMaterial());
+    const pickNode = new THREE.Mesh(geom, new THREE.MeshBasicMaterial());
+    system.registerNode(mainNode, pickNode, system.allocatePickId());
+    return { mainNode, pickNode };
+  }
+
+  it('renders visible nodes and skips nodes whose main mesh is hidden', () => {
+    const { system, renderPickBuffer, rendered } = buildSystem();
+    const visible = registerPair(system);
+    const hidden = registerPair(system);
+    hidden.mainNode.visible = false;
+
+    renderPickBuffer();
+
+    expect(rendered).toHaveLength(1);
+    expect(rendered[0]).toContain(visible.pickNode);
+    expect(rendered[0]).not.toContain(hidden.pickNode);
+  });
+
+  it('skips a visible mesh under a HIDDEN ancestor (effective visibility, not own flag)', () => {
+    // The LOD registry toggles `visible` on the level object, which for
+    // partition tiles is a GROUP — the member meshes' own flags stay
+    // true. The gate must walk ancestors.
+    const { system, renderPickBuffer, rendered } = buildSystem();
+    const pair = registerPair(system);
+    const wrapper = new THREE.Group();
+    wrapper.add(pair.mainNode);
+    wrapper.visible = false;
+    expect(pair.mainNode.visible).toBe(true); // own flag untouched
+
+    renderPickBuffer();
+
+    expect(rendered).toHaveLength(1);
+    expect(rendered[0]).not.toContain(pair.pickNode);
+  });
+
+  it('does NOT re-sync a hidden entry pick geometry (demotion-resurrection guard)', () => {
+    // Demotion path: the level is hidden, then its geometry is released
+    // to the pool (possibly adopted by another node or byte-evicted +
+    // disposed). The pick pass must not touch it — syncing would attach
+    // the released geometry to the pick mesh and re-upload it on render.
+    const { system, renderPickBuffer } = buildSystem();
+    const pair = registerPair(system);
+    const originalPickGeom = pair.pickNode.geometry;
+
+    pair.mainNode.visible = false;
+    pair.mainNode.geometry = new THREE.BufferGeometry(); // simulate pool swap while hidden
+    renderPickBuffer();
+
+    expect(pair.pickNode.geometry).toBe(originalPickGeom);
+
+    // Re-promotion: a fresh commit re-shows the level; the next pick
+    // render syncs the (new, live) geometry as usual.
+    pair.mainNode.visible = true;
+    renderPickBuffer();
+    expect(pair.pickNode.geometry).toBe(pair.mainNode.geometry);
+  });
+
+  it('does not call updateCameraParams on a hidden entry pick material', () => {
+    const { system, renderPickBuffer } = buildSystem();
+    const geom = new THREE.BufferGeometry();
+    const mainNode = new THREE.Mesh(geom, new THREE.MeshBasicMaterial());
+    mainNode.visible = false;
+    const updateCameraParams = vi.fn();
+    const pickMaterial = new THREE.MeshBasicMaterial();
+    (
+      pickMaterial as unknown as { updateCameraParams: typeof updateCameraParams }
+    ).updateCameraParams = updateCameraParams;
+    const pickNode = new THREE.Mesh(geom, pickMaterial);
+    system.registerNode(mainNode, pickNode, system.allocatePickId());
+
+    renderPickBuffer();
+
+    expect(updateCameraParams).not.toHaveBeenCalled();
+  });
+});
+
+// =============================================================================
 // performPick — pick-target resize guard (MED-25 regression)
 // =============================================================================
 

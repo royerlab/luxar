@@ -206,6 +206,65 @@ class TestBasicRoundTrip:
             err_msg="Sharpness values differ after round-trip",
         )
 
+    def test_points_metadata_completeness(self, tmp_path) -> None:
+        """Test that presence flags are written to group.attrs, not just metadata.
+
+        Mirrors test_gsplats_metadata_completeness and the Lines attrs test
+        (test_ordering_lines.py): the Points writer must stamp
+        has_colors/has_radii/has_sharpness into group.attrs so the viewer can
+        read attribute presence without probing datasets (three-geometry
+        symmetry with Lines' has_colors/has_sharpness stamps).
+        """
+        output_path = tmp_path / "test.luxar.zarr"
+        n_points = 100
+
+        rng = np.random.RandomState(7)
+        positions = rng.randn(n_points, 3).astype(np.float32)
+        colors = rng.rand(n_points, 3).astype(np.float32)
+        radii = rng.rand(n_points).astype(np.float32) * 0.5 + 0.1
+        sharpness = rng.rand(n_points).astype(np.float32)
+
+        with LuxarZarrCompiler(output_path) as compiler:
+            compiler.create_scene(dimensions=Dimensions.default_3d())
+            compiler.write_points(
+                "test_points",
+                positions,
+                colors=colors,
+                radii=radii,
+                sharpness=sharpness,
+            )
+
+        # Open zarr directly to check group.attrs (not through LuxarScene API)
+        store = zarr.open_group(output_path, mode="r")
+        attrs = dict(store["test_points"].attrs)
+
+        for field in ["type", "n_points", "has_colors", "has_radii", "has_sharpness"]:
+            assert field in attrs, f"Required field '{field}' missing from group.attrs!"
+
+        assert attrs["type"] == "points"
+        assert attrs["n_points"] == n_points
+        assert attrs["has_colors"] is True
+        assert attrs["has_radii"] is True
+        assert attrs["has_sharpness"] is True
+
+    def test_points_metadata_without_optional_arrays(self, tmp_path) -> None:
+        """Presence flags must be stamped False when the arrays are absent."""
+        output_path = tmp_path / "test.luxar.zarr"
+        n_points = 50
+
+        positions = np.random.randn(n_points, 3).astype(np.float32)
+
+        with LuxarZarrCompiler(output_path) as compiler:
+            compiler.create_scene(dimensions=Dimensions.default_3d())
+            compiler.write_points("test_points", positions)
+
+        store = zarr.open_group(output_path, mode="r")
+        attrs = dict(store["test_points"].attrs)
+
+        assert attrs["has_colors"] is False
+        assert attrs["has_radii"] is False
+        assert attrs["has_sharpness"] is False
+
 
 class TestHDRColors:
     """Tests for HDR color support."""

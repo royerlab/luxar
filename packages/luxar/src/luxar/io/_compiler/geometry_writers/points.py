@@ -182,6 +182,11 @@ def write_points(
     group.attrs.update(attrs)
     group.attrs["type"] = "points"
     group.attrs["n_points"] = n_points
+    # Presence flags mirror the Lines writer (has_colors/has_sharpness) so all
+    # three geometry types stamp the same attrs the viewer can rely on.
+    group.attrs["has_colors"] = metadata["has_colors"]
+    group.attrs["has_radii"] = metadata["has_radii"]
+    group.attrs["has_sharpness"] = metadata["has_sharpness"]
 
     # 9. Compute and store position bounds (nD bounding box)
     # This is computed from the final positions (potentially reordered)

@@ -126,20 +126,56 @@ export class PointsBufferAdapter {
         host.stats.reuses++;
         host.typeStats.points.reuses++;
         return active.geometry as THREE.InstancedBufferGeometry;
-      } else {
-        // Grow = RELEASE + REACQUIRE — an in-place rebuild strands the
-        // old GL/GPU buffer in the renderer caches (hard leak under the
-        // WebGPU renderer via the strong Info.memoryMap). Releasing
-        // lets the old geometry reach geometry.dispose() through the
-        // normal evictor, which frees its buffers (and its texture, via
-        // the geometry dispose event) correctly on every backend. The
-        // released buffer cannot be re-picked below (capacity <
-        // pointCount); the fall-through best-fit/fresh-alloc paths set
-        // _lastAcquireRebuilt and the allocation counters.
-        host.stats.capacityGrowths++;
+      }
+      // Grow = RELEASE + REACQUIRE — an in-place rebuild strands the
+      // old GL/GPU buffer in the renderer caches (hard leak under the
+      // WebGPU renderer via the strong Info.memoryMap). Releasing
+      // lets the old geometry reach geometry.dispose() through the
+      // normal evictor, which frees its buffers (and its texture, via
+      // the geometry dispose event) correctly on every backend. The
+      // released buffer cannot be re-picked below (capacity <
+      // pointCount); the fall-through best-fit/fresh-alloc paths set
+      // _lastAcquireRebuilt and the allocation counters.
+      host.stats.capacityGrowths++;
+      // OOM RE-CLAIM WINDOW. A grow is exactly when memory is tightest,
+      // and everything from the release onward can throw: the release's
+      // own evict sweep (graceFrame −1, so it may even dispose the buffer
+      // we just released), and above all the fresh allocation's big
+      // Float32Array in createPointsGeometry — the realistic OOM throw
+      // site. Without this catch, the throw propagates out of the commit
+      // BEFORE its handoff try/finally, leaving the mesh's still-rendered
+      // geometry sitting in the free pool — adoptable by ANOTHER node,
+      // which would then overwrite it with foreign data under this
+      // node's transform. On a throw we re-claim the released buffer
+      // (splice it back out of its free bucket and restore it as this
+      // node's active entry) and re-throw, so the pool books stay
+      // consistent with what the mesh actually renders. The re-claim can
+      // never conflict with best-fit adoption for THIS call: the
+      // released buffer's capacity < pointCount, so the scan below can
+      // never have picked it. If the release-time sweep already disposed
+      // the buffer, re-claim finds nothing and we just re-throw — the
+      // mesh shows nothing until the next successful commit, but no
+      // pooled entry aliases it (documented residual).
+      const released = active;
+      try {
         this.releaseGeometry(nodeId);
+        return this.adoptOrAllocate(nodeId, pointCount);
+      } catch (error) {
+        this.reclaimAfterFailedGrow(nodeId, released);
+        throw error;
       }
     }
+
+    return this.adoptOrAllocate(nodeId, pointCount);
+  }
+
+  /**
+   * Best-fit adoption from the free buckets, else a fresh allocation.
+   * Extracted from `acquireGeometry` so the grow path can wrap it (and
+   * the preceding release) in the OOM re-claim try/catch above.
+   */
+  private adoptOrAllocate(nodeId: string, pointCount: number): THREE.InstancedBufferGeometry {
+    const host = this.host;
 
     // BEST-fit, not first-fit — see the gsplats adapter for rationale.
     // The fixed texel layout means any pooled points geometry fits any
@@ -196,6 +232,43 @@ export class PointsBufferAdapter {
     host.typeStats.points.allocations++;
 
     return geometry;
+  }
+
+  /**
+   * Undo a failed grow (see the OOM re-claim comment in
+   * `acquireGeometry`): restore the buffer released at the start of the
+   * grow as the node's active entry, so the geometry the mesh still
+   * renders is neither adoptable from the free pool nor orphaned.
+   *
+   * Two sub-cases:
+   * - A replacement entry was already installed for the node before the
+   *   throw (fresh allocation succeeded, then the post-allocation byte
+   *   sweep threw): dispose it — it was never handed to the caller.
+   * - The released buffer is found in a free bucket: splice it out and
+   *   re-activate it. If the release-time sweep disposed it, it is in no
+   *   bucket — nothing to restore (the caller re-throws either way).
+   */
+  private reclaimAfterFailedGrow(nodeId: string, released: PooledBuffer): void {
+    const host = this.host;
+
+    const current = host.activeBuffers.get(nodeId);
+    if (current && current !== released) {
+      host.activeBuffers.delete(nodeId);
+      current.geometry.dispose();
+    }
+
+    for (const pooled of this.pointBuffers.values()) {
+      const index = pooled.indexOf(released);
+      if (index !== -1) {
+        pooled.splice(index, 1);
+        released.inUse = true;
+        released.lastUsedFrame = host.frameCount;
+        host.activeBuffers.set(nodeId, released);
+        return;
+      }
+    }
+    // Not found: already disposed by the release-time sweep — see the
+    // "documented residual" note in acquireGeometry.
   }
 
   releaseGeometry(nodeId: string): void {

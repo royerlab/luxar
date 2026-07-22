@@ -28,6 +28,7 @@ export interface LoadDatasetPorts {
   loaderConfig: LoaderConfig | undefined;
   openCacheStats: boolean;
   disposeOverlays: () => void;
+  disposePicking: () => void;
   initScaleBar: () => void;
   initColormapLegend: () => void;
   initOverlays: () => Promise<void>;
@@ -44,6 +45,14 @@ export async function loadDataset(src: string, ports: LoadDatasetPorts): Promise
   // with clearSceneContent() — otherwise a failing scene load leaves the old
   // overlay DOM elements visible on top of an empty canvas.
   ports.disposeOverlays();
+
+  // Dispose the previous picking session upfront for the same reason:
+  // its nodeMap references geometries that clearSceneContent() is about
+  // to dispose. If loadSceneData below throws mid-load, a still-alive
+  // session (with a live embedder-selection consumer) would keep firing
+  // picks against disposed geometries until the next successful load.
+  // The end-of-load initPicking remains the (re)creation point.
+  ports.disposePicking();
 
   // Note: Monitor cleanup is handled by SceneLoader.loadScene() which calls
   // monitor.disconnectAllLoaders() when loading a new scene

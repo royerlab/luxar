@@ -144,8 +144,33 @@ export class LinesBufferAdapter {
       // rationale. The scalar spec set is decided HERE, at acquire
       // time, so updateGeometry never needs to rebuild.
       if (scalarsMatch) host.stats.capacityGrowths++;
-      this.releaseGeometry(nodeId);
+      // OOM RE-CLAIM WINDOW — see the points adapter's twin comment.
+      // The released buffer can never be picked by the best-fit scan
+      // for this call: either its capacity < segmentCount (grow) or its
+      // scalar spec set mismatches (the scan filters on both).
+      const released = active;
+      try {
+        this.releaseGeometry(nodeId);
+        return this.adoptOrAllocate(nodeId, segmentCount, hasScalars);
+      } catch (error) {
+        this.reclaimAfterFailedGrow(nodeId, released);
+        throw error;
+      }
     }
+
+    return this.adoptOrAllocate(nodeId, segmentCount, hasScalars);
+  }
+
+  /**
+   * Best-fit adoption from the free buckets, else a fresh allocation —
+   * see the points adapter's twin comment.
+   */
+  private adoptOrAllocate(
+    nodeId: string,
+    segmentCount: number,
+    hasScalars: boolean
+  ): THREE.InstancedBufferGeometry {
+    const host = this.host;
 
     // BEST-fit, not first-fit — see the gsplats adapter for rationale.
     // Candidates must carry the SAME scalar spec set (a base-only
@@ -203,6 +228,32 @@ export class LinesBufferAdapter {
     return geometry;
   }
 
+  /**
+   * Undo a failed grow — see the points adapter's twin comment for the
+   * full sub-case breakdown (replacement-entry disposal + free-bucket
+   * re-claim; a buffer the release-time sweep disposed stays gone).
+   */
+  private reclaimAfterFailedGrow(nodeId: string, released: PooledBuffer): void {
+    const host = this.host;
+
+    const current = host.activeBuffers.get(nodeId);
+    if (current && current !== released) {
+      host.activeBuffers.delete(nodeId);
+      current.geometry.dispose();
+    }
+
+    for (const pooled of this.lineBuffers.values()) {
+      const index = pooled.indexOf(released);
+      if (index !== -1) {
+        pooled.splice(index, 1);
+        released.inUse = true;
+        released.lastUsedFrame = host.frameCount;
+        host.activeBuffers.set(nodeId, released);
+        return;
+      }
+    }
+  }
+
   releaseGeometry(nodeId: string): void {
     const host = this.host;
     const buffer = host.activeBuffers.get(nodeId);
@@ -241,6 +292,45 @@ export class LinesBufferAdapter {
       throw new Error(
         'LinesBufferAdapter.updateGeometry: geometry has no scalar columns but data ' +
           'carries scalars — acquireLinesGeometry must be called with hasScalars=true.'
+      );
+    }
+
+    // PRE-FLIGHT torn-write guard: unlike points/gsplats (a single fused
+    // writer that guards before ANY store), lines perform 11–13
+    // sequential per-attribute writes below, each with its own length
+    // guard. A short array in the MIDDLE of that sequence would throw
+    // after earlier attributes were already stored and range-registered,
+    // leaving a torn mix (new positions + old colors) on the GPU.
+    // Validate every array this update will write — the same lengths the
+    // individual writePooledAttribute guards check (short throws there;
+    // longer sources are trimmed by its subarray, hence `<`) — and throw
+    // ONE aggregate error before the first store. The per-write guards
+    // stay as belt and braces.
+    const requiredLengths: Array<[field: string, actual: number, expected: number]> = [
+      ['startPositions', data.startPositions.length, count * 3],
+      ['endPositions', data.endPositions.length, count * 3],
+      ['startColors', data.startColors.length, count * 3],
+      ['endColors', data.endColors.length, count * 3],
+      ['startWidths', data.startWidths.length, count],
+      ['endWidths', data.endWidths.length, count],
+      ['startSharpness', data.startSharpness.length, count],
+      ['endSharpness', data.endSharpness.length, count],
+      ['segmentLengths', data.segmentLengths.length, count],
+      ['startClipped', data.startClipped.length, count],
+      ['endClipped', data.endClipped.length, count],
+    ];
+    if (hasScalarsInData) {
+      requiredLengths.push(['startScalars', data.startScalars!.length, count]);
+      requiredLengths.push(['endScalars', data.endScalars!.length, count]);
+    }
+    const shortFields = requiredLengths.filter(([, actual, expected]) => actual < expected);
+    if (shortFields.length > 0) {
+      throw new Error(
+        'LinesBufferAdapter.updateGeometry: refusing a torn multi-attribute write for ' +
+          `count=${count} — short source arrays: ` +
+          shortFields
+            .map(([field, actual, expected]) => `${field} (length ${actual}, need ${expected})`)
+            .join(', ')
       );
     }
 

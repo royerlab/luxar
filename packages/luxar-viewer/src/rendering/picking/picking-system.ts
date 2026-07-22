@@ -10,8 +10,10 @@
  *    appear when the world is quiet and hide whenever anything is
  *    moving. Moving the cursor over a static scene costs nothing; a
  *    stationary cursor during animation gets no stale tooltip.
- * 3. If the buffer is dirty when the pick fires, ALL registered pick
- *    nodes are rendered to a cached RGBA32F target at half-res.
+ * 3. If the buffer is dirty when the pick fires, all EFFECTIVELY
+ *    VISIBLE registered pick nodes (own flag AND ancestors — hidden/
+ *    demoted LOD levels are skipped) are rendered to a cached RGBA32F
+ *    target at half-res.
  * 4. Ray-AABB culling (using a per-node cached world AABB) skips the
  *    readback when the cursor is over empty space.
  * 5. Readback of a 5×5 region followed by brightness-weighted
@@ -38,6 +40,7 @@ import { isNormalMode, isOpaqueMode } from '../blending-state';
 import type { BlendingMode } from '../material-manager';
 import {
   disposePickMaterial,
+  isEffectivelyVisible,
   unregisterAllPickMaterials,
   type PickNodeEntry,
 } from './picking-system/registration';
@@ -473,7 +476,7 @@ export class PickingSystem {
    * Perform a pick at the given screen coordinates.
    *
    * If the pick buffer is dirty (camera/geometry/resize changed), re-renders
-   * ALL registered nodes to the cached buffer first. Otherwise just reads
+   * all effectively visible registered nodes to the cached buffer first. Otherwise just reads
    * from the cached buffer — zero GPU cost on hover.
    */
   private async performPick(screenX: number, screenY: number): Promise<void> {
@@ -578,7 +581,8 @@ export class PickingSystem {
   }
 
   /**
-   * Render ALL registered pick nodes to the cached pick buffer.
+   * Render all EFFECTIVELY VISIBLE registered pick nodes to the cached
+   * pick buffer (hidden/demoted LOD levels are skipped — see the loop).
    * Called only when the buffer is dirty (camera/geometry/resize changed).
    * Renders at half resolution for performance — pick IDs don't need full res.
    */
@@ -604,8 +608,18 @@ export class PickingSystem {
     const isOrtho = isOrthographicCamera(cam);
     const fov = isOrtho ? getOrthoFrustumHeight(cam) : getCameraFovRadians(cam);
 
-    // Sync and add ALL registered nodes to pick scene
+    // Sync and add all EFFECTIVELY VISIBLE registered nodes to pick scene
     for (const entry of this.nodeMap.values()) {
+      // Skip nodes hidden on screen (own flag OR any ancestor — the LOD
+      // registry hides the LEVEL object, which can be a group). Picking
+      // targets what the user sees, so hidden levels must not reach the
+      // pick buffer: rendering one would yield phantom picks, and for a
+      // DEMOTED level (geometry released back to the buffer pool while
+      // hidden) the geometry sync below would resurrect disposed /
+      // adopted pool data under this entry's pickId (GPU re-upload with
+      // no owner). See `isEffectivelyVisible` in
+      // picking-system/registration.ts for the full rationale.
+      if (!isEffectivelyVisible(entry.main)) continue;
       // Sync geometry (main node's geometry may have been replaced by view updates)
       const mainGeom = (entry.main as THREE.Mesh).geometry;
       if (mainGeom) {
