@@ -35,6 +35,22 @@ Controls:
 
 from __future__ import annotations
 
+DEMO_META = {
+    "key": "forest",
+    "title": "L-System Tree Forest",
+    "description": "A procedural forest of L-system trees rendered as width-tapered Lines with bark-to-foliage gradients.",
+    "category": "synthetic",
+    "geometry": "points+lines",
+    "requirements": {
+        "download_mb": 0,
+        "compute": "light",
+        "gpu": "none",
+        "local_data": None,
+    },
+    "caches": [],
+    "outputs": ["forest"],
+}
+
 import sys
 import tempfile
 from dataclasses import dataclass, field

@@ -67,6 +67,22 @@ Output:
     - Automatically opens in browser
 """
 
+DEMO_META = {
+    "key": "gsplats_4d_zebrafish_timelapse",
+    "title": "4D Zebrafish Timelapse",
+    "description": "A 4D confocal timelapse of zebrafish gastrulation as per-timepoint Gaussian splats.",
+    "category": "microscopy",
+    "geometry": "gsplats",
+    "requirements": {
+        "download_mb": 2,
+        "compute": "medium",
+        "gpu": "optional",
+        "local_data": "git-lfs",
+    },
+    "caches": ["gsplats_zebrafish"],
+    "outputs": ["gsplats_4d_zebrafish_timelapse"],
+}
+
 import sys
 from pathlib import Path
 

@@ -81,6 +81,22 @@ Output:
     - Automatically opens in browser
 """
 
+DEMO_META = {
+    "key": "gsplats_lod_embryo_line",
+    "title": "Embryo LOD (splats + lines)",
+    "description": "100 copies of a Tribolium embryo splat-fit laid along a line — adaptive level-of-detail at scale.",
+    "category": "microscopy",
+    "geometry": "mixed",
+    "requirements": {
+        "download_mb": 50,  # approx
+        "compute": "medium",
+        "gpu": "optional",
+        "local_data": "git-lfs",
+    },
+    "caches": ["gsplats_tribolium"],
+    "outputs": ["gsplats_lod_embryo_line"],
+}
+
 import sys
 from pathlib import Path
 

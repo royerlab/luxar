@@ -84,6 +84,22 @@ Output:
     - Automatically opens in browser
 """
 
+DEMO_META = {
+    "key": "gsplats_2d_cmu1_pathology",
+    "title": "2D Whole-Slide Pathology Image (CMU-1, OpenSlide)",
+    "description": "H&E whole-slide pathology image (CMU-1, 1.5 gigapixel) as tiled 2D Gaussian splats.",
+    "category": "medical",
+    "geometry": "gsplats",
+    "requirements": {
+        "download_mb": 150,  # approx
+        "compute": "medium",
+        "gpu": "optional",
+        "local_data": "git-lfs",
+    },
+    "caches": ["gsplats_cmu1_pathology"],
+    "outputs": ["gsplats_2d_cmu1_pathology"],
+}
+
 # Enable MPS->CPU fallback for unsupported PyTorch ops (must be before torch import)
 import os
 

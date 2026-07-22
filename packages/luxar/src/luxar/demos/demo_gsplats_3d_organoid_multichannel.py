@@ -88,6 +88,22 @@ Use --recompute to re-fit from scratch (requires network + GPU).
 
 """
 
+DEMO_META = {
+    "key": "gsplats_3d_organoid_multichannel",
+    "title": "Multichannel 3D Organoid",
+    "description": "Multi-channel 3D mouse intestinal-organoid microscopy (IDR idr0062) as colored Gaussian splats.",
+    "category": "microscopy",
+    "geometry": "gsplats",
+    "requirements": {
+        "download_mb": 1,
+        "compute": "medium",
+        "gpu": "optional",
+        "local_data": "git-lfs",
+    },
+    "caches": ["gsplats_multichannel"],
+    "outputs": ["gsplats_3d_organoid_multichannel"],
+}
+
 # Enable MPS→CPU fallback for unsupported PyTorch ops (must be before torch import)
 import os
 

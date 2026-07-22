@@ -67,6 +67,22 @@ Output:
     - Automatically opens in browser
 """
 
+DEMO_META = {
+    "key": "gsplats_3d_opencell_map4",
+    "title": "3D Opencell Map4",
+    "description": "A 2-channel 3D confocal stack of tagged MAP4 (microtubules) and nuclei as Gaussian splats.",
+    "category": "microscopy",
+    "geometry": "gsplats",
+    "requirements": {
+        "download_mb": 2,
+        "compute": "medium",
+        "gpu": "optional",
+        "local_data": "git-lfs",
+    },
+    "caches": ["gsplats_opencell_map4"],
+    "outputs": ["gsplats_3d_opencell_map4"],
+}
+
 # Enable MPS->CPU fallback for unsupported PyTorch ops (must be before torch import)
 import os
 

@@ -55,6 +55,22 @@ Controls:
     - Mouse drag: rotate,  Scroll: zoom,  Right-drag: pan,  'C': fly controls
 """
 
+DEMO_META = {
+    "key": "gsplats_3d_ct_totalsegmentator",
+    "title": "CT Anatomical Atlas (TotalSegmentator) — Organs in Color",
+    "description": "A clinical CT scan Gaussian-splatted and colored by 117 TotalSegmentator organ labels.",
+    "category": "medical",
+    "geometry": "gsplats",
+    "requirements": {
+        "download_mb": 7,
+        "compute": "medium",
+        "gpu": "optional",
+        "local_data": "git-lfs",
+    },
+    "caches": ["gsplats_ct_totalsegmentator"],
+    "outputs": ["gsplats_3d_ct_totalsegmentator"],
+}
+
 from pathlib import Path
 
 import numpy as np

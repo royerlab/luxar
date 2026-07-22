@@ -17,6 +17,22 @@ Controls:
     - Browser opens automatically
 """
 
+DEMO_META = {
+    "key": "lorenz",
+    "title": "Lorenz Attractor",
+    "description": "The chaotic Lorenz attractor trajectory with a time-based color gradient.",
+    "category": "synthetic",
+    "geometry": "points",
+    "requirements": {
+        "download_mb": 0,
+        "compute": "light",
+        "gpu": "none",
+        "local_data": None,
+    },
+    "caches": [],
+    "outputs": ["lorenz"],
+}
+
 import sys
 import tempfile
 from pathlib import Path
@@ -25,7 +41,7 @@ import numpy as np
 from arbol import aprint, asection
 
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
-from luxar.demos import launch_viewer
+from luxar.demos import launch_viewer, parse_int_arg
 from luxar.utils.paths import get_demos_output_dir
 
 
@@ -170,10 +186,10 @@ def generate_lorenz_attractor(
 
 def main() -> None:
     """Main demo entry point."""
-    # Parse simple command line args (optional)
-    n_points = 500000
-    if len(sys.argv) > 1 and sys.argv[1].startswith("--points="):
-        n_points = int(sys.argv[1].split("=")[1])
+    # Parse command line args (optional). parse_int_arg accepts both
+    # `--points=N` and `--points N`, so forwarded args from `luxar demo run`
+    # are not position-sensitive.
+    n_points = parse_int_arg("points", 500000)
 
     aprint("=" * 70)
     aprint("LORENZ ATTRACTOR DEMO")

@@ -44,6 +44,22 @@ Controls:
     - Mouse drag: rotate,  Scroll: zoom,  Right-drag: pan,  'C': fly controls
 """
 
+DEMO_META = {
+    "key": "gsplats_3d_cryoem_virus",
+    "title": "Cryo-EM Giant Virus Capsid (EMDB) — Density Map → Gaussian Splats",
+    "description": "Real cryo-EM density map of the PBCV-1 giant virus capsid (EMD-5384) as Gaussian splats.",
+    "category": "structural",
+    "geometry": "gsplats",
+    "requirements": {
+        "download_mb": 50,  # approx
+        "compute": "medium",
+        "gpu": "optional",
+        "local_data": "git-lfs",
+    },
+    "caches": ["gsplats_cryoem_virus"],
+    "outputs": ["gsplats_3d_cryoem_virus"],
+}
+
 import sys
 from pathlib import Path
 

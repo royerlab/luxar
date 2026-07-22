@@ -83,6 +83,22 @@ Output:
     - Automatically opens in browser
 """
 
+DEMO_META = {
+    "key": "gsplats_4d_celegans_tracking",
+    "title": "4D C. elegans Nuclei Tracking",
+    "description": "4D C. elegans embryo: per-timepoint gsplat volumes plus tracked nuclei lineage polylines.",
+    "category": "microscopy",
+    "geometry": "mixed",
+    "requirements": {
+        "download_mb": 72,
+        "compute": "medium",
+        "gpu": "optional",
+        "local_data": "git-lfs",
+    },
+    "caches": ["gsplats_celegans"],
+    "outputs": ["gsplats_4d_celegans_tracking"],
+}
+
 import csv
 import json
 import sys
