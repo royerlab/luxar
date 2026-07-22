@@ -203,7 +203,7 @@ export class GSplatsBufferAdapter {
           'was it acquired from the pool?'
       );
     }
-    // Append fast path (Phase 4 Stage 2): the commit layer sets `fromSplat`
+    // Append fast path (Phase 4 Stage 2): the commit layer sets `fromInstance`
     // to the prefix count already on the GPU when this commit only extends it,
     // so the fused writer + ranged upload touch just the `[fromSplat, count)`
     // suffix (see writeSplatTexels). 0 means a full write.

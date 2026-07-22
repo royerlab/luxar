@@ -252,6 +252,24 @@ describe('attachSplatStorage / writeSplatTexels — fused writer round-trip', ()
     expect(texture.version).toBe(1); // 1 = the attach-time needsUpdate only
   });
 
+  it('an EMPTY span does NOT inflate pending ranges up to its position (fold non-inflation)', () => {
+    // Seeding the collapse fold with an empty span's position would stretch
+    // a pending [100, 300) up to the span's floats — uploading a huge run of
+    // clean data (and here also tripping the ≥75%-dirty-rows full-image
+    // fallback, wiping the ranges entirely). Default width 4096 → rowFloats
+    // 16384; capacity 2048 splats → 2 rows, so [100, 300) stays 1 dirty row.
+    const geometry = new THREE.InstancedBufferGeometry();
+    const texture = attachSplatStorage(geometry, 2048);
+    texture.clearUpdateRanges();
+    texture.addUpdateRange(100, 200); // pending floats [100, 300), row 0
+    // At-capacity no-op append at splat 2000 (float 32000): an empty span.
+    registerElementTexelDirtyRange(texture, SPLAT_FLOATS_PER_SPLAT, 2000, 2000);
+    const ranges = texture.updateRanges;
+    expect(ranges.length).toBe(1);
+    expect(ranges[0].start).toBe(100);
+    expect(ranges[0].start + ranges[0].count).toBe(300); // no inflation to 2000×FLOATS
+  });
+
   it('splits by the TEXTURE width, not the reconfigured global width (renderer-swap safety)', () => {
     // Allocate at width 8, then reconfigure the session width (as a
     // backend/renderer swap does). The dirty-range split must follow the

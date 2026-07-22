@@ -182,6 +182,85 @@ describe('commitGSplatsGeometry', () => {
     expect(mockSyncGSplatMaterial).toHaveBeenCalledWith(mesh);
   });
 
+  it('leaves the freshness stamps untouched when the pool update throws (success-only stamps)', () => {
+    // Prime a SUCCESSFUL commit first so the stamps hold real values, then
+    // make a bigger commit throw: visibleSplatCount / loadedViewVersion /
+    // committedData must all still describe the last SUCCESSFUL commit —
+    // a throwing write must not stamp the mesh fresh-for-the-new-view with
+    // a count that never landed (the LOD freshness registry would trust it).
+    const root = new THREE.Group();
+    const mesh = makeMesh('/g');
+    root.add(mesh);
+
+    const geometry = new THREE.BufferGeometry();
+    const pool = {
+      acquireGSplatsGeometry: vi.fn(() => geometry),
+      updateGSplatsGeometry: vi.fn(),
+      releaseGSplatsGeometry: vi.fn(),
+      didLastAcquireRebuildAttributes: vi.fn(() => false),
+    };
+    const first = makeStaged(2);
+    commitGSplatsGeometry(first, root, pool as never, undefined, 1);
+    if (first.noop) throw new Error('expected geometry staged commit');
+    expect((mesh.userData as { visibleSplatCount: number }).visibleSplatCount).toBe(2);
+
+    pool.updateGSplatsGeometry.mockImplementation(() => {
+      throw new Error('upload failed');
+    });
+    expect(() => commitGSplatsGeometry(makeStaged(5), root, pool as never, undefined, 2)).toThrow(
+      'upload failed'
+    );
+
+    expect((mesh.userData as { visibleSplatCount: number }).visibleSplatCount).toBe(2);
+    expect((mesh.userData as { loadedViewVersion?: number }).loadedViewVersion).toBe(1);
+    expect((mesh.userData as { committedData?: unknown }).committedData).toBe(first.sourceData);
+  });
+
+  it('disposes a replaced non-pool creation geometry at the pool handoff (placeholder leak)', () => {
+    // The creation-time placeholder geometry carries a minimum-row splat
+    // texture; nobody else owns it once the pool hands the node its first
+    // real geometry, so the handoff must dispose it — see the
+    // commit-points-geometry.test.ts twin.
+    const root = new THREE.Group();
+    const mesh = makeMesh('/g');
+    root.add(mesh);
+    const prevGeometry = mesh.geometry;
+    const disposeSpy = vi.spyOn(prevGeometry, 'dispose');
+
+    const newGeometry = new THREE.BufferGeometry();
+    newGeometry.userData = { luxarPooled: true };
+    const pool = {
+      acquireGSplatsGeometry: vi.fn(() => newGeometry),
+      updateGSplatsGeometry: vi.fn(),
+      releaseGSplatsGeometry: vi.fn(),
+      didLastAcquireRebuildAttributes: vi.fn(() => true),
+    };
+    commitGSplatsGeometry(makeStaged(3), root, pool as never, undefined, V);
+    expect(mesh.geometry).toBe(newGeometry);
+    expect(disposeSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it('never disposes a replaced POOL-owned geometry (luxarPooled marker — acquire released it)', () => {
+    const root = new THREE.Group();
+    const mesh = makeMesh('/g');
+    root.add(mesh);
+    const prevGeometry = mesh.geometry;
+    prevGeometry.userData = { ...prevGeometry.userData, luxarPooled: true };
+    const disposeSpy = vi.spyOn(prevGeometry, 'dispose');
+
+    const newGeometry = new THREE.BufferGeometry();
+    newGeometry.userData = { luxarPooled: true };
+    const pool = {
+      acquireGSplatsGeometry: vi.fn(() => newGeometry),
+      updateGSplatsGeometry: vi.fn(),
+      releaseGSplatsGeometry: vi.fn(),
+      didLastAcquireRebuildAttributes: vi.fn(() => true),
+    };
+    commitGSplatsGeometry(makeStaged(3), root, pool as never, undefined, V);
+    expect(mesh.geometry).toBe(newGeometry);
+    expect(disposeSpy).not.toHaveBeenCalled();
+  });
+
   it('[C7] pool path: calls acquire/update exactly once, replaces mesh.geometry, SKIPS updateInstancedGSplatsMesh', () => {
     mockUpdateInstancedMesh.mockReset();
     const root = new THREE.Group();

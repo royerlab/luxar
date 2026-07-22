@@ -362,6 +362,71 @@ describe('commitPointsGeometry — exception-window ownership handoff', () => {
     expect(points.geometry).not.toBe(oldGeometry);
     expect((points.userData as { committedData?: unknown }).committedData).toBeUndefined();
   });
+
+  it('leaves the freshness stamps untouched when the pool update throws (success-only stamps)', () => {
+    // Prime a SUCCESSFUL commit first so the stamps hold real values, then
+    // make a bigger commit throw: visiblePointCount / loadedViewVersion /
+    // committedData must all still describe the last SUCCESSFUL commit —
+    // a throwing write must not stamp the mesh fresh-for-the-new-view with
+    // a count that never landed (the LOD freshness registry would trust it).
+    const root = new THREE.Group();
+    const points = makePoints('/p');
+    root.add(points);
+
+    const geometry = new THREE.BufferGeometry();
+    const gpuBufferPool = {
+      acquirePointsGeometry: vi.fn(() => geometry),
+      updatePointsGeometry: vi.fn(),
+      didLastAcquireRebuildAttributes: vi.fn(() => false),
+    };
+    const first = makeData(2);
+    commitPointsGeometry('/p', first, root, gpuBufferPool as never, mockNodeFactory, undefined, 1);
+    expect((points.userData as { visiblePointCount: number }).visiblePointCount).toBe(2);
+
+    gpuBufferPool.updatePointsGeometry.mockImplementation(() => {
+      throw new Error('upload failed');
+    });
+    expect(() =>
+      commitPointsGeometry(
+        '/p',
+        makeData(5),
+        root,
+        gpuBufferPool as never,
+        mockNodeFactory,
+        undefined,
+        2
+      )
+    ).toThrow('upload failed');
+
+    expect((points.userData as { visiblePointCount: number }).visiblePointCount).toBe(2);
+    expect((points.userData as { loadedViewVersion?: number }).loadedViewVersion).toBe(1);
+    expect((points.userData as { committedData?: unknown }).committedData).toBe(first);
+  });
+
+  it('non-pool path: keeps the previous geometry undisposed when the factory throws (create-then-swap-then-dispose)', () => {
+    // The non-pool fallback builds the replacement geometry BEFORE touching
+    // the mesh: a throwing factory (malformed data) must leave the mesh on
+    // its old, still-valid geometry — dispose-first would strand the mesh
+    // on a freed element texture.
+    const root = new THREE.Group();
+    const points = makePoints('/p');
+    root.add(points);
+    const prevGeometry = points.geometry;
+    const disposeSpy = vi.spyOn(prevGeometry, 'dispose');
+
+    const throwingFactory = {
+      createPointsGeometry: vi.fn(() => {
+        throw new Error('malformed data');
+      }),
+    } as unknown as NodeFactory;
+
+    expect(() =>
+      commitPointsGeometry('/p', makeData(3), root, null, throwingFactory, undefined, 0)
+    ).toThrow('malformed data');
+
+    expect(points.geometry).toBe(prevGeometry);
+    expect(disposeSpy).not.toHaveBeenCalled();
+  });
 });
 
 describe('commitPointsGeometry — no-op commit skip (committedData)', () => {
@@ -523,6 +588,65 @@ describe('commitPointsGeometry — append fast path (Phase 4 Stage 2, fromInstan
     const committed = (root.children[0].userData as { committedData: object }).committedData;
     const next = makeData(6, /*withRadii=*/ false); // radii dropped
     setPrefixParent(next, committed);
+    commitPointsGeometry('/p', next, root, pool as never, mockNodeFactory, undefined, 1);
+    expect(lastOpts(pool).fromInstance).toBe(0);
+  });
+
+  it('does NOT append when colors/sharpness/scalars presence flips vs the committed parent', () => {
+    // Same all-or-nothing rationale as the radii flip above — the gate
+    // carries one presence conjunct PER optional field, so each field's
+    // flip must force the full rewrite on its own (a mutant dropping any
+    // single conjunct would append a fill-valued suffix onto a prefix
+    // whose committed values differ).
+    const makeDataWithField = (
+      pointCount: number,
+      field: 'colors' | 'sharpness' | 'scalars',
+      present: boolean
+    ): LoadedPointsData => {
+      const data = makeData(pointCount);
+      if (field === 'colors') {
+        data.colors = present ? new Uint8Array(pointCount * 3) : undefined;
+      } else if (field === 'sharpness') {
+        data.sharpness = present ? new Float32Array(pointCount) : undefined;
+      } else {
+        data.scalars = present ? new Float32Array(pointCount) : undefined;
+      }
+      return data;
+    };
+
+    for (const field of ['colors', 'sharpness', 'scalars'] as const) {
+      const root = new THREE.Group();
+      root.add(makePoints('/p'));
+      const pool = makePool(new THREE.BufferGeometry());
+      commitPointsGeometry(
+        '/p',
+        makeDataWithField(4, field, /*present=*/ true),
+        root,
+        pool as never,
+        mockNodeFactory,
+        undefined,
+        0
+      );
+      const committed = (root.children[0].userData as { committedData: object }).committedData;
+      const next = makeDataWithField(6, field, /*present=*/ false); // field dropped
+      setPrefixParent(next, committed);
+      commitPointsGeometry('/p', next, root, pool as never, mockNodeFactory, undefined, 1);
+      expect(lastOpts(pool).fromInstance, `presence flip: ${field}`).toBe(0);
+    }
+  });
+
+  it('does NOT append when the pool hands back a DIFFERENT geometry, even without a reported rebuild', () => {
+    // geometry === prevGeometry is a load-bearing conjunct of its own: a
+    // swap that (hypothetically) reported no attribute rebuild still means
+    // the committed prefix lives in ANOTHER buffer — appending would
+    // extend a stranger's texels.
+    const root = new THREE.Group();
+    root.add(makePoints('/p'));
+    const pool = makePool(new THREE.BufferGeometry());
+    const next = primeAndExtend(root, pool, 4, 6);
+    pool.acquirePointsGeometry.mockReturnValue(new THREE.BufferGeometry());
+    // didLastAcquireRebuildAttributes stays FALSE (makePool default) — the
+    // geometry-identity conjunct must gate alone.
     commitPointsGeometry('/p', next, root, pool as never, mockNodeFactory, undefined, 1);
     expect(lastOpts(pool).fromInstance).toBe(0);
   });
