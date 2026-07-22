@@ -150,7 +150,12 @@ def wait_for_server(
         True once the server accepts a connection, False on timeout or
         thread death.
     """
-    connect_host = "127.0.0.1" if host in ("0.0.0.0", "::") else host
+    # Not a bind: detect the all-interfaces host the user passed and redirect
+    # the readiness *probe* to loopback (you cannot connect() to 0.0.0.0 on
+    # macOS). The real bind is uvicorn's, with the user's explicit host,
+    # guarded by _warn_if_lan_exposed. The inline nosec waives bandit B104
+    # (hardcoded_bind_all_interfaces), which false-positives on this literal.
+    connect_host = "127.0.0.1" if host in ("0.0.0.0", "::") else host  # nosec B104
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         if thread is not None and not thread.is_alive():
