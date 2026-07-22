@@ -69,6 +69,22 @@ Output:
     - Automatically opens in browser
 """
 
+DEMO_META = {
+    "key": "gsplats_3d_tribolium_embryo",
+    "title": "3D Tribolium Embryo",
+    "description": "A 3D light-sheet volume of a developing Tribolium beetle embryo as Gaussian splats.",
+    "category": "microscopy",
+    "geometry": "gsplats",
+    "requirements": {
+        "download_mb": 3,
+        "compute": "medium",
+        "gpu": "optional",
+        "local_data": "git-lfs",
+    },
+    "caches": ["gsplats_tribolium"],
+    "outputs": ["gsplats_3d_tribolium_embryo"],
+}
+
 import sys
 import zipfile
 from pathlib import Path

@@ -37,6 +37,25 @@ Controls:
     - Mouse drag: rotate,  Scroll: zoom,  Right-drag: pan
 """
 
+DEMO_META = {
+    "key": "gsplats_interop_observatory",
+    "title": "Astronomical observatories (SuperSplat compressed PLY) → Luxar",
+    "description": "A Gaussian-splat capture of a real astronomical observatory (SuperSplat PLY) in Luxar.",
+    "category": "photogrammetry",
+    "geometry": "gsplats",
+    "requirements": {
+        "download_mb": 41,
+        "compute": "medium",
+        "gpu": "none",
+        "local_data": None,
+    },
+    "caches": ["gsplats_interop_observatory"],
+    "outputs": [
+        "gsplats_interop_observatory_rubin",
+        "gsplats_interop_observatory_gemini-south",
+    ],
+}
+
 import sys
 from pathlib import Path
 

@@ -28,6 +28,22 @@ Controls:
     - Browser opens automatically
 """
 
+DEMO_META = {
+    "key": "sharpness_showcase",
+    "title": "Point Sharpness Showcase",
+    "description": "Showcase of the point sharpness parameter — gradients, comparison rows, and a sinusoidal wave.",
+    "category": "synthetic",
+    "geometry": "points",
+    "requirements": {
+        "download_mb": 0,
+        "compute": "light",
+        "gpu": "none",
+        "local_data": None,
+    },
+    "caches": [],
+    "outputs": ["sharpness_showcase"],
+}
+
 import sys
 import tempfile
 from pathlib import Path

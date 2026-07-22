@@ -61,6 +61,22 @@ Output:
     - Automatically opens in browser
 """
 
+DEMO_META = {
+    "key": "gsplats_3d_cells3d_multichannel",
+    "title": "Cells3D Multichannel Microscopy",
+    "description": "Two-channel scikit-image cells3d volume (membranes + nuclei) as toggleable gsplat layers.",
+    "category": "microscopy",
+    "geometry": "gsplats",
+    "requirements": {
+        "download_mb": 1,
+        "compute": "medium",
+        "gpu": "optional",
+        "local_data": "git-lfs",
+    },
+    "caches": ["gsplats_cells3d"],
+    "outputs": ["gsplats_3d_cells3d_multichannel"],
+}
+
 from pathlib import Path
 
 import numpy as np
@@ -356,9 +372,7 @@ def main():
     aprint("3D per-channel fitting + per-channel BOP-LUT layers")
     aprint("")
 
-    output_path = (
-        get_demos_output_dir() / "gsplats_3d_cells3d_multichannel.luxar.zarr"
-    )
+    output_path = get_demos_output_dir() / "gsplats_3d_cells3d_multichannel.luxar.zarr"
 
     # Serve-only mode
     if SERVE_ONLY:

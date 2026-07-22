@@ -32,6 +32,22 @@ Controls:
     - Try different powers (6, 8, 9) for different shapes!
 """
 
+DEMO_META = {
+    "key": "mandelbulb",
+    "title": "Mandelbulb Fractal",
+    "description": "Volumetric Mandelbulb 3D fractal via distance estimation, iteration-colored surface points.",
+    "category": "synthetic",
+    "geometry": "points",
+    "requirements": {
+        "download_mb": 0,
+        "compute": "medium",
+        "gpu": "none",
+        "local_data": None,
+    },
+    "caches": [],
+    "outputs": ["mandelbulb"],
+}
+
 import sys
 import tempfile
 from pathlib import Path
@@ -170,9 +186,9 @@ def generate_mandelbulb_volumetric(
         grid_spacing = coords[1] - coords[0]
         jitter_amount = grid_spacing * 0.3  # 30% of grid spacing
         rng = np.random.default_rng(seed)
-        jitter = rng.uniform(
-            -jitter_amount, jitter_amount, sample_points.shape
-        ).astype(np.float32)
+        jitter = rng.uniform(-jitter_amount, jitter_amount, sample_points.shape).astype(
+            np.float32
+        )
         sample_points += jitter
 
         aprint(f"✓ Created sampling grid: {resolution}×{resolution}×{resolution}")

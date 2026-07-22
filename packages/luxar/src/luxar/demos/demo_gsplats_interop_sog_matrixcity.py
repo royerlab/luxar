@@ -58,6 +58,22 @@ Controls:
     - Mouse drag: rotate,  Scroll: zoom,  Right-drag: pan
 """
 
+DEMO_META = {
+    "key": "gsplats_interop_sog_matrixcity",
+    "title": "MatrixCity aerial (PlayCanvas SOG, ~13.6M) → Luxar LOD",
+    "description": "MatrixCity aerial city: 13.6M-Gaussian PlayCanvas SOG scene imported with overview LOD.",
+    "category": "photogrammetry",
+    "geometry": "gsplats",
+    "requirements": {
+        "download_mb": 156,
+        "compute": "heavy",
+        "gpu": "none",
+        "local_data": None,
+    },
+    "caches": [],
+    "outputs": ["gsplats_interop_sog_matrixcity"],
+}
+
 from pathlib import Path
 
 from arbol import Arbol, aprint, asection
@@ -103,7 +119,9 @@ def fetch_bundle() -> Path:
     BUNDLE_DIR.mkdir(parents=True, exist_ok=True)
     with asection("Fetching MatrixCity SOG bundle"):
         for name in SOG_FILES:
-            cached_download(f"{BASE_URL}/{name}", f"{DEMO_NAME}/matrixcity_aerial", name)
+            cached_download(
+                f"{BASE_URL}/{name}", f"{DEMO_NAME}/matrixcity_aerial", name
+            )
     return BUNDLE_DIR
 
 

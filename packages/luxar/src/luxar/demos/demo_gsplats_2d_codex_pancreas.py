@@ -86,6 +86,22 @@ Output:
     - Automatically opens in browser
 """
 
+DEMO_META = {
+    "key": "gsplats_2d_codex_pancreas",
+    "title": "2D 12-Channel CODEX Pancreas (Multiplexed Fluorescence)",
+    "description": "A 12-channel CODEX immunofluorescence image of human pancreas as 2D Gaussian splats.",
+    "category": "microscopy",
+    "geometry": "gsplats",
+    "requirements": {
+        "download_mb": 5900,
+        "compute": "heavy",
+        "gpu": "required",
+        "local_data": None,
+    },
+    "caches": ["gsplats_codex_pancreas"],
+    "outputs": ["gsplats_2d_codex_pancreas"],
+}
+
 # Enable MPS->CPU fallback for unsupported PyTorch ops (must be before torch import)
 import os
 

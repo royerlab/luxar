@@ -88,6 +88,22 @@ Usage:
 
 from __future__ import annotations
 
+DEMO_META = {
+    "key": "huri_interactome",
+    "title": "HuRI Interactome",
+    "description": "The HuRI human protein interactome: ~8k proteins as Points, ~50k interactions as Lines.",
+    "category": "networks",
+    "geometry": "points+lines",
+    "requirements": {
+        "download_mb": 35,
+        "compute": "medium",
+        "gpu": "none",
+        "local_data": None,
+    },
+    "caches": ["huri"],
+    "outputs": ["huri_interactome"],
+}
+
 import hashlib
 import io
 import sys

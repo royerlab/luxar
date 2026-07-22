@@ -33,6 +33,22 @@ Controls:
     - Ctrl+C to stop
 """
 
+DEMO_META = {
+    "key": "fractals_4d",
+    "title": "4D Geometric Fractal Explorer",
+    "description": "Six 4D geometric fractals (XOR, Menger, Sierpinski, ...) with categorical + W-axis navigation.",
+    "category": "synthetic",
+    "geometry": "points",
+    "requirements": {
+        "download_mb": 0,
+        "compute": "light",
+        "gpu": "none",
+        "local_data": None,
+    },
+    "caches": [],
+    "outputs": ["fractals_4d"],
+}
+
 import sys
 import tempfile
 from pathlib import Path

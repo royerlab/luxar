@@ -120,6 +120,22 @@ Controls:
 
 from __future__ import annotations
 
+DEMO_META = {
+    "key": "particle_collision_animated",
+    "title": "Animated Particle Collision Detector Visualization",
+    "description": "Time-animated particle-collision tracks curving in a detector's magnetic field.",
+    "category": "synthetic",
+    "geometry": "points+lines",
+    "requirements": {
+        "download_mb": 0,
+        "compute": "light",
+        "gpu": "none",
+        "local_data": None,
+    },
+    "caches": [],
+    "outputs": ["collision_animated"],
+}
+
 import sys
 import tempfile
 from pathlib import Path

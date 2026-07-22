@@ -52,6 +52,22 @@ Controls:
     - Mouse drag: rotate,  Scroll: zoom,  Right-drag: pan,  'C': fly controls
 """
 
+DEMO_META = {
+    "key": "gsplats_3d_tng_cosmic_web",
+    "title": "IllustrisTNG Cosmic Web",
+    "description": "IllustrisTNG TNG300 dark-matter density (244M particles) as Gaussian splats — the cosmic web.",
+    "category": "astronomy",
+    "geometry": "gsplats",
+    "requirements": {
+        "download_mb": 50,  # approx
+        "compute": "medium",
+        "gpu": "optional",
+        "local_data": "git-lfs",
+    },
+    "caches": ["gsplats_tng_cosmic_web"],
+    "outputs": ["gsplats_3d_tng_cosmic_web"],
+}
+
 import os
 from pathlib import Path
 
@@ -185,16 +201,18 @@ def _download_snapshot() -> list[Path]:
     with asection(f"Downloading {SIMULATION} snapshot {SNAPSHOT} (~15 GB)"):
         # Chunk 0 first, then read NumFilesPerSnapshot to learn the chunk count.
         first = CACHE_DIR / f"snap_{SNAPSHOT:03d}.0.hdf5"
-        robust_download(f"{base}.0.hdf5", first, max_retries=5, timeout=1800,
-                         extra_headers=hdr)
+        robust_download(
+            f"{base}.0.hdf5", first, max_retries=5, timeout=1800, extra_headers=hdr
+        )
         with h5py.File(first, "r") as f:
             n_chunks = int(f["Header"].attrs["NumFilesPerSnapshot"])
         aprint(f"Snapshot has {n_chunks} chunk(s)")
         files = [first]
         for i in range(1, n_chunks):
             fp = CACHE_DIR / f"snap_{SNAPSHOT:03d}.{i}.hdf5"
-            robust_download(f"{base}.{i}.hdf5", fp, max_retries=5, timeout=1800,
-                            extra_headers=hdr)
+            robust_download(
+                f"{base}.{i}.hdf5", fp, max_retries=5, timeout=1800, extra_headers=hdr
+            )
             files.append(fp)
     return files
 
@@ -225,8 +243,10 @@ def build_density_grid() -> np.ndarray:
             np.save(raw_cache, raw)
     with asection(f"Smooth (σ={SIGMA}) + log-normalize"):
         v = finalize_density(raw, SIGMA)
-        aprint(f"✓ Fit-ready cube: {v.shape}, p50={np.percentile(v, 50):.3f}, "
-               f"p99={np.percentile(v, 99):.3f}")
+        aprint(
+            f"✓ Fit-ready cube: {v.shape}, p50={np.percentile(v, 50):.3f}, "
+            f"p99={np.percentile(v, 99):.3f}"
+        )
     return v
 
 
@@ -316,9 +336,7 @@ def create_luxar_scene(gsplats_data: GSplatData, output_path: Path) -> Path:
                 dimensions=dims,
                 viewer_config=ViewerConfig(tone_mapping="Neutral"),
             )
-            scene.attrs["title"] = (
-                "GSplats: IllustrisTNG Cosmic Web (TNG300-3-Dark)"
-            )
+            scene.attrs["title"] = "GSplats: IllustrisTNG Cosmic Web (TNG300-3-Dark)"
             scene.add_gsplats_from_data(
                 name="cosmic_web",
                 result=gsplats_data,
