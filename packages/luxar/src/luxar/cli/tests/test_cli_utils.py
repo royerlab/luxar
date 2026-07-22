@@ -130,11 +130,27 @@ class TestFindAvailablePort:
             assert mock_check.call_count == 3
 
     def test_find_available_port_with_end_port(self) -> None:
-        """Test find_available_port accepts end_port as second argument."""
+        """Test find_available_port honors the explicit end_port keyword."""
         with patch("luxar.cli.utils.check_port_available") as mock_check:
             mock_check.side_effect = [False, True]
-            result = find_available_port(9000, 9001)
+            result = find_available_port(9000, end_port=9001)
             assert result == 9001
+
+    def test_find_available_port_end_port_below_start(self) -> None:
+        """end_port below start_port finds nothing."""
+        assert find_available_port(9000, end_port=8000) is None
+
+    def test_find_available_port_end_port_capped(self) -> None:
+        """end_port past the valid range is capped at 65535."""
+        with patch("luxar.cli.utils.check_port_available", return_value=False):
+            assert find_available_port(65534, end_port=99999) is None
+
+    def test_find_available_port_threads_host(self) -> None:
+        """The host argument reaches check_port_available."""
+        with patch("luxar.cli.utils.check_port_available") as mock_check:
+            mock_check.return_value = True
+            find_available_port(9000, host="0.0.0.0")
+            mock_check.assert_called_once_with(9000, "0.0.0.0")
 
 
 class TestCheckViewerBuilt:
@@ -439,3 +455,136 @@ class TestBuildViewer:
             with patch("luxar.cli.utils.aprint"):
                 result = build_viewer()
                 assert result is False
+
+
+class TestWaitForServer:
+    """Tests for the poll-based server-readiness helper."""
+
+    def test_returns_true_for_listening_server(self) -> None:
+        """A live listener is detected well before the timeout."""
+        import socket
+        import threading
+
+        from luxar.cli.utils import wait_for_server
+
+        server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        server.bind(("127.0.0.1", 0))
+        server.listen(1)
+        port = server.getsockname()[1]
+        thread = threading.Thread(target=lambda: None)
+        thread.start()
+        try:
+            assert wait_for_server("127.0.0.1", port, timeout=2.0) is True
+        finally:
+            server.close()
+
+    def test_returns_false_fast_when_thread_dies(self) -> None:
+        """A dead server thread short-circuits the poll loop."""
+        import threading
+        import time
+
+        from luxar.cli.utils import (
+            find_available_port,
+            wait_for_server,
+        )
+
+        dead = threading.Thread(target=lambda: None)
+        dead.start()
+        dead.join()
+
+        port = find_available_port(59700)
+        assert port is not None
+        start = time.monotonic()
+        assert wait_for_server("127.0.0.1", port, thread=dead, timeout=5.0) is False
+        assert time.monotonic() - start < 1.0
+
+    def test_returns_false_on_timeout(self) -> None:
+        """Nothing listening and no thread → False after the timeout."""
+        from luxar.cli.utils import find_available_port, wait_for_server
+
+        port = find_available_port(59800)
+        assert port is not None
+        assert wait_for_server("127.0.0.1", port, timeout=0.3) is False
+
+    def test_all_interfaces_host_probed_via_loopback(self) -> None:
+        """0.0.0.0 binds are probed on 127.0.0.1."""
+        import socket
+
+        from luxar.cli.utils import wait_for_server
+
+        server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        server.bind(("0.0.0.0", 0))
+        server.listen(1)
+        port = server.getsockname()[1]
+        try:
+            assert wait_for_server("0.0.0.0", port, timeout=2.0) is True
+        finally:
+            server.close()
+
+
+class TestEnsureViewerBuilt:
+    """Tests for the unified viewer-build policy."""
+
+    def test_already_built(self) -> None:
+        from luxar.cli.utils import ensure_viewer_built
+
+        with patch("luxar.cli.utils.check_viewer_built", return_value=True):
+            assert ensure_viewer_built() is True
+
+    def test_dev_tree_auto_builds(self) -> None:
+        from luxar.cli.utils import ensure_viewer_built
+
+        with (
+            patch("luxar.cli.utils.check_viewer_built", return_value=False),
+            patch("luxar.cli.utils.build_viewer", return_value=True) as mock_build,
+            patch("luxar.cli.utils.aprint"),
+        ):
+            assert ensure_viewer_built() is True
+            mock_build.assert_called_once()
+
+    def test_wheel_install_errors_without_building(self) -> None:
+        """Outside a dev tree the missing viewer is a packaging error."""
+        from luxar.cli.utils import ensure_viewer_built
+
+        with (
+            patch("luxar.cli.utils.check_viewer_built", return_value=False),
+            patch("luxar.cli.utils._find_dev_repo_root", return_value=None),
+            patch("luxar.cli.utils.build_viewer") as mock_build,
+            patch("luxar.cli.utils.aprint"),
+        ):
+            assert ensure_viewer_built() is False
+            mock_build.assert_not_called()
+
+
+class TestPickPort:
+    """Tests for the warn-on-shift port picker."""
+
+    def test_returns_requested_port_silently(self) -> None:
+        from luxar.cli.utils import pick_port
+
+        with (
+            patch("luxar.cli.utils.find_available_port", return_value=9000),
+            patch("luxar.cli.utils.aprint") as mock_print,
+        ):
+            assert pick_port(9000) == 9000
+            mock_print.assert_not_called()
+
+    def test_warns_when_port_shifts(self) -> None:
+        from luxar.cli.utils import pick_port
+
+        with (
+            patch("luxar.cli.utils.find_available_port", return_value=9001),
+            patch("luxar.cli.utils.aprint") as mock_print,
+        ):
+            assert pick_port(9000, label="viewer") == 9001
+            assert "busy" in mock_print.call_args.args[0]
+
+    def test_returns_none_when_exhausted(self) -> None:
+        from luxar.cli.utils import pick_port
+
+        with (
+            patch("luxar.cli.utils.find_available_port", return_value=None),
+            patch("luxar.cli.utils.aprint") as mock_print,
+        ):
+            assert pick_port(9000) is None
+            assert "No available ports" in mock_print.call_args.args[0]

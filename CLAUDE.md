@@ -52,7 +52,7 @@ make benchmark-wasm  # Run WASM vs TypeScript performance benchmarks
 
 # Data & Examples
 make run-examples # Generate example datasets
-make demo         # Generate demo dataset only (use 'luxar demo' to also serve)
+make demo         # Generate the Lorenz demo dataset (use 'luxar demo run lorenz' to also serve)
 
 # Native launchers (luxar export --native)
 # Run `make build-launchers` BEFORE `luxar export --native` — the bundlers
@@ -197,7 +197,9 @@ See `docs/guides/developer/BUILD_SYSTEM_SPEC.md` for complete documentation.
 
 ### Luxar CLI
 ```bash
-luxar demo                       # Quick demo with viewer
+luxar demo                       # List the 75 bundled demos (table)
+luxar demo run lorenz            # Run a demo by key/index (forwards -- args)
+luxar demo cache list            # Inventory / clear demo caches (cache clear …)
 luxar serve <data.luxar.zarr> --viewer # Serve with viewer
 luxar info <data.luxar.zarr> --stats   # Dataset info
 luxar profiles                   # Network simulation profiles

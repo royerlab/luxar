@@ -36,11 +36,16 @@ class _ImmediateThread:
     def join(self, *_a, **_k):
         return None
 
+    def is_alive(self):
+        # The target already ran inline, so the "thread" is done — this makes
+        # wait_for_server() fail fast instead of polling to its timeout.
+        return False
+
 
 @pytest.fixture
 def available_port():
     """Find an available port for testing."""
-    return find_available_port(8000, 9000)
+    return find_available_port(8000, end_port=9000)
 
 
 @pytest.fixture
@@ -227,9 +232,9 @@ class TestServeIntegration:
 
         monkeypatch.setattr(cli_main, "_serve_viewer", fake_serve_viewer)
         monkeypatch.setattr(cli_main, "_serve_data", fake_serve_data)
-        monkeypatch.setattr(cli_main, "check_viewer_built", lambda: True)
+        monkeypatch.setattr(cli_main, "ensure_viewer_built", lambda: True)
         monkeypatch.setattr(cli_main.threading, "Thread", _ImmediateThread)
-        monkeypatch.setattr(cli_main.time, "sleep", lambda *_a, **_k: None)
+        monkeypatch.setattr(cli_main, "wait_for_server", lambda *_a, **_k: True)
 
         result = CliRunner().invoke(
             app,
@@ -240,50 +245,6 @@ class TestServeIntegration:
                 "--cors-origin",
                 "https://example.com",
                 "--no-open",
-            ],
-        )
-        assert result.exit_code == 0, result.stdout
-        assert captured["viewer"] == "https://example.com"
-        assert captured["data"] == "https://example.com"
-
-    def test_demo_command_threads_cors_origin(self, monkeypatch, tmp_path):
-        """`luxar demo --cors-origin X` must propagate X to both servers."""
-        from typer.testing import CliRunner
-
-        from luxar.cli import app
-        from luxar.cli import main as cli_main
-
-        captured: dict[str, str] = {}
-
-        def fake_serve_viewer(
-            host, port, data_url=None, open_browser_flag=True, cors_origin="local"
-        ):
-            captured["viewer"] = cors_origin
-
-        def fake_serve_data(path, host, port, *args, **kwargs):
-            cors_origin = kwargs.get("cors_origin")
-            if cors_origin is None and len(args) >= 6:
-                cors_origin = args[5]
-            captured["data"] = cors_origin or "local"
-
-        monkeypatch.setattr(cli_main, "_serve_viewer", fake_serve_viewer)
-        monkeypatch.setattr(cli_main, "_serve_data", fake_serve_data)
-        monkeypatch.setattr(cli_main, "check_viewer_built", lambda: True)
-        monkeypatch.setattr(cli_main.threading, "Thread", _ImmediateThread)
-        monkeypatch.setattr(cli_main.time, "sleep", lambda *_a, **_k: None)
-
-        out = tmp_path / "demo.luxar.zarr"
-        result = CliRunner().invoke(
-            app,
-            [
-                "demo",
-                "--no-open",
-                "--points",
-                "100",
-                "--output",
-                str(out),
-                "--cors-origin",
-                "https://example.com",
             ],
         )
         assert result.exit_code == 0, result.stdout
@@ -505,101 +466,12 @@ class TestProfilesCommand:
         assert len(lines) > 2  # At least header + 1 profile
 
 
-class TestDemoCommand:
-    """Integration tests for demo command."""
-
-    def test_demo_creates_valid_zarr(self, tmp_path):
-        """Test that demo command creates a valid zarr store."""
-        from typer.testing import CliRunner
-
-        from luxar.cli import app
-
-        output_path = tmp_path / "demo_output.luxar.zarr"
-        runner = CliRunner()
-
-        # Run demo with --no-serve and --output flags
-        result = runner.invoke(
-            app, ["demo", "--no-serve", "--output", str(output_path), "--points", "100"]
-        )
-
-        assert result.exit_code == 0, f"Demo command failed: {result.stdout}"
-        assert output_path.exists()
-
-        # Verify it's a valid zarr store
-        import zarr
-
-        store = zarr.open(str(output_path), mode="r")
-        attrs_dict = dict(store.attrs)
-        assert "version" in attrs_dict or "luxar_version" in attrs_dict
-        # Verify it has expected structure
-        assert "Lorenz" in store or len(list(store.group_keys())) > 0
-
-    def test_demo_with_seed(self, tmp_path):
-        """Test demo with seed produces reproducible results."""
-        from typer.testing import CliRunner
-
-        from luxar.cli import app
-
-        output1 = tmp_path / "demo1.luxar.zarr"
-        output2 = tmp_path / "demo2.luxar.zarr"
-
-        runner = CliRunner()
-
-        # Run twice with same seed
-        result1 = runner.invoke(
-            app,
-            [
-                "demo",
-                "--no-serve",
-                "--output",
-                str(output1),
-                "--points",
-                "50",
-                "--seed",
-                "42",
-            ],
-        )
-        result2 = runner.invoke(
-            app,
-            [
-                "demo",
-                "--no-serve",
-                "--output",
-                str(output2),
-                "--points",
-                "50",
-                "--seed",
-                "42",
-            ],
-        )
-
-        assert result1.exit_code == 0
-        assert result2.exit_code == 0
-
-        # Both should exist
-        assert output1.exists()
-        assert output2.exists()
-
-        # Load and verify both stores exist and have content
-        import zarr
-
-        store1 = zarr.open(str(output1), mode="r")
-        store2 = zarr.open(str(output2), mode="r")
-
-        # Verify both have same structure (exact reproducibility check would compare arrays)
-        keys1 = list(store1.group_keys())
-        keys2 = list(store2.group_keys())
-        assert len(keys1) > 0, "Store 1 is empty"
-        assert len(keys2) > 0, "Store 2 is empty"
-        assert keys1 == keys2, "Stores have different structure"
-
-
 class TestPortHandling:
     """Test port conflict handling and availability checking."""
 
     def test_find_available_port(self):
         """Test finding an available port."""
-        port = find_available_port(9000, 9100)
+        port = find_available_port(9000, end_port=9100)
         assert 9000 <= port < 9100
 
         # Verify port is actually available

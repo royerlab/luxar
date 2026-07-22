@@ -293,7 +293,7 @@ MIN_NODE_MINOR := 19
 | Command | Description |
 |---------|-------------|
 | `make demo` | Generate demo dataset (100k points) |
-| `luxar demo` | Generate demo + serve + open browser (all-in-one) |
+| `luxar demo` | List the bundled demos; `luxar demo run <key>` generates + serves one |
 | `make run-examples` | Generate all example datasets |
 | `make run-demos` | Generate ALL demo datasets (output to `datasets/demos/`) |
 | `make serve-examples` | Serve datasets directory |
@@ -690,7 +690,7 @@ The build system uses these environment variables:
 | Variable | Purpose | Default |
 |----------|---------|---------|
 | `NVM_DIR` | nvm installation directory | `~/.nvm` |
-| `DATASET` | Dataset path for `make serve-dataset` | `datasets/demos/demo.luxar.zarr` |
+| `DATASET` | Dataset path for `make serve-dataset` | `datasets/demos/lorenz.luxar.zarr` |
 | `PORT` | Server port for data serving | `8000` |
 | `SLURM` | Set to `1` to build CUDA on a GPU node via Slurm | `0` |
 | `SLURM_PARTITION` | Slurm partition for GPU builds | `gpu` |

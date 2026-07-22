@@ -57,7 +57,7 @@ def complex_scene(tmp_path):
 class TestViewerCommand:
     """Test the viewer command."""
 
-    @patch("luxar.cli.main.check_viewer_built")
+    @patch("luxar.cli.main.ensure_viewer_built")
     @patch("luxar.cli.main._serve_viewer")
     def test_viewer_basic(self, mock_serve, mock_check, runner) -> None:
         """Test basic viewer command."""
@@ -73,24 +73,26 @@ class TestViewerCommand:
         mock_check.assert_called_once()
         mock_serve.assert_called_once()
 
-    @patch("luxar.cli.main.check_viewer_built")
-    @patch("luxar.cli.main.build_viewer")
-    def test_viewer_auto_build(self, mock_build, mock_check, runner) -> None:
-        """Test viewer auto-builds if not built."""
-        mock_check.return_value = False
-        mock_build.return_value = True
+    def test_viewer_auto_build(self, runner) -> None:
+        """Viewer auto-builds when missing in a dev tree.
 
-        # This would normally block, so we just check the initial checks
-        with patch("luxar.cli.main._serve_viewer"):
+        Targets ensure_viewer_built's real logic in cli.utils: dist missing
+        (check_viewer_built False) + dev tree present → build_viewer runs.
+        """
+        with (
+            patch("luxar.cli.utils.check_viewer_built", return_value=False),
+            patch("luxar.cli.utils.build_viewer", return_value=True) as mock_build,
+            patch("luxar.cli.main._serve_viewer"),
+        ):
             runner.invoke(app, ["viewer", "--no-open"])
-            # Build should be attempted
             mock_build.assert_called_once()
 
-    @patch("luxar.cli.main.check_viewer_built")
+    @patch("luxar.cli.main.wait_for_server", return_value=True)
+    @patch("luxar.cli.main.ensure_viewer_built")
     @patch("luxar.cli.main._serve_viewer")
     @patch("luxar.cli.main._serve_data")
     def test_viewer_with_data(
-        self, mock_data, mock_viewer, mock_check, runner, sample_scene
+        self, mock_data, mock_viewer, mock_check, _mock_wait, runner, sample_scene
     ) -> None:
         """Test viewer with data option."""
         mock_check.return_value = True
@@ -114,48 +116,18 @@ class TestViewerCommand:
 
 
 class TestDemoCommand:
-    """Test the demo command."""
+    """The `demo` sub-app dispatches to demo scripts; details live in
+    test_demo_commands.py. Here we just pin that the group is mounted."""
 
-    @patch("luxar.cli.main.check_viewer_built")
-    @patch("luxar.cli.main._serve_viewer")
-    @patch("luxar.cli.main._serve_data")
-    def test_demo_basic(self, mock_data, mock_viewer, mock_check, runner) -> None:
-        """Test basic demo command."""
-        mock_check.return_value = True
+    def test_bare_demo_shows_table(self, runner) -> None:
+        result = runner.invoke(app, ["demo"])
+        assert result.exit_code == 0
+        assert "demos" in result.stdout.lower()
 
-        with patch("luxar.utils.demos.create_lorenz_attractor") as mock_create:
-            runner.invoke(app, ["demo", "--no-open", "--points", "100"])
-            # Demo should be created
-            assert mock_create.called
-            call_args = mock_create.call_args
-            assert call_args[1]["n_points"] == 100
-
-    def test_demo_with_output(self, runner, tmp_path) -> None:
-        """Test demo with specified output."""
-        output = tmp_path / "my_demo.luxar.zarr"
-
-        with patch("luxar.cli.main.check_viewer_built", return_value=True):
-            with patch("luxar.cli.main._serve_viewer"):
-                with patch("luxar.cli.main._serve_data"):
-                    runner.invoke(
-                        app,
-                        [
-                            "demo",
-                            "--output",
-                            str(output),
-                            "--points",
-                            "50",
-                            "--no-open",
-                        ],
-                    )
-                    # Output should exist
-                    assert output.exists()
-
-    def test_demo_invalid_type(self, runner) -> None:
-        """Test demo with invalid type."""
-        result = runner.invoke(app, ["demo", "--type", "invalid", "--no-open"])
-        assert result.exit_code == 1
-        assert "Unknown demo type" in result.stdout
+    def test_demo_unknown_key_errors(self, runner) -> None:
+        result = runner.invoke(app, ["demo", "run", "no-such-demo"])
+        assert result.exit_code != 0
+        assert "unknown demo" in result.stdout.lower()
 
 
 class TestEnhancedInfoCommand:
@@ -209,7 +181,7 @@ class TestEnhancedInfoCommand:
 class TestEnhancedServeCommand:
     """Test the enhanced serve command."""
 
-    @patch("luxar.cli.main.find_available_port", return_value=8000)
+    @patch("luxar.cli.main.pick_port", return_value=8000)
     @patch("luxar.cli.main.uvicorn.run")
     def test_serve_basic(self, mock_uvicorn, _mock_port, runner, sample_scene) -> None:
         """Test basic serve command (existing functionality)."""
@@ -217,11 +189,20 @@ class TestEnhancedServeCommand:
         assert result.exit_code == 0
         mock_uvicorn.assert_called_once()
 
-    @patch("luxar.cli.main.find_available_port", return_value=8000)
+    @patch("luxar.cli.main.wait_for_server", return_value=True)
+    @patch("luxar.cli.main._serve_viewer")
+    @patch("luxar.cli.main.pick_port", return_value=8000)
     @patch("luxar.cli.main.uvicorn.run")
-    @patch("luxar.cli.main.check_viewer_built")
+    @patch("luxar.cli.main.ensure_viewer_built")
     def test_serve_with_viewer(
-        self, mock_check, mock_uvicorn, _mock_port, runner, sample_scene
+        self,
+        mock_check,
+        mock_uvicorn,
+        _mock_port,
+        _mock_viewer,
+        _mock_wait,
+        runner,
+        sample_scene,
     ) -> None:
         """Test serve with viewer option."""
         mock_check.return_value = True
@@ -230,7 +211,7 @@ class TestEnhancedServeCommand:
         assert result.exit_code == 0
         mock_check.assert_called()
 
-    @patch("luxar.cli.main.find_available_port", return_value=8000)
+    @patch("luxar.cli.main.pick_port", return_value=8000)
     @patch("luxar.cli.main.uvicorn.run")
     @patch("luxar.cli.main.open_browser_func")
     def test_serve_open_without_viewer_is_ignored(
@@ -243,12 +224,22 @@ class TestEnhancedServeCommand:
         mock_browser.assert_not_called()
         assert "--open requires --viewer" in result.stdout
 
-    @patch("luxar.cli.main.find_available_port", return_value=8000)
+    @patch("luxar.cli.main.wait_for_server", return_value=True)
+    @patch("luxar.cli.main._serve_viewer")
+    @patch("luxar.cli.main.pick_port", return_value=8000)
     @patch("luxar.cli.main.uvicorn.run")
     @patch("luxar.cli.main.open_browser_func")
-    @patch("luxar.cli.main.check_viewer_built")
+    @patch("luxar.cli.main.ensure_viewer_built")
     def test_serve_with_viewer_and_open_opens_browser(
-        self, mock_check, mock_browser, mock_uvicorn, _mock_port, runner, sample_scene
+        self,
+        mock_check,
+        mock_browser,
+        mock_uvicorn,
+        _mock_port,
+        _mock_viewer,
+        _mock_wait,
+        runner,
+        sample_scene,
     ) -> None:
         """`serve --viewer --open` (viewer built) opens the browser exactly once
         — the positive twin of test_serve_with_viewer_not_built_skips_open."""
@@ -257,10 +248,10 @@ class TestEnhancedServeCommand:
         assert result.exit_code == 0, result.output
         mock_browser.assert_called_once()
 
-    @patch("luxar.cli.main.find_available_port", return_value=8000)
+    @patch("luxar.cli.main.pick_port", return_value=8000)
     @patch("luxar.cli.main.uvicorn.run")
     @patch("luxar.cli.main.open_browser_func")
-    @patch("luxar.cli.main.check_viewer_built")
+    @patch("luxar.cli.main.ensure_viewer_built")
     def test_serve_with_viewer_not_built_skips_open(
         self, mock_check, mock_browser, mock_uvicorn, _mock_port, runner, sample_scene
     ) -> None:
@@ -272,8 +263,8 @@ class TestEnhancedServeCommand:
         assert result.exit_code == 0
         mock_browser.assert_not_called()
 
-    @patch("luxar.cli.main.find_available_port", return_value=8000)
-    @patch("luxar.cli.main.check_viewer_built")
+    @patch("luxar.cli.main.pick_port", return_value=8000)
+    @patch("luxar.cli.main.ensure_viewer_built")
     @patch("luxar.cli.main._serve_viewer")
     def test_serve_viewer_only(
         self, mock_serve, mock_check, _mock_port, runner
@@ -295,38 +286,15 @@ class TestEnhancedServeCommand:
 class TestCLIIntegration:
     """Integration tests for CLI commands."""
 
-    def test_demo_no_serve_then_info_workflow(self, runner, tmp_path) -> None:
-        """Test generating demo data without serving then viewing info."""
-        output = tmp_path / "test.luxar.zarr"
-
-        # Generate
-        result1 = runner.invoke(
-            app, ["demo", "--no-serve", "--output", str(output), "--points", "50"]
-        )
-        assert result1.exit_code == 0
-        assert output.exists()
-
-        # Info
-        result2 = runner.invoke(app, ["info", str(output)])
-        assert result2.exit_code == 0
-        assert "50" in result2.stdout
-
-    def test_demo_creates_temp_dir(self, runner) -> None:
-        """Test that demo creates temp directory when no output specified."""
-        with patch("luxar.cli.main.check_viewer_built", return_value=True):
-            with patch("luxar.cli.main._serve_viewer"):
-                with patch("luxar.cli.main._serve_data"):
-                    with patch("tempfile.mkdtemp") as mock_temp:
-                        mock_temp.return_value = "/tmp/test"
-                        runner.invoke(app, ["demo", "--points", "10", "--no-open"])
-                        mock_temp.assert_called_once()
-
     def test_all_commands_help(self, runner) -> None:
         """Test that all commands have proper help."""
-        commands = ["serve", "info", "viewer", "demo"]
-
-        for cmd in commands:
+        # Leaf commands show an Options section.
+        for cmd in ["serve", "info", "viewer"]:
             result = runner.invoke(app, [cmd, "--help"])
             assert result.exit_code == 0
             assert cmd in result.stdout.lower()
             assert "Options" in result.stdout
+        # `demo` is a group: it lists Commands.
+        demo_help = runner.invoke(app, ["demo", "--help"])
+        assert demo_help.exit_code == 0
+        assert "Commands" in demo_help.stdout
