@@ -1425,3 +1425,47 @@ describe('depth-sort coordinator — points integration', () => {
     expect(mockApi.releaseNode).toHaveBeenCalledWith(mesh.uuid);
   });
 });
+
+describe('depth-sort coordinator — provider failure semantics', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('a throwing centers provider leaves the node unregistered (no phantom recovery sorts)', async () => {
+    // The provider resolves BEFORE the `registered` flag flips: a throw
+    // must behave like a registerNode rejection — otherwise the node is
+    // stranded with registered=true and no worker-side centers, and the
+    // per-frame recovery branch (registered && !lastSortAxis) dispatches
+    // a guaranteed-null sort.
+    const coord = await loadCoordinator();
+    const camera = makeCamera();
+    coord.configureDepthSort({ getCamera: () => camera, requestRender: vi.fn() });
+
+    const mesh = makeGSplatsMesh(2, 'normal');
+    mesh.userData.nodeType = 'points';
+    coord.noteDepthSortCommit(
+      mesh,
+      () => {
+        throw new Error('provider OOM');
+      },
+      2
+    );
+    await flush();
+
+    // Nothing reached the worker, no sort dispatched.
+    expect(mockApi.registerNode).not.toHaveBeenCalled();
+    expect(mockApi.sort).not.toHaveBeenCalled();
+
+    // The per-frame scheduler must NOT enter the recovery branch for
+    // this node (registered stayed false).
+    coord.evaluateDepthSortPerFrame();
+    coord.evaluateDepthSortPerFrame();
+    expect(mockApi.sort).not.toHaveBeenCalled();
+
+    // A later healthy commit recovers the full register + sort cycle.
+    coord.noteDepthSortCommit(mesh, () => new Float32Array([0, 0, -1, 1, 0, -2]), 2);
+    await flush();
+    expect(mockApi.registerNode).toHaveBeenCalledTimes(1);
+    expect(mockApi.sort).toHaveBeenCalledTimes(1);
+  });
+});

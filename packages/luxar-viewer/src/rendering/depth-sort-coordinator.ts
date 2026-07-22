@@ -317,10 +317,15 @@ export function noteDepthSortCommit(
       // A newer commit may have landed while the worker was spawning.
       const current = nodeStates.get(nodeId);
       if (current?.generation !== generation) return;
-      current.registered = true;
       // Resolve a lazy centers provider only now — past the generation
-      // re-check, so a superseded commit never pays the copy.
+      // re-check, so a superseded commit never pays the copy. Resolved
+      // BEFORE the `registered` flag flips: a throwing provider then
+      // leaves the node unregistered (same semantics as a registerNode
+      // rejection) instead of stranding a phantom registration the
+      // per-frame recovery branch would dispatch guaranteed-null sorts
+      // against. (The throw lands in the outer catch below.)
       const buffer = typeof centers3 === 'function' ? centers3() : centers3;
+      current.registered = true;
       // The register RPC is its own promise — the surrounding .catch
       // only sees synchronous throws, so a transport/transfer rejection
       // here would otherwise float as an unhandled rejection.
