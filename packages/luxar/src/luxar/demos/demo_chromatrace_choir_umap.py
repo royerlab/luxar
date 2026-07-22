@@ -26,6 +26,22 @@ Usage:
 
 from __future__ import annotations
 
+DEMO_META = {
+    "key": "chromatrace_choir_umap",
+    "title": "ChromaTrace CHOIR UMAP",
+    "description": "3D UMAP of ~60k single cells annotated with CHOIR cell types and 8 tissue lineages.",
+    "category": "embeddings",
+    "geometry": "points",
+    "requirements": {
+        "download_mb": 0,
+        "compute": "light",
+        "gpu": "none",
+        "local_data": "manual-file",
+    },
+    "caches": ["chromatrace"],
+    "outputs": ["chromatrace_choir_umap"],
+}
+
 import json
 import re
 import sys

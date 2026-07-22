@@ -48,6 +48,22 @@ Controls:
     - Browser opens automatically
 """
 
+DEMO_META = {
+    "key": "nd_transforms",
+    "title": "Multi-Instrument Observatory with nD Transforms",
+    "description": "Multi-instrument observatory aligned in time and channel via per-dimension nD transforms.",
+    "category": "synthetic",
+    "geometry": "points",
+    "requirements": {
+        "download_mb": 0,
+        "compute": "light",
+        "gpu": "none",
+        "local_data": None,
+    },
+    "caches": [],
+    "outputs": ["nd_transforms_observatory"],
+}
+
 from pathlib import Path
 
 import numpy as np

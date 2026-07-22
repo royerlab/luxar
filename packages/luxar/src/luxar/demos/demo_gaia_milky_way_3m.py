@@ -111,6 +111,22 @@ Viewing Tips:
     - Colors reflect real stellar temperatures!
 """
 
+DEMO_META = {
+    "key": "galaxy",
+    "title": "Gaia Milky Way (3M stars)",
+    "description": "Real Milky Way stars from Gaia DR3 (3M brightest) in galactocentric coordinates.",
+    "category": "astronomy",
+    "geometry": "points",
+    "requirements": {
+        "download_mb": 41,
+        "compute": "medium",
+        "gpu": "none",
+        "local_data": "git-lfs",
+    },
+    "caches": [],
+    "outputs": ["galaxy"],
+}
+
 import sys
 import tempfile
 from pathlib import Path

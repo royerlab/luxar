@@ -71,6 +71,22 @@ Output:
     - Automatically opens in browser
 """
 
+DEMO_META = {
+    "key": "gsplats_3d_acto3d_heart",
+    "title": "3D Acto3D Heart",
+    "description": "E13.5 mouse embryo heart, 3-channel light-sheet volume as per-channel Gaussian splats.",
+    "category": "microscopy",
+    "geometry": "gsplats",
+    "requirements": {
+        "download_mb": 13,
+        "compute": "medium",
+        "gpu": "optional",
+        "local_data": "git-lfs",
+    },
+    "caches": ["gsplats_acto3d_heart"],
+    "outputs": ["gsplats_3d_acto3d_heart"],
+}
+
 # Enable MPS->CPU fallback for unsupported PyTorch ops (must be before torch import)
 import os
 

@@ -48,6 +48,22 @@ Controls:
     - Mouse drag: rotate,  Scroll: zoom,  Right-drag: pan
 """
 
+DEMO_META = {
+    "key": "gsplats_interop_mipnerf_garden",
+    "title": 'Mip-NeRF 360 "garden" (antimatter15 .splat) -> Luxar',
+    "description": "Mip-NeRF 360 'garden' scene (~5M splats, antimatter15 .splat) imported into Luxar as tiled splats.",
+    "category": "photogrammetry",
+    "geometry": "gsplats",
+    "requirements": {
+        "download_mb": 187,
+        "compute": "medium",
+        "gpu": "none",
+        "local_data": None,
+    },
+    "caches": ["gsplats_interop_mipnerf"],
+    "outputs": ["gsplats_interop_mipnerf_garden"],
+}
+
 import sys
 from pathlib import Path
 

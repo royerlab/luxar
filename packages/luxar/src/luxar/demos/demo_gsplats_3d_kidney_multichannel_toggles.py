@@ -123,6 +123,22 @@ Output:
 
 """
 
+DEMO_META = {
+    "key": "gsplats_6d_kidney_multichannel_toggles",
+    "title": "6D Kidney Multichannel Toggles",
+    "description": "3-channel scikit-image mouse-kidney volume as gsplats with per-channel boolean toggle dimensions.",
+    "category": "microscopy",
+    "geometry": "gsplats",
+    "requirements": {
+        "download_mb": 2,
+        "compute": "medium",
+        "gpu": "optional",
+        "local_data": "git-lfs",
+    },
+    "caches": ["gsplats_kidney"],
+    "outputs": ["gsplats_6d_kidney_multichannel_toggles"],
+}
+
 import sys
 from pathlib import Path
 

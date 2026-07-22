@@ -98,6 +98,22 @@ Controls:
 
 from __future__ import annotations
 
+DEMO_META = {
+    "key": "storm_3d_microtubules",
+    "title": "STORM 3D Microtubules",
+    "description": "Real 3D STORM super-resolution localizations of COS7 microtubules rendered as Gaussian splats.",
+    "category": "microscopy",
+    "geometry": "gsplats",
+    "requirements": {
+        "download_mb": 1800,
+        "compute": "heavy",
+        "gpu": "none",
+        "local_data": None,
+    },
+    "caches": ["storm_data"],
+    "outputs": ["storm_3d_microtubules"],
+}
+
 import sys
 from pathlib import Path
 

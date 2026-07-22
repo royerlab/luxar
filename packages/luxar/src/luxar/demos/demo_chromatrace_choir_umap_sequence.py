@@ -42,6 +42,22 @@ Usage:
 
 from __future__ import annotations
 
+DEMO_META = {
+    "key": "chromatrace_choir_umap_sequence",
+    "title": "Chromatrace CHOIR 3D UMAP — Sequential Cell-Type Walk.",
+    "description": "A 3D UMAP of ~60k single cells, stepping through each CHOIR cell type one slot at a time.",
+    "category": "embeddings",
+    "geometry": "points",
+    "requirements": {
+        "download_mb": 0,
+        "compute": "medium",
+        "gpu": "none",
+        "local_data": "manual-file",
+    },
+    "caches": ["chromatrace"],
+    "outputs": ["chromatrace_choir_umap_sequence"],
+}
+
 import json
 import re
 import sys

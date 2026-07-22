@@ -46,6 +46,22 @@ USAGE
     python demo_global_rivers_earth.py [--recompute] [--no-serve] [--serve-only]
 """
 
+DEMO_META = {
+    "key": "global_rivers_earth",
+    "title": "Rivers of Earth",
+    "description": "A topographic ETOPO globe (Points) plus every HydroRIVERS reach (Lines) in geographic 3D.",
+    "category": "geoscience",
+    "geometry": "points+lines",
+    "requirements": {
+        "download_mb": 1000,
+        "compute": "heavy",
+        "gpu": "none",
+        "local_data": None,
+    },
+    "caches": ["global_rivers_earth"],
+    "outputs": ["global_rivers_earth"],
+}
+
 from pathlib import Path
 
 import numpy as np
@@ -70,17 +86,17 @@ ETOPO_URL = (
     "60s_surface_elev_gtif/ETOPO_2022_v1_60s_N90W180_surface.tif"
 )
 
-N_GLOBE = 8_000_000       # Fibonacci-sphere terrain points
-MIN_ORDER = 3             # keep HydroRIVERS reaches with Strahler order >= this
-DECIMATE_DEG = 0.06       # drop river vertices closer than this (~2-3x line width)
-RADIUS = 100.0            # globe radius (scene units)
-EXAGG = 45.0              # vertical exaggeration of elevation relief
-POINT_RADII = 0.09        # terrain point size (8M points form a dense shell)
-EARTH_OPACITY = 0.05      # near-transparent backdrop; lets the rivers dominate
-RIVER_LIFT = 0.004        # lift rivers barely above the terrain surface
+N_GLOBE = 8_000_000  # Fibonacci-sphere terrain points
+MIN_ORDER = 3  # keep HydroRIVERS reaches with Strahler order >= this
+DECIMATE_DEG = 0.06  # drop river vertices closer than this (~2-3x line width)
+RADIUS = 100.0  # globe radius (scene units)
+EXAGG = 45.0  # vertical exaggeration of elevation relief
+POINT_RADII = 0.09  # terrain point size (8M points form a dense shell)
+EARTH_OPACITY = 0.05  # near-transparent backdrop; lets the rivers dominate
+RIVER_LIFT = 0.004  # lift rivers barely above the terrain surface
 RIVER_WIDTH = 0.015
 RIVER_INTENSITY = 1.6
-R_EARTH = 6_371_000.0     # metres, for elevation -> relief fraction
+R_EARTH = 6_371_000.0  # metres, for elevation -> relief fraction
 
 FLAGS = parse_demo_flags()
 NO_SERVE = FLAGS["no_serve"]
@@ -168,15 +184,28 @@ def decimate_polyline(pts: np.ndarray, min_len_deg: float) -> np.ndarray:
 
 
 # Hypsometric terrain palette and teal->white river palette (Strahler order).
-EARTH_LUT = _lut_from([
-    (0.00, (2, 5, 22)), (0.08, (8, 20, 70)), (0.18, (18, 80, 140)),
-    (0.215, (45, 150, 185)), (0.221, (28, 105, 55)), (0.30, (70, 135, 62)),
-    (0.45, (120, 145, 72)), (0.60, (160, 135, 85)), (0.75, (140, 110, 82)),
-    (0.88, (185, 175, 165)), (1.00, (255, 255, 255)),
-])
-RIVER_LUT = _lut_from([
-    (0.00, (30, 110, 145)), (0.50, (80, 200, 230)), (1.00, (245, 255, 255)),
-])
+EARTH_LUT = _lut_from(
+    [
+        (0.00, (2, 5, 22)),
+        (0.08, (8, 20, 70)),
+        (0.18, (18, 80, 140)),
+        (0.215, (45, 150, 185)),
+        (0.221, (28, 105, 55)),
+        (0.30, (70, 135, 62)),
+        (0.45, (120, 145, 72)),
+        (0.60, (160, 135, 85)),
+        (0.75, (140, 110, 82)),
+        (0.88, (185, 175, 165)),
+        (1.00, (255, 255, 255)),
+    ]
+)
+RIVER_LUT = _lut_from(
+    [
+        (0.00, (30, 110, 145)),
+        (0.50, (80, 200, 230)),
+        (1.00, (245, 255, 255)),
+    ]
+)
 
 
 # =============================================================================
@@ -260,7 +289,9 @@ def _parse_river_polylines(shp_path: Path) -> tuple[np.ndarray, np.ndarray, np.n
 # =============================================================================
 
 
-def _sample_elevation(etopo: np.ndarray, lon: np.ndarray, lat: np.ndarray) -> np.ndarray:
+def _sample_elevation(
+    etopo: np.ndarray, lon: np.ndarray, lat: np.ndarray
+) -> np.ndarray:
     """Sample the ETOPO grid (row 0 = 90N, col 0 = 180W) at geographic lon/lat."""
     h, w = etopo.shape
     col = np.mod(((lon + 180.0) / 360.0 * w).astype(np.int64), w)
@@ -282,7 +313,9 @@ def build_scene(etopo_path: Path, shp_path: Path, output_path: Path) -> Path:
         # pre-bake terrain colors from the LUT (identical across additive-LOD
         # levels; avoids serialising a LUT array on the additive-LOD path)
         gcolors = (
-            EARTH_LUT[np.clip((gscal * 255).astype(np.int64), 0, 255)].astype(np.float32)
+            EARTH_LUT[np.clip((gscal * 255).astype(np.int64), 0, 255)].astype(
+                np.float32
+            )
             / 255.0
         )
 
@@ -302,7 +335,9 @@ def build_scene(etopo_path: Path, shp_path: Path, output_path: Path) -> Path:
         overt = np.repeat(order[keep].astype(np.float32), kept_lengths)
         onorm = np.clip((overt - 3.0) / 7.0, 0.0, 1.0)
         rcolors = (
-            RIVER_LUT[np.clip((onorm * 255).astype(np.int64), 0, 255)].astype(np.float32)
+            RIVER_LUT[np.clip((onorm * 255).astype(np.int64), 0, 255)].astype(
+                np.float32
+            )
             / 255.0
         )
         # connected indices: consecutive pairs WITHIN each polyline (shared
@@ -314,19 +349,26 @@ def build_scene(etopo_path: Path, shp_path: Path, output_path: Path) -> Path:
         aprint(f"{int(keep.sum()):,} river polylines, {len(valid):,} segments")
 
     with asection("Writing scene"):
-        dims = Dimensions([
-            Dimension("x", unit="", display=True),
-            Dimension("y", unit="", display=True),
-            Dimension("z", unit="", display=True),
-        ])
+        dims = Dimensions(
+            [
+                Dimension("x", unit="", display=True),
+                Dimension("y", unit="", display=True),
+                Dimension("z", unit="", display=True),
+            ]
+        )
         with LuxarZarrCompiler(output_path, encoding_mode=EncodingMode.PRECISION) as c:
             scene = c.create_scene(
                 dimensions=dims, viewer_config=ViewerConfig(tone_mapping="Neutral")
             )
             scene.attrs["title"] = "Rivers of Earth — global topography + HydroRIVERS"
             scene.add_points(
-                "terrain", positions=gpos, radii=POINT_RADII, colors=gcolors,
-                blending_mode="normal", opacity=EARTH_OPACITY, layer=True,
+                "terrain",
+                positions=gpos,
+                radii=POINT_RADII,
+                colors=gcolors,
+                blending_mode="normal",
+                opacity=EARTH_OPACITY,
+                layer=True,
                 additive_lod=dict(method="spatial-uniform", n_lods=5),
             )
             # Connected polylines (indexed) so the material renders seamless
@@ -334,18 +376,30 @@ def build_scene(etopo_path: Path, shp_path: Path, output_path: Path) -> Path:
             # O(N) union-find over ~2M polylines (minutes to build) for little
             # gain — the rivers stream via the spatial-chunk index instead.
             scene.add_lines(
-                "rivers", vertices=rpos, widths=RIVER_WIDTH, colors=rcolors,
-                indices=rindices, line_type="indexed", blending_mode="additive",
-                opacity=0.95, intensity=RIVER_INTENSITY, layer=True,
+                "rivers",
+                vertices=rpos,
+                widths=RIVER_WIDTH,
+                colors=rcolors,
+                indices=rindices,
+                line_type="indexed",
+                blending_mode="additive",
+                opacity=0.95,
+                intensity=RIVER_INTENSITY,
+                layer=True,
             )
             scene.add_text(
-                "Rivers of Earth", position=(0.02, 0.02), font_size=0.045,
-                anchor="top-left", color="rgba(255,255,255,0.75)",
+                "Rivers of Earth",
+                position=(0.02, 0.02),
+                font_size=0.045,
+                anchor="top-left",
+                color="rgba(255,255,255,0.75)",
                 blend_mode="difference",
             )
             scene.add_text(
                 "ETOPO 2022 topography • HydroRIVERS (HydroSHEDS) river networks",
-                position=(0.98, 0.97), font_size=0.015, anchor="bottom-right",
+                position=(0.98, 0.97),
+                font_size=0.015,
+                anchor="bottom-right",
                 color="rgba(200,200,220,0.5)",
             )
         aprint(f"Scene saved: {output_path}")

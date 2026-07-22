@@ -82,6 +82,22 @@ Controls:
     - Ctrl+C to stop
 """
 
+DEMO_META = {
+    "key": "quasicrystal",
+    "title": "Quasicrystal",
+    "description": "3D icosahedral quasicrystal built by cut-and-project from a 6D lattice.",
+    "category": "synthetic",
+    "geometry": "points",
+    "requirements": {
+        "download_mb": 0,
+        "compute": "light",
+        "gpu": "none",
+        "local_data": None,
+    },
+    "caches": [],
+    "outputs": ["quasicrystal"],
+}
+
 import sys
 import tempfile
 from pathlib import Path

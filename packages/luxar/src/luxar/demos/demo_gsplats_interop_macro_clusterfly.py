@@ -46,6 +46,22 @@ Controls:
     - Mouse drag: rotate,  Scroll: zoom,  Right-drag: pan
 """
 
+DEMO_META = {
+    "key": "gsplats_interop_macro_clusterfly",
+    "title": "Dany Bittel macro-photogrammetry cluster fly → Luxar",
+    "description": "Dany Bittel's macro-photogrammetry Gaussian-splat capture of a cluster fly, imported into Luxar.",
+    "category": "photogrammetry",
+    "geometry": "gsplats",
+    "requirements": {
+        "download_mb": 68,
+        "compute": "medium",
+        "gpu": "none",
+        "local_data": None,
+    },
+    "caches": ["gsplats_interop_macro"],
+    "outputs": ["gsplats_interop_macro_clusterfly"],
+}
+
 from pathlib import Path
 
 from arbol import Arbol, aprint, asection

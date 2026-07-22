@@ -27,6 +27,22 @@ Controls:
 
 from __future__ import annotations
 
+DEMO_META = {
+    "key": "cosmicflows_laniakea",
+    "title": "Cosmicflows — Laniakea Supercluster",
+    "description": "Local-universe galaxies and reconstructed cosmic velocity streamlines (Cosmicflows-4).",
+    "category": "astronomy",
+    "geometry": "points+lines",
+    "requirements": {
+        "download_mb": 25,  # approx
+        "compute": "medium",
+        "gpu": "none",
+        "local_data": None,
+    },
+    "caches": ["laniakea"],
+    "outputs": ["cosmicflows_laniakea_full", "cosmicflows_laniakea"],
+}
+
 import argparse
 import sys
 import tempfile

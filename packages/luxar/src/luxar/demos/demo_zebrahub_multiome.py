@@ -9,6 +9,22 @@ Paper: https://www.biorxiv.org/content/10.1101/2024.10.18.618987v1
 Navigate between Cell Type and Timepoint views using the categorical dimension dropdown!
 """
 
+DEMO_META = {
+    "key": "zebrahub_multiome",
+    "title": "Zebrahub Integrated Cells 3D UMAP",
+    "description": "3D UMAP of ~95k integrated zebrafish single cells with categorical attribute navigation.",
+    "category": "embeddings",
+    "geometry": "points",
+    "requirements": {
+        "download_mb": 5,  # approx
+        "compute": "medium",
+        "gpu": "none",
+        "local_data": None,
+    },
+    "caches": ["zebrahub_multiome"],
+    "outputs": ["zebrahub_multiome", "cells"],
+}
+
 import sys
 import tempfile
 from pathlib import Path
@@ -68,9 +84,7 @@ def load_cells_data():  # type: ignore[no-untyped-def]
         return coords, attrs, category_maps
 
     with asection("Loading Zebrahub Multiome Integrated Cells"):
-        return cache_computed(
-            "zebrahub_multiome", "coords_attrs", _fetch, version=1
-        )
+        return cache_computed("zebrahub_multiome", "coords_attrs", _fetch, version=1)
 
 
 def attr_to_colors(values):  # type: ignore[no-untyped-def]

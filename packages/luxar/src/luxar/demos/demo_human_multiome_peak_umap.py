@@ -26,6 +26,22 @@ Controls:
     - Ctrl+C to stop
 """
 
+DEMO_META = {
+    "key": "human_multiome_peak_umap",
+    "title": "Human Multiome Peak UMAP",
+    "description": "3D UMAP of ~1M single-cell ATAC-seq peaks (human multiome), colored by cell type and lineage.",
+    "category": "embeddings",
+    "geometry": "points",
+    "requirements": {
+        "download_mb": 0,
+        "compute": "medium",
+        "gpu": "none",
+        "local_data": "manual-file",
+    },
+    "caches": [],
+    "outputs": ["human_multiome_peak_umap", "human_umap"],
+}
+
 import sys
 import tempfile
 from pathlib import Path

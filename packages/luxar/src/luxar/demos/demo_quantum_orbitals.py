@@ -41,6 +41,22 @@ Controls:
     - Ctrl+C to stop
 """
 
+DEMO_META = {
+    "key": "quantum_orbitals",
+    "title": "Quantum Atomic Orbitals",
+    "description": "Hydrogen-atom electron probability-density orbitals (s/p/d/f) with state navigation.",
+    "category": "synthetic",
+    "geometry": "points",
+    "requirements": {
+        "download_mb": 0,
+        "compute": "light",
+        "gpu": "none",
+        "local_data": None,
+    },
+    "caches": [],
+    "outputs": ["quantum_orbitals"],
+}
+
 import math
 import sys
 import tempfile

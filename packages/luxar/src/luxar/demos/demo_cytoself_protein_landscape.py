@@ -31,6 +31,22 @@ Dependencies:
     pip install umap-learn pandas requests
 """
 
+DEMO_META = {
+    "key": "cytoself_protein_landscape",
+    "title": "cytoself Protein Landscape",
+    "description": "~114K CytoSelf image embeddings (OpenCell) as a 3D UMAP, colored by subcellular localization.",
+    "category": "embeddings",
+    "geometry": "points",
+    "requirements": {
+        "download_mb": 3900,
+        "compute": "heavy",
+        "gpu": "none",
+        "local_data": None,
+    },
+    "caches": ["cytoself"],
+    "outputs": ["cytoself_protein_landscape", "cytoself_landscape"],
+}
+
 import sys
 import tempfile
 import time

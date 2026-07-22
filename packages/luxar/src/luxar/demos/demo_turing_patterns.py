@@ -39,6 +39,22 @@ Controls:
     - Ctrl+C to stop
 """
 
+DEMO_META = {
+    "key": "turing_patterns",
+    "title": "Turing Patterns",
+    "description": "Gray-Scott reaction-diffusion Turing patterns (spots, stripes, spirals) evolving in time.",
+    "category": "synthetic",
+    "geometry": "points",
+    "requirements": {
+        "download_mb": 0,
+        "compute": "light",
+        "gpu": "none",
+        "local_data": None,
+    },
+    "caches": [],
+    "outputs": ["turing_patterns"],
+}
+
 import sys
 import tempfile
 from pathlib import Path

@@ -78,6 +78,22 @@ Output:
     - Automatically opens in browser
 """
 
+DEMO_META = {
+    "key": "gsplats_lod_tribolium",
+    "title": "Adaptive Level of Detail on a real Tribolium embryo (Light-Sheet)",
+    "description": "A ~256K-splat Tribolium embryo with an adaptive substitutive LOD ladder for zoom detail.",
+    "category": "microscopy",
+    "geometry": "gsplats",
+    "requirements": {
+        "download_mb": 3,
+        "compute": "medium",
+        "gpu": "optional",
+        "local_data": "git-lfs",
+    },
+    "caches": ["gsplats_tribolium"],
+    "outputs": ["gsplats_lod_tribolium"],
+}
+
 import sys
 from pathlib import Path
 

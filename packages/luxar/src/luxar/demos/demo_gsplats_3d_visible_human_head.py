@@ -52,6 +52,22 @@ Controls:
     - Mouse drag: rotate,  Scroll: zoom,  Right-drag: pan,  'C': fly controls
 """
 
+DEMO_META = {
+    "key": "gsplats_3d_visible_human_head",
+    "title": "Visible Human Head (cryosection anatomy)",
+    "description": "Human head in true color from NLM Visible Human cryosections as Gaussian splats.",
+    "category": "medical",
+    "geometry": "gsplats",
+    "requirements": {
+        "download_mb": 25,
+        "compute": "medium",
+        "gpu": "optional",
+        "local_data": "git-lfs",
+    },
+    "caches": [],
+    "outputs": ["gsplats_3d_visible_human_head"],
+}
+
 from pathlib import Path
 
 import numpy as np

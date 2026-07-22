@@ -23,6 +23,22 @@ Controls:
     - Browser opens automatically
 """
 
+DEMO_META = {
+    "key": "rainbow_sphere",
+    "title": "Rainbow Sphere with Fibonacci Spiral",
+    "description": "200k points on a Fibonacci-spiral sphere with a smooth rainbow gradient flowing along the spiral.",
+    "category": "synthetic",
+    "geometry": "points",
+    "requirements": {
+        "download_mb": 0,
+        "compute": "light",
+        "gpu": "none",
+        "local_data": None,
+    },
+    "caches": [],
+    "outputs": ["rainbow_sphere"],
+}
+
 import sys
 import tempfile
 from pathlib import Path
@@ -207,7 +223,9 @@ def main() -> None:
         aprint("The viewer will open in your browser automatically.")
         aprint("Press Ctrl+C when done to stop and cleanup.")
         aprint("")
-        aprint(f"💡 TIP: This demo has high point density ({n_points / 1000:.0f}k points)")
+        aprint(
+            f"💡 TIP: This demo has high point density ({n_points / 1000:.0f}k points)"
+        )
         aprint("   - Initial load may take a moment")
         aprint("   - Zoom in to see individual points clearly")
         aprint("   - Notice how evenly distributed the points are")

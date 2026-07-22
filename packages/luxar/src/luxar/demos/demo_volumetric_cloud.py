@@ -25,6 +25,22 @@ Controls:
     - Browser opens automatically
 """
 
+DEMO_META = {
+    "key": "cloud",
+    "title": "Cloud",
+    "description": "A volumetric cloud from multi-octave fractal noise, rendered as soft points.",
+    "category": "synthetic",
+    "geometry": "points",
+    "requirements": {
+        "download_mb": 0,
+        "compute": "light",
+        "gpu": "none",
+        "local_data": None,
+    },
+    "caches": [],
+    "outputs": ["cloud"],
+}
+
 import sys
 import tempfile
 from pathlib import Path
