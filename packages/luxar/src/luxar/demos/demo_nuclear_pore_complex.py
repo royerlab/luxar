@@ -73,6 +73,22 @@ Controls:
     - Ctrl+C to stop and cleanup
 """
 
+DEMO_META = {
+    "key": "nuclear_pore_complex",
+    "title": "Nuclear Pore Complex",
+    "description": "Real Nup107-160 Y-complex (PDB 3I4R) tiled into the NPC's 8-fold symmetric ring (C-alpha trace).",
+    "category": "structural",
+    "geometry": "points",
+    "requirements": {
+        "download_mb": 3,  # approx
+        "compute": "light",
+        "gpu": "none",
+        "local_data": None,
+    },
+    "caches": ["nuclear_pore_complex"],
+    "outputs": ["nuclear_pore_complex"],
+}
+
 import shutil
 import sys
 import tempfile

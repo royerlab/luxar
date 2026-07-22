@@ -91,6 +91,22 @@ Controls:
 
 from __future__ import annotations
 
+DEMO_META = {
+    "key": "earthquakes",
+    "title": "Global Earthquakes (3D)",
+    "description": "Real USGS earthquakes on a 3D Blue Marble globe, spikes scaled by magnitude and colored by time.",
+    "category": "geoscience",
+    "geometry": "points+lines",
+    "requirements": {
+        "download_mb": 5,  # approx
+        "compute": "medium",
+        "gpu": "none",
+        "local_data": None,
+    },
+    "caches": ["earthquakes"],
+    "outputs": ["earthquakes"],
+}
+
 import sys
 import tempfile
 from datetime import datetime, timedelta, timezone

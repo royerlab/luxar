@@ -36,6 +36,22 @@ Controls:
     - Ctrl+C to stop
 """
 
+DEMO_META = {
+    "key": "zebrahub_multiome_peak_umap",
+    "title": "Zebrahub Multiome Peak UMAP",
+    "description": "3D UMAP of 640k single-cell ATAC-seq peaks (Zebrahub), colored by cell type across 6 timepoints.",
+    "category": "embeddings",
+    "geometry": "points",
+    "requirements": {
+        "download_mb": 50,  # approx
+        "compute": "medium",
+        "gpu": "none",
+        "local_data": None,
+    },
+    "caches": ["zebrahub_multiome_peak"],
+    "outputs": ["zebrahub_multiome_peak_umap", "zebrahub_umap"],
+}
+
 import sys
 import tempfile
 from pathlib import Path
@@ -141,9 +157,7 @@ def load_zebrahub_umap_data(
     # (keyed on the selected attribute set) so repeat runs are offline.
     cache_key = "coords_attrs_" + "_".join(attr_names)
     with asection("Downloading Zebrahub 3D UMAP Data"):
-        return cache_computed(
-            "zebrahub_multiome_peak", cache_key, _fetch, version=1
-        )
+        return cache_computed("zebrahub_multiome_peak", cache_key, _fetch, version=1)
 
 
 def create_zebrahub_scene(

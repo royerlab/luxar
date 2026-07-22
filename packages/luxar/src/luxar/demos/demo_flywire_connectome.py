@@ -78,6 +78,22 @@ Usage:
 
 from __future__ import annotations
 
+DEMO_META = {
+    "key": "flywire_connectome",
+    "title": "FlyWire Connectome",
+    "description": "Adult Drosophila brain connectome: ~139k neurons as Points, ~2M connections as Lines.",
+    "category": "connectome",
+    "geometry": "points+lines",
+    "requirements": {
+        "download_mb": 850,
+        "compute": "heavy",
+        "gpu": "none",
+        "local_data": None,
+    },
+    "caches": ["flywire"],
+    "outputs": ["flywire_connectome"],
+}
+
 import sys
 import tempfile
 from pathlib import Path

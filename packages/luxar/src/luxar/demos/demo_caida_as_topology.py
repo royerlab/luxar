@@ -99,6 +99,22 @@ Usage:
 
 from __future__ import annotations
 
+DEMO_META = {
+    "key": "caida_as_topology",
+    "title": "CAIDA AS Topology",
+    "description": "The Internet's AS graph: ~80k autonomous systems and ~350k BGP links in 3D.",
+    "category": "networks",
+    "geometry": "points+lines",
+    "requirements": {
+        "download_mb": 60,
+        "compute": "medium",
+        "gpu": "none",
+        "local_data": None,
+    },
+    "caches": ["caida"],
+    "outputs": ["caida_as_topology"],
+}
+
 import bz2
 import gzip
 import hashlib

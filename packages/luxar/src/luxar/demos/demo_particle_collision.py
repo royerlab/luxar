@@ -106,6 +106,22 @@ Controls:
 
 from __future__ import annotations
 
+DEMO_META = {
+    "key": "collision",
+    "title": "Collision",
+    "description": "A synthetic particle-physics collision with curved tracks, jets, and calorimeter deposits.",
+    "category": "synthetic",
+    "geometry": "points",
+    "requirements": {
+        "download_mb": 0,
+        "compute": "light",
+        "gpu": "none",
+        "local_data": None,
+    },
+    "caches": [],
+    "outputs": ["collision"],
+}
+
 import sys
 import tempfile
 from dataclasses import dataclass

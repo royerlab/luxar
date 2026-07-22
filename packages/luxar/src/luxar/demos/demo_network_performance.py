@@ -45,6 +45,22 @@ Controls:
     - Watch browser DevTools Network tab to see throttling in action
 """
 
+DEMO_META = {
+    "key": "network_performance",
+    "title": "Network Performance Testing with Large 4D Dataset",
+    "description": "A large procedural 4D point dataset for testing viewer loading under simulated network profiles.",
+    "category": "synthetic",
+    "geometry": "points",
+    "requirements": {
+        "download_mb": 0,
+        "compute": "light",
+        "gpu": "none",
+        "local_data": None,
+    },
+    "caches": [],
+    "outputs": ["performance_test"],
+}
+
 import sys
 import tempfile
 from pathlib import Path
@@ -302,7 +318,9 @@ def main() -> None:
     aprint("")
     aprint(f"Dataset: {n_points:,} points in 4D (W, X, Y, Z)")
     aprint(f"Size: ~{n_points * 48 / 1_000_000:.1f} MB (4D positions + colors + radii)")
-    aprint("Use [1] then [ / ] keys to slice the W dimension and trigger progressive loading")
+    aprint(
+        "Use [1] then [ / ] keys to slice the W dimension and trigger progressive loading"
+    )
 
     if not no_simulation:
         aprint(f"Network Profile: {network_profile}")

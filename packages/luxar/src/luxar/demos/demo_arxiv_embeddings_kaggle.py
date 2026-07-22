@@ -79,6 +79,22 @@ Controls:
     - Ctrl+C to stop
 """
 
+DEMO_META = {
+    "key": "arxiv_papers_kaggle",
+    "title": "arXiv Paper Embeddings",
+    "description": "2M+ arXiv papers embedded with OpenAI text-embedding-3-large, shown as a 3D UMAP.",
+    "category": "embeddings",
+    "geometry": "points",
+    "requirements": {
+        "download_mb": 30000,
+        "compute": "heavy",
+        "gpu": "none",
+        "local_data": "kaggle-auth",
+    },
+    "caches": ["arxiv_kaggle"],
+    "outputs": ["arxiv_papers_kaggle", "arxiv_papers"],
+}
+
 import sys
 import tempfile
 from pathlib import Path
@@ -610,7 +626,11 @@ def generate_paper_landscape(
         stacked = stack_colorings(
             positions,
             [
-                {"label": "Category", "colors": category_colors, "labels": category_labels},
+                {
+                    "label": "Category",
+                    "colors": category_colors,
+                    "labels": category_labels,
+                },
                 {"label": "Year", "colors": year_colors, "labels": year_labels},
             ],
         )
@@ -672,9 +692,7 @@ def generate_paper_landscape(
                     int(round(v * 255))
                     for v in CATEGORY_COLORS.get(cat, CATEGORY_COLORS["other"])
                 )
-                _cat_legend += (
-                    f'<div><span style="color:#{r:02x}{g:02x}{b:02x}">█</span> {cat}</div>'
-                )
+                _cat_legend += f'<div><span style="color:#{r:02x}{g:02x}{b:02x}">█</span> {cat}</div>'
             _cat_legend += "</div>"
             scene.add_html(
                 _cat_legend,

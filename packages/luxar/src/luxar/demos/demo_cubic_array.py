@@ -18,6 +18,22 @@ Controls:
     - Browser opens automatically
 """
 
+DEMO_META = {
+    "key": "cubic_array",
+    "title": "Cubic Array with Depth-of-Field Visualization",
+    "description": "A dense 100³ cubic lattice of 1M depth-colored points on a star field, for depth-of-field testing.",
+    "category": "synthetic",
+    "geometry": "points",
+    "requirements": {
+        "download_mb": 0,
+        "compute": "light",
+        "gpu": "none",
+        "local_data": None,
+    },
+    "caches": [],
+    "outputs": ["cubic_array"],
+}
+
 import sys
 import tempfile
 from pathlib import Path

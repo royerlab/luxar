@@ -52,6 +52,22 @@ Controls:
     - Mouse drag: rotate,  Scroll: zoom,  Right-drag: pan,  'C': fly controls
 """
 
+DEMO_META = {
+    "key": "gsplats_3d_milky_way_dust",
+    "title": "Milky Way Dust (Gaussian splats)",
+    "description": "Real 3D dust reconstruction of the solar neighborhood (Leike & Ensslin 2020) as Gaussian splats.",
+    "category": "astronomy",
+    "geometry": "gsplats",
+    "requirements": {
+        "download_mb": 8,
+        "compute": "medium",
+        "gpu": "optional",
+        "local_data": "git-lfs",
+    },
+    "caches": ["gsplats_milkyway_dust"],
+    "outputs": ["gsplats_3d_milky_way_dust"],
+}
+
 import sys
 from pathlib import Path
 
@@ -101,6 +117,7 @@ FLAGS = parse_demo_flags()
 NO_SERVE = FLAGS["no_serve"]
 SERVE_ONLY = FLAGS["serve_only"]
 RECOMPUTE = FLAGS["recompute"]
+
 
 def _int_arg(argv: list[str], flag: str, default: int) -> int:
     """Parse an int CLI flag in either ``--flag value`` or ``--flag=value`` form."""

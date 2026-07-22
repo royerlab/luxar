@@ -124,6 +124,22 @@ Output:
 
 """
 
+DEMO_META = {
+    "key": "gsplats_3d_kidney_multichannel_layers",
+    "title": "3D Kidney Multichannel Layers",
+    "description": "3-channel confocal mouse kidney splats with per-channel Layers-panel control.",
+    "category": "microscopy",
+    "geometry": "gsplats",
+    "requirements": {
+        "download_mb": 2,
+        "compute": "medium",
+        "gpu": "optional",
+        "local_data": "git-lfs",
+    },
+    "caches": ["gsplats_kidney"],
+    "outputs": ["gsplats_3d_kidney_multichannel_layers"],
+}
+
 import sys
 from pathlib import Path
 

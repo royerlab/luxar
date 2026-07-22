@@ -120,6 +120,22 @@ Controls:
 
 """
 
+DEMO_META = {
+    "key": "gsplats_3d_organoid_dapi_nuclei",
+    "title": "3D Organoid DAPI Nuclei",
+    "description": "DAPI-stained organoid nuclei from 3D microscopy compressed as Gaussian splats.",
+    "category": "microscopy",
+    "geometry": "gsplats",
+    "requirements": {
+        "download_mb": 1,
+        "compute": "medium",
+        "gpu": "optional",
+        "local_data": "git-lfs",
+    },
+    "caches": ["gsplats_dapi"],
+    "outputs": ["gsplats_3d_organoid_dapi_nuclei"],
+}
+
 # Enable MPS→CPU fallback for unsupported PyTorch ops (must be before torch import)
 import os
 

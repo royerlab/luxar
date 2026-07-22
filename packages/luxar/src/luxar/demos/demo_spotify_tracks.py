@@ -20,6 +20,22 @@ Dependencies:
     pip install luxar[demos]   # includes pandas, umap-learn
 """
 
+DEMO_META = {
+    "key": "spotify_tracks",
+    "title": "Spotify Tracks",
+    "description": "~114K Spotify tracks embedded in 3D by audio features (UMAP), colored by genre.",
+    "category": "embeddings",
+    "geometry": "points",
+    "requirements": {
+        "download_mb": 20,
+        "compute": "medium",
+        "gpu": "none",
+        "local_data": None,
+    },
+    "caches": ["spotify"],
+    "outputs": ["spotify_tracks"],
+}
+
 import sys
 import tempfile
 from pathlib import Path
@@ -308,9 +324,7 @@ def generate_spotify_landscape(
                     int(round(v * 255))
                     for v in GENRE_COLORS.get(cat, GENRE_COLORS["other"])
                 )
-                legend_html += (
-                    f'<div><span style="color:#{r:02x}{g:02x}{b:02x}">█</span> {cat}</div>'
-                )
+                legend_html += f'<div><span style="color:#{r:02x}{g:02x}{b:02x}">█</span> {cat}</div>'
             legend_html += "</div>"
             scene.add_html(legend_html, position=(0.02, 0.97), anchor="bottom-left")
 
@@ -358,9 +372,7 @@ def main() -> None:
     if "--no-serve" in sys.argv:
         output_path = get_demos_output_dir() / "spotify_tracks.luxar.zarr"
         try:
-            n_tracks = generate_spotify_landscape(
-                output_path, sample_size=sample_size
-            )
+            n_tracks = generate_spotify_landscape(output_path, sample_size=sample_size)
             if n_tracks == 0:
                 return
         except Exception as e:
@@ -377,9 +389,7 @@ def main() -> None:
         output_path = Path(tmpdir) / "spotify_tracks.luxar.zarr"
 
         try:
-            n_tracks = generate_spotify_landscape(
-                output_path, sample_size=sample_size
-            )
+            n_tracks = generate_spotify_landscape(output_path, sample_size=sample_size)
             if n_tracks == 0:
                 return
         except Exception as e:

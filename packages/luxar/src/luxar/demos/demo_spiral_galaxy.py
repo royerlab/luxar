@@ -37,6 +37,22 @@ Controls:
     - Ctrl+C to stop and cleanup
 """
 
+DEMO_META = {
+    "key": "spiral_galaxy",
+    "title": "Spiral Galaxy",
+    "description": "A procedural multi-armed logarithmic-spiral galaxy with realistic stellar populations.",
+    "category": "synthetic",
+    "geometry": "points",
+    "requirements": {
+        "download_mb": 0,
+        "compute": "light",
+        "gpu": "none",
+        "local_data": None,
+    },
+    "caches": [],
+    "outputs": ["spiral_galaxy"],
+}
+
 import sys
 import tempfile
 from pathlib import Path

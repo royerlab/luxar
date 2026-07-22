@@ -54,6 +54,22 @@ OUTPUT:
     - Opens in the browser; press L for the Layers panel, play the Time slider.
 """
 
+DEMO_META = {
+    "key": "gsplats_4d_neuromast_2ch",
+    "title": "4D Neuromast (2-channel timelapse)",
+    "description": "4D two-channel zebrafish neuromast timelapse (membranes + nuclei) as Gaussian splats.",
+    "category": "microscopy",
+    "geometry": "gsplats",
+    "requirements": {
+        "download_mb": 220,  # approx (local store, not bundled/hosted)
+        "compute": "medium",
+        "gpu": "none",
+        "local_data": "manual-file",
+    },
+    "caches": [],
+    "outputs": ["gsplats_4d_neuromast_2ch"],
+}
+
 import os
 from pathlib import Path
 

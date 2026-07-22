@@ -26,6 +26,22 @@ Requirements:
 
 from __future__ import annotations
 
+DEMO_META = {
+    "key": "zebrahub_velocity_streamlines",
+    "title": "Zebrahub 3D RNA-velocity UMAP + streamlines.",
+    "description": "Zebrafish single-cell RNA-velocity UMAP: cells as Points, velocity streamlines as Lines.",
+    "category": "embeddings",
+    "geometry": "points+lines",
+    "requirements": {
+        "download_mb": 500,  # approx
+        "compute": "medium",
+        "gpu": "none",
+        "local_data": None,
+    },
+    "caches": ["zebrahub_velocity"],
+    "outputs": ["zebrahub_velocity_streamlines_standard"],
+}
+
 import argparse
 import hashlib
 import sys
