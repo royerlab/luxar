@@ -1005,6 +1005,34 @@ class TestWriterFuzzRegressions:
 
     POS = np.random.RandomState(0).rand(50, 3).astype(np.float32) * 10
 
+    # ---- review follow-ups: numpy scalars + gsplat reserved attrs ------
+
+    def test_numpy_scalar_broadcast_components_accepted(self) -> None:
+        """np.float32 does NOT subclass Python float — tuple components
+        unpacked from a float32 array (a legitimate caller pattern) must
+        pass the pre-write gate like plain floats do."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            _, _, scene = self._scene(tmpdir)
+            scene.add_points(
+                "np_scalars",
+                self.POS,
+                colors=(np.float32(1.0), np.float32(0.5), np.float32(0.2)),
+            )
+            # numpy-scalar radii/sharpness stay CLEANLY REJECTED (the
+            # downstream broadcast writers only handle Python floats —
+            # on main they crashed with a deep IndexError; the pre-write
+            # gate converts that to a typed error).
+            with pytest.raises((ValueError, TypeError)):
+                scene.add_points("np_rad", self.POS, radii=np.float32(0.5))
+
+    def test_gsplat_position_bounds_is_reserved(self) -> None:
+        """The gsplat writer unconditionally stamps position_bounds; a
+        user-supplied value must be rejected up front, not silently
+        stamped over (the same rule points/lines already enforce)."""
+        from luxar.io._compiler.node_common import GSPLATS_RESERVED_ATTRS
+
+        assert "position_bounds" in GSPLATS_RESERVED_ATTRS
+
     # ---- F1: empty node name must not clobber the scene root -----------
 
     def test_empty_node_name_rejected_and_root_intact(self) -> None:

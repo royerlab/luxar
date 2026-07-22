@@ -62,6 +62,7 @@ GSPLATS_RESERVED_ATTRS: FrozenSet[str] = frozenset(
         "amplitude_range",
         "amplitude_data_range",
         "center_bounds",
+        "position_bounds",
     }
 )
 
@@ -122,7 +123,12 @@ def validate_broadcast_color(colors: Any, context: str = "colors") -> None:
     import numpy as np
 
     for i, component in enumerate(colors):
-        if not isinstance(component, (int, float)) or not np.isfinite(component):
+        # np.floating/np.integer included: np.float32 does NOT subclass
+        # Python float (np.float64 does), and float32 tuple components — e.g.
+        # tuple(color_array[i]) — are a legitimate caller pattern.
+        if not isinstance(component, (int, float, np.integer, np.floating)) or not np.isfinite(
+            component
+        ):
             raise ValidationError(
                 f"{context}: Uniform color component {i} must be a finite "
                 f"number, got {component!r}",

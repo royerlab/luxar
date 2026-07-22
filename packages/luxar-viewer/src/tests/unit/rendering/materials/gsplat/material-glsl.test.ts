@@ -280,6 +280,12 @@ describe('GSplatMaterial', () => {
 
       // Shifted Gaussian ray integral factor passed as uniform (precomputed in TypeScript)
       expect(material.vertexShader).toContain('sigmaRay * uRayIntegralFactor');
+      // String-pin the trace-normalized inversion's RESTORE factor: the
+      // ray sigma of the normalized covariance must be rescaled by
+      // sqrt(sTrace) (sigma_ray = sqrt(s/quadN)) — a wrong or dropped
+      // exponent here is invisible to the TS-mirror unit test and to the
+      // peak-mode codegen snapshot.
+      expect(material.vertexShader).toContain('inversesqrt(quad) * sqrt(sTrace)');
     });
 
     it('should have near-plane guard with smooth fade and screen-coverage cull', () => {
