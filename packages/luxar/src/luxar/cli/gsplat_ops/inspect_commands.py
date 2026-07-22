@@ -7,7 +7,6 @@ the shared ``app_gsplat`` Typer.
 from __future__ import annotations
 
 import shutil
-import time
 from pathlib import Path
 from typing import TYPE_CHECKING, Optional
 
@@ -494,18 +493,15 @@ def quick_view(
 
         from luxar.cli.serving import _serve_data, _serve_viewer
         from luxar.cli.utils import (
-            build_viewer,
-            check_viewer_built,
-            find_available_port,
+            ensure_viewer_built,
+            pick_port,
+            wait_for_server,
         )
         from luxar.gsplats.io._archive import extract_compressed_zarr
 
         # Check viewer is built
-        if not check_viewer_built():
-            aprint("🔨 Building viewer...")
-            if not build_viewer():
-                aprint("❌ Failed to build viewer")
-                raise typer.Exit(1)
+        if not ensure_viewer_built():
+            raise typer.Exit(1)
 
         with asection(f"Quick View: {path.name}"):
             # Resolve to an on-disk .gsplats.zarr directory: extract archives to
@@ -525,11 +521,10 @@ def quick_view(
             aprint(f"Serving node tree directly: {serve_target.name}")
 
             # Find available ports
-            actual_port = find_available_port(port)
-            actual_viewer_port = find_available_port(viewer_port)
+            actual_port = pick_port(port, label="data")
+            actual_viewer_port = pick_port(viewer_port, label="viewer")
 
             if actual_port is None or actual_viewer_port is None:
-                aprint("❌ Could not find available ports")
                 raise typer.Exit(1)
 
             with asection("Starting servers"):
@@ -550,7 +545,8 @@ def quick_view(
                     daemon=True,
                 )
                 data_thread.start()
-                time.sleep(1)
+                if not wait_for_server("127.0.0.1", actual_port, data_thread):
+                    aprint("⚠️  Data server did not become ready.")
 
                 # Construct data URL (no trailing slash — see CLAUDE.md gotcha).
                 # The store is mounted at the server root: no name suffix.

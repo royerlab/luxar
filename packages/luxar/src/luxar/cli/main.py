@@ -11,7 +11,6 @@ from __future__ import annotations
 
 import tempfile
 import threading
-import time
 from pathlib import Path
 from typing import Optional, cast
 
@@ -23,12 +22,22 @@ from starlette.types import ASGIApp
 
 from luxar import __version__
 
+from .common_options import (
+    AllowSensitivePathOption,
+    BandwidthOption,
+    CorsOriginOption,
+    HostOption,
+    JitterOption,
+    LatencyOption,
+    PacketLossOption,
+    ProfileOption,
+    parse_network_options_or_exit,
+)
 from .info_command import _dfs, register_info_command
 from .network_simulation import (
     NETWORK_PROFILES,
     NetworkSimulationMiddleware,
     has_network_simulation,
-    parse_network_options,
     print_network_params,
 )
 from .serving import (
@@ -43,9 +52,10 @@ from .serving import (
 )
 from .utils import (
     _DEFAULT_CORS_ORIGIN,
-    build_viewer,
     check_viewer_built,
-    find_available_port,
+    ensure_viewer_built,
+    pick_port,
+    wait_for_server,
 )
 from .utils import (
     open_browser as open_browser_func,
@@ -114,15 +124,20 @@ def _start_data_server_thread(
     packet_loss_rate: float,
     allow_sensitive_path: bool,
     cors_origin: str,
-    startup_delay: float = 1.0,
+    timeout: float = 5.0,
 ) -> threading.Thread:
     """Start the background data server thread shared by ``viewer`` and ``demo``.
 
-    Kept in main.py (not serving.py) so ``threading``, ``time``, and
-    ``_serve_data`` resolve as *this module's* globals — preserving the existing
-    test patch targets (``patch("luxar.cli.main._serve_data")``,
-    ``monkeypatch.setattr(cli_main.threading, "Thread", ...)``,
-    ``monkeypatch.setattr(cli_main.time, "sleep", ...)``).
+    Readiness is polled (``wait_for_server``) instead of a fixed sleep, so a
+    data server that dies on startup (e.g. loses a bind race) is reported
+    instead of silently leaving the viewer pointing at a dead URL.
+
+    Kept in main.py (not serving.py) so ``threading``, ``time``,
+    ``_serve_data``, and ``wait_for_server`` resolve as *this module's*
+    globals — preserving the existing test patch targets
+    (``patch("luxar.cli.main._serve_data")``,
+    ``patch("luxar.cli.main.wait_for_server")``,
+    ``monkeypatch.setattr(cli_main.threading, "Thread", ...)``).
     """
     thread = threading.Thread(
         target=_serve_data,
@@ -140,7 +155,8 @@ def _start_data_server_thread(
         daemon=True,
     )
     thread.start()
-    time.sleep(startup_delay)
+    if not wait_for_server(host, port, thread, timeout=timeout):
+        aprint(f"⚠️  Data server on {host}:{port} did not become ready.")
     return thread
 
 
@@ -148,11 +164,7 @@ def _start_data_server_thread(
 @app.command()
 def serve(
     path: Optional[Path] = typer.Argument(None, exists=True, readable=True),
-    host: str = typer.Option(
-        "127.0.0.1",
-        "--host",
-        help="Host address to bind to (use 0.0.0.0 for all interfaces)",
-    ),
+    host: HostOption = "127.0.0.1",
     port: int = typer.Option(8000, "--port", "-p"),
     viewer: bool = typer.Option(False, "--viewer", help="Also serve the viewer"),
     viewer_port: int = typer.Option(5173, "--viewer-port", help="Port for viewer"),
@@ -160,48 +172,14 @@ def serve(
     viewer_only: bool = typer.Option(
         False, "--viewer-only", help="Serve only the viewer"
     ),
-    # Network simulation parameters
-    profile: Optional[str] = typer.Option(
-        None,
-        "--profile",
-        help="Network profile (3g, 4g, 5g, slow-broadband, broadband, fast-broadband, satellite, rural, congested)",
-    ),
-    bandwidth: Optional[str] = typer.Option(
-        None,
-        "--bandwidth",
-        "-b",
-        help="Bandwidth limit (e.g., '1mbps', '500kbps', '10mbps')",
-    ),
-    latency: Optional[str] = typer.Option(
-        None,
-        "--latency",
-        "-l",
-        help="Network latency (e.g., '100ms', '500ms', '1s')",
-    ),
-    jitter: Optional[str] = typer.Option(
-        None,
-        "--jitter",
-        "-j",
-        help="Latency jitter as percentage (e.g., '10%', '0.1')",
-    ),
-    packet_loss: Optional[str] = typer.Option(
-        None,
-        "--packet-loss",
-        help="Packet loss rate (e.g., '1%', '0.01', '5%')",
-    ),
-    cors_origin: str = typer.Option(
-        _DEFAULT_CORS_ORIGIN,
-        "--cors-origin",
-        help=(
-            "Allowed CORS origin. Default 'local' allows localhost/127.0.0.1/::1. "
-            "Use '*' to allow any origin without credentials."
-        ),
-    ),
-    allow_sensitive_path: bool = typer.Option(
-        False,
-        "--allow-sensitive-path",
-        help="Allow serving obvious system paths such as /, /etc, /proc, /sys, /dev.",
-    ),
+    # Network simulation parameters (shared declarations: common_options.py)
+    profile: ProfileOption = None,
+    bandwidth: BandwidthOption = None,
+    latency: LatencyOption = None,
+    jitter: JitterOption = None,
+    packet_loss: PacketLossOption = None,
+    cors_origin: CorsOriginOption = _DEFAULT_CORS_ORIGIN,
+    allow_sensitive_path: AllowSensitivePathOption = False,
 ) -> None:
     """Serve a directory, Zarr dataset, or viewer via HTTP.
 
@@ -226,22 +204,6 @@ def serve(
 
         # Test packet loss
         luxar serve data.luxar.zarr --bandwidth 10mbps --packet-loss 5%
-
-    Args:
-        path (Path, optional): Path to directory or Zarr dataset to serve.
-        host (str, optional): Host address. Defaults to "127.0.0.1".
-        port (int, optional): Port number. Defaults to 8000.
-        viewer (bool, optional): Also serve the viewer. Defaults to False.
-        viewer_port (int, optional): Port for viewer. Defaults to 5173.
-        open_browser (bool, optional): Open browser. Defaults to False.
-        viewer_only (bool, optional): Serve only the viewer. Defaults to False.
-        profile (str, optional): Network profile name.
-        bandwidth (str, optional): Bandwidth limit.
-        latency (str, optional): Network latency.
-        jitter (str, optional): Latency jitter percentage.
-        packet_loss (str, optional): Packet loss rate.
-        cors_origin (str, optional): Allowed CORS origin. Defaults to "local".
-        allow_sensitive_path (bool, optional): Permit serving system paths.
     """
     try:
         # Warn about conflicting flags
@@ -255,21 +217,12 @@ def serve(
 
         # Handle viewer-only mode
         if viewer_only:
-            if not check_viewer_built():
-                aprint(
-                    "❌ Viewer not built. Run: cd packages/luxar-viewer && pnpm build"
-                )
+            if not ensure_viewer_built():
                 raise typer.Exit(1)
 
-            # Find available port
-            actual_viewer_port = find_available_port(viewer_port)
+            actual_viewer_port = pick_port(viewer_port, host, label="viewer")
             if actual_viewer_port is None:
-                aprint(f"❌ Error: No available ports found near {viewer_port}")
                 raise typer.Exit(1)
-            if actual_viewer_port != viewer_port:
-                aprint(
-                    f"⚠️  Viewer port {viewer_port} busy, using {actual_viewer_port} instead"
-                )
 
             _serve_viewer(host, actual_viewer_port, None, open_browser, cors_origin)
             return
@@ -293,35 +246,24 @@ def serve(
             raise typer.Exit(1)
 
         # Find available ports (auto-increment if requested ports are busy)
-        actual_port = find_available_port(port)
+        actual_port = pick_port(port, host, label="data")
         if actual_port is None:
-            aprint(f"❌ Error: No available ports found near {port}")
             raise typer.Exit(1)
-
-        if actual_port != port:
-            aprint(f"⚠️  Port {port} busy, using {actual_port} instead")
 
         viewer_served = False
         if viewer:
-            actual_viewer_port = find_available_port(viewer_port)
+            actual_viewer_port = pick_port(viewer_port, host, label="viewer")
             if actual_viewer_port is None:
-                aprint(f"❌ Error: No available ports found near {viewer_port}")
                 raise typer.Exit(1)
-            if actual_viewer_port != viewer_port:
-                aprint(
-                    f"⚠️  Viewer port {viewer_port} busy, using {actual_viewer_port} instead"
-                )
         else:
             actual_viewer_port = viewer_port
 
         # Parse network simulation parameters
-        try:
-            bandwidth_mbps, latency_ms, jitter_percent, packet_loss_rate = (
-                parse_network_options(profile, bandwidth, latency, jitter, packet_loss)
+        bandwidth_mbps, latency_ms, jitter_percent, packet_loss_rate = (
+            parse_network_options_or_exit(
+                profile, bandwidth, latency, jitter, packet_loss
             )
-        except ValueError as e:
-            aprint(f"❌ [Luxar] {e}")
-            raise typer.Exit(code=1)
+        )
 
         if has_network_simulation(
             bandwidth_mbps, latency_ms, jitter_percent, packet_loss_rate
@@ -343,9 +285,8 @@ def serve(
 
         # Also serve viewer if requested
         if viewer:
-            if not check_viewer_built():
-                aprint("⚠️  Viewer not built. Skipping viewer serving.")
-                aprint("💡 To build: cd packages/luxar-viewer && pnpm build")
+            if not ensure_viewer_built():
+                aprint("⚠️  Skipping viewer serving.")
             else:
                 # Start viewer in a separate thread
                 data_url = f"http://{host}:{actual_port}"  # No trailing slash
@@ -355,11 +296,14 @@ def serve(
                     daemon=True,
                 )
                 viewer_thread.start()
-                time.sleep(1)  # Give viewer time to start
-                viewer_served = True
+                if wait_for_server(host, actual_viewer_port, viewer_thread):
+                    viewer_served = True
+                else:
+                    aprint("⚠️  Viewer server did not become ready.")
         else:
             aprint(
-                f"📊 Viewer URL: http://localhost:5173/?src=http://{host}:{actual_port}"
+                f"📊 Viewer URL: http://localhost:{viewer_port}/"
+                f"?src=http://{host}:{actual_port}"
             )
 
         # Open browser if requested
@@ -371,7 +315,6 @@ def serve(
             else:
                 data_url = f"http://{host}:{actual_port}"
                 viewer_url = f"http://{host}:{actual_viewer_port}/?src={data_url}"
-                time.sleep(1)  # Give servers time to start
                 open_browser_func(viewer_url)
 
         # Wrap the complete ASGI app with network simulation (if enabled)
@@ -406,52 +349,18 @@ def serve(
 @app.command()
 def viewer(
     data: Optional[Path] = typer.Option(None, "--data", "-d", help="Zarr data to load"),
-    host: str = typer.Option("127.0.0.1", "--host", help="Host address"),
+    host: HostOption = "127.0.0.1",
     port: int = typer.Option(5173, "--port", "-p", help="Port number"),
     data_port: int = typer.Option(8000, "--data-port", help="Port for data server"),
     open_browser: bool = typer.Option(True, "--open/--no-open", help="Open browser"),
-    # Network simulation parameters (apply to data server only)
-    profile: Optional[str] = typer.Option(
-        None,
-        "--profile",
-        help="Network profile (3g, 4g, 5g, slow-broadband, broadband, fast-broadband, satellite, rural, congested)",
-    ),
-    bandwidth: Optional[str] = typer.Option(
-        None,
-        "--bandwidth",
-        "-b",
-        help="Bandwidth limit (e.g., '1mbps', '500kbps')",
-    ),
-    latency: Optional[str] = typer.Option(
-        None,
-        "--latency",
-        "-l",
-        help="Network latency (e.g., '100ms', '500ms')",
-    ),
-    jitter: Optional[str] = typer.Option(
-        None,
-        "--jitter",
-        "-j",
-        help="Latency jitter percentage (e.g., '10%', '0.1')",
-    ),
-    packet_loss: Optional[str] = typer.Option(
-        None,
-        "--packet-loss",
-        help="Packet loss rate (e.g., '1%', '0.01')",
-    ),
-    cors_origin: str = typer.Option(
-        _DEFAULT_CORS_ORIGIN,
-        "--cors-origin",
-        help=(
-            "Allowed CORS origin. Default 'local' allows localhost/127.0.0.1/::1. "
-            "Use '*' to allow any origin without credentials."
-        ),
-    ),
-    allow_sensitive_path: bool = typer.Option(
-        False,
-        "--allow-sensitive-path",
-        help="Allow serving obvious system paths such as /, /etc, /proc, /sys, /dev.",
-    ),
+    # Network simulation parameters, data server only (see common_options.py)
+    profile: ProfileOption = None,
+    bandwidth: BandwidthOption = None,
+    latency: LatencyOption = None,
+    jitter: JitterOption = None,
+    packet_loss: PacketLossOption = None,
+    cors_origin: CorsOriginOption = _DEFAULT_CORS_ORIGIN,
+    allow_sensitive_path: AllowSensitivePathOption = False,
 ) -> None:
     """Serve the Luxar viewer, optionally with data.
 
@@ -466,40 +375,19 @@ def viewer(
 
         # Serve viewer only (no simulation applies)
         luxar viewer
-
-    Args:
-        data (Path, optional): Zarr data to load.
-        host (str, optional): Host address. Defaults to "127.0.0.1".
-        port (int, optional): Port number. Defaults to 5173.
-        data_port (int, optional): Port for data server. Defaults to 8000.
-        open_browser (bool, optional): Open browser. Defaults to True.
-        profile (str, optional): Network profile (applies to data server only).
-        bandwidth (str, optional): Bandwidth limit (applies to data server only).
-        latency (str, optional): Network latency (applies to data server only).
-        jitter (str, optional): Latency jitter percentage (applies to data server only).
-        packet_loss (str, optional): Packet loss rate (applies to data server only).
-        cors_origin (str, optional): Allowed CORS origin for both viewer and
-            data servers. Defaults to "local" (loopback only).
-        allow_sensitive_path (bool, optional): Permit serving system paths.
     """
     try:
         _warn_if_lan_exposed(host, cors_origin)
 
-        # Check if viewer is built
-        if not check_viewer_built():
-            aprint("❌ Viewer not built. Building now...")
-            if not build_viewer():
-                aprint("❌ Failed to build viewer")
-                raise typer.Exit(1)
+        if not ensure_viewer_built():
+            raise typer.Exit(1)
 
         # Parse network simulation parameters (applies only if data is provided)
-        try:
-            bandwidth_mbps, latency_ms, jitter_percent, packet_loss_rate = (
-                parse_network_options(profile, bandwidth, latency, jitter, packet_loss)
+        bandwidth_mbps, latency_ms, jitter_percent, packet_loss_rate = (
+            parse_network_options_or_exit(
+                profile, bandwidth, latency, jitter, packet_loss
             )
-        except ValueError as e:
-            aprint(f"❌ [Luxar] {e}")
-            raise typer.Exit(code=1)
+        )
 
         if has_network_simulation(
             bandwidth_mbps, latency_ms, jitter_percent, packet_loss_rate
@@ -527,9 +415,8 @@ def viewer(
             _validate_serve_path(data, allow_sensitive_path=allow_sensitive_path)
 
             # Find available port for data server
-            actual_data_port = find_available_port(data_port)
+            actual_data_port = pick_port(data_port, host, label="data")
             if actual_data_port is None:
-                aprint(f"❌ No available ports near {data_port}")
                 raise typer.Exit(1)
 
             # Start data server in background thread
@@ -550,12 +437,9 @@ def viewer(
             data_url = f"http://{host}:{actual_data_port}"
 
         # Find available port for viewer
-        actual_viewer_port = find_available_port(port)
+        actual_viewer_port = pick_port(port, host, label="viewer")
         if actual_viewer_port is None:
-            aprint(f"❌ No available ports near {port}")
             raise typer.Exit(1)
-        if actual_viewer_port != port:
-            aprint(f"⚠️  Viewer port {port} busy, using {actual_viewer_port} instead")
 
         # Serve viewer
         _serve_viewer(host, actual_viewer_port, data_url, open_browser, cors_origin)
@@ -585,43 +469,13 @@ def demo(
     open_browser: bool = typer.Option(True, "--open/--no-open", help="Open browser"),
     port: int = typer.Option(8000, "--port", "-p", help="Data server port"),
     viewer_port: int = typer.Option(5173, "--viewer-port", help="Viewer port"),
-    # Network simulation parameters
-    profile: Optional[str] = typer.Option(
-        None,
-        "--profile",
-        help="Network profile (3g, 4g, 5g, slow-broadband, broadband, fast-broadband, satellite, rural, congested)",
-    ),
-    bandwidth: Optional[str] = typer.Option(
-        None,
-        "--bandwidth",
-        "-b",
-        help="Bandwidth limit (e.g., '1mbps', '500kbps')",
-    ),
-    latency: Optional[str] = typer.Option(
-        None,
-        "--latency",
-        "-l",
-        help="Network latency (e.g., '100ms', '500ms')",
-    ),
-    jitter: Optional[str] = typer.Option(
-        None,
-        "--jitter",
-        "-j",
-        help="Latency jitter percentage (e.g., '10%', '0.1')",
-    ),
-    packet_loss: Optional[str] = typer.Option(
-        None,
-        "--packet-loss",
-        help="Packet loss rate (e.g., '1%', '0.01')",
-    ),
-    cors_origin: str = typer.Option(
-        _DEFAULT_CORS_ORIGIN,
-        "--cors-origin",
-        help=(
-            "Allowed CORS origin. Default 'local' allows localhost/127.0.0.1/::1. "
-            "Use '*' to allow any origin without credentials."
-        ),
-    ),
+    # Network simulation parameters (shared declarations: common_options.py)
+    profile: ProfileOption = None,
+    bandwidth: BandwidthOption = None,
+    latency: LatencyOption = None,
+    jitter: JitterOption = None,
+    packet_loss: PacketLossOption = None,
+    cors_origin: CorsOriginOption = _DEFAULT_CORS_ORIGIN,
 ) -> None:
     """Generate a demo dataset and optionally serve with viewer.
 
@@ -641,23 +495,6 @@ def demo(
 
         # Generate with specific parameters and simulate slow network
         luxar demo --points 100000 --bandwidth 500kbps --latency 200ms
-
-    Args:
-        output (Path, optional): Output path. Required when --no-serve.
-        n_points (int, optional): Number of points. Defaults to 10000.
-        demo_type (str, optional): Demo type. Defaults to "lorenz".
-        seed (int, optional): Random seed.
-        serve (bool, optional): Serve with viewer. Defaults to True.
-        open_browser (bool, optional): Open browser. Defaults to True.
-        port (int, optional): Data server port. Defaults to 8000.
-        viewer_port (int, optional): Viewer port. Defaults to 5173.
-        profile (str, optional): Network profile name.
-        bandwidth (str, optional): Bandwidth limit.
-        latency (str, optional): Network latency.
-        jitter (str, optional): Latency jitter percentage.
-        packet_loss (str, optional): Packet loss rate.
-        cors_origin (str, optional): Allowed CORS origin for both viewer and
-            data servers. Defaults to "local" (loopback only).
     """
     # Validate inputs early
     if n_points <= 0:
@@ -703,13 +540,11 @@ def demo(
             return
 
         # Parse network simulation parameters (if serving)
-        try:
-            bandwidth_mbps, latency_ms, jitter_percent, packet_loss_rate = (
-                parse_network_options(profile, bandwidth, latency, jitter, packet_loss)
+        bandwidth_mbps, latency_ms, jitter_percent, packet_loss_rate = (
+            parse_network_options_or_exit(
+                profile, bandwidth, latency, jitter, packet_loss
             )
-        except ValueError as e:
-            aprint(f"❌ [Luxar] {e}")
-            raise typer.Exit(code=1)
+        )
 
         if has_network_simulation(
             bandwidth_mbps, latency_ms, jitter_percent, packet_loss_rate
@@ -719,19 +554,14 @@ def demo(
             )
 
         with asection("Viewer Setup and Port Management"):
-            # Check viewer is built
-            if not check_viewer_built():
-                aprint("🔨 Building viewer...")
-                if not build_viewer():
-                    aprint("❌ Failed to build viewer")
-                    raise typer.Exit(1)
+            if not ensure_viewer_built():
+                raise typer.Exit(1)
 
             # Find available ports
-            actual_port = find_available_port(port)
-            actual_viewer_port = find_available_port(viewer_port)
+            actual_port = pick_port(port, label="data")
+            actual_viewer_port = pick_port(viewer_port, label="viewer")
 
             if actual_port is None or actual_viewer_port is None:
-                aprint("❌ Could not find available ports")
                 raise typer.Exit(1)
 
         with asection("Server Startup"):
