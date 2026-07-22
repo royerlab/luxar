@@ -393,6 +393,10 @@ def serve(
         uvicorn.run(
             asgi_app, host=host, port=actual_port, reload=False, log_level="warning"
         )
+    except typer.Exit:
+        raise
+    except KeyboardInterrupt:
+        aprint("\n🛑 Shutting down server...")
     except Exception as e:
         aprint(f"❌ Error serving path: {e}")
         raise typer.Exit(1)
@@ -541,9 +545,9 @@ def viewer(
                 cors_origin,
             )
 
-            data_url = f"http://{host}:{actual_data_port}"  # No trailing slash!
-            if data.name.endswith(".zarr"):
-                data_url += "/" + data.name
+            # The data server mounts the dataset itself at its root, so the
+            # URL carries no store-name suffix. No trailing slash!
+            data_url = f"http://{host}:{actual_data_port}"
 
         # Find available port for viewer
         actual_viewer_port = find_available_port(port)
@@ -556,6 +560,8 @@ def viewer(
         # Serve viewer
         _serve_viewer(host, actual_viewer_port, data_url, open_browser, cors_origin)
 
+    except typer.Exit:
+        raise
     except KeyboardInterrupt:
         aprint("\n🛑 Shutting down viewer...")
     except Exception as e:
@@ -742,8 +748,9 @@ def demo(
                 cors_origin,
             )
 
-            # Construct data URL
-            data_url = f"http://127.0.0.1:{actual_port}/{output.name}"
+            # Construct data URL — the store is mounted at the server root,
+            # so no store-name suffix (and no trailing slash).
+            data_url = f"http://127.0.0.1:{actual_port}"
 
             # Serve viewer (this blocks)
             aprint("\n🎉 Demo ready! Starting viewer...")
@@ -755,6 +762,8 @@ def demo(
                 cors_origin,
             )
 
+    except typer.Exit:
+        raise
     except KeyboardInterrupt:
         aprint("\n🛑 Shutting down demo...")
     except Exception as e:
@@ -859,6 +868,8 @@ def export(
                 )
             except KeyboardInterrupt:
                 aprint("\n🛑 Server stopped.")
+    except typer.Exit:
+        raise
     except FileExistsError as e:
         aprint(f"❌ {e}")
         aprint("Use --overwrite to replace existing output")

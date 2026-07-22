@@ -55,7 +55,7 @@ def register_info_command(app: typer.Typer) -> None:
 
         try:
             if not path.exists():
-                aprint("❌ Path does not exist.")
+                aprint(f"❌ Error: path does not exist: {path}")
                 raise typer.Exit(1)
 
             # Get zarr info
@@ -139,6 +139,8 @@ def register_info_command(app: typer.Typer) -> None:
                         aprint(f"    Splats: {gs['n_splats']:,}")
                         aprint(f"    Dimensions: {gs['n_dims']}")
                         aprint(f"    Has colors: {gs['has_colors']}")
+        except typer.Exit:
+            raise
         except Exception as e:
             aprint(f"❌ Error reading info for {path}: {e}")
             raise typer.Exit(1)

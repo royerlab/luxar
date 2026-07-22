@@ -143,7 +143,8 @@ def test_info_command_nonexistent_path(runner, tmp_path) -> None:
     result = runner.invoke(app, ["info", str(nonexistent_path)])
 
     assert result.exit_code == 1
-    assert "Path does not exist" in result.stdout
+    assert "path does not exist" in result.stdout
+    assert "does_not_exist" in result.stdout
 
 
 def test_info_command_complex_hierarchy(runner, tmp_path) -> None:
@@ -531,3 +532,20 @@ def test_info_tree_shows_lines_icon(runner, tmp_path) -> None:
     assert "my_lines" in result.stdout
     # The tree should show the lines icon
     assert "📏" in result.stdout
+
+
+def test_serve_error_not_double_printed(runner, tmp_path) -> None:
+    """A typer.Exit raised inside serve must escape the broad except unchanged.
+
+    typer.Exit subclasses RuntimeError, so a bare ``except Exception`` used to
+    catch the command's own exit path and re-print a spurious
+    '❌ Error serving path: 1' wrapper line.
+    """
+    not_a_dir = tmp_path / "file.txt"
+    not_a_dir.write_text("x")
+
+    result = runner.invoke(app, ["serve", str(not_a_dir)])
+
+    assert result.exit_code == 1
+    assert "is not a directory" in result.stdout
+    assert "Error serving path" not in result.stdout

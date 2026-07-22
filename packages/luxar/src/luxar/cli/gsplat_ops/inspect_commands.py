@@ -552,8 +552,9 @@ def quick_view(
                 data_thread.start()
                 time.sleep(1)
 
-                # Construct data URL (no trailing slash — see CLAUDE.md gotcha)
-                data_url = f"http://127.0.0.1:{actual_port}/{serve_target.name}"
+                # Construct data URL (no trailing slash — see CLAUDE.md gotcha).
+                # The store is mounted at the server root: no name suffix.
+                data_url = f"http://127.0.0.1:{actual_port}"
 
                 # Serve viewer (this blocks)
                 aprint("\n🎉 Viewer ready!")
