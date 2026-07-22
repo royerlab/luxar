@@ -692,3 +692,37 @@ class TestServePerformance:
         assert p95 < 1.0, (
             f"95th percentile response time {p95:.2f}s exceeds 1s threshold"
         )
+
+
+class TestDataServerMountRoot:
+    """The data server must mount the dataset itself, never its parent."""
+
+    def test_zarr_store_mounted_at_root_hides_siblings(self, sample_scene):
+        """Sibling files of a served .zarr store are not exposed over HTTP."""
+        from luxar.cli.serving import _build_data_app
+
+        sibling = sample_scene.parent / "secret_sibling.txt"
+        sibling.write_text("SECRET")
+
+        client = TestClient(_build_data_app(sample_scene))
+
+        # The store is served AT the root (data URLs carry no name suffix).
+        assert client.get("/.zgroup").status_code == 200
+        # Neither the sibling nor the old parent-mounted URL shape resolves.
+        assert client.get("/secret_sibling.txt").status_code == 404
+        assert client.get(f"/{sample_scene.name}/.zgroup").status_code == 404
+
+    def test_resolve_mount_root(self, tmp_path):
+        """Directories mount themselves; single files mount their parent."""
+        from luxar.cli.serving import _resolve_mount_root
+
+        store = tmp_path / "scene.luxar.zarr"
+        store.mkdir()
+        plain = tmp_path / "plain"
+        plain.mkdir()
+        lone_file = tmp_path / "volume.npy"
+        lone_file.write_bytes(b"x")
+
+        assert _resolve_mount_root(store) == store
+        assert _resolve_mount_root(plain) == plain
+        assert _resolve_mount_root(lone_file) == tmp_path
