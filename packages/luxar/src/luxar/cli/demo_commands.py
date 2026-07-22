@@ -56,13 +56,19 @@ def _status(info: DemoInfo) -> str:
 
 
 def _print_table(demos: list[DemoInfo]) -> None:
-    header = f"{'#':>3}  {'KEY':<32} {'GEOM':<12} {'CATEGORY':<14} {'NEEDS':<20} STATUS"
+    # Size the KEY column to the longest key so it is never truncated — the
+    # key is what the user types into `demo run`, so it must be copy-pasteable.
+    kw = max((len(d.key) for d in demos), default=3)
+    kw = max(kw, len("KEY"))
+    header = (
+        f"{'#':>3}  {'KEY':<{kw}} {'GEOM':<12} {'CATEGORY':<14} {'NEEDS':<20} STATUS"
+    )
     aprint(f"🎬 [Luxar] {len(demos)} demos\n")
     aprint(header)
     aprint("─" * len(header))
     for d in demos:
         aprint(
-            f"{d.index:>3}  {d.key[:32]:<32} {d.geometry:<12} {d.category:<14} "
+            f"{d.index:>3}  {d.key:<{kw}} {d.geometry:<12} {d.category:<14} "
             f"{_needs_glyphs(d):<20} {_status(d)}"
         )
     aprint("")
