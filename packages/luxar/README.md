@@ -412,7 +412,7 @@ Luxar provides a CLI for common operations:
 luxar serve dataset.luxar.zarr
 
 # Create a demo dataset without serving
-luxar demo --no-serve --output demo.luxar.zarr --points 100000
+luxar demo run lorenz -- --no-serve --points=100000
 
 # Get information about a dataset
 luxar info dataset.luxar.zarr
@@ -425,7 +425,7 @@ luxar info dataset.luxar.zarr
 
 **Creating demo data:**
 - `luxar demo` - Create and serve demo with viewer (opens browser)
-- `luxar demo --no-serve --output <path.luxar.zarr>` - Create demo without serving
+- `luxar demo run lorenz -- --no-serve` - Generate a demo scene without serving
 - Use `--points` to specify number of points (default: 10,000)
 - Use `--seed` for reproducible results
 

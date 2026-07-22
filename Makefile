@@ -1188,10 +1188,10 @@ setup-dev:  ## Complete development setup (auto-installs missing dependencies)
 	@echo "💡 Use '$(HATCH) shell' to activate the Python environment"
 
 # Demo and serving
-demo:  ## Generate a demo dataset (datasets/demos/demo.luxar.zarr with 100k points)
+demo:  ## Generate the Lorenz demo dataset (datasets/demos/lorenz.luxar.zarr, 100k points)
 	@mkdir -p datasets/demos
-	$(HATCH) run luxar demo --no-serve --output datasets/demos/demo.luxar.zarr --points 100000
-	@echo "✅ Demo dataset created at datasets/demos/demo.luxar.zarr"
+	$(HATCH) run luxar demo run lorenz -- --no-serve --points=100000
+	@echo "✅ Demo dataset created at datasets/demos/lorenz.luxar.zarr"
 
 run-examples:  ## Run all examples to generate zarr files (output to datasets/examples/)
 	@echo "🚀 Running all examples to generate zarr files..."
@@ -1228,34 +1228,11 @@ run-examples:  ## Run all examples to generate zarr files (output to datasets/ex
 	@echo "   make serve-examples"
 
 run-demos:  ## Generate ALL demo datasets (output to datasets/demos/)
-	@echo "🚀 Generating all demo datasets..."
-	@echo "📂 Output directory: datasets/demos/"
-	@echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+	@# Registry-driven: `demo run-all` skips demos whose declared outputs
+	@# already exist and those needing manual/Kaggle data. Output stems come
+	@# from each demo's DEMO_META, so the stem≠filename demos are handled too.
 	@mkdir -p datasets/demos
-	@# Run all demo scripts (skip if output exists)
-	@total=$$(ls -1 packages/luxar/src/luxar/demos/demo_*.py 2>/dev/null | wc -l || echo 0); \
-	count=0; \
-	for script in packages/luxar/src/luxar/demos/demo_*.py; do \
-		count=$$((count + 1)); \
-		name=$$(basename $$script .py | sed 's/demo_//'); \
-		echo ""; \
-		echo "[$${count}/$${total}] 📊 $$name"; \
-		zarr_candidates="datasets/demos/$${name}.zarr datasets/demos/$$(echo $$name | tr '_' '-').zarr"; \
-		found=0; \
-		for zarr in $$zarr_candidates; do \
-			if [ -d "$$zarr" ]; then \
-				echo "   ✓ Already exists: $$zarr"; \
-				found=1; \
-				break; \
-			fi; \
-		done; \
-		if [ "$$found" = "0" ]; then \
-			$(HATCH) run python $$script --no-serve 2>&1 | head -20 || echo "   ⚠️  Failed or requires manual run"; \
-		fi; \
-	done
-	@echo ""
-	@echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-	@echo "✅ Demo generation complete!"
+	$(HATCH) run luxar demo run-all --skip-existing
 	@echo ""
 	@echo "📁 Generated zarr files in datasets/demos/:"
 	@for zarr in datasets/demos/*.zarr; do \
@@ -1386,11 +1363,11 @@ serve-examples:  ## Serve the datasets directory for browsing generated datasets
 	$(HATCH) run luxar serve datasets/ -p 8000
 
 # Default values for serve-dataset (override with: make serve-dataset DATASET=path/to/data.zarr PORT=8080)
-DATASET ?= datasets/demos/demo.luxar.zarr
+DATASET ?= datasets/demos/lorenz.luxar.zarr
 PORT ?= 8000
 
-serve-dataset:  ## Serve a dataset (default: datasets/demos/demo.luxar.zarr, port: 8000)
-	@if [ ! -d "datasets/demos/demo.luxar.zarr" ]; then \
+serve-dataset:  ## Serve a dataset (default: datasets/demos/lorenz.luxar.zarr, port: 8000)
+	@if [ ! -d "datasets/demos/lorenz.luxar.zarr" ]; then \
 		echo "No demo dataset found. Creating one..."; \
 		$(MAKE) demo; \
 	fi
