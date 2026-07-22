@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import socket
 import subprocess
+import threading
+import time
 import webbrowser
 from pathlib import Path
 from typing import Any, Optional
@@ -65,35 +67,100 @@ def check_port_available(port: int, host: str = "127.0.0.1") -> bool:
 
 
 def find_available_port(
-    start_port: int = 8000, max_attempts: int = 100
+    start_port: int = 8000,
+    max_attempts: int = 100,
+    *,
+    end_port: Optional[int] = None,
+    host: str = "127.0.0.1",
 ) -> Optional[int]:
     """Find an available port starting from the given port.
 
     Args:
         start_port: Port to start searching from.
-        max_attempts: Maximum number of ports to try. If max_attempts is
-            greater than start_port, it is treated as an end_port to search
-            inclusively (e.g., find_available_port(9000, 9100)).
+        max_attempts: Maximum number of ports to try.
+        end_port: Inclusive upper bound for the search; overrides
+            ``max_attempts`` when given (capped at 65535).
+        host: Host address the port must be bindable on — pass the same
+            host the server will bind so availability is checked on the
+            interface actually used.
 
     Returns:
         Available port number, or None if none found.
     """
-    end_port: Optional[int] = None
-    if max_attempts > start_port:
-        end_port = max_attempts
-        if end_port > 65535:
-            end_port = 65535
+    if end_port is not None:
+        end_port = min(end_port, 65535)
         if end_port < start_port:
             return None
         max_attempts = end_port - start_port + 1
 
     for i in range(max_attempts):
         port = start_port + i
-        if end_port is not None and port > end_port:
+        if port > 65535:
             return None
-        if check_port_available(port):
+        if check_port_available(port, host):
             return port
     return None
+
+
+def pick_port(
+    requested: int, host: str = "127.0.0.1", label: str = ""
+) -> Optional[int]:
+    """Resolve a usable port near ``requested``, warning when it shifts.
+
+    Wraps :func:`find_available_port` with the uniform "port busy" warning
+    every serve-family command should print, so callers can't silently bind
+    a different port than the user asked for.
+
+    Returns:
+        The chosen port, or None if no port is available.
+    """
+    actual = find_available_port(requested, host=host)
+    if actual is None:
+        aprint(f"❌ Error: No available ports found near {requested}")
+        return None
+    if actual != requested:
+        prefix = f"{label} port".strip().capitalize()
+        aprint(f"⚠️  {prefix} {requested} busy, using {actual} instead")
+    return actual
+
+
+def wait_for_server(
+    host: str,
+    port: int,
+    thread: Optional[threading.Thread] = None,
+    timeout: float = 5.0,
+    poll_interval: float = 0.05,
+) -> bool:
+    """Poll until ``(host, port)`` accepts a TCP connection.
+
+    Replaces the old fixed ``time.sleep(1)`` startup delays: returns as soon
+    as the server is actually reachable, and fails fast when the optional
+    ``thread`` running the server has died (e.g. lost a bind race) instead
+    of letting the caller open a browser onto a dead server.
+
+    Args:
+        host: Host the server binds; all-interfaces sentinels (``0.0.0.0`` /
+            ``::``) are probed via loopback.
+        port: Port the server binds.
+        thread: Server thread to watch; a dead thread returns False early.
+        timeout: Total seconds to wait before giving up.
+        poll_interval: Delay between connection attempts.
+
+    Returns:
+        True once the server accepts a connection, False on timeout or
+        thread death.
+    """
+    connect_host = "127.0.0.1" if host in ("0.0.0.0", "::") else host
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if thread is not None and not thread.is_alive():
+            return False
+        try:
+            with socket.create_connection((connect_host, port), timeout=poll_interval):
+                return True
+        except OSError:
+            time.sleep(poll_interval)
+    return False
 
 
 def check_viewer_built() -> bool:
@@ -104,6 +171,20 @@ def check_viewer_built() -> bool:
     """
     viewer_dist = get_viewer_dist_path()
     return viewer_dist.exists() and (viewer_dist / "index.html").exists()
+
+
+def _find_dev_repo_root() -> Optional[Path]:
+    """Walk up from this file to the dev repo root (a pyproject.toml ancestor).
+
+    Returns None when luxar runs from an installed wheel rather than the
+    source tree.
+    """
+    current = Path(__file__).parent
+    while current != current.parent:
+        if (current / "pyproject.toml").exists():
+            return current
+        current = current.parent
+    return None
 
 
 def get_viewer_dist_path() -> Path:
@@ -122,14 +203,12 @@ def get_viewer_dist_path() -> Path:
     if bundled.is_dir() and (bundled / "index.html").exists():
         return bundled
 
-    # 2. Development: walk up to find pyproject.toml and use source tree layout
-    current = Path(__file__).parent
-    while current != current.parent:
-        if (current / "pyproject.toml").exists():
-            viewer_dist = current / "packages" / "luxar-viewer" / "dist"
-            if viewer_dist.exists():
-                return viewer_dist
-        current = current.parent
+    # 2. Development: use the source tree layout
+    repo_root = _find_dev_repo_root()
+    if repo_root is not None:
+        viewer_dist = repo_root / "packages" / "luxar-viewer" / "dist"
+        if viewer_dist.exists():
+            return viewer_dist
 
     # 3. Last-resort fallback for editable installs
     return (
@@ -138,6 +217,28 @@ def get_viewer_dist_path() -> Path:
         / "luxar-viewer"
         / "dist"
     )
+
+
+def ensure_viewer_built(auto_build: bool = True) -> bool:
+    """Return True when the viewer dist exists, building it first if possible.
+
+    The serve-family commands previously disagreed on what to do when the
+    viewer wasn't built (warn-and-skip vs auto-build vs error). This is the
+    single policy: auto-build via pnpm only when running from a dev source
+    tree; from an installed wheel the bundled ``_viewer_dist`` should already
+    exist, so a missing viewer is a packaging problem, not a build step.
+    """
+    if check_viewer_built():
+        return True
+    if auto_build and _find_dev_repo_root() is not None:
+        aprint("🔨 Viewer not built. Building now...")
+        return build_viewer()
+    aprint(
+        "❌ Viewer not available: the installed package is missing its bundled "
+        "viewer (_viewer_dist). Reinstall luxar, or in a dev tree run: "
+        "cd packages/luxar-viewer && pnpm build"
+    )
+    return False
 
 
 def build_viewer() -> bool:

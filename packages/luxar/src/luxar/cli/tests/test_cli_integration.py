@@ -36,11 +36,16 @@ class _ImmediateThread:
     def join(self, *_a, **_k):
         return None
 
+    def is_alive(self):
+        # The target already ran inline, so the "thread" is done — this makes
+        # wait_for_server() fail fast instead of polling to its timeout.
+        return False
+
 
 @pytest.fixture
 def available_port():
     """Find an available port for testing."""
-    return find_available_port(8000, 9000)
+    return find_available_port(8000, end_port=9000)
 
 
 @pytest.fixture
@@ -227,9 +232,9 @@ class TestServeIntegration:
 
         monkeypatch.setattr(cli_main, "_serve_viewer", fake_serve_viewer)
         monkeypatch.setattr(cli_main, "_serve_data", fake_serve_data)
-        monkeypatch.setattr(cli_main, "check_viewer_built", lambda: True)
+        monkeypatch.setattr(cli_main, "ensure_viewer_built", lambda: True)
         monkeypatch.setattr(cli_main.threading, "Thread", _ImmediateThread)
-        monkeypatch.setattr(cli_main.time, "sleep", lambda *_a, **_k: None)
+        monkeypatch.setattr(cli_main, "wait_for_server", lambda *_a, **_k: True)
 
         result = CliRunner().invoke(
             app,
@@ -268,9 +273,9 @@ class TestServeIntegration:
 
         monkeypatch.setattr(cli_main, "_serve_viewer", fake_serve_viewer)
         monkeypatch.setattr(cli_main, "_serve_data", fake_serve_data)
-        monkeypatch.setattr(cli_main, "check_viewer_built", lambda: True)
+        monkeypatch.setattr(cli_main, "ensure_viewer_built", lambda: True)
         monkeypatch.setattr(cli_main.threading, "Thread", _ImmediateThread)
-        monkeypatch.setattr(cli_main.time, "sleep", lambda *_a, **_k: None)
+        monkeypatch.setattr(cli_main, "wait_for_server", lambda *_a, **_k: True)
 
         out = tmp_path / "demo.luxar.zarr"
         result = CliRunner().invoke(
@@ -599,7 +604,7 @@ class TestPortHandling:
 
     def test_find_available_port(self):
         """Test finding an available port."""
-        port = find_available_port(9000, 9100)
+        port = find_available_port(9000, end_port=9100)
         assert 9000 <= port < 9100
 
         # Verify port is actually available
