@@ -65,6 +65,7 @@ from pathlib import Path
 
 from arbol import Arbol, aprint, asection
 
+from luxar.core.viewer_config import CameraConfig
 from luxar.demos._interop_common import build_gsplats_cache, build_interop_scene
 from luxar.utils.demos import (
     launch_viewer,
@@ -90,6 +91,16 @@ CACHE_GSPLATS = CACHE_DIR / "garden.gsplats.zarr"
 
 # Per-tile splat cap for the `tiles` BSP partition (see the Mip-NeRF demo).
 MAX_ELEMENTS_PER_TILE = 1_000_000
+
+# Open framed on the CENTRAL TABLE and orbit around it. The Mip-NeRF garden is
+# a NeRF-style capture: the dense subject (the potted-plant table) sits near the
+# origin, but sparse floater splats blow the bounding box out to ±180, so plain
+# bounding-sphere auto-framing parks the camera far away and the table is a
+# speck. `target` = the table center (≈ the median of the splat centers, robust
+# to the floaters — the bbox center is a misleading (6.5, 11.5, −6.3)); it also
+# becomes the orbit pivot, so mouse-drag rotates around the table. `position`
+# is a raised 3/4 view ~17 units out — close enough to fill the frame.
+TABLE_CAMERA = CameraConfig(position=(9.0, 4.0, 12.0), target=(0.0, -1.8, -1.7))
 
 FLAGS = parse_demo_flags()
 Arbol.max_depth = 5
@@ -140,6 +151,7 @@ def build_scene() -> Path:
         title="INRIA 3DGS garden (full quality) → Luxar",
         layer_name="garden",
         credit="INRIA 3DGS (Kerbl 2023) • Mip-NeRF 360 • research use",
+        camera=TABLE_CAMERA,
     )
 
 
