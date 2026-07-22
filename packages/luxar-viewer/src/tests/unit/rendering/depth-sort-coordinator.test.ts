@@ -151,7 +151,7 @@ describe('depth-sort coordinator', () => {
 
     const mesh = makeGSplatsMesh(3, 'normal');
     const centers = new Float32Array([0, 0, -10, 1, 0, -1, 2, 0, -5]);
-    coord.noteGSplatsCommit(mesh, centers, 3);
+    coord.noteDepthSortCommit(mesh, centers, 3);
     await flush();
 
     expect(mockApi.registerNode).toHaveBeenCalledTimes(1);
@@ -179,7 +179,7 @@ describe('depth-sort coordinator', () => {
     coord.configureDepthSort({ getCamera: () => makeCamera(), requestRender: vi.fn() });
 
     const mesh = makeGSplatsMesh(3, 'additive');
-    coord.noteGSplatsCommit(mesh, new Float32Array(9), 3);
+    coord.noteDepthSortCommit(mesh, new Float32Array(9), 3);
     await flush();
 
     expect(mockApi.registerNode).not.toHaveBeenCalled();
@@ -197,7 +197,7 @@ describe('depth-sort coordinator', () => {
 
     const mesh = makeGSplatsMesh(3, 'volumetric');
     const centers = new Float32Array([0, 0, -10, 1, 0, -1, 2, 0, -5]);
-    coord.noteGSplatsCommit(mesh, centers, 3);
+    coord.noteDepthSortCommit(mesh, centers, 3);
     await flush();
 
     expect(mockApi.registerNode).toHaveBeenCalledTimes(1);
@@ -224,22 +224,22 @@ describe('depth-sort coordinator', () => {
     });
 
     const mesh = makeGSplatsMesh(3, 'normal');
-    coord.noteGSplatsCommit(mesh, new Float32Array([0, 0, -10, 1, 0, -1, 2, 0, -5]), 3);
+    coord.noteDepthSortCommit(mesh, new Float32Array([0, 0, -10, 1, 0, -1, 2, 0, -5]), 3);
     await flush();
     expect(mockApi.registerNode).toHaveBeenCalledTimes(1);
 
     // Both modes are sorted — the ordering stays valid; the projection/
     // output change is the material's problem, not the coordinator's.
-    coord.noteGSplatsBlendingModeSwitch(mesh, 'volumetric', 'normal');
+    coord.noteDepthSortBlendingModeSwitch(mesh, 'volumetric', 'normal');
     expect(requestReprocess).not.toHaveBeenCalled();
     expect(mockApi.releaseNode).not.toHaveBeenCalled();
 
     // Switching to a commutative mode DOES release worker-side state.
-    coord.noteGSplatsBlendingModeSwitch(mesh, 'additive', 'volumetric');
+    coord.noteDepthSortBlendingModeSwitch(mesh, 'additive', 'volumetric');
     expect(mockApi.releaseNode).toHaveBeenCalledTimes(1);
 
     // And switching back to a sorted mode forces the reprocess.
-    coord.noteGSplatsBlendingModeSwitch(mesh, 'volumetric', 'additive');
+    coord.noteDepthSortBlendingModeSwitch(mesh, 'volumetric', 'additive');
     expect(requestReprocess).toHaveBeenCalledTimes(1);
   });
 
@@ -249,13 +249,13 @@ describe('depth-sort coordinator', () => {
     coord.configureDepthSort({ getCamera: () => makeCamera(), requestRender });
 
     const mesh = makeGSplatsMesh(3, 'normal');
-    coord.noteGSplatsCommit(mesh, new Float32Array([0, 0, -10, 1, 0, -1, 2, 0, -5]), 3);
+    coord.noteDepthSortCommit(mesh, new Float32Array([0, 0, -10, 1, 0, -1, 2, 0, -5]), 3);
     await flush();
     expect(mockApi.sort).toHaveBeenCalledTimes(1);
     const staleGeneration = mockApi.sort.mock.calls[0][0].generation as number;
 
     // A newer commit lands while the sort is in flight (generation bumps).
-    coord.noteGSplatsCommit(mesh, new Float32Array([0, 0, -1, 1, 0, -10, 2, 0, -5]), 3);
+    coord.noteDepthSortCommit(mesh, new Float32Array([0, 0, -1, 1, 0, -10, 2, 0, -5]), 3);
     await flush();
 
     // The FIRST dispatch's (now-stale) ordering resolves — must NOT be applied.
@@ -287,7 +287,7 @@ describe('depth-sort coordinator', () => {
 
     // First lifetime: 3 splats committed, sort dispatched with generation A.
     const mesh = makeGSplatsMesh(3, 'normal');
-    coord.noteGSplatsCommit(mesh, new Float32Array([0, 0, -10, 1, 0, -1, 2, 0, -5]), 3);
+    coord.noteDepthSortCommit(mesh, new Float32Array([0, 0, -10, 1, 0, -1, 2, 0, -5]), 3);
     await flush();
     expect(mockApi.sort).toHaveBeenCalledTimes(1);
     const generationA = mockApi.sort.mock.calls[0][0].generation as number;
@@ -297,7 +297,7 @@ describe('depth-sort coordinator', () => {
     coord.releaseDepthSortNode(mesh);
 
     // Re-promote: the SAME mesh recommits with a DIFFERENT count (2).
-    coord.noteGSplatsCommit(mesh, new Float32Array([0, 0, -1, 1, 0, -2]), 2);
+    coord.noteDepthSortCommit(mesh, new Float32Array([0, 0, -1, 1, 0, -2]), 2);
     await flush();
     expect(mockApi.sort).toHaveBeenCalledTimes(2);
     const generationB = mockApi.sort.mock.calls[1][0].generation as number;
@@ -321,10 +321,10 @@ describe('depth-sort coordinator', () => {
     coord.configureDepthSort({ getCamera: () => makeCamera(), requestRender: vi.fn() });
 
     const mesh = makeGSplatsMesh(2, 'normal');
-    coord.noteGSplatsCommit(mesh, new Float32Array([0, 0, -1, 1, 0, -2]), 2);
+    coord.noteDepthSortCommit(mesh, new Float32Array([0, 0, -1, 1, 0, -2]), 2);
     await flush();
-    coord.noteGSplatsCommit(mesh, new Float32Array([0, 0, -1, 1, 0, -2]), 2);
-    coord.noteGSplatsCommit(mesh, new Float32Array([0, 0, -1, 1, 0, -2]), 2);
+    coord.noteDepthSortCommit(mesh, new Float32Array([0, 0, -1, 1, 0, -2]), 2);
+    coord.noteDepthSortCommit(mesh, new Float32Array([0, 0, -1, 1, 0, -2]), 2);
     await flush();
 
     // Three commits, but only ONE sort RPC outstanding — and only ONE
@@ -360,7 +360,7 @@ describe('depth-sort coordinator', () => {
 
     const mesh = makeGSplatsMesh(2, 'normal');
     mesh.position.set(0, 0, 10);
-    coord.noteGSplatsCommit(mesh, new Float32Array([0, 0, -1, 1, 0, -2]), 2);
+    coord.noteDepthSortCommit(mesh, new Float32Array([0, 0, -1, 1, 0, -2]), 2);
     await flush();
 
     expect(mockApi.sort).toHaveBeenCalledTimes(1);
@@ -374,7 +374,7 @@ describe('depth-sort coordinator', () => {
     const coord = await loadCoordinator();
     coord.configureDepthSort({ getCamera: () => makeCamera(), requestRender: vi.fn() });
     const meshA = makeGSplatsMesh(2, 'normal');
-    coord.noteGSplatsCommit(meshA, new Float32Array([0, 0, -1, 1, 0, -2]), 2);
+    coord.noteDepthSortCommit(meshA, new Float32Array([0, 0, -1, 1, 0, -2]), 2);
     await flush();
     expect(mockApi.initialize).toHaveBeenCalledTimes(1);
 
@@ -384,7 +384,7 @@ describe('depth-sort coordinator', () => {
     // Re-init (a second LuxarApp.init in the same page/session).
     coord.configureDepthSort({ getCamera: () => makeCamera(), requestRender: vi.fn() });
     const meshB = makeGSplatsMesh(2, 'normal');
-    coord.noteGSplatsCommit(meshB, new Float32Array([0, 0, -1, 1, 0, -2]), 2);
+    coord.noteDepthSortCommit(meshB, new Float32Array([0, 0, -1, 1, 0, -2]), 2);
     await flush();
 
     // A FRESH worker was spawned and initialized; sorts flow again.
@@ -407,9 +407,9 @@ describe('depth-sort coordinator', () => {
 
     const mesh = makeGSplatsMesh(2, 'normal');
     // Two commits: neither may throw; register/sort never happen.
-    coord.noteGSplatsCommit(mesh, new Float32Array([0, 0, -1, 1, 0, -2]), 2);
+    coord.noteDepthSortCommit(mesh, new Float32Array([0, 0, -1, 1, 0, -2]), 2);
     await flush();
-    coord.noteGSplatsCommit(mesh, new Float32Array([0, 0, -1, 1, 0, -2]), 2);
+    coord.noteDepthSortCommit(mesh, new Float32Array([0, 0, -1, 1, 0, -2]), 2);
     await flush();
     expect(mockApi.registerNode).not.toHaveBeenCalled();
     expect(mockApi.sort).not.toHaveBeenCalled();
@@ -432,8 +432,8 @@ describe('depth-sort coordinator', () => {
     far.geometry.boundingSphere!.center.set(0, 0, -30);
     const near = makeGSplatsMesh(2, 'normal');
     near.geometry.boundingSphere!.center.set(0, 0, -10);
-    coord.noteGSplatsCommit(near, new Float32Array([0, 0, -1, 1, 0, -2]), 2);
-    coord.noteGSplatsCommit(far, new Float32Array([0, 0, -1, 1, 0, -2]), 2);
+    coord.noteDepthSortCommit(near, new Float32Array([0, 0, -1, 1, 0, -2]), 2);
+    coord.noteDepthSortCommit(far, new Float32Array([0, 0, -1, 1, 0, -2]), 2);
     await flush();
 
     coord.evaluateDepthSortPerFrame();
@@ -453,9 +453,9 @@ describe('depth-sort coordinator', () => {
 
     const meshA = makeGSplatsMesh(2, 'normal');
     const meshB = makeGSplatsMesh(2, 'normal');
-    coord.noteGSplatsCommit(meshA, new Float32Array([0, 0, -1, 1, 0, -2]), 2);
+    coord.noteDepthSortCommit(meshA, new Float32Array([0, 0, -1, 1, 0, -2]), 2);
     await flush();
-    coord.noteGSplatsCommit(meshB, new Float32Array([0, 0, -3, 1, 0, -4]), 2);
+    coord.noteDepthSortCommit(meshB, new Float32Array([0, 0, -3, 1, 0, -4]), 2);
     await flush();
 
     // One sort per node, concurrently in flight (per-node rule, not global).
@@ -500,7 +500,7 @@ describe('depth-sort coordinator', () => {
 
     const parts = [0, 1, 2, 3].map(() => makeGSplatsMesh(2, 'normal'));
     makePartitionWrapper(bspTree, parts);
-    for (const m of parts) coord.noteGSplatsCommit(m, new Float32Array([0, 0, -1, 1, 0, -2]), 2);
+    for (const m of parts) coord.noteDepthSortCommit(m, new Float32Array([0, 0, -1, 1, 0, -2]), 2);
     await flush();
 
     coord.evaluateDepthSortPerFrame();
@@ -531,7 +531,7 @@ describe('depth-sort coordinator', () => {
 
     const parts = [0, 1, 2, 3].map(() => makeGSplatsMesh(2, 'normal'));
     makePartitionWrapper(bspTree, parts);
-    for (const m of parts) coord.noteGSplatsCommit(m, new Float32Array([0, 0, -1, 1, 0, -2]), 2);
+    for (const m of parts) coord.noteDepthSortCommit(m, new Float32Array([0, 0, -1, 1, 0, -2]), 2);
     await flush();
 
     coord.evaluateDepthSortPerFrame();
@@ -556,9 +556,9 @@ describe('depth-sort coordinator', () => {
     mid.geometry.boundingSphere!.center.set(0, 0, -20);
     far.geometry.boundingSphere!.center.set(0, 0, -30);
     // Insertion order deliberately NOT depth order — the fallback must reorder.
-    coord.noteGSplatsCommit(mid, new Float32Array([0, 0, -1, 1, 0, -2]), 2);
-    coord.noteGSplatsCommit(far, new Float32Array([0, 0, -1, 1, 0, -2]), 2);
-    coord.noteGSplatsCommit(near, new Float32Array([0, 0, -1, 1, 0, -2]), 2);
+    coord.noteDepthSortCommit(mid, new Float32Array([0, 0, -1, 1, 0, -2]), 2);
+    coord.noteDepthSortCommit(far, new Float32Array([0, 0, -1, 1, 0, -2]), 2);
+    coord.noteDepthSortCommit(near, new Float32Array([0, 0, -1, 1, 0, -2]), 2);
     await flush();
 
     coord.evaluateDepthSortPerFrame();
@@ -585,7 +585,7 @@ describe('depth-sort coordinator', () => {
     nanCenter.geometry.boundingSphere!.center.set(NaN, NaN, NaN);
 
     for (const m of [boundless, nanCenter, farMesh]) {
-      coord.noteGSplatsCommit(m, new Float32Array([0, 0, -1, 1, 0, -2]), 2);
+      coord.noteDepthSortCommit(m, new Float32Array([0, 0, -1, 1, 0, -2]), 2);
     }
     await flush();
 
@@ -625,7 +625,7 @@ describe('depth-sort coordinator', () => {
 
     // Commit near wrapper FIRST so insertion order can't fake the result.
     for (const m of [...nearParts, ...farParts]) {
-      coord.noteGSplatsCommit(m, new Float32Array([0, 0, -1, 1, 0, -2]), 2);
+      coord.noteDepthSortCommit(m, new Float32Array([0, 0, -1, 1, 0, -2]), 2);
     }
     await flush();
 
@@ -662,7 +662,7 @@ describe('depth-sort coordinator', () => {
     frontLeaf.geometry.boundingSphere!.center.set(0, 0, -20);
 
     for (const m of [frontLeaf, ...parts, behindLeaf]) {
-      coord.noteGSplatsCommit(m, new Float32Array([0, 0, -1, 1, 0, -2]), 2);
+      coord.noteDepthSortCommit(m, new Float32Array([0, 0, -1, 1, 0, -2]), 2);
     }
     await flush();
 
@@ -697,7 +697,7 @@ describe('depth-sort coordinator', () => {
     makePartitionWrapper({ axis: 0, split: 0, left: { part: 0 }, right: { part: 1 } }, partsB);
 
     for (const m of [...partsA, ...partsB]) {
-      coord.noteGSplatsCommit(m, new Float32Array([0, 0, -1, 1, 0, -2]), 2);
+      coord.noteDepthSortCommit(m, new Float32Array([0, 0, -1, 1, 0, -2]), 2);
     }
     await flush();
 
@@ -719,8 +719,8 @@ describe('depth-sort coordinator', () => {
     far.geometry.boundingSphere!.center.set(0, 0, -30);
     const near = makeGSplatsMesh(2, 'normal');
     near.geometry.boundingSphere!.center.set(0, 0, -15);
-    coord.noteGSplatsCommit(far, new Float32Array([0, 0, -1, 1, 0, -2]), 2);
-    coord.noteGSplatsCommit(near, new Float32Array([0, 0, -1, 1, 0, -2]), 2);
+    coord.noteDepthSortCommit(far, new Float32Array([0, 0, -1, 1, 0, -2]), 2);
+    coord.noteDepthSortCommit(near, new Float32Array([0, 0, -1, 1, 0, -2]), 2);
     await flush();
     coord.evaluateDepthSortPerFrame();
     expect(near.renderOrder).toBe(1); // biased while normal
@@ -743,7 +743,7 @@ describe('depth-sort coordinator', () => {
     const mesh = makeGSplatsMesh(2, 'normal');
     mesh.position.set(0, 0, -10);
     mesh.rotation.y = Math.PI;
-    coord.noteGSplatsCommit(mesh, new Float32Array([0, 0, 1, 0, 0, 3]), 2);
+    coord.noteDepthSortCommit(mesh, new Float32Array([0, 0, 1, 0, 0, 3]), 2);
     await flush();
 
     const mv = mockApi.sort.mock.calls[0][0].modelView as Float32Array;
@@ -762,10 +762,10 @@ describe('depth-sort coordinator', () => {
     coord.configureDepthSort({ getCamera: () => makeCamera(), requestRender: vi.fn() });
 
     const mesh = makeGSplatsMesh(2, 'normal');
-    coord.noteGSplatsCommit(mesh, new Float32Array([0, 0, -1, 1, 0, -2]), 2);
+    coord.noteDepthSortCommit(mesh, new Float32Array([0, 0, -1, 1, 0, -2]), 2);
     await flush();
     // A second commit queues a re-sort while the first sort is in flight.
-    coord.noteGSplatsCommit(mesh, new Float32Array([0, 0, -1, 1, 0, -2]), 2);
+    coord.noteDepthSortCommit(mesh, new Float32Array([0, 0, -1, 1, 0, -2]), 2);
     await flush();
     expect(mockApi.sort).toHaveBeenCalledTimes(1);
 
@@ -789,7 +789,7 @@ describe('depth-sort coordinator', () => {
     coord.configureDepthSort({ getCamera: () => makeCamera(), requestRender });
 
     const mesh = makeGSplatsMesh(2, 'normal');
-    coord.noteGSplatsCommit(mesh, new Float32Array([0, 0, -1, 1, 0, -2]), 2);
+    coord.noteDepthSortCommit(mesh, new Float32Array([0, 0, -1, 1, 0, -2]), 2);
     await flush();
 
     coord.releaseDepthSortNode(mesh);
@@ -812,7 +812,7 @@ describe('depth-sort coordinator', () => {
     coord.configureDepthSort({ getCamera: () => makeCamera(), requestRender: vi.fn() });
 
     const mesh = makeGSplatsMesh(2, 'normal');
-    coord.noteGSplatsCommit(mesh, new Float32Array([0, 0, -1, 1, 0, -2]), 2);
+    coord.noteDepthSortCommit(mesh, new Float32Array([0, 0, -1, 1, 0, -2]), 2);
     await flush();
 
     delete mesh.userData.committedData; // demotion released the geometry
@@ -837,7 +837,7 @@ describe('depth-sort coordinator', () => {
     });
 
     const mesh = makeGSplatsMesh(2, 'normal');
-    coord.noteGSplatsBlendingModeSwitch(mesh, 'normal', 'additive');
+    coord.noteDepthSortBlendingModeSwitch(mesh, 'normal', 'additive');
     expect(mesh.userData.committedData).toBeUndefined();
     expect(requestReprocess).toHaveBeenCalledTimes(1);
   });
@@ -847,10 +847,10 @@ describe('depth-sort coordinator', () => {
     coord.configureDepthSort({ getCamera: () => makeCamera(), requestRender: vi.fn() });
 
     const mesh = makeGSplatsMesh(2, 'normal');
-    coord.noteGSplatsCommit(mesh, new Float32Array([0, 0, -1, 1, 0, -2]), 2);
+    coord.noteDepthSortCommit(mesh, new Float32Array([0, 0, -1, 1, 0, -2]), 2);
     await flush();
 
-    coord.noteGSplatsBlendingModeSwitch(mesh, 'additive', 'normal');
+    coord.noteDepthSortBlendingModeSwitch(mesh, 'additive', 'normal');
     expect(mockApi.releaseNode).toHaveBeenCalledWith(mesh.uuid);
     // The stamp is NOT cleared on the way out (no reprocess needed).
     expect(mesh.userData.committedData).toBeDefined();
@@ -871,7 +871,7 @@ describe('depth-sort coordinator', () => {
     coord.configureDepthSort({ getCamera: () => makeCamera(), requestRender: vi.fn() });
 
     const mesh = makeGSplatsMesh(2, 'normal');
-    coord.noteGSplatsCommit(mesh, new Float32Array([0, 0, -1, 1, 0, -2]), 2);
+    coord.noteDepthSortCommit(mesh, new Float32Array([0, 0, -1, 1, 0, -2]), 2);
     await flush();
 
     coord.disposeDepthSort();
@@ -888,11 +888,11 @@ describe('depth-sort coordinator', () => {
 
     const mesh = makeGSplatsMesh(2, 'normal');
     // First a real commit so the worker exists.
-    coord.noteGSplatsCommit(mesh, new Float32Array([0, 0, -1, 1, 0, -2]), 2);
+    coord.noteDepthSortCommit(mesh, new Float32Array([0, 0, -1, 1, 0, -2]), 2);
     await flush();
     expect(mockApi.registerNode).toHaveBeenCalledTimes(1);
 
-    coord.noteGSplatsCommit(mesh, new Float32Array(0), 0);
+    coord.noteDepthSortCommit(mesh, new Float32Array(0), 0);
     await flush();
     expect(mockApi.registerNode).toHaveBeenCalledTimes(1); // unchanged
     expect(mockApi.releaseNode).toHaveBeenCalledWith(mesh.uuid);
@@ -922,7 +922,7 @@ describe('depth-sort scheduler (Phase 3)', () => {
   ): Promise<THREE.Mesh> {
     coord.configureDepthSort({ getCamera: () => camera, requestRender: vi.fn(), ...extra });
     const mesh = makeGSplatsMesh(2, 'normal');
-    coord.noteGSplatsCommit(mesh, new Float32Array([0, 0, -1, 1, 0, -2]), 2);
+    coord.noteDepthSortCommit(mesh, new Float32Array([0, 0, -1, 1, 0, -2]), 2);
     await flush();
     expect(mockApi.sort).toHaveBeenCalledTimes(1);
     sortResolvers[0]({
@@ -1020,7 +1020,7 @@ describe('depth-sort scheduler (Phase 3)', () => {
     coord.configureDepthSort({ getCamera: () => camera, requestRender: vi.fn() });
     const mesh = makeGSplatsMesh(2, 'normal');
     mesh.scale.set(10, 10, 10);
-    coord.noteGSplatsCommit(mesh, new Float32Array([0, 0, -1, 1, 0, -2]), 2);
+    coord.noteDepthSortCommit(mesh, new Float32Array([0, 0, -1, 1, 0, -2]), 2);
     await flush();
     sortResolvers[0]({
       generation: mockApi.sort.mock.calls[0][0].generation as number,
@@ -1119,13 +1119,13 @@ describe('depth-sort scheduler (Phase 3)', () => {
     // A normal-mode commit neither spawns the worker nor sorts: the
     // identity (storage) ordering is pinned.
     const mesh = makeGSplatsMesh(2, 'normal');
-    coord.noteGSplatsCommit(mesh, new Float32Array([0, 0, -1, 1, 0, -2]), 2);
+    coord.noteDepthSortCommit(mesh, new Float32Array([0, 0, -1, 1, 0, -2]), 2);
     await flush();
     expect(mockApi.initialize).not.toHaveBeenCalled();
     expect(mockApi.sort).not.toHaveBeenCalled();
 
     // The mode-switch hook must not force a reprocess either.
-    coord.noteGSplatsBlendingModeSwitch(mesh, 'normal', 'additive');
+    coord.noteDepthSortBlendingModeSwitch(mesh, 'normal', 'additive');
     expect(requestReprocess).not.toHaveBeenCalled();
 
     // And the per-frame scheduler no-ops.
@@ -1158,7 +1158,7 @@ describe('depth-sort scheduler (Phase 3)', () => {
     coord.configureDepthSort({ getCamera: () => camera, requestRender });
 
     const mesh = makeGSplatsMesh(2, 'normal');
-    coord.noteGSplatsCommit(mesh, new Float32Array([0, 0, -1, 1, 0, -2]), 2);
+    coord.noteDepthSortCommit(mesh, new Float32Array([0, 0, -1, 1, 0, -2]), 2);
     await flush();
     expect(mockApi.registerNode).toHaveBeenCalledTimes(1);
     expect(mockApi.sort).not.toHaveBeenCalled();
@@ -1190,7 +1190,7 @@ describe('depth-sort scheduler (Phase 3)', () => {
     const camera = makeCamera();
     const mesh = await sortedSetup(coord, camera);
 
-    coord.noteGSplatsCommit(mesh, new Float32Array(0), 0);
+    coord.noteDepthSortCommit(mesh, new Float32Array(0), 0);
     await flush();
     expect(mockApi.releaseNode).toHaveBeenCalledWith(mesh.uuid);
 
@@ -1202,9 +1202,226 @@ describe('depth-sort scheduler (Phase 3)', () => {
     expect(mockApi.sort).toHaveBeenCalledTimes(1); // the setup sort only
 
     // A later non-empty commit restores the full register + sort cycle.
-    coord.noteGSplatsCommit(mesh, new Float32Array([0, 0, -1, 1, 0, -2]), 2);
+    coord.noteDepthSortCommit(mesh, new Float32Array([0, 0, -1, 1, 0, -2]), 2);
     await flush();
     expect(mockApi.registerNode).toHaveBeenCalledTimes(2);
     expect(mockApi.sort).toHaveBeenCalledTimes(2);
+  });
+});
+
+/**
+ * Points integration (the volumetric-phases arc PR-B): points share the
+ * whole coordinator mechanism — the deltas under test are the LAZY
+ * centers provider, the EFFECTIVE-mode gate (points render `volumetric`
+ * as additive until phase 3, so they must not sort in it), and the
+ * shared global renderOrder scale.
+ */
+describe('depth-sort coordinator — points integration', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  /** A minimal points mesh — same texture-backed shape, points nodeType. */
+  function makePointsMesh(count: number, blendingMode: string): THREE.Mesh {
+    const mesh = makeGSplatsMesh(count, blendingMode);
+    mesh.userData.nodeType = 'points';
+    return mesh;
+  }
+
+  it('registers + sorts a normal-mode points commit from a LAZY centers provider', async () => {
+    const coord = await loadCoordinator();
+    const requestRender = vi.fn();
+    coord.configureDepthSort({ getCamera: () => makeCamera(), requestRender });
+
+    const mesh = makePointsMesh(3, 'normal');
+    const produced: Float32Array[] = [];
+    const provider = vi.fn(() => {
+      const out = new Float32Array([0, 0, -10, 1, 0, -1, 2, 0, -5]);
+      produced.push(out);
+      return out;
+    });
+    coord.noteDepthSortCommit(mesh, provider, 3);
+    await flush();
+
+    // The provider ran exactly once, and ITS buffer (not some other
+    // array) was transferred to the worker.
+    expect(provider).toHaveBeenCalledTimes(1);
+    expect(mockApi.registerNode).toHaveBeenCalledTimes(1);
+    expect(transferCalls[0].transferables).toContain(produced[0].buffer);
+    expect(mockApi.sort).toHaveBeenCalledTimes(1);
+
+    sortResolvers[0]({
+      generation: mockApi.sort.mock.calls[0][0].generation as number,
+      ordering: new Uint32Array([0, 2, 1]),
+    });
+    await flush();
+    const attr = (mesh.geometry as THREE.InstancedBufferGeometry).getAttribute('aSortedIndex');
+    expect(Array.from(attr.array as Uint32Array)).toEqual([0, 2, 1]);
+    expect(requestRender).toHaveBeenCalled();
+  });
+
+  it('never invokes the provider for an order-independent (additive) commit', async () => {
+    // The whole point of the lazy form: the common additive path must
+    // not pay the O(N) positions copy.
+    const coord = await loadCoordinator();
+    coord.configureDepthSort({ getCamera: () => makeCamera(), requestRender: vi.fn() });
+
+    const mesh = makePointsMesh(3, 'additive');
+    const provider = vi.fn(() => new Float32Array(9));
+    coord.noteDepthSortCommit(mesh, provider, 3);
+    await flush();
+
+    expect(provider).not.toHaveBeenCalled();
+    expect(mockApi.registerNode).not.toHaveBeenCalled();
+  });
+
+  it('never invokes the provider when a newer commit superseded the registration', async () => {
+    // The provider resolves AFTER the generation re-check inside the
+    // worker-init continuation — a commit superseded while the worker
+    // was spawning must not pay the copy either.
+    const coord = await loadCoordinator();
+    coord.configureDepthSort({ getCamera: () => makeCamera(), requestRender: vi.fn() });
+
+    const mesh = makePointsMesh(2, 'normal');
+    const staleProvider = vi.fn(() => new Float32Array([0, 0, -1, 1, 0, -2]));
+    // Two commits back-to-back BEFORE the async worker init settles: the
+    // first registration's continuation sees a newer generation and bails.
+    coord.noteDepthSortCommit(mesh, staleProvider, 2);
+    const freshProvider = vi.fn(() => new Float32Array([0, 0, -3, 1, 0, -4]));
+    coord.noteDepthSortCommit(mesh, freshProvider, 2);
+    await flush();
+
+    expect(staleProvider).not.toHaveBeenCalled();
+    expect(freshProvider).toHaveBeenCalledTimes(1);
+    expect(mockApi.registerNode).toHaveBeenCalledTimes(1);
+  });
+
+  it('does NOT sort a volumetric points commit (phase-1 effective-additive fallback)', async () => {
+    // effectiveGeometryMode('volumetric', 'point') === 'additive' until
+    // volumetric phase 3 — the material renders commutatively, so sorting
+    // would be pure waste. THE chokepoint test: when phase 3 flips the
+    // helper, this expectation inverts and points volumetric starts
+    // sorting with no coordinator change.
+    const coord = await loadCoordinator();
+    coord.configureDepthSort({ getCamera: () => makeCamera(), requestRender: vi.fn() });
+
+    const mesh = makePointsMesh(3, 'volumetric');
+    const provider = vi.fn(() => new Float32Array(9));
+    coord.noteDepthSortCommit(mesh, provider, 3);
+    await flush();
+
+    expect(provider).not.toHaveBeenCalled();
+    expect(mockApi.registerNode).not.toHaveBeenCalled();
+    expect(mockApi.sort).not.toHaveBeenCalled();
+  });
+
+  it('mode switches judge the EFFECTIVE mode: normal→volumetric releases points but not gsplats', async () => {
+    const coord = await loadCoordinator();
+    const requestReprocess = vi.fn();
+    coord.configureDepthSort({
+      getCamera: () => makeCamera(),
+      requestRender: vi.fn(),
+      requestReprocess,
+    });
+
+    // Points: normal→volumetric LEAVES the sorted set today (volumetric
+    // renders additive) — worker-side state must be released.
+    const points = makePointsMesh(2, 'normal');
+    coord.noteDepthSortCommit(points, () => new Float32Array([0, 0, -1, 1, 0, -2]), 2);
+    await flush();
+    expect(mockApi.registerNode).toHaveBeenCalledTimes(1);
+    coord.noteDepthSortBlendingModeSwitch(points, 'volumetric', 'normal');
+    expect(mockApi.releaseNode).toHaveBeenCalledWith(points.uuid);
+
+    // ...and additive→volumetric must NOT force the expensive reprocess
+    // (both effectively unsorted for points).
+    coord.noteDepthSortBlendingModeSwitch(points, 'volumetric', 'additive');
+    expect(requestReprocess).not.toHaveBeenCalled();
+
+    // Gsplats: the same normal→volumetric switch is sorted→sorted — no
+    // release, no reprocess (the existing contract, now via the
+    // effective-mode path).
+    mockApi.releaseNode.mockClear();
+    const gsplats = makeGSplatsMesh(2, 'normal');
+    coord.noteDepthSortCommit(gsplats, new Float32Array([0, 0, -1, 1, 0, -2]), 2);
+    await flush();
+    coord.noteDepthSortBlendingModeSwitch(gsplats, 'volumetric', 'normal');
+    expect(mockApi.releaseNode).not.toHaveBeenCalled();
+    expect(requestReprocess).not.toHaveBeenCalled();
+  });
+
+  it('mode switch TO normal clears the points noop stamp and requests a reprocess', async () => {
+    const coord = await loadCoordinator();
+    const requestReprocess = vi.fn();
+    coord.configureDepthSort({
+      getCamera: () => makeCamera(),
+      requestRender: vi.fn(),
+      requestReprocess,
+    });
+
+    const mesh = makePointsMesh(2, 'normal');
+    coord.noteDepthSortBlendingModeSwitch(mesh, 'normal', 'additive');
+    expect(mesh.userData.committedData).toBeUndefined();
+    expect(requestReprocess).toHaveBeenCalledTimes(1);
+  });
+
+  it('points and gsplats land on ONE global renderOrder scale by depth', async () => {
+    const coord = await loadCoordinator();
+    coord.configureDepthSort({ getCamera: () => makeCamera(), requestRender: vi.fn() });
+
+    const farPoints = makePointsMesh(2, 'normal');
+    farPoints.geometry.boundingSphere!.center.set(0, 0, -30);
+    const nearGSplats = makeGSplatsMesh(2, 'normal');
+    nearGSplats.geometry.boundingSphere!.center.set(0, 0, -10);
+    const midPoints = makePointsMesh(2, 'normal');
+    midPoints.geometry.boundingSphere!.center.set(0, 0, -20);
+    // Insertion order deliberately NOT depth order.
+    coord.noteDepthSortCommit(nearGSplats, new Float32Array([0, 0, -1, 1, 0, -2]), 2);
+    coord.noteDepthSortCommit(farPoints, () => new Float32Array([0, 0, -1, 1, 0, -2]), 2);
+    coord.noteDepthSortCommit(midPoints, () => new Float32Array([0, 0, -1, 1, 0, -2]), 2);
+    await flush();
+
+    coord.evaluateDepthSortPerFrame();
+
+    expect(farPoints.renderOrder).toBe(0);
+    expect(midPoints.renderOrder).toBe(1);
+    expect(nearGSplats.renderOrder).toBe(2);
+  });
+
+  it('camera motion past the angle threshold re-sorts a points node (Phase 3 scheduler)', async () => {
+    const coord = await loadCoordinator();
+    const camera = makeCamera();
+    coord.configureDepthSort({ getCamera: () => camera, requestRender: vi.fn() });
+
+    const mesh = makePointsMesh(2, 'normal');
+    coord.noteDepthSortCommit(mesh, () => new Float32Array([0, 0, -1, 1, 0, -2]), 2);
+    await flush();
+    expect(mockApi.sort).toHaveBeenCalledTimes(1);
+    sortResolvers[0]({
+      generation: mockApi.sort.mock.calls[0][0].generation as number,
+      ordering: new Uint32Array([0, 1]),
+    });
+    await flush();
+
+    camera.rotateY((5 * Math.PI) / 180); // past the 3° default threshold
+    coord.evaluateDepthSortPerFrame();
+    expect(mockApi.sort).toHaveBeenCalledTimes(2);
+  });
+
+  it('a zero-count points commit releases instead of registering (empty slice)', async () => {
+    const coord = await loadCoordinator();
+    coord.configureDepthSort({ getCamera: () => makeCamera(), requestRender: vi.fn() });
+
+    const mesh = makePointsMesh(2, 'normal');
+    coord.noteDepthSortCommit(mesh, () => new Float32Array([0, 0, -1, 1, 0, -2]), 2);
+    await flush();
+    expect(mockApi.registerNode).toHaveBeenCalledTimes(1);
+
+    const provider = vi.fn(() => new Float32Array(0));
+    coord.noteDepthSortCommit(mesh, provider, 0);
+    await flush();
+    expect(provider).not.toHaveBeenCalled();
+    expect(mockApi.registerNode).toHaveBeenCalledTimes(1); // unchanged
+    expect(mockApi.releaseNode).toHaveBeenCalledWith(mesh.uuid);
   });
 });

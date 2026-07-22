@@ -39,11 +39,12 @@ import {
  */
 export function disposeObjectTree(obj: THREE.Object3D): void {
   if (obj instanceof THREE.Mesh || obj instanceof THREE.InstancedMesh) {
-    // Depth-sorting Phase 2: drop the node's SortWorker registration
-    // (transferred center buffers) with the mesh. No-op for non-gsplats
-    // and never-registered nodes; an in-flight sort resolves onto the
-    // deleted coordinator state and is discarded.
-    if (obj.userData?.nodeType === 'gsplats') releaseDepthSortNode(obj);
+    // Depth sorting: drop the node's SortWorker registration (transferred
+    // center buffers) with the mesh. Unconditional — only sortable nodes
+    // (gsplats + points today, lines later) ever register, and the release
+    // is a cheap map-delete no-op for everything else; an in-flight sort
+    // resolves onto the deleted coordinator state and is discarded.
+    releaseDepthSortNode(obj);
     if (obj.geometry) obj.geometry.dispose();
     if (obj.material) {
       if (Array.isArray(obj.material)) {

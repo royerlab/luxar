@@ -33,6 +33,7 @@
 
 import * as THREE from 'three';
 import type { LoadedPointsData } from '../../data-loader-types';
+import { noteDepthSortCommit } from '../../../rendering/depth-sort-coordinator';
 import { isPointsUserData } from '../../../types/points';
 import { stampLadderComplete, stampLoadedViewVersion } from './stamp-view-version';
 import { isAlreadyCommitted } from './noop-commit';
@@ -131,6 +132,22 @@ export function commitPointsGeometry(
   const maxRadius = (attrs?.max_radius as number | undefined) ?? 1.0;
   const footprintRadius = data.radii ? maxRadius : 0.5;
 
+  // Lazy projected-centers provider for the depth-sort coordinator
+  // (invoked only when the node actually registers — order-dependent
+  // effective mode, non-empty, still the latest generation — so the
+  // common additive path never pays the copy). MUST allocate fresh:
+  // the coordinator TRANSFERS the returned buffer to the SortWorker,
+  // and `data.positions` is the committed/lineage reference the noop
+  // and append gates key on — a `subarray` view would detach it. The
+  // elementwise copy also widens Float16 positions to the Float32 the
+  // sort kernel expects.
+  const sortCenters3 = (): Float32Array => {
+    const src = data.positions;
+    const out = new Float32Array(pointCount * 3);
+    for (let i = 0; i < out.length; i++) out[i] = src[i];
+    return out;
+  };
+
   const bufferSession = session?.begin('Update Buffers');
   try {
     if (gpuBufferPool) {
@@ -143,6 +160,17 @@ export function commitPointsGeometry(
       // dispatches a `dispose` event on the material to evict that
       // cache. No-op under WebGL2 / pre-init / no cached entry.
       const attributesRebuilt = gpuBufferPool.didLastAcquireRebuildAttributes();
+      // Keep the previous depth-sort permutation on a same-node same-count
+      // in-place recommit (timepoint scrub): a permutation of [0,count) is
+      // a strictly-no-worse prior than storage order for the ≥1 frame
+      // until the re-sort dispatched by noteDepthSortCommit below lands.
+      // Guards mirror the gsplats twin (commit-gsplats-geometry.ts) — the
+      // full rationale lives there.
+      const preserveOrdering =
+        hadCommittedData &&
+        !attributesRebuilt &&
+        geometry === prevGeometry &&
+        prevCount === pointCount;
       // Append fast path (depth-sorting Phase 4 Stage 2): when this commit
       // merely EXTENDS the prefix already on the GPU, write & upload only the
       // new `[prevCount, pointCount)` suffix. Correctness rests on the
@@ -200,6 +228,7 @@ export function commitPointsGeometry(
       geometry.userData.radiusScale = data.radii instanceof Uint8Array ? maxRadius : 1.0;
       try {
         gpuBufferPool.updatePointsGeometry(geometry, data, pointCount, {
+          preserveOrdering,
           fromInstance: canAppend ? (prevCount ?? 0) : 0,
         });
 
@@ -265,6 +294,15 @@ export function commitPointsGeometry(
       // data in full (whether written fully or by suffix-extension), so the
       // next commit may append. A context restore clears this flag.
       points.userData.gpuPrefixIntact = true;
+      // Depth-sorting (points integration): every non-noop commit bumps
+      // the node's sort generation; order-dependent (effective `normal`)
+      // nodes additionally register their centers with the SortWorker and
+      // get one sort from the current camera pose. Success-only (a
+      // throwing write propagates before this line, mirroring the gsplats
+      // twin) with the CLAMPED count, so permutation values stay inside
+      // [0, textureCapacity). The lazy provider defers the O(N) positions
+      // copy to the sorted path.
+      noteDepthSortCommit(points, sortCenters3, pointCount);
       return;
     }
 
@@ -305,6 +343,8 @@ export function commitPointsGeometry(
     // is only consulted on the pool path, but keeping the stamp uniform
     // across paths mirrors the gsplats commit.
     points.userData.gpuPrefixIntact = true;
+    // Depth-sorting registration — see the pool path above.
+    noteDepthSortCommit(points, sortCenters3, pointCount);
   } finally {
     bufferSession?.end();
   }

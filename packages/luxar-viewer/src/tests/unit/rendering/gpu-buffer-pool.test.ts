@@ -13,6 +13,7 @@ import * as THREE from 'three';
 import { getSplatTexture } from '../../../rendering/gsplat-geometry';
 import { getPointTexture } from '../../../rendering/point-geometry';
 import { POINT_FLOATS_PER_POINT } from '../../../rendering/element-texture-layout';
+import { writeSortedIndexOrdering } from '../../../rendering/element-storage';
 
 describe('GPUBufferPool', () => {
   let pool: GPUBufferPool;
@@ -102,6 +103,30 @@ describe('GPUBufferPool', () => {
       expect(attr.updateRanges.length).toBe(1);
       expect(attr.updateRanges[0].start).toBe(0);
       expect(attr.updateRanges[0].count).toBeGreaterThanOrEqual(4);
+    });
+
+    it('preserveOrdering keeps the sort permutation while still rewriting texels', () => {
+      // The points twin of the gsplats case in splat-texture-storage.test.ts:
+      // a same-count recommit with preserveOrdering keeps the depth-sort
+      // permutation (a no-worse prior until the re-sort lands) while the
+      // texels themselves are refreshed.
+      const geom = pool.acquirePointsGeometry('node1', 4);
+      pool.updatePointsGeometry(geom, createMockLoadedPointsData(4), 4);
+      // The SortWorker landed a depth-sort permutation between commits.
+      writeSortedIndexOrdering(geom, new Uint32Array([3, 2, 1, 0]), 4);
+
+      const recommit = createMockLoadedPointsData(4);
+      (recommit.positions as Float32Array).fill(7);
+      pool.updatePointsGeometry(geom, recommit, 4, { preserveOrdering: true });
+      const ordering = geom.getAttribute('aSortedIndex').array as Uint32Array;
+      expect(Array.from(ordering.subarray(0, 4))).toEqual([3, 2, 1, 0]);
+      const texels = getPointTexture(geom)!.image.data as Float32Array;
+      expect(texels[0]).toBe(7); // point 0 center.x — texels WERE rewritten
+      expect(geom.instanceCount).toBe(4);
+
+      // Without the flag the identity reset is restored (default behavior).
+      pool.updatePointsGeometry(geom, createMockLoadedPointsData(4), 4);
+      expect(Array.from(ordering.subarray(0, 4))).toEqual([0, 1, 2, 3]);
     });
 
     it('should reuse geometry when requesting same node again', () => {

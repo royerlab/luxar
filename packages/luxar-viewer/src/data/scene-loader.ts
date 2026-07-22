@@ -1273,7 +1273,7 @@ export class SceneLoader {
         this.clearCommittedDataStamp(path);
         // Also drop the level's depth-sort state + worker-side centers: a
         // demoted level won't sort again until re-promotion re-registers it
-        // (fresh commit → noteGSplatsCommit). Mirrors the coordinator's
+        // (fresh commit → noteDepthSortCommit). Mirrors the coordinator's
         // empty-commit release hygiene.
         const mesh = this.rootGroup?.getObjectByName(path);
         if (mesh) releaseDepthSortNode(mesh as THREE.Mesh);
@@ -1285,6 +1285,10 @@ export class SceneLoader {
         this._gpuBufferPool?.releasePointsGeometry(path);
         this.registry.unregisterPointsLoader(path);
         this.clearCommittedDataStamp(path);
+        // Drop the level's depth-sort state + worker-side centers — the
+        // same demotion hygiene as the gsplats branch above.
+        const mesh = this.rootGroup?.getObjectByName(path);
+        if (mesh) releaseDepthSortNode(mesh as THREE.Mesh);
       },
       releaseLazyLines: (path) => {
         // Lines peer of releaseLazyGSplats/releaseLazyPoints.

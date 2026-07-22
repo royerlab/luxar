@@ -325,7 +325,7 @@ export class PointsBufferAdapter {
     geometry: THREE.InstancedBufferGeometry,
     data: LoadedPointsData,
     count: number,
-    options?: { fromInstance?: number }
+    options?: { preserveOrdering?: boolean; fromInstance?: number }
   ): void {
     const instanced = geometry;
     const texture = getPointTexture(instanced);
@@ -410,11 +410,15 @@ export class PointsBufferAdapter {
     count = writePointTexels(texture, texelSrc, count, { fromPoint: fromInstance });
     if (fromInstance > 0) {
       // Append: keep the prefix's existing ordering and give the appended
-      // points identity until a re-sort lands (points have no
-      // preserveOrdering option in this stage — ordering is always
-      // identity outside the append suffix bookkeeping).
+      // points identity until a re-sort lands (fromInstance and
+      // preserveOrdering are mutually exclusive — append needs
+      // count > prev, preserveOrdering needs count === prev).
       writeSortedIndexIdentityRange(instanced, fromInstance, count);
-    } else {
+    } else if (!options?.preserveOrdering) {
+      // `preserveOrdering` (commit path decides — see
+      // commit-points-geometry.ts) keeps a same-count recommit's existing
+      // depth-sort permutation as a no-worse prior until the re-sort
+      // lands; every other full write resets to identity.
       writeSortedIndexIdentity(instanced, count);
     }
 

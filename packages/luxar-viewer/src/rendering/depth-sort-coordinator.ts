@@ -3,10 +3,16 @@
  * (depth-sorting Phases 2-3,
  * `docs/guides/specs/GSPLAT_DEPTH_SORTING_SPEC.md` §5-§6).
  *
+ * Serves every texture-backed geometry with an `aSortedIndex`
+ * indirection — gsplats and points today, lines when their storage
+ * migrates. The mechanism is geometry-agnostic (projected 3D centers in,
+ * back-to-front permutation out); only the commit call sites differ.
+ *
  * Module-scoped live authority (the `element-texture-layout.ts` pattern):
- * the commit path (`commit-gsplats-geometry.ts`) and the app lifecycle
- * are far apart, so both talk to this module instead of threading a
- * coordinator object through constructors.
+ * the commit paths (`commit-gsplats-geometry.ts`,
+ * `commit-points-geometry.ts`) and the app lifecycle are far apart, so
+ * all talk to this module instead of threading a coordinator object
+ * through constructors.
  *
  * Responsibilities:
  * - Owns the single persistent Comlink SortWorker (spawn on first
@@ -14,7 +20,7 @@
  *   round-robin data-worker pool — node registrations and their
  *   transferred center buffers must live in exactly one worker.
  * - Tracks the per-node **generation** counter: bumped on every non-noop
- *   commit (`noteGSplatsCommit`), never on stamp-only noops. An ordering
+ *   commit (`noteDepthSortCommit`), never on stamp-only noops. An ordering
  *   is applied only when its generation still matches — a stale (shorter)
  *   permutation applied to a grown buffer would be corrupt.
  * - Enforces **at most one in-flight sort per node**; a commit landing
@@ -27,17 +33,21 @@
  *   thresholds from `config.depthSort`; `?depthSort=0` disables the whole
  *   subsystem via {@link setDepthSortEnabled}).
  * - Cross-node draw order: the same per-frame pass collects every visible
- *   normal-mode gsplat mesh and assigns ONE global back-to-front
- *   `renderOrder` scale (wrapper groups by mean view-z, exact BSP ranks
- *   within a wrapper) — machinery owned by the
+ *   sorted-mode mesh (any registered geometry type) and assigns ONE
+ *   global back-to-front `renderOrder` scale (wrapper groups by mean
+ *   view-z, exact BSP ranks within a wrapper) — machinery owned by the
  *   `depth-sort-coordinator/render-order.ts` submodule, driven here via
  *   {@link clearRenderOrderFrameState} / {@link collectRenderOrderSlot} /
  *   {@link assignGlobalRenderOrder}.
  *
- * Ordering only matters for order-dependent blending (`normal`); all
- * other modes are commutative. Commits of non-`normal` nodes still bump
- * the generation (killing any in-flight sort) and release the node's
- * worker-side registration.
+ * Ordering only matters for order-dependent blending; all other modes
+ * are commutative. Order-dependence is judged on the EFFECTIVE mode —
+ * `effectiveGeometryMode(requested, kind)` — so a points node whose
+ * requested `volumetric` renders as additive (the phase-1 κ=0 fallback)
+ * is never sorted, and flipping that one policy helper (volumetric
+ * phases 3-4) upgrades sorting here automatically. Commits of
+ * order-independent nodes still bump the generation (killing any
+ * in-flight sort) and release the node's worker-side registration.
  */
 
 import * as THREE from 'three';
@@ -47,7 +57,7 @@ import { wrap, transfer, type Remote } from 'comlink';
 import SortWorker from '../workers/sort-worker?worker';
 import type { SortWorkerAPI } from '../workers/sort-worker';
 import { writeSortedIndexOrdering } from './element-storage';
-import { needsDepthSort } from './blending-state';
+import { needsDepthSort, effectiveGeometryMode } from './blending-state';
 import { clearCommittedData, hasCommittedData } from '../types/committed-data';
 import type { BlendingMode } from './material-manager';
 import {
@@ -129,7 +139,7 @@ let getProfiler: (() => UpdateProfiler | null) | null = null;
  * worker is never spawned, and the per-frame scheduler no-ops.
  */
 let depthSortEnabled = true;
-/** One-shot flag for the SortWorker-unavailable error (see noteGSplatsCommit). */
+/** One-shot flag for the SortWorker-unavailable error (see noteDepthSortCommit). */
 let warnedWorkerUnavailable = false;
 const nodeStates = new Map<string, NodeSortState>();
 
@@ -150,7 +160,7 @@ export function configureDepthSort(options: {
   requestRender: () => void;
   /**
    * Force a full view reprocess (`SceneLoader.updateView({})`) — used by
-   * the blending-mode-switch hook, see {@link noteGSplatsBlendingModeSwitch}.
+   * the blending-mode-switch hook, see {@link noteDepthSortBlendingModeSwitch}.
    */
   requestReprocess?: () => void;
   /**
@@ -204,7 +214,7 @@ function ensureWorker(): Promise<void> {
   return initPromise;
 }
 
-/** Read the live blending mode that actually drives the blend state. */
+/** Read the live REQUESTED blending mode stamped by the material wrappers. */
 function liveBlendingMode(mesh: THREE.Mesh): BlendingMode | undefined {
   const material = mesh.material as THREE.Material | THREE.Material[];
   const single = Array.isArray(material) ? material[0] : material;
@@ -212,14 +222,47 @@ function liveBlendingMode(mesh: THREE.Mesh): BlendingMode | undefined {
 }
 
 /**
- * Record a non-noop gsplats commit. Always bumps the node's generation
- * (dropping any in-flight sort's result). When the node's LIVE blending
- * mode is order-dependent (`normal`), transfers the projected centers to
+ * The material-kind discriminator for {@link effectiveGeometryMode},
+ * derived from the node-type stamp every Luxar mesh carries.
+ */
+function geometryKindOf(mesh: THREE.Mesh): 'point' | 'line' | 'gsplat' {
+  const nodeType = (mesh.userData as { nodeType?: string } | undefined)?.nodeType;
+  return nodeType === 'points' ? 'point' : nodeType === 'lines' ? 'line' : 'gsplat';
+}
+
+/**
+ * True when the mesh's LIVE mode is order-dependent AS RENDERED:
+ * `userData.blendingMode` keeps the REQUESTED mode, but points/lines
+ * render `volumetric` as additive until phases 3-4 land
+ * (`effectiveGeometryMode`, the one-chokepoint fallback policy) — sorting
+ * a commutative render is wasted worker time, and judging the effective
+ * mode here means flipping that helper upgrades sorting automatically.
+ */
+function isLiveOrderDependent(mesh: THREE.Mesh, mode: BlendingMode | undefined): boolean {
+  if (!mode) return false;
+  return needsDepthSort(effectiveGeometryMode(mode, geometryKindOf(mesh)));
+}
+
+/**
+ * Record a non-noop commit of a sortable node (gsplats or points; lines
+ * when their texture storage lands). Always bumps the node's generation
+ * (dropping any in-flight sort's result). When the node's LIVE effective
+ * blending mode is order-dependent, transfers the projected centers to
  * the SortWorker and requests one sort from the current camera pose.
  *
- * `centers3` is TRANSFERRED (detached) on the order-dependent path — the
- * commit's texture-write loops are the last main-thread readers, and the
- * memoized-concat noop identity keys on `sourceData`, never `processed.*`.
+ * `centers3` — projected 3D centers, `count * 3` floats:
+ * - As a `Float32Array` it is TRANSFERRED (detached) on the
+ *   order-dependent path, so the caller must hand over a buffer with no
+ *   other readers (gsplats pass `processed.centers3D`: the commit's
+ *   texture-write loops are the last main-thread readers, and the
+ *   memoized-concat noop identity keys on `sourceData`, never
+ *   `processed.*`).
+ * - As a THUNK it is invoked lazily, only when the node actually
+ *   registers (order-dependent mode, non-empty, latest generation) — the
+ *   points commit uses this to pay the O(N) fresh-copy of
+ *   `data.positions` only on the sorted path. The thunk MUST return a
+ *   freshly allocated array: the returned buffer is transferred, and a
+ *   `subarray` view of a live array would detach that array with it.
  */
 /**
  * Module-scoped monotonic generation source. Generations must be unique
@@ -234,7 +277,11 @@ function liveBlendingMode(mesh: THREE.Mesh): BlendingMode | undefined {
  */
 let nextGeneration = 0;
 
-export function noteGSplatsCommit(mesh: THREE.Mesh, centers3: Float32Array, count: number): void {
+export function noteDepthSortCommit(
+  mesh: THREE.Mesh,
+  centers3: Float32Array | (() => Float32Array),
+  count: number
+): void {
   const nodeId = mesh.uuid;
   let state = nodeStates.get(nodeId);
   if (!state) {
@@ -252,7 +299,7 @@ export function noteGSplatsCommit(mesh: THREE.Mesh, centers3: Float32Array, coun
   state.generation = ++nextGeneration;
 
   const mode = liveBlendingMode(mesh);
-  if (!depthSortEnabled || !mode || !needsDepthSort(mode) || count === 0) {
+  if (!depthSortEnabled || !isLiveOrderDependent(mesh, mode) || count === 0) {
     // Depth sorting disabled (identity ordering pinned), commutative
     // blending, or an empty frame: no ordering needed. Drop any
     // worker-side registration so the worker doesn't hold stale
@@ -271,11 +318,14 @@ export function noteGSplatsCommit(mesh: THREE.Mesh, centers3: Float32Array, coun
       const current = nodeStates.get(nodeId);
       if (current?.generation !== generation) return;
       current.registered = true;
+      // Resolve a lazy centers provider only now — past the generation
+      // re-check, so a superseded commit never pays the copy.
+      const buffer = typeof centers3 === 'function' ? centers3() : centers3;
       // The register RPC is its own promise — the surrounding .catch
       // only sees synchronous throws, so a transport/transfer rejection
       // here would otherwise float as an unhandled rejection.
       api
-        .registerNode(transfer({ nodeId, generation, centers3, count }, [centers3.buffer]))
+        .registerNode(transfer({ nodeId, generation, centers3: buffer, count }, [buffer.buffer]))
         .catch((error: unknown) => {
           log.error(Modules.WORKER_POOL, `SortWorker registerNode failed for ${nodeId}`, error);
           // The worker never received this generation's centers — clear
@@ -529,7 +579,7 @@ export function evaluateDepthSortPerFrame(): void {
     // resolve path checks; a sort dispatched now would be dropped there.
     if (!hasCommittedData(mesh)) continue;
     const mode = liveBlendingMode(mesh);
-    if (!mode || !needsDepthSort(mode)) {
+    if (!isLiveOrderDependent(mesh, mode)) {
       // No longer order-dependent (e.g. switched to additive) — clear any
       // cross-part renderOrder bias so it doesn't strand a stale ordering.
       if (mesh.renderOrder !== 0) mesh.renderOrder = 0;
@@ -593,14 +643,15 @@ export function evaluateDepthSortPerFrame(): void {
 }
 
 /**
- * React to a gsplat layer's blending mode changing at runtime (the
- * LayersPanel compose chain — spec §5.4).
+ * React to a sortable layer's blending mode changing at runtime (the
+ * LayersPanel compose chain — spec §5.4). Wired for gsplats and points;
+ * lines join with their storage migration.
  *
- * Switching TO `normal` cannot simply "register+sort": the SortWorker has
- * no centers for a node that was order-independent at its last commit
- * (registration is gated on the live mode, and the staged arrays were
- * transferred/discarded). Instead, clear the node's noop stamp
- * (`userData.committedData`) and request a view reprocess — the
+ * Switching TO a sorted mode cannot simply "register+sort": the
+ * SortWorker has no centers for a node that was order-independent at its
+ * last commit (registration is gated on the live mode, and the staged
+ * arrays were transferred/discarded). Instead, clear the node's noop
+ * stamp (`userData.committedData`) and request a view reprocess — the
  * memoized-concat noop path would otherwise skip re-projection entirely.
  * The resulting standard commit registers + sorts like any other (the
  * SliceCache still holds the source nD data; one O(N) re-projection per
@@ -610,25 +661,31 @@ export function evaluateDepthSortPerFrame(): void {
  * under commutative modes — no identity reset needed); the worker-side
  * centers are released as hygiene.
  */
-export function noteGSplatsBlendingModeSwitch(
+export function noteDepthSortBlendingModeSwitch(
   mesh: THREE.Mesh,
   newMode: BlendingMode | undefined,
   prevMode: BlendingMode | undefined
 ): void {
   // Disabled session: identity ordering is pinned for every mode, so a
-  // switch TO normal must not force the (expensive) reprocess; there is
-  // also no worker-side state to release on a switch away.
+  // switch TO a sorted mode must not force the (expensive) reprocess;
+  // there is also no worker-side state to release on a switch away.
   if (!depthSortEnabled) return;
   if (!newMode || newMode === prevMode) return;
-  // Sorted modes = normal ∪ volumetric (needsDepthSort). A switch
-  // BETWEEN two sorted modes (normal↔volumetric) is deliberately a
-  // no-op here: the ordering stays valid; the projection/output change
-  // is the material's problem (TSL rebuild / GLSL define recompile).
-  const wasSorted = prevMode !== undefined && needsDepthSort(prevMode);
-  if (needsDepthSort(newMode) && !wasSorted) {
+  // Sorted modes = normal ∪ volumetric (needsDepthSort), judged on the
+  // EFFECTIVE mode (see isLiveOrderDependent): a points node switching
+  // normal→volumetric today leaves the sorted set (volumetric renders as
+  // additive until phase 3), while the same switch on gsplats is a
+  // sorted→sorted no-op. A switch BETWEEN two sorted modes is
+  // deliberately a no-op here: the ordering stays valid; the
+  // projection/output change is the material's problem (TSL rebuild /
+  // GLSL define recompile).
+  const kind = geometryKindOf(mesh);
+  const wasSorted = prevMode !== undefined && needsDepthSort(effectiveGeometryMode(prevMode, kind));
+  const isSorted = needsDepthSort(effectiveGeometryMode(newMode, kind));
+  if (isSorted && !wasSorted) {
     clearCommittedData(mesh);
     requestReprocess?.();
-  } else if (!needsDepthSort(newMode) && wasSorted) {
+  } else if (!isSorted && wasSorted) {
     const state = nodeStates.get(mesh.uuid);
     if (state) {
       // Invalidate any in-flight sort's result; keep the counter
@@ -642,9 +699,10 @@ export function noteGSplatsBlendingModeSwitch(
 }
 
 /**
- * Drop a node's sort state + worker-side registration. Wired to gsplats
- * node disposal (an in-flight sort resolves onto a missing state and is
- * discarded).
+ * Drop a node's sort state + worker-side registration. Wired to node
+ * disposal and lazy-LOD release for every sortable type (an in-flight
+ * sort resolves onto a missing state and is discarded; a no-op for
+ * never-registered nodes).
  */
 export function releaseDepthSortNode(mesh: THREE.Mesh): void {
   const nodeId = mesh.uuid;
