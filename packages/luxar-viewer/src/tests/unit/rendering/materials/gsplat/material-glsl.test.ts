@@ -363,11 +363,16 @@ describe('GSplatMaterial', () => {
       );
     });
 
-    it('should discard negligible contributions', () => {
+    it('should discard negligible contributions (gain-aware gate)', () => {
       const material = new GSplatMaterial();
 
-      // Higher threshold (1e-4) for better performance while still invisible
-      expect(material.fragmentShader).toContain('if (intensity < 1e-4) discard');
+      // Higher threshold (1e-4) for performance, scaled by the layer gain
+      // so high-gain dim splats are not gated out before uIntensity
+      // applies; max(uIntensity, 1.0) keeps gain <= 1 at the historical
+      // threshold exactly.
+      expect(material.fragmentShader).toContain(
+        'if (intensity * max(uIntensity, 1.0) < 1e-4) discard'
+      );
     });
   });
 

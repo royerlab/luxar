@@ -6,9 +6,19 @@
  * GPUBufferPool stubs to detect which code path ran.
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import * as THREE from 'three';
+
+const mockNoteDepthSortCommit = vi.fn();
+vi.mock('../../../../rendering/depth-sort-coordinator', () => ({
+  noteDepthSortCommit: (...args: unknown[]) => mockNoteDepthSortCommit(...args),
+}));
+
 import { commitPointsGeometry } from '../../../../data/scene-loader/commit/commit-points-geometry';
+import {
+  configureElementTextureLayout,
+  resetElementTextureLayoutForTests,
+} from '../../../../rendering/element-texture-layout';
 import { createPointsGeometry } from '../../../../rendering/node-factory/create-points-node';
 import { getPointTexture } from '../../../../rendering/point-geometry';
 import { getPrefixParent, setPrefixParent } from '../../../../types/prefix-lineage';
@@ -766,5 +776,211 @@ describe('commitPointsGeometry — committedEnergyFraction stamp', () => {
     root2.add(plain);
     commitPointsGeometry('/p', makeData(2), root2, null, mockNodeFactory, undefined, 0);
     expect(energy(plain)).toBe(1);
+  });
+});
+
+describe('commitPointsGeometry — depth-sort integration (points sort registration)', () => {
+  beforeEach(() => {
+    mockNoteDepthSortCommit.mockReset();
+  });
+
+  const makePool = (geometry: THREE.BufferGeometry) => ({
+    acquirePointsGeometry: vi.fn(() => geometry),
+    updatePointsGeometry: vi.fn(),
+    didLastAcquireRebuildAttributes: vi.fn(() => false),
+  });
+
+  it('pool path: notifies the coordinator with a LAZY centers provider and the count', () => {
+    const root = new THREE.Group();
+    const points = makePoints('/p');
+    root.add(points);
+    const data = makeData(3);
+    (data.positions as Float32Array).set([1, 2, 3, 4, 5, 6, 7, 8, 9]);
+    const pool = makePool(new THREE.BufferGeometry());
+    commitPointsGeometry('/p', data, root, pool as never, mockNodeFactory, undefined, 0);
+
+    expect(mockNoteDepthSortCommit).toHaveBeenCalledTimes(1);
+    const [mesh, provider, count] = mockNoteDepthSortCommit.mock.calls[0] as [
+      THREE.Mesh,
+      () => Float32Array,
+      number,
+    ];
+    expect(mesh).toBe(points);
+    expect(count).toBe(3);
+    // Points pass a THUNK (deferring the O(N) copy to the sorted path),
+    // unlike gsplats' fresh centers3D array.
+    expect(typeof provider).toBe('function');
+    const centers = provider();
+    expect(centers).toBeInstanceOf(Float32Array);
+    expect(Array.from(centers)).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9]);
+    // FRESH allocation, not a view: the coordinator transfers the returned
+    // buffer to the SortWorker; sharing data.positions' ArrayBuffer would
+    // detach the committed/lineage reference with it.
+    expect(centers.buffer).not.toBe((data.positions as Float32Array).buffer);
+  });
+
+  it('non-pool path: notifies too (both commit branches register)', () => {
+    const root = new THREE.Group();
+    const points = makePoints('/p');
+    root.add(points);
+    commitPointsGeometry('/p', makeData(4), root, null, mockNodeFactory, undefined, 0);
+    expect(mockNoteDepthSortCommit).toHaveBeenCalledTimes(1);
+    expect(mockNoteDepthSortCommit.mock.calls[0][0]).toBe(points);
+    expect(mockNoteDepthSortCommit.mock.calls[0][2]).toBe(4);
+  });
+
+  it('the provider widens Float16 positions to the Float32 the sort kernel expects', () => {
+    const root = new THREE.Group();
+    const points = makePoints('/p');
+    root.add(points);
+    const data = makeData(2);
+    // 0.5 / 1.5 / -2 are exactly representable in fp16 — the widened
+    // copy must be value-identical. The Float16Array GLOBAL is absent on
+    // Node < 23 (CI), so fall back to a Float64Array stand-in there: both
+    // take the thunk's same non-Float32 element-wise branch, and the
+    // fp16-exact values make the two engines byte-identical.
+    const F16 = (globalThis as unknown as { Float16Array?: Float16ArrayConstructor }).Float16Array;
+    const values = [0.5, 1.5, -2, 3, -0.25, 8];
+    data.positions = (F16 ? new F16(values) : new Float64Array(values)) as never;
+    const pool = makePool(new THREE.BufferGeometry());
+    commitPointsGeometry('/p', data, root, pool as never, mockNodeFactory, undefined, 0);
+
+    const provider = mockNoteDepthSortCommit.mock.calls[0][1] as () => Float32Array;
+    const centers = provider();
+    expect(centers).toBeInstanceOf(Float32Array);
+    expect(Array.from(centers)).toEqual([0.5, 1.5, -2, 3, -0.25, 8]);
+  });
+
+  it('is success-only: a throwing GPU write must NOT bump the sort generation', () => {
+    // Mirrors the gsplats ordering (noteDepthSortCommit after the write
+    // block): the buffer holds partially-written data, committedData was
+    // not stamped, and the next commit full-rewrites + registers.
+    const root = new THREE.Group();
+    const points = makePoints('/p');
+    root.add(points);
+    const pool = makePool(new THREE.BufferGeometry());
+    pool.updatePointsGeometry.mockImplementation(() => {
+      throw new Error('device lost');
+    });
+    expect(() =>
+      commitPointsGeometry('/p', makeData(3), root, pool as never, mockNodeFactory, undefined, 0)
+    ).toThrow('device lost');
+    expect(mockNoteDepthSortCommit).not.toHaveBeenCalled();
+  });
+
+  it('is skipped on the memoized no-op recommit (stamp-only — in-flight sorts stay valid)', () => {
+    const root = new THREE.Group();
+    const points = makePoints('/p');
+    root.add(points);
+    const data = makeData(3);
+    commitPointsGeometry('/p', data, root, null, mockNodeFactory, undefined, 0);
+    expect(mockNoteDepthSortCommit).toHaveBeenCalledTimes(1);
+    // SAME reference again: the no-op path must not bump the generation
+    // (spec §5 generation contract, shared with the gsplats staged.noop).
+    commitPointsGeometry('/p', data, root, null, mockNodeFactory, undefined, 1);
+    expect(mockNoteDepthSortCommit).toHaveBeenCalledTimes(1);
+  });
+
+  it('reports count 0 on an empty commit (coordinator release path)', () => {
+    const root = new THREE.Group();
+    const points = makePoints('/p');
+    root.add(points);
+    commitPointsGeometry('/p', makeData(0), root, null, mockNodeFactory, undefined, 0);
+    expect(mockNoteDepthSortCommit).toHaveBeenCalledTimes(1);
+    expect(mockNoteDepthSortCommit.mock.calls[0][2]).toBe(0);
+  });
+
+  describe('capacity-clamp consistency', () => {
+    afterEach(() => {
+      resetElementTextureLayoutForTests();
+    });
+
+    it('notifies the coordinator with the CLAMPED count and a same-length provider', () => {
+      // maxTextureSize 6 → width 6 (multiple of texelsPerElement 3),
+      // per-node bound = 6×6/3 = 12 points. An unclamped count would make
+      // the SortWorker return permutation values ≥ the texture capacity
+      // (OOB texel fetches → points vanish).
+      configureElementTextureLayout(6);
+      const root = new THREE.Group();
+      const points = makePoints('/p');
+      root.add(points);
+      const pool = makePool(new THREE.BufferGeometry());
+      commitPointsGeometry('/p', makeData(100), root, pool as never, mockNodeFactory, undefined, 0);
+
+      expect((points.userData as { visiblePointCount: number }).visiblePointCount).toBe(12);
+      const [, provider, count] = mockNoteDepthSortCommit.mock.calls[0] as [
+        THREE.Mesh,
+        () => Float32Array,
+        number,
+      ];
+      expect(count).toBe(12);
+      expect((provider() as Float32Array).length).toBe(12 * 3);
+    });
+  });
+});
+
+describe('commitPointsGeometry — preserve-ordering on same-node same-count recommits', () => {
+  // The commit path decides; the writer obeys the flag (its skip behavior
+  // is covered in points-texture-storage tests). These pin the predicate
+  // (hadCommittedData && !attributesRebuilt && same geometry && same count)
+  // by asserting the options arg threaded to updatePointsGeometry —
+  // mirroring the gsplats twin in commit-gsplats-geometry.test.ts.
+  const makePool = (geometry: THREE.BufferGeometry) => ({
+    acquirePointsGeometry: vi.fn(() => geometry),
+    updatePointsGeometry: vi.fn(),
+    didLastAcquireRebuildAttributes: vi.fn(() => false),
+  });
+  const lastOpts = (pool: ReturnType<typeof makePool>) =>
+    (pool.updatePointsGeometry.mock.calls.at(-1) as unknown[])[3];
+
+  it('same-count recommit → preserveOrdering true (first commit → false)', () => {
+    const root = new THREE.Group();
+    root.add(makePoints('/p'));
+    const pool = makePool(new THREE.BufferGeometry());
+    // First commit: no committedData stamp yet → the geometry's ordering
+    // is unvouched-for, identity must be written.
+    commitPointsGeometry('/p', makeData(7), root, pool as never, mockNodeFactory, undefined, 0);
+    expect(lastOpts(pool)).toEqual({ preserveOrdering: false, fromInstance: 0 });
+    // Same-node same-count recommit on the SAME pooled geometry: the
+    // previous permutation of [0,7) is still valid — keep it as a
+    // no-worse prior until the commit-triggered re-sort lands. Equal
+    // count is NOT an append, so fromInstance stays 0.
+    commitPointsGeometry('/p', makeData(7), root, pool as never, mockNodeFactory, undefined, 1);
+    expect(lastOpts(pool)).toEqual({ preserveOrdering: true, fromInstance: 0 });
+  });
+
+  it('count-change recommit → preserveOrdering false', () => {
+    const root = new THREE.Group();
+    root.add(makePoints('/p'));
+    const pool = makePool(new THREE.BufferGeometry());
+    commitPointsGeometry('/p', makeData(7), root, pool as never, mockNodeFactory, undefined, 0);
+    // A permutation of [0,7) is not a permutation of [0,9).
+    commitPointsGeometry('/p', makeData(9), root, pool as never, mockNodeFactory, undefined, 1);
+    expect(lastOpts(pool)).toEqual({ preserveOrdering: false, fromInstance: 0 });
+  });
+
+  it('recommit after committedData was cleared (LOD demotion) → false', () => {
+    const root = new THREE.Group();
+    const points = makePoints('/p');
+    root.add(points);
+    const pool = makePool(new THREE.BufferGeometry());
+    commitPointsGeometry('/p', makeData(7), root, pool as never, mockNodeFactory, undefined, 0);
+    delete (points.userData as { committedData?: unknown }).committedData;
+    commitPointsGeometry('/p', makeData(7), root, pool as never, mockNodeFactory, undefined, 1);
+    expect(lastOpts(pool)).toEqual({ preserveOrdering: false, fromInstance: 0 });
+  });
+
+  it('geometry swap / attribute rebuild defeats the flag', () => {
+    const root = new THREE.Group();
+    root.add(makePoints('/p'));
+    const pool = makePool(new THREE.BufferGeometry());
+    commitPointsGeometry('/p', makeData(7), root, pool as never, mockNodeFactory, undefined, 0);
+    // Best-fit reuse handed the node a DIFFERENT geometry (holding some
+    // other node's permutation over a different prior count) and reported
+    // an attribute rebuild — identity must be written.
+    pool.acquirePointsGeometry.mockReturnValue(new THREE.BufferGeometry());
+    pool.didLastAcquireRebuildAttributes.mockReturnValue(true);
+    commitPointsGeometry('/p', makeData(7), root, pool as never, mockNodeFactory, undefined, 1);
+    expect(lastOpts(pool)).toEqual({ preserveOrdering: false, fromInstance: 0 });
   });
 });

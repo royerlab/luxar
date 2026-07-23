@@ -190,6 +190,8 @@ export async function loadGSplatsNodeExpensive(
       `Loaded ${data.splatCount.toLocaleString()} gsplats for ${node.path}`
     );
   } catch (error) {
+    // Expected dispose-crossing — see the load-points-node.ts twin.
+    if (!ctx.isDatasetLive()) return;
     ctx.registry.recordFailure(node.path, error as Error);
     throw new LoaderError(classifyLoaderError(error), node.path, error);
   }

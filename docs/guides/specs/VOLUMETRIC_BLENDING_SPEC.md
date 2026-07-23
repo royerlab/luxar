@@ -305,7 +305,7 @@ replacing `isNormalMode` at every order-dependence gate:
 
 - `rendering/depth-sort-coordinator.ts:242` (sort dispatch),
   `:519` (renderOrder-bias clearing), `:610-618`
-  (`noteGSplatsBlendingModeSwitch` transition logic — switching *to* a sorted
+  (`noteDepthSortBlendingModeSwitch` transition logic — switching *to* a sorted
   mode clears committed data + reprocesses; switching *away* invalidates
   in-flight sorts). The additive↔volumetric transition thus reuses the exact
   machinery normal↔additive already exercises.

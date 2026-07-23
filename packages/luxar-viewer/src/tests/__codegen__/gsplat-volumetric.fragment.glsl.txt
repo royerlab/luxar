@@ -112,15 +112,15 @@ void main() {
 
 	nodeVar5 = ( ( ( nodeVarying2 * nodeUniform4 ) * max( ( exp( ( nodeVar4 * -0.5 ) ) - nodeUniform5 ), 0.0 ) ) * mix( 1.0, ( - log( ( 1.0 - min( nodeVarying1, 0.998046875 ) ) ) ), nodeUniform6 ) );
 
-	if ( ( nodeVar5 < 0.0001 ) ) {
+	if ( ( ( nodeVar5 * max( nodeUniform7, 1.0 ) ) < 0.0001 ) ) {
 
 		discard;
 		
 
 	}
 
-	nodeVar6 = ( ( nodeUniform7 * nodeUniform8 ) * nodeVar5 );
-	nodeVar8 = max( ( ( nodeVarying0 * vec3( nodeUniform9 ) ) + vec3( nodeUniform10 ) ), vec3( 0.0, 0.0, 0.0 ) );
+	nodeVar6 = ( ( nodeUniform8 * nodeUniform9 ) * nodeVar5 );
+	nodeVar8 = max( ( ( nodeVarying0 * vec3( nodeUniform7 ) ) + vec3( nodeUniform10 ) ), vec3( 0.0, 0.0, 0.0 ) );
 
 	if ( ( ( max( nodeVar8.x, max( nodeVar8.y, nodeVar8.z ) ) < 0.0001 ) && ( nodeVar6 < 0.0001 ) ) ) {
 
@@ -140,7 +140,7 @@ void main() {
 
 	}
 
-	DiffuseColor = vec4( ( ( ( pow( nodeVar8, vec3( nodeUniform11 ) ) * vec3( nodeVar5 ) ) * vec3( nodeUniform8 ) ) * vec3( nodeVar9 ) ), ( 1.0 - exp( ( - nodeVar6 ) ) ) );
+	DiffuseColor = vec4( ( ( ( pow( nodeVar8, vec3( nodeUniform11 ) ) * vec3( nodeVar5 ) ) * vec3( nodeUniform9 ) ) * vec3( nodeVar9 ) ), ( 1.0 - exp( ( - nodeVar6 ) ) ) );
 	DiffuseColor.w = ( DiffuseColor.w * nodeUniform12 );
 	nodeVar10 = max( vec4( DiffuseColor.xyz, DiffuseColor.w ), 0.0 );
 	Output = nodeVar10;

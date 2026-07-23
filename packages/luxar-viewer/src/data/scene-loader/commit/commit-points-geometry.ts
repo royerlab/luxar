@@ -33,6 +33,7 @@
 
 import * as THREE from 'three';
 import type { LoadedPointsData } from '../../data-loader-types';
+import { noteDepthSortCommit } from '../../../rendering/depth-sort-coordinator';
 import { isPointsUserData } from '../../../types/points';
 import { stampLadderComplete, stampLoadedViewVersion } from './stamp-view-version';
 import { isAlreadyCommitted } from './noop-commit';
@@ -93,13 +94,6 @@ export function commitPointsGeometry(
     return;
   }
 
-  if (data.pointCount === 0) {
-    log.info(
-      Modules.SCENE_LOADER,
-      `Clearing points for ${path} (no visible points at current slice)`
-    );
-  }
-
   // SEMANTIC clamp at the commit choke point (mirrors
   // commit-gsplats-geometry.ts): the GPU writers below clamp the WRITTEN
   // points to the per-node texture bound (element-texture-layout), so
@@ -131,6 +125,28 @@ export function commitPointsGeometry(
   const maxRadius = (attrs?.max_radius as number | undefined) ?? 1.0;
   const footprintRadius = data.radii ? maxRadius : 0.5;
 
+  // Lazy projected-centers provider for the depth-sort coordinator
+  // (invoked only when the node actually registers — order-dependent
+  // effective mode, non-empty, still the latest generation — so the
+  // common additive path never pays the copy). MUST allocate fresh:
+  // the coordinator TRANSFERS the returned buffer to the SortWorker,
+  // and `data.positions` is the committed/lineage reference the noop
+  // and append gates key on — passing a `subarray` VIEW to the transfer
+  // would detach it. Reading through a subarray into `out.set` is safe
+  // (set copies; only `out.buffer` is later transferred).
+  const sortCenters3 = (): Float32Array => {
+    const src = data.positions;
+    const out = new Float32Array(pointCount * 3);
+    if (src instanceof Float32Array) {
+      out.set(src.subarray(0, out.length)); // memcpy fast path
+    } else {
+      // Float16 positions: elementwise widen to the Float32 the sort
+      // kernel expects.
+      for (let i = 0; i < out.length; i++) out[i] = src[i];
+    }
+    return out;
+  };
+
   const bufferSession = session?.begin('Update Buffers');
   try {
     if (gpuBufferPool) {
@@ -143,6 +159,17 @@ export function commitPointsGeometry(
       // dispatches a `dispose` event on the material to evict that
       // cache. No-op under WebGL2 / pre-init / no cached entry.
       const attributesRebuilt = gpuBufferPool.didLastAcquireRebuildAttributes();
+      // Keep the previous depth-sort permutation on a same-node same-count
+      // in-place recommit (timepoint scrub): a permutation of [0,count) is
+      // a strictly-no-worse prior than storage order for the ≥1 frame
+      // until the re-sort dispatched by noteDepthSortCommit below lands.
+      // Guards mirror the gsplats twin (commit-gsplats-geometry.ts) — the
+      // full rationale lives there.
+      const preserveOrdering =
+        hadCommittedData &&
+        !attributesRebuilt &&
+        geometry === prevGeometry &&
+        prevCount === pointCount;
       // Append fast path (depth-sorting Phase 4 Stage 2): when this commit
       // merely EXTENDS the prefix already on the GPU, write & upload only the
       // new `[prevCount, pointCount)` suffix. Correctness rests on the
@@ -200,6 +227,7 @@ export function commitPointsGeometry(
       geometry.userData.radiusScale = data.radii instanceof Uint8Array ? maxRadius : 1.0;
       try {
         gpuBufferPool.updatePointsGeometry(geometry, data, pointCount, {
+          preserveOrdering,
           fromInstance: canAppend ? (prevCount ?? 0) : 0,
         });
 
@@ -250,61 +278,70 @@ export function commitPointsGeometry(
           prevGeometry.dispose();
         }
       }
-      // SUCCESS-ONLY stamps (a throw above propagates past this point,
-      // mirroring the gsplats twin's ordering): freshness first —
-      points.userData.visiblePointCount = pointCount;
-      // Slice-aware LOD freshness stamp (see commit-gsplats-geometry.ts).
-      stampLoadedViewVersion(points.userData, loadedViewVersion);
-      // Ladder-completeness stamp for the never-downgrade display gate.
-      stampLadderComplete(points.userData);
-      // Record the committed data reference — a later update returning the
-      // SAME reference (memoized progressive concat) takes the stamp-only
-      // no-op path above instead of re-uploading.
-      setCommittedData(points, data);
-      // Append-fast-path bookkeeping: the buffer now holds this commit's
-      // data in full (whether written fully or by suffix-extension), so the
-      // next commit may append. A context restore clears this flag.
-      points.userData.gpuPrefixIntact = true;
-      return;
+    } else {
+      // Pool disabled: recreate unconditionally. Recreation handles all
+      // the dtype logic (divisor-based widenToFloat32 for Uint8/Uint16,
+      // Float16 widening, bounds/footprint, radiusScale userData) via
+      // NodeFactory, which builds the same texture-backed storage as the
+      // pool (attachPointStorage + writePointTexels) sized exactly.
+      // (A historical same-count in-place branch assumed a different
+      // layout and threw against factory-built geometry; correctness over
+      // reuse on this non-default fallback.)
+      // Create-then-swap-then-dispose: building first keeps the mesh on its
+      // old (valid) geometry if the factory throws on malformed data —
+      // dispose-first would strand the mesh on a disposed geometry whose
+      // element texture is already freed.
+      const oldGeometry = points.geometry;
+      // Pass max_radius so the rebuilt geometry bakes the correct
+      // footprint into boundingBox (and the right dtype scale); omitting
+      // it would default maxRadius=1.0 and clip large radii.
+      points.geometry = nodeFactory.createPointsGeometry(data, maxRadius);
+      if (oldGeometry) {
+        oldGeometry.dispose();
+      }
+      // dispose+recreate path picks up new dtype-aware scales from
+      // the freshly built geometry's userData.
+      syncPointMaterialWithGeometry(points);
+      // Fresh GPU buffers replaced the geometry: evict Three's cached
+      // RenderObject (stale `vertexBuffers` on the WebGPU backend) —
+      // same contract as the pool path's attributesRebuilt branch.
+      invalidateRenderObjectFor(points);
     }
 
-    // Pool disabled: recreate unconditionally. Recreation handles all
-    // the dtype logic (divisor-based widenToFloat32 for Uint8/Uint16,
-    // Float16 widening, bounds/footprint, radiusScale userData) via
-    // NodeFactory, which builds the same texture-backed storage as the
-    // pool (attachPointStorage + writePointTexels) sized exactly.
-    // (A historical same-count in-place branch assumed a different
-    // layout and threw against factory-built geometry; correctness over
-    // reuse on this non-default fallback.)
-    // Create-then-swap-then-dispose: building first keeps the mesh on its
-    // old (valid) geometry if the factory throws on malformed data —
-    // dispose-first would strand the mesh on a disposed geometry whose
-    // element texture is already freed.
-    const oldGeometry = points.geometry;
-    // Pass max_radius so the rebuilt geometry bakes the correct
-    // footprint into boundingBox (and the right dtype scale); omitting
-    // it would default maxRadius=1.0 and clip large radii.
-    points.geometry = nodeFactory.createPointsGeometry(data, maxRadius);
-    if (oldGeometry) {
-      oldGeometry.dispose();
-    }
-    // dispose+recreate path picks up new dtype-aware scales from
-    // the freshly built geometry's userData.
-    syncPointMaterialWithGeometry(points);
-    // Fresh GPU buffers replaced the geometry: evict Three's cached
-    // RenderObject (stale `vertexBuffers` on the WebGPU backend) —
-    // same contract as the pool path's attributesRebuilt branch.
-    invalidateRenderObjectFor(points);
-    // SUCCESS-ONLY stamps (see the pool path).
+    // SUCCESS-ONLY tail, shared by both branches (a throwing write above
+    // propagates past this point, mirroring the gsplats twin's single
+    // post-if/else tail): freshness first —
     points.userData.visiblePointCount = pointCount;
-    stampLoadedViewVersion(points.userData, loadedViewVersion);
-    stampLadderComplete(points.userData);
-    // Record the committed data reference (see the pool path above).
-    setCommittedData(points, data);
-    // The freshly built geometry holds this commit's data in full. The flag
-    // is only consulted on the pool path, but keeping the stamp uniform
-    // across paths mirrors the gsplats commit.
+    // Append-fast-path bookkeeping: the buffer now holds this commit's
+    // data in full (whether written fully or by suffix-extension), so the
+    // next commit may append. Only consulted on the pool path, but the
+    // stamp stays uniform across paths (gsplats parity). A context
+    // restore clears this flag.
     points.userData.gpuPrefixIntact = true;
+    // Slice-aware LOD freshness stamp (see commit-gsplats-geometry.ts).
+    stampLoadedViewVersion(points.userData, loadedViewVersion);
+    // Ladder-completeness stamp for the never-downgrade display gate.
+    stampLadderComplete(points.userData);
+    // Record the committed data reference — a later update returning the
+    // SAME reference (memoized progressive concat) takes the stamp-only
+    // no-op path above instead of re-uploading.
+    setCommittedData(points, data);
+
+    if (pointCount === 0) {
+      log.info(
+        Modules.SCENE_LOADER,
+        `Clearing points for ${path} (no visible points at current slice)`
+      );
+    }
+
+    // Depth-sorting (points integration): every non-noop commit bumps
+    // the node's sort generation; order-dependent (effective `normal`)
+    // nodes additionally register their centers with the SortWorker and
+    // get one sort from the current camera pose. Runs LAST like the
+    // gsplats twin, success-only, with the CLAMPED count so permutation
+    // values stay inside [0, textureCapacity). The lazy provider defers
+    // the O(N) positions copy to the sorted path.
+    noteDepthSortCommit(points, sortCenters3, pointCount);
   } finally {
     bufferSession?.end();
   }

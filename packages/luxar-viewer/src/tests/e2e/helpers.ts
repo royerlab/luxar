@@ -1149,7 +1149,8 @@ export async function validateSceneAttributes(page: Page): Promise<
       // is texture-backed: an RGBA32F element texture holds 12 floats
       // (3 texels) per point — center xyz [0..2], radius [3], color rgb
       // [4..6], sharpness [7], scalar [8], alpha [9]. The only
-      // per-instance attribute is aSortedIndex (identity ordering).
+      // per-instance attribute is aSortedIndex (identity by default; a
+      // depth-sort permutation in effective-normal mode).
       if (obj.userData?.nodeType !== 'points') return;
       const texData = obj.geometry?.userData?.elementTexture?.image?.data;
       if (!texData) return;
