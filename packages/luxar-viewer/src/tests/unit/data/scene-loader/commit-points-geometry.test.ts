@@ -835,8 +835,13 @@ describe('commitPointsGeometry — depth-sort integration (points sort registrat
     root.add(points);
     const data = makeData(2);
     // 0.5 / 1.5 / -2 are exactly representable in fp16 — the widened
-    // copy must be value-identical.
-    data.positions = new Float16Array([0.5, 1.5, -2, 3, -0.25, 8]) as never;
+    // copy must be value-identical. The Float16Array GLOBAL is absent on
+    // Node < 23 (CI), so fall back to a Float64Array stand-in there: both
+    // take the thunk's same non-Float32 element-wise branch, and the
+    // fp16-exact values make the two engines byte-identical.
+    const F16 = (globalThis as unknown as { Float16Array?: Float16ArrayConstructor }).Float16Array;
+    const values = [0.5, 1.5, -2, 3, -0.25, 8];
+    data.positions = (F16 ? new F16(values) : new Float64Array(values)) as never;
     const pool = makePool(new THREE.BufferGeometry());
     commitPointsGeometry('/p', data, root, pool as never, mockNodeFactory, undefined, 0);
 
