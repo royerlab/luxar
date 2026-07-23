@@ -86,7 +86,11 @@ describe('SceneLoader lifecycle stress', () => {
 
   it(
     '50× load → dispose cycle leaves loaders/_zarrStore/rootGroup empty each time',
-    { timeout: 20_000 },
+    // Generous budget: 50 async cycles are fast in isolation (<2s) but this
+    // is a stress test running under FULL-SUITE parallelism, where every
+    // core is saturated by sibling workers — a 20s budget flaked under
+    // contention while passing in isolation and on rerun.
+    { timeout: 60_000 },
     async () => {
       for (let i = 0; i < 50; i++) {
         const url = `http://localhost:8000/test-${i}.zarr`;

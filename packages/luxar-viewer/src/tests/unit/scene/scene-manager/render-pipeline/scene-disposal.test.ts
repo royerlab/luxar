@@ -227,6 +227,17 @@ describe('clearLoadedSceneContent', () => {
 });
 
 describe('disposeSceneGraphResources', () => {
+  it('drops ALL depth-sort registrations (self-sufficient final shutdown)', () => {
+    // Defense-in-depth: the dispose pipeline calls disposeDepthSort()
+    // separately, but an embedder driving only this shutdown path must
+    // not leave the module-scoped coordinator map pinning old meshes.
+    vi.mocked(releaseAllDepthSortNodes).mockClear();
+    const scene = new THREE.Scene();
+    scene.add(makeMesh().mesh);
+    disposeSceneGraphResources(scene);
+    expect(releaseAllDepthSortNodes).toHaveBeenCalledTimes(1);
+  });
+
   it('disposes geometry and material of every renderable in the scene', () => {
     const scene = new THREE.Scene();
     const { mesh: a, geometryDispose: aG, materialDispose: aM } = makeMesh();

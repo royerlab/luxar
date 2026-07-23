@@ -110,6 +110,13 @@ export function clearLoadedSceneContent(scene: THREE.Scene): number {
  * Skips non-renderable Object3Ds; those have nothing to dispose.
  */
 export function disposeSceneGraphResources(scene: THREE.Scene): void {
+  // Defense-in-depth: the canonical teardown (dispose-pipeline) calls
+  // disposeDepthSort() separately, but an embedder driving THIS shutdown
+  // path alone would otherwise leave the module-scoped coordinator map
+  // pinning every sorted mesh (+ geometry + element texture) it ever
+  // registered. Releasing here makes the final-shutdown traversal
+  // self-sufficient; it is a no-op under the wired pipeline.
+  releaseAllDepthSortNodes();
   scene.traverse((object) => {
     if ('geometry' in object && 'material' in object) {
       const mesh = object as THREE.Mesh;
