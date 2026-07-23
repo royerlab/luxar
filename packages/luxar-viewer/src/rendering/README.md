@@ -22,7 +22,7 @@ The default backend is `THREE.WebGLRenderer` (GLSL `ShaderMaterial`). `WebGPURen
 
 ```
 rendering/
-├── material-manager.ts                 # Material creation, caching, and global camera updates
+├── material-manager.ts                 # Per-node material creation + global camera updates
 ├── node-factory.ts                     # Scene-node factories for Points / Lines / GSplats
 ├── gpu-buffer-pool.ts                  # Geometry reuse with count and byte-budget eviction
 ├── gpu-byte-budget.ts                  # Single adaptive VRAM budget (pool + LOD registry share it)
@@ -49,8 +49,7 @@ rendering/
 │                  uniform-helpers, material-builder, tsl-helpers, glsl-lib, shader-source }
 │
 ├── material-manager/                   # MaterialManager helper modules
-│   ├── factories.ts                    # VISUAL/PICKING/MEGA_SHADER_FACTORIES + cache-key fns
-│   ├── lru-cache.ts                    # Generic lruGet / lruSet
+│   ├── factories.ts                    # VISUAL/PICKING/MEGA_SHADER_FACTORIES + backend dispatch
 │   ├── lifecycle.ts                    # subscribeToDispose + removeFromRegistries + SOFT_DISPOSE_FLAG
 │   └── stats.ts                        # getCacheStats snapshot
 │
@@ -92,7 +91,7 @@ rendering/
 │
 ├── gpu-buffer-pool/                    # Per-type adapters + eviction
 │   ├── {points,lines,gsplats}-adapter.ts
-│   ├── attribute-codec.ts / eviction-policy.ts / pool-stats.ts
+│   ├── eviction-policy.ts / pool-stats.ts
 │   ├── capacity.ts                     # chooseCapacity (1.5× growth, min-instance floor)
 │   ├── geometry-bytes.ts               # estimateGeometryBytes + cached size invalidation
 │   └── byte-budget-evictor.ts          # Cross-type byte-budget enforcement

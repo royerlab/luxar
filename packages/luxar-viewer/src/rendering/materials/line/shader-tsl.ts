@@ -254,8 +254,13 @@ export function lineWebGPUFactory(
     // width is a multiple of 6 (element-texture-layout.ts), so a
     // segment's 6 texels share one row and only x advances. texel5 is
     // fetched only in colormap mode (the scalar slots) — mirrors the
-    // GLSL twin's USE_COLORMAP-gated fetch. texel5.zw (per-endpoint
-    // alphas) are reserved for volumetric Phase 4 and not read here.
+    // GLSL twin's USE_COLORMAP-gated fetch. Unlike the GLSL twin,
+    // texels 2/3 are NOT deferred past the bothBehind cull — the Fn
+    // trace-order house rule emits statements unconditionally, so the
+    // TSL backend pays 2 extra loads per culled vertex (accepted
+    // asymmetry, output-identical; same trade as the point factory).
+    // texel5.zw (per-endpoint alphas) are reserved for volumetric
+    // Phase 4 and not read here.
     const lineBase: TSLNode = int(aSortedIndex).mul(int(6)).toVar();
     // int() wrap is LOAD-BEARING: TSL types textureSize() as uint (the
     // WGSL textureDimensions convention), but the WebGL2 fallback emits
