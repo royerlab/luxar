@@ -31,42 +31,52 @@ def get_project_root() -> Path:
     raise RuntimeError("Could not find project root (no pyproject.toml found)")
 
 
-def get_datasets_dir() -> Path:
+def get_datasets_dir(create: bool = True) -> Path:
     """Get the datasets directory at project root.
 
-    Creates the directory if it doesn't exist.
+    Args:
+        create: Create the directory if it doesn't exist (default True). Pass
+            False to resolve the path read-only (e.g. when only checking
+            whether an output exists, so listing does not create dirs).
 
     Returns:
         Path to datasets/ directory
     """
     datasets_dir = get_project_root() / "datasets"
-    datasets_dir.mkdir(exist_ok=True)
+    if create:
+        datasets_dir.mkdir(exist_ok=True)
     return datasets_dir
 
 
-def get_examples_output_dir() -> Path:
+def get_examples_output_dir(create: bool = True) -> Path:
     """Get output directory for example scripts.
 
-    Creates the directory if it doesn't exist.
+    Args:
+        create: Create the directory (and its parent) if missing (default True).
 
     Returns:
         Path to datasets/examples/ directory
     """
-    examples_dir = get_datasets_dir() / "examples"
-    examples_dir.mkdir(exist_ok=True)
+    examples_dir = get_datasets_dir(create=create) / "examples"
+    if create:
+        examples_dir.mkdir(exist_ok=True)
     return examples_dir
 
 
-def get_demos_output_dir() -> Path:
+def get_demos_output_dir(create: bool = True) -> Path:
     """Get output directory for demo scripts.
 
-    Creates the directory if it doesn't exist.
+    Args:
+        create: Create the directory (and its parent) if missing (default True).
+            Pass False for read-only path resolution (status/inventory), so a
+            read-only command like ``luxar demo list`` never creates ``datasets/``.
 
     Returns:
         Path to datasets/demos/ directory
     """
-    demos_dir = get_datasets_dir() / "demos"
-    demos_dir.mkdir(exist_ok=True)
+    demos_dir = get_datasets_dir(create=create) / "demos"
+    if create:
+        demos_dir.mkdir(exist_ok=True)
     return demos_dir
 
 
