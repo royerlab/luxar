@@ -102,7 +102,10 @@ export function applyScalarRangeToMaterial(
  *   gpu-buffer-pool points adapter). This is the texture-storage analog
  *   of the old `hasAttribute('aScalar')` probe, driven by the same
  *   signal that used to bind the attribute.
- * - Lines need both `aStartScalar` and `aEndScalar` instanced attributes.
+ * - Lines carry their per-endpoint scalars in texel5.xy of the line
+ *   texture — same fixed-layout situation as points, so presence rides
+ *   the identical `userData.hasScalars` stamp (`stampLineScalarPresence`
+ *   in line-geometry.ts, called by every texel-write path).
  *
  * Use this to fail-closed: if `false`, the caller should NOT enable
  * `USE_COLORMAP` and should log a warning so the user understands why
@@ -120,13 +123,9 @@ export function supportsScalarColormap(
   geometry?: THREE.BufferGeometry
 ): boolean {
   if (nodeType === 'gsplats') return true;
-  if (nodeType === 'points') {
+  if (nodeType === 'points' || nodeType === 'lines') {
     // Scalar presence stamp — see the doc block above.
     return geometry ? geometry.userData?.hasScalars === true : false;
-  }
-  if (nodeType === 'lines') {
-    if (!geometry) return false;
-    return geometry.hasAttribute('aStartScalar') && geometry.hasAttribute('aEndScalar');
   }
   return false;
 }

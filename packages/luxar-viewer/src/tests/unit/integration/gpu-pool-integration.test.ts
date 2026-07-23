@@ -8,6 +8,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import { GPUBufferPool } from '../../../rendering/gpu-buffer-pool';
 import { getPointTexture } from '../../../rendering/point-geometry';
+import { getLineTexture } from '../../../rendering/line-geometry';
 import { POINT_FLOATS_PER_POINT } from '../../../rendering/element-texture-layout';
 import type { LoadedPointsData } from '../../../data/data-loader-types';
 import * as THREE from 'three';
@@ -233,10 +234,17 @@ describe('GPU Buffer Pool Integration Tests', () => {
   // first-class methods on the same class. Even smoke-level acquisition is
   // strictly better than no coverage.
   describe('Three-geometry symmetry: Lines + GSplats acquire/release', () => {
-    it('acquireLinesGeometry returns an InstancedBufferGeometry of the requested capacity', () => {
+    it('acquireLinesGeometry returns an InstancedBufferGeometry with the texture storage pair', () => {
       const pool = new GPUBufferPool(20, 300);
-      const geom = pool.acquireLinesGeometry('/lines-1', 16, false);
+      const geom = pool.acquireLinesGeometry('/lines-1', 16);
       expect(geom).toBeInstanceOf(THREE.InstancedBufferGeometry);
+      // Same storage model as points: quad base + per-instance
+      // `aSortedIndex` + the RGBA32F line texture (6 texels/segment).
+      expect(geom.getAttribute('aQuadCorner')).toBeDefined();
+      const sortedIndex = geom.getAttribute('aSortedIndex');
+      expect(sortedIndex, 'attribute "aSortedIndex" missing from geometry').toBeDefined();
+      expect(sortedIndex.array).toBeInstanceOf(Uint32Array);
+      expect(getLineTexture(geom), 'line texture missing from geometry').not.toBeNull();
       expect(() => pool.releaseLinesGeometry('/lines-1')).not.toThrow();
     });
 
@@ -249,8 +257,8 @@ describe('GPU Buffer Pool Integration Tests', () => {
 
     it('acquireLinesGeometry reuses the same geometry across acquisitions for the same nodeId', () => {
       const pool = new GPUBufferPool(20, 300);
-      const g1 = pool.acquireLinesGeometry('/lines-reuse', 16, false);
-      const g2 = pool.acquireLinesGeometry('/lines-reuse', 16, false);
+      const g1 = pool.acquireLinesGeometry('/lines-reuse', 16);
+      const g2 = pool.acquireLinesGeometry('/lines-reuse', 16);
       // Pool dedupes by nodeId — same node should get the same underlying geometry.
       expect(g2).toBe(g1);
     });

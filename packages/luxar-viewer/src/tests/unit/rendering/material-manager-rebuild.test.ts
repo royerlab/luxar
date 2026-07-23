@@ -2,10 +2,12 @@
  * Unit tests for MaterialManager.rebuildAfterContextRestore.
  *
  * The rebuild path is tested in isolation: we don't need a real WebGL
- * context. We populate the cache through the public API, call the
- * rebuild method, and assert that subsequent cache stats reflect a
- * fresh state and that the next access produces a new material
- * instance (not a stale cached one).
+ * context. All three material kinds are PER NODE now (the line-material
+ * LRU — the last cached kind — died with the lines texture-storage
+ * migration), so the cache maps rebuild clears are permanently empty;
+ * what the rebuild MUST NOT do is disturb the camera-update registry or
+ * dispose live materials. We create materials through the public API,
+ * call the rebuild method, and assert those invariants hold.
  */
 
 import { describe, it, expect, beforeEach } from 'vitest';
@@ -27,8 +29,8 @@ const POINT_PROPS = {
   customColorMode: false,
 } as const;
 
-// Lines are the cached kind (points/gsplats are per node and uncached),
-// so the cache-drop assertions drive the LINE cache.
+// Line materials are per node too (each carries its own `uLineTex`),
+// so the line cache — like the point/gsplat caches — stays empty.
 const LINE_PROPS = {
   opacity: 0.7,
   gamma: 1.5,
@@ -42,29 +44,29 @@ describe('MaterialManager.rebuildAfterContextRestore', () => {
     __resetMaterialManagerForTests();
   });
 
-  it('clears the per-type allocation caches but preserves the camera-update registry', () => {
-    // rebuildAfterContextRestore drops the per-type
-    // allocation caches (so the next getXMaterial compiles fresh
-    // shaders against the new context) but PRESERVES registeredMaterials
-    // / ownedMaterials so existing visible scene materials keep
-    // receiving updateCameraParams() across the restore.
+  it('keeps the caches empty and preserves the camera-update registry', () => {
+    // rebuildAfterContextRestore drops the per-type allocation caches —
+    // permanently empty in the per-node world, so the clear is a no-op —
+    // but PRESERVES registeredMaterials / ownedMaterials so existing
+    // visible scene materials keep receiving updateCameraParams()
+    // across the restore.
     const mm = new MaterialManager();
-    mm.getLineMaterial(LINE_PROPS); // populates the line cache
+    mm.getLineMaterial(LINE_PROPS); // per-node — registered only
     mm.getPointMaterial(POINT_PROPS); // per-node — registered only
 
     const before = mm.getCacheStats();
-    expect(before.cachedMaterials).toBeGreaterThan(0);
-    expect(before.totalRegistered).toBeGreaterThan(0);
+    expect(before.cachedMaterials).toBe(0); // nothing is cached anymore
+    expect(before.totalRegistered).toBe(2);
 
     mm.rebuildAfterContextRestore();
 
     const after = mm.getCacheStats();
-    expect(after.cachedMaterials).toBe(0); // allocation cache dropped
+    expect(after.cachedMaterials).toBe(0); // still empty
     // Registry preserved — visible materials still tracked for camera updates.
     expect(after.totalRegistered).toBe(before.totalRegistered);
   });
 
-  it('produces a fresh material on next access (not a stale cached one)', () => {
+  it('produces a fresh material on next access (per-node — never a stale instance)', () => {
     const mm = new MaterialManager();
     const before = mm.getLineMaterial(LINE_PROPS);
     mm.rebuildAfterContextRestore();
@@ -82,12 +84,11 @@ describe('MaterialManager.rebuildAfterContextRestore', () => {
     }).not.toThrow();
   });
 
-  it('does NOT call material.dispose() on cached entries (avoids dead-context errors)', () => {
+  it('does NOT call material.dispose() on live materials (avoids dead-context errors)', () => {
     // The reasoning is documented in the method's doc comment: some
     // THREE drivers throw when disposing programs from a now-dead
-    // WebGL context. We test the behavior indirectly: the rebuild path
-    // succeeds even on a brand-new manager whose materials were never
-    // disposed (no explicit disposal of pre-existing cache happens).
+    // WebGL context — and per-node materials are attached to visible
+    // scene meshes, so rebuild must never dispose them anyway.
     const mm = new MaterialManager();
     const m = mm.getLineMaterial(LINE_PROPS);
     let disposeCalls = 0;

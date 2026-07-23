@@ -2,11 +2,19 @@
  * Line picking material TSL factory — NodeMaterial counterpart to
  * `LINE_PICK_SOURCE` in `shaders.ts`.
  *
- * Mirrors line.tsl's sprite-expansion math, but the fragment outputs:
+ * Mirrors the visual factory's sprite-expansion math, but the fragment
+ * outputs:
  *   - R: nodeId (set via uniform)
- *   - G: elementId (instance index)
+ *   - G: elementId (= `aSortedIndex`, the STORAGE slot — identical to
+ *     the draw slot under identity ordering, and stays correct once
+ *     the sort worker permutes draw order)
  *   - B: brightness (perpendicular falloff × cap × widthScale × widthFade)
  *   - A: 1.0
+ *
+ * Per-segment data comes from the RGBA32F line texture (`uLineTex`,
+ * 6 texels/segment — layout in `rendering/line-geometry.ts`), fetched
+ * in the vertex stage and indexed by `aSortedIndex` (visual-factory
+ * parity, shader-tsl.ts).
  *
  * Depth = 1.0 - brightness (brightness-as-depth tie-breaking).
  *
@@ -23,10 +31,12 @@ import {
   uniform,
   attribute,
   varying,
-  instanceIndex,
   vec2,
+  vec3,
   vec4,
   float,
+  int,
+  ivec2,
   max,
   min,
   clamp,
@@ -34,6 +44,8 @@ import {
   length,
   step,
   exp,
+  texture,
+  textureSize,
   modelViewMatrix,
   cameraProjectionMatrix,
   Discard,
@@ -44,6 +56,7 @@ import {
   sanitizeNonNegative,
   type TSLNode,
 } from '../../materials/_shared/tsl-helpers';
+import { getPlaceholderElementTexture } from '../../element-texture-layout';
 
 /**
  * Pre-created TSL leaf nodes supplied by the wrapper class. Same
@@ -52,6 +65,11 @@ import {
  * avoiding the `.onUpdate('render')` callback churn.
  */
 export interface LinePickTSLNodes {
+  /**
+   * Line data texture node (RGBA32F, 6 texels/segment). Rebound per
+   * node by the wrapper's `updateLineTexture` (fresh node + rebuild).
+   */
+  readonly uLineTex: TSLNode;
   readonly uResolution: TSLNode;
   readonly uIsOrtho: TSLNode;
   readonly uNodeId: TSLNode;
@@ -91,20 +109,16 @@ export function linePickWebGPUFactory(
   outMaterial?: NodeMaterial
 ): NodeMaterial {
   const aQuadCorner: TSLNode = attribute<'vec2'>('aQuadCorner', 'vec2');
-  const aStartPos: TSLNode = attribute<'vec3'>('aStartPos', 'vec3');
-  const aEndPos: TSLNode = attribute<'vec3'>('aEndPos', 'vec3');
-  const aStartWidth: TSLNode = attribute<'float'>('aStartWidth', 'float');
-  const aEndWidth: TSLNode = attribute<'float'>('aEndWidth', 'float');
-  const aStartSharpness: TSLNode = attribute<'float'>('aStartSharpness', 'float');
-  const aEndSharpness: TSLNode = attribute<'float'>('aEndSharpness', 'float');
-  const aSegmentLength: TSLNode = attribute<'float'>('aSegmentLength', 'float');
-  const aStartClipped: TSLNode = attribute<'float'>('aStartClipped', 'float');
-  const aEndClipped: TSLNode = attribute<'float'>('aEndClipped', 'float');
+  // The only per-instance attribute (visual-factory parity): segment
+  // data lives in the line texture; `aSortedIndex` maps the draw slot
+  // to a storage slot.
+  const aSortedIndex: TSLNode = attribute<'uint'>('aSortedIndex', 'uint');
 
   // Pixel-width math consumes the CPU-precomputed
   // uPerspectiveLineScale / uOrthoLineScale (no FOV uniform exists).
   // uIsOrtho is unbound — projection mode is a JS-level config
   // branch (`config.isOrtho`), not a runtime uniform.
+  const uLineTex = nodes.uLineTex;
   const uResolution = nodes.uResolution;
   const uNodeId = nodes.uNodeId;
   const uNearCull = nodes.uNearCull;
@@ -112,129 +126,183 @@ export function linePickWebGPUFactory(
   const uPerspectiveLineScale = nodes.uPerspectiveLineScale;
   const uOrthoLineScale = nodes.uOrthoLineScale;
 
-  // ---- Vertex computation (mirrors line.tsl exactly) ----
+  // ---- Vertex computation (mirrors line shader-tsl.ts exactly) ----
+  //
+  // Traced inside a single Fn() body with explicit `.toVar()`
+  // statements — same load-bearing structure as the visual factory
+  // (see shader-tsl.ts): inside Fn(), statements emit in trace order,
+  // unconditionally, so texel fetches can't land inside a select()
+  // branch and read uninitialized on the other path.
 
-  // Branchless: aQuadCorner.x ∈ {-1, +1} by construction.
-  const t: TSLNode = aQuadCorner.x.mul(0.5).add(0.5);
-  const startW: TSLNode = sanitizeNonNegative(aStartWidth, float(0.0));
-  const endW: TSLNode = sanitizeNonNegative(aEndWidth, float(0.0));
-  // Sharpness is a [0, 1] knob -> super-Gaussian exponent beta = 2^(6s - 2)
-  // (computed in the fragment). A valid s=0 must NOT be rejected, so clamp a
-  // non-negative-sanitised value into [0, 1] with the 0.5 default. Mirrors
-  // the visual shaders.
-  const startS: TSLNode = clamp(sanitizeNonNegative(aStartSharpness, float(0.5)), 0.0, 1.0);
-  const endS: TSLNode = clamp(sanitizeNonNegative(aEndSharpness, float(0.5)), 0.0, 1.0);
-  const width: TSLNode = mix(startW, endW, t);
-  const vSharpnessVal: TSLNode = mix(startS, endS, t);
-
-  const mvStart: TSLNode = modelViewMatrix.mul(vec4(aStartPos, 1.0));
-  const mvEnd: TSLNode = modelViewMatrix.mul(vec4(aEndPos, 1.0));
-  const mvPos: TSLNode = mix(mvStart, mvEnd, t);
-
-  // PERSPECTIVE ONLY (compile-time graph variant; see the visual line
-  // TSL): ortho graphs carry no cull/fade code — NDC clipping is the
-  // sole cull authority there.
-  // 1e-20 floor = uNearCull == 0 guard only; uNearCull is
-  // scene-bounds-scaled (see the visual line shader — an absolute 1e-4
-  // floor culled every segment of a tiny-unit scene).
   const nearCull: TSLNode = max(uNearCull, float(1e-20));
-  const startDepth: TSLNode = mvStart.z.negate();
-  const endDepth: TSLNode = mvEnd.z.negate();
-  const bothBehind: TSLNode | null = config.isOrtho
-    ? null
-    : startDepth.lessThan(nearCull).and(endDepth.lessThan(nearCull));
 
-  const clipStart: TSLNode = cameraProjectionMatrix.mul(mvStart);
-  const clipEnd: TSLNode = cameraProjectionMatrix.mul(mvEnd);
-  // projection is linear, so proj * mix(a,b,t) == mix(proj*a, proj*b, t).
-  const clipPosBase: TSLNode = mix(clipStart, clipEnd, t);
-
-  // Scene-relative w guard (w == -viewZ under perspective; ortho
-  // graphs use the inert 1.0 — compile-time variant). See the visual
-  // line shader for the scale-free rationale.
-  const wGuard: TSLNode = config.isOrtho ? float(1.0) : nearCull;
-  const wStart: TSLNode = max(clipStart.w, wGuard);
-  const wEnd: TSLNode = max(clipEnd.w, wGuard);
-  const ndcStart: TSLNode = vec2(clipStart.xy.div(wStart));
-  const ndcEnd: TSLNode = vec2(clipEnd.xy.div(wEnd));
-
-  // The +0.5 in (ndc*0.5+0.5)*resolution cancels under subtraction.
-  const pixelDir: TSLNode = vec2(ndcEnd.sub(ndcStart).mul(uResolution.mul(0.5)));
-  const pixelLen: TSLNode = length(pixelDir);
-  // `.toVar()` on the chained branch keeps the sharp edge stable.
-  const lineDir: TSLNode = pixelLen
-    .greaterThan(0.0001)
-    .select(vec2(pixelDir.div(pixelLen)).toVar(), vec2(1.0, 0.0));
-  const perpendicular: TSLNode = vec2(lineDir.y.negate(), lineDir.x);
-
-  // Each camera projection mode is a separate graph variant so the
-  // unused branch never materialises. Wrapper rebuilds when isOrtho
-  // flips. View-space depth (-mvPos.z) matches the visual shader.
-  let rawPixelWidth: TSLNode;
-  if (config.isOrtho) {
-    rawPixelWidth = width.mul(uOrthoLineScale);
-  } else {
-    const distView: TSLNode = max(mvPos.z.negate(), nearCull);
-    rawPixelWidth = width.mul(uPerspectiveLineScale).div(distView);
-  }
-
-  const minPixelWidth = float(1.5);
-  const maxPW: TSLNode = max(uMaxLinePixelWidth, minPixelWidth.add(1.0));
-  const clampedPixelWidth: TSLNode = clamp(rawPixelWidth, minPixelWidth, maxPW);
-  const vWidthFadeVal: TSLNode = rawPixelWidth
-    .lessThanEqual(maxPW)
-    .select(float(1.0), maxPW.div(max(rawPixelWidth, float(1e-4))).toVar());
-
-  // Pathological-segment cull (visual-shader parity): both endpoints
-  // inside near-cull margin AND rawPixelWidth blows past the clamp by
-  // 2× → degenerate to off-screen. Otherwise picking still rasterizes
-  // the half-viewport quad the visual pass already culled.
-  const pathological: TSLNode | null = config.isOrtho
-    ? null
-    : startDepth
-        .lessThan(nearCull.mul(2.0))
-        .and(endDepth.lessThan(nearCull.mul(2.0)))
-        .and(rawPixelWidth.greaterThan(maxPW.mul(2.0)));
-
-  const pixelOffset: TSLNode = perpendicular.mul(aQuadCorner.y).mul(clampedPixelWidth);
-  const ndcOffset: TSLNode = pixelOffset.div(uResolution).mul(2.0);
-  const expandedClip: TSLNode = vec4(
-    clipPosBase.xy.add(ndcOffset.mul(clipPosBase.w)),
-    clipPosBase.z,
-    clipPosBase.w
-  );
-
-  // Real TSL control flow — see visual `line.tsl` for the rationale
-  // (one branch per draw instead of evaluating both via select()).
-  const culled: TSLNode | null =
-    bothBehind && pathological ? bothBehind.or(pathological) : (bothBehind ?? pathological);
-  const clipPos: TSLNode = culled
-    ? Fn(() => {
-        const out = vec4(0.0, 0.0, -2.0, 1.0).toVar('clipPos');
-        If(culled.not(), () => {
-          out.assign(expandedClip);
-        });
-        return out;
-      })()
-    : expandedClip;
-
-  // Varyings. Per-segment-constant values (segment length, clipped
-  // flags, node id, element id) use `flat` interpolation — matches the
-  // GLSL3 `flat` qualifier on the same fields.
-  const vSharpness: TSLNode = varying(vSharpnessVal);
-  const vPerpNorm: TSLNode = varying(aQuadCorner.y);
-  const vT: TSLNode = varying(t);
-  const vSegmentLength: TSLNode = varying(aSegmentLength).setInterpolation('flat');
-  const vWidthAtT: TSLNode = varying(width);
-  const vPixelWidth: TSLNode = varying(rawPixelWidth);
-  const vWidthFade: TSLNode = varying(vWidthFadeVal);
+  // Varyings declared up front, `.assign()`ed inside the vertex body.
+  // Per-segment-constant values (segment length, clipped flags, node
+  // id, element id) use `flat` interpolation — matches the GLSL3
+  // `flat` qualifier on the same fields.
+  const vSharpness: TSLNode = varying(float(0.0));
+  const vPerpNorm: TSLNode = varying(float(0.0));
+  const vT: TSLNode = varying(float(0.0));
+  const vSegmentLength: TSLNode = varying(float(0.0)).setInterpolation('flat');
+  const vWidthAtT: TSLNode = varying(float(0.0));
+  const vPixelWidth: TSLNode = varying(float(0.0));
+  const vWidthFade: TSLNode = varying(float(0.0));
   // View-space z to the fragment (fade computed per-fragment; see the
   // visual line TSL). Ortho graphs skip it.
-  const vViewZ: TSLNode | null = config.isOrtho ? null : varying(mvPos.z);
-  const vClippedStart: TSLNode = varying(aStartClipped).setInterpolation('flat');
-  const vClippedEnd: TSLNode = varying(aEndClipped).setInterpolation('flat');
+  const vViewZ: TSLNode | null = config.isOrtho ? null : varying(float(0.0));
+  const vClippedStart: TSLNode = varying(float(0.0)).setInterpolation('flat');
+  const vClippedEnd: TSLNode = varying(float(0.0)).setInterpolation('flat');
   const vNodeId: TSLNode = varying(uNodeId).setInterpolation('flat');
-  const vElementId: TSLNode = varying(float(instanceIndex)).setInterpolation('flat');
+  // Storage slot, NOT instanceIndex (the draw slot): identical under
+  // identity ordering, and stays correct once the sort worker permutes
+  // draw order.
+  const vElementId: TSLNode = varying(float(aSortedIndex)).setInterpolation('flat');
+
+  const vertexBody = Fn(() => {
+    // === Line-texture fetch prologue (visual-shader parity) ===
+    // Width is a multiple of 6, so a segment's texels share one row.
+    // Colors (texels 2/3 .rgb) and scalars (texel 5) are not needed
+    // for picking; only the .w sharpness of texels 2/3 is read.
+    const lineBase: TSLNode = int(aSortedIndex).mul(int(6)).toVar();
+    // int() wrap is LOAD-BEARING — see the visual factory
+    // (shader-tsl.ts) for the WebGL2-fallback rationale.
+    const lineTexW: TSLNode = int((textureSize(uLineTex, int(0)) as unknown as TSLNode).x).toVar();
+    const texelX: TSLNode = lineBase.mod(lineTexW).toVar();
+    const texelY: TSLNode = lineBase.div(lineTexW).toVar();
+    const lineT0: TSLNode = uLineTex.load(ivec2(texelX, texelY)).toVar();
+    const lineT1: TSLNode = uLineTex.load(ivec2(texelX.add(int(1)), texelY)).toVar();
+    const lineT2: TSLNode = uLineTex.load(ivec2(texelX.add(int(2)), texelY)).toVar();
+    const lineT3: TSLNode = uLineTex.load(ivec2(texelX.add(int(3)), texelY)).toVar();
+    const lineT4: TSLNode = uLineTex.load(ivec2(texelX.add(int(4)), texelY)).toVar();
+    const aStartPos: TSLNode = vec3(lineT0).toVar();
+    const aStartWidth: TSLNode = lineT0.w.toVar();
+    const aEndPos: TSLNode = vec3(lineT1).toVar();
+    const aEndWidth: TSLNode = lineT1.w.toVar();
+    const aStartSharpness: TSLNode = lineT2.w.toVar();
+    const aEndSharpness: TSLNode = lineT3.w.toVar();
+    const aSegmentLength: TSLNode = lineT4.x.toVar();
+    const aStartClipped: TSLNode = lineT4.y.toVar();
+    const aEndClipped: TSLNode = lineT4.z.toVar();
+
+    // Branchless: aQuadCorner.x ∈ {-1, +1} by construction.
+    const t: TSLNode = aQuadCorner.x.mul(0.5).add(0.5).toVar();
+    const startW: TSLNode = sanitizeNonNegative(aStartWidth, float(0.0));
+    const endW: TSLNode = sanitizeNonNegative(aEndWidth, float(0.0));
+    // Sharpness is a [0, 1] knob -> super-Gaussian exponent beta = 2^(6s - 2)
+    // (computed in the fragment). A valid s=0 must NOT be rejected, so clamp a
+    // non-negative-sanitised value into [0, 1] with the 0.5 default. Mirrors
+    // the visual shaders.
+    const startS: TSLNode = clamp(sanitizeNonNegative(aStartSharpness, float(0.5)), 0.0, 1.0);
+    const endS: TSLNode = clamp(sanitizeNonNegative(aEndSharpness, float(0.5)), 0.0, 1.0);
+    const width: TSLNode = mix(startW, endW, t).toVar();
+    const vSharpnessVal: TSLNode = mix(startS, endS, t);
+
+    const mvStart: TSLNode = modelViewMatrix.mul(vec4(aStartPos, 1.0)).toVar();
+    const mvEnd: TSLNode = modelViewMatrix.mul(vec4(aEndPos, 1.0)).toVar();
+    const mvPos: TSLNode = mix(mvStart, mvEnd, t).toVar();
+
+    // PERSPECTIVE ONLY (compile-time graph variant; see the visual line
+    // TSL): ortho graphs carry no cull/fade code — NDC clipping is the
+    // sole cull authority there.
+    // 1e-20 floor = uNearCull == 0 guard only; uNearCull is
+    // scene-bounds-scaled (see the visual line shader — an absolute 1e-4
+    // floor culled every segment of a tiny-unit scene).
+    const startDepth: TSLNode = mvStart.z.negate().toVar();
+    const endDepth: TSLNode = mvEnd.z.negate().toVar();
+    const bothBehind: TSLNode | null = config.isOrtho
+      ? null
+      : startDepth.lessThan(nearCull).and(endDepth.lessThan(nearCull));
+
+    const clipStart: TSLNode = cameraProjectionMatrix.mul(mvStart).toVar();
+    const clipEnd: TSLNode = cameraProjectionMatrix.mul(mvEnd).toVar();
+    // projection is linear, so proj * mix(a,b,t) == mix(proj*a, proj*b, t).
+    const clipPosBase: TSLNode = mix(clipStart, clipEnd, t).toVar();
+
+    // Scene-relative w guard (w == -viewZ under perspective; ortho
+    // graphs use the inert 1.0 — compile-time variant). See the visual
+    // line shader for the scale-free rationale.
+    const wGuard: TSLNode = config.isOrtho ? float(1.0) : nearCull;
+    const wStart: TSLNode = max(clipStart.w, wGuard);
+    const wEnd: TSLNode = max(clipEnd.w, wGuard);
+    const ndcStart: TSLNode = vec2(clipStart.xy.div(wStart)).toVar();
+    const ndcEnd: TSLNode = vec2(clipEnd.xy.div(wEnd)).toVar();
+
+    // The +0.5 in (ndc*0.5+0.5)*resolution cancels under subtraction.
+    const pixelDir: TSLNode = vec2(ndcEnd.sub(ndcStart).mul(uResolution.mul(0.5))).toVar();
+    const pixelLen: TSLNode = length(pixelDir).toVar();
+    // `.toVar()` on the chained branch keeps the sharp edge stable.
+    const lineDir: TSLNode = pixelLen
+      .greaterThan(0.0001)
+      .select(vec2(pixelDir.div(pixelLen)).toVar(), vec2(1.0, 0.0))
+      .toVar();
+    const perpendicular: TSLNode = vec2(lineDir.y.negate(), lineDir.x).toVar();
+
+    // Each camera projection mode is a separate graph variant so the
+    // unused branch never materialises. Wrapper rebuilds when isOrtho
+    // flips. View-space depth (-mvPos.z) matches the visual shader.
+    let rawPixelWidth: TSLNode;
+    if (config.isOrtho) {
+      rawPixelWidth = width.mul(uOrthoLineScale).toVar();
+    } else {
+      const distView: TSLNode = max(mvPos.z.negate(), nearCull);
+      rawPixelWidth = width.mul(uPerspectiveLineScale).div(distView).toVar();
+    }
+
+    const minPixelWidth = float(1.5);
+    const maxPW: TSLNode = max(uMaxLinePixelWidth, minPixelWidth.add(1.0)).toVar();
+    const clampedPixelWidth: TSLNode = clamp(rawPixelWidth, minPixelWidth, maxPW);
+    const vWidthFadeVal: TSLNode = rawPixelWidth
+      .lessThanEqual(maxPW)
+      .select(float(1.0), maxPW.div(max(rawPixelWidth, float(1e-4))).toVar());
+
+    // Pathological-segment cull (visual-shader parity): both endpoints
+    // inside near-cull margin AND rawPixelWidth blows past the clamp by
+    // 2× → degenerate to off-screen. Otherwise picking still rasterizes
+    // the half-viewport quad the visual pass already culled.
+    const pathological: TSLNode | null = config.isOrtho
+      ? null
+      : startDepth
+          .lessThan(nearCull.mul(2.0))
+          .and(endDepth.lessThan(nearCull.mul(2.0)))
+          .and(rawPixelWidth.greaterThan(maxPW.mul(2.0)));
+
+    const pixelOffset: TSLNode = perpendicular.mul(aQuadCorner.y).mul(clampedPixelWidth);
+    const ndcOffset: TSLNode = pixelOffset.div(uResolution).mul(2.0);
+    const expandedClip: TSLNode = vec4(
+      clipPosBase.xy.add(ndcOffset.mul(clipPosBase.w)),
+      clipPosBase.z,
+      clipPosBase.w
+    ).toVar();
+
+    // Real TSL control flow — see the visual factory for the rationale
+    // (one branch per draw instead of evaluating both via select()).
+    const culled: TSLNode | null =
+      bothBehind && pathological ? bothBehind.or(pathological) : (bothBehind ?? pathological);
+    const clipPosOut: TSLNode = vec4(0.0, 0.0, -2.0, 1.0).toVar('clipPos');
+    if (culled) {
+      If(culled.not(), () => {
+        clipPosOut.assign(expandedClip);
+      });
+    } else {
+      clipPosOut.assign(expandedClip);
+    }
+
+    // Assign varyings (declared outside the Fn; see above).
+    vSharpness.assign(vSharpnessVal);
+    vPerpNorm.assign(aQuadCorner.y);
+    vT.assign(t);
+    vSegmentLength.assign(aSegmentLength);
+    vWidthAtT.assign(width);
+    vPixelWidth.assign(rawPixelWidth);
+    vWidthFade.assign(vWidthFadeVal);
+    if (vViewZ) vViewZ.assign(mvPos.z);
+    vClippedStart.assign(aStartClipped);
+    vClippedEnd.assign(aEndClipped);
+
+    return clipPosOut;
+  });
+
+  const clipPos: TSLNode = vertexBody();
 
   // ---- Fragment: brightness output + brightness-as-depth ----
 
@@ -316,6 +384,12 @@ export function buildLinePickTSLNodesFromUniforms(
   uniforms: Record<string, THREE.IUniform>
 ): LinePickTSLNodes {
   return {
+    // Line data texture — bound from the caller's uniform when present,
+    // else the shared placeholder so codegen-only consumers still build
+    // a valid graph.
+    uLineTex: texture(
+      (uniforms.uLineTex?.value as THREE.Texture | null) ?? getPlaceholderElementTexture()
+    ),
     uResolution: uniform(
       (uniforms.uResolution?.value as THREE.Vector2 | undefined) ?? new THREE.Vector2(1, 1)
     ),

@@ -1,6 +1,6 @@
 # GPU Buffer Pool — Per-Type Adapters and Cross-Type Eviction
 
-> Internal helpers for `rendering/gpu-buffer-pool.ts`: per-geometry-type adapters (Points, Lines, GSplats) that own bucketed buffer reuse, a geometry-agnostic interleaved-attribute codec, and a byte-budget evictor that disposes pooled buffers across all three type pools once the global byte ceiling is exceeded.
+> Internal helpers for `rendering/gpu-buffer-pool.ts`: per-geometry-type adapters (Points, Lines, GSplats) that own bucketed buffer reuse, and a byte-budget evictor that disposes pooled buffers across all three type pools once the global byte ceiling is exceeded.
 
 The parent `GPUBufferPool` (`../gpu-buffer-pool.ts`) owns the shared coordination state — `activeBuffers`, `frameCount`, `stats`, eviction policy — and delegates per-type acquire / release / update to one adapter per geometry type. This split keeps each adapter focused on its own attribute layout and update path while eviction sees all three pools uniformly.
 
@@ -12,9 +12,6 @@ gpu-buffer-pool/
 │                              PooledBufferRef
 ├── eviction-policy.ts       # Pure largest-first selector — selectBuffersToEvict()
 ├── byte-budget-evictor.ts   # Cross-type eviction loop — evictUntilUnderByteBudget()
-├── attribute-codec.ts       # Geometry-agnostic interleaved-buffer helper
-│                              (writePooledAttribute — strided writes only;
-│                              there is deliberately NO in-place rebuild)
 ├── geometry-bytes.ts        # Cached per-geometry byte estimate
 │                              (estimateGeometryBytes, invalidateCachedByteSize)
 ├── capacity.ts              # Buffer-capacity sizing primitive
@@ -31,28 +28,20 @@ gpu-buffer-pool/
 Each adapter (`PointsBufferAdapter`, `LinesBufferAdapter`, `GSplatsBufferAdapter`) owns:
 
 - A bucketed `Map<number, PooledBuffer[]>` of released-but-reusable geometries, keyed by capacity bucket.
-- Lines: a canonical per-instance attribute spec list (`LINES_BASE_ATTRIBUTE_SPECS`) used to allocate the geometry's single `InstancedInterleavedBuffer`. Points and GSplats instead attach an RGBA32F **element texture** (3 texels/point via `point-geometry.ts::attachPointStorage`; 4 texels/splat via `gsplat-geometry.ts::attachSplatStorage`) + an `aSortedIndex` (Uint32) ordering attribute (depth-sorting Phase 1 / §8); the texture is disposed by the geometry's own `dispose` event at every dispose site.
-- `acquireGeometry(nodeId, …)` — first checks `host.activeBuffers` for in-place reuse (matching capacity; for lines, also a matching scalar spec set via the `hasScalars` parameter — points and gsplats use fixed texel layouts, so capacity is their only criterion), then scans bucketed pools best-fit, then falls back to allocation. **Growth is release + reacquire, never an in-place rebuild**: an undersized active buffer is released to the pool intact and the acquire falls through to best-fit/fresh allocation. Replacing a rendered geometry's attributes would strand the old GPU buffer in the renderer caches (freed only at GC mercy on classic WebGL; pinned permanently by the WebGPU renderer's strong `Info.memoryMap`). Content carry-forward is unnecessary — every commit rewrites all attributes for the full count right after acquire.
+- All three types attach an RGBA32F **element texture** (3 texels/point via `point-geometry.ts::attachPointStorage`; 6 texels/segment via `line-geometry.ts::attachLineStorage`; 4 texels/splat via `gsplat-geometry.ts::attachSplatStorage`) + an `aSortedIndex` (Uint32) ordering attribute (depth-sorting Phase 1 / §8); the texture is disposed by the geometry's own `dispose` event at every dispose site.
+- `acquireGeometry(nodeId, …)` — first checks `host.activeBuffers` for in-place reuse (matching capacity — the fixed texel layouts make capacity the only criterion for every type), then scans bucketed pools best-fit, then falls back to allocation. **Growth is release + reacquire, never an in-place rebuild**: an undersized active buffer is released to the pool intact and the acquire falls through to best-fit/fresh allocation. Replacing a rendered geometry's attributes would strand the old GPU buffer in the renderer caches (freed only at GC mercy on classic WebGL; pinned permanently by the WebGPU renderer's strong `Info.memoryMap`). Content carry-forward is unnecessary — every commit rewrites all attributes for the full count right after acquire.
 - `releaseGeometry(nodeId)` — moves the buffer into a per-capacity bucket and calls `host.evictUnused()`.
-- `updateGeometry(geometry, data, count, …)` — Lines write per-instance attributes via `writePooledAttribute`; Points and GSplats run one fused texel pass (`writePointTexels` / `writeSplatTexels`) plus an identity `aSortedIndex` fill. All recompute `boundingBox` / `boundingSphere`; the lines adapter expands the box by max line width, the gsplats adapter by max Cholesky row-norm × truncation radius.
+- `updateGeometry(geometry, data, count, …)` — one fused texel pass (`writePointTexels` / `writeLineTexels` / `writeSplatTexels`, each with a fail-loud pre-store guard) plus an identity `aSortedIndex` fill (or a suffix-identity/preserved permutation for appends and same-count recommits). All recompute `boundingBox` / `boundingSphere`; the lines adapter expands the box by max line width, the gsplats adapter by max Cholesky row-norm × truncation radius.
 
 Adapters interact with the parent pool only through the narrow `*AdapterHost` interfaces — they read `activeBuffers`, `frameCount`, `stats`, `typeStats`, call `host.getBucket(count)` and `host.evictUnused()`, and set `host._lastAcquireRebuilt` so the parent knows whether the returned geometry still has its previous attribute bindings.
 
-### Dtype-blind pooling (points and gsplats)
+### Dtype-blind pooling
 
-All three types pool by capacity alone. Points lost their dtype bucketing with the texture migration: the fixed 3-texel RGBA32F layout means any pooled points geometry fits any points node — dtype normalization happens at upload time (`widenToFloat32` in the adapter), so a Uint8 color view can never be reinterpreted as Float32. Lines' interleaved layout is uniformly Float32; gsplat splat textures are always RGBA32F.
+All three types pool by capacity alone. Points lost their dtype bucketing with the texture migration (dtype normalization happens at upload time — `widenToFloat32` in the adapter — so a Uint8 color view can never be reinterpreted as Float32), and lines lost their `hasScalars` spec bucketing the same way: the fixed RGBA32F texel layouts mean any pooled geometry of a type fits any node of that type.
 
-### Optional scalar attributes (colormaps)
+### Optional scalar slots (colormaps)
 
-Points always carry a scalar texel slot (0.0 identity when the dataset has no scalars; real presence rides the `geometry.userData.hasScalars` stamp). Lines declare scalar presence at ACQUIRE time — `acquireLinesGeometry(nodeId, count, hasScalars)` includes `aStartScalar`/`aEndScalar` in the creation spec set when the commit carries colormap data, and a spec-set mismatch on a pooled/active candidate releases and reacquires. `updateGeometry` never rebuilds in place (it throws if scalar data arrives on a base-only geometry — an acquire-contract violation).
-
-### Interleaved-attribute codec
-
-`attribute-codec.ts` holds the strided-write logic:
-
-- `writePooledAttribute(geometry, name, src, count)` — strided write of a packed source array into the interleaved buffer at the right offset. Adapters call this from `updateGeometry` instead of poking each attribute view individually.
-
-There is deliberately no in-place rebuild helper: a geometry's attribute views are never replaced after creation (see the growth note above).
+Points (texel2.x) and lines (texel5.xy) always carry scalar texel slots, written with the 0.0 identity when the dataset has no scalars; real presence rides the `geometry.userData.hasScalars` stamp that every write path refreshes (pool geometries are reused across tenants). A colormap toggle therefore never rebuilds geometry or re-buckets the pool.
 
 ### Capacity sizing
 
@@ -83,13 +72,13 @@ The evictor sees pooled-only buffers — active (in-use) buffers are never candi
 
 - The parent `GPUBufferPool` is the **only** writer to `activeBuffers`, `stats`, `typeStats`, and `_lastAcquireRebuilt`. Adapters mutate these fields through their `Host` interface — never via direct construction or back-doors.
 - Per-bucket arrays inside an adapter (`pointBuffers`, `lineBuffers`, `gsplatBuffers`) only ever contain pooled (not active) buffers. Active buffers live in `host.activeBuffers` keyed by `nodeId`.
-- `updateGeometry` deletes the r184 `_maxInstanceCount` cache after writes (gsplats/lines adapters) — r184 caches this value on the geometry and won't refresh it spontaneously. (Capacity-grow rebuilds no longer exist; growth swaps in a fresh geometry, which has no stale cache by construction.)
+- `updateGeometry` deletes the r184 `_maxInstanceCount` cache after writes — r184 caches this value on the geometry and won't refresh it spontaneously. (Capacity-grow rebuilds no longer exist; growth swaps in a fresh geometry, which has no stale cache by construction.)
 - After any `updateGeometry`, `boundingBox` and `boundingSphere` are recomputed. Frustum culling depends on these being current — the lines and gsplats paths additionally expand the box to cover the rendered footprint (line width, Cholesky row-norm × σ).
 
 ## See Also
 
 - `../gpu-buffer-pool.ts` — parent pool that wires the three adapters together and owns shared state
-- `../interleaved-attributes.ts` — `packInterleavedAttributes`, `widenToFloat32`, `writeInterleavedAttribute` primitives used by the codec
-- `../line-geometry.ts` / `../gsplat-geometry.ts` — standalone-geometry counterparts (mirror the `_maxInstanceCount` workaround)
+- `../widen-to-float32.ts` — dtype widening consumed by the points adapter
+- `../point-geometry.ts` / `../line-geometry.ts` / `../gsplat-geometry.ts` — the per-type texel writers + storage attach helpers
 - `./geometry-bytes.ts` — `estimateGeometryBytes`, `invalidateCachedByteSize`
 - `../README.md` § "GPU Buffer Pool" — package-level overview

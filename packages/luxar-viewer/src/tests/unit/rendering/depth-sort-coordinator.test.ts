@@ -1430,6 +1430,103 @@ describe('depth-sort coordinator — points integration', () => {
   });
 });
 
+/**
+ * Lines integration (the volumetric-phases arc PR-C): lines share the
+ * whole coordinator mechanism through the same geometry-neutral entry
+ * points — the deltas under test are the `'line'` kind mapping (the
+ * commit passes segment MIDPOINTS as the lazy centers) and the
+ * EFFECTIVE-mode gate (lines render `volumetric` as additive until
+ * phase 4, so they must not sort in it).
+ */
+describe('depth-sort coordinator — lines integration', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  /** A minimal lines mesh — same texture-backed shape, lines nodeType. */
+  function makeLinesMesh(count: number, blendingMode: string): THREE.Mesh {
+    const mesh = makeGSplatsMesh(count, blendingMode);
+    mesh.userData.nodeType = 'lines';
+    return mesh;
+  }
+
+  it('registers + sorts a normal-mode lines commit from a LAZY midpoint provider', async () => {
+    const coord = await loadCoordinator();
+    const requestRender = vi.fn();
+    coord.configureDepthSort({ getCamera: () => makeCamera(), requestRender });
+
+    const mesh = makeLinesMesh(3, 'normal');
+    const produced: Float32Array[] = [];
+    const provider = vi.fn(() => {
+      const out = new Float32Array([0, 0, -10, 1, 0, -1, 2, 0, -5]);
+      produced.push(out);
+      return out;
+    });
+    coord.noteDepthSortCommit(mesh, provider, 3);
+    await flush();
+
+    expect(provider).toHaveBeenCalledTimes(1);
+    expect(mockApi.registerNode).toHaveBeenCalledTimes(1);
+    expect(transferCalls[0].transferables).toContain(produced[0].buffer);
+    expect(mockApi.sort).toHaveBeenCalledTimes(1);
+
+    sortResolvers[0]({
+      generation: mockApi.sort.mock.calls[0][0].generation as number,
+      ordering: new Uint32Array([0, 2, 1]),
+    });
+    await flush();
+    const attr = (mesh.geometry as THREE.InstancedBufferGeometry).getAttribute('aSortedIndex');
+    expect(Array.from(attr.array as Uint32Array)).toEqual([0, 2, 1]);
+    expect(requestRender).toHaveBeenCalled();
+  });
+
+  it('does NOT sort a volumetric lines commit (phase-1 effective-additive fallback)', async () => {
+    // effectiveGeometryMode('volumetric', 'line') === 'additive' until
+    // volumetric phase 4 — the material renders commutatively, so sorting
+    // would be pure waste. THE lines chokepoint test: when phase 4 flips
+    // the helper, this expectation inverts and lines volumetric starts
+    // sorting with no coordinator change.
+    const coord = await loadCoordinator();
+    coord.configureDepthSort({ getCamera: () => makeCamera(), requestRender: vi.fn() });
+
+    const mesh = makeLinesMesh(3, 'volumetric');
+    const provider = vi.fn(() => new Float32Array(9));
+    coord.noteDepthSortCommit(mesh, provider, 3);
+    await flush();
+
+    expect(provider).not.toHaveBeenCalled();
+    expect(mockApi.registerNode).not.toHaveBeenCalled();
+    expect(mockApi.sort).not.toHaveBeenCalled();
+  });
+
+  it('mode switches judge the EFFECTIVE mode: lines normal→volumetric releases', async () => {
+    // Same type-aware matrix as points: 'volumetric' downgrades to
+    // additive for the 'line' kind, so leaving `normal` for it exits
+    // the sorted set (release), and additive→volumetric is a no-op
+    // (unsorted→unsorted must not force a reprocess).
+    const coord = await loadCoordinator();
+    const requestReprocess = vi.fn();
+    coord.configureDepthSort({
+      getCamera: () => makeCamera(),
+      requestRender: vi.fn(),
+      requestReprocess,
+    });
+
+    const lines = makeLinesMesh(2, 'normal');
+    coord.noteDepthSortCommit(lines, () => new Float32Array([0, 0, -1, 1, 0, -2]), 2);
+    await flush();
+    expect(mockApi.registerNode).toHaveBeenCalledTimes(1);
+
+    coord.noteDepthSortBlendingModeSwitch(lines, 'volumetric', 'normal');
+    await flush();
+    expect(mockApi.releaseNode).toHaveBeenCalledWith(lines.uuid);
+
+    requestReprocess.mockClear();
+    coord.noteDepthSortBlendingModeSwitch(lines, 'volumetric', 'additive');
+    expect(requestReprocess).not.toHaveBeenCalled();
+  });
+});
+
 describe('depth-sort coordinator — provider failure semantics', () => {
   beforeEach(() => {
     vi.clearAllMocks();

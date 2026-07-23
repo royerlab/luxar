@@ -6,6 +6,29 @@ All notable changes to Luxar are documented in this file.
 
 ### July 2026
 
+#### Added — lines texture storage + depth sorting (three-geometry symmetry complete)
+
+- **Lines migrated to texture-backed element storage**: per-segment data
+  now lives in an RGBA32F line texture (6 texels/segment — endpoints +
+  widths, per-endpoint colors + sharpness, segment length + clip flags,
+  colormap scalars + reserved per-endpoint alphas for volumetric
+  Phase 4), fetched in the vertex stage via `texelFetch` and indexed by
+  the sole per-instance `aSortedIndex` attribute — the same storage
+  model gsplats and points already use.
+- **Lines in `normal` blending mode are now back-to-front depth-sorted**
+  by segment midpoint, joining the SortWorker, the camera-motion re-sort
+  scheduler, the cross-node `renderOrder` scale, the `preserveOrdering`
+  same-count-recommit prior, and the suffix-only append fast path.
+  Picking reads the storage slot (`aSortedIndex`), staying correct under
+  any permutation. Lines `volumetric` keeps its additive fallback
+  (unsorted) until volumetric Phase 4 flips the shared policy helper.
+- **Three lines-only mechanisms retired by the fixed texel layout**: the
+  interleaved-attribute packing, the colormap attribute-set toggle
+  (scalar presence now rides the `userData.hasScalars` stamp — no more
+  geometry rebuild or pool re-bucketing on a colormap switch), and the
+  line-material LRU cache (line materials are per node, carrying the
+  node's own `uLineTex`, like points and gsplats).
+
 #### Added — points depth sorting (normal mode now correctly ordered)
 
 - **Points in `normal` blending mode are now back-to-front depth-sorted**,
@@ -29,6 +52,26 @@ All notable changes to Luxar are documented in this file.
   LUXAR_ZARR_FORMAT.md — size attributes do not scale with the node
   `transform` (centers/vertices do); gsplats differ (covariances
   transform with the node).
+
+#### Added — `luxar demo` sub-app + DEMO_META registry + CLI dedup (#633–#638)
+
+- **`luxar demo` sub-app** (#637): `luxar demo` lists all 75 bundled demos in a
+  table; `demo info <key>`, `demo run <key|index>` (forwards `--` args, exit
+  codes propagate), `demo run-all` (batch `--no-serve` generation with
+  `--skip-existing/--force`, `--keep-going/--fail-fast`), and
+  `demo cache list/clear` for the `~/.cache/luxar/` inventory.
+- **DEMO_META registry** (#635): every `demo_*.py` carries a machine-readable
+  `DEMO_META` literal, AST-parsed (never imported) by `demos/registry.py`;
+  schema-validated for all demos by `tests/test_demo_meta.py`, single source
+  for the CLI and the gallery manifest.
+- **CLI refactor** (#638): shared option definitions in `common_options.py`
+  (no duplicated `typer.Option` help/defaults), honest port API (`pick_port` /
+  `find_available_port` return the actually-bound port), polled server
+  readiness (`wait_for_server`, replaces fixed sleeps, fail-fast on a dead
+  server thread), and one `ensure_viewer_built()` policy for every
+  serve-family command.
+- **Fixed** (#633): subcommands no longer swallow `typer.Exit`; zarr stores
+  are mounted at the data-server root.
 
 #### Fixed — review-campaign hardening riding the points-sorting PR
 

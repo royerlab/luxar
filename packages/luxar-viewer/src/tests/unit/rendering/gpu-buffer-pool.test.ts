@@ -12,7 +12,11 @@ import type { ProcessedLinesData } from '../../../types/lines';
 import * as THREE from 'three';
 import { getSplatTexture } from '../../../rendering/gsplat-geometry';
 import { getPointTexture } from '../../../rendering/point-geometry';
-import { POINT_FLOATS_PER_POINT } from '../../../rendering/element-texture-layout';
+import { getLineTexture } from '../../../rendering/line-geometry';
+import {
+  LINE_FLOATS_PER_SEGMENT,
+  POINT_FLOATS_PER_POINT,
+} from '../../../rendering/element-texture-layout';
 import { writeSortedIndexOrdering } from '../../../rendering/element-storage';
 
 describe('GPUBufferPool', () => {
@@ -277,41 +281,53 @@ describe('GPUBufferPool', () => {
 
   describe('Lines Geometry', () => {
     it('should create InstancedBufferGeometry for lines', () => {
-      const geom = pool.acquireLinesGeometry('line1', 500, false);
+      const geom = pool.acquireLinesGeometry('line1', 500);
       expect(geom).toBeInstanceOf(THREE.InstancedBufferGeometry);
+      // Acquire must NOT bump instanceCount — only a successful texel
+      // write does (updateGeometry's post-write prepare).
+      expect(geom.instanceCount).toBe(0);
+      expect(geom.drawRange.count).toBe(6);
+      expect(geom.getAttribute('aQuadCorner')).toBeDefined();
 
-      // Check instance attributes
-      expect(geom.getAttribute('aStartPos')).toBeDefined();
-      expect(geom.getAttribute('aEndPos')).toBeDefined();
-      expect(geom.getAttribute('aStartColor')).toBeDefined();
-      expect(geom.getAttribute('aSegmentLength')).toBeDefined();
+      // Texture-backed storage: per-segment data lives in the pooled
+      // RGBA32F line texture (6 texels/segment); aSortedIndex is the only
+      // per-instance attribute. Capacity = ceil(500 * 1.5) = 750
+      // segments -> >= 750 * 24 floats in the backing store.
+      const texture = getLineTexture(geom);
+      expect(texture).not.toBeNull();
+      expect((texture!.image.data as Float32Array).length).toBeGreaterThanOrEqual(
+        750 * LINE_FLOATS_PER_SEGMENT
+      );
+      const sortedIndex = geom.getAttribute('aSortedIndex');
+      expect(sortedIndex).toBeDefined();
+      expect(sortedIndex.array).toBeInstanceOf(Uint32Array);
       // Ownership marker consumed by the commit handoff's dispose gate.
       expect(geom.userData.luxarPooled).toBe(true);
     });
 
     it('should reuse lines geometry', () => {
-      const geom1 = pool.acquireLinesGeometry('line1', 500, false);
-      const geom2 = pool.acquireLinesGeometry('line1', 400, false);
+      const geom1 = pool.acquireLinesGeometry('line1', 500);
+      const geom2 = pool.acquireLinesGeometry('line1', 400);
 
       expect(geom2).toBe(geom1);
       expect(pool.getStats().reuses).toBe(1);
     });
 
     it('should handle lines release and reuse', () => {
-      pool.acquireLinesGeometry('line1', 500, false);
+      pool.acquireLinesGeometry('line1', 500);
       pool.releaseLinesGeometry('line1');
 
-      pool.acquireLinesGeometry('line2', 450, false);
+      pool.acquireLinesGeometry('line2', 450);
       expect(pool.getStats().allocations).toBe(1);
       expect(pool.getStats().reuses).toBe(1);
     });
 
     it('updateLinesGeometry rejects a torn multi-attribute write atomically', () => {
-      // Lines write 11–13 sequential per-attribute columns; a short
-      // array in the MIDDLE (endColors here) used to throw after the
-      // positions were already stored and range-registered — a torn mix
-      // of new positions + old colors. The pre-flight sweep must throw
-      // ONE aggregate error BEFORE any store.
+      // The fused texel writer's fail-loud guard runs BEFORE any store:
+      // a short array in the MIDDLE of the source set (endColors here)
+      // throws ONE aggregate error with nothing written — no torn mix of
+      // new positions + old colors in the line texture (the interleaved
+      // era needed a separate pre-flight sweep for the same guarantee).
       const makeLinesData = (count: number): ProcessedLinesData => ({
         startPositions: new Float32Array(count * 3),
         endPositions: new Float32Array(count * 3),
@@ -327,33 +343,40 @@ describe('GPUBufferPool', () => {
         segmentCount: count,
       });
 
-      const geom = pool.acquireLinesGeometry('torn-lines', 2, false);
+      const geom = pool.acquireLinesGeometry('torn-lines', 2);
 
       // Sentinel commit: a fully valid update.
       const sentinel = makeLinesData(2);
       sentinel.startPositions.set([1, 2, 3, 4, 5, 6]);
       pool.updateLinesGeometry(geom, sentinel, 2);
 
-      const posView = geom.getAttribute('aStartPos') as THREE.InterleavedBufferAttribute;
-      const buffer = posView.data as THREE.InstancedInterleavedBuffer;
-      const rangesAfterSentinel = buffer.updateRanges.length;
-      expect(posView.getX(0)).toBe(1);
+      const texture = getLineTexture(geom)!;
+      const texels = texture.image.data as Float32Array;
+      const rangesAfterSentinel = texture.updateRanges.length;
+      const versionAfterSentinel = texture.version;
+      // texel 0 of each segment starts at the 24-float stride: startPos.xyz.
+      expect(texels[0]).toBe(1);
+      expect(geom.instanceCount).toBe(2);
 
       // Torn attempt: valid (new) positions but a SHORT endColors.
       const torn = makeLinesData(2);
       torn.startPositions.set([9, 9, 9, 9, 9, 9]);
       torn.endColors = new Float32Array(3); // needs 2 * 3 = 6
       expect(() => pool.updateLinesGeometry(geom, torn, 2)).toThrow(
-        /endColors \(length 3, need 6\)/
+        /writeLineTexels: source arrays shorter than count=2 \(.*endColors=3/
       );
 
-      // Atomic: the position region is UNTOUCHED (sentinel survives)…
-      expect(posView.getX(0)).toBe(1);
-      expect(posView.getY(0)).toBe(2);
-      expect(posView.getZ(0)).toBe(3);
-      expect(posView.getX(1)).toBe(4);
-      // …and no NEW update ranges were registered beyond the sentinel's.
-      expect(buffer.updateRanges.length).toBe(rangesAfterSentinel);
+      // Atomic: the position texels are UNTOUCHED (sentinel survives)…
+      expect(texels[0]).toBe(1);
+      expect(texels[1]).toBe(2);
+      expect(texels[2]).toBe(3);
+      expect(texels[LINE_FLOATS_PER_SEGMENT]).toBe(4);
+      // …no NEW upload was registered beyond the sentinel's…
+      expect(texture.updateRanges.length).toBe(rangesAfterSentinel);
+      expect(texture.version).toBe(versionAfterSentinel);
+      // …and instanceCount was not re-prepared (set only AFTER a
+      // successful write).
+      expect(geom.instanceCount).toBe(2);
     });
   });
 
@@ -429,9 +452,9 @@ describe('GPUBufferPool', () => {
     });
 
     it('lines: a throw during grow re-claims the released buffer', () => {
-      const geom1 = pool.acquireLinesGeometry('grow-oom-l', 500, false); // capacity 750
+      const geom1 = pool.acquireLinesGeometry('grow-oom-l', 500); // capacity 750
 
-      withThrowingEvict(() => pool.acquireLinesGeometry('grow-oom-l', 2000, false));
+      withThrowingEvict(() => pool.acquireLinesGeometry('grow-oom-l', 2000));
 
       const active = pool.activeBuffers.get('grow-oom-l');
       expect(active).toBeDefined();
@@ -441,7 +464,7 @@ describe('GPUBufferPool', () => {
         expect(buffers).not.toContain(active);
       }
       const reusesBefore = pool.getStats().reuses;
-      expect(pool.acquireLinesGeometry('grow-oom-l', 500, false)).toBe(geom1);
+      expect(pool.acquireLinesGeometry('grow-oom-l', 500)).toBe(geom1);
       expect(pool.getStats().reuses).toBe(reusesBefore + 1);
     });
 
@@ -555,7 +578,7 @@ describe('GPUBufferPool', () => {
 
     it('should dispose all geometries on pool disposal', () => {
       pool.acquirePointsGeometry('node1', 1000);
-      pool.acquireLinesGeometry('line1', 500, false);
+      pool.acquireLinesGeometry('line1', 500);
       pool.acquireGSplatsGeometry('splat1', 300);
 
       pool.dispose();
@@ -686,7 +709,7 @@ describe('GPUBufferPool', () => {
 
     it('should track active vs pooled buffers', () => {
       pool.acquirePointsGeometry('node1', 1000);
-      pool.acquireLinesGeometry('line1', 500, false);
+      pool.acquireLinesGeometry('line1', 500);
 
       let stats = pool.getStats();
       expect(stats.activeBuffers).toBe(2);
@@ -764,10 +787,12 @@ describe('GPUBufferPool', () => {
       try {
         const empty = new GPUBufferPool(20, 300, 5, () => 0);
 
-        const lineGeom = empty.acquireLinesGeometry('zero-lines', 0, false);
-        const lineBuf = (lineGeom.getAttribute('aStartPos') as THREE.InterleavedBufferAttribute)
-          .data;
-        expect((lineBuf.array as Float32Array).length).toBeGreaterThan(0);
+        // Texture-backed lines: the zero-capacity hazard is the ordering
+        // attribute (the texture always has >= 1 row) — mirror points.
+        const lineGeom = empty.acquireLinesGeometry('zero-lines', 0);
+        const lineIdx = lineGeom.getAttribute('aSortedIndex');
+        expect((lineIdx.array as Uint32Array).length).toBeGreaterThan(0);
+        expect((getLineTexture(lineGeom)!.image.data as Float32Array).length).toBeGreaterThan(0);
 
         // Texture-backed points: the zero-capacity hazard is the ordering
         // attribute (the texture always has >= 1 row) — mirror gsplats.

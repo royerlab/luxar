@@ -130,21 +130,21 @@ export class NodeFactory {
    * post-processing → materials → nodes.
    *
    * Also re-uploads geometry GPU buffers for all three geometry types. A
-   * context loss zeroes the GPU-side storage — the gsplat/point element
-   * textures + `aSortedIndex`, and the lines interleaved instance
-   * buffers — while the CPU mirror survives, so we mark everything
-   * full-dirty (empty ranges → three's full upload) and clear the
-   * append-fast-path flag `gpuPrefixIntact` (depth-sorting Phase 4
-   * Stage 2). The flag is load-bearing: without it the next commit could
-   * take the append path and DOWNGRADE the pending full upload to a
-   * suffix-only partial, leaving the prefix stale. This runs
+   * context loss zeroes the GPU-side storage — the element textures +
+   * `aSortedIndex` (gsplats, points, and lines alike since the lines
+   * texture-storage migration) — while the CPU mirror survives, so we
+   * mark everything full-dirty (empty ranges → three's full upload) and
+   * clear the append-fast-path flag `gpuPrefixIntact` (depth-sorting
+   * Phase 4 Stage 2). The flag is load-bearing: without it the next
+   * commit could take the append path and DOWNGRADE the pending full
+   * upload to a suffix-only partial, leaving the prefix stale. This runs
    * unconditionally (picking may be disabled).
    */
   rebuildAfterContextRestore(root: THREE.Object3D): void {
     root.traverse((obj) => {
       if (!(obj instanceof THREE.Mesh)) return;
       const nodeType = obj.userData?.nodeType;
-      if (nodeType === 'gsplats' || nodeType === 'points') {
+      if (nodeType === 'gsplats' || nodeType === 'points' || nodeType === 'lines') {
         // Texture-backed storage (pool AND non-pool geometries alike):
         // mark the element texture + aSortedIndex full-dirty.
         const geom = obj.geometry as THREE.InstancedBufferGeometry;
@@ -158,28 +158,6 @@ export class NodeFactory {
         if (idx) {
           idx.clearUpdateRanges();
           idx.needsUpdate = true;
-        }
-        obj.userData.gpuPrefixIntact = false;
-      } else if (nodeType === 'lines') {
-        // Collect the geometry's unique InstancedInterleavedBuffer(s) —
-        // every pooled per-instance attribute is a view over one shared
-        // buffer today, but dedupe by identity so a future multi-buffer
-        // layout (dtype groups) stays covered. Non-pool lines geometries
-        // use plain per-attribute storage instead — mark those directly.
-        const geom = obj.geometry as THREE.InstancedBufferGeometry;
-        const buffers = new Set<THREE.InstancedInterleavedBuffer>();
-        for (const name of Object.keys(geom.attributes)) {
-          const attr = geom.attributes[name];
-          if (attr instanceof THREE.InterleavedBufferAttribute) {
-            buffers.add(attr.data as THREE.InstancedInterleavedBuffer);
-          } else if (attr instanceof THREE.BufferAttribute) {
-            attr.clearUpdateRanges();
-            attr.needsUpdate = true;
-          }
-        }
-        for (const buffer of buffers) {
-          buffer.clearUpdateRanges();
-          buffer.needsUpdate = true;
         }
         obj.userData.gpuPrefixIntact = false;
       }

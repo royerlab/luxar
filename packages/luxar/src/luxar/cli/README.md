@@ -7,8 +7,9 @@ This package contains the command-line interface (CLI) for Luxar, providing tool
 Essential CLI commands in 3 steps:
 
 ```bash
-# 1. Generate and view a demo (fastest way to see Luxar)
+# 1. List the bundled demos, then run one (fastest way to see Luxar)
 luxar demo
+luxar demo run lorenz
 
 # 2. Serve your own dataset with the viewer
 luxar serve my_data.luxar.zarr --viewer
@@ -18,7 +19,7 @@ luxar info my_data.luxar.zarr --stats
 ```
 
 **What Each Does**:
-- `luxar demo` - Creates a demo dataset and opens it in the viewer automatically
+- `luxar demo` - Lists the bundled demos; `luxar demo run <key>` generates one and opens it in the viewer
 - `luxar serve --viewer` - Serves your data via HTTP alongside the viewer (add `--open` to launch the browser)
 - `luxar info --stats` - Shows dataset structure, dimensions, and compression stats
 

@@ -64,6 +64,7 @@ DEMO_META = {
     "outputs": ["nd_transforms_observatory"],
 }
 
+import sys
 from pathlib import Path
 
 import numpy as np
@@ -382,6 +383,10 @@ def main() -> None:
     aprint("  - Radio data appears at Time ≥ 5 (time-shifted)")
     aprint("  - X-ray data appears at even Time values (time-scaled)")
     aprint("")
+
+    if "--no-serve" in sys.argv:
+        aprint(f"✓ Dataset generated at {output_path}")
+        return
 
     launch_viewer(output_path)
 

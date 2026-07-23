@@ -21,7 +21,7 @@
 import type { SceneNode } from './data-loader-types';
 import { clamp } from '../utils/clamp';
 import { normalizeBlendingMode } from '../rendering/blending-state';
-import type { BlendingMode } from '../rendering/material-manager';
+import type { BlendingMode } from '../types/blending';
 
 export interface ComposableAttrs {
   opacity?: number;

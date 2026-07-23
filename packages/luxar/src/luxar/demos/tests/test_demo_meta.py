@@ -46,6 +46,24 @@ def test_every_demo_compiles(path: Path) -> None:
     compile(path.read_text(encoding="utf-8"), str(path), "exec")
 
 
+@pytest.mark.parametrize("path", DEMO_PATHS, ids=lambda p: p.name)
+def test_every_demo_supports_no_serve(path: Path) -> None:
+    """Every demo must honor ``--no-serve`` (generate, don't block on a server).
+
+    ``luxar demo run-all`` and ``make run-demos`` pass ``--no-serve`` to every
+    demo; one demo that ignores it blocks the whole batch on a serving viewer
+    (this bit us: demo_nd_transforms launched the viewer unconditionally).
+    Source-level check — the flag must be consulted either literally
+    (``"--no-serve" in sys.argv``) or via the ``parse_demo_flags()`` helper.
+    """
+    source = path.read_text(encoding="utf-8")
+    assert "--no-serve" in source or "parse_demo_flags" in source, (
+        f"{path.name} never consults --no-serve; `luxar demo run-all` would "
+        "hang on it. Gate serving on '--no-serve' in sys.argv (see "
+        "demo_lorenz) or use parse_demo_flags()."
+    )
+
+
 def test_keys_unique_and_resolvable() -> None:
     demos = iter_demos(refresh=True)
     assert len(demos) == len(DEMO_PATHS)
@@ -150,11 +168,25 @@ def test_validate_meta_rejects_bad_blocks(tmp_path: Path) -> None:
         variant(requirements={"download_mb": -1}),
         variant(requirements={"local_data": "usb-stick"}),
         variant(caches=[1]),
+        # Path containment: caches/outputs names are joined onto roots that
+        # `demo cache clear` rmtree's — separators / '..' / absolute paths
+        # must be rejected.
+        variant(caches=["../escape"]),
+        variant(caches=["/absolute"]),
+        variant(outputs=["a/b"]),
+        variant(outputs=[".."]),
         {k: v for k, v in good.items() if k != "outputs"},
     ]
     for bad in bad_cases:
         with pytest.raises(DemoMetaError):
             registry.validate_meta(bad, tmp_path / "demo_x.py")
+
+
+def test_get_demo_rejects_malformed_numeric_tokens() -> None:
+    # "--5" passes an isdigit-after-lstrip gate but is not an int — it must
+    # fall through to the unknown-key path (KeyError), not raise ValueError.
+    with pytest.raises(KeyError, match="unknown demo"):
+        get_demo("--5")
 
 
 def test_extract_rejects_missing_and_non_literal(tmp_path: Path) -> None:

@@ -10,6 +10,32 @@ These demos are:
 - **Complete**: Generate → Serve → View → Cleanup workflow
 - **Copy-pasteable**: Can be used as templates for your own visualizations
 
+## Running Demos (the `luxar demo` CLI)
+
+The easiest way to run any demo is the CLI (equivalent to the per-demo
+`hatch run python ...` commands listed below):
+
+```bash
+luxar demo                  # list all demos (key, index, requirements)
+luxar demo info lorenz      # metadata for one demo
+luxar demo run lorenz       # run by key or index; forwards -- args
+luxar demo run lorenz -- --no-serve --points=10000
+luxar demo run-all          # generate every demo's dataset (--no-serve)
+luxar demo cache list       # inventory demo caches under ~/.cache/luxar/
+```
+
+## The DEMO_META registry
+
+Every `demo_*.py` file carries a top-level `DEMO_META` dict literal —
+machine-readable metadata (key, title, description, category, geometry,
+requirements incl. GPU/download/local-data, plus its cache dirs and output
+scene stems). `registry.py` discovers demos by globbing this folder and
+AST-parses each file's `DEMO_META` (no import), so the registry can never
+drift from the files on disk; `tests/test_demo_meta.py` schema-validates all
+of them (a demo without valid `DEMO_META`, or one that ignores `--no-serve`,
+fails the suite). The `luxar demo` sub-app is driven entirely by this
+registry — there is no second metadata list to keep in sync.
+
 ## Available Demos
 
 ### Scientific Visualization Demos

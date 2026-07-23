@@ -1,10 +1,10 @@
 /**
  * Tests that materials work correctly with and without colormaps.
  *
- * Guards against the critical issue where unbound shader attributes
- * (scalar, aStartScalar, aEndScalar) would cause WebGL errors.
- * The #ifdef USE_COLORMAP pattern ensures these attributes are only
- * declared in the shader when a colormap texture is actually provided.
+ * Scalars live in the element textures (points texel2.x, lines
+ * texel5.xy), so there are no scalar attributes to leave unbound; the
+ * #ifdef USE_COLORMAP pattern gates the scalar texel fetch + LUT path so
+ * it is compiled only when a colormap texture is actually provided.
  */
 import { describe, it, expect } from 'vitest';
 import * as THREE from 'three';
@@ -162,26 +162,31 @@ describe('Material colormap guards', () => {
       expect(cloned.defines.USE_COLORMAP).toBeUndefined();
     });
 
-    it('vertex shader declares aStartScalar only under USE_COLORMAP', () => {
+    it('vertex shader fetches texel5 scalars only under USE_COLORMAP', () => {
       const mat = new LineMaterial();
       const shader = mat.vertexShader;
-      // The per-vertex colour attributes are declared when USE_COLORMAP is
-      // NOT defined; the scalar attributes take their place in the #else
-      // (USE_COLORMAP) branch. This keeps the active vertex-attribute count
-      // within GL_MAX_VERTEX_ATTRIBS (16) for colormapped lines.
-      expect(shader).toContain('#ifndef USE_COLORMAP');
+      // Scalars live in texel5.xy of the fixed 6-texel line texture, so
+      // there are no scalar ATTRIBUTES to declare at all (the interleaved
+      // era's attribute-set toggle and its GL_MAX_VERTEX_ATTRIBS pressure
+      // are gone) — the guard is now the texel5 fetch, which must appear
+      // only inside the #ifdef USE_COLORMAP branch so non-colormap draws
+      // skip the extra texelFetch.
+      expect(shader).not.toContain('in float aStartScalar');
+      expect(shader).not.toContain('in float aEndScalar');
 
-      // aStartScalar must only appear inside the colormap-gated branch
-      // (the #else of #ifndef USE_COLORMAP), never unconditionally.
-      const lines = shader.split('\n');
-      for (const line of lines) {
-        if (line.trim().startsWith('in float aStartScalar')) {
-          const idx = lines.indexOf(line);
-          const before = lines.slice(Math.max(0, idx - 6), idx).join('\n');
-          expect(before).toContain('#ifndef USE_COLORMAP');
-          expect(before).toContain('#else');
-        }
-      }
+      const texel5Fetch = 'texelFetch(uLineTex, ivec2(texel0.x + 5, texel0.y), 0)';
+      const idx = shader.indexOf(texel5Fetch);
+      expect(idx).toBeGreaterThan(-1);
+      // The fetch sits inside a still-open #ifdef USE_COLORMAP block: the
+      // nearest preceding #ifdef USE_COLORMAP comes after any #endif.
+      const preceding = shader.slice(0, idx);
+      expect(preceding.lastIndexOf('#ifdef USE_COLORMAP')).toBeGreaterThan(
+        preceding.lastIndexOf('#endif')
+      );
+      // …and it is the ONLY texel5 fetch site (no unconditional twin).
+      expect(shader.indexOf(texel5Fetch, idx + 1)).toBe(-1);
+      // The mixed scalar (lineT5.x/.y) feeds the LUT lookup.
+      expect(shader).toContain('mix(lineT5.x, lineT5.y, t)');
     });
   });
 });
