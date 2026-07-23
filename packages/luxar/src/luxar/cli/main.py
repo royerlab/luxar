@@ -30,6 +30,7 @@ from .common_options import (
     LatencyOption,
     PacketLossOption,
     ProfileOption,
+    make_port_option,
     parse_network_options_or_exit,
 )
 from .info_command import _dfs, register_info_command
@@ -169,7 +170,7 @@ def _start_data_server_thread(
 def serve(
     path: Optional[Path] = typer.Argument(None, exists=True, readable=True),
     host: HostOption = "127.0.0.1",
-    port: int = typer.Option(8000, "--port", "-p"),
+    port: int = make_port_option(8000),
     viewer: bool = typer.Option(False, "--viewer", help="Also serve the viewer"),
     viewer_port: int = typer.Option(5173, "--viewer-port", help="Port for viewer"),
     open_browser: bool = typer.Option(False, "--open", help="Open browser"),
@@ -354,7 +355,7 @@ def serve(
 def viewer(
     data: Optional[Path] = typer.Option(None, "--data", "-d", help="Zarr data to load"),
     host: HostOption = "127.0.0.1",
-    port: int = typer.Option(5173, "--port", "-p", help="Port number"),
+    port: int = make_port_option(5173, "Port number"),
     data_port: int = typer.Option(8000, "--data-port", help="Port for data server"),
     open_browser: bool = typer.Option(True, "--open/--no-open", help="Open browser"),
     # Network simulation parameters, data server only (see common_options.py)
@@ -470,9 +471,7 @@ def export(
     open_browser: bool = typer.Option(
         False, "--open", help="Serve and open browser after export"
     ),
-    port: int = typer.Option(
-        8000, "--port", "-p", help="Port for local server (with --open)"
-    ),
+    port: int = make_port_option(8000, "Port for local server (with --open)"),
     native: Optional[str] = typer.Option(
         None,
         "--native",

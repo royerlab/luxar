@@ -6,7 +6,7 @@ import json
 from pathlib import Path
 from typing import List, Optional, Tuple
 
-from luxar.cli.lod import measure_store_bytes
+from luxar.cli.gsplat_ops.recipe_shared import measure_store_bytes
 
 
 def measure_tiles_bytes_per_splat(

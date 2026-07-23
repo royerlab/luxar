@@ -24,7 +24,7 @@ def build_fit_recipe_params(
     volume_ndim: int,
 ) -> Any:
     """Validate per-part ``--recipe`` knobs and build a ``RecipeParams``."""
-    from luxar.cli.lod import (
+    from luxar.cli.gsplat_ops.recipe_shared import (
         VALID_ADDITIVE_METHODS,
         VALID_SUBSTITUTIVE_METHODS,
         estimate_bytes_per_splat,

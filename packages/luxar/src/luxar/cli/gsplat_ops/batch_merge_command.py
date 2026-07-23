@@ -154,7 +154,7 @@ def run_batch_merge_cmd(
         if color_source:
             colors = [parse_hex_color(c.strip()) for c in color_source.split(",")]
 
-        from luxar.cli.lod import reject_irrelevant_recipe_options
+        from luxar.cli.gsplat_ops.recipe_shared import reject_irrelevant_recipe_options
         from luxar.gsplats.lod.recipes import PER_PART_RECIPES
 
         # ── usage validation (up front, before the streaming writer runs) ──
@@ -249,14 +249,14 @@ def run_batch_merge_cmd(
         # timepoints were stacked; colors when a multi-channel color merge will
         # write them). Mutually exclusive with an explicit --breakpoints; the
         # supporting knobs need --target-ms.
-        from luxar.cli.lod import validate_streaming_knobs
+        from luxar.cli.gsplat_ops.recipe_shared import validate_streaming_knobs
 
         validate_streaming_knobs(
             target_ms, bandwidth_mbps, bytes_per_splat, breakpoints
         )
         eff_breakpoints = breakpoints
         if target_ms is not None:
-            from luxar.cli.lod import (
+            from luxar.cli.gsplat_ops.recipe_shared import (
                 estimate_bytes_per_splat,
                 resolve_streaming_breakpoints,
             )
