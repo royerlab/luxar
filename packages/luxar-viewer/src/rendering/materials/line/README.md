@@ -73,17 +73,19 @@ fragment-side rather than vertex-side because with only 4 vertices per
 quad, a vertex-side `min(t, 1−t) × segLen / width` collapses to `0.5`
 everywhere — there's no vertex at the body midpoint to interpolate from.
 
-## Geometry and attribute layout
+## Geometry and storage layout
 
 Lines use `THREE.Mesh` with `InstancedBufferGeometry` — **not**
-`THREE.InstancedMesh`. The per-instance attributes (start/end position,
-colour-or-scalar, width, sharpness, segment length, clipped flags) are
-packed into a single `InstancedInterleavedBuffer` so the geometry reports
-one vertex buffer slot. This both fits within WebGL2's 16-attribute-location
-limit and stays under WebGPU's `maxVertexBuffers` ceiling on
-compat-mode adapters (Luxar requests the higher real limits at adapter
-init; see `scene-manager.ts::setupWebGPURenderer`). See
-`../../line-geometry.ts` for the buffer construction.
+`THREE.InstancedMesh`. Per-segment data lives in a per-node RGBA32F
+**line texture** (`uLineTex`, 6 texels/segment — layout authority in
+`../../element-texture-layout.ts`; per-texel map in
+`../../line-geometry.ts`), fetched in the vertex stage via `texelFetch`
+and indexed by the sole per-instance attribute `aSortedIndex` (Uint32,
+the draw-slot → storage-slot mapping the depth-sort worker permutes).
+The texel fetch prologue reconstructs the historical local names
+(`aStartPos`, `aEndWidth`, …), so the expansion math below is unchanged
+from the interleaved era. See `../../line-geometry.ts` for the storage
+construction and the fused texel writer.
 
 ## Variant defines (fast paths)
 
@@ -93,7 +95,7 @@ either gated via `#ifdef` (GLSL) or read at TSL build time
 
 | Define                       | Effect                                                                                                                                                                | Set by                                                       |
 | ---------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------ |
-| `USE_COLORMAP`               | Replaces `aStartColor`/`aEndColor` per-vertex RGB with `aStartScalar`/`aEndScalar` + LUT lookup                                                                       | `setColormapTexture(texture)` / `updateColormapTexture`      |
+| `USE_COLORMAP`               | Replaces the texel2/3 per-endpoint RGB with the texel5 scalars + LUT lookup (presence rides the geometry's `userData.hasScalars` stamp)                               | `setColormapTexture(texture)` / `updateColormapTexture`      |
 | `LUXAR_GAMMA_ONE`            | Skips three per-fragment `pow()` calls when `gamma == 1.0 ± 1e-4` (the default)                                                                                       | `updateGamma` when crossing the threshold                    |
 | `LUXAR_NO_GOG`               | Skips the `vColor × uIntensity + uOffset` chain and its `max(·, 0)` clamp when `intensity==1 && offset==0`                                                            | `updateIntensity` / `updateOffset` via `_refreshNoGOGDefine` |
 | `LUXAR_MAX_RGB_CONTRIBUTION` | Premultiplies `rgb *= intensity × opacity` so `CustomBlending + MaxEquation + OneFactor/OneFactor` captures contribution-weighted colour rather than flat full-bright | `applyBlendingMode('max')`                                   |
@@ -147,7 +149,7 @@ they remain the readable reference even after the TSL path stabilises.
 
 - `../_shared/README.md` — shared infrastructure, `ShaderSource` pattern, `buildMaterial` dispatch
 - `../../README.md` — Rendering package overview and where line materials sit in the pipeline
-- `../../line-geometry.ts` — `InstancedBufferGeometry` builder and the interleaved-attribute layout this shader binds
-- `../../material-manager.ts` — owns the `getLineMaterial` cache and the camera-broadcast loop
+- `../../line-geometry.ts` — `InstancedBufferGeometry` builder, the 6-texel layout, and the fused texel writer this shader reads
+- `../../material-manager.ts` — creates the per-node line materials and owns the camera-broadcast loop
 - `../../picking/line/material.ts` / `material-tsl.ts` — picking counterparts; share the vertex-stage screen-space expansion math
 - `../../../tests/e2e/tsl-shader-parity.spec.ts` — GLSL ↔ TSL parity harness
