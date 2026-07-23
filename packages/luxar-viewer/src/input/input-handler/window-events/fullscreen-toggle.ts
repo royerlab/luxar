@@ -1,19 +1,20 @@
 /**
  * Toggle fullscreen mode body extracted from input-handler.ts. Enters
  * fullscreen on the document element (true fullscreen, browser chrome
- * included); falls back to the WebGL canvas if the document request
- * rejects; exits fullscreen otherwise.
+ * included); exits fullscreen otherwise.
+ *
+ * There is deliberately NO canvas-element fallback: the rejection causes for
+ * `documentElement.requestFullscreen()` (no user gesture, permissions-policy,
+ * `fullscreenEnabled` false) apply equally to the canvas, and a canvas-only
+ * fullscreen would hide every DOM overlay (control rail, panels) — worse than
+ * not entering fullscreen at all. (The historical fallback was a mechanical
+ * carry-over from the pre-extraction handler, not a considered feature.)
  *
  * @module input/input-handler/window-events/fullscreen-toggle
  */
 
 import { log, Modules } from '../../../utils/log';
 import { isDocumentFullscreen } from '../../../utils/fullscreen';
-import type { SceneManager } from '../../../scene/scene-manager';
-
-export interface FullscreenCtx {
-  sceneManager: SceneManager;
-}
 
 /** Safari (< 16.4) exposes only the webkit-prefixed fullscreen API. */
 interface WebkitFullscreenElement extends HTMLElement {
@@ -33,17 +34,11 @@ function exitFullscreen(): Promise<void> | void {
   return document.exitFullscreen ? document.exitFullscreen() : d.webkitExitFullscreen?.();
 }
 
-export function toggleFullscreen(ctx: FullscreenCtx): void {
+export function toggleFullscreen(): void {
   if (!isDocumentFullscreen()) {
     // Enter fullscreen — target the document element for true fullscreen.
     Promise.resolve(requestFullscreen(document.documentElement)).catch((err) => {
       log.error(Modules.INPUT, 'Error attempting to enable fullscreen:', err);
-      // Fallback: try the canvas element.
-      Promise.resolve(requestFullscreen(ctx.sceneManager.renderer.domElement)).catch(
-        (fallbackErr) => {
-          log.error(Modules.INPUT, 'Fallback fullscreen also failed:', fallbackErr);
-        }
-      );
     });
   } else {
     Promise.resolve(exitFullscreen()).catch((err) => {

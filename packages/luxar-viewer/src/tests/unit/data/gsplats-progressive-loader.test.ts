@@ -1087,7 +1087,10 @@ describe('concatenateGSplatsData — RGBA color layout (per-element opacity)', (
   });
 
   it('opaque white-fills a colorless LOD at the RGBA stride (alpha=1)', () => {
-    const merged = concatenateGSplatsData([makeRgbaLod(2, 0.5), makeLodData(2, 3, { color: 'none' })]);
+    const merged = concatenateGSplatsData([
+      makeRgbaLod(2, 0.5),
+      makeLodData(2, 3, { color: 'none' }),
+    ]);
     expect(merged.colorComponents).toBe(4);
     expect(merged.colors!.length).toBe(4 * 4);
     // The colorless part fills opaque white (1,1,1,1) at stride 4.
@@ -1108,5 +1111,40 @@ describe('concatenateGSplatsData — RGBA color layout (per-element opacity)', (
     expect(() =>
       concatenateGSplatsData([makeLodData(3, 3, { color: 'float32' }), makeRgbaLod(2, 0.9)])
     ).toThrow(/mixed color layouts .*4 vs 3 components/);
+  });
+});
+
+describe('dispose during an in-flight level (teardown race)', () => {
+  it('stops streaming instead of indexing into the cleared lodLoaders', async () => {
+    // A dispose() racing the awaited level used to make the NEXT iteration
+    // read `this.lodLoaders[level]` as undefined — a TypeError that the
+    // refinement loop then mis-counted as a real failure. The loop now
+    // checks `_disposed` and breaks.
+    let release!: () => void;
+    const gate = new Promise<void>((r) => {
+      release = r;
+    });
+    const slowA = makeSubLoader(makeLodData(10, 3, { color: 'uint8' }));
+    const origA = slowA.updateViewWithResidency as unknown as (
+      vs: unknown,
+      s?: unknown
+    ) => Promise<unknown>;
+    slowA.updateViewWithResidency = vi.fn(async (vs: unknown, s?: unknown) => {
+      const out = await origA(vs, s);
+      await gate; // hold level 0 in flight
+      return out;
+    });
+    const fastB = makeSubLoader(makeLodData(5, 3, { color: 'uint8' }));
+    const l = new GSplatsProgressiveLoader(
+      [slowA, fastB] as unknown as GSplatsSpatialIndexLoader[],
+      2,
+      '/dispose-race'
+    );
+    const pending = l.loadGSplats(baseViewState);
+    l.dispose(); // clears lodLoaders while level 0 is awaited
+    release();
+    await expect(pending).resolves.toBeDefined(); // pre-fix: TypeError
+    // Level 1 was never touched after the dispose.
+    expect(fastB.updateViewWithResidency).not.toHaveBeenCalled();
   });
 });

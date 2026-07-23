@@ -264,6 +264,16 @@ describe('buildRailItems', () => {
       setFullscreen(true);
       expect(fs.isActive!()).toBe(true);
     });
+
+    it('ONLY the fullscreen chip is excluded from the parent View-button glow', () => {
+      // Fullscreen is a session-long ambient state — it must not light the
+      // View button all session. The other toggles (cinematic etc.) keep
+      // the parent-glow contract.
+      const toggles = findView().flyout!;
+      for (const t of toggles) {
+        expect(!!t.excludeFromParentActive).toBe(t.id === 'fullscreen');
+      }
+    });
   });
 
   describe('Layers disabled predicate', () => {

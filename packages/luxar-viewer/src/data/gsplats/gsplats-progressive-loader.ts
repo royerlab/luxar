@@ -95,17 +95,20 @@ export function concatenateGSplatsData(parts: LoadedGSplatsData[]): LoadedGSplat
   }
 
   let offset = 0;
-  for (const part of parts) {
+  for (const [levelIdx, part] of parts.entries()) {
     if (colors && part.colors) {
       // LADDER-DTYPE CONTRACT (see concat-helpers.ts): `set` converts by
       // VALUE, not semantics — a Float32 (0..1) level written into a Uint8
       // (0..255) merge truncates to garbage, and the reverse writes 255×
       // values. The writer emits one color dtype per ladder; fail fast.
+      // Messages name the offending level (concat-helpers' convention) so a
+      // corrupt store is diagnosable without a debugger.
       if (part.colors.constructor !== colors.constructor) {
         throw new Error(
           'concatenateGSplatsData: mixed color dtypes across LOD levels ' +
-            `(${part.colors.constructor.name} vs ${colors.constructor.name}) — ` +
-            "ladder levels must share each field's dtype."
+            `(level ${levelIdx}: ${part.colors.constructor.name} vs ` +
+            `${colors.constructor.name}) — ladder levels must share each ` +
+            "field's dtype."
         );
       }
       // Same contract for the color LAYOUT: `colorK` strides every copy, so
@@ -116,8 +119,9 @@ export function concatenateGSplatsData(parts: LoadedGSplatsData[]): LoadedGSplat
       if ((part.colorComponents ?? 3) !== colorK) {
         throw new Error(
           'concatenateGSplatsData: mixed color layouts across LOD levels ' +
-            `(${part.colorComponents ?? 3} vs ${colorK} components) — ` +
-            'ladder levels must share the color layout (RGB vs RGBA).'
+            `(level ${levelIdx}: ${part.colorComponents ?? 3} vs ${colorK} ` +
+            'components) — ladder levels must share the color layout ' +
+            '(RGB vs RGBA).'
         );
       }
       colors.set(part.colors, offset * colorK);
@@ -393,6 +397,13 @@ export class GSplatsProgressiveLoader implements GSplatsDataLoader {
     const startLevel = this.loadedLODs.length;
 
     for (let level = startLevel; level < this.nLods; level++) {
+      // A dispose() racing the awaited level below clears `lodLoaders`, so
+      // the next iteration would TypeError on `this.lodLoaders[level]` — a
+      // teardown mis-counted as a real refinement failure (recordFailure +
+      // backoff). Stop streaming instead.
+      if (this._disposed) {
+        break;
+      }
       if (!shouldLoadLevel(pass, level, startLevel)) {
         break;
       }
@@ -532,6 +543,10 @@ export class GSplatsProgressiveLoader implements GSplatsDataLoader {
    * buffers or running the accumulator — avoiding wasted memory.
    */
   private prefetchNextLOD(viewState: GSplatsViewState): void {
+    // Same teardown race as the streaming loop: a dispose() between the
+    // awaited level and this fire-and-forget clears `lodLoaders`, and
+    // indexing it would TypeError before the .catch can swallow anything.
+    if (this._disposed) return;
     const nextLevel = this.loadedLODs.length;
     if (nextLevel >= this.nLods) return;
 

@@ -73,10 +73,7 @@ import {
   type DimensionSlidersFactory,
   type DimNavSetupCtx,
 } from './input-handler/dimension-navigation/setup';
-import {
-  toggleFullscreen,
-  type FullscreenCtx,
-} from './input-handler/window-events/fullscreen-toggle';
+import { toggleFullscreen } from './input-handler/window-events/fullscreen-toggle';
 import { cycleDataMonitor } from './input-handler/commands/data-monitor-cycle';
 import {
   exportViewerState,
@@ -688,19 +685,15 @@ export class InputHandler {
    * Toggle fullscreen mode on/off.
    *
    * Requests fullscreen for the document element (true fullscreen including
-   * browser chrome). Falls back to canvas-only fullscreen if document
-   * fullscreen fails. Triggered by Space key (when not focused on UI element).
+   * browser chrome). Triggered by Space key (when not focused on UI element)
+   * and the View-options fullscreen chip.
    *
    * Fullscreen exit is also possible via browser's native ESC key handling.
    *
    * @private
    */
   private toggleFullscreen(): void {
-    toggleFullscreen(this.makeFullscreenCtx());
-  }
-
-  private makeFullscreenCtx(): FullscreenCtx {
-    return { sceneManager: this.sceneManager };
+    toggleFullscreen();
   }
 
   /**
