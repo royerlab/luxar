@@ -217,7 +217,7 @@ class TestMergeStreamingKnobs:
     def test_stored_stream_string_reparses_at_merge_time(self) -> None:
         """The manifest round-trip: the stored string re-parses via
         parse_lod_breakpoints into the same deferred spec."""
-        from luxar.cli.lod import parse_lod_breakpoints
+        from luxar.cli.gsplat_ops.recipe_shared import parse_lod_breakpoints
 
         assert parse_lod_breakpoints("stream:20833") == "stream:20833"
 
@@ -439,7 +439,7 @@ class TestValidateStreamingKnobsHelper:
     `batch-fit merge` — one source of truth for the exclusion messages."""
 
     def test_default_prefix_messages(self) -> None:
-        from luxar.cli.lod import validate_streaming_knobs
+        from luxar.cli.gsplat_ops.recipe_shared import validate_streaming_knobs
 
         with pytest.raises(typer.BadParameter) as exc:
             validate_streaming_knobs(200.0, None, None, "equal-count")
@@ -449,7 +449,7 @@ class TestValidateStreamingKnobsHelper:
         assert "--bandwidth-mbps/--bytes-per-splat only apply with" in str(exc.value)
 
     def test_merge_prefix_renames_options(self) -> None:
-        from luxar.cli.lod import validate_streaming_knobs
+        from luxar.cli.gsplat_ops.recipe_shared import validate_streaming_knobs
 
         with pytest.raises(typer.BadParameter) as exc:
             validate_streaming_knobs(
@@ -461,7 +461,7 @@ class TestValidateStreamingKnobsHelper:
         assert "--merge-bandwidth-mbps/--merge-bytes-per-splat" in str(exc.value)
 
     def test_valid_combinations_pass(self) -> None:
-        from luxar.cli.lod import validate_streaming_knobs
+        from luxar.cli.gsplat_ops.recipe_shared import validate_streaming_knobs
 
         validate_streaming_knobs(None, None, None, None)
         validate_streaming_knobs(None, None, None, "equal-count")

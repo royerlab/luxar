@@ -8,9 +8,15 @@ from typing import Optional
 import typer
 from arbol import aprint
 
-from .batch_submit_packing import resolve_tasks_per_job
+from .batch_submit_pipeline import (
+    build_plan_configs,
+    generate_all_scripts,
+    resolve_gpu_context,
+    resolve_packing,
+    stamp_slurm_fields,
+    validate_tiling_arg,
+)
 from .batch_submit_plan_output import print_batch_submit_plan
-from .batch_submit_preemptible import resolve_preemptible_partition
 from .batch_submit_slurm import submit_batch_jobs
 
 
@@ -456,107 +462,42 @@ def run_batch_submit(
         aprint("Error: --partition is required")
         raise typer.Exit(1)
 
-    # Normalize + validate --tiling up front (mirrors `gsplat fit`'s
-    # _resolve_tiling) so a typo fails loudly instead of silently submitting a
-    # large uniform array in the wrong mode.
-    tiling = tiling.lower()
-    if tiling not in ("uniform", "content"):
-        aprint(f"Error: --tiling must be uniform|content, got {tiling!r}")
-        raise typer.Exit(1)
+    tiling = validate_tiling_arg(tiling)
 
     try:
-        import math
-
         from luxar.cli.gsplat_config import PRESETS
-        from luxar.cli.gsplat_ops.batch_planning import (
-            ContentKnobs,
-            DenoiseConfig,
-            FitConfig,
-            MergeConfig,
-            plan_batch,
-        )
-        from luxar.gsplats.batch.env_capture import (
-            capture_environment,
-            generate_env_preamble,
-            get_slurm_scheduler_info,
-            is_slurm_mps_available,
-        )
-        from luxar.gsplats.batch.slurm_gen import (
-            generate_fit_sbatch,
-            generate_merge_sbatch,
-        )
-        from luxar.gsplats.batch.time_estimate import estimate_slurm_time_limit
-        from luxar.gsplats.gpu_profile import (
-            get_gpu_summary,
-            get_gpu_throughput_table,
-            load_profiles,
-        )
+        from luxar.cli.gsplat_ops.batch_planning import plan_batch
+        from luxar.gsplats.batch.env_capture import is_slurm_mps_available
 
         # 1. Load GPU profile (required only for auto tile-size)
         axes_list = [a.strip() for a in axes.split(",")] if axes else None
-        summary = get_gpu_summary(
-            gpu_name=gpu_name_opt,
-            gpu_mem=float(gpu_mem) if gpu_mem else None,
-        )
-        if summary is None and tile_size is None and tiling != "content":
-            aprint("Error: No GPU benchmark profile found.")
-            aprint("")
-            aprint("Option A — run the benchmark first (recommended):")
-            aprint(
-                "  luxar gsplat benchmark --slurm --partition "
-                + (partition or "<partition>")
-            )
-            aprint("")
-            aprint("Option B — skip the profile by providing a tile size explicitly:")
-            aprint("  luxar gsplat batch-fit submit ... --tile-size 128")
-            raise typer.Exit(1)
-
-        recs = (summary or {}).get("recommendations", {})
-        peak = recs.get("peak_throughput_3d", {})
-
-        # Resolve GPU name for display
-        profiles = load_profiles()
-        resolved_gpu = gpu_name_opt
-        if summary is not None and resolved_gpu is None:
-            for name, entry in profiles.get("gpus", {}).items():
-                if entry.get("summary") == summary:
-                    resolved_gpu = name
-                    break
-        if resolved_gpu is None and profiles.get("gpus"):
-            resolved_gpu = next(iter(profiles["gpus"]))
-        resolved_gpu = resolved_gpu or "unknown"
-
-        # 1b. GPU-profile-derived sizing inputs (uniform auto tile-size + ETA).
-        peak_shape = peak.get("shape", [])
-        oom = (summary or {}).get("oom_boundaries", {}).get("3d", {})
-        max_shape = oom.get("max_successful_shape", peak_shape)
-        throughput_table = get_gpu_throughput_table(gpu_name=resolved_gpu)
+        gpu = resolve_gpu_context(gpu_name_opt, gpu_mem, tile_size, tiling, partition)
+        peak = gpu.peak
+        resolved_gpu = gpu.resolved_gpu
+        max_shape = gpu.max_shape
+        throughput_table = gpu.throughput_table
 
         # 2-6. Discover + decompose + build the manifest/jobs. This whole half is
         # shared verbatim with `batch-fit run` (the local runner) via plan_batch.
-        fit_cfg = FitConfig(
+        cfgs = build_plan_configs(
             preset=preset,
             seeds=seeds,
             iters=iters,
             config=config,
             floor=floor,
-            progressive=batch_progressive,
-            splats_per_pass=batch_splats_per_pass,
-            psnr_patience=batch_psnr_patience,
-            max_passes=batch_max_passes,
-            cull_retention=batch_cull_retention,
-        )
-        denoise_cfg = DenoiseConfig(
-            denoise=batch_denoise,
-            denoise_h=batch_denoise_h,
-            denoise_2d=batch_denoise_2d,
-            patch_size=batch_denoise_patch_size,
-            search_distance=batch_denoise_search_distance,
-            backend=batch_denoise_backend,
-            calibration_samples=batch_calibration_samples,
-            preprocess=batch_preprocess,
-        )
-        content_cfg = ContentKnobs(
+            batch_progressive=batch_progressive,
+            batch_splats_per_pass=batch_splats_per_pass,
+            batch_psnr_patience=batch_psnr_patience,
+            batch_max_passes=batch_max_passes,
+            batch_cull_retention=batch_cull_retention,
+            batch_denoise=batch_denoise,
+            batch_denoise_h=batch_denoise_h,
+            batch_denoise_2d=batch_denoise_2d,
+            batch_denoise_patch_size=batch_denoise_patch_size,
+            batch_denoise_search_distance=batch_denoise_search_distance,
+            batch_denoise_backend=batch_denoise_backend,
+            batch_calibration_samples=batch_calibration_samples,
+            batch_preprocess=batch_preprocess,
             cal=cal,
             k_star_ref=k_star_ref,
             n_features_ref=n_features_ref,
@@ -570,21 +511,23 @@ def run_batch_submit(
             max_leaf=max_leaf,
             plan_timepoint=plan_timepoint,
             plan_samples=plan_samples,
-        )
-        merge_cfg = MergeConfig(
-            recipe=merge_recipe,
+            merge_recipe=merge_recipe,
             channel_colors=channel_colors,
-            n_lods=merge_n_lods,
-            additive_method=merge_additive_method,
-            breakpoints=merge_breakpoints,
-            target_ms=merge_target_ms,
-            bandwidth_mbps=merge_bandwidth_mbps,
-            bytes_per_splat=merge_bytes_per_splat,
-            compression_factor=merge_compression_factor,
-            levels=merge_levels,
-            substitutive_method=merge_substitutive_method,
-            coarsen_dims=merge_coarsen_dims,
+            merge_n_lods=merge_n_lods,
+            merge_additive_method=merge_additive_method,
+            merge_breakpoints=merge_breakpoints,
+            merge_target_ms=merge_target_ms,
+            merge_bandwidth_mbps=merge_bandwidth_mbps,
+            merge_bytes_per_splat=merge_bytes_per_splat,
+            merge_compression_factor=merge_compression_factor,
+            merge_levels=merge_levels,
+            merge_substitutive_method=merge_substitutive_method,
+            merge_coarsen_dims=merge_coarsen_dims,
         )
+        fit_cfg = cfgs.fit
+        denoise_cfg = cfgs.denoise
+        content_cfg = cfgs.content
+        merge_cfg = cfgs.merge
 
         # Merge-recipe knobs (incl. --merge-target-ms sizing) are resolved
         # INSIDE plan_batch, after shape discovery — so the ladder is sized
@@ -625,94 +568,51 @@ def run_batch_submit(
         n_iters = iters if iters is not None else preset_config.get("n_iters", 3000)
 
         # 5b. Compute tasks-per-job packing
-        #
-        # When each volume is small relative to GPU capacity, we pack
-        # multiple fitting tasks sequentially into one Slurm job to
-        # reduce scheduling overhead (fewer array elements to launch).
-        # 5b-i. Query scheduler for smart packing defaults
-        sched_info = get_slurm_scheduler_info()
-        uses_backfill = sched_info["uses_backfill"]
-        no_job_limit = sched_info["max_jobs_per_user"] is None
-
-        tasks_per_job = resolve_tasks_per_job(
+        packing = resolve_packing(
             tasks_per_job,
             parallel=parallel,
-            uses_backfill=uses_backfill,
-            no_job_limit=no_job_limit,
             max_shape=max_shape,
             tile_voxels=tile_voxels,
             est_seconds=est_seconds,
+            total_tasks=total_tasks,
+            time_limit=time_limit,
         )
-
-        n_slurm_jobs = math.ceil(total_tasks / tasks_per_job)
-        if parallel:
-            # Parallel: all tasks run at once, so wall time ≈ 1 task
-            est_seconds_per_job = est_seconds * 1.2  # 20% overhead for contention
-        else:
-            est_seconds_per_job = est_seconds * tasks_per_job
-        slurm_time = time_limit or estimate_slurm_time_limit(est_seconds_per_job)
-        total_gpu_hours = est_seconds * total_tasks / 3600.0
+        tasks_per_job = packing.tasks_per_job
+        uses_backfill = packing.uses_backfill
+        no_job_limit = packing.no_job_limit
+        n_slurm_jobs = packing.n_slurm_jobs
+        est_seconds_per_job = packing.est_seconds_per_job
+        slurm_time = packing.slurm_time
+        total_gpu_hours = packing.total_gpu_hours
 
         # 6. Build manifest — fit_args, denoise mode, channel colors, and the
         # per-part merge-recipe args were all resolved inside plan_batch above;
         # the manifest is plan.manifest. We only add the Slurm-specific fields
         # (partition, packing, preemptible) here.
-
-        # Preemptible partition detection
-        preempt_partition = resolve_preemptible_partition(
+        preempt_partition = stamp_slurm_fields(
+            manifest,
+            packing=packing,
+            partition=partition,
+            account=account,
+            qos=qos,
+            gpus=gpus,
+            cpus=cpus,
+            mem=mem,
+            parallel=parallel,
+            max_concurrent=max_concurrent,
             preemptible=preemptible,
             preemptible_partition_opt=preemptible_partition_opt,
-        )
-
-        # plan_batch built the manifest + jobs (dataset/decomposition/fit/merge/
-        # denoise fields). Stamp the Slurm-specific fields onto it here.
-        manifest.slurm_time_limit = slurm_time
-        manifest.slurm_partition = partition
-        manifest.slurm_account = account
-        manifest.slurm_qos = qos
-        manifest.slurm_gpus = gpus
-        manifest.slurm_cpus = cpus
-        manifest.slurm_mem_gb = mem
-        manifest.tasks_per_job = tasks_per_job
-        manifest.parallel_tasks_per_job = parallel
-        manifest.max_concurrent = max_concurrent
-        manifest.preemptible = preempt_partition is not None
-        manifest.preemptible_partition = preempt_partition
-        manifest.preemptible_max_concurrent = (
-            (preemptible_concurrent or max_concurrent) if preempt_partition else None
+            preemptible_concurrent=preemptible_concurrent,
         )
 
         # 7. Capture environment + generate scripts
-        env = capture_environment()
-        preamble = generate_env_preamble(env)
-        fit_script = generate_fit_sbatch(manifest, preamble)
-        merge_script = generate_merge_sbatch(manifest, preamble)
-
-        # Generate preemptible fit script if enabled
-        preempt_fit_script = None
-        if preempt_partition:
-            preempt_fit_script = generate_fit_sbatch(
-                manifest,
-                preamble,
-                partition_override=preempt_partition,
-                max_concurrent_override=manifest.preemptible_max_concurrent,
-                requeue=True,
-                job_name="luxar-fit-preempt",
-            )
-
-        # Generate denoise scripts if needed
-        calibrate_script = None
-        denoise_script = None
-        if batch_denoise:
-            from luxar.gsplats.batch.slurm_gen import (
-                generate_calibrate_sbatch,
-                generate_denoise_sbatch,
-            )
-
-            if batch_denoise_h is None:
-                calibrate_script = generate_calibrate_sbatch(manifest, preamble)
-            if denoise_mode == "preprocess":
-                denoise_script = generate_denoise_sbatch(manifest, preamble)
+        scripts = generate_all_scripts(
+            manifest,
+            preempt_partition=preempt_partition,
+            batch_denoise=batch_denoise,
+            batch_denoise_h=batch_denoise_h,
+            denoise_mode=denoise_mode,
+        )
 
         # 8. Print plan (always)
         print_batch_submit_plan(
@@ -757,12 +657,12 @@ def run_batch_submit(
         submit_batch_jobs(
             output_dir=output_dir,
             manifest=manifest,
-            fit_script=fit_script,
-            merge_script=merge_script,
-            preamble=preamble,
-            calibrate_script=calibrate_script,
-            denoise_script=denoise_script,
-            preempt_fit_script=preempt_fit_script,
+            fit_script=scripts.fit_script,
+            merge_script=scripts.merge_script,
+            preamble=scripts.preamble,
+            calibrate_script=scripts.calibrate_script,
+            denoise_script=scripts.denoise_script,
+            preempt_fit_script=scripts.preempt_fit_script,
             total_tasks=total_tasks,
             preempt_partition=preempt_partition,
         )
