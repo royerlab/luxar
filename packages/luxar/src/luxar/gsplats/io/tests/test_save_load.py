@@ -1580,3 +1580,51 @@ class TestAtomicWrites:
                 np.sort(data.amplitudes), np.sort(splats["amplitudes"]), atol=0.05
             )
             assert self._no_tmp_siblings(path.parent)
+
+
+class TestAtomicFinalizeTrashFirst:
+    """The directory swap is trash-first: dest never absent while a prior
+    good store existed, and a failed swap-in restores the original."""
+
+    def test_failed_swap_in_restores_prior_store(self, tmp_path, monkeypatch) -> None:
+        import importlib
+        import os as _os
+
+        sg = importlib.import_module("luxar.gsplats.io.save_gsplats")
+        dest = tmp_path / "store.gsplats.zarr"
+        dest.mkdir()
+        (dest / "old.txt").write_text("prior good store")
+        tmp = tmp_path / ".store.tmp"
+        tmp.mkdir()
+        (tmp / "new.txt").write_text("new store")
+
+        real_replace = _os.replace
+        calls = {"n": 0}
+
+        def flaky_replace(src, dst):
+            calls["n"] += 1
+            if calls["n"] == 2:  # the tmp→dest swap-in
+                raise OSError("simulated swap-in failure")
+            return real_replace(src, dst)
+
+        monkeypatch.setattr(sg.os, "replace", flaky_replace)
+        with pytest.raises(OSError, match="simulated swap-in failure"):
+            sg._atomic_finalize(tmp, dest)
+        # Prior store restored under its original name; tmp untouched.
+        assert (dest / "old.txt").read_text() == "prior good store"
+        assert (tmp / "new.txt").exists()
+
+    def test_successful_swap_leaves_no_trash(self, tmp_path) -> None:
+        import importlib
+
+        sg = importlib.import_module("luxar.gsplats.io.save_gsplats")
+        dest = tmp_path / "store.gsplats.zarr"
+        dest.mkdir()
+        (dest / "old.txt").write_text("x")
+        tmp = tmp_path / ".store.tmp"
+        tmp.mkdir()
+        (tmp / "new.txt").write_text("y")
+        sg._atomic_finalize(tmp, dest)
+        assert (dest / "new.txt").read_text() == "y"
+        assert not (dest / "old.txt").exists()
+        assert not list(tmp_path.glob(".*trash-*"))
