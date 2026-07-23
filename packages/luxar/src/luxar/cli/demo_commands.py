@@ -212,7 +212,13 @@ def demo_run_all(
             skipped += 1
             continue
         aprint(f"▶️  {d.key}: {d.title}")
-        result = subprocess.run([sys.executable, "-m", d.module, "--no-serve"])
+        try:
+            result = subprocess.run([sys.executable, "-m", d.module, "--no-serve"])
+        except KeyboardInterrupt:
+            # Same contract as `demo run`: Ctrl-C exits 130, not Click's
+            # generic "Aborted!" exit 1.
+            aprint(f"\n🛑 Interrupted during {d.key}.")
+            raise typer.Exit(130) from None
         if result.returncode != 0:
             failed.append(d.key)
             aprint(f"❌ {d.key}: exited {result.returncode}")

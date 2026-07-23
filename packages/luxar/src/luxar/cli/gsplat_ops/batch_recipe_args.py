@@ -60,9 +60,9 @@ def build_merge_recipe_params(
     defaults ("none") keep the merge byte-identical to before.
     """
     from luxar.cli.lod import (
-        _VALID_ADDITIVE_METHODS,
-        _VALID_SUBSTITUTIVE_METHODS,
-        _parse_lod_breakpoints,
+        VALID_ADDITIVE_METHODS,
+        VALID_SUBSTITUTIVE_METHODS,
+        parse_lod_breakpoints,
     )
     from luxar.gsplats.lod.recipes import RecipeParams
 
@@ -87,15 +87,15 @@ def build_merge_recipe_params(
     am = _resolve("additive-method", additive_method, str)
     if am is not None:
         am_norm = am.strip().replace("-", "_")
-        if am_norm not in _VALID_ADDITIVE_METHODS:
+        if am_norm not in VALID_ADDITIVE_METHODS:
             raise typer.BadParameter(
                 f"--additive-method must be one of "
-                f"{list(_VALID_ADDITIVE_METHODS)}; got {am!r}"
+                f"{list(VALID_ADDITIVE_METHODS)}; got {am!r}"
             )
         overrides["additive_method"] = am_norm
     bp = _resolve("breakpoints", breakpoints, str)
     if bp is not None:
-        overrides["breakpoints"] = _parse_lod_breakpoints(bp)
+        overrides["breakpoints"] = parse_lod_breakpoints(bp)
     cf = _resolve("compression-factor", compression_factor, int)
     if cf is not None:
         overrides["compression_factor"] = cf
@@ -111,10 +111,10 @@ def build_merge_recipe_params(
         # BEFORE the streaming writer overwrites final.gsplats.zarr, rather than
         # raising deep in the merge and leaving a stub a non-`--force` re-run skips.
         sm_norm = sm.strip().replace("-", "_")
-        if sm_norm not in _VALID_SUBSTITUTIVE_METHODS:
+        if sm_norm not in VALID_SUBSTITUTIVE_METHODS:
             raise typer.BadParameter(
                 f"--substitutive-method must be one of "
-                f"{list(_VALID_SUBSTITUTIVE_METHODS)}; got {sm!r}"
+                f"{list(VALID_SUBSTITUTIVE_METHODS)}; got {sm!r}"
             )
         overrides["substitutive_method"] = sm_norm
     cd = coarsen_dims if coarsen_dims is not None else stored.get("coarsen-dims")

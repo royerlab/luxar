@@ -208,20 +208,20 @@ def get_viewer_dist_path() -> Path:
     if bundled.is_dir() and (bundled / "index.html").exists():
         return bundled
 
-    # 2. Development: use the source tree layout
+    # 2. Development: use the source tree layout. Returned even when dist/
+    #    doesn't exist yet — a fresh clone has no build, and callers like
+    #    ensure_viewer_built()/build_viewer() need the REAL location to
+    #    auto-build into (gating on exists() here used to divert fresh
+    #    clones to the broken fallback below, so auto-build ran pnpm in a
+    #    nonexistent directory and misreported "pnpm not found").
     repo_root = _find_dev_repo_root()
     if repo_root is not None:
-        viewer_dist = repo_root / "packages" / "luxar-viewer" / "dist"
-        if viewer_dist.exists():
-            return viewer_dist
+        return repo_root / "packages" / "luxar-viewer" / "dist"
 
-    # 3. Last-resort fallback for editable installs
-    return (
-        Path(__file__).parent.parent.parent.parent.parent
-        / "packages"
-        / "luxar-viewer"
-        / "dist"
-    )
+    # 3. Last-resort fallback when no pyproject.toml ancestor exists:
+    #    hop from .../packages/luxar/src/luxar/cli/utils.py to the repo root
+    #    (parents[5], not parents[4] — that pointed at packages/packages/…).
+    return Path(__file__).resolve().parents[5] / "packages" / "luxar-viewer" / "dist"
 
 
 def ensure_viewer_built(auto_build: bool = True) -> bool:

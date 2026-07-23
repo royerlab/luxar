@@ -237,6 +237,36 @@ def write_gsplat_leaf(
         )
 
     # Additive ladder → additive_<i>/ subgroups + aggregate parent attrs.
+    #
+    # Fail fast on ladders the viewer would reject at load: sub-LOD levels
+    # must agree on color layout (RGB vs RGBA), color dtype, and
+    # dimensionality — the viewer strides its progressive level-concat by
+    # each of these, so a mixed ladder is malformed data there. Refuse to
+    # write one instead of producing an unloadable store.
+    color_layouts = {s.colors.shape[1] for s in sublods if s.colors is not None}
+    if len(color_layouts) > 1:
+        raise ValueError(
+            "additive ladder has mixed color layouts across sub-LODs "
+            f"(channel counts {sorted(color_layouts)}); all levels must share "
+            "RGB vs RGBA. Merge sources via GSplatData.concatenate (which "
+            "normalizes the ladder) before writing."
+        )
+    color_dtypes = {str(s.colors.dtype) for s in sublods if s.colors is not None}
+    if len(color_dtypes) > 1:
+        raise ValueError(
+            "additive ladder has mixed color dtypes across sub-LODs "
+            f"({sorted(color_dtypes)}); all levels must share one dtype. "
+            "Merge sources via GSplatData.concatenate (which normalizes the "
+            "ladder) before writing."
+        )
+    sub_ndims = {s.centers.shape[1] for s in sublods}
+    if len(sub_ndims) > 1:
+        raise ValueError(
+            "additive ladder has mixed dimensionality across sub-LODs "
+            f"(ndims {sorted(sub_ndims)}); all levels must share the dataset "
+            "dimensionality."
+        )
+
     n_dims: Optional[int] = None
     total = 0
     has_any_colors = False

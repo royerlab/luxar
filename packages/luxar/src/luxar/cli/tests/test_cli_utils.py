@@ -191,6 +191,23 @@ class TestGetViewerDistPath:
         result = get_viewer_dist_path()
         assert "luxar-viewer" in str(result) or "dist" in str(result)
 
+    def test_get_viewer_dist_path_parent_is_the_real_viewer_package(self) -> None:
+        """The dist path must sit inside the actual viewer package.
+
+        Regression tripwire for the fresh-clone auto-build bug: with no
+        ``dist/`` built yet, the old code fell through to a fallback that
+        resolved to ``<repo>/packages/packages/luxar-viewer`` (one ``.parent``
+        short), so ``build_viewer()`` ran pnpm in a nonexistent directory and
+        misreported "pnpm not found". In a dev tree (bundled ``_viewer_dist``
+        absent) the returned path's parent must be the real viewer package —
+        whether or not dist/ exists yet.
+        """
+        result = get_viewer_dist_path()
+        if result.name == "_viewer_dist":  # installed-wheel bundled viewer
+            pytest.skip("bundled _viewer_dist present; dev-tree layout n/a")
+        assert result.parent.name == "luxar-viewer"
+        assert (result.parent / "package.json").exists()
+
 
 class TestFormatTreeNode:
     """Tests for format_tree_node function."""

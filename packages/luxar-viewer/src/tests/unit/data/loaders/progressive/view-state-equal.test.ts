@@ -171,6 +171,20 @@ describe('viewStatesEqual', () => {
     expect(viewStatesEqual(a, { ...b, dimensions: stepped })).toBe(false);
   });
 
+  it('never skips an extend_to_all sentinel flip as ride-along churn', () => {
+    // The ride-along skip ignores the tolerance VALUE, but the worker's
+    // discrete-dim membership DOES read the extend_to_all sentinel
+    // (isExtendToAll): a 0.5 ↔ 1e10 flip changes which elements match, so
+    // it must reset even on a discrete non-spatial non-displayed dim.
+    const a = { ...base(), tolerance: [0, 0, 0, 0.5], dimensions: dims4() };
+    const b = { ...base(), tolerance: [0, 0, 0, 1e10], dimensions: dims4() };
+    expect(viewStatesEqual(a, b)).toBe(false);
+    expect(viewStatesEqual(b, a)).toBe(false); // symmetric
+    // Two different above-threshold sentinels are the same query.
+    const c = { ...base(), tolerance: [0, 0, 0, 2e10], dimensions: dims4() };
+    expect(viewStatesEqual(b, c)).toBe(true);
+  });
+
   it('still compares tolerance raw on spatial, continuous, displayed, or metadata-less dims', () => {
     // Discrete SPATIAL dim: tolerance genuinely selects the decoded set.
     const spatialDims = dims4();

@@ -22,7 +22,7 @@ import typer
 from arbol import aprint, asection
 
 # Valid ordering methods for the additive (prefix-sum) axis.
-_VALID_ADDITIVE_METHODS = (
+VALID_ADDITIVE_METHODS = (
     "auto",
     "greedy",
     "self_energy",
@@ -33,7 +33,7 @@ _VALID_ADDITIVE_METHODS = (
 )
 
 # Valid substitutive partition algorithms.
-_VALID_SUBSTITUTIVE_METHODS = (
+VALID_SUBSTITUTIVE_METHODS = (
     "auto",
     "kmeans",
     "kmeans_lloyd",
@@ -152,7 +152,7 @@ def reject_irrelevant_recipe_options(
     raise typer.BadParameter(msg)
 
 
-def _parse_lod_breakpoints(spec: str) -> "str | list[int] | list[float]":
+def parse_lod_breakpoints(spec: str) -> "str | list[int] | list[float]":
     """Parse the ``--breakpoints`` string for :func:`make_additive_lod`.
 
     Accepted forms: ``equal-count`` → literal; ``stream:14000`` → passed
@@ -746,22 +746,22 @@ def lod_recipe(
 
         # ── validate values ──
         method_norm = (method or "auto").strip().replace("-", "_")
-        if method_norm not in _VALID_ADDITIVE_METHODS:
+        if method_norm not in VALID_ADDITIVE_METHODS:
             msg = (
-                f"--method must be one of {list(_VALID_ADDITIVE_METHODS)}; "
+                f"--method must be one of {list(VALID_ADDITIVE_METHODS)}; "
                 f"got {method!r}"
             )
-            if method_norm in _VALID_SUBSTITUTIVE_METHODS:
+            if method_norm in VALID_SUBSTITUTIVE_METHODS:
                 # `-m kmeans_lloyd` etc.: the user almost certainly meant the
                 # substitutive partition algorithm (--method is the ADDITIVE
                 # ordering — every substitutive level is laddered by default).
                 msg += " (for the substitutive algorithm use --substitutive-method)"
             raise typer.BadParameter(msg)
         sub_norm = (substitutive_method or "auto").strip().replace("-", "_")
-        if sub_norm not in _VALID_SUBSTITUTIVE_METHODS:
+        if sub_norm not in VALID_SUBSTITUTIVE_METHODS:
             raise typer.BadParameter(
                 f"--substitutive-method must be one of "
-                f"{list(_VALID_SUBSTITUTIVE_METHODS)}; got {substitutive_method!r}"
+                f"{list(VALID_SUBSTITUTIVE_METHODS)}; got {substitutive_method!r}"
             )
         if additive_ladders is False and recipe in ("stream", "tiles"):
             raise typer.BadParameter(
@@ -828,7 +828,7 @@ def lod_recipe(
         validate_streaming_knobs(
             target_ms, bandwidth_mbps, bytes_per_splat, breakpoints
         )
-        bp = _parse_lod_breakpoints(breakpoints or "equal-count")
+        bp = parse_lod_breakpoints(breakpoints or "equal-count")
         encoding_obj = _resolve_encoding(encoding)
 
         if output_path.exists() and not overwrite:

@@ -277,32 +277,32 @@ def resolve_merge_recipe_args(
     if merge.n_lods is not None:
         args["n-lods"] = str(merge.n_lods)
     if merge.additive_method is not None:
-        from luxar.cli.lod import _VALID_ADDITIVE_METHODS
+        from luxar.cli.lod import VALID_ADDITIVE_METHODS
 
         am_norm = merge.additive_method.strip().replace("-", "_")
-        if am_norm not in _VALID_ADDITIVE_METHODS:
+        if am_norm not in VALID_ADDITIVE_METHODS:
             raise typer.BadParameter(
                 f"--merge-additive-method must be one of "
-                f"{list(_VALID_ADDITIVE_METHODS)}; got {merge.additive_method!r}"
+                f"{list(VALID_ADDITIVE_METHODS)}; got {merge.additive_method!r}"
             )
         args["additive-method"] = am_norm
     if eff_breakpoints is not None:
-        from luxar.cli.lod import _parse_lod_breakpoints
+        from luxar.cli.lod import parse_lod_breakpoints
 
-        _parse_lod_breakpoints(eff_breakpoints)
+        parse_lod_breakpoints(eff_breakpoints)
         args["breakpoints"] = eff_breakpoints
     if merge.compression_factor is not None:
         args["compression-factor"] = str(merge.compression_factor)
     if merge.levels is not None:
         args["levels"] = str(merge.levels)
     if merge.substitutive_method is not None:
-        from luxar.cli.lod import _VALID_SUBSTITUTIVE_METHODS
+        from luxar.cli.lod import VALID_SUBSTITUTIVE_METHODS
 
         sm_norm = merge.substitutive_method.strip().replace("-", "_")
-        if sm_norm not in _VALID_SUBSTITUTIVE_METHODS:
+        if sm_norm not in VALID_SUBSTITUTIVE_METHODS:
             raise typer.BadParameter(
                 f"--merge-substitutive-method must be one of "
-                f"{list(_VALID_SUBSTITUTIVE_METHODS)}; "
+                f"{list(VALID_SUBSTITUTIVE_METHODS)}; "
                 f"got {merge.substitutive_method!r}"
             )
         args["substitutive-method"] = sm_norm

@@ -60,6 +60,21 @@ export function concatenateGSplatsData(parts: LoadedGSplatsData[]): LoadedGSplat
   }
 
   const ndim = parts[0].ndim;
+  // Same fail-fast contract as the dtype/layout checks below, one field
+  // over: `ndim` strides positions AND sizes the Cholesky blocks, so a
+  // corrupted store whose sub-LODs disagree on ndim would pass the dtype
+  // checks (all Float32) yet mis-stride every splat after the first part —
+  // silent corruption. Dimensionality is per-dataset; a mismatch is
+  // malformed data.
+  for (const part of parts) {
+    if (part.ndim !== ndim) {
+      throw new Error(
+        'concatenateGSplatsData: mixed dimensionality across LOD levels ' +
+          `(ndim ${part.ndim} vs ${ndim}) — ladder levels must share the ` +
+          'dataset dimensionality.'
+      );
+    }
+  }
   const totalSplats = parts.reduce((sum, p) => sum + p.splatCount, 0);
   const cholSize = (ndim * (ndim + 1)) / 2;
   const count = (p: LoadedGSplatsData) => p.splatCount;

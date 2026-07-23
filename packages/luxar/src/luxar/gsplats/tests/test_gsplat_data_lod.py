@@ -1131,9 +1131,7 @@ class TestMergeLodColors:
             ),
             colors=c0,
         )
-        multi = GSplatData.from_additive_sublods(
-            [self._lod(c0, 2), self._lod(c0, 2)]
-        )
+        multi = GSplatData.from_additive_sublods([self._lod(c0, 2), self._lod(c0, 2)])
         assert single.colors is not None and multi.colors is not None
         assert multi.colors.dtype == single.colors.dtype == np.uint8
 
@@ -1160,3 +1158,117 @@ class TestMergeLodColors:
         assert merged is not None and merged.dtype == np.float32
         np.testing.assert_allclose(merged[0], [1.0, 0.0, 128 / 255], atol=1e-6)
         np.testing.assert_allclose(merged[1], [1.0, 1.0, 1.0])  # white fill
+
+
+class TestLadderWideColorPolicy:
+    """`GSplatData.concatenate` must emit LAYOUT/DTYPE-uniform ladders.
+
+    The viewer fail-fasts on ladders whose levels disagree on color layout
+    (RGB vs RGBA) or dtype. With ragged inputs, later levels see a different
+    source subset than earlier ones, so the color policy must be decided once
+    per ladder, not per level (pre-fix, RGBA 2-level + RGB 3-level emitted an
+    RGB tail level beside RGBA ones — an unloadable store from a supported
+    `gsplat merge` invocation).
+    """
+
+    @staticmethod
+    def _view(n_levels: int, colors_per_level):
+        from luxar.gsplats.gsplat_data import AdditiveSubLOD, GSplatData
+
+        sublods = []
+        for k in range(n_levels):
+            n = 4
+            sublods.append(
+                AdditiveSubLOD(
+                    centers=np.zeros((n, 3), dtype=np.float32),
+                    amplitudes=np.ones(n, dtype=np.float32),
+                    cholesky_factors=np.tile(
+                        np.array([1, 0, 1, 0, 0, 1], dtype=np.float32), (n, 1)
+                    ),
+                    colors=colors_per_level(k, n),
+                )
+            )
+        return GSplatData.from_additive_sublods(sublods)
+
+    def test_ragged_rgba_plus_rgb_yields_uniform_rgba_ladder(self) -> None:
+        from luxar.gsplats.gsplat_data import GSplatData
+
+        rgba = self._view(2, lambda k, n: np.full((n, 4), 0.5, dtype=np.float32))
+        rgb_u8 = self._view(3, lambda k, n: np.full((n, 3), 128, dtype=np.uint8))
+        out = GSplatData.concatenate([rgba, rgb_u8])
+        layouts = set()
+        dtypes = set()
+        for k in range(out.n_additive_sublods):
+            colors = out.additive_sublod(k).colors
+            assert colors is not None
+            layouts.add(colors.shape[1])
+            dtypes.add(colors.dtype)
+        # Pre-fix: level 2 (RGB-source-only) stayed (n,3) uint8 while levels
+        # 0-1 were (n,4) float32 — a mixed ladder the viewer rejects.
+        assert layouts == {4}, f"mixed layouts survived: {layouts}"
+        assert dtypes == {np.dtype(np.float32)}, f"mixed dtypes survived: {dtypes}"
+        # uint8 tail level was normalized semantically (÷255), alpha opaque.
+        tail = out.additive_sublod(2).colors
+        assert tail is not None
+        np.testing.assert_allclose(tail[0], [128 / 255] * 3 + [1.0], atol=1e-6)
+
+    def test_uniform_integer_ragged_layout_stays_integer_rgba(self) -> None:
+        from luxar.gsplats.gsplat_data import GSplatData
+
+        rgba_u8 = self._view(2, lambda k, n: np.full((n, 4), 200, dtype=np.uint8))
+        rgb_u8 = self._view(3, lambda k, n: np.full((n, 3), 100, dtype=np.uint8))
+        out = GSplatData.concatenate([rgba_u8, rgb_u8])
+        for k in range(out.n_additive_sublods):
+            colors = out.additive_sublod(k).colors
+            assert colors is not None
+            assert colors.shape[1] == 4
+            assert colors.dtype == np.uint8
+        # Widened integer alpha is full-scale opaque.
+        assert int(out.additive_sublod(2).colors[0, 3]) == 255
+
+
+class TestWriterRejectsMixedLadder:
+    """`write_gsplats_tree` refuses to write viewer-unloadable mixed ladders."""
+
+    @staticmethod
+    def _sublod(colors, n=4, ndim=3):
+        chol = np.zeros((n, ndim * (ndim + 1) // 2), dtype=np.float32)
+        chol[:, [0, 2, 5][:ndim] if ndim == 3 else range(chol.shape[1])] = 1.0
+        return AdditiveSubLOD(
+            centers=np.random.default_rng(0).random((n, ndim)).astype(np.float32),
+            amplitudes=np.ones(n, dtype=np.float32),
+            cholesky_factors=np.tile(
+                np.array([1, 0, 1, 0, 0, 1], dtype=np.float32), (n, 1)
+            )
+            if ndim == 3
+            else chol,
+            colors=colors,
+        )
+
+    def _write(self, tmp_path, sublods):
+        import pytest
+
+        from luxar.gsplats.io.save_gsplats import write_gsplats_tree
+        from luxar.gsplats.tree import GSplatLeaf
+
+        leaf = GSplatLeaf(additive_sublods=sublods)
+        with pytest.raises(ValueError, match="additive ladder has mixed"):
+            write_gsplats_tree(tmp_path / "bad.gsplats.zarr", leaf)
+
+    def test_mixed_color_layout_rejected(self, tmp_path) -> None:
+        self._write(
+            tmp_path,
+            [
+                self._sublod(np.full((4, 4), 0.5, dtype=np.float32)),
+                self._sublod(np.full((4, 3), 0.5, dtype=np.float32)),
+            ],
+        )
+
+    def test_mixed_color_dtype_rejected(self, tmp_path) -> None:
+        self._write(
+            tmp_path,
+            [
+                self._sublod(np.full((4, 3), 0.5, dtype=np.float32)),
+                self._sublod(np.full((4, 3), 128, dtype=np.uint8)),
+            ],
+        )

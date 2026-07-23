@@ -77,7 +77,7 @@ import {
   isVolumetricMode,
   usesPeakProjection,
 } from '../../blending-state';
-import type { BlendingMode } from '../../material-manager';
+import type { BlendingMode } from '../../../types/blending';
 import { ALPHA_CLAMP } from './math';
 
 // Type-erased constructor aliases. TSL's typed `vec2`/`vec3`/`vec4`/`mat3`
