@@ -216,10 +216,10 @@ class TestMergeStreamingKnobs:
 
     def test_stored_stream_string_reparses_at_merge_time(self) -> None:
         """The manifest round-trip: the stored string re-parses via
-        _parse_lod_breakpoints into the same deferred spec."""
-        from luxar.cli.lod import _parse_lod_breakpoints
+        parse_lod_breakpoints into the same deferred spec."""
+        from luxar.cli.lod import parse_lod_breakpoints
 
-        assert _parse_lod_breakpoints("stream:20833") == "stream:20833"
+        assert parse_lod_breakpoints("stream:20833") == "stream:20833"
 
     def test_target_ms_sized_with_true_merged_ndim(self) -> None:
         """merged_ndim=3 (single timepoint, 3 spatial) must size against the

@@ -169,6 +169,16 @@ def validate_meta(meta: Any, path: Path) -> None:
             isinstance(item, str) and item for item in seq
         ):
             fail(f"{field} must be a (possibly empty) list of non-empty strings")
+        # Path containment: these names are joined onto the cache/output roots
+        # and `demo cache clear` rmtree's the result — an absolute path or a
+        # `..`/separator segment would escape the root (pathlib's `/` with an
+        # absolute RHS REPLACES the base). Single path-safe segments only.
+        for item in seq:
+            if not all(c.isalnum() or c in "._-" for c in item) or item.startswith("."):
+                fail(
+                    f"{field} entry {item!r} must be a single path-safe segment "
+                    "([A-Za-z0-9._-], not dot-leading — no separators, no '..')"
+                )
 
 
 def extract_demo_meta(path: Path) -> dict[str, Any]:
@@ -265,8 +275,14 @@ def get_demo(key_or_index: str) -> DemoInfo:
     demos = iter_demos()
 
     token = key_or_index.strip()
-    if token.lstrip("-").isdigit():
+    # int() rather than isdigit-gating alone: a token like "--5" passes
+    # lstrip("-").isdigit() but int() rejects it — treat that as a key
+    # lookup (→ the KeyError path below), not an uncaught ValueError.
+    try:
         index = int(token)
+    except ValueError:
+        index = None
+    if index is not None:
         if 1 <= index <= len(demos):
             return demos[index - 1]
         raise KeyError(

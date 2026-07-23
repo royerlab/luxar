@@ -30,6 +30,26 @@ All notable changes to Luxar are documented in this file.
   `transform` (centers/vertices do); gsplats differ (covariances
   transform with the node).
 
+#### Added — `luxar demo` sub-app + DEMO_META registry + CLI dedup (#633–#638)
+
+- **`luxar demo` sub-app** (#637): `luxar demo` lists all 75 bundled demos in a
+  table; `demo info <key>`, `demo run <key|index>` (forwards `--` args, exit
+  codes propagate), `demo run-all` (batch `--no-serve` generation with
+  `--skip-existing/--force`, `--keep-going/--fail-fast`), and
+  `demo cache list/clear` for the `~/.cache/luxar/` inventory.
+- **DEMO_META registry** (#635): every `demo_*.py` carries a machine-readable
+  `DEMO_META` literal, AST-parsed (never imported) by `demos/registry.py`;
+  schema-validated for all demos by `tests/test_demo_meta.py`, single source
+  for the CLI and the gallery manifest.
+- **CLI refactor** (#638): shared option definitions in `common_options.py`
+  (no duplicated `typer.Option` help/defaults), honest port API (`pick_port` /
+  `find_available_port` return the actually-bound port), polled server
+  readiness (`wait_for_server`, replaces fixed sleeps, fail-fast on a dead
+  server thread), and one `ensure_viewer_built()` policy for every
+  serve-family command.
+- **Fixed** (#633): subcommands no longer swallow `typer.Exit`; zarr stores
+  are mounted at the data-server root.
+
 #### Fixed — review-campaign hardening riding the points-sorting PR
 
 - **Runtime blending-mode switches now reach hidden LOD levels**: switching

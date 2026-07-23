@@ -53,6 +53,13 @@ def effective_amplitudes(data: object) -> np.ndarray:
     if colors is not None:
         colors = np.asarray(colors)
         if colors.ndim == 2 and colors.shape[1] == 4:
-            weighted: np.ndarray = amps * colors[:, 3].astype(amps.dtype, copy=False)
+            alpha = colors[:, 3]
+            if np.issubdtype(alpha.dtype, np.integer):
+                # Integer colors store opacity at full scale (255 = opaque —
+                # a valid SDR storage form, see _merge_lod_colors); the
+                # opacity CONTRACT is [0, 1], so normalize before weighting
+                # or every integer-color splat is misranked ~255×.
+                alpha = alpha.astype(np.float32) / np.iinfo(alpha.dtype).max
+            weighted: np.ndarray = amps * alpha.astype(amps.dtype, copy=False)
             return weighted
     return amps

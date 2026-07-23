@@ -776,6 +776,22 @@ describe('LinesProgressiveLoader', () => {
       await expect(loader.loadLines(baseViewState)).rejects.toThrow(/mixed color dtypes/);
     });
 
+    it('rejects mixed dimensionality across LOD levels (ndim strides the concat)', async () => {
+      // Same fail-fast family as the dtype check: ndim strides the position
+      // concat, so sub-LODs disagreeing on it would silently mis-stride
+      // every vertex after the first part.
+      lodA = makeSubLoader(makeLodData(20, 10, 3));
+      lodB = makeSubLoader(makeLodData(10, 5, 4));
+      loader = new LinesProgressiveLoader(
+        [lodA, lodB] as unknown as LinesSpatialIndexLoader[],
+        2,
+        '/lines'
+      );
+      await expect(loader.loadLines(baseViewState)).rejects.toThrow(
+        /mixed dimensionality .*ndim 4 vs 3/
+      );
+    });
+
     it('uses Uint8 fill (255) when first LOD colors are uint8 but a level lacks them', async () => {
       lodB = makeSubLoader(makeLodData(10, 5, 3)); // no colors
       loader = new LinesProgressiveLoader(

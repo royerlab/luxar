@@ -30,7 +30,7 @@ import {
   normalModeDepthWrite,
   type CompleteBlendingState,
 } from '../../blending-state';
-import type { BlendingMode } from '../../material-manager';
+import type { BlendingMode } from '../../../types/blending';
 
 /**
  * Intensity == 1 && offset == 0 (with ±1e-4 epsilon) lets the

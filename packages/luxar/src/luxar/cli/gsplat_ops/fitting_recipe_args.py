@@ -25,10 +25,10 @@ def build_fit_recipe_params(
 ) -> Any:
     """Validate per-part ``--recipe`` knobs and build a ``RecipeParams``."""
     from luxar.cli.lod import (
-        _VALID_ADDITIVE_METHODS,
-        _VALID_SUBSTITUTIVE_METHODS,
-        _parse_lod_breakpoints,
+        VALID_ADDITIVE_METHODS,
+        VALID_SUBSTITUTIVE_METHODS,
         estimate_bytes_per_splat,
+        parse_lod_breakpoints,
         resolve_streaming_breakpoints,
         validate_streaming_knobs,
     )
@@ -77,16 +77,16 @@ def build_fit_recipe_params(
         )
 
     add_norm = (additive_method or "auto").strip().replace("-", "_")
-    if add_norm not in _VALID_ADDITIVE_METHODS:
+    if add_norm not in VALID_ADDITIVE_METHODS:
         raise typer.BadParameter(
-            f"--additive-method must be one of {list(_VALID_ADDITIVE_METHODS)}; "
+            f"--additive-method must be one of {list(VALID_ADDITIVE_METHODS)}; "
             f"got {additive_method!r}"
         )
     sub_norm = (substitutive_method or "auto").strip().replace("-", "_")
-    if sub_norm not in _VALID_SUBSTITUTIVE_METHODS:
+    if sub_norm not in VALID_SUBSTITUTIVE_METHODS:
         raise typer.BadParameter(
             f"--substitutive-method must be one of "
-            f"{list(_VALID_SUBSTITUTIVE_METHODS)}; got {substitutive_method!r}"
+            f"{list(VALID_SUBSTITUTIVE_METHODS)}; got {substitutive_method!r}"
         )
     validate_streaming_knobs(target_ms, bandwidth_mbps, bytes_per_splat, breakpoints)
     if target_ms is not None:
@@ -97,7 +97,7 @@ def build_fit_recipe_params(
             analytic_bps=estimate_bytes_per_splat(volume_ndim),
         )
     else:
-        bp = _parse_lod_breakpoints(breakpoints) if breakpoints else "equal-count"
+        bp = parse_lod_breakpoints(breakpoints) if breakpoints else "equal-count"
 
     parsed_coarsen: Optional[tuple] = None
     if coarsen_dims is not None:

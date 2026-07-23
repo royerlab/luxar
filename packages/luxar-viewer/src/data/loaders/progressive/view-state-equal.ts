@@ -14,6 +14,7 @@
 
 import type { ViewState } from '../../data-loader-types';
 import type { DimensionMetadata } from '../../../types/dims';
+import { isExtendToAll } from '../../../workers/data-worker/projection/hidden-dims';
 
 /**
  * Canonical QUERY-DETERMINANT projection of the dimensions metadata,
@@ -103,6 +104,13 @@ export function viewStatesEqual(a: ViewState, b: ViewState): boolean {
       const m = dimsForTol?.[i];
       const rideAlong = m?.discrete === true && m?.spatial !== true && !displayed.has(i);
       if (!rideAlong) return false;
+      // The ride-along skip ignores the VALUE — but the extend_to_all
+      // sentinel is the one tolerance value the worker's discrete-dim
+      // membership DOES read (isExtendToAll in projection/hidden-dims).
+      // A 0.5 ↔ 1e10 flip changes which elements match, so it must never
+      // be skipped as builder churn. (Unreachable with today's static
+      // extend_to_all attrs; hardening against a future dynamic toggle.)
+      if (isExtendToAll(a.tolerance[i]) !== isExtendToAll(b.tolerance[i])) return false;
     }
   }
   // Dimensions metadata: reference equality first, then a compare of the
