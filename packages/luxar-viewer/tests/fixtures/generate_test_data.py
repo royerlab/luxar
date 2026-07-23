@@ -87,6 +87,8 @@ FIXTURE_NAMES: list[str] = [
     "test_nd_transforms.luxar.zarr",
     "test_overview.gsplats.zarr",
     "test_points_blending_modes.luxar.zarr",
+    "test_points_normal_overlap.luxar.zarr",
+    "test_points_normal_overlap_reversed.luxar.zarr",
     "test_quantization.luxar.zarr",
     "test_sharpness_range.luxar.zarr",
     "test_standalone_gsplats.gsplats.zarr",
@@ -2091,6 +2093,137 @@ def generate_gsplats_test() -> None:
         aprint(f"  Centers: {centers.shape}, Cholesky: {cholesky.shape}")
 
 
+def generate_points_normal_overlap_test() -> None:
+    """Two large overlapping points at staggered depth, 'normal' blending.
+
+    The points sibling of :func:`generate_gsplats_normal_overlap_test`
+    (three-geometry symmetry — points are depth-sorted too): a back red
+    point and a front green point whose sprites overlap in screen space
+    under the viewer's auto-framed camera, plus a small off-axis blue
+    reference point. Radii are generous relative to the 0.5-unit center
+    separation so the two sprites genuinely overlap;
+    ``blending_mode='normal'`` with ``opacity=0.5`` makes the
+    compositing ORDER visible in the overlap pixels (green-over-red vs
+    the mirror image).
+    """
+    with asection("Generating Points Normal-Overlap Test"):
+        output = FIXTURES_DIR / "test_points_normal_overlap.luxar.zarr"
+
+        # Same layout as the gsplat overlap fixture: back point at z=0,
+        # front point at z=1 overlapping in screen space, blue reference
+        # off-axis (an anchor outside the overlap).
+        positions = np.array(
+            [
+                [-0.25, 0.0, 0.0],  # back point (red)
+                [0.25, 0.0, 1.0],  # front point (green), overlaps in screen space
+                [3.0, 2.0, 0.0],  # small reference point (blue), no overlap
+            ],
+            dtype=np.float32,
+        )
+        colors = np.array(
+            [
+                [1.0, 0.1, 0.1],  # red
+                [0.1, 1.0, 0.1],  # green
+                [0.1, 0.1, 1.0],  # blue
+            ],
+            dtype=np.float32,
+        )
+        # Sprite radii ≈ the gsplat fixture's ~1σ extent: the two big
+        # sprites (0.7 > half the 0.5-unit separation) overlap solidly.
+        radii = np.array([0.7, 0.7, 0.3], dtype=np.float32)
+
+        dims = Dimensions(
+            [
+                Dimension("x", unit="units", display=True),
+                Dimension("y", unit="units", display=True),
+                Dimension("z", unit="units", display=True),
+            ]
+        )
+
+        with LuxarZarrCompiler(
+            output,
+            encoding_mode=EncodingMode.PRECISION,
+            compressor=None,
+            float16_allowed=False,
+        ) as compiler:
+            scene = compiler.create_scene(dimensions=dims)
+
+            scene.add_points(
+                "overlap_points",
+                positions,
+                colors=colors,
+                radii=radii,
+                blending_mode="normal",
+                opacity=0.5,
+            )
+
+        aprint(f"  Created {output}")
+
+
+def generate_points_normal_overlap_reversed_test() -> None:
+    """The points normal-overlap scene declared FRONT-TO-BACK (sort gate).
+
+    Identical to :func:`generate_points_normal_overlap_test` except the
+    points are DECLARED in reversed (front-first) order — the points
+    twin of :func:`generate_gsplats_normal_overlap_reversed_test`. NOTE:
+    the compiler Morton-reorders storage, so the on-disk order is
+    spatial, not the declaration order — what makes this fixture a
+    depth-sort gate is its geometry: under the viewer's auto-framed
+    camera the near (green) point sits BETWEEN the two far points in
+    storage order, so the identity ordering is not back-to-front and the
+    E2E assertion (aSortedIndex non-identity + view-z monotone, see
+    blending-modes.spec.ts) fails without a working SortWorker.
+    """
+    with asection("Generating Points Normal-Overlap-Reversed Test"):
+        output = FIXTURES_DIR / "test_points_normal_overlap_reversed.luxar.zarr"
+
+        # Same points as the canonical overlap fixture, front point FIRST.
+        positions = np.array(
+            [
+                [0.25, 0.0, 1.0],  # front point (green) stored first
+                [-0.25, 0.0, 0.0],  # back point (red) stored second
+                [3.0, 2.0, 0.0],  # small reference point (blue), no overlap
+            ],
+            dtype=np.float32,
+        )
+        colors = np.array(
+            [
+                [0.1, 1.0, 0.1],  # green (front)
+                [1.0, 0.1, 0.1],  # red (back)
+                [0.1, 0.1, 1.0],  # blue
+            ],
+            dtype=np.float32,
+        )
+        radii = np.array([0.7, 0.7, 0.3], dtype=np.float32)
+
+        dims = Dimensions(
+            [
+                Dimension("x", unit="units", display=True),
+                Dimension("y", unit="units", display=True),
+                Dimension("z", unit="units", display=True),
+            ]
+        )
+
+        with LuxarZarrCompiler(
+            output,
+            encoding_mode=EncodingMode.PRECISION,
+            compressor=None,
+            float16_allowed=False,
+        ) as compiler:
+            scene = compiler.create_scene(dimensions=dims)
+
+            scene.add_points(
+                "overlap_points_reversed",
+                positions,
+                colors=colors,
+                radii=radii,
+                blending_mode="normal",
+                opacity=0.5,
+            )
+
+        aprint(f"  Created {output}")
+
+
 def generate_gsplats_normal_overlap_test() -> None:
     """Two large overlapping splats at staggered depth, 'normal' blending.
 
@@ -2755,6 +2888,8 @@ def main() -> None:
         generate_points_blending_modes_test()
         generate_lines_blending_modes_test()
         generate_blending_inherited_test()
+        generate_points_normal_overlap_test()
+        generate_points_normal_overlap_reversed_test()
         aprint("")
 
         generate_gsplats_test()

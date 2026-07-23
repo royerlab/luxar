@@ -13,6 +13,13 @@
  * they are properties of the math itself, no GPU needed.
  */
 import { describe, it, expect } from 'vitest';
+import {
+  VOLUMETRIC_SERIES_TAU_THRESHOLD,
+  VOLUMETRIC_TAU_EPS,
+  VOLUMETRIC_SERIES_C1,
+  VOLUMETRIC_SERIES_C2,
+  VOLUMETRIC_SERIES_C2_DIVISOR,
+} from '../../../../../rendering/materials/gsplat/math';
 
 /**
  * Exact transmittance-screening: S(τ) = (1 − e^(−τ))/τ, S(0) = 1.
@@ -26,10 +33,18 @@ function screenExact(tau: number): number {
   return -Math.expm1(-tau) / tau;
 }
 
-/** The shader's branch: series below 1e-3, guarded quotient above. */
+/**
+ * The shader's branch: series below the threshold, guarded quotient
+ * above — built FROM the exported constants in ./math (the shaders
+ * interpolate the same symbols), so a drift there fails this suite
+ * against `screenExact` instead of silently diverging from the test's
+ * own private copy.
+ */
 function screenShader(tau: number): number {
   const alpha = 1 - Math.exp(-tau);
-  return tau < 1e-3 ? 1 - 0.5 * tau + (tau * tau) / 6 : alpha / Math.max(tau, 1e-20);
+  return tau < VOLUMETRIC_SERIES_TAU_THRESHOLD
+    ? 1 - VOLUMETRIC_SERIES_C1 * tau + (tau * tau) / VOLUMETRIC_SERIES_C2_DIVISOR
+    : alpha / Math.max(tau, VOLUMETRIC_TAU_EPS);
 }
 
 /** One volumetric fragment: premultiplied (emission·S, α). */
@@ -45,6 +60,18 @@ function over(src: { rgb: number; a: number }, dstRgb: number): number {
 }
 
 describe('S(τ) series/exact seam', () => {
+  it('constants pin the spec values (single source in ./math, consumed by both shaders)', () => {
+    expect(VOLUMETRIC_SERIES_TAU_THRESHOLD).toBe(1e-3);
+    expect(VOLUMETRIC_TAU_EPS).toBe(1e-20);
+    expect(VOLUMETRIC_SERIES_C1).toBe(0.5);
+    expect(VOLUMETRIC_SERIES_C2).toBe(1 / 6);
+    // The shaders emit the τ² term as a division by 1/C2 (the historical
+    // `τ·τ/6.0`, bit-identical rounding) — the derived divisor must stay
+    // exactly consistent with C2.
+    expect(VOLUMETRIC_SERIES_C2_DIVISOR).toBe(6);
+    expect(VOLUMETRIC_SERIES_C2_DIVISOR * VOLUMETRIC_SERIES_C2).toBe(1);
+  });
+
   it('shader branch matches the exact form across the τ range (incl. the 1e-3 seam)', () => {
     for (const tau of [0, 1e-8, 1e-6, 1e-4, 0.999e-3, 1e-3, 1.001e-3, 0.1, 1, 10]) {
       expect(screenShader(tau)).toBeCloseTo(screenExact(tau), 9);

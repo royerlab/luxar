@@ -739,6 +739,47 @@ test.describe('TSL ↔ GLSL shader parity', () => {
     ).toBeLessThan(3.0);
   });
 
+  test('gsplat-volumetric-rgba: per-splat alpha → optical-depth fold matches across backends', async ({
+    page,
+  }) => {
+    await bootHarness(page);
+
+    const glslPixels = await runGLSL(page, 'gsplat-volumetric-rgba');
+    const tslResult = await runTSL(page, 'gsplat-volumetric-rgba');
+
+    assertBothRendered(glslPixels, tslResult.pixels, 'gsplat-volumetric-rgba');
+    expect(
+      meanAbsDiffPerCoveredPixel(glslPixels, tslResult.pixels),
+      'gsplat-volumetric-rgba: per-covered-pixel parity (footprint-invariant)'
+    ).toBeLessThan(2.0);
+
+    // With uHasElementAlpha=1 and texel3.y = 0.5 the density scalar is
+    // scaled by w = −ln(1 − 0.5) ≈ 0.693 on BOTH backends — the
+    // α → optical-depth branch no other gsplat variant executes (they
+    // all leave the gate at its 0 default). The center alpha must stay
+    // sub-saturated absorption, exactly like the α = 1-identity twin.
+    const centerAlphaGLSL = glslPixels[(32 * 64 + 32) * 4 + 3];
+    const centerAlphaTSL = tslResult.pixels[(32 * 64 + 32) * 4 + 3];
+    for (const [backend, a] of [
+      ['GLSL', centerAlphaGLSL],
+      ['TSL', centerAlphaTSL],
+    ] as const) {
+      expect(
+        a,
+        `gsplat-volumetric-rgba ${backend}: expected sub-saturated absorption alpha at center, got ${a}`
+      ).toBeGreaterThan(0);
+      expect(a).toBeLessThan(255);
+    }
+
+    const diff = meanAbsDiff(glslPixels, tslResult.pixels);
+    // Same looser tolerance as gsplat-volumetric (sum-projection
+    // ray-integral path).
+    expect(
+      diff,
+      `GSplat-volumetric-rgba parity: mean abs diff ${diff.toFixed(2)} on 0-255 scale.`
+    ).toBeLessThan(3.0);
+  });
+
   test('gsplat-pick: covariance projection with nodeId / elementId / brightness output', async ({
     page,
   }) => {
@@ -1033,6 +1074,55 @@ test.describe('TSL ↔ GLSL shader parity', () => {
     }
     expect(centerAlpha).toBeLessThan(160);
     expect(centerAlpha).toBeGreaterThan(40);
+  });
+
+  test('point-sorted-permuted: aSortedIndex permutation + multi-row texel fetch parity', async ({
+    page,
+  }) => {
+    await bootHarness(page);
+
+    const glslPixels = await runGLSL(page, 'point-sorted-permuted');
+    const tslResult = await runTSL(page, 'point-sorted-permuted');
+
+    assertBothRendered(glslPixels, tslResult.pixels, 'point-sorted-permuted');
+    expect(
+      meanAbsDiffPerCoveredPixel(glslPixels, tslResult.pixels),
+      'point-sorted-permuted: per-covered-pixel parity (footprint-invariant)'
+    ).toBeLessThan(2.0);
+
+    // All four permuted slots must land — one distinct-color sprite per
+    // screen quadrant (world ±0.5 → pixels 16/48; the quadrant set is
+    // symmetric, so probe COVERAGE per quadrant regardless of readback
+    // row order; the parity assertions above pin the per-pixel colors).
+    // A missing quadrant means the aSortedIndex → texel indirection
+    // dropped or aliased a storage slot (e.g. a broken base / W row
+    // computation reading row 0 for every point).
+    for (const [x, y] of [
+      [16, 16],
+      [48, 16],
+      [16, 48],
+      [48, 48],
+    ] as const) {
+      for (const [backend, px] of [
+        ['GLSL', glslPixels],
+        ['TSL', tslResult.pixels],
+      ] as const) {
+        const o = (y * 64 + x) * 4;
+        const covered =
+          px[o] !== px[0] || px[o + 1] !== px[1] || px[o + 2] !== px[2] || px[o + 3] !== px[3];
+        expect(
+          covered,
+          `point-sorted-permuted ${backend}: no sprite at (${x},${y}) — ` +
+            'the sorted-index indirection dropped/aliased a storage slot'
+        ).toBe(true);
+      }
+    }
+
+    const diff = meanAbsDiff(glslPixels, tslResult.pixels);
+    expect(
+      diff,
+      `point-sorted-permuted parity: mean abs diff ${diff.toFixed(2)} on 0-255 scale.`
+    ).toBeLessThan(2.0);
   });
 
   test('line-ortho-near: in-frustum ortho line inside the nearCull slab RENDERS (B9c bug A)', async ({

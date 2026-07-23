@@ -10,11 +10,11 @@
  * - `types.ts` — the `RegistryEntry` registry contract
  * - `shared.ts` — cross-family camera / colormap-LUT helpers
  * - `post-processing.ts` — const-rgb, fxaa, bloom-threshold, mega* (8 entries)
- * - `points.ts` — point + point-pick variants (12 entries)
- * - `lines.ts` — line + line-pick variants (8 entries)
- * - `gsplats.ts` — gsplat + gsplat-pick variants (13 entries)
+ * - `points.ts` — point + point-pick variants (14 entries)
+ * - `lines.ts` — line + line-pick variants (9 entries)
+ * - `gsplats.ts` — gsplat + gsplat-pick variants (16 entries)
  * - `render.ts` — the `renderGLSL` / `renderTSL` executors
- * - `index.ts` — merges the families into the 41-entry `SHADER_REGISTRY`
+ * - `index.ts` — merges the families into the 47-entry `SHADER_REGISTRY`
  *
  * Why a dedicated page rather than reusing the main viewer:
  * - Construction order is explicit and minimal — no app/state machine

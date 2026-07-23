@@ -2,8 +2,8 @@
  * Point shader family for the TSL ↔ GLSL parity harness: the visual
  * point-sprite variants (falloff sweep, gamma fast path, max-mode
  * premultiply, colormap LUT, perspective sizing, subpixel floor, near
- * fade, behind-camera guard) plus the point-pick counterparts.
- * 13 registry entries.
+ * fade, behind-camera guard, sorted-index permutation) plus the
+ * point-pick counterparts. 14 registry entries.
  *
  * @module tests/e2e/harnesses/tsl-harness/points
  */
@@ -25,7 +25,10 @@ import {
   writePointTexels,
   type PointTexelSource,
 } from '../../../../rendering/point-geometry';
-import { writeSortedIndexIdentity } from '../../../../rendering/element-storage';
+import {
+  writeSortedIndexIdentity,
+  writeSortedIndexOrdering,
+} from '../../../../rendering/element-storage';
 import type { RegistryEntry } from './types';
 import { buildBehindCamera, buildColormapTexture } from './shared';
 
@@ -109,6 +112,86 @@ function buildPointInstancedMesh(
   // form the unit quad — otherwise r184 falls back to a single
   // non-instanced draw call and produces a degenerate parity image.
   geom.instanceCount = 1;
+  geom.setDrawRange(0, 6);
+  const mesh = new THREE.Mesh(geom, material);
+  mesh.frustumCulled = false;
+  return mesh;
+}
+
+/**
+ * Four-point texel source for the sorted-permutation variant — one
+ * point per screen quadrant (world ±0.5 → pixels 16/48 under the
+ * default ortho camera), each with a DISTINCT color, so a broken
+ * `aSortedIndex` → texel indirection moves or recolors a sprite and
+ * changes pixels instead of passing vacuously. Shared by the texture
+ * and mesh builders below (identical-data convention — the shaders
+ * sample the uniform's texture).
+ */
+const SORTED_PERMUTED_COUNT = 4;
+const SORTED_PERMUTED_POINTS: PointTexelSource = {
+  // prettier-ignore
+  positions: new Float32Array([
+    -0.5, -0.5, 0,
+     0.5, -0.5, 0,
+    -0.5,  0.5, 0,
+     0.5,  0.5, 0,
+  ]),
+  // prettier-ignore
+  colors: new Float32Array([
+    1.0, 0.1, 0.1,
+    0.1, 1.0, 0.1,
+    0.1, 0.1, 1.0,
+    1.0, 1.0, 0.1,
+  ]),
+  radii: new Float32Array([0.3, 0.3, 0.3, 0.3]),
+  sharpness: new Float32Array([0.5, 0.5, 0.5, 0.5]),
+};
+
+/**
+ * NON-identity draw-slot → storage-slot permutation under test —
+ * applied via the production `writeSortedIndexOrdering` (the
+ * SortWorker's write path).
+ */
+const SORTED_PERMUTED_ORDERING = new Uint32Array([2, 0, 3, 1]);
+
+/**
+ * Four-point data texture, deliberately THREE TEXELS WIDE (one point
+ * per ROW): storage slot i has texel base 3·i, so with W = 3 every
+ * slot i > 0 resolves to row y = base / W = i > 0. This exercises the
+ * shaders' 2D texel-address reconstruction (x = base % W,
+ * y = base / W) on a multi-row wrap — every other point variant uses a
+ * single-point 3×1 texture where y is always 0, so a broken row
+ * computation was invisible to the whole suite.
+ */
+function buildSortedPermutedPointTexture(): THREE.DataTexture {
+  const tex = new THREE.DataTexture(
+    new Float32Array(3 * SORTED_PERMUTED_COUNT * 4),
+    3,
+    SORTED_PERMUTED_COUNT,
+    THREE.RGBAFormat,
+    THREE.FloatType
+  );
+  tex.magFilter = THREE.NearestFilter;
+  tex.minFilter = THREE.NearestFilter;
+  tex.generateMipmaps = false;
+  tex.flipY = false;
+  writePointTexels(tex, SORTED_PERMUTED_POINTS, SORTED_PERMUTED_COUNT);
+  return tex;
+}
+
+/**
+ * Multi-instance point mesh matching {@link SORTED_PERMUTED_POINTS},
+ * with the NON-identity {@link SORTED_PERMUTED_ORDERING} written
+ * through the production `writeSortedIndexOrdering`. Same assembly
+ * conventions as {@link buildPointInstancedMesh} (drawRange capped at
+ * the 6 quad indices, finite `instanceCount`, no frustum culling).
+ */
+function buildSortedPermutedMesh(material: THREE.Material): THREE.Object3D {
+  const geom = createPointQuadGeometry();
+  const texture = attachPointStorage(geom, SORTED_PERMUTED_COUNT);
+  writePointTexels(texture, SORTED_PERMUTED_POINTS, SORTED_PERMUTED_COUNT);
+  writeSortedIndexOrdering(geom, SORTED_PERMUTED_ORDERING, SORTED_PERMUTED_COUNT);
+  geom.instanceCount = SORTED_PERMUTED_COUNT;
   geom.setDrawRange(0, 6);
   const mesh = new THREE.Mesh(geom, material);
   mesh.frustumCulled = false;
@@ -498,5 +581,39 @@ export const POINT_SHADERS: Record<string, RegistryEntry> = {
     },
     buildMesh: buildPointInstancedMesh,
     buildCamera: buildBehindCamera,
+  },
+  // aSortedIndex indirection under a NON-identity permutation on a
+  // MULTI-ROW point texture. Every other point variant is a single
+  // instance with writeSortedIndexIdentity on a 3×1 texture, so neither
+  // the draw-slot → storage-slot permutation nor a texel base with
+  // base / W > 0 (row y > 0) was exercised by ANY parity variant — a
+  // backend that ignored aSortedIndex or mis-reconstructed the 2D texel
+  // address would ship invisibly. Four distinct-color points, one per
+  // screen quadrant, drawn through the production
+  // writeSortedIndexOrdering permutation [2, 0, 3, 1].
+  'point-sorted-permuted': {
+    source: POINT_SOURCE,
+    buildUniforms: () => ({
+      uPointTex: { value: buildSortedPermutedPointTexture() },
+      pointSizeFactor: { value: 32.0 },
+      maxPointSize: { value: 32.0 },
+      radiusScale: { value: 1.0 },
+      uIsOrtho: { value: 1 },
+      uResolution: { value: new THREE.Vector2(64, 64) },
+      opacity: { value: 1.0 },
+      invGamma: { value: 1.0 / 2.2 },
+      uIntensity: { value: 1.0 },
+      uOffset: { value: 0.0 },
+    }),
+    buildTSLMaterial: (uniforms) => {
+      const m = pointWebGPUFactory(
+        buildPointTSLNodesFromUniforms(uniforms, {}),
+        {}
+      ) as unknown as THREE.Material;
+      m.transparent = false;
+      m.blending = THREE.NoBlending;
+      return m;
+    },
+    buildMesh: buildSortedPermutedMesh,
   },
 };
