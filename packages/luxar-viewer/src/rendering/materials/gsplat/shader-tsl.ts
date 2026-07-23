@@ -628,7 +628,11 @@ export function gsplatWebGPUFactory(
       : vAlpha;
     const intensity: TSLNode = rawIntensity.mul(alphaFactor).toVar();
     // Alpha is folded in, so a ~zero-alpha splat discards in every mode.
-    Discard(intensity.lessThan(1e-4));
+    // GAIN-AWARE gate (GLSL parity): brightness = intensity * uIntensity
+    // * color, so a high gain must relax the visibility floor —
+    // max(uIntensity, 1) keeps gain <= 1 exactly at the historical
+    // threshold. See shader-glsl.ts for the full rationale.
+    Discard(intensity.mul(max(uIntensity, float(1.0))).lessThan(1e-4));
 
     // GOG. Colormap mode bypasses color GOG — gamma + display-range
     // shaped the scalar VALUE (amplitude) pre-LUT (vertex stage).

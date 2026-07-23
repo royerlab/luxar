@@ -23,7 +23,7 @@ import { materialManager } from '../../rendering';
 import { log, Modules } from '../../utils/log';
 import { getColormapTexture } from '../../rendering/colormap-textures';
 import { supportsScalarColormap } from '../../rendering/material-colormap-helpers';
-import { noteGSplatsBlendingModeSwitch } from '../../rendering/depth-sort-coordinator';
+import { noteDepthSortBlendingModeSwitch } from '../../rendering/depth-sort-coordinator';
 import {
   composeAttrs,
   collectAncestorNodes,
@@ -183,12 +183,16 @@ export class LayerApplyEngine {
       applyColorAdjustments(mat, eff.gamma, eff.intensity, eff.offset);
       const prevBlendingMode = mat.userData?.blendingMode as BlendingMode | undefined;
       this.applyBlendingStateToMaterial(mat, eff.blending_mode);
-      // Depth-sorting Phase 2: a gsplat layer switching blending mode may
-      // need to start (TO `normal`: clear the noop stamp + reprocess so
-      // the next commit registers with the SortWorker) or stop (AWAY:
-      // release) depth sorting.
-      if (obj.userData?.nodeType === 'gsplats') {
-        noteGSplatsBlendingModeSwitch(obj as THREE.Mesh, eff.blending_mode, prevBlendingMode);
+      // Depth sorting: a sortable layer switching blending mode may need
+      // to start (TO an effective sorted mode: clear the noop stamp +
+      // reprocess so the next commit registers with the SortWorker) or
+      // stop (AWAY: release) depth sorting. Gsplats + points today;
+      // lines join when their texture storage lands (the coordinator
+      // has no centers pipeline for them yet, so a reprocess would be
+      // pure waste).
+      const sortableType = obj.userData?.nodeType;
+      if (sortableType === 'gsplats' || sortableType === 'points') {
+        noteDepthSortBlendingModeSwitch(obj as THREE.Mesh, eff.blending_mode, prevBlendingMode);
       }
     }
     this.deps.requestRender();

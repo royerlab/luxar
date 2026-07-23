@@ -158,6 +158,8 @@ export async function loadLinesNodeExpensive(
 
     log.success(Modules.SCENE_LOADER, `Loaded ${data.segmentCount} segments for ${node.path}`);
   } catch (error) {
+    // Expected dispose-crossing — see the load-points-node.ts twin.
+    if (!ctx.isDatasetLive()) return;
     ctx.registry.recordFailure(node.path, error as Error);
     throw new LoaderError(classifyLoaderError(error), node.path, error);
   }

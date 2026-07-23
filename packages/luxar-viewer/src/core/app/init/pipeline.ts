@@ -386,7 +386,10 @@ export async function runInitPipeline(
     ports.events.add(() => sceneManager.removeEventListener('change', onSceneChange));
 
     const onContextRestored = (): void => {
-      const sceneLoader = getSceneLoader('default');
+      // Elected default (argless), not the literal 'default' id — matches
+      // the sibling consumers (core/app.ts, build-rail-items.ts) and stays
+      // correct if an embedder ever names its loader.
+      const sceneLoader = getSceneLoader();
       if (sceneLoader && sceneManager.scene) {
         sceneLoader.nodeFactory.rebuildAfterContextRestore(sceneManager.scene);
       }

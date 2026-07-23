@@ -6,6 +6,48 @@ All notable changes to Luxar are documented in this file.
 
 ### July 2026
 
+#### Added — points depth sorting (normal mode now correctly ordered)
+
+- **Points in `normal` blending mode are now back-to-front depth-sorted**,
+  exactly like gsplats: every points commit registers its projected 3D
+  centers with the persistent SortWorker (via a lazy provider so the
+  common additive path never pays the copy), the resulting permutation is
+  applied through the existing `aSortedIndex` indirection, and points
+  join the camera-motion re-sort scheduler and the cross-node global
+  `renderOrder` scale. Same-count recommits (timepoint scrubs) keep the
+  previous permutation as a no-worse prior until the re-sort lands
+  (`preserveOrdering`, mirroring gsplats).
+- The depth-sort coordinator went geometry-neutral: `noteGSplatsCommit` /
+  `noteGSplatsBlendingModeSwitch` → `noteDepthSortCommit` /
+  `noteDepthSortBlendingModeSwitch`; order-dependence is judged on the
+  EFFECTIVE mode (`effectiveGeometryMode`), so points `volumetric` —
+  rendered as additive until volumetric phase 3 — is deliberately not
+  sorted, and phase 3's policy flip upgrades it automatically. LayersPanel
+  mode switches, per-mesh disposal, and lazy-LOD demotion all
+  register/release points sort state symmetrically with gsplats.
+- Docs: Points `radii/` and Lines `widths/` shader contract documented in
+  LUXAR_ZARR_FORMAT.md — size attributes do not scale with the node
+  `transform` (centers/vertices do); gsplats differ (covariances
+  transform with the node).
+
+#### Fixed — review-campaign hardening riding the points-sorting PR
+
+- **Runtime blending-mode switches now reach hidden LOD levels**: switching
+  a layer TO an order-dependent mode also marks resident lazy LOD levels
+  stale, so the LOD registry's settle-gated reload re-commits (and
+  depth-sort registers) them — previously they rendered the sorted mode
+  unsorted until an unrelated slice change (pre-existing, gsplats + points).
+- **High-gain gsplats no longer lose dim splats**: the early fragment
+  discard is gain-aware (`intensity × max(gain, 1)`), so dim fluorescence
+  channels amplified with the intensity control keep their splats instead
+  of showing hard clipped rims (identical output at gain ≤ 1).
+- **Sort worker robustness**: a worker that dies during startup or crashes
+  mid-session can no longer accumulate per-commit memory (init settle
+  guard) or permanently stop a node's re-sorts (per-sort RPC deadline) —
+  both degrade to the documented unsorted-normal fallback.
+- Dataset-switch teardown no longer logs spurious node-failure errors when
+  an in-flight load crosses the dispose (expected-abort classification).
+
 #### Fixed — scale-correctness + LOD display + compiler validation campaign
 
 - **Tiny/huge-unit scenes now render correctly in every geometry**: all

@@ -559,6 +559,12 @@ chunk-index range maps to exactly one zarr chunk.
 - **Description:** Point radii in scene units
 - **Default:** 0.5 if not provided (see `DEFAULT_POINT_RADIUS` in `core/scene.py`)
 - **Validation:** All values must be positive
+- **Shader contract:** radii do NOT scale with the node's `transform` — a
+  node-level scale repositions point centers but leaves the rendered disc
+  size unchanged (size attributes are applied after the model transform).
+  This is deliberate and shared with Lines `widths/`; gsplats differ
+  (their covariances transform with the node). Bake the desired world
+  size into the radii themselves when scaling a node.
 
 #### sharpnesses/ (Optional)
 - **Shape:** `(N,)`
@@ -633,6 +639,9 @@ per-vertex arrays are reordered by the vertex sort):
 - **Dtype/Encoding:** POSITIVE_SCALAR, same rules as Points `radii/`
   (`bounded_scalar_uint8/16` or `geolog_scalar_uint16` under AUTO; float32
   under PRECISION; `broadcasted` when a scalar width is given).
+- **Shader contract:** like Points `radii/`, widths do NOT scale with the
+  node's `transform` — a node-level scale repositions vertices but leaves
+  the rendered line width unchanged.
 
 #### colors/ (Optional)
 - **Shape:** `(N, 3)` — per-vertex RGB, same COLOR encoding rules as Points
