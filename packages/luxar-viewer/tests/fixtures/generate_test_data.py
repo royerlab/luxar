@@ -72,6 +72,9 @@ FIXTURE_NAMES: list[str] = [
     "test_gsplats_volumetric.luxar.zarr",
     "test_gsplats_volumetric_reversed.luxar.zarr",
     "test_gsplats_rgba_occlusion.luxar.zarr",
+    "test_gsplats_rgba_hdr.luxar.zarr",
+    "test_gsplats_rgba_uint8.luxar.zarr",
+    "test_gsplats_rgba_lut.luxar.zarr",
     "test_hdr_colors.luxar.zarr",
     "test_hierarchical_transforms.luxar.zarr",
     "test_integer_colors.luxar.zarr",
@@ -2591,6 +2594,123 @@ def generate_gsplats_rgba_occlusion_test() -> None:
         aprint(f"  Created {output}")
 
 
+
+
+def generate_gsplats_rgba_hdr_test() -> None:
+    """RGBA colors with HDR RGB (values > 1) — the geolog per-channel path.
+
+    Real-bytes coverage for the one RGBA combination the unit matrix never
+    round-tripped: HDR float32 RGBA under the default AUTO encoding, where
+    each column (including alpha, [0,1]) gets its own geolog anchors. A
+    stride or per-channel-anchor bug shows up as corrupted alpha at decode.
+    """
+    with asection("Generating GSplats RGBA-HDR Test"):
+        output = FIXTURES_DIR / "test_gsplats_rgba_hdr.luxar.zarr"
+        rng = np.random.default_rng(7)
+        n = 2000  # > LUT palette cap, so AUTO picks geolog per-channel
+        centers = rng.uniform(-2, 2, (n, 3)).astype(np.float32)
+        amplitudes = np.ones(n, dtype=np.float32)
+        cholesky = np.zeros((n, 6), dtype=np.float32)
+        cholesky[:, [0, 2, 5]] = 0.3
+        colors = np.empty((n, 4), dtype=np.float32)
+        colors[:, :3] = rng.uniform(0.0, 8.0, (n, 3))  # HDR: > 1.0
+        colors[:, 3] = rng.uniform(0.05, 1.0, n)  # opacity stays [0, 1]
+        dims = Dimensions(
+            [
+                Dimension("x", unit="units", display=True),
+                Dimension("y", unit="units", display=True),
+                Dimension("z", unit="units", display=True),
+            ]
+        )
+        with LuxarZarrCompiler(output, compressor=None) as compiler:
+            scene = compiler.create_scene(dimensions=dims)
+            scene.add_gsplats(
+                "rgba_hdr_splats",
+                centers,
+                amplitudes=amplitudes,
+                cholesky_factors=cholesky,
+                colors=colors,
+            )
+        aprint(f"Generated {output}")
+
+
+def generate_gsplats_rgba_uint8_test() -> None:
+    """Native uint8 RGBA colors — integer passthrough with a 4th column.
+
+    Alpha is stored at full scale (255 = opaque); the decoder must preserve
+    the integer dtype and the worker normalizes /255.
+    """
+    with asection("Generating GSplats RGBA-uint8 Test"):
+        output = FIXTURES_DIR / "test_gsplats_rgba_uint8.luxar.zarr"
+        rng = np.random.default_rng(11)
+        n = 24
+        centers = rng.uniform(-2, 2, (n, 3)).astype(np.float32)
+        amplitudes = np.ones(n, dtype=np.float32)
+        cholesky = np.zeros((n, 6), dtype=np.float32)
+        cholesky[:, [0, 2, 5]] = 0.3
+        colors = rng.integers(0, 256, (n, 4), dtype=np.uint8)
+        dims = Dimensions(
+            [
+                Dimension("x", unit="units", display=True),
+                Dimension("y", unit="units", display=True),
+                Dimension("z", unit="units", display=True),
+            ]
+        )
+        with LuxarZarrCompiler(output, compressor=None) as compiler:
+            scene = compiler.create_scene(dimensions=dims)
+            scene.add_gsplats(
+                "rgba_uint8_splats",
+                centers,
+                amplitudes=amplitudes,
+                cholesky_factors=cholesky,
+                colors=colors,
+            )
+        aprint(f"Generated {output}")
+
+
+def generate_gsplats_rgba_lut_test() -> None:
+    """Few unique RGBA rows over many splats — the 4-wide LUT row encode.
+
+    The LUT planner accepts rows up to width 4 (structural.py); this pins
+    that an RGBA palette round-trips through lut encoding with alpha intact.
+    """
+    with asection("Generating GSplats RGBA-LUT Test"):
+        output = FIXTURES_DIR / "test_gsplats_rgba_lut.luxar.zarr"
+        rng = np.random.default_rng(13)
+        n = 64
+        centers = rng.uniform(-2, 2, (n, 3)).astype(np.float32)
+        amplitudes = np.ones(n, dtype=np.float32)
+        cholesky = np.zeros((n, 6), dtype=np.float32)
+        cholesky[:, [0, 2, 5]] = 0.3
+        palette = np.array(
+            [
+                [1.0, 0.0, 0.0, 0.25],
+                [0.0, 1.0, 0.0, 0.5],
+                [0.0, 0.0, 1.0, 0.75],
+                [1.0, 1.0, 0.0, 1.0],
+            ],
+            dtype=np.float32,
+        )
+        colors = palette[rng.integers(0, 4, n)]
+        dims = Dimensions(
+            [
+                Dimension("x", unit="units", display=True),
+                Dimension("y", unit="units", display=True),
+                Dimension("z", unit="units", display=True),
+            ]
+        )
+        with LuxarZarrCompiler(output, compressor=None) as compiler:
+            scene = compiler.create_scene(dimensions=dims)
+            scene.add_gsplats(
+                "rgba_lut_splats",
+                centers,
+                amplitudes=amplitudes,
+                cholesky_factors=cholesky,
+                colors=colors,
+            )
+        aprint(f"Generated {output}")
+
+
 def generate_standalone_gsplats_test() -> None:
     """Standalone v3.1 ``.gsplats.zarr`` — a *detached* gsplats leaf node.
 
@@ -2898,6 +3018,9 @@ def main() -> None:
         generate_gsplats_volumetric_test()
         generate_gsplats_volumetric_reversed_test()
         generate_gsplats_rgba_occlusion_test()
+        generate_gsplats_rgba_hdr_test()
+        generate_gsplats_rgba_uint8_test()
+        generate_gsplats_rgba_lut_test()
         aprint("")
 
         generate_standalone_gsplats_test()
