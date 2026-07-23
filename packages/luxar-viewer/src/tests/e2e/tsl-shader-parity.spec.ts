@@ -1125,6 +1125,56 @@ test.describe('TSL ↔ GLSL shader parity', () => {
     ).toBeLessThan(2.0);
   });
 
+  test('line-sorted-permuted: aSortedIndex permutation + multi-row texel fetch parity', async ({
+    page,
+  }) => {
+    await bootHarness(page);
+
+    const glslPixels = await runGLSL(page, 'line-sorted-permuted');
+    const tslResult = await runTSL(page, 'line-sorted-permuted');
+
+    assertBothRendered(glslPixels, tslResult.pixels, 'line-sorted-permuted');
+    expect(
+      meanAbsDiffPerCoveredPixel(glslPixels, tslResult.pixels),
+      'line-sorted-permuted: per-covered-pixel parity (footprint-invariant)'
+    ).toBeLessThan(2.0);
+
+    // All four permuted slots must land — one distinct-color segment per
+    // screen quadrant (midpoints at world ±0.5 → pixels 16/48; the
+    // quadrant set is symmetric, so probe COVERAGE per quadrant
+    // regardless of readback row order; the parity assertions above pin
+    // the per-pixel colors). A missing quadrant means the
+    // aSortedIndex → texel indirection dropped or aliased a storage
+    // slot (e.g. a broken base / W row computation reading row 0 for
+    // every segment).
+    for (const [x, y] of [
+      [16, 16],
+      [48, 16],
+      [16, 48],
+      [48, 48],
+    ] as const) {
+      for (const [backend, px] of [
+        ['GLSL', glslPixels],
+        ['TSL', tslResult.pixels],
+      ] as const) {
+        const o = (y * 64 + x) * 4;
+        const covered =
+          px[o] !== px[0] || px[o + 1] !== px[1] || px[o + 2] !== px[2] || px[o + 3] !== px[3];
+        expect(
+          covered,
+          `line-sorted-permuted ${backend}: no segment at (${x},${y}) — ` +
+            'the sorted-index indirection dropped/aliased a storage slot'
+        ).toBe(true);
+      }
+    }
+
+    const diff = meanAbsDiff(glslPixels, tslResult.pixels);
+    expect(
+      diff,
+      `line-sorted-permuted parity: mean abs diff ${diff.toFixed(2)} on 0-255 scale.`
+    ).toBeLessThan(2.0);
+  });
+
   test('line-ortho-near: in-frustum ortho line inside the nearCull slab RENDERS (B9c bug A)', async ({
     page,
   }) => {

@@ -11,10 +11,10 @@
  * - `shared.ts` — cross-family camera / colormap-LUT helpers
  * - `post-processing.ts` — const-rgb, fxaa, bloom-threshold, mega* (8 entries)
  * - `points.ts` — point + point-pick variants (14 entries)
- * - `lines.ts` — line + line-pick variants (9 entries)
+ * - `lines.ts` — line + line-pick variants (10 entries)
  * - `gsplats.ts` — gsplat + gsplat-pick variants (16 entries)
  * - `render.ts` — the `renderGLSL` / `renderTSL` executors
- * - `index.ts` — merges the families into the 47-entry `SHADER_REGISTRY`
+ * - `index.ts` — merges the families into the 48-entry `SHADER_REGISTRY`
  *
  * Why a dedicated page rather than reusing the main viewer:
  * - Construction order is explicit and minimal — no app/state machine
