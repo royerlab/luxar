@@ -13,15 +13,17 @@
  *    `createGSplatsNode` documents and points avoids by passing the
  *    composed attrs as its sole attrs param).
  *
- * 2. The colormap clone path must NOT orphan the pooled original: the
- *    original stays in the LRU cache serving future cache hits, so it
- *    must keep receiving `updateCameraParams` (stale-resolution line
- *    widths otherwise) and must still be reachable by manager
- *    `dispose()` (GPU program leak on embedder re-init otherwise).
+ * 2. Line materials are PER NODE (each carries the node's own
+ *    `uLineTex`, since the texture-backed storage migration; the
+ *    line-material LRU is gone): `createLinesNode` gets a fresh
+ *    node-owned material from the manager on every call, applies the
+ *    colormap DIRECTLY to it (the historical clone-on-divergence dance
+ *    is gone — mirrors `createPointsMaterial`), stamps
+ *    `_layerMaterialCloned: true`, and binds the geometry-owned line
+ *    texture at creation via `syncLineMaterialWithGeometry`.
  */
 
 import { describe, it, expect, beforeEach, vi } from 'vitest';
-import * as THREE from 'three';
 import { NodeFactory } from '../../../../rendering/node-factory';
 import {
   materialManager,
@@ -30,7 +32,7 @@ import {
 import { applyEffectiveAttrs } from '../../../../data/scene-loader/view-state/effective-attrs';
 import type { SceneNode } from '../../../../data/data-loader-types';
 import type { LineMaterial } from '../../../../rendering/materials/line/material-glsl';
-import type { InstancedLinesMeshConfig } from '../../../../rendering/line-geometry';
+import { getLineTexture, type InstancedLinesMeshConfig } from '../../../../rendering/line-geometry';
 import type { LinesMetadata, LinesDataLoader } from '../../../../types/lines';
 
 /** One-segment processed config; optionally scalar-bearing (colormap path). */
@@ -157,48 +159,46 @@ describe('createLinesNode material wiring', () => {
     });
   });
 
-  describe('colormap clone path leaves the cached original live', () => {
-    // Material props derived from empty nodeAttrs = the getLineMaterial
-    // defaults, so a direct getLineMaterial call below shares the cache key.
-    const defaultProps = {
-      opacity: 1.0,
-      gamma: 1.0,
-      intensity: 1.0,
-      offset: 0.0,
-      blendingMode: 'additive' as const,
-    };
+  describe('per-node material: colormap applies directly (no clone)', () => {
     const colormapNodeAttrs = {
       colormap: 'viridis',
       has_scalars: true,
-      scalar_data_range: [0, 1],
+      scalar_data_range: [0.5, 2.5],
     };
 
-    it('a cache hit after the clone still receives updateCameraParams', () => {
-      // Prime the cache with the original, then trigger the clone path.
-      const original = materialManager.getLineMaterial(defaultProps) as LineMaterial;
+    it('the material is node-owned — distinct across two creations with identical attrs', () => {
+      // Line materials are per node (each carries its own uLineTex), so
+      // two nodes created from the SAME attrs must never share one.
       const factory = new NodeFactory();
-      const mesh = factory.createLinesNode(
-        '/streamlines',
-        colormapNodeAttrs,
+      const meshA = factory.createLinesNode(
+        '/streamlines-a',
+        {},
         rawAttrs,
-        makeProcessed(/* withScalars */ true),
+        makeProcessed(),
         makeLoader()
       );
+      const meshB = factory.createLinesNode(
+        '/streamlines-b',
+        {},
+        rawAttrs,
+        makeProcessed(),
+        makeLoader()
+      );
+      expect(meshA.material).not.toBe(meshB.material);
 
-      // The mesh got a clone; the original still serves the cache.
-      expect(mesh.material).not.toBe(original);
-      expect(materialManager.getLineMaterial(defaultProps)).toBe(original);
+      // Per-node from creation: LayersPanel / LOD-cross-fade mutate the
+      // material directly instead of clone-on-first-use.
+      expect(meshA.userData._layerMaterialCloned).toBe(true);
+      expect(meshB.userData._layerMaterialCloned).toBe(true);
 
-      // The cached original must keep tracking global camera params —
-      // a detached-but-cached entry would render stale line widths
-      // after the next resize/FOV change.
-      materialManager.updateCameraParams(Math.PI / 3, new THREE.Vector2(800, 600), false);
-      expect(original.uniforms.uResolution.value.x).toBe(800);
-      expect(original.uniforms.uResolution.value.y).toBe(600);
+      // Nothing entered a cache — the per-node materials live only in
+      // the camera-update registry.
+      const stats = materialManager.getCacheStats();
+      expect(stats.cachedMaterials).toBe(0);
+      expect(stats.totalRegistered).toBe(2);
     });
 
-    it('manager dispose() disposes both the cached original and the clone', () => {
-      const original = materialManager.getLineMaterial(defaultProps) as LineMaterial;
+    it('applies the colormap directly to THE mesh material (no clone, single registration)', () => {
       const factory = new NodeFactory();
       const mesh = factory.createLinesNode(
         '/streamlines',
@@ -207,19 +207,58 @@ describe('createLinesNode material wiring', () => {
         makeProcessed(/* withScalars */ true),
         makeLoader()
       );
-      const clone = mesh.material as LineMaterial;
-      expect(clone).not.toBe(original);
 
-      const originalDispose = vi.spyOn(original, 'dispose');
-      const cloneDispose = vi.spyOn(clone, 'dispose');
+      // The colormap landed on the material actually attached to the
+      // mesh — the clone-era indirection (cached original + clone) is gone.
+      const material = mesh.material as LineMaterial;
+      expect('USE_COLORMAP' in material.defines).toBe(true);
+      expect(material.uniforms.uColormapTex.value).not.toBeNull();
+      expect(material.uniforms.uScalarMin.value).toBe(0.5);
+      expect(material.uniforms.uScalarScale.value).toBeCloseTo(0.5, 5); // 1/(2.5-0.5)
+      expect(material.userData.scalarRange).toEqual([0.5, 2.5]);
+
+      // Exactly ONE material exists for this node (clone-era: 2 — the
+      // cached original plus the clone), and none of it is cached.
+      const stats = materialManager.getCacheStats();
+      expect(stats.cachedMaterials).toBe(0);
+      expect(stats.totalRegistered).toBe(1);
+    });
+
+    it('binds the geometry-owned line texture (uLineTex) on the material at creation', () => {
+      // syncLineMaterialWithGeometry runs inside createLinesNode so a
+      // mesh created WITH data renders before any commit.
+      const factory = new NodeFactory();
+      const mesh = factory.createLinesNode(
+        '/streamlines',
+        {},
+        rawAttrs,
+        makeProcessed(),
+        makeLoader()
+      );
+      const geometryTexture = getLineTexture(mesh.geometry);
+      expect(geometryTexture).not.toBeNull();
+      const material = mesh.material as LineMaterial;
+      expect(material.getLineTexture()).toBe(geometryTexture);
+    });
+
+    it('manager dispose() disposes the node-owned material via the registry', () => {
+      // Per-node materials sit in NO cache, so the registry is the only
+      // path manager teardown has to them — a registry miss would leak
+      // the GPU program on embedder re-init.
+      const factory = new NodeFactory();
+      const mesh = factory.createLinesNode(
+        '/streamlines',
+        colormapNodeAttrs,
+        rawAttrs,
+        makeProcessed(/* withScalars */ true),
+        makeLoader()
+      );
+      const material = mesh.material as LineMaterial;
+      const materialDispose = vi.spyOn(material, 'dispose');
 
       materialManager.dispose();
 
-      // The original was in the LRU cache when dispose() ran; it must be
-      // reachable through the registries (a detached-while-cached original
-      // sat in neither and leaked its GPU program on embedder re-init).
-      expect(originalDispose).toHaveBeenCalled();
-      expect(cloneDispose).toHaveBeenCalled();
+      expect(materialDispose).toHaveBeenCalled();
     });
   });
 });

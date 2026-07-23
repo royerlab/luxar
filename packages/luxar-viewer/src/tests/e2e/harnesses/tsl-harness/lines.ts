@@ -18,71 +18,96 @@ import {
   linePickWebGPUFactory,
   buildLinePickTSLNodesFromUniforms,
 } from '../../../../rendering/picking/line/pick.tsl';
-import { createInstancedLinesMesh } from '../../../../rendering/line-geometry';
+import {
+  createInstancedLinesMesh,
+  writeLineTexels,
+  type LineTexelSource,
+} from '../../../../rendering/line-geometry';
 import type { RegistryEntry } from './types';
 import { buildBehindCamera, buildColormapTexture } from './shared';
 
 /**
- * Line mesh + per-endpoint scalars for the colormap-parity case.
- *
- * Under `USE_COLORMAP` the line shader sources colour from the LUT and
- * omits the `aStartColor`/`aEndColor` `in` declarations entirely (see
- * `line/shader-glsl.ts`), which keeps the active vertex-attribute count
- * within `GL_MAX_VERTEX_ATTRIBS` (16) even with the scalar pair added.
- * We drop the now-unused colour buffers and bind the scalars so the mesh
- * matches the shader's active attribute set.
+ * Single-segment texel source shared by the mesh builder and the
+ * standalone `uLineTex` data texture below. Horizontal segment across
+ * the viewport in NDC, generous width so it covers many pixels and
+ * exposes both the perpendicular falloff and edge AA.
  */
-function buildLineColormapMesh(material: THREE.Material): THREE.Object3D {
-  const mesh = buildLineInstancedMesh(material) as THREE.Mesh;
-  mesh.geometry.deleteAttribute('aStartColor');
-  mesh.geometry.deleteAttribute('aEndColor');
-  mesh.geometry.setAttribute(
-    'aStartScalar',
-    new THREE.InstancedBufferAttribute(new Float32Array([0.2]), 1)
-  );
-  mesh.geometry.setAttribute(
-    'aEndScalar',
-    new THREE.InstancedBufferAttribute(new Float32Array([0.8]), 1)
-  );
-  return mesh;
+function lineTexelSource(
+  start: readonly [number, number, number] = [-0.5, 0, 0],
+  end: readonly [number, number, number] = [0.5, 0, 0],
+  scalars?: readonly [number, number]
+): LineTexelSource {
+  return {
+    startPositions: new Float32Array([start[0], start[1], start[2]]),
+    endPositions: new Float32Array([end[0], end[1], end[2]]),
+    startColors: new Float32Array([1.0, 0.5, 0.25]),
+    endColors: new Float32Array([1.0, 0.5, 0.25]),
+    startWidths: new Float32Array([0.1]),
+    endWidths: new Float32Array([0.1]),
+    // Sharpness is the normalised [0, 1] knob -> super-Gaussian exponent
+    // beta = 2^(6s - 2). 0.5 -> beta=2 (a true Gaussian, the default).
+    startSharpness: new Float32Array([0.5]),
+    endSharpness: new Float32Array([0.5]),
+    segmentLengths: new Float32Array([1.0]),
+    startClipped: new Uint8Array([0]),
+    endClipped: new Uint8Array([0]),
+    startScalars: scalars ? new Float32Array([scalars[0]]) : undefined,
+    endScalars: scalars ? new Float32Array([scalars[1]]) : undefined,
+  };
 }
 
 /**
- * Build a single-segment line mesh for parity testing. Horizontal
- * segment across the viewport in NDC, generous width so it covers
- * many pixels and exposes both the perpendicular falloff and edge AA.
+ * Standalone 6×1 line data texture for `buildUniforms`. The shaders
+ * sample the segment from `uLineTex` (`texelFetch(uLineTex, ...)`); the
+ * TSL texture node is FACTORY-time bound from the uniforms record, so
+ * each registry entry supplies one of these with the SAME (start, end,
+ * scalars) its `buildMesh` passes to `buildLineInstancedMesh` — mirrors
+ * the point harness's `buildPointDataTexture`.
+ */
+function buildLineDataTexture(
+  start: readonly [number, number, number] = [-0.5, 0, 0],
+  end: readonly [number, number, number] = [0.5, 0, 0],
+  scalars?: readonly [number, number]
+): THREE.DataTexture {
+  const tex = new THREE.DataTexture(new Float32Array(24), 6, 1, THREE.RGBAFormat, THREE.FloatType);
+  tex.magFilter = THREE.NearestFilter;
+  tex.minFilter = THREE.NearestFilter;
+  tex.generateMipmaps = false;
+  tex.flipY = false;
+  writeLineTexels(tex, lineTexelSource(start, end, scalars), 1);
+  return tex;
+}
+
+/**
+ * Line mesh + per-endpoint scalars (0.2 → 0.8) for the colormap-parity
+ * case. Under `USE_COLORMAP` the shader sources colour from the LUT via
+ * the texel5 scalars; the fixed 6-texel layout carries both the (unused)
+ * colours and the scalars, so no geometry surgery is needed.
+ */
+function buildLineColormapMesh(material: THREE.Material): THREE.Object3D {
+  return buildLineInstancedMesh(material, [-0.5, 0, 0], [0.5, 0, 0], [0.2, 0.8]);
+}
+
+/**
+ * Build a single-segment line mesh for parity testing (see
+ * `lineTexelSource` for the segment shape).
  */
 function buildLineInstancedMesh(
   material: THREE.Material,
   start: readonly [number, number, number] = [-0.5, 0, 0],
-  end: readonly [number, number, number] = [0.5, 0, 0]
+  end: readonly [number, number, number] = [0.5, 0, 0],
+  scalars?: readonly [number, number]
 ): THREE.Object3D {
   // PRODUCTION assembly (createInstancedLinesMesh), not a hand-rolled
-  // geometry: the previous version decorated the plain BufferGeometry
-  // quad TEMPLATE with instanced attributes — never a real
-  // InstancedBufferGeometry — which the WebGPU-path draw dispatch
-  // (three.webgpu.js drawParams: `instanceCount = geometry.instanceCount`
-  // only when isInstancedBufferGeometry) does not draw as intended.
-  // Using the production creator keeps parity testing the real path and
-  // makes instancing correct by construction. (Same fix the point
-  // builder got earlier — see the instanceCount note there.)
+  // geometry: a plain BufferGeometry quad TEMPLATE decorated by hand is
+  // never a real InstancedBufferGeometry, which the WebGPU-path draw
+  // dispatch (three.webgpu.js drawParams: `instanceCount =
+  // geometry.instanceCount` only when isInstancedBufferGeometry) does
+  // not draw as intended. Using the production creator keeps parity
+  // testing the real path (texture storage + aSortedIndex) and makes
+  // instancing correct by construction.
   const mesh = createInstancedLinesMesh(
-    {
-      startPositions: new Float32Array([start[0], start[1], start[2]]),
-      endPositions: new Float32Array([end[0], end[1], end[2]]),
-      startColors: new Float32Array([1.0, 0.5, 0.25]),
-      endColors: new Float32Array([1.0, 0.5, 0.25]),
-      startWidths: new Float32Array([0.1]),
-      endWidths: new Float32Array([0.1]),
-      // Sharpness is the normalised [0, 1] knob -> super-Gaussian exponent
-      // beta = 2^(6s - 2). 0.5 -> beta=2 (a true Gaussian, the default).
-      startSharpness: new Float32Array([0.5]),
-      endSharpness: new Float32Array([0.5]),
-      segmentLengths: new Float32Array([1.0]),
-      startClipped: new Uint8Array([0]),
-      endClipped: new Uint8Array([0]),
-      segmentCount: 1,
-    },
+    { ...lineTexelSource(start, end, scalars), segmentCount: 1 },
     material
   );
   mesh.frustumCulled = false;
@@ -95,6 +120,7 @@ export const LINE_SHADERS: Record<string, RegistryEntry> = {
   line: {
     source: LINE_SOURCE,
     buildUniforms: () => ({
+      uLineTex: { value: buildLineDataTexture() },
       uResolution: { value: new THREE.Vector2(64, 64) },
       uIsOrtho: { value: 1 },
       uNearCull: { value: 0.01 },
@@ -128,6 +154,7 @@ export const LINE_SHADERS: Record<string, RegistryEntry> = {
   'line-gamma-one': {
     source: LINE_SOURCE,
     buildUniforms: () => ({
+      uLineTex: { value: buildLineDataTexture() },
       uResolution: { value: new THREE.Vector2(64, 64) },
       uIsOrtho: { value: 1 },
       uNearCull: { value: 0.01 },
@@ -159,6 +186,7 @@ export const LINE_SHADERS: Record<string, RegistryEntry> = {
   'line-no-gog': {
     source: LINE_SOURCE,
     buildUniforms: () => ({
+      uLineTex: { value: buildLineDataTexture() },
       uResolution: { value: new THREE.Vector2(64, 64) },
       uIsOrtho: { value: 1 },
       uNearCull: { value: 0.01 },
@@ -192,6 +220,7 @@ export const LINE_SHADERS: Record<string, RegistryEntry> = {
   'line-max': {
     source: LINE_SOURCE,
     buildUniforms: () => ({
+      uLineTex: { value: buildLineDataTexture() },
       uResolution: { value: new THREE.Vector2(64, 64) },
       uIsOrtho: { value: 1 },
       uNearCull: { value: 0.01 },
@@ -223,6 +252,7 @@ export const LINE_SHADERS: Record<string, RegistryEntry> = {
   'line-colormap': {
     source: LINE_SOURCE,
     buildUniforms: () => ({
+      uLineTex: { value: buildLineDataTexture() },
       uResolution: { value: new THREE.Vector2(64, 64) },
       uIsOrtho: { value: 1 },
       uNearCull: { value: 0.01 },
@@ -255,6 +285,7 @@ export const LINE_SHADERS: Record<string, RegistryEntry> = {
   'line-pick': {
     source: LINE_PICK_SOURCE,
     buildUniforms: () => ({
+      uLineTex: { value: buildLineDataTexture() },
       uResolution: { value: new THREE.Vector2(64, 64) },
       uIsOrtho: { value: 1 },
       uNodeId: { value: 42 },
@@ -276,6 +307,7 @@ export const LINE_SHADERS: Record<string, RegistryEntry> = {
   'line-behind': {
     source: LINE_SOURCE,
     buildUniforms: () => ({
+      uLineTex: { value: buildLineDataTexture([-0.5, 0, 3], [0.5, 0, 3]) },
       uResolution: { value: new THREE.Vector2(64, 64) },
       uIsOrtho: { value: 0 },
       uNearCull: { value: 0.01 },
@@ -301,6 +333,7 @@ export const LINE_SHADERS: Record<string, RegistryEntry> = {
   'line-pick-behind': {
     source: LINE_PICK_SOURCE,
     buildUniforms: () => ({
+      uLineTex: { value: buildLineDataTexture([-0.5, 0, 3], [0.5, 0, 3]) },
       uResolution: { value: new THREE.Vector2(64, 64) },
       uIsOrtho: { value: 0 },
       uNodeId: { value: 42 },
@@ -324,6 +357,7 @@ export const LINE_SHADERS: Record<string, RegistryEntry> = {
   'line-ortho-near': {
     source: LINE_SOURCE,
     buildUniforms: () => ({
+      uLineTex: { value: buildLineDataTexture([-0.5, 0, 0.85], [0.5, 0, 0.85]) },
       uResolution: { value: new THREE.Vector2(64, 64) },
       uIsOrtho: { value: 1 },
       uNearCull: { value: 0.5 },

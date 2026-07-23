@@ -4,9 +4,10 @@
  * `docs/guides/specs/GSPLAT_DEPTH_SORTING_SPEC.md` §5-§6).
  *
  * Serves every texture-backed geometry with an `aSortedIndex`
- * indirection — gsplats and points today, lines when their storage
- * migrates. The mechanism is geometry-agnostic (projected 3D centers in,
- * back-to-front permutation out); only the commit call sites differ.
+ * indirection — gsplats, points, and lines. The mechanism is
+ * geometry-agnostic (projected 3D centers in — segment midpoints for
+ * lines — back-to-front permutation out); only the commit call sites
+ * differ.
  *
  * Module-scoped live authority (the `element-texture-layout.ts` pattern):
  * the commit paths (`commit-gsplats-geometry.ts`,
@@ -302,8 +303,8 @@ function isLiveOrderDependent(mesh: THREE.Mesh, mode: BlendingMode | undefined):
 }
 
 /**
- * Record a non-noop commit of a sortable node (gsplats or points; lines
- * when their texture storage lands). Always bumps the node's generation
+ * Record a non-noop commit of a sortable node (gsplats, points, or
+ * lines). Always bumps the node's generation
  * (dropping any in-flight sort's result). When the node's LIVE effective
  * blending mode is order-dependent, transfers the projected centers to
  * the SortWorker and requests one sort from the current camera pose.
@@ -719,8 +720,8 @@ export function evaluateDepthSortPerFrame(): void {
 
 /**
  * React to a sortable layer's blending mode changing at runtime (the
- * LayersPanel compose chain — spec §5.4). Wired for gsplats and points;
- * lines join with their storage migration.
+ * LayersPanel compose chain — spec §5.4). Wired for all three geometry
+ * types (gsplats, points, lines).
  *
  * Switching TO a sorted mode cannot simply "register+sort": the
  * SortWorker has no centers for a node that was order-independent at its

@@ -28,6 +28,7 @@ import * as THREE from 'three';
 import type { GSplatsDataLoader, GSplatsMetadata, GSplatsViewState } from '../../types/gsplats';
 import type { LoadedGSplatsData } from '../../types/gsplats';
 import { log, Modules } from '../../utils/log';
+import { notifier } from '../../utils/cross-layer/notifier';
 import { isAbortError } from '../loaders/abort-error';
 import type { UpdateProfiler, UpdateSession } from '../../profiling/update-profiler';
 import type { ViewState } from '../data-loader-types';
@@ -151,6 +152,11 @@ export async function runGSplatsRefinement(ctx: GSplatsRefinementCtx): Promise<v
               `giving up after ${MAX_CONSECUTIVE_REFINEMENT_FAILURES} consecutive failures ` +
               '(will retry on the next view change)'
           );
+          // The node silently freezes at its last valid coarse prefix — a
+          // console-only error leaves the user staring at a permanently
+          // coarse node with no explanation. Same channel as leaf-load
+          // failures (load-leaf-error-dispatch).
+          notifier.toast(`Refinement failed for ${path} — showing reduced detail`, 5000);
         } else {
           log.error(
             Modules.SCENE_LOADER,

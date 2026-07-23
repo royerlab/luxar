@@ -28,7 +28,7 @@ import {
 } from '../point-geometry';
 import { writeSortedIndexIdentity } from '../element-storage';
 import { clampPointCapacity } from '../element-texture-layout';
-import { widenToFloat32 } from '../interleaved-attributes';
+import { widenToFloat32 } from '../widen-to-float32';
 import type { LoadedPointsData, DataLoader } from '../../data/data-loader-types';
 import type { PointsMetadata, PointsUserData } from '../../types/points';
 import { log, Modules } from '../../utils/log';
