@@ -260,3 +260,64 @@ describe('attachPointStorage / writePointTexels — fused writer round-trip', ()
     expect(disposed).toBe(true);
   });
 });
+
+describe('writePointTexels — RGBA color layout (per-point opacity, volumetric Phase 3)', () => {
+  // The colors array is strided by `colorComponents` (3 = RGB, 4 = RGBA):
+  // point i's color lives at colors[i*colorK .. i*colorK+2] and — for RGBA —
+  // its alpha at colors[i*colorK+3], packed into texel2.y. Mirrors the gsplat
+  // writer's SplatTexelSource.colorComponents.
+  function makeRgbaSource(count: number): PointTexelSource {
+    const src = makeSource(count);
+    const colors = new Float32Array(count * 4);
+    for (let i = 0; i < count; i++) {
+      colors[i * 4] = 0.1 + i;
+      colors[i * 4 + 1] = 0.2 + i;
+      colors[i * 4 + 2] = 0.3 + i;
+      colors[i * 4 + 3] = 0.5 / (i + 1); // distinct per-point alpha
+    }
+    return { ...src, colors, colorComponents: 4 };
+  }
+
+  it('writes each point’s alpha into texel2.y and RGB at STRIDE 4 (two-point stride proof)', () => {
+    // Two points with distinct RGBA tuples: a stride-3 read would smear
+    // point 1's RGB (reading [a0, r1, g1]) and drop both alphas — asserting
+    // BOTH points' full tuples pins the stride, not just the alpha copy.
+    const geometry = new THREE.InstancedBufferGeometry();
+    const texture = attachPointStorage(geometry, 4);
+    const src = makeRgbaSource(2);
+    writePointTexels(texture, src, 2);
+    const arr = texture.image.data as Float32Array;
+    for (let i = 0; i < 2; i++) {
+      const o = i * POINT_FLOATS_PER_POINT;
+      // texel 1: color.rgb from the point's OWN stride-4 tuple
+      expect(arr[o + 4]).toBeCloseTo(0.1 + i, 6);
+      expect(arr[o + 5]).toBeCloseTo(0.2 + i, 6);
+      expect(arr[o + 6]).toBeCloseTo(0.3 + i, 6);
+      // texel 2.y: the point's own alpha column, NOT the 1.0 identity
+      expect(arr[o + 9]).toBeCloseTo(0.5 / (i + 1), 6);
+    }
+  });
+
+  it('an RGB source resets alpha to the opaque 1.0 identity (pool-reuse overwrite)', () => {
+    // An RGBA tenant followed by an RGB tenant on the SAME pool texture:
+    // the RGB pass must overwrite the previous alphas with 1.0.
+    const geometry = new THREE.InstancedBufferGeometry();
+    const texture = attachPointStorage(geometry, 4);
+    writePointTexels(texture, makeRgbaSource(2), 2);
+    const arr = texture.image.data as Float32Array;
+    expect(arr[9]).not.toBe(1.0); // RGBA alpha landed first
+    writePointTexels(texture, makeSource(2), 2);
+    expect(arr[9]).toBe(1.0);
+    expect(arr[POINT_FLOATS_PER_POINT + 9]).toBe(1.0);
+  });
+
+  it('throws when RGBA colors are shorter than count × 4 (length guard uses n×colorK)', () => {
+    // colors sized count*3 would satisfy an RGB-stride guard — with
+    // colorComponents=4 the guard must demand count*4 and fail loud
+    // instead of writing NaN alphas from out-of-bounds reads.
+    const geometry = new THREE.InstancedBufferGeometry();
+    const texture = attachPointStorage(geometry, 8);
+    const src = { ...makeRgbaSource(8), colors: new Float32Array(8 * 3) };
+    expect(() => writePointTexels(texture, src, 8)).toThrow(/shorter than count/);
+  });
+});

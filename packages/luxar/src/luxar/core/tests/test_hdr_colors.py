@@ -202,27 +202,32 @@ class TestHDRColorSupport:
                 compiler.write_points("negative_colors", positions, colors=colors)
 
     def test_color_channel_count(self, tmp_path) -> None:
-        """Points accept only RGB (3 channels).
+        """Points accept RGB (3) or RGBA (4) channels, nothing else.
 
-        GSplats accept RGBA (the 4th channel is per-splat opacity); points
-        and lines stay RGB-only until their volumetric phases (3–4).
+        Points and GSplats accept RGBA — the 4th channel is per-element
+        opacity (volumetric phases 2–3); lines stay RGB-only until their
+        volumetric phase (4). Grayscale and 5+ channels are rejected.
         """
         with LuxarZarrCompiler(tmp_path / "channels.luxar.zarr") as compiler:
             compiler.create_scene(dimensions=Dimensions.default_3d())
 
             positions = np.random.randn(100, 3).astype(np.float32)
 
-            # Test RGBA (4 channels) - should fail
+            # RGBA (4 channels) — accepted, alpha bounded to [0, 1]
             rgba_colors = np.random.rand(100, 4).astype(np.float32)
+            compiler.write_points("rgba", positions, colors=rgba_colors)
+
             from luxar.validation import ValidationError
 
-            with pytest.raises(ValidationError, match="must have 3 .RGB. channels"):
-                compiler.write_points("rgba", positions, colors=rgba_colors)
-
-            # Test grayscale (1 channel) - should fail
+            # Grayscale (1 channel) — rejected
             gray_colors = np.random.rand(100, 1).astype(np.float32)
-            with pytest.raises(ValidationError, match="must have 3 .RGB. channels"):
+            with pytest.raises(ValidationError, match="channels"):
                 compiler.write_points("gray", positions, colors=gray_colors)
+
+            # 5 channels — rejected even with RGBA opted in
+            five_colors = np.random.rand(100, 5).astype(np.float32)
+            with pytest.raises(ValidationError, match="channels"):
+                compiler.write_points("five", positions, colors=five_colors)
 
     def test_no_colors_allowed(self, tmp_path) -> None:
         """Test that points without colors are allowed."""

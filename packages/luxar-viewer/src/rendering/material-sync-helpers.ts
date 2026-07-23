@@ -57,6 +57,11 @@ export function syncPointMaterialWithGeometry(points: THREE.Mesh): void {
   if (renderMat instanceof PointMaterial || renderMat instanceof PointTSLMaterial) {
     renderMat.updateRadiusScale(radiusScale);
     if (pointTexture) renderMat.updatePointTexture(pointTexture);
+    // RGBA-alpha presence: gates the volumetric w(a) optical-depth map
+    // (uHasElementAlpha). Stamped by both texel-write paths; refreshed
+    // on every commit so pool geometry swaps can't leak a previous
+    // tenant's flag. Mirrors the gsplat commit's updateHasElementAlpha.
+    renderMat.updateHasElementAlpha(geometry.userData?.hasElementAlpha === true);
   }
 
   // Picking shadow node was wired into userData by

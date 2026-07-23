@@ -136,7 +136,8 @@ class Group(Node):
         Args:
             name: Name of the points node
             positions: Array of shape (N, D) for point positions
-            colors: Optional (N, 3) array, RGB tuple, or None
+            colors: Optional (N, 3) RGB or (N, 4) RGBA array (the alpha
+                column is per-point opacity in [0, 1]), RGB tuple, or None
             radii: Optional (N,) array, scalar, or None (default 0.5)
             sharpness: Optional (N,) array, scalar, or None
             scalars: Optional (N,) array or scalar for colormap lookup.
@@ -346,7 +347,8 @@ class Group(Node):
             centers: Array of shape (N, D) for splat centers
             amplitudes: (N,) array or scalar for intensities
             cholesky_factors: (N, k) packed Cholesky factors, k=D*(D+1)/2
-            colors: Optional (N, 3) array, RGB tuple, or None
+            colors: Optional (N, 3) RGB or (N, 4) RGBA array (the alpha
+                column is per-splat opacity in [0, 1]), RGB tuple, or None
             labels: Optional list of strings, one per splat. Used for hover tooltips.
             image_labels: Optional per-element images for hover thumbnails.
             parent: Parent node (default: this group)

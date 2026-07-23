@@ -21,10 +21,11 @@
  *   |-------|-------------------------------------------------------|
  *   | 0     | center.xyz, radius                                    |
  *   | 1     | color.rgb, sharpness                                  |
- *   | 2     | scalar (0.0 when no scalars), alpha (1.0), 0, 0       |
+ *   | 2     | scalar (0.0 when no scalars), alpha, 0, 0             |
  *
  * texel2.x is the colormap scalar and texel2.y the per-point opacity
- * alpha (reserved for volumetric Phase 3); BOTH are written
+ * alpha (the RGBA color column when the dataset carries one — volumetric
+ * Phase 3 — else the 1.0 opaque identity); BOTH are written
  * UNCONDITIONALLY — pool textures are reused, so leaving them
  * unspecified would let a previous tenant's values leak through. 0.0 is
  * the no-scalar identity and 1.0 (opaque) the per-element-opacity
@@ -127,8 +128,14 @@ export function pointsNormalizationDivisor(
 export interface PointTexelSource {
   /** Point centers (count × 3). */
   positions: Float32Array;
-  /** Colors RGB (count × 3). */
+  /** Colors RGB or RGBA (count × colorComponents). */
   colors: Float32Array;
+  /**
+   * Components per color item: 3 = RGB (default), 4 = RGBA — the alpha
+   * column is per-point opacity, packed into texel2.y. Mirrors
+   * `SplatTexelSource.colorComponents`.
+   */
+  colorComponents?: 3 | 4;
   /** Radii (count). */
   radii: Float32Array;
   /** Sharpness knobs (count). */
@@ -192,12 +199,13 @@ export function writePointTexels(
   const n = Math.min(count, elementTexelCapacity(texture, POINT_FLOATS_PER_POINT));
   const from = Math.max(0, Math.min(opts?.fromPoint ?? 0, n));
   const { positions, colors, radii, sharpness, scalars } = src;
+  const colorK = src.colorComponents ?? 3;
   // Fail loud on source/count mismatch (the interleaved-era writer
   // threw here too) — a silent short read would write NaN texels that
   // the shaders' NaN guards then drop invisibly.
   if (
     positions.length < n * 3 ||
-    colors.length < n * 3 ||
+    colors.length < n * colorK ||
     radii.length < n ||
     sharpness.length < n ||
     (scalars !== undefined && scalars.length < n)
@@ -212,24 +220,26 @@ export function writePointTexels(
   for (let i = from; i < n; i++) {
     const o = i * POINT_FLOATS_PER_POINT;
     const p3 = i * 3;
+    const ck = i * colorK;
     // texel 0: center.xyz, radius
     arr[o] = positions[p3];
     arr[o + 1] = positions[p3 + 1];
     arr[o + 2] = positions[p3 + 2];
     arr[o + 3] = radii[i];
     // texel 1: color.rgb, sharpness
-    arr[o + 4] = colors[p3];
-    arr[o + 5] = colors[p3 + 1];
-    arr[o + 6] = colors[p3 + 2];
+    arr[o + 4] = colors[ck];
+    arr[o + 5] = colors[ck + 1];
+    arr[o + 6] = colors[ck + 2];
     arr[o + 7] = sharpness[i];
     // texel 2: scalar, alpha (per-point opacity — volumetric Phase 3).
     // BOTH are written UNCONDITIONALLY — pool textures are reused, so
     // leaving them unspecified would let a previous tenant's values
-    // leak through. 0.0 = no-scalar identity, 1.0 (opaque) = the
-    // per-element-opacity identity. .zw stay unspecified (stale on
-    // reused pool textures; never read).
+    // leak through. 0.0 = no-scalar identity; alpha is the RGBA color
+    // column when present, else 1.0 (the opaque per-element-opacity
+    // identity). .zw stay unspecified (stale on reused pool textures;
+    // never read). Mirrors the gsplat writer's texel3.y.
     arr[o + 8] = scalars !== undefined ? scalars[i] : 0.0;
-    arr[o + 9] = 1.0;
+    arr[o + 9] = colorK === 4 ? colors[ck + 3] : 1.0;
   }
   // Ranged upload: only the [from, n) rows just written go to the GPU, not
   // the full capacity-sized image (pool slack rows past n never re-upload;

@@ -69,8 +69,15 @@ export interface LoadedPointsData {
   /** 3D positions extracted from nD space (size: numPoints * 3) */
   positions: PositionArray;
 
-  /** RGB colors (size: numPoints * 3, optional) */
+  /** RGB or RGBA colors (size: numPoints * colorComponents, optional) */
   colors?: ColorArray;
+
+  /**
+   * Components per color item: 3 = RGB, 4 = RGBA — the alpha column is
+   * per-point opacity (VOLUMETRIC_BLENDING_SPEC.md phase 3). Absent ⇒ 3.
+   * Mirrors `LoadedGSplatsData.colorComponents`.
+   */
+  colorComponents?: 3 | 4;
 
   /** Point radii in world units (size: numPoints, optional) */
   radii?: ScalarArray;

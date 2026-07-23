@@ -155,7 +155,14 @@ export function projectPointsTo3D(
   ctx: ProjectionContext,
   targetBuffers?: ProjectionTargetBuffers | null,
   /** optional per-point scalars for colormap lookup. */
-  scalars?: Float32Array | Uint8Array | Uint16Array | Float16Array | null
+  scalars?: Float32Array | Uint8Array | Uint16Array | Float16Array | null,
+  /**
+   * Components per color item: 3 = RGB (default), 4 = RGBA (the alpha
+   * column is per-point opacity). Strides every color guard/compaction
+   * below — a hardcoded 3 would truncate + misalign RGBA data (the
+   * gsplat colorK lesson).
+   */
+  colorComponents: 3 | 4 = 3
 ): LoadedPointsData {
   const totalPoints = ranges.reduce((sum, r) => sum + (r.end - r.start), 0);
 
@@ -212,10 +219,11 @@ export function projectPointsTo3D(
         `projectPointsTo3D: sharpness too short (got ${sharpness.length}, expected ≥ ${totalPoints})`
       );
     }
-    // RGB triplet per point — short colors corrupt the TS-side compaction.
-    if (colors && colors.length < totalPoints * 3) {
+    // RGB(A) tuple per point — short colors corrupt the TS-side compaction.
+    if (colors && colors.length < totalPoints * colorComponents) {
       throw new Error(
-        `projectPointsTo3D: colors too short (got ${colors.length}, expected ≥ ${totalPoints * 3})`
+        `projectPointsTo3D: colors too short (got ${colors.length}, ` +
+          `expected ≥ ${totalPoints * colorComponents})`
       );
     }
     if (ctx.effectiveRadiusConfig) {
@@ -439,29 +447,29 @@ export function projectPointsTo3D(
               }
             }
 
-            // Compact colors (type-preserving)
+            // Compact colors (type-preserving, strided by the RGB(A) layout)
             if (colors && targetBuffers.colors) {
               if (colors instanceof Uint8Array && targetBuffers.colors instanceof Uint8Array) {
                 const cb = targetBuffers.colors as Uint8Array;
-                cb[writeIdx * 3] = cb[readIdx * 3];
-                cb[writeIdx * 3 + 1] = cb[readIdx * 3 + 1];
-                cb[writeIdx * 3 + 2] = cb[readIdx * 3 + 2];
+                for (let c = 0; c < colorComponents; c++) {
+                  cb[writeIdx * colorComponents + c] = cb[readIdx * colorComponents + c];
+                }
               } else if (
                 colors instanceof Uint16Array &&
                 targetBuffers.colors instanceof Uint16Array
               ) {
                 const cb = targetBuffers.colors as Uint16Array;
-                cb[writeIdx * 3] = cb[readIdx * 3];
-                cb[writeIdx * 3 + 1] = cb[readIdx * 3 + 1];
-                cb[writeIdx * 3 + 2] = cb[readIdx * 3 + 2];
+                for (let c = 0; c < colorComponents; c++) {
+                  cb[writeIdx * colorComponents + c] = cb[readIdx * colorComponents + c];
+                }
               } else if (
                 colors instanceof Float32Array &&
                 targetBuffers.colors instanceof Float32Array
               ) {
                 const cb = targetBuffers.colors as Float32Array;
-                cb[writeIdx * 3] = cb[readIdx * 3];
-                cb[writeIdx * 3 + 1] = cb[readIdx * 3 + 1];
-                cb[writeIdx * 3 + 2] = cb[readIdx * 3 + 2];
+                for (let c = 0; c < colorComponents; c++) {
+                  cb[writeIdx * colorComponents + c] = cb[readIdx * colorComponents + c];
+                }
               }
             }
 
@@ -513,15 +521,15 @@ export function projectPointsTo3D(
         const filteredPositions3D = new Float32Array(filteredCount * 3);
         const filteredRadii = new Float32Array(filteredCount);
 
-        // Filter colors if present
+        // Filter colors if present (strided by the RGB(A) layout)
         let filteredColors: Float32Array | Uint8Array | Uint16Array | undefined;
         if (colors) {
           if (colors instanceof Float32Array) {
-            filteredColors = new Float32Array(filteredCount * 3);
+            filteredColors = new Float32Array(filteredCount * colorComponents);
           } else if (colors instanceof Uint8Array) {
-            filteredColors = new Uint8Array(filteredCount * 3);
+            filteredColors = new Uint8Array(filteredCount * colorComponents);
           } else if (colors instanceof Uint16Array) {
-            filteredColors = new Uint16Array(filteredCount * 3);
+            filteredColors = new Uint16Array(filteredCount * colorComponents);
           }
         }
 
@@ -561,11 +569,11 @@ export function projectPointsTo3D(
           // Copy radius
           filteredRadii[i] = finalRadii![srcIdx];
 
-          // Copy colors if present (3 components)
+          // Copy colors if present (RGB(A) — colorComponents per point)
           if (colors && filteredColors) {
-            filteredColors[i * 3] = colors[srcIdx * 3];
-            filteredColors[i * 3 + 1] = colors[srcIdx * 3 + 1];
-            filteredColors[i * 3 + 2] = colors[srcIdx * 3 + 2];
+            for (let c = 0; c < colorComponents; c++) {
+              filteredColors[i * colorComponents + c] = colors[srcIdx * colorComponents + c];
+            }
           }
 
           // Copy sharpness if present
@@ -627,6 +635,7 @@ export function projectPointsTo3D(
   return {
     positions: positions3D as PositionArray,
     colors: colors as ColorArray | undefined,
+    colorComponents: colors ? colorComponents : undefined,
     radii: finalRadii as ScalarArray | undefined,
     sharpness: sharpness as ScalarArray | undefined,
     // pass scalars through. They are already type-compacted above

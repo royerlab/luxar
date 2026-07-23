@@ -208,6 +208,10 @@ export function commitPointsGeometry(
         getPrefixParent(data) !== undefined &&
         getPrefixParent(data) === committed &&
         !!data.colors === !!committed.colors &&
+        // Color LAYOUT parity (RGB vs RGBA): an append writes only the
+        // suffix, so a layout flip would leave the prefix's texel2.y
+        // alphas stale against the new interpretation.
+        (data.colorComponents ?? 3) === (committed.colorComponents ?? 3) &&
         !!data.radii === !!committed.radii &&
         !!data.sharpness === !!committed.sharpness &&
         !!data.scalars === !!committed.scalars;

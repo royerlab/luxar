@@ -123,17 +123,19 @@ export function needsDepthSort(mode: BlendingMode): boolean {
 }
 
 /**
- * THE phase-1 volumetric fallback policy, in one place: points and
- * lines don't implement the emission–absorption fragment math yet
- * (VOLUMETRIC_BLENDING_SPEC.md phases 3–4), so every point/line
- * state-writing path renders `volumetric` as `additive` — its exact
- * κ = 0 limit — while `userData.blendingMode` keeps the REQUESTED mode
- * so stored scenes upgrade automatically when those phases land.
+ * THE volumetric fallback policy, in one place: lines don't implement
+ * the emission–absorption fragment math yet
+ * (VOLUMETRIC_BLENDING_SPEC.md phase 4), so every LINE state-writing
+ * path renders `volumetric` as `additive` — its exact κ = 0 limit —
+ * while `userData.blendingMode` keeps the REQUESTED mode so stored
+ * scenes upgrade automatically when phase 4 lands. Points and gsplats
+ * implement the real volumetric math (phases 1–3), so the helper is
+ * the identity for them.
  *
  * Call sites are deliberately many (GLSL ctor chains, wrapper
  * `applyBlendingMode`s, TSL factory tails — each a genuinely distinct
- * state writer), but the POLICY lives only here: phases 3–4 flip the
- * `geometry !== 'gsplat'` condition (or delete the helper) and every
+ * state writer), but the POLICY lives only here: phase 4 deletes the
+ * `geometry === 'line'` condition (and then this helper) and every
  * site upgrades atomically.
  *
  * @param mode - the requested blending mode
@@ -145,7 +147,7 @@ export function effectiveGeometryMode(
   mode: BlendingMode,
   geometry: 'point' | 'line' | 'gsplat'
 ): BlendingMode {
-  return isVolumetricMode(mode) && geometry !== 'gsplat' ? 'additive' : mode;
+  return isVolumetricMode(mode) && geometry === 'line' ? 'additive' : mode;
 }
 
 /**
@@ -317,9 +319,10 @@ export function getCompleteBlendingState(
     // shader. depthWrite is false UNCONDITIONALLY — no
     // normalModeDepthWrite coupling; the mode is smooth in opacity by
     // design (VOLUMETRIC_BLENDING_SPEC.md §3.1).
-    // NOTE: only gsplats implement the volumetric fragment math in
-    // phase 1; point/line materials intercept this mode upstream and
-    // apply the additive state instead (the exact κ=0 limit).
+    // NOTE: gsplats (phase 1) and points (phase 3) implement the
+    // volumetric fragment math; line materials intercept this mode
+    // upstream (effectiveGeometryMode) and apply the additive state
+    // instead (the exact κ=0 limit) until phase 4.
     return getGSplatNormalBlendingState();
   }
 

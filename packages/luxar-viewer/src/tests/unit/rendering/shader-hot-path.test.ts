@@ -46,7 +46,7 @@ import {
   GSPLAT_VERTEX_SHADER,
   GSPLAT_FRAGMENT_SHADER,
 } from '../../../rendering/materials/gsplat/shader-glsl';
-import { VOLUMETRIC_SERIES_TAU_THRESHOLD } from '../../../rendering/materials/gsplat/math';
+import { VOLUMETRIC_SERIES_TAU_THRESHOLD } from '../../../rendering/materials/_shared/volumetric';
 import { LINE_VERTEX_SHADER } from '../../../rendering/materials/line/shader-glsl';
 
 describe('Shader hot-path string regressions', () => {

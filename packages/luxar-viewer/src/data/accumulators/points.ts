@@ -84,6 +84,9 @@ export class LoadedPointsDataAccumulator implements DataAccumulator<
    */
   private usedCount = 0;
 
+  /** Components per color item: 3 (RGB) or 4 (RGBA — alpha = per-point opacity). */
+  private colorComponents: 3 | 4 = 3;
+
   // Current capacity (number of points)
   private capacity: number;
 
@@ -118,7 +121,7 @@ export class LoadedPointsDataAccumulator implements DataAccumulator<
 
     // Start with Float32Array (will be replaced on first fill with actual types)
     this.positionBuffer = new Float32Array(initialCapacity * 3);
-    this.colorBuffer = new Float32Array(initialCapacity * 3);
+    this.colorBuffer = new Float32Array(initialCapacity * 3); // RGB(A) — see configureColorComponents
     this.radiiBuffer = new Float32Array(initialCapacity);
     this.sharpnessBuffer = new Float32Array(initialCapacity);
     // Scalars are optional on most datasets. Start with an empty sentinel
@@ -126,6 +129,35 @@ export class LoadedPointsDataAccumulator implements DataAccumulator<
     // up front. `fill()` allocates on first use.
     this.scalarBuffer = new Float32Array(0);
 
+    this.allocations++;
+  }
+
+  /**
+   * Declare the color layout (3 = RGB, 4 = RGBA) BEFORE the first color
+   * fill. The loader knows the layout from the zarr array shape at open
+   * time; the accumulator needs it to size every color buffer. Throws if
+   * colors were already written with a different layout — the layout is a
+   * property of the dataset, not of an individual load. Mirrors
+   * `LoadedGSplatsDataAccumulator.configureColorComponents`.
+   */
+  configureColorComponents(components: 3 | 4): void {
+    this.assertNotDisposed('configureColorComponents');
+    if (components === this.colorComponents) return;
+    if (this.hasColors) {
+      throw new Error(
+        `LoadedPointsDataAccumulator: color layout changed to ${components} components after ` +
+          `colors were already written with ${this.colorComponents}`
+      );
+    }
+    this.colorComponents = components;
+    // Re-size the (still empty) color buffer, preserving its element type.
+    const n = this.capacity * components;
+    this.colorBuffer =
+      this.colorBuffer instanceof Uint8Array
+        ? new Uint8Array(n)
+        : this.colorBuffer instanceof Uint16Array
+          ? new Uint16Array(n)
+          : new Float32Array(n);
     this.allocations++;
   }
 
@@ -168,7 +200,7 @@ export class LoadedPointsDataAccumulator implements DataAccumulator<
     // it's identical work since usedCount === capacity.
     const liveCount = Math.min(this.usedCount, this.capacity);
     const livePos = liveCount * 3;
-    const liveColor = liveCount * 3;
+    const liveColor = liveCount * this.colorComponents;
     const liveScalar = liveCount;
 
     // Allocate new buffers with SAME types as current (type-preserving growth)
@@ -176,17 +208,17 @@ export class LoadedPointsDataAccumulator implements DataAccumulator<
     newPositions.set(this.positionBuffer.subarray(0, livePos));
     this.positionBuffer = newPositions;
 
-    // Color: Type-preserving
+    // Color: Type-preserving (strided by the declared RGB(A) layout)
     if (this.colorBuffer instanceof Uint8Array) {
-      const newColors = new Uint8Array(newCapacity * 3);
+      const newColors = new Uint8Array(newCapacity * this.colorComponents);
       newColors.set(this.colorBuffer.subarray(0, liveColor));
       this.colorBuffer = newColors;
     } else if (this.colorBuffer instanceof Uint16Array) {
-      const newColors = new Uint16Array(newCapacity * 3);
+      const newColors = new Uint16Array(newCapacity * this.colorComponents);
       newColors.set(this.colorBuffer.subarray(0, liveColor));
       this.colorBuffer = newColors;
     } else {
-      const newColors = new Float32Array(newCapacity * 3);
+      const newColors = new Float32Array(newCapacity * this.colorComponents);
       newColors.set(this.colorBuffer.subarray(0, liveColor));
       this.colorBuffer = newColors;
     }
@@ -286,7 +318,10 @@ export class LoadedPointsDataAccumulator implements DataAccumulator<
     // Return LoadedPointsData with NATIVE types (matches what was filled!)
     return {
       positions: this.positionBuffer.subarray(0, count * 3) as PositionArray,
-      colors: this.hasColors ? (this.colorBuffer.subarray(0, count * 3) as ColorArray) : undefined,
+      colors: this.hasColors
+        ? (this.colorBuffer.subarray(0, count * this.colorComponents) as ColorArray)
+        : undefined,
+      colorComponents: this.colorComponents,
       radii: this.hasRadii ? (this.radiiBuffer.subarray(0, count) as ScalarArray) : undefined,
       sharpness: this.hasSharpness
         ? (this.sharpnessBuffer.subarray(0, count) as ScalarArray)
@@ -383,9 +418,9 @@ export class LoadedPointsDataAccumulator implements DataAccumulator<
 
     // Recreate buffers with correct types (only if types differ from initial Float32)
     if (types.color === 'Uint8Array') {
-      this.colorBuffer = new Uint8Array(this.capacity * 3);
+      this.colorBuffer = new Uint8Array(this.capacity * this.colorComponents);
     } else if (types.color === 'Uint16Array') {
-      this.colorBuffer = new Uint16Array(this.capacity * 3);
+      this.colorBuffer = new Uint16Array(this.capacity * this.colorComponents);
     }
 
     if (types.radius === 'Uint8Array') {
@@ -443,16 +478,16 @@ export class LoadedPointsDataAccumulator implements DataAccumulator<
     // Track the highest filled index for cheap ensureCapacity copies.
     // Prefer 1-per-point sources (radii, sharpness, scalars) over the
     // multi-channel color buffer so the count is correct regardless of
-    // whether future color formats are RGB or RGBA. Positions are still
-    // checked first because they're the canonical 3-floats-per-point
-    // attribute on this code path. Only fall through to colors / 3 when
-    // no 1-per-point source is available.
+    // the RGB vs RGBA layout. Positions are still checked first because
+    // they're the canonical 3-floats-per-point attribute on this code
+    // path. Only fall through to colors / colorComponents when no
+    // 1-per-point source is available.
     const filledCount = data.positions
       ? data.positions.length / 3
       : (data.radii?.length ??
         data.sharpness?.length ??
         data.scalars?.length ??
-        (data.colors ? data.colors.length / 3 : 0));
+        (data.colors ? data.colors.length / this.colorComponents : 0));
     if (filledCount > 0) {
       this.usedCount = Math.max(this.usedCount, offset + filledCount);
     }
@@ -464,11 +499,11 @@ export class LoadedPointsDataAccumulator implements DataAccumulator<
     if (data.colors) {
       this.hasColors = true;
       if (data.colors instanceof Uint8Array) {
-        (this.colorBuffer as Uint8Array).set(data.colors, offset * 3);
+        (this.colorBuffer as Uint8Array).set(data.colors, offset * this.colorComponents);
       } else if (data.colors instanceof Uint16Array) {
-        (this.colorBuffer as Uint16Array).set(data.colors, offset * 3);
+        (this.colorBuffer as Uint16Array).set(data.colors, offset * this.colorComponents);
       } else {
-        (this.colorBuffer as Float32Array).set(data.colors, offset * 3);
+        (this.colorBuffer as Float32Array).set(data.colors, offset * this.colorComponents);
       }
     }
     if (data.radii) {

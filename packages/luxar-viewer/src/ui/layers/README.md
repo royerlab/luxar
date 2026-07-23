@@ -11,7 +11,7 @@ The Layers panel exposes scene graph nodes marked with `layer=True` (set in the 
 - **Gamma** correction
 - **Opacity**
 - **Blending mode** (additive, volumetric, normal, max, opaque, luminous)
-- **Absorption** (κ, 0–10) — only shown for volumetric gsplat/group layers; κ = 0 looks additive
+- **Absorption** (κ, 0–10) — only shown for volumetric gsplat/points/group layers (lines render the additive fallback until phase 4); κ = 0 looks additive
 - **Colormap** (for gsplats with scalars/amplitudes, scalar-backed points/lines, and groups that fan out to such descendants)
 - **Active level** (LOD groups, and partitions wrapping LOD groups) — `auto` or lock to a specific level
 

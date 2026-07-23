@@ -65,7 +65,7 @@ math below it is unchanged:
 | texel1.rgb | `aColor`     | Per-point colour (HDR); the writer fills white when the dataset has none                                                                                        |
 | texel1.w   | `aSharpness` | Per-point sharpness — a normalised `[0, 1]` knob (no scale; `uint8/255` already lands in range). Maps in-shader to the super-Gaussian exponent `β = 2^(6s − 2)` |
 | texel2.x   | `aScalar`    | `USE_COLORMAP` only — replaces `aColor` via LUT lookup (fetched only in colormap builds; 0.0 identity fill when the dataset has no scalars)                     |
-| texel2.y   | —            | Per-point opacity alpha (1.0 identity fill) — reserved for volumetric Phase 3, not read by the current shaders                                                  |
+| texel2.y   | `vAlpha`     | Per-point opacity alpha — the RGBA color column when the dataset carries one, else the 1.0 opaque identity fill. Linear contribution scale in every mode; volumetric maps it into optical depth `w(a) = −ln(1 − a)` gated by `uHasElementAlpha` |
 
 Scalar PRESENCE is not knowable from the fixed layout, so the texel writers
 stamp `geometry.userData.hasScalars` and the fail-closed colormap guard
@@ -179,7 +179,7 @@ The fragment shader runs in this order:
 ## Blending modes
 
 `PointMaterial`/`PointTSLMaterial` accept the canonical Luxar `BlendingMode`
-(`'additive' | 'volumetric' | 'normal' | 'opaque' | 'luminous' | 'max'`; `volumetric` renders its additive κ=0 fallback until phase 3 — see `effectiveGeometryMode` in blending-state.ts) and route everything
+(`'additive' | 'volumetric' | 'normal' | 'opaque' | 'luminous' | 'max'`; `volumetric` is the real emission–absorption math since phase 3 — `LUXAR_VOLUMETRIC` output branch, τ = κ·density·chord with the isotropic chord scale from `./math.ts`, over the premultiplied One/OneMinusSrcAlpha state) and route everything
 through `applyBlendingMode(mode)`, which is the **single source of truth** for
 both creation (called from the constructor) and runtime UI transitions (called
 from `LayersPanel`). The method:
