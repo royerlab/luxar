@@ -17,7 +17,10 @@ import {
   clampLineCapacity,
   lineTextureHeightForCapacity,
 } from '../../../rendering/element-texture-layout';
-import { elementTexelCapacity } from '../../../rendering/element-storage';
+import {
+  elementTexelCapacity,
+  registerElementTexelDirtyRange,
+} from '../../../rendering/element-storage';
 import {
   attachLineStorage,
   getLineTexture,
@@ -263,6 +266,35 @@ describe('attachLineStorage / writeLineTexels — fused writer round-trip', () =
       endScalars: new Float32Array(4),
     };
     expect(() => writeLineTexels(texture, shortScalars, 8)).toThrow(/shorter than count/);
+  });
+
+  it('a pending FULL upload is NOT downgraded by a later append (three-geometry twin)', () => {
+    // Lines twin of the point/splat pending-full tests: full-upload mode is
+    // encoded as needsUpdate + EMPTY updateRanges — invisible to the range
+    // fold. A full write dirtying >= 75% of rows enters full mode; an append
+    // BEFORE any flush must NOT register partial ranges (that would
+    // downgrade the full upload and leave the prefix rendering the previous
+    // commit's texels on classic WebGL).
+    configureElementTextureLayout(12); // 2 segments/row
+    const geometry = new THREE.InstancedBufferGeometry();
+    const texture = attachLineStorage(geometry, 4); // 4 segments → 2 rows
+    texture.clearUpdateRanges();
+    texture.onUpdate?.(texture); // simulate the attach upload flush
+    const v0 = texture.version;
+
+    // Full write of all 4 segments → 2/2 rows dirty → full-upload mode.
+    writeLineTexels(texture, makeSource(4), 4);
+    expect(texture.updateRanges.length).toBe(0);
+    expect(texture.version).toBeGreaterThan(v0);
+
+    // A suffix register before the flush must keep full mode (no ranges).
+    registerElementTexelDirtyRange(texture, LINE_FLOATS_PER_SEGMENT, 3, 4);
+    expect(texture.updateRanges.length).toBe(0);
+
+    // A simulated flush ends the pending-full state; ranged uploads resume.
+    texture.onUpdate?.(texture);
+    registerElementTexelDirtyRange(texture, LINE_FLOATS_PER_SEGMENT, 3, 4);
+    expect(texture.updateRanges.length).toBeGreaterThan(0);
   });
 
   it('clamps the written count to the texture capacity (memory safety)', () => {

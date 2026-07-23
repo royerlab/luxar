@@ -241,14 +241,25 @@ def _atomic_finalize(tmp: Path, dest: Path) -> None:
     Write-to-temp-then-swap is what makes the store writers crash-safe: a
     mid-write failure leaves ``dest`` (the prior good store, if any) untouched
     instead of destroyed-then-partially-rewritten. For single files the
-    ``os.replace`` is atomic; for directories the remove-then-rename leaves a
-    sub-second window with no ``dest`` — still strictly better than the old
-    in-place ``overwrite=True``, which cleared the prior store before writing
-    a single new byte.
+    ``os.replace`` is atomic. For directories the swap is TRASH-FIRST: the
+    old ``dest`` is renamed aside (atomic), ``tmp`` renamed in (atomic), and
+    only then is the old copy deleted — so there is no instant, even under
+    SIGKILL, at which ``dest`` is absent while a prior good store existed.
+    A kill between the two renames leaves the old store recoverable at the
+    ``.trash-*`` sibling; a kill after leaves at worst a stale trash dir.
     """
     if dest.is_dir():
-        shutil.rmtree(dest)
-    elif dest.exists():
+        trash = dest.parent / f".{dest.name}.trash-{os.getpid()}-{uuid.uuid4().hex[:8]}"
+        os.replace(str(dest), str(trash))
+        try:
+            os.replace(str(tmp), str(dest))
+        except BaseException:
+            # Restore the prior good store before propagating.
+            os.replace(str(trash), str(dest))
+            raise
+        shutil.rmtree(trash, ignore_errors=True)
+        return
+    if dest.exists():
         dest.unlink()
     os.replace(str(tmp), str(dest))
 
