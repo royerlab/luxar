@@ -1,25 +1,22 @@
 /**
- * Direct unit tests for the factory tables, backend resolution, and
- * cache-key helpers.
+ * Direct unit tests for the factory tables and backend resolution.
  *
  * Orchestrator tests (material-manager.test.ts) exercise these
- * indirectly through `getXMaterial` cache hits/misses; this file pins
- * the keying contract so a future "tighten the bucketing" change
- * trips a deliberate test update.
+ * indirectly through the `getXMaterial` creation paths; this file pins
+ * the table shapes and the caps → backend dispatch.
  *
- * Lines are the ONLY cached material kind: point and gsplat materials
- * are per node (each carries its own element texture) and have no
- * cache key, so `lineCacheKey` is the sole keying surface under test.
+ * No material kind is cached or keyed anymore: point, line, and gsplat
+ * materials are all per node (each carries its own element texture),
+ * so the historical `lineCacheKey` helper — and its keying contract —
+ * is gone (it died with the lines texture-storage migration).
  */
 
 import { describe, it, expect } from 'vitest';
 import {
   resolveMaterialBackend,
-  lineCacheKey,
   VISUAL_FACTORIES,
   PICKING_FACTORIES,
   MEGA_SHADER_FACTORIES,
-  type LineMaterialProperties,
 } from '../../../../rendering/material-manager/factories';
 import type { RendererCapabilities } from '../../../../rendering/renderer-capabilities';
 
@@ -27,14 +24,6 @@ import type { RendererCapabilities } from '../../../../rendering/renderer-capabi
 // only `apiSurface` is read.
 const caps = (apiSurface: 'webgl2' | 'webgpu'): RendererCapabilities =>
   ({ apiSurface }) as RendererCapabilities;
-
-const baseLine: LineMaterialProperties = {
-  blendingMode: 'additive',
-  opacity: 1.0,
-  gamma: 1.0,
-  intensity: 1.0,
-  offset: 0.0,
-};
 
 describe('resolveMaterialBackend', () => {
   it("returns 'tsl' for webgpu", () => {
@@ -72,62 +61,5 @@ describe('VISUAL_FACTORIES / PICKING_FACTORIES / MEGA_SHADER_FACTORIES shape', (
     expect(Object.keys(MEGA_SHADER_FACTORIES).sort()).toEqual(['glsl', 'tsl']);
     expect(typeof MEGA_SHADER_FACTORIES.glsl).toBe('function');
     expect(typeof MEGA_SHADER_FACTORIES.tsl).toBe('function');
-  });
-});
-
-describe('lineCacheKey', () => {
-  it('produces the same key for identical props + backend (deterministic)', () => {
-    expect(lineCacheKey(baseLine, 'glsl')).toBe(lineCacheKey(baseLine, 'glsl'));
-  });
-
-  it('starts with `line_<backend>_<blendingMode>_…` for routing', () => {
-    expect(lineCacheKey(baseLine, 'glsl')).toMatch(/^line_glsl_additive_/);
-    expect(lineCacheKey(baseLine, 'tsl')).toMatch(/^line_tsl_additive_/);
-  });
-
-  it('encodes opacity into a 0–100 bucket (clamp [0,1] × 100, round)', () => {
-    const half = lineCacheKey({ ...baseLine, opacity: 0.5 }, 'glsl');
-    const halfPlus = lineCacheKey({ ...baseLine, opacity: 0.504 }, 'glsl');
-    const halfMinus = lineCacheKey({ ...baseLine, opacity: 0.496 }, 'glsl');
-    // All three round to the same 50 bucket
-    expect(half).toBe(halfPlus);
-    expect(half).toBe(halfMinus);
-    // But 0.55 is a different bucket
-    expect(half).not.toBe(lineCacheKey({ ...baseLine, opacity: 0.55 }, 'glsl'));
-  });
-
-  it('encodes the transparent flag t=1 for non-opaque, t=0 for opaque blending mode', () => {
-    expect(lineCacheKey({ ...baseLine, blendingMode: 'additive' }, 'glsl')).toMatch(/_t1_dw0$/);
-    expect(lineCacheKey({ ...baseLine, blendingMode: 'opaque' }, 'glsl')).toMatch(/_t0_dw0$/);
-  });
-
-  it('normal-mode depthWrite flip (0.99) never shares a key across the flip, even inside one 1% bucket', () => {
-    // 0.985 and 0.994 both round to opacity bucket 99, but sit on
-    // opposite sides of the depthWrite predicate — first-requester-wins
-    // would hand one of them the wrong depth state.
-    const below = lineCacheKey({ ...baseLine, blendingMode: 'normal', opacity: 0.985 }, 'glsl');
-    const above = lineCacheKey({ ...baseLine, blendingMode: 'normal', opacity: 0.994 }, 'glsl');
-    expect(below).toMatch(/_o99_/);
-    expect(above).toMatch(/_o99_/);
-    expect(below).toMatch(/_dw0$/);
-    expect(above).toMatch(/_dw1$/);
-    expect(below).not.toBe(above);
-
-    // Non-normal modes have no opacity-derived depthWrite: same bucket
-    // → same key on both sides of 0.99.
-    const addBelow = lineCacheKey({ ...baseLine, opacity: 0.985 }, 'glsl');
-    const addAbove = lineCacheKey({ ...baseLine, opacity: 0.994 }, 'glsl');
-    expect(addBelow).toBe(addAbove);
-  });
-
-  it('omits radius/sharpness/truncation buckets (lines have no such props)', () => {
-    const key = lineCacheKey(baseLine, 'glsl');
-    expect(key).not.toMatch(/_r\d+/);
-    expect(key).not.toMatch(/_s\d+/);
-    expect(key).not.toMatch(/_tr\d+/);
-  });
-
-  it('glsl vs tsl keys differ for the same props', () => {
-    expect(lineCacheKey(baseLine, 'glsl')).not.toBe(lineCacheKey(baseLine, 'tsl'));
   });
 });

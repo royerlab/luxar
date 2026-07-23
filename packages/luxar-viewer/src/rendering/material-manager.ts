@@ -28,20 +28,17 @@ import type { MegaShaderConfig } from './post-processing/mega/material';
 import type { CameraAwareMaterial } from './materials/_shared/camera-aware-material';
 import type { RendererCapabilities } from './renderer-capabilities';
 import { log, Modules } from '../utils/log';
-import { config } from '../config';
 import {
   VISUAL_FACTORIES,
   PICKING_FACTORIES,
   MEGA_SHADER_FACTORIES,
   resolveMaterialBackend,
-  lineCacheKey,
   type BlendingMode,
   type PointMaterialProperties,
   type LineMaterialProperties,
   type GSplatMaterialProperties,
   type MaterialBackend,
 } from './material-manager/factories';
-import { lruGet, lruSet } from './material-manager/lru-cache';
 import {
   SOFT_DISPOSE_FLAG,
   subscribeToDispose,
@@ -94,21 +91,15 @@ export type LuxarGSplatPickingMaterial = GSplatPickingMaterial | GSplatPickingTS
 export type LuxarMegaShaderMaterial = MegaShaderMaterial | MegaShaderTSLMaterial;
 
 /**
- * Manages all materials in the scene with caching and global updates.
- * Supports points, lines, and future material types.
+ * Manages all materials in the scene with lifecycle tracking and
+ * global camera-uniform updates. Supports points, lines, and gsplats.
  *
- * The LINE cache is a bounded LRU map: each `getLineMaterial()` call
- * promotes the entry to most-recently-used by re-inserting it; on
- * insert past `cacheMaxSize`, the least-recently-used entry is
- * disposed and dropped. Without this bound the cache would grow
- * unbounded as users animate attribute sliders, leaking GPU shader
- * programs. Point and gsplat materials are PER NODE (each carries the
- * node's own element texture) and are never cached — their maps stay
- * permanently empty (kept for the lifecycle/stats context shapes).
- *
- * The bound is configured from
- * `config.dataLoading.performance.materialCacheMaxSize` (default 200).
- * `0` disables eviction.
+ * ALL visual materials are PER NODE (each carries the node's own
+ * element texture — `uPointTex` / `uLineTex` / `uSplatTex`) and are
+ * never cached; the three cache maps stay permanently empty (kept for
+ * the lifecycle/stats context shapes, where an empty map is a truthful
+ * no-op). The historical line-material LRU died with the lines
+ * texture-storage migration — the last cached material kind.
  */
 export class MaterialManager {
   private pointMaterialCache = new Map<string, LuxarPointMaterial>();
@@ -132,9 +123,6 @@ export class MaterialManager {
    * THREE's EventDispatcher.
    */
   private subscribedMaterials = new WeakSet<THREE.Material & CameraAwareMaterial>();
-  /** Total LRU evictions (only the line cache can evict — point/gsplat materials are per node). */
-  private evictionCount = 0;
-
   /**
    * Diagnostic: cumulative wall-clock time spent constructing
    * materials (Point/Line/GSplat). Useful as a proxy for "how much
@@ -145,47 +133,19 @@ export class MaterialManager {
   private totalCreateMs = 0;
   private createCount = 0;
   /**
-   * Materials that entered through `register()` or LRU eviction rather than
-   * a manager factory (per-node point/gsplat materials live in
+   * Materials that entered through `register()` rather than a manager
+   * factory (per-node point/line/gsplat materials live in
    * `registeredMaterials` only).
    *
-   * Examples: GPU-picking materials and evicted line materials awaiting
-   * defer-dispose. These
-   * still need global camera uniforms and manager-level disposal, but they must
-   * be tracked separately from cached shared materials for leak diagnostics.
+   * Examples: GPU-picking materials and colormap clones. These still
+   * need global camera uniforms and manager-level disposal, but they
+   * are tracked separately for leak diagnostics.
    */
   private ownedMaterials = new Set<THREE.Material & CameraAwareMaterial>();
   private currentFov = (60 * Math.PI) / 180; // Current FOV in radians (or frustumHeight for ortho)
   private currentResolution = new THREE.Vector2(1920, 1080); // Use reasonable default
   private currentIsOrtho = false;
   private currentNearCull: number | undefined = undefined;
-
-  /**
-   * Callback used by `lruSet` on eviction. DEFER-DISPOSE: cached
-   * materials are shared and attached directly to live meshes (only the
-   * colormap / layers-panel paths clone), so eviction must not dispose —
-   * a disposed-but-still-rendered material is auto-recompiled by Three
-   * but its dispose listener has unregistered it, so it silently stops
-   * receiving `updateCameraParams` and renders with stale
-   * resolution/FOV/nearCull after the next resize. Instead the entry
-   * merely leaves the cache (the bound is enforced by `lruSet`, which
-   * deleted the map entry before calling this); the material stays in
-   * `registeredMaterials` (camera updates keep flowing) and moves to
-   * `ownedMaterials` (leak diagnostics + teardown), so `dispose()` still
-   * cleans it up at end of life. Trade-off: an evicted-and-truly-unused
-   * material is retained until manager disposal — one CPU-side uniforms
-   * object per distinct key ever created (its GPU program is shared and
-   * refcounted by shader key in Three), strictly cheaper than the
-   * use-after-evict bug. Bound as an arrow field so each `lruSet` call
-   * site can pass it without rebinding `this`.
-   */
-  private readonly handleEviction = (
-    _key: string,
-    material: THREE.Material & CameraAwareMaterial
-  ): void => {
-    this.ownedMaterials.add(material);
-    this.evictionCount++;
-  };
 
   /**
    * Build the lifecycle context handed to `subscribeToDispose` and
@@ -269,7 +229,18 @@ export class MaterialManager {
   }
 
   /**
-   * Get or create a line material with caching.
+   * Create a line material — PER NODE, no LRU cache.
+   *
+   * Segment data lives in a per-node texture (`uLineTex`, since the
+   * texture-backed storage migration), so two nodes can never share a
+   * line material: sharing would rebind one node's texture onto
+   * another's mesh at every commit. Every call creates a fresh material
+   * that the node owns for its lifetime (the node factory stamps
+   * `_layerMaterialCloned: true`, so LayersPanel / LOD-cross-fade
+   * mutate it directly instead of clone-on-first-use).
+   * `lineMaterialCache` stays permanently empty — it remains in the
+   * lifecycle/stats context shapes, where an empty map is a truthful
+   * no-op. Mirrors {@link getPointMaterial} / {@link getGSplatMaterial}.
    *
    * Dispatches to `LineTSLMaterial` (NodeMaterial / TSL) when the
    * active renderer reports `caps.apiSurface === 'webgpu'`, otherwise to the
@@ -278,13 +249,9 @@ export class MaterialManager {
    */
   getLineMaterial(props: LineMaterialProperties): LuxarLineMaterial {
     const backend = resolveMaterialBackend(this.caps);
-    const key = lineCacheKey(props, backend);
-
-    let material = lruGet(this.lineMaterialCache, key);
-    if (material) return material;
 
     const createStart = performance.now();
-    material = new VISUAL_FACTORIES.line[backend]({
+    const material = new VISUAL_FACTORIES.line[backend]({
       opacity: props.opacity,
       gamma: props.gamma,
       intensity: props.intensity,
@@ -302,15 +269,8 @@ export class MaterialManager {
       this.currentIsOrtho,
       this.currentNearCull
     );
-    lruSet(
-      this.lineMaterialCache,
-      key,
-      material,
-      config.dataLoading.performance.materialCacheMaxSize,
-      this.handleEviction
-    );
 
-    log.info(Modules.RENDERER, `Created line material: ${key}`);
+    log.info(Modules.RENDERER, `Created per-node line material (${backend})`);
     return material;
   }
 
@@ -439,11 +399,11 @@ export class MaterialManager {
     removeFromRegistries(material, this.lifecycleCtx);
   }
 
-  /** Dispose all cached materials. */
+  /** Dispose all managed materials. */
   dispose(): void {
-    // Union of both registries: an LRU-evicted line material is parked
-    // in ownedMaterials only (handleEviction) — registeredMaterials
-    // alone would miss it and leak its GPU program at teardown.
+    // Union of both registries so an ownedMaterials-only entry (e.g. a
+    // register()-entered material) can't leak its GPU program at
+    // teardown.
     const materials = new Set([...this.registeredMaterials, ...this.ownedMaterials]);
     this.registeredMaterials.clear();
     this.ownedMaterials.clear();
@@ -493,7 +453,6 @@ export class MaterialManager {
       gsplatMaterialCache: this.gsplatMaterialCache,
       ownedMaterials: this.ownedMaterials,
       registeredMaterials: this.registeredMaterials,
-      evictionCount: this.evictionCount,
       totalCreateMs: this.totalCreateMs,
       createCount: this.createCount,
     });

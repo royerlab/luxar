@@ -249,9 +249,8 @@ export function elementTexelCapacity(texture: THREE.DataTexture, floatsPerElemen
  * Fill `aSortedIndex[0..count)` with identity ordering and register a
  * single collapsed prefix update range. Ranges accumulate across
  * commits while a mesh is not drawn and the WebGPU backends replay
- * them verbatim (no flush-time merge — see
- * `interleaved-attributes.ts`), so every write collapses the pending
- * set to one `[0, max-end)` range.
+ * them verbatim (no flush-time merge), so every write collapses the
+ * pending set to one `[0, max-end)` range.
  */
 export function writeSortedIndexIdentity(
   geometry: THREE.InstancedBufferGeometry,

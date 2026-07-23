@@ -9,19 +9,32 @@
  * userData write on a real mesh.
  */
 
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import * as THREE from 'three';
+
+const mockNoteDepthSortCommit = vi.fn();
+vi.mock('../../../../rendering/depth-sort-coordinator', () => ({
+  noteDepthSortCommit: (...args: unknown[]) => mockNoteDepthSortCommit(...args),
+}));
 
 // Mock the GPU update fn so the no-pool path's actual dispatch can be
 // asserted (a mutant that drops this call would otherwise still pass the
 // userData write). Mirrors the gsplats commit test's mock of
-// updateInstancedGSplatsMesh.
+// updateInstancedGSplatsMesh. `getLineTexture` must ride along: the
+// commit's syncLineMaterialWithGeometry (material-sync-helpers.ts) reads
+// it from this same module — null keeps the sync a no-op on the stub
+// geometries used here.
 const mockUpdateInstancedLinesMesh = vi.fn();
 vi.mock('../../../../rendering/line-geometry', () => ({
   updateInstancedLinesMesh: (...args: unknown[]) => mockUpdateInstancedLinesMesh(...args),
+  getLineTexture: () => null,
 }));
 
 import { commitLinesGeometry } from '../../../../data/scene-loader/commit/commit-lines-geometry';
+import {
+  configureElementTextureLayout,
+  resetElementTextureLayoutForTests,
+} from '../../../../rendering/element-texture-layout';
 import { getPrefixParent, setPrefixParent } from '../../../../types/prefix-lineage';
 import { SOFT_DISPOSE_FLAG } from '../../../../rendering/material-manager';
 import type { StagedLinesCommit } from '../../../../data/scene-loader/process/data-processor-lines';
@@ -134,7 +147,7 @@ describe('commitLinesGeometry', () => {
     // route through this object. We pin the contract that visibleSegmentCount
     // is still written regardless of pool presence.
     const mockPool: any = {
-      acquireLinesGeometry: () => ({ geometry: new THREE.BufferGeometry(), pointCount: 0 }),
+      acquireLinesGeometry: () => new THREE.BufferGeometry(),
       updateLinesGeometry: () => undefined,
       releaseLinesGeometry: () => undefined,
       didLastAcquireRebuildAttributes: () => false,
@@ -261,7 +274,7 @@ describe('commitLinesGeometry', () => {
 describe('commitLinesGeometry — append fast path (Phase 4 Stage 2, fromInstance)', () => {
   // The gate lives in the pool branch; these tests pin `fromInstance` in the
   // options threaded to updateLinesGeometry. The suffix-write behavior
-  // itself is covered in interleaved-attributes.test.ts.
+  // itself is covered in line-texture-storage.test.ts.
   const makePool = (geometry: THREE.BufferGeometry) => ({
     acquireLinesGeometry: vi.fn(() => geometry),
     updateLinesGeometry: vi.fn(),
@@ -326,7 +339,7 @@ describe('commitLinesGeometry — append fast path (Phase 4 Stage 2, fromInstanc
     expect(lastOpts(pool).fromInstance).toBe(0);
   });
 
-  it('does NOT append when the acquire rebuilt attributes (pool grow / spec-set change)', () => {
+  it('does NOT append when the acquire rebuilt attributes (pool grow / best-fit swap)', () => {
     const root = new THREE.Group();
     root.add(makeMesh('/lines'));
     const pool = makePool(new THREE.BufferGeometry());
@@ -502,9 +515,10 @@ describe('commitLinesGeometry — committedEnergyFraction stamp', () => {
 });
 
 describe('commitLinesGeometry — RenderObject invalidation on non-pool rebuild', () => {
-  // When updateInstancedLinesMesh reports a REBUILD (size/spec-set change
-  // rebinds a fresh InstancedInterleavedBuffer), the commit must dispatch
-  // the SOFT_DISPOSE-flagged material event so Three's cached RenderObject
+  // When updateInstancedLinesMesh reports a REBUILD (a COUNT change builds
+  // a fresh exact-size geometry+texture pair — scalar toggles no longer
+  // rebuild under the fixed texel layout), the commit must dispatch the
+  // SOFT_DISPOSE-flagged material event so Three's cached RenderObject
   // (stale `vertexBuffers` on the WebGPU backend) is evicted — the same
   // contract the pool branch honors via didLastAcquireRebuildAttributes.
   const softDisposeSeen = (mesh: THREE.Mesh): (() => boolean) => {
@@ -547,5 +561,198 @@ describe('commitLinesGeometry — RenderObject invalidation on non-pool rebuild'
       0
     );
     expect(saw()).toBe(false);
+  });
+});
+
+describe('commitLinesGeometry — depth-sort integration (lines sort registration)', () => {
+  beforeEach(() => {
+    mockNoteDepthSortCommit.mockReset();
+    mockUpdateInstancedLinesMesh.mockReset();
+  });
+
+  const makePool = (geometry: THREE.BufferGeometry) => ({
+    acquireLinesGeometry: vi.fn(() => geometry),
+    updateLinesGeometry: vi.fn(),
+    releaseLinesGeometry: vi.fn(),
+    didLastAcquireRebuildAttributes: vi.fn(() => false),
+  });
+  const makeStaged = (segmentCount: number): StagedLinesCommit => ({
+    path: '/lines',
+    sourceData: makeSourceData(segmentCount),
+    processed: makeProcessed(segmentCount),
+  });
+
+  it('pool path: notifies the coordinator with a LAZY midpoints provider and the count', () => {
+    const root = new THREE.Group();
+    const mesh = makeMesh('/lines');
+    root.add(mesh);
+    const staged = makeStaged(2);
+    if (staged.noop) throw new Error('expected geometry staged commit');
+    staged.processed.startPositions.set([0, 2, 4, 10, 20, 30]);
+    staged.processed.endPositions.set([2, 4, 6, 30, 40, 50]);
+    const pool = makePool(new THREE.BufferGeometry());
+    commitLinesGeometry(staged, root, pool as never, undefined, 0);
+
+    expect(mockNoteDepthSortCommit).toHaveBeenCalledTimes(1);
+    const [calledMesh, provider, count] = mockNoteDepthSortCommit.mock.calls[0] as [
+      THREE.Mesh,
+      () => Float32Array,
+      number,
+    ];
+    expect(calledMesh).toBe(mesh);
+    expect(count).toBe(2);
+    // Lines pass a THUNK (deferring the O(N) midpoint copy to the sorted
+    // path). Segment sort keys are the endpoint midpoints (start+end)/2.
+    expect(typeof provider).toBe('function');
+    const centers = provider();
+    expect(centers).toBeInstanceOf(Float32Array);
+    expect(Array.from(centers)).toEqual([1, 3, 5, 20, 30, 40]);
+    // FRESH allocation, not a view: the coordinator transfers the returned
+    // buffer to the SortWorker; sharing the processed arrays' ArrayBuffer
+    // would detach the texel source with it.
+    expect(centers.buffer).not.toBe(staged.processed.startPositions.buffer);
+    expect(centers.buffer).not.toBe(staged.processed.endPositions.buffer);
+  });
+
+  it('non-pool path: notifies too (both commit branches register)', () => {
+    const root = new THREE.Group();
+    const mesh = makeMesh('/lines');
+    root.add(mesh);
+    commitLinesGeometry(makeStaged(4), root, null, undefined, 0);
+    expect(mockNoteDepthSortCommit).toHaveBeenCalledTimes(1);
+    expect(mockNoteDepthSortCommit.mock.calls[0][0]).toBe(mesh);
+    expect(mockNoteDepthSortCommit.mock.calls[0][2]).toBe(4);
+  });
+
+  it('is success-only: a throwing GPU write must NOT bump the sort generation', () => {
+    // Mirrors the points/gsplats ordering (noteDepthSortCommit after the
+    // write block): the texture holds partially-written data, committedData
+    // was not stamped, and the next commit full-rewrites + registers.
+    const root = new THREE.Group();
+    root.add(makeMesh('/lines'));
+    const pool = makePool(new THREE.BufferGeometry());
+    pool.updateLinesGeometry.mockImplementation(() => {
+      throw new Error('device lost');
+    });
+    expect(() => commitLinesGeometry(makeStaged(3), root, pool as never, undefined, 0)).toThrow(
+      'device lost'
+    );
+    expect(mockNoteDepthSortCommit).not.toHaveBeenCalled();
+  });
+
+  it('is skipped on the staged.noop path (stamp-only — in-flight sorts stay valid)', () => {
+    const root = new THREE.Group();
+    root.add(makeMesh('/lines'));
+    const noop: StagedLinesCommit = { path: '/lines', noop: true, sourceData: makeSourceData(3) };
+    commitLinesGeometry(noop, root, null, undefined, 1);
+    expect(mockNoteDepthSortCommit).not.toHaveBeenCalled();
+  });
+
+  it('reports count 0 on an empty commit (coordinator release path)', () => {
+    const root = new THREE.Group();
+    root.add(makeMesh('/lines'));
+    commitLinesGeometry(makeStaged(0), root, null, undefined, 0);
+    expect(mockNoteDepthSortCommit).toHaveBeenCalledTimes(1);
+    expect(mockNoteDepthSortCommit.mock.calls[0][2]).toBe(0);
+  });
+
+  describe('capacity-clamp consistency', () => {
+    afterEach(() => {
+      resetElementTextureLayoutForTests();
+    });
+
+    it('notifies the coordinator with the CLAMPED count and a same-length provider', () => {
+      // maxTextureSize 6 → width 6 (multiple of texelsPerElement 6),
+      // per-node bound = 6×6/6 = 6 segments. An unclamped count would make
+      // the SortWorker return permutation values ≥ the texture capacity
+      // (OOB texel fetches → segments vanish).
+      configureElementTextureLayout(6);
+      const root = new THREE.Group();
+      const mesh = makeMesh('/lines');
+      root.add(mesh);
+      const pool = makePool(new THREE.BufferGeometry());
+      commitLinesGeometry(makeStaged(100), root, pool as never, undefined, 0);
+
+      expect((mesh.userData as { visibleSegmentCount: number }).visibleSegmentCount).toBe(6);
+      const [, provider, count] = mockNoteDepthSortCommit.mock.calls[0] as [
+        THREE.Mesh,
+        () => Float32Array,
+        number,
+      ];
+      expect(count).toBe(6);
+      expect((provider() as Float32Array).length).toBe(6 * 3);
+    });
+  });
+});
+
+describe('commitLinesGeometry — preserve-ordering on same-node same-count recommits', () => {
+  // The commit path decides; the writer obeys the flag (its skip behavior
+  // is covered in line-texture-storage tests). These pin the predicate
+  // (hadCommittedData && !attributesRebuilt && same geometry && same count)
+  // by asserting the options arg threaded to updateLinesGeometry —
+  // mirroring the points/gsplats twins.
+  const makePool = (geometry: THREE.BufferGeometry) => ({
+    acquireLinesGeometry: vi.fn(() => geometry),
+    updateLinesGeometry: vi.fn(),
+    releaseLinesGeometry: vi.fn(),
+    didLastAcquireRebuildAttributes: vi.fn(() => false),
+  });
+  const lastOpts = (pool: ReturnType<typeof makePool>) =>
+    (pool.updateLinesGeometry.mock.calls.at(-1) as unknown[])[3];
+  const makeStaged = (segmentCount: number): StagedLinesCommit => ({
+    path: '/lines',
+    sourceData: makeSourceData(segmentCount),
+    processed: makeProcessed(segmentCount),
+  });
+
+  it('same-count recommit → preserveOrdering true (first commit → false)', () => {
+    const root = new THREE.Group();
+    root.add(makeMesh('/lines'));
+    const pool = makePool(new THREE.BufferGeometry());
+    // First commit: no committedData stamp yet → the geometry's ordering
+    // is unvouched-for, identity must be written.
+    commitLinesGeometry(makeStaged(7), root, pool as never, undefined, 0);
+    expect(lastOpts(pool)).toEqual({ preserveOrdering: false, fromInstance: 0 });
+    // Same-node same-count recommit on the SAME pooled geometry: the
+    // previous permutation of [0,7) is still valid — keep it as a
+    // no-worse prior until the commit-triggered re-sort lands. Equal
+    // count is NOT an append, so fromInstance stays 0.
+    commitLinesGeometry(makeStaged(7), root, pool as never, undefined, 1);
+    expect(lastOpts(pool)).toEqual({ preserveOrdering: true, fromInstance: 0 });
+  });
+
+  it('count-change recommit → preserveOrdering false', () => {
+    const root = new THREE.Group();
+    root.add(makeMesh('/lines'));
+    const pool = makePool(new THREE.BufferGeometry());
+    commitLinesGeometry(makeStaged(7), root, pool as never, undefined, 0);
+    // A permutation of [0,7) is not a permutation of [0,9).
+    commitLinesGeometry(makeStaged(9), root, pool as never, undefined, 1);
+    expect(lastOpts(pool)).toEqual({ preserveOrdering: false, fromInstance: 0 });
+  });
+
+  it('recommit after committedData was cleared (LOD demotion) → false', () => {
+    const root = new THREE.Group();
+    const mesh = makeMesh('/lines');
+    root.add(mesh);
+    const pool = makePool(new THREE.BufferGeometry());
+    commitLinesGeometry(makeStaged(7), root, pool as never, undefined, 0);
+    delete (mesh.userData as { committedData?: unknown }).committedData;
+    commitLinesGeometry(makeStaged(7), root, pool as never, undefined, 1);
+    expect(lastOpts(pool)).toEqual({ preserveOrdering: false, fromInstance: 0 });
+  });
+
+  it('geometry swap / attribute rebuild defeats the flag', () => {
+    const root = new THREE.Group();
+    root.add(makeMesh('/lines'));
+    const pool = makePool(new THREE.BufferGeometry());
+    commitLinesGeometry(makeStaged(7), root, pool as never, undefined, 0);
+    // Best-fit reuse handed the node a DIFFERENT geometry (holding some
+    // other node's permutation over a different prior count) and reported
+    // an attribute rebuild — identity must be written.
+    pool.acquireLinesGeometry.mockReturnValue(new THREE.BufferGeometry());
+    pool.didLastAcquireRebuildAttributes.mockReturnValue(true);
+    commitLinesGeometry(makeStaged(7), root, pool as never, undefined, 1);
+    expect(lastOpts(pool)).toEqual({ preserveOrdering: false, fromInstance: 0 });
   });
 });

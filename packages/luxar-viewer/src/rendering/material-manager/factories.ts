@@ -1,18 +1,17 @@
 /**
- * Material factory tables + backend resolution + cache-key helpers.
+ * Material factory tables + backend resolution.
  *
- * Keeps the `MaterialManager` class focused on cache + lifecycle
+ * Keeps the `MaterialManager` class focused on lifecycle
  * orchestration.
  *
- * Everything here is **stateless** — pure constructor lookups and
- * pure cache-key string construction. The single piece of state
- * (renderer capabilities) is threaded through `resolveMaterialBackend`
- * by the caller; we don't import the singleton.
+ * Everything here is **stateless** — pure constructor lookups. The
+ * single piece of state (renderer capabilities) is threaded through
+ * `resolveMaterialBackend` by the caller; we don't import the
+ * singleton.
  *
  * @module rendering/material-manager/factories
  */
 
-import { normalModeDepthWrite } from '../blending-state';
 import type { BlendingMode } from '../../types/blending';
 import { PointMaterial } from '../materials/point/material-glsl';
 import { LineMaterial } from '../materials/line/material-glsl';
@@ -29,7 +28,6 @@ import { GSplatPickingTSLMaterial } from '../picking/gsplat/material-tsl';
 import { MegaShaderMaterial } from '../post-processing/mega/material';
 import { MegaShaderTSLMaterial } from '../post-processing/mega/material-tsl';
 import type { RendererCapabilities } from '../renderer-capabilities';
-import { clamp } from '../../utils/clamp';
 
 /**
  * Supported blending modes for materials.
@@ -152,33 +150,7 @@ export const MEGA_SHADER_FACTORIES = {
   tsl: MegaShaderTSLMaterial,
 } as const;
 
-/**
- * Compute the integer-bucketed cache-key components for the cached
- * material kind (Lines — point and gsplat materials are per node and
- * uncached, so they have no cache key).
- */
-function getCommonMaterialBuckets(props: {
-  opacity: number;
-  gamma: number;
-  intensity: number;
-  offset: number;
-}): { opacityBucket: number; gammaBucket: number; intensityBucket: number; offsetBucket: number } {
-  return {
-    opacityBucket: Math.round(clamp(props.opacity, 0, 1) * 100),
-    gammaBucket: Math.round(clamp(props.gamma, 0, 10) * 100),
-    intensityBucket: Math.round(clamp(props.intensity, 0, 100) * 100),
-    offsetBucket: Math.round((clamp(props.offset, -10, 10) + 10) * 10),
-  };
-}
-
-/** Cache key for a Lines material variant. */
-export function lineCacheKey(props: LineMaterialProperties, backend: MaterialBackend): string {
-  const { opacityBucket, gammaBucket, intensityBucket, offsetBucket } =
-    getCommonMaterialBuckets(props);
-  const transparent = props.blendingMode !== 'opaque';
-  // depthWrite discriminator: 'normal' mode flips depthWrite at the
-  // opacity >= 0.99 threshold, so two opacity buckets on the same side of
-  // the flip must not share a cached material with different depth state.
-  const dw = props.blendingMode === 'normal' && normalModeDepthWrite(props.opacity) ? 1 : 0;
-  return `line_${backend}_${props.blendingMode}_o${opacityBucket}_g${gammaBucket}_i${intensityBucket}_f${offsetBucket}_t${transparent ? 1 : 0}_dw${dw}`;
-}
+// (The historical `lineCacheKey` + bucketing helpers are gone: line
+// materials went PER NODE with the texture-backed storage migration —
+// each carries the node's own `uLineTex` — so no material kind is
+// cached or keyed anymore.)

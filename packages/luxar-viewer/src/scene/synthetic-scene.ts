@@ -59,19 +59,18 @@ function mulberry32(seed: number): () => number {
  * normalized sharpness knob's Gaussian midpoint, beta = 2).
  *
  * Memory cost — these are *source* arrays only; the actual peak
- * during a `?renderer=…` bench run is higher because
- * `packInterleavedAttributes` allocates another `count * stride`
- * Float32Array and Three's GPU upload double-buffers in driver
+ * during a `?renderer=…` bench run is higher because the line texture
+ * (`writeLineTexels`) allocates another `count × 24` Float32Array
+ * backing store and Three's GPU upload double-buffers in driver
  * memory until the first frame submits.
  *
  *   source arrays:   count × 17 Float32 (positions×2=6, colors×2=6,
  *                       widths×2=2, sharpness×2=2, length×1=1) × 4 B
  *                    + count × 2 Uint8  (clipped flags) × 1 B
  *                  = count × 70 B
- *   interleaved buf: count × stride × 4 B, stride matches the per-
- *                    instance set above (widened to Float32) plus
- *                    any alignment padding
- *   ≈ 2× the source-array figure as a working JS heap estimate.
+ *   line texture:    count × 24 floats × 4 B = count × 96 B
+ *                    (6 texels/segment RGBA32F — see line-geometry.ts)
+ *   ≈ 2.4× the source-array figure as a working JS heap estimate.
  *
  * For 10 M segments: ~700 MB of source arrays → ~1.4 GB peak JS
  * heap during construction + packing. The bench machine needs the

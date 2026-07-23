@@ -20,9 +20,10 @@
  *   - Width and sharpness sanitised against negative/NaN/Inf.
  *
  * Shader defines:
- *   - `USE_COLORMAP` — enables the per-vertex scalar attribute +
- *     colormap LUT path. Set in `LineMaterial` when the geometry
- *     binds `aStartScalar`/`aEndScalar`.
+ *   - `USE_COLORMAP` — enables the texel5 scalar fetch + colormap LUT
+ *     path. Set in `LineMaterial` when the node carries real colormap
+ *     scalars (the `userData.hasScalars` stamp — the fixed 6-texel
+ *     layout always has the slot, so presence rides the stamp).
  *   - `LUXAR_MAX_RGB_CONTRIBUTION` — fragment-side define that
  *     premultiplies `rgb *= alpha` before output so the
  *     `MaxEquation` + `OneFactor`/`OneFactor` blend captures
@@ -46,29 +47,17 @@ export const LINE_VERTEX_SHADER = /* glsl */ `
     // Static geometry attribute (per quad vertex)
     in vec2 aQuadCorner;  // (-1,-1), (1,-1), (-1,1), (1,1)
 
-    // Instanced attributes (per segment)
-    in vec3 aStartPos;
-    in vec3 aEndPos;
-    // Per-vertex colours are only read in the non-colormap branch. Under
-    // USE_COLORMAP the colour comes from the LUT, so these attributes are
-    // omitted entirely — a line already carries many instanced attributes,
-    // and declaring two unused vec3 attributes alongside the scalar pair
-    // can push the active-attribute count past GL_MAX_VERTEX_ATTRIBS (16)
-    // once THREE injects position/normal/uv.
-    #ifndef USE_COLORMAP
-    in vec3 aStartColor;
-    in vec3 aEndColor;
-    #else
-    in float aStartScalar;
-    in float aEndScalar;
-    #endif
-    in float aStartWidth;
-    in float aEndWidth;
-    in float aStartSharpness;
-    in float aEndSharpness;
-    in float aSegmentLength;
-    in float aStartClipped;
-    in float aEndClipped;
+    // Draw-slot → storage-slot mapping. Identity after a fresh commit;
+    // the sort worker permutes it so draw order tracks view depth
+    // without rewriting segment data. Uint32Array attribute → bound via
+    // vertexAttribIPointer, matching this uint declaration.
+    in uint aSortedIndex;
+
+    // Line data texture: RGBA32F, 6 texels/segment (see
+    // rendering/line-geometry.ts for the texel layout). Replaces the
+    // interleaved era's 11–13 instanced attributes — the colormap
+    // attribute-set toggle (GL_MAX_VERTEX_ATTRIBS pressure) is gone.
+    uniform highp sampler2D uLineTex;
 
     // Uniforms
     uniform vec2 uResolution;
@@ -102,6 +91,30 @@ export const LINE_VERTEX_SHADER = /* glsl */ `
     flat out float vClippedEnd;
 
     void main() {
+      // === Line-texture fetch prologue ===
+      // texelFetch reads reconstruct the per-segment values into the exact
+      // local names the math below has always used — zero changes
+      // downstream of this block. The width is a multiple of 6
+      // (element-texture-layout.ts), so a segment's 6 texels share one row
+      // and only x advances. Texels 2/3 (colors + sharpness) and 5
+      // (scalars) are fetched only PAST the bothBehind cull below, keeping
+      // the cheap-cull ordering the interleaved shader had. texel5.zw
+      // (per-endpoint alphas) are reserved for volumetric Phase 4 and not
+      // read here.
+      int lineBase = int(aSortedIndex) * 6;
+      int lineTexW = textureSize(uLineTex, 0).x;
+      ivec2 texel0 = ivec2(lineBase % lineTexW, lineBase / lineTexW);
+      vec4 lineT0 = texelFetch(uLineTex, texel0, 0);
+      vec4 lineT1 = texelFetch(uLineTex, ivec2(texel0.x + 1, texel0.y), 0);
+      vec4 lineT4 = texelFetch(uLineTex, ivec2(texel0.x + 4, texel0.y), 0);
+      vec3 aStartPos = lineT0.xyz;
+      float aStartWidth = lineT0.w;
+      vec3 aEndPos = lineT1.xyz;
+      float aEndWidth = lineT1.w;
+      float aSegmentLength = lineT4.x;
+      float aStartClipped = lineT4.y;
+      float aEndClipped = lineT4.z;
+
       // Position along segment: 0 = start, 1 = end. Branchless because
       // aQuadCorner.x ∈ {-1, +1} by construction.
       float t = aQuadCorner.x * 0.5 + 0.5;
@@ -170,6 +183,13 @@ export const LINE_VERTEX_SHADER = /* glsl */ `
 
       // === Below here only runs when the segment passed the cheap cull. ===
 
+      // Deferred texel fetches (colors + sharpness; scalars under
+      // USE_COLORMAP) — skipped entirely for cheap-culled segments.
+      vec4 lineT2 = texelFetch(uLineTex, ivec2(texel0.x + 2, texel0.y), 0);
+      vec4 lineT3 = texelFetch(uLineTex, ivec2(texel0.x + 3, texel0.y), 0);
+      float aStartSharpness = lineT2.w;
+      float aEndSharpness = lineT3.w;
+
       // Interpolate attributes along segment.
       // Colormap mode: display range (uScalarMin/uScalarScale) and gamma
       // shape the scalar VALUE before the LUT lookup, not the resulting
@@ -178,14 +198,15 @@ export const LINE_VERTEX_SHADER = /* glsl */ `
       // gain/offset controls work on colormapped nodes too. The gamma
       // fast path (LUXAR_GAMMA_ONE) skips the pow() when gamma == 1.0.
       #ifdef USE_COLORMAP
-      float s = mix(aStartScalar, aEndScalar, t);
+      vec4 lineT5 = texelFetch(uLineTex, ivec2(texel0.x + 5, texel0.y), 0);
+      float s = mix(lineT5.x, lineT5.y, t);
       float st = clamp((s - uScalarMin) * uScalarScale, 0.0, 1.0);
       #ifndef LUXAR_GAMMA_ONE
       st = pow(st, uInvGamma);          // gamma on the value, pre-LUT
       #endif
       vColor = texture(uColormapTex, vec2(st, 0.5)).rgb;
       #else
-      vColor = mix(aStartColor, aEndColor, t);
+      vColor = mix(lineT2.rgb, lineT3.rgb, t);
       #endif
 
       // sanitise width/sharpness against negative/NaN/Inf so a

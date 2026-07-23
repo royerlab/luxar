@@ -24,7 +24,7 @@
  */
 
 import * as THREE from 'three';
-import { widenToFloat32 } from '../interleaved-attributes';
+import { widenToFloat32 } from '../widen-to-float32';
 import {
   attachPointStorage,
   getPointTexture,

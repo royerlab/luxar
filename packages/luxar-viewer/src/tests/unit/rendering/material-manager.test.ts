@@ -565,8 +565,26 @@ describe('MaterialManager', () => {
       expect(stats2.keys.length).toBe(0); // no keys — nothing cached
     });
 
-    it('should include cache keys in statistics (line cache — the cached kind)', () => {
+    it('should report no cache keys — all three material kinds are per-node (nothing cached)', () => {
+      // The line-material LRU (the last cached kind) died with the lines
+      // texture-storage migration: every getXMaterial call creates a
+      // fresh per-node material, so the cache maps — and therefore
+      // `keys` — stay permanently empty.
       manager.getLineMaterial({
+        blendingMode: 'additive',
+        opacity: 1.0,
+        gamma: 1.0,
+        intensity: 1.0,
+        offset: 0.0,
+      });
+      manager.getPointMaterial({
+        blendingMode: 'additive',
+        opacity: 1.0,
+        gamma: 1.0,
+        intensity: 1.0,
+        offset: 0.0,
+      });
+      manager.getGSplatMaterial({
         blendingMode: 'additive',
         opacity: 1.0,
         gamma: 1.0,
@@ -575,9 +593,14 @@ describe('MaterialManager', () => {
       });
 
       const stats = manager.getCacheStats();
-      expect(stats.keys.length).toBeGreaterThan(0);
-      expect(stats.keys[0]).toContain('line_');
-      expect(stats.keys[0]).toContain('additive');
+      expect(stats.keys).toEqual([]);
+      expect(stats.pointMaterials).toBe(0);
+      expect(stats.lineMaterials).toBe(0);
+      expect(stats.gsplatMaterials).toBe(0);
+      expect(stats.cachedMaterials).toBe(0);
+      expect(stats.evictions).toBe(0);
+      // All three per-node materials are still registered for camera broadcast.
+      expect(stats.totalRegistered).toBe(3);
     });
   });
 

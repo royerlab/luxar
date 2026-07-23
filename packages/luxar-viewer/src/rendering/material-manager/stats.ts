@@ -1,9 +1,8 @@
 /**
- * Material-manager diagnostics: cache-size + eviction + create-time
- * snapshot.
+ * Material-manager diagnostics: registry-size + create-time snapshot.
  *
- * Counters stay on MaterialManager because eviction and cache-miss paths
- * mutate them; this module builds the returned object shape for
+ * Counters stay on MaterialManager because the creation paths mutate
+ * them; this module builds the returned object shape for
  * `getCacheStats()`.
  *
  * @module rendering/material-manager/stats
@@ -18,7 +17,6 @@ export interface StatsCtx {
   readonly gsplatMaterialCache: Map<string, unknown>;
   readonly ownedMaterials: Set<unknown>;
   readonly registeredMaterials: Set<unknown>;
-  readonly evictionCount: number;
   readonly totalCreateMs: number;
   readonly createCount: number;
 }
@@ -33,17 +31,21 @@ export function getCacheStats(ctx: StatsCtx) {
     cachedMaterials:
       ctx.pointMaterialCache.size + ctx.lineMaterialCache.size + ctx.gsplatMaterialCache.size,
     totalRegistered: ctx.registeredMaterials.size,
-    /** Cumulative LRU evictions since creation (only the line cache evicts). */
-    evictions: ctx.evictionCount,
+    /**
+     * Cumulative LRU evictions — always 0 since the line-material LRU
+     * (the last cached kind) died with the lines texture-storage
+     * migration; kept so stats consumers don't break.
+     */
+    evictions: 0,
     /** Configured cache bound (`0` = disabled). */
     maxSize: config.dataLoading.performance.materialCacheMaxSize,
     /**
      * Cumulative wall-clock ms spent inside `new XMaterial(...)`
-     * calls (cache-miss path). Excludes WebGL program compilation,
-     * which happens lazily on first render.
+     * calls. Excludes WebGL program compilation, which happens lazily
+     * on first render.
      */
     totalCreateMs: ctx.totalCreateMs,
-    /** Number of `new XMaterial(...)` calls (cache misses). */
+    /** Number of `new XMaterial(...)` calls. */
     createCount: ctx.createCount,
     keys: [
       ...Array.from(ctx.pointMaterialCache.keys()),

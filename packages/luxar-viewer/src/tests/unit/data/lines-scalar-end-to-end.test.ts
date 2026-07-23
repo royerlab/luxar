@@ -5,13 +5,16 @@
  *  - LinesDataAccumulator: scalar buffer init/grow/fill/getData.
  *  - projectLinesTo3D (TS path): scalars interpolated at clipped
  *    endpoints; output omits scalars when input has none.
- *  - GPU pool updateLinesGeometry: lazily allocates aStartScalar /
- *    aEndScalar when present; non-scalar updates leave geometry without
- *    those attributes.
- *  - createInstancedLinesMesh + updateInstancedLinesMesh: bind / update
- *    the scalar attributes via the shared `attrSpecs` path.
+ *  - GPU pool updateLinesGeometry: scalars land in texel5.xy of the
+ *    fixed 6-texel line-texture layout; non-scalar updates write the
+ *    0.0 identity there and presence rides `userData.hasScalars`
+ *    (refreshed every write — pool geometries are reused across
+ *    tenants).
+ *  - createInstancedLinesMesh + updateInstancedLinesMesh: write /
+ *    update the scalar texels in place — a scalar toggle never
+ *    rebuilds (the fixed layout always carries the slots).
  *  - End-to-end: a LoadedLinesData with scalars produces an
- *    InstancedLinesMesh whose geometry has aStartScalar/aEndScalar →
+ *    InstancedLinesMesh whose geometry carries the presence stamp →
  *    `supportsScalarColormap('lines', geometry)` returns true.
  */
 import { describe, it, expect } from 'vitest';
@@ -25,9 +28,11 @@ import { TypeScriptFallback } from '../../../wasm/typescript';
 import { GPUBufferPool } from '../../../rendering/gpu-buffer-pool';
 import {
   createInstancedLinesMesh,
+  getLineTexture,
   updateInstancedLinesMesh,
   type InstancedLinesMeshConfig,
 } from '../../../rendering/line-geometry';
+import { LINE_FLOATS_PER_SEGMENT } from '../../../rendering/element-texture-layout';
 import { LineMaterial } from '../../../rendering/materials/line/material-glsl';
 import { supportsScalarColormap } from '../../../rendering/material-colormap-helpers';
 import type { LoadedLinesData, ProcessedLinesData } from '../../../types/lines';
@@ -258,162 +263,151 @@ describe('projectLinesTo3D scalar interpolation', () => {
   });
 });
 
-describe('GPU pool updateLinesGeometry scalar attribute', () => {
-  it('does NOT create scalar attributes when data has no scalars', () => {
+/**
+ * A minimal ProcessedLinesData for pool-update tests; scalars ride
+ * along when provided (per-segment start/end pairs).
+ */
+function processedLines(
+  segmentCount: number,
+  scalars?: { start: number[]; end: number[] }
+): ProcessedLinesData {
+  return {
+    startPositions: new Float32Array(segmentCount * 3),
+    endPositions: new Float32Array(segmentCount * 3),
+    startColors: new Float32Array(segmentCount * 3),
+    endColors: new Float32Array(segmentCount * 3),
+    startWidths: new Float32Array(segmentCount),
+    endWidths: new Float32Array(segmentCount),
+    startSharpness: new Float32Array(segmentCount),
+    endSharpness: new Float32Array(segmentCount),
+    segmentLengths: new Float32Array(segmentCount),
+    startClipped: new Uint8Array(segmentCount),
+    endClipped: new Uint8Array(segmentCount),
+    ...(scalars
+      ? {
+          startScalars: new Float32Array(scalars.start),
+          endScalars: new Float32Array(scalars.end),
+        }
+      : {}),
+    segmentCount,
+  };
+}
+
+/** texel5 offsets of segment `i`: [startScalar, endScalar, alpha, alpha]. */
+function scalarTexels(geometry: THREE.BufferGeometry, i: number): number[] {
+  const arr = getLineTexture(geometry)!.image.data as Float32Array;
+  const o = i * LINE_FLOATS_PER_SEGMENT + 20;
+  return [arr[o], arr[o + 1], arr[o + 2], arr[o + 3]];
+}
+
+describe('GPU pool updateLinesGeometry scalar texels', () => {
+  it('writes the texel5 identity (0.0 scalars, 1.0 alphas) and stamps hasScalars=false when data has no scalars', () => {
     const pool = new GPUBufferPool(20, 300, 5, () => 0);
-    const g = pool.acquireLinesGeometry('l1', 4, /*hasScalars=*/ false);
-    const processed: ProcessedLinesData = {
-      startPositions: new Float32Array(12),
-      endPositions: new Float32Array(12),
-      startColors: new Float32Array(12),
-      endColors: new Float32Array(12),
-      startWidths: new Float32Array(4),
-      endWidths: new Float32Array(4),
-      startSharpness: new Float32Array(4),
-      endSharpness: new Float32Array(4),
-      segmentLengths: new Float32Array(4),
-      startClipped: new Uint8Array(4),
-      endClipped: new Uint8Array(4),
-      segmentCount: 4,
-    };
-    pool.updateLinesGeometry(g, processed, 4);
-    expect(g.hasAttribute('aStartScalar')).toBe(false);
-    expect(g.hasAttribute('aEndScalar')).toBe(false);
+    const g = pool.acquireLinesGeometry('l1', 4);
+    pool.updateLinesGeometry(g, processedLines(4), 4);
+    expect(g.userData.hasScalars).toBe(false);
+    // Identity fills are written UNCONDITIONALLY — a reused pool texture
+    // must never leak a previous tenant's scalars/alphas.
+    for (let i = 0; i < 4; i++) {
+      expect(scalarTexels(g, i)).toEqual([0.0, 0.0, 1.0, 1.0]);
+    }
   });
 
-  it('creates aStartScalar/aEndScalar at ACQUIRE time when hasScalars is declared', () => {
+  it('lands scalars at texel5.xy and stamps hasScalars=true (fixed layout — no acquire-time declaration)', () => {
     const pool = new GPUBufferPool(20, 300, 5, () => 0);
-    const g = pool.acquireLinesGeometry('l2', 2, /*hasScalars=*/ true);
-    const processed: ProcessedLinesData = {
-      startPositions: new Float32Array(6),
-      endPositions: new Float32Array(6),
-      startColors: new Float32Array(6),
-      endColors: new Float32Array(6),
-      startWidths: new Float32Array(2),
-      endWidths: new Float32Array(2),
-      startSharpness: new Float32Array(2),
-      endSharpness: new Float32Array(2),
-      segmentLengths: new Float32Array(2),
-      startClipped: new Uint8Array(2),
-      endClipped: new Uint8Array(2),
-      startScalars: new Float32Array([0.1, 0.9]),
-      endScalars: new Float32Array([0.2, 0.8]),
-      segmentCount: 2,
-    };
-    pool.updateLinesGeometry(g, processed, 2);
-    expect(g.hasAttribute('aStartScalar')).toBe(true);
-    expect(g.hasAttribute('aEndScalar')).toBe(true);
-    // Pooled attributes are now `InterleavedBufferAttribute` views
-    // over a shared `InstancedInterleavedBuffer` — `.array[0]` reads
-    // the first float of the stride (not necessarily this attribute's
-    // first value). Use the semantic `getX(i)` API instead.
-    const startAttr = g.getAttribute('aStartScalar');
-    expect(startAttr.getX(0)).toBeCloseTo(0.1, 5);
-    expect(startAttr.getX(1)).toBeCloseTo(0.9, 5);
+    const g = pool.acquireLinesGeometry('l2', 2);
+    pool.updateLinesGeometry(g, processedLines(2, { start: [0.1, 0.9], end: [0.2, 0.8] }), 2);
+    expect(g.userData.hasScalars).toBe(true);
+    // Byte-level layout check: startScalar/endScalar per segment at the
+    // documented texel5 offsets, opacity alphas at the 1.0 identity.
+    expect(scalarTexels(g, 0)[0]).toBeCloseTo(0.1, 5);
+    expect(scalarTexels(g, 0)[1]).toBeCloseTo(0.2, 5);
+    expect(scalarTexels(g, 1)[0]).toBeCloseTo(0.9, 5);
+    expect(scalarTexels(g, 1)[1]).toBeCloseTo(0.8, 5);
+    expect(scalarTexels(g, 0).slice(2)).toEqual([1.0, 1.0]);
   });
 
   it('grow = release + reacquire: a larger acquire returns a FRESH geometry and pools the old one', () => {
     const pool = new GPUBufferPool(20, 300, 5, () => 0);
-    const g = pool.acquireLinesGeometry('l-grow', 2, /*hasScalars=*/ true);
-    expect(g.hasAttribute('aStartScalar')).toBe(true);
+    const g = pool.acquireLinesGeometry('l-grow', 2);
 
-    // Growth is NEVER an in-place interleaved-buffer rebuild (that
-    // strands the old GPU buffer in the renderer caches — permanent
-    // leak under the WebGPU renderer). The undersized geometry is
-    // released to the pool intact and a fresh one is allocated;
-    // content carry-forward is not needed because every commit
-    // rewrites all attributes for the full count right after acquire.
+    // Growth is NEVER an in-place rebuild (that strands the old GPU
+    // resources in the renderer caches — permanent leak under the WebGPU
+    // renderer). The undersized geometry is released to the pool intact
+    // and a fresh one is allocated; content carry-forward is not needed
+    // because every commit rewrites the texels for the full count right
+    // after acquire.
     const before = pool.getStats();
-    const grown = pool.acquireLinesGeometry('l-grow', 200, /*hasScalars=*/ true);
+    const grown = pool.acquireLinesGeometry('l-grow', 200);
     expect(grown).not.toBe(g);
-    expect(grown.hasAttribute('aStartScalar')).toBe(true);
+    expect(getLineTexture(grown)).not.toBeNull();
     expect(pool.didLastAcquireRebuildAttributes()).toBe(true);
     expect(pool.getStats().capacityGrowths).toBe(before.capacityGrowths + 1);
 
-    // The old geometry went back to the pool with its buffer intact
-    // (its interleaved views were not replaced).
-    const startView = g.getAttribute('aStartScalar') as THREE.InterleavedBufferAttribute;
-    expect(startView).toBeDefined();
+    // The old geometry went back to the pool with its texture intact.
+    expect(getLineTexture(g)).not.toBeNull();
     expect(pool.getStats().pooledBuffers).toBeGreaterThan(0);
-
-    // A scalar spec-set change likewise swaps geometries instead of
-    // rebuilding in place.
-    const baseOnly = pool.acquireLinesGeometry('l-grow', 200, /*hasScalars=*/ false);
-    expect(baseOnly).not.toBe(grown);
-    expect(baseOnly.hasAttribute('aStartScalar')).toBe(false);
   });
 
-  it('updateLinesGeometry THROWS when scalar data arrives on a base-only geometry', () => {
+  it('presence stamp flips across pool-reuse tenants and stale scalars are identity-refilled', () => {
+    // The interleaved era bucketed pool geometries by scalar spec-set
+    // (and THREW when scalar data hit a base-only geometry). The fixed
+    // texel layout retires both: ANY pooled lines geometry fits ANY
+    // lines node, so the presence stamp + identity refill are the sole
+    // guards against a previous tenant leaking through.
     const pool = new GPUBufferPool(20, 300, 5, () => 0);
-    const g = pool.acquireLinesGeometry('l-contract', 1, /*hasScalars=*/ false);
-    const withScalars: ProcessedLinesData = {
-      startPositions: new Float32Array(3),
-      endPositions: new Float32Array(3),
-      startColors: new Float32Array(3),
-      endColors: new Float32Array(3),
-      startWidths: new Float32Array(1),
-      endWidths: new Float32Array(1),
-      startSharpness: new Float32Array(1),
-      endSharpness: new Float32Array(1),
-      segmentLengths: new Float32Array(1),
-      startClipped: new Uint8Array(1),
-      endClipped: new Uint8Array(1),
-      startScalars: new Float32Array([0.5]),
-      endScalars: new Float32Array([0.5]),
-      segmentCount: 1,
-    };
-    expect(() => pool.updateLinesGeometry(g, withScalars, 1)).toThrow(/hasScalars=true/);
+    const g = pool.acquireLinesGeometry('tenant-a', 2);
+    pool.updateLinesGeometry(g, processedLines(2, { start: [0.3, 0.7], end: [0.4, 0.6] }), 2);
+    expect(g.userData.hasScalars).toBe(true);
+
+    pool.releaseLinesGeometry('tenant-a');
+    const adopted = pool.acquireLinesGeometry('tenant-b', 2);
+    expect(adopted).toBe(g); // best-fit reuse hands back the same geometry
+
+    pool.updateLinesGeometry(adopted, processedLines(2), 2);
+    expect(adopted.userData.hasScalars).toBe(false);
+    // tenant-a's scalars must not survive in texel5.xy.
+    expect(scalarTexels(adopted, 0)).toEqual([0.0, 0.0, 1.0, 1.0]);
+    expect(scalarTexels(adopted, 1)).toEqual([0.0, 0.0, 1.0, 1.0]);
   });
 
-  it('reuses scalar attributes on subsequent commits', () => {
+  it('overwrites scalar texels in place on subsequent commits (same texture instance)', () => {
     const pool = new GPUBufferPool(20, 300, 5, () => 0);
-    const g = pool.acquireLinesGeometry('l3', 1, /*hasScalars=*/ true);
-    const make = (s: number, e: number): ProcessedLinesData => ({
-      startPositions: new Float32Array(3),
-      endPositions: new Float32Array(3),
-      startColors: new Float32Array(3),
-      endColors: new Float32Array(3),
-      startWidths: new Float32Array(1),
-      endWidths: new Float32Array(1),
-      startSharpness: new Float32Array(1),
-      endSharpness: new Float32Array(1),
-      segmentLengths: new Float32Array(1),
-      startClipped: new Uint8Array(1),
-      endClipped: new Uint8Array(1),
-      startScalars: new Float32Array([s]),
-      endScalars: new Float32Array([e]),
-      segmentCount: 1,
-    });
-    pool.updateLinesGeometry(g, make(0.1, 0.2), 1);
-    const attr1 = g.getAttribute('aStartScalar') as THREE.InterleavedBufferAttribute;
-    pool.updateLinesGeometry(g, make(0.5, 0.6), 1);
-    const attr2 = g.getAttribute('aStartScalar') as THREE.InterleavedBufferAttribute;
-    expect(attr2).toBe(attr1); // same view instance — interleaved buffer reused
-    expect(attr2.getX(0)).toBeCloseTo(0.5, 5);
+    const g = pool.acquireLinesGeometry('l3', 1);
+    pool.updateLinesGeometry(g, processedLines(1, { start: [0.1], end: [0.2] }), 1);
+    const texture1 = getLineTexture(g);
+    pool.updateLinesGeometry(g, processedLines(1, { start: [0.5], end: [0.6] }), 1);
+    expect(getLineTexture(g)).toBe(texture1); // same texture — no storage rebuild
+    expect(scalarTexels(g, 0)[0]).toBeCloseTo(0.5, 5);
+    expect(scalarTexels(g, 0)[1]).toBeCloseTo(0.6, 5);
   });
 });
 
 describe('line-geometry mesh creation/update', () => {
-  it('createInstancedLinesMesh + updateInstancedLinesMesh keep aStartScalar in sync', () => {
+  const baseConfig = (): InstancedLinesMeshConfig => ({
+    startPositions: new Float32Array([0, 0, 0]),
+    endPositions: new Float32Array([1, 0, 0]),
+    startColors: new Float32Array([1, 1, 1]),
+    endColors: new Float32Array([1, 1, 1]),
+    startWidths: new Float32Array([0.1]),
+    endWidths: new Float32Array([0.1]),
+    startSharpness: new Float32Array([2.0]),
+    endSharpness: new Float32Array([2.0]),
+    segmentLengths: new Float32Array([1.0]),
+    startClipped: new Uint8Array([0]),
+    endClipped: new Uint8Array([0]),
+    segmentCount: 1,
+  });
+
+  it('createInstancedLinesMesh + updateInstancedLinesMesh keep the scalar texels in sync', () => {
     const initial: InstancedLinesMeshConfig = {
-      startPositions: new Float32Array([0, 0, 0]),
-      endPositions: new Float32Array([1, 0, 0]),
-      startColors: new Float32Array([1, 1, 1]),
-      endColors: new Float32Array([1, 1, 1]),
-      startWidths: new Float32Array([0.1]),
-      endWidths: new Float32Array([0.1]),
-      startSharpness: new Float32Array([2.0]),
-      endSharpness: new Float32Array([2.0]),
-      segmentLengths: new Float32Array([1.0]),
-      startClipped: new Uint8Array([0]),
-      endClipped: new Uint8Array([0]),
+      ...baseConfig(),
       startScalars: new Float32Array([0.0]),
       endScalars: new Float32Array([1.0]),
-      segmentCount: 1,
     };
     const mesh = createInstancedLinesMesh(initial, new LineMaterial());
-    expect(mesh.geometry.hasAttribute('aStartScalar')).toBe(true);
-    expect(mesh.geometry.hasAttribute('aEndScalar')).toBe(true);
+    expect(mesh.geometry.userData.hasScalars).toBe(true);
+    expect(scalarTexels(mesh.geometry, 0)).toEqual([0.0, 1.0, 1.0, 1.0]);
 
     // Update with new scalars
     const updated: InstancedLinesMeshConfig = {
@@ -422,38 +416,37 @@ describe('line-geometry mesh creation/update', () => {
       endScalars: new Float32Array([0.75]),
     };
     const rebuilt = updateInstancedLinesMesh(mesh, updated);
-    // Same count + same spec-set → in-place write, no buffer rebuild —
-    // the commit layer must NOT invalidate the cached RenderObject.
+    // Same count → in-place texel write, no storage rebuild — the commit
+    // layer must NOT invalidate the cached RenderObject.
     expect(rebuilt).toBe(false);
-    const startAttr = mesh.geometry.getAttribute('aStartScalar');
-    // Pooled / standalone line attributes are now interleaved views —
-    // use `getX(i)` for semantic per-instance reads.
-    expect(startAttr.getX(0)).toBeCloseTo(0.25, 5);
+    expect(scalarTexels(mesh.geometry, 0)[0]).toBeCloseTo(0.25, 5);
+    expect(scalarTexels(mesh.geometry, 0)[1]).toBeCloseTo(0.75, 5);
   });
 
-  it('updateInstancedLinesMesh reports a rebuild on a scalar spec-set toggle', () => {
-    const base: InstancedLinesMeshConfig = {
-      startPositions: new Float32Array([0, 0, 0]),
-      endPositions: new Float32Array([1, 0, 0]),
-      startColors: new Float32Array([1, 1, 1]),
-      endColors: new Float32Array([1, 1, 1]),
-      startWidths: new Float32Array([0.1]),
-      endWidths: new Float32Array([0.1]),
-      startSharpness: new Float32Array([2.0]),
-      endSharpness: new Float32Array([2.0]),
-      segmentLengths: new Float32Array([1.0]),
-      startClipped: new Uint8Array([0]),
-      endClipped: new Uint8Array([0]),
-      segmentCount: 1,
-    };
+  it('a scalar toggle does NOT rebuild — the fixed layout always has the texel5 slots', () => {
+    const base = baseConfig();
     const mesh = createInstancedLinesMesh(base, new LineMaterial());
-    // Toggling scalars ON changes the interleaved stride → rebuild.
+    const geometryBefore = mesh.geometry;
+    expect(mesh.geometry.userData.hasScalars).toBe(false);
+    expect(scalarTexels(mesh.geometry, 0)).toEqual([0.0, 0.0, 1.0, 1.0]);
+
+    // Toggle scalars ON: same count → in-place write; only the presence
+    // stamp and texel5.xy change (the interleaved era rebuilt here).
     const withScalars: InstancedLinesMeshConfig = {
       ...base,
       startScalars: new Float32Array([0.5]),
       endScalars: new Float32Array([0.5]),
     };
-    expect(updateInstancedLinesMesh(mesh, withScalars)).toBe(true);
+    expect(updateInstancedLinesMesh(mesh, withScalars)).toBe(false);
+    expect(mesh.geometry).toBe(geometryBefore);
+    expect(mesh.geometry.userData.hasScalars).toBe(true);
+    expect(scalarTexels(mesh.geometry, 0)).toEqual([0.5, 0.5, 1.0, 1.0]);
+
+    // Toggle scalars OFF again: stamp flips back and the identity fill
+    // scrubs the stale scalar values.
+    expect(updateInstancedLinesMesh(mesh, baseConfig())).toBe(false);
+    expect(mesh.geometry.userData.hasScalars).toBe(false);
+    expect(scalarTexels(mesh.geometry, 0)).toEqual([0.0, 0.0, 1.0, 1.0]);
   });
 });
 

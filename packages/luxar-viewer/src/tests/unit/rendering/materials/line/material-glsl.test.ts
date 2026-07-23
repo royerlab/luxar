@@ -4,7 +4,9 @@ import { LineMaterial } from '../../../../../rendering/materials/line/material-g
 import {
   createLineQuadGeometry,
   createInstancedLinesMesh,
+  getLineTexture,
 } from '../../../../../rendering/line-geometry';
+import { LINE_FLOATS_PER_SEGMENT } from '../../../../../rendering/element-texture-layout';
 
 // Mock THREE.ShaderMaterial
 vi.mock('three', async () => {
@@ -95,18 +97,26 @@ describe('LineMaterial', () => {
     it('should have correct vertex shader with screen-space expansion', () => {
       const material = new LineMaterial();
 
-      // Check for instanced attributes (GLSL ES 3.0 uses "in" instead of "attribute")
-      expect(material.vertexShader).toContain('in vec3 aStartPos');
-      expect(material.vertexShader).toContain('in vec3 aEndPos');
-      expect(material.vertexShader).toContain('in vec3 aStartColor');
-      expect(material.vertexShader).toContain('in vec3 aEndColor');
-      expect(material.vertexShader).toContain('in float aStartWidth');
-      expect(material.vertexShader).toContain('in float aEndWidth');
-      expect(material.vertexShader).toContain('in float aStartSharpness');
-      expect(material.vertexShader).toContain('in float aEndSharpness');
-      expect(material.vertexShader).toContain('in float aSegmentLength');
-      expect(material.vertexShader).toContain('in float aStartClipped');
-      expect(material.vertexShader).toContain('in float aEndClipped');
+      // Texture-backed storage: the only per-instance attribute is
+      // aSortedIndex (aQuadCorner is per quad vertex); per-segment values
+      // are texelFetch'd from the line texture (6 texels/segment) into
+      // locals with the historical names so the downstream math is
+      // unchanged.
+      expect(material.vertexShader).toContain('in vec2 aQuadCorner');
+      expect(material.vertexShader).toContain('in uint aSortedIndex');
+      expect(material.vertexShader).toContain('uniform highp sampler2D uLineTex');
+      expect(material.vertexShader).toContain('int lineBase = int(aSortedIndex) * 6');
+      expect(material.vertexShader).toContain('vec3 aStartPos = lineT0.xyz');
+      expect(material.vertexShader).toContain('float aStartWidth = lineT0.w');
+      expect(material.vertexShader).toContain('vec3 aEndPos = lineT1.xyz');
+      expect(material.vertexShader).toContain('float aEndWidth = lineT1.w');
+      expect(material.vertexShader).toContain('float aSegmentLength = lineT4.x');
+      expect(material.vertexShader).toContain('float aStartClipped = lineT4.y');
+      expect(material.vertexShader).toContain('float aEndClipped = lineT4.z');
+      // The interleaved era's per-instance attribute declarations are gone.
+      expect(material.vertexShader).not.toContain('in vec3 aStartPos;');
+      expect(material.vertexShader).not.toContain('in vec3 aStartColor;');
+      expect(material.vertexShader).not.toContain('in float aStartWidth;');
 
       // Check for uniforms
       expect(material.vertexShader).toContain('uniform vec2 uResolution');
@@ -425,17 +435,41 @@ describe('createInstancedLinesMesh', () => {
 
     const geometry = mesh.geometry as THREE.InstancedBufferGeometry;
     expect(geometry.instanceCount).toBe(2);
-    expect(geometry.getAttribute('aStartPos')).toBeDefined();
-    expect(geometry.getAttribute('aEndPos')).toBeDefined();
-    expect(geometry.getAttribute('aStartColor')).toBeDefined();
-    expect(geometry.getAttribute('aEndColor')).toBeDefined();
-    expect(geometry.getAttribute('aStartWidth')).toBeDefined();
-    expect(geometry.getAttribute('aEndWidth')).toBeDefined();
-    expect(geometry.getAttribute('aStartSharpness')).toBeDefined();
-    expect(geometry.getAttribute('aEndSharpness')).toBeDefined();
-    expect(geometry.getAttribute('aSegmentLength')).toBeDefined();
-    expect(geometry.getAttribute('aStartClipped')).toBeDefined();
-    expect(geometry.getAttribute('aEndClipped')).toBeDefined();
+
+    // Texture-backed storage: aSortedIndex (identity after a fresh build)
+    // is the only per-instance attribute; the interleaved-era attributes
+    // are gone.
+    const sortedIndex = geometry.getAttribute('aSortedIndex');
+    expect(sortedIndex).toBeDefined();
+    expect(sortedIndex.array).toBeInstanceOf(Uint32Array);
+    expect(Array.from((sortedIndex.array as Uint32Array).subarray(0, 2))).toEqual([0, 1]);
+    expect(geometry.getAttribute('aStartPos')).toBeUndefined();
+    expect(geometry.getAttribute('aStartColor')).toBeUndefined();
+    expect(geometry.getAttribute('aSegmentLength')).toBeUndefined();
+
+    // Per-segment data lives in the line texture at the documented
+    // 6-texel offsets (segment 1 checked; 24-float stride).
+    const texture = getLineTexture(geometry);
+    expect(texture).not.toBeNull();
+    const data = texture!.image.data as Float32Array;
+    const o = 1 * LINE_FLOATS_PER_SEGMENT;
+    // texel 0: startPos.xyz, startWidth
+    expect(Array.from(data.subarray(o, o + 3))).toEqual([1, 1, 1]);
+    expect(data[o + 3]).toBeCloseTo(0.1, 6);
+    // texel 1: endPos.xyz, endWidth
+    expect(Array.from(data.subarray(o + 4, o + 7))).toEqual([2, 1, 1]);
+    expect(data[o + 7]).toBeCloseTo(0.1, 6);
+    // texel 2: startColor.rgb, startSharpness
+    expect(Array.from(data.subarray(o + 8, o + 12))).toEqual([0, 1, 0, 1]);
+    // texel 3: endColor.rgb, endSharpness
+    expect(Array.from(data.subarray(o + 12, o + 16))).toEqual([0, 1, 0, 1]);
+    // texel 4: segmentLength, startClipped, endClipped
+    expect(data[o + 16]).toBeCloseTo(1.414, 5);
+    expect(data[o + 17]).toBe(0);
+    expect(data[o + 18]).toBe(0);
+    // texel 5: scalar identities (no scalars in config) + opaque alphas —
+    // written UNCONDITIONALLY (fixed layout).
+    expect(Array.from(data.subarray(o + 20, o + 24))).toEqual([0, 0, 1, 1]);
   });
 
   it('should compute bounding box and sphere (width-expanded)', () => {
