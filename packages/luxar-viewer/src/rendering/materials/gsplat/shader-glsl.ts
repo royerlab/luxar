@@ -8,7 +8,13 @@
 import { GLSL_SANITIZE_FUNCTIONS, GLSL_NEAR_FADE_FUNCTIONS } from '../_shared/glsl-lib';
 import type { ShaderSource } from '../_shared/shader-source';
 import { gsplatWebGPUFactory, buildGSplatTSLNodesFromUniforms } from './shader-tsl';
-import { ALPHA_CLAMP } from './math';
+import {
+  ALPHA_CLAMP,
+  VOLUMETRIC_SERIES_C1,
+  VOLUMETRIC_SERIES_C2_DIVISOR,
+  VOLUMETRIC_SERIES_TAU_THRESHOLD,
+  VOLUMETRIC_TAU_EPS,
+} from './math';
 
 export const GSPLAT_VERTEX_SHADER = /* glsl */ `
     precision highp float;
@@ -543,8 +549,8 @@ export const GSPLAT_FRAGMENT_SHADER = /* glsl */ `
         // Divisor guarded: GPU ternaries/selects evaluate both lanes, and
         // the TSL twin's .select does too — max() keeps the unselected
         // lane NaN-free at tau = 0 (identical in the selected regime).
-        float screen = (tau < 1e-3) ? 1.0 - 0.5 * tau + tau * tau / 6.0
-                                    : alpha / max(tau, 1e-20);
+        float screen = (tau < ${VOLUMETRIC_SERIES_TAU_THRESHOLD}) ? 1.0 - ${VOLUMETRIC_SERIES_C1} * tau + tau * tau / ${VOLUMETRIC_SERIES_C2_DIVISOR}.0
+                                    : alpha / max(tau, ${VOLUMETRIC_TAU_EPS});
         fragColor = vec4(finalColor * screen, alpha);
         #else
         // All other modes keep the alpha=1.0 contract: additive/luminous

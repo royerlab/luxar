@@ -46,6 +46,7 @@ import {
   GSPLAT_VERTEX_SHADER,
   GSPLAT_FRAGMENT_SHADER,
 } from '../../../rendering/materials/gsplat/shader-glsl';
+import { VOLUMETRIC_SERIES_TAU_THRESHOLD } from '../../../rendering/materials/gsplat/math';
 import { LINE_VERTEX_SHADER } from '../../../rendering/materials/line/shader-glsl';
 
 describe('Shader hot-path string regressions', () => {
@@ -158,7 +159,11 @@ describe('Shader hot-path string regressions', () => {
       // the physical 1 − e^(−τ), RGB is screened by S(τ) with the τ→0
       // series — NOT the alpha=1 contract and NOT the coverage clamp.
       expect(volumetricBranch).toMatch(/alpha\s*=\s*1\.0\s*-\s*exp\s*\(\s*-tau\s*\)/);
-      expect(volumetricBranch).toMatch(/tau\s*<\s*1e-3/); // series guard
+      // Series guard — the threshold is interpolated from ./math (the
+      // ALPHA_CLAMP single-source pattern; 1e-3 serializes as "0.001"),
+      // so build the expected literal from the same constant.
+      const threshold = String(VOLUMETRIC_SERIES_TAU_THRESHOLD).replace('.', '\\.');
+      expect(volumetricBranch).toMatch(new RegExp(`tau\\s*<\\s*${threshold}`));
       expect(volumetricBranch).toMatch(
         /fragColor\s*=\s*vec4\s*\(\s*finalColor\s*\*\s*screen\s*,\s*alpha\s*\)/
       );

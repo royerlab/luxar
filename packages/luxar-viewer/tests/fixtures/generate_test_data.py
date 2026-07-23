@@ -72,6 +72,9 @@ FIXTURE_NAMES: list[str] = [
     "test_gsplats_volumetric.luxar.zarr",
     "test_gsplats_volumetric_reversed.luxar.zarr",
     "test_gsplats_rgba_occlusion.luxar.zarr",
+    "test_gsplats_rgba_hdr.luxar.zarr",
+    "test_gsplats_rgba_uint8.luxar.zarr",
+    "test_gsplats_rgba_lut.luxar.zarr",
     "test_hdr_colors.luxar.zarr",
     "test_hierarchical_transforms.luxar.zarr",
     "test_integer_colors.luxar.zarr",
@@ -87,6 +90,8 @@ FIXTURE_NAMES: list[str] = [
     "test_nd_transforms.luxar.zarr",
     "test_overview.gsplats.zarr",
     "test_points_blending_modes.luxar.zarr",
+    "test_points_normal_overlap.luxar.zarr",
+    "test_points_normal_overlap_reversed.luxar.zarr",
     "test_quantization.luxar.zarr",
     "test_sharpness_range.luxar.zarr",
     "test_standalone_gsplats.gsplats.zarr",
@@ -2091,6 +2096,137 @@ def generate_gsplats_test() -> None:
         aprint(f"  Centers: {centers.shape}, Cholesky: {cholesky.shape}")
 
 
+def generate_points_normal_overlap_test() -> None:
+    """Two large overlapping points at staggered depth, 'normal' blending.
+
+    The points sibling of :func:`generate_gsplats_normal_overlap_test`
+    (three-geometry symmetry — points are depth-sorted too): a back red
+    point and a front green point whose sprites overlap in screen space
+    under the viewer's auto-framed camera, plus a small off-axis blue
+    reference point. Radii are generous relative to the 0.5-unit center
+    separation so the two sprites genuinely overlap;
+    ``blending_mode='normal'`` with ``opacity=0.5`` makes the
+    compositing ORDER visible in the overlap pixels (green-over-red vs
+    the mirror image).
+    """
+    with asection("Generating Points Normal-Overlap Test"):
+        output = FIXTURES_DIR / "test_points_normal_overlap.luxar.zarr"
+
+        # Same layout as the gsplat overlap fixture: back point at z=0,
+        # front point at z=1 overlapping in screen space, blue reference
+        # off-axis (an anchor outside the overlap).
+        positions = np.array(
+            [
+                [-0.25, 0.0, 0.0],  # back point (red)
+                [0.25, 0.0, 1.0],  # front point (green), overlaps in screen space
+                [3.0, 2.0, 0.0],  # small reference point (blue), no overlap
+            ],
+            dtype=np.float32,
+        )
+        colors = np.array(
+            [
+                [1.0, 0.1, 0.1],  # red
+                [0.1, 1.0, 0.1],  # green
+                [0.1, 0.1, 1.0],  # blue
+            ],
+            dtype=np.float32,
+        )
+        # Sprite radii ≈ the gsplat fixture's ~1σ extent: the two big
+        # sprites (0.7 > half the 0.5-unit separation) overlap solidly.
+        radii = np.array([0.7, 0.7, 0.3], dtype=np.float32)
+
+        dims = Dimensions(
+            [
+                Dimension("x", unit="units", display=True),
+                Dimension("y", unit="units", display=True),
+                Dimension("z", unit="units", display=True),
+            ]
+        )
+
+        with LuxarZarrCompiler(
+            output,
+            encoding_mode=EncodingMode.PRECISION,
+            compressor=None,
+            float16_allowed=False,
+        ) as compiler:
+            scene = compiler.create_scene(dimensions=dims)
+
+            scene.add_points(
+                "overlap_points",
+                positions,
+                colors=colors,
+                radii=radii,
+                blending_mode="normal",
+                opacity=0.5,
+            )
+
+        aprint(f"  Created {output}")
+
+
+def generate_points_normal_overlap_reversed_test() -> None:
+    """The points normal-overlap scene declared FRONT-TO-BACK (sort gate).
+
+    Identical to :func:`generate_points_normal_overlap_test` except the
+    points are DECLARED in reversed (front-first) order — the points
+    twin of :func:`generate_gsplats_normal_overlap_reversed_test`. NOTE:
+    the compiler Morton-reorders storage, so the on-disk order is
+    spatial, not the declaration order — what makes this fixture a
+    depth-sort gate is its geometry: under the viewer's auto-framed
+    camera the near (green) point sits BETWEEN the two far points in
+    storage order, so the identity ordering is not back-to-front and the
+    E2E assertion (aSortedIndex non-identity + view-z monotone, see
+    blending-modes.spec.ts) fails without a working SortWorker.
+    """
+    with asection("Generating Points Normal-Overlap-Reversed Test"):
+        output = FIXTURES_DIR / "test_points_normal_overlap_reversed.luxar.zarr"
+
+        # Same points as the canonical overlap fixture, front point FIRST.
+        positions = np.array(
+            [
+                [0.25, 0.0, 1.0],  # front point (green) stored first
+                [-0.25, 0.0, 0.0],  # back point (red) stored second
+                [3.0, 2.0, 0.0],  # small reference point (blue), no overlap
+            ],
+            dtype=np.float32,
+        )
+        colors = np.array(
+            [
+                [0.1, 1.0, 0.1],  # green (front)
+                [1.0, 0.1, 0.1],  # red (back)
+                [0.1, 0.1, 1.0],  # blue
+            ],
+            dtype=np.float32,
+        )
+        radii = np.array([0.7, 0.7, 0.3], dtype=np.float32)
+
+        dims = Dimensions(
+            [
+                Dimension("x", unit="units", display=True),
+                Dimension("y", unit="units", display=True),
+                Dimension("z", unit="units", display=True),
+            ]
+        )
+
+        with LuxarZarrCompiler(
+            output,
+            encoding_mode=EncodingMode.PRECISION,
+            compressor=None,
+            float16_allowed=False,
+        ) as compiler:
+            scene = compiler.create_scene(dimensions=dims)
+
+            scene.add_points(
+                "overlap_points_reversed",
+                positions,
+                colors=colors,
+                radii=radii,
+                blending_mode="normal",
+                opacity=0.5,
+            )
+
+        aprint(f"  Created {output}")
+
+
 def generate_gsplats_normal_overlap_test() -> None:
     """Two large overlapping splats at staggered depth, 'normal' blending.
 
@@ -2458,6 +2594,123 @@ def generate_gsplats_rgba_occlusion_test() -> None:
         aprint(f"  Created {output}")
 
 
+
+
+def generate_gsplats_rgba_hdr_test() -> None:
+    """RGBA colors with HDR RGB (values > 1) — the geolog per-channel path.
+
+    Real-bytes coverage for the one RGBA combination the unit matrix never
+    round-tripped: HDR float32 RGBA under the default AUTO encoding, where
+    each column (including alpha, [0,1]) gets its own geolog anchors. A
+    stride or per-channel-anchor bug shows up as corrupted alpha at decode.
+    """
+    with asection("Generating GSplats RGBA-HDR Test"):
+        output = FIXTURES_DIR / "test_gsplats_rgba_hdr.luxar.zarr"
+        rng = np.random.default_rng(7)
+        n = 2000  # > LUT palette cap, so AUTO picks geolog per-channel
+        centers = rng.uniform(-2, 2, (n, 3)).astype(np.float32)
+        amplitudes = np.ones(n, dtype=np.float32)
+        cholesky = np.zeros((n, 6), dtype=np.float32)
+        cholesky[:, [0, 2, 5]] = 0.3
+        colors = np.empty((n, 4), dtype=np.float32)
+        colors[:, :3] = rng.uniform(0.0, 8.0, (n, 3))  # HDR: > 1.0
+        colors[:, 3] = rng.uniform(0.05, 1.0, n)  # opacity stays [0, 1]
+        dims = Dimensions(
+            [
+                Dimension("x", unit="units", display=True),
+                Dimension("y", unit="units", display=True),
+                Dimension("z", unit="units", display=True),
+            ]
+        )
+        with LuxarZarrCompiler(output, compressor=None) as compiler:
+            scene = compiler.create_scene(dimensions=dims)
+            scene.add_gsplats(
+                "rgba_hdr_splats",
+                centers,
+                amplitudes=amplitudes,
+                cholesky_factors=cholesky,
+                colors=colors,
+            )
+        aprint(f"Generated {output}")
+
+
+def generate_gsplats_rgba_uint8_test() -> None:
+    """Native uint8 RGBA colors — integer passthrough with a 4th column.
+
+    Alpha is stored at full scale (255 = opaque); the decoder must preserve
+    the integer dtype and the worker normalizes /255.
+    """
+    with asection("Generating GSplats RGBA-uint8 Test"):
+        output = FIXTURES_DIR / "test_gsplats_rgba_uint8.luxar.zarr"
+        rng = np.random.default_rng(11)
+        n = 24
+        centers = rng.uniform(-2, 2, (n, 3)).astype(np.float32)
+        amplitudes = np.ones(n, dtype=np.float32)
+        cholesky = np.zeros((n, 6), dtype=np.float32)
+        cholesky[:, [0, 2, 5]] = 0.3
+        colors = rng.integers(0, 256, (n, 4), dtype=np.uint8)
+        dims = Dimensions(
+            [
+                Dimension("x", unit="units", display=True),
+                Dimension("y", unit="units", display=True),
+                Dimension("z", unit="units", display=True),
+            ]
+        )
+        with LuxarZarrCompiler(output, compressor=None) as compiler:
+            scene = compiler.create_scene(dimensions=dims)
+            scene.add_gsplats(
+                "rgba_uint8_splats",
+                centers,
+                amplitudes=amplitudes,
+                cholesky_factors=cholesky,
+                colors=colors,
+            )
+        aprint(f"Generated {output}")
+
+
+def generate_gsplats_rgba_lut_test() -> None:
+    """Few unique RGBA rows over many splats — the 4-wide LUT row encode.
+
+    The LUT planner accepts rows up to width 4 (structural.py); this pins
+    that an RGBA palette round-trips through lut encoding with alpha intact.
+    """
+    with asection("Generating GSplats RGBA-LUT Test"):
+        output = FIXTURES_DIR / "test_gsplats_rgba_lut.luxar.zarr"
+        rng = np.random.default_rng(13)
+        n = 64
+        centers = rng.uniform(-2, 2, (n, 3)).astype(np.float32)
+        amplitudes = np.ones(n, dtype=np.float32)
+        cholesky = np.zeros((n, 6), dtype=np.float32)
+        cholesky[:, [0, 2, 5]] = 0.3
+        palette = np.array(
+            [
+                [1.0, 0.0, 0.0, 0.25],
+                [0.0, 1.0, 0.0, 0.5],
+                [0.0, 0.0, 1.0, 0.75],
+                [1.0, 1.0, 0.0, 1.0],
+            ],
+            dtype=np.float32,
+        )
+        colors = palette[rng.integers(0, 4, n)]
+        dims = Dimensions(
+            [
+                Dimension("x", unit="units", display=True),
+                Dimension("y", unit="units", display=True),
+                Dimension("z", unit="units", display=True),
+            ]
+        )
+        with LuxarZarrCompiler(output, compressor=None) as compiler:
+            scene = compiler.create_scene(dimensions=dims)
+            scene.add_gsplats(
+                "rgba_lut_splats",
+                centers,
+                amplitudes=amplitudes,
+                cholesky_factors=cholesky,
+                colors=colors,
+            )
+        aprint(f"Generated {output}")
+
+
 def generate_standalone_gsplats_test() -> None:
     """Standalone v3.1 ``.gsplats.zarr`` — a *detached* gsplats leaf node.
 
@@ -2755,6 +3008,8 @@ def main() -> None:
         generate_points_blending_modes_test()
         generate_lines_blending_modes_test()
         generate_blending_inherited_test()
+        generate_points_normal_overlap_test()
+        generate_points_normal_overlap_reversed_test()
         aprint("")
 
         generate_gsplats_test()
@@ -2763,6 +3018,9 @@ def main() -> None:
         generate_gsplats_volumetric_test()
         generate_gsplats_volumetric_reversed_test()
         generate_gsplats_rgba_occlusion_test()
+        generate_gsplats_rgba_hdr_test()
+        generate_gsplats_rgba_uint8_test()
+        generate_gsplats_rgba_lut_test()
         aprint("")
 
         generate_standalone_gsplats_test()

@@ -50,6 +50,7 @@ import {
 } from '../../blending-state';
 import type { BlendingMode } from '../../../types/blending';
 import { proxyIUniform, type TSLNode } from '../_shared/tsl-helpers';
+import { computeScalarRangeUniforms } from '../_shared/scalar-range';
 
 /**
  * Persistent TSL node table owned by the wrapper. Colormap nodes are
@@ -161,12 +162,13 @@ export class PointTSLMaterial
     // Colormap uniforms are added lazily — see `rebuildColormapNodes`.
     if (materialConfig.colormapTexture) {
       this.uniforms.uColormapTex = { value: materialConfig.colormapTexture };
-      this.uniforms.uScalarMin = { value: materialConfig.scalarRange?.[0] ?? 0.0 };
-      this.uniforms.uScalarScale = {
-        value: materialConfig.scalarRange
-          ? 1.0 / Math.max(1e-10, materialConfig.scalarRange[1] - materialConfig.scalarRange[0])
-          : 1.0,
-      };
+      // Midpoint identity for degenerate ranges — see scalar-range.ts.
+      const sr = computeScalarRangeUniforms(
+        materialConfig.scalarRange?.[0] ?? 0.0,
+        materialConfig.scalarRange?.[1] ?? 1.0
+      );
+      this.uniforms.uScalarMin = { value: sr.scalarMin };
+      this.uniforms.uScalarScale = { value: sr.scalarScale };
     }
 
     this.defines = materialConfig.colormapTexture ? { USE_COLORMAP: '' } : {};
@@ -511,9 +513,11 @@ export class PointTSLMaterial
   }
 
   setScalarRange(min: number, max: number): void {
-    if (this.uniforms.uScalarMin) this.uniforms.uScalarMin.value = min;
+    // Midpoint identity for degenerate ranges — see scalar-range.ts.
+    const { scalarMin, scalarScale } = computeScalarRangeUniforms(min, max);
+    if (this.uniforms.uScalarMin) this.uniforms.uScalarMin.value = scalarMin;
     if (this.uniforms.uScalarScale) {
-      this.uniforms.uScalarScale.value = 1.0 / Math.max(1e-10, max - min);
+      this.uniforms.uScalarScale.value = scalarScale;
     }
   }
 }
