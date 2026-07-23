@@ -33,6 +33,7 @@ import {
   applyColormapTextureToMaterial,
   applyScalarRangeToMaterial,
 } from '../../material-colormap-helpers';
+import { getPlaceholderElementTexture } from '../../element-texture-layout';
 import {
   applyBlendingStateToMaterial,
   getCompleteBlendingState,
@@ -49,6 +50,7 @@ import { proxyIUniform, type TSLNode } from '../_shared/tsl-helpers';
  * optional.
  */
 interface LineMaterialTSLNodeTable {
+  uLineTex: TSLNode;
   uResolution: TSLNode;
   uIsOrtho: TSLNode;
   uNearCull: TSLNode;
@@ -73,12 +75,35 @@ export class LineTSLMaterial
 
   private tslNodes: LineMaterialTSLNodeTable;
 
+  /**
+   * Explicit `depthTest` / `transparent` overrides from the constructor
+   * config. Every `rebuildGraph()` re-applies the factory tail's
+   * MODE-DERIVED blending state (depthTest/transparent included), so an
+   * override honored only once in the constructor tail would silently
+   * revert on the first later rebuild (e.g. the guaranteed
+   * placeholder→real `updateLineTexture` rebuild at first commit). The
+   * GLSL twin never rebuilds, so its constructor-tail overrides stick;
+   * persisting them here and re-applying at the end of `rebuildGraph`
+   * keeps the two backends contract-identical. An explicit later
+   * `applyBlendingMode()` call CLEARS both (a runtime mode switch takes
+   * full ownership of the blending state — matching the GLSL twin,
+   * where `applyBlendingStateToMaterial` overwrites both fields
+   * unconditionally). Mirrors `PointTSLMaterial`.
+   */
+  private _explicitDepthTest?: boolean;
+  private _explicitTransparent?: boolean;
+
   constructor(materialConfig: LineMaterialConfig = {}) {
     super();
 
     const gammaValue = clampGamma(materialConfig.gamma);
 
     this.tslNodes = {
+      // Line data texture node. Starts on the shared placeholder; the
+      // commit's material sync rebinds the acquired pool entry's
+      // texture via `updateLineTexture` (node identity change ->
+      // graph rebuild, same lifecycle as the colormap texture).
+      uLineTex: texture(getPlaceholderElementTexture()),
       uResolution: uniform(new THREE.Vector2(1, 1)),
       uIsOrtho: uniform(0),
       uNearCull: uniform(0.05),
@@ -96,6 +121,11 @@ export class LineTSLMaterial
     // value via `proxyIUniform`, so the GPU sees the new value on the
     // next frame without any `.onUpdate('render')` callback.
     this.uniforms = {
+      // WARNING: a direct `uniforms.uLineTex.value = tex` write does
+      // NOT rebind the sampled texture — TSL `texture()` nodes capture
+      // the Texture at build time. `updateLineTexture()` is the only
+      // rebind chokepoint (fresh node + graph rebuild).
+      uLineTex: proxyIUniform(this.tslNodes.uLineTex),
       uResolution: proxyIUniform(this.tslNodes.uResolution),
       uIsOrtho: proxyIUniform(this.tslNodes.uIsOrtho),
       uNearCull: proxyIUniform(this.tslNodes.uNearCull),
@@ -154,23 +184,21 @@ export class LineTSLMaterial
     // runs after `super()`.
     this.userData.blendingMode = materialConfig.blendingMode ?? 'additive';
 
+    // Capture explicit overrides BEFORE the first rebuild —
+    // `rebuildGraph`'s tail re-applies them over the factory's
+    // mode-derived blending state on EVERY rebuild (see the
+    // `_explicitDepthTest` field doc; the GLSL twin applies them once
+    // in its constructor tail and never rebuilds).
+    this._explicitTransparent = materialConfig.transparent;
+    this._explicitDepthTest = materialConfig.depthTest;
+
     this.rebuildGraph();
 
-    // Stamp the mode-derived depthTest the factory tail just applied
-    // (GLSL twin: applyBlendingMode stamps userData.depthTest) so
+    // Stamp the depthTest the rebuild just settled on — mode-derived
+    // from the factory tail, or the explicit override re-applied over
+    // it (GLSL twin: applyBlendingMode stamps userData.depthTest) — so
     // clone() round-trips the real state.
     this.userData.depthTest = this.depthTest;
-
-    // Honor explicit overrides from config after the factory's
-    // mode-derived blending state (mirrors the GLSL twin's constructor
-    // tail).
-    if (materialConfig.transparent !== undefined) {
-      this.transparent = materialConfig.transparent;
-    }
-    if (materialConfig.depthTest !== undefined) {
-      this.depthTest = materialConfig.depthTest;
-      this.userData.depthTest = materialConfig.depthTest;
-    }
   }
 
   /**
@@ -230,7 +258,40 @@ export class LineTSLMaterial
       },
       this
     );
+    // Re-apply the explicit constructor overrides over the factory
+    // tail's mode-derived blending state — on EVERY rebuild, not just
+    // the constructor's, so a texture/gamma/colormap rebuild can't
+    // silently revert them (see the `_explicitDepthTest` field doc).
+    if (this._explicitTransparent !== undefined) {
+      this.transparent = this._explicitTransparent;
+    }
+    if (this._explicitDepthTest !== undefined) {
+      this.depthTest = this._explicitDepthTest;
+      this.userData.depthTest = this._explicitDepthTest;
+    }
     this.needsUpdate = true;
+  }
+
+  /**
+   * Rebind the line data texture. TSL `texture()` captures the
+   * THREE.Texture at factory time, so an identity change needs a
+   * fresh node + graph rebuild (exact mirror of
+   * `PointTSLMaterial.updatePointTexture` and the colormap texture
+   * lifecycle). No-op when the texture is unchanged — the common
+   * per-commit case.
+   */
+  updateLineTexture(tex: THREE.DataTexture | null): void {
+    const current = (this.uniforms.uLineTex?.value as THREE.Texture | null | undefined) ?? null;
+    const next = tex ?? getPlaceholderElementTexture();
+    if (current === next) return;
+    this.tslNodes.uLineTex = texture(next);
+    this.uniforms.uLineTex = proxyIUniform(this.tslNodes.uLineTex);
+    this.rebuildGraph();
+  }
+
+  /** The currently bound line data texture. */
+  getLineTexture(): THREE.DataTexture | null {
+    return (this.uniforms.uLineTex?.value as THREE.DataTexture | null | undefined) ?? null;
   }
 
   /** Same toggle helper as `LineMaterial._refreshNoGOGDefine` — see there. */
@@ -336,6 +397,14 @@ export class LineTSLMaterial
   }
 
   applyBlendingMode(mode: BlendingMode): void {
+    // A runtime mode switch takes FULL ownership of the blending state:
+    // clear the constructor's explicit depthTest/transparent overrides
+    // so the mode-derived state below (and every later rebuild) wins.
+    // Matches the GLSL twin, where applyBlendingStateToMaterial
+    // overwrites both fields unconditionally on every call.
+    this._explicitDepthTest = undefined;
+    this._explicitTransparent = undefined;
+
     const opacity = (this.uniforms.uOpacity?.value as number | undefined) ?? 1.0;
     // Phase-1 volumetric fallback — the policy lives in
     // effectiveGeometryMode (blending-state.ts); userData keeps the
@@ -410,6 +479,10 @@ export class LineTSLMaterial
     if (sourceIsOrtho) {
       cloned.rebuildGraph();
     }
+    // Rebind the line data texture LAST (its own rebuild picks up the
+    // ortho flag copied above). No-op when still on the placeholder.
+    const lineTex = this.uniforms.uLineTex?.value as THREE.DataTexture | null | undefined;
+    if (lineTex) cloned.updateLineTexture(lineTex);
 
     return cloned as this;
   }

@@ -6,11 +6,6 @@
  * Kept here so rendering paths can reuse the helper without pulling in
  * the data-loading dependency cone.
  *
- * There is deliberately no `syncLineMaterialWithGeometry`: line
- * materials carry no geometry-derived uniform (widths are raw Float32
- * per-instance attributes with no dtype-scale analog of
- * `radiusScale`, and there is no mesh-owned texture like `uSplatTex`).
- *
  * @module rendering/material-sync-helpers
  */
 
@@ -19,12 +14,17 @@ import { PointMaterial } from './materials/point/material-glsl';
 import { PointTSLMaterial } from './materials/point/material-tsl';
 import { PointPickingMaterial } from './picking/point/material';
 import { PointPickingTSLMaterial } from './picking/point/material-tsl';
+import { LineMaterial } from './materials/line/material-glsl';
+import { LineTSLMaterial } from './materials/line/material-tsl';
+import { LinePickingMaterial } from './picking/line/material';
+import { LinePickingTSLMaterial } from './picking/line/material-tsl';
 import { GSplatMaterial } from './materials/gsplat/material-glsl';
 import { GSplatTSLMaterial } from './materials/gsplat/material-tsl';
 import { GSplatPickingMaterial } from './picking/gsplat/material';
 import { GSplatPickingTSLMaterial } from './picking/gsplat/material-tsl';
 import { getSplatTexture } from './gsplat-geometry';
 import { getPointTexture } from './point-geometry';
+import { getLineTexture } from './line-geometry';
 
 /**
  * Synchronize a Points material's geometry-derived state after a
@@ -68,6 +68,42 @@ export function syncPointMaterialWithGeometry(points: THREE.Mesh): void {
     if (pickMat instanceof PointPickingMaterial || pickMat instanceof PointPickingTSLMaterial) {
       pickMat.updateRadiusScale(radiusScale);
       if (pointTexture) pickMat.updatePointTexture(pointTexture);
+    }
+  }
+}
+
+/**
+ * Synchronize a Lines material's line-texture binding after a geometry
+ * commit.
+ *
+ * Segment data lives in an RGBA32F texture that shares the geometry's
+ * lifetime (`line-geometry.ts::attachLineStorage`). A pool acquire may
+ * hand the node a DIFFERENT geometry+texture pair (growth, best-fit
+ * reuse, first commit after the placeholder mesh), so the commit
+ * rebinds `uLineTex` on the render material and — via
+ * `userData.pickNode` — the pick material. Idempotent: both wrapper
+ * classes no-op or cheaply re-write on an unchanged identity (the
+ * common same-geometry commit), so this is safe to call on every
+ * commit. Mirrors {@link syncPointMaterialWithGeometry} (minus the
+ * dtype scale — lines have no `radiusScale` analog; widths are raw
+ * Float32 world units).
+ */
+export function syncLineMaterialWithGeometry(mesh: THREE.Mesh): void {
+  const geometry = mesh.geometry;
+  if (!geometry) return;
+  const lineTexture = getLineTexture(geometry);
+  if (!lineTexture) return;
+
+  const renderMat = mesh.material as THREE.Material | null;
+  if (renderMat instanceof LineMaterial || renderMat instanceof LineTSLMaterial) {
+    renderMat.updateLineTexture(lineTexture);
+  }
+
+  const pickNode = mesh.userData?.pickNode as THREE.Object3D | undefined;
+  if (pickNode) {
+    const pickMat = (pickNode as THREE.Mesh).material as THREE.Material | undefined;
+    if (pickMat instanceof LinePickingMaterial || pickMat instanceof LinePickingTSLMaterial) {
+      pickMat.updateLineTexture(lineTexture);
     }
   }
 }

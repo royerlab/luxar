@@ -107,7 +107,7 @@ export function createPointQuadGeometry(): THREE.InstancedBufferGeometry {
  * to Float32 while preserving the GPU-shader-visible [0, 1] range that
  * the interleaved era's per-attribute `normalized: true` flag produced.
  * Shared by the pool adapter and the non-pool factory so both paths
- * widen identically. See `interleaved-attributes.ts` for context.
+ * widen identically. See `widen-to-float32.ts` for context.
  */
 export function pointsNormalizationDivisor(
   source: ArrayLike<number> | undefined,

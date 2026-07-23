@@ -6,8 +6,8 @@
  *
  * Key optimizations:
  * - Reuses geometries when size AND type match (0ms GPU allocation)
- * - In-place data updates (lines: strided attribute writes; points/gsplats:
- *   fused texel writes into the pooled element texture)
+ * - In-place data updates (fused texel writes into the pooled element
+ *   texture for all three geometry types)
  * - Size-based bucketing for efficient matching
  * - LRU eviction after 300 frames of non-use
  * - Multi-type support for all TypedArray formats
@@ -18,8 +18,10 @@
  *   and written into the fixed 3-texel RGBA32F point texture, so any
  *   pooled points geometry fits any points node (capacity is the only
  *   matching criterion — see points-adapter.ts).
- * - Lines: Float32Array (per ProcessedLinesData interface); geometries
- *   are bucketed by their scalar spec set (`hasScalars`).
+ * - Lines: Float32Array (per ProcessedLinesData interface), stored in
+ *   the fixed 6-texel RGBA32F line texture — capacity is the only
+ *   matching criterion (the interleaved era's `hasScalars` spec
+ *   bucketing is gone; the layout always carries the scalar slots).
  * - GSplats: Float32Array (per PackedGSplatsData interface), stored in
  *   the 4-texel RGBA32F splat texture.
  *
@@ -39,9 +41,6 @@ import { GSplatsBufferAdapter, type PackedGSplatsData } from './gpu-buffer-pool/
 
 // Per-type spec arrays and helpers live in
 // ./gpu-buffer-pool/{points,lines,gsplats}-adapter.
-
-// Geometry-agnostic interleaved-buffer helpers live in
-// ./gpu-buffer-pool/attribute-codec for reuse by all adapters.
 
 // Re-export so existing consumers that import these from
 // `rendering/gpu-buffer-pool` keep working.
@@ -239,18 +238,12 @@ export class GPUBufferPool {
   // =========================================================================
 
   /**
-   * Acquire geometry for Lines (instanced per-segment attributes).
-   * `hasScalars` declares whether the commit carries colormap scalar
-   * columns — the spec set is decided here, at acquire time (a
-   * mismatch releases and reacquires; updateLinesGeometry never
-   * rebuilds in place).
+   * Acquire geometry for Lines (texture-backed per-segment storage —
+   * the fixed 6-texel layout means capacity is the only matching
+   * criterion; see lines-adapter.ts).
    */
-  acquireLinesGeometry(
-    nodeId: string,
-    segmentCount: number,
-    hasScalars: boolean
-  ): THREE.InstancedBufferGeometry {
-    return this.lines.acquireGeometry(nodeId, segmentCount, hasScalars);
+  acquireLinesGeometry(nodeId: string, segmentCount: number): THREE.InstancedBufferGeometry {
+    return this.lines.acquireGeometry(nodeId, segmentCount);
   }
 
   /** Release Lines geometry back to pool. */
@@ -260,16 +253,18 @@ export class GPUBufferPool {
 
   /**
    * Update Lines geometry in place.
-   * @param options - `fromInstance`: append fast path (Phase 4 Stage 2) —
-   *   write & upload only the `[fromInstance, count)` segment suffix,
-   *   preserving the prefix already on the GPU (the commit path decides;
-   *   see commit-lines-geometry.ts).
+   * @param options - `preserveOrdering`: keep the existing `aSortedIndex`
+   *   permutation instead of resetting to identity (same-count recommit
+   *   of an already-sorted node — the commit path decides; see
+   *   commit-lines-geometry.ts). `fromInstance`: append fast path
+   *   (Phase 4 Stage 2) — write & upload only the `[fromInstance, count)`
+   *   segment suffix, preserving the prefix already on the GPU.
    */
   updateLinesGeometry(
     geometry: THREE.InstancedBufferGeometry,
     data: ProcessedLinesData,
     count: number,
-    options?: { fromInstance?: number }
+    options?: { preserveOrdering?: boolean; fromInstance?: number }
   ): void {
     this.lines.updateGeometry(geometry, data, count, options);
   }

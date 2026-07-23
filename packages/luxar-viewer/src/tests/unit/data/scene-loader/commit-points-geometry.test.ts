@@ -533,7 +533,7 @@ describe('commitPointsGeometry — no-op commit skip (committedData)', () => {
 describe('commitPointsGeometry — append fast path (Phase 4 Stage 2, fromInstance)', () => {
   // The gate lives in the pool branch; these tests pin `fromInstance` in the
   // options threaded to updatePointsGeometry. The suffix-write behavior
-  // itself is covered in interleaved-attributes.test.ts.
+  // itself is covered in point-texture-storage.test.ts.
   const makePool = (geometry: THREE.BufferGeometry) => ({
     acquirePointsGeometry: vi.fn(() => geometry),
     updatePointsGeometry: vi.fn(),

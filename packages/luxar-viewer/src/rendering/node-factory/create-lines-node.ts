@@ -2,16 +2,19 @@
  * Lines-node creation helpers for NodeFactory.
  *
  * `createLinesNode` resolves the line material backend through
- * materialManager, applies the colormap clone path when scalars +
- * a non-null colormap are requested, then builds the
- * InstancedLinesMesh + optional picking shadow node.
+ * materialManager (PER NODE — each material carries the node's own
+ * `uLineTex`), applies the colormap directly when scalars + a non-null
+ * colormap are requested, then builds the InstancedLinesMesh +
+ * optional picking shadow node.
  *
  * @module rendering/node-factory/create-lines-node
  */
 
 import * as THREE from 'three';
-import { materialManager, type BlendingMode, type LuxarLineMaterial } from '../material-manager';
+import { materialManager, type BlendingMode } from '../material-manager';
 import { getColormapTexture } from '../colormap-textures';
+import { supportsScalarColormap } from '../material-colormap-helpers';
+import { syncLineMaterialWithGeometry } from '../material-sync-helpers';
 import { createInstancedLinesMesh, type InstancedLinesMeshConfig } from '../line-geometry';
 import type { LinesMetadata, LinesUserData, LinesDataLoader } from '../../types/lines';
 import { log, Modules } from '../../utils/log';
@@ -37,7 +40,7 @@ export function createLinesNode(
   // ancestor values until the first panel interaction, if ever.
   // Per-leaf geometry properties (`max_width`, `transform`) stay on
   // `attrs`: they are deliberately NOT composited (see COMPOSITING_ATTRS).
-  let material: LuxarLineMaterial = materialManager.getLineMaterial({
+  const material = materialManager.getLineMaterial({
     opacity: (nodeAttrs.opacity as number | undefined) ?? 1.0,
     gamma: (nodeAttrs.gamma as number | undefined) ?? 1.0,
     intensity: (nodeAttrs.intensity as number | undefined) ?? 1.0,
@@ -45,34 +48,27 @@ export function createLinesNode(
     blendingMode: (nodeAttrs.blending_mode as string | undefined as BlendingMode) ?? 'additive',
   });
 
-  // Apply colormap if specified and scalar data exists.
+  const mesh = createInstancedLinesMesh(processed, material);
+  mesh.name = path;
+
+  // Apply colormap if specified and scalar data exists. Line materials
+  // are PER NODE (each carries the node's own `uLineTex`), so the
+  // colormap applies directly to the node-owned material — the
+  // historical clone-on-divergence dance is gone (mirrors
+  // `createPointsMaterial`). Presence rides the `userData.hasScalars`
+  // stamp `createInstancedLinesMesh` just wrote (fail-closed).
   const lnColormapName = nodeAttrs.colormap as string | undefined;
   const lnHasScalars = !!nodeAttrs.has_scalars;
-  const linesScalarsReady = 'startScalars' in processed && 'endScalars' in processed;
   if (lnColormapName && lnHasScalars) {
-    if (!linesScalarsReady) {
+    if (!supportsScalarColormap('lines', mesh.geometry)) {
       log.warning(
         Modules.SCENE_LOADER,
-        `[${path}] Line scalar colormap requested but scalar attributes are not bound. Colormap suppressed.`
+        `[${path}] Line scalar colormap requested but no scalar data is bound in the line texture. Colormap suppressed; rendering with vertex colors.`
       );
     } else {
       const lnLutBytes = nodeAttrs.customLutBytes as Uint8Array | undefined;
       const lnColormapTex = getColormapTexture(lnColormapName, lnLutBytes);
       if (lnColormapTex) {
-        // Clone WITHOUT detaching the pooled original from global
-        // updates: the original stays in the LRU cache serving future
-        // cache hits, so it must (1) keep receiving updateCameraParams —
-        // a detached-but-cached entry renders with stale resolution/FOV
-        // line widths after the next resize — and (2) stay in
-        // registeredMaterials so manager dispose() reaches it (a
-        // detached-while-cached original was in neither registry and
-        // leaked its GPU program on embedder re-init). The historical
-        // detachFromGlobalUpdates call here guarded a disposeAll-vs-cache
-        // mismatch that has never existed: dispose() clears the line
-        // cache whenever it disposes registered materials, so a disposed
-        // material can never be served from the cache.
-        material = material.clone() as typeof material;
-        materialManager.register(material);
         material.updateColormapTexture(lnColormapTex);
         const lnScalarRange = (nodeAttrs.scalar_data_range as [number, number]) ?? [0, 1];
         material.updateScalarRange(lnScalarRange[0], lnScalarRange[1]);
@@ -80,15 +76,23 @@ export function createLinesNode(
     }
   }
 
-  const mesh = createInstancedLinesMesh(processed, material);
-  mesh.name = path;
   mesh.userData = {
     nodeType: 'lines',
     loader,
     attrs,
     maxWidth: attrs.max_width ?? 1.0,
     visibleSegmentCount: processed.segmentCount,
+    // Per-node material from creation: LayersPanel and the LOD
+    // cross-fade honor this marker and mutate the material directly
+    // instead of clone-on-first-use (mirrors createPointsNode /
+    // createGSplatsNode).
+    _layerMaterialCloned: true,
   } as LinesUserData;
+
+  // Bind the geometry-owned line texture on the render material right
+  // away so a mesh created WITH data renders before any commit (node
+  // factory initial data, tests) — mirrors createPointsNode.
+  syncLineMaterialWithGeometry(mesh);
 
   if (attrs.transform) applyTransform(mesh, attrs.transform);
 
@@ -101,6 +105,10 @@ export function createLinesNode(
     const pickNode = new THREE.Mesh(mesh.geometry, pickMaterial);
     pickNode.matrixWorld.copy(mesh.matrixWorld);
     pickingSystem.registerNode(mesh, pickNode, pickId);
+    // Bind the geometry-owned line texture on BOTH materials (the
+    // render material was bound above; this covers the just-created
+    // pick material so picking works before the first commit's sync).
+    syncLineMaterialWithGeometry(mesh);
   }
 
   return mesh;
@@ -128,14 +136,14 @@ export function createEmptyLinesNode(
     endClipped: new Uint8Array(0),
     segmentCount: 0,
   };
-  // When the node carries a scalar field + colormap, bind empty scalar
-  // arrays on the placeholder so the colormap clone path in
-  // `createLinesNode` (gated on `'startScalars' in processed`) fires at
-  // material-creation time. Without them the guard sees no scalars, logs
-  // "Colormap suppressed", and nothing ever re-enables the LUT once real
-  // scalars stream in (the commit writes into the existing placeholder
-  // geometry). Gate on the SAME `nodeAttrs` fields the colormap-application
-  // path above reads, so the placeholder matches exactly when colormap will
+  // When the node carries a scalar field + colormap, declare empty
+  // scalar arrays on the placeholder so `createInstancedLinesMesh`
+  // stamps `userData.hasScalars = true` and the fail-closed colormap
+  // guard in `createLinesNode` passes at material-creation time.
+  // Without them the guard sees no scalars, logs "Colormap suppressed",
+  // and nothing ever re-enables the LUT once real scalars stream in.
+  // Gate on the SAME `nodeAttrs` fields the colormap-application path
+  // above reads, so the placeholder matches exactly when colormap will
   // apply. Mirrors `create-points-node.ts::createEmptyPointsNode`.
   if (nodeAttrs.colormap && nodeAttrs.has_scalars) {
     emptyConfig.startScalars = new Float32Array(0);

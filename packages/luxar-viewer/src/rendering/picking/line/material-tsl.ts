@@ -16,17 +16,19 @@
  */
 
 import * as THREE from 'three';
-import { uniform } from 'three/tsl';
+import { uniform, texture } from 'three/tsl';
 import { NodeMaterial } from 'three/webgpu';
 import { linePickWebGPUFactory, type LinePickTSLNodes } from './pick.tsl';
 import type { CameraAwareMaterial } from '../../materials/_shared/camera-aware-material';
 import { proxyIUniform, type TSLNode } from '../../materials/_shared/tsl-helpers';
+import { getPlaceholderElementTexture } from '../../element-texture-layout';
 import type { LinePickingMaterialConfig } from './material';
 
 export class LinePickingTSLMaterial extends NodeMaterial implements CameraAwareMaterial {
   uniforms: Record<string, THREE.IUniform>;
 
   private tslNodes: {
+    uLineTex: TSLNode;
     uResolution: TSLNode;
     uIsOrtho: TSLNode;
     uNearCull: TSLNode;
@@ -40,6 +42,11 @@ export class LinePickingTSLMaterial extends NodeMaterial implements CameraAwareM
     super();
 
     this.tslNodes = {
+      // Line data texture node. Starts on the shared placeholder; the
+      // commit's material sync rebinds the acquired pool entry's
+      // texture via `updateLineTexture` (fresh node + graph rebuild —
+      // TSL texture() captures the Texture at build time).
+      uLineTex: texture(getPlaceholderElementTexture()),
       uResolution: uniform(new THREE.Vector2(1, 1)),
       uIsOrtho: uniform(0),
       uNearCull: uniform(0.05),
@@ -50,6 +57,9 @@ export class LinePickingTSLMaterial extends NodeMaterial implements CameraAwareM
     };
 
     this.uniforms = {
+      // WARNING: a direct `uniforms.uLineTex.value = tex` write does NOT
+      // rebind — `updateLineTexture()` is the only rebind chokepoint.
+      uLineTex: proxyIUniform(this.tslNodes.uLineTex),
       uResolution: proxyIUniform(this.tslNodes.uResolution),
       uIsOrtho: proxyIUniform(this.tslNodes.uIsOrtho),
       uNearCull: proxyIUniform(this.tslNodes.uNearCull),
@@ -92,6 +102,9 @@ export class LinePickingTSLMaterial extends NodeMaterial implements CameraAwareM
     const cloned = new LinePickingTSLMaterial({
       nodeId: this.uniforms.uNodeId.value as number,
     });
+    // Rebind the line data texture (no-op when still on the placeholder).
+    const lineTex = this.uniforms.uLineTex?.value as THREE.DataTexture | null | undefined;
+    if (lineTex) cloned.updateLineTexture(lineTex);
     (cloned.uniforms.uResolution.value as THREE.Vector2).copy(
       this.uniforms.uResolution.value as THREE.Vector2
     );
@@ -138,5 +151,22 @@ export class LinePickingTSLMaterial extends NodeMaterial implements CameraAwareM
       linePickWebGPUFactory(this.tslNodes as LinePickTSLNodes, this._currentConfig(), this);
       this.needsUpdate = true;
     }
+  }
+
+  /**
+   * Rebind the line data texture. TSL `texture()` captures the
+   * THREE.Texture at factory time, so an identity change needs a fresh
+   * node + graph rebuild. Mirrors `PointPickingTSLMaterial.
+   * updatePointTexture`. No-op when unchanged (the common per-commit
+   * case).
+   */
+  updateLineTexture(tex: THREE.DataTexture | null): void {
+    const current = (this.uniforms.uLineTex?.value as THREE.Texture | null | undefined) ?? null;
+    const next = tex ?? getPlaceholderElementTexture();
+    if (current === next) return;
+    this.tslNodes.uLineTex = texture(next);
+    this.uniforms.uLineTex = proxyIUniform(this.tslNodes.uLineTex);
+    linePickWebGPUFactory(this.tslNodes as LinePickTSLNodes, this._currentConfig(), this);
+    this.needsUpdate = true;
   }
 }

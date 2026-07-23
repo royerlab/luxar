@@ -83,17 +83,29 @@ describe('supportsScalarColormap', () => {
     expect(supportsScalarColormap('points')).toBe(false);
   });
 
-  it('returns false for lines with only one of aStartScalar/aEndScalar', () => {
+  it('returns false for lines without the hasScalars stamp', () => {
+    // The fixed 6-texel line layout always has the texel5.xy scalar
+    // slots, so scalar presence is the `userData.hasScalars` stamp set
+    // by the texel writers (`stampLineScalarPresence`) — an unstamped
+    // (or false-stamped) geometry fails closed, same as points.
     const g = new THREE.InstancedBufferGeometry();
-    g.setAttribute('aStartScalar', new THREE.InstancedBufferAttribute(new Float32Array(1), 1));
+    expect(supportsScalarColormap('lines', g)).toBe(false);
+    g.userData.hasScalars = false;
     expect(supportsScalarColormap('lines', g)).toBe(false);
   });
 
-  it('returns true for lines with both scalar attributes', () => {
+  it('returns true for lines with the `userData.hasScalars` stamp', () => {
+    // Stamped by every line texel-write path when both startScalars and
+    // endScalars are present (`stampLineScalarPresence` in
+    // line-geometry.ts) — the same signal that used to bind the
+    // aStartScalar/aEndScalar attributes.
     const g = new THREE.InstancedBufferGeometry();
-    g.setAttribute('aStartScalar', new THREE.InstancedBufferAttribute(new Float32Array(1), 1));
-    g.setAttribute('aEndScalar', new THREE.InstancedBufferAttribute(new Float32Array(1), 1));
+    g.userData.hasScalars = true;
     expect(supportsScalarColormap('lines', g)).toBe(true);
+  });
+
+  it('returns false for lines when geometry omitted', () => {
+    expect(supportsScalarColormap('lines')).toBe(false);
   });
 });
 

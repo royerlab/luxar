@@ -216,10 +216,10 @@ export function collectRenderOrderSlot(
  * 4. Sequential global integers 0..M-1 are written to mesh.renderOrder.
  *
  * Transparent objects OUTSIDE the coordinator's sorted set (commutative
- * modes, lines until their sort integration) keep renderOrder 0 and tie
- * with the globally-farthest sorted mesh (falling back to THREE's
- * per-object z) — depth interleaving with unsorted content stays out of
- * scope, unchanged from the per-wrapper scheme this replaces.
+ * modes) keep renderOrder 0 and tie with the globally-farthest sorted
+ * mesh (falling back to THREE's per-object z) — depth interleaving with
+ * unsorted content stays out of scope, unchanged from the per-wrapper
+ * scheme this replaces.
  */
 export function assignGlobalRenderOrder(): void {
   const slots = orderSlots;

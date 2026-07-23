@@ -6,92 +6,79 @@
  * (activeBuffers, stats, frame counter) is read from the GPUBufferPool
  * reference passed at construction.
  *
+ * Per-segment data lives in the RGBA32F line texture attached at
+ * creation (6 texels/segment — see `../line-geometry.ts` for the layout
+ * and `../element-texture-layout.ts` for the addressing math); the only
+ * per-instance attribute is `aSortedIndex`. The layout is FIXED
+ * regardless of which optional fields the dataset carries, so — unlike
+ * the interleaved era's colormap-scalar spec bucketing — ANY pooled
+ * lines geometry fits ANY lines node (mirroring the points/gsplats
+ * adapters): reuse keys on capacity alone.
+ *
  * The top-level GPUBufferPool owns only shared coordination logic
  * (eviction, frame counter, dispose); this adapter owns Lines-specific
  * buffer layout and update behavior.
  */
 
 import * as THREE from 'three';
-import { packInterleavedAttributes, widenToFloat32 } from '../interleaved-attributes';
+import {
+  attachLineStorage,
+  computeLineBounds,
+  getLineTexture,
+  stampLineScalarPresence,
+  writeLineTexels,
+} from '../line-geometry';
+import { writeSortedIndexIdentity, writeSortedIndexIdentityRange } from '../element-storage';
+import { clampLineCapacity } from '../element-texture-layout';
 import type { ProcessedLinesData } from '../../types/lines';
-import { writePooledAttribute } from './attribute-codec';
 import type { PooledBuffer } from './pool-stats';
 import { chooseCapacity } from './capacity';
 
 /**
- * Canonical per-segment attribute layout for pooled line geometries.
- * The pool pre-allocates a single `InstancedInterleavedBuffer` over
- * these specs (Float32 throughout — Uint8 clipped flags get widened
- * at upload time). Optional scalar attributes (aStartScalar /
- * aEndScalar) are included at CREATION time when the acquire call
- * declares colormap data (hasScalars) — never via an in-place rebuild,
- * which would strand the old GPU buffer in the renderer caches.
+ * Lines render as instanced unit quads, so the indexed draw range is
+ * always the 2-triangle base quad (6 indices) while `instanceCount`
+ * carries the number of segments.
  *
- * Declaration order matters only for stride bookkeeping; the shader
- * reads attributes by name through the views.
+ * Called ONLY from `updateGeometry`, AFTER the texel write succeeds —
+ * never at acquire time. Bumping `instanceCount` before the write would
+ * let a throwing write draw the new count over stale/zero texels; the
+ * points/gsplats adapters have the same ordering.
  */
-const LINES_BASE_ATTRIBUTE_SPECS: ReadonlyArray<{
-  name: string;
-  itemSize: 1 | 2 | 3 | 4;
-}> = [
-  { name: 'aStartPos', itemSize: 3 },
-  { name: 'aEndPos', itemSize: 3 },
-  { name: 'aStartColor', itemSize: 3 },
-  { name: 'aEndColor', itemSize: 3 },
-  { name: 'aStartWidth', itemSize: 1 },
-  { name: 'aEndWidth', itemSize: 1 },
-  { name: 'aStartSharpness', itemSize: 1 },
-  { name: 'aEndSharpness', itemSize: 1 },
-  { name: 'aSegmentLength', itemSize: 1 },
-  { name: 'aStartClipped', itemSize: 1 },
-  { name: 'aEndClipped', itemSize: 1 },
-];
-
-const LINES_SCALAR_ATTRIBUTE_SPECS: ReadonlyArray<{
-  name: string;
-  itemSize: 1 | 2 | 3 | 4;
-}> = [
-  { name: 'aStartScalar', itemSize: 1 },
-  { name: 'aEndScalar', itemSize: 1 },
-];
-
-function createLinesGeometry(
-  segmentCapacity: number,
-  hasScalars: boolean
+function prepareLinesGeometryForDraw(
+  geometry: THREE.BufferGeometry,
+  segmentCount: number
 ): THREE.InstancedBufferGeometry {
+  const instanced = geometry as THREE.InstancedBufferGeometry;
+  instanced.instanceCount = segmentCount;
+  instanced.setDrawRange(0, 6);
+  return instanced;
+}
+
+function createLinesGeometry(segmentCapacity: number): THREE.InstancedBufferGeometry {
   const geometry = new THREE.InstancedBufferGeometry();
-
-  const quadPositions = new Float32Array([-1, -1, 1, -1, -1, 1, 1, 1]);
-  geometry.setAttribute('aQuadCorner', new THREE.Float32BufferAttribute(quadPositions, 2));
-  geometry.setIndex([0, 1, 2, 2, 1, 3]);
-
-  const specTemplates = hasScalars
-    ? [...LINES_BASE_ATTRIBUTE_SPECS, ...LINES_SCALAR_ATTRIBUTE_SPECS]
-    : LINES_BASE_ATTRIBUTE_SPECS;
-  const specs = specTemplates.map((spec) => ({
-    ...spec,
-    data: new Float32Array(segmentCapacity * spec.itemSize),
-  }));
-  const { buffer, views } = packInterleavedAttributes(specs, segmentCapacity);
-  buffer.setUsage(THREE.DynamicDrawUsage);
-  for (const spec of specs) {
-    geometry.setAttribute(spec.name, views[spec.name]);
-  }
-  // Draw nothing until the first successful write sets the real count
-  // (mirrors the points/gsplats adapters — THREE's default is Infinity).
+  const quadCorners = new Float32Array([-1, -1, 1, -1, -1, 1, 1, 1]);
+  const indices = new Uint16Array([0, 1, 2, 2, 1, 3]);
+  geometry.setAttribute('aQuadCorner', new THREE.BufferAttribute(quadCorners, 2));
+  geometry.setIndex(new THREE.BufferAttribute(indices, 1));
   geometry.instanceCount = 0;
   geometry.setDrawRange(0, 6);
-  // Ownership marker — see the points adapter's twin comment.
-  if (!geometry.userData) geometry.userData = {};
+
+  // Segment data lives in the RGBA32F texture attached here (disposed BY
+  // the geometry's dispose event, so every pool dispose site frees it);
+  // `aSortedIndex` is the only per-instance attribute.
+  attachLineStorage(geometry, segmentCapacity);
+  // Ownership marker: the commit handoff disposes a replaced geometry
+  // ONLY when it is not pool-owned (pool geometries are released back to
+  // the free list by acquire, never disposed by the commit layer).
   geometry.userData.luxarPooled = true;
   return geometry;
 }
 
-/** Whether a pooled lines geometry carries the colormap scalar columns. */
-function linesGeometryHasScalars(geometry: THREE.BufferGeometry): boolean {
-  return geometry.getAttribute('aStartScalar') !== undefined;
-}
-
+/**
+ * Shared-state surface the lines adapter reads/writes on the parent
+ * GPUBufferPool. Kept narrow so the adapter can be unit-tested with a
+ * minimal stub instead of a full pool instance.
+ */
 export interface LinesAdapterHost {
   activeBuffers: Map<string, PooledBuffer>;
   readonly frameCount: number;
@@ -118,75 +105,63 @@ export class LinesBufferAdapter {
 
   constructor(private readonly host: LinesAdapterHost) {}
 
-  acquireGeometry(
-    nodeId: string,
-    segmentCount: number,
-    hasScalars: boolean
-  ): THREE.InstancedBufferGeometry {
+  acquireGeometry(nodeId: string, segmentCount: number): THREE.InstancedBufferGeometry {
     const host = this.host;
     host._lastAcquireRebuilt = false;
 
+    // Per-node texture bound: width × maxTextureSize / 6 texels (2.79M
+    // segments on a 4096-class device). Warns once; the update path
+    // clamps its written count to the texture capacity to match.
+    segmentCount = clampLineCapacity(segmentCount);
+
     const active = host.activeBuffers.get(nodeId);
     if (active && active.type === 'lines') {
-      const scalarsMatch = linesGeometryHasScalars(active.geometry) === hasScalars;
-      if (scalarsMatch && active.capacity >= segmentCount) {
+      if (active.capacity >= segmentCount) {
         active.lastUsedFrame = host.frameCount;
         host.stats.reuses++;
         host.typeStats.lines.reuses++;
         return active.geometry as THREE.InstancedBufferGeometry;
       }
-      // Undersized OR spec-set change (colormap scalars appearing/
-      // disappearing): RELEASE + REACQUIRE, never an in-place
-      // interleaved-buffer rebuild — replacing a rendered geometry's
-      // attributes strands the old GL/GPU buffer in the renderer
-      // caches (hard leak under the WebGPU renderer via the strong
-      // Info.memoryMap). See the points adapter for the full
-      // rationale. The scalar spec set is decided HERE, at acquire
-      // time, so updateGeometry never needs to rebuild.
-      if (scalarsMatch) host.stats.capacityGrowths++;
+      // Grow = RELEASE + REACQUIRE — an in-place rebuild strands the
+      // old GL/GPU buffer in the renderer caches (hard leak under the
+      // WebGPU renderer via the strong Info.memoryMap). See the points
+      // adapter for the full rationale. (The interleaved era's scalar
+      // spec-set mismatch branch is gone: the fixed texel layout always
+      // carries the scalar slots.)
+      host.stats.capacityGrowths++;
       // OOM RE-CLAIM WINDOW — see the points adapter's twin comment.
       // The released buffer can never be picked by the best-fit scan
-      // for this call: either its capacity < segmentCount (grow) or its
-      // scalar spec set mismatches (the scan filters on both).
+      // for this call: its capacity < segmentCount.
       const released = active;
       try {
         this.releaseGeometry(nodeId);
-        return this.adoptOrAllocate(nodeId, segmentCount, hasScalars);
+        return this.adoptOrAllocate(nodeId, segmentCount);
       } catch (error) {
         this.reclaimAfterFailedGrow(nodeId, released);
         throw error;
       }
     }
 
-    return this.adoptOrAllocate(nodeId, segmentCount, hasScalars);
+    return this.adoptOrAllocate(nodeId, segmentCount);
   }
 
   /**
    * Best-fit adoption from the free buckets, else a fresh allocation —
    * see the points adapter's twin comment.
    */
-  private adoptOrAllocate(
-    nodeId: string,
-    segmentCount: number,
-    hasScalars: boolean
-  ): THREE.InstancedBufferGeometry {
+  private adoptOrAllocate(nodeId: string, segmentCount: number): THREE.InstancedBufferGeometry {
     const host = this.host;
 
     // BEST-fit, not first-fit — see the gsplats adapter for rationale.
-    // Candidates must carry the SAME scalar spec set (a base-only
-    // buffer cannot serve colormap data, and a scalar buffer serving
-    // base-only data would render stale scalar columns).
+    // The fixed texel layout means any pooled lines geometry fits any
+    // lines node: capacity is the only matching criterion.
     let bestList: PooledBuffer[] | null = null;
     let bestIndex = -1;
     let bestCapacity = Infinity;
     for (const pooled of this.lineBuffers.values()) {
       for (let i = pooled.length - 1; i >= 0; i--) {
         const candidate = pooled[i];
-        if (
-          candidate.capacity >= segmentCount &&
-          candidate.capacity < bestCapacity &&
-          linesGeometryHasScalars(candidate.geometry) === hasScalars
-        ) {
+        if (candidate.capacity >= segmentCount && candidate.capacity < bestCapacity) {
           bestList = pooled;
           bestIndex = i;
           bestCapacity = candidate.capacity;
@@ -196,7 +171,10 @@ export class LinesBufferAdapter {
     if (bestList) {
       const candidate = bestList[bestIndex];
       bestList.splice(bestIndex, 1);
-      // See the points adapter's twin comment.
+      // Adopted geometry may still carry the previous tenant's
+      // instanceCount + texels; draw nothing until this node's write
+      // sets the real count (a throwing write must not render the
+      // previous tenant's content under this node's transform).
       (candidate.geometry as THREE.InstancedBufferGeometry).instanceCount = 0;
       candidate.inUse = true;
       candidate.lastUsedFrame = host.frameCount;
@@ -208,8 +186,10 @@ export class LinesBufferAdapter {
     }
 
     host._lastAcquireRebuilt = true;
-    const capacity = chooseCapacity(segmentCount);
-    const geometry = createLinesGeometry(capacity, hasScalars);
+    // Growth headroom (1.5×) can itself cross the texture bound; clamp
+    // the chosen capacity too (still >= segmentCount, which was clamped).
+    const capacity = clampLineCapacity(chooseCapacity(segmentCount));
+    const geometry = createLinesGeometry(capacity);
 
     const newBuffer: PooledBuffer = {
       geometry,
@@ -296,130 +276,58 @@ export class LinesBufferAdapter {
     geometry: THREE.InstancedBufferGeometry,
     data: ProcessedLinesData,
     count: number,
-    options?: { fromInstance?: number }
+    options?: { preserveOrdering?: boolean; fromInstance?: number }
   ): void {
-    const hasScalarsInData = !!(data.startScalars && data.endScalars);
-    if (hasScalarsInData && !linesGeometryHasScalars(geometry)) {
-      // The scalar spec set is decided at acquire time (acquireGeometry's
-      // hasScalars parameter) — an in-place rebuild here would strand the
-      // old GPU buffer in the renderer caches. Reaching this means the
-      // caller passed hasScalars=false and then supplied scalar data.
+    const instanced = geometry;
+    const texture = getLineTexture(instanced);
+    if (!texture) {
       throw new Error(
-        'LinesBufferAdapter.updateGeometry: geometry has no scalar columns but data ' +
-          'carries scalars — acquireLinesGeometry must be called with hasScalars=true.'
+        'LinesBufferAdapter.updateGeometry: geometry has no line texture — ' +
+          'was it acquired from the pool?'
       );
     }
+    // Append fast path (Phase 4 Stage 2): the commit layer sets
+    // `fromInstance` to the prefix count already on the GPU when this
+    // commit only extends it, so the fused writer + ranged upload touch
+    // just the `[fromInstance, count)` suffix (see writeLineTexels).
+    // 0 means a full write.
+    const fromInstance = options?.fromInstance ?? 0;
 
-    // PRE-FLIGHT torn-write guard: unlike points/gsplats (a single fused
-    // writer that guards before ANY store), lines perform 11–13
-    // sequential per-attribute writes below, each with its own length
-    // guard. A short array in the MIDDLE of that sequence would throw
-    // after earlier attributes were already stored and range-registered,
-    // leaving a torn mix (new positions + old colors) on the GPU.
-    // Validate every array this update will write — the same lengths the
-    // individual writePooledAttribute guards check (short throws there;
-    // longer sources are trimmed by its subarray, hence `<`) — and throw
-    // ONE aggregate error before the first store. The per-write guards
-    // stay as belt and braces.
-    const requiredLengths: Array<[field: string, actual: number, expected: number]> = [
-      ['startPositions', data.startPositions.length, count * 3],
-      ['endPositions', data.endPositions.length, count * 3],
-      ['startColors', data.startColors.length, count * 3],
-      ['endColors', data.endColors.length, count * 3],
-      ['startWidths', data.startWidths.length, count],
-      ['endWidths', data.endWidths.length, count],
-      ['startSharpness', data.startSharpness.length, count],
-      ['endSharpness', data.endSharpness.length, count],
-      ['segmentLengths', data.segmentLengths.length, count],
-      ['startClipped', data.startClipped.length, count],
-      ['endClipped', data.endClipped.length, count],
-    ];
-    if (hasScalarsInData) {
-      requiredLengths.push(['startScalars', data.startScalars!.length, count]);
-      requiredLengths.push(['endScalars', data.endScalars!.length, count]);
-    }
-    const shortFields = requiredLengths.filter(([, actual, expected]) => actual < expected);
-    if (shortFields.length > 0) {
-      throw new Error(
-        'LinesBufferAdapter.updateGeometry: refusing a torn multi-attribute write for ' +
-          `count=${count} — short source arrays: ` +
-          shortFields
-            .map(([field, actual, expected]) => `${field} (length ${actual}, need ${expected})`)
-            .join(', ')
-      );
+    // One fused pass over the staged arrays into the texel layout
+    // (replaces the 11–13 per-attribute strided writes; the writer's
+    // fail-loud guard runs before ANY store, retiring the interleaved
+    // era's separate pre-flight torn-write sweep), then identity
+    // ordering. The writer clamps to the texture capacity; mirror that
+    // clamp in instanceCount so a bound-clamped node never draws
+    // instances whose texels were not written.
+    count = writeLineTexels(texture, data, count, { fromSegment: fromInstance });
+    if (fromInstance > 0) {
+      // Append: keep the prefix's existing ordering and give the appended
+      // segments identity until a re-sort lands (fromInstance and
+      // preserveOrdering are mutually exclusive — append needs
+      // count > prev, preserveOrdering needs count === prev).
+      writeSortedIndexIdentityRange(instanced, fromInstance, count);
+    } else if (!options?.preserveOrdering) {
+      // `preserveOrdering` (commit path decides — see
+      // commit-lines-geometry.ts) keeps a same-count recommit's existing
+      // depth-sort permutation as a no-worse prior until the re-sort
+      // lands; every other full write resets to identity.
+      writeSortedIndexIdentity(instanced, count);
     }
 
-    // Append fast path (depth-sorting Phase 4 Stage 2): the commit layer
-    // proved the buffer's first `fromInstance` segments already hold this
-    // data's prefix, so every attribute write below skips them — only the
-    // `[fromInstance, count)` suffix is copied and dirtied for upload.
-    const opts = { fromInstance: options?.fromInstance ?? 0 };
+    prepareLinesGeometryForDraw(geometry, count);
 
-    const startClippedF32 = widenToFloat32(data.startClipped);
-    const endClippedF32 = widenToFloat32(data.endClipped);
-
-    const baseUpdates: Array<[string, Float32Array]> = [
-      ['aStartPos', data.startPositions],
-      ['aEndPos', data.endPositions],
-      ['aStartColor', data.startColors],
-      ['aEndColor', data.endColors],
-      ['aStartWidth', data.startWidths],
-      ['aEndWidth', data.endWidths],
-      ['aStartSharpness', data.startSharpness],
-      ['aEndSharpness', data.endSharpness],
-      ['aSegmentLength', data.segmentLengths],
-      ['aStartClipped', startClippedF32],
-      ['aEndClipped', endClippedF32],
-    ];
-    for (const [name, source] of baseUpdates) {
-      writePooledAttribute(geometry, name, source, count, opts);
-    }
-
-    if (hasScalarsInData) {
-      writePooledAttribute(
-        geometry,
-        'aStartScalar',
-        data.startScalars as Float32Array,
-        count,
-        opts
-      );
-      writePooledAttribute(geometry, 'aEndScalar', data.endScalars as Float32Array, count, opts);
-    }
-
-    geometry.instanceCount = count;
+    // Scalar presence stamp (drives `supportsScalarColormap`) — refreshed
+    // on EVERY update; pool geometries are reused across tenants.
+    stampLineScalarPresence(instanced, data);
 
     // CRITICAL: Force THREE.js to recalculate _maxInstanceCount.
     delete (geometry as unknown as { _maxInstanceCount?: number })._maxInstanceCount;
 
-    // CRITICAL: Recompute bounding box after position updates (mirrors
-    // computeLineBounds in line-geometry.ts). Also expand by max width
-    // so the rendered footprint is covered by frustum culling.
-    const box = new THREE.Box3();
-    const v = new THREE.Vector3();
-    let maxWidth = 0;
-    for (let i = 0; i < count; i++) {
-      v.set(
-        data.startPositions[i * 3],
-        data.startPositions[i * 3 + 1],
-        data.startPositions[i * 3 + 2]
-      );
-      box.expandByPoint(v);
-      v.set(data.endPositions[i * 3], data.endPositions[i * 3 + 1], data.endPositions[i * 3 + 2]);
-      box.expandByPoint(v);
-
-      const sw = data.startWidths[i];
-      const ew = data.endWidths[i];
-      if (Number.isFinite(sw) && sw > maxWidth) maxWidth = sw;
-      if (Number.isFinite(ew) && ew > maxWidth) maxWidth = ew;
-    }
-    if (count > 0 && maxWidth > 0) {
-      box.expandByScalar(maxWidth);
-    }
-
-    geometry.boundingBox = box;
-    const sphere = new THREE.Sphere();
-    box.getBoundingSphere(sphere);
-    geometry.boundingSphere = sphere;
+    // CRITICAL: Recompute bounding box after position updates, expanded
+    // by max width so the rendered footprint is covered by frustum
+    // culling (shared helper — see line-geometry.ts).
+    computeLineBounds(instanced, data, count);
   }
 
   dispose(): void {

@@ -6,6 +6,29 @@ All notable changes to Luxar are documented in this file.
 
 ### July 2026
 
+#### Added — lines texture storage + depth sorting (three-geometry symmetry complete)
+
+- **Lines migrated to texture-backed element storage**: per-segment data
+  now lives in an RGBA32F line texture (6 texels/segment — endpoints +
+  widths, per-endpoint colors + sharpness, segment length + clip flags,
+  colormap scalars + reserved per-endpoint alphas for volumetric
+  Phase 4), fetched in the vertex stage via `texelFetch` and indexed by
+  the sole per-instance `aSortedIndex` attribute — the same storage
+  model gsplats and points already use.
+- **Lines in `normal` blending mode are now back-to-front depth-sorted**
+  by segment midpoint, joining the SortWorker, the camera-motion re-sort
+  scheduler, the cross-node `renderOrder` scale, the `preserveOrdering`
+  same-count-recommit prior, and the suffix-only append fast path.
+  Picking reads the storage slot (`aSortedIndex`), staying correct under
+  any permutation. Lines `volumetric` keeps its additive fallback
+  (unsorted) until volumetric Phase 4 flips the shared policy helper.
+- **Three lines-only mechanisms retired by the fixed texel layout**: the
+  interleaved-attribute packing, the colormap attribute-set toggle
+  (scalar presence now rides the `userData.hasScalars` stamp — no more
+  geometry rebuild or pool re-bucketing on a colormap switch), and the
+  line-material LRU cache (line materials are per node, carrying the
+  node's own `uLineTex`, like points and gsplats).
+
 #### Added — points depth sorting (normal mode now correctly ordered)
 
 - **Points in `normal` blending mode are now back-to-front depth-sorted**,

@@ -16,6 +16,7 @@
 
 import * as THREE from 'three';
 import { LINE_VERTEX_SHADER, LINE_FRAGMENT_SHADER } from './shader-glsl';
+import { getPlaceholderElementTexture } from '../../element-texture-layout';
 import type { CameraAwareMaterial } from '../_shared/camera-aware-material';
 import type { ColormapAwareMaterial } from '../_shared/colormap-aware-material';
 import { clampGamma, isGammaOne } from '../_shared/uniform-helpers';
@@ -125,6 +126,10 @@ export class LineMaterial
 
     super({
       uniforms: {
+        // Per-node line data texture (6 texels/segment). Starts on the
+        // shared placeholder; the commit sync rebinds the geometry's
+        // acquired pool entry's texture via `updateLineTexture`.
+        uLineTex: { value: getPlaceholderElementTexture() },
         uResolution: { value: new THREE.Vector2(1, 1) },
         uIsOrtho: { value: 0 }, // 0 = perspective, 1 = orthographic
         uOpacity: { value: materialConfig.opacity ?? 1.0 },
@@ -248,6 +253,22 @@ export class LineMaterial
   }
 
   /**
+   * Rebind the line data texture (pool acquire may hand the node a
+   * different geometry+texture pair on growth or best-fit reuse).
+   * Plain uniform update — no shader recompilation involved. Mirrors
+   * `PointMaterial.updatePointTexture`; `null` falls back to the
+   * shared placeholder so the sampler is never unbound.
+   */
+  updateLineTexture(texture: THREE.DataTexture | null): void {
+    this.uniforms.uLineTex.value = texture ?? getPlaceholderElementTexture();
+  }
+
+  /** The currently bound line data texture. */
+  getLineTexture(): THREE.DataTexture | null {
+    return (this.uniforms.uLineTex.value as THREE.DataTexture | null) ?? null;
+  }
+
+  /**
    * Update opacity.
    */
   updateOpacity(opacity: number): void {
@@ -366,6 +387,9 @@ export class LineMaterial
     }
 
     cloned.uniforms.uResolution.value.copy(this.uniforms.uResolution.value);
+    // Preserve the line data texture binding (per-node — the clone
+    // serves the same node).
+    cloned.uniforms.uLineTex.value = this.uniforms.uLineTex.value;
     // Preserve orthographic state, near-plane / max-pixel-width clamp,
     // and the precomputed pixel-width scales.
     cloned.uniforms.uIsOrtho.value = this.uniforms.uIsOrtho.value;

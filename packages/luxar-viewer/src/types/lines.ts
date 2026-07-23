@@ -270,14 +270,16 @@ export interface ProcessedLinesData {
    * Start-vertex scalar values (M,), interpolated if clipped, optional.
    *
    * present when the source `LoadedLinesData.scalars` is non-null.
-   * Bound as `aStartScalar` instanced attribute and used by the line
-   * vertex shader under `USE_COLORMAP`.
+   * Written into texel5.x of the line texture and used by the line
+   * vertex shader under `USE_COLORMAP` (presence rides the
+   * `userData.hasScalars` stamp — the fixed 6-texel layout always has
+   * the slot).
    */
   startScalars?: Float32Array;
 
   /**
    * End-vertex scalar values (M,), interpolated if clipped, optional.
-   * Bound as `aEndScalar`.
+   * Written into texel5.y.
    */
   endScalars?: Float32Array;
 

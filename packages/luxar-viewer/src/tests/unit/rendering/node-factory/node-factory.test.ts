@@ -18,6 +18,7 @@ import type { LoadedPointsData } from '../../../../data/data-loader-types';
 import { mulberry32 } from '../../../helpers/random';
 import { attachSplatStorage, getSplatTexture } from '../../../../rendering/gsplat-geometry';
 import { attachPointStorage, getPointTexture } from '../../../../rendering/point-geometry';
+import { attachLineStorage, getLineTexture } from '../../../../rendering/line-geometry';
 import { POINT_FLOATS_PER_POINT } from '../../../../rendering/element-texture-layout';
 
 // Audit C3 fix: `Math.random()` replaced with a seedable PRNG so failures
@@ -516,8 +517,8 @@ describe('NodeFactory', () => {
 
   describe('rebuildAfterContextRestore — GPU full-dirty (Phase 4 Stage 2)', () => {
     // After a WebGL context loss the GPU buffers are gone while the CPU
-    // mirror survives, so every element texture + aSortedIndex
-    // (gsplats AND points) and every interleaved instance buffer (lines)
+    // mirror survives, so every element texture + aSortedIndex (gsplats,
+    // points, AND lines — all three geometry types are texture-backed)
     // must be marked full-dirty (empty ranges → full upload) and the
     // append-fast-path flag cleared so the next commit does a full
     // rewrite, not a suffix append.
@@ -539,19 +540,14 @@ describe('NodeFactory', () => {
       return mesh;
     };
 
-    // Pool-style interleaved mesh for lines: two attribute views over
-    // one shared InstancedInterleavedBuffer, mirroring the adapter's layout.
-    const makeInterleavedMesh = (nodeType: 'lines'): THREE.Mesh => {
+    // Texture-backed lines mesh: line texture + aSortedIndex, same
+    // storage shape on the pool AND non-pool paths (lines texture-storage
+    // migration).
+    const makeLinesTextureMesh = (): THREE.Mesh => {
       const geom = new THREE.InstancedBufferGeometry();
-      const buffer = new THREE.InstancedInterleavedBuffer(new Float32Array(8 * 4), 4, 1);
-      geom.setAttribute('aCenter', new THREE.InterleavedBufferAttribute(buffer, 3, 0));
-      geom.setAttribute('aRadius', new THREE.InterleavedBufferAttribute(buffer, 1, 3));
-      // Plain (non-interleaved) attribute alongside — the non-pool lines
-      // layout binds plain InstancedBufferAttributes, which the restore hook
-      // must mark full-dirty via the else-branch.
-      geom.setAttribute('aPlain', new THREE.InstancedBufferAttribute(new Float32Array(8), 1));
+      attachLineStorage(geom, 8);
       const mesh = new THREE.Mesh(geom, new THREE.MeshBasicMaterial());
-      mesh.userData = { nodeType, gpuPrefixIntact: true };
+      mesh.userData = { nodeType: 'lines', gpuPrefixIntact: true };
       return mesh;
     };
 
@@ -612,36 +608,36 @@ describe('NodeFactory', () => {
       expect((mesh.userData as { gpuPrefixIntact: boolean }).gpuPrefixIntact).toBe(false);
     });
 
-    it('marks lines interleaved buffers full-dirty and drops gpuPrefixIntact', () => {
-      for (const nodeType of ['lines'] as const) {
-        const mesh = makeInterleavedMesh(nodeType);
-        const geom = mesh.geometry as THREE.InstancedBufferGeometry;
-        const buffer = (geom.getAttribute('aCenter') as THREE.InterleavedBufferAttribute)
-          .data as THREE.InstancedInterleavedBuffer;
-        const plain = geom.getAttribute('aPlain') as THREE.InstancedBufferAttribute;
-        // Seed a partial (append-style) pending range as if a suffix commit
-        // had registered one; snapshot the version to prove the hook re-armed
-        // the upload (needsUpdate is a write-only setter).
-        buffer.clearUpdateRanges();
-        buffer.addUpdateRange(12, 8);
-        const version = buffer.version;
-        plain.clearUpdateRanges();
-        plain.addUpdateRange(2, 2);
-        const plainVersion = plain.version;
+    it('marks the line texture + aSortedIndex full-dirty and drops gpuPrefixIntact', () => {
+      // Lines take the same branch as gsplats/points since the lines
+      // texture-storage migration.
+      const mesh = makeLinesTextureMesh();
+      const geom = mesh.geometry as THREE.InstancedBufferGeometry;
+      const tex = getLineTexture(geom)!;
+      const idx = geom.getAttribute('aSortedIndex') as THREE.InstancedBufferAttribute;
+      // Seed a partial (append-style) pending range as if a suffix commit
+      // had registered one; snapshot versions to prove the hook re-armed
+      // the upload (needsUpdate is a write-only setter).
+      tex.clearUpdateRanges();
+      tex.addUpdateRange(96, 48);
+      idx.clearUpdateRanges();
+      idx.addUpdateRange(4, 4);
+      const texVersion = tex.version;
+      const idxVersion = idx.version;
 
-        const root = new THREE.Group();
-        root.add(mesh);
-        factory.rebuildAfterContextRestore(root);
+      const root = new THREE.Group();
+      root.add(mesh);
+      factory.rebuildAfterContextRestore(root);
 
-        // Full-upload path: ranges emptied, needsUpdate re-armed (version++).
-        expect(buffer.updateRanges.length).toBe(0);
-        expect(buffer.version).toBeGreaterThan(version);
-        // Plain attributes (non-pool lines layout) are covered too.
-        expect(plain.updateRanges.length).toBe(0);
-        expect(plain.version).toBeGreaterThan(plainVersion);
-        // Next commit must full-rewrite, not append.
-        expect((mesh.userData as { gpuPrefixIntact: boolean }).gpuPrefixIntact).toBe(false);
-      }
+      // Full-image upload path (markElementTextureFullDirty): ranges
+      // emptied + the pending-full state registered, needsUpdate re-armed
+      // (version++).
+      expect(tex.updateRanges.length).toBe(0);
+      expect(tex.version).toBeGreaterThan(texVersion);
+      expect(idx.updateRanges.length).toBe(0);
+      expect(idx.version).toBeGreaterThan(idxVersion);
+      // Next commit must full-rewrite, not append.
+      expect((mesh.userData as { gpuPrefixIntact: boolean }).gpuPrefixIntact).toBe(false);
     });
 
     it('runs without a picking system and ignores unrelated nodes', () => {
