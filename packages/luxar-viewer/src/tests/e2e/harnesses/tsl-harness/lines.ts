@@ -79,6 +79,57 @@ function buildLineDataTexture(
 }
 
 /**
+ * MULTI-ROW line data texture (6×2): element 0 (row 0) is a DECOY
+ * segment (short, vertical, green, parked in a corner); element 1
+ * (row 1) holds the standard horizontal segment. Paired with
+ * `aSortedIndex = [1]` (see `buildLineMultiRowMesh`), both backends
+ * must fetch ROW 1 — a texture-orientation (Y-flip) mismatch between
+ * the GLSL `texelFetch` and the TSL `textureLoad` codegen would render
+ * the decoy on one backend only and fail pixel parity. 1-row textures
+ * (every other entry) are structurally blind to this bug class.
+ */
+function buildLineDataTextureMultiRow(): THREE.DataTexture {
+  const tex = new THREE.DataTexture(new Float32Array(48), 6, 2, THREE.RGBAFormat, THREE.FloatType);
+  tex.magFilter = THREE.NearestFilter;
+  tex.minFilter = THREE.NearestFilter;
+  tex.generateMipmaps = false;
+  tex.flipY = false;
+  const real = lineTexelSource();
+  writeLineTexels(
+    tex,
+    {
+      startPositions: new Float32Array([0.7, 0.5, 0, ...real.startPositions]),
+      endPositions: new Float32Array([0.7, 0.9, 0, ...real.endPositions]),
+      startColors: new Float32Array([0, 1, 0, ...real.startColors]),
+      endColors: new Float32Array([0, 1, 0, ...real.endColors]),
+      startWidths: new Float32Array([0.05, ...real.startWidths]),
+      endWidths: new Float32Array([0.05, ...real.endWidths]),
+      startSharpness: new Float32Array([0.5, ...real.startSharpness]),
+      endSharpness: new Float32Array([0.5, ...real.endSharpness]),
+      segmentLengths: new Float32Array([0.4, ...real.segmentLengths]),
+      startClipped: new Uint8Array([0, ...real.startClipped]),
+      endClipped: new Uint8Array([0, ...real.endClipped]),
+    },
+    2
+  );
+  return tex;
+}
+
+/**
+ * Standard line mesh redirected to STORAGE SLOT 1 (the multi-row
+ * texture's real segment). The mesh's own attached texture is ignored —
+ * the shaders sample the uniform's — but its `aSortedIndex` drives the
+ * fetch index on both backends.
+ */
+function buildLineMultiRowMesh(material: THREE.Material): THREE.Object3D {
+  const mesh = buildLineInstancedMesh(material) as THREE.Mesh;
+  const idx = mesh.geometry.getAttribute('aSortedIndex') as THREE.InstancedBufferAttribute;
+  (idx.array as Uint32Array)[0] = 1;
+  idx.needsUpdate = true;
+  return mesh;
+}
+
+/**
  * Line mesh + per-endpoint scalars (0.2 → 0.8) for the colormap-parity
  * case. Under `USE_COLORMAP` the shader sources colour from the LUT via
  * the texel5 scalars; the fixed 6-texel layout carries both the (unused)
@@ -144,6 +195,37 @@ export const LINE_SHADERS: Record<string, RegistryEntry> = {
       return m;
     },
     buildMesh: buildLineInstancedMesh,
+  },
+  // Multi-row texture-orientation parity: the segment renders from
+  // STORAGE SLOT 1 of a 2-row texture (row 0 is a green decoy). Both
+  // backends must resolve the same row — a Y-flip mismatch between the
+  // GLSL texelFetch and the TSL textureLoad codegen shows up as the
+  // decoy rendering on one backend only. 1-row textures (every other
+  // entry) cannot catch this bug class.
+  'line-multirow': {
+    source: LINE_SOURCE,
+    buildUniforms: () => ({
+      uLineTex: { value: buildLineDataTextureMultiRow() },
+      uResolution: { value: new THREE.Vector2(64, 64) },
+      uIsOrtho: { value: 1 },
+      uNearCull: { value: 0.01 },
+      uMaxLinePixelWidth: { value: 32.0 },
+      uPerspectiveLineScale: { value: 1.0 },
+      uOrthoLineScale: { value: 64.0 },
+      uOpacity: { value: 1.0 },
+      uInvGamma: { value: 1.0 / 2.2 },
+      uIntensity: { value: 1.0 },
+      uOffset: { value: 0.0 },
+    }),
+    buildTSLMaterial: (uniforms) => {
+      const m = lineWebGPUFactory(buildLineTSLNodesFromUniforms(uniforms, {}), {
+        isOrtho: true,
+      }) as unknown as THREE.Material;
+      m.transparent = false;
+      m.blending = THREE.NoBlending;
+      return m;
+    },
+    buildMesh: buildLineMultiRowMesh,
   },
   // Line with the gamma==1 fast path enabled. Same geometry +
   // uniforms as `line`, but the TSL factory is built with

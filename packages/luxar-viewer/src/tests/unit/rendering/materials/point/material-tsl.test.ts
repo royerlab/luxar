@@ -185,6 +185,22 @@ describe('PointTSLMaterial clone', () => {
     expect(cloned.userData.gamma).toBeCloseTo(2.2, 5);
   });
 
+  it('carries the camera-STATE uniforms (uIsOrtho, uNearCull, uResolution) onto the clone', () => {
+    // A clone taken in ortho mode used to keep the constructor defaults
+    // (perspective, nearCull 0.1, 1920×1080) until the next global
+    // updateCameraParams broadcast — rendering the wrong projection
+    // branch in the meantime. Lines clones are the reference.
+    const original = new PointTSLMaterial();
+    original.updateCameraParams(2.0, new THREE.Vector2(640, 480), /*isOrtho=*/ true, 0.42);
+
+    const cloned = original.clone();
+
+    expect(cloned.uniforms.uIsOrtho.value).toBe(1);
+    expect(cloned.uniforms.uNearCull.value).toBeCloseTo(0.42, 5);
+    expect((cloned.uniforms.uResolution.value as THREE.Vector2).x).toBe(640);
+    expect((cloned.uniforms.uResolution.value as THREE.Vector2).y).toBe(480);
+  });
+
   it('resyncs camera-derived uniforms (pointSizeFactor, maxPointSize) from source onto clone', () => {
     const original = new PointTSLMaterial();
     original.updateCameraParams(Math.PI / 3, new THREE.Vector2(1600, 900), false);

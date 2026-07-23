@@ -486,6 +486,18 @@ export class PointTSLMaterial
     cloned.uniforms.maxPointSize.value = this.uniforms.maxPointSize.value;
     cloned.uniforms.invGamma.value = this.uniforms.invGamma.value;
     cloned.uniforms.radiusScale.value = this.uniforms.radiusScale.value;
+    // Camera-state uniforms must ride along too (mirrors
+    // LineTSLMaterial.clone, the reference implementation): a clone
+    // taken in ortho mode otherwise renders the perspective branch with
+    // stale resolution/nearCull until the next global
+    // updateCameraParams broadcast reaches it. Unlike lines, uIsOrtho
+    // is a RUNTIME uniform in the points TSL graph (no ortho graph
+    // variant), so a plain value copy suffices — no rebuild needed.
+    cloned.uniforms.uIsOrtho.value = this.uniforms.uIsOrtho.value;
+    cloned.uniforms.uNearCull.value = this.uniforms.uNearCull.value;
+    (cloned.uniforms.uResolution.value as THREE.Vector2).copy(
+      this.uniforms.uResolution.value as THREE.Vector2
+    );
 
     return cloned as this;
   }

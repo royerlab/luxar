@@ -208,6 +208,48 @@ describe('processLinesData', () => {
     expect(mockGetWorkerPool).not.toHaveBeenCalled();
   });
 
+  it('keeps scalar PRESENCE at a zero-visible-segment slice (empty-but-defined fields)', async () => {
+    // Presence follows the SOURCE, not the visible count: at a slice
+    // with 0 visible segments the dispatcher's scalar arrays are empty,
+    // but the node still HAS scalars — dropping the fields here used to
+    // flip the geometry's `hasScalars` stamp false on the next commit,
+    // silently suppressing a colormap picked while the slice was empty
+    // (nothing re-applies it when segments return). Points keep an
+    // empty-but-defined subarray; lines must match.
+    mockBuildInstanceBuffers.mockImplementation(() => makeDispatcherLinesResult(0));
+    const root = new THREE.Group();
+    root.add(makeMesh('/lines'));
+    const data = makeData(500);
+    data.scalars = new Float32Array(data.vertexCount);
+    const result = await processLinesData(
+      '/lines',
+      data,
+      { displayDims: [0, 1, 2], slicePosition: [0, 0, 0], tolerance: [0, 0, 0] },
+      root,
+      1
+    );
+    expect(result).not.toBeNull();
+    const staged = result as {
+      processed: { startScalars?: Float32Array; endScalars?: Float32Array; segmentCount: number };
+    };
+    expect(staged.processed.segmentCount).toBe(0);
+    expect(staged.processed.startScalars).toBeInstanceOf(Float32Array);
+    expect(staged.processed.endScalars).toBeInstanceOf(Float32Array);
+
+    // The no-source-scalars signal is preserved: absent source ⇒
+    // absent fields, regardless of what the dispatcher returned.
+    mockBuildInstanceBuffers.mockImplementation(() => makeDispatcherLinesResult(0));
+    const noScalars = await processLinesData(
+      '/lines',
+      makeData(500),
+      { displayDims: [0, 1, 2], slicePosition: [0, 0, 0], tolerance: [0, 0, 0] },
+      root,
+      1
+    );
+    const stagedNo = noScalars as { processed: { startScalars?: Float32Array } };
+    expect(stagedNo.processed.startScalars).toBeUndefined();
+  });
+
   it('uses worker projection for large datasets', async () => {
     const root = new THREE.Group();
     root.add(makeMesh('/lines'));
