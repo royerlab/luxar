@@ -2,8 +2,8 @@
  * Shared texture-backed element storage for instanced geometry.
  *
  * Per-element data lives in an RGBA32F **element texture** (gsplats:
- * 4 texels/splat; points: 3 texels/point; lines later — layout
- * authority in `./element-texture-layout`) sampled by the vertex
+ * 4 texels/splat; points: 3 texels/point; lines: 6 texels/segment —
+ * layout authority in `./element-texture-layout`) sampled by the vertex
  * shader via `texelFetch`; the only per-instance attribute is
  * `aSortedIndex` (Uint32), which maps the draw slot to a storage slot
  * so draw order can be permuted without rewriting element data

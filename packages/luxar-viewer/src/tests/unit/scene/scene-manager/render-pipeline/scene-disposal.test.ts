@@ -151,7 +151,7 @@ describe('clearLoadedSceneContent', () => {
 
   it('releases the per-mesh depth-sort registration of every mesh (gsplats, points, plain)', () => {
     // The release is deliberately UNCONDITIONAL: only sortable nodes
-    // (gsplats + points today, lines later) ever register, and the call
+    // (gsplats, points, and lines) ever register, and the call
     // is a cheap map-delete no-op for everything else — a nodeType gate
     // here would silently strand registrations when a new geometry type
     // joins the sorted set.

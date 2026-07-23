@@ -8,8 +8,6 @@
  * @module rendering/material-manager/stats
  */
 
-import { config } from '../../config';
-
 /** Snapshot view of the orchestrator state needed to build stats. */
 export interface StatsCtx {
   readonly pointMaterialCache: Map<string, unknown>;
@@ -37,8 +35,6 @@ export function getCacheStats(ctx: StatsCtx) {
      * migration; kept so stats consumers don't break.
      */
     evictions: 0,
-    /** Configured cache bound (`0` = disabled). */
-    maxSize: config.dataLoading.performance.materialCacheMaxSize,
     /**
      * Cumulative wall-clock ms spent inside `new XMaterial(...)`
      * calls. Excludes WebGL program compilation, which happens lazily

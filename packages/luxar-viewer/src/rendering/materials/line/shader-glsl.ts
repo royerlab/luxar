@@ -495,6 +495,11 @@ export const LINE_SOURCE: ShaderSource = {
     // through `LineTSLMaterial.updateCameraParams`, which calls
     // `rebuildGraph()` itself — this short-lived ShaderSource path
     // just needs the right variant at construction.
+    // Default config otherwise — no toggles: colormap uniforms in the
+    // record are IGNORED here (matching POINT_SOURCE). Consumers
+    // needing USE_COLORMAP / LUXAR_MAX_RGB_CONTRIBUTION call
+    // `lineWebGPUFactory(buildLineTSLNodesFromUniforms(u, { useColormap }),
+    // { ...flags })` directly, as the parity harness does.
     const isOrtho = ((u.uIsOrtho?.value as number) ?? 0) === 1;
     return lineWebGPUFactory(buildLineTSLNodesFromUniforms(u, {}), { isOrtho });
   },

@@ -34,9 +34,9 @@ type AnyGSplatMaterial = GSplatMaterial | GSplatTSLMaterial;
  * continues to receive global camera updates and stays cached.
  *
  * Used by `data/scene-loader/commit/invalidate-render-object.ts`, which is
- * fired when the GPU buffer pool rebuilds a geometry's underlying
- * `InstancedInterleavedBuffer` and the mesh's cached `RenderObject`
- * needs to drop its stale `vertexBuffers` set. Exported so the
+ * fired when a commit swaps a mesh's geometry (pool grow / best-fit /
+ * non-pool rebuild) and the mesh's cached `RenderObject` needs to drop
+ * its stale `vertexBuffers` set. Exported so the
  * dispatcher and the listener stay name-coupled.
  *
  * Symbol-keyed so the flag can't collide with Three's internal
