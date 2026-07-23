@@ -214,6 +214,18 @@ describe('GSplatMaterial.applyBlendingMode (GLSL)', () => {
     expect(cloned.defines.LUXAR_VOLUMETRIC).toBe('');
   });
 
+  it('clone() carries the camera-STATE uniforms (uIsOrtho, uNearCull, uResolution)', () => {
+    // Same class as the points/lines clone fix: a clone taken in ortho
+    // mode used to keep the constructor defaults (perspective branch,
+    // stale near-cull) until the next global camera broadcast.
+    const mat = new GSplatMaterial();
+    mat.updateCameraParams(2.0, new THREE.Vector2(640, 480), /*isOrtho=*/ true, 0.42);
+    const cloned = mat.clone();
+    expect(cloned.uniforms.uIsOrtho.value).toBe(1);
+    expect(cloned.uniforms.uNearCull.value).toBeCloseTo(0.42, 5);
+    expect((cloned.uniforms.uResolution.value as THREE.Vector2).x).toBe(640);
+  });
+
   it('updateAbsorption writes the uniform without a recompile', () => {
     const mat = new GSplatMaterial({ blendingMode: 'volumetric' });
     const version = mat.version;
@@ -402,6 +414,17 @@ describe('GSplatTSLMaterial.applyBlendingMode (TSL)', () => {
     const cloned = mat.clone();
     expect(cloned.getAbsorption()).toBe(3.5);
     expect(cloned.userData.blendingMode).toBe('volumetric');
+  });
+
+  it('clone() carries the camera-STATE uniforms (uIsOrtho, uNearCull, uResolution) (TSL)', () => {
+    // Same class as the points/lines clone fix; gsplat uIsOrtho is a
+    // runtime uniform in the TSL graph, so a value copy suffices.
+    const mat = new GSplatTSLMaterial();
+    mat.updateCameraParams(2.0, new THREE.Vector2(640, 480), /*isOrtho=*/ true, 0.42);
+    const cloned = mat.clone();
+    expect(cloned.uniforms.uIsOrtho.value).toBe(1);
+    expect(cloned.uniforms.uNearCull.value).toBeCloseTo(0.42, 5);
+    expect((cloned.uniforms.uResolution.value as THREE.Vector2).x).toBe(640);
   });
 
   it('updateAbsorption writes the uniform without a graph rebuild (TSL)', () => {

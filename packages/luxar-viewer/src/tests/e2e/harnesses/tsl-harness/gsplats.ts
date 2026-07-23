@@ -3,8 +3,8 @@
  * gaussian-splat variants (covariance projection, tiny-sigma fade/
  * reject, gamma fast path, normal premult, opaque peak, thin-covariance
  * dilation, colormap LUT, behind-camera guard) plus the gsplat-pick
- * counterparts including the surface-pick depth pair. 14 registry
- * entries.
+ * counterparts including the surface-pick depth pair and the multi-row
+ * texture-orientation variant. 16 registry entries.
  *
  * @module tests/e2e/harnesses/tsl-harness/gsplats
  */

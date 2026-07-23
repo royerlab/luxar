@@ -3,7 +3,7 @@
  * point-sprite variants (falloff sweep, gamma fast path, max-mode
  * premultiply, colormap LUT, perspective sizing, subpixel floor, near
  * fade, behind-camera guard) plus the point-pick counterparts.
- * 13 registry entries.
+ * 14 registry entries (incl. the multi-row texture-orientation variant).
  *
  * @module tests/e2e/harnesses/tsl-harness/points
  */

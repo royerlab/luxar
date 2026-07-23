@@ -2,7 +2,8 @@
  * Line shader family for the TSL ↔ GLSL parity harness: the visual
  * instanced-line variants (gamma / no-GOG fast paths, max-mode
  * premultiply, colormap LUT, behind-camera + ortho-near culling) plus
- * the line-pick counterparts. 9 registry entries.
+ * the line-pick counterparts + the multi-row texture-orientation
+ * variant. 10 registry entries.
  *
  * @module tests/e2e/harnesses/tsl-harness/lines
  */

@@ -466,6 +466,12 @@ export class GSplatMaterial
     cloned.uniforms.uFx.value = this.uniforms.uFx.value;
     cloned.uniforms.uFy.value = this.uniforms.uFy.value;
     cloned.uniforms.uResolution.value.copy(this.uniforms.uResolution.value);
+    // Camera-state uniforms ride along with the derived focal scales
+    // (mirrors LineMaterial.clone / the points clone fix): a clone taken
+    // in ortho mode otherwise renders the perspective branch with a
+    // stale near-cull until the next global camera broadcast.
+    cloned.uniforms.uIsOrtho.value = this.uniforms.uIsOrtho.value;
+    cloned.uniforms.uNearCull.value = this.uniforms.uNearCull.value;
     cloned.uniforms.uProjectionMode.value = this.uniforms.uProjectionMode.value;
     cloned.uniforms.uInvGamma.value = this.uniforms.uInvGamma.value;
 
