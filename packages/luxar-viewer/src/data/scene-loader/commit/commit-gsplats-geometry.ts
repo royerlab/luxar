@@ -14,7 +14,7 @@
 
 import * as THREE from 'three';
 import { updateInstancedGSplatsMesh } from '../../../rendering/gsplat-geometry';
-import { noteGSplatsCommit } from '../../../rendering/depth-sort-coordinator';
+import { noteDepthSortCommit } from '../../../rendering/depth-sort-coordinator';
 import { clampSplatCapacity } from '../../../rendering/element-texture-layout';
 import { syncGSplatMaterialWithGeometry } from '../../../rendering/material-sync-helpers';
 import { isGSplatsUserData } from '../../../types/gsplats';
@@ -101,7 +101,7 @@ export function commitGSplatsGeometry(
       // Keep the previous depth-sort permutation on a same-node same-count
       // in-place recommit (timepoint scrub): a permutation of [0,count) is a
       // strictly-no-worse prior than storage order for the ≥1 frame until the
-      // re-sort dispatched by noteGSplatsCommit below lands. Every guard is
+      // re-sort dispatched by noteDepthSortCommit below lands. Every guard is
       // load-bearing:
       // - !attributesRebuilt / geometry === prevGeometry: pool best-fit reuse
       //   can hand this node a geometry holding ANOTHER node's permutation
@@ -292,7 +292,7 @@ export function commitGSplatsGeometry(
     // detaches it (safe — the memoized-concat noop keys on `sourceData`).
     // The CLAMPED count keeps the SortWorker's permutation values inside
     // [0, textureCapacity) — the worker clamps its own count to it.
-    noteGSplatsCommit(mesh, processed.centers3D, splatCount);
+    noteDepthSortCommit(mesh, processed.centers3D, splatCount);
   } finally {
     bufferSession?.end();
   }

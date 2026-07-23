@@ -469,7 +469,14 @@ export const GSPLAT_FRAGMENT_SHADER = /* glsl */ `
         // Early discard for negligible contribution (raised threshold for
         // performance). Alpha is already folded in, so a ~zero-alpha splat
         // discards here in every mode (it neither emits nor absorbs).
-        if (intensity < 1e-4) discard;
+        // GAIN-AWARE: the emitted brightness is intensity * uIntensity *
+        // color, so the visibility test must include the gain — a flat
+        // 1e-4 gate discarded dim splats that a high gain (dim
+        // fluorescence channels) would have lifted well above the ~1/255
+        // floor (hard clipped rims + vanishing splats at gain >~ 40).
+        // max(uIntensity, 1.0) keeps gain <= 1 EXACTLY at the historical
+        // threshold (no overdraw change for default renders).
+        if (intensity * max(uIntensity, 1.0) < 1e-4) discard;
 
         // Per-node GOG (Gain-Offset-Gamma) color adjustment. uIntensity (gain)
         // and uOffset apply in BOTH modes so the layer intensity/offset controls

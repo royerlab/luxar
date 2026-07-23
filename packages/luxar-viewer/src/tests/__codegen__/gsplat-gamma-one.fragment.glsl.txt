@@ -106,7 +106,7 @@ void main() {
 
 	nodeVar5 = ( ( ( nodeVarying2 * nodeUniform4 ) * max( ( exp( ( nodeVar4 * -0.5 ) ) - nodeUniform5 ), 0.0 ) ) * nodeVarying1 );
 
-	if ( ( nodeVar5 < 0.0001 ) ) {
+	if ( ( ( nodeVar5 * max( nodeUniform6, 1.0 ) ) < 0.0001 ) ) {
 
 		discard;
 		

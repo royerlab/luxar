@@ -149,14 +149,26 @@ describe('clearLoadedSceneContent', () => {
     expect(releaseAllDepthSortNodes).toHaveBeenCalledTimes(1);
   });
 
-  it('releases the per-mesh depth-sort registration of gsplats meshes', () => {
+  it('releases the per-mesh depth-sort registration of every mesh (gsplats, points, plain)', () => {
+    // The release is deliberately UNCONDITIONAL: only sortable nodes
+    // (gsplats + points today, lines later) ever register, and the call
+    // is a cheap map-delete no-op for everything else — a nodeType gate
+    // here would silently strand registrations when a new geometry type
+    // joins the sorted set.
     vi.mocked(releaseDepthSortNode).mockClear();
     const scene = new THREE.Scene();
-    const { mesh } = makeMesh();
-    mesh.userData.nodeType = 'gsplats';
-    scene.add(mesh);
+    const { mesh: gsplats } = makeMesh();
+    gsplats.userData.nodeType = 'gsplats';
+    const { mesh: points } = makeMesh();
+    points.userData.nodeType = 'points';
+    const { mesh: plain } = makeMesh();
+    scene.add(gsplats);
+    scene.add(points);
+    scene.add(plain);
     clearLoadedSceneContent(scene);
-    expect(releaseDepthSortNode).toHaveBeenCalledWith(mesh);
+    expect(releaseDepthSortNode).toHaveBeenCalledWith(gsplats);
+    expect(releaseDepthSortNode).toHaveBeenCalledWith(points);
+    expect(releaseDepthSortNode).toHaveBeenCalledWith(plain);
   });
 
   it('removes plain meshes and reports the count', () => {
@@ -215,6 +227,17 @@ describe('clearLoadedSceneContent', () => {
 });
 
 describe('disposeSceneGraphResources', () => {
+  it('drops ALL depth-sort registrations (self-sufficient final shutdown)', () => {
+    // Defense-in-depth: the dispose pipeline calls disposeDepthSort()
+    // separately, but an embedder driving only this shutdown path must
+    // not leave the module-scoped coordinator map pinning old meshes.
+    vi.mocked(releaseAllDepthSortNodes).mockClear();
+    const scene = new THREE.Scene();
+    scene.add(makeMesh().mesh);
+    disposeSceneGraphResources(scene);
+    expect(releaseAllDepthSortNodes).toHaveBeenCalledTimes(1);
+  });
+
   it('disposes geometry and material of every renderable in the scene', () => {
     const scene = new THREE.Scene();
     const { mesh: a, geometryDispose: aG, materialDispose: aM } = makeMesh();

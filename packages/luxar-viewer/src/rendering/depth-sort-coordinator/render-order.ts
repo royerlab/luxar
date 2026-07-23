@@ -4,14 +4,15 @@
  * same-name-directory pattern as `picking-system.ts` /
  * `picking-system/settle-scheduler.ts`).
  *
- * Depth sorting orders splats WITHIN a mesh; THREE orders transparent
- * MESHES by their `matrixWorld` origin — but every gsplat part shares
- * the world origin (splat centers are baked into the geometry), so
+ * Depth sorting orders elements WITHIN a mesh; THREE orders transparent
+ * MESHES by their `matrixWorld` origin — but every Luxar data mesh bakes
+ * element centers into the geometry and shares the world origin, so
  * THREE's per-object sort key is identical for all parts and they draw
  * in fixed creation order, NOT back-to-front. This module gives THREE a
  * real signal via `renderOrder` (compared before z, ascending → lowest
  * drawn first), on ONE global integer scale across every visible
- * sorted-mode gsplat mesh (needsDepthSort: normal | volumetric).
+ * sorted-mode mesh the coordinator tracks (gsplats + points today;
+ * needsDepthSort on the effective mode).
  *
  * Per-frame protocol (driven by `evaluateDepthSortPerFrame`):
  * 1. {@link clearRenderOrderFrameState} at the top of the frame,
@@ -199,7 +200,7 @@ export function collectRenderOrderSlot(
 /**
  * ASSIGN half of the cross-node ordering (runs after the collect loop).
  *
- * Every visible sorted-mode gsplat mesh lands on ONE global integer
+ * Every visible sorted-mode mesh lands on ONE global integer
  * renderOrder scale, farthest first:
  * 1. Slots group by partition wrapper (single leaves are groups of one).
  * 2. Groups order by the MEAN view-z of their members' content centroids —
@@ -214,10 +215,11 @@ export function collectRenderOrderSlot(
  *    own view-z (legacy partitions without a stored tree).
  * 4. Sequential global integers 0..M-1 are written to mesh.renderOrder.
  *
- * Non-gsplat transparent objects keep renderOrder 0 and tie with the
- * globally-farthest gsplat mesh (falling back to THREE's per-object z) —
- * cross-TYPE depth interleaving stays out of scope, unchanged from the
- * per-wrapper scheme this replaces.
+ * Transparent objects OUTSIDE the coordinator's sorted set (commutative
+ * modes, lines until their sort integration) keep renderOrder 0 and tie
+ * with the globally-farthest sorted mesh (falling back to THREE's
+ * per-object z) — depth interleaving with unsorted content stays out of
+ * scope, unchanged from the per-wrapper scheme this replaces.
  */
 export function assignGlobalRenderOrder(): void {
   const slots = orderSlots;

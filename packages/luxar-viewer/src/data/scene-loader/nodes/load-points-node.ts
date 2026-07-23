@@ -167,6 +167,13 @@ export async function loadPointsNodeExpensive(
 
     log.success(Modules.SCENE_LOADER, `Loaded ${data.pointCount} points for ${node.path}`);
   } catch (error) {
+    // Expected dispose-crossing: a read that passed its abort check can
+    // still throw a non-AbortError against a torn-down store (dataset
+    // switch aborts the signal FIRST, then disposes the store). The
+    // dataset is dead — a failure record + error-level LoaderError would
+    // be pure noise (and a spurious user toast). Symmetric with the
+    // success path's liveness gate above.
+    if (!ctx.isDatasetLive()) return;
     // Record the failure so `retryFailedLoader(path)` can target this node.
     ctx.registry.recordFailure(node.path, error as Error);
     throw new LoaderError(classifyLoaderError(error), node.path, error);

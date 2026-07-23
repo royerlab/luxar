@@ -217,16 +217,19 @@ export class GPUBufferPool {
 
   /**
    * Update Points geometry attributes in-place (zero GPU allocations).
-   * @param options - `fromInstance`: append fast path (Phase 4 Stage 2) —
-   *   write & upload only the `[fromInstance, count)` suffix, preserving
-   *   the prefix already on the GPU (the commit path decides; see
-   *   commit-points-geometry.ts).
+   * @param options - `preserveOrdering`: keep the geometry's existing
+   *   `aSortedIndex` permutation instead of resetting it to identity
+   *   (same-node same-count recommit — the commit path decides; see
+   *   commit-points-geometry.ts). `fromInstance`: append fast path
+   *   (Phase 4 Stage 2) — write & upload only the `[fromInstance, count)`
+   *   suffix, preserving the prefix texels + permutation already on the
+   *   GPU.
    */
   updatePointsGeometry(
     geometry: THREE.InstancedBufferGeometry,
     data: LoadedPointsData,
     count: number,
-    options?: { fromInstance?: number }
+    options?: { preserveOrdering?: boolean; fromInstance?: number }
   ): void {
     this.points.updateGeometry(geometry, data, count, options);
   }
