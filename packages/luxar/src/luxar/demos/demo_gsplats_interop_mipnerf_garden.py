@@ -133,7 +133,10 @@ def build_scene(scene_key: str = "garden") -> Path:
         recipe="tiles",
         recompute=FLAGS["recompute"],
         max_elements=MAX_ELEMENTS_PER_TILE,
-        n_lods=6,
+        # Streaming ladder → fast first paint: the coarsest additive chunk is
+        # ~14k splats/tile (vs the equal-count 1/6), so the first frame decodes
+        # ~14k × (tiles in view) instead of ~1M, then refines by doubling.
+        breakpoints="stream:14000",
     )
     out = get_demos_output_dir() / f"gsplats_interop_mipnerf_{scene_key}.luxar.zarr"
     return build_interop_scene(

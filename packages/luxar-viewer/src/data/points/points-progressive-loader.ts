@@ -345,6 +345,13 @@ export class PointsProgressiveLoader implements PointsDataLoader {
     const startLevel = this.loadedLODs.length;
 
     for (let level = startLevel; level < this.nLods; level++) {
+      // A dispose() racing the awaited level below clears `lodLoaders`, so
+      // the next iteration would TypeError on `this.lodLoaders[level]` — a
+      // teardown mis-counted as a real refinement failure (recordFailure +
+      // backoff). Stop streaming instead.
+      if (this._disposed) {
+        break;
+      }
       if (!shouldLoadLevel(pass, level, startLevel)) {
         break;
       }
@@ -467,6 +474,10 @@ export class PointsProgressiveLoader implements PointsDataLoader {
   }
 
   private prefetchNextLOD(viewState: PointsViewState): void {
+    // Same teardown race as the streaming loop: a dispose() between the
+    // awaited level and this fire-and-forget clears `lodLoaders`, and
+    // indexing it would TypeError before the .catch can swallow anything.
+    if (this._disposed) return;
     const nextLevel = this.loadedLODs.length;
     if (nextLevel >= this.nLods) return;
     // Fire-and-forget; errors ignored (network failures, aborts).

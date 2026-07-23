@@ -43,11 +43,31 @@ export class RailOverlay {
     teardown?: () => void;
   };
 
-  constructor(private readonly deps: RailOverlayDeps) {}
+  // The flyout's tooltip-flip (--up) depends on the viewport height, which
+  // changes on window resize and on entering/leaving fullscreen while the
+  // flyout stays open — recompute instead of trusting the open-time value.
+  private readonly onViewportChange = (): void => this.refreshFlyoutFlip();
+
+  constructor(private readonly deps: RailOverlayDeps) {
+    window.addEventListener('resize', this.onViewportChange);
+    document.addEventListener('fullscreenchange', this.onViewportChange);
+    // webkit* covers Safari < 16.4 (see utils/fullscreen.ts).
+    document.addEventListener('webkitfullscreenchange', this.onViewportChange);
+  }
 
   /** The item whose overlay is currently open, or undefined. */
   get activeItem(): ControlRailItem | undefined {
     return this.current?.item;
+  }
+
+  /** Re-derive the open flyout's tooltip-flip class from the live viewport. */
+  private refreshFlyoutFlip(): void {
+    if (this.current?.kind !== 'flyout') return;
+    const el = this.current.el;
+    el.classList.toggle(
+      'luxar-control-rail__flyout--up',
+      el.getBoundingClientRect().bottom > window.innerHeight - 48
+    );
   }
 
   private isToggleActive(t: ControlRailToggle): boolean {
@@ -63,7 +83,7 @@ export class RailOverlay {
 
   /** Whether any of the item's flyout toggles is currently active. */
   anyToggleActive(item: ControlRailItem): boolean {
-    return (item.flyout ?? []).some((t) => this.isToggleActive(t));
+    return (item.flyout ?? []).some((t) => !t.excludeFromParentActive && this.isToggleActive(t));
   }
 
   /** Re-sync each chip's active-state for the open flyout of `item` (no-op otherwise). */
@@ -127,13 +147,12 @@ export class RailOverlay {
     this.deps.root.appendChild(el);
     // Align the flyout's vertical centre with the opening button.
     el.style.top = `${btn.offsetTop + btn.offsetHeight / 2}px`;
-    // Flip the chip tooltips above when the flyout sits near the viewport bottom
-    // (the View button is low in the rail), so they don't clip off-screen.
-    if (el.getBoundingClientRect().bottom > window.innerHeight - 48) {
-      el.classList.add('luxar-control-rail__flyout--up');
-    }
     btn.setAttribute('aria-expanded', 'true');
     this.current = { item, el, btn, kind: 'flyout' };
+    // Flip the chip tooltips above when the flyout sits near the viewport
+    // bottom (the View button is low in the rail), so they don't clip
+    // off-screen. Re-derived on resize/fullscreenchange while open.
+    this.refreshFlyoutFlip();
     this.deps.onOverlayChange();
     this.deps.wake();
   }
@@ -234,5 +253,8 @@ export class RailOverlay {
   /** Tear down the overlay (rail disposal). */
   dispose(): void {
     this.close();
+    window.removeEventListener('resize', this.onViewportChange);
+    document.removeEventListener('fullscreenchange', this.onViewportChange);
+    document.removeEventListener('webkitfullscreenchange', this.onViewportChange);
   }
 }

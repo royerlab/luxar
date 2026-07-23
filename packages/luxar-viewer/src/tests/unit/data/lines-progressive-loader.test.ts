@@ -1034,3 +1034,38 @@ describe('LinesProgressiveLoader — committedEnergyFraction (quality stamps)', 
     expect(make([0.7, null]).committedEnergyFraction).toBeNull();
   });
 });
+
+describe('dispose during an in-flight level (teardown race)', () => {
+  it('stops streaming instead of indexing into the cleared lodLoaders', async () => {
+    // A dispose() racing the awaited level used to make the NEXT iteration
+    // read `this.lodLoaders[level]` as undefined — a TypeError that the
+    // refinement loop then mis-counted as a real failure. The loop now
+    // checks `_disposed` and breaks.
+    let release!: () => void;
+    const gate = new Promise<void>((r) => {
+      release = r;
+    });
+    const slowA = makeSubLoader(makeLodData(10, 5, 3));
+    const origA = slowA.updateViewWithResidency as unknown as (
+      vs: unknown,
+      s?: unknown
+    ) => Promise<unknown>;
+    slowA.updateViewWithResidency = vi.fn(async (vs: unknown, s?: unknown) => {
+      const out = await origA(vs, s);
+      await gate; // hold level 0 in flight
+      return out;
+    });
+    const fastB = makeSubLoader(makeLodData(6, 3, 3));
+    const l = new LinesProgressiveLoader(
+      [slowA, fastB] as unknown as LinesSpatialIndexLoader[],
+      2,
+      '/dispose-race'
+    );
+    const pending = l.loadLines(baseViewState);
+    l.dispose(); // clears lodLoaders while level 0 is awaited
+    release();
+    await expect(pending).resolves.toBeDefined(); // pre-fix: TypeError
+    // Level 1 was never touched after the dispose.
+    expect(fastB.updateViewWithResidency).not.toHaveBeenCalled();
+  });
+});

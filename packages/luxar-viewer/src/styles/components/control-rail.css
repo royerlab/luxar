@@ -174,14 +174,14 @@
   opacity: 1;
 }
 
-/* When the button's panel is already open, its name is redundant — suppress
-   the tooltip so it doesn't linger over the on-screen panel.
-   [aria-expanded='true'] covers the button whose flyout/popover is currently
-   open (set by RailOverlay): a momentary item like Home never gets .is-active
-   (refresh() skips it), yet its right-click popover must still win over the
-   hover tooltip. */
-.luxar-control-rail__btn.is-active:hover .luxar-control-rail__tip,
-.luxar-control-rail__btn.is-active:focus-visible .luxar-control-rail__tip,
+/* When the button's rail popover/flyout is open, its name is redundant —
+   suppress the tooltip so it doesn't linger over the popover.
+   [aria-expanded='true'] covers exactly that (set by RailOverlay), including
+   momentary items like Home whose right-click popover never gets .is-active.
+   Merely-ACTIVE buttons (an open DOM panel, a toggle like cinematic) keep
+   their hover label: the earlier `.is-active` suppression hid the name of
+   every latched control, which read as a missing tooltip rather than a
+   redundancy optimization. */
 .luxar-control-rail__btn[aria-expanded='true'] .luxar-control-rail__tip {
   opacity: 0;
 }
