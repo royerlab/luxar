@@ -1041,3 +1041,65 @@ describe('PointsProgressiveLoader — committedEnergyFraction (quality stamps)',
     expect(make([0.7, null]).committedEnergyFraction).toBeNull();
   });
 });
+
+describe('dispose during an in-flight level (teardown race)', () => {
+  it('stops streaming instead of indexing into the cleared lodLoaders', async () => {
+    // A dispose() racing the awaited level used to make the NEXT iteration
+    // read `this.lodLoaders[level]` as undefined — a TypeError that the
+    // refinement loop then mis-counted as a real failure. The loop now
+    // checks `_disposed` and breaks.
+    let release!: () => void;
+    const gate = new Promise<void>((r) => {
+      release = r;
+    });
+    const slowA = makeSubLoader(makeLodData(10, 3, { color: 'uint8' }));
+    const origA = slowA.updateViewWithResidency as unknown as (
+      vs: unknown,
+      s?: unknown
+    ) => Promise<unknown>;
+    slowA.updateViewWithResidency = vi.fn(async (vs: unknown, s?: unknown) => {
+      const out = await origA(vs, s);
+      await gate; // hold level 0 in flight
+      return out;
+    });
+    const fastB = makeSubLoader(makeLodData(5, 3, { color: 'uint8' }));
+    const l = new PointsProgressiveLoader(
+      [slowA, fastB] as unknown as PointsSpatialIndexLoader[],
+      2,
+      '/dispose-race'
+    );
+    const pending = l.loadPoints(baseViewState);
+    l.dispose(); // clears lodLoaders while level 0 is awaited
+    release();
+    await expect(pending).resolves.toBeDefined(); // pre-fix: TypeError
+    // Level 1 was never touched after the dispose.
+    expect(fastB.updateViewWithResidency).not.toHaveBeenCalled();
+  });
+});
+
+describe('buildSliceViewSig extend_to_all membership (shared helper)', () => {
+  const dims4 = () =>
+    [
+      { name: 'x' },
+      { name: 'y' },
+      { name: 'z' },
+      { name: 't', discrete: true, spatial: false, step: 1 },
+    ] as unknown as PointsViewState['dimensions'];
+  const view = (tol3: number) => ({
+    displayDims: [0, 1, 2],
+    slicePosition: [0, 0, 0, 0],
+    tolerance: [0, 0, 0, tol3],
+    dimensions: dims4(),
+  });
+
+  it('collapses ordinary ride-along churn but keys extend_to_all membership', () => {
+    // Ordinary builder churn (0 at init vs 0.5 from navigation) must collide
+    // (cache hit) — that was the whole point of nulling the ride-along slot.
+    expect(buildSliceViewSig(view(0))).toBe(buildSliceViewSig(view(0.5)));
+    // …but the extend_to_all sentinel is the one ride-along value the
+    // worker's discrete-dim membership reads: it must NOT collide.
+    expect(buildSliceViewSig(view(0.5))).not.toBe(buildSliceViewSig(view(1e10)));
+    // Two above-threshold sentinels are the same query.
+    expect(buildSliceViewSig(view(1e10))).toBe(buildSliceViewSig(view(2e10)));
+  });
+});
