@@ -258,6 +258,11 @@ export function buildRailItems(deps: RailItemsDeps): ControlRailItem[] {
           icon: RAIL_ICONS.fullscreen,
           activate: () => ui.commands.toggleFullscreen(),
           isActive: () => isDocumentFullscreen(),
+          // Fullscreen is a session-long ambient state — lighting the View
+          // button for the whole session would read as noise (and the rail
+          // is hidden in fullscreen anyway). The chip itself still shows
+          // active inside the flyout.
+          excludeFromParentActive: true,
         },
       ],
     },

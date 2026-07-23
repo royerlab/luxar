@@ -17,7 +17,10 @@ import {
   clampPointCapacity,
   pointTextureHeightForCapacity,
 } from '../../../rendering/element-texture-layout';
-import { elementTexelCapacity } from '../../../rendering/element-storage';
+import {
+  elementTexelCapacity,
+  registerElementTexelDirtyRange,
+} from '../../../rendering/element-storage';
 import {
   attachPointStorage,
   getPointTexture,
@@ -154,8 +157,8 @@ describe('attachPointStorage / writePointTexels — fused writer round-trip', ()
     // Simulate the renderer flush (three invokes onUpdate after consuming
     // the upload) — the initial full write crossed the >=75% knee into
     // full-upload mode, and a pre-flush append correctly STAYS full
-    // (pinned by the pending-full test); this test exercises the ranged
-    // append path that runs once the upload has flushed.
+    // (pinned by the points pending-full test below); this test exercises
+    // the ranged append path that runs once the upload has flushed.
     texture.onUpdate?.(texture);
 
     // Append: source is FULL-LENGTH (6), write only points [4, 6) = row 2.
@@ -173,6 +176,35 @@ describe('attachPointStorage / writePointTexels — fused writer round-trip', ()
     expect(union.length).toBeGreaterThan(0);
     const minStart = Math.min(...union.map((r) => r.start));
     expect(minStart).toBe(4 * POINT_FLOATS_PER_POINT);
+  });
+
+  it('a pending FULL upload is NOT downgraded by a later append (three-geometry twin)', () => {
+    // Points twin of the splat suite's pending-full test: full-upload mode
+    // is encoded as needsUpdate + EMPTY updateRanges — invisible to the
+    // range fold. A full write dirtying >= 75% of rows enters full mode;
+    // an append BEFORE any flush must NOT register partial ranges (that
+    // would downgrade the full upload and leave the prefix rendering the
+    // previous commit's texels on classic WebGL).
+    configureElementTextureLayout(6); // 2 points/row
+    const geometry = new THREE.InstancedBufferGeometry();
+    const texture = attachPointStorage(geometry, 4); // 4 points → 2 rows
+    texture.clearUpdateRanges();
+    texture.onUpdate?.(texture); // simulate the attach upload flush
+    const v0 = texture.version;
+
+    // Full write of all 4 points → 2/2 rows dirty → full-upload mode.
+    writePointTexels(texture, makeSource(4), 4);
+    expect(texture.updateRanges.length).toBe(0);
+    expect(texture.version).toBeGreaterThan(v0);
+
+    // A suffix register before the flush must keep full mode (no ranges).
+    registerElementTexelDirtyRange(texture, POINT_FLOATS_PER_POINT, 3, 4);
+    expect(texture.updateRanges.length).toBe(0);
+
+    // A simulated flush ends the pending-full state; ranged uploads resume.
+    texture.onUpdate?.(texture);
+    registerElementTexelDirtyRange(texture, POINT_FLOATS_PER_POINT, 3, 4);
+    expect(texture.updateRanges.length).toBeGreaterThan(0);
   });
 
   it('writePointTexels({fromPoint: 0}) and omitted opts are byte-identical (regression)', () => {
