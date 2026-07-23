@@ -20,7 +20,7 @@ luxar demo                  # list all demos (key, index, requirements)
 luxar demo info lorenz      # metadata for one demo
 luxar demo run lorenz       # run by key or index; forwards -- args
 luxar demo run lorenz -- --no-serve --points=10000
-luxar demo run-all          # generate every demo's dataset (--no-serve)
+luxar demo run-all          # generate demo datasets (--no-serve; skips GPU/large-download by default)
 luxar demo cache list       # inventory demo caches under ~/.cache/luxar/
 ```
 
@@ -43,7 +43,7 @@ registry — there is no second metadata list to keep in sync.
 #### demo_lorenz.py - Lorenz Attractor
 Beautiful chaotic attractor with rainbow color gradient.
 
-**Run**: `hatch run python packages/luxar/src/luxar/demos/demo_lorenz.py [--points=100000]`
+**Run**: `luxar demo run lorenz [-- --points=100000]`
 
 **Demonstrates**: Differential equation integration, vectorized HSV-to-RGB color conversion, time-based color gradients, progressive writing, chaotic systems visualization.
 
@@ -52,7 +52,7 @@ Beautiful chaotic attractor with rainbow color gradient.
 #### demo_rainbow_sphere.py - Fibonacci Spiral Sphere
 Dense sphere (200k points) with perfect distribution and rainbow colors.
 
-**Run**: `hatch run python packages/luxar/src/luxar/demos/demo_rainbow_sphere.py [--points=100000]`
+**Run**: `luxar demo run rainbow_sphere [-- --points=100000]`
 
 **Demonstrates**: Fibonacci (golden angle) spiral for optimal sphere coverage, smooth rainbow gradient using phase-shifted sine waves, automatic point spacing calculation, high density visualization.
 
@@ -61,7 +61,7 @@ Dense sphere (200k points) with perfect distribution and rainbow colors.
 #### demo_volumetric_cloud.py - Fractal Cloud Structure
 Realistic cloud using multi-octave fractal noise and varying point sizes.
 
-**Run**: `hatch run python packages/luxar/src/luxar/demos/demo_volumetric_cloud.py [--points=1000000]`
+**Run**: `luxar demo run cloud [-- --points=1000000]`
 
 **Demonstrates**: Self-contained Perlin-like fractal noise, multi-octave detail at multiple scales, volumetric density filtering, varying point sizes based on local density, soft cloud-like appearance (low sharpness 0.2-0.35 on the normalized [0, 1] knob).
 
@@ -70,7 +70,7 @@ Realistic cloud using multi-octave fractal noise and varying point sizes.
 #### demo_cubic_array.py - 3D Cubic Grid with Star Background
 Dense 100-cubed grid (1M points) with 500k background stars.
 
-**Run**: `hatch run python packages/luxar/src/luxar/demos/demo_cubic_array.py`
+**Run**: `luxar demo run cubic_array`
 
 **Demonstrates**: Regular grids via meshgrid, multi-layer scenes (foreground + background), very high point density (1.5M total), different blending modes (additive vs normal), semi-transparent background layers.
 
@@ -79,7 +79,7 @@ Dense 100-cubed grid (1M points) with 500k background stars.
 #### demo_mandelbulb.py - 3D Mandelbulb Fractal
 Stunning volumetric representation of the famous Mandelbulb 3D fractal.
 
-**Run**: `hatch run python packages/luxar/src/luxar/demos/demo_mandelbulb.py [--resolution=128] [--power=8]`
+**Run**: `luxar demo run mandelbulb [-- --resolution=128] [-- --power=8]`
 
 **Demonstrates**: 3D fractal mathematics (extension of Mandelbrot set), distance estimation for surface detection, iteration-based coloring, adaptive point sizing, spherical coordinate transformation, escape-time algorithm in 3D.
 
@@ -88,7 +88,7 @@ Stunning volumetric representation of the famous Mandelbulb 3D fractal.
 #### demo_spiral_galaxy.py - Realistic Multi-Armed Spiral Galaxy
 Beautiful astronomical simulation of a barred spiral galaxy.
 
-**Run**: `hatch run python packages/luxar/src/luxar/demos/demo_spiral_galaxy.py [--stars=500000] [--arms=4]`
+**Run**: `luxar demo run spiral_galaxy [-- --stars=500000] [-- --arms=4]`
 
 **Demonstrates**: Logarithmic spiral arm generation, realistic stellar population distributions, color variation (blue young stars in arms, red/yellow old stars in bulge), central galactic bulge and stellar halo modeling.
 
@@ -97,7 +97,7 @@ Beautiful astronomical simulation of a barred spiral galaxy.
 #### demo_quantum_orbitals.py - Quantum Atomic Orbitals
 Hydrogen atom electron probability density visualization showing s, p, d, and f orbitals.
 
-**Run**: `hatch run python packages/luxar/src/luxar/demos/demo_quantum_orbitals.py [--grid=N]`
+**Run**: `luxar demo run quantum_orbitals [-- --grid=N]`
 
 **Demonstrates**: Hydrogen wavefunction computation (radial functions and spherical harmonics), categorical navigation between quantum states (n, l, m), probability density coloring, 3D shapes (spheres, dumbbells, cloverleafs).
 
@@ -106,7 +106,7 @@ Hydrogen atom electron probability density visualization showing s, p, d, and f 
 #### demo_atp_synthase.py - ATP Synthase Molecular Turbine
 Visualizes the complete ATP Synthase rotary motor structure with F1 catalytic head and F0 membrane rotor, all subunits color-coded.
 
-**Run**: `hatch run python packages/luxar/src/luxar/demos/demo_atp_synthase.py`
+**Run**: `luxar demo run atp_synthase`
 
 **Demonstrates**: Molecular machine visualization, multi-subunit protein complex, color-coded structural components (alpha, beta, gamma, c-ring), biological energy production machinery (~600 kDa enzyme).
 
@@ -115,7 +115,7 @@ Visualizes the complete ATP Synthase rotary motor structure with F1 catalytic he
 #### demo_nuclear_pore_complex.py - Nuclear Pore Complex
 Downloads real Nup107-160 subcomplex structure from PDB and applies perfect 8-fold rotational symmetry to visualize the nuclear gateway.
 
-**Run**: `hatch run python packages/luxar/src/luxar/demos/demo_nuclear_pore_complex.py`
+**Run**: `luxar demo run nuclear_pore_complex`
 
 **Requires**: Internet access (downloads PDB structure).
 
@@ -126,7 +126,7 @@ Downloads real Nup107-160 subcomplex structure from PDB and applies perfect 8-fo
 #### demo_quasicrystal_3d.py - 3D Aperiodic Quasicrystal
 3D quasicrystal with icosahedral symmetry using the cut-and-project method from 6D to 3D.
 
-**Run**: `hatch run python packages/luxar/src/luxar/demos/demo_quasicrystal_3d.py`
+**Run**: `luxar demo run quasicrystal`
 
 **Demonstrates**: Cut-and-project method (6D lattice to 3D), icosahedral symmetry (5-fold), golden ratio projection matrices, aperiodic tiling (never repeats but ordered), color-coded by perpendicular space coordinates.
 
@@ -135,7 +135,7 @@ Downloads real Nup107-160 subcomplex structure from PDB and applies perfect 8-fo
 #### demo_turing_patterns.py - 2D Turing Reaction-Diffusion Patterns
 Gray-Scott reaction-diffusion system creating organic patterns (spots, stripes, spirals, labyrinths) with temporal evolution.
 
-**Run**: `hatch run python packages/luxar/src/luxar/demos/demo_turing_patterns.py [--size=N] [--steps=N]`
+**Run**: `luxar demo run turing_patterns [-- --size=N] [-- --steps=N]`
 
 **Demonstrates**: Gray-Scott model simulation, multiple pattern types via different (F, k) parameters, temporal evolution of pattern formation, categorical navigation between pattern types, emergent complexity from simple rules.
 
@@ -144,7 +144,7 @@ Gray-Scott reaction-diffusion system creating organic patterns (spots, stripes, 
 #### demo_bioluminescent_ocean.py - Bioluminescent Ocean
 Ethereal underwater visualization with animated jellyfish, flowing tentacles, glowing plankton, and bioluminescent deep-sea atmosphere.
 
-**Run**: `hatch run python packages/luxar/src/luxar/demos/demo_bioluminescent_ocean.py`
+**Run**: `luxar demo run ocean`
 
 **Demonstrates**: Jellyfish bell and tentacle geometry, bioluminescent color schemes (GFP-inspired), marine organism animation, atmospheric underwater effects.
 
@@ -153,7 +153,7 @@ Ethereal underwater visualization with animated jellyfish, flowing tentacles, gl
 #### demo_flywire_connectome.py - FlyWire Adult Drosophila Connectome
 First complete wiring diagram of an adult animal brain: ~139k neurons as Points at their soma positions (in µm) and top-N neuron-to-neuron connections as tapered Lines inside the real brain envelope.
 
-**Run**: `hatch run python packages/luxar/src/luxar/demos/demo_flywire_connectome.py [--min-synapses=20] [--max-edges=300000]`
+**Run**: `luxar demo run flywire_connectome [-- --min-synapses=20] [-- --max-edges=300000]`
 
 **Requires**: Internet access on first run (auto-downloads ~850 MB of connectivity data from Zenodo to `~/.cache/luxar/flywire/`; subsequent runs are offline).
 
@@ -164,7 +164,7 @@ First complete wiring diagram of an adult animal brain: ~139k neurons as Points 
 #### demo_particle_collision.py - Particle Collision Detector
 Realistic visualization of particle physics collisions inspired by CERN's ATLAS and CMS detectors, showing helical particle tracks, jets, and energy deposits.
 
-**Run**: `hatch run python packages/luxar/src/luxar/demos/demo_particle_collision.py`
+**Run**: `luxar demo run collision`
 
 **Demonstrates**: Helical trajectories from Lorentz force (F = qv x B), transverse momentum and track curvature, detector geometry (barrel + endcap), particle jets and energy deposits, magnetic field effects on charged particles.
 
@@ -173,7 +173,7 @@ Realistic visualization of particle physics collisions inspired by CERN's ATLAS 
 #### demo_particle_collision_animated.py - Animated Particle Collision Detector
 Time-animated version of the particle collision demo. Watch particle tracks grow outward from the collision vertex as time advances.
 
-**Run**: `hatch run python packages/luxar/src/luxar/demos/demo_particle_collision_animated.py`
+**Run**: `luxar demo run particle_collision_animated`
 
 **Demonstrates**: Same physics as `demo_particle_collision.py` plus time dimension animation, event unfolding in real-time, 4D (XYZ + time) navigation.
 
@@ -184,7 +184,7 @@ Time-animated version of the particle collision demo. Watch particle tracks grow
 #### demo_4d_fractals.py - 4D Geometric Fractal Explorer
 Interactive exploration of 6 different 4D geometric fractals with categorical dimension.
 
-**Run**: `hatch run python packages/luxar/src/luxar/demos/demo_4d_fractals.py [--grid=64]`
+**Run**: `luxar demo run fractals_4d [-- --grid=64]`
 
 **Demonstrates**: 4D spatial navigation (XYZ + W dimension), categorical dimension (select between 6 fractal types), large dataset (~100M+ points, ~1M visible), XOR Fractal, Menger Sponge 4D, Sierpinski 4D, Cantor Dust 4D, Checkerboard and Diamond patterns.
 
@@ -193,7 +193,7 @@ Interactive exploration of 6 different 4D geometric fractals with categorical di
 #### demo_5d_spiral_galaxy.py - 5D Spiral Galaxy with Time Evolution
 Large-scale 5D data with millions of points: multiple spiral arms evolving over time with channel-based coloring.
 
-**Run**: `hatch run python packages/luxar/src/luxar/demos/demo_5d_spiral_galaxy.py [--points=N]`
+**Run**: `luxar demo run spiral_galaxy_5d [-- --points=N]`
 
 **Demonstrates**: 5D data (X, Y, Z, Time, Channel), continuous and discrete dimension navigation, time-based animation of spiral arm rotation, channel variation representing different wavelengths, logarithmic spiral arm mathematics.
 
@@ -202,7 +202,7 @@ Large-scale 5D data with millions of points: multiple spiral arms evolving over 
 #### demo_nd_transforms.py - Multi-Instrument Observatory with nD Transforms
 Three instruments (optical telescope, radio telescope, X-ray satellite) observing the same galaxy cluster, aligned using per-dimension affine transforms.
 
-**Run**: `hatch run python packages/luxar/src/luxar/demos/demo_nd_transforms.py`
+**Run**: `luxar demo run nd_transforms`
 
 **Demonstrates**: `nd_transform` with affine scale + offset on Time dimension, categorical permutation on Channel dimension, multi-group scenes with per-group nD alignment, coherent multi-instrument view from a single time slider.
 
@@ -213,7 +213,7 @@ Three instruments (optical telescope, radio telescope, X-ray satellite) observin
 #### demo_sharpness_showcase.py - Point Sharpness Showcase
 Comprehensive showcase of the point sharpness feature: gradient from peaky (0.0) to hard-edged (1.0) on the normalized knob, fixed sharpness comparison rows, mixed sharpness cloud, and sinusoidal wave pattern.
 
-**Run**: `hatch run python packages/luxar/src/luxar/demos/demo_sharpness_showcase.py [--points N]`
+**Run**: `luxar demo run sharpness_showcase [-- --points N]`
 
 **Demonstrates**: Sharpness parameter control (normalized [0, 1] knob mapping to a super-Gaussian falloff exponent beta=2^(6s-2); 0.5 = Gaussian), soft/peaky points (low s) vs sharp disc-like points (high s), color-coded sharpness values, multiple visualization patterns.
 
@@ -222,7 +222,7 @@ Comprehensive showcase of the point sharpness feature: gradient from peaky (0.0)
 #### demo_lsystem_forest.py - L-System Tree Forest (Lines Demo)
 Beautiful procedural forest using L-system grammars to showcase the **Lines** node type.
 
-**Run**: `hatch run python packages/luxar/src/luxar/demos/demo_lsystem_forest.py [--iterations=6] [--trees=16]`
+**Run**: `luxar demo run forest [-- --iterations=6] [-- --trees=16]`
 
 **Demonstrates**: **Lines node type** with thousands of line segments, L-system grammar expansion and interpretation, width tapering (thick trunk to thin twigs), color gradients (bark to foliage), 3D branching, multiple tree varieties (elegant, fractal, willow, bush, cherry), seasonal color schemes.
 
@@ -231,7 +231,7 @@ Beautiful procedural forest using L-system grammars to showcase the **Lines** no
 #### demo_hilbert_curve_3d.py - 3D Hilbert Space-Filling Curve (Lines Demo)
 The 3D Hilbert curve — a continuous, self-similar polyline that visits every cell of a 2^n × 2^n × 2^n grid exactly once with consecutive cells always sharing a face. Vectorized Skilling algorithm produces orders 1 through max_order (default 6 = 262k vertices), each rendered as a single thin polyline with HSV hue swept along the traversal index. A slider on the `order` dim steps through the recursion so you can watch each level subdivide and rotate.
 
-**Run**: `hatch run python packages/luxar/src/luxar/demos/demo_hilbert_curve_3d.py [--max-order=6]`
+**Run**: `luxar demo run hilbert_curve_3d [-- --max-order=6]`
 
 **Demonstrates**: Single ultra-long `polyline` Lines node (262k+ vertices, 262k segments), thin constant width with color gradient along traversal, runtime-verified Hamiltonian path on the integer lattice, slider-driven recursion exploration (each order on its own slot of a non-displayed `order` dim), Skilling's vectorized 3D Hilbert algorithm.
 
@@ -242,9 +242,9 @@ Large multi-cluster dataset (1M points) for testing viewer performance under net
 
 **Run**:
 ```bash
-hatch run python packages/luxar/src/luxar/demos/demo_network_performance.py
-hatch run python packages/luxar/src/luxar/demos/demo_network_performance.py --profile 3g
-hatch run python packages/luxar/src/luxar/demos/demo_network_performance.py --points=2000000 --profile satellite
+luxar demo run network_performance
+luxar demo run network_performance -- --profile 3g
+luxar demo run network_performance -- --points=2000000 --profile satellite
 ```
 
 **Demonstrates**: Network simulation (bandwidth throttling, latency, jitter, packet loss), progressive loading behavior with limited bandwidth, cache effectiveness under bandwidth constraints, multi-cluster particle systems (1M+ points).
@@ -256,7 +256,7 @@ hatch run python packages/luxar/src/luxar/demos/demo_network_performance.py --po
 #### demo_arxiv_paper_embeddings.py - ArXiv Paper Embeddings (Semantic Scholar)
 Visualizes scientific papers in 3D embedding space. Papers cluster by topic, colored by research field, sized by citation count.
 
-**Run**: `hatch run python packages/luxar/src/luxar/demos/demo_arxiv_paper_embeddings.py`
+**Run**: `luxar demo run arxiv_papers`
 
 **Requires**: Internet access, `sentence-transformers` and `umap-learn` packages. Embeds abstracts with Sentence-BERT (all-MiniLM-L6-v2) and reduces to 3D with UMAP.
 
@@ -267,7 +267,7 @@ Visualizes scientific papers in 3D embedding space. Papers cluster by topic, col
 #### demo_arxiv_embeddings_kaggle.py - ArXiv Paper Embeddings (Kaggle / OpenAI)
 Visualizes arXiv papers using pre-computed OpenAI embeddings from the Kaggle "openai-arxiv-embeddings" dataset (2M+ papers, 3072D).
 
-**Run**: `hatch run python packages/luxar/src/luxar/demos/demo_arxiv_embeddings_kaggle.py`
+**Run**: `luxar demo run arxiv_papers_kaggle`
 
 **Requires**: Internet access, Kaggle account (for first download, ~30 GB cached to `~/.cache/mlcroissant/`), `mlcroissant` and `umap-learn` packages. First run takes 8-15 minutes; subsequent runs use cache.
 
@@ -278,7 +278,7 @@ Visualizes arXiv papers using pre-computed OpenAI embeddings from the Kaggle "op
 #### demo_protein_embeddings_cafa5.py - Protein Function Landscape (ProtT5 Embeddings)
 Visualizes 142k proteins from the CAFA5 challenge in 3D embedding space, showing how proteins with similar functions cluster together.
 
-**Run**: `hatch run python packages/luxar/src/luxar/demos/demo_protein_embeddings_cafa5.py`
+**Run**: `luxar demo run protein_landscape`
 
 **Requires**: Internet access, `umap-learn` package. Uses ProtT5 1024D embeddings reduced to 3D with UMAP.
 
@@ -289,7 +289,7 @@ Visualizes 142k proteins from the CAFA5 challenge in 3D embedding space, showing
 #### demo_esm3_protein_landscape.py - ESM-3 Protein Landscape (Swiss-Prot)
 ~572k Swiss-Prot proteins embedded with ESM-3 (or ESM C 300M) and projected to 3D with UMAP. Each point is a protein, colored by taxonomic kingdom, with hover labels showing protein name, organism, and kingdom.
 
-**Run**: `python -m luxar.demos.demo_esm3_protein_landscape [--no-serve] [--sample=100000] [--model=esmc-300m]`
+**Run**: `luxar demo run esm3_protein_landscape [-- --no-serve] [-- --sample=100000] [-- --model=esmc-300m]`
 
 **Requires**: Internet access (downloads Swiss-Prot from UniProt), `esm` package; GPU strongly recommended (first run computes ESM embeddings + UMAP, ~5h). Subsequent runs load cached results.
 
@@ -300,7 +300,7 @@ Visualizes 142k proteins from the CAFA5 challenge in 3D embedding space, showing
 #### demo_cellxgene_census_umap.py - CZ CELLxGENE Census single-cell 3D UMAP (LOD stress test)
 A very large 3D UMAP of human single cells from the CZ CELLxGENE Census, embedded from their **precomputed scVI latent** (50-d) with **cuML UMAP**, rendered with **substitutive Points LOD** + a categorical `coloring` dimension (cell type / tissue / disease). The shipped default builds a 3M-element scene from a 1M-cell cache; the pipeline scales to **10M cells (30M elements, a 7-level LOD ladder)** — the largest UMAP demo in the repo, built to exercise the LOD machinery.
 
-**Run**: `hatch run python packages/luxar/src/luxar/demos/demo_cellxgene_census_umap.py [--no-serve]`
+**Run**: `luxar demo run cellxgene_census_umap [-- --no-serve]`
 
 **Requires**: nothing extra for the default (ships a 1M-cell coords cache via Git LFS). Regenerating at scale needs a CUDA GPU with `cellxgene-census` + `cuml` (RAPIDS) — see `scripts/gen_census_umap.py` (≈96.6M primary human cells available; ~140s scVI fetch + ~14min cuML UMAP for 10M). Point the demo at a larger cache via `CENSUS_UMAP_CACHE` / `CENSUS_UMAP_MAX_CELLS` / `CENSUS_UMAP_DEVICE`.
 
@@ -311,7 +311,7 @@ A very large 3D UMAP of human single cells from the CZ CELLxGENE Census, embedde
 #### demo_cytoself_protein_landscape.py - CytoSelf Protein Localization 3D UMAP
 ~114k per-image CytoSelf embeddings from the OpenCell dataset as a 3D UMAP point cloud. Each point is a single fluorescence microscopy crop of an endogenously tagged protein, colored by subcellular localization or protein identity.
 
-**Run**: `python -m luxar.demos.demo_cytoself_protein_landscape [--no-serve] [--recompute]`
+**Run**: `luxar demo run cytoself_protein_landscape [-- --no-serve] [-- --recompute]`
 
 **Requires**: Internet access (downloads embeddings from Google Drive), `umap-learn`, `pandas`, `requests`. First run computes 3D UMAP (~10-30 min); subsequent runs load cached results.
 
@@ -322,7 +322,7 @@ A very large 3D UMAP of human single cells from the CZ CELLxGENE Census, embedde
 #### demo_zebrahub_multiome.py - Zebrahub Integrated Cells 3D UMAP
 Visualizes integrated single cells from zebrafish with categorical attribute navigation between Cell Type and Timepoint views.
 
-**Run**: `hatch run python packages/luxar/src/luxar/demos/demo_zebrahub_multiome.py`
+**Run**: `luxar demo run zebrahub_multiome`
 
 **Requires**: Internet access (downloads the integrated 3D-UMAP parquet from the CZ Biohub public store).
 
@@ -333,7 +333,7 @@ Visualizes integrated single cells from zebrafish with categorical attribute nav
 #### demo_zebrahub_velocity_streamlines.py - Zebrahub 3D RNA-Velocity UMAP + Streamlines
 Turns the Zebrahub VeloCyto AnnData (spliced/unspliced counts + precomputed 3D RNA-velocity UMAP embedding) into a luminous scene: cells as soft Points (colored by anatomy ontology) and RK4-integrated streamlines as Lines tracing the velocity field through UMAP space.
 
-**Run**: `hatch run python packages/luxar/src/luxar/demos/demo_zebrahub_velocity_streamlines.py [--preset preview] [--no-serve] [--h5ad /path/to/zebrahub_velocity.h5ad]`
+**Run**: `luxar demo run zebrahub_velocity_streamlines [-- --preset preview] [-- --no-serve] [-- --h5ad /path/to/zebrahub_velocity.h5ad]`
 
 **Requires**: Internet access on first run (auto-downloads the `.h5ad` from the shared Zebrahub Google Drive into `~/.cache/luxar/zebrahub_velocity/`), `anndata`, `h5py`, `gdown`, `scipy`.
 
@@ -344,7 +344,7 @@ Turns the Zebrahub VeloCyto AnnData (spliced/unspliced counts + precomputed 3D R
 #### demo_human_multiome_peak_umap.py - Human Multiome Peak 3D UMAP
 3D UMAP embedding of ~1M single-cell ATAC-seq peaks, color-coded by cell type, lineage, timepoint, and other attributes.
 
-**Run**: `hatch run python packages/luxar/src/luxar/demos/demo_human_multiome_peak_umap.py`
+**Run**: `luxar demo run human_multiome_peak_umap`
 
 **Requires**: Local parquet data file, `pandas` package.
 
@@ -355,7 +355,7 @@ Turns the Zebrahub VeloCyto AnnData (spliced/unspliced counts + precomputed 3D R
 #### demo_mouse_multiome_peak_umap.py - Mouse Multiome Peak 3D UMAP
 3D UMAP embedding of ~192k single-cell ATAC-seq peaks from mouse embryonic development (E7.5-E8.75), color-coded by cell type, lineage, and timepoint.
 
-**Run**: `hatch run python packages/luxar/src/luxar/demos/demo_mouse_multiome_peak_umap.py`
+**Run**: `luxar demo run mouse_multiome_peak_umap`
 
 **Requires**: Local parquet data file, `pandas` package.
 
@@ -366,7 +366,7 @@ Turns the Zebrahub VeloCyto AnnData (spliced/unspliced counts + precomputed 3D R
 #### demo_zebrahub_multiome_peak_umap.py - Zebrahub Multiome Peak 3D UMAP
 3D UMAP of 640k single-cell chromatin accessibility peaks from the Zebrahub project, with 30 cell types across 6 developmental stages.
 
-**Run**: `hatch run python packages/luxar/src/luxar/demos/demo_zebrahub_multiome_peak_umap.py`
+**Run**: `luxar demo run zebrahub_multiome_peak_umap`
 
 **Requires**: Internet access (downloads from CZ Biohub public zarr store).
 
@@ -377,7 +377,7 @@ Turns the Zebrahub VeloCyto AnnData (spliced/unspliced counts + precomputed 3D R
 #### demo_chromatrace_choir_umap.py - Chromatrace CHOIR 3D UMAP (Cell-Type Atlas)
 3D UMAP of ~60k single cells annotated with CHOIR bio-terms (88 fine-grained cell types) and bio-groups (8 broad lineages: Neuroectoderm, Neural Crest, Craniofacial Mesenchyme, Cardiac/Vascular, Mesoderm, Endoderm, Epidermis, Other). Two runtime-switchable color views with curated CHOIR palette and grouped HTML legend.
 
-**Run**: `hatch run python packages/luxar/src/luxar/demos/demo_chromatrace_choir_umap.py [--data /path/to/zip-or-folder]`
+**Run**: `luxar demo run chromatrace_choir_umap [-- --data /path/to/zip-or-folder]`
 
 **Requires**: User-provided `choir_umap_3d_viewer.zip` bundle (parquet + colormap JSON) — auto-detected in `~/Downloads/` or `~/.cache/luxar/chromatrace/`.
 
@@ -388,7 +388,7 @@ Turns the Zebrahub VeloCyto AnnData (spliced/unspliced counts + precomputed 3D R
 #### demo_tabula_sapiens.py - Tabula Sapiens Human Single-Cell Atlas UMAP
 The Tabula Sapiens first-draft human cell atlas (~500k cells from 24 tissues of 15 donors) as a 3D UMAP embedding. Each point is a cell, colored by organ of origin, with hover labels showing cell type and tissue.
 
-**Run**: `python -m luxar.demos.demo_tabula_sapiens [--no-serve] [--sample=50000]`
+**Run**: `luxar demo run tabula_sapiens [-- --no-serve] [-- --sample=50000]`
 
 **Requires**: Internet access (downloads from CZ CELLxGENE Discover), `pandas`, `umap-learn`, `scipy` (installed via `luxar[demos]`).
 
@@ -399,7 +399,7 @@ The Tabula Sapiens first-draft human cell atlas (~500k cells from 24 tissues of 
 #### demo_spotify_tracks.py - Spotify Tracks 3D UMAP of Audio Features
 ~114k Spotify tracks embedded into 3D via UMAP on 9 audio features (danceability, energy, loudness, speechiness, acousticness, instrumentalness, liveness, valence, tempo). Colored by genre, sized by popularity, with track/artist/genre hover labels.
 
-**Run**: `python -m luxar.demos.demo_spotify_tracks [--no-serve] [--sample=50000]`
+**Run**: `luxar demo run spotify_tracks [-- --no-serve] [-- --sample=50000]`
 
 **Requires**: Internet access (downloads dataset CSV from Hugging Face), `pandas`, `umap-learn` (installed via `luxar[demos]`).
 
@@ -410,7 +410,7 @@ The Tabula Sapiens first-draft human cell atlas (~500k cells from 24 tissues of 
 #### demo_chromatrace_choir_umap_sequence.py - Chromatrace CHOIR UMAP — Cell-Type Walkthrough
 Variant of the Chromatrace demo with an 89-step slider stepping through each fine-grained CHOIR bio-term one at a time. Within each bio-group, cell types are reordered (nearest-neighbor + 2-opt TSP on UMAP centroids) so consecutive slots are spatially adjacent. Backdrop layer keeps the full UMAP outline visible across all slots; highlight layer shows only the active type in its CHOIR palette color.
 
-**Run**: `hatch run python packages/luxar/src/luxar/demos/demo_chromatrace_choir_umap_sequence.py [--no-tsp] [--data /path/to/zip-or-folder]`
+**Run**: `luxar demo run chromatrace_choir_umap_sequence [-- --no-tsp] [-- --data /path/to/zip-or-folder]`
 
 **Requires**: Same `choir_umap_3d_viewer.zip` bundle as `demo_chromatrace_choir_umap.py`.
 
@@ -420,10 +420,19 @@ Variant of the Chromatrace demo with an 89-step slider stepping through each fin
 
 ### Data-Driven Demos (External Datasets)
 
+#### demo_global_rivers_earth.py - Rivers of Earth
+A topographic ETOPO globe (Points) plus every HydroRIVERS reach (Lines) in geographic 3D.
+
+**Run**: `luxar demo run global_rivers_earth`
+
+**Demonstrates**: Mixed Points+Lines geometry in one scene, geographic (lat/lon/elevation) coordinate mapping, large real-world datasets with local caching (~1 GB download on first run).
+
+---
+
 #### demo_gaia_milky_way_3m.py - Milky Way Stars (Gaia DR3, 3M Stars)
 Real Milky Way stars from Gaia DR3: top 3M brightest stars with real photometric colors (BP-RP index), galactocentric coordinates, and reference markers (Sun, Betelgeuse, Rigel).
 
-**Run**: `hatch run python packages/luxar/src/luxar/demos/demo_gaia_milky_way_3m.py`
+**Run**: `luxar demo run galaxy`
 
 **Requires**: Internet access (Gaia DR3 TAP query or cached data).
 
@@ -434,7 +443,7 @@ Real Milky Way stars from Gaia DR3: top 3M brightest stars with real photometric
 #### demo_earthquakes_3d.py - Global Earthquake Visualization
 Real-time earthquake data from USGS plotted on a 3D Earth sphere with vertical spikes showing magnitude and color-coded by time.
 
-**Run**: `hatch run python packages/luxar/src/luxar/demos/demo_earthquakes_3d.py`
+**Run**: `luxar demo run earthquakes`
 
 **Requires**: Internet access (USGS earthquake API).
 
@@ -445,7 +454,7 @@ Real-time earthquake data from USGS plotted on a 3D Earth sphere with vertical s
 #### demo_cosmicflows_laniakea.py - Cosmicflows-4 Laniakea Flow Field
 Recreates the Cosmicflows-4 / Laniakea visualization by Simone Conradi and Manlio De Domenico: 55,486 local-universe galaxies plus colored streamlines tracing matter flow through basins of attraction.
 
-**Run**: `hatch run python packages/luxar/src/luxar/demos/demo_cosmicflows_laniakea.py [--preset preview|full]`
+**Run**: `luxar demo run cosmicflows_laniakea [-- --preset preview|full]`
 
 **Requires**: Internet access on first run (downloads ~26 MB from the public `manlius/laniakea` GitHub data cache; reused from `~/.cache/luxar/laniakea/`). The full preset reproduces the reported 29,555 valid streamlines and writes a large line dataset; `--preset preview` is faster for iteration.
 
@@ -456,7 +465,7 @@ Recreates the Cosmicflows-4 / Laniakea visualization by Simone Conradi and Manli
 #### demo_desi_galaxies.py - DESI DR1: The Cosmic Web in 3D (~9.75M galaxies & quasars)
 The large-scale structure of the Universe as a point cloud from the Dark Energy Spectroscopic Instrument's first data release. Each point is a real galaxy or quasar with a measured spectroscopic redshift; the redshift becomes a comoving distance so sky position + depth give true 3D Cartesian coordinates in megaparsecs. You sit at the observer's origin looking out at the two DESI footprint caps fanning into filaments, voids, and the baryon-acoustic shells. Two colorings toggle in the Layers panel: **by tracer** (BGS/LRG/ELG/QSO populations, naturally layered by distance) and **by redshift** (continuous depth colormap).
 
-**Run**: `hatch run python packages/luxar/src/luxar/demos/demo_desi_galaxies.py [--recompute]`
+**Run**: `luxar demo run desi_galaxies [-- --recompute]`
 
 **Requires**: Nothing extra by default — ships a compact precomputed point cloud (quantized XYZ + redshift + tracer id) via Git LFS. With `--recompute` (or if the LFS asset isn't pulled) it auto-downloads the ~1 GB of DR1 LSS clustering catalogs to `~/.cache/luxar/desi_galaxies/` (resumable), reads them with `astropy`, and converts (RA, Dec, z) → comoving Mpc. Adds `astropy` to the `demos` extra. The built scene (with substitutive LOD) is cached in the demos output dir, so only the first launch pays the LOD-build cost.
 
@@ -467,7 +476,7 @@ The large-scale structure of the Universe as a point cloud from the Dark Energy 
 #### demo_asteroids_solar_system.py - The Solar System (~1.5M Real Asteroids, JPL SBDB)
 Every catalogued minor planet placed in real 3D space by propagating its measured Keplerian orbit to a common epoch: ~1.5M asteroids as Points colored by semi-major axis, plus the eight planets, the Sun, and the planets' orbit ellipses (Lines). The main belt, Kirkwood gaps, Hilda triangle, and Jupiter Trojan clouds all emerge from the real orbital-element distribution.
 
-**Run**: `hatch run python packages/luxar/src/luxar/demos/demo_asteroids_solar_system.py [--animate] [--max-asteroids N]`
+**Run**: `luxar demo run asteroids_solar_system [-- --animate] [-- --max-asteroids N]`
 
 **Requires**: Internet access on first run (downloads the JPL SBDB catalog, ~140 MB, to `~/.cache/luxar/asteroids/`; the parsed catalog is then cached as `.npz`, so subsequent runs are offline).
 
@@ -478,7 +487,7 @@ Every catalogued minor planet placed in real 3D space by propagating its measure
 #### demo_dipc_3d_genome.py - Single-Cell 3D Genome (Dip-C)
 The folded 3D structure of one human cell's genome from Dip-C (Tan et al. 2018, Science): the chromosomes coil through the nucleus as Lines, colored by chromosome, with the maternal and paternal genomes exposed as two toggleable Layers (press **L**) to isolate one copy or overlay both.
 
-**Run**: `hatch run python packages/luxar/src/luxar/demos/demo_dipc_3d_genome.py [--recompute]`
+**Run**: `luxar demo run dipc_3d_genome [-- --recompute]`
 
 **Requires**: Nothing extra by default — ships a small precomputed structure via Git LFS. With `--recompute` (or if the LFS asset isn't pulled) it auto-downloads the GEO archive (`GSE117876_RAW.tar`, ~4.7 GB) to `~/.cache/luxar/dipc_genome/`, extracts one cell's `.3dg`, and caches the processed `.npz`.
 
@@ -489,7 +498,7 @@ The folded 3D structure of one human cell's genome from Dip-C (Tan et al. 2018, 
 #### demo_storm_3d_microtubules.py - 3D STORM Super-Resolution Microscopy
 Microtubule cytoskeleton at nanometer resolution using real STORM super-resolution microscopy localizations as Gaussian splats.
 
-**Run**: `hatch run python packages/luxar/src/luxar/demos/demo_storm_3d_microtubules.py`
+**Run**: `luxar demo run storm_3d_microtubules`
 
 **Requires**: Internet access (downloads STORM localization data).
 
@@ -500,7 +509,7 @@ Microtubule cytoskeleton at nanometer resolution using real STORM super-resoluti
 #### demo_huri_interactome.py - HuRI Human Reference Interactome (Network)
 ~8k human proteins as Points and ~50k direct Y2H protein-protein interactions as Lines, laid out in 3D by graph structure alone (spectral embedding + UMAP). Nodes colored by Louvain community or HGNC chromosome; intra-community edges colored by community, cross-community "bridge" edges in dim gray. Rich edge hovers show the pair, intra/cross label, and — when available — the shared CORUM complex.
 
-**Run**: `hatch run python packages/luxar/src/luxar/demos/demo_huri_interactome.py`
+**Run**: `luxar demo run huri_interactome`
 
 **Requires**: Internet access (downloads ~35 MB one-time: HuRI + HGNC + optional CORUM), `networkx>=3.0`, `umap-learn`, `scipy`, `pandas`, `requests`.
 
@@ -511,7 +520,7 @@ Microtubule cytoskeleton at nanometer resolution using real STORM super-resoluti
 #### demo_ppi_flow_field.py - HuRI PPI Flow Field (Signed Network Streamlines)
 Turns the HuRI protein-protein interaction graph into a continuous 3D flow landscape. PageRank orients each interaction from lower-centrality to higher-centrality protein; UMAP embeds a signed sparse adjacency / flow-profile matrix so upstream and downstream roles separate; a cubic vector field blends nearby oriented edges with a regularized `1/d^3` weight; Gaussian-smoothed streamlines are seeded from proteins and advected forward through the volume.
 
-**Run**: `hatch run python packages/luxar/src/luxar/demos/demo_ppi_flow_field.py [--preset preview|full]`
+**Run**: `luxar demo run ppi_flow_field [-- --preset preview|full]`
 
 **Requires**: Internet access on first run (reuses the HuRI/HGNC cache in `~/.cache/luxar/huri/`), `networkx>=3.0`, `umap-learn`, `scipy`, `pandas`, `requests`. The default `full` preset builds the requested 256³ vector field and caches a larger `.npz` file; use `--preset preview` for a faster 128³ authoring run.
 
@@ -522,7 +531,7 @@ Turns the HuRI protein-protein interaction graph into a continuous 3D flow lands
 #### demo_caida_as_topology.py - CAIDA AS Topology (The Internet as a Graph)
 ~80k Autonomous Systems as Points and ~350k BGP relationships as Lines, laid out in 3D from graph structure alone. Auto-fetches the latest CAIDA serial-2 snapshot. Edges are styled by RELATIONSHIP TYPE — warm amber tapered lines for provider-customer (thick at provider, thin at customer, encoding direction), cool cyan uniform lines for peers. Nodes colored by Louvain community or country (CAIDA as2org). Tier-1 ASes (no upstream providers) get a size bump so the backbone pops. Edge hovers narrate the relationship ("Tier-1 transit" / "Tier-1 peering" / "Provider → Customer" / etc.) with both endpoints' org names and countries.
 
-**Run**: `hatch run python packages/luxar/src/luxar/demos/demo_caida_as_topology.py`
+**Run**: `luxar demo run caida_as_topology`
 
 **Requires**: Internet access (auto-downloads ~60 MB from CAIDA on first run), `networkx>=3.0`, `umap-learn`, `scipy`, `pandas`, `requests`.
 
@@ -532,10 +541,19 @@ Turns the HuRI protein-protein interaction graph into a continuous 3D flow lands
 
 ### GSplats Demos (Gaussian Splatting)
 
+#### demo_gsplats_3d_tng_cosmic_web.py - IllustrisTNG Cosmic Web
+IllustrisTNG TNG300 dark-matter density (244M particles) as Gaussian splats — the cosmic web.
+
+**Run**: `luxar demo run gsplats_3d_tng_cosmic_web`
+
+**Demonstrates**: Fetch-raw-and-process-locally for access-gated data (IllustrisTNG requires an account + API key; nothing is redistributed), GPU gsplat fitting of a cosmological density field, LOD topologies for very large splat counts.
+
+---
+
 #### demo_gsplats_2d_codex_pancreas.py - 2D CODEX Pancreas (12-Channel Multiplexed Fluorescence)
 12-channel multiplexed immunofluorescence image of human pancreas tissue as 2D Gaussian splats with per-channel colors, using tiled fitting.
 
-**Run**: `hatch run python packages/luxar/src/luxar/demos/demo_gsplats_2d_codex_pancreas.py`
+**Run**: `luxar demo run gsplats_2d_codex_pancreas`
 
 **Requires**: Internet access (downloads from Zenodo), GPU recommended. 476 megapixels per channel (25,816 x 18,440 px).
 
@@ -546,7 +564,7 @@ Turns the HuRI protein-protein interaction graph into a continuous 3D flow lands
 #### demo_gsplats_2d_cmu1_pathology.py - 2D Whole-Slide Pathology Image (CMU-1)
 Gigapixel H&E-stained whole-slide pathology image as 2D Gaussian splats with per-channel (R/G/B) colors, using tiled fitting.
 
-**Run**: `hatch run python packages/luxar/src/luxar/demos/demo_gsplats_2d_cmu1_pathology.py`
+**Run**: `luxar demo run gsplats_2d_cmu1_pathology`
 
 **Requires**: Internet access (downloads from OpenSlide test data, ~169 MB), GPU recommended. 1.5 gigapixels (46,000 x 32,914 px).
 
@@ -557,7 +575,7 @@ Gigapixel H&E-stained whole-slide pathology image as 2D Gaussian splats with per
 #### demo_gsplats_3d_organoid_dapi_nuclei.py - 3D Organoid DAPI Nuclei
 Gaussian splatting compression of real 3D confocal microscopy data (DAPI-stained cell nuclei) from Image Data Resource (IDR).
 
-**Run**: `hatch run python packages/luxar/src/luxar/demos/demo_gsplats_3d_organoid_dapi_nuclei.py`
+**Run**: `luxar demo run gsplats_3d_organoid_dapi_nuclei`
 
 **Requires**: Internet access (downloads OME-ZARR from IDR). Supports Metal (MPS) acceleration on Apple Silicon.
 
@@ -568,7 +586,7 @@ Gaussian splatting compression of real 3D confocal microscopy data (DAPI-stained
 #### demo_gsplats_3d_organoid_multichannel.py - Multi-Channel 3D Organoid (IDR Pipeline)
 Multi-channel 3D microscopy data as Gaussian splats, with full compute pipeline from Image Data Resource (IDR). Uses precomputed gsplats from Git LFS by default.
 
-**Run**: `hatch run python packages/luxar/src/luxar/demos/demo_gsplats_3d_organoid_multichannel.py [--recompute]`
+**Run**: `luxar demo run gsplats_3d_organoid_multichannel [-- --recompute]`
 
 **Requires**: Git LFS data (default) or internet access + GPU (with `--recompute`).
 
@@ -579,7 +597,7 @@ Multi-channel 3D microscopy data as Gaussian splats, with full compute pipeline 
 #### demo_gsplats_3d_cells3d_multichannel.py - 3D Multi-Channel Cells (Layers + BOP LUTs)
 Two-channel scikit-image `cells3d` fluorescence volume (membranes + nuclei) fitted per channel as 3D splats and shown as toggleable **layers**, each coloured by a BOP (Blue-Orange-Purple) microscopy LUT (`bop_orange` membranes, `bop_blue` nuclei). Fully self-contained (skimage downloads the sample) — the cheapest gsplat demo to run from scratch. Uses precomputed gsplats from Git LFS by default.
 
-**Run**: `hatch run python packages/luxar/src/luxar/demos/demo_gsplats_3d_cells3d_multichannel.py [--recompute]`
+**Run**: `luxar demo run gsplats_3d_cells3d_multichannel [-- --recompute]`
 
 **Requires**: Git LFS data (default) or `scikit-image` + GPU (with `--recompute`).
 
@@ -590,7 +608,7 @@ Two-channel scikit-image `cells3d` fluorescence volume (membranes + nuclei) fitt
 #### demo_gsplats_3d_kidney_multichannel_toggles.py - 3D Multi-Channel Kidney (Boolean Toggles)
 Three-channel confocal mouse kidney tissue (nuclei, WGA, actin) with independent boolean toggle dimensions for each channel.
 
-**Run**: `hatch run python packages/luxar/src/luxar/demos/demo_gsplats_3d_kidney_multichannel_toggles.py`
+**Run**: `luxar demo run gsplats_6d_kidney_multichannel_toggles`
 
 **Requires**: `scikit-image` package (for `kidney()` sample data, FluoCells Prepared Slide #3).
 
@@ -601,7 +619,7 @@ Three-channel confocal mouse kidney tissue (nuclei, WGA, actin) with independent
 #### demo_gsplats_3d_kidney_multichannel_layers.py - 3D Multi-Channel Kidney (Layers Panel)
 Same kidney dataset as the toggles variant, but uses the **Layers panel** (`layer=True`) instead of boolean dimensions for per-channel visibility control.
 
-**Run**: `hatch run python packages/luxar/src/luxar/demos/demo_gsplats_3d_kidney_multichannel_layers.py`
+**Run**: `luxar demo run gsplats_3d_kidney_multichannel_layers`
 
 **Requires**: `scikit-image` package.
 
@@ -612,7 +630,7 @@ Same kidney dataset as the toggles variant, but uses the **Layers panel** (`laye
 #### demo_gsplats_3d_acto3d_heart.py - 3D Mouse Embryo Heart (Acto3D / Zeiss Lightsheet 7)
 Three-channel light-sheet microscopy volume of an E13.5 mouse embryo heart as Gaussian splats with per-channel colors.
 
-**Run**: `hatch run python packages/luxar/src/luxar/demos/demo_gsplats_3d_acto3d_heart.py`
+**Run**: `luxar demo run gsplats_3d_acto3d_heart`
 
 **Requires**: Internet access (downloads ~1.65 GB TIFF from Google Drive), GPU recommended.
 
@@ -623,7 +641,7 @@ Three-channel light-sheet microscopy volume of an E13.5 mouse embryo heart as Ga
 #### demo_gsplats_3d_opencell_map4.py - OpenCell MAP4 Cytoskeleton
 Two-channel confocal z-stack of endogenously tagged MAP4 (microtubule-associated protein 4) in HEK293T cells from the OpenCell project, with Hoechst nuclear stain.
 
-**Run**: `hatch run python packages/luxar/src/luxar/demos/demo_gsplats_3d_opencell_map4.py`
+**Run**: `luxar demo run gsplats_3d_opencell_map4`
 
 **Requires**: Internet access (downloads from OpenCell, ~70 MB).
 
@@ -634,7 +652,7 @@ Two-channel confocal z-stack of endogenously tagged MAP4 (microtubule-associated
 #### demo_gsplats_3d_tribolium_embryo.py - 3D Tribolium Embryo (Cell Tracking Challenge)
 Large isotropic 3D light-sheet volume of a developing beetle (*Tribolium castaneum*) embryo using Gaussian splatting. Near-isotropic at 0.381 um per voxel.
 
-**Run**: `hatch run python packages/luxar/src/luxar/demos/demo_gsplats_3d_tribolium_embryo.py`
+**Run**: `luxar demo run gsplats_3d_tribolium_embryo`
 
 **Requires**: Internet access (downloads ~2.6 GB from Zenodo), GPU recommended. 965 x 1871 x 991 voxels.
 
@@ -645,7 +663,7 @@ Large isotropic 3D light-sheet volume of a developing beetle (*Tribolium castane
 #### demo_gsplats_3d_milky_way_dust.py - 3D Interstellar Dust of the Solar Neighborhood (Leike & Enßlin 2020)
 Gaussian-splats a real 3D reconstruction of the Milky Way's interstellar dust around the Sun — the splat pipeline applied to astrophysics rather than microscopy. The "volume" is a cube of *space*: a 740 × 740 × 540 pc reconstruction of dust extinction density at 1 pc resolution, fit into glowing 3D fog revealing the Local Bubble and the Orion / Taurus / Perseus molecular clouds.
 
-**Run**: `hatch run python packages/luxar/src/luxar/demos/demo_gsplats_3d_milky_way_dust.py [--recompute]`
+**Run**: `luxar demo run gsplats_3d_milky_way_dust [-- --recompute]`
 
 **Requires**: Nothing extra by default — ships a precomputed **full-resolution** fit via Git LFS (~8 MB: the native 740×740×540 cube fit to ~675k splats, PSNR ~35 dB). With `--recompute` (or if the LFS asset isn't pulled) it auto-downloads the 2.4 GB reconstruction (`mean_std.h5`) to `~/.cache/luxar/gsplats_milkyway_dust/` (resumable) and refits. The `--recompute` default reproduces the shipped full-res fit and needs a large-VRAM GPU (~40 GB+); on a smaller card pass `--target-size 256 --max-splats 200000` for a lighter downscaled refit.
 
@@ -656,7 +674,7 @@ Gaussian-splats a real 3D reconstruction of the Milky Way's interstellar dust ar
 #### demo_gsplats_3d_visible_human_head.py - Visible Human Head (Real-Color Anatomy)
 The human head Gaussian-splatted in **true photographic color** from the NLM Visible Human Project cryosections — actual photographs of a frozen cadaver sliced at 1 mm, so brain, skull, muscle and vasculature appear in natural anatomical color (not a false-color transfer function). The splat pipeline applied to real photographic volumetric anatomy.
 
-**Run**: `hatch run python packages/luxar/src/luxar/demos/demo_gsplats_3d_visible_human_head.py [--recompute]`
+**Run**: `luxar demo run gsplats_3d_visible_human_head [-- --recompute]`
 
 **Requires**: Nothing extra by default — ships a precomputed fit + per-splat colors via Git LFS. With `--recompute` (or if the LFS assets aren't pulled) it auto-downloads the 377 color head slices (~1.1 GB) to `~/.cache/luxar/gsplats_visible_human_head/`, builds the masked RGB volume, fits luminance (GPU), and samples per-splat colors.
 
@@ -667,7 +685,7 @@ The human head Gaussian-splatted in **true photographic color** from the NLM Vis
 #### demo_gsplats_3d_cryoem_virus.py - Cryo-EM Giant Virus Capsid (Structural Biology)
 Gaussian-splats a real cryo-electron-microscopy density map from the EMDB: the icosahedral capsid of *Paramecium bursaria* chlorella virus 1 (PBCV-1), a giant virus. The reconstructed electron-density volume — a hollow ~1650 Å shell tiled with capsomers — is exactly what the Luxar splat fitter eats, so this is the microscopy splat pipeline applied to structural biology (no isosurface threshold needed).
 
-**Run**: `hatch run python packages/luxar/src/luxar/demos/demo_gsplats_3d_cryoem_virus.py [--recompute]`
+**Run**: `luxar demo run gsplats_3d_cryoem_virus [-- --recompute]`
 
 **Requires**: Nothing extra by default — ships a precomputed fit via Git LFS (~12 MB: the 700³ EMDB map downsampled to 512³, fit to ~1.0M splats, PSNR ~28 dB). With `--recompute` (or if the LFS asset isn't pulled) it auto-downloads the 1.3 GB EMDB map (`emd_5384.map.gz`) to `~/.cache/luxar/gsplats_cryoem_virus/` (resumable), reads it with `mrcfile`, downsamples to 512³, and fits Gaussian splats on the GPU. Adds `mrcfile` to the `demos` extra.
 
@@ -678,7 +696,7 @@ Gaussian-splats a real cryo-electron-microscopy density map from the EMDB: the i
 #### demo_gsplats_3d_ct_totalsegmentator.py - CT Anatomical Atlas (neck-to-pelvis, Organs in Color)
 Gaussian-splats a real clinical CT scan — a neck-to-pelvis study (the fullest coverage routine CT offers; the head and distal limbs are outside the scan) — and colors every splat by the anatomical structure it belongs to, using the TotalSegmentator dataset's 117-organ segmentation. The result is a glowing, rotatable atlas — white skeleton, red great vessels, cyan lungs, and colored abdominal organs in their true 3D positions. The same **one-fit + per-splat label sampling** idea as the Visible Human head demo, but the sampled organ label drives the color (a tissue-grouped palette), a **hover tooltip** (the specific structure name — all 117 tissue types), and a split into **toggle-able Layers-panel groups** (Skeleton / Organs / Vessels & heart / Nervous system / Muscles, the last a faint boosted context) — the splat pipeline applied to clinical radiology.
 
-**Run**: `hatch run python packages/luxar/src/luxar/demos/demo_gsplats_3d_ct_totalsegmentator.py [--recompute]`
+**Run**: `luxar demo run gsplats_3d_ct_totalsegmentator [-- --recompute]`
 
 **Requires**: Nothing extra by default — ships a precomputed fit + per-splat organ labels via Git LFS (~8 MB: a neck-to-pelvis subject at 1.5 mm, fit to ~0.66M splats, PSNR ~43 dB; colors, layers and hover tooltips are all derived from the labels at scene build). With `--recompute` (or if the LFS assets aren't pulled) it auto-downloads the 3.2 GB TotalSegmentator subset to `~/.cache/luxar/gsplats_ct_totalsegmentator/` (resumable), extracts one subject, combines its 117 organ masks with `nibabel`, windows + fits on the GPU, and samples the per-splat organ label. Adds `nibabel` to the `demos` extra.
 
@@ -689,7 +707,7 @@ Gaussian-splats a real clinical CT scan — a neck-to-pelvis study (the fullest 
 #### demo_gsplats_lod_tribolium.py - Adaptive Level of Detail on the Tribolium Embryo
 Takes the precomputed Tribolium embryo fit and builds an **adaptive Level of Detail (LOD)** pyramid on it — the embryo is stored at several resolutions, and the viewer shows the simplest one that still looks right at the current zoom. This demo uses *substitutive* LOD (each coarser level *replaces* the finer one with fewer, larger splats), and ships it with per-level debug colors (green→amber→red, finest→coarsest) so the viewer's `coverage_fraction` level-switching is visible as you zoom. The scaled-up companion to `examples/gsplats_lod_example.py`.
 
-**Run**: `hatch run python packages/luxar/src/luxar/demos/demo_gsplats_lod_tribolium.py`
+**Run**: `luxar demo run gsplats_lod_tribolium`
 
 **Requires**: Precomputed Tribolium splats (Git LFS); no network/GPU needed for the default path. `--recompute` re-fits from Zenodo (network + GPU).
 
@@ -700,7 +718,7 @@ Takes the precomputed Tribolium embryo fit and builds an **adaptive Level of Det
 #### demo_gsplats_lod_embryo_line.py - Near-Unlimited Scaling with Adaptive Level of Detail
 Lays out `--count` (default 100) copies of the single adaptive-detail Tribolium embryo along a straight line, drops the camera near the middle of the line, and lets you fly down it. **Level of Detail (LOD)** is the idea that makes this scale: each embryo is kept at several resolutions, and the viewer picks — per object, every frame, by viewport-relative `coverage_fraction` (how much of the screen it covers) — the simplest version that still looks right. Near embryos render fine (green) while distant ones collapse to a few big splats (red), so the detail actually drawn stays roughly bounded by what the screen can resolve, no matter how long the line. All copies share **byte-identical splat arrays** (per-embryo orientation/jitter lives only in scene-graph transforms), so the encoder's `array_ref` deduplication stores the geometry once: 100 embryos cost ~55 MB on disk instead of ~1.3 GB.
 
-**Run**: `hatch run python packages/luxar/src/luxar/demos/demo_gsplats_lod_embryo_line.py`
+**Run**: `luxar demo run gsplats_lod_embryo_line`
 
 **Requires**: Precomputed Tribolium splats (Git LFS); no network/GPU needed for the default path. `--recompute` re-fits from Zenodo (network + GPU).
 
@@ -711,7 +729,7 @@ Lays out `--count` (default 100) copies of the single adaptive-detail Tribolium 
 #### demo_gsplats_recipes_tribolium.py - LOD `--recipe` gallery (flat / stream / levels / tiles / overview / adaptive)
 Runs the unified `luxar gsplat lod --recipe` pipeline on the **one** precomputed Tribolium fit to build the six scale-ordered representation topologies and lays them out side by side for direct comparison: **flat** (one leaf) → **stream** (one leaf + a prefix-sum ladder) → **levels** (a `kind=lod` of *substitutive* levels — coarse↔fine replacement, one shown at a time) → **tiles** (a spatial BSP `kind=partition` where every part carries its own additive ladder) → **overview** (an *unbalanced-by-design* `kind=lod`: a cheap coarse substitutive cap for the far view, above a `tiles` fine branch for close-up — detail only where you look) → **adaptive** (a BSP `kind=partition` where every part is its own *substitutive* lod group — per-part coarse↔fine replacement, so each cell culls AND picks its own level by its own on-screen size). Structure is colour-coded so the topologies are legible: each BSP part gets a distinct colour, the overview coarse cap is red ("far") above cool-coloured fine parts ("near"), and the stream ladder runs blue→cyan coarse→fine. The reference demo for the `cal → fit → lod --recipe → convert → serve` workflow; each recipe build prints the equivalent CLI command.
 
-**Run**: `hatch run python packages/luxar/src/luxar/demos/demo_gsplats_recipes_tribolium.py`
+**Run**: `luxar demo run gsplats_recipes_tribolium`
 
 **Requires**: Precomputed Tribolium splats (Git LFS); no network/GPU needed for the default path. `--recompute` re-fits from Zenodo (network + GPU).
 
@@ -725,37 +743,37 @@ These six demos download **pre-captured** Gaussian-splat scenes from the classic
 
 ##### demo_gsplats_interop_spz_scaniverse.py - Scaniverse SPZ captures (Niantic)
 Downloads the two official Niantic `spz` sample scans (a horned lizard, a raccoon-family sculpture — phone captures) and imports them with a streaming LOD ladder.
-**Run**: `hatch run python packages/luxar/src/luxar/demos/demo_gsplats_interop_spz_scaniverse.py`
+**Run**: `luxar demo run gsplats_interop_spz_scaniverse`
 **Requires**: Network (~18 + 24 MB). No GPU.
 **Data**: [nianticlabs/spz](https://github.com/nianticlabs/spz) samples — **MIT**.
 
 ##### demo_gsplats_interop_mipnerf_garden.py - Mip-NeRF 360 garden / bicycle (`.splat`)
 Downloads the iconic Mip-NeRF 360 *garden* (or `--scene bicycle`) scene as an antimatter15 `.splat` (~187/196 MB) and imports it with a **tiled** LOD (spatial BSP + per-tile streaming ladders) since it is ~5 M splats.
-**Run**: `hatch run python packages/luxar/src/luxar/demos/demo_gsplats_interop_mipnerf_garden.py [--scene garden|bicycle]`
+**Run**: `luxar demo run gsplats_interop_mipnerf_garden [-- --scene garden|bicycle]`
 **Requires**: Network (~187 MB). No GPU.
 **Data**: [cakewalk/splat-data](https://huggingface.co/cakewalk/splat-data); Mip-NeRF 360 (Barron et al. 2022) trained to 3DGS (Kerbl et al. 2023) — **research use** (Google), fetched at runtime, not redistributed.
 
 ##### demo_gsplats_interop_observatory.py - Astronomical observatories (SuperSplat compressed PLY)
 Downloads a Gaussian-splat capture of the Vera C. Rubin Observatory (`--scene gemini-south` for Gemini South) as a SuperSplat *compressed* PLY and imports it with a streaming LOD.
-**Run**: `hatch run python packages/luxar/src/luxar/demos/demo_gsplats_interop_observatory.py [--scene rubin|gemini-south]`
+**Run**: `luxar demo run gsplats_interop_observatory [-- --scene rubin|gemini-south]`
 **Requires**: Network (~41/83 MB). No GPU.
 **Data**: [khyron/Gaussian-Splatting](https://github.com/khyron/Gaussian-Splatting) — **CC BY 4.0**.
 
 ##### demo_gsplats_interop_inria_garden.py - Full-quality INRIA garden (HTTP-Range zip extraction)
 Extracts just the ~1.45 GB `point_cloud.ply` member from INRIA's 14.7 GB `models.zip` over **HTTP Range requests** (Zip64 central-directory parsing — the member sits at byte offset ~5.6 GB), then imports it with a tiled LOD. The full-training-fidelity counterpart of the `.splat` demo.
-**Run**: `hatch run python packages/luxar/src/luxar/demos/demo_gsplats_interop_inria_garden.py`
+**Run**: `luxar demo run gsplats_interop_inria_garden`
 **Requires**: Network (~1.45 GB range-extracted from a 14.7 GB archive; server must honor byte ranges — INRIA's does). No GPU.
 **Data**: [INRIA 3DGS pretrained models](https://repo-sam.inria.fr/fungraph/3d-gaussian-splatting/); INRIA Gaussian-Splatting license (**research / non-commercial**); Mip-NeRF 360 scenes (Google research use). Fetched at runtime, not redistributed.
 
 ##### demo_gsplats_interop_macro_clusterfly.py - Macro cluster fly (Dany Bittel)
 Range-extracts just the ~68 MB `cluster fly L.ply` member (~300 k splats) from Dany Bittel's ~1 GB macro-photogrammetry release archive on GitHub — a real cluster fly (*Pollenia*) captured under a macro rig and 3DGS-trained — then imports it with a streaming LOD. A millimetre-scale "fly in digital amber": the smallest, most detailed subject of the interop set, and the one that exercises the range extractor against a **redirecting** host (GitHub release assets → signed CDN).
-**Run**: `hatch run python packages/luxar/src/luxar/demos/demo_gsplats_interop_macro_clusterfly.py`
+**Run**: `luxar demo run gsplats_interop_macro_clusterfly`
 **Requires**: Network (~68 MB range-extracted from a ~1 GB archive; server must honor byte ranges — GitHub's asset CDN does). No GPU.
 **Data**: [Dany Bittel macro splats](https://danybittel.ch/macro) — **CC BY 4.0** (attributed in-scene). Fetched at runtime, not redistributed.
 
 ##### demo_gsplats_interop_sog_matrixcity.py - MatrixCity aerial (PlayCanvas SOG, ~13.6M — the largest)
 Fetches the aerial "small city" MatrixCity scene — **13,589,514 Gaussians** — from SuperSplat in PlayCanvas's compact **SOG** (Spatially Ordered Gaussians) format (`meta.json` + lossless WebP images, ~15–20× smaller than PLY), decodes it with Luxar's SOG reader, and builds an **overview** LOD: one coarse global level (instant whole-city first paint) over a BSP partition of stream-laddered fine tiles. The largest scene in the interop set (~45× the cluster fly) and the city-scale stress test for Luxar's LOD.
-**Run**: `hatch run python packages/luxar/src/luxar/demos/demo_gsplats_interop_sog_matrixcity.py`
+**Run**: `luxar demo run gsplats_interop_sog_matrixcity`
 **Requires**: Network (~156 MB SOG bundle), several GB RAM for the import + LOD build (workstation recommended). No GPU required. `Pillow` (WebP) from the `demos` extra.
 **Data**: [MatrixCity](https://city-super.github.io/matrixcity/) (Li et al. 2023), 3DGS via FriendlySplat on [SuperSplat](https://superspl.at/scene/ace6e5b0) — research/education; fetched at runtime, not redistributed.
 
@@ -766,7 +784,7 @@ Fetches the aerial "small city" MatrixCity scene — **13,589,514 Gaussians** �
 #### demo_gsplats_4d_zebrafish_timelapse.py - 4D Zebrafish Embryo Time-Lapse
 4D (3D + time) confocal recording of a living zebrafish embryo during gastrulation, with per-timepoint Gaussian splatting and a time dimension slider.
 
-**Run**: `hatch run python packages/luxar/src/luxar/demos/demo_gsplats_4d_zebrafish_timelapse.py`
+**Run**: `luxar demo run gsplats_4d_zebrafish_timelapse`
 
 **Requires**: Internet access (downloads ~2.1 GB LSM from Zenodo), GPU recommended.
 
@@ -777,7 +795,7 @@ Fetches the aerial "small city" MatrixCity scene — **13,589,514 Gaussians** �
 #### demo_gsplats_4d_neuromast_2ch.py - 4D Two-Channel Zebrafish Neuromast Time-Lapse
 100-timepoint iSIM recording of a developing zebrafish lateral-line **neuromast** (`she:GFP; cldnb:lyn-mScarlet`), shown as **two independently-toggleable Gaussian-splat layers**: membranes (mScarlet, `bop_blue` LUT) + nuclei (GFP, `bop_orange` LUT). Both channels are co-registered and share one 4D coordinate space, so they animate together — play the **Time** slider to scrub development, press **L** for the Layers panel to control each channel. The bundled gsplats are pre-fit (per-channel calibration K*=64k → `batch-fit` → Z×2.5 anisotropy correction → redundancy cull), so no fitting/GPU is needed to view.
 
-**Run**: `hatch run python packages/luxar/src/luxar/demos/demo_gsplats_4d_neuromast_2ch.py`
+**Run**: `luxar demo run gsplats_4d_neuromast_2ch`
 
 **Requires**: The two pre-fit `.gsplats.zarr` (~220 MB) in a local store (`~/luxar_demo_data/gsplats_neuromast_2ch/`, or `$LUXAR_NEUROMAST_DATA_DIR`). ⚠️ **Not bundled/hosted yet** — this is the outstanding follow-up (upload to the demo data host and switch to `load_precomputed_gsplats`, like the other gsplat demos). No network/GPU needed once the store is populated.
 
@@ -788,7 +806,7 @@ Fetches the aerial "small city" MatrixCity scene — **13,589,514 Gaussians** �
 #### demo_gsplats_4d_celegans_tracking.py - 4D C. elegans Nuclei Tracking with Lines
 4D confocal time-series of a developing *C. elegans* embryo: Gaussian splats for volume rendering combined with polylines for tracked cell nuclei trajectories.
 
-**Run**: `hatch run python packages/luxar/src/luxar/demos/demo_gsplats_4d_celegans_tracking.py`
+**Run**: `luxar demo run gsplats_4d_celegans_tracking`
 
 **Requires**: Internet access (downloads ~26.1 GB from Zenodo), GPU recommended.
 

@@ -78,7 +78,13 @@ import {
   usesPeakProjection,
 } from '../../blending-state';
 import type { BlendingMode } from '../../../types/blending';
-import { ALPHA_CLAMP } from './math';
+import {
+  ALPHA_CLAMP,
+  VOLUMETRIC_SERIES_TAU_THRESHOLD,
+  VOLUMETRIC_TAU_EPS,
+  VOLUMETRIC_SERIES_C1,
+  VOLUMETRIC_SERIES_C2_DIVISOR,
+} from './math';
 
 // Type-erased constructor aliases. TSL's typed `vec2`/`vec3`/`vec4`/`mat3`
 // overloads reject many valid combinations of intermediate `Node<…>`
@@ -680,9 +686,16 @@ export function gsplatWebGPUFactory(
       // materializes both sides — fine for this cheap scalar math
       // (unlike the vertex projection branches, which stay
       // JS-conditional).
+      // Threshold/coefficients/guard from ./math (the ALPHA_CLAMP
+      // single-source pattern — same constants as the GLSL template and
+      // the volumetric-math unit test).
       const alpha: TSLNode = float(1.0).sub(exp(tau.negate()));
-      const series: TSLNode = float(1.0).sub(tau.mul(0.5)).add(tau.mul(tau).div(6.0));
-      const screen: TSLNode = tau.lessThan(1e-3).select(series, alpha.div(max(tau, 1e-20)));
+      const series: TSLNode = float(1.0)
+        .sub(tau.mul(VOLUMETRIC_SERIES_C1))
+        .add(tau.mul(tau).div(VOLUMETRIC_SERIES_C2_DIVISOR));
+      const screen: TSLNode = tau
+        .lessThan(VOLUMETRIC_SERIES_TAU_THRESHOLD)
+        .select(series, alpha.div(max(tau, VOLUMETRIC_TAU_EPS)));
       return vec4(finalColor.mul(screen), alpha);
     }
     // All other modes keep the alpha=1.0 contract: additive/luminous
