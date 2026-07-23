@@ -60,7 +60,7 @@ import type { SortWorkerAPI } from '../workers/sort-worker';
 import { writeSortedIndexOrdering } from './element-storage';
 import { needsDepthSort, effectiveGeometryMode } from './blending-state';
 import { clearCommittedData, hasCommittedData } from '../types/committed-data';
-import type { BlendingMode } from './material-manager';
+import type { BlendingMode } from '../types/blending';
 import {
   assignGlobalRenderOrder,
   clearRenderOrderFrameState,
@@ -499,9 +499,9 @@ function scheduleSort(mesh: THREE.Mesh, nodeId: string): void {
   // `resortQueued`, which never drains. Routing the timeout through the
   // existing .catch clears `inFlight` and drains the queue (bounded
   // staleness degrade instead of a permanently unsorted node). A merely
-  // SLOW sort that resolves after the deadline is harmless: the resolve
-  // path re-checks generation + committedData, and a duplicate same-
-  // generation apply writes the identical ordering.
+  // SLOW sort that resolves after the deadline is harmless too: the race
+  // has already rejected, so its late resolve is dropped — the node just
+  // stays unsorted until the next commit/camera trigger re-sorts it.
   void withTimeout(
     'depth-sort',
     api.sort({ nodeId, generation, modelView: new Float32Array(modelView.elements) }),

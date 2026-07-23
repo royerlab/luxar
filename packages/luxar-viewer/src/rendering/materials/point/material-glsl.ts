@@ -22,7 +22,7 @@ import {
   effectiveGeometryMode,
   type CompleteBlendingState,
 } from '../../blending-state';
-import type { BlendingMode } from '../../material-manager';
+import type { BlendingMode } from '../../../types/blending';
 
 /**
  * Configuration for point material creation

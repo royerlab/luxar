@@ -30,11 +30,11 @@ def run_additive_dataset(
         from dataclasses import replace
 
         from luxar.cli.lod import (
-            _VALID_ADDITIVE_METHODS,
-            _parse_lod_breakpoints,
+            VALID_ADDITIVE_METHODS,
             detect_store_encoding,
             estimate_bytes_per_splat,
             measure_store_bytes,
+            parse_lod_breakpoints,
             resolve_streaming_breakpoints,
             validate_streaming_knobs,
         )
@@ -56,15 +56,15 @@ def run_additive_dataset(
 
         # ── usage validation (mirrors `gsplat lod`) ──
         method_norm = (method or "auto").strip().replace("-", "_")
-        if method_norm not in _VALID_ADDITIVE_METHODS:
+        if method_norm not in VALID_ADDITIVE_METHODS:
             raise typer.BadParameter(
-                f"--method must be one of {list(_VALID_ADDITIVE_METHODS)}; "
+                f"--method must be one of {list(VALID_ADDITIVE_METHODS)}; "
                 f"got {method!r}"
             )
         validate_streaming_knobs(
             target_ms, bandwidth_mbps, bytes_per_splat, breakpoints
         )
-        bp = _parse_lod_breakpoints(breakpoints or "equal-count")
+        bp = parse_lod_breakpoints(breakpoints or "equal-count")
         eff_n_lods = n_lods if n_lods is not None else 4
         encoding_mode_obj = _resolve_encoding_mode(encoding_mode)
 

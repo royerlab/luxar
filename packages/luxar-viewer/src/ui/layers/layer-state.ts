@@ -7,7 +7,7 @@
 
 import type { SceneNode } from '../../data/data-loader-types';
 import { getEffectiveAttrs } from '../../data/attrs-composer';
-import type { BlendingMode } from '../../rendering/material-manager';
+import type { BlendingMode } from '../../types/blending';
 import type { NodeKind } from '../../types/format-contract';
 import { log, Modules } from '../../utils/log';
 

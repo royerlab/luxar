@@ -62,7 +62,7 @@ import {
   type CompleteBlendingState,
 } from '../../blending-state';
 import { proxyIUniform, type TSLNode } from '../_shared/tsl-helpers';
-import type { BlendingMode } from '../../material-manager';
+import type { BlendingMode } from '../../../types/blending';
 
 export class GSplatTSLMaterial
   extends NodeMaterial

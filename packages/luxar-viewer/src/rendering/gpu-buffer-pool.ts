@@ -55,16 +55,19 @@ export type {
   PoolStats,
   PooledBufferRef,
 } from './gpu-buffer-pool/pool-stats';
-export { selectBuffersToEvict } from './gpu-buffer-pool/eviction-policy';
+// (`selectBuffersToEvict` / `chooseCapacity` used to be re-exported here
+// too, but every consumer imports them from their `gpu-buffer-pool/`
+// modules directly — the facade copies were dead.)
 
 /**
- * Capacity-sizing primitives moved to `gpu-buffer-pool/capacity.ts` so
- * the per-geometry adapters can import them without re-importing this
- * parent barrel (depcruise no-circular). Re-exported here for callers
- * of the parent module (and the wider rationale for the
+ * Test-only capacity override — the global test setup (`tests/setup.ts`)
+ * reaches it through this parent module. The capacity primitives
+ * themselves live in `gpu-buffer-pool/capacity.ts` so the per-geometry
+ * adapters can import them without re-importing this parent barrel
+ * (depcruise no-circular; the rationale for the
  * `DEFAULT_MIN_INSTANCE_CAPACITY = 256` floor lives in that file).
  */
-export { __setMinInstanceCapacityForTesting, chooseCapacity } from './gpu-buffer-pool/capacity';
+export { __setMinInstanceCapacityForTesting } from './gpu-buffer-pool/capacity';
 
 /**
  * GPU buffer pool for reusing THREE.BufferGeometry objects.

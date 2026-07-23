@@ -84,3 +84,23 @@ class TestEffectiveAmplitudes:
         data = self._leaf(amps, colors)
         order = np.argsort(-effective_amplitudes(data))
         assert list(order) == [0, 2, 1]
+
+    def test_integer_rgba_alpha_is_normalized_to_unit_range(self) -> None:
+        # uint8 colors are a valid SDR storage form (see _merge_lod_colors):
+        # opacity is stored at full scale (255 = opaque). The [0, 1] opacity
+        # contract requires normalizing before weighting — pre-fix, a uint8
+        # RGBA leaf misranked every splat by ~255x against float data.
+        amps = np.ones(3)
+        colors = np.array(
+            [[255, 255, 255, 255], [255, 255, 255, 128], [255, 255, 255, 0]],
+            dtype=np.uint8,
+        )
+        data = self._leaf(amps, colors)
+        weighted = effective_amplitudes(data)
+        assert np.allclose(weighted, [1.0, 128 / 255, 0.0], atol=1e-6)
+
+    def test_uint16_rgba_alpha_full_scale_is_opaque(self) -> None:
+        amps = np.array([2.0])
+        colors = np.array([[65535, 0, 0, 65535]], dtype=np.uint16)
+        data = self._leaf(amps, colors)
+        assert np.allclose(effective_amplitudes(data), [2.0], atol=1e-6)

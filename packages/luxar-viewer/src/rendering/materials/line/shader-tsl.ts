@@ -68,7 +68,7 @@ import {
   getCompleteBlendingState,
   effectiveGeometryMode,
 } from '../../blending-state';
-import type { BlendingMode } from '../../material-manager';
+import type { BlendingMode } from '../../../types/blending';
 
 export interface LineTSLConfig {
   readonly useColormap?: boolean;

@@ -37,7 +37,7 @@ import type { PostProcessingManager } from '../post-processing/post-processing-m
 import { isCameraAwareMaterial } from '../materials/_shared/camera-aware-material';
 import { isSurfacePickAwareMaterial } from './gsplat/material';
 import { isNormalMode, isOpaqueMode } from '../blending-state';
-import type { BlendingMode } from '../material-manager';
+import type { BlendingMode } from '../../types/blending';
 import {
   disposePickMaterial,
   isEffectivelyVisible,

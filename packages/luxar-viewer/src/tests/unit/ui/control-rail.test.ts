@@ -139,6 +139,39 @@ describe('ControlRail', () => {
     raf.mockRestore();
   });
 
+  it('re-syncs active-state on fullscreenchange (state can flip without a click)', () => {
+    // The View-options fullscreen chip keys isActive off the live fullscreen
+    // element, which changes without a click/keydown (Escape, browser UI) and
+    // always after the async fullscreen request resolves — syncFullscreen must
+    // schedule a refresh, not just toggle the rail's is-fullscreen class.
+    const rafQueue: FrameRequestCallback[] = [];
+    const raf = vi.spyOn(window, 'requestAnimationFrame').mockImplementation(((
+      cb: FrameRequestCallback
+    ) => {
+      rafQueue.push(cb);
+      return 1;
+    }) as typeof requestAnimationFrame);
+    const flushRaf = (): void => rafQueue.shift()?.(0);
+
+    let fullscreen = false;
+    rail = new ControlRail(items([{}, { isActive: () => fullscreen }]));
+    const active = () =>
+      document.querySelector('[data-rail-id="render"]')?.classList.contains('is-active');
+    expect(active()).toBe(false);
+
+    fullscreen = true;
+    document.dispatchEvent(new Event('fullscreenchange'));
+    flushRaf();
+    expect(active()).toBe(true);
+
+    fullscreen = false;
+    document.dispatchEvent(new Event('fullscreenchange'));
+    flushRaf();
+    expect(active()).toBe(false);
+
+    raf.mockRestore();
+  });
+
   it('never marks a momentary item active', () => {
     rail = new ControlRail(items([{}, {}, { momentary: true, isActive: () => true }]));
     expect(

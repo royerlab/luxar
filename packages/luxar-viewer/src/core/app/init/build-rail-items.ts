@@ -11,6 +11,7 @@
  */
 
 import { RAIL_ICONS, type ControlRailItem } from '../../../ui/control-rail';
+import { isDocumentFullscreen } from '../../../utils/fullscreen';
 import { buildSettingsPopover } from '../../../ui/rail-panels/settings-popover';
 import { buildNavigationPopover } from '../../../ui/rail-panels/navigation-popover';
 import { buildPerformancePopover } from '../../../ui/rail-panels/performance-popover';
@@ -243,6 +244,20 @@ export function buildRailItems(deps: RailItemsDeps): ControlRailItem[] {
           icon: RAIL_ICONS.cinematic,
           activate: () => ui.commands.toggleCinematicMode(),
           isActive: () => renderingControls.settings.cinematicMode,
+        },
+        {
+          // Fullscreen is otherwise reachable only through the focus-gated
+          // Space shortcut (dead whenever focus sits in a panel control), so
+          // this chip is the discoverable affordance. Active-state tracks the
+          // live fullscreen element; the rail refreshes on fullscreenchange
+          // (see ControlRail.syncFullscreen), which also covers exits via
+          // Escape or browser UI.
+          id: 'fullscreen',
+          title: 'Fullscreen',
+          shortcut: 'Space',
+          icon: RAIL_ICONS.fullscreen,
+          activate: () => ui.commands.toggleFullscreen(),
+          isActive: () => isDocumentFullscreen(),
         },
       ],
     },
