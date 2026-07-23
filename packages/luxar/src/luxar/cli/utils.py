@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import socket
 import subprocess
 import threading
@@ -224,20 +225,84 @@ def get_viewer_dist_path() -> Path:
     return Path(__file__).resolve().parents[5] / "packages" / "luxar-viewer" / "dist"
 
 
+def exit_code_from(returncode: int) -> int:
+    """Map a ``subprocess`` returncode to a shell-conventional exit code.
+
+    POSIX ``subprocess.run`` reports a signal-killed child as ``-N`` (signal
+    number). Passing that straight to ``typer.Exit``/``sys.exit`` truncates to
+    ``256 - N`` (SIGKILL → 247), which no tooling recognizes; the shell
+    convention is ``128 + N`` (SIGKILL → 137). Non-negative codes pass through.
+    """
+    return 128 - returncode if returncode < 0 else returncode
+
+
+def _dist_is_stale(dist: Path, src_dir: Path) -> bool:
+    """True when any viewer source is newer than the built ``dist/index.html``.
+
+    A dist that exists but predates the newest source edit silently serves an
+    outdated viewer (the "stale server" pitfall) — an existence check alone
+    can't see it. Single ``os.walk`` + ``stat`` over ``src/`` (~1600 files,
+    tens of ms); mirrors the viewer test harness's fixture-staleness check
+    (``newestPySourceMtime`` in ``global-setup.ts``). Fail-open: unreadable
+    entries are skipped, and a missing ``src/`` reads as not-stale.
+    """
+    index = dist / "index.html"
+    if not index.exists() or not src_dir.is_dir():
+        return False
+    built_at = index.stat().st_mtime
+    for dirpath, _dirnames, filenames in os.walk(src_dir):
+        for name in filenames:
+            try:
+                if os.stat(os.path.join(dirpath, name)).st_mtime > built_at:
+                    return True
+            except OSError:
+                continue
+    return False
+
+
 def ensure_viewer_built(auto_build: bool = True) -> bool:
-    """Return True when the viewer dist exists, building it first if possible.
+    """Return True when a CURRENT viewer dist exists, building it if possible.
 
     The serve-family commands previously disagreed on what to do when the
     viewer wasn't built (warn-and-skip vs auto-build vs error). This is the
     single policy: auto-build via pnpm only when running from a dev source
     tree; from an installed wheel the bundled ``_viewer_dist`` should already
     exist, so a missing viewer is a packaging problem, not a build step.
+
+    In a dev tree "built" also means "not stale": a dist older than the newest
+    viewer source triggers a rebuild too. A FAILED rebuild of a merely-stale
+    dist degrades to serving the stale build — with a loud warning — instead
+    of taking serving down entirely.
     """
-    if check_viewer_built():
+    built = check_viewer_built()
+    repo_root = _find_dev_repo_root()
+    stale = (
+        built
+        and repo_root is not None
+        and _dist_is_stale(
+            get_viewer_dist_path(), repo_root / "packages" / "luxar-viewer" / "src"
+        )
+    )
+    if built and not stale:
         return True
-    if auto_build and _find_dev_repo_root() is not None:
-        aprint("🔨 Viewer not built. Building now...")
-        return build_viewer()
+    if auto_build and repo_root is not None:
+        aprint(
+            "🔨 Viewer dist is stale (sources changed since the last build). Rebuilding..."
+            if stale
+            else "🔨 Viewer not built. Building now..."
+        )
+        if build_viewer():
+            return True
+        if stale:
+            aprint(
+                "⚠️  Rebuild FAILED — serving the previous (stale) viewer build. "
+                "Fix the build (cd packages/luxar-viewer && pnpm build) to pick "
+                "up your source changes."
+            )
+            return True
+        return False
+    if built:
+        return True
     aprint(
         "❌ Viewer not available: the installed package is missing its bundled "
         "viewer (_viewer_dist). Reinstall luxar, or in a dev tree run: "

@@ -290,6 +290,93 @@ describe('ControlRail', () => {
     expect(document.querySelector('.luxar-control-rail__flyout')).toBeNull();
   });
 
+  it('an excludeFromParentActive toggle never lights the parent flyout button', () => {
+    // The fullscreen chip's contract: active INSIDE the flyout, but a
+    // session-long ambient state must not glow the View button all session.
+    // A normal active toggle (cinematic) still does.
+    let ambientOn = true;
+    let normalOn = false;
+    rail = new ControlRail([
+      {
+        id: 'view',
+        title: 'View options',
+        icon: RAIL_ICONS.view,
+        activate: vi.fn(),
+        flyout: [
+          {
+            id: 'ambient',
+            title: 'Ambient',
+            icon: RAIL_ICONS.scalebar,
+            activate: vi.fn(),
+            isActive: () => ambientOn,
+            excludeFromParentActive: true,
+          },
+          {
+            id: 'normal',
+            title: 'Normal',
+            icon: RAIL_ICONS.cinematic,
+            activate: vi.fn(),
+            isActive: () => normalOn,
+          },
+        ],
+      },
+    ]);
+    const btn = document.querySelector<HTMLButtonElement>('[data-rail-id="view"]')!;
+    // Only the excluded toggle is on → parent must NOT glow.
+    expect(btn.classList.contains('is-active')).toBe(false);
+
+    // A normal toggle turning on still lights the parent (constructor-time
+    // refresh is synchronous; rebuild to re-evaluate deterministically).
+    rail.dispose();
+    ambientOn = false;
+    normalOn = true;
+    rail = new ControlRail([
+      {
+        id: 'view',
+        title: 'View options',
+        icon: RAIL_ICONS.view,
+        activate: vi.fn(),
+        flyout: [
+          {
+            id: 'normal',
+            title: 'Normal',
+            icon: RAIL_ICONS.cinematic,
+            activate: vi.fn(),
+            isActive: () => normalOn,
+          },
+        ],
+      },
+    ]);
+    const btn2 = document.querySelector<HTMLButtonElement>('[data-rail-id="view"]')!;
+    expect(btn2.classList.contains('is-active')).toBe(true);
+  });
+
+  it('recomputes the flyout tooltip-flip on fullscreenchange/resize while open', () => {
+    rail = new ControlRail([
+      {
+        id: 'view',
+        title: 'View',
+        icon: RAIL_ICONS.view,
+        activate: vi.fn(),
+        flyout: [{ id: 't', title: 'T', icon: RAIL_ICONS.scalebar, activate: vi.fn() }],
+      },
+    ]);
+    document.querySelector<HTMLButtonElement>('[data-rail-id="view"]')!.click();
+    const fly = document.querySelector<HTMLElement>('.luxar-control-rail__flyout')!;
+    expect(fly).not.toBeNull();
+
+    // Force the flyout to sit "near the viewport bottom" and fire the
+    // viewport-change events the overlay now listens for.
+    fly.getBoundingClientRect = () => ({ bottom: window.innerHeight + 100 }) as DOMRect;
+    document.dispatchEvent(new Event('fullscreenchange'));
+    expect(fly.classList.contains('luxar-control-rail__flyout--up')).toBe(true);
+
+    // And back: viewport grows → the flip clears on resize.
+    fly.getBoundingClientRect = () => ({ bottom: 0 }) as DOMRect;
+    window.dispatchEvent(new Event('resize'));
+    expect(fly.classList.contains('luxar-control-rail__flyout--up')).toBe(false);
+  });
+
   it('closes the flyout on an outside pointerdown', () => {
     rail = new ControlRail([
       {

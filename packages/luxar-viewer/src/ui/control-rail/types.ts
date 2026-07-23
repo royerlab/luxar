@@ -82,4 +82,12 @@ export interface ControlRailToggle {
   activate: () => void;
   openSelector?: string;
   isActive?: () => boolean;
+  /**
+   * Exclude this toggle from the PARENT flyout button's active state (the
+   * chip itself still shows active inside the flyout). For session-long
+   * ambient states like fullscreen, where lighting the parent button for
+   * the whole session reads as noise rather than signal — unlike cinematic
+   * mode, whose glow deliberately advertises a changed render pipeline.
+   */
+  excludeFromParentActive?: boolean;
 }

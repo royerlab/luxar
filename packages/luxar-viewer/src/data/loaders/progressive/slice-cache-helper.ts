@@ -13,6 +13,7 @@
 
 import { SliceCache } from '../../../cache/slice-cache';
 import { log, Modules } from '../../../utils/log';
+import { isExtendToAll } from '../../../workers/data-worker/projection/hidden-dims';
 import type { DimensionMetadata } from '../../../types/dims';
 
 /** The query fields that determine which elements a slice loads. */
@@ -78,7 +79,15 @@ export function buildSliceViewSig(view: SliceViewLike): string {
     const spatial = m?.spatial === true;
     // Discrete non-spatial: the ride-along tolerance is query-irrelevant
     // (the real reach is 0.25×step) and builder-inconsistent — key on step.
-    const tol = discrete && !spatial ? null : (view.tolerance[i] ?? 0);
+    // EXCEPT the extend_to_all sentinel: it is the one ride-along value the
+    // worker's discrete-dim membership DOES read (isExtendToAll in
+    // projection/hidden-dims), so key on MEMBERSHIP ('xa') while still
+    // collapsing the churn-prone ordinary values to null. Belt-and-braces:
+    // extend_to_all attrs are static today (folded upstream by
+    // deriveNodeViewState), but a future dynamic toggle must never restore
+    // a snapshot decoded under the other membership.
+    const rawTol = view.tolerance[i] ?? 0;
+    const tol = discrete && !spatial ? (isExtendToAll(rawTol) ? 'xa' : null) : rawTol;
     return {
       p: pos,
       t: tol,

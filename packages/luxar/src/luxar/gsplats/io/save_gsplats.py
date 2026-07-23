@@ -17,8 +17,10 @@ stats; see :func:`split_fitting_info`), and consolidates metadata.
 from __future__ import annotations
 
 import datetime
+import os
 import shutil
 import tempfile
+import uuid
 from pathlib import Path
 from typing import (
     TYPE_CHECKING,
@@ -225,6 +227,32 @@ def _resolve_zarr_path(
     return temp_dir, temp_dir / zarr_name
 
 
+def _tmp_sibling(dest: Path) -> Path:
+    """A hidden temp sibling of ``dest`` — same parent, so ``os.replace`` is a
+    same-filesystem rename (never a copy). Dot-prefixed so glob discovery
+    (``part_*``/``*.gsplats.zarr`` scans, batch status candidates) skips it;
+    pid+uuid suffix so a stale sibling from a killed run can't collide."""
+    return dest.parent / f".{dest.name}.tmp-{os.getpid()}-{uuid.uuid4().hex[:8]}"
+
+
+def _atomic_finalize(tmp: Path, dest: Path) -> None:
+    """Replace ``dest`` with the fully-written ``tmp``.
+
+    Write-to-temp-then-swap is what makes the store writers crash-safe: a
+    mid-write failure leaves ``dest`` (the prior good store, if any) untouched
+    instead of destroyed-then-partially-rewritten. For single files the
+    ``os.replace`` is atomic; for directories the remove-then-rename leaves a
+    sub-second window with no ``dest`` — still strictly better than the old
+    in-place ``overwrite=True``, which cleared the prior store before writing
+    a single new byte.
+    """
+    if dest.is_dir():
+        shutil.rmtree(dest)
+    elif dest.exists():
+        dest.unlink()
+    os.replace(str(tmp), str(dest))
+
+
 def _compress_zarr(
     zarr_path: Path,
     out_path: Path,
@@ -232,22 +260,32 @@ def _compress_zarr(
     zip_deflate: bool,
     temp_dir: Optional[Path],
 ) -> None:
-    """Compress a written zarr directory into ``out_path`` and clean up temp."""
+    """Compress a written zarr directory into ``out_path`` and clean up temp.
+
+    The archive streams into a temp sibling and is atomically renamed into
+    place on success — a mid-compression failure leaves no partial archive
+    at ``out_path`` (and any prior file there survives).
+    """
+    out_tmp = _tmp_sibling(out_path)
     try:
         import tarfile
         import zipfile
 
         if compress == "zip":
             zip_method = zipfile.ZIP_DEFLATED if zip_deflate else zipfile.ZIP_STORED
-            with zipfile.ZipFile(out_path, "w", zip_method) as zipf:
+            with zipfile.ZipFile(out_tmp, "w", zip_method) as zipf:
                 for file_path in zarr_path.rglob("*"):
                     if file_path.is_file():
                         zipf.write(file_path, file_path.relative_to(zarr_path.parent))
         elif compress == "tar.gz":
-            with tarfile.open(out_path, "w:gz") as tarf:
+            with tarfile.open(out_tmp, "w:gz") as tarf:
                 tarf.add(zarr_path, arcname=zarr_path.name)
         else:
             raise ValueError(f"Unsupported compression format: {compress!r}")
+        _atomic_finalize(out_tmp, out_path)
+    except BaseException:
+        out_tmp.unlink(missing_ok=True)
+        raise
     finally:
         if temp_dir is not None and temp_dir.exists():
             shutil.rmtree(temp_dir, ignore_errors=True)
@@ -353,68 +391,88 @@ def write_gsplats_tree(
     """
     path = Path(path)
     temp_dir, zarr_path = _resolve_zarr_path(path, compress)
+    if not compress:
+        # Crash-safety: write into a hidden temp sibling and atomically swap
+        # into place at the end. The old in-place ``overwrite=True`` cleared a
+        # pre-existing store at ``path`` BEFORE writing, so a mid-write crash
+        # destroyed the prior good copy and left a partial store behind (which
+        # existence-gated consumers like the batch-merge resume then treated
+        # as complete).
+        zarr_path = _tmp_sibling(path)
 
     store = DirectoryStore(str(zarr_path))
     root = zarr.group(store=store, overwrite=True)
+    try:
+        # Barrier axes for ordering: explicit arg wins; else the LOD reduction
+        # barrier (complement of the persisted coarsen_dims); else per-leaf
+        # auto-detect (barrier_dims stays None → detect_barrier_dims per leaf).
+        if barrier_dims is None:
+            barrier_dims = _barrier_from_coarsen_dims(pipeline_info, node)
 
-    # Barrier axes for ordering: explicit arg wins; else the LOD reduction
-    # barrier (complement of the persisted coarsen_dims); else per-leaf
-    # auto-detect (barrier_dims stays None → detect_barrier_dims per leaf).
-    if barrier_dims is None:
-        barrier_dims = _barrier_from_coarsen_dims(pipeline_info, node)
+        dataset_ctx = make_dataset_ctx(encoding_mode, compressor=compressor)
+        ordering_ctx = make_ordering_ctx(ordering)
+        write_gsplat_node(
+            root,
+            node,
+            dataset_ctx=dataset_ctx,
+            ordering_ctx=ordering_ctx,
+            store=root,
+            barrier_dims=barrier_dims,
+        )
 
-    dataset_ctx = make_dataset_ctx(encoding_mode, compressor=compressor)
-    ordering_ctx = make_ordering_ctx(ordering)
-    write_gsplat_node(
-        root,
-        node,
-        dataset_ctx=dataset_ctx,
-        ordering_ctx=ordering_ctx,
-        store=root,
-        barrier_dims=barrier_dims,
-    )
+        # Self-identifying v3.0 header (the node's own type/kind/position_bounds attrs
+        # were written onto root by the walker; these header keys are disjoint).
+        root.attrs["format_version"] = FORMAT_VERSION
+        root.attrs["format_type"] = "gsplats_zarr"
+        root.attrs["timestamp"] = datetime.datetime.now(
+            datetime.timezone.utc
+        ).isoformat()
+        root.attrs["luxar_gsplats_version"] = GSPLATS_VERSION
+        # A standalone file opened directly (?src=…gsplats.zarr) is the whole layer,
+        # so expose the root in the viewer's Layers panel (the scene-embed graft uses
+        # the scene builders instead and does not carry this root attr).
+        root.attrs.setdefault("layer", True)
+        if description:
+            root.attrs["description"] = description
 
-    # Self-identifying v3.0 header (the node's own type/kind/position_bounds attrs
-    # were written onto root by the walker; these header keys are disjoint).
-    root.attrs["format_version"] = FORMAT_VERSION
-    root.attrs["format_type"] = "gsplats_zarr"
-    root.attrs["timestamp"] = datetime.datetime.now(datetime.timezone.utc).isoformat()
-    root.attrs["luxar_gsplats_version"] = GSPLATS_VERSION
-    # A standalone file opened directly (?src=…gsplats.zarr) is the whole layer,
-    # so expose the root in the viewer's Layers panel (the scene-embed graft uses
-    # the scene builders instead and does not carry this root attr).
-    root.attrs.setdefault("layer", True)
-    if description:
-        root.attrs["description"] = description
+        if fitting_info is not None:
+            # `n_splats` denotes the count of splats in THIS artifact (see
+            # fitting/results.py). Stats are inherited from the source fit, so for
+            # count-changing operations (substitutive / multiscale LOD synthesise
+            # extra representative splats) the inherited value is stale and would
+            # contradict the file's own leaf arrays. Correct it to the true total.
+            if "n_splats" in fitting_info:
+                from luxar.gsplats.tree import total_splats
 
-    if fitting_info is not None:
-        # `n_splats` denotes the count of splats in THIS artifact (see
-        # fitting/results.py). Stats are inherited from the source fit, so for
-        # count-changing operations (substitutive / multiscale LOD synthesise
-        # extra representative splats) the inherited value is stale and would
-        # contradict the file's own leaf arrays. Correct it to the true total.
-        if "n_splats" in fitting_info:
-            from luxar.gsplats.tree import total_splats
+                fitting_info = {**fitting_info, "n_splats": int(total_splats(node))}
+            fitting_group = root.create_group("fitting")
+            fitting_group.attrs.update(fitting_info)
+            if fitting_config is not None:
+                fitting_group.create_group("config").attrs.update(fitting_config)
+        if provenance_info is not None:
+            root.create_group("provenance").attrs.update(provenance_info)
+        if pipeline_info:
+            # Reduction/topology stats (lod_kind, method, compression_factor,
+            # coverage_inflation, refine, ...) — everything split_fitting_info's
+            # other buckets do not consume. Optional group: absent for plain fits.
+            root.create_group("pipeline").attrs.update(pipeline_info)
 
-            fitting_info = {**fitting_info, "n_splats": int(total_splats(node))}
-        fitting_group = root.create_group("fitting")
-        fitting_group.attrs.update(fitting_info)
-        if fitting_config is not None:
-            fitting_group.create_group("config").attrs.update(fitting_config)
-    if provenance_info is not None:
-        root.create_group("provenance").attrs.update(provenance_info)
-    if pipeline_info:
-        # Reduction/topology stats (lod_kind, method, compression_factor,
-        # coverage_inflation, refine, ...) — everything split_fitting_info's
-        # other buckets do not consume. Optional group: absent for plain fits.
-        root.create_group("pipeline").attrs.update(pipeline_info)
+        # Stamp BEFORE consolidating so the hash lands in ``.zmetadata`` too.
+        _stamp_content_hash(root)
+        zarr.consolidate_metadata(store)
 
-    # Stamp BEFORE consolidating so the hash lands in ``.zmetadata`` too.
-    _stamp_content_hash(root)
-    zarr.consolidate_metadata(store)
-
-    if compress:
-        _compress_zarr(zarr_path, path, compress, zip_deflate, temp_dir)
+        if compress:
+            _compress_zarr(zarr_path, path, compress, zip_deflate, temp_dir)
+        else:
+            _atomic_finalize(zarr_path, path)
+    except BaseException:
+        # Never leave a temp sibling behind; the destination (the prior good
+        # store, if any) is untouched by construction.
+        if temp_dir is not None:
+            shutil.rmtree(temp_dir, ignore_errors=True)
+        else:
+            shutil.rmtree(zarr_path, ignore_errors=True)
+        raise
 
 
 def write_partition_streaming(
@@ -468,76 +526,91 @@ def write_partition_streaming(
     )
 
     path = Path(path)
-    store = DirectoryStore(str(path))
+    # Crash-safety: stream into a hidden temp sibling and atomically swap into
+    # place after the final consolidate. This writer can run for a long time
+    # (one part per tile of a whole timelapse); the old in-place
+    # ``overwrite=True`` destroyed a pre-existing output before the first part
+    # landed, and a crashed merge left a partial store that the batch-merge
+    # resume (existence-gated) then treated as complete.
+    tmp = _tmp_sibling(path)
+    store = DirectoryStore(str(tmp))
     root = zarr.group(store=store, overwrite=True)
+    try:
+        dataset_ctx = make_dataset_ctx(encoding_mode, compressor=compressor)
+        ordering_ctx = make_ordering_ctx(ordering)
 
-    dataset_ctx = make_dataset_ctx(encoding_mode, compressor=compressor)
-    ordering_ctx = make_ordering_ctx(ordering)
+        child_bounds: List[Dict[str, List[float]]] = []
+        n_written = 0
+        for node in part_nodes():
+            part_group = root.require_group(f"part_{n_written}")
+            # Barrier for ordering: explicit arg wins; else derive from this part's
+            # coarsen_dims provenance; else per-leaf auto-detect. Computed per part
+            # since parts are streamed one at a time (each has its own ndim).
+            part_barrier = (
+                barrier_dims
+                if barrier_dims is not None
+                else _barrier_from_coarsen_dims(pipeline_info, node)
+            )
+            cmeta = write_gsplat_node(
+                part_group,
+                node,
+                dataset_ctx=dataset_ctx,
+                ordering_ctx=ordering_ctx,
+                store=root,
+                # Insertion order for the viewer's sibling sort — matches the
+                # standalone partition writer (prevents part_10 < part_2 reorder).
+                attrs={"child_index": n_written},
+                barrier_dims=part_barrier,
+            )
+            if "position_bounds" in cmeta:
+                child_bounds.append(cmeta["position_bounds"])
+            n_written += 1
 
-    child_bounds: List[Dict[str, List[float]]] = []
-    n_written = 0
-    for node in part_nodes():
-        part_group = root.require_group(f"part_{n_written}")
-        # Barrier for ordering: explicit arg wins; else derive from this part's
-        # coarsen_dims provenance; else per-leaf auto-detect. Computed per part
-        # since parts are streamed one at a time (each has its own ndim).
-        part_barrier = (
-            barrier_dims
-            if barrier_dims is not None
-            else _barrier_from_coarsen_dims(pipeline_info, node)
-        )
-        cmeta = write_gsplat_node(
-            part_group,
-            node,
-            dataset_ctx=dataset_ctx,
-            ordering_ctx=ordering_ctx,
-            store=root,
-            # Insertion order for the viewer's sibling sort — matches the
-            # standalone partition writer (prevents part_10 < part_2 reorder).
-            attrs={"child_index": n_written},
-            barrier_dims=part_barrier,
-        )
-        if "position_bounds" in cmeta:
-            child_bounds.append(cmeta["position_bounds"])
-        n_written += 1
+        if n_written == 0:
+            raise ValueError("write_partition_streaming: no non-empty parts to write")
 
-    if n_written == 0:
-        raise ValueError("write_partition_streaming: no non-empty parts to write")
+        # Root partition attrs — same set the GSplatPartition branch of
+        # write_gsplat_node emits (type/kind/display_type/max_elements/position_bounds).
+        # That branch may ALSO write an optional bsp_tree; a streamed merge has no
+        # single BSP tree, so this writer omits it (viewer falls back to centroids).
+        root.attrs["type"] = "group"
+        root.attrs["kind"] = "partition"
+        root.attrs["display_type"] = "gsplats"
+        root.attrs["max_elements"] = int(max_elements)
+        bounds = _union_bounds(child_bounds)
+        if bounds is not None:
+            root.attrs["position_bounds"] = bounds
 
-    # Root partition attrs — same set the GSplatPartition branch of
-    # write_gsplat_node emits (type/kind/display_type/max_elements/position_bounds).
-    # That branch may ALSO write an optional bsp_tree; a streamed merge has no
-    # single BSP tree, so this writer omits it (viewer falls back to centroids).
-    root.attrs["type"] = "group"
-    root.attrs["kind"] = "partition"
-    root.attrs["display_type"] = "gsplats"
-    root.attrs["max_elements"] = int(max_elements)
-    bounds = _union_bounds(child_bounds)
-    if bounds is not None:
-        root.attrs["position_bounds"] = bounds
+        # Self-identifying v3.0 header (disjoint from the node's structural attrs).
+        root.attrs["format_version"] = FORMAT_VERSION
+        root.attrs["format_type"] = "gsplats_zarr"
+        root.attrs["timestamp"] = datetime.datetime.now(
+            datetime.timezone.utc
+        ).isoformat()
+        root.attrs["luxar_gsplats_version"] = GSPLATS_VERSION
+        root.attrs.setdefault("layer", True)
+        if description:
+            root.attrs["description"] = description
 
-    # Self-identifying v3.0 header (disjoint from the node's structural attrs).
-    root.attrs["format_version"] = FORMAT_VERSION
-    root.attrs["format_type"] = "gsplats_zarr"
-    root.attrs["timestamp"] = datetime.datetime.now(datetime.timezone.utc).isoformat()
-    root.attrs["luxar_gsplats_version"] = GSPLATS_VERSION
-    root.attrs.setdefault("layer", True)
-    if description:
-        root.attrs["description"] = description
+        if fitting_info is not None:
+            fitting_group = root.create_group("fitting")
+            fitting_group.attrs.update(fitting_info)
+            if fitting_config is not None:
+                fitting_group.create_group("config").attrs.update(fitting_config)
+        if provenance_info is not None:
+            root.create_group("provenance").attrs.update(provenance_info)
+        if pipeline_info:
+            root.create_group("pipeline").attrs.update(pipeline_info)
 
-    if fitting_info is not None:
-        fitting_group = root.create_group("fitting")
-        fitting_group.attrs.update(fitting_info)
-        if fitting_config is not None:
-            fitting_group.create_group("config").attrs.update(fitting_config)
-    if provenance_info is not None:
-        root.create_group("provenance").attrs.update(provenance_info)
-    if pipeline_info:
-        root.create_group("pipeline").attrs.update(pipeline_info)
-
-    # Stamp BEFORE consolidating so the hash lands in ``.zmetadata`` too.
-    _stamp_content_hash(root)
-    zarr.consolidate_metadata(store)
+        # Stamp BEFORE consolidating so the hash lands in ``.zmetadata`` too.
+        _stamp_content_hash(root)
+        zarr.consolidate_metadata(store)
+    except BaseException:
+        # Includes the n_written == 0 ValueError above — no partial root is
+        # left behind either way; the destination stays untouched.
+        shutil.rmtree(tmp, ignore_errors=True)
+        raise
+    _atomic_finalize(tmp, path)
     return n_written
 
 
