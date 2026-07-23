@@ -61,7 +61,7 @@ import {
   getCompleteBlendingState,
   effectiveGeometryMode,
 } from '../../blending-state';
-import type { BlendingMode } from '../../material-manager';
+import type { BlendingMode } from '../../../types/blending';
 
 // Type-erased constructor aliases — same rationale as the gsplat TSL
 // factory (shader-tsl.ts there): TSL's typed `vec*` overloads reject

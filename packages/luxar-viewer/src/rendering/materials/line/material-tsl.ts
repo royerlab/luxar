@@ -39,7 +39,7 @@ import {
   effectiveGeometryMode,
   type CompleteBlendingState,
 } from '../../blending-state';
-import type { BlendingMode } from '../../material-manager';
+import type { BlendingMode } from '../../../types/blending';
 import { proxyIUniform, type TSLNode } from '../_shared/tsl-helpers';
 
 /**

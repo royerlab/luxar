@@ -1087,7 +1087,10 @@ describe('concatenateGSplatsData — RGBA color layout (per-element opacity)', (
   });
 
   it('opaque white-fills a colorless LOD at the RGBA stride (alpha=1)', () => {
-    const merged = concatenateGSplatsData([makeRgbaLod(2, 0.5), makeLodData(2, 3, { color: 'none' })]);
+    const merged = concatenateGSplatsData([
+      makeRgbaLod(2, 0.5),
+      makeLodData(2, 3, { color: 'none' }),
+    ]);
     expect(merged.colorComponents).toBe(4);
     expect(merged.colors!.length).toBe(4 * 4);
     // The colorless part fills opaque white (1,1,1,1) at stride 4.
@@ -1108,5 +1111,17 @@ describe('concatenateGSplatsData — RGBA color layout (per-element opacity)', (
     expect(() =>
       concatenateGSplatsData([makeLodData(3, 3, { color: 'float32' }), makeRgbaLod(2, 0.9)])
     ).toThrow(/mixed color layouts .*4 vs 3 components/);
+  });
+
+  it('rejects mixed dimensionality across LOD levels (ndim strides the concat)', () => {
+    // Same fail-fast family as the dtype/layout checks: ndim strides the
+    // position concat AND sizes the Cholesky blocks, so sub-LODs disagreeing
+    // on it would silently mis-stride every splat after the first part.
+    expect(() =>
+      concatenateGSplatsData([
+        makeLodData(3, 3, { color: 'none' }),
+        makeLodData(2, 4, { color: 'none' }),
+      ])
+    ).toThrow(/mixed dimensionality .*ndim 4 vs 3/);
   });
 });

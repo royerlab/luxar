@@ -58,6 +58,21 @@ function concatenateLinesData(parts: LoadedLinesData[]): LoadedLinesData {
   }
 
   const ndim = parts[0].ndim;
+  // Same fail-fast contract as the ladder dtype checks (see concat-helpers):
+  // `ndim` strides the position concat below, so sub-LODs disagreeing on
+  // dimensionality would mis-stride every vertex after the first part —
+  // silent corruption. Dimensionality is per-dataset; a mismatch is
+  // malformed data. (Points concat is immune: its loader projects to
+  // stride-3 before concatenation.)
+  for (const part of parts) {
+    if (part.ndim !== ndim) {
+      throw new Error(
+        'concatenateLinesData: mixed dimensionality across LOD levels ' +
+          `(ndim ${part.ndim} vs ${ndim}) — ladder levels must share the ` +
+          'dataset dimensionality.'
+      );
+    }
+  }
   const totalVertices = parts.reduce((s, p) => s + p.vertexCount, 0);
   const totalSegments = parts.reduce((s, p) => s + p.segmentCount, 0);
   const count = (p: LoadedLinesData) => p.vertexCount;

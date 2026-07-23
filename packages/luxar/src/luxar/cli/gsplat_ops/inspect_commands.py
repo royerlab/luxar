@@ -13,6 +13,7 @@ from typing import TYPE_CHECKING, Optional
 import typer
 from arbol import aprint, asection
 
+from ..common_options import CorsOriginOption
 from ..utils import _DEFAULT_CORS_ORIGIN, format_memory_size
 
 if TYPE_CHECKING:
@@ -460,14 +461,7 @@ def quick_view(
     port: int = typer.Option(8000, "--port", "-p", help="Data server port"),
     viewer_port: int = typer.Option(5173, "--viewer-port", help="Viewer port"),
     open_browser: bool = typer.Option(True, "--open/--no-open", help="Open browser"),
-    cors_origin: str = typer.Option(
-        _DEFAULT_CORS_ORIGIN,
-        "--cors-origin",
-        help=(
-            "Allowed CORS origin. Default 'local' allows localhost/127.0.0.1/::1. "
-            "Use '*' to allow any origin without credentials."
-        ),
-    ),
+    cors_origin: CorsOriginOption = _DEFAULT_CORS_ORIGIN,
 ) -> None:
     """Quick view of a Gaussian splat dataset in the Luxar web viewer.
 

@@ -30,8 +30,16 @@ class TestListAndTable:
         result = runner.invoke(app, ["demo", "list", "--category", "synthetic"])
         assert result.exit_code == 0
         assert "lorenz" in result.stdout
-        # An astronomy-only demo must not appear in a synthetic-filtered table.
-        assert "gaia" not in result.stdout.lower() or "galaxy" not in result.stdout
+        # NO non-synthetic demo key may appear in a synthetic-filtered table.
+        # Token-level match (ANSI stripped): substring checks false-positive
+        # on key collisions like "galaxy" ⊂ "spiral_galaxy".
+        import re
+
+        plain = re.sub(r"\x1b\[[0-9;]*m", "", result.stdout)
+        tokens = set(re.split(r"\s+", plain))
+        for d in iter_demos():
+            if d.category != "synthetic":
+                assert d.key not in tokens, f"{d.key} leaked into filter"
 
     def test_list_empty_filter(self, runner) -> None:
         result = runner.invoke(app, ["demo", "list", "--category", "nonexistent"])
@@ -97,6 +105,59 @@ class TestRun:
         result = runner.invoke(app, ["demo", "run", "no-such-demo"])
         assert result.exit_code != 0
         assert "unknown demo" in result.stdout.lower()
+
+
+class TestRunAll:
+    """`demo run-all` batch semantics (mocked subprocess; no demo executes)."""
+
+    @pytest.fixture(autouse=True)
+    def _no_existing_outputs(self, monkeypatch) -> None:
+        # Make every demo look not-yet-generated so --skip-existing never
+        # skips (host machines may have real outputs under datasets/demos).
+        monkeypatch.setattr(
+            "luxar.cli.demo_commands.registry.demo_output_paths", lambda d: []
+        )
+
+    @staticmethod
+    def _runnable_count() -> int:
+        return sum(
+            1
+            for d in iter_demos()
+            if d.local_data not in ("manual-file", "kaggle-auth")
+        )
+
+    def test_keep_going_aggregates_failures(self, runner) -> None:
+        failing = next(
+            d
+            for d in iter_demos()
+            if d.local_data not in ("manual-file", "kaggle-auth")
+        )
+
+        def fake_run(argv, **kw):
+            code = 2 if argv[2] == failing.module else 0
+            return subprocess.CompletedProcess(argv, code)
+
+        with patch("luxar.cli.demo_commands.subprocess.run", side_effect=fake_run) as m:
+            result = runner.invoke(app, ["demo", "run-all"])
+        assert result.exit_code == 1  # a failure surfaces at the end
+        assert m.call_count == self._runnable_count()  # ...but nothing aborted
+        assert failing.key in result.stdout
+        assert "failed 1" in result.stdout
+
+    def test_fail_fast_stops_at_first_failure(self, runner) -> None:
+        with patch("luxar.cli.demo_commands.subprocess.run") as m:
+            m.return_value = subprocess.CompletedProcess([], 5)
+            result = runner.invoke(app, ["demo", "run-all", "--fail-fast"])
+        assert result.exit_code == 1
+        assert m.call_count == 1  # stopped at the first failing demo
+
+    def test_all_green_exits_zero(self, runner) -> None:
+        with patch("luxar.cli.demo_commands.subprocess.run") as m:
+            m.return_value = subprocess.CompletedProcess([], 0)
+            result = runner.invoke(app, ["demo", "run-all"])
+        assert result.exit_code == 0
+        assert m.call_count == self._runnable_count()
+        assert "failed 0" in result.stdout
 
 
 class TestCache:
