@@ -13,7 +13,7 @@ so a third meaning for a niche testing flag was a muscle-memory trap.
 
 from __future__ import annotations
 
-from typing import Annotated, Optional
+from typing import Annotated, Any, Optional
 
 import typer
 from arbol import aprint
@@ -91,6 +91,17 @@ AllowSensitivePathOption = Annotated[
         help="Allow serving obvious system paths such as /, /etc, /proc, /sys, /dev.",
     ),
 ]
+
+
+def make_port_option(default: int, help_text: Optional[str] = None) -> Any:
+    """A ``--port``/``-p`` option with a per-command default and help text.
+
+    A factory rather than an ``Annotated`` alias because — unlike the options
+    above, where only the default varies — each serve-family command binds a
+    different default port AND its own help string; the flag spellings stay
+    unified here.
+    """
+    return typer.Option(default, "--port", "-p", help=help_text)
 
 
 def parse_network_options_or_exit(

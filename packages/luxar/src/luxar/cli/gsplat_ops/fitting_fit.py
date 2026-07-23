@@ -9,13 +9,20 @@ import typer
 from arbol import aprint, asection
 
 from .fitting_fit_utils import (
-    build_fit_recipe_params as _build_fit_recipe_params_impl,
+    FitPipelineCtx,
+    assemble_fit_config,
+    dispatch_parallel_tiled,
+    fit_progressive,
+    fit_sequential_tiled,
+    fit_single_tile,
+    maybe_denoise_full_volume,
+    rescale_and_save,
+    resolve_denoise_h,
+    validate_and_build_recipe,
+    warn_ignored_density_flags,
 )
 from .fitting_fit_utils import (
     resolve_tiling as _resolve_tiling_impl,
-)
-from .fitting_fit_utils import (
-    save_fit_output as _save_fit_output_impl,
 )
 
 
@@ -449,9 +456,7 @@ def run_fit_volume(
     """
     from luxar.cli.gsplat_config import (
         dump_default_config,
-        load_fit_config,
         load_volume,
-        parse_seeds,
     )
 
     # Handle --dump-config: print and exit (no input/output needed)
@@ -495,72 +500,70 @@ def run_fit_volume(
                 tiling, volume.shape, tile_size, _has_density
             )
 
-            # Content density knobs only apply to content tiling — warn if the
-            # decomposition didn't resolve to content (e.g. an explicit
-            # --tiling uniform/none), so the flags aren't silently no-ops.
-            if resolved_tiling != "content" and plan_box is None:
-                _density_flags = [
-                    name
-                    for name, on in (
-                        ("--cal", cal is not None),
-                        ("--k-star-ref", k_star_ref is not None),
-                        ("--n-features-ref", n_features_ref is not None),
-                        ("--feature-threshold", feature_threshold is not None),
-                        ("--feature-metric", feature_metric is not None),
-                        ("--target-features", target_features is not None),
-                    )
-                    if on
-                ]
-                if _density_flags:
-                    aprint(
-                        f"⚠ {', '.join(_density_flags)} apply only to "
-                        f"--tiling content; ignored under --tiling {resolved_tiling}."
-                    )
+            # Pipeline ctx: the parameter state the extracted helpers consume.
+            ctx = FitPipelineCtx(
+                input_path=input_path,
+                output_path=output_path,
+                seeds=seeds,
+                iters=iters,
+                device=device,
+                preset=preset,
+                loss=loss,
+                config=config,
+                compress=compress,
+                channel=channel,
+                timepoint=timepoint,
+                array_key=array_key,
+                axes=axes,
+                lr=lr,
+                floor=floor,
+                seed_method=seed_method,
+                verbose=verbose,
+                downscale=downscale,
+                resolved_tiling=resolved_tiling,
+                flat=flat,
+                tile_size=tile_size,
+                tile_overlap=tile_overlap,
+                tile=tile,
+                jobs=jobs,
+                keep_tiles=keep_tiles,
+                allow_empty_tile=allow_empty_tile,
+                recipe=recipe,
+                recipe_n_lods=recipe_n_lods,
+                recipe_additive_method=recipe_additive_method,
+                recipe_breakpoints=recipe_breakpoints,
+                recipe_target_ms=recipe_target_ms,
+                recipe_bandwidth_mbps=recipe_bandwidth_mbps,
+                recipe_bytes_per_splat=recipe_bytes_per_splat,
+                recipe_compression_factor=recipe_compression_factor,
+                recipe_levels=recipe_levels,
+                recipe_substitutive_method=recipe_substitutive_method,
+                recipe_coarsen_dims=recipe_coarsen_dims,
+                cal=cal,
+                k_star_ref=k_star_ref,
+                n_features_ref=n_features_ref,
+                feature_threshold=feature_threshold,
+                feature_metric=feature_metric,
+                target_features=target_features,
+                plan_only=plan_only,
+                plan_box=plan_box,
+                progressive=progressive,
+                max_splats_per_pass=max_splats_per_pass,
+                psnr_patience=psnr_patience,
+                max_passes=max_passes,
+                cull_retention=cull_retention,
+                denoise=denoise,
+                denoise_h=denoise_h,
+                denoise_2d=denoise_2d,
+                denoise_patch_size=denoise_patch_size,
+                denoise_search_distance=denoise_search_distance,
+                denoise_backend=denoise_backend,
+            )
+
+            warn_ignored_density_flags(ctx)
 
             # Per-part LOD recipe (tiled partition only): validate + build params.
-            recipe_params: "Any" = None
-            if recipe is not None:
-                if flat:
-                    raise typer.BadParameter(
-                        "--recipe needs a partition output; it is incompatible "
-                        "with --flat (which merges to a single leaf)."
-                    )
-                if resolved_tiling == "none":
-                    raise typer.BadParameter(
-                        "--recipe needs a tiled fit (--tiling uniform/content); a "
-                        "whole-volume fit is a single leaf. Run `gsplat lod` on it "
-                        "instead."
-                    )
-                if tile is not None:
-                    raise typer.BadParameter(
-                        "--recipe is applied when the parts are merged; it cannot "
-                        "be combined with single-tile --tile (a worker fits one "
-                        "bare leaf)."
-                    )
-                if plan_only or plan_box is not None:
-                    raise typer.BadParameter(
-                        "--recipe is incompatible with --plan-only / --plan-box."
-                    )
-                recipe_params = _build_fit_recipe_params_impl(
-                    recipe,
-                    n_lods=recipe_n_lods,
-                    additive_method=recipe_additive_method,
-                    breakpoints=recipe_breakpoints,
-                    target_ms=recipe_target_ms,
-                    bandwidth_mbps=recipe_bandwidth_mbps,
-                    bytes_per_splat=recipe_bytes_per_splat,
-                    compression_factor=recipe_compression_factor,
-                    levels=recipe_levels,
-                    substitutive_method=recipe_substitutive_method,
-                    coarsen_dims=recipe_coarsen_dims,
-                    device=device,
-                    volume_ndim=volume.ndim,
-                )
-                from luxar.gsplats.lod.recipes import uniform_per_part_lod_warning
-
-                _w = uniform_per_part_lod_warning(resolved_tiling, recipe)
-                if _w:
-                    aprint(f"⚠ {_w}")
+            recipe_params: "Any" = validate_and_build_recipe(ctx, volume.ndim)
 
             if resolved_tiling == "content":
                 from luxar.cli.gsplat_ops.planner import run_content_fit
@@ -637,253 +640,24 @@ def run_fit_volume(
             # Resolve effective_h (calibrate if needed), then either:
             # - Denoise full volume now (non-tiled fitting)
             # - Pass h + params through to fit_tile (tiled fitting, per-tile denoise)
-            _denoise_effective_h: Optional[float] = None
-            if denoise:
-                if denoise_h is not None:
-                    _denoise_effective_h = denoise_h
-                    aprint(f"Denoise: using manual h={_denoise_effective_h:.4f}")
-                else:
-                    import torch
-
-                    from luxar.gsplats.preprocessing import calibrate_nlm_h
-                    from luxar.gsplats.preprocessing.denoise_pipeline import (
-                        normalize_volume,
-                    )
-                    from luxar.gsplats.utils.device import resolve_torch_device
-
-                    with asection("Calibrating NLM h"):
-                        norm_vol, _, _ = normalize_volume(volume)
-                        t_vol = torch.from_numpy(norm_vol)
-                        # Auto-select CUDA > MPS > CPU when --device is omitted.
-                        dev = (
-                            resolve_torch_device(device)
-                            if device
-                            else resolve_torch_device()
-                        )
-                        _denoise_effective_h = calibrate_nlm_h(
-                            t_vol,
-                            patch_size=denoise_patch_size,
-                            search_distance=denoise_search_distance,
-                            backend=denoise_backend,
-                            device=dev,
-                            use_2d_slice=True,
-                        )
-                        aprint(f"Calibrated h={_denoise_effective_h:.4f}")
+            ctx.denoise_effective_h = resolve_denoise_h(ctx, volume)
 
             # For non-tiled paths, denoise the full volume now.
             # For tiled paths, denoise is deferred to per-tile (see fit_tile).
             is_tiled = (tile is not None) or tiled
-            if denoise and _denoise_effective_h is not None and not is_tiled:
-                from luxar.gsplats.preprocessing.denoise_pipeline import (
-                    denoise_volume_array,
-                )
+            volume = maybe_denoise_full_volume(ctx, volume, is_tiled)
 
-                with asection("Denoising (NLM)"):
-                    volume = denoise_volume_array(
-                        volume,
-                        h=_denoise_effective_h,
-                        patch_size=denoise_patch_size,
-                        search_distance=denoise_search_distance,
-                        backend=denoise_backend,
-                        device=device,
-                        use_2d=denoise_2d,
-                    )
-                    aprint(f"Denoised volume shape: {volume.shape}")
-
-            # 2. Parse downscale option
-            parsed_downscale = None
-            if downscale is not None:
-                ds_parts = [int(x.strip()) for x in downscale.split(",")]
-                parsed_downscale = (
-                    ds_parts[0] if len(ds_parts) == 1 else tuple(ds_parts)
-                )
-
-            # 3. Build merged config
-            cli_overrides = {
-                "n_iters": iters,
-                "device": device,
-                "loss_type": loss,
-                "lr": lr,
-                "floor": floor,
-                "seed_method": seed_method,
-                "verbose": verbose,
-                "cull_retention": cull_retention,
-            }
-            fit_config = load_fit_config(preset, config, cli_overrides)
-
-            if preset:
-                aprint(f"Preset: {preset}")
-            if config:
-                aprint(f"Config: {config}")
-            aprint(f"Iterations: {fit_config.get('n_iters')}")
-
-            # 4. Parse seeds
-            parsed_seeds = parse_seeds(seeds)
-            if parsed_seeds is not None:
-                aprint(f"Seeds: {parsed_seeds}")
-            else:
-                aprint("Seeds: auto")
-
-            # 4b. Inject per-tile denoise params for tiled fitting
-            if denoise and _denoise_effective_h is not None and is_tiled:
-                fit_config["_denoise_h"] = _denoise_effective_h
-                fit_config["_denoise_params"] = {
-                    "patch_size": denoise_patch_size,
-                    "search_distance": denoise_search_distance,
-                    "backend": denoise_backend,
-                    "device": device,
-                    "use_2d": denoise_2d,
-                }
-                aprint(f"Denoise: per-tile on-the-fly (h={_denoise_effective_h:.4f})")
-
-            # 5. Apply downscaling
-            # Pop downscale from fit_config to avoid "multiple values" conflict
-            # (get_fit_defaults extracts it from the fit_gaussian_splats signature)
-            fc_downscale = fit_config.pop("downscale", None)
-            # CLI --downscale flag takes priority over YAML/preset config
-            effective_downscale = (
-                parsed_downscale if parsed_downscale is not None else fc_downscale
+            # 2-5. Merged config + parsed seeds + effective downscale
+            fit_config, parsed_seeds, effective_downscale = assemble_fit_config(
+                ctx, is_tiled
             )
 
-            # 5b. Parallel tiled fitting: spawn one subprocess per tile.
-            # Branch BEFORE the in-memory downscale below — the parent skips the
-            # in-memory downscale (it only needs the shape to compute the grid);
-            # each worker re-invokes `fit --tile i/M`, loading and downscaling
-            # its own region and rescaling back to original coords, then we
-            # reload + merge. (The parent still holds the volume loaded above —
-            # only its shape is used here.) When --jobs resolves to 1 (e.g.
-            # `-j auto` on a CPU/MPS box, or an explicit `-j 0/1`), fall through
-            # to the in-process sequential path instead of spawning a subprocess.
-            if tiled and tile is None and jobs != "1":
-                import math
-
-                from luxar.gsplats.fit_tiled_parallel import (
-                    build_worker_cmd,
-                    fit_tiled_parallel,
-                    luxar_argv0,
-                    resolve_jobs,
-                )
-                from luxar.gsplats.fitting.downscale import normalize_downscale
-                from luxar.gsplats.tiling import compute_tile_specs
-
-                # Compute the tile grid on the POST-downscale shape (shape math
-                # only — decimation is volume[::f]) so the parent and workers
-                # agree on the tile count M.
-                ds_factors = (
-                    normalize_downscale(effective_downscale, volume.ndim)
-                    if effective_downscale is not None
-                    else None
-                )
-                if ds_factors is not None:
-                    grid_shape = tuple(
-                        len(range(0, s, f)) for s, f in zip(volume.shape, ds_factors)
-                    )
-                else:
-                    grid_shape = tuple(volume.shape)
-
-                specs = compute_tile_specs(grid_shape, tile_size, tile_overlap)
-                n_tiles = len(specs)
-                tile_voxels = max((int(math.prod(s.shape)) for s in specs), default=1)
-
-                try:
-                    n_jobs = resolve_jobs(
-                        jobs,
-                        tile_voxels=tile_voxels,
-                        num_tiles=n_tiles,
-                        device=device,
-                    )
-                except ValueError:
-                    aprint(f"Error: --jobs must be an integer or 'auto', got '{jobs}'")
-                    raise typer.Exit(1)
-
-                # Only spawn workers when there is genuine concurrency to gain.
-                # Otherwise (n_jobs == 1) fall through to the sequential tiled
-                # path below — no subprocess overhead for a single worker.
-                if n_jobs > 1:
-                    aprint(
-                        f"Parallel tiled fitting: {n_tiles} tiles, grid={grid_shape}, "
-                        f"{n_jobs} concurrent worker(s)"
-                    )
-
-                    # Format downscale for worker argv (scalar or per-axis).
-                    ds_arg: Optional[str] = None
-                    if effective_downscale is not None:
-                        if isinstance(effective_downscale, (list, tuple)):
-                            ds_arg = ",".join(str(int(x)) for x in effective_downscale)
-                        else:
-                            ds_arg = str(int(effective_downscale))
-
-                    argv0 = luxar_argv0()
-
-                    def _worker_cmd(i: int, m: int, out_path: Path) -> list[str]:
-                        return build_worker_cmd(
-                            argv0,
-                            input_path,
-                            out_path,
-                            i,
-                            m,
-                            tile_size,
-                            tile_overlap,
-                            seeds=seeds,
-                            iters=iters,
-                            device=device,
-                            preset=preset,
-                            config=config,
-                            loss=loss,
-                            lr=lr,
-                            floor=floor,
-                            seed_method=seed_method,
-                            downscale=ds_arg,
-                            channel=channel,
-                            timepoint=timepoint,
-                            array_key=array_key,
-                            axes=axes,
-                            progressive=progressive,
-                            max_splats_per_pass=max_splats_per_pass,
-                            psnr_patience=psnr_patience,
-                            max_passes=max_passes,
-                            denoise=denoise,
-                            denoise_h=_denoise_effective_h,
-                            denoise_patch_size=denoise_patch_size,
-                            denoise_search_distance=denoise_search_distance,
-                            denoise_backend=denoise_backend,
-                            denoise_2d=denoise_2d,
-                            # Empty (windowed-to-zero) tiles must not crash the
-                            # whole run: the worker writes an .empty marker and
-                            # exits 0; the orchestrator skips it at merge.
-                            allow_empty_tile=True,
-                        )
-
-                    tmp_dir = output_path.parent / f".{output_path.name}.tiles"
-                    merge_cull = fit_config.get("cull_retention")
-
-                    with asection("Optimization (parallel tiles)"):
-                        result = fit_tiled_parallel(
-                            num_tiles=n_tiles,
-                            jobs=n_jobs,
-                            tmp_dir=tmp_dir,
-                            worker_cmd_builder=_worker_cmd,
-                            volume_shape=grid_shape,
-                            tile_size=tile_size,
-                            overlap=tile_overlap,
-                            progressive=progressive,
-                            cull_retention=merge_cull,
-                            verbose=verbose,
-                            keep_tiles=keep_tiles,
-                            partition=not flat,
-                            recipe=recipe,
-                            recipe_params=recipe_params,
-                        )
-
-                    with asection(f"Saving to {output_path.name}"):
-                        n_splats = _save_fit_output_impl(
-                            result, output_path, compress=compress, verbose=verbose
-                        )
-
-                    aprint(f"\nDone: {n_splats:,} splats")
-                    raise typer.Exit(0)
-
-                aprint("--jobs resolved to 1 worker; using sequential tiled fitting")
+            # 5b. Parallel tiled fitting: spawn one subprocess per tile (branch
+            # BEFORE the in-memory downscale below — see dispatch_parallel_tiled).
+            if dispatch_parallel_tiled(
+                ctx, volume, fit_config, effective_downscale, recipe_params
+            ):
+                raise typer.Exit(0)
 
             # For tiled modes, downscale the volume before tiling
             tiled_downscale_factors = None
@@ -907,129 +681,22 @@ def run_fit_volume(
             # 6. Fit
             if tile is not None:
                 # Single-tile mode (Slurm-ready)
-                from luxar.gsplats.fit_tiled_gsplats import fit_tile
-                from luxar.gsplats.tiling import compute_tile_specs
-
-                tile_parts = tile.split("/")
-                if len(tile_parts) != 2:
-                    aprint("Error: --tile must be N/M format (e.g., '3/16')")
-                    raise typer.Exit(1)
-                try:
-                    tile_idx, tile_total = int(tile_parts[0]), int(tile_parts[1])
-                except ValueError:
-                    aprint("Error: --tile N/M requires integer values")
-                    raise typer.Exit(1)
-
-                specs = compute_tile_specs(volume.shape, tile_size, tile_overlap)
-                if tile_total != len(specs):
-                    aprint(
-                        f"Note: --tile specifies {tile_total} tiles but "
-                        f"grid has {len(specs)} tiles for this volume. "
-                        f"Using actual grid count."
-                    )
-                if tile_idx < 0 or tile_idx >= len(specs):
-                    aprint(
-                        f"Error: tile index {tile_idx} out of range [0, {len(specs)})"
-                    )
-                    raise typer.Exit(1)
-
-                # Extract params that are explicit in fit_tile to avoid
-                # "got multiple values" conflicts with **fit_config
-                fc_voxel_size = fit_config.pop("voxel_size", None)
-                fc_output_space = fit_config.pop("output_space", "real")
-
-                with asection(
-                    f"Fitting tile {tile_idx}/{len(specs)} "
-                    f"grid={specs[tile_idx].grid_index}"
-                ):
-                    result = fit_tile(
-                        volume,
-                        specs[tile_idx],
-                        voxel_size=fc_voxel_size,
-                        output_space=fc_output_space,
-                        progressive=progressive,
-                        max_splats_per_pass=max_splats_per_pass,
-                        psnr_patience=psnr_patience,
-                        max_passes=max_passes,
-                        seeds=parsed_seeds,
-                        **fit_config,
-                    )
+                result = fit_single_tile(ctx, volume, fit_config, parsed_seeds)
 
             elif tiled:
                 # Full tiled fitting
-                from luxar.gsplats.fit_tiled_gsplats import fit_tiled
-
-                # Extract params that are explicit in fit_tiled to avoid
-                # "got multiple values" conflicts with **fit_config
-                fc_voxel_size = fit_config.pop("voxel_size", None)
-                fc_output_space = fit_config.pop("output_space", "real")
-                fc_verbose = fit_config.pop("verbose", True)
-
-                # Partition by default (one part per tile), unless --flat. With
-                # --downscale this sequential path rescales a flat merged result
-                # back to original coords below, so partition is only offered
-                # here when not downscaling (use -j>1 for a downscaled partition,
-                # whose workers rescale themselves).
-                seq_partition = (not flat) and tiled_downscale_factors is None
-                if (not flat) and tiled_downscale_factors is not None:
-                    if recipe is not None:
-                        raise typer.BadParameter(
-                            "--recipe needs a partition, but the sequential tiled "
-                            "path writes a flat leaf under --downscale. Use -j>1 "
-                            "(parallel tiles) for a downscaled partition with LOD."
-                        )
-                    aprint(
-                        "Note: --downscale on the sequential tiled path writes a "
-                        "flat leaf; use -j>1 for a downscaled partition."
-                    )
-                result = fit_tiled(
+                result = fit_sequential_tiled(
+                    ctx,
                     volume,
-                    tile_size=tile_size,
-                    overlap=tile_overlap,
-                    voxel_size=fc_voxel_size,
-                    output_space=fc_output_space,
-                    verbose=fc_verbose,
-                    progressive=progressive,
-                    max_splats_per_pass=max_splats_per_pass,
-                    psnr_patience=psnr_patience,
-                    max_passes=max_passes,
-                    seeds=parsed_seeds,
-                    partition=seq_partition,
-                    recipe=recipe,
-                    recipe_params=recipe_params,
-                    **fit_config,
+                    fit_config,
+                    parsed_seeds,
+                    tiled_downscale_factors,
+                    recipe_params,
                 )
 
             elif progressive:
                 # Progressive fitting: multiple passes on residuals
-                from luxar.gsplats.fit_progressive_gsplats import (
-                    fit_progressive_gaussian_splats,
-                )
-
-                # max_splats = seeds (total budget), or use seeds as max
-                prog_max_splats = (
-                    parsed_seeds
-                    if isinstance(parsed_seeds, int)
-                    else fit_config.pop("seeds", 50000)
-                )
-                # Map --iters to iters_per_pass for progressive mode
-                prog_iters = fit_config.pop("n_iters", 1000)
-                # Remove params that progressive handles differently
-                fit_config.pop("downscale", None)
-                fit_config.pop("seeds", None)
-                # voxel_size/output_space are passed through — progressive
-                # handles them internally (voxel space for passes, converts final result)
-
-                with asection("Progressive Optimization"):
-                    result = fit_progressive_gaussian_splats(
-                        volume,
-                        max_splats=prog_max_splats,
-                        max_splats_per_pass=max_splats_per_pass,
-                        iters_per_pass=prog_iters,
-                        psnr_patience=psnr_patience,
-                        max_passes=max_passes,
-                        **fit_config,
-                    )
+                result = fit_progressive(ctx, volume, fit_config, parsed_seeds)
 
             else:
                 # Standard fitting (downscale handled inside fit_gaussian_splats)
@@ -1041,49 +708,10 @@ def run_fit_volume(
                         **fit_config,
                     )
 
-            # Rescale tiled results back to original coordinates if downscaled
-            if tiled_downscale_factors is not None and result.n_splats > 0:
-                from luxar.gsplats.fitting.downscale import (
-                    rescale_centers,
-                    rescale_cholesky_packed,
-                )
-                from luxar.gsplats.gsplat_data import GSplatData
-
-                result = GSplatData(
-                    centers=rescale_centers(result.centers, tiled_downscale_factors),
-                    amplitudes=result.amplitudes,
-                    cholesky_factors=rescale_cholesky_packed(
-                        result.cholesky_factors, tiled_downscale_factors
-                    ),
-                    colors=result.colors,
-                    stats=result.stats,
-                )
-                aprint(f"Rescaled {result.n_splats} splats to original coordinates")
-
-            # 7. Save
-            from luxar.gsplats.gsplat_data import GSplatData
-
-            is_leaf = isinstance(result, GSplatData)
-            with asection(f"Saving to {output_path.name}"):
-                if (
-                    is_leaf
-                    and allow_empty_tile
-                    and tile is not None
-                    and result.n_splats == 0
-                ):
-                    # Empty tile (windowed to near-zero signal): the gsplats
-                    # writer enforces a no-empty policy, so instead of erroring
-                    # we drop an .empty marker that the parallel orchestrator
-                    # treats as a legitimately-skipped tile at merge time.
-                    marker = Path(str(output_path) + ".empty")
-                    marker.write_text("0 splats\n")
-                    aprint("Empty tile (0 splats): wrote marker, skipped save")
-                    n_splats = 0
-                else:
-                    # leaf → .save; partition node → write_gsplats_tree
-                    n_splats = _save_fit_output_impl(
-                        result, output_path, compress=compress, verbose=verbose
-                    )
+            # 7. Rescale (if downscaled tiled) + save
+            result, n_splats, is_leaf = rescale_and_save(
+                ctx, result, tiled_downscale_factors
+            )
 
         time_s = result.stats.get("time_seconds", 0) if is_leaf else 0
         aprint(f"\nDone: {n_splats:,} splats in {time_s:.1f}s")

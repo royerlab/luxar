@@ -13,7 +13,7 @@ from typing import TYPE_CHECKING, Optional
 import typer
 from arbol import aprint, asection
 
-from ..common_options import CorsOriginOption
+from ..common_options import CorsOriginOption, make_port_option
 from ..utils import _DEFAULT_CORS_ORIGIN, format_memory_size
 
 if TYPE_CHECKING:
@@ -458,7 +458,7 @@ def quick_view(
     path: Path = typer.Argument(
         ..., exists=True, help="Path to .gsplats.zarr dataset (or .zip/.tar.gz)"
     ),
-    port: int = typer.Option(8000, "--port", "-p", help="Data server port"),
+    port: int = make_port_option(8000, "Data server port"),
     viewer_port: int = typer.Option(5173, "--viewer-port", help="Viewer port"),
     open_browser: bool = typer.Option(True, "--open/--no-open", help="Open browser"),
     cors_origin: CorsOriginOption = _DEFAULT_CORS_ORIGIN,
