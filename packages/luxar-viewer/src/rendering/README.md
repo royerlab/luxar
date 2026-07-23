@@ -335,9 +335,9 @@ The `GPUBufferPool` manages geometry reuse for Points, Lines, and GSplats, elimi
 **Key Features:**
 
 - Size-based bucketing: reuses geometries when size and type match (0ms GPU allocation)
-- In-place data updates (lines: strided attribute writes; points/gsplats: fused texel writes)
+- In-place data updates (fused texel writes for all three geometries — lines joined in the PR-C texture-storage migration)
 - Count-based and byte-budget eviction (`gpuPoolMaxBytes`, `gpuPoolEvictBatchSize`)
-- Multi-type support: Points, Lines, and GSplats (lines carry optional scalar attributes for colormaps; points/gsplats always carry a scalar/alpha texel slot)
+- Multi-type support: Points, Lines, and GSplats (all three carry a fixed scalar/alpha texel slot; lines stamp presence via `userData.hasScalars`)
 
 ### 7. Adaptive DPR Manager
 
