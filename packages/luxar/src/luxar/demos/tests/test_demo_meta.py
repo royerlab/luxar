@@ -74,6 +74,27 @@ def test_keys_unique_and_resolvable() -> None:
         assert get_demo(str(demo.index)) == demo
 
 
+def test_descriptions_unique_and_non_placeholder() -> None:
+    """Field-quality guard: descriptions must be real, distinct one-liners.
+
+    The schema validator enforces non-empty single-line strings; this pins
+    the softer qualities nothing else guards — no copy-pasted descriptions
+    and no placeholder text surviving into the registry/CLI table.
+    """
+    demos = iter_demos()
+    descriptions = [d.description for d in demos]
+    dupes = {x for x in descriptions if descriptions.count(x) > 1}
+    assert not dupes, f"duplicated demo descriptions: {sorted(dupes)}"
+    placeholder = ("todo", "tbd", "fixme", "placeholder", "a demo.")
+    offenders = [
+        d.key
+        for d in demos
+        if d.description.strip().lower() in placeholder
+        or any(p in d.description.lower() for p in ("todo:", "fixme:"))
+    ]
+    assert not offenders, f"placeholder descriptions: {offenders}"
+
+
 def test_get_demo_suggests_close_matches() -> None:
     with pytest.raises(KeyError, match="unknown demo"):
         get_demo("lorentz-attractor-oops")
