@@ -1069,3 +1069,49 @@ describe('dispose during an in-flight level (teardown race)', () => {
     expect(fastB.updateViewWithResidency).not.toHaveBeenCalled();
   });
 });
+
+describe('determinant-equal dimensions refresh (three-geometry twin of the points test)', () => {
+  it('does NOT reload on a determinant-equal dimensions refresh, then adopts the new reference', async () => {
+    // The scene rebuilds the dimensions objects right after the first data
+    // load (range fill, displayed-dim step derivation, key reorder). The
+    // loader must neither reset on it (view-state-equal's determinant
+    // projection) nor keep sig-comparing forever afterwards — it adopts the
+    // fresh reference so later passes ref-short-circuit. A REAL query change
+    // after the refresh must still reset. Ports the points-loader test so a
+    // regression in the LinesProgressiveLoader wiring can't hide behind the shared helper's
+    // own unit tests.
+    const dimsV1 = [
+      { name: 'x', unit: 'units', scale: 1, range: null, display: true, step: null },
+      { name: 'y', unit: 'units', scale: 1, range: null, display: true, step: null },
+      { name: 'z', unit: 'units', scale: 1, range: null, display: true, step: null },
+    ] as unknown as LinesViewState['dimensions'];
+    const dimsV2 = [
+      { name: 'x', unit: 'units', scale: 1, display: true, step: 1, range: [0, 9] },
+      { name: 'y', unit: 'units', scale: 1, display: true, step: 1, range: [0, 9] },
+      { name: 'z', unit: 'units', scale: 1, display: true, step: 1, range: [0, 9] },
+    ] as unknown as LinesViewState['dimensions'];
+    const lod0 = makeSubLoader(makeLodData(20, 10, 3));
+    const l = new LinesProgressiveLoader(
+      [lod0] as unknown as LinesSpatialIndexLoader[],
+      1,
+      '/dims-refresh'
+    );
+    await l.loadLines({ ...baseViewState, dimensions: dimsV1 });
+    lod0.updateView.mockClear();
+
+    // Refresh: determinant-equal, different reference → no reload.
+    await l.loadLines({ ...baseViewState, dimensions: dimsV2 });
+    expect(lod0.updateView).not.toHaveBeenCalled();
+    // Same refreshed reference again → still no reload (ref fast path).
+    await l.loadLines({ ...baseViewState, dimensions: dimsV2 });
+    expect(lod0.updateView).not.toHaveBeenCalled();
+
+    // A genuine query change still resets.
+    await l.loadLines({
+      ...baseViewState,
+      slicePosition: [1, 1, 1, 0],
+      dimensions: dimsV2,
+    });
+    expect(lod0.updateView).toHaveBeenCalled();
+  });
+});
