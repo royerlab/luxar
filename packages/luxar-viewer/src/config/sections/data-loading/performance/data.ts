@@ -27,11 +27,6 @@ export const dataLoadingPerformanceConfig: DataLoadingPerformanceConfig = {
   // anything longer suggests a real load problem and the app should
   // fall back to main-thread execution rather than hang on boot.
   workerInitTimeoutMs: 10000,
-  // Material cache eviction bound. Only LINE materials are LRU-cached
-  // (point and gsplat materials are per node, uncached), so this caps
-  // cached materials at 200. Users animating sliders can blow through
-  // this quickly so eviction keeps memory bounded.
-  materialCacheMaxSize: 200,
 
   // GPU buffer pool — multi-type support (Float32Array, Uint8Array,
   // Uint16Array with auto normalization). Reuses geometries when

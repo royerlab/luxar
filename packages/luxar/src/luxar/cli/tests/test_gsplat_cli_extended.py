@@ -334,6 +334,82 @@ class TestBuildDimensions:
 # ═══════════════════════════════════════════════════════════════════════
 
 
+# Full expected output of `gsplat fit --dump-config --preset hifi`, snapshotted
+# from the command before the run_fit_volume decomposition (2026-07) — a
+# byte-exact safety net for the fit command's --dump-config early-exit path.
+_DUMP_CONFIG_HIFI_GOLDEN = """\
+# ============================================================
+# Luxar Gaussian Splat Fitting Configuration
+# ============================================================
+# Base preset: hifi
+# Priority: CLI flags > YAML config > preset > function defaults
+#
+# Usage:
+#   luxar gsplat fit volume.npy output.gsplats.zarr --config this_file.yaml
+#   luxar gsplat fit volume.npy output.gsplats.zarr --preset hifi --config overrides.yaml
+#
+# Seed generation kwargs (num_scales, percentile_thresh, spacing, etc.)
+# can also be set here and will be forwarded to the seed generator.
+
+# --- Basic Parameters ---
+n_iters: 10000            # Max optimization iterations
+lr: 0.01                      # Adam learning rate
+loss_type: "l1"        # Loss function: l1, mse, or poisson
+seed_method: "auto"  # Seed method: auto, edges, grid, decomposition
+
+# --- Preprocessing ---
+norm_percentile: 0.0  # Percentile clipping (0=full range, >0=robust)
+floor: "auto"                # Background/DC suppression: auto | pN (e.g. p10) | <float> | none
+downscale: null            # Downsample by integer factor (null=disabled, e.g. 4 or [1,4,4])
+
+# --- Regularization ---
+asymmetric_penalty: 1.0  # Over-prediction penalty (null=disabled)
+l1_amp: null              # L1 on amplitudes (null=auto: 0.1*lr)
+l1_diag: null            # L1 on Cholesky diagonals (null=auto: 0.01*lr)
+
+# --- Shape Constraints ---
+sigma_min_diag: 0.28867513459481287  # Min Cholesky diagonal
+sigma_max_diag: null  # Max Cholesky diagonal (null=unbounded)
+amp_max: null            # Max amplitude (null=auto: 1.0)
+max_eccentricity: 15.0  # Max axis ratio (null=no constraint)
+truncate: 2.75          # Truncation radius in sigma
+
+# --- Convergence ---
+max_abs_error: null  # Absolute error threshold (null=auto: 0.01)
+rel_l2_target: null  # Relative L2 threshold (null=disabled)
+gradient_clip: null   # Gradient norm clipping (null=disabled)
+scheduler_type: "plateau"  # LR scheduler: plateau or exponential
+patience: 15          # Iterations before LR reduction
+lr_reduction_factor: 0.9  # LR multiplier on plateau
+early_stop_patience: 400  # Stop after N iters without improvement
+
+# --- Dynamic Operations ---
+enable_dynamic_ops: true  # Enable splat relocation during optimization
+dynamic_ops_verbose: false  # Verbose logging for dynamic ops
+
+# --- Post-Processing ---
+cull_retention: 0.999  # Post-fit cumulative culling (0-1, null=disabled)
+voxel_footprint_correction: false  # Inflate covariances by voxel footprint
+
+# --- Boundary Containment ---
+boundary_penalty: null  # Boundary penalty weight (null=disabled)
+clip_to_bounds: false  # Hard clip splats to volume bounds
+
+# --- Anisotropic Voxels ---
+voxel_size: null      # Physical spacing (null=isotropic)
+output_space: "real"  # Output coords: real or voxel
+
+# --- Performance ---
+sort_splats_enabled: true  # Periodic Morton-code sorting for GPU cache locality
+sort_splats_interval: 1000  # Sort every N iterations (also sorts at iteration 0)
+
+# --- Hardware ---
+use_metal: true        # Metal acceleration (macOS Apple Silicon)
+use_cuda: true          # Custom CUDA kernels (NVIDIA GPUs)
+
+"""
+
+
 class TestFitCommand:
     def test_dump_config(self, runner: CliRunner) -> None:
         result = runner.invoke(app, ["gsplat", "fit", "--dump-config"])
@@ -347,6 +423,15 @@ class TestFitCommand:
         assert result.exit_code == 0
         parsed = yaml.safe_load(result.stdout)
         assert parsed["n_iters"] == 10000
+
+    def test_dump_config_hifi_golden(self, runner: CliRunner) -> None:
+        """`fit --dump-config --preset hifi` output is byte-identical to the
+        pre-refactor snapshot (safety net for the run_fit_volume decomposition)."""
+        result = runner.invoke(
+            app, ["gsplat", "fit", "--dump-config", "--preset", "hifi"]
+        )
+        assert result.exit_code == 0
+        assert result.stdout == _DUMP_CONFIG_HIFI_GOLDEN
 
     def test_fit_help_exposes_floor_flag(self, runner: CliRunner) -> None:
         result = runner.invoke(app, ["gsplat", "fit", "--help"])
@@ -3961,7 +4046,7 @@ class TestLODCommand:
         (u16 when escalated / legacy), MEMORY to u8 without one, PRECISION
         stores float32. Needs NON-uniform cholesky (uniform stores broadcast
         them)."""
-        from luxar.cli.lod import detect_store_encoding
+        from luxar.cli.gsplat_ops.recipe_shared import detect_store_encoding
         from luxar.encoding import EncodingMode
         from luxar.gsplats.gsplat_data import GSplatData
 
@@ -3992,7 +4077,7 @@ class TestLODCommand:
         while bare float32 stays "precision"."""
         import json
 
-        from luxar.cli.lod import detect_store_encoding
+        from luxar.cli.gsplat_ops.recipe_shared import detect_store_encoding
         from luxar.gsplats.gsplat_data import GSplatData
 
         rng = np.random.default_rng(2)

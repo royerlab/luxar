@@ -29,7 +29,7 @@ def run_additive_dataset(
     try:
         from dataclasses import replace
 
-        from luxar.cli.lod import (
+        from luxar.cli.gsplat_ops.recipe_shared import (
             VALID_ADDITIVE_METHODS,
             detect_store_encoding,
             estimate_bytes_per_splat,

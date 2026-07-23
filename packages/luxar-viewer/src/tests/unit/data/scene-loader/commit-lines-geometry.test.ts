@@ -755,4 +755,21 @@ describe('commitLinesGeometry — preserve-ordering on same-node same-count reco
     commitLinesGeometry(makeStaged(7), root, pool as never, undefined, 1);
     expect(lastOpts(pool)).toEqual({ preserveOrdering: false, fromInstance: 0 });
   });
+
+  it('a geometry SWAP alone (no reported rebuild) defeats the flag', () => {
+    // geometry === prevGeometry is a load-bearing conjunct of its own:
+    // a swap that (hypothetically) reported no attribute rebuild still
+    // means the previous permutation lives in ANOTHER buffer — the new
+    // buffer's aSortedIndex is a stranger's and must be reset to
+    // identity. Mirrors the points twin's independent-conjunct pin.
+    const root = new THREE.Group();
+    root.add(makeMesh('/lines'));
+    const pool = makePool(new THREE.BufferGeometry());
+    commitLinesGeometry(makeStaged(7), root, pool as never, undefined, 0);
+    pool.acquireLinesGeometry.mockReturnValue(new THREE.BufferGeometry());
+    // didLastAcquireRebuildAttributes stays FALSE (makePool default) —
+    // the geometry-identity conjunct must gate alone.
+    commitLinesGeometry(makeStaged(7), root, pool as never, undefined, 1);
+    expect(lastOpts(pool)).toEqual({ preserveOrdering: false, fromInstance: 0 });
+  });
 });

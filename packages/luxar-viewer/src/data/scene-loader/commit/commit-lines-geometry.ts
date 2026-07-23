@@ -112,7 +112,7 @@ export function commitLinesGeometry(
       // layout means any pooled lines geometry fits any lines node —
       // the interleaved era's scalar spec-set dimension is gone).
       const geometry = gpuBufferPool.acquireLinesGeometry(staged.path, segmentCount);
-      const acquireRebuilt = gpuBufferPool.didLastAcquireRebuildAttributes();
+      const attributesRebuilt = gpuBufferPool.didLastAcquireRebuildAttributes();
       // Keep the previous depth-sort permutation on a same-node
       // same-count in-place recommit (timepoint scrub): a permutation of
       // [0,count) is a strictly-no-worse prior than storage order for
@@ -120,7 +120,7 @@ export function commitLinesGeometry(
       // below lands. Guards mirror the points/gsplats twins.
       const preserveOrdering =
         hadCommittedData &&
-        !acquireRebuilt &&
+        !attributesRebuilt &&
         geometry === prevGeometry &&
         prevCount === segmentCount;
       // Append fast path (depth-sorting Phase 4 Stage 2): when this commit
@@ -141,7 +141,7 @@ export function commitLinesGeometry(
       const committed = getCommittedData(mesh) as LoadedLinesData | undefined;
       const canAppend =
         hadCommittedData &&
-        !acquireRebuilt &&
+        !attributesRebuilt &&
         geometry === prevGeometry &&
         mesh.userData.gpuPrefixIntact === true &&
         segmentCount > (prevCount ?? 0) &&
@@ -182,7 +182,7 @@ export function commitLinesGeometry(
         // geometry+texture pair). Idempotent on the common same-pair
         // commit.
         syncLineMaterialWithGeometry(mesh);
-        if (acquireRebuilt) invalidateRenderObjectFor(mesh);
+        if (attributesRebuilt) invalidateRenderObjectFor(mesh);
         // Dispose a replaced NON-pool geometry (the creation-time
         // placeholder) — see the commit-points-geometry.ts twin.
         if (prevGeometry !== geometry && !prevGeometry.userData?.luxarPooled) {

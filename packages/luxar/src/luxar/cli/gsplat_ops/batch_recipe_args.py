@@ -59,7 +59,7 @@ def build_merge_recipe_params(
     hundreds of tiles need their own perf validation first; the RecipeParams
     defaults ("none") keep the merge byte-identical to before.
     """
-    from luxar.cli.lod import (
+    from luxar.cli.gsplat_ops.recipe_shared import (
         VALID_ADDITIVE_METHODS,
         VALID_SUBSTITUTIVE_METHODS,
         parse_lod_breakpoints,

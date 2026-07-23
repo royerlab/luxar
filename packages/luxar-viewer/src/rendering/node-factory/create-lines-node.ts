@@ -16,6 +16,7 @@ import { getColormapTexture } from '../colormap-textures';
 import { supportsScalarColormap } from '../material-colormap-helpers';
 import { syncLineMaterialWithGeometry } from '../material-sync-helpers';
 import { createInstancedLinesMesh, type InstancedLinesMeshConfig } from '../line-geometry';
+import { clampLineCapacity } from '../element-texture-layout';
 import type { LinesMetadata, LinesUserData, LinesDataLoader } from '../../types/lines';
 import { log, Modules } from '../../utils/log';
 import type { PickingSystem } from '../picking/picking-system';
@@ -81,7 +82,10 @@ export function createLinesNode(
     loader,
     attrs,
     maxWidth: attrs.max_width ?? 1.0,
-    visibleSegmentCount: processed.segmentCount,
+    // Clamped like the commit path's stamp — the geometry above wrote at
+    // most the per-node texture bound, and debug/UI counts must agree
+    // with drawn instances (mirrors createPointsNode / createGSplatsNode).
+    visibleSegmentCount: clampLineCapacity(processed.segmentCount),
     // Per-node material from creation: LayersPanel and the LOD
     // cross-fade honor this marker and mutate the material directly
     // instead of clone-on-first-use (mirrors createPointsNode /

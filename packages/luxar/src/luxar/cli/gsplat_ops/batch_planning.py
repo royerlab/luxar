@@ -248,7 +248,7 @@ def resolve_merge_recipe_args(
 
     # Streaming trio → a concrete stream:<c> breakpoints string, resolved at
     # plan time (the stored string round-trips the manifest untouched).
-    from luxar.cli.lod import validate_streaming_knobs
+    from luxar.cli.gsplat_ops.recipe_shared import validate_streaming_knobs
 
     validate_streaming_knobs(
         merge.target_ms,
@@ -259,7 +259,7 @@ def resolve_merge_recipe_args(
     )
     eff_breakpoints = merge.breakpoints
     if merge.target_ms is not None:
-        from luxar.cli.lod import (
+        from luxar.cli.gsplat_ops.recipe_shared import (
             estimate_bytes_per_splat,
             resolve_streaming_breakpoints,
         )
@@ -277,7 +277,7 @@ def resolve_merge_recipe_args(
     if merge.n_lods is not None:
         args["n-lods"] = str(merge.n_lods)
     if merge.additive_method is not None:
-        from luxar.cli.lod import VALID_ADDITIVE_METHODS
+        from luxar.cli.gsplat_ops.recipe_shared import VALID_ADDITIVE_METHODS
 
         am_norm = merge.additive_method.strip().replace("-", "_")
         if am_norm not in VALID_ADDITIVE_METHODS:
@@ -287,7 +287,7 @@ def resolve_merge_recipe_args(
             )
         args["additive-method"] = am_norm
     if eff_breakpoints is not None:
-        from luxar.cli.lod import parse_lod_breakpoints
+        from luxar.cli.gsplat_ops.recipe_shared import parse_lod_breakpoints
 
         parse_lod_breakpoints(eff_breakpoints)
         args["breakpoints"] = eff_breakpoints
@@ -296,7 +296,7 @@ def resolve_merge_recipe_args(
     if merge.levels is not None:
         args["levels"] = str(merge.levels)
     if merge.substitutive_method is not None:
-        from luxar.cli.lod import VALID_SUBSTITUTIVE_METHODS
+        from luxar.cli.gsplat_ops.recipe_shared import VALID_SUBSTITUTIVE_METHODS
 
         sm_norm = merge.substitutive_method.strip().replace("-", "_")
         if sm_norm not in VALID_SUBSTITUTIVE_METHODS:

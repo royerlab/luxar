@@ -133,6 +133,21 @@ describe('GPUBufferPool', () => {
       expect(Array.from(ordering.subarray(0, 4))).toEqual([0, 1, 2, 3]);
     });
 
+    it('append (fromInstance) keeps the PREFIX permutation and gives only the suffix identity', () => {
+      // Suffix-only ordering on append — the points twin of the lines
+      // case below; resetting the whole attribute would flash the node
+      // unsorted on every progressive refinement.
+      const geom = pool.acquirePointsGeometry('append-points', 6);
+      pool.updatePointsGeometry(geom, createMockLoadedPointsData(4), 4);
+      writeSortedIndexOrdering(geom, new Uint32Array([3, 2, 1, 0]), 4);
+
+      pool.updatePointsGeometry(geom, createMockLoadedPointsData(6), 6, { fromInstance: 4 });
+      const ordering = geom.getAttribute('aSortedIndex').array as Uint32Array;
+      expect(Array.from(ordering.subarray(0, 4))).toEqual([3, 2, 1, 0]); // prefix preserved
+      expect(Array.from(ordering.subarray(4, 6))).toEqual([4, 5]); // suffix identity
+      expect(geom.instanceCount).toBe(6);
+    });
+
     it('should reuse geometry when requesting same node again', () => {
       const geom1 = pool.acquirePointsGeometry('node1', 1000);
       const geom2 = pool.acquirePointsGeometry('node1', 900); // Same node, smaller count
@@ -377,6 +392,37 @@ describe('GPUBufferPool', () => {
       // …and instanceCount was not re-prepared (set only AFTER a
       // successful write).
       expect(geom.instanceCount).toBe(2);
+    });
+
+    it('append (fromInstance) keeps the PREFIX permutation and gives only the suffix identity', () => {
+      // The suffix-only ordering write is load-bearing: resetting the
+      // whole aSortedIndex on an append would destroy the live depth-sort
+      // permutation and flash the node unsorted on every progressive
+      // refinement until the re-sort lands. Mirrors the points twin below.
+      const makeLinesData = (count: number): ProcessedLinesData => ({
+        startPositions: new Float32Array(count * 3),
+        endPositions: new Float32Array(count * 3),
+        startColors: new Float32Array(count * 3),
+        endColors: new Float32Array(count * 3),
+        startWidths: new Float32Array(count),
+        endWidths: new Float32Array(count),
+        startSharpness: new Float32Array(count),
+        endSharpness: new Float32Array(count),
+        segmentLengths: new Float32Array(count),
+        startClipped: new Uint8Array(count),
+        endClipped: new Uint8Array(count),
+        segmentCount: count,
+      });
+      const geom = pool.acquireLinesGeometry('append-lines', 6);
+      pool.updateLinesGeometry(geom, makeLinesData(4), 4);
+      // The SortWorker landed a permutation between commits.
+      writeSortedIndexOrdering(geom, new Uint32Array([3, 2, 1, 0]), 4);
+
+      pool.updateLinesGeometry(geom, makeLinesData(6), 6, { fromInstance: 4 });
+      const ordering = geom.getAttribute('aSortedIndex').array as Uint32Array;
+      expect(Array.from(ordering.subarray(0, 4))).toEqual([3, 2, 1, 0]); // prefix preserved
+      expect(Array.from(ordering.subarray(4, 6))).toEqual([4, 5]); // suffix identity
+      expect(geom.instanceCount).toBe(6);
     });
   });
 
