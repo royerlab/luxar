@@ -36,6 +36,10 @@ export const RAIL_ICONS: Record<string, string> = {
     '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="4" width="12" height="12" rx="1"/><rect x="9" y="9" width="11" height="11" rx="1"/></svg>',
   cinematic:
     '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 20l7-7"/><path d="M15 3l1.2 3.3L19.5 7.5l-3.3 1.2L15 12l-1.2-3.3L10.5 7.5l3.3-1.2z"/></svg>',
+  // Fullscreen: two diagonal expand arrows. Deliberately NOT four corner
+  // brackets (which would collide with the fit/frame icon above).
+  fullscreen:
+    '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M14 4h6v6"/><path d="M20 4l-6.5 6.5"/><path d="M10 20H4v-6"/><path d="M4 20l6.5-6.5"/></svg>',
   // Navigation modes — the rail button swaps between these to mirror the live
   // camera control type (orbit / fly / ortho). Same 24×24 / currentColor style.
   navOrbit:

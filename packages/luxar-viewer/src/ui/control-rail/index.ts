@@ -359,6 +359,11 @@ export class ControlRail {
   private syncFullscreen(): void {
     if (this.disposed) return;
     this.root.classList.toggle('is-fullscreen', isDocumentFullscreen());
+    // Fullscreen state feeds active-state (the View-options fullscreen chip),
+    // and the change can arrive without a click/keydown (Escape, browser UI)
+    // — and always after the async fullscreen request resolves — so the
+    // click-driven refresh alone would leave the chip stale.
+    this.scheduleRefresh();
     this.wake();
   }
 

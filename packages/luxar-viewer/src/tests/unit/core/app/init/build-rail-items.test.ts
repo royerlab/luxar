@@ -8,7 +8,7 @@
  * disabled predicate (grayed when the scene has no layers).
  */
 
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, afterEach } from 'vitest';
 import { buildRailItems, type RailItemsDeps } from '../../../../../core/app/init/build-rail-items';
 import type { ControlRailItem } from '../../../../../ui/control-rail';
 
@@ -32,6 +32,7 @@ function makeDeps(
         toggleRenderingControls: vi.fn(),
         cycleDataMonitor: vi.fn(),
         toggleCinematicMode: vi.fn(),
+        toggleFullscreen: vi.fn(),
         togglePerformanceStats: vi.fn(),
         recenterCamera: vi.fn(),
       },
@@ -220,6 +221,48 @@ describe('buildRailItems', () => {
       // it with a fresh node (identical HTML) — a string compare wouldn't notice,
       // node identity does. This test fails if the guard is removed.
       expect(btn.querySelector('svg')).toBe(svgAfterFirst);
+    });
+  });
+
+  describe('View options flyout', () => {
+    const findView = (deps = makeDeps()): ControlRailItem =>
+      buildRailItems(deps).find((i: ControlRailItem) => i.id === 'view')!;
+
+    /** Stub the standard fullscreen element (jsdom has no real fullscreen). */
+    const setFullscreen = (on: boolean): void => {
+      Object.defineProperty(document, 'fullscreenElement', {
+        configurable: true,
+        get: () => (on ? document.body : null),
+      });
+    };
+    afterEach(() => setFullscreen(false));
+
+    it('carries the five view toggles in order, fullscreen last', () => {
+      expect(findView().flyout!.map((t) => t.id)).toEqual([
+        'scalebar',
+        'legend',
+        'overlays',
+        'cinematic',
+        'fullscreen',
+      ]);
+    });
+
+    it('fullscreen chip fires the same command as the Space shortcut', () => {
+      const deps = makeDeps();
+      const fs = findView(deps).flyout!.find((t) => t.id === 'fullscreen')!;
+      fs.activate();
+      expect(
+        (deps as unknown as { ui: { commands: { toggleFullscreen: ReturnType<typeof vi.fn> } } }).ui
+          .commands.toggleFullscreen
+      ).toHaveBeenCalledTimes(1);
+    });
+
+    it('fullscreen chip active-state tracks the live fullscreen element', () => {
+      const fs = findView().flyout!.find((t) => t.id === 'fullscreen')!;
+      setFullscreen(false);
+      expect(fs.isActive!()).toBe(false);
+      setFullscreen(true);
+      expect(fs.isActive!()).toBe(true);
     });
   });
 
