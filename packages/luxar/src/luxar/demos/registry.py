@@ -306,11 +306,12 @@ def demo_output_paths(info: DemoInfo, demos_dir: Optional[Path] = None) -> list[
     already carries a ``.zarr`` suffix is used verbatim.
     """
     if demos_dir is None:
-        # Deferred: get_demos_output_dir creates directories and needs the
-        # project root, neither of which `luxar demo list` should require.
+        # Deferred: get_demos_output_dir needs the project root, which `luxar
+        # demo list` should not require. create=False so merely resolving output
+        # paths (for status/inventory) never creates datasets/ dirs.
         from luxar.utils.paths import get_demos_output_dir
 
-        demos_dir = get_demos_output_dir()
+        demos_dir = get_demos_output_dir(create=False)
     return [
         demos_dir / (stem if stem.endswith(".zarr") else f"{stem}.luxar.zarr")
         for stem in info.outputs

@@ -8,8 +8,8 @@ time. Extra CLI args after the key are forwarded verbatim to the demo script.
 
 from __future__ import annotations
 
-import subprocess
 import sys
+from pathlib import Path
 from typing import Optional
 
 import typer
@@ -17,7 +17,8 @@ from arbol import aprint
 
 from ..demos import registry
 from ..demos.registry import DemoInfo
-from .utils import exit_code_from, format_memory_size
+from ..utils.process import run_child_process
+from .utils import format_memory_size
 
 app_demo = typer.Typer(
     help="Run and manage Luxar's bundled demos (list / info / run / cache).",
@@ -43,16 +44,39 @@ def _needs_glyphs(info: DemoInfo) -> str:
     return " ".join(parts)
 
 
+def _safe_output_paths(info: DemoInfo) -> list[Path]:
+    """Resolve a demo's output paths, or ``[]`` when the root can't be found.
+
+    ``registry.demo_output_paths`` → ``get_demos_output_dir`` → ``get_project_root``
+    raises ``RuntimeError`` from an installed wheel (no ``pyproject.toml``). An
+    empty list is the right answer there: "no known outputs to skip/clear".
+    """
+    try:
+        return registry.demo_output_paths(info)
+    except RuntimeError:
+        return []
+
+
 def _status(info: DemoInfo) -> str:
     """Whether this demo already has cached inputs or a generated output."""
-    try:
-        if any(p.exists() for p in registry.demo_output_paths(info)):
-            return "output ✓"
-    except Exception:
-        pass
+    if any(p.exists() for p in _safe_output_paths(info)):
+        return "output ✓"
     if any(d.exists() for d in registry.demo_cache_dirs(info)):
         return "cached"
     return ""
+
+
+def _demos_or_exit() -> list[DemoInfo]:
+    """All demos, or a clean error+exit if any ``DEMO_META`` is malformed.
+
+    Without this, a single broken demo file makes ``registry.iter_demos`` raise
+    ``DemoMetaError`` — an uncaught traceback for *every* ``demo`` subcommand.
+    """
+    try:
+        return registry.iter_demos()
+    except registry.DemoMetaError as e:
+        aprint(f"❌ Broken demo metadata: {e}")
+        raise typer.Exit(1) from e
 
 
 def _print_table(demos: list[DemoInfo]) -> None:
@@ -82,6 +106,9 @@ def _resolve_or_exit(key_or_index: str) -> DemoInfo:
     except KeyError as e:
         aprint(f"❌ {e}")
         raise typer.Exit(1) from e
+    except registry.DemoMetaError as e:
+        aprint(f"❌ Broken demo metadata: {e}")
+        raise typer.Exit(1) from e
 
 
 # ─────────────────────────────── callback ────────────────────────────────────
@@ -89,7 +116,7 @@ def _resolve_or_exit(key_or_index: str) -> DemoInfo:
 def demo_callback(ctx: typer.Context) -> None:
     """Show the demo table when invoked with no subcommand."""
     if ctx.invoked_subcommand is None:
-        _print_table(registry.iter_demos())
+        _print_table(_demos_or_exit())
         raise typer.Exit(0)
 
 
@@ -104,7 +131,7 @@ def list_demos(
     ),
 ) -> None:
     """List all bundled demos as a table."""
-    demos = registry.iter_demos()
+    demos = _demos_or_exit()
     if category:
         demos = [d for d in demos if d.category == category]
     if geometry:
@@ -171,14 +198,14 @@ def demo_run(
     if extra:
         aprint(f"➡️  Forwarding args to the demo: {' '.join(extra)}")
     cmd = [sys.executable, "-m", info.module, *extra]
-    try:
-        result = subprocess.run(cmd)
-    except KeyboardInterrupt:
-        aprint("\n🛑 Demo interrupted.")
-        raise typer.Exit(130) from None
-    if result.returncode != 0:
-        # 128+N for signal-killed children (raw -N truncates to 256-N).
-        raise typer.Exit(exit_code_from(result.returncode))
+    # isolate_group=True: the demo (and the `luxar serve` it spawns) run in
+    # their own process group, so a terminal Ctrl-C reaches only this command,
+    # which then tears the whole subtree down deterministically (SIGINT →
+    # SIGTERM → SIGKILL). Without this, a hung uvicorn is orphaned on its port.
+    # run_child_process also maps signal death to 128+N (raw -N truncates).
+    code = run_child_process(cmd, label=f"demo '{info.key}'")
+    if code != 0:
+        raise typer.Exit(code)
 
 
 # ─────────────────────────────── run-all ─────────────────────────────────────
@@ -194,35 +221,64 @@ def demo_run_all(
         "--keep-going/--fail-fast",
         help="Continue after a failing demo (default) or stop at the first.",
     ),
+    include_gpu: bool = typer.Option(
+        False,
+        "--include-gpu/--skip-gpu",
+        help="Also run demos that require a GPU (skipped by default — they "
+        "fail unattended on a CPU-only machine).",
+    ),
+    max_download_mb: int = typer.Option(
+        200,
+        "--max-download-mb",
+        help="Skip demos whose download exceeds this many MB (0 = no limit).",
+    ),
 ) -> None:
     """Generate every demo's dataset (``--no-serve``), for batch/gallery builds.
 
-    Skips demos that need manual/Kaggle data (they can't run unattended) and,
-    by default, demos whose output scenes already exist.
+    Skips demos that can't run unattended: manual/Kaggle data, GPU-required
+    demos (unless ``--include-gpu``), and large downloads (over
+    ``--max-download-mb``). By default also skips demos whose outputs exist.
     """
-    demos = registry.iter_demos()
+    demos = _demos_or_exit()
     ran, skipped, failed = 0, 0, []
     for d in demos:
         if d.local_data in ("manual-file", "kaggle-auth"):
             aprint(f"⏭️  {d.key}: needs {d.local_data}; skipping")
             skipped += 1
             continue
-        outs = registry.demo_output_paths(d)
+        if d.gpu == "required" and not include_gpu:
+            aprint(f"⏭️  {d.key}: needs GPU (pass --include-gpu); skipping")
+            skipped += 1
+            continue
+        if max_download_mb and d.download_mb > max_download_mb:
+            aprint(
+                f"⏭️  {d.key}: download {d.download_mb}MB > "
+                f"{max_download_mb}MB limit; skipping"
+            )
+            skipped += 1
+            continue
+        outs = _safe_output_paths(d)
         if skip_existing and outs and all(p.exists() for p in outs):
             aprint(f"⏭️  {d.key}: output exists; skipping")
             skipped += 1
             continue
         aprint(f"▶️  {d.key}: {d.title}")
-        try:
-            result = subprocess.run([sys.executable, "-m", d.module, "--no-serve"])
-        except KeyboardInterrupt:
-            # Same contract as `demo run`: Ctrl-C exits 130, not Click's
-            # generic "Aborted!" exit 1.
-            aprint(f"\n🛑 Interrupted during {d.key}.")
-            raise typer.Exit(130) from None
-        if result.returncode != 0:
+        # Default isolate_group=True: --no-serve demos spawn no server, but
+        # group isolation still gives a clean Ctrl-C (only this batch runner
+        # gets SIGINT) and a deterministic per-demo teardown.
+        code = run_child_process(
+            [sys.executable, "-m", d.module, "--no-serve"], label=d.key
+        )
+        if code == 130:
+            # 130 is our Ctrl-C convention (run_child_process maps SIGINT and a
+            # KeyboardInterrupt to it): stop the whole batch, matching `demo
+            # run`. A demo that deliberately exits 130 for another reason would
+            # also stop the batch — acceptable, as bundled demos never do.
+            aprint(f"\n🛑 Interrupted during {d.key}; stopping run-all.")
+            raise typer.Exit(130)
+        if code != 0:
             failed.append(d.key)
-            aprint(f"❌ {d.key}: exited {exit_code_from(result.returncode)}")
+            aprint(f"❌ {d.key}: exited {code}")
             if not keep_going:
                 break
         else:
@@ -237,7 +293,11 @@ def demo_run_all(
 @cache_app.command("list")
 def cache_list() -> None:
     """Inventory the demo caches under ~/.cache/luxar/."""
-    entries = registry.inventory_caches()
+    try:
+        entries = registry.inventory_caches()
+    except registry.DemoMetaError as exc:
+        aprint(f"❌ Broken demo metadata: {exc}")
+        raise typer.Exit(1) from exc
     if not entries:
         aprint(f"No demo cache directories under {registry.DEMO_CACHE_ROOT}")
         raise typer.Exit(0)
@@ -284,14 +344,13 @@ def cache_clear(
     either --dry-run (preview) or a confirmation (or --yes).
     """
     import shutil
-    from pathlib import Path
 
     if not keys and not all_demos and not orphans:
         aprint("❌ Specify demo key(s), --all, or --orphans.")
         raise typer.Exit(1)
 
     selected: list[DemoInfo] = (
-        registry.iter_demos()
+        _demos_or_exit()
         if all_demos
         else [_resolve_or_exit(k) for k in (keys or [])]
     )
@@ -305,15 +364,19 @@ def cache_clear(
         for f in sorted(cache_dir.rglob("*")):
             if not f.is_file():
                 continue
-            is_pkl = f.suffix in (".pkl", ".corrupt") or f.name.endswith(".pkl.corrupt")
-            if (is_pkl and computed) or (not is_pkl and downloads):
+            # A computed artifact is a pickle (or a corrupt pickle); every other
+            # file — including a corrupt *download* like ``foo.zip.corrupt`` — is
+            # a download. ``Path("x.pkl.corrupt").suffix == ".corrupt"``, so the
+            # ``endswith`` check is what actually classifies corrupt pickles.
+            is_computed = f.suffix == ".pkl" or f.name.endswith(".pkl.corrupt")
+            if (is_computed and computed) or (not is_computed and downloads):
                 targets.append((f, f.stat().st_size, f"{demo_key}/{f.name}"))
 
     for d in selected:
         for cache_dir in registry.demo_cache_dirs(d):
             _add_dir_files(cache_dir, d.key)
         if outputs:
-            for p in registry.demo_output_paths(d):
+            for p in _safe_output_paths(d):
                 if p.exists():
                     size = (
                         registry.dir_size_bytes(p) if p.is_dir() else p.stat().st_size
@@ -321,7 +384,12 @@ def cache_clear(
                     targets.append((p, size, f"{d.key} output {p.name}"))
 
     if orphans:
-        for e in registry.inventory_caches():
+        try:
+            entries = registry.inventory_caches()
+        except registry.DemoMetaError as exc:
+            aprint(f"❌ Broken demo metadata: {exc}")
+            raise typer.Exit(1) from exc
+        for e in entries:
             if not e.demo_keys:
                 targets.append((e.path, e.size_bytes, f"ORPHAN {e.path.name}"))
 
@@ -341,14 +409,21 @@ def cache_clear(
         aprint("Aborted.")
         raise typer.Exit(0)
 
-    for path, _size, _label in targets:
+    freed, not_removed = 0, []
+    for path, size, label in targets:
         if path.is_dir():
             shutil.rmtree(path, ignore_errors=True)
         else:
             path.unlink(missing_ok=True)
+        if path.exists():
+            not_removed.append(label)
+        else:
+            freed += size
     # Remove now-empty cache dirs left behind by file deletions.
     for d in selected:
         for cache_dir in registry.demo_cache_dirs(d):
             if cache_dir.exists() and not any(cache_dir.iterdir()):
                 cache_dir.rmdir()
-    aprint(f"✅ Cleared {format_memory_size(total)}.")
+    aprint(f"✅ Cleared {format_memory_size(freed)}.")
+    if not_removed:
+        aprint(f"⚠️  Could not remove {len(not_removed)} item(s): {', '.join(not_removed)}")

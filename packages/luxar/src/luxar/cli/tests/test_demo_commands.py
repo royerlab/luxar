@@ -69,8 +69,8 @@ class TestInfo:
 
 class TestRun:
     def test_run_dispatches_module_with_forwarded_args(self, runner) -> None:
-        with patch("luxar.cli.demo_commands.subprocess.run") as mock_run:
-            mock_run.return_value = subprocess.CompletedProcess([], 0)
+        with patch("luxar.cli.demo_commands.run_child_process") as mock_run:
+            mock_run.return_value = 0
             result = runner.invoke(
                 app, ["demo", "run", "lorenz", "--no-serve", "--points=10"]
             )
@@ -87,23 +87,24 @@ class TestRun:
         assert "Forwarding args" in result.stdout
 
     def test_run_propagates_nonzero_exit(self, runner) -> None:
-        with patch("luxar.cli.demo_commands.subprocess.run") as mock_run:
-            mock_run.return_value = subprocess.CompletedProcess([], 3)
+        with patch("luxar.cli.demo_commands.run_child_process") as mock_run:
+            mock_run.return_value = 3
             result = runner.invoke(app, ["demo", "run", "lorenz"])
         assert result.exit_code == 3
 
-    def test_run_maps_signal_kill_to_shell_convention(self, runner) -> None:
-        # A SIGKILLed child reports returncode -9; raw typer.Exit(-9)
-        # truncates to 247 — the shell convention is 128+9 = 137.
-        with patch("luxar.cli.demo_commands.subprocess.run") as mock_run:
-            mock_run.return_value = subprocess.CompletedProcess([], -9)
+    def test_run_propagates_shell_convention_exit(self, runner) -> None:
+        # run_child_process already maps signal death to 128+N (e.g. SIGKILL
+        # -> 137; the mapping itself is covered in test_process.py). demo_run
+        # must propagate that code verbatim, not truncate it.
+        with patch("luxar.cli.demo_commands.run_child_process") as mock_run:
+            mock_run.return_value = 137
             result = runner.invoke(app, ["demo", "run", "lorenz"])
         assert result.exit_code == 137
 
     def test_run_by_index(self, runner) -> None:
         target = iter_demos()[0]
-        with patch("luxar.cli.demo_commands.subprocess.run") as mock_run:
-            mock_run.return_value = subprocess.CompletedProcess([], 0)
+        with patch("luxar.cli.demo_commands.run_child_process") as mock_run:
+            mock_run.return_value = 0
             result = runner.invoke(app, ["demo", "run", "1"])
         assert result.exit_code == 0
         argv = mock_run.call_args.args[0]
@@ -116,7 +117,7 @@ class TestRun:
 
 
 class TestRunAll:
-    """`demo run-all` batch semantics (mocked subprocess; no demo executes)."""
+    """`demo run-all` batch semantics (mocked child; no demo executes)."""
 
     @pytest.fixture(autouse=True)
     def _no_existing_outputs(self, monkeypatch) -> None:
@@ -127,25 +128,27 @@ class TestRunAll:
         )
 
     @staticmethod
-    def _runnable_count() -> int:
-        return sum(
-            1
-            for d in iter_demos()
-            if d.local_data not in ("manual-file", "kaggle-auth")
+    def _is_runnable(d, *, max_download_mb: int = 200) -> bool:
+        """Mirror run-all's DEFAULT skip criteria (no --include-gpu)."""
+        return (
+            d.local_data not in ("manual-file", "kaggle-auth")
+            and d.gpu != "required"
+            and d.download_mb <= max_download_mb
         )
+
+    @classmethod
+    def _runnable_count(cls) -> int:
+        return sum(1 for d in iter_demos() if cls._is_runnable(d))
 
     def test_keep_going_aggregates_failures(self, runner) -> None:
-        failing = next(
-            d
-            for d in iter_demos()
-            if d.local_data not in ("manual-file", "kaggle-auth")
-        )
+        failing = next(d for d in iter_demos() if self._is_runnable(d))
 
         def fake_run(argv, **kw):
-            code = 2 if argv[2] == failing.module else 0
-            return subprocess.CompletedProcess(argv, code)
+            return 2 if argv[2] == failing.module else 0
 
-        with patch("luxar.cli.demo_commands.subprocess.run", side_effect=fake_run) as m:
+        with patch(
+            "luxar.cli.demo_commands.run_child_process", side_effect=fake_run
+        ) as m:
             result = runner.invoke(app, ["demo", "run-all"])
         assert result.exit_code == 1  # a failure surfaces at the end
         assert m.call_count == self._runnable_count()  # ...but nothing aborted
@@ -153,19 +156,78 @@ class TestRunAll:
         assert "failed 1" in result.stdout
 
     def test_fail_fast_stops_at_first_failure(self, runner) -> None:
-        with patch("luxar.cli.demo_commands.subprocess.run") as m:
-            m.return_value = subprocess.CompletedProcess([], 5)
+        with patch("luxar.cli.demo_commands.run_child_process") as m:
+            m.return_value = 5
             result = runner.invoke(app, ["demo", "run-all", "--fail-fast"])
         assert result.exit_code == 1
         assert m.call_count == 1  # stopped at the first failing demo
 
     def test_all_green_exits_zero(self, runner) -> None:
-        with patch("luxar.cli.demo_commands.subprocess.run") as m:
-            m.return_value = subprocess.CompletedProcess([], 0)
+        with patch("luxar.cli.demo_commands.run_child_process") as m:
+            m.return_value = 0
             result = runner.invoke(app, ["demo", "run-all"])
         assert result.exit_code == 0
         assert m.call_count == self._runnable_count()
         assert "failed 0" in result.stdout
+
+    def test_interrupt_stops_batch(self, runner) -> None:
+        with patch("luxar.cli.demo_commands.run_child_process") as m:
+            m.return_value = 130  # helper reports Ctrl-C
+            result = runner.invoke(app, ["demo", "run-all"])
+        assert result.exit_code == 130
+        assert m.call_count == 1  # stopped immediately on interrupt
+
+    def test_skip_gpu_by_default(self, runner) -> None:
+        gpu_demo = next((d for d in iter_demos() if d.gpu == "required"), None)
+        if gpu_demo is None:
+            pytest.skip("no GPU-required demo in the registry")
+        with patch("luxar.cli.demo_commands.run_child_process") as m:
+            m.return_value = 0
+            result = runner.invoke(app, ["demo", "run-all"])
+        ran_modules = [c.args[0][2] for c in m.call_args_list]
+        assert gpu_demo.module not in ran_modules
+        assert f"{gpu_demo.key}: needs GPU" in result.stdout
+
+    def test_include_gpu_runs_gpu_demo(self, runner) -> None:
+        gpu_demo = next((d for d in iter_demos() if d.gpu == "required"), None)
+        if gpu_demo is None:
+            pytest.skip("no GPU-required demo in the registry")
+        # --include-gpu + no download limit so the ONLY skip axis is GPU.
+        with patch("luxar.cli.demo_commands.run_child_process") as m:
+            m.return_value = 0
+            result = runner.invoke(
+                app, ["demo", "run-all", "--include-gpu", "--max-download-mb", "0"]
+            )
+        assert result.exit_code == 0
+        ran_modules = [c.args[0][2] for c in m.call_args_list]
+        # A GPU demo with no other skip reason must now run.
+        if gpu_demo.local_data not in ("manual-file", "kaggle-auth"):
+            assert gpu_demo.module in ran_modules
+
+    def test_max_download_mb_filters(self, runner) -> None:
+        big = next(
+            (
+                d
+                for d in iter_demos()
+                if d.download_mb > 200
+                and d.local_data not in ("manual-file", "kaggle-auth")
+                and d.gpu != "required"
+            ),
+            None,
+        )
+        if big is None:
+            pytest.skip("no large-download CPU demo in the registry")
+        # Default 200MB limit skips it...
+        with patch("luxar.cli.demo_commands.run_child_process") as m:
+            m.return_value = 0
+            result = runner.invoke(app, ["demo", "run-all"])
+        assert big.module not in [c.args[0][2] for c in m.call_args_list]
+        assert f"{big.key}: download" in result.stdout
+        # ...but --max-download-mb 0 (no limit) runs it.
+        with patch("luxar.cli.demo_commands.run_child_process") as m:
+            m.return_value = 0
+            runner.invoke(app, ["demo", "run-all", "--max-download-mb", "0"])
+        assert big.module in [c.args[0][2] for c in m.call_args_list]
 
 
 class TestCache:
@@ -237,6 +299,53 @@ class TestCache:
         result = runner.invoke(app, ["demo", "cache", "clear", "--orphans", "--yes"])
         assert result.exit_code == 0
         assert not orphan.exists()
+
+
+class TestBrokenMeta:
+    """A malformed DEMO_META must produce a clean error, not a traceback."""
+
+    def test_list_reports_broken_meta_cleanly(self, runner, monkeypatch) -> None:
+        from luxar.demos.registry import DemoMetaError
+
+        def boom(*a, **k):
+            raise DemoMetaError("demo_x.py: bad meta")
+
+        monkeypatch.setattr("luxar.cli.demo_commands.registry.iter_demos", boom)
+        result = runner.invoke(app, ["demo", "list"])
+        assert result.exit_code == 1
+        assert "Broken demo metadata" in result.stdout
+
+    def test_run_reports_broken_meta_cleanly(self, runner, monkeypatch) -> None:
+        from luxar.demos.registry import DemoMetaError
+
+        def boom(*a, **k):
+            raise DemoMetaError("demo_x.py: bad meta")
+
+        monkeypatch.setattr("luxar.cli.demo_commands.registry.get_demo", boom)
+        result = runner.invoke(app, ["demo", "run", "lorenz"])
+        assert result.exit_code == 1
+        assert "Broken demo metadata" in result.stdout
+
+
+class TestCacheClearClassification:
+    def test_corrupt_download_is_a_download_not_computed(
+        self, runner, tmp_path, monkeypatch
+    ) -> None:
+        monkeypatch.setattr("luxar.demos.registry.DEMO_CACHE_ROOT", tmp_path)
+        demo = next(d for d in iter_demos() if d.caches)
+        cdir = tmp_path / demo.caches[0]
+        cdir.mkdir()
+        corrupt_dl = cdir / "archive.zip.corrupt"
+        corrupt_dl.write_bytes(b"z" * 2048)
+        corrupt_pkl = cdir / "cache_v1.pkl.corrupt"
+        corrupt_pkl.write_bytes(b"p" * 512)
+        # --no-computed must preserve the corrupt PICKLE but drop the corrupt DOWNLOAD.
+        result = runner.invoke(
+            app, ["demo", "cache", "clear", demo.key, "--no-computed", "--yes"]
+        )
+        assert result.exit_code == 0
+        assert not corrupt_dl.exists()  # corrupt download cleared with downloads
+        assert corrupt_pkl.exists()  # corrupt pickle preserved by --no-computed
 
 
 @pytest.mark.slow
