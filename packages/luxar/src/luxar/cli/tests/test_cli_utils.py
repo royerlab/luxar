@@ -605,3 +605,88 @@ class TestPickPort:
         ):
             assert pick_port(9000) is None
             assert "No available ports" in mock_print.call_args.args[0]
+
+
+class TestDistStaleness:
+    """_dist_is_stale + the ensure_viewer_built stale-rebuild policy."""
+
+    def _tree(self, tmp_path: Path) -> tuple[Path, Path]:
+        dist = tmp_path / "dist"
+        dist.mkdir()
+        (dist / "index.html").write_text("<html/>")
+        src = tmp_path / "src"
+        src.mkdir()
+        (src / "app.ts").write_text("export {};")
+        return dist, src
+
+    def test_fresh_dist_is_not_stale(self, tmp_path) -> None:
+        import os
+
+        from luxar.cli.utils import _dist_is_stale
+
+        dist, src = self._tree(tmp_path)
+        # Make the build strictly newer than the sources.
+        past = os.path.getmtime(src / "app.ts") + 100
+        os.utime(dist / "index.html", (past, past))
+        assert _dist_is_stale(dist, src) is False
+
+    def test_source_newer_than_build_is_stale(self, tmp_path) -> None:
+        import os
+
+        from luxar.cli.utils import _dist_is_stale
+
+        dist, src = self._tree(tmp_path)
+        past = os.path.getmtime(src / "app.ts") - 100
+        os.utime(dist / "index.html", (past, past))
+        assert _dist_is_stale(dist, src) is True
+
+    def test_missing_dist_or_src_reads_not_stale(self, tmp_path) -> None:
+        from luxar.cli.utils import _dist_is_stale
+
+        dist, src = self._tree(tmp_path)
+        assert _dist_is_stale(tmp_path / "nope", src) is False
+        assert _dist_is_stale(dist, tmp_path / "nosrc") is False
+
+    def test_stale_dist_triggers_rebuild_and_degrades_on_failure(
+        self, monkeypatch
+    ) -> None:
+        # ensure_viewer_built must rebuild a stale dist; if the rebuild FAILS
+        # it degrades to serving the stale build (True) with a warning rather
+        # than taking serving down.
+        import luxar.cli.utils as u
+
+        monkeypatch.setattr(u, "check_viewer_built", lambda: True)
+        monkeypatch.setattr(u, "_find_dev_repo_root", lambda: Path("/repo"))
+        monkeypatch.setattr(u, "_dist_is_stale", lambda dist, src: True)
+        monkeypatch.setattr(u, "get_viewer_dist_path", lambda: Path("/repo/dist"))
+        calls = []
+        monkeypatch.setattr(u, "build_viewer", lambda: calls.append(1) or False)
+        assert u.ensure_viewer_built() is True  # degraded, not down
+        assert calls == [1]  # ...but the rebuild was attempted
+
+    def test_fresh_dist_skips_rebuild(self, monkeypatch) -> None:
+        import luxar.cli.utils as u
+
+        monkeypatch.setattr(u, "check_viewer_built", lambda: True)
+        monkeypatch.setattr(u, "_find_dev_repo_root", lambda: Path("/repo"))
+        monkeypatch.setattr(u, "_dist_is_stale", lambda dist, src: False)
+        monkeypatch.setattr(u, "get_viewer_dist_path", lambda: Path("/repo/dist"))
+        monkeypatch.setattr(
+            u, "build_viewer", lambda: (_ for _ in ()).throw(AssertionError)
+        )
+        assert u.ensure_viewer_built() is True
+
+
+class TestExitCodeFrom:
+    def test_positive_and_zero_pass_through(self) -> None:
+        from luxar.cli.utils import exit_code_from
+
+        assert exit_code_from(0) == 0
+        assert exit_code_from(3) == 3
+
+    def test_signal_maps_to_shell_convention(self) -> None:
+        # SIGKILL (-9) → 137, not the truncated 247.
+        from luxar.cli.utils import exit_code_from
+
+        assert exit_code_from(-9) == 137
+        assert exit_code_from(-15) == 143

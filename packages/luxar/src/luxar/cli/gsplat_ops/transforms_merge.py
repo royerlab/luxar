@@ -95,15 +95,10 @@ def run_merge_datasets(
     except typer.Exit:
         raise
     except Exception as e:
+        # (No partial-output caveat needed: the writer streams into a temp
+        # sibling and atomically swaps into place, so a mid-write failure
+        # leaves any prior store untouched and no partial output behind.)
         aprint(f"Error: {e}")
-        # The writer streams straight into output_path (no temp+rename), so a
-        # mid-write failure can leave a partial store behind — say so rather
-        # than letting the user mistake it for a complete output.
-        if output_path.exists():
-            aprint(
-                f"⚠️  A partial output may remain at {output_path} — "
-                "delete it before retrying."
-            )
         import traceback
 
         traceback.print_exc()
