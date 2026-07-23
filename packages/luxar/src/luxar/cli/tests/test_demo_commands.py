@@ -92,6 +92,14 @@ class TestRun:
             result = runner.invoke(app, ["demo", "run", "lorenz"])
         assert result.exit_code == 3
 
+    def test_run_maps_signal_kill_to_shell_convention(self, runner) -> None:
+        # A SIGKILLed child reports returncode -9; raw typer.Exit(-9)
+        # truncates to 247 — the shell convention is 128+9 = 137.
+        with patch("luxar.cli.demo_commands.subprocess.run") as mock_run:
+            mock_run.return_value = subprocess.CompletedProcess([], -9)
+            result = runner.invoke(app, ["demo", "run", "lorenz"])
+        assert result.exit_code == 137
+
     def test_run_by_index(self, runner) -> None:
         target = iter_demos()[0]
         with patch("luxar.cli.demo_commands.subprocess.run") as mock_run:

@@ -3,8 +3,9 @@
  * associated with a given mesh + its material, so the next render
  * builds a fresh one with a clean `vertexBuffers` cache.
  *
- * Why this exists: when the GPU buffer pool grows the underlying
- * `InstancedInterleavedBuffer` of an `InstancedBufferGeometry`,
+ * Why this exists: when a commit swaps a mesh's `InstancedBufferGeometry`
+ * (pool grow / best-fit adoption / non-pool rebuild — the per-instance
+ * buffers, e.g. `aSortedIndex`, are new objects),
  * Three's `RenderObject` (cached in `RenderObjects.chainMap` keyed
  * by `[mesh, material, …]`) still holds:
  *

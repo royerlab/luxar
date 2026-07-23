@@ -1457,3 +1457,126 @@ class TestRobustDisplayRange:
                 if a.get("colormap"):
                     assert "amplitude_data_range" in a, f"{lvl} colormap without range"
                     assert a["amplitude_data_range"][1] > a["amplitude_data_range"][0]
+
+
+class TestAtomicWrites:
+    """Crash-safety: writers must never destroy a prior good store or leave a
+    partial one — write-to-temp-sibling + atomic swap (see _atomic_finalize)."""
+
+    @staticmethod
+    def _leaf(seed: int):
+        from luxar.gsplats.gsplat_data import AdditiveSubLOD
+        from luxar.gsplats.tree import GSplatLeaf
+
+        rng = np.random.default_rng(seed)
+        chol = np.zeros((20, 6), dtype=np.float32)
+        chol[:, [0, 2, 5]] = rng.uniform(0.5, 2.0, size=(20, 3))
+        return GSplatLeaf(
+            additive_sublods=[
+                AdditiveSubLOD(
+                    centers=rng.uniform(0, 50, (20, 3)).astype(np.float32),
+                    amplitudes=rng.uniform(0.1, 1, (20,)).astype(np.float32),
+                    cholesky_factors=chol,
+                )
+            ]
+        )
+
+    @staticmethod
+    def _no_tmp_siblings(directory: Path) -> bool:
+        return not any(directory.glob(".*tmp-*"))
+
+    def test_failed_tree_write_preserves_prior_store(self, monkeypatch) -> None:
+        import importlib
+
+        # NOT `import ... as sg`: the io package re-exports the FUNCTION
+        # `save_gsplats`, which shadows the submodule on attribute lookup.
+        sg = importlib.import_module("luxar.gsplats.io.save_gsplats")
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "test.gsplats.zarr"
+            # A good prior store.
+            save_gsplats(path=path, **create_test_splats_3d(50), ordering="none")
+            before = zarr.open_group(str(path), mode="r").attrs["content_hash"]
+
+            # A rewrite that crashes mid-write (inside the node walker).
+            def boom(*a, **k):
+                raise RuntimeError("simulated mid-write crash")
+
+            monkeypatch.setattr(sg, "write_gsplat_node", boom)
+            with pytest.raises(RuntimeError, match="simulated mid-write crash"):
+                sg.write_gsplats_tree(path, self._leaf(1), ordering="none")
+
+            # Prior good store untouched; no temp sibling left behind.
+            after = zarr.open_group(str(path), mode="r").attrs["content_hash"]
+            assert after == before
+            assert self._no_tmp_siblings(path.parent)
+
+    def test_failed_streaming_write_preserves_prior_store(self, monkeypatch) -> None:
+        from luxar.gsplats.io.save_gsplats import write_partition_streaming
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "part.gsplats.zarr"
+            write_partition_streaming(
+                path, lambda: iter([self._leaf(0), self._leaf(1)]), ordering="none"
+            )
+            before = zarr.open_group(str(path), mode="r").attrs["content_hash"]
+
+            def parts_then_boom():
+                yield self._leaf(2)
+                raise RuntimeError("simulated producer crash")
+
+            with pytest.raises(RuntimeError, match="simulated producer crash"):
+                write_partition_streaming(path, parts_then_boom, ordering="none")
+
+            after = zarr.open_group(str(path), mode="r").attrs["content_hash"]
+            assert after == before
+            assert self._no_tmp_siblings(path.parent)
+
+    def test_streaming_zero_parts_leaves_nothing(self) -> None:
+        # The n_written == 0 ValueError used to leave a partial root at the
+        # destination; now neither the destination nor a temp sibling exists.
+        from luxar.gsplats.io.save_gsplats import write_partition_streaming
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "empty.gsplats.zarr"
+            with pytest.raises(ValueError, match="no non-empty parts"):
+                write_partition_streaming(path, lambda: iter([]), ordering="none")
+            assert not path.exists()
+            assert self._no_tmp_siblings(path.parent)
+
+    def test_failed_compression_leaves_no_partial_archive(self, monkeypatch) -> None:
+        import importlib
+
+        sg = importlib.import_module("luxar.gsplats.io.save_gsplats")
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "test.gsplats.zarr.zip"
+
+            def boom(*a, **k):
+                raise RuntimeError("simulated compression crash")
+
+            monkeypatch.setattr(sg, "_atomic_finalize", boom)
+            with pytest.raises(RuntimeError, match="simulated compression crash"):
+                save_gsplats(
+                    path=path,
+                    **create_test_splats_3d(30),
+                    ordering="none",
+                    compress="zip",
+                )
+            assert not path.exists()
+            assert self._no_tmp_siblings(path.parent)
+
+    def test_success_roundtrip_unchanged(self) -> None:
+        # The atomic swap must not change what a successful save produces.
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "rt.gsplats.zarr"
+            splats = create_test_splats_3d(40)
+            save_gsplats(path=path, **splats, ordering="none")
+            data = load_gsplats(path)
+            assert data.n_splats == 40
+            # Spatial ordering off + AUTO encoding: match the tolerance the
+            # existing roundtrip tests use for quantized amplitudes.
+            assert np.allclose(
+                np.sort(data.amplitudes), np.sort(splats["amplitudes"]), atol=0.05
+            )
+            assert self._no_tmp_siblings(path.parent)

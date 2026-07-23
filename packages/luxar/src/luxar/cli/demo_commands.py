@@ -17,7 +17,7 @@ from arbol import aprint
 
 from ..demos import registry
 from ..demos.registry import DemoInfo
-from .utils import format_memory_size
+from .utils import exit_code_from, format_memory_size
 
 app_demo = typer.Typer(
     help="Run and manage Luxar's bundled demos (list / info / run / cache).",
@@ -177,7 +177,8 @@ def demo_run(
         aprint("\n🛑 Demo interrupted.")
         raise typer.Exit(130) from None
     if result.returncode != 0:
-        raise typer.Exit(result.returncode)
+        # 128+N for signal-killed children (raw -N truncates to 256-N).
+        raise typer.Exit(exit_code_from(result.returncode))
 
 
 # ─────────────────────────────── run-all ─────────────────────────────────────
@@ -221,7 +222,7 @@ def demo_run_all(
             raise typer.Exit(130) from None
         if result.returncode != 0:
             failed.append(d.key)
-            aprint(f"❌ {d.key}: exited {result.returncode}")
+            aprint(f"❌ {d.key}: exited {exit_code_from(result.returncode)}")
             if not keep_going:
                 break
         else:

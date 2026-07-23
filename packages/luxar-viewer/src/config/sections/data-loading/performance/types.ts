@@ -59,15 +59,6 @@ export interface DataLoadingPerformanceConfig {
    */
   gpuPoolMaxBytes: number | null;
 
-  /**
-   * Maximum number of cached LINE materials (the one LRU-cached kind —
-   * point and gsplat materials are per node, uncached).
-   * Materials are bucketed by attribute (opacity / gamma / intensity / …);
-   * an unbounded cache leaks GPU shader programs over long sessions when
-   * users animate sliders. Set to 0 to disable LRU eviction.
-   */
-  materialCacheMaxSize: number;
-
   // Debugging
   enablePerformanceMonitoring: boolean;
 }

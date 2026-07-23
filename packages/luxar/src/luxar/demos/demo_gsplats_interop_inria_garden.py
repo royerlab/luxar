@@ -142,7 +142,14 @@ def build_scene() -> Path:
         recipe="tiles",
         recompute=FLAGS["recompute"],
         max_elements=MAX_ELEMENTS_PER_TILE,
-        n_lods=6,
+        # Streaming ladder for fast first paint (NOT equal-count `n_lods`).
+        # Each tile's coarsest additive chunk is ~14k splats — vs the
+        # equal-count 1/6 = ~121k. First frame decodes ~14k × (tiles in view)
+        # instead of ~1M, so the scene shows something almost immediately, then
+        # refines by geometric doubling. Energy is heavily front-loaded (the
+        # first ~14k already carry the bulk of the opacity-weighted energy), so
+        # the fast first frame still looks essentially complete.
+        breakpoints="stream:14000",
     )
     out = get_demos_output_dir() / "gsplats_interop_inria_garden.luxar.zarr"
     return build_interop_scene(

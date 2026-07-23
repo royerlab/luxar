@@ -15,7 +15,7 @@ imports and ``unittest.mock.patch`` targets keep resolving unchanged.
 
 from __future__ import annotations
 
-import time
+import threading
 from pathlib import Path
 from typing import Any, MutableMapping, Optional, cast
 
@@ -317,8 +317,23 @@ def _serve_viewer(
     aprint(f"🌐 Viewer available at: {viewer_url}")
 
     if open_browser_flag:
-        time.sleep(1)
-        open_browser_func(viewer_url)
+        # uvicorn.run blocks THIS thread, so a same-thread open must fire
+        # before the server binds — the old fixed sleep opened the browser
+        # onto an unbound port when startup took >1s. Poll readiness from a
+        # helper thread instead and open only once the server answers
+        # (mirrors `serve --viewer`'s polled open in main.py).
+        def _open_when_ready() -> None:
+            from .utils import wait_for_server
+
+            if wait_for_server(host, port, timeout=15.0):
+                open_browser_func(viewer_url)
+            else:
+                aprint(
+                    "⚠️  Viewer server did not become ready within 15s — "
+                    f"not opening a browser. Try {viewer_url} manually."
+                )
+
+        threading.Thread(target=_open_when_ready, daemon=True).start()
 
     uvicorn.run(api, host=host, port=port, reload=False, log_level="warning")
 

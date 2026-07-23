@@ -5,6 +5,8 @@ import { SceneLoaderManager } from '../../../data/scene-loader-manager';
 import { getWorkerPool } from '../../../workers/worker-pool';
 import { showError } from '../../../ui/error-overlay';
 import { createInstancedLinesMesh } from '../../../rendering/line-geometry';
+import { clampLineCapacity } from '../../../rendering/element-texture-layout';
+import { syncLineMaterialWithGeometry } from '../../../rendering/material-sync-helpers';
 import { materialManager } from '../../../rendering/material-manager';
 import { computeDebugState } from './debug-state';
 import { buildDebugCacheHelpers } from './debug-cache-helpers';
@@ -189,9 +191,16 @@ export function installDebugInterface(ports: InstallDebugInterfacePorts): void {
           nodeType: 'lines',
           attrs: {},
           maxWidth: 1.0,
-          visibleSegmentCount: cfg.segmentCount,
+          visibleSegmentCount: clampLineCapacity(cfg.segmentCount),
           synthetic: true,
         };
+        // Bind the geometry-owned line texture on the per-node material —
+        // without this the shader samples the shared zero placeholder and
+        // the bench renders N invisible instances (segment data lives in
+        // `uLineTex` since the texture-storage migration; the production
+        // paths bind via createLinesNode / the commit sync, neither of
+        // which runs for this debug injection).
+        syncLineMaterialWithGeometry(mesh);
         ports.sceneManager.scene.add(mesh);
         // Kick the renderer so the new mesh is uploaded before the
         // bench's first measurement frame.

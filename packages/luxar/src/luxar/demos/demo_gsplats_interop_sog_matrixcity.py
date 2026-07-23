@@ -145,7 +145,10 @@ def build_scene() -> Path:
         recompute=FLAGS["recompute"],
         max_elements=MAX_ELEMENTS_PER_TILE,
         compression_factor=COARSE_COMPRESSION,
-        n_lods=4,
+        # Streaming ladder → fast first paint: the coarse level + each tile
+        # open with a ~14k-splat chunk (vs the equal-count 1/4), so the first
+        # frame decodes a small fraction and then refines by geometric doubling.
+        breakpoints="stream:14000",
     )
     out = get_demos_output_dir() / "gsplats_interop_sog_matrixcity.luxar.zarr"
     return build_interop_scene(
