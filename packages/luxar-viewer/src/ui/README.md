@@ -151,8 +151,8 @@ Performance open rail popovers (see [`rail-panels/`](./rail-panels/README.md)).
 - **Collapse** — a chevron handle collapses the rail into the lower-left corner
   (persisted); it reveals on hover only.
 - **View-options flyout** — one button opens a horizontal popover of overlay
-  toggles (scale bar, colormap legend, overlays, cinematic) so the rail stays
-  short.
+  toggles (scale bar, colormap legend, overlays, cinematic, fullscreen) so the
+  rail stays short.
 - **Docked footer** — hosts the Performance readout (see §4).
 - **Theme participation** — styled with `--luxar-*` tokens and carries the
   `luxar-glass-surface` marker class (like every other panel) so it shares the
