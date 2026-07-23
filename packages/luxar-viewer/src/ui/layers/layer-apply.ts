@@ -186,12 +186,11 @@ export class LayerApplyEngine {
       // Depth sorting: a sortable layer switching blending mode may need
       // to start (TO an effective sorted mode: clear the noop stamp +
       // reprocess so the next commit registers with the SortWorker) or
-      // stop (AWAY: release) depth sorting. Gsplats + points today;
-      // lines join when their texture storage lands (the coordinator
-      // has no centers pipeline for them yet, so a reprocess would be
-      // pure waste).
+      // stop (AWAY: release) depth sorting. All three geometry types
+      // register centers with the coordinator (gsplats/points centers,
+      // lines segment midpoints).
       const sortableType = obj.userData?.nodeType;
-      if (sortableType === 'gsplats' || sortableType === 'points') {
+      if (sortableType === 'gsplats' || sortableType === 'points' || sortableType === 'lines') {
         noteDepthSortBlendingModeSwitch(obj as THREE.Mesh, eff.blending_mode, prevBlendingMode);
       }
     }
@@ -241,9 +240,10 @@ export class LayerApplyEngine {
       const mat = this.getLeafMaterial(obj);
       if (!mat || !mat.updateColormapTexture) continue;
       if (layer.colormap && tex) {
-        // C1 fail-closed guard: enabling USE_COLORMAP requires the right
-        // scalar attribute on geometry (`scalar` for points,
-        // `aStartScalar`/`aEndScalar` for lines, `aAmplitude` for gsplats).
+        // C1 fail-closed guard: enabling USE_COLORMAP requires real
+        // scalar data behind the geometry (the `userData.hasScalars`
+        // stamp for points/lines texel storage; always true for gsplats,
+        // whose amplitude is the scalar).
         const nodeType = leaf.type as 'points' | 'lines' | 'gsplats';
         const geometry = (obj as THREE.Points | THREE.Mesh).geometry as THREE.BufferGeometry;
         if (!supportsScalarColormap(nodeType, geometry)) {

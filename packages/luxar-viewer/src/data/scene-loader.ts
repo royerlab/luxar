@@ -1295,6 +1295,10 @@ export class SceneLoader {
         this._gpuBufferPool?.releaseLinesGeometry(path);
         this.registry.unregisterLinesLoader(path);
         this.clearCommittedDataStamp(path);
+        // Drop the level's depth-sort state + worker-side midpoints —
+        // the same demotion hygiene as the gsplats/points branches above.
+        const mesh = this.rootGroup?.getObjectByName(path);
+        if (mesh) releaseDepthSortNode(mesh as THREE.Mesh);
       },
       applyEffectiveAttrs: (node) => this.applyEffectiveAttrs(node),
       deriveNodeViewState: (path, attrs, opts) => this.deriveNodeViewState(path, attrs, opts),

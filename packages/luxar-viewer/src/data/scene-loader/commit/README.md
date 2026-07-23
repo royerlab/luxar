@@ -102,6 +102,5 @@ are allowed inside commit — by contract.
 - `../../../rendering/material-manager.ts` — `SOFT_DISPOSE_FLAG`
   symbol and the soft-dispose listener that pairs with this
   folder's `invalidateRenderObjectFor`.
-- `../../../rendering/interleaved-attributes.ts` —
-  `widenToFloat32` / `writeInterleavedAttribute` used by the points
-  in-place path.
+- `../../../rendering/widen-to-float32.ts` —
+  `widenToFloat32` used by the points commit paths.

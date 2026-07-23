@@ -2,7 +2,8 @@
  * Line Picking Material for GPU object picking.
  *
  * Renders line segments to an RGBA32F pick buffer encoding:
- *   R = nodeId, G = elementId (gl_InstanceID), B = brightness, A = 1.0
+ *   R = nodeId, G = elementId (aSortedIndex — the storage slot),
+ *   B = brightness, A = 1.0
  *
  * Shader source-of-truth lives in `./shaders.ts`.
  */
@@ -23,6 +24,9 @@ export class LinePickingMaterial extends THREE.ShaderMaterial implements CameraA
   constructor(config: LinePickingMaterialConfig) {
     super({
       uniforms: {
+        // Line data texture — rebound by the commit's material sync
+        // (shared with the visual material's pool-owned storage).
+        uLineTex: { value: null },
         uResolution: { value: new THREE.Vector2(1, 1) },
         uIsOrtho: { value: 0 },
         uNearCull: { value: 0.05 },
@@ -57,6 +61,7 @@ export class LinePickingMaterial extends THREE.ShaderMaterial implements CameraA
    */
   clone(): this {
     const cloned = new LinePickingMaterial({ nodeId: this.uniforms.uNodeId.value });
+    cloned.uniforms.uLineTex.value = this.uniforms.uLineTex.value;
     cloned.uniforms.uResolution.value.copy(this.uniforms.uResolution.value);
     cloned.uniforms.uIsOrtho.value = this.uniforms.uIsOrtho.value;
     cloned.uniforms.uNearCull.value = this.uniforms.uNearCull.value;
@@ -91,5 +96,13 @@ export class LinePickingMaterial extends THREE.ShaderMaterial implements CameraA
       this.uniforms.uPerspectiveLineScale.value =
         resolution.y / Math.max(Math.tan(safeFov * 0.5), 1e-4);
     }
+  }
+
+  /**
+   * Rebind the line data texture (plain uniform update). Mirrors
+   * `PointPickingMaterial.updatePointTexture`.
+   */
+  updateLineTexture(texture: THREE.DataTexture | null): void {
+    this.uniforms.uLineTex.value = texture;
   }
 }

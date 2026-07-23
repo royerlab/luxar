@@ -26,6 +26,10 @@
  *   per-texel layout is documented in `point-geometry.ts` (the texel
  *   writer lives there too).
  *
+ * - **Lines** ({@link LINE_TEXTURE_LAYOUT}): 6 texels/segment. The
+ *   per-texel layout is documented in `line-geometry.ts` (the texel
+ *   writer lives there too).
+ *
  * The texture width is a **session constant**: `min(4096,
  * maxTextureSize)` rounded down to a multiple of the layout's
  * texels-per-element, configured once at renderer init from
@@ -51,7 +55,7 @@ export interface ElementTextureLayout {
   readonly texelsPerElement: number;
   /** texelsPerElement * 4. */
   readonly floatsPerElement: number;
-  /** Element noun for log messages ('splat' | 'point'). */
+  /** Element noun for log messages ('splat' | 'point' | 'segment'). */
   readonly label: string;
   /** Remediation hint appended to the capacity-clamp warning. */
   readonly clampHint: string;
@@ -155,7 +159,7 @@ let placeholderElementTexture: THREE.DataTexture | null = null;
  */
 export function getPlaceholderElementTexture(): THREE.DataTexture {
   if (!placeholderElementTexture) {
-    // 12×1: the LCM of the layouts' texels-per-element (4 and 3), so the
+    // 12×1: the LCM of the layouts' texels-per-element (4, 3 and 6), so the
     // "an element's texels never straddle a row" invariant the shader
     // prologues state holds for the placeholder too (an OOB texelFetch is
     // defined-safe in WebGL2, but keeping the invariant true costs nothing).
@@ -251,4 +255,43 @@ export function clampPointCapacity(requested: number): number {
 /** Texture height (rows) needed for `capacity` points at the session width. */
 export function pointTextureHeightForCapacity(capacity: number): number {
   return elementTextureHeightForCapacity(capacity, POINT_TEXTURE_LAYOUT);
+}
+
+// ---------------------------------------------------------------------------
+// Line-bound bindings (6 texels/segment — per-texel layout and the texel
+// writer live in line-geometry.ts)
+// ---------------------------------------------------------------------------
+
+/** The line layout: 6 texels/segment (24 floats = 96 B in RGBA32F). */
+export const LINE_TEXTURE_LAYOUT: ElementTextureLayout = {
+  texelsPerElement: 6,
+  floatsPerElement: 24,
+  label: 'segment',
+  clampHint: 'Split the dataset into multiple nodes to render every segment.',
+};
+
+/** Texels consumed per segment (24 floats = 96 B in RGBA32F). */
+export const LINE_TEXELS_PER_SEGMENT = LINE_TEXTURE_LAYOUT.texelsPerElement;
+
+/** Floats per segment row in the texture's backing store. */
+export const LINE_FLOATS_PER_SEGMENT = LINE_TEXTURE_LAYOUT.floatsPerElement;
+
+/** Line-texture width in texels (multiple of 6 — see the generic core). */
+export function getLineTextureWidth(): number {
+  return getElementTextureWidth(LINE_TEXTURE_LAYOUT);
+}
+
+/** Hard per-node segment capacity (see {@link getMaxElementCapacityPerNode}). */
+export function getMaxLineCapacityPerNode(): number {
+  return getMaxElementCapacityPerNode(LINE_TEXTURE_LAYOUT);
+}
+
+/** Clamp a requested segment capacity (see {@link clampElementCapacity}). */
+export function clampLineCapacity(requested: number): number {
+  return clampElementCapacity(requested, LINE_TEXTURE_LAYOUT);
+}
+
+/** Texture height (rows) needed for `capacity` segments at the session width. */
+export function lineTextureHeightForCapacity(capacity: number): number {
+  return elementTextureHeightForCapacity(capacity, LINE_TEXTURE_LAYOUT);
 }

@@ -39,16 +39,12 @@ export const LINE_PICK_VERTEX_SHADER = /* glsl */ `
 
     in vec2 aQuadCorner;
 
-    // Instanced attributes (per segment)
-    in vec3 aStartPos;
-    in vec3 aEndPos;
-    in float aStartWidth;
-    in float aEndWidth;
-    in float aStartSharpness;
-    in float aEndSharpness;
-    in float aSegmentLength;
-    in float aStartClipped;
-    in float aEndClipped;
+    // Draw-slot → storage-slot mapping (visual-shader parity).
+    in uint aSortedIndex;
+
+    // Line data texture: RGBA32F, 6 texels/segment (see
+    // rendering/line-geometry.ts for the texel layout).
+    uniform highp sampler2D uLineTex;
 
     uniform vec2 uResolution;
     uniform int uIsOrtho;
@@ -73,6 +69,26 @@ export const LINE_PICK_VERTEX_SHADER = /* glsl */ `
     flat out highp float vElementId;
 
     void main() {
+      // === Line-texture fetch prologue (visual-shader parity) ===
+      // Width is a multiple of 6, so a segment's texels share one row.
+      // Colors (texels 2/3 .rgb) and scalars (texel 5) are not needed
+      // for picking; only the .w sharpness of texels 2/3 is read.
+      int lineBase = int(aSortedIndex) * 6;
+      int lineTexW = textureSize(uLineTex, 0).x;
+      ivec2 texel0 = ivec2(lineBase % lineTexW, lineBase / lineTexW);
+      vec4 lineT0 = texelFetch(uLineTex, texel0, 0);
+      vec4 lineT1 = texelFetch(uLineTex, ivec2(texel0.x + 1, texel0.y), 0);
+      vec4 lineT4 = texelFetch(uLineTex, ivec2(texel0.x + 4, texel0.y), 0);
+      vec3 aStartPos = lineT0.xyz;
+      float aStartWidth = lineT0.w;
+      vec3 aEndPos = lineT1.xyz;
+      float aEndWidth = lineT1.w;
+      float aStartSharpness = texelFetch(uLineTex, ivec2(texel0.x + 2, texel0.y), 0).w;
+      float aEndSharpness = texelFetch(uLineTex, ivec2(texel0.x + 3, texel0.y), 0).w;
+      float aSegmentLength = lineT4.x;
+      float aStartClipped = lineT4.y;
+      float aEndClipped = lineT4.z;
+
       // Branchless: aQuadCorner.x ∈ {-1, +1} by construction.
       float t = aQuadCorner.x * 0.5 + 0.5;
       vT = t;
@@ -121,7 +137,7 @@ export const LINE_PICK_VERTEX_SHADER = /* glsl */ `
         vWidthFade = 0.0;
         vViewZ = 0.0;
         vNodeId = uNodeId;
-        vElementId = float(gl_InstanceID);
+        vElementId = float(aSortedIndex);
         return;
       }
 
@@ -174,7 +190,7 @@ export const LINE_PICK_VERTEX_SHADER = /* glsl */ `
         vWidthFade = 0.0;
         vViewZ = 0.0;
         vNodeId = uNodeId;
-        vElementId = float(gl_InstanceID);
+        vElementId = float(aSortedIndex);
         return;
       }
       float clampedPixelWidth = clamp(rawPixelWidth, minPixelWidth, maxPW);
@@ -189,7 +205,10 @@ export const LINE_PICK_VERTEX_SHADER = /* glsl */ `
       gl_Position = clipPos;
 
       vNodeId = uNodeId;
-      vElementId = float(gl_InstanceID);
+      // Storage slot, NOT gl_InstanceID (the draw slot): identical
+      // under identity ordering, and stays correct once the sort
+      // worker permutes draw order.
+      vElementId = float(aSortedIndex);
     }
 `;
 

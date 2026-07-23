@@ -3,18 +3,21 @@
  * `data.scalars` / `processed.startScalars`/`endScalars` are supplied.
  *
  * The C1 fail-closed guard checks the `userData.hasScalars` stamp for
- * Points (scalar data rides texel2.x of the fixed-layout point texture,
- * so presence is no longer readable off a geometry attribute) and
- * `aStartScalar`/`aEndScalar` attributes for Lines — without the
- * binding/stamp, that guard would always trip. These tests demonstrate
- * the unblocking path.
+ * BOTH Points and Lines: scalar data rides texel2.x of the fixed-layout
+ * point texture and texel5.xy of the fixed-layout line texture, so
+ * presence is no longer readable off a geometry attribute — without the
+ * stamp, that guard would always trip. These tests demonstrate the
+ * unblocking path.
  */
 import { describe, it, expect, vi } from 'vitest';
 import * as THREE from 'three';
 import { NodeFactory } from '../../../rendering/node-factory';
 import { getPointTexture } from '../../../rendering/point-geometry';
-import { POINT_FLOATS_PER_POINT } from '../../../rendering/element-texture-layout';
-import { createInstancedLinesMesh } from '../../../rendering/line-geometry';
+import {
+  LINE_FLOATS_PER_SEGMENT,
+  POINT_FLOATS_PER_POINT,
+} from '../../../rendering/element-texture-layout';
+import { createInstancedLinesMesh, getLineTexture } from '../../../rendering/line-geometry';
 import { LineMaterial } from '../../../rendering/materials/line/material-glsl';
 import { supportsScalarColormap } from '../../../rendering/material-colormap-helpers';
 import type { LoadedPointsData, DataLoader } from '../../../data/data-loader-types';
@@ -117,7 +120,7 @@ describe('scalar attribute binding', () => {
   });
 
   describe('Lines', () => {
-    it('binds aStartScalar/aEndScalar when both are supplied in config', () => {
+    it('stamps userData.hasScalars + writes texel5.xy when both scalars are supplied', () => {
       const config = {
         startPositions: new Float32Array([0, 0, 0]),
         endPositions: new Float32Array([1, 0, 0]),
@@ -130,15 +133,22 @@ describe('scalar attribute binding', () => {
         segmentLengths: new Float32Array([1.0]),
         startClipped: new Uint8Array([0]),
         endClipped: new Uint8Array([0]),
-        startScalars: new Float32Array([0.0]),
-        endScalars: new Float32Array([1.0]),
+        startScalars: new Float32Array([0.25]),
+        endScalars: new Float32Array([0.75]),
         segmentCount: 1,
       };
       const material = new LineMaterial();
       const mesh = createInstancedLinesMesh(config, material);
       const geometry = mesh.geometry;
-      expect(geometry.hasAttribute('aStartScalar')).toBe(true);
-      expect(geometry.hasAttribute('aEndScalar')).toBe(true);
+      // Scalar presence is the userData stamp (the fixed 6-texel layout
+      // always has the scalar slots, so no attribute probe exists anymore).
+      expect(geometry.userData.hasScalars).toBe(true);
+      // The scalar VALUES land in texel5.xy (offsets 20/21 of the 24-float
+      // per-segment stride) of the geometry-attached line texture.
+      const texData = getLineTexture(geometry)!.image.data as Float32Array;
+      expect(texData[0 * LINE_FLOATS_PER_SEGMENT + 20]).toBeCloseTo(0.25, 5);
+      expect(texData[0 * LINE_FLOATS_PER_SEGMENT + 21]).toBeCloseTo(0.75, 5);
+      // Colormap guard passes when scalar data is bound.
       expect(supportsScalarColormap('lines', geometry)).toBe(true);
     });
 
@@ -147,8 +157,10 @@ describe('scalar attribute binding', () => {
     // the empty placeholder, logged "Colormap suppressed", and the LUT was
     // never re-enabled once real scalars streamed in (commit writes into the
     // existing placeholder geometry) — leaving colormapped lines white.
-    // createEmptyLinesNode now pre-binds empty start/end scalars when the
-    // node declares colormap + has_scalars.
+    // createEmptyLinesNode declares empty start/end scalars when the node
+    // declares colormap + has_scalars, which createInstancedLinesMesh turns
+    // into the userData.hasScalars stamp, so the guard passes and the
+    // per-node material is colormap-enabled up front.
     it('placeholder enables colormap when attrs declare has_scalars + colormap', () => {
       const factory = new NodeFactory();
       const nodeAttrs = { has_scalars: true, colormap: 'viridis', scalar_data_range: [0, 1] };
@@ -168,10 +180,9 @@ describe('scalar attribute binding', () => {
 
       const placeholder = factory.createEmptyLinesNode('/streamlines', nodeAttrs, attrs, loader);
 
-      // Empty start/end scalars are bound so the fail-closed guard passes
-      // even though the placeholder carries zero segments.
-      expect(placeholder.geometry.hasAttribute('aStartScalar')).toBe(true);
-      expect(placeholder.geometry.hasAttribute('aEndScalar')).toBe(true);
+      // hasScalars is stamped so the fail-closed guard passes even
+      // though the placeholder carries zero segments.
+      expect(placeholder.geometry.userData.hasScalars).toBe(true);
       expect(supportsScalarColormap('lines', placeholder.geometry)).toBe(true);
 
       // The material is colormap-enabled from the start (no suppression).
@@ -179,7 +190,7 @@ describe('scalar attribute binding', () => {
       expect(material.defines && 'USE_COLORMAP' in material.defines).toBe(true);
     });
 
-    it('placeholder does NOT bind scalars when no colormap is declared', () => {
+    it('placeholder does NOT stamp hasScalars when no colormap is declared', () => {
       const factory = new NodeFactory();
       const nodeAttrs = { has_scalars: true };
       const attrs = {
@@ -195,11 +206,11 @@ describe('scalar attribute binding', () => {
       const loader = { dispose: vi.fn() } as unknown as LinesDataLoader;
 
       const placeholder = factory.createEmptyLinesNode('/streamlines', nodeAttrs, attrs, loader);
-      expect(placeholder.geometry.hasAttribute('aStartScalar')).toBe(false);
-      expect(placeholder.geometry.hasAttribute('aEndScalar')).toBe(false);
+      expect(placeholder.geometry.userData.hasScalars).toBe(false);
+      expect(supportsScalarColormap('lines', placeholder.geometry)).toBe(false);
     });
 
-    it('does NOT bind scalar attributes when only one side is supplied (fail-closed)', () => {
+    it('does NOT stamp hasScalars when only one side is supplied (fail-closed)', () => {
       const config = {
         startPositions: new Float32Array([0, 0, 0]),
         endPositions: new Float32Array([1, 0, 0]),
@@ -219,8 +230,7 @@ describe('scalar attribute binding', () => {
       const material = new LineMaterial();
       const mesh = createInstancedLinesMesh(config, material);
       const geometry = mesh.geometry;
-      expect(geometry.hasAttribute('aStartScalar')).toBe(false);
-      expect(geometry.hasAttribute('aEndScalar')).toBe(false);
+      expect(geometry.userData.hasScalars).toBe(false);
       expect(supportsScalarColormap('lines', geometry)).toBe(false);
     });
   });
