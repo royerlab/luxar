@@ -30,6 +30,24 @@ All notable changes to Luxar are documented in this file.
   `transform` (centers/vertices do); gsplats differ (covariances
   transform with the node).
 
+#### Fixed — review-campaign hardening riding the points-sorting PR
+
+- **Runtime blending-mode switches now reach hidden LOD levels**: switching
+  a layer TO an order-dependent mode also marks resident lazy LOD levels
+  stale, so the LOD registry's settle-gated reload re-commits (and
+  depth-sort registers) them — previously they rendered the sorted mode
+  unsorted until an unrelated slice change (pre-existing, gsplats + points).
+- **High-gain gsplats no longer lose dim splats**: the early fragment
+  discard is gain-aware (`intensity × max(gain, 1)`), so dim fluorescence
+  channels amplified with the intensity control keep their splats instead
+  of showing hard clipped rims (identical output at gain ≤ 1).
+- **Sort worker robustness**: a worker that dies during startup or crashes
+  mid-session can no longer accumulate per-commit memory (init settle
+  guard) or permanently stop a node's re-sorts (per-sort RPC deadline) —
+  both degrade to the documented unsorted-normal fallback.
+- Dataset-switch teardown no longer logs spurious node-failure errors when
+  an in-flight load crosses the dispose (expected-abort classification).
+
 #### Fixed — scale-correctness + LOD display + compiler validation campaign
 
 - **Tiny/huge-unit scenes now render correctly in every geometry**: all

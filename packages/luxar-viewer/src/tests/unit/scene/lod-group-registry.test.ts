@@ -2305,3 +2305,48 @@ describe('LODGroupRegistry — force-finest capture override (?lod-finest / Luxa
     expect(children[2].object.visible).toBe(true);
   });
 });
+
+describe('LODGroupRegistry — blending-mode-switch stamp-clear recovery (depth-sort integration)', () => {
+  it('a hidden-or-shown resident lazy level whose stamps were cleared reloads via the ready-but-stale kick and never blanks the display', () => {
+    // The depth-sort coordinator's switch-TO-sorted hook clears BOTH the
+    // committedData noop stamp AND the loadedViewVersion freshness stamp
+    // on every affected level (layer-apply reaches all lod_group leaves).
+    // Lazy levels are outside the reprocess sweep, so their ONLY recovery
+    // is this registry's settle-gated ready-but-stale reload — and the
+    // display must never blank meanwhile (a brief coarse fallback is the
+    // documented staleness behavior, same as any re-slice).
+    const version = 1;
+    const reg = makeRegistry([0, 1, 2], undefined, undefined, () => version);
+    const coarse = makeCountedChild(0, version, 100); // eager, complete
+    const ensureLoaded = vi.fn();
+    const fine = makeCountedChild(0.5, version, 1000); // resident lazy level
+    fine.ensureLoaded = ensureLoaded; // lazy: registry-driven reloads
+    reg.register(makeEntry([coarse, fine], 0, '/g'));
+
+    reg.evaluatePerFrame();
+    expect(fine.object.visible).toBe(true); // steady state: fine displayed
+
+    // === The mode switch fires: both levels' stamps cleared. ===
+    delete (coarse.object.userData as { loadedViewVersion?: number }).loadedViewVersion;
+    delete (fine.object.userData as { loadedViewVersion?: number }).loadedViewVersion;
+
+    // Settle-gated: evaluate several frames at a CONSTANT version. The
+    // display must show SOMETHING every frame (ready-but-stale content),
+    // and the stale lazy aspiration must get exactly one reload kick.
+    for (let f = 0; f < 10; f++) {
+      reg.evaluatePerFrame();
+      expect(coarse.object.visible || fine.object.visible, `frame ${f}: display blanked`).toBe(
+        true
+      );
+    }
+    expect(ensureLoaded).toHaveBeenCalled();
+
+    // The reload's re-commit lands (fresh stamp + count) → fine displays.
+    fine.loading = false; // commit path's stamp; kickDeferredLoad set it true
+    (fine.object.userData as { loadedViewVersion?: number }).loadedViewVersion = version;
+    (coarse.object.userData as { loadedViewVersion?: number }).loadedViewVersion = version;
+    reg.evaluatePerFrame();
+    expect(fine.object.visible).toBe(true);
+    expect(coarse.object.visible).toBe(false);
+  });
+});

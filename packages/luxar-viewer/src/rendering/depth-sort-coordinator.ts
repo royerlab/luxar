@@ -67,6 +67,7 @@ import {
 } from './depth-sort-coordinator/render-order';
 import { config } from '../config';
 import type { UpdateProfiler } from '../profiling/update-profiler';
+import { withTimeout } from '../workers/worker-pool/timeout/with-timeout';
 import { log, Modules } from '../utils/log';
 
 /**
@@ -205,6 +206,13 @@ export function setDepthSortEnabled(enabled: boolean): void {
  * documented warn-once degrade path.
  */
 const SORT_WORKER_INIT_TIMEOUT_MS = 30_000;
+
+/**
+ * Per-sort RPC deadline (see scheduleSort). Generous — a sort is
+ * O(N + buckets) over at most a few million centers, milliseconds on any
+ * live worker; the deadline only trips on a crashed/wedged worker thread.
+ */
+const SORT_RPC_TIMEOUT_MS = 30_000;
 
 /** Lazily spawn + initialize the persistent sort worker. */
 function ensureWorker(): Promise<void> {
@@ -484,8 +492,20 @@ function scheduleSort(mesh: THREE.Mesh, nodeId: string): void {
   // dispatch→applied round-trip the monitor's 'Depth Sort' line shows.
   const session = getProfiler?.()?.beginDepthSortPass() ?? null;
 
-  void api
-    .sort({ nodeId, generation, modelView: new Float32Array(modelView.elements) })
+  // Timeout-raced: a worker that CRASHES mid-session leaves the Comlink
+  // RPC pending forever, and a stuck `inFlight` is unrecoverable — the
+  // per-frame scheduler skips in-flight nodes and later commits only set
+  // `resortQueued`, which never drains. Routing the timeout through the
+  // existing .catch clears `inFlight` and drains the queue (bounded
+  // staleness degrade instead of a permanently unsorted node). A merely
+  // SLOW sort that resolves after the deadline is harmless: the resolve
+  // path re-checks generation + committedData, and a duplicate same-
+  // generation apply writes the identical ordering.
+  void withTimeout(
+    'depth-sort',
+    api.sort({ nodeId, generation, modelView: new Float32Array(modelView.elements) }),
+    SORT_RPC_TIMEOUT_MS
+  )
     .then((result) => {
       const current = nodeStates.get(nodeId);
       if (!current) {
