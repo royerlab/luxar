@@ -52,6 +52,7 @@ import {
   isVolumetricMode,
   usesPeakProjection,
 } from '../../blending-state';
+import { computeScalarRangeUniforms, scalarRangeUniformEntries } from '../_shared/scalar-range';
 
 /**
  * Configuration for gsplat material creation
@@ -211,13 +212,8 @@ export class GSplatMaterial
         ...(materialConfig.colormapTexture
           ? {
               uColormapTex: { value: materialConfig.colormapTexture },
-              uScalarMin: { value: materialConfig.scalarRange?.[0] ?? 0.0 },
-              uScalarScale: {
-                value: materialConfig.scalarRange
-                  ? 1.0 /
-                    Math.max(1e-10, materialConfig.scalarRange[1] - materialConfig.scalarRange[0])
-                  : 1.0,
-              },
+              // Midpoint identity for degenerate ranges — see scalar-range.ts.
+              ...scalarRangeUniformEntries(materialConfig.scalarRange),
             }
           : {}),
       },
@@ -640,9 +636,11 @@ export class GSplatMaterial
   }
 
   setScalarRange(min: number, max: number): void {
-    if (this.uniforms.uScalarMin) this.uniforms.uScalarMin.value = min;
+    // Midpoint identity for degenerate ranges — see scalar-range.ts.
+    const { scalarMin, scalarScale } = computeScalarRangeUniforms(min, max);
+    if (this.uniforms.uScalarMin) this.uniforms.uScalarMin.value = scalarMin;
     if (this.uniforms.uScalarScale) {
-      this.uniforms.uScalarScale.value = 1.0 / Math.max(1e-10, max - min);
+      this.uniforms.uScalarScale.value = scalarScale;
     }
   }
 }

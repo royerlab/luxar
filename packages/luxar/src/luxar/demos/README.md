@@ -20,7 +20,7 @@ luxar demo                  # list all demos (key, index, requirements)
 luxar demo info lorenz      # metadata for one demo
 luxar demo run lorenz       # run by key or index; forwards -- args
 luxar demo run lorenz -- --no-serve --points=10000
-luxar demo run-all          # generate every demo's dataset (--no-serve)
+luxar demo run-all          # generate demo datasets (--no-serve; skips GPU/large-download by default)
 luxar demo cache list       # inventory demo caches under ~/.cache/luxar/
 ```
 

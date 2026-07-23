@@ -63,6 +63,7 @@ import {
 } from '../../blending-state';
 import { proxyIUniform, type TSLNode } from '../_shared/tsl-helpers';
 import type { BlendingMode } from '../../../types/blending';
+import { computeScalarRangeUniforms } from '../_shared/scalar-range';
 
 export class GSplatTSLMaterial
   extends NodeMaterial
@@ -164,12 +165,13 @@ export class GSplatTSLMaterial
     };
     if (materialConfig.colormapTexture) {
       this.tslNodes.uColormapTex = texture(materialConfig.colormapTexture);
-      this.tslNodes.uScalarMin = uniform(materialConfig.scalarRange?.[0] ?? 0.0);
-      this.tslNodes.uScalarScale = uniform(
-        materialConfig.scalarRange
-          ? 1.0 / Math.max(1e-10, materialConfig.scalarRange[1] - materialConfig.scalarRange[0])
-          : 1.0
+      // Midpoint identity for degenerate ranges — see scalar-range.ts.
+      const sr = computeScalarRangeUniforms(
+        materialConfig.scalarRange?.[0] ?? 0.0,
+        materialConfig.scalarRange?.[1] ?? 1.0
       );
+      this.tslNodes.uScalarMin = uniform(sr.scalarMin);
+      this.tslNodes.uScalarScale = uniform(sr.scalarScale);
     }
 
     this.uniforms = this.buildUniformProxies();
@@ -569,9 +571,11 @@ export class GSplatTSLMaterial
   }
 
   setScalarRange(min: number, max: number): void {
-    if (this.uniforms.uScalarMin) this.uniforms.uScalarMin.value = min;
+    // Midpoint identity for degenerate ranges — see scalar-range.ts.
+    const { scalarMin, scalarScale } = computeScalarRangeUniforms(min, max);
+    if (this.uniforms.uScalarMin) this.uniforms.uScalarMin.value = scalarMin;
     if (this.uniforms.uScalarScale) {
-      this.uniforms.uScalarScale.value = 1.0 / Math.max(1e-10, max - min);
+      this.uniforms.uScalarScale.value = scalarScale;
     }
   }
 }
