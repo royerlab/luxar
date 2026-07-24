@@ -968,3 +968,88 @@ describe('LoadedPointsDataAccumulator — ensureCapacity property invariants', (
     );
   });
 });
+
+describe('LoadedPointsDataAccumulator — RGBA color layout (configureColorComponents)', () => {
+  // The color layout (3 = RGB, 4 = RGBA) is a property of the dataset,
+  // declared by the loader BEFORE the first color fill so every color
+  // buffer (initial, type-repinned, grown) is sized at the right stride.
+  // Mirrors LoadedGSplatsDataAccumulator.configureColorComponents.
+
+  function rgbaColors(count: number): Float32Array {
+    const colors = new Float32Array(count * 4);
+    for (let i = 0; i < count; i++) {
+      colors[i * 4] = 0.1 + i;
+      colors[i * 4 + 1] = 0.2 + i;
+      colors[i * 4 + 2] = 0.3 + i;
+      colors[i * 4 + 3] = 0.5 / (i + 1); // distinct per-point alpha
+    }
+    return colors;
+  }
+
+  function positions(count: number): Float32Array {
+    const pos = new Float32Array(count * 3);
+    for (let i = 0; i < pos.length; i++) pos[i] = i;
+    return pos;
+  }
+
+  it('configureColorComponents(4) before fills → getData carries colorComponents=4 and a count×4 colors view', () => {
+    const acc = new LoadedPointsDataAccumulator(8, 3, 100);
+    acc.configureColorComponents(4);
+    acc.fill(0, { positions: positions(3), colors: rgbaColors(3) });
+    const data = acc.getData(3);
+    expect(data.colorComponents).toBe(4);
+    expect(data.colors).toBeInstanceOf(Float32Array);
+    expect(data.colors!.length).toBe(3 * 4);
+    // Each point's own RGBA tuple lands stride-aligned (a 3-strided buffer
+    // would smear point 1+ and drop the alphas).
+    for (let i = 0; i < 3; i++) {
+      expect(data.colors![i * 4]).toBeCloseTo(0.1 + i, 6);
+      expect(data.colors![i * 4 + 2]).toBeCloseTo(0.3 + i, 6);
+      expect(data.colors![i * 4 + 3]).toBeCloseTo(0.5 / (i + 1), 6);
+    }
+  });
+
+  it('growth past capacity preserves the RGBA stride and the filled tuples', () => {
+    const acc = new LoadedPointsDataAccumulator(4, 3, 100);
+    acc.configureColorComponents(4);
+    acc.fill(0, { positions: positions(4), colors: rgbaColors(4) });
+    // Grow beyond the initial capacity — the color copy must move the
+    // live prefix at stride 4 (a stride-3 liveColor would truncate it).
+    expect(acc.ensureCapacity(10)).toBe(true);
+    const data = acc.getData(4);
+    expect(data.colorComponents).toBe(4);
+    expect(data.colors!.length).toBe(4 * 4);
+    for (let i = 0; i < 4; i++) {
+      expect(data.colors![i * 4]).toBeCloseTo(0.1 + i, 6);
+      expect(data.colors![i * 4 + 3]).toBeCloseTo(0.5 / (i + 1), 6);
+    }
+  });
+
+  it('throws when the layout changes AFTER colors were already written', () => {
+    const acc = new LoadedPointsDataAccumulator(8, 3, 100);
+    acc.fill(0, {
+      positions: positions(2),
+      colors: new Float32Array([0.1, 0.2, 0.3, 0.4, 0.5, 0.6]), // RGB
+    });
+    expect(() => acc.configureColorComponents(4)).toThrow(
+      /color layout changed to 4 components after colors were already written with 3/
+    );
+  });
+
+  it('re-declaring the SAME layout is a no-op (even after fills)', () => {
+    const acc = new LoadedPointsDataAccumulator(8, 3, 100);
+    acc.fill(0, {
+      positions: positions(1),
+      colors: new Float32Array([0.1, 0.2, 0.3]), // RGB
+    });
+    const allocationsBefore = acc.getStats().allocations;
+    expect(() => acc.configureColorComponents(3)).not.toThrow();
+    expect(acc.getStats().allocations).toBe(allocationsBefore); // no re-size
+    // Same for RGBA: a repeat declaration after the first is a no-op too.
+    const acc4 = new LoadedPointsDataAccumulator(8, 3, 100);
+    acc4.configureColorComponents(4);
+    acc4.fill(0, { positions: positions(1), colors: rgbaColors(1) });
+    expect(() => acc4.configureColorComponents(4)).not.toThrow();
+    expect(acc4.getData(1).colorComponents).toBe(4);
+  });
+});

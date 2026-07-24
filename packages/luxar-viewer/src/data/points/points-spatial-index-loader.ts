@@ -51,6 +51,7 @@ import {
   type BaseViewState,
   type LoadRange,
   loadColorRanges,
+  colorComponentsOf,
   prefetchRangesIntoCache,
   OnceInit,
   makeInitialLoaderMetrics,
@@ -122,6 +123,14 @@ export class PointsSpatialIndexLoader implements DataLoader, LoaderMonitor {
 
   // Data accumulator for object pooling.
   private _accumulator: LoadedPointsDataAccumulator | null = null;
+
+  /**
+   * Components per color item, learned from the zarr `colors` shape at
+   * open time: 3 = RGB, 4 = RGBA (alpha = per-point opacity). Strides
+   * the accumulator buffers and the projection compaction. Mirrors
+   * `GSplatsSpatialIndexLoader.colorComponents`.
+   */
+  private colorComponents: 3 | 4 = 3;
 
   // Monitoring
   private readonly events = new LoaderEventEmitter();
@@ -353,6 +362,10 @@ export class PointsSpatialIndexLoader implements DataLoader, LoaderMonitor {
         );
       }
       this.arrays.colors = colorsArray;
+      // Learn the color layout (3 = RGB, 4 = RGBA) from the zarr shape at
+      // open time — it strides every downstream copy (accumulator,
+      // projection compaction, texel packing). Mirrors the gsplat loader.
+      this.colorComponents = colorComponentsOf(colorsArray);
     } catch (e: unknown) {
       // Colors are optional - only log if it's not a 404
       if (!isNotFoundError(e)) {
@@ -601,6 +614,10 @@ export class PointsSpatialIndexLoader implements DataLoader, LoaderMonitor {
     if (this._accumulator && appConfig.dataLoading.performance.useAccumulators) {
       const totalPoints = ranges.reduce((sum, r) => sum + (r.end - r.start), 0);
 
+      // Declare the color layout BEFORE any color fill so the buffers
+      // are strided for RGB(A) — a no-op when unchanged.
+      this._accumulator.configureColorComponents(this.colorComponents);
+
       // Ensure capacity and initialize types
       this._accumulator.ensureCapacity(totalPoints);
 
@@ -609,7 +626,7 @@ export class PointsSpatialIndexLoader implements DataLoader, LoaderMonitor {
         this._accumulator.fill(0, {
           positions: new Float32Array(3),
           colors: colors
-            ? (colors.subarray(0, Math.min(3, colors.length)) as ColorArray)
+            ? (colors.subarray(0, Math.min(this.colorComponents, colors.length)) as ColorArray)
             : undefined,
           radii: radii ? (radii.subarray(0, Math.min(1, radii.length)) as ScalarArray) : undefined,
           sharpness: sharpness
@@ -1227,7 +1244,8 @@ export class PointsSpatialIndexLoader implements DataLoader, LoaderMonitor {
       ranges,
       this.buildProjectionContext(),
       targetBuffers,
-      scalars ?? null
+      scalars ?? null,
+      this.colorComponents
     );
   }
 

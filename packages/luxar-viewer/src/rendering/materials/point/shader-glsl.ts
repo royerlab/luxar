@@ -18,6 +18,14 @@
  */
 import { GLSL_SANITIZE_FUNCTIONS, GLSL_NEAR_FADE_FUNCTIONS } from '../_shared/glsl-lib';
 import type { ShaderSource } from '../_shared/shader-source';
+import {
+  ALPHA_CLAMP,
+  VOLUMETRIC_SERIES_C1,
+  VOLUMETRIC_SERIES_C2_DIVISOR,
+  VOLUMETRIC_SERIES_TAU_THRESHOLD,
+  VOLUMETRIC_TAU_EPS,
+} from '../_shared/volumetric';
+import { POINT_CHORD_SCALE } from './math';
 import { pointWebGPUFactory, buildPointTSLNodesFromUniforms } from './shader-tsl';
 
 export const POINT_VERTEX_SHADER = /* glsl */ `
@@ -59,6 +67,7 @@ export const POINT_VERTEX_SHADER = /* glsl */ `
     out mediump vec2 vSpriteCoord; // [0, 1] sprite UV, replaces gl_PointCoord
     out mediump float vPointSize;  // RAW projected size (pre-clamp) for sub-pixel compensation
     out mediump float vNearFade;   // Perspective near fade (1.0 under ortho)
+    flat out mediump float vAlpha; // per-point opacity (texel2.y; 1.0 for RGB data)
 
     void main() {
       // === Point-texture fetch prologue ===
@@ -66,20 +75,21 @@ export const POINT_VERTEX_SHADER = /* glsl */ `
       // local names the math below has always used — zero changes
       // downstream of this block. The width is a multiple of 3
       // (element-texture-layout.ts), so a point's 3 texels share one row
-      // and only x advances. texel2 is fetched only under USE_COLORMAP
-      // (the scalar slot); texel2.y (per-point alpha) is reserved for
-      // volumetric Phase 3 and not read here.
+      // and only x advances. texel2 carries the colormap scalar (.x,
+      // read under USE_COLORMAP) and the per-point alpha (.y, written
+      // unconditionally by the texel writer — 1.0 for RGB data).
       int pointBase = int(aSortedIndex) * 3;
       int pointTexW = textureSize(uPointTex, 0).x;
       ivec2 texel0 = ivec2(pointBase % pointTexW, pointBase / pointTexW);
       vec4 pointT0 = texelFetch(uPointTex, texel0, 0);
       vec4 pointT1 = texelFetch(uPointTex, ivec2(texel0.x + 1, texel0.y), 0);
+      vec4 pointT2 = texelFetch(uPointTex, ivec2(texel0.x + 2, texel0.y), 0);
       vec3 aCenter = pointT0.xyz;      // world-space centre
       float aRadius = pointT0.w;
       vec3 aColor = pointT1.rgb;
       float aSharpness = pointT1.w;
+      vAlpha = pointT2.y;              // per-point opacity (1.0 for RGB data)
       #ifdef USE_COLORMAP
-      vec4 pointT2 = texelFetch(uPointTex, ivec2(texel0.x + 2, texel0.y), 0);
       float aScalar = pointT2.x;       // per-point scalar for colormap lookup
       #endif
 
@@ -191,12 +201,18 @@ export const POINT_FRAGMENT_SHADER = /* glsl */ `
     uniform mediump float uIntensity; // Per-node linear color multiplier (gain)
     uniform mediump float uOffset; // Per-node additive brightness shift (black level)
 
+    // Volumetric (emission–absorption) uniforms — read only under
+    // LUXAR_VOLUMETRIC; inert (compiled out) in every other mode.
+    uniform highp float uAbsorption;         // κ — composed node absorption
+    uniform lowp float uHasElementAlpha;     // 1.0 when colors carry a real alpha column
+
     in mediump vec3 vColor;
     in mediump float vBeta; // Super-Gaussian exponent beta (per-instance)
     in highp float vRadius; // Radius from vertex shader (needs precision for zero-check)
     in mediump vec2 vSpriteCoord; // [0,1] sprite UV (replaces gl_PointCoord)
     in mediump float vPointSize; // Raw pre-clamp sprite size (sub-pixel compensation)
     in mediump float vNearFade; // Perspective near fade (1.0 under ortho)
+    flat in mediump float vAlpha; // per-point opacity (texel2.y; 1.0 for RGB data)
 
     out vec4 fragColor;
 
@@ -243,8 +259,39 @@ export const POINT_FRAGMENT_SHADER = /* glsl */ `
       // GOG on the raw color.
       mediump vec3 adjusted = max(vColor * uIntensity + uOffset, vec3(0.0));
 
+      // Sub-pixel intensity compensation (mirrors the line shader's
+      // widthScale, SQUARED because both sprite dimensions clamp:
+      // energy ∝ area ∝ size²). Points at or above the 1.5px floor
+      // are unaffected (sizeScale = 1).
+      mediump float sizeScale = min(vPointSize / 1.5, 1.0);
+
+      // Screen density of this fragment — falloff scaled by every
+      // "how much of this point is there" factor (node opacity,
+      // sub-pixel energy, near fade). This is the additive-mode alpha.
+      mediump float alpha = falloff * opacity * sizeScale * sizeScale * vNearFade;
+
+      #ifdef LUXAR_VOLUMETRIC
+      // Per-point alpha maps into optical depth w(a) = −ln(1 − a) so a
+      // point's peak rendered alpha reproduces a (mirrors the gsplat
+      // shader; clamp = ALPHA_CLAMP from ../_shared/volumetric). Gated by
+      // uHasElementAlpha: the identity 1.0 written for RGB data must
+      // NOT map to w ≈ 6.24.
+      alpha *= mix(1.0, -log(1.0 - min(vAlpha, ${ALPHA_CLAMP})), uHasElementAlpha);
+      // 'volumetric' optical depth: the isotropic special case of the
+      // gsplat ray integral (VOLUMETRIC_BLENDING_SPEC.md §3.1) —
+      // rayMass = density × through-thickness of the Gaussian-profile
+      // ball (R·√(π/K), see materials/point/math.ts).
+      float tau = uAbsorption * alpha * vRadius * ${POINT_CHORD_SCALE};
+      // Discard only when color AND τ are both negligible — a black
+      // point still absorbs (a pure-ink occluder keeps its optical depth).
+      if (max(adjusted.r, max(adjusted.g, adjusted.b)) < 1e-4 && tau < 1e-4) discard;
+      #else
+      // Per-point alpha is a plain linear contribution scale in every
+      // non-volumetric mode (identity 1.0 for RGB data — no gate needed).
+      alpha *= vAlpha;
       // Early discard for zero-contribution fragments after offset
       if (max(adjusted.r, max(adjusted.g, adjusted.b)) < 1e-4) discard;
+      #endif
 
       // LUXAR_GAMMA_ONE (gamma == 1.0) skips the per-fragment pow() —
       // pow(x, 1) == x — same fast path the colormap branch already takes.
@@ -254,15 +301,20 @@ export const POINT_FRAGMENT_SHADER = /* glsl */ `
       mediump vec3 finalColor = pow(adjusted, vec3(invGamma));
       #endif
 
-      // Sub-pixel intensity compensation (mirrors the line shader's
-      // widthScale, SQUARED because both sprite dimensions clamp:
-      // energy ∝ area ∝ size²). Points at or above the 1.5px floor
-      // are unaffected (sizeScale = 1).
-      mediump float sizeScale = min(vPointSize / 1.5, 1.0);
-
-      // Calculate alpha (intensity) for additive blending
-      mediump float alpha = falloff * opacity * sizeScale * sizeScale * vNearFade;
-
+      #if defined(LUXAR_VOLUMETRIC)
+      // 'volumetric' mode: emission–absorption (Max 1995). RGB carries
+      // the self-screened emission — finalColor·alpha is exactly what
+      // additive adds to the framebuffer, times S(τ) = (1−e^(−τ))/τ (the
+      // front of the ball absorbs its own back; the series branch keeps
+      // S(0) = 1 exact — the κ=0 additive limit; constants from
+      // ../_shared/volumetric, shared with the gsplat twins); alpha is
+      // the physical absorption 1 − e^(−τ) for the
+      // One / OneMinusSrcAlpha state. Mirrors the gsplat shader.
+      float volAlpha = 1.0 - exp(-tau);
+      float screen = (tau < ${VOLUMETRIC_SERIES_TAU_THRESHOLD}) ? 1.0 - ${VOLUMETRIC_SERIES_C1} * tau + tau * tau / ${VOLUMETRIC_SERIES_C2_DIVISOR}.0
+                                  : volAlpha / max(tau, ${VOLUMETRIC_TAU_EPS});
+      fragColor = vec4(finalColor * alpha * screen, volAlpha);
+      #elif defined(LUXAR_MAX_RGB_CONTRIBUTION)
       // max-mode RGB premultiplication.
       //
       // In max blending the framebuffer uses CustomBlending +
@@ -274,7 +326,6 @@ export const POINT_FRAGMENT_SHADER = /* glsl */ `
       // the framebuffer max sees contribution-weighted colour. The
       // LUXAR_MAX_RGB_CONTRIBUTION define is set by
       // PointMaterial.applyBlendingMode('max').
-      #ifdef LUXAR_MAX_RGB_CONTRIBUTION
       fragColor = vec4(finalColor * alpha, alpha);
       #else
       // Output final color with alpha for AdditiveBlending (SrcAlpha, One)

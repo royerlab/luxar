@@ -819,3 +819,64 @@ describe('projectPointsTo3D — WASM-boundary validation guards', () => {
     expect(Array.from(result.positions)).toEqual([0, 1, 2]);
   });
 });
+
+describe('projectPointsTo3D — RGBA color compaction (colorComponents=4, fallback path)', () => {
+  // The zero-radius filter compacts colors strided by `colorComponents`
+  // (3 = RGB, 4 = RGBA — alpha is per-point opacity). A hardcoded stride 3
+  // would truncate the output and hand every survivor after a removed point
+  // a misaligned tuple (the gsplat colorK lesson). Mirrors the
+  // Uint8-radius filter tests above: a hidden-spatial-dim distance drives
+  // the effective radius to 0 for the middle point.
+  it('surviving points keep their OWN RGBA tuples when a middle point is filtered out', () => {
+    // 3 points × 4 dims: points 0 and 2 sit ON the slice (dim3 = 0, kept);
+    // point 1 is far in the hidden dim (dim3 = 100 ≫ R=1 → R_eff 0, filtered).
+    const positions = new Float32Array([0, 0, 0, 0, 1, 1, 1, 100, 2, 2, 2, 0]);
+    const colors = new Float32Array([
+      0.1,
+      0.2,
+      0.3,
+      0.9, // point 0 (kept)
+      0.4,
+      0.5,
+      0.6,
+      0.5, // point 1 (filtered)
+      0.7,
+      0.8,
+      0.9,
+      0.25, // point 2 (kept)
+    ]);
+
+    const result = projectPointsTo3D(
+      wasm,
+      positions,
+      colors,
+      new Float32Array([1, 1, 1]),
+      null,
+      makeViewState({
+        displayDims: [0, 1, 2],
+        slicePosition: [0, 0, 0, 0], // slice at dim3 = 0
+        tolerance: [0, 0, 0, 0],
+      }),
+      [{ start: 0, end: 3 }] as PointRange[],
+      makeCtx({
+        effectiveRadiusConfig: {
+          spatialExtendDims: [true, true, true, true],
+          maxRadius: 1.0,
+        },
+      }),
+      null, // no targetBuffers / accumulator → fallback (allocating) path
+      undefined,
+      4 // colorComponents: RGBA
+    );
+
+    expect(result.pointCount).toBe(2);
+    expect(result.colorComponents).toBe(4);
+    expect(result.colors!.length).toBe(2 * 4); // NOT 2 * 3 (a stride-3 compaction)
+    // Survivor 0 keeps point 0's tuple; survivor 1 keeps point 2's tuple —
+    // a stride-3 compaction would hand survivor 1 [0.6, 0.7, 0.8] instead.
+    const expected = [0.1, 0.2, 0.3, 0.9, 0.7, 0.8, 0.9, 0.25];
+    for (let i = 0; i < expected.length; i++) {
+      expect(result.colors![i]).toBeCloseTo(expected[i], 6);
+    }
+  });
+});

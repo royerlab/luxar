@@ -6,6 +6,35 @@ All notable changes to Luxar are documented in this file.
 
 ### July 2026
 
+#### Added — volumetric blending for Points (Phase 3) + points RGBA colors
+
+- **Points now render the real `volumetric` emission–absorption math**
+  (VOLUMETRIC_BLENDING_SPEC.md Phase 3) on both shader backends: the
+  fragment computes the isotropic special case of the gsplat ray
+  integral — `rayMass = falloff · radius · √(π/ln 100)`, the line
+  integral through the Gaussian-profile point ball — with
+  `τ = κ · density · rayMass`, self-screened emission `S(τ)`, and the
+  physical absorption alpha `1 − e^(−τ)` over the premultiplied
+  One/OneMinusSrcAlpha state. κ = 0 renders pixel-identical to
+  `additive`; the depth sort engages automatically through the existing
+  `needsDepthSort(effectiveGeometryMode(...))` gates (the lines-only
+  additive fallback remains until Phase 4). The layers-panel κ slider
+  now appears for volumetric points layers, and both point materials
+  gained `uAbsorption` (composed node `absorption`) and
+  `updateAbsorption`.
+- **Points accept RGBA colors** (`(N, 4)`; the alpha column is per-point
+  opacity in `[0, 1]`), mirroring gsplats: alpha rides texel2.y of the
+  point texture, scales a point's contribution linearly in every
+  blending mode, and maps into optical depth `w(a) = −ln(1 − a)` under
+  `volumetric` (gated by `uHasElementAlpha`, so RGB datasets are
+  unaffected). The whole pipeline — Python validation
+  (`channels=(3, 4)`), accumulator, progressive-LOD concat (with a
+  fail-fast mixed RGB/RGBA ladder guard), nD projection compaction, GPU
+  adapters, and the texel writer — is stride-aware.
+- **Mandelbulb demo showcases volumetric points**: full-strength colors
+  with real depth cueing — the historical `colors *= 0.1` +
+  `intensity=0.0625` anti-blowout dimming under additive is gone.
+
 #### Added — lines texture storage + depth sorting (three-geometry symmetry complete)
 
 - **Lines migrated to texture-backed element storage**: per-segment data

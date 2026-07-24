@@ -84,7 +84,7 @@ import {
   VOLUMETRIC_TAU_EPS,
   VOLUMETRIC_SERIES_C1,
   VOLUMETRIC_SERIES_C2_DIVISOR,
-} from './math';
+} from '../_shared/volumetric';
 
 // Type-erased constructor aliases. TSL's typed `vec2`/`vec3`/`vec4`/`mat3`
 // overloads reject many valid combinations of intermediate `Node<…>`
@@ -625,7 +625,7 @@ export function gsplatWebGPUFactory(
       .mul(max(exp(mahalSq.mul(-0.5)).sub(uShiftC), float(0.0)));
     // Per-splat opacity (color alpha; 1.0 for RGB data): linear factor in
     // every mode, mapped into optical DENSITY w = −ln(1−a) in volumetric
-    // (GLSL twin; clamp = ALPHA_CLAMP from ./math and sits INSIDE the
+    // (GLSL twin; clamp = ALPHA_CLAMP from ../_shared/volumetric and sits INSIDE the
     // expression — mix evaluates both lanes, so the log argument must be
     // NaN-free even when the gate is 0).
     const volumetricGraph = isVolumetricMode(config.blendingMode ?? 'additive');

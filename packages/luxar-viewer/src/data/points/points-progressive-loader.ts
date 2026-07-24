@@ -112,8 +112,25 @@ function concatenatePointsData(parts: LoadedPointsData[]): LoadedPointsData {
   };
 
   // Optional per-point fields: all-or-nothing across LODs (dtype preserved).
-  const colors = concatOptionalField(parts, (p) => p.colors as ColorArray, count, 3, 'colors');
-  if (colors) result.colors = colors;
+  // Color LAYOUT (3 = RGB, 4 = RGBA) strides the concat — a hardcoded 3
+  // would truncate + misalign an RGBA additive ladder (the gsplat colorK
+  // lesson, PR #620). Layout is a property of the dataset, uniform across
+  // its LODs; a mismatch is malformed data — fail fast, naming the level.
+  const colorK: 3 | 4 = parts.find((p) => p.colors)?.colorComponents ?? 3;
+  for (const [levelIdx, part] of parts.entries()) {
+    if (part.colors && (part.colorComponents ?? 3) !== colorK) {
+      throw new Error(
+        'concatenatePointsData: mixed color layouts across LOD levels ' +
+          `(level ${levelIdx}: ${part.colorComponents ?? 3} vs ${colorK} ` +
+          'components) — ladder levels must share the color layout (RGB vs RGBA).'
+      );
+    }
+  }
+  const colors = concatOptionalField(parts, (p) => p.colors as ColorArray, count, colorK, 'colors');
+  if (colors) {
+    result.colors = colors;
+    result.colorComponents = colorK;
+  }
   const radii = concatOptionalField(parts, (p) => p.radii as ScalarArray, count, 1, 'radii');
   if (radii) result.radii = radii;
   const sharpness = concatOptionalField(

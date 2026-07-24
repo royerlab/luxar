@@ -90,7 +90,10 @@ def write_points(
     # validators further down remain in place (belt and braces).
     if colors is not None:
         if isinstance(colors, np.ndarray):
-            validate_colors_for_writing(colors, n_points)
+            # Points accept RGBA: the alpha column is per-point opacity
+            # (consumed by every blending mode; mapped into optical depth in
+            # volumetric — see VOLUMETRIC_BLENDING_SPEC.md, phase 3).
+            validate_colors_for_writing(colors, n_points, channels=(3, 4))
         elif isinstance(colors, (list, tuple)):
             validate_broadcast_color(colors, "colors")
     if radii is not None:
@@ -172,7 +175,7 @@ def write_points(
     if colors is not None:
         # Belt and braces — the fail-fast gate (step 0d) already validated
         if isinstance(colors, np.ndarray):
-            validate_colors_for_writing(colors, n_points)
+            validate_colors_for_writing(colors, n_points, channels=(3, 4))
         write_colors(group, colors, ordering_data, n_points, ctx.dataset_ctx)
         metadata["has_colors"] = True
 

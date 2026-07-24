@@ -1300,12 +1300,14 @@ describe('depth-sort coordinator — points integration', () => {
     expect(mockApi.registerNode).toHaveBeenCalledTimes(1);
   });
 
-  it('does NOT sort a volumetric points commit (phase-1 effective-additive fallback)', async () => {
-    // effectiveGeometryMode('volumetric', 'point') === 'additive' until
-    // volumetric phase 3 — the material renders commutatively, so sorting
-    // would be pure waste. THE chokepoint test: when phase 3 flips the
-    // helper, this expectation inverts and points volumetric starts
-    // sorting with no coordinator change.
+  it('DOES sort a volumetric points commit (phase 3: real emission–absorption)', async () => {
+    // effectiveGeometryMode('volumetric', 'point') === 'volumetric'
+    // since phase 3 and needsDepthSort('volumetric') is true — the
+    // material composites order-dependently, so the commit registers
+    // with the SortWorker exactly like a normal-mode points commit.
+    // THE chokepoint test: this expectation inverted when phase 3
+    // flipped the helper, with no coordinator change (its twin for
+    // lines below stays on the phase-1 fallback until phase 4).
     const coord = await loadCoordinator();
     coord.configureDepthSort({ getCamera: () => makeCamera(), requestRender: vi.fn() });
 
@@ -1314,12 +1316,12 @@ describe('depth-sort coordinator — points integration', () => {
     coord.noteDepthSortCommit(mesh, provider, 3);
     await flush();
 
-    expect(provider).not.toHaveBeenCalled();
-    expect(mockApi.registerNode).not.toHaveBeenCalled();
-    expect(mockApi.sort).not.toHaveBeenCalled();
+    expect(provider).toHaveBeenCalledTimes(1);
+    expect(mockApi.registerNode).toHaveBeenCalledTimes(1);
+    expect(mockApi.sort).toHaveBeenCalled();
   });
 
-  it('mode switches judge the EFFECTIVE mode: normal→volumetric releases points but not gsplats', async () => {
+  it('mode switches judge the EFFECTIVE mode: points normal→volumetric is sorted→sorted', async () => {
     const coord = await loadCoordinator();
     const requestReprocess = vi.fn();
     coord.configureDepthSort({
@@ -1328,24 +1330,28 @@ describe('depth-sort coordinator — points integration', () => {
       requestReprocess,
     });
 
-    // Points: normal→volumetric LEAVES the sorted set today (volumetric
-    // renders additive) — worker-side state must be released.
+    // Points: normal→volumetric is sorted→sorted since phase 3 — no
+    // release, no reprocess (the same contract gsplats have carried
+    // since phase 1).
     const points = makePointsMesh(2, 'normal');
     coord.noteDepthSortCommit(points, () => new Float32Array([0, 0, -1, 1, 0, -2]), 2);
     await flush();
     expect(mockApi.registerNode).toHaveBeenCalledTimes(1);
     coord.noteDepthSortBlendingModeSwitch(points, 'volumetric', 'normal');
-    expect(mockApi.releaseNode).toHaveBeenCalledWith(points.uuid);
-
-    // ...and additive→volumetric must NOT force the expensive reprocess
-    // (both effectively unsorted for points).
-    coord.noteDepthSortBlendingModeSwitch(points, 'volumetric', 'additive');
+    expect(mockApi.releaseNode).not.toHaveBeenCalled();
     expect(requestReprocess).not.toHaveBeenCalled();
 
+    // ...and additive→volumetric is unsorted→SORTED: the coordinator
+    // must request the reprocess that re-commits (and registers) the
+    // node — mirroring additive→normal.
+    const additivePoints = makePointsMesh(2, 'additive');
+    coord.noteDepthSortBlendingModeSwitch(additivePoints, 'volumetric', 'additive');
+    expect(requestReprocess).toHaveBeenCalled();
+
     // Gsplats: the same normal→volumetric switch is sorted→sorted — no
-    // release, no reprocess (the existing contract, now via the
-    // effective-mode path).
-    mockApi.releaseNode.mockClear();
+    // release, no reprocess (the existing contract, now shared with
+    // points via the effective-mode path).
+    requestReprocess.mockClear();
     const gsplats = makeGSplatsMesh(2, 'normal');
     coord.noteDepthSortCommit(gsplats, new Float32Array([0, 0, -1, 1, 0, -2]), 2);
     await flush();

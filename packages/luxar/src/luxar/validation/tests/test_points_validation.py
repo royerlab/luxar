@@ -112,6 +112,54 @@ def test_integer_color_ranges_do_not_emit_hdr_warning() -> None:
 
 
 # =============================================================================
+# RGBA Colors (per-point opacity — volumetric phase 3)
+# =============================================================================
+
+
+def test_rgba_colors_accepted_and_written(tmp_path) -> None:
+    """(N, 4) float32 RGBA colors are accepted by the points writer.
+
+    The alpha column is per-point opacity in [0, 1] (consumed by every
+    blending mode; mapped into optical depth in volumetric) and must
+    persist on disk with the full (N, 4) shape.
+    """
+    store = tmp_path / "rgba_points.luxar.zarr"
+    n = 50
+    rng = np.random.default_rng(42)
+    positions = rng.standard_normal((n, 3)).astype(np.float32)
+    colors = rng.uniform(0.0, 1.0, (n, 4)).astype(np.float32)
+    with LuxarZarrCompiler(
+        store, encoding_mode=EncodingMode.PRECISION, enable_spatial_index=False
+    ) as compiler:
+        scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+        scene.add_points("rgba", positions, colors=colors, parent=scene)
+
+    root = zarr.open_group(store, mode="r")
+    assert "rgba/colors" in root
+
+    decoder = ArrayDecoder()
+    stored_colors = decoder.decode(root["rgba/colors"], root)
+    assert stored_colors.shape == (n, 4)
+    np.testing.assert_array_equal(stored_colors, colors)
+
+
+def test_rgba_alpha_out_of_range_rejected_by_writer(tmp_path) -> None:
+    """Alpha is opacity, not emission: alpha > 1 fails at the pre-write gate."""
+    store = tmp_path / "rgba_bad_alpha.luxar.zarr"
+    n = 10
+    positions = np.random.randn(n, 3).astype(np.float32)
+    colors = np.random.rand(n, 4).astype(np.float32)
+    colors[3, 3] = 1.5  # RGB may be HDR (>1); alpha may not
+
+    with LuxarZarrCompiler(store, enable_spatial_index=False) as compiler:
+        scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+        # add_points re-wraps the writer's ValidationError as a ValueError
+        # (same surface as test_mismatched_colors above).
+        with pytest.raises(ValueError, match="alpha channel must be within"):
+            scene.add_points("bad", positions, colors=colors, parent=scene)
+
+
+# =============================================================================
 # Radii Validation Tests (Parametrized)
 # =============================================================================
 
