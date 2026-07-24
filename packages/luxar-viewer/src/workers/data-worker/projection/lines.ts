@@ -48,6 +48,16 @@ export async function projectLinesTo3D(
     viewState: ProjectionViewState;
     ndim: number;
     segmentCount: number;
+    /**
+     * Channels per color entry: 3 (RGB, default) or 4 (RGBA — the alpha
+     * column is per-vertex opacity, volumetric phase 4). When 4, the
+     * worker de-interleaves the coerced colors into an RGB stride-3
+     * array for `interpolate_colors_batch` (an RGB-only kernel) plus a
+     * stride-1 alpha column routed through `interpolate_scalars_batch`
+     * (the widths/sharpness/scalars kernel — alpha interpolates
+     * linearly like any scalar), emitting `startAlphas`/`endAlphas`.
+     */
+    colorComponents?: 3 | 4;
   }
 ): Promise<{
   startPositions: Float32Array;
@@ -62,6 +72,10 @@ export async function projectLinesTo3D(
   startScalars: Float32Array;
   /** Per-segment end scalar (empty Float32Array when input scalars=null). */
   endScalars: Float32Array;
+  /** Per-segment start alpha (empty Float32Array unless colorComponents=4). */
+  startAlphas: Float32Array;
+  /** Per-segment end alpha (empty Float32Array unless colorComponents=4). */
+  endAlphas: Float32Array;
   segmentLengths: Float32Array;
   startClipped: Uint8Array;
   endClipped: Uint8Array;
@@ -71,6 +85,7 @@ export async function projectLinesTo3D(
 
   const { positions, segments, widths, colors, sharpness, scalars, viewState, ndim, segmentCount } =
     params;
+  const colorK = colors ? (params.colorComponents ?? 3) : 3;
   const { displayDims, slicePosition, tolerance } = viewState;
 
   // The shared projection validator handles displayDims and the basic
@@ -99,6 +114,7 @@ export async function projectLinesTo3D(
   validateLineSegmentReferences('projectLinesTo3D', segments, segmentCount, positions, ndim, {
     widths,
     colors: colors ?? undefined,
+    colorComponents: colorK,
     sharpness: sharpness ?? undefined,
     scalars: scalars ?? undefined,
   });
@@ -145,6 +161,8 @@ export async function projectLinesTo3D(
         endSharpness: new Float32Array(0),
         startScalars: new Float32Array(0),
         endScalars: new Float32Array(0),
+        startAlphas: new Float32Array(0),
+        endAlphas: new Float32Array(0),
         segmentLengths: new Float32Array(0),
         startClipped: emptyFlags,
         endClipped: new Uint8Array(0),
@@ -172,13 +190,35 @@ export async function projectLinesTo3D(
   );
 
   // Step 3: Interpolate colors using WASM
-  // Convert colors to Float32Array if needed (WASM expects Float32Array)
+  // Convert colors to Float32Array if needed (WASM expects Float32Array).
+  // `interpolate_colors_batch` is an RGB stride-3 kernel; an RGBA input
+  // (colorK === 4) is de-interleaved once into an RGB array + a stride-1
+  // alpha column, and the alpha rides the SAME scalar kernel widths /
+  // sharpness / scalars already use (alpha interpolates linearly like
+  // any scalar; both WASM and the >16D TS backend have it, so no kernel
+  // change and no parity surface is added).
   const startColors = new Float32Array(visibleCount * 3);
   const endColors = new Float32Array(visibleCount * 3);
+  let startAlphas: Float32Array;
+  let endAlphas: Float32Array;
 
   if (colors) {
+    let colorsRGB = coerceColorsToFloat32(colors);
+    let alphaColumn: Float32Array | null = null;
+    if (colorK === 4) {
+      const numVertices = colorsRGB.length / 4;
+      const rgb = new Float32Array(numVertices * 3);
+      alphaColumn = new Float32Array(numVertices);
+      for (let v = 0; v < numVertices; v++) {
+        rgb[v * 3] = colorsRGB[v * 4];
+        rgb[v * 3 + 1] = colorsRGB[v * 4 + 1];
+        rgb[v * 3 + 2] = colorsRGB[v * 4 + 2];
+        alphaColumn[v] = colorsRGB[v * 4 + 3];
+      }
+      colorsRGB = rgb;
+    }
     wasmModule.interpolate_colors_batch(
-      coerceColorsToFloat32(colors),
+      colorsRGB,
       segments,
       visibility,
       t1Params,
@@ -187,9 +227,28 @@ export async function projectLinesTo3D(
       startColors,
       endColors
     );
+    if (alphaColumn) {
+      startAlphas = new Float32Array(visibleCount);
+      endAlphas = new Float32Array(visibleCount);
+      wasmModule.interpolate_scalars_batch(
+        alphaColumn,
+        segments,
+        visibility,
+        t1Params,
+        t2Params,
+        segmentCount,
+        startAlphas,
+        endAlphas
+      );
+    } else {
+      startAlphas = new Float32Array(0);
+      endAlphas = new Float32Array(0);
+    }
   } else {
     fillColorsWhite(startColors, visibleCount);
     fillColorsWhite(endColors, visibleCount);
+    startAlphas = new Float32Array(0);
+    endAlphas = new Float32Array(0);
   }
 
   // Step 4: Interpolate widths using WASM
@@ -283,6 +342,8 @@ export async function projectLinesTo3D(
     endSharpness.buffer as ArrayBuffer,
     startScalars.buffer as ArrayBuffer,
     endScalars.buffer as ArrayBuffer,
+    startAlphas.buffer as ArrayBuffer,
+    endAlphas.buffer as ArrayBuffer,
     segmentLengths.buffer as ArrayBuffer,
     startClipped.buffer as ArrayBuffer,
     endClipped.buffer as ArrayBuffer,
@@ -300,6 +361,8 @@ export async function projectLinesTo3D(
       endSharpness,
       startScalars,
       endScalars,
+      startAlphas,
+      endAlphas,
       segmentLengths,
       startClipped,
       endClipped,

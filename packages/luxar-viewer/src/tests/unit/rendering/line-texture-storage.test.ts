@@ -28,7 +28,7 @@ import {
   type LineTexelSource,
 } from '../../../rendering/line-geometry';
 
-function makeSource(count: number, withScalars = false): LineTexelSource {
+function makeSource(count: number, withScalars = false, withAlphas = false): LineTexelSource {
   const startPositions = new Float32Array(count * 3);
   const endPositions = new Float32Array(count * 3);
   const startColors = new Float32Array(count * 3);
@@ -42,6 +42,8 @@ function makeSource(count: number, withScalars = false): LineTexelSource {
   const endClipped = new Uint8Array(count);
   const startScalars = withScalars ? new Float32Array(count) : undefined;
   const endScalars = withScalars ? new Float32Array(count) : undefined;
+  const startAlphas = withAlphas ? new Float32Array(count) : undefined;
+  const endAlphas = withAlphas ? new Float32Array(count) : undefined;
   for (let i = 0; i < count; i++) {
     startPositions.set([i, i + 0.25, i + 0.5], i * 3);
     endPositions.set([i + 1, i + 1.25, i + 1.5], i * 3);
@@ -58,6 +60,10 @@ function makeSource(count: number, withScalars = false): LineTexelSource {
       startScalars[i] = 0.05 * i;
       endScalars[i] = 0.07 * i;
     }
+    if (startAlphas && endAlphas) {
+      startAlphas[i] = 0.1 + 0.02 * i;
+      endAlphas[i] = 0.9 - 0.02 * i;
+    }
   }
   return {
     startPositions,
@@ -73,6 +79,8 @@ function makeSource(count: number, withScalars = false): LineTexelSource {
     endClipped,
     startScalars,
     endScalars,
+    startAlphas,
+    endAlphas,
   };
 }
 
@@ -174,6 +182,33 @@ describe('attachLineStorage / writeLineTexels — fused writer round-trip', () =
       expect(arr[o + 22]).toBe(1.0);
       expect(arr[o + 23]).toBe(1.0);
     }
+  });
+
+  it('per-endpoint alphas (RGBA colors) write into texel5.zw exactly (volumetric phase 4)', () => {
+    const geometry = new THREE.InstancedBufferGeometry();
+    const texture = attachLineStorage(geometry, 4);
+    const src = makeSource(4, /*withScalars=*/ true, /*withAlphas=*/ true);
+    writeLineTexels(texture, src, 4);
+    const arr = texture.image.data as Float32Array;
+    for (let i = 0; i < 4; i++) {
+      const o = i * LINE_FLOATS_PER_SEGMENT;
+      // Scalars keep their slots — alphas must not displace them.
+      expect(arr[o + 20]).toBe(src.startScalars![i]);
+      expect(arr[o + 21]).toBe(src.endScalars![i]);
+      expect(arr[o + 22]).toBeCloseTo(0.1 + 0.02 * i, 6);
+      expect(arr[o + 23]).toBeCloseTo(0.9 - 0.02 * i, 6);
+    }
+  });
+
+  it('throws on short alpha arrays BEFORE any store (same fail-loud guard as every field)', () => {
+    const geometry = new THREE.InstancedBufferGeometry();
+    const texture = attachLineStorage(geometry, 4);
+    const arr = texture.image.data as Float32Array;
+    const before = arr.slice();
+    const src = makeSource(4, false, true);
+    (src as { startAlphas?: Float32Array }).startAlphas = new Float32Array(2); // short
+    expect(() => writeLineTexels(texture, src, 4)).toThrow(/startAlphas/);
+    expect(Array.from(arr)).toEqual(Array.from(before)); // no torn write
   });
 
   it('registers per-row dirty ranges over [0, n), leaving slack rows clean', () => {

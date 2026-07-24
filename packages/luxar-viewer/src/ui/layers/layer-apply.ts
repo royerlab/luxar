@@ -176,9 +176,9 @@ export class LayerApplyEngine {
       const eff = this.composeEffective(leaf.path);
       if (!eff) continue;
       mat.updateOpacity(eff.opacity);
-      // Optional-chained: gsplat + point materials implement it (line
-      // materials render volumetric's additive fallback until phase 4,
-      // where κ is inert anyway).
+      // All three geometry-material families implement it (gsplats
+      // phase 1, points phase 3, lines phase 4); optional-chained for
+      // non-Luxar materials.
       mat.updateAbsorption?.(eff.absorption);
       applyColorAdjustments(mat, eff.gamma, eff.intensity, eff.offset);
       const prevBlendingMode = mat.userData?.blendingMode as BlendingMode | undefined;

@@ -33,8 +33,22 @@
  *     switching back. Without this define, max-mode line rendering
  *     looks "stranded" — every visible fragment paints at full
  *     intensity regardless of opacity, intensity, or fade.
+ *   - `LUXAR_VOLUMETRIC` — fragment-side emission–absorption output
+ *     branch (Max 1995): τ = κ·density·chord through the
+ *     Gaussian-profile ribbon (materials/line/math.ts), self-screened
+ *     emission over the One/OneMinusSrcAlpha state. Set by
+ *     `LineMaterial.applyBlendingMode('volumetric')` (volumetric
+ *     phase 4 — VOLUMETRIC_BLENDING_SPEC.md §7).
  */
 import { GLSL_SANITIZE_FUNCTIONS, GLSL_NEAR_FADE_FUNCTIONS } from '../_shared/glsl-lib';
+import {
+  ALPHA_CLAMP,
+  VOLUMETRIC_SERIES_C1,
+  VOLUMETRIC_SERIES_C2_DIVISOR,
+  VOLUMETRIC_SERIES_TAU_THRESHOLD,
+  VOLUMETRIC_TAU_EPS,
+} from '../_shared/volumetric';
+import { LINE_CHORD_SCALE } from './math';
 import { lineWebGPUFactory, buildLineTSLNodesFromUniforms } from './shader-tsl';
 import type { ShaderSource } from '../_shared/shader-source';
 
@@ -89,6 +103,7 @@ export const LINE_VERTEX_SHADER = /* glsl */ `
     out float vViewZ;        // View-space z (fragment computes the near fade)
     flat out float vClippedStart; // flat: same value across all 4 quad vertices
     flat out float vClippedEnd;
+    out mediump float vAlpha; // per-endpoint opacity, interpolated along t (texel5.zw; 1.0 for RGB data)
 
     void main() {
       // === Line-texture fetch prologue ===
@@ -97,10 +112,9 @@ export const LINE_VERTEX_SHADER = /* glsl */ `
       // downstream of this block. The width is a multiple of 6
       // (element-texture-layout.ts), so a segment's 6 texels share one row
       // and only x advances. Texels 2/3 (colors + sharpness) and 5
-      // (scalars) are fetched only PAST the bothBehind cull below, keeping
-      // the cheap-cull ordering the interleaved shader had. texel5.zw
-      // (per-endpoint alphas) are reserved for volumetric Phase 4 and not
-      // read here.
+      // (scalars in .xy, per-endpoint alphas in .zw) are fetched only PAST
+      // the bothBehind cull below, keeping the cheap-cull ordering the
+      // interleaved shader had.
       int lineBase = int(aSortedIndex) * 6;
       int lineTexW = textureSize(uLineTex, 0).x;
       ivec2 texel0 = ivec2(lineBase % lineTexW, lineBase / lineTexW);
@@ -170,6 +184,7 @@ export const LINE_VERTEX_SHADER = /* glsl */ `
         vPixelWidth = 0.0;
         vWidthFade = 0.0;
         vViewZ = 0.0;
+        vAlpha = 1.0;
         return;
       }
 
@@ -183,12 +198,29 @@ export const LINE_VERTEX_SHADER = /* glsl */ `
 
       // === Below here only runs when the segment passed the cheap cull. ===
 
-      // Deferred texel fetches (colors + sharpness; scalars under
-      // USE_COLORMAP) — skipped entirely for cheap-culled segments.
+      // Deferred texel fetches (colors + sharpness + texel5) — skipped
+      // entirely for cheap-culled segments. texel5 carries the colormap
+      // scalars (.xy, read under USE_COLORMAP) and the per-endpoint
+      // alphas (.zw, written unconditionally by the texel writer — 1.0
+      // for RGB data), so it is fetched in every mode.
       vec4 lineT2 = texelFetch(uLineTex, ivec2(texel0.x + 2, texel0.y), 0);
       vec4 lineT3 = texelFetch(uLineTex, ivec2(texel0.x + 3, texel0.y), 0);
+      vec4 lineT5 = texelFetch(uLineTex, ivec2(texel0.x + 5, texel0.y), 0);
       float aStartSharpness = lineT2.w;
       float aEndSharpness = lineT3.w;
+
+      // Per-endpoint opacity, interpolated along the segment (1.0 for
+      // RGB data). Each endpoint is sanitized BEFORE the mix so one
+      // NaN endpoint can't poison the whole segment: alpha is
+      // load-bearing in EVERY mode (linear contribution scale) and maps
+      // into optical depth under volumetric, where a NaN/Inf poisons τ
+      // past the discard into NaN pixels — and a huge finite value
+      // would blow out the linear folds (or overflow the mediump
+      // varying). Python validation pins alpha to [0, 1] at write; this
+      // guards hand-crafted zarr. NaN/Inf → the 1.0 opaque identity
+      // (loud); finite values clamp to [0, 1]. The point/gsplat twins
+      // do the same.
+      vAlpha = mix(sanitizeAlpha(lineT5.z), sanitizeAlpha(lineT5.w), t);
 
       // Interpolate attributes along segment.
       // Colormap mode: display range (uScalarMin/uScalarScale) and gamma
@@ -198,7 +230,6 @@ export const LINE_VERTEX_SHADER = /* glsl */ `
       // gain/offset controls work on colormapped nodes too. The gamma
       // fast path (LUXAR_GAMMA_ONE) skips the pow() when gamma == 1.0.
       #ifdef USE_COLORMAP
-      vec4 lineT5 = texelFetch(uLineTex, ivec2(texel0.x + 5, texel0.y), 0);
       float s = mix(lineT5.x, lineT5.y, t);
       float st = clamp((s - uScalarMin) * uScalarScale, 0.0, 1.0);
       #ifndef LUXAR_GAMMA_ONE
@@ -341,8 +372,10 @@ export const LINE_VERTEX_SHADER = /* glsl */ `
  * Computes the shifted-truncated super-Gaussian perpendicular
  * cross-section (beta = 2^(6s - 2), beta=2 is a truncated Gaussian) plus
  * fragment-side cap factor so the segment body reaches the documented
- * full intensity. The picking system uses a different fragment shader
- * (see picking/line-picking-material.ts).
+ * full intensity. Under `LUXAR_VOLUMETRIC` the output switches to the
+ * emission–absorption branch (transverse chord integral through the
+ * width profile — materials/line/math.ts). The picking system uses a
+ * different fragment shader (see picking/line-picking-material.ts).
  */
 export const LINE_FRAGMENT_SHADER = /* glsl */ `
     precision highp float;
@@ -355,6 +388,11 @@ export const LINE_FRAGMENT_SHADER = /* glsl */ `
     uniform float uIntensity; // Per-node linear color multiplier (gain)
     uniform float uOffset; // Per-node additive brightness shift (black level)
 
+    // Volumetric (emission–absorption) uniforms — read only under
+    // LUXAR_VOLUMETRIC; inert (compiled out) in every other mode.
+    uniform highp float uAbsorption;         // κ — composed node absorption
+    uniform lowp float uHasElementAlpha;     // 1.0 when colors carry a real alpha column
+
     in vec3 vColor;
     in float vSharpness;
     in float vPerpNorm;     // Interpolated: 0 at centerline, ±1 at edges
@@ -366,6 +404,7 @@ export const LINE_FRAGMENT_SHADER = /* glsl */ `
     in float vViewZ; // View-space z (near fade computed here per-fragment)
     flat in float vClippedStart;
     flat in float vClippedEnd;
+    in mediump float vAlpha; // per-endpoint opacity, interpolated along t (1.0 for RGB data)
 
     out vec4 fragColor;
 
@@ -453,8 +492,35 @@ export const LINE_FRAGMENT_SHADER = /* glsl */ `
       adjusted = max(adjusted, vec3(0.0));
       #endif
 
+      #ifdef LUXAR_VOLUMETRIC
+      // Screen density of this fragment — the intensity chain already
+      // carries every "how much of this line is there" factor (cap,
+      // profile, AA coverage, sub-pixel energy, width-clamp fade, near
+      // fade); node opacity folds in here. This is the additive-mode
+      // alpha, and volumetric scales it by the per-endpoint alpha's
+      // optical-depth map w(a) = −ln(1 − a) so a segment's peak
+      // rendered alpha reproduces a (mirrors the point/gsplat shaders;
+      // clamp = ALPHA_CLAMP from ../_shared/volumetric). Gated by
+      // uHasElementAlpha: the identity 1.0 written for RGB data must
+      // NOT map to w ≈ 6.24.
+      float alpha = intensity * uOpacity;
+      alpha *= mix(1.0, -log(1.0 - min(vAlpha, ${ALPHA_CLAMP})), uHasElementAlpha);
+      // 'volumetric' optical depth: the TRANSVERSE special case of the
+      // gsplat ray integral (VOLUMETRIC_BLENDING_SPEC.md §3.1 / §7) —
+      // rayMass = density × through-thickness of the Gaussian-profile
+      // ribbon (width·√(π/K), see materials/line/math.ts).
+      float tau = uAbsorption * alpha * vWidthAtT * ${LINE_CHORD_SCALE};
+      // Discard only when color AND τ are both negligible — a black
+      // line still absorbs (a pure-ink occluder keeps its optical depth).
+      if (max(adjusted.r, max(adjusted.g, adjusted.b)) < 1e-4 && tau < 1e-4) discard;
+      #else
+      // Per-endpoint alpha is a plain linear contribution scale in
+      // every non-volumetric mode (identity 1.0 for RGB data — no gate
+      // needed).
+      intensity *= vAlpha;
       // Early discard for zero-contribution fragments after offset
       if (max(adjusted.r, max(adjusted.g, adjusted.b)) < 1e-4) discard;
+      #endif
 
       // Gamma fast path: when gamma==1 (the default) the pow() is
       // identity. The wrapper class stamps LUXAR_GAMMA_ONE on the
@@ -467,6 +533,20 @@ export const LINE_FRAGMENT_SHADER = /* glsl */ `
       vec3 gammaColor = pow(adjusted, vec3(uInvGamma));
       #endif
 
+      #if defined(LUXAR_VOLUMETRIC)
+      // 'volumetric' mode: emission–absorption (Max 1995). RGB carries
+      // the self-screened emission — gammaColor·alpha is exactly what
+      // additive adds to the framebuffer, times S(τ) = (1−e^(−τ))/τ
+      // (the front of the ribbon absorbs its own back; the series
+      // branch keeps S(0) = 1 exact — the κ=0 additive limit; constants
+      // from ../_shared/volumetric, shared with the point/gsplat
+      // twins); the output alpha is the physical absorption 1 − e^(−τ)
+      // for the One / OneMinusSrcAlpha state.
+      float volAlpha = 1.0 - exp(-tau);
+      float screen = (tau < ${VOLUMETRIC_SERIES_TAU_THRESHOLD}) ? 1.0 - ${VOLUMETRIC_SERIES_C1} * tau + tau * tau / ${VOLUMETRIC_SERIES_C2_DIVISOR}.0
+                                  : volAlpha / max(tau, ${VOLUMETRIC_TAU_EPS});
+      fragColor = vec4(gammaColor * alpha * screen, volAlpha);
+      #elif defined(LUXAR_MAX_RGB_CONTRIBUTION)
       // max-mode RGB premultiplication. With CustomBlending +
       // MaxEquation + OneFactor/OneFactor the source RGB isn't
       // multiplied by alpha at composite time, so a soft line in max
@@ -474,7 +554,6 @@ export const LINE_FRAGMENT_SHADER = /* glsl */ `
       // intensity*opacity here so the framebuffer max captures
       // contribution-weighted colour. Other modes keep alpha-weighted
       // output.
-      #ifdef LUXAR_MAX_RGB_CONTRIBUTION
       float a = intensity * uOpacity;
       fragColor = vec4(gammaColor * a, a);
       #else

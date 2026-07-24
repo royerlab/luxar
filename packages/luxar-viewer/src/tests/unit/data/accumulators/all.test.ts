@@ -1053,3 +1053,104 @@ describe('LoadedPointsDataAccumulator — RGBA color layout (configureColorCompo
     expect(acc4.getData(1).colorComponents).toBe(4);
   });
 });
+
+describe('LinesDataAccumulator — RGBA color layout (configureColorComponents)', () => {
+  // The lines twin of the points suite above: the color layout (3 = RGB,
+  // 4 = RGBA — alpha = per-vertex opacity, volumetric phase 4) is a
+  // property of the dataset, declared by the loader BEFORE the first
+  // color fill so every color buffer is sized at the right stride.
+
+  function rgbaVertexColors(count: number): Float32Array {
+    const colors = new Float32Array(count * 4);
+    for (let i = 0; i < count; i++) {
+      colors[i * 4] = 0.1 + i;
+      colors[i * 4 + 1] = 0.2 + i;
+      colors[i * 4 + 2] = 0.3 + i;
+      colors[i * 4 + 3] = 0.5 / (i + 1); // distinct per-vertex alpha
+    }
+    return colors;
+  }
+
+  function vertexPositions(count: number, ndim = 3): Float32Array {
+    const pos = new Float32Array(count * ndim);
+    for (let i = 0; i < pos.length; i++) pos[i] = i;
+    return pos;
+  }
+
+  it('configureColorComponents(4) before fills → getData carries colorComponents=4 and a count×4 colors view', () => {
+    const acc = new LinesDataAccumulator(8, 4, 3);
+    acc.configureColorComponents(4);
+    acc.fill(0, 0, {
+      positions: vertexPositions(3),
+      segments: new Uint32Array([0, 1, 1, 2]),
+      colors: rgbaVertexColors(3),
+    });
+    const data = acc.getData(2, 3);
+    expect(data.colorComponents).toBe(4);
+    expect(data.colors).toBeInstanceOf(Float32Array);
+    expect(data.colors!.length).toBe(3 * 4);
+    for (let i = 0; i < 3; i++) {
+      expect(data.colors![i * 4]).toBeCloseTo(0.1 + i, 6);
+      expect(data.colors![i * 4 + 2]).toBeCloseTo(0.3 + i, 6);
+      expect(data.colors![i * 4 + 3]).toBeCloseTo(0.5 / (i + 1), 6);
+    }
+  });
+
+  it('growth past capacity preserves the RGBA stride and the filled tuples', () => {
+    const acc = new LinesDataAccumulator(4, 2, 3);
+    acc.configureColorComponents(4);
+    acc.fill(0, 0, {
+      positions: vertexPositions(4),
+      segments: new Uint32Array([0, 1, 2, 3]),
+      colors: rgbaVertexColors(4),
+    });
+    // Grow beyond the initial vertex capacity — the color copy must move
+    // the live prefix at stride 4 (a stride-3 liveColor would truncate it).
+    expect(acc.ensureCapacity(10, 5)).toBe(true);
+    const data = acc.getData(2, 4);
+    expect(data.colorComponents).toBe(4);
+    expect(data.colors!.length).toBe(4 * 4);
+    for (let i = 0; i < 4; i++) {
+      expect(data.colors![i * 4]).toBeCloseTo(0.1 + i, 6);
+      expect(data.colors![i * 4 + 3]).toBeCloseTo(0.5 / (i + 1), 6);
+    }
+  });
+
+  it('RGB fills emit colorComponents=3 (the layout is explicit, never inferred wrong)', () => {
+    const acc = new LinesDataAccumulator(8, 4, 3);
+    acc.fill(0, 0, {
+      positions: vertexPositions(2),
+      segments: new Uint32Array([0, 1]),
+      colors: new Float32Array([0.1, 0.2, 0.3, 0.4, 0.5, 0.6]), // RGB
+    });
+    const data = acc.getData(1, 2);
+    expect(data.colorComponents).toBe(3);
+    expect(data.colors!.length).toBe(2 * 3);
+  });
+
+  it('throws when the layout changes AFTER colors were already written', () => {
+    const acc = new LinesDataAccumulator(8, 4, 3);
+    acc.fill(0, 0, {
+      positions: vertexPositions(2),
+      segments: new Uint32Array([0, 1]),
+      colors: new Float32Array([0.1, 0.2, 0.3, 0.4, 0.5, 0.6]), // RGB
+    });
+    expect(() => acc.configureColorComponents(4)).toThrow(
+      /color layout changed to 4 components after colors were already written with 3/
+    );
+  });
+
+  it('Uint8 RGBA colors keep dtype AND stride through type re-pinning', () => {
+    const acc = new LinesDataAccumulator(8, 4, 3);
+    acc.configureColorComponents(4);
+    acc.fill(0, 0, {
+      positions: vertexPositions(2),
+      segments: new Uint32Array([0, 1]),
+      colors: new Uint8Array([10, 20, 30, 217, 40, 50, 60, 128]),
+    });
+    const data = acc.getData(1, 2);
+    expect(data.colorComponents).toBe(4);
+    expect(data.colors).toBeInstanceOf(Uint8Array);
+    expect(Array.from(data.colors!)).toEqual([10, 20, 30, 217, 40, 50, 60, 128]);
+  });
+});

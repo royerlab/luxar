@@ -20,6 +20,7 @@ semantics — `MaterialManager.getLineMaterial` dispatches on
 | `material-tsl.ts`  | `LineTSLMaterial extends NodeMaterial` — same constructor + update API, but owns persistent `UniformNode`s and rebuilds its TSL graph (`rebuildGraph`) when graph-specialized defines or projection mode flip. WebGPU path.            |
 | `shader-glsl.ts`   | `LINE_VERTEX_SHADER` + `LINE_FRAGMENT_SHADER` GLSL3 source strings and the `LINE_SOURCE: ShaderSource` registry entry. The `webgpu` field re-enters `lineWebGPUFactory` so the parity harness can drive both backends from one symbol. |
 | `shader-tsl.ts`    | `lineWebGPUFactory(nodes, config, outMaterial?)` — TSL counterpart to the GLSL strings. Reads pre-created `UniformNode`s from a `LineTSLNodes` table and emits the NodeMaterial graph.                                                 |
+| `math.ts`          | Shared CPU-side constants for both backends — `LINE_CHORD_SCALE = √(π/ln 100)`, the through-thickness of the Gaussian-profile ribbon per unit width (the volumetric chord factor; full derivation in its doc comment). Mirrors `point/math.ts` / `gsplat/math.ts`.                        |
 
 ## Rendering model in one paragraph
 
@@ -53,7 +54,10 @@ applies the per-node GOG (`color × uIntensity + uOffset`, clamped) and the
 gamma is skipped (gamma + display range shape the scalar pre-LUT in the
 vertex stage); intensity/offset still apply post-LUT to the mapped colour,
 matching the GSplat shader, so the layer gain/offset controls work on
-colormapped nodes — and writes `vec4(rgb, intensity × uOpacity)`.
+colormapped nodes — and writes `vec4(rgb, intensity × vAlpha × uOpacity)`
+(`vAlpha` is the per-endpoint opacity, `1.0` for RGB data). Under
+`LUXAR_VOLUMETRIC` the output switches to the emission–absorption branch
+described below.
 The `capFactor` joint trick (next section) is **independent** of the
 perpendicular falloff — only `perpFalloff` changed when the kernel was swapped
 to the super-Gaussian.
@@ -87,9 +91,58 @@ The texel fetch prologue reconstructs the historical local names
 from the interleaved era. See `../../line-geometry.ts` for the storage
 construction and the fused texel writer.
 
+Texel5 carries the colormap scalars in `.xy` and the **per-endpoint
+opacity alphas** in `.zw` — the alpha column of an RGBA color dataset
+(`(N, 4)` colors; the writer fills the `1.0` opaque identity for RGB
+data). The vertex stage reads both slots through `sanitizeAlpha`
+(NaN/Inf → opaque `1.0`; finite clamped to `[0, 1]`) and interpolates
+them along the segment parameter `t` into the `vAlpha` varying. In every
+non-volumetric mode `vAlpha` is a plain linear contribution scale
+(identity for RGB data, no gate needed); under `LUXAR_VOLUMETRIC` it
+maps into optical depth `w(a) = −ln(1 − a)`, gated by
+`uHasElementAlpha` (next-but-one section).
+
+## Volumetric emission–absorption branch (`LUXAR_VOLUMETRIC`)
+
+Since volumetric Phase 4 (VOLUMETRIC_BLENDING_SPEC.md §7) lines render
+the REAL `volumetric` blending math on both backends — the former
+additive-state fallback (and the `effectiveGeometryMode` helper that
+encoded it) is gone. The ray integral is the **transverse chord**
+through the Gaussian-profile ribbon: locally the line is a Gaussian
+tube, so a ray crossing at normalized perpendicular offset `p`
+integrates to `perpFalloff(p) · width · √(π/K)` — the shader computes
+`rayMass = perpFalloff × vWidthAtT × LINE_CHORD_SCALE` with
+`LINE_CHORD_SCALE = √(π/ln 100)` from `./math.ts` (derivation comment
+there; the value equals `POINT_CHORD_SCALE`, keeping the
+point/line/gsplat κ scales aligned). The optical depth the shader
+computes is `τ = uAbsorption × alpha × vWidthAtT × LINE_CHORD_SCALE`,
+where `alpha` is the additive-mode screen density — the full intensity
+chain (`capFactor · perpFalloff · edgeAA · widthScale · vWidthFade ·
+nearFade`, so `perpFalloff` enters τ exactly once) times `uOpacity`,
+times the `w(vAlpha)` map when `uHasElementAlpha` is set. Every "how
+much of this line is there" factor scales emission and absorption
+together, so fades leave no ghost fog. Emission is `gammaColor × alpha × S(τ)` with the shared
+self-screening series `S(τ) = (1 − e^(−τ))/τ` (constants from
+`../_shared/volumetric.ts`, shared with the point/gsplat twins), and
+the output alpha is the physical absorption `1 − e^(−τ)` over the
+premultiplied `One / OneMinusSrcAlpha` state. `κ = 0` reproduces
+`additive` exactly. The color early-discard is bypassed while `τ` is
+significant — a black line still absorbs (a pure-ink occluder keeps its
+optical depth).
+
+Plumbing: both wrappers accept `absorption` in `LineMaterialConfig`,
+own the `uAbsorption` (composed node κ) and `uHasElementAlpha` uniforms
+(plain uniforms — no rebuild on toggle), and expose `updateAbsorption` /
+`updateHasElementAlpha`; both are carried through `clone()`. The
+layers-panel κ slider shows for volumetric lines layers. Because
+`volumetric` is order-dependent, line meshes in this mode are
+back-to-front depth-sorted by segment midpoint via `needsDepthSort(mode)`
+and the existing lazy midpoint provider (see
+`GSPLAT_DEPTH_SORTING_SPEC.md` §8).
+
 ## Variant defines (fast paths)
 
-Both backends share the same four `#define`s, set by the wrapper and
+Both backends share the same five `#define`s, set by the wrapper and
 either gated via `#ifdef` (GLSL) or read at TSL build time
 (`rebuildGraph` re-runs the factory):
 
@@ -99,6 +152,7 @@ either gated via `#ifdef` (GLSL) or read at TSL build time
 | `LUXAR_GAMMA_ONE`            | Skips three per-fragment `pow()` calls when `gamma == 1.0 ± 1e-4` (the default)                                                                                       | `updateGamma` when crossing the threshold                    |
 | `LUXAR_NO_GOG`               | Skips the `vColor × uIntensity + uOffset` chain and its `max(·, 0)` clamp when `intensity==1 && offset==0`                                                            | `updateIntensity` / `updateOffset` via `_refreshNoGOGDefine` |
 | `LUXAR_MAX_RGB_CONTRIBUTION` | Premultiplies `rgb *= intensity × opacity` so `CustomBlending + MaxEquation + OneFactor/OneFactor` captures contribution-weighted colour rather than flat full-bright | `applyBlendingMode('max')`                                   |
+| `LUXAR_VOLUMETRIC`           | Switches the fragment output to the emission–absorption branch (transverse chord τ, `S(τ)` screening, `1 − e^(−τ)` alpha — see the volumetric section above)          | `applyBlendingMode('volumetric')`                            |
 
 The perpendicular falloff is **not** a define-gated fast path: the
 super-Gaussian `max(exp(−K·p^β) − C, 0)/(1 − C)` is computed unconditionally
@@ -121,8 +175,9 @@ at build time and emits a single-branch graph, so a mode flip in
 | `clampGamma(g)`                                  | `Math.max(0.001, g ?? 1.0)` guard before `1 / gamma` (shared across all six material constructors).                                                          |
 | `CameraAwareMaterial` interface                  | Implemented so `MaterialManager.updateCameraParams(fov, resolution, isOrtho?)` reaches this material.                                                        |
 | `ColormapAwareMaterial` interface                | Implemented so `material-colormap-helpers.ts` sets the LUT texture and scalar range through setters.                                                         |
-| `GLSL_SANITIZE_FUNCTIONS`                        | Prepended to the GLSL vertex shader; gives `sanitizePositive` / `sanitizeNonNegative` to clean width/sharpness inputs against NaN/Inf/negative.              |
-| `sanitizePositive` / `sanitizeNonNegative` (TSL) | TSL counterparts of the GLSL sanitisers — same contract, called inline in the factory.                                                                       |
+| `GLSL_SANITIZE_FUNCTIONS`                        | Prepended to the GLSL vertex shader; gives `sanitizePositive` / `sanitizeNonNegative` / `sanitizeAlpha` to clean width/sharpness/alpha inputs against NaN/Inf/out-of-range. |
+| `sanitizePositive` / `sanitizeNonNegative` / `sanitizeAlpha` (TSL) | TSL counterparts of the GLSL sanitisers — same contract, called inline in the factory.                                                     |
+| `volumetric.ts` constants                        | `ALPHA_CLAMP` (the `1 − 1/512` cap of the `w(a)` map) + the `S(τ)` series thresholds/coefficients — shared with the point/gsplat volumetric branches so all three geometries agree numerically. |
 | `proxyIUniform(node)`                            | Wraps each TSL `UniformNode` in an `IUniform`-shaped getter/setter so `material.uniforms.uX.value = Y` lands on `node.value`. No per-render callback bridge. |
 
 ## `isGammaOne` / `isNoGOG` cross-export

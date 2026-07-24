@@ -27,6 +27,7 @@ import {
   SpatialQueryBuilder,
   mergeRanges,
   type LoadRange,
+  colorComponentsOf,
   getExpectedColorType,
   loadColorRanges,
   prefetchRangesIntoCache,
@@ -105,6 +106,10 @@ export class LinesSpatialIndexLoader implements LinesDataLoader {
 
   // Suppress detail logs after first successful view update
   private _initialLoadDone = false;
+
+  // Channels per color entry (3 RGB / 4 RGBA), learned from the colors
+  // array's logical shape at open time (mirrors the points loader).
+  private colorComponents: 3 | 4 = 3;
 
   // LoaderMonitor surface — same shape as the points and gsplats facades.
   private readonly events = new LoaderEventEmitter();
@@ -256,6 +261,10 @@ export class LinesSpatialIndexLoader implements LinesDataLoader {
     try {
       let colorsArray = await zarr.open(this.zarrLocation.resolve('colors'), { kind: 'array' });
       this.registerBounds('colors', colorsArray);
+      // Color channel count (3 RGB / 4 RGBA) from the LOGICAL shape —
+      // learned once at open, threaded through the accumulator into
+      // `LoadedLinesData.colorComponents` (mirrors the points loader).
+      this.colorComponents = colorComponentsOf(colorsArray);
       if (this.l0Cache) {
         colorsArray = wrapWithCache(
           colorsArray,
@@ -513,6 +522,10 @@ export class LinesSpatialIndexLoader implements LinesDataLoader {
       const actualVertexCount = sortedIndices.length; // ACTUAL count from unique indices!
       // FIXED: Pass BOTH vertex count AND segment count to avoid buffer truncation
       // For particle tracks, N vertices → N-1 segments (ratio ~1:1, not 1.5:1)
+      // Color channel count MUST be configured before any capacity /
+      // buffer request so the color buffer is sized with the right
+      // stride (mirrors the points loader's configureColorComponents).
+      accumulator.configureColorComponents(this.colorComponents);
       accumulator.ensureCapacity(actualVertexCount, segmentCount);
 
       // Initialize accumulator types based on array metadata (must be done BEFORE loading!)
@@ -526,12 +539,13 @@ export class LinesSpatialIndexLoader implements LinesDataLoader {
         const colorDtype = originalDtype || String(this.arrays.colors.dtype);
         const colorType = getExpectedColorType(colorDtype);
         // Create a small typed array to initialize accumulator types
+        // (one color entry — colorComponents wide).
         const sampleColors =
           colorType === 'Uint8Array'
-            ? new Uint8Array(3)
+            ? new Uint8Array(this.colorComponents)
             : colorType === 'Uint16Array'
-              ? new Uint16Array(3)
-              : new Float32Array(3);
+              ? new Uint16Array(this.colorComponents)
+              : new Float32Array(this.colorComponents);
         accumulator.fill(0, 0, {
           positions: new Float32Array(attrs.ndim),
           segments: new Uint32Array(2),
@@ -707,6 +721,7 @@ export class LinesSpatialIndexLoader implements LinesDataLoader {
       segments: remappedSegments,
       widths,
       colors,
+      colorComponents: colors ? this.colorComponents : undefined,
       sharpness,
       // scalars now flow through the loader fallback path.
       scalars,

@@ -149,6 +149,11 @@ export function commitLinesGeometry(
         getPrefixParent(staged.sourceData) !== undefined &&
         getPrefixParent(staged.sourceData) === committed &&
         !!staged.sourceData.colors === !!committed.colors &&
+        // Color LAYOUT parity, not just presence: an append writes only
+        // the suffix texels, so an RGB↔RGBA flip between levels would
+        // strand the prefix's texel5.zw alphas at the other layout's
+        // values (mirrors commit-points-geometry's conjunct).
+        (staged.sourceData.colorComponents ?? 3) === (committed.colorComponents ?? 3) &&
         !!staged.sourceData.sharpness === !!committed.sharpness &&
         !!staged.sourceData.scalars === !!committed.scalars;
       // Consume-and-clear (see prefix-lineage.ts retention contract): the

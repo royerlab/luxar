@@ -254,6 +254,7 @@ export class MaterialManager {
     const createStart = performance.now();
     const material = new VISUAL_FACTORIES.line[backend]({
       opacity: props.opacity,
+      absorption: props.absorption,
       gamma: props.gamma,
       intensity: props.intensity,
       offset: props.offset,

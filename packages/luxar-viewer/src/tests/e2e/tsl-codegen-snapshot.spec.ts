@@ -123,6 +123,11 @@ const SHADERS = [
   // Max-mode premultiplied RGB-contribution fragment (lines; GLSL twin:
   // LUXAR_MAX_RGB_CONTRIBUTION) — distinct generated code vs `line`.
   'line-max',
+  // Emission–absorption output branch (lines, volumetric; GLSL twin:
+  // LUXAR_VOLUMETRIC): τ = κ·alpha·width·chord, S(τ) screening, the
+  // w(a) per-endpoint-alpha map, and the color-discard bypass are
+  // distinct generated code no other line variant pins.
+  'line-volumetric',
   // Lines are the only geometry whose ortho/perspective split is a
   // BUILD-time TSL option (points/gsplats branch on the uIsOrtho
   // uniform at runtime), so the perspective line shaders are distinct

@@ -70,6 +70,7 @@ function buildLinesParams(
     colors: data.colors,
     sharpness: data.sharpness,
     scalars: data.scalars ?? null,
+    colorComponents: data.colorComponents,
     viewState: {
       displayDims: viewState.displayDims,
       slicePosition: viewState.slicePosition,
@@ -78,6 +79,11 @@ function buildLinesParams(
     ndim: data.ndim,
     segmentCount: data.segmentCount,
   };
+}
+
+/** True when the loaded colors carry an RGBA alpha column. */
+function hasRGBAColors(data: LoadedLinesData): boolean {
+  return !!data.colors && (data.colorComponents ?? 3) === 4;
 }
 
 /**
@@ -98,7 +104,8 @@ function buildLinesParams(
  */
 function toProcessedLines(
   result: Awaited<ReturnType<typeof projectLinesInProcess>>,
-  hasSourceScalars: boolean
+  hasSourceScalars: boolean,
+  hasSourceAlpha: boolean
 ): ProcessedLinesData {
   const hasScalars = hasSourceScalars;
   return {
@@ -112,6 +119,11 @@ function toProcessedLines(
     endSharpness: result.endSharpness,
     startScalars: hasScalars ? result.startScalars : undefined,
     endScalars: hasScalars ? result.endScalars : undefined,
+    // Alpha presence follows the SOURCE color layout alone (RGBA), for
+    // the same empty-slice reason as scalars above: 0 visible segments
+    // must not flip the geometry's hasElementAlpha stamp.
+    startAlphas: hasSourceAlpha ? result.startAlphas : undefined,
+    endAlphas: hasSourceAlpha ? result.endAlphas : undefined,
     segmentLengths: result.segmentLengths,
     startClipped: result.startClipped,
     endClipped: result.endClipped,
@@ -167,7 +179,7 @@ export async function projectLinesTo3DUsingWorker(
       );
     }
 
-    return toProcessedLines(workerResult, !!data.scalars);
+    return toProcessedLines(workerResult, !!data.scalars, hasRGBAColors(data));
   } catch (error) {
     // Dataset-switch abort: don't burn CPU on stale in-process work.
     if (error instanceof Error && error.name === 'WorkerAbortError') {
@@ -178,7 +190,11 @@ export async function projectLinesTo3DUsingWorker(
       'Worker lines projection failed, falling back to in-process dispatcher:',
       error
     );
-    return toProcessedLines(await projectLinesInProcess(params), !!data.scalars);
+    return toProcessedLines(
+      await projectLinesInProcess(params),
+      !!data.scalars,
+      hasRGBAColors(data)
+    );
   }
 }
 
@@ -239,7 +255,8 @@ export async function processLinesData(
     // dispatcher in-process rather than a separate main-thread copy.
     return toProcessedLines(
       await projectLinesInProcess(buildLinesParams(data, viewState, tolerance)),
-      !!data.scalars
+      !!data.scalars,
+      hasRGBAColors(data)
     );
   };
 

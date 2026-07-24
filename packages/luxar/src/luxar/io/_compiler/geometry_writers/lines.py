@@ -123,7 +123,9 @@ def write_lines(
     # further down remain in place (belt and braces).
     if colors is not None:
         if isinstance(colors, np.ndarray):
-            validate_colors_for_writing(colors, n_vertices)
+            # channels=(3, 4): lines accept RGBA since volumetric phase 4
+            # (the alpha column is per-vertex opacity) — mirrors points.
+            validate_colors_for_writing(colors, n_vertices, channels=(3, 4))
         elif isinstance(colors, (list, tuple)):
             validate_broadcast_color(colors, "colors")
     if sharpness is not None:
@@ -153,7 +155,7 @@ def write_lines(
     if sharpness is not None and isinstance(sharpness, (int, float)):
         aprint(f"  → Uniform sharpness {sharpness:.1f} for all vertices")
     if colors is not None and isinstance(colors, (list, tuple)):
-        aprint(f"  → Uniform color RGB{list(colors)} for all vertices")
+        aprint(f"  → Uniform color RGB(A){list(colors)} for all vertices")
 
     # Convert line type to indexed representation (unified internal format)
     segments = convert_to_indexed(n_vertices, line_type, indices)
@@ -277,7 +279,7 @@ def write_lines(
     # Write optional datasets
     if colors is not None:
         if isinstance(colors, np.ndarray):
-            validate_colors_for_writing(colors, n_vertices)
+            validate_colors_for_writing(colors, n_vertices, channels=(3, 4))
         # Use the canonical COLOR helper (shared with Points / GSplats)
         # so the default-precision and color_mode-detection logic is
         # symmetric across all three geometry types.

@@ -45,7 +45,6 @@ import { getPlaceholderElementTexture } from '../../element-texture-layout';
 import {
   applyBlendingStateToMaterial,
   getCompleteBlendingState,
-  effectiveGeometryMode,
   isVolumetricMode,
   type CompleteBlendingState,
 } from '../../blending-state';
@@ -214,9 +213,7 @@ export class PointTSLMaterial
     if (this.userData.blendingMode === 'max') {
       this.defines.LUXAR_MAX_RGB_CONTRIBUTION = '';
     }
-    if (
-      isVolumetricMode(effectiveGeometryMode(this.userData.blendingMode as BlendingMode, 'point'))
-    ) {
+    if (isVolumetricMode(this.userData.blendingMode as BlendingMode)) {
       this.defines.LUXAR_VOLUMETRIC = '';
     }
 
@@ -449,12 +446,7 @@ export class PointTSLMaterial
     this._explicitTransparent = undefined;
 
     const opacity = (this.uniforms.opacity?.value as number | undefined) ?? 1.0;
-    // Routed through effectiveGeometryMode (blending-state.ts) so the
-    // line volumetric-fallback policy stays centralized (identity for
-    // points since volumetric phase 3); userData keeps the REQUESTED
-    // mode.
-    const effectiveMode: BlendingMode = effectiveGeometryMode(mode, 'point');
-    const state: CompleteBlendingState = getCompleteBlendingState(effectiveMode, opacity);
+    const state: CompleteBlendingState = getCompleteBlendingState(mode, opacity);
 
     if (!this.defines) {
       this.defines = {};
@@ -468,7 +460,7 @@ export class PointTSLMaterial
     // tracker (mirrors max's LUXAR_MAX_RGB_CONTRIBUTION), and every
     // non-volumetric transition clears it — a volumetric→normal switch
     // must not strand the branch.
-    const wantsVolumetric = isVolumetricMode(effectiveMode);
+    const wantsVolumetric = isVolumetricMode(mode);
     const hasVolumetric = 'LUXAR_VOLUMETRIC' in this.defines;
     const stateChanged = applyBlendingStateToMaterial(this, state);
     let definesChanged = false;
@@ -491,11 +483,11 @@ export class PointTSLMaterial
 
     // The TSL factory reads `blendingMode` to decide the shader-output
     // shape (`useMaxRGBContribution` derives from `mode === 'max'`;
-    // the volumetric output branch from the mode via
-    // effectiveGeometryMode). Flipping max ↔ non-max or crossing
-    // volumetric changes the graph; rebuild so the colorNode reflects
-    // the new branch. userData.blendingMode is already the new mode,
-    // so the rebuild's factory config picks up the right branch.
+    // the volumetric output branch directly from the mode). Flipping
+    // max ↔ non-max or crossing volumetric changes the graph; rebuild
+    // so the colorNode reflects the new branch. userData.blendingMode
+    // is already the new mode, so the rebuild's factory config picks
+    // up the right branch.
     if (definesChanged) {
       this.rebuildGraph();
     } else if (previousMode !== mode && stateChanged) {

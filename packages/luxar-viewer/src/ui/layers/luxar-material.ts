@@ -24,9 +24,9 @@ export interface LuxarMaterial extends THREE.Material, CameraAwareMaterial {
   updateOpacity(v: number): void;
   /**
    * Update the absorption coefficient κ (volumetric blending mode).
-   * Optional: only gsplat materials implement it in phase 1 —
-   * points/lines render volumetric's additive (κ = 0) fallback, where κ
-   * is inert (VOLUMETRIC_BLENDING_SPEC.md §5.1).
+   * All three geometry-material families implement it (gsplats phase 1,
+   * points phase 3, lines phase 4); optional only for exotic/legacy
+   * materials (VOLUMETRIC_BLENDING_SPEC.md).
    */
   updateAbsorption?(v: number): void;
   updateColormapTexture?(texture: THREE.DataTexture | null): void;
@@ -36,12 +36,9 @@ export interface LuxarMaterial extends THREE.Material, CameraAwareMaterial {
    *
    * All three geometry materials implement it today (the optionality is
    * kept for exotic/legacy materials the generic fallback still covers).
-   * It is LOAD-BEARING for points/lines: their implementations intercept
-   * `volumetric` and apply the additive fallback state — the generic
-   * fallback would pair the premultiplied volumetric blend state with a
-   * shader that never emits that alpha. Call this instead of writing
-   * `mat.blending`/`mat.blendEquation` directly so type-specific factors,
-   * defines, and uniforms stay in sync.
+   * Call this instead of writing `mat.blending`/`mat.blendEquation`
+   * directly so type-specific factors, defines (LUXAR_VOLUMETRIC /
+   * LUXAR_MAX_RGB_CONTRIBUTION), and uniforms stay in sync.
    */
   applyBlendingMode?(mode: BlendingMode): void;
 }

@@ -57,7 +57,12 @@ function makeLodData(
   vertexCount: number,
   segmentCount: number,
   ndim = 3,
-  options: { color?: 'none' | 'uint8' | 'uint16' | 'float32'; sharpness?: boolean } = {}
+  options: {
+    color?: 'none' | 'uint8' | 'uint16' | 'float32';
+    /** Widen colors to 4 channels (per-vertex alpha column). */
+    rgba?: boolean;
+    sharpness?: boolean;
+  } = {}
 ): LoadedLinesData {
   const positions = new Float32Array(vertexCount * ndim);
   positions.fill(0.5);
@@ -68,13 +73,20 @@ function makeLodData(
     segments[i * 2 + 1] = Math.min(i * 2 + 1, vertexCount - 1);
   }
   const widths = new Float32Array(vertexCount).fill(1);
+  const colorK = options.rgba ? 4 : 3;
   let colors: Float32Array | Uint8Array | Uint16Array | null = null;
   if (options.color === 'uint8') {
-    colors = new Uint8Array(vertexCount * 3).fill(128);
+    colors = new Uint8Array(vertexCount * colorK).fill(128);
   } else if (options.color === 'uint16') {
-    colors = new Uint16Array(vertexCount * 3).fill(32000);
+    colors = new Uint16Array(vertexCount * colorK).fill(32000);
   } else if (options.color === 'float32') {
-    colors = new Float32Array(vertexCount * 3).fill(0.5);
+    colors = new Float32Array(vertexCount * colorK).fill(0.5);
+  }
+  if (colors && options.rgba) {
+    // Distinct per-vertex alphas so stride slips are detectable.
+    for (let i = 0; i < vertexCount; i++) {
+      colors[i * 4 + 3] = colors instanceof Float32Array ? 0.25 : 64;
+    }
   }
   const sharpness = options.sharpness ? new Float32Array(vertexCount).fill(1) : null;
   return {
@@ -82,6 +94,7 @@ function makeLodData(
     segments,
     widths,
     colors,
+    ...(colors && options.rgba ? { colorComponents: 4 as const } : {}),
     sharpness,
     segmentCount,
     vertexCount,
@@ -1113,5 +1126,54 @@ describe('determinant-equal dimensions refresh (three-geometry twin of the point
       dimensions: dimsV2,
     });
     expect(lod0.updateView).toHaveBeenCalled();
+  });
+});
+
+describe('LinesProgressiveLoader — RGBA color layout (colorK stride, volumetric phase 4)', () => {
+  it('concatenates an RGBA ladder at stride 4 and stamps colorComponents=4', async () => {
+    const lodA = makeSubLoader(makeLodData(20, 10, 3, { color: 'float32', rgba: true }));
+    const lodB = makeSubLoader(makeLodData(10, 5, 3, { color: 'float32', rgba: true }));
+    const loader = new LinesProgressiveLoader(
+      [lodA, lodB] as unknown as LinesSpatialIndexLoader[],
+      2,
+      '/lines'
+    );
+    const result = await loader.loadLines(baseViewState);
+    expect(result.colorComponents).toBe(4);
+    expect(result.colors?.length).toBe(30 * 4);
+    // LOD B's first vertex is global vertex 20 — its alpha must land at
+    // 20*4+3 (a stride-3 concat would smear every vertex after level A).
+    expect(result.colors?.[20 * 4 + 3]).toBeCloseTo(0.25, 6);
+    expect(result.colors?.[19 * 4 + 3]).toBeCloseTo(0.25, 6);
+  });
+
+  it('rejects mixed RGB/RGBA layouts across LOD levels (same dtype, different stride)', async () => {
+    // The dtype guard alone would MISS this — both levels are Float32 —
+    // while the concat stride would silently corrupt every vertex after
+    // the offending level (the gsplat ladder shipped exactly this bug
+    // before its colorK guard).
+    const lodA = makeSubLoader(makeLodData(20, 10, 3, { color: 'float32', rgba: true }));
+    const lodB = makeSubLoader(makeLodData(10, 5, 3, { color: 'float32' })); // RGB
+    const loader = new LinesProgressiveLoader(
+      [lodA, lodB] as unknown as LinesSpatialIndexLoader[],
+      2,
+      '/lines'
+    );
+    await expect(loader.loadLines(baseViewState)).rejects.toThrow(/mixed color layouts/);
+  });
+
+  it('white-fills a missing-colors level at the RGBA stride with opaque alpha', async () => {
+    const lodA = makeSubLoader(makeLodData(20, 10, 3, { color: 'float32', rgba: true }));
+    const lodB = makeSubLoader(makeLodData(10, 5, 3)); // no colors
+    const loader = new LinesProgressiveLoader(
+      [lodA, lodB] as unknown as LinesSpatialIndexLoader[],
+      2,
+      '/lines'
+    );
+    const result = await loader.loadLines(baseViewState);
+    expect(result.colorComponents).toBe(4);
+    // LOD B verts 20..29 → white RGB + the 1.0 opaque alpha identity.
+    expect(result.colors?.[20 * 4]).toBeCloseTo(1.0, 6);
+    expect(result.colors?.[20 * 4 + 3]).toBeCloseTo(1.0, 6);
   });
 });

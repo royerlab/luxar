@@ -27,7 +27,7 @@ import {
 import {
   applyBlendingStateToMaterial,
   getCompleteBlendingState,
-  effectiveGeometryMode,
+  isVolumetricMode,
   normalModeDepthWrite,
   type CompleteBlendingState,
 } from '../../blending-state';
@@ -59,6 +59,13 @@ export interface LineMaterialConfig {
   intensity?: number;
   /** Offset (additive brightness shift / black level), default 0.0 */
   offset?: number;
+  /**
+   * κ — composed node absorption for the volumetric blending mode
+   * (identity 1.0). Inert in every other mode; same shape as
+   * `PointMaterialConfig.absorption` and `GSplatMaterialConfig.absorption`
+   * (three-geometry symmetry).
+   */
+  absorption?: number;
   /** Blending mode */
   blendingMode?: BlendingMode;
   /** Whether material is transparent (default true) */
@@ -111,15 +118,13 @@ export class LineMaterial
 
     // Determine THREE.js blending mode
     // 'additive' and 'luminous' both use AdditiveBlending - only depthTest differs
-    // Volumetric maps to its additive (κ=0) fallback for lines — the
-    // policy lives in effectiveGeometryMode (blending-state.ts).
-    const initialMode = effectiveGeometryMode(blendingMode, 'line');
+    const initialMode = blendingMode;
     let blending: THREE.Blending;
     if (isOpaque || initialMode === 'normal') {
       blending = THREE.NormalBlending;
     } else if (initialMode === 'additive' || initialMode === 'luminous') {
       blending = THREE.AdditiveBlending; // Classic additive: SrcAlpha, One
-    } else if (initialMode === 'max') {
+    } else if (initialMode === 'max' || initialMode === 'volumetric') {
       blending = THREE.CustomBlending;
     } else {
       blending = THREE.NormalBlending;
@@ -137,6 +142,13 @@ export class LineMaterial
         uInvGamma: { value: 1.0 / gammaValue }, // Pre-computed inverse for performance
         uIntensity: { value: materialConfig.intensity ?? 1.0 },
         uOffset: { value: materialConfig.offset ?? 0.0 },
+        // Volumetric (emission–absorption) uniforms — read only under
+        // the LUXAR_VOLUMETRIC define; inert in every other mode.
+        uAbsorption: { value: materialConfig.absorption ?? 1.0 },
+        // 1 when the committed colors carry a real alpha column (RGBA);
+        // set per-commit (material-sync-helpers.ts), gates only the
+        // volumetric w(a) optical-depth map.
+        uHasElementAlpha: { value: 0 },
         // near-plane safety + max-pixel-width clamp uniforms.
         uNearCull: { value: 0.05 },
         uMaxLinePixelWidth: { value: 540 }, // ≈ resolution.y * 0.5 default; updated in updateCameraParams
@@ -343,6 +355,25 @@ export class LineMaterial
   }
 
   /**
+   * Update the volumetric absorption coefficient κ (composed node
+   * attr). Plain uniform write — inert unless the material is in
+   * volumetric mode. Mirrors `PointMaterial.updateAbsorption`.
+   */
+  updateAbsorption(absorption: number): void {
+    this.uniforms.uAbsorption.value = absorption;
+  }
+
+  /**
+   * Flag whether the committed colors carry a real per-endpoint alpha
+   * column (RGBA). Set per-commit by `syncLineMaterialWithGeometry`;
+   * gates only the volumetric w(a) optical-depth map. Mirrors
+   * `PointMaterial.updateHasElementAlpha`.
+   */
+  updateHasElementAlpha(hasAlpha: boolean): void {
+    this.uniforms.uHasElementAlpha.value = hasAlpha ? 1 : 0;
+  }
+
+  /**
    * Update the colormap texture and enable/disable colormap mode.
    */
   updateColormapTexture(texture: THREE.DataTexture | null): void {
@@ -368,6 +399,7 @@ export class LineMaterial
       gamma: this.userData.gamma ?? 1.0,
       intensity: this.uniforms.uIntensity.value,
       offset: this.uniforms.uOffset.value,
+      absorption: this.uniforms.uAbsorption.value,
       blendingMode: this.userData.blendingMode ?? 'additive',
       transparent: this.transparent,
       depthTest: this.userData.depthTest ?? true,
@@ -394,6 +426,10 @@ export class LineMaterial
     cloned.uniforms.uPerspectiveLineScale.value = this.uniforms.uPerspectiveLineScale.value;
     cloned.uniforms.uOrthoLineScale.value = this.uniforms.uOrthoLineScale.value;
     cloned.uniforms.uInvGamma.value = this.uniforms.uInvGamma.value;
+    // Commit-written data flag: the clone shares the source's line
+    // texture, so it must share its RGBA-alpha presence too (mirrors
+    // PointMaterial.clone).
+    cloned.uniforms.uHasElementAlpha.value = this.uniforms.uHasElementAlpha.value;
 
     return cloned as this;
   }
@@ -420,11 +456,7 @@ export class LineMaterial
    */
   applyBlendingMode(mode: BlendingMode): void {
     const opacity = (this.uniforms.uOpacity?.value as number | undefined) ?? 1.0;
-    // Phase-1 volumetric fallback — the policy lives in
-    // effectiveGeometryMode (blending-state.ts); userData keeps the
-    // REQUESTED mode so stored scenes upgrade automatically.
-    const effectiveMode: BlendingMode = effectiveGeometryMode(mode, 'line');
-    const state: CompleteBlendingState = getCompleteBlendingState(effectiveMode, opacity);
+    const state: CompleteBlendingState = getCompleteBlendingState(mode, opacity);
 
     // Defensive: THREE may leave defines undefined when none were
     // passed at construction.
@@ -433,6 +465,12 @@ export class LineMaterial
     const previousMode = this.userData.blendingMode as BlendingMode | undefined;
     const wantsContrib = state.shaderOutputMode === 'rgb-contribution';
     const hasContrib = 'LUXAR_MAX_RGB_CONTRIBUTION' in this.defines;
+    // Volumetric = its own output branch (emission–absorption): every
+    // non-volumetric transition must clear the define (a
+    // volumetric→normal switch must not strand it). Mirrors the
+    // point/gsplat wrappers' define lifecycle.
+    const wantsVolumetric = isVolumetricMode(mode);
+    const hasVolumetric = 'LUXAR_VOLUMETRIC' in this.defines;
     const stateChanged = applyBlendingStateToMaterial(this, state);
     let definesChanged = false;
     if (wantsContrib && !hasContrib) {
@@ -440,6 +478,13 @@ export class LineMaterial
       definesChanged = true;
     } else if (!wantsContrib && hasContrib) {
       delete this.defines.LUXAR_MAX_RGB_CONTRIBUTION;
+      definesChanged = true;
+    }
+    if (wantsVolumetric && !hasVolumetric) {
+      this.defines.LUXAR_VOLUMETRIC = '';
+      definesChanged = true;
+    } else if (!wantsVolumetric && hasVolumetric) {
+      delete this.defines.LUXAR_VOLUMETRIC;
       definesChanged = true;
     }
     this.userData.blendingMode = mode;
