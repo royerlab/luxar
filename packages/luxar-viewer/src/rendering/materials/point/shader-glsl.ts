@@ -88,7 +88,14 @@ export const POINT_VERTEX_SHADER = /* glsl */ `
       float aRadius = pointT0.w;
       vec3 aColor = pointT1.rgb;
       float aSharpness = pointT1.w;
-      vAlpha = pointT2.y;              // per-point opacity (1.0 for RGB data)
+      // Per-point opacity (1.0 for RGB data). Sanitized: alpha is
+      // load-bearing in EVERY mode (linear contribution scale) and maps
+      // into optical depth under volumetric, where a NaN/Inf poisons
+      // τ past the discard into NaN pixels. Python validation blocks
+      // non-finite alpha, but hand-crafted zarr must not. NaN/Inf/
+      // negative route to the 1.0 opaque identity (same policy as the
+      // sharpness/radius sanitizers above; gsplat twin does the same).
+      vAlpha = sanitizeNonNegative(pointT2.y, 1.0);
       #ifdef USE_COLORMAP
       float aScalar = pointT2.x;       // per-point scalar for colormap lookup
       #endif

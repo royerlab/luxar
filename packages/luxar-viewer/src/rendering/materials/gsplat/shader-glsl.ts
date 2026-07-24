@@ -388,7 +388,13 @@ export const GSPLAT_VERTEX_SHADER = /* glsl */ `
         #endif
         // Per-splat opacity rides regardless of color source (in colormap
         // mode an RGBA dataset keeps its alpha; RGB data carries 1.0).
-        vAlpha = aAlpha;
+        // Sanitized: alpha is load-bearing in EVERY mode (linear
+        // contribution scale) and maps into optical depth under
+        // volumetric, where a NaN/Inf poisons τ past the discard into
+        // NaN pixels. Python validation blocks non-finite alpha, but
+        // hand-crafted zarr must not. NaN/Inf/negative route to the
+        // 1.0 opaque identity (point twin does the same).
+        vAlpha = sanitizeNonNegative(aAlpha, 1.0);
 
         // Compute proper clip-space depth using projection matrix
         // This ensures correct depth buffer behavior for overlapping splats

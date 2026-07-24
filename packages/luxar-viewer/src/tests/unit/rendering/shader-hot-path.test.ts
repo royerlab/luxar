@@ -99,13 +99,16 @@ describe('Shader hot-path string regressions', () => {
       expect(GSPLAT_VERTEX_SHADER).toMatch(/inversesqrt\s*\(\s*quad\s*\)/);
     });
 
-    it('reads the per-splat alpha from texel3.y and passes it through vAlpha', () => {
+    it('reads the per-splat alpha from texel3.y and passes it through vAlpha (sanitized)', () => {
       // Per-element opacity rides in texel3.y (element-texture-layout.ts). A
       // mutation that read the wrong channel or dropped the varying would
       // silently ignore imported 3DGS opacity — pin both the read and the
-      // varying assignment. A pure-math test can't see either.
+      // varying assignment. A pure-math test can't see either. The
+      // assignment routes through sanitizeNonNegative(·, 1.0): alpha is
+      // load-bearing in every mode, and a NaN from hand-crafted zarr
+      // would otherwise poison volumetric τ into NaN pixels.
       expect(GSPLAT_VERTEX_SHADER).toMatch(/float\s+aAlpha\s*=\s*splatT3\.y/);
-      expect(GSPLAT_VERTEX_SHADER).toMatch(/vAlpha\s*=\s*aAlpha/);
+      expect(GSPLAT_VERTEX_SHADER).toMatch(/vAlpha\s*=\s*sanitizeNonNegative\(aAlpha, 1\.0\)/);
     });
 
     it('computes the Mahalanobis quadratic form rᵀΣ⁻¹r before the inversesqrt', () => {

@@ -440,6 +440,14 @@ export class PointsBufferAdapter {
     // pool geometries are reused across tenants, and a presence flip must
     // not leak the previous tenant's stamp (the texel writer already
     // restores the identity fills).
+    //
+    // Deliberately stamped AFTER the texel write above: writePointTexels
+    // throws only at its pre-loop length guard, so a throwing write
+    // leaves the texture's PREVIOUS content fully intact — and these
+    // un-reached stamps stay consistent with it (old texels + old
+    // stamps). Stamping before the write would instead pair NEW stamps
+    // with OLD texels on that path (reviewed and kept; the lines
+    // adapter's stampLineScalarPresence follows the same ordering).
     if (!instanced.userData) instanced.userData = {};
     instanced.userData.hasScalars = data.scalars !== undefined;
     instanced.userData.hasColors = !!data.colors;

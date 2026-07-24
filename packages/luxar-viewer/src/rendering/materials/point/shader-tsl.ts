@@ -386,7 +386,10 @@ export function pointWebGPUFactory(
     vColor.assign(perPointColor);
     vPointSize.assign(basePointSize);
     vNearFade.assign(depthFade);
-    vAlpha.assign(pointT2.y);
+    // Sanitized like the GLSL twin: NaN/Inf/negative alpha routes to
+    // the 1.0 opaque identity (alpha is load-bearing in every mode and
+    // feeds optical depth under volumetric).
+    vAlpha.assign(sanitizeNonNegative(pointT2.y, float(1.0)));
 
     return clipPos;
   });

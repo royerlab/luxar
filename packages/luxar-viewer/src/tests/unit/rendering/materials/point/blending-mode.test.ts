@@ -118,6 +118,15 @@ describe('PointMaterial.applyBlendingMode', () => {
     expect(mat.fragmentShader).toContain('), uHasElementAlpha);');
   });
 
+  it('vertex shader sanitizes the per-point alpha read (NaN/Inf/negative → 1.0)', () => {
+    // Alpha is load-bearing in every mode and feeds optical depth under
+    // volumetric — an unsanitized NaN from hand-crafted zarr poisons τ
+    // past the discard into NaN pixels. Pinned at the USAGE (the
+    // assignment), matching the gsplat twin's pin.
+    const mat = new PointMaterial();
+    expect(mat.vertexShader).toContain('vAlpha = sanitizeNonNegative(pointT2.y, 1.0);');
+  });
+
   it("'volumetric' applies the REAL emission–absorption state (phase 3), userData keeps 'volumetric'", () => {
     // Points implement the volumetric fragment math since phase 3
     // (VOLUMETRIC_BLENDING_SPEC.md): premultiplied self-screened

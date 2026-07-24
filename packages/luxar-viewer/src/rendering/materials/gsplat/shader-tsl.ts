@@ -68,7 +68,12 @@ import {
   screenSize,
 } from 'three/tsl';
 import { NodeMaterial } from 'three/webgpu';
-import { invalidFloatTSL, perspectiveNearFadeTSL, type TSLNode } from '../_shared/tsl-helpers';
+import {
+  invalidFloatTSL,
+  perspectiveNearFadeTSL,
+  sanitizeNonNegative,
+  type TSLNode,
+} from '../_shared/tsl-helpers';
 import {
   applyBlendingStateToMaterial,
   getCompleteBlendingState,
@@ -578,7 +583,10 @@ export function gsplatWebGPUFactory(
 
     // Assign varyings (declared outside the Fn; see above).
     vColor.assign(perInstanceColor);
-    vAlpha.assign(aAlpha);
+    // Sanitized like the GLSL twin: NaN/Inf/negative alpha routes to
+    // the 1.0 opaque identity (alpha is load-bearing in every mode and
+    // feeds optical depth under volumetric).
+    vAlpha.assign(sanitizeNonNegative(aAlpha, float(1.0)));
     vAmplitude2D.assign(vAmplitude2DVal);
     vL2D.assign(vL2DVal);
     vCenterScreen.assign(vCenterScreenVal);
