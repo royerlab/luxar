@@ -268,6 +268,10 @@ export function pointWebGPUFactory(
   const vColor: TSLNode = varying(vec3(float(0.0), float(0.0), float(0.0)));
   const vPointSize: TSLNode = varying(float(0.0));
   const vNearFade: TSLNode = varying(float(1.0));
+  // Smooth (non-flat) on the TSL side vs the GLSL twin's `flat out` —
+  // deliberately equivalent, not drift: all 4 quad vertices of an
+  // instance write the same per-instance value, so interpolation is a
+  // no-op (TSL's varying() has no flat qualifier on the WebGL fallback).
   const vAlpha: TSLNode = varying(float(1.0));
 
   const vertexBody = Fn(() => {

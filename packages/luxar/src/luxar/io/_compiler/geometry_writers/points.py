@@ -125,7 +125,7 @@ def write_points(
     if sharpness is not None and isinstance(sharpness, (int, float)):
         aprint(f"  → Uniform sharpness {sharpness:.1f} for all points")
     if colors is not None and isinstance(colors, (list, tuple)):
-        aprint(f"  → Uniform color RGB{list(colors)} for all points")
+        aprint(f"  → Uniform color RGB(A){list(colors)} for all points")
 
     # 3. Apply spatial ordering if enabled (reorders arrays only)
     # Note: Spatial ordering uses radii to compute chunk_bounds.

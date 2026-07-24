@@ -126,13 +126,32 @@ def validate_broadcast_color(colors: Any, context: str = "colors") -> None:
         # np.floating/np.integer included: np.float32 does NOT subclass
         # Python float (np.float64 does), and float32 tuple components — e.g.
         # tuple(color_array[i]) — are a legitimate caller pattern.
-        if not isinstance(component, (int, float, np.integer, np.floating)) or not np.isfinite(
-            component
-        ):
+        if not isinstance(
+            component, (int, float, np.integer, np.floating)
+        ) or not np.isfinite(component):
             raise ValidationError(
                 f"{context}: Uniform color component {i} must be a finite "
                 f"number, got {component!r}",
                 "Use finite numeric RGB(A) components",
+            )
+        # Mirror the ndarray validator's bounds (validate_colors_for_writing):
+        # RGB is non-negative (HDR > 1 allowed); the optional 4th component is
+        # per-element OPACITY and must stay in [0, 1] — an HDR-RGB tuple would
+        # otherwise smuggle an out-of-range alpha past the SDR range check
+        # (which scans RGB only), and an SDR tuple would fail only inside the
+        # encoder AFTER positions were already written.
+        if component < 0:
+            raise ValidationError(
+                f"{context}: Uniform color component {i} cannot be negative, "
+                f"got {component!r}",
+                "Use non-negative RGB(A) components",
+            )
+        if i == 3 and component > 1:
+            raise ValidationError(
+                f"{context}: Uniform color alpha (component 4) must be in "
+                f"[0, 1] — it is per-element opacity, never HDR — got "
+                f"{component!r}",
+                "Clamp the alpha component to [0, 1]",
             )
 
 
@@ -166,14 +185,11 @@ def validate_scalars_preflight(
 
     if not isinstance(scalars, np.ndarray):
         raise ValidationError(
-            f"{context}: Expected numpy array or scalar, "
-            f"got {type(scalars).__name__}",
+            f"{context}: Expected numpy array or scalar, got {type(scalars).__name__}",
             "Convert to numpy array: np.array(scalars)",
         )
 
-    if scalars.ndim != 1 or (
-        scalars.shape[0] != n_elements and scalars.shape[0] != 1
-    ):
+    if scalars.ndim != 1 or (scalars.shape[0] != n_elements and scalars.shape[0] != 1):
         raise ValidationError(
             f"{context}: Expected 1D array with {n_elements} values or 1 "
             f"(broadcast), got shape {scalars.shape}",
