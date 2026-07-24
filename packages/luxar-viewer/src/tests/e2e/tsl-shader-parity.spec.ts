@@ -485,6 +485,50 @@ test.describe('TSL ↔ GLSL shader parity', () => {
     ).toBeLessThan(2.0);
   });
 
+  // Multi-row texture-orientation parity (one per geometry type): the
+  // element renders from STORAGE SLOT 1 of a 2-row data texture whose
+  // row 0 is a green decoy parked away from the viewport centre. A
+  // Y-flip mismatch between the GLSL texelFetch and the TSL textureLoad
+  // codegen (three wraps WebGL-fallback loads in `height − y − 1`)
+  // would sample the decoy on one backend only → pixel parity fails.
+  // The centre-pixel content assertion keeps the test non-vacuous: if
+  // BOTH backends consistently sampled the wrong row, the centred real
+  // element would be missing and the decoy's green would dominate.
+  for (const variant of ['point-multirow', 'line-multirow', 'gsplat-multirow'] as const) {
+    test(`${variant}: 2-row texture — both backends resolve the same storage row`, async ({
+      page,
+    }) => {
+      await bootHarness(page);
+      const glslPixels = await runGLSL(page, variant);
+      const tslResult = await runTSL(page, variant);
+
+      assertBothRendered(glslPixels, tslResult.pixels, variant);
+      expect(
+        meanAbsDiffPerCoveredPixel(glslPixels, tslResult.pixels),
+        `${variant}: per-covered-pixel parity (footprint-invariant)`
+      ).toBeLessThan(2.0);
+
+      // Non-vacuousness: the REAL element (slot 1) is centred, so the
+      // centre pixel must be lit on both backends and must NOT be the
+      // decoy's pure green (real color is red-dominant 1.0/0.5/0.25).
+      for (const [label, px] of [
+        ['GLSL', glslPixels],
+        ['TSL', tslResult.pixels],
+      ] as const) {
+        const o = (32 * 64 + 32) * 4;
+        const [r, g] = [px[o], px[o + 1]];
+        expect(
+          r,
+          `${variant} ${label}: centre pixel unlit — wrong storage row sampled`
+        ).toBeGreaterThan(10);
+        expect(
+          r,
+          `${variant} ${label}: centre pixel is the green DECOY — storage row mismatch`
+        ).toBeGreaterThan(g);
+      }
+    });
+  }
+
   test('line-colormap: USE_COLORMAP LUT with per-endpoint scalars + value gamma', async ({
     page,
   }) => {

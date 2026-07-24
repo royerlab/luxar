@@ -198,6 +198,22 @@ describe('PointMaterial', () => {
   });
 
   describe('methods', () => {
+    it('clone() carries the camera-STATE uniforms (uIsOrtho, uNearCull, uResolution)', () => {
+      // A clone taken in ortho mode used to keep the constructor
+      // defaults (perspective branch, stale resolution/nearCull) until
+      // the next global updateCameraParams broadcast. Lines clones are
+      // the reference implementation.
+      const original = new PointMaterial();
+      original.updateCameraParams(2.0, new THREE.Vector2(640, 480), /*isOrtho=*/ true, 0.42);
+
+      const cloned = original.clone();
+
+      expect(cloned.uniforms.uIsOrtho.value).toBe(1);
+      expect(cloned.uniforms.uNearCull.value).toBeCloseTo(0.42, 5);
+      expect((cloned.uniforms.uResolution.value as THREE.Vector2).x).toBe(640);
+      expect((cloned.uniforms.uResolution.value as THREE.Vector2).y).toBe(480);
+    });
+
     it('should update camera parameters with pre-computed values', () => {
       const material = new PointMaterial();
       const fov = (45 * Math.PI) / 180;

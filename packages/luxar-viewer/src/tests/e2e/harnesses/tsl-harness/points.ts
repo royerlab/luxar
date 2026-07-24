@@ -4,7 +4,7 @@
  * premultiply, volumetric emission–absorption, colormap LUT,
  * perspective sizing, subpixel floor, near fade, behind-camera guard,
  * sorted-index permutation) plus the point-pick counterparts.
- * 15 registry entries.
+ * 16 registry entries (incl. the multi-row texture-orientation variant).
  *
  * @module tests/e2e/harnesses/tsl-harness/points
  */
@@ -82,6 +82,51 @@ function buildPointDataTexture(
   tex.flipY = false;
   writePointTexels(tex, pointTexelSource(center, sharpness, scalar), 1);
   return tex;
+}
+
+/**
+ * MULTI-ROW point data texture (3×2): element 0 (row 0) is a DECOY
+ * point parked in a screen corner with a distinct green color; element
+ * 1 (row 1) holds the standard centered point. Paired with
+ * `aSortedIndex = [1]` (see `buildPointMultiRowMesh`), both backends
+ * must fetch ROW 1 — a texture-orientation (Y-flip) mismatch between
+ * the hand-written GLSL `texelFetch` and the TSL `textureLoad` codegen
+ * (which wraps fetches in three's `height − y − 1` flip on the WebGL
+ * fallback) would sample the decoy on one backend only and fail pixel
+ * parity. Every other entry's 1-row texture is structurally blind to
+ * this bug class: row 0 maps to row 0 under any flip.
+ */
+function buildPointDataTextureMultiRow(): THREE.DataTexture {
+  const tex = new THREE.DataTexture(new Float32Array(24), 3, 2, THREE.RGBAFormat, THREE.FloatType);
+  tex.magFilter = THREE.NearestFilter;
+  tex.minFilter = THREE.NearestFilter;
+  tex.generateMipmaps = false;
+  tex.flipY = false;
+  writePointTexels(
+    tex,
+    {
+      positions: new Float32Array([0.8, 0.8, 0, 0, 0, 0]), // decoy corner, real center
+      colors: new Float32Array([0, 1, 0, 1.0, 0.5, 0.25]), // decoy green, real standard
+      radii: new Float32Array([0.5, 0.5]),
+      sharpness: new Float32Array([0.5, 0.5]),
+    },
+    2
+  );
+  return tex;
+}
+
+/**
+ * Standard point mesh redirected to STORAGE SLOT 1 (the multi-row
+ * texture's real element). The mesh's own attached texture is ignored —
+ * the shaders sample the uniform's — but its `aSortedIndex` drives the
+ * fetch index on both backends.
+ */
+function buildPointMultiRowMesh(material: THREE.Material): THREE.Object3D {
+  const mesh = buildPointInstancedMesh(material) as THREE.Mesh;
+  const idx = mesh.geometry.getAttribute('aSortedIndex') as THREE.InstancedBufferAttribute;
+  (idx.array as Uint32Array)[0] = 1;
+  idx.needsUpdate = true;
+  return mesh;
 }
 
 /** Point mesh with the texel2.x scalar written for the colormap-parity case. */
@@ -272,6 +317,37 @@ export const POINT_SHADERS: Record<string, RegistryEntry> = {
       return m;
     },
     buildMesh: buildPointInstancedMesh,
+  },
+  // Multi-row texture-orientation parity: the point renders from
+  // STORAGE SLOT 1 of a 2-row texture (row 0 is a green decoy in a
+  // corner). Both backends must resolve the same row — a Y-flip
+  // mismatch between the GLSL texelFetch and the TSL textureLoad
+  // codegen shows up as the decoy rendering on one backend only.
+  // 1-row textures (every other entry) cannot catch this bug class.
+  'point-multirow': {
+    source: POINT_SOURCE,
+    buildUniforms: () => ({
+      uPointTex: { value: buildPointDataTextureMultiRow() },
+      pointSizeFactor: { value: 32.0 },
+      maxPointSize: { value: 32.0 },
+      radiusScale: { value: 1.0 },
+      uIsOrtho: { value: 1 },
+      uResolution: { value: new THREE.Vector2(64, 64) },
+      opacity: { value: 1.0 },
+      invGamma: { value: 1.0 / 2.2 },
+      uIntensity: { value: 1.0 },
+      uOffset: { value: 0.0 },
+    }),
+    buildTSLMaterial: (uniforms) => {
+      const m = pointWebGPUFactory(
+        buildPointTSLNodesFromUniforms(uniforms, {}),
+        {}
+      ) as unknown as THREE.Material;
+      m.transparent = false;
+      m.blending = THREE.NoBlending;
+      return m;
+    },
+    buildMesh: buildPointMultiRowMesh,
   },
   // Super-Gaussian exponent sweep: the GLSL `pow(rho, beta)` / `exp(...)`
   // falloff must match TSL across the beta range, not just at the default.
