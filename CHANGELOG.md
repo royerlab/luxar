@@ -33,7 +33,10 @@ All notable changes to Luxar are documented in this file.
   adapters, and the texel writer — is stride-aware.
 - **Mandelbulb demo showcases volumetric points**: full-strength colors
   with real depth cueing — the historical `colors *= 0.1` +
-  `intensity=0.0625` anti-blowout dimming under additive is gone.
+  `intensity=0.0625` anti-blowout dimming under additive (a combined
+  ×0.00625) is gone; the demo now runs κ = 8 at intensity 0.5 (80× the
+  old brightness), tuned live at the demo's full 1.24M-point resolution
+  so the dense core sits just under saturation.
 
 #### Added — lines texture storage + depth sorting (three-geometry symmetry complete)
 

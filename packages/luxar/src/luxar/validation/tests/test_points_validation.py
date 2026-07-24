@@ -159,6 +159,31 @@ def test_rgba_alpha_out_of_range_rejected_by_writer(tmp_path) -> None:
             scene.add_points("bad", positions, colors=colors, parent=scene)
 
 
+def test_broadcast_rgba_alpha_bounds_fail_fast(tmp_path) -> None:
+    """The uniform-color (tuple) path enforces the same alpha ∈ [0, 1] bound
+    as the ndarray path, at the PRE-WRITE gate.
+
+    Pre-fix, an HDR-RGB tuple smuggled alpha 5.0 to disk (the SDR range check
+    scans RGB only) and an SDR tuple failed only inside the encoder AFTER
+    positions were written — leaving the partial node the fail-fast gate
+    exists to prevent.
+    """
+    store = tmp_path / "rgba_bc.luxar.zarr"
+    n = 10
+    positions = np.random.randn(n, 3).astype(np.float32)
+
+    with LuxarZarrCompiler(store, enable_spatial_index=False) as compiler:
+        scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+        # HDR RGB with out-of-range alpha — must fail fast (pre-write).
+        with pytest.raises(ValueError, match=r"alpha .component 4. must be in"):
+            scene.add_points("hdr_bad", positions, colors=(2.0, 0.5, 0.2, 5.0))
+        # Negative component — must fail fast too.
+        with pytest.raises(ValueError, match="cannot be negative"):
+            scene.add_points("neg", positions, colors=(1.0, -0.1, 0.2, 0.5))
+        # Valid HDR RGB + in-range alpha — accepted.
+        scene.add_points("ok", positions, colors=(2.0, 0.5, 0.2, 0.5))
+
+
 # =============================================================================
 # Radii Validation Tests (Parametrized)
 # =============================================================================

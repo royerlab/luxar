@@ -235,7 +235,8 @@ describe('LineMaterial ↔ LineTSLMaterial blending-state convergence', () => {
 
   it("'volumetric': phase-1 fallback applies the ADDITIVE state, userData keeps 'volumetric'", () => {
     // Lines don't implement the emission–absorption fragment math yet
-    // (VOLUMETRIC_BLENDING_SPEC.md phases 3–4). The material intercepts
+    // (VOLUMETRIC_BLENDING_SPEC.md phase 4; points joined gsplats in
+    // phase 3). The material intercepts
     // the mode and applies additive — the exact κ=0 limit — while the
     // REQUESTED mode stays in userData so stored scenes upgrade
     // automatically when the line implementation lands.
