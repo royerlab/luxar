@@ -263,15 +263,16 @@ def generate_mandelbulb_volumetric(
 
             # Volumetric emission–absorption (VOLUMETRIC_BLENDING_SPEC.md
             # phase 3): the dense fractal shell self-occludes instead of
-            # blowing out, so the historical anti-blowout workarounds
-            # (colors ×= 0.1 and intensity = 0.0625) are gone — full-
-            # strength colors with real depth cueing. κ (absorption) is
-            # scale-dependent — per-point optical depth ∝ κ·radius (radii
-            # here are ~0.005–0.02 units) and occlusion builds over the
-            # many overlapping points along a ray through the shell; κ = 8
-            # was picked visually (bright glowing surface, interior
-            # darkening through the front lobes; higher values over-
-            # self-screen toward a dim solid).
+            # blowing out, so the historical additive anti-blowout
+            # workarounds (colors ×= 0.1 AND intensity = 0.0625, a
+            # combined ×0.00625) are gone — real depth cueing at 80×
+            # the old brightness. (κ, intensity) = (8, 0.5) was picked by
+            # live A/B at the demo's full resolution: the saturated
+            # radiance of a deep ray is ≈ c·intensity/(κ·radius·chord),
+            # so intensity 0.5 keeps the dense core just under white
+            # while κ = 8 (inside the panel slider range) leaves the
+            # surface glowing; higher κ over-self-screens toward a dim
+            # solid, intensity 1.0 saturates the core flat white.
             scene.add_points(
                 "Mandelbulb",
                 positions,
@@ -281,7 +282,7 @@ def generate_mandelbulb_volumetric(
                 opacity=0.9,
                 blending_mode="volumetric",
                 absorption=8.0,
-                intensity=1.0,
+                intensity=0.5,
             )
 
             # Overlay annotations
