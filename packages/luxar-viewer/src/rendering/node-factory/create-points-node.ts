@@ -74,11 +74,14 @@ export function createPointsGeometry(
       ? data.positions
       : widenToFloat32(data.positions as ArrayLike<number>);
 
+  // Color layout: 3 (RGB) or 4 (RGBA — alpha = per-point opacity in
+  // texel2.y). Strides the staged slice and the writer's per-point reads.
+  const colorK: 3 | 4 = data.colors ? (data.colorComponents ?? 3) : 3;
   let colorsF32: Float32Array;
   if (data.colors) {
     validateColorMode(data.colors, data.metadata);
     colorsF32 = widenToFloat32(
-      data.colors.subarray(0, pointCount * 3) as ArrayLike<number>,
+      data.colors.subarray(0, pointCount * colorK) as ArrayLike<number>,
       pointsNormalizationDivisor(data.colors, /*normalized=*/ true)
     );
   } else {
@@ -134,6 +137,7 @@ export function createPointsGeometry(
   const texelSrc: PointTexelSource = {
     positions: positionsF32,
     colors: colorsF32,
+    colorComponents: colorK,
     radii: radiiF32,
     sharpness: sharpnessF32,
     scalars: scalarsF32,
@@ -185,6 +189,10 @@ export function createPointsGeometry(
   geometry.userData.hasColors = !!data.colors;
   geometry.userData.hasRadii = !!data.radii;
   geometry.userData.hasSharpness = !!data.sharpness;
+  // RGBA-alpha presence (texel2.y carries a REAL per-point opacity, not
+  // the 1.0 identity). syncPointMaterialWithGeometry pushes this into the
+  // material's uHasElementAlpha gate on every commit.
+  geometry.userData.hasElementAlpha = colorK === 4;
 
   return geometry;
 }
@@ -206,6 +214,7 @@ export function createPointsMaterial(
 ): LuxarPointMaterial {
   const material = materialManager.getPointMaterial({
     opacity: attrs.opacity ?? 1.0,
+    absorption: attrs.absorption ?? 1.0,
     gamma: attrs.gamma ?? 1.0,
     intensity: attrs.intensity ?? 1.0,
     offset: attrs.offset ?? 0.0,

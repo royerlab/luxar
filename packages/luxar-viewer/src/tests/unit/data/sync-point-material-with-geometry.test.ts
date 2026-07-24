@@ -96,6 +96,38 @@ describe('syncPointMaterialWithGeometry', () => {
     expect(mat.uniforms.uPointTex.value).toBe(bound);
   });
 
+  it('pushes uHasElementAlpha=1 when geometry.userData.hasElementAlpha is true (RGBA colors)', () => {
+    // The texel-write paths stamp `hasElementAlpha` when the dataset carries
+    // RGBA colors (alpha → texel2.y); the commit sync must forward it to the
+    // material or the shader's w(a) per-point-opacity path never activates.
+    const mat = new PointMaterial();
+    expect(mat.uniforms.uHasElementAlpha.value).toBe(0); // opaque default
+    const geometry = new THREE.InstancedBufferGeometry();
+    attachPointStorage(geometry, 4);
+    geometry.userData.hasElementAlpha = true;
+    const points = new THREE.Mesh(geometry, mat);
+
+    syncPointMaterialWithGeometry(points);
+
+    expect(mat.uniforms.uHasElementAlpha.value).toBe(1);
+  });
+
+  it('resets uHasElementAlpha=0 when the geometry has no alpha stamp (pool-swap leak guard)', () => {
+    // A pool acquire may hand the node a geometry previously used by an
+    // RGBA tenant; refreshing on every commit means an RGB dataset must
+    // pull the uniform back to 0 even if the material was left at 1.
+    const mat = new PointMaterial();
+    mat.uniforms.uHasElementAlpha.value = 1; // previous RGBA tenant
+    const geometry = new THREE.InstancedBufferGeometry();
+    attachPointStorage(geometry, 4);
+    geometry.userData.hasElementAlpha = false;
+    const points = new THREE.Mesh(geometry, mat);
+
+    syncPointMaterialWithGeometry(points);
+
+    expect(mat.uniforms.uHasElementAlpha.value).toBe(0);
+  });
+
   it('is a no-op when material is not a PointMaterial', () => {
     // Defensive: external callers might attach a non-Luxar material.
     const otherMat = new THREE.MeshBasicMaterial();

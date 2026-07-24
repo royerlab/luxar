@@ -233,10 +233,6 @@ def generate_mandelbulb_volumetric(
         colors[:, 1] = np.abs(np.sin(2 * np.pi * hue + 2 * np.pi / 3))  # Green
         colors[:, 2] = np.abs(np.sin(2 * np.pi * hue + 4 * np.pi / 3))  # Blue
 
-        # Dim/attenuate colors so the dense surface doesn't blow out under
-        # additive blending
-        colors *= 0.1
-
         aprint("✓ Generated rainbow gradient based on fractal depth")
 
         # Generate radii based on distance (closer to surface = smaller points)
@@ -265,6 +261,18 @@ def generate_mandelbulb_volumetric(
         with LuxarZarrCompiler(output_path) as compiler:
             scene = compiler.create_scene(dimensions=dims)
 
+            # Volumetric emission–absorption (VOLUMETRIC_BLENDING_SPEC.md
+            # phase 3): the dense fractal shell self-occludes instead of
+            # blowing out, so the historical additive anti-blowout
+            # workarounds (colors ×= 0.1 AND intensity = 0.0625, a
+            # combined ×0.00625) are gone — real depth cueing at 80×
+            # the old brightness. (κ, intensity) = (8, 0.5) was picked by
+            # live A/B at the demo's full resolution: the saturated
+            # radiance of a deep ray is ≈ c·intensity/(κ·radius·chord),
+            # so intensity 0.5 keeps the dense core just under white
+            # while κ = 8 (inside the panel slider range) leaves the
+            # surface glowing; higher κ over-self-screens toward a dim
+            # solid, intensity 1.0 saturates the core flat white.
             scene.add_points(
                 "Mandelbulb",
                 positions,
@@ -272,8 +280,9 @@ def generate_mandelbulb_volumetric(
                 radii=radii,
                 sharpness=sharpnesses,
                 opacity=0.9,
-                blending_mode="additive",
-                intensity=0.0625,
+                blending_mode="volumetric",
+                absorption=8.0,
+                intensity=0.5,
             )
 
             # Overlay annotations

@@ -17,10 +17,7 @@ import {
   samplePixelsAt,
   openLayersPanel,
 } from './helpers';
-import {
-  EXPECTED_BLEND_STATE as EXPECTED_STATE,
-  EXPECTED_GSPLAT_VOLUMETRIC_STATE,
-} from './blending-expected-state';
+import { EXPECTED_BLEND_STATE as EXPECTED_STATE } from './blending-expected-state';
 
 const DATASET = 'http://localhost:9000/datasets/examples/rendering_modes_example.luxar.zarr';
 const MULTI_DATASET = 'http://localhost:9000/datasets/examples/multiple_objects_example.luxar.zarr';
@@ -1171,13 +1168,13 @@ test.describe('GSplat volumetric mode (emission–absorption)', () => {
 
     expect(state).not.toBeNull();
     expect(state.blendingMode).toBe('volumetric');
-    expect(state.blending).toBe(EXPECTED_GSPLAT_VOLUMETRIC_STATE.blending);
-    expect(state.blendEquation).toBe(EXPECTED_GSPLAT_VOLUMETRIC_STATE.blendEquation);
-    expect(state.blendSrc).toBe(EXPECTED_GSPLAT_VOLUMETRIC_STATE.blendSrc);
-    expect(state.blendDst).toBe(EXPECTED_GSPLAT_VOLUMETRIC_STATE.blendDst);
-    expect(state.depthTest).toBe(EXPECTED_GSPLAT_VOLUMETRIC_STATE.depthTest);
-    expect(state.depthWrite).toBe(EXPECTED_GSPLAT_VOLUMETRIC_STATE.depthWrite);
-    expect(state.transparent).toBe(EXPECTED_GSPLAT_VOLUMETRIC_STATE.transparent);
+    expect(state.blending).toBe(EXPECTED_STATE.volumetric.blending);
+    expect(state.blendEquation).toBe(EXPECTED_STATE.volumetric.blendEquation);
+    expect(state.blendSrc).toBe(EXPECTED_STATE.volumetric.blendSrc);
+    expect(state.blendDst).toBe(EXPECTED_STATE.volumetric.blendDst);
+    expect(state.depthTest).toBe(EXPECTED_STATE.volumetric.depthTest);
+    expect(state.depthWrite).toBe(EXPECTED_STATE.volumetric.depthWrite);
+    expect(state.transparent).toBe(EXPECTED_STATE.volumetric.transparent);
     expect(state.hasVolumetricDefine).toBe(true); // GLSL backend
     expect(state.absorption).toBe(1.0); // authored zarr attr reached the uniform
     expect(state.projectionMode).toBe(0); // SUM ray-integral, not peak

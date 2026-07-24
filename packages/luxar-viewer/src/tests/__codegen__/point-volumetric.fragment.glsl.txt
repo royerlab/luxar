@@ -45,18 +45,20 @@ layout( std140 ) uniform object {
 	float nodeUniform4;
 	float nodeUniform5;
 	float nodeUniform6;
-	mat3 nodeUniform8;
-	uint nodeUniform9;
+	float nodeUniform7;
+	float nodeUniform8;
 	mat3 nodeUniform10;
 	uint nodeUniform11;
 	mat3 nodeUniform12;
 	uint nodeUniform13;
-	float nodeUniform14;
+	mat3 nodeUniform14;
+	uint nodeUniform15;
 	float nodeUniform16;
-	float nodeUniform17;
 	float nodeUniform18;
 	float nodeUniform19;
-	vec2 nodeUniform20;
+	float nodeUniform20;
+	float nodeUniform21;
+	vec2 nodeUniform22;
 };
 
 
@@ -77,8 +79,10 @@ vec3 nodeVar3;
 float nodeVar4;
 float nodeVar5;
 float nodeVar6;
+float nodeVar7;
+float nodeVar8;
 vec4 Output;
-vec4 nodeVar7;
+vec4 nodeVar9;
 
 // codes
 
@@ -108,21 +112,33 @@ void main() {
 	nodeVar3 = max( ( ( nodeVarying3 * vec3( nodeUniform2 ) ) + vec3( nodeUniform3 ) ), vec3( 0.0, 0.0, 0.0 ) );
 	nodeVar4 = min( ( nodeVarying4 / 1.5 ), 1.0 );
 	nodeVar5 = ( ( ( ( max( ( exp( ( pow( sqrt( ( nodeVar1 * 4.0 ) ), nodeVarying2 ) * -4.6051702 ) ) - 0.01 ), 0.0 ) * 1.0101010101010102 ) * nodeUniform4 ) * ( nodeVar4 * nodeVar4 ) ) * nodeVarying5 );
-	nodeVar6 = ( nodeVar5 * nodeVarying6 );
+	nodeVar6 = ( nodeVar5 * mix( 1.0, ( - log( ( 1.0 - min( nodeVarying6, 0.998046875 ) ) ) ), nodeUniform5 ) );
+	nodeVar7 = ( ( ( nodeUniform6 * nodeVar6 ) * nodeVarying1 ) * 0.8259468366189925 );
 
-	if ( ( max( nodeVar3.x, max( nodeVar3.y, nodeVar3.z ) ) < 0.0001 ) ) {
+	if ( ( ( max( nodeVar3.x, max( nodeVar3.y, nodeVar3.z ) ) < 0.0001 ) && ( nodeVar7 < 0.0001 ) ) ) {
 
 		discard;
 		
 
 	}
 
-	DiffuseColor = vec4( pow( nodeVar3, vec3( nodeUniform5 ) ), nodeVar6 );
-	DiffuseColor.w = ( DiffuseColor.w * nodeUniform6 );
-	nodeVar7 = max( vec4( DiffuseColor.xyz, DiffuseColor.w ), 0.0 );
-	Output = nodeVar7;
+
+	if ( ( nodeVar7 < 0.001 ) ) {
+
+		nodeVar8 = ( ( 1.0 - ( nodeVar7 * 0.5 ) ) + ( ( nodeVar7 * nodeVar7 ) / 6.0 ) );
+
+	} else {
+
+		nodeVar8 = ( ( 1.0 - exp( ( - nodeVar7 ) ) ) / max( nodeVar7, 1e-20 ) );
+
+	}
+
+	DiffuseColor = vec4( ( ( pow( nodeVar3, vec3( nodeUniform7 ) ) * vec3( nodeVar6 ) ) * vec3( nodeVar8 ) ), ( 1.0 - exp( ( - nodeVar7 ) ) ) );
+	DiffuseColor.w = ( DiffuseColor.w * nodeUniform8 );
+	nodeVar9 = max( vec4( DiffuseColor.xyz, DiffuseColor.w ), 0.0 );
+	Output = nodeVar9;
 
 	// result
-	fragColor = nodeVar7;
+	fragColor = nodeVar9;
 
 }

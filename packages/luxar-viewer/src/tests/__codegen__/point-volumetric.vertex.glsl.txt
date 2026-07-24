@@ -1,0 +1,282 @@
+#version 300 es
+
+// Three.js r184 - Node System
+
+
+// extensions
+
+
+// precision
+
+precision highp float;
+precision highp int;
+precision highp sampler2D;
+precision highp sampler3D;
+precision highp samplerCube;
+precision highp sampler2DArray;
+
+precision highp usampler2D;
+precision highp usampler3D;
+precision highp usamplerCube;
+precision highp usampler2DArray;
+
+precision highp isampler2D;
+precision highp isampler3D;
+precision highp isamplerCube;
+precision highp isampler2DArray;
+
+precision highp sampler2DShadow;
+precision highp sampler2DArrayShadow;
+precision highp samplerCubeShadow;
+
+
+// uniforms
+
+layout( std140 ) uniform render {
+	mat4 cameraViewMatrix;
+	mat4 cameraProjectionMatrix;
+};
+
+layout( std140 ) uniform object {
+	mat4 nodeUniform1;
+	float nodeUniform2;
+	float nodeUniform3;
+	float nodeUniform4;
+	float nodeUniform5;
+	float nodeUniform6;
+	float nodeUniform7;
+	float nodeUniform8;
+	mat3 nodeUniform10;
+	uint nodeUniform11;
+	mat3 nodeUniform12;
+	uint nodeUniform13;
+	mat3 nodeUniform14;
+	uint nodeUniform15;
+	float nodeUniform16;
+	float nodeUniform18;
+	float nodeUniform19;
+	float nodeUniform20;
+	float nodeUniform21;
+	vec2 nodeUniform22;
+};
+uniform sampler2D nodeUniform9;
+
+// varyings
+out vec2 nodeVarying0;
+out float nodeVarying1;
+out float nodeVarying2;
+out vec3 nodeVarying3;
+out float nodeVarying4;
+out float nodeVarying5;
+out float nodeVarying6;
+
+
+// attributes
+layout( location = 0 ) in uint aSortedIndex;
+layout( location = 1 ) in vec2 aQuadCorner;
+
+
+// vars
+mat4 modelViewMatrix;
+vec2 nodeVar0;
+vec3 nodeVar2;
+int nodeVar10;
+int nodeVar11;
+int nodeVar12;
+int nodeVar13;
+vec2 nodeVar14;
+vec2 nodeVar15;
+bool nodeVar16;
+vec4 nodeVar17;
+vec4 nodeVar18;
+vec2 nodeVar19;
+vec2 nodeVar20;
+bool nodeVar21;
+vec4 nodeVar22;
+vec4 nodeVar23;
+vec3 nodeVar24;
+float nodeVar25;
+vec3 nodeVar26;
+float nodeVar27;
+vec2 nodeVar28;
+vec2 nodeVar29;
+bool nodeVar30;
+vec4 nodeVar31;
+vec4 nodeVar32;
+float nodeVar33;
+float nodeVar34;
+float nodeVar35;
+float nodeVar36;
+float nodeVar37;
+vec4 nodeVar38;
+vec4 nodeVar39;
+float nodeVar40;
+float nodeVar41;
+float nodeVar42;
+float nodeVar43;
+float nodeVar44;
+float nodeVar45;
+vec4 nodeVar46;
+
+// codes
+
+
+void main() {
+
+	// transforms
+	
+
+	// flow
+	// code
+
+	modelViewMatrix = ( cameraViewMatrix * nodeUniform1 );
+	nodeVarying1 = 0.0;
+	nodeVar0 = vec2( 0.0, 0.0 );
+	nodeVarying0 = nodeVar0;
+	nodeVar2 = vec3( 0.0, 0.0, 0.0 );
+	nodeVarying3 = nodeVar2;
+	nodeVarying2 = 0.0;
+	nodeVarying4 = 0.0;
+	nodeVarying5 = 1.0;
+	nodeVarying6 = 1.0;
+	nodeVar10 = ( int( aSortedIndex ) * 3 );
+	nodeVar11 = int( textureSize( nodeUniform9, 0 ).x );
+	nodeVar12 = ( nodeVar10 % nodeVar11 );
+	nodeVar13 = ( nodeVar10 / nodeVar11 );
+	nodeVar14 = ( nodeUniform10 * vec3( vec2( ivec2( nodeVar12, nodeVar13 ) ), 1.0 ) ).xy;
+	nodeVar16 = bool( nodeUniform11 );
+
+	if ( nodeVar16 ) {
+
+		nodeVar15 = vec2( nodeVar14.x, ( ( int( textureSize( nodeUniform9, 0 ).y ) - int( nodeVar14.y ) ) - 1 ) );
+
+	} else {
+
+		nodeVar15 = nodeVar14;
+
+	}
+
+	nodeVar17 = texelFetch( nodeUniform9, ivec2( nodeVar15 ), int( 0 ) );
+	nodeVar18 = nodeVar17;
+	nodeVar19 = ( nodeUniform12 * vec3( vec2( ivec2( ( nodeVar12 + 1 ), nodeVar13 ) ), 1.0 ) ).xy;
+	nodeVar21 = bool( nodeUniform13 );
+
+	if ( nodeVar21 ) {
+
+		nodeVar20 = vec2( nodeVar19.x, ( ( int( textureSize( nodeUniform9, 0 ).y ) - int( nodeVar19.y ) ) - 1 ) );
+
+	} else {
+
+		nodeVar20 = nodeVar19;
+
+	}
+
+	nodeVar22 = texelFetch( nodeUniform9, ivec2( nodeVar20 ), int( 0 ) );
+	nodeVar23 = nodeVar22;
+	nodeVar24 = nodeVar18.xyz;
+	nodeVar25 = nodeVar18.w;
+	nodeVar26 = nodeVar23.xyz;
+	nodeVar27 = nodeVar23.w;
+	nodeVar28 = ( nodeUniform14 * vec3( vec2( ivec2( ( nodeVar12 + 2 ), nodeVar13 ) ), 1.0 ) ).xy;
+	nodeVar30 = bool( nodeUniform15 );
+
+	if ( nodeVar30 ) {
+
+		nodeVar29 = vec2( nodeVar28.x, ( ( int( textureSize( nodeUniform9, 0 ).y ) - int( nodeVar28.y ) ) - 1 ) );
+
+	} else {
+
+		nodeVar29 = nodeVar28;
+
+	}
+
+	nodeVar31 = texelFetch( nodeUniform9, ivec2( nodeVar29 ), int( 0 ) );
+	nodeVar32 = nodeVar31;
+
+	if ( ( ( ( nodeVar27 < 1e30 ) && ( nodeVar27 > -1e30 ) ) && ( nodeVar27 >= 0.0 ) ) ) {
+
+		nodeVar33 = nodeVar27;
+
+	} else {
+
+		nodeVar33 = 0.5;
+
+	}
+
+	nodeVar34 = pow( 2.0, ( ( clamp( nodeVar33, 0.0, 1.0 ) * 6.0 ) - 2.0 ) );
+	nodeVar36 = ( nodeVar25 * nodeUniform16 );
+
+	if ( ( ( ( nodeVar36 < 1e30 ) && ( nodeVar36 > -1e30 ) ) && ( nodeVar36 >= 0.0 ) ) ) {
+
+		nodeVar35 = nodeVar36;
+
+	} else {
+
+		nodeVar35 = 0.0;
+
+	}
+
+	nodeVar37 = nodeVar35;
+	nodeVar38 = ( modelViewMatrix * vec4( nodeVar24, 1.0 ) );
+	nodeVar39 = ( cameraProjectionMatrix * nodeVar38 );
+
+	if ( ( int( nodeUniform19 ) == 1 ) ) {
+
+		nodeVar40 = 1.0;
+
+	} else {
+
+		nodeVar40 = ( 1.0 / max( ( - nodeVar38.z ), 1e-20 ) );
+
+	}
+
+	nodeVar41 = ( ( nodeVar37 * nodeUniform18 ) * nodeVar40 );
+
+	if ( ( int( nodeUniform19 ) == 1 ) ) {
+
+		nodeVar42 = 1.0;
+
+	} else {
+
+
+		if ( ( nodeVar38.z >= 0.0 ) ) {
+
+			nodeVar43 = 0.0;
+
+		} else {
+
+			nodeVar44 = max( nodeUniform20, 1e-20 );
+			nodeVar43 = smoothstep( nodeVar44, ( nodeVar44 * 2.0 ), ( - nodeVar38.z ) );
+
+		}
+
+		nodeVar42 = nodeVar43;
+
+	}
+
+	nodeVar45 = nodeVar42;
+	nodeVarying0 = ( ( aQuadCorner + vec2( 1.0 ) ) * vec2( 0.5 ) );
+	nodeVarying1 = nodeVar37;
+	nodeVarying2 = nodeVar34;
+	nodeVarying3 = nodeVar26;
+	nodeVarying4 = nodeVar41;
+	nodeVarying5 = nodeVar45;
+	nodeVarying6 = nodeVar32.y;
+
+	if ( ( nodeVar45 < 0.01 ) ) {
+
+		nodeVar46 = vec4( 0.0, 0.0, -2.0, 1.0 );
+
+	} else {
+
+		nodeVar46 = ( nodeVar39 + vec4( ( ( aQuadCorner * ( vec2( clamp( nodeVar41, 1.5, nodeUniform21 ) ) / nodeUniform22 ) ) * vec2( nodeVar39.w ) ), 0.0, 0.0 ) );
+
+	}
+
+
+	// result
+	gl_Position = nodeVar46;
+
+	gl_PointSize = 1.0;
+
+}

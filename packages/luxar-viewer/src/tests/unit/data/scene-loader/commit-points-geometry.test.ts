@@ -693,6 +693,27 @@ describe('commitPointsGeometry — append fast path (Phase 4 Stage 2, fromInstan
     }
   });
 
+  it('does NOT append when the color LAYOUT flips (RGB committed, RGBA next)', () => {
+    // Both commits carry colors (the presence conjunct passes) but the
+    // STRIDE differs: an append writes only the suffix, so a 3→4 layout
+    // flip would leave the prefix's texel2.y alphas stale against the new
+    // RGBA interpretation. The colorComponents conjunct must gate alone.
+    const root = new THREE.Group();
+    root.add(makePoints('/p'));
+    const pool = makePool(new THREE.BufferGeometry());
+    // Committed prefix: RGB (colorComponents unset → 3).
+    commitPointsGeometry('/p', makeData(4), root, pool as never, mockNodeFactory, undefined, 0);
+    const committed = (root.children[0].userData as { committedData: object }).committedData;
+    // Genuine extension in every other respect — lineage intact, count grew,
+    // colors present — but declared RGBA.
+    const next = makeData(6);
+    next.colors = new Uint8Array(6 * 4);
+    next.colorComponents = 4;
+    setPrefixParent(next, committed);
+    commitPointsGeometry('/p', next, root, pool as never, mockNodeFactory, undefined, 1);
+    expect(lastOpts(pool).fromInstance).toBe(0); // full rewrite, not an append
+  });
+
   it('does NOT append when the pool hands back a DIFFERENT geometry, even without a reported rebuild', () => {
     // geometry === prevGeometry is a load-bearing conjunct of its own: a
     // swap that (hypothetically) reported no attribute rebuild still means

@@ -533,18 +533,23 @@ chunk-index range maps to exactly one zarr chunk.
 - **Description:** Point positions in D-dimensional space (never broadcast)
 
 #### colors/ (Optional)
-- **Shape:** `(N, 3)` for RGB
+- **Shape:** `(N, 3)` for RGB or `(N, 4)` for RGBA
 - **Dtype:** `uint16` (`geolog_perchannel_u16`, HDR default) / `uint8` (SDR
   `rgb_uint8`, or HDR under MEMORY) / `float32` (PRECISION). HDR colors are
   quantized per channel on a true-log grid (uniform relative precision, code 0
   reserved for exact zeros) and decoded back to float32.
-- **Chunks:** `(chunk_rows, 3)` — byte-based / spatial-index-aligned
+- **Chunks:** `(chunk_rows, 3|4)` — byte-based / spatial-index-aligned
 - **Compression:** Blosc with zstd, level 9 (width-aware shuffle policy)
 - **Description:** HDR RGB colors in normalized range
   - **SDR Range:** 0.0-1.0 (standard dynamic range)
   - **HDR Range:** Values > 1.0 represent HDR brightness
   - **Typical HDR:** 0.0-10.0 (extreme brightness)
   - **Note:** Values are NOT in 0-255 range; use 0.0-1.0 for normal colors
+  - **Alpha (optional 4th channel):** per-point opacity α ∈ [0, 1] (never
+    HDR; the SDR/HDR autodetect scans RGB only). Every blending mode scales a
+    point's contribution by α; `volumetric` maps it into optical depth
+    w = −ln(1−α) — see VOLUMETRIC_BLENDING_SPEC.md §5.4.1. No format-version
+    bump: readers key off the array shape, and codecs are channel-agnostic.
 - **Default:** White (1.0, 1.0, 1.0) if not provided
 
 #### radii/ (Optional)

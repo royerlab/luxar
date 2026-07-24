@@ -14,7 +14,7 @@ import {
   VOLUMETRIC_SERIES_C2_DIVISOR,
   VOLUMETRIC_SERIES_TAU_THRESHOLD,
   VOLUMETRIC_TAU_EPS,
-} from './math';
+} from '../_shared/volumetric';
 
 export const GSPLAT_VERTEX_SHADER = /* glsl */ `
     precision highp float;
@@ -462,7 +462,7 @@ export const GSPLAT_FRAGMENT_SHADER = /* glsl */ `
         // Every mode scales its contribution linearly by a; volumetric
         // instead maps a into optical DENSITY, w = −ln(1 − a), so a
         // splat's peak rendered alpha reproduces a exactly (3DGS-faithful;
-        // clamp = ALPHA_CLAMP from ./math, mirrors Python's 1 − 1/512).
+        // clamp = ALPHA_CLAMP from ../_shared/volumetric, mirrors Python's 1 − 1/512).
         // Dilute limit: w ≈ a, so the modes agree as a → 0; at large a
         // volumetric is intentionally denser (optical-depth semantics —
         // see spec §5.4).

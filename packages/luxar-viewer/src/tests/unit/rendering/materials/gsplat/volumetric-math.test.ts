@@ -19,7 +19,7 @@ import {
   VOLUMETRIC_SERIES_C1,
   VOLUMETRIC_SERIES_C2,
   VOLUMETRIC_SERIES_C2_DIVISOR,
-} from '../../../../../rendering/materials/gsplat/math';
+} from '../../../../../rendering/materials/_shared/volumetric';
 
 /**
  * Exact transmittance-screening: S(τ) = (1 − e^(−τ))/τ, S(0) = 1.
