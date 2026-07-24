@@ -184,7 +184,8 @@ float nodeVar103;
 vec2 nodeVar104;
 vec2 nodeVar105;
 vec4 nodeVar106;
-vec4 nodeVar107;
+float nodeVar107;
+vec4 nodeVar108;
 
 // codes
 
@@ -455,24 +456,35 @@ void main() {
 	nodeVar105 = nodeVar104;
 	nodeVar106 = ( cameraProjectionMatrix * nodeVar42 );
 	nodeVarying0 = nodeVar40;
-	nodeVarying1 = nodeVar41;
+
+	if ( ( ( nodeVar41 < 1e30 ) && ( nodeVar41 > -1e30 ) ) ) {
+
+		nodeVar107 = min( max( nodeVar41, 0.0 ), 1.0 );
+
+	} else {
+
+		nodeVar107 = 1.0;
+
+	}
+
+	nodeVarying1 = nodeVar107;
 	nodeVarying2 = ( ( nodeVar36 * ( ( sqrt( nodeVar73 ) / sqrt( max( ( ( ( nodeVar89.x * ( ( ( nodeVar82 * nodeVar89.x ) + ( nodeVar85 * nodeVar89.y ) ) + ( nodeVar86 * nodeVar89.z ) ) ) + ( nodeVar89.y * ( ( ( nodeVar85 * nodeVar89.x ) + ( nodeVar83 * nodeVar89.y ) ) + ( nodeVar87 * nodeVar89.z ) ) ) ) + ( nodeVar89.z * ( ( ( nodeVar86 * nodeVar89.x ) + ( nodeVar87 * nodeVar89.y ) ) + ( nodeVar84 * nodeVar89.z ) ) ) ), 1e-8 ) ) ) * nodeUniform31 ) ) * nodeVar56 );
 	nodeVarying3 = vec3( nodeVar71, nodeVar72, ( 1.0 / sqrt( max( ( nodeVar70 - ( nodeVar72 * nodeVar72 ) ), 0.000001 ) ) ) );
 	nodeVarying4 = nodeVar105;
 
 	if ( ( ( ( ( nodeVar50 < 0.01 ) || ( nodeVar55 < 0.01 ) ) || (!( ( nodeVar36 < 1e30 ) && ( nodeVar36 > -1e30 ) )) ) || ( ( (!( ( nodeVar68 < 1e30 ) && ( nodeVar68 > -1e30 ) )) || (!( ( nodeVar69 < 1e30 ) && ( nodeVar69 > -1e30 ) )) ) || (!( ( nodeVar70 < 1e30 ) && ( nodeVar70 > -1e30 ) )) ) ) ) {
 
-		nodeVar107 = vec4( 0.0, 0.0, -2.0, 1.0 );
+		nodeVar108 = vec4( 0.0, 0.0, -2.0, 1.0 );
 
 	} else {
 
-		nodeVar107 = vec4( ( ( ( ( nodeVar105 + ( ( ( nodeVar96 * vec2( aQuadCorner.x ) ) * vec2( ( nodeVar98 * nodeVar103 ) ) ) + ( ( nodeVar97 * vec2( aQuadCorner.y ) ) * vec2( ( nodeVar99 * nodeVar103 ) ) ) ) ) / nodeUniform24 ) * vec2( 2.0 ) ) - vec2( 1.0 ) ), ( nodeVar106.z / nodeVar106.w ), 1.0 );
+		nodeVar108 = vec4( ( ( ( ( nodeVar105 + ( ( ( nodeVar96 * vec2( aQuadCorner.x ) ) * vec2( ( nodeVar98 * nodeVar103 ) ) ) + ( ( nodeVar97 * vec2( aQuadCorner.y ) ) * vec2( ( nodeVar99 * nodeVar103 ) ) ) ) ) / nodeUniform24 ) * vec2( 2.0 ) ) - vec2( 1.0 ) ), ( nodeVar106.z / nodeVar106.w ), 1.0 );
 
 	}
 
 
 	// result
-	gl_Position = nodeVar107;
+	gl_Position = nodeVar108;
 
 	gl_PointSize = 1.0;
 
