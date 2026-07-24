@@ -15,8 +15,10 @@
 > (phase 4); the depth sort engages for points volumetric through the
 > existing `needsDepthSort(effectiveGeometryMode(...))` gates with zero
 > coordinator change (the phase-B chokepoint pins inverted as designed).
-> Showcase: the mandelbulb demo runs volumetric at full-strength colors
-> (the ×0.1 anti-blowout dimming is gone).
+> Showcase: the mandelbulb demo runs volumetric with full-strength colors
+> (the ×0.1 anti-blowout color dimming is gone) at (κ, intensity) =
+> (8, 0.5) — tuned at the demo's full resolution, where a deep ray's
+> saturated radiance is ≈ c·intensity/(κ·radius·chord).
 >
 > **Status**: **Phase 2 IMPLEMENTED** (2026-07-20): per-element opacity via
 > the color ALPHA channel (RGBA colors) for gsplats — see §5.4.1. Alpha is

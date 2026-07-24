@@ -43,10 +43,11 @@
  *
  * Ordering only matters for order-dependent blending; all other modes
  * are commutative. Order-dependence is judged on the EFFECTIVE mode —
- * `effectiveGeometryMode(requested, kind)` — so a points node whose
- * requested `volumetric` renders as additive (the phase-1 κ=0 fallback)
- * is never sorted, and flipping that one policy helper (volumetric
- * phases 3-4) upgrades sorting here automatically. Commits of
+ * `effectiveGeometryMode(requested, kind)` — so a LINES node whose
+ * requested `volumetric` renders as additive (the κ=0 fallback until
+ * volumetric phase 4) is never sorted, while points joined gsplats in
+ * phase 3 (the helper flip upgraded sorting here automatically, with
+ * zero coordinator change — the designed chokepoint). Commits of
  * order-independent nodes still bump the generation (killing any
  * in-flight sort) and release the node's worker-side registration.
  */
@@ -291,10 +292,11 @@ function geometryKindOf(mesh: THREE.Mesh): 'point' | 'line' | 'gsplat' {
 
 /**
  * True when the mesh's LIVE mode is order-dependent AS RENDERED:
- * `userData.blendingMode` keeps the REQUESTED mode, but points/lines
- * render `volumetric` as additive until phases 3-4 land
- * (`effectiveGeometryMode`, the one-chokepoint fallback policy) — sorting
- * a commutative render is wasted worker time, and judging the effective
+ * `userData.blendingMode` keeps the REQUESTED mode, but lines render
+ * `volumetric` as additive until phase 4 lands
+ * (`effectiveGeometryMode`, the one-chokepoint fallback policy; points
+ * and gsplats render the real math since phase 3) — sorting a
+ * commutative render is wasted worker time, and judging the effective
  * mode here means flipping that helper upgrades sorting automatically.
  */
 function isLiveOrderDependent(mesh: THREE.Mesh, mode: BlendingMode | undefined): boolean {
@@ -748,10 +750,10 @@ export function noteDepthSortBlendingModeSwitch(
   if (!depthSortEnabled) return;
   if (!newMode || newMode === prevMode) return;
   // Sorted modes = normal ∪ volumetric (needsDepthSort), judged on the
-  // EFFECTIVE mode (see isLiveOrderDependent): a points node switching
-  // normal→volumetric today leaves the sorted set (volumetric renders as
-  // additive until phase 3), while the same switch on gsplats is a
-  // sorted→sorted no-op. A switch BETWEEN two sorted modes is
+  // EFFECTIVE mode (see isLiveOrderDependent): a LINES node switching
+  // normal→volumetric leaves the sorted set (volumetric renders as
+  // additive until phase 4), while the same switch on points/gsplats is
+  // a sorted→sorted no-op. A switch BETWEEN two sorted modes is
   // deliberately a no-op here: the ordering stays valid; the
   // projection/output change is the material's problem (TSL rebuild /
   // GLSL define recompile).

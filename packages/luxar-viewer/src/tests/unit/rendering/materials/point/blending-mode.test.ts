@@ -109,8 +109,13 @@ describe('PointMaterial.applyBlendingMode', () => {
     expect(mat.fragmentShader).toContain('tau < 1e-4) discard');
     expect(mat.fragmentShader).toContain('fragColor = vec4(finalColor * alpha * screen, volAlpha)');
     // Per-point alpha → optical depth map, gated by uHasElementAlpha.
+    // The gate must be pinned at its USAGE inside the mix() — a bare
+    // `toContain('uHasElementAlpha')` also matches the uniform
+    // DECLARATION and survives a mutation that hardwires the gate to
+    // 1.0 (mutation-found: the w ≈ 6.24 identity-alpha blowup for RGB
+    // data would ship silently).
     expect(mat.fragmentShader).toContain('-log(1.0 - min(vAlpha,');
-    expect(mat.fragmentShader).toContain('uHasElementAlpha');
+    expect(mat.fragmentShader).toContain('), uHasElementAlpha);');
   });
 
   it("'volumetric' applies the REAL emission–absorption state (phase 3), userData keeps 'volumetric'", () => {
