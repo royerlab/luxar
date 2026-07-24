@@ -175,7 +175,10 @@ export async function projectLinesViaDispatcher(
     ndim: loaded.ndim,
     segmentCount: loaded.segmentCount,
   });
-  const hasScalars = !!loaded.scalars && result.startScalars.length > 0;
+  // Presence follows the SOURCE alone (mirrors toProcessedLines in
+  // data-processor-lines.ts): an empty slice keeps empty-but-defined
+  // scalar fields so the geometry's hasScalars stamp survives.
+  const hasScalars = !!loaded.scalars;
   return {
     startPositions: result.startPositions,
     endPositions: result.endPositions,
