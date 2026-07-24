@@ -24,6 +24,7 @@ import {
 import {
   attachLineStorage,
   getLineTexture,
+  stampLinePresenceFlags,
   writeLineTexels,
   type LineTexelSource,
 } from '../../../rendering/line-geometry';
@@ -198,6 +199,22 @@ describe('attachLineStorage / writeLineTexels — fused writer round-trip', () =
       expect(arr[o + 22]).toBeCloseTo(0.1 + 0.02 * i, 6);
       expect(arr[o + 23]).toBeCloseTo(0.9 - 0.02 * i, 6);
     }
+  });
+
+  it('stampLinePresenceFlags stamps hasElementAlpha from alpha presence and REFRESHES across writes', () => {
+    // Mutation-found gap: hardwiring the stamp to `false` survived the
+    // entire unit suite — the stamp is the sole source the commit sync
+    // reads to set the material's uHasElementAlpha gate, so severing it
+    // silently disables the volumetric w(a) map for every RGBA lines
+    // dataset. Also pins the pool-tenant refresh: an RGB tenant after an
+    // RGBA tenant must flip the stamp back to false.
+    const geometry = new THREE.InstancedBufferGeometry();
+    stampLinePresenceFlags(geometry, makeSource(2, true, true));
+    expect(geometry.userData.hasElementAlpha).toBe(true);
+    expect(geometry.userData.hasScalars).toBe(true);
+    stampLinePresenceFlags(geometry, makeSource(2));
+    expect(geometry.userData.hasElementAlpha).toBe(false);
+    expect(geometry.userData.hasScalars).toBe(false);
   });
 
   it('throws on short alpha arrays BEFORE any store (same fail-loud guard as every field)', () => {

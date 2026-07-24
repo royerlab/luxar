@@ -386,6 +386,50 @@ describe('projectLinesTo3DUsingWorker', () => {
     expect(Array.from(result.startPositions)).toEqual([1, 2, 3]);
   });
 
+  it('EMPTY slice of an RGBA source keeps startAlphas/endAlphas DEFINED (presence follows SOURCE)', () => {
+    // The stamp chain's linchpin (volumetric phase 4): 0 visible
+    // segments returns empty alpha arrays from the worker, and
+    // `toProcessedLines` gates alpha presence on the SOURCE layout
+    // (`colorComponents === 4`) — NOT on `length > 0` — so the
+    // geometry's `hasElementAlpha` stamp survives an empty slice
+    // exactly like the scalars presence fix this mirrors. A future
+    // edit gating on length would resurrect the empty-slice flip.
+    const projectLinesTo3D = vi.fn(async () => ({
+      startPositions: new Float32Array(),
+      endPositions: new Float32Array(),
+      startColors: new Float32Array(),
+      endColors: new Float32Array(),
+      startWidths: new Float32Array(),
+      endWidths: new Float32Array(),
+      startSharpness: new Float32Array(),
+      endSharpness: new Float32Array(),
+      startAlphas: new Float32Array(),
+      endAlphas: new Float32Array(),
+      segmentLengths: new Float32Array(),
+      startClipped: new Uint8Array(),
+      endClipped: new Uint8Array(),
+      visibleSegmentCount: 0,
+    }));
+    mockGetWorkerPool.mockReturnValue({
+      runWithTimeout: vi.fn(async (_op, _kind, fn) => fn({ projectLinesTo3D })),
+    });
+    const rgbaData: LoadedLinesData = {
+      ...makeData(4),
+      colors: new Float32Array(4 * 2 * 4),
+      colorComponents: 4,
+    };
+    return projectLinesTo3DUsingWorker(
+      rgbaData,
+      { displayDims: [0, 1, 2], slicePosition: [0, 0, 0], tolerance: [0, 0, 0] },
+      [1, 1, 1],
+      1
+    ).then((result) => {
+      expect(result.segmentCount).toBe(0);
+      expect(result.startAlphas).toBeDefined();
+      expect(result.endAlphas).toBeDefined();
+    });
+  });
+
   it('falls back to the in-process dispatcher on worker failure', async () => {
     mockGetWorkerPool.mockReturnValue({
       runWithTimeout: vi.fn(async () => {
