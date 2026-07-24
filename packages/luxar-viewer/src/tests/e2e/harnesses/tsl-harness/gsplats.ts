@@ -3,8 +3,8 @@
  * gaussian-splat variants (covariance projection, tiny-sigma fade/
  * reject, gamma fast path, normal premult, opaque peak, thin-covariance
  * dilation, colormap LUT, behind-camera guard) plus the gsplat-pick
- * counterparts including the surface-pick depth pair. 16 registry
- * entries.
+ * counterparts including the surface-pick depth pair and the multi-row
+ * texture-orientation variant. 17 registry entries.
  *
  * @module tests/e2e/harnesses/tsl-harness/gsplats
  */
@@ -108,6 +108,52 @@ function buildGSplatSplatDataTexture(
     1
   );
   return tex;
+}
+
+/**
+ * MULTI-ROW splat data texture (4×2): element 0 (row 0) is a DECOY
+ * splat (green, parked in a corner); element 1 (row 1) holds the
+ * standard centered splat. Paired with `aSortedIndex = [1]` (see
+ * `buildGSplatMultiRowMesh`), both backends must fetch ROW 1 — a
+ * texture-orientation (Y-flip) mismatch between the GLSL `texelFetch`
+ * and the TSL `textureLoad` codegen would render the decoy on one
+ * backend only and fail pixel parity. 1-row textures (every other
+ * entry) are structurally blind to this bug class.
+ */
+function buildGSplatSplatDataTextureMultiRow(): THREE.DataTexture {
+  const tex = new THREE.DataTexture(new Float32Array(32), 4, 2, THREE.RGBAFormat, THREE.FloatType);
+  tex.magFilter = THREE.NearestFilter;
+  tex.minFilter = THREE.NearestFilter;
+  tex.generateMipmaps = false;
+  tex.flipY = false;
+  const sigma = 0.1;
+  writeSplatTexels(
+    tex,
+    {
+      centers: new Float32Array([0.8, 0.8, 0, 0, 0, 0]), // decoy corner, real center
+      cholesky01: new Float32Array([sigma, 0, sigma, 0]),
+      cholesky23: new Float32Array([sigma, 0, sigma, 0]),
+      cholesky45: new Float32Array([0, sigma, 0, sigma]),
+      amplitudes: new Float32Array([1.0, 1.0]),
+      colors: new Float32Array([0, 1, 0, 1.0, 0.5, 0.25]), // decoy green, real standard
+    },
+    2
+  );
+  return tex;
+}
+
+/**
+ * Standard gsplat mesh redirected to STORAGE SLOT 1 (the multi-row
+ * texture's real splat). The mesh's own attached texture is ignored —
+ * the shaders sample the uniform's — but its `aSortedIndex` drives the
+ * fetch index on both backends.
+ */
+function buildGSplatMultiRowMesh(material: THREE.Material): THREE.Object3D {
+  const mesh = buildGSplatInstancedMesh(material) as THREE.Mesh;
+  const idx = mesh.geometry.getAttribute('aSortedIndex') as THREE.InstancedBufferAttribute;
+  (idx.array as Uint32Array)[0] = 1;
+  idx.needsUpdate = true;
+  return mesh;
 }
 
 /**
@@ -240,6 +286,43 @@ export const GSPLAT_SHADERS: Record<string, RegistryEntry> = {
       return m;
     },
     buildMesh: buildGSplatInstancedMesh,
+  },
+  // Multi-row texture-orientation parity: the splat renders from
+  // STORAGE SLOT 1 of a 2-row texture (row 0 is a green decoy in a
+  // corner). Both backends must resolve the same row — a Y-flip
+  // mismatch between the GLSL texelFetch and the TSL textureLoad
+  // codegen shows up as the decoy rendering on one backend only.
+  // 1-row textures (every other entry) cannot catch this bug class.
+  'gsplat-multirow': {
+    source: GSPLAT_SOURCE,
+    buildUniforms: () => ({
+      uSplatTex: { value: buildGSplatSplatDataTextureMultiRow() },
+      uResolution: { value: new THREE.Vector2(64, 64) },
+      uFx: { value: 32.0 },
+      uFy: { value: 32.0 },
+      uTruncate: { value: 3.0 },
+      uTruncateSq: { value: 9.0 },
+      uRayIntegralFactor: { value: 2.433 },
+      uProjectionMode: { value: 1 },
+      uIsOrtho: { value: 1 },
+      uNearCull: { value: 0.01 },
+      uMaxExtentFactor: { value: 1.0 },
+      uOpacity: { value: 1.0 },
+      uInvGamma: { value: 1.0 / 2.2 },
+      uIntensity: { value: 1.0 },
+      uOffset: { value: 0.0 },
+      uShiftC: { value: Math.exp(-0.5 * 9) },
+      uInvOneMinusC: { value: 1.0 / (1.0 - Math.exp(-0.5 * 9)) },
+    }),
+    buildTSLMaterial: (uniforms) => {
+      const m = gsplatWebGPUFactory(buildGSplatTSLNodesFromUniforms(uniforms), {
+        blendingMode: 'max',
+      }) as unknown as THREE.Material;
+      m.transparent = false;
+      m.blending = THREE.NoBlending;
+      return m;
+    },
+    buildMesh: buildGSplatMultiRowMesh,
   },
   // GSplat at an OFF-CENTER position (world y=0.5 → screen y≈48 of 64).
   // Every other sprite fixture sits at the exact viewport center and is

@@ -540,6 +540,12 @@ export class GSplatTSLMaterial
     (cloned.uniforms.uResolution.value as THREE.Vector2).copy(
       this.uniforms.uResolution.value as THREE.Vector2
     );
+    // Camera-state uniforms ride along with the derived focal scales
+    // (mirrors LineTSLMaterial.clone / the points clone fix): uIsOrtho
+    // is a runtime uniform in the gsplat TSL graph, so a plain value
+    // copy suffices — no rebuild needed.
+    cloned.uniforms.uIsOrtho.value = this.uniforms.uIsOrtho.value;
+    cloned.uniforms.uNearCull.value = this.uniforms.uNearCull.value;
     cloned.uniforms.uProjectionMode.value = this.uniforms.uProjectionMode.value;
     cloned.uniforms.uInvGamma.value = this.uniforms.uInvGamma.value;
 

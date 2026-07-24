@@ -85,15 +85,22 @@ function buildLinesParams(
  *
  * The worker returns an empty `startScalars` when input scalars were
  * null; the loader treats absent source scalars as the "no colormap"
- * signal so the geometry's scalar attribute stays unallocated. We pass
- * `hasSourceScalars` (truthiness of `data.scalars`) so undefined and
- * null inputs are handled uniformly.
+ * signal. We pass `hasSourceScalars` (truthiness of `data.scalars`) so
+ * undefined and null inputs are handled uniformly — and presence
+ * follows the SOURCE alone, not the visible count: at a slice with 0
+ * visible segments the worker's scalar arrays are empty but the node
+ * still HAS scalars, and the empty-but-defined fields keep the
+ * geometry's `hasScalars` stamp true (matching the points accumulator's
+ * empty-subarray semantics). Gating on `length > 0` here used to flip
+ * the stamp false on an empty slice, silently suppressing a colormap
+ * picked while empty — with nothing re-applying it when segments
+ * returned.
  */
 function toProcessedLines(
   result: Awaited<ReturnType<typeof projectLinesInProcess>>,
   hasSourceScalars: boolean
 ): ProcessedLinesData {
-  const hasScalars = hasSourceScalars && result.startScalars.length > 0;
+  const hasScalars = hasSourceScalars;
   return {
     startPositions: result.startPositions,
     endPositions: result.endPositions,

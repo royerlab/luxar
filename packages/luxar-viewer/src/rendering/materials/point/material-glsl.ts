@@ -442,6 +442,16 @@ export class PointMaterial
     cloned.uniforms.maxPointSize.value = this.uniforms.maxPointSize.value;
     cloned.uniforms.invGamma.value = this.uniforms.invGamma.value;
     cloned.uniforms.radiusScale.value = this.uniforms.radiusScale.value;
+    // Camera-state uniforms must ride along too (mirrors
+    // LineMaterial.clone, the reference implementation): a clone taken
+    // in ortho mode otherwise renders the perspective branch with stale
+    // resolution/nearCull until the next global updateCameraParams
+    // broadcast reaches it.
+    cloned.uniforms.uIsOrtho.value = this.uniforms.uIsOrtho.value;
+    cloned.uniforms.uNearCull.value = this.uniforms.uNearCull.value;
+    (cloned.uniforms.uResolution.value as THREE.Vector2).copy(
+      this.uniforms.uResolution.value as THREE.Vector2
+    );
     // Commit-written data flag: the clone shares the source's point
     // texture, so it must share its RGBA-alpha presence too.
     cloned.uniforms.uHasElementAlpha.value = this.uniforms.uHasElementAlpha.value;
