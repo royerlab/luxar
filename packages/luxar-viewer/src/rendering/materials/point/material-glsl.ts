@@ -20,6 +20,7 @@ import {
   getCompleteBlendingState,
   applyBlendingStateToMaterial,
   effectiveGeometryMode,
+  isVolumetricMode,
   type CompleteBlendingState,
 } from '../../blending-state';
 import type { BlendingMode } from '../../../types/blending';
@@ -33,6 +34,12 @@ export interface PointMaterialConfig {
   gamma?: number;
   intensity?: number; // Linear color multiplier (gain), default 1.0
   offset?: number; // Additive brightness shift (black level), default 0.0
+  /**
+   * κ — composed node absorption for the volumetric blending mode
+   * (identity 1.0). Inert in every other mode; same shape as
+   * `GSplatMaterialConfig.absorption` (three-geometry symmetry).
+   */
+  absorption?: number;
   /**
    * Luxar blending mode. Same shape as `LineMaterialConfig.blendingMode`
    * and `GSplatMaterialConfig.blendingMode` (three-geometry symmetry —
@@ -79,8 +86,9 @@ export class PointMaterial
     // overrides this with the canonical mode-derived state — the
     // value here only matters during the brief window between
     // `super({...})` returning and `applyBlendingMode` running.
-    // Volumetric maps to its additive (κ=0) fallback for points — the
-    // policy lives in effectiveGeometryMode (blending-state.ts).
+    // Routed through effectiveGeometryMode (blending-state.ts) so the
+    // line volumetric-fallback policy stays centralized (identity for
+    // points since volumetric phase 3).
     const initialMode = effectiveGeometryMode(blendingMode, 'point');
     let initialBlending: THREE.Blending;
     if (isOpaque || initialMode === 'normal') {
@@ -88,7 +96,7 @@ export class PointMaterial
     } else if (initialMode === 'additive' || initialMode === 'luminous') {
       initialBlending = THREE.AdditiveBlending;
     } else {
-      initialBlending = THREE.CustomBlending; // max
+      initialBlending = THREE.CustomBlending; // max / volumetric
     }
 
     super({
@@ -103,6 +111,14 @@ export class PointMaterial
         invGamma: { value: 1.0 / gammaValue }, // Pre-computed inverse for performance
         uIntensity: { value: materialConfig.intensity ?? 1.0 },
         uOffset: { value: materialConfig.offset ?? 0.0 },
+
+        // Volumetric (emission–absorption) uniforms — read only under
+        // the LUXAR_VOLUMETRIC define; inert in every other mode.
+        uAbsorption: { value: materialConfig.absorption ?? 1.0 },
+        // 1 when the committed colors carry a real alpha column (RGBA);
+        // set per-commit (commit-points-geometry.ts), gates only the
+        // volumetric w(a) optical-depth map.
+        uHasElementAlpha: { value: 0 },
 
         // OPTIMIZED camera uniforms - pre-computed for shader performance
         // pointSizeFactor = 2.0 * resolution.y / tan(fov/2)
@@ -254,6 +270,25 @@ export class PointMaterial
   }
 
   /**
+   * Update the volumetric absorption coefficient κ (composed node
+   * attr). Plain uniform write — inert unless the material is in
+   * volumetric mode. Mirrors `GSplatMaterial.updateAbsorption`.
+   */
+  updateAbsorption(absorption: number): void {
+    this.uniforms.uAbsorption.value = absorption;
+  }
+
+  /**
+   * Flag whether the committed colors carry a real per-point alpha
+   * column (RGBA). Set per-commit by `commit-points-geometry.ts`;
+   * gates only the volumetric w(a) optical-depth map. Mirrors
+   * `GSplatMaterial.updateHasElementAlpha`.
+   */
+  updateHasElementAlpha(hasAlpha: boolean): void {
+    this.uniforms.uHasElementAlpha.value = hasAlpha ? 1 : 0;
+  }
+
+  /**
    * Update radius scale for dtype normalization
    * Use 1/255 for uint8 radii, 1.0 for float radii
    */
@@ -311,15 +346,16 @@ export class PointMaterial
    */
   applyBlendingMode(mode: BlendingMode): void {
     const opacity = (this.uniforms.opacity?.value as number | undefined) ?? 1.0;
-    // Phase-1 volumetric fallback — the policy lives in
-    // effectiveGeometryMode (blending-state.ts); userData keeps the
-    // REQUESTED mode so stored scenes upgrade automatically.
+    // Routed through effectiveGeometryMode (blending-state.ts) so the
+    // line volumetric-fallback policy stays centralized (identity for
+    // points since volumetric phase 3); userData keeps the REQUESTED
+    // mode.
     const effectiveMode: BlendingMode = effectiveGeometryMode(mode, 'point');
     const state: CompleteBlendingState = getCompleteBlendingState(effectiveMode, opacity);
 
     // Defensive: THREE may leave `defines` undefined when none were
     // passed at construction. We rely on it as our source of truth for
-    // the LUXAR_MAX_RGB_CONTRIBUTION shader define.
+    // the LUXAR_MAX_RGB_CONTRIBUTION / LUXAR_VOLUMETRIC shader defines.
     if (!this.defines) {
       this.defines = {};
     }
@@ -328,6 +364,12 @@ export class PointMaterial
     const previousMode = this.userData.blendingMode as BlendingMode | undefined;
     const wantsContrib = state.shaderOutputMode === 'rgb-contribution';
     const hasContrib = 'LUXAR_MAX_RGB_CONTRIBUTION' in this.defines;
+    // Volumetric = its own output branch (emission–absorption): every
+    // non-volumetric transition must clear the define (a
+    // volumetric→normal switch must not strand it). Mirrors the gsplat
+    // wrapper's define lifecycle.
+    const wantsVolumetric = isVolumetricMode(effectiveMode);
+    const hasVolumetric = 'LUXAR_VOLUMETRIC' in this.defines;
     const stateChanged = applyBlendingStateToMaterial(this, state);
     let definesChanged = false;
     if (wantsContrib && !hasContrib) {
@@ -335,6 +377,13 @@ export class PointMaterial
       definesChanged = true;
     } else if (!wantsContrib && hasContrib) {
       delete this.defines.LUXAR_MAX_RGB_CONTRIBUTION;
+      definesChanged = true;
+    }
+    if (wantsVolumetric && !hasVolumetric) {
+      this.defines.LUXAR_VOLUMETRIC = '';
+      definesChanged = true;
+    } else if (!wantsVolumetric && hasVolumetric) {
+      delete this.defines.LUXAR_VOLUMETRIC;
       definesChanged = true;
     }
     this.userData.blendingMode = mode;
@@ -367,6 +416,7 @@ export class PointMaterial
       gamma: this.userData.gamma ?? 1.0, // gamma stored in userData, not uniforms
       intensity: this.uniforms.uIntensity.value,
       offset: this.uniforms.uOffset.value,
+      absorption: this.uniforms.uAbsorption.value,
       blendingMode: (this.userData.blendingMode as BlendingMode | undefined) ?? 'additive',
       depthTest: this.userData.depthTest ?? true, // depthTest stored in userData
       transparent: this.transparent,
@@ -402,6 +452,9 @@ export class PointMaterial
     (cloned.uniforms.uResolution.value as THREE.Vector2).copy(
       this.uniforms.uResolution.value as THREE.Vector2
     );
+    // Commit-written data flag: the clone shares the source's point
+    // texture, so it must share its RGBA-alpha presence too.
+    cloned.uniforms.uHasElementAlpha.value = this.uniforms.uHasElementAlpha.value;
 
     return cloned as this;
   }

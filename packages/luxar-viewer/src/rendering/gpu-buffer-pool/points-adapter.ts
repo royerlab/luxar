@@ -352,10 +352,15 @@ export class PointsBufferAdapter {
         ? data.positions
         : widenToFloat32(data.positions as ArrayLike<number>);
 
+    // Color layout: 3 (RGB) or 4 (RGBA — alpha = per-point opacity).
+    // Strides the staged slice and the writer's per-point reads; the
+    // absent-colors fill stays RGB (the writer stamps the 1.0 opaque
+    // identity into texel2.y unconditionally either way).
+    const colorK: 3 | 4 = data.colors ? (data.colorComponents ?? 3) : 3;
     let colorsF32: Float32Array;
     if (data.colors) {
       colorsF32 = widenToFloat32(
-        data.colors.subarray(0, count * 3) as ArrayLike<number>,
+        data.colors.subarray(0, count * colorK) as ArrayLike<number>,
         pointsNormalizationDivisor(data.colors, /*normalized=*/ true)
       );
     } else {
@@ -398,6 +403,7 @@ export class PointsBufferAdapter {
     const texelSrc: PointTexelSource = {
       positions: positionsF32,
       colors: colorsF32,
+      colorComponents: colorK,
       radii: radiiF32,
       sharpness: sharpnessF32,
       scalars: scalarsF32,
@@ -439,6 +445,10 @@ export class PointsBufferAdapter {
     instanced.userData.hasColors = !!data.colors;
     instanced.userData.hasRadii = !!data.radii;
     instanced.userData.hasSharpness = !!data.sharpness;
+    // RGBA-alpha presence (texel2.y carries a REAL per-point opacity,
+    // not the 1.0 identity). syncPointMaterialWithGeometry pushes this
+    // into the material's uHasElementAlpha gate on every commit.
+    instanced.userData.hasElementAlpha = colorK === 4;
 
     // CRITICAL: Force THREE.js to recalculate _maxInstanceCount.
     delete (geometry as unknown as { _maxInstanceCount?: number })._maxInstanceCount;

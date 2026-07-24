@@ -378,6 +378,46 @@ test.describe('TSL ↔ GLSL shader parity', () => {
     ).toBeLessThan(2.0);
   });
 
+  // Point volumetric (phase 3): the GLSL side compiles with
+  // LUXAR_VOLUMETRIC, the TSL side builds the volumetric output branch
+  // from `blendingMode: 'volumetric'`. τ = κ·density·chord (the
+  // isotropic ray integral, POINT_CHORD_SCALE), the S(τ) screening, the
+  // physical absorption alpha, AND the per-point RGBA alpha → w(a)
+  // optical-depth map (the harness texture carries alpha 0.6 with
+  // uHasElementAlpha = 1) must match pixel-for-pixel across backends.
+  test('point-volumetric: LUXAR_VOLUMETRIC emission–absorption matches TSL volumetric branch', async ({
+    page,
+  }) => {
+    await bootHarness(page);
+
+    const glslPixels = await runGLSL(page, 'point-volumetric');
+    const tslResult = await runTSL(page, 'point-volumetric');
+
+    assertBothRendered(glslPixels, tslResult.pixels, 'point-volumetric');
+    expect(
+      meanAbsDiffPerCoveredPixel(glslPixels, tslResult.pixels),
+      'point-volumetric: per-covered-pixel parity (footprint-invariant)'
+    ).toBeLessThan(2.0);
+
+    // The alpha channel must carry the PHYSICAL absorption 1 − e^(−τ):
+    // sub-saturated and non-zero at the sprite center on both backends
+    // (guards a stale alpha-weighted graph that never entered the
+    // volumetric branch — and, via non-zero, that the w(a) map with the
+    // texture's alpha 0.6 didn't zero the density).
+    const centerAlphaGLSL = glslPixels[(32 * 64 + 32) * 4 + 3];
+    const centerAlphaTSL = tslResult.pixels[(32 * 64 + 32) * 4 + 3];
+    for (const [backend, a] of [
+      ['GLSL', centerAlphaGLSL],
+      ['TSL', centerAlphaTSL],
+    ] as const) {
+      expect(
+        a,
+        `point-volumetric ${backend}: expected sub-saturated absorption alpha at center, got ${a}`
+      ).toBeGreaterThan(0);
+      expect(a).toBeLessThan(255);
+    }
+  });
+
   // Max-mode premultiplied RGB-contribution output: the GLSL side
   // compiles with LUXAR_MAX_RGB_CONTRIBUTION, the TSL side is built
   // with `blendingMode: 'max'`. The fragment must emit rgb·alpha (the

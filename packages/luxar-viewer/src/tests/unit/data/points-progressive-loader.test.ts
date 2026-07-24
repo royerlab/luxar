@@ -1077,6 +1077,92 @@ describe('dispose during an in-flight level (teardown race)', () => {
   });
 });
 
+describe('PointsProgressiveLoader — RGBA color layout (per-point opacity)', () => {
+  // The additive-ladder color concat is strided by `colorComponents`
+  // (3 = RGB, 4 = RGBA) — a hardcoded 3 would truncate + misalign an RGBA
+  // ladder and drop `colorComponents` downstream (the gsplat colorK
+  // lesson). Layout is a property of the dataset, uniform across its LODs;
+  // a mismatch is malformed data and fails fast, naming the level.
+  function makeRgbaLodData(pointCount: number, alpha: number): LoadedPointsData {
+    const data = makeLodData(pointCount);
+    const colors = new Float32Array(pointCount * 4);
+    for (let i = 0; i < pointCount; i++) {
+      colors[i * 4] = 0.2;
+      colors[i * 4 + 1] = 0.4;
+      colors[i * 4 + 2] = 0.6;
+      colors[i * 4 + 3] = alpha;
+    }
+    data.colors = colors;
+    data.colorComponents = 4;
+    return data;
+  }
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+
+  it('concatenates two RGBA parts at STRIDE 4 and reports colorComponents=4', async () => {
+    const lodA = makeSubLoader(makeRgbaLodData(3, 0.9));
+    const lodB = makeSubLoader(makeRgbaLodData(2, 0.3));
+    const loader = new PointsProgressiveLoader(
+      [lodA, lodB] as unknown as PointsSpatialIndexLoader[],
+      2,
+      '/points'
+    );
+    const result = await loader.loadPoints(baseViewState);
+    expect(result.pointCount).toBe(5);
+    expect(result.colorComponents).toBe(4);
+    expect(result.colors!.length).toBe(5 * 4); // NOT 5 * 3 (a stride-3 concat)
+    // Per-part alphas land intact and stride-aligned across the boundary.
+    for (let i = 0; i < 3; i++) expect(result.colors![i * 4 + 3]).toBeCloseTo(0.9, 6);
+    for (let i = 3; i < 5; i++) expect(result.colors![i * 4 + 3]).toBeCloseTo(0.3, 6);
+    // RGB survives at the right offsets (not smeared by a wrong stride).
+    expect(result.colors![4 * 4]).toBeCloseTo(0.2, 6);
+    expect(result.colors![4 * 4 + 2]).toBeCloseTo(0.6, 6);
+  });
+
+  it('rejects a mixed RGB + RGBA ladder, naming the offending level', async () => {
+    // An RGB and an RGBA level can share Float32Array, so the dtype check
+    // cannot catch this — the layout gate must fail fast instead of
+    // corrupting every point after the mismatched level.
+    const lodA = makeSubLoader(makeRgbaLodData(3, 0.9));
+    const lodB = makeSubLoader(makeLodData(2, 3, { color: 'float32' })); // RGB
+    const loader = new PointsProgressiveLoader(
+      [lodA, lodB] as unknown as PointsSpatialIndexLoader[],
+      2,
+      '/points'
+    );
+    await expect(loader.loadPoints(baseViewState)).rejects.toThrow(
+      /mixed color layouts .*level 1: 3 vs 4 components/
+    );
+  });
+
+  it('single-part passthrough keeps colorComponents=4', async () => {
+    const lodA = makeSubLoader(makeRgbaLodData(4, 0.7));
+    const loader = new PointsProgressiveLoader(
+      [lodA] as unknown as PointsSpatialIndexLoader[],
+      1,
+      '/points'
+    );
+    const result = await loader.loadPoints(baseViewState);
+    expect(result.colorComponents).toBe(4);
+    expect(result.colors!.length).toBe(4 * 4);
+  });
+
+  it('an RGB ladder stays colorComponents=3', async () => {
+    const lodA = makeSubLoader(makeLodData(3, 3, { color: 'float32' }));
+    const lodB = makeSubLoader(makeLodData(2, 3, { color: 'float32' }));
+    const loader = new PointsProgressiveLoader(
+      [lodA, lodB] as unknown as PointsSpatialIndexLoader[],
+      2,
+      '/points'
+    );
+    const result = await loader.loadPoints(baseViewState);
+    expect(result.colorComponents).toBe(3);
+    expect(result.colors!.length).toBe(5 * 3);
+  });
+});
+
 describe('buildSliceViewSig extend_to_all membership (shared helper)', () => {
   const dims4 = () =>
     [

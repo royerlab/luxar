@@ -45,6 +45,7 @@ import {
   textureSize,
   max,
   min,
+  mix,
   clamp,
   dot,
   exp,
@@ -55,11 +56,20 @@ import {
 } from 'three/tsl';
 import { NodeMaterial } from 'three/webgpu';
 import { sanitizeNonNegative, perspectiveNearFadeTSL, type TSLNode } from '../_shared/tsl-helpers';
+import {
+  ALPHA_CLAMP,
+  VOLUMETRIC_SERIES_C1,
+  VOLUMETRIC_SERIES_C2_DIVISOR,
+  VOLUMETRIC_SERIES_TAU_THRESHOLD,
+  VOLUMETRIC_TAU_EPS,
+} from '../_shared/volumetric';
+import { POINT_CHORD_SCALE } from './math';
 import { getPlaceholderElementTexture } from '../../element-texture-layout';
 import {
   applyBlendingStateToMaterial,
   getCompleteBlendingState,
   effectiveGeometryMode,
+  isVolumetricMode,
 } from '../../blending-state';
 import type { BlendingMode } from '../../../types/blending';
 
@@ -136,6 +146,20 @@ export interface PointTSLNodes {
   readonly invGamma: TSLNode;
   readonly uIntensity: TSLNode;
   readonly uOffset: TSLNode;
+  /**
+   * κ — composed node absorption (volumetric mode). Read only when the
+   * graph was built with `blendingMode: 'volumetric'`; a plain runtime
+   * uniform otherwise (mirrors the gsplat factory).
+   */
+  readonly uAbsorption: TSLNode;
+  /**
+   * 1.0 when the committed colors carry a real alpha column (RGBA), 0
+   * otherwise. Gates ONLY the volumetric w(a) optical-depth map — the
+   * identity alpha 1.0 written for RGB data must not map to w ≈ 6.24.
+   * Deliberately a uniform, not a config flag: toggling it never
+   * rebuilds the graph.
+   */
+  readonly uHasElementAlpha: TSLNode;
   /** Set only when colormap mode is active. */
   readonly uColormapTex?: TSLNode;
   readonly uScalarMin?: TSLNode;
@@ -189,6 +213,8 @@ export function pointWebGPUFactory(
   const uInvGamma = nodes.invGamma;
   const uIntensity = nodes.uIntensity;
   const uOffset = nodes.uOffset;
+  const uAbsorption = nodes.uAbsorption;
+  const uHasElementAlpha = nodes.uHasElementAlpha;
   if (config.useColormap) {
     if (!nodes.uColormapTex || !nodes.uScalarMin || !nodes.uScalarScale) {
       throw new Error(
@@ -209,6 +235,17 @@ export function pointWebGPUFactory(
     config.useMaxRGBContribution !== undefined
       ? config.useMaxRGBContribution
       : config.blendingMode === 'max';
+
+  // The volumetric (emission–absorption) output branch is chosen at
+  // GRAPH BUILD time — a JS conditional, exactly like the gsplat
+  // factory (TSL `.select()` is avoided for structural branches). The
+  // wrapper's `applyBlendingMode` rebuilds the graph on any
+  // volumetric crossing via the LUXAR_VOLUMETRIC define. Routed
+  // through `effectiveGeometryMode` so the line fallback policy stays
+  // centralized (identity for points since volumetric phase 3).
+  const volumetricGraph = isVolumetricMode(
+    effectiveGeometryMode(config.blendingMode ?? 'additive', 'point')
+  );
 
   // ---- Vertex computation ----
   //
@@ -231,6 +268,7 @@ export function pointWebGPUFactory(
   const vColor: TSLNode = varying(vec3(float(0.0), float(0.0), float(0.0)));
   const vPointSize: TSLNode = varying(float(0.0));
   const vNearFade: TSLNode = varying(float(1.0));
+  const vAlpha: TSLNode = varying(float(1.0));
 
   const vertexBody = Fn(() => {
     // === Point-texture fetch prologue ===
@@ -239,9 +277,10 @@ export function pointWebGPUFactory(
     // downstream of this block. Every value is a `.toVar()` STATEMENT
     // (the Fn house rule; see the block comment above). The texture
     // width is a multiple of 3 (element-texture-layout.ts), so a
-    // point's 3 texels share one row and only x advances. texel2 is
-    // fetched only in colormap mode (the scalar slot) — mirrors the
-    // GLSL twin's USE_COLORMAP-gated fetch.
+    // point's 3 texels share one row and only x advances. texel2
+    // carries the colormap scalar (.x) and the per-point alpha (.y,
+    // written unconditionally by the texel writer — 1.0 for RGB data)
+    // — mirrors the GLSL twin's unconditional fetch.
     const pointBase: TSLNode = int(aSortedIndex).mul(int(3)).toVar();
     // int() wrap is LOAD-BEARING: TSL types textureSize() as uint (the
     // WGSL textureDimensions convention), but the WebGL2 fallback emits
@@ -259,9 +298,8 @@ export function pointWebGPUFactory(
     const aRadius: TSLNode = pointT0.w.toVar();
     const aColor: TSLNode = vec3(pointT1).toVar();
     const aSharpness: TSLNode = pointT1.w.toVar();
-    const aScalar: TSLNode | null = config.useColormap
-      ? uPointTex.load(ivec2(texelX.add(int(2)), texelY)).x.toVar()
-      : null;
+    const pointT2: TSLNode = uPointTex.load(ivec2(texelX.add(int(2)), texelY)).toVar();
+    const aScalar: TSLNode | null = config.useColormap ? pointT2.x.toVar() : null;
 
     // Sanitise per-point values (NaN/Inf-safe).
     // Sharpness is authored in [0, 1] -> super-Gaussian exponent
@@ -344,6 +382,7 @@ export function pointWebGPUFactory(
     vColor.assign(perPointColor);
     vPointSize.assign(basePointSize);
     vNearFade.assign(depthFade);
+    vAlpha.assign(pointT2.y);
 
     return clipPos;
   });
@@ -378,17 +417,71 @@ export function pointWebGPUFactory(
     // parity, matching the gsplat shader). Colormap mode: gamma +
     // display-range shaped the scalar VALUE pre-LUT (vertex stage), so
     // only gain/offset apply post-LUT (no extra gamma).
-    const adjusted: TSLNode = max(vColor.mul(uIntensity).add(uOffset), vec3(0.0));
-    Discard(max(adjusted.r, max(adjusted.g, adjusted.b)).lessThan(1e-4));
-    // Colormap mode (gamma applied pre-LUT) OR gammaOne both skip the pow().
-    const finalColor: TSLNode =
-      config.useColormap || config.gammaOne ? adjusted : adjusted.pow(vec3(uInvGamma));
+    const adjusted: TSLNode = max(vColor.mul(uIntensity).add(uOffset), vec3(0.0)).toVar();
+    const maxAdjusted: TSLNode = max(adjusted.r, max(adjusted.g, adjusted.b));
 
     // Sub-pixel intensity compensation (mirrors the line shader's
     // widthScale, SQUARED: both sprite dimensions clamp, energy ∝ area).
     const sizeScale: TSLNode = min(vPointSize.div(float(1.5)), float(1.0));
-    const alpha: TSLNode = falloff.mul(uOpacity).mul(sizeScale.mul(sizeScale)).mul(vNearFade);
+    // Screen density of this fragment — falloff scaled by every "how
+    // much of this point is there" factor. This is the additive alpha.
+    const alphaBase: TSLNode = falloff
+      .mul(uOpacity)
+      .mul(sizeScale.mul(sizeScale))
+      .mul(vNearFade)
+      .toVar();
 
+    // Per-point alpha (texel2.y): linear contribution scale in every
+    // non-volumetric mode (identity 1.0 for RGB data); volumetric maps
+    // it into optical depth w(a) = −ln(1 − a), gated by uHasElementAlpha
+    // so the RGB identity 1.0 never maps to w ≈ 6.24 (GLSL twin; clamp
+    // = ALPHA_CLAMP from ../_shared/volumetric).
+    const alpha: TSLNode = (
+      volumetricGraph
+        ? alphaBase.mul(
+            mix(
+              float(1.0),
+              min(vAlpha, float(ALPHA_CLAMP)).oneMinus().log().negate(),
+              uHasElementAlpha
+            )
+          )
+        : alphaBase.mul(vAlpha)
+    ).toVar();
+
+    // Volumetric optical depth: the isotropic special case of the
+    // gsplat ray integral — rayMass = density × through-thickness of
+    // the Gaussian-profile ball (R·√(π/K), materials/point/math.ts).
+    const tau: TSLNode | null = volumetricGraph
+      ? uAbsorption.mul(alpha).mul(vRadius).mul(float(POINT_CHORD_SCALE)).toVar()
+      : null;
+    if (volumetricGraph && tau) {
+      // Discard only when color AND τ are both negligible — a black
+      // point still absorbs (pure-ink occluders keep their optical depth).
+      Discard(maxAdjusted.lessThan(1e-4).and(tau.lessThan(1e-4)));
+    } else {
+      Discard(maxAdjusted.lessThan(1e-4));
+    }
+
+    // Colormap mode (gamma applied pre-LUT) OR gammaOne both skip the pow().
+    const finalColor: TSLNode =
+      config.useColormap || config.gammaOne ? adjusted : adjusted.pow(vec3(uInvGamma));
+
+    if (volumetricGraph && tau) {
+      // 'volumetric' output branch: emission–absorption (Max 1995).
+      // finalColor·alpha is exactly what additive adds to the
+      // framebuffer, screened by S(τ) = (1−e^(−τ))/τ (series below
+      // τ = 1e-3 keeps S(0) = 1 exact — the κ=0 additive limit); alpha
+      // out is the physical absorption 1 − e^(−τ) for the
+      // One / OneMinusSrcAlpha state. Mirrors the gsplat factory.
+      const volAlpha: TSLNode = float(1.0).sub(exp(tau.negate()));
+      const series: TSLNode = float(1.0)
+        .sub(tau.mul(VOLUMETRIC_SERIES_C1))
+        .add(tau.mul(tau).div(VOLUMETRIC_SERIES_C2_DIVISOR));
+      const screen: TSLNode = tau
+        .lessThan(VOLUMETRIC_SERIES_TAU_THRESHOLD)
+        .select(series, volAlpha.div(max(tau, VOLUMETRIC_TAU_EPS)));
+      return vec4(finalColor.mul(alpha).mul(screen), volAlpha);
+    }
     if (premultiplyRGB) {
       // RGB premultiplied by alpha — CustomBlending + MaxEquation.
       return vec4(finalColor.mul(alpha), alpha);
@@ -407,13 +500,12 @@ export function pointWebGPUFactory(
   // Wire blending state from the shared helper. The shader-output
   // shape (premultiplied RGB vs alpha-weighted) is derived from the
   // blending mode unless the caller passed an explicit override.
-  // Phase-1 volumetric fallback: this factory tail is the ONLY state
-  // writer at TSL construction (the ctor never calls applyBlendingMode,
-  // unlike the GLSL twin) AND re-runs on every rebuildGraph — so it must
-  // apply the same volumetric→additive interception as the wrapper, or a
-  // volumetric points node would pair the premultiplied One/
-  // OneMinusSrcAlpha state with this alpha-weighted shader (full-strength
-  // RGB that DARKENS what's behind it — the opposite of the κ=0 limit).
+  // This factory tail is the ONLY state writer at TSL construction
+  // (the ctor never calls applyBlendingMode, unlike the GLSL twin) AND
+  // re-runs on every rebuildGraph — so it must judge the mode through
+  // the same effectiveGeometryMode policy chokepoint as the wrapper
+  // (identity for points since volumetric phase 3; kept so the policy
+  // stays centralized in blending-state.ts).
   const requestedMode: BlendingMode = config.blendingMode ?? 'additive';
   const blendingMode: BlendingMode = effectiveGeometryMode(requestedMode, 'point');
   const opacityValue = (nodes.opacity.value as number | undefined) ?? 1.0;
@@ -458,6 +550,8 @@ export function buildPointTSLNodesFromUniforms(
     invGamma: uniform((uniforms.invGamma?.value as number) ?? 1.0),
     uIntensity: uniform((uniforms.uIntensity?.value as number) ?? 1.0),
     uOffset: uniform((uniforms.uOffset?.value as number) ?? 0.0),
+    uAbsorption: uniform((uniforms.uAbsorption?.value as number) ?? 1.0),
+    uHasElementAlpha: uniform((uniforms.uHasElementAlpha?.value as number) ?? 0),
   };
   if (!config.useColormap) return base;
   return {

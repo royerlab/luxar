@@ -1,10 +1,10 @@
 /**
  * Point shader family for the TSL ↔ GLSL parity harness: the visual
  * point-sprite variants (falloff sweep, gamma fast path, max-mode
- * premultiply, colormap LUT, perspective sizing, subpixel floor, near
- * fade, behind-camera guard, sorted-index permutation) plus the
- * point-pick counterparts. 15 registry entries (incl. the multi-row
- * texture-orientation variant).
+ * premultiply, volumetric emission–absorption, colormap LUT,
+ * perspective sizing, subpixel floor, near fade, behind-camera guard,
+ * sorted-index permutation) plus the point-pick counterparts.
+ * 16 registry entries (incl. the multi-row texture-orientation variant).
  *
  * @module tests/e2e/harnesses/tsl-harness/points
  */
@@ -134,6 +134,46 @@ function buildPointColormapMesh(material: THREE.Material): THREE.Object3D {
   // Mid-range scalar so gamma (pow(t, invGamma)) actually moves the
   // lookup off the t=0/1 fixed points where pow is the identity.
   return buildPointInstancedMesh(material, 0.5, [0, 0, 0], 0.5);
+}
+
+/**
+ * RGBA texel source for the volumetric parity variant: alpha 0.6 lands
+ * in texel2.y so the w(a) = −ln(1−a) optical-depth map (gated by
+ * uHasElementAlpha = 1) is exercised through the REAL writer on both
+ * backends — a Y-flip or w-map drift shows up as a parity diff.
+ */
+function pointVolumetricTexelSource(): PointTexelSource {
+  return {
+    positions: new Float32Array([0, 0, 0]),
+    colors: new Float32Array([1.0, 0.5, 0.25, 0.6]),
+    colorComponents: 4,
+    radii: new Float32Array([0.5]),
+    sharpness: new Float32Array([0.5]),
+  };
+}
+
+/** Pre-built RGBA point data texture for the volumetric parity variant. */
+function buildPointVolumetricDataTexture(): THREE.DataTexture {
+  const tex = new THREE.DataTexture(new Float32Array(12), 3, 1, THREE.RGBAFormat, THREE.FloatType);
+  tex.magFilter = THREE.NearestFilter;
+  tex.minFilter = THREE.NearestFilter;
+  tex.generateMipmaps = false;
+  tex.flipY = false;
+  writePointTexels(tex, pointVolumetricTexelSource(), 1);
+  return tex;
+}
+
+/** Point mesh whose geometry-attached texture carries the RGBA alpha. */
+function buildPointVolumetricMesh(material: THREE.Material): THREE.Object3D {
+  const geom = createPointQuadGeometry();
+  const texture = attachPointStorage(geom, 1);
+  writePointTexels(texture, pointVolumetricTexelSource(), 1);
+  writeSortedIndexIdentity(geom, 1);
+  geom.instanceCount = 1;
+  geom.setDrawRange(0, 6);
+  const mesh = new THREE.Mesh(geom, material);
+  mesh.frustumCulled = false;
+  return mesh;
 }
 
 /**
@@ -423,6 +463,39 @@ export const POINT_SHADERS: Record<string, RegistryEntry> = {
       return m;
     },
     buildMesh: buildPointInstancedMesh,
+  },
+  // Point volumetric parity: the emission–absorption output branch
+  // (LUXAR_VOLUMETRIC; sum path) — τ = κ·density·chord, S(τ) screening,
+  // physical absorption alpha, per-point RGBA alpha → w(a) optical
+  // depth via uHasElementAlpha = 1. Mirrors the gsplat-volumetric entry;
+  // uAbsorption 1.5 + opacity 0.7 keep τ mid-range so every factor is
+  // observable in the image.
+  'point-volumetric': {
+    source: POINT_SOURCE,
+    buildUniforms: () => ({
+      uPointTex: { value: buildPointVolumetricDataTexture() },
+      pointSizeFactor: { value: 32.0 },
+      maxPointSize: { value: 32.0 },
+      radiusScale: { value: 1.0 },
+      uIsOrtho: { value: 1 },
+      uResolution: { value: new THREE.Vector2(64, 64) },
+      opacity: { value: 0.7 },
+      invGamma: { value: 1.0 / 2.2 },
+      uIntensity: { value: 1.0 },
+      uOffset: { value: 0.0 },
+      uAbsorption: { value: 1.5 },
+      uHasElementAlpha: { value: 1 },
+    }),
+    buildDefines: () => ({ LUXAR_VOLUMETRIC: '' }),
+    buildTSLMaterial: (uniforms) => {
+      const m = pointWebGPUFactory(buildPointTSLNodesFromUniforms(uniforms, {}), {
+        blendingMode: 'volumetric',
+      }) as unknown as THREE.Material;
+      m.transparent = false;
+      m.blending = THREE.NoBlending;
+      return m;
+    },
+    buildMesh: buildPointVolumetricMesh,
   },
   // Point colormap parity: USE_COLORMAP LUT path. Gamma is applied to the
   // scalar VALUE before the LUT lookup (vertex stage); intensity/offset

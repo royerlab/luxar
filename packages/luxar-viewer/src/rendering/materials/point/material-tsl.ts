@@ -46,6 +46,7 @@ import {
   applyBlendingStateToMaterial,
   getCompleteBlendingState,
   effectiveGeometryMode,
+  isVolumetricMode,
   type CompleteBlendingState,
 } from '../../blending-state';
 import type { BlendingMode } from '../../../types/blending';
@@ -71,6 +72,8 @@ interface PointMaterialTSLNodeTable {
   invGamma: TSLNode;
   uIntensity: TSLNode;
   uOffset: TSLNode;
+  uAbsorption: TSLNode;
+  uHasElementAlpha: TSLNode;
   uColormapTex?: TSLNode;
   uScalarMin?: TSLNode;
   uScalarScale?: TSLNode;
@@ -129,6 +132,11 @@ export class PointTSLMaterial
       invGamma: uniform(1.0 / gammaValue),
       uIntensity: uniform(materialConfig.intensity ?? 1.0),
       uOffset: uniform(materialConfig.offset ?? 0.0),
+      // Volumetric (emission–absorption) uniforms — read only when the
+      // graph was built in volumetric mode; plain runtime uniforms
+      // otherwise (no rebuild on value changes).
+      uAbsorption: uniform(materialConfig.absorption ?? 1.0),
+      uHasElementAlpha: uniform(0),
       pointSizeFactor: uniform((2.0 * defaultResolutionY) / defaultTanHalfFov),
       maxPointSize: uniform(defaultResolutionY * 0.5),
       radiusScale: uniform(materialConfig.radiusScale ?? 1.0),
@@ -151,6 +159,8 @@ export class PointTSLMaterial
       invGamma: proxyIUniform(this.tslNodes.invGamma),
       uIntensity: proxyIUniform(this.tslNodes.uIntensity),
       uOffset: proxyIUniform(this.tslNodes.uOffset),
+      uAbsorption: proxyIUniform(this.tslNodes.uAbsorption),
+      uHasElementAlpha: proxyIUniform(this.tslNodes.uHasElementAlpha),
       pointSizeFactor: proxyIUniform(this.tslNodes.pointSizeFactor),
       maxPointSize: proxyIUniform(this.tslNodes.maxPointSize),
       radiusScale: proxyIUniform(this.tslNodes.radiusScale),
@@ -196,10 +206,18 @@ export class PointTSLMaterial
 
     // For max mode, the shader needs the LUXAR_MAX_RGB_CONTRIBUTION
     // define from the very first compile. Apply it before rebuild
-    // so the factory sees the right define set. (Other modes don't
-    // touch defines, so they're no-ops here.)
+    // so the factory sees the right define set. Volumetric mirrors
+    // this with LUXAR_VOLUMETRIC (the factory derives the output
+    // branch from `blendingMode`; the define is the rebuild-boundary
+    // tracker `applyBlendingMode` keys on). (Other modes don't touch
+    // defines, so they're no-ops here.)
     if (this.userData.blendingMode === 'max') {
       this.defines.LUXAR_MAX_RGB_CONTRIBUTION = '';
+    }
+    if (
+      isVolumetricMode(effectiveGeometryMode(this.userData.blendingMode as BlendingMode, 'point'))
+    ) {
+      this.defines.LUXAR_VOLUMETRIC = '';
     }
 
     // Capture explicit overrides BEFORE the first rebuild —
@@ -352,6 +370,25 @@ export class PointTSLMaterial
     this.uniforms.uOffset.value = offset;
   }
 
+  /**
+   * Update the volumetric absorption coefficient κ (composed node
+   * attr). Plain runtime uniform — no graph rebuild. Mirrors
+   * `GSplatTSLMaterial.updateAbsorption`.
+   */
+  updateAbsorption(absorption: number): void {
+    this.uniforms.uAbsorption.value = absorption;
+  }
+
+  /**
+   * Flag whether the committed colors carry a real per-point alpha
+   * column (RGBA). Deliberately a uniform, not a define — toggling it
+   * never rebuilds the graph. Mirrors
+   * `GSplatTSLMaterial.updateHasElementAlpha`.
+   */
+  updateHasElementAlpha(hasAlpha: boolean): void {
+    this.uniforms.uHasElementAlpha.value = hasAlpha ? 1 : 0;
+  }
+
   updateRadiusScale(scale: number): void {
     this.uniforms.radiusScale.value = scale;
   }
@@ -412,9 +449,10 @@ export class PointTSLMaterial
     this._explicitTransparent = undefined;
 
     const opacity = (this.uniforms.opacity?.value as number | undefined) ?? 1.0;
-    // Phase-1 volumetric fallback — the policy lives in
-    // effectiveGeometryMode (blending-state.ts); userData keeps the
-    // REQUESTED mode so stored scenes upgrade automatically.
+    // Routed through effectiveGeometryMode (blending-state.ts) so the
+    // line volumetric-fallback policy stays centralized (identity for
+    // points since volumetric phase 3); userData keeps the REQUESTED
+    // mode.
     const effectiveMode: BlendingMode = effectiveGeometryMode(mode, 'point');
     const state: CompleteBlendingState = getCompleteBlendingState(effectiveMode, opacity);
 
@@ -425,6 +463,13 @@ export class PointTSLMaterial
     const previousMode = this.userData.blendingMode as BlendingMode | undefined;
     const wantsContrib = state.shaderOutputMode === 'rgb-contribution';
     const hasContrib = 'LUXAR_MAX_RGB_CONTRIBUTION' in this.defines;
+    // Volumetric is a BUILD-TIME output branch in the factory: any
+    // volumetric crossing must rebuild the graph. The define is the
+    // tracker (mirrors max's LUXAR_MAX_RGB_CONTRIBUTION), and every
+    // non-volumetric transition clears it — a volumetric→normal switch
+    // must not strand the branch.
+    const wantsVolumetric = isVolumetricMode(effectiveMode);
+    const hasVolumetric = 'LUXAR_VOLUMETRIC' in this.defines;
     const stateChanged = applyBlendingStateToMaterial(this, state);
     let definesChanged = false;
     if (wantsContrib && !hasContrib) {
@@ -434,13 +479,23 @@ export class PointTSLMaterial
       delete this.defines.LUXAR_MAX_RGB_CONTRIBUTION;
       definesChanged = true;
     }
+    if (wantsVolumetric && !hasVolumetric) {
+      this.defines.LUXAR_VOLUMETRIC = '';
+      definesChanged = true;
+    } else if (!wantsVolumetric && hasVolumetric) {
+      delete this.defines.LUXAR_VOLUMETRIC;
+      definesChanged = true;
+    }
     this.userData.blendingMode = mode;
     this.userData.depthTest = state.depthTest;
 
     // The TSL factory reads `blendingMode` to decide the shader-output
-    // shape (`useMaxRGBContribution` derives from `mode === 'max'`).
-    // Flipping max ↔ non-max changes the graph; rebuild so the
-    // colorNode reflects the new branch.
+    // shape (`useMaxRGBContribution` derives from `mode === 'max'`;
+    // the volumetric output branch from the mode via
+    // effectiveGeometryMode). Flipping max ↔ non-max or crossing
+    // volumetric changes the graph; rebuild so the colorNode reflects
+    // the new branch. userData.blendingMode is already the new mode,
+    // so the rebuild's factory config picks up the right branch.
     if (definesChanged) {
       this.rebuildGraph();
     } else if (previousMode !== mode && stateChanged) {
@@ -458,6 +513,7 @@ export class PointTSLMaterial
       gamma: this.userData.gamma ?? 1.0,
       intensity: this.uniforms.uIntensity.value,
       offset: this.uniforms.uOffset.value,
+      absorption: this.uniforms.uAbsorption.value,
       blendingMode: (this.userData.blendingMode as BlendingMode | undefined) ?? 'additive',
       depthTest: this.userData.depthTest ?? true,
       transparent: this.transparent,
@@ -500,6 +556,9 @@ export class PointTSLMaterial
     (cloned.uniforms.uResolution.value as THREE.Vector2).copy(
       this.uniforms.uResolution.value as THREE.Vector2
     );
+    // Commit-written data flag: the clone shares the source's point
+    // texture, so it must share its RGBA-alpha presence too.
+    cloned.uniforms.uHasElementAlpha.value = this.uniforms.uHasElementAlpha.value;
 
     return cloned as this;
   }

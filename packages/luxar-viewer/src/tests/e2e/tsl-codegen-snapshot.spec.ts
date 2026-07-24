@@ -137,6 +137,11 @@ const SHADERS = [
   // Max-mode premultiplied RGB-contribution fragment (points; GLSL twin:
   // LUXAR_MAX_RGB_CONTRIBUTION) — distinct generated code vs `point`.
   'point-max',
+  // Emission–absorption output branch (points, volumetric phase 3; GLSL
+  // twin: LUXAR_VOLUMETRIC): τ = κ·density·chord, S(τ) screening, the
+  // w(a) per-point-alpha map, and the color-discard bypass are distinct
+  // generated code no other point variant pins.
+  'point-volumetric',
   'gsplat',
   'gsplat-pick',
   'gsplat-gamma-one',

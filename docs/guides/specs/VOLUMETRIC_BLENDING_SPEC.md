@@ -1,5 +1,23 @@
 # Volumetric Blending Mode — Emission–Absorption Compositing
 
+> **Status**: **Phase 3 IMPLEMENTED** (2026-07-24): points render the real
+> emission–absorption math. The point fragment computes the ISOTROPIC
+> special case of the §3.1 ray integral — rayMass = falloff · R·√(π/K)
+> (the line integral of the Gaussian-profile ball; K = ln 100 truncates at
+> T = √(2K) ≈ 3.03σ, nearly the gsplat T = 3, so point and gsplat κ scales
+> agree; `POINT_CHORD_SCALE` in `rendering/materials/point/math.ts`) —
+> with τ = κ·density·rayMass where density = falloff·opacity·sizeScale²·
+> nearFade (every "how much of this point is there" factor scales τ, so
+> fades leave no ghost fog). Points also gained RGBA colors: the alpha
+> column rides texel2.y, active in every mode, mapped through w(a) under
+> volumetric exactly like gsplats (§5.4.1), gated by `uHasElementAlpha`.
+> `effectiveGeometryMode` now falls back to additive for LINES only
+> (phase 4); the depth sort engages for points volumetric through the
+> existing `needsDepthSort(effectiveGeometryMode(...))` gates with zero
+> coordinator change (the phase-B chokepoint pins inverted as designed).
+> Showcase: the mandelbulb demo runs volumetric at full-strength colors
+> (the ×0.1 anti-blowout dimming is gone).
+>
 > **Status**: **Phase 2 IMPLEMENTED** (2026-07-20): per-element opacity via
 > the color ALPHA channel (RGBA colors) for gsplats — see §5.4.1. Alpha is
 > active in EVERY blending mode (linear contribution scale; volumetric maps
@@ -531,7 +549,7 @@ LOD-merge aggregation, importer mapping, `gsplat info`/`filter` awareness.
 Exit criteria: imported 3DGS scene renders with per-splat occlusion; absent-array
 path allocates nothing (assert in a unit test).
 
-**Phase 3 — points**: extend the depth-sort infrastructure to point nodes
+**Phase 3 — points (IMPLEMENTED 2026-07-24)**: extend the depth-sort infrastructure to point nodes
 (centers sort directly — the same kernel input shape as splat centers); chord
 integral through the existing super-Gaussian radial profile
 (`rendering/materials/point/shader-glsl.ts:189-198`; for a Gaussian-profile
@@ -629,6 +647,14 @@ Invariant and behavior tests:
 
 ## 10. Changelog
 
+- **2026-07-24** — Phase 3 (points) implemented: isotropic chord-integral
+  rayMass (`POINT_CHORD_SCALE = √(π/K)`), `LUXAR_VOLUMETRIC` output branch
+  in both point shader backends, `uAbsorption`/`uHasElementAlpha` on both
+  point materials, points RGBA colors end-to-end (validator `channels=(3,4)`,
+  accumulator/loader/projection/texel-writer stride threading, alpha in
+  texel2.y), `effectiveGeometryMode` narrowed to a lines-only fallback,
+  panel κ slider shown for points layers, mandelbulb demo switched to
+  volumetric (×0.1 dimming removed).
 - **2026-07-19 (later)** — Pre-implementation review corrections: TSL output
   branch is build-time ⇒ additive↔volumetric requires a rebuild
   (`outputBranchChanged` predicate, §5.4/risk #6); phase-1 points/lines
