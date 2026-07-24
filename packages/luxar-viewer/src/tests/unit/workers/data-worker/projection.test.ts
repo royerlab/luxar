@@ -478,6 +478,88 @@ describe('Color normalization at WASM boundary', () => {
     expect(arr[2]).toBeCloseTo(1, 5);
   });
 
+  it('Lines: RGBA colors are de-interleaved — RGB stride-3 to interpolate_colors_batch, the alpha column through interpolate_scalars_batch (volumetric phase 4)', async () => {
+    const { mod, wasm } = await loadWorker();
+    wasm.clip_segments_batch.mockImplementation(() => 1);
+    const ndim = 3;
+    const positions = new Float32Array(2 * ndim);
+    const segments = new Uint32Array([0, 1]);
+    const widths = new Float32Array([1.0, 1.0]);
+    // 2 RGBA vertices; distinct alphas 217/255 and 128/255.
+    const colorsU8 = new Uint8Array([0, 128, 255, 217, 64, 200, 32, 128]);
+
+    const result = (await mod.workerAPI.projectLinesTo3D({
+      positions,
+      segments,
+      widths,
+      colors: colorsU8,
+      sharpness: null,
+      scalars: null,
+      viewState: {
+        displayDims: [0, 1, 2],
+        slicePosition: [0, 0, 0],
+        tolerance: [10, 10, 10],
+      },
+      ndim,
+      segmentCount: 1,
+      colorComponents: 4,
+    })) as { startAlphas: Float32Array; endAlphas: Float32Array };
+
+    // The RGB kernel is stride-3 by contract: it must receive the
+    // de-interleaved RGB array, NOT the 4-strided input (which would
+    // read vertex 1's color as [alpha0, r1, g1]).
+    const colorsArg = (wasm.interpolate_colors_batch.mock.calls[0] as unknown[])[0];
+    expect(colorsArg).toBeInstanceOf(Float32Array);
+    const rgb = colorsArg as Float32Array;
+    expect(rgb.length).toBe(2 * 3);
+    expect(rgb[0]).toBeCloseTo(0, 5);
+    expect(rgb[1]).toBeCloseTo(128 / 255, 5);
+    expect(rgb[2]).toBeCloseTo(1, 5);
+    expect(rgb[3]).toBeCloseTo(64 / 255, 5); // vertex 1 red — NOT alpha 0
+    expect(rgb[5]).toBeCloseTo(32 / 255, 5);
+
+    // Alpha rides the scalar kernel (the widths/sharpness path). The
+    // color step runs before the widths step, so the alpha column is
+    // the FIRST interpolate_scalars_batch call; the column is the
+    // normalized [0, 1] alpha, one entry per vertex.
+    const alphaArg = (wasm.interpolate_scalars_batch.mock.calls[0] as unknown[])[0];
+    expect(alphaArg).toBeInstanceOf(Float32Array);
+    const alphas = alphaArg as Float32Array;
+    expect(alphas.length).toBe(2);
+    expect(alphas[0]).toBeCloseTo(217 / 255, 5);
+    expect(alphas[1]).toBeCloseTo(128 / 255, 5);
+
+    // Per-segment alpha outputs are allocated (one per visible segment).
+    expect(result.startAlphas).toBeInstanceOf(Float32Array);
+    expect(result.startAlphas.length).toBe(1);
+    expect(result.endAlphas.length).toBe(1);
+  });
+
+  it('Lines: RGB colors emit EMPTY alpha arrays and no extra scalar-interp call', async () => {
+    const { mod, wasm } = await loadWorker();
+    wasm.clip_segments_batch.mockImplementation(() => 1);
+    const ndim = 3;
+    const result = (await mod.workerAPI.projectLinesTo3D({
+      positions: new Float32Array(2 * ndim),
+      segments: new Uint32Array([0, 1]),
+      widths: new Float32Array([1.0, 1.0]),
+      colors: new Uint8Array([0, 128, 255, 64, 200, 32]),
+      sharpness: null,
+      scalars: null,
+      viewState: {
+        displayDims: [0, 1, 2],
+        slicePosition: [0, 0, 0],
+        tolerance: [10, 10, 10],
+      },
+      ndim,
+      segmentCount: 1,
+    })) as { startAlphas: Float32Array; endAlphas: Float32Array };
+    // Only widths ride the scalar kernel on the RGB path.
+    expect(wasm.interpolate_scalars_batch).toHaveBeenCalledTimes(1);
+    expect(result.startAlphas.length).toBe(0);
+    expect(result.endAlphas.length).toBe(0);
+  });
+
   it('GSplats: Uint8Array colors are normalized to Float32 [0,1] before the fused kernel', async () => {
     const { mod, wasm } = await loadWorker();
     // [W5] Colors are coerced to normalized f32 once on the worker side and

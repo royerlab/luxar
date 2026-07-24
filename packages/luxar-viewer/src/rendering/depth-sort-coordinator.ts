@@ -42,14 +42,12 @@
  *   {@link assignGlobalRenderOrder}.
  *
  * Ordering only matters for order-dependent blending; all other modes
- * are commutative. Order-dependence is judged on the EFFECTIVE mode —
- * `effectiveGeometryMode(requested, kind)` — so a LINES node whose
- * requested `volumetric` renders as additive (the κ=0 fallback until
- * volumetric phase 4) is never sorted, while points joined gsplats in
- * phase 3 (the helper flip upgraded sorting here automatically, with
- * zero coordinator change — the designed chokepoint). Commits of
- * order-independent nodes still bump the generation (killing any
- * in-flight sort) and release the node's worker-side registration.
+ * are commutative. Order-dependence is judged on `needsDepthSort(mode)`
+ * uniformly for all three geometry types (gsplats phase 1, points
+ * phase 3, lines phase 4 — each upgrade landed with zero coordinator
+ * change, the designed chokepoint). Commits of order-independent nodes
+ * still bump the generation (killing any in-flight sort) and release
+ * the node's worker-side registration.
  */
 
 import * as THREE from 'three';
@@ -59,7 +57,7 @@ import { wrap, transfer, type Remote } from 'comlink';
 import SortWorker from '../workers/sort-worker?worker';
 import type { SortWorkerAPI } from '../workers/sort-worker';
 import { writeSortedIndexOrdering } from './element-storage';
-import { needsDepthSort, effectiveGeometryMode } from './blending-state';
+import { needsDepthSort } from './blending-state';
 import { clearCommittedData, hasCommittedData } from '../types/committed-data';
 import type { BlendingMode } from '../types/blending';
 import {
@@ -282,26 +280,14 @@ function liveBlendingMode(mesh: THREE.Mesh): BlendingMode | undefined {
 }
 
 /**
- * The material-kind discriminator for {@link effectiveGeometryMode},
- * derived from the node-type stamp every Luxar mesh carries.
+ * True when the mesh's LIVE mode is order-dependent as rendered. All
+ * three geometry types implement the real volumetric math (gsplats
+ * phase 1, points phase 3, lines phase 4), so the requested mode IS
+ * the rendered mode and `needsDepthSort` judges it directly.
  */
-function geometryKindOf(mesh: THREE.Mesh): 'point' | 'line' | 'gsplat' {
-  const nodeType = (mesh.userData as { nodeType?: string } | undefined)?.nodeType;
-  return nodeType === 'points' ? 'point' : nodeType === 'lines' ? 'line' : 'gsplat';
-}
-
-/**
- * True when the mesh's LIVE mode is order-dependent AS RENDERED:
- * `userData.blendingMode` keeps the REQUESTED mode, but lines render
- * `volumetric` as additive until phase 4 lands
- * (`effectiveGeometryMode`, the one-chokepoint fallback policy; points
- * and gsplats render the real math since phase 3) — sorting a
- * commutative render is wasted worker time, and judging the effective
- * mode here means flipping that helper upgrades sorting automatically.
- */
-function isLiveOrderDependent(mesh: THREE.Mesh, mode: BlendingMode | undefined): boolean {
+function isLiveOrderDependent(mode: BlendingMode | undefined): boolean {
   if (!mode) return false;
-  return needsDepthSort(effectiveGeometryMode(mode, geometryKindOf(mesh)));
+  return needsDepthSort(mode);
 }
 
 /**
@@ -360,7 +346,7 @@ export function noteDepthSortCommit(
   state.generation = ++nextGeneration;
 
   const mode = liveBlendingMode(mesh);
-  if (!depthSortEnabled || !isLiveOrderDependent(mesh, mode) || count === 0) {
+  if (!depthSortEnabled || !isLiveOrderDependent(mode) || count === 0) {
     // Depth sorting disabled (identity ordering pinned), commutative
     // blending, or an empty frame: no ordering needed. Drop any
     // worker-side registration so the worker doesn't hold stale
@@ -657,7 +643,7 @@ export function evaluateDepthSortPerFrame(): void {
     // resolve path checks; a sort dispatched now would be dropped there.
     if (!hasCommittedData(mesh)) continue;
     const mode = liveBlendingMode(mesh);
-    if (!isLiveOrderDependent(mesh, mode)) {
+    if (!isLiveOrderDependent(mode)) {
       // No longer order-dependent (e.g. switched to additive) — clear any
       // cross-part renderOrder bias so it doesn't strand a stale ordering.
       if (mesh.renderOrder !== 0) mesh.renderOrder = 0;
@@ -749,17 +735,13 @@ export function noteDepthSortBlendingModeSwitch(
   // there is also no worker-side state to release on a switch away.
   if (!depthSortEnabled) return;
   if (!newMode || newMode === prevMode) return;
-  // Sorted modes = normal ∪ volumetric (needsDepthSort), judged on the
-  // EFFECTIVE mode (see isLiveOrderDependent): a LINES node switching
-  // normal→volumetric leaves the sorted set (volumetric renders as
-  // additive until phase 4), while the same switch on points/gsplats is
-  // a sorted→sorted no-op. A switch BETWEEN two sorted modes is
-  // deliberately a no-op here: the ordering stays valid; the
-  // projection/output change is the material's problem (TSL rebuild /
-  // GLSL define recompile).
-  const kind = geometryKindOf(mesh);
-  const wasSorted = prevMode !== undefined && needsDepthSort(effectiveGeometryMode(prevMode, kind));
-  const isSorted = needsDepthSort(effectiveGeometryMode(newMode, kind));
+  // Sorted modes = normal ∪ volumetric (needsDepthSort), for all three
+  // geometry types. A switch BETWEEN two sorted modes (e.g.
+  // normal→volumetric) is deliberately a no-op here: the ordering stays
+  // valid; the projection/output change is the material's problem (TSL
+  // rebuild / GLSL define recompile).
+  const wasSorted = prevMode !== undefined && needsDepthSort(prevMode);
+  const isSorted = needsDepthSort(newMode);
   if (isSorted && !wasSorted) {
     clearCommittedData(mesh);
     // Clear the per-slice freshness stamp TOO: the reprocess sweep below

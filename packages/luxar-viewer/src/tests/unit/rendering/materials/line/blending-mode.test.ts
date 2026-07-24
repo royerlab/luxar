@@ -107,9 +107,45 @@ describe('LineMaterial.applyBlendingMode (GLSL)', () => {
   });
 
   it('line fragment shader contains LUXAR_MAX_RGB_CONTRIBUTION guard', () => {
+    // Phase 4 made the max branch an `#elif` of the volumetric `#if` —
+    // pin the `defined(...)` form (matches the point twin's pin).
     const mat = new LineMaterial();
-    expect(mat.fragmentShader).toContain('#ifdef LUXAR_MAX_RGB_CONTRIBUTION');
+    expect(mat.fragmentShader).toContain('defined(LUXAR_MAX_RGB_CONTRIBUTION)');
     expect(mat.fragmentShader).toContain('gammaColor * a');
+  });
+
+  it('line fragment shader contains the volumetric emission–absorption branch', () => {
+    // Shader-text pins for the LUXAR_VOLUMETRIC output branch — a
+    // pure-TS state test can't guard the emitted GLSL (the blending
+    // campaign's mutation lesson). τ = κ·density·chord (the transverse
+    // ribbon through-thickness), physical absorption alpha, and the
+    // color-discard bypass (a black line still absorbs) are each
+    // distinct generated code. Mirrors the point twin.
+    const mat = new LineMaterial();
+    expect(mat.fragmentShader).toContain('#if defined(LUXAR_VOLUMETRIC)');
+    expect(mat.fragmentShader).toContain('float tau = uAbsorption * alpha * vWidthAtT *');
+    expect(mat.fragmentShader).toContain('float volAlpha = 1.0 - exp(-tau);');
+    expect(mat.fragmentShader).toContain('tau < 1e-4) discard');
+    expect(mat.fragmentShader).toContain('fragColor = vec4(gammaColor * alpha * screen, volAlpha)');
+    // Per-endpoint alpha → optical depth map, gated by uHasElementAlpha.
+    // The gate must be pinned at its USAGE inside the mix() — a bare
+    // `toContain('uHasElementAlpha')` also matches the uniform
+    // DECLARATION and survives a mutation that hardwires the gate to
+    // 1.0 (the point twin's mutation-found w ≈ 6.24 identity-alpha
+    // blowup for RGB data would ship silently).
+    expect(mat.fragmentShader).toContain('-log(1.0 - min(vAlpha,');
+    expect(mat.fragmentShader).toContain('), uHasElementAlpha);');
+  });
+
+  it('vertex shader sanitizes the per-endpoint alpha read (NaN/Inf → 1.0, finite clamped to [0, 1])', () => {
+    // Alpha is load-bearing in every mode and feeds optical depth under
+    // volumetric — an unsanitized NaN from hand-crafted zarr poisons τ
+    // past the discard into NaN pixels. Pinned at the USAGE (the
+    // interpolated assignment), matching the point twin's pin.
+    const mat = new LineMaterial();
+    expect(mat.vertexShader).toContain(
+      'vAlpha = mix(sanitizeAlpha(lineT5.z), sanitizeAlpha(lineT5.w), t);'
+    );
   });
 });
 
@@ -206,7 +242,16 @@ describe('LineTSLMaterial.applyBlendingMode (TSL)', () => {
 // must agree field-for-field. This is the convergence contract that
 // replaced the GLSL wrapper's hand-rolled per-mode dispatch.
 describe('LineMaterial ↔ LineTSLMaterial blending-state convergence', () => {
-  const ALL_MODES: BlendingMode[] = ['additive', 'normal', 'max', 'opaque', 'luminous'];
+  // 'volumetric' joins the loop since phase 4: line materials apply the
+  // shared getCompleteBlendingState('volumetric') like points/gsplats.
+  const ALL_MODES: BlendingMode[] = [
+    'additive',
+    'volumetric',
+    'normal',
+    'max',
+    'opaque',
+    'luminous',
+  ];
   const STATE_FIELDS = [
     'blending',
     'blendEquation',
@@ -233,44 +278,86 @@ describe('LineMaterial ↔ LineTSLMaterial blending-state convergence', () => {
     });
   }
 
-  it("'volumetric': phase-1 fallback applies the ADDITIVE state, userData keeps 'volumetric'", () => {
-    // Lines don't implement the emission–absorption fragment math yet
-    // (VOLUMETRIC_BLENDING_SPEC.md phase 4; points joined gsplats in
-    // phase 3). The material intercepts
-    // the mode and applies additive — the exact κ=0 limit — while the
-    // REQUESTED mode stays in userData so stored scenes upgrade
-    // automatically when the line implementation lands.
-    const expected = getCompleteBlendingState('additive', 1.0);
+  it("'volumetric' applies the REAL emission–absorption state (phase 4), userData keeps 'volumetric'", () => {
+    // Lines implement the volumetric fragment math since phase 4
+    // (VOLUMETRIC_BLENDING_SPEC.md): premultiplied self-screened
+    // emission over One/OneMinusSrcAlpha — the same framebuffer state
+    // points (phase 3) and gsplats (phase 1) carry — never
+    // depth-writes, depth-tested.
     for (const mat of [new LineMaterial(), new LineTSLMaterial()]) {
       mat.applyBlendingMode('volumetric');
-      for (const field of STATE_FIELDS) {
-        expect(mat[field], `${mat.constructor.name} ${field}`).toBe(expected[field]);
-      }
+      expect(mat.blending).toBe(THREE.CustomBlending);
+      expect(mat.blendEquation).toBe(THREE.AddEquation);
+      expect(mat.blendSrc).toBe(THREE.OneFactor);
+      expect(mat.blendDst).toBe(THREE.OneMinusSrcAlphaFactor);
+      expect(mat.depthTest).toBe(true);
+      expect(mat.depthWrite).toBe(false);
+      expect(mat.transparent).toBe(true);
+      expect(mat.defines?.LUXAR_VOLUMETRIC).toBe('');
       expect(mat.userData.blendingMode).toBe('volumetric');
     }
   });
 
-  it('volumetric fallback survives TSL CONSTRUCTION and graph REBUILDS (factory-tail interception)', () => {
-    // Mirror of the point twin: the TSL factory tail is the only state
-    // writer at construction and re-runs on every rebuildGraph, so it
-    // must intercept volumetric itself (pre-fix it applied the raw
-    // premultiplied state under the alpha-weighted line shader).
-    const expected = getCompleteBlendingState('additive', 1.0);
+  it('every non-volumetric transition clears LUXAR_VOLUMETRIC (no stranded define)', () => {
+    // Risk #6 of the spec: a volumetric→normal switch must not strand
+    // the define — the normal branch would then never be reached.
+    for (const mat of [new LineMaterial(), new LineTSLMaterial()]) {
+      mat.applyBlendingMode('volumetric');
+      expect(mat.defines?.LUXAR_VOLUMETRIC).toBe('');
+      mat.applyBlendingMode('normal');
+      expect(mat.defines?.LUXAR_VOLUMETRIC).toBeUndefined();
+      mat.applyBlendingMode('volumetric');
+      mat.applyBlendingMode('additive');
+      expect(mat.defines?.LUXAR_VOLUMETRIC).toBeUndefined();
+    }
+  });
+
+  it('volumetric state survives TSL CONSTRUCTION and graph REBUILDS (factory-tail interception)', () => {
+    // Mirror of the point twin: the TSL factory tail is the ONLY state
+    // writer at construction (the ctor never calls applyBlendingMode,
+    // unlike GLSL) and re-runs on every rebuildGraph — so it must
+    // derive the volumetric state (and output branch) itself from
+    // config.blendingMode.
+    const expected = getCompleteBlendingState('volumetric', 1.0);
     const constructed = new LineTSLMaterial({ blendingMode: 'volumetric' });
     for (const field of STATE_FIELDS) {
       expect(constructed[field], `constructed ${field}`).toBe(expected[field]);
     }
+    expect(constructed.defines?.LUXAR_VOLUMETRIC).toBe('');
     expect(constructed.userData.blendingMode).toBe('volumetric');
 
+    // max→volumetric toggles BOTH defines → definesChanged →
+    // rebuildGraph — the tail must re-derive the volumetric state, not
+    // clobber it with a stale-mode default.
     const switched = new LineTSLMaterial({ blendingMode: 'max' });
     switched.applyBlendingMode('volumetric');
     for (const field of STATE_FIELDS) {
       expect(switched[field], `post-switch ${field}`).toBe(expected[field]);
     }
+    expect(switched.defines?.LUXAR_VOLUMETRIC).toBe('');
 
+    // Any later rebuild while volumetric (e.g. gamma crossing 1.0)
+    // must not clobber the state either.
     switched.updateGamma(2.2); // gamma crossing 1.0 → rebuildGraph
     for (const field of STATE_FIELDS) {
       expect(switched[field], `post-rebuild ${field}`).toBe(expected[field]);
+    }
+  });
+
+  it('clone() carries uAbsorption and uHasElementAlpha (both backends)', () => {
+    // The layers panel clones on first interaction; a clone that reset
+    // κ to 1.0 or dropped the RGBA-alpha flag would silently change the
+    // volumetric render (the gsplat phase-1 review caught the same bug
+    // class in its clones).
+    for (const mat of [new LineMaterial(), new LineTSLMaterial()]) {
+      mat.applyBlendingMode('volumetric');
+      mat.updateAbsorption(2.5);
+      mat.updateHasElementAlpha(true);
+      const cloned = mat.clone();
+      expect(cloned.uniforms.uAbsorption.value).toBe(2.5);
+      expect(cloned.uniforms.uHasElementAlpha.value).toBe(1);
+      expect(cloned.userData.blendingMode).toBe('volumetric');
+      expect(cloned.blending).toBe(THREE.CustomBlending);
     }
   });
 });

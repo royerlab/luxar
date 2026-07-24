@@ -19,10 +19,7 @@ import {
   getWebGLErrors,
   assertNoConsoleErrors,
 } from './helpers';
-import {
-  EXPECTED_BLEND_STATE as EXPECTED_STATE,
-  EXPECTED_LINE_VOLUMETRIC_STATE,
-} from './blending-expected-state';
+import { EXPECTED_BLEND_STATE as EXPECTED_STATE } from './blending-expected-state';
 
 const FIXTURE =
   'http://localhost:9000/packages/luxar-viewer/tests/fixtures/test_lines_blending_modes.luxar.zarr';
@@ -116,13 +113,10 @@ test.describe('Lines blending modes (per-mode material state)', () => {
     const states = await readLinesMaterialStates(page);
     expect(states.length).toBe(6);
 
-    // NOTE: `volumetric` asserts the phase-1 ADDITIVE fallback state
-    // (EXPECTED_LINE_VOLUMETRIC_STATE — the shared map's volumetric row
-    // is the REAL state points/gsplats carry since phase 3) while
-    // userData.blendingMode keeps 'volumetric' — lines implement the
-    // emission–absorption math in phase 4 (VOLUMETRIC_BLENDING_SPEC.md).
-    for (const [mode, sharedExpected] of Object.entries(EXPECTED_STATE)) {
-      const expected = mode === 'volumetric' ? EXPECTED_LINE_VOLUMETRIC_STATE : sharedExpected;
+    // Every mode — volumetric included since phase 4 — asserts the
+    // shared per-mode state (lines carry the same REAL
+    // emission–absorption state as points/gsplats).
+    for (const [mode, expected] of Object.entries(EXPECTED_STATE)) {
       const state = states.find((s) => s.name.includes(`lines_${mode}`));
       expect(state, `lines_${mode} mesh not found in scene`).toBeTruthy();
       expect(state!.blendingMode, `lines_${mode}: userData.blendingMode`).toBe(mode);

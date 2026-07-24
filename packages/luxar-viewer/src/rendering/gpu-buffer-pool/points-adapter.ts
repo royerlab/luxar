@@ -447,7 +447,7 @@ export class PointsBufferAdapter {
     // un-reached stamps stay consistent with it (old texels + old
     // stamps). Stamping before the write would instead pair NEW stamps
     // with OLD texels on that path (reviewed and kept; the lines
-    // adapter's stampLineScalarPresence follows the same ordering).
+    // adapter's stampLinePresenceFlags follows the same ordering).
     if (!instanced.userData) instanced.userData = {};
     instanced.userData.hasScalars = data.scalars !== undefined;
     instanced.userData.hasColors = !!data.colors;

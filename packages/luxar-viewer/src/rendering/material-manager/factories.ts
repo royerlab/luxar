@@ -50,16 +50,16 @@ import type { RendererCapabilities } from '../renderer-capabilities';
  * - 'max': Maximum of source and destination (brightest wins)
  * - 'opaque': Solid rendering with depth write (closest object wins)
  * - 'luminous': Same as additive visually, but respects depth occlusion (occluded by closer objects)
- * - 'volumetric': Emission–absorption (VOLUMETRIC_BLENDING_SPEC.md). For
- *   **GSplats and Points** the shader emits premultiplied self-screened
+ * - 'volumetric': Emission–absorption (VOLUMETRIC_BLENDING_SPEC.md). All
+ *   three geometry types: the shader emits premultiplied self-screened
  *   emission with the physical absorption alpha `1 − e^(−τ)`,
  *   τ = κ·opacity·rayMass (`LUXAR_VOLUMETRIC` define, `uAbsorption`
  *   uniform; the point rayMass is the isotropic chord integral,
- *   materials/point/math.ts), over the same `One / OneMinusSrcAlpha`
+ *   materials/point/math.ts; the line rayMass is the transverse chord,
+ *   materials/line/math.ts), over the same `One / OneMinusSrcAlpha`
  *   state as gsplat normal; order-dependent and depth-sorted
  *   (`needsDepthSort`), never depth-writes; κ = 0 renders exactly like
- *   'additive'. **Lines** render its additive (κ = 0) fallback until
- *   phase 4 (`effectiveGeometryMode`).
+ *   'additive'.
  *
  * Re-exported from `types/blending.ts` — the single source of truth for
  * the mode set (adding a mode there updates this union, the per-node attr
@@ -84,6 +84,8 @@ export interface PointMaterialProperties {
 export interface LineMaterialProperties {
   blendingMode: BlendingMode;
   opacity: number;
+  /** Absorption coefficient κ (volumetric mode; identity/default 1.0). */
+  absorption?: number;
   gamma: number;
   intensity: number;
   offset: number;

@@ -1,5 +1,33 @@
 # Volumetric Blending Mode — Emission–Absorption Compositing
 
+> **Status**: **Phase 4 IMPLEMENTED** (2026-07-24) — the plan is COMPLETE: all
+> three geometry types render the real emission–absorption math on both
+> shader backends. Lines compute the TRANSVERSE chord through the
+> Gaussian-profile ribbon — rayMass = perpFalloff · vWidthAtT ·
+> `LINE_CHORD_SCALE` (= √(π/ln 100), same K = ln 100 truncation as points;
+> derivation in `rendering/materials/line/math.ts`) — with τ = κ·density·
+> rayMass where density collects the REMAINING intensity-chain factors
+> (capFactor·edgeAA·widthScale·widthFade·nearFade·uOpacity; perpFalloff
+> enters exactly once, via rayMass — the shader's grouping is τ = κ·alpha·
+> vWidthAtT·LINE_CHORD_SCALE with alpha = the additive-mode screen
+> density, i.e. the full intensity chain × uOpacity), emission =
+> gammaColor·alpha·S(τ) via the shared S(τ) series
+> (`materials/_shared/volumetric.ts`), and output alpha = 1 − e^(−τ) over
+> One/OneMinusSrcAlpha; κ = 0 is exactly additive. Lines also gained RGBA
+> colors end-to-end ((N,3)→(N,4); Python writer `channels=(3,4)`, the worker
+> de-interleaves the alpha column through the existing
+> `interpolate_scalars_batch` scalar kernel — NO WASM change; per-endpoint
+> alphas ride texel5.zw, read through `sanitizeAlpha` and mixed along t,
+> mapped through w(a) = −ln(1−a) under volumetric gated by
+> `uHasElementAlpha`, plain linear scale in every other mode). The
+> `effectiveGeometryMode` additive fallback is GONE — the helper became
+> identity and was DELETED from `rendering/blending-state.ts`; lines
+> volumetric depth-sorts via `needsDepthSort(mode)` with the existing lazy
+> segment-midpoint provider, zero coordinator change. Both line materials
+> carry `absorption` config / `updateAbsorption` / `uAbsorption` and
+> `updateHasElementAlpha` / `uHasElementAlpha` (clone-carried); the layers
+> panel κ slider now shows for lines too.
+>
 > **Status**: **Phase 3 IMPLEMENTED** (2026-07-24): points render the real
 > emission–absorption math. The point fragment computes the ISOTROPIC
 > special case of the §3.1 ray integral — rayMass = falloff · R·√(π/K)
@@ -11,8 +39,9 @@
 > fades leave no ghost fog). Points also gained RGBA colors: the alpha
 > column rides texel2.y, active in every mode, mapped through w(a) under
 > volumetric exactly like gsplats (§5.4.1), gated by `uHasElementAlpha`.
-> `effectiveGeometryMode` now falls back to additive for LINES only
-> (phase 4); the depth sort engages for points volumetric through the
+> `effectiveGeometryMode` at this point fell back to additive for LINES
+> only (the helper became identity and was deleted when phase 4 shipped);
+> the depth sort engages for points volumetric through the
 > existing `needsDepthSort(effectiveGeometryMode(...))` gates with zero
 > coordinator change (the phase-B chokepoint pins inverted as designed).
 > Showcase: the mandelbulb demo runs volumetric with full-strength colors
@@ -26,7 +55,8 @@
 > it into optical depth w = −ln(1−a)); the classical importer now stores
 > learned 3DGS opacity in alpha (amplitudes := 1) so imported scenes occlude
 > correctly. The original per-splat `absorption_weights` array plan is
-> SUPERSEDED by this. Points/lines RGBA + volumetric remain phases 3–4.
+> SUPERSEDED by this. Points/lines RGBA + volumetric were phases 3–4 (both
+> since implemented — see the entries above).
 >
 > **Status**: **Phase 1 IMPLEMENTED** (2026-07-19): gsplats +
 > node-level κ, exactly per §4/§5 with the pre-implementation corrections
@@ -51,8 +81,8 @@
 > phase 1 (§6); E2E expected blend state needs a per-geometry split (§8).
 > **Scope**: A 6th blending mode, `volumetric`, spanning Python (enum, validation,
 > node attr, default stamping), the viewer (mode SSOT, blend state, composition,
-> shaders GLSL+TSL, depth-sort gating, layers-panel UI), and — in later phases —
-> the `.gsplats.zarr` format (optional per-splat absorption weights) and the
+> shaders GLSL+TSL, depth-sort gating, layers-panel UI), and — in later phases,
+> all since implemented — per-element alpha via RGBA colors and the
 > Points/Lines geometry types.
 > **Goal**: Physically grounded emission-with-occlusion rendering: each element
 > adds its emitted light to the pixel AND exponentially attenuates everything
@@ -62,8 +92,8 @@
 > **Non-goals**: WebGPU compute sorting / order-independent transparency;
 > scattering, shadowing, or any multi-bounce light transport; per-splat κ in
 > phase 1 (spec'd in §5.4, built in phase 2); Points/Lines in phase 1 (phases
-> 3–4); skipping the depth sort when κ = 0 (mode gates sorting — predicates stay
-> simple).
+> 3–4, both since implemented); skipping the depth sort when κ = 0 (mode gates
+> sorting — predicates stay simple).
 
 Related reading: `docs/guides/specs/GSPLAT_DEPTH_SORTING_SPEC.md` (the sorting
 infrastructure this mode rides on), `packages/luxar-viewer/src/rendering/README.md`,
@@ -307,13 +337,17 @@ and `volumetric` preserves the tuning.
   (`material-tsl.ts` (the `applyBlendingMode` rebuild predicate)) generalizes its `premultChanged` term to an
   `outputBranchChanged` term covering BOTH `isNormalMode` and `isVolumetricMode`
   crossings (§5.4).
-- **Points/lines in phase 1**: the shared mode tuple means the panel dropdown
-  offers `volumetric` for every geometry type, and Python accepts it on any
-  node. Point/line materials intercept it in `applyBlendingMode` and apply the
-  **additive** state instead (the exact κ = 0 limit of volumetric), keeping the
-  requested mode in `userData.blendingMode` so stored scenes upgrade
-  automatically when phases 3–4 implement the real math. Without this, an
-  unhandled mode falls through to normal-mode alpha-over state — silently wrong.
+- **Points/lines in phase 1** (HISTORICAL — superseded by phases 3–4): the
+  shared mode tuple means the panel dropdown offers `volumetric` for every
+  geometry type, and Python accepts it on any node. During phases 1–3,
+  point/line materials intercepted it in `applyBlendingMode` and applied the
+  **additive** state instead (the exact κ = 0 limit of volumetric), keeping
+  the requested mode in `userData.blendingMode` — and stored scenes did
+  upgrade automatically when phases 3–4 shipped the real math. The
+  `effectiveGeometryMode` downgrade helper that encoded this fallback became
+  identity once lines landed and was DELETED from
+  `rendering/blending-state.ts`; all three geometry types now apply the real
+  volumetric blend state and shader branch directly.
 
 ### 5.2 Depth-sort gating: `needsDepthSort(mode)`
 
@@ -354,8 +388,9 @@ Front-most picking beyond a τ threshold is a possible follow-up, not phase 1.
   L172, setter L282), TSL `material-tsl.ts` (L92/128/287), material-manager
   config pass-through — the GSPLAT factory call only in phase 1
   (`rendering/material-manager.ts`); the point/line factory configs
-  deliberately omit it (their materials have no `uAbsorption` until
-  phases 3–4).
+  deliberately omitted it until phases 3–4, and since phase 4 all three
+  geometry factories thread `absorption` (every material owns
+  `uAbsorption` + `updateAbsorption`).
 
 ### 5.4 Fragment shader (GLSL + TSL twins)
 
@@ -535,7 +570,8 @@ and rendering agree.
 1. Python: enum member, `validate_absorption`, `Node.absorption`, default
    stamps (§4), CLI (`cli/gsplat_ops/scene_commands.py` — mode help +
    `--absorption` threaded into both `add_gsplats_*` call sites), docs mode
-   lists (§8). Points/lines materials get the additive-state fallback (§5.1).
+   lists (§8). Points/lines materials get the additive-state fallback (§5.1;
+   since removed — phases 3–4 shipped the real math).
 2. Viewer: tuple entry, `isVolumetricMode`, `needsDepthSort`, blend-state
    branch, composer + uniform plumbing, GLSL + TSL fragment branches,
    `applyBlendingMode` cases, sort-gate replacements, renderOrder inclusion,
@@ -563,10 +599,28 @@ Showcase + exit criterion: switch the **mandelbulb demo**
 the dense fractal surface from blowing out under additive; volumetric's bounded
 accumulation removes that workaround and adds real depth cueing to the surface.
 
-**Phase 4 — lines**: segment-midpoint depth sort (standard approximation;
-artifacts only when long segments interleave — subdivision if ever needed);
-cross-section chord through the transverse super-Gaussian profile
-(`rendering/materials/line/shader-glsl.ts:344-351`).
+**Phase 4 — lines (IMPLEMENTED 2026-07-24)**: segment-midpoint depth sort
+(standard approximation; artifacts only when long segments interleave —
+subdivision if ever needed) — the lazy midpoint provider the lines
+depth-sort integration already registered, now engaged via
+`needsDepthSort(mode)` with zero coordinator change since the
+`effectiveGeometryMode` downgrade helper was deleted. The ray integral is
+the TRANSVERSE chord through the Gaussian-profile ribbon: locally the line
+is a Gaussian tube, so a ray crossing at normalized perpendicular offset p
+integrates the depth direction to `perpFalloff(p) · width · √(π/K)` —
+rayMass = perpFalloff · vWidthAtT · `LINE_CHORD_SCALE` (= √(π/ln 100);
+derivation comment in `rendering/materials/line/math.ts`; identical value
+to `POINT_CHORD_SCALE`, keeping the point/line/gsplat κ scales aligned;
+non-Gaussian β reshapes fold into the user's κ). Both line shader backends
+gained the `LUXAR_VOLUMETRIC` output branch (τ = κ·alpha·vWidthAtT·
+`LINE_CHORD_SCALE` with alpha = the additive-mode screen density — the
+full intensity chain, which carries perpFalloff once, × uOpacity × the
+w(a) map; shared S(τ) series, output
+alpha 1 − e^(−τ), color-discard bypassed while τ is significant). Lines
+RGBA colors land the per-endpoint alphas in line-texture texel5.zw (the
+slots the texture migration reserved), read through `sanitizeAlpha` and
+interpolated along t in the vertex stage; w(a) applies under volumetric
+gated by `uHasElementAlpha`, plain linear scale in every other mode.
 
 ---
 
@@ -575,15 +629,19 @@ cross-section chord through the transverse super-Gaussian profile
 Every SSOT list that must grow for a 6th mode (inventory from the 2026-07
 blending campaign):
 
-- `src/tests/e2e/blending-expected-state.ts` — **per-geometry split**:
-  `EXPECTED_BLEND_STATE.volumetric` = the gsplat premultiplied state
-  (CustomBlending 5, AddEquation 100, One 201, OneMinusSrcAlpha 205,
-  depthWrite false), plus an explicit points/lines expectation = the ADDITIVE
-  row (the phase-1 fallback, §5.1) consumed by the two per-mode loops
-  (`blending-modes.spec.ts` points loop, `lines-blending-modes.spec.ts`).
-- Codegen SHADERS lists: `tsl-codegen-snapshot.spec.ts:118` + harness
-  registries (`tests/e2e/harnesses/tsl-harness/gsplats.ts:191`; points/lines in
-  phases 3–4) — new `gsplat-volumetric` variant, snapshot committed.
+- `src/tests/e2e/blending-expected-state.ts` — the phase-1 **per-geometry
+  split** is GONE: since phase 4 all three geometry types consume the single
+  shared `EXPECTED_BLEND_STATE.volumetric` row (the premultiplied state —
+  CustomBlending 5, AddEquation 100, One 201, OneMinusSrcAlpha 205,
+  depthWrite false). The last interim fallback expectation
+  (`EXPECTED_LINE_VOLUMETRIC_STATE`) was deleted with the fallback itself;
+  the per-mode loops (`blending-modes.spec.ts` points loop,
+  `lines-blending-modes.spec.ts`) assert the real volumetric state.
+- Codegen SHADERS lists: `tsl-codegen-snapshot.spec.ts` + harness
+  registries (`tests/e2e/harnesses/tsl-harness/{gsplats,points,lines}.ts`) —
+  `gsplat-volumetric` (phase 1), the points variants (phase 3), and
+  `line-volumetric` (phase 4) all registered with committed snapshots and
+  parity-spec coverage.
 - `tests/unit/rendering/materials/gsplat/blending-mode.test.ts` — state +
   define + projection-mode asserts for the new branch, GLSL and TSL.
 - Python `typing_utils/tests/test_enums.py:22-30` — hard-coded member count
@@ -649,6 +707,25 @@ Invariant and behavior tests:
 
 ## 10. Changelog
 
+- **2026-07-24 (later)** — Phase 4 (lines) implemented — the plan is
+  complete: transverse chord-integral rayMass through the Gaussian-profile
+  ribbon (`LINE_CHORD_SCALE = √(π/ln 100)`,
+  `rendering/materials/line/math.ts`), `LUXAR_VOLUMETRIC` output branch in
+  both line shader backends (τ = κ·density·rayMass, shared S(τ) series,
+  1 − e^(−τ) alpha, color-discard bypass while τ is significant),
+  `uAbsorption`/`uHasElementAlpha` + `updateAbsorption`/
+  `updateHasElementAlpha` on both line materials (clone-carried), lines RGBA
+  colors end-to-end (Python writer `channels=(3,4)`, loader
+  `colorComponents` threading, worker de-interleave through the existing
+  `interpolate_scalars_batch` scalar kernel — no WASM change, per-endpoint
+  alphas in texel5.zw read through `sanitizeAlpha` and mixed along t),
+  `effectiveGeometryMode` DELETED entirely (it became identity — lines
+  volumetric sorts via `needsDepthSort(mode)` with the existing lazy
+  segment-midpoint provider, zero coordinator change; the two coordinator
+  lines pins inverted), panel κ slider shown for lines layers,
+  `EXPECTED_LINE_VOLUMETRIC_STATE` deleted (lines join the shared
+  volumetric expected-state row), `line-volumetric` added to the codegen
+  SHADERS list and the parity spec.
 - **2026-07-24** — Phase 3 (points) implemented: isotropic chord-integral
   rayMass (`POINT_CHORD_SCALE = √(π/K)`), `LUXAR_VOLUMETRIC` output branch
   in both point shader backends, `uAbsorption`/`uHasElementAlpha` on both

@@ -24,7 +24,9 @@
  * perpendicular cross-section `max(exp(-K·p^beta) - C, 0)/(1-C)`
  * (beta = 2^(6s - 2), beta=2 is a truncated Gaussian) × edgeAA × widthScale
  * × widthFade × capFactor (capFactor ramps to full intensity inside the body
- * but is 1.0 at clipped endpoints).
+ * but is 1.0 at clipped endpoints). `blendingMode: 'volumetric'` selects
+ * the emission–absorption output branch at graph build time (transverse
+ * chord integral through the width profile — materials/line/math.ts).
  *
  * @module rendering/materials/line/shader-tsl
  */
@@ -60,13 +62,22 @@ import { NodeMaterial } from 'three/webgpu';
 import { getPlaceholderElementTexture } from '../../element-texture-layout';
 import {
   perspectiveNearFadeStaticTSL,
+  sanitizeAlpha,
   sanitizeNonNegative,
   type TSLNode,
 } from '../_shared/tsl-helpers';
 import {
+  ALPHA_CLAMP,
+  VOLUMETRIC_SERIES_C1,
+  VOLUMETRIC_SERIES_C2_DIVISOR,
+  VOLUMETRIC_SERIES_TAU_THRESHOLD,
+  VOLUMETRIC_TAU_EPS,
+} from '../_shared/volumetric';
+import { LINE_CHORD_SCALE } from './math';
+import {
   applyBlendingStateToMaterial,
   getCompleteBlendingState,
-  effectiveGeometryMode,
+  isVolumetricMode,
 } from '../../blending-state';
 import type { BlendingMode } from '../../../types/blending';
 
@@ -142,6 +153,20 @@ export interface LineTSLNodes {
   readonly uInvGamma: TSLNode;
   readonly uIntensity: TSLNode;
   readonly uOffset: TSLNode;
+  /**
+   * κ — composed node absorption (volumetric mode). Read only when the
+   * graph was built with `blendingMode: 'volumetric'`; a plain runtime
+   * uniform otherwise (mirrors the point/gsplat factories).
+   */
+  readonly uAbsorption: TSLNode;
+  /**
+   * 1.0 when the committed colors carry a real alpha column (RGBA), 0
+   * otherwise. Gates ONLY the volumetric w(a) optical-depth map — the
+   * identity alpha 1.0 written for RGB data must not map to w ≈ 6.24.
+   * Deliberately a uniform, not a config flag: toggling it never
+   * rebuilds the graph.
+   */
+  readonly uHasElementAlpha: TSLNode;
   /** Set only when colormap mode is active. */
   readonly uColormapTex?: TSLNode;
   readonly uScalarMin?: TSLNode;
@@ -189,6 +214,8 @@ export function lineWebGPUFactory(
   const uInvGamma = nodes.uInvGamma;
   const uIntensity = nodes.uIntensity;
   const uOffset = nodes.uOffset;
+  const uAbsorption = nodes.uAbsorption;
+  const uHasElementAlpha = nodes.uHasElementAlpha;
   if (config.useColormap) {
     if (!nodes.uColormapTex || !nodes.uScalarMin || !nodes.uScalarScale) {
       throw new Error(
@@ -208,6 +235,13 @@ export function lineWebGPUFactory(
     config.useMaxRGBContribution !== undefined
       ? config.useMaxRGBContribution
       : config.blendingMode === 'max';
+
+  // The volumetric (emission–absorption) output branch is chosen at
+  // GRAPH BUILD time — a JS conditional, exactly like the point/gsplat
+  // factories (TSL `.select()` is avoided for structural branches).
+  // The wrapper's `applyBlendingMode` rebuilds the graph on any
+  // volumetric crossing via the LUXAR_VOLUMETRIC define.
+  const volumetricGraph = isVolumetricMode(config.blendingMode ?? 'additive');
 
   // ---- Vertex computation ----
   //
@@ -242,6 +276,10 @@ export function lineWebGPUFactory(
   // Clipped flags are per-instance — same across all 4 quad verts.
   const vClippedStart: TSLNode = varying(float(0.0)).setInterpolation('flat');
   const vClippedEnd: TSLNode = varying(float(0.0)).setInterpolation('flat');
+  // Per-endpoint opacity, interpolated along the segment (deliberately
+  // NON-flat: the start/end alphas differ, matching the GLSL twin's
+  // smooth `out float vAlpha`).
+  const vAlpha: TSLNode = varying(float(1.0));
 
   const nearCull: TSLNode = max(uNearCull, float(1e-20));
 
@@ -252,15 +290,15 @@ export function lineWebGPUFactory(
     // downstream of this block. Every value is a `.toVar()` STATEMENT
     // (the Fn house rule; see the block comment above). The texture
     // width is a multiple of 6 (element-texture-layout.ts), so a
-    // segment's 6 texels share one row and only x advances. texel5 is
-    // fetched only in colormap mode (the scalar slots) — mirrors the
-    // GLSL twin's USE_COLORMAP-gated fetch. Unlike the GLSL twin,
-    // texels 2/3 are NOT deferred past the bothBehind cull — the Fn
-    // trace-order house rule emits statements unconditionally, so the
-    // TSL backend pays 2 extra loads per culled vertex (accepted
-    // asymmetry, output-identical; same trade as the point factory).
-    // texel5.zw (per-endpoint alphas) are reserved for volumetric
-    // Phase 4 and not read here.
+    // segment's 6 texels share one row and only x advances. texel5
+    // carries the colormap scalars (.xy, read under useColormap) and
+    // the per-endpoint alphas (.zw, written unconditionally by the
+    // texel writer — 1.0 for RGB data), so it is fetched in every
+    // mode. Unlike the GLSL twin, texels 2/3/5 are NOT deferred past
+    // the bothBehind cull — the Fn trace-order house rule emits
+    // statements unconditionally, so the TSL backend pays the extra
+    // loads per culled vertex (accepted asymmetry, output-identical;
+    // same trade as the point factory).
     const lineBase: TSLNode = int(aSortedIndex).mul(int(6)).toVar();
     // int() wrap is LOAD-BEARING: TSL types textureSize() as uint (the
     // WGSL textureDimensions convention), but the WebGL2 fallback emits
@@ -275,6 +313,7 @@ export function lineWebGPUFactory(
     const lineT2: TSLNode = uLineTex.load(ivec2(texelX.add(int(2)), texelY)).toVar();
     const lineT3: TSLNode = uLineTex.load(ivec2(texelX.add(int(3)), texelY)).toVar();
     const lineT4: TSLNode = uLineTex.load(ivec2(texelX.add(int(4)), texelY)).toVar();
+    const lineT5: TSLNode = uLineTex.load(ivec2(texelX.add(int(5)), texelY)).toVar();
     const aStartPos: TSLNode = vec3(lineT0).toVar();
     const aStartWidth: TSLNode = lineT0.w.toVar();
     const aEndPos: TSLNode = vec3(lineT1).toVar();
@@ -299,7 +338,6 @@ export function lineWebGPUFactory(
       // color; intensity/offset apply POST-LUT in the fragment stage
       // (matching the gsplat shader). gammaOne skips the pow() when
       // gamma == 1.0.
-      const lineT5: TSLNode = uLineTex.load(ivec2(texelX.add(int(5)), texelY)).toVar();
       const s: TSLNode = mix(lineT5.x, lineT5.y, t);
       const st0: TSLNode = clamp(s.sub(uScalarMin!).mul(uScalarScale!), 0.0, 1.0);
       const st: TSLNode = config.gammaOne ? st0 : st0.pow(uInvGamma);
@@ -453,6 +491,12 @@ export function lineWebGPUFactory(
     if (vViewZ) vViewZ.assign(mvPos.z);
     vClippedStart.assign(aStartClipped);
     vClippedEnd.assign(aEndClipped);
+    // Each endpoint sanitized BEFORE the mix so one NaN endpoint can't
+    // poison the whole segment: NaN/Inf route to the 1.0 opaque
+    // identity (loud), finite values clamp to [0, 1] (alpha is
+    // load-bearing in every mode and feeds optical depth under
+    // volumetric). Mirrors the GLSL twin.
+    vAlpha.assign(mix(sanitizeAlpha(lineT5.z), sanitizeAlpha(lineT5.w), t));
 
     return clipPosOut;
   });
@@ -520,8 +564,46 @@ export function lineWebGPUFactory(
     // chain is identity for non-negative vColor (noGOG).
     const adjusted: TSLNode = config.noGOG
       ? vColor
-      : max(vColor.mul(uIntensity).add(uOffset), vec3(0.0));
-    Discard(max(adjusted.r, max(adjusted.g, adjusted.b)).lessThan(1e-4));
+      : max(vColor.mul(uIntensity).add(uOffset), vec3(0.0)).toVar();
+    const maxAdjusted: TSLNode = max(adjusted.r, max(adjusted.g, adjusted.b));
+
+    // Screen density of this fragment — the intensity chain already
+    // carries every "how much of this line is there" factor; node
+    // opacity folds in here. This is the additive-mode alpha.
+    const alphaBase: TSLNode = intensity.mul(uOpacity).toVar();
+
+    // Per-endpoint alpha (texel5.zw, interpolated): a plain linear
+    // contribution scale in every non-volumetric mode (identity 1.0 for
+    // RGB data); volumetric maps it into optical depth
+    // w(a) = −ln(1 − a), gated by uHasElementAlpha so the RGB identity
+    // 1.0 never maps to w ≈ 6.24 (GLSL twin; clamp = ALPHA_CLAMP from
+    // ../_shared/volumetric).
+    const alpha: TSLNode = (
+      volumetricGraph
+        ? alphaBase.mul(
+            mix(
+              float(1.0),
+              min(vAlpha, float(ALPHA_CLAMP)).oneMinus().log().negate(),
+              uHasElementAlpha
+            )
+          )
+        : alphaBase.mul(vAlpha)
+    ).toVar();
+
+    // Volumetric optical depth: the TRANSVERSE special case of the
+    // gsplat ray integral — rayMass = density × through-thickness of
+    // the Gaussian-profile ribbon (width·√(π/K), materials/line/math.ts).
+    const tau: TSLNode | null = volumetricGraph
+      ? uAbsorption.mul(alpha).mul(vWidthAtT).mul(float(LINE_CHORD_SCALE)).toVar()
+      : null;
+    if (volumetricGraph && tau) {
+      // Discard only when color AND τ are both negligible — a black
+      // line still absorbs (pure-ink occluders keep their optical depth).
+      Discard(maxAdjusted.lessThan(1e-4).and(tau.lessThan(1e-4)));
+    } else {
+      Discard(maxAdjusted.lessThan(1e-4));
+    }
+
     // Gamma fast path: when the wrapper knows gamma==1.0 the pow() is
     // identity. JS-level branch so the generated WGSL/GLSL omits the
     // pow entirely when not needed. Colormap mode also skips it (gamma
@@ -529,7 +611,22 @@ export function lineWebGPUFactory(
     const gammaColor: TSLNode =
       config.useColormap || config.gammaOne ? adjusted : adjusted.pow(vec3(uInvGamma));
 
-    const alpha: TSLNode = intensity.mul(uOpacity);
+    if (volumetricGraph && tau) {
+      // 'volumetric' output branch: emission–absorption (Max 1995).
+      // gammaColor·alpha is exactly what additive adds to the
+      // framebuffer, screened by S(τ) = (1−e^(−τ))/τ (series below
+      // τ = 1e-3 keeps S(0) = 1 exact — the κ=0 additive limit); alpha
+      // out is the physical absorption 1 − e^(−τ) for the
+      // One / OneMinusSrcAlpha state. Mirrors the point/gsplat factories.
+      const volAlpha: TSLNode = float(1.0).sub(exp(tau.negate()));
+      const series: TSLNode = float(1.0)
+        .sub(tau.mul(VOLUMETRIC_SERIES_C1))
+        .add(tau.mul(tau).div(VOLUMETRIC_SERIES_C2_DIVISOR));
+      const screen: TSLNode = tau
+        .lessThan(VOLUMETRIC_SERIES_TAU_THRESHOLD)
+        .select(series, volAlpha.div(max(tau, VOLUMETRIC_TAU_EPS)));
+      return vec4(gammaColor.mul(alpha).mul(screen), volAlpha);
+    }
     if (premultiplyRGB) {
       return vec4(gammaColor.mul(alpha), alpha);
     }
@@ -541,15 +638,12 @@ export function lineWebGPUFactory(
   material.colorNode = colorNode();
   material.toneMapped = false;
 
-  // Phase-1 volumetric fallback: this factory tail is the ONLY state
-  // writer at TSL construction (the ctor never calls applyBlendingMode,
-  // unlike the GLSL twin) AND re-runs on every rebuildGraph — so it must
-  // apply the same volumetric→additive interception as the wrapper, or a
-  // volumetric lines node would pair the premultiplied One/
-  // OneMinusSrcAlpha state with this alpha-weighted shader (full-strength
-  // RGB that DARKENS what's behind it — the opposite of the κ=0 limit).
-  const requestedMode: BlendingMode = config.blendingMode ?? 'additive';
-  const blendingMode: BlendingMode = effectiveGeometryMode(requestedMode, 'line');
+  // Wire blending state from the shared helper. This factory tail is
+  // the ONLY state writer at TSL construction (the ctor never calls
+  // applyBlendingMode, unlike the GLSL twin) AND re-runs on every
+  // rebuildGraph — so it must derive the state from the same mode the
+  // output branch above used.
+  const blendingMode: BlendingMode = config.blendingMode ?? 'additive';
   const opacityValue = (nodes.uOpacity.value as number | undefined) ?? 1.0;
   const blendingState = getCompleteBlendingState(blendingMode, opacityValue);
   applyBlendingStateToMaterial(material, blendingState);
@@ -592,6 +686,8 @@ export function buildLineTSLNodesFromUniforms(
     uInvGamma: uniform((uniforms.uInvGamma?.value as number) ?? 1.0),
     uIntensity: uniform((uniforms.uIntensity?.value as number) ?? 1.0),
     uOffset: uniform((uniforms.uOffset?.value as number) ?? 0.0),
+    uAbsorption: uniform((uniforms.uAbsorption?.value as number) ?? 1.0),
+    uHasElementAlpha: uniform((uniforms.uHasElementAlpha?.value as number) ?? 0),
   };
   if (!config.useColormap) return base;
   return {

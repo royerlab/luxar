@@ -43,6 +43,7 @@ export function createLinesNode(
   // `attrs`: they are deliberately NOT composited (see COMPOSITING_ATTRS).
   const material = materialManager.getLineMaterial({
     opacity: (nodeAttrs.opacity as number | undefined) ?? 1.0,
+    absorption: (nodeAttrs.absorption as number | undefined) ?? 1.0,
     gamma: (nodeAttrs.gamma as number | undefined) ?? 1.0,
     intensity: (nodeAttrs.intensity as number | undefined) ?? 1.0,
     offset: (nodeAttrs.offset as number | undefined) ?? 0.0,

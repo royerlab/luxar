@@ -190,9 +190,16 @@ export interface LoadedLinesData {
   /** Vertex widths (N,) or (1,) if broadcast */
   widths: Float32Array;
 
-  /** Vertex colors (N * 3) RGB, null if not present
+  /** Vertex colors (N * colorComponents) RGB or RGBA, null if not present
    * Supports Float32Array (HDR), Uint8Array (SDR), or Uint16Array */
   colors: Float32Array | Uint8Array | Uint16Array | null;
+
+  /**
+   * Number of channels per color entry: 3 (RGB) or 4 (RGBA — the alpha
+   * column is per-vertex opacity, volumetric phase 4). Defaults to 3
+   * when omitted. Mirrors `LoadedPointsData.colorComponents`.
+   */
+  colorComponents?: 3 | 4;
 
   /** Vertex sharpness (N,) null if not present */
   sharpness: Float32Array | null;
@@ -282,6 +289,22 @@ export interface ProcessedLinesData {
    * Written into texel5.y.
    */
   endScalars?: Float32Array;
+
+  /**
+   * Start-vertex opacity alphas (M,), interpolated if clipped,
+   * optional. Present when the source colors carry an RGBA alpha
+   * column (`LoadedLinesData.colorComponents === 4`); normalized to
+   * [0, 1] float regardless of the source color dtype. Written into
+   * texel5.z; presence rides the `userData.hasElementAlpha` stamp
+   * (gates only the volumetric w(a) optical-depth map).
+   */
+  startAlphas?: Float32Array;
+
+  /**
+   * End-vertex opacity alphas (M,), interpolated if clipped, optional.
+   * Written into texel5.w.
+   */
+  endAlphas?: Float32Array;
 
   /** Number of visible segments after clipping */
   segmentCount: number;
