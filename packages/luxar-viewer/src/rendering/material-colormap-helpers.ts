@@ -104,7 +104,7 @@ export function applyScalarRangeToMaterial(
  *   signal that used to bind the attribute.
  * - Lines carry their per-endpoint scalars in texel5.xy of the line
  *   texture — same fixed-layout situation as points, so presence rides
- *   the identical `userData.hasScalars` stamp (`stampLineScalarPresence`
+ *   the identical `userData.hasScalars` stamp (`stampLinePresenceFlags`
  *   in line-geometry.ts, called by every texel-write path).
  *
  * Use this to fail-closed: if `false`, the caller should NOT enable

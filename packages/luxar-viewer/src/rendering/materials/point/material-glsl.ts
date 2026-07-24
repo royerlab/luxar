@@ -19,7 +19,6 @@ import {
 import {
   getCompleteBlendingState,
   applyBlendingStateToMaterial,
-  effectiveGeometryMode,
   isVolumetricMode,
   type CompleteBlendingState,
 } from '../../blending-state';
@@ -86,10 +85,7 @@ export class PointMaterial
     // overrides this with the canonical mode-derived state — the
     // value here only matters during the brief window between
     // `super({...})` returning and `applyBlendingMode` running.
-    // Routed through effectiveGeometryMode (blending-state.ts) so the
-    // line volumetric-fallback policy stays centralized (identity for
-    // points since volumetric phase 3).
-    const initialMode = effectiveGeometryMode(blendingMode, 'point');
+    const initialMode = blendingMode;
     let initialBlending: THREE.Blending;
     if (isOpaque || initialMode === 'normal') {
       initialBlending = THREE.NormalBlending;
@@ -346,12 +342,7 @@ export class PointMaterial
    */
   applyBlendingMode(mode: BlendingMode): void {
     const opacity = (this.uniforms.opacity?.value as number | undefined) ?? 1.0;
-    // Routed through effectiveGeometryMode (blending-state.ts) so the
-    // line volumetric-fallback policy stays centralized (identity for
-    // points since volumetric phase 3); userData keeps the REQUESTED
-    // mode.
-    const effectiveMode: BlendingMode = effectiveGeometryMode(mode, 'point');
-    const state: CompleteBlendingState = getCompleteBlendingState(effectiveMode, opacity);
+    const state: CompleteBlendingState = getCompleteBlendingState(mode, opacity);
 
     // Defensive: THREE may leave `defines` undefined when none were
     // passed at construction. We rely on it as our source of truth for
@@ -368,7 +359,7 @@ export class PointMaterial
     // non-volumetric transition must clear the define (a
     // volumetric→normal switch must not strand it). Mirrors the gsplat
     // wrapper's define lifecycle.
-    const wantsVolumetric = isVolumetricMode(effectiveMode);
+    const wantsVolumetric = isVolumetricMode(mode);
     const hasVolumetric = 'LUXAR_VOLUMETRIC' in this.defines;
     const stateChanged = applyBlendingStateToMaterial(this, state);
     let definesChanged = false;

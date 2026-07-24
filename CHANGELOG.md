@@ -6,6 +6,44 @@ All notable changes to Luxar are documented in this file.
 
 ### July 2026
 
+#### Added — volumetric blending for Lines (Phase 4) + lines RGBA colors
+
+- **Lines now render the real `volumetric` emission–absorption math**
+  (VOLUMETRIC_BLENDING_SPEC.md Phase 4 — the plan is complete: all three
+  geometry types) on both shader backends: the fragment computes the
+  TRANSVERSE chord through the Gaussian-profile ribbon —
+  `rayMass = perpFalloff · width · √(π/ln 100)` (`LINE_CHORD_SCALE`,
+  derivation in `rendering/materials/line/math.ts`; the value equals
+  `POINT_CHORD_SCALE`, keeping the point/line/gsplat κ scales aligned) —
+  with `τ = κ · density · rayMass` (density = the remaining intensity
+  chain: cap factor, AA coverage, sub-pixel energy, width-clamp fade,
+  near fade, node opacity — the profile enters once, via `rayMass`),
+  self-screened emission `S(τ)`, and the
+  physical absorption alpha `1 − e^(−τ)` over the premultiplied
+  One/OneMinusSrcAlpha state. κ = 0 renders exactly like `additive`.
+  Both line materials gained `absorption` config, `uAbsorption` +
+  `updateAbsorption`, and `uHasElementAlpha` + `updateHasElementAlpha`
+  (all clone-carried); the layers-panel κ slider now appears for
+  volumetric lines layers too.
+- **Lines accept RGBA colors** (`(N, 4)`; the alpha column is
+  per-vertex opacity in `[0, 1]`), mirroring points and gsplats: the
+  Python writer validates `channels=(3, 4)`, the loader threads
+  `colorComponents`, and the worker de-interleaves RGBA into RGB plus an
+  alpha column interpolated through the existing
+  `interpolate_scalars_batch` scalar kernel — no WASM change. The
+  per-endpoint alphas land in line-texture texel5.zw (the slots the
+  texture migration reserved), are read through `sanitizeAlpha`, and mix
+  along the segment parameter `t`; alpha scales a segment's contribution
+  linearly in every blending mode and maps into optical depth
+  `w(a) = −ln(1 − a)` under `volumetric` (gated by `uHasElementAlpha`,
+  so RGB datasets are unaffected).
+- **`effectiveGeometryMode` removed**: with lines implementing the real
+  math, the interim geometry-mode downgrade helper became identity and
+  was deleted from `rendering/blending-state.ts` — order dependence is
+  judged directly on `needsDepthSort(mode)`, so lines `volumetric` now
+  depth-sorts back-to-front through the existing lazy segment-midpoint
+  provider with zero coordinator change.
+
 #### Added — volumetric blending for Points (Phase 3) + points RGBA colors
 
 - **Points now render the real `volumetric` emission–absorption math**

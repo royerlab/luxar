@@ -37,7 +37,7 @@ import { getPlaceholderElementTexture } from '../../element-texture-layout';
 import {
   applyBlendingStateToMaterial,
   getCompleteBlendingState,
-  effectiveGeometryMode,
+  isVolumetricMode,
   type CompleteBlendingState,
 } from '../../blending-state';
 import type { BlendingMode } from '../../../types/blending';
@@ -62,6 +62,8 @@ interface LineMaterialTSLNodeTable {
   uInvGamma: TSLNode;
   uIntensity: TSLNode;
   uOffset: TSLNode;
+  uAbsorption: TSLNode;
+  uHasElementAlpha: TSLNode;
   uColormapTex?: TSLNode;
   uScalarMin?: TSLNode;
   uScalarScale?: TSLNode;
@@ -115,6 +117,11 @@ export class LineTSLMaterial
       uInvGamma: uniform(1.0 / gammaValue),
       uIntensity: uniform(materialConfig.intensity ?? 1.0),
       uOffset: uniform(materialConfig.offset ?? 0.0),
+      // Volumetric κ + RGBA-alpha presence — read only when the
+      // graph was built in volumetric mode; plain runtime uniforms
+      // otherwise (mirrors PointTSLMaterial).
+      uAbsorption: uniform(materialConfig.absorption ?? 1.0),
+      uHasElementAlpha: uniform(0),
     };
 
     // Build the public IUniform-proxy table. Mutations to
@@ -137,6 +144,8 @@ export class LineTSLMaterial
       uInvGamma: proxyIUniform(this.tslNodes.uInvGamma),
       uIntensity: proxyIUniform(this.tslNodes.uIntensity),
       uOffset: proxyIUniform(this.tslNodes.uOffset),
+      uAbsorption: proxyIUniform(this.tslNodes.uAbsorption),
+      uHasElementAlpha: proxyIUniform(this.tslNodes.uHasElementAlpha),
     };
 
     // Colormap uniforms are added lazily — see `rebuildColormapNodes`.
@@ -185,6 +194,18 @@ export class LineTSLMaterial
     // constructor body where `this.applyBlendingMode(blendingMode)`
     // runs after `super()`.
     this.userData.blendingMode = materialConfig.blendingMode ?? 'additive';
+
+    // For max mode, the shader needs the LUXAR_MAX_RGB_CONTRIBUTION
+    // define from the very first compile; volumetric mirrors this with
+    // LUXAR_VOLUMETRIC (the factory derives the output branch from
+    // `blendingMode`; the define is the rebuild-boundary tracker
+    // `applyBlendingMode` keys on). Mirrors PointTSLMaterial.
+    if (this.userData.blendingMode === 'max') {
+      this.defines.LUXAR_MAX_RGB_CONTRIBUTION = '';
+    }
+    if (isVolumetricMode(this.userData.blendingMode as BlendingMode)) {
+      this.defines.LUXAR_VOLUMETRIC = '';
+    }
 
     // Capture explicit overrides BEFORE the first rebuild —
     // `rebuildGraph`'s tail re-applies them over the factory's
@@ -388,6 +409,26 @@ export class LineTSLMaterial
     if (this._refreshNoGOGDefine()) this.rebuildGraph();
   }
 
+  /**
+   * Update the volumetric absorption coefficient κ (composed node
+   * attr). Plain uniform write through the proxy — no rebuild needed
+   * (the node identity is stable). Mirrors
+   * `PointTSLMaterial.updateAbsorption`.
+   */
+  updateAbsorption(absorption: number): void {
+    this.uniforms.uAbsorption.value = absorption;
+  }
+
+  /**
+   * Flag whether the committed colors carry a real per-endpoint alpha
+   * column (RGBA). Deliberately a uniform, not a define — toggling it
+   * never rebuilds the graph. Mirrors
+   * `PointTSLMaterial.updateHasElementAlpha`.
+   */
+  updateHasElementAlpha(hasAlpha: boolean): void {
+    this.uniforms.uHasElementAlpha.value = hasAlpha ? 1 : 0;
+  }
+
   updateColormapTexture(tex: THREE.DataTexture | null): void {
     const oldTexture =
       (this.uniforms.uColormapTex?.value as THREE.Texture | null | undefined) ?? null;
@@ -408,11 +449,7 @@ export class LineTSLMaterial
     this._explicitTransparent = undefined;
 
     const opacity = (this.uniforms.uOpacity?.value as number | undefined) ?? 1.0;
-    // Phase-1 volumetric fallback — the policy lives in
-    // effectiveGeometryMode (blending-state.ts); userData keeps the
-    // REQUESTED mode so stored scenes upgrade automatically.
-    const effectiveMode: BlendingMode = effectiveGeometryMode(mode, 'line');
-    const state: CompleteBlendingState = getCompleteBlendingState(effectiveMode, opacity);
+    const state: CompleteBlendingState = getCompleteBlendingState(mode, opacity);
 
     if (!this.defines) {
       this.defines = {};
@@ -421,6 +458,13 @@ export class LineTSLMaterial
     const previousMode = this.userData.blendingMode as BlendingMode | undefined;
     const wantsContrib = state.shaderOutputMode === 'rgb-contribution';
     const hasContrib = 'LUXAR_MAX_RGB_CONTRIBUTION' in this.defines;
+    // Volumetric is a BUILD-TIME output branch in the factory: any
+    // volumetric crossing must rebuild the graph. The define is the
+    // tracker (mirrors max's LUXAR_MAX_RGB_CONTRIBUTION), and every
+    // non-volumetric transition clears it — a volumetric→normal switch
+    // must not strand the branch.
+    const wantsVolumetric = isVolumetricMode(mode);
+    const hasVolumetric = 'LUXAR_VOLUMETRIC' in this.defines;
     const stateChanged = applyBlendingStateToMaterial(this, state);
     let definesChanged = false;
     if (wantsContrib && !hasContrib) {
@@ -430,9 +474,23 @@ export class LineTSLMaterial
       delete this.defines.LUXAR_MAX_RGB_CONTRIBUTION;
       definesChanged = true;
     }
+    if (wantsVolumetric && !hasVolumetric) {
+      this.defines.LUXAR_VOLUMETRIC = '';
+      definesChanged = true;
+    } else if (!wantsVolumetric && hasVolumetric) {
+      delete this.defines.LUXAR_VOLUMETRIC;
+      definesChanged = true;
+    }
     this.userData.blendingMode = mode;
     this.userData.depthTest = state.depthTest;
 
+    // The TSL factory reads `blendingMode` to decide the shader-output
+    // shape (`useMaxRGBContribution` derives from `mode === 'max'`;
+    // the volumetric output branch directly from the mode). Flipping
+    // max ↔ non-max or crossing volumetric changes the graph; rebuild
+    // so the colorNode reflects the new branch. userData.blendingMode
+    // is already the new mode, so the rebuild's factory config picks
+    // up the right branch.
     if (definesChanged) {
       this.rebuildGraph();
     } else if (previousMode !== mode && stateChanged) {
@@ -450,6 +508,7 @@ export class LineTSLMaterial
       gamma: this.userData.gamma ?? 1.0,
       intensity: this.uniforms.uIntensity.value,
       offset: this.uniforms.uOffset.value,
+      absorption: this.uniforms.uAbsorption.value,
       blendingMode:
         (this.userData.blendingMode as LineMaterialConfig['blendingMode']) ?? 'additive',
       depthTest: this.userData.depthTest ?? true,
@@ -478,6 +537,10 @@ export class LineTSLMaterial
     cloned.uniforms.uPerspectiveLineScale.value = this.uniforms.uPerspectiveLineScale.value;
     cloned.uniforms.uOrthoLineScale.value = this.uniforms.uOrthoLineScale.value;
     cloned.uniforms.uInvGamma.value = this.uniforms.uInvGamma.value;
+    // Commit-written data flag: the clone shares the source's line
+    // texture, so it must share its RGBA-alpha presence too (mirrors
+    // PointTSLMaterial.clone).
+    cloned.uniforms.uHasElementAlpha.value = this.uniforms.uHasElementAlpha.value;
     if (sourceIsOrtho) {
       cloned.rebuildGraph();
     }

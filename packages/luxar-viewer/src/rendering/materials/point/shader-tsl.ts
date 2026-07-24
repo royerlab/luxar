@@ -73,7 +73,6 @@ import { getPlaceholderElementTexture } from '../../element-texture-layout';
 import {
   applyBlendingStateToMaterial,
   getCompleteBlendingState,
-  effectiveGeometryMode,
   isVolumetricMode,
 } from '../../blending-state';
 import type { BlendingMode } from '../../../types/blending';
@@ -245,12 +244,8 @@ export function pointWebGPUFactory(
   // GRAPH BUILD time — a JS conditional, exactly like the gsplat
   // factory (TSL `.select()` is avoided for structural branches). The
   // wrapper's `applyBlendingMode` rebuilds the graph on any
-  // volumetric crossing via the LUXAR_VOLUMETRIC define. Routed
-  // through `effectiveGeometryMode` so the line fallback policy stays
-  // centralized (identity for points since volumetric phase 3).
-  const volumetricGraph = isVolumetricMode(
-    effectiveGeometryMode(config.blendingMode ?? 'additive', 'point')
-  );
+  // volumetric crossing via the LUXAR_VOLUMETRIC define.
+  const volumetricGraph = isVolumetricMode(config.blendingMode ?? 'additive');
 
   // ---- Vertex computation ----
   //
@@ -514,12 +509,9 @@ export function pointWebGPUFactory(
   // blending mode unless the caller passed an explicit override.
   // This factory tail is the ONLY state writer at TSL construction
   // (the ctor never calls applyBlendingMode, unlike the GLSL twin) AND
-  // re-runs on every rebuildGraph — so it must judge the mode through
-  // the same effectiveGeometryMode policy chokepoint as the wrapper
-  // (identity for points since volumetric phase 3; kept so the policy
-  // stays centralized in blending-state.ts).
-  const requestedMode: BlendingMode = config.blendingMode ?? 'additive';
-  const blendingMode: BlendingMode = effectiveGeometryMode(requestedMode, 'point');
+  // re-runs on every rebuildGraph — so it must derive the state from
+  // the same mode the output branch above used.
+  const blendingMode: BlendingMode = config.blendingMode ?? 'additive';
   const opacityValue = (nodes.opacity.value as number | undefined) ?? 1.0;
   const blendingState = getCompleteBlendingState(blendingMode, opacityValue);
   applyBlendingStateToMaterial(material, blendingState);

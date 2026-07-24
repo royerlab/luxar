@@ -162,31 +162,36 @@ describe('Material colormap guards', () => {
       expect(cloned.defines.USE_COLORMAP).toBeUndefined();
     });
 
-    it('vertex shader fetches texel5 scalars only under USE_COLORMAP', () => {
+    it('vertex shader USES texel5 scalars only under USE_COLORMAP (fetch is unconditional since phase 4)', () => {
       const mat = new LineMaterial();
       const shader = mat.vertexShader;
       // Scalars live in texel5.xy of the fixed 6-texel line texture, so
       // there are no scalar ATTRIBUTES to declare at all (the interleaved
       // era's attribute-set toggle and its GL_MAX_VERTEX_ATTRIBS pressure
-      // are gone) — the guard is now the texel5 fetch, which must appear
-      // only inside the #ifdef USE_COLORMAP branch so non-colormap draws
-      // skip the extra texelFetch.
+      // are gone). Since volumetric phase 4 the texel5 FETCH itself is
+      // unconditional — texel5.zw carries the per-endpoint alphas, read
+      // in every mode — so the colormap guard moved to the scalar USE:
+      // the mix(lineT5.x, lineT5.y, t) LUT feed must stay inside the
+      // #ifdef USE_COLORMAP branch.
       expect(shader).not.toContain('in float aStartScalar');
       expect(shader).not.toContain('in float aEndScalar');
 
+      // Exactly ONE fetch site (no colormap-gated duplicate).
       const texel5Fetch = 'texelFetch(uLineTex, ivec2(texel0.x + 5, texel0.y), 0)';
-      const idx = shader.indexOf(texel5Fetch);
-      expect(idx).toBeGreaterThan(-1);
-      // The fetch sits inside a still-open #ifdef USE_COLORMAP block: the
-      // nearest preceding #ifdef USE_COLORMAP comes after any #endif.
-      const preceding = shader.slice(0, idx);
+      const fetchIdx = shader.indexOf(texel5Fetch);
+      expect(fetchIdx).toBeGreaterThan(-1);
+      expect(shader.indexOf(texel5Fetch, fetchIdx + 1)).toBe(-1);
+
+      // The scalar USE sits inside a still-open #ifdef USE_COLORMAP
+      // block: the nearest preceding #ifdef USE_COLORMAP comes after any
+      // #endif.
+      const scalarUse = 'mix(lineT5.x, lineT5.y, t)';
+      const useIdx = shader.indexOf(scalarUse);
+      expect(useIdx).toBeGreaterThan(-1);
+      const preceding = shader.slice(0, useIdx);
       expect(preceding.lastIndexOf('#ifdef USE_COLORMAP')).toBeGreaterThan(
         preceding.lastIndexOf('#endif')
       );
-      // …and it is the ONLY texel5 fetch site (no unconditional twin).
-      expect(shader.indexOf(texel5Fetch, idx + 1)).toBe(-1);
-      // The mixed scalar (lineT5.x/.y) feeds the LUT lookup.
-      expect(shader).toContain('mix(lineT5.x, lineT5.y, t)');
     });
   });
 });

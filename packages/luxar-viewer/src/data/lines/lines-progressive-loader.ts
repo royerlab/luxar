@@ -87,14 +87,20 @@ function concatenateLinesData(parts: LoadedLinesData[]): LoadedLinesData {
   const segments = new Uint32Array(totalSegments * 2);
 
   const firstWithColors = parts.find((p) => p.colors !== null);
+  // Color stride follows the ladder's layout (3 RGB / 4 RGBA). Mixed
+  // layouts across levels are rejected below — like the dtype contract,
+  // the layout is a property of the dataset, and a silent 3-vs-4 mix
+  // would mis-stride every vertex after the offending level (the gsplat
+  // ladder shipped exactly this bug before its colorK guard).
+  const colorK = firstWithColors?.colorComponents ?? 3;
   let colors: Float32Array | Uint8Array | Uint16Array | null = null;
   if (firstWithColors?.colors) {
     if (firstWithColors.colors instanceof Uint8Array) {
-      colors = new Uint8Array(totalVertices * 3);
+      colors = new Uint8Array(totalVertices * colorK);
     } else if (firstWithColors.colors instanceof Uint16Array) {
-      colors = new Uint16Array(totalVertices * 3);
+      colors = new Uint16Array(totalVertices * colorK);
     } else {
-      colors = new Float32Array(totalVertices * 3);
+      colors = new Float32Array(totalVertices * colorK);
     }
   }
   const firstWithSharpness = parts.find((p) => p.sharpness !== null);
@@ -124,11 +130,20 @@ function concatenateLinesData(parts: LoadedLinesData[]): LoadedLinesData {
             "field's dtype."
         );
       }
-      colors.set(part.colors, vertexOffset * 3);
+      if ((part.colorComponents ?? 3) !== colorK) {
+        throw new Error(
+          'concatenateLinesData: mixed color layouts across LOD levels ' +
+            `(level ${levelIdx}: ${part.colorComponents ?? 3} components vs ` +
+            `${colorK}) — ladder levels must share the color layout.`
+        );
+      }
+      colors.set(part.colors, vertexOffset * colorK);
     } else if (colors && !part.colors) {
+      // White fill; for an RGBA ladder the alpha column gets the same
+      // max value = 1.0 opaque (the per-element-opacity identity).
       const fill = colors instanceof Uint8Array ? 255 : colors instanceof Uint16Array ? 65535 : 1.0;
-      for (let i = 0; i < part.vertexCount * 3; i++) {
-        colors[vertexOffset * 3 + i] = fill;
+      for (let i = 0; i < part.vertexCount * colorK; i++) {
+        colors[vertexOffset * colorK + i] = fill;
       }
     }
     if (sharpness && part.sharpness) {
@@ -154,6 +169,7 @@ function concatenateLinesData(parts: LoadedLinesData[]): LoadedLinesData {
     segments,
     widths,
     colors,
+    ...(colors ? { colorComponents: colorK } : {}),
     sharpness,
     segmentCount: totalSegments,
     vertexCount: totalVertices,

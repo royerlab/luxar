@@ -379,6 +379,30 @@ describe('commitLinesGeometry — append fast path (Phase 4 Stage 2, fromInstanc
     commitLinesGeometry(next, root, pool as never, undefined, 1);
     expect(lastOpts(pool).fromInstance).toBe(0);
   });
+
+  it('does NOT append when the color LAYOUT flips (RGB committed, RGBA next)', () => {
+    // Both commits carry colors (the presence conjunct passes) but the
+    // STRIDE differs: an append writes only the suffix texels, so a 3→4
+    // layout flip would leave the prefix's texel5.zw alphas stale against
+    // the new RGBA interpretation. The colorComponents conjunct must gate
+    // alone (mirrors the points twin).
+    const root = new THREE.Group();
+    root.add(makeMesh('/lines'));
+    const pool = makePool(new THREE.BufferGeometry());
+    // Committed prefix: RGB colors (colorComponents unset → 3).
+    const first = makeStaged(4);
+    (first.sourceData as { colors: Float32Array | null }).colors = new Float32Array(4 * 2 * 3);
+    commitLinesGeometry(first, root, pool as never, undefined, 0);
+    const committed = (root.children[0].userData as { committedData: object }).committedData;
+    // Genuine extension in every other respect — lineage intact, count
+    // grew, colors present — but declared RGBA.
+    const next = makeStaged(6);
+    (next.sourceData as { colors: Float32Array | null }).colors = new Float32Array(6 * 2 * 4);
+    (next.sourceData as { colorComponents?: 3 | 4 }).colorComponents = 4;
+    setPrefixParent(next.sourceData, committed);
+    commitLinesGeometry(next, root, pool as never, undefined, 1);
+    expect(lastOpts(pool).fromInstance).toBe(0); // full rewrite, not an append
+  });
 });
 
 describe('commitLinesGeometry — no-op commit skip (committedData)', () => {

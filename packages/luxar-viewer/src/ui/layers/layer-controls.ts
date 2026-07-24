@@ -459,21 +459,16 @@ export class LayerControls {
 
   /**
    * Show the Absorption (κ) slider only when it can do something: the
-   * primary selection's mode is `volumetric` AND the layer is (or can
-   * contain) a geometry that implements the volumetric math — gsplats
-   * (phase 1), points (phase 3), or a group of either. Lines render
-   * volumetric's additive fallback until phase 4, where κ is inert, so
-   * showing a dead slider would mislead. Called from render() and the
-   * blend-dropdown change handler (mode switches must reveal/hide it
-   * immediately).
+   * primary selection's mode is `volumetric`. All three geometry types
+   * implement the volumetric math (gsplats phase 1, points phase 3,
+   * lines phase 4), so the mode alone decides. Called from render() and
+   * the blend-dropdown change handler (mode switches must reveal/hide
+   * it immediately).
    */
   private syncAbsorptionVisibility(): void {
     if (!this.absorptionSlider) return;
     const primary = this.deps.state.getPrimarySelected();
-    const show =
-      !!primary &&
-      primary.blendingMode === 'volumetric' &&
-      (primary.type === 'gsplats' || primary.type === 'points' || primary.type === 'group');
+    const show = !!primary && primary.blendingMode === 'volumetric';
     this.absorptionSlider.setVisible(show);
   }
 

@@ -25,7 +25,7 @@ import {
   attachLineStorage,
   computeLineBounds,
   getLineTexture,
-  stampLineScalarPresence,
+  stampLinePresenceFlags,
   writeLineTexels,
 } from '../line-geometry';
 import { writeSortedIndexIdentity, writeSortedIndexIdentityRange } from '../element-storage';
@@ -319,7 +319,7 @@ export class LinesBufferAdapter {
 
     // Scalar presence stamp (drives `supportsScalarColormap`) — refreshed
     // on EVERY update; pool geometries are reused across tenants.
-    stampLineScalarPresence(instanced, data);
+    stampLinePresenceFlags(instanced, data);
 
     // CRITICAL: Force THREE.js to recalculate _maxInstanceCount.
     delete (geometry as unknown as { _maxInstanceCount?: number })._maxInstanceCount;

@@ -204,9 +204,9 @@ class TestHDRColorSupport:
     def test_color_channel_count(self, tmp_path) -> None:
         """Points accept RGB (3) or RGBA (4) channels, nothing else.
 
-        Points and GSplats accept RGBA — the 4th channel is per-element
-        opacity (volumetric phases 2–3); lines stay RGB-only until their
-        volumetric phase (4). Grayscale and 5+ channels are rejected.
+        All three geometry types accept RGBA — the 4th channel is
+        per-element opacity (volumetric phases 2–4). Grayscale and 5+
+        channels are rejected.
         """
         with LuxarZarrCompiler(tmp_path / "channels.luxar.zarr") as compiler:
             compiler.create_scene(dimensions=Dimensions.default_3d())
@@ -228,6 +228,42 @@ class TestHDRColorSupport:
             five_colors = np.random.rand(100, 5).astype(np.float32)
             with pytest.raises(ValidationError, match="channels"):
                 compiler.write_points("five", positions, colors=five_colors)
+
+    def test_lines_accept_rgba_colors(self, tmp_path) -> None:
+        """Lines accept RGBA per-vertex colors (volumetric phase 4).
+
+        The 4th channel is per-vertex opacity; the (N, 4) shape must
+        round-trip through the writer intact. 5 channels stay rejected.
+        """
+        import zarr
+
+        from luxar.encoding import ArrayDecoder
+
+        store_path = tmp_path / "lines_rgba.luxar.zarr"
+        vertices = np.random.rand(50, 3).astype(np.float32) * 10
+        rgba = np.random.rand(50, 4).astype(np.float32)
+        with LuxarZarrCompiler(store_path, enable_spatial_index=False) as compiler:
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+            scene.add_lines(
+                "rgba_lines", vertices, widths=0.1, colors=rgba, line_type="polyline"
+            )
+
+            # 5 channels — still rejected (the adder wraps the writer's
+            # ValidationError into a ValueError).
+            five = np.random.rand(50, 5).astype(np.float32)
+            with pytest.raises(ValueError, match="channels"):
+                scene.add_lines(
+                    "five_lines",
+                    vertices,
+                    widths=0.1,
+                    colors=five,
+                    line_type="polyline",
+                )
+
+        store = zarr.open_group(store_path, mode="r")
+        decoded = ArrayDecoder().decode(store["rgba_lines/colors"], store)
+        assert decoded.shape == (50, 4)
+        np.testing.assert_array_almost_equal(decoded, rgba, decimal=5)
 
     def test_no_colors_allowed(self, tmp_path) -> None:
         """Test that points without colors are allowed."""

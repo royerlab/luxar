@@ -1301,13 +1301,11 @@ describe('depth-sort coordinator — points integration', () => {
   });
 
   it('DOES sort a volumetric points commit (phase 3: real emission–absorption)', async () => {
-    // effectiveGeometryMode('volumetric', 'point') === 'volumetric'
-    // since phase 3 and needsDepthSort('volumetric') is true — the
-    // material composites order-dependently, so the commit registers
-    // with the SortWorker exactly like a normal-mode points commit.
-    // THE chokepoint test: this expectation inverted when phase 3
-    // flipped the helper, with no coordinator change (its twin for
-    // lines below stays on the phase-1 fallback until phase 4).
+    // needsDepthSort('volumetric') is true — the material composites
+    // order-dependently, so the commit registers with the SortWorker
+    // exactly like a normal-mode points commit. Since phase 4 all
+    // three geometry types sort volumetric (the per-type
+    // effectiveGeometryMode downgrade helper is gone).
     const coord = await loadCoordinator();
     coord.configureDepthSort({ getCamera: () => makeCamera(), requestRender: vi.fn() });
 
@@ -1440,9 +1438,9 @@ describe('depth-sort coordinator — points integration', () => {
  * Lines integration (the volumetric-phases arc PR-C): lines share the
  * whole coordinator mechanism through the same geometry-neutral entry
  * points — the deltas under test are the `'line'` kind mapping (the
- * commit passes segment MIDPOINTS as the lazy centers) and the
- * EFFECTIVE-mode gate (lines render `volumetric` as additive until
- * phase 4, so they must not sort in it).
+ * commit passes segment MIDPOINTS as the lazy centers) and, since
+ * phase 4, the shared volumetric contract: lines implement the real
+ * emission–absorption state like points/gsplats, so volumetric SORTS.
  */
 describe('depth-sort coordinator — lines integration', () => {
   beforeEach(() => {
@@ -1486,12 +1484,12 @@ describe('depth-sort coordinator — lines integration', () => {
     expect(requestRender).toHaveBeenCalled();
   });
 
-  it('does NOT sort a volumetric lines commit (phase-1 effective-additive fallback)', async () => {
-    // effectiveGeometryMode('volumetric', 'line') === 'additive' until
-    // volumetric phase 4 — the material renders commutatively, so sorting
-    // would be pure waste. THE lines chokepoint test: when phase 4 flips
-    // the helper, this expectation inverts and lines volumetric starts
-    // sorting with no coordinator change.
+  it('DOES sort a volumetric lines commit (phase 4: real emission–absorption)', async () => {
+    // needsDepthSort('volumetric') is true — the material composites
+    // order-dependently, so the commit registers with the SortWorker
+    // exactly like a normal-mode lines commit. Since phase 4 all
+    // three geometry types sort volumetric (the per-type
+    // effectiveGeometryMode downgrade helper is gone).
     const coord = await loadCoordinator();
     coord.configureDepthSort({ getCamera: () => makeCamera(), requestRender: vi.fn() });
 
@@ -1500,16 +1498,12 @@ describe('depth-sort coordinator — lines integration', () => {
     coord.noteDepthSortCommit(mesh, provider, 3);
     await flush();
 
-    expect(provider).not.toHaveBeenCalled();
-    expect(mockApi.registerNode).not.toHaveBeenCalled();
-    expect(mockApi.sort).not.toHaveBeenCalled();
+    expect(provider).toHaveBeenCalledTimes(1);
+    expect(mockApi.registerNode).toHaveBeenCalledTimes(1);
+    expect(mockApi.sort).toHaveBeenCalled();
   });
 
-  it('mode switches judge the EFFECTIVE mode: lines normal→volumetric releases', async () => {
-    // Same type-aware matrix as points: 'volumetric' downgrades to
-    // additive for the 'line' kind, so leaving `normal` for it exits
-    // the sorted set (release), and additive→volumetric is a no-op
-    // (unsorted→unsorted must not force a reprocess).
+  it('mode switches: lines normal→volumetric is sorted→sorted', async () => {
     const coord = await loadCoordinator();
     const requestReprocess = vi.fn();
     coord.configureDepthSort({
@@ -1518,18 +1512,24 @@ describe('depth-sort coordinator — lines integration', () => {
       requestReprocess,
     });
 
+    // Lines: normal→volumetric is sorted→sorted since phase 4 — no
+    // release, no reprocess (the same contract points have carried
+    // since phase 3 and gsplats since phase 1).
     const lines = makeLinesMesh(2, 'normal');
     coord.noteDepthSortCommit(lines, () => new Float32Array([0, 0, -1, 1, 0, -2]), 2);
     await flush();
     expect(mockApi.registerNode).toHaveBeenCalledTimes(1);
 
     coord.noteDepthSortBlendingModeSwitch(lines, 'volumetric', 'normal');
-    await flush();
-    expect(mockApi.releaseNode).toHaveBeenCalledWith(lines.uuid);
-
-    requestReprocess.mockClear();
-    coord.noteDepthSortBlendingModeSwitch(lines, 'volumetric', 'additive');
+    expect(mockApi.releaseNode).not.toHaveBeenCalled();
     expect(requestReprocess).not.toHaveBeenCalled();
+
+    // ...and additive→volumetric is unsorted→SORTED: the coordinator
+    // must request the reprocess that re-commits (and registers) the
+    // node — mirroring additive→normal.
+    const additiveLines = makeLinesMesh(2, 'additive');
+    coord.noteDepthSortBlendingModeSwitch(additiveLines, 'volumetric', 'additive');
+    expect(requestReprocess).toHaveBeenCalled();
   });
 });
 

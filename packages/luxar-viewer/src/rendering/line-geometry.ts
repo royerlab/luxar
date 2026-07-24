@@ -26,12 +26,12 @@
  *   | 5     | startScalar (0.0), endScalar (0.0), alphas (1.0, 1.0)    |
  *
  * texel5.xy are the colormap scalars and texel5.zw the per-endpoint
- * opacity alphas (reserved for volumetric Phase 4); ALL FOUR are written
- * UNCONDITIONALLY — pool textures are reused, so leaving them
- * unspecified would let a previous tenant's values leak through. 0.0 is
- * the no-scalar identity and 1.0 (opaque) the per-element-opacity
- * identity. texel4.w stays unspecified (stale on reused pool textures;
- * never read).
+ * opacity alphas (from an RGBA color column — volumetric phase 4); ALL
+ * FOUR are written UNCONDITIONALLY — pool textures are reused, so
+ * leaving them unspecified would let a previous tenant's values leak
+ * through. 0.0 is the no-scalar identity and 1.0 (opaque) the
+ * per-element-opacity identity. texel4.w stays unspecified (stale on
+ * reused pool textures; never read).
  *
  * Texture lifetime = geometry lifetime: `attachLineStorage` registers a
  * `dispose` listener on the geometry, so every dispose site (pool
@@ -148,6 +148,16 @@ export interface LineTexelSource {
    */
   startScalars?: Float32Array;
   endScalars?: Float32Array;
+  /**
+   * Per-endpoint opacity alphas (count each) from an RGBA color column
+   * (volumetric phase 4), packed into texel5.zw. Absent ⇒ both slots
+   * are written 1.0 (the per-element-opacity identity — written
+   * unconditionally, pool-reuse safe). Presence rides the
+   * `userData.hasElementAlpha` stamp the call sites write, which gates
+   * only the volumetric w(a) optical-depth map.
+   */
+  startAlphas?: Float32Array;
+  endAlphas?: Float32Array;
 }
 
 /**
@@ -220,6 +230,8 @@ export function writeLineTexels(
     endClipped,
     startScalars,
     endScalars,
+    startAlphas,
+    endAlphas,
   } = src;
   // Fail loud on source/count mismatch BEFORE any store (the
   // interleaved-era pre-flight guard's job) — a silent short read would
@@ -237,7 +249,9 @@ export function writeLineTexels(
     startClipped.length < n ||
     endClipped.length < n ||
     (startScalars !== undefined && startScalars.length < n) ||
-    (endScalars !== undefined && endScalars.length < n)
+    (endScalars !== undefined && endScalars.length < n) ||
+    (startAlphas !== undefined && startAlphas.length < n) ||
+    (endAlphas !== undefined && endAlphas.length < n)
   ) {
     throw new Error(
       `writeLineTexels: source arrays shorter than count=${n} ` +
@@ -247,10 +261,12 @@ export function writeLineTexels(
         `startSharpness=${startSharpness.length}, endSharpness=${endSharpness.length}, ` +
         `segmentLengths=${segmentLengths.length}, startClipped=${startClipped.length}, ` +
         `endClipped=${endClipped.length}, startScalars=${startScalars?.length ?? 'absent'}, ` +
-        `endScalars=${endScalars?.length ?? 'absent'})`
+        `endScalars=${endScalars?.length ?? 'absent'}, startAlphas=${startAlphas?.length ?? 'absent'}, ` +
+        `endAlphas=${endAlphas?.length ?? 'absent'})`
     );
   }
   const hasScalars = startScalars !== undefined && endScalars !== undefined;
+  const hasAlphas = startAlphas !== undefined && endAlphas !== undefined;
   for (let i = from; i < n; i++) {
     const o = i * LINE_FLOATS_PER_SEGMENT;
     const p3 = i * 3;
@@ -281,15 +297,15 @@ export function writeLineTexels(
     arr[o + 17] = startClipped[i];
     arr[o + 18] = endClipped[i];
     arr[o + 19] = 0.0;
-    // texel 5: startScalar, endScalar, per-endpoint opacity alphas
-    // (volumetric Phase 4). ALL FOUR written UNCONDITIONALLY — pool
-    // textures are reused, so leaving them unspecified would let a
-    // previous tenant's values leak through. 0.0 = no-scalar identity,
-    // 1.0 (opaque) = the per-element-opacity identity.
+    // texel 5: startScalar, endScalar, per-endpoint opacity alphas.
+    // ALL FOUR written UNCONDITIONALLY — pool textures are reused, so
+    // leaving them unspecified would let a previous tenant's values
+    // leak through. 0.0 = no-scalar identity, 1.0 (opaque) = the
+    // per-element-opacity identity for RGB data.
     arr[o + 20] = hasScalars ? startScalars[i] : 0.0;
     arr[o + 21] = hasScalars ? endScalars[i] : 0.0;
-    arr[o + 22] = 1.0;
-    arr[o + 23] = 1.0;
+    arr[o + 22] = hasAlphas ? startAlphas[i] : 1.0;
+    arr[o + 23] = hasAlphas ? endAlphas[i] : 1.0;
   }
   // Ranged upload: only the [from, n) rows just written go to the GPU, not
   // the full capacity-sized image (pool slack rows past n never re-upload;
@@ -357,21 +373,22 @@ export function computeLineBounds(
 }
 
 /**
- * Stamp scalar presence on the geometry's userData. The fixed 6-texel
- * layout always carries the texel5.xy scalar slots (0.0 identity when
- * absent), so "does this node have real colormap scalars?" is no longer
- * readable off a geometry attribute — `supportsScalarColormap('lines',
- * …)` reads this stamp instead. Refreshed on EVERY write (pool
- * geometries are reused across tenants; a presence flip must not leak
- * the previous tenant's stamp — the texel writer already restores the
- * identity fills). Shared by the non-pool paths and the pool adapter.
+ * Stamp per-segment-data presence flags on the geometry's userData.
+ * The fixed 6-texel layout always carries the texel5 slots (identity
+ * fills when absent), so "does this node have real colormap scalars /
+ * a real alpha column?" is not readable off a geometry attribute —
+ * `supportsScalarColormap('lines', …)` reads `hasScalars`, and the
+ * commit's material sync pushes `hasElementAlpha` into the material's
+ * `uHasElementAlpha` gate (volumetric w(a) map). Refreshed on EVERY
+ * write (pool geometries are reused across tenants; a presence flip
+ * must not leak the previous tenant's stamp — the texel writer already
+ * restores the identity fills). Shared by the non-pool paths and the
+ * pool adapter.
  */
-export function stampLineScalarPresence(
-  geometry: THREE.BufferGeometry,
-  src: LineTexelSource
-): void {
+export function stampLinePresenceFlags(geometry: THREE.BufferGeometry, src: LineTexelSource): void {
   if (!geometry.userData) geometry.userData = {};
   geometry.userData.hasScalars = src.startScalars !== undefined && src.endScalars !== undefined;
+  geometry.userData.hasElementAlpha = src.startAlphas !== undefined && src.endAlphas !== undefined;
 }
 
 /**
@@ -406,7 +423,7 @@ function buildLinesGeometry(meshConfig: InstancedLinesMeshConfig): THREE.Instanc
   geometry.instanceCount = segmentCount;
   geometry.setDrawRange(0, 6);
   computeLineBounds(geometry, meshConfig, segmentCount);
-  stampLineScalarPresence(geometry, meshConfig);
+  stampLinePresenceFlags(geometry, meshConfig);
   return geometry;
 }
 
@@ -486,7 +503,7 @@ export function updateInstancedLinesMesh(
     // Force THREE.js to recalculate _maxInstanceCount.
     delete (geometry as unknown as { _maxInstanceCount?: number })._maxInstanceCount;
     computeLineBounds(geometry, meshConfig, segmentCount);
-    stampLineScalarPresence(geometry, meshConfig);
+    stampLinePresenceFlags(geometry, meshConfig);
   }
 
   return rebuilt;

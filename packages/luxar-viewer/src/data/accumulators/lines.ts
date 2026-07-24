@@ -80,6 +80,9 @@ export class LinesDataAccumulator implements DataAccumulator<
   private usedVertexCount = 0;
   private usedSegmentCount = 0;
 
+  /** Components per color entry: 3 (RGB) or 4 (RGBA — alpha = per-vertex opacity). */
+  private colorComponents: 3 | 4 = 3;
+
   private vertexCapacity: number;
   private segmentCapacity: number;
   private ndim: number;
@@ -111,7 +114,7 @@ export class LinesDataAccumulator implements DataAccumulator<
     this.vertexBuffer = new Float32Array(initialVertexCapacity * ndim);
     this.segmentBuffer = new Uint32Array(initialSegmentCapacity * 2);
     this.widthBuffer = new Float32Array(initialVertexCapacity); // PER-VERTEX!
-    this.colorBuffer = new Float32Array(initialVertexCapacity * 3); // RGB
+    this.colorBuffer = new Float32Array(initialVertexCapacity * 3); // RGB(A) — see configureColorComponents
     this.sharpnessBuffer = new Float32Array(initialVertexCapacity);
     // Scalars are an optional per-vertex attribute. Start with an empty
     // sentinel buffer so non-scalar line datasets don't reserve
@@ -119,6 +122,35 @@ export class LinesDataAccumulator implements DataAccumulator<
     // it on first scalar fill.
     this.scalarBuffer = new Float32Array(0);
 
+    this.allocations++;
+  }
+
+  /**
+   * Declare the color layout (3 = RGB, 4 = RGBA) BEFORE the first color
+   * fill. The loader knows the layout from the zarr array shape at open
+   * time; the accumulator needs it to size every color buffer. Throws if
+   * colors were already written with a different layout — the layout is a
+   * property of the dataset, not of an individual load. Mirrors
+   * `LoadedPointsDataAccumulator.configureColorComponents`.
+   */
+  configureColorComponents(components: 3 | 4): void {
+    this.assertNotDisposed('configureColorComponents');
+    if (components === this.colorComponents) return;
+    if (this.hasColors) {
+      throw new Error(
+        `LinesDataAccumulator: color layout changed to ${components} components after ` +
+          `colors were already written with ${this.colorComponents}`
+      );
+    }
+    this.colorComponents = components;
+    // Re-size the (still empty) color buffer, preserving its element type.
+    const n = this.vertexCapacity * components;
+    this.colorBuffer =
+      this.colorBuffer instanceof Uint8Array
+        ? new Uint8Array(n)
+        : this.colorBuffer instanceof Uint16Array
+          ? new Uint16Array(n)
+          : new Float32Array(n);
     this.allocations++;
   }
 
@@ -178,9 +210,9 @@ export class LinesDataAccumulator implements DataAccumulator<
 
     // Recreate color buffer with correct type (only if types differ from initial Float32)
     if (types.color === 'Uint8Array') {
-      this.colorBuffer = new Uint8Array(this.vertexCapacity * 3);
+      this.colorBuffer = new Uint8Array(this.vertexCapacity * this.colorComponents);
     } else if (types.color === 'Uint16Array') {
-      this.colorBuffer = new Uint16Array(this.vertexCapacity * 3);
+      this.colorBuffer = new Uint16Array(this.vertexCapacity * this.colorComponents);
     }
 
     // Lazily allocate scalar buffer when first scalar fill is observed.
@@ -237,7 +269,7 @@ export class LinesDataAccumulator implements DataAccumulator<
       // Copy only the live prefix.
       const liveVerts = Math.min(this.usedVertexCount, this.vertexCapacity);
       const liveVertexFloats = liveVerts * this.ndim;
-      const liveColorFloats = liveVerts * 3;
+      const liveColorFloats = liveVerts * this.colorComponents;
 
       const newVertexBuf = new Float32Array(newVertexCap * this.ndim);
       const newWidthBuf = new Float32Array(newVertexCap); // PER-VERTEX!
@@ -268,15 +300,15 @@ export class LinesDataAccumulator implements DataAccumulator<
 
       // Color: Type-preserving growth (like Points accumulator)
       if (this.colorBuffer instanceof Uint8Array) {
-        const newColorBuf = new Uint8Array(newVertexCap * 3);
+        const newColorBuf = new Uint8Array(newVertexCap * this.colorComponents);
         newColorBuf.set(this.colorBuffer.subarray(0, liveColorFloats));
         this.colorBuffer = newColorBuf;
       } else if (this.colorBuffer instanceof Uint16Array) {
-        const newColorBuf = new Uint16Array(newVertexCap * 3);
+        const newColorBuf = new Uint16Array(newVertexCap * this.colorComponents);
         newColorBuf.set(this.colorBuffer.subarray(0, liveColorFloats));
         this.colorBuffer = newColorBuf;
       } else {
-        const newColorBuf = new Float32Array(newVertexCap * 3);
+        const newColorBuf = new Float32Array(newVertexCap * this.colorComponents);
         newColorBuf.set(this.colorBuffer.subarray(0, liveColorFloats));
         this.colorBuffer = newColorBuf;
       }
@@ -321,7 +353,10 @@ export class LinesDataAccumulator implements DataAccumulator<
       positions: this.vertexBuffer.subarray(0, vertexCount * this.ndim),
       segments: this.segmentBuffer.subarray(0, segmentCount * 2),
       widths: this.widthBuffer.subarray(0, vertexCount), // PER-VERTEX! Not segmentCount!
-      colors: this.hasColors ? this.colorBuffer.subarray(0, vertexCount * 3) : null,
+      colors: this.hasColors
+        ? this.colorBuffer.subarray(0, vertexCount * this.colorComponents)
+        : null,
+      ...(this.hasColors ? { colorComponents: this.colorComponents } : {}),
       sharpness: this.hasSharpness ? this.sharpnessBuffer.subarray(0, vertexCount) : null,
       // per-vertex scalars now flow through the accumulator path.
       // Omitted (undefined) when not present to match the new
@@ -374,11 +409,11 @@ export class LinesDataAccumulator implements DataAccumulator<
       this.hasColors = true;
       // Multi-type support: set with correct type (no conversion!)
       if (data.colors instanceof Uint8Array) {
-        (this.colorBuffer as Uint8Array).set(data.colors, vertexOffset * 3);
+        (this.colorBuffer as Uint8Array).set(data.colors, vertexOffset * this.colorComponents);
       } else if (data.colors instanceof Uint16Array) {
-        (this.colorBuffer as Uint16Array).set(data.colors, vertexOffset * 3);
+        (this.colorBuffer as Uint16Array).set(data.colors, vertexOffset * this.colorComponents);
       } else {
-        (this.colorBuffer as Float32Array).set(data.colors, vertexOffset * 3);
+        (this.colorBuffer as Float32Array).set(data.colors, vertexOffset * this.colorComponents);
       }
     }
     if (data.sharpness) {
@@ -408,7 +443,7 @@ export class LinesDataAccumulator implements DataAccumulator<
       allocations: this.allocations,
       growthEvents: this.totalGrowths,
       memoryMB:
-        (this.vertexCapacity * (this.ndim * 4 + 4 + 3 * 4 + 4) + // vertices + widths + colors + sharpness
+        (this.vertexCapacity * (this.ndim * 4 + 4 + this.colorComponents * 4 + 4) + // vertices + widths + colors + sharpness
           this.segmentCapacity * (2 * 4)) / // segments only (no widths here!)
         1024 /
         1024,

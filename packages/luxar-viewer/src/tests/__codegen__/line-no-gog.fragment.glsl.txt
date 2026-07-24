@@ -52,10 +52,12 @@ layout( std140 ) uniform object {
 	uint nodeUniform11;
 	mat3 nodeUniform12;
 	uint nodeUniform13;
-	mat4 nodeUniform15;
-	vec2 nodeUniform17;
-	float nodeUniform18;
-	float nodeUniform19;
+	mat3 nodeUniform14;
+	uint nodeUniform15;
+	mat4 nodeUniform17;
+	vec2 nodeUniform19;
+	float nodeUniform20;
+	float nodeUniform21;
 };
 
 
@@ -70,6 +72,7 @@ in float nodeVarying6;
 in float nodeVarying7;
 flat  in float nodeVarying8;
 flat  in float nodeVarying9;
+in float nodeVarying10;
 
 
 // vars
@@ -78,9 +81,11 @@ float nodeVar0;
 float nodeVar1;
 float nodeVar2;
 float nodeVar3;
+float nodeVar4;
 float nodeVar5;
+float nodeVar6;
 vec4 Output;
-vec4 nodeVar6;
+vec4 nodeVar8;
 
 // codes
 
@@ -103,6 +108,19 @@ void main() {
 	nodeVar2 = ( ( 1.0 - nodeVarying3 ) * nodeVarying4 );
 	nodeVar3 = clamp( ( min( nodeVar1, nodeVar2 ) / nodeVarying5 ), 0.0, 1.0 );
 
+	if ( ( nodeVarying5 > 1e-20 ) ) {
+
+		nodeVar4 = nodeVar3;
+
+	} else {
+
+		nodeVar4 = 1.0;
+
+	}
+
+	nodeVar5 = ( ( ( ( ( ( mix( ( 0.5 + ( nodeVar4 * 0.5 ) ), 1.0, mix( nodeVarying9, nodeVarying8, step( nodeVar1, nodeVar2 ) ) ) * ( max( ( exp( ( pow( nodeVar0, pow( 2.0, ( ( nodeVarying1 * 6.0 ) - 2.0 ) ) ) * -4.6051702 ) ) - 0.01 ), 0.0 ) * 1.0101010101010102 ) ) * ( 1.0 - smoothstep( ( 1.0 - ( 1.0 / max( nodeVarying6, 1.5 ) ) ), 1.0, nodeVar0 ) ) ) * min( ( nodeVarying6 / 1.5 ), 1.0 ) ) * nodeVarying7 ) * 1.0 ) * nodeUniform0 );
+	nodeVar6 = ( nodeVar5 * nodeVarying10 );
+
 	if ( ( max( nodeVarying0.x, max( nodeVarying0.y, nodeVarying0.z ) ) < 0.0001 ) ) {
 
 		discard;
@@ -110,23 +128,12 @@ void main() {
 
 	}
 
-
-	if ( ( nodeVarying5 > 1e-20 ) ) {
-
-		nodeVar5 = nodeVar3;
-
-	} else {
-
-		nodeVar5 = 1.0;
-
-	}
-
-	DiffuseColor = vec4( pow( nodeVarying0, vec3( nodeUniform0 ) ), ( ( ( ( ( ( mix( ( 0.5 + ( nodeVar5 * 0.5 ) ), 1.0, mix( nodeVarying9, nodeVarying8, step( nodeVar1, nodeVar2 ) ) ) * ( max( ( exp( ( pow( nodeVar0, pow( 2.0, ( ( nodeVarying1 * 6.0 ) - 2.0 ) ) ) * -4.6051702 ) ) - 0.01 ), 0.0 ) * 1.0101010101010102 ) ) * ( 1.0 - smoothstep( ( 1.0 - ( 1.0 / max( nodeVarying6, 1.5 ) ) ), 1.0, nodeVar0 ) ) ) * min( ( nodeVarying6 / 1.5 ), 1.0 ) ) * nodeVarying7 ) * 1.0 ) * nodeUniform1 ) );
+	DiffuseColor = vec4( pow( nodeVarying0, vec3( nodeUniform1 ) ), nodeVar6 );
 	DiffuseColor.w = ( DiffuseColor.w * nodeUniform2 );
-	nodeVar6 = max( vec4( DiffuseColor.xyz, DiffuseColor.w ), 0.0 );
-	Output = nodeVar6;
+	nodeVar8 = max( vec4( DiffuseColor.xyz, DiffuseColor.w ), 0.0 );
+	Output = nodeVar8;
 
 	// result
-	fragColor = nodeVar6;
+	fragColor = nodeVar8;
 
 }

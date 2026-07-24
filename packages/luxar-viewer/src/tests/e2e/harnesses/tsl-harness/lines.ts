@@ -1,9 +1,10 @@
 /**
  * Line shader family for the TSL ↔ GLSL parity harness: the visual
  * instanced-line variants (gamma / no-GOG fast paths, max-mode
- * premultiply, colormap LUT, behind-camera + ortho-near culling,
- * sorted-index permutation) plus the line-pick counterparts + the
- * multi-row texture-orientation variant. 11 registry entries.
+ * premultiply, volumetric emission–absorption, colormap LUT,
+ * behind-camera + ortho-near culling, sorted-index permutation) plus
+ * the line-pick counterparts + the multi-row texture-orientation
+ * variant. 12 registry entries.
  *
  * @module tests/e2e/harnesses/tsl-harness/lines
  */
@@ -33,11 +34,18 @@ import { buildBehindCamera, buildColormapTexture } from './shared';
  * standalone `uLineTex` data texture below. Horizontal segment across
  * the viewport in NDC, generous width so it covers many pixels and
  * exposes both the perpendicular falloff and edge AA.
+ *
+ * `alphas` fills texel5.zw (start/end per-endpoint opacity, from an
+ * RGBA color column) through the REAL `writeLineTexels` writer — the
+ * volumetric variant passes DISTINCT sub-1.0 values so the vertex
+ * stage's sanitize + along-t mix and the fragment's w(a) map are
+ * exercised on both backends.
  */
 function lineTexelSource(
   start: readonly [number, number, number] = [-0.5, 0, 0],
   end: readonly [number, number, number] = [0.5, 0, 0],
-  scalars?: readonly [number, number]
+  scalars?: readonly [number, number],
+  alphas?: readonly [number, number]
 ): LineTexelSource {
   return {
     startPositions: new Float32Array([start[0], start[1], start[2]]),
@@ -55,6 +63,8 @@ function lineTexelSource(
     endClipped: new Uint8Array([0]),
     startScalars: scalars ? new Float32Array([scalars[0]]) : undefined,
     endScalars: scalars ? new Float32Array([scalars[1]]) : undefined,
+    startAlphas: alphas ? new Float32Array([alphas[0]]) : undefined,
+    endAlphas: alphas ? new Float32Array([alphas[1]]) : undefined,
   };
 }
 
@@ -69,14 +79,15 @@ function lineTexelSource(
 function buildLineDataTexture(
   start: readonly [number, number, number] = [-0.5, 0, 0],
   end: readonly [number, number, number] = [0.5, 0, 0],
-  scalars?: readonly [number, number]
+  scalars?: readonly [number, number],
+  alphas?: readonly [number, number]
 ): THREE.DataTexture {
   const tex = new THREE.DataTexture(new Float32Array(24), 6, 1, THREE.RGBAFormat, THREE.FloatType);
   tex.magFilter = THREE.NearestFilter;
   tex.minFilter = THREE.NearestFilter;
   tex.generateMipmaps = false;
   tex.flipY = false;
-  writeLineTexels(tex, lineTexelSource(start, end, scalars), 1);
+  writeLineTexels(tex, lineTexelSource(start, end, scalars, alphas), 1);
   return tex;
 }
 
@@ -149,7 +160,8 @@ function buildLineInstancedMesh(
   material: THREE.Material,
   start: readonly [number, number, number] = [-0.5, 0, 0],
   end: readonly [number, number, number] = [0.5, 0, 0],
-  scalars?: readonly [number, number]
+  scalars?: readonly [number, number],
+  alphas?: readonly [number, number]
 ): THREE.Object3D {
   // PRODUCTION assembly (createInstancedLinesMesh), not a hand-rolled
   // geometry: a plain BufferGeometry quad TEMPLATE decorated by hand is
@@ -160,11 +172,34 @@ function buildLineInstancedMesh(
   // testing the real path (texture storage + aSortedIndex) and makes
   // instancing correct by construction.
   const mesh = createInstancedLinesMesh(
-    { ...lineTexelSource(start, end, scalars), segmentCount: 1 },
+    { ...lineTexelSource(start, end, scalars, alphas), segmentCount: 1 },
     material
   );
   mesh.frustumCulled = false;
   return mesh;
+}
+
+/**
+ * Per-endpoint texel5.zw alphas for the volumetric variant: DISTINCT
+ * sub-1.0 values so the along-segment mix is a real interpolation
+ * (centre pixel sees 0.75, neither endpoint value) and the
+ * w(a) = −ln(1−a) map is non-trivial without saturating τ.
+ */
+const VOLUMETRIC_LINE_ALPHAS: readonly [number, number] = [0.6, 0.9];
+
+/**
+ * Line mesh whose 6-texel storage carries the per-endpoint RGBA alphas
+ * (texel5.zw = 0.6 → 0.9) — the LINES twin of
+ * `points.ts::buildPointVolumetricMesh`.
+ */
+function buildLineVolumetricMesh(material: THREE.Material): THREE.Object3D {
+  return buildLineInstancedMesh(
+    material,
+    [-0.5, 0, 0],
+    [0.5, 0, 0],
+    undefined,
+    VOLUMETRIC_LINE_ALPHAS
+  );
 }
 
 /**
@@ -431,6 +466,48 @@ export const LINE_SHADERS: Record<string, RegistryEntry> = {
       return m;
     },
     buildMesh: buildLineInstancedMesh,
+  },
+  // Line volumetric parity: the emission–absorption output branch
+  // (LUXAR_VOLUMETRIC; the TSL side builds it from
+  // `blendingMode: 'volumetric'`) — τ = κ·alpha·vWidthAtT·chord (the
+  // transverse ribbon integral, LINE_CHORD_SCALE = √(π/ln 100)), S(τ)
+  // screening, physical absorption alpha, AND the per-endpoint
+  // texel5.zw alphas (0.6 → 0.9) → w(a) = −ln(1−a) optical depth via
+  // uHasElementAlpha = 1. uAbsorption 2.0 + opacity 0.7 keep τ
+  // mid-range on the line body (τ ≈ 0.16 at the centre pixel) so S(τ)
+  // and volAlpha are non-trivial — neither saturated at 1 nor
+  // vanishing — and a GLSL/TSL divergence is visible. Mirrors
+  // `point-volumetric` (three-geometry symmetry).
+  'line-volumetric': {
+    source: LINE_SOURCE,
+    buildUniforms: () => ({
+      uLineTex: {
+        value: buildLineDataTexture([-0.5, 0, 0], [0.5, 0, 0], undefined, VOLUMETRIC_LINE_ALPHAS),
+      },
+      uResolution: { value: new THREE.Vector2(64, 64) },
+      uIsOrtho: { value: 1 },
+      uNearCull: { value: 0.01 },
+      uMaxLinePixelWidth: { value: 32.0 },
+      uPerspectiveLineScale: { value: 1.0 },
+      uOrthoLineScale: { value: 64.0 },
+      uOpacity: { value: 0.7 },
+      uInvGamma: { value: 1.0 / 2.2 },
+      uIntensity: { value: 1.0 },
+      uOffset: { value: 0.0 },
+      uAbsorption: { value: 2.0 },
+      uHasElementAlpha: { value: 1 },
+    }),
+    buildDefines: () => ({ LUXAR_VOLUMETRIC: '' }),
+    buildTSLMaterial: (uniforms) => {
+      const m = lineWebGPUFactory(buildLineTSLNodesFromUniforms(uniforms, {}), {
+        blendingMode: 'volumetric',
+        isOrtho: true,
+      }) as unknown as THREE.Material;
+      m.transparent = false;
+      m.blending = THREE.NoBlending;
+      return m;
+    },
+    buildMesh: buildLineVolumetricMesh,
   },
   // Line colormap parity: USE_COLORMAP LUT path with per-endpoint scalars
   // (0.2 → 0.8). Gamma applied to the value pre-LUT (gammaOne=false here);

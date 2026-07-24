@@ -77,13 +77,12 @@ export const EXPECTED_BLEND_STATE: Record<string, ExpectedBlendState> = {
     depthWrite: true, // at opacity >= 0.99 (normalModeDepthWrite)
     transparent: true,
   },
-  // The REAL volumetric state — gsplats (phase 1) and points (phase 3):
-  // premultiplied emission–absorption over the One/OneMinusSrcAlpha
-  // framebuffer state (numerically identical to the gsplat `normal`
-  // state; the semantics live in the fragment shader). depthWrite is
-  // false UNCONDITIONALLY. LINES still intercept 'volumetric' and apply
-  // the additive fallback until phase 4 — the lines loop must use
-  // EXPECTED_LINE_VOLUMETRIC_STATE below instead of this row.
+  // The REAL volumetric state — all three geometry types (gsplats
+  // phase 1, points phase 3, lines phase 4): premultiplied
+  // emission–absorption over the One/OneMinusSrcAlpha framebuffer
+  // state (numerically identical to the gsplat `normal` state; the
+  // semantics live in the fragment shader). depthWrite is false
+  // UNCONDITIONALLY.
   volumetric: {
     blending: 5, // CustomBlending
     blendEquation: 100, // AddEquation
@@ -93,23 +92,4 @@ export const EXPECTED_BLEND_STATE: Record<string, ExpectedBlendState> = {
     depthWrite: false,
     transparent: true,
   },
-};
-
-/**
- * PHASE-1 LINES VALUE: line materials intercept 'volumetric' and apply
- * the ADDITIVE state (the exact κ=0 limit — VOLUMETRIC_BLENDING_SPEC.md
- * §5.1) until phase 4 implements the emission–absorption math for
- * lines. Deliberately mirrors the `additive` row above;
- * userData.blendingMode still reads 'volumetric' (the requested mode is
- * preserved). Phase 4 deletes this and the lines loop joins the shared
- * `volumetric` row.
- */
-export const EXPECTED_LINE_VOLUMETRIC_STATE: ExpectedBlendState = {
-  blending: 2, // AdditiveBlending (phase-1 fallback)
-  blendEquation: 100, // AddEquation
-  blendSrc: 204, // SrcAlphaFactor
-  blendDst: 201, // OneFactor
-  depthTest: false,
-  depthWrite: false,
-  transparent: true,
 };

@@ -54,10 +54,12 @@ layout( std140 ) uniform object {
 	uint nodeUniform13;
 	mat3 nodeUniform14;
 	uint nodeUniform15;
-	mat4 nodeUniform17;
-	vec2 nodeUniform19;
-	float nodeUniform20;
-	float nodeUniform21;
+	mat3 nodeUniform16;
+	uint nodeUniform17;
+	mat4 nodeUniform19;
+	vec2 nodeUniform21;
+	float nodeUniform22;
+	float nodeUniform23;
 };
 
 
@@ -72,6 +74,7 @@ in float nodeVarying6;
 in float nodeVarying7;
 flat  in float nodeVarying8;
 flat  in float nodeVarying9;
+in float nodeVarying10;
 
 
 // vars
@@ -83,8 +86,9 @@ float nodeVar3;
 vec3 nodeVar5;
 float nodeVar6;
 float nodeVar7;
+float nodeVar8;
 vec4 Output;
-vec4 nodeVar8;
+vec4 nodeVar9;
 
 // codes
 
@@ -108,14 +112,6 @@ void main() {
 	nodeVar3 = clamp( ( min( nodeVar1, nodeVar2 ) / nodeVarying5 ), 0.0, 1.0 );
 	nodeVar5 = max( ( ( nodeVarying0 * vec3( nodeUniform0 ) ) + vec3( nodeUniform1 ) ), vec3( 0.0, 0.0, 0.0 ) );
 
-	if ( ( max( nodeVar5.x, max( nodeVar5.y, nodeVar5.z ) ) < 0.0001 ) ) {
-
-		discard;
-		
-
-	}
-
-
 	if ( ( nodeVarying5 > 1e-20 ) ) {
 
 		nodeVar6 = nodeVar3;
@@ -126,13 +122,22 @@ void main() {
 
 	}
 
-	nodeVar7 = ( ( ( ( ( ( mix( ( 0.5 + ( nodeVar6 * 0.5 ) ), 1.0, mix( nodeVarying9, nodeVarying8, step( nodeVar1, nodeVar2 ) ) ) * ( max( ( exp( ( pow( nodeVar0, pow( 2.0, ( ( nodeVarying1 * 6.0 ) - 2.0 ) ) ) * -4.6051702 ) ) - 0.01 ), 0.0 ) * 1.0101010101010102 ) ) * ( 1.0 - smoothstep( ( 1.0 - ( 1.0 / max( nodeVarying6, 1.5 ) ) ), 1.0, nodeVar0 ) ) ) * min( ( nodeVarying6 / 1.5 ), 1.0 ) ) * nodeVarying7 ) * 1.0 ) * nodeUniform3 );
-	DiffuseColor = vec4( ( pow( nodeVar5, vec3( nodeUniform2 ) ) * vec3( nodeVar7 ) ), nodeVar7 );
+	nodeVar7 = ( ( ( ( ( ( mix( ( 0.5 + ( nodeVar6 * 0.5 ) ), 1.0, mix( nodeVarying9, nodeVarying8, step( nodeVar1, nodeVar2 ) ) ) * ( max( ( exp( ( pow( nodeVar0, pow( 2.0, ( ( nodeVarying1 * 6.0 ) - 2.0 ) ) ) * -4.6051702 ) ) - 0.01 ), 0.0 ) * 1.0101010101010102 ) ) * ( 1.0 - smoothstep( ( 1.0 - ( 1.0 / max( nodeVarying6, 1.5 ) ) ), 1.0, nodeVar0 ) ) ) * min( ( nodeVarying6 / 1.5 ), 1.0 ) ) * nodeVarying7 ) * 1.0 ) * nodeUniform2 );
+	nodeVar8 = ( nodeVar7 * nodeVarying10 );
+
+	if ( ( max( nodeVar5.x, max( nodeVar5.y, nodeVar5.z ) ) < 0.0001 ) ) {
+
+		discard;
+		
+
+	}
+
+	DiffuseColor = vec4( ( pow( nodeVar5, vec3( nodeUniform3 ) ) * vec3( nodeVar8 ) ), nodeVar8 );
 	DiffuseColor.w = ( DiffuseColor.w * nodeUniform4 );
-	nodeVar8 = max( vec4( DiffuseColor.xyz, DiffuseColor.w ), 0.0 );
-	Output = nodeVar8;
+	nodeVar9 = max( vec4( DiffuseColor.xyz, DiffuseColor.w ), 0.0 );
+	Output = nodeVar9;
 
 	// result
-	fragColor = nodeVar8;
+	fragColor = nodeVar9;
 
 }

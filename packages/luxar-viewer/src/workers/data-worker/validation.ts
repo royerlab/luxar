@@ -212,6 +212,8 @@ export function validateLineSegmentReferences(
   opts: {
     widths?: ArrayLike<number>;
     colors?: ArrayLike<number>;
+    /** Channels per color entry: 3 (RGB, default) or 4 (RGBA). */
+    colorComponents?: 3 | 4;
     sharpness?: ArrayLike<number>;
     scalars?: ArrayLike<number>;
   } = {}
@@ -245,11 +247,13 @@ export function validateLineSegmentReferences(
         `(got ${opts.widths.length}, expected ≥ ${minVertices})`
     );
   }
-  // Per-vertex colors (RGB triplet) — 3 entries per referenced vertex.
-  if (opts.colors && opts.colors.length < minVertices * 3) {
+  // Per-vertex colors — colorComponents (3 RGB / 4 RGBA) entries per
+  // referenced vertex.
+  const colorK = opts.colorComponents ?? 3;
+  if (opts.colors && opts.colors.length < minVertices * colorK) {
     throw new Error(
       `${fnName}: colors too short for max segment vertex ${maxVertex} ` +
-        `(got ${opts.colors.length}, expected ≥ ${minVertices * 3})`
+        `(got ${opts.colors.length}, expected ≥ ${minVertices * colorK})`
     );
   }
   if (opts.sharpness && opts.sharpness.length < minVertices) {

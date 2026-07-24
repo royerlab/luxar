@@ -102,6 +102,12 @@ export function syncLineMaterialWithGeometry(mesh: THREE.Mesh): void {
   const renderMat = mesh.material as THREE.Material | null;
   if (renderMat instanceof LineMaterial || renderMat instanceof LineTSLMaterial) {
     renderMat.updateLineTexture(lineTexture);
+    // RGBA-alpha presence: gates the volumetric w(a) optical-depth map
+    // (uHasElementAlpha). Stamped by every texel-write path
+    // (stampLinePresenceFlags); refreshed on every commit so pool
+    // geometry swaps can't leak a previous tenant's flag. Mirrors
+    // syncPointMaterialWithGeometry.
+    renderMat.updateHasElementAlpha(geometry.userData?.hasElementAlpha === true);
   }
 
   const pickNode = mesh.userData?.pickNode as THREE.Object3D | undefined;
