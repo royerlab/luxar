@@ -6,6 +6,28 @@ All notable changes to Luxar are documented in this file.
 
 ### July 2026
 
+#### Changed — volumetric flag closure (double-check follow-ups)
+
+- **Strict color-layout guard** (`assertColorLayout`, all three geometry
+  types): the per-geometry data processors / projection entry now require
+  `colors.length === count × colorComponents` exactly. An RGBA array whose
+  producer forgot to declare `colorComponents: 4` used to satisfy the old
+  `≥ count·3` minimum checks and silently mis-stride every element; it now
+  throws immediately, naming the mismatch.
+- **`stampPointPresenceFlags`**: the two duplicated five-flag inline
+  presence-stamp blocks (points node factory + pool adapter) extracted
+  into one chokepoint beside the texel writer, adopting the lines
+  pattern (`stampLinePresenceFlags`) — plus stamp/sync unit pins that a
+  severed `hasElementAlpha` chain previously survived.
+- **Combined `USE_COLORMAP` + `LUXAR_VOLUMETRIC` coverage** (points +
+  lines): new parity-harness entries, codegen snapshots, and pixel-parity
+  tests for the colormap-with-volumetric combination (both branches read
+  the same single texel fetch). Also: a tripwire pinning that THREE's TSL
+  `material.opacity` tail stays inert (Luxar opacity rides the custom
+  uniform), and spec notes for the two deliberate per-element-alpha
+  semantics (invisible-but-pickable; `normal`-mode depthWrite keys on
+  node opacity only).
+
 #### Added — volumetric blending for Lines (Phase 4) + lines RGBA colors
 
 - **Lines now render the real `volumetric` emission–absorption math**

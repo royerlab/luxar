@@ -418,6 +418,43 @@ test.describe('TSL ↔ GLSL shader parity', () => {
     }
   });
 
+  // COMBINED colormap + volumetric (points): USE_COLORMAP sources the
+  // colour from the LUT while LUXAR_VOLUMETRIC maps the per-element
+  // alpha through w(a) into τ — both branches read the SAME single
+  // texel fetch, so this is the case that breaks if either read
+  // displaces the other. Both defines co-compile on GLSL; the TSL side
+  // builds with {useColormap: true, blendingMode: 'volumetric'}.
+  test('point-volumetric-colormap: combined USE_COLORMAP + LUXAR_VOLUMETRIC matches across backends', async ({
+    page,
+  }) => {
+    await bootHarness(page);
+
+    const glslPixels = await runGLSL(page, 'point-volumetric-colormap');
+    const tslResult = await runTSL(page, 'point-volumetric-colormap');
+
+    assertBothRendered(glslPixels, tslResult.pixels, 'point-volumetric-colormap');
+    expect(
+      meanAbsDiffPerCoveredPixel(glslPixels, tslResult.pixels),
+      'point-volumetric-colormap: per-covered-pixel parity (footprint-invariant)'
+    ).toBeLessThan(2.0);
+
+    // Physical absorption alpha still sub-saturated + non-zero at the
+    // centre on both backends (the volumetric branch survived the
+    // colormap combination; the LUT path did not zero the density).
+    const centerAlphaGLSL = glslPixels[(32 * 64 + 32) * 4 + 3];
+    const centerAlphaTSL = tslResult.pixels[(32 * 64 + 32) * 4 + 3];
+    for (const [backend, a] of [
+      ['GLSL', centerAlphaGLSL],
+      ['TSL', centerAlphaTSL],
+    ] as const) {
+      expect(
+        a,
+        `point-volumetric-colormap ${backend}: expected sub-saturated absorption alpha at center, got ${a}`
+      ).toBeGreaterThan(0);
+      expect(a).toBeLessThan(255);
+    }
+  });
+
   // Line volumetric: the GLSL side compiles with LUXAR_VOLUMETRIC, the
   // TSL side builds the volumetric output branch from
   // `blendingMode: 'volumetric'`. τ = κ·alpha·vWidthAtT·chord (the
@@ -457,6 +494,43 @@ test.describe('TSL ↔ GLSL shader parity', () => {
       expect(
         a,
         `line-volumetric ${backend}: expected sub-saturated absorption alpha at center, got ${a}`
+      ).toBeGreaterThan(0);
+      expect(a).toBeLessThan(255);
+    }
+  });
+
+  // COMBINED colormap + volumetric (lines): USE_COLORMAP sources the
+  // colour from the LUT while LUXAR_VOLUMETRIC maps the per-element
+  // alpha through w(a) into τ — both branches read the SAME single
+  // texel fetch, so this is the case that breaks if either read
+  // displaces the other. Both defines co-compile on GLSL; the TSL side
+  // builds with {useColormap: true, blendingMode: 'volumetric'}.
+  test('line-volumetric-colormap: combined USE_COLORMAP + LUXAR_VOLUMETRIC matches across backends', async ({
+    page,
+  }) => {
+    await bootHarness(page);
+
+    const glslPixels = await runGLSL(page, 'line-volumetric-colormap');
+    const tslResult = await runTSL(page, 'line-volumetric-colormap');
+
+    assertBothRendered(glslPixels, tslResult.pixels, 'line-volumetric-colormap');
+    expect(
+      meanAbsDiffPerCoveredPixel(glslPixels, tslResult.pixels),
+      'line-volumetric-colormap: per-covered-pixel parity (footprint-invariant)'
+    ).toBeLessThan(2.0);
+
+    // Physical absorption alpha still sub-saturated + non-zero at the
+    // centre on both backends (the volumetric branch survived the
+    // colormap combination; the LUT path did not zero the density).
+    const centerAlphaGLSL = glslPixels[(32 * 64 + 32) * 4 + 3];
+    const centerAlphaTSL = tslResult.pixels[(32 * 64 + 32) * 4 + 3];
+    for (const [backend, a] of [
+      ['GLSL', centerAlphaGLSL],
+      ['TSL', centerAlphaTSL],
+    ] as const) {
+      expect(
+        a,
+        `line-volumetric-colormap ${backend}: expected sub-saturated absorption alpha at center, got ${a}`
       ).toBeGreaterThan(0);
       expect(a).toBeLessThan(255);
     }

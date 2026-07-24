@@ -713,19 +713,22 @@ describe('projectPointsTo3D — WASM-boundary validation guards', () => {
     ).toThrow(/radii too short/);
   });
 
-  it('rejects colors shorter than 3 × numPoints', () => {
+  it('rejects colors whose length does not match numPoints × colorComponents (STRICT)', () => {
+    // Strict equality since the volumetric double-check: a minimum
+    // check (4N ≥ 3N) let an RGBA array with an undeclared
+    // colorComponents silently mis-stride every point.
     expect(() =>
       projectPointsTo3D(
         wasm,
         new Float32Array(30),
-        new Uint8Array(15), // need 30
+        new Uint8Array(15), // need exactly 30
         null,
         null,
         makeViewState(),
         ranges10,
         makeCtx()
       )
-    ).toThrow(/colors too short/);
+    ).toThrow(/colors length 15 does not match count 10 × colorComponents 3/);
   });
 
   it('rejects sharpness shorter than numPoints (symmetry with lines/gsplats)', () => {
