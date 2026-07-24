@@ -128,6 +128,10 @@ const SHADERS = [
   // w(a) per-endpoint-alpha map, and the color-discard bypass are
   // distinct generated code no other line variant pins.
   'line-volumetric',
+  // COMBINED colormap + volumetric (lines): the LUT value path and the
+  // w(a) alpha map both read the single unconditional texel5 fetch —
+  // distinct generated code neither single-flag variant pins.
+  'line-volumetric-colormap',
   // Lines are the only geometry whose ortho/perspective split is a
   // BUILD-time TSL option (points/gsplats branch on the uIsOrtho
   // uniform at runtime), so the perspective line shaders are distinct
@@ -147,6 +151,10 @@ const SHADERS = [
   // w(a) per-point-alpha map, and the color-discard bypass are distinct
   // generated code no other point variant pins.
   'point-volumetric',
+  // COMBINED colormap + volumetric (points): LUT value path + w(a)
+  // alpha map off the single texel2 fetch — distinct generated code
+  // neither single-flag variant pins.
+  'point-volumetric-colormap',
   'gsplat',
   'gsplat-pick',
   'gsplat-gamma-one',

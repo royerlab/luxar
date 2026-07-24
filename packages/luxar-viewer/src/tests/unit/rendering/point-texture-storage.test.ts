@@ -24,6 +24,7 @@ import {
 import {
   attachPointStorage,
   getPointTexture,
+  stampPointPresenceFlags,
   writePointTexels,
   type PointTexelSource,
 } from '../../../rendering/point-geometry';
@@ -319,5 +320,52 @@ describe('writePointTexels — RGBA color layout (per-point opacity, volumetric 
     const texture = attachPointStorage(geometry, 8);
     const src = { ...makeRgbaSource(8), colors: new Float32Array(8 * 3) };
     expect(() => writePointTexels(texture, src, 8)).toThrow(/shorter than count/);
+  });
+});
+
+describe('stampPointPresenceFlags — the shared presence-stamp chokepoint', () => {
+  // Mutation-found on the LINES twin (volumetric phase-4 double-check):
+  // hardwiring the alpha stamp to false survived the entire unit suite —
+  // the stamp is the sole source the commit sync reads for the
+  // material's uHasElementAlpha gate. This is the points twin of that
+  // pin, added when the two historical inline stamp blocks (node
+  // factory + pool adapter) were extracted into one helper.
+  it('stamps all five flags from source presence + colorK, and REFRESHES across writes', () => {
+    const geometry = new THREE.InstancedBufferGeometry();
+    stampPointPresenceFlags(
+      geometry,
+      {
+        scalars: new Float32Array(0), // zero-length declared field COUNTS as present
+        colors: new Float32Array(12),
+        radii: new Float32Array(4),
+        sharpness: new Float32Array(4),
+      },
+      4
+    );
+    expect(geometry.userData.hasScalars).toBe(true);
+    expect(geometry.userData.hasColors).toBe(true);
+    expect(geometry.userData.hasRadii).toBe(true);
+    expect(geometry.userData.hasSharpness).toBe(true);
+    expect(geometry.userData.hasElementAlpha).toBe(true);
+
+    // Pool-tenant flip: an RGB tenant without optional fields must reset
+    // every flag — a stale true would leak the previous tenant's stamp.
+    stampPointPresenceFlags(geometry, { colors: null }, 3);
+    expect(geometry.userData.hasScalars).toBe(false);
+    expect(geometry.userData.hasColors).toBe(false);
+    expect(geometry.userData.hasRadii).toBe(false);
+    expect(geometry.userData.hasSharpness).toBe(false);
+    expect(geometry.userData.hasElementAlpha).toBe(false);
+  });
+
+  it('hasElementAlpha derives from the SOURCE layout (colorK), not buffer contents', () => {
+    // RGBA layout with all-1.0 alphas is still hasElementAlpha=true (the
+    // gate is about layout, not values); RGB layout is false even with
+    // colors present.
+    const geometry = new THREE.InstancedBufferGeometry();
+    stampPointPresenceFlags(geometry, { colors: new Float32Array(8) }, 4);
+    expect(geometry.userData.hasElementAlpha).toBe(true);
+    stampPointPresenceFlags(geometry, { colors: new Float32Array(6) }, 3);
+    expect(geometry.userData.hasElementAlpha).toBe(false);
   });
 });

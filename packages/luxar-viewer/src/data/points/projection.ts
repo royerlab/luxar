@@ -22,6 +22,7 @@
  */
 
 import * as THREE from 'three';
+import { assertColorLayout } from '../loaders/color-loader';
 import { log, Modules } from '../../utils/log';
 import {
   shouldApplyEffectiveRadius,
@@ -219,13 +220,11 @@ export function projectPointsTo3D(
         `projectPointsTo3D: sharpness too short (got ${sharpness.length}, expected ≥ ${totalPoints})`
       );
     }
-    // RGB(A) tuple per point — short colors corrupt the TS-side compaction.
-    if (colors && colors.length < totalPoints * colorComponents) {
-      throw new Error(
-        `projectPointsTo3D: colors too short (got ${colors.length}, ` +
-          `expected ≥ ${totalPoints * colorComponents})`
-      );
-    }
+    // RGB(A) tuple per point — STRICT equality, not a minimum: loaders
+    // emit exact-length views, and a minimum check (4N ≥ 3N) would let
+    // an RGBA array with an undeclared colorComponents silently
+    // mis-stride every point after the first (see assertColorLayout).
+    assertColorLayout(colors, totalPoints, colorComponents, 'projectPointsTo3D');
     if (ctx.effectiveRadiusConfig) {
       // The effective-radius kernel reads slicePosition[d] for d < ndim.
       if (viewState.slicePosition.length < ndim) {

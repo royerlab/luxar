@@ -4,7 +4,7 @@
  * premultiply, volumetric emission–absorption, colormap LUT,
  * behind-camera + ortho-near culling, sorted-index permutation) plus
  * the line-pick counterparts + the multi-row texture-orientation
- * variant. 12 registry entries.
+ * variant. 13 registry entries.
  *
  * @module tests/e2e/harnesses/tsl-harness/lines
  */
@@ -198,6 +198,23 @@ function buildLineVolumetricMesh(material: THREE.Material): THREE.Object3D {
     [-0.5, 0, 0],
     [0.5, 0, 0],
     undefined,
+    VOLUMETRIC_LINE_ALPHAS
+  );
+}
+
+/**
+ * Combined USE_COLORMAP + LUXAR_VOLUMETRIC mesh: texel5 fully populated
+ * (scalars 0.2 → 0.8 in .xy AND per-endpoint alphas 0.6 → 0.9 in .zw).
+ * The two branches share the single unconditional texel5 fetch since
+ * phase 4, so this is the case that would break if either read
+ * displaced the other.
+ */
+function buildLineVolumetricColormapMesh(material: THREE.Material): THREE.Object3D {
+  return buildLineInstancedMesh(
+    material,
+    [-0.5, 0, 0],
+    [0.5, 0, 0],
+    [0.2, 0.8],
     VOLUMETRIC_LINE_ALPHAS
   );
 }
@@ -508,6 +525,46 @@ export const LINE_SHADERS: Record<string, RegistryEntry> = {
       return m;
     },
     buildMesh: buildLineVolumetricMesh,
+  },
+  // COMBINED colormap + volumetric: the LUT sources the colour from
+  // texel5.xy while the volumetric branch maps texel5.zw alphas through
+  // w(a) into τ — both defines co-compiled, both texel5 reads live off
+  // the SAME single fetch. Would catch either branch displacing the
+  // other (the untested-combination flag from the phase-4 double-check).
+  'line-volumetric-colormap': {
+    source: LINE_SOURCE,
+    buildUniforms: () => ({
+      uLineTex: {
+        value: buildLineDataTexture([-0.5, 0, 0], [0.5, 0, 0], [0.2, 0.8], VOLUMETRIC_LINE_ALPHAS),
+      },
+      uResolution: { value: new THREE.Vector2(64, 64) },
+      uIsOrtho: { value: 1 },
+      uNearCull: { value: 0.01 },
+      uMaxLinePixelWidth: { value: 32.0 },
+      uPerspectiveLineScale: { value: 1.0 },
+      uOrthoLineScale: { value: 64.0 },
+      uOpacity: { value: 0.7 },
+      uInvGamma: { value: 1.0 / 2.2 },
+      uIntensity: { value: 1.0 },
+      uOffset: { value: 0.0 },
+      uAbsorption: { value: 2.0 },
+      uHasElementAlpha: { value: 1 },
+      uColormapTex: { value: buildColormapTexture() },
+      uScalarMin: { value: 0.0 },
+      uScalarScale: { value: 1.0 },
+    }),
+    buildDefines: () => ({ USE_COLORMAP: '', LUXAR_VOLUMETRIC: '' }),
+    buildTSLMaterial: (uniforms) => {
+      const m = lineWebGPUFactory(buildLineTSLNodesFromUniforms(uniforms, { useColormap: true }), {
+        useColormap: true,
+        blendingMode: 'volumetric',
+        isOrtho: true,
+      }) as unknown as THREE.Material;
+      m.transparent = false;
+      m.blending = THREE.NoBlending;
+      return m;
+    },
+    buildMesh: buildLineVolumetricColormapMesh,
   },
   // Line colormap parity: USE_COLORMAP LUT path with per-endpoint scalars
   // (0.2 → 0.8). Gamma applied to the value pre-LUT (gammaOne=false here);

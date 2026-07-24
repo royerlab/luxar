@@ -54,6 +54,40 @@ export function colorComponentsOf(array: zarr.Array<zarr.DataType, zarr.Readable
 }
 
 /**
+ * STRICT color-layout assertion at a chokepoint where the exact element
+ * count is known (the per-geometry data processors / projection entry).
+ *
+ * Every layout-FLIP hazard has a guard (accumulator configure throw,
+ * progressive-concat mixed-layout throw, commit append parity conjunct),
+ * but none of them catches layout OMISSION: an RGBA array whose producer
+ * forgot to declare `colorComponents: 4` satisfies every `≥ count·3`
+ * minimum check (4N ≥ 3N) and silently mis-strides every element after
+ * the first — visually scrambled, programmatically silent. Loaders emit
+ * exact-length views (accumulator subarrays, cache clones, concat
+ * outputs), so at these chokepoints STRICT equality is the correct
+ * contract and turns an omitted declaration into an immediate loud
+ * throw naming the mismatch.
+ *
+ * No-op when `colors` is absent. Shared by all three geometry types.
+ */
+export function assertColorLayout(
+  colors: { length: number } | null | undefined,
+  count: number,
+  colorComponents: number,
+  context: string
+): void {
+  if (!colors) return;
+  if (colors.length !== count * colorComponents) {
+    throw new Error(
+      `${context}: colors length ${colors.length} does not match ` +
+        `count ${count} × colorComponents ${colorComponents} = ${count * colorComponents}. ` +
+        'An RGBA array with an undeclared colorComponents (defaulting to 3) mis-strides ' +
+        'every element — declare the layout where the data is produced.'
+    );
+  }
+}
+
+/**
  * Allocate a color buffer matching `dtype`. Encoded sources always go
  * through Float32 (decoding produces floats); for unencoded sources we
  * preserve the native uint8/uint16 type so THREE.js's normalization runs

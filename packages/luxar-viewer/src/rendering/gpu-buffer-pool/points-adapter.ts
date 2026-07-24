@@ -29,6 +29,7 @@ import {
   attachPointStorage,
   getPointTexture,
   pointsNormalizationDivisor,
+  stampPointPresenceFlags,
   writePointTexels,
   type PointTexelSource,
 } from '../point-geometry';
@@ -430,33 +431,18 @@ export class PointsBufferAdapter {
 
     preparePointsGeometryForDraw(geometry, count);
 
-    // Presence stamps: the fixed texel layout always carries every slot
-    // (identity fills when a field is absent), so real source presence
-    // rides userData — `hasScalars` drives `supportsScalarColormap`, the
-    // rest serve debug/E2E introspection (datasets written before the
-    // Python writer stamped `has_colors/has_radii/has_sharpness` into
-    // attrs carry no such keys; the flags otherwise live in a
-    // metadata dict that never reaches attrs). Refreshed on EVERY update —
-    // pool geometries are reused across tenants, and a presence flip must
-    // not leak the previous tenant's stamp (the texel writer already
-    // restores the identity fills).
+    // Presence stamps — shared chokepoint with the node factory; see
+    // `stampPointPresenceFlags` for what each flag carries and why they
+    // refresh on EVERY update (pool tenant flips).
     //
     // Deliberately stamped AFTER the texel write above: writePointTexels
     // throws only at its pre-loop length guard, so a throwing write
-    // leaves the texture's PREVIOUS content fully intact — and these
+    // leaves the texture's PREVIOUS content fully intact — and the
     // un-reached stamps stay consistent with it (old texels + old
     // stamps). Stamping before the write would instead pair NEW stamps
     // with OLD texels on that path (reviewed and kept; the lines
     // adapter's stampLinePresenceFlags follows the same ordering).
-    if (!instanced.userData) instanced.userData = {};
-    instanced.userData.hasScalars = data.scalars !== undefined;
-    instanced.userData.hasColors = !!data.colors;
-    instanced.userData.hasRadii = !!data.radii;
-    instanced.userData.hasSharpness = !!data.sharpness;
-    // RGBA-alpha presence (texel2.y carries a REAL per-point opacity,
-    // not the 1.0 identity). syncPointMaterialWithGeometry pushes this
-    // into the material's uHasElementAlpha gate on every commit.
-    instanced.userData.hasElementAlpha = colorK === 4;
+    stampPointPresenceFlags(instanced, data, colorK);
 
     // CRITICAL: Force THREE.js to recalculate _maxInstanceCount.
     delete (geometry as unknown as { _maxInstanceCount?: number })._maxInstanceCount;

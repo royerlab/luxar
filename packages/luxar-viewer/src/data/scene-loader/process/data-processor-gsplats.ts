@@ -26,6 +26,7 @@ import type {
   GSplatsViewState,
   ProcessedGSplatsData,
 } from '../../../types/gsplats';
+import { assertColorLayout } from '../../loaders';
 import { config as appConfig } from '../../../config';
 import { log, Modules } from '../../../utils/log';
 import { getWorkerPool } from '../../../workers/worker-pool';
@@ -83,6 +84,10 @@ function buildGSplatsParams(
       }
     }
   }
+  // Strict layout check at the chokepoint where the exact splat count
+  // is known: catches an RGBA array whose producer forgot to declare
+  // colorComponents (see assertColorLayout).
+  assertColorLayout(data.colors, data.splatCount, data.colorComponents ?? 3, 'buildGSplatsParams');
   return {
     positions: data.positions,
     choleskyFactors: data.choleskyFactors,

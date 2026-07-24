@@ -376,6 +376,26 @@ volumetric (it is emissive; the `setSurfacePickDepth(isNormalMode || isOpaqueMod
 front-most rule in `rendering/picking/picking-system.ts` stays as-is).
 Front-most picking beyond a τ threshold is a possible follow-up, not phase 1.
 
+Two deliberate per-element-alpha semantics, uniform across all three
+geometry types (phase-4 double-check review; symmetry-by-design, not
+oversights):
+
+- **Invisible-but-pickable**: the pick shaders never read the
+  per-element alpha (points texel2.y / lines texel5.zw / gsplat
+  texel3.y) — their brightness derives from the coverage chain only. An
+  element with alpha ≈ 0 is visually absent (emission scaled to ~0;
+  under volumetric it is not even discarded when its color is
+  non-black, since a black-but-dense occluder keeps its τ) yet remains
+  fully pickable. Making picking alpha-aware would follow the same
+  τ-threshold follow-up as front-most picking above.
+- **`normal`-mode depthWrite ignores per-element alpha**:
+  `normalModeDepthWrite` keys on NODE opacity alone, so an RGBA node in
+  `normal` mode at node-opacity 1.0 writes depth even for its
+  near-transparent (alpha ≈ 0) elements, which can occlude content
+  behind them. Per-element depthWrite is not expressible in a single
+  draw call; the workaround is the volumetric mode itself (never
+  depth-writes) or lowering node opacity below the 0.99 threshold.
+
 ### 5.3 Attr composition and the uniform
 
 - `ComposableAttrs`/`EffectiveAttrs` gain `absorption`
