@@ -281,8 +281,9 @@ export const POINT_FRAGMENT_SHADER = /* glsl */ `
       mediump float alpha = falloff * opacity * sizeScale * sizeScale * vNearFade;
 
       #ifdef LUXAR_VOLUMETRIC
-      // Per-point alpha maps into optical depth w(a) = −ln(1 − a) so a
-      // point's peak rendered alpha reproduces a (mirrors the gsplat
+      // Per-point alpha maps into optical depth w(a) = −ln(1 − a) so
+      // alpha composes as optical depth ("peak rendered alpha = a" is
+      // exact when the remaining τ factor is 1; mirrors the gsplat
       // shader; clamp = ALPHA_CLAMP from ../_shared/volumetric). Gated by
       // uHasElementAlpha: the identity 1.0 written for RGB data must
       // NOT map to w ≈ 6.24.
