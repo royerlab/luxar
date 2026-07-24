@@ -260,9 +260,9 @@ void main() {
 	nodeVarying4 = nodeVar39;
 	nodeVarying5 = nodeVar43;
 
-	if ( ( ( ( nodeVar30.y < 1e30 ) && ( nodeVar30.y > -1e30 ) ) && ( nodeVar30.y >= 0.0 ) ) ) {
+	if ( ( ( nodeVar30.y < 1e30 ) && ( nodeVar30.y > -1e30 ) ) ) {
 
-		nodeVar44 = nodeVar30.y;
+		nodeVar44 = min( max( nodeVar30.y, 0.0 ), 1.0 );
 
 	} else {
 

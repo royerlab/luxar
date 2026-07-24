@@ -39,6 +39,16 @@ float sanitizePositive(float v, float fallback) {
 float sanitizeNonNegative(float v, float fallback) {
   return (isInvalidFloat(v) || v < 0.0) ? fallback : v;
 }
+
+// Per-element opacity sanitizer: NaN/Inf route to the 1.0 opaque
+// identity (corruption stays LOUD), finite values clamp to [0, 1]
+// (alpha is opacity, never HDR — Python pins the range at write; this
+// guards hand-crafted zarr). The clamp keeps the zero boundary
+// CONTINUOUS (a -1e-4 epsilon vanishes like +0.0 renders, instead of
+// jumping to full opacity) and keeps the value mediump-varying-safe.
+float sanitizeAlpha(float v) {
+  return isInvalidFloat(v) ? 1.0 : clamp(v, 0.0, 1.0);
+}
 `;
 
 /**

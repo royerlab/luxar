@@ -263,9 +263,9 @@ void main() {
 	nodeVarying4 = nodeVar41;
 	nodeVarying5 = nodeVar45;
 
-	if ( ( ( ( nodeVar32.y < 1e30 ) && ( nodeVar32.y > -1e30 ) ) && ( nodeVar32.y >= 0.0 ) ) ) {
+	if ( ( ( nodeVar32.y < 1e30 ) && ( nodeVar32.y > -1e30 ) ) ) {
 
-		nodeVar46 = nodeVar32.y;
+		nodeVar46 = min( max( nodeVar32.y, 0.0 ), 1.0 );
 
 	} else {
 

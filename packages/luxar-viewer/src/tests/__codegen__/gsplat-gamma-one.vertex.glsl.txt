@@ -409,9 +409,9 @@ void main() {
 	nodeVar87 = ( cameraProjectionMatrix * nodeVar40 );
 	nodeVarying0 = nodeVar38;
 
-	if ( ( ( ( nodeVar39 < 1e30 ) && ( nodeVar39 > -1e30 ) ) && ( nodeVar39 >= 0.0 ) ) ) {
+	if ( ( ( nodeVar39 < 1e30 ) && ( nodeVar39 > -1e30 ) ) ) {
 
-		nodeVar88 = nodeVar39;
+		nodeVar88 = min( max( nodeVar39, 0.0 ), 1.0 );
 
 	} else {
 

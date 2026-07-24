@@ -391,10 +391,14 @@ export const GSPLAT_VERTEX_SHADER = /* glsl */ `
         // Sanitized: alpha is load-bearing in EVERY mode (linear
         // contribution scale) and maps into optical depth under
         // volumetric, where a NaN/Inf poisons τ past the discard into
-        // NaN pixels. Python validation blocks non-finite alpha, but
-        // hand-crafted zarr must not. NaN/Inf/negative route to the
-        // 1.0 opaque identity (point twin does the same).
-        vAlpha = sanitizeNonNegative(aAlpha, 1.0);
+        // NaN pixels — and a huge finite value would blow out the
+        // linear folds (or overflow the mediump varying). Python
+        // validation pins alpha to [0, 1] at write; this guards
+        // hand-crafted zarr. NaN/Inf → the 1.0 opaque identity (loud);
+        // finite values clamp to [0, 1] (a negative epsilon vanishes
+        // continuously instead of flipping opaque). The point twin
+        // does the same.
+        vAlpha = sanitizeAlpha(aAlpha);
 
         // Compute proper clip-space depth using projection matrix
         // This ensures correct depth buffer behavior for overlapping splats

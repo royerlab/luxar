@@ -47,6 +47,20 @@ export function sanitizeNonNegative(value: TSLNode, fallback: TSLNode): TSLNode 
 }
 
 /**
+ * Per-element opacity sanitizer. Mirrors GLSL `sanitizeAlpha`: NaN/Inf
+ * route to the 1.0 opaque identity (corruption stays LOUD), finite
+ * values clamp to [0, 1] — alpha is opacity, never HDR (Python pins the
+ * range at write; this guards hand-crafted zarr). The clamp keeps the
+ * zero boundary CONTINUOUS (a -1e-4 epsilon vanishes like +0.0 renders,
+ * instead of jumping to full opacity) and keeps the value
+ * mediump-varying-safe.
+ */
+export function sanitizeAlpha(value: TSLNode): TSLNode {
+  const isFinite = value.lessThan(1e30).and(value.greaterThan(-1e30));
+  return isFinite.select(value.max(0.0).min(1.0), float(1.0));
+}
+
+/**
  * Boolean TSL node: true when `value` is NaN or +/-Inf. Mirrors GLSL
  * `isInvalidFloat`. TSL has no direct `isnan`/`isinf` exposed across
  * backends, so we approximate via the finite-range test that

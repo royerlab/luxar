@@ -71,7 +71,7 @@ import { NodeMaterial } from 'three/webgpu';
 import {
   invalidFloatTSL,
   perspectiveNearFadeTSL,
-  sanitizeNonNegative,
+  sanitizeAlpha,
   type TSLNode,
 } from '../_shared/tsl-helpers';
 import {
@@ -583,10 +583,10 @@ export function gsplatWebGPUFactory(
 
     // Assign varyings (declared outside the Fn; see above).
     vColor.assign(perInstanceColor);
-    // Sanitized like the GLSL twin: NaN/Inf/negative alpha routes to
-    // the 1.0 opaque identity (alpha is load-bearing in every mode and
+    // Sanitized like the GLSL twin: NaN/Inf route to the 1.0 opaque
+    // identity, finite values clamp to [0, 1] (alpha is load-bearing and
     // feeds optical depth under volumetric).
-    vAlpha.assign(sanitizeNonNegative(aAlpha, float(1.0)));
+    vAlpha.assign(sanitizeAlpha(aAlpha));
     vAmplitude2D.assign(vAmplitude2DVal);
     vL2D.assign(vL2DVal);
     vCenterScreen.assign(vCenterScreenVal);

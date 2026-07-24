@@ -435,9 +435,9 @@ void main() {
 	nodeVar92 = texture( nodeUniform28, nodeVar89 );
 	nodeVarying0 = nodeVar92.xyz;
 
-	if ( ( ( ( nodeVar39 < 1e30 ) && ( nodeVar39 > -1e30 ) ) && ( nodeVar39 >= 0.0 ) ) ) {
+	if ( ( ( nodeVar39 < 1e30 ) && ( nodeVar39 > -1e30 ) ) ) {
 
-		nodeVar93 = nodeVar39;
+		nodeVar93 = min( max( nodeVar39, 0.0 ), 1.0 );
 
 	} else {
 
