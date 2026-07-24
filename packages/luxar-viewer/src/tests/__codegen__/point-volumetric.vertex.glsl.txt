@@ -116,7 +116,8 @@ float nodeVar42;
 float nodeVar43;
 float nodeVar44;
 float nodeVar45;
-vec4 nodeVar46;
+float nodeVar46;
+vec4 nodeVar47;
 
 // codes
 
@@ -261,21 +262,32 @@ void main() {
 	nodeVarying3 = nodeVar26;
 	nodeVarying4 = nodeVar41;
 	nodeVarying5 = nodeVar45;
-	nodeVarying6 = nodeVar32.y;
 
-	if ( ( nodeVar45 < 0.01 ) ) {
+	if ( ( ( nodeVar32.y < 1e30 ) && ( nodeVar32.y > -1e30 ) ) ) {
 
-		nodeVar46 = vec4( 0.0, 0.0, -2.0, 1.0 );
+		nodeVar46 = min( max( nodeVar32.y, 0.0 ), 1.0 );
 
 	} else {
 
-		nodeVar46 = ( nodeVar39 + vec4( ( ( aQuadCorner * ( vec2( clamp( nodeVar41, 1.5, nodeUniform21 ) ) / nodeUniform22 ) ) * vec2( nodeVar39.w ) ), 0.0, 0.0 ) );
+		nodeVar46 = 1.0;
+
+	}
+
+	nodeVarying6 = nodeVar46;
+
+	if ( ( nodeVar45 < 0.01 ) ) {
+
+		nodeVar47 = vec4( 0.0, 0.0, -2.0, 1.0 );
+
+	} else {
+
+		nodeVar47 = ( nodeVar39 + vec4( ( ( aQuadCorner * ( vec2( clamp( nodeVar41, 1.5, nodeUniform21 ) ) / nodeUniform22 ) ) * vec2( nodeVar39.w ) ), 0.0, 0.0 ) );
 
 	}
 
 
 	// result
-	gl_Position = nodeVar46;
+	gl_Position = nodeVar47;
 
 	gl_PointSize = 1.0;
 

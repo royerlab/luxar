@@ -107,7 +107,7 @@ def write_gsplats(
     if isinstance(amplitudes, (int, float)):
         aprint(f"  → Uniform amplitude {amplitudes:.3f} for all splats")
     if colors is not None and isinstance(colors, (list, tuple)):
-        aprint(f"  → Uniform color RGB{list(colors)} for all splats")
+        aprint(f"  → Uniform color RGB(A){list(colors)} for all splats")
     if cholesky_is_uniform:
         aprint(
             f"  → Uniform Cholesky factors (shape {n_dims * (n_dims + 1) // 2}) "

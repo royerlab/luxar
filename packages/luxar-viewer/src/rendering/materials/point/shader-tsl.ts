@@ -55,7 +55,12 @@ import {
   cameraProjectionMatrix,
 } from 'three/tsl';
 import { NodeMaterial } from 'three/webgpu';
-import { sanitizeNonNegative, perspectiveNearFadeTSL, type TSLNode } from '../_shared/tsl-helpers';
+import {
+  sanitizeAlpha,
+  sanitizeNonNegative,
+  perspectiveNearFadeTSL,
+  type TSLNode,
+} from '../_shared/tsl-helpers';
 import {
   ALPHA_CLAMP,
   VOLUMETRIC_SERIES_C1,
@@ -386,7 +391,10 @@ export function pointWebGPUFactory(
     vColor.assign(perPointColor);
     vPointSize.assign(basePointSize);
     vNearFade.assign(depthFade);
-    vAlpha.assign(pointT2.y);
+    // Sanitized like the GLSL twin: NaN/Inf route to the 1.0 opaque
+    // identity, finite values clamp to [0, 1] (alpha is load-bearing and
+    // feeds optical depth under volumetric).
+    vAlpha.assign(sanitizeAlpha(pointT2.y));
 
     return clipPos;
   });

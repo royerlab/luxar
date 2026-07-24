@@ -205,6 +205,15 @@ describe('GSplatMaterial.applyBlendingMode (GLSL)', () => {
     expect(mat.fragmentShader).toContain('exp(-tau)');
   });
 
+  it('vertex shader sanitizes the per-splat alpha read (NaN/Inf → 1.0, finite clamped to [0, 1])', () => {
+    // Alpha is load-bearing in every mode and feeds optical depth under
+    // volumetric — an unsanitized NaN from hand-crafted zarr poisons τ
+    // past the discard into NaN pixels. Pinned at the USAGE (the
+    // assignment), matching the point twin's pin.
+    const mat = new GSplatMaterial();
+    expect(mat.vertexShader).toContain('vAlpha = sanitizeAlpha(aAlpha);');
+  });
+
   it('clone() round-trips absorption (the layers panel clones on any first interaction)', () => {
     const mat = new GSplatMaterial({ absorption: 3.5, blendingMode: 'volumetric' });
     expect(mat.getAbsorption()).toBe(3.5);
