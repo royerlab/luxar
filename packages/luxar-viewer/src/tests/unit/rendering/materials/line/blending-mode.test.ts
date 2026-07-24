@@ -16,6 +16,8 @@ import { describe, it, expect } from 'vitest';
 import * as THREE from 'three';
 import { LineMaterial } from '../../../../../rendering/materials/line/material-glsl';
 import { LineTSLMaterial } from '../../../../../rendering/materials/line/material-tsl';
+import { LINE_CHORD_SCALE } from '../../../../../rendering/materials/line/math';
+import { POINT_CHORD_SCALE } from '../../../../../rendering/materials/point/math';
 import { getCompleteBlendingState } from '../../../../../rendering/blending-state';
 import type { BlendingMode } from '../../../../../rendering/material-manager';
 
@@ -146,6 +148,28 @@ describe('LineMaterial.applyBlendingMode (GLSL)', () => {
     expect(mat.vertexShader).toContain(
       'vAlpha = mix(sanitizeAlpha(lineT5.z), sanitizeAlpha(lineT5.w), t);'
     );
+  });
+
+  it('LINE_CHORD_SCALE equals POINT_CHORD_SCALE (the κ-scale alignment contract, executable)', () => {
+    // Both math.ts files derive √(π/ln 100) independently (isotropic
+    // ball chord ∝ radius vs transverse ribbon chord ∝ width) and their
+    // comments declare the values identical — which is what makes the
+    // shared κ slider mean the same optical depth per unit size across
+    // geometry types. Retuning one constant without the other would
+    // silently de-calibrate κ; this pin makes the contract executable.
+    expect(LINE_CHORD_SCALE).toBe(POINT_CHORD_SCALE);
+    expect(LINE_CHORD_SCALE).toBeCloseTo(Math.sqrt(Math.PI / Math.log(100.0)), 15);
+  });
+
+  it('non-volumetric fragment folds vAlpha into the contribution (alpha active in EVERY mode)', () => {
+    // Phase-2 doctrine: the per-element alpha is a plain linear
+    // contribution scale outside volumetric. Mutation-found gap: dropping
+    // `intensity *= vAlpha;` survived the entire unit suite (only the
+    // playwright-tier codegen snapshot would catch it) — an RGBA
+    // dataset's translucent segments would render fully opaque in
+    // additive/normal/max. Pinned at the USAGE.
+    const mat = new LineMaterial();
+    expect(mat.fragmentShader).toContain('intensity *= vAlpha;');
   });
 });
 

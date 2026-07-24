@@ -491,11 +491,13 @@ export function lineWebGPUFactory(
     if (vViewZ) vViewZ.assign(mvPos.z);
     vClippedStart.assign(aStartClipped);
     vClippedEnd.assign(aEndClipped);
-    // Each endpoint sanitized BEFORE the mix so one NaN endpoint can't
-    // poison the whole segment: NaN/Inf route to the 1.0 opaque
-    // identity (loud), finite values clamp to [0, 1] (alpha is
-    // load-bearing in every mode and feeds optical depth under
-    // volumetric). Mirrors the GLSL twin.
+    // Each texel read sanitized BEFORE the mix: NaN/Inf route to the
+    // 1.0 opaque identity (loud), finite values clamp to [0, 1] (alpha
+    // is load-bearing in every mode and feeds optical depth under
+    // volumetric). The guarantee is "NaN never reaches τ/pixels" — a
+    // NaN source vertex already poisons BOTH texel alphas upstream in
+    // the worker's lerp kernel, so the whole segment renders
+    // loud-opaque. Mirrors the GLSL twin.
     vAlpha.assign(mix(sanitizeAlpha(lineT5.z), sanitizeAlpha(lineT5.w), t));
 
     return clipPosOut;

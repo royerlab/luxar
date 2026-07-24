@@ -127,6 +127,17 @@ describe('PointMaterial.applyBlendingMode', () => {
     expect(mat.vertexShader).toContain('vAlpha = sanitizeAlpha(pointT2.y);');
   });
 
+  it('non-volumetric fragment folds vAlpha into the contribution (alpha active in EVERY mode)', () => {
+    // Phase-2 doctrine: the per-element alpha is a plain linear
+    // contribution scale outside volumetric. Mutation-found gap (on the
+    // line twin): dropping the fold survived the entire unit suite —
+    // only the playwright-tier codegen snapshot would catch an RGBA
+    // dataset's translucent points rendering fully opaque in
+    // additive/normal/max. Pinned at the USAGE.
+    const mat = new PointMaterial();
+    expect(mat.fragmentShader).toContain('alpha *= vAlpha;');
+  });
+
   it("'volumetric' applies the REAL emission–absorption state (phase 3), userData keeps 'volumetric'", () => {
     // Points implement the volumetric fragment math since phase 3
     // (VOLUMETRIC_BLENDING_SPEC.md): premultiplied self-screened
