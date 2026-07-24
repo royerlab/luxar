@@ -32,6 +32,8 @@ const GSPLAT_OVERLAP_FIXTURE =
   'http://localhost:9000/packages/luxar-viewer/tests/fixtures/test_gsplats_normal_overlap.luxar.zarr';
 const GSPLAT_OVERLAP_REVERSED_FIXTURE =
   'http://localhost:9000/packages/luxar-viewer/tests/fixtures/test_gsplats_normal_overlap_reversed.luxar.zarr';
+const POINTS_OVERLAP_REVERSED_FIXTURE =
+  'http://localhost:9000/packages/luxar-viewer/tests/fixtures/test_points_normal_overlap_reversed.luxar.zarr';
 const GSPLAT_VOLUMETRIC_FIXTURE =
   'http://localhost:9000/packages/luxar-viewer/tests/fixtures/test_gsplats_volumetric.luxar.zarr';
 const GSPLAT_VOLUMETRIC_REVERSED_FIXTURE =
@@ -859,6 +861,215 @@ test.describe('GSplat normal mode (premultiplied coverage alpha)', () => {
     const afterOrbit = await readState();
     for (const node of afterOrbit.nodes) expect(node.identity).toBe(true);
     expect(afterOrbit.sorts).toBe(0);
+  });
+});
+
+test.describe('Points normal mode depth sorting', () => {
+  // Fixture: the POINTS twin of the gsplat normal-overlap-reversed
+  // scene (three-geometry symmetry — points are depth-sorted too): a
+  // back red point, a front green point overlapping it in screen space,
+  // and an off-axis blue reference, declared front-first with
+  // blending_mode='normal', opacity=0.5. See
+  // generate_points_normal_overlap_reversed_test().
+  test.slow();
+
+  test.beforeAll(async () => {
+    const { existsSync } = await import('node:fs');
+    const path = await import('node:path');
+    const { fileURLToPath } = await import('node:url');
+    const specDir = path.dirname(fileURLToPath(import.meta.url));
+    for (const name of [
+      'test_points_normal_overlap.luxar.zarr',
+      'test_points_normal_overlap_reversed.luxar.zarr',
+    ]) {
+      const fixtureDir = path.resolve(specDir, `../../../tests/fixtures/${name}`);
+      if (!existsSync(fixtureDir)) {
+        throw new Error(
+          `Missing fixture ${fixtureDir} — run \`pnpm test:generate-fixtures\` ` +
+            'from packages/luxar-viewer/ first.'
+        );
+      }
+    }
+  });
+
+  /** Wait until a points mesh has committed instances. */
+  async function waitForPointsCommitted(page: import('@playwright/test').Page): Promise<void> {
+    await page.waitForFunction(
+      () => {
+        const debug = (window as unknown as { __luxarDebug?: { scene?: unknown } }).__luxarDebug;
+        if (!debug?.scene) return false;
+        let committed = false;
+        (debug.scene as { traverse: (cb: (obj: unknown) => void) => void }).traverse((obj) => {
+          const o = obj as {
+            userData?: { nodeType?: string };
+            geometry?: { instanceCount?: number };
+          };
+          if (o.userData?.nodeType === 'points' && (o.geometry?.instanceCount ?? 0) > 0) {
+            committed = true;
+          }
+        });
+        return committed;
+      },
+      undefined,
+      { timeout: 30000 }
+    );
+  }
+
+  test('depth sort applies a back-to-front ordering after load settle (points)', async ({
+    page,
+  }) => {
+    // The points mirror of the gsplat Phase-2 gate. The reversed fixture
+    // declares its points front-to-back; the compiler may Morton-reorder
+    // storage, so the gate does NOT assume a specific on-disk order.
+    // Instead it asserts the applied `aSortedIndex` permutation directly:
+    // (a) it departs from identity, and (b) it is back-to-front — view z
+    // (from the live camera + the point-texture positions, 12 floats /
+    // point) is non-decreasing along the ordering. For this scene's
+    // camera framing the identity ordering is NOT monotone (the near
+    // green point sits between the two far points in storage), so a
+    // points-blind coordinator times out at the non-identity wait — the
+    // non-vacuous gate. The overlap pixels are then checked for the
+    // correct green-over-red compositing.
+    await page.addInitScript(() => {
+      localStorage.setItem('luxar-control-rail-hint-dismissed', '1');
+    });
+    await page.goto(`/?src=${POINTS_OVERLAP_REVERSED_FIXTURE}&debug&dpr=1`);
+    await waitForLuxarReady(page);
+    await waitForPointsCommitted(page);
+
+    // The sort lands asynchronously after the commit: wait until the
+    // permutation departs from identity.
+    await page.waitForFunction(
+      () => {
+        const debug = (window as unknown as { __luxarDebug?: { scene?: unknown } }).__luxarDebug;
+        if (!debug?.scene) return false;
+        let sorted = false;
+        (debug.scene as { traverse: (cb: (obj: unknown) => void) => void }).traverse((obj) => {
+          const o = obj as {
+            userData?: { nodeType?: string; visiblePointCount?: number };
+            geometry?: { attributes?: { aSortedIndex?: { array?: ArrayLike<number> } } };
+          };
+          if (o.userData?.nodeType !== 'points') return;
+          const arr = o.geometry?.attributes?.aSortedIndex?.array;
+          const count = o.userData?.visiblePointCount ?? 0;
+          if (!arr || count < 2) return;
+          for (let i = 0; i < count; i++) {
+            if (arr[i] !== i) {
+              sorted = true;
+              return;
+            }
+          }
+        });
+        return sorted;
+      },
+      undefined,
+      { timeout: 30000 }
+    );
+
+    // Assert the applied permutation is back-to-front: view z of the
+    // drawn points (point-texture positions under modelView) never
+    // decreases along the instance order. Point texel layout: 3 texels
+    // (12 floats) per point, texel0.xyz = position.
+    const monotone = await page.evaluate(() => {
+      const debug = (window as any).__luxarDebug;
+      const results: Array<{ ordering: number[]; viewZs: number[]; ok: boolean }> = [];
+      debug.scene.traverse((obj: any) => {
+        if (obj.userData?.nodeType !== 'points') return;
+        const count = obj.userData?.visiblePointCount ?? 0;
+        const arr = obj.geometry?.attributes?.aSortedIndex?.array;
+        const texData = obj.geometry?.userData?.elementTexture?.image?.data;
+        if (!arr || !texData || count < 2) return;
+        const mwi = debug.camera.matrixWorldInverse.elements;
+        const mw = obj.matrixWorld.elements;
+        // modelView = matrixWorldInverse × matrixWorld (column-major).
+        const viewZof = (x: number, y: number, z: number) => {
+          const wx = mw[0] * x + mw[4] * y + mw[8] * z + mw[12];
+          const wy = mw[1] * x + mw[5] * y + mw[9] * z + mw[13];
+          const wz = mw[2] * x + mw[6] * y + mw[10] * z + mw[14];
+          return mwi[2] * wx + mwi[6] * wy + mwi[10] * wz + mwi[14];
+        };
+        const ordering: number[] = [];
+        const viewZs: number[] = [];
+        let ok = true;
+        let prev = -Infinity;
+        for (let j = 0; j < count; j++) {
+          const idx = arr[j];
+          ordering.push(idx);
+          const zv = viewZof(texData[idx * 12], texData[idx * 12 + 1], texData[idx * 12 + 2]);
+          viewZs.push(zv);
+          // Small epsilon: equal-depth points share a key bucket.
+          if (zv < prev - 1e-4) ok = false;
+          prev = Math.max(prev, zv);
+        }
+        results.push({ ordering, viewZs, ok });
+      });
+      return results;
+    });
+    expect(monotone.length).toBeGreaterThan(0);
+    for (const r of monotone) {
+      expect(r.ok, `points ordering ${r.ordering} viewZs ${r.viewZs} not back-to-front`).toBe(true);
+    }
+
+    await waitForNextRender(page, 5);
+
+    // Visual sanity: the overlap core composites green over red (the
+    // correct image; the wrong draw order gives the mirror-image
+    // red-dominant core). The overlap's screen position depends on the
+    // auto-framing, so project the red/green point centers to screen
+    // coordinates in-page and sample the middle of the segment between
+    // them — where the two sprites weigh comparably and the compositing
+    // order alone decides the dominant channel.
+    const midOffsets = await page.evaluate(() => {
+      const debug = (window as any).__luxarDebug;
+      let offsets: Array<[number, number]> | null = null;
+      debug.scene.traverse((obj: any) => {
+        if (obj.userData?.nodeType !== 'points' || offsets) return;
+        const texData = obj.geometry?.userData?.elementTexture?.image?.data;
+        if (!texData) return;
+        const mwi = debug.camera.matrixWorldInverse.elements;
+        const pm = debug.camera.projectionMatrix.elements;
+        const mw = obj.matrixWorld.elements;
+        const toScreen = (x: number, y: number, z: number): [number, number] => {
+          const wx = mw[0] * x + mw[4] * y + mw[8] * z + mw[12];
+          const wy = mw[1] * x + mw[5] * y + mw[9] * z + mw[13];
+          const wz = mw[2] * x + mw[6] * y + mw[10] * z + mw[14];
+          const vx = mwi[0] * wx + mwi[4] * wy + mwi[8] * wz + mwi[12];
+          const vy = mwi[1] * wx + mwi[5] * wy + mwi[9] * wz + mwi[13];
+          const vz = mwi[2] * wx + mwi[6] * wy + mwi[10] * wz + mwi[14];
+          const cx = pm[0] * vx + pm[4] * vy + pm[8] * vz + pm[12];
+          const cy = pm[1] * vx + pm[5] * vy + pm[9] * vz + pm[13];
+          const cw = pm[3] * vx + pm[7] * vy + pm[11] * vz + pm[15];
+          return [(cx / cw + 1) / 2, (1 - cy / cw) / 2];
+        };
+        // Identify red (z≈0, x<1) and green (z≈1) among the first points
+        // (point texel stride: 12 floats, texel0.xyz = position).
+        let red: [number, number] | null = null;
+        let green: [number, number] | null = null;
+        for (let i = 0; i < 3; i++) {
+          const x = texData[i * 12];
+          const z = texData[i * 12 + 2];
+          if (z > 0.5) green = toScreen(x, texData[i * 12 + 1], z);
+          else if (x < 1.0) red = toScreen(x, texData[i * 12 + 1], z);
+        }
+        if (red && green) {
+          offsets = [];
+          for (let t = 0.35; t <= 0.65; t += 0.05) {
+            offsets.push([red[0] + (green[0] - red[0]) * t, red[1] + (green[1] - red[1]) * t]);
+          }
+        }
+      });
+      return offsets;
+    });
+    expect(midOffsets).not.toBeNull();
+    const samples = await samplePixelsAt(page, 'canvas', midOffsets!);
+    const lit = samples.filter((s) => s.r > 20 || s.g > 20);
+    expect(lit.length).toBeGreaterThan(0);
+    const greenOverRed = lit.filter((s) => s.g > s.r).length;
+    const redOverGreen = lit.filter((s) => s.r > s.g).length;
+    expect(greenOverRed).toBeGreaterThan(redOverGreen);
+
+    const webglErrors = await getWebGLErrors(page);
+    expect(webglErrors.length).toBe(0);
   });
 });
 

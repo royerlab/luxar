@@ -10,7 +10,6 @@ from __future__ import annotations
 import pickle
 import re
 import shutil
-import subprocess
 import sys
 import zipfile
 from pathlib import Path, PurePosixPath
@@ -23,6 +22,7 @@ from ..core.dimensions import Dimension, Dimensions
 from ..io.compiler import LuxarZarrCompiler
 from ..typing_utils.aliases import PathLike
 from ..typing_utils.config import check_dataset_size_warning
+from .process import run_child_process
 
 
 def _validate_zip_member_path(member: str) -> PurePosixPath:
@@ -708,22 +708,25 @@ def launch_viewer(
     if open_browser:
         cmd.append("--open")
 
-    try:
-        subprocess.run(cmd, check=True)
-    except KeyboardInterrupt:
-        aprint("\n🛑 Stopping demo...")
-    except subprocess.CalledProcessError as e:
-        # Check if it's a "module not found" error
-        if e.returncode == 1:
-            aprint(f"\n❌ Error running luxar: {e}")
-            aprint("Make sure luxar is installed in your Python environment.")
-            aprint("If using hatch: run this demo with 'hatch run python <demo.py>'")
-        else:
-            aprint(f"\n❌ Error: {e}")
-            aprint(
-                "Make sure the viewer is built: cd packages/luxar-viewer && pnpm build"
-            )
-        sys.exit(1)
+    # isolate_group=False: keep the `luxar serve` child in this process's group
+    # so an ancestor's group-kill (from `luxar demo run`) still cascades to it.
+    # When the demo is run directly (`python -m luxar.demos.demo_X`), the
+    # helper's per-PID teardown still cleanly kills a hung server on Ctrl-C.
+    code = run_child_process(cmd, label="Luxar viewer", isolate_group=False)
+    if code in (0, 130):  # clean exit or user Ctrl-C
+        return
+    # Genuine failure. returncode 1 usually means luxar/module import failure;
+    # anything else typically means the viewer isn't built.
+    if code == 1:
+        aprint("\n❌ Error running luxar (exit 1).")
+        aprint("Make sure luxar is installed in your Python environment.")
+        aprint("If using hatch: run this demo with 'hatch run python <demo.py>'")
+    else:
+        aprint(f"\n❌ Error: luxar serve exited with code {code}.")
+        aprint(
+            "Make sure the viewer is built: cd packages/luxar-viewer && pnpm build"
+        )
+    sys.exit(1)
 
 
 def create_lorenz_attractor(

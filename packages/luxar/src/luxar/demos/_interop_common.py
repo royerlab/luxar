@@ -38,7 +38,14 @@ def build_gsplats_cache(
     Returns the path to the cached ``.gsplats.zarr``.
     """
     if cache_file.exists() and not recompute:
-        aprint(f"✓ Cached import: {cache_file}")
+        # Existence-gated: recipe/knob changes in the demo (e.g. the #648
+        # equal-count → stream:14000 ladder switch) do NOT retroactively
+        # apply to an already-built cache — say so instead of silently
+        # serving a stale recipe.
+        aprint(
+            f"✓ Cached import: {cache_file} "
+            "(pass --recompute to rebuild with the current LOD recipe)"
+        )
         return cache_file
 
     from luxar.gsplats.interop import import_gsplats

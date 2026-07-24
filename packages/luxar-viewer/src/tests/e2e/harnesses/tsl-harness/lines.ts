@@ -1,9 +1,9 @@
 /**
  * Line shader family for the TSL ↔ GLSL parity harness: the visual
  * instanced-line variants (gamma / no-GOG fast paths, max-mode
- * premultiply, colormap LUT, behind-camera + ortho-near culling) plus
- * the line-pick counterparts + the multi-row texture-orientation
- * variant. 10 registry entries.
+ * premultiply, colormap LUT, behind-camera + ortho-near culling,
+ * sorted-index permutation) plus the line-pick counterparts + the
+ * multi-row texture-orientation variant. 11 registry entries.
  *
  * @module tests/e2e/harnesses/tsl-harness/lines
  */
@@ -24,6 +24,7 @@ import {
   writeLineTexels,
   type LineTexelSource,
 } from '../../../../rendering/line-geometry';
+import { writeSortedIndexOrdering } from '../../../../rendering/element-storage';
 import type { RegistryEntry } from './types';
 import { buildBehindCamera, buildColormapTexture } from './shared';
 
@@ -161,6 +162,110 @@ function buildLineInstancedMesh(
   const mesh = createInstancedLinesMesh(
     { ...lineTexelSource(start, end, scalars), segmentCount: 1 },
     material
+  );
+  mesh.frustumCulled = false;
+  return mesh;
+}
+
+/**
+ * Four-segment texel source for the sorted-permutation variant — one
+ * short horizontal segment per screen quadrant (midpoints at world
+ * ±0.5 → pixels 16/48 under the default ortho camera), each with a
+ * DISTINCT color, so a broken `aSortedIndex` → texel indirection moves
+ * or recolors a segment and changes pixels instead of passing
+ * vacuously. Shared by the texture and mesh builders below
+ * (identical-data convention — the shaders sample the uniform's
+ * texture). The LINES twin of `points.ts::SORTED_PERMUTED_POINTS`.
+ */
+const SORTED_PERMUTED_COUNT = 4;
+const SORTED_PERMUTED_LINES: LineTexelSource = {
+  // prettier-ignore
+  startPositions: new Float32Array([
+    -0.75, -0.5, 0,
+     0.25, -0.5, 0,
+    -0.75,  0.5, 0,
+     0.25,  0.5, 0,
+  ]),
+  // prettier-ignore
+  endPositions: new Float32Array([
+    -0.25, -0.5, 0,
+     0.75, -0.5, 0,
+    -0.25,  0.5, 0,
+     0.75,  0.5, 0,
+  ]),
+  // prettier-ignore
+  startColors: new Float32Array([
+    1.0, 0.1, 0.1,
+    0.1, 1.0, 0.1,
+    0.1, 0.1, 1.0,
+    1.0, 1.0, 0.1,
+  ]),
+  // prettier-ignore
+  endColors: new Float32Array([
+    1.0, 0.1, 0.1,
+    0.1, 1.0, 0.1,
+    0.1, 0.1, 1.0,
+    1.0, 1.0, 0.1,
+  ]),
+  startWidths: new Float32Array([0.1, 0.1, 0.1, 0.1]),
+  endWidths: new Float32Array([0.1, 0.1, 0.1, 0.1]),
+  startSharpness: new Float32Array([0.5, 0.5, 0.5, 0.5]),
+  endSharpness: new Float32Array([0.5, 0.5, 0.5, 0.5]),
+  segmentLengths: new Float32Array([0.5, 0.5, 0.5, 0.5]),
+  startClipped: new Uint8Array([0, 0, 0, 0]),
+  endClipped: new Uint8Array([0, 0, 0, 0]),
+};
+
+/**
+ * NON-identity draw-slot → storage-slot permutation under test —
+ * applied via the production `writeSortedIndexOrdering` (the
+ * SortWorker's write path).
+ */
+const SORTED_PERMUTED_ORDERING = new Uint32Array([2, 0, 3, 1]);
+
+/**
+ * Four-segment line data texture, deliberately SIX TEXELS WIDE (one
+ * segment per ROW): storage slot i has texel base 6·i, so with W = 6
+ * every slot i > 0 resolves to row y = base / W = i > 0. This
+ * exercises the shaders' 2D texel-address reconstruction
+ * (x = base % W, y = base / W) on a multi-row wrap — every other line
+ * variant uses a single-segment 6×1 texture where y is always 0, so a
+ * broken row computation was invisible to the whole line suite.
+ */
+function buildSortedPermutedLineTexture(): THREE.DataTexture {
+  const tex = new THREE.DataTexture(
+    new Float32Array(6 * SORTED_PERMUTED_COUNT * 4),
+    6,
+    SORTED_PERMUTED_COUNT,
+    THREE.RGBAFormat,
+    THREE.FloatType
+  );
+  tex.magFilter = THREE.NearestFilter;
+  tex.minFilter = THREE.NearestFilter;
+  tex.generateMipmaps = false;
+  tex.flipY = false;
+  writeLineTexels(tex, SORTED_PERMUTED_LINES, SORTED_PERMUTED_COUNT);
+  return tex;
+}
+
+/**
+ * Multi-instance lines mesh matching {@link SORTED_PERMUTED_LINES},
+ * with the NON-identity {@link SORTED_PERMUTED_ORDERING} written
+ * through the production `writeSortedIndexOrdering`. Assembled via the
+ * production `createInstancedLinesMesh` like every other line entry
+ * (which attaches the storage pair via `attachLineStorage` and writes
+ * the texels + identity ordering); the permutation write then replaces
+ * the identity — the SortWorker's exact commit sequence.
+ */
+function buildSortedPermutedLinesMesh(material: THREE.Material): THREE.Object3D {
+  const mesh = createInstancedLinesMesh(
+    { ...SORTED_PERMUTED_LINES, segmentCount: SORTED_PERMUTED_COUNT },
+    material
+  );
+  writeSortedIndexOrdering(
+    mesh.geometry as THREE.InstancedBufferGeometry,
+    SORTED_PERMUTED_ORDERING,
+    SORTED_PERMUTED_COUNT
   );
   mesh.frustumCulled = false;
   return mesh;
@@ -462,5 +567,40 @@ export const LINE_SHADERS: Record<string, RegistryEntry> = {
     },
     // Camera at z=1 (ortho near 0.1): world z=0.85 → view depth 0.15.
     buildMesh: (m) => buildLineInstancedMesh(m, [-0.5, 0, 0.85], [0.5, 0, 0.85]),
+  },
+  // aSortedIndex indirection under a NON-identity permutation on a
+  // MULTI-ROW line texture — the LINES twin of `point-sorted-permuted`.
+  // Every other line variant is a single instance with identity
+  // ordering on a 6×1 texture, so neither the draw-slot → storage-slot
+  // permutation nor a texel base with base / W > 0 (row y > 0) was
+  // exercised by ANY line parity variant — a backend that ignored
+  // aSortedIndex or mis-reconstructed the 2D texel address would ship
+  // invisibly. Four distinct-color segments, one per screen quadrant,
+  // drawn through the production writeSortedIndexOrdering permutation
+  // [2, 0, 3, 1].
+  'line-sorted-permuted': {
+    source: LINE_SOURCE,
+    buildUniforms: () => ({
+      uLineTex: { value: buildSortedPermutedLineTexture() },
+      uResolution: { value: new THREE.Vector2(64, 64) },
+      uIsOrtho: { value: 1 },
+      uNearCull: { value: 0.01 },
+      uMaxLinePixelWidth: { value: 32.0 },
+      uPerspectiveLineScale: { value: 1.0 },
+      uOrthoLineScale: { value: 64.0 },
+      uOpacity: { value: 1.0 },
+      uInvGamma: { value: 1.0 / 2.2 },
+      uIntensity: { value: 1.0 },
+      uOffset: { value: 0.0 },
+    }),
+    buildTSLMaterial: (uniforms) => {
+      const m = lineWebGPUFactory(buildLineTSLNodesFromUniforms(uniforms, {}), {
+        isOrtho: true,
+      }) as unknown as THREE.Material;
+      m.transparent = false;
+      m.blending = THREE.NoBlending;
+      return m;
+    },
+    buildMesh: buildSortedPermutedLinesMesh,
   },
 };

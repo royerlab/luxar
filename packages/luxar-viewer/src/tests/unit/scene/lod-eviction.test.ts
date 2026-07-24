@@ -120,3 +120,64 @@ describe('enforceResidentByteBudget — on-screen protection', () => {
     expect(bare.release).toHaveBeenCalledTimes(1);
   });
 });
+
+describe('enforceResidentByteBudget — pure-retention early-outs', () => {
+  // The three guards at the top of the function: with no budget, a
+  // non-positive budget, or no residency measurement wired, the policy is
+  // PURE RETENTION — nothing may be released even when candidates exist.
+  function coldEntry(): {
+    entry: EvictableEntry;
+    release: ReturnType<typeof vi.fn>;
+  } {
+    const cold = child(false, 1);
+    const displayed = child(true, 2);
+    return {
+      entry: {
+        children: [cold, displayed],
+        activeChildIndex: 1,
+        displayedChildIndex: 1,
+      },
+      release: cold.release as ReturnType<typeof vi.fn>,
+    };
+  }
+
+  it('releases nothing when no budget getter is wired (budget == null)', () => {
+    const { entry, release } = coldEntry();
+    enforceResidentByteBudget({
+      entries: [entry],
+      camera: new THREE.Camera(),
+      frustum: new THREE.Frustum(),
+      // no getResidentByteBudget at all
+      getResidentBytes: () => 1e12,
+      computeWorldBox: () => null,
+    });
+    expect(release).not.toHaveBeenCalled();
+  });
+
+  it('releases nothing for a non-positive budget (0 disables eviction)', () => {
+    for (const budget of [0, -1]) {
+      const { entry, release } = coldEntry();
+      run(entry, () => 1e12, budget);
+      expect(release).not.toHaveBeenCalled();
+    }
+  });
+
+  it('releases nothing when no residency measurement is wired', () => {
+    const { entry, release } = coldEntry();
+    enforceResidentByteBudget({
+      entries: [entry],
+      camera: new THREE.Camera(),
+      frustum: new THREE.Frustum(),
+      getResidentByteBudget: () => 100,
+      // no getResidentBytes
+      computeWorldBox: () => null,
+    });
+    expect(release).not.toHaveBeenCalled();
+  });
+
+  it('releases nothing while under budget', () => {
+    const { entry, release } = coldEntry();
+    run(entry, () => 50, 100);
+    expect(release).not.toHaveBeenCalled();
+  });
+});

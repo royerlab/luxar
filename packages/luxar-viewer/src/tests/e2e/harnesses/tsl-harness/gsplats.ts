@@ -4,7 +4,7 @@
  * reject, gamma fast path, normal premult, opaque peak, thin-covariance
  * dilation, colormap LUT, behind-camera guard) plus the gsplat-pick
  * counterparts including the surface-pick depth pair and the multi-row
- * texture-orientation variant. 16 registry entries.
+ * texture-orientation variant. 17 registry entries.
  *
  * @module tests/e2e/harnesses/tsl-harness/gsplats
  */
@@ -35,7 +35,8 @@ import { buildBehindCamera, buildColormapTexture } from './shared';
 function buildGSplatInstancedMesh(
   material: THREE.Material,
   center: readonly [number, number, number] = [0, 0, 0],
-  sigma: number = 0.1
+  sigma: number = 0.1,
+  alpha: number = 1.0
 ): THREE.Object3D {
   // PRODUCTION assembly (createInstancedGSplatsMesh), not a hand-rolled
   // geometry: the previous version decorated the plain BufferGeometry
@@ -44,6 +45,10 @@ function buildGSplatInstancedMesh(
   // pixels through WebGPURenderer — every gsplat parity variant's TSL
   // side was black and the tests passed vacuously under the tolerance.
   // Isotropic: L = sigma · I, packed [L00, L10, L11, L20, L21, L22].
+  // Colors are RGBA (the production colorComponents === 4 layout) so
+  // the optional per-splat `alpha` reaches texel3.y; the default 1.0 is
+  // the per-element-opacity identity — byte-identical to what the RGB
+  // path writes, so every pre-existing entry is unchanged.
   const mesh = createInstancedGSplatsMesh(
     {
       centers: new Float32Array([center[0], center[1], center[2]]),
@@ -51,7 +56,8 @@ function buildGSplatInstancedMesh(
       cholesky23: new Float32Array([sigma, 0]),
       cholesky45: new Float32Array([0, sigma]),
       amplitudes: new Float32Array([1.0]),
-      colors: new Float32Array([1.0, 0.5, 0.25]),
+      colors: new Float32Array([1.0, 0.5, 0.25, alpha]),
+      colorComponents: 4,
       splatCount: 1,
     },
     material
@@ -76,13 +82,18 @@ function buildGSplatInstancedMesh(
  */
 function buildGSplatSplatDataTexture(
   center: readonly [number, number, number] = [0, 0, 0],
-  sigma: number = 0.1
+  sigma: number = 0.1,
+  alpha: number = 1.0
 ): THREE.DataTexture {
   const tex = new THREE.DataTexture(new Float32Array(16), 4, 1, THREE.RGBAFormat, THREE.FloatType);
   tex.magFilter = THREE.NearestFilter;
   tex.minFilter = THREE.NearestFilter;
   tex.generateMipmaps = false;
   tex.flipY = false;
+  // RGBA colors (production colorComponents === 4 branch of
+  // writeSplatTexels) so the optional per-splat `alpha` lands in
+  // texel3.y; the default 1.0 writes exactly what the RGB branch would
+  // (the per-element-opacity identity), preserving every existing entry.
   writeSplatTexels(
     tex,
     {
@@ -91,7 +102,8 @@ function buildGSplatSplatDataTexture(
       cholesky23: new Float32Array([sigma, 0]),
       cholesky45: new Float32Array([0, sigma]),
       amplitudes: new Float32Array([1.0]),
-      colors: new Float32Array([1.0, 0.5, 0.25]),
+      colors: new Float32Array([1.0, 0.5, 0.25, alpha]),
+      colorComponents: 4,
     },
     1
   );
@@ -507,6 +519,53 @@ export const GSPLAT_SHADERS: Record<string, RegistryEntry> = {
       return m;
     },
     buildMesh: buildGSplatInstancedMesh,
+  },
+  // GSplat 'volumetric' with a PER-SPLAT alpha (RGBA colors +
+  // uHasElementAlpha=1). Same scene/uniforms as `gsplat-volumetric`
+  // except texel3.y = 0.5 and the gate uniform is ON, so the
+  // α → optical-density fold
+  //   intensity *= mix(1, −ln(1 − min(a, ALPHA_CLAMP)), uHasElementAlpha)
+  // actually executes. Every other gsplat entry leaves uHasElementAlpha
+  // at its 0 default (TSL `?? 0`; the GLSL uniform uninitialized), so
+  // without this variant the fold ran in ZERO parity cases — a
+  // divergence in the mix lanes or the log clamp would ship invisibly.
+  // α = 0.5 puts w = −ln(0.5) ≈ 0.693 mid-range, so both the screened
+  // RGB and the absorption alpha move measurably relative to α = 1.
+  'gsplat-volumetric-rgba': {
+    source: GSPLAT_SOURCE,
+    buildUniforms: () => ({
+      uSplatTex: { value: buildGSplatSplatDataTexture([0, 0, 0], 0.1, 0.5) },
+      uResolution: { value: new THREE.Vector2(64, 64) },
+      uFx: { value: 32.0 },
+      uFy: { value: 32.0 },
+      uTruncate: { value: 3.0 },
+      uTruncateSq: { value: 9.0 },
+      uRayIntegralFactor: { value: 2.433 },
+      uProjectionMode: { value: 0 }, // SUM ray-integral (volumetric = emissive)
+      uIsOrtho: { value: 1 },
+      uNearCull: { value: 0.01 },
+      uMaxExtentFactor: { value: 1.0 },
+      uOpacity: { value: 0.7 },
+      uAbsorption: { value: 1.5 },
+      uHasElementAlpha: { value: 1 }, // the gate under test
+      uInvGamma: { value: 1.0 / 2.2 },
+      uIntensity: { value: 1.0 },
+      uOffset: { value: 0.0 },
+      uShiftC: { value: Math.exp(-0.5 * 9) },
+      uInvOneMinusC: { value: 1.0 / (1.0 - Math.exp(-0.5 * 9)) },
+    }),
+    buildDefines: () => ({ LUXAR_VOLUMETRIC: '' }),
+    buildTSLMaterial: (uniforms) => {
+      const m = gsplatWebGPUFactory(buildGSplatTSLNodesFromUniforms(uniforms), {
+        blendingMode: 'volumetric',
+      }) as unknown as THREE.Material;
+      // The harness compares raw fragment output — override the
+      // factory-applied blend state exactly like the other variants.
+      m.transparent = false;
+      m.blending = THREE.NoBlending;
+      return m;
+    },
+    buildMesh: (m) => buildGSplatInstancedMesh(m, [0, 0, 0], 0.1, 0.5),
   },
   // meanAbsDiff compares full RGBA. uOpacity=0.6 keeps the coverage
   // sub-saturated so alpha varies across the splat. uProjectionMode=1
