@@ -14,11 +14,15 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { LinesProgressiveLoader } from '../../../data/lines/lines-progressive-loader';
+import {
+  LinesProgressiveLoader,
+  concatenateLinesData,
+} from '../../../data/lines/lines-progressive-loader';
 import type { LinesSpatialIndexLoader } from '../../../data/lines/lines-spatial-index-loader';
 import type { LinesViewState, LoadedLinesData } from '../../../types/lines';
 import { CACHE_HIT_THRESHOLD_MS } from '../../../data/loaders/progressive/constants';
 import { SliceCache } from '../../../cache/slice-cache';
+import { getAppendSpan } from '../../../data/loaders/progressive/concat-arena';
 import { buildSliceViewSig } from '../../../data/loaders/progressive/slice-cache-helper';
 import { getPrefixParent } from '../../../types/prefix-lineage';
 
@@ -1175,5 +1179,78 @@ describe('LinesProgressiveLoader — RGBA color layout (colorK stride, volumetri
     // LOD B verts 20..29 → white RGB + the 1.0 opaque alpha identity.
     expect(result.colors?.[20 * 4]).toBeCloseTo(1.0, 6);
     expect(result.colors?.[20 * 4 + 3]).toBeCloseTo(1.0, 6);
+  });
+});
+
+describe('LinesProgressiveLoader — concat arena integration (perf lever L2)', () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  /** 3-level ladder streamed one pass at a time (level B is non-resident). */
+  function makeSteppedLoader() {
+    const dataA = makeLodData(20, 10, 3, { color: 'uint8' });
+    const dataB = makeLodData(10, 5, 3, { color: 'uint8' });
+    const dataC = makeLodData(6, 3, 3, { color: 'uint8' });
+    const a = makeSubLoader(dataA);
+    const b = makeSubLoader(dataB);
+    const c = makeSubLoader(dataC);
+    b.updateViewWithResidency.mockImplementation(async () => ({
+      data: dataB,
+      allResident: false,
+    }));
+    const loader = new LinesProgressiveLoader(
+      [a, b, c] as unknown as LinesSpatialIndexLoader[],
+      3,
+      '/arena_lines'
+    );
+    return { loader, parts: [dataA, dataB, dataC] };
+  }
+
+  it('streams incrementally, matching the reference concat byte-for-byte, with segment+vertex spans', async () => {
+    const { loader, parts } = makeSteppedLoader();
+    const r1 = await loader.loadLines(baseViewState);
+    expect(loader.loadedLODCount).toBe(2);
+    expect(getAppendSpan(r1)).toEqual({
+      fromElement: 0,
+      elementCount: 15,
+      fromVertex: 0,
+      vertexCount: 30,
+    });
+
+    const r2 = await loader.loadLines(baseViewState);
+    expect(loader.loadedLODCount).toBe(3);
+    const ref = concatenateLinesData(parts);
+    expect(Array.from(r2.positions)).toEqual(Array.from(ref.positions));
+    expect(Array.from(r2.segments)).toEqual(Array.from(ref.segments));
+    expect(Array.from(r2.widths)).toEqual(Array.from(ref.widths));
+    expect(Array.from(r2.colors!)).toEqual(Array.from(ref.colors!));
+    expect(getPrefixParent(r2)).toBe(r1);
+    expect(getAppendSpan(r2)).toEqual({
+      fromElement: 15,
+      elementCount: 3,
+      fromVertex: 30,
+      vertexCount: 6,
+    });
+  });
+
+  it('reset-generation isolation: an old generation result keeps its bytes after a view change reload', async () => {
+    const { loader } = makeSteppedLoader();
+    await loader.loadLines(baseViewState);
+    const gen1 = await loader.loadLines(baseViewState);
+    const savedSegments = gen1.segments.slice();
+    const savedPositions = gen1.positions.slice();
+
+    const viewB: LinesViewState = { ...baseViewState, slicePosition: [5, 5, 5, 0] };
+    const gen2First = await loader.loadLines(viewB);
+    expect(gen2First).not.toBe(gen1);
+    expect(getPrefixParent(gen2First)).toBeUndefined();
+    await loader.loadLines(viewB);
+
+    expect(Array.from(gen1.segments)).toEqual(Array.from(savedSegments));
+    expect(Array.from(gen1.positions)).toEqual(Array.from(savedPositions));
   });
 });

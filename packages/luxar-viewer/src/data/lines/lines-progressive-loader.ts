@@ -23,6 +23,13 @@ import type {
   QueryInfo,
 } from '../../types/data-monitor-types';
 import { ProgressiveMonitorAdapter } from '../loaders/progressive-monitor-adapter';
+import {
+  ArenaField,
+  OptionalLadderField,
+  setAppendSpan,
+  validateLadderFieldDtype,
+  type ArenaFieldStats,
+} from '../loaders/progressive/concat-arena';
 import { concatOptionalField, concatRequiredField } from '../loaders/progressive/concat-helpers';
 import {
   classifyStreamingPass,
@@ -39,8 +46,12 @@ import { log, Modules, LogEmoji } from '../../utils/log';
  * offset-adjusted by the cumulative vertex count across earlier
  * levels — local indices in level *k* become global indices in the
  * concatenated buffer.
+ *
+ * Exported as the REFERENCE implementation: multi-level ladders build
+ * incrementally in {@link LinesLadderArena} (byte-equivalence pinned by
+ * tests); this full rebuild still serves the k ≤ 1 cases.
  */
-function concatenateLinesData(parts: LoadedLinesData[]): LoadedLinesData {
+export function concatenateLinesData(parts: LoadedLinesData[]): LoadedLinesData {
   if (parts.length === 0) {
     return {
       positions: new Float32Array(0),
@@ -181,6 +192,265 @@ function concatenateLinesData(parts: LoadedLinesData[]): LoadedLinesData {
   return result;
 }
 
+/** Lines color dtypes (mirrors `LoadedLinesData.colors`). */
+type LinesColorArray = Float32Array | Uint8Array | Uint16Array;
+
+/** Full-scale white/opaque fill for a colorless level (per dtype). */
+function linesColorFillValue(ctor: new (n: number) => LinesColorArray): number {
+  if (ctor === Uint8Array) return 255;
+  if (ctor === Uint16Array) return 65535;
+  return 1.0;
+}
+
+/**
+ * Growable ladder arena for the lines progressive concat (perf lever L2).
+ *
+ * Incremental equivalent of {@link concatenateLinesData}: appending level
+ * *k* copies ONLY level *k*'s bytes (amortized O(N_total) across the ladder
+ * instead of O(k·N) full rebuilds), with `snapshot()` byte-identical to the
+ * reference concat of the same parts — same segment-index vertex-offset
+ * remapping, white color fill, sharpness 0.5 default fill, all-or-nothing
+ * scalars, and validation errors (reference order + messages). Snapshots are
+ * prefix-stable `subarray` views (see `concat-arena.ts` for the aliasing
+ * contract). One arena per loader reset generation. Exported for the
+ * arena-vs-reference equivalence tests.
+ */
+export class LinesLadderArena {
+  private ndim = 3;
+  private positions: ArenaField<Float32Array> | null = null;
+  private widths: ArenaField<Float32Array> | null = null;
+  /** Segment index pairs; element = segment, 2 entries each. */
+  private segments: ArenaField<Uint32Array> | null = null;
+  // Colors follow the reference's fill-with-white policy (field created by
+  // the first color-carrying level, white-backfilled); sharpness likewise
+  // but with the projection default 0.5; scalars are all-or-nothing.
+  private colors: ArenaField<LinesColorArray> | null = null;
+  private colorK: 3 | 4 = 3;
+  private sharpness: ArenaField<Float32Array> | null = null;
+  private readonly scalars = new OptionalLadderField<ScalarArray>();
+  private appendedParts = 0;
+  private totalVertices = 0;
+  private totalSegments = 0;
+
+  /** Elements (segments) appended so far. */
+  get totalElements(): number {
+    return this.totalSegments;
+  }
+
+  /** Vertices appended so far (per-vertex fields stride by this). */
+  get totalVertexElements(): number {
+    return this.totalVertices;
+  }
+
+  /** Aggregated copy-work counters across fields (test/verification hook). */
+  debugStats(): ArenaFieldStats {
+    const stats: ArenaFieldStats = { appendedEntries: 0, reallocCopiedEntries: 0 };
+    const fields = [
+      this.positions,
+      this.widths,
+      this.segments,
+      this.colors,
+      this.sharpness,
+      this.scalars.field,
+    ];
+    for (const f of fields) {
+      if (!f) continue;
+      stats.appendedEntries += f.stats.appendedEntries;
+      stats.reallocCopiedEntries += f.stats.reallocCopiedEntries;
+    }
+    return stats;
+  }
+
+  /**
+   * Append `parts[appendedSoFar..parts.length)`. `isFinal` = ladder-complete
+   * batch (exact capacity + trim). All throwing validation runs before any
+   * write, so a malformed level leaves the arena unchanged.
+   */
+  appendThrough(parts: LoadedLinesData[], isFinal: boolean): void {
+    const from = this.appendedParts;
+    // APPEND-ONLY PRECONDITION: `parts` must extend the levels already
+    // appended (the loader only ever pushes onto `loadedLODs` within a reset
+    // generation; a view change makes a fresh arena). A shorter list would
+    // silently snapshot stale extra content, so fail loudly instead.
+    if (parts.length < from) {
+      throw new Error(
+        `LinesLadderArena: ladder shrank (${parts.length} levels vs ${from} ` +
+          'already appended) — an arena is append-only within a reset generation.'
+      );
+    }
+    if (parts.length === from) {
+      if (isFinal) this.trim();
+      return;
+    }
+    if (from === 0) {
+      this.ndim = parts[0].ndim;
+    }
+    const ndim = this.ndim;
+
+    // ---- Validation (reference order: ndim → positions dtype → widths
+    // dtype → scalars presence/dtype → colors dtype/layout), no writes. ----
+    for (let i = from; i < parts.length; i++) {
+      if (parts[i].ndim !== ndim) {
+        throw new Error(
+          'concatenateLinesData: mixed dimensionality across LOD levels ' +
+            `(ndim ${parts[i].ndim} vs ${ndim}) — ladder levels must share the ` +
+            'dataset dimensionality.'
+        );
+      }
+    }
+    const posCtor = (this.positions?.elementCtor ?? parts[0].positions.constructor) as new (
+      n: number
+    ) => Float32Array;
+    validateLadderFieldDtype(parts, from, (p) => p.positions, posCtor, 'positions');
+    const widthsCtor = (this.widths?.elementCtor ?? parts[0].widths.constructor) as new (
+      n: number
+    ) => Float32Array;
+    validateLadderFieldDtype(parts, from, (p) => p.widths, widthsCtor, 'widths');
+    const scalarsPlan = this.scalars.plan(parts, from, (p) => p.scalars, 'scalars');
+
+    let colorCtor = this.colors?.elementCtor ?? null;
+    let colorK: 3 | 4 = this.colors ? this.colorK : 3;
+    if (!colorCtor) {
+      const firstWithColors = parts.slice(from).find((p) => p.colors !== null);
+      if (firstWithColors?.colors) {
+        colorCtor = firstWithColors.colors.constructor as new (n: number) => LinesColorArray;
+        colorK = firstWithColors.colorComponents ?? 3;
+      }
+    }
+    if (colorCtor) {
+      for (let i = from; i < parts.length; i++) {
+        const partColors = parts[i].colors;
+        if (!partColors) continue;
+        if (partColors.constructor !== colorCtor) {
+          throw new Error(
+            'concatenateLinesData: mixed color dtypes across LOD levels ' +
+              `(level ${i}: ${partColors.constructor.name} vs ` +
+              `${colorCtor.name}) — ladder levels must share each ` +
+              "field's dtype."
+          );
+        }
+        if ((parts[i].colorComponents ?? 3) !== colorK) {
+          throw new Error(
+            'concatenateLinesData: mixed color layouts across LOD levels ' +
+              `(level ${i}: ${parts[i].colorComponents ?? 3} components vs ` +
+              `${colorK}) — ladder levels must share the color layout.`
+          );
+        }
+      }
+    }
+
+    // ---- Writes (validation passed; nothing below throws) ----
+    let batchVertices = 0;
+    let batchSegments = 0;
+    for (let i = from; i < parts.length; i++) {
+      batchVertices += parts[i].vertexCount;
+      batchSegments += parts[i].segmentCount;
+    }
+    const newVertexTotal = this.totalVertices + batchVertices;
+    const newSegmentTotal = this.totalSegments + batchSegments;
+
+    if (!this.positions) {
+      this.positions = new ArenaField(posCtor, ndim, newVertexTotal);
+      this.widths = new ArenaField(widthsCtor, 1, newVertexTotal);
+      this.segments = new ArenaField(Uint32Array, 2, newSegmentTotal);
+    } else {
+      this.positions.ensureCapacity(newVertexTotal, isFinal);
+      this.widths?.ensureCapacity(newVertexTotal, isFinal);
+      this.segments?.ensureCapacity(newSegmentTotal, isFinal);
+    }
+    this.scalars.apply(scalarsPlan, 1, newVertexTotal, isFinal);
+    if (colorCtor && !this.colors) {
+      // First color-carrying level: create + white-backfill (reference:
+      // fill loop over colorless parts).
+      this.colorK = colorK;
+      this.colors = new ArenaField<LinesColorArray>(colorCtor, colorK, newVertexTotal);
+      this.colors.appendFill(linesColorFillValue(colorCtor), this.totalVertices);
+    } else if (this.colors) {
+      this.colors.ensureCapacity(newVertexTotal, isFinal);
+    }
+    const firstWithSharpness = this.sharpness
+      ? null
+      : parts.slice(from).find((p) => p.sharpness !== null);
+    if (firstWithSharpness && !this.sharpness) {
+      // First sharpness-carrying level: create + backfill the DEFAULT knob
+      // (0.5 → beta=2, Gaussian) exactly like the reference concat — see
+      // its rationale for the append fast path's prefix-identity contract.
+      this.sharpness = new ArenaField(Float32Array, 1, newVertexTotal);
+      this.sharpness.appendFill(0.5, this.totalVertices);
+    } else if (this.sharpness) {
+      this.sharpness.ensureCapacity(newVertexTotal, isFinal);
+    }
+
+    const positions = this.positions;
+    const widths = this.widths;
+    const segments = this.segments;
+    const colors = this.colors;
+    const sharpness = this.sharpness;
+    for (let i = from; i < parts.length; i++) {
+      const part = parts[i];
+      const nVerts = part.vertexCount;
+      const vertexOffset = this.totalVertices;
+      positions.append(part.positions, nVerts);
+      widths?.append(part.widths, nVerts);
+      // Offset-adjust segment indices into the concatenated vertex array.
+      segments?.appendWith(part.segmentCount, (buf, base) => {
+        for (let j = 0; j < part.segments.length; j++) {
+          buf[base + j] = part.segments[j] + vertexOffset;
+        }
+      });
+      if (colors) {
+        if (part.colors) {
+          colors.append(part.colors, nVerts);
+        } else {
+          colors.appendFill(linesColorFillValue(colors.elementCtor), nVerts);
+        }
+      }
+      if (sharpness) {
+        if (part.sharpness) {
+          sharpness.append(part.sharpness, nVerts);
+        } else {
+          sharpness.appendFill(0.5, nVerts);
+        }
+      }
+      this.scalars.field?.append(part.scalars as ScalarArray, nVerts);
+      this.totalVertices += nVerts;
+      this.totalSegments += part.segmentCount;
+      this.appendedParts++;
+    }
+
+    if (isFinal) this.trim();
+  }
+
+  /** Snapshot the current contents as prefix-stable views (fresh object). */
+  snapshot(): LoadedLinesData {
+    const colors = this.colors?.view() ?? null;
+    const result: LoadedLinesData = {
+      positions: this.positions?.view() ?? new Float32Array(0),
+      segments: this.segments?.view() ?? new Uint32Array(0),
+      widths: this.widths?.view() ?? new Float32Array(0),
+      colors,
+      ...(colors ? { colorComponents: this.colorK } : {}),
+      sharpness: this.sharpness?.view() ?? null,
+      segmentCount: this.totalSegments,
+      vertexCount: this.totalVertices,
+      ndim: this.ndim,
+    };
+    if (this.scalars.field) {
+      result.scalars = this.scalars.field.view();
+    }
+    return result;
+  }
+
+  private trim(): void {
+    this.positions?.trimToFit();
+    this.widths?.trimToFit();
+    this.segments?.trimToFit();
+    this.colors?.trimToFit();
+    this.sharpness?.trimToFit();
+    this.scalars.field?.trimToFit();
+  }
+}
+
 /**
  * Progressive Lines loader.
  */
@@ -204,6 +474,12 @@ export class LinesProgressiveLoader implements LinesDataLoader {
     lodCount: number;
     result: LoadedLinesData;
   } | null = null;
+  // Growable ladder arena backing `concatenateMemoized` (perf lever L2):
+  // appending a level copies only that level's bytes instead of rebuilding
+  // the whole concat. One arena per reset generation. Mirrors
+  // GSplatsProgressiveLoader.
+  private _arena: LinesLadderArena | null = null;
+  private _arenaGeneration = -1;
   // Per-sub-LOD cumulative energy fractions e(k) (the build-time
   // `lod_stats.energy_fraction_cum` stamps), normalized at construction:
   // non-null only when EVERY sub-LOD carries a stamp (a partially stamped
@@ -487,6 +763,14 @@ export class LinesProgressiveLoader implements LinesDataLoader {
    * for the first level of a generation (a view change bumps the reset
    * generation and empties `loadedLODs`), which is correct — the first
    * commit extends nothing. Mirrors GSplatsProgressiveLoader.
+   *
+   * Multi-level concats build incrementally in a per-generation
+   * {@link LinesLadderArena} (perf lever L2): only the NEW levels' bytes
+   * are copied, and the result is a prefix-stable view — byte-identical to
+   * the reference {@link concatenateLinesData} rebuild. k ≤ 1 keeps the
+   * reference path (empty result / the raw single part as-is). Each fresh
+   * result is also stamped with its {@link setAppendSpan | append span}
+   * (segment-space, plus the lines-only vertex-space span).
    */
   private concatenateMemoized(session?: UpdateSession): LoadedLinesData {
     const concatSession = session?.begin('Concatenate LODs');
@@ -504,8 +788,29 @@ export class LinesProgressiveLoader implements LinesDataLoader {
         this._concatCache && this._concatCache.generation === this._resetGeneration
           ? this._concatCache.result
           : null;
-      const result = concatenateLinesData(this.loadedLODs);
+      const k = this.loadedLODs.length;
+      let result: LoadedLinesData;
+      if (k <= 1) {
+        // Reference shape for the trivial cases: [] → empty result,
+        // [part] → the raw part as-is (no copy; the arena starts at k=2).
+        result = concatenateLinesData(this.loadedLODs);
+      } else {
+        if (!this._arena || this._arenaGeneration !== this._resetGeneration) {
+          this._arena = new LinesLadderArena();
+          this._arenaGeneration = this._resetGeneration;
+        }
+        this._arena.appendThrough(this.loadedLODs, k === this.nLods);
+        result = this._arena.snapshot();
+      }
       setPrefixParent(result, prevMemo);
+      const prevSegments = prevMemo?.segmentCount ?? 0;
+      const prevVertices = prevMemo?.vertexCount ?? 0;
+      setAppendSpan(result, {
+        fromElement: prevSegments,
+        elementCount: result.segmentCount - prevSegments,
+        fromVertex: prevVertices,
+        vertexCount: result.vertexCount - prevVertices,
+      });
       this._concatCache = {
         generation: this._resetGeneration,
         lodCount: this.loadedLODs.length,
@@ -559,5 +864,6 @@ export class LinesProgressiveLoader implements LinesDataLoader {
     this.loadedLODs = [];
     this.lastViewState = null;
     this._concatCache = null;
+    this._arena = null;
   }
 }

@@ -28,6 +28,12 @@ import type {
   QueryInfo,
 } from '../../types/data-monitor-types';
 import { ProgressiveMonitorAdapter } from '../loaders/progressive-monitor-adapter';
+import {
+  ArenaField,
+  setAppendSpan,
+  validateLadderFieldDtype,
+  type ArenaFieldStats,
+} from '../loaders/progressive/concat-arena';
 import { concatRequiredField } from '../loaders/progressive/concat-helpers';
 import {
   classifyStreamingPass,
@@ -165,6 +171,239 @@ export function concatenateGSplatsData(parts: LoadedGSplatsData[]): LoadedGSplat
   };
 }
 
+/** GSplats color dtypes (mirrors `LoadedGSplatsData.colors`). */
+type GSplatsColorArray = Float32Array | Uint8Array | Uint16Array;
+
+/** Full-scale white/opaque fill for a colorless level (per dtype). */
+function colorFillValue(ctor: new (n: number) => GSplatsColorArray): number {
+  if (ctor === Uint8Array) return 255;
+  if (ctor === Uint16Array) return 65535;
+  return 1.0;
+}
+
+/**
+ * Growable ladder arena for the gsplats progressive concat (perf lever L2).
+ *
+ * Incremental equivalent of {@link concatenateGSplatsData}: appending the
+ * ladder's level *k* copies ONLY level *k*'s bytes into capacity-managed
+ * arena fields (amortized O(N_total) across the ladder instead of the
+ * reference's O(k·N) full rebuild per level), while `snapshot()` results are
+ * byte-identical to the reference concat of the same parts — same validation
+ * errors (ndim / dtype / color-layout, in the reference's order), same
+ * white-fill for colorless levels, same result shape. Snapshots are
+ * prefix-stable `subarray` views; see `concat-arena.ts` for the full
+ * view-with-copy-on-grow aliasing contract.
+ *
+ * One arena per loader reset generation — a view change discards it wholesale
+ * (the safe v1), never mixing generations in one buffer.
+ *
+ * Exported for the arena-vs-reference equivalence tests.
+ */
+export class GSplatsLadderArena {
+  private ndim = 3;
+  private positions: ArenaField<Float32Array> | null = null;
+  private amplitudes: ArenaField<Float32Array> | null = null;
+  private cholesky: ArenaField<Float32Array> | null = null;
+  // Colors follow the reference's fill-with-white policy: the field is
+  // created by the FIRST color-carrying level (white-backfilling everything
+  // appended before it) and colorless levels append the full-scale fill.
+  private colors: ArenaField<GSplatsColorArray> | null = null;
+  private colorK: 3 | 4 = 3;
+  private appendedParts = 0;
+  private totalSplats = 0;
+
+  /** Elements (splats) appended so far. */
+  get totalElements(): number {
+    return this.totalSplats;
+  }
+
+  /** Aggregated copy-work counters across fields (test/verification hook). */
+  debugStats(): ArenaFieldStats {
+    const total: ArenaFieldStats = { appendedEntries: 0, reallocCopiedEntries: 0 };
+    for (const f of [this.positions, this.amplitudes, this.cholesky, this.colors]) {
+      if (!f) continue;
+      total.appendedEntries += f.stats.appendedEntries;
+      total.reallocCopiedEntries += f.stats.reallocCopiedEntries;
+    }
+    return total;
+  }
+
+  /**
+   * Append `parts[appendedSoFar..parts.length)` to the arena. `isFinal`
+   * marks the ladder-complete batch: capacity growth is exact and slack is
+   * trimmed afterwards (see the arena capacity policy).
+   *
+   * All throwing validation runs BEFORE any write, so a malformed level
+   * leaves the arena unchanged (a retried concat re-throws the same error,
+   * matching the reference rebuild's behavior).
+   */
+  appendThrough(parts: LoadedGSplatsData[], isFinal: boolean): void {
+    const from = this.appendedParts;
+    // APPEND-ONLY PRECONDITION: `parts` must extend the levels already
+    // appended (the loader only ever pushes onto `loadedLODs` within a reset
+    // generation; a view change makes a fresh arena). A shorter list would
+    // silently snapshot stale extra content, so fail loudly instead.
+    if (parts.length < from) {
+      throw new Error(
+        `GSplatsLadderArena: ladder shrank (${parts.length} levels vs ${from} ` +
+          'already appended) — an arena is append-only within a reset generation.'
+      );
+    }
+    if (parts.length === from) {
+      if (isFinal) this.trim();
+      return;
+    }
+
+    if (from === 0) {
+      this.ndim = parts[0].ndim;
+    }
+    const ndim = this.ndim;
+    const cholSize = (ndim * (ndim + 1)) / 2;
+
+    // ---- Validation (reference order: ndim → required dtypes → colors) ----
+    for (let i = from; i < parts.length; i++) {
+      if (parts[i].ndim !== ndim) {
+        throw new Error(
+          'concatenateGSplatsData: mixed dimensionality across LOD levels ' +
+            `(ndim ${parts[i].ndim} vs ${ndim}) — ladder levels must share the ` +
+            'dataset dimensionality.'
+        );
+      }
+    }
+    this.validateRequiredDtype(parts, from, (p) => p.positions, this.positions, 'positions');
+    this.validateRequiredDtype(parts, from, (p) => p.amplitudes, this.amplitudes, 'amplitudes');
+    this.validateRequiredDtype(
+      parts,
+      from,
+      (p) => p.choleskyFactors,
+      this.cholesky,
+      'choleskyFactors'
+    );
+
+    // Colors: dtype + layout are established by the first color-carrying
+    // level of the LADDER (arena field, or the first carrier in this batch)
+    // and every carrier must match — same contract and messages as the
+    // reference concat's per-part checks.
+    let colorCtor = this.colors?.elementCtor ?? null;
+    let colorK: 3 | 4 = this.colors ? this.colorK : 3;
+    if (!colorCtor) {
+      const firstWithColors = parts.slice(from).find((p) => p.colors !== null);
+      if (firstWithColors?.colors) {
+        colorCtor = firstWithColors.colors.constructor as new (n: number) => GSplatsColorArray;
+        colorK = firstWithColors.colorComponents ?? 3;
+      }
+    }
+    if (colorCtor) {
+      for (let i = from; i < parts.length; i++) {
+        const partColors = parts[i].colors;
+        if (!partColors) continue;
+        if (partColors.constructor !== colorCtor) {
+          throw new Error(
+            'concatenateGSplatsData: mixed color dtypes across LOD levels ' +
+              `(level ${i}: ${partColors.constructor.name} vs ` +
+              `${colorCtor.name}) — ladder levels must share each ` +
+              "field's dtype."
+          );
+        }
+        if ((parts[i].colorComponents ?? 3) !== colorK) {
+          throw new Error(
+            'concatenateGSplatsData: mixed color layouts across LOD levels ' +
+              `(level ${i}: ${parts[i].colorComponents ?? 3} vs ${colorK} ` +
+              'components) — ladder levels must share the color layout ' +
+              '(RGB vs RGBA).'
+          );
+        }
+      }
+    }
+
+    // ---- Writes (validation passed; nothing below throws) ----
+    let batchSplats = 0;
+    for (let i = from; i < parts.length; i++) batchSplats += parts[i].splatCount;
+    const newTotal = this.totalSplats + batchSplats;
+
+    if (!this.positions) {
+      this.positions = new ArenaField(Float32Array, ndim, newTotal);
+      this.amplitudes = new ArenaField(Float32Array, 1, newTotal);
+      this.cholesky = new ArenaField(Float32Array, cholSize, newTotal);
+    } else {
+      this.positions.ensureCapacity(newTotal, isFinal);
+      this.amplitudes?.ensureCapacity(newTotal, isFinal);
+      this.cholesky?.ensureCapacity(newTotal, isFinal);
+    }
+    if (colorCtor && !this.colors) {
+      // First color-carrying level: create the field and white-backfill
+      // every splat appended before it (reference: fill loop over
+      // colorless parts).
+      this.colorK = colorK;
+      this.colors = new ArenaField<GSplatsColorArray>(colorCtor, colorK, newTotal);
+      this.colors.appendFill(colorFillValue(colorCtor), this.totalSplats);
+    } else if (this.colors) {
+      this.colors.ensureCapacity(newTotal, isFinal);
+    }
+
+    const positions = this.positions;
+    const amplitudes = this.amplitudes;
+    const cholesky = this.cholesky;
+    const colors = this.colors;
+    for (let i = from; i < parts.length; i++) {
+      const part = parts[i];
+      const n = part.splatCount;
+      positions.append(part.positions, n);
+      amplitudes?.append(part.amplitudes, n);
+      cholesky?.append(part.choleskyFactors, n);
+      if (colors) {
+        if (part.colors) {
+          colors.append(part.colors, n);
+        } else {
+          colors.appendFill(colorFillValue(colors.elementCtor), n);
+        }
+      }
+      this.totalSplats += n;
+      this.appendedParts++;
+    }
+
+    if (isFinal) this.trim();
+  }
+
+  /** Snapshot the current contents as prefix-stable views (fresh object). */
+  snapshot(): LoadedGSplatsData {
+    return {
+      positions: this.positions?.view() ?? new Float32Array(0),
+      amplitudes: this.amplitudes?.view() ?? new Float32Array(0),
+      choleskyFactors: this.cholesky?.view() ?? new Float32Array(0),
+      colors: this.colors?.view() ?? null,
+      colorComponents: this.colorK,
+      splatCount: this.totalSplats,
+      ndim: this.ndim,
+    };
+  }
+
+  private trim(): void {
+    this.positions?.trimToFit();
+    this.amplitudes?.trimToFit();
+    this.cholesky?.trimToFit();
+    this.colors?.trimToFit();
+  }
+
+  /**
+   * Required-field dtype check against the field's established ctor (or the
+   * batch's part 0 when the arena is empty) — delegates to the shared
+   * `concatRequiredField`-twin validator.
+   */
+  private validateRequiredDtype(
+    parts: LoadedGSplatsData[],
+    from: number,
+    get: (p: LoadedGSplatsData) => Float32Array,
+    field: ArenaField<Float32Array> | null,
+    label: string
+  ): void {
+    const ctor: new (n: number) => Float32Array = field
+      ? field.elementCtor
+      : (get(parts[0]).constructor as new (n: number) => Float32Array);
+    validateLadderFieldDtype(parts, from, get, ctor, label);
+  }
+}
+
 /**
  * Progressive GSplats loader for multi-LOD datasets.
  *
@@ -191,6 +430,13 @@ export class GSplatsProgressiveLoader implements GSplatsDataLoader {
     lodCount: number;
     result: LoadedGSplatsData;
   } | null = null;
+  // Growable ladder arena backing `concatenateMemoized` (perf lever L2):
+  // appending a level copies only that level's bytes instead of rebuilding
+  // the whole concat. One arena per reset generation — `_arenaGeneration`
+  // gates it exactly like the memo's generation key, so a view change
+  // discards the arena (fresh buffers, no cross-generation aliasing).
+  private _arena: GSplatsLadderArena | null = null;
+  private _arenaGeneration = -1;
   // Per-sub-LOD cumulative energy fractions e(k) (the build-time
   // `lod_stats.energy_fraction_cum` stamps), normalized at construction:
   // non-null only when EVERY sub-LOD carries a stamp (a partially stamped
@@ -517,6 +763,15 @@ export class GSplatsProgressiveLoader implements GSplatsDataLoader {
    * for the first level of a generation (a view change bumps the reset
    * generation and empties `loadedLODs`), which is correct — the first
    * commit extends nothing.
+   *
+   * Multi-level concats build incrementally in a per-generation
+   * {@link GSplatsLadderArena} (perf lever L2): only the NEW levels' bytes
+   * are copied, and the result is a prefix-stable view — byte-identical to
+   * the reference {@link concatenateGSplatsData} rebuild. k ≤ 1 keeps the
+   * reference path (empty result / the raw single part as-is). Each fresh
+   * result is also stamped with its {@link setAppendSpan | append span}
+   * (the suffix it adds relative to the prefix parent) for downstream
+   * suffix-only consumers.
    */
   private concatenateMemoized(session?: UpdateSession): LoadedGSplatsData {
     const concatSession = session?.begin('Concatenate LODs');
@@ -534,8 +789,26 @@ export class GSplatsProgressiveLoader implements GSplatsDataLoader {
         this._concatCache && this._concatCache.generation === this._resetGeneration
           ? this._concatCache.result
           : null;
-      const result = concatenateGSplatsData(this.loadedLODs);
+      const k = this.loadedLODs.length;
+      let result: LoadedGSplatsData;
+      if (k <= 1) {
+        // Reference shape for the trivial cases: [] → empty result,
+        // [part] → the raw part as-is (no copy; the arena starts at k=2).
+        result = concatenateGSplatsData(this.loadedLODs);
+      } else {
+        if (!this._arena || this._arenaGeneration !== this._resetGeneration) {
+          this._arena = new GSplatsLadderArena();
+          this._arenaGeneration = this._resetGeneration;
+        }
+        this._arena.appendThrough(this.loadedLODs, k === this.nLods);
+        result = this._arena.snapshot();
+      }
       setPrefixParent(result, prevMemo);
+      const prevElements = prevMemo?.splatCount ?? 0;
+      setAppendSpan(result, {
+        fromElement: prevElements,
+        elementCount: result.splatCount - prevElements,
+      });
       this._concatCache = {
         generation: this._resetGeneration,
         lodCount: this.loadedLODs.length,
@@ -604,5 +877,6 @@ export class GSplatsProgressiveLoader implements GSplatsDataLoader {
     this.loadedLODs = [];
     this.lastViewState = null;
     this._concatCache = null;
+    this._arena = null;
   }
 }

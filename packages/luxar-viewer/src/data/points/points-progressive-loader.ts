@@ -30,6 +30,7 @@ import type {
   LoadedPointsData,
   PointsDataLoader,
   PointsViewState,
+  PositionArray,
   ScalarArray,
 } from '../../types/points';
 import { setPrefixParent } from '../../types/prefix-lineage';
@@ -41,6 +42,13 @@ import type {
   QueryInfo,
 } from '../../types/data-monitor-types';
 import { ProgressiveMonitorAdapter } from '../loaders/progressive-monitor-adapter';
+import {
+  ArenaField,
+  OptionalLadderField,
+  setAppendSpan,
+  validateLadderFieldDtype,
+  type ArenaFieldStats,
+} from '../loaders/progressive/concat-arena';
 import { concatOptionalField, concatRequiredField } from '../loaders/progressive/concat-helpers';
 import {
   classifyStreamingPass,
@@ -58,8 +66,12 @@ import { log, Modules, LogEmoji } from '../../utils/log';
  * only when ALL levels carry them (mixed-presence is dropped — keeps
  * the loader simple and matches the writer's all-or-nothing per-attr
  * policy).
+ *
+ * Exported as the REFERENCE implementation: multi-level ladders build
+ * incrementally in {@link PointsLadderArena} (byte-equivalence pinned by
+ * tests); this full rebuild still serves the k ≤ 1 cases.
  */
-function concatenatePointsData(parts: LoadedPointsData[]): LoadedPointsData {
+export function concatenatePointsData(parts: LoadedPointsData[]): LoadedPointsData {
   if (parts.length === 0) {
     // Construct a minimal LoadedPointsData with empty arrays so the
     // commit pipeline doesn't NPE on edge cases (no LODs visible yet).
@@ -148,6 +160,183 @@ function concatenatePointsData(parts: LoadedPointsData[]): LoadedPointsData {
 }
 
 /**
+ * Growable ladder arena for the points progressive concat (perf lever L2).
+ *
+ * Incremental equivalent of {@link concatenatePointsData}: appending level
+ * *k* copies ONLY level *k*'s bytes (amortized O(N_total) across the ladder
+ * instead of O(k·N) full rebuilds), with `snapshot()` byte-identical to the
+ * reference concat of the same parts — same all-or-nothing optional-field
+ * drops, color-layout/dtype validation (reference order + messages), and
+ * metadata aggregation. Snapshots are prefix-stable `subarray` views (see
+ * `concat-arena.ts` for the aliasing contract). One arena per loader reset
+ * generation. Exported for the arena-vs-reference equivalence tests.
+ */
+export class PointsLadderArena {
+  private ndim = 3;
+  // INVARIANT (see the reference concat): points positions are ALWAYS
+  // 3D-projected, stride 3, regardless of `ndim`.
+  private positions: ArenaField<PositionArray> | null = null;
+  private readonly colors = new OptionalLadderField<ColorArray>();
+  private readonly radii = new OptionalLadderField<ScalarArray>();
+  private readonly sharpness = new OptionalLadderField<ScalarArray>();
+  private readonly scalars = new OptionalLadderField<ScalarArray>();
+  // Ladder color layout (3 RGB / 4 RGBA), established by the FIRST
+  // color-carrying level and validated for every later carrier — even when
+  // the merged colors field itself is dropped (reference parity).
+  private colorK: 3 | 4 | null = null;
+  private totalPointsFirst = 0;
+  private usedSpatialIndexAll = true;
+  private readonly aggBounds = new THREE.Box3();
+  private appendedParts = 0;
+  private total = 0;
+
+  /** Elements (points) appended so far. */
+  get totalElements(): number {
+    return this.total;
+  }
+
+  /** Aggregated copy-work counters across fields (test/verification hook). */
+  debugStats(): ArenaFieldStats {
+    const stats: ArenaFieldStats = { appendedEntries: 0, reallocCopiedEntries: 0 };
+    const fields = [
+      this.positions,
+      this.colors.field,
+      this.radii.field,
+      this.sharpness.field,
+      this.scalars.field,
+    ];
+    for (const f of fields) {
+      if (!f) continue;
+      stats.appendedEntries += f.stats.appendedEntries;
+      stats.reallocCopiedEntries += f.stats.reallocCopiedEntries;
+    }
+    return stats;
+  }
+
+  /**
+   * Append `parts[appendedSoFar..parts.length)`. `isFinal` = ladder-complete
+   * batch (exact capacity + trim). All throwing validation runs before any
+   * write, so a malformed level leaves the arena unchanged.
+   */
+  appendThrough(parts: LoadedPointsData[], isFinal: boolean): void {
+    const from = this.appendedParts;
+    // APPEND-ONLY PRECONDITION: `parts` must extend the levels already
+    // appended (the loader only ever pushes onto `loadedLODs` within a reset
+    // generation; a view change makes a fresh arena). A shorter list would
+    // silently snapshot stale extra content, so fail loudly instead.
+    if (parts.length < from) {
+      throw new Error(
+        `PointsLadderArena: ladder shrank (${parts.length} levels vs ${from} ` +
+          'already appended) — an arena is append-only within a reset generation.'
+      );
+    }
+    if (parts.length === from) {
+      if (isFinal) this.trim();
+      return;
+    }
+    if (from === 0) {
+      this.ndim = parts[0].ndim;
+      this.totalPointsFirst = parts[0].metadata.totalPoints;
+    }
+
+    // ---- Validation (reference order: positions dtype → color layout →
+    // per-optional-field presence/dtype), no state mutation. ----
+    const posCtor = (this.positions?.elementCtor ?? parts[0].positions.constructor) as new (
+      n: number
+    ) => PositionArray;
+    validateLadderFieldDtype(parts, from, (p) => p.positions, posCtor, 'positions');
+
+    let colorK = this.colorK;
+    if (colorK === null) {
+      const firstWithColors = parts.slice(from).find((p) => p.colors);
+      if (firstWithColors) colorK = firstWithColors.colorComponents ?? 3;
+    }
+    if (colorK !== null) {
+      for (let i = from; i < parts.length; i++) {
+        if (parts[i].colors && (parts[i].colorComponents ?? 3) !== colorK) {
+          throw new Error(
+            'concatenatePointsData: mixed color layouts across LOD levels ' +
+              `(level ${i}: ${parts[i].colorComponents ?? 3} vs ${colorK} ` +
+              'components) — ladder levels must share the color layout (RGB vs RGBA).'
+          );
+        }
+      }
+    }
+
+    const colorsPlan = this.colors.plan(parts, from, (p) => p.colors, 'colors');
+    const radiiPlan = this.radii.plan(parts, from, (p) => p.radii, 'radii');
+    const sharpnessPlan = this.sharpness.plan(parts, from, (p) => p.sharpness, 'sharpness');
+    const scalarsPlan = this.scalars.plan(parts, from, (p) => p.scalars, 'scalars');
+
+    // ---- Writes (validation passed; nothing below throws) ----
+    this.colorK = colorK;
+    let batchPoints = 0;
+    for (let i = from; i < parts.length; i++) batchPoints += parts[i].pointCount;
+    const newTotal = this.total + batchPoints;
+
+    if (!this.positions) {
+      this.positions = new ArenaField<PositionArray>(posCtor, 3, newTotal);
+    } else {
+      this.positions.ensureCapacity(newTotal, isFinal);
+    }
+    this.colors.apply(colorsPlan, colorK ?? 3, newTotal, isFinal);
+    this.radii.apply(radiiPlan, 1, newTotal, isFinal);
+    this.sharpness.apply(sharpnessPlan, 1, newTotal, isFinal);
+    this.scalars.apply(scalarsPlan, 1, newTotal, isFinal);
+
+    const positions = this.positions;
+    for (let i = from; i < parts.length; i++) {
+      const part = parts[i];
+      const n = part.pointCount;
+      positions.append(part.positions, n);
+      this.colors.field?.append(part.colors as ColorArray, n);
+      this.radii.field?.append(part.radii as ScalarArray, n);
+      this.sharpness.field?.append(part.sharpness as ScalarArray, n);
+      this.scalars.field?.append(part.scalars as ScalarArray, n);
+      this.aggBounds.union(part.metadata.bounds);
+      this.usedSpatialIndexAll = this.usedSpatialIndexAll && part.metadata.usedSpatialIndex;
+      this.total += n;
+      this.appendedParts++;
+    }
+
+    if (isFinal) this.trim();
+  }
+
+  /** Snapshot the current contents as prefix-stable views (fresh object). */
+  snapshot(): LoadedPointsData {
+    const result: LoadedPointsData = {
+      positions: this.positions?.view() ?? new Float32Array(0),
+      pointCount: this.total,
+      ndim: this.ndim,
+      metadata: {
+        totalPoints: this.totalPointsFirst,
+        loadedPoints: this.total,
+        // Clone: the aggregate keeps growing with later levels; each
+        // snapshot owns its bounds (reference allocates one per rebuild).
+        bounds: this.aggBounds.clone(),
+        usedSpatialIndex: this.usedSpatialIndexAll,
+      },
+    };
+    if (this.colors.field) {
+      result.colors = this.colors.field.view();
+      result.colorComponents = this.colorK ?? 3;
+    }
+    if (this.radii.field) result.radii = this.radii.field.view();
+    if (this.sharpness.field) result.sharpness = this.sharpness.field.view();
+    if (this.scalars.field) result.scalars = this.scalars.field.view();
+    return result;
+  }
+
+  private trim(): void {
+    this.positions?.trimToFit();
+    this.colors.field?.trimToFit();
+    this.radii.field?.trimToFit();
+    this.sharpness.field?.trimToFit();
+    this.scalars.field?.trimToFit();
+  }
+}
+
+/**
  * Progressive Points loader.
  */
 export class PointsProgressiveLoader implements PointsDataLoader {
@@ -170,6 +359,12 @@ export class PointsProgressiveLoader implements PointsDataLoader {
     lodCount: number;
     result: LoadedPointsData;
   } | null = null;
+  // Growable ladder arena backing `concatenateMemoized` (perf lever L2):
+  // appending a level copies only that level's bytes instead of rebuilding
+  // the whole concat. One arena per reset generation. Mirrors
+  // GSplatsProgressiveLoader.
+  private _arena: PointsLadderArena | null = null;
+  private _arenaGeneration = -1;
   // Per-sub-LOD cumulative energy fractions e(k) (the build-time
   // `lod_stats.energy_fraction_cum` stamps), normalized at construction:
   // non-null only when EVERY sub-LOD carries a stamp (a partially stamped
@@ -460,6 +655,13 @@ export class PointsProgressiveLoader implements PointsDataLoader {
    * for the first level of a generation (a view change bumps the reset
    * generation and empties `loadedLODs`), which is correct — the first
    * commit extends nothing. Mirrors GSplatsProgressiveLoader.
+   *
+   * Multi-level concats build incrementally in a per-generation
+   * {@link PointsLadderArena} (perf lever L2): only the NEW levels' bytes
+   * are copied, and the result is a prefix-stable view — byte-identical to
+   * the reference {@link concatenatePointsData} rebuild. k ≤ 1 keeps the
+   * reference path (empty result / the raw single part as-is). Each fresh
+   * result is also stamped with its {@link setAppendSpan | append span}.
    */
   private concatenateMemoized(session?: UpdateSession): LoadedPointsData {
     const concatSession = session?.begin('Concatenate LODs');
@@ -477,8 +679,26 @@ export class PointsProgressiveLoader implements PointsDataLoader {
         this._concatCache && this._concatCache.generation === this._resetGeneration
           ? this._concatCache.result
           : null;
-      const result = concatenatePointsData(this.loadedLODs);
+      const k = this.loadedLODs.length;
+      let result: LoadedPointsData;
+      if (k <= 1) {
+        // Reference shape for the trivial cases: [] → empty result,
+        // [part] → the raw part as-is (no copy; the arena starts at k=2).
+        result = concatenatePointsData(this.loadedLODs);
+      } else {
+        if (!this._arena || this._arenaGeneration !== this._resetGeneration) {
+          this._arena = new PointsLadderArena();
+          this._arenaGeneration = this._resetGeneration;
+        }
+        this._arena.appendThrough(this.loadedLODs, k === this.nLods);
+        result = this._arena.snapshot();
+      }
       setPrefixParent(result, prevMemo);
+      const prevElements = prevMemo?.pointCount ?? 0;
+      setAppendSpan(result, {
+        fromElement: prevElements,
+        elementCount: result.pointCount - prevElements,
+      });
       this._concatCache = {
         generation: this._resetGeneration,
         lodCount: this.loadedLODs.length,
@@ -533,5 +753,6 @@ export class PointsProgressiveLoader implements PointsDataLoader {
     this.loadedLODs = [];
     this.lastViewState = null;
     this._concatCache = null;
+    this._arena = null;
   }
 }

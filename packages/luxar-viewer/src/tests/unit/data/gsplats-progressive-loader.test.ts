@@ -16,6 +16,7 @@ import type { GSplatsSpatialIndexLoader } from '../../../data/gsplats/gsplats-sp
 import type { GSplatsViewState, LoadedGSplatsData } from '../../../types/gsplats';
 import { CACHE_HIT_THRESHOLD_MS } from '../../../data/loaders/progressive/constants';
 import { SliceCache } from '../../../cache/slice-cache';
+import { getAppendSpan } from '../../../data/loaders/progressive/concat-arena';
 import { buildSliceViewSig } from '../../../data/loaders/progressive/slice-cache-helper';
 import { getPrefixParent } from '../../../types/prefix-lineage';
 
@@ -1204,5 +1205,92 @@ describe('determinant-equal dimensions refresh (three-geometry twin of the point
       dimensions: dimsV2,
     });
     expect(lod0.updateView).toHaveBeenCalled();
+  });
+});
+
+describe('GSplatsProgressiveLoader — concat arena integration (perf lever L2)', () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  /** 3-level ladder streamed one pass at a time (level B is non-resident). */
+  function makeSteppedLoader() {
+    const dataA = makeLodData(100, 3, { color: 'uint8' });
+    const dataB = makeLodData(50, 3, { color: 'uint8' });
+    const dataC = makeLodData(25, 3, { color: 'uint8' });
+    const a = makeSubLoader(dataA);
+    const b = makeSubLoader(dataB);
+    const c = makeSubLoader(dataC);
+    // Cache miss on B stops the first refine pass at k=2; the next pass
+    // resumes from level 2 and completes the ladder.
+    b.updateViewWithResidency.mockImplementation(async () => ({
+      data: dataB,
+      allResident: false,
+    }));
+    const loader = new GSplatsProgressiveLoader(
+      [a, b, c] as unknown as GSplatsSpatialIndexLoader[],
+      3,
+      '/arena_gsplats'
+    );
+    return { loader, parts: [dataA, dataB, dataC] };
+  }
+
+  it('streams incrementally, matching the reference concat byte-for-byte at every pass', async () => {
+    const { loader, parts } = makeSteppedLoader();
+    const r1 = await loader.loadGSplats(baseViewState);
+    expect(loader.loadedLODCount).toBe(2);
+    const ref1 = concatenateGSplatsData(parts.slice(0, 2));
+    expect(Array.from(r1.positions)).toEqual(Array.from(ref1.positions));
+    expect(Array.from(r1.colors!)).toEqual(Array.from(ref1.colors!));
+
+    const r2 = await loader.loadGSplats(baseViewState);
+    expect(loader.loadedLODCount).toBe(3);
+    const ref2 = concatenateGSplatsData(parts);
+    expect(Array.from(r2.positions)).toEqual(Array.from(ref2.positions));
+    expect(Array.from(r2.amplitudes)).toEqual(Array.from(ref2.amplitudes));
+    expect(Array.from(r2.choleskyFactors)).toEqual(Array.from(ref2.choleskyFactors));
+    expect(Array.from(r2.colors!)).toEqual(Array.from(ref2.colors!));
+    // Genuine prefix extension: lineage chains r2 → r1.
+    expect(getPrefixParent(r2)).toBe(r1);
+  });
+
+  it('stamps append spans: the suffix each result adds relative to its prefix parent', async () => {
+    const { loader } = makeSteppedLoader();
+    const r1 = await loader.loadGSplats(baseViewState);
+    expect(getAppendSpan(r1)).toEqual({ fromElement: 0, elementCount: 150 });
+    const r2 = await loader.loadGSplats(baseViewState);
+    expect(getAppendSpan(r2)).toEqual({ fromElement: 150, elementCount: 25 });
+    // Memoized repeat: same reference, same span.
+    const r3 = await loader.loadGSplats(baseViewState);
+    expect(r3).toBe(r2);
+    expect(getAppendSpan(r3)).toEqual({ fromElement: 150, elementCount: 25 });
+  });
+
+  it('reset-generation isolation: an old generation result keeps its bytes after a view change reload', async () => {
+    const { loader } = makeSteppedLoader();
+    await loader.loadGSplats(baseViewState);
+    const gen1 = await loader.loadGSplats(baseViewState);
+    const savedPositions = gen1.positions.slice();
+    const savedColors = gen1.colors!.slice();
+
+    // View change → new generation → fresh arena.
+    const viewB: GSplatsViewState = { ...baseViewState, slicePosition: [5, 5, 5, 0] };
+    const gen2First = await loader.loadGSplats(viewB);
+
+    // The new generation's first result extends nothing (lineage dropped,
+    // span restarts at 0) and is a NEW reference.
+    expect(gen2First).not.toBe(gen1);
+    expect(getPrefixParent(gen2First)).toBeUndefined();
+    expect(getAppendSpan(gen2First)).toEqual({ fromElement: 0, elementCount: 150 });
+
+    const gen2Full = await loader.loadGSplats(viewB);
+    expect(getAppendSpan(gen2Full)).toEqual({ fromElement: 150, elementCount: 25 });
+
+    // The old generation's bytes are untouched by the new arena's writes.
+    expect(Array.from(gen1.positions)).toEqual(Array.from(savedPositions));
+    expect(Array.from(gen1.colors!)).toEqual(Array.from(savedColors));
   });
 });

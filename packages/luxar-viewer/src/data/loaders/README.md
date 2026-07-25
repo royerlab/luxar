@@ -433,6 +433,7 @@ src/data/loaders/
 │
 ├── progressive/                  # Shared helpers for additive-LOD progressive loaders
 │   ├── concat-helpers.ts         # Generic typed-array field concatenation across LOD parts
+│   ├── concat-arena.ts           # Growable arena fields + append spans (amortized ladder concat)
 │   ├── slice-cache-helper.ts     # Shared SliceCache key/snapshot/lookup helpers (S-cache)
 │   └── constants.ts              # CACHE_HIT_THRESHOLD_MS — shared streaming threshold
 │
@@ -497,6 +498,11 @@ pnpm test src/tests/unit/data/loaders/transferable-accumulator.test.ts
   the parent node, `addEventListener` idempotency, `getMetrics` aggregation.
 - **concat-helpers.test.ts** (under `progressive/`) — required/optional
   typed-array concatenation, dtype preservation, all-or-nothing optional gate.
+- **concat-arena.test.ts** (under `progressive/`) — arena growth/trim capacity
+  policy, prefix-stable views, copy-work accounting, append-span registry.
+- **concat-arena-equivalence.test.ts** (under `progressive/`) — the three
+  per-geometry ladder arenas pinned byte-for-byte against their reference
+  `concatenate*Data` rebuilds across 6-level ladders.
 
 ## Dependencies
 

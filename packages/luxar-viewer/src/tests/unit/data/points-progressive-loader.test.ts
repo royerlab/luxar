@@ -9,11 +9,15 @@
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import * as THREE from 'three';
-import { PointsProgressiveLoader } from '../../../data/points/points-progressive-loader';
+import {
+  PointsProgressiveLoader,
+  concatenatePointsData,
+} from '../../../data/points/points-progressive-loader';
 import type { PointsSpatialIndexLoader } from '../../../data/points/points-spatial-index-loader';
 import type { LoadedPointsData, PointsViewState } from '../../../types/points';
 import { CACHE_HIT_THRESHOLD_MS } from '../../../data/loaders/progressive/constants';
 import { SliceCache } from '../../../cache/slice-cache';
+import { getAppendSpan } from '../../../data/loaders/progressive/concat-arena';
 import { buildSliceViewSig } from '../../../data/loaders/progressive/slice-cache-helper';
 import { getPrefixParent } from '../../../types/prefix-lineage';
 
@@ -1187,5 +1191,66 @@ describe('buildSliceViewSig extend_to_all membership (shared helper)', () => {
     expect(buildSliceViewSig(view(0.5))).not.toBe(buildSliceViewSig(view(1e10)));
     // Two above-threshold sentinels are the same query.
     expect(buildSliceViewSig(view(1e10))).toBe(buildSliceViewSig(view(2e10)));
+  });
+});
+
+describe('PointsProgressiveLoader — concat arena integration (perf lever L2)', () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  /** 3-level ladder streamed one pass at a time (level B is non-resident). */
+  function makeSteppedLoader() {
+    const dataA = makeLodData(100, 3, { color: 'uint8' });
+    const dataB = makeLodData(50, 3, { color: 'uint8' });
+    const dataC = makeLodData(25, 3, { color: 'uint8' });
+    const a = makeSubLoader(dataA);
+    const b = makeSubLoader(dataB);
+    const c = makeSubLoader(dataC);
+    b.updateViewWithResidency.mockImplementation(async () => ({
+      data: dataB,
+      allResident: false,
+    }));
+    const loader = new PointsProgressiveLoader(
+      [a, b, c] as unknown as PointsSpatialIndexLoader[],
+      3,
+      '/arena_points'
+    );
+    return { loader, parts: [dataA, dataB, dataC] };
+  }
+
+  it('streams incrementally, matching the reference concat byte-for-byte, with spans and lineage', async () => {
+    const { loader, parts } = makeSteppedLoader();
+    const r1 = await loader.loadPoints(baseViewState);
+    expect(loader.loadedLODCount).toBe(2);
+    expect(getAppendSpan(r1)).toEqual({ fromElement: 0, elementCount: 150 });
+
+    const r2 = await loader.loadPoints(baseViewState);
+    expect(loader.loadedLODCount).toBe(3);
+    const ref = concatenatePointsData(parts);
+    expect(Array.from(r2.positions)).toEqual(Array.from(ref.positions));
+    expect(Array.from(r2.colors!)).toEqual(Array.from(ref.colors!));
+    expect(r2.metadata.loadedPoints).toBe(ref.metadata.loadedPoints);
+    expect(getPrefixParent(r2)).toBe(r1);
+    expect(getAppendSpan(r2)).toEqual({ fromElement: 150, elementCount: 25 });
+  });
+
+  it('reset-generation isolation: an old generation result keeps its bytes after a view change reload', async () => {
+    const { loader } = makeSteppedLoader();
+    await loader.loadPoints(baseViewState);
+    const gen1 = await loader.loadPoints(baseViewState);
+    const saved = gen1.positions.slice();
+
+    const viewB: PointsViewState = { ...baseViewState, slicePosition: [5, 5, 5, 0] };
+    const gen2First = await loader.loadPoints(viewB);
+    expect(gen2First).not.toBe(gen1);
+    expect(getPrefixParent(gen2First)).toBeUndefined();
+    expect(getAppendSpan(gen2First)).toEqual({ fromElement: 0, elementCount: 150 });
+    await loader.loadPoints(viewB);
+
+    expect(Array.from(gen1.positions)).toEqual(Array.from(saved));
   });
 });
