@@ -291,7 +291,7 @@ Visualizes 142k proteins from the CAFA5 challenge in 3D embedding space, showing
 
 **Run**: `luxar demo run esm3_protein_landscape [-- --no-serve] [-- --sample=100000] [-- --model=esmc-300m]`
 
-**Requires**: Internet access (downloads Swiss-Prot from UniProt), `esm` package; GPU strongly recommended (first run computes ESM embeddings + UMAP, ~5h). Subsequent runs load cached results.
+**Requires**: Internet access (downloads Swiss-Prot from UniProt), `esm>=3.0.0` (in the `demos` extra); a CUDA GPU to compute embeddings (first run computes ESM embeddings + UMAP, ~5h). Subsequent runs load cached results — and load them without `torch`, `esm` or `umap-learn` installed at all, because each is demanded only at the point where the corresponding uncached computation happens rather than as an entry-point preflight. If an earlier run left a quarantined `*.corrupt` artifact in `~/.cache/luxar/esm3_swissprot/`, the demo reports its path and size up front — re-download the complete file or delete the quarantined copy, otherwise the run starts over from scratch.
 
 **Demonstrates**: Protein language model embeddings (ESM-3 / ESM C), large-scale embedding visualization (~572k proteins), UMAP dimensionality reduction, taxonomic-kingdom coloring, hover labels.
 
@@ -335,7 +335,7 @@ Turns the Zebrahub VeloCyto AnnData (spliced/unspliced counts + precomputed 3D R
 
 **Run**: `luxar demo run zebrahub_velocity_streamlines [-- --preset preview] [-- --no-serve] [-- --h5ad /path/to/zebrahub_velocity.h5ad]`
 
-**Requires**: Internet access on first run (auto-downloads the `.h5ad` from the shared Zebrahub Google Drive into `~/.cache/luxar/zebrahub_velocity/`), `anndata`, `h5py`, `gdown`, `scipy`.
+**Requires**: Internet access on first run (auto-downloads the `.h5ad` from the shared Zebrahub Google Drive into `~/.cache/luxar/zebrahub_velocity/`), `anndata>=0.10,<0.13`, `h5py`, `gdown`, `scipy`. The anndata upper bound is load-bearing: anndata >= 0.13 requires `zarr>=3.1`, which conflicts with Luxar's `zarr>=2.16,<3.0` pin — installing `luxar[demos]` applies the constraint for you.
 
 **Demonstrates**: RNA-velocity visualization (Points + Lines together), per-cell velocity binned into a regularized smoothed cubic vector field, vectorized RK4 streamline integration through UMAP space, categorical anatomy-ontology coloring, stratified streamline seeding.
 
@@ -978,7 +978,14 @@ positions = cache_computed(
 ```
 
 `cache_computed` writes atomically and quarantines a corrupt cache to `.corrupt`
-instead of crashing. Sibling demos are importable normally
+instead of crashing. A quarantined file is never reused, so
+`luxar.utils.download.warn_if_quarantined()` (called from `robust_download()`,
+the shared download chokepoint) reports its path and size before a re-fetch
+starts — a demo that pulls a multi-gigabyte artifact should not silently restart
+the download. Use `find_quarantined_files()` / `format_quarantine_notice()` when
+a demo needs the same information inside its own error message.
+
+Sibling demos are importable normally
 (`from luxar.demos.demo_x import helper`) — no `importlib` file-path tricks.
 
 ## Creating New Demos

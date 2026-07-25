@@ -24,7 +24,14 @@ Usage:
     python -m luxar.demos.demo_esm3_protein_landscape --model=esmc-300m
 
 Dependencies:
-    pip install luxar[demos] esm
+    pip install 'luxar[demos]'   # includes esm>=3.0.0, umap-learn, h5py
+    pip install 'torch>=2.2,<3.0'  # CUDA build, to compute embeddings
+
+Cache hygiene:
+    A cached artifact that fails validation is quarantined to ``<name>.corrupt``
+    and never reused. The demo reports any quarantined file (path + size) before
+    doing anything expensive — re-download the complete file or delete the
+    quarantined copy, otherwise the run starts over from scratch.
 """
 
 DEMO_META = {
@@ -44,16 +51,24 @@ DEMO_META = {
 }
 
 import gzip
+import importlib
 import re
 import sys
 import tempfile
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 from arbol import aprint, asection
 
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
 from luxar.demos import launch_viewer, stack_colorings
+from luxar.utils.download import (
+    QUARANTINE_SUFFIX,
+    find_quarantined_files,
+    format_quarantine_notice,
+    warn_if_quarantined,
+)
 from luxar.utils.paths import get_demos_output_dir
 
 # =============================================================================
@@ -61,6 +76,48 @@ from luxar.utils.paths import get_demos_output_dir
 # =============================================================================
 
 DEFAULT_SAMPLE_SIZE = 0  # 0 = all (~572K)
+
+# Optional heavyweight dependencies, each demanded ONLY at the point where the
+# corresponding uncached computation happens — never as an entry-point preflight.
+# A complete embeddings cache returns before torch/esm are touched, and a
+# complete UMAP cache returns before umap-learn is, so gating up front would
+# refuse to run a machine that has every artifact it needs. Values are
+# (pip spec, luxar extra, extra note).
+_INSTALL_HINTS: dict[str, tuple[str, str, str]] = {
+    "torch": (
+        "torch>=2.2,<3.0",
+        "gsplats",
+        "Needed only to COMPUTE embeddings (a CUDA GPU is required for that).",
+    ),
+    "esm": (
+        "esm>=3.0.0",
+        "demos",
+        "Needed only to COMPUTE embeddings; a complete cached embeddings file "
+        "skips the model entirely.",
+    ),
+    "umap": (
+        "umap-learn>=0.5.0",
+        "demos",
+        "Needed only to COMPUTE the 3D projection; a cached UMAP skips it.",
+    ),
+}
+
+
+def _require_module(name: str) -> Any:
+    """Import an optional dependency, or raise with an actionable install hint.
+
+    Raises ``ImportError`` rather than exiting, so callers keep control and the
+    demo's own error reporting stays in one place.
+    """
+    try:
+        return importlib.import_module(name)
+    except ImportError as exc:
+        spec, extra, note = _INSTALL_HINTS.get(name, (name, "demos", ""))
+        raise ImportError(
+            f"Missing dependency: {name}. Install with `pip install '{spec}'` "
+            f"(or the whole extra: `pip install 'luxar[{extra}]'`). {note}".rstrip()
+        ) from exc
+
 
 SWISSPROT_FASTA_URLS = [
     # ExPASy mirror (faster, more reliable)
@@ -373,7 +430,6 @@ def _compute_esm3_embeddings(
     # shaped or unreadable file (e.g. a partial download) is quarantined to
     # `<name>.corrupt` and treated as absent, so the demo never silently
     # proceeds with malformed embeddings.
-    quarantined_corrupt = False
     if embeddings_cache.exists():
         with asection("Loading cached ESM embeddings"):
             try:
@@ -391,25 +447,45 @@ def _compute_esm3_embeddings(
                 embeddings_cache.name + ".corrupt"
             )
             embeddings_cache.rename(corrupt_path)
-            quarantined_corrupt = True
             aprint(
                 f"⚠ Cached embeddings are invalid ({actual}, expected "
                 f"{expected_shape}); quarantined to {corrupt_path.name} — recomputing."
             )
 
-    import torch
+    # Report ANY quarantined copy — including one left behind by an EARLIER run
+    # (the common case: the `.npy` is already gone, so the block above never
+    # fires). Without this the demo silently restarts a multi-GB fetch/compute
+    # with no hint that a rejected copy is sitting in the cache.
+    quarantined = warn_if_quarantined(
+        embeddings_cache,
+        action=(
+            "re-download the complete embeddings file, or delete the quarantined "
+            "copy to reclaim the disk space and recompute from scratch"
+        ),
+    )
+
+    # Past the cache check, so the compute path is genuinely being taken: this
+    # is where torch becomes mandatory (the CUDA probe below needs it). `esm` is
+    # demanded later, just before the model load — on a machine without CUDA the
+    # "supply a complete cache" message below is the actionable one, and it
+    # carries the quarantine notice, so it must not be pre-empted by a
+    # missing-esm error the user cannot act on anyway.
+    torch = _require_module("torch")
 
     # Computing ESM embeddings for ~572K proteins is only practical on a CUDA
     # GPU. If no usable cache is present and no CUDA device is available, fail
     # fast with an actionable message rather than downloading the model and then
     # crashing on `.to("cuda")` (or grinding for many hours on CPU/MPS).
     if not torch.cuda.is_available():
-        quarantine_note = (
-            "    A truncated/incomplete copy was quarantined to "
-            f"'{embeddings_cache.name}.corrupt' — re-fetch the full file and rerun.\n"
-            if quarantined_corrupt
-            else ""
+        notice = format_quarantine_notice(
+            quarantined,
+            indent="  ",
+            action=(
+                "re-download the complete file to that path, or delete the "
+                "quarantined copy and rerun on a CUDA machine"
+            ),
         )
+        quarantine_note = f"{notice}\n" if notice else ""
         raise RuntimeError(
             "No usable cached embeddings were found and CUDA is not available, "
             "so ESM embeddings cannot be (re)computed on this machine.\n"
@@ -423,7 +499,8 @@ def _compute_esm3_embeddings(
             "scratch."
         )
 
-    # Load model
+    # Load model — the one place `esm` itself is genuinely needed.
+    _require_module("esm")
     with asection(f"Loading ESM model: {model_name}"):
         if model_name == "esmc-300m":
             from esm.models.esmc import ESMC
@@ -528,7 +605,7 @@ def _reduce_to_3d(
         aprint(f"✓ Loaded 3D UMAP from cache ({len(positions):,} points)")
         return positions
 
-    from umap import UMAP
+    UMAP = _require_module("umap").UMAP
 
     with asection(
         f"UMAP reduction ({embeddings.shape[0]:,} × {embeddings.shape[1]}D → 3D)"
@@ -835,29 +912,32 @@ def main() -> None:
     aprint(f"Model: {model_name}")
     aprint("")
 
-    # Check dependencies
-    try:
-        import torch  # noqa: F401
-    except ImportError:
-        aprint("Missing dependency: torch")
-        aprint("Install with: pip install torch")
-        sys.exit(1)
-
-    try:
-        import esm  # noqa: F401
-    except ImportError:
-        aprint("Missing dependency: esm")
-        aprint("Install with: pip install esm")
-        sys.exit(1)
-
-    try:
-        import umap  # noqa: F401
-    except ImportError:
-        aprint("Missing dependency: umap-learn")
-        aprint("Install with: pip install umap-learn")
-        sys.exit(1)
-
     cache_dir = Path.home() / ".cache" / "luxar" / "esm3_swissprot"
+
+    # Report the cache's real state FIRST. A quarantined `.corrupt` artifact is
+    # the difference between "instant run" and "multi-GB re-download", so the
+    # user learns about it even when a dependency gate below also trips.
+    quarantined = find_quarantined_files(cache_dir)
+    if quarantined:
+        aprint(
+            format_quarantine_notice(
+                quarantined,
+                indent="",
+                action=(
+                    "re-download the complete file under the same name (minus "
+                    f"'{QUARANTINE_SUFFIX}') into {cache_dir}, or delete the "
+                    "quarantined copy to reclaim the disk space — otherwise this "
+                    "run recomputes/re-downloads it from scratch"
+                ),
+            )
+        )
+        aprint("")
+
+    # NO dependency preflight here on purpose. torch / esm / umap-learn are
+    # demanded by `_require_module` at the exact points that need them, so a
+    # machine holding complete caches runs the demo without any of them
+    # installed. Gating up front would refuse the cache-only path that the
+    # quarantine notice above tells the user to aim for.
 
     if "--no-serve" in sys.argv:
         output_path = get_demos_output_dir() / "esm3_protein_landscape.luxar.zarr"
