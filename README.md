@@ -6,9 +6,24 @@
 
 **High-performance n-dimensional scientific visualization.**
 
-Luxar is a system for compiling and visualizing large-scale n-dimensional point clouds, lines, and Gaussian splats. Built for scientists and researchers who need to explore datasets with millions of elements in 3D, 4D, or higher dimensions.
+Luxar makes large scientific datasets explorable in a web browser. You describe a
+scene in Python — **points**, **lines**, and **Gaussian splats**, in as many
+dimensions as your data actually has — and Luxar *compiles* it into a chunked,
+spatially indexed Zarr archive. A GPU viewer then streams that archive and renders
+it. The expensive work happens once, at compile time; what remains during
+exploration is bounded by your graphics card rather than by your file format.
 
-**Volume rendering, without the voxels.** Luxar fits image volumes to sparse oriented Gaussians instead of shipping the grid: a 3.3 GB light-sheet stack becomes 2.6 MB of splats, and a 400-timepoint confocal timelapse becomes 72 MB — small enough to stream into a browser and render on the GPU with real emission–absorption physics. See [Volume Rendering with Gaussian Splats](#volume-rendering-with-gaussian-splats).
+Three ideas carry most of the design:
+
+- **Compile, don't load.** Elements are reordered along a space-filling curve,
+  chunked to ~64 KB and compressed, so the viewer fetches only the chunks the
+  current view actually intersects — and starts drawing before the rest arrives.
+- **n dimensions are first class.** Time, channel, camera, or any abstract axis is
+  a real dimension with units and extent, not a folder of frames. Geometry is
+  sliced by nD proximity, and every non-displayed axis becomes a slider.
+- **Represent, don't rasterize.** Image volumes are *fitted* to sparse oriented
+  Gaussians instead of shipped as voxel grids — which is what lets a 3.3 GB
+  light-sheet stack, or a 400-timepoint timelapse, travel over a network at all.
 
 [Quick Start](#quick-start) | [Volume Rendering](#volume-rendering-with-gaussian-splats) | [Gallery](#gallery) | [Documentation](#documentation) | [API Reference](#api-reference)
 
@@ -16,7 +31,10 @@ Luxar is a system for compiling and visualizing large-scale n-dimensional point 
 
 ## Why Luxar?
 
-Scientific visualization is often software-limited. Luxar changes this by separating data compilation from rendering:
+Most scientific viewers are limited by how much work the application must do per
+frame. Luxar moves that work out of the interaction loop: spatial ordering,
+chunking, compression, level-of-detail, and — for image volumes — the Gaussian fit
+itself all happen ahead of time, so the browser is left with little to do but draw.
 
 ```
 ┌─────────────────────┐         ┌──────────────────────┐
@@ -30,22 +48,25 @@ Scientific visualization is often software-limited. Luxar changes this by separa
 └─────────────────────┘         └──────────────────────┘
 ```
 
-- **Python** compiles your data into optimized Zarr archives
-- **WebGL** renders at GPU speeds in any browser
-- **Result**: rendering is GPU-bound, not application-bound — real-world speed scales with your graphics card (headless software-GL, with no GPU, is the slow exception)
+Because the archive is self-describing and chunked, the same output serves every
+consumer: `luxar serve` for local exploration, a static file host for sharing, or a
+standalone export a colleague opens with no Luxar install. And because the viewer's
+remaining work is drawing, rendering is GPU-bound rather than application-bound —
+real-world speed scales with your graphics card (headless software-GL, with no GPU,
+is the slow exception).
 
 ### Key Capabilities
 
 | Feature | Description |
 |---------|-------------|
-| **n-Dimensional** | Full support for 3D, 4D, and beyond with intuitive slice navigation |
-| **Massive Scale** | 100K to 10M+ primitives at interactive frame rates |
-| **HDR Rendering** | 16-bit floating-point colors with bloom and tone mapping |
-| **Streaming** | Progressive loading from local files or remote servers |
-| **[Volume Rendering](#volume-rendering-with-gaussian-splats)** | Volumes fitted to oriented Gaussian splats — gigabytes of voxels become megabytes of streamable, GPU-native geometry |
-| **[Timelapse-Native](#timelapses-are-one-dataset-not-a-folder-of-frames)** | A whole 4D/5D acquisition in one dataset — time is a fitted dimension, not a folder of frames |
-| **[Emission–Absorption](#emission-and-absorption-not-just-glow)** | Physically-based `volumetric` blending with one turbidity knob, from X-ray glow to dense medium |
-| **Line Geometry** | Render line segments with width tapering and color gradients |
+| **[Three geometries](#geometry-types)** | Points, lines, and Gaussian splats share one attribute model — nD positions, per-element colors, sizes, and opacity |
+| **[n-Dimensional](#n-dimensional-visualization)** | 3D, 4D, 5D and beyond: named axes with physical units, radius-based slicing, keyboard navigation, per-axis transforms |
+| **Massive scale** | 100K to 10M+ primitives at interactive frame rates, with level-of-detail and progressive streaming from local files or remote servers |
+| **[Volume rendering](#volume-rendering-with-gaussian-splats)** | Image volumes fitted to oriented Gaussians — gigabytes of voxels become megabytes of streamable, GPU-native geometry, timelapses included |
+| **Appearance** | HDR 16-bit float color, bloom and tone mapping, matplotlib/colorcet colormaps, and six blending modes from additive to physically-based [emission–absorption](#emission-and-absorption-not-just-glow) |
+| **Fitting pipeline** | `cal → fit → lod` with cross-validated splat budgets, optional CUDA, and whole-timelapse fitting across many GPUs or a Slurm cluster |
+| **Interoperable** | Reads classical 3D-Gaussian-splatting captures (INRIA, `.splat`, `.spz`, SuperSplat, PlayCanvas SOG); writes INRIA PLY |
+| **Shareable** | `luxar export` produces a standalone offline folder or a double-clickable native macOS/Linux app — no Luxar install needed to view |
 
 > **Requirements:** The Luxar viewer targets **desktop browsers** with **WebGL2** support (Chrome, Firefox, Edge, Safari 15+). Touch/mobile devices are not currently supported.
 
