@@ -21,8 +21,15 @@ import {
   getPlaceholderElementTexture,
 } from '../../../rendering/element-texture-layout';
 import {
+  SORTED_INDEX_CHUNK_ELEMENTS,
+  cancelAllSortedIndexOrderingApplies,
+  cancelSortedIndexOrderingApply,
+  configureSortedIndexChunkedApply,
   elementTexelCapacity,
+  hasPendingSortedIndexOrderingApply,
+  pumpSortedIndexOrderingApply,
   registerElementTexelDirtyRange,
+  setSortedIndexChunkElementsForTests,
   writeSortedIndexIdentity,
   writeSortedIndexIdentityRange,
   writeSortedIndexOrdering,
@@ -865,5 +872,263 @@ describe('pool adapter — precomputed projection bounds fast path', () => {
     } finally {
       pool.dispose();
     }
+  });
+});
+
+describe('chunked ordering apply (perf lever L8)', () => {
+  // Tiny chunk (4 indices) so tests stay readable; the production
+  // constant is 1M (4 MB/frame — see the element-storage module note).
+  const CHUNK = 4;
+
+  beforeEach(() => {
+    setSortedIndexChunkElementsForTests(CHUNK);
+    configureSortedIndexChunkedApply(true);
+  });
+
+  afterEach(() => {
+    cancelAllSortedIndexOrderingApplies();
+    setSortedIndexChunkElementsForTests(null);
+    configureSortedIndexChunkedApply(true);
+  });
+
+  function makeGeometry(capacity: number): {
+    geometry: THREE.InstancedBufferGeometry;
+    attr: THREE.InstancedBufferAttribute;
+    arr: Uint32Array;
+  } {
+    const geometry = new THREE.InstancedBufferGeometry();
+    attachSplatStorage(geometry, capacity);
+    const attr = geometry.getAttribute('aSortedIndex') as THREE.InstancedBufferAttribute;
+    return { geometry, attr, arr: attr.array as Uint32Array };
+  }
+
+  /** Reversed permutation over [0, n) — every entry differs from identity (n ≥ 2). */
+  function reversed(n: number): Uint32Array {
+    const out = new Uint32Array(n);
+    for (let i = 0; i < n; i++) out[i] = n - 1 - i;
+    return out;
+  }
+
+  /** Simulate the classic WebGLRenderer consuming the pending upload. */
+  function flushAttr(attr: THREE.InstancedBufferAttribute): void {
+    attr.clearUpdateRanges();
+  }
+
+  it('exposes a 1M-index (4 MB) production chunk size', () => {
+    expect(SORTED_INDEX_CHUNK_ELEMENTS).toBe(1_000_000);
+  });
+
+  it('threshold routing: orderings ≤ one chunk stay single-shot', () => {
+    const { geometry, attr, arr } = makeGeometry(16);
+    const n = writeSortedIndexOrdering(geometry, reversed(CHUNK), CHUNK);
+    expect(n).toBe(CHUNK);
+    expect(hasPendingSortedIndexOrderingApply(geometry)).toBe(false);
+    expect(Array.from(arr.subarray(0, CHUNK))).toEqual([3, 2, 1, 0]);
+    // Single-shot keeps the collapsed [0, n) prefix discipline.
+    expect(attr.updateRanges.length).toBe(1);
+    expect(attr.updateRanges[0]).toMatchObject({ start: 0, count: CHUNK });
+  });
+
+  it('large ordering: the write only records the pending apply (previous permutation stays intact)', () => {
+    const { geometry, attr, arr } = makeGeometry(16);
+    writeSortedIndexIdentity(geometry, 12);
+    flushAttr(attr);
+    const versionBefore = attr.version;
+
+    const ordering = reversed(12); // 3 chunks of 4
+    const n = writeSortedIndexOrdering(geometry, ordering, 12);
+    expect(n).toBe(12);
+    expect(hasPendingSortedIndexOrderingApply(geometry)).toBe(true);
+    // The pump owns EVERY slice — the write itself leaves the previous
+    // (fully valid) permutation untouched, registers no ranges, and
+    // bumps no version. A never-pumped ordering degrades to "stale but
+    // valid", never "mixed".
+    expect(Array.from(arr.subarray(0, 12))).toEqual([0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]);
+    expect(attr.updateRanges.length).toBe(0);
+    expect(attr.version).toBe(versionBefore);
+  });
+
+  it('pump progression: one slice per pump, per-slice ranges, final buffer EXACTLY the ordering', () => {
+    const { geometry, attr, arr } = makeGeometry(16);
+    writeSortedIndexIdentity(geometry, 12);
+    flushAttr(attr);
+    const ordering = reversed(12);
+    writeSortedIndexOrdering(geometry, ordering, 12);
+
+    // Frame 1: slice [0, 4) — more work remains. Mid-apply pin: buffer =
+    // NEW prefix [0, 4) ∪ OLD (identity) suffix [4, 12). This mix is NOT
+    // a permutation — e.g. index 8 appears at slots 3 (new) and 8 (old):
+    // one splat transiently draws twice while indices 0–3 are omitted.
+    // Deliberate, documented trade: bounded shimmer for ceil(n/chunk)
+    // frames instead of a 119–563 ms upload hitch.
+    expect(pumpSortedIndexOrderingApply(geometry)).toBe(true);
+    expect(Array.from(arr.subarray(0, 12))).toEqual([11, 10, 9, 8, 4, 5, 6, 7, 8, 9, 10, 11]);
+    // Only the slice's range is registered — not the whole prefix.
+    expect(attr.updateRanges.length).toBe(1);
+    expect(attr.updateRanges[0]).toMatchObject({ start: 0, count: CHUNK });
+    flushAttr(attr);
+
+    // Frame 2: slice [4, 8) — more work remains.
+    expect(pumpSortedIndexOrderingApply(geometry)).toBe(true);
+    expect(attr.updateRanges.length).toBe(1);
+    expect(attr.updateRanges[0]).toMatchObject({ start: CHUNK, count: CHUNK });
+    flushAttr(attr);
+
+    // Frame 3: slice [8, 12) — completes.
+    expect(pumpSortedIndexOrderingApply(geometry)).toBe(false);
+    expect(attr.updateRanges.length).toBe(1);
+    expect(attr.updateRanges[0]).toMatchObject({ start: 2 * CHUNK, count: CHUNK });
+    expect(hasPendingSortedIndexOrderingApply(geometry)).toBe(false);
+    // Completion invariant: the buffer EXACTLY equals the ordering.
+    expect(Array.from(arr.subarray(0, 12))).toEqual(Array.from(ordering));
+    // Idempotent past completion.
+    expect(pumpSortedIndexOrderingApply(geometry)).toBe(false);
+  });
+
+  it('unflushed slices collapse into ONE contiguous range (WebGPU never-clears discipline)', () => {
+    const { geometry, attr } = makeGeometry(16);
+    const ordering = reversed(12);
+    writeSortedIndexOrdering(geometry, ordering, 12);
+    // No flush between slices (hidden mesh / coalesced frames): ranges
+    // must fold, never accumulate.
+    pumpSortedIndexOrderingApply(geometry);
+    expect(attr.updateRanges.length).toBe(1);
+    expect(attr.updateRanges[0]).toMatchObject({ start: 0, count: CHUNK });
+    pumpSortedIndexOrderingApply(geometry);
+    expect(attr.updateRanges.length).toBe(1);
+    expect(attr.updateRanges[0]).toMatchObject({ start: 0, count: 2 * CHUNK });
+    pumpSortedIndexOrderingApply(geometry);
+    expect(attr.updateRanges.length).toBe(1);
+    expect(attr.updateRanges[0]).toMatchObject({ start: 0, count: 3 * CHUNK });
+  });
+
+  it('a NEW ordering mid-apply is HELD and starts only after the current apply completes', () => {
+    // Never restart a streaming apply: under a continuous orbit new
+    // orderings arrive every sort round-trip, and restart-from-slice-0
+    // meant the stream never converged (measured 8× frame-median
+    // regression). A fully-applied slightly-stale order is strictly
+    // better than a never-completing mix.
+    const { geometry, arr } = makeGeometry(16);
+    const orderingA = reversed(12);
+    writeSortedIndexOrdering(geometry, orderingA, 12);
+    pumpSortedIndexOrderingApply(geometry);
+    pumpSortedIndexOrderingApply(geometry); // A applied through [0, 8)
+
+    // B arrives (a newer sort resolve): held, NOT started.
+    const orderingB = new Uint32Array([5, 4, 7, 6, 1, 0, 3, 2, 9, 8, 11, 10]);
+    writeSortedIndexOrdering(geometry, orderingB, 12);
+    expect(hasPendingSortedIndexOrderingApply(geometry)).toBe(true);
+    expect(Array.from(arr.subarray(0, CHUNK))).toEqual([11, 10, 9, 8]); // A's prefix intact
+
+    // A completes first (buffer EXACTLY equals A for one frame — a fully
+    // valid permutation); the pump reports more work (B's stream).
+    expect(pumpSortedIndexOrderingApply(geometry)).toBe(true); // A [8, 12) + promote B
+    expect(Array.from(arr.subarray(0, 12))).toEqual(Array.from(orderingA));
+
+    // B streams from slice 0.
+    expect(pumpSortedIndexOrderingApply(geometry)).toBe(true); // B [0, 4)
+    expect(Array.from(arr.subarray(0, CHUNK))).toEqual([5, 4, 7, 6]);
+    expect(pumpSortedIndexOrderingApply(geometry)).toBe(true); // B [4, 8)
+    expect(pumpSortedIndexOrderingApply(geometry)).toBe(false); // B [8, 12) — done
+    expect(hasPendingSortedIndexOrderingApply(geometry)).toBe(false);
+    expect(Array.from(arr.subarray(0, 12))).toEqual(Array.from(orderingB));
+  });
+
+  it('held ordering: LATEST wins — an even newer arrival replaces the held one', () => {
+    const { geometry, arr } = makeGeometry(16);
+    const orderingA = reversed(12);
+    writeSortedIndexOrdering(geometry, orderingA, 12);
+    pumpSortedIndexOrderingApply(geometry); // A streaming
+
+    const orderingB = new Uint32Array(12).fill(1);
+    const orderingC = new Uint32Array([5, 4, 7, 6, 1, 0, 3, 2, 9, 8, 11, 10]);
+    writeSortedIndexOrdering(geometry, orderingB, 12); // held...
+    writeSortedIndexOrdering(geometry, orderingC, 12); // ...replaced (B dropped)
+
+    // Finish A (2 more slices), then C streams; B never touches the buffer.
+    pumpSortedIndexOrderingApply(geometry);
+    pumpSortedIndexOrderingApply(geometry); // A done + C promoted
+    pumpSortedIndexOrderingApply(geometry);
+    pumpSortedIndexOrderingApply(geometry);
+    expect(pumpSortedIndexOrderingApply(geometry)).toBe(false);
+    expect(Array.from(arr.subarray(0, 12))).toEqual(Array.from(orderingC));
+  });
+
+  it('a SMALL (single-shot) ordering mid-apply cancels the stream — the full write wins', () => {
+    const { geometry, arr } = makeGeometry(16);
+    writeSortedIndexOrdering(geometry, reversed(12), 12);
+    pumpSortedIndexOrderingApply(geometry); // streaming
+    // A single-shot write leaves the buffer exactly equal to the newest
+    // ordering — dominating anything the stream could still produce.
+    const small = new Uint32Array([2, 0, 1]);
+    writeSortedIndexOrdering(geometry, small, 3);
+    expect(hasPendingSortedIndexOrderingApply(geometry)).toBe(false);
+    expect(pumpSortedIndexOrderingApply(geometry)).toBe(false);
+    expect(Array.from(arr.subarray(0, 3))).toEqual([2, 0, 1]);
+  });
+
+  it('writeSortedIndexIdentity cancels an in-flight apply AND its held ordering (commit supersedes)', () => {
+    const { geometry, arr } = makeGeometry(16);
+    writeSortedIndexOrdering(geometry, reversed(12), 12);
+    pumpSortedIndexOrderingApply(geometry); // streaming
+    writeSortedIndexOrdering(geometry, new Uint32Array(12).fill(2), 12); // held
+    expect(hasPendingSortedIndexOrderingApply(geometry)).toBe(true);
+    writeSortedIndexIdentity(geometry, 12);
+    expect(hasPendingSortedIndexOrderingApply(geometry)).toBe(false);
+    expect(pumpSortedIndexOrderingApply(geometry)).toBe(false);
+    // Neither the stale stream nor the held ordering scribbles over the
+    // fresh identity.
+    expect(Array.from(arr.subarray(0, 12))).toEqual([0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]);
+  });
+
+  it('writeSortedIndexIdentityRange (append commit) cancels an in-flight apply', () => {
+    const { geometry } = makeGeometry(16);
+    writeSortedIndexOrdering(geometry, reversed(12), 12);
+    writeSortedIndexIdentityRange(geometry, 12, 16);
+    expect(hasPendingSortedIndexOrderingApply(geometry)).toBe(false);
+    expect(pumpSortedIndexOrderingApply(geometry)).toBe(false);
+  });
+
+  it('geometry dispose cancels the apply (structural lifetime pin)', () => {
+    const { geometry } = makeGeometry(16);
+    writeSortedIndexOrdering(geometry, reversed(12), 12);
+    expect(hasPendingSortedIndexOrderingApply(geometry)).toBe(true);
+    geometry.dispose();
+    expect(hasPendingSortedIndexOrderingApply(geometry)).toBe(false);
+  });
+
+  it('explicit cancel + cancel-all clear pending applies', () => {
+    const a = makeGeometry(16);
+    const b = makeGeometry(16);
+    writeSortedIndexOrdering(a.geometry, reversed(12), 12);
+    writeSortedIndexOrdering(b.geometry, reversed(12), 12);
+    cancelSortedIndexOrderingApply(a.geometry);
+    expect(hasPendingSortedIndexOrderingApply(a.geometry)).toBe(false);
+    expect(hasPendingSortedIndexOrderingApply(b.geometry)).toBe(true);
+    cancelAllSortedIndexOrderingApplies();
+    expect(hasPendingSortedIndexOrderingApply(b.geometry)).toBe(false);
+  });
+
+  it('chunking disabled (WebGPU backends): large orderings stay single-shot', () => {
+    configureSortedIndexChunkedApply(false);
+    const { geometry, attr, arr } = makeGeometry(16);
+    const ordering = reversed(12);
+    const n = writeSortedIndexOrdering(geometry, ordering, 12);
+    expect(n).toBe(12);
+    expect(hasPendingSortedIndexOrderingApply(geometry)).toBe(false);
+    expect(Array.from(arr.subarray(0, 12))).toEqual(Array.from(ordering));
+    expect(attr.updateRanges.length).toBe(1);
+    expect(attr.updateRanges[0]).toMatchObject({ start: 0, count: 12 });
+  });
+
+  it('chunked path clamps to the attribute length like the single-shot path', () => {
+    const { geometry, arr } = makeGeometry(8); // attr length 8
+    const ordering = reversed(12); // longer than the attribute
+    const n = writeSortedIndexOrdering(geometry, ordering, 12);
+    expect(n).toBe(8);
+    expect(pumpSortedIndexOrderingApply(geometry)).toBe(true); // [0, 4)
+    expect(pumpSortedIndexOrderingApply(geometry)).toBe(false); // [4, 8) — done
+    expect(hasPendingSortedIndexOrderingApply(geometry)).toBe(false);
+    expect(Array.from(arr)).toEqual(Array.from(ordering.subarray(0, 8)));
   });
 });
