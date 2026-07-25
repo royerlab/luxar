@@ -465,7 +465,8 @@
       "script": "demo_protein_embeddings_cafa5.py",
       "dataset": "datasets/demos/protein_landscape.luxar.zarr",
       "autoFrame": false,
-      "note": "bounds-fit shows whole embedding incl outlier clusters; fixes too-close"
+      "zoom": 3,
+      "note": "bounds-fit shows whole embedding incl outlier clusters; zoom 3x back in on the core, which the sparse outliers otherwise shrink to a speck"
     },
     {
       "id": "quasicrystal",

@@ -189,7 +189,7 @@ def demo_run(
 ) -> None:
     """Run a demo by key or index; extra args are forwarded to the demo.
 
-    Example: luxar demo run tribolium -- --recompute --no-serve
+    Example: luxar demo run gsplats_3d_tribolium_embryo -- --recompute --no-serve
     """
     info = _resolve_or_exit(key)
     extra = list(ctx.args)

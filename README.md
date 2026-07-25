@@ -82,20 +82,72 @@ is the slow exception).
 - **Gaussian-splat _fitting_** also needs an NVIDIA **CUDA GPU** (see `make build-cuda`); _viewing_ splats in the browser does not.
 - **Ubuntu/Debian only**: `sudo apt-get install -y pipx && pipx ensurepath`
 
-### Install and Run Demo
+### Install and Run Demos
 
 ```bash
 git clone https://github.com/royerlab/luxar.git
 cd luxar
-make setup-dev  # Auto-installs Node.js, pnpm, Hatch (no sudo)
-luxar demo run lorenz   # Generates a demo + opens browser (or `luxar demo` to browse all)
+make setup-dev          # Auto-installs Node.js, pnpm, Hatch (no sudo)
+luxar demo              # Browse the 75 bundled demos
+luxar demo run lorenz   # Run one — generates the data and opens the viewer
 ```
 
-This generates a Lorenz attractor and opens the viewer:
+That last command generates a Lorenz attractor and opens the viewer:
 
 ![Lorenz Attractor Demo](docs/images/readme/lorenz-demo.png)
 
-### Create Your First Visualization
+#### Browsing the catalogue
+
+`luxar demo` prints every bundled demo as a table — index, key, geometry,
+category, what it needs, and whether you have already built it:
+
+```
+🎬 [Luxar] 75 demos
+
+  #  KEY                                    GEOM         CATEGORY       NEEDS                STATUS
+───────────────────────────────────────────────────────────────────────────────────────────────────
+  1  arxiv_papers                           points       embeddings     ⬇20MB                cached
+  6  cellxgene_census_umap                  points       embeddings     ⬇12MB LFS
+  8  chromatrace_choir_umap_sequence        points       embeddings     📁manual              cached
+ 24  gsplats_2d_codex_pancreas              gsplats      microscopy     ⬇5900MB GPU          cached
+ 26  gsplats_3d_cells3d_multichannel        gsplats      microscopy     ⬇1MB GPU* LFS        cached
+ ...
+
+Run one:  luxar demo run <key|#>       Details:  luxar demo info <key|#>
+Caches:   luxar demo cache list        Clear:    luxar demo cache clear …
+```
+
+**NEEDS** tells you the cost before you commit: `⬇NNMB` for a download, `GPU`
+(required) or `GPU*` (optional), plus `LFS`, `🔑kaggle`, or `📁manual` when a demo
+needs Git-LFS data, Kaggle credentials, or a file you supply. **STATUS** reads
+`cached` once inputs are downloaded and `output ✓` once the scene is built, so a
+second pass over the catalogue shows exactly what is already on disk.
+
+#### The `luxar demo` commands
+
+| Command | What it does |
+|---------|--------------|
+| `luxar demo` | Browse the catalogue (same as `luxar demo list`) |
+| `luxar demo list -c microscopy` | Filter by category: `synthetic`, `microscopy`, `embeddings`, `photogrammetry`, `astronomy`, `structural`, `networks`, `medical`, `geoscience`, `genomics`, `connectome` |
+| `luxar demo list -g gsplats` | Filter by geometry: `points`, `gsplats`, `lines`, `points+lines`, `mixed` |
+| `luxar demo info <key\|#>` | Requirements, caches, outputs, and how to run one demo |
+| `luxar demo run <key\|#>` | Run by key **or** index — `luxar demo run 1` and `luxar demo run lorenz` are the same demo |
+| `luxar demo run <key> -- ARGS` | Forward arguments to the demo script, e.g. `luxar demo run gsplats_3d_tribolium_embryo -- --recompute --no-serve` |
+| `luxar demo run-all` | Build every demo's dataset unattended; skips GPU-only, manual-data, and >200 MB downloads unless told otherwise |
+| `luxar demo cache list` | Inventory the demo caches under `~/.cache/luxar/`, with sizes and orphans |
+| `luxar demo cache clear <keys>` | Reclaim space — `--all` for everything, `--outputs` to drop generated scenes too, `--dry-run` to preview |
+
+Demos run as subprocesses, so `Ctrl-C` tears down the demo *and* the viewer it
+spawned. Every tile in the [Gallery](#gallery) below is one of these demos — pick
+a key from `luxar demo` and `luxar demo run <key>` reproduces it locally.
+
+---
+
+## Your First Visualization
+
+The demos show what Luxar can render; this is how you build a scene from your own
+data. Define a coordinate system, add geometry, and the compiler writes a
+`.luxar.zarr` archive.
 
 ```python
 import numpy as np
@@ -122,22 +174,26 @@ with LuxarZarrCompiler("my_data.luxar.zarr") as compiler:
 # luxar serve my_data.luxar.zarr --viewer --open
 ```
 
-### Using the CLI
+### Viewing and sharing it
 
 ```bash
-# Browse the bundled demos, then run one with its viewer
-luxar demo
-luxar demo run lorenz
-
-# Serve your own data
+# Serve the scene and open the viewer
 luxar serve my_data.luxar.zarr --viewer --open
 
-# Dataset information
+# Inspect what you compiled
 luxar info my_data.luxar.zarr --stats
 
-# Network simulation for performance testing
+# Test how it behaves on a slow link
 luxar serve my_data.luxar.zarr --profile 3g --viewer
+
+# Package it so a colleague can open it without installing Luxar
+luxar export my_data.luxar.zarr -o my_export/
 ```
+
+From here: [Geometry Types](#geometry-types) for points, lines, and splats;
+[n-Dimensional Visualization](#n-dimensional-visualization) for 4D and beyond; and
+[Volume Rendering](#volume-rendering-with-gaussian-splats) if your data is an image
+volume rather than a point set.
 
 ---
 
@@ -161,13 +217,11 @@ A cross-section of Luxar's built-in demos — all three geometry types (**Points
 | [![ATP Synthase — molecular machine](docs/images/readme/gallery/atp_synthase.webp)](docs/images/readme/gallery/atp_synthase.webm) | [![Tabula Sapiens — human cell atlas](docs/images/readme/gallery/tabula_sapiens.webp)](docs/images/readme/gallery/tabula_sapiens.webm) | [![Human Multiome — ATAC-peak UMAP](docs/images/readme/gallery/human_multiome_peak_umap.webp)](docs/images/readme/gallery/human_multiome_peak_umap.webm) |
 | **ATP Synthase**<br>molecular machine | **Tabula Sapiens**<br>human cell atlas | **Human Multiome**<br>ATAC-peak UMAP |
 
-### Astronomy, geoscience & physics
+### Earth & geoscience
 
-| [![Spiral Galaxy — barred multi-armed disk](docs/images/readme/gallery/spiral_galaxy.webp)](docs/images/readme/gallery/spiral_galaxy.webm) | [![Spiral Galaxy — 5D navigable](docs/images/readme/gallery/spiral_galaxy_5d.webp)](docs/images/readme/gallery/spiral_galaxy_5d.webm) | [![Global Earthquakes — USGS on the globe](docs/images/readme/gallery/earthquakes.webp)](docs/images/readme/gallery/earthquakes.webm) |
-|:--:|:--:|:--:|
-| **Spiral Galaxy**<br>barred multi-armed disk | **Spiral Galaxy**<br>5D navigable | **Global Earthquakes**<br>USGS on the globe |
-| [![Rivers of Earth — topography + river networks](docs/images/readme/gallery/global_rivers_earth.webp)](docs/images/readme/gallery/global_rivers_earth.webm) | [![Particle Collision — physics event](docs/images/readme/gallery/collision.webp)](docs/images/readme/gallery/collision.webm) | [![Ocean — bioluminescent jellyfish](docs/images/readme/gallery/ocean.webp)](docs/images/readme/gallery/ocean.webm) |
-| **Rivers of Earth**<br>topography + river networks | **Particle Collision**<br>physics event | **Ocean**<br>bioluminescent jellyfish |
+| [![Global Earthquakes — USGS on the globe](docs/images/readme/gallery/earthquakes.webp)](docs/images/readme/gallery/earthquakes.webm) | [![Rivers of Earth — topography + river networks](docs/images/readme/gallery/global_rivers_earth.webp)](docs/images/readme/gallery/global_rivers_earth.webm) |
+|:--:|:--:|
+| **Global Earthquakes**<br>USGS on the globe | **Rivers of Earth**<br>topography + river networks |
 
 ### Networks & embeddings
 
@@ -182,26 +236,26 @@ A cross-section of Luxar's built-in demos — all three geometry types (**Points
 | [![Lorenz Attractor — chaotic dynamics](docs/images/readme/gallery/lorenz.webp)](docs/images/readme/gallery/lorenz.webm) | [![Rainbow Sphere — HDR Fibonacci sphere](docs/images/readme/gallery/rainbow_sphere.webp)](docs/images/readme/gallery/rainbow_sphere.webm) | [![Quantum Orbitals — hydrogen 2p_z](docs/images/readme/gallery/quantum_orbitals.webp)](docs/images/readme/gallery/quantum_orbitals.webm) |
 |:--:|:--:|:--:|
 | **Lorenz Attractor**<br>chaotic dynamics | **Rainbow Sphere**<br>HDR Fibonacci sphere | **Quantum Orbitals**<br>hydrogen 2p_z |
-| [![Hilbert Curve — 3D space-filling](docs/images/readme/gallery/hilbert_curve_3d.webp)](docs/images/readme/gallery/hilbert_curve_3d.webm) |
-| **Hilbert Curve**<br>3D space-filling |
+| [![Spiral Galaxy — barred multi-armed disk](docs/images/readme/gallery/spiral_galaxy.webp)](docs/images/readme/gallery/spiral_galaxy.webm) | [![Spiral Galaxy — 5D navigable](docs/images/readme/gallery/spiral_galaxy_5d.webp)](docs/images/readme/gallery/spiral_galaxy_5d.webm) | [![Hilbert Curve — 3D space-filling](docs/images/readme/gallery/hilbert_curve_3d.webp)](docs/images/readme/gallery/hilbert_curve_3d.webm) |
+| **Spiral Galaxy**<br>barred multi-armed disk | **Spiral Galaxy**<br>5D navigable | **Hilbert Curve**<br>3D space-filling |
+| [![Particle Collision — physics event](docs/images/readme/gallery/collision.webp)](docs/images/readme/gallery/collision.webm) | [![Ocean — bioluminescent jellyfish](docs/images/readme/gallery/ocean.webp)](docs/images/readme/gallery/ocean.webm) |
+| **Particle Collision**<br>physics event | **Ocean**<br>bioluminescent jellyfish |
 
 > The full curated set (and more datasets) lives in `scripts/gallery/manifest.json`. A few very large point clouds (Gaia 3M stars, DESI cosmic web) and heavy volumes render too slowly under headless software-GL to include as videos here — regenerate with a GPU via `make generate-gallery`.
 >
 > These demos visualize openly-shared scientific datasets — see [Acknowledgments → Datasets & scientific data](#datasets--scientific-data) for full sources and citations.
 
-### Running Demos
+### Reproducing these locally
+
+Each tile is a bundled demo — run it by key with the
+[`luxar demo` commands](#the-luxar-demo-commands) shown in Quick Start:
 
 ```bash
-# Run all demos
-make run-demos
+luxar demo                          # Find the key for any tile above
+luxar demo run spiral_galaxy_5d     # Build and view one
+luxar demo run-all                  # Build every demo's dataset unattended
 
-# Or run an individual demo (opens the viewer)
-hatch run python packages/luxar/src/luxar/demos/demo_spiral_galaxy.py
-hatch run python packages/luxar/src/luxar/demos/demo_earthquakes_3d.py
-hatch run python packages/luxar/src/luxar/demos/demo_dipc_3d_genome.py
-
-# Regenerate the gallery stills + orbit videos above
-make generate-gallery
+make generate-gallery               # Regenerate the stills + orbit videos above
 ```
 
 ---
@@ -534,11 +588,23 @@ scene.luxar.zarr/
 
 ### Performance Characteristics
 
-| Scale | Memory | Load Time | Frame Rate |
-|-------|--------|-----------|------------|
-| 100K elements | ~5MB | <1s | 60 FPS |
-| 1M elements | ~50MB | ~3s | 30-60 FPS |
-| 10M elements | ~500MB | ~15s | 15-30 FPS |
+Measured on an **NVIDIA RTX 3070 at 1280×720**, adaptive DPR pinned to 1.0 for
+measurement, in interactive orbit at the reference 4-pixel primitive size. Median
+per-frame GPU time through the full HDR composer chain:
+
+| Elements | Lines | Points | Gaussian splats |
+|----------|-------|--------|-----------------|
+| 100K | 0.42 ms | 0.86 ms | 1.34 ms |
+| 1M | 60 FPS | 60 FPS | 60 FPS |
+| 10M | — | 65 ms † | 101 ms † |
+
+† Exceeds the 16.7 ms vsync budget at full resolution, so raw rendering drops to
+half-rate; the viewer's adaptive DPR (on by default, and disabled for these
+measurements) buys back frame rate by downscaling the render buffer.
+
+Frame rate is GPU-, resolution- and geometry-dependent, so treat these as one
+reference point rather than a guarantee. Load time is dominated by transfer and
+decode, so it tracks your link and cache state rather than element count alone.
 
 ### Spatial Indexing
 
