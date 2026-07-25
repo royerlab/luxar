@@ -371,8 +371,10 @@ def prepare_paper_data(
 
         abstracts.append(abstract)
         primary_fields.append(primary_field)
-        citation_counts.append(paper.get("citationCount", 0))
-        years.append(paper.get("year", 2020))
+        # The API returns explicit nulls (e.g. "year": null), so .get() defaults
+        # never apply — coalesce None as well.
+        citation_counts.append(int(paper.get("citationCount") or 0))
+        years.append(int(paper.get("year") or 2020))
 
     return abstracts, primary_fields, citation_counts, years
 
@@ -463,11 +465,15 @@ def generate_paper_landscape(
         n_papers = len(embeddings_3d)
         positions = embeddings_3d
 
-        citation_array = np.array(citation_counts, dtype=np.float32)
+        # Cached bundles predating the None-coalescing in prepare_paper_data may
+        # still carry null citation counts / years — coalesce here too.
+        citation_array = np.array(
+            [c if c is not None else 0 for c in citation_counts], dtype=np.float32
+        )
         log_citations = np.log1p(citation_array)  # log(1 + x) to handle 0 citations
         years = np.array(
             [
-                int(papers_clean[i].get("year", 2015))
+                int(papers_clean[i].get("year") or 2015)
                 if i < len(papers_clean)
                 else 2015
                 for i in range(n_papers)
