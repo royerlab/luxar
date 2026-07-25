@@ -9,7 +9,7 @@ quarantined path, its size, and what to do about it.
 
 from __future__ import annotations
 
-import importlib
+import sys
 from pathlib import Path
 
 import numpy as np
@@ -28,15 +28,17 @@ HEAVY_DEPS = ("torch", "esm", "umap")
 
 @pytest.fixture
 def without_heavy_deps(monkeypatch):
-    """Make torch / esm / umap-learn look uninstalled, machine-independently."""
-    real = importlib.import_module
+    """Make torch / esm / umap-learn look uninstalled, machine-independently.
 
-    def fake(name, package=None):
-        if name.split(".")[0] in HEAVY_DEPS:
-            raise ImportError(f"No module named {name!r}")
-        return real(name, package)
-
-    monkeypatch.setattr(demo.importlib, "import_module", fake)
+    A ``None`` entry in ``sys.modules`` makes any import of that name raise
+    ``ImportError``, which is exactly the condition under test. Preferred over
+    patching ``importlib.import_module``: that attribute lives on the shared
+    stdlib module object, so replacing it intercepts *every* import in the
+    process for the duration of the test, whereas these three keys are scoped
+    to the names that matter (and monkeypatch restores any real entry).
+    """
+    for name in HEAVY_DEPS:
+        monkeypatch.setitem(sys.modules, name, None)
 
 
 class TestQuarantineReporting:
@@ -55,8 +57,10 @@ class TestQuarantineReporting:
         assert str(corrupt) in message
         assert "3.00 KB" in message
         assert "QUARANTINED" in message
-        # Warned on the console too, before anything expensive was attempted.
-        assert corrupt.name in capsys.readouterr().out
+        # This layer carries the notice in the EXCEPTION, not on the console:
+        # `main()` owns the console report (see TestMainReportsQuarantine), and
+        # printing here too showed the user the same file twice.
+        assert corrupt.name not in capsys.readouterr().out
 
     def test_clean_cache_message_has_no_quarantine_noise(self, tmp_path) -> None:
         torch = pytest.importorskip("torch")
@@ -135,3 +139,75 @@ class TestDependencyGatesAreDeferred:
         assert "luxar[demos]" in message
         # Names the cache escape hatch, which is the whole point of deferring.
         assert "cached embeddings" in message
+
+    def test_compute_path_gates_torch_actionably(
+        self, tmp_path, without_heavy_deps
+    ) -> None:
+        """The PRODUCTION path must gate torch, not just the helper in isolation.
+
+        Mutation-checked: replacing the `_require_module("torch")` call with a
+        bare `import torch` must fail this test. Without it, a cache miss on a
+        torch-less machine raises a raw ModuleNotFoundError instead of naming
+        the pinned spec.
+        """
+        with pytest.raises(ImportError) as excinfo:
+            _compute_esm3_embeddings(SEQUENCES, tmp_path, model_name="esmc-300m")
+
+        message = str(excinfo.value)
+        assert "torch>=2.2,<3.0" in message, f"torch gate not actionable: {message}"
+        assert "luxar[gsplats]" in message
+
+    def test_compute_path_gates_esm_after_the_cuda_check(
+        self, tmp_path, monkeypatch
+    ) -> None:
+        """`esm` must be demanded on the model-load path, and only after CUDA.
+
+        Mutation-checked twice: deleting the `_require_module("esm")` call fails
+        this test, and moving it above the CUDA probe fails
+        ``TestQuarantineReporting`` (a GPU-less machine must get the
+        supply-a-cache message, which carries the quarantine notice).
+        """
+        torch = pytest.importorskip("torch")
+        # Pretend this machine can compute, so the CUDA guard passes and the
+        # model-load path — the one place `esm` is genuinely needed — is reached.
+        monkeypatch.setattr(torch.cuda, "is_available", lambda: True)
+        monkeypatch.setitem(sys.modules, "esm", None)
+
+        with pytest.raises(ImportError) as excinfo:
+            _compute_esm3_embeddings(SEQUENCES, tmp_path, model_name="esmc-300m")
+
+        message = str(excinfo.value)
+        assert "pip install 'esm>=3.0.0'" in message, (
+            f"esm gate missing or not actionable on the compute path: {message}"
+        )
+
+
+class TestMainReportsQuarantine:
+    """`main()` owns the CONSOLE report — exactly once, before anything costly.
+
+    The compute path deliberately stays silent (`verbose=False`) so the same
+    quarantined file is not announced twice per run; this test is what keeps the
+    console coverage that move gave up.
+    """
+
+    def test_notice_is_printed_once(self, tmp_path, monkeypatch, capsys) -> None:
+        # Path.home() honours $HOME on posix, so this redirects the demo's
+        # hard-coded cache dir without patching pathlib globally.
+        monkeypatch.setenv("HOME", str(tmp_path))
+        cache_dir = tmp_path / ".cache" / "luxar" / "esm3_swissprot"
+        cache_dir.mkdir(parents=True)
+        corrupt = cache_dir / f"embeddings_esmc_300m.npy{QUARANTINE_SUFFIX}"
+        corrupt.write_bytes(b"x" * 2048)
+
+        monkeypatch.setattr(demo, "generate_esm3_landscape", lambda output_path, **k: 0)
+        monkeypatch.setattr(demo, "get_demos_output_dir", lambda: tmp_path)
+        monkeypatch.setattr(demo.sys, "argv", ["demo", "--no-serve"])
+
+        demo.main()
+
+        out = capsys.readouterr().out
+        assert str(corrupt) in out, "main() did not report the quarantined cache"
+        assert out.count("QUARANTINED") == 1, (
+            f"quarantine notice printed {out.count('QUARANTINED')} times; "
+            "exactly one report per run is the contract"
+        )

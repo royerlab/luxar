@@ -456,13 +456,13 @@ def _compute_esm3_embeddings(
     # (the common case: the `.npy` is already gone, so the block above never
     # fires). Without this the demo silently restarts a multi-GB fetch/compute
     # with no hint that a rejected copy is sitting in the cache.
-    quarantined = warn_if_quarantined(
-        embeddings_cache,
-        action=(
-            "re-download the complete embeddings file, or delete the quarantined "
-            "copy to reclaim the disk space and recompute from scratch"
-        ),
-    )
+    # verbose=False: `main()` already prints a dir-wide notice for this cache
+    # before anything expensive starts, so printing again here would show the
+    # user two near-identical warnings about the SAME file three lines apart —
+    # which reads like two separate corrupt artifacts. Collect the paths silently
+    # and let them enrich the RuntimeError below instead, which is where a
+    # caller that bypassed `main()` still needs them.
+    quarantined = warn_if_quarantined(embeddings_cache, verbose=False)
 
     # Past the cache check, so the compute path is genuinely being taken: this
     # is where torch becomes mandatory (the CUDA probe below needs it). `esm` is
