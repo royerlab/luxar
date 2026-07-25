@@ -34,7 +34,7 @@ scene/
 ├── lod-eviction.ts                 # VRAM-budget LRU eviction policy for LOD levels
 ├── lod-display-gate.ts             # Never-downgrade display gate (energy-threshold release)
 ├── lod-freshness.ts                # Pure LOD freshness + settle helpers for the registry
-├── synthetic-scene.ts              # Synthetic perf-bench scene generators (lines)
+├── synthetic-scene.ts              # Synthetic perf-bench scene generators (lines, points, gsplats)
 └── README.md                       # This documentation
 ```
 
@@ -1014,9 +1014,17 @@ _For implementation details, see the source files in this directory._
   committed geometry reflects the current view version) and
   `SettleTracker` ("has the version been stable for N ticks?" — the
   debounce behind deferred fine-level reloads).
-- `synthetic-scene.ts` — Mulberry32-seeded synthetic line-segment
-  scene generator (`generateSyntheticLines`) used by the perf bench
-  and the `__luxarDebug.injectSyntheticScene` debug API.
+- `synthetic-scene.ts` — Mulberry32-seeded synthetic scene generators
+  used by the perf bench and the `__luxarDebug.injectSyntheticScene`
+  debug API. `generateSyntheticLines` (random-walk segments — output
+  pinned byte-for-byte by the 10 M-segment bench contract), plus
+  `generateSyntheticPoints` / `generateSyntheticGSplats` built on a
+  shared gaussian-blob cluster sampler (`sampleClusteredPositions`).
+  GSplats get valid lower-triangular Cholesky factors with varied
+  scale, anisotropy, and orientation so depth-sorted 'normal'
+  blending is order-dependent; the injector emits the production
+  commit signals (`committedData` stamp + `noteDepthSortCommit`) so
+  the sort subsystem engages on injected nodes.
 
 ## Subpackages
 

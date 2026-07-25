@@ -38,6 +38,22 @@ export interface SortResult {
   generation: number;
   /** Back-to-front permutation [count] — TRANSFERRED to the main thread. */
   ordering: Uint32Array;
+  /**
+   * Time spent inside the backend `sort_splats_by_depth` call, in ms.
+   * For compiled WASM this INCLUDES the wasm-bindgen boundary copies
+   * (centers copy-in, ordering copy-in/out, mallocs) — the shim performs
+   * them inside the exported function; for the TS fallback it is the pure
+   * kernel. Measured with `performance.now()` on the worker's clock.
+   */
+  kernelMs: number;
+  /**
+   * Whole `sortNode` body duration in ms (registry lookup + output
+   * allocation + kernel). `workerMs - kernelMs` is the worker-side
+   * overhead around the backend call. Same clock as `kernelMs`, so the
+   * difference is meaningful; both are durations, safe to compare with
+   * main-thread-measured durations.
+   */
+  workerMs: number;
 }
 
 /**
@@ -65,6 +81,7 @@ export function registerNode(ctx: SortWorkerCtx, params: RegisterNodeParams): vo
  * (released, or never order-dependent).
  */
 export function sortNode(ctx: SortWorkerCtx, params: SortParams): SortResult | null {
+  const bodyStart = performance.now();
   const wasm = requireWasm(ctx);
   const node = ctx.nodes.get(params.nodeId);
   if (!node || node.generation !== params.generation) {
@@ -72,8 +89,20 @@ export function sortNode(ctx: SortWorkerCtx, params: SortParams): SortResult | n
   }
 
   const ordering = new Uint32Array(node.count);
+  // Timing wraps the backend call generically: `ctx.wasm` is either the
+  // compiled WASM module or the TypeScript fallback, so both report.
+  const kernelStart = performance.now();
   wasm.sort_splats_by_depth(node.centers3, params.modelView, ordering, node.count);
-  return transfer({ generation: node.generation, ordering }, [ordering.buffer]);
+  const kernelEnd = performance.now();
+  return transfer(
+    {
+      generation: node.generation,
+      ordering,
+      kernelMs: kernelEnd - kernelStart,
+      workerMs: kernelEnd - bodyStart,
+    },
+    [ordering.buffer]
+  );
 }
 
 /** Drop a node's registration (node disposal / pool release). */

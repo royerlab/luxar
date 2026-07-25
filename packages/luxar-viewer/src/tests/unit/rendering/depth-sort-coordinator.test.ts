@@ -15,7 +15,13 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import * as THREE from 'three';
 
-type SortResult = { generation: number; ordering: Uint32Array } | null;
+type SortResult = {
+  generation: number;
+  ordering: Uint32Array;
+  /** Worker timing split (optional in mocks; the real worker always sends both). */
+  kernelMs?: number;
+  workerMs?: number;
+} | null;
 
 interface MockApi {
   initialize: ReturnType<typeof vi.fn>;
@@ -932,6 +938,10 @@ describe('depth-sort scheduler (Phase 3)', () => {
     sortResolvers[0]({
       generation: mockApi.sort.mock.calls[0][0].generation as number,
       ordering: new Uint32Array([0, 1]),
+      // Worker timing split as the real sortNode reports it — the
+      // profiler round-trip test below pins the derived metadata.
+      kernelMs: 1.5,
+      workerMs: 2,
     });
     await flush();
     return mesh;
@@ -1148,6 +1158,15 @@ describe('depth-sort scheduler (Phase 3)', () => {
     expect(root.count).toBe(1);
     expect(root.metadata?.splats).toBe(2);
     expect(root.metadata?.info).toMatch(/up$/);
+    // Timing split: kernelMs passes through; boundaryMs = workerMs −
+    // kernelMs; queueMs = locally-timed round-trip − workerMs. The mock
+    // resolves through microtask flushes so the measured round-trip vs
+    // the mocked 2 ms workerMs is timing-dependent — only queueMs's
+    // non-negativity (it is clamped at 0) and finiteness are pinned.
+    expect(root.metadata?.kernelMs).toBe(1.5);
+    expect(root.metadata?.boundaryMs).toBeCloseTo(0.5);
+    expect(Number.isFinite(root.metadata?.queueMs)).toBe(true);
+    expect(root.metadata?.queueMs).toBeGreaterThanOrEqual(0);
   });
 
   it('recovers a node whose first dispatch raced a null camera (registered, never sorted)', async () => {
