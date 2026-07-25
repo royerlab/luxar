@@ -21,7 +21,12 @@ Usage:
     hatch run python packages/luxar/src/luxar/demos/demo_zebrahub_velocity_streamlines.py --h5ad /path/to/zebrahub_velocity.h5ad
 
 Requirements:
-    pip install 'luxar[demos]' anndata h5py gdown scipy
+    pip install 'luxar[demos]' gdown
+
+    ``anndata``/``h5py``/``scipy`` ship in the ``demos`` extra. If you install
+    anndata by hand, KEEP THE UPPER BOUND — ``pip install 'anndata>=0.10,<0.13'``
+    — because anndata >= 0.13 requires zarr >= 3.1 and Luxar pins
+    ``zarr>=2.16,<3.0``.
 """
 
 from __future__ import annotations
@@ -187,6 +192,28 @@ class StreamlineGeometry:
 # Auto-install helpers (mirror the demo_tabula_sapiens approach)
 # -----------------------------------------------------------------------------
 
+# Version-constrained install specs for lazily-imported extras, keyed by module
+# name. A bare `pip install <module>` is NOT always safe: it can silently drag
+# an incompatible transitive dependency into the environment, so the hint has to
+# carry the constraint. Keep in sync with the `demos` extra in pyproject.toml.
+_INSTALL_SPECS: dict[str, str] = {
+    # anndata >= 0.13 requires `zarr>=3.1`, which is unsatisfiable against
+    # Luxar's `zarr>=2.16,<3.0` pin: an unconstrained `pip install anndata`
+    # upgrades zarr to 3.x and breaks every Luxar store. 0.10/0.11 declare no
+    # zarr dependency at all; 0.12 asks for `zarr>=2.18.7,!=3.0.*`, satisfied by
+    # zarr 2.18.7. So `<0.13` is the safe ceiling.
+    "anndata": "'anndata>=0.10,<0.13'",
+}
+
+# Extra guidance appended to the message when the constraint needs explaining.
+_INSTALL_NOTES: dict[str, str] = {
+    "anndata": (
+        "The upper bound is REQUIRED: anndata >= 0.13 pulls zarr >= 3.1, which "
+        "conflicts with Luxar's zarr>=2.16,<3.0 pin. Installing the whole extra "
+        "(pip install 'luxar[demos]') applies the same constraint for you."
+    ),
+}
+
 
 def _require_module(module: str, pip_name: str | None = None) -> Any:
     """Import a module, raising a clear error with install instructions if missing.
@@ -197,17 +224,29 @@ def _require_module(module: str, pip_name: str | None = None) -> Any:
     (HPC, locked-down CI, virtualenvs with pinned deps) and hides the
     install failure mode entirely. The PPI demo's import-error pattern is
     safer and more transparent.
+
+    Args:
+        module: Module name to import.
+        pip_name: Explicit pip requirement to advertise; defaults to the
+            version-constrained spec from :data:`_INSTALL_SPECS`, else the
+            module name.
     """
     try:
         return __import__(module)
     except ImportError as exc:
-        pkg = pip_name or module
+        pkg = pip_name or _INSTALL_SPECS.get(module, module)
+        note = _INSTALL_NOTES.get(module) if pip_name is None else None
         aprint(f"❌ Missing dependency for the zebrahub demo: {module}")
         aprint(f"   Install with: pip install {pkg}")
-        raise ImportError(
+        if note:
+            aprint(f"   ⚠ {note}")
+        message = (
             f"{module} is required by demo_zebrahub_velocity_streamlines. "
             f"Install with `pip install {pkg}`."
-        ) from exc
+        )
+        if note:
+            message = f"{message} {note}"
+        raise ImportError(message) from exc
 
 
 # -----------------------------------------------------------------------------

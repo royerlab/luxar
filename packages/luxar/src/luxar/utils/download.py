@@ -9,9 +9,102 @@ from __future__ import annotations
 import hashlib
 import time
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Optional, Union
 
 from arbol import aprint, asection
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Quarantined-cache detection
+# ─────────────────────────────────────────────────────────────────────────────
+
+#: Suffix appended by the demo/cache helpers when a cached artifact is found to
+#: be truncated, unreadable or the wrong shape. A quarantined file is NEVER
+#: reused — it is kept only so the user can inspect or salvage it.
+QUARANTINE_SUFFIX = ".corrupt"
+
+
+def _format_bytes(n_bytes: int) -> str:
+    """Format a byte count as a compact human-readable size."""
+    size = float(n_bytes)
+    for unit in ("B", "KB", "MB", "GB", "TB"):
+        if size < 1024.0 or unit == "TB":
+            return f"{size:.0f} {unit}" if unit == "B" else f"{size:.2f} {unit}"
+        size /= 1024.0
+    return f"{size:.2f} TB"  # pragma: no cover - loop always returns
+
+
+def find_quarantined_files(target: Union[str, Path]) -> list[Path]:
+    """Return the quarantined ``.corrupt`` files associated with *target*.
+
+    Args:
+        target: A cache *file* (both ``foo.npy.corrupt`` and the
+            ``Path.with_suffix`` form ``foo.corrupt`` are checked, matching the
+            two quarantine conventions in the codebase) or a cache *directory*
+            (every ``*.corrupt`` inside it is reported).
+
+    Returns:
+        Existing quarantined paths, sorted and de-duplicated (empty when clean).
+    """
+    target = Path(target)
+    if target.is_dir():
+        return sorted(p for p in target.glob(f"*{QUARANTINE_SUFFIX}") if p.is_file())
+
+    candidates = [target.with_name(target.name + QUARANTINE_SUFFIX)]
+    if target.suffix:
+        candidates.append(target.with_suffix(QUARANTINE_SUFFIX))
+    seen: dict[Path, None] = {}
+    for path in candidates:
+        if path.is_file():
+            seen[path] = None
+    return sorted(seen)
+
+
+def format_quarantine_notice(
+    paths: list[Path],
+    *,
+    indent: str = "  ",
+    action: str = "re-download the full file (or delete the quarantined copy)",
+) -> str:
+    """Build an actionable multi-line notice for quarantined cache files.
+
+    Returns an empty string when *paths* is empty, so callers can splice the
+    result straight into a larger message.
+    """
+    if not paths:
+        return ""
+    lines = [
+        f"{indent}⚠ A previously cached copy was QUARANTINED as corrupt and will "
+        f"not be reused:"
+    ]
+    for path in paths:
+        try:
+            size = _format_bytes(path.stat().st_size)
+        except OSError:  # pragma: no cover - raced deletion
+            size = "unknown size"
+        lines.append(f"{indent}    {path}  ({size})")
+    lines.append(f"{indent}  To proceed you must {action}.")
+    return "\n".join(lines)
+
+
+def warn_if_quarantined(
+    target: Union[str, Path],
+    *,
+    verbose: bool = True,
+    action: str = "re-download the full file (or delete the quarantined copy)",
+) -> list[Path]:
+    """Print an actionable warning if *target* has quarantined ``.corrupt`` files.
+
+    Called at the download chokepoint so a user who is about to re-fetch a
+    multi-gigabyte artifact is told *why* — a truncated earlier copy is sitting
+    next to it — instead of silently watching a huge download start over.
+
+    Returns:
+        The quarantined paths found (empty when clean).
+    """
+    quarantined = find_quarantined_files(target)
+    if quarantined and verbose:
+        aprint(format_quarantine_notice(quarantined, indent="", action=action))
+    return quarantined
 
 
 def robust_download(
@@ -75,6 +168,11 @@ def robust_download(
             aprint(f"✓ File already downloaded: {output_path}")
             aprint(f"  Size: {current_size / (1024**3):.2f} GB")
             return output_path
+
+    # A quarantined `.corrupt` sibling means an earlier copy was rejected as
+    # truncated/unreadable. Say so BEFORE re-fetching, so a multi-GB download
+    # never starts unexplained.
+    warn_if_quarantined(output_path)
 
     # Set up session with retry logic
     session = requests.Session()
