@@ -1,16 +1,24 @@
 /**
  * Synthetic large-scene generators for the perf bench.
  *
- * Builds an `InstancedLinesMeshConfig` (or, in future commits, a
- * points / gsplats equivalent) at configurable instance counts and
- * pushes the resulting mesh into the live scene via the existing
- * `node-factory` + `material-manager` pipeline. Used exclusively by
- * the perf-bench harness to exercise the bandwidth-bound regime
- * (millions of segments) without needing a real on-disk zarr file.
+ * Builds an `InstancedLinesMeshConfig`, an `InstancedGSplatsMeshConfig`,
+ * or a points payload at configurable instance counts; the debug
+ * injector (`core/app/debug/debug-interface.ts`) pushes the resulting
+ * mesh into the live scene via the existing `node-factory` +
+ * `material-manager` pipeline. Used exclusively by the perf-bench
+ * harness to exercise the bandwidth-bound regime (millions of
+ * elements) without needing a real on-disk zarr file.
  *
  * Not loaded in production builds — the only consumers are the
  * `__luxarDebug.injectSyntheticScene(...)` debug API and the
- * `line-perf-bench.spec.ts` Playwright spec that calls it.
+ * perf-bench Playwright specs that call it.
+ *
+ * Generators are PURE (typed arrays in/out, seeded PRNG, no THREE
+ * runtime import) so they unit-test headlessly. The lines generator is
+ * kept byte-for-byte as originally shipped (its output is pinned by
+ * the `line-perf-bench.spec.ts` 10 M-segment scenario contract); the
+ * points/gsplats generators share the seeded-RNG + gaussian-cluster
+ * sampling scaffolding below.
  *
  * @module scene/synthetic-scene
  */
@@ -18,24 +26,43 @@
 import type * as THREE from 'three';
 
 import type { InstancedLinesMeshConfig } from '../rendering/line-geometry';
+import type { InstancedGSplatsMeshConfig } from '../rendering/gsplat-geometry';
 
-export type SyntheticSceneType = 'lines';
+export type SyntheticSceneType = 'lines' | 'points' | 'gsplats';
 
 export interface SyntheticSceneSpec {
   type: SyntheticSceneType;
-  /** Number of line segments to generate. */
+  /** Number of elements (segments / points / splats) to generate. */
   count: number;
   /**
-   * Bounds for the random walk that generates segments. Larger
-   * bounds → more on-screen spread. Defaults to [-100, 100].
+   * Half-extent of the generation volume. Lines: bounds of the random
+   * walk. Points/gsplats: cluster centers are drawn uniformly from
+   * `[-bounds, bounds]^3`. Larger bounds → more on-screen spread.
+   * Defaults to [-100, 100].
    */
   bounds?: number;
   /**
-   * Deterministic seed so the same `(type, count, seed)` produces
-   * the same scene byte-for-byte. Defaults to 1.
+   * Deterministic seed so the same `(type, count, seed, clusters)`
+   * produces the same scene byte-for-byte. Defaults to 1.
    */
   seed?: number;
+  /**
+   * Number of gaussian blobs the points/gsplats samplers draw from
+   * (ignored by 'lines', which is a random walk). Defaults to
+   * {@link DEFAULT_CLUSTERS}.
+   */
+  clusters?: number;
+  /**
+   * Blending mode for the injected node — consumed by the debug
+   * injector (not the generators). Defaults: 'additive' for lines
+   * (the historical bench contract), 'normal' for points/gsplats so
+   * the depth-sort subsystem engages.
+   */
+  blending?: string;
 }
+
+/** Default gaussian-blob count for the clustered samplers. */
+export const DEFAULT_CLUSTERS = 256;
 
 /**
  * Mulberry32 PRNG — small, fast, deterministic. Sufficient for
@@ -170,13 +197,236 @@ export function generateSyntheticLines(spec: SyntheticSceneSpec): InstancedLines
 }
 
 /**
- * Result of injecting a synthetic scene. Returned to the caller so
- * the perf bench can read back the actual segment count and pass it
- * to its result JSON.
+ * Gaussian sampler over a seeded uniform PRNG (Box–Muller, spare-value
+ * cached). Deterministic: the same `rand` stream yields the same
+ * normal stream.
  */
-export interface SyntheticInjectionResult {
-  type: SyntheticSceneType;
-  segmentCount: number;
-  /** The Mesh that was added to the scene. */
-  mesh: THREE.Mesh;
+function makeGaussian(rand: () => number): () => number {
+  let spare: number | null = null;
+  return () => {
+    if (spare !== null) {
+      const v = spare;
+      spare = null;
+      return v;
+    }
+    // rand() ∈ [0, 1); shift u1 away from 0 so log() stays finite.
+    const u1 = 1 - rand();
+    const u2 = rand();
+    const mag = Math.sqrt(-2 * Math.log(u1));
+    spare = mag * Math.sin(2 * Math.PI * u2);
+    return mag * Math.cos(2 * Math.PI * u2);
+  };
 }
+
+/**
+ * Sample `count` 3D positions from `clusters` gaussian blobs inside a
+ * `[-bounds, bounds]^3` volume — the shared spatial scaffold for the
+ * points and gsplats generators (real microscopy / astronomy point
+ * sets are clumpy, and clustered depth structure is what makes
+ * depth-sorted blending measurably order-dependent).
+ *
+ * Cluster centers are uniform in the volume; per-cluster σ is
+ * 2–8 % of `bounds`. Deterministic for a given `(rand-stream, count,
+ * clusters, bounds)`.
+ *
+ * Also returns the empirical min/max corner of the sampled positions
+ * (gaussians have unbounded tails, so consumers needing a bounding box
+ * must use the measured one, not `±bounds`).
+ */
+export function sampleClusteredPositions(
+  rand: () => number,
+  count: number,
+  clusters: number,
+  bounds: number
+): { positions: Float32Array; min: [number, number, number]; max: [number, number, number] } {
+  const gauss = makeGaussian(rand);
+  const k = Math.max(1, Math.floor(clusters));
+
+  // Cluster table first (fixed PRNG-stream prefix, so the same seed
+  // gives the same blobs regardless of count).
+  const centers = new Float32Array(k * 3);
+  const sigmas = new Float32Array(k);
+  for (let c = 0; c < k; c++) {
+    centers[c * 3] = (rand() * 2 - 1) * bounds;
+    centers[c * 3 + 1] = (rand() * 2 - 1) * bounds;
+    centers[c * 3 + 2] = (rand() * 2 - 1) * bounds;
+    sigmas[c] = bounds * (0.02 + 0.06 * rand());
+  }
+
+  const positions = new Float32Array(count * 3);
+  const min: [number, number, number] = [Infinity, Infinity, Infinity];
+  const max: [number, number, number] = [-Infinity, -Infinity, -Infinity];
+  for (let i = 0; i < count; i++) {
+    const c = Math.min(k - 1, Math.floor(rand() * k));
+    const s = sigmas[c];
+    for (let d = 0; d < 3; d++) {
+      const v = centers[c * 3 + d] + s * gauss();
+      positions[i * 3 + d] = v;
+      // Read back the Float32-rounded value so min/max bound the array
+      // EXACTLY (v is float64 here).
+      const stored = positions[i * 3 + d];
+      if (stored < min[d]) min[d] = stored;
+      if (stored > max[d]) max[d] = stored;
+    }
+  }
+  if (count === 0) {
+    min[0] = min[1] = min[2] = 0;
+    max[0] = max[1] = max[2] = 0;
+  }
+  return { positions, min, max };
+}
+
+/**
+ * Payload for a synthetic points node — plain typed arrays (Float32
+ * throughout, so the production widen/normalize path is an identity)
+ * plus the measured bounds the injector turns into the geometry's
+ * `THREE.Box3`.
+ */
+export interface SyntheticPointsConfig {
+  /** Positions (pointCount * 3). */
+  positions: Float32Array;
+  /** RGB colors in [0, 1) (pointCount * 3). */
+  colors: Float32Array;
+  /** Per-point world-unit radii (pointCount). */
+  radii: Float32Array;
+  /** Per-point sharpness knob in [0, 1] (pointCount). */
+  sharpness: Float32Array;
+  pointCount: number;
+  /** Max world-unit radius — the geometry's footprint expansion. */
+  maxRadius: number;
+  /** Empirical min corner of `positions`. */
+  boundsMin: [number, number, number];
+  /** Empirical max corner of `positions`. */
+  boundsMax: [number, number, number];
+}
+
+/**
+ * Generate a clustered points scene: positions from
+ * {@link sampleClusteredPositions}, vivid random colors, per-point
+ * radii varied over [0.2 %, 1 %] of `bounds`, and sharpness at the
+ * dataset default 0.5 (Gaussian midpoint, beta = 2 — matches the
+ * lines generator).
+ *
+ * Memory: `count × 8` Float32 source floats (32 B/point) + the
+ * RGBA32F point texture at 3 texels/point (48 B/point) during
+ * injection.
+ */
+export function generateSyntheticPoints(spec: SyntheticSceneSpec): SyntheticPointsConfig {
+  const count = spec.count;
+  const bounds = spec.bounds ?? 100;
+  const clusters = spec.clusters ?? DEFAULT_CLUSTERS;
+  const rand = mulberry32(spec.seed ?? 1);
+
+  const { positions, min, max } = sampleClusteredPositions(rand, count, clusters, bounds);
+
+  const colors = new Float32Array(count * 3);
+  const radii = new Float32Array(count);
+  const sharpness = new Float32Array(count);
+  let maxRadius = 0;
+  for (let i = 0; i < count; i++) {
+    colors[i * 3] = rand();
+    colors[i * 3 + 1] = rand();
+    colors[i * 3 + 2] = rand();
+    radii[i] = bounds * (0.002 + 0.008 * rand());
+    if (radii[i] > maxRadius) maxRadius = radii[i];
+    sharpness[i] = 0.5;
+  }
+
+  return {
+    positions,
+    colors,
+    radii,
+    sharpness,
+    pointCount: count,
+    // 0.5 mirrors createPointsGeometry's no-radii footprint default.
+    maxRadius: count > 0 ? maxRadius : 0.5,
+    boundsMin: min,
+    boundsMax: max,
+  };
+}
+
+/**
+ * Generate a clustered gsplats scene as an `InstancedGSplatsMeshConfig`.
+ *
+ * Each splat gets a lower-triangular Cholesky factor L with strictly
+ * positive diagonal — by construction a valid factor of the SPD
+ * covariance Σ = L·Lᵀ:
+ * - characteristic size log-uniform over one decade
+ *   ([0.2 %, 2 %] of `bounds`) → scale varies;
+ * - per-axis diagonal jitter ×[0.4, 1.6] → anisotropy varies;
+ * - off-diagonals ±0.8 × the row's diagonal → orientation/correlation
+ *   varies (Σ gains substantial off-diagonal terms).
+ * Scale AND orientation therefore differ across splats, so
+ * depth-sorted 'normal' blending is measurably order-dependent.
+ *
+ * Amplitudes are positive and varied ([0.2, 1.0)); colors vivid random
+ * RGB.
+ *
+ * Packing matches `packCholeskyForShader`: cholesky01 = [L00, L10],
+ * cholesky23 = [L11, L20], cholesky45 = [L21, L22].
+ */
+export function generateSyntheticGSplats(spec: SyntheticSceneSpec): InstancedGSplatsMeshConfig {
+  const count = spec.count;
+  const bounds = spec.bounds ?? 100;
+  const clusters = spec.clusters ?? DEFAULT_CLUSTERS;
+  const rand = mulberry32(spec.seed ?? 1);
+
+  const { positions: centers } = sampleClusteredPositions(rand, count, clusters, bounds);
+
+  const cholesky01 = new Float32Array(count * 2);
+  const cholesky23 = new Float32Array(count * 2);
+  const cholesky45 = new Float32Array(count * 2);
+  const amplitudes = new Float32Array(count);
+  const colors = new Float32Array(count * 3);
+
+  const sizeFloor = bounds * 0.002;
+  for (let i = 0; i < count; i++) {
+    // Characteristic size: log-uniform over [sizeFloor, 10·sizeFloor].
+    const s = sizeFloor * Math.pow(10, rand());
+    // Per-axis diagonals: positive, anisotropic (×[0.4, 1.6]).
+    const d0 = s * (0.4 + 1.2 * rand());
+    const d1 = s * (0.4 + 1.2 * rand());
+    const d2 = s * (0.4 + 1.2 * rand());
+    // Off-diagonals relative to the row diagonal — any lower-triangular
+    // L with positive diagonal is a valid Cholesky factor, so no
+    // further constraint is needed for positive-definiteness.
+    const L10 = (rand() * 2 - 1) * 0.8 * d1;
+    const L20 = (rand() * 2 - 1) * 0.8 * d2;
+    const L21 = (rand() * 2 - 1) * 0.8 * d2;
+
+    cholesky01[i * 2] = d0; // L00
+    cholesky01[i * 2 + 1] = L10; // L10
+    cholesky23[i * 2] = d1; // L11
+    cholesky23[i * 2 + 1] = L20; // L20
+    cholesky45[i * 2] = L21; // L21
+    cholesky45[i * 2 + 1] = d2; // L22
+
+    amplitudes[i] = 0.2 + 0.8 * rand();
+    colors[i * 3] = rand();
+    colors[i * 3 + 1] = rand();
+    colors[i * 3 + 2] = rand();
+  }
+
+  return {
+    centers,
+    cholesky01,
+    cholesky23,
+    cholesky45,
+    amplitudes,
+    colors,
+    splatCount: count,
+  };
+}
+
+/**
+ * Result of injecting a synthetic scene. Returned to the caller so
+ * the perf bench can read back the actual element count and pass it
+ * to its result JSON. `elementCount` is uniform across types (and is
+ * the CLAMPED drawn count — see the per-node texture capacity clamps);
+ * the per-type aliases (`segmentCount` / `pointCount` / `splatCount`)
+ * carry the REQUESTED count and preserve the original lines shape.
+ */
+export type SyntheticInjectionResult =
+  | { type: 'lines'; segmentCount: number; elementCount: number; mesh: THREE.Mesh }
+  | { type: 'points'; pointCount: number; elementCount: number; mesh: THREE.Mesh }
+  | { type: 'gsplats'; splatCount: number; elementCount: number; mesh: THREE.Mesh };

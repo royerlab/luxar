@@ -480,6 +480,10 @@ function scheduleSort(mesh: THREE.Mesh, nodeId: string): void {
   // One detached profiler pass per dispatch — its duration is the
   // dispatch→applied round-trip the monitor's 'Depth Sort' line shows.
   const session = getProfiler?.()?.beginDepthSortPass() ?? null;
+  // The profiler session does not expose its elapsed time (SessionImpl's
+  // startTime is private), so time the dispatch→resolve round-trip locally
+  // for the queueMs derivation below.
+  const dispatchedAt = performance.now();
 
   // Timeout-raced: a worker that CRASHES mid-session leaves the Comlink
   // RPC pending forever, and a stuck `inFlight` is unrecoverable — the
@@ -496,6 +500,7 @@ function scheduleSort(mesh: THREE.Mesh, nodeId: string): void {
     SORT_RPC_TIMEOUT_MS
   )
     .then((result) => {
+      const roundTripMs = performance.now() - dispatchedAt;
       const current = nodeStates.get(nodeId);
       if (!current) {
         session?.end();
@@ -518,8 +523,20 @@ function scheduleSort(mesh: THREE.Mesh, nodeId: string): void {
           // Ordering upload = 4 bytes/splat through the attribute
           // update-range machinery (the architecture's headline number).
           const bytes = result.ordering.length * 4;
+          // Timing split (perf campaign): kernelMs = inside the backend
+          // call (incl. wasm-bindgen boundary copies for compiled WASM);
+          // boundaryMs = worker-side overhead around it; queueMs =
+          // round-trip minus worker time (Comlink RPC + structured clone
+          // + event-loop queueing). All durations, so worker-clock vs
+          // main-clock is safe; clamped at 0 against timer granularity.
+          // These keys are LAST-WRITE on profiler metadata merge (each
+          // sort pass has its own seq, so the 'Depth Sort' root always
+          // shows the latest sort's split).
           session?.setMetadata({
             splats: result.ordering.length,
+            kernelMs: result.kernelMs,
+            boundaryMs: Math.max(0, result.workerMs - result.kernelMs),
+            queueMs: Math.max(0, roundTripMs - result.workerMs),
             info:
               bytes >= 1_000_000
                 ? `${(bytes / 1_000_000).toFixed(1)} MB up`
