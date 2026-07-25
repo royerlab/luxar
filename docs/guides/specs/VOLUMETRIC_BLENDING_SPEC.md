@@ -36,7 +36,8 @@
 > agree; `POINT_CHORD_SCALE` in `rendering/materials/point/math.ts`) —
 > with τ = κ·density·rayMass where density = opacity·sizeScale²·nearFade
 > (the profile enters τ exactly ONCE, via rayMass; every "how much of this
-> point is there" factor scales τ, so fades leave no ghost fog). Points also gained RGBA colors: the alpha
+> point is there" factor scales τ, so fades leave no ghost fog). Points
+> also gained RGBA colors: the alpha
 > column rides texel2.y, active in every mode, mapped through w(a) under
 > volumetric exactly like gsplats (§5.4.1), gated by `uHasElementAlpha`.
 > `effectiveGeometryMode` at this point fell back to additive for LINES
