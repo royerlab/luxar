@@ -36,6 +36,15 @@ import { waitForLuxarReady } from './helpers';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const VIEWER_ROOT = path.resolve(__dirname, '../../..');
 
+// Dataset-server origin — same derivation as the gsplat bench so both
+// specs honor the port-parameterized perf config (see
+// playwright.perf.config.ts: foreign servers squatting :9000 would
+// otherwise skip every scenario as "dataset not reachable", including
+// synthetic ones gated on their bootstrap URL).
+const DATA_BASE =
+  process.env.LUXAR_PERF_DATA_BASE ??
+  `http://localhost:${process.env.LUXAR_PERF_DATA_PORT ?? 9000}`;
+
 function currentCommitSha(): string {
   try {
     return execSync('git rev-parse --short HEAD', { cwd: VIEWER_ROOT }).toString().trim();
@@ -73,19 +82,19 @@ const SCENARIOS: ScenarioSpec[] = [
     type: 'zarr',
     id: 'lines-basic',
     label: 'lines_basic_example.luxar.zarr (small, always present)',
-    url: 'http://localhost:9000/datasets/examples/lines_basic_example.luxar.zarr',
+    url: `${DATA_BASE}/datasets/examples/lines_basic_example.luxar.zarr`,
   },
   {
     type: 'zarr',
     id: 'lines-zebrahub-hifi',
     label: 'zebrahub_velocity_streamlines_hifi.luxar.zarr (large)',
-    url: 'http://localhost:9000/datasets/demos/zebrahub_velocity_streamlines_hifi.luxar.zarr',
+    url: `${DATA_BASE}/datasets/demos/zebrahub_velocity_streamlines_hifi.luxar.zarr`,
   },
   {
     type: 'synthetic-lines',
     id: 'synthetic-lines-10M',
     label: 'synthetic random-walk lines, 10 M segments (bandwidth bound)',
-    bootstrapUrl: 'http://localhost:9000/datasets/examples/lines_basic_example.luxar.zarr',
+    bootstrapUrl: `${DATA_BASE}/datasets/examples/lines_basic_example.luxar.zarr`,
     count: 10_000_000,
   },
 ];

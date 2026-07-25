@@ -17,7 +17,10 @@ export default defineConfig({
   test: {
     environment: 'jsdom',
     globals: true,
-    globalSetup: ['./src/tests/global-setup.ts'],
+    // WASM-only setup: the perf benches read no zarr fixtures, and bench
+    // boxes may lack the hatch/Python env the full setup's fixture
+    // generation requires.
+    globalSetup: ['./src/tests/global-setup-perf.ts'],
     setupFiles: ['./src/tests/setup.ts'],
     include: [
       'src/tests/unit/wasm/perf-budget.test.ts',
