@@ -1002,34 +1002,82 @@ describe('chunked ordering apply (perf lever L8)', () => {
     expect(attr.updateRanges[0]).toMatchObject({ start: 0, count: 3 * CHUNK });
   });
 
-  it('a NEW ordering mid-apply cancels the old one and restarts from slice 0', () => {
+  it('a NEW ordering mid-apply is HELD and starts only after the current apply completes', () => {
+    // Never restart a streaming apply: under a continuous orbit new
+    // orderings arrive every sort round-trip, and restart-from-slice-0
+    // meant the stream never converged (measured 8× frame-median
+    // regression). A fully-applied slightly-stale order is strictly
+    // better than a never-completing mix.
     const { geometry, arr } = makeGeometry(16);
     const orderingA = reversed(12);
     writeSortedIndexOrdering(geometry, orderingA, 12);
     pumpSortedIndexOrderingApply(geometry);
     pumpSortedIndexOrderingApply(geometry); // A applied through [0, 8)
 
-    // B arrives (a newer sort resolve): restart wholesale.
+    // B arrives (a newer sort resolve): held, NOT started.
     const orderingB = new Uint32Array([5, 4, 7, 6, 1, 0, 3, 2, 9, 8, 11, 10]);
     writeSortedIndexOrdering(geometry, orderingB, 12);
     expect(hasPendingSortedIndexOrderingApply(geometry)).toBe(true);
-    // A's applied prefix [0, 8) remains until B's slices overwrite it.
-    expect(Array.from(arr.subarray(0, CHUNK))).toEqual([11, 10, 9, 8]);
+    expect(Array.from(arr.subarray(0, CHUNK))).toEqual([11, 10, 9, 8]); // A's prefix intact
+
+    // A completes first (buffer EXACTLY equals A for one frame — a fully
+    // valid permutation); the pump reports more work (B's stream).
+    expect(pumpSortedIndexOrderingApply(geometry)).toBe(true); // A [8, 12) + promote B
+    expect(Array.from(arr.subarray(0, 12))).toEqual(Array.from(orderingA));
+
+    // B streams from slice 0.
     expect(pumpSortedIndexOrderingApply(geometry)).toBe(true); // B [0, 4)
     expect(Array.from(arr.subarray(0, CHUNK))).toEqual([5, 4, 7, 6]);
     expect(pumpSortedIndexOrderingApply(geometry)).toBe(true); // B [4, 8)
-    expect(pumpSortedIndexOrderingApply(geometry)).toBe(false); // B [8, 12)
+    expect(pumpSortedIndexOrderingApply(geometry)).toBe(false); // B [8, 12) — done
+    expect(hasPendingSortedIndexOrderingApply(geometry)).toBe(false);
     expect(Array.from(arr.subarray(0, 12))).toEqual(Array.from(orderingB));
   });
 
-  it('writeSortedIndexIdentity cancels an in-flight apply (commit supersedes)', () => {
+  it('held ordering: LATEST wins — an even newer arrival replaces the held one', () => {
+    const { geometry, arr } = makeGeometry(16);
+    const orderingA = reversed(12);
+    writeSortedIndexOrdering(geometry, orderingA, 12);
+    pumpSortedIndexOrderingApply(geometry); // A streaming
+
+    const orderingB = new Uint32Array(12).fill(1);
+    const orderingC = new Uint32Array([5, 4, 7, 6, 1, 0, 3, 2, 9, 8, 11, 10]);
+    writeSortedIndexOrdering(geometry, orderingB, 12); // held...
+    writeSortedIndexOrdering(geometry, orderingC, 12); // ...replaced (B dropped)
+
+    // Finish A (2 more slices), then C streams; B never touches the buffer.
+    pumpSortedIndexOrderingApply(geometry);
+    pumpSortedIndexOrderingApply(geometry); // A done + C promoted
+    pumpSortedIndexOrderingApply(geometry);
+    pumpSortedIndexOrderingApply(geometry);
+    expect(pumpSortedIndexOrderingApply(geometry)).toBe(false);
+    expect(Array.from(arr.subarray(0, 12))).toEqual(Array.from(orderingC));
+  });
+
+  it('a SMALL (single-shot) ordering mid-apply cancels the stream — the full write wins', () => {
     const { geometry, arr } = makeGeometry(16);
     writeSortedIndexOrdering(geometry, reversed(12), 12);
+    pumpSortedIndexOrderingApply(geometry); // streaming
+    // A single-shot write leaves the buffer exactly equal to the newest
+    // ordering — dominating anything the stream could still produce.
+    const small = new Uint32Array([2, 0, 1]);
+    writeSortedIndexOrdering(geometry, small, 3);
+    expect(hasPendingSortedIndexOrderingApply(geometry)).toBe(false);
+    expect(pumpSortedIndexOrderingApply(geometry)).toBe(false);
+    expect(Array.from(arr.subarray(0, 3))).toEqual([2, 0, 1]);
+  });
+
+  it('writeSortedIndexIdentity cancels an in-flight apply AND its held ordering (commit supersedes)', () => {
+    const { geometry, arr } = makeGeometry(16);
+    writeSortedIndexOrdering(geometry, reversed(12), 12);
+    pumpSortedIndexOrderingApply(geometry); // streaming
+    writeSortedIndexOrdering(geometry, new Uint32Array(12).fill(2), 12); // held
     expect(hasPendingSortedIndexOrderingApply(geometry)).toBe(true);
     writeSortedIndexIdentity(geometry, 12);
     expect(hasPendingSortedIndexOrderingApply(geometry)).toBe(false);
     expect(pumpSortedIndexOrderingApply(geometry)).toBe(false);
-    // The stale ordering never scribbles over the fresh identity.
+    // Neither the stale stream nor the held ordering scribbles over the
+    // fresh identity.
     expect(Array.from(arr.subarray(0, 12))).toEqual([0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]);
   });
 

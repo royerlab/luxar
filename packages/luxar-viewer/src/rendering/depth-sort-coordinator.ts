@@ -468,6 +468,17 @@ function scheduleSort(mesh: THREE.Mesh, nodeId: string): void {
     state.resortQueued = true;
     return;
   }
+  // Apply-gate (perf lever L8): while a chunked ordering apply is
+  // streaming for this geometry (or holding a newest ordering), a new
+  // sort could only produce another ordering the stream can't consume
+  // yet — sorting faster than the apply cadence measurably doubled the
+  // sort count and starved the stream. Queue exactly like the in-flight
+  // case; the per-frame pump drains the queue when the apply completes.
+  const geometry = mesh.geometry as THREE.InstancedBufferGeometry | undefined;
+  if (geometry && hasPendingSortedIndexOrderingApply(geometry)) {
+    state.resortQueued = true;
+    return;
+  }
   state.inFlight = true;
 
   const generation = state.generation;
@@ -625,6 +636,10 @@ function isEffectivelyVisible(mesh: THREE.Object3D): boolean {
  *   thing keeping the on-demand loop alive between slices. The slice
  *   just written rides THIS frame's flush (per-frame callbacks run
  *   before render), so the final slice needs no extra frame.
+ * - On COMPLETION, drain a queued re-sort (a commit or the apply-gate
+ *   in scheduleSort parked it) — the counterpart of the resolve path's
+ *   drain, restoring the natural cadence: sort → apply N frames → next
+ *   sort.
  *
  * Per-node bound: one slice per pending node per frame — several large
  * nodes resolving simultaneously each add one slice's cost to a frame
@@ -632,14 +647,19 @@ function isEffectivelyVisible(mesh: THREE.Object3D): boolean {
  * already serialized by the per-node single-in-flight sort rule).
  */
 function pumpChunkedOrderingApplies(): void {
-  for (const state of nodeStates.values()) {
+  for (const [nodeId, state] of nodeStates) {
     const geometry = state.mesh.geometry as THREE.InstancedBufferGeometry | undefined;
     if (!geometry || !hasPendingSortedIndexOrderingApply(geometry)) continue;
     if (!hasCommittedData(state.mesh)) {
       cancelSortedIndexOrderingApply(geometry);
       continue;
     }
-    if (pumpSortedIndexOrderingApply(geometry)) requestRender?.();
+    if (pumpSortedIndexOrderingApply(geometry)) {
+      requestRender?.();
+    } else if (state.resortQueued) {
+      state.resortQueued = false;
+      scheduleSort(state.mesh, nodeId);
+    }
   }
 }
 
@@ -667,7 +687,9 @@ function pumpChunkedOrderingApplies(): void {
  * the threshold AGAIN. Frames between dispatch and resolve render the
  * previous order — bounded staleness, standard 3DGS behavior. Skips:
  * pending view updates (the commit will sort anyway), in-flight sorts
- * (the resolve is at most a frame away), invisible/demoted meshes, and
+ * (the resolve is at most a frame away), in-flight chunked ordering
+ * applies (the L8 apply-gate — a new ordering couldn't be consumed
+ * until the stream completes anyway), invisible/demoted meshes, and
  * nodes whose live mode is no longer order-dependent.
  */
 export function evaluateDepthSortPerFrame(): void {
@@ -740,6 +762,13 @@ export function evaluateDepthSortPerFrame(): void {
 
     // === Within-mesh re-sort trigger (Phase 3) ===
     if (state.inFlight) continue;
+    // Apply-gate (L8): no new dispatches while an ordering is still
+    // streaming into this geometry — post-completion frames compare the
+    // live pose against the last DISPATCH pose, so accumulated orbit
+    // motion triggers the next sort immediately once the stream ends.
+    if (hasPendingSortedIndexOrderingApply(mesh.geometry as THREE.InstancedBufferGeometry)) {
+      continue;
+    }
     if (!state.lastSortAxis) {
       // Registered with the worker but no sort ever dispatched — the
       // first commit raced a null camera (init ordering / renderer

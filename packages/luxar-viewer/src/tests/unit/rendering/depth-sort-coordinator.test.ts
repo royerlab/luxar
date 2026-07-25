@@ -1811,6 +1811,62 @@ describe('depth-sort coordinator — chunked ordering apply (perf lever L8)', ()
     expect(Array.from(arr.subarray(0, 12))).toEqual(Array.from(ordering));
   });
 
+  it('apply-gate: camera motion past the threshold does NOT dispatch while the stream runs', async () => {
+    const { coord, storage } = await loadWithTinyChunks();
+    const camera = makeCamera();
+    coord.configureDepthSort({ getCamera: () => camera, requestRender: vi.fn() });
+
+    const { mesh } = await resolveLargeOrdering(coord, 12); // 3 slices pending
+    const geometry = mesh.geometry as THREE.InstancedBufferGeometry;
+    expect(mockApi.sort).toHaveBeenCalledTimes(1);
+
+    // 5° — well past the 3° threshold; without the gate this would
+    // dispatch immediately (the continuous-orbit feedback loop that
+    // doubled the sort count and starved the stream).
+    camera.rotateY((5 * Math.PI) / 180);
+    coord.evaluateDepthSortPerFrame(); // slice [0, 4) — gated
+    coord.evaluateDepthSortPerFrame(); // slice [4, 8) — gated
+    expect(mockApi.sort).toHaveBeenCalledTimes(1);
+    expect(storage.hasPendingSortedIndexOrderingApply(geometry)).toBe(true);
+
+    // Final slice completes THIS frame; the trigger section then sees the
+    // gate cleared and the accumulated motion dispatches immediately —
+    // the natural cadence: sort → apply N frames → next sort.
+    coord.evaluateDepthSortPerFrame();
+    expect(storage.hasPendingSortedIndexOrderingApply(geometry)).toBe(false);
+    expect(mockApi.sort).toHaveBeenCalledTimes(2);
+  });
+
+  it('apply-gate: a sort request landing mid-stream is queued and drained at completion', async () => {
+    const { coord, storage } = await loadWithTinyChunks();
+    const camera = makeCamera();
+    coord.configureDepthSort({ getCamera: () => camera, requestRender: vi.fn() });
+
+    const { mesh } = await resolveLargeOrdering(coord, 12); // 3 slices pending
+    const geometry = mesh.geometry as THREE.InstancedBufferGeometry;
+
+    // A commit lands mid-stream (test harness commits don't write
+    // identity, so the apply keeps streaming — the production identity
+    // write would cancel it first). Its sort must be QUEUED, not
+    // dispatched: scheduleSort's apply-gate parks it in resortQueued.
+    coord.noteDepthSortCommit(mesh, new Float32Array(36), 12);
+    await flush();
+    expect(mockApi.registerNode).toHaveBeenCalledTimes(2);
+    expect(mockApi.sort).toHaveBeenCalledTimes(1);
+
+    coord.evaluateDepthSortPerFrame(); // slice [0, 4)
+    coord.evaluateDepthSortPerFrame(); // slice [4, 8)
+    expect(mockApi.sort).toHaveBeenCalledTimes(1);
+
+    // Completion frame: the pump drains the queued re-sort, carrying the
+    // commit's CURRENT generation.
+    coord.evaluateDepthSortPerFrame();
+    expect(storage.hasPendingSortedIndexOrderingApply(geometry)).toBe(false);
+    expect(mockApi.sort).toHaveBeenCalledTimes(2);
+    const drainedGeneration = mockApi.sort.mock.calls[1][0].generation as number;
+    expect(drainedGeneration).toBe(mockApi.registerNode.mock.calls[1][0].generation);
+  });
+
   it("releaseDepthSortNode cancels the node's in-flight apply (no orphaned pump entry)", async () => {
     const { coord, storage } = await loadWithTinyChunks();
     coord.configureDepthSort({ getCamera: () => makeCamera(), requestRender: vi.fn() });

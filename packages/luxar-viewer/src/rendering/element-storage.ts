@@ -257,6 +257,18 @@ interface ChunkedOrderingApply {
   count: number;
   /** Next unwritten index — `[0, cursor)` already holds the new ordering. */
   cursor: number;
+  /**
+   * At most ONE held newer ordering (latest wins — an even newer arrival
+   * replaces it). Started only after the CURRENT stream completes; a
+   * mid-apply restart would let a continuous orbit (new orderings every
+   * sort round-trip) keep the stream perpetually at slice 0 — measured
+   * as an 8× frame-median regression (~65 ms constant jank: nearly every
+   * frame became a chunk-upload frame and the buffer never converged).
+   * A fully-applied slightly-stale order is strictly better than a
+   * never-completing mix. Dropped with the whole entry on every
+   * cancellation path (identity write, demotion, release, dispose).
+   */
+  pending: { ordering: Uint32Array; count: number } | null;
 }
 
 /**
@@ -313,13 +325,30 @@ function applyNextSortedIndexChunk(
   attr.needsUpdate = true;
 
   if (state.cursor >= state.count) {
+    if (state.pending) {
+      // Promote the held newest ordering: the buffer EXACTLY equals the
+      // just-completed ordering for this frame (a fully valid
+      // permutation renders), and the next pump starts the new stream.
+      state.ordering = state.pending.ordering;
+      state.count = state.pending.count;
+      state.cursor = 0;
+      state.pending = null;
+      return true;
+    }
     chunkedApplies.delete(geometry);
     return false;
   }
   return true;
 }
 
-/** True while a chunked ordering application is in flight for `geometry`. */
+/**
+ * True while a chunked ordering application is in flight for `geometry`
+ * (including while a held newest ordering is waiting its turn). Doubles
+ * as the coordinator's DISPATCH GATE: no new sorts are dispatched for a
+ * node while this is true — sorting faster than the stream can apply
+ * just churns held orderings (the natural cadence is sort → apply N
+ * frames → next sort).
+ */
 export function hasPendingSortedIndexOrderingApply(
   geometry: THREE.InstancedBufferGeometry
 ): boolean {
@@ -340,12 +369,13 @@ export function pumpSortedIndexOrderingApply(geometry: THREE.InstancedBufferGeom
 }
 
 /**
- * Abort an in-flight chunked application, leaving the attribute as-is
- * (a valid mix of old/new indices — same transient class as
- * mid-application frames; the caller is about to overwrite it or has
- * released the geometry). Callers: new-ordering writes, both identity
- * writers (the commit path), LOD-demotion detection in the
- * coordinator's pump, node release, geometry dispose.
+ * Abort an in-flight chunked application — the streaming ordering AND
+ * any held newest ordering — leaving the attribute as-is (a valid mix
+ * of old/new indices — same transient class as mid-application frames;
+ * the caller is about to overwrite it or has released the geometry).
+ * Callers: small single-shot ordering writes, both identity writers
+ * (the commit path), LOD-demotion detection in the coordinator's pump,
+ * node release, geometry dispose.
  */
 export function cancelSortedIndexOrderingApply(geometry: THREE.InstancedBufferGeometry): void {
   chunkedApplies.delete(geometry);
@@ -507,27 +537,41 @@ export function writeSortedIndexIdentityRange(
  *   frames render a bounded old/new mix — the documented
  *   transient-duplication trade.
  *
- * A previous in-flight chunked apply for this geometry is always
- * cancelled first (a NEW ordering supersedes it wholesale and restarts
- * from slice 0 — the coordinator's generation guard already ensures
- * only current-generation orderings reach this writer).
+ * A NEW large ordering arriving while an apply is streaming does NOT
+ * restart the stream: it is HELD (at most one — latest wins, an older
+ * held ordering is dropped) and starts only after the current apply
+ * completes (see ChunkedOrderingApply.pending for why restarting never
+ * converges under a continuous orbit). A SMALL (single-shot) ordering
+ * cancels the stream instead — the full write leaves the buffer
+ * exactly equal to the newest ordering, which dominates anything the
+ * stream could still produce. The coordinator's generation guard
+ * ensures only current-generation orderings reach this writer either
+ * way.
  */
 export function writeSortedIndexOrdering(
   geometry: THREE.InstancedBufferGeometry,
   ordering: Uint32Array,
   count: number
 ): number {
-  cancelSortedIndexOrderingApply(geometry);
   const attr = geometry.getAttribute('aSortedIndex') as THREE.InstancedBufferAttribute;
   const arr = attr.array as Uint32Array;
   const n = Math.min(count, ordering.length, arr.length);
   if (!chunkedApplyEnabled || n <= sortedIndexChunkElements) {
+    cancelSortedIndexOrderingApply(geometry);
     arr.set(ordering.subarray(0, n));
     collapseSortedIndexRanges(attr, n);
     return n;
   }
 
-  const state: ChunkedOrderingApply = { ordering, count: n, cursor: 0 };
+  const inFlight = chunkedApplies.get(geometry);
+  if (inFlight) {
+    // Hold-latest: never restart a streaming apply (see the pending
+    // field's doc); the newest ordering waits its turn.
+    inFlight.pending = { ordering, count: n };
+    return n;
+  }
+
+  const state: ChunkedOrderingApply = { ordering, count: n, cursor: 0, pending: null };
   chunkedApplies.set(geometry, state);
   if (!chunkedDisposeHooked.has(geometry)) {
     chunkedDisposeHooked.add(geometry);
