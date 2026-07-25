@@ -92,6 +92,20 @@ export function syncPointMaterialWithGeometry(points: THREE.Mesh): void {
  * commit. Mirrors {@link syncPointMaterialWithGeometry} (minus the
  * dtype scale — lines have no `radiusScale` analog; widths are raw
  * Float32 world units).
+ *
+ * Two documented divergences from the points twin (phase-4 lifecycle
+ * review; deliberate, unit-tested):
+ * - The no-texture early return below skips the `hasElementAlpha` push
+ *   entirely (a placeholder geometry carries no presence information),
+ *   whereas the points twin pushes the flag unconditionally. Both are
+ *   safe — every real lines mesh attaches storage — but the policies
+ *   differ for the unreachable placeholder case.
+ * - On a THROWING pool write, the commit's `finally` still runs this
+ *   sync (the texture rebind must happen so the material never samples
+ *   a disposed texture), so the uniform can transiently reflect the
+ *   PREVIOUS tenant's stamp — harmless because adoption pinned
+ *   `instanceCount = 0` (nothing draws) and the next successful commit
+ *   re-stamps.
  */
 export function syncLineMaterialWithGeometry(mesh: THREE.Mesh): void {
   const geometry = mesh.geometry;

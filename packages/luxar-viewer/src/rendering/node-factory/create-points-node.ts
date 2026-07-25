@@ -23,6 +23,7 @@ import {
   createPointQuadGeometry,
   attachPointStorage,
   pointsNormalizationDivisor,
+  stampPointPresenceFlags,
   writePointTexels,
   type PointTexelSource,
 } from '../point-geometry';
@@ -174,25 +175,10 @@ export function createPointsGeometry(
   if (!geometry.userData) geometry.userData = {};
   geometry.userData.radiusScale = radiusScale;
   geometry.userData.pointCount = pointCount;
-  // Scalar presence stamp: the fixed 3-texel layout always carries a
-  // texel2.x slot (0.0 identity when absent), so "does this node have
-  // real colormap scalars?" is no longer readable off a geometry
-  // attribute. `supportsScalarColormap('points', …)` reads this stamp
-  // instead. A zero-length scalars array (the placeholder's declared
-  // field) counts as present — matching the interleaved era's empty
-  // `aScalar` pre-bind that let the fail-closed guard pass.
-  geometry.userData.hasScalars = data.scalars !== undefined;
-  // Sibling presence stamps for debug/E2E introspection (the node's zarr
-  // attrs lack has_colors/has_radii/has_sharpness on datasets written
-  // before the Python writer stamped them — see the pool
-  // adapter's stamp comment).
-  geometry.userData.hasColors = !!data.colors;
-  geometry.userData.hasRadii = !!data.radii;
-  geometry.userData.hasSharpness = !!data.sharpness;
-  // RGBA-alpha presence (texel2.y carries a REAL per-point opacity, not
-  // the 1.0 identity). syncPointMaterialWithGeometry pushes this into the
-  // material's uHasElementAlpha gate on every commit.
-  geometry.userData.hasElementAlpha = colorK === 4;
+  // Presence stamps (hasScalars / hasColors / hasRadii / hasSharpness /
+  // hasElementAlpha) — shared chokepoint with the pool adapter; see
+  // `stampPointPresenceFlags` for the semantics each flag carries.
+  stampPointPresenceFlags(geometry, data, colorK);
 
   return geometry;
 }
