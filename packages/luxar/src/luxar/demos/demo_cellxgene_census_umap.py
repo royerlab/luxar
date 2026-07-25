@@ -76,6 +76,17 @@ COLORINGS = [
 # CENSUS_UMAP_CACHE env var to point at a larger (e.g. 10M) regenerated cache.
 DEFAULT_CACHE = Path(__file__).parent / "data" / "census_umap_1m.npz"
 
+# Per-cell sphere radius in scene units, tied to the local cell spacing rather
+# than picked by eye: at NORM_SPAN the 1M-cell cloud has a median
+# nearest-neighbour distance of ~0.127, so a radius of ~0.4x that leaves
+# adjacent cells just short of touching. Anything approaching the spacing
+# itself fuses the cloud — at the old 0.35 each sphere swallowed a median of 13
+# neighbours (p90 62) and every mid-density region clipped to opaque white,
+# hiding both the UMAP filaments and the per-cell-type hues.
+POINT_RADIUS = 0.05
+# Coordinate span the UMAP is normalized into; POINT_RADIUS is calibrated for it.
+NORM_SPAN = 140.0
+
 
 def _hashed_hue(codes: np.ndarray) -> np.ndarray:
     """Stable, well-spread hue per integer category code (good for hundreds)."""
@@ -100,7 +111,7 @@ def _colors_for(field: str, codes: np.ndarray, labels: list[str]) -> np.ndarray:
     return attribute_to_color(names, field)
 
 
-def normalize_coords(coords: np.ndarray, span: float = 140.0) -> np.ndarray:
+def normalize_coords(coords: np.ndarray, span: float = NORM_SPAN) -> np.ndarray:
     c = coords - coords.mean(axis=0)
     c /= np.abs(c).max() + 1e-9
     return (c * (span / 2)).astype(np.float32)
@@ -165,7 +176,7 @@ def build_scene(
         ]
     ).astype(np.float32)
     colors = np.vstack([color_arrays[f] for f, _ in COLORINGS]).astype(np.float32)
-    radii = np.full(len(positions), 0.35, dtype=np.float32)
+    radii = np.full(len(positions), POINT_RADIUS, dtype=np.float32)
 
     # Per-cell hover labels, aligned with the stacked `coloring` blocks: within
     # each block a point shows that coloring's category (cell type / tissue /
