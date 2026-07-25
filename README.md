@@ -8,7 +8,9 @@
 
 Luxar is a system for compiling and visualizing large-scale n-dimensional point clouds, lines, and Gaussian splats. Built for scientists and researchers who need to explore datasets with millions of elements in 3D, 4D, or higher dimensions.
 
-[Quick Start](#quick-start) | [Gallery](#gallery) | [Documentation](#documentation) | [API Reference](#api-reference)
+**Volume rendering, without the voxels.** Luxar fits image volumes to sparse oriented Gaussians instead of shipping the grid: a 3.3 GB light-sheet stack becomes 2.6 MB of splats, and a 400-timepoint confocal timelapse becomes 72 MB — small enough to stream into a browser and render on the GPU with real emission–absorption physics. See [Volume Rendering with Gaussian Splats](#volume-rendering-with-gaussian-splats).
+
+[Quick Start](#quick-start) | [Volume Rendering](#volume-rendering-with-gaussian-splats) | [Gallery](#gallery) | [Documentation](#documentation) | [API Reference](#api-reference)
 
 ---
 
@@ -40,7 +42,9 @@ Scientific visualization is often software-limited. Luxar changes this by separa
 | **Massive Scale** | 100K to 10M+ primitives at interactive frame rates |
 | **HDR Rendering** | 16-bit floating-point colors with bloom and tone mapping |
 | **Streaming** | Progressive loading from local files or remote servers |
-| **Gaussian Splatting** | Fit and visualize oriented Gaussians for volume reconstruction |
+| **[Volume Rendering](#volume-rendering-with-gaussian-splats)** | Volumes fitted to oriented Gaussian splats — gigabytes of voxels become megabytes of streamable, GPU-native geometry |
+| **[Timelapse-Native](#timelapses-are-one-dataset-not-a-folder-of-frames)** | A whole 4D/5D acquisition in one dataset — time is a fitted dimension, not a folder of frames |
+| **[Emission–Absorption](#emission-and-absorption-not-just-glow)** | Physically-based `volumetric` blending with one turbidity knob, from X-ray glow to dense medium |
 | **Line Geometry** | Render line segments with width tapering and color gradients |
 
 > **Requirements:** The Luxar viewer targets **desktop browsers** with **WebGL2** support (Chrome, Firefox, Edge, Safari 15+). Touch/mobile devices are not currently supported.
@@ -180,6 +184,150 @@ make generate-gallery
 
 ---
 
+## Volume Rendering with Gaussian Splats
+
+Classical volume rendering ships **voxels**: to display a 3D image you upload the
+grid to the GPU as a 3D texture and ray-march it. That model does not survive
+contact with modern microscopy — a single light-sheet timepoint can be several
+gigabytes, a timelapse multiplies that by the number of timepoints, and none of it
+fits through a browser.
+
+Luxar takes the other route. It **fits** the volume with a sparse mixture of
+oriented 3D Gaussians and renders those instead. The size of the representation
+tracks how much *structure* a sample contains rather than the grid it happened to
+be sampled on — so empty space costs nothing, and what is left is small enough to
+stream:
+
+| Dataset | Source volume | Fitted representation |
+|---------|---------------|-----------------------|
+| **Tribolium embryo** — light-sheet, 1 timepoint | 965 × 1871 × 991 = 1.8 G voxels (3.3 GB as TIFF) | 256K splats · **2.6 MB** |
+| **C. elegans embryo** — confocal, 400 timepoints | 400 × 41 × 512 × 512 = 4.3 G voxels | 5.5M splats · **72 MB** (180 KB per timepoint) |
+
+Both are the cached fits bundled with this repository (`demos/data/gsplats_tribolium/`
+and `demos/data/gsplats_celegans/`), fitted at full source resolution — about
+10 bytes per splat on disk. They then render in any WebGL2 browser: no 3D textures,
+no ray-marching, and no CUDA on the viewing machine.
+
+This is lossy, so fidelity is measured rather than asserted. Across a 13-dataset
+microscopy benchmark (4–107 M voxels; confocal, spinning-disk and light-sheet), fits
+at a fixed 32K-splat budget land between 25 and 43 dB PSNR, with a median 30×
+compression at each dataset's cross-validated splat budget (manuscript in
+preparation). `luxar gsplat compare` reports PSNR/SSIM/MSE for your own data.
+
+### Emission and absorption, not just glow
+
+The `volumetric` blending mode implements the standard emission–absorption model of
+direct volume rendering (Max 1995) in closed form for Gaussians — the same
+radiative transfer NeRF composites with. One per-layer knob, absorption κ, morphs
+the render continuously:
+
+| κ | Look | Good for |
+|---|------|----------|
+| `0` | pure emission — bit-identical to `additive` | sparse fluorescence, X-ray-like projection |
+| small | attenuated projection — near structure pops, occluded structure dims | depth cueing in dense timelapses |
+| large | dense smoke- or ink-like medium | opaque tissue, anatomy |
+
+Because fitted amplitudes *are* densities (fluorophore concentration) rather than
+learned opacities, κ is interpretable as the turbidity of the sample instead of
+being an arbitrary rendering constant. Absorption is also orientation-consistent —
+an elongated splat seen end-on absorbs more than the same splat seen side-on, which
+a stored per-splat opacity cannot express. All three geometry types render the same
+physics, on both the WebGL/GLSL and WebGPU/TSL backends.
+
+```bash
+luxar gsplat convert fit.gsplats.zarr scene.luxar.zarr \
+    --blending-mode volumetric --absorption 4 --colormap plasma --tone-mapping Neutral
+```
+
+The other modes cover the rest of the classical spectrum: `additive`/`luminous`
+(pure emission, the default), `max` (maximum-intensity projection), and
+`normal`/`opaque` (surfaces). Full derivation and invariants in the
+[Volumetric Blending Spec](docs/guides/specs/VOLUMETRIC_BLENDING_SPEC.md).
+
+### Timelapses are one dataset, not a folder of frames
+
+Each timepoint is fitted in 3D and the results are stacked onto a time axis: every
+splat gains a time coordinate and a corresponding covariance entry (width zero for a
+discrete axis, or a real extent if you want temporal spread), so a complete 4D
+acquisition — or 5D, adding channel or camera — lives in a **single**
+`.gsplats.zarr`. The viewer's time slider is then ordinary nD slice navigation, and
+because splats are stored barrier-first, a storage chunk never straddles two
+timepoints: scrubbing fetches only the current frame.
+
+Coarsening treats the time and channel axes as **hard barriers**. Coarse splats are
+never merged across them and mass is conserved per barrier group, so a timepoint
+keeps its exact brightness at every level of detail and scrubbing never smears one
+frame into the next.
+
+Fitting a whole timelapse is one command, on whatever hardware you have:
+
+```bash
+# Every GPU in the box, planned over T×C, resumable
+luxar gsplat batch-fit run movie.zarr out/ --gpus auto
+
+# Or a Slurm array job on a cluster
+luxar gsplat batch-fit submit movie.zarr out/ -p gpu --tiling content --cal cal.json
+```
+
+Both plan tiles once across all timepoints and channels, fit each tile as an
+independent task, then **stream-merge** the results — peak memory is one tile
+region, never the whole movie. `status`, `validate`, `merge`, and `cancel` are
+shared by both backends. Pass `--merge-recipe` to give each spatial part its own
+LOD ladder as it streams.
+
+### Scaling: pick a topology, stream the rest
+
+`luxar gsplat lod --recipe` turns a fitted dataset into a level-of-detail topology.
+The recipes are named by intent and ordered by dataset scale:
+
+| Recipe | Structure | Use when |
+|--------|-----------|----------|
+| `flat` | one bare leaf | tiny data, debugging |
+| `stream` | one leaf + progressive ladder | small data, fast first paint |
+| `levels` | coarse→fine replacement levels | zooming across scales |
+| `tiles` | spatial tiles, each with its own ladder | large scene at one scale |
+| `overview` | instant coarse overview, fine tiles on zoom | huge scene, "see everything first" |
+| `adaptive` | tiles where every tile picks its own level | largest scenes, locally adaptive |
+
+Apart from `flat`, every recipe carries a progressive streaming ladder by default:
+splats are reordered so that *any* prefix is the best L² approximation of the whole,
+which means the first chunk to arrive is already a meaningful picture and later
+chunks only refine it. Where levels replace each other, the viewer picks between
+them using a viewport-relative `coverage_fraction = sqrt(N_i / N_finest)` — the
+finest level shows when an object fills the screen, coarser ones step in as it
+shrinks — so level switching self-calibrates on any monitor with no threshold to
+tune.
+
+The canonical end-to-end pipeline is three commands:
+
+```bash
+# 1. Choose the splat budget K* by blind-spot cross-validation
+luxar gsplat cal volume.tiff cal.json
+
+# 2. Fit at K*
+luxar gsplat fit volume.tiff fit.gsplats.zarr --seeds <K*>
+
+# 3. Build the streaming topology
+luxar gsplat lod fit.gsplats.zarr scene.gsplats.zarr --recipe stream
+```
+
+Step 1 earns its place: `cal` sweeps K, finds where *held-out* PSNR peaks, and
+reports the dataset's noise floor — so the splat count is picked by
+cross-validation against the data rather than by guesswork.
+
+### Photogrammetric splats, too
+
+The same renderer reads classical 3D-Gaussian-splatting captures. `luxar gsplat
+import` auto-sniffs INRIA `.ply`, antimatter15 `.splat`, Niantic/Scaniverse `.spz`,
+SuperSplat compressed `.ply`, and PlayCanvas SOG, then feeds them through the same
+LOD and streaming path — the largest interop demo is a 13.6M-Gaussian aerial city
+scene. `luxar gsplat export` writes INRIA PLY back out.
+
+See the [Gaussian Splatting Guide](packages/luxar/src/luxar/gsplats/README.md) for
+the fitting model, calibration, and LOD algorithms in full.
+
+---
+
 ## Geometry Types
 
 ### Points
@@ -194,7 +342,8 @@ scene.add_points(
     radii=radii,         # (N,) float32 - per-point size
     sharpness=sharpness, # (N,) float32 - edge falloff (0-1, normalized)
     opacity=0.8,         # Global opacity
-    blending_mode="additive"  # "normal", "additive", "max"
+    # "additive" (default), "volumetric", "normal", "max", "opaque", "luminous"
+    blending_mode="additive",
 )
 ```
 
@@ -213,7 +362,8 @@ scene.add_lines(
 
 ### Gaussian Splats
 
-Oriented Gaussian functions for volume reconstruction. Requires `pip install "luxar[gsplats]"`.
+Oriented Gaussian functions — Luxar's volume-rendering primitive. Fitting requires
+`pip install "luxar[gsplats]"`; viewing does not.
 
 ```python
 from luxar.gsplats import fit_gaussian_splats
@@ -221,11 +371,16 @@ from luxar.gsplats import fit_gaussian_splats
 # Fit splats to your volume
 result = fit_gaussian_splats(volume, n_iters=1000)
 
-# Add to scene
-scene.add_gsplats_from_data("Reconstruction", result)
+# Add to scene, rendered as an absorbing medium
+scene.add_gsplats_from_data(
+    "Reconstruction", result, blending_mode="volumetric", absorption=4.0
+)
 ```
 
-See [Gaussian Splatting Guide](packages/luxar/src/luxar/gsplats/README.md) for detailed documentation.
+See [Volume Rendering with Gaussian Splats](#volume-rendering-with-gaussian-splats)
+for the scaling and timelapse story, or the
+[Gaussian Splatting Guide](packages/luxar/src/luxar/gsplats/README.md) for the
+fitting model in detail.
 
 ---
 
